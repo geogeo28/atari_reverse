@@ -373,7 +373,7 @@ static uint32_t scene_run_purchase(uint8_t *image, uint32_t price_field, uint32_
  *
  * Two waits guard it. While WB_SCENE_MESSAGE_PENDING is up the shop is finished talking and only
  * the FIRE edge (or a box already gone) lets the player out — through the tail, having spent
- * WB_SHOP_MESSAGE_COST first unless WB_SHOP_LEAVE_CHARGED is zero. Otherwise, while
+ * WB_SHOP_MESSAGE_COST first unless WB_SHOP_REFUSED_COUNT is zero. Otherwise, while
  * WB_SCENE_ACK_WAIT is up, ANY edge (or a box already gone) takes the box down and clears the wait
  * — and then the frame carries on into the request rather than returning. */
 static uint32_t scene_run_shop(uint8_t *image) {
@@ -386,7 +386,7 @@ static uint32_t scene_run_shop(uint8_t *image) {
         if ((int8_t)joy1_newly_pressed(image) >= 0 && image[WB_TEXT_BOX_ACTIVE] != 0)
             return WB_SCENE_EXIT_RETURN;
         record = be32(image + WB_SHOP_RECORD_PTR);
-        if (be16(image + addr_add(record, WB_SHOP_LEAVE_CHARGED)) == 0)
+        if (be16(image + addr_add(record, WB_SHOP_REFUSED_COUNT)) == 0)
             return scene_reload_and_report(image);
         /* The spend's own tail wins where it has one: `bsr $de80` returns here only when the budget
          * held, and the `bra $dfbe` below it is what the leave itself is. */
@@ -522,4 +522,584 @@ uint32_t scene_run_frame(uint8_t *image) {
     if (be16(image + addr_add(descriptor, WB_SCENE_KIND)) != WB_SCENE_KIND_BOSS_DEFEAT)
         return WB_SCENE_EXIT_RETURN;
     return scene_run_boss_defeat(image);
+}
+
+
+/* --- $19ac: THE SCENE-SPAWN TREE ----------------------------------------------------------------
+ *
+ * What ENTERS a scene, where everything above is what runs one once a frame. Its one caller is the
+ * `bsr.w $19ac` at $c66 inside player_pending_event_gate, on the arm the event actor's animation
+ * handshake reaches, and it is driven by the SAME descriptor the driver runs on: a byte-coded
+ * script read straight out of WB_RECORD_PTR_10420 with a walking cursor, which is why this file
+ * walks one too rather than naming a field per read.
+ *
+ * THREE ARMS, chosen by WB_SCENE_KIND exactly as $dbc0's are, and a fourth ending that is a bare
+ * `rts`: a kind that is not 1, 2 or 4 leaves having done nothing but mark
+ * WB_SCENE_SPAWN_GATE_SLOT free. Each arm resets one actor table, fills the first few of its slots
+ * with the DISPLAY RECORDS the scene is made of — inert type-0 records the sprite pass draws and no
+ * behaviour handler runs — marks the rest free again, and hands stage_load_window a map and tile
+ * bank out of WB_SCENE_MAP_BANK_TABLE.
+ *
+ * WHAT MAKES IT THE PROJECT'S THIRD CLOSED DISPATCH TABLE. The speech arm scales a script BYTE by
+ * four and `jsr`s through WB_SPAWN_GATE_TABLE, whose three live entries are the gates below. Unlike
+ * the two dispatches above it the index cannot wrap or turn negative — a byte times four is at most
+ * 1020 — so the offset guard and an index guard coincide here, and the guard is spelt as the offset
+ * only because that is what the `lea` adds.
+ *
+ * ONE ENDING THIS FILE CANNOT FOLLOW, and it is the original's own: the `illegal` at $1d8e, reached
+ * when a shop that has already turned the player away three times turns him away a fourth. See
+ * WB_SCENE_EXIT_ILLEGAL in scene.h.
+ */
+
+/* `move.w (a1)+,d0` and `move.b (a1)+,d0` — the descriptor is READ SEQUENTIALLY, and the cursor is
+ * the original's a1. Through the bus because WB_RECORD_PTR_10420 is a pointer a caller supplied and
+ * the descriptor table it names lies past the loaded image. */
+static uint16_t script_word(const uint8_t *image, uint32_t *at) {
+    uint16_t value = bus_read_word(image, *at);
+
+    *at = addr_add(*at, 2);
+    return value;
+}
+
+static uint8_t script_byte(const uint8_t *image, uint32_t *at) {
+    uint8_t value = bus_read_byte(image, *at);
+
+    *at = addr_add(*at, 1);
+    return value;
+}
+
+
+/* --- $e43e, $e456, $e46c: the three SPAWN-SCRIPT GATES ------------------------------------------
+ *
+ * Three near-identical routines of 24, 22 and 22 bytes, and the whole of WB_SPAWN_GATE_TABLE's live
+ * entries. Each compares WB_HUD_SLOT_BBC8's HIGH byte — `cmpi.b #n,$bbc8.l`, i.e. the 1..6 variant
+ * the panel draws, not the "changed" byte beside it — against its own number and returns having
+ * written nothing when they match.
+ *
+ * OTHERWISE IT REWRITES THE SCRIPT THE CALLER IS IN THE MIDDLE OF READING, which is the whole point
+ * of the mechanism and the reason `cursor` is a parameter. `move.b #$7,(a1)` plants
+ * WB_SPAWN_GATE_REFUSED_SCRIPT over the speech index the caller reads ONE INSTRUCTION LATER, and
+ * `move.w #$0,1(a1)` clears the descriptor's own WB_SCENE_EXIT_ACTION word behind it. So a player
+ * carrying the wrong equipment gets script 7 instead of the descriptor's own, and the scene he then
+ * leaves runs exit action 0.
+ *
+ * `cursor` is the original's a1, which the caller has already advanced past the gate byte: it is
+ * WB_SCENE_GATE_INDEX + 1 into the descriptor, an ODD address, so the word write at +1 lands EVEN
+ * and the 68000 takes no address error. A case that seeds an odd descriptor would break that, which
+ * is why test/test_scene.py seeds only even ones — the original's own writer of that pointer
+ * ($162e) can produce nothing else. */
+static void spawn_gate(uint8_t *image, uint32_t cursor, uint8_t keep) {
+    if (image[WB_HUD_SLOT_BBC8] == keep)
+        return;
+    bus_write_byte(image, cursor, WB_SPAWN_GATE_REFUSED_SCRIPT);
+    bus_write_word(image, addr_add(cursor, 1), 0);
+}
+
+void spawn_gate_unless_bbc8_eq1(uint8_t *image, uint32_t cursor) { spawn_gate(image, cursor, 1); }
+void spawn_gate_unless_bbc8_eq3(uint8_t *image, uint32_t cursor) { spawn_gate(image, cursor, 3); }
+void spawn_gate_unless_bbc8_eq4(uint8_t *image, uint32_t cursor) { spawn_gate(image, cursor, 4); }
+
+/* WB_SPAWN_GATE_TABLE's four longwords in the order the image holds them, which
+ * test/test_scene.py compares entry by entry against ../names.txt's addresses. Entry 0 is NOT an
+ * address (WB_SPAWN_GATE_ENTRY_0_NOT_AN_ADDRESS) and is never fetched, because the dispatcher below
+ * returns on a script byte of zero before it scales one. */
+static void (*const SPAWN_GATES[WB_SPAWN_GATE_COUNT])(uint8_t *image, uint32_t cursor) = {
+    NULL,
+    spawn_gate_unless_bbc8_eq1, spawn_gate_unless_bbc8_eq3, spawn_gate_unless_bbc8_eq4,
+};
+
+/* `moveq #0,d0 / move.b (a1)+,d0 / beq / lsl.w #2 / lea $e42e.l,a0 / movea.l 0(a0,d0.w),a0 /
+ * jsr (a0)`. The index is a BYTE, so the shift cannot wrap the word and the sign-extended offset
+ * cannot be negative — the contrast with scene_run_exit_action above, whose index is a word and
+ * whose offset therefore aliases. What is refused is the same thing: a `jsr` through a longword
+ * outside the table, which no C can stand in for. */
+static void spawn_run_gate(uint8_t *image, uint8_t index, uint32_t cursor) {
+    uint32_t offset;
+
+    if (index == 0)
+        return;
+    offset = sign_ext16((uint16_t)(index * SCENE_TABLE_ENTRY_BYTES));
+    if (offset >= WB_SPAWN_GATE_COUNT * SCENE_TABLE_ENTRY_BYTES)
+        return;
+    SPAWN_GATES[offset / SCENE_TABLE_ENTRY_BYTES](image, cursor);
+}
+
+
+/* --- what all three arms share ------------------------------------------------------------------ */
+
+/* `move.w d0,6(a2) / move.w d1,(a2) / move.w d2,2(a2) / clr.w 4(a2)` in the speech arm, and
+ * `move.l #imm,(a1)+ / move.w #imm,(a1)+ / move.w n(a0),(a1)+ / lea 24(a1),a1` in the shop's — the
+ * same four fields either way.
+ *
+ * IT IS IN TWO HALVES BECAUSE THE SHOP'S SPRITE SOURCE IS READ BETWEEN THEM. `move.w 54(a0),(a1)+`
+ * is the THIRD instruction of its record, so the read happens AFTER that record's own xy and type
+ * are in memory — and the record `a0` points at is one a caller supplied, which can be the very
+ * words just written (test/test_scene.py's alias case puts field 54 on slot 0's x). Passing the
+ * field as a call ARGUMENT would read it first, and C does not even fix which first: argument
+ * order is unspecified. The speech arm has no such hazard — it reads all three of its words out of
+ * the script cursor before it stores anything — so it keeps the whole-record form below. */
+static void spawn_record_open(uint8_t *image, uint32_t at, uint32_t xy, uint16_t type) {
+    /* These two are commutative and a mutant that swaps them is EQUIVALENT, proved rather than
+     * assumed: the longword covers [at, at + WB_ACTOR_TYPE) and the word [WB_ACTOR_TYPE,
+     * WB_ACTOR_TYPE + 2), which are disjoint for every `at`, and each is guarded against the image
+     * independently. The gate round's sweep tried the swap and it survived; no seed can separate
+     * them. The order below is the original's. */
+    bus_write_long(image, at, xy);
+    bus_write_word(image, addr_add(at, WB_ACTOR_TYPE), type);
+}
+
+/* ...and the sprite word, plus the cursor at the NEXT record, which is what both originals leave in
+ * their address register. */
+static uint32_t spawn_record_close(uint8_t *image, uint32_t at, uint16_t sprite) {
+    bus_write_word(image, addr_add(at, WB_ACTOR_SPRITE), sprite);
+    return addr_add(at, WB_ACTOR_RECORD_BYTES);
+}
+
+static uint32_t spawn_display_record(uint8_t *image, uint32_t at, uint32_t xy, uint16_t type,
+                                     uint16_t sprite) {
+    spawn_record_open(image, at, xy, type);
+    return spawn_record_close(image, at, sprite);
+}
+
+/* `cmpi.l #$ffffffff,(a2) / beq / move.w #$ffbe,(a2) / lea 32(a2),a2 / bra` — every slot from the
+ * cursor up to the table's terminator marked free AGAIN, after actor_table_reset has already marked
+ * all nineteen and the arm has overwritten the first few.
+ *
+ * THE LOOP HAS NO BOUND IN THE ORIGINAL and one here, for the reason src/behavior.c's walk has one
+ * and with the same constant: a table with no WB_ACTOR_TABLE_END spins until the machine is reset,
+ * and once the cursor leaves the loaded image every read is answered with zero and every write
+ * dropped (bus.h), so it can never find one. The cursor's stride divides the 24-bit bus exactly, so
+ * after WB_ACTOR_WALK_BUS_CYCLE steps it is back on an address it has already read; the oracle's own
+ * instruction cap fires long before, so no differential can tell the two apart. */
+static void spawn_free_rest_of_table(uint8_t *image, uint32_t at) {
+    for (uint32_t step = 0; step < WB_ACTOR_WALK_BUS_CYCLE; step++) {
+        if (bus_read_long(image, at) == WB_ACTOR_TABLE_END)
+            return;
+        bus_write_word(image, at, WB_ACTOR_FREE_MARKER);
+        at = addr_add(at, WB_ACTOR_RECORD_BYTES);
+    }
+}
+
+/* The tail all three arms end in, in TWO halves because the shop arm reads the descriptor once more
+ * between them and a store lands in the gap.
+ *
+ * `movea.l (a1)+,a0 / movea.l (a1)+,a6 / move.w #$ffff,$d76.w` — both longwords fetched out of
+ * WB_SCENE_MAP_BANK_TABLE and only THEN the freeze raised. The entry address is unbounded (`lsl.w
+ * #3` on a descriptor word, added SIGN-EXTENDED), so the read is reproduced wherever it lands
+ * rather than guarded. */
+static void spawn_fetch_bank_and_freeze(uint8_t *image, uint32_t bank_offset,
+                                        uint32_t *map, uint32_t *tiles) {
+    uint32_t entry = addr_add(WB_SCENE_MAP_BANK_TABLE, bank_offset);
+
+    *map = bus_read_long(image, entry);
+    *tiles = bus_read_long(image, addr_add(entry, WB_SCENE_MAP_BANK_TILES));
+    wr16(image + WB_SCROLL_FOLLOW_FROZEN, WB_SCROLL_FOLLOW_FROZEN_SET);
+}
+
+/* ...and `jsr $f95c.l / clr.w $a34.w`, which the three arms then spell identically. */
+static void spawn_load_stage(uint8_t *image, uint32_t map, uint32_t start, uint32_t tiles) {
+    stage_load_window(image, map, start, tiles);
+    wr16(image + WB_STATE_FLAG_A34, 0);
+}
+
+/* `moveq #0,d0 / move.w 30(a1),d0 / lsl.w #3` off a RE-READ WB_RECORD_PTR_10420 — not off the
+ * cursor the arm has been walking, and not off the pointer the arm read on entry. The re-read is
+ * the original's and is kept: a gate above may have written through the descriptor, and the
+ * descriptor pointer itself is one of the addresses such a write can land on. */
+static uint32_t spawn_map_bank_offset(const uint8_t *image) {
+    uint32_t descriptor = be32(image + WB_RECORD_PTR_10420);
+    uint16_t index = bus_read_word(image, addr_add(descriptor, WB_SCENE_MAP_BANK_INDEX));
+
+    return sign_ext16((uint16_t)(index * WB_SCENE_MAP_BANK_BYTES));
+}
+
+static uint32_t spawn_start_record(uint32_t index) {
+    return WB_STAGE_START_RECORDS + index * WB_START_RECORD_LEN;
+}
+
+/* `cmpi.w #$5,$bd88.l / blt` — SIGNED, and re-read at each of its four sites. */
+static int spawn_is_late_stage(const uint8_t *image) {
+    return (int16_t)be16(image + WB_STAGE_NUMBER) >= (int16_t)WB_SCENE_LATE_STAGE_FIRST;
+}
+
+
+/* $1ab4..$1aef — the speech arm's last twenty-eight instructions, WHICH HAVE A SECOND ENTRANCE.
+ * A whole-image census over every branch form, both absolute encodings and both data widths finds
+ * exactly two instructions naming $1ab4: the fall-through inside $19e2, and the `jmp $1ab4.w` at
+ * $deb0 — scene_spend_visit_budget's, taken when an exhausted visit's marker cell matches neither
+ * neighbour. (The word $1ab4 also sits at $10432, inside WB_SHOP_RECORD_TABLE's pointer $21ab4,
+ * which is data and not an operand.)
+ *
+ * IT IS A SHARED TAIL AND IT IS SPLIT OUT SO THAT IT CAN BE ONE. What differs between the two
+ * entrances is only the ENDING: the tree's own path reaches `movea.l (a7)+,a0 / rts` having pushed
+ * that a0 at $19ac, and $deb0's has pushed nothing — so the pop takes $de80's own return address
+ * and the `rts` returns one frame further out. That unwind is why `scene_spend_visit_budget` above
+ * still reports WB_SCENE_EXIT_STAGE_RESET instead of calling this; the tail it declined to follow
+ * is now reconstructed, and only the caller-side convention is left. ../STATUS.md carries it. */
+static void scene_spawn_speech_tail(uint8_t *image) {
+    uint32_t map, tiles;
+
+    spawn_fetch_bank_and_freeze(image, spawn_map_bank_offset(image), &map, &tiles);
+    spawn_load_stage(image, map, spawn_start_record(WB_SCENE_START_RECORD_SPEECH), tiles);
+    wr16(image + WB_STATE_FLAG_A30, WB_STATE_FLAG_SET);
+}
+
+
+/* --- kind 1, THE SPEECH SCENE ($19e2..$1aef) ---------------------------------------------------
+ *
+ * Three display records out of two triples of descriptor words — the first triple twice over, once
+ * as it stands and once with the sprite bumped and the x moved WB_SCENE_SPAWN_PAIR_DX along, which
+ * is a two-cell object drawn as two records. Then the gate, then the speech script.
+ *
+ * THE SPEECH INDEX IS READ AFTER THE GATE RUNS, and that ordering is the mechanism rather than an
+ * accident: the gate's `move.b #$7,(a1)` writes the very byte the next instruction reads. A port
+ * that fetched both script bytes before dispatching would be green on every case whose gate matched
+ * and wrong on every case whose gate did not. */
+static void scene_spawn_speech(uint8_t *image, uint32_t script, uint32_t marker) {
+    uint32_t at = WB_ACTOR_TABLE_A30;
+    uint16_t sprite, x, y;
+    uint8_t gate, index;
+
+    actor_table_reset(image, WB_ACTOR_TABLE_A30);
+    /* `clr.w $1017c.l` on a LONGWORD cursor: only the HIGH half goes. */
+    wr16(image + WB_SPEECH_SCRIPT_CURSOR, 0);
+
+    sprite = script_word(image, &script);
+    x = script_word(image, &script);
+    y = script_word(image, &script);
+    if (spawn_is_late_stage(image))
+        sprite = WB_SCENE_LATE_STAGE_SPRITE;
+    at = spawn_display_record(image, at, ((uint32_t)x << 16) | y, 0, sprite);
+    at = spawn_display_record(image, at,
+                              ((uint32_t)(uint16_t)(x + WB_SCENE_SPAWN_PAIR_DX) << 16) | y, 0,
+                              (uint16_t)(sprite + 1));
+
+    sprite = script_word(image, &script);
+    x = script_word(image, &script);
+    y = script_word(image, &script);
+    at = spawn_display_record(image, at, ((uint32_t)x << 16) | y, 0, sprite);
+    spawn_free_rest_of_table(image, at);
+
+    /* THE TWO STEPS ARE SEPARATE STATEMENTS ON PURPOSE. C does not order a call's arguments, so
+     * `spawn_run_gate(image, script_byte(image, &script), script)` would leave it to the compiler
+     * whether the gate is handed the cursor BEFORE or AFTER the gate byte advanced it — and the
+     * whole mechanism is that it is handed the byte AFTER. */
+    gate = script_byte(image, &script);
+    spawn_run_gate(image, gate, script);
+
+    index = script_byte(image, &script);
+    wr32(image + WB_SPEECH_SCRIPT_CURSOR,
+         bus_read_long(image, addr_add(WB_SPEECH_SCRIPT_TABLE,
+                                       sign_ext16((uint16_t)(index * SCENE_TABLE_ENTRY_BYTES)))));
+    image[WB_TEXT_REQUEST] = bus_read_byte(image, be32(image + WB_SPEECH_SCRIPT_CURSOR));
+    wr16(image + WB_TEXT_LIFETIME_REQUEST, WB_SCENE_SPEECH_LIFETIME_HELD);
+    wr32(image + WB_SPEECH_SCRIPT_CURSOR, be32(image + WB_SPEECH_SCRIPT_CURSOR) + 1);
+
+    scene_clear_marker_pair(image, marker);
+    map_stamp_block(image);
+
+    scene_spawn_speech_tail(image);
+}
+
+
+/* --- kind 4, THE BOSS SCENE ($1ea8..$1f33) ----------------------------------------------------- */
+
+/* Unlike the other two this one resets WB_ACTOR_TABLE_A32 and writes ONE record — the followed
+ * actor's, slot 12 of that table — and it makes it a WB_SCENE_BOSS_FOLLOW_TYPE record, i.e. the
+ * PLAYER's own behaviour slot, at a fixed position with a fixed pair of sizes.
+ *
+ * TWO DEAD COMPUTATIONS, both reproduced nowhere because no exit can observe them: the descriptor
+ * word at +12 is loaded into d0 and never spent, and the `lsl.w #3,d0` three instructions before
+ * the `lea` is overwritten by `move.w #$10,d0` before the index is used — so this arm always takes
+ * WB_SCENE_BOSS_MAP_BANK_OFFSET whatever the descriptor says, where the other two follow the
+ * descriptor's own word.
+ *
+ * IT TAKES NO CURSOR, because the original does not either: `movea.l $10420.l,a0 / lea 4(a0),a0`
+ * RE-BUILDS the cursor out of a fresh read of the descriptor pointer rather than carrying on from
+ * the head's a1. */
+static void scene_spawn_boss(uint8_t *image, uint32_t marker) {
+    uint32_t follow = WB_ACTOR_FOLLOWED_A32;
+    uint32_t script, map, tiles;
+
+    actor_table_reset(image, WB_ACTOR_TABLE_A32);
+
+    wr16(image + follow + WB_ACTOR_SPRITE, 0);
+    wr16(image + follow + WB_ACTOR_TYPE, WB_SCENE_BOSS_FOLLOW_TYPE);
+    wr32(image + follow, WB_SCENE_BOSS_FOLLOW_XY);
+    wr32(image + follow + WB_ACTOR_HALF_WIDTH, WB_SCENE_BOSS_FOLLOW_SIZES);
+
+    /* `lea 4(a0),a0 / ... / lea 8(a0),a0`, so the pair read is the descriptor's words at +12
+     * and +14. The FIRST of the two is dead, per the plate above; the read is kept because it is
+     * what steps the cursor onto the second. */
+    script = addr_add(be32(image + WB_RECORD_PTR_10420), WB_SCENE_KIND + 2 + 8);
+    script_word(image, &script);
+    image[WB_TEXT_REQUEST] = (uint8_t)script_word(image, &script);
+    wr16(image + WB_TEXT_LIFETIME_REQUEST, WB_TEXT_LIFETIME_DEFAULT);
+
+    scene_clear_marker_pair(image, marker);
+    map_stamp_block(image);
+
+    spawn_fetch_bank_and_freeze(image, WB_SCENE_BOSS_MAP_BANK_OFFSET, &map, &tiles);
+    spawn_load_stage(image, map, spawn_start_record(WB_SCENE_START_RECORD_BOSS), tiles);
+    wr16(image + WB_PANEL_FRAME_HOLD, 0);
+    wr16(image + WB_STATE_FLAG_A32, WB_STATE_FLAG_SET);
+}
+
+
+/* --- $1cc0 and $1d1e: THE SHOP'S PRICE PLATES ---------------------------------------------------
+ *
+ * Two routines of their own — each has an `rts`, and each is reached only by `bsr.w` (twice, both
+ * times from inside this tree) — that together draw a four-digit price into a SPRITE's bitmap.
+ * They are $b850's packed-BCD digit plotter one tier over: the same WB_DIGIT_GLYPHS_ALT font, the
+ * same WB_DIGIT_GLYPH_LEN, the same leading-zero latch, and the same four-plane 8-row glyph. What
+ * differs is the destination — a masked sprite out of WB_RESOURCE_TABLE rather than the screen — so
+ * the row is WB_GLYPH_STAMP_ROW_BYTES and the cell before each group of planes is a MASK word.
+ */
+
+/* The whole distance `glyph_stamp_8_rows` advances before it rewinds: the mask word it skips on
+ * entry plus WB_DIGIT_ROWS rows. Named because BOTH `lea` rewinds are this minus a cell step. */
+#define GLYPH_STAMP_SPAN  (WB_DIGIT_ROWS * WB_GLYPH_STAMP_ROW_BYTES + WB_GLYPH_STAMP_MASK_BYTES)
+
+/* $1d1e — one 8-pixel glyph column into a masked sprite, and THE CURSOR FOR THE NEXT ONE, which is
+ * what the two `lea` rewinds at the end are for and why this returns the original's a0.
+ *
+ * `lea 2(a0),a0` skips the group's mask word; the four plane bytes then go in two apart, and
+ * `lea 14(a0),a0` steps to the next row — WB_GLYPH_STAMP_ROW_BYTES in all. Afterwards
+ * `move.w a0,d7 / btst #0,d7` asks whether the CURSOR the caller handed in was even: an even one's
+ * next cell is the odd byte of the same group, an odd one's is the next group's even byte. That is
+ * bg_plot_banner_glyph's +1/+7 with a 10-byte group instead of an 8-byte one, which is the mask
+ * word's whole width. */
+uint32_t glyph_stamp_8_rows(uint8_t *image, uint32_t at, uint32_t glyph) {
+    unsigned row, plane;
+
+    at = addr_add(at, WB_GLYPH_STAMP_MASK_BYTES);
+    for (row = 0; row < WB_DIGIT_ROWS; row++) {
+        for (plane = 0; plane < WB_PLANES; plane++) {
+            bus_write_byte(image, at, bus_read_byte(image, glyph));
+            glyph = addr_add(glyph, 1);
+            if (plane + 1 < WB_PLANES)
+                at = addr_add(at, WB_GLYPH_STAMP_PLANE_STEP);
+        }
+        at = addr_add(at, WB_GLYPH_STAMP_ROW_SKIP);
+    }
+    return addr_add(at, ((at & 1) ? WB_GLYPH_STAMP_NEXT_ODD : WB_GLYPH_STAMP_NEXT_EVEN)
+                        - (uint32_t)GLYPH_STAMP_SPAN);
+}
+
+/* $1cc0 — WB_SHOP_PRICE_DIGITS digits of one price into the resource `resource` names.
+ *
+ * `mulu.w #20,d7` picks the WB_RESOURCE_TABLE record and its first longword is the sprite's own
+ * bitmap; `move.w 0(a1,d6.w),d0` reads the price out of WB_SHOP_RECORD_PTR at the caller's
+ * displacement, which is WB_SHOP_ITEM1_PRICE or WB_SHOP_ITEM2_PRICE. Neither index is bounded — the
+ * resource offset is a `mulu` result taken as a SIGN-EXTENDED word and the field displacement is a
+ * word too — so both are reproduced wherever they land.
+ *
+ * `rol.w #4,d0` brings the TOP nibble down, so the digits are drawn most significant first, and a
+ * nibble of zero before any nonzero one is drawn as WB_TEXT_GLYPH_TABLE's first glyph (the SPACE:
+ * that font starts at character $20). d4 is the latch that ends the blanking, and it is
+ * WB_DIGIT_SIGNIFICANT_SEEN's mechanism spelt in a register instead of a word. */
+void shop_render_price_digits(uint8_t *image, uint16_t resource, uint16_t price_field) {
+    uint32_t entry = addr_add(WB_RESOURCE_TABLE,
+                              sign_ext16((uint16_t)(resource * WB_RESOURCE_RECORD_BYTES)));
+    uint32_t at = bus_read_long(image, entry);
+    uint16_t digits = bus_read_word(image, addr_add(be32(image + WB_SHOP_RECORD_PTR),
+                                                    sign_ext16(price_field)));
+    int significant = 0;
+    unsigned n;
+
+    for (n = 0; n < WB_SHOP_PRICE_DIGITS; n++) {
+        uint16_t glyph_offset;
+
+        digits = (uint16_t)((digits << WB_SHOP_PRICE_NIBBLE_BITS)
+                            | (digits >> (16 - WB_SHOP_PRICE_NIBBLE_BITS)));
+        glyph_offset = (uint16_t)((digits & 0xf) * WB_DIGIT_GLYPH_LEN);
+        if (glyph_offset == 0 && !significant) {
+            at = glyph_stamp_8_rows(image, at, WB_TEXT_GLYPH_TABLE);
+            continue;
+        }
+        significant = 1;
+        at = glyph_stamp_8_rows(image, at, addr_add(WB_DIGIT_GLYPHS_ALT, glyph_offset));
+    }
+}
+
+
+/* --- kind 2, THE SHOP COUNTER ($1bb4..$1cbf, then $1d52..$1ea7) --------------------------------- */
+
+/* The eight display records the counter is made of, in the order the arm writes them: the two items
+ * at WB_SHOP_DISPLAY_ITEM1_XY / _ITEM2_XY showing the record's own two item sprites, the SIGN as a
+ * two-record pair exactly like the speech arm's, the leave marker, the two price plates
+ * shop_render_price_digits then draws into, and one more record whose WB_ACTOR_TYPE is the only one
+ * of the eight the arm does not clear.
+ *
+ * EVERY FIELD IS READ WHERE THE ORIGINAL READS IT, and that is a claim about ORDER WITHIN a record
+ * as well as across the eight. WB_SHOP_SIGN_XY, WB_SHOP_SIGN_SPRITE and WB_STAGE_NUMBER are each
+ * read TWICE, once for each half of the sign pair; and every sprite field is read AFTER its own
+ * record's xy and type are stored, because the records this loop writes are addresses a seeded
+ * WB_SHOP_RECORD_PTR can name. An earlier draft here read the fields as call arguments, i.e. before
+ * the stores, and test/test_scene.py's alias case is what refuted it. */
+static uint32_t shop_build_display(uint8_t *image, uint32_t record) {
+    uint32_t at = WB_ACTOR_TABLE_A30;
+    uint32_t xy;
+    uint16_t sprite;
+
+    spawn_record_open(image, at, WB_SHOP_DISPLAY_ITEM1_XY, 0);
+    at = spawn_record_close(image, at,
+                            bus_read_word(image, addr_add(record, WB_SHOP_ITEM1_SPRITE)));
+    spawn_record_open(image, at, WB_SHOP_DISPLAY_ITEM2_XY, 0);
+    at = spawn_record_close(image, at,
+                            bus_read_word(image, addr_add(record, WB_SHOP_ITEM2_SPRITE)));
+
+    xy = bus_read_long(image, addr_add(record, WB_SHOP_SIGN_XY));
+    spawn_record_open(image, at, xy, 0);
+    sprite = bus_read_word(image, addr_add(record, WB_SHOP_SIGN_SPRITE));
+    if (spawn_is_late_stage(image))
+        sprite = WB_SCENE_LATE_STAGE_SPRITE;
+    at = spawn_record_close(image, at, sprite);
+
+    /* `move.l 50(a0),(a1) / addi.l #$400000,(a1)+` — a LONGWORD add, so the pair's second half is
+     * WB_SCENE_SPAWN_PAIR_DX along in x with its y untouched, and `addq.w #1,(a1)+` bumps the
+     * sprite in a WORD. Both of the record's fields are read a SECOND time here, and the sign
+     * sprite's read again follows this record's own stores. */
+    xy = bus_read_long(image, addr_add(record, WB_SHOP_SIGN_XY));
+    spawn_record_open(image, at, xy + (WB_SCENE_SPAWN_PAIR_DX << 16), 0);
+    sprite = bus_read_word(image, addr_add(record, WB_SHOP_SIGN_SPRITE));
+    if (spawn_is_late_stage(image))
+        sprite = WB_SCENE_LATE_STAGE_SPRITE;
+    at = spawn_record_close(image, at, (uint16_t)(sprite + 1));
+
+    at = spawn_display_record(image, at, WB_SHOP_DISPLAY_LEAVE_XY, 0,
+                              WB_SHOP_DISPLAY_LEAVE_SPRITE);
+    at = spawn_display_record(image, at, WB_SHOP_DISPLAY_PRICE1_XY, 0,
+                              WB_SHOP_DISPLAY_PRICE1_SPRITE);
+    at = spawn_display_record(image, at, WB_SHOP_DISPLAY_PRICE2_XY, 0,
+                              WB_SHOP_DISPLAY_PRICE2_SPRITE);
+    return spawn_display_record(image, at, WB_SHOP_DISPLAY_EXTRA_XY, WB_SHOP_DISPLAY_EXTRA_TYPE,
+                                WB_SHOP_DISPLAY_EXTRA_SPRITE);
+}
+
+/* $1d52..$1ea7 — the tail the shop arm `bra.w`s into, and the only ending in this tree that is not
+ * an `rts`.
+ *
+ * THE FIRST ARM IS THE REFUSAL. A counter whose sign is WB_SHOP_SIGN_SPRITE_INTRO, entered with
+ * WB_BCD_COUNTER no greater than WB_SHOP_ITEM2_PRICE (a SIGNED word compare, so a purse of $8000 or
+ * more reads negative and is refused too), posts WB_SHOP_BROKE_MSG_FIRST/_SECOND/_THIRD by
+ * WB_SHOP_REFUSED_COUNT and bumps it — and a FOURTH refusal at the same counter reaches the
+ * `illegal` at $1d8e, which is what this function reports rather than follows. Nothing resets that
+ * word inside the tree, so the crash is the original's.
+ *
+ * The other arm is the ordinary entry greeting, off WB_SHOP_ENTER_COUNT and the record's own three
+ * ids, and it is the one with a DEFAULT: `cmpi.w #$2,38(a0) / beq` falls through to the FIRST id, so
+ * a count of 3 or more posts WB_SHOP_ENTER_MSG_FIRST again rather than crashing. */
+static uint32_t shop_post_entry_message(uint8_t *image) {
+    uint32_t record = be32(image + WB_SHOP_RECORD_PTR);
+    uint16_t count;
+
+    if (bus_read_word(image, addr_add(record, WB_SHOP_SIGN_SPRITE)) == WB_SHOP_SIGN_SPRITE_INTRO
+        && (int16_t)be16(image + WB_BCD_COUNTER)
+           <= (int16_t)bus_read_word(image, addr_add(record, WB_SHOP_ITEM2_PRICE))) {
+        count = bus_read_word(image, addr_add(record, WB_SHOP_REFUSED_COUNT));
+        if (count == 0)
+            scene_post_message(image, WB_SHOP_BROKE_MSG_FIRST, WB_TEXT_LIFETIME_DEFAULT);
+        else if (count == 1)
+            scene_post_message(image, WB_SHOP_BROKE_MSG_SECOND, WB_TEXT_LIFETIME_DEFAULT);
+        else if (count == 2)
+            scene_post_message(image, WB_SHOP_BROKE_MSG_THIRD, WB_TEXT_LIFETIME_DEFAULT);
+        else
+            return WB_SCENE_EXIT_ILLEGAL;
+        wr16(image + WB_SCENE_MESSAGE_PENDING, WB_SCENE_MESSAGE_PENDING_SET);
+        /* `addq.w #1,42(a0)` is a MEMORY read-modify-write, and it runs AFTER the post above and
+         * after the pending word — so what it increments is not the `count` the message select
+         * used. The two differ whenever the record overlaps one of those destinations, which a
+         * seeded WB_SHOP_RECORD_PTR can arrange; the same shape as the +38 bump below. */
+        bus_write_word(image, addr_add(record, WB_SHOP_REFUSED_COUNT),
+                       (uint16_t)(bus_read_word(image,
+                                                addr_add(record, WB_SHOP_REFUSED_COUNT)) + 1));
+        wr16(image + WB_SCENE_ACK_WAIT, WB_SCENE_MESSAGE_PENDING_SET);
+    } else {
+        wr16(image + WB_SCENE_ACK_WAIT, WB_SCENE_MESSAGE_PENDING_SET);
+        count = bus_read_word(image, addr_add(record, WB_SHOP_ENTER_COUNT));
+        if (count == 1)
+            scene_post_message(image,
+                               (uint8_t)bus_read_word(image,
+                                                      addr_add(record, WB_SHOP_ENTER_MSG_SECOND)),
+                               WB_TEXT_LIFETIME_DEFAULT);
+        else if (count == 2)
+            scene_post_message(image,
+                               (uint8_t)bus_read_word(image,
+                                                      addr_add(record, WB_SHOP_ENTER_MSG_LATER)),
+                               WB_TEXT_LIFETIME_DEFAULT);
+        else
+            scene_post_message(image,
+                               (uint8_t)bus_read_word(image,
+                                                      addr_add(record, WB_SHOP_ENTER_MSG_FIRST)),
+                               WB_TEXT_LIFETIME_DEFAULT);
+    }
+
+    /* `addq.w #1,38(a0)` is on BOTH paths, and on the refusal path the record pointer is the one
+     * loaded at the top rather than a fresh read. */
+    bus_write_word(image, addr_add(record, WB_SHOP_ENTER_COUNT),
+                   (uint16_t)(bus_read_word(image, addr_add(record, WB_SHOP_ENTER_COUNT)) + 1));
+    return WB_SCENE_EXIT_RETURN;
+}
+
+static uint32_t scene_spawn_shop(uint8_t *image, uint32_t script) {
+    uint32_t entry, record, exit, map, tiles;
+    uint16_t index, variant;
+
+    actor_table_reset(image, WB_ACTOR_TABLE_A30);
+
+    index = script_word(image, &script);
+    entry = addr_add(WB_SHOP_RECORD_TABLE,
+                     sign_ext16((uint16_t)(index * SCENE_TABLE_ENTRY_BYTES)));
+    wr32(image + WB_SHOP_RECORD_PTR, bus_read_long(image, entry));
+    record = bus_read_long(image, entry);
+
+    spawn_free_rest_of_table(image, shop_build_display(image, record));
+
+    shop_render_price_digits(image, WB_SHOP_DISPLAY_PRICE1_SPRITE, WB_SHOP_ITEM1_PRICE);
+    shop_render_price_digits(image, WB_SHOP_DISPLAY_PRICE2_SPRITE, WB_SHOP_ITEM2_PRICE);
+
+    exit = shop_post_entry_message(image);
+    if (exit != WB_SCENE_EXIT_RETURN)
+        return exit;
+
+    spawn_fetch_bank_and_freeze(image, spawn_map_bank_offset(image), &map, &tiles);
+    /* `movea.l $10420.l,a1 / tst.w 4(a1)` — a SECOND fresh read of the descriptor pointer, made
+     * AFTER the freeze above, and the word it tests is WB_SCENE_VARIANT. */
+    variant = bus_read_word(image, addr_add(be32(image + WB_RECORD_PTR_10420), WB_SCENE_VARIANT));
+    spawn_load_stage(image, map,
+                     spawn_start_record(variant != 0 ? WB_SCENE_START_RECORD_SHOP
+                                                     : WB_SCENE_START_RECORD_SHOP_ALT),
+                     tiles);
+    wr16(image + WB_PANEL_FRAME_HOLD, WB_PANEL_FRAME_HOLD_SET);
+    wr16(image + WB_STATE_FLAG_A30, WB_STATE_FLAG_SET);
+    wr16(image + WB_SHOP_GREET_COUNTDOWN, WB_SHOP_GREET_COUNTDOWN_RESET);
+    return WB_SCENE_EXIT_RETURN;
+}
+
+
+uint32_t scene_spawn_from_script(uint8_t *image) {
+    uint32_t script = addr_add(be32(image + WB_RECORD_PTR_10420), WB_SCENE_KIND);
+    uint32_t marker = be32(image + WB_SCENE_MARKER_CELL_PTR);
+    uint16_t kind;
+
+    wr16(image + WB_SCENE_SPAWN_GATE_SLOT, WB_ACTOR_FREE_MARKER);
+    kind = script_word(image, &script);
+
+    if (kind == WB_SCENE_KIND_SPEECH) {
+        scene_spawn_speech(image, script, marker);
+        return WB_SCENE_EXIT_RETURN;
+    }
+    if (kind == WB_SCENE_KIND_SHOP)
+        return scene_spawn_shop(image, script);
+    if (kind == WB_SCENE_KIND_BOSS_DEFEAT) {
+        scene_spawn_boss(image, marker);
+        return WB_SCENE_EXIT_RETURN;
+    }
+    /* THE LADDER'S FALL-THROUGH IS NOT A RETURN. $19ac's first instruction is `move.l a0,-(a7)` and
+     * only the three arms end in the matching `movea.l (a7)+,a0`, so the `rts` at $19e0 pops the
+     * SAVED a0 as its return address and leaves the caller's own on the stack. Nothing this port
+     * does can stand in for a jump to a register the caller happened to hold, so the arm ends at
+     * the report; the case sets `stop_pc` to $19e0. */
+    return WB_SCENE_EXIT_WILD_RETURN;
 }

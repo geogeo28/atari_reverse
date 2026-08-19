@@ -8,7 +8,7 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 294/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 300/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
@@ -113,7 +113,12 @@ defeat, the hidden door and the flute that opens it. With it `actor_behavior_typ
 unported call left, and that one is UNPORTABLE. The tail beside it is a LIFT rather than a new port:
 $6ade is `actor_damage_followed`'s own last 42 bytes, already reconstructed inside it, and the third
 entrance to it is this routine's — so those 42 bytes are counted once, in $69fe's 266) —
-38,186 bytes in all, 86.3 % of everything
+and THE SCENE-SPAWN TREE (`scene_spawn_from_script` with its three arms, `shop_render_price_digits`,
+`glyph_stamp_8_rows` and the three spawn gates, 1,288 bytes, batch 41 phase B: what ENTERS a scene,
+where `scene_run_frame` is what runs one once a frame. The project's THIRD closed dispatch table
+comes with it, and TWO original defects the oracle found — a fall-through `rts` that returns through
+a pushed a0, and a fourth shop refusal that reaches an `illegal`) —
+39,474 bytes in all, 89.2 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures *(the denominator is §0k's 44,262 — batch 28's
 coverage break-open finally put the per-monster tier INSIDE the measured program, so this figure
 dropped from batch 27's 80.3 % not because anything was lost but because the denominator now
@@ -125,7 +130,10 @@ left this leading count at 161 while its own section and parenthetical said 163 
 oversight, found by batch 23's port agent. And batch 27's header said 175 while its own table
 expands to 176 — found by the 2026-08-11 re-scan's reconciliation, corrected here. The class
 recurs; expand the table before trusting the headline.)*
-`make test`: **5525 cases green in what this batch commits**, measured by a full run from a clean
+`make test`: **5,796 cases green in what batch 41 phase B commits** (5,663 after phase A, plus this
+phase's 133, all of them in `test/test_scene.py`, which goes 240 -> 373). The paragraph below is
+batch 40 phase C's and is left as the record of that batch rather than overwritten.
+`make test`: **5525 cases green in what THAT batch commits**, measured by a full run from a clean
 `build/` rather than added up (5438 after batch 40 phase B, plus phase C's 87 — 78 in
 `test/test_player.py`, which goes 168 -> 246, and 9 in `test/test_scene.py`, which goes 231 -> 240
 for the marker-pair leaf and the byte comparison that proves its twin is the same instructions).
@@ -7720,12 +7728,16 @@ the band with nothing left over:
 | `$1334..$1513` | 480 | the fall pass, the cell lookup and both settles (ported) |
 | `$1514..$1519` | 6 | data (the three `WB_TILE_33_*` words) |
 | `$151a..$19ab` | 1,170 | `player_run_map_cell` — the largest single routine in the game |
-| `$19ac..$1aef` | 324 | `scene_spawn_from_script` — the SCENE-SPAWN TREE's head. **RE-PRICED BY PHASE C: the tree is ~1,220 bytes, not 592** — this head plus the `$1bb4` arm below plus `$1cc0..$1f33`, which the two rows further down attribute to two leaves |
+| `$19ac..$1aef` | 324 | `scene_spawn_from_script` — the SCENE-SPAWN TREE's head, **BATCH 41 PHASE B, LANDED**. Phase C's re-pricing was exact: the whole tree is 1,220 bytes in this band (plus 68 outside it), and `$1ab4..$1aef` inside this row is a SHARED TAIL with a second entrance from `$deb0` |
 | `$1af0..$1b45` | 86 | `map_stamp_block` (ported, batch 10) |
 | `$1b46..$1b67` | 34 | `scene_clear_marker_pair` — **PHASE C** (renamed from `speech_script_step`, which was wrong; its two callers `$1aac` and `$1ef2` are BOTH inside the `$19ac` tree, not one of them in the `$151a` one) |
 | `$1b68..$1bb3` | 76 | both pool allocators (ported, batch 10) |
-| `$1bb4..$1cbf` | 268 | the tree's second arm, reached by a `beq.w` from `$19d4` — a continuation, not a routine, and the only span in the band with no name at all |
-| `$1cc0..$1f35` | 630 | `resource_descriptor_fetch`, `glyph_stamp_8_rows` and what is between them — **and phase C MEASURED that "what is between them" is the `$19ac` tree's own flow graph**: arm 2 ends `bra.w $1d52` and the tree's THIRD arm is `$1ea8`, both in here. This row is not a separate tier |
+| `$1bb4..$1cbf` | 268 | the tree's second arm — the SHOP counter's eight display records — **BATCH 41 PHASE B, LANDED**. Still a continuation and still no `fn`: one instruction in the image names it, the `beq.w` at `$19d4` |
+| `$1cc0..$1d1d` | 94 | `shop_render_price_digits` — **BATCH 41 PHASE B, LANDED** and RENAMED from `resource_descriptor_fetch`, which named four of its twenty-four instructions |
+| `$1d1e..$1d51` | 52 | `glyph_stamp_8_rows` — **BATCH 41 PHASE B, LANDED**, `# ctx` retired, name unchanged |
+| `$1d52..$1ea7` | 342 | the shop arm's TAIL, reached by the `bra.w` at `$1cbc` — **BATCH 41 PHASE B, LANDED**, and the one ending in the tree that is not an `rts` (the `illegal` at `$1d8e`) |
+| `$1ea8..$1f33` | 140 | the tree's THIRD arm, the boss scene — **BATCH 41 PHASE B, LANDED**, a continuation reached by the `beq.w` at `$19dc` |
+| `$1f34..$1f35` | 2 | an `rts` with NO reference of any form anywhere in the image — two dead bytes, measured in phase B |
 | `$1f36..$1f53` | 30 | `actor_table_reset` (ported) |
 | `$1f54..$21e3` | 656 | `player_stage_transition` — **PHASE C**, and `$1fa2` sits INSIDE that span (phase B MEASURED it: the arm is this routine's) |
 | `$21e4..$23b5` | 466 | data — and phase C DIVIDED it exactly: the state word, THREE 88-byte posture records, and four cursor-plus-table animations |
@@ -7734,9 +7746,14 @@ the band with nothing left over:
 **1,294 bytes were already ported, 490 are data, PHASE A ports 508, and 4,406 remained AT PHASE A.**
 *(PHASE-STAMPED, because this sentence sat frozen under a table three phases kept moving. Re-derive
 it whenever the table moves: phase B took 736 (`$ec8` 436 + `$1208` 300) and phase C 690 (`$1f54`
-656 + `$1b46` 34), so the three phases have ported **1,934** of the band and **2,980** remain —
-`$b1a`'s 526, `$151a`'s 1,170, the `$19ac` tree's rows and the frame top's 62. The two `$19ac` rows
-below are flagged where they sit, not only in the queue.)* Add
+656 + `$1b46` 34), so the three phases have ported **1,934** of the band and **2,980** remained.
+**PHASE B THEN TOOK 1,220 OF THOSE 2,980** — the whole `$19ac` tree inside the band — leaving
+**1,760**, which is `$b1a`'s 526, `$151a`'s 1,170 (ported in phase A but counted in that phase's
+figure, not here) and the frame top's 62. Re-derived rather than decremented: the band's remaining
+UNPORTED bytes are now exactly `$b1a` (526) and `$a38` (62), 588 in all — and the 1,760 itemizes
+as 526 + 1,170 + 62 + the `$1f34` DEAD PAIR's 2, which is the term the first draft of this sentence
+dropped. The tree's SIX rows in the table below are each flagged LANDED where they sit, not only in
+the queue.)* Add
 `scene_copy_record_fields` (`$539e`, 30 bytes, outside the band, reached by the one `bsr` at `$c5e`
 inside **`player_pending_event_gate`** — `$b1a`, which is NOT "the gate": that name is `$d78`
 everywhere else in these documents) and the batch is 538.
@@ -9088,22 +9105,32 @@ seed.
     a property of the kit rather than of this game, and it is currently written down only here.
 
 **QUEUED — WHAT REMAINS OF THE PLAYER.**
-  * **`$19ac` THE SCENE-SPAWN TREE (~1,220 bytes)**, unchanged from phase C's measurement:
-    `$19ac` + `$1bb4` + `$1cc0..$1f33`, a FOURTH dispatch table (`spawn_script_gate_table` at
-    `$e42e`, three ~24-byte targets) and `jsr $f95c.l`, which IS ported. **It is not reached from
-    `$151a`** — phase C's census holds and this batch's port confirms it by running without it.
+  * ~~**`$19ac` THE SCENE-SPAWN TREE (~1,220 bytes)**~~ — **LANDED in batch 41 phase B**, and phase
+    C's measurement was exact to the byte: 1,220 inside the band, 68 outside it for the three gate
+    targets. The dispatch table closed with it.
   * **`$b1a` (526 B) — UNPORTABLE**, three stack-unwinding exits, one of them through this routine.
   * **`$a38` the frame top (62 B) LAST**, and the dispatch row flips with it.
 
-**QUEUED, CARRIED FORWARD — THE LIVE LIST** (phase C's, less what landed): `abcd_byte` and
+**QUEUED, CARRIED FORWARD — THE LIVE LIST** (phase C's, less what landed; batch 41 phase B cleared
+the `$1ab4` boundary from it — the tail is reconstructed and only the caller's unwind convention is
+open — and cleared five of the encoder backlog's entries): `abcd_byte` and
 `sbcd_byte` to the kit; regenerate `../out/names_dump.txt`, `../out/hw_scan.tsv`, `../decomp.c` and
 `../out/wonderboy_dis.txt` — **and the listing's two known desyncs now have a third: `$1960` is four
 bytes of DATA inside `$151a` and the sweep spends one bogus `ori.b #$0,d0` line on it**; `bus.h` to
-the kit; the `$1ab4` boundary; the tier partition; the `scene_run_effect` latent guard; the second
+the kit; the tier partition; the `scene_run_effect` latent guard; the second
 reader of `actor_type30_drift` at `$b84`; the two remaining duplicate `cmt` directives (`0x1023a`,
 `0x10394`); the `WB_HUD_SLOT_BBC2` / `_BBC6` renames; `fn 0x205c`; and **the encoder backlog phase
-B queued, which this batch's hoist did NOT clear** — a grep of `test/` finds nineteen definitions
-still annotated "third copy, queued for leaf.py", none of them this batch's. Phase 41A hoisted only
+B queued, which this batch's hoist did NOT clear** — the queue is **SIXTEEN**, not the nineteen this
+sentence used to claim, which matched no reading of the tree. **AND THE COUNTING RULE DID NOT NEED
+INVENTING: the project already has one, and it is TESTED.** test_behavior.py defines
+`HOIST_QUEUE_NOTE = "queued for leaf.py"` and
+`test_the_hoist_queue_is_as_long_as_this_comment_says` counts the COMMENT LINES carrying it,
+pinning that file at `HOIST_QUEUE_LENGTH` = 13; test_player.py carries the other 3 under the same
+rule, for 16. (The rule found its own violation immediately: rewording `movea_l_ind`'s note during
+this gate round dropped the phrase and turned that test red, which is the mechanism working.) Two
+figures a naive grep gives instead, recorded so nobody re-derives them by accident: 15 distinct
+`def` NAMES are annotated, because one definition can carry the note on more than one line, and 17
+lines match a looser wording. Phase 41A hoisted only
 the seven its own pin pushed over the line, and the rule is not applied retroactively by that.
 
 **THE ENCODER LEDGER, PHASE 41A, AND IT FOUND A LIVE ONE.** `$151a`'s pin needed twenty-two forms,
@@ -9157,3 +9184,316 @@ bus.h where src/actor.c does not" — argue against a THIRD routine and say noth
 Only the count separated them, and a count is a convention rather than an argument. It is now one
 `static inline` in `include/bus.h`, beside the record accessors that are there for exactly this
 reason, serving all seven inline sites (four in the behaviour tier, three in the player's).
+
+---
+
+## Batch 41 phase B — THE SCENE-SPAWN TREE, and the project's THIRD closed dispatch table
+
+**Verified 300, 39,474 bytes, 89.2 % of §0k's 44,262; `make test` 5,796** (5,663 before; all 133 new
+cases are in `test/test_scene.py`, which goes 240 -> 373 — and TWENTY-FOUR of the 133 came from the
+mutation sweep, the independent gate and the pin bug below rather than from the port). `tools/test_hw_portability.py`, which is
+outside `make test` and on the standing verification list, is 56 green. `$19ac` — 1,220 bytes inside
+the player band plus 68 outside it — **runs whole on all three arms**, and with it the only unported
+bytes left in `$a38..$2461` are `player_pending_event_gate`'s 526 and the frame top's 62.
+
+**WHAT THE TREE IS.** `scene_run_frame` ($dbc0) is what runs a scene once a frame; this is what
+ENTERS one. Its single caller is the `bsr.w $19ac` at `$c66` inside `player_pending_event_gate`, and
+it is driven by the SAME 32-byte descriptor `WB_RECORD_PTR_10420` names — read not as a record of
+named fields but as a BYTE-CODED SCRIPT with a walking a1, which is why `src/scene.c` walks a cursor
+over it rather than naming a field per read. Three arms, chosen by `WB_SCENE_KIND` exactly as
+$dbc0's are:
+
+| arm | bytes | what it does |
+| --- | --- | --- |
+| kind 1, SPEECH | 324 (`$19e2..$1aef`, sharing the head) | three display records out of two triples of descriptor words, the gate dispatch, and a speech script posted with an INFINITE lifetime |
+| kind 2, SHOP | 610 (`$1bb4..$1cbf` + `$1d52..$1ea7`) | the counter's EIGHT display records out of the shop record the descriptor indexes, the two price plates, and an entry greeting or a refusal |
+| kind 4, BOSS | 140 (`$1ea8..$1f33`) | the A32 table reset and ONE record — the followed actor, armed as behaviour slot 1, the PLAYER's own |
+| the leaves | 214 (`$1cc0`, `$1d1e`, and the three gates at `$e43e`/`$e456`/`$e46c`) | the price plates and the dispatch table's three targets |
+
+Every arm ends the same way: two longwords out of `scene_map_bank_table`, the scroll frozen, and
+`stage_load_window` — which has run whole since batch 26, so **there is no boundary anywhere in the
+tree**. The three arms' start records are `WB_STAGE_START_RECORDS` entries 3, 1-or-2 and 0, and the
+speech arm's is the one whose tune byte is NEGATIVE: entering a speech scene STOPS the sound module
+where the other two start a song.
+
+**THE THIRD CLOSED DISPATCH TABLE, and the one whose index cannot lie.** `spawn_script_gate_table`
+($e42e) is four longwords bounded by the first of its own targets; slot 0 holds `$02140202`, which
+is not an address, and is never fetched because the caller's `beq` skips a script byte of zero
+before the `lsl.w #2` that would scale one. The three live targets are 24, 22 and 22 bytes and a
+whole-image census over both absolute call encodings and every word-displacement branch finds **NO
+instruction naming any of them** — the table is their only entrance, which is what makes closing the
+table close the routines. UNLIKE the other two dispatches this index is a BYTE, so `lsl.w #2` tops
+out at 1020 and the sign-extended offset can never wrap or turn negative: the offset guard and an
+index guard coincide here, and the batch-27 aliasing lesson does not apply. 252 of the 256 values
+reach a longword outside the table, which the port refuses (src/blit.c's sprite-dispatch refusal) and
+the battery refuses as an input.
+
+**AND WHAT THE GATES DO IS THE BATCH'S BEST FIND: THEY REWRITE THE SCRIPT THE CALLER IS IN THE
+MIDDLE OF READING.** Each compares `WB_HUD_SLOT_BBC8`'s HIGH byte — the 1..6 icon variant the panel
+draws — against its own number, and a MISMATCH executes `move.b #$7,(a1)` over the descriptor byte
+the caller reads ONE INSTRUCTION LATER, plus `move.w #$0,1(a1)` over the descriptor's own
+`WB_SCENE_EXIT_ACTION` behind it. So a player carrying the wrong equipment hears speech script 7
+instead of the descriptor's own and leaves the scene through exit action 0. **A port that fetched
+both script bytes before dispatching would be green on every matched case and wrong on every refused
+one**, which is why `test_a_dispatched_gate_is_read_back_before_the_speech_index` drives all three
+gates both ways. The plate at `cmt 0xe43e` said a1 was "a pending spawn record" and 7 "a spawn type";
+both are corrected there.
+
+**TWO ORIGINAL DEFECTS, both found by the ORACLE rather than by reading, and both reported rather
+than followed.**
+
+* **THE LADDER'S FALL-THROUGH IS NOT A RETURN.** `$19ac`'s first instruction is `move.l a0,-(a7)`
+  and only the THREE ARMS end in the matching `movea.l (a7)+,a0` (at `$1aec`, `$1ea4` and `$1f30` —
+  a scan of the whole tree finds exactly those three). So the `rts` at `$19e0` pops the SAVED a0 as
+  its return address and leaves the caller's own on the stack: a descriptor whose kind is not 1, 2
+  or 4 jumps to whatever a0 `player_pending_event_gate` happened to hold. The first draft of the
+  case expected a plain return and the oracle ran 686,638 instructions without reaching one. Ported
+  as `WB_SCENE_EXIT_WILD_RETURN` with `stop_pc` at `$19e0`.
+* **A FOURTH REFUSAL AT ONE SHOP COUNTER EXECUTES AN `illegal`.** The shop tail's first arm — a
+  counter whose sign sprite is `$181`, entered with `WB_BCD_COUNTER` no greater than
+  `WB_SHOP_ITEM2_PRICE` — posts message $11 "Come back with some money", $12 "Never Come Back!!" or
+  $13 "You lost wing boots." by the record's word 42, and BUMPS that word. Nothing in the tree
+  resets it, so the fourth visit falls past `cmpi.w #$2,d0` into the `$4afc` at `$1d8e`. Ported as
+  `WB_SCENE_EXIT_ILLEGAL` with `stop_pc` there. The contrast is the OTHER arm one branch down, which
+  has a genuine default: `cmpi.w #$2,38(a0) / beq` falls through to the FIRST id, so an entry count
+  of 3 or more posts word 8 again rather than crashing.
+
+**A TABLE THIS BATCH GOT WRONG AND THE SUITE REFUTED WITHIN THE HOUR.** `scene_map_bank_table`
+($103e8) was first written up as EIGHT 8-byte entries bounded by `shop_record_table`. It is SEVEN,
+bounded by `record_ptr_10420` — the descriptor pointer begins exactly where the table ends, so an
+eighth entry would BE that pointer and `record_ptr_10424` beside it. The seeding for an
+eighth entry overwrote the descriptor pointer and every arm ran away; `cmt 0x103e8` and
+`WB_SCENE_MAP_BANK_COUNT` carry the corrected figure and the retraction. All seven entries are
+SHIPPED and live — three maps at `$1abcc`, `$1b870` and `$1c894`, each with its tile bank `$a4`
+bytes on — which makes this the one table in the tree that can be described from the .PRG alone.
+**THE LESSON IS THE OLD ONE ONE RUNG UP: a table's bound is its NEIGHBOUR, and the neighbour has to
+be looked up rather than assumed from the next name in the file.**
+
+**WHAT `$1cc0` AND `$1d1e` TURNED OUT TO BE, which is the extent decision the phase was asked to
+make.** Both are TRUE ROUTINES and both keep their `fn`: a whole-image census finds each reached
+only by `bsr.w`, twice, and each has its own `rts`. What changed is one NAME. `$1cc0` was
+`resource_descriptor_fetch`, which describes four of its twenty-four instructions; the other twenty
+draw a FOUR-DIGIT PRICE into a sprite's bitmap, so it is `shop_render_price_digits`. Its two callers
+are the whole reading: `bsr.w` with d7 = `$1a1` / d6 = `$3a` and with `$1a2` / `$3c` — the two
+sprites arm 2 has just planted as PRICE PLATES at y `$2a` below the items at y `$20`, and the two
+fields `WB_SHOP_ITEM1_PRICE` and `WB_SHOP_ITEM2_PRICE`. The body is `$b850`'s packed-BCD digit
+plotter one tier over: the same `WB_DIGIT_GLYPHS_ALT` font (whose plate had recorded a "second,
+unrecovered user" — this is it), the same 32-byte glyph, the same leading-zero latch, and a blank
+drawn from `WB_TEXT_GLYPH_TABLE`'s first glyph, which is the SPACE. `$1d1e` keeps
+`glyph_stamp_8_rows` and loses its `# ctx`: it lays four plane bytes two apart, eight rows twenty
+bytes apart, and then hands back the cursor for the NEXT 8-pixel cell — **+1 from an EVEN cursor and
++9 from an odd one, which is `bg_plot_banner_glyph`'s +1/+7 with a MASK WORD added to the group.**
+That is what says the destination is a masked sprite 32 pixels wide, and it is read off the two
+`lea -161`/`lea -153` rewinds rather than assumed.
+
+**`$1ab4` IS RESOLVED AS A SHARED TAIL, and the queue item it was goes with it.** A census over every
+branch form, both absolute encodings and both data widths finds exactly two instructions naming it:
+the fall-through inside `$19e2`, and the `jmp $1ab4.w` at `$deb0` — `scene_spend_visit_budget`'s,
+taken when an exhausted visit's marker cell matches neither neighbour. (The word `$1ab4` also sits at
+`$10432`, but that is the low half of `shop_record_table`'s pointer `$21ab4`: data, not an operand.)
+The twenty-eight instructions are now reconstructed as `scene_spawn_speech_tail`, and it carries a
+`var` and not an `fn` for `cmt 0x1fa2`'s reason. **WHAT IS STILL OPEN IS THE CALLER'S CONVENTION AND
+NOT THE TAIL**: the two entrances differ only in the ending, because `$deb0` has pushed nothing and
+the tail's `movea.l (a7)+,a0` therefore pops `$de80`'s own return address and the `rts` returns one
+frame further out. `scene_spend_visit_budget` still reports `WB_SCENE_EXIT_STAGE_RESET`; making it
+call the tail is a change to that routine's contract and to three of its cases, and is queued.
+
+**A SECOND FIELD READING, and a rename with it.** Word 42 of the shop record carried a name taken
+from the CONSEQUENCE one reader draws from it — `$dbc0`'s farewell reads `tst.w 42(a1)` and leaves
+for nothing when it is zero, and the retired spelling said exactly that. The tree's three message
+ids are what say the word is a COUNT of refusals, so it is `WB_SHOP_REFUSED_COUNT` and the farewell
+reading now follows from it rather than defining it. The old spelling is written nowhere, this
+retraction included, so its grep is zero by construction. Five more fields gained names from this arm's use of them —
+`WB_SHOP_ENTER_MSG_FIRST/_SECOND/_LATER` (8/10/12), `WB_SHOP_ENTER_COUNT` (38),
+`WB_SHOP_SIGN_SPRITE` (48), `WB_SHOP_SIGN_XY` (50) and `WB_SHOP_ITEM1_SPRITE`/`_ITEM2_SPRITE`
+(54/56) — and the last pair CROSS-CHECKS the existing reading of `WB_SHOP_REQUEST`: word 54's sprite
+stands at x `$33`, which is the position a fire buys as item 1, and word 56's at `$be`, which buys
+item 2.
+
+**WHAT THE CASES ARE BUILT FROM.** The speech scripts, the gate table, the two glyph fonts, the five
+shipped start records and the shop-record pointer table are the game's OWN bytes and no case seeds
+any of them — a speech case posts the id the shipped script really holds, and
+the eight shop-record pointers are the shipped ones. **`scene_map_bank_table` belongs on the SEEDED
+side and an earlier draft put it here**: its seven entries are shipped, but `bank_pokes` re-keys
+every one of them in every spawn case, precisely so that only the CHOSEN entry names a seeded map
+and a mis-indexed arm loads a different one. Exactly one test reads it unseeded —
+`test_the_map_bank_table_is_bounded_and_ships_its_own_entries`, which is where the shipped bytes are
+stated. What is otherwise seeded is what the .PRG does not ship: the descriptor, the shop record,
+the two price sprites' resource entries, and the map and tile bank the arms load (test_stage.py's, so the whole reload composes with that battery's own model rather
+than a second copy of it).
+
+**KNOWINGLY NOT PINNED, and each says why.**
+* **A gate index outside 1..3.** The original `jsr`s through a longword outside the four-entry
+  table; no C can stand in for that, and the battery refuses those indices as inputs exactly as it
+  refuses an out-of-table exit action.
+* **A map-bank index whose sign-extended offset leaves the seven entries.** That one IS reproduced —
+  it is a data read and the port follows it wherever it lands — but no case drives it, because a
+  case that did would hand `stage_load_window` two arbitrary pointers and measure the scroll engine
+  rather than this tree.
+* **The two dead computations in the boss arm** (the descriptor word at +12, and the `lsl.w #3,d0`
+  at `$1efa` that `move.w #$10,d0` overwrites two instructions later). A register no exit can
+  observe is not program output — src/blit.c's rule — so neither is reproduced. What IS pinned is
+  the consequence: `test_the_boss_arm_ignores_the_descriptors_bank_index` seeds the descriptor's own
+  word to name a DIFFERENT entry and requires the run to load entry 2 anyway.
+* **What a shipped descriptor selects.** The descriptor table lies past the program and is loaded
+  from disk; the .PRG ships `$a8` bytes of zeros for it. Every kind, gate index and bank index here
+  is a case's own seed, and which ones the game actually reaches is a question about the disk.
+* **The two bytes at `$1f34`.** An `rts` with no reference of any form — no branch, no absolute or
+  PC-relative operand, and no aligned word or longword holding the address. Dead, not ported, and
+  counted as neither.
+
+**THE ENCODER LEDGER: FIVE HOISTED, and all five because THIS batch's pin was their third or fourth
+copy.** `cmpi_b_abs_l` (was 2), `movea_l_indexed` (2, and ../STATUS.md had already named it the
+first candidate), `addq_l_an` (2), `move_b_imm_ind` (2) and `move_w_imm_d16` (3) are now in
+`leaf.py`, each body proved byte-identical to every copy it replaces across the whole register and
+value space BEFORE the suite was run. **TWO OF THE FIVE HAD A REAL DIVERGENCE between their copies**,
+which is the third time that has been the hoist's payoff rather than the de-duplication:
+`addq_l_an` used `leaf.quick_field` in test_player.py, which REFUSES a distance outside 1..8, against
+an inlined `(amount & 7) << 9` in test_map.py, which silently assembles 9 as 1 — the `subq_w_ind`
+class again, one encoder over; and `move_b_imm_ind` spelt its opcode two ways
+(`0x10bc | an << 9` against `0x1000 | an << 9 | 2 << 6 | 0x3c`) for identical bytes, which is a
+readability divergence rather than a byte one and is noted as such. Two more are SECOND copies,
+annotated in both files: `move_b_postinc_ind` (test_stage.py) and `move_w_an_dn` (test_stage.py).
+
+**TWO NEAR-MISSES INSIDE THE BATTERY ITSELF, and both are worth recognising on sight.**
+
+* **A SHADOWED HELPER.** This section's new helper was first called `start_record`, which is the
+  name a helper 900 lines above it already carries — a SHADOW, not a duplicate, so nothing warned
+  and twenty-six unrelated cases went red with a `TypeError` deep inside `leaf.overlay`. **A new
+  section in an old battery owes an AST-level scan for redefinitions**, which is three lines and
+  found this one; a grep for `def <name>` would have found it too, and neither was run until the
+  failures were.
+* **FOURTEEN PINS THAT WERE NEVER COMPARED, and the tell was arithmetic.**
+  `@pytest.mark.parametrize` evaluates its argument list when the DECORATOR RUNS — at import, where
+  the `def` is — so `ENTRY_BYTES.update(...)` at the FOOT of the file added fourteen rows the
+  parametrization never saw. `assert_batch_is_complete` stayed green because it reads the dict at
+  run time, and the battery's case count did not move when the pins went in: 240 before, 240 after.
+  The fix is a second parametrized test over the tree's own `SPAWN_ENTRY_BYTES` sharing one
+  assertion body — **and enabling the fourteen immediately failed one of them**, `spawn speech post`,
+  which had a duplicated `longword(SCRIPT_CURSOR)` in its expected bytes. A pin that is collected
+  but not parametrized is worse than no pin, because the table looks complete.
+
+**THE MUTATION SWEEP: 56 MUTANTS, 54 CAUGHT, and both survivors are arguments rather than gaps.**
+Constants flipped, branches inverted, indices off by one, arms deleted, table rows rotated and both
+dispatch guards loosened, over every routine this phase added. FOUR of the five the first pass
+reported as survivors were REAL, and each is now a case — which is the sweep earning its keep rather
+than confirming the suite:
+
+* **`free-loop-skipped`** — deleting the arm's second free pass changed NOTHING, because
+  `actor_table_reset` has already written WB_ACTOR_FREE_MARKER over every slot the loop would.
+  Killed by `test_the_free_loop_runs_past_what_the_reset_covered`, which moves the table's
+  terminator two records out so the loop walks past what the reset covered. Its stride was already
+  pinned (`free-loop-stride-halved` was caught from the start); what was not pinned was its
+  EXISTENCE.
+* **`speech-cursor-cleared-as-a-longword`** — `clr.w $1017c.l` clears only the cursor's HIGH half,
+  and the `move.l` eight instructions later overwrites the whole longword on every ordinary index.
+  Killed by `test_the_cursor_clear_is_a_WORD_and_script_eight_is_what_shows_it`: script index 8's
+  offset lands ON the cursor (the table is BOUNDED by it), so the `move.l` stores it over itself and
+  what survives to be followed is exactly what the `clr.w` left.
+* **`a34-not-cleared`** — a store of ZERO over a shipped zero is invisible. Killed by seeding every
+  fixed word the tree writes with `SEED_UNEXPECTED`, which is the substitute for the attribution
+  pass this battery cannot use, one tier down from `pokes`'s own SEED_TEXT_REQUEST.
+* **`speech-index-read-before-the-gate`** was caught from the start, and it is listed here because
+  the review edit below MOVED it: `spawn_run_gate(image, script_byte(image, &script), script)` left
+  the argument order to the compiler, and C does not order a call's arguments — so the whole
+  read-after-store mechanism rested on clang's choice. The two steps are separate statements now,
+  and the mutant was RE-SPELT against the tree that ships and re-run, because a mutant that no
+  longer applies is not a caught one.
+
+**THE TWO THAT SURVIVE ARE NAMED AS WHAT THEY ARE.** `gate-offset-guard-off-by-one` turns the
+dispatch guard's `>=` into a `>`, and nothing here can catch it: the index it admits is one the
+ORIGINAL `jsr`s through a longword outside the table, which no C stands in for, so it is an input
+the battery declines. It is batch 27's survivor one dispatch over, and
+`test_the_battery_refuses_a_gate_index_outside_the_table` states it as a coverage hole rather than
+leaving it silent. `shop-sign-pair-added-as-a-word` is an EQUIVALENT MUTANT and proved so:
+WB_SCENE_SPAWN_PAIR_DX enters the longword shifted 16, so the constant's low word is zero, the add
+can never carry from y into x, and the carry out of x leaves the longword under both spellings. No
+seed can separate them; the case that would needs a constant this instruction does not have.
+
+**AND THE SWEEP COST MORE WALL CLOCK THAN THE PORT DID, for a reason worth recording.** A mutant
+that breaks `stage_load_window`'s inputs makes every composed case differ over the whole 180 KB of
+scroll buffer, and `leaf.run`'s assertion builds `report(diffs)` for all of it EAGERLY — `--tb=no`
+does not help, because the message string is formed before the exception is raised. One such mutant
+took forty minutes. Three things fixed it and are worth reusing: `-x`, so a caught mutant stops at
+the first failure instead of formatting sixty of them; restricting the run to `test/test_scene.py`,
+which is sound HERE because a grep shows it is the only battery that calls any `src/scene.c` symbol
+(test_player.py's two hits are comments) — and a `caught` under a narrowed run is still a caught,
+since narrowing can only make catching harder; and `-n 4` rather than `-n auto`, because fourteen
+xdist workers on a ten-core machine thrashed. The recipe's step 0a backup was taken outside the repo
+before any of it, and the first attempt WAS killed by a wall clock with `pair-sprite-not-bumped`
+still applied — restored from the SNAPSHOT and relinked, never from git, exactly as mode 4
+requires, and every one of the fifteen `src/*.c` files was compared against the step-0a backup
+afterwards.
+
+**THE INDEPENDENT GATE ON THIS DIFF: 5 finder angles, 4 verifiers, 18 findings confirmed and 1
+refuted — AND THE READ-AFTER-STORE CLASS STRUCK TWICE MORE. IT IS NOW AT FIVE SIGHTINGS.** Both were
+in code this section had already claimed was faithful, and both are the same mistake one level finer
+than the one the port got right:
+
+* **The display record's SPRITE field is read AFTER that record's own xy and type are stored.**
+  `move.l #imm,(a1)+ / move.w #imm,(a1)+ / move.w 54(a0),(a1)+` — the read is the THIRD instruction.
+  The port passed the field read as a CALL ARGUMENT, so it happened first; and C does not even fix
+  which first, since argument order is unspecified. Pinned by an alias case proven RED: the arm's
+  own index-8 mechanism puts the record 54 bytes below WB_ACTOR_TABLE_A30, which makes field 54 the
+  very word slot 0's store has just written.
+* **`addq.w #1,42(a0)` is a MEMORY read-modify-write** and it runs after the message post and after
+  WB_SCENE_MESSAGE_PENDING, so the value it increments is not the `count` the message select read.
+  The port incremented the cached one. Pinned by a second alias case, also RED first: the record 42
+  bytes below WB_TEXT_REQUEST makes field 42 the word the post rewrites, so the original leaves
+  `$1101` where the cached port leaves `$0001` — and with it a text request of zero instead of the
+  id it had just posted.
+
+**THE LESSON IS A SHARPENING OF THE STANDING ONE, and it is worth stating separately: "the port
+re-reads where the original re-reads" was true of this arm ACROSS records and false WITHIN one.** A
+census of the stores between two reads has to be run at instruction granularity, not at the
+granularity of the helper the C happens to use — and a helper that takes a value as a parameter has
+already made the ordering decision before the caller can see it. This section's own plate claimed
+"EVERY FIELD IS RE-READ WHERE THE ORIGINAL RE-READS IT", which was the false half; it is corrected
+in place.
+
+**ONE FINDING WAS REFUTED and no code moved for it.** `spawn_run_gate`'s in-band void-return refusal
+was raised as needing an out-of-band channel; the verifier found it consistent with
+`scene_run_exit_action`'s reviewed precedent one dispatch over. Queued instead: **if an out-of-band
+refusal channel ever lands, both dispatch guards adopt it together** — a refusal convention that
+holds for one of two identical shapes is worse than neither.
+
+**THE SUBSET SWEEP OVER THE TWO REPAIRED SITES: 9 mutants, 8 caught, and the ninth is equivalent** —
+three read-before-store forms, two order swaps inside the record, two over the refusal bump, and two
+controls that the consolidated price-plate model must still catch. It taught the repair something
+the repair had not thought of: **ONE ALIAS PLACEMENT PINS ONLY THE RECORD IT ALIASES.** The first
+draft aliased slot 0 alone, and `display-second-field-read-before-the-stores` and
+`sign-field-read-before-the-stores` both walked straight through it; the case is parametrized over
+THREE placements now, one per shape the arm has. **And the third placement had to be re-aimed**,
+which is the sharper half: aiming the sign's field at slot 2's TYPE word proved nothing, because
+`actor_table_reset` has already zeroed every type — a read before the store and a read after it
+both see 0. It has to alias the X word, which the reset leaves as WB_ACTOR_FREE_MARKER and the
+store then replaces. *An alias case is only a discriminator where the two orders SEE DIFFERENT
+BYTES, and a value some earlier pass has already written is not one.* The equivalent survivor is
+`record-open-writes-xy-after-type`: the longword covers [0, 4) of the record and the type word
+[4, 6), disjoint for every address and each guarded independently, so the two stores commute — the
+proof is on `spawn_record_open` itself.
+
+**AND THE GATE FOUND A SILENT-DIVERGENCE TRAP OF THE `adda_w_dn_an` CLASS, A FOURTH TIME.**
+`move_b_postinc_ind` existed in test_stage.py as `(source, destination)` and in test_scene.py as
+`(destination, source)` — same name, same body, opposite meaning, so `move_b_postinc_ind(A0, A1)`
+assembled `move.b (a0)+,(a1)` in one file and `move.b (a1)+,(a0)` in the other. Both batteries were
+green because neither imported the other's. SOURCE FIRST wins (the mnemonic's own order, and
+`move_w_d16_d16`'s and `move_w_postinc_d16`'s in leaf.py) and this battery's call site moved.
+
+**QUEUED BY THIS PHASE.**
+* **An out-of-band refusal channel, IF one ever lands, is adopted by BOTH dispatch guards at once.**
+  `spawn_run_gate` and `scene_run_exit_action` refuse in band (a void return / an early `return`);
+  the gate reviewed that and found it consistent, so nothing moved. The pair is registered here so
+  that a later change cannot give one of two identical shapes a convention the other lacks.
+* **`scene_spend_visit_budget` can follow its tail now.** `$1ab4` is reconstructed; what remains is
+  the one-level stack UNWIND its entrance makes, which is a change to that routine's reported exit
+  and to the three cases that name `WB_SCENE_EXIT_STAGE_RESET`.
+* **`WB_SHOP_ITEM1_PRICE`/`_ITEM2_PRICE` now have two readers each** (the purchase in `$dbc0` and the
+  price plate here), and word 60 has a third — the refusal gate's compare. Registered, not folded in.
+* **The `$1d52` tail's `WB_SHOP_SIGN_SPRITE_INTRO` arm is reachable only from a seeded record.** No
+  shipped shop record exists to say whether any real counter carries sign `$181`, so "the fourth
+  refusal crashes the game" is a property of the CODE and not yet of the DISK.
+* **`test_scene.py` is now 373 cases and ~21 s on its own with `-n 4`**, most of it `model_load_window` run once
+  per composed case. The band cache this phase added covers the ALLOWED set; the cases that also
+  want the VALUES would need the model itself cached, which is the next thing to do if the battery
+  gets slower.

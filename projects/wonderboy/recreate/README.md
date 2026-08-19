@@ -513,6 +513,25 @@ ENDING IT REACHED, out of band, as an integer no image byte can collide with:
   taken, because `emu.run` stops at either the checkpoint or the `rts` and reports only that it
   stopped.
 
+**SOMETIMES THERE IS NO POSITIVE WITNESS AT ALL, and then the witness is NEGATIVE.** Batch 41 phase
+B found two endings in one routine where the rule above has nothing to name: the report stands for an
+instruction with *nothing below it on its own path*, and the instruction *above* it runs on a path
+that RETURNS as well. `scene_spawn_from_script`'s `rts` at `$19e0` is one (the `beq.w $1ea8` two
+instructions up executes on the kind-4 path too, which returns from its own arm) and the `illegal` at
+`$1d8e` is the other (the `cmpi.w #$2,d0` above it executes on the count-2 path, which returns).
+Moving the checkpoint down is impossible in both cases, because the report IS the last instruction.
+
+> **Name an instruction only the RETURNING path reaches, and require it NOT to have run.** With the
+> checkpoint that is exact: the run stopped at either the checkpoint or the `rts`, and an
+> instruction every returning path executes was not executed. `run_spawn` in test_scene.py takes
+> both halves — `visited` for the positive evidence where there is any, `not_visited` for this —
+> and a case may pass only the second. Its two are `addq.w #1,38(a0)` at `$1e42`, which both
+> returning arms of the shop tail reach, and the three arm entries `$19e2`/`$1bb4`/`$1ea8`, none of
+> which the kind ladder's fall-through enters.
+
+`run_reaching` is still the right tool wherever a distinguishing instruction exists; the negative
+form is for the case where the census says none does, and the case owes the reader that census.
+
 **THE WITNESS HAS TO BE AN INSTRUCTION ONLY THE TAKEN ARM RUNS, and getting that wrong reads as
 evidence rather than as a gap.** Batch 41 phase A's first draft named the `beq.w` at `$161c` as the
 unwind's witness — and that `beq` executes on every path that reaches the tile-$39 test, taken or

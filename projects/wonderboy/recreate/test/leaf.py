@@ -1014,6 +1014,56 @@ def addq_b_d16(amount, base, displacement):
     return opcode(0x5028 | ((amount & 7) << 9) | base) + word(displacement)
 
 
+# --- the FIVE test_scene.py's spawn-tree pin pushed over the third-copy line (batch 41 phase B) ---
+# Each was at two or three copies before that battery needed a fourth or a third, and each body
+# below was proved byte-identical to every copy it replaces across the whole register and value
+# space BEFORE the suite was run — so the hoist does not rest on the pins alone. Two of the five
+# had a real divergence between their copies, noted on the encoder itself.
+
+def cmpi_b_abs_l(value, addr):
+    """`cmpi.b #imm,<abs>.l` — the immediate travels in a whole WORD even for a byte compare, which
+    is why it is masked here: an unmasked spelling assembles a different instruction for anything
+    above $ff. Three users: test_player.py, test_text.py and the spawn gates' `cmpi.b #n,$bbc8.l`."""
+    return opcode(0x0c39) + word(value & 0xff) + longword(addr)
+
+
+def movea_l_indexed(destination, source, index):
+    """`movea.l 0(As,Dn.w),Ad` — how every one of this program's FOUR dispatch tables is read.
+
+    ../STATUS.md named this the first candidate for promotion, and it is. THE TWO COPIES IT REPLACES
+    were test_scroll.py's, which hand-rolled `index << 12`, and test_behavior.py's, which already
+    called `brief_extension_word` — the same bits either way, with the address-register and longword
+    flags spelt rather than assumed. (test_scene.py never had a copy of this encoder; the inherited
+    annotation that said so was about `movea_l_ind`, a different one, and is corrected there too.)
+    """
+    return opcode(0x2070 | (destination << 9) | source) + brief_extension_word(index)
+
+
+def addq_l_an(amount, reg):
+    """`addq.l #n,An` — a whole-register add that touches NO condition code, which is why it can sit
+    between the arithmetic that sets X and an `sbcd` that reads it.
+
+    THE TWO COPIES DISAGREED, in `subq_w_ind`'s way: test_player.py used `quick_field`, which
+    REFUSES a distance outside 1..8, against test_map.py's inlined `(amount & 7) << 9`, which
+    silently assembles 9 as 1. The refusing form wins; every existing call site is inside the range,
+    so no assembled byte moves and what the fix buys is the next call site."""
+    return opcode(0x5088 | quick_field(amount) | reg)
+
+
+def move_b_imm_ind(base, value):
+    """`move.b #imm,(An)` — the immediate in a whole word again. test_map.py and test_stage.py spelt
+    the opcode two ways (`0x10bc | base << 9` against `0x1000 | base << 9 | 2 << 6 | 0x3c`) for
+    identical bytes; the short form is kept."""
+    return opcode(0x10bc | (base << 9)) + word(value)
+
+
+def move_w_imm_d16(base, value, displacement):
+    """`move.w #imm,d16(An)` — the immediate comes FIRST and the destination's displacement second,
+    the same extension order `move_w_d16_d16` above documents. It was at THREE copies (test_actor.py,
+    test_behavior.py, test_player.py), all three byte-identical, before this became the fourth."""
+    return opcode(0x317c | (base << 9)) + word(value) + word(displacement)
+
+
 # A 68000 branch counts its displacement from the EXTENSION WORD, which sits two bytes after the
 # opcode the branch is written as — so a displacement is always the bytes the branch spans plus that
 # 2. The same 2 is what a `d16(pc)` OPERAND counts from, which is how test_sound.py's PC-relative

@@ -83,7 +83,9 @@ from leaf import (LONGWORD_BYTES, RTS, WORD_BYTES, addi_w_dn, addq_b_d16, addq_b
                   cmpi_b_ind, jmp_abs_l, program_writes, quick_field, s8,
                   s16,
                   sub_w_dn_d16, sub_w_dn_dn, subi_w_dn, subq_w_dn, tst_b_d16, tst_w_abs_l,
-                  tst_w_abs_w, tst_w_dn, word)
+                  tst_w_abs_w, tst_w_dn, word,
+                  # ...and the five hoisted to leaf.py by batch 41 phase B's spawn-tree pin
+                  move_w_imm_d16, movea_l_indexed)
 from layout import DEFINES, wb
 
 # The record's own geometry and the register numbers come from the battery that owns the actor
@@ -260,9 +262,6 @@ def move_w_ind_d16(source, destination, displacement):
     return opcode(0x3150 | (destination << 9) | source) + word(displacement)
 
 
-def move_w_imm_d16(base, value, displacement):
-    return opcode(0x317c | (base << 9)) + word(value) + word(displacement)
-
 
 def move_w_dn_d16(reg, base, displacement):
     return opcode(0x3140 | (base << 9) | reg) + word(displacement)
@@ -284,7 +283,8 @@ def movea_l_an(destination, source):
 
 def movea_l_ind(reg, source):
     return opcode(0x2050 | (reg << 9) | source)
-    # ALSO IN test_blit.py, test_scene.py — third copy, queued for leaf.py.
+    # ALSO IN test_blit.py, test_scene.py, test_scroll.py — a FOURTH copy, not the third this line
+    # used to claim, and all four agree; queued for leaf.py.
 
 
 def movea_l_d16(reg, source, displacement):
@@ -533,13 +533,6 @@ def move_w_d16_d16(source, source_displacement, destination, destination_displac
     return (opcode(0x3168 | (destination << 9) | source)
             + word(source_displacement) + word(destination_displacement))
 
-
-def movea_l_indexed(destination, source, index):
-    """`movea.l 0(As,Dn.w),Ad` — the fetch BOTH of this file's jump tables are read with."""
-    return opcode(0x2070 | (destination << 9) | source) + brief_extension_word(index)
-    # ALSO IN test_blit.py, test_scene.py (each hand-rolling `index << 12` where this calls
-    # `brief_extension_word`) — third copy, and the FIRST candidate for the leaf.py promotion
-    # because the other two spell the extension word themselves.
 
 
 def andi_b_d16(base, value, displacement):

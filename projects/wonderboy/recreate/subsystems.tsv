@@ -111,6 +111,20 @@
 # NO function until ../names.txt named them, so the pre-2026-08-11 scan had 68 bytes of them in the
 # "code in no function" residue and in no tier at all (the $e1c8 pattern, PORTABILITY §0h).
 0x101bc	0x10200	scene (dialogue + shop)
+# The SCENE-SPAWN TREE (batch 41 phase B): $19ac..$1f36, what ENTERS a scene where $dbc0 above is
+# what runs one once a frame. It sits INSIDE the player band by address, and it is scene tier by
+# every other measure — it is driven by the same WB_RECORD_PTR_10420 descriptor, it writes the
+# scene's own state words ($e026/$e02a/$e02c) and the shop record, and its one caller
+# (player_pending_event_gate) is the only thing about it that is the player's. `hi` is $1f36, where
+# actor_table_reset begins; the three routines already inside the span and belonging elsewhere
+# ($1af0 map_stamp_block, $1b46 scene_clear_marker_pair, $1b68/$1b8e the pool allocators) are why
+# this row is not carved further — a per-routine partition of the band is the queued tier split.
+0x19ac	0x1f36	scene (dialogue + shop)
+# ...and the FOURTH dispatch table's three targets, $e43e..$e482, which are reached ONLY through
+# spawn_script_gate_table ($e42e) from inside that tree — a whole-image census over both absolute
+# call encodings and every word-displacement branch finds no other entrance. `hi` is $e482, where
+# the boot prompt's own code begins.
+0xe43e	0xe482	scene (dialogue + shop)
 0xb346	0xbd66	hud (status panel)
 0xd93a	0xdbb0	hud (status panel)
 0x10200	0x103e8	hud (status panel)

@@ -31,7 +31,26 @@
  * same three exits the C does. */
 #define WB_SCENE_EXIT_RETURN       0u  /* the original `rts`d without leaving the scene */
 #define WB_SCENE_EXIT_RELOAD       1u  /* it went through $dfbe (scene_exit_and_reload), which runs */
-#define WB_SCENE_EXIT_STAGE_RESET  2u  /* ...or to $1ab4, which $de80 tail-jumps to — NOT ported */
+#define WB_SCENE_EXIT_STAGE_RESET  2u  /* ...or to $1ab4, which $de80 tail-jumps to. THE TAIL ITSELF
+                                        * IS PORTED (batch 41 phase B: it is the speech arm's last
+                                        * twenty-eight instructions, `scene_spawn_speech_tail`).
+                                        * What is still open is this CALLER's side of it: $deb0
+                                        * arrives having pushed nothing, so the tail's
+                                        * `movea.l (a7)+,a0` pops $de80's own return address and
+                                        * the `rts` returns one frame further out — a one-level
+                                        * unwind, not a boundary in the tail */
+#define WB_SCENE_EXIT_WILD_RETURN  4u  /* ...or reached the `rts` at $19e0, which is NOT a return:
+                                        * `scene_spawn_from_script` pushes a0 at its first
+                                        * instruction and only its THREE ARMS pop it again, so a
+                                        * descriptor whose kind is not 1, 2 or 4 returns THROUGH
+                                        * THAT SAVED a0 and leaves its real return address on the
+                                        * stack. An ORIGINAL DEFECT, found by the oracle running
+                                        * away when this battery first drove an unnamed kind */
+#define WB_SCENE_EXIT_ILLEGAL      3u  /* ...or reached the `illegal` at $1d8e, which is the
+                                        * ORIGINAL's own ending and not a boundary of this port:
+                                        * a fourth refusal at one shop counter executes $4afc and
+                                        * takes an illegal-instruction exception. See
+                                        * `scene_spawn_from_script` below */
 
 /* $dbc0 — the once-a-frame scene driver. Takes no argument (it reads its mode flags and its
  * descriptor pointer out of memory) and, in the original, returns nothing. */
@@ -72,5 +91,39 @@ void scene_exit_and_reload(uint8_t *image);
  * boundary. Exported because test/test_scene.py enters each of them directly. */
 void scene_exit_action_none(uint8_t *image);
 void scene_exit_action_select_a30_table(uint8_t *image);
+
+
+/* --- $19ac: THE SCENE-SPAWN TREE ----------------------------------------------------------------
+ *
+ * What ENTERS a scene, where everything above runs one once a frame. Its one caller in the image is
+ * the `bsr.w $19ac` at $c66 inside player_pending_event_gate. It takes no register argument — the
+ * descriptor comes from WB_RECORD_PTR_10420 and the collision-map cell from
+ * WB_SCENE_MARKER_CELL_PTR — and it reads the descriptor as a byte-coded SCRIPT rather than as a
+ * record of named fields, which is why src/scene.c walks a cursor over it.
+ *
+ * IT RUNS WHOLE, on all three arms: every callee is reconstructed (actor_table_reset,
+ * map_stamp_block, scene_clear_marker_pair above, the three gates below and stage_load_window), so
+ * a differential enters at $19ac and leaves at the original's own `rts`. The ONE exception is not
+ * this port's boundary but the ORIGINAL's ending: WB_SCENE_EXIT_ILLEGAL. */
+uint32_t scene_spawn_from_script(uint8_t *image);
+
+/* $e43e, $e456, $e46c — the three live entries of WB_SPAWN_GATE_TABLE, the FOURTH dispatch table in
+ * the program and the third this project has closed. Each returns having written nothing when
+ * WB_HUD_SLOT_BBC8's high byte is its own number, and otherwise OVERWRITES THE SCRIPT: `cursor` is
+ * the original's a1, the descriptor byte the caller reads one instruction later, and the word after
+ * it is the descriptor's own WB_SCENE_EXIT_ACTION. Exported because test/test_scene.py enters each
+ * of them directly as well as through the dispatch. */
+void spawn_gate_unless_bbc8_eq1(uint8_t *image, uint32_t cursor);
+void spawn_gate_unless_bbc8_eq3(uint8_t *image, uint32_t cursor);
+void spawn_gate_unless_bbc8_eq4(uint8_t *image, uint32_t cursor);
+
+/* $1cc0 — the shop's PRICE PLATES: four digits of the price at `price_field` (d6, a displacement
+ * into WB_SHOP_RECORD_PTR's record) drawn into the sprite `resource` (d7) names. */
+void shop_render_price_digits(uint8_t *image, uint16_t resource, uint16_t price_field);
+
+/* $1d1e — one 8-pixel glyph column of `glyph` (a1) into the masked sprite bitmap at `at` (a0), and
+ * the cursor for the NEXT column, which is the original's own a0: one byte on from an EVEN cursor
+ * and nine from an odd one. */
+uint32_t glyph_stamp_8_rows(uint8_t *image, uint32_t at, uint32_t glyph);
 
 #endif /* WONDERBOY_SCENE_H */

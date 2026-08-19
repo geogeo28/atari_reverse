@@ -60,21 +60,28 @@ import pytest
 import harness
 import leaf
 import emu
-from leaf import (LONGWORD_BYTES, RTS, WORD_BYTES, assert_entry_is, branch_w_to, bsr_w, case_salt,
+import loader
+from leaf import (LONGWORD_BYTES, RTS, WORD_BYTES, WORD_MASK, assert_entry_is, branch_w_to, bsr_w, case_salt,
                   clr_b_abs_l, clr_b_ind, clr_w_abs_l, clr_w_abs_w, cmpi_w_abs_l, cmpi_w_d16,
                   jsr_abs_l,
                   keyed_block, lea_abs_l, lea_indexed, longword, lsl_w_imm_dn, merge_bands,
                   move_b_ind_dn,
                   move_l_imm_abs_l, move_w_imm_abs_l, move_w_imm_abs_w, move_w_ind_dn,
                   movea_l_abs_l, opcode, overlay, program_writes, run_reaching, s16, seeded_bytes,
-                  sub_w_dn_d16, tst_w_abs_w, word)
+                  sub_w_dn_d16, tst_w_abs_w, word,
+                  # ...and what batch 41 phase B's spawn-tree pin adds, five of them hoisted to
+                  # leaf.py by this batch because it was each one's third or fourth copy
+                  addq_l_an, btst_imm_dn, clr_w_dn, cmp_w_dn_dn, cmp_w_imm_dn, cmpi_b_abs_l,
+                  lea_d16, move_b_imm_ind, move_b_postinc_dn, move_w_imm_d16, move_w_imm_dn,
+                  move_w_abs_l_dn, move_w_postinc_dn, moveq_0_dn, movea_l_indexed)
 from layout import wb
 # The reload tail RUNS stage_load_window, so a composed case's write set CONTAINS that routine's.
 # The model, the seeds, the instruction cap and the unmatched latch all come from the battery that
 # owns them — two copies could disagree while both stayed green, which is the rule test_stage.py
 # itself follows towards test_hud.py and test_sound.py.
 from test_stage import (LATCH_UNMATCHED, LOAD_WINDOW_INSN_CAP,               # noqa: E402
-                        build_cursors, load_window_pokes, model_load_window)
+                        RAW_TILE_BANK, build_cursors, load_window_pokes, model_load_window)
+from test_stage import MAP as STAGE_MAP                                      # noqa: E402
 from test_sound import PLAY_SONG_MIXER, PSG_REG_MIXER, assert_psg_state      # noqa: E402
 # ...and the six `set_state_*` stubs the exit table dispatches to are test_effects.py's, destination
 # and immediate alike — that table is its transcription of the disassembly, not a second copy.
@@ -150,7 +157,7 @@ VISIT_BUDGET = wb("SHOP_VISIT_BUDGET")
 ITEM1_COUNT = wb("SHOP_ITEM1_COUNT")
 ITEM2_COUNT = wb("SHOP_ITEM2_COUNT")
 GREET_COUNT = wb("SHOP_GREET_COUNT")
-LEAVE_CHARGED = wb("SHOP_LEAVE_CHARGED")
+REFUSED_COUNT = wb("SHOP_REFUSED_COUNT")
 FAREWELL_COUNT = wb("SHOP_FAREWELL_COUNT")
 ITEM1_PRICE = wb("SHOP_ITEM1_PRICE")
 ITEM2_PRICE = wb("SHOP_ITEM2_PRICE")
@@ -592,14 +599,20 @@ def run_frame(case, seeds, expected_exit, allowed=None, cap=SHOP_CAP, via=None, 
 
 # --- the pins ------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("label", sorted(ENTRY_BYTES))
-def test_the_instruction_at_each_pinned_address_is_the_one_reconstructed(label):
-    """Each pinned instruction, against the bytes at its own address."""
+def assert_pinned_instruction(label):
+    """One pinned instruction, against the bytes at its own address. Shared by the two
+    parametrized tests over it — see the spawn tree's own, which explains why there are two."""
     addr, expected = ENTRY_BYTES[label]
     actual = bytes(harness.BASE_IMAGE[addr:addr + len(expected)])
     assert actual == expected, (
         f"{label} @ {addr:#x} is {actual.hex()}, not the {expected.hex()} this battery "
         f"reconstructs")
+
+
+@pytest.mark.parametrize("label", sorted(ENTRY_BYTES))
+def test_the_instruction_at_each_pinned_address_is_the_one_reconstructed(label):
+    """Each pinned instruction, against the bytes at its own address."""
+    assert_pinned_instruction(label)
 
 
 @pytest.mark.parametrize("name", ["scene_run_frame", "scene_spend_visit_budget",
@@ -1369,7 +1382,7 @@ def test_a_shop_message_that_exhausts_the_budget_closes_the_visit_from_the_drive
 # (label, the words that put the shop in that arm, the bytes it needs, what the spend costs)
 BUDGET_SPENDING_ARMS = (
     ("charged leave",
-     ((MESSAGE_PENDING, MESSAGE_PENDING_SET), (SHOP_RECORD + LEAVE_CHARGED, 1)),
+     ((MESSAGE_PENDING, MESSAGE_PENDING_SET), (SHOP_RECORD + REFUSED_COUNT, 1)),
      joystick(JOY1_FIRE) + ((TEXT_BOX_ACTIVE, 0xff),), MESSAGE_COST),
     ("greeting",
      ((MESSAGE_PENDING, 0), (ACK_WAIT, 0), (SHOP_REQUEST, 0), (GREET_COUNTDOWN, 1),
@@ -2017,24 +2030,24 @@ def test_a_leaving_scene_runs_the_exit_action_its_descriptor_names():
 
 @pytest.mark.parametrize("edge,box", [(JOY1_FIRE, 0xff), (0xff, 0x01), (0x00, 0x00)])
 def test_a_pending_message_leaves_for_nothing_when_the_record_is_not_charged(edge, box):
-    """`tst.w 42(a1) / beq` — a zero WB_SHOP_LEAVE_CHARGED reaches the exit with no write at all,
+    """`tst.w 42(a1) / beq` — a zero WB_SHOP_REFUSED_COUNT reaches the exit with no write at all,
     budget included."""
     case = f"leave free edge={edge:#04x} box={box:#04x}"
     run_frame_to_reload(case, shop_pokes(case, words=((MESSAGE_PENDING, MESSAGE_PENDING_SET),
-                                                     (SHOP_RECORD + LEAVE_CHARGED, 0)),
+                                                     (SHOP_RECORD + REFUSED_COUNT, 0)),
                                          bytes_=joystick(edge) + ((TEXT_BOX_ACTIVE, box),)),
                         via="leave uncharged")
 
 
 @pytest.mark.parametrize("budget", [0x0010, MESSAGE_COST, MESSAGE_COST + 1])
 def test_a_charged_leave_spends_the_message_cost_first(budget):
-    """The other arm: a nonzero WB_SHOP_LEAVE_CHARGED spends WB_SHOP_MESSAGE_COST and only then
+    """The other arm: a nonzero WB_SHOP_REFUSED_COUNT spends WB_SHOP_MESSAGE_COST and only then
     leaves. Every budget here stays non-negative, so that spend is the arm's WHOLE write set — and
     it is nowhere near anything $dfbe or the hinge touches, which is the disjointness the end-to-end
     run rests on."""
     case = f"leave charged budget={budget}"
     run_frame_to_reload(case, shop_pokes(case, words=((MESSAGE_PENDING, MESSAGE_PENDING_SET),
-                                                      (SHOP_RECORD + LEAVE_CHARGED, 1),
+                                                      (SHOP_RECORD + REFUSED_COUNT, 1),
                                                       (SHOP_RECORD + VISIT_BUDGET, budget)),
                                          bytes_=joystick(JOY1_FIRE) + ((TEXT_BOX_ACTIVE, 0xff),)),
                         via="leave charged",
@@ -2060,3 +2073,1435 @@ def test_the_hud_slot_takes_the_scene_out_after_the_fragments_are_built():
                                via="boss exit", prefix_bands=SLOT_BAND,
                                prefix={SCENE_EXIT_REQUEST: word(0), BOSS_DEFEAT_FLAG: word(0)})
     assert leaf.read_int(info, BOSS_SLOTS + ACTOR_TYPE, WORD_BYTES, case) == BOSS_TYPE_1
+
+
+# =================================================================================================
+# $19ac — THE SCENE-SPAWN TREE (batch 41 phase B)
+#
+# What ENTERS a scene, where everything above runs one once a frame, and it is driven by the SAME
+# descriptor: a byte-coded script read with a walking cursor. Three arms, and each ends by handing
+# `stage_load_window` a map and a tile bank, so every full case here composes with test_stage.py's
+# battery exactly as the reload cases above do.
+#
+# WHAT IS REAL DATA AND WHAT IS SEEDED. The speech scripts, the gate table, the glyph fonts, the
+# shipped start records and the shop-record pointer table are the game's own bytes and no case seeds
+# any of them — a speech case posts the id the shipped script really holds. The descriptor, the shop
+# record, the resource table's two price sprites and the map/tile bank the arms load are past the
+# program or unshipped, so those are the case's own, address-keyed.
+#
+# KNOWINGLY NOT PINNED
+#   * a gate index outside 1..3. The `lsl.w #2` on a script BYTE cannot wrap or turn negative, so
+#     252 of the 256 values `jsr` through a longword outside the four-entry table — the refusal
+#     src/blit.c's sprite dispatch makes, and this battery refuses them as inputs the same way it
+#     refuses an out-of-table exit action.
+#   * a map-bank index whose sign-extended offset leaves the seven entries. That one is a DATA read
+#     and the port follows it, but a case that drove it would hand the hinge two arbitrary pointers
+#     and measure the scroll engine rather than this tree.
+#   * WHAT A SHIPPED DESCRIPTOR SELECTS, for the reason the head of this file gives: the descriptor
+#     table is loaded from disk and the .PRG ships zeros for it.
+
+SPAWN_GATE_TABLE = wb("SPAWN_GATE_TABLE")
+SPAWN_GATE_COUNT = wb("SPAWN_GATE_COUNT")
+SPAWN_GATE_ENTRY_0 = wb("SPAWN_GATE_ENTRY_0_NOT_AN_ADDRESS")
+SPAWN_GATE_REFUSED_SCRIPT = wb("SPAWN_GATE_REFUSED_SCRIPT")
+SPAWN_GATE_SLOT = wb("SCENE_SPAWN_GATE_SLOT")
+HUD_SLOT_BBC8 = wb("HUD_SLOT_BBC8")
+
+MAP_BANK_TABLE = wb("SCENE_MAP_BANK_TABLE")
+MAP_BANK_COUNT = wb("SCENE_MAP_BANK_COUNT")
+MAP_BANK_BYTES = wb("SCENE_MAP_BANK_BYTES")
+MAP_BANK_TILES = wb("SCENE_MAP_BANK_TILES")
+MAP_BANK_INDEX = wb("SCENE_MAP_BANK_INDEX")
+BOSS_MAP_BANK_OFFSET = wb("SCENE_BOSS_MAP_BANK_OFFSET")
+
+START_RECORD_BOSS = wb("SCENE_START_RECORD_BOSS")
+START_RECORD_SHOP = wb("SCENE_START_RECORD_SHOP")
+START_RECORD_SHOP_ALT = wb("SCENE_START_RECORD_SHOP_ALT")
+START_RECORD_SPEECH = wb("SCENE_START_RECORD_SPEECH")
+STAGE_START_RECORDS = wb("STAGE_START_RECORDS")
+
+SPAWN_PAIR_DX = wb("SCENE_SPAWN_PAIR_DX")
+FROZEN_SET = wb("SCROLL_FOLLOW_FROZEN_SET")
+# ...and the mode flags' own, which is a different constant even though it is the same word.
+STATE_FLAG_SET = wb("STATE_FLAG_SET")
+LATE_STAGE_FIRST = wb("SCENE_LATE_STAGE_FIRST")
+LATE_STAGE_SPRITE = wb("SCENE_LATE_STAGE_SPRITE")
+SPEECH_LIFETIME_HELD = wb("SCENE_SPEECH_LIFETIME_HELD")
+STAGE_NUMBER = wb("STAGE_NUMBER")
+ACTOR_SPRITE = wb("ACTOR_SPRITE")
+ACTOR_TABLE_END = wb("ACTOR_TABLE_END")
+TABLE_A30_SLOTS = 19              # what actor_table_reset writes, and where the terminator sits
+TABLE_A30_END = TABLE_A30 + TABLE_A30_SLOTS * RECORD_BYTES
+
+SHOP_ENTER_MSG_FIRST = wb("SHOP_ENTER_MSG_FIRST")
+SHOP_ENTER_MSG_SECOND = wb("SHOP_ENTER_MSG_SECOND")
+SHOP_ENTER_MSG_LATER = wb("SHOP_ENTER_MSG_LATER")
+SHOP_ENTER_COUNT = wb("SHOP_ENTER_COUNT")
+SHOP_SIGN_SPRITE = wb("SHOP_SIGN_SPRITE")
+SHOP_SIGN_SPRITE_INTRO = wb("SHOP_SIGN_SPRITE_INTRO")
+SHOP_SIGN_XY = wb("SHOP_SIGN_XY")
+SHOP_ITEM1_SPRITE = wb("SHOP_ITEM1_SPRITE")
+SHOP_ITEM2_SPRITE = wb("SHOP_ITEM2_SPRITE")
+BROKE_MSG_FIRST = wb("SHOP_BROKE_MSG_FIRST")
+BROKE_MSG_SECOND = wb("SHOP_BROKE_MSG_SECOND")
+BROKE_MSG_THIRD = wb("SHOP_BROKE_MSG_THIRD")
+GREET_COUNTDOWN_RESET = wb("SHOP_GREET_COUNTDOWN_RESET")
+DISPLAY_ITEM1_XY = wb("SHOP_DISPLAY_ITEM1_XY")
+DISPLAY_ITEM2_XY = wb("SHOP_DISPLAY_ITEM2_XY")
+DISPLAY_LEAVE_XY = wb("SHOP_DISPLAY_LEAVE_XY")
+DISPLAY_PRICE1_XY = wb("SHOP_DISPLAY_PRICE1_XY")
+DISPLAY_PRICE2_XY = wb("SHOP_DISPLAY_PRICE2_XY")
+DISPLAY_EXTRA_XY = wb("SHOP_DISPLAY_EXTRA_XY")
+DISPLAY_LEAVE_SPRITE = wb("SHOP_DISPLAY_LEAVE_SPRITE")
+DISPLAY_PRICE1_SPRITE = wb("SHOP_DISPLAY_PRICE1_SPRITE")
+DISPLAY_PRICE2_SPRITE = wb("SHOP_DISPLAY_PRICE2_SPRITE")
+DISPLAY_EXTRA_SPRITE = wb("SHOP_DISPLAY_EXTRA_SPRITE")
+DISPLAY_EXTRA_TYPE = wb("SHOP_DISPLAY_EXTRA_TYPE")
+SHOP_DISPLAY_COUNT = 8
+# Every shipped bank entry names a map and, $a4 on, that map's own tile bank.
+SHIPPED_BANK_SPAN = 0xa4
+# A word no arm of the tree writes and no shipped byte holds, for the destinations whose expected
+# value is ZERO — a `clr.w` over a shipped zero is otherwise invisible.
+SEED_UNEXPECTED = 0x5a5a
+
+BOSS_FOLLOW = wb("ACTOR_FOLLOWED_A32")
+BOSS_FOLLOW_XY = wb("SCENE_BOSS_FOLLOW_XY")
+BOSS_FOLLOW_TYPE = wb("SCENE_BOSS_FOLLOW_TYPE")
+BOSS_FOLLOW_SIZES = wb("SCENE_BOSS_FOLLOW_SIZES")
+ACTOR_SIZE_SECOND = wb("ACTOR_SIZE_SECOND")
+
+RESOURCE_TABLE = wb("RESOURCE_TABLE")
+RESOURCE_RECORD_BYTES = wb("RESOURCE_RECORD_BYTES")
+PRICE_DIGITS = wb("SHOP_PRICE_DIGITS")
+PRICE_NIBBLE_BITS = wb("SHOP_PRICE_NIBBLE_BITS")
+GLYPH_MASK_BYTES = wb("GLYPH_STAMP_MASK_BYTES")
+GLYPH_PLANE_STEP = wb("GLYPH_STAMP_PLANE_STEP")
+GLYPH_ROW_SKIP = wb("GLYPH_STAMP_ROW_SKIP")
+GLYPH_ROW_BYTES = wb("GLYPH_STAMP_ROW_BYTES")
+GLYPH_NEXT_EVEN = wb("GLYPH_STAMP_NEXT_EVEN")
+GLYPH_NEXT_ODD = wb("GLYPH_STAMP_NEXT_ODD")
+GLYPH_SPAN = wb("DIGIT_ROWS") * GLYPH_ROW_BYTES + GLYPH_MASK_BYTES
+DIGIT_ROWS = wb("DIGIT_ROWS")
+DIGIT_GLYPH_LEN = wb("DIGIT_GLYPH_LEN")
+DIGIT_GLYPHS_ALT = wb("DIGIT_GLYPHS_ALT")
+TEXT_GLYPH_TABLE = wb("TEXT_GLYPH_TABLE")
+PLANES = wb("PLANES")
+
+EXIT_ILLEGAL = wb("SCENE_EXIT_ILLEGAL")
+EXIT_WILD_RETURN = wb("SCENE_EXIT_WILD_RETURN")
+ILLEGAL_PC = 0x1d8e               # the `illegal` the fourth refusal reaches
+WILD_RETURN_PC = 0x19e0           # ...and the `rts` that returns through the pushed a0
+STOP_PC_FOR[EXIT_ILLEGAL] = ILLEGAL_PC
+STOP_PC_FOR[EXIT_WILD_RETURN] = WILD_RETURN_PC
+# The three arm entries the kind ladder branches to. A run that stopped at WILD_RETURN_PC without
+# visiting any of them is what says the ladder FELL THROUGH rather than returning from an arm — the
+# negative witness this one ending needs, because there is no instruction below the `rts` it stands
+# for and the one above it (`beq.w $1ea8`) runs on the kind-4 path too.
+SPAWN_ARMS = (0x19e2, 0x1bb4, 0x1ea8)
+LAST_KIND_TEST = 0x19d8
+
+# The two sprite bitmaps the price plates are drawn into: plain RAM between test_stage.py's map and
+# the scroll buffers at $44000, clear of both.
+PRICE_SPRITE_A = 0x41000
+PRICE_SPRITE_B = 0x41400
+PRICE_SPRITE_LEN = 0x100
+# ...and the seven map pointers the bank entries a case does NOT choose are given. They step DOWN
+# from test_stage.py's MAP so that none of them can collide with its RAW_TILE_BANK above it, and the
+# lowest is still well clear of the program's own end.
+UNCHOSEN_MAP_STEP = 0x1000
+
+A2, A5 = 2, 5
+D1, D4, D5, D6, D7 = 1, 4, 5, 6, 7
+ILLEGAL = leaf.opcode(0x4afc)
+
+
+def move_l_an_push(an):
+    """`move.l An,-(a7)` — the tree's first instruction, and the a0 its three arms pop back."""
+    return opcode(0x2000 | (7 << 9) | (4 << 6) | (1 << 3) | an)
+
+
+def movea_l_postinc(destination, source):
+    """`movea.l (As)+,Ad` — how each arm takes the map and the tile bank out of one bank entry."""
+    return opcode(0x2058 | (destination << 9) | source)
+
+
+def move_b_postinc_ind(source, destination):
+    """`move.b (As)+,(Ad)` — the glyph stamp's whole inner step.
+
+    ALSO IN test_stage.py, whose banner plotter spells the same byte move — second copy, and the two
+    DISAGREED ABOUT ARGUMENT ORDER while sharing a body and a name: `move_b_postinc_ind(A0, A1)`
+    assembled `move.b (a0)+,(a1)` there and `move.b (a1)+,(a0)` here. Both batteries were green
+    because neither imported the other's, which is the `adda_w_dn_an` class a fourth time. SOURCE
+    FIRST wins — it is the 68000 mnemonic's own order and `move_w_d16_d16`'s and
+    `move_w_postinc_d16`'s in leaf.py — so this file's call site is the one that moved. Hoist on the
+    third copy."""
+    return opcode(0x1000 | (destination << 9) | (2 << 6) | (3 << 3) | source)
+
+
+def move_w_an_dn(reg, an):
+    """`move.w An,Dn` — the glyph stamp's parity test reads its own cursor this way.
+
+    ALSO IN test_stage.py — second copy, and that pair AGREES, body and order alike. Registered
+    rather than changed: the NAME reads source-first (`an_dn`) while the parameters are
+    destination-first, which is a wart both copies share and no call site can trip over. Hoist on
+    the third, in leaf.py's order."""
+    return opcode(0x3008 | (reg << 9) | an)
+
+
+def move_l_ind_abs_l(source, addr):
+    """`move.l (An),<abs>.l` — the speech script's pointer planted in its cursor."""
+    return opcode(0x23d0 | source) + longword(addr)
+
+
+def move_b_ind_abs_l(source, addr):
+    """`move.b (An),<abs>.l` — the id under the cursor posted into WB_TEXT_REQUEST."""
+    return opcode(0x13d0 | source) + longword(addr)
+
+
+def addq_l_abs_l(amount, addr):
+    """`addq.l #n,<abs>.l` — the speech cursor is a LONGWORD and is advanced as one."""
+    return opcode(0x5080 | leaf.quick_field(amount) | 0x39) + longword(addr)
+
+
+def bcc_s_to(condition, here, target):
+    """A SHORT conditional branch, as the two later gates spell their jump to the first one's `rts`.
+    The displacement counts from the extension position exactly as the word form's does.
+
+    ALSO IN test_sound.py as `_branch_s_to` — second copy, and it carries that one's ASSERT rather
+    than a bare mask: a displacement byte of 0 selects the `.w` form and one of $ff the `.l` form,
+    so neither is a short branch at all and emitting one would assemble a two-word instruction that
+    swallows the next. Masking hides that; refusing it does not. Hoist on the third."""
+    displacement = target - (here + leaf.BRANCH_EXTENSION)
+    assert -0x80 <= displacement < 0x80 and displacement not in (0, -1), (
+        f"{displacement} is not a legal short-branch displacement")
+    return opcode(condition | (displacement & 0xff))
+
+
+def dbf_w_to(reg, here, target):
+    """`dbf Dn,<target>` — the glyph stamp's row loop."""
+    return opcode(leaf.DBF_DN | reg) + word(target - (here + leaf.BRANCH_EXTENSION))
+
+
+def spawn_gate_body(entry, keep, branch):
+    """One gate, whole. The three differ ONLY in the byte compared and in how the match jumps to the
+    first one's `rts`, which is what `branch` supplies — so a fourth spelling would fail here."""
+    return (cmpi_b_abs_l(keep, HUD_SLOT_BBC8) + branch
+            + move_b_imm_ind(A1, SPAWN_GATE_REFUSED_SCRIPT)
+            + move_w_imm_d16(A1, 0, 1) + RTS)
+
+
+GATE_1_ENTRY, GATE_3_ENTRY, GATE_4_ENTRY = 0xe43e, 0xe456, 0xe46c
+GATE_SHARED_RTS = 0xe454
+
+# $1d1e, whole — the mask word skipped, four plane bytes two apart, the row step, and the two
+# rewinds, each of which is GLYPH_SPAN less the cell step its parity selects.
+GLYPH_STAMP_ENTRY = 0x1d1e
+GLYPH_ROW_LOOP = 0x1d26
+GLYPH_ODD_ARM = 0x1d4c
+GLYPH_STAMP_BYTES = (
+    lea_d16(A0, GLYPH_MASK_BYTES, A0)
+    + move_w_imm_dn(D7, DIGIT_ROWS - 1)
+    + b"".join(move_b_postinc_ind(A1, A0) + (addq_l_an(GLYPH_PLANE_STEP, A0) if plane + 1 < PLANES
+                                             else b"")
+               for plane in range(PLANES))
+    + lea_d16(A0, GLYPH_ROW_SKIP, A0)
+    + dbf_w_to(D7, 0x1d38, GLYPH_ROW_LOOP)
+    + move_w_an_dn(D7, A0) + btst_imm_dn(0, D7)
+    + branch_w_to(BNE_W, 0x1d42, GLYPH_ODD_ARM)
+    + lea_d16(A0, -(GLYPH_SPAN - GLYPH_NEXT_EVEN) & 0xffff, A0) + RTS
+    + lea_d16(A0, -(GLYPH_SPAN - GLYPH_NEXT_ODD) & 0xffff, A0) + RTS)
+
+SPAWN_ENTRY_BYTES = {
+    # $19ac: the two pointers and the free marker over slot 1, before any arm is chosen.
+    "scene_spawn_from_script": (0x19ac, move_l_an_push(A0) + movea_l_abs_l(A1, DESCRIPTOR_PTR)
+                                + movea_l_abs_l(A6, MARKER_CELL_PTR)
+                                + move_w_imm_abs_l(FREE_MARKER, SPAWN_GATE_SLOT)),
+    # ...and the kind ladder, which is THREE tests and then a bare `rts`: a descriptor naming kind 3
+    # leaves having written only that marker.
+    "spawn kind ladder": (0x19c2, lea_d16(A1, SCENE_KIND, A1) + move_w_postinc_dn(D0, A1)
+                          + cmp_w_imm_dn(D0, KIND_SPEECH) + branch_w_to(BEQ_W, 0x19cc, 0x19e2)
+                          + cmp_w_imm_dn(D0, KIND_SHOP) + branch_w_to(BEQ_W, 0x19d4, 0x1bb4)
+                          + cmp_w_imm_dn(D0, KIND_BOSS) + branch_w_to(BEQ_W, 0x19dc, 0x1ea8) + RTS),
+    # The FOURTH dispatch table, and the READ-AFTER-STORE with it: the `moveq/move.b` at $1a7c
+    # fetches the speech index AFTER the `jsr (a0)` that may have overwritten it.
+    "spawn gate dispatch": (0x1a66, moveq_0_dn(D0) + move_b_postinc_dn(D0, A1)
+                            + branch_w_to(BEQ_W, 0x1a6a, 0x1a7c) + lsl_w_imm_dn(2, D0)
+                            + lea_abs_l(A0, SPAWN_GATE_TABLE) + movea_l_indexed(A0, A0, D0)
+                            + jsr_ind(A0)
+                            + moveq_0_dn(D0) + move_b_postinc_dn(D0, A1)),
+    # The speech post, whose lifetime is the INFINITE one and not the $32 every $dbc0 arm uses.
+    "spawn speech post": (0x1a80, lsl_w_imm_dn(2, D0) + lea_abs_l(A0, SCRIPT_TABLE)
+                          + lea_indexed(A0, D0) + move_l_ind_abs_l(A0, SCRIPT_CURSOR)
+                          + movea_l_abs_l(A0, SCRIPT_CURSOR)
+                          + move_b_ind_abs_l(A0, TEXT_REQUEST)
+                          + move_w_imm_abs_l(SPEECH_LIFETIME_HELD, TEXT_LIFETIME_REQUEST)
+                          + addq_l_abs_l(1, SCRIPT_CURSOR)),
+    # $1ab4, the shared tail: the bank index off a RE-READ descriptor pointer, both longwords, and
+    # only then the freeze.
+    "spawn stage tail": (0x1ab4, movea_l_abs_l(A1, DESCRIPTOR_PTR) + moveq_0_dn(D0)
+                         + move_w_ind_dn(D0, A1, MAP_BANK_INDEX) + lsl_w_imm_dn(3, D0)
+                         + lea_abs_l(A1, MAP_BANK_TABLE) + lea_indexed(A1, D0)
+                         + movea_l_postinc(A0, A1) + movea_l_postinc(A6, A1)
+                         + move_w_imm_abs_w(FROZEN_SET, SCROLL_FOLLOW_FROZEN)
+                         + lea_abs_l(A1, STAGE_START_RECORDS
+                                     + START_RECORD_SPEECH * START_RECORD_LEN)),
+    # The two price plates, which is where "d7 is a sprite and d6 a price field" is read off.
+    "shop price plates": (0x1ca4, move_w_imm_dn(D7, DISPLAY_PRICE1_SPRITE)
+                          + move_w_imm_dn(D6, ITEM1_PRICE) + bsr_w(0x1cac, 0x1cc0)
+                          + move_w_imm_dn(D7, DISPLAY_PRICE2_SPRITE)
+                          + move_w_imm_dn(D6, ITEM2_PRICE) + bsr_w(0x1cb8, 0x1cc0)),
+    # $1cc0: the resource fetch and the price read, and nothing else claimed for it.
+    "shop_render_price_digits": (0x1cc0, clr_w_dn(D4)
+                                 + leaf.mulu_w_imm_dn(D7, RESOURCE_RECORD_BYTES)
+                                 + lea_abs_l(A0, RESOURCE_TABLE)
+                                 + lea_indexed(A1, D7, source=A0) + movea_l_ind(A0, A1)
+                                 + movea_l_abs_l(A1, SHOP_RECORD_PTR)
+                                 + leaf.move_w_indexed_dn(D0, A1, D6)),
+    # ...and $1d1e, whole.
+    "glyph_stamp_8_rows": (GLYPH_STAMP_ENTRY, GLYPH_STAMP_BYTES),
+    # The three gates, whole: they are the only routines the dispatch above can reach.
+    "spawn_gate_unless_bbc8_eq1": (GATE_1_ENTRY, spawn_gate_body(
+        GATE_1_ENTRY, 1, branch_w_to(BEQ_W, 0xe446, GATE_SHARED_RTS))),
+    "spawn_gate_unless_bbc8_eq3": (GATE_3_ENTRY, spawn_gate_body(
+        GATE_3_ENTRY, 3, bcc_s_to(BEQ_W, 0xe45e, GATE_SHARED_RTS))),
+    "spawn_gate_unless_bbc8_eq4": (GATE_4_ENTRY, spawn_gate_body(
+        GATE_4_ENTRY, 4, bcc_s_to(BEQ_W, 0xe474, GATE_SHARED_RTS))),
+    # The shop tail's refusal gate: the sign sprite AND a SIGNED purse compare.
+    "shop refusal gate": (0x1d52, movea_l_abs_l(A0, SHOP_RECORD_PTR)
+                          + cmpi_w_d16(A0, SHOP_SIGN_SPRITE_INTRO, SHOP_SIGN_SPRITE)
+                          + branch_w_to(BNE_W, 0x1d5e, 0x1de0)
+                          + move_w_abs_l_dn(D0, BCD_COUNTER)
+                          + move_w_ind_dn(D1, A0, ITEM2_PRICE)
+                          + cmp_w_dn_dn(D0, D1) + branch_w_to(BGT_W, 0x1d6e, 0x1de0)),
+    # ...and the ORIGINAL's own ending, three instructions on from it.
+    "shop refusal illegal": (0x1d86, cmp_w_imm_dn(D0, 2) + branch_w_to(BEQ_W, 0x1d8a, 0x1db8)
+                             + ILLEGAL),
+    # The boss arm's override: the shift is DEAD, the index is always this offset.
+    "boss bank override": (0x1efa, lsl_w_imm_dn(3, D0) + lea_abs_l(A1, MAP_BANK_TABLE)
+                           + move_w_imm_dn(D0, BOSS_MAP_BANK_OFFSET) + lea_indexed(A1, D0)),
+}
+ENTRY_BYTES.update(SPAWN_ENTRY_BYTES)
+RECORDED_PINS += len(SPAWN_ENTRY_BYTES)
+SPAWN_RECORDED_PINS = 14
+
+
+@pytest.mark.parametrize("label", sorted(SPAWN_ENTRY_BYTES))
+def test_each_spawn_tree_instruction_is_the_one_reconstructed(label):
+    """The tree's own pins, and A SECOND TEST rather than more rows in the one above.
+
+    `@pytest.mark.parametrize` evaluates its argument list when the DECORATOR RUNS, which is when
+    the module is imported and the `def` above is reached — so a table extended BELOW that point
+    adds rows the parametrization never sees. This section's first draft did exactly that:
+    fourteen pins went into `ENTRY_BYTES`, `assert_batch_is_complete` stayed green because it reads
+    the dict at RUN time, and not one of the fourteen was ever compared against the image. The
+    tell was arithmetic — the battery's case count did not move when the pins were added.
+    """
+    assert_pinned_instruction(label)
+
+
+def test_the_spawn_trees_pin_table_still_holds_what_it_was_written_for():
+    """`assert_batch_is_complete` for this section alone, so a pin dropped from the tree's own
+    table shrinks it loudly instead of hiding inside the battery's total."""
+    leaf.assert_batch_is_complete(SPAWN_ENTRY_BYTES, SPAWN_RECORDED_PINS)
+
+
+# --- the tables, before any of them is followed --------------------------------------------------
+
+def gate_table_entry(index):
+    return int.from_bytes(harness.BASE_IMAGE[SPAWN_GATE_TABLE + index * LONGWORD_BYTES:][
+        :LONGWORD_BYTES], "big")
+
+
+@pytest.mark.parametrize("index, name", [(1, "spawn_gate_unless_bbc8_eq1"),
+                                         (2, "spawn_gate_unless_bbc8_eq3"),
+                                         (3, "spawn_gate_unless_bbc8_eq4")])
+def test_each_spawn_gate_table_entry_is_the_routine_names_txt_names(index, name):
+    """The dispatch src/scene.c's SPAWN_GATES array stands for, entry by entry against the image."""
+    assert gate_table_entry(index) == leaf.entry_of(name), (
+        f"spawn gate {index} is {gate_table_entry(index):#x}, not {name}")
+
+
+def test_the_spawn_gate_table_entry_zero_is_not_an_address():
+    """Slot 0 is the reason the dispatcher returns on a script byte of zero BEFORE it scales one:
+    the longword there is data, and following it would run the image at $2140202."""
+    assert gate_table_entry(0) == SPAWN_GATE_ENTRY_0, (
+        f"entry 0 is {gate_table_entry(0):#x}, not the {SPAWN_GATE_ENTRY_0:#x} src/scene.c's NULL "
+        f"stands for")
+    assert not loader.LOAD_BASE <= gate_table_entry(0) < loader.PROGRAM_END, (
+        "entry 0 names an address inside the program after all")
+
+
+def test_the_spawn_gate_table_is_bounded_by_its_own_first_target():
+    """FOUR entries and not five: the table ends exactly where $e43e, the first thing it names,
+    begins — the same self-bounding reading the other three dispatch tables get."""
+    assert SPAWN_GATE_TABLE + SPAWN_GATE_COUNT * LONGWORD_BYTES == leaf.entry_of(
+        "spawn_gate_unless_bbc8_eq1")
+
+
+def test_the_battery_refuses_a_gate_index_outside_the_table():
+    """The refusal src/scene.c makes, stated — the same shape as
+    `test_the_battery_refuses_an_exit_action_offset_outside_the_table` one table over, and named as
+    a COVERAGE HOLE for the same reason. An index of 4 or more makes the original `jsr` through a
+    longword outside the four entries; there is no C for calling that, so it is an input this file
+    declines, and batch 41 phase B's sweep duly turned the port's `>=` into a `>` and nothing here
+    caught it, because nothing here can.
+
+    WHAT IS DIFFERENT FROM THAT ONE, and it is why this table needed no offset arithmetic: the
+    index is a script BYTE, so `lsl.w #2` tops out at 1020 and the sign-extended offset can never
+    wrap back into the table. The aliasing that gives WB_SCENE_EXIT_ACTION_TABLE 24 extra live
+    indices has no analogue here — asserted rather than asserted-by-omission.
+    """
+    assert 0xff * LONGWORD_BYTES < 0x8000, (
+        "a byte index times four could reach a NEGATIVE sign-extended offset after all, so the "
+        "port's guard would need the exit-action table's offset arithmetic")
+    past = int.from_bytes(harness.BASE_IMAGE[SPAWN_GATE_TABLE
+                                             + SPAWN_GATE_COUNT * LONGWORD_BYTES:][:LONGWORD_BYTES],
+                          "big")
+    assert not any(past == leaf.entry_of(name) for name in
+                   ("spawn_gate_unless_bbc8_eq1", "spawn_gate_unless_bbc8_eq3",
+                    "spawn_gate_unless_bbc8_eq4")), (
+        f"{past:#x} past the table IS one of the three targets, so the bound would be wrong")
+
+
+def test_the_three_gates_are_reachable_only_through_the_table():
+    """A whole-image scan of both absolute JSR/JMP encodings and of every word-displacement branch
+    finds NO instruction naming any of the three — so the dispatch is their only entrance, which is
+    what makes closing the table close the routines."""
+    program = bytes(harness.BASE_IMAGE[:loader.PROGRAM_END])
+    for name in ("spawn_gate_unless_bbc8_eq1", "spawn_gate_unless_bbc8_eq3",
+                 "spawn_gate_unless_bbc8_eq4"):
+        target = leaf.entry_of(name)
+        for at in range(loader.LOAD_BASE, loader.PROGRAM_END - LONGWORD_BYTES, 2):
+            head = int.from_bytes(program[at:at + WORD_BYTES], "big")
+            operand = int.from_bytes(program[at + WORD_BYTES:at + WORD_BYTES + LONGWORD_BYTES],
+                                     "big")
+            assert not (head in (leaf.JSR_ABS_L, leaf.JMP_ABS_L)
+                        and operand == target), (
+                f"{name} is reached by a direct call at {at:#x}, not only through the table")
+            if 0x6000 <= head <= 0x6fff and (head & 0xff) == 0:
+                displacement = s16(int.from_bytes(program[at + WORD_BYTES:at + 2 * WORD_BYTES],
+                                                  "big"))
+                assert at + WORD_BYTES + displacement != target, (
+                    f"{name} is branched to at {at:#x}, not only reached through the table")
+
+
+def test_the_map_bank_table_is_bounded_and_ships_its_own_entries():
+    """SEVEN entries and not eight, which is a correction this battery MADE rather than checked: the
+    table ends exactly where WB_RECORD_PTR_10420 begins, and an eighth entry would BE that pointer
+    and the copy beside it. Unlike the descriptor and shop tables this one's contents are in the
+    .PRG, and all seven are live."""
+    assert MAP_BANK_TABLE + MAP_BANK_COUNT * MAP_BANK_BYTES == DESCRIPTOR_PTR
+    assert DESCRIPTOR_PTR + 2 * LONGWORD_BYTES == SHOP_RECORD_TABLE
+    entries = [(int.from_bytes(harness.BASE_IMAGE[MAP_BANK_TABLE + i * MAP_BANK_BYTES:][:4], "big"),
+                int.from_bytes(harness.BASE_IMAGE[MAP_BANK_TABLE + i * MAP_BANK_BYTES
+                                                  + MAP_BANK_TILES:][:4], "big"))
+               for i in range(MAP_BANK_COUNT)]
+    assert all(0 < m < loader.PROGRAM_END and t == m + SHIPPED_BANK_SPAN for m, t in entries), (
+        f"the shipped bank entries are not (map, map + $a4) pairs inside the program: {entries}")
+    assert BOSS_MAP_BANK_OFFSET % MAP_BANK_BYTES == 0 and (
+        BOSS_MAP_BANK_OFFSET // MAP_BANK_BYTES) < MAP_BANK_COUNT, (
+        "the boss arm's hard-coded offset does not name one of the seven entries")
+
+
+def test_the_a30_table_ends_in_the_terminator_the_free_loop_stops_on():
+    """`cmpi.l #$ffffffff,(a2)` is the free loop's ONLY exit, and the longword it stops on is
+    shipped: WB_ACTOR_TABLE_A30 plus its nineteen records lands exactly on it, four bytes below
+    WB_ACTOR_TABLE_A32. That is also why every case below re-plants it — this battery's own
+    address-keyed bands reach over it."""
+    assert TABLE_A30_END == TABLE_A32 - LONGWORD_BYTES
+    assert int.from_bytes(harness.BASE_IMAGE[TABLE_A30_END:TABLE_A30_END + LONGWORD_BYTES],
+                          "big") == ACTOR_TABLE_END
+
+
+def test_the_glyph_row_is_two_masked_groups():
+    """WB_GLYPH_STAMP_ROW_BYTES is a literal in the header (test/layout.py scrapes plain integers
+    only), so the derivation it claims is asserted here instead: three plane steps and the row skip.
+    The two rewinds follow from it, and the pin above compares both against the image's own `lea`s."""
+    assert GLYPH_ROW_BYTES == (PLANES - 1) * GLYPH_PLANE_STEP + GLYPH_ROW_SKIP
+    assert GLYPH_NEXT_ODD - GLYPH_NEXT_EVEN == GLYPH_ROW_BYTES // 2 - GLYPH_PLANE_STEP, (
+        "the odd cursor's step does not land on the next 10-byte group's even byte")
+
+
+def test_the_start_records_the_three_arms_name_are_the_shipped_ones():
+    """Each arm `lea`s a literal, and this is what says which of WB_STAGE_START_RECORDS' five it
+    is — including the speech arm's, whose tune byte is the NEGATIVE one, so entering a speech scene
+    STOPS the sound module where the other two arms start a song."""
+    for index, expected in ((START_RECORD_BOSS, 0x1d40c), (START_RECORD_SHOP, 0x1d416),
+                            (START_RECORD_SHOP_ALT, 0x1d420), (START_RECORD_SPEECH, 0x1d42a)):
+        assert STAGE_START_RECORDS + index * START_RECORD_LEN == expected
+    speech_tune = harness.BASE_IMAGE[STAGE_START_RECORDS
+                                     + START_RECORD_SPEECH * START_RECORD_LEN + START_TUNE]
+    assert speech_tune & 0x80, "the speech arm's record no longer stops the sound module"
+    for index in (START_RECORD_BOSS, START_RECORD_SHOP, START_RECORD_SHOP_ALT):
+        tune = harness.BASE_IMAGE[STAGE_START_RECORDS + index * START_RECORD_LEN + START_TUNE]
+        assert not tune & 0x80, f"start record {index} no longer starts a song"
+
+
+# --- $e43e / $e456 / $e46c: the three gates, entered directly ------------------------------------
+
+GATE_INSN_CAP = 8                 # five instructions on the writing arm, plus the runner's sentinel
+_GATES = {name: leaf.register_glue(name, [ctypes.c_uint32])
+          for name in ("spawn_gate_unless_bbc8_eq1", "spawn_gate_unless_bbc8_eq3",
+                       "spawn_gate_unless_bbc8_eq4")}
+# The cursor is the descriptor byte the caller has just consumed, so it is ODD — which is what puts
+# the gate's word write at 1(a1) on an even address.
+GATE_CURSOR = DESCRIPTOR + wb("SCENE_GATE_INDEX") + 1
+GATE_KEEP = {"spawn_gate_unless_bbc8_eq1": 1, "spawn_gate_unless_bbc8_eq3": 3,
+             "spawn_gate_unless_bbc8_eq4": 4}
+
+
+def gate_pokes(case, bbc8):
+    """The descriptor band the gate writes into, plus the icon byte it compares."""
+    salt = case_salt(case)
+    return {DESCRIPTOR: keyed_block(DESCRIPTOR, RECORD_BYTES, salt),
+            HUD_SLOT_BBC8: bytes([bbc8])}
+
+
+@pytest.mark.parametrize("name", sorted(GATE_KEEP))
+def test_a_gate_whose_icon_matches_writes_nothing(name):
+    """`cmpi.b #n,$bbc8.l / beq` — the arm that leaves the descriptor's script alone."""
+    case = f"{name} matched"
+    info = leaf.run(name, _GATES[name](GATE_CURSOR), (), case,
+                    regs={"a1": GATE_CURSOR, "_pokes": gate_pokes(case, GATE_KEEP[name])},
+                    max_insns=GATE_INSN_CAP)
+    assert not leaf.program_writes(info), f"{case}: the matching arm wrote {leaf.program_writes(info)}"
+
+
+@pytest.mark.parametrize("name", sorted(GATE_KEEP))
+@pytest.mark.parametrize("bbc8", (0, 2, 5, 0xff))
+def test_a_gate_whose_icon_does_not_match_rewrites_the_script(name, bbc8):
+    """The three bytes the mismatch leaves: WB_SPAWN_GATE_REFUSED_SCRIPT over the speech index the
+    caller reads next, and a zero word over WB_SCENE_EXIT_ACTION behind it."""
+    if bbc8 == GATE_KEEP[name]:
+        pytest.skip("that byte is this gate's own")
+    case = f"{name} against {bbc8:#04x}"
+    info = leaf.run(name, _GATES[name](GATE_CURSOR), [(GATE_CURSOR, 3)], case,
+                    regs={"a1": GATE_CURSOR, "_pokes": gate_pokes(case, bbc8)},
+                    max_insns=GATE_INSN_CAP)
+    leaf.assert_written_is(info, {GATE_CURSOR: bytes([SPAWN_GATE_REFUSED_SCRIPT]),
+                                  GATE_CURSOR + 1: word(0)}, case)
+
+
+def test_the_gate_writes_the_descriptors_own_exit_action_word():
+    """The word at 1(a1) is not an anonymous neighbour: the cursor is WB_SCENE_GATE_INDEX + 1, so
+    the two bytes behind the script index are WB_SCENE_EXIT_ACTION — the word $dfbe dispatches on
+    when the scene is left."""
+    assert GATE_CURSOR + 1 == DESCRIPTOR + SCENE_EXIT_ACTION
+
+
+# --- $1d1e: one glyph column ---------------------------------------------------------------------
+
+GLYPH_INSN_CAP = 96               # 2 + 8 * (4 writes + 3 steps + a row step + the `dbf`) + 5 + 1
+_GLYPH_STAMP = leaf.register_glue("glyph_stamp_8_rows", [ctypes.c_uint32] * 2, ctypes.c_uint32)
+
+
+def glyph_write_addresses(cursor):
+    """Where the eight rows of four plane bytes land, walked the way the routine walks them."""
+    at = cursor + GLYPH_MASK_BYTES
+    for _ in range(DIGIT_ROWS):
+        for plane in range(PLANES):
+            yield at
+            at += GLYPH_PLANE_STEP if plane + 1 < PLANES else GLYPH_ROW_SKIP
+
+
+def glyph_next_cursor(cursor):
+    return cursor + (GLYPH_NEXT_ODD if cursor & 1 else GLYPH_NEXT_EVEN)
+
+
+@pytest.mark.parametrize("column", range(PRICE_DIGITS))
+def test_the_glyph_stamp_lays_a_column_and_returns_the_next(column):
+    """One shipped glyph into a seeded sprite, at each of the four cursors a price walks — the two
+    byte columns of the first 10-byte group and then of the second. The write set is stated exactly
+    and the returned cursor is compared against the ORACLE's own a0, not against a model of it."""
+    case = f"glyph stamp column {column}"
+    cursor = PRICE_SPRITE_A + [0, 1, GLYPH_ROW_BYTES // 2, GLYPH_ROW_BYTES // 2 + 1][column]
+    glyph = DIGIT_GLYPHS_ALT + column * DIGIT_GLYPH_LEN
+    pokes = {PRICE_SPRITE_A: keyed_block(PRICE_SPRITE_A, PRICE_SPRITE_LEN, case_salt(case))}
+    source = bytes(harness.BASE_IMAGE[glyph:glyph + DIGIT_ROWS * PLANES])
+
+    info = leaf.run("glyph_stamp_8_rows", _GLYPH_STAMP(cursor, glyph),
+                    [(PRICE_SPRITE_A, PRICE_SPRITE_LEN)], case,
+                    regs={"a0": cursor, "a1": glyph, "_pokes": pokes},
+                    max_insns=GLYPH_INSN_CAP)
+    leaf.assert_written_is(info, {at: bytes([source[i]])
+                                  for i, at in enumerate(glyph_write_addresses(cursor))}, case)
+    assert info["regs"]["a0"] == glyph_next_cursor(cursor), (
+        f"{case}: the original left a0 at {info['regs']['a0']:#x}")
+    assert info["ret"] == info["regs"]["a0"], (
+        f"{case}: the reconstruction returned {info['ret']:#x}")
+
+
+def test_the_four_glyph_cursors_close_on_the_next_row_of_groups():
+    """The four columns a price occupies are the two byte columns of each of the row's two groups,
+    and the fourth hands back a cursor exactly WB_GLYPH_STAMP_ROW_BYTES on — which is what says the
+    row is two groups and the sprite 32 pixels wide."""
+    cursor = PRICE_SPRITE_A
+    for _ in range(PRICE_DIGITS):
+        cursor = glyph_next_cursor(cursor)
+    assert cursor == PRICE_SPRITE_A + GLYPH_ROW_BYTES
+
+
+# --- $1cc0: the price plates ---------------------------------------------------------------------
+
+PRICE_INSN_CAP = 8 * PRICE_DIGITS + PRICE_DIGITS * GLYPH_INSN_CAP + 16
+_PRICE = leaf.register_glue("shop_render_price_digits", [ctypes.c_uint32] * 2)
+
+
+def resource_entry(index):
+    return RESOURCE_TABLE + index * RESOURCE_RECORD_BYTES
+
+
+def price_pokes(case, price, field, sprite=PRICE_SPRITE_A,
+                resource=DISPLAY_PRICE1_SPRITE):
+    """The resource record whose first longword is the sprite, the shop record the price is read
+    out of, and the sprite itself. All three lie past the program and are the case's own."""
+    salt = case_salt(case)
+    return leaf.overlay(
+        {SHOP_RECORD: keyed_block(SHOP_RECORD, SHOP_RECORD_BYTES, salt)},
+        {sprite: keyed_block(sprite, PRICE_SPRITE_LEN, salt),
+         resource_entry(resource): longword(sprite),
+         SHOP_RECORD_PTR: longword(SHOP_RECORD),
+         SHOP_RECORD + field: word(price)})
+
+
+def price_glyph_sources(price):
+    """The four glyphs the digits select, most significant nibble first, with a leading zero drawn
+    from WB_TEXT_GLYPH_TABLE's first glyph (the SPACE) until a nonzero one has been seen."""
+    significant = False
+    for shift in range(PRICE_DIGITS - 1, -1, -1):
+        nibble = (price >> (shift * PRICE_NIBBLE_BITS)) & 0xf
+        if nibble == 0 and not significant:
+            yield TEXT_GLYPH_TABLE
+            continue
+        significant = True
+        yield DIGIT_GLYPHS_ALT + nibble * DIGIT_GLYPH_LEN
+
+
+def price_plate_writes(sprite, price):
+    """Every byte one price plate leaves, as {address: bytes} — the four glyph columns the digits
+    select, taken from the SHIPPED fonts.
+
+    A MODEL and not a difference helper: it is derived from `harness.BASE_IMAGE` and this battery's
+    own geometry, so it states what the plate should hold independently of what either core wrote.
+    Three cases walked it identically before it was extracted.
+    """
+    written = {}
+    cursor = sprite
+    for glyph in price_glyph_sources(price):
+        source = bytes(harness.BASE_IMAGE[glyph:glyph + DIGIT_ROWS * PLANES])
+        for i, at in enumerate(glyph_write_addresses(cursor)):
+            written[at] = bytes([source[i]])
+        cursor = glyph_next_cursor(cursor)
+    return written
+
+
+@pytest.mark.parametrize("price", (0x0000, 0x0001, 0x0100, 0x1234, 0x9999, 0xffff, 0x0f0f))
+def test_the_price_plate_draws_four_digits_with_leading_zeros_blanked(price):
+    """Every byte of the sprite, stated exactly: four glyph columns whose sources the leading-zero
+    latch chooses. A price of zero draws four SPACES, and a price with an interior zero draws that
+    one as a digit — which is the whole of what the latch is for."""
+    case = f"price plate {price:#06x}"
+    pokes = price_pokes(case, price, ITEM1_PRICE)
+    written = price_plate_writes(PRICE_SPRITE_A, price)
+
+    info = leaf.run("shop_render_price_digits", _PRICE(DISPLAY_PRICE1_SPRITE, ITEM1_PRICE),
+                    [(PRICE_SPRITE_A, PRICE_SPRITE_LEN)], case,
+                    regs={"d7": DISPLAY_PRICE1_SPRITE, "d6": ITEM1_PRICE, "_pokes": pokes},
+                    max_insns=PRICE_INSN_CAP)
+    leaf.assert_written_is(info, written, case)
+
+
+@pytest.mark.parametrize("resource, field, sprite", [(DISPLAY_PRICE1_SPRITE, ITEM1_PRICE,
+                                                      PRICE_SPRITE_A),
+                                                     (DISPLAY_PRICE2_SPRITE, ITEM2_PRICE,
+                                                      PRICE_SPRITE_B)])
+def test_each_price_plate_reads_its_own_field_and_draws_its_own_sprite(resource, field, sprite):
+    """The two call sites differ only in d7 and d6, so this is what says which resource carries
+    which price: seed the OTHER field with a value that would be visible and require the run to have
+    ignored it."""
+    case = f"price plate resource {resource:#x}"
+    pokes = leaf.overlay(price_pokes(case, 0x1234, field, sprite, resource),
+                         {SHOP_RECORD + (ITEM2_PRICE if field == ITEM1_PRICE else ITEM1_PRICE):
+                          word(0x5678)})
+    written = price_plate_writes(sprite, 0x1234)
+
+    info = leaf.run("shop_render_price_digits", _PRICE(resource, field), [(sprite,
+                                                                           PRICE_SPRITE_LEN)], case,
+                    regs={"d7": resource, "d6": field, "_pokes": pokes},
+                    max_insns=PRICE_INSN_CAP)
+    leaf.assert_written_is(info, written, case)
+
+
+# --- $19ac, whole: the three arms end to end -----------------------------------------------------
+#
+# Every case here is a FULL RUN: the arm, its display records, its gate, its message, the marker
+# clear, the 2x2 stamp and the whole stage reload, ending at the original's own `rts`. The one
+# exception is the fourth refusal, which ends at the ORIGINAL's `illegal` and is checkpointed.
+
+# Where the script cursor stands after each read, derived rather than restated: the head consumes
+# the kind word, each arm then two triples of three words, and the two script BYTES follow them.
+SPAWN_TRIPLE_WORDS = 3
+SPAWN_SCRIPT_FIRST = SCENE_KIND + WORD_BYTES
+GATE_INDEX_AT = SPAWN_SCRIPT_FIRST + 2 * SPAWN_TRIPLE_WORDS * WORD_BYTES
+SPEECH_INDEX_AT = GATE_INDEX_AT + 1
+# ...and the same two offsets as the header names them. The derivation above comes from WALKING the
+# cursor and the constants come from the descriptor block, so requiring them equal is two
+# independent readings of the same two bytes rather than one restated.
+assert (GATE_INDEX_AT, SPEECH_INDEX_AT) == (wb("SCENE_GATE_INDEX"), wb("SCENE_SPEECH_INDEX")), (
+    "the cursor walk and include/wonderboy.h disagree about where the two script bytes are")
+# ...and the second triple, whose LAST TWO WORDS the boss arm reads instead — `lea 8(a0),a0` off a
+# cursor it rebuilt at descriptor+4, so +12 (which it discards) and +14 (the message id).
+SPAWN_TRIPLE_2 = SPAWN_SCRIPT_FIRST + SPAWN_TRIPLE_WORDS * WORD_BYTES
+BOSS_DEAD_WORD_AT = SPAWN_TRIPLE_2 + WORD_BYTES
+BOSS_MESSAGE_AT = SPAWN_TRIPLE_2 + 2 * WORD_BYTES
+
+SPAWN_CAP = LOAD_WINDOW_INSN_CAP + 512
+SPAWN_SHOP_CAP = LOAD_WINDOW_INSN_CAP + 2 * PRICE_DIGITS * GLYPH_INSN_CAP + 512
+_SPAWN = leaf.image_glue("scene_spawn_from_script", ctypes.c_uint32)
+
+# Every byte the tree itself may touch, as a BOUND: the stray check is what catches a write outside
+# it, and the byte-for-byte diff is what pins the values. WB_SCENE_MAP_BANK_TABLE and the resource
+# records are read-only here and deliberately absent.
+SPAWN_OWN_BYTES = (
+    set(range(TABLE_A30, TABLE_A30_END))
+    | set(range(TABLE_A32, TABLE_A32 + TABLE_A30_SLOTS * RECORD_BYTES))
+    | set(range(SPAWN_GATE_SLOT, SPAWN_GATE_SLOT + WORD_BYTES))
+    | set(range(SCROLL_FOLLOW_FROZEN, SCROLL_FOLLOW_FROZEN + WORD_BYTES))
+    | set(range(FLAG_A30, STATE_FLAG_A34 + WORD_BYTES))
+    | set(range(PANEL_FRAME_HOLD, PANEL_FRAME_HOLD + WORD_BYTES))
+    | set(range(MESSAGE_PENDING, MARKER_CELL_PTR + LONGWORD_BYTES))
+    | set(range(TEXT_REQUEST, TEXT_LIFETIME_REQUEST + WORD_BYTES))
+    | set(range(SCRIPT_CURSOR, SCRIPT_CURSOR + LONGWORD_BYTES))
+    | set(range(SHOP_RECORD_PTR, SHOP_RECORD_PTR + LONGWORD_BYTES))
+    | set(range(DESCRIPTOR, DESCRIPTOR + RECORD_BYTES))
+    | set(range(SHOP_RECORD, SHOP_RECORD + SHOP_RECORD_BYTES))
+    | set(range(MAP_ROW_STRIDE, MAP_ROW_STRIDE + MAP_BAND_LEN))
+    | set(range(MARKER_CELL - 1, MARKER_CELL + 2))
+    | set(range(PRICE_SPRITE_A, PRICE_SPRITE_A + PRICE_SPRITE_LEN))
+    | set(range(PRICE_SPRITE_B, PRICE_SPRITE_B + PRICE_SPRITE_LEN)))
+
+_LOAD_WINDOW_BYTES = {}
+
+
+def load_window_bytes(start):
+    """Every address `stage_load_window` writes for one start record, out of test_stage.py's own
+    model. Cached per record because the ADDRESSES do not depend on a case's salt — only the values
+    do, and this set is only ever used as a bound."""
+    if start not in _LOAD_WINDOW_BYTES:
+        seeds = load_window_pokes(f"spawn bands {start:#x}", start, RAW_TILE_BANK, True,
+                                  LATCH_UNMATCHED)
+        image = harness.make_image(seeds)
+        _LOAD_WINDOW_BYTES[start] = leaf.seeded_bytes(
+            model_load_window(image, start, RAW_TILE_BANK, True, LATCH_UNMATCHED))
+    return _LOAD_WINDOW_BYTES[start]
+
+
+def spawn_start_record(index):
+    return STAGE_START_RECORDS + index * START_RECORD_LEN
+
+
+def bank_pokes(chosen):
+    """All seven entries, and only the CHOSEN one names the map this case seeds — so an arm that
+    indexed the table wrongly would load a different (unseeded, all-zero) map and diverge. The other
+    six step DOWN from it, clear of test_stage.py's tile bank above."""
+    return {MAP_BANK_TABLE + i * MAP_BANK_BYTES:
+            longword(STAGE_MAP if i == chosen else STAGE_MAP - (i + 1) * UNCHOSEN_MAP_STEP)
+            + longword(RAW_TILE_BANK)
+            for i in range(MAP_BANK_COUNT)}
+
+
+def spawn_pokes(case, start, *, bank=0, bbc8=0, stage=0, words=(), bytes_=()):
+    """The scene battery's own bands, test_stage.py's whole stage-reload seed, and the tables the
+    tree reads on top of both.
+
+    THE A30 TABLE'S TERMINATOR IS RE-PLANTED LAST, and it has to be: this battery's address-keyed
+    band around WB_ACTOR_TABLE_A32 reaches back over the shipped $ffffffff four bytes below it, and
+    without the terminator the free loop has no exit at all.
+    """
+    salt = case_salt(case)
+    scene = pokes(case, words=words, bytes_=tuple(bytes_) + ((HUD_SLOT_BBC8, bbc8),))
+    window = load_window_pokes(case, start, RAW_TILE_BANK, False, LATCH_UNMATCHED)
+    tables = dict(bank_pokes(bank))
+    tables.update({
+        resource_entry(DISPLAY_PRICE1_SPRITE): longword(PRICE_SPRITE_A),
+        resource_entry(DISPLAY_PRICE2_SPRITE): longword(PRICE_SPRITE_B),
+        PRICE_SPRITE_A: keyed_block(PRICE_SPRITE_A, PRICE_SPRITE_LEN, salt),
+        PRICE_SPRITE_B: keyed_block(PRICE_SPRITE_B, PRICE_SPRITE_LEN, salt),
+        STAGE_NUMBER: word(stage),
+        SPAWN_GATE_SLOT: word(~FREE_MARKER & WORD_MASK),
+        # ...and every FIXED word the tree writes, seeded with something no arm can leave. Without
+        # this a store of ZERO over a shipped zero is invisible, and batch 41 phase B's sweep proved
+        # it: `a34-not-cleared` survived until these went in. It is the same substitute for the
+        # attribution pass that `pokes` makes with SEED_TEXT_REQUEST, one tier up.
+        FLAG_A30: word(0), FLAG_A32: word(0), STATE_FLAG_A34: word(SEED_UNEXPECTED),
+        PANEL_FRAME_HOLD: word(SEED_UNEXPECTED),
+        MESSAGE_PENDING: word(0), ACK_WAIT: word(0),
+        GREET_COUNTDOWN: word(SEED_UNEXPECTED),
+        SCRIPT_CURSOR: longword(SEED_UNEXPECTED),
+        TABLE_A30: keyed_block(TABLE_A30, TABLE_A30_END - TABLE_A30, salt),
+        TABLE_A30_END: longword(ACTOR_TABLE_END),
+    })
+    return leaf.overlay(scene, window, tables)
+
+
+def run_spawn(case, seeds, start, expected_exit=EXIT_RETURN, cap=SPAWN_CAP, reaches_hinge=True,
+              visited=(), not_visited=(), extra_allowed=frozenset()):
+    """One `scene_spawn_from_script` case. Poison is off for `run_frame`'s reason: the tree's own
+    outputs include the pointers the hinge then reads its start record and its map back through.
+
+    THE TWO ENDINGS THAT ARE NOT RETURNS take a NEGATIVE witness rather than `run_reaching`'s
+    positive one, and the README's rule is why: each stands for an instruction with nothing below it
+    on its own path, and the instruction above it runs on a path that RETURNS as well. So the case
+    names an instruction only the returning path reaches and requires it NOT to have run, which with
+    the checkpoint is exact; ``visited`` carries the positive half where there is one.
+    """
+    allowed = merge_bands(SPAWN_OWN_BYTES | set(extra_allowed)
+                          | (load_window_bytes(start) if reaches_hinge else set()))
+    how = dict(regs={"_pokes": seeds}, max_insns=cap, poison=False,
+               stop_pc=STOP_PC_FOR.get(expected_exit, 0),
+               psg_seed={PSG_REG_MIXER: PLAY_SONG_MIXER})
+    if not visited and not_visited == ():
+        # The bitset costs a write per instruction and most cases ask it nothing; the two endings
+        # that are not returns are the ones that do.
+        info = leaf.run("scene_spawn_from_script", _SPAWN, allowed, case, **how)
+    else:
+        with leaf.pc_coverage():
+            info = leaf.run("scene_spawn_from_script", _SPAWN, allowed, case, **how)
+            for at in visited:
+                assert emu.cov_visited(at), f"{case}: the run never executed {at:#x}"
+            for at in not_visited:
+                assert not emu.cov_visited(at), (
+                    f"{case}: the run executed {at:#x}, so it did not take the ending this case "
+                    f"names")
+    assert info["ret"] == expected_exit, (
+        f"{case}: the reconstruction reported exit {info['ret']}")
+    return info
+
+
+def spawn_record(info, slot, table=None):
+    """One display record's (x, y, type, sprite), read back out of the ORACLE's write set — so a
+    field the original never wrote fails outright rather than reading as the seed."""
+    at = (TABLE_A30 if table is None else table) + slot * RECORD_BYTES
+    return tuple(leaf.read_int(info, at + off, WORD_BYTES, f"slot {slot}")
+                 for off in (ACTOR_X, wb("ACTOR_Y"), ACTOR_TYPE, ACTOR_SPRITE))
+
+
+@pytest.mark.parametrize("kind", (0, 3, KIND_BOSS + 1, 0xffff))
+def test_a_kind_the_ladder_does_not_name_falls_through_its_own_rts(kind):
+    """The head marks WB_SCENE_SPAWN_GATE_SLOT free whichever arm runs, so an unnamed kind leaves
+    that word and nothing else — AND THEN RETURNS THROUGH THE SAVED a0, which is what this case
+    exists to state. The three arms each end in `movea.l (a7)+,a0`; the ladder's fall-through does
+    not, so the `rts` at $19e0 takes the longword the FIRST instruction pushed.
+
+    THE ORACLE IS WHAT FOUND IT: the first draft of this case expected a plain return and the run
+    went 686,638 instructions without reaching one.
+    """
+    case = f"spawn kind {kind:#x}"
+    start = spawn_start_record(START_RECORD_SPEECH)
+    seeds = spawn_pokes(case, start, words=((DESCRIPTOR + SCENE_KIND, kind),))
+    info = run_spawn(case, seeds, start,
+                     expected_exit=EXIT_WILD_RETURN, reaches_hinge=False,
+                     visited=(LAST_KIND_TEST,), not_visited=SPAWN_ARMS)
+    leaf.assert_written_is(info, {SPAWN_GATE_SLOT: word(FREE_MARKER)}, case)
+
+
+def test_only_the_three_arms_pop_the_a0_the_head_pushed():
+    """The defect above, read off the bytes rather than off the run: `move.l a0,-(a7)` at the entry,
+    exactly THREE `movea.l (a7)+,a0` in the whole tree — one per arm — and the `rts` at $19e0 is not
+    behind any of them."""
+    pops = [at for at in range(0x19ac, 0x1f36, 2)
+            if bytes(harness.BASE_IMAGE[at:at + WORD_BYTES]) == movea_l_postinc(A0, 7)]
+    assert pops == [0x1aec, 0x1ea4, 0x1f30], f"the tree's stack pops moved: {[hex(a) for a in pops]}"
+    assert bytes(harness.BASE_IMAGE[WILD_RETURN_PC:WILD_RETURN_PC + WORD_BYTES]) == RTS
+
+
+# --- kind 1: the speech scene --------------------------------------------------------------------
+
+# The two triples of descriptor words the arm builds its three records out of. Plain numbers, in the
+# order the cursor reads them: sprite, then x, then y.
+SPEECH_TRIPLE_1 = (0x120, 0x0044, 0x0028)
+SPEECH_TRIPLE_2 = (0x131, 0x00a0, 0x0030)
+GATE_ICON = {1: 1, 2: 3, 3: 4}    # which WB_HUD_SLOT_BBC8 value each table entry keeps the script for
+
+
+def effective_speech_index(gate, speech, bbc8):
+    """Which speech script actually runs: the descriptor's own byte unless a dispatched gate found
+    the wrong icon, in which case WB_SPAWN_GATE_REFUSED_SCRIPT has replaced it BEFORE the read."""
+    if gate in GATE_ICON and bbc8 != GATE_ICON[gate]:
+        return SPAWN_GATE_REFUSED_SCRIPT
+    return speech
+
+
+def shipped_script(index):
+    """(pointer, first id) of one of the eight shipped speech scripts — the game's own bytes."""
+    pointer = int.from_bytes(harness.BASE_IMAGE[SCRIPT_TABLE + index * LONGWORD_BYTES:][
+        :LONGWORD_BYTES], "big")
+    return pointer, harness.BASE_IMAGE[pointer]
+
+
+def speech_seeds(case, *, gate=0, speech=0, bbc8=0, stage=0, bank=0,
+                 triple=SPEECH_TRIPLE_1, triple2=SPEECH_TRIPLE_2):
+    words = ((DESCRIPTOR + SCENE_KIND, KIND_SPEECH), (DESCRIPTOR + MAP_BANK_INDEX, bank))
+    words += tuple((DESCRIPTOR + SPAWN_SCRIPT_FIRST + i * WORD_BYTES, value)
+                   for i, value in enumerate(triple))
+    words += tuple((DESCRIPTOR + SPAWN_TRIPLE_2 + i * WORD_BYTES, value)
+                   for i, value in enumerate(triple2))
+    start = spawn_start_record(START_RECORD_SPEECH)
+    # (seeds, start) like `shop_seeds`, so a case cannot pair one arm's seeds with another arm's
+    # start record — the model `run_spawn` derives its allowed bands from is keyed on that record.
+    return spawn_pokes(case, start, bank=bank, bbc8=bbc8, stage=stage, words=words,
+                       bytes_=((DESCRIPTOR + GATE_INDEX_AT, gate),
+                               (DESCRIPTOR + SPEECH_INDEX_AT, speech))), start
+
+
+def assert_speech_records(info, case, triple, triple2, late):
+    """The three records, and the pair mechanism inside the first two: one sprite and one x apart."""
+    sprite, x, y = triple
+    first = LATE_STAGE_SPRITE if late else sprite
+    assert spawn_record(info, 0) == (x, y, 0, first), case
+    assert spawn_record(info, 1) == ((x + SPAWN_PAIR_DX) & WORD_MASK, y, 0,
+                                     (first + 1) & WORD_MASK), case
+    assert spawn_record(info, 2) == (triple2[1], triple2[2], 0, triple2[0]), case
+
+
+def assert_rest_of_table_is_free(info, case, first_slot):
+    """Every slot from `first_slot` up to the terminator marked free AGAIN, after the records."""
+    for slot in range(first_slot, TABLE_A30_SLOTS):
+        at = TABLE_A30 + slot * RECORD_BYTES + ACTOR_X
+        assert leaf.read_int(info, at, WORD_BYTES, case) == FREE_MARKER, (
+            f"{case}: slot {slot} is not free")
+
+
+@pytest.mark.parametrize("speech", range(SCRIPT_COUNT))
+def test_the_speech_arm_posts_the_shipped_script_its_byte_names(speech):
+    """Each of the eight scripts the .PRG carries, driven through the whole arm: three records, the
+    rest of the table freed, the id posted with the INFINITE lifetime, the cursor advanced past it,
+    and the stage reloaded. Nothing here seeds a script — these are the game's own bytes."""
+    case = f"speech script {speech}"
+    seeds, start = speech_seeds(case, speech=speech)
+    info = run_spawn(case, seeds, start)
+    pointer, first_id = shipped_script(speech)
+    assert_speech_records(info, case, SPEECH_TRIPLE_1, SPEECH_TRIPLE_2, late=False)
+    assert_rest_of_table_is_free(info, case, 3)
+    assert leaf.read_int(info, TEXT_REQUEST, 1, case) == first_id, case
+    assert leaf.read_int(info, TEXT_LIFETIME_REQUEST, WORD_BYTES, case) == SPEECH_LIFETIME_HELD
+    assert leaf.read_int(info, SCRIPT_CURSOR, LONGWORD_BYTES, case) == pointer + 1, case
+    assert leaf.read_int(info, SPAWN_GATE_SLOT, WORD_BYTES, case) == FREE_MARKER
+    assert leaf.read_int(info, FLAG_A30, WORD_BYTES, case) == STATE_FLAG_SET
+    assert leaf.read_int(info, SCROLL_FOLLOW_FROZEN, WORD_BYTES, case) == FROZEN_SET
+
+
+# Two records past where the table's terminator ships, so the free loop walks past everything
+# `actor_table_reset` covered. $9e30 itself has to stop being the terminator for that to happen.
+MOVED_TERMINATOR = TABLE_A30_END + 2 * RECORD_BYTES
+
+
+def test_the_free_loop_runs_past_what_the_reset_covered():
+    """THE LOOP IS INVISIBLE WHILE THE TERMINATOR SITS WHERE IT SHIPS, and this case is what makes
+    it visible. `actor_table_reset` has already written WB_ACTOR_FREE_MARKER over every slot from 3
+    up to $9e30, so the arm's second pass re-writes the same word at the same addresses and deleting
+    it changes nothing a differential can see — batch 41 phase B's sweep duly reported
+    `free-loop-skipped` as a survivor, and that is a property of the ORIGINAL rather than a gap in
+    the port.
+
+    Move the terminator two records further out and the loop writes two records the reset never
+    touched. What that pins is the loop's EXISTENCE and its EXTENT; its stride is pinned by the
+    ordinary cases, because a wrong stride lands mid-record inside the three the arm just built.
+    """
+    case = "free loop past the reset"
+    base, start = speech_seeds(case)
+    seeds = leaf.overlay(base,
+                         {TABLE_A30_END: keyed_block(TABLE_A30_END, RECORD_BYTES,
+                                                     case_salt(case)),
+                          MOVED_TERMINATOR: longword(ACTOR_TABLE_END)})
+    assert int.from_bytes(harness.make_image(seeds)[TABLE_A30_END:][:LONGWORD_BYTES],
+                          "big") != ACTOR_TABLE_END, (
+        "the seeded band happens to spell the terminator, so the loop would stop where it always "
+        "does and this case would be testing nothing")
+    info = run_spawn(case, seeds, start,
+                     extra_allowed=set(range(TABLE_A30_END,
+                                             MOVED_TERMINATOR + LONGWORD_BYTES)))
+    for at in (TABLE_A30_END, TABLE_A30_END + RECORD_BYTES):
+        assert leaf.read_int(info, at + ACTOR_X, WORD_BYTES, case) == FREE_MARKER, (
+            f"{case}: the slot at {at:#x} was not freed, so the loop stopped at the old terminator")
+
+
+def test_the_speech_lifetime_is_the_infinite_one_and_not_the_drivers():
+    """WB_SCENE_SPEECH_LIFETIME_HELD is what makes this arm different from every arm of $dbc0, which
+    all post WB_TEXT_LIFETIME_DEFAULT — so the box the scene opens with waits for the player."""
+    assert SPEECH_LIFETIME_HELD != TEXT_LIFETIME_DEFAULT
+
+
+@pytest.mark.parametrize("gate", sorted(GATE_ICON))
+@pytest.mark.parametrize("matched", (True, False))
+def test_a_dispatched_gate_is_read_back_before_the_speech_index(gate, matched):
+    """THE READ-AFTER-STORE, driven both ways. The gate writes the descriptor byte the very next
+    instruction reads, so a mismatched icon runs script WB_SPAWN_GATE_REFUSED_SCRIPT instead of the
+    descriptor's own — and clears WB_SCENE_EXIT_ACTION behind it. A port that fetched both script
+    bytes before dispatching would pass the matched half of this and fail the other."""
+    speech = 2
+    bbc8 = GATE_ICON[gate] if matched else GATE_ICON[gate] ^ 0xff
+    case = f"gate {gate} {'matched' if matched else 'refused'}"
+    seeds, start = speech_seeds(case, gate=gate, speech=speech, bbc8=bbc8)
+    info = run_spawn(case, seeds, start)
+
+    index = effective_speech_index(gate, speech, bbc8)
+    assert index == (speech if matched else SPAWN_GATE_REFUSED_SCRIPT)
+    assert leaf.read_int(info, TEXT_REQUEST, 1, case) == shipped_script(index)[1], case
+    assert leaf.read_int(info, SCRIPT_CURSOR, LONGWORD_BYTES, case) == shipped_script(index)[0] + 1
+    if not matched:
+        assert leaf.read_int(info, DESCRIPTOR + SPEECH_INDEX_AT, 1, case) == (
+            SPAWN_GATE_REFUSED_SCRIPT)
+        assert leaf.read_int(info, DESCRIPTOR + SCENE_EXIT_ACTION, WORD_BYTES, case) == 0
+
+
+# A cursor whose HIGH half is nonzero and whose LOW half still names a readable image byte, so the
+# `clr.w` and a `clr.l` leave different addresses behind.
+SEEDED_CURSOR = 0x00023456
+
+
+def test_the_cursor_clear_is_a_WORD_and_script_eight_is_what_shows_it():
+    """`clr.w $1017c.l` clears only the HIGH half of a LONGWORD cursor, and on every ordinary index
+    that is INVISIBLE: the `move.l (a0),$1017c.l` eight instructions later overwrites the whole
+    longword. Batch 41 phase B's sweep reported `speech-cursor-cleared-as-a-longword` as a survivor
+    for exactly that reason.
+
+    SCRIPT INDEX 8 IS WHERE IT SHOWS. WB_SPEECH_SCRIPT_TABLE is eight longwords BOUNDED BY THE
+    CURSOR ITSELF, so index 8's offset lands on `$1017c` and the `move.l` stores the cursor over
+    itself — a no-op. What survives to be followed is therefore whatever the `clr.w` left: the
+    seeded cursor with its high half gone. A port that cleared the longword would follow 0 instead,
+    and a port that cleared nothing would follow the whole seeded pointer.
+    """
+    case = "speech script eight"
+    assert SCRIPT_TABLE + SCRIPT_COUNT * LONGWORD_BYTES == SCRIPT_CURSOR, (
+        "index 8's offset no longer lands on the cursor, so this case is about nothing")
+    base, start = speech_seeds(case)
+    seeds = leaf.overlay(base, {DESCRIPTOR + SPEECH_INDEX_AT: bytes([SCRIPT_COUNT]),
+                                SCRIPT_CURSOR: longword(SEEDED_CURSOR)})
+    info = run_spawn(case, seeds, start)
+    followed = SEEDED_CURSOR & WORD_MASK
+    assert leaf.read_int(info, TEXT_REQUEST, 1, case) == harness.BASE_IMAGE[followed], case
+    assert leaf.read_int(info, SCRIPT_CURSOR, LONGWORD_BYTES, case) == followed + 1, case
+
+
+def test_a_gate_index_of_zero_dispatches_nothing():
+    """`beq.w $1a7c` — index 0 skips the `jsr` altogether, which is why entry 0 of the table need
+    not be an address. The descriptor's own script runs and its exit action survives."""
+    case = "gate index zero"
+    seeds, start = speech_seeds(case, gate=0, speech=5, bbc8=0)
+    info = run_spawn(case, seeds, start)
+    assert leaf.read_int(info, TEXT_REQUEST, 1, case) == shipped_script(5)[1], case
+    assert DESCRIPTOR + SCENE_EXIT_ACTION not in leaf.program_writes(info), (
+        "index 0 dispatched a gate after all")
+
+
+@pytest.mark.parametrize("stage", (0, LATE_STAGE_FIRST - 1, LATE_STAGE_FIRST, 0xffff))
+def test_the_late_stage_sprite_replaces_the_pairs_first_and_the_signed_compare_shows(stage):
+    """`cmpi.w #$5,$bd88.l / blt` is SIGNED, so WB_STAGE_NUMBER $ffff reads as -1 and takes the
+    EARLY arm — which is the whole difference between this test and one that used an unsigned
+    compare. Only the PAIR's sprite is replaced; the third record's own is untouched."""
+    case = f"late stage {stage:#x}"
+    seeds, start = speech_seeds(case, stage=stage)
+    info = run_spawn(case, seeds, start)
+    assert_speech_records(info, case, SPEECH_TRIPLE_1, SPEECH_TRIPLE_2,
+                          late=s16(stage) >= LATE_STAGE_FIRST)
+
+
+def test_the_pairs_x_and_sprite_wrap_inside_their_words():
+    """`addi.w #$40,d1` and `addi.w #$1,d0` are WORD adds, so a pair whose x is near $ffff wraps
+    rather than carrying anywhere."""
+    case = "pair wraps"
+    triple = (WORD_MASK, WORD_MASK - 0x10, 0x0030)
+    seeds, start = speech_seeds(case, triple=triple)
+    info = run_spawn(case, seeds, start)
+    assert_speech_records(info, case, triple, SPEECH_TRIPLE_2, late=False)
+    assert spawn_record(info, 1)[0] == (WORD_MASK - 0x10 + SPAWN_PAIR_DX) & WORD_MASK
+    assert spawn_record(info, 1)[3] == 0
+
+
+@pytest.mark.parametrize("bank", range(MAP_BANK_COUNT))
+def test_the_speech_arm_loads_the_bank_entry_its_descriptor_word_names(bank):
+    """Only the chosen entry names the map this case seeds, so an arm that indexed the table wrongly
+    would load a different one — and the byte-for-byte diff over eight scroll buffers is what says
+    it did not."""
+    case = f"speech bank {bank}"
+    seeds, start = speech_seeds(case, bank=bank)
+    run_spawn(case, seeds, start)
+
+
+def test_the_shop_index_past_the_table_reads_the_pointer_it_is_about_to_write():
+    """Index 8's offset lands ON WB_SHOP_RECORD_PTR itself — the longword that BOUNDS the table —
+    so `move.l (a0),$10448.l / movea.l (a0),a0` stores the pointer over itself and then follows it.
+
+    IT IS THE ALIAS CASE FOR THIS ARM'S DOUBLE READ. The original reads `(a0)` twice with its own
+    store between them, and this is the one index where those two addresses coincide: a port that
+    cached the first read would agree here by luck, and one that re-read (as this one does) is
+    right for the reason rather than the value. The store writes exactly what the first read
+    returned, so the arm is idempotent — which is what makes the index drivable at all.
+    """
+    case = "shop record index past the table"
+    seeds, start = shop_seeds(case, index=SHOP_RECORD_COUNT)
+    assert (SHOP_RECORD_TABLE + SHOP_RECORD_COUNT * LONGWORD_BYTES) == SHOP_RECORD_PTR, (
+        "index 8's offset no longer lands on the pointer, so this case is about nothing")
+    info = run_shop(case, seeds, start)
+    assert leaf.read_int(info, SHOP_RECORD_PTR, LONGWORD_BYTES, case) == SHOP_RECORD, case
+    assert leaf.read_int(info, SHOP_RECORD + SHOP_ENTER_COUNT, WORD_BYTES, case) == 1, case
+
+
+# THE TWO ALIAS CASES FOR THIS ARM'S READ-AFTER-STORE ORDERING, and both need a record the arm's
+# own stores can reach. Index 8's offset lands ON WB_SHOP_RECORD_PTR (the table's bound), so the
+# pointer the arm follows is whatever a case seeds THERE — which is how a record can be put anywhere.
+#
+# The display build reads each record's sprite field AFTER storing that record's xy and type, so a
+# record placed WB_SHOP_ITEM1_SPRITE below the table makes field 54 the very word slot 0's xy store
+# has just written.
+# THREE placements, because ONE pins only the record it touches: the sweep's
+# `display-second-field-read-before-the-stores` and `sign-field-read-before-the-stores` both
+# survived a case that aliased slot 0 alone. Each entry is (what the field lands on, where the
+# record goes, the (slot, sprite) pairs that alias proves), and together they cover the item pair
+# and the sign — the three shapes the arm has.
+DISPLAY_ALIAS_PLACEMENTS = (
+    ("slot 0's x, read for record 0's own sprite", TABLE_A30 - SHOP_ITEM1_SPRITE, True,
+     ((0, DISPLAY_ITEM1_XY >> 16), (1, DISPLAY_ITEM1_XY & WORD_MASK))),
+    ("slot 1's x, read for record 1's own sprite",
+     TABLE_A30 + RECORD_BYTES - SHOP_ITEM2_SPRITE, True, ((1, DISPLAY_ITEM2_XY >> 16),)),
+    # ...and the sign pair, whose sprite field IS the aliased word, so this one cannot seed it.
+    # IT HAS TO ALIAS THE X WORD AND NOT THE TYPE WORD: `actor_table_reset` has already zeroed every
+    # type, so a read before the store and a read after it both see 0 and the mutant lives. The x
+    # word the reset leaves is WB_ACTOR_FREE_MARKER, which the sign's own store then replaces — so
+    # THAT is the byte where "before" and "after" differ. (The sign's xy comes from a field the
+    # reset has zeroed, so the store writes 0 and the sprite reads back 0.)
+    ("slot 2's x, read for the sign's own sprite",
+     TABLE_A30 + 2 * RECORD_BYTES + ACTOR_X - SHOP_SIGN_SPRITE, False, ((2, 0), (3, 1))),
+)
+ALIASED_DISPLAY_RECORD = TABLE_A30 - SHOP_ITEM1_SPRITE
+# ...and the refusal's `addq.w #1,42(a0)` re-reads its count AFTER the message post, so a record
+# placed WB_SHOP_REFUSED_COUNT below WB_TEXT_REQUEST makes field 42 the word that post rewrites.
+ALIASED_REFUSAL_RECORD = TEXT_REQUEST - REFUSED_COUNT
+
+
+@pytest.mark.parametrize("what, record, seed_sign, expected", DISPLAY_ALIAS_PLACEMENTS)
+def test_a_display_records_sprite_is_read_after_its_own_xy_and_type_stores(what, record, seed_sign,
+                                                                           expected):
+    """`move.l #imm,(a1)+ / move.w #imm,(a1)+ / move.w 54(a0),(a1)+` — the field read is the THIRD
+    instruction, not the first, and these three placements are what make the difference visible.
+
+    Put the record so that its sprite FIELD lands on a word the build has just written, and the
+    sprite that comes back is that word. A port that evaluated the field read as a call ARGUMENT —
+    before the stores, which is what C's unspecified argument order gives you — reads the seed
+    instead. ONE placement was not enough: it pins only the record whose store it aliases, and the
+    sweep duly kept `display-second-field-read-before-the-stores` and
+    `sign-field-read-before-the-stores` alive until the other two went in.
+    """
+    case = f"shop display alias on {what}"
+    seeds, start = shop_seeds(case, index=SHOP_RECORD_COUNT)
+    layer = {
+        record: keyed_block(record, SHOP_RECORD_BYTES, case_salt(case)),
+        SHOP_RECORD_PTR: longword(record),
+        record + SHOP_ENTER_COUNT: word(0),
+        record + SHOP_ENTER_MSG_FIRST: word(0x0021),
+    }
+    if seed_sign:
+        # not WB_SHOP_SIGN_SPRITE_INTRO, so the tail takes the ordinary entry greeting
+        layer[record + SHOP_SIGN_SPRITE] = word(SHOP_SIGN_SPRITE_INTRO + 1)
+    info = run_shop(case, leaf.overlay(seeds, layer), start,
+                    extra_allowed=set(range(record, record + SHOP_RECORD_BYTES)))
+    assert leaf.read_int(info, SHOP_RECORD_PTR, LONGWORD_BYTES, case) == record
+    for slot, sprite in expected:
+        assert spawn_record(info, slot)[3] == sprite, (
+            f"{case}: slot {slot}'s sprite is {spawn_record(info, slot)[3]:#x}, not the {sprite:#x} "
+            f"the store it aliases had just written")
+
+
+def test_the_refusal_count_bump_re_reads_after_the_message_is_posted():
+    """`addq.w #1,42(a0)` is a MEMORY read-modify-write and it runs AFTER the post and after
+    WB_SCENE_MESSAGE_PENDING, so the value it increments is whatever those stores left.
+
+    With the record 42 bytes below WB_TEXT_REQUEST, field 42 IS the word the post rewrites: it reads
+    zero on the way in (so the arm takes WB_SHOP_BROKE_MSG_FIRST), the post puts $11 in its high
+    byte, and the bump therefore leaves $1101. A port that incremented the count it had CACHED for
+    the message select leaves $0001 — and with it a WB_TEXT_REQUEST of zero instead of the id it
+    just posted.
+    """
+    case = "shop refusal count alias"
+    seeds, start = shop_seeds(case, index=SHOP_RECORD_COUNT, purse=SHOP_PURSE_BROKE)
+    band = set(range(ALIASED_REFUSAL_RECORD, ALIASED_REFUSAL_RECORD + SHOP_RECORD_BYTES))
+    seeds = leaf.overlay(seeds, {
+        ALIASED_REFUSAL_RECORD: keyed_block(ALIASED_REFUSAL_RECORD, SHOP_RECORD_BYTES,
+                                            case_salt(case)),
+        SHOP_RECORD_PTR: longword(ALIASED_REFUSAL_RECORD),
+        ALIASED_REFUSAL_RECORD + SHOP_SIGN_SPRITE: word(SHOP_SIGN_SPRITE_INTRO),
+        ALIASED_REFUSAL_RECORD + ITEM2_PRICE: word(SHOP_PURSE_BROKE + 1),
+        ALIASED_REFUSAL_RECORD + SHOP_ENTER_COUNT: word(0),
+        # field 42 IS this word, and it has to read ZERO for the arm to pick the first id
+        TEXT_REQUEST: word(0),
+    })
+    info = run_shop(case, seeds, start, extra_allowed=band)
+    posted_then_bumped = (BROKE_MSG_FIRST << 8) | 1
+    assert leaf.read_int(info, ALIASED_REFUSAL_RECORD + REFUSED_COUNT, WORD_BYTES,
+                         case) == posted_then_bumped, (
+        f"{case}: the bump did not re-read the word the post had just changed")
+    assert leaf.read_int(info, TEXT_REQUEST, 1, case) == BROKE_MSG_FIRST, (
+        f"{case}: the posted id did not survive the bump")
+
+
+# --- kind 4: the boss scene ----------------------------------------------------------------------
+
+BOSS_MESSAGE = 0x0037             # the descriptor word at +14, posted as its LOW byte
+BOSS_DEAD_WORD = 0x1234           # ...and the one at +12, which nothing spends
+BOSS_FOLLOW_SLOT = (BOSS_FOLLOW - TABLE_A32) // RECORD_BYTES
+
+
+def boss_seeds(case, *, bank=BOSS_MAP_BANK_OFFSET // MAP_BANK_BYTES, index=5,
+               message=BOSS_MESSAGE):
+    """The boss arm's descriptor. ``index`` is the word at WB_SCENE_MAP_BANK_INDEX and is
+    deliberately NOT ``bank``: this arm overwrites the index it just shifted, so a case that seeded
+    the two equal could not tell an arm that honoured the descriptor from one that did not."""
+    start = spawn_start_record(START_RECORD_BOSS)
+    return spawn_pokes(case, start, bank=bank,
+                       words=((DESCRIPTOR + SCENE_KIND, KIND_BOSS),
+                              (DESCRIPTOR + MAP_BANK_INDEX, index),
+                              (DESCRIPTOR + BOSS_DEAD_WORD_AT, BOSS_DEAD_WORD),
+                              (DESCRIPTOR + BOSS_MESSAGE_AT, message))), start
+
+
+@pytest.mark.parametrize("index", (0, 1, 3, MAP_BANK_COUNT - 1))
+def test_the_boss_arm_ignores_the_descriptors_bank_index(index):
+    """`lsl.w #3,d0` and then `move.w #$10,d0` two instructions later: the shift is DEAD and the arm
+    always takes WB_SCENE_BOSS_MAP_BANK_OFFSET. Only that entry names the map this case seeds, so an
+    arm that followed the descriptor would load an unseeded one and the eight scroll buffers would
+    diverge."""
+    case = f"boss bank index {index}"
+    seeds, start = boss_seeds(case, index=index)
+    run_spawn(case, seeds, start)
+
+
+def test_the_boss_arm_arms_the_followed_record_as_the_players_own_type():
+    """One record and not three: WB_ACTOR_FOLLOWED_A32 given a fixed position, a fixed pair of sizes
+    and WB_SCENE_BOSS_FOLLOW_TYPE — which is behaviour slot 1, the PLAYER's."""
+    case = "boss followed record"
+    seeds, start = boss_seeds(case)
+    info = run_spawn(case, seeds, start)
+    assert spawn_record(info, BOSS_FOLLOW_SLOT, TABLE_A32) == (
+        BOSS_FOLLOW_XY >> 16, BOSS_FOLLOW_XY & WORD_MASK, BOSS_FOLLOW_TYPE, 0), case
+    assert leaf.read_int(info, BOSS_FOLLOW + ACTOR_HALF_WIDTH, LONGWORD_BYTES,
+                         case) == BOSS_FOLLOW_SIZES
+    for slot in range(TABLE_A30_SLOTS):
+        if slot == BOSS_FOLLOW_SLOT:
+            continue
+        assert leaf.read_int(info, TABLE_A32 + slot * RECORD_BYTES + ACTOR_X, WORD_BYTES,
+                             case) == FREE_MARKER, f"{case}: A32 slot {slot} is not free"
+
+
+@pytest.mark.parametrize("message", (0, 1, BOSS_MESSAGE, 0x12ff, WORD_MASK))
+def test_the_boss_arm_posts_the_low_byte_of_its_descriptor_word(message):
+    """`move.b d1,$c030.l` — the id is the word's LOW byte, and the lifetime is the ordinary $32
+    rather than the speech arm's infinite one. The word BELOW it is read into d0 and never spent."""
+    case = f"boss message {message:#06x}"
+    seeds, start = boss_seeds(case, message=message)
+    info = run_spawn(case, seeds, start)
+    assert leaf.read_int(info, TEXT_REQUEST, 1, case) == (message & 0xff), case
+    assert leaf.read_int(info, TEXT_LIFETIME_REQUEST, WORD_BYTES, case) == TEXT_LIFETIME_DEFAULT
+    assert leaf.read_int(info, PANEL_FRAME_HOLD, WORD_BYTES, case) == 0
+    assert leaf.read_int(info, FLAG_A32, WORD_BYTES, case) == STATE_FLAG_SET
+    assert leaf.read_int(info, STATE_FLAG_A34, WORD_BYTES, case) == 0
+
+
+# --- kind 2: the shop counter --------------------------------------------------------------------
+
+# One shop record's fields, as plain numbers. The two prices are what the price plates draw, the two
+# item sprites what stands at each cursor position, and the sign is the pair.
+SHOP_SEED = {SHOP_ITEM1_SPRITE: 0x0141, SHOP_ITEM2_SPRITE: 0x0142,
+             SHOP_SIGN_SPRITE: 0x0150, ITEM1_PRICE: 0x0120, ITEM2_PRICE: 0x0340,
+             SHOP_ENTER_MSG_FIRST: 0x0021, SHOP_ENTER_MSG_SECOND: 0x0022,
+             SHOP_ENTER_MSG_LATER: 0x0023}
+SHOP_SIGN_AT = 0x00600018         # the longword at WB_SHOP_SIGN_XY: x $60, y $18
+SHOP_PURSE_RICH = 0x0999          # packed BCD, above WB_SHOP_ITEM2_PRICE
+SHOP_PURSE_BROKE = 0x0100         # ...and below it
+SHOP_TAIL_RETURN = 0x1e42         # `addq.w #1,38(a0)` — reached by BOTH returning paths
+
+
+def shop_seeds(case, *, index=0, count=0, refused=0, sign_sprite=None,
+               purse=SHOP_PURSE_RICH, stage=0, bank=0, fields=()):
+    """The descriptor, the shop record the tree plants, and the purse the tail compares.
+
+    ONE SEED, TWO READINGS: WB_SCENE_VARIANT is both the WB_SHOP_RECORD_TABLE index the arm walks in
+    and the word the tail tests to pick its start record, so a case cannot set the two apart —
+    index 0 is exactly the case that takes WB_SCENE_START_RECORD_SHOP_ALT.
+    """
+    record = dict(SHOP_SEED)
+    record.update(fields)
+    if sign_sprite is not None:
+        record[SHOP_SIGN_SPRITE] = sign_sprite
+    record[SHOP_ENTER_COUNT] = count
+    record[REFUSED_COUNT] = refused
+    words = ((DESCRIPTOR + SCENE_KIND, KIND_SHOP), (DESCRIPTOR + MAP_BANK_INDEX, bank),
+             (DESCRIPTOR + SCENE_VARIANT, index), (BCD_COUNTER, purse))
+    words += tuple((SHOP_RECORD + off, value) for off, value in sorted(record.items()))
+    start = spawn_start_record(START_RECORD_SHOP if index else START_RECORD_SHOP_ALT)
+    return spawn_pokes(case, start, bank=bank, stage=stage, words=words), start
+
+
+def shop_expected_records(image, late):
+    """The eight display records, in the order the arm writes them."""
+    sign_xy = int.from_bytes(bytes(image[SHOP_RECORD + SHOP_SIGN_XY:][:LONGWORD_BYTES]), "big")
+    sign = LATE_STAGE_SPRITE if late else leaf.u16(image, SHOP_RECORD + SHOP_SIGN_SPRITE)
+    paired = (sign_xy + (SPAWN_PAIR_DX << 16)) & 0xffffffff
+    return [
+        (DISPLAY_ITEM1_XY >> 16, DISPLAY_ITEM1_XY & WORD_MASK, 0,
+         leaf.u16(image, SHOP_RECORD + SHOP_ITEM1_SPRITE)),
+        (DISPLAY_ITEM2_XY >> 16, DISPLAY_ITEM2_XY & WORD_MASK, 0,
+         leaf.u16(image, SHOP_RECORD + SHOP_ITEM2_SPRITE)),
+        (sign_xy >> 16, sign_xy & WORD_MASK, 0, sign),
+        (paired >> 16, paired & WORD_MASK, 0, (sign + 1) & WORD_MASK),
+        (DISPLAY_LEAVE_XY >> 16, DISPLAY_LEAVE_XY & WORD_MASK, 0, DISPLAY_LEAVE_SPRITE),
+        (DISPLAY_PRICE1_XY >> 16, DISPLAY_PRICE1_XY & WORD_MASK, 0, DISPLAY_PRICE1_SPRITE),
+        (DISPLAY_PRICE2_XY >> 16, DISPLAY_PRICE2_XY & WORD_MASK, 0, DISPLAY_PRICE2_SPRITE),
+        (DISPLAY_EXTRA_XY >> 16, DISPLAY_EXTRA_XY & WORD_MASK, DISPLAY_EXTRA_TYPE,
+         DISPLAY_EXTRA_SPRITE),
+    ]
+
+
+def assert_price_plate(info, case, sprite, price):
+    """Every byte of one price plate, out of the shipped fonts — which is what says the tree handed
+    shop_render_price_digits the resource and the field this plate is drawn from."""
+    for at, expected in price_plate_writes(sprite, price).items():
+        assert leaf.read_int(info, at, 1, case) == expected[0], (
+            f"{case}: the plate at {sprite:#x} differs at {at:#x}")
+
+
+def run_shop(case, seeds, start, **kwargs):
+    return run_spawn(case, seeds, start, cap=SPAWN_SHOP_CAP, **kwargs)
+
+
+@pytest.mark.parametrize("stage", (0, LATE_STAGE_FIRST))
+def test_the_shop_arm_builds_its_eight_records_and_both_price_plates(stage):
+    """The counter, whole: eight display records out of the record the descriptor's index names, the
+    rest of the table freed, and the two price plates drawn from WB_SHOP_ITEM1_PRICE and
+    WB_SHOP_ITEM2_PRICE into the sprites the records beside them show."""
+    case = f"shop build stage {stage}"
+    seeds, start = shop_seeds(case, stage=stage)
+    image = harness.make_image(seeds)
+    info = run_shop(case, seeds, start)
+    for slot, expected in enumerate(shop_expected_records(image, stage >= LATE_STAGE_FIRST)):
+        assert spawn_record(info, slot) == expected, f"{case}: slot {slot}"
+    assert_rest_of_table_is_free(info, case, SHOP_DISPLAY_COUNT)
+    assert_price_plate(info, case, PRICE_SPRITE_A, SHOP_SEED[ITEM1_PRICE])
+    assert_price_plate(info, case, PRICE_SPRITE_B, SHOP_SEED[ITEM2_PRICE])
+    assert leaf.read_int(info, SHOP_RECORD_PTR, LONGWORD_BYTES, case) == SHOP_RECORD
+
+
+@pytest.mark.parametrize("sign_xy", (SHOP_SIGN_AT, 0xffd00018, 0x0060ffff, 0xffffffff))
+def test_the_sign_pair_is_one_longword_add_and_one_word_bump(sign_xy):
+    """The pair's second half: `move.l 50(a0),(a1) / addi.l #$400000,(a1)+` and then
+    `addq.w #1,(a1)+` on the sprite. The longword add is what makes a sign at x $ffd0 wrap into
+    $0010 and DROP the carry instead of disturbing y; $0060ffff is the case where a WORD add on the
+    y half would have carried into x and this one does not.
+
+    AND A WORD ADD ON THE X HALF IS EQUIVALENT, which is worth writing down because batch 41 phase
+    B's sweep tried exactly that and the mutant SURVIVED. WB_SCENE_SPAWN_PAIR_DX enters the longword
+    shifted 16, so the constant's low word is zero: the add can never carry out of y into x, and the
+    carry out of x leaves the longword under both spellings. No seed can separate them — this is an
+    equivalent mutant and not a hole, and the case that WOULD separate them needs a constant whose
+    low word is nonzero, which this instruction's is not."""
+    case = f"shop sign {sign_xy:#010x}"
+    seeds, start = shop_seeds(case)
+    seeds = leaf.overlay(seeds, {SHOP_RECORD + SHOP_SIGN_XY: longword(sign_xy)})
+    image = harness.make_image(seeds)
+    info = run_shop(case, seeds, start)
+    expected = shop_expected_records(image, late=False)
+    assert spawn_record(info, 2) == expected[2], case
+    assert spawn_record(info, 3) == expected[3], case
+
+
+@pytest.mark.parametrize("count, field", [(0, SHOP_ENTER_MSG_FIRST), (1, SHOP_ENTER_MSG_SECOND),
+                                          (2, SHOP_ENTER_MSG_LATER), (3, SHOP_ENTER_MSG_FIRST),
+                                          (0x1000, SHOP_ENTER_MSG_FIRST)])
+def test_the_entry_greeting_posts_the_id_its_count_names_and_has_a_default(count, field):
+    """`cmpi.w #$2,38(a0) / beq` and then a FALL-THROUGH to the first arm, so a count of 3 or more
+    posts WB_SHOP_ENTER_MSG_FIRST again — the contrast with the refusal ladder below, whose fourth
+    value reaches an `illegal`."""
+    case = f"shop entry count {count:#x}"
+    seeds, start = shop_seeds(case, count=count)
+    info = run_shop(case, seeds, start)
+    assert leaf.read_int(info, TEXT_REQUEST, 1, case) == (SHOP_SEED[field] & 0xff), case
+    assert leaf.read_int(info, TEXT_LIFETIME_REQUEST, WORD_BYTES, case) == TEXT_LIFETIME_DEFAULT
+    assert leaf.read_int(info, SHOP_RECORD + SHOP_ENTER_COUNT, WORD_BYTES,
+                         case) == (count + 1) & WORD_MASK
+    assert leaf.read_int(info, ACK_WAIT, WORD_BYTES, case) == MESSAGE_PENDING_SET
+    assert leaf.read_int(info, GREET_COUNTDOWN, WORD_BYTES, case) == GREET_COUNTDOWN_RESET
+    assert leaf.read_int(info, PANEL_FRAME_HOLD, WORD_BYTES, case) == wb("PANEL_FRAME_HOLD_SET")
+
+
+@pytest.mark.parametrize("refused, expected", [(0, BROKE_MSG_FIRST), (1, BROKE_MSG_SECOND),
+                                               (2, BROKE_MSG_THIRD)])
+def test_a_broke_player_is_refused_and_the_refusal_is_counted(refused, expected):
+    """The arm the sign sprite WB_SHOP_SIGN_SPRITE_INTRO opens: three escalating messages by
+    WB_SHOP_REFUSED_COUNT, the count bumped, and BOTH the pending and the acknowledge words raised —
+    where the entry greeting raises only the second."""
+    case = f"shop refusal {refused}"
+    seeds, start = shop_seeds(case, refused=refused, purse=SHOP_PURSE_BROKE,
+                              sign_sprite=SHOP_SIGN_SPRITE_INTRO)
+    info = run_shop(case, seeds, start)
+    assert leaf.read_int(info, TEXT_REQUEST, 1, case) == expected, case
+    assert leaf.read_int(info, SHOP_RECORD + REFUSED_COUNT, WORD_BYTES, case) == refused + 1
+    assert leaf.read_int(info, MESSAGE_PENDING, WORD_BYTES, case) == MESSAGE_PENDING_SET
+    assert leaf.read_int(info, ACK_WAIT, WORD_BYTES, case) == MESSAGE_PENDING_SET
+    # ...and WB_SHOP_ENTER_COUNT is bumped on this path too, which is what "a refusal counts as an
+    # entry" means.
+    assert leaf.read_int(info, SHOP_RECORD + SHOP_ENTER_COUNT, WORD_BYTES, case) == 1
+
+
+def test_a_fourth_refusal_reaches_the_originals_own_illegal_instruction():
+    """AN ORIGINAL DEFECT, and the one ending in this tree that is not an `rts`: nothing resets
+    WB_SHOP_REFUSED_COUNT, so a counter that has turned the player away three times executes the
+    `illegal` at $1d8e on the fourth. The port reports WB_SCENE_EXIT_ILLEGAL and the case diffs the
+    whole image at the instant control arrives there.
+
+    THE WITNESS IS NEGATIVE: `cmpi.w #$2,d0` above the `illegal` runs on the count-2 path as well,
+    and there is no instruction below it on this one — so what separates them is that the returning
+    paths all reach `addq.w #1,38(a0)` and this one never does."""
+    case = "shop fourth refusal"
+    seeds, start = shop_seeds(case, refused=3, purse=SHOP_PURSE_BROKE,
+                              sign_sprite=SHOP_SIGN_SPRITE_INTRO)
+    run_shop(case, seeds, start, expected_exit=EXIT_ILLEGAL, reaches_hinge=False,
+             visited=(transfer_at("shop refusal illegal"),), not_visited=(SHOP_TAIL_RETURN,))
+
+
+@pytest.mark.parametrize("purse, sign_sprite, refused_expected", [
+    (SHOP_PURSE_BROKE, SHOP_SIGN_SPRITE_INTRO, True),
+    (SHOP_PURSE_RICH, SHOP_SIGN_SPRITE_INTRO, False),
+    (SHOP_PURSE_BROKE, SHOP_SIGN_SPRITE_INTRO + 1, False),
+    (SHOP_SEED[ITEM2_PRICE], SHOP_SIGN_SPRITE_INTRO, True),
+    (0x8000, SHOP_SIGN_SPRITE_INTRO, True),
+])
+def test_the_refusal_needs_both_the_sign_and_a_signed_purse_compare(purse, sign_sprite,
+                                                                    refused_expected):
+    """Two conditions and a SIGNED compare. `cmp.w d1,d0 / bgt` reads WB_BCD_COUNTER against
+    WB_SHOP_ITEM2_PRICE as signed words, so a purse of $8000 — four packed-BCD digits the panel draws
+    as 8000 — is NEGATIVE and refused however rich the player looks; and a purse EQUAL to the price
+    is refused too, because the branch away is `bgt` and not `bge`."""
+    case = f"shop refusal gate {purse:#06x}/{sign_sprite:#x}"
+    seeds, start = shop_seeds(case, purse=purse, sign_sprite=sign_sprite)
+    info = run_shop(case, seeds, start)
+    posted = leaf.read_int(info, TEXT_REQUEST, 1, case)
+    assert (posted == BROKE_MSG_FIRST) == refused_expected, (
+        f"{case}: posted {posted:#x}")
+    assert (MESSAGE_PENDING in leaf.program_writes(info)) == refused_expected, case
+
+
+@pytest.mark.parametrize("index", range(1, SHOP_RECORD_COUNT))
+def test_the_shop_index_plants_the_pointer_its_table_entry_names(index):
+    """WB_SCENE_VARIANT scaled by four indexes WB_SHOP_RECORD_TABLE, and the pointer is planted in
+    WB_SHOP_RECORD_PTR before it is followed. Every entry is shipped, so nothing here seeds the
+    table; index 8, whose offset leaves it, is the case below."""
+    case = f"shop record index {index}"
+    expected = int.from_bytes(harness.BASE_IMAGE[SHOP_RECORD_TABLE + index * LONGWORD_BYTES:][
+        :LONGWORD_BYTES], "big")
+    seeds, start = shop_seeds(case, index=index)
+    # The record the index names is not the one this battery seeds, so the arm reads zeros out of
+    # it — which is fine, both cores read the same zeros — but it WRITES its entry count, so that
+    # record's own band has to be allowed as well.
+    info = run_shop(case, seeds, start,
+                    extra_allowed=set(range(expected, expected + SHOP_RECORD_BYTES)))
+    assert leaf.read_int(info, SHOP_RECORD_PTR, LONGWORD_BYTES, case) == expected, case

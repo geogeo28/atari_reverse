@@ -50,7 +50,9 @@ from leaf import (BRANCH_EXTENSION, JSR_ABS_L, RTS, add_w_dn_dn, addi_w_dn, addq
                   move_w_postinc_d16,
                   movea_l_abs_l, movea_l_an_an, moveq_0_dn, opcode, program_writes, s16,
                   sub_w_dn_d16,
-                  sub_w_dn_dn, subi_w_dn, tst_w_abs_w, tst_w_dn, u16, word)
+                  sub_w_dn_dn, subi_w_dn, tst_w_abs_w, tst_w_dn, u16, word,
+                  # ...and the five hoisted to leaf.py by batch 41 phase B's spawn-tree pin
+                  move_w_imm_d16)
 from leaf import (WORD_MASK, clr_w_abs_l, move_b_abs_l_dn, move_b_imm_abs_l,
                   move_w_imm_abs_l, move_w_indexed_dn, tst_b_abs_l)
 from layout import wb
@@ -331,11 +333,6 @@ def addq_w_d16(amount, base, displacement):
 def cmp_w_d16_dn(reg, base, displacement):
     return opcode(0xb068 | (reg << 9) | base) + word(displacement)
 
-
-def move_w_imm_d16(base, value, displacement):
-    """`move.w #imm,d16(An)` — the immediate comes FIRST and the destination's displacement second,
-    the same extension order `move_w_d16_d16` above documents."""
-    return opcode(0x317c | (base << 9)) + word(value) + word(displacement)
 
 
 def lsl_l_imm_dn(count, reg):

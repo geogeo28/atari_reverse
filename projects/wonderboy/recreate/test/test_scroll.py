@@ -60,7 +60,9 @@ from leaf import (RTS, addi_w_dn, addq_w_abs_l, andi_w_dn, branch, branch_over, 
                   move_w_postinc_dn, movea_l_abs_l, movea_l_abs_w, moveq_0_dn,
                   mulu_w_imm_dn, opcode, program_writes, rotate_left32, s16, st_abs_l,
                   sub_w_dn_dn, subi_w_dn, subq_w_abs_l, subq_w_dn, swap_dn, tst_b_abs_l,
-                  tst_w_abs_l, tst_w_abs_w, tst_w_dn, u16, word)
+                  tst_w_abs_l, tst_w_abs_w, tst_w_dn, u16, word,
+                  # ...and the five hoisted to leaf.py by batch 41 phase B's spawn-tree pin
+                  movea_l_indexed)
 from layout import wb
 
 import emu      # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -533,10 +535,6 @@ def move_l_d0_dn(reg):
 # --- the encodings the consumer tier adds ---------------------------------------------------------
 # bg_scroll_blit is the only routine here that addresses a longword through a table, jumps through a
 # register, or reads WB_SCREEN_BACK, so these are its own.
-
-def movea_l_indexed(reg, base, index):
-    """`movea.l (0,An,Dn.w),Am` — the jump table read, and the whole of the original's dispatch."""
-    return opcode(0x2070 | (reg << 9) | base) + word(index << 12)
 
 
 def adda_w_imm_an(reg, value):

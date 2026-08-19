@@ -96,7 +96,9 @@ from leaf import (BRANCH_EXTENSION, JSR_ABS_L, RTS, add_w_dn_dn, addi_w_dn, addq
                   move_w_dn_dn, move_w_ind_dn, move_w_postinc_dn, movea_l_abs_l, moveq_0_dn, opcode,
                   mulu_w_dn_dn,
                   program_writes, s16, set_low_word, sub_w_dn_dn, subi_w_dn, subq_w_dn,
-                  tst_w_abs_w, tst_w_dn, u16, word)
+                  tst_w_abs_w, tst_w_dn, u16, word,
+                  # ...and the five hoisted to leaf.py by batch 41 phase B's spawn-tree pin
+                  addq_l_an, move_b_imm_ind)
 from layout import wb
 
 import emu      # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -260,9 +262,6 @@ def addq_w_dn(amount, reg):
     return opcode(0x5040 | ((amount & 7) << 9) | reg)
 
 
-def addq_l_an(amount, reg):
-    return opcode(0x5088 | ((amount & 7) << 9) | reg)
-
 
 def cmp_w_d16_dn(reg, base, displacement):
     return opcode(0xb068 | (reg << 9) | base) + word(displacement)
@@ -276,9 +275,6 @@ def cmpi_b_indexed(base, index, value):
 def bit_op_d16(op, bit, reg, displacement):
     return opcode(op | 0x28 | reg) + word(bit) + word(displacement)
 
-
-def move_b_imm_ind(base, value):
-    return opcode(0x10bc | (base << 9)) + word(value)
 
 
 def move_b_imm_postinc(base, value):

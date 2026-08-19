@@ -68,7 +68,9 @@ from leaf import (RTS, branch, branch_over, btst_imm_dn, case_salt, clr_b_abs_l,
                   lea_indexed, longword, merge_bands, move_w_imm_abs_l, move_w_imm_dn,
                   movea_l_abs_w, moveq_0_dn,
                   mulu_w_imm_dn, opcode, program_writes, st_abs_l, subq_w_abs_l, tst_b_abs_l,
-                  tst_w_abs_l, word)
+                  tst_w_abs_l, word,
+                  # ...and the five hoisted to leaf.py by batch 41 phase B's spawn-tree pin
+                  cmpi_b_abs_l)
 from layout import wb
 
 import loader   # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -229,13 +231,6 @@ def lsl_imm_dn(count, reg, size):
     (which is what lets d0's high bytes reach the index) and the driver's table index a WORD one."""
     return opcode(0xe108 | ((count & 7) << 9) | (size << 6) | reg)
 
-
-def cmpi_b_abs_l(value, addr):
-    return opcode(0x0c39) + word(value & 0xff) + longword(addr)
-    # ALSO IN test_player.py — second copy, which the rule allows. That copy MASKS the immediate to
-    # a byte, since a byte compare still carries it in a whole word, and this one did not: the two
-    # would have diverged on any negative or over-wide value. Masked here to match; the one call
-    # site passes $ff, so no assembled byte moves.
 
 
 def cmp_b_imm_dn(reg, value):

@@ -367,8 +367,12 @@
 #define WB_DIGIT_SIGNIFICANT_SEEN 0xb84eu  /* word: the leading-zero latch (see src/hud.c) */
 #define WB_DIGIT_SIGNIFICANT_SET  0xffffu  /* the `move.w #$ffff` that forces a digit to print */
 #define WB_DIGIT_GLYPHS           0x1447cu /* the glyphs for every font_select EXCEPT 1 */
-#define WB_DIGIT_GLYPHS_ALT       0x145bcu /* ...and the ones for font_select == 1 ($1d0a leas it
-                                            * too, so this table has a second, unrecovered user) */
+#define WB_DIGIT_GLYPHS_ALT       0x145bcu /* ...and the ones for font_select == 1. Its SECOND user
+                                            * is the `lea $145bc.l,a1` at $1d0a inside
+                                            * shop_render_price_digits, RECOVERED in batch 41 phase
+                                            * B — so the two users are the panel's digit plotter and
+                                            * the shop's price plates, and this comment's earlier
+                                            * "unrecovered" is retracted */
 #define WB_DIGIT_FONT_ALT         1u       /* the `cmpi.w #1,d0` that chooses between them */
 #define WB_DIGIT_FONT_DEFAULT     0u       /* the `moveq #0,d0` $b5ea and $b7ea force */
 #define WB_DIGIT_GLYPH_LEN        32u      /* `asl.w #5,d6`: WB_DIGIT_ROWS rows x WB_PLANES planes */
@@ -540,6 +544,7 @@
                                            * `tst.w`; `bg_scroll_run_queue` ($7522) and $f9a6 are the
                                            * only two that TEST it, and the name is read off those.
                                            * ../names.txt's `cmt 0xd76` itemizes all nine */
+#define WB_SCROLL_FOLLOW_FROZEN_SET 0xffffu /* what all five of those `move.w #$ffff` sites write */
 #define WB_SCROLL_FOLLOW_X       0x9934u  /* word pair: the followed object's position ON SCREEN.
                                            * $f9ae computes them as `object.x - $20 - POS_X` and
                                            * `object.y - $40 - POS_Y`, which is what makes the two
@@ -784,6 +789,9 @@
                                                * ($4ec, $8dfe, $8e66, $dbc0, $ff42) against two
                                                * `clr.w` and three `move.w #$ffff` writers, so it
                                                * only ever holds $0000 or $ffff */
+#define WB_STATE_FLAG_SET            0xffffu  /* the one nonzero value any of the three is written
+                                               * with — every writer of all three is a
+                                               * `move.w #$ffff` or a `clr.w` */
 #define WB_ACTOR_TABLE_A30           0x9bd0u  /* the table $8e66 projects while A30 is negative */
 #define WB_ACTOR_TABLE_A32           0x9e34u  /* ...while A30 is not and A32 is */
 #define WB_ACTOR_TABLE_DEFAULT       0x996cu  /* ...and while neither is */
@@ -2415,8 +2423,9 @@
                                                * scancode actions, one of them a `bchg` on $bd6b)
                                                * and TWO inside player_meter_empty_check, where a
                                                * raised word makes the death arm unreachable. So it
-                                               * is the game's own cheat enable; what the sequence
-                                               * SPELLS is not decoded here */
+                                               * is the game's own cheat enable; the sequence bytes
+                                               * 61 30 13 1e are the IKBD scancodes for UNDO, B, R,
+                                               * A -- the cheat is typed as Undo then "BRA" */
 #define WB_KEY_SEQUENCE_MATCHED_SET  0xffffu
 #define WB_KEY_LAST_SCANCODE         0x879u   /* byte: ../names.txt's key_last_scancode, the word the
                                                * sequence above is walked against. Its one reader in
@@ -3653,6 +3662,13 @@
                                              * 2x2 stamp above tests for its second tile set */
 #define WB_SCENE_VARIANT           4u       /* word: 0 = spawn nothing, else picks the fragment
                                              * type below */
+#define WB_SCENE_GATE_INDEX        16u      /* byte: `moveq #0,d0 / move.b (a1)+,d0 / beq` — which
+                                             * WB_SPAWN_GATE_TABLE entry the speech arm dispatches,
+                                             * and zero dispatches none */
+#define WB_SCENE_SPEECH_INDEX      17u      /* byte: which WB_SPEECH_SCRIPT_TABLE entry it then
+                                             * posts — the byte a refused gate OVERWRITES with
+                                             * WB_SPAWN_GATE_REFUSED_SCRIPT, one instruction before
+                                             * this read */
 #define WB_SCENE_EXIT_ACTION       18u      /* word: which WB_SCENE_EXIT_ACTION_TABLE entry $dfbe
                                              * dispatches on the way out (`move.w 18(a6),d0`) */
 #define WB_SCENE_START_INDEX       28u      /* word: which WB_STAGE_START_TABLE entry $dfbe hands
@@ -3714,8 +3730,17 @@
 #define WB_SHOP_ITEM1_COUNT        34u      /* word: purchases of item 1 so far */
 #define WB_SHOP_ITEM2_COUNT        36u
 #define WB_SHOP_GREET_COUNT        40u      /* word: greetings posted so far */
-#define WB_SHOP_LEAVE_CHARGED      42u      /* word: `tst.w 42(a1)` — zero leaves the shop for
-                                             * nothing, nonzero spends WB_SHOP_MESSAGE_COST first */
+#define WB_SHOP_REFUSED_COUNT      42u      /* word: how many times this shop has turned the player
+                                             * away for being broke. $1d52 posts
+                                             * WB_SHOP_BROKE_MSG_* by it and bumps it; $dbc0 reads
+                                             * the same word as "have you been refused before" —
+                                             * `tst.w 42(a1)`, zero leaves the shop for nothing and
+                                             * nonzero spends WB_SHOP_MESSAGE_COST first. THIS WORD
+                                             * WAS NAMED FOR THAT $dbc0 CONSEQUENCE ALONE until
+                                             * batch 41 phase B; the spawn tree's three message ids
+                                             * are what say it is a COUNT, and the name is now what
+                                             * the word holds rather than what one reader does
+                                             * with it */
 #define WB_SHOP_FAREWELL_COUNT     44u      /* word: farewells posted so far */
 #define WB_SHOP_ITEM1_PRICE        58u      /* word, compared against WB_BCD_COUNTER and then
                                              * subtracted from it by bcd_sub_counter_bd6e */
@@ -3730,6 +3755,30 @@
                                              * two words of the record after the effects above; the
                                              * fire mapping at the same x is what says which is
                                              * which (src/behavior.c) */
+/* The fields the SPAWN TREE reads (batch 41 phase B) — everything $1bb4 builds the counter's
+ * display out of, plus the three ids its tail posts. */
+#define WB_SHOP_ENTER_MSG_FIRST     8u      /* word: the id posted the first time the player walks
+                                             * in... */
+#define WB_SHOP_ENTER_MSG_SECOND   10u      /* ...the second... */
+#define WB_SHOP_ENTER_MSG_LATER    12u      /* ...and every later time, which is also the DEFAULT:
+                                             * `cmpi.w #$2,38(a0) / beq` falls through to the FIRST
+                                             * arm, so a count of 3 or more posts field 8 again */
+#define WB_SHOP_ENTER_COUNT        38u      /* word: how many times the counter has been entered.
+                                             * Bumped on BOTH of $1d52's paths, so a refusal counts
+                                             * as an entry */
+#define WB_SHOP_SIGN_SPRITE        48u      /* word: the sprite of the sign above the counter, and
+                                             * the word $1d58 tests for WB_SHOP_SIGN_SPRITE_INTRO */
+#define WB_SHOP_SIGN_SPRITE_INTRO  0x181u   /* `cmpi.w #$181,48(a0)` — the one sign whose shop can
+                                             * refuse a broke player */
+#define WB_SHOP_SIGN_XY            50u      /* longword: the sign's (x, y), copied straight into the
+                                             * display record's WB_ACTOR_X / WB_ACTOR_Y */
+#define WB_SHOP_ITEM1_SPRITE       54u      /* word: what stands at WB_SHOP_DISPLAY_ITEM1_XY — the
+                                             * x a fire buys as WB_SHOP_REQUEST_ITEM1 */
+#define WB_SHOP_ITEM2_SPRITE       56u
+#define WB_SHOP_BROKE_MSG_FIRST    0x11u    /* "   Come back with / some money." */
+#define WB_SHOP_BROKE_MSG_SECOND   0x12u    /* "  Never Come Back!!" — the same id the FAREWELL
+                                             * arm repeats, WB_SHOP_FAREWELL_ID_REPEAT */
+#define WB_SHOP_BROKE_MSG_THIRD    0x13u    /* "You lost wing boots." */
 #define WB_SHOP_MESSAGE_COST       2u       /* `move.w #$2,d0` before three of the four `bsr $de80` */
 #define WB_SHOP_PURCHASE_COST      3u       /* `move.w #$3,d0` — what a purchase costs instead */
 #define WB_SHOP_FAREWELL_ID_FIRST  9u       /* `move.b #$9,$c030.l` — message 9, " Please come
@@ -3757,6 +3806,111 @@
 #define WB_SCENE_EXIT_REQUEST      0x1079au /* word: raised $ffff at $10768, one instruction after
                                              * message $63 " Offensive Power Increased." — the
                                              * boss-defeat arm leaves the scene when it is set */
+
+/* ---- $19ac: THE SCENE-SPAWN TREE (src/scene.c, batch 41 phase B) -------------------------------
+ *
+ * What ENTERS a scene, where $dbc0 above is what runs one once a frame. The same descriptor's
+ * WB_SCENE_KIND picks the arm — 1 fills the A30 table with three display records and posts a speech
+ * script, 2 builds the shop counter's eight, 4 arms the A32 table for the boss — and every arm ends
+ * by handing stage_load_window a map and tile bank out of WB_SCENE_MAP_BANK_TABLE.
+ */
+#define WB_SCENE_SPAWN_GATE_SLOT   0x998cu  /* WB_ACTOR_TABLE_DEFAULT slot 1, marked free by the
+                                             * tree's FIRST instruction whichever arm then runs.
+                                             * It is the slot player_pending_event_gate spawns its
+                                             * own event actor into (../names.txt, cmt 0x99ac) */
+
+/* The FOURTH dispatch table in the program: four longwords, $e42e..$e43d, bounded by the first of
+ * its own targets. Entry 0 holds WB_SPAWN_GATE_ENTRY_0_NOT_AN_ADDRESS and is never fetched, because
+ * the caller's `beq.w` skips a script byte of zero before the `lsl.w #2`. */
+#define WB_SPAWN_GATE_TABLE        0xe42eu
+#define WB_SPAWN_GATE_COUNT        4u
+#define WB_SPAWN_GATE_ENTRY_0_NOT_AN_ADDRESS 0x02140202u
+#define WB_SPAWN_GATE_REFUSED_SCRIPT 7u     /* `move.b #$7,(a1)` — the speech script a gate whose
+                                             * WB_HUD_SLOT_BBC8 does not match forces INSTEAD, by
+                                             * overwriting the byte the caller reads next */
+
+/* SEVEN 8-byte entries, $103e8..$1041f, bounded by WB_RECORD_PTR_10420 — the descriptor pointer
+ * itself begins where the table ends, which is what says seven and not eight. Each entry is
+ * (map pointer, tile bank pointer): a0 and a6 for stage_load_window. Unlike the descriptor and shop
+ * tables these ARE shipped, and all seven are live — three distinct maps at $1abcc, $1b870 and
+ * $1c894, each with its own bank $a4 bytes on. */
+#define WB_SCENE_MAP_BANK_TABLE    0x103e8u
+#define WB_SCENE_MAP_BANK_COUNT    7u
+#define WB_SCENE_MAP_BANK_BYTES    8u
+#define WB_SCENE_MAP_BANK_TILES    4u       /* the second longword of an entry */
+#define WB_SCENE_MAP_BANK_INDEX    30u      /* word in the descriptor: `move.w 30(a1),d0 /
+                                             * lsl.w #3`, added SIGN-EXTENDED, so nothing bounds it
+                                             * and the read is reproduced wherever it lands */
+#define WB_SCENE_BOSS_MAP_BANK_OFFSET 0x10u /* ...except on the boss arm, which `move.w #$10,d0`s
+                                             * over the index it just shifted — entry 2, always */
+
+/* Which WB_STAGE_START_RECORDS record each arm hands the hinge. */
+#define WB_SCENE_START_RECORD_BOSS      0u  /* $1d40c */
+#define WB_SCENE_START_RECORD_SHOP      1u  /* $1d416, when the descriptor's WB_SCENE_VARIANT is
+                                             * nonzero... */
+#define WB_SCENE_START_RECORD_SHOP_ALT  2u  /* ...and $1d420 when it is zero */
+#define WB_SCENE_START_RECORD_SPEECH    3u  /* $1d42a, the one whose tune byte is NEGATIVE — so the
+                                             * speech arm STOPS the sound module */
+
+/* The three display records the speech arm builds, out of two triples of descriptor words. The
+ * first triple is used TWICE: once as it stands and once with the sprite bumped by one and the x by
+ * WB_SCENE_SPAWN_PAIR_DX, which is the same pairing the shop's sign gets. */
+#define WB_SCENE_SPAWN_PAIR_DX     0x40u    /* `addi.w #$40,d1`, and the high word of the shop
+                                             * sign's `addi.l #$400000,(a1)+` — one constant */
+#define WB_SCENE_LATE_STAGE_FIRST  5u       /* `cmpi.w #$5,$bd88.l / blt` — SIGNED, on
+                                             * WB_STAGE_NUMBER */
+#define WB_SCENE_LATE_STAGE_SPRITE 0x175u   /* what the first sprite of a pair becomes from that
+                                             * stage on, in BOTH the speech arm and the shop's */
+#define WB_SCENE_SPEECH_LIFETIME_HELD 0xffffu /* `move.w #$ffff,$c034.l` — the box the speech arm
+                                             * posts never expires on its own, where every arm of
+                                             * $dbc0 posts WB_TEXT_LIFETIME_DEFAULT */
+
+/* The eight records the shop arm builds into WB_ACTOR_TABLE_A30, as the longword (x, y) each one's
+ * `move.l #imm,(a1)+` plants. Records 2 and 3 take theirs from WB_SHOP_SIGN_XY instead. */
+#define WB_SHOP_DISPLAY_ITEM1_XY   0x00330020u /* x $33 — the cursor position a fire here buys as
+                                                * WB_SHOP_REQUEST_ITEM1 */
+#define WB_SHOP_DISPLAY_ITEM2_XY   0x00be0020u /* x $be — WB_SHOP_REQUEST_ITEM2 */
+#define WB_SHOP_DISPLAY_LEAVE_XY   0x00780018u /* x $78 — WB_SHOP_REQUEST_FAREWELL */
+#define WB_SHOP_DISPLAY_PRICE1_XY  0x0033002au /* the two price plates, one cell below their items */
+#define WB_SHOP_DISPLAY_PRICE2_XY  0x00be002au
+#define WB_SHOP_DISPLAY_EXTRA_XY   0x00780030u
+#define WB_SHOP_DISPLAY_LEAVE_SPRITE  0x173u
+#define WB_SHOP_DISPLAY_PRICE1_SPRITE 0x1a1u   /* ...and the resource shop_render_price_digits
+                                                * draws WB_SHOP_ITEM1_PRICE into */
+#define WB_SHOP_DISPLAY_PRICE2_SPRITE 0x1a2u
+#define WB_SHOP_DISPLAY_EXTRA_SPRITE  0x164u
+#define WB_SHOP_DISPLAY_EXTRA_TYPE 0x22u    /* the ONE record of the eight whose WB_ACTOR_TYPE is
+                                             * not cleared */
+#define WB_SHOP_GREET_COUNTDOWN_RESET 0xfau /* `move.w #$fa,$e02c.l` — 250 frames */
+
+/* The boss arm's own followed record, written straight into WB_ACTOR_FOLLOWED_A32 after the table
+ * it lives in has been reset. */
+#define WB_SCENE_BOSS_FOLLOW_XY    0x00400080u
+#define WB_SCENE_BOSS_FOLLOW_TYPE  1u       /* `move.w #$1,4(a1)` — WB_ACTOR_TYPE, the PLAYER's
+                                             * behaviour slot */
+#define WB_SCENE_BOSS_FOLLOW_SIZES 0x000a0014u /* `move.l #$a0014,14(a1)` — WB_ACTOR_HALF_WIDTH $a
+                                                * over WB_ACTOR_SIZE_SECOND $14 */
+
+/* $1cc0 / $1d1e — the shop's PRICE PLATES. `shop_render_price_digits` rotates a price word a nibble
+ * at a time into `glyph_stamp_8_rows`, which is $b850's digit plotter one tier over: the same
+ * WB_DIGIT_GLYPHS_ALT font, the same WB_DIGIT_GLYPH_LEN, the same leading-zero latch, but writing
+ * into a SPRITE's own bitmap rather than onto the screen. */
+#define WB_SHOP_PRICE_DIGITS       4u       /* `move.w #$3,d5` + the `dbf` */
+#define WB_SHOP_PRICE_NIBBLE_BITS  4u       /* `rol.w #4,d0` — the digit is the word's TOP nibble */
+#define WB_GLYPH_STAMP_MASK_BYTES  2u       /* `lea 2(a0),a0`: a masked sprite's group opens with a
+                                             * mask word, and the four plane bytes follow it */
+#define WB_GLYPH_STAMP_PLANE_STEP  2u       /* `addq.l #2,a0` between plane bytes */
+#define WB_GLYPH_STAMP_ROW_SKIP    14u      /* `lea 14(a0),a0` after the fourth */
+#define WB_GLYPH_STAMP_ROW_BYTES   20u      /* == (WB_PLANES - 1) * PLANE_STEP + ROW_SKIP, which
+                                             * test/test_scene.py asserts rather than deriving here
+                                             * (test/layout.py scrapes plain literals only). Two
+                                             * 10-byte groups: a 32-pixel-wide masked sprite */
+#define WB_GLYPH_STAMP_NEXT_EVEN   1u       /* an EVEN cursor's next 8-pixel cell is the odd byte of
+                                             * its own group... */
+#define WB_GLYPH_STAMP_NEXT_ODD    9u       /* ...and an odd one's is the next group's even byte,
+                                             * which is what makes the group 10 bytes wide. The two
+                                             * `lea -161`/`lea -153` rewinds are these two subtracted
+                                             * from WB_DIGIT_ROWS * ROW_BYTES + MASK_BYTES */
 
 /* ---- the eight fragments a defeated boss leaves ------------------------------------------------
  *

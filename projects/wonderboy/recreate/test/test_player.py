@@ -71,7 +71,9 @@ from leaf import (LONGWORD_BYTES, RTS, WORD_BYTES, addi_w_dn, addq_b_d16, addq_b
                   # ...and the seven this battery spelt itself until each reached its third copy
                   clr_b_ind, cmpi_b_ind, cmpi_w_dn, jmp_abs_l, move_b_ind_dn, move_l_dn_dn,
                   move_w_postinc_d16,
-                  movea_l_an_an, mulu_w_dn_dn)
+                  movea_l_an_an, mulu_w_dn_dn,
+                  # ...and the five hoisted to leaf.py by batch 41 phase B's spawn-tree pin
+                  addq_l_an, cmpi_b_abs_l, move_w_imm_d16)
 from layout import wb
 
 # The record's geometry, the register ordinals and the three BIT opcodes come from the battery that
@@ -402,12 +404,6 @@ def cmpa_l_imm(reg, value):
     return opcode(0xb1fc | (reg << 9)) + longword(value)
 
 
-def addq_l_an(amount, reg):
-    """`addq.l #n,An` — a whole-register add that touches NO condition code, which is why it can sit
-    between the arithmetic that sets X and the `sbcd` that reads it."""
-    # ALSO IN test_map.py — second copy.
-    return opcode(0x5088 | quick_field(amount) | reg)
-
 
 def subq_l_abs_l(amount, addr):
     """`subq.l #n,addr.l` — the write pointer rewound by one record."""
@@ -418,11 +414,6 @@ def sbcd_predec(destination, source):
     """`sbcd -(Ad),-(As)` — the memory-to-memory form, which is the one this game executes."""
     return opcode(0x8108 | (destination << 9) | source)
 
-
-def move_w_imm_d16(base, value, displacement):
-    """`move.w #imm,d16(An)` — the shot's type word."""
-    # ALSO IN test_actor.py, test_behavior.py — third copy, queued for leaf.py.
-    return opcode(0x317c | (base << 9)) + word(value) + word(displacement)
 
 
 def move_l_imm_d16(base, value, displacement):
@@ -1249,11 +1240,6 @@ def move_w_postinc_ind(source, destination):
     return opcode(_MOVE_W | _move_destination(_EA_IND, destination)
                   | _move_source(_EA_POSTINC, source))
 
-
-def cmpi_b_abs_l(value, addr):
-    """`cmpi.b #imm,<abs>.l` — the immediate travels in a whole WORD even for a byte compare."""
-    return opcode(0x0c39) + word(value & 0xff) + longword(addr)
-    # ALSO IN test_text.py — second copy, which the rule allows (and which now carries this mask).
 
 
 def cmpi_b_abs_w(value, addr):

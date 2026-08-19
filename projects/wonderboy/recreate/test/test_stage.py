@@ -63,7 +63,9 @@ from leaf import (RTS, add_w_dn_dn, branch, branch_over, bsr_w, btst_imm_dn, cas
                   mulu_w_dn_dn,
                   cmpi_b_ind, opcode, program_writes, st_abs_l, subi_w_dn, swap_dn, tst_w_abs_l,
                   tst_w_abs_w, u16, s16,
-                  word)
+                  word,
+                  # ...and the five hoisted to leaf.py by batch 41 phase B's spawn-tree pin
+                  move_b_imm_ind)
 from layout import wb
 # `game_life_restart_reset` CALLS hud_draw_lives, so its write set CONTAINS that routine's.
 # The geometry and the model are imported from the battery that owns them rather than
@@ -257,7 +259,9 @@ def move_w_dn_abs_l(reg, addr):
 
 
 def move_w_an_dn(reg, an):
-    """`move.w An,Dn` — the parity test's only way to look at a cursor."""
+    """`move.w An,Dn` — the parity test's only way to look at a cursor.
+    ALSO IN test_scene.py, whose glyph stamp makes the same test — second copy, agreeing in body and
+    in argument order. Hoist on the third."""
     return opcode(0x3000 | (reg << 9) | (1 << 3) | an)
 
 
@@ -315,9 +319,6 @@ def clr_l_abs_l(addr):
     return opcode(0x42b9) + longword(addr)
 
 
-def move_b_imm_ind(an, value):
-    return opcode(0x1000 | (an << 9) | (2 << 6) | 0x3c) + word(value)
-
 
 def move_w_d16_dn(reg, base, displacement):
     return opcode(0x3028 | (reg << 9) | base) + word(displacement)
@@ -328,6 +329,9 @@ def addi_l_imm_ind(an, value):
 
 
 def move_b_postinc_ind(source, destination):
+    """ALSO IN test_scene.py — second copy. The two once disagreed about argument order while
+    sharing this body and this name, so the same call assembled opposite instructions in the two
+    files; SOURCE FIRST (this order) won, and that file's call site moved. Hoist on the third."""
     return opcode(0x1000 | (destination << 9) | (2 << 6) | (3 << 3) | source)
 
 
