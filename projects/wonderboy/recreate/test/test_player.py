@@ -52,6 +52,7 @@ import pytest
 
 import harness
 import leaf
+import emu          # noqa: E402  (harness.py is what puts oracle/ on sys.path)
 import loader
 from leaf import (LONGWORD_BYTES, RTS, WORD_BYTES, addi_w_dn, addq_b_d16, addq_b_dn, addq_w_d16,
                   addq_w_dn, andi_w_dn, cmp_w_imm_dn, cmpi_w_abs_l,
@@ -62,19 +63,28 @@ from leaf import (LONGWORD_BYTES, RTS, WORD_BYTES, addi_w_dn, addq_b_d16, addq_b
                   move_w_imm_abs_l, move_w_imm_abs_w, move_w_imm_dn, move_w_postinc_dn,
                   movea_l_abs_l, moveq, opcode,
                   program_writes, quick_field, st_abs_l, sub_w_dn_d16, subq_b_d16, subq_w_d16,
-                  tst_b_abs_l, tst_b_d16, tst_w_abs_l, tst_w_abs_w, word)
+                  tst_b_abs_l, tst_b_d16, tst_w_abs_l, tst_w_abs_w, word,
+                  # ...and the forms batch 41 phase A's $151a pin adds to this battery's needs
+                  WORD_MASK, add_w_dn_dn, addq_w_abs_l, asr_w_imm_dn, bcc_abs, cmpi_b_dn,
+                  cmpi_w_d16, lea_indexed, lsl_w_imm_dn, move_b_abs_l_dn, move_b_dn_abs_l,
+                  move_w_ind_dn, subi_w_dn, subq_w_abs_l, subq_w_dn,
+                  # ...and the seven this battery spelt itself until each reached its third copy
+                  clr_b_ind, cmpi_b_ind, cmpi_w_dn, jmp_abs_l, move_b_ind_dn, move_l_dn_dn,
+                  move_w_postinc_d16,
+                  movea_l_an_an, mulu_w_dn_dn)
 from layout import wb
 
 # The record's geometry, the register ordinals and the three BIT opcodes come from the battery that
 # owns the actor table — a second copy of "what a record looks like" could disagree with src/actor.c
 # while both stayed green. Same rule test_behavior.py follows.
-from leaf import A0, A1, A2, A3, A5, A6, D0, D1, D6, D7                          # noqa: E402
-from test_actor import (BCLR_IMM, BEQ_W, BGT_W, BMI_W, BNE_W, BPL_W, BRA_W,  # noqa: E402
-                        BSET_IMM, BTST_IMM,
+from leaf import A0, A1, A2, A3, A5, A6, A7, D0, D1, D3, D6, D7                          # noqa: E402
+from test_actor import (BCLR_IMM, BEQ_W, BGT_W, BLE_W, BLT_W, BMI_W, BNE_W, BPL_W,  # noqa: E402
+                        BRA_W, BSET_IMM, BTST_IMM,
                         RECORD_BYTES, TABLE_DEFAULT, _sfx_bytes, bit_op_d16, jsr_d16_an)
 # ...and the sound module's, from the battery that owns snd_play_song.
 from test_sound import (PLAY_SONG_INSN_CAP, PLAY_SONG_MIXER, PLAY_SONG_SEEDED_BANDS,   # noqa: E402
-                        PSG_REG_MIXER, STUB_TABLE_BASE, STUB_TRIGGER_OFFSET, model_play_song)
+                        PSG_REG_MIXER, STOP_INSN_CAP, STOP_WRITES, STUB_INSN_CAP,
+                        STUB_STOP_OFFSET, STUB_TABLE_BASE, STUB_TRIGGER_OFFSET, model_play_song)
 
 
 # --- the globals, from the header both languages read ---------------------------------------------
@@ -277,6 +287,16 @@ def _assert_writes(info, expected, what):
                                   for addr, value in expected.items()}, what)
 
 
+def _flatten(model):
+    """An imported battery's `{address: bytes}` write-set model, as this file's `{address: byte}`.
+
+    THREE cases had these two lines inline before batch 41 phase A added a fourth — the death arm's
+    song, the boss arm's stop chain and the flute's song — and a fourth copy is where a divergence
+    would start. It is not in leaf.py because the SHAPE is this battery's, not the kit's:
+    `_assert_writes` is what wants one byte per key."""
+    return {addr + index: value[index] for addr, value in model.items() for index in range(len(value))}
+
+
 def _put_word(expected, addr, value):
     expected[addr] = (value >> 8) & 0xff
     expected[addr + 1] = value & 0xff
@@ -373,14 +393,6 @@ def cmp_b_imm_dn(reg, value):
 def cmpi_l_abs_l(value, addr):
     """`cmpi.l #imm,addr.l` — the write pointer against the list's base."""
     return opcode(0x0cb9) + longword(value) + longword(addr)
-
-
-def cmpi_b_ind(base, value):
-    """`cmpi.b #imm,(An)` — the item byte of the record the pointer names."""
-    # ALSO IN test_behavior.py, test_map.py, test_stage.py — fourth copy, queued for leaf.py, and
-    # spelt in THEIR argument order (base first) rather than this battery's own reading order: the
-    # `adda_w_dn_an` collision was two copies of one encoder that disagreed about exactly that.
-    return opcode(0x0c10 | base) + word(value & 0xff)
 
 
 def cmpa_l_imm(reg, value):
@@ -1070,6 +1082,555 @@ def _stage_transition_pieces():
     ] + _walk_cycle_pieces(POSTURE_WALK_RIGHT)
 
 
+# --- $151a: the collision cell, the six special tiles and the eight scene triggers ------------------
+# The constants are the header's (wonderboy.h's `$151a` block), so the pin and the reconstruction
+# cannot disagree about one; only the four addresses no header names are local, each with the
+# ../names.txt line that does name them.
+FIELD_12 = wb("ACTOR_FIELD_12")
+SND_ENGINE_ENABLED = wb("SND_ENGINE_ENABLED")
+STAGE_TUNE_LATCH = wb("STAGE_TUNE_LATCH")
+CELL_Y_BIAS = wb("PLAYER_CELL_Y_BIAS")
+MAP_CELL_SHIFT = wb("MAP_CELL_SHIFT")
+MAP_ROW_STRIDE = wb("MAP_ROW_STRIDE")
+COLLISION_MAP_DEFAULT = wb("COLLISION_MAP_DEFAULT")
+COLLISION_MAP_CELLS = wb("COLLISION_MAP_CELLS")
+# $1536's `lea $23498.l,a6` is the map's base PLUS its four header bytes, i.e. cell 0 itself — so an
+# operand scan keyed on the map's own address does not see this routine at all.
+COLLISION_MAP_CELL_0 = COLLISION_MAP_DEFAULT + COLLISION_MAP_CELLS
+
+TILE_33 = wb("MAP_TILE_33")
+TILE_34 = wb("MAP_TILE_34")
+TILE_35 = wb("MAP_TILE_35")
+TILE_36 = wb("MAP_TILE_36")
+TILE_37 = wb("MAP_TILE_37")
+TILE_38 = wb("MAP_TILE_38")
+TILE_39 = wb("MAP_TILE_39")
+TILE_33_FLAG_RAISED_BYTE = wb("TILE_33_FLAG_RAISED_BYTE")
+TILE_34_SPEED = wb("PLAYER_TILE_34_SPEED")
+TILE_34_SPAWN_TYPE = wb("PLAYER_TILE_34_SPAWN_TYPE")
+TILE_HURT_COST = wb("PLAYER_TILE_HURT_COST")
+TILE_37_X_STEP = wb("PLAYER_TILE_37_X_STEP")
+PANEL_FRAME_DELAY = wb("PANEL_FRAME_DELAY")
+PANEL_FRAME_DELAY_EVEN = wb("PANEL_FRAME_DELAY_EVEN")
+DAMAGE_FLICKER_FRAMES = wb("ACTOR_DAMAGE_FLICKER_FRAMES")
+DAMAGE_FOLLOWED_SFX = wb("ACTOR_DAMAGE_FOLLOWED_SFX")
+DAMAGE_KNOCKBACK_SPEED = wb("ACTOR_DAMAGE_KNOCKBACK_SPEED")
+
+TRIGGER_TABLE = wb("SCENE_TRIGGER_TABLE")
+TRIGGER_CODE_FIRST = wb("SCENE_TRIGGER_CODE_FIRST")
+TRIGGER_CODE_LAST = wb("SCENE_TRIGGER_CODE_LAST")
+TRIGGER_RECORD_SHIFT = wb("SCENE_TRIGGER_RECORD_SHIFT")
+TRIGGER_RECORD_BYTES = 1 << TRIGGER_RECORD_SHIFT
+TRIGGER_KIND = wb("SCENE_TRIGGER_KIND")
+KIND_SPAWN_1 = wb("SCENE_TRIGGER_KIND_SPAWN_1")
+KIND_SPAWN_2 = wb("SCENE_TRIGGER_KIND_SPAWN_2")
+KIND_MESSAGE = wb("SCENE_TRIGGER_KIND_MESSAGE")
+KIND_BOSS_DEFEAT = wb("SCENE_TRIGGER_KIND_BOSS_DEFEAT")
+KIND_SPAWN_5 = wb("SCENE_TRIGGER_KIND_SPAWN_5")
+KIND_SPAWN_6 = wb("SCENE_TRIGGER_KIND_SPAWN_6")
+KIND_ALIGN = wb("SCENE_TRIGGER_KIND_ALIGN")
+KIND_TUNE = wb("SCENE_TRIGGER_KIND_TUNE")
+TRIGGER_X = wb("SCENE_TRIGGER_X")
+TRIGGER_SPAWN_Y = wb("SCENE_TRIGGER_SPAWN_Y")
+TRIGGER_SPAWN_TYPE = wb("SCENE_TRIGGER_SPAWN_TYPE")
+TRIGGER_SPAWN_FIELD = wb("SCENE_TRIGGER_SPAWN_FIELD")
+TRIGGER_VISITS = wb("SCENE_TRIGGER_VISITS")
+TRIGGER_SPAWN_SLOT = wb("SCENE_TRIGGER_SPAWN_SLOT")
+TRIGGER_SPRITE_1 = wb("SCENE_TRIGGER_SPRITE_1")
+TRIGGER_SPRITE_2 = wb("SCENE_TRIGGER_SPRITE_2")
+TRIGGER_SPRITE_5 = wb("SCENE_TRIGGER_SPRITE_5")
+TRIGGER_SPRITE_6 = wb("SCENE_TRIGGER_SPRITE_6")
+TRIGGER_SFX_1 = wb("SCENE_TRIGGER_SFX_1")
+TRIGGER_SFX_2 = wb("SCENE_TRIGGER_SFX_2")
+TRIGGER_SPAWN_1_FIELD_10 = wb("SCENE_TRIGGER_SPAWN_1_FIELD_10")
+TRIGGER_SPAWN_SPEED = wb("SCENE_TRIGGER_SPAWN_SPEED")
+TRIGGER_MESSAGE = wb("SCENE_TRIGGER_MESSAGE")
+TEXT_REQUEST_PRIMED = wb("TEXT_REQUEST_PRIMED")
+TRIGGER_BOSS_KEY = wb("SCENE_TRIGGER_BOSS_KEY")
+TRIGGER_BOSS_SFX = wb("SCENE_TRIGGER_BOSS_SFX")
+TRIGGER_ALIGN_SUBKIND = wb("SCENE_TRIGGER_ALIGN_SUBKIND")
+TRIGGER_ALIGN_SECOND = wb("SCENE_TRIGGER_ALIGN_SECOND")
+TRIGGER_ALIGN_REACH = wb("SCENE_TRIGGER_ALIGN_REACH")
+HUD_SLOT_BBC4 = wb("HUD_SLOT_BBC4")
+HUD_SLOT_BBC4_ARMED = wb("HUD_SLOT_BBC4_ARMED")
+HUD_SLOT_BBC4_SPENT = wb("HUD_SLOT_BBC4_SPENT")
+HUD_SLOT_BBC8 = wb("HUD_SLOT_BBC8")
+HUD_SLOT_BBC8_FLUTE = wb("HUD_SLOT_BBC8_FLUTE")
+LEVEL_SEQ_INDEX = wb("LEVEL_SEQ_INDEX")
+LEVEL_SEQ_DOOR_A = wb("LEVEL_SEQ_DOOR_A")
+LEVEL_SEQ_DOOR_B = wb("LEVEL_SEQ_DOOR_B")
+LEVEL_SEQ_DOOR_STEP = wb("LEVEL_SEQ_DOOR_STEP")
+FLUTE_PLAYED = wb("SCENE_FLUTE_PLAYED")
+FLUTE_PLAYED_SET = wb("SCENE_FLUTE_PLAYED_SET")
+STAGE_ADVANCE_REQUEST = wb("STAGE_ADVANCE_REQUEST")
+STAGE_ADVANCE_REQUEST_SET = wb("STAGE_ADVANCE_REQUEST_SET")
+ALIGN_REQUEST_B14 = wb("SCENE_ALIGN_REQUEST_B14")
+TRIGGER_FLAG_SET = wb("SCENE_TRIGGER_FLAG_SET")
+TRIGGER_TUNE_MAX_Y = wb("SCENE_TRIGGER_TUNE_MAX_Y")
+MESSAGE_PLAYED_FLUTE = wb("TEXT_MESSAGE_PLAYED_FLUTE")
+MESSAGE_NICE_VIEW = wb("TEXT_MESSAGE_NICE_VIEW")
+TRIGGER_FLUTE_SONG = wb("SCENE_TRIGGER_FLUTE_SONG")
+KEY_LAST_SCANCODE = wb("KEY_LAST_SCANCODE")
+STAGE_ANIM_REQUEST_B0E = wb("STAGE_ANIM_REQUEST_B0E")
+SCENE_MARKER_CELL_PTR = wb("SCENE_MARKER_CELL_PTR")
+RECORD_PTR_10424 = wb("RECORD_PTR_10424")
+FOLLOWED_DEFAULT = wb("ACTOR_FOLLOWED_DEFAULT")
+# NAMED OFF THE `COLLIDE_` PREFIX ON PURPOSE: the $b1a section below already binds
+# COLLIDE_UNWIND to the two INSTRUCTIONS of the pop, which is a different fact about the
+# same arm, and a battery holding both under one name reports the wrong one.
+EXIT_RETURN = wb("PLAYER_COLLIDE_RETURN")
+EXIT_SOUND_WAIT = wb("PLAYER_COLLIDE_SOUND_WAIT")
+EXIT_UNWIND = wb("PLAYER_COLLIDE_UNWIND")
+
+# The three addresses inside the ORIGINAL that no header names, because the reconstruction reaches
+# none of them: two branch targets and the routine's own data words.
+KNOCK_BACK_TAIL = leaf.entry_of("actor_knock_back_and_launch")   # $6ade, the `bra.w` at $15e8
+UNWIND_TARGET = leaf.entry_of("stage_sequence_advance")          # $e5ba, after the triple pop
+# THE CHECKPOINT IS THE `jmp` AND THE WITNESS IS THE `lea`, in that order and not the other way
+# round. `emu.run` stops BEFORE marking the checkpoint's own PC, so a checkpoint at the `lea` can
+# only be witnessed by something above it — and the `beq.w` at $161c EXECUTES ON EVERY PATH that
+# reaches the tile-$39 test, taken or not, so it witnesses nothing. The `lea 12(a7),a7` is on the
+# taken arm alone; stopping one instruction later is what makes it available as the witness, and it
+# writes no memory (a7 is a register), so the image compared is still the one at the transfer.
+UNWIND_SITE = 0x1626             # `jmp $e5ba.l` — where the checkpointed run stops
+UNWIND_TAKEN_AT = 0x1622         # ...and the `lea 12(a7),a7` that must have executed to get there
+SOUND_WAIT_SITE = 0x1932         # `tst.b 378(a5)` — WB_PLAYER_COLLIDE_SOUND_WAIT's checkpoint
+SOUND_WAIT_TAKEN_AT = 0x192a     # ...and the `jsr (a5)` that starts the song the spin waits on
+UNWIND_STACK_BYTES = 12          # `lea 12(a7),a7` — THREE return addresses
+DESCRIPTOR_SUBKIND_FROM_A1 = TRIGGER_ALIGN_SUBKIND - WORD_BYTES  # a1 is past the kind word already
+
+
+# --- the encodings this pin needs and neither leaf.py nor the block above had ----------------------
+# A `move` names its DESTINATION at bits 11-9 (register) and 8-6 (mode) and its SOURCE at 5-3 (mode)
+# and 2-0 (register) — the same two fields in the two orders. That one rule is behind four of the
+# encoders here, so it is spelt once rather than folded into each of them. (It was seven until
+# `move_l_dn_dn`, `movea_l_an_an`, `move_b_ind_dn` and `move_w_postinc_d16` reached their third copy
+# and moved to leaf.py, taking the byte and d16 spellings of the rule with them.)
+_MOVE_W, _MOVE_L = 0x3000, 0x2000
+_EA_DN, _EA_AN, _EA_IND, _EA_POSTINC = 0, 1, 2, 3
+_EA_OTHER, _EA_ABS_L = 7, 1
+
+
+def _move_source(mode, reg):
+    """A `move`'s SOURCE effective address, in bits 5-0."""
+    return (mode << 3) | reg
+
+
+def _move_destination(mode, reg):
+    """...and its DESTINATION, in bits 11-6, which hold the same two fields in the other order."""
+    return (reg << 9) | (mode << 6)
+
+
+def move_l_an_abs_l(reg, addr):
+    """`move.l An,<abs>.l` — a whole POINTER published to a global ($163a, $1964)."""
+    # ALSO IN test_stage.py, as the bare opcode word `MOVE_L_AN_ABS_L` — second copy, which the rule
+    # allows. A constant spelling an opcode IS a copy of the encoder; goes to leaf.py on its third.
+    return (opcode(_MOVE_L | _move_destination(_EA_OTHER, _EA_ABS_L) | _move_source(_EA_AN, reg))
+            + longword(addr))
+
+
+def move_l_abs_l_abs_l(source, destination):
+    """`move.l <abs>.l,<abs>.l` — the descriptor pointer copied to its neighbour. SIX arms make it
+    ($1684, $170e, $1772, $17a4, $17f4, $18f6) and a whole-image sweep for the encoding finds
+    exactly those six, all inside this routine."""
+    return (opcode(_MOVE_L | _move_destination(_EA_OTHER, _EA_ABS_L)
+                   | _move_source(_EA_OTHER, _EA_ABS_L))
+            + longword(source) + longword(destination))
+
+
+def move_w_dn_ind(reg, base):
+    """`move.w Dn,(An)` — $188e, the door writing the player's snapped x back."""
+    return opcode(_MOVE_W | _move_destination(_EA_IND, base) | _move_source(_EA_DN, reg))
+    # ALSO IN test_map.py — second copy, which the rule allows.
+
+
+def move_w_postinc_ind(source, destination):
+    """`move.w (As)+,(Ad)` — the first of the four words a spawning kind copies."""
+    return opcode(_MOVE_W | _move_destination(_EA_IND, destination)
+                  | _move_source(_EA_POSTINC, source))
+
+
+def cmpi_b_abs_l(value, addr):
+    """`cmpi.b #imm,<abs>.l` — the immediate travels in a whole WORD even for a byte compare."""
+    return opcode(0x0c39) + word(value & 0xff) + longword(addr)
+    # ALSO IN test_text.py — second copy, which the rule allows (and which now carries this mask).
+
+
+def cmpi_b_abs_w(value, addr):
+    """...and the SHORT form, which is how the boss arm reads the scancode byte at $879."""
+    return opcode(0x0c38) + word(value & 0xff) + word(addr)
+
+
+def cmp_w_ind_dn(reg, base):
+    """`cmp.w (An),Dn` — the SIGNED compare of the followed actor's x against the door's window."""
+    return opcode(0xb050 | (reg << 9) | base)
+    # ALSO IN test_behavior.py — second copy, which the rule allows.
+
+
+def andi_w_abs_l(value, addr):
+    """`andi.w #imm,<abs>.l` — the panel delay masked EVEN in memory, right after its decrement."""
+    return opcode(0x0279) + word(value) + longword(addr)
+    # ALSO IN test_scroll.py — second copy, which the rule allows.
+
+
+def tst_w_ind(base):
+    """`tst.w (An)` — "is the scene's own actor slot free", which is a SIGN test of its x."""
+    return opcode(0x4a50 | base)
+    # ALSO IN test_behavior.py — second copy, which the rule allows.
+
+
+def clr_b_abs_w(addr):
+    """`clr.b <abs>.w` — the tile flag's HIGH BYTE lowered, against the `st` that raises it."""
+    return opcode(0x4238) + word(addr)
+
+
+def st_abs_w(addr):
+    """`st <abs>.w` — Scc's true byte into a destination below $8000, leaf.st_abs_l's short twin."""
+    return opcode(0x50f8) + word(addr)
+
+
+def subq_w_ind(amount, base):
+    """`subq.w #n,(An)` — leaf.addq_w_ind's mirror, and $15fe's nudge."""
+    return opcode(0x5150 | quick_field(amount) | base)
+    # ALSO IN test_behavior.py — second copy, which the rule allows (and which now shares this body).
+
+
+def subq_w_postinc(amount, base):
+    """`subq.w #n,(An)+` — one visit spent AND the cursor stepped, in one instruction."""
+    return opcode(0x5158 | quick_field(amount) | base)
+
+
+def subq_l_dn(amount, reg):
+    """`subq.l #n,Dn` — $162c's bias, a LONGWORD subtract where every other one here is a word."""
+    return opcode(0x5180 | quick_field(amount) | reg)
+
+
+def _trigger_slot_pieces(label, sfx):
+    """The head kinds 1, 2 and 5 share: republish the descriptor pointer, refuse the scene's own
+    actor slot unless its x is negative, and ask the sound module for the arrival effect."""
+    return [
+        move_l_abs_l_abs_l(RECORD_PTR_10420, RECORD_PTR_10424),
+        lea_abs_l(A2, TRIGGER_SPAWN_SLOT),
+        tst_w_ind(A2),
+        bcc(BMI_W, f"{label}-free"),
+        RTS,
+        lab(f"{label}-free"),
+        lea_abs_l(A5, STUB_TABLE_BASE),
+        move_w_imm_dn(D0, sfx),
+        clr_w_dn(D1),
+        jsr_d16_an(A5, STUB_TRIGGER_OFFSET),
+    ]
+
+
+def _trigger_copy_pieces():
+    """The four words every spawning kind copies out of the descriptor into the slot it took."""
+    return [
+        move_w_postinc_ind(A1, A2),
+        move_w_postinc_d16(A1, A2, ACTOR_Y),
+        move_w_postinc_d16(A1, A2, ACTOR_TYPE),
+        move_w_postinc_d16(A1, A2, FIELD_12),
+    ]
+
+
+def _trigger_visit_pieces(label):
+    """...and the tail all four share: one visit spent, and the cell consumed on the last one."""
+    return [
+        subq_w_postinc(1, A1),
+        bcc(BNE_W, f"{label}-out"),
+        clr_b_ind(A6),
+        lab(f"{label}-out"),
+        RTS,
+    ]
+
+
+def _run_map_cell_pieces():
+    """$151a — one collision cell, six special tiles and eight scene kinds. 1,170 bytes, the largest
+    single routine in the image, and the last of `actor_behavior_type01_player`'s nine calls to be
+    reconstructed bar the gate."""
+    return [
+        # $151a — the record's x,y turned into ONE collision-map cell
+        moveq(0, D0),
+        move_l_dn_dn(D1, D0),
+        move_w_ind_dn(D0, A0, ACTOR_X),
+        move_w_ind_dn(D1, A0, ACTOR_Y),
+        subi_w_dn(D1, CELL_Y_BIAS),
+        asr_w_imm_dn(MAP_CELL_SHIFT, D0),
+        asr_w_imm_dn(MAP_CELL_SHIFT, D1),
+        move_w_abs_l_dn(D3, MAP_ROW_STRIDE),
+        mulu_w_dn_dn(D3, D1),
+        add_w_dn_dn(D3, D0),
+        lea_abs_l(A6, COLLISION_MAP_CELL_0),
+        lea_indexed(A6, D3),
+        cmpi_b_ind(A6, TRIGGER_CODE_FIRST),
+        bcc(BLT_W, "clear-tile-flag"),
+        moveq(0, D0),
+        move_b_ind_dn(D0, A6),
+        cmp_b_imm_dn(D0, TRIGGER_CODE_LAST),
+        bcc(BLE_W, "trigger"),
+        # $1554 — tile $33 raises the flag the ladder tier reads
+        cmpi_b_dn(D0, TILE_33),
+        bcc(BNE_W, "tile-34"),
+        st_abs_w(TILE_33_FLAG),
+        RTS,
+        # $1562 — tile $34: a SUPPORTED record is launched, and a record is spawned on its x,y
+        lab("tile-34"),
+        cmpi_b_dn(D0, TILE_34),
+        bcc(BNE_W, "tile-35"),
+        bit_op_d16(BTST_IMM, SUPPORTED_BIT, A0, ACTOR_FLAGS),
+        bcc(BNE_W, "tile-34-launch"),
+        RTS,
+        lab("tile-34-launch"),
+        move_b_imm_d16(A0, TILE_34_SPEED, SPEED),
+        bit_op_d16(BSET_IMM, MOVING_BIT, A0, ACTOR_FLAGS),
+        bit_op_d16(BSET_IMM, LAUNCHED_BIT, A0, ACTOR_FLAGS),
+        bit_op_d16(BCLR_IMM, SUPPORTED_BIT, A0, ACTOR_FLAGS),
+        bsr("actor_alloc_slot_high"),
+        cmpa_l_imm(A1, ALLOC_NONE),
+        bcc(BEQ_W, "shared-rts"),
+        move_l_ind_ind(A0, A1),
+        move_w_imm_d16(A1, TILE_34_SPAWN_TYPE, ACTOR_TYPE),
+        RTS,
+        # $15a6 — tiles $35 and $36 are ONE body reached by two paths
+        lab("tile-35"),
+        cmpi_b_dn(D0, TILE_35),
+        bcc(BNE_W, "tile-36"),
+        bcc(BRA_W, "hurt"),
+        lab("tile-36"),
+        cmpi_b_dn(D0, TILE_36),
+        bcc(BNE_W, "tile-37"),
+        lab("hurt"),
+        bit_op_d16(BTST_IMM, FLICKER_BIT, A0, ACTOR_FLAGS),
+        bcc(BNE_W, "tile-37"),
+        bit_op_d16(BSET_IMM, FLAGS2_BIT_0, A0, FLAGS2),
+        bit_op_d16(BSET_IMM, FLICKER_BIT, A0, ACTOR_FLAGS),
+        move_b_imm_d16(A0, DAMAGE_FLICKER_FRAMES, FLICKER_COUNTDOWN),
+        subq_w_abs_l(TILE_HURT_COST, HUD_METER_VALUE),
+        bcc(BPL_W, "meter-floored"),
+        clr_w_abs_l(HUD_METER_VALUE),
+        lab("meter-floored"),
+        movea_l_an_an(A1, A0),
+        bcc_abs(BRA_W, KNOCK_BACK_TAIL),
+        # $15ec — tile $37 nudges a SUPPORTED record back
+        lab("tile-37"),
+        cmpi_b_dn(D0, TILE_37),
+        bcc(BNE_W, "tile-38"),
+        bit_op_d16(BTST_IMM, SUPPORTED_BIT, A0, ACTOR_FLAGS),
+        bcc(BEQ_W, "shared-rts"),
+        subq_w_ind(TILE_37_X_STEP, A0),
+        lab("shared-rts"),
+        RTS,
+        # $1602 — tile $38 steps the panel delay and FALLS THROUGH into tile $39's own test
+        lab("tile-38"),
+        cmpi_b_dn(D0, TILE_38),
+        bcc(BNE_W, "tile-39"),
+        subq_w_abs_l(1, PANEL_FRAME_DELAY),
+        andi_w_abs_l(PANEL_FRAME_DELAY_EVEN, PANEL_FRAME_DELAY),
+        # $1618 — tile $39 leaves through a TRIPLE POP: this routine, its caller and its caller's
+        lab("tile-39"),
+        cmpi_b_dn(D0, TILE_39),
+        bcc(BEQ_W, "unwind"),
+        RTS,
+        lab("unwind"),
+        lea_d16(A7, UNWIND_STACK_BYTES),
+        jmp_abs_l(UNWIND_TARGET),
+        # $162c — a cell of 3..$22 names a 32-byte SCENE DESCRIPTOR, dispatched on its own kind word
+        lab("trigger"),
+        subq_l_dn(TRIGGER_CODE_FIRST, D0),
+        lsl_w_imm_dn(TRIGGER_RECORD_SHIFT, D0),
+        lea_abs_l(A1, TRIGGER_TABLE),
+        lea_indexed(A1, D0),
+        move_l_an_abs_l(A1, RECORD_PTR_10420),
+        move_w_postinc_dn(D0, A1),
+        cmpi_w_dn(D0, KIND_SPAWN_1),
+        bcc(BEQ_W, "kind-1"),
+        cmpi_w_dn(D0, KIND_SPAWN_2),
+        bcc(BEQ_W, "kind-2"),
+        cmpi_w_dn(D0, KIND_MESSAGE),
+        bcc(BEQ_W, "kind-3"),
+        cmpi_w_dn(D0, KIND_BOSS_DEFEAT),
+        bcc(BEQ_W, "kind-4"),
+        cmpi_w_dn(D0, KIND_SPAWN_5),
+        bcc(BEQ_W, "kind-5"),
+        cmpi_w_dn(D0, KIND_SPAWN_6),
+        bcc(BEQ_W, "kind-6"),
+        cmpi_w_dn(D0, KIND_ALIGN),
+        bcc(BEQ_W, "kind-7"),
+        cmp_w_imm_dn(D0, KIND_TUNE),
+        bcc(BEQ_W, "kind-8"),
+        RTS,
+        # $1684 — kind 1, the only arm that reads the FOLLOWED record, and it copies its side
+        # bit INVERTED
+        lab("kind-1"),
+    ] + _trigger_slot_pieces("kind-1", TRIGGER_SFX_1) + _trigger_copy_pieces() + [
+        lea_abs_l(A5, FOLLOWED_DEFAULT),
+        bit_op_d16(BTST_IMM, SIDE_BIT, A5, ACTOR_FLAGS),
+        bcc(BNE_W, "kind-1-face-left"),
+        bit_op_d16(BSET_IMM, SIDE_BIT, A2, ACTOR_FLAGS),
+        bcc(BRA_W, "kind-1-flags"),
+        lab("kind-1-face-left"),
+        bit_op_d16(BCLR_IMM, SIDE_BIT, A2, ACTOR_FLAGS),
+        lab("kind-1-flags"),
+        bit_op_d16(BCLR_IMM, FLICKER_BIT, A2, ACTOR_FLAGS),
+        bit_op_d16(BSET_IMM, MOVING_BIT, A2, ACTOR_FLAGS),
+        bit_op_d16(BSET_IMM, LAUNCHED_BIT, A2, ACTOR_FLAGS),
+        bit_op_d16(BCLR_IMM, SUPPORTED_BIT, A2, ACTOR_FLAGS),
+        move_b_imm_d16(A2, TRIGGER_SPAWN_1_FIELD_10, FIELD_10),
+        move_b_imm_d16(A2, TRIGGER_SPAWN_SPEED, SPEED),
+        move_w_imm_d16(A2, TRIGGER_SPRITE_1, ACTOR_SPRITE),
+    ] + _trigger_visit_pieces("kind-1") + [
+        # $170e — kind 2: kind 1 without the side bit and without WB_ACTOR_FIELD_10
+        lab("kind-2"),
+    ] + _trigger_slot_pieces("kind-2", TRIGGER_SFX_2) + _trigger_copy_pieces() + [
+        bit_op_d16(BSET_IMM, MOVING_BIT, A2, ACTOR_FLAGS),
+        bit_op_d16(BSET_IMM, LAUNCHED_BIT, A2, ACTOR_FLAGS),
+        bit_op_d16(BCLR_IMM, SUPPORTED_BIT, A2, ACTOR_FLAGS),
+        move_b_imm_d16(A2, TRIGGER_SPAWN_SPEED, SPEED),
+        move_w_imm_d16(A2, TRIGGER_SPRITE_2, ACTOR_SPRITE),
+        bit_op_d16(BCLR_IMM, FLICKER_BIT, A2, ACTOR_FLAGS),
+    ] + _trigger_visit_pieces("kind-2") + [
+        # $1772 — kind 3 posts a MESSAGE and takes no actor slot at all
+        lab("kind-3"),
+        move_l_abs_l_abs_l(RECORD_PTR_10420, RECORD_PTR_10424),
+        moveq(0, D0),
+        move_b_imm_abs_l(TEXT_REQUEST_PRIMED, TEXT_REQUEST),
+        move_w_postinc_dn(D0, A1),
+        bcc(BEQ_W, "kind-3-out"),
+        move_b_dn_abs_l(D0, TEXT_REQUEST),
+        move_w_imm_abs_l(TEXT_LIFETIME_DEFAULT, TEXT_LIFETIME_REQUEST),
+        lab("kind-3-out"),
+        clr_b_ind(A6),
+        RTS,
+        # $179e — the cell below WB_SCENE_TRIGGER_CODE_FIRST, where the tile flag comes back down
+        lab("clear-tile-flag"),
+        clr_b_abs_w(TILE_33_FLAG),
+        RTS,
+        # $17a4 — kind 5, kind 2's quiet twin, which also clears the PLAYER's own 30(a0)
+        lab("kind-5"),
+    ] + _trigger_slot_pieces("kind-5", TRIGGER_SFX_2) + [
+        clr_b_d16(A0, FIELD_30),
+    ] + _trigger_copy_pieces() + [
+        move_w_imm_d16(A2, TRIGGER_SPRITE_5, ACTOR_SPRITE),
+        bit_op_d16(BCLR_IMM, FLICKER_BIT, A2, ACTOR_FLAGS),
+    ] + _trigger_visit_pieces("kind-5") + [
+        # $17f4 — kind 6, the same again with NO effect at all
+        lab("kind-6"),
+        move_l_abs_l_abs_l(RECORD_PTR_10420, RECORD_PTR_10424),
+        lea_abs_l(A2, TRIGGER_SPAWN_SLOT),
+        tst_w_ind(A2),
+        bcc(BMI_W, "kind-6-free"),
+        RTS,
+        lab("kind-6-free"),
+    ] + _trigger_copy_pieces() + [
+        move_w_imm_d16(A2, TRIGGER_SPRITE_6, ACTOR_SPRITE),
+        bit_op_d16(BCLR_IMM, FLICKER_BIT, A2, ACTOR_FLAGS),
+    ] + _trigger_visit_pieces("kind-6") + [
+        # $1830 — kind 7, the HIDDEN DOOR. Two gates in a lattice, with a `bra.s` back into the
+        # other order's first question
+        lab("kind-7"),
+        cmpi_b_abs_l(HUD_SLOT_BBC4_ARMED, HUD_SLOT_BBC4),
+        bcc(BEQ_W, "kind-7-armed"),
+        lab("kind-7-flute"),
+        cmpi_w_abs_l(FLUTE_PLAYED_SET, FLUTE_PLAYED),
+        bcc(BEQ_W, "kind-7-second"),
+        RTS,
+        lab("kind-7-second"),
+        cmpi_w_d16(A1, TRIGGER_ALIGN_SECOND, DESCRIPTOR_SUBKIND_FROM_A1),
+        bcc(BEQ_W, "kind-7-reach"),
+        RTS,
+        lab("kind-7-armed"),
+        cmpi_w_d16(A1, TRIGGER_ALIGN_SECOND, DESCRIPTOR_SUBKIND_FROM_A1),
+        bcc(BNE_W, "kind-7-reach"),
+        bra_s("kind-7-flute"),
+        lab("kind-7-reach"),
+        lea_abs_l(A2, FOLLOWED_DEFAULT),
+        bit_op_d16(BTST_IMM, SUPPORTED_BIT, A2, ACTOR_FLAGS),
+        bcc(BEQ_W, "kind-7-out"),
+        movea_l_abs_l(A3, RECORD_PTR_10420),
+        move_w_ind_dn(D0, A3, TRIGGER_X),
+        subq_w_dn(TRIGGER_ALIGN_REACH, D0),
+        cmp_w_ind_dn(D0, A2),
+        bcc(BGT_W, "kind-7-out"),
+        addq_w_dn(2 * TRIGGER_ALIGN_REACH, D0),
+        cmp_w_ind_dn(D0, A2),
+        bcc(BLT_W, "kind-7-out"),
+        subq_w_dn(TRIGGER_ALIGN_REACH, D0),
+        move_w_dn_ind(D0, A0),
+        move_w_imm_abs_l(0, FLUTE_PLAYED),
+        move_w_imm_abs_l(HUD_SLOT_BBC4_SPENT, HUD_SLOT_BBC4),
+        move_w_imm_abs_w(TRIGGER_FLAG_SET, SCROLL_FOLLOW_FROZEN),
+        move_w_imm_abs_l(TRIGGER_FLAG_SET, PANEL_FRAME_HOLD),
+        move_w_imm_abs_w(TRIGGER_FLAG_SET, ALIGN_REQUEST_B14),
+        cmpi_w_abs_l(LEVEL_SEQ_DOOR_A, LEVEL_SEQ_INDEX),
+        bcc(BEQ_W, "kind-7-advance"),
+        cmpi_w_abs_l(LEVEL_SEQ_DOOR_B, LEVEL_SEQ_INDEX),
+        bcc(BEQ_W, "kind-7-advance"),
+        lab("kind-7-out"),
+        RTS,
+        lab("kind-7-advance"),
+        cmpi_w_d16(A1, TRIGGER_ALIGN_SECOND, DESCRIPTOR_SUBKIND_FROM_A1),
+        bcc(BEQ_W, "kind-7-request"),
+        addq_w_abs_l(LEVEL_SEQ_DOOR_STEP, LEVEL_SEQ_INDEX),
+        RTS,
+        lab("kind-7-request"),
+        move_w_imm_abs_l(STAGE_ADVANCE_REQUEST_SET, STAGE_ADVANCE_REQUEST),
+        RTS,
+        # $18ea — kind 8: the FLUTE, or the view. Its flute arm ends in the busy-wait at $1932
+        lab("kind-8"),
+        cmpi_w_d16(A0, TRIGGER_TUNE_MAX_Y, ACTOR_Y),
+        bcc(BLT_W, "kind-8-body"),
+        RTS,
+        lab("kind-8-body"),
+        move_l_abs_l_abs_l(RECORD_PTR_10420, RECORD_PTR_10424),
+        clr_b_ind(A6),
+        cmpi_b_abs_l(HUD_SLOT_BBC8_FLUTE, HUD_SLOT_BBC8),
+        bcc(BNE_W, "kind-8-view"),
+        move_b_imm_abs_l(MESSAGE_PLAYED_FLUTE, TEXT_REQUEST),
+        move_w_imm_abs_l(TEXT_LIFETIME_DEFAULT, TEXT_LIFETIME_REQUEST),
+        lea_abs_l(A5, STUB_TABLE_BASE),
+        move_w_imm_dn(D0, TRIGGER_FLUTE_SONG),
+        clr_w_dn(D1),
+        jsr_ind(A5),
+        lea_abs_l(A5, STUB_TABLE_BASE),
+        lab("kind-8-wait"),
+        tst_b_d16(A5, SND_ENGINE_ENABLED - STUB_TABLE_BASE),
+        bcc_s(BNE_W, "kind-8-wait"),
+        # ...and everything below the spin is unreachable under either core: the `jsr` above raises
+        # that very byte as snd_play_song's LAST write. src/player.c ports none of these SIX.
+        move_w_imm_abs_l(FLUTE_PLAYED_SET, FLUTE_PLAYED),
+        clr_w_dn(D1),
+        moveq(0, D0),
+        move_b_abs_l_dn(D0, STAGE_TUNE_LATCH),
+        jsr_ind(A5),
+        RTS,
+        lab("kind-8-view"),
+        move_b_imm_abs_l(MESSAGE_NICE_VIEW, TEXT_REQUEST),
+        move_w_imm_abs_l(TEXT_LIFETIME_DEFAULT, TEXT_LIFETIME_REQUEST),
+        RTS,
+        # $1960 — DATA, inside the body: flute_played_latch and stage_advance_request, both zero
+        word(0) + word(0),
+        # $1964 — kind 4, the boss defeat, which the space bar arms
+        lab("kind-4"),
+        move_l_an_abs_l(A6, SCENE_MARKER_CELL_PTR),
+        bit_op_d16(BTST_IMM, SUPPORTED_BIT, A0, ACTOR_FLAGS),
+        bcc(BNE_W, "kind-4-supported"),
+        RTS,
+        lab("kind-4-supported"),
+        cmpi_b_abs_w(TRIGGER_BOSS_KEY, KEY_LAST_SCANCODE),
+        bcc(BEQ_W, "kind-4-fire"),
+        RTS,
+        lab("kind-4-fire"),
+        lea_abs_l(A1, STUB_TABLE_BASE),
+        jsr_d16_an(A1, STUB_STOP_OFFSET),
+        move_w_imm_dn(D0, TRIGGER_BOSS_SFX),
+        clr_w_dn(D1),
+        jsr_d16_an(A1, STUB_TRIGGER_OFFSET),
+        move_w_imm_abs_w(TRIGGER_FLAG_SET, STATE_FLAG_A34),
+        move_w_imm_abs_l(TRIGGER_FLAG_SET, PANEL_FRAME_HOLD),
+        move_w_imm_abs_w(TRIGGER_FLAG_SET, STAGE_ANIM_REQUEST_B0E),
+        RTS,
+    ]
+
+
 ENTRY_PIECES = {
     "player_meter_empty_check": _meter_empty_pieces(),
     "player_jump_step": _jump_step_pieces(),
@@ -1079,8 +1640,9 @@ ENTRY_PIECES = {
     "player_step_and_arm": _step_and_arm_pieces(),
     "player_weapon_fire": _weapon_fire_pieces(),
     "player_stage_transition": _stage_transition_pieces(),
+    "player_run_map_cell": _run_map_cell_pieces(),
 }
-RECONSTRUCTED_ROUTINES = 8
+RECONSTRUCTED_ROUTINES = 9
 
 ENTRY_BYTES = {name: leaf.asm(leaf.entry_of(name), pieces)
                for name, pieces in ENTRY_PIECES.items()}
@@ -1089,7 +1651,6 @@ INSN_COUNT = {name: leaf.instruction_count(pieces) for name, pieces in ENTRY_PIE
 # The two callees this file's bodies reach, as upper bounds on one call. Both belong to other
 # batteries; `joy1_newly_pressed`'s body is five instructions and test_input.py pins it, and the SFX
 # stub's cap comes from the battery that owns the sound module.
-from test_sound import STUB_INSN_CAP    # noqa: E402
 JOY_EDGE_INSNS = 8
 
 
@@ -1130,6 +1691,9 @@ BODY_SIZES = {
     "player_stage_transition": 656,     # $1f54..$21e3, bounded by the 466 bytes of DATA above it —
                                         # and EIGHT of those 656 are data too, the ladder's own
                                         # frame table at $20c2
+    "player_run_map_cell": 1170,        # $151a..$19ab, bounded by scene_spawn_from_script's entry —
+                                        # and FOUR of those are data as well, the two handshake
+                                        # words at $1960 the flute and the door talk through
 }
 
 
@@ -1162,6 +1726,8 @@ CALLERS = {
     # ...and the LAST call has TWO callers: the frame's own `bsr` and the one on nearly every arm of
     # `player_pending_event_gate`.
     "player_stage_transition": (0xa70, 0xbb0),
+    # ...and the collision cell has ONE, the frame's eighth `bsr`.
+    "player_run_map_cell": (0xa6c,),
 }
 
 
@@ -1675,9 +2241,7 @@ def test_the_death_arm_starts_the_song_and_raises_the_four_words(block):
                                 ACTOR + ACTOR_FLAGS: bytes([flags])})
     image = harness.make_image(pokes)
 
-    song = model_play_song(image, DEATH_SONG)
-    expected = {addr + index: value[index]
-                for addr, value in song.items() for index in range(len(value))}
+    expected = _flatten(model_play_song(image, DEATH_SONG))
     expected[ACTOR + ACTOR_FLAGS] = flags & ~(1 << FLICKER_BIT)
     for global_word in (STATE_FLAG_A34, STAGE_RESET_BLOCK, SCROLL_FOLLOW_FROZEN, PANEL_FRAME_HOLD):
         _put_word(expected, global_word, DEATH_FLAG_SET)
@@ -3408,7 +3972,7 @@ def test_the_swing_is_asked_before_the_posture_on_a_seed_that_would_answer_both(
 # `player_pending_event_gate` ($b1a) is the frame's second call and the only one still missing. It is
 # UNPORTABLE rather than merely unported: THREE of its exits leave through a stack unwind instead of
 # returning — `lea 4(a7),a7 / jmp` at $bdc and $c20, and `bra.w $1622` at $d16, which lands in
-# `player_collide_and_scroll`'s own `lea 12(a7),a7 / jmp $e5ba.l` and so pops THREE return addresses
+# `player_run_map_cell`'s own `lea 12(a7),a7 / jmp $e5ba.l` and so pops THREE return addresses
 # in ANOTHER routine's body. That third one is why the count was two until batch 40 phase C: a census
 # of this routine's own instructions cannot see a pop that happens somewhere else. What CAN be
 # pinned about it from here is structural, and both claims below were live failure modes.
@@ -3438,7 +4002,7 @@ GATE_UNWIND_EXITS = {
     0xc1c: (0x4fef0004, 0xe5ba),     # lea 4(a7),a7 / jmp $e5ba.l — one
 }
 # ...and the THIRD, which is not the gate's own instruction at all: it branches into
-# `player_collide_and_scroll` and unwinds there.
+# `player_run_map_cell` and unwinds there.
 GATE_UNWIND_VIA = 0x1622
 COLLIDE_UNWIND = (0x4fef000c, 0xe5ba)   # lea 12(a7),a7 / jmp $e5ba.l — THREE return addresses
 
@@ -3453,7 +4017,7 @@ def _unwind_at(addr):
 def test_the_gate_leaves_through_THREE_stack_unwinds_and_one_of_them_is_not_its_own():
     """WHY $b1a IS UNPORTABLE, counted. Two of the three are its own `lea 4(a7),a7 / jmp` pairs. The
     third is the one every surface in this project said did not exist until batch 40 phase C:
-    `bra.w $1622` at $d16 lands inside `player_collide_and_scroll`, whose `lea 12(a7),a7 / jmp
+    `bra.w $1622` at $d16 lands inside `player_run_map_cell`, whose `lea 12(a7),a7 / jmp
     $e5ba.l` discards THREE return addresses — so the gate can unwind past its caller AND its
     caller's caller, through a pop written in another routine's body.
 
@@ -3469,9 +4033,9 @@ def test_the_gate_leaves_through_THREE_stack_unwinds_and_one_of_them_is_not_its_
         f"$1622 is {[hex(v) for v in _unwind_at(GATE_UNWIND_VIA)]}, not the triple pop")
     assert 0xd16 in CONTROL_FLOW_TARGETS[GATE_UNWIND_VIA], (
         "the gate does not branch to $1622, so the third exit is not the gate's")
-    entry = leaf.entry_of("player_collide_and_scroll")
+    entry = leaf.entry_of("player_run_map_cell")
     assert entry < GATE_UNWIND_VIA < 0x19ac, (
-        "$1622 is not inside player_collide_and_scroll, so the pop is not in another routine")
+        "$1622 is not inside player_run_map_cell, so the pop is not in another routine")
     # The pop's DEPTH is the claim that matters, and it is read off the `lea`'s displacement rather
     # than written down: 12 bytes of return addresses is three of them.
     assert (COLLIDE_UNWIND[0] & 0xffff) // LONGWORD_BYTES == 3
@@ -3547,3 +4111,965 @@ def test_1fa2_is_an_ARM_of_player_stage_transition_and_not_a_routine():
         "the branch that names the arm is not inside player_stage_transition's own body")
     assert STAGE_TRANSITION_ARM < entry + BODY_SIZES["player_stage_transition"], (
         "the arm is not inside the body the pin covers")
+
+
+# --- $151a: the player's own map cell ---------------------------------------------------------------
+#
+# WHAT SHAPES THIS PART OF THE BATTERY. Every case here seeds a COLLISION MAP, which nothing above it
+# in this file does: the cell the routine reads is computed from the record's x,y and a stride word
+# that lies past the program's last byte, so both are zero in the shipped image and a case that
+# seeded neither would read cell 0 of a map of zero-length rows. The band around the cell is
+# address-keyed for the usual reason — a lookup one cell out reads a byte that is wrong FOR WHERE IT
+# WAS READ rather than a plausible zero.
+#
+# THE DESCRIPTOR TABLE IS SEEDED THE SAME WAY and for a sharper reason: it is loaded from disk, so
+# there is no shipped datum to run against at all, and every one of the eight kinds is a branch on a
+# word out of it.
+_RUN_MAP_CELL = leaf.register_glue("player_run_map_cell", [ctypes.c_uint32], ctypes.c_uint32)
+
+# A stride wide enough that the row term dominates the column one (so a case that lost the multiply
+# would not land on the same cell by accident) and — the half the first draft got wrong — with a
+# NONZERO LOW NIBBLE. `asr.w #4` and `lsr.w #4` on a negative row differ by exactly $f000, and
+# $f000 * any multiple of 16 is 0 in the low word, so a stride of $20 made the row shift's
+# SIGNEDNESS invisible to every case at once. $1e leaves $2000 of difference.
+MAP_STRIDE = 0x1e
+
+# THE GATE BYTES ARE SEEDED NONZERO, and that is the attribution pass rather than tidiness: the
+# poison re-run inverts every byte the ORACLE wrote, and on the three arms that clear the map cell
+# the inverted cell code is $ff — which `cmpi.b #$3 / blt` sends to the tile-flag arm, so the
+# poisoned run exercises a DIFFERENT path and stops catching a write whose value already equals the
+# seed. Bits 4 and 7 of WB_ACTOR_FLAGS and bit 7 of WB_ACTOR_FLAGS2 are read by nothing in $151a and
+# written by nothing in it either, so a record carrying them takes exactly the same arms.
+QUIET_FLAGS = (1 << 4) | (1 << 7)
+QUIET_FLAGS2 = 1 << 7
+
+
+def _cell_for(x, y):
+    """The address $1536's `lea` reaches for a record at (x, y) — the whole lookup, restated from the
+    68000's own widths so a case cannot inherit the port's arithmetic: `asr.w` on both coordinates,
+    an UNSIGNED `mulu.w`, a word-wide `add.w` and a SIGN-EXTENDED index."""
+    row = leaf.s16((y - CELL_Y_BIAS) & WORD_MASK) >> MAP_CELL_SHIFT
+    column = leaf.s16(x) >> MAP_CELL_SHIFT
+    return COLLISION_MAP_CELL_0 + leaf.s16((MAP_STRIDE * (row & WORD_MASK) + column) & WORD_MASK)
+
+
+CELL = _cell_for(PLAYER_X, PLAYER_Y)
+# ...and the band around it, as a LENGTH only: its base is per-case, because a case that moves
+# the record moves the cell, so a module-level `CELL - MAP_STRIDE` would be right for the
+# default position and quietly wrong for every other.
+CELL_BAND_LEN = 2 * MAP_STRIDE + 1
+
+# The scene's own actor slot and the followed record, each with a whole record of margin, so a write
+# one field out is a write to a keyed byte.
+SPAWN_SLOT_BAND = (TRIGGER_SPAWN_SLOT, RECORD_BYTES)
+FOLLOWED_BAND = (FOLLOWED_DEFAULT, RECORD_BYTES)
+
+# A cell code for each band, chosen so that no two cases share one: the scene cases take
+# TRIGGER_CELL and the tile cases their own tile code.
+TRIGGER_CELL_CODE = TRIGGER_CODE_FIRST + 5
+DESCRIPTOR = TRIGGER_TABLE + ((TRIGGER_CELL_CODE - TRIGGER_CODE_FIRST) << TRIGGER_RECORD_SHIFT)
+DESCRIPTOR_BAND = (DESCRIPTOR, TRIGGER_RECORD_BYTES)
+
+# Four descriptor words a spawn copies, chosen so none of them is a plausible neighbour of another.
+SPAWN_WORDS = {TRIGGER_X: 0x0123, TRIGGER_SPAWN_Y: 0x0456,
+               TRIGGER_SPAWN_TYPE: 0x0789, TRIGGER_SPAWN_FIELD: 0x0abc}
+VISITS_LEFT = 3            # ...and a visit counter that does NOT reach zero on the case's own frame
+METER_SEED = 0x100         # a meter high enough that WB_PLAYER_TILE_HURT_COST leaves it positive
+
+# The widest single path this routine has, as an upper bound: its own body once, the runner's
+# sentinel, and every callee it can reach on any ONE of its arms — the high-pool walk (tile $34), the
+# SFX trigger (four kinds), the stop chain (kind 4) and a song start (kind 8). No path needs all
+# four, which is what makes it a cap rather than a measurement.
+MAP_CELL_CAP = _cap("player_run_map_cell",
+                    extra=ALLOC_STRAIGHT_LINE_INSNS + ALLOC_HIGH_SLOTS * ALLOC_INSN_PER_SLOT
+                    + STUB_INSN_CAP + STOP_INSN_CAP + PLAY_SONG_INSN_CAP)
+
+
+def _cell_pokes(what, code, fields=None, slot_free=True, pool_full=False,
+                x=PLAYER_X, y=PLAYER_Y, record=None):
+    """A frame in which the player stands on cell `code`, with everything the eight kinds read.
+
+    THE KEYED BANDS ARE THEIR OWN LAYER, which is `leaf.overlay`'s documented hazard and the one this
+    battery would hit first: the cell, the spawn slot's x and the four descriptor words all lie
+    INSIDE a keyed block, so a single dict literal holding both would drop the block entirely and
+    every case would run on the .PRG's zeros."""
+    salt = case_salt(what)
+    # THE RECORD IS A PARAMETER because a0 is the CALLER's, not this battery's ACTOR: one case aims
+    # it at a descriptor word on purpose, to drive the alias the `move.w d0,(a0)` snap creates.
+    record = ACTOR if record is None else record
+    cell = _cell_for(x, y)
+    keyed = {lo: keyed_block(lo, length, salt)
+             for lo, length in ((cell - MAP_STRIDE, CELL_BAND_LEN), SPAWN_SLOT_BAND, FOLLOWED_BAND,
+                                DESCRIPTOR_BAND, *PLAY_SONG_SEEDED_BANDS)}
+    # THE POOL IS TWO LAYERS AND NOT ONE DICT, which is `_weapon_pokes`' hard-won lesson repeated:
+    # WB_ACTOR_X is 0, so the FIRST record's marker key IS `POOL_LO` — in one literal it replaces the
+    # whole 192-byte keyed block with a two-byte word and every other byte of the pool runs on the
+    # .PRG's zeros, where a spurious clear the port makes is invisible.
+    pool = {POOL_LO: keyed_block(POOL_LO, POOL_LEN, salt)}
+    markers = {TABLE_DEFAULT + slot * RECORD_BYTES + ACTOR_X: word(0 if pool_full else FREE_MARKER)
+               for slot in range(ALLOC_HIGH_FIRST, ALLOC_HIGH_FIRST + ALLOC_HIGH_SLOTS)}
+
+    base = {cell: bytes([code]),
+            MAP_ROW_STRIDE: word(MAP_STRIDE),
+            TABLE_SELECTED: longword(TABLE_DEFAULT),
+            record + ACTOR_X: word(x), record + ACTOR_Y: word(y),
+            record + ACTOR_FLAGS: bytes([QUIET_FLAGS]), record + FLAGS2: bytes([QUIET_FLAGS2]),
+            # the scene slot is FREE by default, which is what the four spawning kinds require
+            TRIGGER_SPAWN_SLOT + ACTOR_X: word(FREE_MARKER if slot_free else PLAYER_X),
+            FOLLOWED_DEFAULT + ACTOR_FLAGS: bytes([0]),
+            FOLLOWED_DEFAULT + ACTOR_X: word(PLAYER_X),
+            # ...and every global the routine can write, seeded to a value no arm produces
+            TILE_33_FLAG: bytes([MARKER, MARKER]),
+            RECORD_PTR_10420: longword(MARKER), RECORD_PTR_10424: longword(MARKER),
+            SCENE_MARKER_CELL_PTR: longword(MARKER),
+            ALIGN_REQUEST_B14: word(MARKER), STAGE_ADVANCE_REQUEST: word(MARKER),
+            SCROLL_FOLLOW_FROZEN: word(MARKER), PANEL_FRAME_HOLD: word(MARKER),
+            STATE_FLAG_A34: word(MARKER), STAGE_ANIM_REQUEST_B0E: word(MARKER),
+            PANEL_FRAME_DELAY: word(MARKER), HUD_METER_VALUE: word(METER_SEED),
+            # ...and the gates, each seeded CLOSED so a case that wants an arm opens it itself
+            FLUTE_PLAYED: word(MARKER), LEVEL_SEQ_INDEX: word(MARKER),
+            HUD_SLOT_BBC4: word(MARKER), HUD_SLOT_BBC8: bytes([MARKER]),
+            KEY_LAST_SCANCODE: bytes([MARKER])}
+    for offset, value in SPAWN_WORDS.items():
+        base[DESCRIPTOR + offset] = word(value)
+    base[DESCRIPTOR + TRIGGER_VISITS] = word(VISITS_LEFT)
+    seeded = _pokes(what, leaf.overlay(keyed, pool, markers, base, fields or {}))
+    leaf.assert_bands_are_seeded(seeded, [(POOL_LO, POOL_LEN), (cell - MAP_STRIDE, CELL_BAND_LEN),
+                                          SPAWN_SLOT_BAND, FOLLOWED_BAND, DESCRIPTOR_BAND],
+                                 f"{what}: a keyed band was dropped")
+    return seeded
+
+
+def _run_cell(what, pokes, expected, exit_code=None, stop_pc=0, via=None, psg_seed=None,
+              extra_band=(), record=ACTOR):
+    """Every case's runner. `via` is the transfer instruction a checkpointed run must have executed,
+    which is what stops a `stop_pc` case passing on a run that simply returned. `record` is a0."""
+    exit_code = EXIT_RETURN if exit_code is None else exit_code
+    how = dict(regs={"a0": record, "_pokes": pokes}, max_insns=MAP_CELL_CAP, stop_pc=stop_pc,
+               psg_seed=psg_seed)
+    bands = merge_bands(expected) + list(extra_band)
+    if via is None:
+        info = leaf.run("player_run_map_cell", _RUN_MAP_CELL(record), bands, what, **how)
+    else:
+        info = leaf.run_reaching("player_run_map_cell", _RUN_MAP_CELL(record), bands, what, via,
+                                 **how)
+    _assert_writes(info, expected, what)
+    assert info["ret"] == exit_code, (
+        f"{what}: the reconstruction reported {info['ret']}, not the {exit_code} this case expects")
+    return info
+
+
+# --- the cell lookup itself -------------------------------------------------------------------------
+
+@pytest.mark.parametrize("code", [0, 1, 2, 0x80, 0xff],
+                         ids=["zero", "block", "ledge", "sign-bit", "all-ones"])
+def test_a_cell_below_the_first_trigger_code_only_lowers_the_tile_flags_BYTE(code):
+    """`cmpi.b #$3,(a6) / blt` is a SIGNED byte test, so $80 and $ff take this arm as surely as 0
+    does — which is what bounds the trigger band at 3..$22 rather than 3..$ff, since the `ble`
+    below it would otherwise admit every negative code twice over. And the write is `clr.b`: the
+    flag's HIGH byte alone, so the seeded low byte survives."""
+    what = f"player_run_map_cell cell={code:#04x}"
+    pokes = _cell_pokes(what, code)
+
+    _run_cell(what, pokes, {TILE_33_FLAG: 0})
+
+
+def test_tile_33_raises_the_same_byte_the_arm_above_lowers():
+    """`st $1514.w` — Scc's true BYTE, against the `move.w #$ffff` actor_fall_and_settle writes to
+    the same word. The two halves of the word are what tells them apart."""
+    what = "player_run_map_cell tile 33"
+    pokes = _cell_pokes(what, TILE_33)
+
+    _run_cell(what, pokes, {TILE_33_FLAG: TILE_33_FLAG_RAISED_BYTE})
+
+
+@pytest.mark.parametrize("code", [TRIGGER_CODE_LAST + 1, TILE_33 - 1, TILE_39 + 1, 0x7f],
+                         ids=["one-past-the-triggers", "one-below-33", "one-past-39", "largest"])
+def test_a_cell_above_the_trigger_band_that_names_NO_tile_writes_nothing_at_all(code):
+    """The tile ladder's own default, which is the third band's silent majority: seven `cmpi.b`s
+    against distinct codes and an `rts` under them. `one-past-the-triggers` is the boundary from the
+    OTHER side — $23 is the first code the `ble` refuses — and `one-past-39` says the ladder ends
+    where it does rather than running on into the unwind."""
+    what = f"player_run_map_cell unknown tile {code:#04x}"
+    pokes = _cell_pokes(what, code)
+
+    _run_cell(what, pokes, {})
+
+
+@pytest.mark.parametrize("x,y", [(0x0000, 0x0010), (0x0140, 0x0088), (0x03f0, 0x0230),
+                                 (0x0010, 0x0000), (0xfff0, 0x0088), (0xff00, 0x0000)],
+                         ids=["origin", "ordinary", "far", "above-the-bias", "left-of-the-map",
+                              "both-negative"])
+def test_the_cell_is_the_row_stride_times_the_row_plus_the_column(x, y):
+    """The lookup, driven at four positions with tile $33 planted at the cell each one SHOULD reach
+    and nothing planted anywhere else — so a port that dropped the `mulu`, the bias or either shift
+    lands on a keyed byte and raises no flag.
+
+    THREE of the six rows are about SIGNEDNESS, and each pins a different half of it.
+    `above-the-bias` says the `subi.w #$10` happens BEFORE the `asr.w`: a y of 0 gives -16, and
+    bias-after lands on a different cell. `left-of-the-map` drives a NEGATIVE x, which is the only
+    thing that separates the column's `asr.w #4` from a logical shift — the column is ADDED, so the
+    two readings differ by $f000 in the index. `both-negative` drives a negative ROW as well, which
+    the stride's low nibble is what makes visible (see MAP_STRIDE)."""
+    what = f"player_run_map_cell lookup x={x:#06x} y={y:#06x}"
+    pokes = _cell_pokes(what, TILE_33, x=x, y=y)
+
+    _run_cell(what, pokes, {TILE_33_FLAG: TILE_33_FLAG_RAISED_BYTE})
+
+
+# --- the six special tiles ----------------------------------------------------------------------------
+
+def _launch_flags(flags):
+    """`bset #0 / bset #1 / bclr #2` over one byte, whatever order they are spelt in."""
+    return (flags | (1 << MOVING_BIT) | (1 << LAUNCHED_BIT)) & ~(1 << SUPPORTED_BIT) & 0xff
+
+
+@pytest.mark.parametrize("flags", [0, 1 << MOVING_BIT, 0xff & ~(1 << SUPPORTED_BIT)],
+                         ids=["clear", "moving", "everything-but-supported"])
+def test_tile_34_does_nothing_at_all_to_an_UNSUPPORTED_record(flags):
+    """`btst #2,8(a0) / bne` guards the whole arm, allocator included."""
+    what = f"player_run_map_cell tile 34 unsupported flags={flags:#04x}"
+    pokes = _cell_pokes(what, TILE_34, fields={ACTOR + ACTOR_FLAGS: bytes([flags])})
+
+    _run_cell(what, pokes, {})
+
+
+def test_tile_34_launches_the_record_and_spawns_one_on_its_own_x_and_y():
+    """The whole arm: the speed literal, the three motion bits, and `move.l (a0),(a1)` — the x AND
+    the y as ONE operand into the record the high pool hands back."""
+    what = "player_run_map_cell tile 34"
+    flags = 1 << SUPPORTED_BIT
+    pokes = _cell_pokes(what, TILE_34, fields={ACTOR + ACTOR_FLAGS: bytes([flags])})
+
+    expected = {ACTOR + SPEED: TILE_34_SPEED, ACTOR + ACTOR_FLAGS: _launch_flags(flags)}
+    _put_word(expected, SHOT + ACTOR_X, PLAYER_X)
+    _put_word(expected, SHOT + ACTOR_Y, PLAYER_Y)
+    _put_word(expected, SHOT + ACTOR_TYPE, TILE_34_SPAWN_TYPE)
+    _run_cell(what, pokes, expected)
+
+
+def test_tile_34_still_launches_when_the_high_pool_is_FULL():
+    """`cmpa.l #$0,a1 / beq` — the allocation is tested and the record is not written, but the three
+    bits and the speed above it have already landed. So a full pool costs the arm nothing."""
+    what = "player_run_map_cell tile 34 pool full"
+    flags = 1 << SUPPORTED_BIT
+    pokes = _cell_pokes(what, TILE_34, fields={ACTOR + ACTOR_FLAGS: bytes([flags])},
+                        pool_full=True)
+
+    _run_cell(what, pokes, {ACTOR + SPEED: TILE_34_SPEED, ACTOR + ACTOR_FLAGS: _launch_flags(flags)})
+
+
+@pytest.mark.parametrize("code", [TILE_35, TILE_36], ids=["tile-35", "tile-36"])
+def test_a_record_already_FLICKERING_pays_the_hurt_tiles_nothing(code):
+    """`btst #6,8(a0) / bne` leaves through the tile ladder's own tail, so neither the meter nor the
+    knock-back happens — and the two codes reach that test by two different paths."""
+    what = f"player_run_map_cell tile {code:#04x} flickering"
+    pokes = _cell_pokes(what, code,
+                        fields={ACTOR + ACTOR_FLAGS: bytes([1 << FLICKER_BIT])})
+
+    _run_cell(what, pokes, {})
+
+
+def _hurt_expected(meter_left, flags=QUIET_FLAGS, flags2=QUIET_FLAGS2):
+    """What the hurt arm leaves on the record and on the meter, given what they were SEEDED with.
+
+    Both hurt cases state the same six writes, which is why they are here rather than spelt twice.
+    ONLY THE SFX HALF COMES FROM THE OWNING BATTERY — `_sfx_bytes`, which each case adds itself; the
+    four writes of `$6ade`'s tail are restated here from the ORIGINAL's four instructions
+    (`bset #0 / bset #1 / bclr #2 / move.b #$5,11(a1)`) rather than imported, because test_actor.py
+    models that tail only as part of `actor_damage_followed`'s own arms and has no exported model of
+    it alone. So this is a second statement of four writes, and what keeps it honest is that it
+    starts from the SEEDED bytes: every one of them is a `bset`/`bclr` on a byte the case chose, so
+    a model that started from zero would agree with a port that STORED the byte instead of masking
+    it."""
+    expected = {ACTOR + FLAGS2: flags2 | (1 << FLAGS2_BIT_0),
+                ACTOR + ACTOR_FLAGS: _launch_flags(flags | (1 << FLICKER_BIT)),
+                ACTOR + FLICKER_COUNTDOWN: DAMAGE_FLICKER_FRAMES,
+                ACTOR + SPEED: DAMAGE_KNOCKBACK_SPEED}
+    _put_word(expected, HUD_METER_VALUE, meter_left)
+    return expected
+
+
+@pytest.mark.parametrize("code", [TILE_35, TILE_36], ids=["tile-35", "tile-36"])
+def test_the_hurt_tiles_are_ONE_arm_reached_by_two_paths(code):
+    """Everything the pair does: WB_ACTOR_FLAGS2_BIT_0 and the flicker raised, the countdown stamped,
+    WB_PLAYER_TILE_HURT_COST off the meter, and then the SHARED TAIL at $6ade — the SFX, whose write
+    set comes from the battery that owns the trigger, and the four writes `_hurt_expected` states."""
+    what = f"player_run_map_cell tile {code:#04x}"
+    pokes = _cell_pokes(what, code)
+    image = harness.make_image(pokes)
+
+    expected = dict(_sfx_bytes(image, DAMAGE_FOLLOWED_SFX, SND_CHANNEL_A))
+    expected.update(_hurt_expected(METER_SEED - TILE_HURT_COST))
+    _run_cell(what, pokes, expected)
+
+
+@pytest.mark.parametrize("meter,left", [(TILE_HURT_COST, 0), (TILE_HURT_COST - 1, 0), (0, 0),
+                                        (0x8001, 0x8001 - TILE_HURT_COST)],
+                         ids=["exact", "one-short", "empty", "already-negative"])
+def test_the_hurt_tiles_meter_floor_reads_the_RESULT_and_not_the_value(meter, left):
+    """`subq.w #4,$b6fa.l / bpl / clr.w` — the branch reads what the subtraction LEFT, so a meter
+    already negative that the borrow carries back into the positive half is stored rather than
+    floored. `already-negative` is that row and it is the one a `max(0, …)` port fails."""
+    what = f"player_run_map_cell hurt meter={meter:#06x}"
+    pokes = _cell_pokes(what, TILE_35, fields={HUD_METER_VALUE: word(meter)})
+    image = harness.make_image(pokes)
+
+    expected = dict(_sfx_bytes(image, DAMAGE_FOLLOWED_SFX, SND_CHANNEL_A))
+    expected.update(_hurt_expected(left))
+    _run_cell(what, pokes, expected)
+
+
+@pytest.mark.parametrize("supported", [False, True], ids=["airborne", "supported"])
+def test_tile_37_nudges_only_a_SUPPORTED_record(supported):
+    """`subq.w #6,(a0)` behind a `btst #2,8(a0) / beq`, and the step is IN MEMORY on the x."""
+    what = f"player_run_map_cell tile 37 supported={supported}"
+    flags = (1 << SUPPORTED_BIT) if supported else 0
+    pokes = _cell_pokes(what, TILE_37, fields={ACTOR + ACTOR_FLAGS: bytes([flags])})
+
+    expected = {}
+    if supported:
+        _put_word(expected, ACTOR + ACTOR_X, PLAYER_X - TILE_37_X_STEP)
+    _run_cell(what, pokes, expected)
+
+
+@pytest.mark.parametrize("delay", [0x0011, 0x0010, 0x0000, 0xffff],
+                         ids=["odd", "even", "zero-wraps", "all-ones"])
+def test_tile_38_steps_the_panel_delay_and_then_masks_it_EVEN(delay):
+    """TWO stores to one word. The ledger records final values, so what this pins is the
+    composition: a `subq.w` that wraps $0000 to $ffff and then a mask that makes it $fffe."""
+    what = f"player_run_map_cell tile 38 delay={delay:#06x}"
+    pokes = _cell_pokes(what, TILE_38, fields={PANEL_FRAME_DELAY: word(delay)})
+
+    expected = {}
+    _put_word(expected, PANEL_FRAME_DELAY, (delay - 1) & PANEL_FRAME_DELAY_EVEN)
+    _run_cell(what, pokes, expected)
+
+
+def test_tile_39_leaves_through_the_TRIPLE_POP_having_written_nothing():
+    """WB_PLAYER_COLLIDE_UNWIND. The oracle is stopped at the `jmp $e5ba.l` at $1626, so what this
+    compares is the whole image one instruction into the arm — the `lea 12(a7),a7` above it has run,
+    and it moves a REGISTER, so the image is still the one at the transfer.
+
+    THE WITNESS IS THAT `lea`, and the checkpoint sits below it for exactly that reason: `emu.run`
+    stops BEFORE marking the checkpoint's own PC, so a witness has to lie ABOVE it, and the `lea` is
+    the only instruction on this arm that no other path executes. The obvious choice — the `beq.w`
+    at $161c — witnesses NOTHING: it runs on every path that reaches the tile-$39 test, taken or
+    not."""
+    what = "player_run_map_cell tile 39"
+    pokes = _cell_pokes(what, TILE_39)
+
+    _run_cell(what, pokes, {}, exit_code=EXIT_UNWIND, stop_pc=UNWIND_SITE,
+              via=UNWIND_TAKEN_AT)
+
+
+def test_the_unwind_discards_THREE_return_addresses_and_jumps_to_the_sequence_advance():
+    """What WB_PLAYER_COLLIDE_UNWIND stands in for, read off the image rather than claimed: the two
+    instructions at the checkpoint. A port that reported the exit for a `rts` would still pass the
+    case above; this is what says the original does not return."""
+    at = UNWIND_TAKEN_AT
+    assert bytes(harness.BASE_IMAGE[at:at + 4]) == lea_d16(A7, UNWIND_STACK_BYTES), \
+        f"{at:#x} is not `lea {UNWIND_STACK_BYTES}(a7),a7`"
+    assert at + 4 == UNWIND_SITE, "the checkpoint is not the instruction after the pop"
+    assert bytes(harness.BASE_IMAGE[UNWIND_SITE:UNWIND_SITE + 6]) == jmp_abs_l(UNWIND_TARGET)
+    assert UNWIND_STACK_BYTES == 3 * LONGWORD_BYTES, (
+        "the pop is not three return addresses, which is what makes this arm abandon its caller's "
+        "caller as well as its caller")
+
+
+# --- the eight scene triggers -------------------------------------------------------------------------
+
+def _published(expected, descriptor=DESCRIPTOR, republished=True):
+    """The descriptor pointer, which every path through the trigger band writes — and its copy,
+    which SIX of the eight arms make — kinds 4 and 7 are the two that do not."""
+    _put_long(expected, RECORD_PTR_10420, descriptor)
+    if republished:
+        _put_long(expected, RECORD_PTR_10424, descriptor)
+    return expected
+
+
+def _spawn_expected(image, sprite, sfx=None, speed=None, field_10=None, launched=False,
+                    side_bit=None, visits=VISITS_LEFT, cell=CELL):
+    """What the four spawning kinds have in common, and the four ways they differ. `side_bit` is
+    kind 1's alone; `visits` is what the counter held on entry.
+
+    THE FLAG BYTE STARTS FROM WHAT THE SLOT WAS SEEDED WITH, which is the whole reason that byte is
+    keyed: every one of these arms reaches it with `bset`/`bclr` alone, so the five bits none of them
+    names come back unchanged and a model that started from zero would agree with a port that
+    STORED the byte instead of masking it."""
+    slot = TRIGGER_SPAWN_SLOT
+    flags = image[slot + ACTOR_FLAGS]
+    expected = _published({})
+    if sfx is not None:
+        expected.update(_sfx_bytes(image, sfx, SND_CHANNEL_A))
+    _put_word(expected, slot + ACTOR_X, SPAWN_WORDS[TRIGGER_X])
+    _put_word(expected, slot + ACTOR_Y, SPAWN_WORDS[TRIGGER_SPAWN_Y])
+    _put_word(expected, slot + ACTOR_TYPE, SPAWN_WORDS[TRIGGER_SPAWN_TYPE])
+    _put_word(expected, slot + FIELD_12, SPAWN_WORDS[TRIGGER_SPAWN_FIELD])
+    if side_bit is not None:
+        flags = ((flags | (1 << SIDE_BIT)) if side_bit else (flags & ~(1 << SIDE_BIT))) & 0xff
+    if launched:
+        flags = _launch_flags(flags)
+    expected[slot + ACTOR_FLAGS] = flags & ~(1 << FLICKER_BIT)
+    if field_10 is not None:
+        expected[slot + FIELD_10] = field_10
+    if speed is not None:
+        expected[slot + SPEED] = speed
+    _put_word(expected, slot + ACTOR_SPRITE, sprite)
+    _put_word(expected, DESCRIPTOR + TRIGGER_VISITS, (visits - 1) & WORD_MASK)
+    if visits - 1 == 0:
+        # THE CELL IS A PARAMETER because `_cell_pokes` computes it from the record's x,y: a spawn
+        # case that moved the player would seed one cell and expect the clear at another, and the
+        # write set would be wrong in a way that reads as a port bug. Every spawning case today
+        # stands at the battery's default position, so the default is right — and stating it as an
+        # argument is what stops the next one being silently wrong.
+        expected[cell] = 0
+    return expected
+
+
+def _trigger_pokes(what, kind, fields=None, **kwargs):
+    """A frame standing on TRIGGER_CELL_CODE, with the descriptor's kind word set."""
+    seeds = {DESCRIPTOR + TRIGGER_KIND: word(kind)}
+    seeds.update(fields or {})
+    return _cell_pokes(what, TRIGGER_CELL_CODE, fields=seeds, **kwargs)
+
+
+@pytest.mark.parametrize("kind", [0, KIND_TUNE + 1, 0x8000, WORD_MASK],
+                         ids=["zero", "one-past-the-last", "sign-bit", "all-ones"])
+def test_a_kind_word_outside_the_ladder_PUBLISHES_THE_DESCRIPTOR_AND_NOTHING_ELSE(kind):
+    """THE DEFAULT ARM IS NOT INERT, and this is the case that says so. `move.l a1,$10420.l` runs
+    BEFORE the kind word is even read, so a cell whose descriptor none of the eight arms claims
+    still hands scene_run_frame ($dbc0) a descriptor to branch on — which is how that routine is
+    ever given one, since this instruction is the image's ONLY writer of that pointer."""
+    what = f"player_run_map_cell trigger kind={kind:#06x}"
+    pokes = _trigger_pokes(what, kind)
+
+    _run_cell(what, pokes, _published({}, republished=False))
+
+
+@pytest.mark.parametrize("code", [TRIGGER_CODE_FIRST, TRIGGER_CODE_FIRST + 1,
+                                  TRIGGER_CODE_LAST - 1, TRIGGER_CODE_LAST],
+                         ids=["first", "second", "penultimate", "last"])
+def test_the_cell_code_indexes_the_descriptor_table_from_its_FIRST_code(code):
+    """`subq.l #3,d0 / lsl.w #5,d0` — cell 3 is descriptor 0, and the band's last code is $22, so the
+    table this routine can reach is exactly WB_SCENE_TRIGGER_CODE_LAST - FIRST + 1 records long."""
+    what = f"player_run_map_cell trigger code={code:#04x}"
+    descriptor = TRIGGER_TABLE + ((code - TRIGGER_CODE_FIRST) << TRIGGER_RECORD_SHIFT)
+    pokes = _cell_pokes(what, code, fields={descriptor + TRIGGER_KIND: word(0)})
+
+    _run_cell(what, pokes, _published({}, descriptor=descriptor, republished=False),
+              extra_band=[(descriptor, WORD_BYTES)])
+
+
+@pytest.mark.parametrize("kind", [KIND_SPAWN_1, KIND_SPAWN_2, KIND_SPAWN_5, KIND_SPAWN_6],
+                         ids=["kind-1", "kind-2", "kind-5", "kind-6"])
+def test_a_spawning_kind_gives_up_on_a_slot_that_is_not_FREE(kind):
+    """`tst.w (a2) / bmi` on the scene slot's x — and the copy to WB_RECORD_PTR_10424 above it has
+    already happened, so "gives up" is not "does nothing"."""
+    what = f"player_run_map_cell kind {kind} busy slot"
+    pokes = _trigger_pokes(what, kind, slot_free=False)
+
+    _run_cell(what, pokes, _published({}))
+
+
+@pytest.mark.parametrize("slot_x,free", [(0x0000, False), (0x0001, False), (0x7fff, False),
+                                         (0x8000, True), (FREE_MARKER, True), (0xffff, True)],
+                         ids=["zero", "one", "largest-positive", "sign-bit", "free-marker",
+                              "all-ones"])
+def test_the_free_slot_test_is_a_SIGN_test_and_not_a_marker_comparison(slot_x, free):
+    """`tst.w (a2) / bmi` — the arms take the slot on a NEGATIVE x, not on WB_ACTOR_FREE_MARKER
+    specifically. The two readings agree on every x the game produces (map positions are positive
+    and the free marker is $ffbe) and part company on $8000 and $ffff, which no shipped frame
+    reaches; `zero` is the boundary itself, where `bmi` and a `beq`-style test disagree.
+
+    A port that compared against the marker word instead refuses `sign-bit` and `all-ones`; one that
+    used `<= 0` takes `zero`. Both are green on every other case in this file."""
+    what = f"player_run_map_cell slot x={slot_x:#06x}"
+    pokes = _trigger_pokes(what, KIND_SPAWN_6,
+                           fields={TRIGGER_SPAWN_SLOT + ACTOR_X: word(slot_x)})
+    image = harness.make_image(pokes)
+
+    expected = (_spawn_expected(image, TRIGGER_SPRITE_6) if free
+                else _published({}))
+    _run_cell(what, pokes, expected)
+
+
+@pytest.mark.parametrize("side", [False, True], ids=["followed-faces-right", "followed-faces-left"])
+def test_kind_1_copies_the_followed_records_side_bit_INVERTED(side):
+    """`btst #3,8(a5) / bne` jumps to the `bclr`, so the record this arm spawns faces the way the
+    player is NOT facing. It is the one arm of the eight that reads the followed record at all."""
+    what = f"player_run_map_cell kind 1 followed-side={side}"
+    followed = (1 << SIDE_BIT) if side else 0
+    pokes = _trigger_pokes(what, KIND_SPAWN_1,
+                           fields={FOLLOWED_DEFAULT + ACTOR_FLAGS: bytes([followed])})
+    image = harness.make_image(pokes)
+
+    _run_cell(what, pokes,
+              _spawn_expected(image, TRIGGER_SPRITE_1, sfx=TRIGGER_SFX_1,
+                              speed=TRIGGER_SPAWN_SPEED, field_10=TRIGGER_SPAWN_1_FIELD_10,
+                              launched=True, side_bit=not side))
+
+
+def test_kind_2_is_kind_1_without_the_side_bit_and_without_the_countdown_byte():
+    """The two arms differ in exactly three writes, which is why they are separate here rather than
+    one parametrized case: kind 2 writes no WB_ACTOR_FIELD_10, reads no followed record, and plays
+    WB_SCENE_TRIGGER_SFX_2 where kind 1 plays its own."""
+    what = "player_run_map_cell kind 2"
+    pokes = _trigger_pokes(what, KIND_SPAWN_2)
+    image = harness.make_image(pokes)
+
+    _run_cell(what, pokes,
+              _spawn_expected(image, TRIGGER_SPRITE_2, sfx=TRIGGER_SFX_2,
+                              speed=TRIGGER_SPAWN_SPEED, launched=True))
+
+
+def test_kind_5_plays_an_effect_clears_the_PLAYERS_field_30_and_launches_nothing():
+    """`clr.b 30(a0)` — on the record the CALLER handed in, not on the one being spawned, which is
+    the one write in this routine that crosses from the scene's record back to the player's."""
+    what = "player_run_map_cell kind 5"
+    pokes = _trigger_pokes(what, KIND_SPAWN_5, fields={ACTOR + FIELD_30: bytes([MARKER])})
+    image = harness.make_image(pokes)
+
+    expected = _spawn_expected(image, TRIGGER_SPRITE_5, sfx=TRIGGER_SFX_2)
+    expected[ACTOR + FIELD_30] = 0
+    _run_cell(what, pokes, expected)
+
+
+def test_kind_6_is_kind_5_with_NO_effect_and_no_write_to_the_player():
+    """The quietest of the eight: four words, a sprite, a flicker bit and a visit."""
+    what = "player_run_map_cell kind 6"
+    pokes = _trigger_pokes(what, KIND_SPAWN_6, fields={ACTOR + FIELD_30: bytes([MARKER])})
+    image = harness.make_image(pokes)
+
+    _run_cell(what, pokes, _spawn_expected(image, TRIGGER_SPRITE_6))
+
+
+@pytest.mark.parametrize("visits", [1, 2], ids=["last-visit", "one-to-spare"])
+def test_the_visit_that_empties_the_counter_CLEARS_THE_MAP_CELL(visits):
+    """`subq.w #1,(a1)+ / bne / clr.b (a6)` — the trigger fires a fixed number of times and then is
+    not there any more, because the cell that selected it is gone. The `bne` reads what the
+    subtraction left, so this is the counter's own value and not a separate flag."""
+    what = f"player_run_map_cell kind 6 visits={visits}"
+    pokes = _trigger_pokes(what, KIND_SPAWN_6,
+                           fields={DESCRIPTOR + TRIGGER_VISITS: word(visits)})
+    image = harness.make_image(pokes)
+
+    _run_cell(what, pokes, _spawn_expected(image, TRIGGER_SPRITE_6, visits=visits))
+
+
+@pytest.mark.parametrize("message,posted", [(0x0041, 0x41), (0x0000, None), (0x0100, 0x00),
+                                            (0x1234, 0x34)],
+                         ids=["ordinary", "zero", "high-byte-only", "both-bytes"])
+def test_kind_3_primes_the_request_byte_and_then_posts_the_descriptors_LOW_byte(message, posted):
+    """TWO defects reproduced rather than tidied. WB_TEXT_REQUEST is stamped
+    WB_TEXT_REQUEST_PRIMED before the id is read, so a descriptor holding zero leaves that $ff
+    standing and posts no lifetime at all; and the id is TESTED as a word and WRITTEN as its low
+    byte, so $100 is "nonzero" and posts message 0. The cell is cleared on every path, which makes
+    this the one arm that spends no visit and still fires exactly once."""
+    what = f"player_run_map_cell kind 3 message={message:#06x}"
+    pokes = _trigger_pokes(what, KIND_MESSAGE,
+                           fields={DESCRIPTOR + TRIGGER_MESSAGE: word(message)})
+
+    expected = _published({})
+    expected[TEXT_REQUEST] = TEXT_REQUEST_PRIMED if posted is None else posted
+    if posted is not None:
+        _put_word(expected, TEXT_LIFETIME_REQUEST, TEXT_LIFETIME_DEFAULT)
+    expected[CELL] = 0
+    _run_cell(what, pokes, expected)
+
+
+@pytest.mark.parametrize("supported,scancode", [(False, TRIGGER_BOSS_KEY), (True, 0),
+                                                (True, TRIGGER_BOSS_KEY - 1)],
+                         ids=["airborne", "no-key", "wrong-key"])
+def test_kind_4_publishes_the_marker_cell_BEFORE_either_of_its_gates(supported, scancode):
+    """`move.l a6,$e02e.l` is the arm's first instruction, so the scene tier is handed the cell
+    address on every frame the player stands on one of these — whatever the two gates say."""
+    what = f"player_run_map_cell kind 4 supported={supported} key={scancode:#04x}"
+    flags = (1 << SUPPORTED_BIT) if supported else 0
+    pokes = _trigger_pokes(what, KIND_BOSS_DEFEAT,
+                           fields={ACTOR + ACTOR_FLAGS: bytes([flags]),
+                                   KEY_LAST_SCANCODE: bytes([scancode])})
+
+    expected = _published({}, republished=False)
+    _put_long(expected, SCENE_MARKER_CELL_PTR, CELL)
+    _run_cell(what, pokes, expected)
+
+
+def test_kind_4_stops_the_music_and_raises_the_three_boss_handshake_words():
+    """The whole arm, and it reaches the sound module TWICE — stub +28 to stop and stub +56 for the
+    effect — so its write set is those two batteries' models plus the three words. The scancode it
+    wants is WB_SCENE_TRIGGER_BOSS_KEY, which is the same $39 the tile ladder's last code is and a
+    different thing entirely."""
+    what = "player_run_map_cell kind 4 firing"
+    pokes = _trigger_pokes(what, KIND_BOSS_DEFEAT,
+                           fields={ACTOR + ACTOR_FLAGS: bytes([1 << SUPPORTED_BIT]),
+                                   KEY_LAST_SCANCODE: bytes([TRIGGER_BOSS_KEY])})
+    image = harness.make_image(pokes)
+
+    expected = _published({}, republished=False)
+    _put_long(expected, SCENE_MARKER_CELL_PTR, CELL)
+    expected.update(_flatten(STOP_WRITES))
+    expected.update(_sfx_bytes(image, TRIGGER_BOSS_SFX, SND_CHANNEL_A))
+    for flag_word in (STATE_FLAG_A34, PANEL_FRAME_HOLD, STAGE_ANIM_REQUEST_B0E):
+        _put_word(expected, flag_word, TRIGGER_FLAG_SET)
+    _run_cell(what, pokes, expected, psg_seed={PSG_REG_MIXER: PLAY_SONG_MIXER})
+
+
+# --- kind 7, the hidden door, and kind 8, the flute that opens it -------------------------------------
+# The two are ONE mechanism and the two words at $1960 are how they talk, which is why they are read
+# together here: kind 8 raises WB_SCENE_FLUTE_PLAYED past a busy-wait no run reaches, and kind 7 is
+# the only thing that ever reads it.
+
+DOOR_X = 0x0200               # the descriptor's x, and where an aligned player is put
+DOOR_OPEN_SEEDS = {DESCRIPTOR + TRIGGER_X: word(DOOR_X),
+                   FOLLOWED_DEFAULT + ACTOR_X: word(DOOR_X),
+                   FOLLOWED_DEFAULT + ACTOR_FLAGS: bytes([1 << SUPPORTED_BIT])}
+
+
+def _door_pokes(what, *, armed, second, fields=None):
+    """A frame at the door, with the two gate answers chosen and everything below them open."""
+    seeds = dict(DOOR_OPEN_SEEDS)
+    # THE GATE READS A BYTE AND THE ARM WRITES A WORD, so the armed value goes in the HIGH
+    # half: `cmpi.b #$1,$bbc4.l` looks at $bbc4 itself, which `move.w #$ff,$bbc4.l` then
+    # CLEARS — so opening the door disarms it, and the low byte is seeded apart from both.
+    seeds[HUD_SLOT_BBC4] = bytes([HUD_SLOT_BBC4_ARMED if armed else MARKER, MARKER])
+    seeds[DESCRIPTOR + TRIGGER_ALIGN_SUBKIND] = word(TRIGGER_ALIGN_SECOND if second else MARKER)
+    seeds.update(fields or {})
+    return _trigger_pokes(what, KIND_ALIGN, fields=seeds)
+
+
+def _door_expected(x=DOOR_X):
+    """The five words the door writes once it is through both gates, and the x it snaps."""
+    expected = _published({}, republished=False)
+    _put_word(expected, ACTOR + ACTOR_X, x)
+    _put_word(expected, FLUTE_PLAYED, 0)
+    _put_word(expected, HUD_SLOT_BBC4, HUD_SLOT_BBC4_SPENT)
+    for flag_word in (SCROLL_FOLLOW_FROZEN, PANEL_FRAME_HOLD, ALIGN_REQUEST_B14):
+        _put_word(expected, flag_word, TRIGGER_FLAG_SET)
+    return expected
+
+
+@pytest.mark.parametrize("armed,second,flute,opens", [
+    (True, False, False, True),      # an armed slot admits a first-kind descriptor outright
+    (True, False, True, True),       # ...flute or no flute, which is the `bne` at $1856
+    (True, True, False, False),      # ...but a second-kind one still wants the flute
+    (True, True, True, True),
+    (False, False, False, False),    # ...and without the slot, a first-kind one never opens
+    (False, False, True, False),     # — not even with the flute, which is the `bne` at $184a
+    (False, True, True, True),
+    (False, True, False, False),
+], ids=["armed-first", "armed-first-flute", "armed-second-no-flute", "armed-second-flute",
+        "unarmed-first", "unarmed-first-flute", "unarmed-second-flute", "unarmed-second-no-flute"])
+def test_the_doors_two_gates_are_a_LATTICE_and_all_EIGHT_answers_agree(armed, second,
+                                                                       flute, opens):
+    """`cmpi.b #$1,$bbc4.l / beq` picks which pair of questions is asked and in which ORDER, and the
+    `bra.s $183c` at $1860 sends the armed-second answer back into the other order's first question.
+    So the predicate is (armed AND NOT second) OR (flute AND second) — all EIGHT combinations of the
+    three inputs, because the two ways of reaching each answer are driven separately and a case that
+    drove seven of eight would be naming a total it had not covered.
+
+    A port that spelt the two orders as a CHAIN rather than as this disjunction passes four of these
+    and fails `unarmed-first-flute`."""
+    what = f"player_run_map_cell door armed={armed} second={second} flute={flute}"
+    pokes = _door_pokes(what, armed=armed, second=second,
+                        fields={FLUTE_PLAYED: word(FLUTE_PLAYED_SET if flute else 0)})
+
+    _run_cell(what, pokes, _door_expected() if opens else _published({}, republished=False))
+
+
+def test_an_AIRBORNE_followed_record_gets_no_door():
+    """`btst #2,8(a2) / beq` — and the record tested is the FOLLOWED one, not the caller's a0."""
+    what = "player_run_map_cell door airborne"
+    pokes = _door_pokes(what, armed=True, second=False,
+                        fields={FOLLOWED_DEFAULT + ACTOR_FLAGS: bytes([0])})
+
+    _run_cell(what, pokes, _published({}, republished=False))
+
+
+@pytest.mark.parametrize("offset", [-TRIGGER_ALIGN_REACH - 1, -TRIGGER_ALIGN_REACH, 0,
+                                    TRIGGER_ALIGN_REACH, TRIGGER_ALIGN_REACH + 1],
+                         ids=["short", "near-edge", "centre", "far-edge", "past"])
+def test_the_doors_reach_window_is_INCLUSIVE_at_both_ends(offset):
+    """`subq.w #4 / cmp.w (a2),d0 / bgt` then `addq.w #8 / cmp.w (a2),d0 / blt` — both branches are
+    STRICT, so the followed record exactly WB_SCENE_TRIGGER_ALIGN_REACH either side is inside. The x
+    written back is the descriptor's own, recovered by the third `subq.w`, so an aligned player is
+    SNAPPED rather than left where he stood."""
+    what = f"player_run_map_cell door offset={offset}"
+    followed_x = (DOOR_X + offset) & WORD_MASK
+    pokes = _door_pokes(what, armed=True, second=False,
+                        fields={FOLLOWED_DEFAULT + ACTOR_X: word(followed_x)})
+
+    inside = abs(offset) <= TRIGGER_ALIGN_REACH
+    _run_cell(what, pokes, _door_expected() if inside else _published({}, republished=False))
+
+
+@pytest.mark.parametrize("door_x", [0x8001, 0x7ffe], ids=["just-negative", "just-positive"])
+def test_the_doors_window_arithmetic_WRAPS_in_sixteen_bits(door_x):
+    """`subq.w #4` / `addq.w #8` / `subq.w #4` are WORD operations on a word register, and both
+    compares under them read N^V. Drive the descriptor's x either side of the sign boundary with the
+    followed record standing exactly ON it, and the two answers are opposite:
+
+      * $8001 — `subq.w #4` wraps to $7ffd, and $7ffd > $8001 SIGNED, so `bgt` refuses a player who
+        is standing on the very pixel the door names;
+      * $7ffe — `subq.w #4` gives $7ffa, which is not greater than $7ffe, so the first compare
+        passes; `addq.w #8` then wraps the probe to $8002, and $8002 < $7ffe SIGNED, so `blt`
+        refuses him at the other end.
+
+    A port that did the same arithmetic in `int32_t` opens the door on both rows. Every other case
+    here keeps the window in the positive half, where the two readings agree."""
+    what = f"player_run_map_cell door wrap x={door_x:#06x}"
+    pokes = _door_pokes(what, armed=True, second=False,
+                        fields={DESCRIPTOR + TRIGGER_X: word(door_x),
+                                FOLLOWED_DEFAULT + ACTOR_X: word(door_x)})
+
+    _run_cell(what, pokes, _published({}, republished=False))
+
+
+def test_the_door_reads_the_FOLLOWED_records_x_and_writes_the_CALLERS():
+    """The two records are the same one in the game and NOTHING HERE PROVES IT: the compare is
+    `cmp.w (a2),d0` on WB_ACTOR_FOLLOWED_DEFAULT and the store is `move.w d0,(a0)` on the caller's.
+
+    THE THREE X VALUES ARE ALL DIFFERENT, which is what makes the case non-vacuous: the followed
+    record stands OFF-CENTRE but inside the window, the caller's record is somewhere else entirely,
+    and the x that lands is the DESCRIPTOR's. A port that compared the caller's x refuses (his is
+    far outside the window); one that wrote the followed record's x writes the off-centre value; one
+    that wrote back to the followed record leaves the caller's untouched. Every other case here
+    seeds the two records the same distance from the door, where all four ports agree.
+
+    THE CALLER'S x IS THE BATTERY'S DEFAULT and is not moved, because moving it moves the CELL —
+    the lookup at the top of the routine reads that same word, so a case that put the caller
+    somewhere else would be standing on a different map byte and never reach this arm at all.
+    PLAYER_X is already 0xc0 pixels outside the window, which is all this row needs."""
+    what = "player_run_map_cell door two records"
+    off_centre = DOOR_X + TRIGGER_ALIGN_REACH - 1
+    pokes = _door_pokes(what, armed=True, second=False,
+                        fields={FOLLOWED_DEFAULT + ACTOR_X: word(off_centre)})
+
+    assert len({DOOR_X, off_centre, PLAYER_X}) == 3, "the three x values must differ"
+    assert abs(PLAYER_X - DOOR_X) > TRIGGER_ALIGN_REACH, (
+        "the caller's x must be OUTSIDE the window, or a port that measured it would still pass")
+    _run_cell(what, pokes, _door_expected())
+
+
+@pytest.mark.parametrize("sequence,second", [(LEVEL_SEQ_DOOR_A, False), (LEVEL_SEQ_DOOR_B, False),
+                                             (LEVEL_SEQ_DOOR_A, True), (LEVEL_SEQ_DOOR_B, True),
+                                             (LEVEL_SEQ_DOOR_A + 1, False),
+                                             (LEVEL_SEQ_DOOR_A - 1, True)],
+                         ids=["A-step", "B-step", "A-request", "B-request", "between", "below"])
+def test_the_door_moves_the_level_sequence_on_from_exactly_TWO_points(sequence, second):
+    """Two `cmpi.w`s, both EQUALITIES, so a sequence index one either side of either value gets a
+    frozen scroll and a raised flag and nothing more. Past them the descriptor's sub-kind chooses:
+    WB_SCENE_TRIGGER_ALIGN_SECOND raises WB_STAGE_ADVANCE_REQUEST, which player_pending_event_gate
+    reads at $d06 and answers with THIS routine's own triple pop; anything else steps the index."""
+    what = f"player_run_map_cell door sequence={sequence:#06x} second={second}"
+    flute = second
+    pokes = _door_pokes(what, armed=not second, second=second,
+                        fields={LEVEL_SEQ_INDEX: word(sequence),
+                                FLUTE_PLAYED: word(FLUTE_PLAYED_SET if flute else 0)})
+
+    expected = _door_expected()
+    if sequence in (LEVEL_SEQ_DOOR_A, LEVEL_SEQ_DOOR_B):
+        if second:
+            _put_word(expected, STAGE_ADVANCE_REQUEST, STAGE_ADVANCE_REQUEST_SET)
+        else:
+            _put_word(expected, LEVEL_SEQ_INDEX, sequence + LEVEL_SEQ_DOOR_STEP)
+    _run_cell(what, pokes, expected)
+
+
+def test_the_doors_LAST_question_is_re_read_AFTER_the_snap_store():
+    """`cmpi.w #$2,6(a1)` is asked THREE times — at $184a, at $1856 and again at $18ce — and the
+    third is BELOW the `move.w d0,(a0)` that snaps the player's x. So a port that reads the
+    descriptor's sub-kind once and caches it answers the third question with a word the store may
+    already have replaced. It is the read-after-store class batch 32 found at `snd_channel_step`'s
+    $18036, one routine over.
+
+    THE ALIAS IS SEEDABLE, which is what makes this a differential and not a note: a0 is the
+    CALLER's record and nothing bounds it, so a case that aims it at the descriptor's own +8 word
+    makes the snap store overwrite the very word $18ce re-reads. Here the record's x IS the
+    sub-kind: seeded WB_SCENE_TRIGGER_ALIGN_SECOND on entry, so the door opens through the flute
+    arm — and overwritten with the door's x by the snap, so the re-read finds something else and the
+    original STEPS WB_LEVEL_SEQ_INDEX where a cached port raises WB_STAGE_ADVANCE_REQUEST. Two
+    different words, so the write sets part.
+
+    No shipped frame does this — the player's record is in the actor table and the descriptors are
+    loaded from disk above $21828 — which is why the arm is driven rather than argued about."""
+    what = "player_run_map_cell door re-read after the snap"
+    record = DESCRIPTOR + TRIGGER_ALIGN_SUBKIND        # a0, aimed at the word $18ce re-reads
+    entry_x = TRIGGER_ALIGN_SECOND                     # ...which is therefore the record's x, too
+    entry_y = 0x0088
+    door_x = 0x0200
+
+    pokes = _cell_pokes(what, TRIGGER_CELL_CODE, record=record, x=entry_x, y=entry_y,
+                        # THE ALIAS MEANS THE RECORD'S x AND THE SUB-KIND ARE ONE ADDRESS, and
+                        # `_cell_pokes` writes the descriptor's own words AFTER the record's — so
+                        # the entry value has to come from the LAST layer or the spawn seed wins.
+                        # It failed exactly that way TWICE: the record's x aliases the sub-kind and
+                        # its y aliases the VISIT COUNTER, and the first draft seeded neither from
+                        # the last layer, so the cell lookup landed elsewhere and the run took the
+                        # tile-flag arm. Kind 7 spends no visit, so that word is free to be a y.
+                        fields={DESCRIPTOR + TRIGGER_ALIGN_SUBKIND: word(entry_x),
+                                DESCRIPTOR + TRIGGER_VISITS: word(entry_y),
+                                DESCRIPTOR + TRIGGER_KIND: word(KIND_ALIGN),
+                                DESCRIPTOR + TRIGGER_X: word(door_x),
+                                FOLLOWED_DEFAULT + ACTOR_X: word(door_x),
+                                FOLLOWED_DEFAULT + ACTOR_FLAGS: bytes([1 << SUPPORTED_BIT]),
+                                FLUTE_PLAYED: word(FLUTE_PLAYED_SET),
+                                LEVEL_SEQ_INDEX: word(LEVEL_SEQ_DOOR_A)})
+
+    assert door_x != TRIGGER_ALIGN_SECOND, "the snap must CHANGE the word the third question reads"
+    expected = _published({}, republished=False)
+    _put_word(expected, record + ACTOR_X, door_x)      # the snap, onto the descriptor's own +8
+    _put_word(expected, FLUTE_PLAYED, 0)
+    _put_word(expected, HUD_SLOT_BBC4, HUD_SLOT_BBC4_SPENT)
+    for flag_word in (SCROLL_FOLLOW_FROZEN, PANEL_FRAME_HOLD, ALIGN_REQUEST_B14):
+        _put_word(expected, flag_word, TRIGGER_FLAG_SET)
+    # the RE-READ answers "not the second sub-kind" now, so the sequence STEPS
+    _put_word(expected, LEVEL_SEQ_INDEX, LEVEL_SEQ_DOOR_A + LEVEL_SEQ_DOOR_STEP)
+    _run_cell(what, pokes, expected, record=record)
+
+
+@pytest.mark.parametrize("y", [TRIGGER_TUNE_MAX_Y, TRIGGER_TUNE_MAX_Y + 1, 0x7fff],
+                         ids=["exact", "one-below", "largest-positive"])
+def test_kind_8_is_the_one_arm_that_reads_the_players_own_position(y):
+    """`cmpi.w #$64,2(a0) / blt` — a STRICT compare, so a record exactly at
+    WB_SCENE_TRIGGER_TUNE_MAX_Y is already too low. Nothing is written, not even the pointer copy.
+    That it is also a SIGNED one is the case below; these three rows cannot tell."""
+    what = f"player_run_map_cell kind 8 y={y:#06x}"
+    pokes = _trigger_pokes(what, KIND_TUNE, y=y)
+
+    _run_cell(what, pokes, _published({}, republished=False))
+
+
+def _tune_expected(y, message):
+    """What every arm of kind 8 that gets past the y gate writes: the pointer republished, the cell
+    at the record's OWN position consumed, and a message posted. The `y` is a parameter because the
+    cell follows the record — three cases spelt these four lines with two different y's before this
+    helper, and the one that got it wrong would have looked like a port bug."""
+    expected = _published({})
+    expected[_cell_for(PLAYER_X, y)] = 0
+    expected[TEXT_REQUEST] = message
+    _put_word(expected, TEXT_LIFETIME_REQUEST, TEXT_LIFETIME_DEFAULT)
+    return expected
+
+
+def test_kind_8s_y_gate_is_SIGNED_and_only_a_negative_y_says_so():
+    """`blt` reads N^V, so a record ABOVE the top of the screen runs the arm. Every y the case above
+    drives is positive, where a `bcs` would answer identically; this one is $ff9c, and an unsigned
+    port returns having written nothing where the original republishes the pointer, consumes the
+    cell and posts a message."""
+    what = "player_run_map_cell kind 8 negative y"
+    above_the_screen = 0xff9c
+    pokes = _trigger_pokes(what, KIND_TUNE, y=above_the_screen,
+                           fields={HUD_SLOT_BBC8: bytes([MARKER])})
+
+    _run_cell(what, pokes, _tune_expected(above_the_screen, MESSAGE_NICE_VIEW))
+
+
+@pytest.mark.parametrize("held", [0, HUD_SLOT_BBC8_FLUTE + 1, 0xff],
+                         ids=["nothing", "wrong-item", "all-ones"])
+def test_kind_8_without_the_flute_reads_the_view(held):
+    """`cmpi.b #$2,$bbc8.l / bne` — the item the player is holding, as a BYTE. Message
+    WB_TEXT_MESSAGE_NICE_VIEW, and the cell is consumed either way, so the view is read once."""
+    what = f"player_run_map_cell kind 8 holding={held:#04x}"
+    pokes = _trigger_pokes(what, KIND_TUNE, y=TRIGGER_TUNE_MAX_Y - 1,
+                           fields={HUD_SLOT_BBC8: bytes([held])})
+
+    _run_cell(what, pokes, _tune_expected(TRIGGER_TUNE_MAX_Y - 1, MESSAGE_NICE_VIEW))
+
+
+def test_kind_8_with_the_flute_plays_the_song_and_STOPS_AT_THE_BUSY_WAIT():
+    """WB_PLAYER_COLLIDE_SOUND_WAIT, and this is the case the whole convention exists for. The
+    oracle is stopped at the `tst.b 378(a5)` itself, so what is compared is the whole image at the
+    instant the spin is entered: the message, the lifetime, the consumed cell and snd_play_song's
+    entire write set. The witness is the `jsr (a5)` at $192a, without which the case would pass on a
+    run that took the view arm instead."""
+    what = "player_run_map_cell kind 8 flute"
+    pokes = _trigger_pokes(what, KIND_TUNE, y=TRIGGER_TUNE_MAX_Y - 1,
+                           fields={HUD_SLOT_BBC8: bytes([HUD_SLOT_BBC8_FLUTE])})
+    image = harness.make_image(pokes)
+
+    expected = _tune_expected(TRIGGER_TUNE_MAX_Y - 1, MESSAGE_PLAYED_FLUTE)
+    expected.update(_flatten(model_play_song(image, TRIGGER_FLUTE_SONG)))
+    _run_cell(what, pokes, expected, exit_code=EXIT_SOUND_WAIT, stop_pc=SOUND_WAIT_SITE,
+              via=SOUND_WAIT_TAKEN_AT, psg_seed={PSG_REG_MIXER: PLAY_SONG_MIXER})
+
+
+def test_the_busy_wait_can_NEVER_be_entered_with_its_byte_clear():
+    """WHY THE SIX INSTRUCTIONS BELOW THE SPIN ARE NOT PORTED, and it is a MEASUREMENT OF THE
+    ORIGINAL rather than a claim in a comment or a reading of this port's model.
+
+    The `jsr (a5)` three instructions above the `tst.b` is snd_play_song. This runs THAT ROUTINE'S
+    OWN 68000 CODE under the oracle, on an image whose WB_SND_ENGINE_ENABLED byte is seeded CLEAR,
+    and requires the byte to come back set — which is the whole of the argument that the spin at
+    $1932 is entered on every run whatever a case seeds. Nothing in `src/` is consulted, so a port
+    that stopped raising the byte would not hide this.
+
+    The day it fails is the day $1938..$194d becomes reachable and has to be ported."""
+    seeded = harness.make_image(_cell_pokes("busy-wait premise", TRIGGER_CELL_CODE,
+                                            fields={SND_ENGINE_ENABLED: bytes([0])}))
+    assert seeded[SND_ENGINE_ENABLED] == 0, "the premise needs the byte seeded CLEAR to be a test"
+
+    after, _, _ = emu.run(seeded, leaf.entry_of("snd_play_song"), {"d0": TRIGGER_FLUTE_SONG},
+                          max_insns=PLAY_SONG_INSN_CAP,
+                          psg_seed={PSG_REG_MIXER: PLAY_SONG_MIXER})
+    assert after[SND_ENGINE_ENABLED] != 0, (
+        "the ORIGINAL snd_play_song no longer leaves WB_SND_ENGINE_ENABLED set, so the busy-wait at "
+        f"{SOUND_WAIT_SITE:#x} is now enterable with it clear and the six instructions below it "
+        "have become reachable — port them, and retire WB_PLAYER_COLLIDE_SOUND_WAIT's reasoning")
+
+    # ...and the instruction that does it is the LAST one the routine executes, which is what makes
+    # the raise unconditional rather than one arm's. Read off the image, not off the model.
+    assert bytes(harness.BASE_IMAGE[SOUND_WAIT_SITE:SOUND_WAIT_SITE + WORD_BYTES]) \
+        == tst_b_d16(A5, SND_ENGINE_ENABLED - STUB_TABLE_BASE)[:WORD_BYTES], (
+            f"{SOUND_WAIT_SITE:#x} is not the `tst.b` this convention is about")
+
+
+def test_the_two_handshake_words_are_DATA_INSIDE_this_routines_own_body():
+    """$1960 and $1962 lie between the `rts` at $195e and kind 4's entry at $1964, which is why a
+    linear sweep renders them as an instruction. Both are zero in the shipped image, and both lie
+    inside the extent BODY_SIZES pins — so the pin covering 1,170 bytes is what says they are the
+    routine's own and not a neighbour's."""
+    entry = leaf.entry_of("player_run_map_cell")
+    assert entry < FLUTE_PLAYED < STAGE_ADVANCE_REQUEST < entry + BODY_SIZES["player_run_map_cell"]
+    assert STAGE_ADVANCE_REQUEST == FLUTE_PLAYED + WORD_BYTES
+    assert bytes(harness.BASE_IMAGE[FLUTE_PLAYED:FLUTE_PLAYED + 2 * WORD_BYTES]) == bytes(4)
+
+
+@pytest.mark.parametrize("name,text", [("TEXT_MESSAGE_PLAYED_FLUTE", b"flute"),
+                                       ("TEXT_MESSAGE_NICE_VIEW", b"nice view")])
+def test_the_messages_kind_8_posts_are_the_ones_the_shipped_strings_name(name, text):
+    """What NAMES the flute and the view: the two ids are read out of the image's own message table,
+    exactly as the wing boots' and the revival medicine's are above."""
+    table = wb("TEXT_MESSAGE_TABLE")
+    first = wb("TEXT_MESSAGE_FIRST_ID")
+    shift = wb("TEXT_MESSAGE_PTR_SHIFT")
+    at = table + (wb(name) - first) * (1 << shift)
+    where = int.from_bytes(harness.BASE_IMAGE[at:at + LONGWORD_BYTES], "big")
+    assert text in bytes(harness.BASE_IMAGE[where:where + 40]).lower()
+
+
+# Every descriptor offset this project has more than one NAME for, and what each name reads it as.
+# include/wonderboy.h's own rule is that a second name for one offset is only safe if a case PINS the
+# two against each other — the scraper reads plain literals and cannot derive one #define from
+# another — and until batch 41 phase A only the +2 pair was pinned. These are the three groups.
+DESCRIPTOR_OFFSET_ALIASES = {
+    2: ("SCENE_KIND", "SCENE_TRIGGER_X", "SCENE_TRIGGER_MESSAGE"),
+    4: ("SCENE_VARIANT", "SCENE_TRIGGER_SPAWN_Y"),
+    8: ("SCENE_TRIGGER_SPAWN_FIELD", "SCENE_TRIGGER_ALIGN_SUBKIND"),
+}
+
+
+@pytest.mark.parametrize("offset,names", sorted(DESCRIPTOR_OFFSET_ALIASES.items()),
+                         ids=lambda v: str(v))
+def test_every_descriptor_offset_with_more_than_one_NAME_is_pinned_to_one_number(offset, names):
+    """ONE offset, several readings, pinned against each other rather than left as numbers that
+    could drift apart. +2 is the scene driver's KIND word, the spawning kinds' x and kind 3's
+    message id; +4 is the fragment selector and the spawn's y; +8 is the spawning kinds' fourth
+    copied word and the door's sub-kind. A later batch that re-derives the descriptor's layout and
+    moves one name leaves the others behind, and both `src/scene.c` and `src/player.c` then read
+    different words off one record with every battery green — which is exactly what this case is
+    for."""
+    for name in names:
+        assert wb(name) == offset, (
+            f"{name} is {wb(name):#x}, not the {offset:#x} the other names for this descriptor word "
+            f"use ({', '.join(names)})")

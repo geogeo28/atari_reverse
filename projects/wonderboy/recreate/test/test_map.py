@@ -87,9 +87,14 @@ import harness
 import leaf
 from leaf import (BRANCH_EXTENSION, JSR_ABS_L, RTS, add_w_dn_dn, addi_w_dn, addq_b_d16, andi_w_dn,
                   asr_w_imm_dn, branch, branch_over, branch_w_to, case_salt, clr_w_dn, cmp_w_dn_dn,
-                  clr_b_d16, cmpi_b_dn, cmpi_w_d16, keyed_block, lea_abs_l, lea_indexed, longword,
-                  lsl_w_imm_dn, merge_bands, move_b_d16_dn, move_b_imm_d16, move_w_abs_l_dn,
+                  JMP_ABS_L, clr_b_d16, cmpi_b_dn, cmpi_b_ind, cmpi_w_d16, cmpi_w_dn, keyed_block,
+                  lea_abs_l,
+                  lea_indexed,
+                  longword,
+                  lsl_w_imm_dn, merge_bands, move_b_d16_dn, move_b_imm_d16, move_l_dn_dn,
+                  move_w_abs_l_dn,
                   move_w_dn_dn, move_w_ind_dn, move_w_postinc_dn, movea_l_abs_l, moveq_0_dn, opcode,
+                  mulu_w_dn_dn,
                   program_writes, s16, set_low_word, sub_w_dn_dn, subi_w_dn, subq_w_dn,
                   tst_w_abs_w, tst_w_dn, u16, word)
 from layout import wb
@@ -195,12 +200,6 @@ def move_b_dn_dn(destination, source):
     return opcode(0x1000 | (destination << 9) | source)
 
 
-def move_l_dn_dn(destination, source):
-    """`move.l Dn,Dn` — $13be's second instruction, and the reason its two cleared registers reach
-    $13c8 as LONGS rather than as words over the caller's high halves."""
-    return opcode(0x2000 | (destination << 9) | source)
-
-
 def move_w_d16_ind(source, displacement, destination):
     return opcode(0x3080 | (destination << 9) | 0x28 | source) + word(displacement)
 
@@ -225,8 +224,11 @@ def add_w_dn_ind(reg, base):
     return opcode(0xd150 | (reg << 9) | base)
 
 
-def move_w_dn_ind(source, base):
-    return opcode(0x3080 | (base << 9) | source)
+def move_w_dn_ind(reg, base):
+    return opcode(0x3080 | (base << 9) | reg)
+    # ALSO IN test_player.py — second copy, which the rule allows. The two agree on the argument
+    # ORDER (data register, then address register); this one called the data register `source`,
+    # renamed to leaf.py's and that copy's `reg` so a third copy has one spelling to hoist.
 
 
 def move_w_dn_d16(source, base, displacement):
@@ -237,10 +239,6 @@ def move_w_dn_d16(source, base, displacement):
 def andi_w_d16(base, value, displacement):
     """`andi.w #imm,d16(An)` — $1492's landing arm masks the actor's own y with one of these."""
     return opcode(0x0268 | base) + word(value) + word(displacement)
-
-
-def mulu_w_dn_dn(destination, source):
-    return opcode(0xc0c0 | (destination << 9) | source)
 
 
 def neg_w_dn(reg):
@@ -270,17 +268,9 @@ def cmp_w_d16_dn(reg, base, displacement):
     return opcode(0xb068 | (reg << 9) | base) + word(displacement)
 
 
-def cmpi_b_ind(base, value):
-    return opcode(0x0c10 | base) + word(value)
-
-
 def cmpi_b_indexed(base, index, value):
     """`cmpi.b #imm,0(An,Dn.w)` — how the ground test reaches a row up or down."""
     return opcode(0x0c30 | base) + word(value) + word(index << 12)
-
-
-def cmpi_w_dn(reg, value):
-    return opcode(0x0c40 | reg) + word(value)
 
 
 def bit_op_d16(op, bit, reg, displacement):
@@ -836,7 +826,6 @@ BSR_LONG_DISPLACEMENT = 0xff        # the 68020 `bsr.l`/`bra.l` encoding; none i
 # The two absolute forms a call site can take. `JSR_ABS_L` is leaf.py's — the scan below only ever
 # compares against the opcode word, but a battery that BUILDS the instruction must get the same two
 # bytes, so there is one definition of them.
-JMP_ABS_L = 0x4ef9
 
 
 def _relative_sites(program, targets, high_byte=BSR_HIGH_BYTE):

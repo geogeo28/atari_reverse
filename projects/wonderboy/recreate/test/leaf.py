@@ -409,6 +409,17 @@ def jsr_abs_l(addr):
     return opcode(JSR_ABS_L) + longword(addr)
 
 
+JMP_ABS_L = 0x4ef9
+
+
+def jmp_abs_l(addr):
+    """`jmp <abs>.l` — `jsr_abs_l`'s sibling with bit 6 clear, and a transfer that never comes back.
+    THREE batteries: test_behavior.py's tail jumps, test_player.py's `$1626` triple-pop exit, and
+    test_map.py's call scan, which uses the OPCODE WORD on its own — a scan constant is a copy, and
+    counting it is what put this one over the line."""
+    return opcode(JMP_ABS_L) + longword(addr)
+
+
 # The 68000's BRIEF EXTENSION WORD, which every indexed operand in this reconstruction carries and
 # which three encoders below plus test_sound.py's own spelt inline until they met here: the index
 # REGISTER at bits 15-12, bit 15 choosing An over Dn, the WORD/LONG bit at 11, and an 8-bit
@@ -454,6 +465,16 @@ def move_w_postinc_dn(reg, base):
     always spelt out: test_scroll.py's own copy took it as read (it only ever steps a0), which is a
     constant hidden in an encoder rather than in the call that knows it."""
     return opcode(0x3018 | (reg << 9) | base)
+
+
+def move_b_ind_dn(reg, base):
+    """`move.b (An),Dn` — a BYTE read through a bare pointer, with no displacement to name the field
+    it lands on. THREE batteries spelt it identically and in one argument order, the DESTINATION
+    data register first, which is `move_w_ind_dn`'s and `move_b_postinc_dn`'s above: $154a's indexed
+    map cell (test_player.py), the marker cell's own byte (test_scene.py), test_behavior.py's slot
+    byte. The destination's mode field is 0 (Dn) and so vanishes; the source's is 2 — (An) — which a
+    `move`'s source EA carries at 5-3, above the base register."""
+    return opcode(0x1000 | (reg << 9) | (2 << 3) | base)
 
 
 def move_b_d16_dn(reg, base, displacement):
@@ -526,6 +547,27 @@ def move_w_d16_d16(source, source_displacement, destination, destination_displac
     workspace already made by not following it."""
     return (opcode(0x3168 | (destination << 9) | source)
             + word(source_displacement) + word(destination_displacement))
+
+
+def move_w_postinc_d16(source, destination, displacement):
+    """`move.w (As)+,d16(Ad)` — a word walked out of a table straight into a record field. The
+    post-increment source is the whole point: a pair of these is ONE cursor walk rather than two
+    indexed reads, which is also what makes a table's terminator the word AFTER the last frame.
+    THREE batteries (test_actor.py's kind-table pair, test_behavior.py's launch template,
+    test_player.py's spawn).
+
+    SOURCE FIRST, which is `move_w_d16_d16`'s order above — source then destination — and the order
+    six of the seven call sites already read (test_behavior.py's three, test_player.py's three)
+    against test_actor.py's one. test_actor.py's copy took DESTINATION first under the SAME NAME, so
+    the two batteries would have assembled each other's registers the moment either imported the
+    other's; its one call site is converted with this hoist.
+
+    THE ORDER IS NOT SELF-PINNING. Both registers land in fields of the same word, so a swap emits a
+    different instruction only when the two ordinals differ — `move.w (a1)+,d16(a1)` is one word
+    either way. Every site here uses two different address registers, so the entry pins do catch it.
+    Field layout: source mode 3 at 5-3 with its register at 2-0, destination mode 5 at 8-6 with ITS
+    register at 11-9 — a `move`'s two halves reading their mode and register in opposite orders."""
+    return opcode(0x3000 | (destination << 9) | (5 << 6) | (3 << 3) | source) + word(displacement)
 
 
 def move_b_abs_l_dn(reg, addr):
@@ -637,6 +679,25 @@ def cmpi_b_dn(reg, value):
     return opcode(0x0c00 | reg) + word(value)
 
 
+def cmpi_b_ind(base, value):
+    """`cmpi.b #imm,(An)` — a byte compared against a bare pointer, with no displacement to name the
+    field it lands on. FOUR batteries spelt it and all four agreed on the argument order (base then
+    immediate), but only TWO masked the immediate: a byte compare encodes its operand in a whole
+    word whose HIGH half is zero, so the unmasked spellings assemble a different instruction for any
+    value above $ff. The mask is the 68000's, so it wins. Sites: test_behavior.py, test_map.py,
+    test_stage.py and test_player.py's cell-code band test."""
+    return opcode(0x0c10 | base) + word(value & 0xff)
+
+
+def cmpi_w_dn(reg, value):
+    """`cmpi.w #imm,Dn` — the WORD sibling of `cmpi_b_dn` above, so its size field is 1 at 7-6.
+    THREE batteries spelt it identically and in one argument order, register then immediate
+    (test_blit.py's band edge, test_map.py, test_player.py's seven kind tests). `cmp_w_imm_dn` below
+    is a DIFFERENT instruction meaning the same thing and this image uses both, so a pin spelling
+    one cannot stand in for the other."""
+    return opcode(0x0c00 | (1 << 6) | reg) + word(value)
+
+
 def sub_w_dn_dn(destination, source):
     return opcode(0x9040 | (destination << 9) | source)
 
@@ -661,6 +722,27 @@ def cmp_w_dn_dn(destination, source):
 
 def move_w_dn_dn(destination, source):
     return opcode(0x3000 | (destination << 9) | source)
+
+
+def move_l_dn_dn(destination, source):
+    """`move.l Dn,Dm` — the LONG sibling of `move_w_dn_dn` above, and the reason a register cleared
+    before a call reaches the callee as a longword rather than as a word laid over the caller's high
+    half ($13be into $13c8, and $151c's d1). FOUR batteries spelt it identically and in one argument
+    order, DESTINATION first (test_behavior.py, test_map.py, test_player.py, test_stage.py). Both
+    mode fields are 0 (Dn), so only the two register fields survive: destination at 11-9, source at
+    2-0."""
+    return opcode(0x2000 | (destination << 9) | source)
+
+
+def movea_l_an_an(destination, source):
+    """`movea.l An,Am` — one address register copied into another. It is `movea` and not `move`
+    purely because the destination is an address register, which is also why it sets NO flags.
+    THREE batteries spelt it identically and in one argument order, DESTINATION first, which is this
+    file's convention for a two-register operand (`add_w_dn_dn`, `cmp_w_dn_dn`, `adda_w_dn_an`):
+    test_actor.py's five sites, test_player.py's hand-off of the player's own record to the
+    shared tail, test_stage.py's one. Both halves are mode 1 (An), which the destination carries at 8-6 and
+    the source at 5-3."""
+    return opcode(0x2000 | (destination << 9) | (1 << 6) | (1 << 3) | source)
 
 
 def move_w_imm_dn(reg, value):
@@ -696,6 +778,16 @@ def swap_dn(reg):
 
 def mulu_w_imm_dn(reg, value):
     return opcode(0xc0fc | (reg << 9)) + word(value)
+
+
+def mulu_w_dn_dn(destination, source):
+    """`mulu.w Dm,Dn` — an UNSIGNED word multiply whose 32-bit product fills the WHOLE destination,
+    high half included. THREE batteries spelt it identically and in one argument order, destination
+    first (test_map.py, test_player.py's row stride times row, test_stage.py). Its own field layout
+    rather than a `move`'s: the destination register at 11-9 and the source EFFECTIVE ADDRESS at
+    5-0, so a register source is just its ordinal — the same shape as `mulu_w_imm_dn` above, whose
+    source EA is the immediate mode 0x3c instead."""
+    return opcode(0xc0c0 | (destination << 9) | source)
 
 
 def lsl_w_imm_dn(count, reg):
@@ -863,6 +955,18 @@ def clr_w_d16(base, displacement):
     """`clr.w d16(An)` — how a routine zeroes a WORD field of a record it holds a pointer to. TWO
     batteries (test_actor.py's spawn and reset, test_sound.py's stop chain)."""
     return opcode(0x4268 | base) + word(displacement)
+
+
+def clr_b_ind(base):
+    """`clr.b (An)` — a byte zeroed through a bare pointer: the map cell a trigger is consumed from
+    (test_player.py) and the marker cell above both compares (test_scene.py). THREE batteries SPELT
+    it identically, which is this file's threshold, but only those two ever CALLED it —
+    test_behavior.py's copy had no call site at all, so it was deleted rather than converted, and
+    that battery does not import this. The argument is an ADDRESS register, which two of the three
+    named for what it is and one called `reg`, the name this file keeps for a DATA register. A
+    byte's size field is 0 at 7-6 (a word's is the 1 that makes `clr_w_*` above) and the destination
+    EA is mode 2 — (An) — at 5-3."""
+    return opcode(0x4200 | (2 << 3) | base)
 
 
 def clr_b_d16(base, displacement):

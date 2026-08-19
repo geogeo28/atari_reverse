@@ -14,6 +14,8 @@
 
 #include <stdint.h>
 
+#include "bus.h"
+
 /* $67e0 — the a1 fifteen call sites want: WB_ACTOR_FOLLOWED_A32 while WB_STATE_FLAG_A32 is
  * NONZERO (a `bne`, not the `bpl` $8e66 uses on the same word), else WB_ACTOR_FOLLOWED_DEFAULT. */
 uint32_t followed_actor_record(const uint8_t *image);
@@ -74,6 +76,30 @@ void actor_spawn_from_template(uint8_t *image, uint32_t template_record, uint32_
  * `bra.w` tail jumps. */
 void actor_start_motion_at_speed(uint8_t *image, uint32_t actor, uint32_t speed);
 
+/* `bset #0,8(a0) / bset #1,8(a0) / bclr #2,8(a0) / move.b #n,11(a0)` — four writes the image spells
+ * INLINE at seven sites, four in the behaviour tier ($2f46, $2fb0, $3528, $357a) and three in the
+ * player's ($1576, $16e0, $1744). It is here rather than in include/bus.h — where batch 41 phase A first put
+ * it — because the four writes are ACTOR SEMANTICS (two WB_ACTOR_FLAGS bits, a third
+ * cleared, a speed byte) and bus.h is a header about reaching an address at all, queued for
+ * promotion into the kit where no game's record layout belongs. It is shared for the same
+ * reason bus.h's accessors are:
+ * src/behavior.c and src/player.c both had it, byte for byte, and NOTHING distinguished the two
+ * copies — same bus, same literal speed — so only the copy count kept them apart.
+ *
+ * IT IS NOT `actor_start_motion_at_speed` ($2af2), and the reason is the INSTRUCTION STREAM rather
+ * than the bus: not one of those seven sites calls that routine, so each battery's entry pin holds
+ * these four writes inline and a call would be a claim the original does not make. ($2af2 also
+ * spells them `bclr #2 / bset #0 / bset #1`, which is one byte and one final value either way, so
+ * only a pin can see the difference.) src/actor.c's own copies write the buffer DIRECTLY rather than
+ * through this header and are left alone; ../STATUS.md records that asymmetry. */
+static inline void launch_at_inline_speed(uint8_t *image, uint32_t record, uint8_t speed) {
+    flag_set(image, record, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVING_BIT);
+    flag_set(image, record, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_LAUNCHED_BIT);
+    flag_clear(image, record, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT);
+    set_field_b(image, record, WB_ACTOR_SPEED, speed);
+}
+
+
 /* $14d6 — the fall's per-frame step: unsupported, falling, and one more unit of WB_ACTOR_SPEED
  * until it is exactly WB_ACTOR_FALL_SPEED_MAX. Reached by `bsr` from $13a6 and by `blt.w` from
  * $14c0, inside the routine at $1492. */
@@ -133,6 +159,18 @@ void actor_turn_and_launch(uint8_t *image, uint32_t actor, uint32_t step_outcome
  * WB_ACTOR_FLAGS2_INVULNERABLE_BIT is left completely alone. Thirty-eight control-flow sites: ten
  * `bsr.w` and twenty-eight tail jumps. */
 void actor_damage_followed(uint8_t *image, uint32_t attacker);
+
+/* $6ade — the LAST FORTY-TWO BYTES of that routine, and a shared tail rather than only its ending:
+ * WB_ACTOR_DAMAGE_FOLLOWED_SFX on WB_SND_CHANNEL_A, then `actor_start_motion_at_speed` at
+ * WB_ACTOR_DAMAGE_KNOCKBACK_SPEED. Three entrances, two of them $69fe's own arms ($6ad0's `bra.w`
+ * and the fall-through at $6adc) and the third `player_run_map_cell`'s `bra.w $6ade` at $15e8, off
+ * tiles that hurt — which is why it is exported instead of being spelt inside its owner. `record` is
+ * the a1 all three entrances have loaded.
+ *
+ * The three flag bits it writes are `bset #0 / bset #1 / bclr #2` where $2af2 spells
+ * `bclr #2 / bset #0 / bset #1`; one byte, one final value, so only the entry pin can tell the two
+ * orders apart. */
+void actor_knock_back_and_launch(uint8_t *image, uint32_t record);
 
 /* $6b46 — deal one: WB_EFFECT_RECORD_LIST's first byte plus one, DOUBLED while WB_HUD_SLOT_BBC0
  * (the gauntlet) has a charge, off the WB_SPAWN_HITPOINTS pool of `actor`'s own template. On a pool

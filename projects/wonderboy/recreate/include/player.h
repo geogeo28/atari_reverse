@@ -35,20 +35,25 @@
  * `leaf.register_glue` takes its arity from the caller, so a battery binding this one from the
  * convention above rather than from its own prototype would call a 3-argument function with 2.
  *
- * NO BOUNDARY IS REPORTED FROM THIS FILE, which is what makes it the first tier. Between them these
- * eight call exactly SIX things — `joy1_newly_pressed` ($682), `snd_call_trigger_effect`
- * (stub +56), `snd_play_song` (stub +0), the two map step probes ($10a2/$1170) and
- * `actor_alloc_slot_high` ($1b8e) — and every one of those is reconstructed, so each runs to the
- * original's own `rts`. (The fall pass and the LOW allocator are callees of the routines still
- * deferred, not of these.)
+ * THE FIRST EIGHT REPORT NO BOUNDARY AT ALL, which is what made this the first tier. Between them
+ * they call exactly SIX things — `joy1_newly_pressed` ($682), `snd_call_trigger_effect` (stub +56),
+ * `snd_play_song` (stub +0), the two map step probes ($10a2/$1170) and `actor_alloc_slot_high`
+ * ($1b8e) — and every one of those is reconstructed, so each runs to the original's own `rts`.
+ * (The fall pass and the LOW allocator are callees of the routines still deferred, not of these.)
  *
- * WHAT THE FRAME STILL CALLS AND THIS FILE DOES NOT HAVE, in the order $a38 calls them:
- * `player_pending_event_gate` ($b1a, called at $a3c) and `player_collide_and_scroll` ($151a at
- * $a6c). ../STATUS.md's batch-40 partition prices both and says why each is not here — $b1a is
- * UNPORTABLE rather than merely unported, because THREE of its exits leave through a stack unwind
- * instead of returning: `lea 4(a7),a7 / jmp` at $bdc and at $c20, and — the one a census of its own
- * instructions does not see — `bra.w $1622` at $d16, which lands in `player_collide_and_scroll`'s
- * `lea 12(a7),a7 / jmp $e5ba.l` and so pops THREE return addresses in another routine's body.
+ * THE NINTH DOES REPORT ONE — two, in fact. `player_run_map_cell` ($151a, batch 41 phase A) adds
+ * `snd_stop` (stub +28) and `actor_knock_back_and_launch` ($6ade) to that list, both reconstructed;
+ * what it cannot follow is not a callee but two ENDINGS, a stack unwind and a spin, and the three
+ * WB_PLAYER_COLLIDE_* codes below are what it returns in their place.
+ *
+ * WHAT THE FRAME STILL CALLS AND THIS FILE DOES NOT HAVE, in the order $a38 calls them: exactly
+ * ONE, `player_pending_event_gate` ($b1a, called at $a3c). Batch 41 phase A took the other,
+ * `player_run_map_cell` ($151a at $a6c). ../STATUS.md's batch-40
+ * partition prices $b1a and says why it is not here: it is UNPORTABLE rather than merely unported,
+ * because THREE of its exits leave through a stack unwind instead of returning — `lea 4(a7),a7 /
+ * jmp` at $bdc and at $c20, and — the one a census of its own instructions does not see —
+ * `bra.w $1622` at $d16, which lands in `player_run_map_cell`'s own `lea 12(a7),a7 / jmp $e5ba.l`
+ * and so pops THREE return addresses in another routine's body.
  */
 #ifndef WONDERBOY_PLAYER_H
 #define WONDERBOY_PLAYER_H
@@ -203,5 +208,46 @@ void player_weapon_fire(uint8_t *image, uint32_t actor, unsigned entry_extend);
  * THE SWING'S FIRST FRAME IS INDEXED BY THE SFX ID, not by the cursor — see WB_PLAYER_ATTACK_SFX and
  * the plate at $20ca. Reproduced, not tidied. */
 void player_stage_transition(uint8_t *image, uint32_t actor);
+
+/* The two places `player_run_map_cell` stops being a function, reported in place of what the
+ * original does there. C-only — no value here is in the image — but test/layout.py scrapes this
+ * header so that a case names the same three outcomes the C does.
+ *
+ * WB_PLAYER_COLLIDE_SOUND_WAIT IS A BOUNDARY OF THE ORACLE'S, NOT OF THE PORT'S, which is what makes
+ * it a report rather than a refusal. `tst.b 378(a5) / bne.s $1932` spins until
+ * WB_SND_ENGINE_ENABLED goes zero, and only the sound module's own interrupt clears it — which no
+ * differential run has.
+ *
+ * AND THE BYTE IS NOT AN INPUT THE CASE CAN CHOOSE: `snd_play_song`, three instructions above the
+ * spin on the one path that reaches it, raises that very byte as its LAST write (`st 378(a3)` at the
+ * end of $17b3a). So the spin is entered on EVERY run, whatever the case seeds, and everything below
+ * it is unreachable under either core rather than merely awkward: SIX instructions, $1938..$194d,
+ * TWENTY-TWO bytes, ending in the arm's own `rts`. They are therefore NOT PORTED — a branch no case
+ * can drive would ship unpinned — and this report is what the reconstruction returns in their place,
+ * from the instant the oracle arrives at the `tst.b`. ../STATUS.md records what that leaves
+ * honestly unpinned.
+ *
+ * WB_PLAYER_COLLIDE_UNWIND is the port's own, and it is the `lea 12(a7),a7 / jmp $e5ba.l` at $1622:
+ * THREE return addresses discarded, so the arm abandons this routine, `actor_behavior_type01_player`
+ * and whatever called that. Nothing a C function can do, so it says which arm it took and the case
+ * diffs at the instant control arrives at the `lea`. TWO instructions reach it — the `beq.w` at
+ * $161c on tile WB_MAP_TILE_39, and `player_pending_event_gate`'s `bra.w` at $d16 — and only the
+ * first is this routine's own. */
+#define WB_PLAYER_COLLIDE_RETURN      0u  /* the original `rts`d */
+#define WB_PLAYER_COLLIDE_SOUND_WAIT  1u  /* ...or reached the busy-wait at $1932 with the byte up */
+#define WB_PLAYER_COLLIDE_UNWIND      2u  /* ...or the triple pop at $1622 */
+
+/* $151a — THE COLLISION MAP, called at $a6c and only while WB_STATE_FLAG_A32 is clear. One cell
+ * lookup and then one of three bands (see WB_SCENE_TRIGGER_CODE_FIRST in wonderboy.h):
+ *   * below WB_SCENE_TRIGGER_CODE_FIRST — WB_TILE_33_FLAG's BYTE cleared, and nothing else;
+ *   * up to WB_SCENE_TRIGGER_CODE_LAST — the cell names a 32-byte SCENE DESCRIPTOR, which is
+ *     published to WB_RECORD_PTR_10420 (this is the image's ONE writer of that pointer) and then
+ *     dispatched on its own kind word. Eight arms; a ninth value publishes and returns;
+ *   * above it — the six special tiles WB_MAP_TILE_34..WB_MAP_TILE_39 beside WB_MAP_TILE_33.
+ *
+ * ITS ONLY CALLEES ARE RECONSTRUCTED: `actor_alloc_slot_high` ($1b8e) on the WB_MAP_TILE_34 arm, the
+ * sound stub's +0/+28/+56 entries, and — through `bra.w $6ade` at $15e8 —
+ * `actor_knock_back_and_launch`, which is `actor_damage_followed`'s own tail. */
+uint32_t player_run_map_cell(uint8_t *image, uint32_t actor);
 
 #endif /* WONDERBOY_PLAYER_H */

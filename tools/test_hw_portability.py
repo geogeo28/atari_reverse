@@ -389,7 +389,7 @@ def test_the_committed_scan_reproduces_its_published_figures():
     # §0j: the re-scan added 26 functions and moved NO function's tier, so this pair was untouched.
     # §0k: it moves for the first time since §0i. No PRE-EXISTING function's tier moved either, but
     # four of the 123 NEW ones steer: the player's own behaviour-table slot and its subtree
-    # (`actor_behavior_type01_player`, `player_pending_event_gate`, `player_collide_and_scroll`,
+    # (`actor_behavior_type01_player`, `player_pending_event_gate`, `player_run_map_cell`,
     # `actor_behavior_type61`) all reach `show_data_disk_prompt` -> `load_resource_by_index`, and so
     # inherit both the Copylock (T6) and the FDC status poll's steer. +4 functions / +1,686 B.
     assert (len(at_risk), sum(scan.funcs[a].size for a in at_risk)) == (24, 3910)

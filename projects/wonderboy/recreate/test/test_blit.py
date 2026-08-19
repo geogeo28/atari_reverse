@@ -59,7 +59,7 @@ from harness import make_image
 from layout import wb
 from leaf import (RTS, adda_w_dn_an, add_w_dn_dn, addq_w_dn, andi_w_dn, asl_w_imm_dn,
                   asr_w_imm_dn, backward_branch,
-                  branch_over, case_salt, clr_w_dn, cmp_w_dn_dn, cmp_w_imm_dn, ext_w_dn,
+                  branch_over, case_salt, clr_w_dn, cmp_w_dn_dn, cmp_w_imm_dn, cmpi_w_dn, ext_w_dn,
                   keyed_block, lea_abs_l, lea_d16,
                   longword, lsl_w_imm_dn, merge_bands, move_b_d16_dn, move_b_imm_abs_l,
                   move_w_dn_dn, move_w_imm_dn, move_w_ind_dn, move_w_postinc_dn, movea_l_abs_w,
@@ -1437,11 +1437,6 @@ def movea_l_ind(reg, base):
 def add_w_d16_dn(reg, base, displacement):
     """`add.w d16(An),Dn` — how a descriptor's x/y offset reaches the record's own."""
     return opcode(0xd068 | (reg << 9) | base) + word(displacement)
-
-
-def cmpi_w_dn(reg, value):
-    """`cmpi.w #imm,Dn` — the band's lower edge."""
-    return opcode(0x0c40 | reg) + word(value)
 
 
 def muls_w_dn_dn(destination, source):

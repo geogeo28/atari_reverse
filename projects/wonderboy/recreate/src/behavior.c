@@ -350,24 +350,6 @@ void actor_face_and_step_away4(uint8_t *image, uint32_t actor) {
     step_away_without_facing(image, actor, WB_ACTOR_STEP_AWAY_PIXELS);
 }
 
-/* `bset #0,8(a0) / bset #1,8(a0) / bclr #2,8(a0) / move.b #n,11(a0)` — actor_start_motion_at_speed's
- * three writes with the speed a LITERAL rather than a register, which is why the four sites that
- * spell it in this file ($2f46, $2fb0, $3528 and $357a) call nothing. The raises come first here and
- * $2af2 clears first; the three bits are disjoint and the differential compares the byte the frame
- * ENDS on, so no case can see the order.
- *
- * IT IS NOT actor_start_motion_at_speed, for two reasons that both matter. The original does not
- * CALL that routine at any of these four sites — the entry pins hold the inline bytes — and this
- * file writes a record through bus.h (see the header) where src/actor.c writes the buffer directly,
- * so the two spellings part on any record the bus refuses. (src/actor.c's `actor_turn_and_launch`
- * is the same shape again over its own record, for the same reason.) */
-static void launch_at_inline_speed(uint8_t *image, uint32_t actor, uint8_t speed) {
-    flag_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVING_BIT);
-    flag_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_LAUNCHED_BIT);
-    flag_clear(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT);
-    set_field_b(image, actor, WB_ACTOR_SPEED, speed);
-}
-
 /* $2f86 — the countdown, and what running out does. The relaunch is `launch_at_inline_speed` plus a
  * cursor reset, and it happens only for a SUPPORTED record that `rng_next` gives permission to: one
  * bit of the generator's word decides.

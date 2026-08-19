@@ -75,15 +75,20 @@ include/map.h              the collision map's three routines — prototypes, wh
                            helpers (one probe with the ground flags no caller reads dropped) that
                            moved here from src/behavior.c when src/player.c's walk became their
                            second module
-include/player.h           THE PLAYER'S OWN FRAME — the EIGHT routines that reach nothing this port
-                           lacks: five of behaviour slot 1's own nine calls, the jump machine the
-                           gate reaches below one of them, and the spawn helper the second one
-                           hands a template to. Plus the
+include/player.h           THE PLAYER'S OWN FRAME — NINE routines: SIX of behaviour slot 1's own
+                           nine calls, the jump machine the gate reaches below one of them, the
+                           routine that leaves the ladder, and the spawn helper the second call
+                           hands a template to. (Of slot 1's other three, `player_gate_on_1516` and
+                           `actor_fall_and_settle` belong to the behaviour tier and
+                           `player_pending_event_gate` is unportable.) EIGHT of the nine reach
+                           nothing this port lacks; the COLLISION CELL ($151a, batch 41 phase A) is
+                           the one that reports an EXIT rather than returning. Plus the
                            per-arm reading of the WEAPON's threaded `sbcd` extend bit, and (at the
                            foot of the header) what the frame still calls that is NOT there —
-                           which since batch 40 phase C is `player_pending_event_gate` ($b1a),
-                           UNPORTABLE on three stack-unwinding exits, and
-                           `player_collide_and_scroll` ($151a)
+                           which since batch 41 phase A is `player_pending_event_gate` ($b1a)
+                           alone, UNPORTABLE on three stack-unwinding exits. Batch 41 phase A added
+                           `player_run_map_cell` ($151a) and with it this file's first EXIT REPORTS
+                           — the busy-wait and the triple pop
 include/actor.h            the followed actor's record, the two tests over it, the two passes
                            that project actor records into screen coordinates, the table's
                            lifecycle — reset, free, the two pool allocators and the spawn — and
@@ -472,7 +477,14 @@ test/test_player.py        the player frame's differential, and the first batter
                            that is wrong for where it came from — with rows for the chain's ORDER
                            (all four flags raised at once), for the field order that FLIPS between
                            the idle pair and the other three, and for the swing's first frame being
-                           indexed by the SFX id
+                           indexed by the SFX id. Batch 41 phase A added the NINTH pin, $151a's
+                           1,170 bytes, and with it the first COLLISION MAP this battery seeds for
+                           itself (the cell is computed from the record's x,y through a stride word
+                           that is zero in the shipped image, so a case that seeded neither would
+                           read cell 0 of a map of zero-length rows) and the 32-byte SCENE
+                           DESCRIPTORS, which are loaded from disk and so have no shipped bytes to
+                           run against at all. It is also the battery's first user of the exit-report
+                           convention below
 test/test_text.py          the text subsystem's differential. The plotter: 32 bytes into the
                            4-plane buffer with the write set stated exactly, the returned cursor
                            compared against both sides, a cell walk that shows the +1/+7 alternation
@@ -483,6 +495,59 @@ test/test_text.py          the text subsystem's differential. The plotter: 32 by
                            stated exactly, the blit's rectangle and countdown, and four structural
                            pins that read the $a09c message table's extent off its own data
 ```
+
+## Reporting an exit the port cannot take
+
+Three kinds of instruction end a routine somewhere a C function cannot follow: a `jmp` into unported
+code, a stack unwind, and a spin the oracle can never leave. The convention is the same for all
+three and it is **not** a refusal — the reconstruction runs the whole arm and then RETURNS WHICH
+ENDING IT REACHED, out of band, as an integer no image byte can collide with:
+
+* the C function's result is an exit code `#define`d in the module's own header
+  (`include/scene.h`'s three, `include/player.h`'s three), scraped by `test/layout.py` so the case
+  names the same constants the C does;
+* the case sets `stop_pc` to the address of the instruction the report stands for, which diffs the
+  whole image at the INSTANT control arrives there;
+* and it goes through `leaf.run_reaching`, whose extra argument is the transfer instruction that
+  must have EXECUTED. Without that witness a checkpointed case passes whether or not the arm was
+  taken, because `emu.run` stops at either the checkpoint or the `rts` and reports only that it
+  stopped.
+
+**THE WITNESS HAS TO BE AN INSTRUCTION ONLY THE TAKEN ARM RUNS, and getting that wrong reads as
+evidence rather than as a gap.** Batch 41 phase A's first draft named the `beq.w` at `$161c` as the
+unwind's witness — and that `beq` executes on every path that reaches the tile-$39 test, taken or
+not, so it witnessed nothing. `emu.run` stops BEFORE marking the checkpoint's own PC, so the witness
+must lie ABOVE the checkpoint; when the only distinguishing instruction IS the one the report stands
+for, move the checkpoint one instruction down. The unwind stops at the `jmp` at `$1626` and
+witnesses the `lea 12(a7),a7` at `$1622`, which no other path executes — and the `lea` writes no
+memory, so the image compared is still the one at the transfer.
+
+### The busy-wait, which is the third kind and the one with a trap in it
+
+`player_run_map_cell`'s flute arm ends at `$1932`: `lea $17adc.l,a5 / tst.b 378(a5) / bne.s $1932`,
+spinning until `WB_SND_ENGINE_ENABLED` goes zero. Only the sound module's own interrupt clears that
+byte and no differential run has one, so the spin never ends under the oracle.
+
+The obvious treatment — "read the byte once, report the wait when it is up, and let a case that
+wants the rest of the arm seed it ZERO" — is wrong here, and checking WHY before writing the branch
+is the recipe:
+
+> **Find out who last WROTE the byte the spin polls.** Three instructions above the `tst.b` is
+> `jsr (a5)` on stub +0, and the last instruction of `snd_play_song` is `st 378(a3)` on that very
+> byte. So the predicate is FORCED: whatever a case seeds, the spin is entered, and the SIX
+> instructions below it ($1938..$194d, 22 bytes, the arm's own `rts` included) are unreachable
+> under either core.
+
+So they are **not ported at all** — a branch no case can drive would ship unpinned, which is the
+same bar batch 40 phase A applied when it deleted a written-but-undriven walk. The arm ends at the
+report. What that costs is recorded in `STATUS.md` as unpinned bytes rather than hidden in a comment,
+and the premise is a CASE rather than prose:
+`test_the_busy_wait_can_NEVER_be_entered_with_its_byte_clear` runs `snd_play_song`'s OWN 68000 CODE
+under the oracle, on an image seeded with the byte CLEAR, and requires it back set. **Ask the
+original, not a model of it**: the first draft of that case asked test_sound.py's `model_play_song`,
+which is a statement this project wrote — so a reconstruction and its own justification would have
+drifted together. It fails the day the original stops raising the byte, which is the day those six
+instructions become reachable and have to be ported.
 
 ## Running
 

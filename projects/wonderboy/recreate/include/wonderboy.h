@@ -2027,7 +2027,10 @@
  */
 #define WB_RECORD_PTR_10424          0x10424u /* longword: WB_RECORD_PTR_10420's neighbour, the copy
                                                * six `move.l $10420.l,$10424.l` sites make, so it
-                                               * names the same 32-byte SCENE DESCRIPTOR */
+                                               * names the same 32-byte SCENE DESCRIPTOR — and all
+                                               * SIX are inside player_run_map_cell ($1684, $170e,
+                                               * $1772, $17a4, $17f4, $18f6), i.e. six of its eight
+                                               * scene-trigger arms */
 #define WB_SCENE_GOLD_AWARD          12u      /* word: the packed-BCD amount `move.w 12(a1),d0` at
                                                * $5180 reads out of that descriptor. The shipped
                                                * bytes of the table are zeros (the rest is loaded
@@ -2415,6 +2418,9 @@
                                                * is the game's own cheat enable; what the sequence
                                                * SPELLS is not decoded here */
 #define WB_KEY_SEQUENCE_MATCHED_SET  0xffffu
+#define WB_KEY_LAST_SCANCODE         0x879u   /* byte: ../names.txt's key_last_scancode, the word the
+                                               * sequence above is walked against. Its one reader in
+                                               * the reconstruction is $151a's boss-defeat arm */
 
 #define WB_PLAYER_DEATH_SFX          0x16u    /* `move.w #$16,d0 / clr.w d1` — channel A */
 #define WB_PLAYER_DEATH_SONG         0x10u    /* `move.w #$10,d0 / jsr (a1)` on stub +0 */
@@ -2567,7 +2573,7 @@
                                                * its nine to be read rather than merely reset. FOUR
                                                * operand sites, all absolute SHORT: the raise
                                                * `move.w #$ffff,$b0e.w` at $19a4 (inside the SCENE
-                                               * KIND 4 arm of player_collide_and_scroll — the boss
+                                               * KIND 4 arm of player_run_map_cell — the boss
                                                * defeat), two readers `tst.w $b0e.w` at $b22
                                                * (player_pending_event_gate) and $1f5e (here), and
                                                * the `clr.l $b0e.w` at $c6a, which clears
@@ -2744,6 +2750,167 @@
                                                * bias, applied to WB_MAP_ROW_STRIDE's own address */
 #define WB_STAMP_TILES_FIRST         0x78u    /* $78,$79 on the top row and $7a,$7b below it */
 #define WB_STAMP_TILES_SECOND        0x7cu    /* ...and $7c..$7f for the variant */
+
+/* ---- $151a: what the PLAYER'S OWN CELL costs him (src/player.c) -------------------------------
+ *
+ * `player_run_map_cell` turns the record's x,y into ONE collision-map cell and branches on the
+ * byte there. Three bands, in the order the original tests them: below WB_SCENE_TRIGGER_CODE_FIRST
+ * nothing at all, up to WB_SCENE_TRIGGER_CODE_LAST a SCENE DESCRIPTOR, and above that the six
+ * special tiles $34..$39 beside WB_MAP_TILE_33.
+ *
+ * TWO WAYS THIS LOOKUP DIFFERS FROM src/map.c's, and both are the original's rather than a
+ * simplification. It reads its row stride from WB_MAP_ROW_STRIDE — the BACKGROUND map's word — where
+ * both probes read WB_COLLISION_MAP_DEFAULT's own; and it names WB_COLLISION_MAP_DEFAULT
+ * unconditionally where they pick on WB_STATE_FLAG_A32, which is sound only because the one caller
+ * ($a6c) is itself behind a clear A32.
+ */
+#define WB_PLAYER_CELL_Y_BIAS        0x10u    /* `subi.w #$10,d1` before the row shift — one whole
+                                               * WB_MAP_CELL_PIXELS above the record's own y */
+#define WB_MAP_TILE_34               0x34u    /* while WB_ACTOR_FLAG_SUPPORTED_BIT is up: launch the
+                                               * record at WB_PLAYER_TILE_34_SPEED and spawn a
+                                               * WB_PLAYER_TILE_34_SPAWN_TYPE record on its x,y */
+#define WB_MAP_TILE_35               0x35u    /* the pair that HURTS: one arm serves both */
+#define WB_MAP_TILE_36               0x36u
+#define WB_MAP_TILE_37               0x37u    /* while supported, the x moves
+                                               * WB_PLAYER_TILE_37_X_STEP pixels left */
+#define WB_MAP_TILE_38               0x38u    /* one off WB_PANEL_FRAME_DELAY, masked even */
+#define WB_MAP_TILE_39               0x39u    /* the STACK UNWIND — see WB_PLAYER_COLLIDE_UNWIND */
+#define WB_PLAYER_TILE_34_SPEED      0xfu     /* `move.b #$f,11(a0)` into WB_ACTOR_SPEED */
+#define WB_PLAYER_TILE_34_SPAWN_TYPE 0x2fu    /* `move.w #$2f,4(a1)` into WB_ACTOR_TYPE, on a record
+                                               * out of the HIGH pool whose x,y are one `move.l` of
+                                               * the player's own */
+#define WB_PLAYER_TILE_HURT_COST     4u       /* `subq.w #4,$b6fa.l` off WB_HUD_METER_VALUE, floored
+                                               * by a `bpl` that reads the RESULT — the same
+                                               * read-modify-write shape actor_charge_damage carries */
+#define WB_PLAYER_TILE_37_X_STEP     6u       /* `subq.w #6,(a0)` */
+#define WB_PANEL_FRAME_DELAY_EVEN    0xfffeu  /* `andi.w #$fffe,$bd28.l` — a SECOND store to the word
+                                               * the `subq.w` above it just wrote */
+#define WB_TILE_33_FLAG_RAISED_BYTE  0xffu    /* `st $1514.w` — Scc's true BYTE, against the
+                                               * `move.w #$ffff` WB_TILE_33_FLAG_RAISED that
+                                               * actor_fall_and_settle writes to the same word */
+#define WB_SCENE_TRIGGER_FLAG_SET    0xffffu  /* the `move.w #$ffff` the boss-defeat and door arms
+                                               * raise their handshake words with */
+
+/* The 32-byte records cells WB_SCENE_TRIGGER_CODE_FIRST..WB_SCENE_TRIGGER_CODE_LAST select, and the
+ * kind word at their FRONT.
+ *
+ * ONE RECORD, TWO KIND WORDS, and they are different fields rather than two readings of one. This
+ * table is where WB_RECORD_PTR_10420 comes from — the `move.l a1,$10420.l` at $163a is its only
+ * writer in the image — and the SCENE DRIVER then branches on WB_SCENE_KIND, the word at +2. The
+ * player's own collision branches on the word at +0 instead, and for the four SPAWNING kinds below
+ * that +2 word is the spawned record's X. So a cell whose kind word is none of the eight is NOT
+ * inert: it publishes the descriptor and returns, which is how the driver is handed one at all.
+ */
+#define WB_SCENE_TRIGGER_TABLE        0x21828u /* `lea $21828.l,a1`; past the shipped image, so it is
+                                                * loaded from disk and no shipped datum names one */
+#define WB_SCENE_TRIGGER_CODE_FIRST   3u       /* `cmpi.b #$3,(a6) / blt` on the way in and
+                                                * `subq.l #3,d0` on the way to the table: one fact */
+#define WB_SCENE_TRIGGER_CODE_LAST    0x22u    /* `cmp.b #$22,d0 / ble` — a SIGNED byte test, though
+                                                * the `blt` above has already taken every code from
+                                                * $80 up, so the band it admits is 3..$22 */
+#define WB_SCENE_TRIGGER_RECORD_SHIFT 5u       /* `lsl.w #5` — 32 bytes, as WB_SPAWN_RECORD_BYTES */
+#define WB_SCENE_TRIGGER_KIND         0u       /* word: `move.w (a1)+,d0`, against WB_SCENE_KIND at
+                                                * +2 (see above) */
+#define WB_SCENE_TRIGGER_KIND_SPAWN_1 1u       /* sprite WB_SCENE_TRIGGER_SPRITE_1, SFX
+                                                * WB_SCENE_TRIGGER_SFX_1, and the only arm that
+                                                * copies the FOLLOWED actor's side bit */
+#define WB_SCENE_TRIGGER_KIND_SPAWN_2 2u       /* sprite WB_SCENE_TRIGGER_SPRITE_2 */
+#define WB_SCENE_TRIGGER_KIND_MESSAGE 3u       /* post the descriptor's own message id */
+#define WB_SCENE_TRIGGER_KIND_BOSS_DEFEAT 4u   /* the arm that raises WB_STAGE_ANIM_REQUEST_B0E */
+#define WB_SCENE_TRIGGER_KIND_SPAWN_5 5u       /* sprite WB_SCENE_TRIGGER_SPRITE_5 */
+#define WB_SCENE_TRIGGER_KIND_SPAWN_6 6u       /* sprite WB_SCENE_TRIGGER_SPRITE_6, and the one
+                                                * spawning arm that plays no effect */
+#define WB_SCENE_TRIGGER_KIND_ALIGN   7u       /* the hidden door: stand within
+                                                * WB_SCENE_TRIGGER_ALIGN_REACH of the descriptor's x
+                                                * with the flute already played */
+#define WB_SCENE_TRIGGER_KIND_TUNE    8u       /* play the flute, or read the view */
+
+/* The four words each SPAWNING kind copies out of the descriptor, in the order the four
+ * `move.w (a1)+` take them, and the visit counter below them. Offsets are from the descriptor's
+ * own base, which is why the first is WB_SCENE_KIND's. */
+#define WB_SCENE_TRIGGER_X            2u       /* the spawned record's x for kinds 1/2/5/6 and the
+                                                * door's for kind 7 — one offset, one reading */
+#define WB_SCENE_TRIGGER_SPAWN_Y      4u
+#define WB_SCENE_TRIGGER_SPAWN_TYPE   6u
+#define WB_SCENE_TRIGGER_SPAWN_FIELD  8u       /* into WB_ACTOR_FIELD_12, as a WORD */
+#define WB_SCENE_TRIGGER_VISITS       10u      /* `subq.w #1,(a1)+`: spent on every spawn, and the
+                                                * visit that empties it CLEARS THE MAP CELL, so the
+                                                * trigger fires a fixed number of times */
+#define WB_SCENE_TRIGGER_SPAWN_SLOT   0x99acu  /* WB_ACTOR_TABLE_DEFAULT slot 2, and all four arms
+                                                * refuse unless its x is negative — the
+                                                * WB_ACTOR_FREE_MARKER test, spelt `tst.w / bmi`.
+                                                * The gate's own spawn takes slot 1 ($998c) */
+#define WB_SCENE_TRIGGER_SPRITE_1     0x15bu
+#define WB_SCENE_TRIGGER_SPRITE_2     0x157u
+#define WB_SCENE_TRIGGER_SPRITE_5     0x1a0u
+#define WB_SCENE_TRIGGER_SPRITE_6     0x19fu
+#define WB_SCENE_TRIGGER_SFX_1        1u       /* `move.w #$1,d0 / clr.w d1` */
+#define WB_SCENE_TRIGGER_SFX_2        3u       /* kinds 2 and 5 share it; kind 6 plays none */
+#define WB_SCENE_TRIGGER_SPAWN_1_FIELD_10 0xau /* kind 1 alone writes WB_ACTOR_FIELD_10 */
+#define WB_SCENE_TRIGGER_SPAWN_SPEED  8u       /* ...and kinds 1 and 2 write WB_ACTOR_SPEED */
+
+/* kind 3 — the message, and its own `move.b #$ff` PRIMER: WB_TEXT_REQUEST is stamped $ff before the
+ * id is read, so a descriptor holding zero leaves that $ff standing and posts no lifetime at all. */
+#define WB_SCENE_TRIGGER_MESSAGE      2u       /* word: the id, `move.w (a1)+,d0` */
+#define WB_TEXT_REQUEST_PRIMED        0xffu
+
+/* kind 4 — the boss defeat. It runs only while the record is SUPPORTED and the last key pressed was
+ * WB_SCENE_TRIGGER_BOSS_KEY, which is the one place in this routine a keyboard byte steers a
+ * branch; the cell address is published to WB_SCENE_MARKER_CELL_PTR either way. */
+#define WB_SCENE_TRIGGER_BOSS_KEY     0x39u    /* `cmpi.b #$39,$879.w` — WB_KEY_LAST_SCANCODE, and
+                                                * the same $39 the tile ladder's last code is */
+#define WB_SCENE_TRIGGER_BOSS_SFX     4u
+
+/* kind 7 — the hidden door. */
+#define WB_SCENE_TRIGGER_ALIGN_SUBKIND 8u      /* word: `cmpi.w #$2,6(a1)` through the a1 the kind
+                                                * word's own post-increment has already advanced —
+                                                * three sites, one field */
+#define WB_SCENE_TRIGGER_ALIGN_SECOND  2u      /* the value that picks WB_STAGE_ADVANCE_REQUEST over
+                                                * stepping WB_LEVEL_SEQ_INDEX */
+#define WB_SCENE_TRIGGER_ALIGN_REACH   4u      /* `subq.w #4 / cmp / bgt` then `addq.w #8 / cmp /
+                                                * blt`: the followed actor's x must lie within four
+                                                * pixels of the descriptor's, INCLUSIVE both ends */
+#define WB_HUD_SLOT_BBC4_ARMED         1u      /* `cmpi.b #$1,$bbc4.l` — the BYTE, where the write
+                                                * below is a WORD */
+#define WB_HUD_SLOT_BBC4_SPENT         0xffu   /* `move.w #$ff,$bbc4.l` */
+#define WB_LEVEL_SEQ_DOOR_A            9u      /* the two `cmpi.w` values that let the door move the
+                                                * sequence on at all */
+#define WB_LEVEL_SEQ_DOOR_B            0x15u
+#define WB_LEVEL_SEQ_DOOR_STEP         2u      /* `addq.w #2,$216be.l` */
+#define WB_SCENE_FLUTE_PLAYED          0x1960u /* word INSIDE $151a's own body ($1960..$1961), and
+                                                * all three of its operand sites are in it: kind 8
+                                                * raises it once the flute has finished playing, and
+                                                * kind 7 requires it and clears it. THE RAISE IS PAST
+                                                * THE BUSY-WAIT (see WB_PLAYER_COLLIDE_SOUND_WAIT),
+                                                * so the reconstruction CLEARS this word and reads
+                                                * it, and never raises it */
+#define WB_SCENE_FLUTE_PLAYED_SET      1u
+#define WB_STAGE_ADVANCE_REQUEST       0x1962u /* the word beside it, and the OTHER half of the
+                                                * unwind: kind 7's second sub-arm raises it, and
+                                                * player_pending_event_gate's `tst.w` at $d06 then
+                                                * clears it and takes `bra.w $1622` — this routine's
+                                                * own triple pop, in another routine's frame */
+#define WB_STAGE_ADVANCE_REQUEST_SET   1u
+#define WB_SCENE_ALIGN_REQUEST_B14     0xb14u  /* word inside WB_STAGE_RESET_BLOCK: raised $ffff here
+                                                * and read by the gate's `tst.w $b14.w` at $b2a. Its
+                                                * only clear is the `clr.l $b14.w` at $cfe, which
+                                                * takes WB_EVENT_ANIM_DONE_B16 with it */
+
+/* kind 8 — the flute, or the view. */
+#define WB_SCENE_TRIGGER_TUNE_MAX_Y   0x64u    /* `cmpi.w #$64,2(a0) / blt`: the arm runs only while
+                                                * the record is ABOVE this y — the only gate of the
+                                                * eight that reads the player's POSITION. Kind 4
+                                                * reads the same record's flags (`btst #2,8(a0)`),
+                                                * so "reads the player" alone would be two arms */
+#define WB_HUD_SLOT_BBC8_FLUTE        2u       /* `cmpi.b #$2,$bbc8.l` — which item is held */
+#define WB_TEXT_MESSAGE_PLAYED_FLUTE  0x4du    /* "  You tried playing \n      the flute. " */
+#define WB_TEXT_MESSAGE_NICE_VIEW     0x4cu    /* "      Nice View.    " */
+#define WB_SCENE_TRIGGER_FLUTE_SONG   0xfu     /* `move.w #$f,d0 / clr.w d1 / jsr (a5)` — stub +0,
+                                                * and the LAST write `snd_play_song` makes is the
+                                                * WB_SND_ENGINE_ENABLED byte the `tst.b` under it
+                                                * then spins on. WB_STAGE_TUNE_LATCH, which the
+                                                * unreachable tail restarts, is not read by the
+                                                * reconstruction at all */
 
 /* ---- the text subsystem, $bd8a..$c030 (RUNTIME addresses; src/text.c) -------------------------
  *

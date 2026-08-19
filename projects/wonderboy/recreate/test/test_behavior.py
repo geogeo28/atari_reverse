@@ -77,8 +77,10 @@ from leaf import (LONGWORD_BYTES, RTS, WORD_BYTES, addi_w_dn, addq_b_d16, addq_b
                   cmpi_w_d16, keyed_block,
                   lea_abs_l, lea_d16, lea_indexed, longword, lsl_w_imm_dn, merge_bands,
                   ext_w_dn, jsr_abs_l, neg_w_dn,
-                  move_b_d16_dn, move_b_imm_d16, move_w_dn_dn, move_w_imm_abs_l, move_w_imm_dn,
-                  move_w_ind_dn, move_w_postinc_dn, moveq_0_dn, opcode, program_writes, s8,
+                  move_b_d16_dn, move_b_imm_d16, move_b_ind_dn, move_l_dn_dn, move_w_dn_dn,
+                  move_w_imm_abs_l, move_w_imm_dn,
+                  move_w_ind_dn, move_w_postinc_d16, move_w_postinc_dn, moveq_0_dn, opcode,
+                  cmpi_b_ind, jmp_abs_l, program_writes, quick_field, s8,
                   s16,
                   sub_w_dn_d16, sub_w_dn_dn, subi_w_dn, subq_w_dn, tst_b_d16, tst_w_abs_l,
                   tst_w_abs_w, tst_w_dn, word)
@@ -258,11 +260,6 @@ def move_w_ind_d16(source, destination, displacement):
     return opcode(0x3150 | (destination << 9) | source) + word(displacement)
 
 
-def move_w_postinc_d16(source, destination, displacement):
-    """...and the POST-INCREMENT form, which is what makes the terminator the word AFTER the frame."""
-    return opcode(0x3158 | (destination << 9) | source) + word(displacement)
-
-
 def move_w_imm_d16(base, value, displacement):
     return opcode(0x317c | (base << 9)) + word(value) + word(displacement)
 
@@ -329,12 +326,11 @@ def tst_b_dn(reg):
     return opcode(0x4a00 | reg)
 
 
-def tst_w_ind(reg):
-    return opcode(0x4a50 | reg)
-
-
-def clr_b_ind(reg):
-    return opcode(0x4210 | reg)
+def tst_w_ind(base):
+    return opcode(0x4a50 | base)
+    # ALSO IN test_player.py — second copy, which the rule allows. The operand is an ADDRESS
+    # register, so it is named `base` here as it is there; this copy called it `reg`, which is the
+    # name this file and leaf.py use for a DATA register.
 
 
 def add_w_dn_ind(reg, base):
@@ -360,6 +356,7 @@ def sub_w_d16_dn(reg, base, displacement):
 
 def cmp_w_ind_dn(reg, base):
     return opcode(0xb050 | (reg << 9) | base)
+    # ALSO IN test_player.py — second copy, which the rule allows.
 
 
 def bset_imm_dn(bit, reg):
@@ -371,10 +368,6 @@ def clr_l_dn(reg):
     leftover: two bytes where `moveq #0` would have done, and the only long clear in this file."""
     return opcode(0x4280 | reg)
     # ALSO IN test_blit.py, test_hud.py (`_clr_l_dn`) — third copy, queued for leaf.py.
-
-
-def move_b_ind_dn(reg, base):
-    return opcode(0x1010 | (reg << 9) | base)
 
 
 def cmp_b_imm_dn(reg, value):
@@ -410,10 +403,6 @@ def rol_l_imm_dn(count, reg):
     return opcode(0xe198 | ((count & 7) << 9) | reg)
 
 
-def move_l_dn_dn(destination, source):
-    return opcode(0x2000 | (destination << 9) | source)
-
-
 def move_l_d16_dn(reg, base, displacement):
     """`move.l d16(An),Dn` — the SCORE longword out of an actor_kind_table row."""
     return opcode(0x2028 | (reg << 9) | base) + word(displacement)
@@ -433,17 +422,16 @@ def move_b_dn_postinc(base, reg):
     return opcode(0x10c0 | (base << 9) | reg)
 
 
-def jmp_abs_l(addr):
-    return opcode(0x4ef9) + longword(addr)
-
-
 def adda_w_dn(reg, base):
     return opcode(0xd0c0 | (base << 9) | reg)
 
 
 
 def subq_w_ind(amount, base):
-    return opcode(0x5150 | ((amount & 7) << 9) | base)
+    return opcode(0x5150 | quick_field(amount) | base)
+    # ALSO IN test_player.py — second copy, which the rule allows. That copy reaches the 3-bit field
+    # through leaf.quick_field, which REFUSES a distance outside 1..8 where this one's inline
+    # `(amount & 7) << 9` silently assembled 9 as 1; converted here so a third copy has one body.
 
 
 
@@ -500,10 +488,6 @@ def mulu_w_dn(destination, source):
 
 def lsr_w_imm_dn(count, reg):
     return opcode(0xe048 | ((count & 7) << 9) | reg)
-
-
-def cmpi_b_ind(base, value):
-    return opcode(0x0c10 | base) + word(value & 0xff)
 
 
 def cmpi_b_postinc(base, value):

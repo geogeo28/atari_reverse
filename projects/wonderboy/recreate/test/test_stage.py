@@ -55,11 +55,13 @@ import leaf
 from leaf import (RTS, add_w_dn_dn, branch, branch_over, bsr_w, btst_imm_dn, case_salt,
                   clr_w_abs_l, clr_w_abs_w,
                   dbf_over, forward_branch, keyed_block, lea_abs_l, lea_d16, lea_indexed, longword,
-                  lsl_w_imm_dn, merge_bands, move_l_imm_abs_l, move_l_imm_postinc, move_w_abs_l_dn,
+                  lsl_w_imm_dn, merge_bands, move_l_dn_dn, move_l_imm_abs_l, move_l_imm_postinc,
+                  move_w_abs_l_dn,
                   move_w_dn_dn, move_w_imm_abs_l, move_w_imm_abs_w, move_w_imm_dn,
                   move_w_indexed_dn,
-                  move_b_postinc_dn, move_w_postinc_dn, movea_l_abs_l, moveq_0_dn,
-                  opcode, program_writes, st_abs_l, subi_w_dn, swap_dn, tst_w_abs_l,
+                  move_b_postinc_dn, move_w_postinc_dn, movea_l_abs_l, movea_l_an_an, moveq_0_dn,
+                  mulu_w_dn_dn,
+                  cmpi_b_ind, opcode, program_writes, st_abs_l, subi_w_dn, swap_dn, tst_w_abs_l,
                   tst_w_abs_w, u16, s16,
                   word)
 from layout import wb
@@ -259,14 +261,6 @@ def move_w_an_dn(reg, an):
     return opcode(0x3000 | (reg << 9) | (1 << 3) | an)
 
 
-def movea_l_an_an(destination, source):
-    return opcode(0x2040 | (destination << 9) | (1 << 3) | source)
-
-
-def mulu_w_dn_dn(destination, source):
-    return opcode(0xc0c0 | (destination << 9) | source)
-
-
 def adda_l_dn_an(an, dn):
     return opcode(0xd1c0 | (an << 9) | dn)
 
@@ -281,10 +275,6 @@ def rol_l_imm_dn(count, reg):
 
 def move_l_postinc_postinc(source, destination):
     return opcode(0x2000 | (destination << 9) | (3 << 6) | (3 << 3) | source)
-
-
-def move_l_dn_dn(destination, source):
-    return opcode(0x2000 | (destination << 9) | source)
 
 
 def move_w_dn_postinc(an, dn):
@@ -323,10 +313,6 @@ def clr_l_abs_w(addr):
 
 def clr_l_abs_l(addr):
     return opcode(0x42b9) + longword(addr)
-
-
-def cmpi_b_ind(an, value):
-    return opcode(0x0c10 | an) + word(value)
 
 
 def move_b_imm_ind(an, value):
@@ -568,7 +554,9 @@ def _life_restart_reset_entry():
 # The encodings only these two spell. `lea 0(a1,d0.w),a0` is leaf's `lea_indexed` with a SOURCE of
 # its own — $f95c is the one site in the reconstruction whose index base is not its destination.
 CMPA_L_IMM_AN = 0xb1fc          # cmpa.l #imm,An — a LONGWORD compare of the tile-bank pointer
-MOVE_L_AN_ABS_L = 0x23c8        # move.l An,<abs>.l, the source register in the low three bits
+MOVE_L_AN_ABS_L = 0x23c8        # move.l An,<abs>.l, the source register in the low three bits.
+                                # ALSO IN test_player.py as the encoder `move_l_an_abs_l` —
+                                # second copy, which the rule allows; leaf.py on its third.
 MOVE_W_D16_AN_ABS_L = 0x33e8    # move.w d16(An),<abs>.l — memory to memory in one instruction
 SUB_W_ABS_L_DN = 0x9079         # sub.w <abs>.l,Dn
 CMP_B_ABS_L_DN = 0xb039         # cmp.b <abs>.l,Dn — the tune latch's de-duplication test

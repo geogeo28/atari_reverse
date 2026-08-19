@@ -139,4 +139,5 @@ static inline void flag_flip(uint8_t *image, uint32_t record, uint32_t offset, u
                 (uint8_t)(field_b(image, record, offset) ^ (1u << bit)));
 }
 
+
 #endif /* WONDERBOY_BUS_H */

@@ -47,7 +47,9 @@ from leaf import (BRANCH_EXTENSION, JSR_ABS_L, RTS, add_w_dn_dn, addi_w_dn, addq
                   keyed_block, lea_abs_l, lea_d16, lea_indexed, longword, lsl_w_imm_dn,
                   merge_bands, move_b_d16_dn, move_b_imm_d16, move_l_imm_abs_l,
                   move_l_imm_postinc, move_w_abs_l_dn, move_w_imm_dn, move_w_ind_dn,
-                  movea_l_abs_l, moveq_0_dn, opcode, program_writes, s16, sub_w_dn_d16,
+                  move_w_postinc_d16,
+                  movea_l_abs_l, movea_l_an_an, moveq_0_dn, opcode, program_writes, s16,
+                  sub_w_dn_d16,
                   sub_w_dn_dn, subi_w_dn, tst_w_abs_w, tst_w_dn, u16, word)
 from leaf import (WORD_MASK, clr_w_abs_l, move_b_abs_l_dn, move_b_imm_abs_l,
                   move_w_imm_abs_l, move_w_indexed_dn, tst_b_abs_l)
@@ -237,10 +239,6 @@ def _bsr_s(here, target):
 
 def jsr_abs_w(addr):
     return opcode(0x4eb8) + word(addr)
-
-
-def movea_l_an_an(destination, source):
-    return opcode(0x2048 | (destination << 9) | source)
 
 
 def move_w_dn_postinc(reg, destination):
@@ -723,22 +721,40 @@ def _slot_rearm(slot, message_id):
             + move_w_imm_abs_l(TEXT_LIFETIME_DEFAULT, TEXT_LIFETIME_REQUEST))
 
 
-def _damage_followed_entry():
-    """$69fe's whole 266 bytes, ending exactly where WB_ACTOR_DAMAGE_TABLE begins."""
-    # The tail every arm that does any work funnels into: the x compare, the SFX, the knock-back.
+def _knock_back_and_launch_entry():
+    """$6ade's forty-two bytes: the SFX on channel A, then the three flag bits and the speed byte.
+
+    THE SAME BYTES ARE $69fe's LAST FORTY-TWO, so `_damage_followed_entry` below builds its own tail
+    out of this call rather than spelling them a second time — two spellings of one instruction
+    stream can disagree while both entry pins stay green, and this one is now a routine of its own
+    only because a THIRD entrance ($15e8's `bra.w`, in `player_run_map_cell`) reaches it.
+    `test_the_shared_tail_is_the_last_forty_two_bytes_of_the_damage_path` is the address half of
+    that claim; this function is the byte half.
+
+    The three bit ops are `bset #0 / bset #1 / bclr #2` where $2af2's `_start_motion_entry` spells
+    `bclr #2 / bset #0 / bset #1` — one byte and one final value, so the pin is the only thing in
+    the project that can tell the two orders apart.
+    """
     trigger = (move_w_imm_dn(D0, DAMAGE_FOLLOWED_SFX) + clr_w_dn(D1)
                + lea_abs_l(A5, SND_STUB_TABLE) + jsr_d16_an(A5, STUB_TRIGGER_OFFSET))
-    knockback = (bit_op_d16(BSET_IMM, MOVING_BIT, A1, ACTOR_FLAGS)
-                 + bit_op_d16(BSET_IMM, LAUNCHED_BIT, A1, ACTOR_FLAGS)
-                 + bit_op_d16(BCLR_IMM, SUPPORTED_BIT, A1, ACTOR_FLAGS)
-                 + move_b_imm_d16(A1, DAMAGE_KNOCKBACK_SPEED, SPEED) + RTS)
+    return (trigger
+            + bit_op_d16(BSET_IMM, MOVING_BIT, A1, ACTOR_FLAGS)
+            + bit_op_d16(BSET_IMM, LAUNCHED_BIT, A1, ACTOR_FLAGS)
+            + bit_op_d16(BCLR_IMM, SUPPORTED_BIT, A1, ACTOR_FLAGS)
+            + move_b_imm_d16(A1, DAMAGE_KNOCKBACK_SPEED, SPEED) + RTS)
+
+
+def _damage_followed_entry():
+    """$69fe's whole 266 bytes, ending exactly where WB_ACTOR_DAMAGE_TABLE begins."""
+    # The tail every arm that does any work funnels into: the x compare, then the shared forty-two
+    # bytes above — which are `actor_knock_back_and_launch` and this routine's ending at once.
     attacker_right = bit_op_d16(BCLR_IMM, SIDE_BIT, A1, ACTOR_FLAGS) + clr_b_d16(A1, FIELD_30)
     attacker_left = (bit_op_d16(BSET_IMM, SIDE_BIT, A1, ACTOR_FLAGS)
                      + move_b_imm_d16(A1, DAMAGE_FIELD_30_SET, FIELD_30))
     tail = (move_w_ind_dn(D0, A1, ACTOR_X) + move_w_ind_dn(D1, A0, ACTOR_X) + cmp_w_dn_dn(D1, D0)
             + branch(BGT_W, attacker_left, branch(BRA_W, attacker_right))
             + attacker_left + branch(BRA_W, attacker_right)
-            + attacker_right + trigger + knockback)
+            + attacker_right + _knock_back_and_launch_entry())
 
     # The meter arm, which is what the slot spend falls back on...
     meter = (sub_w_dn_abs_l(D0, METER_VALUE) + branch(BPL_W, clr_w_abs_l(METER_VALUE))
@@ -871,15 +887,7 @@ def move_l_indexed_dn(reg, base, index):
 
 # The two destination modes the respawn continuation adds, and the only site of each in the image.
 _MOVE_TO_D16 = 5 << 6           # the DESTINATION mode field of a `move`: d16(An)
-_MOVE_FROM_POSTINC = 3 << 3     # ...and its SOURCE mode: (An)+
-_MOVE_FROM_IMM = 0x3c           # ...or mode 7 reg 4, an immediate in the stream
-
-
-def move_w_postinc_d16(destination, source, displacement):
-    """`move.w (An)+,d16(Am)` — how the kind table's two words land in the record. The SOURCE is a
-    post-increment cursor, which is what makes the pair one walk rather than two indexed reads."""
-    return opcode(0x3000 | (destination << 9) | _MOVE_TO_D16 | _MOVE_FROM_POSTINC | source) + word(
-        displacement)
+_MOVE_FROM_IMM = 0x3c           # ...and a SOURCE mode of 7 reg 4, an immediate in the stream
 
 
 def move_l_imm_d16(base, value, displacement):
@@ -989,7 +997,7 @@ def _respawn_entry():
         move_b_imm_d16(A0, RESPAWN_FIELD_12, FIELD_12),
         move_b_imm_d16(A0, RESPAWN_FIELD_30, FIELD_30),
         lea_abs_l(A2, KIND_TABLE), lsl_w_imm_dn(KIND_RECORD_SHIFT, D0), lea_indexed(A2, D0),
-        move_w_postinc_d16(A0, A2, ACTOR_TYPE), move_w_postinc_d16(A0, A2, ACTOR_SPRITE),
+        move_w_postinc_d16(A2, A0, ACTOR_TYPE), move_w_postinc_d16(A2, A0, ACTOR_SPRITE),
         move_l_imm_d16(A0, RESPAWN_SIZE, HALF_WIDTH),
         RTS,
     ])
@@ -1080,11 +1088,12 @@ ENTRY_BYTES = {
     "actor_toggle_side_flag": _toggle_side_entry(),
     "actor_turn_and_launch": _turn_and_launch_entry(),
     "actor_damage_followed": _damage_followed_entry(),
+    "actor_knock_back_and_launch": _knock_back_and_launch_entry(),
     "actor_damage_template_hitpoints": _damage_template_entry(),
     "actor_defeat_and_score": DEFEAT_BODY,
     "actor_respawn_as_new_kind": _respawn_entry(),
 }
-RECONSTRUCTED_ROUTINES = 22
+RECONSTRUCTED_ROUTINES = 23
 
 
 def test_the_battery_covers_every_routine_it_was_written_for():
@@ -1125,6 +1134,10 @@ def test_the_whole_body_is_the_bytes_this_battery_reconstructs(name):
     # Ghidra function: $69fe ends where its own `lea $6b08.l,a2` names, and $6b46 begins where that
     # word table stops (test_the_damage_table_is_the_data_between_the_two_bodies).
     ("actor_damage_followed", 266),
+    # ...and $6ade, which has no Ghidra function either and never could: it is the last forty-two
+    # bytes of the body above, so its extent is that body's end minus its own entry — the arithmetic
+    # `test_the_shared_tail_is_the_last_forty_two_bytes_of_the_damage_path` states.
+    ("actor_knock_back_and_launch", 42),
     ("actor_damage_template_hitpoints", 114),
     # ...and $6cdc, which Ghidra has no function for at all: its extent runs from the one
     # `ble.w` aimed at it to the `rts` at $6d58, whose second byte is the last of the body.
@@ -3324,6 +3337,165 @@ def test_both_paths_follow_whichever_template_table_the_pointer_names(table_base
         pokes[template + SPAWN_TYPE] = word(5)
         pokes[template + SPAWN_HITPOINTS] = word(DAMAGE_STATE["pool"])
         runner(case, pokes)
+
+
+# --- $6ade: the knock-back, as a routine of its own -------------------------------------------------
+# THE LAST FORTY-TWO BYTES OF $69fe, and a SHARED TAIL rather than only that body's ending. Three
+# entrances reach them: $6ad0's `bra.w` and the fall-through at $6adc, both inside $69fe, and
+# `bra.w $6ade` at $15e8 inside `player_run_map_cell` — off the tiles that hurt. The third is the
+# whole reason src/actor.c exports them instead of spelling them twice.
+#
+# WHAT THESE CASES ADD over the $69fe ones above, which already run these bytes on every arm that
+# does any work:
+#   * THE RECORD IS a1 AND NOTHING ELSE. Two of the three entrances hand it the FOLLOWED record, so
+#     a port that read WB_ACTOR_FOLLOWED_DEFAULT instead of its argument still passes every case in
+#     the damage battery bar the four `test_the_damage_path_reads_the_mode_flag_as_a_byte` rows the
+#     A32 flag picks the other record on — a MEASURED figure, from the mutant. The cases below enter
+#     on ORDINARY slots as well, with a0 pointing at a different record.
+#   * THE BYTE WRITE IS A WRITE EVEN WHEN THE VALUE DOES NOT MOVE. One seed already carries the two
+#     bits raised and the third clear, which is what the attribution pass turns into a real claim.
+#   * THE OTHER FIVE BITS OF WB_ACTOR_FLAGS. `bset`/`bclr` are bit ops on a byte the rest of the
+#     tier also writes, so a seed with every neighbouring bit set comes back with them all intact.
+#
+# KNOWINGLY NOT PINNED
+#   * WHICH ENTRANCE RAN. All three arrive with a1 already loaded and nothing in the write set says
+#     where control came from; the census below is what bounds them, and it is a statement about the
+#     image rather than about a run.
+
+# The nine instructions the entry pin holds — the trigger's four, the two `bset`s, the `bclr`, the
+# speed store and the `rts` — plus the whole sound stub the `jsr 56(a5)` enters. STUB_INSN_CAP is
+# test_sound.py's and carries no sentinel of its own (see the defeat block below), so one is added
+# here for the `rts` this run ends on.
+KNOCK_BACK_BODY_INSNS = 9
+KNOCK_BACK_INSN_CAP = KNOCK_BACK_BODY_INSNS + STUB_INSN_CAP + leaf.RUNNER_SENTINEL_INSN
+
+_KNOCK_BACK = leaf.register_glue("actor_knock_back_and_launch", [ctypes.c_uint32])
+
+# An ordinary slot, clear of the followed records and of the ones the batteries above use, plus the
+# DECOY the same seeds put under a0: the routine reads neither, so a port that took the record from
+# the wrong register writes into a record no case expects rather than into the one it was handed.
+KNOCK_BACK_RECORD = TABLE_DEFAULT + 6 * RECORD_BYTES
+KNOCK_BACK_DECOY = TABLE_DEFAULT + 7 * RECORD_BYTES
+
+KNOCK_BACK_MOTION_BITS = (1 << MOVING_BIT) | (1 << LAUNCHED_BIT)
+KNOCK_BACK_TOUCHED_BITS = KNOCK_BACK_MOTION_BITS | (1 << SUPPORTED_BIT)
+# The exact opposite of the state the routine wants, which is what the cases that do not sweep the
+# flags seed: every bit it names has to move.
+KNOCK_BACK_INVERTED = 1 << SUPPORTED_BIT
+# ...and the sweep, where each seed says something the others cannot: `settled` is the state the
+# routine wants ALREADY, so its byte write moves no value at all; `neighbours` and `all-set` are
+# what says the five bits nothing here names come back untouched.
+KNOCK_BACK_FLAG_SEEDS = (
+    ("settled", KNOCK_BACK_MOTION_BITS),
+    ("inverted", KNOCK_BACK_INVERTED),
+    ("neighbours", 0xff ^ KNOCK_BACK_TOUCHED_BITS),
+    ("all-set", 0xff),
+)
+# The speed seeds. WB_ACTOR_DAMAGE_KNOCKBACK_SPEED is the value the routine stamps, so its store
+# moves no value either; the rest are bytes it must overwrite whatever they held, and the last is
+# the one the cases that do not sweep the speed use.
+KNOCK_BACK_SPEED_SEED = 0x5a
+KNOCK_BACK_SPEED_SEEDS = (DAMAGE_KNOCKBACK_SPEED, 0x00, 0xff, KNOCK_BACK_SPEED_SEED)
+
+
+def _run_knock_back(case, record, flags, speed):
+    """One entrance at $6ade with ``record`` in a1, against an EXACT write set: the record's flags
+    byte, its speed byte and the trigger's own, which come from test_sound.py's model the way the
+    two damage paths' do."""
+    what = f"actor_knock_back_and_launch {case}"
+    pokes = _state_pokes(case_salt(what), {})
+    for at in (record, KNOCK_BACK_DECOY):
+        pokes[at + ACTOR_FLAGS] = bytes([flags])
+        pokes[at + SPEED] = bytes([speed])
+
+    image = harness.make_image(pokes)
+    expected = {
+        record + ACTOR_FLAGS: (flags | KNOCK_BACK_MOTION_BITS) & ~(1 << SUPPORTED_BIT) & BYTE_MASK,
+        record + SPEED: DAMAGE_KNOCKBACK_SPEED,
+    }
+    sound = sfx_expected_writes(image, DAMAGE_FOLLOWED_SFX, SND_CHANNEL_A)
+    expected.update(_sfx_bytes(image, DAMAGE_FOLLOWED_SFX, SND_CHANNEL_A))
+
+    info = leaf.run("actor_knock_back_and_launch", _KNOCK_BACK(record), merge_bands(expected), what,
+                    regs={"a1": record, "a0": KNOCK_BACK_DECOY, "_pokes": pokes,
+                          **DAMAGE_ENTRY_REGS},
+                    max_insns=KNOCK_BACK_INSN_CAP)
+    _assert_writes(info, expected, what)
+    assert_sfx_written(info, sound, f"{what}: the effect it triggers")
+    assert info["regs"]["a1"] == record, (
+        f"{what}: the original left a1={info['regs']['a1']:#x}, not the {record:#x} it was entered "
+        f"with — nothing here moves it")
+    return info
+
+
+@pytest.mark.parametrize("speed", KNOCK_BACK_SPEED_SEEDS, ids=lambda v: f"speed{v:#04x}")
+@pytest.mark.parametrize("flags", [seed for _id, seed in KNOCK_BACK_FLAG_SEEDS],
+                         ids=[case_id for case_id, _seed in KNOCK_BACK_FLAG_SEEDS])
+def test_the_knock_back_launches_the_record_and_stamps_one_exact_speed(flags, speed):
+    """`bset #0 / bset #1 / bclr #2 / move.b #$5,11(a1)` and the SFX in front of them, as the whole
+    write set. The `settled` and `speed0x05` rows are the ones the attribution pass earns: both
+    stores land on bytes that already held the value, and are writes all the same."""
+    _run_knock_back(f"flags={flags:#04x} speed={speed:#04x}", KNOCK_BACK_RECORD, flags, speed)
+
+
+@pytest.mark.parametrize("record", [FOLLOWED_DEFAULT, FOLLOWED_A32, KNOCK_BACK_RECORD,
+                                    TABLE_A32 + 9 * RECORD_BYTES],
+                         ids=["followed-default", "followed-a32", "default-slot-6", "a32-slot-9"])
+def test_the_knock_back_lands_on_whichever_record_a1_names(record):
+    """a1 is the only thing that says where the record is. Two of the three entrances hand it one of
+    the two FOLLOWED records, so those two rows are the ones a port that hardcoded either address
+    would still pass — the other two are what fails it."""
+    _run_knock_back(f"into {record:#x}", record, KNOCK_BACK_INVERTED, KNOCK_BACK_SPEED_SEED)
+
+
+def test_the_knock_back_leaves_the_stub_table_and_the_effect_it_asked_for():
+    """The registers, which no write set can show: `move.w #$b,d0 / clr.w d1` are WORD stores into
+    two longwords the caller owns, and the stub's `movem` pair hands both back across the call."""
+    info = _run_knock_back("registers", KNOCK_BACK_RECORD, KNOCK_BACK_INVERTED,
+                           KNOCK_BACK_SPEED_SEED)
+    assert info["regs"]["a5"] == SND_STUB_TABLE, "a5 is not the stub table the `lea` names"
+    assert info["regs"]["d0"] == leaf.set_low_word(DAMAGE_ENTRY_REGS["d0"], DAMAGE_FOLLOWED_SFX), (
+        f"d0 came back {info['regs']['d0']:#010x}, not the caller's high half over effect "
+        f"{DAMAGE_FOLLOWED_SFX:#x}")
+    assert info["regs"]["d1"] == leaf.set_low_word(DAMAGE_ENTRY_REGS["d1"], SND_CHANNEL_A), (
+        f"d1 came back {info['regs']['d1']:#010x}, not the caller's high half over channel "
+        f"{SND_CHANNEL_A}")
+
+
+def test_the_shared_tail_is_the_last_forty_two_bytes_of_the_damage_path():
+    """`_damage_followed_entry` builds its own ending out of `_knock_back_and_launch_entry`, so this
+    is the address half of what makes that legitimate: $6ade really is where $69fe's body ends less
+    those forty-two bytes, and the pin at each of the two entries really is the image's."""
+    followed = leaf.entry_of("actor_damage_followed")
+    tail = ENTRY_BYTES["actor_knock_back_and_launch"]
+    assert leaf.entry_of("actor_knock_back_and_launch") == (
+        followed + len(ENTRY_BYTES["actor_damage_followed"]) - len(tail)), (
+        f"$6ade is not the last {len(tail)} bytes of the "
+        f"{len(ENTRY_BYTES['actor_damage_followed'])} at {followed:#x}")
+    assert ENTRY_BYTES["actor_damage_followed"].endswith(tail), (
+        "the damage path's pin no longer ends in the shared tail's bytes")
+
+
+def test_the_knock_back_is_named_by_exactly_the_two_branches_the_plate_says():
+    """$6ad0's `bra.w` and $15e8's, and nothing else in the program names the address.
+
+    THE THIRD ENTRANCE DOES NOT APPEAR HERE AND CANNOT: $69fe also FALLS THROUGH into these bytes at
+    $6adc, and a fall-through is the absence of an instruction naming the address rather than one
+    more site. What bounds that entrance is the arithmetic in the case above, not this census.
+
+    The scan is test_behavior.py's — every way an instruction can name an address, keyed by target —
+    imported rather than restated so the two censuses cannot disagree about the same instruction. It
+    is imported INSIDE the case because that module imports THIS one: a module-level import here
+    would be a cycle whose failure depended on which file pytest collected first.
+    """
+    from test_behavior import INSTRUCTION_TARGETS
+
+    entry = leaf.entry_of("actor_knock_back_and_launch")
+    sites = sorted(INSTRUCTION_TARGETS.get(entry, []))
+    assert [at for at, _op in sites] == [0x15e8, 0x6ad0], (
+        f"{entry:#x} is named by {[hex(at) for at, _op in sites]}, not by $15e8 and $6ad0")
+    for at, op in sites:
+        assert op == BRA_W, f"the site at {at:#x} is {op:#06x}, not the `bra.w` the plate claims"
 
 
 # --- $6bb8: what a defeat costs ---------------------------------------------------------------------

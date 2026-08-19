@@ -472,6 +472,7 @@ def move_w_dn_abs_l(reg, addr):
 
 def andi_w_abs_l(value, addr):
     return opcode(0x0279) + word(value) + longword(addr)
+    # ALSO IN test_player.py — second copy, which the rule allows.
 
 
 def addq_l_ind_a7(amount):

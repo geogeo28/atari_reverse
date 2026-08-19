@@ -231,7 +231,11 @@ def lsl_imm_dn(count, reg, size):
 
 
 def cmpi_b_abs_l(value, addr):
-    return opcode(0x0c39) + word(value) + longword(addr)
+    return opcode(0x0c39) + word(value & 0xff) + longword(addr)
+    # ALSO IN test_player.py — second copy, which the rule allows. That copy MASKS the immediate to
+    # a byte, since a byte compare still carries it in a whole word, and this one did not: the two
+    # would have diverged on any negative or over-wide value. Masked here to match; the one call
+    # site passes $ff, so no assembled byte moves.
 
 
 def cmp_b_imm_dn(reg, value):

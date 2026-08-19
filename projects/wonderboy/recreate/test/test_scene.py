@@ -61,8 +61,10 @@ import harness
 import leaf
 import emu
 from leaf import (LONGWORD_BYTES, RTS, WORD_BYTES, assert_entry_is, branch_w_to, bsr_w, case_salt,
-                  clr_b_abs_l, clr_w_abs_l, clr_w_abs_w, cmpi_w_abs_l, cmpi_w_d16, jsr_abs_l,
+                  clr_b_abs_l, clr_b_ind, clr_w_abs_l, clr_w_abs_w, cmpi_w_abs_l, cmpi_w_d16,
+                  jsr_abs_l,
                   keyed_block, lea_abs_l, lea_indexed, longword, lsl_w_imm_dn, merge_bands,
+                  move_b_ind_dn,
                   move_l_imm_abs_l, move_w_imm_abs_l, move_w_imm_abs_w, move_w_ind_dn,
                   movea_l_abs_l, opcode, overlay, program_writes, run_reaching, s16, seeded_bytes,
                   sub_w_dn_d16, tst_w_abs_w, word)
@@ -360,16 +362,6 @@ EXIT_ACTION_1_INSN = len(EXIT_ACTION_1_PIECES) - 1
 # where $de94 takes `jmp $1ab4.w` — which is why src/scene.c has one body returning a flag.
 MARKER_PAIR_ENTRY = 0x1b46
 NEIGHBOUR_CELL = wb("MAP_NEIGHBOUR_CELL")
-
-
-def move_b_ind_dn(reg, base):
-    """`move.b (An),Dn` — the marker cell's own byte."""
-    return opcode(0x1010 | (reg << 9) | base)
-
-
-def clr_b_ind(base):
-    """`clr.b (An)` — and the store that clears it, above both compares."""
-    return opcode(0x4210 | base)
 
 
 def cmp_b_d16_dn(reg, base, displacement):

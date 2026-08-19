@@ -1282,7 +1282,7 @@ Cut against merged function *extents*, so a discontiguous body's own hole is not
 | 3 | `0x06d5a..0x07522` | 1,992 | 316 | starts at `actor_respawn_as_new_kind`'s body end, ends at `bg_scroll_run_queue` |
 | 4 | `0x0ee68..0x0f542` | 1,754 | 0 | **the Copylock ciphertext** — unreadable by construction, not a campaign target |
 | 5 | `0x02462..0x02af2` | 1,680 | 398 | |
-| 6 | `0x01514..0x01ab4` | 1,440 | 130 | ends where `scene_spend_visit_budget`'s unported arm goes. **Batch 40 phase C took NONE of this gap** — `$1b46` lies PAST its end (and was already inside a named `fn`), so booking it here would be a phantom credit — but it DIVIDED the gap exactly: 6 bytes of data (`$1514`) + 1,170 (`player_collide_and_scroll`, `$151a..$19ab`) + 264 (`scene_spawn_from_script`'s head as far as `$1ab4`) = 1,440. Note the head does NOT end there: it runs on to `$1aef`, and those last 60 bytes lie in neither this gap nor gap 10 |
+| 6 | `0x01514..0x01ab4` | 1,440 | 130 | ends where `scene_spend_visit_budget`'s unported arm goes. **Batch 40 phase C took NONE of this gap** — `$1b46` lies PAST its end (and was already inside a named `fn`), so booking it here would be a phantom credit — but it DIVIDED the gap exactly: 6 bytes of data (`$1514`) + 1,170 (`player_run_map_cell`, `$151a..$19ab`, which BATCH 41 PHASE A then took whole) + 264 (`scene_spawn_from_script`'s head as far as `$1ab4`) = 1,440. Note the head does NOT end there: it runs on to `$1aef`, and those last 60 bytes lie in neither this gap nor gap 10 |
 | 7 | `0x01f54..0x023b6` | 1,122 | 0 | **656 of these are gone as of batch 40 phase C** — `player_stage_transition` is `$1f54..$21e3` and the 466 above it are its own DATA, now read field by field (three 88-byte posture records and four cursor-plus-table animations). So this gap is CLOSED but for its data; the figures in this table are the 2026-08-11 re-scan's and are not re-run here |
 | 8 | `0x00938..0x00d28` | 1,008 | 132 | |
 | 9 | `0x0e91c..0x0ecca` | 942 | 76 | runs up to `copylock_entry` |
@@ -1408,12 +1408,12 @@ body is an address SET, so an `F` record can *span* a run while leaving bytes in
 | `0x105e4..0x1079a` | 438 | 438 | — | the 14 `pickup_effect_*` — the 438 B §0j found in a region `architecture.md` calls DATA |
 | `0x25a8..0x2736` | 398 | 374 | **24** (`0x25a8..0x25c0`) | `actor_behavior_type03` |
 | `0x5a6e..0x5b3c` | 206 | 202 | **4** (`0x5aae..0x5ab2`) | `actor_behavior_type50`, `actor_behavior_type51` |
-| `0x1712..0x17f4` | 130 | 34 | **96** (`0x1712..0x1772`) | `player_collide_and_scroll` |
+| `0x1712..0x17f4` | 130 | 34 | **96** (`0x1712..0x1772`) | `player_run_map_cell` |
 | `0xa84..0xb08` | 132 | 2 | **130** (`0xa84..0xb06`) | `player_meter_empty_check` |
 | **total** | **2,220** | **1,966** | **254** | |
 
 The last two are worth reading rather than skimming: `player_meter_empty_check` is `$a76..$b07` and
-`player_collide_and_scroll` is `$151a..$19ab`, so both **contain** their run's address span, yet 226
+`player_run_map_cell` is `$151a..$19ab`, so both **contain** their run's address span, yet 226
 of those 262 bytes are still in no function body. *(Both extents are corrected by one byte here,
 batch 40: `$b08` is `WB_STAGE_RESET_BLOCK`'s first byte and `$19ac` is `scene_spawn_from_script`'s
 entry, so the old figures named the NEXT thing's first byte as this one's last. The arithmetic in
@@ -1435,7 +1435,7 @@ same reason.
 |---|---:|---|
 | `$a38 actor_behavior_type01_player` | 62 | slot 1 of the table — the player |
 | `$b1a player_pending_event_gate` | 440 | |
-| `$151a player_collide_and_scroll` | 1,066 | the largest single routine the wall hid |
+| `$151a player_run_map_cell` | 1,066 | the largest single routine the wall hid. **RECONSTRUCTED, batch 41 phase A, and this row's edge is corrected with it**: a whole-image census of its $151a..$19ab finds THREE outward transfers — `bsr.w $1b8e`, `bra.w $6ade` and `jmp $e5ba.l` — and none of them is `show_data_disk_prompt`. Whatever reaches the prompt from here does so through `$e5ba`, which is a TAIL JUMP after a stack unwind and not a call this routine returns from |
 | `$6f9e actor_behavior_type61` | 118 | |
 
 All four reach `show_data_disk_prompt → load_resource_by_index → copylock_entry` (direct `T6`,

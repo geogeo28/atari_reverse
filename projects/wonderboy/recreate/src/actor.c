@@ -694,6 +694,10 @@ void actor_damage_followed(uint8_t *image, uint32_t attacker) {
         image[addr_add(record, WB_ACTOR_FIELD_30)] = WB_ACTOR_DAMAGE_FIELD_30_SET;
     }
 
+    actor_knock_back_and_launch(image, record);
+}
+
+void actor_knock_back_and_launch(uint8_t *image, uint32_t record) {
     snd_call_trigger_effect(image, WB_ACTOR_DAMAGE_FOLLOWED_SFX, WB_SND_CHANNEL_A);
 
     /* The three flag bits and the speed byte `actor_start_motion_at_speed` writes, reached here as
