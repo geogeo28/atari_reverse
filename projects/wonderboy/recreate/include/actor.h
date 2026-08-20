@@ -100,6 +100,32 @@ static inline void launch_at_inline_speed(uint8_t *image, uint32_t record, uint8
 }
 
 
+/* ONE STEP ALONG WB_ACTOR_TYPE30_DRIFT, off whichever of the table's TWO cursors the caller names.
+ *
+ * The 32-word triangle at $4f5c is stepped by two routines that do not know about each other, and
+ * they differ in NOTHING but the cursor address: `actor_behavior_type30` uses
+ * WB_ACTOR_TYPE30_CURSOR ($4f5a) and `player_pending_event_gate`'s death ascent uses
+ * WB_DEATH_DRIFT_CURSOR ($4f58), the word immediately below it. Same table, same stride, same mask,
+ * same add into WB_ACTOR_X — so the table carries two independent phases and this is the one body
+ * that walks it. (The ORIGINALS differ only in how they ADDRESS the table: slot 30 reaches it with
+ * `lea $4f5c(pc,d0.w),a1` and the gate with `lea $4f5c.l,a1 / lea 0(a1,d0.w),a1`. That is an
+ * encoding difference, not a behavioural one, and each call site's own comment keeps it.)
+ *
+ * THE RAW CURSOR INDEXES AND ONLY THE STORE IS MASKED, which is the shape worth having in one place:
+ * the fetch reaches the table plus a SIGN-EXTENDED word, so a cursor outside 0..$3e reads outside
+ * the 32 entries and a negative one reads below them, and the `andi.w #$3f` lands only on what goes
+ * back to memory. */
+static inline void actor_drift_x_step(uint8_t *image, uint32_t actor, uint32_t cursor_at) {
+    uint16_t cursor = be16(image + cursor_at);
+    uint16_t drift = bus_read_word(image, addr_add(WB_ACTOR_TYPE30_DRIFT, sign_ext16(cursor)));
+
+    set_field_w(image, actor, WB_ACTOR_X,
+                (uint16_t)((uint16_t)field_w(image, actor, WB_ACTOR_X) + drift));
+    wr16(image + cursor_at,
+         (uint16_t)((cursor + WB_ACTOR_TYPE30_DRIFT_STRIDE) & WB_ACTOR_TYPE30_DRIFT_MASK));
+}
+
+
 /* $14d6 — the fall's per-frame step: unsupported, falling, and one more unit of WB_ACTOR_SPEED
  * until it is exactly WB_ACTOR_FALL_SPEED_MAX. Reached by `bsr` from $13a6 and by `blt.w` from
  * $14c0, inside the routine at $1492. */

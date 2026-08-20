@@ -68,6 +68,7 @@ from leaf import (BSR_W, MOVE_W_ABS_L_ABS_L, MOVE_W_ABS_L_D0, MOVE_W_D0_ABS_L, M
                   RTS, backward_branch, bcd_expected, bsr_w, clr_w_dn, forward_branch, jsr_abs_l,
                   longword, meter_add_expected, move_l_imm_postinc, opcode, rotate_left32,
                   subq_w_abs_l, subq_w_dn, tst_b_d16, tst_w_dn, word)
+from leaf import clr_l_dn   # hoisted by batch 41 phase C; this file spelt it `_clr_l_dn`
 from layout import wb
 
 # $bbca calls the SOUND MODULE, so the battery that owns $1a48a owns its write set too — imported
@@ -458,12 +459,6 @@ SUB_W_ABS_L_D0 = b"\x90\x79"        # sub.w <abs>.l,d0
 JSR_D16_A1 = b"\x4e\xa9"            # jsr d16(a1) — into the sound module's stub table
 D0, D1 = 0, 1                       # the two registers $bbca's arms compute in
 
-
-def _clr_l_dn(reg):
-    """`clr.l Dn` — the WHOLE longword, unlike the `clr.w` two instructions above it. Dead where
-    $bbca spells it: $bcd6 takes no register. ALSO IN test_blit.py (`clr_l_dn`), which is two users
-    and so short of leaf.py's three."""
-    return opcode(0x4280 | reg)
 
 # The 68000's shift/rotate-BY-IMMEDIATE encoding, `1110 ccc d ss i tt rrr`, with a count of 8 spelled
 # as 0. Built rather than transcribed so that the shift COUNTS come out of the geometry constants the
@@ -1077,7 +1072,7 @@ def _step_arm(blit):
         CMPI_W_IMM_ABS_L + word(PANEL_FRAME_INDEX_START) + longword(PANEL_FRAME_INDEX),
         BGT_W + forward_branch(len(trigger)), trigger,
         MOVE_W_IMM_ABS_L + word(PANEL_FRAME_DWELL_RELOAD) + longword(PANEL_FRAME_DWELL),
-        _clr_l_dn(D0), blit,
+        clr_l_dn(D0), blit,
         CMPI_W_IMM_ABS_L + word(PANEL_FRAME_INDEX_LAST) + longword(PANEL_FRAME_INDEX),
         BNE_W + forward_branch(len(finish)), finish,
         ADDQ_W_1_ABS_L + longword(PANEL_FRAME_INDEX), RTS])

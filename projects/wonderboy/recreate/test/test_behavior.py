@@ -86,6 +86,8 @@ from leaf import (LONGWORD_BYTES, RTS, WORD_BYTES, addi_w_dn, addq_b_d16, addq_b
                   tst_w_abs_w, tst_w_dn, word,
                   # ...and the five hoisted to leaf.py by batch 41 phase B's spawn-tree pin
                   move_w_imm_d16, movea_l_indexed)
+# ...and the four batch 41 phase C's review hoisted OUT of this file, each a third or fourth copy
+from leaf import add_w_dn_ind, clr_l_dn, move_b_imm_dn, tst_w_d16
 from layout import DEFINES, wb
 
 # The record's own geometry and the register numbers come from the battery that owns the actor
@@ -232,13 +234,18 @@ UNPORTED_TYPE = 1
 
 
 # --- the encodings only this battery spells -------------------------------------------------------
-# THIRTEEN of these are still a THIRD copy and are due to move to leaf.py under its own rule ("an
+# TWELVE of these are still a THIRD copy and are due to move to leaf.py under its own rule ("an
 # encoding moves there on its third"). The count is not a tally kept by hand: each one carries a
 # QUEUE NOTE beside its own definition below — `HOIST_QUEUE_NOTE` is the phrase they all end with —
 # and `test_the_hoist_queue_is_as_long_as_this_comment_says` counts them — so the number here fails a test rather than a reviewer, which is what the
-# figure it replaces did not. They are `add_w_d16_dn`, `adda_l_dn`, `clr_l_dn`, `cmp_b_imm_dn`,
+# figure it replaces did not. They are `add_w_d16_dn`, `adda_l_dn`, `cmp_b_imm_dn`,
 # `cmp_w_abs_l_dn`, `jsr_abs_w`, `lsl_l_imm_dn`, `move_w_d16_d16`, `move_w_dn_abs_l`,
-# `move_w_dn_d16`, `movea_l_ind`, `mulu_w_dn` and `subi_w_d16` — TWO SHORTER than batch 39 left it,
+# `move_w_dn_d16`, `movea_l_ind`, `mulu_w_dn` and `subi_w_d16` — ONE SHORTER again, because batch 41
+# phase C's review HOISTED `clr_l_dn` (which this file's note already had at three) and, with it,
+# `add_w_dn_ind`, `move_b_imm_dn` and `tst_w_d16`, which this file carried WITHOUT a queue note and
+# which test_player.py's gate pin had just made third copies. THE TRIPWIRE BELOW IS WHAT CAUGHT THE
+# LEDGER: the hoist dropped the count to twelve and this comment still said thirteen — TWO SHORTER
+# than batch 39 left it,
 # because batch 40 hoisted `addq_b_dn` and `jsr_ind` (with five more this file had no note on:
 # `addq_w_d16`, `addq_w_ind`, `subq_w_d16`, `subq_b_d16` and `move_b_dn_d16`, each of which
 # test_player.py would have made a third or fourth copy of). Hoisting them edits six other
@@ -333,10 +340,6 @@ def tst_w_ind(base):
     # name this file and leaf.py use for a DATA register.
 
 
-def add_w_dn_ind(reg, base):
-    return opcode(0xd150 | (reg << 9) | base)
-
-
 def sub_w_dn_ind(reg, base):
     return opcode(0x9150 | (reg << 9) | base)
 
@@ -361,13 +364,6 @@ def cmp_w_ind_dn(reg, base):
 
 def bset_imm_dn(bit, reg):
     return opcode(0x08c0 | reg) + word(bit)
-
-
-def clr_l_dn(reg):
-    """`clr.l Dn` — the WHOLE register, which is what makes slot 61's d1 an argument and not a
-    leftover: two bytes where `moveq #0` would have done, and the only long clear in this file."""
-    return opcode(0x4280 | reg)
-    # ALSO IN test_blit.py, test_hud.py (`_clr_l_dn`) — third copy, queued for leaf.py.
 
 
 def cmp_b_imm_dn(reg, value):
@@ -436,10 +432,6 @@ def subq_w_ind(amount, base):
 
 
 
-def tst_w_d16(base, displacement):
-    return opcode(0x4a68 | base) + word(displacement)
-
-
 def st_d16(base, displacement):
     """`st d16(An)` — the 68000's own "set true", i.e. the byte $ff."""
     return opcode(0x50e8 | base) + word(displacement)
@@ -492,11 +484,6 @@ def lsr_w_imm_dn(count, reg):
 
 def cmpi_b_postinc(base, value):
     return opcode(0x0c18 | base) + word(value & 0xff)
-
-
-def move_b_imm_dn(reg, value):
-    """`move.b #imm,Dn` — the LOW BYTE alone, which is what slots 3 and 6 write their step into."""
-    return opcode(0x103c | (reg << 9)) + word(value & 0xff)
 
 
 def jmp_d16_an(reg, displacement):
@@ -5048,7 +5035,7 @@ PORTED_SLOT_COUNT = 61
 # The queue notes above, counted from the file rather than tallied — the phrase every one of them
 # ends with, and the number the comment at the top of the encoder block states.
 HOIST_QUEUE_NOTE = "queued for leaf.py"
-HOIST_QUEUE_LENGTH = 13
+HOIST_QUEUE_LENGTH = 12
 
 
 def test_the_hoist_queue_is_as_long_as_this_comment_says():

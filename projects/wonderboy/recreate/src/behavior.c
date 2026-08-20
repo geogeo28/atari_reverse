@@ -2688,13 +2688,10 @@ static void type30_top_up_the_meter(uint8_t *image) {
  * the read, so the fetch reaches WB_ACTOR_TYPE30_DRIFT + a SIGN-EXTENDED word and only the store is
  * bounded to the 32 entries — the same shape slot 52's frame cursor has. */
 static void type30_drift_step(uint8_t *image, uint32_t actor) {
-    uint16_t cursor = be16(image + WB_ACTOR_TYPE30_CURSOR);
-    uint16_t drift = bus_read_word(image, addr_add(WB_ACTOR_TYPE30_DRIFT, sign_ext16(cursor)));
-
-    set_field_w(image, actor, WB_ACTOR_X,
-                (uint16_t)((uint16_t)field_w(image, actor, WB_ACTOR_X) + drift));
-    wr16(image + WB_ACTOR_TYPE30_CURSOR,
-         (uint16_t)((cursor + WB_ACTOR_TYPE30_DRIFT_STRIDE) & WB_ACTOR_TYPE30_DRIFT_MASK));
+    /* `lea $4f5c(pc,d0.w),a1` — a PC-RELATIVE INDEXED read of the table, which is the encoding
+     * PORTABILITY.md 0k is about and the reason nothing found this table before batch 33. The gate
+     * at $b1a reaches the same words with a plain `lea $4f5c.l,a1`; the step itself is one body. */
+    actor_drift_x_step(image, actor, WB_ACTOR_TYPE30_CURSOR);
 }
 
 /* $4eca — 142 bytes. It hovers: WB_ACTOR_TYPE30_DRIFT's triangle moves it left and right by a net

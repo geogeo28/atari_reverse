@@ -75,20 +75,21 @@ include/map.h              the collision map's three routines — prototypes, wh
                            helpers (one probe with the ground flags no caller reads dropped) that
                            moved here from src/behavior.c when src/player.c's walk became their
                            second module
-include/player.h           THE PLAYER'S OWN FRAME — NINE routines: SIX of behaviour slot 1's own
+include/player.h           THE PLAYER'S OWN FRAME — TEN routines: SEVEN of behaviour slot 1's own
                            nine calls, the jump machine the gate reaches below one of them, the
                            routine that leaves the ladder, and the spawn helper the second call
-                           hands a template to. (Of slot 1's other three, `player_gate_on_1516` and
-                           `actor_fall_and_settle` belong to the behaviour tier and
-                           `player_pending_event_gate` is unportable.) EIGHT of the nine reach
-                           nothing this port lacks; the COLLISION CELL ($151a, batch 41 phase A) is
-                           the one that reports an EXIT rather than returning. Plus the
+                           hands a template to. (Slot 1's other two, `player_gate_on_1516` and
+                           `actor_fall_and_settle`, belong to the behaviour tier.) EIGHT of the ten
+                           reach nothing this port lacks; the COLLISION CELL ($151a, batch 41 phase
+                           A) and the PENDING-EVENT GATE ($b1a, phase C) are the two that report an
+                           ENDING rather than returning — three codes and six. Plus the
                            per-arm reading of the WEAPON's threaded `sbcd` extend bit, and (at the
                            foot of the header) what the frame still calls that is NOT there —
-                           which since batch 41 phase A is `player_pending_event_gate` ($b1a)
-                           alone, UNPORTABLE on three stack-unwinding exits. Batch 41 phase A added
-                           `player_run_map_cell` ($151a) and with it this file's first EXIT REPORTS
-                           — the busy-wait and the triple pop
+                           which since batch 41 phase C is NOTHING: all nine of $a38's `bsr`s are
+                           reconstructed, and what is left of the player is $a38 itself. Phase A
+                           added this file's first EXIT REPORTS — the busy-wait and the triple pop
+                           — and phase C is the heaviest user of them, with three stack unwinds, one
+                           of which reports $151a's own code because it reaches $151a's own pop
 include/actor.h            the followed actor's record, the two tests over it, the two passes
                            that project actor records into screen coordinates, the table's
                            lifecycle — reset, free, the two pool allocators and the spawn — and
@@ -243,7 +244,16 @@ src/player.c               the player's frame, batch 40: the DEATH CHECK ($a76, 
                            WB_EFFECT_STATE_21E4 picks between. It holds the only readers of the two
                            bits the walk writes, and its swing has a defect worth knowing about: the
                            first frame of every swing is indexed by the SFX ID, because the sound
-                           stub restores d0
+                           stub restores d0. Batch 41 then added the frame's eighth call, the
+                           COLLISION CELL ($151a, phase A), and its SECOND, the PENDING-EVENT GATE
+                           ($b1a, phase C) — three flag words with an arm each, of which the first
+                           is the game's GAME OVER sequence: the dying player's rise along
+                           WB_ACTOR_TYPE30_DRIFT through a cursor of its own, the message WB_LIVES
+                           chooses between, the continue prompt and the walk into the data-disk
+                           screen. It has FIVE endings and three of them are stack unwinds, so it is
+                           the heaviest user of the exit-report convention below — and the third
+                           unwind reports WB_PLAYER_COLLIDE_UNWIND, because `bra.w $1622` reaches
+                           $151a's own triple pop rather than an ending of its own
 src/map.c                  the COLLISION MAP the actors walk on — a second map with the background
                            map's layout, one byte per 16x16 cell, and which of the two
                            state_flag_a32 names. The two step probes ($10a2/$1170, forty-one callers
@@ -484,7 +494,15 @@ test/test_player.py        the player frame's differential, and the first batter
                            read cell 0 of a map of zero-length rows) and the 32-byte SCENE
                            DESCRIPTORS, which are loaded from disk and so have no shipped bytes to
                            run against at all. It is also the battery's first user of the exit-report
-                           convention below
+                           convention below. Phase C added the TENTH pin, $b1a's 526 bytes — decoded
+                           from the RAW IMAGE, because the listing is out of phase across the two
+                           data words inside that routine's code — and four more checkpointed runs,
+                           one of them a report the callee makes rather than the routine
+                           (`scene_spawn_from_script` did not come back). Two of its cases COMPOSE
+                           with test_scene.py's spawn seeding and one with test_stage.py's reset
+                           seeding, which is where `_gate_body_layer()` comes from: WB_LIVES is data
+                           INSIDE $b1a's code, and a battery that keys a band around that word
+                           writes over the instructions beside it
 test/test_text.py          the text subsystem's differential. The plotter: 32 bytes into the
                            4-plane buffer with the write set stated exactly, the returned cursor
                            compared against both sides, a cell walk that shows the +1/+7 alternation
@@ -588,7 +606,7 @@ canonical list of what has to be reachable.
 
 The gate's coverage claim is only worth what a sweep says: flip a constant, delete a branch,
 off-by-one an index, rebuild, re-run — a mutation nothing catches is a hole. A sweep **lies** in
-**seven** ways, all seven measured here, so run one this way:
+**eight** ways, all eight measured here, so run one this way:
 
 ```bash
 mkdir -p "$BACKUP" && cp src/*.c "$BACKUP"     # 0a. A NAMED BACKUP OUTSIDE THE REPO, first and
@@ -612,7 +630,7 @@ for m in mutants/*.patch; do
   test ${PIPESTATUS[0]:-0} -eq 0 || continue   # 3. a mutant that will not COMPILE is not a result
   .venv/bin/python -m pytest -q -n auto test   # 2. NO pipe: read the RETURNCODE
   echo "$m -> $?"                              #    (0 = SURVIVED, nonzero = caught)
-  git apply -R "$m"                            # restore, and re-green before the next one
+  cp snapshot/*.c src/                         # 8. RESTORE BY COPY, never by reverse patch
 done
 ```
 
@@ -639,7 +657,7 @@ done
    check loads the MUTANT library and reports the pristine tree as RED. It reads exactly like a
    broken batch. The cure is the first line of the recipe above — force the relink before the green
    check, not only before each mutant — and it is the same guard as the two below rather than an
-   eighth way a sweep lies; the frame sentence's count of SEVEN stands.
+   eighth way a sweep lies; it is mode 4's guard, and not the mode 8 the list now ends on.
    **Batch 34 lost a whole batch to the SNAPSHOT half of this mode**, which is why the recipe above
    now guards it: an unconditional `cp src/*.c snapshot/` at the top of a re-run silently overwrites
    the good snapshot with whatever the tree currently holds — and after a killed sweep the tree
@@ -647,7 +665,7 @@ done
    the loop, which compares the tree against it, agrees with the poison. So: snapshot only AFTER the
    step-0 green check passes, and refuse to overwrite an existing one — re-arming is an explicit
    `rm -rf snapshot`. This is not an eighth way a sweep lies; it is mode 4's guard extended from the
-   restore step to the capture step, and the frame sentence's count of SEVEN stands.
+   restore step to the capture step, and not the mode 8 the list now ends on either.
    **AND A FOURTH HALF, MEASURED TWICE — batch 34 and again batch 39: NEVER RESTORE THE TREE FROM
    GIT DURING A SWEEP.** A timed-out sweep leaves the tree possibly holding a mutant, and the
    obvious cleanup — `rm -rf snapshot && git checkout -- src/*.c` — is the worst thing that can be
@@ -657,8 +675,9 @@ done
    the edits were still in the session's transcript. **A guideline that has been broken twice needs
    a step, not a paragraph** — which is why step 0 of the recipe above now takes a NAMED BACKUP
    OUTSIDE THE REPO before anything else, and why the loop restores from the SNAPSHOT and never from
-   git. Like the two halves above this is mode 4's guard reaching one step further, not an eighth
-   way a sweep lies.
+   git. Like the two halves above this is mode 4's guard reaching one step further and not a mode
+   of its own — worth keeping straight now that the list DOES have an eighth entry, about a restore
+   that fails SILENTLY rather than one typed in a panic.
    A third self-inflicted variant, from batch 35's post-mortem: **`pkill -f` matches its own
    shell's command line** when the pattern string appears in it, so the cleanup kills the shell
    mid-diagnosis and the next check runs against a state you did not establish (a healthy tree
@@ -680,6 +699,21 @@ done
    under the other suite and produces phantom failures that no mutant caused. Run the projects
    **serially** — which also means a sweep here must not share a machine with someone else's
    `make test`.
+
+8. **A DELETION mutant has no inverse to patch with, and the loop threw away the one signal that
+   said so.** Batch 41 phase C's sweep replaced whole lines by exact string and three mutants
+   replaced a line with the EMPTY STRING, so the reverse pair was `("", the deleted line)` — and
+   there is no such thing as a reverse `str.replace` for that. The runner's own guard did the right
+   thing and said so: it required `text.count(old) == 1` before writing, `"".count()` in a 60 KB
+   file is 60,001, so it refused the revert, printed a NOT-APPLIED line and exited nonzero. **The
+   shell loop is what lost it** — the APPLY call was status-checked (`|| { … continue; }`) and the
+   REVERT call was not, so a refused restore read exactly like a completed one. The mutant stayed in
+   the tree and the NEXT iteration's `diff -q src/ snapshot/` stopped the sweep, one full suite run
+   later. Two fixes and the first is enough: restore by copying the snapshot back, which has an
+   inverse for every mutation because it is not one; and check the status of every step that writes.
+   (The same run also showed why the `diff` guard belongs at the TOP of the loop rather than the
+   bottom: it is the only thing standing between a failed restore and a sweep whose every later
+   result is measured on the wrong source.)
 
 **A REVIEWER THAT MUTATES IS A WRITER, and the gate has to be told so.** A review agent that probes
 a finding by editing `src/`, rebuilding and running the suite is doing everything a sweep does,

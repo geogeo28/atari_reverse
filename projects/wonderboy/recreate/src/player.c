@@ -22,7 +22,9 @@
 #include "map.h"
 #include "os.h"
 #include "player.h"
+#include "scene.h"
 #include "sound.h"
+#include "stage.h"
 #include "text.h"
 #include "wonderboy.h"
 
@@ -1223,4 +1225,211 @@ uint32_t player_run_map_cell(uint8_t *image, uint32_t actor) {
     if ((int8_t)code <= (int8_t)WB_SCENE_TRIGGER_CODE_LAST)
         return player_run_scene_trigger(image, actor, cell, code);
     return player_run_special_tile(image, actor, code);
+}
+
+
+/* --- $b1a: THE PENDING-EVENT GATE ----------------------------------------------------------------
+ *
+ * Three word flags, an arm each, and one shared tail. player.h's plate names the arms and the five
+ * endings; wonderboy.h's `$b1a` block carries the constants. The tail is `bsr.w $1f54 /
+ * move.w #$ffff,d7 / rts` at $bb0, and TWELVE branches inside this routine reach it.
+ */
+
+/* $bb0 — that tail. It is not just "return skipped": the frame the gate keeps to itself still gets
+ * its posture selected, which is how a dying player is animated at all. */
+static uint32_t gate_end_frame(uint8_t *image, uint32_t actor) {
+    player_stage_transition(image, actor);
+    return WB_PLAYER_GATE_FRAME_SKIPPED;
+}
+
+/* $b4a — the frame the rise tops out. WHICH message goes up is WB_LIVES' answer, and the default is
+ * the one with no way out of it: `move.b #$17,d0` runs first and only a nonzero count replaces it. */
+static void gate_post_game_over(uint8_t *image) {
+    uint8_t message = be16(image + WB_LIVES) != 0 ? WB_TEXT_MESSAGE_CONTINUE
+                                                  : WB_TEXT_MESSAGE_GAME_OVER;
+
+    wr16(image + WB_STATE_FLAG_A34, WB_STATE_FLAG_SET);
+    wr16(image + WB_DEATH_MESSAGE_POSTED_B0A, WB_EVENT_GATE_FLAG_SET);
+    text_post_message_for(image, message, WB_DEATH_MESSAGE_LIFETIME);
+}
+
+/* $b7a — one frame of the dying player's rise: a pixel up, then a step along WB_ACTOR_TYPE30_DRIFT
+ * through a cursor of this arm's own.
+ *
+ * THE RAW WORD INDEXES THE TABLE and the mask lands only on what goes back, so a cursor outside
+ * 0..$3e reads outside the 32 words and a negative one reads BELOW them — the same shape as every
+ * other frame table in this game, and the reason the read goes through bus.h.
+ *
+ * BOTH STORES GO THROUGH THE CALLER'S a0, which is what makes the order below load-bearing: the y
+ * is spent BEFORE the cursor is read, so a record placed over WB_DEATH_DRIFT_CURSOR steps a cursor
+ * this frame already changed. */
+static void gate_death_rise(uint8_t *image, uint32_t actor) {
+    set_field_w(image, actor, WB_ACTOR_Y,
+                (uint16_t)(field_w(image, actor, WB_ACTOR_Y) - WB_DEATH_ASCENT_RISE));
+
+    /* `lea $4f5c.l,a1 / lea 0(a1,d0.w),a1` — the ABSOLUTE-LONG pair, against slot 30's
+     * `lea $4f5c(pc,d0.w),a1` over the same table. Different encoding, one step: actor.h. The y is
+     * spent FIRST, which is what makes a record placed two bytes below the cursor read a cursor
+     * this frame has already changed. */
+    actor_drift_x_step(image, actor, WB_DEATH_DRIFT_CURSOR);
+}
+
+/* $be4 — the continue prompt proper, asked on every frame the box is up: FIRE, with a life left,
+ * spends one and restarts the level. */
+static uint32_t gate_spend_life_and_restart(uint8_t *image, uint32_t actor) {
+    if (be16(image + WB_LIVES) == 0)
+        return gate_end_frame(image, actor);
+    if ((image[WB_JOY1_STATE] & (1u << WB_JOY1_FIRE_BIT)) == 0)
+        return gate_end_frame(image, actor);
+
+    image[WB_TEXT_REQUEST] = WB_TEXT_REQUEST_PRIMED;
+    wr16(image + WB_LIVES, (uint16_t)(be16(image + WB_LIVES) - 1));
+    game_life_restart_reset(image);
+    /* The image's ONE absolute-long write of the form word, and it sits between that call and the
+     * unwind: losing a life costs the armour. */
+    wr16(image + WB_EFFECT_STATE_21E4, WB_PLAYER_POSTURE_STATE_ONE);
+    wr16(image + WB_LEVEL_SEQ_INDEX, (uint16_t)(be16(image + WB_LEVEL_SEQ_INDEX) - 1));
+    wr16(image + WB_LIFE_RESTART_ENTRY_C26, WB_EVENT_GATE_FLAG_SET);
+    return WB_PLAYER_GATE_RESTART_UNWIND;
+}
+
+/* $bbe — the frames after the message goes up. While the box is on screen the prompt above is asked;
+ * the frame it comes DOWN latches WB_DEATH_BOX_EXPIRED_B0C, and the frame after THAT leaves for the
+ * data-disk prompt. So a player who never presses fire reaches it by waiting out
+ * WB_DEATH_MESSAGE_LIFETIME. */
+static uint32_t gate_death_prompt(uint8_t *image, uint32_t actor) {
+    if (be16(image + WB_DEATH_BOX_EXPIRED_B0C) != 0)
+        return WB_PLAYER_GATE_DATADISK_UNWIND;
+    if (image[WB_TEXT_BOX_ACTIVE] != 0)
+        return gate_spend_life_and_restart(image, actor);
+
+    wr16(image + WB_DEATH_BOX_EXPIRED_B0C, WB_EVENT_GATE_FLAG_SET);
+    return gate_end_frame(image, actor);
+}
+
+/* $b36 — the DEATH arm.
+ *
+ * THE TOP IS TESTED TWICE, once before the rise and once after it, and the second read is not
+ * redundant: both of the rise's stores go through the caller's a0, so a record placed over
+ * WB_SCROLL_FOLLOW_X is the one arrangement in which the answer CHANGES inside the frame — and then
+ * this arm re-raises the very flag it is already running on. Spelt as two reads. */
+static uint32_t gate_death(uint8_t *image, uint32_t actor) {
+    if (be16(image + WB_DEATH_MESSAGE_POSTED_B0A) != 0)
+        return gate_death_prompt(image, actor);
+
+    if (be16(image + WB_SCROLL_FOLLOW_Y) == WB_DEATH_ASCENT_TOP_Y) {
+        gate_post_game_over(image);
+        return gate_end_frame(image, actor);
+    }
+
+    gate_death_rise(image, actor);
+    if (be16(image + WB_SCROLL_FOLLOW_Y) == WB_DEATH_ASCENT_TOP_Y)
+        wr16(image + WB_STAGE_RESET_BLOCK, WB_PLAYER_DEATH_FLAG_SET);
+    return gate_end_frame(image, actor);
+}
+
+/* $c28 — the STAGE-ANIMATION arm, which the boss defeat raises. Until WB_STAGE_ANIM_DONE_B10 says
+ * the animation has finished the arm does nothing but the shared tail — which is where
+ * `player_stage_transition` actually STEPS that animation and raises the latch. */
+static uint32_t gate_stage_anim(uint8_t *image, uint32_t actor) {
+    if (be16(image + WB_STAGE_ANIM_DONE_B10) == 0)
+        return gate_end_frame(image, actor);
+
+    if (be16(image + WB_EVENT_ANIM_DONE_B12) != 0) {
+        if (scene_spawn_from_script(image) != WB_SCENE_EXIT_RETURN)
+            return WB_PLAYER_GATE_SCENE_LEFT;
+        /* `clr.l $b0e.w` — ONE longword over TWO named words, so the request and its latch come
+         * down together and the instruction names neither WB_STAGE_ANIM_DONE_B10 nor the fact that
+         * it is being cleared at all. */
+        wr32(image + WB_STAGE_ANIM_REQUEST_B0E, 0);
+        wr16(image + WB_EVENT_ANIM_DONE_B12, 0);
+        return gate_end_frame(image, actor);
+    }
+
+    /* `cmpi.w #$ffbe,$998c.l` — a TEST of the free marker and never a raise; the one raise is
+     * `scene_spawn_from_script`'s own, at $19ba. */
+    if (be16(image + WB_SCENE_SPAWN_GATE_SLOT) != WB_ACTOR_FREE_MARKER)
+        return gate_end_frame(image, actor);
+
+    snd_call_trigger_effect(image, WB_EVENT_SPAWN_SFX, WB_SND_CHANNEL_A);
+    scene_copy_record_fields(image, WB_ACTOR_TYPE35_TEMPLATE, WB_SCENE_SPAWN_GATE_SLOT);
+    return gate_end_frame(image, actor);
+}
+
+/* $c8a — the third arm's spawn, and it uses no template at all: two records filled word by word out
+ * of the descriptor WB_RECORD_PTR_10420 names.
+ *
+ * THE POSITION LONGWORD IS READ TWICE, once per record, because the first record's own three stores
+ * sit between the two reads — and slot 0 IS a place a descriptor can be. */
+static void gate_spawn_event_pair(uint8_t *image) {
+    uint32_t descriptor;
+
+    wr16(image + WB_STATE_FLAG_A34, WB_STATE_FLAG_SET);
+    snd_stop(image);                                        /* `jsr 28(a1)` — stub +28 */
+    snd_call_trigger_effect(image, WB_EVENT_SPAWN_SFX, WB_SND_CHANNEL_A);
+
+    descriptor = be32(image + WB_RECORD_PTR_10420);
+    wr32(image + WB_ACTOR_TABLE_DEFAULT,
+         bus_read_long(image, addr_add(descriptor, WB_EVENT_PAIR_POSITION)));
+    wr16(image + WB_ACTOR_TABLE_DEFAULT + WB_ACTOR_TYPE, 0);
+    wr16(image + WB_ACTOR_TABLE_DEFAULT + WB_ACTOR_SPRITE, WB_EVENT_PAIR_SPRITE_INERT);
+
+    wr32(image + WB_SCENE_SPAWN_GATE_SLOT,
+         bus_read_long(image, addr_add(descriptor, WB_EVENT_PAIR_POSITION)));
+    wr16(image + WB_SCENE_SPAWN_GATE_SLOT + WB_ACTOR_TYPE, WB_EVENT_PAIR_TYPE_RISER);
+    wr16(image + WB_SCENE_SPAWN_GATE_SLOT + WB_ACTOR_SPRITE, WB_EVENT_PAIR_SPRITE_RISER);
+
+    /* TWO WRITES TO EACH OF THOSE TWO WORDS whenever the descriptor asks for the animator: the
+     * riser's pair is stored first and overwritten in place. The ledger records final values, so
+     * folding them would be invisible — spelt as the pair, as $151a's tile-$38 delay is. */
+    if (bus_read_word(image, addr_add(descriptor, WB_SCENE_TRIGGER_SPAWN_TYPE)) != 0) {
+        wr16(image + WB_SCENE_SPAWN_GATE_SLOT + WB_ACTOR_TYPE, WB_EVENT_PAIR_TYPE_ANIMATOR);
+        wr16(image + WB_SCENE_SPAWN_GATE_SLOT + WB_ACTOR_SPRITE, WB_EVENT_PAIR_SPRITE_ANIMATOR);
+    }
+}
+
+/* $cf0 — the third arm's other half: the event's own animation has finished (WB_STAGE_ANIM_DONE_B18,
+ * which `player_stage_transition` raises on the frame its cursor wraps), so the whole event comes
+ * down and the stage either advances or does not. */
+static uint32_t gate_event_finished(uint8_t *image, uint32_t actor) {
+    if (be16(image + WB_STAGE_ANIM_DONE_B18) == 0)
+        return gate_end_frame(image, actor);
+
+    image[WB_TEXT_BOX_ACTIVE] = 0;
+    /* `clr.l $b14.w` — the second longword clear over two named words, WB_EVENT_ANIM_DONE_B16 going
+     * down as its low half without being named. */
+    wr32(image + WB_SCENE_ALIGN_REQUEST_B14, 0);
+    wr16(image + WB_STAGE_ANIM_DONE_B18, 0);
+
+    if (be16(image + WB_STAGE_ADVANCE_REQUEST) != 0) {
+        wr16(image + WB_STAGE_ADVANCE_REQUEST, 0);
+        return WB_PLAYER_COLLIDE_UNWIND;
+    }
+    wr16(image + WB_EVENT_FINISHED_E1BE, WB_EVENT_GATE_FLAG_SET);
+    return WB_PLAYER_GATE_FRAME_SKIPPED;
+}
+
+/* $c76 — the SCENE-ALIGN arm, which the hidden door raises.
+ *
+ * ITS REFUSAL IS NOT THE SECOND ARM'S. A slot that is not free sends $c86 to $d22, which is
+ * `move.w #$ffff,d7 / rts` with NO `bsr.w $1f54` above it — where the same refusal on the stage
+ * arm ($c3e) goes to the shared tail and does get one. */
+static uint32_t gate_scene_align(uint8_t *image, uint32_t actor) {
+    if (be16(image + WB_EVENT_ANIM_DONE_B16) != 0)
+        return gate_event_finished(image, actor);
+    if (be16(image + WB_SCENE_SPAWN_GATE_SLOT) != WB_ACTOR_FREE_MARKER)
+        return WB_PLAYER_GATE_FRAME_SKIPPED;
+
+    gate_spawn_event_pair(image);
+    return gate_end_frame(image, actor);
+}
+
+uint32_t player_pending_event_gate(uint8_t *image, uint32_t actor) {
+    if (be16(image + WB_STAGE_RESET_BLOCK) != 0)
+        return gate_death(image, actor);
+    if (be16(image + WB_STAGE_ANIM_REQUEST_B0E) != 0)
+        return gate_stage_anim(image, actor);
+    if (be16(image + WB_SCENE_ALIGN_REQUEST_B14) != 0)
+        return gate_scene_align(image, actor);
+    return WB_PLAYER_GATE_FRAME_RUNS;
 }

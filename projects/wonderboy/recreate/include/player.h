@@ -20,7 +20,7 @@
  * BEHAVIOUR band ($539e, between slot 35's template and slot 36's entry) and fills a record for the
  * three event actors src/behavior.c holds, so scene.c is the one home it has no claim from at all.
  *
- * WHY A FILE OF ITS OWN rather than more of src/behavior.c. The player's subtree is ~4,900 unported
+ * WHY A FILE OF ITS OWN rather than more of src/behavior.c. The player's subtree was ~4,900 unported
  * bytes across five tiers (input, the jump machine, the walk accelerator, the collision/scene tree
  * at $151a and the stage transition at $1f54); src/behavior.c is the sixty-one OTHER rows and is
  * already 5,000 lines. The two meet at exactly one address, and that address stays where the
@@ -29,31 +29,31 @@
  * it is the behaviour tier's one entrance into this file, and behavior.h declares it.
  *
  * THE REGISTER CONVENTION IS actor.h's: the player's record address in a0, which every routine here
- * takes as `actor`. None of them returns a register any caller reads, so all of them are `void`.
- * ONE OF THE SEVEN TAKES A THIRD PARAMETER AND IT IS NOT A REGISTER: `player_weapon_fire`'s
+ * takes as `actor`. Only ONE of them hands a register back that a caller reads — the gate's d7, and
+ * even that is returned as an exit code rather than as the register (see its plate below) — so the
+ * rest are `void`.
+ * ONE OF THEM TAKES A THIRD PARAMETER AND IT IS NOT A REGISTER: `player_weapon_fire`'s
  * `entry_extend` is the 68000's X FLAG, which its `sbcd` folds in and no `regs=` dict can carry —
  * `leaf.register_glue` takes its arity from the caller, so a battery binding this one from the
  * convention above rather than from its own prototype would call a 3-argument function with 2.
  *
- * THE FIRST EIGHT REPORT NO BOUNDARY AT ALL, which is what made this the first tier. Between them
+ * EIGHT OF THE TEN REPORT NO BOUNDARY AT ALL, which is what made this the first tier. Between them
  * they call exactly SIX things — `joy1_newly_pressed` ($682), `snd_call_trigger_effect` (stub +56),
  * `snd_play_song` (stub +0), the two map step probes ($10a2/$1170) and `actor_alloc_slot_high`
  * ($1b8e) — and every one of those is reconstructed, so each runs to the original's own `rts`.
  * (The fall pass and the LOW allocator are callees of the routines still deferred, not of these.)
  *
- * THE NINTH DOES REPORT ONE — two, in fact. `player_run_map_cell` ($151a, batch 41 phase A) adds
- * `snd_stop` (stub +28) and `actor_knock_back_and_launch` ($6ade) to that list, both reconstructed;
- * what it cannot follow is not a callee but two ENDINGS, a stack unwind and a spin, and the three
- * WB_PLAYER_COLLIDE_* codes below are what it returns in their place.
+ * THE OTHER TWO REPORT AN ENDING RATHER THAN A CALLEE. `player_run_map_cell` ($151a, batch 41 phase
+ * A) adds `snd_stop` (stub +28) and `actor_knock_back_and_launch` ($6ade) to that list, both
+ * reconstructed; what it cannot follow is two ENDINGS, a stack unwind and a spin, and the three
+ * WB_PLAYER_COLLIDE_* codes below are what it returns in their place. `player_pending_event_gate`
+ * ($b1a, batch 41 phase C) is the heavier of the two, with SIX codes over five endings, and its own
+ * plate at the foot of this file is where they are.
  *
- * WHAT THE FRAME STILL CALLS AND THIS FILE DOES NOT HAVE, in the order $a38 calls them: exactly
- * ONE, `player_pending_event_gate` ($b1a, called at $a3c). Batch 41 phase A took the other,
- * `player_run_map_cell` ($151a at $a6c). ../STATUS.md's batch-40
- * partition prices $b1a and says why it is not here: it is UNPORTABLE rather than merely unported,
- * because THREE of its exits leave through a stack unwind instead of returning — `lea 4(a7),a7 /
- * jmp` at $bdc and at $c20, and — the one a census of its own instructions does not see —
- * `bra.w $1622` at $d16, which lands in `player_run_map_cell`'s own `lea 12(a7),a7 / jmp $e5ba.l`
- * and so pops THREE return addresses in another routine's body.
+ * WHAT THE FRAME STILL CALLS AND THIS FILE DOES NOT HAVE: NOTHING. All nine of `$a38`'s `bsr`s are
+ * reconstructed as of batch 41 phase C. What is left of the player is `$a38` ITSELF — 62 bytes of
+ * nine calls and three guards — and ../STATUS.md's phase C section prices the row rather than this
+ * plate.
  */
 #ifndef WONDERBOY_PLAYER_H
 #define WONDERBOY_PLAYER_H
@@ -249,5 +249,63 @@ void player_stage_transition(uint8_t *image, uint32_t actor);
  * sound stub's +0/+28/+56 entries, and — through `bra.w $6ade` at $15e8 —
  * `actor_knock_back_and_launch`, which is `actor_damage_followed`'s own tail. */
 uint32_t player_run_map_cell(uint8_t *image, uint32_t actor);
+
+/* $b1a — THE PENDING-EVENT GATE, the frame's SECOND call ($a3c) and the one that decides whether the
+ * seven below it run at all. Three words of WB_STAGE_RESET_BLOCK are tested in the order the block
+ * holds them, each with an arm of its own:
+ *   * the block's OWN first word — the DEATH request `player_meter_empty_check` raises at $aee.
+ *     The dying player rises a pixel a frame, swaying along WB_ACTOR_TYPE30_DRIFT through
+ *     WB_DEATH_DRIFT_CURSOR, until WB_SCROLL_FOLLOW_Y reaches WB_DEATH_ASCENT_TOP_Y; then the
+ *     GAME OVER message goes up and every frame after that is the continue prompt;
+ *   * WB_STAGE_ANIM_REQUEST_B0E — the boss defeat's. It spawns WB_ACTOR_TYPE35_TEMPLATE into
+ *     WB_SCENE_SPAWN_GATE_SLOT and, once WB_EVENT_ANIM_DONE_B12 says that actor has finished,
+ *     runs `scene_spawn_from_script` and takes both flags down;
+ *   * WB_SCENE_ALIGN_REQUEST_B14 — the hidden door's. It spawns a PAIR of records straight (no
+ *     template), waits on WB_EVENT_ANIM_DONE_B16 and then WB_STAGE_ANIM_DONE_B18, and ends the
+ *     event either by advancing the stage or by raising WB_EVENT_FINISHED_E1BE.
+ *
+ * WHAT THE CALLER READS IS d7, AND THE C RETURNS AN EXIT CODE INSTEAD. `tst.w d7 / bmi.w $a74` at
+ * $a40 reads the low word only, so the two returning endings are one bit — but the two are not the
+ * same write: $b32 is `clr.l d7`, which takes the HIGH half with it, and $bb4/$d22 are
+ * `move.w #$ffff,d7`, which leave it. That is a register claim, so it lives in the differential:
+ * test_player.py enters every case with a known d7 and reads the whole 32 bits back out of the
+ * oracle, against what the exit code says they should be.
+ *
+ * SIX CODES OVER FIVE ENDINGS, and the arithmetic is worth stating because it is what an audit
+ * counts: the routine has five places control leaves it — two `rts`es and three unwinds — and a
+ * SIXTH code for the arm where the leaving is the CALLEE's rather than this routine's. Three of the
+ * five are stack unwinds, which is what batch 40 phase B read as a reason the routine could never be
+ * ported at all; every callee is reconstructed now, and each ending is reported out of band and
+ * diffed at a `stop_pc` checkpoint with a witness above it (README.md, "Reporting an exit the port
+ * cannot take"). */
+#define WB_PLAYER_GATE_FRAME_RUNS      0u  /* `clr.l d7 / rts` at $b32: none of the three set, so
+                                            * the seven calls below the gate all run */
+#define WB_PLAYER_GATE_FRAME_SKIPPED   1u  /* `move.w #$ffff,d7 / rts` at $bb4 (after the shared
+                                            * `bsr.w $1f54` at $bb0) or at $d22 (WITHOUT it). TWO
+                                            * PATHS REACH $d22 AND ONLY ONE IS A BRANCH: the
+                                            * `bne.w` at $c86, the align arm's slot refusal — which
+                                            * is the asymmetry against the second arm's $c3e, where
+                                            * the same refusal goes to the shared tail — and the
+                                            * FALL-THROUGH from the $e1be raise at $d1a */
+/* ...and 2 is deliberately absent: the third unwind's report is WB_PLAYER_COLLIDE_UNWIND above,
+ * because it is not a second exit but the SAME instruction. `bra.w $1622` at $d16 branches into
+ * `player_run_map_cell`'s own `lea 12(a7),a7 / jmp $e5ba.l` — no call, no code of that routine run
+ * — so the gate reaches the identical triple pop and says so with the identical code. */
+#define WB_PLAYER_GATE_DATADISK_UNWIND 3u  /* `lea 4(a7),a7 / jmp $e494.l` at $bd8: ONE return
+                                            * address discarded, into show_data_disk_prompt */
+#define WB_PLAYER_GATE_RESTART_UNWIND  4u  /* `lea 4(a7),a7 / jmp $e5ba.l` at $c1c: one again, into
+                                            * the level-entry band. THREE instructions above that
+                                            * pop — not one — is $c06, the image's ONE absolute-LONG
+                                            * write of WB_EFFECT_STATE_21E4: losing a life costs the
+                                            * armour. The arm's tail runs $c06 (the armour), $c0e
+                                            * (WB_LEVEL_SEQ_INDEX back one), $c14
+                                            * (WB_LIFE_RESTART_ENTRY_C26 up) and then the pop */
+#define WB_PLAYER_GATE_SCENE_LEFT      5u  /* `bsr.w $19ac` at $c66 did not come back.
+                                            * `scene_spawn_from_script` has three endings of its own
+                                            * (scene.h) and none of them is this routine's to
+                                            * describe, so the gate says only that the call left and
+                                            * the case's own `stop_pc` names WHICH — everything
+                                            * below the `bsr` on that arm is then unreached */
+uint32_t player_pending_event_gate(uint8_t *image, uint32_t actor);
 
 #endif /* WONDERBOY_PLAYER_H */

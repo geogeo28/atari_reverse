@@ -66,6 +66,7 @@ from leaf import (RTS, add_w_dn_dn, branch, branch_over, bsr_w, btst_imm_dn, cas
                   word,
                   # ...and the five hoisted to leaf.py by batch 41 phase B's spawn-tree pin
                   move_b_imm_ind)
+from leaf import clr_l_abs_w   # hoisted out of this file by batch 41 phase C
 from layout import wb
 # `game_life_restart_reset` CALLS hud_draw_lives, so its write set CONTAINS that routine's.
 # The geometry and the model are imported from the battery that owns them rather than
@@ -309,10 +310,6 @@ def clr_l_postinc(an):
 
 def clr_w_postinc(an):
     return opcode(0x4258 | an)
-
-
-def clr_l_abs_w(addr):
-    return opcode(0x42b8) + word(addr)
 
 
 def clr_l_abs_l(addr):

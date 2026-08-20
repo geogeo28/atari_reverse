@@ -73,7 +73,11 @@ from leaf import (LONGWORD_BYTES, RTS, WORD_BYTES, addi_w_dn, addq_b_d16, addq_b
                   move_w_postinc_d16,
                   movea_l_an_an, mulu_w_dn_dn,
                   # ...and the five hoisted to leaf.py by batch 41 phase B's spawn-tree pin
-                  addq_l_an, cmpi_b_abs_l, move_w_imm_d16)
+                  addq_l_an, cmpi_b_abs_l, move_w_imm_d16,
+                  # ...and the three batch 41 phase C's $b1a pin adds, plus the five its review
+                  # HOISTED here from this file and four others (each was a third or fourth copy)
+                  clr_b_abs_l, clr_w_abs_w, jsr_abs_l,
+                  add_w_dn_ind, clr_l_abs_w, clr_l_dn, move_b_imm_dn, tst_w_d16)
 from layout import wb
 
 # The record's geometry, the register ordinals and the three BIT opcodes come from the battery that
@@ -283,10 +287,14 @@ def _pokes(what, fields=None):
     return leaf.overlay(base, fields or {})
 
 
-def _assert_writes(info, expected, what):
-    """The oracle's write set, stated EXACTLY — every case here can say what it wrote."""
+def _assert_writes(info, expected, what, extra=frozenset()):
+    """The oracle's write set, stated EXACTLY — every case here can say what it wrote.
+
+    ``extra`` is passed straight to `leaf.assert_written_is`: the addresses a COMPOSED case leaves to
+    the battery that owns the callee. It lives here rather than in a second copy of the int/bytes
+    normalisation, which is the one rule this whole battery's models are shaped by."""
     leaf.assert_written_is(info, {addr: bytes([value]) if isinstance(value, int) else value
-                                  for addr, value in expected.items()}, what)
+                                  for addr, value in expected.items()}, what, extra=extra)
 
 
 def _flatten(model):
@@ -1617,6 +1625,224 @@ def _run_map_cell_pieces():
     ]
 
 
+# --- $b1a: the pending-event gate's own constants and forms (batch 41 phase C) ----------------------
+SPAWN_GATE_SLOT = wb("SCENE_SPAWN_GATE_SLOT")
+ACTOR_FREE_MARKER = wb("ACTOR_FREE_MARKER")
+EVENT_ANIM_DONE_B12 = wb("EVENT_ANIM_DONE_B12")
+SCROLL_FOLLOW_Y = wb("SCROLL_FOLLOW_Y")
+STATE_FLAG_SET = wb("STATE_FLAG_SET")
+LIVES = wb("LIVES")
+TEXT_BOX_ACTIVE = wb("TEXT_BOX_ACTIVE")
+JOY1_STATE = wb("JOY1_STATE")
+TYPE30_DRIFT = wb("ACTOR_TYPE30_DRIFT")
+TYPE30_DRIFT_STRIDE = wb("ACTOR_TYPE30_DRIFT_STRIDE")
+TYPE30_DRIFT_MASK = wb("ACTOR_TYPE30_DRIFT_MASK")
+
+GATE_FLAG_SET = wb("EVENT_GATE_FLAG_SET")
+EVENT_SPAWN_SFX = wb("EVENT_SPAWN_SFX")
+DEATH_MESSAGE_POSTED_B0A = wb("DEATH_MESSAGE_POSTED_B0A")
+DEATH_BOX_EXPIRED_B0C = wb("DEATH_BOX_EXPIRED_B0C")
+DEATH_ASCENT_TOP_Y = wb("DEATH_ASCENT_TOP_Y")
+DEATH_ASCENT_RISE = wb("DEATH_ASCENT_RISE")
+DEATH_DRIFT_CURSOR = wb("DEATH_DRIFT_CURSOR")
+DEATH_MESSAGE_LIFETIME = wb("DEATH_MESSAGE_LIFETIME")
+LIFE_RESTART_ENTRY_C26 = wb("LIFE_RESTART_ENTRY_C26")
+EVENT_FINISHED_E1BE = wb("EVENT_FINISHED_E1BE")
+EVENT_PAIR_POSITION = wb("EVENT_PAIR_POSITION")
+EVENT_PAIR_SPRITE_INERT = wb("EVENT_PAIR_SPRITE_INERT")
+EVENT_PAIR_TYPE_RISER = wb("EVENT_PAIR_TYPE_RISER")
+EVENT_PAIR_SPRITE_RISER = wb("EVENT_PAIR_SPRITE_RISER")
+EVENT_PAIR_TYPE_ANIMATOR = wb("EVENT_PAIR_TYPE_ANIMATOR")
+EVENT_PAIR_SPRITE_ANIMATOR = wb("EVENT_PAIR_SPRITE_ANIMATOR")
+MESSAGE_GAME_OVER = wb("TEXT_MESSAGE_GAME_OVER")
+MESSAGE_CONTINUE = wb("TEXT_MESSAGE_CONTINUE")
+
+# The three transfers this routine ends on, keyed on the instruction the report stands for.
+GATE_DATADISK_TARGET = leaf.entry_of("show_data_disk_prompt")
+UNWIND_ONE_BYTES = LONGWORD_BYTES  # `lea 4(a7),a7` — ONE return address, where $1622 discards three
+# The restart unwind and the triple pop land on the SAME routine, which is why the second one is
+# spelt as UNWIND_TARGET above rather than as an address of its own.
+
+# NOT header constants, because the reconstruction never spells them: both are DATA WORDS INSIDE the
+# body, which is why a linear sweep of this routine desyncs twice. The `word()`s in the pin below are
+# what claims their shipped values.
+LIVES_SHIPPED = 3                  # $be2, and WB_LIVES_ON_RESTART is what puts it back
+LIFE_RESTART_ENTRY_SHIPPED = 0     # $c26
+
+
+def move_b_abs_w_dn(reg, addr):
+    """`move.b <abs>.w,Dn` — `move_b_abs_l_dn`'s short form, for the joystick byte at $877."""
+    return opcode(0x1038 | (reg << 9)) + word(addr)
+
+
+def subq_w_abs_w(amount, addr):
+    """`subq.w #n,<abs>.w` — `leaf.subq_w_abs_l`'s short form, for WB_LIVES below $8000."""
+    return opcode(0x5178 | quick_field(amount)) + word(addr)
+
+
+def move_l_d16_ind(source, source_displacement, destination):
+    """`move.l d16(As),(Ad)` — the descriptor's position longword straight into a record's x,y.
+    SOURCE PAIR FIRST, as `leaf.move_w_d16_d16` orders its four."""
+    return opcode(0x2000 | (destination << 9) | (2 << 6) | (5 << 3) | source) + word(
+        source_displacement)
+
+
+def _pending_event_gate_pieces():
+    """$b1a..$d27, 526 bytes. THE LISTING IS NOT THE SOURCE for this one: `../out/wonderboy_dis.txt`
+    runs out of phase across the data word at $b18 and again at $be2 and $c26, both of which are
+    DATA INSIDE THE BODY, so every instruction below was decoded from the raw image bytes instead.
+    That is the whole reason this routine was never listing-readable.
+
+    FOUR BYTES OF IT ARE UNREACHABLE — the `clr.w d7 / rts` at $bba, which no instruction in the
+    image names (the case below asserts that). It is spelt here because the pin covers the BODY, not
+    the reachable part of it, exactly as $1f34's dead `rts` is counted in the partition.
+    """
+    return [
+        # $b1a — the three flags, in the order WB_STAGE_RESET_BLOCK holds them
+        tst_w_abs_w(STAGE_RESET_BLOCK),
+        bcc(BNE_W, "death"),
+        tst_w_abs_w(STAGE_ANIM_REQUEST_B0E),
+        bcc(BNE_W, "stage-anim"),
+        tst_w_abs_w(ALIGN_REQUEST_B14),
+        bcc(BNE_W, "scene-align"),
+        clr_l_dn(D7),
+        RTS,
+        # $b36 — the DEATH arm: rise until the camera tops out, then post the message once
+        lab("death"),
+        tst_w_abs_w(DEATH_MESSAGE_POSTED_B0A),
+        bcc(BNE_W, "prompt"),
+        cmpi_w_abs_l(DEATH_ASCENT_TOP_Y, SCROLL_FOLLOW_Y),
+        bcc(BNE_W, "rise"),
+        move_b_imm_dn(D0, MESSAGE_GAME_OVER),
+        tst_w_abs_l(LIVES),
+        bcc(BEQ_W, "post"),
+        move_b_imm_dn(D0, MESSAGE_CONTINUE),
+        lab("post"),
+        move_w_imm_abs_w(STATE_FLAG_SET, STATE_FLAG_A34),
+        move_w_imm_abs_w(GATE_FLAG_SET, DEATH_MESSAGE_POSTED_B0A),
+        move_b_dn_abs_l(D0, TEXT_REQUEST),
+        move_w_imm_abs_l(DEATH_MESSAGE_LIFETIME, TEXT_LIFETIME_REQUEST),
+        bcc(BRA_W, "tail"),
+        # $b7a — a pixel up and one step of WB_ACTOR_TYPE30_DRIFT, then the camera tested AGAIN
+        lab("rise"),
+        subq_w_d16(DEATH_ASCENT_RISE, A0, ACTOR_Y),
+        move_w_abs_l_dn(D0, DEATH_DRIFT_CURSOR),
+        lea_abs_l(A1, TYPE30_DRIFT),
+        lea_indexed(A1, D0),
+        move_w_ind_dn(D1, A1),
+        add_w_dn_ind(D1, A0),
+        addq_w_dn(TYPE30_DRIFT_STRIDE, D0),
+        andi_w_dn(D0, TYPE30_DRIFT_MASK),
+        move_w_dn_abs_l(D0, DEATH_DRIFT_CURSOR),
+        cmpi_w_abs_l(DEATH_ASCENT_TOP_Y, SCROLL_FOLLOW_Y),
+        bcc(BNE_W, "tail"),
+        move_w_imm_abs_w(DEATH_FLAG_SET, STAGE_RESET_BLOCK),
+        # $bb0 — THE SHARED TAIL, which twelve branches reach
+        lab("tail"),
+        bsr("player_stage_transition"),
+        move_w_imm_dn(D7, GATE_FLAG_SET),
+        RTS,
+        # $bba — DEAD: no instruction in the image aims here
+        clr_w_dn(D7),
+        RTS,
+        # $bbe — the frames after the message: wait on the box, then leave for the disk prompt
+        lab("prompt"),
+        tst_w_abs_w(DEATH_BOX_EXPIRED_B0C),
+        bcc(BNE_W, "datadisk"),
+        tst_b_abs_l(TEXT_BOX_ACTIVE),
+        bcc(BNE_W, "continue"),
+        move_w_imm_abs_w(GATE_FLAG_SET, DEATH_BOX_EXPIRED_B0C),
+        bra_s("tail"),
+        lab("datadisk"),
+        lea_d16(A7, UNWIND_ONE_BYTES),
+        jmp_abs_l(GATE_DATADISK_TARGET),
+        # $be2 — DATA inside the body: WB_LIVES itself
+        word(LIVES_SHIPPED),
+        # $be4 — FIRE with a life left spends one and restarts the level
+        lab("continue"),
+        tst_w_abs_w(LIVES),
+        bcc_s(BEQ_W, "tail"),
+        move_b_abs_w_dn(D0, JOY1_STATE),
+        andi_b_dn(D0, 1 << JOY1_FIRE_BIT),
+        bcc_s(BEQ_W, "tail"),
+        move_b_imm_abs_l(TEXT_REQUEST_PRIMED, TEXT_REQUEST),
+        subq_w_abs_w(1, LIVES),
+        jsr_abs_l(leaf.entry_of("game_life_restart_reset")),
+        move_w_imm_abs_l(POSTURE_STATE_ONE, EFFECT_STATE_21E4),
+        subq_w_abs_l(1, LEVEL_SEQ_INDEX),
+        move_w_imm_abs_l(GATE_FLAG_SET, LIFE_RESTART_ENTRY_C26),
+        lea_d16(A7, UNWIND_ONE_BYTES),
+        jmp_abs_l(UNWIND_TARGET),
+        # $c26 — DATA inside the body again, and the word the `move.w` four instructions up raises
+        word(LIFE_RESTART_ENTRY_SHIPPED),
+        # $c28 — the STAGE-ANIMATION arm
+        lab("stage-anim"),
+        tst_w_abs_w(STAGE_ANIM_DONE_B10),
+        bcc_s(BEQ_W, "tail"),
+        tst_w_abs_w(EVENT_ANIM_DONE_B12),
+        bcc(BNE_W, "spawn-from-script"),
+        cmpi_w_abs_l(ACTOR_FREE_MARKER, SPAWN_GATE_SLOT),
+        bcc(BNE_W, "tail"),
+        lea_abs_l(A1, STUB_TABLE_BASE),
+        move_w_imm_dn(D0, EVENT_SPAWN_SFX),
+        clr_w_dn(D1),
+        jsr_d16_an(A1, STUB_TRIGGER_OFFSET),
+        lea_abs_l(A2, SPAWN_GATE_SLOT),
+        lea_abs_l(A1, TYPE35_TEMPLATE),
+        bsr("scene_copy_record_fields"),
+        bcc(BRA_W, "tail"),
+        lab("spawn-from-script"),
+        bsr("scene_spawn_from_script"),
+        clr_l_abs_w(STAGE_ANIM_REQUEST_B0E),
+        clr_w_abs_w(EVENT_ANIM_DONE_B12),
+        bcc(BRA_W, "tail"),
+        # $c76 — the SCENE-ALIGN arm, whose refusal goes to $d22 and not to the shared tail
+        lab("scene-align"),
+        tst_w_abs_w(EVENT_ANIM_DONE_B16),
+        bcc(BNE_W, "event-finished"),
+        cmpi_w_abs_l(ACTOR_FREE_MARKER, SPAWN_GATE_SLOT),
+        bcc(BNE_W, "skip"),
+        move_w_imm_abs_w(STATE_FLAG_SET, STATE_FLAG_A34),
+        lea_abs_l(A1, STUB_TABLE_BASE),
+        jsr_d16_an(A1, STUB_STOP_OFFSET),
+        move_w_imm_dn(D0, EVENT_SPAWN_SFX),
+        clr_w_dn(D1),
+        lea_abs_l(A1, STUB_TABLE_BASE),
+        jsr_d16_an(A1, STUB_TRIGGER_OFFSET),
+        lea_abs_l(A2, TABLE_DEFAULT),
+        movea_l_abs_l(A1, RECORD_PTR_10420),
+        move_l_d16_ind(A1, EVENT_PAIR_POSITION, A2),
+        clr_w_d16(A2, ACTOR_TYPE),
+        move_w_imm_d16(A2, EVENT_PAIR_SPRITE_INERT, ACTOR_SPRITE),
+        lea_d16(A2, RECORD_BYTES),
+        move_l_d16_ind(A1, EVENT_PAIR_POSITION, A2),
+        move_w_imm_d16(A2, EVENT_PAIR_TYPE_RISER, ACTOR_TYPE),
+        move_w_imm_d16(A2, EVENT_PAIR_SPRITE_RISER, ACTOR_SPRITE),
+        tst_w_d16(A1, TRIGGER_SPAWN_TYPE),
+        bcc(BEQ_W, "tail"),
+        move_w_imm_d16(A2, EVENT_PAIR_TYPE_ANIMATOR, ACTOR_TYPE),
+        move_w_imm_d16(A2, EVENT_PAIR_SPRITE_ANIMATOR, ACTOR_SPRITE),
+        bcc(BRA_W, "tail"),
+        # $cf0 — the event is over: everything comes down, and the stage advances or does not
+        lab("event-finished"),
+        tst_w_abs_w(STAGE_ANIM_DONE_B18),
+        bcc(BEQ_W, "tail"),
+        clr_b_abs_l(TEXT_BOX_ACTIVE),
+        clr_l_abs_w(ALIGN_REQUEST_B14),
+        clr_w_abs_w(STAGE_ANIM_DONE_B18),
+        tst_w_abs_l(STAGE_ADVANCE_REQUEST),
+        bcc(BEQ_W, "no-advance"),
+        clr_w_abs_l(STAGE_ADVANCE_REQUEST),
+        bcc_abs(BRA_W, UNWIND_TAKEN_AT),
+        lab("no-advance"),
+        move_w_imm_abs_l(GATE_FLAG_SET, EVENT_FINISHED_E1BE),
+        # $d22 — `move.w #$ffff,d7 / rts` WITHOUT the shared tail's call above it
+        lab("skip"),
+        move_w_imm_dn(D7, GATE_FLAG_SET),
+        RTS,
+    ]
+
+
 ENTRY_PIECES = {
     "player_meter_empty_check": _meter_empty_pieces(),
     "player_jump_step": _jump_step_pieces(),
@@ -1627,8 +1853,9 @@ ENTRY_PIECES = {
     "player_weapon_fire": _weapon_fire_pieces(),
     "player_stage_transition": _stage_transition_pieces(),
     "player_run_map_cell": _run_map_cell_pieces(),
+    "player_pending_event_gate": _pending_event_gate_pieces(),
 }
-RECONSTRUCTED_ROUTINES = 9
+RECONSTRUCTED_ROUTINES = 10
 
 ENTRY_BYTES = {name: leaf.asm(leaf.entry_of(name), pieces)
                for name, pieces in ENTRY_PIECES.items()}
@@ -1680,6 +1907,10 @@ BODY_SIZES = {
     "player_run_map_cell": 1170,        # $151a..$19ab, bounded by scene_spawn_from_script's entry —
                                         # and FOUR of those are data as well, the two handshake
                                         # words at $1960 the flute and the door talk through
+    "player_pending_event_gate": 526,   # $b1a..$d27, bounded by bg_scroll_raise_requests' entry —
+                                        # FOUR of those are data (WB_LIVES at $be2 and
+                                        # WB_LIFE_RESTART_ENTRY_C26 at $c26) and FOUR more are the
+                                        # dead `clr.w d7 / rts` at $bba
 }
 
 
@@ -1714,6 +1945,9 @@ CALLERS = {
     "player_stage_transition": (0xa70, 0xbb0),
     # ...and the collision cell has ONE, the frame's eighth `bsr`.
     "player_run_map_cell": (0xa6c,),
+    # ...and the gate has ONE, the frame's SECOND — which is what makes its d7 the frame's own
+    # question and nobody else's.
+    "player_pending_event_gate": (0xa3c,),
 }
 
 
@@ -2086,15 +2320,27 @@ def test_the_last_charge_rearms_the_slot_and_posts_the_message_that_names_it():
     _run_jump(what, pokes, expected)
 
 
+# The longest sentence any of these cases matches inside, plus room for the two leading control
+# bytes of a WB_TEXT_MESSAGE_TABLE record. One window for all four, rather than a fresh number each.
+MESSAGE_TEXT_WINDOW = 64
+
+
+def _shipped_message_text(message_id):
+    """The bytes WB_TEXT_MESSAGE_TABLE's ``message_id`` entry points at, so a case can check WHAT a
+    posted id says against the image rather than against this battery's reading of it.
+
+    FOUR cases wanted these six lines with four different window lengths before the fourth one made
+    it a helper; the id is 1-based, which is the part worth having in one place."""
+    at = (wb("TEXT_MESSAGE_TABLE")
+          + (message_id - wb("TEXT_MESSAGE_FIRST_ID")) * (1 << wb("TEXT_MESSAGE_PTR_SHIFT")))
+    where = int.from_bytes(harness.BASE_IMAGE[at:at + LONGWORD_BYTES], "big")
+    return bytes(harness.BASE_IMAGE[where:where + MESSAGE_TEXT_WINDOW])
+
+
 def test_the_message_the_wing_boots_post_is_the_one_the_shipped_string_names():
     """The id is 1-based into WB_TEXT_MESSAGE_TABLE, so the claim above is checkable against the
     image's own bytes rather than against this battery's reading of them."""
-    table = wb("TEXT_MESSAGE_TABLE")
-    first = wb("TEXT_MESSAGE_FIRST_ID")
-    shift = wb("TEXT_MESSAGE_PTR_SHIFT")
-    at = table + (MESSAGE_WING_BOOTS_LOST - first) * (1 << shift)
-    where = int.from_bytes(harness.BASE_IMAGE[at:at + LONGWORD_BYTES], "big")
-    text = bytes(harness.BASE_IMAGE[where:where + 32])
+    text = _shipped_message_text(MESSAGE_WING_BOOTS_LOST)
     assert b"wing boots" in text.lower(), f"message {MESSAGE_WING_BOOTS_LOST:#x} reads {text!r}"
 
 
@@ -2240,12 +2486,7 @@ def test_the_death_arm_starts_the_song_and_raises_the_four_words(block):
 
 def test_the_message_the_revival_arm_posts_is_the_one_the_shipped_string_names():
     """The other half of the pair above, read off the image."""
-    table = wb("TEXT_MESSAGE_TABLE")
-    first = wb("TEXT_MESSAGE_FIRST_ID")
-    shift = wb("TEXT_MESSAGE_PTR_SHIFT")
-    at = table + (MESSAGE_REVIVAL_USED - first) * (1 << shift)
-    where = int.from_bytes(harness.BASE_IMAGE[at:at + LONGWORD_BYTES], "big")
-    text = bytes(harness.BASE_IMAGE[where:where + 40])
+    text = _shipped_message_text(MESSAGE_REVIVAL_USED)
     assert b"revival" in text.lower(), f"message {MESSAGE_REVIVAL_USED:#x} reads {text!r}"
 
 
@@ -2286,11 +2527,7 @@ def test_the_copy_is_eight_longwords_and_the_first_is_the_SCENES(template):
     pokes = _copy_pokes(what, template)
     image = harness.make_image(pokes)
 
-    expected = {}
-    _put_long(expected, DESTINATION, _image_long(image, SCENE + SCENE_SPAWN_POSITION))
-    for i in range(TEMPLATE_LONGWORDS):
-        _put_long(expected, DESTINATION + (i + 1) * LONGWORD_BYTES,
-                  _image_long(image, template + SPAWN_TEMPLATE_UNREAD + i * LONGWORD_BYTES))
+    expected = _record_copy_writes(image, DESTINATION, SCENE, template)
 
     info = leaf.run("scene_copy_record_fields", _COPY_RECORD(template, DESTINATION),
                     merge_bands(expected), what,
@@ -2312,6 +2549,25 @@ def test_the_template_the_gate_hands_it_carries_the_slot_number_of_the_event_act
 def _put_long(expected, addr, value):
     for index in range(LONGWORD_BYTES):
         expected[addr + index] = (value >> (8 * (LONGWORD_BYTES - 1 - index))) & 0xff
+
+
+def _record_copy_writes(image, destination, descriptor, template, into=None):
+    """`scene_copy_record_fields`' whole write set: EIGHT longwords into ``destination``.
+
+    The FIRST is the scene descriptor's own position longword, written over the record's x and y;
+    the other seven are the template's bytes 4..31, because `lea 4(a1),a1` skips its first longword
+    once the position has taken that place. FOUR cases spelt these five lines — the two that enter
+    $539e directly and the two that reach it through the gate's composition — and a fifth would
+    have been where the arithmetic drifted, which is the one divergence a per-battery write-set
+    compare cannot catch, because each case supplies its own expectation.
+
+    ``into`` merges into an existing model (the gate's arms have the SFX trigger's writes first)."""
+    expected = {} if into is None else into
+    _put_long(expected, destination, _image_long(image, descriptor + SCENE_SPAWN_POSITION))
+    for i in range(TEMPLATE_LONGWORDS):
+        _put_long(expected, destination + (i + 1) * LONGWORD_BYTES,
+                  _image_long(image, template + SPAWN_TEMPLATE_UNREAD + i * LONGWORD_BYTES))
+    return expected
 
 
 # ==================================================================================================
@@ -3266,6 +3522,14 @@ ABSOLUTE_FORMS = (
     (0x0c79, 6, True),       # cmpi.w  #imm,<abs>.l
     (0x3039, 4, True),       # move.w  <abs>.l,Dn
     (0x33c0, 4, True),       # move.w  Dn,<abs>.l
+    # ...and the three batch 41 phase C's censuses needed. THE LIST IS OPCODE-EXACT, which is what
+    # keeps it honest and what bounds it: `subq.w #n` and the two register forms below encode their
+    # count and their register INTO the opcode word, so these three entries cover `#1`, `d1` and
+    # `a0` and nothing else. A site with another count or register is not silently dropped — it
+    # lands in the `other` dict with the word in front of it, which is where a census goes wrong.
+    (0x5378, 2, False),      # subq.w  #1,<abs>.w
+    (0x3238, 2, False),      # move.w  <abs>.w,D1 — a SHORT operand, so two bytes after the opcode
+    (0x41f8, 2, False),      # lea     <abs>.w,A0 — a POINTER, not an operand of the word itself
 )
 
 
@@ -3331,6 +3595,40 @@ OPERAND_CENSUS = {
                            0x10370: 0x31fc},            #                     /
                           # ...and a `bra.w` displacement, the second near-miss.
                           {0x4962: 0x6000}),
+    # --- and batch 41 phase C's four, three of which are one routine's whole private state --------
+    "STAGE_RESET_BLOCK": ({0xad2: 0x4a79,               # tst.w  $b08.l  \ player_meter_empty_check's
+                           0xaee: 0x33fc,               # move.w #$ffff  / death arm, guard and raise
+                           0xb1a: 0x4a78,               # tst.w  $b08.w  — the gate's FIRST test
+                           0xbaa: 0x31fc,               # move.w #$ffff  — its ascent's re-raise
+                           0x1fd6: 0x4a78,             # tst.w  $b08.w  — the death ANIMATION arm
+                           # ...and the SIXTH, which names the word as a POINTER rather than reading
+                           # it: the `lea $b08.w,a0` the block reset walks its eighteen bytes with.
+                           # It is why the name reads oddly at the five above — one address, two
+                           # jobs — and it DOES write $b08, as the run's first `clr.l`.
+                           0xfed2: 0x41f8},
+                          {}),
+    "DEATH_MESSAGE_POSTED_B0A": ({0xb36: 0x4a78,        # tst.w  $b0a.w
+                                  0xb62: 0x31fc},       # move.w #$ffff,$b0a.w
+                                 # ...and eight coincidences inside the SOUND MODULE's pattern data,
+                                 # none of them with an instruction in front. A word this small has
+                                 # them; the near-miss list is what keeps the count of two honest.
+                                 {0x1aa58: 0x0d0c, 0x1ab3a: 0x0a09, 0x1ab4c: 0x0a09,
+                                  0x1ab84: 0x0d0c, 0x1ab8e: 0x0d0c, 0x1ab98: 0x0d0c,
+                                  0x1aba2: 0x0d0c, 0x1abb2: 0x0d0c}),
+    "DEATH_BOX_EXPIRED_B0C": ({0xbbe: 0x4a78,           # tst.w  $b0c.w
+                               0xbd0: 0x31fc},          # move.w #$ffff,$b0c.w
+                              {0x1a9f6: 0x080a}),
+    # ...and WB_LIVES, whose plate said FOUR until this phase ported the fifth site's routine.
+    "LIVES": ({0xb4e: 0x4a79,                           # tst.w  $be2.l  — which message goes up
+               0xbe4: 0x4a78,                           # tst.w  $be2.w  — the prompt's own guard
+               0xbfc: 0x5378,                           # subq.w #1,$be2.w
+               0xe80c: 0x3238,                          # move.w $be2.w,d1 — the icon redraw
+               0xfe50: 0x31fc},                         # move.w #$3,$be2.w — the new-game reset
+              {}),
+    "EVENT_FINISHED_E1BE": ({0xd1a: 0x33fc,             # move.w #$ffff,$e1be.l — the gate's raise
+                             0xe032: 0x4a79},           # tst.w  $e1be.l — the ONE reader, and the
+                                                        # first instruction of the routine it gates
+                            {0xe096: 0x0000}),
 }
 
 
@@ -3952,19 +4250,19 @@ def test_the_swing_is_asked_before_the_posture_on_a_seed_that_would_answer_both(
 
 
 # ==================================================================================================
-# The ONE routine of the frame this port MEASURES rather than reconstructs
+# What the gate's THREE STACK UNWINDS are, read off the bytes
 # ==================================================================================================
 #
-# `player_pending_event_gate` ($b1a) is the frame's second call and the only one still missing. It is
-# UNPORTABLE rather than merely unported: THREE of its exits leave through a stack unwind instead of
-# returning — `lea 4(a7),a7 / jmp` at $bdc and $c20, and `bra.w $1622` at $d16, which lands in
+# `player_pending_event_gate` ($b1a) is RECONSTRUCTED as of batch 41 phase C and its differential is
+# at the foot of this file; what stays here is the structural pair that came first, when the routine
+# was measured rather than ported. THREE of its exits leave through a stack unwind instead of
+# returning — `lea 4(a7),a7 / jmp` at $bd8 and $c1c, and `bra.w $1622` at $d16, which lands in
 # `player_run_map_cell`'s own `lea 12(a7),a7 / jmp $e5ba.l` and so pops THREE return addresses
 # in ANOTHER routine's body. That third one is why the count was two until batch 40 phase C: a census
-# of this routine's own instructions cannot see a pop that happens somewhere else. What CAN be
-# pinned about it from here is structural, and both claims below were live failure modes.
+# of this routine's own instructions cannot see a pop that happens somewhere else. Both claims below
+# were live failure modes, and both are what the exit reports now stand on.
 
 GATE_SPAWN_SITE = 0xc52            # `lea $998c.l,a2 / lea $537e.l,a1 / bsr.w $539e`
-GATE_DESTINATION = 0x998c          # slot 1 of WB_ACTOR_TABLE_DEFAULT
 STAGE_TRANSITION_ARM = 0x1fa2
 
 
@@ -3980,16 +4278,17 @@ def _image_operands_at(site):
     return pairs
 
 
-# Keyed on the `lea`, which is where the pop IS; ../names.txt's plates name the `jmp` four bytes on
-# ($bdc, $c20), and the two addresses being different is worth keeping straight in a case that is
-# about counting them.
+# Keyed on the `lea`, which is where the pop IS. The `jmp` is four bytes on ($bdc, $c20) and the two
+# addresses being different is worth keeping straight in a case that is about counting them — and in
+# a checkpointed run, where the `lea` is the WITNESS and the `jmp` is the stop. ../names.txt's
+# `cmt 0xb1a` keys on the `lea` too, as of batch 41 phase C; it named the `jmp` before that.
 GATE_UNWIND_EXITS = {
     0xbd8: (0x4fef0004, 0xe494),     # lea 4(a7),a7 / jmp $e494.l — one return address
     0xc1c: (0x4fef0004, 0xe5ba),     # lea 4(a7),a7 / jmp $e5ba.l — one
 }
 # ...and the THIRD, which is not the gate's own instruction at all: it branches into
-# `player_run_map_cell` and unwinds there.
-GATE_UNWIND_VIA = 0x1622
+# `player_run_map_cell` and unwinds there. `UNWIND_TAKEN_AT` above is that address; a second name for
+# it here is what the review found, and one name is the repair.
 COLLIDE_UNWIND = (0x4fef000c, 0xe5ba)   # lea 12(a7),a7 / jmp $e5ba.l — THREE return addresses
 
 
@@ -4001,7 +4300,7 @@ def _unwind_at(addr):
 
 
 def test_the_gate_leaves_through_THREE_stack_unwinds_and_one_of_them_is_not_its_own():
-    """WHY $b1a IS UNPORTABLE, counted. Two of the three are its own `lea 4(a7),a7 / jmp` pairs. The
+    """WHAT THE THREE EXIT REPORTS STAND FOR, counted. Two of the three are its own `lea 4(a7),a7 / jmp` pairs. The
     third is the one every surface in this project said did not exist until batch 40 phase C:
     `bra.w $1622` at $d16 lands inside `player_run_map_cell`, whose `lea 12(a7),a7 / jmp
     $e5ba.l` discards THREE return addresses — so the gate can unwind past its caller AND its
@@ -4015,16 +4314,19 @@ def test_the_gate_leaves_through_THREE_stack_unwinds_and_one_of_them_is_not_its_
         assert _unwind_at(at) == expected, (
             f"the unwind at {at:#x} is {[hex(v) for v in _unwind_at(at)]}, not "
             f"{[hex(v) for v in expected]}")
-    assert _unwind_at(GATE_UNWIND_VIA) == COLLIDE_UNWIND, (
-        f"$1622 is {[hex(v) for v in _unwind_at(GATE_UNWIND_VIA)]}, not the triple pop")
-    assert 0xd16 in CONTROL_FLOW_TARGETS[GATE_UNWIND_VIA], (
+    assert _unwind_at(UNWIND_TAKEN_AT) == COLLIDE_UNWIND, (
+        f"$1622 is {[hex(v) for v in _unwind_at(UNWIND_TAKEN_AT)]}, not the triple pop")
+    assert 0xd16 in CONTROL_FLOW_TARGETS[UNWIND_TAKEN_AT], (
         "the gate does not branch to $1622, so the third exit is not the gate's")
     entry = leaf.entry_of("player_run_map_cell")
-    assert entry < GATE_UNWIND_VIA < 0x19ac, (
+    assert entry < UNWIND_TAKEN_AT < 0x19ac, (
         "$1622 is not inside player_run_map_cell, so the pop is not in another routine")
-    # The pop's DEPTH is the claim that matters, and it is read off the `lea`'s displacement rather
-    # than written down: 12 bytes of return addresses is three of them.
-    assert (COLLIDE_UNWIND[0] & 0xffff) // LONGWORD_BYTES == 3
+    # The pop's DEPTH is the claim that matters, and it is read off each `lea`'s displacement rather
+    # than written down: 12 bytes of return addresses is three of them, 4 is one.
+    assert (COLLIDE_UNWIND[0] & WORD_MASK) // LONGWORD_BYTES == 3
+    for at, (pop, _target) in GATE_UNWIND_EXITS.items():
+        assert (pop & WORD_MASK) // LONGWORD_BYTES == 1, (
+            f"the unwind at {at:#x} does not discard exactly one return address")
 
 
 def test_the_gates_spawn_site_loads_the_TEMPLATE_in_a1_and_the_DESTINATION_in_a2():
@@ -4035,9 +4337,9 @@ def test_the_gates_spawn_site_loads_the_TEMPLATE_in_a1_and_the_DESTINATION_in_a2
     So the operands come out of the image here. `lea $998c.l,a2` is the DESTINATION — slot 1 of
     WB_ACTOR_TABLE_DEFAULT, which the `cmpi.w #$ffbe,$998c.l` at $c36 has just checked is free — and
     `lea $537e.l,a1` is WB_ACTOR_TYPE35_TEMPLATE."""
-    assert _image_operands_at(GATE_SPAWN_SITE) == [(A2, GATE_DESTINATION), (A1, TYPE35_TEMPLATE)], (
+    assert _image_operands_at(GATE_SPAWN_SITE) == [(A2, SPAWN_GATE_SLOT), (A1, TYPE35_TEMPLATE)], (
         f"the two `lea`s at {GATE_SPAWN_SITE:#x} are not the a2=destination / a1=template pair")
-    assert GATE_DESTINATION == TABLE_DEFAULT + RECORD_BYTES, (
+    assert SPAWN_GATE_SLOT == TABLE_DEFAULT + RECORD_BYTES, (
         "the gate's destination is not slot 1 of the default actor table")
 
 
@@ -4054,11 +4356,7 @@ def test_the_composition_the_gate_spells_fills_the_records_the_gate_names():
     pokes = leaf.overlay(pokes, {RECORD_PTR_10420: SCENE.to_bytes(LONGWORD_BYTES, "big")})
     image = harness.make_image(pokes)
 
-    expected = {}
-    _put_long(expected, destination, _image_long(image, SCENE + SCENE_SPAWN_POSITION))
-    for i in range(TEMPLATE_LONGWORDS):
-        _put_long(expected, destination + (i + 1) * LONGWORD_BYTES,
-                  _image_long(image, template + SPAWN_TEMPLATE_UNREAD + i * LONGWORD_BYTES))
+    expected = _record_copy_writes(image, destination, SCENE, template)
 
     info = leaf.run("scene_copy_record_fields", _COPY_RECORD(template, destination),
                     merge_bands(expected), what,
@@ -5026,12 +5324,7 @@ def test_the_two_handshake_words_are_DATA_INSIDE_this_routines_own_body():
 def test_the_messages_kind_8_posts_are_the_ones_the_shipped_strings_name(name, text):
     """What NAMES the flute and the view: the two ids are read out of the image's own message table,
     exactly as the wing boots' and the revival medicine's are above."""
-    table = wb("TEXT_MESSAGE_TABLE")
-    first = wb("TEXT_MESSAGE_FIRST_ID")
-    shift = wb("TEXT_MESSAGE_PTR_SHIFT")
-    at = table + (wb(name) - first) * (1 << shift)
-    where = int.from_bytes(harness.BASE_IMAGE[at:at + LONGWORD_BYTES], "big")
-    assert text in bytes(harness.BASE_IMAGE[where:where + 40]).lower()
+    assert text in _shipped_message_text(wb(name)).lower()
 
 
 # Every descriptor offset this project has more than one NAME for, and what each name reads it as.
@@ -5039,7 +5332,7 @@ def test_the_messages_kind_8_posts_are_the_ones_the_shipped_strings_name(name, t
 # two against each other — the scraper reads plain literals and cannot derive one #define from
 # another — and until batch 41 phase A only the +2 pair was pinned. These are the three groups.
 DESCRIPTOR_OFFSET_ALIASES = {
-    2: ("SCENE_KIND", "SCENE_TRIGGER_X", "SCENE_TRIGGER_MESSAGE"),
+    2: ("SCENE_KIND", "SCENE_TRIGGER_X", "SCENE_TRIGGER_MESSAGE", "EVENT_PAIR_POSITION"),
     4: ("SCENE_VARIANT", "SCENE_TRIGGER_SPAWN_Y"),
     8: ("SCENE_TRIGGER_SPAWN_FIELD", "SCENE_TRIGGER_ALIGN_SUBKIND"),
 }
@@ -5050,7 +5343,8 @@ DESCRIPTOR_OFFSET_ALIASES = {
 def test_every_descriptor_offset_with_more_than_one_NAME_is_pinned_to_one_number(offset, names):
     """ONE offset, several readings, pinned against each other rather than left as numbers that
     could drift apart. +2 is the scene driver's KIND word, the spawning kinds' x and kind 3's
-    message id; +4 is the fragment selector and the spawn's y; +8 is the spawning kinds' fourth
+    message id — and, since batch 41 phase C, the gate's event pair, which takes +2 and +4 as ONE
+    longword; +4 is the fragment selector and the spawn's y; +8 is the spawning kinds' fourth
     copied word and the door's sub-kind. A later batch that re-derives the descriptor's layout and
     moves one name leaves the others behind, and both `src/scene.c` and `src/player.c` then read
     different words off one record with every battery green — which is exactly what this case is
@@ -5059,3 +5353,891 @@ def test_every_descriptor_offset_with_more_than_one_NAME_is_pinned_to_one_number
         assert wb(name) == offset, (
             f"{name} is {wb(name):#x}, not the {offset:#x} the other names for this descriptor word "
             f"use ({', '.join(names)})")
+
+
+# ==================================================================================================
+# $b1a — THE PENDING-EVENT GATE, and the frame it decides
+# ==================================================================================================
+#
+# WHAT SHAPES THIS PART OF THE BATTERY, and it is not what shaped the eight above it.
+#
+#   * THE OUTPUT IS A REGISTER. Every other routine here is entered for its memory; this one is
+#     entered so that $a38 can read `tst.w d7`. The reconstruction returns an EXIT CODE instead
+#     (include/player.h), so every case below enters with a known d7 and `_assert_d7` says what the
+#     ORIGINAL's whole 32 bits should be given the code — which is how the difference between
+#     `clr.l d7` and `move.w #$ffff,d7` gets pinned at all.
+#   * THE SHARED TAIL IS A CALL, and twelve of the routine's branches reach it. Every case that does
+#     not want `player_stage_transition`'s writes in its model seeds WB_STAGE_ANIM_DONE_B10 —
+#     that routine's own FIRST instruction is `tst.w $b10.w`, so a raised latch makes all 656 bytes
+#     of it an `rts`. The one case that must run it with the latch DOWN models what it writes.
+#   * THREE ENDINGS ARE STACK UNWINDS and a fourth is a callee that never comes back, so four of the
+#     cases are checkpointed runs with a witness above the checkpoint (README.md's convention).
+#   * THE DRIFT TABLE IS SEEDED, keyed, with a margin on both sides: the ascent indexes
+#     WB_ACTOR_TYPE30_DRIFT with the RAW cursor word, so a case can drive an index outside the 32
+#     entries and the byte it lands on has to be wrong FOR WHERE IT CAME FROM.
+
+_GATE = leaf.register_glue("player_pending_event_gate", [ctypes.c_uint32], ctypes.c_uint32)
+
+# The restart unwind CALLS `game_life_restart_reset`, so its seeding and its write-set model come
+# from the battery that owns that routine — a second model here could drift from src/stage.c while
+# both stayed green.
+from test_stage import GAME_RESET_INSN_CAP, _life_reset_writes, _reset_pokes   # noqa: E402
+
+GATE_EXIT_RUNS = wb("PLAYER_GATE_FRAME_RUNS")
+GATE_EXIT_SKIPPED = wb("PLAYER_GATE_FRAME_SKIPPED")
+GATE_EXIT_DATADISK = wb("PLAYER_GATE_DATADISK_UNWIND")
+GATE_EXIT_RESTART = wb("PLAYER_GATE_RESTART_UNWIND")
+GATE_EXIT_SCENE_LEFT = wb("PLAYER_GATE_SCENE_LEFT")
+
+# The four checkpoints and the instruction each one needs to have seen. THE WITNESS LIES ABOVE THE
+# CHECKPOINT in every case, because `emu.run` stops BEFORE marking the checkpoint's own PC.
+GATE_DATADISK_SITE = 0xbdc         # `jmp $e494.l`
+GATE_DATADISK_TAKEN_AT = 0xbd8     # ...witnessed by the `lea 4(a7),a7`, which no other path runs
+GATE_RESTART_SITE = 0xc20          # `jmp $e5ba.l`
+GATE_RESTART_TAKEN_AT = 0xc1c      # ...and its own `lea 4(a7),a7`
+GATE_COLLIDE_TAKEN_AT = 0xd16      # `bra.w $1622` — the checkpoint is $151a's own UNWIND_SITE
+GATE_SCENE_LEFT_SITE = 0x19e0      # `scene_spawn_from_script`'s wild-return `rts`
+GATE_SCENE_CALL_AT = 0xc66         # ...witnessed by the `bsr.w $19ac` only this arm executes
+GATE_TAIL_CALL_AT = 0xbb0          # `bsr.w $1f54` — what the two arms that end at $d22 do NOT run
+
+# d7 on entry: a value with BOTH halves nonzero, so `clr.l` and `move.w` are distinguishable and the
+# high half a preserved write leaves behind is not a zero that anything else could have produced.
+D7_ENTRY = 0x1234abcd
+# ...and the endings whose d7 the case may state. The two that call something on the way out may not:
+# `game_life_restart_reset` and `scene_spawn_from_script` are free to clobber a scratch register and
+# nothing reads d7 on those paths anyway, since the frame they belong to is abandoned.
+GATE_D7_STATED = frozenset({GATE_EXIT_RUNS, GATE_EXIT_SKIPPED, GATE_EXIT_DATADISK, EXIT_UNWIND})
+
+# The drift table with a margin either side, so an index outside its 32 words lands on a keyed byte.
+# THE MARGIN IS DERIVED FROM THE CURSORS THE CASES DRIVE, not chosen: the largest positive index any
+# row uses must still be inside the band, or that row's "it lands on a keyed byte" is decoration and
+# the expected value is read from the same unseeded bytes the run reads. `leaf.assert_bands_are_
+# seeded` cannot catch that — it only checks the bands a case DECLARES — so the bound is asserted
+# below instead.
+# It is STATED and not derived from `DRIFT_CURSORS`: a tripwire that measured the band with the very
+# constant it seeds from cannot fail, which is the lesson batch 40 phase C's dropped keyed band left.
+DRIFT_MARGIN = 0x48
+DRIFT_BAND_LO = TYPE30_DRIFT - DRIFT_MARGIN
+DRIFT_BAND_LEN = 2 * DRIFT_MARGIN + (TYPE30_DRIFT_MASK + 1)
+# Where a case puts the scene descriptor the third arm's pair is positioned from: an ordinary slot,
+# well clear of the two the arm fills AND of the FOLLOWED record. Slot 12 is `WB_ACTOR_FOLLOWED_
+# DEFAULT`, which the shared tail and half the behaviour tier read, so a descriptor placed there
+# would double as that record and the isolation this constant is for would be gone; the assertion
+# below is what keeps the two apart as either address moves.
+GATE_DESCRIPTOR_SLOT = 9
+GATE_DESCRIPTOR = TABLE_DEFAULT + GATE_DESCRIPTOR_SLOT * RECORD_BYTES
+GATE_DESCRIPTOR_BAND = (GATE_DESCRIPTOR - RECORD_BYTES, 3 * RECORD_BYTES)
+# ...and the two records it fills, with a margin, so a store one field out is visible.
+EVENT_PAIR_BAND = (TABLE_DEFAULT - RECORD_BYTES, 3 * RECORD_BYTES)
+
+# Where the dying player starts: both coordinates well away from zero, so a drift of zero and a
+# rise of one are still changes the ledger can see.
+ASCENT_X, ASCENT_Y = 0x0140, 0x0070
+
+PENDING_GATE_CAP = _cap("player_pending_event_gate",
+                        extra=INSN_COUNT["player_stage_transition"]
+                        + INSN_COUNT["scene_copy_record_fields"]
+                        + STUB_INSN_CAP + STOP_INSN_CAP)
+
+
+def _gate_pokes(what, fields=None, descriptor=GATE_DESCRIPTOR):
+    """A frame in which nothing is pending, so a case raises exactly the flag its arm is about.
+
+    THE KEYED BANDS ARE THEIR OWN LAYER, `leaf.overlay`'s documented hazard: WB_DEATH_DRIFT_CURSOR
+    and the two records the third arm fills all lie INSIDE one, so a single dict literal holding both
+    would drop the block and every case would run on the .PRG's own bytes."""
+    salt = case_salt(what)
+    keyed = {lo: keyed_block(lo, length, salt)
+             for lo, length in ((DRIFT_BAND_LO, DRIFT_BAND_LEN), GATE_DESCRIPTOR_BAND,
+                                EVENT_PAIR_BAND)}
+    base = {
+        # the three flags the head tests, and the five latches the arms read, all DOWN
+        STAGE_RESET_BLOCK: word(0), DEATH_MESSAGE_POSTED_B0A: word(0),
+        DEATH_BOX_EXPIRED_B0C: word(0), STAGE_ANIM_REQUEST_B0E: word(0),
+        EVENT_ANIM_DONE_B12: word(0), ALIGN_REQUEST_B14: word(0),
+        EVENT_ANIM_DONE_B16: word(0), STAGE_ANIM_DONE_B18: word(0),
+        # ...and the ONE latch raised by default, which is what makes the shared tail an `rts`
+        STAGE_ANIM_DONE_B10: word(MARKER),
+        # the inputs each arm reads
+        SCROLL_FOLLOW_Y: word(0), LIVES: word(0), TEXT_BOX_ACTIVE: bytes([0]),
+        JOY1_STATE: bytes([0]), DEATH_DRIFT_CURSOR: word(0),
+        STAGE_ADVANCE_REQUEST: word(0),
+        SPAWN_GATE_SLOT + ACTOR_X: word(ACTOR_FREE_MARKER),
+        RECORD_PTR_10420: longword(descriptor),
+        # ...and every global an arm can WRITE, seeded to a value no arm produces
+        STATE_FLAG_A34: word(MARKER), LIFE_RESTART_ENTRY_C26: word(MARKER),
+        EVENT_FINISHED_E1BE: word(MARKER), LEVEL_SEQ_INDEX: word(MARKER),
+        EFFECT_STATE_21E4: word(MARKER),
+    }
+    seeded = _pokes(what, leaf.overlay(keyed, base, fields or {}))
+    leaf.assert_bands_are_seeded(seeded, [(DRIFT_BAND_LO, DRIFT_BAND_LEN), GATE_DESCRIPTOR_BAND,
+                                          EVENT_PAIR_BAND],
+                                 f"{what}: a keyed band was dropped")
+    return seeded
+
+
+def _gate_body_layer():
+    """The gate's own 526 bytes, put back from the shipped image.
+
+    A COMPOSED CASE HAS TO RE-PLANT THEM, and this cost a debugging session: WB_LIVES is DATA INSIDE
+    THIS ROUTINE'S CODE ($be2, between the data-disk `jmp` and the `tst.w` at $be4), and
+    test_stage.py's reset seeding keys a BAND AROUND every word it resets — so overlaying that
+    battery's seeds writes keyed bytes over the instructions at $be4 and the run walks off into them.
+    The layer goes between the imported seeds and the case's own words, so both still land."""
+    lo = leaf.entry_of("player_pending_event_gate")
+    hi = lo + BODY_SIZES["player_pending_event_gate"]
+    return {lo: bytes(harness.BASE_IMAGE[lo:hi])}
+
+
+def _assert_the_tail_would_be_visible(pokes, what, after=None, record=ACTOR):
+    """A PREMISE GUARD ON THE SEED for the two cases whose claim is "the shared tail did NOT run".
+
+    `emu.cov_visited` watches the ORACLE's executed PCs, so "$bb0 was not reached" is a statement
+    about the original and can never see a C-side change. What makes those cases pin the PORT is that
+    the tail WRITES SOMETHING under their seeding — then a reconstruction that called it anyway
+    reddens on the write set. That is a property of the seed, and it is decided by keyed bytes
+    (`case_salt`), so renaming a case could silently take it away: the mutation sweep's
+    `align-refusal-gets-the-tail` survivor was exactly that hole with `WB_STAGE_ANIM_DONE_B10` up.
+
+    So the premise is a run, not a comment: `player_stage_transition` is entered on THIS case's own
+    image and required to write. ``after`` is what the arm has already written by the point the tail
+    WOULD have been called — the no-advance ending takes two flag words down first, and the premise
+    has to be asked about the state at the call site rather than at the entry."""
+    seeds = leaf.overlay(pokes, after or {})
+    info = leaf.run("player_stage_transition", _STAGE_TRANSITION(record), [(0, loader.PROGRAM_END)],
+                    f"{what}: the tail's own run",
+                    regs={"a0": record, "_pokes": seeds}, max_insns=STAGE_TRANSITION_CAP)
+    assert program_writes(info), (
+        f"{what}: `player_stage_transition` writes NOTHING under this case's seeding, so \"the arm "
+        f"did not call it\" is a claim about the original's control flow and not about this port")
+
+
+def _assert_d7(info, exit_code, what, d7_high=D7_ENTRY & ~WORD_MASK):
+    """What the ORIGINAL leaves in d7 — the only output $a38 reads, and the one the exit code stands
+    in for. The two returning endings differ in the HALF THE CALLER DOES NOT LOOK AT, which is why
+    the whole 32 bits are compared and not `& 0xffff`.
+
+    `d7_high` is what the entry half is worth BY THE TIME the answer is written. It is the entry
+    value on every arm that calls nothing but `player_stage_transition`, and a case whose arm calls
+    something that CLOBBERS a scratch register says so: `scene_spawn_from_script` leaves the high
+    half zero, which the gate cannot help and the caller never notices, since `tst.w d7` reads the
+    low word alone."""
+    if exit_code not in GATE_D7_STATED:
+        return
+    if exit_code == GATE_EXIT_RUNS:
+        expected = 0                                              # `clr.l d7` at $b32
+    elif exit_code == GATE_EXIT_SKIPPED:
+        expected = d7_high | GATE_FLAG_SET                        # `move.w #$ffff,d7`
+    else:
+        expected = D7_ENTRY                                       # an unwind writes no register
+    assert info["regs"]["d7"] == expected, (
+        f"{what}: the ORIGINAL left d7={info['regs']['d7']:#010x}, not the {expected:#010x} exit "
+        f"code {exit_code} says it should")
+
+
+def _run_gate(what, pokes, expected, exit_code=GATE_EXIT_SKIPPED, stop_pc=0, via=None,
+              psg_seed=None, extra_band=(), record=ACTOR, cap=None, poison=True,
+              self_checked=frozenset(), d7_high=D7_ENTRY & ~WORD_MASK):
+    """Every gate case's runner. `via` is the transfer a checkpointed run must have executed, which
+    is what stops a `stop_pc` case passing on a run that simply returned. `self_checked` is the band
+    a COMPOSED case leaves to the battery that owns the callee — the two arms that run the spawn tree
+    are its only users, and the byte-for-byte diff still covers every byte of it."""
+    how = dict(regs={"a0": record, "d7": D7_ENTRY, "_pokes": pokes},
+               max_insns=PENDING_GATE_CAP if cap is None else cap,
+               stop_pc=stop_pc, psg_seed=psg_seed, poison=poison)
+    bands = merge_bands(expected) + list(extra_band)
+    if via is None:
+        info = leaf.run("player_pending_event_gate", _GATE(record), bands, what, **how)
+    else:
+        info = leaf.run_reaching("player_pending_event_gate", _GATE(record), bands, what, via, **how)
+    _assert_writes(info, expected, what, extra=self_checked)
+    assert info["ret"] == exit_code, (
+        f"{what}: the reconstruction reported {info['ret']}, not the {exit_code} this case expects")
+    _assert_d7(info, exit_code, what, d7_high)
+    return info
+
+
+def _run_gate_claiming_tail_not_reached(what, pokes, expected, after=None, **how):
+    """`_run_gate`, for the two cases whose claim is that the shared tail did NOT run — PREMISE AND
+    CLAIM IN ONE CALL, so that a case cannot carry one without the other.
+
+    `emu.cov_visited` watches the ORACLE's executed PCs, so "$bb0 was not reached" is a statement
+    about the original and can never see a C-side change. What makes these cases pin the PORT is that
+    the tail WRITES SOMETHING under their seeding — then a reconstruction that called it anyway
+    reddens on the write set. That is a property of the SEED, decided by `case_salt` keyed bytes, and
+    the mutation sweep's `align-refusal-gets-the-tail` survivor was exactly that premise going
+    missing with `WB_STAGE_ANIM_DONE_B10` up. Splitting the two into a helper call plus a
+    `pc_coverage` block is what let it go missing, so they are one entry point now.
+
+    ``after`` is what the arm has already written by the point the tail WOULD be called — the
+    no-advance ending takes two flag words down first, so the premise has to be asked about the state
+    at the call site rather than at the entry."""
+    _assert_the_tail_would_be_visible(pokes, what, after=after)
+    with leaf.pc_coverage():
+        info = _run_gate(what, pokes, expected, **how)
+        assert not emu.cov_visited(GATE_TAIL_CALL_AT), (
+            f"{what}: the arm reached the shared tail at {GATE_TAIL_CALL_AT:#x}, which it does not "
+            f"have — and the premise above says the tail would have written if it had")
+    return info
+
+
+# --- the head: three flags, in one order --------------------------------------------------------
+
+def test_no_pending_event_clears_the_WHOLE_of_d7_and_writes_nothing():
+    """`clr.l d7 / rts` at $b32, which is the answer that lets the other seven calls of the frame
+    run. It is the only ending that touches d7's high half, and the only one that writes no byte at
+    all — the shared tail is not even reached, so `player_stage_transition` does not run."""
+    what = "player_pending_event_gate idle"
+    _run_gate(what, _gate_pokes(what), {}, exit_code=GATE_EXIT_RUNS)
+
+
+GATE_HEAD_FLAGS = [("death", STAGE_RESET_BLOCK), ("stage-anim", STAGE_ANIM_REQUEST_B0E),
+                   ("align", ALIGN_REQUEST_B14)]
+
+
+@pytest.mark.parametrize("name,flag", GATE_HEAD_FLAGS, ids=[c[0] for c in GATE_HEAD_FLAGS])
+def test_any_one_of_the_three_flags_ends_the_frame_for_everything_below_the_gate(name, flag):
+    """Each raised ALONE, with every latch below it seeded so its arm does nothing: the answer is
+    WB_PLAYER_GATE_FRAME_SKIPPED either way, and $a38's `bmi.w $a74` then skips seven calls.
+
+    The align arm is the one that writes nothing on this row for a different reason from the other
+    two — its slot-not-free refusal goes to $d22, which has no `bsr.w $1f54` above it."""
+    what = f"player_pending_event_gate head {name}"
+    # Both spawning arms are closed by a slot that is not free, which is the cheapest way to make
+    # each arm do nothing — and the two refusals are NOT the same ending, which the align arm's own
+    # case below is about.
+    fields = {flag: word(MARKER), SPAWN_GATE_SLOT + ACTOR_X: word(MARKER)}
+    if flag == STAGE_RESET_BLOCK:
+        # The death arm needs its ascent already topped out to do nothing else, which is the state
+        # `_prompt_pokes` below builds — spelt here rather than called because that helper seeds the
+        # THREE flags itself and this row is about raising exactly ONE of them. The three keys are
+        # the same three, and this is the box-down frame, so the box-expired latch is the one write.
+        fields[DEATH_MESSAGE_POSTED_B0A] = word(MARKER)
+        fields[DEATH_BOX_EXPIRED_B0C] = word(0)
+        fields[TEXT_BOX_ACTIVE] = bytes([0])
+    pokes = _gate_pokes(what, fields)
+    expected = {}
+    if flag == STAGE_RESET_BLOCK:
+        _put_word(expected, DEATH_BOX_EXPIRED_B0C, GATE_FLAG_SET)
+    _run_gate(what, pokes, expected)
+
+
+def test_the_three_flags_are_tested_in_the_order_the_block_holds_them():
+    """All three raised at once: the DEATH arm runs and the other two do not, which is what the
+    order at $b1a..$b2e says. Read off the write set — only the death arm posts a message."""
+    what = "player_pending_event_gate all three raised"
+    pokes = _gate_pokes(what, {STAGE_RESET_BLOCK: word(MARKER),
+                               STAGE_ANIM_REQUEST_B0E: word(MARKER),
+                               ALIGN_REQUEST_B14: word(MARKER),
+                               SCROLL_FOLLOW_Y: word(DEATH_ASCENT_TOP_Y)})
+    expected = {}
+    _put_word(expected, STATE_FLAG_A34, STATE_FLAG_SET)
+    _put_word(expected, DEATH_MESSAGE_POSTED_B0A, GATE_FLAG_SET)
+    expected[TEXT_REQUEST] = MESSAGE_GAME_OVER
+    _put_word(expected, TEXT_LIFETIME_REQUEST, DEATH_MESSAGE_LIFETIME)
+    _run_gate(what, pokes, expected)
+
+
+def test_the_SECOND_flag_is_tested_before_the_THIRD():
+    """The case above pins only that $b08 comes first, because the death arm is unmistakable. This
+    one separates the other two, whose arms are otherwise easy to confuse: both spawn into
+    WB_SCENE_SPAWN_GATE_SLOT off WB_RECORD_PTR_10420 and both refuse a slot that is not free. With
+    both flags raised the STAGE arm runs, and what says so is that the slot is filled from
+    WB_ACTOR_TYPE35_TEMPLATE rather than with the align arm's hard-coded pair."""
+    what = "player_pending_event_gate stage before align"
+    pokes = _gate_pokes(what, {STAGE_ANIM_REQUEST_B0E: word(MARKER),
+                               ALIGN_REQUEST_B14: word(MARKER)})
+    image = harness.make_image(pokes)
+
+    expected = _record_copy_writes(image, SPAWN_GATE_SLOT, GATE_DESCRIPTOR, TYPE35_TEMPLATE,
+                                   into=_sfx_bytes(image, EVENT_SPAWN_SFX, SND_CHANNEL_A))
+    _run_gate(what, pokes, expected, psg_seed={PSG_REG_MIXER: PLAY_SONG_MIXER})
+
+
+# --- $b36: the death arm's ascent ---------------------------------------------------------------
+
+def _drift_at(image, cursor):
+    """The word the ascent reads, indexed the way the original does: the RAW cursor, sign-extended,
+    off WB_ACTOR_TYPE30_DRIFT and NOT masked first."""
+    at = (TYPE30_DRIFT + leaf.s16(cursor)) & wb("BUS_ADDR_MASK")
+    return int.from_bytes(image[at:at + WORD_BYTES], "big")
+
+
+# 0 and the last in-table index, the one that wraps, one PAST the table and one BELOW it.
+DRIFT_CURSORS = [0, 2, TYPE30_DRIFT_MASK - 1, TYPE30_DRIFT_MASK + 1, 0x80, 0xfffe]
+
+
+@pytest.mark.parametrize("cursor", DRIFT_CURSORS, ids=lambda v: f"cursor{v:#06x}")
+def test_the_dying_player_rises_one_pixel_and_sways_by_the_RAW_cursors_word(cursor):
+    """$b7a: `subq.w #1,2(a0)` then the drift added to (a0), and the cursor stepped and masked ONLY
+    on the way back to memory. The last three rows are what says the mask is on the STORE: an index
+    of $40, $80 or $fffe reads outside the 32 words the table has, and lands on a keyed byte that is
+    wrong for anywhere else it could have come from."""
+    what = f"player_pending_event_gate ascent cursor={cursor:#06x}"
+    pokes = _gate_pokes(what, {STAGE_RESET_BLOCK: word(MARKER),
+                               DEATH_DRIFT_CURSOR: word(cursor),
+                               ACTOR + ACTOR_X: word(ASCENT_X), ACTOR + ACTOR_Y: word(ASCENT_Y)})
+    image = harness.make_image(pokes)
+
+    expected = {}
+    _put_word(expected, ACTOR + ACTOR_Y, ASCENT_Y - DEATH_ASCENT_RISE)
+    _put_word(expected, ACTOR + ACTOR_X, (ASCENT_X + _drift_at(image, cursor)) & WORD_MASK)
+    _put_word(expected, DEATH_DRIFT_CURSOR,
+              (cursor + TYPE30_DRIFT_STRIDE) & TYPE30_DRIFT_MASK)
+    _run_gate(what, pokes, expected)
+
+
+def test_the_seeding_this_section_rests_on_covers_what_its_cases_actually_READ():
+    """TWO PREMISES, both of which a case can silently lose and neither of which
+    `leaf.assert_bands_are_seeded` can see, because it only checks the bands a case DECLARES.
+
+    The FIRST is the drift band's reach: `DRIFT_CURSORS` drives indexes outside the table on purpose,
+    and the largest of them must still land inside the keyed band — otherwise that row reads the
+    .PRG's own shipped word, the expected value is computed from the same unseeded byte, and a port
+    that mis-indexed into the gap would match. It cost exactly that: the band was 0x20 either side
+    and the $80 row read 0x20 bytes past its end.
+
+    The SECOND is that the scene descriptor is not the FOLLOWED record. Slot 12 of the default table
+    IS `WB_ACTOR_FOLLOWED_DEFAULT`, which the shared tail and much of the behaviour tier read."""
+    reach = TYPE30_DRIFT + max(leaf.s16(cursor) for cursor in DRIFT_CURSORS) + WORD_BYTES
+    assert DRIFT_BAND_LO <= TYPE30_DRIFT + min(leaf.s16(c) for c in DRIFT_CURSORS), (
+        "a case drives a NEGATIVE index that reaches below the keyed band")
+    assert reach <= DRIFT_BAND_LO + DRIFT_BAND_LEN, (
+        f"a case reads up to {reach:#x}, past the keyed band's end at "
+        f"{DRIFT_BAND_LO + DRIFT_BAND_LEN:#x} — that row's keying is decoration")
+    assert GATE_DESCRIPTOR != FOLLOWED_DEFAULT, (
+        "the case's scene descriptor sits on the followed record")
+    lo, length = GATE_DESCRIPTOR_BAND
+    assert not lo <= FOLLOWED_DEFAULT < lo + length, (
+        "the descriptor's keyed band covers the followed record")
+
+
+def test_the_ascents_own_table_is_the_one_slot_30_drifts_on_and_its_cursor_is_not():
+    """WB_DEATH_DRIFT_CURSOR is a SECOND phase over one table, which is the claim the row above
+    rests on. Both halves off the image: the two words are adjacent, and only these two instructions
+    name the gate's one."""
+    assert DEATH_DRIFT_CURSOR + WORD_BYTES == wb("ACTOR_TYPE30_CURSOR"), (
+        "the gate's cursor is not the word below slot 30's own")
+    named, _ = _absolute_operand_census(DEATH_DRIFT_CURSOR)
+    assert sorted(named) == [0xb7e, 0xb98], (
+        f"the gate's drift cursor is named by {[hex(at) for at in sorted(named)]}")
+
+
+def test_the_ascent_re_reads_the_camera_AFTER_its_own_two_stores():
+    """THE READ-AFTER-STORE, driven. `cmpi.w #$ffc0,$9936.l` is spelt twice — once at $b3e before
+    the rise and once at $b9e after it — and a port that kept the first answer would be
+    indistinguishable on every ordinary frame, because nothing the rise writes is the camera.
+
+    So the record is placed ON the camera pair: a0 = WB_SCROLL_FOLLOW_X, which makes `subq.w #1,2(a0)`
+    a decrement of WB_SCROLL_FOLLOW_Y itself. Seeded one above the top, the rise puts it EXACTLY at
+    WB_DEATH_ASCENT_TOP_Y and the second read then re-raises WB_STAGE_RESET_BLOCK — a write the
+    single-read port never makes.
+
+    RED FIRST: with `gate_death`'s second `be16` replaced by the first read's value, this case fails
+    on the missing $b08 write."""
+    what = "player_pending_event_gate ascent onto the camera"
+    camera = wb("SCROLL_FOLLOW_X")
+    pokes = _gate_pokes(what, {STAGE_RESET_BLOCK: word(MARKER),
+                               DEATH_DRIFT_CURSOR: word(0),
+                               camera: word(ASCENT_X), SCROLL_FOLLOW_Y: word(DEATH_ASCENT_TOP_Y + 1)})
+    image = harness.make_image(pokes)
+
+    expected = {}
+    _put_word(expected, SCROLL_FOLLOW_Y, DEATH_ASCENT_TOP_Y)          # `subq.w #1,2(a0)`
+    _put_word(expected, camera, (ASCENT_X + _drift_at(image, 0)) & WORD_MASK)
+    _put_word(expected, DEATH_DRIFT_CURSOR, TYPE30_DRIFT_STRIDE)
+    _put_word(expected, STAGE_RESET_BLOCK, DEATH_FLAG_SET)            # ...and the SECOND read's
+    _run_gate(what, pokes, expected, record=camera)
+
+
+def test_the_rise_spends_the_y_BEFORE_it_reads_the_drift_cursor():
+    """THE ORDER INSIDE THE RISE, driven the same way. `subq.w #1,2(a0)` runs first and
+    `move.w $4f58.l,d0` second, so a record placed two bytes BELOW the cursor makes the rise's own
+    decrement the thing the cursor read then sees.
+
+    Seeded at WB_DEATH_DRIFT_CURSOR + 1 step, the frame indexes the table at the step below and
+    stores back the step above THAT — a sequence the other order cannot produce.
+
+    THE STATE IT PROVES THIS ON IS ONE THE HARDWARE CANNOT REACH, and that is worth saying: the
+    `subq.w #1` always flips the cursor's parity, so `move.w 0(a1,d0.w)` fetches an ODD word, which
+    is an address error on a real 68000. Musashi and the port agree about it and the ORDER the case
+    pins is real, but the placement is a differential's, not a frame's — the same standing as this
+    battery's odd-cursor silence."""
+    what = "player_pending_event_gate ascent onto its own cursor"
+    record = DEATH_DRIFT_CURSOR - WORD_BYTES
+    seeded = 2 * TYPE30_DRIFT_STRIDE
+    pokes = _gate_pokes(what, {STAGE_RESET_BLOCK: word(MARKER),
+                               DEATH_DRIFT_CURSOR: word(seeded),
+                               record: word(ASCENT_X)})
+    image = harness.make_image(pokes)
+    spent = seeded - DEATH_ASCENT_RISE
+
+    expected = {}
+    _put_word(expected, record, (ASCENT_X + _drift_at(image, spent)) & WORD_MASK)
+    _put_word(expected, DEATH_DRIFT_CURSOR,
+              (spent + TYPE30_DRIFT_STRIDE) & TYPE30_DRIFT_MASK)
+    _run_gate(what, pokes, expected, record=record)
+
+
+@pytest.mark.parametrize("lives,message", [(0, "MESSAGE_GAME_OVER"), (1, "MESSAGE_CONTINUE"),
+                                           (0xffff, "MESSAGE_CONTINUE")],
+                         ids=["no-lives", "one-life", "all-ones"])
+def test_the_frame_the_ascent_tops_out_posts_the_message_WB_LIVES_chooses(lives, message):
+    """$b4a..$b76. The default is the one with no continue in it and only a NONZERO count replaces
+    it, which is why $ffff takes the same arm as 1: `tst.w` is a test against zero, not a sign."""
+    what = f"player_pending_event_gate top-out lives={lives:#06x}"
+    pokes = _gate_pokes(what, {STAGE_RESET_BLOCK: word(MARKER),
+                               SCROLL_FOLLOW_Y: word(DEATH_ASCENT_TOP_Y), LIVES: word(lives)})
+    expected = {}
+    _put_word(expected, STATE_FLAG_A34, STATE_FLAG_SET)
+    _put_word(expected, DEATH_MESSAGE_POSTED_B0A, GATE_FLAG_SET)
+    expected[TEXT_REQUEST] = globals()[message]
+    _put_word(expected, TEXT_LIFETIME_REQUEST, DEATH_MESSAGE_LIFETIME)
+    _run_gate(what, pokes, expected)
+
+
+@pytest.mark.parametrize("name,message", [("game-over", "MESSAGE_GAME_OVER"),
+                                          ("continue", "MESSAGE_CONTINUE")])
+def test_the_two_messages_the_gate_posts_are_the_ones_the_shipped_strings_name(name, message):
+    """The ids are 1-based into WB_TEXT_MESSAGE_TABLE, so which sentence each one is can be read off
+    the image rather than claimed. They are the SAME sentence with and without a way out of it, which
+    is what makes getting them the wrong way round invisible in a write-set compare."""
+    text = _shipped_message_text(globals()[message])
+    assert b"game over" in text.lower(), f"message {globals()[message]:#x} reads {text!r}"
+    assert (b"continue" in text.lower()) == (name == "continue"), (
+        f"message {globals()[message]:#x} is the wrong one of the pair: {text!r}")
+
+
+# --- $bbe: the prompt, and two of the three unwinds ----------------------------------------------
+
+def _prompt_pokes(what, *, box, expired=0, lives=0, fire=False, fields=None):
+    """A frame with the ascent already topped out, so the gate is in its prompt."""
+    seeds = {STAGE_RESET_BLOCK: word(MARKER),
+             DEATH_MESSAGE_POSTED_B0A: word(MARKER),
+             DEATH_BOX_EXPIRED_B0C: word(expired),
+             TEXT_BOX_ACTIVE: bytes([1 if box else 0]),
+             LIVES: word(lives),
+             JOY1_STATE: bytes([(1 << JOY1_FIRE_BIT) if fire else 0])}
+    seeds.update(fields or {})
+    return _gate_pokes(what, seeds)
+
+
+def test_the_frame_the_box_comes_down_latches_the_word_that_ends_the_game():
+    """$bd0. Nothing else happens on it — the box is down, WB_DEATH_BOX_EXPIRED_B0C goes up, and the
+    frame after this one is the data-disk prompt."""
+    what = "player_pending_event_gate prompt box down"
+    pokes = _prompt_pokes(what, box=False)
+    expected = {}
+    _put_word(expected, DEATH_BOX_EXPIRED_B0C, GATE_FLAG_SET)
+    _run_gate(what, pokes, expected)
+
+
+@pytest.mark.parametrize("box", [False, True], ids=["box-down", "box-up"])
+def test_the_latched_frame_leaves_through_the_data_disk_unwind(box):
+    """WB_PLAYER_GATE_DATADISK_UNWIND: `lea 4(a7),a7 / jmp $e494.l` at $bd8, ONE return address
+    discarded. The oracle is stopped at the `jmp` and witnessed by the `lea`, which no other path
+    executes — and the `lea` writes no memory, so the image compared is the one at the transfer.
+
+    THE ARM WRITES NOTHING AT ALL, which is what makes the witness load-bearing here rather than
+    decorative: without it the case would pass on a run that simply returned.
+
+    THE `box-up` ROW IS WHAT ORDERS THE TWO TESTS. `tst.w $b0c.w` at $bbe runs BEFORE
+    `tst.b $c031.l` at $bc6, so a latched word leaves for the disk prompt even while a box is on
+    screen — where the other order would ask the continue prompt instead."""
+    what = f"player_pending_event_gate prompt expired box={box}"
+    pokes = _prompt_pokes(what, box=box, expired=MARKER, lives=2, fire=True)
+    _run_gate(what, pokes, {}, exit_code=GATE_EXIT_DATADISK,
+              stop_pc=GATE_DATADISK_SITE, via=GATE_DATADISK_TAKEN_AT)
+
+
+@pytest.mark.parametrize("lives,fire", [(0, True), (0, False), (2, False)],
+                         ids=["no-lives-firing", "no-lives-idle", "lives-not-firing"])
+def test_the_prompt_waits_while_either_half_of_its_question_is_unanswered(lives, fire):
+    """$be4's two gates: a life LEFT and FIRE HELD, and the frame does nothing at all until both are
+    true. The first row is the one that matters — fire on a spent game is refused."""
+    what = f"player_pending_event_gate prompt lives={lives} fire={fire}"
+    _run_gate(what, _prompt_pokes(what, box=True, lives=lives, fire=fire), {})
+
+
+def test_fire_on_the_prompt_spends_a_life_costs_the_armour_and_unwinds():
+    """WB_PLAYER_GATE_RESTART_UNWIND, and the whole of what the frame does on the way out: the
+    message primer, WB_LIVES spent, `game_life_restart_reset`'s own write set, the form word forced
+    to WB_PLAYER_POSTURE_STATE_ONE, WB_LEVEL_SEQ_INDEX stepped BACK and
+    WB_LIFE_RESTART_ENTRY_C26 raised for the level entry to read.
+
+    THE FORM WORD IS THE POINT. `move.w #$1,$21e4.l` at $c06 is the image's only absolute-LONG write
+    of it, which is the site an encoding-blind census missed for three batches — and it lands between
+    the restart call and the unwind, so LOSING A LIFE COSTS THE ARMOUR.
+
+    `game_life_restart_reset` is modelled against the image AS THE GATE LEAVES IT, because the
+    `subq.w #1,$be2.w` above the call is what decides how many life icons get drawn."""
+    what = "player_pending_event_gate prompt firing"
+    lives, sequence = 3, 7
+    pokes = _prompt_pokes(what, box=True, lives=lives, fire=True,
+                          fields={LEVEL_SEQ_INDEX: word(sequence)})
+    pokes = leaf.overlay(_reset_pokes(case_salt(what), lives), _gate_body_layer(), pokes)
+    image = bytearray(harness.make_image(pokes))
+    image[LIVES:LIVES + WORD_BYTES] = word(lives - 1)          # the gate's own `subq.w`
+
+    expected = dict(_life_reset_writes(bytes(image)))
+    expected[TEXT_REQUEST] = TEXT_REQUEST_PRIMED
+    _put_word(expected, LIVES, lives - 1)
+    _put_word(expected, EFFECT_STATE_21E4, POSTURE_STATE_ONE)
+    _put_word(expected, LEVEL_SEQ_INDEX, sequence - 1)
+    _put_word(expected, LIFE_RESTART_ENTRY_C26, GATE_FLAG_SET)
+    _run_gate(what, pokes, expected, exit_code=GATE_EXIT_RESTART,
+              stop_pc=GATE_RESTART_SITE, via=GATE_RESTART_TAKEN_AT,
+              cap=PENDING_GATE_CAP + GAME_RESET_INSN_CAP, poison=False)
+
+
+def test_the_word_the_restart_raises_is_read_where_the_unwind_lands():
+    """WB_LIFE_RESTART_ENTRY_C26 is DATA INSIDE THE GATE'S OWN CODE, and its readers are in the band
+    the unwind jumps into: `tst.w $c26.w` at $e5e4 skips one byte of level setup while it is raised,
+    and `clr.w $c26.w` at $e6ec puts it back down. Three sites, no fourth."""
+    named, other = _absolute_operand_census(LIFE_RESTART_ENTRY_C26)
+    assert named == {0xc14: 0x33fc, 0xe5e4: 0x4a78, 0xe6ec: 0x4278}, (
+        f"the restart word is named by { {hex(a): hex(o) for a, o in sorted(named.items())} }")
+    assert not other, f"unclassified candidates: {[hex(a) for a in sorted(other)]}"
+    assert leaf.entry_of("show_data_disk_prompt") < 0xe5e4 < leaf.entry_of("load_resource_by_index")
+
+
+# --- $c28: the stage-animation arm ---------------------------------------------------------------
+
+def test_the_stage_arm_does_nothing_but_the_tail_until_its_animation_finishes():
+    """`tst.w $b10.w / beq.s $bb0` — and this is the ONE case here that runs
+    `player_stage_transition` for real, because the latch it would return on is the very word this
+    arm is waiting for. So the write set is that routine's arm-1 model and nothing of the gate's."""
+    what = "player_pending_event_gate stage arm waiting"
+    cursor = 2 * ANIM_FRAME_BYTES
+    pokes = _gate_pokes(what, {STAGE_ANIM_REQUEST_B0E: word(MARKER),
+                               STAGE_ANIM_DONE_B10: word(0),
+                               EFFECT_STATE_21E4: word(0),
+                               TRANSITION_CURSOR: word(cursor)})
+    image = harness.make_image(pokes)
+
+    expected = {}
+    frame_at = TRANSITION_CURSOR + WORD_BYTES + cursor
+    _put_word(expected, ACTOR + ACTOR_SPRITE,
+              int.from_bytes(image[frame_at:frame_at + WORD_BYTES], "big"))
+    _put_word(expected, TRANSITION_CURSOR, cursor + ANIM_FRAME_BYTES)
+    _run_gate(what, pokes, expected)
+
+
+def test_the_stage_arm_refuses_a_slot_that_is_not_free_and_writes_nothing():
+    """`cmpi.w #$ffbe,$998c.l / bne.w $bb0` — a TEST of the free marker and never a raise.
+
+    THE TAIL IS UNOBSERVABLE ON THIS ARM, which is why the case does not claim it. Reaching the
+    refusal at all requires WB_STAGE_ANIM_DONE_B10 nonzero (`tst.w $b10.w / beq.s $bb0` at $c28 is
+    above it), and that latch is `player_stage_transition`'s own first test — so the tail is an `rts`
+    here whatever calls it, and `return WB_PLAYER_GATE_FRAME_SKIPPED` in place of the tail call is an
+    EQUIVALENT mutant. That is a property of the original, not a gap in the port: the align arm's
+    identical refusal, where the tail IS observable, is the case that pins the difference between the
+    two endings. ../STATUS.md records the silence."""
+    what = "player_pending_event_gate stage arm slot taken"
+    pokes = _gate_pokes(what, {STAGE_ANIM_REQUEST_B0E: word(MARKER),
+                               SPAWN_GATE_SLOT + ACTOR_X: word(MARKER)})
+    _run_gate(what, pokes, {})
+
+
+def test_the_stage_arm_spawns_the_event_actor_through_the_composition_it_names():
+    """$c42..$c62: effect WB_EVENT_SPAWN_SFX on channel A, then `lea $998c.l,a2 / lea $537e.l,a1 /
+    bsr.w $539e` — a2 the DESTINATION and a1 the TEMPLATE, in that order. The copy's own model comes
+    from the rows above, so a port that swapped the two reddens on the destination's bytes."""
+    what = "player_pending_event_gate stage arm spawning"
+    pokes = _gate_pokes(what, {STAGE_ANIM_REQUEST_B0E: word(MARKER)})
+    image = harness.make_image(pokes)
+
+    expected = _record_copy_writes(image, SPAWN_GATE_SLOT, GATE_DESCRIPTOR, TYPE35_TEMPLATE,
+                                   into=_sfx_bytes(image, EVENT_SPAWN_SFX, SND_CHANNEL_A))
+    _run_gate(what, pokes, expected, psg_seed={PSG_REG_MIXER: PLAY_SONG_MIXER})
+
+
+
+
+# The two sub-arms below run the WHOLE spawn tree, so their seeding, their allowed band and their
+# models come from the battery that owns it rather than from `_gate_pokes`. What these cases are
+# about is the three instructions BELOW the `bsr.w $19ac`.
+from test_scene import (DESCRIPTOR as SCENE_DESCRIPTOR,   # noqa: E402
+                        SPAWN_CAP, SPAWN_OWN_BYTES, START_RECORD_SPEECH,
+                        load_window_bytes, spawn_pokes, spawn_start_record, speech_seeds)
+
+SCENE_KIND = wb("SCENE_KIND")
+SPAWN_UNNAMED_KIND = 3          # not 1, 2 or 4 — the kind ladder's fall-through
+
+
+def _gate_over(seeds):
+    """Another battery's seeds with the gate's own words on top and its BODY re-planted between —
+    the second arm raised, the other two flags down, and the animation reported finished."""
+    gate = {STAGE_RESET_BLOCK: word(0), STAGE_ANIM_REQUEST_B0E: word(MARKER),
+            STAGE_ANIM_DONE_B10: word(MARKER), EVENT_ANIM_DONE_B12: word(MARKER),
+            ALIGN_REQUEST_B14: word(0)}
+    return leaf.overlay(seeds, _gate_body_layer(), gate)
+
+
+def test_the_finished_event_disarms_BOTH_words_of_one_longword_clear():
+    """`clr.l $b0e.w` at $c6a takes WB_STAGE_ANIM_DONE_B10 down WITH WB_STAGE_ANIM_REQUEST_B0E and
+    names neither the second word nor the fact that it is a clear at all — the class this routine
+    spells twice. Both halves are in the model and both are seeded NONZERO, so a port that cleared
+    only the word the instruction names reddens on the other.
+
+    Everything `scene_spawn_from_script` writes is declared SELF-CHECKED: test_scene.py is what pins
+    the tree's own write set, and the byte-for-byte diff every case here makes still covers it."""
+    what = "player_pending_event_gate stage arm finishing"
+    seeds, start = speech_seeds(what)
+    pokes = _gate_over(seeds)
+
+    expected = {}
+    _put_long(expected, STAGE_ANIM_REQUEST_B0E, 0)     # ...which is $b0e AND $b10
+    _put_word(expected, EVENT_ANIM_DONE_B12, 0)
+    # THE CLEAR TAKES THE LATCH DOWN UNDER THE SHARED TAIL, which is a real property of this arm and
+    # not an artefact of the seeding: `player_stage_transition` returns at once while
+    # WB_STAGE_ANIM_DONE_B10 is up, and this is the one path in the routine that lowers it BEFORE
+    # calling. So the tail runs for real and publishes a sprite, which the assertion below requires.
+    sprite = {ACTOR + ACTOR_SPRITE, ACTOR + ACTOR_SPRITE + 1}
+    tree = SPAWN_OWN_BYTES | load_window_bytes(start) | sprite
+    info = _run_gate(what, pokes, expected, cap=PENDING_GATE_CAP + SPAWN_CAP, poison=False,
+                     psg_seed={PSG_REG_MIXER: PLAY_SONG_MIXER},
+                     extra_band=merge_bands(tree), self_checked=tree, d7_high=0)
+    assert sprite <= set(program_writes(info)), (
+        f"{what}: the tail did not publish a sprite, so it returned on a latch this arm had already "
+        f"cleared")
+
+
+def test_a_spawn_tree_that_never_returns_leaves_everything_below_the_call_unrun():
+    """WB_PLAYER_GATE_SCENE_LEFT. `scene_spawn_from_script` pushes a0 at its first instruction and
+    only its three arms pop it, so a descriptor whose kind the ladder does not name returns THROUGH
+    that saved a0 — an original defect test_scene.py found and pins. The gate cannot follow it, so it
+    reports that the call left and says nothing about WHICH of the callee's three endings it was:
+    the checkpoint is the callee's own `rts` at $19e0 and the witness is the `bsr.w $19ac` at $c66,
+    which no other path in this routine executes.
+
+    THE THREE INSTRUCTIONS BELOW THE CALL MUST NOT HAVE RUN, and that is what the write set says: the
+    only byte written is the free marker the tree's own head plants, so neither longword clear
+    happened."""
+    what = "player_pending_event_gate stage arm scene left"
+    start = spawn_start_record(START_RECORD_SPEECH)
+    pokes = _gate_over(spawn_pokes(what, start,
+                                   words=((SCENE_DESCRIPTOR + SCENE_KIND, SPAWN_UNNAMED_KIND),)))
+
+    expected = {}
+    _put_word(expected, SPAWN_GATE_SLOT, ACTOR_FREE_MARKER)
+    _run_gate(what, pokes, expected, exit_code=GATE_EXIT_SCENE_LEFT,
+              cap=PENDING_GATE_CAP + SPAWN_CAP, poison=False,
+              psg_seed={PSG_REG_MIXER: PLAY_SONG_MIXER},
+              stop_pc=GATE_SCENE_LEFT_SITE, via=GATE_SCENE_CALL_AT)
+
+
+# --- $c76: the scene-align arm, the event pair and the last unwind -------------------------------
+
+def test_the_align_arms_refusal_skips_the_frame_WITHOUT_the_shared_tail():
+    """THE ASYMMETRY between the two arms that test the same word. `cmpi.w #$ffbe,$998c.l / bne.w
+    $d22` at $c7e sends a taken slot to `move.w #$ffff,d7 / rts` with NO `bsr.w $1f54` above it,
+    where the stage arm's identical refusal at $c3e goes to the shared tail and does get one.
+
+    Nothing is written either way, so the write set cannot tell them apart: the claim is the
+    NEGATIVE coverage one, that $bb0 did not execute."""
+    what = "player_pending_event_gate align arm slot taken"
+    # WB_STAGE_ANIM_DONE_B10 IS SEEDED DOWN HERE, where every other case raises it: with the latch up
+    # `player_stage_transition` is an `rts` and calling it or not is invisible on both sides, so the
+    # negative coverage claim below would pin the ORIGINAL and nothing about the port. Down, the tail
+    # publishes a sprite — so a port that reached it writes a byte the original does not.
+    pokes = _gate_pokes(what, {ALIGN_REQUEST_B14: word(MARKER),
+                               STAGE_ANIM_DONE_B10: word(0),
+                               SPAWN_GATE_SLOT + ACTOR_X: word(MARKER)})
+    _run_gate_claiming_tail_not_reached(what, pokes, {})
+
+
+def _event_pair_first_record_writes(image, position):
+    """Everything the align arm writes BEFORE it reads the position longword a second time: the two
+    sound models, WB_STATE_FLAG_A34, and slot 0's three fields.
+
+    STOP FIRST, THEN THE TRIGGER, in the order the arm calls them — `snd_stop_all_sfx` clears the
+    three active flags as ONE longword and the trigger then raises channel A's again, so a model
+    that applied the two sets the other way round would expect a zero the arm never leaves behind.
+    That ordering rule lives here once rather than in a comment above each copy of the block."""
+    expected = _flatten(STOP_WRITES)
+    expected.update(_sfx_bytes(image, EVENT_SPAWN_SFX, SND_CHANNEL_A))
+    _put_word(expected, STATE_FLAG_A34, STATE_FLAG_SET)
+    _put_long(expected, TABLE_DEFAULT, position)
+    _put_word(expected, TABLE_DEFAULT + ACTOR_TYPE, 0)
+    _put_word(expected, TABLE_DEFAULT + ACTOR_SPRITE, EVENT_PAIR_SPRITE_INERT)
+    return expected
+
+
+@pytest.mark.parametrize("spawn_type,type_word,sprite",
+                         [(0, "EVENT_PAIR_TYPE_RISER", "EVENT_PAIR_SPRITE_RISER"),
+                          (1, "EVENT_PAIR_TYPE_ANIMATOR", "EVENT_PAIR_SPRITE_ANIMATOR"),
+                          (0xffff, "EVENT_PAIR_TYPE_ANIMATOR", "EVENT_PAIR_SPRITE_ANIMATOR")],
+                         ids=["riser", "animator", "animator-all-ones"])
+def test_the_align_arm_fills_a_PAIR_of_records_out_of_the_descriptor(spawn_type, type_word, sprite):
+    """$c8a..$cec, and there is no template anywhere in it: slot 0 gets a type-0 record showing
+    WB_EVENT_PAIR_SPRITE_INERT and slot 1 gets the riser or the animator, both positioned from the
+    descriptor's own WB_SCENE_TRIGGER_X and _SPAWN_Y as one longword.
+
+    THE SECOND RECORD'S TWO WORDS ARE STORED TWICE when the descriptor asks for the animator — the
+    riser's pair first and overwritten in place — which the ledger records as one final value. The
+    rows say which pair survives; `test_the_align_arm_re_reads_the_position` below is what says the
+    LONGWORD is re-read rather than kept."""
+    what = f"player_pending_event_gate align spawn type={spawn_type:#06x}"
+    pokes = _gate_pokes(what, {ALIGN_REQUEST_B14: word(MARKER),
+                               GATE_DESCRIPTOR + TRIGGER_SPAWN_TYPE: word(spawn_type)})
+    image = harness.make_image(pokes)
+    position = _image_long(image, GATE_DESCRIPTOR + EVENT_PAIR_POSITION)
+
+    expected = _event_pair_first_record_writes(image, position)
+    _put_long(expected, SPAWN_GATE_SLOT, position)
+    _put_word(expected, SPAWN_GATE_SLOT + ACTOR_TYPE, globals()[type_word])
+    _put_word(expected, SPAWN_GATE_SLOT + ACTOR_SPRITE, globals()[sprite])
+    _run_gate(what, pokes, expected, psg_seed={PSG_REG_MIXER: PLAY_SONG_MIXER})
+
+
+def test_the_align_arm_re_reads_the_position_longword_for_the_second_record():
+    """THE SECOND READ-AFTER-STORE. `move.l 2(a1),(a2)` is spelt twice with the FIRST record's three
+    stores between them, and a1 is the descriptor pointer the image supplies — so the descriptor
+    lying ON slot 0 is the arrangement in which the two reads differ. Here it does: the first copy
+    lands on the descriptor's own +2 longword, so the second read takes back what the first wrote.
+
+    RED FIRST: with the longword hoisted into a local, slot 1 gets the ORIGINAL position and this
+    case reddens on four bytes.
+
+    AND IT CATCHES A SECOND ONE FOR FREE. WB_SCENE_TRIGGER_SPAWN_TYPE is offset 6, which is
+    WB_ACTOR_SPRITE — so `tst.w 6(a1)` reads the very word `move.w #$1a9,6(a2)` has just stored.
+    The case seeds it ZERO and still gets the ANIMATOR, because the arm's own store is what the
+    branch then reads."""
+    what = "player_pending_event_gate align descriptor on slot 0"
+    pokes = _gate_pokes(what, {ALIGN_REQUEST_B14: word(MARKER),
+                               TABLE_DEFAULT + TRIGGER_SPAWN_TYPE: word(0)},
+                        descriptor=TABLE_DEFAULT)
+    image = harness.make_image(pokes)
+    first = _image_long(image, TABLE_DEFAULT + EVENT_PAIR_POSITION)
+
+    expected = _event_pair_first_record_writes(image, first)
+    # ...and the SECOND read, off the record the three writes above have just changed: +2 of it is
+    # now the low half of the position longword and the type word the `clr.w` zeroed.
+    after = bytearray(image)
+    after[TABLE_DEFAULT:TABLE_DEFAULT + LONGWORD_BYTES] = first.to_bytes(LONGWORD_BYTES, "big")
+    after[TABLE_DEFAULT + ACTOR_TYPE:TABLE_DEFAULT + ACTOR_TYPE + WORD_BYTES] = word(0)
+    after[TABLE_DEFAULT + ACTOR_SPRITE:TABLE_DEFAULT + ACTOR_SPRITE + WORD_BYTES] = word(
+        EVENT_PAIR_SPRITE_INERT)
+    second = _image_long(bytes(after), TABLE_DEFAULT + EVENT_PAIR_POSITION)
+    assert second != first, "the case's placement does not make the two reads differ"
+
+    _put_long(expected, SPAWN_GATE_SLOT, second)
+    # ...and the ANIMATOR's pair, from a descriptor whose spawn-type word was seeded ZERO: the arm's
+    # own `move.w #$1a9,6(a2)` is what the `tst.w 6(a1)` below it reads.
+    assert _image_long(image, TABLE_DEFAULT + TRIGGER_SPAWN_TYPE - WORD_BYTES) & WORD_MASK == 0, (
+        "the case did not seed the descriptor's spawn-type word to zero, so the second store is "
+        "not what flips the branch")
+    _put_word(expected, SPAWN_GATE_SLOT + ACTOR_TYPE, EVENT_PAIR_TYPE_ANIMATOR)
+    _put_word(expected, SPAWN_GATE_SLOT + ACTOR_SPRITE, EVENT_PAIR_SPRITE_ANIMATOR)
+    # POISON OFF, and for this case's own reason rather than the composed cases': the descriptor IS
+    # the modelled destination, so pre-poisoning the bytes the oracle wrote changes the very longword
+    # the SECOND read is supposed to pick up and the attribution pass would be re-deriving `second`
+    # from bytes no run produced.
+    _run_gate(what, pokes, expected, psg_seed={PSG_REG_MIXER: PLAY_SONG_MIXER}, poison=False)
+
+
+def test_the_align_arm_waits_for_the_animation_it_started():
+    """`tst.w $b18.w / beq.w $bb0` at $cf0: WB_EVENT_ANIM_DONE_B16 is up, so the spawn is behind it,
+    and until `player_stage_transition` raises WB_STAGE_ANIM_DONE_B18 the arm is the tail alone."""
+    what = "player_pending_event_gate align waiting on the animation"
+    pokes = _gate_pokes(what, {ALIGN_REQUEST_B14: word(MARKER),
+                               EVENT_ANIM_DONE_B16: word(MARKER)})
+    _run_gate(what, pokes, {})
+
+
+def test_the_event_ending_without_a_stage_advance_raises_the_word_only_e032_reads():
+    """$cf8..$d1a. The box comes down, `clr.l $b14.w` takes WB_EVENT_ANIM_DONE_B16 with
+    WB_SCENE_ALIGN_REQUEST_B14 as the longword's low half, WB_STAGE_ANIM_DONE_B18 is cleared on its
+    own, and with no advance pending WB_EVENT_FINISHED_E1BE goes up.
+
+    AND THE ANSWER IS $d22's, NOT $bb0's — this ending has no `bsr.w $1f54` above it either, which
+    the negative coverage claim below is what says."""
+    what = "player_pending_event_gate event finished, no advance"
+    # ...and the latch DOWN again, for the reason the refusal case above spells out: with it up the
+    # shared tail writes nothing and "did not call it" is not a claim about this port at all.
+    pokes = _gate_pokes(what, {ALIGN_REQUEST_B14: word(MARKER),
+                               STAGE_ANIM_DONE_B10: word(0),
+                               EVENT_ANIM_DONE_B16: word(MARKER),
+                               STAGE_ANIM_DONE_B18: word(MARKER),
+                               TEXT_BOX_ACTIVE: bytes([MARKER]),
+                               STAGE_ADVANCE_REQUEST: word(0)})
+    expected = {TEXT_BOX_ACTIVE: 0}
+    _put_long(expected, ALIGN_REQUEST_B14, 0)          # ...which is $b14 AND $b16
+    _put_word(expected, STAGE_ANIM_DONE_B18, 0)
+    _put_word(expected, EVENT_FINISHED_E1BE, GATE_FLAG_SET)
+    # ...and the premise is asked about the state at the point the tail WOULD be called, which is
+    # after this arm's own three clears rather than at the gate's entry.
+    _run_gate_claiming_tail_not_reached(what, pokes, expected,
+                                        after={ALIGN_REQUEST_B14: word(0) + word(0),
+                                               STAGE_ANIM_DONE_B18: word(0)})
+
+
+def test_the_event_ending_WITH_a_stage_advance_takes_the_collision_maps_triple_pop():
+    """THE THIRD UNWIND, and it is not a second exit but the SAME instruction: `bra.w $1622` at $d16
+    branches into `player_run_map_cell`'s own `lea 12(a7),a7 / jmp $e5ba.l` — no call, no code of
+    that routine run — so this arm reaches the identical triple pop and reports the identical
+    WB_PLAYER_COLLIDE_UNWIND. The checkpoint is therefore $151a's own UNWIND_SITE and the witness is
+    the `bra.w`, which is the one instruction on this path that no tile-$39 frame executes."""
+    what = "player_pending_event_gate event finished, advancing"
+    pokes = _gate_pokes(what, {ALIGN_REQUEST_B14: word(MARKER),
+                               EVENT_ANIM_DONE_B16: word(MARKER),
+                               STAGE_ANIM_DONE_B18: word(MARKER),
+                               TEXT_BOX_ACTIVE: bytes([MARKER]),
+                               STAGE_ADVANCE_REQUEST: word(MARKER)})
+    expected = {TEXT_BOX_ACTIVE: 0}
+    _put_long(expected, ALIGN_REQUEST_B14, 0)
+    _put_word(expected, STAGE_ANIM_DONE_B18, 0)
+    _put_word(expected, STAGE_ADVANCE_REQUEST, 0)
+    _run_gate(what, pokes, expected, exit_code=EXIT_UNWIND,
+              stop_pc=UNWIND_SITE, via=GATE_COLLIDE_TAKEN_AT)
+
+
+# --- what the body is, beyond what any run reaches -----------------------------------------------
+
+GATE_DEAD_PAIR = 0xbba          # `clr.w d7 / rts`
+GATE_DEAD_PAIR_BYTES = 4
+
+
+def test_the_gates_own_dead_pair_is_reached_by_nothing_in_the_image():
+    """FOUR BYTES OF THE 526 ARE UNREACHABLE, and they are counted in the partition rather than
+    trimmed off it — the same standing as $1f34's dead `rts`. Both halves: the bytes really are
+    `clr.w d7 / rts`, and no instruction of ANY form aims at them.
+
+    They are also the only place in the image that answers the gate's question with a WORD clear
+    where every live path uses `clr.l` or `move.w #$ffff` — so what was cut is a THIRD answer."""
+    assert bytes(harness.BASE_IMAGE[GATE_DEAD_PAIR:GATE_DEAD_PAIR + GATE_DEAD_PAIR_BYTES]) == (
+        clr_w_dn(D7) + RTS)
+    assert GATE_DEAD_PAIR not in CONTROL_FLOW_TARGETS, (
+        f"$bba is named by {[hex(at) for at in CONTROL_FLOW_TARGETS[GATE_DEAD_PAIR]]}")
+    assert GATE_DEAD_PAIR not in PC_RELATIVE_SOURCE_TARGETS, "$bba is read PC-relatively"
+
+
+GATE_LONGWORD_DISARMS = [("stage", STAGE_ANIM_REQUEST_B0E, STAGE_ANIM_DONE_B10, 0xc6a),
+                         ("event", ALIGN_REQUEST_B14, EVENT_ANIM_DONE_B16, 0xcfe)]
+
+
+@pytest.mark.parametrize("name,named,unnamed,at", GATE_LONGWORD_DISARMS,
+                         ids=[c[0] for c in GATE_LONGWORD_DISARMS])
+def test_each_longword_clear_takes_the_word_its_instruction_does_not_name(name, named, unnamed, at):
+    """The structural half of the two cases above: the second word really is the longword's low half,
+    and the instruction at that address really is a `clr.l <abs>.w`. Without this the pair could
+    drift apart in the header and both differential cases would keep passing on the new addresses."""
+    assert unnamed == named + WORD_BYTES, (
+        f"{unnamed:#x} is not the low half of the longword at {named:#x}")
+    assert bytes(harness.BASE_IMAGE[at:at + len(clr_l_abs_w(named))]) == clr_l_abs_w(named), (
+        f"{at:#x} is not `clr.l {named:#x}.w`")
+
+
+def test_the_two_checkpointed_unwinds_are_the_two_the_pin_table_above_holds():
+    """The gate's two DIRECT unwinds are the two `GATE_UNWIND_EXITS` keys, so the case that decodes
+    the pops and the cases that stop the oracle at them are about the same two instructions.
+
+    Whether each pops exactly one return address, and whether the third is $151a's triple pop, is
+    `test_the_gate_leaves_through_THREE_stack_unwinds_and_one_of_them_is_not_its_own`'s — one owner
+    for `GATE_UNWIND_EXITS` rather than two loops that can drift."""
+    assert sorted(GATE_UNWIND_EXITS) == [GATE_DATADISK_TAKEN_AT, GATE_RESTART_TAKEN_AT]
+    for taken_at, site in ((GATE_DATADISK_TAKEN_AT, GATE_DATADISK_SITE),
+                           (GATE_RESTART_TAKEN_AT, GATE_RESTART_SITE)):
+        assert site == taken_at + len(lea_d16(A7, UNWIND_ONE_BYTES)), (
+            f"the checkpoint at {site:#x} is not the instruction after the pop at {taken_at:#x}")

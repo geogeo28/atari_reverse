@@ -38,6 +38,7 @@
 #include "input.h"
 #include "map.h"
 #include "stage.h"          /* $dfbe's tail IS stage_load_window */
+#include "text.h"           /* the id + lifetime pair every arm here posts through */
 
 /* $ddf2..$ddfe and $de68..$de74 — the table is read out of the IMAGE and the call goes to the C.
  * The order matches WB_EFFECT_HANDLER_TABLE's own longwords, which test/test_scene.py compares
@@ -78,13 +79,6 @@ static uint32_t scene_run_effect(uint8_t *image, uint16_t index, uint32_t record
         && index < WB_EFFECT_HANDLER_PUSH_FIRST + WB_EFFECT_HANDLER_PUSH_COUNT)
         return be32(image + WB_EFFECT_RECORD_WRITE_PTR);
     return record;
-}
-
-/* The one way any arm posts a message: an id byte and a lifetime word, the pair every writer of
- * WB_TEXT_REQUEST in this routine spells. */
-static void scene_post_message(uint8_t *image, uint8_t id, uint16_t lifetime) {
-    image[WB_TEXT_REQUEST] = id;
-    wr16(image + WB_TEXT_LIFETIME_REQUEST, lifetime);
 }
 
 static void scene_bump_word(uint8_t *image, uint32_t addr) {
@@ -272,7 +266,7 @@ static uint32_t scene_run_speech(uint8_t *image) {
     if ((int8_t)image[cursor] < 0)
         return scene_reload_and_report(image);
 
-    scene_post_message(image, image[cursor], WB_SPEECH_LIFETIME);
+    text_post_message_for(image, image[cursor], WB_SPEECH_LIFETIME);
     wr32(image + WB_SPEECH_SCRIPT_CURSOR, addr_add(cursor, 1));
     return WB_SCENE_EXIT_RETURN;
 }
@@ -300,7 +294,7 @@ static uint32_t scene_run_greeting(uint8_t *image) {
     else
         id = be16(image + addr_add(record, WB_SHOP_GREET_MSG_LATER));
 
-    scene_post_message(image, (uint8_t)id, WB_TEXT_LIFETIME_DEFAULT);
+    text_post_message_for(image, (uint8_t)id, WB_TEXT_LIFETIME_DEFAULT);
     scene_bump_word(image, addr_add(record, WB_SHOP_GREET_COUNT));
     return scene_spend_visit_budget(image, record, WB_SHOP_MESSAGE_COST);
 }
@@ -323,7 +317,7 @@ static uint32_t scene_run_farewell(uint8_t *image) {
      * id, which is why the vector page does not appear here at all: the two arms are observably
      * one. wonderboy.h's WB_VECTOR_LINE_F records the instruction; the greeting arm above is where
      * the same slip does change what is posted. */
-    scene_post_message(image, id, WB_TEXT_LIFETIME_DEFAULT);
+    text_post_message_for(image, id, WB_TEXT_LIFETIME_DEFAULT);
     scene_bump_word(image, addr_add(record, WB_SHOP_FAREWELL_COUNT));
     return scene_spend_visit_budget(image, record, WB_SHOP_MESSAGE_COST);
 }
@@ -362,7 +356,7 @@ static uint32_t scene_run_purchase(uint8_t *image, uint32_t price_field, uint32_
     else
         id = be16(image + addr_add(record, repeat_id_field));
 
-    scene_post_message(image, (uint8_t)id, WB_TEXT_LIFETIME_DEFAULT);
+    text_post_message_for(image, (uint8_t)id, WB_TEXT_LIFETIME_DEFAULT);
     scene_bump_word(image, addr_add(record, count_field));
     /* The effect index is read with the record still in a1; the SPEND that follows is not. */
     record = scene_run_effect(image, be16(image + addr_add(record, effect_field)), record);
@@ -999,11 +993,11 @@ static uint32_t shop_post_entry_message(uint8_t *image) {
            <= (int16_t)bus_read_word(image, addr_add(record, WB_SHOP_ITEM2_PRICE))) {
         count = bus_read_word(image, addr_add(record, WB_SHOP_REFUSED_COUNT));
         if (count == 0)
-            scene_post_message(image, WB_SHOP_BROKE_MSG_FIRST, WB_TEXT_LIFETIME_DEFAULT);
+            text_post_message_for(image, WB_SHOP_BROKE_MSG_FIRST, WB_TEXT_LIFETIME_DEFAULT);
         else if (count == 1)
-            scene_post_message(image, WB_SHOP_BROKE_MSG_SECOND, WB_TEXT_LIFETIME_DEFAULT);
+            text_post_message_for(image, WB_SHOP_BROKE_MSG_SECOND, WB_TEXT_LIFETIME_DEFAULT);
         else if (count == 2)
-            scene_post_message(image, WB_SHOP_BROKE_MSG_THIRD, WB_TEXT_LIFETIME_DEFAULT);
+            text_post_message_for(image, WB_SHOP_BROKE_MSG_THIRD, WB_TEXT_LIFETIME_DEFAULT);
         else
             return WB_SCENE_EXIT_ILLEGAL;
         wr16(image + WB_SCENE_MESSAGE_PENDING, WB_SCENE_MESSAGE_PENDING_SET);
@@ -1019,17 +1013,17 @@ static uint32_t shop_post_entry_message(uint8_t *image) {
         wr16(image + WB_SCENE_ACK_WAIT, WB_SCENE_MESSAGE_PENDING_SET);
         count = bus_read_word(image, addr_add(record, WB_SHOP_ENTER_COUNT));
         if (count == 1)
-            scene_post_message(image,
+            text_post_message_for(image,
                                (uint8_t)bus_read_word(image,
                                                       addr_add(record, WB_SHOP_ENTER_MSG_SECOND)),
                                WB_TEXT_LIFETIME_DEFAULT);
         else if (count == 2)
-            scene_post_message(image,
+            text_post_message_for(image,
                                (uint8_t)bus_read_word(image,
                                                       addr_add(record, WB_SHOP_ENTER_MSG_LATER)),
                                WB_TEXT_LIFETIME_DEFAULT);
         else
-            scene_post_message(image,
+            text_post_message_for(image,
                                (uint8_t)bus_read_word(image,
                                                       addr_add(record, WB_SHOP_ENTER_MSG_FIRST)),
                                WB_TEXT_LIFETIME_DEFAULT);

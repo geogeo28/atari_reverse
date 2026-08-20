@@ -65,6 +65,7 @@ from leaf import (RTS, adda_w_dn_an, add_w_dn_dn, addq_w_dn, andi_w_dn, asl_w_im
                   move_w_dn_dn, move_w_imm_dn, move_w_ind_dn, move_w_postinc_dn, movea_l_abs_w,
                   mulu_w_imm_dn, opcode, program_writes, rotate_left32, rotate_right32, s8,
                   s16, set_low_word, sub_w_dn_dn, swap_dn, tst_w_dn, word)
+from leaf import clr_l_dn   # hoisted out of this file by batch 41 phase C
 
 import emu                                                       # noqa: E402
 import loader                                                    # noqa: E402
@@ -216,12 +217,6 @@ def clip_value(width, side, x):
 def move_l_imm_dn(reg, value):
     """`move.l #imm,Dn` — the all-ones a mask word is moved into. ALSO IN test_stage.py."""
     return opcode(0x203c | (reg << 9)) + longword(value)
-
-
-def clr_l_dn(reg):
-    """`clr.l Dn` — the whole longword, which is what leaves a plane's wrapped half at zero.
-    ALSO IN test_hud.py, where $bbca spells it over a register nothing reads."""
-    return opcode(0x4280 | reg)
 
 
 def ror_l_dn_dn(count_reg, reg):

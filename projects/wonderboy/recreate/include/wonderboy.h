@@ -2467,6 +2467,89 @@
  * (WB_HUD_SLOT_BBC6 and WB_HUD_SLOT_BBC2). Ids are 1-based into WB_TEXT_MESSAGE_TABLE. */
 #define WB_TEXT_MESSAGE_REVIVAL_USED    0x16u /* "  Used the revival\n\n      medicine." */
 #define WB_TEXT_MESSAGE_WING_BOOTS_LOST 0x13u /* "You lost wing boots." */
+/* ...and the two the GATE posts, which are the same sentence with and without a way out of it. Both
+ * are read back off WB_TEXT_MESSAGE_TABLE by test_player.py rather than trusted from here. */
+#define WB_TEXT_MESSAGE_GAME_OVER       0x17u /* "     GAME OVER." — WB_LIVES is ZERO */
+#define WB_TEXT_MESSAGE_CONTINUE        0x40u /* "     GAME OVER.\n\n   Press fire to\n     continue"
+                                               * — the DEFAULT is the other one: `move.b #$17,d0`
+                                               * runs first and only a nonzero count replaces it */
+
+/* ---- $b1a: THE PENDING-EVENT GATE (batch 41 phase C) --------------------------------------------
+ *
+ * Three words of WB_STAGE_RESET_BLOCK tested in the order the block holds them — its own first word
+ * (the DEATH request `player_meter_empty_check` raises), WB_STAGE_ANIM_REQUEST_B0E and
+ * WB_SCENE_ALIGN_REQUEST_B14 — with an arm each. Everything each arm needs beyond the words already
+ * named above is here; see include/player.h for the five endings.
+ */
+#define WB_EVENT_GATE_FLAG_SET       0xffffu  /* the `move.w #$ffff` over the four words below whose
+                                               * RAISE is this routine's. Only two of the four are
+                                               * its outright — WB_DEATH_MESSAGE_POSTED_B0A and
+                                               * WB_DEATH_BOX_EXPIRED_B0C, whose every operand site
+                                               * is inside $b1a. The other two are raised here and
+                                               * SPENT ELSEWHERE: WB_LIFE_RESTART_ENTRY_C26 is read
+                                               * and cleared in show_data_disk_prompt's band, and
+                                               * WB_EVENT_FINISHED_E1BE is read at $e032.
+                                               * WB_STATE_FLAG_SET and WB_PLAYER_DEATH_FLAG_SET are
+                                               * the same immediate against words other routines
+                                               * own, and are spelt there rather than folded in */
+#define WB_DEATH_MESSAGE_POSTED_B0A  0xb0au   /* word: TWO operand sites and BOTH are this routine's
+                                               * — the `tst.w $b0a.w` at $b36 that routes the death
+                                               * arm into its prompt, and the `move.w #$ffff` at
+                                               * $b62 that latches it the frame the ascent tops out.
+                                               * So the whole life of the word is one routine's, and
+                                               * only the block reset ever puts it back down */
+#define WB_DEATH_BOX_EXPIRED_B0C     0xb0cu   /* ...and the second such word, on the same two
+                                               * instructions' pattern: `tst.w` at $bbe and
+                                               * `move.w #$ffff` at $bd0, raised on the frame
+                                               * WB_TEXT_BOX_ACTIVE is found DOWN again and read the
+                                               * frame after, to leave for the data-disk prompt */
+#define WB_DEATH_ASCENT_TOP_Y        0xffc0u  /* `cmpi.w #$ffc0,$9936.l` — where the dying player's
+                                               * rise stops. It is a WB_SCROLL_FOLLOW_Y, i.e. a
+                                               * SCREEN coordinate, not the record's own y */
+#define WB_DEATH_ASCENT_RISE         1u       /* `subq.w #1,2(a0)` — one pixel of WB_ACTOR_Y a frame */
+#define WB_DEATH_DRIFT_CURSOR        0x4f58u  /* word: the SECOND cursor over WB_ACTOR_TYPE30_DRIFT,
+                                               * two bytes below slot 30's own
+                                               * (WB_ACTOR_TYPE30_CURSOR, $4f5a). Two operand sites,
+                                               * both in this ascent ($b7e, $b98), so the drift
+                                               * table carries two independent phases and this is
+                                               * the one a dying player sways on */
+#define WB_DEATH_MESSAGE_LIFETIME    0x12cu   /* `move.w #$12c,$c034.l` — 300 frames, against the
+                                               * WB_TEXT_LIFETIME_DEFAULT every other poster uses */
+#define WB_EVENT_SPAWN_SFX            5u       /* `move.w #$5,d0 / clr.w d1` — BOTH spawning arms */
+#define WB_LIFE_RESTART_ENTRY_C26    0xc26u   /* word, and it lies INSIDE this routine's own code:
+                                               * the two bytes between the `jmp $e5ba.l` at $c20 and
+                                               * the `tst.w $b10.w` at $c28, which is why a linear
+                                               * sweep desyncs there. THREE operand sites — raised
+                                               * $ffff at $c14, one instruction before the restart
+                                               * unwind, and read + cleared inside
+                                               * show_data_disk_prompt's band (`tst.w $c26.w` at
+                                               * $e5e4, `clr.w $c26.w` at $e6ec), where a raised
+                                               * word makes the level entry SKIP
+                                               * `move.b 1(a0),$e70c.l` */
+#define WB_EVENT_FINISHED_E1BE       0xe1beu  /* word: raised $ffff at $d1a — the third arm's ending
+                                               * when the finished event asked for no stage advance.
+                                               * TWO operand sites, that raise and the
+                                               * `tst.w $e1be.l` at $e032, which is the first
+                                               * instruction of a routine that returns at once while
+                                               * it is clear. NOTHING IN THE IMAGE NAMES A CLEAR of
+                                               * it (the census below covers the absolute forms
+                                               * only, so a block clear through an address register
+                                               * would not appear) */
+#define WB_EVENT_PAIR_POSITION       2u       /* `move.l 2(a1),(a2)` off WB_RECORD_PTR_10420 — the
+                                               * descriptor's WB_SCENE_TRIGGER_X and _SPAWN_Y as one
+                                               * longword, over the new record's own x and y, and
+                                               * RE-READ for the second record rather than kept */
+#define WB_EVENT_PAIR_SPRITE_INERT   0x1a9u   /* slot 0's, over the type word the `clr.w 4(a2)`
+                                               * above it has just zeroed: a record no behaviour
+                                               * row runs, which is only ever drawn */
+#define WB_EVENT_PAIR_TYPE_RISER     0x25u    /* slot 1's DEFAULT — actor_behavior_type37 */
+#define WB_EVENT_PAIR_SPRITE_RISER   0x1a8u
+#define WB_EVENT_PAIR_TYPE_ANIMATOR  0x24u    /* ...both overwritten IN PLACE with
+                                               * actor_behavior_type36's pair when the descriptor's
+                                               * WB_SCENE_TRIGGER_SPAWN_TYPE is nonzero, so the
+                                               * frame that takes this arm stores each of those two
+                                               * words twice */
+#define WB_EVENT_PAIR_SPRITE_ANIMATOR 0x1a4u
 
 /* The 32-byte record `scene_copy_record_fields` ($539e) builds, and the one field of the scene
  * descriptor it takes: 20(a3) off WB_RECORD_PTR_10420, written over the new record's x and y before
@@ -3180,7 +3263,20 @@
  * MEANS is mostly established elsewhere (../names.txt) or not at all, and the names say only what
  * this routine does with them. */
 #define WB_STAGE_RESET_BLOCK       0xb08u  /* `lea $b08.w,a0` then four `clr.l (a0)+` and a
-                                            * `clr.w (a0)+` — 18 bytes cleared as one run */
+                                            * `clr.w (a0)+` — 18 bytes cleared as one run.
+                                            * ITS OWN FIRST WORD IS THE DEATH REQUEST, which is why
+                                            * the name reads oddly at most of its call sites: SIX
+                                            * operand sites, of which FIVE name the death request
+                                            * and only the SIXTH — the reset's own `lea $b08.w,a0`
+                                            * at $fed2 — is about the block. The five are
+                                            * `move.w #$ffff,$b08.l` at $aee, which raises it (the death
+                                            * arm of player_meter_empty_check), `tst.w $b08.l` at
+                                            * $ad2 is that arm's own guard, `tst.w $b08.w` at $b1a
+                                            * is player_pending_event_gate's FIRST test, $baa
+                                            * re-raises it inside that gate's ascent, and
+                                            * `tst.w $b08.w` at $1fd6 is what picks the death
+                                            * animation in player_stage_transition. test_player.py's
+                                            * OPERAND_CENSUS holds all six */
 #define WB_STAGE_RESET_BLOCK_LONGS 4u
 #define WB_STAGE_RESET_BLOCK_WORDS 1u
 /* The five words $bbca's timers run around panel_frame_index ($bd2c). Batch 16 read that body, so
@@ -3609,9 +3705,17 @@
  * — and the tail, which both entrants run, redraws the lives and reseeds the meter, the score and
  * the effect-record write pointer.
  */
-#define WB_LIVES                   0xbe2u   /* word. FOUR operand sites: `move.w #$3` here, the
-                                             * `subq.w #1` at $bfc, `tst.w` at $b4e and the
-                                             * `move.w $be2.w,d1` $e80c counts icons down from */
+#define WB_LIVES                   0xbe2u   /* word, and DATA INSIDE player_pending_event_gate's own
+                                             * code — the two bytes between the data-disk `jmp` at
+                                             * $bdc and the `tst.w` at $be4. FIVE operand sites, not
+                                             * the four this plate had: `move.w #$3` here, the
+                                             * `subq.w #1` at $bfc, `tst.w $be2.l` at $b4e (which
+                                             * picks WHICH game-over message goes up), `tst.w
+                                             * $be2.w` at $be4 (the continue prompt's own guard, a
+                                             * DIFFERENT frame and a different arm) and the
+                                             * `move.w $be2.w,d1` $e80c counts icons down from.
+                                             * $be4 is exactly the site a linear sweep misses,
+                                             * because this word is what it desyncs on */
 #define WB_LIVES_ON_RESTART        3u       /* `move.w #$3,$be2.w` */
 #define WB_LEVEL_SEQ_INDEX         0x216beu /* word: ../names.txt's level_seq_index, cleared here */
 #define WB_EFFECT_STATE_BD6C       0xbd6cu  /* the fourth of the small state words, cleared with

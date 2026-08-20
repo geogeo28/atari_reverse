@@ -588,6 +588,17 @@ def move_b_imm_abs_l(value, addr):
     return opcode(0x13fc) + word(value & 0xff) + longword(addr)
 
 
+def move_b_imm_dn(reg, value):
+    """`move.b #imm,Dn` — the LOW BYTE alone, with the immediate travelling in a whole word as every
+    byte-immediate does. THREE batteries (test_behavior.py's walk steps, test_map.py's step verdicts,
+    test_player.py's two GAME OVER message ids). THE THREE DID NOT AGREE: test_map.py's copy did not
+    MASK, so anything above $ff would have assembled a different instruction there and the same call
+    a different one elsewhere. The masking form wins — it is the field's width, and it is what the
+    two `move_b_imm_*` encoders beside this one already do — and no existing call site moves,
+    because every value they pass is a byte already."""
+    return opcode(0x103c | (reg << 9)) + word(value & 0xff)
+
+
 def move_b_imm_d16(base, value, displacement):
     """`move.b #imm,d16(An)` — the same immediate-in-a-word rule against a based operand. THREE
     batteries (test_actor.py's launch speed, test_map.py's stamped tile, test_sound.py's active
@@ -706,6 +717,14 @@ def add_w_dn_dn(destination, source):
     return opcode(0xd040 | (destination << 9) | source)
 
 
+def add_w_dn_ind(reg, base):
+    """`add.w Dn,(An)` — a register added INTO a record field, where `add_w_dn_dn` above adds into
+    another register. THREE batteries (test_behavior.py's eleven sites, test_map.py's step commit,
+    test_player.py's death drift), all three with the same body and the same `(reg, base)` order.
+    The second operand is an ADDRESS register, which is why it is `base` and not `reg`."""
+    return opcode(0xd150 | (reg << 9) | base)
+
+
 def cmp_w_imm_dn(reg, value):
     """`cmp.w #imm,Dn` — CMP with an IMMEDIATE source EA, which is a different instruction from
     `cmpi.w #imm,Dn` meaning the same thing; both appear in this image. THREE batteries
@@ -759,6 +778,15 @@ def moveq_0_dn(reg):
     """`moveq #0,Dn`, the one immediate the walks in test_actor.py and test_map.py ever use — spelt
     for it because "clear the register before a word load" is what those sites mean."""
     return moveq(0, reg)
+
+
+def clr_l_dn(reg):
+    """`clr.l Dn` — the WHOLE register, where `clr_w_dn` below leaves the high half. FOUR batteries
+    spelt it identically (test_behavior.py, test_blit.py, test_hud.py as `_clr_l_dn`, and
+    test_player.py's gate, which is the copy that took it past the threshold): two bytes where
+    `moveq #0` would have done, and the difference between "the answer is zero" and "the low word
+    is zero" wherever a caller reads only part of the register."""
+    return opcode(0x4280 | reg)
 
 
 def clr_w_dn(reg):
@@ -951,6 +979,13 @@ def tst_w_abs_l(addr):
     return opcode(0x4a79) + longword(addr)
 
 
+def tst_w_d16(base, displacement):
+    """`tst.w d16(An)` — a record field tested through a pointer the routine loaded, which is the
+    based form of `tst_w_abs_w` above. THREE batteries (test_actor.py, test_behavior.py,
+    test_player.py's gate), identical body and identical `(base, displacement)` order."""
+    return opcode(0x4a68 | base) + word(displacement)
+
+
 def clr_w_d16(base, displacement):
     """`clr.w d16(An)` — how a routine zeroes a WORD field of a record it holds a pointer to. TWO
     batteries (test_actor.py's spawn and reset, test_sound.py's stop chain)."""
@@ -984,6 +1019,14 @@ def clr_b_abs_l(addr):
 
 def clr_w_abs_l(addr):
     return opcode(0x4279) + longword(addr)
+
+
+def clr_l_abs_w(addr):
+    """`clr.l <abs>.w` — THE DISARM-BY-LONGWORD form: it clears the word at ``addr`` AND the one
+    above it, and the instruction names only the first. The family's other three members were
+    already here; this was the hole, filled locally in test_stage.py and then again in
+    test_player.py, whose gate spells it twice ($c6a and $cfe) over four separately named flags."""
+    return opcode(0x42b8) + word(addr)
 
 
 def clr_w_abs_w(addr):
@@ -1525,8 +1568,10 @@ def assert_written_is(info, model, what, extra=frozenset()):
     """The run's write set is EXACTLY ``model``'s addresses, and every byte holds ``model``'s value.
 
     ``model`` is {address: bytes}, the shape a composed battery's model returns. ``extra`` is a set
-    of addresses the case has declared it CHECKS FOR ITSELF — the boss arm's eighteen actor records
-    are the one user — and the rule is that the two are DISJOINT: an address is modelled here or
+    of addresses the case has declared it CHECKS FOR ITSELF, or has left to the battery that OWNS the
+    callee that wrote them — the boss arm's eighteen actor records were the one user until batch 41
+    phase C's gate added two more, its arms that run the whole spawn tree — and the rule is that the
+    two are DISJOINT: an address is modelled here or
     checked there, never both. That is refused by name rather than resolved, because either
     resolution is wrong. Exempting an address from the actual side alone (which this did) leaves the
     model still value-checking a byte the case said it owned, and makes an overlap fail the SET

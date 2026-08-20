@@ -99,6 +99,9 @@ from leaf import (BRANCH_EXTENSION, JSR_ABS_L, RTS, add_w_dn_dn, addi_w_dn, addq
                   tst_w_abs_w, tst_w_dn, u16, word,
                   # ...and the five hoisted to leaf.py by batch 41 phase B's spawn-tree pin
                   addq_l_an, move_b_imm_ind)
+# ...and the two batch 41 phase C's review hoisted OUT of this file. `move_b_imm_dn` MASKS its
+# immediate now, where this file's copy did not; every value here is a byte, so no byte moves.
+from leaf import add_w_dn_ind, move_b_imm_dn
 from layout import wb
 
 import emu      # noqa: E402  (harness puts the kit's oracle on sys.path)
@@ -194,10 +197,6 @@ def branch_w_back(condition, spanned_bytes):
     return opcode(condition) + word(displacement)
 
 
-def move_b_imm_dn(reg, value):
-    return opcode(0x103c | (reg << 9)) + word(value)
-
-
 def move_b_dn_dn(destination, source):
     return opcode(0x1000 | (destination << 9) | source)
 
@@ -220,10 +219,6 @@ def sub_w_dn_ind(reg, base):
 
 def add_w_d16_dn(reg, base, displacement):
     return opcode(0xd068 | (reg << 9) | base) + word(displacement)
-
-
-def add_w_dn_ind(reg, base):
-    return opcode(0xd150 | (reg << 9) | base)
 
 
 def move_w_dn_ind(reg, base):

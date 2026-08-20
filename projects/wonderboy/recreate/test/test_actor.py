@@ -219,6 +219,7 @@ LIST_INSN_CAP = 64 * SCREEN_RECORD_COUNT
 # are re-exported here, because two other batteries name THIS file as their source for them.
 from leaf import (A0, A1, A2, A5, A6, D0, D1, D2, D7,                      # noqa: E402,F401
                   BSET_IMM, BCLR_IMM, BTST_IMM, bit_op_d16)
+from leaf import tst_w_d16  # noqa: E402   # hoisted out of this file by batch 41 phase C
 
 BNE_W, BEQ_W, BPL_W, BLE_W, BLT_W, BGT_W, BRA_W = (0x6600, 0x6700, 0x6a00, 0x6f00,
                                                    0x6d00, 0x6e00, 0x6000)
@@ -870,10 +871,6 @@ def subq_w_d16(amount, base, displacement):
     """`subq.w #n,d16(An)` — the mirror of `addq_w_d16` above, and the one instruction that lowers
     the template table's live count."""
     return opcode(0x5168 | ((amount & 7) << 9) | base) + word(displacement)
-
-
-def tst_w_d16(base, displacement):
-    return opcode(0x4a68 | base) + word(displacement)
 
 
 def move_l_indexed_dn(reg, base, index):

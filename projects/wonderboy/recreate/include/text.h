@@ -40,12 +40,24 @@ void text_run_message_box(uint8_t *image);
  * module's battery pins only its own routines and both stay green while one drifts.
  *
  * It is `static inline` in a header both already include, so it exports no symbol and the objection
- * costs nothing. WHAT IS NOT HERE: the two writers that do something else. src/scene.c's takes a
- * LIFETIME (its speech arm posts zero) and `type61_post_message` clears only the HIGH byte of the
- * lifetime word with a `clr.b` — neither is this pair, and folding them in would hide that. */
-static inline void text_post_message(uint8_t *image, uint8_t message) {
+ * costs nothing.
+ *
+ * THE LIFETIME-TAKING FORM IS HERE TOO, as of batch 41 phase C, and by the same argument at the same
+ * threshold. src/scene.c wrote one for its own TEN call sites (its speech arm posts a lifetime of
+ * zero) and the earlier revision of this plate listed it under "what is not here"; the gate at $b1a
+ * then made it a SECOND module's, posting WB_DEATH_MESSAGE_LIFETIME rather than the default — so the
+ * pair of stores has one body again and the default is expressed as one call rather than as a second
+ * copy of the two writes.
+ *
+ * WHAT IS STILL NOT HERE: `type61_post_message`, which clears only the HIGH byte of the lifetime word
+ * with a `clr.b`. That is not this pair of stores, and folding it in would hide that. */
+static inline void text_post_message_for(uint8_t *image, uint8_t message, uint16_t lifetime) {
     image[WB_TEXT_REQUEST] = message;
-    wr16(image + WB_TEXT_LIFETIME_REQUEST, WB_TEXT_LIFETIME_DEFAULT);
+    wr16(image + WB_TEXT_LIFETIME_REQUEST, lifetime);
+}
+
+static inline void text_post_message(uint8_t *image, uint8_t message) {
+    text_post_message_for(image, message, WB_TEXT_LIFETIME_DEFAULT);
 }
 
 #endif /* WONDERBOY_TEXT_H */
