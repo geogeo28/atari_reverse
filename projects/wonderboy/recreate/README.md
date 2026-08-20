@@ -586,6 +586,38 @@ which is a statement this project wrote — so a reconstruction and its own just
 drifted together. It fails the day the original stops raising the byte, which is the day those six
 instructions become reachable and have to be ported.
 
+### Proving that a quantity lives in a CPU FLAG, which decides whether it can be re-derived
+
+`emu.REPORTED_REGS` is `d0..d7` and `a0..a6` — **no CCR** — so a routine's exit X, C or V is
+invisible to a differential except through whatever CONSUMES it. When two routines are composed by
+adjacent `bsr`s and the second folds a flag in (`sbcd`, `abcd`, `addx`, `roxl`), the port has two
+choices, and they are not equally available:
+
+* **re-derive** the bit from the words the last arithmetic instruction read — `overlap_mask_exit_extend`
+  in `src/behavior.c` is the one site where that works; or
+* **thread** it, which means the producing routine has to report it, and so does everything IT ends
+  in.
+
+Which one is legal is a MEASUREMENT, and it needs neither a reconstruction nor a model:
+
+> **Run the ORIGINAL twice on two seeds, stop both at the boundary between the two routines and
+> require the images EQUAL; then run both on through the consumer and require them to DIFFER.**
+> Equal memory in, different memory out — so the difference travelled in a flag, and no function of
+> the image can recover it. Re-derivation is then ruled out and threading is the only option.
+
+Batch 41 phase D is the worked case (`test_the_walks_two_arms_leave_the_image_IDENTICAL` and
+`test_the_SAME_image_then_spends_a_DIFFERENT_shot_count`): two seeds differing in two bytes of the
+player's record leave `$a4a`'s walk with a byte-identical image and then spend a different shot
+count at `$a4e`'s `sbcd`. That is what says the last unported dispatch row waits on an exit-X
+campaign and not on a helper.
+
+**AND SUCH A PAIR SHARES ONE `case_salt`, which is the opposite of this project's usual rule.**
+`case_salt` keys a seeded block by CASE NAME so that two cases cannot land on each other's bytes;
+here the two runs must differ in the fields the case names and in nothing else, so a per-run name
+makes the keyed record differ too and "the images are equal" fails on bytes neither run wrote. That
+reads exactly like the measurement being wrong, and it is how the first draft of that pair failed.
+Give the pair one shared salt constant and say why beside it.
+
 ## Running
 
 ```bash
@@ -606,7 +638,7 @@ canonical list of what has to be reachable.
 
 The gate's coverage claim is only worth what a sweep says: flip a constant, delete a branch,
 off-by-one an index, rebuild, re-run — a mutation nothing catches is a hole. A sweep **lies** in
-**eight** ways, all eight measured here, so run one this way:
+**nine** ways, all nine measured here, so run one this way:
 
 ```bash
 mkdir -p "$BACKUP" && cp src/*.c "$BACKUP"     # 0a. A NAMED BACKUP OUTSIDE THE REPO, first and
@@ -656,16 +688,16 @@ done
    sources never runs, and even after you put the sources back by hand the next run's step-0 green
    check loads the MUTANT library and reports the pristine tree as RED. It reads exactly like a
    broken batch. The cure is the first line of the recipe above — force the relink before the green
-   check, not only before each mutant — and it is the same guard as the two below rather than an
-   eighth way a sweep lies; it is mode 4's guard, and not the mode 8 the list now ends on.
+   check, not only before each mutant — and it is the same guard as the two below rather than a
+   way a sweep lies in its own right; it is mode 4's guard, and not a numbered mode.
    **Batch 34 lost a whole batch to the SNAPSHOT half of this mode**, which is why the recipe above
    now guards it: an unconditional `cp src/*.c snapshot/` at the top of a re-run silently overwrites
    the good snapshot with whatever the tree currently holds — and after a killed sweep the tree
    holds a MUTANT, or (as happened) a reverted file. The snapshot is then poisoned and the guard in
    the loop, which compares the tree against it, agrees with the poison. So: snapshot only AFTER the
    step-0 green check passes, and refuse to overwrite an existing one — re-arming is an explicit
-   `rm -rf snapshot`. This is not an eighth way a sweep lies; it is mode 4's guard extended from the
-   restore step to the capture step, and not the mode 8 the list now ends on either.
+   `rm -rf snapshot`. This is not a way a sweep lies in its own right; it is mode 4's guard extended
+   from the restore step to the capture step, and not a numbered mode either.
    **AND A FOURTH HALF, MEASURED TWICE — batch 34 and again batch 39: NEVER RESTORE THE TREE FROM
    GIT DURING A SWEEP.** A timed-out sweep leaves the tree possibly holding a mutant, and the
    obvious cleanup — `rm -rf snapshot && git checkout -- src/*.c` — is the worst thing that can be
@@ -714,6 +746,16 @@ done
    (The same run also showed why the `diff` guard belongs at the TOP of the loop rather than the
    bottom: it is the only thing standing between a failed restore and a sweep whose every later
    result is measured on the wrong source.)
+9. **A mutant that does not APPLY reports itself as a SURVIVOR** — mode 3's mirror image, and the
+   more dangerous of the two, because a survivor reads as a finding while a spurious "caught" reads
+   as nothing. Batch 41 phase D hit it on the first sweep that mutated CASES rather than `src/`: the
+   anchor string spanned a line break, `str.replace` matched nothing, the PRISTINE tree was tested,
+   pytest returned 0, and the loop's "0 = SURVIVED" printed a clean, plausible, entirely false
+   survivor against the phase's single most load-bearing claim. The cure is mode 3's, one step
+   earlier: **check that the mutation LANDED, not only that the run finished.** Require the anchor to
+   occur exactly once, exit nonzero otherwise, and print NOT APPLIED — which is not a result. (`git
+   apply` gives this for free and a hand-rolled `str.replace` runner does not, which is why a sweep
+   over a test file needs the check spelt out.)
 
 **A REVIEWER THAT MUTATES IS A WRITER, and the gate has to be told so.** A review agent that probes
 a finding by editing `src/`, rebuilding and running the suite is doing everything a sweep does,

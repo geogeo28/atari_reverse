@@ -1265,7 +1265,16 @@
  * followed record onto the platform, $6dd8 lets it go again.
  */
 #define WB_ACTOR_PLATFORM_RIDDEN     0x6ef0u  /* word: 1 while the followed record is being carried,
-                                               * cleared when it leaves. Read at $6f42 */
+                                               * cleared when it leaves. FOUR `tst.w` readers, not
+                                               * the one this line used to name: $a52 (the player
+                                               * frame's fall guard) and $6e36 spell it abs.LONG,
+                                               * $6f0a and $6f42 abs.w. Four writers too — $6da2,
+                                               * $6e14 and $6eca abs.LONG, $e5ba abs.w, which is
+                                               * where both of the frame's unwinds land. So the
+                                               * eight sites split FIVE long to THREE short, and
+                                               * they lie in SEVEN routines. test_player.py's
+                                               * `..._named_in_BOTH_absolute_encodings` is the
+                                               * census; ../../names.txt's cmt 0x6ef0 reads it */
 #define WB_ACTOR_PLATFORM_TOP        0x10u    /* `subi.w #$10,d1` — the ride height above the y */
 #define WB_ACTOR_PLATFORM_CATCH      0xau     /* `cmp.w #$a,d0 / bgt` — how far BELOW the top the
                                                * followed record may be and still be caught */

@@ -52,8 +52,14 @@
  *
  * WHAT THE FRAME STILL CALLS AND THIS FILE DOES NOT HAVE: NOTHING. All nine of `$a38`'s `bsr`s are
  * reconstructed as of batch 41 phase C. What is left of the player is `$a38` ITSELF — 62 bytes of
- * nine calls and three guards — and ../STATUS.md's phase C section prices the row rather than this
- * plate.
+ * nine calls, the caller-side d7 gate on the pending-event gate's answer, and two conditional guards
+ * (`$6ef0` over the fall, `$a32` over the collision map, each skipping exactly one call).
+ *
+ * IT IS STILL NOT PORTED, and as of batch 41 phase D the reason is no longer only the three costs
+ * that phase C priced. The FOURTH is inside this header: `$a4a` and `$a4e` are adjacent `bsr`s, so
+ * the frame is the site that must supply `player_weapon_fire`'s `entry_extend`, and the two cases
+ * that measure that are beside the weapon's own rows below. ../STATUS.md's batch 41 phase D section
+ * prices the row rather than this plate.
  */
 #ifndef WONDERBOY_PLAYER_H
 #define WONDERBOY_PLAYER_H
@@ -179,9 +185,21 @@ void player_step_and_arm(uint8_t *image, uint32_t actor);
  *     `joy1_newly_pressed`, so the reading rests on the same enumeration.
  * And what "the caller's" means here is `player_step_and_arm`'s exit X, because $a4a and $a4e are
  * adjacent `bsr`s with nothing between them. That routine's last X-writer is data dependent (a
- * `subq.b`/`addq.b` on one of four record bytes, or the map probe's own arithmetic), so the three
- * arms above are the same class as `overlap_mask_exit_extend`'s site — and `emu.run` forces the CCR
- * clear, so no case in this project can enter them with X set. ../STATUS.md carries that. */
+ * `subq.b`/`addq.b` on one of four record bytes, or the map probe's own arithmetic), and `emu.run`
+ * forces the CCR clear, so no case that ENTERS THIS ROUTINE can hand it a set X.
+ *
+ * THAT IS A LIMIT ON A CASE'S ENTRY, NOT ON THE GAME, and batch 41 phase D drew the line where it
+ * actually falls. A run that starts at `$a4a` and lets the WALK execute produces the bit itself, and
+ * the two cases beside the rows above measure it: two seeds differing in two record bytes leave the
+ * image byte-for-byte identical when the walk returns, and then spend a DIFFERENT shot count. So
+ * the bit is drivable after all — from the frame, not from here — and it is `$a38` that owes it.
+ *
+ * WHICH IS WHY THIS SITE IS NOT `overlap_mask_exit_extend`'s CLASS, and that reading is RETRACTED.
+ * That helper re-computes its bit from the two words the last arithmetic instruction read; here the
+ * two arms leave the SAME words with the SAME values, so no function of the image can tell them
+ * apart. `$a38` has to THREAD the walk's exit X, `player_step_and_arm` does not report one, and on
+ * its ordinary paths that bit belongs to the two map probes, which do not either. ../STATUS.md's
+ * batch 41 phase D section prices that campaign; it is what the dispatch row now waits on. */
 void player_weapon_fire(uint8_t *image, uint32_t actor, unsigned entry_extend);
 
 /* $1f54 — THE STAGE TRANSITION, called at $a70 (the frame's LAST call) and again at $bb0, on nearly

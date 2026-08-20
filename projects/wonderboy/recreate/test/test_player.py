@@ -3464,7 +3464,12 @@ def test_the_three_OTHER_arms_carry_the_callers_extend_and_no_case_here_can_set_
     parameter is live: run alone, the same seed with entry_extend = 1 spends two rather than one. It
     is a `run_candidate_only` claim against an independent model of the arithmetic, which is weaker
     than the oracle and stronger than nothing — the same standing test_hud.py's model-only `sbcd`
-    rows have. If the kit ever gains an entry-CCR parameter, these become differential rows.
+    rows have.
+
+    AND THE LIMIT IS THIS BATTERY'S ENTRY, NOT THE KIT'S — the first draft of this docstring said an
+    entry-CCR parameter was what these rows waited on, and that is RETRACTED. A run that starts one
+    instruction EARLIER, at the frame's `bsr.w $ec8`, produces the bit itself: the pair of cases
+    below this section measure exactly that, on the original's own code.
     ("The sites include/hud.h tabulates" is the scoped claim, not "all of them are unpinnable": that
     header's own table has one site a row DOES drive and two more pinned over their exercised
     paths.)
@@ -3480,6 +3485,202 @@ def test_the_three_OTHER_arms_carry_the_callers_extend_and_no_case_here_can_set_
     left = image[WEAPON_RECORD + RECORD_LOW_BYTE]
     assert left == _spend_bytes(0x09, borrow=1)[WEAPON_RECORD + RECORD_LOW_BYTE], (
         f"an entry X of 1 left {left:#04x} in the count, not the model's")
+
+
+# --- WHO SUPPLIES THAT PARAMETER, measured on the ORIGINAL -----------------------------------------
+#
+# `entry_extend` is a parameter because the bit is the CALLER's, and the caller is `$a38`'s pair of
+# adjacent `bsr`s at `$a4a` (the walk) and `$a4e` (the weapon). So the frame top is the site that has
+# to SUPPLY it, and the two cases below are what say — against the original's own 68000 code, with no
+# reconstruction consulted — that it cannot supply a constant and cannot re-derive one afterwards.
+#
+# They are a PREMISE for `../STATUS.md`'s batch 41 phase D section, in the shape
+# `test_the_busy_wait_can_NEVER_be_entered_with_its_byte_clear` established: the reading that blocks
+# the row is a run, not a paragraph, and the day it stops holding is the day the block lifts.
+
+# $a4a and $a4e, DERIVED from the frame's entry rather than transcribed: `bsr.w` x2, `tst.w d7`,
+# `bmi.w`, `bsr.w` stand above the walk's call. The widths alone would be a transcription, so the
+# case below PINS the bytes at both addresses against the two calls they must be — a width read
+# wrong lands the pin on something that is not a `bsr.w` to the routine named.
+BSR_W_BYTES = len(leaf.BSR_W) + WORD_BYTES
+FRAME_ENTRY = leaf.entry_of("actor_behavior_type01_player")
+FRAME_PREFIX_WIDTHS = (BSR_W_BYTES, BSR_W_BYTES, WORD_BYTES, 2 * WORD_BYTES, BSR_W_BYTES)
+WALK_CALL_AT = FRAME_ENTRY + sum(FRAME_PREFIX_WIDTHS)
+WEAPON_CALL_AT = WALK_CALL_AT + BSR_W_BYTES
+AFTER_WEAPON_AT = WEAPON_CALL_AT + BSR_W_BYTES
+PLATFORM_RIDDEN = wb("ACTOR_PLATFORM_RIDDEN")
+
+# The cap for a run that crosses BOTH routines: each one's own, since the run is one of each.
+WALK_THEN_WEAPON_CAP = STEP_AND_ARM_CAP + WEAPON_CAP
+
+# The two seeds differ in the walk's DIRECTION byte and its SUB-FRAME counter, and in nothing else.
+# WB_ACTOR_FIELD_23 is what picks the arm — the right-hand walk turns when the byte says LEFT and
+# accelerates when it already says RIGHT — and the counter is chosen so that the two arms leave the
+# record in the SAME state (see the second case).
+#   * TURN: `subq.b #2,22(a0)` on the speed the fire edge has just cleared to zero borrows, so the
+#     walk returns with X SET. The counter is left at the value the accelerator would have produced.
+#   * ACCELERATE: `addq.b #1,24(a0)` on a counter of zero carries nothing, and `andi.b #$3` leaves it
+#     nonzero, so the accelerator returns before its own `addq.w #4,d0` — the walk returns with X
+#     CLEAR.
+# Neither arm reaches a map probe, because both tails RE-READ the speed and find the fire edge's
+# zero. That is what keeps the two runs' MEMORY identical while their X differs.
+WALK_X_SET_SEED = {FIELD_23: 0, FIELD_24: 1}
+WALK_X_CLEAR_SEED = {FIELD_23: ST_BYTE, FIELD_24: 0}
+WALK_SPEND_COUNT = 0x05
+
+# ONE SALT FOR BOTH RUNS, which is the opposite of this battery's usual rule and is the point here:
+# `case_salt` keys the record's block by CASE NAME so that two cases cannot share a byte, and these
+# two runs must differ in the two seeded fields above and in NOTHING else. A per-case salt makes the
+# keyed record differ as well, and then "the walk left the same image" fails on bytes neither arm
+# wrote — which is exactly how the first draft of these cases failed.
+FRAME_COMPOSITION_SALT = "the frame's walk-then-weapon composition"
+
+
+def _frame_composition_pokes(record_fields):
+    """`_weapon_pokes`' four open gates, plus everything the WALK reads on the way to them.
+
+    RIGHT IS HELD IN BOTH JOYSTICK BYTES, which is the seeding this composition needs and the weapon
+    battery's own does not: the walk's head reads the CURRENT byte, and the weapon's third gate wants
+    `joy1_newly_pressed` to be exactly WB_PLAYER_FIRE_EDGE_EXACT — so the direction has to be down
+    ALREADY, or the edge byte is $88 and nothing fires."""
+    held = (1 << JOY1_DOWN_BIT) | (1 << JOY1_RIGHT_BIT)
+    fields = {
+        JOY1_PREV: bytes([held]),
+        JOY1_CURRENT: bytes([FIRE_EDGE_EXACT | held]),
+        TILE_33_MODE: word(0),              # ...so the walk arm does not leave a ladder
+        ACTOR + FLAGS2: bytes([0]),         # the hurt drift's gate, which the fire edge lowers anyway
+        ACTOR + FIELD_29: bytes([0]),       # no knock-back
+        ACTOR + FIELD_22: bytes([0]),       # the speed, which the fire edge clears in any case
+    }
+    for offset, value in record_fields.items():
+        fields[ACTOR + offset] = bytes([value])
+    return _weapon_pokes(FRAME_COMPOSITION_SALT, WEAPON_LIGHTNING, count=WALK_SPEND_COUNT,
+                         fields=fields)
+
+
+def _run_walk_then_weapon(record_fields, stop_pc):
+    """The ORIGINAL's own `$a4a`/`$a4e` pair, run under the oracle with no reconstruction involved."""
+    image = harness.make_image(_frame_composition_pokes(record_fields))
+    after, _, _ = emu.run(image, WALK_CALL_AT, {"a0": ACTOR},
+                          max_insns=WALK_THEN_WEAPON_CAP, stop_pc=stop_pc)
+    return after
+
+
+def test_the_frames_two_adjacent_bsrs_are_the_walk_and_the_weapon():
+    """The pin under both cases below: the addresses they run from are the two calls they claim, and
+    the instruction after them is the fall guard — which is what says the pair is ADJACENT, with
+    nothing between the walk's `rts` and the weapon's entry to write the X flag."""
+    assert bytes(harness.BASE_IMAGE[WALK_CALL_AT:WEAPON_CALL_AT]) \
+        == leaf.asm(WALK_CALL_AT, [bsr("player_step_and_arm")])
+    assert bytes(harness.BASE_IMAGE[WEAPON_CALL_AT:AFTER_WEAPON_AT]) \
+        == leaf.asm(WEAPON_CALL_AT, [bsr("player_weapon_fire")])
+    assert bytes(harness.BASE_IMAGE[AFTER_WEAPON_AT:AFTER_WEAPON_AT + len(
+        tst_w_abs_l(PLATFORM_RIDDEN))]) == tst_w_abs_l(PLATFORM_RIDDEN)
+
+
+def test_the_walks_two_arms_leave_the_image_IDENTICAL():
+    """HALF ONE OF THE MEASUREMENT, and the half that makes the other half mean something.
+
+    Both seeds are run as far as the weapon's entry — i.e. `player_step_and_arm` alone — and the two
+    images are required to be equal byte for byte. So whatever separates the two runs below is NOT in
+    memory, and no function of the image can recover it. That is what rules out the
+    `overlap_mask_exit_extend` treatment, where the exit bit is re-computed from the words the last
+    arithmetic instruction read: here the two arms write the same words with the same values."""
+    turn = _run_walk_then_weapon(WALK_X_SET_SEED, WEAPON_CALL_AT)
+    accelerate = _run_walk_then_weapon(WALK_X_CLEAR_SEED, WEAPON_CALL_AT)
+    assert bytes(turn) == bytes(accelerate), (
+        "the two walk arms no longer leave the same image, so the pair below is no longer a claim "
+        "about a CPU flag — re-derive the two seeds before reading its result")
+
+
+def test_the_SAME_image_then_spends_a_DIFFERENT_shot_count():
+    """HALF TWO: identical memory in, different memory out — so the difference travelled in a
+    condition-code bit, and the only one `sbcd -(a2),-(a6)` reads is X.
+
+    WHAT THIS BLOCKS. `actor_behavior_type01_player` cannot hand `player_weapon_fire` a constant
+    `entry_extend` (either constant is wrong on one of these two runs) and cannot compute one from
+    the image (the case above says the image is the same). It has to THREAD the walk's exit X, and
+    `player_step_and_arm` does not report one — on the ordinary paths that bit belongs to the two map
+    probes, which do not report one either. ../STATUS.md's batch 41 phase D section prices that.
+
+    The two counts are stated from `leaf.bcd_expected`'s decimal model rather than from each other,
+    so a run that spent nothing at all fails here instead of looking like agreement."""
+    turn = _run_walk_then_weapon(WALK_X_SET_SEED, AFTER_WEAPON_AT)
+    accelerate = _run_walk_then_weapon(WALK_X_CLEAR_SEED, AFTER_WEAPON_AT)
+
+    at = WEAPON_RECORD + RECORD_LOW_BYTE
+    assert turn[at] == _spend_bytes(WALK_SPEND_COUNT, borrow=1)[at], (
+        f"the TURN arm left {turn[at]:#04x} in the count — it no longer reaches the weapon with X "
+        f"set, so the reading this premise rests on has moved")
+    assert accelerate[at] == _spend_bytes(WALK_SPEND_COUNT, borrow=0)[at], (
+        f"the ACCELERATE arm left {accelerate[at]:#04x} in the count, not the X-clear spend")
+
+    # AND EXACTLY ONE ADDRESS DIFFERS, which is the half four documents attribute to this case and
+    # the half phase E's pricing rests on. Without it the two rows above would still pass while the
+    # weapon diverged somewhere else as well — and then "the difference is one BCD byte the X flag
+    # decided" would be a claim about the two bytes the case happens to read, not about the run.
+    diverged = {addr for addr in range(len(turn)) if turn[addr] != accelerate[addr]}
+    assert diverged == {at}, (
+        f"the two runs differ at {sorted(hex(a) for a in diverged)}, not at the single "
+        f"{at:#x} — the walk's two arms now separate somewhere besides the shot count, so this "
+        f"pair no longer isolates the X flag")
+
+
+# --- WB_ACTOR_PLATFORM_RIDDEN's operand census, as a case ------------------------------------------
+#
+# Every instruction in the image that names the word the frame's fall guard reads, and WHAT each one
+# is: EIGHT sites in seven routines, FIVE of them abs.LONG and THREE abs.w. The frame's own guard is
+# one of the LONG ones.
+#
+# WHAT THE EARLIER CENSUS IN ../names.txt MISSED IS FIVE SITES, AND THE AXIS IS NOT THE ENCODING.
+# That plate listed three, and they are exactly one per routine its own first sentence already names
+# — the raise in `actor_platform_carry_followed`, the clear in `actor_platform_release_check`, the
+# read in slot 56. So it enumerated what it met while reading THREE BODIES and stated the total as an
+# image-wide one. Two of its three are abs.LONG and two of the five it missed are abs.w, so an
+# encoding blind spot cannot be the mechanism; three of the missed five sit in the same platform band
+# as the three it had, so a band cut cannot be either. The axis is ROUTINE COVERAGE.
+#
+# `$a52` is the costly omission — the fall guard of the one dispatch row still unported. `$e5ba` is
+# the sharpest: it is the instruction BOTH of the player frame's `jmp $e5ba.l` unwinds land on, so the
+# word the fall guard reads is taken down by the very transfer that abandons the frame.
+PLATFORM_RIDDEN_READERS = (0xa52, 0x6e36, 0x6f0a, 0x6f42)
+PLATFORM_RIDDEN_INSNS = {
+    0xa52: tst_w_abs_l(PLATFORM_RIDDEN),                       # $a38's own fall guard
+    0x6da2: move_w_imm_abs_l(1, PLATFORM_RIDDEN),              # the word's one raise
+    0x6e14: clr_w_abs_l(PLATFORM_RIDDEN),
+    0x6e36: tst_w_abs_l(PLATFORM_RIDDEN),
+    0x6eca: clr_w_abs_l(PLATFORM_RIDDEN),
+    0x6f0a: tst_w_abs_w(PLATFORM_RIDDEN),
+    0x6f42: tst_w_abs_w(PLATFORM_RIDDEN),
+    0xe5ba: clr_w_abs_w(PLATFORM_RIDDEN),                      # where both unwinds land
+}
+
+
+def test_the_platform_word_is_named_in_BOTH_absolute_encodings():
+    """THE CORRECTION ../names.txt's `cmt 0x6ef0` carries. The earlier plate's site count and its
+    reader count are both low — the image holds eight and four — and the block above says why, which
+    is not the reason a first reading of the two lists suggests.
+
+    The census is run BOTH ways round, which is what makes it a census rather than a list: every
+    instruction above is required to be in the image, and the raw two-byte scan is required to find
+    nothing the table does not name."""
+    for at, encoding in PLATFORM_RIDDEN_INSNS.items():
+        assert bytes(harness.BASE_IMAGE[at:at + len(encoding)]) == encoding, (
+            f"{at:#x} does not hold the instruction the census claims for {PLATFORM_RIDDEN:#x}")
+
+    # A word address appears whole in a short operand and as the LOW HALF of a long one, so the
+    # scan's offsets are the encodings' own operand words rather than the instruction addresses.
+    found = set(_operand_sites(PLATFORM_RIDDEN.to_bytes(WORD_BYTES, "big")))
+    expected = {at + len(encoding) - WORD_BYTES
+                for at, encoding in PLATFORM_RIDDEN_INSNS.items()}
+    assert found == expected, (
+        f"the scan finds {sorted(hex(a) for a in found)} against the census's "
+        f"{sorted(hex(a) for a in expected)}")
+    readers = tuple(sorted(at for at, encoding in PLATFORM_RIDDEN_INSNS.items()
+                           if encoding in (tst_w_abs_w(PLATFORM_RIDDEN),
+                                           tst_w_abs_l(PLATFORM_RIDDEN))))
+    assert readers == tuple(sorted(PLATFORM_RIDDEN_READERS)), (
+        f"the census's readers are {[hex(at) for at in readers]}, not the four the plate names")
 
 
 # ==================================================================================================

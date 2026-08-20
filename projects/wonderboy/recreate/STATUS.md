@@ -9640,6 +9640,14 @@ phase's secondary goal. It was NOT taken, and the reason is not the 62 bytes:
 That is a phase, not a tail. Recorded here and in `../names.txt`'s `cmt 0xa38` so the next batch
 starts from the measurement rather than from the byte count.
 
+*(**THE LIST IS THREE ITEMS LONG AND THE COST IS FOUR** — corrected by batch 41 phase D, which went
+to write the row and found the missing one. All three above still hold, unamended; what none of them
+names is that `$a4a` and `$a4e` are ADJACENT `bsr`s, so the frame is the site that has to supply
+`player_weapon_fire`'s `entry_extend`, and it can neither pass a constant nor re-derive one. Phase
+D's section at the foot of this file measures it. The lesson is the batch-37 one at a new address: a
+cost measurement is only as complete as the surfaces it enumerated, and this one enumerated the
+BATTERIES the flip would move and not the ROUTINE the flip would have to write.)*
+
 ### Honestly unpinned
 
 * **`$e032` is not decoded.** `WB_EVENT_FINISHED_E1BE`'s one reader gates a routine that spends
@@ -9830,3 +9838,224 @@ cap fired. Both are inherited from the battery that owns the tree rather than in
 Ghidra folds into `scene_exit_and_reload`'s tail. It spends `WB_HUD_METER_VALUE` behind two more
 flag words (`$e1c0`, `$e1c4`) and nothing in this project reads it yet; it is what the third arm's
 no-advance ending hands the frame to. And `$a38` itself, with the flip's real cost measured above.
+
+## Batch 41 phase D — THE FRAME TOP, READ AND NOT WRITTEN: a fourth cost the row was hiding
+
+**Verified 301, 40,000 bytes, 90.4 % of §0k's 44,262 — UNCHANGED, because nothing was ported;
+`make test` 5,855** (5,851 before; all four new cases are in `test/test_player.py`, which goes
+414 -> 418). `tools/test_hw_portability.py`, outside `make test` and on the standing verification
+list, is 56 green — checked FIRST for a pin on the dispatch-row count or the function tally, and it
+has neither (its one mention of the table is prose about the 61 handlers, and 61 is still the
+number). **`PORTED_SLOT_COUNT` stays 61.**
+
+**THIS PHASE WAS TO FLIP THE LAST DISPATCH ROW AND IT DID NOT.** What it did instead is read
+`actor_behavior_type01_player`'s 62 bytes off the raw image, measure the one cost the phase-C
+pricing did not have, and leave the surfaces pointing at the campaign that cost names. The row is
+still 61 of 62, and the honest headline is that the frame top is now UNDERSTOOD rather than PORTED.
+
+### The 62 bytes, read off the image
+
+`$a38..$a75`, decoded from the raw bytes (offset = address − `$3f8` + `$1c`) rather than from
+`../out/wonderboy_dis.txt`, which is one phase stale. Nine `bsr`s, one register test, two memory
+guards and an `rts`, and nothing else:
+
+| at | instruction | what it decides |
+| --- | --- | --- |
+| `$a38` | `bsr.w $a76` | `player_meter_empty_check` |
+| `$a3c` | `bsr.w $b1a` | `player_pending_event_gate` |
+| `$a40` | `tst.w d7` / `bmi.w $a74` | the gate's answer, LOW WORD only — negative skips everything below |
+| `$a46` | `bsr.w $d78` | `player_gate_on_1516` |
+| `$a4a` | `bsr.w $ec8` | `player_step_and_arm` |
+| `$a4e` | `bsr.w $1208` | `player_weapon_fire` — **adjacent to the line above, which is the finding** |
+| `$a52` | `tst.w $6ef0.l` / `bne.w $a60` | skips the FALL alone |
+| `$a5c` | `bsr.w $1334` | `actor_fall_and_settle` |
+| `$a60` | `bsr.w $d84` | `player_apply_joystick` |
+| `$a64` | `tst.w $a32.w` / `bne.w $a70` | skips the COLLISION MAP alone |
+| `$a6c` | `bsr.w $151a` | `player_run_map_cell` |
+| `$a70` | `bsr.w $1f54` | `player_stage_transition` |
+| `$a74` | `rts` | its own |
+
+**BOTH GUARDS READ FIXED GLOBALS AND NOT THE DISPATCHED RECORD**, both word-wide, and the two are
+spelt in DIFFERENT absolute encodings — `$6ef0` LONG, `$a32` SHORT. Each `bne.w` clears exactly one
+`bsr`, not the rest of the frame. The `# ctx` tag comes off the `fn` line on that read.
+
+### THE FOURTH COST: the frame is where the X flag is composed, and it cannot fake one
+
+`player_weapon_fire` takes `entry_extend` as a parameter because the bit its `sbcd -(a2),-(a6)` at
+`$1260` folds in is the CALLER's on three of its four arms (batch 40 phase B established that, after
+correcting its own first reading of where the bit came from). The caller is `$a4e`, and the
+instruction before it is `$a4a`. So **the frame top is the only site in the program that can supply
+that parameter**, and phase C's cost list — which enumerated the BATTERIES the flip would move —
+never named it.
+
+It cannot be a constant and it cannot be re-derived, and both halves are a RUN rather than a
+reading. `test/test_player.py` runs the ORIGINAL's own `$a4a..$a52` under the oracle, with no
+reconstruction involved, on two seeds that differ in two bytes of the player's record
+(`WB_ACTOR_FIELD_23`, which picks the walk arm, and `WB_ACTOR_FIELD_24`, chosen so the two arms
+leave the counter equal):
+
+* `test_the_walks_two_arms_leave_the_image_IDENTICAL` stops both runs at `$a4e` and requires the two
+  images to be **equal byte for byte**. They are.
+* `test_the_SAME_image_then_spends_a_DIFFERENT_shot_count` runs both on to `$a52` and finds them
+  differing at **exactly one address** — `$b449`, the shot count, `$03` against `$04`. That case
+  asserts the two counts AND the whole diff set (`== {WEAPON_RECORD + RECORD_LOW_BYTE}`), because
+  the "exactly one" is what phase E's pricing rests on: without it the two byte comparisons would
+  still pass while the runs diverged somewhere else, and the claim would be about the two bytes the
+  case reads rather than about the run.
+
+Identical memory in, one byte different out: the whole difference travelled in a condition-code bit,
+and the only one `sbcd` reads is X. Which also **RETRACTS the `overlap_mask_exit_extend` reading**
+that `include/player.h` carried for this site. That helper re-computes its bit from the two words the
+last arithmetic instruction read; here the two arms leave the same words holding the same values, so
+no function of the image can separate them. The bit has to be THREADED through the call.
+
+**WHY THAT IS A CAMPAIGN AND NOT A HELPER.** `player_step_and_arm` returns `void` and would have to
+report an exit X. Its last X-writer is per-path — the flicker's `subq.b #1,21(a0)`, the turn's
+`subq.b #2,22(a0)`, the accelerator's `addq.b #1,24(a0)` and `addq.w #4,d0` — and on every path whose
+tail re-reads a NONZERO `WB_ACTOR_FIELD_22` it is the map probe's, i.e.
+`actor_step_left_against_map` / `actor_step_right_against_map` (`$10a2`/`$1170`, 358 bytes, 41
+callers) and the ground helper they share, whose own writers are the `sub.w d7,(a0)` at `$1116`, the
+`add.w d0,d1` at `$10da`, the `neg.w d7` at `$112a` and the `add.w d7,d7` at `$1154`. Threading it
+means a signature change to the two probes and to `map.h`'s `step_left`/`step_right` wrappers, which
+`src/behavior.c`, `src/map.c` and `src/player.c` all use.
+
+**AND NO INTERMEDIATE STEP OF THAT CHAIN IS DIRECTLY PINNABLE**, which is what makes it a campaign to
+plan rather than a diff to write: `emu.REPORTED_REGS` is `d0..d7` and `a0..a6`, with **no CCR**, so a
+routine's exit X is invisible to a differential except through a CONSUMER. The whole chain has one
+consumer, the `sbcd`, and the two cases above are the only place it can be pinned — so the port and
+its pin have to arrive together, over three files, or the chain ships on a model of itself.
+
+### The other three costs are unchanged, and none of them was attempted
+
+Stated so a reader does not have to diff the two sections. `UNPORTED_TYPE` still has slot 1 to stand
+on, so `test_behavior.py`'s eight boundary cases and `_walk_pokes`' free-record seeding are untouched
+and `test_the_only_unported_row_left_is_the_player` is still TRUE rather than a tripwire that has
+fired. The exit-report set the gate's and `$151a`'s abandoning endings need is designed but not
+written, and the whole-frame differential is not written. **Nothing was half-reworked**: this phase
+adds four cases and changes no reconstruction, so the tree is green at a clean boundary.
+
+*(The design that was reached before the blocker, recorded so the next phase does not re-derive it:
+the frame propagates the CALLEE's report verbatim — one exit, one spelling, the code-2 lesson — and
+returns 0 for its own `rts` at `$a74`, since the gate's two RETURNING endings both reach it. That
+makes the frame's value space `{0} ∪ {the gate's non-returning codes} ∪ {`$151a`'s two}`, which the
+dispatcher would pass up unchanged — and the numbering has to move first, because
+`WB_PLAYER_GATE_FRAME_SKIPPED` and `WB_PLAYER_COLLIDE_SOUND_WAIT` are BOTH 1 today and mean different
+things, and 1/2/3 are `WB_ACTOR_DISPATCH_REFUSED`/`_UNBOUNDED`/`_PICKUP_REFUSED`. The names are
+scraped by `test/layout.py`, so a renumbering moves no case.)*
+
+### The band arithmetic, re-derived and unmoved
+
+`$a38..$2461` is 6,698 bytes and it still divides with zero remainder against batch 40's
+twenty-nine-row partition. Nothing was ported, so the figure phase C left stands unchanged and is
+re-derived rather than copied: of the 1,760 bytes that remained after batch 41 phase B, phase C took
+`$b1a`'s **526**, `$151a`'s **1,170** were taken in phase A and counted in that phase's figure, the
+`$1f34` dead pair is **2** of DATA, and the remaining **62** are `$a38`'s. 526 + 1,170 + 62 + 2 =
+1,760. **The band's unported bytes are exactly `$a38`'s 62**, and this phase leaves them there.
+
+### Plate corrections this phase landed
+
+* **`WB_ACTOR_PLATFORM_RIDDEN`'s census was low in both figures, and it missed FIVE sites.** The
+  earlier `cmt 0x6ef0` gave a site count and a reader count that the image contradicts: it holds
+  **EIGHT sites in seven routines, four of them readers**. Writers: `move.w #$1,$6ef0.l` at `$6da2`
+  (`actor_platform_carry_followed`), `clr.w $6ef0.l` at `$6e14` (`actor_platform_release_check`),
+  `clr.w $6ef0.l` at `$6eca` (`actor_platform_release_blocked_rider`), `clr.w $6ef0.w` at `$e5ba`
+  (inside `show_data_disk_prompt`). Readers, all bare `tst.w`: `$a52`
+  (`actor_behavior_type01_player` — the frame's own fall guard), `$6e36` (slot 54), `$6f0a` (slot
+  55), `$6f42` (slot 56). **The encoding split is FIVE abs.LONG to THREE abs.w**, not four and four.
+  It is a CASE and not prose — `test_the_platform_word_is_named_in_BOTH_absolute_encodings` checks it
+  both ways round: every instruction in the table must be in the image, and a raw two-byte scan must
+  find nothing the table does not name. `include/wonderboy.h`'s single-reader line is corrected with
+  it.
+* **AND THE MECHANISM IS NOT THE ONE THIS SECTION FIRST GAVE, which matters more than the count.**
+  The first draft blamed the operand ENCODING — it read the omission as a scan that had seen only one
+  of the two absolute forms, and filed the whole correction under the standing lesson about scanning
+  both. **That diagnosis is RETRACTED, and the bytes refute it three ways**: two of the
+  old plate's three sites are abs.LONG and it spelt the third `.w` itself; two of the five it missed
+  are abs.w, so the short form was not the blind spot; and three of the missed five (`$6e36`,
+  `$6eca`, `$6f0a`) sit inside the same platform band as the three it had, so it was not a band cut
+  either. What it actually was: **its three sites are exactly one per routine its own first sentence
+  already names** — the raise in the carry routine, the clear in the release routine, the read in
+  slot 56 — so it enumerated what it met while reading THREE BODIES and stated the total as an
+  image-wide census. The five it missed are in five other routines. **The lesson is SCOPE, not
+  encoding**: a census gathered while reading bodies is a census of those bodies; scope the claim to
+  the routines read, or run the scan.
+* **`$a52` is the costly omission and `$e5ba` the sharpest.** `$a52` is the fall guard of the one
+  dispatch row still unported. `$e5ba` is the instruction BOTH of the frame's `jmp $e5ba.l` unwinds
+  land on (`$c1c` and `$1622`), so the word the fall guard reads is taken down by the very transfer
+  that abandons the frame that reads it — and `cmt 0xe5ba` had already spelt that `clr.w` as its
+  first instruction, so the two plates disagreed and `cmt 0x6ef0` was the stale one.
+* **`cmt 0xa38` loses its `# ctx` tag** on the body read, and gains the guards' encodings and the
+  fourth cost. **`cmt 0xec8`** now registers the exit-X obligation on the walk itself, where the
+  next phase will look for it, and **`cmt 0x1208`** points at the measurement.
+
+### The mutation sweep, and the ninth way a sweep lies
+
+**THIS PHASE PORTS NO C, so the sweep goes at the CASES rather than at `src/`.** A sweep over
+`src/*.c` would have measured code this phase did not touch and reported a clean 100 %; what the four
+new cases claim is a reading of the ORIGINAL, so what has to be mutated is the reading.
+
+**10 mutants written: 0 equivalent, 10 kept; 10 of 10 CAUGHT.** In two rounds, because round one
+found a sweep-lie first. The mutants: the frame prefix's widths off by one; the two `bsr`s' order
+swapped; the fall guard read as abs.w rather than abs.LONG; the two runs given a per-run
+`case_salt`; the two seeds made identical (both arms accelerate); the turn arm expected not to
+borrow; the accelerate arm expected to borrow; the census cut back to the three sites the old plate
+named; a census row moved two bytes off the instruction it names; and a WRITER added to the reader
+list.
+
+**THE NINTH WAY A SWEEP LIES, and it is mode 3's shape at a different step: A MUTANT THAT DOES NOT
+APPLY REPORTS ITSELF AS A SURVIVOR.** Mode 3 is "a mutant that will not COMPILE reports itself as
+caught" — the mirror image. Here the runner's anchor string spanned a line break, `str.replace`
+matched nothing, the *pristine* tree was tested, pytest returned 0, and "0 = SURVIVED" printed
+`prefix/guard-is-abs-w-not-abs-l -> SURVIVED` — a clean, plausible, entirely false finding on the
+single most load-bearing claim in the phase. The cure is the same shape as mode 3's: **check that the
+mutation was APPLIED, not only that the run finished.** The runner exits non-zero when the anchor
+count is not exactly 1 and prints NOT APPLIED, which is not a result. Re-anchored, that mutant is
+caught.
+
+### Honestly unpinned
+
+* **The walk's exit X, and therefore the frame.** Named above; it is the blocker rather than a
+  silence, and the two premise cases are what will fail the day the reading moves.
+* **`WB_PLAYER_COLLIDE_SOUND_WAIT` and the six instructions below the spin** — unchanged from phase
+  A, and note that the frame would inherit it: a frame case that reaches the flute arm stops there.
+* Everything phase C's own list carries (`$e032`, the odd drift cursor, the two spawn-tree arms'
+  self-checked write sets, the stage arm's invisible tail) is unchanged.
+
+### Queue
+
+* **PHASE E — THE WALK'S EXIT X**, and it is the whole of what the row now waits on: exit X out of
+  `actor_step_left_against_map`, `actor_step_right_against_map` and the ground helper, then out of
+  `player_step_and_arm`, pinned end to end at the `sbcd` by the two seeds this phase measured (both
+  directions, and a mutant per X-writer). Then the flip: the frame, the exit-report composition
+  sketched above, the `UNPORTED_TYPE` retirement and the whole-frame + dispatch-level differentials.
+* **THEN, and not before**: the spine, the on-target backends, the playable `.PRG`. **None of the
+  three has been started**, and 62/62 would not by itself deliver any of them.
+* **CARRIED, unchanged**: `$e032`; the odd drift cursor; `hud_meter_charge`; `src/actor.c` on to
+  `bus.h`; `leaf.run_reaching` / `final_pc` to the kit; the `TRAP_MODEL.md` `stop_pc` note;
+  `abcd_byte` to the kit; `bus.h` to the kit; regenerating `../out/names_dump.txt`,
+  `../out/hw_scan.tsv`, `../decomp.c` and `../out/wonderboy_dis.txt` (still a phase stale, and this
+  phase read the raw image rather than wait for it); the `$1ab4` boundary; the tier partition; the
+  `scene_run_effect` latent guard; the duplicate `cmt` directives at `0x1023a` and `0x10394`; the
+  `WB_HUD_SLOT_BBC2`/`_BBC6` renames; `map.c`'s unguarded `WB_ACTOR_X` write; which-monster-is-which;
+  `leaf.stray_writes`' O(writes x bands) scan.
+
+### Lessons
+
+* **A COST MEASUREMENT IS ONLY AS COMPLETE AS THE SURFACES IT ENUMERATED.** Phase C priced the row by
+  listing what the flip would BREAK — a battery's boundary constant, an exit-report set, a seeding
+  union — and got three real items. It never listed what the flip would WRITE, and the fourth cost
+  was in the routine's own two adjacent instructions. Price a port by both.
+* **"NO CASE CAN DRIVE THIS" IS A CLAIM ABOUT WHERE A CASE STARTS.** `include/player.h` said the
+  weapon's three carrier arms were undrivable because `emu.run` forces the CCR clear — true of a run
+  entering at `$1208`, and false of one entering four bytes earlier at `$a4a`, which produces the bit
+  itself. The kit did not have to change. Before filing something as needing kit work, ask whether
+  moving the ENTRY POINT reaches it.
+* **TWO RUNS THAT AGREE IN MEMORY AND DISAGREE IN OUTPUT ARE A PROOF, and a cheap one.** The pair
+  above needs no reconstruction, no model and no CCR reporting: run the original twice, require the
+  intermediate images equal, require the final ones to differ. That is how to establish that a
+  quantity lives in a flag — and it is what says a re-derivation helper cannot substitute for
+  threading.
+* **A SHARED SALT IS SOMETIMES THE POINT.** `case_salt` keys a seeded block by case name so two cases
+  cannot share a byte; a pair of runs that must differ in two seeded fields and NOTHING else needs
+  the opposite. The first draft used a per-run name and failed on keyed bytes neither arm wrote —
+  which read exactly like the reading being wrong.
