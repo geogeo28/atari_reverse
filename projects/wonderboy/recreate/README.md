@@ -608,8 +608,42 @@ Which one is legal is a MEASUREMENT, and it needs neither a reconstruction nor a
 Batch 41 phase D is the worked case (`test_the_walks_two_arms_leave_the_image_IDENTICAL` and
 `test_the_SAME_image_then_spends_a_DIFFERENT_shot_count`): two seeds differing in two bytes of the
 player's record leave `$a4a`'s walk with a byte-identical image and then spend a different shot
-count at `$a4e`'s `sbcd`. That is what says the last unported dispatch row waits on an exit-X
-campaign and not on a helper.
+count at `$a4e`'s `sbcd`. That is what said the last unported dispatch row waited on an exit-X
+campaign and not on a helper — and batch 41 phase E then ran that campaign: the walk and the two map
+probes report their exit X, pinned at the `sbcd`. What the row still waits on is the bit the WALK is
+ENTERED with, which phase E re-priced down to a model of `$d78`'s chain (../STATUS.md's phase E
+section, "THE FIFTH COST").
+
+**HOW THE THREADING IS THEN WRITTEN**, settled by batch 41 phase E over three files and forty-six
+call sites:
+
+* **The producing routine's return slot takes the bit if it is free** — `unsigned f(…, unsigned
+  entry_extend)` returning the exit bit, which is `src/hud.c`'s four packed-BCD accumulators and now
+  `player_step_and_arm`. **If the slot is taken, the bit is an out-param** — `unsigned *exit_extend`,
+  which is `bcd_add_random_1_to_4`'s shape and now the two map probes'. An in-AND-out pointer is for
+  a routine that both reads and writes the flag, like `abcd_byte` or the probes' shared tail.
+* **An out-param may be NULL, and most callers pass NULL.** The probes have forty-one `bsr` callers
+  each and exactly one reads the flag, so the two `step_left`/`step_right` wrappers in `include/map.h`
+  drop it exactly as they already drop `ground`, and the eight sites that keep their own `ground`
+  pass `NULL` in one token. Adding a fifth MANDATORY argument to forty-six call statements to serve
+  one reader is the change that makes the next such campaign unaffordable — count them before
+  choosing, and put the count in the status file.
+* **A routine that cannot reach a branch before an X-writer takes no entry bit** (the turn and the
+  accelerator, whose first instruction writes one; both probes, whose fifth does, with nothing
+  conditional above it) and **a routine with no X-writer on any arm stays out of the chain
+  entirely** (the fire edge). Say which in the plate; a parameter that is never read is an invented
+  value in waiting. "First instruction" is the wrong test and states the rule too strongly — what
+  matters is that no path can OBSERVE the caller's bit.
+* **The model belongs on the plates, one entry per ARM**, derived from the 68000 and not from the C
+  — `sub`/`add`/`subq`/`addq`/`neg`/`asl`/`asr`/`lsl`/`lsr`/`roxl`/`roxr`/`abcd`/`sbcd` write X, and
+  `move`/`tst`/`cmp`/`btst`/`bset`/`bclr`/`clr`/`st`/`lea`/`andi`/`ori`/`eori`/`mulu`/`dbf` and every
+  branch do not. Only the LAST writer before an exit is worth modelling; an earlier one that every
+  path overwrites is noise, and saying so in the plate is what stops the next reader adding it.
+* **The pin is a COMPOSITION differential at the consumer**, since no oracle run can report a CCR:
+  run the original's two adjacent `bsr`s and a glue that calls the two C routines in the same order,
+  diff the whole image, and give each row an `expected_extend` read back off the ORIGINAL's output
+  through an independent model — otherwise a row whose seeding stopped reaching the consumer passes
+  by agreeing about nothing. One row per X-writer the producer can leave last.
 
 **AND SUCH A PAIR SHARES ONE `case_salt`, which is the opposite of this project's usual rule.**
 `case_salt` keys a seeded block by CASE NAME so that two cases cannot land on each other's bytes;

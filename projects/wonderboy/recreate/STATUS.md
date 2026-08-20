@@ -10028,6 +10028,9 @@ caught.
   `player_step_and_arm`, pinned end to end at the `sbcd` by the two seeds this phase measured (both
   directions, and a mutant per X-writer). Then the flip: the frame, the exit-report composition
   sketched above, the `UNPORTED_TYPE` retirement and the whole-frame + dispatch-level differentials.
+  *(**THIS ENTRY'S SCOPE WAS TOO NARROW** — corrected by batch 41 phase E, which landed the
+  threading and then measured that the row also owes an entry bit of its own, out of `$d78`'s chain.
+  See that section's "THE FIFTH COST", which prices it and states what it does NOT need.)*
 * **THEN, and not before**: the spine, the on-target backends, the playable `.PRG`. **None of the
   three has been started**, and 62/62 would not by itself deliver any of them.
 * **CARRIED, unchanged**: `$e032`; the odd drift cursor; `hud_meter_charge`; `src/actor.c` on to
@@ -10059,3 +10062,368 @@ caught.
   cannot share a byte; a pair of runs that must differ in two seeded fields and NOTHING else needs
   the opposite. The first draft used a per-run name and failed on keyed bytes neither arm wrote —
   which read exactly like the reading being wrong.
+
+## Batch 41 phase E — THE WALK'S EXIT X, THREADED AND PINNED AT THE `sbcd`
+
+**Verified 301, 40,000 bytes, 90.4 % of §0k's 44,262 — UNCHANGED, because nothing NEW was ported;
+`make test` 5,872** (5,855 before; all seventeen new cases are `test/test_player.py`'s
+frame-composition battery, which takes that file 418 -> 435). Three already-verified routines gained
+an OUTPUT rather than a body: `player_step_and_arm` ($ec8), `actor_step_left_against_map` ($10a2)
+and `actor_step_right_against_map` ($1170). `tools/test_hw_portability.py`, outside `make test` and
+on the standing verification list, is **56 green** — checked FIRST for a pin on the signatures or
+exports this phase moves and it has none: it parses `../out/hw_scan.tsv`, a scan of the ORIGINAL
+image, and never loads the candidate `.so`. **`PORTED_SLOT_COUNT` stays 61.**
+
+**WHAT THE PHASE DID.** Phase D measured that the bit `player_weapon_fire`'s `sbcd -(a2),-(a6)` at
+$1260 folds in travels in a CPU flag and cannot be re-derived; this phase makes the C carry it, from
+the two map probes through the walk's five sections to the weapon's parameter, and pins the whole
+chain at its one consumer. **It did NOT flip the dispatch row**, and what remains is one routine's
+exit-X model rather than the dispatcher-wide threading this section first priced — see "the fifth
+cost" below, which was re-priced by the independent gate after the threading landed.
+
+### The model, derived from the 68000 and not from the C
+
+Read off `../out/wonderboy_dis.txt` for $ec8..$1207 (in phase in this region) and cross-checked
+against the raw image. The rule applied at every step: `sub`/`add`/`subq`/`addq`/`neg`/`asl`/`asr`/
+`lsl`/`lsr`/`roxl`/`roxr`/`abcd`/`sbcd` write X; `move`/`moveq`/`tst`/`cmp`/`cmpi`/`btst`/`bset`/
+`bclr`/`clr`/`st`/`lea`/`andi`/`ori`/`eori`/`mulu`/`dbf` and every branch do not.
+
+**THE TWO PROBES ($10a2, $1170) NEVER PASS THEIR CALLER'S X THROUGH.** `sub.w 14(a0),d0` at $10ac
+and `add.w 14(a0),d0` at $117a run before either routine's first branch, so the entry bit is gone by
+the second instruction of the body and neither probe takes an entry parameter. **And every exit of
+BOTH is the shared tail's**: three `bra` sites reach $111a and $1170 has no `rts` at all, so one
+model covers both —
+
+| the tail's arm | deciding instruction | the X it leaves |
+| --- | --- | --- |
+| the cell holds tile $1 | `neg.w d7` at $112a | set unless the stride word at $23494 is zero |
+| $1 or $2 one row down | none — $113c/$1146 are `cmpi.b`/`beq` | **the probe body's own**, unchanged |
+| neither | `add.w d7,d7` at $1154 | that stride's bit 15 |
+
+and the body's bit, which only the middle arm can deliver, is `sub.w d7,(a0)` at $1116 on both of
+$10a2's committing exits, `add.w d0,d1` at $10da on its edge arm (`move.w 14(a0),(a0)` and
+`move.b #$0,d0` below it write no flag), `add.w d7,(a0)` at $1200 on $1170's committing exits and
+`sub.w 14(a0),d0` at $11d4 on its clamp. The five X-writers above $10da in each head, and the
+`subq.w #1,d7` at $10fa/$11e2, are overwritten inside their own iteration and are NOT modelled —
+saying so on the plate is what stops the next reader adding them.
+
+**THE WALK ($ec8), section by section.** Knock-back: `subq.b #1,29(a0)` at $eec on the stepping arm,
+which overwrites the probe's, and the caller's on the `beq.w $ecc`. Fire edge: **no X-writer on
+either arm**, which is why that section is absent from the C's chain — `bsr $682` is
+`move.b`/`move.b`/`eor.b`/`and.b`/`rts` and the arm is `bset`/`bclr`/`clr.b`. Flicker:
+`subq.b #1,21(a0)` at $f14 on both of its own arms, the caller's on the `beq.w`. Hurt drift: **the
+probe's**, on the one arm that runs anything, so the `subq.b #2,31(a0)` above it is spent with its
+borrow dropped. Accelerator: never the caller's — `addq.b #1,24(a0)` on the early exit and
+`addq.w #4,d0` at $fe4/$104e on everything else. Turn: `subq.b #decel,22(a0)` at $1002/$106a, handed
+to the tail. The two tails ($ff2/$105c): the probe's when the re-read 22(a0) is nonzero, and
+whatever arrived when it is zero. **The whole routine's ONE pass-through path** is the coast on a
+zero speed with no knock-back, no flicker and no drift.
+
+**TWO READINGS THE MODEL MADE AND THE CASES THEN CONFIRMED.** The knock-back's borrow is always
+CLEAR (the byte the `subq.b` re-reads is the nonzero one the `tst.b` just saw, and nothing between
+them writes it). The accelerator's early exit can never carry (a counter that carried was $ff, and
+`andi.b #$3` then leaves zero and takes the other arm). Both are stated on the plates as readings
+rather than left as branches a case might one day drive.
+
+**AND ONE ROUTINE WAS LEFT `void` ON PURPOSE.** `player_reset_ground_state` ($107c) ends on
+`addq.b #8,d0` at $109a, so it does produce an X — and that bit is DEAD at both of its call sites,
+because the turn or the accelerator writes X after it on every path out of the arm that called it.
+Reporting it would have moved a public signature and a battery binding to carry a value nothing can
+read.
+
+### The signature shape, and the precedent it followed
+
+Two shapes were already in the tree and the choice between them is mechanical: **the return slot
+takes the bit when it is free** (`src/hud.c`'s four packed-BCD accumulators —
+`unsigned bcd_add_counter_bd6e(image, addend, unsigned entry_extend)`), and **an out-param takes it
+when the slot is taken** (`bcd_add_random_1_to_4`, which returns d0 and hands the extend back
+through `unsigned *exit_extend`). So `player_step_and_arm` becomes
+`unsigned player_step_and_arm(image, actor, unsigned entry_extend)` and the two probes, which
+already return d0 and hand d1 back by pointer, gain `unsigned *exit_extend`.
+
+**THE OUT-PARAM MAY BE NULL, AND THAT IS THE HALF THAT MATTERS** at this scale: the probes have
+forty-one `bsr` callers EACH in the ORIGINAL and exactly one of them reads the flag. Counted in the
+C, so that the next threading campaign budgets against a figure rather than an impression —
+**46 call statements were in scope and 24 were not touched at all**:
+
+| what | sites | what the diff did to them |
+| --- | --- | --- |
+| `step_left`/`step_right` in `src/behavior.c` | 24 | **nothing** — the wrappers pass the NULL |
+| the two wrappers in `include/map.h` | 2 | gained the NULL |
+| direct `actor_step_*_against_map` in `src/behavior.c` | 8 | gained `, NULL`, one token each |
+| the walk's own probe sites in `src/player.c` | 6 | collapsed into 3 calls to `player_probe_step` |
+| `spend_field_b` in `src/player.c` | 6 | four gained `&extend`, two a NULL |
+
+`src/map.c`'s own `cell_pointer` takes the same optional pointer, NULL from $13c8. A fifth
+MANDATORY argument at all forty-six would have been the change that makes the next such campaign
+unaffordable, and `include/map.h` already had the convention: a full-report function with thin
+wrappers that drop what a caller does not want.
+
+`src/player.c`'s six probe sites collapse into one `player_probe_step` — three direction pairs,
+one per section that moves the record — so the walk names the probe interface once.
+`spend_field_b` grew the same optional pointer, since four of the walk's sections hand a `subq.b`'s
+borrow on and two do not. **The four X primitives are named** — `word_add_extend`,
+`word_sub_extend`, `byte_add_extend`, `byte_sub_extend`: on a two's-complement machine the 68000's
+carry IS the wrap, so each is one comparison, but `(a + b) < a` spelt at nine sites is the shape a
+reader mistakes for a bounds check.
+
+**THEY WENT STRAIGHT INTO THE KIT'S `machine.h`, and the first draft's decision to park them in
+`include/hud.h` under `abcd_byte`'s promotion note is RETRACTED — the precedent does not transfer.**
+`abcd_byte` and `sbcd_byte` have BODIES in `src/hud.c`, so that header is their declaration site by
+necessity and promoting them means moving code into a kit `.c`; these four are header-only inlines
+of exactly the shape `machine.h` already holds beside `sign_ext16` and `set_low_word`, both of their
+consumers already include it, and the move is additive with no other project naming those symbols.
+Deferring them bought nothing and cost `src/map.c` — the lowest-level collision module — an
+`#include "hud.h"` for arithmetic with nothing to do with a status panel.
+
+### The pin: seventeen cases, red first, both directions
+
+`test_the_walks_exit_X_reaches_the_weapons_sbcd` runs the ORIGINAL's `$a4a`/`$a4e` pair under the
+oracle and a glue that calls the two C routines in the same order, and requires the whole image to
+agree. **The composition lives in the glue because `$a38` is not ported**: the glue is those two
+`bsr`s and nothing else, and the bit it hands the walk is the zero `emu.run`'s SR = $2700 gives the
+oracle rather than a value the case chose.
+
+**EACH ROW ALSO STATES WHICH PATH IT DROVE**, as an `expected_extend` checked against the ORIGINAL's
+own shot count through `leaf.bcd_expected`'s decimal model. Without it a row whose seeding quietly
+stopped reaching the `sbcd` would pass by having both sides spend nothing — agreeing about nothing
+and pinning no flag. The sixteen rows are the turn, the accelerator's counter, the pass-through, the
+flicker, the knock-back over a solid row (where the probe leaves a SET bit and the `subq.b` must
+overwrite it), the ceiling add's carry and its twin that does not carry, and nine probe-tail rows:
+the block arm at an ordinary stride AND at a zero one, the far arm, the right-hand middle arm with a
+commit that carries and one that does not, the LEFT-hand middle arm (the only place
+`step_left_commit`'s borrow escapes), the left probe's edge arm at both strides, and the left probe
+into the block arm.
+
+**AND A SEVENTEENTH CASE, WHICH IS THE ONLY ONE THAT IS NOT A DIFFERENTIAL**, because it cannot be:
+`test_the_walk_hands_a_SET_caller_bit_STRAIGHT_THROUGH_to_the_sbcd` enters the walk with X SET, and
+`emu.run` forces SR = $2700 so no oracle run can. It uses `leaf.run_candidate_only` against
+`leaf.bcd_expected`'s model — the shape `player_weapon_fire`'s own entry-X rows already use — and it
+asserts the PAIR: the same coasting seed with a clear bit must spend the other count. The review is
+what said this was missing, and it was the round's most valuable finding: with only the sixteen
+differential rows, **six mutants that replace a pass-through with a constant zero all survived**,
+including `player_step_and_arm` ignoring its own parameter. The pass-through is the load-bearing
+arm — a firing frame is by construction a coasting frame — and it had no surface at all.
+
+**RED FIRST, AND IN BOTH DIRECTIONS.** Measured against the TWELVE rows that existed at the time,
+which is why the figures below do not add to sixteen: the four probe rows added later (the two
+zero-stride ones, the left-hand middle arm, and the left probe into the block arm) came out of the
+mutation sweep and the review, after the constants had been tried. The twelve were the turn, the
+accelerator's counter, the pass-through, the flicker, the knock-back over a solid row, the ceiling
+add's carry and its twin, the right-hand block/far/middle arms, the wrapping commit, and the left
+probe's edge arm.
+
+With the threading removed and the weapon fed a constant 0, **six of those twelve failed** — exactly
+the six whose true bit is 1. With a constant 1, **eight failed**: the six whose true bit is 0, plus
+two more inside the differential's poison pass, which re-runs both cores on an image whose
+oracle-written bytes are pre-poisoned and so effectively tries a second count value. Every row was
+red under at least one constant, which is what says no constant can serve. **Re-running it is two
+edits to `_compose_walk_then_weapon`** (drop the walk's returned bit; pass 0, then 1), and the four
+later rows would join the tally on the same side as their `expected_extend` says.
+
+**THE SEEDING FAULT THAT WORE A FINDING'S CLOTHES**, worth recording because it looked like a
+result: the first draft of the three probing rows all came back "this arm leaves X clear". The cause
+was that `_weapon_pokes` seeds no MAP, and the .PRG ships `WB_COLLISION_MAP_DEFAULT`'s stride word as
+ZERO — so every cell index collapsed to its column, the stamped rows were never read, and both of
+the tail's arithmetic arms leave X clear on a zero stride whatever the case does. `map_pokes` is now
+a layer under the composition's own, and the rows drive the arms they name.
+
+### The sweep
+
+**FOUR ROUNDS, and the last two are the review's.** Round one went at the twenty-one mutants the
+threading suggested and found ONE hole; the review then moved the sources (the probe epilogues
+collapsed, the extend primitives went to the kit) and added three findings of its own, so **round
+three re-spelt every mutant against the tree as the review left it and added six more** — the
+pass-through mutants the review said were unpinned, an `always-set` twin for each `dropped`
+mutant, and one on the new `probe_report` helper.
+
+**ROUND THREE: 27 mutants — 2 equivalent, 4 unreachable at the consumer, 21 KEPT, of which 18
+caught and 3 SURVIVED.** 2 + 4 + 21 = 27. Round four re-ran those three against the rows written
+for them: **3 of 3 caught, so 21 of 21 kept mutants are caught.**
+
+* **THE SIX PASS-THROUGH MUTANTS THE REVIEW PREDICTED ALL DIED**, including `player_step_and_arm`
+  ignoring its own `entry_extend` — which round one had filed as EQUIVALENT and which the SET-bit
+  case retires. That reclassification is the round's headline: an "equivalent because no case can
+  tell" is a statement about the cases, and the case that could tell had simply not been written.
+* **THE THREE ROUND-THREE SURVIVORS WERE ALL MINE, AND TWO OF THEM WERE ROWS THAT PASSED FOR THE
+  WRONG REASON.** The stride-0 rows added to close round one's stride equivalences seeded NOTHING:
+  `_clear_map_rows` and `_fill_probe_row` both write `stride`-sized bands, so at a stride of zero
+  both are empty, the rows ran on `map_pokes`' keyed bytes, and they agreed with the model by luck.
+  The third was a real gap — no row put the LEFT probe through the tail's middle arm, the only
+  combination that carries `step_left_commit`'s borrow out. All three now name their cells by INDEX
+  (a zero-stride map has no rows to name), and `_frame_composition_pokes` refuses a zero-stride row
+  that asks for a band.
+* **Equivalent (2)**: the knock-back dropping its own borrow (that borrow is provably always clear,
+  and so is the entry bit on the arm that reaches it), and the left probe's commit borrow DROPPED —
+  separable only by a HALF-WIDTH at or above $8000, since with an ordinary one
+  `x - half - remaining >= 0` implies `x >= remaining` and that `sub.w` can never borrow.
+* **Unreachable at the consumer (4)** — the path runs in the game but no frame that reaches the
+  `sbcd` can be on it: `$1170`'s clamp borrow, the drift's probe bit, the coast's `subq.b` borrow,
+  and the `add.w d7,d7` arm read as `stride + 1`. Listed under "honestly unpinned" below, where the
+  count agrees with this one.
+
+**AND `player_step_and_arm` IGNORING ITS OWN `entry_extend` IS NOT AMONG THE EQUIVALENCES.** Round
+one filed it there, on the ground that every oracle case enters with X clear; the SET-bit case KILLS
+it, and it is a kept mutant that round three caught. Two other round-one equivalences went the same
+way — the `neg.w` arm forced to 1 and `cell_pointer`'s `add.w` forced to 1, both called equivalent
+"under the game's own data" because no map was thought to hold a zero stride. The .PRG ships
+`WB_COLLISION_MAP_DEFAULT`'s stride word as ZERO, `map_pokes` already takes `default_stride`, and
+both are now driven and caught. **LESSON: "no case can tell these apart" is a claim about the CASES,
+and "the game's own data cannot reach this" is a claim about the DATA — the shipped image is the
+first place to check the second, and an unwritten case is not evidence for the first.**
+
+### THE FIFTH COST, measured by paying the fourth — and then RE-PRICED
+
+**The flip needs a MODEL of one routine's six exits, and nothing above it.** An earlier draft of
+this heading priced it as an exit X out of three more routines plus an `entry_extend` on the
+dispatch row; that estimate rested on a misreading of `player_jump_step` and is retracted below,
+where the corrected exit table is. What survives of it is the premise, and the premise is sound —
+the walk's pass-through arm is not a formality. A frame that reaches the `sbcd` has a fire
+EDGE (the weapon's third gate wants the newly-pressed byte to be exactly $80), the walk's fire-edge
+arm therefore runs, and it CLEARS the speed at $f06 and lowers the drift's gate bit at $f00 — so on
+such a frame the drift cannot run and the coast always re-reads zero. With no knock-back and no
+flicker, **not one instruction in the walk writes X**, and the bit the `sbcd` folds in is the one
+`$a4a` was entered with.
+
+And every routine above it passes one through on an ordinary frame, which was read off the bytes
+rather than assumed. The last column is what the re-pricing below then does to each of them:
+
+| routine | its pass-through path | what it owes after the re-pricing |
+| --- | --- | --- |
+| `$a76` `player_meter_empty_check` | `tst.w $b6fa.l / bne.w $b06` onto an `rts` — all but one frame of a life | **nothing** — `$d78` overwrites X below it on every firing frame |
+| `$b1a` `player_pending_event_gate` | three `tst.w`/`bne.w` pairs then `clr.l d7 / rts` | **nothing**, for the same reason |
+| `$d78` `player_gate_on_1516` | `tst.w $1516.l / rts` whenever the ladder mode is up | **the whole of the cost**: its other arm falls into `player_jump_step`, whose six exits are the table below, and its OWN ladder arm is the one open question |
+
+**AND THE JUMP MACHINE MAKES THE COST SMALLER, NOT BIGGER — WHICH IS THE OPPOSITE OF WHAT THIS
+SECTION FIRST SAID.** An earlier draft here described every arm of `$e06` as overwriting the
+`addi.b #$8,d0` at `$e12`, and concluded that the chain therefore ran off the top of the row into
+the dispatcher. **That is retracted: the bytes of `$e06..$ec6` refute it, and THREE of the six exits
+EXPORT `$e12`'s carry.** Everything between that instruction and them writes no flag — `move.b`, two
+`btst`/`bne` pairs, `tst.b`, `beq`, `btst`, `beq`, and the `move.b`/`move.b`/`eor.b`/`and.b`/`rts`
+that is the whole of `joy1_newly_pressed` (`$682`).
+
+| exit | reached when | the X it leaves |
+| --- | --- | --- |
+| `$e6a` via the `beq.w` at `$e34` | airborne, no wing-boot charge | **`$e12`'s carry** |
+| `$e6a` via the `beq.w` at `$e3e` | airborne, charge held, UP not held | **`$e12`'s carry** |
+| `$e6a` via the `bne.w` at `$e4e`, or by falling through `$e62` | airborne, a charge spent | `subq.b #1,$bbc2.l` at `$e48` |
+| `$e78` | SUPPORTED, UP not newly pressed | **`$e12`'s carry** |
+| `$ea6` | SUPPORTED, UP newly pressed — the LAUNCH | the `jsr 56(a1)` at `$e88`, which is `movem.l`/`bsr.w $1a488`/`movem.l`/`rts`, so the sound routine's — **unread by this port** |
+| `$ec6` | MOVING — the ASCENT | `subq.b #1,11(a0)` at `$eb2` |
+
+**AND A FIRING FRAME CANNOT REACH THE ONE UNREAD EXIT.** The weapon's third gate wants the
+newly-pressed byte to be exactly `$80`, so bit 0 (UP) is clear, so the `btst #0,d0 / bne.w` at `$e70`
+never takes the launch. Every other exit's bit is a FUNCTION OF MEMORY: the carry of
+`byte[$bd6b] + 8` (i.e. `byte[$bd6b] >= $f8`), the byte at `$bbc2`, or `11(a0)`.
+
+**SO THE RE-PRICING.** On a frame that fires, `player_gate_on_1516`'s jumping arm ALWAYS writes an X
+and that X is derivable, so nothing above `$d78` — not `$b1a`, not `$a76`, not the dispatcher —
+can reach the `sbcd` with its bit intact. **The frame needs no `entry_extend` from
+`actor_dispatch_behavior`, and the `UNPORTED_TYPE` signature decision is not part of this cost after
+all.** What phase F actually owes is a MODEL of `$d78`'s chain: six exits, five of them computable
+from three bytes, and one — the launch — that no firing frame reaches. `src/player.c`'s
+`player_ascend` passes its borrow a NULL today and its comment says UNTHREADED rather than dead,
+which stays correct.
+
+**THE ONE ARM THAT STILL PASSES A CALLER'S BIT** is `$d78`'s own `tst.w $1516.l / rts`, taken while
+the ladder mode is up, where the jump machine does not run at all. Whether such a frame can also
+fire is NOT established here: the weapon's first gate reads `$1514` and not `$1516`, and this phase
+did not measure whether the two can disagree. That is the open question phase F starts from, and it
+is a much smaller one than a dispatcher-wide threading.
+
+### Honestly unpinned
+
+* **FOUR X paths no firing frame can reach**, each a live mutant that survived and each named
+  rather than driven — the same four the sweep counts: `$1170`'s CLAMP borrow at $11d4 (the
+  composition never seeds a record past the level's right edge, and `test_map.py`'s clamp cases
+  cannot see a CCR); the HURT DRIFT's probe bit (the fire edge lowers the drift's gate two sections
+  above it, so a firing frame never drifts); the COAST's `subq.b #1,22(a0)` borrow (the fire edge
+  clears the speed, so the coast's stepping arm never runs on a firing frame); and the tail's
+  `add.w d7,d7` read as `stride + 1`, which only a stride at or above $8000 separates. The first
+  three are pinned as MEMORY by their own batteries; it is only their contribution to the X chain
+  that no case can separate, and each is reachable in principle from a DIFFERENT entry — a narrow
+  scroll limit for the clamp, a non-firing frame for the other two.
+* **The left probe's commit borrow, at the value 1** — it is pinned at 0, on both the middle-arm
+  row and the model, and provably cannot be 1 for any half-width the game uses (see the sweep).
+* **The jump machine's LAUNCH exit ($ea6)**, whose X is the `jsr 56(a1)` sound routine's and which
+  this port has never read. It is honestly unpinned and honestly UNREACHABLE from the `sbcd`: a
+  firing frame cannot take that arm (see "the fifth cost"). Phase F models the other five.
+* **The frame's own entry X** — the fifth cost. It is a blocker rather than a silence, and
+  `player.h`'s plate and `cmt 0xa38` both name it.
+* **`WB_PLAYER_COLLIDE_SOUND_WAIT` and the six instructions below the spin**, and everything phase
+  C's list carries (`$e032`, the odd drift cursor, the two spawn-tree arms' self-checked write sets,
+  the stage arm's invisible tail) — all unchanged.
+
+### Queue
+
+* **PHASE F — THE FRAME.** In order: a MODEL of `$d78`'s chain — six exits, five computable from
+  `byte[$bd6b]`, `$bbc2` and `11(a0)`, one (the launch) that no firing frame reaches — and the one
+  open question beside it, whether a ladder frame can fire at all (`$1516` up while `$1514` lets the
+  weapon through). **NOT** `$a76`, `$b1a` or a dispatch-row `entry_extend`: none of them can reach
+  the `sbcd` on a firing frame, which is the re-pricing above. Then the exit-code RENUMBERING (`WB_PLAYER_GATE_FRAME_SKIPPED` and
+  `WB_PLAYER_COLLIDE_SOUND_WAIT` are both 1 and mean different things, and 1/2/3 are the three
+  `WB_ACTOR_DISPATCH_*` codes); then the 62 bytes, the `UNPORTED_TYPE` retirement (with
+  `test_behavior.py`'s tripwire becoming the 62/62 assertion), the whole-frame differential and the
+  dispatch-level `jmp (a1)` case.
+* **THEN, and not before**: the spine, the on-target backends, the playable `.PRG`. **None of the
+  three has been started.**
+* **LANDED THIS PHASE, so it is not carried**: the four X primitives (`word_add_extend` and its
+  three siblings) went straight into the kit's `machine.h` rather than being registered for a later
+  promotion — see "the signature shape" above for why that precedent does not transfer from
+  `abcd_byte`/`sbcd_byte`, which ARE still carried because they have bodies in `src/hud.c`.
+* **CARRIED, unchanged**, everything as phase D left it — `$e032`; the odd drift cursor;
+  `hud_meter_charge`; `src/actor.c` on to `bus.h`; `leaf.run_reaching` / `final_pc` to the kit; the
+  `TRAP_MODEL.md` `stop_pc` note; `bus.h` to the kit; regenerating `../out/names_dump.txt`,
+  `../out/hw_scan.tsv`, `../decomp.c` and `../out/wonderboy_dis.txt`; the `$1ab4` boundary; the tier
+  partition; the `scene_run_effect` latent guard; the duplicate `cmt` directives at `0x1023a` and
+  `0x10394`; the `WB_HUD_SLOT_BBC2`/`_BBC6` renames; `map.c`'s unguarded `WB_ACTOR_X` write;
+  which-monster-is-which; `leaf.stray_writes`' O(writes x bands) scan.
+
+### Lessons
+
+* **A THREADED FLAG IS AN INTERFACE CHANGE AT THE CALL-SITE COUNT, NOT AT THE ROUTINE COUNT.** Three
+  routines gained an output and forty-six call statements were in scope; the shape that left
+  twenty-four of them untouched and made eight more a one-token edit is a NULL-able out-param plus
+  the wrappers the header already had. Decide that before writing the first signature — the
+  alternative is a diff whose size hides the model it is carrying. (The table above is the count.
+  The first draft of this section gave two figures that did not add up, which is the arithmetic the
+  gate exists to catch: a budget nobody can reproduce is not a budget.)
+* **A PARAMETER THAT IS NEVER READ IS AN INVENTED VALUE IN WAITING.** The first draft gave
+  `player_turn_around` an `entry_extend` for symmetry and then had to pass it a literal 0, which is
+  exactly the fabricated bit the phase exists to avoid. A routine whose FIRST instruction writes X
+  takes no entry bit, and a routine with no X-writer on any arm stays out of the chain entirely —
+  and both facts belong in the plate, because their absence from the signature is the claim.
+* **SEED THE DATA THE MODEL READS, NOT ONLY THE DATA THE CODE BRANCHES ON.** Three rows came back
+  with a clean, plausible, uniform answer — "this arm leaves X clear" — because the map's STRIDE
+  word was zero in a battery that had never needed a map. Every arm of the tail collapses to the
+  same value on a zero stride, so the wrong answer was self-consistent across three independent
+  cases. A model constant read out of the image is an input; a battery that does not seed it is
+  measuring the .PRG's zeros.
+* **A MUTANT SURVIVES WHERE A BATTERY'S ROWS ARE ALL ONE SHAPE.** The report-order mutant lived
+  because every left-hand row happened to drive the tail's middle arm, where the two orders agree.
+  Coverage of a MODEL is coverage of its arms crossed with the paths that reach them, not of its
+  arms alone — and the sweep is the only thing that says which crossing is missing.
+* **"EVERY ARM DOES X" NEEDS THE EXITS ENUMERATED FROM BYTES, NOT SAMPLED — AND THIS IS THE THIRD
+  FALSE MECHANISM IN THREE PHASES.** Phase D wrote two (an encoding blind spot that was really a
+  scope one, and a per-run salt read as a wrong measurement); this phase wrote a third, and it was
+  the load-bearing sentence of the whole cost estimate: `player_jump_step`'s arms were said to
+  overwrite its opening `addi.b`, from having READ the two arms that do. THREE of its six exits
+  export it, and the error inverted the conclusion — the fifth cost went from "thread the whole
+  dispatcher" to "model one routine from three bytes". The pattern across all three is the same
+  shape as batch 41 phase D's own census lesson: **a claim quantified over arms, exits, sites or
+  callers is a claim about a SET, and a set is enumerated or it is not claimed.** Sampling two of
+  six and writing "every" is not a shortcut, it is a different statement. The cheap guard is the one
+  that caught this: decode the whole span and tabulate the exits before writing the sentence.
+* **A ROW WRITTEN TO KILL A MUTANT IS NOT A ROW THAT KILLS IT.** The two stride-0 rows added to
+  close round one's stride equivalences were green on the first run, drove nothing, and would have
+  shipped as coverage if the sweep had not been re-run against them. The mechanism is worth
+  recognising: a seeding HELPER sized by the very parameter the row is varying (`bytes(...) *
+  stride`) silently produces nothing at the interesting value. **Re-run the sweep after writing the
+  row that is supposed to kill the mutant** — a new case's own green is not evidence it covers
+  anything, and neither is the author's reasoning about it.
+* **CLASSIFY A SURVIVOR BEFORE CALLING IT A HOLE.** Nine of twenty-one survived and only one was a
+  hole. Two were equivalent because every case enters with X clear; three because separating them
+  needs a stride or a half-width no map and no record holds; three because the path, though live in
+  the game, cannot be on a frame that also fires. Each of those is a sentence in the status file,
+  not a case to force — and forcing them would have meant fabricating records, which is the thing
+  the rule about seeding real data forbids.

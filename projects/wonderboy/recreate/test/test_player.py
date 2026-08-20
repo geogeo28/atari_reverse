@@ -2607,24 +2607,30 @@ PROBE_ROW = (WALK_Y - 1) >> CELL_SHIFT
 CLEARED_MAP_ROWS = 4
 
 
-def _map_row(row):
-    return MAP_DEFAULT + MAP_CELLS + row * DEFAULT_STRIDE
+def _map_row(row, stride=DEFAULT_STRIDE):
+    return MAP_DEFAULT + MAP_CELLS + row * stride
 
 
-def _clear_map_rows(pokes):
+def _clear_map_rows(pokes, row=None, stride=DEFAULT_STRIDE):
     """The probed cells zeroed. `map_pokes` keys every cell off its ADDRESS, which is right for the
     map battery's own cases and wrong here: a keyed cell would block a step at random and the arm a
     case is about would not be the thing moving.
 
     The band starts ONE ROW ABOVE the probed one because a probe that walks off the map's left edge
-    names a NEGATIVE column, and `lea d16(An,Dn.w)` sign-extends it back into the previous row."""
-    pokes[_map_row(PROBE_ROW - 1)] = bytes(CLEARED_MAP_ROWS * DEFAULT_STRIDE)
+    names a NEGATIVE column, and `lea d16(An,Dn.w)` sign-extends it back into the previous row.
+
+    `row` and `stride` are parameters because the frame-composition battery stands its record one
+    cell lower and drives one case at a stride of its own; a second copy of this band is how a
+    window ends up seeded off the wrong row while every case still passes."""
+    row = PROBE_ROW if row is None else row
+    pokes[_map_row(row - 1, stride)] = bytes(CLEARED_MAP_ROWS * stride)
     return pokes
 
 
-def _fill_probe_row(pokes):
-    """...and the same window with the probed row SOLID, for the one case about a blocked step."""
-    pokes[_map_row(PROBE_ROW)] = bytes([TILE_BLOCK]) * DEFAULT_STRIDE
+def _fill_probe_row(pokes, row=None, stride=DEFAULT_STRIDE):
+    """...and the same window with the probed row SOLID, for the cases about a blocked step."""
+    row = PROBE_ROW if row is None else row
+    pokes[_map_row(row, stride)] = bytes([TILE_BLOCK]) * stride
     return pokes
 
 
@@ -2656,7 +2662,13 @@ def _walk_pokes(what, fields=None, blocked=False):
     return leaf.overlay(base, fields or {})
 
 
-_STEP_AND_ARM = leaf.register_glue("player_step_and_arm", [ctypes.c_uint32])
+# THE WALK TAKES AND RETURNS THE X FLAG (include/player.h), and every case in THIS battery enters
+# with the zero `emu.run`'s SR = $2700 gives the oracle — so the entry bit is 0 here, not a choice.
+# What the routine RETURNS is invisible to a memory differential; the frame-composition battery
+# further down is where the chain is pinned, at the one instruction that consumes it.
+_STEP_AND_ARM = leaf.register_glue("player_step_and_arm", [ctypes.c_uint32, ctypes.c_uint],
+                                   ctypes.c_uint)
+WALK_ENTRY_EXTEND = 0
 # The map probes LOOP once per pixel of a blocked step, so the cap has to carry the widest step any
 # case here takes rather than a round number: a probe is BLOCKED_PROBE_INSNS instructions of
 # straight-line body plus PROBE_LOOP_INSNS per pixel it backs off, and no case seeds a step above
@@ -2673,7 +2685,8 @@ STEP_AND_ARM_CAP = _cap("player_step_and_arm",
 
 
 def _run_walk(what, pokes, expected):
-    info = leaf.run("player_step_and_arm", _STEP_AND_ARM(ACTOR), merge_bands(expected), what,
+    info = leaf.run("player_step_and_arm", _STEP_AND_ARM(ACTOR, WALK_ENTRY_EXTEND),
+                    merge_bands(expected), what,
                     regs={"a0": ACTOR, "_pokes": pokes}, max_insns=STEP_AND_ARM_CAP)
     _assert_writes(info, expected, what)
     return info
@@ -3536,26 +3549,75 @@ WALK_SPEND_COUNT = 0x05
 FRAME_COMPOSITION_SALT = "the frame's walk-then-weapon composition"
 
 
-def _frame_composition_pokes(record_fields):
+# The map window the composition's PROBING cases run on. `_weapon_pokes` stands the record at
+# PLAYER_Y, one cell below where the walk battery puts it, so the probed row is re-derived here
+# rather than borrowed: a band seeded off the wrong row leaves the probed cells keyed and the arm a
+# case is about is not the thing that moved.
+COMPOSITION_PROBE_ROW = (PLAYER_Y - 1) >> CELL_SHIFT
+
+
+def _frame_composition_pokes(record_fields, direction=1 << JOY1_RIGHT_BIT, cells=None,
+                             strength=WALK_STRENGTH, actor_x=None, stride=DEFAULT_STRIDE,
+                             solid_probe_row=False):
     """`_weapon_pokes`' four open gates, plus everything the WALK reads on the way to them.
 
-    RIGHT IS HELD IN BOTH JOYSTICK BYTES, which is the seeding this composition needs and the weapon
-    battery's own does not: the walk's head reads the CURRENT byte, and the weapon's third gate wants
-    `joy1_newly_pressed` to be exactly WB_PLAYER_FIRE_EDGE_EXACT — so the direction has to be down
-    ALREADY, or the edge byte is $88 and nothing fires."""
-    held = (1 << JOY1_DOWN_BIT) | (1 << JOY1_RIGHT_BIT)
+    THE DIRECTION IS HELD IN BOTH JOYSTICK BYTES, which is the seeding this composition needs and
+    the weapon battery's own does not: the walk's head reads the CURRENT byte, and the weapon's
+    third gate wants `joy1_newly_pressed` to be exactly WB_PLAYER_FIRE_EDGE_EXACT — so the
+    direction has to be down ALREADY, or the edge byte is $88 and nothing fires. `direction` of 0
+    is a frame with fire and DOWN alone, which is the walk's COASTING arm.
+
+    `record_fields` are BYTE fields off `_WALK_QUIET_RECORD` — the same "takes no arm" record the
+    walk battery seeds, reused rather than restated so that a new byte the walk reads is added in
+    one place. The two WORD-wide inputs a case may move are named parameters instead (`actor_x`,
+    `strength`), because a width decided by set membership is a width a case cannot see.
+
+    THE MAP IS `map_pokes` PLUS THE WALK BATTERY'S OWN TWO WINDOW HELPERS, at this battery's row
+    and stride. The stride layer is the one `_weapon_pokes` has no reason to carry and the one that
+    matters most: the .PRG ships WB_COLLISION_MAP_DEFAULT's own word as ZERO, so without it every
+    cell index collapses to its column, the stamped rows are never read, and BOTH of the tail's
+    arithmetic arms leave X clear whatever a case seeds. That is how the first draft of the probing
+    rows below read as "this arm gives 0" — a seeding fault wearing a finding's clothes.
+
+    `cells` is {(row offset, column): tile} relative to COMPOSITION_PROBE_ROW, applied as a LATER
+    overlay layer than the window: a cell poke and the four-row block share bytes, and
+    `leaf.overlay` is what merges those byte by byte."""
+    held = (1 << JOY1_DOWN_BIT) | direction
     fields = {
         JOY1_PREV: bytes([held]),
         JOY1_CURRENT: bytes([FIRE_EDGE_EXACT | held]),
         TILE_33_MODE: word(0),              # ...so the walk arm does not leave a ladder
-        ACTOR + FLAGS2: bytes([0]),         # the hurt drift's gate, which the fire edge lowers anyway
-        ACTOR + FIELD_29: bytes([0]),       # no knock-back
-        ACTOR + FIELD_22: bytes([0]),       # the speed, which the fire edge clears in any case
+        STATE_FLAG_A32: word(0),            # ...so a probe reads the DEFAULT collision map
+        SCROLL_LIMIT_X: word(WIDE_LEVEL),   # ...and the right probe's clamp does not fire
+        EFFECT_STATE_BD6A: word(strength),
+        ACTOR + ACTOR_TYPE: word(TYPE_PLAYER),
+        ACTOR + HALF_WIDTH: word(WALK_HALF_WIDTH),
     }
-    for offset, value in record_fields.items():
-        fields[ACTOR + offset] = bytes([value])
-    return _weapon_pokes(FRAME_COMPOSITION_SALT, WEAPON_LIGHTNING, count=WALK_SPEND_COUNT,
-                         fields=fields)
+    fields.update({ACTOR + offset: bytes([value])
+                   for offset, value in _WALK_QUIET_RECORD.items()})
+    fields.update({ACTOR + offset: bytes([value]) for offset, value in record_fields.items()})
+    if actor_x is not None:
+        fields[ACTOR + ACTOR_X] = word(actor_x)
+
+    # AT A ZERO STRIDE THERE ARE NO ROWS TO SEED: both helpers write `stride`-sized bands, so both
+    # are empty, and a row that asked for them would run on `map_pokes`' keyed bytes and pass by
+    # luck. The mutation sweep caught exactly that — two stride-0 rows agreeing with the model while
+    # driving an arm nobody chose. Such a row names its cells by INDEX instead (see `cells`).
+    window = {}
+    if stride:
+        _clear_map_rows(window, COMPOSITION_PROBE_ROW, stride)
+        if solid_probe_row:
+            _fill_probe_row(window, COMPOSITION_PROBE_ROW, stride)
+    else:
+        assert not solid_probe_row, "a solid ROW is meaningless at a stride of zero"
+        assert cells, "a zero-stride row must name the cell the probe lands on, by index"
+    stamped = {_map_row(COMPOSITION_PROBE_ROW + row, stride) + column: bytes([tile])
+               for (row, column), tile in (cells or {}).items()}
+    return leaf.overlay(map_pokes(case_salt(FRAME_COMPOSITION_SALT), default_stride=stride),
+                        _weapon_pokes(FRAME_COMPOSITION_SALT, WEAPON_LIGHTNING,
+                                      count=WALK_SPEND_COUNT, fields=fields),
+                        window, stamped)
+
 
 
 def _run_walk_then_weapon(record_fields, stop_pc):
@@ -3592,6 +3654,16 @@ def test_the_walks_two_arms_leave_the_image_IDENTICAL():
         "the two walk arms no longer leave the same image, so the pair below is no longer a claim "
         "about a CPU flag — re-derive the two seeds before reading its result")
 
+    # AND NEITHER ARM TOOK A PROBE, which is the premise UNDER the premise and the one the shared
+    # pokes builder can silently move: both tails re-read the speed the fire edge cleared, so the
+    # record's x must be exactly where it was seeded. A seed change that lets a probe run makes the
+    # probe zero the speed mid-loop for a player record, and the equality above would fail here
+    # instead of in the row that moved it.
+    at = ACTOR + ACTOR_X
+    assert bytes(turn[at:at + WORD_BYTES]) == word(PLAYER_X), (
+        "a walk arm moved the record, so one of these seeds now reaches a map probe and this pair "
+        "is no longer the flag-only comparison it claims to be")
+
 
 def test_the_SAME_image_then_spends_a_DIFFERENT_shot_count():
     """HALF TWO: identical memory in, different memory out — so the difference travelled in a
@@ -3599,9 +3671,9 @@ def test_the_SAME_image_then_spends_a_DIFFERENT_shot_count():
 
     WHAT THIS BLOCKS. `actor_behavior_type01_player` cannot hand `player_weapon_fire` a constant
     `entry_extend` (either constant is wrong on one of these two runs) and cannot compute one from
-    the image (the case above says the image is the same). It has to THREAD the walk's exit X, and
-    `player_step_and_arm` does not report one — on the ordinary paths that bit belongs to the two map
-    probes, which do not report one either. ../STATUS.md's batch 41 phase D section prices that.
+    the image (the case above says the image is the same). It has to THREAD the walk's exit X —
+    which batch 41 phase E then did, through the walk's five sections and the two map probes, with
+    the battery below this pair as the pin. ../STATUS.md's phase D section prices what was left.
 
     The two counts are stated from `leaf.bcd_expected`'s decimal model rather than from each other,
     so a run that spent nothing at all fails here instead of looking like agreement."""
@@ -3624,6 +3696,223 @@ def test_the_SAME_image_then_spends_a_DIFFERENT_shot_count():
         f"the two runs differ at {sorted(hex(a) for a in diverged)}, not at the single "
         f"{at:#x} — the walk's two arms now separate somewhere besides the shot count, so this "
         f"pair no longer isolates the X flag")
+
+
+# --- THE CHAIN ITSELF: the walk's exit X, composed into the weapon and diffed against the original -
+#
+# BATCH 41 PHASE E. The two cases above say the bit exists and travels in a flag; these say the
+# reconstruction carries THE SAME ONE, on every path a firing frame can reach. Each row runs the
+# ORIGINAL's `$a4a`/`$a4e` pair under the oracle and the two C routines composed the way those two
+# adjacent `bsr`s compose them, and requires the whole image to agree.
+#
+# WHY THE COMPOSITION LIVES IN THE GLUE AND NOT IN src/. `actor_behavior_type01_player` ($a38) is the
+# one dispatch row still unported, so there is no C function that spells `bsr $ec8 / bsr $1208` yet.
+# The glue is that pair and nothing else — it adds no arithmetic of its own, and the entry bit it
+# hands the walk is the zero `emu.run` gives the oracle (SR = $2700), not a value the case chose.
+#
+# WHAT EACH ROW CLAIMS, BEYOND THE DIFFERENTIAL. `expected_extend` is the X the row says the WALK
+# leaves, and it is checked against the ORACLE's own shot count through `leaf.bcd_expected`'s decimal
+# model — so a row states which path it drove instead of asserting that two runs agree. Without it a
+# case whose seeding quietly stopped reaching the `sbcd` would still pass: both sides would spend
+# nothing, agree perfectly, and pin no flag at all.
+def _compose_walk_then_weapon(entry_extend):
+    """`$a4a` and `$a4e`, in C. The walk's returned X is the weapon's `entry_extend` and nothing
+    between them touches the flag — which is the whole of what this battery pins.
+
+    THE TWO SYMBOLS ARE THE BATTERY'S EXISTING BINDINGS and not fresh ones, which is not tidiness:
+    `leaf.bind` is `getattr` on a `ctypes.CDLL`, and ctypes CACHES the function object on the
+    library — so a second `bind` of a name already bound hands back the SAME object and its
+    `argtypes`/`restype` are whatever the last call set. Two spellings of one prototype in one file
+    is a signature change silently applied to both, or silently discarded from one."""
+    def glue(lib, image):
+        exit_extend = _STEP_AND_ARM(ACTOR, entry_extend)(lib, image)
+        _WEAPON_FIRE(ACTOR, exit_extend)(lib, image)
+        return exit_extend
+    return glue
+
+
+def _run_frame_composition(what, pokes, expected_extend, probe=None):
+    """One composition row. `probe` is the map probe the row claims to drive, and it is checked as
+    an EXECUTED PC rather than inferred.
+
+    WHY THAT WITNESS EXISTS: a row picks its probe with one joystick bit, and a seeding change that
+    stops the direction reaching the walk turns the row into a coasting frame that still agrees with
+    the model — the bit it then pins is a pass-through, not the arm the row's name claims. That is
+    the shape the review flagged when two rows here were found driving nothing, and the shape a
+    duplicated direction constant invites."""
+    with leaf.pc_coverage():
+        diffs, info = leaf.differential(WALK_CALL_AT, {"a0": ACTOR, "_pokes": pokes},
+                                        _compose_walk_then_weapon(WALK_ENTRY_EXTEND),
+                                        max_insns=WALK_THEN_WEAPON_CAP,
+                                        stop_pc=AFTER_WEAPON_AT, poison=True)
+        entered = probe is None or emu.cov_visited(leaf.entry_of(probe))
+    assert not diffs, f"{what}\n{leaf.report(diffs)}"
+    assert entered, (
+        f"{what}: the run never executed {probe}, so this row drove a walk that took no map step "
+        f"at all — whatever it pins is not the arm it names")
+
+    at = WEAPON_RECORD + RECORD_LOW_BYTE
+    spent = info["writes"].get(at)
+    assert spent == _spend_bytes(WALK_SPEND_COUNT, borrow=expected_extend)[at], (
+        f"{what}: the ORIGINAL left {spent!r} in the shot count, not the "
+        f"X={expected_extend} spend the row claims — either the run never reached the `sbcd` or "
+        f"the walk leaves a different bit than this row says")
+    return info
+
+
+# The walk's exit-X model, one row per path a frame that also FIRES can reach, with the seed that
+# drives it and the bit it must leave. The four sections' plates in src/player.c are what these
+# rows check; ../STATUS.md names the paths no firing frame can reach at all.
+FLICKER_FLAG = 1 << FLICKER_BIT
+# The speed the accelerator leaves when it ticks its counter over: one pixel, so a probing row's
+# step is the smallest that still takes a probe.
+COMPOSITION_STEP_SPEED = 1
+
+
+def _right_step_column(actor_x):
+    """The map column an ordinary RIGHT step lands in: `(x + 14(a0) + d7) asr #4`, wrapped to a word
+    first because the probe is computed in one. One derivation, because two rows below want it at
+    two different x values and a second spelling is how they would drift apart."""
+    probe = (actor_x + WALK_HALF_WIDTH + COMPOSITION_STEP_SPEED) & WORD_MASK
+    return probe >> CELL_SHIFT
+
+
+def _left_step_column(actor_x):
+    """...and the column a LEFT step lands in: `(x - 14(a0) - d7) asr #4`, the same shape with both
+    signs flipped. A negative result is a real column here — `lea d16(An,Dn.w)` sign-extends it back
+    into the row above — which is what the edge rows below use."""
+    # Python's `>>` on a negative int IS an arithmetic shift, which is what `asr.w` does, so the
+    # probe stays signed here rather than being wrapped to a word first.
+    return (actor_x - WALK_HALF_WIDTH - COMPOSITION_STEP_SPEED) >> CELL_SHIFT
+
+
+# The cell one row UNDER the one a right step lands in. A BLOCK there takes the tail's MIDDLE arm —
+# the only one that writes no flag of its own and hands the probe body's bit out (the arm accepts a
+# ledge too, and the rows below stamp a block because either reaches it).
+BLOCK_UNDER_STEP = _right_step_column(PLAYER_X)
+BLOCK_UNDER_LEFT_STEP = _left_step_column(PLAYER_X)
+WRAPPING_X = 0xffff             # ...so the commit's `add.w d7,(a0)` carries out of the word
+BLOCK_UNDER_WRAPPED_STEP = _right_step_column(WRAPPING_X)
+# The LEFT probe's edge arm: an x this close to the map's origin makes `x - half_width - speed`
+# NEGATIVE, which parks the record and leaves `cell_pointer`'s `add.w` as the last arithmetic.
+EDGE_X = 2
+# ...and the cell that arm lands on is the row ABOVE the probed one, last column, because the
+# negative column is sign-extended back into it.
+EDGE_CELL_COLUMN = DEFAULT_STRIDE - 1
+# The strength word whose `addq.w #4,d0` CARRIES, and its twin that does not. Both leave a ceiling
+# BYTE of zero, which is what stops the accelerator's own tail taking a probe and overwriting the
+# bit — the pair differs in the high half alone, so only the WORD add can separate them.
+STRENGTH_WORD_CARRY = 0xfffc
+STRENGTH_WORD_NO_CARRY = 0x00fc
+ACCELERATE_SUBFRAME = WALK_SUBFRAME_MASK        # ...so the next tick wraps the counter to zero
+
+ACCELERATING_RIGHT = {FIELD_23: ST_BYTE, FIELD_24: ACCELERATE_SUBFRAME}
+ACCELERATING_LEFT = {FIELD_23: 0, FIELD_24: ACCELERATE_SUBFRAME}
+# A stride of ZERO is what the .PRG itself ships in WB_COLLISION_MAP_DEFAULT's word, and it is the
+# ONE input that separates the tail's two arithmetic arms from constants: `neg.w d7` on a zero
+# leaves X CLEAR where every ordinary stride sets it, and `add.w d7,d7` is then a zero doubled.
+# With no rows to speak of, the cell one row down IS the cell, so the middle arm wants a LEDGE
+# there — the one tile that arm accepts and the first arm does not.
+COLLAPSED_STRIDE = 0
+TILE_LEDGE = wb("MAP_TILE_LEDGE")
+
+FRAME_X_PATHS = (
+    ("turn borrows out of a zeroed speed", dict(record_fields=WALK_X_SET_SEED), 1),
+    ("the accelerator's counter does not carry", dict(record_fields=WALK_X_CLEAR_SEED), 0),
+    ("no section writes X at all — the caller's bit passes through",
+     dict(record_fields={}, direction=0), 0),
+    ("the flicker countdown borrows",
+     dict(record_fields={FLICKER_COUNTDOWN: 0, ACTOR_FLAGS: FLICKER_FLAG}, direction=0), 1),
+    ("the knock-back's own `subq.b` overwrites the probe's bit",
+     dict(record_fields={FIELD_29: 1}, direction=0, solid_probe_row=True, probe=STEP_LEFT), 0),
+    ("the accelerator's `addq.w #4` carries out of the WORD",
+     dict(record_fields=ACCELERATING_RIGHT, strength=STRENGTH_WORD_CARRY), 1),
+    ("...and does not, on the same path, off the same ceiling byte",
+     dict(record_fields=ACCELERATING_RIGHT, strength=STRENGTH_WORD_NO_CARRY), 0),
+    ("the probe's tail stops on a BLOCK, so `neg.w d7` decides",
+     dict(record_fields=ACCELERATING_RIGHT, solid_probe_row=True, probe=STEP_RIGHT), 1),
+    ("...and `neg.w d7` on a ZERO stride leaves it CLEAR, which is what makes that arm a reading",
+     dict(record_fields=ACCELERATING_RIGHT, stride=COLLAPSED_STRIDE,
+          cells={(0, BLOCK_UNDER_STEP): TILE_BLOCK}, probe=STEP_RIGHT), 0),
+    ("the probe's tail finds nothing under it, so `add.w d7,d7` does",
+     dict(record_fields=ACCELERATING_RIGHT, probe=STEP_RIGHT), 0),
+    ("the probe's tail finds a block under it and passes the commit's carry through",
+     dict(record_fields=ACCELERATING_RIGHT, cells={(1, BLOCK_UNDER_STEP): TILE_BLOCK},
+          probe=STEP_RIGHT), 0),
+    ("...and the same arm with an x whose commit CARRIES",
+     dict(record_fields=ACCELERATING_RIGHT, actor_x=WRAPPING_X,
+          cells={(1, BLOCK_UNDER_WRAPPED_STEP): TILE_BLOCK}, probe=STEP_RIGHT), 1),
+    ("the LEFT probe's edge arm, where `cell_pointer`'s `add.w` is the last arithmetic",
+     dict(record_fields=ACCELERATING_LEFT, actor_x=EDGE_X, direction=HELD_LEFT,
+          cells={(0, EDGE_CELL_COLUMN): TILE_BLOCK}, probe=STEP_LEFT), 1),
+    # ...and the same edge arm with the row product COLLAPSED to zero, where `add.w d0,d1` adds a
+    # $ffff column to nothing and does NOT carry. Without it `cell_pointer`'s bit is pinned at one
+    # value and a port that hard-coded a set bit answered the row above.
+    ("...and the same edge arm where that `add.w` does not carry",
+     dict(record_fields=ACCELERATING_LEFT, actor_x=EDGE_X, direction=HELD_LEFT,
+          stride=COLLAPSED_STRIDE,
+          cells={(0, _left_step_column(EDGE_X)): TILE_LEDGE}, probe=STEP_LEFT), 0),
+    # The LEFT probe committing a move and then finding a block under it — the only combination
+    # that carries `step_left_commit`'s borrow out of the routine, and one the edge and solid rows
+    # above both miss (the first takes no commit, the second is overwritten by the tail's `neg.w`).
+    ("the LEFT probe's commit borrow, carried out through the tail's middle arm",
+     dict(record_fields=ACCELERATING_LEFT, direction=HELD_LEFT,
+          cells={(1, BLOCK_UNDER_LEFT_STEP): TILE_BLOCK}, probe=STEP_LEFT), 0),
+    # ...and the LEFT probe into the tail's FIRST arm, which the edge rows cannot reach: an edge arm
+    # is a middle-arm case, so without this one every left-hand path in the battery passes the
+    # body's own bit through and a port that reported BEFORE the tail answered them all. The
+    # mutation sweep is what found that — it was the round's one real hole.
+    ("the LEFT probe's tail stops on a BLOCK, so the body's bit does not escape it either",
+     dict(record_fields=ACCELERATING_LEFT, direction=HELD_LEFT, solid_probe_row=True,
+          probe=STEP_LEFT), 1),
+)
+
+
+@pytest.mark.parametrize("case,seed,expected_extend", FRAME_X_PATHS,
+                         ids=[row[0] for row in FRAME_X_PATHS])
+def test_the_walks_exit_X_reaches_the_weapons_sbcd(case, seed, expected_extend):
+    """ONE ROW PER X-WRITER THE WALK CAN LEAVE ITS LAST, and the composition diffed whole.
+
+    A row's `expected_extend` is not a second statement of the C: it is read off the ORIGINAL's shot
+    count, so it says which of the model's paths the seed really drove. The differential above it is
+    what says the reconstruction agrees — and because the only thing separating an X of 0 from an X
+    of 1 here is ONE packed-BCD unit in one byte, a port that dropped the bit anywhere along the
+    chain fails on the rows whose true bit is set, and one that invented it fails on the rest."""
+    what = f"the frame's walk-then-weapon composition: {case}"
+    probe = seed.pop("probe", None)
+    _run_frame_composition(what, _frame_composition_pokes(**seed), expected_extend, probe)
+
+
+def test_the_walk_hands_a_SET_caller_bit_STRAIGHT_THROUGH_to_the_sbcd():
+    """THE OTHER HALF OF `entry_extend`, and the only half no row above can reach.
+
+    Every case in this file enters the oracle with X clear (`emu.run` forces SR = $2700), so
+    "returns the caller's bit" and "returns zero" are the same claim there — and the pass-through is
+    the load-bearing one, because a frame that FIRES is exactly a frame on the walk's coasting arm:
+    the weapon's third gate wants the newly-pressed byte to be $80, so the walk's fire edge runs, so
+    the speed is cleared at $f06 and the drift's gate lowered at $f00. That is the arm `$a38` will
+    have to supply a bit to.
+
+    C-ONLY, and the file already owns the shape — `leaf.run_candidate_only`, as
+    `test_the_three_OTHER_arms_carry_the_callers_extend_and_no_case_here_can_set_it` uses it for the
+    weapon's own entry bit. What it pins is the C against `leaf.bcd_expected`'s independent decimal
+    model, which is weaker than the oracle and much stronger than nothing: the run must carry the
+    bit through four sections that write no flag and spend it in the `sbcd`.
+
+    AND IT ASSERTS THE PAIR, not one value: the same seed with a CLEAR entry bit must spend the
+    other count. A port that hard-coded either constant answers one of the two rows and fails the
+    other, which is what makes the parameter an input rather than a formality."""
+    pokes = _frame_composition_pokes({}, direction=0)
+    at = WEAPON_RECORD + RECORD_LOW_BYTE
+
+    for entry_extend in (0, 1):
+        returned, image = leaf.run_candidate_only(_compose_walk_then_weapon(entry_extend), pokes)
+        assert returned == entry_extend, (
+            f"the walk was entered with X={entry_extend} on its pass-through arm and returned "
+            f"{returned} — no section on that path writes the flag, so the two must be equal")
+        assert image[at] == _spend_bytes(WALK_SPEND_COUNT, borrow=entry_extend)[at], (
+            f"the weapon spent {image[at]:#04x} off the count with an entry X of {entry_extend}, "
+            f"not the decimal model's — the bit did not survive the walk into the `sbcd`")
 
 
 # --- WB_ACTOR_PLATFORM_RIDDEN's operand census, as a case ------------------------------------------

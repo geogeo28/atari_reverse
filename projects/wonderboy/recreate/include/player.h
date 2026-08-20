@@ -60,6 +60,29 @@
  * the frame is the site that must supply `player_weapon_fire`'s `entry_extend`, and the two cases
  * that measure that are beside the weapon's own rows below. ../STATUS.md's batch 41 phase D section
  * prices the row rather than this plate.
+ *
+ * BATCH 41 PHASE E PAID HALF OF THAT FOURTH COST AND MEASURED THE OTHER HALF. `player_step_and_arm`
+ * now REPORTS its exit X and `player_weapon_fire` is fed it, pinned end to end at the `sbcd` — so
+ * what the frame has to do with the bit is settled. What it has to be GIVEN is not: the walk's
+ * coasting arm passes its caller's X straight through, and on a frame that fires the weapon that
+ * arm is the one that runs, so the frame owes an entry bit of its own.
+ *
+ * THAT BIT COMES FROM `$d78`, AND ON A FIRING FRAME IT IS DERIVABLE FROM MEMORY. `player_jump_step`
+ * ($e06), which `$d78` falls into whenever the ladder mode is down, opens with
+ * `move.w $bd6a.l,d0 / addi.b #$8,d0` and THREE of its six exits still carry that instruction's X —
+ * everything between is `move.b`, `btst`, `tst.b`, the branches, and `joy1_newly_pressed`, none of
+ * which writes a flag. The other three leave `subq.b #1,$bbc2.l` ($e48), `subq.b #1,11(a0)` ($eb2),
+ * or the sound stub's — and that last one is the LAUNCH arm, which a firing frame cannot take,
+ * since the weapon's own gate wants the newly-pressed byte to be exactly $80 and the launch wants
+ * bit 0 of it. (An earlier draft of this plate read every arm as overwriting the opening `addi.b`
+ * and concluded that the chain ran up to `actor_dispatch_behavior`'s `jmp (a1)`; the bytes refute
+ * that and it is RETRACTED.)
+ *
+ * SO THE FIFTH COST IS A MODEL, NOT A THREADING: `$a76` and `$b1a` cannot reach the `sbcd` with
+ * their bit intact on any frame that fires, and the dispatch table's signature is not part of it.
+ * The one arm that still passes a caller's bit is `$d78`'s own `tst.w $1516.l / rts` on a ladder,
+ * and whether such a frame can fire at all is unmeasured — the weapon's first gate reads `$1514`.
+ * ../STATUS.md's batch 41 phase E section prices what is left.
  */
 #ifndef WONDERBOY_PLAYER_H
 #define WONDERBOY_PLAYER_H
@@ -150,8 +173,22 @@ void scene_copy_record_fields(uint8_t *image, uint32_t spawn_template,
  *     sheds speed instead, and the two rates are NOT equal.
  *
  * ITS TWO CALLS TO `player_reset_ground_state` ARE THAT ROUTINE'S ONLY CALL SITES in the image, so
- * batch 40 phase A's "no caller in this port" is retired by this routine landing. */
-void player_step_and_arm(uint8_t *image, uint32_t actor);
+ * batch 40 phase A's "no caller in this port" is retired by this routine landing.
+ *
+ * IT RETURNS A CONDITION-CODE BIT, WHICH IS WHAT BATCH 41 PHASE E ADDED. The 68000 X this routine
+ * leaves is `player_weapon_fire`'s `entry_extend` — `$a4a` and `$a4e` are adjacent `bsr`s — and it
+ * is per-path rather than constant, so it is THREADED: `entry_extend` in, the exit bit back. The
+ * per-section model lives on the five plates in src/player.c and the probes' on
+ * `map_ground_under_cell`'s in src/map.c; test_player.py's frame-composition battery pins the whole
+ * chain at its one consumer, the `sbcd` at $1260.
+ *
+ * ONE ARM PASSES THE CALLER'S BIT STRAIGHT THROUGH — the coast on a zero speed, with no knock-back,
+ * no flicker and no drift — so `entry_extend` is a real input and not a formality. THE FRAME
+ * CANNOT SUPPLY IT YET: the instruction before `$a4a` is `bsr.w $d78`, whose own non-jumping arm is
+ * a bare `tst.w`/`rts` that passes ITS caller's bit on, and so on up through `$b1a` and `$a76`.
+ * ../STATUS.md's batch 41 phase E section prices that chain; every case here enters with the zero
+ * `emu.run`'s SR = $2700 gives. */
+unsigned player_step_and_arm(uint8_t *image, uint32_t actor, unsigned entry_extend);
 
 /* $1208 — THE WEAPON, called at $a4e. Four gates in series — no ladder tile under the player, the
  * WB_EFFECT_RECORD_LIST write pointer off its base (i.e. something IS held), `joy1_newly_pressed`
@@ -192,14 +229,18 @@ void player_step_and_arm(uint8_t *image, uint32_t actor);
  * actually falls. A run that starts at `$a4a` and lets the WALK execute produces the bit itself, and
  * the two cases beside the rows above measure it: two seeds differing in two record bytes leave the
  * image byte-for-byte identical when the walk returns, and then spend a DIFFERENT shot count. So
- * the bit is drivable after all — from the frame, not from here — and it is `$a38` that owes it.
+ * the bit is drivable after all — from the frame, not from here.
  *
  * WHICH IS WHY THIS SITE IS NOT `overlap_mask_exit_extend`'s CLASS, and that reading is RETRACTED.
  * That helper re-computes its bit from the two words the last arithmetic instruction read; here the
  * two arms leave the SAME words with the SAME values, so no function of the image can tell them
- * apart. `$a38` has to THREAD the walk's exit X, `player_step_and_arm` does not report one, and on
- * its ordinary paths that bit belongs to the two map probes, which do not either. ../STATUS.md's
- * batch 41 phase D section prices that campaign; it is what the dispatch row now waits on. */
+ * apart. The bit has to be THREADED — and as of BATCH 41 PHASE E it is: `player_step_and_arm`
+ * reports its exit X (see its plate above and the per-section model in src/player.c), the two map
+ * probes report theirs (include/map.h), and test_player.py's sixteen-row frame-composition battery
+ * runs the two routines composed as `$a4a`/`$a4e` compose them against the ORIGINAL's own pair, one
+ * row per X-writer the walk can leave last. What is still `$a38`'s to supply is the bit the WALK is
+ * entered with, on the one arm that passes it through; ../STATUS.md's batch 41 phase E section
+ * prices what that costs. */
 void player_weapon_fire(uint8_t *image, uint32_t actor, unsigned entry_extend);
 
 /* $1f54 — THE STAGE TRANSITION, called at $a70 (the frame's LAST call) and again at $bb0, on nearly

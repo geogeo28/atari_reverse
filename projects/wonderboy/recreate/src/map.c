@@ -77,10 +77,15 @@ static uint32_t collision_map(const uint8_t *image) {
  * — d1 in $10a2, d3 in $13c8. Both routines hand that register on as well as the pointer, so it is
  * an output here rather than a local: the `mulu.w` product's HIGH half over the cell index. */
 static uint32_t cell_pointer(const uint8_t *image, uint32_t map, uint16_t column, uint16_t row,
-                             uint32_t *cell_index) {
+                             uint32_t *cell_index, unsigned *extend) {
     uint32_t product = (uint32_t)be16(image + map) * row;       /* `mulu.w` — the WHOLE 32 bits */
     uint16_t index = (uint16_t)(product + column);              /* `add.w` — the low word only */
 
+    /* `mulu.w` leaves X alone, so the `add.w` at $10da/$11a8 is this block's one X-writer — and on
+     * the left probe's edge arm it is the LAST one the routine runs, so the tail inherits it. NULL
+     * from $13c8, which has no consumer for the flag. */
+    if (extend != NULL)
+        *extend = word_add_extend((uint16_t)product, column);
     *cell_index = set_low_word(product, index);
     return addr_add(map, WB_COLLISION_MAP_CELLS + sign_ext16(index));
 }
@@ -109,20 +114,37 @@ static int cell_is(const uint8_t *image, uint32_t cell, uint16_t offset, uint8_t
  *
  * ONE spelling because it is one piece of code — see this file's header for the three branches that
  * reach it. The stride it steps by is WB_COLLISION_MAP_DEFAULT's whichever map the cell came out
- * of, which is why it takes the cell as an address rather than as a (map, index) pair. */
-static uint32_t map_ground_under_cell(const uint8_t *image, uint32_t cell, uint32_t cell_index) {
+ * of, which is why it takes the cell as an address rather than as a (map, index) pair.
+ *
+ * AND IT IS WHERE THE PROBES' EXIT X IS DECIDED, one value per arm, because this tail holds the
+ * last arithmetic either routine runs. `*extend` is IN AND OUT for that reason — the middle arm
+ * writes no X at all and hands the caller's own bit straight back out, which is the only path on
+ * which anything the probe BODY computed survives (include/map.h). Everything else here —
+ * `move.w`, `clr.w`, `cmpi.b`, `ori.w`, `rts` — leaves X alone.
+ *
+ * IT IS THE ONE X POINTER IN THIS FILE THAT IS MANDATORY, and deliberately: `cell_pointer` and the
+ * two public probes take a NULL for a caller that does not model the flag, but a tail that is
+ * in-and-out has no meaning without one, and its three callers are the two probes' own exits. A
+ * NULL guard here would be a branch no case could drive. */
+static uint32_t map_ground_under_cell(const uint8_t *image, uint32_t cell, uint32_t cell_index,
+                                      unsigned *extend) {
     uint16_t stride = be16(image + WB_COLLISION_MAP_DEFAULT);
     uint16_t flags;
 
     if (image[cell] == WB_MAP_TILE_BLOCK) {
-        /* `neg.w d7`: the cell is a block, so the question is whether the one ABOVE it is too. */
+        /* `neg.w d7`: the cell is a block, so the question is whether the one ABOVE it is too. And
+         * NEG sets X the way `0 - d7` would, i.e. on every stride but a zero one. */
         uint16_t above = (uint16_t)-stride;
+        *extend = word_sub_extend(0, stride);
         flags = cell_is(image, cell, above, WB_MAP_TILE_BLOCK) ? 0 : WB_MAP_GROUND_HEAD_BIT;
     } else if (cell_is(image, cell, stride, WB_MAP_TILE_BLOCK)
                || cell_is(image, cell, stride, WB_MAP_TILE_LEDGE)) {
+        /* The two `cmpi.b`/`beq` pairs at $113c and $1146 are this arm's whole body, so `*extend`
+         * is left holding what the probe's own last arithmetic put there. */
         flags = 0;
     } else {
         uint16_t two_rows = (uint16_t)(stride + stride);        /* `add.w d7,d7` */
+        *extend = word_add_extend(stride, stride);
         flags = WB_MAP_GROUND_NEAR_BIT;
         if (!cell_is(image, cell, two_rows, WB_MAP_TILE_BLOCK)
             && !cell_is(image, cell, two_rows, WB_MAP_TILE_LEDGE))
@@ -131,13 +153,50 @@ static uint32_t map_ground_under_cell(const uint8_t *image, uint32_t cell, uint3
     return set_low_word(cell_index, flags);
 }
 
+/* $1116 `sub.w d7,(a0)` and $1200 `add.w d7,(a0)` — the move each probe commits on its non-edge
+ * exits, and the tail's entry X on those paths: the WORD borrow or carry out of the record's own x.
+ * The left probe reaches its one from two places, which is why this is a function; the right one is
+ * here beside it because a named commit and an anonymous inlined twin would read as two different
+ * instructions rather than as the mirror pair they are. */
+static void step_left_commit(uint8_t *image, uint32_t actor, uint16_t remaining, unsigned *extend) {
+    uint32_t x_at = addr_add(actor, WB_ACTOR_X);
+    uint16_t x = be16(image + x_at);
+
+    wr16(image + x_at, (uint16_t)(x - remaining));
+    *extend = word_sub_extend(x, remaining);
+}
+
+static void step_right_commit(uint8_t *image, uint32_t actor, uint16_t remaining,
+                              unsigned *extend) {
+    uint32_t x_at = addr_add(actor, WB_ACTOR_X);
+    uint16_t x = be16(image + x_at);
+
+    wr16(image + x_at, (uint16_t)(x + remaining));
+    *extend = word_add_extend(x, remaining);
+}
+
+/* What both probes do on the way out, at all three of their exits: run the shared tail on the cell
+ * they stopped at, and publish the X it leaves to a caller that asked for one. */
+static void probe_report(const uint8_t *image, uint32_t cell, uint32_t cell_index,
+                         unsigned *extend, uint32_t *ground, unsigned *exit_extend) {
+    *ground = map_ground_under_cell(image, cell, cell_index, extend);
+    if (exit_extend != NULL)
+        *exit_extend = *extend;
+}
+
 uint32_t actor_step_left_against_map(uint8_t *image, uint32_t actor, uint32_t step,
-                                     uint32_t *ground) {
+                                     uint32_t *ground, unsigned *exit_extend) {
     uint16_t remaining = (uint16_t)step;                /* d7 */
     uint8_t outcome = WB_MAP_STEP_CLEAR;                /* d6 */
     uint32_t cell;                                      /* a6 */
     uint32_t cell_index;                                /* d1, before its low word is cleared */
     uint16_t column;                                    /* d0's low word at the moment it is read */
+    /* The modelled X. It is written before it is ever read — `cell_pointer`'s `add.w` runs on every
+     * turn of the loop — and only the LAST write before an exit can matter, so the five X-writers
+     * above that `add.w` ($10ac, $10b0, $10b4, $10ba, $10bc) are not modelled: each is overwritten
+     * inside its own iteration. Same for the `subq.w #1,d7` at $10fa, which is followed by $1116 on
+     * one arm and by the loop's own head on the other. */
+    unsigned extend = 0;
 
     for (;;) {
         uint16_t probe = (uint16_t)(be16(image + addr_add(actor, WB_ACTOR_X))
@@ -145,16 +204,17 @@ uint32_t actor_step_left_against_map(uint8_t *image, uint32_t actor, uint32_t st
                                     - remaining);       /* d3, kept for its SIGN */
         column = pixel_to_cell(probe);
         cell = cell_pointer(image, collision_map(image), column, actor_probe_row(image, actor),
-                            &cell_index);
+                            &cell_index, &extend);
 
         if (image[cell] != WB_MAP_TILE_BLOCK) {
             /* `tst.w d3 / bpl` — the wrapped probe's own sign bit, not a comparison. */
             if ((int16_t)probe >= 0) {
-                wr16(image + addr_add(actor, WB_ACTOR_X),
-                     (uint16_t)(be16(image + addr_add(actor, WB_ACTOR_X)) - remaining));
+                step_left_commit(image, actor, remaining, &extend);
                 break;
             }
-            /* Off the map's left edge: park the actor against it, and report blocked. */
+            /* Off the map's left edge: park the actor against it, and report blocked. `move.w
+             * 14(a0),(a0)` and the `move.b #$0,d0` below it write no X, so this is the one exit
+             * that carries `cell_pointer`'s `add.w` into the tail. */
             wr16(image + addr_add(actor, WB_ACTOR_X),
                  be16(image + addr_add(actor, WB_ACTOR_HALF_WIDTH)));
             outcome = WB_MAP_STEP_BLOCKED;
@@ -165,8 +225,7 @@ uint32_t actor_step_left_against_map(uint8_t *image, uint32_t actor, uint32_t st
         /* One pixel less of step and try again — and on an EXACT zero the routine still commits the
          * (now zero) move, so the x word is written on every path out of this loop. */
         if (--remaining == 0) {
-            wr16(image + addr_add(actor, WB_ACTOR_X),
-                 (uint16_t)(be16(image + addr_add(actor, WB_ACTOR_X)) - remaining));
+            step_left_commit(image, actor, remaining, &extend);
             break;
         }
         if (be16(image + addr_add(actor, WB_ACTOR_TYPE)) == WB_ACTOR_TYPE_PLAYER)
@@ -174,7 +233,7 @@ uint32_t actor_step_left_against_map(uint8_t *image, uint32_t actor, uint32_t st
     }
 
     /* `move.b d6,d0` replaces only the low byte of a d0 whose low word still holds the column. */
-    *ground = map_ground_under_cell(image, cell, cell_index);
+    probe_report(image, cell, cell_index, &extend, ground, exit_extend);
     return set_low_byte(column, outcome);
 }
 
@@ -192,12 +251,17 @@ uint32_t actor_step_left_against_map(uint8_t *image, uint32_t actor, uint32_t st
  * word — $41ae, $4cf4 and $4e98, which is what makes the high byte a result and not a leftover —
  * and the remaining twenty-seven overwrite d0 without reading it. None reads d1. */
 uint32_t actor_step_right_against_map(uint8_t *image, uint32_t actor, uint32_t step,
-                                      uint32_t *ground) {
+                                      uint32_t *ground, unsigned *exit_extend) {
     uint16_t remaining = (uint16_t)step;                /* d7 */
     uint8_t outcome = WB_MAP_STEP_CLEAR;                /* d6 */
     uint32_t cell;                                      /* a6 */
     uint32_t cell_index;                                /* d1, before its low word is cleared */
     uint16_t reported;                                  /* d0's low word under the outcome byte */
+    /* The modelled X — see $10a2 above. This head has ONE X-writer that routine does not, the
+     * `addi.w #$f0,d0` at $11ca, and it is left out for the same reason as the five above $11a8:
+     * both arms below it write X again before the tail ($11d4's `sub.w` on the clamp, $1200's
+     * `add.w` on the commit), so its carry reaches no exit. */
+    unsigned extend = 0;
 
     for (;;) {
         uint16_t probe = (uint16_t)(be16(image + addr_add(actor, WB_ACTOR_X))
@@ -205,7 +269,7 @@ uint32_t actor_step_right_against_map(uint8_t *image, uint32_t actor, uint32_t s
                                     + remaining);       /* d3, kept UNSHIFTED for the compare */
         reported = pixel_to_cell(probe);
         cell = cell_pointer(image, collision_map(image), reported, actor_probe_row(image, actor),
-                            &cell_index);
+                            &cell_index, &extend);
 
         if (image[cell] != WB_MAP_TILE_BLOCK) {
             /* Where the actor's right edge stops. In the A32 mode there is no limit word at all
@@ -218,10 +282,16 @@ uint32_t actor_step_right_against_map(uint8_t *image, uint32_t actor, uint32_t s
             if ((int16_t)reported >= (int16_t)probe)
                 break;
             /* Past it: park x so the actor's right edge sits ON the limit, and report blocked
-             * whatever the walk had decided. */
-            reported = (uint16_t)(reported - be16(image + addr_add(actor, WB_ACTOR_HALF_WIDTH)));
+             * whatever the walk had decided. `sub.w 14(a0),d0` at $11d4 is this arm's last
+             * arithmetic — the `move.w d0,(a0)` and `move.b #$0,d0` under it write no X. */
+            {
+                uint16_t half_width = be16(image + addr_add(actor, WB_ACTOR_HALF_WIDTH));
+
+                extend = word_sub_extend(reported, half_width);
+                reported = (uint16_t)(reported - half_width);
+            }
             wr16(image + addr_add(actor, WB_ACTOR_X), reported);
-            *ground = map_ground_under_cell(image, cell, cell_index);
+            probe_report(image, cell, cell_index, &extend, ground, exit_extend);
             return set_low_byte(reported, WB_MAP_STEP_BLOCKED);
         }
 
@@ -234,9 +304,10 @@ uint32_t actor_step_right_against_map(uint8_t *image, uint32_t actor, uint32_t s
             image[addr_add(actor, WB_ACTOR_FIELD_22)] = 0;
     }
 
-    wr16(image + addr_add(actor, WB_ACTOR_X),
-         (uint16_t)(be16(image + addr_add(actor, WB_ACTOR_X)) + remaining));
-    *ground = map_ground_under_cell(image, cell, cell_index);
+    /* `add.w d7,(a0)` at $1200 — the other exits' last arithmetic, and the tail's entry X on both
+     * of them (the `move.b d6,d0` below it writes no flag). */
+    step_right_commit(image, actor, remaining, &extend);
+    probe_report(image, cell, cell_index, &extend, ground, exit_extend);
     return set_low_byte(reported, outcome);
 }
 
@@ -257,8 +328,10 @@ void actor_map_cell_lookup(const uint8_t *image, uint32_t actor, map_cell_probe 
     probe->column = set_low_word(probe->column, pixel_to_cell(pixel_x));
     probe->row = set_low_word(probe->row,
                               pixel_to_cell(be16(image + addr_add(actor, WB_ACTOR_Y))));
+    /* NULL for the X: this routine's interface is the `map_cell_probe` registers, and no caller of
+     * $13c8 reads the flag its `add.w` leaves. */
     probe->cell = cell_pointer(image, collision_map(image), (uint16_t)probe->column,
-                               (uint16_t)probe->row, &probe->cell_index);
+                               (uint16_t)probe->row, &probe->cell_index, NULL);
     /* `move.w 14(a0),d7 / add.w d7,d7` — the footprint's whole width, as a word. */
     probe->span = set_low_word(probe->span,
                                (uint16_t)(2u * be16(image + addr_add(actor, WB_ACTOR_HALF_WIDTH))));

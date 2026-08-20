@@ -10,7 +10,30 @@
 #ifndef WONDERBOY_MAP_H
 #define WONDERBOY_MAP_H
 
+#include <stddef.h>         /* NULL — the two wrappers below drop the probes' X report */
 #include <stdint.h>
+
+/* THE PROBES REPORT A THIRD THING, AND IT IS A CONDITION-CODE BIT: the 68000 X flag they leave.
+ *
+ * `exit_extend` is that bit, a PURE OUTPUT — neither probe ever passes the caller's X through,
+ * because no path through either head reaches a branch before an X-writer (`sub.w 14(a0),d0` at
+ * $10ac and `add.w 14(a0),d0` at $117a are each the fifth instruction and both are unconditional),
+ * so whatever X the caller arrived with is gone before the routine can act on it.
+ *
+ * WHAT IT CAN CARRY is the SHARED TAIL's, three arms: two compute a value of their own out of the
+ * row stride (`neg.w d7` and `add.w d7,d7`), and the middle one writes no flag at all and hands out
+ * whichever of the FOUR body bits the path left — src/map.c's `map_ground_under_cell` and the two
+ * commits above it are where the per-arm model lives.
+ *
+ * WHO READS IT: src/player.c's walk ($ec8), and through it the frame's `bsr $1208` — the X the
+ * weapon's `sbcd` at $1260 folds in is the walk's exit X, and on the walk's probing paths it is
+ * this one (include/player.h, ../STATUS.md's batch 41 phase E). PASS NULL when the caller does not
+ * model the flag: the two wrappers at the foot of this file do, and so do the eight direct call
+ * statements in src/behavior.c. THE REASON IS THAT NOTHING DOWNSTREAM READS THE BIT, not that
+ * something overwrites it — the two helpers those rows feed it to (`actor_toggle_side_flag` $2b82
+ * and `actor_turn_and_launch` $2b8e) contain no X-writer at all, so whether the probe's bit
+ * survives to the dispatcher is a per-handler question no case here asks and no case here needs to.
+ */
 
 /* $10a2 — step `actor` LEFT by `step` pixels, refusing to enter a WB_MAP_TILE_BLOCK cell, and
  * report what is under the cell it stopped on.
@@ -20,11 +43,12 @@
  * had to back off — but in the HIGH byte of d0's low word it also carries the probe's own map
  * column, which is what `set_low_byte` below reproduces. `ground` receives d1, whose low word is
  * the WB_MAP_GROUND_*_BIT set and whose high word is the row product `mulu.w` left there.
+ * `exit_extend` receives the X flag, per the paragraph above.
  *
  * FORTY-ONE `bsr` callers — the same count as $1170 below, the two being called in pairs by the
  * arms of a direction test; only actor_fall_and_settle $1334 has more, 46. */
 uint32_t actor_step_left_against_map(uint8_t *image, uint32_t actor, uint32_t step,
-                                     uint32_t *ground);
+                                     uint32_t *ground, unsigned *exit_extend);
 
 /* $1170 — step `actor` RIGHT by `step` pixels, refusing to enter a WB_MAP_TILE_BLOCK cell, and
  * refusing to take its right edge past the level's own.
@@ -47,7 +71,7 @@ uint32_t actor_step_left_against_map(uint8_t *image, uint32_t actor, uint32_t st
  * straight-line continuation, but the reconstruction hands it back because the shared tail computes
  * it and $10a2's interface is that pair. */
 uint32_t actor_step_right_against_map(uint8_t *image, uint32_t actor, uint32_t step,
-                                      uint32_t *ground);
+                                      uint32_t *ground, unsigned *exit_extend);
 
 /* The registers $13c8 takes and leaves, which is the whole of its interface — it writes no memory.
  * Register map: cell = a6, sub_cell = d2, cell_index = d3, span = d7, column = d0, row = d1.
@@ -138,23 +162,28 @@ uint32_t actor_fall_and_settle(uint8_t *image, uint32_t actor, uint32_t entry_sp
 void map_stamp_block(uint8_t *image);
 
 
-/* ONE PROBE WITH THE GROUND FLAGS DROPPED — for the callers that have no use for d1, which is most
- * of them but NOT all: src/behavior.c has four sites that call `actor_step_*_against_map` DIRECTLY
- * and feed the ground word on to `actor_toggle_side_flag` or `actor_turn_and_launch`, and those
- * keep their own `ground` local. So the claim is about these two wrappers' users, not about the
- * tier. They are here rather than twice in src/ because TWO modules now spell them: src/behavior.c
- * wrote them for the walking dispatch rows, and src/player.c's own walk ($ec8) has SIX probe sites
- * of its own — three direction PAIRS, one per section that moves the record. A second copy is the
- * one divergence nothing catches, each battery pinning only its own routines. Same rule, and the
- * same `static inline`, as bus.h's record accessors. */
+/* ONE PROBE WITH THE GROUND FLAGS AND THE X REPORT DROPPED — for the callers that have no use for
+ * d1, which is most of them but NOT all: src/behavior.c has FOUR direction tests, eight call
+ * statements between them, that reach `actor_step_*_against_map` DIRECTLY and feed the ground word
+ * on to `actor_toggle_side_flag` or `actor_turn_and_launch`, and those keep their own `ground`
+ * local. (Both counts are of the same thing and the header used to give only the first; they are
+ * spelt together here because a census keyed off either one alone misses half the sites.) So the
+ * claim is about these two wrappers' users, not about the tier.
+ *
+ * THEIR ONE MODULE IS src/behavior.c, as of batch 41 phase E. They were put here when it was two —
+ * src/player.c's walk had six probe sites of its own — and that walk now reaches the probes through
+ * `player_probe_step`, because it needs the X these two drop and it needs it at all six sites. They
+ * stay here rather than moving back: TWENTY-FOUR call sites in behavior.c is reason enough for a
+ * named wrapper, and phase F's frame will bring the X-reporting spelling back into a second module.
+ * Same rule, and the same `static inline`, as bus.h's record accessors. */
 static inline uint32_t step_left(uint8_t *image, uint32_t actor, uint32_t step) {
     uint32_t ground = 0;
-    return actor_step_left_against_map(image, actor, step, &ground);
+    return actor_step_left_against_map(image, actor, step, &ground, NULL);
 }
 
 static inline uint32_t step_right(uint8_t *image, uint32_t actor, uint32_t step) {
     uint32_t ground = 0;
-    return actor_step_right_against_map(image, actor, step, &ground);
+    return actor_step_right_against_map(image, actor, step, &ground, NULL);
 }
 
 #endif /* WONDERBOY_MAP_H */

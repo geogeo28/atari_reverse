@@ -880,14 +880,21 @@ def _assert_the_span_comes_back(info, regs, what):
 _STAMP = leaf.image_glue("map_stamp_block")
 _STEP_LEFT_FN = leaf.bind("actor_step_left_against_map",
                           leaf.IMAGE_ARG + [ctypes.c_uint32, ctypes.c_uint32,
-                                            ctypes.POINTER(ctypes.c_uint32)],
+                                            ctypes.POINTER(ctypes.c_uint32),
+                                            ctypes.POINTER(ctypes.c_uint)],
                           ctypes.c_uint32)
 
 
 def _step_left_glue(actor, step, ground):
     """$10a2's result is TWO registers, so the reconstruction hands d1 back through a pointer and
-    the case reads it after the run — `leaf.register_glue` covers only a d0."""
-    return lambda _lib, image: _STEP_LEFT_FN(image, actor, step, ctypes.byref(ground))
+    the case reads it after the run — `leaf.register_glue` covers only a d0.
+
+    THE THIRD OUTPUT IS DROPPED HERE AND THAT IS NOT AN OVERSIGHT: the probe also reports the X
+    flag it leaves (include/map.h), and `emu.REPORTED_REGS` has no CCR — so no case in THIS battery
+    can compare one. The model is pinned where the bit is consumed, at the `sbcd` the frame's walk
+    feeds (test_player.py's frame-composition battery). NULL is what the forty-one callers that
+    ignore d1 and the flag pass, so it is also the shape this battery should run."""
+    return lambda _lib, image: _STEP_LEFT_FN(image, actor, step, ctypes.byref(ground), None)
 
 
 # --- $10a2: the leftward step ---------------------------------------------------------------------
@@ -1243,12 +1250,14 @@ def _assert_regs(info, expected, what):
 
 _STEP_RIGHT_FN = leaf.bind("actor_step_right_against_map",
                            leaf.IMAGE_ARG + [ctypes.c_uint32, ctypes.c_uint32,
-                                             ctypes.POINTER(ctypes.c_uint32)],
+                                             ctypes.POINTER(ctypes.c_uint32),
+                                             ctypes.POINTER(ctypes.c_uint)],
                            ctypes.c_uint32)
 
 
 def _step_right_glue(actor, step, ground):
-    return lambda _lib, image: _STEP_RIGHT_FN(image, actor, step, ctypes.byref(ground))
+    """The X report dropped for the same reason $10a2's is — see `_step_left_glue`."""
+    return lambda _lib, image: _STEP_RIGHT_FN(image, actor, step, ctypes.byref(ground), None)
 
 
 def _run_step_right(case, actor_x, half_width, step, tiles, a32=False, actor_type=0,

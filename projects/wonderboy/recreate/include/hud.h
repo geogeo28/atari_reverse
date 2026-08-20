@@ -66,6 +66,15 @@ void hud_blit_record_bitmap(uint8_t *image, uint32_t record);
 uint8_t abcd_byte(uint8_t addend, uint8_t accumulator, unsigned *extend);
 uint8_t sbcd_byte(uint8_t subtrahend, uint8_t accumulator, unsigned *extend);
 
+/* THE X AN ORDINARY ADD OR SUBTRACT LEAVES — the bit the two instructions above FOLD IN — went to
+ * the kit's machine.h in batch 41 phase E rather than here, and the difference from the promotion
+ * note above is worth stating because it is the reason: `abcd_byte` and `sbcd_byte` have BODIES in
+ * src/hud.c, so moving them moves code into a kit `.c` file; `word_add_extend`, `word_sub_extend`,
+ * `byte_add_extend` and `byte_sub_extend` are header-only inlines of exactly the shape machine.h
+ * already holds beside `sign_ext16`, and both of their consumers (src/map.c, src/player.c) already
+ * include it. Deferring THOSE would have bought nothing and cost src/map.c — the lowest-level
+ * collision module — an include of this header for arithmetic that has nothing to do with a panel. */
+
 /* $b562/$b582 — d0's low WORD is the packed-BCD amount; $b5a2/$b5c6 — d0's whole LONGWORD is.
  *
  * ALL FOUR CARRY THE EXTEND BIT, IN AND OUT, as of batch 33 — which is the whole of this comment,

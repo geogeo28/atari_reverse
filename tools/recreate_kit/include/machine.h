@@ -93,4 +93,30 @@ static inline uint32_t set_low_word(uint32_t value, uint16_t low) {
     return (value & 0xFFFF0000u) | low;
 }
 
+/* THE X FLAG AN ORDINARY ADD OR SUBTRACT LEAVES. On the 68000, `add`/`sub`/`addq`/`subq`/`addi`/
+ * `subi`/`neg` copy the carry (or borrow) into X as well as C, and `abcd`/`sbcd`/`addx`/`subx`/
+ * `roxl`/`roxr` fold it back in — so a port that threads a flag from a producing routine to a
+ * consuming one needs the producer's bit modelled, and these are that model.
+ *
+ * On a two's-complement machine the carry IS the wrap, so none of them needs a mask or a wider
+ * intermediate: a sum that came out below its own augend carried, and a minuend below its
+ * subtrahend borrowed. They are named rather than spelt at each site because `(a + b) < a` is the
+ * shape a reader mistakes for a bounds check. `neg` is `word_sub_extend(0, value)`, which is set
+ * unless the operand was zero. */
+static inline unsigned word_add_extend(uint16_t augend, uint16_t addend) {
+    return (uint16_t)(augend + addend) < augend;
+}
+
+static inline unsigned word_sub_extend(uint16_t minuend, uint16_t subtrahend) {
+    return minuend < subtrahend;
+}
+
+static inline unsigned byte_add_extend(uint8_t augend, uint8_t addend) {
+    return (uint8_t)(augend + addend) < augend;
+}
+
+static inline unsigned byte_sub_extend(uint8_t minuend, uint8_t subtrahend) {
+    return minuend < subtrahend;
+}
+
 #endif /* RECREATE_KIT_MACHINE_H */

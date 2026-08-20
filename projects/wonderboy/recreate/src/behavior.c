@@ -936,9 +936,9 @@ static void walk_and_toggle(uint8_t *image, uint32_t actor, uint32_t settle_span
 
     if (faces_left(image, actor))
         outcome = actor_step_left_against_map(image, actor,
-                                              step_over_low_byte(settle_span, step), &ground);
+                                              step_over_low_byte(settle_span, step), &ground, NULL);
     else
-        outcome = actor_step_right_against_map(image, actor, step, &ground);
+        outcome = actor_step_right_against_map(image, actor, step, &ground, NULL);
     actor_toggle_side_flag(image, actor, outcome, ground);
 }
 
@@ -1135,10 +1135,10 @@ uint32_t actor_behavior_type03(uint8_t *image, uint32_t actor) {
 
     if (faces_left(image, actor)) {
         outcome = actor_step_left_against_map(
-            image, actor, step_over_low_byte(settle_span, WB_ACTOR_TYPE03_WALK_STEP), &ground);
+            image, actor, step_over_low_byte(settle_span, WB_ACTOR_TYPE03_WALK_STEP), &ground, NULL);
         frames = WB_ACTOR_TYPE03_WALK_LEFT;
     } else {
-        outcome = actor_step_right_against_map(image, actor, WB_ACTOR_TYPE03_WALK_STEP, &ground);
+        outcome = actor_step_right_against_map(image, actor, WB_ACTOR_TYPE03_WALK_STEP, &ground, NULL);
         frames = WB_ACTOR_TYPE03_WALK_RIGHT;
     }
     actor_toggle_side_flag(image, actor, outcome, ground);
@@ -1319,10 +1319,10 @@ uint32_t actor_behavior_type05(uint8_t *image, uint32_t actor) {
     actor_hop_ascend_step(image, actor);
 
     if (faces_left(image, actor)) {
-        outcome = actor_step_left_against_map(image, actor, WB_ACTOR_TYPE05_HOP_STEP, &ground);
+        outcome = actor_step_left_against_map(image, actor, WB_ACTOR_TYPE05_HOP_STEP, &ground, NULL);
         frames = WB_ACTOR_TYPE05_HOP_LEFT;
     } else {
-        outcome = actor_step_right_against_map(image, actor, WB_ACTOR_TYPE05_HOP_STEP, &ground);
+        outcome = actor_step_right_against_map(image, actor, WB_ACTOR_TYPE05_HOP_STEP, &ground, NULL);
         frames = WB_ACTOR_TYPE05_HOP_RIGHT;
     }
     actor_hop_or_flip_side(image, actor, outcome, ground);
@@ -3686,10 +3686,10 @@ uint32_t actor_behavior_type15(uint8_t *image, uint32_t actor) {
     /* `move.w #$4,d7` in BOTH arms — a WORD write, so what the settle left in the register cannot
      * reach the step. Slots 14 and 18 spell their left arm `move.b` and this one does not. */
     if (faces_left(image, actor)) {
-        outcome = actor_step_left_against_map(image, actor, WB_ACTOR_TYPE15_WALK_STEP, &ground);
+        outcome = actor_step_left_against_map(image, actor, WB_ACTOR_TYPE15_WALK_STEP, &ground, NULL);
         frames = WB_ACTOR_TYPE15_WALK_LEFT;
     } else {
-        outcome = actor_step_right_against_map(image, actor, WB_ACTOR_TYPE15_WALK_STEP, &ground);
+        outcome = actor_step_right_against_map(image, actor, WB_ACTOR_TYPE15_WALK_STEP, &ground, NULL);
         frames = WB_ACTOR_TYPE15_WALK_RIGHT;
     }
     actor_turn_and_launch(image, actor, outcome, ground);
