@@ -8,9 +8,10 @@
  * whose base — WB_ACTOR_BEHAVIOR_TABLE — appears nowhere in the image as an operand, because it is
  * the 8-bit displacement of a PC-relative INDEXED extension word. Ghidra follows a plain `lea
  * abs.l` and not that one, so the table and all 61 of its targets were invisible, and with them
- * 18,068 bytes: a third of the program. This file is the bottom of what was behind it. The 61
- * handlers themselves are not here — 59 of the 62 slots are still unported, and the dispatcher's
- * BOUNDARY below is how that is stated rather than hidden.
+ * 18,068 bytes: a third of the program. This file is the bottom of what was behind it. Most of the
+ * handlers themselves are not here — this file holds the tier's foundation and the sixty-one rows
+ * whose bodies are behaviour-tier code; slot 1, the player's frame, is src/player.c's, and as of
+ * batch 41 phase F ALL SIXTY-TWO ROWS ARE RECONSTRUCTED.
  *
  * EVERY ROUTINE HERE TAKES 68000 REGISTERS, the convention actor.h sets: a record address in a0, a
  * step in d7, a frame list in a1, a band record in a2. Two hand a register BACK — $5c6e's overlap
@@ -34,17 +35,29 @@
 
 /* --- the walk and the dispatch ($8d0, $928) -----------------------------------------------------
  *
- * THE BOUNDARY, and why it is a returned ADDRESS. TEN of the sixty-two slots are unported (sixty
- * were when this was written, and the mechanism has not moved since), so for those there is nothing
- * for the C to call; what it does instead is FETCH the target out of the image
- * exactly as `movea.l (a1),a1` does and hand it back, and the differential runs the ORACLE on with
- * `stop_pc` at that same address plus a coverage witness that the `jmp (a1)` at $936 really fired.
- * That is batch 19's shape and batch 22's, made table-driven: a later batch adds one row to
- * src/behavior.c's list of reconstructed targets and nothing in the mechanism moves.
+ * THE BOUNDARY, and why it is a returned ADDRESS. It was written when sixty of the sixty-two slots
+ * had no reconstruction: for those there was nothing for the C to call, so what it does instead is
+ * FETCH the target out of the image exactly as `movea.l (a1),a1` does and hand it back, and the
+ * differential runs the ORACLE on with `stop_pc` at that same address plus a coverage witness that
+ * the `jmp (a1)` at $936 really fired. That is batch 19's shape and batch 22's, made table-driven: a
+ * batch added one row to src/behavior.c's list of reconstructed targets and nothing in the mechanism
+ * moved.
  *
- * The three values below are what the C returns when there is no address to report. All three are
- * chosen so no table entry can collide with them — test/test_behavior.py checks that against the
- * image's own 62 longwords rather than assuming it.
+ * THE MECHANISM OUTLIVED THE ROWS, which is what batch 41 phase F had to decide. Every slot is
+ * reconstructed now, so no TYPE reaches an address this port lacks — but the dispatcher still
+ * follows the longword it FETCHES, so a table entry poked to an address that is not a dispatch row
+ * is a transfer the original really takes and the port still cannot follow. That is what
+ * test_behavior.py's boundary cases stand on, and it is the reason this code did not change with
+ * the last row.
+ *
+ * The FOUR values below are what the C returns when there is no address to report, and none of them
+ * can be mistaken for a table entry — test/test_behavior.py checks that against the image's own 62
+ * longwords rather than assuming it.
+ *
+ * THEY SHARE ONE NUMBER SPACE WITH include/player.h's EIGHT as of batch 41 phase F, because slot 1's
+ * frame propagates its callees' reports verbatim and this routine passes the row's answer up
+ * unchanged. Three pairs collided before the flip; `test_the_dispatch_code_space_has_no_collision`
+ * is what says they no longer do, and player.h's WB_PLAYER_COLLIDE_* block carries the rule.
  *
  * A HANDLER REPORTS A BOUNDARY TOO, which is why every one of them below returns a `uint32_t`
  * rather than nothing. Batch 29's boundary was the dispatcher's alone: a slot was ported or it was
@@ -62,7 +75,8 @@
  * pass with a live type-53 record and WB_TILE_33_MODE clear report a boundary where the original
  * had run every record behind it. src/player.c reconstructs $e06, `player_gate_on_1516` CALLS it,
  * and the five handlers that met that edge (53, and 9/12/22/26 through `gated_hurt_frame`) run
- * their frames whole. What is left is slots 59, 8 and 61, none of which ever comes back. */
+ * their frames whole. Slots 59, 8 and 61, which that sentence used to name as what was left, were
+ * reconstructed in batches 32 and 33. */
 #define WB_ACTOR_DISPATCH_RAN     0u   /* a reconstructed handler ran to its own `rts` */
 #define WB_ACTOR_DISPATCH_REFUSED 1u   /* the scaled type left the table: the original `jmp`s through
                                         * a longword outside it and no C stands in for that */
@@ -620,6 +634,10 @@ uint32_t actor_behavior_type57(uint8_t *image, uint32_t actor);
  * this file. While WB_TILE_33_MODE is set it writes nothing at all; while it is clear it runs
  * `player_jump_step` ($e06, player.h) on `actor`, which is where the original branches. It reports
  * nothing because there is nothing left to report — see the boundary paragraph above. */
-void player_gate_on_1516(uint8_t *image, uint32_t actor);
+/* $d78. `extend` is the 68000's X flag, read on entry and written on exit, and NULL from a caller
+ * that carries none — which is every caller but `actor_behavior_type01_player`'s `bsr.w $d78` at
+ * $a46. See the body's plate in src/behavior.c for the six exits it models and the one it does not.
+ */
+void player_gate_on_1516(uint8_t *image, uint32_t actor, unsigned *extend);
 
 #endif /* WONDERBOY_BEHAVIOR_H */

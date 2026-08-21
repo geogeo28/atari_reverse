@@ -15,6 +15,7 @@
 #include <stdint.h>
 
 #include "actor.h"
+#include "behavior.h"
 #include "bus.h"
 #include "hud.h"
 #include "input.h"
@@ -33,10 +34,10 @@
  * re-read it: a record at an address bus.h refuses is written nowhere and reads back as zero.
  *
  * `extend` receives the instruction's BORROW, which four of the walk's sections hand on as their
- * own exit X (player.h). TWO sites pass NULL and their reasons are NOT the same, so each says its
- * own: the hurt drift's borrow is DEAD (a probe writes X after it on every path out), and the jump
- * machine's is UNTHREADED (nothing reads it yet — it belongs to the frame's entry-X chain, which
- * batch 41 phase E measured and did not port). */
+ * own exit X (player.h). ONE site passes NULL and says why: the hurt drift's borrow is DEAD, because
+ * a probe writes X after it on every path out of that section. (The jump machine's ascent used to be
+ * the second such site, on the ground that nothing read its borrow yet; batch 41 phase F threads it
+ * — it is the ASCENDING arm's contribution to the frame's entry-X chain.) */
 static uint8_t spend_field_b(uint8_t *image, uint32_t record, uint32_t offset, uint8_t amount,
                              unsigned *extend) {
     uint8_t before = field_b(image, record, offset);
@@ -57,8 +58,12 @@ static uint8_t spend_field_b(uint8_t *image, uint32_t record, uint32_t offset, u
 /* $a92 — the revival arm. The rearm is SKIPPED while the cheat word is up, which is what makes the
  * medicine unspendable rather than merely plentiful: the same word chose this arm in the first
  * place, so a cheating player revives on every death for ever. */
-static void player_revive(uint8_t *image) {
+static void player_revive(uint8_t *image, unsigned *extend) {
     snd_call_trigger_effect(image, WB_PLAYER_DEATH_SFX, WB_SND_CHANNEL_A);
+    /* `jsr 56(a1)` at $a9e, and the four instructions below it are `tst.w`, `bne`, `move.w` and two
+     * more `move.w` — all X-silent. So the X leaving this arm is the sound routine's. */
+    if (extend != NULL)
+        *extend = WB_PLAYER_EXTEND_UNREAD;
     if (be16(image + WB_KEY_SEQUENCE_MATCHED) == 0)
         wr16(image + WB_HUD_SLOT_BBC6, WB_HUD_SLOT_REARM);
 
@@ -69,49 +74,68 @@ static void player_revive(uint8_t *image) {
 /* $acc — the death itself. `tst.w / bmi` on WB_STAGE_RESET_BLOCK's first word is a SIGN test and not
  * a zero one, so a word already holding the $ffff this arm writes takes no second death — that word
  * is the handshake `player_pending_event_gate` spends on the frames after. */
-static void player_die(uint8_t *image, uint32_t actor) {
+static void player_die(uint8_t *image, uint32_t actor, unsigned *extend) {
     flag_clear(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_FLICKER_BIT);
+    /* THE EARLY RETURN CARRIES THE CALLER'S BIT: `bclr`, `tst.w` and `bmi` are all X-silent, so a
+     * second death on an already-negative word leaves X exactly as it arrived. */
     if ((int16_t)be16(image + WB_STAGE_RESET_BLOCK) < 0)
         return;
 
     wr16(image + WB_STATE_FLAG_A34, WB_PLAYER_DEATH_FLAG_SET);
     snd_play_song(image, WB_PLAYER_DEATH_SONG);
+    /* ...and this arm's is `snd_play_song`'s, for the revival arm's reason: the three `move.w`s
+     * below the `jsr (a1)` at $aec write no flag. */
+    if (extend != NULL)
+        *extend = WB_PLAYER_EXTEND_UNREAD;
     wr16(image + WB_STAGE_RESET_BLOCK, WB_PLAYER_DEATH_FLAG_SET);
     wr16(image + WB_SCROLL_FOLLOW_FROZEN, WB_PLAYER_DEATH_FLAG_SET);
     wr16(image + WB_PANEL_FRAME_HOLD, WB_PLAYER_DEATH_FLAG_SET);
 }
 
-void player_meter_empty_check(uint8_t *image, uint32_t actor) {
+void player_meter_empty_check(uint8_t *image, uint32_t actor, unsigned *extend) {
+    /* `tst.w $b6fa.l / bne.w $b06` onto an `rts` — X-silent, so all but one frame of a life leaves
+     * the caller's bit exactly as it arrived. */
     if (be16(image + WB_HUD_METER_VALUE) != 0)
         return;
 
     /* `tst.b` on the slot's VALUE byte, not on the word: a slot holding $00ff — rearmed, redraw
      * pending — is an empty slot to this test. */
     if (image[WB_HUD_SLOT_BBC6] != 0 || be16(image + WB_KEY_SEQUENCE_MATCHED) != 0) {
-        player_revive(image);
+        player_revive(image, extend);
         return;
     }
-    player_die(image, actor);
+    player_die(image, actor, extend);
 }
 
 
 /* --- $e06: the jump machine --------------------------------------------------------------------
  *
  * Entered only from `player_gate_on_1516`'s `beq.w`, which is the whole of its caller census.
+ *
+ * IT REPORTS AN EXIT X, WHICH IS WHAT BATCH 41 PHASE F ADDED, and `extend` is the same NULL-able
+ * in-and-out pointer `player_gate_on_1516` takes: read nowhere, written by whichever instruction
+ * wrote the 68000's X last on the arm the frame took. The frame is the one caller that reads it —
+ * `bsr.w $d78` at $a46 is the instruction before the walk's, and the walk's coasting arm hands the
+ * bit on to `player_weapon_fire`'s `sbcd`.
+ *
+ * THE OPENING `addi.b #$8,d0` AT $e12 IS THE DEFAULT, and three of the six exits are still carrying
+ * it when they `rts`: everything between it and them is `move.b`, `btst`, `tst.b`, `beq`/`bne` and
+ * `joy1_newly_pressed` ($682, four instructions of `move.b`/`eor.b`/`and.b`), none of which writes
+ * X. So the model is "stamp the carry once, and let the two arms that write X overwrite it".
  */
 
 /* $ea8 — the ascent. `sub.w d0,2(a0)` takes a ZERO-EXTENDED byte off the y, so the record always
  * rises; the `bne` then reads the byte the `subq.b` just left, and a speed of 0 wraps to $ff rather
- * than ending the climb — 255 more frames of it. */
-static void player_ascend(uint8_t *image, uint32_t actor) {
+ * than ending the climb — 255 more frames of it.
+ *
+ * ITS EXIT X IS THE `subq.b #1,11(a0)` AT $eb2 and not the `sub.w` above it, which that instruction
+ * overwrites; below it are `bclr` and `move.b`, both X-silent. The borrow is set exactly when the
+ * speed byte was already zero — the wrapping frame this plate's first paragraph names. */
+static void player_ascend(uint8_t *image, uint32_t actor, unsigned *extend) {
     uint8_t speed = field_b(image, actor, WB_ACTOR_SPEED);
 
     set_field_w(image, actor, WB_ACTOR_Y, (uint16_t)(field_w(image, actor, WB_ACTOR_Y) - speed));
-    /* NULL because nothing reads it YET, and not because it is dead: `subq.b #1,11(a0)` at $eb2
-     * is the ASCENDING arm's own exit X, and `bsr.w $d78` at $a46 — which reaches this routine — is
-     * the instruction before the walk's own `bsr`. So this borrow is one of the four bits the
-     * frame's entry-X chain is made of. ../STATUS.md's batch 41 phase E prices that chain. */
-    if (spend_field_b(image, actor, WB_ACTOR_SPEED, 1, NULL) != 0)
+    if (spend_field_b(image, actor, WB_ACTOR_SPEED, 1, extend) != 0)
         return;
 
     flag_clear(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVING_BIT);
@@ -120,7 +144,17 @@ static void player_ascend(uint8_t *image, uint32_t actor) {
 
 /* $e6c — the launch, on the rising edge alone. The speed it loads is WB_ACTOR_FIELD_10, the byte the
  * head of this routine has just written, so the strength is this frame's and not the one the record
- * was carrying. */
+ * was carrying.
+ *
+ * IT WRITES NO X AND TAKES NO `extend`, and the two arms' reasons differ. The arm that does NOT
+ * launch runs `bsr $682 / btst #0,d0 / bne` and then `rts` at $e78, all X-silent, so the opening
+ * `addi.b` the caller stamped is still what leaves. The arm that DOES launch ends on the
+ * `jsr 56(a1)` at $e88 — `movem.l`/`bsr.w $1a488`/`movem.l`/`rts`, the sound routine this port has
+ * never read — with only `bset`/`bclr`/`move.b` below it, so its X is $1a488's and is NOT modelled
+ * here. THE OMISSION IS DEAD RATHER THAN LATENT: the launch needs bit 0 of `joy1_newly_pressed`
+ * set, `player_weapon_fire`'s third gate needs that same byte to be exactly WB_PLAYER_FIRE_EDGE_EXACT,
+ * and $682 stores nothing — so a frame that launches cannot also reach the `sbcd` that reads the
+ * bit. ../STATUS.md carries it under "honestly unpinned". */
 static void player_launch_jump(uint8_t *image, uint32_t actor) {
     if (!(joy1_newly_pressed(image) & (1u << WB_JOY1_UP_BIT)))
         return;
@@ -139,15 +173,31 @@ static void player_launch_jump(uint8_t *image, uint32_t actor) {
  * IT IS THE THIRD ORIGINAL OF ONE IDIOM and is spelt here rather than shared: src/actor.c's
  * `hud_slot_spend_charge` is the same four instructions for the two damage paths, and that file's
  * own comment argues against exporting a symbol to save one `wr16`. What is different here is the
- * `btst` on the joystick between the test and the spend, and the speed write above it. */
-static void player_hover_on_wing_boots(uint8_t *image, uint32_t actor) {
+ * `btst` on the joystick between the test and the spend, and the speed write above it.
+ *
+ * ITS EXIT X IS THE `subq.b #1,$bbc2.l` AT $e48, ON THE ONE ARM THAT REACHES IT, and that borrow
+ * is a READING rather than a branch: the `tst.b`/`beq` two instructions above has just established
+ * the byte is NONZERO, so the spend can never borrow and the bit is always clear. The two arms that
+ * return early write no X at all — `tst.b`, `btst`, `beq` — and leave the caller's stamped carry.
+ * (The `move.w #$ff` rearm and the two hardware stores below the spend are X-silent, so the borrow
+ * survives to the `rts` at $e6a on both of its own arms.) */
+static void player_hover_on_wing_boots(uint8_t *image, uint32_t actor, unsigned *extend) {
+    uint8_t charge;
+
     if (image[WB_HUD_SLOT_BBC2] == 0)
         return;
     if (!(image[WB_JOY1_CURRENT] & (1u << WB_JOY1_UP_BIT)))
         return;
 
     set_field_b(image, actor, WB_ACTOR_SPEED, WB_PLAYER_SPEED_AFTER_JUMP);
-    image[WB_HUD_SLOT_BBC2] = (uint8_t)(image[WB_HUD_SLOT_BBC2] - 1);
+    /* THE SLOT IS RE-READ HERE and not carried down from the `tst.b`: `subq.b #1,$bbc2.l` at $e48
+     * reads MEMORY at the instruction, and the `move.b #$1,11(a0)` at $e42 between them writes that
+     * very byte for a record at $bbb7 — an address nothing bounds, since `actor_behavior_pass`
+     * follows a table pointer out of memory. Caching the tested value would diverge there. */
+    charge = image[WB_HUD_SLOT_BBC2];
+    image[WB_HUD_SLOT_BBC2] = (uint8_t)(charge - 1);
+    if (extend != NULL)
+        *extend = byte_sub_extend(charge, 1);
     if (image[WB_HUD_SLOT_BBC2] != 0)
         return;
 
@@ -155,20 +205,24 @@ static void player_hover_on_wing_boots(uint8_t *image, uint32_t actor) {
     text_post_message(image, WB_TEXT_MESSAGE_WING_BOOTS_LOST);
 }
 
-void player_jump_step(uint8_t *image, uint32_t actor) {
+void player_jump_step(uint8_t *image, uint32_t actor, unsigned *extend) {
     uint16_t strength = be16(image + WB_EFFECT_STATE_BD6A);
 
     wr16(image + WB_TILE_33_STEP, 0);
-    /* `addi.b #$8,d0` — the low BYTE of the state word, so nothing carries into its high half. */
+    /* `addi.b #$8,d0` — the low BYTE of the state word, so nothing carries into its high half. It
+     * is also the routine's DEFAULT exit X (see the section plate): stamped here, and overwritten
+     * only by the two arms below that run an arithmetic instruction of their own. */
+    if (extend != NULL)
+        *extend = byte_add_extend((uint8_t)strength, WB_PLAYER_JUMP_STRENGTH_BIAS);
     set_field_b(image, actor, WB_ACTOR_FIELD_10,
                 (uint8_t)(strength + WB_PLAYER_JUMP_STRENGTH_BIAS));
 
     if (flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVING_BIT))
-        player_ascend(image, actor);
+        player_ascend(image, actor, extend);
     else if (flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT))
         player_launch_jump(image, actor);
     else
-        player_hover_on_wing_boots(image, actor);
+        player_hover_on_wing_boots(image, actor, extend);
 }
 
 
@@ -1533,4 +1587,80 @@ uint32_t player_pending_event_gate(uint8_t *image, uint32_t actor) {
     if (be16(image + WB_SCENE_ALIGN_REQUEST_B14) != 0)
         return gate_scene_align(image, actor);
     return WB_PLAYER_GATE_FRAME_RUNS;
+}
+
+
+/* --- $a38: THE FRAME TOP, and the 62nd dispatch row --------------------------------------------
+ *
+ * SIXTY-TWO BYTES: nine `bsr`s, one register test, two memory guards and an `rts`, in that order and
+ * with nothing else between them. Batch 41 phase D read them off the raw image and priced the flip;
+ * phase E paid the exit-X half of the price; this is the row.
+ *
+ * IT LIVES IN THIS FILE and not beside the other sixty-one rows in src/behavior.c, which is a
+ * departure from "the module of its caller" and is argued rather than assumed. That rule's PURPOSE
+ * is to put a routine where the battery that pins it lives — it is why `player_gate_on_1516` is in
+ * src/behavior.c, whose tier owns its five other callers. Every one of THIS routine's nine callees
+ * is declared in this header and seeded by test/test_player.py's helpers, so the whole-frame
+ * differential can only be written there; putting the body in src/behavior.c would separate it from
+ * its own pin and add nothing but a file boundary. What src/behavior.c keeps is the TABLE ROW.
+ *
+ * WHAT IT RETURNS IS ITS CALLEE'S REPORT, VERBATIM — one exit, one spelling — and 0 for its own
+ * `rts` at $a74. Both of the gate's RETURNING endings reach that `rts`: WB_PLAYER_GATE_FRAME_RUNS
+ * falls through the `bmi.w` and WB_PLAYER_GATE_FRAME_SKIPPED takes it, and either way the original
+ * comes back here. Everything else the gate or the collision map reports is a transfer that never
+ * returns, so it is passed straight up to `actor_dispatch_behavior`, which passes it up again.
+ * player.h's shared-number-space note is what makes that safe.
+ *
+ * `entry_extend` IS THE DISPATCHER'S OWN X. `lsl.w #2,d1` at $92e — THREE instructions above the
+ * `jmp (a1)` that is this routine's ONLY entrance in the whole image, with `lea` and `movea.l` the
+ * only things between — leaves X set to the last bit shifted out of the word, i.e. bit 14 of the
+ * type word `move.w 4(a0),d1` at $92a read. It matters on exactly one path: the gate's ladder arm
+ * writes no X, the walk's coasting arm passes what it is given through, and
+ * `player_weapon_fire`'s `sbcd` folds it in.
+ *
+ * AND IT IS THE DISPATCHER'S ONLY WHILE `player_meter_empty_check` IS SILENT. Two of that routine's
+ * four paths end in a sound call and leave a bit this port has not read; the refusal below is what
+ * the frame does about it, and the claim above is scoped to the arms where $a76 writes no flag. See src/behavior.c's dispatcher for where the bit is
+ * produced and ../STATUS.md's batch 41 phase F section for the construction that reaches that path.
+ */
+uint32_t actor_behavior_type01_player(uint8_t *image, uint32_t actor, unsigned entry_extend) {
+    unsigned extend = entry_extend;
+    uint32_t report;
+
+    player_meter_empty_check(image, actor, &extend);                   /* $a38 */
+
+    report = player_pending_event_gate(image, actor);                  /* $a3c */
+    /* `tst.w d7 / bmi.w $a74` at $a40 — the LOW WORD only, and the gate's two returning endings are
+     * the two values of that bit ($b32's `clr.l d7` against $bb4/$d22's `move.w #$ffff,d7`). */
+    if (report != WB_PLAYER_GATE_FRAME_RUNS)
+        return report == WB_PLAYER_GATE_FRAME_SKIPPED ? WB_ACTOR_DISPATCH_RAN : report;
+
+    player_gate_on_1516(image, actor, &extend);                        /* $a46 */
+    /* THE ONE COMBINATION THE PORT CANNOT COMPOSE, and it stops here rather than guess: the death
+     * check took a sound arm and the gate took its LADDER arm, so the bit the `sbcd` would fold in
+     * is `snd_trigger_effect`'s or `snd_play_song`'s and this port has not read either. Every other
+     * path has overwritten the sentinel by now — the gate's jumping arm always writes an X. */
+    if (extend == WB_PLAYER_EXTEND_UNREAD)
+        return WB_PLAYER_FRAME_SOUND_EXTEND;
+
+    extend = player_step_and_arm(image, actor, extend);                /* $a4a */
+    player_weapon_fire(image, actor, extend);                          /* $a4e */
+
+    /* `tst.w $6ef0.l / bne.w $a60` — abs.LONG, WORD-wide, a FIXED global and not a record field, and
+     * it clears exactly the one `bsr` below it. */
+    if (be16(image + WB_ACTOR_PLATFORM_RIDDEN) == 0)
+        actor_fall_and_settle(image, actor, WB_SETTLE_SPAN_UNREAD);   /* $a5c */
+
+    player_apply_joystick(image, actor);                               /* $a60 */
+
+    /* `tst.w $a32.w / bne.w $a70` — the same shape one guard down, spelt abs.w where the one above
+     * is abs.LONG, and it too clears exactly one call. */
+    if (be16(image + WB_STATE_FLAG_A32) == 0) {                        /* $a64 */
+        report = player_run_map_cell(image, actor);                    /* $a6c */
+        if (report != WB_PLAYER_COLLIDE_RETURN)
+            return report;
+    }
+
+    player_stage_transition(image, actor);                             /* $a70 */
+    return WB_ACTOR_DISPATCH_RAN;                                      /* $a74 */
 }

@@ -2083,7 +2083,19 @@ def test_the_two_ladder_modes_are_different_words_and_the_case_above_can_tell_th
 
 
 # --- $e06: the jump machine ---------------------------------------------------------------------
-_JUMP_STEP = leaf.register_glue("player_jump_step", [ctypes.c_uint32])
+_JUMP_STEP_FN = leaf.bind("player_jump_step",
+                          leaf.IMAGE_ARG + [ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint)])
+
+
+def _JUMP_STEP(actor):
+    """The jump machine with its exit X DROPPED, which is the shape every case in this section
+    wants: they pin the MEMORY each arm writes, and `emu.REPORTED_REGS` has no CCR, so a flag they
+    could not compare would only be a value they had to invent. NULL is also what the five
+    behaviour-tier `bsr $d78` callers pass in src/behavior.c.
+
+    The model of the flag is pinned where the flag is CONSUMED — the frame's own battery below,
+    which composes $a46/$a4a/$a4e and diffs the shot count the `sbcd` leaves."""
+    return lambda _lib, image: _JUMP_STEP_FN(image, actor, None)
 STRENGTH = 0x0021          # a state word whose low byte + the bias is neither 0 nor the seed
 
 
@@ -2345,7 +2357,14 @@ def test_the_message_the_wing_boots_post_is_the_one_the_shipped_string_names():
 
 
 # --- $a76: the death check --------------------------------------------------------------------------
-_METER_EMPTY = leaf.register_glue("player_meter_empty_check", [ctypes.c_uint32])
+_METER_EMPTY_FN = leaf.bind("player_meter_empty_check",
+                            leaf.IMAGE_ARG + [ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint)])
+
+
+def _METER_EMPTY(actor):
+    """$a76 with its exit X DROPPED. This battery pins the MEMORY each arm writes; the flag it can
+    also destroy is pinned where it is consumed, by the frame battery's refusal rows below."""
+    return lambda _lib, image: _METER_EMPTY_FN(image, actor, None)
 
 
 def _death_pokes(what, fields=None):
@@ -3705,10 +3724,13 @@ def test_the_SAME_image_then_spends_a_DIFFERENT_shot_count():
 # ORIGINAL's `$a4a`/`$a4e` pair under the oracle and the two C routines composed the way those two
 # adjacent `bsr`s compose them, and requires the whole image to agree.
 #
-# WHY THE COMPOSITION LIVES IN THE GLUE AND NOT IN src/. `actor_behavior_type01_player` ($a38) is the
-# one dispatch row still unported, so there is no C function that spells `bsr $ec8 / bsr $1208` yet.
-# The glue is that pair and nothing else — it adds no arithmetic of its own, and the entry bit it
-# hands the walk is the zero `emu.run` gives the oracle (SR = $2700), not a value the case chose.
+# WHY THE COMPOSITION LIVES IN THE GLUE HERE. When these rows were written
+# `actor_behavior_type01_player` ($a38) had no reconstruction, so no C function spelt
+# `bsr $ec8 / bsr $1208`. Batch 41 phase F ported it and the frame battery at the foot of this file
+# drives the WHOLE row; these rows keep the two-call glue on purpose, because a pair is the smallest
+# thing that can carry a flag between two routines and a failure here names which of the two moved.
+# The glue adds no arithmetic of its own, and the entry bit it hands the walk is the zero `emu.run`
+# gives the oracle (SR = $2700), not a value the case chose.
 #
 # WHAT EACH ROW CLAIMS, BEYOND THE DIFFERENTIAL. `expected_extend` is the X the row says the WALK
 # leaves, and it is checked against the ORACLE's own shot count through `leaf.bcd_expected`'s decimal
@@ -3929,7 +3951,9 @@ def test_the_walk_hands_a_SET_caller_bit_STRAIGHT_THROUGH_to_the_sbcd():
 # encoding blind spot cannot be the mechanism; three of the missed five sit in the same platform band
 # as the three it had, so a band cut cannot be either. The axis is ROUTINE COVERAGE.
 #
-# `$a52` is the costly omission — the fall guard of the one dispatch row still unported. `$e5ba` is
+# `$a52` is the costly omission — the fall guard of `actor_behavior_type01_player`, which was the
+# last unported dispatch row when this census was taken and is a reconstruction as of batch 41
+# phase F. `$e5ba` is
 # the sharpest: it is the instruction BOTH of the player frame's `jmp $e5ba.l` unwinds land on, so the
 # word the fall guard reads is taken down by the very transfer that abandons the frame.
 PLATFORM_RIDDEN_READERS = (0xa52, 0x6e36, 0x6f0a, 0x6f42)
@@ -6731,3 +6755,673 @@ def test_the_two_checkpointed_unwinds_are_the_two_the_pin_table_above_holds():
                            (GATE_RESTART_TAKEN_AT, GATE_RESTART_SITE)):
         assert site == taken_at + len(lea_d16(A7, UNWIND_ONE_BYTES)), (
             f"the checkpoint at {site:#x} is not the instruction after the pop at {taken_at:#x}")
+
+
+# ===================================================================================================
+# --- $a38: THE FRAME, WHOLE — batch 41 phase F -----------------------------------------------------
+#
+# The sixty-second dispatch row, and the only one whose body is nine calls into this file. What the
+# cases below add to the nine batteries above them is the COMPOSITION: the order, the caller-side d7
+# test, the two guards, the exit report, and the one thing no callee's battery can hold — the X flag
+# travelling from `player_gate_on_1516`'s chain, through the walk's coasting arm, into the `sbcd`.
+#
+# EVERY CASE HERE ENTERS AT $a38 AND DIFFS THE WHOLE IMAGE against the original run from the same
+# address. The two `bsr`-pair cases above are this battery's ancestors and are kept: they measured
+# that the bit exists before there was a frame to carry it.
+_FRAME = leaf.register_glue("actor_behavior_type01_player",
+                            [ctypes.c_uint32, ctypes.c_uint], ctypes.c_uint32)
+
+# The bound on one frame: each of the nine calls' own cap, plus the frame's sixteen instructions. It
+# is the sum of the caps the nine batteries above already derive, which is what stops it becoming a
+# round number that hides a runaway.
+# `actor_fall_and_settle`'s bound: its player head, then two settles, each of which is a probe's
+# worth of scan. PROBE_INSNS is this file's own derivation, from the walk's battery above.
+FALL_AND_SETTLE_SCANS = 3
+FALL_AND_SETTLE_CAP = FALL_AND_SETTLE_SCANS * PROBE_INSNS
+# THE ROW'S OWN TWELVE INSTRUCTIONS come from the pin that owns them, which is
+# test_behavior.py's: the frame is a dispatch row, so its entry pin sits beside the other
+# sixty-one rather than here, and importing it is what stops this file holding a second count.
+from test_behavior import (DISPATCH_RAN,                       # noqa: E402
+                           INSN_COUNT as BEHAVIOR_INSN_COUNT)
+
+FRAME_CAP = (BEHAVIOR_INSN_COUNT["actor_behavior_type01_player"] + leaf.RUNNER_SENTINEL_INSN
+             + METER_EMPTY_CAP + PENDING_GATE_CAP + JUMP_STEP_CAP + STEP_AND_ARM_CAP
+             + WEAPON_CAP + FALL_AND_SETTLE_CAP + _cap("player_apply_joystick")
+             + MAP_CELL_CAP + STAGE_TRANSITION_CAP)
+
+FRAME_ENTRY_EXTEND = 0          # what `emu.run`'s SR = $2700 gives the oracle at $a38
+FRAME_SALT = "the whole player frame"
+
+# The frame's own five gate words, all set so that the routine each guards writes NOTHING. Every one
+# is a word `_frame_pokes` states rather than inherits, because a frame case is about the eight OTHER
+# calls and a keyed byte in any of these turns the case into a different frame.
+#   * a meter that is not empty ends `player_meter_empty_check` at its first instruction;
+#   * the three WB_STAGE_RESET_BLOCK words clear make `player_pending_event_gate` `clr.l d7 / rts`;
+#   * WB_ACTOR_PLATFORM_RIDDEN raised skips `actor_fall_and_settle` — which is the frame's OWN
+#     abs.LONG guard at $a52, and the one instruction of the two that reads a LONG operand;
+#   * WB_STATE_FLAG_A32 raised skips `player_run_map_cell` — the abs.w guard at $a64;
+#   * WB_STAGE_ANIM_DONE_B10 raised makes `player_stage_transition` its own latch, i.e. an `rts`.
+FRAME_QUIET_GLOBALS = {
+    HUD_METER_VALUE: word(1),
+    STAGE_RESET_BLOCK: word(0), STAGE_ANIM_REQUEST_B0E: word(0), ALIGN_REQUEST_B14: word(0),
+    PLATFORM_RIDDEN: word(1), STATE_FLAG_A32: word(1), STAGE_ANIM_DONE_B10: word(MARKER),
+}
+
+# The strength word whose `addi.b #$8,d0` at $e12 CARRIES, and its twin that does not. The jump
+# machine stamps that byte into WB_ACTOR_FIELD_10 every frame and three of its six exits still carry
+# the flag when they `rts`, so this pair is what drives them apart.
+JUMP_STRENGTH_CARRY = 0x00f8         # $f8 + 8 = $100
+JUMP_STRENGTH_NO_CARRY = WALK_STRENGTH
+
+
+def _frame_pokes(record_fields=None, *, strength=WALK_STRENGTH, up_held=False, charge=0,
+                 globals_=None, ladder=False):
+    """A frame that FIRES, entered at $a38, with the gate's chain the only thing that moves.
+
+    IT IS `_frame_composition_pokes`' SEED PLUS THE FRAME'S OWN FIVE GATE WORDS. The walk-and-weapon
+    layer is reused rather than restated so that a byte either battery needs is added in one place;
+    what this adds is the four calls that composition never ran and the words that shut them.
+
+    THE FIRING FRAME IS ALSO THE COASTING FRAME, which is why the gate's bit reaches the `sbcd` at
+    all: the weapon's third gate wants `joy1_newly_pressed` to be exactly WB_PLAYER_FIRE_EDGE_EXACT,
+    so the walk's fire edge runs, so the speed is cleared at $f06 and the drift's gate lowered at
+    $f00 — and with no knock-back and no flicker, not one instruction of the walk writes X.
+
+    `up_held` holds UP in BOTH joystick bytes, which is the wing boots' own question and costs the
+    weapon nothing: `joy1_newly_pressed` is `current & ~prev`, so a bit held on both frames is not a
+    new press and the edge byte stays $80. Holding UP is therefore compatible with firing; pressing
+    it is not, which is exactly why the LAUNCH exit is unreachable from the `sbcd`.
+
+    `ladder` raises WB_TILE_33_MODE, which sends $d78 down the arm that runs nothing. It leaves
+    WB_TILE_33_FLAG clear, and whether the game can reach THAT pair is the case beside the row that
+    uses it."""
+    fields = {HUD_SLOT_BBC2: bytes([charge])}
+    if ladder:
+        fields[TILE_33_MODE] = word(TILE_33_MODE_UP)
+    if up_held:
+        fields[JOY1_PREV] = bytes([(1 << JOY1_DOWN_BIT) | (1 << JOY1_UP_BIT)])
+        fields[JOY1_CURRENT] = bytes([FIRE_EDGE_EXACT | (1 << JOY1_DOWN_BIT) | (1 << JOY1_UP_BIT)])
+    return leaf.overlay(_frame_composition_pokes(record_fields or {}, direction=0,
+                                                 strength=strength),
+                        FRAME_QUIET_GLOBALS, fields, globals_ or {})
+
+
+def _run_frame(what, pokes, expected_extend, entry_extend=FRAME_ENTRY_EXTEND,
+               expected_report=DISPATCH_RAN):
+    """One whole-frame row: the ORIGINAL from $a38 to its own `rts`, the C's frame beside it, the
+    whole image compared, and the ORACLE's shot count read back as the row's statement of WHICH X
+    the gate's chain left.
+
+    `expected_extend` is not a second copy of the C. It is checked against
+    `leaf.bcd_expected`'s decimal model of what the `sbcd` spends, so a row whose seeding quietly
+    stopped firing fails here rather than agreeing about nothing — the lesson the walk battery above
+    was built on."""
+    diffs, info = leaf.differential(FRAME_ENTRY, {"a0": ACTOR, "_pokes": pokes},
+                                    _FRAME(ACTOR, entry_extend), max_insns=FRAME_CAP, poison=True)
+    assert not diffs, f"{what}\n{leaf.report(diffs)}"
+    assert info["ret"] == expected_report, (
+        f"{what}: the frame reported {info['ret']:#x}, not the {expected_report:#x} this ending "
+        f"leaves at")
+
+    at = WEAPON_RECORD + RECORD_LOW_BYTE
+    spent = info["writes"].get(at)
+    assert spent == _spend_bytes(WALK_SPEND_COUNT, borrow=expected_extend)[at], (
+        f"{what}: the ORIGINAL left {spent!r} in the shot count, not the X={expected_extend} spend "
+        f"this row claims — either the frame never reached the `sbcd` or the gate's chain leaves a "
+        f"different bit")
+    return info
+
+
+# THE $d78 CHAIN, one row per exit, with the seed that drives it and the bit it must leave at the
+# `sbcd`. Five of the six exits are here; the sixth is the LAUNCH, and the case below this table is
+# what says no firing frame can take it.
+#
+# THE FLAGS PICK THE ARM: WB_ACTOR_FLAG_MOVING_BIT is the ASCENT, WB_ACTOR_FLAG_SUPPORTED_BIT the
+# stand, neither the wing boots. Only the ascent and the wing-boot SPEND write an X of their own; the
+# other three arms hand on the `addi.b #$8,d0` the routine's head stamped, which is why the strength
+# pair appears on three rows and the two overwriting arms appear with it deliberately set to CARRY.
+MOVING_FLAG = 1 << MOVING_BIT
+SUPPORTED_FLAG = 1 << SUPPORTED_BIT
+ASCENT_SPEED_BORROWS = 0        # `subq.b #1,11(a0)` borrows exactly when the byte was already zero
+ASCENT_SPEED_NO_BORROW = 1
+WING_BOOT_CHARGES = 3           # more than one, so the spend is not also the rearm
+WING_BOOT_LAST_CHARGE = 1
+
+GATE_X_PATHS = (
+    # $ec6 — the ASCENT, whose `subq.b #1,11(a0)` is the exit's own X.
+    ("the ascent's speed byte borrows",
+     dict(record_fields={ACTOR_FLAGS: MOVING_FLAG, SPEED: ASCENT_SPEED_BORROWS},
+          strength=JUMP_STRENGTH_NO_CARRY), 1),
+    ("...and the same arm one frame earlier, where it does not",
+     dict(record_fields={ACTOR_FLAGS: MOVING_FLAG, SPEED: ASCENT_SPEED_NO_BORROW},
+          strength=JUMP_STRENGTH_CARRY), 0),
+    # $e78 — SUPPORTED with UP not newly pressed, which is every firing frame that stands.
+    ("the stand carries the head's `addi.b` out",
+     dict(record_fields={ACTOR_FLAGS: SUPPORTED_FLAG}, strength=JUMP_STRENGTH_CARRY), 1),
+    ("...and the same arm off a strength byte that does not carry",
+     dict(record_fields={ACTOR_FLAGS: SUPPORTED_FLAG}, strength=JUMP_STRENGTH_NO_CARRY), 0),
+    # $e6a via the `beq.w` at $e34 — airborne with an EMPTY slot, so the spend never runs.
+    ("airborne with no wing-boot charge, so the head's carry stands",
+     dict(record_fields={ACTOR_FLAGS: 0}, charge=0, strength=JUMP_STRENGTH_CARRY), 1),
+    # $e6a via the `beq.w` at $e3e — a charge held but UP not held, which is the same bit by a
+    # different branch, and the row that separates the two `beq`s from each other.
+    ("airborne with a charge but UP not held, which is the OTHER branch to the same `rts`",
+     dict(record_fields={ACTOR_FLAGS: 0}, charge=WING_BOOT_CHARGES,
+          strength=JUMP_STRENGTH_CARRY), 1),
+    # $e6a via the `bne.w` at $e4e — the SPEND, and the row that matters most: the strength byte is
+    # the CARRYING one, so a model that forgot the `subq.b` overwrites it answers 1 here.
+    ("the wing boots spend a charge, and that `subq.b` overwrites the head's carry",
+     dict(record_fields={ACTOR_FLAGS: 0}, charge=WING_BOOT_CHARGES, up_held=True,
+          strength=JUMP_STRENGTH_CARRY), 0),
+    # ...and the same instruction on the frame the LAST charge goes, which falls through $e52's
+    # rearm to the same `rts` instead of branching to it.
+    ("...and on the frame the last charge goes, where the arm falls through the rearm",
+     dict(record_fields={ACTOR_FLAGS: 0}, charge=WING_BOOT_LAST_CHARGE, up_held=True,
+          strength=JUMP_STRENGTH_CARRY), 0),
+)
+
+
+@pytest.mark.parametrize("case,seed,expected_extend", GATE_X_PATHS,
+                         ids=[row[0] for row in GATE_X_PATHS])
+def test_the_gates_chain_reaches_the_weapons_sbcd(case, seed, expected_extend):
+    """ONE ROW PER EXIT OF `$d78`'s CHAIN, diffed as a whole frame.
+
+    `player_gate_on_1516` is the instruction before the walk and the walk's coasting arm passes what
+    it is given straight through, so the bit the `sbcd` folds in on a firing frame is this routine's.
+    Five exits are computable from three bytes — the low byte of WB_EFFECT_STATE_BD6A, WB_ACTOR_SPEED
+    and WB_HUD_SLOT_BBC2 — and each row drives one of them and states which.
+
+    The differential is over the WHOLE frame, so a row also pins the eight other calls' composition;
+    what makes it a statement about the FLAG is the shot count, which no memory the two runs share
+    can produce."""
+    _run_frame(f"the frame's $d78 chain: {case}", _frame_pokes(**seed), expected_extend)
+
+
+# --- the frame's ENTRY bit, which is the DISPATCHER's --------------------------------------------
+#
+# `player_gate_on_1516`'s ladder arm is `tst.w $1516.l / rts` — two X-silent instructions — so on a
+# frame whose WB_TILE_33_MODE is raised the `sbcd` folds in the bit the frame was ENTERED with. That
+# bit is not a caller's to invent: $a38's only reference in the whole image is the table longword at
+# $93c, so the frame is entered by `jmp (a1)` and by nothing else, and three instructions above that
+# jump is `lsl.w #2,d1` at $92e — a WORD shift of two, which leaves X holding bit 14 of the type word
+# `move.w 4(a0),d1` at $92a read.
+#
+# WHICH MAKES THE SET DIRECTION DRIVABLE FROM THE ORIGINAL, and by the original's own aliasing rather
+# than by a fabricated record: `lsl.w` wraps in sixteen bits, so $4001 and $c001 scale to slot 1's
+# offset exactly as $0001 does and the ORACLE really dispatches all three to $a38 — with X set on the
+# two whose bit 14 is up. The rows below run the DISPATCHER, not the frame, for that reason: entered
+# at $a38 the oracle's CCR is `emu.run`'s SR = $2700 whatever the type says.
+#
+# THE GLUE IS test_behavior.py's BINDING and not a second one. `leaf.bind` is `getattr` on a
+# `ctypes.CDLL`, which CACHES the function object, so two spellings of one prototype in one process
+# are one object with whichever `argtypes` was set last.
+from test_behavior import _DISPATCH as _BEHAVIOR_DISPATCH   # noqa: E402
+
+from test_behavior import (BEHAVIOR_SCALE_BITS,                # noqa: E402
+                           BODY_SIZES as BEHAVIOR_BODY_SIZES)
+
+DISPATCH_ENTRY = leaf.entry_of("actor_dispatch_behavior")
+WORD_BITS = WORD_BYTES * 8      # `lsl.w` shifts a WORD, so the bit it leaves in X is counted in one
+# The four instructions the ladder-honesty case below reads, each named by the address it sits at.
+FALL_FLAG_RAISE_AT = 0x1350     # `move.w #$ffff,$1514.l` — the fall pass's own raise
+FALL_CLEARS_AT = 0x1364         # `clr.w $1516 / clr.w $1518 / clr.w $1514`, in that order
+CELL_FLAG_SET_AT = 0x155c       # `st $1514.w` — the collision map's tile-$33 arm
+CELL_FLAG_CLEAR_AT = 0x179e     # `clr.b $1514.w` — its ordinary-cell arm
+LEVEL_RESET_FLAGS_AT = 0xff00   # `clr.l $1514.w` — the level-entry reset, and the one writer
+                                # besides the fall pass that takes BOTH words down
+TILE_33_FLAG_RAISED = wb("TILE_33_FLAG_RAISED")
+FRAME_BODY_BYTES = BEHAVIOR_BODY_SIZES["actor_behavior_type01_player"]
+GATE_SKIP_WITHOUT_TAIL_AT = 0xd22   # the align arm's `move.w #$ffff,d7`, with no tail
+# The bound on a dispatched frame: the dispatcher's own four instructions on top of the frame's.
+DISPATCH_INSNS = BEHAVIOR_INSN_COUNT["actor_dispatch_behavior"]
+TYPE_PLAYER_ALIASES = (0x0001, 0x4001, 0x8001, 0xc001)
+
+
+@pytest.mark.parametrize("type_word", TYPE_PLAYER_ALIASES, ids=lambda v: f"type-{v:04x}")
+def test_the_dispatchers_own_shift_hands_the_ladder_frame_its_entry_X(type_word):
+    """THE FRAME'S ENTRY BIT, driven end to end through the `jmp (a1)`.
+
+    Every row seeds a LADDER frame that also fires, so `$d78` writes no X and the walk's coasting arm
+    passes what it was given to the `sbcd`. The type word is the only thing that moves, and what it
+    moves is a CONDITION CODE: bit 14 of it is what `lsl.w #2` shifts out last.
+
+    ON THE GAME'S OWN DATA THE BIT IS ZERO, because the player's record holds type 1. The two rows
+    that set it are the dispatcher's documented aliasing, which this file's neighbour pins against
+    the oracle for its own reasons (`test_an_aliased_type_dispatches_the_ordinary_slot`) — so what
+    they drive is the ORIGINAL's behaviour, not a record the game could not hold.
+
+    IT IS ALSO THE ROW FLIP PROVEN END TO END: the run enters at `actor_dispatch_behavior`, so the
+    reconstruction has to read the type, scale it, fetch the longword, recognise $a38 as a row it
+    has, and run the whole frame behind it."""
+    expected_extend = (type_word >> (WORD_BITS - BEHAVIOR_SCALE_BITS)) & 1
+    what = f"the dispatched ladder frame, type {type_word:#06x}"
+    pokes = leaf.overlay(_frame_pokes(ladder=True), {ACTOR + ACTOR_TYPE: word(type_word)})
+
+    diffs, info = leaf.differential(DISPATCH_ENTRY, {"a0": ACTOR, "_pokes": pokes},
+                                    _BEHAVIOR_DISPATCH(ACTOR),
+                                    max_insns=FRAME_CAP + DISPATCH_INSNS, poison=True)
+    assert not diffs, f"{what}\n{leaf.report(diffs)}"
+    assert info["ret"] == DISPATCH_RAN, (
+        f"{what}: the dispatcher reported {info['ret']:#x} — it did not run slot 1's frame")
+
+    at = WEAPON_RECORD + RECORD_LOW_BYTE
+    spent = info["writes"].get(at)
+    assert spent == _spend_bytes(WALK_SPEND_COUNT, borrow=expected_extend)[at], (
+        f"{what}: the ORIGINAL left {spent!r} in the shot count, not the X={expected_extend} spend "
+        f"bit 14 of the type says the `lsl.w #2` shifted out")
+
+
+def test_the_ladder_arm_the_row_above_drives_is_a_state_the_game_can_REACH():
+    """THE HONESTY CASE UNDER THE FOUR ROWS ABOVE, and the question batch 41 phase E left open: can a
+    frame whose WB_TILE_33_MODE is raised also FIRE? The weapon's first gate reads WB_TILE_33_FLAG
+    and `$d78` reads WB_TILE_33_MODE, and the two words are $1514 and $1516 — adjacent, and written
+    together often enough that "mode up, flag down" looks impossible.
+
+    IT IS NOT, AND THE CONSTRUCTION IS THE FALL GUARD. What ties the two words is
+    `actor_fall_and_settle`'s player head: `move.w #$ffff,$1514.l` at $1350 on a tile-$33 cell, and
+    `clr.w $1516.l / clr.w $1518.l / clr.w $1514.l` at $1364..$1370 on any other — three clears in a
+    row with no branch between them, so the pass NEVER leaves the mode up with the flag word down.
+    But the frame's own `tst.w $6ef0.l / bne.w $a60` at $a52 can SKIP that pass, and the two other
+    writers of $1514 are BYTE-wide: `st $1514.w` at $155c and `clr.b $1514.w` at $179e, both inside
+    `player_run_map_cell` and both touching the HIGH half only. So a player riding a platform can
+    have $1514 raised to $ff00 by a tile-$33 cell, climb (which needs only a nonzero $1514), and then
+    have the same word cleared to $0000 by an ordinary cell one frame later — with $1516 still up,
+    because nothing on that path writes it.
+
+    THE WRITER CENSUS BEHIND THAT IS THREE AND NOT TWO. Besides the fall pass, `$1514` is written by
+    `st $1514.w` at $155c and `clr.b $1514.w` at $179e — byte-wide, both inside
+    `player_run_map_cell`, and the only two that can move it WITHOUT `$1516` — and by
+    `clr.l $1514.w` at $ff00, which is LONG-wide, sits outside that routine, and is the one other
+    instruction in the image that takes both words down together. All four are pinned below.
+
+    WHAT THIS CASE CHECKS is the half of that argument a case can check: the four instructions the
+    argument rests on are the instructions the image holds, at the addresses named. The reachability
+    itself is an argument over frames and lives in ../STATUS.md's batch 41 phase F section."""
+    assert bytes(harness.BASE_IMAGE[FALL_FLAG_RAISE_AT:FALL_FLAG_RAISE_AT + len(
+        move_w_imm_abs_l(TILE_33_FLAG_RAISED, TILE_33_FLAG))]) \
+        == move_w_imm_abs_l(TILE_33_FLAG_RAISED, TILE_33_FLAG), (
+        f"{FALL_FLAG_RAISE_AT:#x} is not the fall pass's `move.w #$ffff,$1514.l`")
+
+    # ...and the three clears, back to back and in this order, which is what says the pass cannot
+    # separate the two words.
+    clears = clr_w_abs_l(TILE_33_MODE) + clr_w_abs_l(TILE_33_STEP) + clr_w_abs_l(TILE_33_FLAG)
+    assert bytes(harness.BASE_IMAGE[FALL_CLEARS_AT:FALL_CLEARS_AT + len(clears)]) == clears, (
+        f"{FALL_CLEARS_AT:#x} is not the fall pass's three back-to-back clears")
+
+    # ...and the two BYTE writers inside the collision map, which are what can move $1514 alone.
+    assert bytes(harness.BASE_IMAGE[CELL_FLAG_SET_AT:CELL_FLAG_SET_AT + len(
+        st_abs_w(TILE_33_FLAG))]) == st_abs_w(TILE_33_FLAG), (
+        f"{CELL_FLAG_SET_AT:#x} is not `st $1514.w`")
+    assert bytes(harness.BASE_IMAGE[CELL_FLAG_CLEAR_AT:CELL_FLAG_CLEAR_AT + len(
+        clr_b_abs_w(TILE_33_FLAG))]) == clr_b_abs_w(TILE_33_FLAG), (
+        f"{CELL_FLAG_CLEAR_AT:#x} is not `clr.b $1514.w`")
+
+    # ...and the FIFTH instruction, which the first draft of this case and of `cmt 0xa38` both
+    # missed: a LONG-wide clear outside `player_run_map_cell` that takes WB_TILE_33_MODE down with
+    # WB_TILE_33_FLAG. It is what stops the construction above being "any clear of $1514 will do" —
+    # this one cannot produce the state, because it lowers both words at once.
+    assert bytes(harness.BASE_IMAGE[LEVEL_RESET_FLAGS_AT:LEVEL_RESET_FLAGS_AT + len(
+        clr_l_abs_w(TILE_33_FLAG))]) == clr_l_abs_w(TILE_33_FLAG), (
+        f"{LEVEL_RESET_FLAGS_AT:#x} is not `clr.l $1514.w`")
+    assert TILE_33_MODE == TILE_33_FLAG + WORD_BYTES, (
+        "WB_TILE_33_MODE is no longer the low half of the longword that `clr.l` takes down, so the "
+        "census above no longer says the two words fall together")
+
+
+# --- the composition: nine calls, the d7 test, and the two guards ---------------------------------
+FRAME_CALLS = ("player_meter_empty_check", "player_pending_event_gate", "player_gate_on_1516",
+               "player_step_and_arm", "player_weapon_fire", "actor_fall_and_settle",
+               "player_apply_joystick", "player_run_map_cell", "player_stage_transition")
+
+
+def test_the_nine_names_this_battery_iterates_are_the_nine_the_bytes_CALL():
+    """FRAME_CALLS is what the coverage rows below iterate, so it has to BE the frame's calls rather
+    than a list standing beside them. The entry pin already says the 62 bytes are byte-exact
+    (test_behavior.py's `_type01_pieces`); this says the nine names are the nine `bsr` targets those
+    bytes hold, IN ORDER — each search starts where the last call ended."""
+    body = bytes(harness.BASE_IMAGE[FRAME_ENTRY:FRAME_ENTRY + FRAME_BODY_BYTES])
+    at = 0
+    for name in FRAME_CALLS:
+        # `bsr.w`'s displacement is PC-RELATIVE, so the encoding to look for depends on where the
+        # call sits — which is why this walks the body word by word re-encoding rather than
+        # searching for one constant.
+        while at < len(body) and body[at:at + BSR_W_BYTES] != leaf.asm(FRAME_ENTRY + at,
+                                                                       [bsr(name)]):
+            at += WORD_BYTES
+        assert at < len(body), (
+            f"the frame holds no `bsr.w {name}` after the call before it — FRAME_CALLS is not the "
+            f"frame's own call order")
+        at += BSR_W_BYTES
+
+
+@pytest.mark.parametrize("guarded,ridden,in_a32", [
+    ("both guards raised, so neither call runs", 1, 1),
+    ("the fall guard down, so `actor_fall_and_settle` runs", 0, 1),
+    ("the collision guard down, so `player_run_map_cell` runs", 1, 0),
+    ("both guards down, so all NINE calls run", 0, 0),
+], ids=["neither", "fall-only", "cell-only", "all-nine"])
+def test_each_guard_clears_EXACTLY_the_one_call_below_it(guarded, ridden, in_a32):
+    """THE TWO `tst.w`/`bne.w` PAIRS, as a lattice, with the ORACLE's executed PCs as the witness.
+
+    Each guard skips exactly one `bsr` and nothing else — the fall guard at $a52 reads
+    WB_ACTOR_PLATFORM_RIDDEN abs.LONG over `actor_fall_and_settle` alone, and the collision guard at
+    $a64 reads WB_STATE_FLAG_A32 abs.w over `player_run_map_cell` alone. A port that let either
+    `bne.w` skip the rest of the frame passes the two rows that raise it and fails the other two, and
+    one that read either word at the wrong WIDTH fails on the seeded value.
+
+    The `all-nine` row is also this battery's end-to-end case: every one of the nine routines
+    executes in one run, and the two cores agree over the whole image."""
+    what = f"the whole player frame: {guarded}"
+    pokes = _frame_pokes(globals_={PLATFORM_RIDDEN: word(ridden), STATE_FLAG_A32: word(in_a32)})
+
+    with leaf.pc_coverage():
+        _run_frame(what, pokes, expected_extend=0)
+        ran = {name: emu.cov_visited(leaf.entry_of(name)) for name in FRAME_CALLS}
+
+    expected = {name: True for name in FRAME_CALLS}
+    expected["actor_fall_and_settle"] = ridden == 0
+    expected["player_run_map_cell"] = in_a32 == 0
+    assert ran == expected, (
+        f"{what}: the calls the ORIGINAL executed were {sorted(k for k, v in ran.items() if v)}, "
+        f"not the ones the two guards name")
+
+
+def test_a_NEGATIVE_gate_answer_skips_the_seven_calls_below_it():
+    """`tst.w d7 / bmi.w $a74` at $a40, with its PREMISE and its CLAIM in ONE run.
+
+    THE PREMISE is that the gate really did leave a negative low word: the seed takes the align
+    arm's slot refusal, whose ending is the `move.w #$ffff,d7 / rts` at $d22 — and the witness is
+    that instruction's own address, executed. Without it a seed that quietly stopped reaching the
+    refusal would leave the claim below true for the wrong reason, since a gate that never ran also
+    never reaches the seven calls.
+
+    THE CLAIM is that the `bmi.w` clears SEVEN calls and not one: none of the routines below the
+    gate executes, and the frame reports its own `rts`. The gate's two returning endings are one bit
+    to this caller, so what the frame propagates on BOTH of them is WB_ACTOR_DISPATCH_RAN — the
+    skipped frame is still a frame that returned."""
+    what = "the whole player frame: a negative gate answer"
+    pokes = _frame_pokes(globals_={ALIGN_REQUEST_B14: word(MARKER), EVENT_ANIM_DONE_B16: word(0),
+                                   SPAWN_GATE_SLOT + ACTOR_X: word(PLAYER_X)})
+
+    with leaf.pc_coverage():
+        diffs, info = leaf.differential(FRAME_ENTRY, {"a0": ACTOR, "_pokes": pokes},
+                                        _FRAME(ACTOR, FRAME_ENTRY_EXTEND), max_insns=FRAME_CAP,
+                                        poison=True)
+        reached_refusal = emu.cov_visited(GATE_SKIP_WITHOUT_TAIL_AT)
+        ran = {name for name in FRAME_CALLS if emu.cov_visited(leaf.entry_of(name))}
+
+    assert not diffs, f"{what}\n{leaf.report(diffs)}"
+    assert reached_refusal, (
+        f"{what}: the ORIGINAL never executed the align arm's refusal at "
+        f"{GATE_SKIP_WITHOUT_TAIL_AT:#x}, so this seed does not make d7 negative and the claim "
+        f"below is about a gate that did something else")
+    assert ran == {"player_meter_empty_check", "player_pending_event_gate"}, (
+        f"{what}: the frame executed {sorted(ran)} — the `bmi.w` at $a40 must clear the SEVEN calls "
+        f"below the gate and nothing above it")
+    assert info["ret"] == DISPATCH_RAN, (
+        f"{what}: the frame reported {info['ret']:#x}, not its own `rts` — a gate that RETURNED is "
+        f"not an abandoned frame however negative its d7")
+
+
+def _frame_over(inner, globals_=None):
+    """A CALLEE's own seeding with the frame's five gate words laid over it.
+
+    The nine batteries above each seed the routine they own, and every one of them leaves at least
+    one of the frame's gates in a state the frame is not about — the cell battery raises
+    WB_SCENE_ALIGN_REQUEST_B14 to a marker, the gate battery seeds no map. So a frame case that
+    reuses a callee's seed states the frame's own words LAST, and quiets the walk's record with the
+    walk battery's own quiet row so the coast (rather than a keyed byte's map probe) is what runs
+    before the call the case is about."""
+    quiet = {ACTOR + offset: bytes([value]) for offset, value in _WALK_QUIET_RECORD.items()}
+    quiet.update({JOY1_PREV: bytes([0]), JOY1_CURRENT: bytes([0])})
+    # FRAME_QUIET_GLOBALS IS OVERLAID RATHER THAN RESTATED: it is the same five gate words
+    # `_frame_pokes` uses, and a second copy here is how the two would come to disagree about which
+    # arm "quiet" means. (test_behavior.py's `_quiet_record` is the cross-file sibling of this idea —
+    # one seed per handler that shuts every arm but the one under test. It is NOT shared: that one is
+    # keyed by handler NAME for the dispatch battery's 62 rows and this one composes a callee's own
+    # seeding, so they have different shapes and hoisting would fit neither.)
+    return leaf.overlay(inner, FRAME_QUIET_GLOBALS, quiet, globals_ or {})
+
+
+def _run_frame_abandoned(what, pokes, exit_code, stop_pc, via, band=(), cap=None):
+    """A frame whose callee never came back. The oracle is stopped at the transfer, the witness above
+    it says the arm was really taken, and the frame's report is the CALLEE's own code VERBATIM —
+    which is the whole of what the composition does with an ending it cannot follow. A frame that
+    renamed the report would be a second spelling of one ending, which is the mistake the shared
+    number space at the head of include/player.h's WB_PLAYER_COLLIDE_* block exists to make
+    impossible."""
+    info = leaf.run_reaching("actor_behavior_type01_player", _FRAME(ACTOR, FRAME_ENTRY_EXTEND),
+                             list(band), what, via, regs={"a0": ACTOR, "_pokes": pokes},
+                             max_insns=FRAME_CAP if cap is None else cap, stop_pc=stop_pc)
+    assert info["ret"] == exit_code, (
+        f"{what}: the frame reported {info['ret']:#x}, not the callee's own {exit_code:#x}")
+    return info
+
+
+def test_the_collision_maps_TRIPLE_POP_abandons_the_frame_and_is_reported_as_its_own():
+    """WB_PLAYER_COLLIDE_UNWIND, through the frame. `player_run_map_cell`'s tile-$39 arm reaches
+    `lea 12(a7),a7 / jmp $e5ba.l`, which discards THREE return addresses — this frame's among them —
+    so the frame cannot return and does not pretend to. The seed is the cell battery's own tile-$39
+    one with the frame's five gate words laid over it, and the collision guard taken DOWN so the
+    call happens at all."""
+    what = "the whole player frame: the collision map's triple pop"
+    pokes = _frame_over(_cell_pokes(what, TILE_39),
+                        {STATE_FLAG_A32: word(0)})
+
+    # What the five calls ABOVE $151a leave: the coast's flag bit inside the record, and the
+    # ladder pass's WB_TILE_33_STEP clear. The tile-$39 arm itself writes nothing at all — that is
+    # its own battery's claim, and this band is what says the frame added no more.
+    _run_frame_abandoned(what, pokes, EXIT_UNWIND, UNWIND_SITE, UNWIND_TAKEN_AT,
+                         band=[(ACTOR, RECORD_BYTES), (TILE_33_STEP, WORD_BYTES)])
+
+
+def test_the_gates_DATA_DISK_unwind_abandons_the_frame_before_any_call_below_it():
+    """WB_PLAYER_GATE_DATADISK_UNWIND, through the frame: `lea 4(a7),a7 / jmp $e494.l` at $bd8, ONE
+    return address discarded, and it is this frame's. It fires from the SECOND call, so the seven
+    below it never run — which is a DIFFERENT fact from the `bmi.w` skip above, where the same seven
+    do not run and the frame still returns with a report of its own.
+
+    THE ARM WRITES NOTHING AT ALL and neither do the two calls above it under this seed, so the band
+    is empty and the whole image is compared. That is also what makes the witness load-bearing: with
+    no writes anywhere, a run that simply returned would agree just as well.
+
+    The gate's own battery drives this ending from `$b1a`; what this adds is that the frame does not
+    RENAME the report on its way up. The life-restart unwind is the same shape one arm along, and it
+    is left to the gate's battery deliberately — `game_life_restart_reset` redraws the panel, so a
+    frame case would have to restate that routine's whole write set to say nothing new."""
+    what = "the whole player frame: the gate's data-disk unwind"
+    inner = _prompt_pokes(what, box=True, expired=MARKER, lives=2, fire=True)
+    pokes = _frame_over(inner, {STAGE_RESET_BLOCK: word(MARKER)})
+
+    _run_frame_abandoned(what, pokes, GATE_EXIT_DATADISK, GATE_DATADISK_SITE,
+                         GATE_DATADISK_TAKEN_AT)
+
+
+# --- the four calls the quiet frame does NOT exercise ---------------------------------------------
+#
+# EVERY CASE ABOVE PUTS THE FRAME'S FIRST AND LAST CALLS ON THEIR SILENT ARM, which is what a quiet
+# seed is for and what the mutation sweep then charged for: `frame/drop-the-death-check` and
+# `frame/drop-the-stage-transition` both SURVIVED round one, because a call that writes nothing
+# whether or not it happens is a call no differential can see. The two rows below open those arms.
+DEATH_CHECK_SLOT_CHARGE = 1     # WB_HUD_SLOT_BBC6's value byte, so the REVIVAL arm runs
+
+
+def test_the_frame_really_CALLS_the_death_check_when_the_meter_is_empty():
+    """`player_meter_empty_check` is the frame's first call and it writes nothing at all while
+    WB_HUD_METER_VALUE is nonzero — which every other case here seeds, so that every other case is
+    about the eight calls below it. This one empties the meter and arms WB_HUD_SLOT_BBC6, so the
+    REVIVAL arm runs: an effect, the slot rearmed, a message posted and the meter refilled. The
+    frame's other eight calls run behind it exactly as before, and the whole image is compared."""
+    what = "the whole player frame: an EMPTY meter, so the death check's revival arm runs"
+    # WB_KEY_SEQUENCE_MATCHED IS NOT SEEDED AND CANNOT BE: it is $604, inside the kit's poked-input
+    # block, which lies within this program (project.toml's second waiver) and which
+    # `harness.make_image` refuses outright. The shipped image holds ZERO there, which is the arm
+    # this case wants — the cheat word down, so the revival SPENDS the slot — and that is a fact
+    # about the .PRG rather than a choice, so it is stated here instead of poked.
+    pokes = _frame_pokes(globals_={HUD_METER_VALUE: word(0),
+                                   HUD_SLOT_BBC6: bytes([DEATH_CHECK_SLOT_CHARGE])})
+    assert int.from_bytes(harness.BASE_IMAGE[KEY_SEQUENCE_MATCHED:KEY_SEQUENCE_MATCHED
+                                              + WORD_BYTES], "big") == 0, (
+        "the shipped cheat word is no longer zero, so this case's revival arm skips the rearm")
+
+    with leaf.pc_coverage():
+        _run_frame(what, pokes, expected_extend=0)
+        ran = emu.cov_visited(leaf.entry_of("player_meter_empty_check"))
+    assert ran, f"{what}: the ORIGINAL never entered the death check"
+
+
+def test_the_frame_really_CALLS_the_stage_transition_when_nothing_is_latched():
+    """...and the mirror at the other end. `player_stage_transition` is an `rts` while its own
+    WB_STAGE_ANIM_DONE_B10 latch is up, which every case above raises so that the frame's middle is
+    what they measure. With it DOWN the POSTURE SELECTOR runs and publishes the player's sprite,
+    which is the arm that runs on every ordinary frame of the game."""
+    what = "the whole player frame: nothing latched, so the posture selector runs"
+    pokes = _frame_pokes(globals_={STAGE_ANIM_DONE_B10: word(0),
+                                   STAGE_ANIM_REQUEST_B0E: word(0), EVENT_ANIM_DONE_B16: word(0),
+                                   STAGE_RESET_BLOCK: word(0)})
+
+    with leaf.pc_coverage():
+        _run_frame(what, pokes, expected_extend=0)
+        ran = emu.cov_visited(leaf.entry_of("player_stage_transition"))
+    assert ran, f"{what}: the ORIGINAL never entered the stage transition"
+
+
+# The word ABOVE the fall guard's: two shipped ZERO bytes between WB_ACTOR_PLATFORM_RIDDEN and slot
+# 55's entry at $6ef4. Nothing in the image names it, which is exactly what makes it the right place
+# to put a value: a LONGWORD read of the guard's address sees it and a WORD read does not.
+PLATFORM_RIDDEN_NEIGHBOUR = PLATFORM_RIDDEN + WORD_BYTES
+
+
+def test_the_fall_guard_reads_a_WORD_and_not_the_LONGWORD_below_it():
+    """`tst.w $6ef0.l` — and the `.w` is the half a write-set case cannot see, because both widths
+    agree on every value the game itself puts there. The sweep charged for that too
+    (`frame/the-fall-guard-read-as-a-LONGWORD` survived round one).
+
+    So this row seeds the guard's own word CLEAR and the word above it SET. A word read says "run the
+    fall"; a longword read says "skip it". The witness is the ORACLE's executed PCs, and the
+    differential behind it is what makes the reconstruction answer the same question."""
+    what = "the whole player frame: a WORD-wide fall guard over a nonzero neighbour"
+    pokes = _frame_pokes(globals_={PLATFORM_RIDDEN: word(0),
+                                   PLATFORM_RIDDEN_NEIGHBOUR: word(MARKER)})
+
+    with leaf.pc_coverage():
+        _run_frame(what, pokes, expected_extend=0)
+        ran = emu.cov_visited(leaf.entry_of("actor_fall_and_settle"))
+    assert ran, (
+        f"{what}: the fall did not run, so the guard was read wider than the WORD its `tst.w` names")
+
+
+def test_a_dispatched_frame_that_ABANDONS_reports_it_all_the_way_up():
+    """THE OTHER HALF OF THE ROW FLIP, and the sweep is what asked for it: with only the quiet
+    dispatch rows above, an adapter that threw the frame's report away and answered
+    WB_ACTOR_DISPATCH_RAN survived, because a quiet frame answers RAN anyway.
+
+    This one enters at `actor_dispatch_behavior` with a type-1 record whose collision cell is
+    WB_MAP_TILE_39, so the frame's eighth call reaches the `lea 12(a7),a7 / jmp $e5ba.l` at $1622 and
+    never comes back. The dispatcher has to hand WB_PLAYER_COLLIDE_UNWIND up unchanged — which is the
+    whole reason the three exit-code families share one number space."""
+    what = "the dispatched player frame: the collision map's triple pop, reported through $928"
+    pokes = _frame_over(_cell_pokes(what, TILE_39), {STATE_FLAG_A32: word(0),
+                                                     ACTOR + ACTOR_TYPE: word(TYPE_PLAYER)})
+
+    info = leaf.run_reaching("actor_dispatch_behavior", _BEHAVIOR_DISPATCH(ACTOR),
+                             [(ACTOR, RECORD_BYTES), (TILE_33_STEP, WORD_BYTES)], what,
+                             UNWIND_TAKEN_AT, regs={"a0": ACTOR, "_pokes": pokes},
+                             max_insns=FRAME_CAP + DISPATCH_INSNS, stop_pc=UNWIND_SITE)
+    assert info["ret"] == EXIT_UNWIND, (
+        f"{what}: the dispatcher reported {info['ret']:#x}, not the frame's own {EXIT_UNWIND:#x} — "
+        f"a row's answer is the dispatcher's answer")
+
+
+# --- the arm that DESTROYS the entry bit, and the one place the frame refuses ----------------------
+#
+# THE GATE FOUND THIS AND THE BYTES CONFIRM IT: `player_meter_empty_check`'s two sound-calling arms
+# end on a `jsr` into the sound module — the revival's `jsr 56(a1)` at $a9e and the death's
+# `jsr (a1)` at $aec — and every instruction below either call, plus the whole of
+# `player_pending_event_gate`'s no-event path, is X-silent. So on those two paths the bit arriving at
+# `$a46` is `snd_trigger_effect`'s or `snd_play_song`'s and NOT the dispatcher's, and the four rows
+# above that call the entry bit "the dispatcher's" are true only of the arms where `$a76` is silent.
+#
+# WHICH IS A MEASUREMENT AND NOT A READING. Driven under the ORACLE, a revival + ladder + fire frame
+# leaves the borrow-0 spend for BOTH type $0001 and type $4001 — so the sound routine really does
+# overwrite the dispatcher's bit, and a port that handed the walk `entry_extend` there would answer
+# the aliased row with the wrong count. The port refuses instead: see WB_PLAYER_FRAME_SOUND_EXTEND.
+REVIVAL_GLOBALS = {HUD_METER_VALUE: word(0), HUD_SLOT_BBC6: bytes([DEATH_CHECK_SLOT_CHARGE])}
+FRAME_SOUND_EXTEND = wb("PLAYER_FRAME_SOUND_EXTEND")
+
+
+@pytest.mark.parametrize("type_word", TYPE_PLAYER_ALIASES, ids=lambda v: f"type-{v:04x}")
+def test_a_revival_on_a_LADDER_frame_refuses_instead_of_guessing_the_sounds_bit(type_word):
+    """THE REFUSAL, one row per alias, and the aliased rows are the point: whatever the dispatcher
+    shifted out, the death check has overwritten it by `$a46`, so a port that still trusted
+    `entry_extend` would spend a different count on two of these four and the same count by luck on
+    the other two.
+
+    The oracle is stopped at `$a4a` — the walk's own `bsr`, which is exactly where the port stops —
+    so what the differential compares is the image at the instant the bit would have been consumed.
+    Everything above it (the death check's whole revival arm and the gate's ladder `rts`) has run in
+    both cores."""
+    what = f"the frame's revival + ladder refusal, type {type_word:#06x}"
+    pokes = leaf.overlay(_frame_pokes(ladder=True),
+                         REVIVAL_GLOBALS, {ACTOR + ACTOR_TYPE: word(type_word)})
+
+    # POISON IS OFF HERE AND THE REASON IS THIS ARM'S OWN. The revival WRITES the two words that
+    # SELECT it — WB_HUD_METER_VALUE refilled and WB_HUD_SLOT_BBC6 rearmed — so the attribution pass,
+    # which re-runs both cores over an image whose oracle-written bytes are poisoned, hands the
+    # second run a meter that is no longer empty. The ORACLE still stops at the fixed `$a4a`; the
+    # PORT's stopping point is arm-dependent and it no longer refuses, so it runs the weapon and the
+    # two disagree about a frame neither case is about. Every other frame row keeps poison on.
+    info = leaf.run("actor_behavior_type01_player", _FRAME(ACTOR, FRAME_ENTRY_EXTEND),
+                    [(0, loader.PROGRAM_END)], what, regs={"a0": ACTOR, "_pokes": pokes},
+                    max_insns=FRAME_CAP, stop_pc=WALK_CALL_AT, poison=False)
+    assert info["ret"] == FRAME_SOUND_EXTEND, (
+        f"{what}: the frame reported {info['ret']:#x} — a revival frame on the ladder arm carries "
+        f"an X no reader of this port has, and guessing it is what this code refuses to do")
+
+
+def test_a_revival_on_a_JUMPING_frame_runs_WHOLE_because_the_gate_overwrites_the_bit():
+    """THE OTHER SIDE OF THE REFUSAL, and what keeps it from being a blanket one. With
+    WB_TILE_33_MODE clear the gate runs `player_jump_step`, whose head stamps `addi.b #$8,d0` into X
+    before any arm is chosen — so the sound routine's bit is gone and nothing is unknown. The frame
+    runs to its own `rts` and spends the count that head's carry says.
+
+    This is what makes the refusal SCOPED rather than "any frame that revives", and it is the row a
+    port that refused on the death check alone would fail."""
+    what = "the whole player frame: a revival on a JUMPING frame, which is not a refusal"
+    pokes = leaf.overlay(_frame_pokes(strength=JUMP_STRENGTH_CARRY), REVIVAL_GLOBALS)
+
+    _run_frame(what, pokes, expected_extend=1)
+
+
+def test_a_DEATH_frame_never_reaches_the_refusal_because_the_gate_eats_it_first():
+    """THE DEATH ARM'S SENTINEL IS UNREACHABLE AT THE CHECK, and this is the proof rather than the
+    assertion. The sweep flagged `refusal/the-death-arm-does-not-mark-the-bit` as a survivor; it is
+    EQUIVALENT, and the mechanism is the frame's own ordering.
+
+    `player_die` raises WB_STAGE_RESET_BLOCK ($b08) at $aee — and that is the FIRST word
+    `player_pending_event_gate` tests, three instructions into its own body. So any frame on which
+    the death arm runs hands the gate a raised block, the gate takes its DEATH arm, and no death arm
+    of the gate returns WB_PLAYER_GATE_FRAME_RUNS — which means `$a40`'s `bmi.w` or an unwind ends
+    the frame before `$a46` is ever reached. The sentinel is written and then thrown away with the
+    frame.
+
+    THE OTHER HALF, and why the C still writes it: the early return in `player_die` (a block already
+    negative) makes no sound call and marks nothing, so "the death check marked the bit" and "the
+    gate will eat the frame" are the same condition. Removing the mark would leave the model of the
+    flag wrong for a reader, which is what the plate is for; keeping it costs one store.
+
+    The two words are pinned against each other from the image, and the run is the CANDIDATE's
+    because the oracle needs a PSG declaration the death song makes unpredictable here — what is
+    being pinned is a control-flow fact about the port, and the gate's own battery pins the arm."""
+    what = "the whole player frame: a death frame is eaten by the gate before the refusal"
+    pokes = leaf.overlay(_frame_pokes(ladder=True),
+                         {HUD_METER_VALUE: word(0), HUD_SLOT_BBC6: bytes([0]),
+                          STAGE_RESET_BLOCK: word(0)})
+
+    report, image = leaf.run_candidate_only(_FRAME(ACTOR, FRAME_ENTRY_EXTEND), pokes)
+    assert report != FRAME_SOUND_EXTEND, (
+        f"{what}: the frame reported the sound refusal, so the death arm's sentinel DID reach "
+        f"$a46 — the ordering this case rests on has moved and the arm needs a row of its own")
+    assert int.from_bytes(image[STAGE_RESET_BLOCK:STAGE_RESET_BLOCK + WORD_BYTES], "big") \
+        == DEATH_FLAG_SET, (
+        f"{what}: the death arm did not raise WB_STAGE_RESET_BLOCK, so this seed never drove it")

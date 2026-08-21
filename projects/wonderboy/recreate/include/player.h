@@ -102,7 +102,29 @@
  * THE CHEAT WORD IS AN INPUT ON BOTH ARMS and it is not the same input twice: nonzero takes the
  * revival arm whether or not the slot has a charge, and nonzero on that arm SKIPS the rearm — so the
  * medicine is never spent and the meter refills for ever. */
-void player_meter_empty_check(uint8_t *image, uint32_t actor);
+/* `extend` IS THE 68000's X, and this routine is the one place in the frame that can DESTROY it
+ * with a value the port has never read (batch 41 phase F's gate found it). TWO of its four paths end
+ * in a sound call — the revival's `jsr 56(a1)` at $a9e and the death's `jsr (a1)` at $aec — and
+ * every instruction below either call, and every instruction of `player_pending_event_gate`'s
+ * no-event path after it, is X-silent. So on those two paths the bit that arrives at $a46 is
+ * `snd_trigger_effect`'s or `snd_play_song`'s, NOT the dispatcher's.
+ *
+ * IT IS DERIVABLE IN PRINCIPLE AND NOT MODELLED HERE: both routines end
+ * `add.w d0,d0 / lea / movea.w / adda.l a3,a2 / move.l / move.l / move.b / move.b / rts`, and only
+ * that `add.w` writes X — so the bit is bit 15 of a sign-extended table byte. Threading it means a
+ * new output on a 334-byte routine with loops and on every one of its call sites, which is a phase
+ * and not a line. Until then the port REFUSES rather than guesses: this routine writes
+ * WB_PLAYER_EXTEND_UNREAD through `extend`, and `actor_behavior_type01_player` reports
+ * WB_PLAYER_FRAME_SOUND_EXTEND if that value is still there when the walk would consume it.
+ *
+ * `extend` may be NULL — no other caller exists in the image, and the value is meaningless to one. */
+void player_meter_empty_check(uint8_t *image, uint32_t actor, unsigned *extend);
+
+/* THE SENTINEL, and it is OUT OF BAND by construction: an X flag is 0 or 1 and this is neither, so a
+ * refusal cannot be confused with a bit (the standing rule that an in-band refusal collides with a
+ * real value). Nothing in the chain produces it but `player_meter_empty_check`, and nothing consumes
+ * it but the frame — `player_step_and_arm` and `player_weapon_fire` are never reached with it. */
+#define WB_PLAYER_EXTEND_UNREAD 2u
 
 /* $e06 — THE JUMP MACHINE, the body `player_gate_on_1516` branches into while WB_TILE_33_MODE is
  * clear, and the only way into it: the whole-image census finds ONE instruction naming this address,
@@ -122,8 +144,14 @@ void player_meter_empty_check(uint8_t *image, uint32_t actor);
  *   * neither — AIRBORNE, and this is the WING BOOTS. While WB_HUD_SLOT_BBC2 still has a charge and
  *     UP is HELD (the level, not the edge), the fall speed is forced back to 1 and one charge is
  *     spent per frame; the frame the last one goes the slot is rearmed with WB_HUD_SLOT_REARM and
- *     message WB_TEXT_MESSAGE_WING_BOOTS_LOST is posted. The message is what names the slot. */
-void player_jump_step(uint8_t *image, uint32_t actor);
+ *     message WB_TEXT_MESSAGE_WING_BOOTS_LOST is posted. The message is what names the slot.
+ *
+ * IT REPORTS AN EXIT X through the same NULL-able `extend` its caller takes (batch 41 phase F). SIX
+ * exits, and FIVE of them are a function of three bytes — the opening `addi.b #$8,d0` at $e12 is the
+ * default and the ASCENT's `subq.b #1,11(a0)` and the WING BOOTS' `subq.b #1,$bbc2.l` are the only
+ * two overwrites. The sixth, the LAUNCH at $ea6, leaves the sound routine's, which this port has
+ * never read and no frame that also fires can reach; src/player.c's plates carry both readings. */
+void player_jump_step(uint8_t *image, uint32_t actor, unsigned *extend);
 
 /* $d84 — THE LADDER, called at $a60, after the fall pass. It does nothing at all unless
  * WB_TILE_33_FLAG is up, i.e. unless `actor_fall_and_settle`'s player-only head found tile
@@ -292,9 +320,22 @@ void player_stage_transition(uint8_t *image, uint32_t actor);
  * diffs at the instant control arrives at the `lea`. TWO instructions reach it — the `beq.w` at
  * $161c on tile WB_MAP_TILE_39, and `player_pending_event_gate`'s `bra.w` at $d16 — and only the
  * first is this routine's own. */
+/* THE THREE FAMILIES SHARE ONE NUMBER SPACE, and batch 41 phase F is what made that mandatory.
+ * `actor_behavior_type01_player` propagates its callees' reports VERBATIM (behavior.h's boundary
+ * rule) and `actor_dispatch_behavior` passes the row's answer straight up, so the codes below, the
+ * gate's at the foot of this file, and behavior.h's four WB_ACTOR_DISPATCH_* all arrive at the same
+ * caller through the same `uint32_t`. Before the flip they were three private spaces and three
+ * pairs collided; they are now allocated once, and
+ * `test_the_dispatch_code_space_has_no_collision` in test/test_behavior.py is what says so rather
+ * than this comment.
+ *
+ * ZERO IS SHARED ON PURPOSE and is the one value that may be: WB_ACTOR_DISPATCH_RAN,
+ * WB_PLAYER_COLLIDE_RETURN and WB_PLAYER_GATE_FRAME_RUNS all mean "the original reached its own
+ * `rts`", which is the same fact about three routines and not three facts. Every code that stands
+ * in for a transfer the port cannot follow has a number of its own. */
 #define WB_PLAYER_COLLIDE_RETURN      0u  /* the original `rts`d */
-#define WB_PLAYER_COLLIDE_SOUND_WAIT  1u  /* ...or reached the busy-wait at $1932 with the byte up */
-#define WB_PLAYER_COLLIDE_UNWIND      2u  /* ...or the triple pop at $1622 */
+#define WB_PLAYER_COLLIDE_SOUND_WAIT  4u  /* ...or reached the busy-wait at $1932 with the byte up */
+#define WB_PLAYER_COLLIDE_UNWIND      5u  /* ...or the triple pop at $1622 */
 
 /* $151a — THE COLLISION MAP, called at $a6c and only while WB_STATE_FLAG_A32 is clear. One cell
  * lookup and then one of three bands (see WB_SCENE_TRIGGER_CODE_FIRST in wonderboy.h):
@@ -339,32 +380,64 @@ uint32_t player_run_map_cell(uint8_t *image, uint32_t actor);
  * cannot take"). */
 #define WB_PLAYER_GATE_FRAME_RUNS      0u  /* `clr.l d7 / rts` at $b32: none of the three set, so
                                             * the seven calls below the gate all run */
-#define WB_PLAYER_GATE_FRAME_SKIPPED   1u  /* `move.w #$ffff,d7 / rts` at $bb4 (after the shared
+#define WB_PLAYER_GATE_FRAME_SKIPPED   6u  /* `move.w #$ffff,d7 / rts` at $bb4 (after the shared
                                             * `bsr.w $1f54` at $bb0) or at $d22 (WITHOUT it). TWO
                                             * PATHS REACH $d22 AND ONLY ONE IS A BRANCH: the
                                             * `bne.w` at $c86, the align arm's slot refusal — which
                                             * is the asymmetry against the second arm's $c3e, where
                                             * the same refusal goes to the shared tail — and the
                                             * FALL-THROUGH from the $e1be raise at $d1a */
-/* ...and 2 is deliberately absent: the third unwind's report is WB_PLAYER_COLLIDE_UNWIND above,
- * because it is not a second exit but the SAME instruction. `bra.w $1622` at $d16 branches into
- * `player_run_map_cell`'s own `lea 12(a7),a7 / jmp $e5ba.l` — no call, no code of that routine run
- * — so the gate reaches the identical triple pop and says so with the identical code. */
-#define WB_PLAYER_GATE_DATADISK_UNWIND 3u  /* `lea 4(a7),a7 / jmp $e494.l` at $bd8: ONE return
+/* ...and the gate's THIRD unwind has no WB_PLAYER_GATE_* name of its own, because it is not a
+ * second exit but the SAME instruction: the `bra.w $1622` at $d16 branches into
+ * `player_run_map_cell`'s own `lea 12(a7),a7 / jmp $e5ba.l`, with no call and no code of that
+ * routine run, so the gate reaches the identical triple pop and reports the identical
+ * WB_PLAYER_COLLIDE_UNWIND above. */
+#define WB_PLAYER_GATE_DATADISK_UNWIND 7u  /* `lea 4(a7),a7 / jmp $e494.l` at $bd8: ONE return
                                             * address discarded, into show_data_disk_prompt */
-#define WB_PLAYER_GATE_RESTART_UNWIND  4u  /* `lea 4(a7),a7 / jmp $e5ba.l` at $c1c: one again, into
+#define WB_PLAYER_GATE_RESTART_UNWIND  8u  /* `lea 4(a7),a7 / jmp $e5ba.l` at $c1c: one again, into
                                             * the level-entry band. THREE instructions above that
                                             * pop — not one — is $c06, the image's ONE absolute-LONG
                                             * write of WB_EFFECT_STATE_21E4: losing a life costs the
                                             * armour. The arm's tail runs $c06 (the armour), $c0e
                                             * (WB_LEVEL_SEQ_INDEX back one), $c14
                                             * (WB_LIFE_RESTART_ENTRY_C26 up) and then the pop */
-#define WB_PLAYER_GATE_SCENE_LEFT      5u  /* `bsr.w $19ac` at $c66 did not come back.
+#define WB_PLAYER_FRAME_SOUND_EXTEND  10u  /* `actor_behavior_type01_player`'s own, and the one
+                                            * report that is not a transfer: the frame reached $a4a
+                                            * carrying an X that `snd_trigger_effect` or
+                                            * `snd_play_song` left and this port has not read, so it
+                                            * stops rather than hand `player_weapon_fire`'s `sbcd` a
+                                            * guessed bit. It fires only when the death check took a
+                                            * sound arm AND `player_gate_on_1516` took the LADDER
+                                            * arm, which is the one combination that lets the bit
+                                            * survive; a jumping frame overwrites it and runs whole */
+#define WB_PLAYER_GATE_SCENE_LEFT      9u  /* `bsr.w $19ac` at $c66 did not come back.
                                             * `scene_spawn_from_script` has three endings of its own
                                             * (scene.h) and none of them is this routine's to
                                             * describe, so the gate says only that the call left and
                                             * the case's own `stop_pc` names WHICH — everything
                                             * below the `bsr` on that arm is then unreached */
 uint32_t player_pending_event_gate(uint8_t *image, uint32_t actor);
+
+/* $a38 — THE FRAME TOP, slot 1 of WB_ACTOR_BEHAVIOR_TABLE, and the sixty-second row to go live
+ * (batch 41 phase F). Nine calls, a register test on the gate's answer and two memory guards; the
+ * body's plate in src/player.c is where each is, and why the routine is in that file rather than
+ * beside the other sixty-one.
+ *
+ * `entry_extend` IS `actor_dispatch_behavior`'s OWN X — bit 14 of the type word, which `lsl.w #2,d1`
+ * at $92e shifts out THREE instructions above the `jmp (a1)` that is this routine's only entrance
+ * (`lea` and `movea.l` are all that sit between them).
+ * On the game's own data the player's record holds type 1, so the bit is 0; the SET direction is the
+ * dispatcher's documented type ALIASING ($4001 and $c001 scale to the same slot), which is the
+ * original's behaviour and not a fabricated input.
+ *
+ * THE CLAIM IS SCOPED TO THE ARMS WHERE `player_meter_empty_check` IS SILENT. Two of that routine's
+ * four paths end in a sound call and leave a bit no reader of this port has, and on those the X at
+ * $a46 is the sound routine's rather than the dispatcher's. The frame REFUSES there rather than
+ * guess — WB_PLAYER_FRAME_SOUND_EXTEND — and only when the gate's ladder arm would let the bit
+ * survive; a jumping frame overwrites it and runs whole.
+ *
+ * IT RETURNS ITS CALLEE'S REPORT VERBATIM, out of the shared number space at the head of the
+ * WB_PLAYER_COLLIDE_* block above, and WB_ACTOR_DISPATCH_RAN for its own `rts`. */
+uint32_t actor_behavior_type01_player(uint8_t *image, uint32_t actor, unsigned entry_extend);
 
 #endif /* WONDERBOY_PLAYER_H */

@@ -1167,12 +1167,22 @@
                                                * WB_STATE_FLAG_A30/A32/A34 words sit between */
 #define WB_ACTOR_BEHAVIOR_SLOTS      62u      /* == (0xa30 - 0x938) / 4 */
 #define WB_ACTOR_BEHAVIOR_ENTRY      4u       /* `lsl.w #2,d1` — a longword per slot */
+#define WB_ACTOR_BEHAVIOR_SCALE_BITS 2u       /* ...that instruction's shift COUNT, which is
+                                               * log2(WB_ACTOR_BEHAVIOR_ENTRY) and is named
+                                               * separately because it decides something the stride
+                                               * does not: `lsl` leaves X holding the last bit it
+                                               * shifted out, so a WORD shift of 2 hands the handler
+                                               * bit 14 of the type. test/test_behavior.py pins the
+                                               * two against each other */
 #define WB_ACTOR_BEHAVIOR_NULL       0xa36u   /* slots 0 and 58 both hold it: a bare `rts`, and the
                                                * two bytes that bound the table */
 /* The other reconstructed targets, as ADDRESSES — which is what src/behavior.c's dispatcher matches
  * on, because `movea.l (a1),a1` fetches the longword and a poked table entry is still followed. Each
  * is the entry ../names.txt gives the slot of the same number, and test/test_behavior.py pins all
  * sixty-two against the image rather than against this list. */
+#define WB_ACTOR_BEHAVIOR_TYPE01     0xa38u   /* the PLAYER's frame — 62 bytes of nine `bsr`s, and
+                                               * the last row to go live (batch 41 phase F). It sits
+                                               * immediately above the table's own bounding `rts` */
 #define WB_ACTOR_BEHAVIOR_TYPE02     0x2462u
 #define WB_ACTOR_BEHAVIOR_TYPE03     0x25c0u
 #define WB_ACTOR_BEHAVIOR_TYPE04     0x2796u

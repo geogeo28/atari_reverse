@@ -21,6 +21,7 @@
  * SUBTRACT really does wrap into the value the following compare reads. The (int16_t) casts below
  * are where the two rules meet.
  */
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -39,12 +40,6 @@
 #include "sound.h"
 #include "text.h"
 #include "wonderboy.h"
-
-/* What a call hands actor_fall_and_settle where nothing reads its d7 back. The register really is
- * the HANDLER's own entry d7 — a death arm reaches the settle without $23b6 or $5c6e having run —
- * and no memory depends on it: the settles read only its low word and $13be rewrites that before
- * anything does (map.h). Only the two walk arms below hand over a value they can name. */
-#define SETTLE_SPAN_UNREAD 0u
 
 /* --- reading and writing a record -----------------------------------------------------------------
  *
@@ -161,7 +156,37 @@ typedef struct {
     uint32_t (*handler)(uint8_t *image, uint32_t actor);
 } BehaviorHandler;
 
+/* THE X THE DISPATCH ITSELF LEAVES, and the only condition code any handler reads. `lsl.w #2,d1` at
+ * $92e sets X to the LAST bit shifted out of the word — bit 14 of the type — and the TWO
+ * instructions between it and the `jmp (a1)` are `lea` and `movea.l`, neither of which touches a
+ * flag. So a handler is entered with bit 14 of its own record's WB_ACTOR_TYPE in X.
+ *
+ * It is 0 for every type the game itself uses, since bit 14 set means a type of $4000 or more. What
+ * makes it an input rather than a constant is the dispatcher's ALIASING: `lsl.w` is a WORD shift, so
+ * $4001 and $c001 scale to slot 1's offset exactly as $0001 does, and the original really does
+ * dispatch all three to the same handler — with X set on two of them. */
+#define DISPATCH_EXTEND_BIT (WB_WORD_BYTES * CHAR_BIT - WB_ACTOR_BEHAVIOR_SCALE_BITS)
+
+static unsigned dispatch_entry_extend(uint16_t type) {
+    return (type >> DISPATCH_EXTEND_BIT) & 1u;
+}
+
+/* THE ONE ROW WHOSE HANDLER READS THAT BIT, adapted to the shape the other sixty-one have. Giving
+ * every row a third parameter would have moved sixty-two definitions and sixty-two declarations to
+ * carry one bit to one of them; giving this row a table of its own would have split the list the
+ * whole dispatch model rests on. RE-READING THE TYPE WORD IS EXACT rather than convenient: the
+ * original reads it ONCE, with `move.w 4(a0),d1` at $92a — the `lsl.w #2,d1` below it shifts a
+ * REGISTER and touches no memory — and the four instructions between that read and $a38 are the
+ * `lsl.w`, `lea`, `movea.l` and `jmp (a1)`, none of which writes memory. So the word this reads is
+ * the word that produced the flag. */
+static uint32_t dispatch_player_frame(uint8_t *image, uint32_t actor) {
+    uint16_t type = (uint16_t)field_w(image, actor, WB_ACTOR_TYPE);
+
+    return actor_behavior_type01_player(image, actor, dispatch_entry_extend(type));
+}
+
 static const BehaviorHandler PORTED_HANDLERS[] = {
+    {WB_ACTOR_BEHAVIOR_TYPE01, dispatch_player_frame},
     {WB_ACTOR_BEHAVIOR_NULL, actor_behavior_null},
     {WB_ACTOR_BEHAVIOR_TYPE02, actor_behavior_type02},
     {WB_ACTOR_BEHAVIOR_TYPE03, actor_behavior_type03},
@@ -989,7 +1014,7 @@ static void type02_death_frame(uint8_t *image, uint32_t actor) {
     uint32_t frames;
     uint8_t stepped;
 
-    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_fall_and_settle(image, actor, WB_SETTLE_SPAN_UNREAD);
 
     /* SET here steps RIGHT, which is the OPPOSITE arm to $2f22's: the bit says the followed record
      * is to the LEFT (actor.h), so the recoil is away from it rather than toward it. */
@@ -1075,7 +1100,7 @@ static void type03_death_frame(uint8_t *image, uint32_t actor) {
                                  WB_ACTOR_FOLLOWED_SLOT * WB_ACTOR_RECORD_BYTES);
     int defeated = flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_DEFEATED_BIT);
 
-    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_fall_and_settle(image, actor, WB_SETTLE_SPAN_UNREAD);
 
     if (field_w(image, followed, WB_ACTOR_X) >= field_w(image, actor, WB_ACTOR_X)) {
         flag_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SIDE_BIT);
@@ -1264,7 +1289,7 @@ uint32_t actor_behavior_type04(uint8_t *image, uint32_t actor) {
 static void type05_death_frame(uint8_t *image, uint32_t actor) {
     uint8_t stepped;
 
-    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_fall_and_settle(image, actor, WB_SETTLE_SPAN_UNREAD);
     actor_hop_ascend_step(image, actor);
     actor_set_side_flag(image, actor);
 
@@ -1569,7 +1594,7 @@ static int switched_contact_took_the_frame(uint8_t *image, uint32_t actor, int l
  * settle, ascend, and give the slot back the frame the record is supported again. The free marker
  * goes over the x word the settle may have moved this same frame. */
 static void fall_until_supported_then_free(uint8_t *image, uint32_t actor) {
-    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_fall_and_settle(image, actor, WB_SETTLE_SPAN_UNREAD);
     actor_hop_ascend_step(image, actor);
     if (!flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT))
         return;
@@ -1792,7 +1817,7 @@ uint32_t actor_behavior_type52(uint8_t *image, uint32_t actor) {
     if (switched_contact_took_the_frame(image, actor, CONTACT_LATCHES_COUNTDOWN))
         return WB_ACTOR_DISPATCH_RAN;
 
-    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_fall_and_settle(image, actor, WB_SETTLE_SPAN_UNREAD);
     actor_hop_ascend_step(image, actor);
 
     step = field_b(image, actor, WB_ACTOR_FIELD_30);
@@ -1825,11 +1850,23 @@ uint32_t actor_behavior_type52(uint8_t *image, uint32_t actor) {
  *
  * IT STAYS IN THIS FILE, where the behaviour tier's own battery pins it: slot 53 and the four gated
  * hurt arms below are its callers here, and the player's frame is its other. Everything BEHIND it is
- * src/player.c's. */
-void player_gate_on_1516(uint8_t *image, uint32_t actor) {
+ * src/player.c's.
+ *
+ * `extend` IS THE 68000's X, READ ON ENTRY AND WRITTEN ON EXIT, and NULL from every caller that does
+ * not carry one — which is both of this file's call sites, standing for the five `bsr $d78` sites
+ * the original has outside the player's frame ($2e7e, $343e, $4598, $4bca, $5c2e). The frame is the reader: `bsr.w
+ * $d78` at $a46 is the instruction before the walk's own `bsr`, and the walk's coasting arm passes
+ * whatever arrives straight on to `player_weapon_fire`'s `sbcd`.
+ *
+ * THE LADDER ARM IS WHY THE POINTER IS IN AND OUT RATHER THAN JUST OUT. `tst.w` writes no X and the
+ * `rts` at $d82 is the whole of that arm, so on a raised WB_TILE_33_MODE the frame's ENTRY bit is
+ * also its exit bit — spelt here as "touch nothing", which is exactly what the two instructions do.
+ * A ladder frame that also fires is narrow but reachable; ../STATUS.md's batch 41 phase F section
+ * carries the construction. */
+void player_gate_on_1516(uint8_t *image, uint32_t actor, unsigned *extend) {
     if (be16(image + WB_TILE_33_MODE) != 0)
         return;
-    player_jump_step(image, actor);
+    player_jump_step(image, actor, extend);
 }
 
 /* $5c5a — slot 53's exit, which is slot 52's plus the live flag lowered. */
@@ -1860,8 +1897,9 @@ uint32_t actor_behavior_type53(uint8_t *image, uint32_t actor) {
     if (switched_contact_took_the_frame(image, actor, CONTACT_LATCHES_COUNTDOWN))
         return WB_ACTOR_DISPATCH_RAN;
 
-    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
-    player_gate_on_1516(image, actor);
+    actor_fall_and_settle(image, actor, WB_SETTLE_SPAN_UNREAD);
+    /* NULL: no behaviour-tier caller reads the gate's exit X — only the frame does. */
+    player_gate_on_1516(image, actor, NULL);
 
     x = (uint16_t)field_w(image, actor, WB_ACTOR_X);
     set_field_w(image, actor, WB_ACTOR_X,
@@ -2025,7 +2063,7 @@ uint32_t actor_behavior_type47(uint8_t *image, uint32_t actor) {
  * actor_fall_and_settle hands back; the probes read that word alone (map.h), which is why the step
  * is the constant it looks like and not slot 3's byte-wide surprise. */
 static void settle_hop_and_step_facing(uint8_t *image, uint32_t actor, uint32_t step) {
-    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_fall_and_settle(image, actor, WB_SETTLE_SPAN_UNREAD);
     actor_hop_ascend_step(image, actor);
     actor_step_facing(image, actor, step);
 }
@@ -2644,7 +2682,7 @@ uint32_t actor_behavior_type28(uint8_t *image, uint32_t actor) {
         return WB_ACTOR_DISPATCH_RAN;
     }
 
-    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_fall_and_settle(image, actor, WB_SETTLE_SPAN_UNREAD);
     actor_hop_ascend_step(image, actor);
     actor_relaunch_and_anim_5160(image, actor);
     type28_walk_and_turn(image, actor);
@@ -2738,7 +2776,7 @@ uint32_t actor_behavior_type30(uint8_t *image, uint32_t actor) {
  * THE COLLECT ARM IS SKIPPED WHILE THE RECORD IS MOVING, the same `btst #0,8(a0)` gate slot 28 has
  * — but here the gate jumps STRAIGHT to the countdown, so a moving record still ages. */
 uint32_t actor_behavior_type31(uint8_t *image, uint32_t actor) {
-    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_fall_and_settle(image, actor, WB_SETTLE_SPAN_UNREAD);
     actor_hop_ascend_step(image, actor);
     flicker_when_field_12_reaches_the_mark(image, actor);
 
@@ -2865,7 +2903,7 @@ static void type32_publish_frame(uint8_t *image, uint32_t actor) {
  * WB_ACTOR_TYPE30_CURSOR: two live type-32 records share one hop machine, one walk gate and one
  * animation phase, and a record spawned while another is walking is walking from its first frame. */
 uint32_t actor_behavior_type32(uint8_t *image, uint32_t actor) {
-    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_fall_and_settle(image, actor, WB_SETTLE_SPAN_UNREAD);
     actor_hop_ascend_step(image, actor);
 
     if (type32_contact_is_tested(image, actor) && followed_stood_on_it(image, actor)) {
@@ -3146,8 +3184,9 @@ void actor_random_facing_hop(uint8_t *image, uint32_t actor) {
  * runs the PLAYER's jump machine over its OWN record — the strength byte, the ascent, the wing-boot
  * charge, all of it on a0 — which is what the original does and is reproduced rather than tidied. */
 static uint32_t gated_hurt_frame(uint8_t *image, uint32_t actor, uint32_t hurt_lists) {
-    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
-    player_gate_on_1516(image, actor);
+    actor_fall_and_settle(image, actor, WB_SETTLE_SPAN_UNREAD);
+    /* NULL: no behaviour-tier caller reads the gate's exit X — only the frame does. */
+    player_gate_on_1516(image, actor, NULL);
 
     actor_face_and_step_away4(image, actor);
     actor_anim_step_facing_list(image, actor, hurt_lists);
@@ -3434,7 +3473,7 @@ uint32_t actor_behavior_type12(uint8_t *image, uint32_t actor) {
 static uint32_t type13_hurt_frame(uint8_t *image, uint32_t actor) {
     uint8_t throe;
 
-    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_fall_and_settle(image, actor, WB_SETTLE_SPAN_UNREAD);
     actor_hop_ascend_step(image, actor);
 
     /* `tst.b 30(a0)` — the latch is what makes this setup run on the throe's FIRST frame only. */
@@ -3648,7 +3687,7 @@ uint32_t actor_behavior_type14(uint8_t *image, uint32_t actor) {
  * and the hurt arm computes in d0 and stores once, which is also why the two masks differ.
  */
 static uint32_t type15_hurt_frame(uint8_t *image, uint32_t actor) {
-    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_fall_and_settle(image, actor, WB_SETTLE_SPAN_UNREAD);
     actor_hop_ascend_step(image, actor);
 
     if (publish_and_store_cursor(image, actor,
@@ -3710,7 +3749,7 @@ uint32_t actor_behavior_type15(uint8_t *image, uint32_t actor) {
  * one has already lost the bit by the time the launch below raises the other two.
  */
 static uint32_t type16_hurt_frame(uint8_t *image, uint32_t actor) {
-    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_fall_and_settle(image, actor, WB_SETTLE_SPAN_UNREAD);
     actor_hop_ascend_step(image, actor);
 
     if (publish_and_store_cursor(image, actor,
@@ -4145,7 +4184,7 @@ static const HopperFrames TYPE27_FRAMES = {
  * a recovered record's very next live frame finds its countdown already negative and goes straight
  * to the reload and the draw. */
 static uint32_t hopper_hurt_frame(uint8_t *image, uint32_t actor, const HopperFrames *f) {
-    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_fall_and_settle(image, actor, WB_SETTLE_SPAN_UNREAD);
     actor_hop_ascend_step(image, actor);
     actor_set_side_flag(image, actor);
 
@@ -4503,7 +4542,7 @@ uint32_t actor_behavior_type23(uint8_t *image, uint32_t actor) {
  * Both of its list PAIRS hold the SAME list twice, so the facing $3006 reads decides nothing.
  */
 static uint32_t type24_hurt_frame(uint8_t *image, uint32_t actor) {
-    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_fall_and_settle(image, actor, WB_SETTLE_SPAN_UNREAD);
     actor_hop_ascend_step(image, actor);
     actor_anim_step_facing_list(image, actor, WB_ACTOR_TYPE24_HURT_LISTS);
 
@@ -4761,7 +4800,7 @@ uint32_t actor_behavior_type38_pickup(uint8_t *image, uint32_t actor) {
     uint8_t left;
     int was_flickering;
 
-    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_fall_and_settle(image, actor, WB_SETTLE_SPAN_UNREAD);
     actor_hop_ascend_step(image, actor);
 
     if (!flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVING_BIT)
@@ -4847,7 +4886,7 @@ static void shatterer_move_or_break(uint8_t *image, uint32_t actor) {
 static uint32_t shatterer_frame(uint8_t *image, uint32_t actor, uint16_t sprite) {
     uint32_t overlap;
 
-    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_fall_and_settle(image, actor, WB_SETTLE_SPAN_UNREAD);
     actor_hop_ascend_step(image, actor);
     set_field_w(image, actor, WB_ACTOR_SPRITE, sprite);
     overlap = actor_followed_overlap_mask(image, actor);
@@ -4948,7 +4987,7 @@ uint32_t actor_behavior_type42(uint8_t *image, uint32_t actor) {
         return WB_ACTOR_DISPATCH_RAN;
     }
 
-    actor_fall_and_settle(image, actor, SETTLE_SPAN_UNREAD);
+    actor_fall_and_settle(image, actor, WB_SETTLE_SPAN_UNREAD);
     actor_hop_ascend_step(image, actor);
     set_field_w(image, actor, WB_ACTOR_SPRITE, WB_ACTOR_TYPE42_SPRITE);
     if (step_was_blocked(step_facing(image, actor, WB_ACTOR_TYPE42_STEP)))

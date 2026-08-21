@@ -157,6 +157,18 @@ uint32_t actor_settle_on_tile_1_or_2(uint8_t *image, uint32_t actor, uint32_t ce
  * routine left above it (src/behavior.c). */
 uint32_t actor_fall_and_settle(uint8_t *image, uint32_t actor, uint32_t entry_span);
 
+/* What a call hands `entry_span` where nothing reads the register back. The value really is the
+ * CALLER's own entry d7 — a death arm reaches the settle without $23b6 or $5c6e having run, and
+ * `actor_behavior_type01_player`'s `bsr.w $1334` at $a5c inherits whatever the eight calls above it
+ * left — and no memory depends on it: `move.w 14(a0),d7` at $13f8 replaces the low word before
+ * anything reads it, and the two exits above that instruction read it not at all. Only src/behavior.c's
+ * two walk arms hand over a value they can name.
+ *
+ * IT IS HERE RATHER THAN IN src/behavior.c, where it was through batch 41 phase E, because
+ * src/player.c's frame is a second file that needs it and one literal in two files is one too many
+ * (CLAUDE.md §5). This header declares the function it belongs to. */
+#define WB_SETTLE_SPAN_UNREAD 0u
+
 /* $1af0 — stamp four consecutive tile codes into the map as a 2x2 block, at the cell the record
  * WB_RECORD_PTR_10420 points at names. Three callers; no register argument at all. */
 void map_stamp_block(uint8_t *image);

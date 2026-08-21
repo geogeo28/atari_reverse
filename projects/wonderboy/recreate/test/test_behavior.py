@@ -18,13 +18,14 @@ FOUR THINGS SHAPE THIS BATTERY.
   * THE PORTED SLOTS MAKE THE WALK RUNNABLE. Slots 0 and 58 hold the bare `rts` at $a36, so a table
     of type-0 records runs the whole pass to its own `rts` in both cores — which is the only way the
     free-marker skip, the end marker and the WB_STATE_FLAG_A34 arm can be driven. Every case that
-    still wants a BOUNDARY names UNPORTED_TYPE rather than a bare number, and
-    `test_the_only_unported_row_left_is_the_player` asserts that slot 1 is the whole complement:
-    batch 30 ported five slots such cases used to name, and a stale number would have turned a
-    boundary case into a run-the-handler case without failing. Through batch 38 there were FOUR such
-    constants because a case could want two or three different boundaries at once; batch 39 left one
-    row, so a walk case separates "stopped where I seeded" from "dispatched a free record" with the
-    ORACLE's own a0 instead of a second slot number.
+    still wants a BOUNDARY names BOUNDARY_SLOT and BOUNDARY_TARGET rather than a bare number, and
+    `test_every_row_of_the_dispatch_table_is_reconstructed` asserts the complement is EMPTY. Batch 30
+    ported five slots such cases used to name, and a stale number would have turned a boundary case
+    into a run-the-handler case without failing. Through batch 38 there were FOUR such constants
+    because a case could want two or three different boundaries at once; batch 39 left one, and batch
+    41 phase F ported it — so the boundary is no longer a TYPE at all but a table longword poked to an
+    address that is not a dispatch row, and a walk case still separates "stopped where I seeded" from
+    "dispatched a free record" with the ORACLE's own a0.
   * NOTHING IS SEEDED FROM A CONSTANT THE CODE ALSO USES. All three actor tables are zero in a fresh
     image, so every case fills them ADDRESS-KEYED with a record's margin either side: a walk that ran
     one record long or took the wrong stride lands on bytes that are wrong FOR WHERE THEY WERE
@@ -88,6 +89,7 @@ from leaf import (LONGWORD_BYTES, RTS, WORD_BYTES, addi_w_dn, addq_b_d16, addq_b
                   move_w_imm_d16, movea_l_indexed)
 # ...and the four batch 41 phase C's review hoisted OUT of this file, each a third or fourth copy
 from leaf import add_w_dn_ind, clr_l_dn, move_b_imm_dn, tst_w_d16
+from leaf import D7
 from layout import DEFINES, wb
 
 # The record's own geometry and the register numbers come from the battery that owns the actor
@@ -143,6 +145,17 @@ STEP_BLOCKED = wb("ACTOR_STEP_BLOCKED")
 BEHAVIOR_TABLE = wb("ACTOR_BEHAVIOR_TABLE")
 BEHAVIOR_SLOTS = wb("ACTOR_BEHAVIOR_SLOTS")
 BEHAVIOR_ENTRY = wb("ACTOR_BEHAVIOR_ENTRY")
+BEHAVIOR_SCALE_BITS = wb("ACTOR_BEHAVIOR_SCALE_BITS")
+
+# The six words slot 1's frame reads on its way to its quietest arm. They are all player-tier
+# globals, so they are here rather than in the tier's own block above, and `_quiet_record` is their
+# only user in this file.
+HUD_METER_VALUE = wb("HUD_METER_VALUE")
+STAGE_RESET_BLOCK = wb("STAGE_RESET_BLOCK")
+STAGE_ANIM_REQUEST_B0E = wb("STAGE_ANIM_REQUEST_B0E")
+SCENE_ALIGN_REQUEST_B14 = wb("SCENE_ALIGN_REQUEST_B14")
+STAGE_ANIM_DONE_B10 = wb("STAGE_ANIM_DONE_B10")
+TILE_33_FLAG = wb("TILE_33_FLAG")
 BEHAVIOR_NULL = wb("ACTOR_BEHAVIOR_NULL")
 FIXED_SKIP = wb("ACTOR_BEHAVIOR_FIXED_SKIP")
 WALK_BUS_CYCLE = wb("ACTOR_WALK_BUS_CYCLE")
@@ -215,22 +228,44 @@ TABLES_HI = TABLE_A32 + TABLE_BYTES + RECORD_BYTES
 # without dispatching anything interesting. It is not FREE_MARKER and not $ffff.
 OCCUPIED_X = 0x1234
 
-# ...and the type whose slot this port does NOT have, for the records a walk must step over rather
-# than dispatch. Slot 1 is the player's, the largest subtree behind the table.
+# --- THE BOUNDARY, and where it moved when the last row went live ---------------------------------
 #
-# BATCH 39 LEFT EXACTLY ONE. Through batch 38 this file carried FOUR such constants, because a case
-# that wanted two or three DIFFERENT boundaries had two or three to choose from and each batch that
-# ported one had to re-point it (slot 7, then 9, then 14, then 20, then 39/40/57). With the last
-# non-player rows reconstructed the choice is gone: the player is the only unported row, and
-# `test_the_only_unported_row_left_is_the_player` is what says so rather than this comment.
-UNPORTED_TYPE = 1
+# A boundary case needs a dispatch the ORIGINAL takes and the reconstruction cannot follow. Through
+# batch 41 phase E that was a TYPE — a record carrying an unported slot's number — and the file
+# carried one constant naming it. Batch 41 phase F ported slot 1, so all 62 rows are live and the
+# TYPE axis is gone: there is no longer a type word that reaches a handler this port lacks.
+#
+# WHAT REPLACES IT COMES OUT OF THE DISPATCHER'S OWN FOUR INSTRUCTIONS rather than out of a
+# fabricated record. `movea.l (a1),a1 / jmp (a1)` at $934 FETCHES the target from the image and jumps
+# through whatever it finds, and src/behavior.c matches its reconstructions by that fetched ADDRESS
+# (`test_the_reconstructed_target_is_matched_by_ADDRESS_not_by_slot` is the pin on that reading). So
+# a table longword poked to an address that is not a dispatch row is a transfer the ORIGINAL really
+# takes, to a place the port genuinely has nothing to call. Nothing is invented: the record's type
+# stays a real slot number, and the poked address is a real routine entry the image already holds.
+#
+# THE POKED SLOT IS 29 because its shipped row is two bytes of `rts` (WB_ACTOR_BEHAVIOR_TYPE29),
+# which makes the FAILURE mode quiet: a port that ignored the poke and dispatched by slot would run
+# those two bytes and report WB_ACTOR_DISPATCH_RAN, which is a clean disagreement with the oracle's
+# transfer rather than a handler's whole frame running loose over the seeded tables. It is also a
+# slot no walk case uses as a live filler type, so the poke cannot change what any other record
+# dispatches.
+#
+# THE TARGET IS `player_gate_on_1516` ($d78), a routine the behaviour tier reaches by `bsr` from five
+# sites and the dispatcher reaches from none — so it is exactly "an address the image runs, which is
+# not a row of this table".
+BOUNDARY_SLOT = 29
+BOUNDARY_TARGET = leaf.entry_of("player_gate_on_1516")
 
-# WHAT THE THREE EXTRA CONSTANTS USED TO BUY, and how the cases get it now. `_walk_pokes` gives
-# every FREE record the unported type, so a walk case whose boundary is that same slot cannot tell
-# "stopped at the record I seeded" from "dispatched a free record instead of skipping it" — both
-# report the same handler address and write nothing. The separating witness is the ORACLE's own a0,
-# which stops on the record that was dispatched; the boundary cases assert it, which is a stronger
-# statement than a second slot number was and does not need one.
+# HOW A FREE RECORD IS STILL A TRAP. `_walk_pokes` gives every FREE record the boundary type, so a
+# walk that dispatched one instead of skipping it stops and reports an address. It cannot tell
+# "stopped at the record I seeded" from "dispatched a free record" by the answer alone — both report
+# the same address and write nothing — and the separating witness is the ORACLE's own a0, which
+# stops on the record the transfer was taken from. The boundary cases assert it.
+
+
+def _boundary_table_poke():
+    """The one longword the boundary cases move, as a poke dict layer."""
+    return {BEHAVIOR_TABLE + BOUNDARY_SLOT * BEHAVIOR_ENTRY: longword(BOUNDARY_TARGET)}
 
 
 # --- the encodings only this battery spells -------------------------------------------------------
@@ -2017,6 +2052,37 @@ def _player_gate_pieces():
     return [
         tst_w_abs_l(TILE_33_MODE),
         _bcc_abs(BEQ_W, PLAYER_STEP_BODY),
+        RTS,
+    ]
+
+
+def _type01_pieces():
+    """$a38 — THE FRAME TOP, the sixty-second row. Nine `bsr`s, the caller-side test of the gate's
+    d7, two memory guards and an `rts`, and nothing else in 62 bytes.
+
+    THE TWO GUARDS ARE SPELT IN DIFFERENT ABSOLUTE ENCODINGS — WB_ACTOR_PLATFORM_RIDDEN abs.LONG and
+    WB_STATE_FLAG_A32 abs.w — which is a fact this pin carries rather than a detail: each `bne.w`
+    clears exactly the one `bsr` below it, and a port that read either at the wrong width would pass
+    every write-set case and fail here."""
+    return [
+        _bsr("player_meter_empty_check"),
+        _bsr("player_pending_event_gate"),
+        tst_w_dn(D7),
+        _bcc(BMI_W, "out"),
+        _bsr("player_gate_on_1516"),
+        _bsr("player_step_and_arm"),
+        _bsr("player_weapon_fire"),
+        tst_w_abs_l(PLATFORM_RIDDEN),
+        _bcc(BNE_W, "no-fall"),
+        _bsr("actor_fall_and_settle"),
+        _lab("no-fall"),
+        _bsr("player_apply_joystick"),
+        tst_w_abs_w(FLAG_A32),
+        _bcc(BNE_W, "no-cell"),
+        _bsr("player_run_map_cell"),
+        _lab("no-cell"),
+        _bsr("player_stage_transition"),
+        _lab("out"),
         RTS,
     ]
 
@@ -4730,6 +4796,7 @@ ENTRY_PIECES = {
     "actor_behavior_type60": _type60_pieces(),
     "actor_behavior_type61": _type61_pieces(),
     "player_gate_on_1516": _player_gate_pieces(),
+    "actor_behavior_type01_player": _type01_pieces(),
     "actor_behavior_type28": _type28_pieces(),
     "actor_behavior_type30": _type30_pieces(),
     "actor_behavior_type31": _type31_pieces(),
@@ -4774,7 +4841,7 @@ ENTRY_PIECES = {
     "actor_behavior_type46": _type46_pieces(),
     "actor_behavior_type57": _type57_pieces(),
 }
-RECONSTRUCTED_ROUTINES = 92
+RECONSTRUCTED_ROUTINES = 93
 
 ENTRY_BYTES = {name: _asm(leaf.entry_of(name), pieces) for name, pieces in ENTRY_PIECES.items()}
 INSN_COUNT = {name: _instructions(pieces) for name, pieces in ENTRY_PIECES.items()}
@@ -4861,6 +4928,7 @@ BODY_SIZES = {
     "actor_behavior_type59": 22,        # $7044..$7059, bounded by slot 8's entry
     "actor_behavior_type08": 6,         # $705a..$705f — one instruction, then slot 7's own entry
     "player_gate_on_1516": 12,          # $d78..$d83, bounded by player_apply_joystick's entry
+    "actor_behavior_type01_player": 62,  # $a38..$a75, bounded by player_meter_empty_check's entry
     "actor_behavior_type28": 144,       # $4e38..$4ec7, bounded by slot 29's bare `rts`
     "actor_behavior_type30": 142,       # $4eca..$4f57, then a $0000 pad, its global cursor at
                                         # $4f5a and its 32-word drift table at $4f5c
@@ -5018,7 +5086,7 @@ PORTED_TARGETS = ("actor_behavior_null", "actor_behavior_type29",
                   "actor_behavior_type41", "actor_behavior_type42",
                   "actor_behavior_type43", "actor_behavior_type44",
                   "actor_behavior_type45", "actor_behavior_type46",
-                  "actor_behavior_type57")
+                  "actor_behavior_type57", "actor_behavior_type01_player")
 PORTED_SLOTS = tuple(slot for slot, name in sorted(TABLE_TARGETS.items())
                      if name in PORTED_TARGETS)
 
@@ -5028,7 +5096,7 @@ PORTED_SLOTS = tuple(slot for slot, name in sorted(TABLE_TARGETS.items())
 # batch to add a row fails this file instead of a reviewer:
 #   * ../STATUS.md's headline ("N of the table's 62 rows are live") and its batch section
 #   * ../README.md's src/behavior.c entry and its test/test_behavior.py entry
-PORTED_SLOT_COUNT = 61
+PORTED_SLOT_COUNT = 62
 
 
 
@@ -5073,17 +5141,21 @@ def test_the_header_and_the_image_agree_about_slot_7s_entry():
     assert BEHAVIOR_TYPE07 == leaf.entry_of("actor_behavior_type07") == _image_slot(7)
 
 
-def test_the_only_unported_row_left_is_the_player():
-    """UNPORTED_TYPE is what every boundary case in this file steps over or stops at, and after
-    batch 39 it is the ONLY row it can be. Stated as the whole complement rather than as one
-    membership test, because that is the fact the batch established: the 62-entry table is
-    reconstructed but for slot 1.
+def test_every_row_of_the_dispatch_table_is_reconstructed():
+    """SIXTY-TWO OF SIXTY-TWO, batch 41 phase F, and this case is the whole statement of it.
 
-    A batch that ports the player must delete this case and every boundary case that rests on it —
-    there will be no boundary left to drive."""
+    It is the same assertion the file carried through batch 41 phase E, with the complement moved
+    from `[1]` to `[]`: the predecessor said "the player is the only row left" and was a TRIPWIRE —
+    it was designed to fail the day the row flipped, taking the boundary cases' constant with it.
+    That is what happened, and the boundary cases now stand on a poked table entry (BOUNDARY_SLOT
+    above) rather than on an unported type.
+
+    WHAT IT DOES NOT SAY. The table is 62 rows of behaviour, not the whole program: the spine that
+    calls `actor_behavior_pass` is unported, there are no on-target backends, and ../STATUS.md's
+    batch 41 phase F section carries the honest list."""
     unported = sorted(set(range(BEHAVIOR_SLOTS)) - set(PORTED_SLOTS))
-    assert unported == [UNPORTED_TYPE], (
-        f"slots {unported} are unported, not the [{UNPORTED_TYPE}] the boundary cases rest on")
+    assert unported == [], (
+        f"slots {unported} have no reconstruction, so the table is not whole after all")
 
 
 def _image_slot(slot):
@@ -5142,15 +5214,67 @@ def test_the_runaway_walk_has_a_code_of_its_own_and_no_seed_can_reach_it():
     assert not targets & set(codes), "a table entry collides with a dispatch code"
 
 
+# EVERY VALUE actor_dispatch_behavior CAN RETURN THAT IS NOT AN ADDRESS, in the one number space
+# they have shared since batch 41 phase F flipped the player's row. Before the flip the three
+# families were three private spaces and the frame did not exist to join them; now the frame
+# propagates its callees' reports verbatim and the dispatcher passes the row's answer up, so
+# behavior.h's four and player.h's eight all reach one caller through one `uint32_t`.
+#
+# ZERO IS SHARED BY THREE NAMES ON PURPOSE — they are one fact about three routines ("the original
+# reached its own `rts`"), not three facts — and every other code is its own number. Scraped from
+# the headers rather than restated, so a renumbering that reintroduced a collision fails here.
+DISPATCH_CODES_MEANING_RAN = ("ACTOR_DISPATCH_RAN", "PLAYER_COLLIDE_RETURN",
+                              "PLAYER_GATE_FRAME_RUNS")
+# ...and the tenth is NOT a transfer at all but the frame's own refusal to compose a flag it cannot
+# know (WB_PLAYER_FRAME_SOUND_EXTEND). It belongs in this set for the only reason the set exists:
+# it travels up the same `uint32_t` and must not be mistakable for anything else on it. Adding a
+# code and forgetting this tuple is exactly what the sweep caught — the mutant that renumbered it
+# onto WB_PLAYER_GATE_SCENE_LEFT survived until this name was here.
+DISPATCH_CODES_MEANING_A_TRANSFER = ("ACTOR_DISPATCH_REFUSED", "ACTOR_DISPATCH_UNBOUNDED",
+                                     "ACTOR_DISPATCH_PICKUP_REFUSED", "PLAYER_COLLIDE_SOUND_WAIT",
+                                     "PLAYER_COLLIDE_UNWIND", "PLAYER_GATE_FRAME_SKIPPED",
+                                     "PLAYER_GATE_DATADISK_UNWIND", "PLAYER_GATE_RESTART_UNWIND",
+                                     "PLAYER_GATE_SCENE_LEFT", "PLAYER_FRAME_SOUND_EXTEND")
+
+
+def test_the_dispatch_code_space_has_no_collision():
+    """THE PIN UNDER THE RENUMBERING, and the reason the renumbering was the flip's first step.
+
+    `WB_PLAYER_GATE_FRAME_SKIPPED` and `WB_PLAYER_COLLIDE_SOUND_WAIT` were both 1 and meant
+    different things, and 1/2/3 were the three WB_ACTOR_DISPATCH_* codes — three collisions that
+    were harmless only while the player's frame did not exist to carry one family's value into the
+    other's caller. A reintroduced collision would make a case that asserted the wrong one pass."""
+    assert {wb(name) for name in DISPATCH_CODES_MEANING_RAN} == {DISPATCH_RAN}, (
+        "the three codes that mean `the original rts`d` are no longer the same value")
+
+    transfers = {name: wb(name) for name in DISPATCH_CODES_MEANING_A_TRANSFER}
+    assert len(set(transfers.values())) == len(transfers), (
+        f"two of the transfer codes share a value: {sorted(transfers.items(), key=lambda kv: kv[1])}")
+    assert DISPATCH_RAN not in set(transfers.values()), (
+        "a transfer code is 0, which is what `ran to its own rts` means")
+
+    # ...and none of them can be mistaken for a TABLE ENTRY either, which is the other half of the
+    # space: the dispatcher returns an address for a target it has no reconstruction for.
+    targets = {_image_slot(slot) for slot in range(BEHAVIOR_SLOTS)}
+    assert not targets & set(transfers.values()), "a table entry collides with a dispatch code"
+
+
+def test_the_dispatch_scale_and_its_stride_are_one_number_twice():
+    """WB_ACTOR_BEHAVIOR_SCALE_BITS is `lsl.w #2`\'s shift COUNT and WB_ACTOR_BEHAVIOR_ENTRY is the
+    stride it produces; src/behavior.c reads the first to know which bit the shift leaves in X, so
+    the two must agree or the entry-X model is off by a bit."""
+    assert 1 << BEHAVIOR_SCALE_BITS == BEHAVIOR_ENTRY
+
+
 def test_the_reconstructed_target_is_matched_by_ADDRESS_not_by_slot():
     """The dispatcher FETCHES the longword (`movea.l (a1),a1`), so which reconstruction stands in is
     a property of the ADDRESS it fetched and not of the slot it fetched it from. Poking slot 0's
     longword to an unported handler is what separates the two readings: the original jumps there,
     and a port that had memorised "slot 0 is the null handler" would run nothing and report that it
     had."""
-    slot, target_slot = 0, UNPORTED_TYPE
+    slot = 0
     actor = _record(TABLE_DEFAULT, 3)
-    target = leaf.entry_of(TABLE_TARGETS[target_slot])
+    target = BOUNDARY_TARGET
     what = "actor_dispatch_behavior through a poked table entry"
     pokes = _tier_pokes(case_salt(what), {
         actor + ACTOR_TYPE: word(slot),
@@ -5219,15 +5343,18 @@ def _walk_pokes(salt, types, overrides=None):
         record = _record(TABLE_DEFAULT, slot)
         if kind is None:
             fields[record + ACTOR_X] = word(FREE_MARKER)
-            # A free record's type is left a slot NOTHING is reconstructed for, so a walk that
-            # dispatched one instead of skipping it stops at a boundary and fails loudly.
-            fields[record + ACTOR_TYPE] = word(UNPORTED_TYPE)
+            # A free record's type is the BOUNDARY slot, so a walk that dispatched one instead
+            # of skipping it stops at a transfer this port cannot follow and fails loudly.
+            fields[record + ACTOR_TYPE] = word(BOUNDARY_SLOT)
         else:
             fields[record + ACTOR_X] = word(OCCUPIED_X)
             fields[record + ACTOR_TYPE] = word(kind)
     terminator = _record(TABLE_DEFAULT, len(types))
     fields[terminator + ACTOR_X] = longword(TABLE_END)
-    return _tier_pokes(salt, leaf.overlay(fields, overrides or {}))
+    # The boundary slot's table longword goes with them: it is what makes BOUNDARY_SLOT a boundary
+    # at all, and seeding it here rather than per case is what stops a row forgetting it and
+    # dispatching the shipped `rts` instead.
+    return _tier_pokes(salt, leaf.overlay(_boundary_table_poke(), fields, overrides or {}))
 
 
 # The `jmp (a1)` at the dispatcher's foot: the witness that a boundary run really transferred rather
@@ -5254,6 +5381,9 @@ HANDLER_WRITE_BAND = [(TABLES_LO, TABLES_HI - TABLES_LO), (PLATFORM_RIDDEN, WORD
 
 # The global each of the four new handlers publishes, and nothing else in the tier writes.
 HANDLER_GLOBALS = {
+    # Slot 1's quiet frame writes exactly one global: `player_apply_joystick` ($d84) ends on
+    # `clr.w $1518.l` whenever neither UP nor DOWN is held, which is every frame this case runs.
+    "actor_behavior_type01_player": [(TILE_33_STEP, WORD_BYTES)],
     "actor_behavior_type53": [(TYPE53_ALIVE, WORD_BYTES)],
     "actor_behavior_type59": [(TABLE_A32_SET + SPAWN_RESPAWN_KIND, WORD_BYTES)],
     "actor_behavior_type60": [(STATE_WORD_6F9C, WORD_BYTES)],
@@ -5475,6 +5605,27 @@ HANDLER_EXTRA_INSNS["actor_behavior_type45"] = AIM_VELOCITY_INSNS + FOLLOWED_INS
 # the same term.
 HANDLER_EXTRA_INSNS["actor_behavior_type53"] = (INSN_COUNT["player_gate_on_1516"] + JUMP_STEP_INSNS)
 
+# ...and batch 41 phase F's, which is slot 1 and is the largest by an order of magnitude: the row is
+# NINE calls and every one of them is a routine of its own. Their bodies belong to test_player.py —
+# the battery that owns them, and one this file cannot import from, since that battery imports this
+# file's census — so each term is an UPPER BOUND on one call, derived the way JUMP_STEP_INSNS above
+# is stated: the routine's byte EXTENT over the 68000's shortest instruction. It is loose by
+# construction, and it is keyed by handler name, so what it loosens is slot 1's runaway pin and
+# nothing else's (batch 32's lesson about a GLOBAL cap raise de-tuning every other row).
+SHORTEST_INSN_BYTES = WORD_BYTES
+PLAYER_FRAME_CALL_BYTES = (162     # $a76..$b17  player_meter_empty_check
+                           + 526   # $b1a..$d27  player_pending_event_gate
+                           + 12    # $d78..$d83  player_gate_on_1516
+                           + 832   # $ec8..$1207 player_step_and_arm
+                           + 300   # $1208..$1333 player_weapon_fire
+                           + 130   # $d84..$e05  player_apply_joystick
+                           + 1170  # $151a..$19ab player_run_map_cell
+                           + 656)  # $1f54..$21e3 player_stage_transition
+# ...plus the two whose bounds this file already states, because they are shared: the fall pass and
+# the jump machine the gate can enter.
+HANDLER_EXTRA_INSNS["actor_behavior_type01_player"] = (
+    PLAYER_FRAME_CALL_BYTES // SHORTEST_INSN_BYTES + FALL_AND_SETTLE_INSNS + JUMP_STEP_INSNS)
+
 
 def _quiet_record(name, actor):
     """What a ported handler's record needs for the dispatch case to stay inside
@@ -5561,6 +5712,24 @@ def _quiet_record(name, actor):
     if name == "actor_behavior_type61":
         return {TYPE61_ACTIVE: bytes([TYPE61_ACTIVE_SET]),
                 JOY1_PREV: bytes([0]), JOY1_CURRENT: bytes([0])}
+    # SLOT 1 IS THE PLAYER'S WHOLE FRAME, so its quiet arm is nine routines' quiet arms at once and
+    # every one of them is a word this seed states. Top to bottom in the order $a38 calls them: a
+    # meter that is NOT empty ends $a76 at its first instruction; the three WB_STAGE_RESET_BLOCK
+    # words clear make $b1a `clr.l d7 / rts`; WB_TILE_33_MODE raised takes $d78's ladder arm, which
+    # is the one that never enters the jump machine; a record with no knock-back, no flicker, no
+    # drift and a zero speed puts $ec8 on its COASTING arm; WB_TILE_33_FLAG raised shuts $1208 at
+    # its first gate; WB_ACTOR_PLATFORM_RIDDEN raised skips the fall; WB_STATE_FLAG_A32 raised skips
+    # the collision map; and WB_STAGE_ANIM_DONE_B10 raised makes $1f54 its own latch, i.e. an `rts`.
+    # What is LEFT is the coast's one flag bit in the record and $d84's WB_TILE_33_STEP clear.
+    if name == "actor_behavior_type01_player":
+        return {HUD_METER_VALUE: word(1), STAGE_RESET_BLOCK: word(0),
+                STAGE_ANIM_REQUEST_B0E: word(0), SCENE_ALIGN_REQUEST_B14: word(0),
+                STAGE_ANIM_DONE_B10: word(TILE_33_MODE_SET),
+                TILE_33_MODE: word(TILE_33_MODE_SET), TILE_33_FLAG: word(TILE_33_MODE_SET),
+                PLATFORM_RIDDEN: word(1), FLAG_A32: word(1),
+                JOY1_PREV: bytes([0]), JOY1_CURRENT: bytes([0]),
+                actor + ACTOR_FLAGS: bytes([0]), actor + FLAGS2: bytes([0]),
+                actor + FIELD_29: bytes([0]), actor + FIELD_22: bytes([0])}
     return {}
 
 
@@ -5685,14 +5854,23 @@ def test_an_aliased_type_dispatches_the_ordinary_slot(band):
     """One per band, against the ORACLE: the original really does transfer to the same handler for
     $4002 as for $0002, which is what the enumeration above can only assert about the C.
 
-    All three rows now name the SAME slot, because after batch 39 there is only one whose transfer
-    an oracle run can be stopped at. The axis is the band and always was."""
-    slot = UNPORTED_TYPE
+    All three rows name the SAME slot, because a row has to stop the oracle AT the transfer and
+    only a slot whose target this port cannot follow gives it somewhere to stop. Through batch 41
+    phase E that was the player's row; it is BOUNDARY_SLOT's poked entry now. The axis is the band
+    and always was.
+
+    THE SET BIT THIS SCALING ALSO PRODUCES is pinned elsewhere, and it is worth naming here because
+    it is the same instruction: `lsl.w #2` leaves X holding bit 14 of the type, so the $4000 and
+    $c000 rows enter their handler with X SET where the ordinary type does not. Nothing in this case
+    can see a flag — it stops the oracle before the handler runs — so the pin is
+    test_player.py's frame battery, which drives the aliased type all the way to the `sbcd`."""
+    slot = BOUNDARY_SLOT
     type_word = band + slot
     actor = _record(TABLE_DEFAULT, 3)
     what = f"actor_dispatch_behavior aliased type {type_word:#06x}"
-    pokes = _tier_pokes(case_salt(what), {actor + ACTOR_TYPE: word(type_word)})
-    target = leaf.entry_of(TABLE_TARGETS[slot])
+    pokes = _tier_pokes(case_salt(what), leaf.overlay(
+        _boundary_table_poke(), {actor + ACTOR_TYPE: word(type_word)}))
+    target = BOUNDARY_TARGET
 
     info = leaf.run_reaching(DISPATCHER, _DISPATCH(actor), [], what, DISPATCH_JMP_PC,
                              regs={"a0": actor, "_pokes": pokes}, stop_pc=target,
@@ -5737,16 +5915,16 @@ def test_the_end_marker_is_a_longword_and_the_free_marker_only_a_word():
     """A record whose x word is $ffff but whose type is not ends NOTHING — `cmpi.l` reads both — so
     the walk DISPATCHES it.
 
-    THE TYPE HAS TO BE AN UNPORTED ONE. A ported one would make the reconstruction answer
-    WB_ACTOR_DISPATCH_RAN whether it dispatched the record or stopped on it, and the pass writes no
-    memory, so nothing would separate the two readings — the sweep's `end-marker-as-a-word` mutant
-    survived exactly that shape. With an unported type the answer is the handler's own address.
+    THE TYPE HAS TO BE THE BOUNDARY ONE. An ordinary ported type would make the reconstruction
+    answer WB_ACTOR_DISPATCH_RAN whether it dispatched the record or stopped on it, and the pass
+    writes no memory, so nothing would separate the two readings — the sweep's `end-marker-as-a-word`
+    mutant survived exactly that shape. With the boundary slot the answer is the poked address.
     """
     what = "actor_behavior_pass ffff-x but not the terminator"
-    slot = UNPORTED_TYPE
+    slot = BOUNDARY_SLOT
     record = _record(TABLE_DEFAULT, 0)
     pokes = _walk_pokes(case_salt(what), [slot], {record + ACTOR_X: word(0xffff)})
-    target = leaf.entry_of(TABLE_TARGETS[slot])
+    target = BOUNDARY_TARGET
 
     info = leaf.run_reaching("actor_behavior_pass", _PASS, [], what, DISPATCH_JMP_PC,
                              regs={"_pokes": pokes}, stop_pc=target,
@@ -5757,25 +5935,26 @@ def test_the_end_marker_is_a_longword_and_the_free_marker_only_a_word():
 
 
 @pytest.mark.parametrize("at", [0, 1, 3], ids=lambda v: f"boundary-at-{v}")
-def test_the_walk_stops_at_the_first_unported_handler(at):
+def test_the_walk_stops_at_the_first_boundary_transfer(at):
     """THE BOUNDARY, through the pass rather than the dispatcher: free records, ported ones and then
-    a record whose type this port does not have. The reconstruction reports that handler's address
-    and the oracle is stopped there, with the `jmp (a1)` as the witness.
+    a record whose slot the table has been poked to send somewhere this port cannot follow. The
+    reconstruction reports that address and the oracle is stopped there, with the `jmp (a1)` as the
+    witness.
 
-    THE AXIS IS WHERE THE BOUNDARY SITS, not which slot it is — batch 39 left one unported row, so
-    the second thing a row can vary is how many records the walk crosses to reach it.
+    THE AXIS IS WHERE THE BOUNDARY SITS, not which slot it is — there is one boundary construction,
+    so the second thing a row can vary is how many records the walk crosses to reach it.
 
     AND THE ORACLE'S a0 IS WHAT SEPARATES THE TWO READINGS. `_walk_pokes` gives every free record
-    the unported type as well, so "stopped at the record I seeded" and "dispatched a free record
+    the boundary type as well, so "stopped at the record I seeded" and "dispatched a free record
     instead of skipping it" both report the same address and write nothing. The register says which
     record the transfer was taken from, and the rows with a free record BEFORE the boundary are the
     ones where that matters."""
-    slot = UNPORTED_TYPE
+    slot = BOUNDARY_SLOT
     types = [None, 0, None, 0, 0]
     types[at] = slot
     what = f"actor_behavior_pass boundary at record {at}"
     pokes = _walk_pokes(case_salt(what), types)
-    target = leaf.entry_of(TABLE_TARGETS[slot])
+    target = BOUNDARY_TARGET
 
     info = leaf.run_reaching("actor_behavior_pass", _PASS, [], what, DISPATCH_JMP_PC,
                              regs={"_pokes": pokes}, stop_pc=target,
@@ -5811,16 +5990,17 @@ def test_the_a34_arm_runs_three_fixed_records_and_no_walk(flag):
 def test_the_a34_arms_third_dispatch_is_not_guarded_by_the_free_marker():
     """THE PLATE CORRECTION, as a case. The first two fixed records are skipped when free; the third
     is reached by `lea 352(a0),a0 / bra.w $928` with no test at all, so a FREE followed slot is
-    dispatched on whatever type word its bytes hold. Seeded free AND with an unported type, so the
-    boundary the run reports is the proof it dispatched."""
+    dispatched on whatever type word its bytes hold. Seeded free AND with the boundary type, so the
+    transfer the run reports is the proof it dispatched."""
     what = "actor_behavior_pass a34 free followed slot"
-    slot = UNPORTED_TYPE
+    slot = BOUNDARY_SLOT
     fields = {_record(TABLE_DEFAULT, 0) + ACTOR_X: word(FREE_MARKER),
               _record(TABLE_DEFAULT, 1) + ACTOR_X: word(FREE_MARKER),
               _record(TABLE_DEFAULT, FOLLOWED_SLOT) + ACTOR_X: word(FREE_MARKER),
               _record(TABLE_DEFAULT, FOLLOWED_SLOT) + ACTOR_TYPE: word(slot)}
-    pokes = _tier_pokes(case_salt(what), leaf.overlay(fields, {FLAG_A34: word(0xffff)}))
-    target = leaf.entry_of(TABLE_TARGETS[slot])
+    pokes = _tier_pokes(case_salt(what), leaf.overlay(
+        _boundary_table_poke(), fields, {FLAG_A34: word(0xffff)}))
+    target = BOUNDARY_TARGET
 
     info = leaf.run_reaching("actor_behavior_pass", _PASS, [], what, DISPATCH_JMP_PC,
                              regs={"_pokes": pokes}, stop_pc=target,
@@ -5836,12 +6016,13 @@ def test_the_a34_arm_walks_whichever_table_was_published():
     for slot in (0, 1, FOLLOWED_SLOT):
         fields[_record(TABLE_A32, slot) + ACTOR_X] = word(OCCUPIED_X)
         fields[_record(TABLE_A32, slot) + ACTOR_TYPE] = word(0)
-    # ...and the DEFAULT table's same three slots hold an unported type, so a hardcoded port stops.
+    # ...and the DEFAULT table's same three slots hold the BOUNDARY type, so a hardcoded port stops.
     for slot in (0, 1, FOLLOWED_SLOT):
         fields[_record(TABLE_DEFAULT, slot) + ACTOR_X] = word(OCCUPIED_X)
-        fields[_record(TABLE_DEFAULT, slot) + ACTOR_TYPE] = word(UNPORTED_TYPE)
+        fields[_record(TABLE_DEFAULT, slot) + ACTOR_TYPE] = word(BOUNDARY_SLOT)
     pokes = _tier_pokes(case_salt(what), leaf.overlay(
-        fields, {FLAG_A34: word(0xffff), TABLE_SELECTED: longword(TABLE_A32)}))
+        _boundary_table_poke(), fields,
+        {FLAG_A34: word(0xffff), TABLE_SELECTED: longword(TABLE_A32)}))
 
     info = leaf.run("actor_behavior_pass", _PASS, [], what, regs={"_pokes": pokes},
                     max_insns=WALK_INSN_PER_RECORD * 4)
@@ -6825,9 +7006,26 @@ def test_the_step_away_routine_ignores_its_callers_d7():
 #
 # EVERY HANDLER HANDS BACK A uint32_t, which is behavior.h's boundary: WB_ACTOR_DISPATCH_RAN when it
 # ran to its own `rts`, or the address at which the original left code this port has.
+#
+# THE PLAYER'S ROW IS EXCLUDED, for the reason the neighbouring docstring gives: `register_glue`
+# takes its arity from the CALLER, and `actor_behavior_type01_player` is the one handler with a
+# THIRD parameter (the dispatcher's X). Binding it here would hand a 3-argument function 2, which is
+# a segfault rather than a failure. Its own battery is test_player.py's, which binds it correctly;
+# NO_GLUE_TARGETS is the same exclusion for the rows that have no symbol at all.
+_NO_TWO_ARG_GLUE = NO_GLUE_TARGETS + ("actor_behavior_type01_player",)
 _HANDLER_GLUE = {name: leaf.register_glue(name, [ctypes.c_uint32], ctypes.c_uint32)
-                 for name in PORTED_TARGETS if name not in NO_GLUE_TARGETS}
-_PLAYER_GATE = leaf.register_glue(PLAYER_GATE, [ctypes.c_uint32])
+                 for name in PORTED_TARGETS if name not in _NO_TWO_ARG_GLUE}
+_PLAYER_GATE_FN = leaf.bind(PLAYER_GATE,
+                            leaf.IMAGE_ARG + [ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint)])
+
+
+def _PLAYER_GATE(actor):
+    """$d78 with its exit X DROPPED, which is what this whole file's five `bsr $d78` sites pass.
+    `emu.REPORTED_REGS` has no CCR, so a flag no case here can compare is a value none of them
+    should be inventing; the model of it is pinned at its one consumer, the `sbcd` in
+    test_player.py's frame battery. A `register_glue` binding would take its arity from the CALLER
+    and hand a 3-argument function 2 — which is a segfault, not a failure (include/player.h)."""
+    return lambda _lib, image: _PLAYER_GATE_FN(image, actor, None)
 _STUN = leaf.image_glue("actor_stun_followed")
 _SOUND_REQUEST_9 = leaf.image_glue(SOUND_REQUEST_9)
 _BLOCKED_RIDER = leaf.register_glue("actor_platform_release_blocked_rider", [ctypes.c_uint32] * 2)

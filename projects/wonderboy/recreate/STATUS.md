@@ -8,7 +8,7 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 301/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 302/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
@@ -124,8 +124,15 @@ three stack-unwinding exits. That verdict dissolved rather than the bytes changi
 reconstructed — and with it the game's own GAME OVER sequence is read for the first time: the dying
 player's rise, the two messages `WB_LIVES` chooses between, the continue prompt and the walk into the
 data-disk screen. FIVE endings, three of them unwinds, one of which is not a second exit but
-`player_run_map_cell`'s own triple pop reached by a `bra`) —
-40,000 bytes in all, 90.4 % of everything
+`player_run_map_cell`'s own triple pop reached by a `bra`) — and THE FRAME TOP
+(`actor_behavior_type01_player`, 62 bytes, batch 41 phase F: **THE SIXTY-SECOND AND LAST ROW OF
+`WB_ACTOR_BEHAVIOR_TABLE`**, and the smallest port in the campaign by an order of magnitude. Nine
+`bsr`s, a caller-side test of the gate's d7 and two memory guards, and what it costs is not its
+sixteen instructions but the three things only a composition can carry: ONE number space for the
+three exit-code families, the 68000's X flag threaded from `player_gate_on_1516`'s six exits into
+`player_weapon_fire`'s `sbcd`, and the frame's own ENTRY bit, which turns out to be produced four
+instructions before the `jmp (a1)` that enters it) —
+40,062 bytes in all, 90.5 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures *(the denominator is §0k's 44,262 — batch 28's
 coverage break-open finally put the per-monster tier INSIDE the measured program, so this figure
 dropped from batch 27's 80.3 % not because anything was lost but because the denominator now
@@ -137,6 +144,14 @@ left this leading count at 161 while its own section and parenthetical said 163 
 oversight, found by batch 23's port agent. And batch 27's header said 175 while its own table
 expands to 176 — found by the 2026-08-11 re-scan's reconciliation, corrected here. The class
 recurs; expand the table before trusting the headline.)*
+`make test`: **5,907 cases green in what batch 41 phase F commits** (5,872 after phase E, plus
+this phase's 35 — 31 in `test/test_player.py`, which goes 435 -> 466, and four in
+`test/test_behavior.py`: the frame's 62-byte entry pin, its extent, the dispatch code space's
+collision check and the scale-bits pin). FOUR of the cases are the mutation sweep's — the death
+check's live arm, the posture selector's, the fall guard's WIDTH and a DISPATCHED frame that
+abandons — of which TWO are measured holes and two are rows whose attribution did not finish; and
+SIX are the independent gate's, five of them the revival refusal it found. The paragraph below is batch 41 phase C's and is left as
+the record of that batch.
 `make test`: **5,851 cases green in what batch 41 phase C commits** (5,796 after phase B, plus this
 phase's 55, all of them in `test/test_player.py`, which goes 359 -> 414 — four of the 55 are the
 mutation sweep's and two the independent gate's). The paragraph below is batch 41 phase B's and is left as the record of that batch.
@@ -7664,6 +7679,12 @@ port does not have. Every boundary case in `test/test_behavior.py` now rests on 
 second boundary to fall back on — a batch that ports it must delete those cases rather than
 re-point them, which `test_the_only_unported_row_left_is_the_player` says in its own docstring.
 
+*(**THE PREDICTION IN THE SENTENCE ABOVE WAS WRONG IN ITS SECOND HALF**, corrected by batch 41 phase
+F. The row did land, and the boundary cases were RE-AIMED rather than deleted: the dispatcher still
+follows a table longword it fetches, so a poked entry is a boundary the original takes even with
+every row live. See that phase's section, "The boundary the flip took away, and the one that
+replaced it".)*
+
 **THE PLAYER BATCH'S RIDERS, RESTATED.** Two pieces of unported code are not dispatch rows and will
 land with that batch or not at all:
   * **`scene_copy_record_fields` ($539e, 30 bytes)** — `player_pending_event_gate`'s spawn helper,
@@ -9930,7 +9951,8 @@ its pin have to arrive together, over three files, or the chain ships on a model
 Stated so a reader does not have to diff the two sections. `UNPORTED_TYPE` still has slot 1 to stand
 on, so `test_behavior.py`'s eight boundary cases and `_walk_pokes`' free-record seeding are untouched
 and `test_the_only_unported_row_left_is_the_player` is still TRUE rather than a tripwire that has
-fired. The exit-report set the gate's and `$151a`'s abandoning endings need is designed but not
+fired. *(Batch 41 phase F fired it, and re-aimed the eight rather than deleting
+them — see that phase's section.)* The exit-report set the gate's and `$151a`'s abandoning endings need is designed but not
 written, and the whole-frame differential is not written. **Nothing was half-reworked**: this phase
 adds four cases and changes no reconstruction, so the tree is green at a clean boundary.
 
@@ -10321,7 +10343,12 @@ and that X is derivable, so nothing above `$d78` — not `$b1a`, not `$a76`, not
 can reach the `sbcd` with its bit intact. **The frame needs no `entry_extend` from
 `actor_dispatch_behavior`, and the `UNPORTED_TYPE` signature decision is not part of this cost after
 all.** What phase F actually owes is a MODEL of `$d78`'s chain: six exits, five of them computable
-from three bytes, and one — the launch — that no firing frame reaches. `src/player.c`'s
+from three bytes, and one — the launch — that no firing frame reaches. *(**THE FIRST OF THOSE TWO
+SENTENCES IS HALF RETRACTED by batch 41 phase F**, and by the very question the paragraph below this
+one records as unmeasured: a ladder frame CAN fire, so the frame does take an entry bit after all.
+What survives is the size — the bit is produced three instructions above the frame's only entrance,
+by the dispatcher's own `lsl.w #2`, so no chain is threaded and the dispatch table's handler
+signature still does not move. See that phase's section.)* `src/player.c`'s
 `player_ascend` passes its borrow a NULL today and its comment says UNTHREADED rather than dead,
 which stays correct.
 
@@ -10427,3 +10454,475 @@ is a much smaller one than a dispatcher-wide threading.
   the game, cannot be on a frame that also fires. Each of those is a sentence in the status file,
   not a case to force — and forcing them would have meant fabricating records, which is the thing
   the rule about seeding real data forbids.
+
+## Batch 41 phase F — 62 OF 62: THE LAST DISPATCH ROW
+
+**Verified 302, 40,062 bytes, 90.5 % of §0k's 44,262; `make test` 5,907** (5,872 after phase E, plus
+this phase's 35). One new function, `actor_behavior_type01_player` ($a38, 62 bytes), and it is the
+**sixty-second and last row of `WB_ACTOR_BEHAVIOR_TABLE`**. `tools/test_hw_portability.py`, outside
+`make test` and on the standing verification list, is **56 green** — re-checked after the change, and
+it has no pin on the row count for the reason phase D recorded: it parses `../out/hw_scan.tsv`, a
+scan of the ORIGINAL image, and never loads the candidate `.so`. **62 of the table's 62 rows are
+live and NONE remain**; `PORTED_SLOT_COUNT` holds the figure, a case asserts it against the image's
+own table, and the four surfaces its comment names are this section, the headline above,
+`../README.md`'s `src/behavior.c` entry and its `test/test_behavior.py` entry. **THE KIT IS UNTOUCHED** —
+nothing under `tools/recreate_kit` moved this phase, so the Joust and BuggyBoy suites need no
+re-run.
+
+### The row, and the four things it cost
+
+Sixteen instructions in 62 bytes, and none of the cost was in them. What a composition carries that
+no callee's battery can:
+
+* **ONE NUMBER SPACE for three exit-code families.** The frame propagates its callee's report
+  VERBATIM and the dispatcher passes the row's answer up unchanged, so `behavior.h`'s four
+  `WB_ACTOR_DISPATCH_*`, `player.h`'s three `WB_PLAYER_COLLIDE_*` and its five `WB_PLAYER_GATE_*` all
+  arrive at one caller through one `uint32_t`. Three pairs collided. **The renumbering was the
+  phase's first step**, and it moved no case: `test/layout.py` scrapes the names out of the headers,
+  so every user is spelt rather than numbered.
+
+  | code | was | is |
+  | --- | ---: | ---: |
+  | `WB_ACTOR_DISPATCH_RAN` / `WB_PLAYER_COLLIDE_RETURN` / `WB_PLAYER_GATE_FRAME_RUNS` | 0 | 0 |
+  | `WB_ACTOR_DISPATCH_REFUSED` | 1 | 1 |
+  | `WB_ACTOR_DISPATCH_UNBOUNDED` | 2 | 2 |
+  | `WB_ACTOR_DISPATCH_PICKUP_REFUSED` | 3 | 3 |
+  | `WB_PLAYER_COLLIDE_SOUND_WAIT` | **1** | **4** |
+  | `WB_PLAYER_COLLIDE_UNWIND` | **2** | **5** |
+  | `WB_PLAYER_GATE_FRAME_SKIPPED` | **1** | **6** |
+  | `WB_PLAYER_GATE_DATADISK_UNWIND` | **3** | **7** |
+  | `WB_PLAYER_GATE_RESTART_UNWIND` | **4** | **8** |
+  | `WB_PLAYER_GATE_SCENE_LEFT` | **5** | **9** |
+
+  **ZERO IS SHARED BY THREE NAMES ON PURPOSE** — "the original reached its own `rts`" is one fact
+  about three routines, not three facts — and `test_the_dispatch_code_space_has_no_collision` is what
+  says so rather than a comment: it scrapes the twelve names, requires the three zero-aliases to be
+  equal, the nine transfer codes to be pairwise distinct and none of them zero, and none of the nine
+  to collide with a longword of the image's own 62-entry table.
+
+* **THE X CHAIN ABOVE THE WALK.** Phase E threaded the walk and the two map probes into
+  `player_weapon_fire`'s `sbcd`; the bit the WALK is entered with is `player_gate_on_1516`'s, and
+  that routine is now modelled. `void player_gate_on_1516(image, actor, unsigned *extend)` — read on
+  entry, written on exit, NULL from the five behaviour-tier `bsr $d78` sites, which is one token
+  each. `player_jump_step` takes the same pointer.
+
+* **THE FRAME'S OWN ENTRY BIT**, which turned out to be four instructions away rather than a
+  dispatcher-wide threading. See below.
+
+* **THE `UNPORTED_TYPE` RETIREMENT**, which phase C priced first and which is a boundary REDESIGN
+  rather than a deletion. See below.
+
+### The $d78 chain, six exits, five modelled
+
+Decoded from the raw image ($e06..$ec6), and the rule is phase E's: `sub`/`add`/`subq`/`addq`/`neg`/
+the shifts/`abcd`/`sbcd` write X; `move`/`movea`/`moveq`/`tst`/`cmp`/`btst`/`bset`/`bclr`/`clr`/`st`/
+`lea`/the logicals/`dbf` and every branch do not.
+
+| exit | reached when | the X it leaves |
+| --- | --- | --- |
+| `$d82` | WB_TILE_33_MODE raised — the LADDER | **the frame's own entry bit**: `tst.w` writes no X and the `rts` is the whole arm |
+| `$e6a` via the `beq.w` at `$e34` | airborne, no wing-boot charge | `addi.b #$8,d0` at `$e12` — carry of `byte[$bd6b] + 8` |
+| `$e6a` via the `beq.w` at `$e3e` | airborne, a charge held, UP not held | the same carry, by a different branch |
+| `$e6a` via the `bne.w` at `$e4e`, or falling through `$e62` | airborne, a charge SPENT | `subq.b #1,$bbc2.l` at `$e48` — and **it is always CLEAR** |
+| `$e78` | SUPPORTED, UP not newly pressed | `$e12`'s carry |
+| `$ec6` | MOVING — the ASCENT | `subq.b #1,11(a0)` at `$eb2`, set exactly when the speed byte was already zero |
+| `$ea6` | SUPPORTED, UP newly pressed — the LAUNCH | the `jsr 56(a1)` sound routine's — **unmodelled, and dead** |
+
+**TWO OF THESE ARE READINGS AND NOT BRANCHES, and both are stated on the plates rather than left for
+a case to discover.** The wing-boot spend's borrow can never be set, because the `tst.b $bbc2.l /
+beq.w` two instructions above it has just established the byte is nonzero. And the LAUNCH's exit is
+DEAD rather than latent at the only consumer: the launch needs bit 0 of `joy1_newly_pressed` set,
+`player_weapon_fire`'s third gate needs that same byte to be exactly `$80`, and `$682` is four
+instructions with no store — so a frame that launches cannot reach the `sbcd` that reads the bit.
+The C therefore writes nothing on that arm and says why; the sweep counts it below.
+
+**THE PIN IS EIGHT ROWS OF WHOLE-FRAME DIFFERENTIAL** (`test_the_gates_chain_reaches_the_weapons_sbcd`),
+one per exit and two apiece on the three arms a strength byte can separate. Each runs the ORIGINAL
+from `$a38` to its own `rts` against the C's frame, requires the whole image to agree, AND states
+which path it drove as the shot count `leaf.bcd_expected` says the `sbcd` must leave — the
+`expected_extend` discipline phase E's battery was built on, for the same reason: without it a row
+whose seeding quietly stopped firing would pass by spending nothing.
+
+**RED FIRST, BOTH DIRECTIONS, over the eight rows that exist.** With the chain replaced by a constant
+0, **four of the eight failed** — exactly the four whose true bit is 1. With a constant 1, **the other
+four failed**. Every row is red under at least one constant, which is what says no constant serves.
+
+### The frame's entry bit is the DISPATCHER's — on the arms where the death check is silent
+
+Phase E measured that on a firing frame nothing above `$d78` can reach the `sbcd` with its bit
+intact, and concluded that the frame needs no `entry_extend` at all. **That conclusion rested on the
+one question phase E explicitly left open** — whether a frame with WB_TILE_33_MODE raised can also
+fire — and the answer is YES, so the parameter is real. What phase E got right is the SIZE: it is not
+a dispatcher-wide threading, because the bit is produced three instructions above the jump that
+enters the frame.
+
+`$a38`'s only reference in the whole image is the table longword at `$93c` — no `bsr`, no `jmp`, no
+computed address — so the frame is entered by `actor_dispatch_behavior`'s `jmp (a1)` and by nothing
+else. The type word is read ONCE, by `move.w 4(a0),d1` at `$92a`, and FOUR instructions separate
+that read from the frame — `lsl.w`, `lea`, `movea.l`, `jmp (a1)`, none of which writes memory. The
+FLAG is produced three instructions above the jump, by `lsl.w #2,d1` at `$92e`: `lsl` leaves X
+holding the LAST bit shifted out, which for a WORD shift of two is **bit 14 of `WB_ACTOR_TYPE`**.
+Between it and the jump sit `lea` and `movea.l`, neither of which writes a flag.
+
+**AND THE SET DIRECTION IS DRIVABLE FROM THE ORIGINAL**, by the original's own aliasing rather than
+by a fabricated record. `lsl.w` wraps in sixteen bits, so `$4001` and `$c001` scale to slot 1's
+offset exactly as `$0001` does and the oracle really dispatches all three to `$a38` — with X SET on
+the two whose bit 14 is up. On the game's own data the player's type is 1 and the bit is 0; that is
+stated on the plate, and the two aliased rows are what make the parameter an input rather than a
+formality. `test_the_dispatchers_own_shift_hands_the_ladder_frame_its_entry_X` drives all four
+aliases END TO END from `$928`, which is also **the row flip proven through the `jmp (a1)`**: the
+reconstruction has to read the type, scale it, fetch the longword, recognise `$a38` as a row it has,
+and run the whole frame behind it.
+
+**AND THE CLAIM IS SCOPED, WHICH THE MILESTONE GATE IS WHAT ESTABLISHED.** `player_meter_empty_check`
+runs BEFORE the gate and two of its four paths end in a sound call — the revival's `jsr 56(a1)` at
+`$a9e` and the death's `jsr (a1)` at `$aec` — with every instruction below either call, and the
+whole of `player_pending_event_gate`'s no-event path, X-silent. So on a revival or a death frame the
+bit arriving at `$a46` is `snd_trigger_effect`'s or `snd_play_song`'s. **Measured, not read**: driven
+under the ORACLE, a revival + ladder + fire frame leaves the borrow-0 spend for type `$0001` AND for
+type `$4001`, so the sound routine really does overwrite the dispatcher's bit and a port that still
+trusted `entry_extend` would answer the aliased row with the wrong count. What the port does instead
+is REFUSE: `player_meter_empty_check` writes WB_PLAYER_EXTEND_UNREAD — out of band by construction,
+since an X is 0 or 1 — and the frame reports WB_PLAYER_FRAME_SOUND_EXTEND if that value is still
+there at `$a4a`. The refusal is SCOPED to the one combination that lets the bit survive: the gate's
+jumping arm always writes an X, so a revival on a jumping frame runs whole, and a row pins each
+side.
+
+### Can a ladder frame fire? Yes, and the construction is the fall guard
+
+The question phase F starts from, settled from the bytes. `player_weapon_fire`'s first gate is
+`tst.w $1514.l` and `$d78`'s is `tst.w $1516.l`, so the frame needs **WB_TILE_33_MODE raised with
+WB_TILE_33_FLAG reading zero**.
+
+What ties the two words is `actor_fall_and_settle`'s player-only head. On a tile-`$33` cell it runs
+`move.w #$ffff,$1514.l` at `$1350`; on any other it runs `clr.w $1516.l / clr.w $1518.l /
+clr.w $1514.l` at `$1364..$1370` — **three clears back to back with no branch between them** — so
+that pass never leaves the mode up with the flag word down. And WB_TILE_33_MODE is raised ONLY by
+`player_climb`'s two arms, which sit behind `tst.w $1514.l` at `$d84`.
+
+**BUT THE FRAME'S OWN `$a52` GUARD CAN SKIP THAT PASS**, and the only other writers of `$1514` are
+BYTE-wide: `st $1514.w` at `$155c` (the collision map's tile-`$33` arm) and `clr.b $1514.w` at
+`$179e` (its ordinary-cell arm), both touching the HIGH half alone, plus `clr.l $1514.w` at `$ff00`,
+which takes both words down together. A whole-image scan for the two operand words finds no other
+instruction. So the reachable sequence is:
+
+1. a frame whose fall pass runs on a non-tile-`$33` cell leaves `$1514` = `$0000` (low byte included)
+   and `$1516` = 0;
+2. a later frame, with WB_ACTOR_PLATFORM_RIDDEN raised so `$a5c` is skipped, has its COLLISION cell
+   read `$33` — `st $1514.w` makes the word `$ff00`, which is nonzero;
+3. the next such frame climbs (`$d84` sees nonzero) and raises `$1516`, with `$1515` still zero;
+4. the frame after that takes the collision map's ordinary-cell arm, and `clr.b $1514.w` makes the
+   word `$0000` while `$1516` is still up.
+
+**IT IS NARROW AND IT IS NOT FABRICATED**, and the honest split is stated as such: the four
+instructions the argument rests on are pinned as a CASE
+(`test_the_ladder_arm_the_row_above_drives_is_a_state_the_game_can_REACH` checks each against the
+image at its named address); the frame-by-frame reachability is an argument over frames and lives
+here, in prose, where a reader can check it. Refusing to model the pass-through because the state
+looked unreachable would have been the fabricated bit this campaign exists to avoid.
+
+### Where the row lives, and why it is not beside the other sixty-one
+
+`src/player.c`, and the rule it departs from is worth naming. This workspace's rule is **the module
+of the CALLER** — it is why `player_gate_on_1516` is in `src/behavior.c`, whose tier owns its five
+other callers. The rule's PURPOSE is to put a routine where the battery that pins it lives, and every
+one of this row's nine callees is declared in `include/player.h` and seeded by `test_player.py`'s
+helpers, so the whole-frame differential can only be written there. `src/behavior.c` keeps the TABLE
+ROW: one entry in `PORTED_HANDLERS`, pointing at a four-line adapter that reads the type word and
+hands the frame the dispatcher's X.
+
+**THE ADAPTER IS THE SHAPE THAT DID NOT MOVE SIXTY-TWO SIGNATURES.** A third parameter on
+`BehaviorHandler`'s function pointer would have touched every handler's definition and declaration to
+carry one bit to one of them; a second pointer in the struct made `-Wextra` warn on all 61 rows that
+did not spell it. `dispatch_player_frame` re-reads `4(a0)` instead, and the re-read is EXACT rather
+than convenient: the original's own `lsl.w` reads that word at `$92a`, and the three instructions
+between there and `$a38` are `lea`, `movea.l` and `jmp (a1)`, none of which writes memory.
+
+### The boundary the flip took away, and the one that replaced it
+
+`UNPORTED_TYPE` was slot 1 — a record carrying that type reached a handler the port did not have, and
+eight sites in `test_behavior.py` stood on it (six cases, `_walk_pokes`' free-record seeding, and the
+tripwire that asserted slot 1 was the whole complement). With every row live, **no type word reaches
+an address this port lacks**, so the TYPE axis is gone.
+
+**WHAT REPLACES IT COMES OUT OF THE DISPATCHER'S OWN FOUR INSTRUCTIONS.** `movea.l (a1),a1 / jmp (a1)`
+FETCHES the target out of the image, and `src/behavior.c` matches its reconstructions by that fetched
+ADDRESS — which is a reading the file already had a case for. So a table longword **poked** to an
+address that is not a dispatch row is a transfer the ORIGINAL really takes, to a place the port
+genuinely has nothing to call. Nothing is invented: the record's type stays a real slot number and
+the poked address is a real routine entry the image holds.
+
+* `BOUNDARY_SLOT` is **29**, whose shipped row is two bytes of `rts`. That makes the FAILURE mode
+  quiet — a port that ignored the poke and dispatched by slot would run two harmless bytes and
+  report `WB_ACTOR_DISPATCH_RAN`, a clean disagreement with the oracle's transfer rather than a
+  handler's whole frame running loose over the seeded tables — and it is a slot no walk case uses as
+  a live filler type, so the poke changes nothing else.
+* `BOUNDARY_TARGET` is `player_gate_on_1516` (`$d78`), a routine the behaviour tier reaches by `bsr`
+  from five sites and the dispatcher reaches from none.
+* Each of the eight sites was re-aimed and each states what it NOW pins: the address-not-slot case
+  keeps its own poke and changes only its target; the three aliasing rows alias onto slot 29; the
+  end-marker case, the three walk-boundary rows and the two `a34`-arm cases take the boundary type;
+  and `_walk_pokes` carries the table poke itself, so a row cannot forget it.
+* **THE TRIPWIRE BECAME THE MILESTONE.** `test_the_only_unported_row_left_is_the_player` was designed
+  to fail the day the row flipped; it did, and it is now
+  `test_every_row_of_the_dispatch_table_is_reconstructed`, asserting the complement is EMPTY. Its
+  docstring carries the honest list of what that does not mean.
+
+### The whole-frame differentials
+
+Every case enters at `$a38` (or at `$928`, for the four entry-X rows) and diffs the whole image
+against the original run from the same address.
+
+* **the eight `$d78` chain rows** above — all nine callees are seeded, and the composition is diffed
+  end to end;
+* **a four-row LATTICE over the two guards** (`test_each_guard_clears_EXACTLY_the_one_call_below_it`),
+  with the ORACLE's executed PCs as the witness: each `bne.w` clears exactly the one `bsr` below it.
+  Its fourth row is the phase's end-to-end case — **all nine routines execute in one run**;
+* **the d7 skip**, with its PREMISE and its CLAIM in ONE runner: the premise is that the align arm's
+  slot refusal really reached the `move.w #$ffff,d7` at `$d22` (witnessed as an executed PC), and the
+  claim is that the `bmi.w` cleared SEVEN calls and that the frame still reported its own `rts` —
+  a skipped frame is a frame that RETURNED;
+* **two abandoning exits**, one per unwind kind: `player_run_map_cell`'s tile-`$39` TRIPLE pop
+  (`WB_PLAYER_COLLIDE_UNWIND`, oracle stopped at `$1626`, witnessed by the `lea 12(a7),a7`) and the
+  gate's data-disk pop (`WB_PLAYER_GATE_DATADISK_UNWIND`, stopped at `$bdc`, witnessed by the
+  `lea 4(a7),a7`). Each asserts the frame reports the CALLEE's code verbatim;
+* **the four aliased-type rows** through the dispatcher, above;
+* **the call ORDER**, as a case rather than a comment: `FRAME_CALLS` — the list the coverage rows
+  iterate — is required to be the nine `bsr` targets the 62 bytes hold, in order, re-encoding at each
+  offset because `bsr.w`'s displacement is PC-relative;
+* and **the 62-byte entry pin** in `test_behavior.py`, beside the other sixty-one rows', which is
+  byte-exact against the image and carries the two guards' differing absolute encodings.
+
+### The band arithmetic, closed to zero
+
+`$a38..$2461` is **6,698 bytes** and it still divides with zero remainder against batch 40's
+twenty-nine-row partition. Re-derived rather than copied: of the 1,760 bytes that remained after
+batch 41 phase B, phase C took `$b1a`'s **526**, `$151a`'s **1,170** were taken in phase A and
+counted in that phase's figure, the `$1f34` dead pair is **2** of DATA, and the last **62** are
+`$a38`'s, taken here. 526 + 1,170 + 62 + 2 = 1,760. **The band's unported bytes are now ZERO, and the
+only bytes in it that are not code this port runs are the two of the `$1f34` dead pair.**
+
+And the table: 62 slots, 61 distinct targets (slots 0 and 58 share the bare `rts` at `$a36`), and
+every one of the 62 has a reconstruction. `PORTED_SLOT_COUNT` is 62 and
+`test_the_live_row_count_the_docs_state_is_the_one_the_table_has` is what holds the number.
+
+### WHAT 62/62 DOES NOT MEAN
+
+Stated plainly, because a milestone is exactly where a headline outruns its coverage:
+
+* **The spine is unported.** `game_main_loop`, the VBL, the boot chain and everything that CALLS
+  `actor_behavior_pass` are not reconstructed. The tier runs a frame when a differential enters it;
+  nothing in this port starts one.
+* **There are no on-target backends.** Every byte here runs under the Musashi oracle's memory image.
+  There is no screen, no FDC, no interrupt, and the sound module is pinned through a stub and a
+  Dosound ledger.
+* **It is NOT playable-`.PRG`-ready.** Both of the above have to land first; the two BuggyBoy and
+  Joust ports reached a runnable `.PRG` only after their spines did.
+* **The measured total is 90.5 % of §0k's 44,262**, not of the program: PORTABILITY.md's own §0k
+  bounds what is measured, 226 bytes remain genuinely unknown, and the four false-green rows in
+  §0i's table are unchanged by this row landing — `$a38` inherits its edge from `$b1a` and `$151a`
+  and reports their endings rather than following them.
+* **Three X paths are honestly unpinned** and are listed below, unchanged in kind from phase E's.
+
+### The mutation sweep, and the TENTH way a sweep lies (which is an old way, at a new step)
+
+**FORTY MUTANTS WRITTEN, SIX ROUNDS, and the two that carry the tally are the third and the
+fifth.** They go at the four things
+this phase added: the frame's composition (15), the `$d78` chain's X model (7), the dispatcher's
+entry X and the row's wiring (5), the renumbered codes (5), the dispatch scale constant (1) and the
+re-aimed boundary (1).
+
+**ROUND ONE: 34 applied, 0 not applied, 30 caught, 4 SURVIVED.** Round two wrote a row for each of
+the four and re-ran them. **ROUND THREE re-ran all 34 against the tree as those rows left it: 34 of
+34 CAUGHT, 0 survived, 0 not applied.** Round four re-ran FOUR of the seven `chain/`
+mutants after the read-after-store repair below — the two the repair sits inside (the wing-boot
+spend's borrow, dropped and forced) and the two nearest it (the ascent's borrow, and the head's
+carry) — because that repair changed code the sweep had just measured: **4 of 4 caught**, so the
+repair costs no pin.
+
+**AND THE REASON THERE IS A ROUND THREE IS THAT ROUND ONE LIED, in a way this workspace has already
+recorded once and this runner had not been built against: `make` compares mtimes at about
+one-second granularity, so a mutant written and built inside the same second leaves the PRISTINE
+`.so` in place** — and pytest then measures the unmutated tree and prints SURVIVED. It is mode 3's
+shape at a third step (mode 3 is "a mutant that will not COMPILE reports itself as caught"; mode 9
+is "a mutant that does not APPLY reports itself as a survivor"; this is "a mutant that applies and
+is not BUILT reports itself as a survivor").
+
+**AND A DIRTY ROUND PROVES NOTHING IN EITHER DIRECTION, which is the correction the gate made to the
+first draft of this paragraph.** That draft argued the round was half-salvageable — that a stale
+build can only manufacture a survivor, so the catches stand. It cannot: if the relink is skipped the
+`.so` in place is the PREVIOUS mutant's, so a "catch" can be the previous mutant being caught and
+attributed to this one. Round one is therefore evidence of nothing at all, and what establishes this
+phase's coverage is round three's clean 34 of 34 and nothing else. The cure is one line — delete
+`build/*.so` before `make` — and it is now in the runner beside the anchor-count check.
+
+**WHAT ROUND ONE'S FOUR SURVIVORS TURNED OUT TO BE: TWO MEASURED HOLES AND TWO UNSETTLED.** Four
+rows were written, one per survivor, and all four mutants die with them in place — but "the row is
+what kills it" was only MEASURED for two of them, and the honest headline is that number, not four.
+
+**THE TWO MEASURED ONES.** With the new rows DESELECTED and
+the relink forced, `frame/drop-the-death-check` and `frame/drop-the-stage-transition` both survive:
+every case in the battery put the frame's FIRST and LAST calls on their silent arm — a meter that is
+not empty, an animation latch that is up — so a call that writes nothing whether or not it happens
+is a call no differential can see. **A quiet seed is what makes the middle of a frame measurable and
+what makes its ends invisible**, and the two rows that open those arms are the sweep's own.
+
+**THE OTHER TWO ARE UNSETTLED, and saying so is the point of the paragraph above.** The deselected
+attribution run for them did not finish inside this session — it was killed on the third mutant — so
+whether the row or something else already in the battery kills the mutant is not known. What can be
+said from the code
+rather than from a run: no other case seeds the word ABOVE `WB_ACTOR_PLATFORM_RIDDEN`, so nothing
+else could separate a WORD read of the fall guard from a LONGWORD one; and every other
+dispatch-level case runs a frame that answers `WB_ACTOR_DISPATCH_RAN` anyway, so nothing else could
+see an adapter that threw the frame's report away. Both are stated here as reasoning, not as a
+measurement, and re-running the two with their rows deselected is the cheap way to settle it.
+
+**AND ONE DEFECT THE SWEEP DID NOT FIND, caught by re-reading the diff against the bytes.** The
+first draft of `player_hover_on_wing_boots` cached WB_HUD_SLOT_BBC2 at the `tst.b` and reused it for
+the spend — but `move.b #$1,11(a0)` at `$e42` sits BETWEEN the two, and `subq.b #1,$bbc2.l` at `$e48`
+reads memory at the instruction. For a record at `$bbb7` — an address nothing bounds, because
+`actor_behavior_pass` follows a table pointer out of memory — the two readings differ. It is the
+READ-AFTER-STORE class's sixth sighting in this project and the first one INTRODUCED by a port
+rather than found in the original, and it is a reminder that the class bites hardest where a local
+is added for a NEW output: the extend needed a name for the value, and naming it is what tempted the
+cache. The re-read is restored, with the store census in the comment.
+
+**RED FIRST, on the load-bearing model, before the sweep.** The eight `$d78` chain rows were run
+against a constant-0 chain and a constant-1 chain: **four failed under each**, and the two sets are
+disjoint — every row is red under one of the two constants, which is what says no constant serves.
+The dispatcher's entry bit was run against a forced 0 (the two aliased rows whose bit is 1 failed)
+and against bit 15 instead of bit 14 (the `$4001` and `$8001` rows failed, which is why all FOUR
+aliases are rows and not two).
+
+**ROUND FIVE IS THE MILESTONE GATE'S, and it goes at code the first four rounds never saw** — the
+revival refusal the gate's first finding produced. **SIX mutants: 5 CAUGHT, 1 EQUIVALENT, 0
+survivors.** The five: the frame GUESSING instead of refusing (which is the RED-first run for the
+whole repair — all four aliased rows fail); the revival arm not marking the bit; the refusal moved
+ABOVE the gate, so a revival on a JUMPING frame would refuse too; the sentinel moved IN band to 1;
+and the report renumbered onto WB_PLAYER_GATE_SCENE_LEFT. **The last of those five survived until the
+collision case was told about the tenth code** — a code was added and the tuple that pins the space
+was not, which is the same class of omission the phase's own renumbering exists to prevent, and the
+sweep is what caught it.
+
+**THE ONE EQUIVALENCE IS THE DEATH ARM, CLASSIFIED RATHER THAN FORCED.** `refusal/the-death-arm-does-not-mark-the-bit`
+survives round five and round six, and it survives because the sentinel that arm writes can never be
+read: `player_die` raises WB_STAGE_RESET_BLOCK at `$aee`, that word is the FIRST thing
+`player_pending_event_gate` tests, and no death arm of the gate returns
+WB_PLAYER_GATE_FRAME_RUNS — so `$a40` ends the frame before `$a46`. The C still writes the mark,
+because it is the truthful model of the flag and costs one store, and
+`test_a_DEATH_frame_never_reaches_the_refusal_because_the_gate_eats_it_first` pins the ORDERING that
+makes it unreadable, so the day that ordering moves the arm gets a row instead of an argument.
+
+**ROUND SIX re-ran the four `refusal/` mutants after that case landed**, since the case changed what
+the suite covers: 3 of 3 kept mutants caught, the equivalence unchanged. A fifth re-run was needed
+for a different reason — `frame/drop-the-death-check` reported NOT APPLIED once the death check
+gained its parameter, which is the runner's anchor check doing its job and the standing "re-spell
+every mutant when the tree moves" lesson costing one line.
+
+### Honestly unpinned
+
+* **`snd_trigger_effect`'s and `snd_play_song`'s exit X, and therefore a revival frame on the
+  ladder arm.** The port REFUSES rather than guesses (WB_PLAYER_FRAME_SOUND_EXTEND), which is a
+  boundary rather than a silence: four rows drive it and a fifth drives the jumping frame that is
+  NOT a refusal. What is unpinned is the bit itself — derivable in principle, priced in the queue.
+* **The LAUNCH exit's X (`$ea6`)** — the `jsr 56(a1)` sound routine's, which this port has never
+  read. It is unmodelled by decision: the C writes nothing on that arm, and the reason is a proof
+  rather than a hope (the launch wants bit 0 of `joy1_newly_pressed`, the weapon's third gate wants
+  that byte to be exactly `$80`, and `$682` stores nothing), so the bit is DEAD at its only consumer.
+  A mutant that wrote a value there would survive; it is listed here rather than forced, because
+  forcing it would mean modelling a routine nobody has read.
+* **`WB_PLAYER_COLLIDE_SOUND_WAIT` and the six instructions below the spin** — unchanged since batch
+  41 phase A, and the frame inherits it: a frame case that reaches the flute arm stops there.
+* **The four X paths no firing frame can reach**, unchanged from phase E and each still named there:
+  `$1170`'s clamp borrow, the hurt drift's probe bit, the coast's `subq.b` borrow, and the tail's
+  `add.w d7,d7` read as `stride + 1`.
+* **The left probe's commit borrow at the value 1**, unchanged from phase E.
+* **The ladder frame's REACHABILITY**, as split above: the four instructions are a case, the
+  frame-by-frame construction is prose. What the cases pin is that the port carries the bit
+  correctly once the state exists.
+* Everything phase C's list carries (`$e032`, the odd drift cursor, the two spawn-tree arms'
+  self-checked write sets, the stage arm's invisible tail) is unchanged.
+
+### Queue — THE NEXT ARC
+
+The behaviour tier is closed. What is left is the three things 62/62 does not deliver, in the order
+they unblock each other:
+
+1. **THE SPINE.** `game_main_loop` and everything above `actor_behavior_pass` — the VBL, the frame
+   cadence, the boot chain. Nothing in this port starts a frame today.
+2. **THE ON-TARGET BACKENDS.** A screen, the FDC, the interrupts, and the sound module behind
+   something other than a stub and a ledger.
+3. **THE PLAYABLE `.PRG`.** Not before both of the above.
+
+**BORN THIS PHASE, and carried because it did not finish:**
+* **THE DESELECTED ATTRIBUTION RE-RUN for two of round one's four survivors** —
+  `frame/the-fall-guard-read-as-a-LONGWORD` and
+  `dispatch/the-player-row-answers-RAN-instead-of-the-frames-report`, each with its own new row
+  deselected. The runner takes `SWEEP_PYTEST_EXTRA` for exactly that; the run was killed on the
+  third mutant. Until it lands, "the row is what kills the mutant" is reasoning for those two and a
+  measurement for the other two.
+* **`snd_trigger_effect`'s and `snd_play_song`'s EXIT X** — the cost of retiring
+  WB_PLAYER_FRAME_SOUND_EXTEND. Both routines end
+  `add.w d0,d0 / lea / movea.w / adda.l a3,a2 / move.l / move.l / move.b / move.b / rts`, and only
+  that `add.w` writes X, so the bit is bit 15 of a sign-extended table byte and IS derivable. What
+  it costs is a new output on a 334-byte routine with loops and on every one of its call sites,
+  plus a battery — a phase, not a line.
+
+**CARRIED, unchanged** — every item phase E left, less nothing: `$e032`; the odd drift cursor;
+`hud_meter_charge`; `src/actor.c` on to `bus.h`; `leaf.run_reaching` / `final_pc` to the kit; the
+`TRAP_MODEL.md` `stop_pc` note; `bus.h` to the kit; `abcd_byte`/`sbcd_byte` to the kit (they have
+bodies in `src/hud.c`, which is why they did not go with phase E's four inline extend primitives);
+regenerating `../out/names_dump.txt`, `../out/hw_scan.tsv`, `../decomp.c` and
+`../out/wonderboy_dis.txt`; `scene_spend_visit_budget`'s `$1ab4` boundary; the tier partition; the
+`scene_run_effect` latent guard; the duplicate `cmt` directives at `0x1023a` and `0x10394`; the
+`WB_HUD_SLOT_BBC2`/`_BBC6` renames; `map.c`'s unguarded `WB_ACTOR_X` write; which-monster-is-which;
+`leaf.stray_writes`' O(writes x bands) scan.
+
+**LANDED THIS PHASE, so it is not carried**: `SETTLE_SPAN_UNREAD` moved from `src/behavior.c` to
+`include/map.h` as `WB_SETTLE_SPAN_UNREAD`, because `src/player.c`'s frame became a second file
+needing it and one literal in two files is one too many (CLAUDE.md §5). Nineteen call sites in
+`src/behavior.c` were re-spelt; the header that declares `actor_fall_and_settle` is now the header
+that declares what to pass it.
+
+### Lessons
+
+* **A PORT'S COST IS ITS COMPOSITION, NOT ITS BYTE COUNT.** This is the smallest routine the campaign
+  has taken — sixteen instructions — and it took four phases. Everything expensive about it was a
+  property of being a CALLER: a number space three callee families had to share, a flag that only a
+  caller can hand between two adjacent `bsr`s, an entry bit, and a test-suite boundary that existed
+  only because this row did not. None of the four is visible in a byte count, and phase C's first
+  pricing — which enumerated what the flip would BREAK — found three of the four.
+* **AN "OPEN QUESTION" LEFT IN A RE-PRICING IS LOAD-BEARING, AND THE RE-PRICING RESTS ON IT.** Phase
+  E measured the jump machine's exits correctly and then concluded the frame needs no entry bit at
+  all — a conclusion that is true only if the ladder arm cannot fire, which the same section
+  explicitly recorded as unmeasured. It can. The estimate was right about the SIZE and wrong about
+  the existence, and the shape of the error is worth naming: **a cost list that carries an open
+  question has to price the question BOTH ways**, or the reader inherits the convenient branch.
+* **BEFORE PRICING A THREADING CAMPAIGN, DECODE THE CALLER DOWN TO THE TRANSFER.** The frame's entry
+  X looked like a chain to thread up through the dispatcher and turned out to be four instructions
+  away: `lsl.w #2,d1` at `$92e` produces it from a word the dispatcher has already read. Two phases
+  priced that as dispatcher-wide work. The cheap guard is to read the caller's last few instructions
+  before writing the estimate — the same guard phase E's own lesson gives for enumerating exits.
+* **A BOUNDARY IS A MECHANISM, NOT A ROW.** The eight cases that stood on `UNPORTED_TYPE` were not
+  written about slot 1; they were written about "a dispatch the port cannot follow", and slot 1 was
+  merely the cheapest way to reach one. When the row landed, the mechanism was still there — the
+  dispatcher FETCHES its target — so the cases were re-aimed at a poked table entry and each still
+  drives what its name says. **A test that names its example in its constants can be re-aimed; one
+  that names its example in its assertions has to be deleted.**
+* **AN ALIASED INPUT THE ORIGINAL ITSELF ACCEPTS IS NOT A FABRICATED ONE.** The set direction of the
+  frame's entry bit is unreachable on the game's own data, and the honest way to drive it was not a
+  `run_candidate_only` model but the dispatcher's own documented wrapped-offset aliasing: a type of
+  `$4001` reaches slot 1 in the ORACLE too, with X set. The difference between that and fabricating a
+  record is that the oracle agrees — and the case says in as many words that the game's player holds
+  type 1 and the bit is 0 there.
+* **A NEW OUTPUT TEMPTS A CACHE, AND A CACHE IS WHERE READ-AFTER-STORE LIVES.** Threading the wing
+  boots' borrow meant the spent value needed a NAME, and naming it is what turned two memory reads
+  into one local — across a store the original makes between them. Nothing in the sweep found it and
+  nothing in the suite could: the two readings differ only for a record at one address. **When a
+  port grows an output, re-run the store census over the span the new local spans** — the class's
+  usual trigger is an optimisation, and this one's was a signature change.
+* **A "MISSING FIELD INITIALIZER" IS A DESIGN SIGNAL.** The first shape for the one handler that
+  reads a flag was a second function pointer in `BehaviorHandler`; `-Wextra` then warned on all
+  sixty-one rows that did not spell it. The warning was right: a struct member sixty-one of
+  sixty-two rows leave blank is a variant type pretending to be a record. A four-line adapter with
+  the common signature says the same thing and touches nothing.

@@ -173,9 +173,14 @@ src/behavior.c             the per-actor BEHAVIOUR tier's foundation, and the bo
                            for state_flag_a34) and the dispatcher it feeds ($928), which fetches a
                            longword out of the 62-entry table at $938 and tail-jumps through it —
                            on the WRAPPED offset, so 248 of the 65,536 type values reach an entry.
-                           SIXTY-ONE of the sixty-two rows are reconstructed as of batch 39 and
-                           the ONE that is not is the player (slot 1), for which the dispatcher
-                           hands the target BACK and the differential runs the oracle on to it.
+                           ALL SIXTY-TWO ROWS ARE RECONSTRUCTED as of batch 41 phase F; slot 1,
+                           the player's frame, was the last and its body is src/player.c's, so
+                           this file keeps its table row and a four-line adapter. The mechanism
+                           that stood in for an unported row OUTLIVED the rows and is what the
+                           boundary cases still drive: the dispatcher FETCHES its target, so a
+                           table longword poked to an address that is not a dispatch row is a
+                           transfer the original takes and the port hands BACK, with the
+                           differential running the oracle on to it.
                            Batch 40 opened that row's own frame in src/player.c and RETIRED this
                            file's last returning boundary with it: `player_gate_on_1516` calls the
                            jump machine now, so slots 53 and 9/12/22/26 run their frames whole.
@@ -253,7 +258,15 @@ src/player.c               the player's frame, batch 40: the DEATH CHECK ($a76, 
                            screen. It has FIVE endings and three of them are stack unwinds, so it is
                            the heaviest user of the exit-report convention below — and the third
                            unwind reports WB_PLAYER_COLLIDE_UNWIND, because `bra.w $1622` reaches
-                           $151a's own triple pop rather than an ending of its own
+                           $151a's own triple pop rather than an ending of its own.
+                           PHASE F THEN TOOK THE FRAME TOP ITSELF ($a38, 62 bytes) — the
+                           sixty-second and last row of WB_ACTOR_BEHAVIOR_TABLE, and the only one
+                           whose body is nine calls into this file. It is HERE rather than beside
+                           the other sixty-one because the rule that puts a routine with its
+                           caller's module exists to put it with the battery that pins it, and
+                           every one of its nine callees is seeded by test_player.py;
+                           src/behavior.c keeps the table row and a four-line adapter that hands
+                           the frame the X the dispatcher's own `lsl.w #2` leaves
 src/map.c                  the COLLISION MAP the actors walk on — a second map with the background
                            map's layout, one byte per 16x16 cell, and which of the two
                            state_flag_a32 names. The two step probes ($10a2/$1170, forty-one callers
@@ -393,7 +406,7 @@ test/test_behavior.py      the behaviour tier's differential. Its shape is set b
                            sum-the-spanned-bytes idiom), and an independent model of $5c6e's three
                            overlap tests compared against the ORACLE's d0 as well as the port's
                            return. It imports test_map.py's map seeding and test_rng.py's generator
-                           model rather than restating either. Then the SIXTY-ONE LIVE TABLE ROWS
+                           model rather than restating either. Then the SIXTY-TWO LIVE TABLE ROWS
                            (this is the second of the four surfaces PORTED_SLOT_COUNT's own comment
                            names, and the third batch running to drift on it — the pinning case
                            reads the TABLE, not this prose, so nothing but a reader catches it):
@@ -612,7 +625,7 @@ count at `$a4e`'s `sbcd`. That is what said the last unported dispatch row waite
 campaign and not on a helper — and batch 41 phase E then ran that campaign: the walk and the two map
 probes report their exit X, pinned at the `sbcd`. What the row still waits on is the bit the WALK is
 ENTERED with, which phase E re-priced down to a model of `$d78`'s chain (../STATUS.md's phase E
-section, "THE FIFTH COST").
+section, "THE FIFTH COST"), and batch 41 phase F then landed that model and the row with it.
 
 **HOW THE THREADING IS THEN WRITTEN**, settled by batch 41 phase E over three files and forty-six
 call sites:
@@ -639,6 +652,16 @@ call sites:
   `move`/`tst`/`cmp`/`btst`/`bset`/`bclr`/`clr`/`st`/`lea`/`andi`/`ori`/`eori`/`mulu`/`dbf` and every
   branch do not. Only the LAST writer before an exit is worth modelling; an earlier one that every
   path overwrites is noise, and saying so in the plate is what stops the next reader adding it.
+* **A PASS-THROUGH ARM IS SPELT AS "TOUCH NOTHING"**, which is what the in-and-out pointer buys:
+  `player_gate_on_1516`'s ladder arm is `tst.w` and an `rts`, both X-silent, so the C returns without
+  writing `*extend` and the caller's bit stands. A separate "exit" out-param would have made that arm
+  copy a value, which reads as a decision where the machine makes none.
+* **AN ENTRY BIT MAY BE PRODUCED RATHER THAN THREADED, and the first place to look is the caller's
+  own last few instructions.** Batch 41 phase F expected to thread the player frame's entry X up
+  through the dispatcher and found it did not have to: `lsl.w #2,d1` at `$92e` — four instructions
+  above the `jmp (a1)` that is the frame's only entrance — leaves X holding bit 14 of the type word,
+  so the dispatcher COMPUTES the bit from a word it has already read. Before pricing a chain, decode
+  the caller down to the transfer and ask whether an X-writer is already there.
 * **The pin is a COMPOSITION differential at the consumer**, since no oracle run can report a CCR:
   run the original's two adjacent `bsr`s and a glue that calls the two C routines in the same order,
   diff the whole image, and give each row an `expected_extend` read back off the ORIGINAL's output
