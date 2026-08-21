@@ -128,6 +128,15 @@
                                        * different reason: `lea <cursor>.l,a1 / move.w (a1)+,d0`
                                        * puts a table's base exactly one word above its own cursor,
                                        * four times over in player_stage_transition */
+#define WB_WORD_BITS         16u      /* the same width as a SHIFT, for splitting a longword into
+                                       * its two halves and putting them back — what the original
+                                       * spells `swap`. NAMED HERE AND NOT YET EVERYWHERE: src/
+                                       * carries the bare literal at about ten sites and two
+                                       * file-local `WORD_BITS` of its own (src/stage.c,
+                                       * src/scroll.c), so this is the canonical definition and not
+                                       * yet the only one. Retiring the rest — ideally behind a
+                                       * `make_long(high, low)` in the kit's machine.h, beside
+                                       * `set_low_word` — is in ../STATUS.md's queue */
 
 #define WB_JOY1_STATE        0x877u   /* what the IKBD handler last stored; bit 7 = fire */
 #define WB_JOY1_PREV         0x8b3u   /* the byte as of the PREVIOUS frame */
@@ -550,6 +559,13 @@
                                            * `object.y - $40 - POS_Y`, which is what makes the two
                                            * centres below screen coordinates rather than map ones */
 #define WB_SCROLL_FOLLOW_Y       0x9936u
+#define WB_SCROLL_FOLLOW_EVEN_MASK 0xfffefffeu /* `andi.l #$fffefffe,d0` at $516 — bit 0 of BOTH
+                                           * halves of the longword at WB_SCROLL_FOLLOW_X, i.e. the
+                                           * pair snapped to even pixels. game_snap_follow_cursor
+                                           * reads and writes the two as ONE longword, which with
+                                           * $f9ae's pair of word writes is what fixes them adjacent */
+#define WB_SCROLL_FOLLOW_SNAP_UP 2u       /* `addq.w #2,d0` — the x that was masked DOWN carried a
+                                           * pixel, so adding the whole step rounds it UP instead */
 #define WB_SCROLL_CENTRE_X       0x5au    /* `subi.w #$5a,d1` / `subi.w #$30,d0` — where
                                            * bg_scroll_raise_requests wants the followed object */
 #define WB_SCROLL_CENTRE_Y       0x30u
@@ -2477,6 +2493,59 @@
                                                * clears it) which then unwinds out of the frame loop
                                                * into the reload chain at $e5ba. THREE operand sites,
                                                * those three */
+#define WB_ROUND_END_RELOAD_REQUEST_SET 0xffffu /* `move.w #$ffff,$e1c6.l` at $e09e */
+
+/* ---- THE ROUND BONUS: the three words $e032 runs its state machine on (src/game.c) ------------
+ *
+ * WB_EVENT_FINISHED_E1BE above is the TRIGGER; these three are the sequence it drives. It is a
+ * two-phase count: drain WB_HUD_METER_VALUE to zero one unit a frame, scoring WB_ROUND_BONUS_SCORE
+ * each time, then refill it to WB_ROUND_BONUS_METER_TARGET one unit a frame and ask for the reload.
+ *
+ * THE FOUR WORDS ARE TWO LONGWORD-CLEARED PAIRS, which is what fixes their addresses as pairs the
+ * way $9934/$9936 are fixed: `clr.l $e1be.l` at $e092 clears WB_EVENT_FINISHED_E1BE AND
+ * WB_ROUND_BONUS_ACTIVE together, and `clr.l $e1c2.l` at $e098 clears the target AND the phase flag.
+ * That is what an earlier reading of WB_EVENT_FINISHED_E1BE's plate missed. Its census was keyed
+ * on this address at WORD width — and the caveat it stated was about addressing MODE (a block clear
+ * through an address register), which would not have covered the instruction anyway: `clr.l $e1be.l`
+ * is an absolute operand, and only its WIDTH hides it. A census bounds the widths it scanned as
+ * well as the modes. */
+#define WB_ROUND_BONUS_ACTIVE        0xe1c0u  /* word: raised $ffff at $e0d6, the setup arm's own
+                                               * latch. While it is CLEAR $e032 runs the setup and
+                                               * returns; while it is SET the count runs */
+#define WB_ROUND_BONUS_METER_TARGET  0xe1c2u  /* word: what the refill phase counts the meter UP to,
+                                               * computed once at setup */
+#define WB_ROUND_BONUS_REFILLING     0xe1c4u  /* word: clear during the drain phase, raised $ffff at
+                                               * $e072 on the frame the meter reaches zero, which is
+                                               * what switches the count round */
+#define WB_ROUND_BONUS_ACTIVE_SET    0xffffu  /* `move.w #$ffff,$e1c0.l` at $e0d6 */
+#define WB_ROUND_BONUS_REFILLING_SET 0xffffu  /* `move.w #$ffff,$e1c4.l` at $e072 */
+#define WB_ROUND_BONUS_SCORE         0x410u   /* `move.l #$410,d0 / bsr bcd_add_score_bd70` — the
+                                               * packed-BCD 410 points each drained unit is worth */
+#define WB_ROUND_BONUS_METER_BUMP    4u       /* `addi.w #$4,d0` on WB_HUD_METER_VALUE at setup:
+                                               * the refill target is four units above where the
+                                               * round left the meter, CLAMPED to WB_HUD_METER_MAX */
+#define WB_ROUND_BONUS_MAP_BANK      0x18u    /* `move.w #$18,d0 / lea (a1,d0.w),a1` — a FIXED byte
+                                               * offset into WB_SCENE_MAP_BANK_TABLE, i.e. entry
+                                               * $18 / WB_SCENE_MAP_BANK_BYTES == 3 of its 7 */
+#define WB_ROUND_BONUS_START_RECORD  0x1d434u /* `lea $1d434.l,a1` — the start record the bonus
+                                               * stage is loaded with, a literal rather than a table
+                                               * read (the map and tile bank ARE table reads) */
+
+/* ---- THE FRAME'S OWN STATE: what flip_screen and vbl_handler count on (src/game.c) ------------ */
+#define WB_VBL_COUNTER               0x74au   /* word: `addq.w #1,$74a.l` in vbl_handler and NOTHING
+                                               * else raises it; flip_screen waits on it twice and
+                                               * then clears it. THAT PAIR IS WHY THE SPINE'S LAST
+                                               * TWO ROWS ARE UNPORTED, and the reason is how the
+                                               * poll model COUNTS rather than how wide it is: the
+                                               * natural one-trigger run is ACCEPTED, and its poll
+                                               * and arrival totals cancel to agree while the two
+                                               * sides run different iteration counts. The fix is to
+                                               * split the differential at $6ca, one wait per run.
+                                               * Registered in full at ../names.txt's cmt 0x694 */
+#define WB_FLOPPY_IDLE_TIMER         0x64f2u  /* word countdown vbl_handler decrements; on the frame
+                                               * it reaches zero the handler deselects the drives.
+                                               * floppy_unwind_return arms it with $96 (150 frames,
+                                               * ~3 s at 50 Hz) */
 
 /* The IKBD scancodes game_key_actions ($53e) and game_unpause_on_key_release ($638) compare
  * WB_KEY_LAST_SCANCODE against. The handler stores the code with bit 7 SET on release, which is why
@@ -2594,14 +2663,17 @@
                                                * word makes the level entry SKIP
                                                * `move.b 1(a0),$e70c.l` */
 #define WB_EVENT_FINISHED_E1BE       0xe1beu  /* word: raised $ffff at $d1a — the third arm's ending
-                                               * when the finished event asked for no stage advance.
-                                               * TWO operand sites, that raise and the
-                                               * `tst.w $e1be.l` at $e032, which is the first
-                                               * instruction of a routine that returns at once while
-                                               * it is clear. NOTHING IN THE IMAGE NAMES A CLEAR of
-                                               * it (the census below covers the absolute forms
-                                               * only, so a block clear through an address register
-                                               * would not appear) */
+                                               * when the finished event asked for no stage advance,
+                                               * and the ROUND BONUS's trigger. THREE operand sites,
+                                               * not the two an earlier reading of this plate gave
+                                               * it: that raise, the `tst.w $e1be.l` at $e032
+                                               * (round_bonus_run_frame's first instruction, which
+                                               * returns at once while it is clear), and the
+                                               * `clr.l $e1be.l` at $e092 that takes this word down
+                                               * together with WB_ROUND_BONUS_ACTIVE. The earlier
+                                               * count came from a census keyed on this address at
+                                               * WORD width; the clear is a LONGWORD operand based
+                                               * here, and no width but its own finds it */
 #define WB_EVENT_PAIR_POSITION       2u       /* `move.l 2(a1),(a2)` off WB_RECORD_PTR_10420 — the
                                                * descriptor's WB_SCENE_TRIGGER_X and _SPAWN_Y as one
                                                * longword, over the new record's own x and y, and
@@ -3489,6 +3561,19 @@
                                           * which the floppy drive-select depends on) as the chip
                                           * held them — so the read-back at $17f3e is an INPUT of
                                           * the run, and a case must declare it with `psg_seed` */
+
+/* PORT A, which on the ST is not a sound register at all: its low three bits are the floppy's side
+ * and drive-select lines and the rest are the printer strobe, RS-232 control and the monitor's
+ * general-purpose output. `psg_set_drive_select` ($624c) is the ONE routine in the image that
+ * touches it, and it is a read-modify-write for that reason — the five bits it preserves belong to
+ * other peripherals, so the register's prior contents are an INPUT of the run and a case must
+ * declare them with `psg_seed` exactly as the mixer's are declared above. */
+#define WB_PSG_REG_PORT_A          14u   /* `move.b #$e,$ff8800.l` at $624c */
+#define WB_PSG_PORT_A_KEEP         0xf8u /* `andi.b #$f8,d1` — the five bits that are not the
+                                          * floppy's, kept across the write */
+#define WB_PSG_DRIVES_DESELECTED   7u    /* `move.b #$7,d0` in floppy_deselect_drives: side select
+                                          * plus both drive-selects HIGH, and all three are ACTIVE
+                                          * LOW, so this is every drive off */
 
 /* The module's own state that snd_stop / snd_stop_all_sfx clear. The globals block is mapped in
  * ../names.txt (`snd_engine_enabled`); only what these two routines touch is named here. */

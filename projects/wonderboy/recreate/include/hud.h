@@ -127,14 +127,21 @@ uint8_t sbcd_byte(uint8_t subtrahend, uint8_t accumulator, unsigned *extend);
  * WHAT IS STILL UNPINNABLE, and it is the harness rather than the model: `emu.run` forces SR =
  * $2700 after its reset and has no entry-CCR parameter, so no case can enter one of these routines,
  * or any routine that calls one, with X already set. What that costs is listed in ../STATUS.md; the
- * short form is a run ENTERED with X set ($e064's shape, unported) and the shop site below. */
+ * short form is the shop site below. ($e064 USED TO BE THE OTHER EXAMPLE HERE, and batch 42 phase
+ * B removed it: `round_bonus_run_frame` is ported, and the `bsr $b5a2` at $e064 carries an X the
+ * `subq.w #1,$b6fa.l` at $e058 PRODUCES — TWO instructions above it, with the X-silent
+ * `move.l #$410,d0` at $e05e between them. Produced inside the run, so an ordinary differential row
+ * drives it and no entry CCR is wanted. The site was misfiled as an entry-X shape before anything
+ * had read the instruction above it, which is the batch-41-phase-C lesson that "no case can drive
+ * this" is a claim about where a case STARTS.) */
 
 /* THE ENTRY X A CALL SITE CLAIMS, in TWO spellings, because the sites do not all rest on the same
  * kind of evidence and one name would have hidden that. `grep -r WB_BCD_ENTRY_EXTEND ../src` is the
  * audit and returns SIX C SITES covering EIGHT original `bsr`s — FOUR proved, TWO
  * differential-pinned, TWO assumed. Two of the six stand for two `bsr`s each: the shop's subtract
- * ($ddae and $de24) and `pay_gold_award`'s score add ($5196 and $545e). The SIX THREADED sites
- * carry no marker at all, by construction, and are named above.
+ * ($ddae and $de24) and `pay_gold_award`'s score add ($5196 and $545e). The SEVEN THREADED sites
+ * carry no marker at all, by construction, and are named above — the seventh is batch 42 phase B's
+ * $e064, whose bit is the `subq.w #1,$b6fa.l` at $e058.
  *
  * PROVED (four `bsr`s over three C sites): $5196 and $e130 by a reading of the bytes, and batch 38's two —
  * $545e, which is $5196's own three instructions through the shared `pay_gold_award` and so is not

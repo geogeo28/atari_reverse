@@ -8,7 +8,7 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 305/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 312/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the
@@ -138,8 +138,18 @@ pause. Both BUSY-WAIT on a byte only the IKBD interrupt writes, which is why the
 filed one of them as unportable WITH ITS OWN REMEDY REGISTERED; that remedy is now the kit's
 SCHEDULED WRITE model (TRAP_MODEL.md, "Phase 8"), and the spine's whole callee inventory — 86
 routines, 75 of them already reconstructed — is enumerated from the bytes as a test rather than read
-off a listing) —
-40,372 bytes in all, 91.2 % of everything
+off a listing) — and now SEVEN MORE OF THE SPINE'S NINE REMAINING ROWS
+(`game_latch_input_and_step_actors`, `game_snap_follow_cursor`, `psg_set_drive_select`,
+`floppy_deselect_drives`, `vbl_handler`, `round_bonus_run_frame` and `round_bonus_setup`, 380 bytes,
+batch 42 phase B: THE ROUND BONUS — the two-phase meter count that is what `event_finished_e1be` was
+waiting for, and whose score add joins the small class of sites where the 68000's X flag has a
+producer a differential can DRIVE — and `vbl_handler`, the first routine in this project or either
+sibling that ends in `rte` and the first interrupt handler a differential has ever executed, on a
+convention this phase had to design. What is left is `game_main_loop` and `flip_screen`, 224 bytes,
+and the blocker is the HARNESS and not the hardware: both of `flip_screen`'s busy-waits compare a
+WORD and the poll model carries a byte and counts polls per run rather than per site. Registered at
+`../names.txt`'s `cmt 0x694` with the arithmetic, not shrugged at) —
+40,752 bytes in all, 92.1 % of everything
 [`PORTABILITY.md`](PORTABILITY.md) measures *(the denominator is §0k's 44,262 — batch 28's
 coverage break-open finally put the per-monster tier INSIDE the measured program, so this figure
 dropped from batch 27's 80.3 % not because anything was lost but because the denominator now
@@ -3738,6 +3748,12 @@ pins them against the sibling's `bra.w`.
   body. Every other ported byte in this project is target-buildable today. Closing it is a KIT task —
   an on-target psg backend that writes `$ff8800`/`$ff8802` — not a reconstruction one, and until it
   lands the stop chain is differential-only.
+  *(**BATCH 42 PHASE B: THE LAST SENTENCE BUT ONE IS NO LONGER TRUE.** `src/game.c` calls the same
+  two functions — `psg_set_drive_select` is a port-A read-modify-write — so the whole SPINE module
+  joins this one as differential-only, and as one translation unit that takes `vbl_handler`,
+  `floppy_deselect_drives` and the five routines beside them with it. The routine named here is no
+  longer the only one of which this is true, and the KIT task that closes it is unchanged and now
+  has two callers waiting on it.)*
 * **The generator's XOR, as an operator.** With the video term at `0`, `^`, `+` and `|` all agree,
   and the sweep confirms it: that mutant is the batch's one survivor. Closing it needs the harness to
   serve a nonzero video counter, which would be `shim.c`'s invention rather than the game's data.
@@ -9644,6 +9660,12 @@ it".
   that returns at once while it is clear. No instruction in the image NAMES a clear of it — the
   census covers the absolute forms only, so a block clear through an address register would not
   appear, and that limit is stated rather than glossed.
+  *(**BATCH 42 PHASE B: WRONG, AND THE STATED LIMIT WAS THE WRONG LIMIT.** There is a third site and
+  it is a clear: `clr.l $e1be.l` at `$e092`, which takes this word down together with
+  `round_bonus_active`. It is an ABSOLUTE operand, so the caveat above — about an address-register
+  block clear — would never have covered it; what hid it is that the census was keyed on this
+  address at WORD width and the store is a LONGWORD based here. A census bounds the widths it
+  scanned as well as the modes.)*
 * **Two LONGWORD DISARMS, in one routine.** `clr.l $b0e.w` at `$c6a` takes `WB_STAGE_ANIM_DONE_B10`
   down with the request and names neither; `clr.l $b14.w` at `$cfe` does the same to
   `WB_EVENT_ANIM_DONE_B16`. Both halves are in a differential model with the two words seeded to
@@ -11328,8 +11350,12 @@ than claimed as covered.
   tripwire, not claimed as covered.
 * **A run may declare only ONE trigger PC**, so a case that wants to drive BOTH of
   `game_key_actions`' waits in one frame cannot be written. That is a limit of the model rather than
-  a silence — a differential refuses such a schedule by name — and the remedy, if a case ever needs
-  it, is a per-address poll counter on the candidate side.
+  a silence — a differential refuses such a schedule by name. *(Batch 42 phase B: THE REMEDY NAMED
+  HERE WAS WRONG. It said a per-ADDRESS poll counter, and this routine's two waits — `$5e6` and
+  `$60e` — are BOTH on `$879`, so per-address would not have separated the very pair it was
+  registered against. The remedy is per-SITE. And the limit as stated is narrower than the hazard:
+  the refusal is on two trigger PCs, not on two POLLING SITES, and `flip_screen` is the arrangement
+  where one trigger with two sites balances by cancellation. See phase B's queue.)*
 * Everything phase F's list carries is unchanged, less `player_meter_empty_check`'s cheat arm, which
   this phase pinned.
 
@@ -11412,3 +11438,417 @@ O(writes x bands) scan.
   README's mode 2 (a pipe's status is not the command's) wearing different clothes, in a
   hand-typed verification rather than in a runner. **Verify a build by looking at the artifact, not
   at a grep's exit code.**
+
+## Batch 42 phase B — SEVEN OF THE SPINE'S NINE: the round bonus, the first interrupt handler ever run, and the honest stop at flip_screen
+
+Phase A enumerated the spine and left 604 bytes in nine rows. This phase takes **380 of them in
+seven routines** and stops — cleanly, with the boundary registered — at the two that are left.
+
+**Verified 312, 40,752 bytes, 92.1 % of §0k's 44,262; `make test` 6,098** (5,980 after phase A).
+**The KIT DID NOT MOVE** — no file under `tools/recreate_kit` is touched, so the two sibling
+projects need no re-run on this phase's account. `tools/test_hw_portability.py` is 56 and green from
+the repo root.
+
+### What landed
+
+| addr | name | bytes | what it is |
+| --- | --- | ---: | --- |
+| `$882` | `game_latch_input_and_step_actors` | 10 | `bsr joy1_latch_edge / bsr actor_behavior_pass / rts` |
+| `$50a` | `game_snap_follow_cursor` | 52 | the camera quantised to even pixels, biased by the followed actor's facing |
+| `$624c` | `psg_set_drive_select` | 28 | the YM2149's port A, read-modify-written |
+| `$6268` | `floppy_deselect_drives` | 16 | every drive off |
+| `$716` | `vbl_handler` | 52 | the program's one periodic tick |
+| `$e032` | `round_bonus_run_frame` | 118 | THE ROUND BONUS, and the long-queued reader of `$e1be` |
+| `$e0a8` | `round_bonus_setup` | 104 | ...its setup arm, and a true routine rather than an arm |
+
+`10 + 52 + 28 + 16 + 52 + 118 + 104 = 380`, and `604 - 380 = 224` — `game_main_loop` (106) and
+`flip_screen` (118). **The arithmetic is machine-checked and now runs BOTH WAYS.** Phase A's
+inventory test asserted the unported rows' extents and their sum; a row that left that table would
+otherwise simply vanish and the remaining sum would agree with itself. So `test_game.py` now keeps a
+LEDGER: `SPINE_UNPORTED` plus `SPINE_PORTED_FROM_THE_INVENTORY`, each row re-measured from the image,
+each ported row required to carry the same byte count the inventory credited it with, no row in both
+lists, every ported row's name required to be a symbol the candidate DEFINES, and the two sums
+required to make phase A's 898.
+
+### The round bonus, which is what `$e1be` was for
+
+Batch 41 phase C named `WB_EVENT_FINISHED_E1BE` and could not say what read it. `$e032` does, and it
+is a two-phase count of one meter unit a frame: **drain `hud_meter_value` to zero for
+`$410` packed-BCD points a unit, then refill it to `min(value_at_setup + 4, hud_meter_max)` and raise
+`round_end_reload_request`** — which `game_key_actions`' first arm, ported in phase A, consumes.
+`bg_plot_round_banner`'s "ROUND BONUS" / "PERFECT! 10000 PTS" strings, reconstructed in batch 12, are
+this sequence's own banner, and the setup arm is what plots them.
+
+**THREE FINDINGS IN THE BYTES, all reproduced and all pinned.**
+
+* **THE X THE SCORE ADDER CARRIES IN IS PRODUCED INSIDE THE RUN**, which puts it in the small class
+  the project can drive differentially rather than assume — `$6c26` (batch 33) and `$1260` (batch 40
+  phase B) are the others, and what `$1260` was first at was having ARMS THAT DISAGREE on the bit.
+  A first draft of this line called the site the second of its kind, which is the same flattening
+  batch 33's gate corrected once already. `subq.w #1,$b6fa.l` at `$e058` is the instruction immediately above
+  `move.l #$410,d0 / bsr bcd_add_score_bd70`, and a `move.l` of an immediate is X-silent — so the
+  extend the packed-BCD add folds in is that decrement's own BORROW, set exactly when the meter was
+  already zero. **A meter already empty therefore scores one MORE and does not end the drain**: the
+  word wraps to `$ffff`, the borrow rides into the add, and the `tst.w` below sees a non-zero word.
+  Both halves are required by the case, and the two extends are asserted DISTINGUISHABLE on the seed
+  before the value is compared.
+* **THE TWO ENDINGS THAT CLEAR STATE ARE `clr.l`s OVER WORD PAIRS.** `$e092` clears
+  `event_finished_e1be` together with `round_bonus_active`, and `$e098` the target together with the
+  phase flag: four words in two instructions. **This corrects `$e1be`'s plate**, which credited that
+  word with fewer operand sites than the image has — the missing one is a longword store based at the
+  pair, which a census keyed on the WORD forms at that address does not see. It is the direct-reader
+  census lesson again (batch 35), in its widest form yet: a census bounds the OPERAND WIDTHS it
+  scanned as well as the addressing modes.
+* **THE SETUP'S TARGET IS A SIGNED MINIMUM AND ITS BUMP CAN WRAP.** `addi.w #$4,d0 / cmp.w d0,d1 /
+  blt` compares 16-bit signed words, so a meter at `$7ffe` bumps to `$8002`, reads as negative, and
+  the clamp does not fire. Declared fabricated and pinned, because every reachable seed leaves the
+  compare's signedness free.
+
+And one reading settled from the bytes rather than guessed: **`$e0a8` is a TRUE ROUTINE, not a
+continuation arm.** `bsr.w $e0a8` at `$e048` is its one caller and it ends in its own `rts` at
+`$e10e`, with `bg_plot_round_banner` beginning at `$e110` — so an `fn` there does not re-create the
+Ghidra truncation batch 40 phase B warned about.
+
+### The first interrupt handler this project has ever RUN
+
+`vbl_handler` ends in `rte`, and **no routine in any of the three ports had ever ended in one** —
+BuggyBoy and Joust contain no `rte` instruction at all, so there was no convention to copy. The one
+designed here is in `README.md` ("Running a routine that ends in `rte`") and in `include/game.h`;
+the short form:
+
+* **The runner's frame is an `rts` frame and an `rte` pops a wider one.** `osh_run` plants the 4-byte
+  sentinel AT a7; `rte` takes a SIX-byte exception frame, so it reads the sentinel's high word as a
+  status register and assembles a PC that is not the sentinel. **No poke fixes it** — the runner
+  rewrites that longword after every poke lands.
+* **So the case checkpoints the `rte` itself**, which loses nothing observable (the `rte` restores a7
+  and the SR and writes no image byte) and is **SELF-WITNESSING**, unlike every other `stop_pc` case
+  here: the handler has no `rts`, so the checkpoint is the only stop and `emu.run` raises when a run
+  reaches neither. That premise is a CASE — the walk decodes the body and requires exactly one
+  terminator — and a **NEGATIVE CONTROL** runs the same case without the checkpoint and requires the
+  raise.
+
+Its music tick is not re-modelled here: `test_sound.py`'s `_whole_tick_model` is imported and composed
+with the handler's own arithmetic either side of it, so the two cannot disagree. Three machines are
+driven, and the run's ordered hardware-read stream is compared against what each declaration implies.
+
+### THE HONEST STOP: why `flip_screen` did not land, and what would land it
+
+**The blocker is the poll model, not the hardware**, and that is the surprise worth recording. On
+`PORTABILITY.md`'s pricing `flip_screen` is T3 HW_WRITE_ONLY — three dropped REGISTERS over four
+write instructions, `$ffff8240` being written twice by the flash's two exclusive arms — which makes it
+exactly as portable as `set_palette`, green since batch 12. Its hardware writes would be a sink and an
+honestly-unpinned line, the shape this port has used for sixteen colour registers for thirty batches.
+
+What stops it is that **it busy-waits TWICE on `vbl_counter` — and the danger is not that the model
+refuses that, it is that the model ACCEPTS it.** The gate rewrote this section; the first draft said
+the two waits could not be run and that is the reassuring version of a worse fact.
+
+1. **THE OBVIOUS ONE-RUN CASE GOES GREEN WHILE THE TWO SIDES RUN DIFFERENT ITERATION COUNTS.** Seed
+   `vbl_counter >= 1` so the first wait (`$6aa`) falls through in ONE poll, declare a single trigger
+   at `$6d0`, and `harness.py` passes it — its guard refuses only a schedule naming more than one
+   trigger *PC*, and this names one. Then the counters agree **by an off-by-one that cancels**: the
+   candidate's poll counter is a run TOTAL, so the store fires on the second wait's iteration
+   `nth - 1` and the total is `1 + (nth - 1) = nth`; the oracle counts arrivals at `$6d0` alone and
+   its loop exits after `nth` of them. `arrivals == polls` holds while the reconstruction ran one
+   iteration fewer than the original. **AND THE MUTANT THAT DELETES THE FIRST WAIT SURVIVES IT** —
+   the totals still match, and `clr.w $74a.l` at `$6d8` wipes the scheduled store out of the image so
+   the byte diff is identical too. Poisoning cannot rescue it: the attribution pass is refused over a
+   byte the run's own schedule stores.
+2. **SO THE DIFFERENTIAL MUST BE SPLIT AT `$6ca`, and that is required rather than an economy.** One
+   wait per run is the only shape in which the poll total and the arrival total count the same event.
+   The second wait cannot be seeded past — `move.w $74a.l,d0` at `$6ca` then `cmp.w $74a.l,d0 /
+   beq.s` at `$6d0` compares against a copy taken one instruction earlier, so the first comparison
+   always holds — while the FIRST can, which is exactly what makes the composite case look driveable.
+   The split decides the shape of `flip_screen`'s C (three exported pieces instead of one), which is
+   why it is registered rather than done in passing.
+3. **THE WIDTH IS A SMALLER MATTER THAN THE FIRST DRAFT MADE IT.** Both compares are WORDS and a poll
+   carries a byte, but a word wait needs no new kit primitive: one `sched_poll8` at `$74a` ticks the
+   clock and applies the due store, and `bus_read_word` supplies the comparand — one poll per
+   arrival, full width, none of the aliasing `test_sched_model.py` documents. What a hand-rolled loop
+   would lose is `sched_wait8`'s CAP, and an uncapped wait the schedule never releases is an
+   unbounded hang. **So the honest gap is a capped word-wait wrapper, not a capability** — and
+   `sched_poll16` is demoted from "needed" to "the convenient spelling of something that already
+   works".
+
+`game_main_loop` is not ported for a plainer reason: the body makes FIFTEEN calls — three `bsr.w`
+($638, $53e, $50a) and twelve `jsr` — and FOURTEEN of them are reconstructed. The one that is not
+is the `jsr $694.l` it ends on. (An earlier draft of this paragraph counted the `jsr`s alone.) A frame that cannot flip is not a
+frame, and porting the caller of an unportable callee would bury the one boundary that matters inside
+a body no case could enter. Both registrations are in `../names.txt` (`cmt 0x694`, `cmt 0x4a0`) at the
+depth the `$638` plate was written at thirty batches ago — because that is the plate that paid for
+itself in phase A.
+
+### The mutation sweep: 58 DISTINCT MUTANTS OVER 66 RUNS, FIVE CLEAN ROUNDS
+
+**ROUND ONE: 44 mutants, clean. 38 CAUGHT, 6 SURVIVED.** Four shapes over all seven routines — drop a
+call, swap adjacent statements, invert a gate, get a width wrong — plus two test-side mutants at the
+`rte` convention's own checks. **ROUND TWO: 7 runs, clean. 5 CAUGHT, 2 SURVIVED**: the four repairs
+re-run (all four now CAUGHT), the two classified equivalences re-run to say so on the repaired tree,
+and one CONTROL. **ROUND THREE, after the independent gate: 8 mutants at what the gate changed —
+5 CAUGHT, 3 SURVIVED**, and one of those survivors was a hole in a check the gate had just added.
+**ROUND FOUR: 4 runs — 2 CAUGHT (both round-three repairs) and 2 SURVIVED**, the latter two being
+round-three mutants RE-SPELT: one had deleted `actor_table_reset` instead of moving the reads past
+it, the other was a no-op cast, so both had returned a verdict about something other than what they
+named. Their round-three rows are DISCARDED — a mutant that lands but tests the wrong thing is worse
+than one that does not apply, because its verdict looks like evidence — **and both re-spellings then
+SURVIVED, which is the verdict each was written to establish:**
+
+* **`respelt/the-bank-table-is-read-before-the-reset` — EQUIVALENT, BY CONSTRUCTION AND MEASURED.**
+  Moving the two `bus_read_long`s above `actor_table_reset` cannot be seen by any surface the harness
+  compares: a READ leaves no trace in the write ledger, the reset writes `WB_ACTOR_TABLE_A30` and the
+  bank table is elsewhere, so the image is byte-identical either way. This is the one row that says
+  so with a run rather than with an argument, and `src/game.c`'s comment at the site states the same
+  thing — the original's order is reproduced because nothing else keeps it right.
+* **`respelt/the-refill-compares-the-value-it-computed` — EQUIVALENT, and it is the DRAIN arm's
+  equivalence at a second site.** `addq.w #1,$b6fa.l / move.w $b6fa.l,d0` re-reads the word it just
+  stored, and the port reproduces the re-read; the mutant compares the computed value instead. The
+  two can differ only if something writes `$b6fa` between the store and the load, and between them
+  there is no instruction at all. Nothing can separate them, so no case is owed — this is the
+  READ-AFTER-STORE class's EIGHTH sighting and, like the drain's, one where the alias was shown
+  absent rather than found present.
+
+**ROUND FIVE: 3 mutants, clean — 3 CAUGHT**, closing the coverage hole the second gate MEASURED
+(below).
+
+Every round forced the relink, required each anchor to occur exactly once, read unpiped
+returncodes, restored by copy from a snapshot taken after a green check, and cleared
+`test/__pycache__` between mutants; the subset (`test_game.py`, ~5 s) was the fast pass and every
+subset survivor was re-run against the WHOLE suite (~46 s) before being called one.
+
+**FOUR REAL HOLES, all repaired and all re-run to CAUGHT.**
+
+* **`882/the-actor-pass-is-dropped` and `882/the-two-calls-swap-order`, and they had ONE cause.**
+  Every walk case dispatched NULL handlers, which write nothing — so a port that dropped the whole
+  behaviour pass left the identical image, and a port that ran it BEFORE the latch left the identical
+  image too, because no behaviour those cases reach consumes the joystick. **The repair is one case
+  and it kills both**: slot 34, the shop's item cursor, is the cheap handler that both WRITES (it
+  plants its new x and y as one longword) and READS THE EDGE. With the stick newly pushed right,
+  latch-then-pass sees the edge and walks the cursor while pass-then-latch sees nothing — so the two
+  orders leave different memory. A control beside it holds the same stick from the previous frame and
+  requires the cursor to stand, which is what makes the case about the EDGE and not the level.
+  **The lesson: a call is only measured by an input that makes the callee DO something**, which is
+  batch 42 phase A's guard lesson arriving at a different door.
+* **`624c/the-bits-are-masked-before-the-or`.** The original does not mask its argument — `or.b d0,d1`
+  takes the whole low byte — and every case drove a value inside the three floppy lines, so masking
+  changed nothing. Two out-of-range values ($18, $ff) now pin the width. Nothing in the game reaches
+  them — $6268 CALLS it with 7 and $6242 FALLS THROUGH into it with 5, and those two are the whole
+  reachable set — and the case says so. (The first draft of this said $6268 was the only entrant;
+  $6242's fall-through is recorded in its own plate and was missed.)
+* **`e0a8/the-phase-flag-is-left-as-it-was`.** Every setup case came in with the phase flag already
+  down, so `clr.w $e1c4.l` wrote 0 over 0 — and `poison=False` (which these rows need) meant the
+  attribution pass could not cover for it. A row now comes in with the flag STANDING.
+
+**TWO EQUIVALENCES, and one of them is measured by CONTRAST rather than argued.**
+
+* **`e032/the-drain-does-not-re-read-the-meter-after-the-score`.** `tst.w $b6fa.l` at `$e068` re-reads
+  the meter AFTER the score, and the port reproduces that rather than testing the value it just
+  stored. The two can differ only if something between them writes that word, and the only thing
+  between them is `bcd_add_score_bd70`, which writes `$bd70` and `$bd78`. **THE PREMISE IS CARRIED BY
+  A CONTRAST, NOT BY A COUNT**, and an earlier draft of this bullet said otherwise: it credited the
+  drain rows with counting how many times the meter is stored to, which the suite cannot do —
+  `info["writes"]` is address-keyed, so a second store to the same word overwrites the entry and
+  leaves no trace, and the case's own comment says so. What the rows assert is the reachable thing, that both bytes of the
+  meter word are in the write set. What carries the equivalence is round two's CONTROL: a score adder
+  mutated to ALSO write the meter makes the two orders differ, and it is CAUGHT. This is the READ-AFTER-STORE class's seventh sighting and the
+  first where the alias was shown absent rather than found present.
+* **`716/the-terminator-premise-accepts-an-rts`** — SURVIVED BY DESIGN, and the composite cannot be
+  built. It weakens a premise about the ORIGINAL's bytes, and no mutation of this port can put an
+  `rts` into the shipped image for it to catch. Recorded as a tripwire for a future retype of the
+  walk rather than claimed as covered — the same standing the kit's kept-count assertion has.
+
+### What the independent gate found, and its best find INVERTED this phase's headline
+
+Eight finder angles over the whole changeset. **The reconstruction came back correct** — one angle
+traced all seven routines instruction-by-instruction against the image and reported no defect — and
+every finding below is about a CLAIM, a check, or a seed. That is the shape a phase's review has
+once the C is right, and three of them were serious.
+
+**1. THE `flip_screen` BOUNDARY WAS WRONG IN THE REASSURING DIRECTION, which is the worst way for a
+registered boundary to be wrong.** The first draft said the model REFUSES the two-wait run, so the
+next phase would have read "the ground is safe". It does not refuse it: `harness.py` refuses two
+trigger PCs and this arrangement has ONE, so the natural case passes vetting and the counters
+balance by an off-by-one that cancels. The gate did the arithmetic and then went further — the
+mutant that DELETES the first wait survives that case, because the totals still match and
+`clr.w $74a.l` wipes the scheduled store out of the image. The section above is rewritten around
+that, which promotes the `$6ca` split from an economy to the required shape and demotes
+`sched_poll16` from a needed capability to a convenient spelling. **A boundary that overstates the
+obstacle costs a phase; one that understates it costs a false green.**
+
+**2. A HOLE IN THE SETUP'S OWN SWEEP: the maximum was never varied.** Every `round_bonus_setup` case
+seeded `WB_HUD_METER_MAX = $14`, so a port that hard-coded the threshold passed the whole battery —
+and the first repair did not fix it either, because the row added to vary the maximum sat AT the
+clamp point, where a hard-coded `$14` and the real `$0c` give the same answer. Round four's row
+BINDS (`$08`/`$0a`) and the mutant is CAUGHT. **A row that varies an input does not test it unless
+the output moves.**
+
+**3. SIX ASSERTIONS THAT COULD NOT FIRE.** An `_assert_untouched(info, addr, ...)` helper was called
+after `leaf.run` in six cases to say "this arm does not write X" — and `leaf.run` asserts
+`stray_writes` BEFORE returning, so for every address they named the run had already raised. Worse,
+`info["writes"]` is the ORACLE's set while every caption blamed the port. The helper is gone; the
+`allowed` list was the pin all along and now says so. Three smaller tautologies went with it (a
+`(low, high) == (0x08, 0xf0)` over the test's own arithmetic, a distinctness assert on a tuple built
+distinct two lines above, and a redundant half of the ledger's sum).
+
+**4. THE `$e1be` CORRECTION WAS INCOMPLETE, AND ITS RETRACTION INHERITED AN ERROR.** `names.txt` was
+fixed and `include/wonderboy.h`'s plate was not; the new note beside it then described the old
+census as keyed on the absolute WORD forms when what the plate actually said was "absolute forms" —
+and `clr.l $e1be.l` IS an absolute form, so the caveat never covered it. What hides the site is its
+WIDTH, not its mode. **And `test_player.py`'s operand census had the answer the whole time**: the
+`clr.l`'s operand word was sitting in its unclassified near-miss bucket, which is the exact
+mechanism that section was built to provide. `ABSOLUTE_FORMS` now carries `clr.l <abs>.l`, the row
+names three sites, and the bucket is empty. **The near-miss bucket only works if somebody reads it.**
+
+**5. TWO FACTUAL COUNTS WERE WRONG, both in registrations.** `psg_set_drive_select` has TWO
+entrants, not one — `$6242` falls through into it with `bits = 5`, which its own adjacent plate has
+recorded all along — and `game_main_loop` makes FIFTEEN calls, not twelve, of which fourteen are
+reconstructed (the first count was of the `jsr`s alone and dropped the three `bsr`s). Both are
+corrected in all four places each appeared.
+
+**6. AND THREE STALE SURFACES ELSEWHERE, all of them this phase's business.** `include/hud.h` cited
+`$e064` as the canonical example of an entry-X a case CANNOT drive — this phase ported it and showed
+the bit is produced inside the run — and its threaded-site count was six where it is now seven.
+Batch 41 phase C's STATUS section still carried the retracted `$e1be` claim, so grep-to-zero was not
+met on a named surface. And the "second driveable threaded X" line overstated: `$6c26` (batch 33)
+precedes both, and what `$1260` was first at was having ARMS THAT DISAGREE.
+
+**7. A SECOND GATE MEASURED A COVERAGE HOLE THE FIRST HAD LEFT, and it is the sharpest finding of
+the batch because it was demonstrated rather than argued.** A finder inserted `if (bits == 5) kept
+= 0;` into `psg_set_drive_select` and it **SURVIVED the whole 6,091-case suite, twice, relinked** —
+the battery drove `bits` at 0, 1, 2, 4, 7, `$18` and `$ff`, and 5 is the value `$6242` falls through
+with, which is every drive-A disk read in the game. **The battery had pinned two UNREACHABLE values
+and missed one of the two REACHABLE ones.** 5 is now in `DRIVE_BITS`; round five ran the finder's
+mutant and two neighbours that bound the repair (the same trick at `bits == 7`, and one forcing side
+select on the drive-A value) and all three are CAUGHT. The lesson is not "sweep more values": it is
+that **a value chosen to pin an instruction's WIDTH does not also pin what the game DOES with it**,
+and the reachable set — which `cmt 0x624c` had spelt out one edit earlier — is the list a battery
+owes a case each.
+
+**8. AND THE `$6242` ENTRANCE ITSELF HAS NO CASE**, which the plate now says instead of implying
+otherwise. The routine is named and unreconstructed, so what pins `bits = 5` is a direct differential
+of `$624c` with d0 = 5, not a run through the fall-through, and the two writes `$6242` makes before
+falling in are unported with it.
+
+**Declined, with reasons.** `SETUP_REGIONS` is a hand-written band table where `test_stage.py`
+declines to keep one and `test_scene.py` derives the same routine's bands from `model_load_window` —
+the derived form is the right depth and is in the queue; what landed instead is that every base is
+now the header constant rather than a literal with a test proving the literal equals the constant.
+`_assert_untouched`'s successor and a `make_long` in the kit's `machine.h` are both one level up
+from this change and are queued rather than folded in.
+
+### Honestly unpinned
+
+* **`flip_screen`'s three hardware writes and `game_main_loop`'s whole body**, for the reasons above.
+  Neither is a silence: `../names.txt` carries both registrations with the mechanism named.
+* **The `movem` pair around `vbl_handler`.** It saves and restores the machine's registers, and its
+  60 bytes land in the runner's stack band, which the harness excludes from the diff. Nothing on
+  either side records that the registers came back, and a C function's registers are its compiler's
+  business — so what is pinned is the handler's memory and chip effect, not its transparency to the
+  code it interrupted.
+* **WHEN the VBL fires.** A differential enters the handler deliberately, on a seeded frame; the
+  scheduling is the case's claim, exactly as a `schedule` is a claim about the ACIA. Nothing here
+  says the handler runs fifty times a second, or between any particular pair of instructions.
+* **THE SPINE MODULE IS NO LONGER TARGET-BUILDABLE, and `STATUS.md`'s standing claim that
+  `snd_psg_silence` is the only routine in that position is now stale.** `src/game.c` calls
+  `psg_port_read`/`psg_port_write`, which `psg.h` states are off-target only — so
+  `psg_set_drive_select`, `floppy_deselect_drives`, `vbl_handler` and, as one translation unit, the
+  whole spine join it. The remedy is the same kit task already queued for the sound module (an
+  on-target `src/psg.c` that writes the two ports), and nothing here makes it larger.
+* **`round_bonus_setup`'s write set BYTE BY BYTE.** It runs `actor_table_reset`, the whole
+  stage-transition hinge and the round banner — 181,189 bytes across 37 bands, each already modelled
+  by the battery that owns it. What this phase's cases add is the routine's own four words byte for
+  byte, plus a REGION table saying every other byte falls inside a band one of the three callees owns.
+  The strong pin is the whole-image differential; the region table is a stray-write guard and says so.
+  (It earned its place immediately: it caught the banner's PERFECT arm scoring on the one row where
+  the meter comes in full, which is now asserted both ways.)
+* **The sixteen colour writes `round_bonus_setup` reaches through `set_palette`** — inherited
+  unchanged from `stage.h`'s standing claim, and the reason both `$e032` and `$e0a8` are T3.
+* Everything phase A's list carries is unchanged.
+
+### Queue
+
+**LANDED THIS PHASE, so it is not carried**: the `$e032`/`$e0a8` pair (long queued); `$e1be`'s plate
+correction.
+
+**BORN THIS PHASE:**
+* **SPLITTING `flip_screen`'s DIFFERENTIAL AT `$6ca`** — one wait per run, which is the shape the
+  gate showed is required rather than optional, and a decision about the C's shape (three exported
+  pieces instead of one).
+* **A CAPPED WORD-WAIT WRAPPER in the kit** — `sched_wait8`'s cap and `os_refused()` tally over a
+  `sched_poll8`-plus-`bus_read_word` body. NOT `sched_poll16`, and not a capability: the spelling
+  already works, and what is missing is only the guard that turns an unreleased wait into a refused
+  case instead of a hang.
+* **A per-SITE poll counter**, which would let two waits share one run. It is the deeper remedy and
+  the split above does not need it. **It SUPERSEDES phase A's registered per-ADDRESS counter** — and
+  the correction is not the one this phase first wrote: phase A's own pair (`$5e6` and `$60e`) are
+  BOTH on `$879`, so per-address was already wrong for the case it was registered against.
+  `flip_screen` is the second sighting of that, not the discovery.
+* **THE COUNTING HAZARD ITSELF, kit-side.** `harness.py` refuses two trigger PCs and says why; it
+  says nothing about two POLLING SITES under one trigger, which is the arrangement that balances by
+  cancellation. A guard, or at minimum a paragraph in `TRAP_MODEL.md`'s Phase 8, belongs there.
+* **THE `rte` CONVENTION, kit-side.** The 6-byte-exception-frame reason a handler cannot reach the
+  sentinel is a property of `oracle/shim.c` and is true for any game; it is written down in three
+  Wonder Boy files and in no kit document, next door to `TRAP_MODEL.md`'s isomorphic `Pterm` case.
+* **`SETUP_REGIONS` DERIVED FROM THE CALLEES' MODELS** rather than hand-written, the way
+  `test_scene.py`'s `load_window_bytes` derives `stage_load_window`'s from `model_load_window`.
+  `test_stage.py` declines to keep such a table by name and records that its own earlier draft was
+  wrong about its contents; this one is a stray-write bound rather than a model, and it says so, but
+  the derived form is the right depth.
+* **`_assert_untouched` and a `make_long`/word-width helper, one level up.** The first is general
+  test vocabulary living in one battery while nine call sites across five batteries spell it raw;
+  the second would retire `WB_WORD_BITS` and the two `WORD_BITS` copies in `src/stage.c` and
+  `src/scroll.c` together, and `machine.h` already owns `set_low_word` beside it.
+* **WHOLE-BODY `asm()` PINS FOR THIS PHASE'S SEVEN ROUTINES.** `test_game.py`'s `GAME_ROUTINE_PINS`
+  records what each of the module's nine has — two `entry-bytes`, one `body`, one `terminator` and
+  five `none` — and the five are a real gap: phase A assembled both of its routines whole, and this
+  phase assembled one. The rows cite this entry, so the two must not drift apart.
+* **A `subsystems.tsv` range for the spine**, carried from phase A and now with seven more routines
+  in it; still blocked behind the queued `../out/hw_scan.tsv` re-scan.
+
+**CARRIED, unchanged**: the `kit_smoke_project.py` miniature for Phase 8's harness plumbing; moving
+the poked-input block out of the image; the three remaining copies of `jsr_d16_an` / `cmp_b_imm_dn` /
+`cmp_b_abs_l_dn`; `player_run_map_cell`'s flute arm; the deselected attribution re-run for two of
+batch 41 phase F's survivors; `snd_trigger_effect`'s and `snd_play_song`'s exit X; the odd drift
+cursor; `hud_meter_charge`; `src/actor.c` on to `bus.h`; `leaf.run_reaching` / `final_pc` to the kit;
+the `TRAP_MODEL.md` `stop_pc` note; `bus.h` to the kit; `abcd_byte`/`sbcd_byte` to the kit;
+regenerating `../out/names_dump.txt`, `../out/hw_scan.tsv`, `../decomp.c` and
+`../out/wonderboy_dis.txt`; `scene_spend_visit_budget`'s `$1ab4` boundary; the tier partition; the
+`scene_run_effect` latent guard; the duplicate `cmt` directives at `0x1023a` and `0x10394`; the
+`WB_HUD_SLOT_BBC2`/`_BBC6` renames; `map.c`'s unguarded `WB_ACTOR_X` write; which-monster-is-which;
+`leaf.stray_writes`' O(writes x bands) scan.
+
+### Lessons
+
+* **A TIER PRICES WHAT THE ORACLE CAN SEE, NOT WHAT THE HARNESS CAN DRIVE.** `PORTABILITY.md` priced
+  `flip_screen` as ordinarily portable and was right about its hardware; what stopped it was the poll
+  model's width and its counting, which no tier has a column for. The two come apart wherever a
+  routine WAITS on something outside itself. `PORTABILITY.md` §0m records it against the row.
+* **AN INVENTORY NEEDS A LEDGER, NOT A LIST.** Phase A's table asserted what was left; a row that
+  left it would have vanished with the remaining sum still agreeing with itself. Making the ported
+  rows a second asserted list — re-measured, credited with the same count, disjoint from the first,
+  and required to name real symbols — is what makes "380 bytes moved" a measurement.
+* **THE PLATE IS STILL THE CHEAP AUTHORITY, and this time it was the plate about a WORD.** `$e1be`'s
+  operand census was taken over the word forms at that address and missed a longword store based
+  there. A census bounds the OPERAND WIDTHS it scanned as much as the addressing modes — scan both,
+  or say which you scanned.
+* **A BOUNDARY THAT UNDERSTATES ITS OBSTACLE COSTS A PHASE; ONE THAT OVERSTATES THE MODEL'S
+  REFUSAL COSTS A FALSE GREEN.** This phase's first draft said the harness refuses `flip_screen`'s
+  two-wait run. It accepts it, and balances its counters by an off-by-one that cancels. The
+  registered-boundary rule has always been about writing enough down; the gate added the other half
+  — **check that the thing you say the model REFUSES is actually refused**, by reading the guard,
+  not by reasoning about what it ought to guard.
+* **A ROW THAT VARIES AN INPUT DOES NOT TEST IT UNLESS THE OUTPUT MOVES.** The repair for "the
+  maximum is never varied" added a row with a different maximum — at the clamp point, where the
+  right answer and the hard-coded one coincide — and the mutant survived a second time. Same shape
+  as batch 40 phase C's "a survivor's first explanation can be true and not the cause", one step
+  earlier: the fix was aimed correctly and landed on a value that could not show it.
+* **AN ASSERTION AFTER A HELPER THAT ALREADY RAISED IS NOT AN ASSERTION.** Six of them, all saying
+  "this arm does not write X" after `leaf.run` had already refused that write as a stray. Before
+  adding a check, ask which existing check would fire FIRST on the input it is meant to catch.
+* **AND A MUTANT THAT LANDS BUT TESTS THE WRONG THING IS WORSE THAN ONE THAT DOES NOT APPLY.** Two
+  of round three's rows did: one deleted a call where it meant to move a read past it, the other was
+  a no-op cast. A non-applying mutant is loud (mode 9); a mis-aimed one returns a verdict that looks
+  like evidence. Re-spell and re-run — the rows are discarded, not reinterpreted.
+* **A CONVENTION THAT HAS NO PRECEDENT SHOULD SHIP WITH ITS OWN NEGATIVE CONTROL.** The `rte`
+  checkpoint is the first of its kind here, and the thing that makes it evidence rather than a habit
+  is the case that runs without it and requires the failure. That cost three lines and it is what a
+  reader meeting `stop_pc=VBL_RTE` in six months needs.

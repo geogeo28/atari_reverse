@@ -9,10 +9,16 @@
  */
 #include "game.h"
 
+#include "actor.h"
+#include "behavior.h"
 #include "bus.h"
+#include "hud.h"
+#include "input.h"
 #include "sound.h"
+#include "stage.h"
 #include "wonderboy.h"
 
+#include "psg.h"       /* the YM2149's two ports — the floppy pair below, off target only */
 #include "sched.h"     /* the kit's external-agent model — the two waits below, off target only */
 
 /* Wait on WB_KEY_LAST_SCANCODE until it reads `code` — the shape both of this module's spins have.
@@ -130,4 +136,200 @@ void game_unpause_on_key_release(uint8_t *image) {
     image[WB_KEY_LAST_SCANCODE] = 0;
     wr16(image + WB_GAME_PAUSED, 0);
     image[WB_TEXT_REQUEST] = WB_TEXT_REQUEST_DISMISS;
+}
+
+
+/* --- $882: the frame's input-and-actors pair ---------------------------------------------------- */
+
+/* $882 — ten bytes and two `bsr`s. It exists because the two must run in this order and adjacently:
+ * `joy1_latch_edge` shifts the joystick byte one frame down the pipeline, and the behaviour pass
+ * below it is what reads the edge that shift produces. game_main_loop's $66e-gated block reaches it
+ * last of the four, so a PAUSED frame runs neither.
+ *
+ * The pass's own d0 (which exit its walk took) is dropped here: `bsr $8d0 / rts` leaves it in the
+ * register and nothing up the chain reads it. */
+void game_latch_input_and_step_actors(uint8_t *image) {
+    joy1_latch_edge(image);
+    (void)actor_behavior_pass(image);
+}
+
+
+/* --- $50a: the follow cursor, snapped to an even pixel ------------------------------------------ */
+
+/* $50a — game_main_loop's one `bsr`, between bg_scroll_blit and sprite_draw_pass, and what it does
+ * is quantise the camera: WB_SCROLL_FOLLOW_X and _Y are forced to EVEN pixels so the sprite pass
+ * draws the followed actor on a word boundary rather than a nibble-shifted one.
+ *
+ * BOTH HALVES ARE SNAPPED DOWN, and only x can be snapped UP instead. The `andi.l` clears bit 0 of
+ * each half in one instruction, so y is always rounded down; then, while the followed actor's SIDE
+ * flag is set and the masked x differs from the raw one — which is exactly the case where x was ODD
+ * — the whole step is added back, rounding that x up. The bias follows the actor's facing, which is
+ * what stops the camera stepping the wrong way under him on the frame he turns.
+ *
+ * THE COMPARE IS AGAINST MEMORY, NOT AGAINST A KEPT COPY. `cmp.w $9934.l,d0` at $528 re-reads the
+ * high half out of the image after the mask, so "was x odd" is answered by the byte in memory. Read
+ * back the same way here: the two orders differ for any agent that wrote the word in between, and
+ * this reconstruction must be the one the original spells. */
+void game_snap_follow_cursor(uint8_t *image) {
+    uint32_t followed = followed_actor_record(image);
+    uint32_t snapped = bus_read_long(image, WB_SCROLL_FOLLOW_X) & WB_SCROLL_FOLLOW_EVEN_MASK;
+    uint16_t x = (uint16_t)(snapped >> WB_WORD_BITS);
+    uint16_t y = (uint16_t)snapped;
+
+    if (bus_read_byte(image, addr_add(followed, WB_ACTOR_FLAGS)) & (1u << WB_ACTOR_FLAG_SIDE_BIT)
+            && x != bus_read_word(image, WB_SCROLL_FOLLOW_X))
+        x = (uint16_t)(x + WB_SCROLL_FOLLOW_SNAP_UP);
+
+    bus_write_long(image, WB_SCROLL_FOLLOW_X, ((uint32_t)x << WB_WORD_BITS) | y);
+}
+
+
+/* --- $e032/$e0a8: THE ROUND BONUS ---------------------------------------------------------------
+ *
+ * The sequence WB_EVENT_FINISHED_E1BE has been waiting for since batch 41 named it. Two phases,
+ * one unit of WB_HUD_METER_VALUE a frame each way: drain it to zero for WB_ROUND_BONUS_SCORE a
+ * unit, then refill it to WB_ROUND_BONUS_METER_TARGET and ask game_key_actions for the reload. */
+
+/* $e0a8 — the setup arm, and a true routine rather than a continuation: `bsr.w $e0a8` at $e048 is
+ * its one caller and it ends in its own `rts`.
+ *
+ * It empties the A30 actor table, loads the bonus stage through the transition hinge, switches the
+ * game into A30 mode, latches WB_ROUND_BONUS_ACTIVE so the count runs from the next frame, plots
+ * the banner, and computes the refill target.
+ *
+ * THE TARGET IS A SIGNED MINIMUM AND THE BUMP CAN WRAP. `addi.w #$4,d0 / cmp.w d0,d1 / blt` takes
+ * WB_HUD_METER_MAX when it is BELOW value + 4 and the sum otherwise, both as 16-bit signed words —
+ * so a meter at $7ffe bumps to $8002, reads as negative, and the target becomes the sum rather than
+ * the maximum. Reproduced as the word arithmetic it is.
+ *
+ * THE MAP AND TILE BANK COME OUT OF THE TABLE; THE START RECORD DOES NOT. a1 is loaded from
+ * WB_SCENE_MAP_BANK_TABLE and then immediately overwritten by `lea $1d434.l,a1`, so the entry's two
+ * longwords are the hinge's `map` and `tiles` and its `start` is the literal. */
+void round_bonus_setup(uint8_t *image) {
+    actor_table_reset(image, WB_ACTOR_TABLE_A30);
+
+    /* READ AFTER THE RESET, because $e0b6 reads it there. The reset writes WB_ACTOR_TABLE_A30 and
+     * the bank table is elsewhere, so the two orders agree on the game's own image — but a READ
+     * leaves no trace in the write ledger, so no surface the harness compares would see them come
+     * apart. Spelt in the original's order, which is the only thing keeping it right. */
+    uint32_t map_bank_entry = addr_add(WB_SCENE_MAP_BANK_TABLE, WB_ROUND_BONUS_MAP_BANK);
+    uint32_t map = bus_read_long(image, map_bank_entry);
+    uint32_t tiles = bus_read_long(image, addr_add(map_bank_entry, WB_LONGWORD_BYTES));
+
+    stage_load_window(image, map, WB_ROUND_BONUS_START_RECORD, tiles);
+    wr16(image + WB_STATE_FLAG_A30, WB_STATE_FLAG_SET);
+    wr16(image + WB_ROUND_BONUS_ACTIVE, WB_ROUND_BONUS_ACTIVE_SET);
+    bg_plot_round_banner(image);
+
+    int16_t bumped = (int16_t)(bus_read_word(image, WB_HUD_METER_VALUE) + WB_ROUND_BONUS_METER_BUMP);
+    int16_t maximum = (int16_t)bus_read_word(image, WB_HUD_METER_MAX);
+    wr16(image + WB_ROUND_BONUS_METER_TARGET, (uint16_t)(maximum < bumped ? maximum : bumped));
+    wr16(image + WB_ROUND_BONUS_REFILLING, 0);
+}
+
+/* $e032 — run once a frame from game_main_loop's $66e-gated block, and the first of its four calls.
+ *
+ * THE X IT HANDS THE SCORE ADDER IS PRODUCED INSIDE THE RUN. `subq.w #1,$b6fa.l` at $e058 is the
+ * instruction immediately above the `move.l #$410,d0 / bsr bcd_add_score_bd70`, and a `move.l` of
+ * an immediate does not touch X — so the extend the packed-BCD add carries in is the BORROW out of
+ * that decrement, which is set exactly when the meter was already zero. Threaded rather than
+ * assumed clear: this is one of the sites where the bit has a driveable producer above it.
+ *
+ * A METER THAT WAS ALREADY ZERO THEREFORE SCORES ONE MORE. It wraps to $ffff, the borrow rides into
+ * the BCD add, and the `tst.w` below sees a non-zero word — so the drain does not end and the phase
+ * does not switch. Reachable only if something else emptied the meter first; reproduced because it
+ * is what the instructions say.
+ *
+ * THE TWO ENDINGS THAT CLEAR STATE ARE `clr.l`s OVER WORD PAIRS. $e092 clears
+ * WB_EVENT_FINISHED_E1BE together with WB_ROUND_BONUS_ACTIVE and $e098 the target together with the
+ * phase flag — four words in two instructions, which is why a census of the word forms at those
+ * addresses finds no writer. */
+void round_bonus_run_frame(uint8_t *image) {
+    if (!bus_read_word(image, WB_EVENT_FINISHED_E1BE))
+        return;
+    if (!bus_read_word(image, WB_ROUND_BONUS_ACTIVE)) {
+        round_bonus_setup(image);
+        return;
+    }
+    if (!bus_read_word(image, WB_ROUND_BONUS_REFILLING)) {
+        uint16_t meter = bus_read_word(image, WB_HUD_METER_VALUE);
+        unsigned borrow = word_sub_extend(meter, 1);      /* the `subq.w #1`'s own X, threaded below */
+
+        wr16(image + WB_HUD_METER_VALUE, (uint16_t)(meter - 1));
+        (void)bcd_add_score_bd70(image, WB_ROUND_BONUS_SCORE, borrow);
+        if (bus_read_word(image, WB_HUD_METER_VALUE))
+            return;
+        wr16(image + WB_ROUND_BONUS_REFILLING, WB_ROUND_BONUS_REFILLING_SET);
+        return;
+    }
+    wr16(image + WB_HUD_METER_VALUE, (uint16_t)(bus_read_word(image, WB_HUD_METER_VALUE) + 1));
+    /* `addq.w #1,$b6fa.l` then `move.w $b6fa.l,d0` — the compare's operand is a RE-READ of the word
+     * just stored and not the value the add produced, exactly as the drain arm's `tst.w` is and as
+     * $50a's `cmp.w $9934.l,d0` is. Nothing writes between the two instructions, so the spellings
+     * agree; the original's is the one reproduced, and the three arms now read alike. */
+    if (bus_read_word(image, WB_HUD_METER_VALUE)
+            != bus_read_word(image, WB_ROUND_BONUS_METER_TARGET))
+        return;
+    wr32(image + WB_EVENT_FINISHED_E1BE, 0);              /* ...and WB_ROUND_BONUS_ACTIVE with it */
+    wr32(image + WB_ROUND_BONUS_METER_TARGET, 0);         /* ...and WB_ROUND_BONUS_REFILLING */
+    wr16(image + WB_ROUND_END_RELOAD_REQUEST, WB_ROUND_END_RELOAD_REQUEST_SET);
+}
+
+
+/* --- $624c/$6268: the floppy's drive-select lines ------------------------------------------------
+ *
+ * Not sound, despite the chip. The YM2149's port A carries the floppy's side and drive-select
+ * lines in its low three bits and four other peripherals' in the rest, which is why the write is a
+ * read-modify-write and why the register's prior contents are an input the case must declare. */
+
+/* $624c — replace port A's low three bits with `bits`, keeping the other five.
+ *
+ * `bits` is the original's d0 and only its low three bits reach the chip through the `or.b`; a
+ * caller passing more would SET bits the mask meant to preserve, so the value is not masked here —
+ * the instruction does not mask it either.
+ *
+ * TWO ENTRANTS, NOT ONE, and the second does not call it: $6242 (`floppy_select_drive_a`) loads
+ * d0 = 5, clears the idle timer and FALLS THROUGH into this routine's first instruction. So the
+ * `bits` the game itself produces are 5 and 7 — both inside the three floppy lines — and the values
+ * above them that test_game.py drives are reachable through no path in the image. */
+void psg_set_drive_select(uint8_t *image, uint32_t bits) {
+    (void)image;
+    uint8_t kept = (uint8_t)(psg_port_read(WB_PSG_REG_PORT_A) & WB_PSG_PORT_A_KEEP);
+    psg_port_write(WB_PSG_REG_PORT_A, (uint8_t)(kept | (uint8_t)bits));
+}
+
+/* $6268 — every drive off, which is what vbl_handler calls when WB_FLOPPY_IDLE_TIMER expires. The
+ * `movem.l #$c000,-(a7)` around it saves d0/d1 and is stack traffic alone. */
+void floppy_deselect_drives(uint8_t *image) {
+    psg_set_drive_select(image, WB_PSG_DRIVES_DESELECTED);
+}
+
+
+/* --- $716: THE VERTICAL-BLANK HANDLER ------------------------------------------------------------
+ *
+ * The program's ONE periodic tick — MFP timers A and B are masked off at boot — installed at the
+ * level-4 autovector ($70) by hw_init_vectors and again at $e506. Everything else in this
+ * reconstruction is called; this is called BY THE MACHINE, fifty times a second, and the two words
+ * it maintains are read by code that never runs at the same time as it.
+ *
+ * IT ENDS IN `rte`, NOT `rts`, AND THAT IS ITS WHOLE DIFFERENTIAL PROBLEM. game.h states the
+ * convention the cases use and why the alternative does not work; the C is the body and nothing
+ * else. The `movem` pair is not reproduced: it saves and restores the machine's registers around a
+ * handler that must not disturb the interrupted code, and a C function's own registers are its
+ * compiler's business — the bytes it writes land in the runner's stack band, which the harness
+ * excludes from the diff, so there is nothing there to mirror. NOR IS IT THE ONLY SUCH PAIR ON THIS
+ * PATH: the tick is reached through the stub at $17aea, which is itself `movem.l #$fffe,-(a7) /
+ * bsr.w $17c74 / movem.l (a7)+,#$7fff / rts`, so a run of this handler pushes 120 bytes of saved
+ * registers and not 60. Calling `snd_music_tick` directly skips the second wrapper as well. */
+void vbl_handler(uint8_t *image) {
+    wr16(image + WB_VBL_COUNTER, (uint16_t)(bus_read_word(image, WB_VBL_COUNTER) + 1));
+    snd_music_tick(image);
+
+    uint16_t idle = bus_read_word(image, WB_FLOPPY_IDLE_TIMER);
+    if (idle == 0)
+        return;
+    idle = (uint16_t)(idle - 1);
+    wr16(image + WB_FLOPPY_IDLE_TIMER, idle);
+    if (idle == 0)
+        floppy_deselect_drives(image);
 }

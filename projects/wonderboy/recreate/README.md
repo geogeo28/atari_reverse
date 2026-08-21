@@ -654,6 +654,50 @@ Four rules, each of which cost something to learn:
    `emu.run` correctly refuses. Seed each written byte away from what the routine leaves instead;
    that is what the pass would have bought.
 
+### Running a routine that ends in `rte`
+
+`vbl_handler` (`$716`) is the first routine in this project — or in BuggyBoy or Joust, neither of
+which contains a single `rte` — that a differential has run. **The checkpoint below is not a new
+device**: `stop_pc` is the kit's documented answer for a run that cannot reach an `rts`, and
+`TRAP_MODEL.md` already applies it to a `Pterm` whose own stores land on the sentinel longword.
+What is new is the REASON an interrupt handler needs one, and that reason is written down in no kit
+document — `STATUS.md` queues moving it there. The rule is one line plus its justification:
+
+```python
+leaf.run("vbl_handler", glue, allowed, what, regs={"_pokes": pokes}, stop_pc=VBL_RTE, ...)
+```
+
+**THE RUNNER'S FRAME IS AN `rts` FRAME AND AN `rte` POPS A WIDER ONE** — the fact that is missing
+from the kit.  `osh_run` plants the 4-byte
+sentinel AT a7 and stops when the PC reaches it; `rte` takes a SIX-byte exception frame — SR from
+`(a7)`, PC from `2(a7)` — so it reads the sentinel's own high word as a status register and
+assembles a PC out of the sentinel's low word and whatever follows it. **No poke fixes this**, which
+is the part worth knowing before trying: the runner writes that longword after every poke has
+landed, so the SR word and the PC's high half are not a case's to choose. Joust seeds a spare
+sentinel ABOVE `STACK_TOP` for a tail that unwinds one frame (`test_egg.py`) and that trick does not
+extend here for exactly this reason.
+
+So the case CHECKPOINTS THE `rte` ITSELF, and three things make that honest rather than convenient:
+
+1. **Nothing observable is lost.** The `rte` restores a7 and the SR and writes no image byte, and
+   the handler's `movem` pair has already put back every register it saved.
+2. **The checkpoint is SELF-WITNESSING here**, which is why no `run_reaching` witness is needed.
+   `leaf.run_reaching` exists because a `stop_pc` run stops at EITHER the checkpoint or an `rts`, so
+   a case that only set one would pass whichever fired — but this handler HAS no `rts`, and
+   `test_the_handler_has_exactly_one_terminator_and_it_is_the_rte` says so **from the bytes**, by
+   walking the body and requiring exactly one terminator. `emu.run` raises when a run reaches
+   neither stop, so reaching the checkpoint is the only way the case can pass.
+3. **A NEGATIVE CONTROL runs the same case WITHOUT the checkpoint and requires the raise.** A
+   `stop_pc` that were merely decorative would be indistinguishable from a load-bearing one, and the
+   sweep confirms it: dropping the checkpoint is CAUGHT.
+
+**What the convention does NOT buy**, and a case must not imply otherwise: the `movem` pair is not
+reproduced (its bytes land in the runner's stack band, which the harness excludes from the diff —
+and there are TWO such pairs on this path, the handler's own and the `$17aea` stub's, so the run
+pushes 120 bytes and not 60),
+and a differential enters the handler DELIBERATELY, on a seeded frame — *when* the machine would
+have run it is the case's claim, exactly as a `schedule` is a claim about the ACIA.
+
 ### Proving that a quantity lives in a CPU FLAG, which decides whether it can be re-derived
 
 `emu.REPORTED_REGS` is `d0..d7` and `a0..a6` — **no CCR** — so a routine's exit X, C or V is

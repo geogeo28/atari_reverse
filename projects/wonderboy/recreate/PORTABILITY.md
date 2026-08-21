@@ -1699,6 +1699,38 @@ knows what to expect rather than discovering it:
   in `game_key_actions` plus one in `player_meter_empty_check`; it is now zero, on the strength of
   `project.toml`'s `poked_input_program_data` declaration.
 
+## 0m. Batch 42 phase B (2026-08-21): the first interrupt handler ever to run, and the floppy's PSG pair discharged
+
+**Seven of the spine's nine remaining rows are reconstructed and green**, and between them they
+discharge five tier predictions this document made — one direct and four transitive, itemised in
+the table below — and narrow one blind spot. Nothing was re-scanned —
+the tier figures below are §0i's and §0j's, quoted, not recomputed — so this section is about which
+of those prices turned out to be payable, which is the only thing a port can add to a measurement.
+
+| fn | bytes | tier this document priced it at | now |
+|---|---:|---|---|
+| `$624c` `psg_set_drive_select` | 28 | **T2**, direct, by its own `$6254` read-back | **RECONSTRUCTED & GREEN.** The price was exactly right and the mechanism is the one §0h named: the read-back is served from `psg_seed`, the write lands in the ledger, and both surfaces are compared. Its cases drive eight declared port-A bytes across seven `bits` values |
+| `$6268` `floppy_deselect_drives` | 16 | **T2**, transitively, behind the above | **RECONSTRUCTED & GREEN** |
+| `$716` `vbl_handler` | 52 | **T2**, transitively, behind the pair | **RECONSTRUCTED & GREEN — and it is the first interrupt handler in this project, or in either sibling, that a differential has ever executed.** Blind spot 7 is narrowed accordingly. What made it runnable is a checkpoint at its `rte`, which is the kit's existing `stop_pc` and not a new device |
+| `$e032` | 118 | **T3 HW_WRITE_ONLY**, behind `stage_load_window`→`set_palette` | **RECONSTRUCTED & GREEN** as `round_bonus_run_frame`. The T3 edge is real and is inherited whole: the sixteen colour writes its setup arm reaches are dropped by the oracle and stay unpinned |
+| `$e0a8` | 104 | **T3 HW_WRITE_ONLY**, same edge | **RECONSTRUCTED & GREEN** as `round_bonus_setup` |
+| `$50a`, `$882` | 62 | T0 | **RECONSTRUCTED & GREEN** |
+
+**AND THE ONE THAT DID NOT MOVE IS PRICED WRONG BY THIS DOCUMENT, in a way worth recording.**
+`$694` `flip_screen` is T3 HW_WRITE_ONLY — three dropped registers over FOUR write instructions:
+`$ffff8201` at `$6b6`, `$ffff8203` at `$6c0`, and `$ffff8240` twice, `$777` at `$6f8` and a `clr.w`
+at `$702`, which are the flash's two mutually exclusive arms — and on that pricing it is as portable as `set_palette`, which has been green since
+batch 12. It is not ported, and **the hardware is not why**. What stops it is the HARNESS, and in the
+worse of the two possible ways: the model does not refuse the natural one-run case, it ACCEPTS it
+and balances its poll and arrival totals by an off-by-one that cancels, so a case would go green
+while the two sides ran different iteration counts. Both busy-waits compare a WORD and the model
+counts polls per RUN rather than per SITE. That is invisible to a tier, because a tier prices what
+the CODE touches and this is a property of the model that would have to run it. `../names.txt`'s
+`cmt 0x694` carries the full registration. **The lesson for this document: a T0 or T3 price is a
+statement that the oracle can SEE the routine, not that the harness can DRIVE it** — the two come
+apart wherever a routine waits on something outside itself, and §6's capability table has no column
+for that.
+
 ## 2. Method, and what it can and cannot see
 
 `tools/ghidra_scripts/HwPortabilityScan.java` reads Ghidra's **reference model**, not a linear
@@ -2444,9 +2476,15 @@ or standing gap, not a to-do list:
    was wrong, and both documented blind spots turned out to fire in the same driver.
 6. **Tiering is static; running is dynamic.** §4's correction 2: a T4 function returns green on a
    run that never reaches its PSG access. The tiers describe the code, not any one run.
-7. **Interrupt handlers are tiered but never execute under the oracle.** `vbl_handler`,
-   `ikbd_acia_handler` and the two joystick handlers are the game's only clock and its only input
-   path, and a differential never runs them at all.
+7. **Interrupt handlers are tiered, and until batch 42 phase B none of them had ever executed under
+   the oracle.** `vbl_handler`, `ikbd_acia_handler` and the two joystick handlers are the game's only
+   clock and its only input path. **`vbl_handler` NOW RUNS** — §0m above — so the blind spot is
+   narrower than it was and is stated as it now stands rather than deleted: the remaining three have
+   still never been executed by a differential, and what made the fourth runnable (a checkpoint at
+   its `rte`, since the runner's stack frame is an `rts` frame) applies to them unchanged. What
+   neither the old form of this item nor the new one claims is that the handlers run *when the
+   machine would run them*: a differential enters one deliberately, on a seeded frame, and the
+   scheduling is the case's claim and not the model's.
 8. **`--model` prices a capability by assuming it is perfect.** A real FDC model that returned
    plausible-but-wrong status would move the same functions out of the false-green count while
    leaving them just as unverified. The table says what the ceiling is worth, not what a given

@@ -53,4 +53,66 @@ uint32_t game_key_actions(uint8_t *image);
  * bne.s` spins on a byte the ACIA handler writes. */
 void game_unpause_on_key_release(uint8_t *image);
 
+/* $882 — `bsr joy1_latch_edge / bsr actor_behavior_pass / rts`, and the last of the four calls
+ * game_main_loop's $66e-gated block makes. The order is the point: the latch produces the joystick
+ * edge the behaviour pass then reads. */
+void game_latch_input_and_step_actors(uint8_t *image);
+
+/* $50a — snap WB_SCROLL_FOLLOW_X/_Y to even pixels, rounding x UP instead of down while the
+ * followed actor's WB_ACTOR_FLAG_SIDE_BIT is set. Between bg_scroll_blit and sprite_draw_pass,
+ * which is where the camera has to be quantised for the pass below it to draw on a word boundary. */
+void game_snap_follow_cursor(uint8_t *image);
+
+/* $e0a8 — the round bonus's SETUP, and a true routine: `bsr.w $e0a8` at $e048 is its one caller and
+ * it ends in its own `rts`. Loads the bonus stage, switches into A30 mode, plots the banner and
+ * computes WB_ROUND_BONUS_METER_TARGET. */
+void round_bonus_setup(uint8_t *image);
+
+/* $e032 — the round bonus, one frame of it, and the long-queued reader of WB_EVENT_FINISHED_E1BE.
+ * Returns at once while that word is clear; otherwise runs setup, then the drain, then the refill,
+ * and ends by raising WB_ROUND_END_RELOAD_REQUEST for game_key_actions to consume. */
+void round_bonus_run_frame(uint8_t *image);
+
+/* $624c — replace the YM2149 port A's low three bits (the floppy's side and drive selects) with
+ * `bits`, the original's d0, keeping WB_PSG_PORT_A_KEEP. A read-modify-write, so the case must
+ * declare the register's prior contents with `psg_seed`. */
+void psg_set_drive_select(uint8_t *image, uint32_t bits);
+
+/* $6268 — every drive off. vbl_handler's one call, made on the frame WB_FLOPPY_IDLE_TIMER expires. */
+void floppy_deselect_drives(uint8_t *image);
+
+/* $716 — THE VERTICAL-BLANK HANDLER, and the program's only periodic tick. Raises WB_VBL_COUNTER,
+ * runs the music tick, and counts WB_FLOPPY_IDLE_TIMER down to the drive deselect.
+ *
+ * ITS DIFFERENTIAL STOPS AT THE `rte`. The CHECKPOINT is not new — it is the kit's documented
+ * answer for a run that cannot reach an `rts`, and TRAP_MODEL.md already applies it to a `Pterm`
+ * that lands on the sentinel longword. What is new is the REASON an interrupt handler needs one,
+ * which is recorded in no kit document; a reader meeting `stop_pc=VBL_RTE` in test_game.py is owed
+ * it, and so is the next project to port a handler (../STATUS.md queues moving it to the kit):
+ *
+ *   * THE RUNNER'S FRAME IS AN `rts` FRAME AND AN `rte` POPS A WIDER ONE. `osh_run` plants the
+ *     4-byte sentinel AT a7 and stops when the PC reaches it (tools/recreate_kit/oracle/shim.c);
+ *     `rte` takes a 6-byte exception frame — SR from (a7), PC from 2(a7) — so it reads the
+ *     sentinel's own high word as a status register and assembles a PC out of the sentinel's low
+ *     word and whatever follows it. The two disagree BY CONSTRUCTION, and no poke fixes it: the
+ *     runner overwrites the frame's first longword after every poke lands.
+ *   * SO THE CASES CHECKPOINT THE `rte` ITSELF, which is the kit's documented answer for a run that
+ *     cannot reach an `rts` (TRAP_MODEL.md). Nothing is lost by stopping one instruction early: the
+ *     `rte` restores a7 and the SR and writes no image byte, and the `movem` pair around the body
+ *     has already put back every register it saved.
+ *   * AND THE CHECKPOINT IS SELF-WITNESSING HERE, unlike the scene driver's. `run_reaching` exists
+ *     because a `stop_pc` run stops at EITHER the checkpoint or an `rts`, so a case that only set
+ *     one would pass whichever fired. This handler HAS no `rts` — test_game.py asserts that from
+ *     the bytes — so the checkpoint is the only stop, and `emu.run` raises when a run reaches
+ *     neither. A negative control drives the same case without it and requires that raise.
+ *
+ * The `movem.l #$fffe,-(a7)` / `movem.l (a7)+,#$7fff` pair is NOT reproduced. It saves the machine's
+ * registers around a handler that must not disturb the code it interrupted; a C function's
+ * registers are its compiler's business, and the bytes the save writes land in the runner's stack
+ * band, which the harness excludes from the diff. It is not the only such pair on the path: the
+ * tick is reached through the stub at $17aea, itself a `movem`/`bsr`/`movem`/`rts`, so a run pushes
+ * 120 bytes of saved registers and not 60. What that costs is in ../STATUS.md's
+ * honestly-unpinned list. */
+void vbl_handler(uint8_t *image);
+
 #endif /* WONDERBOY_GAME_H */

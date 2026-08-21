@@ -4078,6 +4078,10 @@ ABSOLUTE_FORMS = (
     (0x4a79, 4, True),       # tst.w   <abs>.l
     (0x4278, 2, False),      # clr.w   <abs>.w
     (0x42b8, 2, False),      # clr.l   <abs>.w   — clears the NEXT word too, without naming it
+    (0x42b9, 4, True),       # clr.l   <abs>.l   — the same, in the LONG form. Added batch 42 phase
+                             #   B, and it was already sitting in EVENT_FINISHED_E1BE's near-miss
+                             #   bucket when that plate said the word had no clear: the mechanism
+                             #   this section was built for fired, and the reading missed it.
     (0x31fc, 4, False),      # move.w  #imm,<abs>.w
     (0x33fc, 6, True),       # move.w  #imm,<abs>.l
     (0x0c79, 6, True),       # cmpi.w  #imm,<abs>.l
@@ -4187,9 +4191,14 @@ OPERAND_CENSUS = {
                0xfe50: 0x31fc},                         # move.w #$3,$be2.w — the new-game reset
               {}),
     "EVENT_FINISHED_E1BE": ({0xd1a: 0x33fc,             # move.w #$ffff,$e1be.l — the gate's raise
-                             0xe032: 0x4a79},           # tst.w  $e1be.l — the ONE reader, and the
-                                                        # first instruction of the routine it gates
-                            {0xe096: 0x0000}),
+                             0xe032: 0x4a79,            # tst.w  $e1be.l — the reader, and the first
+                                                        # instruction of the routine it gates
+                             0xe092: 0x42b9},           # clr.l  $e1be.l — the CLEAR, which takes
+                                                        # WB_ROUND_BONUS_ACTIVE down with it. THREE
+                                                        # sites, not the two this row carried until
+                                                        # batch 42 phase B; the third was in the
+                                                        # `other` bucket below the whole time
+                            {}),
 }
 
 
