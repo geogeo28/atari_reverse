@@ -46,7 +46,8 @@ import emu       # noqa: E402  (harness puts the kit's oracle on sys.path)
 import loader    # noqa: E402  (...and its loader, for the image's own base and extent)
 from leaf import (A0, A7, BCHG_IMM, D0, D1, RTS, addq_l_an, addq_w_abs_l, asm, bcc, bcc_abs, bcc_s,
                   bit_op_abs_l, brief_extension_word, bsr_w, clr_b_abs_l, clr_w_abs_l,
-                  cmp_b_abs_l_dn, cmp_b_imm_dn, cmpi_b_abs_l, jmp_abs_l, jsr_d16_an, lab,
+                  cmp_b_abs_l_dn, cmp_b_imm_dn, cmpi_b_abs_l, jmp_abs_l, jsr_abs_l,
+                  jsr_d16_an, lab,
                   lea_abs_l, move_b_imm_abs_l, move_w_abs_l_dn, move_w_imm_abs_l, opcode, place,
                   tst_w_abs_l, word)
 from layout import wb
@@ -127,9 +128,9 @@ SEQUENCE_DATA_START = KEY_SEQUENCE_MATCHED
 SEQUENCE_DATA_PAD = 1
 PAUSE_ARM_ENTRY = SEQUENCE_DATA_START + WORD + WORD + SEQUENCE_LENGTH + SEQUENCE_DATA_PAD
 
-# --- the two bodies, assembled ---------------------------------------------------------------------
+# --- the three bodies, assembled --------------------------------------------------------------------
 # Both are pinned WHOLE rather than at their entry alone, because this battery's constants include
-# two PROGRAM COUNTERS — the addresses the waits re-execute — and a schedule aimed at the wrong one
+# two PROGRAM COUNTERS — the addresses the waits RE-READ their byte at — and a schedule at the wrong one
 # would not fire at the iteration a case names. The labels below are where those PCs come from, so
 # nothing here transcribes an address out of a disassembly.
 
@@ -240,13 +241,131 @@ LEVEL_SKIP_UNWIND = _KEY_ACTIONS_LABELS["level_skip_unwind"]
 QUIT_JMP = _KEY_ACTIONS_LABELS["quit_jmp"]
 QUIT_CALL = _KEY_ACTIONS_LABELS["quit_call"]
 
+# --- flip_screen's body, and the two PROGRAM COUNTERS inside it ---------------------------------
+FLIP_ENTRY = leaf.entry_of("flip_screen")
+
+# The buffers the swap moves, and the ones the frame draws into. Two of the game's own screen
+# addresses (leaf.SCREEN_BUFFERS), so the published bytes are the ones the shifter really takes —
+# and they differ in BOTH published bytes, which would make a port that published the pre-swap
+# pointer separable... except that nothing observes the publish at all. See the honestly-unpinned
+# note on the flash case.
+FRONT_AT_ENTRY, BACK_AT_ENTRY = leaf.SCREEN_BUFFERS
+SCREEN_BUFFER_BYTES = 0x8000          # the spacing of the two, and what one frame may fill
+
+VBL_COUNTER = wb("VBL_COUNTER")           # ...which vbl_handler raises, further down this file
+SCREEN_FRONT = wb("SCREEN_FRONT")
+SCREEN_BACK = wb("SCREEN_BACK")
+# The two bytes of the front-buffer longword the shifter is handed: bits 16-23 and 8-15. Derived
+# here rather than read from the header, because `layout.wb` scrapes plain-integer #defines and
+# these are expressions over WB_SCREEN_FRONT. The body pin below is what says the image's operands
+# really are $74d and $74e.
+SCREEN_FRONT_BITS_16_23 = SCREEN_FRONT + 1
+SCREEN_FRONT_BITS_8_15 = SCREEN_FRONT + 2
+FRAME_TOGGLE = wb("FRAME_TOGGLE")
+FLASH_TIMER = wb("FLASH_TIMER")
+VBL_COUNTER_READY = wb("VBL_COUNTER_READY")
+FLIP_READY_WAIT_PC = wb("FLIP_READY_WAIT_PC")
+FLIP_TICK_WAIT_PC = wb("FLIP_TICK_WAIT_PC")
+SHIFTER_SCREEN_BASE_HIGH = wb("SHIFTER_SCREEN_BASE_HIGH")
+SHIFTER_SCREEN_BASE_MID = wb("SHIFTER_SCREEN_BASE_MID")
+SHIFTER_PALETTE = wb("SHIFTER_PALETTE")
+FLASH_COLOUR_WHITE = wb("FLASH_COLOUR_WHITE")
+
+LONG = leaf.LONGWORD_BYTES
+
+
+# --- the encodings this routine needs that leaf.py has not got ------------------------------------
+def move_l_abs_l_dn(reg, addr):
+    """`move.l <abs>.l,Dn` — the swap's first instruction, which is what keeps the OLD front."""
+    return opcode(0x2039 | (reg << 9)) + leaf.longword(addr)
+
+
+def move_l_dn_abs_l(reg, addr):
+    """`move.l Dn,<abs>.l` — ...and its last."""
+    return opcode(0x23c0 | reg) + leaf.longword(addr)
+
+
+def move_size_abs_l_abs_l(size_opcode, source, destination):
+    """`move.<size> <abs>.l,<abs>.l` — memory to memory, both operands absolute long. The swap's
+    middle instruction is the longword form and the two screen-base publishes are the byte one."""
+    return opcode(size_opcode) + leaf.longword(source) + leaf.longword(destination)
+
+
+MOVE_L_ABS_L_ABS_L = 0x23f9
+MOVE_B_ABS_L_ABS_L = 0x13f9
+
+
+def cmpi_w_imm_dn(reg, value):
+    """`cmpi.w #imm,Dn` — the first wait's SIGNED threshold."""
+    return opcode(0x0c40 | reg) + word(value)
+
+
+def cmp_w_abs_l_dn(reg, addr):
+    """`cmp.w <abs>.l,Dn` — the second wait's compare against the copy taken above it."""
+    return opcode(0xb079 | (reg << 9)) + leaf.longword(addr)
+
+
+def not_w_abs_l(addr):
+    """`not.w <abs>.l` — WB_FRAME_TOGGLE's 0 <-> $ffff toggle, and not a decrement."""
+    return opcode(0x4679) + leaf.longword(addr)
+
+
+def subq_w_abs_l(amount, addr):
+    """`subq.w #n,<abs>.l` — leaf.addq_w_abs_l's counterpart; the two differ in one bit."""
+    return opcode(0x5179 | ((amount & 7) << 9)) + leaf.longword(addr)
+
+
+BLT_S = 0x6d00
+BEQ_S = 0x6700
+
+
+def _flip_pieces():
+    return [
+        move_l_abs_l_dn(D0, SCREEN_FRONT),                              # $694
+        move_size_abs_l_abs_l(MOVE_L_ABS_L_ABS_L, SCREEN_BACK, SCREEN_FRONT),
+        move_l_dn_abs_l(D0, SCREEN_BACK),                               # $6a4
+        lab("ready_wait"),
+        move_w_abs_l_dn(D0, VBL_COUNTER),                               # $6aa — THE SITE: the read
+        lab("ready_test"),
+        cmpi_w_imm_dn(D0, VBL_COUNTER_READY),                           # $6b0
+        lab("ready_branch"),
+        bcc_s(BLT_S, "ready_wait"),                                     # $6b4
+        move_size_abs_l_abs_l(MOVE_B_ABS_L_ABS_L, SCREEN_FRONT_BITS_16_23,
+                              SHIFTER_SCREEN_BASE_HIGH),                # $6b6
+        move_size_abs_l_abs_l(MOVE_B_ABS_L_ABS_L, SCREEN_FRONT_BITS_8_15,
+                              SHIFTER_SCREEN_BASE_MID),                 # $6c0
+        move_w_abs_l_dn(D0, VBL_COUNTER),                               # $6ca — the copy, ONCE
+        lab("tick_wait"),
+        cmp_w_abs_l_dn(D0, VBL_COUNTER),                                # $6d0
+        bcc_s(BEQ_S, "tick_wait"),                                      # $6d6
+        clr_w_abs_l(VBL_COUNTER),                                       # $6d8
+        not_w_abs_l(FRAME_TOGGLE),                                      # $6de
+        tst_w_abs_l(FLASH_TIMER),                                       # $6e4
+        bcc(BEQ_W, "no_flash"),                                         # $6ea
+        subq_w_abs_l(1, FLASH_TIMER),                                   # $6ee
+        bcc(BEQ_W, "flash_ends"),                                       # $6f4
+        move_w_imm_abs_l(FLASH_COLOUR_WHITE, SHIFTER_PALETTE),          # $6f8
+        RTS,                                                            # $700
+        lab("flash_ends"),
+        clr_w_abs_l(SHIFTER_PALETTE),                                   # $702
+        lab("no_flash"),
+        RTS,                                                            # $708
+    ]
+
+
+_FLIP_LABELS = place(FLIP_ENTRY, _flip_pieces())
+
+
 # THE WHOLE-BODY PINS, and they cover the two routines batch 42 phase A ported and no more. Phase B
 # added seven and did not assemble their bodies; saying so is the point of the second table.
 ENTRY_BYTES = {
     "game_key_actions": asm(KEY_ACTIONS_ENTRY, _key_actions_pieces()),
     "game_unpause_on_key_release": asm(UNPAUSE_ENTRY, _unpause_pieces()),
+    # ...and phase C's, whose two wait SITES are program counters this battery and `src/game.c` both
+    # spell as constants — the same argument phase A made for the two above.
+    "flip_screen": asm(FLIP_ENTRY, _flip_pieces()),
 }
-BODY_PINNED_COUNT = 2
+BODY_PINNED_COUNT = 3
 
 # ...AND EVERY ROUTINE THIS FILE RECONSTRUCTS, against the pin it actually has. The tripwire above
 # guards its own table; this one guards the FILE, and it is here because phase B left the count at
@@ -265,6 +384,8 @@ GAME_ROUTINE_PINS = {
     "round_bonus_run_frame": "none",
     "psg_set_drive_select": "none",
     "floppy_deselect_drives": "none",
+    "flip_screen": "entry-bytes",                   # phase C, assembled whole
+    "game_main_loop": "none",                       # phase C — a COMPOSITION; see its own section
 }
 
 # --- caps ------------------------------------------------------------------------------------------
@@ -657,21 +778,35 @@ def test_the_cheat_being_ON_short_circuits_the_walk(cursor, scancode, why):
         f"{why}: the walk ran although the cheat is already enabled")
 
 
-def test_a_differential_refuses_a_schedule_naming_TWO_trigger_pcs():
-    """`game_key_actions` has two waits, on the SAME byte, at $5e6 and $60e — so this routine is
-    exactly where a case would reach for two entries, and the model cannot carry them.
+def test_two_entries_on_this_routines_two_waits_are_counted_at_their_own_sites():
+    """`game_key_actions` has two waits, on the SAME byte, at $5e6 and $60e — and that pair is what
+    made a per-ADDRESS counter the wrong remedy: the address says nothing about which wait polled.
 
-    `nth` counts arrivals AT A PC on the oracle and POLLS on the candidate, which has no program
-    counter; the two are the same event only while one wait is in play. With two, an entry aimed at
-    the second wait fires on a poll of the first, and because both counters are run TOTALS the
-    arrival/poll comparison can still agree. Refused before either core runs.
+    A differential used to refuse this schedule outright, because `nth` counted arrivals AT A PC on
+    the oracle and POLLS over the whole run on the candidate, so two waits could not be told apart.
+    Batch 42 phase C keys both counters by the wait SITE, and the two entries below are ordinary.
+    What the case asserts is the encoder's arithmetic rather than a run: no ONE run of this routine
+    reaches both arms (the pause arm at $574 returns, and the Help block below it is only reached
+    when the pause test fails), so the pair is declarable and only one of the two ever fires.
     """
     schedule = [{"pc": HELP_WAIT_PC, "nth": 1, "addr": KEY_LAST_SCANCODE, "width": BYTE,
                  "value": KEY_SCANCODE_HELP_RELEASE},
                 {"pc": PAUSE_WAIT_PC, "nth": 1, "addr": KEY_LAST_SCANCODE, "width": BYTE,
                  "value": KEY_SCANCODE_P_RELEASE}]
-    with pytest.raises(AssertionError, match="different trigger PCs"):
-        harness.differential(KEY_ACTIONS_ENTRY, {}, _key_actions, schedule=schedule)
+    assert emu.wait_site_pcs(schedule, None) == (HELP_WAIT_PC, PAUSE_WAIT_PC), (
+        "the two triggers are two sites, in the order the schedule names them")
+    assert emu.wait_site_pcs(schedule, [PAUSE_WAIT_PC, HELP_WAIT_PC]) \
+        == (PAUSE_WAIT_PC, HELP_WAIT_PC), "...and a case may declare them in its own order"
+
+
+def test_a_wait_site_declared_twice_is_refused():
+    """Two counters keyed the same way cannot be compared, and the second would silently shadow the
+    first: every poll naming that PC would land in slot 0 and slot 1 would read 0 against the
+    oracle's own 0. `os_sched_site_index` returns the FIRST match on both shores, so the duplicate
+    is not a divergence — it is a counter nobody can read, which is why it is refused at the encoder.
+    """
+    with pytest.raises(ValueError, match="names the same PC twice"):
+        emu.wait_site_pcs(None, [PAUSE_WAIT_PC, PAUSE_WAIT_PC])
 
 
 @pytest.mark.parametrize("pc,why", (
@@ -807,11 +942,12 @@ def _extent(entry):
 
 # THE INVENTORY'S UNPORTED ROWS: `(address, name or None, bytes)`. Stated, and checked by the walk —
 # a table that derived its own contents would agree with any walk, a broken one included.
-SPINE_UNPORTED = (
-    (0x4a0, "game_main_loop", 106),
-    (0x694, "flip_screen", 118),
-)
-SPINE_UNPORTED_BYTES = 224
+# EMPTY, as of batch 42 phase C: THE SPINE IS WHOLE. The tuple stays, and so does every case over
+# it — the ledger is a TRIPWIRE, not a progress bar. A routine the walk starts reaching that this
+# port does not define lands here and fails
+# `test_the_spine_reaches_exactly_the_routines_the_status_table_accounts_for` on the next run.
+SPINE_UNPORTED = ()
+SPINE_UNPORTED_BYTES = 0
 SPINE_ROUTINES = 86                     # what the three roots reach, ported and not
 
 # ...AND THE ROWS THE INVENTORY HAS SINCE LOST, which is the other half of the same ledger. The
@@ -829,6 +965,8 @@ SPINE_PORTED_FROM_THE_INVENTORY = (
     (0x6268, "floppy_deselect_drives", 16),             # phase B
     (0xe032, "round_bonus_run_frame", 118),             # phase B
     (0xe0a8, "round_bonus_setup", 104),                 # phase B
+    (0x694, "flip_screen", 118),                        # phase C
+    (0x4a0, "game_main_loop", 106),                     # phase C — THE LAST ROW
 )
 SPINE_INVENTORY_BYTES = 898             # the eleven rows as phase A enumerated them
 
@@ -959,15 +1097,19 @@ def test_every_ported_row_still_measures_what_the_inventory_credited_it_with():
 
 
 def test_the_ported_rows_and_the_unported_ones_still_add_up_to_the_whole_inventory():
-    """THE RUNNING LEDGER: 898 bytes of unported spine when phase A enumerated it, and every byte
-    since accounted for as either taken or still standing. Phase A took 294 (`game_key_actions`' 240
-    of code and `game_unpause_on_key_release`' 54), leaving 604; phase B took 380 more, leaving 224.
+    """THE RUNNING LEDGER, AND IT NOW READS ZERO: 898 bytes of unported spine when phase A
+    enumerated it, and every byte since accounted for as taken. Phase A took 294 (`game_key_actions`'
+    240 of code and `game_unpause_on_key_release`' 54), leaving 604; phase B took 380 more, leaving
+    224; phase C took the last two rows, `flip_screen`'s 118 and `game_main_loop`'s 106.
     """
     taken = sum(row[2] for row in SPINE_PORTED_FROM_THE_INVENTORY)
     assert taken + SPINE_UNPORTED_BYTES == SPINE_INVENTORY_BYTES
     # ...and the SPLIT, not only the sum: without it a phase could delete a row and decrement the
     # historical SPINE_INVENTORY_BYTES to match, and the sum above would still balance.
-    assert taken == 674
+    assert taken == SPINE_INVENTORY_BYTES, (
+        "the spine's whole inventory is ported, so the taken half IS the whole 898 — a row that "
+        "left the table would balance this by shrinking both sides, which is what the disjointness "
+        "and per-row re-measurement above are for")
 
 
 def test_no_row_is_in_both_halves_of_the_ledger():
@@ -994,15 +1136,19 @@ def test_no_row_is_in_both_halves_of_the_ledger():
 # ==================================================================================================
 #
 # Seven routines, ported callee-clean — every one of them calls only code this port already has, so
-# a case enters at the routine's own address and leaves at its own `rts`. The two that do NOT are
-# `game_main_loop` and `flip_screen`, and what stops the second is not that the model refuses it but
-# that it ACCEPTS it: `flip_screen` waits twice on WB_VBL_COUNTER, the natural one-trigger schedule
-# passes `harness.py`'s vetting, and the candidate's run-total poll count and the oracle's per-PC
-# arrival count then cancel to agree while the two sides run different iteration counts — the mutant
-# that deletes the first wait survives it. The requirement is to split the differential at $6ca, one
-# wait per run; the WIDTH needs no new kit primitive (a `sched_poll8` ticks the clock and
-# `bus_read_word` supplies the comparand), only a capped wrapper. ../names.txt's `cmt 0x694` carries
-# the arithmetic and ../STATUS.md's batch 42 phase B the rest.
+# a case enters at the routine's own address and leaves at its own `rts`. The two that did NOT were
+# `game_main_loop` and `flip_screen`, and what stopped the second was not that the model refused it
+# but that it ACCEPTED it: `flip_screen` waits twice on WB_VBL_COUNTER, the natural one-trigger
+# schedule passed `harness.py`'s vetting, and the candidate's run-total poll count and the oracle's
+# arrival count then cancelled to agree while the two sides ran different iteration counts — the
+# mutant that deletes the first wait survived it.
+#
+# BATCH 42 PHASE C CLOSED BOTH, and the shape it took is NOT the one this comment used to prescribe:
+# the counters are now kept per WAIT SITE on both shores, which makes two waits in one run separable,
+# so the $6ca split that was required under run totals is discharged rather than performed. The
+# width needed no new capability either — `sched_poll16` is one `sched_poll8` plus a full-width read,
+# and what it adds is the cap. ../names.txt's `cmt 0x694` and ../STATUS.md's batch 42 phase C carry
+# the measurement, and this file's own flip_screen and game_main_loop sections are below.
 #
 # WHAT THIS SECTION IMPORTS RATHER THAN RESTATES. `game_latch_input_and_step_actors` runs the whole
 # behaviour pass and `vbl_handler` runs the whole music tick — both already have batteries that
@@ -1041,7 +1187,6 @@ PSG_REG_PORT_A = wb("PSG_REG_PORT_A")
 PSG_PORT_A_KEEP = wb("PSG_PORT_A_KEEP")
 PSG_DRIVES_DESELECTED = wb("PSG_DRIVES_DESELECTED")
 
-VBL_COUNTER = wb("VBL_COUNTER")
 FLOPPY_IDLE_TIMER = wb("FLOPPY_IDLE_TIMER")
 
 EVENT_FINISHED_E1BE = wb("EVENT_FINISHED_E1BE")
@@ -1943,3 +2088,871 @@ def test_the_tick_runs_on_the_machine_the_case_declares(machine):
     the two hardware bytes: three machines, three drop values, and the ordered read stream each
     implies. A port that dropped the call writes none of the tick's bytes and reds on the image."""
     _run_vbl(f"vbl_handler tick on {machine}", idle=0, machine=machine)
+
+
+# ==================================================================================================
+# BATCH 42 PHASE C: flip_screen, and the two waits that kept it out for two phases
+# ==================================================================================================
+#
+# `flip_screen` ($694) busy-waits TWICE on WB_VBL_COUNTER, at $6aa and $6d0. Batch 42 phase B
+# registered the boundary and its gate found the sharp half: the model did not REFUSE the natural
+# one-run case, it ACCEPTED it, and then balanced its counters by an off-by-one that cancelled — a
+# port that had deleted the whole first wait passed. Phase A's registered remedy was a per-ADDRESS
+# poll counter and phase B corrected it to per-SITE, because both of `game_key_actions`' waits are on
+# the SAME byte.
+#
+# THE KIT NOW COUNTS PER WAIT SITE (os.h, "WAIT SITES"), on both shores, keyed by the address of the
+# instruction at which the ORIGINAL's wait RE-READS its byte. So a case declares `wait_sites=` and the harness
+# compares arrivals against polls wait by wait. Two consequences for the cases below:
+#
+#   * A RUN MUST DECLARE EVERY SITE IT POLLS AT, including one no entry stores on — the first wait
+#     falls through in a single poll when the counter is seeded ready, and that poll still has to be
+#     counted or it is the hole itself. `sched_poll8` refuses an undeclared site.
+#   * THE $6ca SPLIT THE PHASE-B PLATE CALLED REQUIRED IS NOT PERFORMED, and the reason is that the
+#     remedy discharges it rather than that it was wrong. One wait per run was required while the
+#     counters were run TOTALS; per site, the two waits in one run are separable, and the mutant the
+#     split existed to catch is caught HERE, in the composite (see the two deleted-wait cases). The
+#     kit pins the same contrast on a planted routine of its own
+#     (tools/recreate_kit/test/test_sched_model.py).
+_flip = leaf.image_glue("flip_screen")
+
+
+def test_the_two_wait_sites_are_where_the_original_RE_READS_the_counter():
+    """THE CROSS-PIN, and it is the point of assembling the body above.
+
+    `src/game.c` names WB_FLIP_READY_WAIT_PC and WB_FLIP_TICK_WAIT_PC at its two `sched_poll16`
+    calls, and every case below declares the same two as its `wait_sites`. Both would agree with each
+    other while naming an address the original never re-reads the counter at — they come from one
+    header. What breaks that circle is the LABELS, which are where the assembled body puts each
+    instruction, and the case above requires that body to be the image's own bytes.
+
+    IT IS THE READ AND NOT THE TEST, which the first wait is what shows: `ready_wait` labels the
+    `move.w $74a.l,d0`, and the `cmpi.w #$1,d0` that decides the loop is two instructions BELOW it.
+    The model applies a due store just before the site's instruction on both shores, so a site
+    naming the compare would land it after the read it was meant to change.
+    """
+    assert FLIP_READY_WAIT_PC == _FLIP_LABELS["ready_wait"], (
+        "WB_FLIP_READY_WAIT_PC is not where the first wait re-reads the counter")
+    assert FLIP_TICK_WAIT_PC == _FLIP_LABELS["tick_wait"], (
+        "WB_FLIP_TICK_WAIT_PC is not where the second wait re-reads the counter")
+    # ...AND THE FIRST WAIT'S READ REALLY IS ABOVE ITS TEST, which is what makes the distinction
+    # above a fact about this routine rather than a general caution.
+    assert FLIP_READY_WAIT_PC < _FLIP_LABELS["ready_test"] < _FLIP_LABELS["ready_branch"], (
+        "the first wait reads, tests and branches at three addresses; the SITE is the first")
+
+
+def test_the_three_key_wait_sites_are_where_the_original_RE_READS_the_scancode():
+    """The same cross-pin for the byte waits, whose sites moved into include/wonderboy.h this phase.
+
+    They were derived from these very labels before `src/game.c` needed them as constants; now that
+    both sides read the header, this is what keeps the header honest against the image.
+    """
+    assert wb("KEY_HELP_WAIT_PC") == HELP_WAIT_PC
+    assert wb("KEY_PAUSE_WAIT_PC") == PAUSE_WAIT_PC
+    assert wb("KEY_UNPAUSE_WAIT_PC") == UNPAUSE_WAIT_PC
+
+
+# --- driving the two waits ------------------------------------------------------------------------
+# THE SITES A flip_screen RUN DECLARES. Both, always: the run polls at each of them, and a poll the
+# model is not counting is refused rather than served.
+FLIP_SITES = (FLIP_READY_WAIT_PC, FLIP_TICK_WAIT_PC)
+
+
+# One iteration of either wait is its compare and its branch back; the first also re-reads the word.
+FLIP_READY_INSNS_PER_ITERATION = 3
+FLIP_TICK_INSNS_PER_ITERATION = 2
+FLIP_STRAIGHT_INSNS = 14          # the swap, the copy, the tail and its three branches
+
+
+def flip_cap(ready_polls, tick_polls):
+    return (FLIP_STRAIGHT_INSNS
+            + FLIP_READY_INSNS_PER_ITERATION * ready_polls
+            + FLIP_TICK_INSNS_PER_ITERATION * tick_polls
+            + leaf.RUNNER_SENTINEL_INSN)
+
+
+def flip_pokes(counter, toggle=0, flash=0):
+    return {SCREEN_FRONT: leaf.longword(FRONT_AT_ENTRY),
+            SCREEN_BACK: leaf.longword(BACK_AT_ENTRY),
+            VBL_COUNTER: word(counter),
+            FRAME_TOGGLE: word(toggle),
+            FLASH_TIMER: word(flash)}
+
+
+def vbl_bump(site, nth, value):
+    """The store the VBL interrupt makes, as a case declares it: WB_VBL_COUNTER takes `value` just
+    before the `nth` arrival at `site`. It is a WORD store, which is what the compares read."""
+    return {"pc": site, "nth": nth, "addr": VBL_COUNTER, "width": WORD, "value": value}
+
+
+FLIP_WRITES = [(SCREEN_FRONT, LONG), (SCREEN_BACK, LONG), (VBL_COUNTER, WORD),
+               (FRAME_TOGGLE, WORD), (FLASH_TIMER, WORD)]
+
+
+def _assert_flip_swapped_and_ticked(info, what, toggle_at_entry):
+    """Every image byte the routine leaves, on the arms that reach its tail."""
+    assert leaf.read_int(info, SCREEN_FRONT, LONG, what) == BACK_AT_ENTRY, (
+        f"{what}: the buffer being displayed is not the one that was being drawn into")
+    assert leaf.read_int(info, SCREEN_BACK, LONG, what) == FRONT_AT_ENTRY
+    assert leaf.read_int(info, VBL_COUNTER, WORD, what) == 0, f"{what}: the counter was not cleared"
+    assert leaf.read_int(info, FRAME_TOGGLE, WORD, what) == (~toggle_at_entry & WORD_MASK), (
+        f"{what}: WB_FRAME_TOGGLE was not INVERTED — a decrement leaves the same byte on the "
+        f"$0001 seed and a different one on every other")
+
+
+@pytest.mark.parametrize("ready_nth", WAIT_ITERATIONS)
+def test_the_first_wait_spins_until_the_vbl_raises_the_counter(ready_nth):
+    """THE FIRST WAIT, DRIVEN FOR REAL, which is what the phase-B case could not do.
+
+    The counter comes in at 0, so `cmpi.w #$1,d0 / blt.s` spins; the case declares the VBL's bump at
+    the `ready_nth` arrival at $6aa, and a SECOND entry releases the tick wait below it. Two trigger
+    PCs in one run — refused outright until this phase, and sound now only because the counters are
+    per site.
+
+    `poison=False`: the tail's `clr.w $74a.l` lands on the very word both entries store, and the
+    attribution pass is refused over a scheduled byte. The seeds are what separate the writes
+    instead — WB_FRAME_TOGGLE comes in $0001 so an inversion and a decrement differ, and the two
+    buffers are distinct so the swap cannot pass by leaving them alone.
+    """
+    tick_nth = 2
+    what = f"flip_screen, the ready wait released at arrival {ready_nth}"
+    info = leaf.run("flip_screen", _flip, FLIP_WRITES, what,
+                    regs={"_pokes": flip_pokes(counter=0, toggle=1)}, poison=False,
+                    max_insns=flip_cap(ready_nth, tick_nth),
+                    schedule=[vbl_bump(FLIP_READY_WAIT_PC, ready_nth, VBL_COUNTER_READY),
+                              vbl_bump(FLIP_TICK_WAIT_PC, tick_nth, VBL_COUNTER_READY + 1)],
+                    wait_sites=FLIP_SITES)
+    _assert_flip_swapped_and_ticked(info, what, toggle_at_entry=1)
+    assert info["regs"]["sched_site_arrivals"] == (ready_nth, tick_nth), (
+        f"{what}: the original's two waits ran {info['regs']['sched_site_arrivals']} iterations")
+
+
+@pytest.mark.parametrize("tick_nth", WAIT_ITERATIONS)
+def test_the_second_wait_spins_until_the_counter_CHANGES(tick_nth):
+    """THE SECOND WAIT, and the arrangement the whole remedy is about.
+
+    The counter is seeded ALREADY READY, so the first wait falls through in ONE poll and only the
+    second is declared — which is exactly the composite phase B showed to be a false-green machine
+    under run totals. It is a true case now: the first wait's single poll is counted at ITS OWN site
+    and compared there.
+
+    The tick wait cannot be seeded past. `move.w $74a.l,d0` at $6ca takes a copy and `cmp.w $74a.l,d0`
+    compares against it one instruction later, so the first comparison always holds however the case
+    seeds the word — every run of this routine spins here at least once.
+    """
+    what = f"flip_screen, the tick wait released at arrival {tick_nth}"
+    info = leaf.run("flip_screen", _flip, FLIP_WRITES, what,
+                    regs={"_pokes": flip_pokes(counter=VBL_COUNTER_READY, toggle=1)}, poison=False,
+                    max_insns=flip_cap(1, tick_nth),
+                    schedule=[vbl_bump(FLIP_TICK_WAIT_PC, tick_nth, VBL_COUNTER_READY + 1)],
+                    wait_sites=FLIP_SITES)
+    _assert_flip_swapped_and_ticked(info, what, toggle_at_entry=1)
+    assert info["regs"]["sched_site_arrivals"] == (1, tick_nth), (
+        f"{what}: the ready wait fell through in one arrival and the tick wait ran {tick_nth}")
+
+
+@pytest.mark.parametrize("counter", [VBL_COUNTER_READY, 2, 0x7fff])
+def test_a_counter_already_at_or_above_the_threshold_falls_through_in_one_poll(counter):
+    """The ready wait's THRESHOLD, from below and from the top of the signed range."""
+    what = f"flip_screen, the counter already at {counter:#06x}"
+    info = leaf.run("flip_screen", _flip, FLIP_WRITES, what,
+                    regs={"_pokes": flip_pokes(counter=counter)}, poison=False,
+                    max_insns=flip_cap(1, 1),
+                    schedule=[vbl_bump(FLIP_TICK_WAIT_PC, 1, counter + 1)],
+                    wait_sites=FLIP_SITES)
+    assert info["regs"]["sched_site_arrivals"][0] == 1, f"{what}: the ready wait spun"
+
+
+@pytest.mark.parametrize("counter", [0x8000, WORD_MASK])
+def test_a_counter_ABOVE_the_signed_range_is_not_ready(counter):
+    """`blt.s` is SIGNED, so a counter with its top bit set reads as BELOW 1 and the wait spins.
+
+    DECLARED FABRICATED. `vbl_handler` raises the counter one at a time and `flip_screen` clears it
+    every frame, so 32,768 frames would have to pass with no flip for the game to reach here — but
+    the signedness is the instruction's, and a port that wrote `>=` on unsigned words would agree
+    with the original on every reachable seed and disagree here.
+    """
+    what = f"flip_screen, the counter at {counter:#06x} (fabricated: signed-range top)"
+    ready_nth = 2
+    info = leaf.run("flip_screen", _flip, FLIP_WRITES, what,
+                    regs={"_pokes": flip_pokes(counter=counter)}, poison=False,
+                    max_insns=flip_cap(ready_nth, 1),
+                    schedule=[vbl_bump(FLIP_READY_WAIT_PC, ready_nth, VBL_COUNTER_READY),
+                              vbl_bump(FLIP_TICK_WAIT_PC, 1, VBL_COUNTER_READY + 1)],
+                    wait_sites=FLIP_SITES)
+    assert info["regs"]["sched_site_arrivals"][0] == ready_nth, (
+        f"{what}: the wait fell through, so the compare is not signed")
+
+
+@pytest.mark.parametrize("flash,expected", [(0, None), (1, 0), (2, 1), (0x8000, 0x7fff)])
+def test_the_flash_countdown_is_decremented_only_while_it_runs(flash, expected):
+    """`tst.w $714.l / beq` then `subq.w #1 / beq`: three arms, and the two that WRITE colour 0 are
+    exclusive. 1 is the frame the flash ends on and 2 the frame before it.
+
+    WHAT THE COLOUR WRITES DO IS NOT PINNED AND CANNOT BE. $ffff8240 is off the 68000's 24-bit bus
+    as far as the loaded image goes: the oracle drops the two `move.w`s and `src/game.c` sinks them,
+    so the white flash this routine paints is invisible to every surface the harness compares —
+    exactly as set_palette's sixteen colour writes have been since batch 12. What IS pinned is the
+    timer word the two arms branch on, which is in the image.
+    """
+    what = f"flip_screen, the flash timer at {flash:#06x}"
+    info = leaf.run("flip_screen", _flip, FLIP_WRITES, what,
+                    regs={"_pokes": flip_pokes(counter=VBL_COUNTER_READY, flash=flash)},
+                    poison=False, max_insns=flip_cap(1, 1),
+                    schedule=[vbl_bump(FLIP_TICK_WAIT_PC, 1, VBL_COUNTER_READY + 1)],
+                    wait_sites=FLIP_SITES)
+    if expected is None:
+        # A RESTING TIMER IS NOT WRITTEN AT ALL, which is a stronger claim than "it is still zero":
+        # the `tst.w` guard means the arm below it never runs, so a port that decremented and stored
+        # would wrap the word to $ffff. `FLIP_WRITES` carries the timer, so a write here would pass
+        # the stray-write check and has to be caught by its ABSENCE.
+        assert FLASH_TIMER not in info["writes"], (
+            f"{what}: a resting timer was written, so the `tst.w` guard is missing")
+        return
+    assert leaf.read_int(info, FLASH_TIMER, WORD, what) == expected
+
+
+@pytest.mark.parametrize("toggle", [0, 1, 0xffff, 0x1234])
+def test_the_frame_toggle_is_INVERTED_and_not_stepped(toggle):
+    """`not.w $712.l`. The $0000/$ffff pair is what the game really holds; the other two are what
+    separate an inversion from a decrement, a negation and a XOR with 1."""
+    what = f"flip_screen, the frame toggle at {toggle:#06x}"
+    info = leaf.run("flip_screen", _flip, FLIP_WRITES, what,
+                    regs={"_pokes": flip_pokes(counter=VBL_COUNTER_READY, toggle=toggle)},
+                    poison=False, max_insns=flip_cap(1, 1),
+                    schedule=[vbl_bump(FLIP_TICK_WAIT_PC, 1, VBL_COUNTER_READY + 1)],
+                    wait_sites=FLIP_SITES)
+    assert leaf.read_int(info, FRAME_TOGGLE, WORD, what) == (~toggle & WORD_MASK)
+
+
+def test_a_run_that_polls_at_a_site_it_did_not_declare_is_refused():
+    """THE GUARD THAT MAKES THE SITE LIST MEAN SOMETHING, and without a case it is code no run reaches.
+
+    A `flip_screen` case that declared only the trigger's site would leave the FIRST wait's poll
+    uncounted — which is precisely the arrangement that used to balance by cancellation. The kit
+    refuses the poll instead of serving it, and the run reds through the shared os_* refusal tally
+    with a clause naming the site list.
+    """
+    with pytest.raises(AssertionError, match="SITE THIS CASE DID NOT DECLARE"):
+        harness.differential(FLIP_ENTRY, {"_pokes": flip_pokes(counter=VBL_COUNTER_READY)}, _flip,
+                             poison=False, max_insns=flip_cap(1, 1),
+                             schedule=[vbl_bump(FLIP_TICK_WAIT_PC, 1, VBL_COUNTER_READY + 1)],
+                             wait_sites=[FLIP_TICK_WAIT_PC])
+
+
+def test_a_schedule_trigger_that_is_not_a_declared_wait_site_is_refused():
+    """The successor to the refusal batch 42 phase A shipped, which turned away a schedule naming
+    two trigger PCs.
+
+    That guard existed because both sides counted a run TOTAL, and two waits under two triggers could
+    not be told apart; per-site counting makes two triggers ordinary, and the two cases above use
+    them. What is refused now is narrower and stronger: an entry whose trigger is not one of the
+    run's declared sites, which nothing would count and which could therefore never come due — the
+    kit measures that on a planted routine of its own.
+    """
+    with pytest.raises(ValueError, match="not among the declared wait sites"):
+        harness.differential(FLIP_ENTRY, {"_pokes": flip_pokes(counter=VBL_COUNTER_READY)}, _flip,
+                             poison=False, max_insns=flip_cap(1, 1),
+                             schedule=[vbl_bump(FLIP_TICK_WAIT_PC, 1, VBL_COUNTER_READY + 1)],
+                             wait_sites=[FLIP_READY_WAIT_PC])
+
+
+# ==================================================================================================
+# BATCH 42 PHASE C: game_main_loop — THE WHOLE FRAME, AS ONE RUN
+# ==================================================================================================
+#
+# The spine's last row, and the only one whose case is a COMPOSITION rather than a routine. `$4a0`
+# makes fifteen calls and does nothing else; one iteration is the differential unit, and the
+# checkpoint is the `bra.s $4a0` at $508 the loop turns round on.
+#
+# WHAT A CASE HERE PINS, AND WHAT IT DOES NOT.
+#   * THE WHOLE IMAGE, at the instant control reaches the backward branch. That is the strong pin and
+#     it is what makes a dropped call, a swapped pair or an inverted gate visible: 245,000-odd
+#     instructions of fourteen reconstructed routines have to leave the same 21,000-odd bytes the
+#     original does.
+#   * NOT THE REGISTERS. The oracle leaves fifteen of them and this reconstruction models exactly one
+#     register file — `sprite_draw_pass`' (include/blit.h), which is the loop's only callee with a
+#     register interface — and four more calls run after it. So the box is an INPUT here and the
+#     comparison is memory plus the reported action, which is stated rather than left implied.
+#   * THE STRAY-WRITE BOUND IS A REGION TABLE, not a model. `FRAME_REGIONS` below says which band of
+#     the image each of the frame's callees owns; every byte of it is already modelled by that
+#     callee's own battery, and re-modelling twenty-one thousand of them here would be a second
+#     statement that could disagree with the first. Same standing as `round_bonus_setup`'s regions in
+#     batch 42 phase B, and it inherits that entry's queued "derive it from the callees" item.
+#
+# THE SEED IS A COHERENT FRAME AND NOT TWO BATTERIES STITCHED TOGETHER, which is a lesson this case
+# had to learn: `test_behavior._walk_pokes` and `test_actor._spawn_pass_pokes` each seed a table the
+# OTHER does not know about, and the frame itself republishes one of the two pointers mid-run —
+# `panel_refresh_frame` writes WB_TABLE_PTR_21E8C at $b372, so `actor_spawn_pass` five calls later
+# reads the pointer the FRAME chose and not the one the seed did. The spawn table the frame chooses
+# is therefore seeded WHERE THE FRAME WILL LOOK, and the shipped bytes at that address are not a
+# spawn table at all: left as they ship, the countdown walk runs 1,948 records past its own start
+# before it finds a terminator. That is a property of an image whose level data has not been loaded,
+# not of the game, and the seed says so by planting the terminator.
+from test_actor import (SPAWN_ARMED, SPAWN_COUNTDOWN, SPAWN_HEADER_BYTES,   # noqa: E402
+                        SPAWN_KILL_COUNT, SPAWN_RECORD_BYTES, SPAWN_TERMINATOR, SPAWN_TYPE,
+                        SPAWN_X, SPAWN_Y, HEADER_CURSOR, HEADER_LIVE, HEADER_MAX_LIVE,
+                        HEADER_WRAPPED, _spawn_pass_pokes, _armed_records, SPAWN_TABLE_SLOTS)
+from test_blit import PassRegs, PASS_FIELD_BY_REG, FIELD_BY_REG, SCRATCH_REGS  # noqa: E402
+
+LOOP_ENTRY = leaf.entry_of("game_main_loop")
+LOOP_BACKWARD_BRANCH = 0x508          # `bra.s $4a0`, the instruction one iteration ends on
+
+TABLE_PTR_21E8C = wb("TABLE_PTR_21E8C")
+ACTOR_SCREEN_RECORDS = wb("ACTOR_SCREEN_RECORDS")
+ACTOR_TABLE_DEFAULT = wb("ACTOR_TABLE_DEFAULT")
+ACTOR_RECORD_BYTES = wb("ACTOR_RECORD_BYTES")
+ACTOR_SCREEN_RECORD_COUNT = wb("ACTOR_SCREEN_RECORD_COUNT")
+ACTOR_TABLE_SELECTED = wb("ACTOR_TABLE_SELECTED")
+BG_QUEUE_H_COUNT = wb("BG_QUEUE_H_COUNT")
+BG_QUEUE_V_COUNT = wb("BG_QUEUE_V_COUNT")
+BG_REQUEST_UP = wb("BG_REQUEST_UP")
+FRAME_TICK_B39A = wb("FRAME_TICK_B39A")
+DIGIT_SIGNIFICANT_SEEN = wb("DIGIT_SIGNIFICANT_SEEN")
+PANEL_FRAME_DELAY = wb("PANEL_FRAME_DELAY")
+PANEL_RESTORE_FLAG_DBB3 = wb("PANEL_RESTORE_FLAG_DBB3")
+
+# WHERE panel_refresh_frame REPUBLISHES THE SPAWN TABLE. `$b372` writes WB_TABLE_PTR_21E8C with one
+# of two literals, chosen on WB_STATE_FLAG_A32 (include/wonderboy.h) — this is the A32-clear one, and
+# the seed below plants the frame's spawn table there so the run's two readers agree.
+FRAME_SPAWN_TABLE = 0x21c60
+
+# The busy frame's own inputs, named because each exists to make one call WRITE.
+FRAME_SCROLL_STEPS = 3            # two-pixel horizontal steps for bg_scroll_run_queue to spend
+FRAME_METER_VALUE = 5             # ...a meter for the round bonus's drain arm to count down
+FRAME_MESSAGE_ID = 1              # ...a message for the box to run
+FRAME_MESSAGE_LIFETIME = 0x40
+FRAME_TICK_NTH = 2                # which arrival at $6d0 the VBL's bump lands before
+HELD_RELEASE_NTH = 3              # ...and which arrival at $64e the IKBD's release lands before
+SEQUENCE_FIRST_SCANCODE = 0x61    # UNDO, the first byte of the cheat sequence at $608
+
+# The frame's write REGIONS: (base, length, which call owns it). A stray-write BOUND, in the sense
+# batch 42 phase B's SETUP_REGIONS is one — every band is modelled byte for byte by the battery named
+# beside it, and what this table adds is that the frame writes NOWHERE ELSE.
+FRAME_REGIONS = (
+    # FIVE FIELDS, NOT THEIR HULL. $712..$753 spans them, and 52 of those bytes are `vbl_handler`'s
+    # OWN CODE ($716..$749) — a hull here would whitelist a self-modifying write into an instruction
+    # and label it "flip_screen's", which is a stray-write bound saying the opposite of what it means.
+    (FRAME_TOGGLE, WORD, "flip_screen's frame toggle"),
+    (FLASH_TIMER, WORD, "...its flash countdown"),
+    (VBL_COUNTER, WORD, "...the counter it waits on and clears"),
+    (SCREEN_FRONT, LONG, "...the buffer pointer it publishes"),
+    (SCREEN_BACK, LONG, "...and the one it swaps in"),
+    (JOY1_PREV, JOY1_CURRENT + 1 - JOY1_PREV, "joy1_latch_edge's two-frame pipeline"),
+    (BG_QUEUE_H_COUNT, 8, "bg_scroll_run_queue's counters"),
+    (BG_REQUEST_UP, 4, "bg_scroll_run_queue's four request bytes"),
+    (ACTOR_SCREEN_RECORDS, ACTOR_TABLE_DEFAULT - ACTOR_SCREEN_RECORDS,
+     "project_followed_actor / project_actor_list, into the projection array"),
+    (ACTOR_TABLE_DEFAULT, ACTOR_SCREEN_RECORD_COUNT * ACTOR_RECORD_BYTES,
+     "actor_spawn_pass, into the record it allocates"),
+    (ACTOR_TABLE_SELECTED, LONG, "...and the table pointer the projections publish"),
+    (FRAME_TICK_B39A, WORD, "panel_refresh_frame's tick"),
+    (DIGIT_SIGNIFICANT_SEEN, WORD, "hud_draw_score's leading-zero latch"),
+    (PANEL_FRAME_DELAY, 6, "panel_frame_timers"),
+    (PANEL_RESTORE_FLAG_DBB3, 1, "panel_restore_dirty_regions"),
+    (TABLE_PTR_21E8C, LONG, "panel_refresh_frame republishing the spawn table"),
+    (FRAME_SPAWN_TABLE - SPAWN_HEADER_BYTES, SPAWN_HEADER_BYTES + 2 * SPAWN_RECORD_BYTES,
+     "actor_spawn_pass over the table the frame chose"),
+    (BACK_AT_ENTRY, SCREEN_BUFFER_BYTES, "bg_scroll_blit, sprite_draw_pass, the panel and the "
+                                        "message box, all into the buffer being drawn into"),
+)
+
+# ...and what the BUSY seed adds, each owned by the call the seed woke up.
+BUSY_FRAME_REGIONS = FRAME_REGIONS + (
+    (KEY_SEQUENCE_CURSOR, WORD, "game_key_actions stepping the cheat sequence"),
+    (HUD_METER_VALUE, WORD, "round_bonus_run_frame's drain"),
+    (BCD_SCORE, BCD_SCORE_LEN, "...and the packed-BCD score it adds to"),
+    (BCD_ADDEND, LONG, "...through bcd_add_score_bd70's addend word"),
+    (TEXT_REQUEST, WORD, "text_run_message_box consuming the request"),
+)
+
+_LOOP_FN = leaf.bind("game_main_loop", leaf.IMAGE_ARG + [ctypes.POINTER(PassRegs)], ctypes.c_uint32)
+
+
+def _loop_glue(_lib, image):
+    """The loop, handed a FRESH sprite-pass register file zeroed at entry.
+
+    Fresh per call for `test_blit._regs_glue`'s reason — the attribution pass runs the candidate a
+    second time and a carried box would start it from the first run's output. Zeroed because the
+    oracle is entered with zeroed registers here: nothing the frame writes depends on them (the one
+    field the pass reads as an input is its stack-unwind cursor, which it leaves in a register), so
+    a case that varied them would be varying something no surface can see.
+    """
+    box = PassRegs()
+    for reg in range(SCRATCH_REGS):
+        box.blit.scratch[reg] = 0
+    for field in FIELD_BY_REG.values():
+        setattr(box.blit, field, 0)
+    for field in PASS_FIELD_BY_REG.values():
+        setattr(box, field, 0)
+    return _LOOP_FN(image, ctypes.byref(box))
+
+
+def _frame_pokes(what, paused=0, flag_a30=0, request=0, scancode=0, spawn_armed=False):
+    """A whole frame's worth of state, coherent across the fifteen calls.
+
+    The two big tables come from the batteries that own them — the behaviour walk's from
+    test_behavior and the actor pool's free markers from test_actor — and this adds the frame's own
+    gates plus the spawn table AT THE ADDRESS THE FRAME REPUBLISHES.
+    """
+    salt = leaf.case_salt(what)
+    pokes = dict(_spawn_pass_pokes(salt, _armed_records([(0, 0)] * SPAWN_TABLE_SLOTS),
+                                   {HEADER_MAX_LIVE: 4, HEADER_LIVE: 4,
+                                    HEADER_CURSOR: 0, HEADER_WRAPPED: 0},
+                                   flag_a30=flag_a30))
+    pokes = leaf.overlay(pokes, _walk_pokes(salt, [None] * 8))
+    header = FRAME_SPAWN_TABLE - SPAWN_HEADER_BYTES
+    frame_table = {
+        # The four header words. LIVE below MAX_LIVE and WRAPPED clear is the CURSOR arm, so a frame
+        # with `spawn_armed` set spawns exactly one record; equal counts make the pass return after
+        # its countdown walk, which is the quiet arm.
+        header + HEADER_MAX_LIVE: word(4),
+        header + HEADER_LIVE: word(0 if spawn_armed else 4),
+        header + HEADER_CURSOR: word(0),
+        header + HEADER_WRAPPED: word(0),
+        FRAME_SPAWN_TABLE + SPAWN_ARMED: bytes([0xff if spawn_armed else 0]),
+        FRAME_SPAWN_TABLE + SPAWN_COUNTDOWN: bytes([3]),
+        FRAME_SPAWN_TABLE + SPAWN_TYPE: word(0x10),
+        FRAME_SPAWN_TABLE + SPAWN_KILL_COUNT: word(0),
+        FRAME_SPAWN_TABLE + SPAWN_X: word(0x0140),
+        FRAME_SPAWN_TABLE + SPAWN_Y: word(0x0080),
+        # ...and the terminator one record on, WITHOUT which the walk runs 1,948 records into data
+        # that is not a spawn table (see this section's header).
+        FRAME_SPAWN_TABLE + SPAWN_RECORD_BYTES: word(SPAWN_TERMINATOR),
+        TABLE_PTR_21E8C: leaf.longword(FRAME_SPAWN_TABLE),
+    }
+    pokes = leaf.overlay(pokes, frame_table)
+    pokes.update({GAME_PAUSED: word(paused),
+                  ROUND_END_RELOAD_REQUEST: word(request),
+                  KEY_LAST_SCANCODE: bytes([scancode]),
+                  # THE SCROLL QUEUE'S TWO COUNTERS, STATED. `_spawn_pass_pokes` fills the tier's
+                  # bands with keyed bytes, and these two words land inside one of them — so left
+                  # alone they hold a salt-dependent step count, and one salt measured here ran
+                  # bg_scroll_run_queue for 1.5 MILLION instructions where its neighbour ran 2,000.
+                  # A cap cannot be a cap over a seed like that.
+                  BG_QUEUE_H_COUNT: word(FRAME_SCROLL_STEPS),
+                  BG_QUEUE_V_COUNT: word(0),
+                  VBL_COUNTER: word(VBL_COUNTER_READY)})
+    pokes.update(_screen_pokes(salt))
+    _assert_the_screen_seed_reached_the_image(pokes, salt, what)
+    return pokes
+
+
+# ONE NAME FOR THE HELD FRAME'S CASE, because its salt is its seed: the premise below and the
+# differential must run the SAME image, or the premise measures a frame nobody drives.
+HELD_FRAME_CASE = "game_main_loop, a paused frame whose key is still held"
+
+
+def _held_frame_pokes(what=HELD_FRAME_CASE):
+    """The busy frame, paused, with the pause key still down — so the FIRST call waits too."""
+    pokes = _busy_frame_pokes(what, paused=GAME_PAUSED_SET)
+    pokes.update({KEY_LAST_SCANCODE: bytes([KEY_SCANCODE_P]),
+                  TEXT_REQUEST: bytes([PAUSE_MESSAGE_ID])})
+    _assert_the_screen_seed_reached_the_image(pokes, leaf.case_salt(what), what)
+    return pokes
+
+
+def _screen_pokes(salt):
+    """The two screen pointers, and the buffer the frame DRAWS into filled with keyed bytes.
+
+    THE FILL IS NOT DECORATION, and leaving it out cost this section its biggest surface. These cases
+    run `poison=False` — the flip's tail clears the very word their schedule stores, and the
+    attribution pass is refused over a scheduled byte — so a call whose writes happen to equal what
+    the destination ALREADY HELD is invisible. As the image ships, the screen and the background
+    buffers are BOTH ZERO: `bg_scroll_blit` copies zeros over zeros, 19,200 of them, and the mutant
+    that DROPPED THE WHOLE CALL left every frame case green. Seeding the destination away from what
+    the routine leaves is what the poison pass would have bought, and `sched.h`'s own contract says
+    to do exactly that.
+
+    Applied LAST by both callers, and that is load-bearing too: `test_behavior._walk_pokes` fills the
+    tier's band with keyed bytes and WB_SCREEN_BACK lies inside it, so an earlier draft of this seed
+    was silently overwritten and the frame drew into the buffer the image ships rather than the one
+    the case named.
+    """
+    return {SCREEN_FRONT: leaf.longword(FRONT_AT_ENTRY),
+            SCREEN_BACK: leaf.longword(BACK_AT_ENTRY),
+            BACK_AT_ENTRY: keyed_block(BACK_AT_ENTRY, SCREEN_BUFFER_BYTES, salt),
+            # ...and the follow cursor, for the same reason: the projection writes it, and a zeroed
+            # longword is what it would write on a zeroed camera.
+            SCROLL_FOLLOW_X: keyed_block(SCROLL_FOLLOW_X, LONG, salt)}
+
+
+def _assert_the_screen_seed_reached_the_image(pokes, salt, what):
+    """`_screen_pokes` really is what the run will see — asked of the IMAGE, not of the dict.
+
+    THE COMMENT SAYING "applied LAST" IS NOT A GUARD, and this hazard has fired five times in this
+    project's history under `leaf.overlay`'s own docstring: a later layer whose keyed BAND covers one
+    of these addresses wins, the dict still lists the poke, and every case stays green because the
+    seed it was relying on was never in the image. That is exactly how the 19,200-byte
+    `bg_scroll_blit` hole was reopened once already.
+
+    `leaf.assert_bands_are_seeded` is the wrong instrument here: it asks whether a band is COVERED,
+    and the band is covered either way — by the wrong bytes. So this compares the built image against
+    the bytes `_screen_pokes` asked for, which is the question a case actually has.
+    """
+    image = harness.make_image(pokes)
+    for addr, wanted in _screen_pokes(salt).items():
+        got = bytes(image[addr:addr + len(wanted)])
+        assert got == wanted, (
+            f"{what}: the screen seed at {addr:#x} did not reach the image — a later poke layer "
+            f"covers it. The frame would run on {got[:8].hex()} where the case asked for "
+            f"{wanted[:8].hex()}, which is how a dropped call whose writes match the destination "
+            f"goes unnoticed (see _screen_pokes).")
+
+
+def _busy_frame_pokes(what, **kw):
+    """A frame on which ELEVEN of the fifteen calls write, which is what makes a dropped call
+    visible. `_frame_pokes` alone leaves six of them silent, and a call nothing makes DO something is
+    a call no differential measures — batch 42 phase B's `$882` lesson, at the loop's scale.
+
+    What each addition buys is named beside it, and
+    `test_the_busy_frame_really_makes_each_call_write` is the premise: it measures every call's own
+    contribution out of the ORACLE and requires exactly the set claimed here.
+    """
+    salt = leaf.case_salt(what)
+    pokes = _frame_pokes(what, **kw)
+    # $882: the shop's item cursor, the one cheap handler that both WRITES and reads the joystick
+    # edge — test_behavior's record, through this file's own `_cursor_walk_pokes`.
+    pokes = leaf.overlay(pokes, _cursor_walk_pokes(salt, joystick_state=1 << JOY1_RIGHT_BIT))
+    pokes.update({
+        # $53e: the cheat sequence's FIRST step, which writes the cursor and waits for nothing.
+        KEY_SEQUENCE_MATCHED: word(0),
+        KEY_SEQUENCE_CURSOR: word(0),
+        KEY_LAST_SCANCODE: bytes([SEQUENCE_FIRST_SCANCODE]),
+        # $e032: the DRAIN arm — the bonus active, not yet refilling, and a meter to spend.
+        EVENT_FINISHED_E1BE: word(0xffff),
+        ROUND_BONUS_ACTIVE: word(ROUND_BONUS_ACTIVE_SET),
+        ROUND_BONUS_REFILLING: word(0),
+        HUD_METER_VALUE: word(FRAME_METER_VALUE),
+        # $bd8a: a message box with a lifetime to tick.
+        TEXT_REQUEST: bytes([FRAME_MESSAGE_ID]),
+        TEXT_LIFETIME_REQUEST: word(FRAME_MESSAGE_LIFETIME),
+        VBL_COUNTER: word(VBL_COUNTER_READY),
+    })
+    pokes.update(_screen_pokes(salt))     # LAST: the walk's keyed band covers WB_SCREEN_BACK
+    _assert_the_screen_seed_reached_the_image(pokes, salt, what)
+    return pokes
+
+
+# The frame is ~245,000 instructions on the oracle and its cost is dominated by two callees whose own
+# batteries cap them individually. Stated as a round bound with the measured figure beside it rather
+# than derived: no geometry here predicts a whole frame, and a cap that tracked the measurement would
+# stop being a cap.
+FRAME_INSN_CAP = 700_000          # measured: 245k quiet, 532k with a spawn, 556k paused
+
+
+def _bands(regions):
+    return [(base, length) for base, length, _owner in regions]
+
+
+def _run_frame(what, pokes, tick_nth=2, regions=FRAME_REGIONS):
+    """One iteration, checkpointed at the backward branch, with the VBL's bump declared."""
+    allowed = _bands(regions)
+    return leaf.run("game_main_loop", _loop_glue, allowed, what,
+                    regs={"_pokes": pokes}, poison=False, max_insns=FRAME_INSN_CAP,
+                    stop_pc=LOOP_BACKWARD_BRANCH,
+                    schedule=[vbl_bump(FLIP_TICK_WAIT_PC, tick_nth, VBL_COUNTER_READY + 1)],
+                    wait_sites=FLIP_SITES)
+
+
+@pytest.mark.parametrize("spawn_armed", [False, True], ids=["quiet-spawn-pass", "one-spawn"])
+def test_a_whole_unpaused_frame_runs_the_fifteen_calls(spawn_armed):
+    """THE SPINE'S CLOSING CASE: 245,000 instructions of fourteen reconstructed routines and the
+    flip, entered at $4a0 and compared at $508.
+
+    `poison=False` for `flip_screen`'s reason — the tail's `clr.w $74a.l` lands on the word the run's
+    own schedule stores, and the attribution pass is refused over a scheduled byte.
+
+    The `one-spawn` row is what makes the twelfth call measurable: with LIVE below MAX_LIVE and one
+    armed template the pass takes its cursor arm and turns a template into an actor, so a port that
+    dropped `jsr $ff42` leaves a different image. The quiet row is the same frame with the pass
+    returning after its countdown walk, which is what most frames do.
+    """
+    what = f"game_main_loop, an unpaused frame ({'one spawn' if spawn_armed else 'no spawn'})"
+    info = _run_frame(what, _frame_pokes(what, spawn_armed=spawn_armed))
+    assert info["ret"] == RETURNED, f"{what}: the iteration did not reach its backward branch"
+    assert info["regs"]["sched_site_arrivals"] == (1, 2), (
+        f"{what}: flip_screen's two waits ran {info['regs']['sched_site_arrivals']}")
+    assert leaf.read_int(info, SCREEN_FRONT, LONG, what) != leaf.read_int(
+        info, SCREEN_BACK, LONG, what), f"{what}: the frame did not end with the buffers swapped"
+
+
+def test_a_PAUSED_frame_skips_four_calls_and_still_flips():
+    """THE $66e GATE, and what it does NOT stop. Four calls are skipped — the round bonus, the panel
+    refresh, the scene driver and the input-and-actors pair — and the other eleven still run, so the
+    screen still flips and the message box still ticks. A port that gated the whole body, or none of
+    it, leaves a different image either way.
+    """
+    what = "game_main_loop, a paused frame"
+    info = _run_frame(what, _frame_pokes(what, paused=GAME_PAUSED_SET))
+    assert info["ret"] == RETURNED
+    # The four gated calls are exactly the ones that write these: a paused frame must touch none of
+    # them, and must still leave flip_screen's own words.
+    for addr, name in ((FRAME_TICK_B39A, "panel_refresh_frame's tick"),
+                       (PANEL_RESTORE_FLAG_DBB3, "panel_restore_dirty_regions"),
+                       (JOY1_PREV, "joy1_latch_edge")):
+        assert addr not in info["writes"], f"{what}: {name} ran on a paused frame"
+    assert leaf.read_int(info, VBL_COUNTER, WORD, what) == 0, f"{what}: the frame did not flip"
+
+
+@pytest.mark.parametrize("flag", [0xffff, 0x0001])
+def test_the_A30_gate_skips_the_spawn_pass(flag):
+    """`tst.w $a30.l / bne.w $4fc` at $4ec — the loop's SECOND gate, and the one whose arm is a
+    single call. The A30 mode is the round-bonus stage, which spawns nothing.
+
+    The flag is read by four of the frame's other calls as well, so this is not a case about
+    `actor_spawn_pass` in isolation; what it pins here is that the loop's own `tst.w` steers, which
+    the image says by the spawn's writes being absent.
+    """
+    what = f"game_main_loop, the A30 flag at {flag:#06x}"
+    info = _run_frame(what, _frame_pokes(what, flag_a30=flag, spawn_armed=True))
+    assert info["ret"] == RETURNED
+    assert FRAME_SPAWN_TABLE + SPAWN_COUNTDOWN not in info["writes"], (
+        f"{what}: the spawn pass ran although the A30 flag is set")
+
+
+def test_a_frame_whose_key_actions_UNWIND_never_reaches_the_backward_branch():
+    """THE OTHER WAY OUT OF ONE ITERATION, and a case that assumed $508 was the only one would HANG
+    rather than fail.
+
+    `game_key_actions`' first arm pops this routine's return address and `jmp $e5ba`s into the boot
+    chain, so a frame entered with the round-end request raised leaves through the loop's SECOND
+    `bsr` and runs none of the thirteen calls below it. The checkpoint is that `jmp`, and the witness
+    that the arm really fired is its own instruction — `leaf.run_reaching`.
+    """
+    what = "game_main_loop, a frame the round-end request unwinds"
+    pokes = _frame_pokes(what, request=0xffff)
+    info = leaf.run_reaching("game_main_loop", _loop_glue,
+                             [(ROUND_END_RELOAD_REQUEST, WORD)], what, ROUND_END_UNWIND,
+                             regs={"_pokes": pokes}, poison=False, max_insns=ARM_INSN_CAP,
+                             stop_pc=ROUND_END_JMP)
+    assert info["ret"] == ROUND_END, (
+        f"{what}: the loop reported {info['ret']} rather than the unwind it took")
+    assert FRAME_TICK_B39A not in info["writes"], f"{what}: the frame ran on past the unwind"
+
+
+# --- the busy frame, the premise under it, and the frame that runs THREE waits ---------------------
+# WHICH OF THE FIFTEEN CALLS WRITES, on each frame this section drives. The claim is the coverage the
+# drop-a-call mutants rest on, and `test_the_busy_frame_really_makes_each_call_write` measures it out
+# of the ORACLE rather than taking it on trust: a seed that stopped making a call do something would
+# otherwise leave that call's mutant surviving with nothing failing.
+#
+# TWO CALLS ARE SILENT ON EVERY FRAME HERE and they are stated rather than hidden — see
+# ../STATUS.md's honestly-unpinned list. `scene_run_frame` writes only in the A30/A32 modes, whose
+# descriptor and actor table are a frame of their own; `sprite_draw_pass` writes only for a projected
+# record whose sprite the descriptor table gives a bitmap, which the composition's actor table has
+# not got.
+# The EIGHT every frame here writes through, whatever else it is doing.
+FRAME_CALLS_ALWAYS_WRITING = (
+    "panel_refresh_frame", "game_latch_input_and_step_actors", "project_followed_actor",
+    "bg_scroll_run_queue", "project_actor_list", "bg_scroll_blit", "game_snap_follow_cursor",
+    "flip_screen",
+)
+# ...and what each frame adds. THE SPAWN IS THE PLAIN FRAME'S, deliberately: on the busy frame the
+# actor table's slots are taken by the shop cursor and its terminator, the allocator hands back a
+# record the pool does not have, and `spawn_one` writes through it into the 68000's VECTOR PAGE. That
+# is the original's own arithmetic on a state the game cannot reach, and this battery declines to
+# bring it inside a region table — the plain frame's `one-spawn` row is where the twelfth call is
+# measured instead.
+PLAIN_FRAME_EXTRA_WRITERS = ("actor_spawn_pass",)                                   # nine in all
+BUSY_FRAME_EXTRA_WRITERS = ("game_key_actions", "round_bonus_run_frame",            # eleven
+                            "text_run_message_box")
+# THE HELD FRAME IS NOT THE BUSY ONE PLUS THE UNPAUSE, and the measurement is what says so:
+# `game_key_actions` writes nothing there. The unpause runs FIRST and its payload FORGETS the
+# scancode, so the keyboard routine two instructions later reads a zero and its cheat-sequence walk
+# steps over nothing — a frame that lifts the pause spends the key that lifted it. Eleven again, and
+# a different eleven.
+HELD_FRAME_EXTRA_WRITERS = ("game_unpause_on_key_release", "round_bonus_run_frame",
+                            "text_run_message_box")
+# TWO CALLS NO FRAME HERE MEASURES, and they are named rather than left to a survivor nobody read.
+FRAME_CALLS_NO_SEED_HERE_REACHES = ("scene_run_frame", "sprite_draw_pass")
+
+# Each call, as (the checkpoint above it, the checkpoint below it, its name). The addresses are the
+# loop's own call sites; `test_the_flip_is_the_body_this_battery_reconstructs` is not what pins them
+# — `test_every_call_site_this_section_brackets_is_a_call` below is.
+FRAME_CALL_SITES = (
+    (0x4a0, 0x4a4, "game_unpause_on_key_release"),
+    (0x4a4, 0x4a8, "game_key_actions"),
+    (0x4b2, 0x4b8, "round_bonus_run_frame"),
+    (0x4b8, 0x4be, "panel_refresh_frame"),
+    (0x4be, 0x4c4, "scene_run_frame"),
+    (0x4c4, 0x4ca, "game_latch_input_and_step_actors"),
+    (0x4ca, 0x4d0, "project_followed_actor"),
+    (0x4d0, 0x4d6, "bg_scroll_run_queue"),
+    (0x4d6, 0x4dc, "project_actor_list"),
+    (0x4dc, 0x4e2, "bg_scroll_blit"),
+    (0x4e2, 0x4e6, "game_snap_follow_cursor"),
+    (0x4e6, 0x4ec, "sprite_draw_pass"),
+    (0x4f6, 0x4fc, "actor_spawn_pass"),
+    (0x4fc, 0x502, "text_run_message_box"),
+    (0x502, 0x508, "flip_screen"),
+)
+
+
+def test_no_frame_region_whitelists_a_routine_the_spine_RUNS():
+    """A STRAY-WRITE BOUND MUST NOT COVER CODE, and the first draft of `FRAME_REGIONS` did.
+
+    Its opening row was the HULL of `flip_screen`'s five data words, $712..$753 — and $716..$749 of
+    that is `vbl_handler`'s own body. A band like that says "the frame may write here" over fifty-two
+    bytes of instructions: a reconstruction that scribbled into one would pass the bound, and the
+    owner column would blame the wrong routine for it.
+
+    So every band is required to be disjoint from every routine the spine's own walk reaches. The
+    entry addresses come from that walk rather than from a list, so a band that grows over a routine
+    added later fails too. (`BACK_AT_ENTRY` and the spawn table are DATA and hold no entry point,
+    which is what makes this checkable rather than merely careful.)
+    """
+    reached, _opaque, _tails = _reachable()
+    for base, length, owner in FRAME_REGIONS + BUSY_FRAME_REGIONS:
+        covered = sorted(entry for entry in reached if base <= entry < base + length)
+        assert not covered, (
+            f"the region at {base:#x}+{length} ({owner}) covers the entry point(s) "
+            f"{[hex(a) for a in covered]} — a stray-write bound over CODE")
+
+
+def test_every_call_site_this_section_brackets_is_a_call():
+    """The bracket table above names fifteen ADDRESS PAIRS, and a pair that had drifted off the
+    instruction it names would measure a different call's contribution — or none. So every `before`
+    is required to hold a `bsr.w`/`jsr <abs>.l` to the routine the row names, and every `after` to be
+    the instruction past it.
+    """
+    for before, after, name in FRAME_CALL_SITES:
+        target = leaf.entry_of(name)
+        encoded = bytes(harness.BASE_IMAGE[before:after])
+        assert encoded in (bsr_w(before, target), jsr_abs_l(target)), (
+            f"{before:#x} is not a call to {name} @ {target:#x} ending at {after:#x}, but "
+            f"{encoded.hex()}")
+    assert len(FRAME_CALL_SITES) == LOOP_CALL_COUNT, (
+        f"the loop makes {LOOP_CALL_COUNT} calls and this table brackets {len(FRAME_CALL_SITES)}")
+
+
+LOOP_CALL_COUNT = 15
+
+
+LOOP_UNPAUSE_CALL = 0x4a0         # `bsr.w $638`, whose body waits on the held frame...
+LOOP_FLIP_CALL = 0x502            # ...and `jsr $694.l`, whose body waits on every frame
+
+
+def _schedule_up_to(checkpoint, held):
+    """The (schedule, wait_sites) a run stopping at `checkpoint` needs, and no more.
+
+    An entry that never comes due SINKS the run (`emu.run` says so by name), so a prefix that stops
+    above a wait must not carry that wait's store — and a prefix that runs THROUGH one must. The two
+    waits a frame can hold are the flip's, on every frame, and `game_unpause_on_key_release`'s, on
+    the held frame alone.
+
+    The SITES are declared for both regardless: a site is a counter, not a store, and declaring one
+    the run never reaches costs an arrival count of zero.
+    """
+    entries, sites = [], list(FLIP_SITES)
+    if held:
+        sites = [UNPAUSE_WAIT_PC] + sites
+        if checkpoint > LOOP_UNPAUSE_CALL:
+            entries.append(release(UNPAUSE_WAIT_PC, KEY_SCANCODE_P_RELEASE, HELD_RELEASE_NTH)[0])
+    if checkpoint > LOOP_FLIP_CALL:
+        entries.append(vbl_bump(FLIP_TICK_WAIT_PC, FRAME_TICK_NTH, VBL_COUNTER_READY + 1))
+    return dict(schedule=entries, wait_sites=sites) if entries else {}
+
+
+def _call_contributions(pokes, held=False):
+    """{call name: how many PROGRAM bytes it changed}, measured on the ORACLE alone.
+
+    Two runs per call, checkpointed either side of it, and the difference between their write sets.
+    The MACHINE STACK is left out (`leaf.program_writes`' band): every `bsr` pushes a return address,
+    so counting it would report every call as writing four bytes and the premise would be vacuous —
+    which is exactly what the first draft of this did.
+    """
+    image = harness.make_image(pokes)
+    contributed = {}
+    for before, after, name in FRAME_CALL_SITES:
+        prefix = _oracle_writes_to(image, before, held)
+        whole = _oracle_writes_to(image, after, held)
+        contributed[name] = len({a for a in set(prefix) | set(whole)
+                                 if prefix.get(a) != whole.get(a)})
+    return contributed
+
+
+def _oracle_writes_to(image, checkpoint, held):
+    writes = emu.run(image, LOOP_ENTRY, {}, stop_pc=checkpoint, max_insns=FRAME_INSN_CAP,
+                     **_schedule_up_to(checkpoint, held))[1]
+    return {addr: value for addr, value in writes.items() if not leaf.on_machine_stack(addr)}
+
+
+@pytest.mark.parametrize("frame,extra", [
+    ("plain", PLAIN_FRAME_EXTRA_WRITERS),
+    ("busy", BUSY_FRAME_EXTRA_WRITERS),
+    ("held", HELD_FRAME_EXTRA_WRITERS),
+], ids=["plain", "busy", "held"])
+def test_each_frame_really_makes_the_calls_it_claims_WRITE(frame, extra):
+    """THE PREMISE UNDER THE DROP-A-CALL COVERAGE, and it is a measurement rather than a claim.
+
+    A call is only measured by an input that makes the callee DO something — batch 42 phase B's `$882`
+    lesson, and the sweep proved it again at the loop's scale: on the plain frame SIX of the fifteen
+    wrote nothing and every one of their drop-a-call mutants survived. This runs the oracle either
+    side of each call and requires the writing set to be exactly the one claimed, so a seed that went
+    quiet fails HERE instead of leaving a mutant unremarked six months later.
+    """
+    if frame == "held":
+        # THE HELD FRAME'S SEED IS ITS CASE'S OWN, not a premise-shaped copy: the writer set claimed
+        # below is the one the differential runs on, and a second salt would measure a second frame.
+        pokes, what = _held_frame_pokes(), HELD_FRAME_CASE
+    else:
+        what = f"the {frame} frame's premise"
+        pokes = (_frame_pokes(what, spawn_armed=True) if frame == "plain"
+                 else _busy_frame_pokes(what))
+    contributed = _call_contributions(pokes, held=(frame == "held"))
+    wrote = {name for name, count in contributed.items() if count}
+    assert wrote == set(FRAME_CALLS_ALWAYS_WRITING) | set(extra), (
+        f"the {frame} frame's writing calls are {sorted(wrote)}, not the ones it claims")
+    assert set(FRAME_CALLS_NO_SEED_HERE_REACHES) <= set(contributed) - wrote, (
+        "a call this battery records as unreached by any seed has started writing — which is good "
+        "news and a table to update")
+
+
+def test_a_BUSY_frame_runs_the_fifteen_calls_with_eleven_of_them_writing():
+    """The frame the drop-a-call sweep is measured against: same composition, a seed that makes each
+    call do something. `poison=False` for `flip_screen`'s reason."""
+    what = "game_main_loop, a busy frame"
+    info = _run_frame(what, _busy_frame_pokes(what), regions=BUSY_FRAME_REGIONS)
+    assert info["ret"] == RETURNED
+    assert info["regs"]["sched_site_arrivals"] == (1, 2)
+    assert leaf.read_int(info, KEY_SEQUENCE_CURSOR, WORD, what) == 1, (
+        f"{what}: game_key_actions did not step the cheat sequence")
+    assert leaf.read_int(info, HUD_METER_VALUE, WORD, what) == FRAME_METER_VALUE - 1, (
+        f"{what}: the round bonus did not drain a unit")
+
+
+def test_a_PAUSED_frame_whose_key_is_still_held_runs_THREE_WAITS_IN_ONE_RUN():
+    """THE REMEDY'S SHOWPIECE, and the case the model could not carry at all before this phase.
+
+    The game is paused and the pause key is still down, so `game_unpause_on_key_release` spins on
+    WB_KEY_LAST_SCANCODE at $64e until the IKBD stores the release — and then the SAME frame goes on
+    to `flip_screen`, which spins twice more on WB_VBL_COUNTER. Three waits, three sites, two
+    interrupts, one run. Under run TOTALS this could not be written: two trigger PCs were refused
+    outright, and lifting that refusal without keying the counters would have let the three balance
+    against each other.
+
+    It also retires one of the sweep's drop-a-call survivors: with the unpause's payload in the frame,
+    a port that dropped the loop's FIRST `bsr` leaves FOUR bytes unwritten — the scancode it forgets,
+    the pause word it clears and the text request it posts. That count is measured rather than
+    guessed, by the premise case above.
+    """
+    what = HELD_FRAME_CASE
+    pokes = _held_frame_pokes(what)
+    release_nth, tick_nth = HELD_RELEASE_NTH, FRAME_TICK_NTH
+    info = leaf.run("game_main_loop", _loop_glue,
+                    _bands(BUSY_FRAME_REGIONS) + [(KEY_LAST_SCANCODE, BYTE), (GAME_PAUSED, WORD)],
+                    what, regs={"_pokes": pokes}, poison=False, max_insns=FRAME_INSN_CAP,
+                    stop_pc=LOOP_BACKWARD_BRANCH,
+                    schedule=[release(UNPAUSE_WAIT_PC, KEY_SCANCODE_P_RELEASE, release_nth)[0],
+                              vbl_bump(FLIP_TICK_WAIT_PC, tick_nth, VBL_COUNTER_READY + 1)],
+                    wait_sites=(UNPAUSE_WAIT_PC,) + FLIP_SITES)
+    assert info["ret"] == RETURNED
+    assert info["regs"]["sched_site_arrivals"] == (release_nth, 1, tick_nth), (
+        f"{what}: the run's three waits ran {info['regs']['sched_site_arrivals']} iterations")
+    assert leaf.read_int(info, GAME_PAUSED, WORD, what) == 0, f"{what}: the pause was not lifted"
+    assert info["writes"][KEY_LAST_SCANCODE] == 0, f"{what}: the scancode was not forgotten"
+    # ...AND THE FRAME RAN ON. A paused frame skips four calls; this one lifted the pause FIRST, so
+    # the $66e test below the unpause reads the word the unpause has just cleared and all fifteen run.
+    assert FRAME_TICK_B39A in info["writes"], (
+        f"{what}: the gated block was skipped, so the unpause's clear did not reach the $66e test")

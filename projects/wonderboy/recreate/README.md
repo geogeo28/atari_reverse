@@ -154,12 +154,17 @@ src/hud.c                  panel_refresh_frame ($b346) below its own entry: batc
                            batch 4's third (the pass's three table walks: the region restore and its
                            six blits, the newest record's display, the six HUD slots)
 src/input.c                the joystick edge pipeline: latch a frame, then diff two frames
-src/game.c                 THE SPINE, batch 42 phase A: game_key_actions ($53e, the game's whole
-                           keyboard — the round-end reload, the cheat's level skip, the pause arm,
-                           the quit, the key-sequence walk and the cheat's Help toggle) and
-                           game_unpause_on_key_release ($638). BOTH BUSY-WAIT on a byte the IKBD
-                           interrupt writes, so both read it through the kit's `sched_poll8` once
-                           per iteration and nowhere else
+src/game.c                 THE SPINE, and as of batch 42 phase C it is WHOLE: game_main_loop
+                           ($4a0) and the fifteen calls it makes. The keyboard (game_key_actions,
+                           $53e — the round-end reload, the cheat's level skip, the pause arm, the
+                           quit, the key-sequence walk and the cheat's Help toggle),
+                           game_unpause_on_key_release ($638), the input-and-actors pair ($882),
+                           the follow-cursor snap ($50a), the round bonus ($e032/$e0a8), the
+                           floppy's PSG pair ($624c/$6268), the vertical-blank handler ($716) and
+                           flip_screen ($694). FOUR OF THEM BUSY-WAIT — three on the byte the IKBD
+                           interrupt writes and two of the flip's on the word the VBL bumps — so
+                           each reads its byte through the kit's `sched_poll8`/`sched_poll16` once
+                           per iteration, NAMING the wait site, and nowhere else
 src/actor.c                the actor tier: $67e0, which names the record everything else is
                            measured against, the two tests above it (which side the followed actor
                            is on, and whether it is within reach horizontally), and the two passes
@@ -634,7 +639,7 @@ leaf.run("game_unpause_on_key_release", glue, allowed, what,
                     "addr": KEY_LAST_SCANCODE, "width": 1, "value": KEY_SCANCODE_P_RELEASE}])
 ```
 
-Four rules, each of which cost something to learn:
+Five rules, each of which cost something to learn:
 
 1. **The trigger PC comes out of the body pin, never out of a listing.** `test_game.py` assembles
    both routines WHOLE and takes the wait's address from a label in that assembly, so a schedule
@@ -653,6 +658,13 @@ Four rules, each of which cost something to learn:
    re-run takes the early arm, never reaches the wait, and the declared store never comes due — which
    `emu.run` correctly refuses. Seed each written byte away from what the routine leaves instead;
    that is what the pass would have bought.
+5. **AND THEN ACTUALLY SEED THEM, over the WHOLE destination — rule 4 is only advice until you do.**
+   Batch 42 phase C's frame cases run `poison=False` for the same reason and left the screen buffer
+   as the image ships it, which is ZERO; `bg_scroll_blit` copies zeros over zeros, so DROPPING THE
+   WHOLE CALL — 19,200 bytes of it — left every case green, and the sweep is what said so. A
+   destination that already holds what the routine writes is not a destination the case is checking.
+   `test_game.py`'s `_screen_pokes` fills it with keyed bytes, and applies them LAST, because a
+   neighbouring battery's keyed band covers WB_SCREEN_BACK and had been quietly overwriting them.
 
 ### Running a routine that ends in `rte`
 

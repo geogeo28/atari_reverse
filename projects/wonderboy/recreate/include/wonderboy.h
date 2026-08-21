@@ -2534,14 +2534,42 @@
 /* ---- THE FRAME'S OWN STATE: what flip_screen and vbl_handler count on (src/game.c) ------------ */
 #define WB_VBL_COUNTER               0x74au   /* word: `addq.w #1,$74a.l` in vbl_handler and NOTHING
                                                * else raises it; flip_screen waits on it twice and
-                                               * then clears it. THAT PAIR IS WHY THE SPINE'S LAST
-                                               * TWO ROWS ARE UNPORTED, and the reason is how the
-                                               * poll model COUNTS rather than how wide it is: the
-                                               * natural one-trigger run is ACCEPTED, and its poll
-                                               * and arrival totals cancel to agree while the two
-                                               * sides run different iteration counts. The fix is to
-                                               * split the differential at $6ca, one wait per run.
-                                               * Registered in full at ../names.txt's cmt 0x694 */
+                                               * then clears it. Both waits are DRIVEN as of batch 42
+                                               * phase C: the kit counts polls and arrivals PER WAIT
+                                               * SITE, so one run can carry the two — os.h's "WAIT
+                                               * SITES", and ../names.txt's cmt 0x694 for what the
+                                               * run TOTALS used to hide here */
+#define WB_VBL_COUNTER_READY         1        /* `cmpi.w #$1,d0 / blt.s` at $6b0: the first wait
+                                               * spins while the counter is BELOW this, as a SIGNED
+                                               * word — so a counter above $7fff reads as not ready */
+
+/* flip_screen's two wait SITES: the addresses at which the original RE-READS WB_VBL_COUNTER, which
+ * is what the scheduled-write model keys its counters by (tools/recreate_kit/include/sched.h). The
+ * READ is the rule and not merely "an instruction the loop re-executes" — the model applies a due
+ * store just BEFORE the site's instruction on both shores, so a site naming the COMPARE below the
+ * read would land it one instruction too late. The first wait is where that bites: its read and its
+ * test are two instructions apart. They are the ORIGINAL's PCs, so they belong with the rest of this
+ * file's addresses rather than in the C, and test_game.py cross-pins each against the assembled body
+ * it decodes out of the image. */
+#define WB_FLIP_READY_WAIT_PC        0x6aau   /* `move.w $74a.l,d0` — the READ; `cmpi.w #$1,d0` at
+                                               * $6b0 is the test, and is NOT the site */
+#define WB_FLIP_TICK_WAIT_PC         0x6d0u   /* `cmp.w $74a.l,d0` — here the read and the test are
+                                               * one instruction, against the copy taken at $6ca,
+                                               * which is why this wait can never be seeded past */
+
+/* ...and the screen base the swap publishes. The 68000 puts the buffer's bits 16-23 and 8-15 on
+ * two write-only shifter registers, which the oracle DROPS exactly as it drops the palette writes
+ * (WB_SHIFTER_PALETTE) — see flip_screen in src/game.c for what that costs. */
+#define WB_SHIFTER_SCREEN_BASE_HIGH  0xff8201u /* `move.b $74d.l,$ff8201.l` at $6b6 */
+#define WB_SHIFTER_SCREEN_BASE_MID   0xff8203u /* `move.b $74e.l,$ff8203.l` at $6c0 */
+/* ...and the two bytes of the front-buffer longword those operands really name. $74d and $74e are
+ * bytes 1 and 2 of WB_SCREEN_FRONT, i.e. the pointer's bits 16-23 and 8-15 — the shifter takes the
+ * base 256-byte-aligned, so its low byte is not published at all. */
+#define WB_SCREEN_FRONT_BITS_16_23   (WB_SCREEN_FRONT + 1u)
+#define WB_SCREEN_FRONT_BITS_8_15    (WB_SCREEN_FRONT + 2u)
+#define WB_FLASH_COLOUR_WHITE        0x777u    /* `move.w #$777,$ff8240.l` at $6f8 — colour 0 while
+                                                * WB_FLASH_TIMER runs; `clr.w` at $702 on the frame
+                                                * it reaches zero */
 #define WB_FLOPPY_IDLE_TIMER         0x64f2u  /* word countdown vbl_handler decrements; on the frame
                                                * it reaches zero the handler deselects the drives.
                                                * floppy_unwind_return arms it with $96 (150 frames,
@@ -2558,6 +2586,15 @@
 #define WB_KEY_SCANCODE_ESC          0x1u     /* `cmpi.b #$1` at $580 -- quit to the disk prompt */
 #define WB_KEY_SCANCODE_HELP         0x62u    /* `cmpi.b #$62` at $5da -- the cheat's second action */
 #define WB_KEY_SCANCODE_HELP_RELEASE 0xe2u    /* ...and $e2 at $5e6, which is $62 | $80 */
+
+/* The three key waits' SITES — the `cmpi.b` at which each spin RE-READS WB_KEY_LAST_SCANCODE, which
+ * is how the scheduled-write model tells one wait from another (tools/recreate_kit/include/sched.h).
+ * A `cmpi.b #imm,(xxx).l` reads and tests in ONE instruction, so unlike flip_screen's first wait the
+ * read and the compare coincide here. WB_KEY_SCANCODE_P_RELEASE is waited for at TWO of them, which
+ * is why the site is the PC and never the address. */
+#define WB_KEY_HELP_WAIT_PC          0x5e6u   /* game_key_actions' Help arm */
+#define WB_KEY_PAUSE_WAIT_PC         0x60eu   /* ...its pause arm */
+#define WB_KEY_UNPAUSE_WAIT_PC       0x64eu   /* game_unpause_on_key_release */
 #define WB_PAUSE_MESSAGE_ID          0x34u    /* `move.b #$34,$c030.l` at $626: the message the pause
                                                * arm posts. The unpause payload posts $ff, which is
                                                * WB_TEXT_REQUEST's documented "dismiss the box" */

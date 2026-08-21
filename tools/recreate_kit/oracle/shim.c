@@ -72,45 +72,56 @@ uint32_t        osh_prof_slots(void) { return PROF_SIZE / 2; }
  * final images still agree byte for byte. */
 static uint32_t g_sched[OS_SCHED_MAX][OS_SCHED_FIELDS];
 static uint32_t g_sched_n;
-static uint32_t g_sched_seen[OS_SCHED_MAX];   /* arrivals at this entry's trigger PC, so far */
-static uint8_t  g_sched_fired[OS_SCHED_MAX];  /* ...and whether it has already been applied */
+static uint8_t  g_sched_fired[OS_SCHED_MAX];  /* whether an entry has already been applied */
 static uint32_t g_sched_applied;              /* entries applied this run */
-static uint32_t g_sched_arrivals;             /* total arrivals at any AT_PC entry's trigger */
+static uint32_t g_sched_arrivals;             /* total arrivals over every declared wait site */
 static uint32_t g_sched_refused;              /* entries whose store os_sched_store would not make */
 
-/* Install the run's schedule. Entries past OS_SCHED_MAX are DROPPED and reported through
- * osh_sched_count(), which emu.run checks against what it passed (`_install_schedule`): silently
- * carrying fewer entries than the case declared would leave the wait loop spinning to the
- * instruction cap with no cause named.
+/* THE RUN'S DECLARED WAIT SITES (os.h, "WAIT SITES") and their arrival counts. An arrival is
+ * counted for the SITE and not for the entry, which is what makes it the same event as the
+ * candidate's poll AT THAT SITE: two waits in one run have two counters here and two there, and the
+ * harness compares them pairwise instead of comparing two totals that can cancel. */
+static uint32_t g_sched_sites[OS_SCHED_SITE_MAX];
+static uint32_t g_sched_site_n;
+static uint32_t g_sched_site_arrivals[OS_SCHED_SITE_MAX];
+
+/* Install the run's schedule: the entries AND the wait sites their triggers name, as one
+ * declaration, because an AT_PC entry whose trigger is not a declared site can never come due.
+ * Entries past OS_SCHED_MAX (and sites past OS_SCHED_SITE_MAX) are DROPPED and reported through
+ * osh_sched_count()/osh_sched_site_count(), which emu.run checks against what it passed
+ * (`_install_schedule`): silently carrying fewer than the case declared would leave the wait loop
+ * spinning to the instruction cap with no cause named.
  *
- * THE LIST IS NOT PER-RUN STATE and sched_enter_run does not clear it — only the counters. What
+ * NEITHER LIST IS PER-RUN STATE and sched_enter_run does not clear them — only the counters. What
  * makes a schedule not leak into the next case is that emu.run calls this before EVERY run, an
  * empty one included; a C caller that drives osh_run directly (the probes in ../test) inherits
  * whatever the last install left and must install its own, empty or not. */
-void osh_schedule(const uint32_t *entries, uint32_t n) {
+void osh_schedule(const uint32_t *entries, uint32_t n, const uint32_t *sites, uint32_t site_n) {
     g_sched_n = os_sched_install(g_sched, entries, n);
+    g_sched_site_n = os_sched_install_sites(g_sched_sites, sites, site_n);
 }
 
 /* Apply every entry the instruction about to run brings due. Called once per instruction, BEFORE it
  * executes, so an AT_PC entry with nth = 1 lands before the compare at that PC reads its byte —
  * which is what makes it the same event as the candidate's first `sched_poll8`. */
 static void sched_fire(uint32_t pc, uint32_t insn_index) {
-    int arrived = 0;   /* did THIS instruction match any AT_PC entry's trigger? */
+    /* ONE ARRIVAL PER INSTRUCTION, however many entries name this PC — the harness compares the
+     * count against the candidate's POLLS AT THE SAME SITE, and a wait polls once per iteration
+     * whether the case declared one store on it or three. Counted after an entry has fired too: a
+     * port that polls a different number of times is what the comparison is for. */
+    uint32_t site = os_sched_site_index(g_sched_sites, g_sched_site_n, pc);
+    uint32_t arrival = 0;
+    if (site != OS_SCHED_NO_SITE) {
+        arrival = ++g_sched_site_arrivals[site];
+        g_sched_arrivals++;
+    }
     for (uint32_t i = 0; i < g_sched_n; i++) {
         int due;
-        if (g_sched[i][OS_SCHED_F_KIND] == OS_SCHED_AT_PC) {
-            if (pc != g_sched[i][OS_SCHED_F_TRIGGER])
-                continue;
-            /* ONE ARRIVAL PER INSTRUCTION, however many entries name this PC — the harness compares
-             * the total against the candidate's POLL count, and a wait polls once per iteration
-             * whether the case declared one store on it or three. Counted after the entry has fired
-             * too: a port that polls a different number of times is what the comparison is for. */
-            arrived = 1;
-            g_sched_seen[i]++;
-            due = g_sched_seen[i] == g_sched[i][OS_SCHED_F_NTH];
-        } else {
+        if (g_sched[i][OS_SCHED_F_KIND] == OS_SCHED_AT_PC)
+            due = site != OS_SCHED_NO_SITE && pc == g_sched[i][OS_SCHED_F_TRIGGER]
+                  && arrival == g_sched[i][OS_SCHED_F_NTH];
+        else
             due = insn_index == g_sched[i][OS_SCHED_F_TRIGGER];   /* 1-based; see osh_run's loop */
-        }
         if (!due || g_sched_fired[i])
             continue;
         g_sched_fired[i] = 1;
@@ -120,17 +131,16 @@ static void sched_fire(uint32_t pc, uint32_t insn_index) {
         else
             g_sched_refused++;
     }
-    g_sched_arrivals += (uint32_t)arrived;
 }
 
 static void sched_enter_run(void) {
     g_sched_applied = 0;
     g_sched_arrivals = 0;
     g_sched_refused = 0;
-    for (uint32_t i = 0; i < OS_SCHED_MAX; i++) {
-        g_sched_seen[i] = 0;
+    for (uint32_t i = 0; i < OS_SCHED_MAX; i++)
         g_sched_fired[i] = 0;
-    }
+    for (uint32_t i = 0; i < OS_SCHED_SITE_MAX; i++)
+        g_sched_site_arrivals[i] = 0;
 }
 
 uint32_t osh_sched_count(void)     { return g_sched_n; }
@@ -139,6 +149,15 @@ uint32_t osh_sched_arrivals(void)  { return g_sched_arrivals; }
 uint32_t osh_sched_refused(void)   { return g_sched_refused; }
 uint32_t osh_sched_max(void)       { return OS_SCHED_MAX; }
 uint32_t osh_sched_fields(void)    { return OS_SCHED_FIELDS; }
+uint32_t osh_sched_site_max(void)  { return OS_SCHED_SITE_MAX; }
+uint32_t osh_sched_site_count(void) { return g_sched_site_n; }
+
+/* Arrivals at the `i`th DECLARED site, in the order the run declared them — what the harness
+ * compares against the candidate's `g_sched_site_polls(i)`. Out of range reads 0 rather than past
+ * the table: the caller is ctypes and a bad index is a test bug, not a model state. */
+uint32_t osh_sched_site_arrivals(uint32_t i) {
+    return i < OS_SCHED_SITE_MAX ? g_sched_site_arrivals[i] : 0u;
+}
 
 /* The 68000 has a 24-bit address bus, so the top byte of an address is ignored: $ffff8800 and
  * $fffffc00 reach the same hardware as $ff8800 and $fffc00. Every hardware-address comparison below

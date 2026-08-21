@@ -7,6 +7,12 @@ written by something outside the routine, and the case declares that store. The 
 before the Nth arrival at the wait's compare (`oracle/shim.c`); a reconstruction reaches the same
 store through `src/sched.c`'s `sched_poll8`, whose Nth POLL is that same event.
 
+AND BOTH COUNTS ARE KEPT PER WAIT SITE (os.h, "WAIT SITES"), which is what makes them comparable in
+a run that holds more than one wait. Against run TOTALS two waits balance by cancellation — the
+candidate's store fires an iteration early on the second wait and the first wait's poll makes the sum
+up, so a port that DELETED the first wait matches. `two_waits` and its two candidate bodies are that
+measurement, and `cand_two_waits_first_deleted` is the port the keying exists to catch.
+
 That is a KIT-WIDE property, so it is pinned here rather than in the first project to need it (the
 placement rule `test_hw_model.py` next door follows). The obstacle is the usual one: this directory
 binds no project, and `harness`/`emu` both load a candidate `.so` at import, so the oracle is
@@ -45,6 +51,10 @@ CAND_POLL_CAP = 16
 # The planted wait is a compare and a branch back, so an unreleased one arrives at its trigger once
 # every two instructions — which is what turns the cap into an expected arrival count.
 WAIT_INSNS_PER_ITERATION = 2
+# The WORD wait's two values, and the arrival the two-wait routine's second spin is released at.
+WORD_HELD = 0x1234
+WORD_WANT = 0x5678
+TWO_WAIT_NTH = 3
 
 
 
@@ -272,6 +282,163 @@ def test_the_candidate_refuses_the_same_out_of_image_store_the_oracle_refuses(ca
     assert cand["watch"] == HELD
 
 
+# ---- WAIT SITES: the counters that make a two-wait run comparable -------------------------------
+
+def sites(cases, name, key):
+    """The per-site counts a case printed, as a tuple in the run's own site order."""
+    s = scalars(cases, name)
+    return tuple(s[f"{key}{i}"] for i in range(s["sites"]))
+
+
+def test_an_entry_whose_trigger_is_not_a_declared_site_can_never_come_due(cases):
+    """WHY `emu.wait_site_pcs` refuses that combination before a case can be written with it.
+
+    An entry fires on ITS SITE's arrival count, so a trigger PC nothing counts is a store that never
+    lands — and the symptom is a wait spinning to the instruction cap, which points at the routine
+    rather than at the declaration. The entry here names the compare the run really does execute and
+    the run declares some other address as its site.
+    """
+    s = scalars(cases, "trigger_is_not_a_declared_site")
+    assert s["reached"] == 0, "the wait was never released"
+    assert (s["count"], s["applied"]) == (1, 0), "the entry is carried and never comes due"
+    assert (s["sites"], s["arrivals"]) == (1, 0), "and the site the run declared is never arrived at"
+    assert s["watch"] == HELD
+
+
+def test_sites_past_the_cap_are_dropped_and_counted(cases):
+    """`os_sched_install_sites` clamps to OS_SCHED_SITE_MAX and the count says what was kept.
+
+    Silently dropping a site is worse here than dropping an entry: the wait at that site would go
+    UNCOUNTED, which is the exact hole the sites exist to close, and the run would still be green.
+    """
+    s = scalars(cases, "more_sites_than_the_cap")
+    assert s["sites"] == _os_h_int("OS_SCHED_SITE_MAX")
+    assert sites(cases, "more_sites_than_the_cap", "arrivals")[0] == 3, (
+        "the kept sites still count, and the first of them is the wait's own compare")
+
+
+def test_two_waits_in_one_run_are_counted_separately(cases):
+    """THE ARRANGEMENT THE PER-SITE COUNTERS EXIST FOR, on the oracle.
+
+    The routine is Wonder Boy's `flip_screen` in miniature: a first wait whose byte the case seeds
+    ALREADY RELEASED, so it falls through in one arrival, and a second declared at `nth`. The two
+    counts are 1 and `nth`; their SUM is what a run total would have reported, and the case below is
+    what shows the sum is not enough.
+    """
+    s = scalars(cases, "two_waits")
+    assert s["reached"] == 1 and s["applied"] == 1
+    assert sites(cases, "two_waits", "arrivals") == (1, TWO_WAIT_NTH)
+    assert s["arrivals"] == 1 + TWO_WAIT_NTH, "the total is the sum of the two, and only the sum"
+
+
+def test_the_faithful_two_wait_port_matches_the_oracle_site_by_site(cases):
+    oracle = sites(cases, "two_waits", "arrivals")
+    cand = sites(cases, "cand_two_waits", "polls")
+    assert cand == oracle == (1, TWO_WAIT_NTH)
+    assert scalars(cases, "cand_two_waits")["undeclared"] == 0
+
+
+def test_a_port_that_DELETES_the_first_wait_is_caught_by_the_per_site_counts(cases):
+    """THE MEASUREMENT THE WHOLE REMEDY RESTS ON, and it is a contrast rather than an argument.
+
+    Against run TOTALS this mutant was invisible: with `nth` counted over the run, the store fired on
+    the run's Nth poll whichever body ran, so the faithful port's second wait spun one iteration
+    FEWER than the original's and the first wait's poll made the sum back up — arrivals == polls, on
+    a port that had deleted a whole wait. (Wonder Boy's `flip_screen` is the live arrangement;
+    projects/wonderboy/recreate/STATUS.md's batch 42 phase C ran the old model against this port and
+    recorded it SURVIVING.)
+
+    Per site there is nothing to cancel with: site 0 is 0 polls against 1 arrival. The RUN TOTAL
+    separates them too, and that is the per-site FIRING rule's own contribution rather than the
+    comparison's — the entry now fires on its site's third poll, so the mutant makes three polls
+    where the faithful body makes four. Both are asserted, because a repair that fixed only one of
+    the two halves would leave the other reporting a pass.
+    """
+    oracle = scalars(cases, "two_waits")
+    mutant = scalars(cases, "cand_two_waits_first_deleted")
+    assert sites(cases, "cand_two_waits_first_deleted", "polls") == (0, TWO_WAIT_NTH)
+    assert sites(cases, "two_waits", "arrivals") == (1, TWO_WAIT_NTH), "...against the oracle's"
+    assert mutant["polls"] == TWO_WAIT_NTH != oracle["arrivals"], (
+        "the run totals differ too, because the entry now fires on its SITE's count")
+    assert mutant["watch"] == oracle["watch"] == WANT, (
+        "and the images agree, which is why the counts have to be what catches it")
+
+
+def test_a_poll_at_an_undeclared_site_is_refused_rather_than_counted(cases):
+    """An uncounted poll is the hole itself, so `sched_poll8` refuses one.
+
+    The body polls a site the run never declared. Nothing counts it, the entry never comes due, the
+    wait runs to the body's own guard — and every poll tallies through `os_refused()`, which is the
+    one counter `harness.differential` reads after every candidate run.
+    """
+    s = scalars(cases, "cand_polls_at_an_undeclared_site")
+    assert s["undeclared"] == s["os_refusals"] == CAND_POLL_CAP
+    assert sites(cases, "cand_polls_at_an_undeclared_site", "polls") == (0,), (
+        "the declared site saw nothing")
+    assert s["applied"] == 0 and s["watch"] == HELD, "so the store never landed"
+
+
+def test_the_two_primitives_tally_an_undeclared_site_THE_SAME_WAY(cases):
+    """SYMMETRY IS THE MODEL'S STATED PRINCIPLE, and a refusal path is where it is cheapest to lose.
+
+    `sched_poll8` counts the poll and then refuses it; `sched_poll16` stops the caller's loop instead
+    of handing back a word, and an earlier draft returned WITHOUT counting — so one event tallied two
+    ways depending on which primitive a reconstruction reached for, and `g_sched_polls()` (which the
+    refusal diagnostic prints) would have disagreed with itself. Both now count.
+
+    The counts differ in MAGNITUDE and that is the two loops' own shape, not the model's: the byte
+    poll returns a byte so the body spins to its own guard, while the word poll returns 0 and the
+    body stops at once. What must match is polls == undeclared == refusals on each.
+    """
+    for name in ("cand_polls_at_an_undeclared_site", "cand_word_wait_at_an_undeclared_site"):
+        s = scalars(cases, name)
+        assert s["polls"] == s["undeclared"] == s["os_refusals"], (
+            f"{name}: {s['polls']} poll(s), {s['undeclared']} undeclared, "
+            f"{s['os_refusals']} refusal(s) — the three count one event and must agree")
+        assert s["applied"] == 0, f"{name}: a store landed on a poll nobody counted"
+    assert scalars(cases, "cand_word_wait_at_an_undeclared_site")["polls"] == 1, (
+        "the word poll stops the caller's loop on the first refusal, unlike the byte poll")
+
+
+# ---- the WORD wait: sched_poll16, the capped wrapper --------------------------------------------
+
+def test_the_word_wait_polls_once_per_arrival_at_full_width(cases):
+    """`sched_poll16` is ONE `sched_poll8` (the clock) plus a WORD read (the comparand).
+
+    That is the whole content of the "capped word-wait wrapper": the aliasing hazard this model
+    documents is TWO polls per arrival, and spelling a word compare as two byte polls would be
+    exactly it. One poll, full width, and the oracle's `cmpi.w` spin arrives the same number of
+    times.
+    """
+    oracle = scalars(cases, "word_released_at_the_third_arrival")
+    cand = scalars(cases, "cand_word_wait")
+    assert cand["polls"] == oracle["arrivals"] == 3
+    assert cand["d1"] == oracle["d1w"] == WORD_WANT, (
+        "the comparand is the whole word, not its low byte")
+    assert (cand["exhausted"], cand["os_refusals"]) == (0, 0)
+
+
+def test_an_unreleased_word_wait_is_CAPPED_like_a_byte_one(cases):
+    """The cap is the only reason the wrapper exists rather than a hand-rolled poll-and-read loop.
+
+    The entry fires and stores the word the wait ALREADY finds, so the release never comes. It ends
+    at OS_SCHED_POLL_MAX polls of that SITE with `os_refused` tallied — an ordinary rejected case
+    instead of a hung suite, which is the property `sched_wait8` bought for byte waits.
+    """
+    s = scalars(cases, "cand_word_wait_never_released")
+    assert s["applied"] == 1, "the store was made"
+    assert s["polls"] == _os_h_int("OS_SCHED_POLL_MAX"), "it stopped at the KIT's cap"
+    assert (s["exhausted"], s["os_refusals"]) == (1, 1)
+    assert s["d1"] == 0, "the body honoured the 0 rather than carrying on"
+    # ...AND THE PROBE'S OWN GUARD DID NOT FIRE, which is what makes the line above about the kit's
+    # cap and not about the body's. The guard exists so that a mutant REMOVING the kit's cap fails
+    # instead of hanging the suite; it sits above OS_SCHED_POLL_MAX so it can never fire first.
+    guard = re.search(r"^#define\s+WORD_POLL_GUARD\s+\(OS_SCHED_POLL_MAX \+ (\d+)u\)",
+                      PROBE_SRC.read_text(), re.M)
+    assert guard and int(guard.group(1)) > 0, (
+        "the probe's word-wait guard must be ABOVE the kit's cap, or it hides the case")
+
+
 # ---- the sizes and the bytes, pinned against their sources -------------------------------------
 
 def _c_define(source, name):
@@ -298,6 +465,7 @@ def test_the_shim_reports_the_sizes_os_h_declares(cases):
     s = scalars(cases, "sizes")
     assert s["max"] == _os_h_int("OS_SCHED_MAX")
     assert s["fields"] == _os_h_int("OS_SCHED_FIELDS")
+    assert s["site_max"] == _os_h_int("OS_SCHED_SITE_MAX")
 
 
 def test_the_probe_and_this_suite_agree_on_the_bytes():
@@ -308,7 +476,9 @@ def test_the_probe_and_this_suite_agree_on_the_bytes():
     """
     src = PROBE_SRC.read_text()
     for name, value in (("HELD", HELD), ("WANT", WANT), ("SCRATCH_BYTE", SCRATCH_BYTE),
-                        ("PROBE_MAX_INSNS", PROBE_MAX_INSNS), ("CAND_POLL_CAP", CAND_POLL_CAP)):
+                        ("PROBE_MAX_INSNS", PROBE_MAX_INSNS), ("CAND_POLL_CAP", CAND_POLL_CAP),
+                        ("WORD_HELD", WORD_HELD), ("WORD_WANT", WORD_WANT),
+                        ("TWO_WAIT_NTH", TWO_WAIT_NTH)):
         assert _c_define(src, name) == value, f"{name} has moved in {PROBE_SRC.name}"
     m = re.search(r"^#define\s+SCRATCH_LONG\s+0x([0-9a-fA-F]{8})u\b", src, re.M)
     assert m and tuple(bytes.fromhex(m.group(1))) == SCRATCH_LONG

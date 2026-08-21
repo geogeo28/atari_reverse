@@ -24,6 +24,8 @@
 
 #include <stdint.h>
 
+#include "blit.h"      /* sprite_pass_regs — game_main_loop's one argument */
+
 /* Which of game_key_actions' four endings it reached. C-only — no value here is in the image — but
  * test/layout.py scrapes this header, so a case names the same four the C does.
  *
@@ -114,5 +116,32 @@ void floppy_deselect_drives(uint8_t *image);
  * 120 bytes of saved registers and not 60. What that costs is in ../STATUS.md's
  * honestly-unpinned list. */
 void vbl_handler(uint8_t *image);
+
+/* $694 — THE FLIP, and game_main_loop's last call: swap WB_SCREEN_FRONT with WB_SCREEN_BACK, publish
+ * the new front buffer to the shifter, wait out the vertical blank, toggle WB_FRAME_TOGGLE and run
+ * the white-flash countdown.
+ *
+ * IT BUSY-WAITS TWICE ON WB_VBL_COUNTER, at WB_FLIP_READY_WAIT_PC and WB_FLIP_TICK_WAIT_PC, and a
+ * case therefore declares BOTH as its `wait_sites` — even the one no schedule entry stores on,
+ * because a poll the model does not count is refused rather than served
+ * (tools/recreate_kit/include/sched.h). What that keying buys, and what a run TOTAL hid here for two
+ * phases, is in ../STATUS.md's batch 42 phase C and in os.h's "WAIT SITES".
+ *
+ * WHAT IT PUTS ON THE SCREEN IS NOT PINNED. Three shifter registers over four writes — the screen
+ * base's two bytes and colour 0 twice — are off the image, dropped by the oracle, and mirrored by
+ * nothing on this side. The same standing hole set_palette has carried since batch 12. */
+void flip_screen(uint8_t *image);
+
+/* $4a0 — THE FRAME LOOP, and the routine every other name in this header is called BY. One call of
+ * this function is ONE ITERATION: the original's `bra.s $4a0` at $508 is where a case checkpoints
+ * it, since the loop has no exit instruction at all.
+ *
+ * Returns one of the WB_KEY_ACTIONS_* above. WB_KEY_ACTIONS_RETURNED means the iteration ran to the
+ * backward branch; anything else means `game_key_actions` unwound out of the loop into the boot
+ * chain, which is a transfer this reconstruction reports rather than makes.
+ *
+ * `sprites` is `sprite_draw_pass`' register file (include/blit.h) — the loop's only argument,
+ * because that is the loop's only callee with a register interface. */
+uint32_t game_main_loop(uint8_t *image, sprite_pass_regs *sprites);
 
 #endif /* WONDERBOY_GAME_H */

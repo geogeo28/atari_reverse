@@ -11,30 +11,40 @@
 
 #include "actor.h"
 #include "behavior.h"
+#include "blit.h"    /* sprite_draw_pass — the loop's one call with a register interface */
 #include "bus.h"
 #include "hud.h"
 #include "input.h"
+#include "scene.h"
+#include "scroll.h"
 #include "sound.h"
 #include "stage.h"
+#include "text.h"
 #include "wonderboy.h"
 
 #include "psg.h"       /* the YM2149's two ports — the floppy pair below, off target only */
 #include "sched.h"     /* the kit's external-agent model — the two waits below, off target only */
 
-/* Wait on WB_KEY_LAST_SCANCODE until it reads `code` — the shape both of this module's spins have.
+/* Wait on WB_KEY_LAST_SCANCODE until it reads `code` — the shape all three of this module's byte
+ * spins have. `site_pc` is the address at which the ORIGINAL re-reads the byte — here the `cmpi.b`,
+ * which reads and tests in one instruction.
  *
  * It goes through the kit's `sched_wait8` rather than a `while (bus_read_byte(...))` because the
  * POLL is what the differential counts (tools/recreate_kit/include/sched.h): the oracle counts
- * arrivals at the original's compare and this side counts polls, one per iteration, and the harness
- * compares the two. The capped form is the one to reach for — an uncapped loop turns a case whose
- * schedule never releases the wait into a HUNG suite, which decides nothing.
+ * arrivals at that compare and this side counts polls at that site, one per iteration, and the
+ * harness compares the two. The capped form is the one to reach for — an uncapped loop turns a case
+ * whose schedule never releases the wait into a HUNG suite, which decides nothing.
+ *
+ * THE SITE IS THE PC AND NOT THE ADDRESS, and this routine's own callers are why: all three spin on
+ * WB_KEY_LAST_SCANCODE and two of them wait for the very same release code, so nothing about the
+ * poll except WHERE the original makes it can tell one wait from another.
  *
  * RETURNS 0 WHEN THE WAIT WAS NEVER RELEASED, and every caller returns immediately on that: the
  * model has refused, the harness is about to throw the case away, and carrying on as though the
  * byte had arrived would run the payload on a state the original never reached. On target this is
  * an ordinary uncapped spin and the ACIA interrupt is what ends it. */
-static int wait_for_scancode(uint8_t *image, uint8_t code) {
-    return sched_wait8(image, WB_KEY_LAST_SCANCODE, code);
+static int wait_for_scancode(uint8_t *image, uint8_t code, uint32_t site_pc) {
+    return sched_wait8(image, WB_KEY_LAST_SCANCODE, code, site_pc);
 }
 
 /* $60e — game_key_actions' PAUSE arm, reached by `beq.w` from $57c and ending in its own `rts`.
@@ -48,7 +58,7 @@ static int wait_for_scancode(uint8_t *image, uint8_t code) {
  * of WB_TEXT_LIFETIME_REQUEST, leaving the low one as it found it — so a paused box inherits the
  * bottom half of whatever lifetime was last posted. Reproduced as the byte store it is. */
 static void pause_the_game(uint8_t *image) {
-    if (!wait_for_scancode(image, WB_KEY_SCANCODE_P_RELEASE))
+    if (!wait_for_scancode(image, WB_KEY_SCANCODE_P_RELEASE, WB_KEY_PAUSE_WAIT_PC))
         return;
     image[WB_KEY_LAST_SCANCODE] = 0;
     wr16(image + WB_GAME_PAUSED, WB_GAME_PAUSED_SET);
@@ -88,7 +98,7 @@ static void cheat_help_action(uint8_t *image) {
         return;
     if (image[WB_KEY_LAST_SCANCODE] != WB_KEY_SCANCODE_HELP)
         return;
-    if (!wait_for_scancode(image, WB_KEY_SCANCODE_HELP_RELEASE))
+    if (!wait_for_scancode(image, WB_KEY_SCANCODE_HELP_RELEASE, WB_KEY_HELP_WAIT_PC))
         return;
     image[WB_EFFECT_STATE_BD6A_LOW] ^= (uint8_t)(1u << WB_EFFECT_STATE_BD6A_CHEAT_BIT);
 }
@@ -131,7 +141,7 @@ void game_unpause_on_key_release(uint8_t *image) {
         return;
     if (image[WB_KEY_LAST_SCANCODE] != WB_KEY_SCANCODE_P)
         return;
-    if (!wait_for_scancode(image, WB_KEY_SCANCODE_P_RELEASE))
+    if (!wait_for_scancode(image, WB_KEY_SCANCODE_P_RELEASE, WB_KEY_UNPAUSE_WAIT_PC))
         return;
     image[WB_KEY_LAST_SCANCODE] = 0;
     wr16(image + WB_GAME_PAUSED, 0);
@@ -332,4 +342,151 @@ void vbl_handler(uint8_t *image) {
     wr16(image + WB_FLOPPY_IDLE_TIMER, idle);
     if (idle == 0)
         floppy_deselect_drives(image);
+}
+
+
+/* --- $694: THE FLIP --------------------------------------------------------------------------
+ *
+ * game_main_loop's last call, and the frame's own heartbeat: swap the two buffers, tell the shifter
+ * where the new front one is, wait for the vertical blank, and run the white-flash countdown.
+ *
+ * IT WAITS TWICE, ON THE SAME WORD, AT TWO DIFFERENT INSTRUCTIONS — and that pair is why this
+ * routine outlived the rest of the spine by two phases. Neither wait is hard to model; what was hard
+ * is that a run TOTAL cannot tell the two apart, so the natural case balanced its counters by
+ * cancellation while the two sides ran different loops (../names.txt's cmt 0x694 has the
+ * arithmetic). The kit now counts polls and arrivals PER WAIT SITE, which is what makes the two
+ * `sched_poll16` calls below separable — WB_FLIP_READY_WAIT_PC and WB_FLIP_TICK_WAIT_PC are the
+ * original's own compare addresses, and a case declares them as its `wait_sites`.
+ *
+ * THE TWO WAITS ARE NOT THE SAME PREDICATE, which is also why the kit's word primitive is an
+ * iterator rather than a `sched_wait16(until)`: the first is a SIGNED threshold and the second a
+ * comparison against a copy taken one instruction earlier.
+ *
+ * THREE HARDWARE REGISTERS OVER FOUR WRITES ARE A SINK, exactly as src/stage.c's set_palette is and
+ * for exactly the same reason: they are off the 68000's 24-bit bus as far as the loaded image goes,
+ * the oracle DROPS them, and the kit's hw.h has no `hw_write8` to mirror them with. So what this
+ * routine puts on the screen — which buffer is displayed, and the full-screen colour-0 flash — is
+ * pinned by nothing here, and ../STATUS.md says so in as many words. On target the three become
+ * ordinary `volatile` stores and the sinks compile out.
+ */
+
+/* One write to a shifter register the differential cannot see. Two widths because the original uses
+ * two: the screen base goes out as two BYTES and colour 0 as a WORD. Written as calls rather than as
+ * no code at all so that the reads that FEED them, and the order, stay where a reader meets them —
+ * set_palette's argument, one file over. */
+static void shifter_write_byte(uint32_t reg, uint8_t value) { (void)reg; (void)value; }
+static void shifter_write_word(uint32_t reg, uint16_t value) { (void)reg; (void)value; }
+
+/* $6aa..$6b4 — spin while WB_VBL_COUNTER is below WB_VBL_COUNTER_READY, as a SIGNED word: `cmpi.w
+ * #$1,d0 / blt.s`. Nothing in this routine raises the counter; vbl_handler does, fifty times a
+ * second, and off target the case's schedule is what stands in for it. */
+static int wait_for_vbl_ready(uint8_t *image) {
+    uint16_t counter;
+
+    while (sched_poll16(image, WB_VBL_COUNTER, WB_FLIP_READY_WAIT_PC, &counter))
+        if ((int16_t)counter >= WB_VBL_COUNTER_READY)
+            return 1;
+    return 0;   /* the cap: the model has refused, and the caller returns (see sched.h) */
+}
+
+/* $6ca..$6d6 — spin until WB_VBL_COUNTER differs from the copy taken at $6ca.
+ *
+ * THE COPY IS NOT A POLL. `move.w $74a.l,d0` runs ONCE, above the loop, and the branch goes back to
+ * the compare below it — so this wait always spins at least once and cannot be seeded past, which is
+ * the property that made the composite case at the top of this routine look driveable. */
+static int wait_for_vbl_tick(uint8_t *image) {
+    uint16_t before = bus_read_word(image, WB_VBL_COUNTER);
+    uint16_t counter;
+
+    while (sched_poll16(image, WB_VBL_COUNTER, WB_FLIP_TICK_WAIT_PC, &counter))
+        if (counter != before)
+            return 1;
+    return 0;
+}
+
+void flip_screen(uint8_t *image) {
+    uint32_t was_front = bus_read_long(image, WB_SCREEN_FRONT);
+
+    bus_write_long(image, WB_SCREEN_FRONT, bus_read_long(image, WB_SCREEN_BACK));
+    bus_write_long(image, WB_SCREEN_BACK, was_front);
+
+    if (!wait_for_vbl_ready(image))
+        return;
+    /* AFTER the swap and AFTER the wait, so what is published is the buffer that has just BECOME
+     * the front one — the two `move.b`s read $74d/$74e, which are inside the longword written two
+     * instructions above. */
+    shifter_write_byte(WB_SHIFTER_SCREEN_BASE_HIGH,
+                       bus_read_byte(image, WB_SCREEN_FRONT_BITS_16_23));
+    shifter_write_byte(WB_SHIFTER_SCREEN_BASE_MID,
+                       bus_read_byte(image, WB_SCREEN_FRONT_BITS_8_15));
+
+    if (!wait_for_vbl_tick(image))
+        return;
+    wr16(image + WB_VBL_COUNTER, 0);
+    /* `not.w $712.l` — a 0 <-> $ffff TOGGLE, not a decrement. */
+    wr16(image + WB_FRAME_TOGGLE, (uint16_t)~bus_read_word(image, WB_FRAME_TOGGLE));
+
+    uint16_t flash = bus_read_word(image, WB_FLASH_TIMER);
+    if (flash == 0)
+        return;
+    flash = (uint16_t)(flash - 1);
+    wr16(image + WB_FLASH_TIMER, flash);
+    /* The two arms are EXCLUSIVE and both write colour 0: white while the countdown still has
+     * frames to run, black on the frame it reaches zero. `subq.w #1 / beq.w` branches on the
+     * DECREMENT's result, which is the word just stored. */
+    shifter_write_word(WB_SHIFTER_PALETTE, flash ? WB_FLASH_COLOUR_WHITE : 0);
+}
+
+
+/* --- $4a0: THE FRAME LOOP ITSELF ---------------------------------------------------------------
+ *
+ * `do { ... } while (1)`: $508 is `bra.s $4a0` and there is no exit instruction. The boot chain
+ * `jmp $4a0.w`s into it once ($e708, after the first stage load, and again from $f8b4) and the
+ * program spends the rest of its life here.
+ *
+ * FIFTEEN CALLS, and this function is nothing else — two leading `bsr`s, a four-call block that runs
+ * only while the game is NOT paused, eight more, and the flip. Every one of them is reconstructed,
+ * which is what made this the last row of the spine rather than the first: a caller is only as
+ * portable as its callees.
+ *
+ * ONE ITERATION IS THE DIFFERENTIAL UNIT. A case enters at $4a0 and checkpoints the backward branch
+ * at $508 — the same shape the scene driver's tails use — so what is compared is the whole frame's
+ * memory at the instant control turns round.
+ *
+ * BUT $508 IS NOT THE ONLY WAY OUT OF ONE ITERATION. Three of `game_key_actions`' endings POP this
+ * routine's return address and `jmp` into the boot chain, so a frame entered with the round-end
+ * request raised — or with the cheat on and N held, or with ESC held — leaves through the second
+ * `bsr` and never reaches $508. This function reports which, in place of the transfer it cannot
+ * make, and a case for such a frame checkpoints game_key_actions' own `jmp` instead.
+ *
+ * THE ONE ARGUMENT IS THE SPRITE PASS'S REGISTER FILE. Everything else the loop calls reads and
+ * writes memory alone; `sprite_draw_pass` is register glue (include/blit.h), and its `unwind` is a
+ * real input the frame carries in a5. */
+uint32_t game_main_loop(uint8_t *image, sprite_pass_regs *sprites) {
+    game_unpause_on_key_release(image);                     /* $4a0 */
+    uint32_t action = game_key_actions(image);              /* $4a4 */
+    if (action != WB_KEY_ACTIONS_RETURNED)
+        return action;                                      /* $550 / $56e / $598: the loop is LEFT */
+
+    /* $4a8. Pausing does not stop the frame — it stops these four calls. The screen still flips, the
+     * message box still runs, and the sprites are still drawn from the projection the last unpaused
+     * frame left, which is why a paused game shows a still picture rather than a black one. */
+    if (!bus_read_word(image, WB_GAME_PAUSED)) {
+        round_bonus_run_frame(image);                       /* $4b2 */
+        panel_refresh_frame(image);                         /* $4b8 */
+        (void)scene_run_frame(image);                       /* $4be — which tail it took is dropped */
+        game_latch_input_and_step_actors(image);            /* $4c4 */
+    }
+    project_followed_actor(image);                          /* $4ca */
+    bg_scroll_run_queue(image);                             /* $4d0 */
+    project_actor_list(image);                              /* $4d6 */
+    bg_scroll_blit(image);                                  /* $4dc */
+    game_snap_follow_cursor(image);                         /* $4e2 */
+    sprite_draw_pass(image, sprites);                       /* $4e6 */
+    /* $4ec. The A30 mode — the round-bonus stage — spawns nothing. */
+    if (!bus_read_word(image, WB_STATE_FLAG_A30))
+        actor_spawn_pass(image);                            /* $4f6 */
+    text_run_message_box(image);                            /* $4fc */
+    flip_screen(image);                                     /* $502 */
+    return WB_KEY_ACTIONS_RETURNED;                         /* $508 `bra.s $4a0` */
 }

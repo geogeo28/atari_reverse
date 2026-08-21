@@ -75,13 +75,17 @@ if _has_hw_ledger:
 # witness that says when the group was needed — differential() raises the moment a case declares one
 # against a candidate that cannot answer for it.
 _SCHED_ABI = ("g_sched_reset", "g_sched_count", "g_sched_polls", "g_sched_applied",
-              "g_sched_refused", "g_sched_exhausted")
+              "g_sched_refused", "g_sched_exhausted", "g_sched_site_count", "g_sched_site_polls",
+              "g_sched_undeclared")
 _missing_sched_abi = [sym for sym in _SCHED_ABI if not hasattr(_lib, sym)]
 _has_sched = not _missing_sched_abi
 if _has_sched:
-    _lib.g_sched_reset.argtypes = [ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32]
+    _u32p = ctypes.POINTER(ctypes.c_uint32)
+    _lib.g_sched_reset.argtypes = [_u32p, ctypes.c_uint32, _u32p, ctypes.c_uint32]
+    _lib.g_sched_site_polls.argtypes = [ctypes.c_uint32]
     for _sym in ("g_sched_count", "g_sched_polls", "g_sched_applied", "g_sched_refused",
-                 "g_sched_exhausted"):
+                 "g_sched_exhausted", "g_sched_site_count", "g_sched_site_polls",
+                 "g_sched_undeclared"):
         getattr(_lib, _sym).restype = ctypes.c_uint32
 
 # The refused-os_*-call tally (see _vet_no_os_refusal) is REQUIRED ABI, unlike the ledger above.
@@ -491,20 +495,38 @@ def _hw_refusal_hint():
             f"ledger entry to name.")
 
 
-def _sched_exhausted_hint():
-    """The clause `_vet_no_os_refusal` adds when a refused run's cause was an unreleased WAIT.
+def _sched_refusal_hint():
+    """The clause `_vet_no_os_refusal` adds when a refused run's cause was the WAIT model.
 
     `os_refused()` is one tally shared by every refusing helper, so a bare count sends the reader
-    hunting for a missing Bconstat gate. An exhausted `sched_wait8` is by far the likeliest cause in
-    a case that declares a schedule, and it has a remedy of its own — the same shape
+    hunting for a missing Bconstat gate. The two scheduled-write causes are by far the likeliest in
+    a case that declares a schedule, and each has a remedy of its own — the same shape
     `_hw_refusal_hint` gives the hardware model.
+
+    They are reported TOGETHER, `_vet_no_os_refusal`'s own rule: an undeclared site's poll returns
+    the byte, so a wait at one usually ALSO runs to the cap, and naming only the cap would send the
+    reader after the store's value when the site list is what is wrong.
     """
-    if not _has_sched or not _lib.g_sched_exhausted():
+    if not _has_sched:
         return ""
-    return (f" {_lib.g_sched_exhausted()} of them were a WAIT that ran to os.h's OS_SCHED_POLL_MAX "
+    clauses = []
+    if _lib.g_sched_undeclared():
+        declared = ", ".join(f"site {i}: {_lib.g_sched_site_polls(i)} poll(s)"
+                             for i in range(_lib.g_sched_site_count())) or "(none)"
+        clauses.append(
+            f" {_lib.g_sched_undeclared()} of them were a POLL AT A SITE THIS CASE DID NOT DECLARE: "
+            f"the run's declared sites took {declared}"
+            f", and the reconstruction called sched_poll8/sched_poll16 naming another PC. A poll "
+            f"nobody counts is the hole the sites close (os.h, \"WAIT SITES\"), so it is refused "
+            f"rather than served. Either the case is missing that PC from `wait_sites=`, or the "
+            f"reconstruction names a site the original's wait does not re-execute.")
+    if _lib.g_sched_exhausted():
+        clauses.append(
+            f" {_lib.g_sched_exhausted()} of them were a WAIT that ran to os.h's OS_SCHED_POLL_MAX "
             f"without its byte arriving, after {_lib.g_sched_polls()} poll(s): the case's schedule "
             f"never released it. Check the store's value against the byte the wait compares, and "
             f"the trigger PC against the instruction the wait re-executes.")
+    return "".join(clauses)
 
 
 def _vet_no_os_refusal(entry):
@@ -533,7 +555,7 @@ def _vet_no_os_refusal(entry):
         f"psg_seed={{reg: value}} for a PSG register the candidate reads back) so BOTH sides execute "
         f"the call; or a stop_pc checkpoint ended the oracle before a call the candidate still "
         f"makes. See tools/recreate_kit/TRAP_MODEL.md."
-        + _hw_refusal_hint() + _sched_exhausted_hint())
+        + _hw_refusal_hint() + _sched_refusal_hint())
 
 
 def _vet_audio_capture_off(entry):
@@ -748,7 +770,7 @@ def _seed_candidate_hw(hw_seed):
                     emu.hw_seed_bytes, hw_seed, _has_hw_ledger)
 
 
-def _vet_schedule_is_runnable(entry, schedule):
+def _vet_schedule_is_runnable(entry, schedule, wait_sites):
     """Refuse a differential whose schedule the CANDIDATE cannot mirror — before either side runs.
 
     Two shapes. An ``insn`` trigger names an instruction index, and the candidate has no instruction
@@ -757,8 +779,15 @@ def _vet_schedule_is_runnable(entry, schedule):
     with no ``src/sched.c`` linked is the same thing one level down — the entries would fire on the
     oracle alone, and every byte the agent supplied would come back as a diff against a reconstruction
     that never saw it.
+
+    A THIRD SHAPE USED TO BE REFUSED HERE AND IS NOT ANY MORE: a schedule naming more than one
+    trigger PC. It was refused because both sides counted a run TOTAL, which two waits can balance by
+    cancellation; the counts are now kept PER WAIT SITE on both shores (os.h, "WAIT SITES"), so two
+    waits in one run are an ordinary case. What replaces it is stricter and lives in the encoder —
+    every trigger PC must be a declared site (``emu.wait_site_pcs``), and a poll at an undeclared
+    site is refused by ``sched_poll8`` — so a wait can no longer go uncounted at all.
     """
-    if not schedule:
+    if not schedule and not wait_sites:
         return
     if not _has_sched:
         raise AssertionError(
@@ -771,7 +800,7 @@ def _vet_schedule_is_runnable(entry, schedule):
     # trigger — or both — would come out of here as a bare KeyError naming nothing. emu's encoder
     # owns every field's shape and its messages say what is wrong; run them before reading a key.
     emu.schedule_entries(schedule)
-    at_insn = [i for i, spec in enumerate(schedule) if "insn" in spec]
+    at_insn = [i for i, spec in enumerate(schedule or ()) if "insn" in spec]
     if at_insn:
         raise AssertionError(
             f"the case for {label(entry)} @ {entry:#x} schedules entr(ies) {at_insn} on an `insn` "
@@ -780,27 +809,15 @@ def _vet_schedule_is_runnable(entry, schedule):
             f"the entry a `pc` trigger — the address of the instruction the original's wait loop "
             f"re-executes — and have the reconstruction read that byte through `sched_poll8`. The "
             f"`insn` trigger is for an oracle-only run (emu.run).")
-    # ...and ONE trigger PC per run, which is the exact extent of what the two sides' counters can
-    # be made to mean the same thing. The oracle counts arrivals PER ENTRY at that entry's own PC;
-    # the candidate has no PC and counts every `sched_poll8` call in the run against `nth`. With one
-    # trigger those are the same event. With two they are not: an entry aimed at the SECOND wait
-    # fires on a poll of the FIRST, its store lands an unknown number of iterations early, and
-    # because both counters are totals the arrival/poll comparison can still agree. Refused rather
-    # than served, because the failure mode is a store at the wrong moment or a candidate that spins
-    # for ever — see TRAP_MODEL.md, "Phase 8".
-    triggers = {spec["pc"] for spec in schedule}   # every entry has one: `insn` was refused above
-    if len(triggers) > 1:
-        raise AssertionError(
-            f"the case for {label(entry)} @ {entry:#x} schedules stores on "
-            f"{len(triggers)} different trigger PCs ({', '.join(f'{pc:#x}' for pc in sorted(triggers))}), "
-            f"and a differential can carry only one. `nth` counts arrivals at a PC on the oracle and "
-            f"POLLS on the candidate, which has no program counter — the two are the same event only "
-            f"while every entry names the same wait. Split the case into one run per wait, or give "
-            f"the run a stop_pc before the second one.")
+    # ...and every trigger PC must be a declared WAIT SITE, which the encoder owns because the site
+    # list is what both shores key their counters by. Run it here so the case is refused before
+    # either core does, with the encoder's own wording.
+    emu.wait_site_pcs(schedule, wait_sites)
 
 
-def _seed_candidate_sched(scheduled):
-    """Install the run's schedule in the candidate — the SAME flattened array the oracle was given.
+def _seed_candidate_sched(scheduled, sites):
+    """Install the run's schedule in the candidate — the SAME flattened array and the SAME wait-site
+    list the oracle was given.
 
     Unconditional, an empty schedule included, for ``_seed_candidate``'s reason: a list left over
     from the previous case would fire inside this one, and under ``-n auto`` which case that was is
@@ -809,32 +826,60 @@ def _seed_candidate_sched(scheduled):
     if not _has_sched:
         return
     n = len(scheduled) // emu.SCHED_FIELDS
-    _lib.g_sched_reset(emu.schedule_array(scheduled), n)
-    # The candidate CLAMPS to OS_SCHED_MAX and reports what it kept. `emu.schedule_entries` refuses
-    # an over-long list one level up, so this can only fire if the two sides disagree about the cap
-    # — and a schedule silently carrying fewer stores than the case declared reads as a wait loop
-    # that simply never ended, which is the worst diagnostic in this model.
+    _lib.g_sched_reset(emu.schedule_array(scheduled), n,
+                       emu.schedule_array(list(sites)), len(sites))
+    # The candidate CLAMPS to OS_SCHED_MAX/OS_SCHED_SITE_MAX and reports what it kept. The encoders
+    # refuse an over-long list one level up, so these can only fire if the two sides disagree about
+    # a cap — and a schedule silently carrying fewer stores or sites than the case declared reads as
+    # a wait loop that simply never ended, which is the worst diagnostic in this model.
     assert _lib.g_sched_count() == n, (
         f"the candidate kept {_lib.g_sched_count()} of the run's {n} scheduled store(s) — its "
         f"OS_SCHED_MAX and the harness's disagree")
+    assert _lib.g_sched_site_count() == len(sites), (
+        f"the candidate kept {_lib.g_sched_site_count()} of the run's {len(sites)} wait site(s) — "
+        f"its OS_SCHED_SITE_MAX and the harness's disagree")
 
 
 def _vet_schedule_ran_the_same_wait(entry, o_regs):
-    """Compare the ORACLE's arrivals at the trigger PCs against the CANDIDATE's polls.
+    """Compare the ORACLE's arrivals against the CANDIDATE's polls, WAIT SITE BY WAIT SITE.
 
     This is the whole cross-check the model rests on. The store itself is applied from the same list
     on both sides, so a port that spun a different number of times — or did not spin at all, or
     polled a byte the original reads outside the loop — still ends with identical memory and would
     pass the diff. The counts are what separate them: one arrival at the compare is one poll.
+
+    PER SITE, AND THAT IS THE LOAD-BEARING WORD — but it is the FIRING rule that carries the catch,
+    not this comparison, and saying so is the honest reading of the measurement. Against run TOTALS a
+    run with two waits balances by cancellation: the candidate's store fires an iteration early on
+    the second wait and the first wait's poll makes the sum up, so a port that DELETED the first wait
+    matches (os.h, "WAIT SITES"; Wonder Boy's `flip_screen` is the arrangement). Keying the FIRING to
+    the site is what breaks that — the entry now comes due on its own site's count, so the two sides'
+    totals diverge as well.
+
+    THIS COMPARISON IS AN UNPROVEN TRIPWIRE, with the standing the kept-count assertions have. Two
+    composites were written to isolate it — the comparison removed beside the deleted first wait, and
+    beside a port that moves a poll from one site to the other — and BOTH came back caught by the
+    firing rule instead. No input is known that only this line catches. It stays because the day the
+    firing rule stops being what it is, this is what would notice; it is not claimed as covered.
+    (projects/wonderboy/recreate/STATUS.md, batch 42 phase C.) The totals are asserted below too,
+    which costs nothing and catches a site list the two sides somehow ordered differently.
     """
-    if not _has_sched or not o_regs.get("sched"):
+    if not _has_sched or not (o_regs.get("sched") or o_regs.get("sched_sites")):
         return
+    sites = o_regs["sched_sites"]
+    site_arrivals = o_regs["sched_site_arrivals"]
+    site_polls = tuple(_lib.g_sched_site_polls(i) for i in range(len(sites)))
+    assert site_arrivals == site_polls, (
+        f"{label(entry)} @ {entry:#x}: the two sides ran different wait loops — "
+        + ", ".join(f"site {pc:#x}: oracle {a} arrival(s), candidate {p} poll(s)"
+                    for pc, a, p in zip(sites, site_arrivals, site_polls))
+        + ". Poll exactly the byte the original's compare reads, once per iteration, naming that "
+          "compare's own PC as the site, and nothing else (see include/sched.h).")
     arrivals, polls = o_regs["sched_arrivals"], _lib.g_sched_polls()
     assert arrivals == polls, (
-        f"{label(entry)} @ {entry:#x}: the oracle executed the scheduled trigger PC(s) {arrivals} "
-        f"time(s) and the candidate polled {polls} time(s) — the reconstruction's wait loop does not "
-        f"run the same number of iterations as the original's. Poll exactly the byte the original's "
-        f"compare reads, once per iteration, and nothing else (see include/sched.h).")
+        f"{label(entry)} @ {entry:#x}: the oracle arrived at a declared wait site {arrivals} "
+        f"time(s) and the candidate polled {polls} time(s) while agreeing site by site — the two "
+        f"sides are not reading the same site list in the same order")
     applied, refused = _lib.g_sched_applied(), _lib.g_sched_refused()
     assert (applied, refused) == (o_regs["sched_applied"], 0), (
         f"{label(entry)} @ {entry:#x}: the agent made {o_regs['sched_applied']} store(s) on the "
@@ -1017,7 +1062,7 @@ def _vet_poison_is_attributable(entry, scheduled, o_writes):
 
 
 def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excluded,
-                       stop_pc, max_insns, psg_seed, hw_seed, schedule):
+                       stop_pc, max_insns, psg_seed, hw_seed, schedule, wait_sites):
     """Guard against a *coincidental* pass: the candidate may match the oracle's final image while
     never actually writing some byte the oracle wrote — because that byte already held the oracle's
     value (an output landing in a zeroed/base region). Re-run both cores on a copy of the input in
@@ -1030,7 +1075,8 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excl
         if a < guard_lo:                     # only the diffed region matters; stack canaries are moot
             poisoned[a] = o_final[a] ^ 0xff
     po_final, _, po_regs = emu.run(poisoned, entry, regs, stop_pc=stop_pc, max_insns=max_insns,
-                                   psg_seed=psg_seed, hw_seed=hw_seed, schedule=schedule)
+                                   psg_seed=psg_seed, hw_seed=hw_seed, schedule=schedule,
+                                   wait_sites=wait_sites)
     # Poisoning can steer the ORACLE into a modeled hardware read the plain run never made, and one
     # the case does not declare would be served a fabricated 0 on this pass too.
     _vet_hw_reads_are_declared(entry, hw_seed, po_regs)
@@ -1043,7 +1089,7 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excl
     _lib.g_os_refusal_reset()
     _seed_candidate_psg(psg_seed)
     _seed_candidate_hw(hw_seed)
-    _seed_candidate_sched(po_regs["sched"])
+    _seed_candidate_sched(po_regs["sched"], po_regs["sched_sites"])
     glue(_lib, buf)
     _vet_no_os_refusal(entry)
     # ...and the same off-image PSG comparison the plain pass got, against the POISONED run's own
@@ -1064,7 +1110,7 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excl
 
 
 def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, poison=False,
-                 psg_seed=None, hw_seed=None, schedule=None):
+                 psg_seed=None, hw_seed=None, schedule=None, wait_sites=None):
     """Run oracle + candidate on the same image. Return (diffs, info).
 
     ``diffs`` is the list of (addr, oracle, cand) byte differences (stack-guard excluded).
@@ -1107,17 +1153,23 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     (``_vet_hw_state``).
     ``schedule`` is the list of stores an EXTERNAL AGENT makes while the run is in flight, for a
     routine that busy-waits on a byte its own instructions never write (``emu.schedule_entries``;
-    TRAP_MODEL.md, Phase 8). The SAME list is installed on both sides, and the oracle's arrivals at
-    the trigger PC are compared against the candidate's ``sched_poll8`` calls afterwards
+    TRAP_MODEL.md, Phase 8). The SAME list is installed on both sides, and the oracle's arrivals are
+    compared against the candidate's ``sched_poll8`` calls afterwards
     (``_vet_schedule_ran_the_same_wait``) — without that the agent would make both sides' memory
     agree whatever the reconstruction's loop did.
+    ``wait_sites`` names every PC this run busy-waits at, and defaults to the trigger PCs the
+    schedule carries — which is right whenever the run holds ONE wait. Both counts above are kept
+    per site, so a run with two waits is compared wait by wait instead of as two totals that can
+    cancel (os.h, "WAIT SITES"). A run whose second wait the schedule does not store on has to name
+    it here: the candidate's poll at an undeclared site is refused rather than uncounted.
     """
     _vet_audio_capture_off(entry)
-    _vet_schedule_is_runnable(entry, schedule)
+    _vet_schedule_is_runnable(entry, schedule, wait_sites)
     pokes = regs.pop("_pokes", None)
     img = make_image(pokes)
     o_final, o_writes, o_regs = emu.run(img, entry, regs, stop_pc=stop_pc, max_insns=max_insns,
-                                        psg_seed=psg_seed, hw_seed=hw_seed, schedule=schedule)
+                                        psg_seed=psg_seed, hw_seed=hw_seed, schedule=schedule,
+                                        wait_sites=wait_sites)
 
     _vet_exclude_bands(exclude, o_regs["min_a7"])
     _vet_psg_seed_reaches_the_path(entry, psg_seed, pokes, o_regs)
@@ -1132,7 +1184,8 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     _lib.g_os_refusal_reset()            # ...and a fresh refused-os_*-call tally (see below)
     _seed_candidate_psg(psg_seed)        # ...and the same PSG entry state the oracle just ran on
     _seed_candidate_hw(hw_seed)          # ...and the same declared hardware bytes
-    _seed_candidate_sched(o_regs["sched"])   # ...and the same external-agent stores
+    # ...and the same external-agent stores, on the same declared wait sites
+    _seed_candidate_sched(o_regs["sched"], o_regs["sched_sites"])
     cand_ret = glue(_lib, buf)
     c_final = bytes(buf)
 
@@ -1200,7 +1253,7 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     if poison and not diffs:
         _vet_poison_is_attributable(entry, o_regs["sched"], o_writes)
         _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excluded,
-                           stop_pc, max_insns, psg_seed, hw_seed, schedule)
+                           stop_pc, max_insns, psg_seed, hw_seed, schedule, wait_sites)
 
     return diffs, {"writes": o_writes, "regs": o_regs, "ret": cand_ret}
 

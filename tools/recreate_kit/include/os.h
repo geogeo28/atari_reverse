@@ -493,6 +493,10 @@ static inline int os_in_image(uint32_t addr, uint32_t count) {
  * through that one call, so its Nth poll IS the original's Nth arrival at the compare, and the
  * harness compares the two counts rather than assuming they agree. OS_SCHED_AT_INSN has no
  * candidate equivalent at all and a differential refuses one; it exists for oracle-only runs.
+ *
+ * ...AND THE COUNTS ARE PER WAIT SITE, which is the half a run TOTAL cannot carry. A run with two
+ * waits in it has two counters on each shore, keyed by the same thing: the address of the
+ * instruction that re-reads the byte the wait spins on. See "WAIT SITES" below.
  */
 #define OS_SCHED_MAX      8      /* entries one run may schedule (both sides size their tables here) */
 /* THE CANDIDATE'S RUNAWAY GUARD. A reconstruction's wait is a real loop in C, so a case whose store
@@ -525,6 +529,66 @@ static inline uint32_t os_sched_install(uint32_t dst[][OS_SCHED_FIELDS], const u
         for (uint32_t f = 0; f < OS_SCHED_FIELDS; f++)
             dst[i][f] = entries[i * OS_SCHED_FIELDS + f];
     return kept;
+}
+
+/* ---- WAIT SITES: WHICH wait a poll or an arrival belongs to -----------------------------------
+ *
+ * A run may hold more than one busy-wait, and a COUNTER PER RUN cannot tell them apart. That is not
+ * a theoretical gap: with two waits under one trigger PC the oracle's arrivals and the candidate's
+ * polls can balance BY CANCELLATION — the second wait runs one iteration fewer on the candidate and
+ * the first wait's poll makes the total up — so the comparison agrees while the two sides ran
+ * different loops, and a port that DELETED the first wait passes. (Wonder Boy's `flip_screen` is the
+ * arrangement; projects/wonderboy/recreate/STATUS.md's batch 42 phases B and C are the measurement.)
+ *
+ * So a run DECLARES its wait sites, and both sides count per site:
+ *
+ *   * a SITE is the address of the instruction that RE-READS THE POLLED BYTE — not merely some
+ *     instruction the loop re-executes. That is the load-bearing half: `sched_fire` applies a due
+ *     store just BEFORE the instruction at the site runs, and the candidate's poll applies it just
+ *     before its own read, so the two sides see the new value at the same iteration only when the
+ *     site is the READ. Wonder Boy's `$6aa` is the `move.w $74a.l,d0` and not the `cmpi.w` two
+ *     instructions below it; where a wait reads and compares in ONE instruction (`cmpi.b
+ *     #$99,$879.l`) the two coincide, which is what makes the looser reading easy to write down.
+ *     It is the same address an AT_PC entry names as its trigger, and every AT_PC trigger must be
+ *     one of the declared sites;
+ *   * the ORACLE bumps site S's arrival count each time it executes the instruction at S;
+ *   * the CANDIDATE names the site at every poll (`sched_poll8(image, addr, site_pc)`) and bumps the
+ *     same counter, because it has no program counter of its own to be asked;
+ *   * an AT_PC entry fires when ITS SITE's count reaches its `nth`, on both shores;
+ *   * `harness.differential` compares the two counts SITE BY SITE.
+ *
+ * WHICH HALF DOES THE WORK: the FIRING rule. An entry keyed to its own site's count makes the two
+ * sides' run totals diverge on a port that ran a different loop, so the totals catch it before the
+ * per-site comparison is reached. That comparison is kept as a tripwire and is NOT claimed as
+ * covered — every composite written to isolate it came back caught by the firing rule instead.
+ *
+ * A poll naming a site the run did not declare is a REFUSAL (os_refused), for the seeded models'
+ * reason: an uncounted poll is exactly the hole above, and quietly serving one would leave the
+ * comparison blind to the wait it came from.
+ *
+ * A per-ADDRESS counter would not do: Wonder Boy's `game_key_actions` has two waits on the SAME
+ * byte at two addresses, so the poll's ADDRESS says nothing about which wait made it. The site is
+ * the PC, always. */
+#define OS_SCHED_SITE_MAX 4      /* distinct wait sites one run may declare (both sides size here) */
+#define OS_SCHED_NO_SITE  0xffffffffu   /* os_sched_site_index: this PC is not a declared site */
+
+/* Copy `n` site PCs into `dst`, clamped to OS_SCHED_SITE_MAX; return how many were kept.
+ * os_sched_install's rule, for os_sched_install's reason: one decision about the drop policy. */
+static inline uint32_t os_sched_install_sites(uint32_t *dst, const uint32_t *sites, uint32_t n) {
+    uint32_t kept = n > OS_SCHED_SITE_MAX ? OS_SCHED_SITE_MAX : n;
+    for (uint32_t i = 0; i < kept; i++)
+        dst[i] = sites[i];
+    return kept;
+}
+
+/* Where `pc` sits in the run's declared site list, or OS_SCHED_NO_SITE. Shared so that "which wait
+ * is this" is answered identically on both shores — the two counters being compared are only
+ * comparable while they are keyed the same way. */
+static inline uint32_t os_sched_site_index(const uint32_t *sites, uint32_t n, uint32_t pc) {
+    for (uint32_t i = 0; i < n; i++)
+        if (sites[i] == pc)
+            return i;
+    return OS_SCHED_NO_SITE;
 }
 
 /* Store `value` at `addr` in the `size`-byte `image`, big-endian, at 1/2/4 bytes — the agent's write,

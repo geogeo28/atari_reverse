@@ -1716,20 +1716,27 @@ of those prices turned out to be payable, which is the only thing a port can add
 | `$e0a8` | 104 | **T3 HW_WRITE_ONLY**, same edge | **RECONSTRUCTED & GREEN** as `round_bonus_setup` |
 | `$50a`, `$882` | 62 | T0 | **RECONSTRUCTED & GREEN** |
 
-**AND THE ONE THAT DID NOT MOVE IS PRICED WRONG BY THIS DOCUMENT, in a way worth recording.**
-`$694` `flip_screen` is T3 HW_WRITE_ONLY — three dropped registers over FOUR write instructions:
-`$ffff8201` at `$6b6`, `$ffff8203` at `$6c0`, and `$ffff8240` twice, `$777` at `$6f8` and a `clr.w`
-at `$702`, which are the flash's two mutually exclusive arms — and on that pricing it is as portable as `set_palette`, which has been green since
-batch 12. It is not ported, and **the hardware is not why**. What stops it is the HARNESS, and in the
-worse of the two possible ways: the model does not refuse the natural one-run case, it ACCEPTS it
-and balances its poll and arrival totals by an off-by-one that cancels, so a case would go green
-while the two sides ran different iteration counts. Both busy-waits compare a WORD and the model
-counts polls per RUN rather than per SITE. That is invisible to a tier, because a tier prices what
-the CODE touches and this is a property of the model that would have to run it. `../names.txt`'s
-`cmt 0x694` carries the full registration. **The lesson for this document: a T0 or T3 price is a
+**AND THE LAST TWO MOVED IN BATCH 42 PHASE C, WHICH CLOSES THE SPINE — and what the previous
+version of this section got right is worth keeping.** `$694` `flip_screen` is T3 HW_WRITE_ONLY —
+three dropped registers over FOUR write instructions: `$ffff8201` at `$6b6`, `$ffff8203` at `$6c0`,
+and `$ffff8240` twice, `$777` at `$6f8` and a `clr.w` at `$702`, the flash's two mutually exclusive
+arms — and on that pricing it is as portable as `set_palette`, which has been green since batch 12.
+It was not ported for two phases, and **the hardware was not why**. What stopped it was the HARNESS,
+in the worse of the two possible ways: the model did not refuse the natural one-run case, it ACCEPTED
+it and balanced its poll and arrival totals by an off-by-one that cancelled, so a case went green
+while the two sides ran different iteration counts. Both busy-waits compare a WORD, and the model
+counted polls per RUN rather than per SITE.
+
+| addr | bytes | tier | what happened in batch 42 phase C |
+| --- | ---: | --- | --- |
+| `$694` `flip_screen` | 118 | **T3 HW_WRITE_ONLY** | **RECONSTRUCTED & GREEN.** The kit now counts polls and arrivals per WAIT SITE (`TRAP_MODEL.md`, Phase 8), so the routine's two waits are separable in one run. Its THREE registers stay dropped and unpinned, and the sweep MEASURES that rather than asserting it: four named mutants over them — the wrong buffer published, the two base bytes swapped, the flash's two arms swapped, the sink write moved above the timer store — all survive the whole suite |
+| `$4a0` `game_main_loop` | 106 | T0 itself; T3 transitively, through the flip | **RECONSTRUCTED & GREEN.** A composition of fifteen calls, and the tier it inherits is the worst of its callees' |
+
+**THE LESSON FOR THIS DOCUMENT STANDS UNCHANGED, and it is now paid for twice: a T0 or T3 price is a
 statement that the oracle can SEE the routine, not that the harness can DRIVE it** — the two come
 apart wherever a routine waits on something outside itself, and §6's capability table has no column
-for that.
+for that. What phase C adds is the other half: the gap was closable, and closing it was a change to
+the MODEL rather than to the tier.
 
 ## 2. Method, and what it can and cannot see
 

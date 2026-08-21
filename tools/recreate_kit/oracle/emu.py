@@ -185,21 +185,25 @@ _HwFileP = ctypes.POINTER(ctypes.c_uint8 * HW_NSLOTS)
 # to the instruction cap and report "did not reach rts", naming neither the schedule nor the fact
 # that it was silently dropped.
 _SCHED_ABI = ("osh_schedule", "osh_sched_count", "osh_sched_applied", "osh_sched_arrivals",
-              "osh_sched_refused", "osh_sched_max", "osh_sched_fields")
+              "osh_sched_refused", "osh_sched_max", "osh_sched_fields",
+              "osh_sched_site_max", "osh_sched_site_count", "osh_sched_site_arrivals")
 _missing_sched = [sym for sym in _SCHED_ABI if not hasattr(_LIB, sym)]
 if _missing_sched:
     raise _stale_oracle(
         "/".join(_missing_sched),
         "so it predates the scheduled-write model: a routine that busy-waits on a byte an interrupt "
         "supplies would spin to the instruction cap, with the declared store never made.")
-_LIB.osh_schedule.argtypes = [_u32p, ctypes.c_uint32]
+_LIB.osh_schedule.argtypes = [_u32p, ctypes.c_uint32, _u32p, ctypes.c_uint32]
+_LIB.osh_sched_site_arrivals.argtypes = [ctypes.c_uint32]
 for _sym in ("osh_sched_count", "osh_sched_applied", "osh_sched_arrivals", "osh_sched_refused",
-             "osh_sched_max", "osh_sched_fields"):
+             "osh_sched_max", "osh_sched_fields", "osh_sched_site_max", "osh_sched_site_count",
+             "osh_sched_site_arrivals"):
     getattr(_LIB, _sym).restype = ctypes.c_uint32
 # Read from the .so rather than restated here (PSG_NREGS's argument): a shim that resized the table
 # or the entry cannot leave this file encoding the old shape.
 SCHED_MAX = _LIB.osh_sched_max()
 SCHED_FIELDS = _LIB.osh_sched_fields()
+SCHED_SITE_MAX = _LIB.osh_sched_site_max()
 # The two trigger kinds. Mirrored from os.h rather than read back from the .so, unlike the two sizes
 # above, because they are an ENCODING the CASES are written against rather than a table size — and
 # test/test_os_memory_map.py pins the pair equal to os.h, which is what a mirror costs.
@@ -540,18 +544,65 @@ def schedule_array(flat):
     return _NO_SCHEDULE if not flat else (ctypes.c_uint32 * len(flat))(*flat)
 
 
-def _install_schedule(schedule):
-    """Install ``schedule`` in the oracle and return the flattened array (for the candidate's copy)."""
+def wait_site_pcs(schedule, wait_sites):
+    """The run's declared WAIT SITES as a tuple of PCs (os.h, "WAIT SITES").
+
+    A site is the address of the instruction at which the ORIGINAL's wait RE-READS the byte it
+    spins on — the store lands just before that instruction on both shores — and both shores count
+    per site: the oracle its arrivals there, the candidate its ``sched_poll8`` calls naming it. What
+    that buys over a run TOTAL is in os.h — with two waits in one run the totals can balance by
+    cancellation while the two sides ran different loops.
+
+    ``wait_sites`` defaults to the trigger PCs the schedule names, which is every case with ONE wait
+    in it and needs no thought. A case whose run polls at a site NO entry stores on — the shape
+    ``flip_screen`` has, where the first wait falls through on a byte the seed already holds — must
+    name it, because the candidate's poll there would otherwise be uncounted, and an uncounted poll
+    is the hole the sites close (``sched_poll8`` refuses one).
+    """
+    triggers = [entry["pc"] for entry in (schedule or ()) if "pc" in entry]
+    sites = list(dict.fromkeys(triggers if wait_sites is None else wait_sites))
+    if wait_sites is not None and len(sites) != len(list(wait_sites)):
+        raise ValueError(f"wait_sites names the same PC twice ({[hex(s) for s in wait_sites]}) — a "
+                         f"site is one wait, and two counters keyed the same way cannot be compared")
+    if len(sites) > SCHED_SITE_MAX:
+        raise ValueError(f"a run may declare at most {SCHED_SITE_MAX} wait site(s) (os.h's "
+                         f"OS_SCHED_SITE_MAX); this one declares {len(sites)}")
+    for site in sites:
+        if not (isinstance(site, int) and 0 <= site < loader.IMAGE_SIZE and site % 2 == 0):
+            raise ValueError(f"wait site {site!r} is not an even address inside the "
+                             f"{loader.IMAGE_SIZE:#x}-byte image, so no run can ever arrive at it")
+    missing = [pc for pc in triggers if pc not in sites]
+    if missing:
+        # Without this the entry reaches the oracle, its site is never counted, and it never comes
+        # due — which surfaces as "the wait loop never ended" and points at the routine.
+        raise ValueError(f"schedule trigger PC(s) {[hex(pc) for pc in missing]} are not among the "
+                         f"declared wait sites {[hex(s) for s in sites]} — an entry fires on ITS "
+                         f"SITE's count, so a trigger that is not a site can never come due")
+    return tuple(sites)
+
+
+def _install_schedule(schedule, wait_sites):
+    """Install ``schedule`` in the oracle; return ``(flattened entries, the declared sites)``.
+
+    Both go to the candidate too (``harness._seed_candidate_sched``), so the two sides cannot
+    describe different stores OR key their counts differently.
+    """
     flat = schedule_entries(schedule)
+    sites = wait_site_pcs(schedule, wait_sites)
     n = len(flat) // SCHED_FIELDS
-    _LIB.osh_schedule(schedule_array(flat), n)
-    # The shim CLAMPS to OS_SCHED_MAX and reports what it kept. schedule_entries refuses an
-    # over-long list above, so this can only fire when the two sides disagree about the cap — and a
-    # run silently carrying fewer stores than the case declared reads as a wait that never ended.
+    _LIB.osh_schedule(schedule_array(flat), n, schedule_array(list(sites)), len(sites))
+    # The shim CLAMPS to OS_SCHED_MAX/OS_SCHED_SITE_MAX and reports what it kept. The encoders above
+    # refuse an over-long list, so these can only fire when the two sides disagree about a cap — and
+    # a run silently carrying fewer stores or sites than the case declared reads as a wait that
+    # never ended.
     if _LIB.osh_sched_count() != n:
         raise RuntimeError(f"the oracle kept {_LIB.osh_sched_count()} of this run's {n} scheduled "
                            f"store(s) — its OS_SCHED_MAX and this file's disagree")
-    return flat
+    if _LIB.osh_sched_site_count() != len(sites):
+        raise RuntimeError(f"the oracle kept {_LIB.osh_sched_site_count()} of this run's "
+                           f"{len(sites)} wait site(s) — its OS_SCHED_SITE_MAX and this file's "
+                           f"disagree")
+    return flat, sites
 
 
 def hw_capture_profile():
@@ -721,7 +772,7 @@ def _vet_no_malloc_over_program(malloc_calls):
 
 
 def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw_seed=None,
-        schedule=None):
+        schedule=None, wait_sites=None):
     """Run ``entry`` on a copy of ``image``. Return (final_image, writes, out_regs).
 
     ``regs`` maps register name -> value (e.g. {"a1": 0x1e000}); A7 is forced to STACK_TOP.
@@ -756,6 +807,12 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     (``schedule_entries`` gives the shape; TRAP_MODEL.md, Phase 8). It too is re-installed before
     every run. An entry that never came due sinks the run: a wait loop whose agent never fired ran
     to the instruction cap, and reporting only "did not reach rts" would name the symptom.
+
+    ``wait_sites`` is the list of PCs at which this run BUSY-WAITS, and it defaults to the trigger
+    PCs the schedule names — which is right for every run with one wait in it. Arrivals are counted
+    per site, not per run, so that ``harness.differential`` can compare them against the candidate's
+    polls wait by wait; a run with a second wait the schedule does not store on must name it here or
+    that wait goes uncounted (os.h, "WAIT SITES", has what a run TOTAL loses).
     """
     regs = regs or {}
     if audio_capture_on():
@@ -802,7 +859,7 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     _LIB.osh_hw_seed((ctypes.c_uint8 * HW_NSLOTS)(*hw_values), hw_known)
     # ...and the external agent's stores, unconditionally for the same reason: a schedule left
     # installed would fire inside the next case, which under -n auto is not even a stable one.
-    scheduled = _install_schedule(schedule)
+    scheduled, sites = _install_schedule(schedule, wait_sites)
 
     mem = bytearray(image)
     Buf = ctypes.c_uint8 * loader.IMAGE_SIZE
@@ -954,12 +1011,16 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     out_regs["hw_events"] = hw_events()             # the ordered (address, value) read stream
     out_regs["hw_file"] = hw_file()
     out_regs["hw_known"] = _LIB.osh_hw_known()
-    # The external agent's surfaces. `sched_arrivals` is the comparable one: it counts the run's
-    # executions of the trigger instruction, which is the ORIGINAL's iteration count for the wait,
-    # and harness.differential compares it against the candidate's poll count.
+    # The external agent's surfaces. `sched_site_arrivals` is the comparable one: entry i counts the
+    # run's executions of the instruction at declared site i, which is the ORIGINAL's iteration count
+    # for THAT wait, and harness.differential compares it against the candidate's polls at the same
+    # site. `sched_arrivals` is their sum, kept because a one-wait case reads more clearly for it.
     out_regs["sched"] = scheduled                     # the flattened list, for the candidate's copy
+    out_regs["sched_sites"] = sites                   # ...and the same site list
     out_regs["sched_applied"] = _LIB.osh_sched_applied()
     out_regs["sched_arrivals"] = _LIB.osh_sched_arrivals()
+    out_regs["sched_site_arrivals"] = tuple(_LIB.osh_sched_site_arrivals(i)
+                                            for i in range(len(sites)))
 
     _vet_no_malloc_over_program(out_regs["malloc_calls"])
     _vet_no_poked_input_read(out_regs["poked_input_calls"])

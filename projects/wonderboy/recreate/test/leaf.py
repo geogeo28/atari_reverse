@@ -234,7 +234,7 @@ def merge_bands(addresses):
 
 
 def run(name, glue, allowed, what, regs=None, poison=True, max_insns=LEAF_INSN_CAP, stop_pc=0,
-        psg_seed=None, hw_seed=None, schedule=None):
+        psg_seed=None, hw_seed=None, schedule=None, wait_sites=None):
     """Run ``name``'s original under the oracle and the reconstruction on the same image.
 
     Requires the two to agree byte for byte over the whole image, and the original to have written
@@ -295,10 +295,18 @@ def run(name, glue, allowed, what, regs=None, poison=True, max_insns=LEAF_INSN_C
     harness compares them. A case should drive the same wait at more than one ``nth``: the kit's own
     suite measures a port that polls TWICE per iteration to be invisible at an ``nth`` that is a
     multiple of its polling rate.
+
+    ``wait_sites`` names every PC the run BUSY-WAITS at, and defaults to the trigger PCs the schedule
+    carries — which is right for a run with one wait in it, i.e. every case but `flip_screen`'s. Both
+    counts above are kept per site, so a run with two waits is compared wait by wait rather than as
+    two totals that can cancel (os.h, "WAIT SITES"). A run whose second wait no entry stores on MUST
+    name it: an undeclared site's poll is refused rather than uncounted, and an uncounted poll is the
+    hole the sites close.
     """
     diffs, info = differential(entry_of(name), dict(regs or {}), glue,
                                max_insns=max_insns, poison=poison, stop_pc=stop_pc,
-                               psg_seed=psg_seed, hw_seed=hw_seed, schedule=schedule)
+                               psg_seed=psg_seed, hw_seed=hw_seed, schedule=schedule,
+                               wait_sites=wait_sites)
     assert not diffs, f"{what}\n{report(diffs)}"
     stray = stray_writes(info["writes"], allowed)
     assert not stray, (

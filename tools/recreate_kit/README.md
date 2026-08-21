@@ -170,9 +170,11 @@ the witness — a case that declares one against a candidate lacking the group i
 
 | symbol | signature | purpose |
 | --- | --- | --- |
-| `sched_poll8` | `uint8_t(uint8_t *, uint32_t)` | one iteration of a busy-wait: apply any store this poll brings due, then read the byte |
-| `g_sched_reset` | `void(const uint32_t *, uint32_t)` | install the run's schedule + clear the counters, before each candidate run |
+| `sched_poll8` | `uint8_t(uint8_t *, uint32_t addr, uint32_t site_pc)` | one iteration of a busy-wait AT `site_pc`: count the poll against that site, apply any store it brings due, then read the byte |
+| `sched_poll16` | `int(uint8_t *, uint32_t addr, uint32_t site_pc, uint16_t *seen)` | one iteration of a CAPPED WORD wait: the poll above plus a full-width read; 0 once the site has spent `OS_SCHED_POLL_MAX` |
+| `g_sched_reset` | `void(const uint32_t *entries, uint32_t n, const uint32_t *sites, uint32_t site_n)` | install the run's schedule AND its wait sites + clear the counters, before each candidate run |
 | `g_sched_count` / `g_sched_polls` / `g_sched_applied` / `g_sched_refused` | | entries carried, polls made, stores made, stores refused |
+| `g_sched_site_count` / `g_sched_site_polls` / `g_sched_undeclared` | | sites declared, polls at the ith, and polls naming no declared site (each a refusal) |
 
 This is the only group that is not about a value a run READS. A routine that busy-waits on a byte
 **no instruction in its own body writes** — Wonder Boy's pause wait spinning on the scancode the IKBD
@@ -182,12 +184,17 @@ in flight, so the loop is infinite on both sides. The case declares the store in
 and the SAME list is installed on both sides.
 
 The store alone would be a false-green machine, since it lands on both sides whatever the
-reconstruction's loop does. What makes it a test is the **count**: the oracle counts arrivals at the
-trigger PC, the candidate counts `sched_poll8` calls, and `harness.differential` compares them — so a
-port that spins a different number of times, or not at all, fails. Poll only the byte the wait is ON,
-once per iteration; an ordinary field read stays a plain guarded read. The whole contract, including
-the `insn` trigger a differential refuses and the aliasing hole the kit suite measures, is
-[`TRAP_MODEL.md`](TRAP_MODEL.md), "Phase 8".
+reconstruction's loop does. What makes it a test is the **count**: the oracle counts arrivals and the
+candidate counts polls, and `harness.differential` compares them — so a port that spins a different
+number of times, or not at all, fails. Poll only the byte the wait is ON, once per iteration; an
+ordinary field read stays a plain guarded read.
+
+**BOTH COUNTS ARE PER WAIT SITE**, keyed by the address at which the ORIGINAL re-reads the byte,
+which the candidate names at every poll and the case declares with `wait_sites=` (defaulting to the
+schedule's trigger PCs). A run TOTAL cannot carry two waits: they balance by cancellation, and a port
+that deleted one of them passes. A poll naming a site the run did not declare is refused rather than
+served. The whole contract, including the `insn` trigger a differential refuses and the aliasing hole
+the kit suite measures, is [`TRAP_MODEL.md`](TRAP_MODEL.md), "Phase 8".
 
 ### The modeled TOS traps
 

@@ -1259,17 +1259,68 @@ the byte the wait is ON, and only where the original's compare reads it. Wonder 
 the *press* code at `$642` before spinning on the *release* at `$64e` — same address, and the first
 is not a poll.
 
-**ONE TRIGGER PC PER DIFFERENTIAL, and this is the exact extent of the equivalence above.** The
-oracle counts arrivals PER ENTRY at that entry's own PC; the candidate counts every `sched_poll8`
-call in the run against `nth`. With one wait in play those are the same event. With two they are
-not — an entry aimed at the SECOND wait fires on a poll of the FIRST, its store lands an unknown
-number of iterations early, and since both counters are run TOTALS the arrival/poll comparison can
-still agree, which is a false green rather than a failure. `harness._vet_schedule_is_runnable`
-refuses a schedule naming more than one trigger PC; the remedy for a case that needs two is one run
-per wait, or a `stop_pc` before the second. (Wonder Boy's `game_key_actions` really does have two,
-at `$5e6` and `$60e`, on the same byte — so this is a live limit and not a hypothetical one. Lifting
-it means counting polls PER ADDRESS on the candidate, which still would not separate two waits on
-the SAME address, so the honest fix is a per-wait handle rather than a wider counter.)
+**A WORD WAIT IS A BYTE POLL PLUS A WIDER READ, and needs no capability of its own.** `sched_poll16`
+is ONE `sched_poll8` (the clock, which counts the arrival and applies the due store) and a full-width
+read of the same address — one poll per arrival, so none of the aliasing below. What it adds over a
+hand-rolled poll-and-read loop is the CAP, and that is the whole reason it exists. It is an
+ITERATOR rather than a `sched_wait16(until)` because the two word waits that motivated it compare
+differently — one is a signed threshold, the other is against a copy the routine took an instruction
+earlier — so an equality wrapper would fit neither and a predicate enumeration would put the
+caller's arithmetic inside the kit. **A word compare must never be spelt as two byte polls**: that is
+exactly the aliasing mutant, invisible at any `nth` that is a multiple of the polling rate.
+
+### WAIT SITES: which wait a poll belongs to
+
+**A COUNTER PER RUN CANNOT CARRY TWO WAITS, and the failure mode is a false green rather than a
+failure.** The equivalence above — one arrival is one poll — holds for the run as a whole only while
+the run holds ONE wait. With two, the candidate's poll total and the oracle's arrival total can
+BALANCE BY CANCELLATION: the store fires one iteration early on the second wait, the first wait's
+poll makes the sum back up, and `arrivals == polls` holds over a port that ran a different loop.
+A port that DELETED the first wait outright passes that comparison.
+
+That is measured rather than argued. Wonder Boy's `flip_screen` waits twice on the same word, at
+`$6aa` and `$6d0`; batch 42 phase C restored the run-total model beside a port with the first wait
+deleted, ran the composite case, and it came back GREEN — then RED under the model below.
+(`projects/wonderboy/recreate/STATUS.md`, batch 42 phase C.)
+
+**SO A RUN DECLARES ITS WAIT SITES AND BOTH SIDES COUNT PER SITE.** A *site* is the address of the
+instruction at which the ORIGINAL's wait **re-reads the byte it spins on**:
+
+```python
+emu.run(image, entry, schedule=[{"pc": 0x6d0, "nth": 3, "addr": 0x74a, "width": 2, "value": 2}],
+        wait_sites=[0x6aa, 0x6d0])
+```
+
+* the ORACLE bumps site S's arrival count each time it executes the instruction at S;
+* the CANDIDATE names the site at every poll — `sched_poll8(image, addr, site_pc)` — because it has
+  no program counter of its own to be asked;
+* an AT_PC entry fires when **its own site's** count reaches its `nth`, on both shores;
+* `harness._vet_schedule_ran_the_same_wait` compares the two **site by site**.
+
+**WHICH HALF DOES THE WORK, stated because the measurement says something narrower than the design
+suggests: the FIRING rule.** An entry keyed to its own site's count makes the two sides' run TOTALS
+diverge on a port that ran a different loop, so the totals catch it before the per-site comparison is
+reached. The comparison is kept as a **tripwire and is not claimed as covered** — both composites
+written to isolate it (the comparison removed beside a deleted wait, and beside a port that moves a
+poll from one site to another) came back caught by the firing rule instead. Same standing as the
+kept-count assertions below.
+
+`wait_sites` defaults to the trigger PCs the schedule names, which is right for every run with one
+wait in it and needs no thought. **A run that polls at a site no entry stores on must name it** —
+`flip_screen`'s first wait falls through in a single poll when the counter is seeded ready, and that
+poll still has to be counted. A poll at an undeclared site is a REFUSAL (`os_refused`), not a
+service: an uncounted poll is the hole itself.
+
+**THE SITE IS THE PC AND NEVER THE ADDRESS.** A per-ADDRESS counter was this model's first registered
+remedy and it was wrong for the very case it was registered against: `game_key_actions` has two waits
+on the SAME byte, at `$5e6` and `$60e`, so the poll's address says nothing about which wait made it.
+
+**What is refused, and what is not.** A trigger PC that is not a declared site can never come due —
+nothing counts its arrivals — so `emu.wait_site_pcs` refuses that combination before either core
+runs, as it refuses a site list with a repeated PC (two counters keyed the same way cannot be
+compared). Two trigger PCs in one run are ordinary. `OS_SCHED_SITE_MAX` bounds how many sites a run
+may declare, and the kept count is reported and asserted on both sides, for `OS_SCHED_MAX`'s reason:
+a silently dropped site leaves that wait uncounted.
 
 **AND THE ATTRIBUTION PASS IS VOID OVER A SCHEDULED BYTE.** `differential(..., poison=True)` inverts
 every oracle-written byte and re-runs; the agent's store is applied from the same list on both sides
@@ -1353,7 +1404,7 @@ nothing to mirror by hand. Two things are **not** in the image and must be match
 | the YM2149's register contents, which a read-back returns | `shim.c`'s `g_psg_file` + its known mask | `psg_port_read()`/`psg_port_write()` keep the same file; `harness.differential` compares it, and the case seeds both sides with `psg_seed=` (Phase 6) |
 | reads of the modeled hardware bytes `$fffa01`, `$ff820a`, `$ff8207`, `$ff8209` | `shim.c`'s `g_hw_log_slot`/`g_hw_log_val` ledger + `g_hw_file` | emit the same ordered `(slot, val)` stream — call `hw_read8()` from `hw.h` with an `OS_HW_*` constant; the case declares both sides' bytes with `hw_seed=` (Phase 7). A VOLATILE one (`$ff8207`/`$ff8209`) may be read at most ONCE per run: a second read is refused, and the remedy is the case's shape — end it before the second read, or split it into two runs |
 
-| a memory byte an EXTERNAL AGENT writes while the run is in flight (an interrupt storing a scancode) | `shim.c`'s `g_sched` list, applied by arrival count | poll the byte through `sched_poll8()` from `sched.h`, once per wait iteration; the case declares the store with `schedule=` (Phase 8), and `harness.differential` compares the candidate's poll count against the oracle's arrivals |
+| a memory byte an EXTERNAL AGENT writes while the run is in flight (an interrupt storing a scancode) | `shim.c`'s `g_sched` list, applied by arrival count per declared WAIT SITE | poll the byte through `sched_poll8()`/`sched_poll16()` from `sched.h`, once per wait iteration, NAMING the site (the original compare's PC); the case declares the store with `schedule=` and the sites with `wait_sites=` (Phase 8), and `harness.differential` compares the candidate's polls against the oracle's arrivals SITE BY SITE |
 
 `OS_SUPER_TOKEN` is not off-image state but it is still a shared value: a reconstruction of a
 function that calls `Super` must return the same constant, since the program can store it into the
