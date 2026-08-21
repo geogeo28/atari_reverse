@@ -90,3 +90,42 @@ def test_a_poke_straddling_an_edge_is_flagged(addr, length):
     """Keyed on the RANGE, not on the start address: a poke that merely reaches into the block
     corrupts it just as thoroughly as one aimed at it."""
     assert os_map.poke_hits_poked_input(addr, length)
+
+
+# ---------------------------------------------------------------------------------------------
+# ...and the one way past that guard: a span the PROJECT declares to be its own program's data
+# ---------------------------------------------------------------------------------------------
+# `poke_hits_poked_input` above answers "does this touch the block", which is all the kit can know
+# by itself. `poke_is_declared_program_data` is the project's answer to "and are those bytes MINE" —
+# the fact nothing here can derive. It is pinned in this module for the module's own stated reason:
+# the shared kit's protection must not live entirely inside one project's tests.
+DECLARED = ((os_map.OS_CON_CHAR, os_map.OS_CON_CHAR + POKE_LEN),)
+
+
+@pytest.mark.parametrize("addr, length", (
+    (os_map.OS_CON_CHAR, POKE_LEN),                    # exactly the span
+    (os_map.OS_CON_CHAR, 1),                           # its first byte
+    (os_map.OS_CON_CHAR + POKE_LEN - 1, 1),            # ...and its last
+    (os_map.OS_CON_CHAR + 1, 2),                       # wholly within
+))
+def test_a_poke_wholly_inside_a_declared_span_is_program_data(addr, length):
+    assert os_map.poke_is_declared_program_data(addr, length, DECLARED)
+
+
+@pytest.mark.parametrize("addr, length, why", (
+    (os_map.OS_CON_CHAR - 1, POKE_LEN, "straddles the low edge"),
+    (os_map.OS_CON_CHAR + 1, POKE_LEN, "straddles the high edge"),
+    (os_map.OS_CON_PENDING, POKE_LEN, "a different part of the block entirely"),
+    (os_map.OS_RANDOM_VALUE, POKE_LEN, "the neighbour the span deliberately excludes"),
+    (os_map.OS_CON_CHAR, 0, "writes nothing, so it declares nothing"),
+))
+def test_a_poke_that_is_not_WHOLLY_inside_is_refused(addr, length, why):
+    """WHOLLY inside or not at all: a poke that straddles the boundary is half the game's data and
+    half the model's, and serving it would write the model's half from a value nobody declared."""
+    assert not os_map.poke_is_declared_program_data(addr, length, DECLARED), why
+
+
+def test_a_project_that_declares_nothing_gets_nothing():
+    """Every project but the declaring one passes an empty tuple, and must be refused as before —
+    the predicate's first `not` is what makes that the cheap path as well as the safe one."""
+    assert not os_map.poke_is_declared_program_data(os_map.OS_CON_CHAR, POKE_LEN, ())

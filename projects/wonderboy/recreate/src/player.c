@@ -1323,8 +1323,10 @@ static uint32_t scene_trigger_tune(uint8_t *image, uint32_t actor, uint32_t cell
     snd_play_song(image, WB_SCENE_TRIGGER_FLUTE_SONG);
 
     /* `tst.b 378(a5) / bne.s $1932`, and THE CALL ABOVE HAS JUST RAISED THAT BYTE — see
-     * WB_PLAYER_COLLIDE_SOUND_WAIT in player.h. There is no seed that enters the spin with it clear
-     * and no interrupt under either core to clear it, so the wait is where this arm ends. */
+     * WB_PLAYER_COLLIDE_SOUND_WAIT in player.h. No seed can enter the spin with it clear, so the
+     * wait is where this arm ends TODAY. Since batch 42 phase A a declared store CAN clear it
+     * mid-run (the kit's Phase 8), which makes the six instructions below the spin reachable and
+     * their port a queued item rather than an impossibility. */
     return WB_PLAYER_COLLIDE_SOUND_WAIT;
 }
 

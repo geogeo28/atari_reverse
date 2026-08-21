@@ -307,12 +307,18 @@ void player_stage_transition(uint8_t *image, uint32_t actor);
  *
  * AND THE BYTE IS NOT AN INPUT THE CASE CAN CHOOSE: `snd_play_song`, three instructions above the
  * spin on the one path that reaches it, raises that very byte as its LAST write (`st 378(a3)` at the
- * end of $17b3a). So the spin is entered on EVERY run, whatever the case seeds, and everything below
- * it is unreachable under either core rather than merely awkward: SIX instructions, $1938..$194d,
- * TWENTY-TWO bytes, ending in the arm's own `rts`. They are therefore NOT PORTED — a branch no case
- * can drive would ship unpinned — and this report is what the reconstruction returns in their place,
- * from the instant the oracle arrives at the `tst.b`. ../STATUS.md records what that leaves
- * honestly unpinned.
+ * end of $17b3a). So the spin is entered on EVERY run whatever the case SEEDS, and the six
+ * instructions below it — $1938..$194d, twenty-two bytes, ending in the arm's own `rts` — are NOT
+ * PORTED: a branch no case could drive would ship unpinned, and this report is what the
+ * reconstruction returns in their place, from the instant the oracle arrives at the `tst.b`.
+ *
+ * BATCH 42 PHASE A MOVED THE SECOND HALF OF THAT ARGUMENT, so read it with its date on it. The
+ * seeding half is unchanged and still decisive. The half that said no core has anything to clear the
+ * byte is now FALSE: the kit's SCHEDULED WRITE model (tools/recreate_kit/TRAP_MODEL.md, "Phase 8")
+ * stores into memory mid-run at a declared arrival, which is exactly what the sound module's own
+ * interrupt does to this byte. So those six instructions are REACHABLE — through a declared store
+ * rather than a seed — and porting them is queued in ../STATUS.md rather than done. Until it lands
+ * this report is what the arm returns, and what it costs is unchanged.
  *
  * WB_PLAYER_COLLIDE_UNWIND is the port's own, and it is the `lea 12(a7),a7 / jmp $e5ba.l` at $1622:
  * THREE return addresses discarded, so the arm abandons this routine, `actor_behavior_type01_player`

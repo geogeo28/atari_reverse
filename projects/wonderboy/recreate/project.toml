@@ -99,3 +99,29 @@ tos_malloc_unused = true
 # everything else — one trap in the image, and it is a Super — but if the game ever reaches
 # Physbase, this is where it bites, and silently: both sides would draw over the same code bytes.
 tos_poked_input_unused = true
+
+# ---- and the four bytes inside that block which are THIS PROGRAM's OWN DATA -------------------
+# $604 is `key_sequence_matched_604`, the game's cheat enable, and $606 is `key_sequence_cursor`,
+# how far the cheat's key-sequence walk has stepped. They are ordinary game variables that happen to
+# share an address with model state, and the guard in harness.make_image() cannot tell the two apart
+# — so it refuses every poke into the block, and without this declaration four of
+# `game_key_actions`' six arms (the cheat's level skip, its Help action and both endings of the
+# sequence walk) have no differential at all, and `player_meter_empty_check`'s cheat arm has had
+# none since batch 22.
+#
+# WHAT IS GIVEN UP, EXACTLY, because a waiver has to say: $604..$607 is os.h's OS_CON_CHAR IN FULL —
+# the whole longword Bconin returns, scancode word and ASCII word — and no byte of anything else.
+# OS_RANDOM_VALUE begins at $608 and is NOT in this span. So after this declaration a hand-written
+# `make_image({OS_CON_CHAR: ...})` is served rather than refused, and the only thing standing between
+# that and a false green is the per-run guard below, which is where it belongs: the block is
+# dangerous when a TRAP READS it, and this program has one trap instruction and it is a Super.
+#
+# Declaring them permits the SEEDING and nothing else: what makes an overlapping address dangerous
+# is a TRAP serving it back as model state, and emu._vet_no_poked_input_read() refuses that on every
+# run, declaration or no declaration. The evidence that no such trap exists is waiver 2's, unchanged
+# — the image holds exactly one trap instruction and it is a Super.
+#
+# ONLY these four bytes, although $608..$60c (the sequence's own scancodes) are equally the game's:
+# nothing needs to poke them — every case reads them as the image ships them — and a declaration
+# wider than its use would permit a poke nobody has justified.
+poked_input_program_data = [[0x604, 4]]

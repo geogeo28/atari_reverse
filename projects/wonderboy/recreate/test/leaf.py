@@ -14,6 +14,7 @@ enough for a tight instruction cap, and a write set the caller can enumerate up 
 import collections
 import contextlib
 import ctypes
+import subprocess
 import zlib
 
 import harness
@@ -97,6 +98,41 @@ def entry_of(name):
         f"{name!r} names {len(addrs)} address(es) in {harness.NAMES} ({[hex(a) for a in addrs]}) — "
         f"a leaf case needs exactly one entry point")
     return addrs[0]
+
+
+def _defined_symbols():
+    """The names the candidate `.so` itself DEFINES, read with `nm`.
+
+    NOT `hasattr(lib, name)`, which is what the first draft used and is wrong in a way that would
+    have grown teeth: a `ctypes.CDLL` handle resolves through the whole process's symbol namespace,
+    so `hasattr(_lib, "rand")` and `hasattr(_lib, "printf")` are both TRUE. Nothing in ../names.txt
+    collides with libc today; the day one does — `rand`, `index`, `time`, `div` are all plausible
+    names for a routine in a 68000 game — the inventory would silently count an unported routine as
+    ported, and the spine's table would shrink without a case failing.
+
+    `nm -gU` lists GLOBAL, DEFINED symbols only, which is exactly the question. Mach-O prefixes a
+    leading underscore; ELF does not, so both spellings are accepted.
+    """
+    out = subprocess.run(["nm", "-gU", str(harness.LIB)], capture_output=True, text=True)
+    assert out.returncode == 0, f"nm could not read {harness.LIB}: {out.stderr.strip()}"
+    names = set()
+    for line in out.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[-2] in ("T", "t", "D", "B"):
+            names.add(parts[-1].lstrip("_"))
+    return names
+
+
+def ported_entries():
+    """Every ``../names.txt`` address whose name the candidate ``.so`` DEFINES — the ported set.
+
+    Asked of the BUILT LIBRARY rather than kept as a list: a routine is reconstructed exactly when
+    there is a function of that name in it, and a list here would be a second source that could
+    drift from ``src/``. A routine the port folded into its caller has no symbol and is correctly
+    absent — it is not separately reachable either.
+    """
+    defined = _defined_symbols()
+    return {addr for addr, name in harness.NAME_MAP.items() if name in defined}
 
 
 def bind(name, argtypes, restype=None):
@@ -198,7 +234,7 @@ def merge_bands(addresses):
 
 
 def run(name, glue, allowed, what, regs=None, poison=True, max_insns=LEAF_INSN_CAP, stop_pc=0,
-        psg_seed=None, hw_seed=None):
+        psg_seed=None, hw_seed=None, schedule=None):
     """Run ``name``'s original under the oracle and the reconstruction on the same image.
 
     Requires the two to agree byte for byte over the whole image, and the original to have written
@@ -248,10 +284,21 @@ def run(name, glue, allowed, what, regs=None, poison=True, max_insns=LEAF_INSN_C
     only ``differential`` refuses — so this one surfaces as an AssertionError, not a RuntimeError.
     Both sides' ordered read stream and declared-byte file are compared afterwards; neither is in the
     image, so a port that skipped a read or read the WRONG modeled address has no other surface.
+
+    ``schedule`` is the list of stores an EXTERNAL AGENT makes while the run is in flight, for a
+    routine that BUSY-WAITS on a byte its own instructions never write (TRAP_MODEL.md, "Phase 8").
+    The spine's two waits are this project's cases: both spin on WB_KEY_LAST_SCANCODE for a release
+    code only the IKBD interrupt stores, so without a declared store neither core ever leaves the
+    loop. An entry names the wait's own compare as its trigger PC — ``{"pc": 0x64e, "nth": 3,
+    "addr": 0x879, "width": 1, "value": 0x99}`` — and the reconstruction reads that byte through
+    ``sched_poll8``, so the oracle's arrivals and the candidate's polls are the same count and the
+    harness compares them. A case should drive the same wait at more than one ``nth``: the kit's own
+    suite measures a port that polls TWICE per iteration to be invisible at an ``nth`` that is a
+    multiple of its polling rate.
     """
     diffs, info = differential(entry_of(name), dict(regs or {}), glue,
                                max_insns=max_insns, poison=poison, stop_pc=stop_pc,
-                               psg_seed=psg_seed, hw_seed=hw_seed)
+                               psg_seed=psg_seed, hw_seed=hw_seed, schedule=schedule)
     assert not diffs, f"{what}\n{report(diffs)}"
     stray = stray_writes(info["writes"], allowed)
     assert not stray, (
@@ -651,12 +698,42 @@ def btst_imm_dn(bit, reg):
 # there and test_effects.py became the third user, at which point they are a fact about the 68000's
 # encoding rather than one battery's private encoder. test_actor.py re-exports them so the batteries
 # that name it as their source keep working.
-BSET_IMM, BCLR_IMM, BTST_IMM = 0x08c0, 0x0880, 0x0800
+BSET_IMM, BCLR_IMM, BTST_IMM, BCHG_IMM = 0x08c0, 0x0880, 0x0800, 0x0840
 
 
 def bit_op_d16(op, bit, reg, displacement):
     """`bset`/`bclr`/`btst #n,d16(An)` — a BYTE operation on memory, whatever the register form is."""
     return opcode(op | 0x28 | reg) + word(bit) + word(displacement)
+
+
+def bit_op_abs_l(op, bit, addr):
+    """...and the same operation against an ABSOLUTE LONG address, which is how the spine spells the
+    one `bchg` in the keyboard router. Still a byte read-modify-write on memory."""
+    return opcode(op | 0x39) + word(bit) + longword(addr)
+
+
+def jsr_d16_an(reg, displacement):
+    """`jsr d16(An)` — how everything outside the sound module reaches its stub table.
+
+    HOISTED (batch 42 phase A) on the third-copy rule: test_actor.py and test_behavior.py each had
+    one and test_game.py wanted a fourth. Those two keep their own for now — re-spelling four
+    batteries is out of this change's scope and is in ../STATUS.md's queue — so this is the canonical
+    home rather than the only copy."""
+    return opcode(0x4ea8 | reg) + word(displacement)
+
+
+def cmp_b_imm_dn(reg, value):
+    """`cmp.b #imm,Dn` — NOT `cmpi.b`: several routines spell a byte test with the CMP form.
+
+    Hoisted with `jsr_d16_an`, and with the same caveat. The `& 0xff` is the 68000's own field
+    width: the immediate rides in the low byte of an extension word, and a caller handing a wider
+    value gets what the instruction stream would hold rather than an OverflowError."""
+    return opcode(0xb03c | (reg << 9)) + word(value & 0xff)
+
+
+def cmp_b_abs_l_dn(reg, addr):
+    """`cmp.b <abs>.l,Dn` — a byte in memory against a register."""
+    return opcode(0xb039 | (reg << 9)) + longword(addr)
 
 
 def move_l_imm_postinc(reg, value):

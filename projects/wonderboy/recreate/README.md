@@ -70,6 +70,9 @@ include/effects.h          the 29 effect/state leaves at $10200..$103e7 and the 
                            effects at $105e4..$10799 — prototypes
 include/hud.h              the status panel's 30 routines — prototypes, and their register interfaces
 include/input.h            the two joystick-pipeline leaves
+include/game.h             THE SPINE: game_main_loop's two leading `bsr`s, the four endings
+                           game_key_actions reports in place of the three stack unwinds it makes,
+                           and why the module could not exist before the kit's Phase 8
 include/map.h              the collision map's three routines — prototypes, why $10a2's result
                            is two registers rather than one, and the two `static inline` step
                            helpers (one probe with the ground flags no caller reads dropped) that
@@ -151,6 +154,12 @@ src/hud.c                  panel_refresh_frame ($b346) below its own entry: batc
                            batch 4's third (the pass's three table walks: the region restore and its
                            six blits, the newest record's display, the six HUD slots)
 src/input.c                the joystick edge pipeline: latch a frame, then diff two frames
+src/game.c                 THE SPINE, batch 42 phase A: game_key_actions ($53e, the game's whole
+                           keyboard — the round-end reload, the cheat's level skip, the pause arm,
+                           the quit, the key-sequence walk and the cheat's Help toggle) and
+                           game_unpause_on_key_release ($638). BOTH BUSY-WAIT on a byte the IKBD
+                           interrupt writes, so both read it through the kit's `sched_poll8` once
+                           per iteration and nowhere else
 src/actor.c                the actor tier: $67e0, which names the record everything else is
                            measured against, the two tests above it (which side the followed actor
                            is on, and whether it is within reach horizontally), and the two passes
@@ -354,6 +363,11 @@ test/test_hud.py           the status panel's differential: the game's own bitma
                            rather than through `screen_back`, and exports its model to test_stage.py
 test/test_input.py         the joystick pair's differential — memory for the latch, the whole
                            returned d0 for the edge
+test/test_game.py          the spine's differential, and the first battery here to DECLARE a
+                           busy-wait's release (leaf.run's `schedule=`). It also carries the
+                           SPINE'S INVENTORY as a case: a recursive-descent walk of the loaded
+                           image from the three roots, so ../STATUS.md's table of what the frame
+                           loop reaches is enumerated from bytes rather than read off a listing
 test/test_rng.py           the PRNG's differential, and the one battery here whose module
                            docstring OPENS with a RETIREMENT and the history behind it: the
                            generator's only hardware term was merely off-image, both cores read a
@@ -599,6 +613,47 @@ which is a statement this project wrote — so a reconstruction and its own just
 drifted together. It fails the day the original stops raising the byte, which is the day those six
 instructions become reachable and have to be ported.
 
+**AND BATCH 42 PHASE A MOVED THAT DAY CLOSER, so read the paragraph above with its date on it.** The
+premise it rests on — that no case can put a zero in the byte the spin polls — was true of the
+harness as it stood, and the harness has changed: the kit's SCHEDULED WRITE model (TRAP_MODEL.md,
+"Phase 8") can now store into memory mid-run, at the Nth arrival at a chosen PC, which is exactly
+what the sound module's interrupt does to that byte. The premise case is still correct and still
+worth having — the routine's own `jsr` forces the byte SET on entry, so seeding it is useless — but
+"the six instructions are unreachable" has become "they are reachable through a declared store that
+nobody has written yet". Porting them is in `STATUS.md`'s queue rather than done here.
+
+### Declaring a busy-wait's release, which is how the spine's two waits are driven
+
+The pair `game_key_actions` / `game_unpause_on_key_release` spin on `key_last_scancode` for a release
+code only the IKBD interrupt stores, and they are the first routines here driven with a schedule:
+
+```python
+leaf.run("game_unpause_on_key_release", glue, allowed, what,
+         regs={"_pokes": pokes}, poison=False, max_insns=wait_cap(nth),
+         schedule=[{"pc": UNPAUSE_WAIT_PC, "nth": nth,
+                    "addr": KEY_LAST_SCANCODE, "width": 1, "value": KEY_SCANCODE_P_RELEASE}])
+```
+
+Four rules, each of which cost something to learn:
+
+1. **The trigger PC comes out of the body pin, never out of a listing.** `test_game.py` assembles
+   both routines WHOLE and takes the wait's address from a label in that assembly, so a schedule
+   aimed at the wrong instruction fails as a body mismatch rather than as a store that quietly lands
+   at the wrong iteration.
+2. **Poll only the byte the wait is ON, once per iteration, and only where the original's compare
+   reads it.** `$642` tests the PRESS code at the same address before the wait below it, and it is
+   not a poll. The harness compares the oracle's arrivals against the candidate's `sched_poll8`
+   calls, and that comparison is the case's whole content — the store itself lands on both sides
+   whatever the port's loop does.
+3. **Drive the same wait at more than one `nth`, and include two adjacent values.** The kit's own
+   suite measures a port that polls TWICE per iteration to be invisible at an `nth` that is a
+   multiple of its polling rate: same image, same applied count, same poll count.
+4. **`poison=False` where the payload writes a byte a guard above it reads.** Both waits end in
+   `clr.b $879.l`, the very byte their entry guard branches on, so the attribution pass's poisoned
+   re-run takes the early arm, never reaches the wait, and the declared store never comes due — which
+   `emu.run` correctly refuses. Seed each written byte away from what the routine leaves instead;
+   that is what the pass would have bought.
+
 ### Proving that a quantity lives in a CPU FLAG, which decides whether it can be re-derived
 
 `emu.REPORTED_REGS` is `d0..d7` and `a0..a6` — **no CCR** — so a routine's exit X, C or V is
@@ -695,7 +750,7 @@ canonical list of what has to be reachable.
 
 The gate's coverage claim is only worth what a sweep says: flip a constant, delete a branch,
 off-by-one an index, rebuild, re-run — a mutation nothing catches is a hole. A sweep **lies** in
-**nine** ways, all nine measured here, so run one this way:
+**ten** ways, all ten measured here, so run one this way:
 
 ```bash
 mkdir -p "$BACKUP" && cp src/*.c "$BACKUP"     # 0a. A NAMED BACKUP OUTSIDE THE REPO, first and
@@ -813,6 +868,13 @@ done
    occur exactly once, exit nonzero otherwise, and print NOT APPLIED — which is not a result. (`git
    apply` gives this for free and a hand-rolled `str.replace` runner does not, which is why a sweep
    over a test file needs the check spelt out.)
+10. **THE ROWS CAN BE RIGHT AND THE TALLY WRONG** — the only mode that is not about a mutant at all.
+   Batch 42 phase A's runner grew a second verdict string (`SURVIVED (whole suite)`, for the
+   full-suite confirmation every subset survivor gets) and its closing summary still bucketed on the
+   exact string `SURVIVED`, so it printed `SURVIVED: 0` under seven rows that said otherwise. Every
+   one of the nine modes above is about a ROW being wrong; this one is about believing a summary
+   over the rows it summarises. **Count the buckets from the rows, not from a second list of the
+   verdict strings you think you emit** — and read the rows before the tally, always.
 
 **A REVIEWER THAT MUTATES IS A WRITER, and the gate has to be told so.** A review agent that probes
 a finding by editing `src/`, rebuilding and running the suite is doing everything a sweep does,
@@ -843,6 +905,20 @@ out of a shared scratchpad path a subagent might reuse.
   SAME-SIZE edit inside the same second re-runs the MUTANT's rewritten module against a restored
   file. It reads exactly like a reproducible failure in clean code. `rm -rf test/__pycache__`
   between mutants, or make the restore change the size.
+
+**A SUBSET IS AN HONEST FAST PASS, IF EVERY SURVIVOR IS RE-RUN WHOLE.** Batch 42 phase A's rounds
+ran the four batteries the changeset touches (8 s) instead of the whole suite (42 s), and re-ran the
+WHOLE suite for any mutant the subset let through. That is sound in one direction only, which is why
+it works: a subset can turn a CATCH into a SURVIVOR — fewer cases — and never the reverse, so a
+CAUGHT verdict off the subset needs no confirmation and a SURVIVED one is not a survivor until the
+full suite agrees. Say in the tally which ran.
+
+**AND A CHECK-REMOVAL MUTANT CANNOT BE MEASURED ALONE.** Deleting an assertion survives against
+correct code by construction: there is nothing for it to catch. The measurement is a COMPOSITE —
+apply the check-removal TOGETHER with the mutant the check exists to catch, and contrast that with
+the same mutant alone. Batch 42 phase A's arrival/poll comparison is pinned exactly so: the double-
+polling port alone is CAUGHT, and the pair SURVIVES, which is what says the comparison is what
+caught it. A "SURVIVED" on a lone check-removal is a prompt to write the pair, not a finding.
 
 Restore and re-green after each mutant — a sweep left half-applied is worse than none. Its sibling
 recipe, [writing a fuzz test so it shards across

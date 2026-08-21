@@ -36,6 +36,7 @@ import harness
 import emu
 import loader
 from recreate_kit import harness as kit_harness   # the guard's internals aren't re-exported by `*`
+from recreate_kit import os_map
 
 # A word-aligned longword of poked state, and a poke of one: what every case below stages.
 POKE_LEN = 4
@@ -101,17 +102,89 @@ def test_staging_poked_input_is_refused(build_poke, what):
 # A poke that never goes through a builder — the layer the builders cannot cover
 # ---------------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("addr", (harness.OS_CON_PENDING, harness.OS_CON_CHAR,
-                                  harness.OS_RANDOM_VALUE, harness.OS_PSG_REGS))
+@pytest.mark.parametrize("addr", (harness.OS_CON_PENDING, harness.OS_RANDOM_VALUE,
+                                  harness.OS_PSG_REGS))
 def test_a_hand_written_poke_into_the_block_is_refused_when_applied(addr):
     """The three kinds of staged state, written straight into a poke dict.
 
     `OS_RANDOM_VALUE` is the load-bearing one: the kit ships no `random_value()` builder, so this is
     the ONLY way to stage an XBIOS Random and the builder-level check could never see it. Before
     make_image() checked, this call silently overwrote four bytes of the game's own code.
+
+    `OS_CON_CHAR` is deliberately NOT in this sweep: it is $604, which ../project.toml declares to be
+    this program's own data, and the three cases below are what cover it instead.
     """
     with pytest.raises(RuntimeError, match="harness-poked input block"):
         harness.make_image({addr: STAGED_LONGWORD})
+
+
+# ---------------------------------------------------------------------------------------------
+# ...and the one span the project declares to be its OWN data, which the guard then serves
+# ---------------------------------------------------------------------------------------------
+# $604..$607 hold `key_sequence_matched_604` and `key_sequence_cursor` — the game's cheat enable and
+# the walk's cursor — and that span is os.h's OS_CON_CHAR IN FULL, the whole longword Bconin returns.
+# It is no part of OS_RANDOM_VALUE, which starts at $608. Nothing in the kit can tell a poke staging
+# that longword from one seeding the two game variables at the same address, so ../project.toml says
+# which they are (`poked_input_program_data`) and the guard then serves a poke wholly inside the
+# span — which is why OS_CON_CHAR is out of the refusal sweep above. What is NOT relaxed is the other
+# direction: a trap reading one of those bytes back as model state is still refused per run, by the
+# cases further down this file.
+DECLARED_LO, DECLARED_HI = kit_harness._CFG.poked_input_program_data[0]
+DECLARED_LEN = DECLARED_HI - DECLARED_LO
+
+
+def test_the_declared_span_is_the_one_project_toml_names():
+    """Read from the bound config rather than restated, so a narrowed declaration fails HERE — where
+    it says what it is — rather than as a puzzling refusal in whichever battery seeded the word."""
+    assert kit_harness._CFG.poked_input_program_data == ((harness.OS_CON_CHAR,
+                                                          harness.OS_CON_CHAR + POKE_LEN),)
+
+
+def test_a_poke_wholly_inside_the_declared_span_is_applied():
+    staged = STAGED_LONGWORD[:DECLARED_LEN]
+    img = harness.make_image({DECLARED_LO: staged})
+    assert bytes(img[DECLARED_LO:DECLARED_HI]) == staged
+
+
+@pytest.mark.parametrize("addr,length,why", (
+    (DECLARED_LO, DECLARED_LEN + 1, "one byte past the end"),
+    (DECLARED_LO - 2, DECLARED_LEN, "two bytes before the start"),
+    (DECLARED_HI, POKE_LEN, "entirely above it"),
+))
+def test_a_poke_that_leaves_the_declared_span_is_still_refused(addr, length, why):
+    """WHOLLY inside or not at all. A poke that straddles the boundary is half the game's data and
+    half the model's, and serving it would write the model's half from a value nobody declared."""
+    with pytest.raises(RuntimeError, match="harness-poked input block"):
+        harness.make_image({addr: bytes(length)})
+
+
+def test_the_declaration_covers_exactly_one_of_the_models_own_fields():
+    """A declaration is a claim about ONE variable. `project.load` refuses a span reaching into more
+    than one model field — a whole-block waiver written as a range gives up every trap's staging
+    area at once and can never be justified byte by byte — and this is what says ours does not."""
+    assert (os_map.poked_input_fields_touched(DECLARED_LO, DECLARED_LEN)
+            == ("OS_CON_CHAR",)), "the declared span is OS_CON_CHAR, in full and nothing else"
+
+
+def test_a_served_poke_over_a_model_field_is_RECORDED_rather_than_silent():
+    """THE HAZARD THE DECLARATION BUYS, and the lightest thing that makes it loud.
+
+    `$604` IS `OS_CON_CHAR` in full, so a hand-written `make_image({OS_CON_CHAR: …})` — the idiom
+    Joust's suite uses to stage a console key — is now SERVED here instead of refused, and would
+    quietly become a game-data seed. Nothing can tell the two apart, so the kit records every served
+    poke that lands on a named model field and this case reads the ledger back.
+
+    A ledger rather than a `warning`: pytest's default filters swallow those, and a print is lost
+    under `-n auto`. This is the shape a case can assert on, which is how every other model surface
+    in the kit is watched.
+    """
+    kit_harness.SERVED_OVER_MODEL_FIELDS.clear()
+    harness.make_image({DECLARED_LO: bytes(DECLARED_LEN)})
+    assert kit_harness.SERVED_OVER_MODEL_FIELDS == {(DECLARED_LO, DECLARED_LEN): ("OS_CON_CHAR",)}
+    # ...and a poke clear of the block records nothing, so the ledger stays a signal.
+    kit_harness.SERVED_OVER_MODEL_FIELDS.clear()
+    harness.make_image({loader.LOAD_BASE: STAGED_LONGWORD})
+    assert not kit_harness.SERVED_OVER_MODEL_FIELDS
 
 
 def test_a_poke_into_the_program_away_from_the_block_is_still_allowed():

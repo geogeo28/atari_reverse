@@ -6,8 +6,9 @@
  * kit-wide, and kit.mk sweeps every kit source into every project's candidate, so the tally is one
  * implementation shared by every game rather than a copy per project.
  *
- * Off-target builds do not compile this file (real TOS refuses nothing); one that calls a refusing
- * helper defines OS_NO_REFUSAL_TALLY instead. See os.h.
+ * ON-TARGET builds do not compile this file (real TOS refuses nothing); one that calls a refusing
+ * helper defines OS_NO_REFUSAL_TALLY instead. Off target it IS compiled, into every candidate by
+ * kit.mk — the harness treats its absence as a hard error. See os.h.
  */
 #include <stdint.h>
 

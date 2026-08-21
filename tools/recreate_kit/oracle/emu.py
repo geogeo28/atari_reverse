@@ -179,6 +179,38 @@ _LIB.osh_hw_volatile.restype = ctypes.c_uint32
 HW_NSLOTS = _LIB.osh_hw_nslots()
 HW_ADDRS = tuple(_LIB.osh_hw_addr_table()[slot] for slot in range(HW_NSLOTS))
 _HwFileP = ctypes.POINTER(ctypes.c_uint8 * HW_NSLOTS)
+# The SCHEDULED WRITE model (TRAP_MODEL.md, Phase 8). Required, not probed, for the seeded models'
+# reason: run() installs the schedule before EVERY run — an empty one included, so one case's agent
+# cannot fire inside the next — and reads back what fired. An .so without it would run a wait loop
+# to the instruction cap and report "did not reach rts", naming neither the schedule nor the fact
+# that it was silently dropped.
+_SCHED_ABI = ("osh_schedule", "osh_sched_count", "osh_sched_applied", "osh_sched_arrivals",
+              "osh_sched_refused", "osh_sched_max", "osh_sched_fields")
+_missing_sched = [sym for sym in _SCHED_ABI if not hasattr(_LIB, sym)]
+if _missing_sched:
+    raise _stale_oracle(
+        "/".join(_missing_sched),
+        "so it predates the scheduled-write model: a routine that busy-waits on a byte an interrupt "
+        "supplies would spin to the instruction cap, with the declared store never made.")
+_LIB.osh_schedule.argtypes = [_u32p, ctypes.c_uint32]
+for _sym in ("osh_sched_count", "osh_sched_applied", "osh_sched_arrivals", "osh_sched_refused",
+             "osh_sched_max", "osh_sched_fields"):
+    getattr(_LIB, _sym).restype = ctypes.c_uint32
+# Read from the .so rather than restated here (PSG_NREGS's argument): a shim that resized the table
+# or the entry cannot leave this file encoding the old shape.
+SCHED_MAX = _LIB.osh_sched_max()
+SCHED_FIELDS = _LIB.osh_sched_fields()
+# The two trigger kinds. Mirrored from os.h rather than read back from the .so, unlike the two sizes
+# above, because they are an ENCODING the CASES are written against rather than a table size — and
+# test/test_os_memory_map.py pins the pair equal to os.h, which is what a mirror costs.
+OS_SCHED_AT_PC = 0
+OS_SCHED_AT_INSN = 1
+# ...and the field order of one flattened entry, for the two consumers that read one back rather
+# than build one (harness._vet_poison_is_attributable). os.h owns the numbers.
+OS_SCHED_F_KIND, OS_SCHED_F_TRIGGER, OS_SCHED_F_NTH = 0, 1, 2
+OS_SCHED_F_ADDR, OS_SCHED_F_WIDTH, OS_SCHED_F_VALUE = 3, 4, 5
+SCHED_WIDTHS = (1, 2, 4)          # os_sched_store carries a byte, a word and a longword
+
 _LIB.osh_cov_enable.argtypes = [ctypes.c_int]
 _LIB.osh_cov_visited.argtypes = [ctypes.c_uint32]
 _LIB.osh_cov_visited.restype = ctypes.c_int
@@ -429,6 +461,99 @@ def hw_seed_bytes(hw_seed):
     return bytes(values), known
 
 
+def schedule_entries(schedule):
+    """``[{...}]`` -> the flattened uint32 array BOTH sides take (os.h, "SCHEDULED WRITES").
+
+    One implementation, for ``psg_seed_bytes``'s reason: ``run()`` installs it in the oracle and
+    ``harness.differential`` hands the SAME array to the candidate's ``g_sched_reset``, so the two
+    cannot describe different stores at different moments.
+
+    Each entry is a dict naming its trigger and its store::
+
+        {"pc": 0x64e, "nth": 3, "addr": 0x879, "width": 1, "value": 0x99}
+        {"insn": 40,              "addr": 0x879, "width": 1, "value": 0x99}
+
+    ``pc`` fires the store just before the ``nth`` execution of the instruction at that address
+    (``nth`` defaults to 1); ``insn`` fires it before the run's Nth instruction (1 = the first) and
+    has no candidate equivalent, so a differential refuses one (``harness.differential``). Every field is checked
+    rather than masked: a width the model does not carry, a value that does not fit it or a store
+    that leaves the image would otherwise be dropped by ``os_sched_store`` at run time, and a
+    schedule that silently did nothing reads as a wait loop that simply never ended.
+    """
+    entries = list(schedule or ())
+    if len(entries) > SCHED_MAX:
+        raise ValueError(f"a run may schedule at most {SCHED_MAX} write(s) (os.h's OS_SCHED_MAX); "
+                         f"this one declares {len(entries)}")
+    flat = []
+    for i, entry in enumerate(entries):
+        unknown = set(entry) - {"pc", "insn", "nth", "addr", "width", "value"}
+        if unknown:
+            raise ValueError(f"schedule[{i}] carries unknown key(s) {sorted(unknown)}")
+        if ("pc" in entry) == ("insn" in entry):
+            raise ValueError(f"schedule[{i}] must name exactly one trigger: `pc` (with an optional "
+                             f"`nth`) or `insn`")
+        nth = entry.get("nth", 1)
+        if "insn" in entry and "nth" in entry:
+            raise ValueError(f"schedule[{i}] is an `insn` trigger, which fires once at a fixed "
+                             f"instruction index — `nth` names an arrival count and applies only to "
+                             f"a `pc` trigger")
+        if not (isinstance(nth, int) and nth >= 1):
+            raise ValueError(f"schedule[{i}]['nth'] = {nth!r} is not an arrival count (1 = the first)")
+        if "insn" in entry and not (isinstance(entry["insn"], int) and entry["insn"] >= 1):
+            raise ValueError(f"schedule[{i}]['insn'] = {entry['insn']!r} is not an instruction index "
+                             f"(1 = the first instruction the run executes)")
+        kind = OS_SCHED_AT_PC if "pc" in entry else OS_SCHED_AT_INSN
+        trigger = entry.get("pc", entry.get("insn"))
+        if kind == OS_SCHED_AT_PC and not (isinstance(trigger, int) and 0 <= trigger < loader.IMAGE_SIZE
+                                           and trigger % 2 == 0):
+            # A 68000 fetches instructions at EVEN addresses inside the image, so a `pc` that is
+            # odd, negative or out of range can never be arrived at. Left unchecked it reaches the
+            # oracle as a `ctypes.c_uint32` (a negative silently becomes 0xffff_fffe), the wait runs
+            # to the instruction cap, and the diagnostic sends the reader after "the trigger PC is
+            # not the instruction the wait re-executes" — which is true and unhelpful.
+            raise ValueError(f"schedule[{i}]['pc'] = {trigger!r} is not an even address inside the "
+                             f"{loader.IMAGE_SIZE:#x}-byte image, so no run can ever arrive at it")
+        for name in ("addr", "width", "value"):
+            if name not in entry:
+                raise ValueError(f"schedule[{i}] names no `{name}` — an entry is a whole store")
+        addr, width, value = entry["addr"], entry["width"], entry["value"]
+        if width not in SCHED_WIDTHS:
+            raise ValueError(f"schedule[{i}]['width'] = {width!r} is not one of {SCHED_WIDTHS}")
+        if not 0 <= value < (1 << (8 * width)):
+            raise ValueError(f"schedule[{i}]['value'] = {value:#x} does not fit {width} byte(s)")
+        if not (0 <= addr and addr + width <= loader.IMAGE_SIZE):
+            raise ValueError(f"schedule[{i}] stores {width} byte(s) at {addr:#x}, outside the "
+                             f"{loader.IMAGE_SIZE:#x}-byte image")
+        flat += [kind, trigger, nth, addr, width, value]
+    return flat
+
+
+# The empty install, built ONCE. run() re-installs the schedule before every run — an empty one
+# included, so a list cannot leak into the next case — and the overwhelming majority of runs have
+# nothing to declare, so the common path should allocate nothing. (Measured at ~1.3 us per run
+# otherwise, against a ~115 us oracle run, and it repeats up to four times per poisoned case.)
+_NO_SCHEDULE = (ctypes.c_uint32 * 1)()
+
+
+def schedule_array(flat):
+    """``flat`` as the uint32 array both sides are handed; the empty one is shared, not rebuilt."""
+    return _NO_SCHEDULE if not flat else (ctypes.c_uint32 * len(flat))(*flat)
+
+
+def _install_schedule(schedule):
+    """Install ``schedule`` in the oracle and return the flattened array (for the candidate's copy)."""
+    flat = schedule_entries(schedule)
+    n = len(flat) // SCHED_FIELDS
+    _LIB.osh_schedule(schedule_array(flat), n)
+    # The shim CLAMPS to OS_SCHED_MAX and reports what it kept. schedule_entries refuses an
+    # over-long list above, so this can only fire when the two sides disagree about the cap — and a
+    # run silently carrying fewer stores than the case declared reads as a wait that never ended.
+    if _LIB.osh_sched_count() != n:
+        raise RuntimeError(f"the oracle kept {_LIB.osh_sched_count()} of this run's {n} scheduled "
+                           f"store(s) — its OS_SCHED_MAX and this file's disagree")
+    return flat
+
+
 def hw_capture_profile():
     """``{address: byte}``: the machine the AUDIO-CAPTURE mode declares (50 Hz colour ST).
 
@@ -595,7 +720,8 @@ def _vet_no_malloc_over_program(malloc_calls):
         f"load_base.")
 
 
-def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw_seed=None):
+def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw_seed=None,
+        schedule=None):
     """Run ``entry`` on a copy of ``image``. Return (final_image, writes, out_regs).
 
     ``regs`` maps register name -> value (e.g. {"a1": 0x1e000}); A7 is forced to STACK_TOP.
@@ -624,6 +750,12 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     list, and a false green needs something being verified — which a bare run is not. A SECOND read
     of a VOLATILE address in one run is reported the same way, in ``out_regs["hw_reread"]``: one
     declaration is one byte, and the counter cannot have held it twice.
+
+    ``schedule`` is the list of stores an EXTERNAL AGENT makes while the run is in flight — the ACIA
+    interrupt storing a release scancode a busy-wait is spinning on, the VBL bumping a frame counter
+    (``schedule_entries`` gives the shape; TRAP_MODEL.md, Phase 8). It too is re-installed before
+    every run. An entry that never came due sinks the run: a wait loop whose agent never fired ran
+    to the instruction cap, and reporting only "did not reach rts" would name the symptom.
     """
     regs = regs or {}
     if audio_capture_on():
@@ -668,6 +800,9 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     # shim installs its own profile over this, which is why passing one under the mode is refused).
     hw_values, hw_known = hw_seed_bytes(hw_seed)
     _LIB.osh_hw_seed((ctypes.c_uint8 * HW_NSLOTS)(*hw_values), hw_known)
+    # ...and the external agent's stores, unconditionally for the same reason: a schedule left
+    # installed would fire inside the next case, which under -n auto is not even a stable one.
+    scheduled = _install_schedule(schedule)
 
     mem = bytearray(image)
     Buf = ctypes.c_uint8 * loader.IMAGE_SIZE
@@ -681,8 +816,18 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
                            STACK_TOP, SENTINEL, stop_pc & 0xFFFFFFFF, max_insns, out)
     if not reached:
         where = f"checkpoint {stop_pc:#x}" if stop_pc else "rts"
+        # A schedule that never fired is the likeliest cause of an overrun on a routine that has a
+        # wait loop, and the cap's own message would send the reader to max_insns instead. Say which
+        # entries came due, so "the trigger PC is wrong" and "the loop never got there" are separable.
+        stalled = ""
+        if scheduled:
+            n_entries = len(scheduled) // SCHED_FIELDS
+            stalled = (f"; its schedule of {n_entries} store(s) made "
+                       f"{_LIB.osh_sched_applied()} of them, after {_LIB.osh_sched_arrivals()} "
+                       f"arrival(s) at a trigger PC — an entry that never came due leaves the wait "
+                       f"loop spinning")
         raise RuntimeError(f"function @ {entry:#x} did not reach {where} within {max_insns} "
-                           f"instructions; final memory is mid-execution, not trustworthy")
+                           f"instructions; final memory is mid-execution, not trustworthy{stalled}")
     # The independent reasons a run's result may be fabricated. They are reported TOGETHER rather
     # than as a first-match: a run can hit more than one, and naming only the first sends the reader
     # off to fix that one and hit the identical message again. The PSG causes are named
@@ -755,6 +900,20 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
                       f"the model would have to fabricate as 0. Under the mode only the two "
                       f"machine-profile bytes are declared at all (hw_capture_profile()); the rest "
                       f"of the set reads an undeclared 0 there, by design")
+    # The external agent's own two failures. An entry that never came due means the run is not the
+    # one the case describes — the trigger PC was never reached, or was reached fewer times than
+    # `nth` — and a refused store means os_sched_store would not make it (a straddle of the image's
+    # top; the width and value are already checked in schedule_entries). Both leave the byte the case
+    # declared unwritten, which on a wait loop is the difference between a modeled run and a hang.
+    n_scheduled = len(scheduled) // SCHED_FIELDS
+    if n_scheduled and _LIB.osh_sched_applied() != n_scheduled:
+        causes.append(f"{n_scheduled - _LIB.osh_sched_applied()} of its {n_scheduled} scheduled "
+                      f"store(s) never came due — the run made {_LIB.osh_sched_arrivals()} "
+                      f"arrival(s) at a trigger PC, so either the PC is not the instruction the "
+                      f"wait re-executes or `nth` names an arrival the loop never reached")
+    if _LIB.osh_sched_refused():
+        causes.append(f"{_LIB.osh_sched_refused()} of its scheduled store(s) could not be made — "
+                      f"the store leaves the {loader.IMAGE_SIZE:#x}-byte image")
     if causes:
         raise RuntimeError(f"function @ {entry:#x} hit unmodeled OS behaviour: "
                            + "; also, ".join(causes)
@@ -795,6 +954,12 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     out_regs["hw_events"] = hw_events()             # the ordered (address, value) read stream
     out_regs["hw_file"] = hw_file()
     out_regs["hw_known"] = _LIB.osh_hw_known()
+    # The external agent's surfaces. `sched_arrivals` is the comparable one: it counts the run's
+    # executions of the trigger instruction, which is the ORIGINAL's iteration count for the wait,
+    # and harness.differential compares it against the candidate's poll count.
+    out_regs["sched"] = scheduled                     # the flattened list, for the candidate's copy
+    out_regs["sched_applied"] = _LIB.osh_sched_applied()
+    out_regs["sched_arrivals"] = _LIB.osh_sched_arrivals()
 
     _vet_no_malloc_over_program(out_regs["malloc_calls"])
     _vet_no_poked_input_read(out_regs["poked_input_calls"])

@@ -2449,6 +2449,54 @@
 #define WB_KEY_LAST_SCANCODE         0x879u   /* byte: ../names.txt's key_last_scancode, the word the
                                                * sequence above is walked against. Its one reader in
                                                * the reconstruction is $151a's boss-defeat arm */
+#define WB_KEY_SEQUENCE_CURSOR       0x606u   /* word: how far the walk at $5a8 has stepped into the
+                                               * sequence below. TWO operand sites, both in that
+                                               * walk -- `move.w $606.l,d0` at $5ae and
+                                               * `addq.w #1,$606.l` at $5ca -- so nothing else in
+                                               * the image resets it. ITS REACHABLE RANGE IS 0..4:
+                                               * the `addq.w` runs only when the byte at the cursor
+                                               * MATCHES, and index 4 is the $ff terminator, whose
+                                               * arm raises WB_KEY_SEQUENCE_MATCHED and returns
+                                               * without stepping -- after which a raised word
+                                               * short-circuits the walk for ever. So the `addq.w`
+                                               * cannot wrap on the game's own data */
+#define WB_KEY_SEQUENCE_SCANCODES    0x608u   /* 5 bytes, 61 30 13 1e ff: the scancodes the walk
+                                               * matches, terminated by WB_KEY_SEQUENCE_TERMINATOR */
+#define WB_KEY_SEQUENCE_TERMINATOR   0xffu    /* `cmp.b #$ff,d1` at $5b8 -- the byte that ends the
+                                               * sequence and raises WB_KEY_SEQUENCE_MATCHED */
+#define WB_GAME_PAUSED               0x66eu   /* word: nonzero while the game is paused. FOUR operand
+                                               * sites and nothing else -- raised $ffff at $61e (the
+                                               * pause arm), cleared at $65e (the unpause payload),
+                                               * and read by two `tst.w`s: game_main_loop's at $4a8,
+                                               * which gates the whole $66e == 0 block, and
+                                               * game_unpause_on_key_release's own at $638 */
+#define WB_GAME_PAUSED_SET           0xffffu  /* `move.w #$ffff,$66e.l` at $61e */
+#define WB_ROUND_END_RELOAD_REQUEST  0xe1c6u  /* word: raised $ffff at $e09e, the last instruction of
+                                               * the round-end sequence's setup arm, and consumed by
+                                               * game_key_actions' first arm ($53e reads it, $548
+                                               * clears it) which then unwinds out of the frame loop
+                                               * into the reload chain at $e5ba. THREE operand sites,
+                                               * those three */
+
+/* The IKBD scancodes game_key_actions ($53e) and game_unpause_on_key_release ($638) compare
+ * WB_KEY_LAST_SCANCODE against. The handler stores the code with bit 7 SET on release, which is why
+ * each key that is waited on has two constants here and they differ by that bit. */
+#define WB_KEY_RELEASE_BIT           0x80u    /* ikbd_acia_handler stores the raw code, release bit
+                                               * and all (../names.txt, key_last_scancode) */
+#define WB_KEY_SCANCODE_P            0x19u    /* `cmpi.b #$19` at $574 and $642 -- the pause key */
+#define WB_KEY_SCANCODE_P_RELEASE    0x99u    /* ...and $99 at $60e and $64e, which is $19 | $80 */
+#define WB_KEY_SCANCODE_N            0x31u    /* `cmpi.b #$31` at $560 -- the cheat's level skip */
+#define WB_KEY_SCANCODE_ESC          0x1u     /* `cmpi.b #$1` at $580 -- quit to the disk prompt */
+#define WB_KEY_SCANCODE_HELP         0x62u    /* `cmpi.b #$62` at $5da -- the cheat's second action */
+#define WB_KEY_SCANCODE_HELP_RELEASE 0xe2u    /* ...and $e2 at $5e6, which is $62 | $80 */
+#define WB_PAUSE_MESSAGE_ID          0x34u    /* `move.b #$34,$c030.l` at $626: the message the pause
+                                               * arm posts. The unpause payload posts $ff, which is
+                                               * WB_TEXT_REQUEST's documented "dismiss the box" */
+#define WB_EFFECT_STATE_BD6A_LOW     0xbd6bu  /* the LOW byte of WB_EFFECT_STATE_BD6A, and the only
+                                               * operand in the image that names it: `bchg #3,$bd6b.l`
+                                               * at $5f0, the cheat's Help action. What bit 3 of that
+                                               * state word buys is NOT decoded */
+#define WB_EFFECT_STATE_BD6A_CHEAT_BIT 3u     /* the bit that `bchg` flips */
 
 #define WB_PLAYER_DEATH_SFX          0x16u    /* `move.w #$16,d0 / clr.w d1` — channel A */
 #define WB_PLAYER_DEATH_SONG         0x10u    /* `move.w #$10,d0 / jsr (a1)` on stub +0 */
@@ -3673,6 +3721,8 @@
                                              * is an `sf`, so the pair is the whole of its range */
 #define WB_SND_FADE_RATE           0x17c65u /* a3+2265, 0 = no fade */
 #define WB_SND_FADE_COUNTDOWN      0x17c66u /* a3+2266, reloaded from the rate */
+#define WB_SND_FADE_START          0xau     /* what snd_start_fadeout ($17f92) puts in BOTH of them --
+                                             * `move.b #$a` twice, hardcoded */
 #define WB_SND_PERIOD_SCRATCH      0x17c68u /* a3+2268, a WORD: the period is stored here and its two
                                              * halves read back out of it one byte at a time */
 #define WB_SND_SPEED_ACC           0x17c6au /* a3+2270 */

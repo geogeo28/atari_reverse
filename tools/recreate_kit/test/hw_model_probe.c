@@ -48,7 +48,6 @@ const uint8_t  *osh_hw_capture_profile(void);
 /* 68000 encodings. The byte read is the shape Wonder Boy's tempo selector has at $17c7e
  * (`btst.b #7,$fffa01`, which the 68000 executes as an absolute-long byte read); the word and long
  * forms are the same instruction widened, which is the shape the model refuses. */
-#define MOVE_B_ABSL_TO_D1  0x1239u /* move.b (xxx).l,d1 */
 #define MOVE_W_ABSL_TO_D1  0x3239u /* move.w (xxx).l,d1 */
 #define MOVE_L_ABSL_TO_D1  0x2239u /* move.l (xxx).l,d1 */
 #define MOVE_B_IMM_TO_ABSL 0x13fcu /* move.b #imm,(xxx).l */

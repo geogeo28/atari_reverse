@@ -1588,8 +1588,10 @@ def _run_map_cell_pieces():
         lab("kind-8-wait"),
         tst_b_d16(A5, SND_ENGINE_ENABLED - STUB_TABLE_BASE),
         bcc_s(BNE_W, "kind-8-wait"),
-        # ...and everything below the spin is unreachable under either core: the `jsr` above raises
-        # that very byte as snd_play_song's LAST write. src/player.c ports none of these SIX.
+        # ...and everything below the spin is unreached BY ANY CASE: the `jsr` above raises that very
+        # byte as snd_play_song's LAST write, so no seed enters the spin with it clear.
+        # src/player.c ports none of these SIX. (Since batch 42 phase A a declared store CAN clear
+        # the byte mid-run — the kit's Phase 8 — so they are reachable and their port is queued.)
         move_w_imm_abs_l(FLUTE_PLAYED_SET, FLUTE_PLAYED),
         clr_w_dn(D1),
         moveq(0, D0),
@@ -2419,19 +2421,20 @@ def test_an_empty_meter_with_a_revival_medicine_spends_it_and_refills(charge):
     _assert_writes(info, expected, what)
 
 
-# --- THE ONE ARM NO CASE HERE CAN DRIVE, and why -------------------------------------------------
+# --- THE CHEAT ARM, drivable since batch 42 phase A ------------------------------------------------
 #
 # WB_KEY_SEQUENCE_MATCHED steers both of the death check's tests — a raised word takes the revival
-# arm with an EMPTY medicine slot and then SKIPS the rearm, so a cheating player revives for ever —
-# and no case in this file can put a value there. The word lives at $604, inside the kit's
-# harness-poked input block ($600..$61f), which for this project lies inside the game's own program
-# because it loads at $3f8. `harness.make_image` REFUSES any poke landing in that block, and it is
-# right to: nothing can tell a poke staging kit model state from one patching the program at the
-# same address (test_poked_input_guard.py owns the waiver and its three guards).
+# arm with an EMPTY medicine slot and then SKIPS the rearm, so a cheating player revives for ever.
+# The word lives at $604, inside the kit's harness-poked input block ($600..$61f), which for this
+# project lies inside the game's own program because it loads at $3f8; `harness.make_image` refuses
+# every poke into that block, since nothing in the kit can tell a poke staging model state from one
+# seeding a game variable at the same address.
 #
-# So the two cases below state the limitation instead of hiding it. What the differential DOES cover
-# is the ordinary machine: the shipped word is zero, every case above runs on that, and the arm they
-# drive is the medicine slot's own. The cheat arm is reproduced in src/player.c and is UNPINNED.
+# ../project.toml now supplies the fact the kit could not have: `poked_input_program_data` declares
+# $604..$607 to be this program's own data, so the seeding is served while the real hazard — a TRAP
+# reading one of those bytes back as model state — stays refused per run by
+# emu._vet_no_poked_input_read. Two cases below drive the arm; the third is the tripwire that fails
+# if the declaration is dropped.
 
 
 def test_a_REARMED_medicine_slot_is_an_empty_one_to_this_test():
@@ -2457,12 +2460,56 @@ def test_the_cheat_word_is_zero_in_the_shipped_image_so_every_case_here_runs_wit
     assert int.from_bytes(harness.BASE_IMAGE[at:at + WORD_BYTES], "big") == 0
 
 
-def test_the_cheat_word_cannot_be_SEEDED_because_it_shares_the_poked_input_block():
-    """The limitation, as a tripwire. If the kit's block ever moves clear of this program — or the
-    project's load base rises — this case fails and the arm above becomes drivable, which is exactly
-    when someone should come back and write the differential this comment stands in for."""
+def test_the_cheat_word_is_seedable_only_because_the_project_declares_it_program_data():
+    """The tripwire, in the direction the declaration made possible.
+
+    Seeding $604 is served, and the address ONE BYTE PAST the declared span is not — so this fails
+    the day `poked_input_program_data` is dropped or narrowed, which is exactly when the two cases
+    below stop testing what they say.
+    """
+    image = harness.make_image({KEY_SEQUENCE_MATCHED: word(KEY_SEQUENCE_MATCHED_SET)})
+    at = KEY_SEQUENCE_MATCHED
+    assert int.from_bytes(image[at:at + WORD_BYTES], "big") == KEY_SEQUENCE_MATCHED_SET
     with pytest.raises(RuntimeError, match="harness-poked input block"):
-        harness.make_image({KEY_SEQUENCE_MATCHED: word(KEY_SEQUENCE_MATCHED_SET)})
+        harness.make_image({harness.OS_RANDOM_VALUE: word(0)})
+
+
+@pytest.mark.parametrize("cheat", [KEY_SEQUENCE_MATCHED_SET, 1, 0x8000],
+                         ids=lambda v: f"cheat{v:#06x}")
+def test_the_cheat_word_revives_a_player_with_NO_medicine_and_skips_the_rearm(cheat):
+    """THE GAME'S OWN CHEAT, as the death check sees it: `tst.w` twice on the same word, so any
+    non-zero value takes the revival arm although the medicine slot is EMPTY, and then leaves the
+    slot alone — the meter refills every death, for ever, off a slot that was never charged.
+
+    The rearm is what separates this from the medicine's own arm above: `_revive_expected(rearm=...)`
+    is the same model with that one store removed, and the case asserts the slot is untouched rather
+    than only that the write set matched.
+    """
+    what = f"player_meter_empty_check with the cheat word {cheat:#06x} and an empty slot"
+    pokes = _death_pokes(what, {HUD_SLOT_BBC6: bytes([0]), KEY_SEQUENCE_MATCHED: word(cheat)})
+    image = harness.make_image(pokes)
+
+    expected = _revive_expected(image, rearm=False)
+    info = leaf.run("player_meter_empty_check", _METER_EMPTY(ACTOR), merge_bands(expected), what,
+                    regs={"a0": ACTOR, "_pokes": pokes}, max_insns=METER_EMPTY_CAP)
+    _assert_writes(info, expected, what)
+    assert HUD_SLOT_BBC6 not in info["writes"], f"{what}: the empty slot was rearmed"
+
+
+def test_the_cheat_word_and_a_CHARGED_slot_still_skip_the_rearm():
+    """The two tests are on the same word and only the SECOND gates the rearm, so a cheating player
+    who also holds a medicine keeps it: the slot is spent by nothing. Without this case a port that
+    read the cheat once and reused the answer for both tests would pass."""
+    what = "player_meter_empty_check with the cheat word and a charged slot"
+    pokes = _death_pokes(what, {HUD_SLOT_BBC6: bytes([1]),
+                                KEY_SEQUENCE_MATCHED: word(KEY_SEQUENCE_MATCHED_SET)})
+    image = harness.make_image(pokes)
+
+    expected = _revive_expected(image, rearm=False)
+    info = leaf.run("player_meter_empty_check", _METER_EMPTY(ACTOR), merge_bands(expected), what,
+                    regs={"a0": ACTOR, "_pokes": pokes}, max_insns=METER_EMPTY_CAP)
+    _assert_writes(info, expected, what)
+    assert HUD_SLOT_BBC6 not in info["writes"], f"{what}: the charged slot was rearmed"
 
 
 def test_a_death_already_in_progress_only_lowers_the_flicker_bit():

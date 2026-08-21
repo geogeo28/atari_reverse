@@ -70,6 +70,20 @@ if _has_hw_ledger:
     _lib.g_hw_file.restype = ctypes.POINTER(ctypes.c_uint8)
     _lib.g_hw_file_known.restype = ctypes.c_uint32
 
+# The scheduled-write surfaces (src/sched.c) are optional in exactly the same way and for the same
+# reason: a game with no busy-wait to model schedules nothing, and the ORACLE's own schedule is the
+# witness that says when the group was needed — differential() raises the moment a case declares one
+# against a candidate that cannot answer for it.
+_SCHED_ABI = ("g_sched_reset", "g_sched_count", "g_sched_polls", "g_sched_applied",
+              "g_sched_refused", "g_sched_exhausted")
+_missing_sched_abi = [sym for sym in _SCHED_ABI if not hasattr(_lib, sym)]
+_has_sched = not _missing_sched_abi
+if _has_sched:
+    _lib.g_sched_reset.argtypes = [ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32]
+    for _sym in ("g_sched_count", "g_sched_polls", "g_sched_applied", "g_sched_refused",
+                 "g_sched_exhausted"):
+        getattr(_lib, _sym).restype = ctypes.c_uint32
+
 # The refused-os_*-call tally (see _vet_no_os_refusal) is REQUIRED ABI, unlike the ledger above.
 # The Dosound ledger can be served without: the oracle's own Dosound stream says when it was needed,
 # so its absence fails loudly at the moment it matters. The refusal tally has no such witness — the
@@ -240,8 +254,20 @@ def _vet_os_memory_map():
 _vet_os_memory_map()
 
 
-def _poked_input_waiver_error(subject):
-    """The shared diagnostic for staging poked input into a block that lies inside the program."""
+def _poked_input_waiver_error(subject, declarable=False):
+    """The shared diagnostic for staging poked input into a block that lies inside the program.
+
+    ``declarable`` adds the ``poked_input_program_data`` remedy, and ONLY the ``make_image`` guard
+    passes it. The builder-level guard (`_vet_poked_input_available`) must not: `console_key()` and
+    `psg_regs()` stage the MODEL's own state, which no declaration can make seedable, so offering
+    the remedy there would send a reader to widen a waiver that buys them nothing and gives up the
+    block.
+    """
+    declaration = ("" if not declarable else
+                   f" If the bytes ARE this program's own data — a game variable that happens to "
+                   f"share the address — declare the span in {project.CONFIG_NAME}'s "
+                   f"`poked_input_program_data`, with the evidence; that permits the seeding and "
+                   f"nothing else.")
     return RuntimeError(
         f"{_CFG.name} staged {subject}, but the harness-poked input block "
         f"({OS_CON_PENDING:#x}..{OS_POKE_BLOCK_END - 1:#x}) lies INSIDE its program, which loads at "
@@ -253,7 +279,7 @@ def _poked_input_waiver_error(subject):
         f"recreate_kit/os_map.py) above the program, or raise load_base — or this case does not "
         f"need the poke. (Those addresses being the game's own code is exactly why this is refused: "
         f"nothing here can tell a poke staging kit model state from one deliberately patching the "
-        f"program at the same place, so both are refused rather than one silently served.)")
+        f"program at the same place, so both are refused rather than one silently served.){declaration}")
 
 
 def _vet_poked_input_available(what):
@@ -282,13 +308,42 @@ def _vet_no_poke_into_poked_input(addr, length):
     it short-circuits, so for every project the hazard cannot reach this costs one call per poke on
     make_image's hot path and never reaches the overlap question at all.
 
-    LIMIT: under the overlap those addresses ARE the game's code, and nothing here can tell a poke
-    that stages kit model state from one that deliberately patches the program's own bytes at the
-    same place (which test_bootstrap.py does elsewhere in the image). It refuses both. Over-strict
-    fails loudly, which is the right way round for this contract; the diagnostic says so.
+    THE LIMIT, AND THE ONE WAY ROUND IT. Under the overlap those addresses ARE the game's bytes, and
+    nothing here can tell a poke that stages kit model state from one that seeds a game variable
+    sharing the address. It refuses both — over-strict fails loudly, which is the right way round —
+    UNLESS the project has said which spans are its own program's data, in ``project.toml``'s
+    ``poked_input_program_data``. That declaration is the fact the paragraph above says the kit
+    cannot have; it permits the SEEDING only, and the real hazard (a trap serving one of those bytes
+    back as model state) stays refused per run by ``emu._vet_no_poked_input_read``.
     """
-    if os_map.poke_hits_poked_input(addr, length) and emu.poked_input_overlaps_program():
-        raise _poked_input_waiver_error(f"a {length}-byte poke at {addr:#x}")
+    if not (os_map.poke_hits_poked_input(addr, length) and emu.poked_input_overlaps_program()):
+        return
+    if os_map.poke_is_declared_program_data(addr, length, _CFG.poked_input_program_data):
+        _note_served_over_a_model_field(addr, length)
+        return
+    raise _poked_input_waiver_error(f"a {length}-byte poke at {addr:#x}", declarable=True)
+
+
+# Every declared span served this session, as {(addr, length): (field names)} — read by
+# test_poked_input_guard.py, and by anyone asking "what did this suite stage over model state?".
+# A LEDGER RATHER THAN A WARNING: `warnings` is swallowed by pytest's default filters and a print
+# is lost under `-n auto`, so neither would make the mistake loud. This is the lightest mechanism
+# that a case can assert on, which is the kit's own convention for every other model surface.
+SERVED_OVER_MODEL_FIELDS = {}
+
+
+def _note_served_over_a_model_field(addr, length):
+    """Record a served poke that lands on a field the OS model also names.
+
+    The declaration says those bytes are the GAME's; it cannot say the author meant them that way
+    on the day. Wonder Boy's `$604` IS `OS_CON_CHAR` in full, so `make_image({OS_CON_CHAR: ...})` —
+    a hand-staged console key, the idiom Joust's suite uses — is now SERVED here instead of refused,
+    and would silently become a game-data seed. Recording it is what lets that be noticed: the
+    project's own battery asserts the ledger holds exactly the spans it means to stage.
+    """
+    fields = os_map.poked_input_fields_touched(addr, length)
+    if fields:
+        SERVED_OVER_MODEL_FIELDS[(addr, length)] = fields
 
 
 def console_key(char, scancode=0):
@@ -436,6 +491,22 @@ def _hw_refusal_hint():
             f"ledger entry to name.")
 
 
+def _sched_exhausted_hint():
+    """The clause `_vet_no_os_refusal` adds when a refused run's cause was an unreleased WAIT.
+
+    `os_refused()` is one tally shared by every refusing helper, so a bare count sends the reader
+    hunting for a missing Bconstat gate. An exhausted `sched_wait8` is by far the likeliest cause in
+    a case that declares a schedule, and it has a remedy of its own — the same shape
+    `_hw_refusal_hint` gives the hardware model.
+    """
+    if not _has_sched or not _lib.g_sched_exhausted():
+        return ""
+    return (f" {_lib.g_sched_exhausted()} of them were a WAIT that ran to os.h's OS_SCHED_POLL_MAX "
+            f"without its byte arriving, after {_lib.g_sched_polls()} poll(s): the case's schedule "
+            f"never released it. Check the store's value against the byte the wait compares, and "
+            f"the trigger PC against the instruction the wait re-executes.")
+
+
 def _vet_no_os_refusal(entry):
     """Reject a run in which the CANDIDATE made an os_* call the TOS model refuses — a FALSE GREEN.
 
@@ -462,7 +533,7 @@ def _vet_no_os_refusal(entry):
         f"psg_seed={{reg: value}} for a PSG register the candidate reads back) so BOTH sides execute "
         f"the call; or a stop_pc checkpoint ended the oracle before a call the candidate still "
         f"makes. See tools/recreate_kit/TRAP_MODEL.md."
-        + _hw_refusal_hint())
+        + _hw_refusal_hint() + _sched_exhausted_hint())
 
 
 def _vet_audio_capture_off(entry):
@@ -677,6 +748,100 @@ def _seed_candidate_hw(hw_seed):
                     emu.hw_seed_bytes, hw_seed, _has_hw_ledger)
 
 
+def _vet_schedule_is_runnable(entry, schedule):
+    """Refuse a differential whose schedule the CANDIDATE cannot mirror — before either side runs.
+
+    Two shapes. An ``insn`` trigger names an instruction index, and the candidate has no instruction
+    counter at all: the oracle would make the store and the candidate would spin, which reads as a
+    hung test rather than as a case that could never have worked. And a schedule against a candidate
+    with no ``src/sched.c`` linked is the same thing one level down — the entries would fire on the
+    oracle alone, and every byte the agent supplied would come back as a diff against a reconstruction
+    that never saw it.
+    """
+    if not schedule:
+        return
+    if not _has_sched:
+        raise AssertionError(
+            f"the case for {label(entry)} @ {entry:#x} declares a scheduled write, but "
+            f"{_CFG.name}'s candidate exports no {'/'.join(_missing_sched_abi)} — "
+            f"tools/recreate_kit/src/sched.c is not linked into it, so the agent's store would be "
+            f"made on the ORACLE side only and every byte it supplied would read as a divergence. "
+            f"Build the candidate through kit.mk, whose SRC sweeps $(KIT)/src/*.c.")
+    # SHAPE FIRST. The trigger-set test below indexes `spec["pc"]`, so an entry that names neither
+    # trigger — or both — would come out of here as a bare KeyError naming nothing. emu's encoder
+    # owns every field's shape and its messages say what is wrong; run them before reading a key.
+    emu.schedule_entries(schedule)
+    at_insn = [i for i, spec in enumerate(schedule) if "insn" in spec]
+    if at_insn:
+        raise AssertionError(
+            f"the case for {label(entry)} @ {entry:#x} schedules entr(ies) {at_insn} on an `insn` "
+            f"trigger, which a differential cannot run: the candidate is C and counts POLLS, not "
+            f"instructions, so nothing on that side could fire the store at the same moment. Give "
+            f"the entry a `pc` trigger — the address of the instruction the original's wait loop "
+            f"re-executes — and have the reconstruction read that byte through `sched_poll8`. The "
+            f"`insn` trigger is for an oracle-only run (emu.run).")
+    # ...and ONE trigger PC per run, which is the exact extent of what the two sides' counters can
+    # be made to mean the same thing. The oracle counts arrivals PER ENTRY at that entry's own PC;
+    # the candidate has no PC and counts every `sched_poll8` call in the run against `nth`. With one
+    # trigger those are the same event. With two they are not: an entry aimed at the SECOND wait
+    # fires on a poll of the FIRST, its store lands an unknown number of iterations early, and
+    # because both counters are totals the arrival/poll comparison can still agree. Refused rather
+    # than served, because the failure mode is a store at the wrong moment or a candidate that spins
+    # for ever — see TRAP_MODEL.md, "Phase 8".
+    triggers = {spec["pc"] for spec in schedule}   # every entry has one: `insn` was refused above
+    if len(triggers) > 1:
+        raise AssertionError(
+            f"the case for {label(entry)} @ {entry:#x} schedules stores on "
+            f"{len(triggers)} different trigger PCs ({', '.join(f'{pc:#x}' for pc in sorted(triggers))}), "
+            f"and a differential can carry only one. `nth` counts arrivals at a PC on the oracle and "
+            f"POLLS on the candidate, which has no program counter — the two are the same event only "
+            f"while every entry names the same wait. Split the case into one run per wait, or give "
+            f"the run a stop_pc before the second one.")
+
+
+def _seed_candidate_sched(scheduled):
+    """Install the run's schedule in the candidate — the SAME flattened array the oracle was given.
+
+    Unconditional, an empty schedule included, for ``_seed_candidate``'s reason: a list left over
+    from the previous case would fire inside this one, and under ``-n auto`` which case that was is
+    not stable.
+    """
+    if not _has_sched:
+        return
+    n = len(scheduled) // emu.SCHED_FIELDS
+    _lib.g_sched_reset(emu.schedule_array(scheduled), n)
+    # The candidate CLAMPS to OS_SCHED_MAX and reports what it kept. `emu.schedule_entries` refuses
+    # an over-long list one level up, so this can only fire if the two sides disagree about the cap
+    # — and a schedule silently carrying fewer stores than the case declared reads as a wait loop
+    # that simply never ended, which is the worst diagnostic in this model.
+    assert _lib.g_sched_count() == n, (
+        f"the candidate kept {_lib.g_sched_count()} of the run's {n} scheduled store(s) — its "
+        f"OS_SCHED_MAX and the harness's disagree")
+
+
+def _vet_schedule_ran_the_same_wait(entry, o_regs):
+    """Compare the ORACLE's arrivals at the trigger PCs against the CANDIDATE's polls.
+
+    This is the whole cross-check the model rests on. The store itself is applied from the same list
+    on both sides, so a port that spun a different number of times — or did not spin at all, or
+    polled a byte the original reads outside the loop — still ends with identical memory and would
+    pass the diff. The counts are what separate them: one arrival at the compare is one poll.
+    """
+    if not _has_sched or not o_regs.get("sched"):
+        return
+    arrivals, polls = o_regs["sched_arrivals"], _lib.g_sched_polls()
+    assert arrivals == polls, (
+        f"{label(entry)} @ {entry:#x}: the oracle executed the scheduled trigger PC(s) {arrivals} "
+        f"time(s) and the candidate polled {polls} time(s) — the reconstruction's wait loop does not "
+        f"run the same number of iterations as the original's. Poll exactly the byte the original's "
+        f"compare reads, once per iteration, and nothing else (see include/sched.h).")
+    applied, refused = _lib.g_sched_applied(), _lib.g_sched_refused()
+    assert (applied, refused) == (o_regs["sched_applied"], 0), (
+        f"{label(entry)} @ {entry:#x}: the agent made {o_regs['sched_applied']} store(s) on the "
+        f"oracle and {applied} on the candidate ({refused} refused) from the same schedule — the "
+        f"two sides did not model the same external write")
+
+
 def _hw_event_text(events):
     """One ledger's reads as readable text: ``0xfffa01->0xb0``."""
     return [f"{addr:#x}->{value:#04x}" for addr, value in events]
@@ -824,8 +989,35 @@ def _vet_hw_state(entry, o_regs):
         "disagreeing, not the reconstruction")
 
 
+def _vet_poison_is_attributable(entry, scheduled, o_writes):
+    """Refuse an attribution pass whose canary a SCHEDULED STORE would overwrite.
+
+    The pass poisons every oracle-written byte and re-runs both cores, so a byte the candidate
+    failed to write stays canary. The agent's store is applied from the same list on both sides and
+    lands BEFORE the function's own store, so a byte that is both scheduled and written comes out
+    correct on both sides whether or not the reconstruction wrote it — the pass then reports an
+    attribution nobody made, which is worse than not running it.
+
+    Wonder Boy's two waits are exactly this shape (`clr.b $879.l` over the byte the schedule
+    releases) and pass ``poison=False`` with seeded destinations instead; this is what stops the
+    next such case doing it by accident.
+    """
+    if not scheduled:
+        return
+    fields = emu.SCHED_FIELDS
+    stored = {scheduled[i + emu.OS_SCHED_F_ADDR] + byte
+              for i in range(0, len(scheduled), fields)
+              for byte in range(scheduled[i + emu.OS_SCHED_F_WIDTH])}
+    clash = sorted(stored & set(o_writes))
+    assert not clash, (
+        f"{label(entry)} @ {entry:#x}: the attribution pass would poison "
+        f"{', '.join(f'{addr:#x}' for addr in clash)}, which this run's schedule also stores — the "
+        f"agent overwrites the canary on both sides, so the pass would pass whatever the candidate "
+        f"wrote. Use poison=False and seed those destinations away from what the routine leaves.")
+
+
 def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excluded,
-                       stop_pc, max_insns, psg_seed, hw_seed):
+                       stop_pc, max_insns, psg_seed, hw_seed, schedule):
     """Guard against a *coincidental* pass: the candidate may match the oracle's final image while
     never actually writing some byte the oracle wrote — because that byte already held the oracle's
     value (an output landing in a zeroed/base region). Re-run both cores on a copy of the input in
@@ -838,7 +1030,7 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excl
         if a < guard_lo:                     # only the diffed region matters; stack canaries are moot
             poisoned[a] = o_final[a] ^ 0xff
     po_final, _, po_regs = emu.run(poisoned, entry, regs, stop_pc=stop_pc, max_insns=max_insns,
-                                   psg_seed=psg_seed, hw_seed=hw_seed)
+                                   psg_seed=psg_seed, hw_seed=hw_seed, schedule=schedule)
     # Poisoning can steer the ORACLE into a modeled hardware read the plain run never made, and one
     # the case does not declare would be served a fabricated 0 on this pass too.
     _vet_hw_reads_are_declared(entry, hw_seed, po_regs)
@@ -851,6 +1043,7 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excl
     _lib.g_os_refusal_reset()
     _seed_candidate_psg(psg_seed)
     _seed_candidate_hw(hw_seed)
+    _seed_candidate_sched(po_regs["sched"])
     glue(_lib, buf)
     _vet_no_os_refusal(entry)
     # ...and the same off-image PSG comparison the plain pass got, against the POISONED run's own
@@ -858,6 +1051,7 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excl
     # traffic is invisible to the byte compare below — which is the whole reason this pass exists.
     _vet_psg_state(entry, po_regs)
     _vet_hw_state(entry, po_regs)
+    _vet_schedule_ran_the_same_wait(entry, po_regs)
     pc_final = bytes(buf)
     bad = [a for a in range(guard_lo) if po_final[a] != pc_final[a] and not excluded(a)]
     if bad:
@@ -870,7 +1064,7 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excl
 
 
 def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, poison=False,
-                 psg_seed=None, hw_seed=None):
+                 psg_seed=None, hw_seed=None, schedule=None):
     """Run oracle + candidate on the same image. Return (diffs, info).
 
     ``diffs`` is the list of (addr, oracle, cand) byte differences (stack-guard excluded).
@@ -893,6 +1087,9 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     ``poison`` runs an extra attribution pass (``_attribution_check``): re-run both cores on an
     image whose oracle-written bytes are pre-poisoned, catching a candidate that matches by
     coincidence without actually writing a byte the oracle wrote. Opt-in (safe for leaf functions).
+    It is REFUSED over a byte the run's own ``schedule`` also stores: the agent's store lands on both
+    sides from the same list and overwrites the canary, so a candidate that never made the
+    function's store would match anyway and the pass would report an attribution it did not make.
     ``psg_seed`` is ``{register: value}``, the contents the case declares the YM2149 held on entry —
     an ordinary input, given identically to both sides, and what makes a read-modify-write of the
     chip runnable (``emu.run``; TRAP_MODEL.md, Phase 6). It is the DIRECT ``$ff8800``/``$ff8802``
@@ -908,12 +1105,19 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     read-back, a wide read, and a second read of a VOLATILE address, which one per-run constant
     cannot describe). Both sides' ordered read stream is compared afterwards, seed or none
     (``_vet_hw_state``).
+    ``schedule`` is the list of stores an EXTERNAL AGENT makes while the run is in flight, for a
+    routine that busy-waits on a byte its own instructions never write (``emu.schedule_entries``;
+    TRAP_MODEL.md, Phase 8). The SAME list is installed on both sides, and the oracle's arrivals at
+    the trigger PC are compared against the candidate's ``sched_poll8`` calls afterwards
+    (``_vet_schedule_ran_the_same_wait``) — without that the agent would make both sides' memory
+    agree whatever the reconstruction's loop did.
     """
     _vet_audio_capture_off(entry)
+    _vet_schedule_is_runnable(entry, schedule)
     pokes = regs.pop("_pokes", None)
     img = make_image(pokes)
     o_final, o_writes, o_regs = emu.run(img, entry, regs, stop_pc=stop_pc, max_insns=max_insns,
-                                        psg_seed=psg_seed, hw_seed=hw_seed)
+                                        psg_seed=psg_seed, hw_seed=hw_seed, schedule=schedule)
 
     _vet_exclude_bands(exclude, o_regs["min_a7"])
     _vet_psg_seed_reaches_the_path(entry, psg_seed, pokes, o_regs)
@@ -928,6 +1132,7 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     _lib.g_os_refusal_reset()            # ...and a fresh refused-os_*-call tally (see below)
     _seed_candidate_psg(psg_seed)        # ...and the same PSG entry state the oracle just ran on
     _seed_candidate_hw(hw_seed)          # ...and the same declared hardware bytes
+    _seed_candidate_sched(o_regs["sched"])   # ...and the same external-agent stores
     cand_ret = glue(_lib, buf)
     c_final = bytes(buf)
 
@@ -990,10 +1195,12 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
 
     _vet_psg_state(entry, o_regs)
     _vet_hw_state(entry, o_regs)
+    _vet_schedule_ran_the_same_wait(entry, o_regs)
 
     if poison and not diffs:
+        _vet_poison_is_attributable(entry, o_regs["sched"], o_writes)
         _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excluded,
-                           stop_pc, max_insns, psg_seed, hw_seed)
+                           stop_pc, max_insns, psg_seed, hw_seed, schedule)
 
     return diffs, {"writes": o_writes, "regs": o_regs, "ret": cand_ret}
 

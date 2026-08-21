@@ -470,6 +470,85 @@ static inline int os_in_image(uint32_t addr, uint32_t count) {
     return addr <= OS_IMAGE_SIZE && count <= OS_IMAGE_SIZE - addr;
 }
 
+/* ---- SCHEDULED WRITES: what an EXTERNAL AGENT stores mid-run (TRAP_MODEL.md, "Phase 8") -----
+ *
+ * A routine that BUSY-WAITS on a memory byte its own instructions never write cannot be run at all
+ * by a differential as the harness was built: nothing changes memory while a run is in flight, so
+ * the loop is infinite on both sides. The byte is written by something outside the routine — an
+ * ACIA keyboard interrupt storing a release scancode, the VBL bumping a frame counter — and that
+ * agent is what this models: a small list of stores the case DECLARES, each applied once when its
+ * trigger comes due.
+ *
+ * ONE ENCODING FOR BOTH SIDES, `OS_SCHED_FIELDS` uint32s per entry, flattened:
+ *
+ *   [OS_SCHED_F_KIND]    OS_SCHED_AT_PC or OS_SCHED_AT_INSN — what the trigger counts
+ *   [OS_SCHED_F_TRIGGER] the PC to arrive at, or the instruction index to reach (1-based)
+ *   [OS_SCHED_F_NTH]     which arrival fires it (1 = the first); AT_INSN ignores it
+ *   [OS_SCHED_F_ADDR]    where the agent stores
+ *   [OS_SCHED_F_WIDTH]   1, 2 or 4 bytes, big-endian
+ *   [OS_SCHED_F_VALUE]   what it stores
+ *
+ * The oracle counts arrivals at a PC (oracle/shim.c); the candidate has no program counter and
+ * counts POLLS instead (src/sched.c, `sched_poll8`) — a reconstruction's wait loop reads its byte
+ * through that one call, so its Nth poll IS the original's Nth arrival at the compare, and the
+ * harness compares the two counts rather than assuming they agree. OS_SCHED_AT_INSN has no
+ * candidate equivalent at all and a differential refuses one; it exists for oracle-only runs.
+ */
+#define OS_SCHED_MAX      8      /* entries one run may schedule (both sides size their tables here) */
+/* THE CANDIDATE'S RUNAWAY GUARD. A reconstruction's wait is a real loop in C, so a case whose store
+ * never releases it does not fail — it HANGS, and a hung suite decides nothing (six mutants in this
+ * model's first sweep failed that way). Past this many polls of one wait, `sched_wait8` gives up and
+ * tallies a refusal, which the harness turns into a rejected case with a name on it. Sized far above
+ * any wait a case can declare — `nth` is bounded by it, and the oracle's own instruction cap bites
+ * first for anything realistic — so it can only be reached by a wait that was never going to end. */
+#define OS_SCHED_POLL_MAX 4096u
+#define OS_SCHED_FIELDS   6      /* uint32s per entry in the flattened array, as listed above */
+#define OS_SCHED_F_KIND    0
+#define OS_SCHED_F_TRIGGER 1
+#define OS_SCHED_F_NTH     2
+#define OS_SCHED_F_ADDR    3
+#define OS_SCHED_F_WIDTH   4
+#define OS_SCHED_F_VALUE   5
+#define OS_SCHED_AT_PC    0u     /* fire before the NTH execution of the instruction at TRIGGER */
+#define OS_SCHED_AT_INSN  1u     /* fire before the run's TRIGGERth instruction, 1 = the first
+                                  * (oracle only: the candidate counts polls, not instructions) */
+
+/* Copy `n` entries of the flattened array into `dst`, clamped to OS_SCHED_MAX; return how many were
+ * kept. The two sides share this for os_sched_store's reason — the STRIDE and the drop policy must
+ * be one decision, or a change applied to one file alone leaves the two decoding different stores
+ * from the same array, which presents as "the wait loop never ended". Both callers report the kept
+ * count (osh_sched_count / g_sched_count) and both harness sides assert it against what they sent. */
+static inline uint32_t os_sched_install(uint32_t dst[][OS_SCHED_FIELDS], const uint32_t *entries,
+                                        uint32_t n) {
+    uint32_t kept = n > OS_SCHED_MAX ? OS_SCHED_MAX : n;
+    for (uint32_t i = 0; i < kept; i++)
+        for (uint32_t f = 0; f < OS_SCHED_FIELDS; f++)
+            dst[i][f] = entries[i * OS_SCHED_FIELDS + f];
+    return kept;
+}
+
+/* Store `value` at `addr` in the `size`-byte `image`, big-endian, at 1/2/4 bytes — the agent's write,
+ * and the one spelling of it. Both sides call this so that a straddle of the image's top, or an
+ * unsupported width, cannot be handled one way by the oracle and another by the candidate. Returns 0
+ * (and stores nothing) for a width the model does not carry or a range outside the image; the
+ * callers treat that as a refusal rather than a silent no-op.
+ *
+ * `size` is a parameter rather than OS_IMAGE_SIZE because the ORACLE is handed its buffer's length
+ * per run (shim.c's g_size) and the kit's own probes run it on a 64 KiB scratch image — bounding a
+ * store against the constant there would write past the buffer. The candidate side has no such
+ * parameter to pass and uses OS_IMAGE_SIZE, which is the image every reconstruction is given.
+ * Written as a subtraction, never `addr + width`, for os_in_image's reason. */
+static inline int os_sched_store(uint8_t *image, uint32_t size, uint32_t addr, uint32_t width,
+                                 uint32_t value) {
+    if (width != 1 && width != 2 && width != 4)
+        return 0;
+    if (addr > size || width > size - addr)
+        return 0;
+    for (uint32_t i = 0; i < width; i++)
+        image[addr + i] = (uint8_t)(value >> (8 * (width - 1 - i)));
+    return 1;
+}
+
 /* Can `count` bytes move between a program buffer at `buf` and a staged file's bytes at
  * `staging + cursor` without leaving the image? One helper for both directions, so the write side —
  * the one that corrupts memory rather than merely reading garbage — cannot be fixed alone. The

@@ -13,8 +13,9 @@
  * build on. Neither is in the image, so neither is covered by the byte diff — that is exactly why
  * both are exported and compared.
  *
- * Off-target builds do not compile this file: a reconstruction running on real hardware writes
- * $ff8800/$ff8802 itself (see src/dosound_log.c for the same split). One that did compile it on
+ * ON-TARGET builds do not compile this file: a reconstruction running on real hardware writes
+ * $ff8800/$ff8802 itself (see src/dosound_log.c for the same split). Off target it IS compiled,
+ * into every candidate by kit.mk. One that did compile it on
  * target would also need OS_NO_REFUSAL_TALLY, since psg_port_read routes a refusal through
  * os_refused().
  */

@@ -59,6 +59,87 @@ void osh_prof_reset(void)    { for (uint32_t i = 0; i < PROF_SIZE / 2; i++) g_pr
 const uint32_t *osh_prof_data(void)  { return g_prof; }
 uint32_t        osh_prof_slots(void) { return PROF_SIZE / 2; }
 
+/* --- SCHEDULED WRITES: the oracle side of the external-agent model (os.h, "Phase 8") ---------
+ *
+ * A routine that busy-waits on a byte its own instructions never write needs something outside it
+ * to store one. os.h owns the encoding and says why; this holds the run's list, counts arrivals at
+ * each entry's trigger PC, and applies each entry ONCE when it comes due.
+ *
+ * THE AGENT'S STORE IS NOT IN THE WRITE-SET. It goes straight into g_mem rather than through
+ * m68k_write_memory_*, because the write-set is what the FUNCTION stored — the harness's attribution
+ * pass poisons exactly those bytes and re-runs, and a byte the agent supplies is an input to the run,
+ * not an output of it. The candidate applies the identical store from the identical list, so the
+ * final images still agree byte for byte. */
+static uint32_t g_sched[OS_SCHED_MAX][OS_SCHED_FIELDS];
+static uint32_t g_sched_n;
+static uint32_t g_sched_seen[OS_SCHED_MAX];   /* arrivals at this entry's trigger PC, so far */
+static uint8_t  g_sched_fired[OS_SCHED_MAX];  /* ...and whether it has already been applied */
+static uint32_t g_sched_applied;              /* entries applied this run */
+static uint32_t g_sched_arrivals;             /* total arrivals at any AT_PC entry's trigger */
+static uint32_t g_sched_refused;              /* entries whose store os_sched_store would not make */
+
+/* Install the run's schedule. Entries past OS_SCHED_MAX are DROPPED and reported through
+ * osh_sched_count(), which emu.run checks against what it passed (`_install_schedule`): silently
+ * carrying fewer entries than the case declared would leave the wait loop spinning to the
+ * instruction cap with no cause named.
+ *
+ * THE LIST IS NOT PER-RUN STATE and sched_enter_run does not clear it — only the counters. What
+ * makes a schedule not leak into the next case is that emu.run calls this before EVERY run, an
+ * empty one included; a C caller that drives osh_run directly (the probes in ../test) inherits
+ * whatever the last install left and must install its own, empty or not. */
+void osh_schedule(const uint32_t *entries, uint32_t n) {
+    g_sched_n = os_sched_install(g_sched, entries, n);
+}
+
+/* Apply every entry the instruction about to run brings due. Called once per instruction, BEFORE it
+ * executes, so an AT_PC entry with nth = 1 lands before the compare at that PC reads its byte —
+ * which is what makes it the same event as the candidate's first `sched_poll8`. */
+static void sched_fire(uint32_t pc, uint32_t insn_index) {
+    int arrived = 0;   /* did THIS instruction match any AT_PC entry's trigger? */
+    for (uint32_t i = 0; i < g_sched_n; i++) {
+        int due;
+        if (g_sched[i][OS_SCHED_F_KIND] == OS_SCHED_AT_PC) {
+            if (pc != g_sched[i][OS_SCHED_F_TRIGGER])
+                continue;
+            /* ONE ARRIVAL PER INSTRUCTION, however many entries name this PC — the harness compares
+             * the total against the candidate's POLL count, and a wait polls once per iteration
+             * whether the case declared one store on it or three. Counted after the entry has fired
+             * too: a port that polls a different number of times is what the comparison is for. */
+            arrived = 1;
+            g_sched_seen[i]++;
+            due = g_sched_seen[i] == g_sched[i][OS_SCHED_F_NTH];
+        } else {
+            due = insn_index == g_sched[i][OS_SCHED_F_TRIGGER];   /* 1-based; see osh_run's loop */
+        }
+        if (!due || g_sched_fired[i])
+            continue;
+        g_sched_fired[i] = 1;
+        if (os_sched_store(g_mem, g_size, g_sched[i][OS_SCHED_F_ADDR],
+                           g_sched[i][OS_SCHED_F_WIDTH], g_sched[i][OS_SCHED_F_VALUE]))
+            g_sched_applied++;
+        else
+            g_sched_refused++;
+    }
+    g_sched_arrivals += (uint32_t)arrived;
+}
+
+static void sched_enter_run(void) {
+    g_sched_applied = 0;
+    g_sched_arrivals = 0;
+    g_sched_refused = 0;
+    for (uint32_t i = 0; i < OS_SCHED_MAX; i++) {
+        g_sched_seen[i] = 0;
+        g_sched_fired[i] = 0;
+    }
+}
+
+uint32_t osh_sched_count(void)     { return g_sched_n; }
+uint32_t osh_sched_applied(void)   { return g_sched_applied; }
+uint32_t osh_sched_arrivals(void)  { return g_sched_arrivals; }
+uint32_t osh_sched_refused(void)   { return g_sched_refused; }
+uint32_t osh_sched_max(void)       { return OS_SCHED_MAX; }
+uint32_t osh_sched_fields(void)    { return OS_SCHED_FIELDS; }
+
 /* The 68000 has a 24-bit address bus, so the top byte of an address is ignored: $ffff8800 and
  * $fffffc00 reach the same hardware as $ff8800 and $fffc00. Every hardware-address comparison below
  * masks with this first, so the idiom a game uses to reach a register cannot decide whether the
@@ -685,6 +766,7 @@ static void enter_from_reset(void) {
     m68k_set_reg(M68K_REG_SR, ENTRY_SR);
     psg_enter_run();
     hw_enter_run();
+    sched_enter_run();
 }
 
 static uint32_t g_heap;         /* Malloc bump pointer */
@@ -880,11 +962,26 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
      * above already called — so osh_run_bench gets it too. */
     g_dosound_n = 0;                      /* Dosound ledger = this run's XBIOS Dosound calls only */
     g_min_a7 = sp;                        /* deepest stack pointer (for exclude-band sanity checks) */
+    /* The external agent's per-run state is reset by sched_enter_run(), which enter_from_reset()
+     * above already called — the same split psg_enter_run() and hw_enter_run() use. */
     uint32_t n = 0;
     g_ncycles = 0;                                  /* 68000 cycle tally = this run's game code only */
     for (; n < max_insns; n++) {
         uint32_t pc = m68k_get_reg(0, M68K_REG_PC);
         if (pc == sentinel || (stop_pc && pc == stop_pc)) break;
+        /* After the stop tests, so an entry triggered on the sentinel or the checkpoint never fires
+         * — the run ends at that PC and nothing could read the byte. Before the instruction
+         * executes, which is the point that matches the candidate's poll (see sched_fire).
+         *
+         * `n` NON-ZERO IS THE OTHER HALF OF THAT. Musashi's first m68k_execute() after a reset
+         * spends the reset's own cycles and executes NO instruction, so iteration 0 observes the
+         * entry PC and iteration 1 observes it again and runs it. Every counter here has always
+         * included that observation (g_ninsns is one more than the instructions executed, and
+         * changing it would move every pinned perf number), but an arrival count that did would be
+         * one too many for a wait loop whose compare IS the entry instruction — and it is compared
+         * against the candidate's poll count. Skipping iteration 0 makes both trigger kinds 1-based
+         * and costs nothing: nothing executed there. */
+        if (g_sched_n && n) sched_fire(pc, n);
         if (g_cov_on && pc < COV_SIZE) g_cov[pc >> 3] |= (uint8_t)(1u << (pc & 7));   /* coverage */
         uint32_t cur_a7 = m68k_get_reg(0, M68K_REG_A7);
         if (cur_a7 < g_min_a7) g_min_a7 = cur_a7;

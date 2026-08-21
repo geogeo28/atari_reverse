@@ -71,6 +71,11 @@ void snd_stop_all_sfx(uint8_t *image);
  * and the `bra.w` is why the module's stop is one routine to a caller and three to a reader. */
 void snd_stop(uint8_t *image);
 
+/* $17f92 — stub +84. Arm the music fade: WB_SND_FADE_COUNTDOWN and WB_SND_FADE_RATE both take
+ * WB_SND_FADE_START, which the routine hardcodes. No argument, no result, and the whole effect is
+ * those two bytes; snd_music_tick_body is what spends them. */
+void snd_start_fadeout(uint8_t *image);
+
 /* ---- THE TICK TIER: what snd_music_tick ($17c74) calls, in the order it calls them --------------
  *
  * The tick's own body is NOT here. What is, is the three routines below it that touch no port and

@@ -12,9 +12,11 @@
  * cross-check that the two model implementations have not drifted. Neither is in the image, so
  * neither is covered by the byte diff — that is exactly why both are exported and compared.
  *
- * Off-target builds do not compile this file: a reconstruction running on real hardware reads the
- * address itself. One that did compile it on target would also need OS_NO_REFUSAL_TALLY, since
- * hw_read8 routes a refusal through os_refused().
+ * ON-TARGET builds do not compile this file: a reconstruction running on real hardware reads the
+ * address itself. Off target it IS compiled, into every candidate by kit.mk. One that did compile
+ * it on target would also need OS_NO_REFUSAL_TALLY, since hw_read8 routes a refusal through
+ * os_refused(). (The first clause read "Off-target" until batch 42 phase A, which contradicted the
+ * rest of the sentence and the build it describes.)
  */
 #include <stdint.h>
 

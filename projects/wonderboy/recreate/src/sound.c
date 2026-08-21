@@ -172,6 +172,20 @@ void snd_stop(uint8_t *image) {
     snd_stop_all_sfx(image);
 }
 
+/* $17f92 — stub +84, and the module's whole FADE trigger: `lea $1738c(pc),a3 / move.b #$a,2266(a3) /
+ * move.b #$a,2265(a3)`. Both bytes take the same hardcoded 10; there is no argument and no register
+ * result. The tick above (snd_music_tick_body) is what spends them — it counts the countdown down
+ * once per sub-tick and drops the master volume when it reaches 0, reloading it from the rate.
+ *
+ * The stores are in the ORIGINAL's order (countdown before rate) although the two addresses are
+ * adjacent and the values equal: they are two `move.b`s, not one word store, and a port that made
+ * it one would write a big-endian $0a0a over $17c65..$17c66 in a single access. Its one caller is
+ * game_key_actions' quit arm ($594). */
+void snd_start_fadeout(uint8_t *image) {
+    image[WB_SND_FADE_COUNTDOWN] = WB_SND_FADE_START;
+    image[WB_SND_FADE_RATE] = WB_SND_FADE_START;
+}
+
 /* ---- the tick tier: $1aaca, $1a5da and $18208 --------------------------------------------------
  *
  * THE IMAGE IS DIRTY WHERE ALL THREE OF THESE LIVE. Everything they read out of $17bc6..$17c71,

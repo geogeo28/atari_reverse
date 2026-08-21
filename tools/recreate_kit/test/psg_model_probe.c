@@ -54,7 +54,6 @@ const uint8_t  *osh_psg_vals(void);
 /* 68000 encodings, in the forms every real PSG driver uses (Wonder Boy's snd_psg_silence at $17f30
  * is `move.b #7,$ff8800; move.b $ff8800,d1; ori.b #$3f,d1; move.b d1,$ff8802` verbatim). */
 #define MOVE_B_IMM_TO_ABSL 0x13fcu /* move.b #imm,(xxx).l */
-#define MOVE_B_ABSL_TO_D1  0x1239u /* move.b (xxx).l,d1 */
 #define MOVE_B_D1_TO_ABSL  0x13c1u /* move.b d1,(xxx).l */
 #define ORI_B_IMM_D1       0x0001u /* ori.b #imm,d1 */
 #define OPCODE_RTS         0x4e75u

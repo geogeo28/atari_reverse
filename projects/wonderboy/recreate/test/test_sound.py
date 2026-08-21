@@ -260,6 +260,7 @@ SONG_LOADED = wb("SND_SONG_LOADED")
 SONG_UNLOADED = wb("SND_SONG_UNLOADED")
 FADE_RATE = wb("SND_FADE_RATE")
 FADE_COUNTDOWN = wb("SND_FADE_COUNTDOWN")
+FADE_START = wb("SND_FADE_START")
 PERIOD_SCRATCH = wb("SND_PERIOD_SCRATCH")
 SPEED_ACC = wb("SND_SPEED_ACC")
 TICK_DROP_VALUE = wb("SND_TICK_DROP_VALUE")
@@ -656,6 +657,19 @@ def _stop_entry():
         _lea_pc(A3, MODULE_BASE),
         opcode(SF_D16_AN | A3) + _module_offset(ENGINE_ENABLED),
         lambda at: branch_w_to(BRA_W, at, leaf.entry_of("snd_stop_all_sfx")),
+    ])
+
+
+def _start_fadeout_entry():
+    """$17f92: the module base, then the SAME immediate into the countdown and the rate, in that
+    order. Sixteen bytes, and the pin is what says the two stores are two `move.b`s rather than one
+    word store over the adjacent pair."""
+    base = leaf.entry_of("snd_start_fadeout")
+    return leaf.assemble(base, [
+        _lea_pc(A3, MODULE_BASE),
+        move_b_imm_d16(A3, FADE_START, _module_displacement(FADE_COUNTDOWN)),
+        move_b_imm_d16(A3, FADE_START, _module_displacement(FADE_RATE)),
+        RTS,
     ])
 
 
@@ -1767,8 +1781,9 @@ ENTRY_BYTES = {
     "snd_channel_step": _channel_step_entry(),
     "snd_music_tick_body": _tick_body_entry(),
     "snd_play_song": _play_song_entry(),
+    "snd_start_fadeout": _start_fadeout_entry(),
 }
-SOUND_ROUTINE_COUNT = 12
+SOUND_ROUTINE_COUNT = 13
 
 # The caps, from the bodies, each the body's own instruction count plus the one instruction osh_run
 # counts past its `rts` (leaf.RUNNER_SENTINEL_INSN — measured here first, hoisted there once three
@@ -2379,6 +2394,45 @@ def test_the_mixer_write_keeps_the_port_direction_bits_it_read_back(mixer, why):
     assert written == [mixer | PSG_MIXER_ALL_OFF], f"{what}: the mixer was written {written}"
     assert written[0] & MIXER_DIRECTION_BITS == mixer & MIXER_DIRECTION_BITS, (
         f"{what}: the direction bits came out {written[0] & MIXER_DIRECTION_BITS:#04x}")
+
+
+# --- $17f92: the fade trigger ---------------------------------------------------------------------
+# Two byte stores of one hardcoded value, and the whole of the routine. It is here rather than with
+# the tick that SPENDS the two bytes because it is a leaf of its own; it was ported in batch 42
+# phase A with its one caller, game_key_actions' ESC arm.
+_start_fadeout = leaf.image_glue("snd_start_fadeout")
+FADEOUT_WRITES = {FADE_COUNTDOWN: bytes([FADE_START]), FADE_RATE: bytes([FADE_START])}
+# lea, two stores, rts, and the instruction osh_run counts past the `rts`.
+FADEOUT_INSN_CAP = 4 + leaf.RUNNER_SENTINEL_INSN
+
+# What the two bytes hold on ENTRY. Neither may already be FADE_START, or a case would pass without
+# the store being made at all — which is the same thing the attribution pass checks, stated here as
+# a seed so it holds whether or not that pass runs.
+FADEOUT_SEEDS = (
+    (0x00, 0x00, "no fade in progress — the state a start is normally issued from"),
+    (0xff, 0xff, "both bytes full, so a store that missed one is visible in the byte it left"),
+    (0x01, 0xfe, "the two DIFFERENT on entry, so a store that hit only one leaves the other"),
+    (0xfe, 0x01, "...and the other way round"),
+)
+
+
+@pytest.mark.parametrize("countdown,rate,why", FADEOUT_SEEDS,
+                         ids=[f"{c[0]:02x}_{c[1]:02x}" for c in FADEOUT_SEEDS])
+def test_the_fade_trigger_arms_both_bytes_with_the_same_hardcoded_value(countdown, rate, why):
+    """WHAT THESE SEEDS DO AND DO NOT SEPARATE, measured rather than assumed.
+
+    They separate a store that MISSED one of the two bytes: it leaves that byte holding its seed,
+    and the seeds are chosen so no byte already holds FADE_START. They do NOT separate two `move.b`s
+    from one big-endian `move.w` over the adjacent pair, and neither does anything else off target —
+    the addresses are consecutive and the value is the same in both halves, so the image, the write
+    set and the write ORDER all come out identical (the first mutation sweep measured both mutants
+    as survivors, and they are equivalences rather than holes). **The entry pin above is what carries
+    the claim that the ORIGINAL makes two byte stores**, and it is the only thing that can."""
+    what = f"snd_start_fadeout over countdown={countdown:#04x} rate={rate:#04x} ({why})"
+    pokes = {FADE_COUNTDOWN: bytes([countdown]), FADE_RATE: bytes([rate])}
+    info = leaf.run("snd_start_fadeout", _start_fadeout, write_bands(FADEOUT_WRITES), what,
+                    regs={"_pokes": pokes}, max_insns=FADEOUT_INSN_CAP)
+    assert_written(info, FADEOUT_WRITES, what)
 
 
 # A register the routine never touches, declared alongside the mixer. Register 14 is PSG port A —

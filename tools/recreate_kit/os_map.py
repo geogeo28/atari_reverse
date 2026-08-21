@@ -52,6 +52,52 @@ def poked_input_overlaps_program(load_base, program_end):
             and load_base < OS_POKE_BLOCK_END and OS_CON_PENDING < program_end)
 
 
+# The model's own fields inside the block, by name — what a declaration is measured against. A
+# span covering more than one of them is a whole-block waiver wearing a range's clothes.
+POKED_INPUT_FIELDS = (("OS_CON_PENDING", OS_CON_PENDING, 4),
+                      ("OS_CON_CHAR", OS_CON_CHAR, 4),
+                      ("OS_RANDOM_VALUE", OS_RANDOM_VALUE, 4),
+                      ("OS_PSG_REGS", OS_PSG_REGS, OS_PSG_NREGS))
+
+
+def poked_input_fields_touched(addr, length):
+    """The names of the model's fields a poke of ``length`` bytes at ``addr`` reaches into.
+
+    Used two ways and both are about making a mistake loud rather than convenient: ``project.load``
+    refuses a DECLARATION spanning more than one field, and ``harness.make_image`` notes when a
+    SERVED poke lands on one, so a hand-staged console key cannot quietly become a game-data seed.
+    """
+    return tuple(name for name, at, size in POKED_INPUT_FIELDS
+                 if addr < at + size and at < addr + length)
+
+
+def poke_is_declared_program_data(addr, length, declared):
+    """Is this whole poke inside a range the PROJECT declared to be its own program's data?
+
+    ``poke_hits_poked_input`` above answers "does this touch the block", which is all the kit can
+    know by itself: under the overlap those addresses ARE the game's bytes, and nothing in the kit
+    can tell a poke staging OS model state from one seeding a game variable that happens to share an
+    address. The project can, and this is how it says so — ``project.toml``'s
+    ``poked_input_program_data``, a list of ``[address, length]`` the game's own code reads and
+    writes at that address.
+
+    THE DECLARATION DOES NOT RE-OPEN THE HAZARD IT LOOKS LIKE. What makes an overlapping poke
+    dangerous is a TRAP serving it back — the model reading the game's code as a keystroke, or
+    clearing four bytes of it — and that is refused per run, on every run, by
+    ``emu._vet_no_poked_input_read``, declaration or no declaration. What this permits is only the
+    seeding of a byte the game itself owns.
+
+    WHOLLY inside, never partly: a poke that straddles the boundary is half game data and half model
+    state, and serving it would write the model's half from a value the project never declared.
+
+    ``declared`` is a sequence of ``(lo, hi)`` half-open ranges (``project.load`` builds it); an
+    empty one — every project but the declaring ones — answers False after one `not`.
+    """
+    if not declared or length <= 0:
+        return False
+    return any(lo <= addr and addr + length <= hi for lo, hi in declared)
+
+
 def poke_hits_poked_input(addr, length):
     """Does a poke of ``length`` bytes at ``addr`` touch any part of the poked-input block?
 

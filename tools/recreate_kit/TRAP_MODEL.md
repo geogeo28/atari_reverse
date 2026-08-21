@@ -251,10 +251,21 @@ absolute address `0x400`, and everything below that is the 68000 vector page —
 layout. The claim is checked rather than assumed, from both directions the hazard has, and **both
 guards key on the overlap, never on the flag**:
 
-* **`harness.make_image()`** refuses any poke whose byte range lands in the block. It sits at the
+* **`harness.make_image()`** refuses a poke whose byte range lands in the block, unless the project
+  has DECLARED that span to be its own program's data (below). It sits at the
   layer pokes are *applied*, so a hand-written `{OS_RANDOM_VALUE: …}` dict — the only way to stage
   an XBIOS `Random`, since the kit ships no builder for it — is seen exactly like a `console_key()`
   one.
+* **`project.toml`'s `poked_input_program_data`** is the one way past that, and only under the
+  overlap: a list of `[address, length]` spans holding the GAME's own variables at an address the
+  model also names. A poke WHOLLY inside a declared span is served; one that straddles the boundary
+  is not. It permits the seeding and nothing else — the hazard is a TRAP serving one of those bytes
+  back as model state, which the per-run guard below still refuses, declaration or no declaration.
+  Wonder Boy declares `[[0x604, 4]]`, which is `OS_CON_CHAR` in full: `$604` is its cheat-enable word
+  and `$606` its key-sequence cursor, and without the declaration four arms of `game_key_actions` and
+  `player_meter_empty_check`'s cheat arm have no differential at all. The arithmetic is pinned by
+  `test/test_os_map.py` and the project's own guards by
+  `projects/wonderboy/recreate/test/test_poked_input_guard.py`.
 * **`emu.run()`** refuses any run in which a trap *reached* the block (`_vet_no_poked_input_read`,
   keyed on the shim's `osh_poked_input_calls` tally of `Bconstat` / `Bconin` / `Crawio` / `Random` /
   `Giaccess` / `Kbdvbase`). Reached, not read: a `Giaccess` write stores into the register file and
@@ -1171,6 +1182,163 @@ modeled set as `T2 SEEDED_READ`**, not as the `T4 HW_READ` it priced them at whe
 capture answered them; the census pins `HW_SEEDED_ADDRS` and `OS_HW_NSLOTS` against `os.h`, so a
 fifth modeled byte cannot be added while the classifier goes on under-counting it.
 
+## Phase 8 — the SCHEDULED WRITE MODEL (what an external agent stores mid-run)
+
+The first seven phases are all about a value a run **reads**. This one is about a value something
+**writes while the run is in flight**, and it exists because a whole class of routine is otherwise
+not runnable at all rather than merely unfaithful.
+
+### The routine that cannot be run
+
+```
+$64e  cmpi.b #$99,$879.l
+$656  bne.s  $64e
+$658  clr.b  $879.l          <- the payload, which nothing can reach
+```
+
+Wonder Boy's pause wait (`$638`) busy-waits on `key_last_scancode`, a byte **no instruction in its
+own body writes**: the IKBD ACIA interrupt stores the release code. Nothing changes memory while an
+`emu.run` is in flight and the candidate is single-threaded C, so the loop is infinite on **both**
+sides. Neither a wider register window nor a `stop_pc` helps — a checkpoint stops the run at the
+compare, and the payload below it is what the case is about. The routine sat REGISTERED-AND-REJECTED
+in `projects/wonderboy/names.txt` for thirty batches with exactly this trigger written into its
+plate: *a kit capability to schedule a memory poke at an instruction count or a PC.*
+
+### Modeled
+
+A run may declare up to `OS_SCHED_MAX` stores. Each names a trigger and a store, in one flattened
+`OS_SCHED_FIELDS`-wide array `os.h` owns and **both sides read**:
+
+```python
+emu.run(image, entry, schedule=[{"pc": 0x64e, "nth": 3, "addr": 0x879, "width": 1, "value": 0x99}])
+```
+
+* `pc` + `nth` — fire just before the `nth` execution of the instruction at that address (`nth`
+  defaults to 1). This is the trigger a differential uses.
+* `insn` — fire just before the run's Nth instruction, 1-based. **Oracle only** (see below).
+* `addr`/`width`/`value` — a 1-, 2- or 4-byte big-endian store, made by `os.h`'s `os_sched_store` on
+  both sides so a straddle of the image's top cannot be handled one way by one and another by the
+  other.
+
+Each entry fires **at most once**. The schedule is re-installed before every run, an empty one
+included, so a list cannot leak into the next case — the same rule the PSG and hardware seeds follow.
+
+**The agent's store is not in the write-set.** It goes straight into the image rather than through
+the write-recording callback, because the write-set is what the FUNCTION stored: the attribution
+(poison) pass inverts exactly those bytes and re-runs, and a byte an interrupt supplied is an INPUT
+to the run, not an output of it.
+
+**An entry that never came due sinks the run.** `emu.run` reports it as a named cause — with the
+arrival count, so "the trigger PC is not the instruction the wait re-executes" and "the loop never
+reached that arrival" are separable — rather than letting it surface as a bare instruction-cap
+overrun.
+
+### The candidate side, and the count that makes it honest
+
+`src/sched.c` is the mirror, linked into every candidate by `kit.mk`. A reconstruction's wait loop
+reads its byte through **one** call:
+
+```c
+while (sched_poll8(image, WB_KEY_LAST_SCANCODE) != WB_KEY_PAUSE_RELEASE)
+    ;   /* the ACIA handler stores the release; off target the schedule is what stores it */
+```
+
+The candidate has no program counter, so it counts **polls** where the oracle counts **arrivals**,
+and the two are the same event by construction: the original re-executes its compare once per
+iteration, and a faithful port polls once per iteration. That is why `insn` triggers are refused in
+a differential — there is nothing on this side to match an instruction index against.
+
+**The poll count is the whole cross-check, and without it the model would be a false-green machine.**
+The store is applied from the *same list* on both sides, so a port that spun a different number of
+times — or did not spin at all, or polled a byte the original reads outside the loop — still ends
+with byte-identical memory. `harness._vet_schedule_ran_the_same_wait` compares the oracle's arrivals
+against the candidate's polls, and its applied/refused tallies against the oracle's.
+
+**A poll is not a general memory read.** An ordinary field read stays a plain guarded read; poll only
+the byte the wait is ON, and only where the original's compare reads it. Wonder Boy's `$638` tests
+the *press* code at `$642` before spinning on the *release* at `$64e` — same address, and the first
+is not a poll.
+
+**ONE TRIGGER PC PER DIFFERENTIAL, and this is the exact extent of the equivalence above.** The
+oracle counts arrivals PER ENTRY at that entry's own PC; the candidate counts every `sched_poll8`
+call in the run against `nth`. With one wait in play those are the same event. With two they are
+not — an entry aimed at the SECOND wait fires on a poll of the FIRST, its store lands an unknown
+number of iterations early, and since both counters are run TOTALS the arrival/poll comparison can
+still agree, which is a false green rather than a failure. `harness._vet_schedule_is_runnable`
+refuses a schedule naming more than one trigger PC; the remedy for a case that needs two is one run
+per wait, or a `stop_pc` before the second. (Wonder Boy's `game_key_actions` really does have two,
+at `$5e6` and `$60e`, on the same byte — so this is a live limit and not a hypothetical one. Lifting
+it means counting polls PER ADDRESS on the candidate, which still would not separate two waits on
+the SAME address, so the honest fix is a per-wait handle rather than a wider counter.)
+
+**AND THE ATTRIBUTION PASS IS VOID OVER A SCHEDULED BYTE.** `differential(..., poison=True)` inverts
+every oracle-written byte and re-runs; the agent's store is applied from the same list on both sides
+and overwrites the canary, so a candidate that never made the function's own store to that address
+matches anyway. The combination is refused (`_vet_poison_is_attributable`) rather than served — seed
+the destination away from what the routine leaves instead, which is what the pass would have bought.
+
+### The off-by-one the probe found, and where it lives
+
+Musashi's first `m68k_execute()` after a reset spends the reset's own cycles and executes **no
+instruction**, so `osh_run`'s loop observes the entry PC twice. Every counter in the shim has always
+included that observation — `osh_num_insns()` is one more than the instructions executed, and moving
+it would move every pinned perf number in three projects — but an arrival count may not, because it
+is compared against a poll count. The loop therefore skips iteration 0 for the schedule alone, which
+also makes both trigger kinds 1-based; nothing executed there.
+`test_nth_1_lands_before_the_very_first_execution_of_the_trigger` is what holds it, and it is aimed
+at the entry PC because that is the only PC the phantom can be.
+
+### The honest limit
+
+**This pins "given that the agent stored X at iteration N, both cores agree", not "the real machine
+stores X at iteration N".** The schedule is the case's claim about the interrupt, exactly as a
+`hw_seed` is its claim about the machine — explicit, shared, and arguable, instead of implicit. What
+it removes is not the assumption but the *hiding* of it: before, the routine could not be run at all,
+and the alternative on offer was to enter the candidate with the byte already released, which is a
+different arm of the original (`$638`'s press guard tests the same byte and would have refused).
+
+**It is not a transaction model.** A byte whose value must follow a *sequence* the run reads many
+times — the FDC status register Phase 7 names as its non-goal — is still out of scope: one entry is
+one store at one moment, and a poll loop that needs three different answers needs three entries and
+a case that knows which iteration each lands on.
+
+### What is pinned, and what is not
+
+**The model** is pinned kit-side by [`test/test_sched_model.py`](test/test_sched_model.py) and its
+`sched_model_probe.c`, which drives **both** implementations in one process (22 cases, as pytest
+collects them), and the declaration's own arithmetic by
+[`test/test_os_map.py`](test/test_os_map.py). The load-bearing one is RED: the same planted spin with **no** schedule does not
+return, which is the state every such routine was in before this phase. Then: the store landing
+before the `nth` arrival and the wait ending; `nth = 1` reporting exactly one arrival (the
+post-reset phantom, above); a trigger PC never executed never coming due; the `insn` trigger firing
+while booking no arrival; two entries together with a big-endian longword; an entry firing once
+across five arrivals (a tally, because the store is idempotent and no byte could say); a store
+outside the image refused on both sides; entries past the cap dropped **and counted**; and a
+schedule not surviving into the next run; an entry that FIRES BUT DOES NOT RELEASE the wait, whose
+arrivals must go on rising to the cap (the claim the first sweep found nothing measuring); and the
+widths `os_sched_store` carries, read out of its own guard and pinned against `emu.SCHED_WIDTHS`. On
+the candidate side, the poll count matching the oracle's arrivals, and two negative controls it
+separates — a body that polls once and then reads
+the image directly (the shape of a port written against a byte that "is already there"), and one
+that polls twice per iteration, whose final image is a correct run's exactly.
+
+**One hole is measured and stated rather than papered over**: at an `nth` that is a multiple of the
+port's polls-per-iteration, the double-poller's extra poll lands on the iteration the release was due
+anyway and NOTHING separates it from a faithful body — same image, same applied count, same poll
+count. `test_an_nth_that_aliases_the_ports_polling_rate_hides_the_double_poll` is that case, and the
+consequence for a project is that a wait should be driven at more than one `nth`.
+
+**Measured and kept anyway:** the kept-count assertions on both harness sides have no reachable
+trigger, because one shared `os_sched_install` clamps for both and their caps cannot diverge. The
+mutant that breaks the clamp IS caught, by the probe's cap case. They stay as a tripwire for the day
+the two sides stop sharing that helper.
+
+**Not pinned.** The harness-level plumbing has no `kit_smoke_project.py` case of its own yet — the
+refusals in `_vet_schedule_is_runnable` and the comparison in `_vet_schedule_ran_the_same_wait` are
+exercised by the first project to use them (Wonder Boy's pause pair) rather than by a kit-side
+miniature the way Phase 7's `test_hw_differential.py` does. That is a gap of the same shape Phase 7
+closed for itself and it is recorded here as one.
+
 ## What a candidate must mirror (cross-side ABI)
 
 Everything the model reads or writes in the image is shared by construction — a reconstruction that
@@ -1184,6 +1352,8 @@ nothing to mirror by hand. Two things are **not** in the image and must be match
 | direct `$ff8800`/`$ff8802` PSG accesses, **reads included** | `shim.c`'s `g_psg_kind`/`g_psg_reg`/`g_psg_val` ledger | emit the same ordered `(kind, reg, val)` stream — call `psg_port_write()` / `psg_port_read()` from `psg.h` (BuggyBoy predates it and emits through `g_REFRESH` out-params instead) |
 | the YM2149's register contents, which a read-back returns | `shim.c`'s `g_psg_file` + its known mask | `psg_port_read()`/`psg_port_write()` keep the same file; `harness.differential` compares it, and the case seeds both sides with `psg_seed=` (Phase 6) |
 | reads of the modeled hardware bytes `$fffa01`, `$ff820a`, `$ff8207`, `$ff8209` | `shim.c`'s `g_hw_log_slot`/`g_hw_log_val` ledger + `g_hw_file` | emit the same ordered `(slot, val)` stream — call `hw_read8()` from `hw.h` with an `OS_HW_*` constant; the case declares both sides' bytes with `hw_seed=` (Phase 7). A VOLATILE one (`$ff8207`/`$ff8209`) may be read at most ONCE per run: a second read is refused, and the remedy is the case's shape — end it before the second read, or split it into two runs |
+
+| a memory byte an EXTERNAL AGENT writes while the run is in flight (an interrupt storing a scancode) | `shim.c`'s `g_sched` list, applied by arrival count | poll the byte through `sched_poll8()` from `sched.h`, once per wait iteration; the case declares the store with `schedule=` (Phase 8), and `harness.differential` compares the candidate's poll count against the oracle's arrivals |
 
 `OS_SUPER_TOKEN` is not off-image state but it is still a shared value: a reconstruction of a
 function that calls `Super` must return the same constant, since the program can store it into the

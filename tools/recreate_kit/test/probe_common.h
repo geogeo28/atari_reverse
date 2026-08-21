@@ -60,6 +60,11 @@ uint32_t osh_out_regs(void);
 #define OUT_REGS 15                /* osh_run reports D0..D7 then A0..A6 (shim.c's OSH_OUT_REGS) */
 
 #define OPCODE_RTS 0x4e75u
+/* `move.b (xxx).l,Dn` — the byte read three probes plant to get a modeled value into a register the
+ * oracle reports. It was #defined identically in each of them; one spelling, for the reason this
+ * header exists. */
+#define OPCODE_MOVE_B_ABSL_TO_DN(reg) ((uint16_t)(0x1039u | ((reg) << 9)))
+#define MOVE_B_ABSL_TO_D1 OPCODE_MOVE_B_ABSL_TO_DN(1)
 
 /* The scratch image every helper below writes into. `static` in a header is right here: a probe is
  * one translation unit plus the oracle's, so there is exactly one of these per binary. */

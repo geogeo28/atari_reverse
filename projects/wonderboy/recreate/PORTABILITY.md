@@ -1668,6 +1668,37 @@ the `T2`-declaration caveat, and `§1`'s stale answer box — whose whole-progra
    directly, and the residue map implies more. It is the denominator of every coverage figure in
    this file.
 
+## 0l. Batch 42 phase A (2026-08-21): what moved, and what was NOT re-scanned
+
+**NO RE-SCAN WAS RUN**, and this section exists so the figures above are not read as current. Every
+count in §0a..§0k comes from `../out/hw_scan.tsv`, which still predates batch 33's decoder fix (the
+queue in `STATUS.md` carries its regeneration). What this phase changed, stated so the next pass
+knows what to expect rather than discovering it:
+
+* **THREE FUNCTIONS became verified**, and each was blocked by a DIFFERENT thing, which is worth
+  keeping straight because only one of them is the registration everybody remembers:
+  `game_unpause_on_key_release` (`$638`, 54 B) carried the batch-12 REJECTED-with-a-registration
+  plate and was blocked by its busy-wait; `game_key_actions` (`$53e`, 240 B of code) had no `fn` at
+  all — it was unnamed, and what blocked it was the poked-input collision at `$604` rather than its
+  own two waits; and `snd_start_fadeout` (`$17f92`, 16 B) was named, unblocked and simply unported,
+  reached this phase because `$53e`'s ESC arm calls it. The first two sit in the
+  `$420..$694` gap that no `subsystems.tsv` range claims, so they will land in the CATCH-ALL until
+  the queued partition edit gives the spine a range of its own.
+* **NO ROW'S HARDWARE CLASSIFICATION MOVES.** None of the three touches a hardware address: the pair
+  reads and writes ordinary image bytes, and the fade trigger writes two of the sound module's own.
+  The `T2 SEEDED_READ` and `T4 HW_READ` tiers are untouched, and so is §0i's four-false-green table.
+* **THE `T*` LADDER GAINS NOTHING AND LOSES NOTHING, but the model behind it grew**: the kit's
+  scheduled-write capability (TRAP_MODEL.md, "Phase 8") makes a routine that BUSY-WAITS on a memory
+  byte an interrupt writes runnable at all. That is not a hardware tier — the byte is in the image —
+  but it is the same shape of obstacle as `T2`'s, and the classifier prices neither. **A busy-wait on
+  an image byte no instruction in the routine writes is invisible to this census**: it reads as
+  ordinary code, and `$638` sat unportable for thirty batches without a row here ever saying so.
+  Naming it is a candidate for the next re-pricing pass, beside `§6`'s.
+* **ONE COUNT THAT IS NOT IN THIS FILE MOVED, and it belongs in the same paragraph**: the number of
+  arms this project cannot drive because the kit's poked-input block covers game data. It was four
+  in `game_key_actions` plus one in `player_meter_empty_check`; it is now zero, on the strength of
+  `project.toml`'s `poked_input_program_data` declaration.
+
 ## 2. Method, and what it can and cannot see
 
 `tools/ghidra_scripts/HwPortabilityScan.java` reads Ghidra's **reference model**, not a linear

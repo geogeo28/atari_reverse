@@ -48,7 +48,12 @@ PINNED = ("OS_IMAGE_SIZE", "OS_HEAP_BASE", "OS_FS_TABLE", "OS_FS_STAGING", "OS_F
           "OS_FS_OFF_CAPACITY",
           # the harness-poked model state (TRAP_MODEL.md): both cores must read the same bytes
           "OS_CON_PENDING", "OS_CON_CHAR", "OS_RANDOM_VALUE", "OS_PSG_REGS", "OS_PSG_NREGS",
-          "OS_PSG_WRITE", "OS_SUPER_TOKEN")
+          "OS_PSG_WRITE", "OS_SUPER_TOKEN",
+          # ...and the scheduled-write model's two trigger kinds (Phase 8). The sizes need no entry —
+          # emu.py reads OS_SCHED_MAX/OS_SCHED_FIELDS from the .so — but these two are an ENCODING
+          # the cases are written against, and a value changed on one side alone would turn every
+          # `pc` trigger into an `insn` one, which fires at an instruction index instead.
+          "OS_SCHED_AT_PC", "OS_SCHED_AT_INSN")
 
 
 def _c_defines(source, names=None):
@@ -130,6 +135,11 @@ def test_every_low_model_address_is_guarded_or_declared_unvetted():
         # because these addresses are POLLED (an FDC wait loop reads $fffa01 once per iteration), so
         # a modest cap would truncate an ordinary run. Not a place in the image either.
         "OS_HW_LOG_MAX",
+        # 4096 POLLS — the candidate's runaway guard on one busy-wait (src/sched.c's sched_wait8),
+        # not a place in the image. It is a count of iterations, and it is this large so that only a
+        # wait which was never going to end can reach it; the oracle's own instruction cap bites
+        # first for anything a case realistically declares.
+        "OS_SCHED_POLL_MAX",
     }
     UNVETTED = {
         # 0x500, the KBDVBASE struct XBIOS Kbdvbase returns. Its only reader is that trap, which IS
