@@ -2635,3 +2635,37 @@ over: an instrument priced as complete is still an instrument, and this one name
 **THE FOURTH STANDING CHECK** — `atari/smoke.py m6`, `m6rearm` and `m6flash`, green on both ROMs, and
 `original.py timeline` / `psgnoise` (plus their `F`-prefixed pair) as their prerequisites.
 `atari/README.md` §11 carries the argument and the instrument's three measured gotchas.
+
+## 0p. Batch 43 phase F — no classification moves, and the exit path priced
+
+Like phases C and E, this phase moves **no tier and no figure in this file**: it touches `atari/`
+only. It is recorded here because it found a defect of a class this file's model prices at zero, and
+because it puts a measurement under a caveat §8 has carried since the on-target arc opened.
+
+**THE CLASS THE CLASSIFIER CANNOT SEE IS "CODE NO SURFACE EXECUTES", and the exit path was it.**
+`game_key_actions`' three endings and everything after them — `run_frames`' third exit, `teardown`,
+`Pterm` — were compiled into thirteen green on-target modes and executed by **none** of them, because
+every mode ran the loop to its frame count and left by the watchdog's door. Driving the endings
+found, on the first try, an **uncapped wait aimed at the wrong byte**: `pin_sched_wait8` took the
+scancode the frame loop had exited on for the IKBD's reset acknowledge and then spun for a byte the
+controller will never send. The program never reached `Pterm`, so nothing was written and nothing was
+handed back. `atari/README.md` §8 has the fix and the isolation.
+
+This is not a portability tier and it is not a modelling hole; it is the plainest possible reminder
+that **the tiers in this file classify code the harness RUNS**. A T1 routine nothing executes is
+verified in exactly the sense that an unexecuted assertion is passing.
+
+**§8's "the joystick and key arms are unexercised" caveat is now a MEASUREMENT.** It used to rest on
+"a headless run cannot press anything", and that half is false: Hatari 2.6.1's `--control-socket`
+takes `hatari-event keydown/keyup <ST scancode>`, and the injected code really does arrive in
+`WB_KEY_LAST_SCANCODE` through the real ACIA interrupt — scancodes `$50`, `$29` and `$4b` read back
+out of the running image, with the shim's `ikbd_bytes` rising from 3 to 10. What that path cannot do
+is press the STICK: it injects at the emulated IKBD while `--joy1 keys` maps host SDL key events, so
+`WB_JOY0_STATE`/`WB_JOY1_STATE` stayed `$00` under all four injected scancodes including both arrows.
+The `$fe`/`$ff` arms therefore stay unexecuted **for a measured reason** rather than an assumed one.
+
+**THE FIFTH STANDING CHECK** — `atari/smoke.py m3` and `m3fault`, green on both ROMs (four runs
+each: the undriven boot, the cheat word's own control, and the three endings), plus
+`atari/smoke.py runsh`, which parses the one command line no headless mode executes.
+`atari/README.md` §12 carries the argument, including why the tail readings hang off the program's
+own `Pterm` and not off a vblank count.

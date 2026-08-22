@@ -796,6 +796,13 @@ separate compiler and the differential `.so` never sees it, so `make test` below
 leaked into. The only trace of it in `src/` is a `#ifdef WB_ON_TARGET` arm on the three shifter
 sinks (`src/game.c`, `src/stage.c`), a define `make test` never passes.
 
+**Sixteen modes, green on two ROMs, and since batch 43 phase F they include the ENDS of the run.**
+`game_key_actions`' three endings are driven on the machine one run each (`smoke.py m3`), and the
+`Pterm` hand-back is asserted from outside the program — both vectors and TOS's own frame clock, read
+one vblank after the exit — with `m3fault` the build that suppresses the two restores and must redden
+every one of those rows and no other. That path had been compiled into thirteen green modes and
+executed by none of them, and driving it found a hang: `atari/README.md` §8 and §12.
+
 **It also runs the ORIGINAL.** `atari/original.py` boots the shipped 1989 `.stx` disks under Hatari
 and drives them to named anchors, which is what supplies the things no host-side computation in this
 project can: the staged image for the frame build (the boot's products, dumped at `$f8b4`), the

@@ -28,8 +28,13 @@ post-boot RAM off a real emulated machine and staging that.
 | **M2** a frame | `game_main_loop` runs **fifty-two frames on the machine**, and at four anchored frames its 32000 framebuffer bytes and its sixteen hardware pens are **byte-identical to the shipped binary's** running the same fifty-two frames. Both sides read where the picture really is — ours out of the image at the address `flip_screen` published, theirs off the shipped binary's own screen by `savebin` at a breakpoint on `$4a0` | ✅ `smoke.py m2` |
 | **M2** mis-anchor control | our frames read off the NEIGHBOURING shipped frame, verdict inverted. The two rows a one-anchor shift can reach both fail; the other six are **excluded and printed**, because this game's picture toggles on a one-second cadence and half the shifts land on an identical frame (§9) | ✅ `smoke.py m2fault` |
 | **M2** the two flip-site mutants | **MEASURED DYING** (§9): the base-byte swap in `flip_screen`'s own two call sites, and the wrong buffer published. Neither touches an image byte — the framebuffer compare cannot see them — and both move the address read back off `$ffff8201/8203` | ✅ both CAUGHT |
-| **M3** the exits | `game_key_actions`' three endings `jmp` into the boot chain and `game_main_loop` reports them instead — the same "exits the reconstruction reports and its caller drops" that Joust's M3 completes in its shim. **ONE HAS NOW EXECUTED**: the play build's frame loop keeps that third way out, and poking `WB_ROUND_END_RELOAD_REQUEST` from a chained breakpoint drives the ROUND_END ending with no input device at all — measured, the loop broke after 7 frames, handed the machine back and wrote a record reporting `loop_ending = 1`. What is still owed is the milestone rather than the mechanism: the three endings driven deliberately and the `Pterm` hand-back asserted healthy | ⛔ owed, one ending DRIVEN |
-| **M3** the joystick arms | the shim's ACIA handler files a report on `$fe`/`$ff` and **those arms have still never executed under any headless check** — a headless run cannot press a stick, and nothing here has changed that. What HAS changed is that the discharging mechanism now exists and is one command: **`bash atari/run.sh`** builds the play build and launches Hatari with `--joy1 keys`, a screen and sound, so a person at the cursor keys runs those arms. **PARTIAL BY CONSTRUCTION**, which is Joust's own wording for the same split: the runner is verified to the edge of the GUI (it builds, it stages, it boots, and `smoke.py play` proves the frame loop underneath it runs indefinitely), and what a human sees when they press left is not something this repository asserts | ⚠️ mechanism DELIVERED, the arms still unexecuted headless |
+| **M3** the exits | `game_key_actions`' three endings are not returns — they pop `game_main_loop`'s return address and `jmp` into the unported boot chain, so the reconstruction REPORTS which one it took (../include/game.h). **ALL THREE ARE NOW MADE TO HAPPEN ON THE MACHINE**, one run each: the round-end reload ($54e, unwind $e5ba), the cheat's level skip ($56c, the same target and a different code) and ESC's quit ($58c, the music fade then $e494). Each arm's condition is a word or a byte in the image, so the drive is a debugger poke at `capture_the_frame`'s SECOND arrival — a known frame, not a wall clock — and the ending fires at the top of the next frame, where `game_key_actions` reads. Measured: 2 frames completed, `loop_ending` = 1, 2 and 3 respectively | ✅ `smoke.py m3` |
+| **M3** the exits' negative control | not a separate run: each M3 run's FIRST pass is the undriven boot that measures where GEMDOS put the image, and it must report `loop_ending` = WB_KEY_ACTIONS_RETURNED over all fifty-two frames. The poke is therefore shown to be what ends the loop, and the three pokes produce three DIFFERENT codes, which no single accident does. **Its records are rescued at `Pterm` like every other M3 run's** — `m3fault`'s pass-one machine is left hooked exactly as its driven runs are, so it too can crash, be reset and have `--auto` rewrite the very numbers every poke below is aimed with | ✅ `smoke.py m3` pass 1 |
+| **M3** the cheat word's own control | the row that completes "the same target on a **different condition**". `$556` is `tst.w $604` THEN `cmpi.b #$31,$879`, and the level-skip drive sets both — so a port that had dropped the word test would still report `loop_ending` = 2 and stay green. A fourth run pokes **N alone**, with `WB_KEY_SEQUENCE_MATCHED` left clear, and requires the loop NOT to end: measured, `loop_ending` = 0 over all fifty-two frames. The two runs are one differential over one poke, and its inputs are DERIVED from the level-skip arm's own poke set minus the word, so the control cannot drift from the thing it controls | ✅ `smoke.py m3` |
+| **M3** the `Pterm` hand-back | Joust's discipline, and it is asserted from OUTSIDE the program: the run carries on thousands of vblanks past the exit for the health scan, and at two moments **chained off the program's own `Pterm`** (+1 vblank, then +20) the debugger reads the machine itself. Both installed vectors have stopped being the shim's (`$70` `0x126b4`→`0xfc06c0`, `$118` `0x126c4`→`0xfc3aec` under TOS 1.04), and **TOS's own frame clock `_frclock` is still advancing** — `0x717` then `0x72a`, +19 over the nineteen vblanks between the two readings, which is the liveness half: a vector handed back to a handler that does not run leaves it frozen. The record's own teardown read-backs say the same thing from the inside, through a different path | ✅ `smoke.py m3` |
+| **M3** the hand-back control | `build.sh m3fault` is the frame build whose `teardown` never stores the two vectors back — `novbl`'s shape at the other end of the run, one store each suppressed and nothing else. Every hand-back row must go red and every ending row must still hold, which it MEASURES rather than claims: all three endings still fire and report their own codes, while `$70`/`$118` are still `0x126b4`/`0x126c4` one vblank after `Pterm` and `_frclock` is frozen at `0x717` (+0 against a handed-back machine's +19). **AND AT THAT MOMENT THE MACHINE SHOWS NO FAULT AT ALL** — the failure mode of an incomplete hand-back is a SILENT DEAD TOS, which no exit status and no crash scan could have caught. Later in the same run it stops being silent, and §12 records what that cost the control's first design | ✅ `smoke.py m3fault` |
+| **M3** the joystick arms | the shim's ACIA handler files a report on `$fe`/`$ff` and **those arms have still never executed under any headless check**. What changed this round is that the boundary is now MEASURED instead of assumed. Hatari 2.6.1 does have a headless input path — `--control-socket` plus `hatari-event keydown/keyup <ST scancode>` — and it works: injected scancodes `$50`, `$29` and `$4b` arrive in `WB_KEY_LAST_SCANCODE` through the real ACIA interrupt, with the shim's own `ikbd_bytes` counter rising from 3 to 10. **It does not reach the stick**: that path presses a KEY at the emulated IKBD, while `--joy1 keys` maps HOST SDL key events, so `WB_JOY0_STATE`/`WB_JOY1_STATE` stayed `$00` under all four injected scancodes including both arrow keys. **PARTIAL BY CONSTRUCTION** — Joust's own wording — with `bash atari/run.sh` the discharging mechanism and a person at the cursor keys the only thing that runs those two arms | ⚠️ measured, and the arms still unexecuted headless |
+| **M3** the runner's exec line | the one command no headless mode executes, and it shipped broken: `--sound on` sat in `atari/run.sh` through thirteen green modes and Hatari rejects it at parse time (`--sound` takes a FREQUENCY). `run.sh parsecheck` now builds the identical argument array and hands it to Hatari with `--help` appended, which parses every option before it and stops without booting; the mode adds the control that makes it a check — the SAME line with the rejected value put back must be refused | ✅ `smoke.py runsh` |
 | **M3** a saved-state round trip | Joust's `HIGH.SCO` equivalent. **ABSENT BY CONSTRUCTION, not deferred**: `../project.toml`'s byte scan establishes that Wonder Boy performs no file I/O at all — one GEMDOS trap in the whole image, a `Super` — so there is no file for a round trip to exist over | n/a |
 | **M4** frame differential vs the original | ~~blocked on M2~~ — **DELIVERED AS PART OF M2**, above: the two rows are the same comparison, and separating them was an artefact of expecting the dump to be a later milestone than the frame. The row is kept so the renumbering is visible rather than silent | ✅ folded into `smoke.py m2` |
 | **M5** the hardware-state vector | at the same four anchors, **twenty registers of the machine itself are identical on both sides** — the sixteen shifter pens, the resolution and sync registers, the refresh rate and the V-overscan — captured by the same debugger commands and read back by the same parser on each side (`original.py`'s `vector_commands` / `hardware_vector`). Our side is anchored on `capture_the_frame`'s own entry, at the address the binary **reports about itself**, so the vector is taken at the very instant `FRAME.BIN` is. The YM-2149's sixteen registers are captured and **printed but not compared**, for two named reasons (§10) | ✅ `smoke.py m5` |
@@ -43,12 +48,18 @@ post-boot RAM off a real emulated machine and staging that.
 | **M6** the sound | **this project's first on-target assertion about sound.** The shipped binary's 1,155 PSG writes over the window are an **exact prefix of our 6,424** — register and value, in order. A prefix rather than an equality because the music is driven by the VBLANK and the window is bounded by FRAMES, and the two sides spend a different number of vblanks on a frame (about 2 against 11½); the direction is measured, and the floor is the shipped side's own count. §10 records why a snapshot could not supply this and named this stream as the surface that could | ✅ `smoke.py m6` |
 | **M6** the sound's reproducibility gate | `original.py psgnoise` boots the shipped binary a **second** time and differences the two streams, because comparing a register the original writes differently on two of its own boots is not evidence in either direction. `m6` refuses to run without the reading and PRINTS what it excludes. Measured: an unflashed pair differs in **0 of 1,155** writes, so `m6` compares all eleven registers; a **flashed** pair differs in **42 of 1,155**, all of them channel A's tone period (registers 0 and 1) inside the first eleven frames, so `m6flash` excludes those two and compares the other nine. One reading per fabrication, which is `flashnoise`'s rule (§10) | ✅ `original.py psgnoise` / `flashpsgnoise` |
 | **M6** the ORDER-ONLY mutant | **MEASURED DYING, and it is the last of the four shifter-sink mutants.** `flip_screen`'s timer store and its colour write are adjacent statements whose argument is the already-decremented local, so swapping them writes the same word to RAM and the same colour to the chip — only later. With it applied, `m5flash` is **entirely green** (framebuffer, pens, hardware vector and rendered picture at all four anchors) and `m6flash`'s order row is **RED**. Both sides are watched, and both must show the store reaching the bus before the colour | ✅ `smoke.py m6flash`, mutant CAUGHT |
-| **M6** the play build | the build a person plays, booted headless past 12,000 vblanks: **still flipping buffers when the run was cut off**, machine healthy throughout — 1,004 frames under TOS 1.04 and 1,160 under EmuTOS, i.e. four to five frames a second (the ROM decides how much of the window is left after it boots, so the count belongs to the ROM too). The two buffers are found in the trace rather than computed — a play run writes no record — and pinned by being exactly `WB_SCREEN_FRONT - WB_SCREEN_BACK` apart. What is asserted about its exit is that THIS run reached none, because it injects no input; a person can reach one, which is M3's owed milestone | ✅ `smoke.py play` |
+| **M6** the play build | the build a person plays, booted headless past 12,000 vblanks: **still flipping buffers when the run was cut off**, machine healthy throughout — 1,004 frames under TOS 1.04 and 1,160 under EmuTOS, i.e. four to five frames a second (the ROM decides how much of the window is left after it boots, so the count belongs to the ROM too). The two buffers are found in the trace rather than computed — a play run writes no record — and pinned by being exactly `WB_SCREEN_FRONT - WB_SCREEN_BACK` apart. What is asserted about its exit is that THIS run reached none, because it injects no input; a person can reach one, and what happens when they do is M3's, driven on the frame build that shares this build's whole exit path | ✅ `smoke.py play` |
+
+**Batch 43 phase F walked the ladder's last rung.** All **sixteen** on-target modes — `m1`, `mono`,
+`novbl`, `m2`, `m2fault`, `m5`, `m5skew`, `m5fault`, `m5flash`, `m6`, `m6rearm`, `m6flash`, **`m3`**,
+**`m3fault`**, `play`, **`runsh`** — are green on **both ROMs**. Every milestone from M1 to M6 now has
+a control of its own, and the one thing on this page that is still owed is not a rung: it is the boot
+chain outside the spine (§2). §12 has the argument, and the phase's own two findings are in "The bugs
+found on target": an uncapped wait that hung the exit on every key-driven ending, and a launcher
+command line that never parsed.
 
 **Batch 43 phase E added the seven M6 rows, killed the LAST shifter-sink mutant, and shipped
-`run.sh`.** All **thirteen** on-target modes — `m1`, `mono`, `novbl`, `m2`, `m2fault`, `m5`, `m5skew`,
-`m5fault`, `m5flash`, `m6`, `m6rearm`, `m6flash`, `play` — are green on **both ROMs**. §11 has the
-argument. Three things the phase produced that are worth the summary line:
+`run.sh`.** §11 has the argument. Three things that phase produced that are worth a summary line:
 
 - **No shifter-sink mutant survives.** The order-only one is dead, measured both ways (§11).
 - **The sound has an on-target assertion** for the first time, and a reproducibility gate under it.
@@ -62,7 +73,8 @@ including the two things M5 captures and does *not* compare and why.
 **Batch 43 phase C moved no row.** It fixed the host-side worker crash (`../STATUS.md`) by routing
 `../src/map.c` and `../src/scene.c` through `../include/bus.h`, which changes the sixteen sources
 this directory cross-compiles — so all five modes were rebuilt and re-run on both ROMs, and M2 is
-still byte-exact at all four anchors (584 vblanks for 52 frames, against phase B's 583). **It also
+still byte-exact at all four anchors (584 vblanks for 52 frames, against phase B's 583; phase F's
+build reads 588). **It also
 left an unpinned modelling decision on target, and it is recorded rather than claimed:** `bus.h`
 answers an address outside the game's 1 MB with zero and drops a write there, while a real ST has
 real RAM or the `$ff8000` I/O page. `build.sh`'s seam tripwire cannot see it — `os_in_image` is
@@ -73,12 +85,15 @@ Verified on **TOS 1.04 and EmuTOS** (Hatari's bundled `tos.img`). **NOT "identic
 ROMs"** — the honest split is that M1 is green on both, and two of its pieces behave differently:
 
 - **The image lands somewhere else, and M1 notices.** The M1 build's `image_base` is `0x2ae00` under
-  TOS 1.04 and the frame builds' is `0x4a600`; under EmuTOS the frame builds land at `0x53000`. The
-  published screen base follows it in every case. The translation in §3 is therefore demonstrably
+  TOS 1.04 and the frame builds' is `0x4a700`; under EmuTOS the M1 build lands at `0x33900` and the
+  frame builds at `0x53100`. The published screen base follows it in every case. **All four are
+  readings that move with the `.PRG`'s own length as well as with the ROM** — this batch's exit-path
+  fix moved the frame builds by `0x100` — so they are quoted as measurements and nothing asserts
+  them. The translation in §3 is therefore demonstrably
   not a constant that happens to be right.
 - **AND M6 TURNED THAT INTO A HARDWARE CONTROL FOR §3's CORRECTION.** The added transient exists
-  exactly when the image base's middle byte carries into the high one. `0x4a600` carries and
-  `0x53000` does not — so the **same binary** publishes 52 transients on TOS 1.04 and **none** on
+  exactly when the image base's middle byte carries into the high one. `0x4a700` carries and
+  `0x53100` does not — so the **same binary** publishes 52 transients on TOS 1.04 and **none** on
   EmuTOS, with the idle-write count taking up the slack (104 against 156). `expected_base_shape`
   derives all three counts from the two buffer addresses rather than pinning the TOS 1.04 reading,
   which is what lets one assertion be right on both ROMs. Writing them down instead is exactly what
@@ -131,7 +146,13 @@ never gives it back, so Ctrl-Q is the way out and the headless run writes no `ST
 is exact: `run_frames` lost its frame count and its watchdog in this build but kept its third exit,
 so a frame in which `game_key_actions` takes one of its three endings DOES leave the loop, hand the
 machine back and write a record. No input means no ending, which is why the headless run never sees
-one — and a person who does has reached M3's owed milestone, which nothing here completes yet.
+one. **What happens after that hand-back is now asserted** rather than left to a person to discover:
+§12 has it, driven on the frame build, which shares this build's whole exit path.
+
+**And the last defect on that path was found by driving it.** A key left in `WB_KEY_LAST_SCANCODE`
+when the loop ends — which is exactly what pressing ESC or N to leave does — used to make
+`pin_sched_wait8` aim an *uncapped* wait at that scancode and hang the program for ever, so the
+machine was never handed back at all. §8 has the fix and the isolation.
 
 ## Use
 
@@ -163,7 +184,11 @@ python3 atari/original.py flashtimeline                     # the flash run's ow
 python3 atari/original.py flashpsgnoise                     #   ...and its own reproducibility gate
 bash atari/build.sh m5flash && python3 atari/smoke.py m6flash # flip_screen's last PAIR, in bus order
 
+bash atari/build.sh m2      && python3 atari/smoke.py m3      # M3, THE THREE EXITS + the hand-back
+bash atari/build.sh m3fault && python3 atari/smoke.py m3fault #   ...and its HAND-BACK control
+
 bash atari/build.sh play    && python3 atari/smoke.py play  # the PLAY build, booted headless
+python3 atari/smoke.py runsh                                #   ...and the line run.sh actually execs
 
 python3 atari/original.py variance                          # what in the dump is one boot's luck
 python3 atari/original.py neighbour                         #   ...and the anchor's own evidence (§9)
@@ -348,13 +373,13 @@ anywhere else. **Measured: zero transients over fifty-two frames.**
 Ours cannot do that. The buffers become `image_base + $70000` and `image_base + $78000`, and when the
 image base's middle byte is `>= $80` the sum carries into the high byte — so our high byte really
 does change, and for one instruction the shifter points at an address that is neither buffer.
-Measured under TOS 1.04, with `image_base = 0x4a600`: the pair is `0xba600`/`0xc2600` and the
-transient is `0xb2600` or `0xca600`, **once per frame, fifty-two times**. `smoke.py`'s
+Measured under TOS 1.04, with `image_base = 0x4a700`: the pair is `0xba700`/`0xc2700` and the
+transient is `0xb2700` or `0xca700`, **once per frame, fifty-two times**. `smoke.py`'s
 `expected_base_shape` derives that count on both sides from their own buffer addresses, rather
 than pinning it or tolerating it.
 
 It is **TPA-dependent, and that is measured rather than reasoned**: an image base whose middle byte
-is under `$80` produces no carry and no transient. EmuTOS puts the frame builds at `0x53000`, and
+is under `$80` produces no carry and no transient. EmuTOS puts the frame builds at `0x53100`, and
 there the **same binary** produces **zero** transients and three idle base writes a frame instead of
 two. So `smoke.py` does not pin a number at all — `expected_base_shape` derives the whole account
 (publications, transients, idle writes) from the two buffer addresses, and the two ROMs are then a
@@ -453,18 +478,38 @@ rather than from a list written down, drops the entry-state-vacuous check, and *
 halves matter: dropping it silently would be the vacuous-green failure mode wearing the control's
 clothes, and the printed note names the ROM that does exercise it (TOS 1.04, entry `0x25`).
 
-### 8. The IKBD acknowledge byte is DISCOVERED, not assumed
+### 8. The IKBD acknowledge byte is DISCOVERED, not assumed — and asked for TWICE
 
-`sched_wait8`'s pin is a genuine spin rather than a byte already in place, and it is arranged in two
-phases so that it cannot hang: the first reset's reply is waited for on a bounded loop — which is
-what establishes that this machine's IKBD answers at all — and only then is the byte cleared, a
-second reset sent, and `sched_wait8` called on the same reply.
+`sched_wait8`'s pin is a genuine spin rather than a byte already in place, and it is arranged so that
+it cannot hang: the reply is waited for on a bounded loop — which is what establishes that this
+machine's IKBD answers at all — and only then is the byte cleared, a further reset sent, and
+`sched_wait8` called on the same reply.
 
 The byte itself is **learned**. The IKBD's documented self-test-passed answer to `$80 $01` is `$f0`;
 the machine this ran on answered **`$f1`**, and the first draft — which had the constant written down
 — failed on a path that was working perfectly. Which byte a controller sends is a property of that
-controller's firmware, not of this port. What phase two then pins is that the answer **repeats**,
+controller's firmware, not of this port. What the pin then establishes is that the answer **repeats**,
 which is a stronger claim than the constant was.
+
+**AND THE DISCOVERY HAD TWO WAYS OF LEARNING THE WRONG BYTE, BOTH OF WHICH HANG THE PROGRAM.**
+`await_ikbd_reply` returns as soon as `WB_KEY_LAST_SCANCODE` is not `$00`, and it cannot tell the
+controller's status byte from a scancode. Aim the uncapped wait at a scancode and the run never
+reaches its own dump — no `STATS.BIN`, no `M2.BIN`, nothing to read.
+
+- **A key the FRAME LOOP left behind.** The byte was not cleared before the first reset was sent, so
+  whatever the loop had in it was taken for the answer. Found by M3's first key-driven ending, and
+  **isolated rather than inferred**: poking the scancode ALONE, with no ending driven at all and the
+  loop running its full fifty-two frames, kills the run identically. It is now cleared first.
+- **A key that arrives DURING the reply window,** which in a play session is not a corner case but
+  the normal path — the player's ESC or N *ends the loop*, and the release of that same key lands
+  inside the ~300 ms the reset takes to answer. So the reply is asked for **twice**, and the pin is
+  taken only if two resets answer the same byte. A press and a release carry different codes and
+  neither repeats, so a stray key cannot survive the agreement. If they disagree the pin is simply
+  not taken and `RB_IKBD_REPLIED` and `sched_wait_returned` say so — a measurement the run survives,
+  where the alternative is a machine that never comes back.
+
+The cost is a third reset (~300 ms of emulated time) in every run, which `RUN_VBLS`' own paragraph
+in `smoke.py` now counts.
 
 ### 9. M2, and what an anchored frame is worth
 
@@ -511,7 +556,7 @@ them was a level-4 interrupt raising the counter and not a predicate already tru
 iterations over 52 frames**, ~330 per frame, against the 2 a wait that never spun would give.
 
 **Both ROMs, and the image lands somewhere else on each.** M2 is green on TOS 1.04 (image at
-`0x49d00`) and on EmuTOS, which lands it ~36 KB higher, with the published base following it both
+`0x4a700`) and on EmuTOS (`0x53100`, ~34 KB higher), with the published base following it both
 times — so the
 translation in §3 is demonstrably not a constant that happens to be right, on the frame path too.
 
@@ -777,10 +822,137 @@ is not a control. **Registered**, with its trigger and home: the trigger is any 
 `../src/sound.c`, and the home is a `m6silent`-shaped build that perturbs the stream through the
 shim's own PSG sink the way `m5fault` perturbs a pen through the shifter sink.
 
+### 12. M3, and what an EXIT is worth
+
+M2, M5 and M6 all watch the reconstruction WHILE IT RUNS. M3 is the only milestone about the two
+moments at the ends of it: the frame loop being LEFT, and the machine being given back.
+
+**THE LOOP HAS NO EXIT INSTRUCTION, so leaving it is `game_key_actions`' doing.** `$4a0` is
+`do { ... } while (1)` and three of `game_key_actions`' arms end by popping the loop's return address
+off the stack and `jmp`ing into the boot chain — a transfer this reconstruction cannot make, because
+the chain is unported, so it REPORTS which arm it reached instead (`../include/game.h`'s
+`WB_KEY_ACTIONS_*`, and `M2.BIN`'s `loop_ending`). The three:
+
+| arm | condition | reports | the original's `jmp` |
+|-----|-----------|---------|----------------------|
+| `$54e` | `WB_ROUND_END_RELOAD_REQUEST` ($e1c6) is up — the round bonus at `$e032` raised it — and this CLEARS it | `WB_KEY_ACTIONS_ROUND_END` (1) | `$e5ba`, the sequence |
+| `$56c` | `WB_KEY_SEQUENCE_MATCHED` ($604) is up AND `WB_KEY_LAST_SCANCODE` ($879) is `$31`, i.e. N with the cheat on. The request word is left alone, because there was none | `WB_KEY_ACTIONS_LEVEL_SKIP` (2) | `$e5ba`, the same target |
+| `$58c` | `WB_KEY_LAST_SCANCODE` is `$01`, i.e. ESC. Starts the music fade at `$594` first | `WB_KEY_ACTIONS_QUIT` (3) | `$e494`, the data-disk prompt |
+
+The two `$e5ba` arms carry **different codes on purpose**: they are reached on different conditions
+and clear different state, and one code for the pair would let a port that took the wrong one report
+the right answer.
+
+**EVERY CONDITION IS A WORD OR A BYTE IN THE IMAGE, which is the whole mechanism.** No input device
+is needed: a debugger poke at the right instant is the drive. The instant is `capture_the_frame`'s
+SECOND arrival — the shim calls it once per anchor frame and nowhere else, which is the anchor M5
+already photographs on — so the poke lands at the END of a known frame and the ending fires at the
+TOP of the next one, where `game_key_actions` reads. Measured, all three: `frames_run` = 2, and
+`loop_ending` 1, 2 and 3.
+
+**WHY THE FRAME BUILD AND NOT THE PLAY BUILD,** which is the build a person reaches an ending on. A
+poke needs the image's run-time address, and the only honest source of it is the binary's own report
+— `M2.BIN`'s `image_base` — which is written when the run ends. The play build writes no record until
+an ending fires, so there is nothing to aim the first poke at; the frame build reports `image_base`
+AND `capture_pc` about itself on an undriven boot, and the driven boot re-reports both and must
+agree. **The exit path is not the play build's difference:** `run_frames`' third exit, `teardown`,
+`Pterm` and both records are the same code in both, and `SMOKE_PLAY` changes the frame count and the
+watchdog and nothing else. A first attempt to derive `image_base` from the `.PRG` header instead —
+basepage + `$100` + text + data, aligned up — was *measured wrong* and abandoned: it gives `0x2b100`
+where the binary reported `0x4a600` on the build that measurement was taken on, because
+`image_storage` is not the first object the linker puts
+in BSS. Layout-dependent until proven otherwise, and it was not.
+
+**THE NEGATIVE CONTROL IS THE FIRST PASS, not a run bolted on.** The undriven boot that measures
+those two numbers is required to report `loop_ending` = `WB_KEY_ACTIONS_RETURNED` over all fifty-two
+frames, so the poke is shown to be what ends the loop rather than assumed to be. The three pokes then
+produce three DIFFERENT codes, which no single accident produces.
+
+**AND ONE ARM NEEDED A SECOND CONTROL, because its poke sets its condition TWICE OVER.** `$556` is
+`tst.w $604` and then `cmpi.b #$31,$879`, so the level-skip drive — which sets both — shows the arm
+is reachable without showing that the cheat word is what gates it: a port that had dropped the word
+test entirely would report `WB_KEY_ACTIONS_LEVEL_SKIP` just the same. A fourth run therefore pokes
+**N alone**, with `WB_KEY_SEQUENCE_MATCHED` left clear, and requires the loop NOT to end. Measured:
+`loop_ending` = 0 over all fifty-two frames, against 2 with the word set. The two runs are one
+differential over one poke — and the control's inputs are DERIVED from the level-skip arm's own poke
+set minus the word (`CHEAT_PREMISE_POKES`), because a control whose inputs are a second copy of the
+thing it controls is one that stops controlling it the day the copy drifts.
+
+#### The `Pterm` hand-back, asserted from outside the program
+
+This is Joust's M3 discipline: run past the program's own exit and assert the machine's health there,
+because an incomplete hand-back is invisible until TOS is running on with whatever the shim left
+hooked. That project's measured version was a handler chaining commands out of memory GEMDOS had
+taken back — a double bus error a second after the program had gone.
+
+The record already carries the hand-back **from the inside** (`RB_VBL_VECTOR_RESTORED`,
+`RB_ACIA_VECTOR_RESTORED` and the rest of the teardown bits, each a read-back of the store it
+follows). M3 adds the outside, at two moments **chained off the program's own `Pterm`** — one vblank
+after it and twenty after that:
+
+- **Both vectors have stopped being the shim's.** Photographed at the poke, while the reconstruction
+  owns the machine, and read again in the tail. Compared ACROSS THE EXIT rather than against a value
+  written down here, because what TOS had before the program ran is TOS's business and differs by
+  ROM — which the two ROMs show: `$70` goes `0x126b4`→`0xfc06c0` and `$118` `0x126c4`→`0xfc3aec`
+  under TOS 1.04, and `0x1b136`→`0xe0086e` / `0x1b146`→`0xe00e64` under EmuTOS. Four different
+  numbers, one assertion.
+- **TOS's own frame clock is still advancing.** `_frclock` (`$466`) is incremented by TOS's
+  vertical-blank handler and by nothing else, so two readings nineteen vblanks apart that differ by
+  nineteen say the vector went back to a handler that RUNS. One reading could not: a vector can point
+  at ROM and still be reached by nobody. (`Pterm`+1 and `Pterm`+20 — the gap is one less than the
+  second reading's offset, and `M3_TAIL_GAP` derives it so the printed label cannot drift from it.)
+- **And the ordering is STRUCTURAL, not a margin.** `wonderboy_os.s` exits with `clr.w -(%sp) /
+  trap #1`, so a breakpoint on GEMDOS function 0 IS the exit, and the two readings are armed from
+  inside its action file. That matters because Hatari's condition parser takes a bare variable or a
+  bare number and nothing else — `VBL+300` is rejected at the `+` — so an absolute count was the
+  first design, and **the hand-back control killed it**: with the readings at 8000/8500 of 9000,
+  `m3fault` failed intermittently on TOS 1.04 with the ending row red, `loop_ending` = 0 over
+  fifty-two frames and every hand-back row GREEN. The control's own point, one step further — the
+  still-hooked vector took the machine down, **TOS reset**, which restores the vectors and restarts
+  the frame clock, and `--auto` re-ran `WB.PRG` with the `:once` poke breakpoint long spent, so the
+  undriven second run overwrote the record. Moving the count nearer the exit did not help, because
+  the crash and the reset happen within tens of vblanks of `Pterm`. Anchoring on the exit does.
+  `--run-vbls` is unchanged either way, so the machine-health scan still covers the long tail; the
+  *readings* are what moved. **And the RECORD had to move with them**: the reboot's second run
+  overwrites `M2.BIN` and `STATS.BIN` on the drive, so the same `Pterm` action file renames both
+  aside before anything can restart. Within `disk/`, because Hatari's `rename` is `rename(2)` and
+  refuses a cross-device move — measured, into a scratch directory on another volume.
+
+**AND THE CONTROL SHOWS THE FAILURE IS SILENT.** `build.sh m3fault` suppresses the two vector stores
+in `teardown` and nothing else. Measured: all three endings still fire and report their own codes,
+the read-backs still RUN, and every hand-back surface reddens — `$70`/`$118` are still `0x126b4`/
+`0x126c4` one vblank after `Pterm`, `_frclock` is frozen at `0x717` (+0 over twenty vblanks where a
+handed-back machine gives +19), and `readback_failed` names both restore bits. What it also shows is
+*how* this fails: **at the moment it matters, Hatari has exited 0 and its log has no fault in it at
+all.** A dead TOS looks exactly like a healthy one to an exit status and a crash scan; the only
+things that see it are the two vectors and the clock. (What comes *later* in that run is a second
+lesson and it is in the ordering bullet above: the unhooked handler eventually runs on memory GEMDOS
+has taken back, and on TOS 1.04 that took the machine down and REBOOTED it, which restores the
+vectors and restarts the clock. The control's own evidence has a shelf life of a few dozen vblanks.)
+
+#### The one line no headless mode executes
+
+`atari/run.sh`'s `exec` is not covered by anything above: every mode here boots Hatari through
+`run_hatari`, and the runner builds a different command — a screen, sound, a joystick, no
+fast-forward. **`--sound on` sat in that line through thirteen green modes**, and Hatari rejects it
+at parse time (`--sound` takes a FREQUENCY: `off`, or 6000-50066). The runner died at argument
+parsing while every check in this file stayed green.
+
+`run.sh parsecheck` builds the argument array ONCE — the same array `exec` takes, because two
+spellings is a check that stops covering the line it is named for — prints it, and hands it to Hatari
+with `--help` appended. The ordering is measured rather than assumed: Hatari parses left to right and
+`--help` prints the usage and stops WHERE IT IS REACHED, so a bad value *before* it reports the error
+and a bad value *after* it is never seen. A clean parse is therefore "the usage banner, and no line
+beginning `Error`" — the exit status says nothing, because `--help` itself exits 1. `smoke.py runsh`
+runs that and then adds the control that makes it a check: the SAME argument list with `--sound on`
+put back must be refused, which is the defect that shipped, shown dying.
+
 ## The bugs found on target
 
-Four, on the first three runs, and every one of them is the shape `docs/on-target-execution.md`
-warns about: real behaviour in code the differential harness cannot execute at all.
+Six, and every one of them is the shape `docs/on-target-execution.md` warns about: real behaviour in
+code the differential harness cannot execute at all. The first four came off the first three runs;
+the last two came off M3, from the two pieces nothing had ever executed — the exit path and the
+runner's own command line.
 
 **1. A non-volatile image read in a busy-wait — in the SHIM, one file over from the comment about
 it.** `await_ikbd_reply` spun on `game_image[WB_KEY_LAST_SCANCODE]`. `game_image` is a plain array to
@@ -805,6 +977,23 @@ than the harness's own limit is not a watchdog.*
 **4. `--run-vbls` short enough to precede the desktop.** At 900 the program was never `Pexec`'d at
 all — TOS 1.04 had not finished booting — and the failure looked identical to a crash. *Lesson: the
 first thing to check when nothing ran is whether anything could have.*
+
+**5. THE EXIT HUNG FOR EVER ON EVERY KEY-DRIVEN ENDING** — i.e. on precisely the two ways a person
+leaves the play build. `pin_sched_wait8` did not clear `WB_KEY_LAST_SCANCODE` before sending its
+first reset, and `await_ikbd_reply` returns on any non-zero byte, so the scancode the frame loop had
+just exited on was taken for the controller's acknowledge. The uncapped `sched_wait8` under it was
+then aimed at a byte the IKBD will never send: no hand-back, no `Pterm`, no record, nothing to read.
+It was found by M3's first key-driven ending and **isolated rather than inferred** — poking the
+scancode alone, with no ending driven and the loop running all fifty-two frames, kills the run
+identically. §8 has the fix, which also closes the sibling case (a key arriving *inside* the reply
+window, which is the normal interactive path) by requiring two resets to answer the same byte.
+*Lesson: a milestone that only reports its surfaces is not driving them. The exit path had been
+compiled into thirteen green modes and executed by exactly none of them.*
+
+**6. The runner's `exec` line did not parse.** `--sound on`; Hatari's `--sound` takes a frequency.
+Thirteen green headless modes and a launcher that died at argument parsing, because no check ran the
+one command that is not `run_hatari`'s. §12 has the probe and its control. *Lesson: a command with no
+check is not covered by the checks next to it, however many of those are green.*
 
 ## Known gaps
 
@@ -856,11 +1045,26 @@ first thing to check when nothing ran is whether anything could have.*
   is what makes the comparison exact; a *whole-memory* differential against a fresh boot is not
   available on those terms and is not attempted.
 - **The scancode path is pinned by a status byte, not by a key.** `sched_wait8` really spins and a
-  real interrupt really ends it, but the byte is the IKBD's reset acknowledge; a headless Hatari has
-  no keyboard, so the *game's* two waits (`$60e`, `$64e`, on scancode `$19`) have not been driven.
-- **The joystick path is installed and unexercised.** The handler's `$fe`/`$ff` arms have never run:
-  the IKBD sends joystick reports only in event-reporting mode with a stick that moves, and there is
-  no stick here. The scancode arm is the one M1 drives.
+  real interrupt really ends it, but the byte is the IKBD's reset acknowledge, so the *game's* two
+  waits (`$60e`, `$64e`, on scancode `$19`) have not been driven. **The reason for that is no longer
+  "a headless Hatari has no keyboard" — that is measured false.** Hatari 2.6.1's `--control-socket`
+  takes `hatari-event keydown/keyup <ST scancode>`, and the injected code really does arrive in
+  `WB_KEY_LAST_SCANCODE` through the real ACIA interrupt: scancodes `$50`, `$29` and `$4b` were read
+  back out of the running image, with the shim's `ikbd_bytes` rising from 3 to 10. What is missing is
+  the SYNCHRONISATION — the socket is driven on wall-clock time while every anchor in this directory
+  is a program instant — and one unexplained detail: `keydown 1` (ESC) delivered `$02` where the
+  other three delivered their argument exactly, so the one scancode an ending needs is the one that
+  did not arrive. **Registered.** Trigger: any attempt to drive an ending or a key wait through a
+  real interrupt rather than a poke. Home: §12, and a handshake that arms the injection from the
+  poke breakpoint instead of from a `sleep`.
+- **The joystick path is installed and unexercised, and now that is a MEASUREMENT.** The handler's
+  `$fe`/`$ff` arms have never run. The injection above presses a KEY at the emulated IKBD, while
+  `--joy1 keys` maps HOST SDL key events onto the emulated stick, so the two never meet:
+  `WB_JOY0_STATE` and `WB_JOY1_STATE` were read out of the running image as `$00` under all four
+  injected scancodes, including both arrow keys (`$4b` left, `$50` down). So the arms stay **partial
+  by construction** with `bash atari/run.sh` as the discharging mechanism and a person at the cursor
+  keys as the only thing that runs them — but the boundary is where a measurement puts it rather than
+  where an assumption did.
 - **`../src/sound.c:786`'s refusal has no on-target story.** The original reads a word of the sound
   handlers' own instruction stream and `jmp`s through it — inexpressible in C. Off target it is a
   refusal; on target `-DOS_NO_REFUSAL_TALLY` turns it into "return the sentinel", which is the

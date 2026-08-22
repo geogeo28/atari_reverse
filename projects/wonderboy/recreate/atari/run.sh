@@ -3,6 +3,14 @@
 #
 #   run.sh              -> disk/WB.PRG, the PLAY build (built for you if it is missing)
 #   run.sh rebuild      -> force `build.sh play` first
+#   run.sh parsecheck   -> print the exact command below and PARSE it, without opening a machine
+#
+# THE EXEC LINE AT THE BOTTOM IS THE ONE COMMAND NO HEADLESS CHECK RUNS, and that cost a person a
+# broken launch: `--sound on` sat there through thirteen green smoke modes and is rejected by
+# Hatari's own parser, which takes a FREQUENCY (off, or 6000-50066). `parsecheck` is the cheap fix —
+# it builds the identical argument list and hands it to Hatari with `--help` appended, which parses
+# every option before it and then stops without booting anything. `smoke.py runsh` is that check with
+# a control on top: it re-runs the same line with the rejected value put back and requires a refusal.
 #
 # CONTROLS. The game reads joystick 1 and nothing else (`WB_JOY1_STATE`; the IKBD `$ff` report
 # header, wonderboy_main.c's ACIA handler), so this launches Hatari with `--joy1 keys`:
@@ -36,14 +44,17 @@
 #
 #   IT TAKES THE MACHINE — real vectors at $70 and $118, as the original does — and normally never
 #   gives it back, so Ctrl-Q is the exit. NORMALLY: the frame loop kept its third way out, so one of
-#   game_key_actions' three endings really does leave it and hand the machine back. Reaching one is
-#   M3's owed milestone and this build is the first thing that can drive it at all; what happens
-#   after the hand-back is not asserted by anything.
+#   game_key_actions' three endings really does leave it and hand the machine back. What happens
+#   when it does IS asserted, on the frame build that shares this build's whole exit path: all three
+#   endings driven and the hand-back read back from outside the program (smoke.py m3, README §12).
+#   Driving them is also what found the hang that used to follow any key-driven exit (README §8).
 #
-#   WHAT IS NOT ASSERTED BY ANYTHING, and cannot be from a script: that the stick MOVES HIM. The
-#   ACIA handler's two joystick arms have never executed under any headless check — a headless run
-#   cannot press a stick — and this runner is the mechanism that discharges them. README.md's M3
-#   joystick row says so in those terms.
+#   WHAT IS NOT ASSERTED BY ANYTHING: that the stick MOVES HIM. The ACIA handler's two joystick arms
+#   have never executed under any headless check, and that boundary is MEASURED rather than assumed
+#   — Hatari's --control-socket can inject a KEY at the emulated IKBD (and the code really does reach
+#   WB_KEY_LAST_SCANCODE), but --joy1 keys maps HOST key events onto the stick, so the two never meet
+#   and WB_JOY1_STATE stays $00. This runner and a person at the cursor keys are what run those arms.
+#   README.md's M3 joystick row has the readings.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -51,7 +62,8 @@ BUILD="$HERE/build"
 DISK="$HERE/disk"
 PLAY_PRG="$BUILD/WB-play.PRG"
 
-if [ "${1:-}" = "rebuild" ] || [ ! -f "$PLAY_PRG" ]; then
+MODE="${1:-}"
+if [ "$MODE" = "rebuild" ] || [ ! -f "$PLAY_PRG" ]; then
   bash "$HERE/build.sh" play
 fi
 
@@ -92,9 +104,40 @@ EOF
 [ -n "${ROM:-}" ] && [ -n "${MEMSIZE:-}" ] \
   || { echo "staging failed — run: bash $HERE/build.sh play"; exit 1; }
 [ "$ROM" = "-" ] && set -- || set -- --tos "$ROM"
-echo "-- $AUTOBOOT from the play build; TOS=$ROM; ${MEMSIZE}MB $MONITOR; joystick 1 on the cursor keys"
 
-# Sound ON and no --fast-forward, which is the whole difference from smoke.py's invocation: this one
-# is for a person.
-exec hatari "$@" --sound on --confirm-quit off --memsize "$MEMSIZE" --monitor "$MONITOR" \
-     --tos-res low --joy1 keys --harddrive "$DISK" --auto "$AUTOBOOT"
+# THE COMMAND, BUILT ONCE INTO AN ARRAY so that `parsecheck` can print and probe the very arguments
+# `exec` would take. Two spellings of it — one to run and one to check — is a check that stops
+# covering the line it is named for, which is the whole failure this mode exists to catch.
+#
+# Sound ON (Hatari's --sound takes a FREQUENCY, off/6000-50066 — "on" is rejected at parse time) and
+# no --fast-forward, which is the whole difference from smoke.py's invocation: this one is for a
+# person.
+ARGV=( "$@" --sound 44100 --confirm-quit off --memsize "$MEMSIZE" --monitor "$MONITOR" \
+       --tos-res low --joy1 keys --harddrive "$DISK" --auto "$AUTOBOOT" )
+
+if [ "$MODE" = "parsecheck" ]; then
+  # The list first, so smoke.py's control can substitute into the REAL arguments rather than into a
+  # copy of them; then the probe. `--help` prints the usage and stops where it is reached, so a clean
+  # parse is "the usage banner, and no line beginning Error". Its own exit status is 1 either way,
+  # which is why the verdict is taken from the output and this script's status is set below.
+  echo "RUNSH-ARGV-BEGIN"
+  printf '%s\n' "${ARGV[@]}"
+  echo "RUNSH-ARGV-END"
+  PARSED="$(hatari "${ARGV[@]}" --help 2>&1 || true)"
+  printf '%s\n' "$PARSED"
+  # `if`, NOT `grep -q ... && { ... }`: under `set -e` a trailing `&&` list whose left side fails
+  # takes the whole script's exit status with it, so the clean-parse path would have exited 1.
+  if printf '%s\n' "$PARSED" | grep -q '^Error'; then
+    echo "PARSE FAILED — Hatari rejected an option in the line above"
+    exit 1
+  fi
+  if ! printf '%s\n' "$PARSED" | grep -q '^Usage:'; then
+    echo "no usage banner — --help never ran, so nothing above was proved to parse"
+    exit 1
+  fi
+  echo "OK: hatari accepts every option run.sh would launch with"
+  exit 0
+fi
+
+echo "-- $AUTOBOOT from the play build; TOS=$ROM; ${MEMSIZE}MB $MONITOR; joystick 1 on the cursor keys"
+exec hatari "${ARGV[@]}"

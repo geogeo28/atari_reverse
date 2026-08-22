@@ -13716,3 +13716,192 @@ string through eight signatures (now nine — M6 added `shipped_timeline`), and 
 artefacts re-read per anchor. **M3's EXITS remain the one on-target milestone still owed**: the three
 `game_key_actions` endings that `jmp` into the boot chain, with the `Pterm` hand-back asserted
 healthy. This phase did not reach them.
+
+## Batch 43 phase F — M3, THE LADDER'S LAST RUNG: the three exits driven, and the hand-back that hung
+
+M1 proved the machine drives the reconstruction; M2 and M5 compared what it draws and what the
+machine holds while it runs; M6 compared the ORDER things reached the hardware. **All four watch a
+program in flight.** M3 is about the two moments at the ends of it — the frame loop being LEFT, and
+the machine being given back — and it is the rung the arc has owed since phase A.
+
+**Sixteen** on-target modes are now green on **both ROMs** (TOS 1.04 and Hatari's bundled EmuTOS):
+`m1`, `mono`, `novbl`, `m2`, `m2fault`, `m5`, `m5skew`, `m5fault`, `m5flash`, `m6`, `m6rearm`,
+`m6flash`, **`m3`**, **`m3fault`**, `play`, **`runsh`**. Suite **6,140**, kit **392**,
+`tools/test_hw_portability` **56** — unchanged, because `src/` is byte-identical to phase E's; the
+whole diff is `atari/` plus the two docs. `atari/README.md` §12 owns the argument.
+
+### What landed
+
+* **ALL THREE OF `game_key_actions`' ENDINGS ARE NOW MADE TO HAPPEN ON A 68000**, one run each, and
+  each reports its own code: `$54e`'s round-end reload (`loop_ending` 1, the original's `jmp $e5ba`),
+  `$56c`'s cheat level skip (2, the same target reached on a different condition) and `$58c`'s ESC
+  quit (3, the music fade then `jmp $e494`). Every arm's condition is a word or a byte in the image,
+  so the drive is a debugger poke at **`capture_the_frame`'s second arrival** — a program instant,
+  the same anchor M5 photographs on — and the ending fires at the top of the next frame where
+  `game_key_actions` reads. Measured: `frames_run` = 2 on all three.
+* **THE NEGATIVE CONTROL IS EACH RUN'S OWN FIRST PASS**, not a run bolted on. The undriven boot that
+  measures `image_base` and `capture_pc` — the two numbers every poke is aimed with — must report
+  `loop_ending` = `WB_KEY_ACTIONS_RETURNED` over all fifty-two frames. So the poke is *shown* to be
+  what ends the loop, and the three pokes produce three different codes, which no single accident
+  does. The driven boot re-reports both numbers and must agree with the undriven one.
+* **AND A FOURTH RUN, because one arm's poke sets its condition twice over.** `$556` is `tst.w $604`
+  and then `cmpi.b #$31,$879`; the level-skip drive sets both, so it shows the arm is REACHABLE
+  without showing that the cheat word is what GATES it — a port that had dropped the word test would
+  report `WB_KEY_ACTIONS_LEVEL_SKIP` just the same. The cheat-word control pokes **N alone** with
+  `WB_KEY_SEQUENCE_MATCHED` left clear and requires the loop not to end: measured, `loop_ending` = 0
+  over all fifty-two frames, against 2 with the word set. One differential over one poke, and its
+  inputs are DERIVED from the arm's own poke set minus the word rather than written out again.
+* **THE `Pterm` HAND-BACK IS ASSERTED FROM OUTSIDE THE PROGRAM** — Joust's M3 discipline. Both
+  installed vectors are photographed while the shim owns the machine and read again after the exit
+  (`$70` `0x126b4`→`0xfc06c0`, `$118` `0x126c4`→`0xfc3aec` on TOS 1.04; `0x1b136`→`0xe0086e` and
+  `0x1b146`→`0xe00e64` on EmuTOS — four numbers, one assertion, because the comparison is ACROSS the
+  exit rather than against a constant). And **TOS's own frame clock `_frclock` is still advancing**,
+  +19 over twenty vblanks, which is the liveness half: a vector handed back to a handler nobody runs
+  leaves it frozen.
+* **A HAND-BACK CONTROL THAT SHOWS THE FAILURE IS SILENT.** `build.sh m3fault` is the frame build
+  whose `teardown` never stores the two vectors back — `novbl`'s shape at the other end of the run,
+  one store each suppressed and nothing else. Measured: all three endings still fire and report
+  their codes, the read-backs still RUN, and every hand-back surface reddens (`$70`/`$118` unchanged,
+  `_frclock` +0, `readback_failed` naming both restore bits) — while **Hatari exits 0 and its log has
+  no fault in it.** A dead TOS is indistinguishable from a healthy one to an exit status and a crash
+  scan. Nothing but the vectors and the clock sees it.
+
+### THE DEFECT: an uncapped wait aimed at a key, on the one path nothing had ever executed
+
+The very first key-driven ending produced **no record at all** — no `STATS.BIN`, no `M2.BIN`, the
+symptom of a crash. It is not a crash; it is a hang, and it was in the shim's exit:
+
+* `pin_sched_wait8` sent an IKBD reset and called `await_ikbd_reply`, which returns as soon as
+  `WB_KEY_LAST_SCANCODE` is not `$00`. **The byte was not cleared first**, so the scancode the frame
+  loop had just exited on was taken for the controller's acknowledge — and the uncapped `sched_wait8`
+  under it was then aimed at a byte the IKBD will never send.
+* **ISOLATED RATHER THAN INFERRED.** Poking the scancode ALONE, with no ending driven and the loop
+  running all fifty-two frames, kills the run identically. So the hang is the exit path's, not the
+  ending's, and it is reachable by any key at all.
+* **AND ITS SIBLING IS THE NORMAL INTERACTIVE PATH.** A key arriving *during* the ~300 ms reset
+  window is taken the same way, and in a play session that is not a corner case: the player's ESC or
+  N is what ENDS the loop, and the release of that same key lands inside the window. So the reply is
+  now asked for **twice** and the pin is taken only if two resets answer the same byte — a press and
+  a release carry different codes and neither repeats. If they disagree the pin is simply not taken
+  and `RB_IKBD_REPLIED`/`sched_wait_returned` say so, which is a measurement the run survives.
+* **THE LESSON IS THE PHASE'S.** That code was compiled into thirteen green on-target modes and
+  executed by none of them, because every mode left the loop by the watchdog's door. *A milestone
+  that only reports its surfaces is not driving them.*
+
+### The control that could not be trusted at a fixed vblank
+
+The tail readings were first taken at absolute vblanks 8000 and 8500 of 9000 — as deep in the tail as
+the run allows. `m3fault` then failed **intermittently** on TOS 1.04 with a verdict that read like
+the control not working: the ending row red, `loop_ending` = 0 over fifty-two frames, and every
+hand-back row GREEN.
+
+It is the control's own point, one step further. The still-hooked level-4 vector runs on memory
+GEMDOS has taken back; on that ROM it took the machine down; **TOS RESET** — which restores the
+vectors and restarts the frame clock — and `--auto` then re-ran `WB.PRG` with the `:once` poke
+breakpoint long spent, so the undriven second run overwrote the record. **A reset restores exactly
+what the control asserts must stay broken.** Moving the readings nearer the exit (3000/3500) did not
+help: the crash and the reset happen within tens of vblanks of `Pterm`.
+
+The fix is to stop timing them at all. `wonderboy_os.s` exits with `clr.w -(%sp) / trap #1`, so a
+breakpoint on **GEMDOS function 0** *is* the exit, and the two readings are armed from inside its
+action file — the next vblank, and twenty after that (`b VBL > VBL :20`, since the condition is true
+at every vblank from now on, so the Nth arrival is N vblanks later). The ordering against the exit
+stops being a margin to measure and becomes structural. `--run-vbls` is unchanged, so the
+machine-health scan still covers the whole long tail.
+
+**AND THAT WAS HALF THE FIX, WHICH THE NEXT SWEEP SAID SO.** The readings were then right and the
+control STILL failed intermittently, because the reboot's second run also overwrites `M2.BIN` and
+`STATS.BIN` on the drive — so the rows read at `Pterm`+1 were the driven run's while the RECORD
+beside them was the undriven one's. The same action file now renames both records aside at the exit,
+before anything can restart. Within `disk/`: Hatari's `rename` is `rename(2)` and answers a
+cross-device move with `ERROR: Cross-device link`, measured on the first attempt to park them in a
+scratch directory on another volume.
+
+**AND THE RESCUE HAD TO COVER PASS ONE TOO**, which the independent gate caught before it could bite:
+pass one had no debugger script at all and read both records off the live drive, and `m3fault`'s
+pass-one machine is left hooked exactly as its driven runs are — so the same crash-reset-rerun could
+have rewritten the very `image_base` and `capture_pc` every poke is aimed with. Pass one now carries
+the one breakpoint that rescues them (`m3_plain_script`), and the rename list is one constant both
+scripts build from. Green `m3fault` runs on the ROM that reboots: four before the gate, two after.
+**Registered**: the control's evidence has a shelf life of a few dozen vblanks, and anything that
+moves the readings later, or reads a record off the live drive, re-opens this.
+
+### The one command no headless mode executes
+
+The user ran `atari/run.sh` and it died at Hatari's argument parser: **`--sound on`**, where Hatari
+takes a frequency (`off`, or 6000-50066). That line had sat there through thirteen green modes,
+because every check in `smoke.py` boots through `run_hatari` and the runner builds a different
+command — a screen, sound, a joystick, no fast-forward.
+
+`run.sh` now builds its argument list **once** into an array (two spellings is a check that stops
+covering the line it is named for) and `run.sh parsecheck` prints it and hands it to Hatari with
+`--help` appended. The ordering is measured, not assumed: Hatari parses left to right and `--help`
+prints the usage and stops WHERE IT IS REACHED, so a bad value before it reports the error and a bad
+value after it is never seen — a clean parse is "the usage banner, and no line beginning `Error`",
+and the exit status says nothing because `--help` itself exits 1. `smoke.py runsh` runs that and adds
+the control that makes it a check: **the same argument list with `--sound on` put back must be
+refused.** The defect that shipped, shown dying.
+
+### The joystick arms: the boundary MEASURED, and the claim that was false
+
+The M3 joystick row stays **partial by construction**, but for a reason that is now measured rather
+than assumed — and half of what the row used to say is false and is retracted here.
+
+Hatari 2.6.1 **does** have a headless input path: `--control-socket <path>` (Hatari connects to a
+socket you listen on) plus `hatari-event keydown/keyup <ST scancode>`. It works, on this machine, on
+this build: injected scancodes `$50`, `$29` and `$4b` were read back out of the running image at
+`WB_KEY_LAST_SCANCODE`, and the shim's own `ikbd_bytes` counter rose from 3 to 10. **"A headless run
+cannot press a key" is refuted.**
+
+What it cannot do is press the STICK. The event injects at the emulated IKBD, while `--joy1 keys`
+maps HOST SDL key events onto the emulated joystick, so the two never meet: `WB_JOY0_STATE` and
+`WB_JOY1_STATE` were read out of the running image as `$00` under all four injected scancodes,
+including both arrow keys. The `$fe`/`$ff` arms are unexecuted for a measured reason.
+
+**Two things are REGISTERED out of this, with triggers and homes.** (1) Driving an ending or a key
+wait through a REAL interrupt rather than a poke needs the injection synchronised to a program
+instant — the socket is driven on wall-clock time while every anchor here is a breakpoint — and it
+needs one unexplained detail settled: `keydown 1` (ESC) delivered `$02` where the other three
+delivered their argument exactly, so the one scancode an ending needs is the one that did not arrive.
+Trigger: any attempt to replace a poke with a keypress. Home: `atari/README.md` §12 and the
+"Known gaps" entry. (2) The `$fe`/`$ff` arms themselves: trigger, any change to the shim's ACIA
+handler; home, `bash atari/run.sh` and a person at the cursor keys.
+
+### Also this phase
+
+* **`image_base` moved and every figure quoting it was corrected.** The exit-path fix lengthened the
+  `.PRG`, so the frame builds now land at `0x4a700` under TOS 1.04 and `0x53100` under EmuTOS (M1's
+  build: `0x2ae00` and `0x33900`). Six sites in `atari/README.md` and one in `smoke.py` carried the
+  old pair; §3's carry argument is unaffected in substance — `0x4a700` still carries into the high
+  byte and `0x53100` still does not — but a stale number in a worked example is a number a reader
+  will check. **The earlier entries in THIS file keep their own figures** (`0x4a600`, `0x53000`,
+  `0x49d00` in the phase A-E sections): they are dated readings of the binaries those phases built,
+  and correcting them would turn a log into a claim about today. The paragraph now says outright that all four are readings that move with the `.PRG`'s
+  length as well as with the ROM.
+* **A derivation measured wrong and abandoned.** The first design computed `image_base` from the
+  `.PRG` header — basepage + `$100` + text + data, aligned up — which gives `0x2b100` where the
+  binary reports `0x4a700`, because `image_storage` is not the first object the linker puts in BSS.
+  Layout-dependent until proven otherwise, and it was not; the two-pass measurement replaced it.
+* **Three breakpoint spellings now live in `original.py`,** beside the two that were there:
+  `vbl_breakpoint` (absolute count or "the next vblank", with a hit count that means "N vblanks
+  later") and `gemdos_breakpoint`. `picture_command`'s inline `b VBL > VBL` was routed through the
+  first so there is one spelling, and the parser's limit is recorded where it bit: it takes a bare
+  variable or a bare number and **nothing else** — `VBL+300` is rejected at the `+`.
+* **The two read-back row names are constants** (`RB_RAN_ROW`, `RB_PASSED_ROW`). They were already
+  structural keys — `MACHINE_DRIVEN` selects the second by name for `novbl` — and M3's control needed
+  the same selection, so a second hand-written copy of the string would have been one that quietly
+  stops matching after a reword.
+
+### CARRIED, unchanged
+
+Everything batch 43 phase E carries, minus M3's exits, which this phase discharges. **The on-target
+ladder is walked**: M1, M2, M3, M5 and M6 all green on both ROMs, with a control apiece. What remains
+for the project is not a rung: it is the **boot chain outside the spine** (`atari/README.md` §2 —
+`game_main_loop` is still `jmp`ed into with the ORIGINAL's post-boot RAM staged under it, so there is
+no title screen, no credits, no stage loader and no second stage), the joystick arms above, and the
+standing queue — the sibling seam routing for guarded sweeps, the ~400 raw computed image accesses in
+`src/`, the `$fffc00` hole between `bus.h` and the shim, the sound module's exit-X, the flute arm,
+`leaf.py`'s encoder hoist, the tier partition, `scene_run_effect`'s fix, `$1ab4`, `bus.h`→kit,
+`src/map.c`'s unguarded `WB_ACTOR_X` write, which-monster-is-which, Joust's deep-anchor render drift,
+the 2,218 unpinned `(d16,An)` bases, `prefix` threaded as a bare string through nine signatures, and
+the shipped side's artefacts re-read per anchor.

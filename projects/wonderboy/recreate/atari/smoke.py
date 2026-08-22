@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""M1, M2, M5 and M6 — reconstructed Wonder Boy code on a 68000, asserted.
+"""M1, M2, M3, M5 and M6 — reconstructed Wonder Boy code on a 68000, asserted.
 
     bash atari/build.sh m1    && python3 atari/smoke.py m1
     bash atari/build.sh novbl && python3 atari/smoke.py novbl     # M1's negative control
@@ -23,8 +23,21 @@
     python3 atari/original.py flashtimeline                         # ...and the flash run's stream
     bash atari/build.sh m5flash && python3 atari/smoke.py m6flash   # ...flip_screen's last PAIR
 
+    bash atari/build.sh m2      && python3 atari/smoke.py m3        # M3: THE THREE EXITS, DRIVEN
+    bash atari/build.sh m3fault && python3 atari/smoke.py m3fault   # ...its HAND-BACK control
+
     bash atari/build.sh play  && python3 atari/smoke.py play        # the PLAY build, booted headless
+    python3 atari/smoke.py runsh                                    # ...and the line run.sh execs
     bash atari/run.sh                                               # ...and played, with a screen
+
+WHAT M3 CLAIMS: `game_key_actions` has three endings that are not returns — they pop the frame loop's
+return address and `jmp` into the unported boot chain — and all three are MADE TO HAPPEN on the
+machine, one run each, each reporting its own `loop_ending`. Then the program exits, and the machine
+is inspected from OUTSIDE it, deep in the tail: both installed vectors have stopped being the shim's
+and TOS's own frame clock is still advancing. The negative control is each run's own first pass — the
+undriven boot that measures where the image is must report that no ending fired and every frame ran —
+and `m3fault` is the build whose `teardown` never gives the two vectors back, which must redden every
+hand-back row and no other.
 
 WHAT M6 CLAIMS: over the same fifty-two frames, the ORDER in which writes reached the machine — not
 where they left it. The reconstruction's screen-base publications are the shipped binary's, flip for
@@ -80,6 +93,7 @@ Running past the program's own exit is not tidiness: WB.PRG installs two excepti
 supervisor, and an incomplete hand-back is only visible AFTER Pterm, when TOS is running on with
 whatever the shim left hooked.
 """
+import collections
 import json
 import os
 import re
@@ -106,12 +120,13 @@ OUT = HERE / "out"
 MEMSIZE_MB = 4
 # TOS's OWN BOOT IS THOUSANDS OF VBLANKS, and this is the measurement rather than a guess: at 900
 # the program was never Pexec'd at all — the desktop had not appeared yet — and the mode reported
-# "no STATS.BIN" for a build that was fine. 6000 puts the boot, the run, the two IKBD resets
-# (~300 ms each) and a long tail after Pterm inside one run, at ~3 s of wall clock under
-# --fast-forward. The tail is not slack: an incomplete hand-back only shows up after the program has
-# gone, which is why every mode here runs to the END rather than stopping at the dump.
+# "no STATS.BIN" for a build that was fine. 6000 puts the boot, the run, the three IKBD resets
+# (~300 ms each — `pin_sched_wait8` asks for the acknowledge twice, see wonderboy_main.c) and a long
+# tail after Pterm inside one run, at ~3 s of wall clock under --fast-forward. The tail is not slack:
+# an incomplete hand-back only shows up after the program has gone, which is why every mode here runs
+# to the END rather than stopping at the dump.
 RUN_VBLS = 6000
-# M2 runs 52 frames of the reconstruction on top of the same TOS boot. Measured: 583 vblanks for the
+# M2 runs 52 frames of the reconstruction on top of the same TOS boot. Measured: 588 vblanks for the
 # frame loop, so this is the M1 run plus that, plus the same tail. The frame loop has its OWN bound
 # (wonderboy_main.c's M2_VBL_BUDGET, 2000) which is deliberately well inside this one — a watchdog
 # longer than the harness's own limit is not a watchdog, and reporting "no record" says nothing
@@ -238,7 +253,8 @@ def stage_drive(prg):
     # EVERY output the program can write is deleted first. A stale FRAME.BIN from the previous build
     # is the shape of failure that PASSES: the run crashes, the comparison reads yesterday's picture,
     # and the mode reports a match.
-    for stale in (STATS_FILE, M2_FILE, M2_FRAME_FILE, M2_PENS_FILE):
+    for stale in (STATS_FILE, M2_FILE, M2_FRAME_FILE, M2_PENS_FILE,
+                  M3_RESCUED_M2, M3_RESCUED_STATS):
         (DISK / stale).unlink(missing_ok=True)
     (DISK / DRIVE_PRG).write_bytes(Path(prg).read_bytes())
     image = prg.with_suffix(".IMG")
@@ -326,19 +342,22 @@ def check_machine_health(status, log, assert_status=True):
     return problems
 
 
-def read_stats():
-    path = DISK / STATS_FILE
+def read_stats(name=STATS_FILE):
+    """`name` is a parameter for M3's sake: a run whose machine is deliberately left broken can
+    REBOOT and write a second record over the first, so M3 has the debugger move both records aside
+    at the exit and reads them under those names."""
+    path = DISK / name
     if not path.exists():
-        return None, "no STATS.BIN — the program never reached its own dump"
+        return None, f"no {name} — the program never reached its own dump"
     blob = path.read_bytes()
     want = struct.calcsize(STATS_FORMAT)
     if len(blob) != want:
-        return None, f"STATS.BIN is {len(blob)} bytes, expected {want}"
+        return None, f"{name} is {len(blob)} bytes, expected {want}"
     record = dict(zip(STATS_FIELDS, struct.unpack(STATS_FORMAT, blob)))
     if record["magic"] != STATS_MAGIC:
-        return None, f"STATS.BIN magic {record['magic']:#x} != {STATS_MAGIC:#x}"
+        return None, f"{name} magic {record['magic']:#x} != {STATS_MAGIC:#x}"
     if record["bytes"] != want:
-        return None, f"STATS.BIN says {record['bytes']} bytes, this parser expects {want}"
+        return None, f"{name} says {record['bytes']} bytes, this parser expects {want}"
     return record, None
 
 
@@ -350,6 +369,17 @@ def read_stats():
 M2_FILE = "M2.BIN"
 M2_FRAME_FILE = "FRAME.BIN"
 M2_PENS_FILE = "PENS.BIN"
+# WHERE M3 MOVES THE TWO RECORDS AT THE PROGRAM'S EXIT, and it is not filing. A run whose machine is
+# deliberately left broken can fall over in the tail, and TOS's answer to that is a RESET — after
+# which `--auto` runs `WB.PRG` AGAIN and the second, undriven run writes its own records over the
+# first. The debugger renames both aside at `Pterm`, before anything can reboot, so what M3 reads is
+# the run it drove. Renamed WITHIN `disk/` because Hatari's `rename` is `rename(2)` and refuses a
+# cross-device move — measured, into a scratch directory on another volume.
+M3_RESCUED_M2 = "M2FIRST.BIN"
+M3_RESCUED_STATS = "STFIRST.BIN"
+# WHICH RECORD GOES WHERE, once. Every M3 run renames both — the driven ones and the undriven pass
+# that measures where the image is — so no reading of either can be a rebooted machine's second run.
+RECORD_RESCUES = ((M2_FILE, M3_RESCUED_M2), (STATS_FILE, M3_RESCUED_STATS))
 # Which built .PRG is a frame build — i.e. stages the original's post-boot RAM and needs its palette
 # beside it. Several modes boot the SAME binary (`m2` and `m2fault`; `m5` and `m5skew`), so the mode
 # name cannot be the test and the artefact set keys on the BUILD instead. The list is build.sh's own
@@ -397,20 +427,21 @@ MIS_ANCHOR_SHIFT = 1
 BITPLANES, PENS = "bitplanes", "pens"
 
 
-def read_m2():
-    path = DISK / M2_FILE
+def read_m2(name=M2_FILE):
+    """`name` is a parameter for the reason `read_stats` gives one."""
+    path = DISK / name
     if not path.exists():
-        return None, f"no {M2_FILE} — the frame build never reached its own dump"
+        return None, f"no {name} — the frame build never reached its own dump"
     blob = path.read_bytes()
     want = struct.calcsize(M2_FORMAT)
     if len(blob) != want:
-        return None, f"{M2_FILE} is {len(blob)} bytes, expected {want}"
+        return None, f"{name} is {len(blob)} bytes, expected {want}"
     unpacked = struct.unpack(M2_FORMAT, blob)
     record = dict(zip(M2_FIELDS, unpacked))
     if record["magic"] != M2_MAGIC:
-        return None, f"{M2_FILE} magic {record['magic']:#x} != {M2_MAGIC:#x}"
+        return None, f"{name} magic {record['magic']:#x} != {M2_MAGIC:#x}"
     if record["bytes"] != want:
-        return None, f"{M2_FILE} says {record['bytes']} bytes, this parser expects {want}"
+        return None, f"{name} says {record['bytes']} bytes, this parser expects {want}"
     # THE ANCHORS THE BINARY RAN, against the anchors this file is about to label its rows with.
     # Both are M2_ANCHOR_FRAMES — one compiled into the .PRG, one scraped from the source NOW — so
     # editing the list and running the smoke without rebuilding would otherwise compare slot 2 (the
@@ -419,7 +450,7 @@ def read_m2():
     ran = list(unpacked[len(M2_FIELDS):][:record["anchor_count"]])
     want_anchors = original.anchor_frames()
     if ran != want_anchors:
-        return None, (f"{M2_FILE} was built for anchors {ran} but wonderboy_main.c now says "
+        return None, (f"{name} was built for anchors {ran} but wonderboy_main.c now says "
                       f"{want_anchors} — rebuild with `bash atari/build.sh m2`, because every frame "
                       f"row below would be labelled with a frame the binary did not photograph")
     return record, None
@@ -489,6 +520,15 @@ def unreachable_readbacks():
         "and seeds nothing, which is the point of M2's image and the cost of it.")
 
 
+# THE TWO READ-BACK ROWS' NAMES, once. They are STRUCTURAL KEYS and not only labels: `MACHINE_DRIVEN`
+# selects the second by name for `novbl`, and M3's hand-back control does the same — the teardown bits
+# live in `readback_failed`, so suppressing the vector restores must break exactly that row and leave
+# "read-backs ran" standing. Two controls matching on a hand-written string is one control that
+# quietly stops matching after a reword.
+RB_RAN_ROW = "read-backs ran"
+RB_PASSED_ROW = "read-backs passed"
+
+
 def readback_checks(record):
     """The two M1 read-back rows, for every mode that boots a build which writes STATS.BIN.
 
@@ -509,9 +549,9 @@ def readback_checks(record):
     if why:
         print(f"   note {why}")
     return [
-        ("read-backs ran", record["readback_attempted"] == want_attempted,
+        (RB_RAN_ROW, record["readback_attempted"] == want_attempted,
          f"attempted {record['readback_attempted']:#06x}, expected exactly {want_attempted:#06x}"),
-        ("read-backs passed", record["readback_failed"] & ~unreachable == 0,
+        (RB_PASSED_ROW, record["readback_failed"] & ~unreachable == 0,
          f"failed {record['readback_failed']:#06x}"
          + (" — " + ", ".join(n for n in RB if record["readback_failed"] >> RB[n] & 1)
             if record["readback_failed"] else "")
@@ -656,9 +696,9 @@ def m1_checks(record):
         raise SystemExit(f"FAIL: RB bits added in C and never classified here: {sorted(unclassified)}")
 
     want_attempted = mask(*BOOT_BITS, *TEARDOWN_BITS)
-    add("read-backs ran", record["readback_attempted"] == want_attempted,
+    add(RB_RAN_ROW, record["readback_attempted"] == want_attempted,
         f"attempted {record['readback_attempted']:#06x}, expected exactly {want_attempted:#06x}")
-    add("read-backs passed", record["readback_failed"] == 0,
+    add(RB_PASSED_ROW, record["readback_failed"] == 0,
         f"failed {record['readback_failed']:#06x}"
         + (" — " + ", ".join(n for n in RB if record["readback_failed"] >> RB[n] & 1)
            if record["readback_failed"] else ""))
@@ -719,7 +759,7 @@ def m1_checks(record):
 
 # The subset of M1 that the `novbl` control must break. Everything here depends on the level-4
 # vector reaching the reconstruction; nothing here can be true with that one store suppressed.
-MACHINE_DRIVEN = ("read-backs passed", "vbl_handler ran on the machine",
+MACHINE_DRIVEN = (RB_PASSED_ROW, "vbl_handler ran on the machine",
                   "tempo_drop_value chose from real hardware", "floppy idle timer expired",
                   "the real YM2149 deselected the drives")
 
@@ -1637,8 +1677,8 @@ def expected_base_shape(base_bytes, buffers, opening_state, back_buffer, frames)
     only if the high byte MOVED. The original's two buffers are `$070000` and `$078000`, which differ
     only in the middle byte, so its high-byte store writes `$07` over `$07` and no transient exists.
     Ours are `image_base + $70000` and `image_base + $78000`, which differ in the high byte too
-    **iff the image base's middle byte carries** — measured on the frame builds, `0x4a600` under
-    TOS 1.04 carries and `0x53000` under EmuTOS does not, so the same binary produces 52 transients
+    **iff the image base's middle byte carries** — measured on the frame builds, `0x4a700` under
+    TOS 1.04 carries and `0x53100` under EmuTOS does not, so the same binary produces 52 transients
     on one ROM and none on the other. So: one per frame exactly when the two buffers' high bytes
     differ.
 
@@ -2112,6 +2152,569 @@ def mode_play():
     print("OK: play — the reconstruction runs indefinitely; run it with a screen: bash atari/run.sh")
 
 
+# ---- M3: THE THREE EXITS, DRIVEN, AND THE MACHINE HANDED BACK ------------------------------------
+#
+# WHAT M3 CLAIMS: `game_key_actions` has three endings that are not returns — they pop
+# `game_main_loop`'s return address and `jmp` into the boot chain (../include/game.h) — and all three
+# are made to happen ON THE MACHINE, one run each, with the reconstruction reporting WHICH by the
+# `loop_ending` field of its own record. Then the program exits, and what the machine does AFTER that
+# is asserted too: this is Joust's M3 discipline, where an incomplete hand-back is invisible until
+# TOS is running on with whatever the shim left hooked.
+#
+# HOW AN ENDING IS DRIVEN WITHOUT AN INPUT DEVICE. Each arm's condition is a word or a byte in the
+# image, so a debugger poke at the right instant is the whole mechanism. The instant is
+# `capture_the_frame`'s Nth arrival — the shim calls it once per anchor frame and nowhere else, which
+# is the anchor M5 already photographs on — so the poke lands at the END of a known frame and the
+# ending fires at the TOP of the next one, where `game_key_actions` reads.
+#
+# WHY THE FRAME BUILD AND NOT THE PLAY BUILD, stated because the play build is the one a person
+# reaches an ending on. A poke needs the image's run-time address, and the only honest source of it
+# is the binary's own report — `M2.BIN`'s `image_base`, which is written when the run ends. The play
+# build writes no record until an ending fires, so there is nothing to aim the first poke at; the
+# frame build reports `image_base` AND `capture_pc` about itself on an undriven run, and the driven
+# run re-reports both and must agree. The exit path is not the play build's difference: `run_frames`'
+# third exit, `teardown`, `Pterm` and both records are the same code in both (wonderboy_main.c's
+# SMOKE_PLAY block changes the frame count and the watchdog and nothing else).
+#
+# THE NEGATIVE CONTROL IS THE FIRST PASS, and it is not a separate run bolted on: the undriven boot
+# that measures `image_base` must report `loop_ending` = WB_KEY_ACTIONS_RETURNED and every one of its
+# fifty-two frames. So each M3 run contains, by construction, one run in which no ending was driven
+# and the loop did not end — which is what makes the three driven ones mean something.
+
+# Which arrival at `capture_the_frame` carries the poke. The SECOND, so that a run has already
+# completed a whole frame under the debugger before anything is injected, and so that the frame the
+# ending fires on is early enough to leave the whole rest of `--run-vbls` as tail.
+M3_POKE_ANCHOR = 2
+M3_RUN_VBLS = M2_RUN_VBLS
+# WHERE THE MACHINE IS INSPECTED FROM OUTSIDE: chained off the program's OWN `Pterm`, not off a
+# vblank count. `wonderboy_os.s` exits with `clr.w -(%sp) / trap #1`, i.e. GEMDOS function 0, and a
+# breakpoint on that opcode is the exit itself; the two readings then hang off it as "the next
+# vblank" and "twenty vblanks later".
+#
+# AN ABSOLUTE COUNT WAS TRIED FIRST AND THE HAND-BACK CONTROL KILLED IT. With the inspections at
+# 8000 and 8500 of 9000 — as deep in the tail as the run allows — `m3fault` failed intermittently on
+# TOS 1.04 with a verdict that read like the control not working: the ending row red, `loop_ending`
+# = 0 over fifty-two frames, and every hand-back row GREEN. What happens is the control's own point
+# taken one step further. The still-hooked level-4 vector runs on memory GEMDOS has taken back; on
+# that ROM it took the machine down; TOS RESET, which restores the vectors and restarts the frame
+# clock, and `--auto` then re-ran `WB.PRG` with the `:once` poke breakpoint long spent, so the
+# undriven second run overwrote the record. **A reset restores exactly what the control asserts must
+# stay broken**, and moving the count nearer the exit (3000/3500) did not help, because the crash
+# and the reset happen within tens of vblanks of `Pterm`. Anchoring on the exit does: at +1 vblank
+# nothing has had time to fall over, and the ordering against the exit stops being a margin to
+# measure and becomes structural.
+#
+# `--run-vbls` is unchanged, so the machine-health scan still covers the whole long tail.
+GEMDOS_PTERM0 = 0
+# WHICH VBLANK AFTER `Pterm` THE SECOND FRAME-CLOCK READING IS TAKEN ON. One reading cannot show
+# motion and two adjacent ones would show it as +1; twenty is a fifth of a second of emulated time
+# and still lands before a crashed machine has been reset.
+M3_TAIL_STEPS = 20
+# ...AND HOW FAR APART THE TWO READINGS THEREFORE ARE, which is one less, because the first is taken
+# at `Pterm`+1 and not at `Pterm` itself. Derived rather than written down: an off-by-one here is a
+# label that disagrees with the +19 every run prints, and a reader checking the docs against the
+# output finds the docs wrong about the instrument.
+M3_TAIL_GAP = M3_TAIL_STEPS - 1
+
+# WHERE EACH ENDING'S `jmp` GOES, from ../include/game.h's own comments on the WB_KEY_ACTIONS_* codes.
+# Not asserted on target and not reached: the boot chain is unported, so the reconstruction REPORTS
+# the transfer in place of making it. Carried here so a row that names an ending names its target.
+UNWIND_SEQUENCE = 0xe5ba        # ROUND_END and LEVEL_SKIP
+UNWIND_DATA_DISK = 0xe494       # QUIT, via the music fade
+
+VEC_LEVEL4_VBL = c_constant("VEC_LEVEL4_VBL")
+VEC_MFP_ACIA = c_constant("VEC_MFP_ACIA")
+# TOS's own frame counter, incremented by ITS vertical-blank handler and by nothing else — the
+# system variable `_frclock`. It is the liveness half of the hand-back: a program that never gave the
+# level-4 vector back leaves this frozen, whatever else the machine appears to be doing. Not scraped
+# from anywhere, because it is TOS's number and this project defines none of TOS.
+TOS_FRCLOCK = 0x466
+LONGWORD_BYTES = 4
+
+M3_POKE_BEACON = "M3_POKE"
+M3_EXIT_BEACON = "M3_EXIT"
+M3_TAIL_BEACONS = ("M3_TAIL_A", "M3_TAIL_B")
+# What each capture is, in one place: the debugger writes these beside the script and the reader
+# below names the moment rather than the filename when one is missing.
+M3_VBL_VECTOR_RUNNING = "M3VBLIN.BIN"
+M3_ACIA_VECTOR_RUNNING = "M3ACIAIN.BIN"
+M3_VBL_VECTOR_AFTER = "M3VBLOUT.BIN"
+M3_ACIA_VECTOR_AFTER = "M3ACIAOUT.BIN"
+M3_CLOCK_EARLY = "M3CLKA.BIN"
+M3_CLOCK_LATE = "M3CLKB.BIN"
+M3_CAPTURES = ((M3_VBL_VECTOR_RUNNING, "$70 while the reconstruction owned the machine"),
+               (M3_ACIA_VECTOR_RUNNING, "$118 while the reconstruction owned the machine"),
+               (M3_VBL_VECTOR_AFTER, "$70 in the tail after the program exited"),
+               (M3_ACIA_VECTOR_AFTER, "$118 in the tail after the program exited"),
+               (M3_CLOCK_EARLY, "TOS's frame clock at the first tail inspection"),
+               (M3_CLOCK_LATE, "TOS's frame clock at the second"))
+
+# One ending: which arm, what it returns, where the original's `jmp` goes, and the image words whose
+# values ARE its condition. `poke` is `original.poke_byte` or `poke_word` — the width comes FIRST in
+# Hatari's memory-write command, which is a documented trap in ../STATUS.md rather than a detail.
+M3Poke = collections.namedtuple("M3Poke", "offset poke value what")
+M3Ending = collections.namedtuple("M3Ending", "tag arm code unwind pokes why")
+
+M3_ENDINGS = (
+    M3Ending("round", "WB_KEY_ACTIONS_ROUND_END", wb("KEY_ACTIONS_ROUND_END"), UNWIND_SEQUENCE,
+             (M3Poke(wb("ROUND_END_RELOAD_REQUEST"), original.poke_word,
+                     wb("ROUND_END_RELOAD_REQUEST_SET"), "the round-end reload request, raised"),),
+             "$53e's first arm, and it outranks every key: the round bonus at $e032 raises the "
+             "request word when its countdown finishes, and this consumes it, CLEARS it and unwinds"),
+    M3Ending("skip", "WB_KEY_ACTIONS_LEVEL_SKIP", wb("KEY_ACTIONS_LEVEL_SKIP"), UNWIND_SEQUENCE,
+             (M3Poke(wb("KEY_SEQUENCE_MATCHED"), original.poke_word,
+                     wb("KEY_SEQUENCE_MATCHED_SET"), "the cheat sequence, matched"),
+              M3Poke(wb("KEY_LAST_SCANCODE"), original.poke_byte, wb("KEY_SCANCODE_N"),
+                     "N, as the IKBD would leave it")),
+             "$556: the cheat's level skip. The SAME unwind target as the round end and a different "
+             "code, because the two arms are reached on different conditions and clear different "
+             "state — one code for the pair would let a port that took the wrong one look right"),
+    M3Ending("quit", "WB_KEY_ACTIONS_QUIT", wb("KEY_ACTIONS_QUIT"), UNWIND_DATA_DISK,
+             (M3Poke(wb("KEY_LAST_SCANCODE"), original.poke_byte, wb("KEY_SCANCODE_ESC"),
+                     "ESC, as the IKBD would leave it"),),
+             "$580: ESC starts the music fade ($594, ../src/sound.c) and unwinds into the "
+             "data-disk prompt rather than the sequence"),
+)
+# THE THREE CODES MUST BE DISTINCT, or a run reporting the wrong ending would satisfy another's row.
+assert len({ending.code for ending in M3_ENDINGS}) == len(M3_ENDINGS), (
+    "two M3 endings share a loop_ending code — ../include/game.h keeps them apart on purpose")
+assert LOOP_RETURNED not in {ending.code for ending in M3_ENDINGS}, (
+    "an M3 ending reports the code that means the loop RETURNED — no run could tell them apart")
+
+# The mode that runs all three, and the mode that breaks the hand-back. Rows are grouped so the
+# control can invert its verdict over the hand-back half and assert the ending half normally, which
+# is `m2fault`'s structural-key rule: a control whose own run is unsound proves nothing.
+# THE CHEAT WORD IS HALF THE LEVEL-SKIP ARM'S CONDITION, and the three driven endings above show
+# only the other half. `$556` is `tst.w $604 / beq` THEN `cmpi.b #$31,$879`, so a port that dropped
+# the word test entirely would still pass the LEVEL_SKIP row — the poke sets both, and N alone would
+# be enough for the broken port. This control drives N with the word left CLEAR and requires the loop
+# NOT to end, which is what makes "the same target on a different condition" a measured claim.
+#
+# THE POKE SET IS DERIVED FROM THE ARM'S OWN, minus the cheat word, rather than written out again: a
+# control whose inputs are a second copy of the thing it controls is one that stops controlling it
+# the day the copy drifts.
+CHEAT_WORD_OFFSET = wb("KEY_SEQUENCE_MATCHED")
+LEVEL_SKIP_ENDING = next(e for e in M3_ENDINGS if e.code == wb("KEY_ACTIONS_LEVEL_SKIP"))
+CHEAT_PREMISE_TAG = "nalone"
+CHEAT_PREMISE_POKES = tuple(entry for entry in LEVEL_SKIP_ENDING.pokes
+                            if entry.offset != CHEAT_WORD_OFFSET)
+assert len(CHEAT_PREMISE_POKES) == len(LEVEL_SKIP_ENDING.pokes) - 1, (
+    f"the level-skip arm no longer pokes WB_KEY_SEQUENCE_MATCHED ({CHEAT_WORD_OFFSET:#x}), so "
+    f"dropping it cannot be the control that shows the word is tested")
+assert CHEAT_PREMISE_POKES, "N alone is no poke at all — the control would drive nothing"
+
+M3_MODE, M3_FAULT_MODE = "m3", "m3fault"
+ENDING_ROWS, HANDBACK_ROWS = "ending", "handback"
+
+
+def m3_save(directory, name, address):
+    return f"savebin {Path(directory) / name} ${address:x} {LONGWORD_BYTES}"
+
+
+def m3_exit_breakpoint(directory, tail=()):
+    """The breakpoint on the program's OWN exit, and everything that has to happen there.
+
+    Two jobs, and EVERY M3 RUN NEEDS THE FIRST. The records are renamed aside before anything can
+    reboot (M3_RESCUED_M2's comment has the reason), and then `tail` — the driven runs' two machine
+    inspections — is armed from inside this same action file, which is what makes their ordering
+    against the exit structural instead of a margin to measure."""
+    directory = Path(directory)
+    rescues = [f"rename {DISK / live} {DISK / rescued}" for live, rescued in RECORD_RESCUES]
+    return original.gemdos_breakpoint(GEMDOS_PTERM0, original.action_file(
+        directory, "M3EXIT.INI", f"echo {M3_EXIT_BEACON}", *rescues, *tail))
+
+
+def m3_plain_script(directory):
+    """PASS ONE'S script, and it exists for one line: the record rescue.
+
+    An undriven boot needs no poke and takes no machine readings — but `m3fault`'s pass one leaves
+    the machine hooked into memory GEMDOS has taken back exactly as its driven runs do, so it can
+    fall over, be RESET, and have `--auto` re-run `WB.PRG` over its records before `--run-vbls` ends.
+    Reading pass one off the live drive would then aim every poke below with a second run's numbers.
+    Rescuing them at `Pterm` costs one breakpoint and closes it."""
+    script = Path(directory) / "M3PLAIN.INI"
+    script.write_text(m3_exit_breakpoint(directory) + "\n")
+    return script
+
+
+def m3_script(directory, base, capture_pc, pokes):
+    """The debugger script that injects `pokes` and then watches the machine outlive the program.
+
+    Two top-level breakpoints. The first is `capture_the_frame`'s Nth arrival, where the two vectors
+    are photographed AS THE SHIM LEFT THEM and the pokes go into the image. The second is the
+    program's own `Pterm0`, which rescues the records and arms the two tail readings — the next
+    vblank, where the two vectors and TOS's frame clock are read back, and Pterm+M3_TAIL_STEPS,
+    where the clock is read again because one reading cannot show motion."""
+    directory = Path(directory)
+    poke_commands = [f"echo {M3_POKE_BEACON}",
+                     m3_save(directory, M3_VBL_VECTOR_RUNNING, VEC_LEVEL4_VBL),
+                     m3_save(directory, M3_ACIA_VECTOR_RUNNING, VEC_MFP_ACIA)]
+    poke_commands += [entry.poke(base + entry.offset, entry.value) for entry in pokes]
+    tail = [
+        original.vbl_breakpoint(original.VBL_NEXT, original.action_file(
+            directory, "M3TAILA.INI", f"echo {M3_TAIL_BEACONS[0]}",
+            m3_save(directory, M3_VBL_VECTOR_AFTER, VEC_LEVEL4_VBL),
+            m3_save(directory, M3_ACIA_VECTOR_AFTER, VEC_MFP_ACIA),
+            m3_save(directory, M3_CLOCK_EARLY, TOS_FRCLOCK))),
+        original.vbl_breakpoint(original.VBL_NEXT, original.action_file(
+            directory, "M3TAILB.INI", f"echo {M3_TAIL_BEACONS[1]}",
+            m3_save(directory, M3_CLOCK_LATE, TOS_FRCLOCK)), hit=M3_TAIL_STEPS),
+    ]
+    # The same-arrival guard and the breakpoint's own spelling are original.py's, for the reason
+    # `our_capture_script` gives: a second spelling on this side is one that can quietly stop
+    # matching the shipped side's.
+    original.refuse_repeated_arrivals([(capture_pc, M3_POKE_ANCHOR)])
+    lines = [
+        original.anchor_breakpoint(capture_pc, M3_POKE_ANCHOR,
+                                   original.action_file(directory, "M3POKE.INI", *poke_commands)),
+        m3_exit_breakpoint(directory, tail),
+    ]
+    script = directory / "M3CMD.INI"
+    script.write_text("\n".join(lines) + "\n")
+    return script
+
+
+def m3_captures(directory):
+    """{filename: longword or None} — what the run's breakpoints left behind.
+
+    A missing capture is None RATHER THAN A RAISE, because the hand-back control is expected to take
+    the machine down: a run whose tail breakpoint never fired has failed the rows that read it, and
+    that is a verdict this mode knows how to print. It is only a hard error when a file is there and
+    the wrong length, which is a reader bug rather than a run."""
+    captured = {}
+    for name, what in M3_CAPTURES:
+        path = Path(directory) / name
+        if not path.exists():
+            captured[name] = None
+            continue
+        blob = path.read_bytes()
+        if len(blob) != LONGWORD_BYTES:
+            raise SystemExit(f"FAIL: {name} ({what}) is {len(blob)} bytes, expected {LONGWORD_BYTES}")
+        captured[name] = struct.unpack(">I", blob)[0]
+    return captured
+
+
+def as_capture(value):
+    return "not captured" if value is None else f"{value:#x}"
+
+
+def handed_back(before, after):
+    """Did a vector stop being the shim's? Both readings have to exist for the answer to be yes."""
+    return before is not None and after is not None and before != after
+
+
+def base_offset(entry):
+    """One poke, as the image offset and value a reader can check against ../include/wonderboy.h."""
+    return f"image + {entry.offset:#x} := {entry.value:#x}"
+
+
+def m3_checks(record, stats, plain, ending, captured, reached_pterm):
+    """One driven ending's rows, as (name, ok, detail, group)."""
+    poke_frame = original.anchor_frames()[M3_POKE_ANCHOR - 1]
+    vbl_in = captured[M3_VBL_VECTOR_RUNNING]
+    vbl_out = captured[M3_VBL_VECTOR_AFTER]
+    acia_in = captured[M3_ACIA_VECTOR_RUNNING]
+    acia_out = captured[M3_ACIA_VECTOR_AFTER]
+    early, late = captured[M3_CLOCK_EARLY], captured[M3_CLOCK_LATE]
+    checks = [
+        ("the loop was LEFT, and by THIS ending", record["loop_ending"] == ending.code,
+         f"loop_ending={record['loop_ending']} = {ending.arm} ({ending.code}); the original's arm "
+         f"`jmp`s to {ending.unwind:#x}. Poked: "
+         + ", ".join(f"{entry.what} at {base_offset(entry)}" for entry in ending.pokes),
+         ENDING_ROWS),
+        ("...on the frame the poke chose", record["frames_run"] == poke_frame,
+         f"{record['frames_run']} frames completed, and the poke landed at the end of frame "
+         f"{poke_frame} (capture_the_frame's arrival {M3_POKE_ANCHOR}), so the ending fired at the "
+         f"top of the next one", ENDING_ROWS),
+        ("the two boots agree where the program is", record["image_base"] == plain["image_base"]
+         and record["capture_pc"] == plain["capture_pc"],
+         f"image at {record['image_base']:#x} (undriven boot: {plain['image_base']:#x}), "
+         f"capture_the_frame at {record['capture_pc']:#x} ({plain['capture_pc']:#x}) — the poke was "
+         f"aimed with the undriven boot's numbers", ENDING_ROWS),
+        # THE PROGRAM REALLY REACHED ITS OWN EXIT, and the three rows below are anchored on it, so
+        # they cannot be reading a machine the reconstruction still owns. A build that hung after
+        # the loop — which is what the exit-path defect in §8 did — never trips this.
+        ("the program reached Pterm", reached_pterm,
+         f"GEMDOS function {GEMDOS_PTERM0} (`clr.w -(%sp) / trap #1`, wonderboy_os.s) was taken, and "
+         f"the two inspections below hang off it: +1 vblank and +{M3_TAIL_STEPS}", ENDING_ROWS),
+        # THE VECTORS ARE COMPARED ACROSS THE EXIT rather than against a value written down here.
+        # What TOS had on $70 before the program ran is TOS's business and differs by ROM; what
+        # matters is that the address the shim installed is no longer there once the shim has gone.
+        ("$70 stopped being the shim's", handed_back(vbl_in, vbl_out),
+         f"level-4 vector {as_capture(vbl_in)} while the reconstruction owned the machine, "
+         f"{as_capture(vbl_out)} one vblank after Pterm", HANDBACK_ROWS),
+        ("$118 stopped being the shim's", handed_back(acia_in, acia_out),
+         f"ACIA vector {as_capture(acia_in)} while the reconstruction owned the machine, "
+         f"{as_capture(acia_out)} one vblank after Pterm", HANDBACK_ROWS),
+        # ...AND THE MACHINE IS ALIVE, not merely unhooked. Two readings, because one cannot show
+        # motion: TOS's own vertical-blank handler is the only writer of this longword, so it moves
+        # if and only if the vector really went back to a handler that runs.
+        ("TOS's frame clock is still advancing", None not in (early, late) and late > early,
+         f"_frclock {as_capture(early)} one vblank after Pterm, {as_capture(late)} at Pterm+"
+         f"{M3_TAIL_STEPS} — {M3_TAIL_GAP} vblanks later"
+         + ("" if None in (early, late) else f" (+{late - early})"), HANDBACK_ROWS),
+    ]
+    # The record's OWN teardown verdict, from the inside, beside the debugger's from the outside.
+    # `RB_PASSED_ROW` carries every restore bit, so it is the hand-back's row here; `RB_RAN_ROW` says
+    # the checks executed at all and must hold whatever the control suppresses.
+    for name, ok, detail in readback_checks(stats):
+        checks.append((name, ok, detail,
+                       HANDBACK_ROWS if name == RB_PASSED_ROW else ENDING_ROWS))
+    return [(name, bool(ok), detail, group) for name, ok, detail, group in checks]
+
+
+def rescued_records(what):
+    """The two records the debugger moved aside at `Pterm`, or a failure that names the run.
+
+    READ UNDER THEIR RESCUED NAMES AND NEVER OFF THE LIVE DRIVE — M3_RESCUED_M2's comment has the
+    reboot that makes the difference, and it applies to the undriven pass as much as to a driven
+    one: `m3fault`'s pass-one machine is left hooked exactly as its driven runs are."""
+    record, why = read_m2(M3_RESCUED_M2)
+    stats, stats_why = read_stats(M3_RESCUED_STATS)
+    if record is None or stats is None:
+        raise SystemExit(f"FAIL: {what} left no readable record ({why or stats_why})")
+    return record, stats
+
+
+def measure_the_undriven_boot(prg, mode):
+    """PASS ONE: boot the build with no poke at all, and take three things off it.
+
+    Two are the numbers every poke below is aimed with — where GEMDOS put the image, and where
+    `capture_the_frame` is — and the third is M3'S NEGATIVE CONTROL: with nothing injected the frame
+    loop must run every frame it was asked for and report that it RETURNED. A mode whose control pass
+    already showed an ending would be measuring something other than the pokes.
+
+    It carries a debugger script all the same, and `m3_plain_script` says why in one line."""
+    with tempfile.TemporaryDirectory() as tmp:
+        status, log, rom = run_hatari(prg, run_vbls=M3_RUN_VBLS, parse=m3_plain_script(tmp),
+                                      log_name=f"hatari-{mode}-plain.log")
+    record, _ = rescued_records("the undriven boot")
+    control = [
+        ("no ending fires when none is driven", record["loop_ending"] == LOOP_RETURNED,
+         f"loop_ending={record['loop_ending']} = WB_KEY_ACTIONS_RETURNED ({LOOP_RETURNED})"),
+        ("...and the loop ran every frame", record["frames_run"] == record["frames_requested"],
+         f"{record['frames_run']} of {record['frames_requested']}"),
+    ]
+    report(f"{mode} pass 1 — the UNDRIVEN boot, which is M3's negative control", control)
+    print(f"   TOS={rom or 'bundled EmuTOS'} hatari exit={status}; image at "
+          f"{record['image_base']:#x}, capture_the_frame at {record['capture_pc']:#x}")
+    broken = [f"{name}: {detail}" for name, ok, detail in control if not ok]
+    if broken:
+        raise SystemExit("FAIL: the negative control did not hold, so no driven run below could "
+                         "mean anything: " + "; ".join(broken))
+    return record, log, status
+
+
+def boot_with_pokes(prg, mode, plain, tag, pokes, what):
+    """Boot the same binary again with `pokes` injected, and bring back everything the run left.
+
+    Shared by the three driven endings and by the cheat word's own control, which is a poke set and
+    an expectation like any of them — the only thing that differs is what its record must say."""
+    with tempfile.TemporaryDirectory() as tmp:
+        script = m3_script(tmp, plain["image_base"], plain["capture_pc"], pokes)
+        status, log, rom = run_hatari(prg, run_vbls=M3_RUN_VBLS, parse=script,
+                                      log_name=f"hatari-{mode}-{tag}.log")
+        captured = m3_captures(tmp)
+    if M3_POKE_BEACON not in log:
+        raise SystemExit(f"FAIL: {what}'s poke breakpoint never fired — arrival {M3_POKE_ANCHOR} at "
+                         f"capture_the_frame ({plain['capture_pc']:#x}) was never reached, so "
+                         f"nothing was injected and this run is not a drive")
+    record, stats = rescued_records(what)
+    return record, stats, captured, log, status, rom
+
+
+def drive_the_ending(prg, mode, plain, ending):
+    """PASS TWO..FOUR: boot the same binary again and MAKE `ending` happen."""
+    record, stats, captured, log, status, rom = boot_with_pokes(
+        prg, mode, plain, ending.tag, ending.pokes, ending.arm)
+    checks = m3_checks(record, stats, plain, ending, captured, M3_EXIT_BEACON in log)
+    return checks, record, log, status, rom
+
+
+def drive_the_cheat_premise_control(prg, mode, plain):
+    """N WITH THE CHEAT WORD LEFT CLEAR: the half of `$556`'s condition the endings cannot show.
+
+    The level-skip row proves the arm is reachable; it does not prove that `tst.w $604` is what
+    gates it, because the poke that reaches the arm sets the word AND the scancode. Drop the word
+    and the loop must NOT end — so a port that tested only the scancode goes red here while staying
+    green there. Its poke set is the arm's own minus the word (CHEAT_PREMISE_POKES)."""
+    record, _, _, _, status, rom = boot_with_pokes(
+        prg, mode, plain, CHEAT_PREMISE_TAG, CHEAT_PREMISE_POKES, "the cheat-word control")
+    poked = ", ".join(base_offset(entry) for entry in CHEAT_PREMISE_POKES)
+    checks = [
+        ("N alone does NOT skip the level", record["loop_ending"] == LOOP_RETURNED,
+         f"loop_ending={record['loop_ending']} = WB_KEY_ACTIONS_RETURNED ({LOOP_RETURNED}); poked "
+         f"{poked} and left WB_KEY_SEQUENCE_MATCHED ({CHEAT_WORD_OFFSET:#x}) CLEAR, so `tst.w $604` "
+         f"at $556 is what refused the arm"),
+        ("...and the loop ran to its own end", record["frames_run"] == record["frames_requested"],
+         f"{record['frames_run']} of {record['frames_requested']} frames"),
+        ("the same placement as the boot the poke was aimed with",
+         record["image_base"] == plain["image_base"],
+         f"image at {record['image_base']:#x} (undriven boot: {plain['image_base']:#x})"),
+    ]
+    report(f"{mode}: the CHEAT-WORD control — the level skip's other half", checks)
+    print(f"   TOS={rom or 'bundled EmuTOS'} hatari exit={status} (full log in "
+          f"{OUT / f'hatari-{mode}-{CHEAT_PREMISE_TAG}.log'})")
+    return [f"the cheat-word control {name}: {detail}" for name, ok, detail in checks if not ok]
+
+
+def mode_m3(mode):
+    """M3: `game_key_actions`' three endings, driven one run each, and the hand-back asserted.
+
+    `m3fault` boots the build whose `teardown` never puts the two vectors back and INVERTS its verdict
+    over the hand-back rows: a run in which the machine still looks handed back would mean this mode
+    is not reading what it names. The ending rows are asserted NORMALLY there, because a control whose
+    own run did not do the thing it is controlling proves nothing — and so is the cheat-word control,
+    which is about `game_key_actions`' predicate and not about the hand-back at all."""
+    faulted = mode == M3_FAULT_MODE
+    prg = BUILD / M3_BUILDS[mode]
+    plain, plain_log, plain_status = measure_the_undriven_boot(prg, mode)
+    # The undriven boot's own health is asserted only where the build is sound. `m3fault` leaves the
+    # machine hooked into memory GEMDOS has taken back, so its tail is expected to be unhealthy —
+    # that IS the control — and the reading is printed below rather than being a pass/fail here.
+    problems = [] if faulted else check_machine_health(plain_status, plain_log)
+    problems += drive_the_cheat_premise_control(prg, mode, plain)
+
+    for ending in M3_ENDINGS:
+        checks, record, log, status, rom = drive_the_ending(prg, mode, plain, ending)
+        report(f"{mode}: {ending.arm} — {ending.why}", checks)
+        print(f"   TOS={rom or 'bundled EmuTOS'} hatari exit={status}, {record['shim_vbl_ticks']} "
+              f"shim vblanks (full log in {OUT / f'hatari-{mode}-{ending.tag}.log'})")
+        faults = check_machine_health(status, log, assert_status=not faulted)
+        if faulted:
+            # MEASURED AND PRINTED, not asserted in either direction. Whether an unhooked vector
+            # takes the machine down depends on what GEMDOS puts in the freed memory, which is TOS's
+            # business; the rows below are what this control asserts.
+            print(f"   note the machine's tail with the hand-back suppressed: "
+                  + ("; ".join(faults) if faults else "no fault in the log, hatari exit "
+                                                      f"{status}"))
+        else:
+            problems += faults
+        ending_rows = [row for row in checks if row[3] == ENDING_ROWS]
+        handback_rows = [row for row in checks if row[3] == HANDBACK_ROWS]
+        problems += [f"{ending.arm} {name}: {detail}" for name, ok, detail, _ in ending_rows if not ok]
+        if faulted and record["loop_ending"] == LOOP_RETURNED:
+            # THE ONE WAY THIS CONTROL LIED, kept as a tripwire over the two fixes that closed it.
+            # A record reporting no ending on a run whose poke fired means the program ran TWICE:
+            # the still-hooked vector took the machine down, TOS reset — restoring the vectors and
+            # restarting the frame clock, so the hand-back rows go green on a build that never
+            # handed anything back — and `--auto` re-ran WB.PRG with the `:once` breakpoint spent,
+            # so the undriven second run's records were the ones on the drive. The readings now hang
+            # off GEMDOS_PTERM0 and the records are renamed aside there, so reaching this means one
+            # of those two did not happen — most likely the rename (M3_RESCUED_M2).
+            problems.append(f"{ending.arm}: the control's own run rebooted AND the records were not "
+                            f"rescued at Pterm — this record is a SECOND, undriven run's, so no row "
+                            f"below reports on the suppressed hand-back")
+        if not faulted:
+            problems += [f"{ending.arm} {name}: {detail}"
+                         for name, ok, detail, _ in handback_rows if not ok]
+            continue
+        held = [name for name, ok, _, _ in handback_rows if ok]
+        if held:
+            problems.append(f"{ending.arm}: the hand-back control did not break "
+                            + ", ".join(held) + " — these rows are not reading the hand-back")
+
+    if problems:
+        raise SystemExit("FAIL: " + "; ".join(problems))
+    if faulted:
+        print(f"OK: with the two vector restores suppressed, every hand-back row FAILS on all "
+              f"{len(M3_ENDINGS)} endings and every ending row still holds — the control is targeted")
+        return
+    print(f"OK: M3 — all {len(M3_ENDINGS)} of game_key_actions' endings driven on a 68000, each "
+          f"reporting its own code, the cheat word shown to be tested rather than assumed, and the "
+          f"machine handed back to a TOS still ticking {M3_TAIL_GAP} vblanks later")
+
+
+# ---- the runner's own exec line, parsed ------------------------------------------------------------
+#
+# THE ONE LINE NO HEADLESS MODE EXECUTES. Every check in this file boots Hatari with `run_hatari`'s
+# arguments; `atari/run.sh` builds a DIFFERENT command — a screen, sound, a joystick, no fast-forward
+# — and nothing ran it until a person did. Measured the hard way: `--sound on` sat in that line
+# through thirteen green modes and is rejected by Hatari's own parser (`--sound` takes a FREQUENCY,
+# off or 6000-50066), so the runner died at argument parsing while every headless mode stayed green.
+#
+# `--help` IS THE PROBE, and the ordering is measured rather than assumed: Hatari parses options left
+# to right and `--help` prints the usage and stops WHERE IT IS REACHED, so every option before it has
+# already been through its own parser (a bad value after `--help` is never seen; a bad value before it
+# reports instead of the usage). A clean parse therefore prints the usage banner and no `Error` line —
+# and the exit status says nothing, because `--help` itself exits 1.
+RUNSH_MODE = "runsh"
+RUNSH_PARSE_CHECK = "parsecheck"
+RUNSH_ARGV_BEGIN = "RUNSH-ARGV-BEGIN"
+RUNSH_ARGV_END = "RUNSH-ARGV-END"
+HATARI_USAGE_RE = re.compile(r"^Usage:", re.M)
+HATARI_PARSE_ERROR_RE = re.compile(r"^Error\b.*", re.M)
+# The value that shipped, and the value that works. The control substitutes the first for the second
+# in the runner's OWN argument list, so what is shown to fail is the real line and not a fixture.
+SOUND_REJECTED = "on"
+
+
+def hatari_parses(args):
+    """(ok, why) for `hatari <args> --help` — did every option before the `--help` parse?"""
+    done = subprocess.run(["hatari", *args, "--help"], stdin=subprocess.DEVNULL, text=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    error = HATARI_PARSE_ERROR_RE.search(done.stdout)
+    if error:
+        return False, error.group(0).strip()
+    if not HATARI_USAGE_RE.search(done.stdout):
+        return False, "no usage banner — --help was never reached, so nothing was proved parsed"
+    return True, "the usage banner printed and no option reported an error"
+
+
+def runsh_argv(output):
+    """The exact argument list `run.sh` would have exec'd, out of what it printed."""
+    inside = re.search(rf"^{RUNSH_ARGV_BEGIN}$(.*?)^{RUNSH_ARGV_END}$", output, re.M | re.S)
+    if not inside:
+        raise SystemExit(f"FAIL: run.sh {RUNSH_PARSE_CHECK} printed no argument list between "
+                         f"{RUNSH_ARGV_BEGIN} and {RUNSH_ARGV_END} — this mode cannot know what it "
+                         f"checked")
+    return [line for line in inside.group(1).split("\n") if line]
+
+
+def mode_runsh():
+    """The interactive invocation, parsed — and shown to be able to fail.
+
+    It restages `atari/disk/` for the play build, exactly as `run.sh` does, so it is not a mode to
+    interleave with another one's run."""
+    done = subprocess.run(["bash", str(HERE / "run.sh"), RUNSH_PARSE_CHECK], text=True,
+                          stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT)
+    OUT.mkdir(exist_ok=True)
+    (OUT / "runsh-parse.log").write_text(done.stdout)
+    argv = runsh_argv(done.stdout)
+    # THE FLAG IS FOUND BY INDEX, and both halves of that matter. The guard is on `--sound` being
+    # ABSENT and nothing else — an earlier draft also required the rejected VALUE to be missing, so a
+    # future line that legitimately passed a value spelled the same way would have tripped it — and
+    # the substitution replaces the word AFTER the flag rather than testing each word's predecessor,
+    # which at index 0 asks about `argv[-1]` and reads the LAST element instead.
+    if "--sound" not in argv:
+        raise SystemExit("FAIL: run.sh's exec line no longer passes --sound at all — the control "
+                         "below would be substituting into a flag that is not there")
+    value_at = argv.index("--sound") + 1
+    if value_at >= len(argv):
+        raise SystemExit("FAIL: run.sh's exec line ends with --sound and no value — there is "
+                         "nothing for the control to substitute")
+    broken = list(argv)
+    broken[value_at] = SOUND_REJECTED
+    control_ok, control_why = hatari_parses(broken)
+    checks = [
+        ("run.sh's own exec line parses", done.returncode == 0,
+         f"`bash atari/run.sh {RUNSH_PARSE_CHECK}` exited {done.returncode} over "
+         f"{len(argv)} arguments: {' '.join(argv)}"),
+        ("...and the check can fail", not control_ok,
+         f"the same line with `--sound {SOUND_REJECTED}` — the value that shipped — "
+         + (f"was accepted, so this probe proves nothing" if control_ok
+            else f"is rejected: {control_why}")),
+    ]
+    report("runsh", checks)
+    problems = [f"{name}: {detail}" for name, ok, detail in checks if not ok]
+    if problems:
+        print(done.stdout[-2000:])
+        raise SystemExit("FAIL: " + "; ".join(problems))
+    print("OK: runsh — the interactive command Hatari is actually given parses, and a run.sh that "
+          "reintroduced the rejected value would be caught here rather than by a person")
+
+
 # Which .PRG each mode boots, and which shipped-side artefact set it compares against. `m5` and
 # `m5skew` share a build, as `m2` and `m2fault` do; `m5flash` is the only one whose shipped side is a
 # different boot of the original, which is what the artefact PREFIX names.
@@ -2134,19 +2737,31 @@ PRG_FOR_MODE = {"m1": "WB-m1.PRG", "mono": "WB-m1.PRG", "novbl": "WB-novbl.PRG",
 M5_BUILDS = {"m5": "WB-m2.PRG", "m5skew": "WB-m2.PRG", "m5fault": "WB-m5fault.PRG",
              "m5flash": "WB-m5flash.PRG"}
 M5_PREFIX = {"m5": "", "m5skew": "", "m5fault": "", "m5flash": original.FRAME_PREFIXES[True]}
+# M3 drives the FRAME build — the section above says why the play build cannot be aimed at — and its
+# control is the build whose `teardown` never gives the two vectors back.
+M3_BUILDS = {M3_MODE: "WB-m2.PRG", M3_FAULT_MODE: "WB-m3fault.PRG"}
 # Which `build.sh` mode produces each smoke mode's binary, for the message a missing build gets.
 BUILD_FOR_MODE = {"mono": "m1", "m2fault": "m2", "m5": "m2", "m5skew": "m2", "m6": "m2",
-                  "m6flash": "m5flash"}
+                  "m6flash": "m5flash", M3_MODE: "m2"}
 
 
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "m1"
-    prg = dict(PRG_FOR_MODE, **M5_BUILDS, **M6_BUILDS).get(mode)
+    # `runsh` boots nothing itself — it asks run.sh for the command IT would boot — so it is routed
+    # before the .PRG lookup below rather than being given a build it does not use.
+    if mode == RUNSH_MODE:
+        mode_runsh()
+        return
+    prg = dict(PRG_FOR_MODE, **M5_BUILDS, **M6_BUILDS, **M3_BUILDS).get(mode)
     if prg is None:
         raise SystemExit(__doc__)
     prg = BUILD / prg
     if not prg.exists():
         raise SystemExit(f"{prg} — run `bash atari/build.sh {BUILD_FOR_MODE.get(mode, mode)}` first")
+
+    if mode in M3_BUILDS:
+        mode_m3(mode)
+        return
 
     if mode in M5_BUILDS:
         mode_m5([], mode, M5_PREFIX[mode])

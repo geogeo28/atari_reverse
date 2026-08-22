@@ -422,9 +422,19 @@ static void publish_screen_base(void) {
 }
 
 static void teardown(void) {
+    /* SMOKE_M3_NO_HANDBACK is M3's HAND-BACK CONTROL (build.sh m3fault), and it is `novbl`'s shape at
+     * the other end of the run: the two vector stores suppressed and nothing else — the same install,
+     * the same frames, the same ending driven, the same record written. What must then fail is every
+     * assertion that the machine was GIVEN BACK: the two read-backs here, the debugger's own
+     * comparison of $70/$118 across the program's exit, and TOS's frame clock, which stops advancing
+     * the moment its vertical-blank handler is no longer the one on the vector. */
+#ifndef SMOKE_M3_NO_HANDBACK
     *io32(VEC_LEVEL4_VBL) = saved.vbl_vector;
+#endif
     checked(RB_VBL_VECTOR_RESTORED, *io32(VEC_LEVEL4_VBL) == saved.vbl_vector);
+#ifndef SMOKE_M3_NO_HANDBACK
     *io32(VEC_MFP_ACIA) = saved.acia_vector;
+#endif
     checked(RB_ACIA_VECTOR_RESTORED, *io32(VEC_MFP_ACIA) == saved.acia_vector);
 
     *io8(SHIFTER_RES) = saved.resolution;
@@ -725,10 +735,12 @@ static __attribute__((noinline)) void capture_the_frame(struct m2_stats *record,
 /* THE BUDGET IS A TOTAL AND IT IS WELL INSIDE `--run-vbls`, which is the M1 lesson taken rather than
  * relearned: a bound longer than the harness's own limit is not a bound — the run simply ends and
  * the mode reports "no record", which says nothing about what went wrong. Measured: 52 frames cost
- * 583 vblanks (~11 each), so 2000 is well over three times the reading and still leaves the boot and
+ * 588 vblanks (~11 each), so 2000 is well over three times the reading and still leaves the boot and
  * a tail inside smoke.py's run. (The figure was first written as an ESTIMATE of ~780 from a guessed
  * 15 vblanks a frame, beside a run that had already reported 583. Two numbers for one measurement,
- * and the one in the comment was the one nobody had measured.)
+ * and the one in the comment was the one nobody had measured. The reading itself drifts a little
+ * with the build — 583, then 584, then 588 — which is why the budget is three times it and not
+ * pinned to it.)
  *
  * WHAT IT CANNOT CATCH, stated because a watchdog's edge matters more than its middle: this is
  * checked BETWEEN frames, and `flip_screen`'s two waits are uncapped spins INSIDE one. A dead
@@ -762,8 +774,8 @@ static __attribute__((noinline)) void capture_the_frame(struct m2_stats *record,
  * WB_KEY_ACTIONS_RETURNED, and the loop breaks, hands the machine back and writes STATS.BIN like any
  * other build. A HEADLESS play run injects no input, so no ending is reachable and no record appears
  * — which is what `smoke.py play` asserts, in those words. A PERSON at `atari/run.sh` can reach one,
- * and that is M3's owed milestone (the exits) rather than a defect here: this build is the first
- * thing in the project that can drive them at all. */
+ * and what happens then is M3's, driven on the FRAME build: that build's exit is this one's, line for
+ * line, and the only thing SMOKE_PLAY changes is how many frames come before it. */
 #ifdef SMOKE_PLAY
 #define M2_FRAME_LIMIT    0xffffffffu
 #define M2_WATCHDOG_ARMED 0
@@ -880,16 +892,39 @@ static int run_vblanks(uint32_t want) {
     return 1;
 }
 
+/* One reset, and WHAT THE CONTROLLER ANSWERED — discovered rather than assumed, for the reason
+ * `await_ikbd_reply` gives.
+ *
+ * THE SCANCODE IS CLEARED BEFORE THE RESET IS SENT, and that clear is the fix for a HANG rather than
+ * tidiness. `await_ikbd_reply` returns as soon as the byte is not IKBD_NOTHING_SAID, so whatever the
+ * frame loop left in it is taken for the controller's answer — and the uncapped wait below is then
+ * aimed at a byte the IKBD will never send. Measured by `smoke.py m3`'s first key-driven ending, and
+ * isolated: poking the scancode ALONE, with no ending driven at all, hangs the run identically. */
+static uint8_t reset_and_hear_back(void) {
+    game_image[WB_KEY_LAST_SCANCODE] = IKBD_NOTHING_SAID;
+    return ikbd_reset() ? await_ikbd_reply() : IKBD_NOTHING_SAID;
+}
+
 /* The `sched_wait8` pin, and it is a genuine spin rather than a byte already in place.
  *
- * The FIRST reset's reply is waited for on the shim's own bounded clock — that is what establishes
- * that this machine's IKBD answers at all. Only then is the byte cleared and a SECOND reset sent,
- * and `sched_wait8` called: it cannot hang, because the reply that will end it is the same reply the
- * bounded wait just observed. Without the first half this would be an uncapped spin taken on faith;
- * with it, the risk is a controller that answers once and not twice. */
+ * The reply is waited for on the shim's own bounded clock first — that is what establishes that this
+ * machine's IKBD answers at all. Only then is the byte cleared, a further reset sent, and
+ * `sched_wait8` called: it cannot hang, because the reply that will end it is the reply the bounded
+ * waits just observed. Without that half this would be an uncapped spin taken on faith.
+ *
+ * ...AND THE ANSWER IS ASKED FOR TWICE, because one reading can be a KEY. The bounded wait cannot
+ * tell the controller's status byte from a scancode the ACIA delivers while it is waiting, and in an
+ * interactive session that is not a corner case but the normal path: the player's ESC or N ENDS the
+ * frame loop, and the RELEASE of the same key lands inside the ~300 ms the reset takes to answer. Two
+ * resets that answer the same byte cannot both be that, because a press and a release carry different
+ * codes and neither repeats. If they disagree the pin is simply NOT TAKEN — recorded through
+ * RB_IKBD_REPLIED and `sched_wait_returned`, which is a measurement the run survives, where aiming
+ * the uncapped wait at a key's code is a machine that never reaches its own dump. */
 static int pin_sched_wait8(void) {
-    uint8_t acknowledge = ikbd_reset() ? await_ikbd_reply() : IKBD_NOTHING_SAID;
+    uint8_t acknowledge = reset_and_hear_back();
 
+    if (acknowledge != reset_and_hear_back())
+        acknowledge = IKBD_NOTHING_SAID;
     checked(RB_IKBD_REPLIED, acknowledge != IKBD_NOTHING_SAID);
     if (acknowledge == IKBD_NOTHING_SAID)
         return 0;

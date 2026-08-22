@@ -264,6 +264,40 @@ def anchor_breakpoint(pc, hit, action):
     return f"b pc = ${pc:x} {count}:once :quiet " + action
 
 
+VBL_NEXT = "VBL"   # Hatari substitutes the counter's CURRENT value, i.e. "the next vblank"
+
+
+def vbl_breakpoint(when, action, hit=FIRST_HIT):
+    """A breakpoint on the emulator's own vblank counter, and THE ONLY PLACE IT IS SPELLED.
+
+    `when` is either a vblank NUMBER — an absolute moment in the run — or `VBL_NEXT`, the
+    stop-then-shoot idiom the rendered capture below needs. With `VBL_NEXT`, `hit` counts vblanks:
+    the condition is true at every vblank from now on, so the Nth arrival IS N vblanks later.
+
+    HATARI'S CONDITION PARSER TAKES A BARE VARIABLE OR A BARE NUMBER AND NOTHING ELSE, measured: it
+    rejects `VBL+300` at the `+`, and `VBL > VBL + 300` at the first space. So "N vblanks after some
+    other moment" cannot be written as a condition at all — the `hit` count above is the only way to
+    express it, and it is why smoke.py's M3 arms BOTH of its tail readings from inside the action
+    file of the breakpoint on the program's exit (`gemdos_breakpoint` below) rather than timing them
+    off the run's own clock. An absolute count was M3's first design and its own control retired it.
+
+    `action` is an `action_file` clause."""
+    count = "" if hit == FIRST_HIT else f":{hit} "
+    return f"b VBL > {when} {count}:once :quiet " + action
+
+
+def gemdos_breakpoint(opcode, action):
+    """A breakpoint on a GEMDOS trap, by function number — the third and last breakpoint spelling.
+
+    Hatari's `GemdosOpcode` variable reads `$ffff` except on a `trap #1`, so this stops the machine
+    inside the OS call rather than at an address the program has to be searched for. smoke.py's M3
+    uses it on `Pterm0` to anchor its tail inspections on the program's OWN exit: an absolute vblank
+    count cannot do that job, because a machine that has fallen over between the exit and the count
+    is reset by TOS — and a reset restores the very vectors the hand-back control needs to stay
+    broken. `action` is an `action_file` clause."""
+    return f"b GemdosOpcode = {opcode} :once :quiet " + action
+
+
 def refuse_repeated_arrivals(stops):
     """Refuse a script that sets two breakpoints on the same PC AND the same arrival.
 
@@ -497,16 +531,15 @@ def picture_command(directory, tag, index):
 
     `screenshot` renders the emulator's display surface, which is built scanline by scanline, so a
     capture taken where the anchor happens to fire mixes that frame with the one before —
-    deterministic only if the picture is static. `b VBL > VBL` (Hatari substitutes the expression's
-    CURRENT value on the right, so this reads "the next vblank") holds the machine until a frame
-    boundary, where the surface holds one completed frame.
+    deterministic only if the picture is static. `VBL_NEXT` holds the machine until a frame boundary,
+    where the surface holds one completed frame.
 
     A SECOND STOP RATHER THAN A SECOND TOP-LEVEL BREAKPOINT: two breakpoints selecting the same
     arrival interfere with each other's counters, which is what `boot_script`'s duplicate guard is
     for. This one is armed from inside the anchor's own action file and disarms itself."""
     shot = Path(directory) / f"{tag}SHOT{index}.INI"
     shot.write_text(f"screenshot {capture_path(directory, tag, index, PICTURE_SUFFIX)}\ncont\n")
-    return f"b VBL > VBL :once :quiet :file {shot}"
+    return vbl_breakpoint(VBL_NEXT, f":file {shot}")
 
 
 def read_capture(captures, tag, index, suffix, frame):

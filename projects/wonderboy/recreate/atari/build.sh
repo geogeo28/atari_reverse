@@ -34,7 +34,7 @@ set -euo pipefail
 # they carry M2_ENTRY_UNWIND, and they are the ones smoke.py stages `PENS.IMG` for. smoke.py SCRAPES
 # this line rather than keeping its own list — a second spelling would let a new frame mode boot
 # without the palette it needs and report "no M2.BIN", which reads like a crash (CLAUDE.md §5).
-FRAME_MODES="m2 m5fault m5flash m6rearm play"
+FRAME_MODES="m2 m5fault m5flash m6rearm m3fault play"
 
 MODE="${1:-m1}"
 case "$MODE" in
@@ -74,6 +74,14 @@ case "$MODE" in
   # the framebuffer, the pens, the hardware vector and the rendered picture are all identical. Only
   # the ORDERED TIMELINE moves, which is what makes it the control that shows M6 can fail.
   m6rearm) DEF="-DSMOKE_M2 -DSMOKE_M6_REARM" ;;
+  # M3's HAND-BACK CONTROL: the frame build that TAKES the machine and never gives the two vectors
+  # back. Everything else is `m2` — the same install, the same driven ending, the same record — so
+  # what reddens is exactly the hand-back: the two teardown read-backs inside the record, the
+  # debugger's comparison of $70/$118 across the program's exit, and TOS's own frame clock, which
+  # stops the moment its vertical-blank handler is no longer on the vector. It is the control that
+  # shows M3's Pterm rows CAN fail, and it is the sibling project's real bug reproduced on purpose
+  # (a handler left hooked into memory GEMDOS had taken back, found only by running past the exit).
+  m3fault) DEF="-DSMOKE_M2 -DSMOKE_M3_NO_HANDBACK" ;;
   # THE BUILD A PERSON PLAYS, and the only one here that is not a measurement. It is `m2` with the
   # frame count and the watchdog lifted (wonderboy_main.c's SMOKE_PLAY block says why each has to
   # go), so the reconstruction's frame loop runs until the window is closed. `atari/run.sh` builds
