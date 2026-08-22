@@ -35,6 +35,16 @@ post-boot RAM off a real emulated machine and staging that.
 | **M5** hardware-state vector + rendered picture | M2 reads back ONE register (`$ffff8201/8203`, the row that kills the two flip-site mutants). The rest of Joust's vector — the YM-2149 file, resolution, refresh rate — and Hatari's own `screenshot` are not taken. Catches when it lands: **the flash's two arms swapped**, which M2 cannot see because its anchors are frames on which `WB_FLASH_TIMER` is zero | ⛔ owed, partly delivered |
 | **M6** timelines | the ordered stream of shifter and PSG writes, reduced to a per-phase shape. Catches: the sink write moved above the timer store; and the PSG select/data race in §5 | ⛔ owed |
 
+**Batch 43 phase C moved no row.** It fixed the host-side worker crash (`../STATUS.md`) by routing
+`../src/map.c` and `../src/scene.c` through `../include/bus.h`, which changes the sixteen sources
+this directory cross-compiles — so all five modes were rebuilt and re-run on both ROMs, and M2 is
+still byte-exact at all four anchors (584 vblanks for 52 frames, against phase B's 583). **It also
+left an unpinned modelling decision on target, and it is recorded rather than claimed:** `bus.h`
+answers an address outside the game's 1 MB with zero and drops a write there, while a real ST has
+real RAM or the `$ff8000` I/O page. `build.sh`'s seam tripwire cannot see it — `os_in_image` is
+already a declared on-target helper and `bus.h` is a header, not a core — and no framebuffer, pen or
+`M2.BIN` field would move. Named in "Known gaps".
+
 Verified on **TOS 1.04 and EmuTOS** (Hatari's bundled `tos.img`). **NOT "identical results on both
 ROMs"** — the honest split is that M1 is green on both, and two of its pieces behave differently:
 
@@ -383,6 +393,21 @@ first thing to check when nothing ran is whether anything could have.*
 
 ## Known gaps
 
+- **`bus.h`'s out-of-image answer is an ORACLE'S answer FOR MOST ADDRESSES, compiled into the `.PRG`
+  and UNPINNED here.** A read outside the game's 1 MB returns zero and a write there is dropped.
+  Off-image that matches the shim on everything **except the seven hardware addresses `../include/
+  bus.h` enumerates** — `$fffc00`, `$ff8800`, `$ff8802`, `$fffa01`, `$ff820a`, `$ff8207`, `$ff8209`
+  — where the shim serves TDRE, the PSG read-back or the case's declared seed, and latches a PSG
+  write. So the claim is narrower than a blanket equivalence, and in *two* directions at once: on the
+  host it is exact off the modeled set and a stated hole on it (six of the seven are caught by the
+  harness's own ledger comparisons; `$fffc00` is not), and on target it is a model of neither. A real
+  ST has real RAM (a 4 MB machine) or a live `$ff8000` I/O page at those addresses. Nothing this
+  directory measures would show the difference: the framebuffer, the sixteen pens, the M-records and
+  `build.sh`'s seam tripwire are all blind to a store that lands outside the array. Not new —
+  `../src/blit.c` and `scene_clear_marker_pair` have done it since batch 15 and batch 40 — but batch
+  43 phase C widened it to the whole of `../src/map.c` and `../src/scene.c`, so it is stated here
+  rather than inherited quietly. Pinning it needs an on-target case that computes such an address on
+  purpose and watches a surface that can see the answer; there is none today.
 - **Of the four shifter-sink mutants `../STATUS.md` measures as surviving the whole differential
   suite, THREE AND A HALF ARE NOW DEAD.** M1 killed the base-byte swap where it lives in the shared
   translation; M2 kills the same swap at `flip_screen`'s own two call sites and the wrong buffer

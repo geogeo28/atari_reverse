@@ -902,6 +902,54 @@ def test_the_speech_arm_posts_the_byte_under_the_cursor_and_advances(script_byte
         f"{case}: it wrote {sorted(hex(a) for a in written)}")
 
 
+# --- the pointers the image supplies, put on the 68000's 24-BIT BUS ------------------------------
+# A top byte no 68000 address line carries. $90000000 + $021828 IS $021828 to the machine, and both
+# cores fold it the same way: Musashi masks with CPU_ADDRESS_MASK before the shim ever sees it.
+POINTER_ALIAS_TOP_BYTE = 0x90000000
+
+
+def test_the_speech_arm_folds_its_two_pointers_onto_the_24_bit_bus():
+    """WB_RECORD_PTR_10420 and WB_SPEECH_SCRIPT_CURSOR ARE 32-BIT WORDS IN MEMORY, AND THE BUS IS 24.
+    Nothing in the image bounds either — `movea.l $10420.l,a0` takes whatever longword is there —
+    so an alias with a top byte set must reach exactly the same descriptor and the same script byte
+    as the plain pointer does, and this case is the plain post above with both aliased.
+
+    IT IS THE PIN BATCH 43 PHASE C OWED. A port that indexes the buffer with the raw longword reads
+    2.4 GiB past its end: that is the host heap, where the oracle has a masked byte of the image, and
+    it is what killed a pytest worker in ~25% of parallel runs until src/scene.c routed the pair
+    through bus.h. A mutant that drops the mask fails here by divergence — or by taking the process
+    down, which is the same finding at a louder volume — because nothing off the image agrees with
+    the descriptor by anything but luck.
+
+    THE STORE CARRIES THE TOP BYTE BACK. `move.l a1,$b8d2.l` writes the address REGISTER, not the
+    address the bus saw, so the advanced cursor keeps the alias — masking the stored value would be
+    a different (and wrong) reconstruction, and this assertion is what separates them.
+    """
+    case = "speech post through an aliased descriptor and cursor"
+    script_byte = 0x63
+    aliased_descriptor = POINTER_ALIAS_TOP_BYTE + DESCRIPTOR
+    aliased_cursor = POINTER_ALIAS_TOP_BYTE + SPEECH_CURSOR_AT
+    seeds = speech_pokes(case, JOY1_FIRE, script_byte)
+    seeds[DESCRIPTOR_PTR] = longword(aliased_descriptor)
+    seeds[SCRIPT_CURSOR] = longword(aliased_cursor)
+
+    info = run_frame(case, seeds, EXIT_RETURN, cap=SPEECH_CAP)
+    written = program_writes(info)
+    assert leaf.read_int(info, TEXT_REQUEST, 1, case) == script_byte, (
+        f"{case}: the arm did not post the byte the MASKED cursor names")
+    assert leaf.read_int(info, TEXT_LIFETIME_REQUEST, WORD_BYTES, case) == SPEECH_LIFETIME, (
+        f"{case}: the speech arm's zero lifetime did not land")
+    assert leaf.read_int(info, SCRIPT_CURSOR, LONGWORD_BYTES, case) == aliased_cursor + 1, (
+        f"{case}: the advanced cursor lost the top byte the address register carries")
+    # THE WHOLE WRITE SET, for the reason `run_frame`'s docstring gives: the attribution pass is off
+    # for this routine, and this case's subject is WHICH address a store carries — so a stray store
+    # at the masked cursor, beside the register write, has to be visible to it.
+    assert set(written) == set(range(TEXT_REQUEST, TEXT_REQUEST + 1)) | set(
+        range(TEXT_LIFETIME_REQUEST, TEXT_LIFETIME_REQUEST + WORD_BYTES)) | set(
+        range(SCRIPT_CURSOR, SCRIPT_CURSOR + LONGWORD_BYTES)), (
+        f"{case}: it wrote {sorted(hex(a) for a in written)}")
+
+
 # --- the shop: the two waits ---------------------------------------------------------------------
 def shop_pokes(case, words=(), longwords=(), bytes_=()):
     base = ((FLAG_A30, 0xffff), (FLAG_A32, 0x0000), (DESCRIPTOR + SCENE_KIND, KIND_SHOP))

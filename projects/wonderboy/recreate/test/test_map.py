@@ -1262,12 +1262,17 @@ def _step_right_glue(actor, step, ground):
 
 def _run_step_right(case, actor_x, half_width, step, tiles, a32=False, actor_type=0,
                     default_stride=DEFAULT_STRIDE, actor_y=None, limit_x=STEP_RIGHT_LIMIT_X,
-                    entry=None):
+                    entry=None, actor=ACTOR):
     """One step-right case. ``tiles`` is {(column offset, row offset): code} RELATIVE to the cell
     the first probe lands in, in the SELECTED map's own grid.
 
     Returns the model's register dict, which has already been required to equal the ORACLE's seven
     registers — and, for the two the reconstruction owes, its returned d0 and its ground word too.
+
+    ``actor`` is the ADDRESS REGISTER the routine is entered with, and it defaults to the record the
+    seeds are written at. A case may hand it an ALIAS of that record — the same address with a top
+    byte no 68000 address line carries — to pin that the pointer reaches the bus folded; the seeds
+    stay at ACTOR because that is where the machine resolves it to.
     """
     entry = dict(entry or {})
     assert set(entry) <= STEP_RIGHT_ENTRY_REGS, (
@@ -1295,9 +1300,9 @@ def _run_step_right(case, actor_x, half_width, step, tiles, a32=False, actor_typ
 
     ground = ctypes.c_uint32(0)
     what = f"actor_step_right_against_map {case}"
-    info = leaf.run("actor_step_right_against_map", _step_right_glue(ACTOR, step, ground),
+    info = leaf.run("actor_step_right_against_map", _step_right_glue(actor, step, ground),
                     merge_bands(expected_writes), what,
-                    regs=dict(entry, a0=ACTOR, d7=step, _pokes=pokes), poison=False,
+                    regs=dict(entry, a0=actor, d7=step, _pokes=pokes), poison=False,
                     max_insns=(STEP_RIGHT_INSN_PER_RETRY * ((step & WORD_MASK) + 1)
                                + STEP_RIGHT_INSN_TAIL))
 
@@ -1340,6 +1345,49 @@ def test_the_rightward_step_stops_at_the_first_blocking_cell(case, step, tiles, 
     assert blocked == expect_blocked, (
         f"{case}: the routine reported {'blocked' if blocked else 'clear'}, which is not what this "
         f"case is about")
+
+
+# --- the record pointer, put on the 68000's 24-BIT BUS ---------------------------------------------
+# `movea.l` loads all 32 bits of an address register and the bus carries 24, so $90000000 + ACTOR IS
+# ACTOR to the machine. Both cores fold it the same way — Musashi masks with CPU_ADDRESS_MASK before
+# the shim is called — and every one of this file's routines is entered with a6/a0 already loaded by
+# a caller nothing bounds.
+RECORD_ALIAS_TOP_BYTE = 0x90000000
+
+
+def test_the_rightward_step_folds_its_record_pointer_onto_the_24_bit_bus():
+    """THE PIN BATCH 43 PHASE C OWED src/map.c, and the twin of test_scene.py's for src/scene.c.
+
+    Entered with the record pointer aliased, the routine must read the SAME x and half-width and
+    commit to the SAME x word as the un-aliased run — the whole write set, byte for byte. A port that
+    indexes its image with the raw longword instead reaches 2.4 GiB past the buffer, where the oracle
+    has the folded record.
+
+    ITS MUTANT DIES BY FAULT AND NOT BY DIVERGENCE, and what that is worth depends on how the case is
+    run — which is the honest form of a claim an earlier draft of this docstring made flatly. With
+    `actor_step_right_against_map`'s three record accesses put back to a raw index:
+
+      * under `tools/recreate_kit/guarded_image.py` the kill is DETERMINISTIC BY CONSTRUCTION —
+        everything above the buffer is PROT_NONE, so the access cannot land anywhere else. 8 of 8.
+      * under a plain `make test` the kill is EMPIRICAL: 8 of 8 as well, because 2.4 GiB past a heap
+        buffer is not mapped in this process — but nothing guarantees that, and a layout where the
+        page IS mapped turns the mutant into a silent scribble on the host heap rather than a
+        failure. That is the same property that made the original defect intermittent.
+
+    No alias can make the kill a clean assertion: the masked address is inside the image only because
+    the top byte was dropped, so the raw one is always outside a 1 MB buffer. The sibling in
+    test_scene.py is the one that fails by divergence, and between them the two shapes are covered.
+
+    THE ASSERTION IS THE UN-ALIASED RUN'S OWN OUTPUT, not a restatement of it: `_run_step_right`
+    already required each run to equal the ORACLE, so comparing the two says the alias changed
+    nothing rather than that both matched a number written down here.
+    """
+    plain = _run_step_right("alias-control", RIGHT_X, RIGHT_HALF_WIDTH, 8, {})
+    aliased = _run_step_right("aliased-record", RIGHT_X, RIGHT_HALF_WIDTH, 8, {},
+                              actor=RECORD_ALIAS_TOP_BYTE + ACTOR)
+    assert aliased == plain, (
+        f"the aliased record produced {aliased}, not the folded record's {plain} — the top byte of "
+        f"an address register does not reach the bus")
 
 
 def test_the_rightward_step_clears_the_players_own_byte_on_every_retry():

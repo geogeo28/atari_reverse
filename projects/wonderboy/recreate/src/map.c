@@ -52,10 +52,38 @@
  *   * `adda.w` (the stamp's row step) sign-extends its operand as well.
  * And one from the same page's other half: `cmpi.w #$10,d7 / blt` is a signed comparison of the
  * OPERAND, while `tst.w d3 / bpl` really is the wrapped value's own sign bit.
+ *
+ * EVERY CELL BYTE **AND EVERY ACTOR-RECORD FIELD** GOES THROUGH bus.h, AND THAT IS NOT
+ * DEFENSIVENESS — IT IS THE ORACLE'S OWN ANSWER. Two address families here are unbounded, and the
+ * second is most of this file:
+ *   * the CELL, and it is the ARGUMENT that is unbounded rather than the arithmetic. `cell_pointer`
+ *     returns `map + WB_COLLISION_MAP_CELLS + sign_ext16(index)`, and a sign-extended WORD index
+ *     moves a base of $1d338 or $23494 by at most ±32768 — so its own result cannot leave a 1 MB
+ *     image. What can is the a6 the two SETTLE routines are entered with: they take the cell from a
+ *     caller, `cell_is` then steps it by a stride read out of memory, and `scene_clear_marker_pair`
+ *     next door takes one straight out of WB_SCENE_MARKER_CELL_PTR.
+ *   * the RECORD, which is most of this file. `actor` is an address register a caller supplies;
+ *     nothing between the caller's `movea.l` and the field access bounds it, and test_behavior.py
+ *     drives a record at $fffff0 on purpose.
+ * Musashi puts either on a 24-BIT bus, and off the image the shim answers zero for every address
+ * but the SEVEN hardware ones bus.h enumerates — so `bus_read_byte` is the oracle's answer on that
+ * set and not on the modeled one, which bus.h states at its own width rather than being summarised
+ * here. An unguarded index into the buffer is neither: it reads the host heap, agreeing with the
+ * oracle only by luck and taking the process down when the page is not mapped. Batch 43 phase C
+ * measured it — the whole 6,138-case suite run on an image with PROT_NONE either side crashed in
+ * three cases, in `actor_step_right_against_map` here (the record) and in `scene_run_frame` in
+ * src/scene.c (a descriptor), and nowhere else.
+ *
+ * ON TARGET IT IS A MODELLING DECISION AND NOT A NO-OP. A real ST answers an address outside the
+ * game's 1 MB with real RAM, or with the $ff8000 I/O page where the shim has a model and this has
+ * none — so a computed read there returns 0 and a computed write is dropped where the machine would
+ * do neither. No on-target surface would show it; ../STATUS.md records that unpinned rather than
+ * claiming otherwise.
  */
 #include <stdint.h>
 
 #include "actor.h"          /* $1492's not-found arm IS actor_accelerate_fall — see below */
+#include "bus.h"            /* every CELL and every ACTOR FIELD is addressed through it */
 #include "machine.h"
 #include "map.h"
 #include "wonderboy.h"
@@ -100,13 +128,13 @@ static uint16_t pixel_to_cell(uint16_t pixels) {
  * pixel above the actor's y, so a record standing exactly on a cell boundary probes the row it is
  * standing in rather than the one below it. */
 static uint16_t actor_probe_row(const uint8_t *image, uint32_t actor) {
-    return pixel_to_cell((uint16_t)(be16(image + addr_add(actor, WB_ACTOR_Y)) - 1));
+    return pixel_to_cell((uint16_t)(bus_read_word(image, addr_add(actor, WB_ACTOR_Y)) - 1));
 }
 
 /* The three tests the shared tail runs on the cells above and below the one a probe stopped at.
  * `offset` is the original's d7, used as a sign-extended word index off the cell pointer. */
 static int cell_is(const uint8_t *image, uint32_t cell, uint16_t offset, uint8_t tile) {
-    return image[addr_add(cell, sign_ext16(offset))] == tile;
+    return bus_read_byte(image, addr_add(cell, sign_ext16(offset))) == tile;
 }
 
 /* $111a — the ground test both probes end in, and the d1 they both hand back: the
@@ -131,7 +159,7 @@ static uint32_t map_ground_under_cell(const uint8_t *image, uint32_t cell, uint3
     uint16_t stride = be16(image + WB_COLLISION_MAP_DEFAULT);
     uint16_t flags;
 
-    if (image[cell] == WB_MAP_TILE_BLOCK) {
+    if (bus_read_byte(image, cell) == WB_MAP_TILE_BLOCK) {
         /* `neg.w d7`: the cell is a block, so the question is whether the one ABOVE it is too. And
          * NEG sets X the way `0 - d7` would, i.e. on every stride but a zero one. */
         uint16_t above = (uint16_t)-stride;
@@ -160,18 +188,18 @@ static uint32_t map_ground_under_cell(const uint8_t *image, uint32_t cell, uint3
  * instructions rather than as the mirror pair they are. */
 static void step_left_commit(uint8_t *image, uint32_t actor, uint16_t remaining, unsigned *extend) {
     uint32_t x_at = addr_add(actor, WB_ACTOR_X);
-    uint16_t x = be16(image + x_at);
+    uint16_t x = bus_read_word(image, x_at);
 
-    wr16(image + x_at, (uint16_t)(x - remaining));
+    bus_write_word(image, x_at, (uint16_t)(x - remaining));
     *extend = word_sub_extend(x, remaining);
 }
 
 static void step_right_commit(uint8_t *image, uint32_t actor, uint16_t remaining,
                               unsigned *extend) {
     uint32_t x_at = addr_add(actor, WB_ACTOR_X);
-    uint16_t x = be16(image + x_at);
+    uint16_t x = bus_read_word(image, x_at);
 
-    wr16(image + x_at, (uint16_t)(x + remaining));
+    bus_write_word(image, x_at, (uint16_t)(x + remaining));
     *extend = word_add_extend(x, remaining);
 }
 
@@ -199,14 +227,14 @@ uint32_t actor_step_left_against_map(uint8_t *image, uint32_t actor, uint32_t st
     unsigned extend = 0;
 
     for (;;) {
-        uint16_t probe = (uint16_t)(be16(image + addr_add(actor, WB_ACTOR_X))
-                                    - be16(image + addr_add(actor, WB_ACTOR_HALF_WIDTH))
+        uint16_t probe = (uint16_t)(bus_read_word(image, addr_add(actor, WB_ACTOR_X))
+                                    - bus_read_word(image, addr_add(actor, WB_ACTOR_HALF_WIDTH))
                                     - remaining);       /* d3, kept for its SIGN */
         column = pixel_to_cell(probe);
         cell = cell_pointer(image, collision_map(image), column, actor_probe_row(image, actor),
                             &cell_index, &extend);
 
-        if (image[cell] != WB_MAP_TILE_BLOCK) {
+        if (bus_read_byte(image, cell) != WB_MAP_TILE_BLOCK) {
             /* `tst.w d3 / bpl` — the wrapped probe's own sign bit, not a comparison. */
             if ((int16_t)probe >= 0) {
                 step_left_commit(image, actor, remaining, &extend);
@@ -215,8 +243,8 @@ uint32_t actor_step_left_against_map(uint8_t *image, uint32_t actor, uint32_t st
             /* Off the map's left edge: park the actor against it, and report blocked. `move.w
              * 14(a0),(a0)` and the `move.b #$0,d0` below it write no X, so this is the one exit
              * that carries `cell_pointer`'s `add.w` into the tail. */
-            wr16(image + addr_add(actor, WB_ACTOR_X),
-                 be16(image + addr_add(actor, WB_ACTOR_HALF_WIDTH)));
+            bus_write_word(image, addr_add(actor, WB_ACTOR_X),
+                           bus_read_word(image, addr_add(actor, WB_ACTOR_HALF_WIDTH)));
             outcome = WB_MAP_STEP_BLOCKED;
             break;
         }
@@ -228,8 +256,8 @@ uint32_t actor_step_left_against_map(uint8_t *image, uint32_t actor, uint32_t st
             step_left_commit(image, actor, remaining, &extend);
             break;
         }
-        if (be16(image + addr_add(actor, WB_ACTOR_TYPE)) == WB_ACTOR_TYPE_PLAYER)
-            image[addr_add(actor, WB_ACTOR_FIELD_22)] = 0;
+        if (bus_read_word(image, addr_add(actor, WB_ACTOR_TYPE)) == WB_ACTOR_TYPE_PLAYER)
+            bus_write_byte(image, addr_add(actor, WB_ACTOR_FIELD_22), 0);
     }
 
     /* `move.b d6,d0` replaces only the low byte of a d0 whose low word still holds the column. */
@@ -264,14 +292,14 @@ uint32_t actor_step_right_against_map(uint8_t *image, uint32_t actor, uint32_t s
     unsigned extend = 0;
 
     for (;;) {
-        uint16_t probe = (uint16_t)(be16(image + addr_add(actor, WB_ACTOR_X))
-                                    + be16(image + addr_add(actor, WB_ACTOR_HALF_WIDTH))
+        uint16_t probe = (uint16_t)(bus_read_word(image, addr_add(actor, WB_ACTOR_X))
+                                    + bus_read_word(image, addr_add(actor, WB_ACTOR_HALF_WIDTH))
                                     + remaining);       /* d3, kept UNSHIFTED for the compare */
         reported = pixel_to_cell(probe);
         cell = cell_pointer(image, collision_map(image), reported, actor_probe_row(image, actor),
                             &cell_index, &extend);
 
-        if (image[cell] != WB_MAP_TILE_BLOCK) {
+        if (bus_read_byte(image, cell) != WB_MAP_TILE_BLOCK) {
             /* Where the actor's right edge stops. In the A32 mode there is no limit word at all
              * (`clr.w d0`), so the edge stops at the bias alone; otherwise the level's own right
              * edge, WB_BG_SCROLL_LIMIT_X being that number less one WB_BG_SCROLL_LIMIT_BIAS. */
@@ -285,12 +313,12 @@ uint32_t actor_step_right_against_map(uint8_t *image, uint32_t actor, uint32_t s
              * whatever the walk had decided. `sub.w 14(a0),d0` at $11d4 is this arm's last
              * arithmetic — the `move.w d0,(a0)` and `move.b #$0,d0` under it write no X. */
             {
-                uint16_t half_width = be16(image + addr_add(actor, WB_ACTOR_HALF_WIDTH));
+                uint16_t half_width = bus_read_word(image, addr_add(actor, WB_ACTOR_HALF_WIDTH));
 
                 extend = word_sub_extend(reported, half_width);
                 reported = (uint16_t)(reported - half_width);
             }
-            wr16(image + addr_add(actor, WB_ACTOR_X), reported);
+            bus_write_word(image, addr_add(actor, WB_ACTOR_X), reported);
             probe_report(image, cell, cell_index, &extend, ground, exit_extend);
             return set_low_byte(reported, WB_MAP_STEP_BLOCKED);
         }
@@ -300,8 +328,8 @@ uint32_t actor_step_right_against_map(uint8_t *image, uint32_t actor, uint32_t s
          * (now zero) move, so the x word is written on every path out of this loop. */
         if (--remaining == 0)
             break;
-        if (be16(image + addr_add(actor, WB_ACTOR_TYPE)) == WB_ACTOR_TYPE_PLAYER)
-            image[addr_add(actor, WB_ACTOR_FIELD_22)] = 0;
+        if (bus_read_word(image, addr_add(actor, WB_ACTOR_TYPE)) == WB_ACTOR_TYPE_PLAYER)
+            bus_write_byte(image, addr_add(actor, WB_ACTOR_FIELD_22), 0);
     }
 
     /* `add.w d7,(a0)` at $1200 — the other exits' last arithmetic, and the tail's entry X on both
@@ -327,21 +355,23 @@ void actor_map_cell_lookup(const uint8_t *image, uint32_t actor, map_cell_probe 
     probe->sub_cell = set_low_word(probe->sub_cell, pixel_x & WB_MAP_CELL_MASK);
     probe->column = set_low_word(probe->column, pixel_to_cell(pixel_x));
     probe->row = set_low_word(probe->row,
-                              pixel_to_cell(be16(image + addr_add(actor, WB_ACTOR_Y))));
+                              pixel_to_cell(bus_read_word(image, addr_add(actor, WB_ACTOR_Y))));
     /* NULL for the X: this routine's interface is the `map_cell_probe` registers, and no caller of
      * $13c8 reads the flag its `add.w` leaves. */
     probe->cell = cell_pointer(image, collision_map(image), (uint16_t)probe->column,
                                (uint16_t)probe->row, &probe->cell_index, NULL);
     /* `move.w 14(a0),d7 / add.w d7,d7` — the footprint's whole width, as a word. */
     probe->span = set_low_word(probe->span,
-                               (uint16_t)(2u * be16(image + addr_add(actor, WB_ACTOR_HALF_WIDTH))));
+                               (uint16_t)(2u * bus_read_word(image,
+                                                             addr_add(actor,
+                                                                      WB_ACTOR_HALF_WIDTH))));
 }
 
 void actor_map_cell_from_actor_x(const uint8_t *image, uint32_t actor, map_cell_probe *probe) {
     /* `moveq #$0,d0 / move.l d0,d1` clear both as LONGS, which is why no caller entering here ever
      * sees the surviving high halves a standalone $13c8 hands back in d0 and d1. */
-    probe->column = (uint16_t)(be16(image + addr_add(actor, WB_ACTOR_X))
-                               - be16(image + addr_add(actor, WB_ACTOR_HALF_WIDTH)));
+    probe->column = (uint16_t)(bus_read_word(image, addr_add(actor, WB_ACTOR_X))
+                               - bus_read_word(image, addr_add(actor, WB_ACTOR_HALF_WIDTH)));
     probe->row = 0;
 
     actor_map_cell_lookup(image, actor, probe);
@@ -362,6 +392,16 @@ static int footprint_reaches_next_cell(uint32_t subcell, uint16_t remaining) {
     return (int16_t)(uint16_t)subcell >= (int16_t)edge;
 }
 
+/* `bclr #4,8(a0)` then `bclr #1,8(a0)` — TWO byte read-modify-writes over the same flags byte, and
+ * BOTH settle arms spell exactly that pair ($1480/$1486 and $1502/$1508). Written as two calls
+ * because that is what the instructions are: an earlier draft of this helper collapsed them into one
+ * masked store, which no surface here can see today but is not what the original does. What
+ * separates the two arms is WB_ACTOR_FLAGS2, which only $1400 touches. */
+static void clear_falling_and_launched(uint8_t *image, uint32_t actor) {
+    flag_clear(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_FALLING_BIT);
+    flag_clear(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_LAUNCHED_BIT);
+}
+
 uint32_t actor_settle_on_platform(uint8_t *image, uint32_t actor, uint32_t cell, uint32_t span,
                                  uint32_t subcell) {
     uint32_t cursor = cell;                             /* a6 */
@@ -370,44 +410,41 @@ uint32_t actor_settle_on_platform(uint8_t *image, uint32_t actor, uint32_t cell,
 
     /* Walk the footprint a whole cell at a time. `cmpi.w #$10,d7 / blt` is a SIGNED comparison of
      * the operand, so a negative span never enters the loop at all. */
-    while (image[cursor] != WB_MAP_TILE_PLATFORM
+    while (bus_read_byte(image, cursor) != WB_MAP_TILE_PLATFORM
            && (int16_t)remaining >= (int16_t)WB_MAP_CELL_PIXELS) {
         cursor = addr_add(cursor, 1);
         remaining = (uint16_t)(remaining - WB_MAP_CELL_PIXELS);
     }
-    on_platform = image[cursor] == WB_MAP_TILE_PLATFORM;
+    on_platform = bus_read_byte(image, cursor) == WB_MAP_TILE_PLATFORM;
 
     if (!on_platform && footprint_reaches_next_cell(subcell, remaining)) {
         cursor = addr_add(cursor, 1);
-        on_platform = image[cursor] == WB_MAP_TILE_PLATFORM;
+        on_platform = bus_read_byte(image, cursor) == WB_MAP_TILE_PLATFORM;
     }
 
     if (on_platform) {
-        int16_t actor_y = (int16_t)be16(image + addr_add(actor, WB_ACTOR_Y));
+        int16_t actor_y = (int16_t)bus_read_word(image, addr_add(actor, WB_ACTOR_Y));
         int16_t top = (int16_t)(be16(image + WB_PLATFORM_Y) - WB_PLATFORM_Y_ABOVE);
 
         /* `cmp.w d1,d0 / bgt` then `addq.w #6,d0 / cmp.w 2(a0),d0 / blt`: the actor lands only from
          * inside the band [top, top + WB_PLATFORM_Y_BAND], both ends signed comparisons of the
          * operands rather than of a difference. */
         if (!(top > actor_y) && !((int16_t)(top + WB_PLATFORM_Y_BAND) < actor_y)) {
-            uint8_t *flags = image + addr_add(actor, WB_ACTOR_FLAGS);
-
-            wr16(image + addr_add(actor, WB_ACTOR_Y),
-                 (uint16_t)(be16(image + WB_PLATFORM_Y) - WB_PLATFORM_STAND_OFFSET));
-            *flags |= (uint8_t)(1u << WB_ACTOR_FLAG_SUPPORTED_BIT);
-            image[addr_add(actor, WB_ACTOR_FLAGS2)] |= (uint8_t)(1u << WB_ACTOR_FLAGS2_LANDED_BIT);
-            *flags &= (uint8_t)~((1u << WB_ACTOR_FLAG_FALLING_BIT)
-                                 | (1u << WB_ACTOR_FLAG_LAUNCHED_BIT));
-            image[addr_add(actor, WB_ACTOR_SPEED)] = 0;
+            bus_write_word(image, addr_add(actor, WB_ACTOR_Y),
+                           (uint16_t)(be16(image + WB_PLATFORM_Y) - WB_PLATFORM_STAND_OFFSET));
+            flag_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT);
+            flag_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_LANDED_BIT);
+            clear_falling_and_launched(image, actor);
+            bus_write_byte(image, addr_add(actor, WB_ACTOR_SPEED), 0);
             return set_low_word(span, remaining);
         }
     }
 
     /* Nothing to stand on. A record that is still marked supported is left alone — only one that
      * has already lost its footing starts falling. */
-    if (!(image[addr_add(actor, WB_ACTOR_FLAGS)] & (1u << WB_ACTOR_FLAG_SUPPORTED_BIT)))
-        image[addr_add(actor, WB_ACTOR_FLAGS)] |= (uint8_t)(1u << WB_ACTOR_FLAG_FALLING_BIT);
-    image[addr_add(actor, WB_ACTOR_FLAGS2)] &= (uint8_t)~(1u << WB_ACTOR_FLAGS2_LANDED_BIT);
+    if (!flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT))
+        flag_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_FALLING_BIT);
+    flag_clear(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_LANDED_BIT);
     return set_low_word(span, remaining);
 }
 
@@ -415,7 +452,10 @@ uint32_t actor_settle_on_platform(uint8_t *image, uint32_t actor, uint32_t cell,
  * `cmpi.b #$1,(a6) / beq` followed by `cmpi.b #$2,(a6) / beq` — the same two codes the ground test
  * in the probes' tail accepts, and the reason this routine is not $1400 with a tile argument. */
 static int cell_is_ground(const uint8_t *image, uint32_t cell) {
-    return image[cell] == WB_MAP_TILE_BLOCK || image[cell] == WB_MAP_TILE_LEDGE;
+    /* Two reads because the original is two `cmpi.b`s over the same (a6). Nothing writes between
+     * them and no surface here can tell one read from two, so this is transcription and not a pin. */
+    return bus_read_byte(image, cell) == WB_MAP_TILE_BLOCK
+           || bus_read_byte(image, cell) == WB_MAP_TILE_LEDGE;
 }
 
 uint32_t actor_settle_on_tile_1_or_2(uint8_t *image, uint32_t actor, uint32_t cell, uint32_t span,
@@ -443,19 +483,15 @@ uint32_t actor_settle_on_tile_1_or_2(uint8_t *image, uint32_t actor, uint32_t ce
         return set_low_word(span, remaining);
     }
 
-    {
-        /* `andi.w #$fff0,2(a0)`: parked on the top of whichever cell the record is in — its own y
-         * masked, and not a platform word read out of memory as $1400's landing arm does. Nothing
-         * here touches WB_ACTOR_FLAGS2, which is the other half of what separates the two arms. */
-        uint8_t *flags = image + addr_add(actor, WB_ACTOR_FLAGS);
-
-        wr16(image + addr_add(actor, WB_ACTOR_Y),
-             (uint16_t)(be16(image + addr_add(actor, WB_ACTOR_Y)) & (uint16_t)~WB_MAP_CELL_MASK));
-        *flags |= (uint8_t)(1u << WB_ACTOR_FLAG_SUPPORTED_BIT);
-        *flags &= (uint8_t)~((1u << WB_ACTOR_FLAG_FALLING_BIT)
-                             | (1u << WB_ACTOR_FLAG_LAUNCHED_BIT));
-        image[addr_add(actor, WB_ACTOR_SPEED)] = 0;
-    }
+    /* `andi.w #$fff0,2(a0)`: parked on the top of whichever cell the record is in — its own y
+     * masked, and not a platform word read out of memory as $1400's landing arm does. Nothing
+     * here touches WB_ACTOR_FLAGS2, which is the other half of what separates the two arms. */
+    bus_write_word(image, addr_add(actor, WB_ACTOR_Y),
+                   (uint16_t)(bus_read_word(image, addr_add(actor, WB_ACTOR_Y))
+                              & (uint16_t)~WB_MAP_CELL_MASK));
+    flag_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT);
+    clear_falling_and_launched(image, actor);
+    bus_write_byte(image, addr_add(actor, WB_ACTOR_SPEED), 0);
     return set_low_word(span, remaining);
 }
 
@@ -464,11 +500,11 @@ uint32_t actor_settle_on_tile_1_or_2(uint8_t *image, uint32_t actor, uint32_t ce
 static int tile_33_head_lets_the_fall_run(uint8_t *image, uint32_t actor, map_cell_probe *probe) {
     /* `moveq #$0,d0 / move.l d0,d1 / move.w (a0),d0` — the record's OWN x with no half-width taken
      * off it, which is why this is the one site in the image entering $13c8 rather than $13be. */
-    probe->column = be16(image + addr_add(actor, WB_ACTOR_X));
+    probe->column = bus_read_word(image, addr_add(actor, WB_ACTOR_X));
     probe->row = 0;
     actor_map_cell_lookup(image, actor, probe);
 
-    if (image[probe->cell] == WB_MAP_TILE_33) {
+    if (bus_read_byte(image, probe->cell) == WB_MAP_TILE_33) {
         wr16(image + WB_TILE_33_FLAG, WB_TILE_33_FLAG_RAISED);
         return be16(image + WB_TILE_33_MODE) == 0;      /* `tst.w / beq` over the `rts` at $1362 */
     }
@@ -494,25 +530,25 @@ uint32_t actor_fall_and_settle(uint8_t *image, uint32_t actor, uint32_t entry_sp
     /* Both early exits hand back `probe.span` and not `entry_span`, because the PLAYER-ONLY head
      * has its own `bsr $13c8` and that lookup ends `move.w 14(a0),d7 / add.w d7,d7`. So a record
      * that leaves through either `rts` still carries the footprint width when the head ran. */
-    if (be16(image + addr_add(actor, WB_ACTOR_TYPE)) == WB_ACTOR_TYPE_PLAYER
+    if (bus_read_word(image, addr_add(actor, WB_ACTOR_TYPE)) == WB_ACTOR_TYPE_PLAYER
         && !tile_33_head_lets_the_fall_run(image, actor, &probe))
         return probe.span;
 
     /* `btst #0,8(a0) / beq` over an `rts`: a record under actor_start_motion_at_speed's own
      * control is left alone entirely — this is bit 0's one reader in the tier. */
-    if (image[addr_add(actor, WB_ACTOR_FLAGS)] & (1u << WB_ACTOR_FLAG_MOVING_BIT))
+    if (flag_is_set(image, actor, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVING_BIT))
         return probe.span;
 
-    speed = image[addr_add(actor, WB_ACTOR_SPEED)];
-    y = (uint16_t)(be16(image + addr_add(actor, WB_ACTOR_Y)) + speed);
-    wr16(image + addr_add(actor, WB_ACTOR_Y), y);
+    speed = bus_read_byte(image, addr_add(actor, WB_ACTOR_SPEED));
+    y = (uint16_t)(bus_read_word(image, addr_add(actor, WB_ACTOR_Y)) + speed);
+    bus_write_word(image, addr_add(actor, WB_ACTOR_Y), y);
 
     /* `btst #1,9(a0) / bne` then `andi.w #$f,d0 / cmp.w d1,d0 / ble`: the ground scan runs when the
      * record is already landed, or when this frame's step carried it into a new cell — the new y's
      * position within its cell being no further in than the step that produced it. The comparison
      * is signed, but neither operand can reach the sign bit: d0 is masked to a nibble and d1 is a
      * byte over a `moveq`-cleared long. */
-    if ((image[addr_add(actor, WB_ACTOR_FLAGS2)] & (1u << WB_ACTOR_FLAGS2_LANDED_BIT))
+    if (flag_is_set(image, actor, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_LANDED_BIT)
         || (int16_t)(y & WB_MAP_CELL_MASK) <= (int16_t)speed) {
         actor_map_cell_from_actor_x(image, actor, &probe);
         actor_settle_on_tile_1_or_2(image, actor, probe.cell, probe.span, probe.sub_cell);
@@ -529,19 +565,19 @@ uint32_t actor_fall_and_settle(uint8_t *image, uint32_t actor, uint32_t entry_sp
 
 void map_stamp_block(uint8_t *image) {
     uint32_t record = be32(image + WB_RECORD_PTR_10420);
-    uint16_t cell = (uint16_t)(be16(image + addr_add(record, WB_RECORD_10420_CELL))
+    uint16_t cell = (uint16_t)(bus_read_word(image, addr_add(record, WB_RECORD_10420_CELL))
                                + WB_STAMP_CELL_BIAS);
     /* The base is WB_MAP_ROW_STRIDE's own address — the stride word — and the bias above is what
      * carries the cursor past it onto cell 0, exactly as WB_COLLISION_MAP_CELLS does. */
     uint32_t at = addr_add(WB_MAP_ROW_STRIDE, sign_ext16(cell));
     /* The tile-set select reads the descriptor's KIND word: the second set is the one a boss-defeat
      * scene stamps. src/scene.c branches on the same word — see WB_SCENE_KIND. */
-    uint8_t tile = (be16(image + addr_add(record, WB_SCENE_KIND)) == WB_SCENE_KIND_BOSS_DEFEAT)
+    uint8_t tile = bus_read_word(image, addr_add(record, WB_SCENE_KIND)) == WB_SCENE_KIND_BOSS_DEFEAT
                    ? WB_STAMP_TILES_SECOND : WB_STAMP_TILES_FIRST;
 
-    image[at] = tile;
-    image[addr_add(at, 1)] = (uint8_t)(tile + 1);
+    bus_write_byte(image, at, tile);
+    bus_write_byte(image, addr_add(at, 1), (uint8_t)(tile + 1));
     at = addr_add(at, sign_ext16(be16(image + WB_MAP_ROW_STRIDE)));      /* `adda.w`, sign-extended */
-    image[at] = (uint8_t)(tile + 2);
-    image[addr_add(at, 1)] = (uint8_t)(tile + 3);
+    bus_write_byte(image, at, (uint8_t)(tile + 2));
+    bus_write_byte(image, addr_add(at, 1), (uint8_t)(tile + 3));
 }

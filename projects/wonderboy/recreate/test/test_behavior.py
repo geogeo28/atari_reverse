@@ -5804,7 +5804,7 @@ def test_every_type_value_dispatches_the_wrapped_offset_or_is_refused(chunk):
     """
     actor = _record(TABLE_DEFAULT, 3)
     image = harness.make_image(_tier_pokes(case_salt(f"types{chunk}")))
-    buf = (ctypes.c_uint8 * harness.IMAGE_SIZE).from_buffer(bytearray(image))
+    buf = harness.candidate_image(image)
     dispatch = leaf.bind("actor_dispatch_behavior", [ctypes.POINTER(ctypes.c_uint8),
                                                      ctypes.c_uint32], ctypes.c_uint32)
     dispatched = 0
@@ -9453,7 +9453,7 @@ def test_slot07_reports_the_address_a_state_byte_past_the_table_names():
     image = harness.make_image(_slot07_pokes(what, {ACTOR + ACTOR_FLAGS: bytes([1 << SIDE_BIT]),
                                                     ACTOR + FIELD_30: bytes([MARK_BOTH]),
                                                     ACTOR + FIELD_31: bytes([TYPE07_BURST_MASK])}))
-    buf = (ctypes.c_uint8 * harness.IMAGE_SIZE).from_buffer(bytearray(image))
+    buf = harness.candidate_image(image)
     handler = leaf.bind(TYPE07, [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32], ctypes.c_uint32)
     ran = 0
 
@@ -15895,7 +15895,7 @@ def test_every_effect_index_runs_the_wrapped_entry_or_is_refused(chunk):
     what = f"pickup index enumeration chunk {chunk}"
     pokes = _pickup_pokes(what, PICKUP_KIND, 0)
     image = harness.make_image(pokes)
-    buf = (ctypes.c_uint8 * harness.IMAGE_SIZE).from_buffer(bytearray(image))
+    buf = harness.candidate_image(image)
     handler = leaf.bind(TYPE38, [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32], ctypes.c_uint32)
     # Everything the frame reads and can also write, taken out of the seeded image rather than
     # restated — a list of literals here would be a second copy of `_pickup_pokes`.

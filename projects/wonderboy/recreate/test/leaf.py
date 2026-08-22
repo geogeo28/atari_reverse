@@ -326,7 +326,7 @@ def run_candidate_only(glue, pokes):
     packed-BCD accumulators — so what it pins is C against a second statement of the arithmetic,
     which is weaker than the oracle and stronger than nothing. Say so in the case.
     """
-    buf = (ctypes.c_uint8 * harness.IMAGE_SIZE).from_buffer(bytearray(harness.make_image(pokes)))
+    buf = harness.candidate_image(harness.make_image(pokes))
     return glue(harness._lib, buf), bytes(buf)
 
 

@@ -809,6 +809,27 @@ make oracle    # rebuild only the shared Musashi oracle
 make clean     # this project's build/ only — the oracle is shared, see the kit README
 ```
 
+### The two checks `make test` does not run
+
+Both are **standing** — nothing forces them, and each earned its place by catching something the
+suite could not:
+
+```bash
+# 1. hardware portability, from the REPO ROOT (56 cases; it cross-pins the kit's two-source tables)
+projects/wonderboy/recreate/.venv/bin/python -m pytest -q tools/test_hw_portability.py
+
+# 2. the GUARDED-IMAGE sweep: every candidate run on an image with PROT_NONE either side, so a raw
+#    `image + <computed address>` that leaves the 1 MB buffer FAULTS instead of reading the host heap
+PYTHONPATH=../../../tools .venv/bin/python -m pytest -q -n auto -p recreate_kit.guarded_image test
+```
+
+The sweep is not in `make test` because a fault is a dead worker rather than a named assertion: under
+`-n auto` xdist reports which test was running and carries on, which makes the run a CENSUS of the
+class instead of a gate. It cannot see a raw access that stays INSIDE the buffer. Batch 43 phase C
+built it and it read **5 crashes of 6,140** against the reconstruction at that batch's HEAD and **0**
+after `src/map.c` and `src/scene.c` were folded through `include/bus.h`; the plugin's own docstring
+(`tools/recreate_kit/guarded_image.py`) carries the rest, including that it is Darwin/BSD only.
+
 `make venv` is `python -m venv .venv` plus `pip install -r requirements.txt` (`kit.mk`), the same
 two lines BuggyBoy and Joust use — run it with the `atari_reverse` conda Python. The `.venv` already
 in this directory was instead made the way Joust's was,

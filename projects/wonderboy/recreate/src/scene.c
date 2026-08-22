@@ -27,6 +27,24 @@
  * to the end. $1ab4 is not reconstructed and `WB_SCENE_EXIT_STAGE_RESET` is still a transfer this
  * file declines to follow; see scene.h. Every `return WB_SCENE_EXIT_*` below names which exit the
  * original took, whether or not this file followed it.
+ *
+ * EVERY ADDRESS THIS FILE TAKES OUT OF MEMORY GOES THROUGH bus.h. Four pointers here are the image's
+ * own and nothing bounds any of them: WB_RECORD_PTR_10420's scene descriptor, WB_SHOP_RECORD_PTR's
+ * shop record, WB_SPEECH_SCRIPT_CURSOR's byte cursor and WB_SCENE_MARKER_CELL_PTR's collision cell.
+ * Musashi puts each on a 24-BIT bus, and off the image the shim answers ZERO for every address but
+ * the seven hardware ones bus.h enumerates; `bus_read_word` is that pair of steps and an unguarded
+ * index into the buffer is neither, so the two cores agree only while the host heap happens to hold
+ * what the image would have. Batch 43
+ * phase C measured the gap: `scene_run_frame` read `descriptor + 2` at 2.4 GiB past the buffer on a
+ * seed the suite has driven since batch 42, and killed the pytest worker whenever that page was not
+ * mapped. THREE FAMILIES ARE DELIBERATELY NOT IN THIS RULE, because none of their addresses comes
+ * out of memory at all — each is a literal plus an index the loop itself bounds: the boss fragments'
+ * slots (WB_BOSS_FRAGMENT_SLOTS), the fragment PARAMS `scene_run_boss_defeat` hands its builder as a
+ * bare pointer (WB_BOSS_FRAGMENT_PARAMS), and `scene_spawn_boss`'s followed record
+ * (WB_ACTOR_FOLLOWED_A32). The census that says three is the whole file scanned for `image[X]`,
+ * `beNN(image + X)`, `wrNN(image + X)` and `image + X` handed to a callee, with X anything but a
+ * bare WB_* constant — an earlier draft of this paragraph ran the same scan and reported two,
+ * because the pointer form is the one a narrower recipe drops.
  */
 #include "machine.h"
 #include "scene.h"
@@ -81,8 +99,10 @@ static uint32_t scene_run_effect(uint8_t *image, uint16_t index, uint32_t record
     return record;
 }
 
+/* Through the bus for its callers' sake: two of the four hand it a field of the SHOP RECORD, whose
+ * pointer comes out of the image and can name an address the image has not got. */
 static void scene_bump_word(uint8_t *image, uint32_t addr) {
-    wr16(image + addr, (uint16_t)(be16(image + addr) + 1));
+    bus_write_word(image, addr, (uint16_t)(bus_read_word(image, addr) + 1));
 }
 
 
@@ -174,7 +194,7 @@ void scene_exit_and_reload(uint8_t *image) {
     uint32_t descriptor = be32(image + WB_RECORD_PTR_10420);
     uint32_t start;
 
-    scene_run_exit_action(image, be16(image + addr_add(descriptor, WB_SCENE_EXIT_ACTION)));
+    scene_run_exit_action(image, bus_read_word(image, addr_add(descriptor, WB_SCENE_EXIT_ACTION)));
     image[WB_TEXT_BOX_ACTIVE] = 0;
 
     /* The descriptor pointer is RE-READ ($dfea) rather than kept in a6, which the action just
@@ -183,9 +203,10 @@ void scene_exit_and_reload(uint8_t *image) {
      * `lea 0(a1,d0.w),a1` sign-extends it, so an index outside the eight entries reads a longword
      * on either side of the table and hands stage_load_window whatever it finds. */
     descriptor = be32(image + WB_RECORD_PTR_10420);
-    uint16_t start_index = be16(image + addr_add(descriptor, WB_SCENE_START_INDEX));
-    start = be32(image + addr_add(WB_STAGE_START_TABLE,
-                                  sign_ext16((uint16_t)(start_index * SCENE_TABLE_ENTRY_BYTES))));
+    uint16_t start_index = bus_read_word(image, addr_add(descriptor, WB_SCENE_START_INDEX));
+    start = bus_read_long(image, addr_add(WB_STAGE_START_TABLE,
+                                          sign_ext16((uint16_t)(start_index
+                                                                * SCENE_TABLE_ENTRY_BYTES))));
 
     /* Cleared LAST, one instruction before the call — so this path always hands the hinge an
      * unfrozen scroll and its WB_SCROLL_FOLLOW_X/_Y arm always runs, whatever raised the flag. */
@@ -213,10 +234,11 @@ static uint32_t scene_reload_and_report(uint8_t *image) {
  * The neighbours are one CELL either side — the collision map is one byte per cell — and the RIGHT
  * one is tested first.
  *
- * THE THREE BYTES GO THROUGH bus.h, where this file's other memory does not, and the reason is that
- * `cell` is now an ADDRESS REGISTER a caller supplies: $1b46 is entered with a6 already loaded and
- * nothing between the load and here bounds it. A raw `image[cell]` would read — and then WRITE —
- * past the ctypes buffer where the 68000 side merely reaches an address the shim drops. */
+ * THE THREE BYTES GO THROUGH bus.h, as every address this file takes out of memory now does (see
+ * the file header), and the reason was first written down here: `cell` is an ADDRESS REGISTER a
+ * caller supplies, $1b46 is entered with a6 already loaded, and nothing between the load and here
+ * bounds it. Unguarded, the read — and then the WRITE — lands past the ctypes buffer, where the
+ * 68000 side merely reaches an address the shim drops. */
 int scene_clear_marker_pair(uint8_t *image, uint32_t cell) {
     uint32_t right = addr_add(cell, WB_MAP_NEIGHBOUR_CELL);
     uint32_t left = addr_add(cell, -(uint32_t)WB_MAP_NEIGHBOUR_CELL);
@@ -242,9 +264,9 @@ int scene_clear_marker_pair(uint8_t *image, uint32_t cell) {
  * instead — the tail this file does not follow. */
 uint32_t scene_spend_visit_budget(uint8_t *image, uint32_t record, uint32_t amount) {
     uint32_t budget = addr_add(record, WB_SHOP_VISIT_BUDGET);
-    int16_t left = (int16_t)(be16(image + budget) - (uint16_t)amount);
+    int16_t left = (int16_t)(bus_read_word(image, budget) - (uint16_t)amount);
 
-    wr16(image + budget, (uint16_t)left);
+    bus_write_word(image, budget, (uint16_t)left);
     if (left >= 0)
         return WB_SCENE_EXIT_RETURN;
 
@@ -263,10 +285,10 @@ static uint32_t scene_run_speech(uint8_t *image) {
         return WB_SCENE_EXIT_RETURN;
 
     cursor = be32(image + WB_SPEECH_SCRIPT_CURSOR);
-    if ((int8_t)image[cursor] < 0)
+    if ((int8_t)bus_read_byte(image, cursor) < 0)
         return scene_reload_and_report(image);
 
-    text_post_message_for(image, image[cursor], WB_SPEECH_LIFETIME);
+    text_post_message_for(image, bus_read_byte(image, cursor), WB_SPEECH_LIFETIME);
     wr32(image + WB_SPEECH_SCRIPT_CURSOR, addr_add(cursor, 1));
     return WB_SCENE_EXIT_RETURN;
 }
@@ -287,12 +309,12 @@ static uint32_t scene_run_greeting(uint8_t *image) {
 
     wr16(image + WB_SCENE_MESSAGE_PENDING, WB_SCENE_MESSAGE_PENDING_SET);
     record = be32(image + WB_SHOP_RECORD_PTR);
-    if (be16(image + addr_add(record, WB_SHOP_GREET_COUNT)) == 0)
-        id = be16(image + addr_add(record, WB_SHOP_GREET_MSG_FIRST));
+    if (bus_read_word(image, addr_add(record, WB_SHOP_GREET_COUNT)) == 0)
+        id = bus_read_word(image, addr_add(record, WB_SHOP_GREET_MSG_FIRST));
     else if (be16(image + WB_VECTOR_LINE_A) == WB_VECTOR_ARM_SELECTOR)
-        id = be16(image + addr_add(record, WB_SHOP_GREET_MSG_SECOND));
+        id = bus_read_word(image, addr_add(record, WB_SHOP_GREET_MSG_SECOND));
     else
-        id = be16(image + addr_add(record, WB_SHOP_GREET_MSG_LATER));
+        id = bus_read_word(image, addr_add(record, WB_SHOP_GREET_MSG_LATER));
 
     text_post_message_for(image, (uint8_t)id, WB_TEXT_LIFETIME_DEFAULT);
     scene_bump_word(image, addr_add(record, WB_SHOP_GREET_COUNT));
@@ -310,7 +332,7 @@ static uint32_t scene_run_farewell(uint8_t *image) {
     wr16(image + WB_SHOP_REQUEST, 0);
     record = be32(image + WB_SHOP_RECORD_PTR);
     wr16(image + WB_SCENE_MESSAGE_PENDING, WB_SCENE_MESSAGE_PENDING_SET);
-    if (be16(image + addr_add(record, WB_SHOP_FAREWELL_COUNT)) == 0)
+    if (bus_read_word(image, addr_add(record, WB_SHOP_FAREWELL_COUNT)) == 0)
         id = WB_SHOP_FAREWELL_ID_FIRST;
 
     /* The `cmpi.w #$1,$2c.l` slip splits the non-first case in two and BOTH halves post the same
@@ -336,7 +358,7 @@ static uint32_t scene_run_purchase(uint8_t *image, uint32_t price_field, uint32_
 
     wr16(image + WB_SHOP_REQUEST, 0);
     record = be32(image + WB_SHOP_RECORD_PTR);
-    price = be16(image + addr_add(record, price_field));
+    price = bus_read_word(image, addr_add(record, price_field));
     if ((int16_t)price > (int16_t)be16(image + WB_BCD_COUNTER))
         return scene_run_greeting(image);
 
@@ -351,15 +373,15 @@ static uint32_t scene_run_purchase(uint8_t *image, uint32_t price_field, uint32_
      * the oracle can enter. ../STATUS.md keeps it as an open row. */
     bcd_sub_counter_bd6e(image, price, WB_BCD_ENTRY_EXTEND_ASSUMED_CLEAR);
     wr16(image + WB_SCENE_MESSAGE_PENDING, WB_SCENE_MESSAGE_PENDING_SET);
-    if (be16(image + addr_add(record, count_field)) == 0)
-        id = be16(image + addr_add(record, first_id_field));
+    if (bus_read_word(image, addr_add(record, count_field)) == 0)
+        id = bus_read_word(image, addr_add(record, first_id_field));
     else
-        id = be16(image + addr_add(record, repeat_id_field));
+        id = bus_read_word(image, addr_add(record, repeat_id_field));
 
     text_post_message_for(image, (uint8_t)id, WB_TEXT_LIFETIME_DEFAULT);
     scene_bump_word(image, addr_add(record, count_field));
     /* The effect index is read with the record still in a1; the SPEND that follows is not. */
-    record = scene_run_effect(image, be16(image + addr_add(record, effect_field)), record);
+    record = scene_run_effect(image, bus_read_word(image, addr_add(record, effect_field)), record);
     return scene_spend_visit_budget(image, record, WB_SHOP_PURCHASE_COST);
 }
 
@@ -380,7 +402,7 @@ static uint32_t scene_run_shop(uint8_t *image) {
         if ((int8_t)joy1_newly_pressed(image) >= 0 && image[WB_TEXT_BOX_ACTIVE] != 0)
             return WB_SCENE_EXIT_RETURN;
         record = be32(image + WB_SHOP_RECORD_PTR);
-        if (be16(image + addr_add(record, WB_SHOP_REFUSED_COUNT)) == 0)
+        if (bus_read_word(image, addr_add(record, WB_SHOP_REFUSED_COUNT)) == 0)
             return scene_reload_and_report(image);
         /* The spend's own tail wins where it has one: `bsr $de80` returns here only when the budget
          * held, and the `bra $dfbe` below it is what the leave itself is. */
@@ -463,7 +485,7 @@ static uint32_t scene_run_boss_defeat(uint8_t *image) {
         actor_slots_mark_free(image, WB_BOSS_FRAGMENT_SLOTS, WB_BOSS_FRAGMENT_COUNT - 1u);
 
         descriptor = be32(image + WB_RECORD_PTR_10420);
-        variant = be16(image + addr_add(descriptor, WB_SCENE_VARIANT));
+        variant = bus_read_word(image, addr_add(descriptor, WB_SCENE_VARIANT));
         if (variant == 0)
             return WB_SCENE_EXIT_RETURN;
 
@@ -501,7 +523,7 @@ uint32_t scene_run_frame(uint8_t *image) {
 
     if ((int16_t)be16(image + WB_STATE_FLAG_A30) < 0) {
         descriptor = be32(image + WB_RECORD_PTR_10420);
-        kind = be16(image + addr_add(descriptor, WB_SCENE_KIND));
+        kind = bus_read_word(image, addr_add(descriptor, WB_SCENE_KIND));
         if (kind == WB_SCENE_KIND_SPEECH)
             return scene_run_speech(image);
         if (kind == WB_SCENE_KIND_SHOP)
@@ -513,7 +535,7 @@ uint32_t scene_run_frame(uint8_t *image) {
         return WB_SCENE_EXIT_RETURN;
 
     descriptor = be32(image + WB_RECORD_PTR_10420);
-    if (be16(image + addr_add(descriptor, WB_SCENE_KIND)) != WB_SCENE_KIND_BOSS_DEFEAT)
+    if (bus_read_word(image, addr_add(descriptor, WB_SCENE_KIND)) != WB_SCENE_KIND_BOSS_DEFEAT)
         return WB_SCENE_EXIT_RETURN;
     return scene_run_boss_defeat(image);
 }
@@ -679,8 +701,9 @@ static void spawn_free_rest_of_table(uint8_t *image, uint32_t at) {
  *
  * `movea.l (a1)+,a0 / movea.l (a1)+,a6 / move.w #$ffff,$d76.w` — both longwords fetched out of
  * WB_SCENE_MAP_BANK_TABLE and only THEN the freeze raised. The entry address is unbounded (`lsl.w
- * #3` on a descriptor word, added SIGN-EXTENDED), so the read is reproduced wherever it lands
- * rather than guarded. */
+ * #3` on a descriptor word, added SIGN-EXTENDED), so the read is reproduced WHEREVER IT LANDS: not
+ * clamped, not refused, not made into an error — through the bus, which is the machine folding it to
+ * 24 bits and answering zero off the image, exactly as this file's header says. */
 static void spawn_fetch_bank_and_freeze(uint8_t *image, uint32_t bank_offset,
                                         uint32_t *map, uint32_t *tiles) {
     uint32_t entry = addr_add(WB_SCENE_MAP_BANK_TABLE, bank_offset);

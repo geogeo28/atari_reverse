@@ -4341,8 +4341,7 @@ def _refusals_stepping(stream):
     is that the reconstruction reaches it.
     """
     pokes = _step_pokes(0, {CHANNEL_A: {CH_DURATION: 1}}, None, {CHANNEL_A: stream})
-    buffer = bytearray(_poked_image(pokes))
-    image = (ctypes.c_uint8 * len(buffer)).from_buffer(buffer)
+    image = harness.candidate_image(_poked_image(pokes))
     harness._lib.g_os_refusal_reset()
     _channel_step_fn(image, _music_channel(CHANNEL_A), 0)
     return harness._lib.g_os_refusal_count()

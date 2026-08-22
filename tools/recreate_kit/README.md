@@ -15,6 +15,8 @@ tools/recreate_kit/
 │                     plus the model-state pokes console_key/psg_regs)
 ├── os_map.py         the harness-poked input block + the overlap arithmetic its guards ask for
 │                     (shared by harness.py and oracle/emu.py; importable with nothing built)
+├── guarded_image.py  OPT-IN pytest plugin: run every candidate on an image with PROT_NONE either
+│                     side, so a raw `image + <computed address>` that leaves the buffer FAULTS
 ├── kit.mk            shared make rules: candidate .so, Musashi oracle, `test`/`venv`/`oracle`/`clean`
 ├── include/          machine.h (big-endian image accessors)  os.h (deterministic TOS trap model)
 ├── src/              C linked into EVERY candidate .so: dosound_log.c (the Dosound ledger below)
@@ -377,6 +379,35 @@ kit. Read [`docs/on-target-execution.md`](../../docs/on-target-execution.md) bef
 in particular "The observable surfaces", which enumerates the six things an on-target run can be
 watched on and states the rule this workspace's pre-commit gate now carries: every on-target change
 names the surface that would catch its failure, and a change that names none has found something.
+
+## The guarded-image sweep, and the seam it hangs on
+
+The oracle puts every address on the 68000's 24-bit bus and then bounds it against the image: an
+access outside reads as zero and a write is dropped (`oracle/shim.c`). A reconstruction that indexes
+its `uint8_t *image` directly does **neither**, so an address the game computed out of its own
+memory — a record pointer, a descriptor, a map cell — reaches the HOST HEAP. The two cores then agree
+only while whatever is next to the buffer happens to hold what the image would have. That is
+invisible to the differential in both directions: it passes when the heap is quiet, and it kills the
+pytest worker when the page is not mapped.
+
+```bash
+PYTHONPATH=<reverse>/tools .venv/bin/python -m pytest -q -n auto -p recreate_kit.guarded_image test
+```
+
+**Not part of any `make test`**, because a fault is a dead worker and not a named assertion. Under
+`-n auto` xdist names the test that was running and carries on, which makes the run a CENSUS of the
+class rather than a gate; what it finds gets pinned afterwards by an ordinary differential case. It
+cannot see a raw access that stays INSIDE the buffer. Darwin/BSD only — it refuses at
+`pytest_configure` elsewhere rather than failing on the first differential, and the docstring says
+why. First use: Wonder Boy batch 43 phase C, 5 crashing cases of 6,140 before the fix and 0 after.
+
+**`harness.candidate_image` EXISTS FOR IT, and that is the point of the seam.** It is the one place a
+candidate's mutable image is allocated — `differential`, its attribution pass and a project's own
+candidate-only runner all go through it — so the plugin replaces one function instead of wrapping
+every glue and every runner. A project's shim does `from recreate_kit.harness import *`, which
+*copies* the name, so the plugin rebinds every module holding the original and **counts** the guarded
+calls: a sweep that guarded nothing, or almost nothing, refuses to exit 0. Both halves of that
+sentence are scar tissue from its own first run.
 
 ## The kit's own tests
 

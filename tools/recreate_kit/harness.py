@@ -434,6 +434,39 @@ def make_image(pokes=None):
     return img
 
 
+def candidate_image(img):
+    """The mutable buffer the CANDIDATE runs on — ONE seam, deliberately.
+
+    A COPY of ``img``, never an alias of it: a caller that needs the reconstruction to write through
+    a buffer it already holds is a different shape and must not come here.
+
+    SEVEN CALL SITES, and the number is grepped rather than remembered
+    (``grep -rn 'candidate_image(' tools projects --include='*.py'``): this module's ``differential``
+    and its attribution pass, and five in Wonder Boy — ``leaf.run_candidate_only`` plus the four
+    enumerations that drive the candidate directly with no oracle beside them (``test_behavior.py``'s
+    65,536 raw type values, its 256 swoop states and its 256 pickup indices, and ``test_sound.py``'s
+    refusal stepping). Those four matter most: they are the WILDEST pointers any case computes, so a
+    census taken with them outside the seam would exclude exactly the cases most likely to leave the
+    image. Each used to build its own ``ctypes`` array, which meant a tool wanting the candidate's
+    image placed SOMEWHERE PARTICULAR had to wrap every glue and every runner instead of replacing
+    one function — and a runner it missed ran unguarded while the tool reported a clean sweep.
+    ``guarded_image.py`` is that tool and this is what it replaces.
+
+    **SIX SITES IN THE SIBLING PROJECTS ARE STILL OUTSIDE IT**, registered rather than routed
+    (Wonder Boy STATUS.md, batch 43 phase C): BuggyBoy's ``test_game_update_real_course.py``,
+    ``test_object_dispatch_real.py``, ``test_obj_blit_engine.py`` and ``test_sound.py``, Joust's
+    ``test_input.py`` and ``test_player.py``, plus BuggyBoy's ``render/atari/game_smoke.py``. Three of
+    them ALIAS a caller's live buffer rather than copying one, so they are not this function's shape
+    at all and need a second seam or a change of their own. A guarded sweep of either project would
+    under-report until they are dealt with, and neither project has one.
+
+    Never live twice at once: the attribution pass runs strictly after the plain one, and the four
+    enumerations above hold their buffer across a loop that calls no differential — so a replacement
+    is free to hand back the same storage every call. A new caller that breaks that must not use it.
+    """
+    return (ctypes.c_uint8 * IMAGE_SIZE).from_buffer(bytearray(img))
+
+
 def hi_garbage(rng, low_word):
     """A 32-bit value with low_word in the low 16 bits and random garbage in the high 16. For a
     register the code uses only as a word (.w ops: dbf / lsl.w / adda.w), feeding this proves the
@@ -1080,7 +1113,7 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excl
     # Poisoning can steer the ORACLE into a modeled hardware read the plain run never made, and one
     # the case does not declare would be served a fabricated 0 on this pass too.
     _vet_hw_reads_are_declared(entry, hw_seed, po_regs)
-    buf = (ctypes.c_uint8 * IMAGE_SIZE).from_buffer(bytearray(poisoned))
+    buf = candidate_image(poisoned)
     # This is a SECOND candidate run, so it needs the same per-run bookkeeping the first one got:
     # poisoning inverts oracle-written bytes, which can steer the candidate down a path the plain
     # run never took — including into a refused os_* call, or into PSG traffic. Reset before, vet
@@ -1177,8 +1210,7 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     # cannot be made honest by anything the candidate does, and the remedy names the seed to add.
     _vet_hw_reads_are_declared(entry, hw_seed, o_regs)
 
-    Buf = ctypes.c_uint8 * IMAGE_SIZE
-    buf = Buf.from_buffer(bytearray(img))
+    buf = candidate_image(img)
     if _has_dosound_ledger:
         _lib.g_dosound_log_reset()       # fresh Dosound ledger for this candidate run (see below)
     _lib.g_os_refusal_reset()            # ...and a fresh refused-os_*-call tally (see below)

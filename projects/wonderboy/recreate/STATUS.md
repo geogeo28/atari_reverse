@@ -8690,9 +8690,12 @@ diagnosis of a tripwire that was already correct. Both are in README's sweep rec
 `lea <cursor>.l,a1 / move.w (a1)+,d0` puts a table's base exactly one word above its own cursor,
 four times over in one routine; the second because a marker cell's two neighbours are one CELL
 either side on a map of one byte per cell, and `image[cell + 1]` hid that. `scene_clear_marker_pair`
-also puts its three bytes through **bus.h**, where the rest of src/scene.c does not: `cell` is now an
-address register a CALLER supplies, and a raw `image[cell]` would read and then WRITE past the
-ctypes buffer where the 68000 side merely reaches an address the shim drops. **TWO ENCODERS WENT TO
+also puts its three bytes through **bus.h** — the first place in src/scene.c that did, and the reason
+is `cell`, an address register a CALLER supplies: unguarded, the read and then the WRITE land past
+the ctypes buffer where the 68000 side merely reaches an address the shim drops. (**Batch 43 phase C
+made that the whole file's rule** — the sentence this paragraph used to end on, that the rest of
+src/scene.c did not go through bus.h, is retracted there and no longer true of any of it.)
+**TWO ENCODERS WENT TO
 `leaf.py`** (`move_w_d16_d16` on its third copy, `move_w_dn_abs_l` on its fourth) and six more are
 registered as second copies in both of their files — the ledger is in the queue at the end of this
 section, with every count grepped rather than guessed.
@@ -12814,3 +12817,348 @@ into it.
 **CARRIED, unchanged**: everything batch 43 phase A carries, minus the discharged items above — in
 particular the tile installer (`$e67e`) and `sprites_cru_install` (`$e87c`) are still unreconstructed,
 and the dump is what stands in for them.
+
+## Batch 43 phase C — THE WORKER CRASH, DIAGNOSED: the reconstruction was reading the host heap
+
+Phase B left one item above all the others: `make test` was green at 6,138 but **not reliably
+green**, because `test/test_game.py::test_the_A30_gate_skips_the_spawn_pass[65535]` killed its xdist
+worker in ~25% of parallel runs. Phase B registered a candidate mechanism and said plainly that
+nobody had run it under a debugger. This phase ran it under a debugger. **The candidate mechanism was
+wrong, the real one is a defect in the reconstruction, and it is a class rather than a site.**
+
+**`make test` 6,140 from a clean `build/`** (6,138 before, plus this phase's two new differential
+pins) **and reliably so: 0 of 72 parallel runs of `test_game.py` fail, against 2 of 32 measured on
+the same machine before the fix.** The kit suite 392; `tools/test_hw_portability.py` 56 from the
+repo root; **BuggyBoy 292 and Joust 4,369** re-run green with each candidate `.so` deleted first,
+because this phase moves the kit. All five on-target modes green on **both ROMs**, M2 still
+byte-exact at all four anchors. No function was ported, so the verified count is unchanged at 314.
+
+### The mechanism, and it is not the one phase B named
+
+`scene_run_frame` ($dbc0) reads the scene descriptor's kind word through the pointer at
+WB_RECORD_PTR_10420:
+
+```
+descriptor = be32(image + WB_RECORD_PTR_10420);
+kind       = be16(image + addr_add(descriptor, WB_SCENE_KIND));   /* the fault */
+```
+
+`addr_add` is a plain 32-bit add and `be16(image + …)` is a raw index into the ctypes buffer. On this
+case's seed the descriptor is **`$9002e549`**, so the second line reads **`image + $9002e54b` — 2.4
+GiB past the end of a 1 MB buffer**. The oracle reads somewhere else entirely: Musashi puts every
+address on the 68000's 24-bit bus (`ADDRESS_68K(a) = a & $ffffff`) before the shim sees it, so the
+oracle reads `image[$02e54b]`, which holds `$0000`.
+
+* **It was never a spawn-table walk.** `cmt 0xff42`'s unterminated table was phase B's candidate;
+  the A30 gate this case is about *skips* `actor_spawn_pass` on both of its parametrisations, and the
+  seed pokes a terminator one record on in any event.
+* **Why only `[65535]`.** The gate is `(int16_t)WB_STATE_FLAG_A30 < 0`. `$ffff` is −1 and takes the
+  descriptor arm; `$0001` is +1 and returns before the pointer is ever dereferenced. The two
+  parametrisations also carry different case salts, so the two descriptors differ — but the arm is
+  what decides, and only one of them enters it.
+* **Why parallel-only, and why that is not a concurrency story.** The candidate's accesses are a
+  deterministic function of the image, and the image is deterministic. What varies is whether the
+  page at `image + $9002e54b` is mapped in *this* process, which depends on the address-space layout
+  — and an xdist worker's layout is not a serial run's. The crash is not intermittent; only the
+  *fault* is. Phase B's first explanation called it a concurrency flake, and this is the second time
+  that survivor's first explanation has been recorded as wrong.
+
+**THE NATIVE STACK, since a Python traceback stops at the ctypes call.** `faulthandler` names
+`_loop_glue` and no further. Loading a `SIGSEGV`/`SIGBUS` handler that calls `backtrace()` (via
+`sitecustomize`, with `-p no:faulthandler` so it wins the last-installed race) and running the case
+on an image with PROT_NONE either side gives it:
+
+```
+=== CRASHCATCH sig=10 code=1 addr=0x39102e54b ===
+  2  libwonderboy.so   scene_run_frame + 96          (src/scene.c)
+  3  libwonderboy.so   game_main_loop + 108
+  4  libffi ... _ctypes_callproc ... PyCFuncPtr_call
+```
+
+**THE GUARD HAS TO BE 4 GiB WIDE.** A page-sized guard either side did NOT fault — a raw index with a
+32-bit address sails straight over 16 KB. Reserving PROT_NONE from 16 MiB below the buffer to 4 GiB
+above it made the crash deterministic on the first run, which is what turned a 1-in-10 flake into an
+instrument.
+
+### The class, measured across the whole suite
+
+A raw index is wrong wherever the address came out of the game's own memory, so the question is how
+many places do it. **Two measurements, and the second is the one that matters.**
+
+| | what it counts | reading |
+| --- | --- | --- |
+| a static census of `src/*.c` | every `image[X]`, `beNN(image + X)`, `wrNN(image + X)` and `image + X` handed to a callee, whose `X` is not a bare `WB_*` constant | **529 sites** across 14 files |
+| the whole suite on a guarded image | which of them any case actually reaches OUT of the buffer | **3 cases of 6,138**, in exactly **two** routines |
+
+The three were `test_the_A30_gate_skips_the_spawn_pass[65535]` (`scene_run_frame`) and both
+parametrisations of `test_swoop_state3_compares_the_y_it_STORED_and_not_the_one_it_computed`
+(`actor_step_right_against_map`, through `step_right` from `actor_swoop_state3_descend`).
+
+**AND THE FIRST DRAFT OF THAT CENSUS EXCLUDED THE FOUR WILDEST CASES IN THE SUITE, without saying
+so.** Four batteries allocate their own candidate buffer instead of going through the seam, and they
+are exactly the enumerations most likely to compute a wild pointer: `test_behavior.py`'s **65,536**
+raw type values, its **256** swoop states and its **256** pickup indices, and `test_sound.py`'s
+refusal stepping. All four are now routed through `harness.candidate_image`, and the sweep re-run —
+**9,611 guarded candidate runs across ten workers, still zero crashes**, against 9,591 before. A
+census that silently drops the wide enumerations is the shape of a claim wider than its recipe, which
+is this project's oldest lesson and the second time this phase has had to learn it.
+
+**SIX SITES IN THE SIBLING PROJECTS ARE REGISTERED, NOT ROUTED, and the census claim is scoped to
+Wonder Boy accordingly**: BuggyBoy's `test_game_update_real_course.py`, `test_object_dispatch_real.py`,
+`test_obj_blit_engine.py` and `test_sound.py`, Joust's `test_input.py` and `test_player.py`, plus
+BuggyBoy's `render/atari/game_smoke.py`. Three of them ALIAS a caller's live buffer rather than
+copying one, so they are not `candidate_image`'s shape at all and need a second seam or a change of
+their own. Neither project has a guarded sweep today; when one is run, it will under-report until
+these are dealt with. `harness.candidate_image`'s docstring carries the list, and its own caller
+count is grepped (**seven**) rather than remembered.
+
+**THE SECOND SITE IS ONE THE SUITE SET UP ON PURPOSE AND THE PORT THEN IGNORED.** `test_behavior.py`
+defines `REFUSED_RECORD = 0xfffff0` — an actor record deliberately placed outside the loaded image so
+that the coordinate stores are DROPPED, which is the only seed that can tell a re-read from a kept
+local. Its own comment says that is "what bus.h and the shim both do for an address outside the
+loaded image". `src/map.c` was not doing it: every one of its actor-field accesses was a raw index,
+so on that seed the C read the host heap while the oracle read zero. The case passed anyway — the
+heap happened to agree — which is exactly the shape of a premise a battery states and the port does
+not honour.
+
+### The fix, and where its boundary is
+
+`include/bus.h` already existed, already stated this rule, and `scene_clear_marker_pair` already
+followed it for the one pointer somebody had thought about. **Both files now follow it whole:**
+
+* **`src/scene.c`** — the four pointers the image supplies: WB_RECORD_PTR_10420's scene descriptor,
+  WB_SHOP_RECORD_PTR's shop record, WB_SPEECH_SCRIPT_CURSOR's byte cursor and
+  WB_SCENE_MARKER_CELL_PTR's cell. `scene_bump_word` goes through it too, because two of its four
+  callers hand it a shop-record field. A census of what is left names **three** bounded families in
+  the file header — the boss fragments' slots, their PARAMS table and `scene_spawn_boss`'s followed
+  record. (The first draft of that paragraph ran the same scan and said two: the `image + X`
+  POINTER-handed-to-a-callee form is the one a narrower recipe drops, and it is the form batches 28
+  and 31 already taught this project to enumerate.)
+* **`src/map.c`** — every ACTOR-record field, since `actor` is an address register a caller supplies,
+  and every collision-map CELL byte. **The cell's unboundedness is the ARGUMENT's, not the
+  arithmetic's**, and the header says so after the first draft overstated it: `cell_pointer` adds a
+  sign-extended WORD to a base of `$1d338`/`$23494`, which moves it by at most ±32768 and cannot
+  leave a 1 MB image. What can is the a6 the two SETTLE routines are ENTERED with.
+
+This is a correctness fix and not a safety net: after the mask an address like `$9002e54b` names
+`$02e54b`, which is *inside* the image and holds different bytes again. A raw index agreed with
+neither that nor the shim's off-image answer.
+
+**AND "THE ORACLE ANSWERS 0 AND DROPS WRITES" IS TRUE OF ALL BUT SEVEN ADDRESSES, which is a set and
+is now enumerated where it belongs — in `include/bus.h`.** Off the image the shim runs a hardware
+model FIRST and only the fall-through is zero/drop: `$fffc00` answers TDRE `$02`; `$ff8800` answers
+`psg_read_back()` and LATCHES the register select on a write; `$ff8802` stores into the PSG file on a
+write; and `$fffa01` / `$ff820a` / `$ff8207` / `$ff8209` answer the case's declared seed. Every one is
+above `$ff8000`, so a FOLDED pointer can name one and `bus_read_byte` will answer 0 where the oracle
+answers the model. **Six of the seven cannot pass a differential**: the two PSG ports go into an
+access ledger `_vet_psg_state` compares, the four seeded addresses into an ordered read stream
+`_vet_hw_state` compares, and an undeclared read of those four is refused outright. **The seventh,
+`$fffc00`, is a SILENT hole** — the shim serves TDRE with no tally and no ledger entry, so the two
+sides differ by two bits with nothing to say so. That no case reaches it is an argument from the six
+refusals plus a green suite, not an observation; the guarded sweep cannot see it either, because a
+bus.h read never touches the buffer. Registered below.
+
+**THE OTHER 400-ODD SITES ARE LEFT, AND THE REASON IS A MEASUREMENT AND NOT A JUDGEMENT.** Under the
+guarded sweep no case in the suite reaches any of them out of the buffer. That is the reachable-set
+rule and it is a statement about the SUITE, not about the code: `src/sound.c` (189), `src/actor.c`
+(93), `src/hud.c` (34), `src/scroll.c` (36), `src/stage.c` (39) and the rest still index raw, and a
+future case with a wilder pointer will find them. `actor.c` matters most of the four: `map.c` now
+guards the actor record and then hands the same pointer to `actor_accelerate_fall`, which does not —
+the suite does not reach that dereference out of the buffer today, and the queue keeps the fold.
+
+### What catches it next time — two pins in the suite and an instrument beside them
+
+**THE SCENE PIN, WHICH DIES BY DIVERGENCE.**
+`test_scene.py::test_the_speech_arm_folds_its_two_pointers_onto_the_24_bit_bus` runs the speech-post
+case with WB_RECORD_PTR_10420 and WB_SPEECH_SCRIPT_CURSOR both aliased by `$90000000`. The bus drops
+the top byte, so the arm must reach the SAME descriptor and post the SAME script byte — and the
+advanced cursor must keep the alias, because `move.l a1,$b8d2.l` writes the address REGISTER and not
+the address the bus saw. **Measured RED under its named mutant** (the three `scene_run_frame` /
+speech reads put back to raw indexing): the candidate never posts at all, leaving the seeded
+`text_request` `$a5` and `text_lifetime_request` `$5a5a` against the oracle's `$63`/`$0000`, and the
+cursor one short.
+
+**THE MAP PIN, WHICH DIES BY FAULT — AND WHAT THAT IS WORTH DEPENDS ON HOW IT IS RUN.**
+`test_map.py::test_the_rightward_step_folds_its_record_pointer_onto_the_24_bit_bus` enters
+`actor_step_right_against_map` with the record pointer aliased the same way and requires the whole
+run — write set and all seven registers — to equal the un-aliased run's, which `_run_step_right` has
+already required to equal the ORACLE's. With that routine's record accesses put back to raw indexing
+the case **took the process down with a bus error in 8 of 8 runs under a plain `make test`, and 8 of
+8 under the guarded plugin**. Those two readings are not the same claim, and an earlier draft stated
+only the first as if it were: **under the guard the kill is deterministic BY CONSTRUCTION** —
+everything above the buffer is PROT_NONE, so the access cannot land anywhere else — while under a
+plain run it is EMPIRICAL, and a layout where that page happens to be mapped turns the mutant into a
+silent scribble on the host heap instead of a failure. Which is precisely the property that made the
+original defect intermittent. No alias can make the kill a clean assertion: the masked address is
+inside the image only because the top byte was dropped, so the raw one is always outside a 1 MB
+buffer. The sibling in test_scene.py is the shape that fails by divergence, and between them both
+shapes are covered.
+
+**THE INSTRUMENT — AND IT IS A KIT ADDITION.** `tools/recreate_kit/guarded_image.py` is an opt-in
+pytest plugin that runs every candidate on an image with 16 MiB of PROT_NONE below and 4 GiB above
+it. It changes nothing unless `-p recreate_kit.guarded_image` is passed:
+
+```bash
+PYTHONPATH=<reverse>/tools .venv/bin/python -m pytest -q -n auto -p recreate_kit.guarded_image test
+```
+
+It is not part of `make test` and the reason is its failure mode: a fault is a dead worker, not a
+named assertion. Under `-n auto` xdist reports which test was running and carries on, so the run is a
+CENSUS of the class. It also cannot see a raw access that stays INSIDE the buffer: it bounds the
+class, it does not prove the addresses right. **It joins `tools/test_hw_portability.py` on the
+standing verification list** (`README.md`, "Running it").
+
+**IT REPLACES ONE FUNCTION, AND THAT SEAM IS THE KIT MOVE.** `harness.candidate_image` is new: the
+one place a candidate's mutable image is allocated. `differential`, its attribution pass and
+`leaf.run_candidate_only` all went through it, so the plugin has one function to replace instead of
+wrapping every glue and every runner — which is what the first draft did, and it left
+`run_candidate_only`'s buffer unguarded (six live call sites, one of them the whole player frame).
+A raw access reachable only from a candidate-only case would have run outside the census while the
+sweep reported it clean.
+
+### The before/after pair, on ONE instrument
+
+The first draft of the plugin measured 3 crashes and then 0; that pair is **superseded**, because the
+instrument changed underneath it. Re-run with the final plugin against the reconstruction restored to
+its committed state:
+
+| | crashes |
+| --- | --- |
+| the reconstruction at HEAD, both pins present | **5 of 6,140** — the original three, plus both new pins |
+| after the fold | **0 of 6,140**, with **9,591** candidate runs counted as guarded |
+
+That the two new pins are among the five is the pins' own RED, measured a second way and by a
+different mechanism than the mutant sweep above.
+
+**AND THE PLUGIN'S OWN TRIPWIRE CAUGHT THE PLUGIN.** It counts guarded runs and refuses to exit 0
+having guarded none. On its first parallel run it reported **4** guarded calls against 6,140 cases:
+the project binds the kit through a shim that does `from recreate_kit.harness import *`, which COPIES
+the name, so patching the shim left `recreate_kit.harness.differential` calling the kit module's own
+unguarded binding and only the candidate-only runners were guarded. Without the counter that sweep
+would have been a clean census of almost nothing.
+
+**THE TRIPWIRE HAS NOW MISFIRED IN TWO WAYS AND BOTH ARE RECORDED, because the rule is per-SWEEP and
+the counter is per-PROCESS.** The first fired: the xdist CONTROLLER collects and runs nothing, so its
+count is always zero and it reddened a green sweep. The second was found BEFORE it fired — a WORKER
+can be handed a slice with no differential in it, and checking per worker would red a sweep at random
+as the slices move. Each worker now reports its count to the controller through xdist's own
+`workeroutput` channel and the controller SUMS them: one assertion, over the run the rule is about.
+Red-checked both ways — a sweep with no differential at all reds (`-n0` over `test_layout.py`), and
+eight workers over nine cases stays green with five of the eight slices empty. *A control's own
+machinery is code, and it gets the same gate.*
+
+### The rate, and what the number is worth
+
+**EVERY PARALLEL RUN OF `test_game.py` THIS PHASE MADE IS COUNTED, not just the batch that reads
+best** — three pre-fix batches across two builds, one post-fix batch, `-n auto` throughout:
+
+| build | runs | crashed |
+| --- | --- | --- |
+| before, `make`'s own `-O2` | 8 | **1** |
+| before, `-O2 -g -fno-omit-frame-pointer` | 12 | **1** |
+| before, the same `-O2 -g` under the `backtrace()` handler | 12 | 0 |
+| **before, total** | **32** | **2 (6.3%)** |
+| after, `make`'s own `-O2` | 48 | 0 |
+| after, the same again once the gate's fixes had landed | 24 | 0 |
+| **after, total** | **72** | **0** |
+
+The two post-fix batches are ONE measurement and not two, because the `.so` they ran is byte for byte
+the same file (`md5 68669aca…`, checked at both ends of both batches). The gate's C change — spelling
+the settle arms' `bclr` pair as two `flag_clear`s instead of one masked store — is a SOURCE
+correction the compiler collapses back at `-O2`, so nothing about the emitted code moved. That is
+also the honest reading of that fix: it makes the C say what the instructions say, and no surface
+here could have told the two apart.
+
+Phase B's own reading was 2 of 8. **The rate is the weaker half of the evidence and is stated as
+such**: at 6.3% a clean 72 has about a 1% chance of happening anyway. The strong half is the guarded
+pair above, which is deterministic.
+
+Two rate measurements were DISCARDED before these, both for the reason the sweep-lie list already
+names: a background loop was still running while the working tree rebuilt the shared `.so` (once with
+`-O0`, once with a mutant applied). A rate measured across a changing binary is not a rate.
+
+### What the pre-commit gate found, and the one it found in the ORIGINAL
+
+Four finder angles over the diff. The round's theme is **claims wider than their recipe**, and the
+sharpest finding was not in the fix at all:
+
+* **A PLATE ASSERTED AN INSTRUCTION THE IMAGE DOES NOT CONTAIN.** The new `clear_falling_and_launched`
+  helper was introduced with a comment calling both settle arms one `andi.b` over two bits. They are
+  **two `bclr`s** — `$1480`/`$1486` and `$1502`/`$1508`, checked in the disassembly — so the helper
+  was collapsing two read-modify-writes into one, and the plate said the opposite of what the
+  original does. The collapse was inherited (the pre-change `*flags &= ~mask` did the same) and no
+  surface here can see it, since nothing reads the byte in between; it is spelt as two `flag_clear`
+  calls now because that is what the instructions are. *The plate is the cheap authority, and an
+  invented encoding in one is worse than no plate at all.*
+* **THE MAP HALF SHIPPED WITH NO PIN, and all three correctness angles said so independently.** Only
+  `src/scene.c` had one; reverting any of `src/map.c`'s thirty conversions left `make test` green.
+  That is the test-coupling rule, and the map pin above is the answer.
+* **THE `$e708`-STYLE RETRACTION FAILED AGAIN, IN STATUS.md.** `src/scene.c`'s own plate correctly
+  retracted the claim that the rest of that file did not go through bus.h; its twin in this file did
+  not, and greps to one. Corrected, and this section describes the retracted wording rather than
+  reproducing it. **Third batch running that grep-to-zero has caught a half-landed correction.**
+* **THE FILE HEADERS' SCOPE WAS NARROWER THAN THE CODE.** `src/map.c`'s said "every CELL byte" while
+  most of the change is the actor record; `src/scene.c`'s named two bounded families where the census
+  finds three; `include/bus.h` still said THREE ROUTINES and TWO modules while nine modules spell it
+  (the counts are grepped and listed there now).
+* **A NEW COMMENT CLAIMED A SURFACE IT DOES NOT HAVE.** `cell_is_ground`'s two reads were annotated as
+  a "re-read discipline"; read counts are invisible to this differential and nothing writes between
+  them. Reworded as transcription rather than as a pin.
+* **THE HELPER WAS SPLICED BETWEEN `probe_report`'S PLATE AND `probe_report`.** Moved beside the two
+  settle arms that call it.
+* **THE ON-TARGET SEMANTICS ARE A MODELLING DECISION AND NO SURFACE SHOWS THEM.** These files are
+  cross-compiled into the `.PRG`, where a real ST answers an address outside the game's 1 MB with real
+  RAM or the `$ff8000` I/O page — so a computed read there now returns 0 and a computed write is
+  dropped where the machine would do neither. `atari/build.sh`'s seam tripwire cannot see it
+  (`os_in_image` is already declared, and `bus.h` is a header, not a core), and no pixel, PSG timeline
+  or M-record would move. Recorded unpinned below rather than claimed.
+
+### Queue
+
+**LANDED THIS PHASE**: the bus.h fold of `src/scene.c` and `src/map.c`; the aliased-pointer pins in
+`test/test_scene.py` and `test/test_map.py`; `harness.candidate_image` (the kit's one candidate-buffer
+seam) and `tools/recreate_kit/guarded_image.py` on top of it.
+
+**DISCHARGED THIS PHASE**: the intermittent native crash in `make test` (born 43B, highest priority).
+`make test`'s green is reproducible again.
+
+**BORN THIS PHASE:**
+* **~400 RAW COMPUTED IMAGE ACCESSES REMAIN IN `src/`, AND THE SUITE REACHES NONE OF THEM OUT OF THE
+  BUFFER.** The census is 529 sites minus the two files folded here. It is a reachable-set statement,
+  not a safety one. `src/sound.c` (189) and `src/actor.c` (93) are the two biggest, and `actor.c` is
+  the one `map.c` now hands a guarded pointer straight into.
+* **THE GUARD IS COMPILED INTO THE `.PRG` AND ITS COST IS BARELY MEASURED.** The only reading is M2's
+  own: **584 vblanks for 52 frames** after the fold, against phase B's 583 — one vblank in 584, which
+  is inside the noise of a single run rather than a measurement of the mask. Both probes iterate once
+  per pixel of the step, per actor, per frame, so the tax is real and unquantified. Folding the
+  remaining ~400 accesses should not happen without measuring it.
+* **THE OUT-OF-IMAGE ANSWER IS A MODELLING DECISION ON TARGET, AND IT IS UNPINNED.** Zero for a read
+  and a dropped write are the oracle's answers, not a real ST's, and no on-target surface would show
+  the difference. It is not new — `src/blit.c` and `scene_clear_marker_pair` already did it — but this
+  phase widens it to two whole files.
+* **A GUARDED SWEEP CANNOT SEE A RAW ACCESS THAT LANDS INSIDE THE BUFFER.** An address that is wrong
+  but in range still reads the wrong bytes and the sweep passes. Only the differential catches that,
+  and only for a seed that reaches it.
+* **`$fffc00` IS A SILENT DIVERGENCE BETWEEN bus.h AND THE SHIM.** The shim serves the IKBD's TDRE
+  byte `$02` there with no tally and no ledger entry; `bus_read_byte` answers 0. It is the ONE
+  address of the seven modeled ones with no refusal behind it, so a folded pointer landing there
+  would agree with nothing and say nothing. That no case reaches it is derived (the other six are
+  caught by ledger comparisons, and the suite is green), not observed — and the guarded sweep is
+  blind to it, because a bus.h read never touches the buffer at all.
+* **SIX SELF-ALLOCATED CANDIDATE BUFFERS IN THE SIBLING PROJECTS ARE OUTSIDE THE SEAM.** Named in
+  `harness.candidate_image`'s docstring. Three of them alias a caller's live buffer rather than
+  copying one, which is a shape that seam does not have; the other three are ordinary copies. A
+  guarded sweep of BuggyBoy or Joust would under-report until they are routed, and neither project
+  has one. The census claim in this section is scoped to Wonder Boy for exactly that reason.
+* **`guarded_image.py` IS DARWIN/BSD ONLY.** `MAP_ANON` is `$1000` here and `$20` on Linux, where
+  `$1000` means something else; the plugin refuses at `pytest_configure` rather than failing on the
+  first differential. Its lower guard is 16 MiB and the reachable set below the image is unbounded in
+  principle — every computed address in these ports is a `uint32_t`, so nothing can go down by
+  construction, and the docstring states what that leaves uncovered.
+
+**CARRIED, unchanged**: everything batch 43 phase B carries, minus the discharged item — in
+particular **M5 (the hardware-state vector) and the FLASH-ARM SURVIVOR were NOT taken this phase.**
+`WB_FLASH_TIMER` is still `$0000` in the staged image, the flash's two swapped arms still survive,
+and the mechanism phase B named for reaching them — a second dump with the flash armed, driven
+identically into the original as a declared fabrication — is untouched. So are M3's exits and the
+joystick arms, and M6's timelines.

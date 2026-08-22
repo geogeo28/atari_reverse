@@ -2540,3 +2540,40 @@ or standing gap, not a to-do list:
    leaving them just as unverified. The table says what the ceiling is worth, not what a given
    implementation would deliver. §6's PSG entry is the worked example: the obvious implementation
    is already known to be insufficient.
+
+---
+
+## 0n. Batch 43 phase C — no classification moves, and a defect class the classifier does not price
+
+**Nothing in this file's tables changes.** No function was ported, no hardware access appeared or
+disappeared, and the runnable/false-green split is exactly as §0m left it. The batch is recorded here
+only because it found a portability defect of a KIND this classifier is blind to, and a reader who
+trusts these tables should know the shape of what they do not cover.
+
+**WHAT THE CLASSIFIER PRICES** is a function's reachability into hardware: which `$ff8xxx` operands
+it touches, and whether the kit models them. **WHAT IT DOES NOT PRICE** is where a reconstruction's C
+*puts* an address the game computed. `src/scene.c` read a scene descriptor through the raw pointer at
+WB_RECORD_PTR_10420 and `src/map.c` read every actor field through a raw `actor`; on a seed the suite
+has driven since batch 42 those reads landed 2.4 GiB past the ctypes buffer, in the host heap. Both
+routines were classified RUNNABLE throughout and both were: the classifier's question is about the
+ORIGINAL's operands, and this is a property of the PORT. See `../recreate/STATUS.md`, batch 43 phase
+C, for the diagnosis and the fold.
+
+**THE THIRD STANDING CHECK.** `Reproducing it` above lists `pytest tools/test_hw_portability.py`
+(56 cases) as the classifier's own pins. The guarded-image sweep now sits beside it and is the
+instrument that measures this other class:
+
+```bash
+cd projects/wonderboy/recreate && PYTHONPATH=../../../tools .venv/bin/python -m pytest -q -n auto \
+    -p recreate_kit.guarded_image test
+```
+
+It read **5 crashing cases of 6,140** against the reconstruction at this batch's HEAD and **0** after
+the fold. It is not in `make test` and it cannot see a raw access that stays inside the buffer —
+`tools/recreate_kit/README.md` states both limits.
+
+**AND IT LEAVES AN UNPINNED MODELLING DECISION ON TARGET.** Routing an address through `include/bus.h`
+answers a read outside the loaded image with zero and drops a write there, which is the oracle's
+answer and not a real ST's — that machine has RAM or the `$ff8000` I/O page at those addresses.
+`atari/README.md`'s "Known gaps" carries it. It is the same class as this file's own §6 caveat 8: a
+model priced as perfect is still a model.
