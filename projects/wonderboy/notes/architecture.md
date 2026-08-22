@@ -785,7 +785,8 @@ $e4e6  (boot continuation — Ghidra folds this into show_data_disk_prompt @ $e4
          move.w #$ffff,$e7cc                  ; ARM THE COPYLOCK  (see 2.5)
          load_resource_by_index(0=TITLESCR.RAD -> $49800)   ; ...which runs it
          …
-$4a0   game_main_loop                         ; entered by jmp from $e708 / $f8b4
+$4a0   game_main_loop                         ; entered by jmp from $f8b4 ONLY ($e708 is dead code:
+                                              ;   $e6fc's bsr to $f89e never returns — see cmt 0x4a0)
          do { …; jsr flip_screen } while (1)  ; $508 = bra.s $4a0, no exit
 ```
 

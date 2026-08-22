@@ -62,6 +62,42 @@
 #define SMOKE_VBLS 60          /* vblanks to run; 60 is well past FLOPPY_IDLE_TICKS in gen_image.py */
 #endif
 
+/* ---- M2: the frame build ----------------------------------------------------------------------
+ *
+ * `-DSMOKE_M2` swaps what the shim DOES between taking the machine and handing it back: M1 counts
+ * vblanks, M2 calls `game_main_loop` (../src/game.c:477). Everything either side of that — the
+ * staging, the vectors, the video mode, the read-backs, the teardown, the record — is the same code.
+ *
+ * IT IS THE IMAGE THAT MAKES M2 POSSIBLE, NOT THIS BLOCK. `game_main_loop` reads the tile bitmaps,
+ * the overlay, the sprite pool and the eight scroll buffers, and none of them can be computed
+ * host-side (gen_image.py's honesty line). `build.sh m2` stages the ORIGINAL's own post-boot RAM
+ * instead, measured by atari/original.py at `$f8b4` — the boot's last instruction. */
+#ifdef SMOKE_M2
+#ifndef M2_ENTRY_UNWIND
+#error "build.sh m2 must pass -DM2_ENTRY_UNWIND=<A5 at the anchor, from build/ORIGREGS.txt>"
+#endif
+/* WHICH FRAMES ARE PHOTOGRAPHED, and the list is chosen by MEASUREMENT of the shipped binary rather
+ * than by taste. AN ANCHOR IS ONLY EVIDENCE IF A MIS-ANCHOR IS DETECTABLE, and this game at the top
+ * of stage 1 draws the SAME PICTURE every frame: with no stick pushed the hero stands still and
+ * nothing moves. Differencing the shipped binary's own consecutive frames over its first seventy
+ * (`original.py frames 70`) finds exactly two boundaries where the screen changes, and each moves
+ * the same 988 of 32000 bytes over 24 scanlines from row 60:
+ *
+ *     frame 1 -> 2     the first frame this loop draws, over what the boot left
+ *     frame 51 -> 52   the same region again, fifty frames — one second — later
+ *
+ * AND IT IS A BLINK, NOT A COUNTER, which the anchors themselves measure: frame 52 is byte-identical
+ * to frame 1 and frame 51 to frame 2, so the picture TOGGLES between two states on a one-second
+ * cadence rather than advancing. That is why smoke.py's mis-anchor control can break only two of its
+ * eight rows and prints the other six as excluded — with a toggling picture, half the shifts land on
+ * an identical frame.
+ *
+ * So the anchors are the two frames either side of each boundary. A match at 2 that was really a
+ * match at 3 would show 988 wrong bytes, and so would a match at 52 read off 51. Both sides use
+ * THIS list: original.py scrapes it out of this line. */
+#define M2_ANCHOR_FRAMES 1, 2, 51, 52
+#endif
+
 /* ---- the image -------------------------------------------------------------------------------
  *
  * 1 MiB, plus 256 bytes of slack the base is rounded up into. THE ROUND-UP IS NOT COSMETIC: an STF's
@@ -130,6 +166,13 @@ static void checked(unsigned bit, int ok) {
 #define ACIA_STATUS      0xfffffc00u  /* IKBD ACIA; bit 1 = transmit data register empty */
 #define ACIA_DATA        0xfffffc02u
 #define ACIA_TDRE_BIT    1u
+
+/* The sixteen colour registers, in the 32-bit form the CPU decodes. `WB_SHIFTER_PALETTE` is the
+ * reconstruction's own 24-bit spelling of the SAME register — the high byte is the I/O page a
+ * 68000's address bus ignores and a compiler does not — so the register number has one definition
+ * and this derives from it rather than restating $ffff8240. */
+#define SHIFTER_IO_PAGE  0xff000000u
+#define SHIFTER_PALETTE  (SHIFTER_IO_PAGE | WB_SHIFTER_PALETTE)
 
 #define LOW_RESOLUTION   0u
 /* THE RESOLUTION REGISTER IS TWO BITS WIDE and the other six read back as whatever was last on the
@@ -226,15 +269,19 @@ void wb_acia_byte(void) {
 
 static const char IMAGE_FILE[] = "WB.IMG";
 
-static int stage_image(void) {
-    long handle = Fopen(IMAGE_FILE, FO_READ);
+static int stage_file(const char *name, long length, void *into) {
+    long handle = Fopen(name, FO_READ);
     long got;
 
     if (handle < 0)
         return 0;
-    got = Fread((short)handle, PROGRAM_BYTES, game_image + WB_STAGED_AT);
+    got = Fread((short)handle, length, into);
     (void)Fclose((short)handle);
-    return got == PROGRAM_BYTES;
+    return got == length;
+}
+
+static int stage_image(void) {
+    return stage_file(IMAGE_FILE, PROGRAM_BYTES, game_image + WB_STAGED_AT);
 }
 
 
@@ -433,14 +480,228 @@ struct stats {
 
 static const char STATS_FILE[] = "STATS.BIN";
 
-static void dump_stats(const struct stats *record) {
-    long handle = Fcreate(STATS_FILE, FCREATE_RW);
+/* The one file writer. Both records and both capture files come through here — an earlier draft had
+ * M2's own copy of these five lines beside this one. */
+static void write_file(const char *name, const void *data, long length) {
+    long handle = Fcreate(name, FCREATE_RW);
 
     if (handle < 0)
         return;
-    (void)Fwrite((short)handle, (long)sizeof(*record), record);
+    (void)Fwrite((short)handle, length, data);
     (void)Fclose((short)handle);
 }
+
+static void dump_stats(const struct stats *record) {
+    write_file(STATS_FILE, record, (long)sizeof(*record));
+}
+
+
+/* ---- M2's own record, and the two surfaces it exists to carry off the machine -------------------
+ *
+ * A SECOND FILE RATHER THAN FOUR MORE FIELDS IN `struct stats`, and that is not filing: smoke.py
+ * checks STATS.BIN's size against a format string, so growing the record per build mode would make
+ * the M1 parser's own version check fire on an M2 run and vice versa. Two records, two magics, two
+ * readers, and neither can silently misread the other's bytes. */
+#ifdef SMOKE_M2
+#define M2_MAGIC 0x57424132u        /* 'WBA2' */
+/* How many anchors the record has room to carry. Not a limit on M2_ANCHOR_FRAMES — the static
+ * assertion below refuses a longer list rather than truncating one. */
+#define M2_ANCHOR_MAX 8u
+/* DERIVED, not restated. Both numbers already have one canonical definition in ../include/
+ * wonderboy.h, which ../test/layout.py scrapes for the Python side — so smoke.py and this file
+ * compute them from the SAME two constants instead of each writing 32000 and 16 down. */
+#define SCREEN_BYTES (WB_SCREEN_LINE * WB_SCREEN_SCANLINES)
+#define PALETTE_PENS WB_PALETTE_COLOURS
+/* The ST implements THREE bits per gun; the fourth bit of each nibble does not exist and a CPU read
+ * of a colour register returns it as whatever was last on the bus. A read-back compare that did not
+ * mask would fail against a shifter that had done exactly what it was told — which is the same
+ * lesson the resolution register taught this file on its first on-target run, one register over. */
+#define ST_PEN_MASK  0x0777u
+
+static const char M2_FILE[] = "M2.BIN";
+static const char FRAME_FILE[] = "FRAME.BIN";
+static const char PENS_FILE[] = "PENS.BIN";
+/* The pens the ORIGINAL's boot left in the shifter, staged beside WB.IMG.
+ *
+ * THE PALETTE IS THE BOOT'S PRODUCT AND IT DOES NOT LIVE IN RAM. `set_palette` is called from
+ * `stage_load_window`, inside the unported chain, so an M2 build that staged only memory paints its
+ * frame through whatever owned the shifter last — measured on the first M2 run, which came back
+ * with TOS 1.04's own desktop palette (777 700 070 770 ...). This is the same sentence as the image
+ * itself: the boot's result handed over, because the boot is not ported. */
+static const char STAGED_PENS_FILE[] = "PENS.IMG";
+static uint16_t staged_pens[PALETTE_PENS];
+
+struct m2_stats {
+    uint32_t magic;
+    uint32_t bytes;
+    uint32_t image_base;
+    uint32_t frames_requested;
+    uint32_t frames_run;
+    uint32_t loop_ending;           /* the WB_KEY_ACTIONS_* the last iteration returned */
+    uint32_t screen_front;          /* the image-space longword the last flip published */
+    uint32_t screen_base_published; /* ...and the machine address it was translated to */
+    uint32_t poll16_calls;          /* sched_poll16's iteration count — see run_frames */
+    uint32_t shim_vbl_ticks;
+    /* Which of the sixteen staged pens did not read back off the shifter, as a bit each. NOT an
+     * RB_* bit: smoke.py compares `readback_attempted` against an EXACT mask, so a bit only the M2
+     * build ever attempts would make the M1 run's own version check fire. Two records, two readers.
+     */
+    uint32_t pens_readback_failed;
+    /* WHAT THE SHIFTER ITSELF HOLDS after the last frame, read back off $ffff8201/8203.
+     *
+     * THIS IS THE ROW THAT CATCHES THE TWO FLIP-SITE MUTANTS AND THE FRAMEBUFFER COMPARE CANNOT.
+     * `flip_screen`'s two `shifter_write_byte`s change no image byte — they change which buffer the
+     * hardware DISPLAYS — so publishing the back buffer instead of the front, or sending the two
+     * base bytes to each other's registers, leaves every pixel this run compares untouched and
+     * every one of them correct. What moves is this number.
+     *
+     * Read off the hardware rather than taken from `wb_target_screen_base`, which is what the
+     * backend believes it wrote. */
+    uint32_t shifter_base;
+    /* Set when `screen_front` named an address outside the image, i.e. the capture was refused
+     * rather than taken. Its own field because "no capture" and "a capture of zeros" are the same
+     * bytes in FRAME.BIN, and only one of them is a reconstruction defect. */
+    uint32_t screen_front_out_of_range;
+    /* THE ANCHOR LIST THE BINARY WAS COMPILED WITH, carried off the machine rather than re-read.
+     * smoke.py scrapes the same `#define` out of this file at CHECK time, so without this the two
+     * can be from different edits: change M2_ANCHOR_FRAMES and run the smoke without rebuilding,
+     * and the count still matches, the size row still passes, and slot 2 — the binary's frame 51 —
+     * is compared against, and LABELLED, the shipped frame 50. A green or a red, both mislabelled.
+     * Fixed-width so the record's own `bytes` field pins the layout; `anchor_count` says how much
+     * of it is real. */
+    uint32_t anchor_count;
+    uint16_t anchor_frames[M2_ANCHOR_MAX];
+};
+
+/* The anchor frames, and only those: fifty-two whole screens would be 1.6 MB of bss on a machine
+ * that has 4 MB and is already carrying a 1 MiB image. Static because a 32000-byte automatic would
+ * be a stack this shim does not have. */
+static const uint16_t m2_anchors[] = { M2_ANCHOR_FRAMES };
+#define M2_ANCHOR_COUNT (sizeof(m2_anchors) / sizeof(m2_anchors[0]))
+/* A list longer than the record can carry would be SILENTLY truncated in the report while the
+ * capture arrays sized themselves correctly — a mislabelling, not a crash. Refuse it at compile
+ * time instead. */
+typedef char m2_anchor_list_fits[(M2_ANCHOR_COUNT <= M2_ANCHOR_MAX) ? 1 : -1];
+/* HOW MANY FRAMES THE LOOP RUNS: the last anchor, DERIVED. An earlier draft wrote the number down a
+ * second time on the line under M2_ANCHOR_FRAMES, under a comment claiming it had not — and that is
+ * the duplication with teeth, because extending the anchor list without noticing would leave the
+ * later slots as zeroed bss and report them as full-screen rendering divergences. */
+#define M2_LAST_ANCHOR (m2_anchors[M2_ANCHOR_COUNT - 1u])
+
+static uint8_t captured_frames[M2_ANCHOR_COUNT][SCREEN_BYTES];
+static uint16_t captured_pens[M2_ANCHOR_COUNT][PALETTE_PENS];
+
+/* Which slot a 1-based frame number is photographed into, or M2_ANCHOR_COUNT for "not an anchor". */
+static unsigned anchor_slot(uint32_t frame) {
+    unsigned slot;
+
+    for (slot = 0; slot < M2_ANCHOR_COUNT; slot++)
+        if (m2_anchors[slot] == frame)
+            return slot;
+    return M2_ANCHOR_COUNT;
+}
+
+/* Publish the staged palette, through the SAME sink `set_palette` writes it through — one call per
+ * colour, which is `../src/stage.c`'s own iteration and not a loop over an indexed pointer (that
+ * addressing mode is what put Joust's sixteenth pen in the resolution register). Read back per pen,
+ * because a partially-published palette and a fully-published one differ by one wrong colour. */
+static void publish_staged_pens(struct m2_stats *record) {
+    unsigned pen;
+
+    for (pen = 0; pen < PALETTE_PENS; pen++) {
+        uint32_t reg = WB_SHIFTER_PALETTE + pen * sizeof(uint16_t);
+
+        wb_target_shifter_word(reg, staged_pens[pen]);
+        if ((*(volatile uint16_t *)(uintptr_t)(SHIFTER_PALETTE + pen * sizeof(uint16_t))
+             & ST_PEN_MASK) != (staged_pens[pen] & ST_PEN_MASK))
+            record->pens_readback_failed |= 1u << pen;
+    }
+}
+
+/* The two surfaces, read where each of them really lives: the picture out of the IMAGE at the
+ * address the game itself published, and the pens off the SHIFTER. Neither is read from a place the
+ * reconstruction chose to put a copy — that would compare our intention with the original's pixels. */
+static void capture_the_frame(struct m2_stats *record, unsigned slot) {
+    uint32_t front = ((uint32_t)game_image[WB_SCREEN_FRONT] << 24)
+                     | ((uint32_t)game_image[WB_SCREEN_FRONT + 1] << 16)
+                     | ((uint32_t)game_image[WB_SCREEN_FRONT + 2] << 8)
+                     | game_image[WB_SCREEN_FRONT + 3];
+    unsigned pen;
+
+    record->screen_front = front;
+    /* THE ADDRESS IS BOUNDED BEFORE IT IS FOLLOWED, and it is the one image value this shim reads
+     * that the reconstruction could get WRONG — a bad `flip_screen` publish is precisely what M2
+     * exists to catch. Unbounded, that failure would `memcpy` 32000 bytes from outside
+     * `image_storage`, bus-error in supervisor, and take the run down with no record at all: the
+     * detector destroyed by the defect it detects. Out of range the capture is skipped and
+     * `screen_front` still carries the offending value, so the smoke sees the number and reds. */
+    if (front > OS_IMAGE_SIZE - SCREEN_BYTES) {
+        record->screen_front_out_of_range = 1u;
+        return;
+    }
+    memcpy(captured_frames[slot], game_image + front, SCREEN_BYTES);
+    for (pen = 0; pen < PALETTE_PENS; pen++)
+        captured_pens[slot][pen] = *(volatile uint16_t *)(uintptr_t)(SHIFTER_PALETTE
+                                                                     + pen * sizeof(uint16_t));
+}
+
+/* Run the reconstruction's own frame loop, and stop for any of three reasons rather than one.
+ *
+ * THE WATCHDOG IS NOT OPTIONAL AND IT IS NOT A CLOCK. `flip_screen`'s two waits are uncapped spins
+ * on WB_VBL_COUNTER — that is the whole of `sched_poll16`'s on-target story — so a level-4 vector
+ * that never fires turns this into a hang, and a hang reports nothing at all. `shim_vbl_ticks` is
+ * the bound because it is the very thing whose absence would cause the hang: if the vblank is alive
+ * the budget is generous, and if it is dead the loop exits immediately with a record.
+ *
+ * ONE FRAME IS TENS OF VBLANKS (~245,000 instructions, ../names.txt cmt 0x4a0), so the budget is
+ * per frame and measured rather than a round number. */
+/* THE BUDGET IS A TOTAL AND IT IS WELL INSIDE `--run-vbls`, which is the M1 lesson taken rather than
+ * relearned: a bound longer than the harness's own limit is not a bound — the run simply ends and
+ * the mode reports "no record", which says nothing about what went wrong. Measured: 52 frames cost
+ * 583 vblanks (~11 each), so 2000 is well over three times the reading and still leaves the boot and
+ * a tail inside smoke.py's run. (The figure was first written as an ESTIMATE of ~780 from a guessed
+ * 15 vblanks a frame, beside a run that had already reported 583. Two numbers for one measurement,
+ * and the one in the comment was the one nobody had measured.)
+ *
+ * WHAT IT CANNOT CATCH, stated because a watchdog's edge matters more than its middle: this is
+ * checked BETWEEN frames, and `flip_screen`'s two waits are uncapped spins INSIDE one. A dead
+ * level-4 vector therefore still hangs, and what ends that run is `--run-vbls` and a missing
+ * M2.BIN. What this bounds is a loop that is merely far too slow. */
+#define M2_VBL_BUDGET 2000u
+
+static uint32_t run_frames(struct m2_stats *record) {
+    sprite_pass_regs sprites;
+    uint32_t deadline = shim_vbl_ticks + M2_VBL_BUDGET;
+    uint32_t frame;
+    unsigned field;
+
+    /* Zero, then the one field that is a real input. `sprite_draw_pass` has no argument — a6, a4 and
+     * a2 come from `lea`s and everything else it reads is memory — so the only inherited register
+     * that matters is a5, and it is the ORIGINAL's own, measured at the anchor. */
+    for (field = 0; field < sizeof(sprites); field++)
+        ((uint8_t *)&sprites)[field] = 0;
+    sprites.blit.unwind = M2_ENTRY_UNWIND;
+
+    for (frame = 0; frame < M2_LAST_ANCHOR; frame++) {
+        unsigned slot;
+
+        record->loop_ending = game_main_loop(game_image, &sprites);
+        if (record->loop_ending != WB_KEY_ACTIONS_RETURNED)
+            break;                  /* the loop was LEFT, exactly as the original's `jmp` leaves it */
+        slot = anchor_slot(frame + 1);          /* the anchors are 1-based, like the debugger's hits */
+        if (slot < M2_ANCHOR_COUNT)
+            capture_the_frame(record, slot);
+        /* THE TWO BREAKS COUNT DIFFERENTLY, and an earlier draft returned `frame` for both. The
+         * unwind above happens INSTEAD of a frame, so `frame` is the number that completed; the
+         * watchdog here happens AFTER one, so it is `frame + 1`. Reporting the smaller number would
+         * have reddened "every frame ran" on a run that ran every frame it was asked for. */
+        if (shim_vbl_ticks >= deadline)
+            return frame + 1u;
+    }
+    return frame;
+}
+
+#endif /* SMOKE_M2 */
 
 
 /* ---- the run ----------------------------------------------------------------------------------- */
@@ -510,11 +771,18 @@ static void sample_the_two_clocks(struct stats *record) {
 
 int wonderboy_main(void) {
     struct stats record;
+#ifdef SMOKE_M2
+    struct m2_stats m2;
+#endif
     void *ssp;
     unsigned field;
 
     for (field = 0; field < sizeof(record); field++)
         ((uint8_t *)&record)[field] = 0;
+#ifdef SMOKE_M2
+    for (field = 0; field < sizeof(m2); field++)
+        ((uint8_t *)&m2)[field] = 0;
+#endif
 
     game_image = (uint8_t *)(((uintptr_t)image_storage + (IMAGE_ALIGN - 1u))
                              & ~(uintptr_t)(IMAGE_ALIGN - 1u));
@@ -522,6 +790,10 @@ int wonderboy_main(void) {
     /* USER MODE: the staging read, and TOS's own screen, taken before anything moves. */
     if (!stage_image())
         return 1;
+#ifdef SMOKE_M2
+    if (!stage_file(STAGED_PENS_FILE, (long)sizeof(staged_pens), staged_pens))
+        return 1;
+#endif
     saved.tos_logbase = (uint32_t)Logbase();
     saved.tos_physbase = (uint32_t)Physbase();
 
@@ -533,7 +805,21 @@ int wonderboy_main(void) {
     install();
     publish_screen_base();
 
+#ifdef SMOKE_M2
+    /* M2 runs FRAMES, and the vblank check comes with them rather than before them: `flip_screen`
+     * waits for the counter twice per frame, so a run that produced frames produced vblanks. */
+    publish_staged_pens(&m2);
+    m2.frames_requested = M2_LAST_ANCHOR;
+    m2.frames_run = run_frames(&m2);
+    checked(RB_VBL_TICKING, m2.frames_run == m2.frames_requested);
+    /* IN SUPERVISOR, AND BEFORE THE TEARDOWN, which is the only window in which this means
+     * anything: `teardown` puts TOS's own base back, and a read after that would report the
+     * desktop's screen and pass for ever. */
+    m2.shifter_base = ((uint32_t)*io8(SHIFTER_BASE_HI) << 16)
+                      | ((uint32_t)*io8(SHIFTER_BASE_MID) << 8);
+#else
     checked(RB_VBL_TICKING, run_vblanks(SMOKE_VBLS));
+#endif
     record.psg_port_a_after_run = psg_port_read(WB_PSG_REG_PORT_A);
     checked(RB_PSG_PORT_A_DESELECTED,
             (record.psg_port_a_after_run & ~WB_PSG_PORT_A_KEEP) == WB_PSG_DRIVES_DESELECTED
@@ -560,5 +846,20 @@ int wonderboy_main(void) {
     record.readback_failed = readback_failed;
     record.readback_attempted = readback_attempted;
     dump_stats(&record);
+
+#ifdef SMOKE_M2
+    m2.magic = M2_MAGIC;
+    m2.bytes = sizeof(m2);
+    m2.image_base = (uint32_t)(uintptr_t)game_image;
+    m2.screen_base_published = wb_target_screen_base;
+    m2.poll16_calls = wb_target_poll16_calls;
+    m2.shim_vbl_ticks = shim_vbl_ticks;
+    m2.anchor_count = M2_ANCHOR_COUNT;
+    for (field = 0; field < M2_ANCHOR_COUNT; field++)
+        m2.anchor_frames[field] = m2_anchors[field];
+    write_file(M2_FILE, &m2, (long)sizeof(m2));
+    write_file(FRAME_FILE, captured_frames, (long)sizeof(captured_frames));
+    write_file(PENS_FILE, captured_pens, (long)sizeof(captured_pens));
+#endif
     return 0;
 }

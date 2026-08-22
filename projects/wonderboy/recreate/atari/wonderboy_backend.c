@@ -183,10 +183,19 @@ int sched_wait8(uint8_t *image, uint32_t addr, uint8_t until, uint32_t site_pc) 
  * (../src/game.c's `wait_for_vbl_ready` and `wait_for_vbl_tick`), so this returns "go round again"
  * for ever and the loop ends on the game's own compare. The word is read at full width from an even
  * address, which is what the 68000 does and what `be16` compiles to on a big-endian target. */
+/* HOW MANY TIMES THE CALLER WENT ROUND, and it is not a diagnostic — it is this function's only
+ * pin. `sched_poll16` cannot be shown to work by its own return value (it is the constant 1) nor by
+ * the word it hands back (an ordinary image read): what has to be true is that the loops above it
+ * SPUN and then ENDED, and the only thing that can end them is a level-4 interrupt raising
+ * WB_VBL_COUNTER between two iterations. A count far above one per wait says the spin was real; the
+ * run reaching its own dump says it ended. M2's record carries the number. */
+uint32_t wb_target_poll16_calls;
+
 int sched_poll16(uint8_t *image, uint32_t addr, uint32_t site_pc, uint16_t *seen) {
     uint32_t at = addr & WB_BUS_ADDR_MASK;
 
     (void)site_pc;
+    wb_target_poll16_calls++;
     *seen = os_in_image(at, 2) ? *(volatile uint16_t *)(image + at) : (uint16_t)0;
     return 1;
 }

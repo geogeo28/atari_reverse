@@ -30,4 +30,10 @@ void wb_target_shifter_word(uint32_t reg, uint16_t value);
 /* What the last screen-base translation actually put on the bus, for the smoke's read-back. */
 extern uint32_t wb_target_screen_base;
 
+/* How many iterations `flip_screen`'s two vblank waits have taken between them. `sched_poll16`
+ * returns a constant and hands back an ordinary image read, so nothing about the call itself can
+ * show it working; what this counts is that the spins were real and that a level-4 interrupt ended
+ * them. M2's record carries it (wonderboy_backend.c). */
+extern uint32_t wb_target_poll16_calls;
+
 #endif /* WONDERBOY_TARGET_H */

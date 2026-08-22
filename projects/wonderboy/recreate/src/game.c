@@ -453,8 +453,11 @@ void flip_screen(uint8_t *image) {
 /* --- $4a0: THE FRAME LOOP ITSELF ---------------------------------------------------------------
  *
  * `do { ... } while (1)`: $508 is `bra.s $4a0` and there is no exit instruction. The boot chain
- * `jmp $4a0.w`s into it once ($e708, after the first stage load, and again from $f8b4) and the
- * program spends the rest of its life here.
+ * `jmp $4a0.w`s into it once, from $f8b4 — the instruction after `stage_load_window` — and the
+ * program spends the rest of its life here. Two addresses in the image hold that `jmp` and an
+ * earlier revision of this plate named both as entries; only $f8b4 is live, because $e6fc's
+ * `bsr.w $f89e` never returns ($f89e falls off its own end into $f8b4). ../names.txt cmt 0x4a0 has
+ * the census.
  *
  * FIFTEEN CALLS, and this function is nothing else — two leading `bsr`s, a four-call block that runs
  * only while the game is NOT paused, eight more, and the flip. Every one of them is reconstructed,

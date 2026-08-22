@@ -7,6 +7,10 @@
 #   build.sh novbl      -> M1's NEGATIVE CONTROL: identical, minus the level-4 vector install. Every
 #                          M1 assertion that depends on the machine driving the reconstruction must
 #                          FAIL, and smoke.py inverts its verdict for this build.
+#   build.sh m2         -> the FRAME build: the image is the ORIGINAL's post-boot RAM instead of the
+#                          program plus seeds, and the shim runs game_main_loop rather than counting
+#                          vblanks. Needs `python3 atari/original.py dump` first — the image cannot
+#                          be computed, only measured (gen_image.py's honesty line).
 #
 # Writes disk/{WB.PRG,WB.IMG} and keeps build/WB-<mode>.PRG so a check needing two builds in
 # sequence does not have to rebuild. build/ and disk/ are gitignored (repo .gitignore already covers
@@ -33,7 +37,8 @@ case "$MODE" in
   # reaches the reconstruction, so its counter stays at gen_image.py's seeded 0, the tempo byte stays
   # at the unwritten sentinel, the floppy timer never expires and the chip is never touched.
   novbl) DEF="-DSMOKE_NO_VBL_INSTALL" ;;
-  *) echo "usage: build.sh [m1 | novbl]"; exit 2 ;;
+  m2)    DEF="-DSMOKE_M2" ;;
+  *) echo "usage: build.sh [m1 | novbl | m2]"; exit 2 ;;
 esac
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -52,7 +57,44 @@ CC=m68k-elf-gcc
 # 0x3f8 load base is argued for, and a second spelling could drift from the loader gen_image.py uses.
 echo ">> stage drive"
 PY="$REC/.venv/bin/python"; [ -x "$PY" ] || PY=python3
-"$PY" "$HERE/gen_image.py" "$BIN/disk1/AUTO/SWB.PRG" "$DISK/WB.IMG"
+if [ "$MODE" = m2 ]; then
+  # THE M2 IMAGE IS MEASURED, NOT COMPUTED, and this is where that costs something: the dump has to
+  # exist before the build, and a stale one is worse than a missing one because it would build.
+  DUMP="$BUILD/ORIGRAM.BIN"; REGS="$BUILD/ORIGREGS.txt"; PENS="$BUILD/ORIGPENS.BIN"
+  # THE THREE ARTEFACTS MUST BE ONE BOOT'S, and an existence test cannot say that: an interrupted
+  # dump leaves this boot's RAM beside the previous boot's registers and palette, all three present.
+  # original.py stamps a manifest (boot id + size + digest each) after all three land, and this
+  # verifies against it — so a mixed or half-written set refuses the build instead of producing an
+  # image and an A5 from different boots.
+  "$PY" -c "
+import sys; sys.path.insert(0, '$HERE')
+import original
+ok, message = original.check_manifest('$BUILD')
+print(('   ' if ok else 'ERROR: ') + message)
+sys.exit(0 if ok else 1)" || exit 1
+  "$PY" "$HERE/gen_image.py" "$BIN/disk1/AUTO/SWB.PRG" "$DISK/WB.IMG" --dump "$DUMP"
+  # The palette is the boot's product too and it does not live in RAM — see wonderboy_main.c's
+  # STAGED_PENS_FILE. Copied rather than generated: it is 32 bytes of measurement.
+  cp "$PENS" "$DISK/PENS.IMG"
+  # `game_main_loop` is `jmp`ed into and inherits the boot's registers; a5 is the sprite pass's
+  # `unwind` and the ONE field of its argument that is a real input (../include/blit.h). Taken from
+  # the same dump as the memory, so the two cannot come from different boots.
+  #
+  # PARSED BY original.py's OWN READER rather than by a sed here. The first draft was a sed, it did
+  # not match (BSD sed has no `\b`), and even fixed it would have been a second spelling of a format
+  # Python already parses — CLAUDE.md §5's across-a-language-boundary duplication, in the one place
+  # where a silent mismatch would compile a plausible wrong number into the frame build.
+  UNWIND=$("$PY" -c "
+import sys; sys.path.insert(0, '$HERE')
+import original
+from pathlib import Path
+value = original.register(Path('$REGS').read_text(), 'A5')
+print('%#010x' % value if value is not None else '')")
+  [ -n "$UNWIND" ] || { echo "ERROR: no A5 in $REGS — re-run \`atari/original.py dump\`"; exit 1; }
+  DEF="$DEF -DM2_ENTRY_UNWIND=$UNWIND"
+else
+  "$PY" "$HERE/gen_image.py" "$BIN/disk1/AUTO/SWB.PRG" "$DISK/WB.IMG"
+fi
 IMG_BYTES=$(wc -c < "$DISK/WB.IMG" | tr -d ' ')           # BSD wc pads with spaces
 STAGED_AT=$(sed -n 's/^load_base *= *\(0x[0-9a-fA-F]*\).*/\1/p' "$REC/project.toml")
 [ -n "$STAGED_AT" ] || { echo "ERROR: no load_base in $REC/project.toml"; exit 1; }
@@ -185,4 +227,18 @@ python3 "$HERE/mkprg.py" "$BUILD/wonderboy.elf" "$BUILD/wonderboy.bin" "$BUILD/$
 
 cp "$BUILD/$PRG" "$DISK/$PRG"
 cp "$BUILD/$PRG" "$BUILD/WB-$MODE.PRG"
+# THE IMAGE IS KEPT PER MODE TOO, and it is not filing: the modes stage DIFFERENT images (m1 the
+# program plus seeds at 136,408 bytes, m2 the original's post-boot RAM at 523,272) and the .PRG has
+# its size compiled in. smoke.py runs five modes against one drive, so without a per-mode copy to
+# re-stage from, `smoke.py m2` after `build.sh m1` boots the frame build over the M1 image — which
+# is how the first draft failed, loudly here but silently for any future pair whose sizes agree.
+cp "$DISK/WB.IMG" "$BUILD/WB-$MODE.IMG"
+# The palette belongs to m2 alone. Keyed on the MODE and not on the file's existence: a
+# `[ -f ... ] && cp ...` would have copied m2's leftover into an m1 build (measured, harmlessly —
+# nothing reads it there), and as the tail of a `set -e` script a false test aborts the build.
+if [ "$MODE" = m2 ]; then
+  cp "$DISK/PENS.IMG" "$BUILD/WB-$MODE.PENS"
+else
+  rm -f "$DISK/PENS.IMG" "$BUILD/WB-$MODE.PENS"
+fi
 ls -l "$DISK/$PRG" "$DISK/WB.IMG"

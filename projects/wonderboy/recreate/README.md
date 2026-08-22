@@ -796,6 +796,12 @@ separate compiler and the differential `.so` never sees it, so `make test` below
 leaked into. The only trace of it in `src/` is a `#ifdef WB_ON_TARGET` arm on the three shifter
 sinks (`src/game.c`, `src/stage.c`), a define `make test` never passes.
 
+**It also runs the ORIGINAL.** `atari/original.py` boots the shipped 1989 `.stx` disks under Hatari
+and drives them to named anchors, which is what supplies the two things no host-side computation in
+this project can: the staged image for the frame build (the boot's products, dumped at `$f8b4`) and
+the shipped side of the frame differential. `atari/README.md` §2 and §9 argue both. Note that it
+needs both disks in `../bin/` and that it is the one thing here whose inputs are not in git.
+
 ```bash
 make venv      # once: .venv + pytest/pytest-xdist (see requirements.txt)
 make test      # build the candidate + the shared oracle, run the suite across cores

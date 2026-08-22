@@ -12,7 +12,9 @@ scheduled write that releases a busy-wait, and three shifter registers the oracl
 target-side implementation.
 
 **It is not the game yet, and the reason is one sentence:** `game_main_loop` is `jmp`ed into with a
-stage already loaded, and the chain that loads one is unported. §2 draws that line exactly.
+stage already loaded, and the chain that loads one is unported. §2 draws that line exactly — and
+records how M2 crosses it without pretending to have ported the boot: by taking the ORIGINAL's own
+post-boot RAM off a real emulated machine and staging that.
 
 ## Status
 
@@ -22,14 +24,16 @@ stage already loaded, and the chain that loads one is unported. §2 draws that l
 | **M1** negative control | one store suppressed (the vector install) and **every machine-driven check fails** — the counter stays at its seeded 0, the tempo byte stays at its never-written sentinel, the countdown never expires, the chip is never touched. The two checks that do NOT depend on the vblank still pass, so the control is targeted rather than a blanket break. On a ROM whose ENTRY STATE already satisfies one of them the control excludes it **and prints the exclusion** (§7) | ✅ `smoke.py novbl` |
 | **M1** hardware control | the **same binary**, booted with a monochrome monitor, takes `tempo_drop_value`'s *other* arm — `WB_SND_TICK_DROP_MONO` where a colour boot gives `WB_SND_TICK_DROP_50HZ`. A code control cannot show that a hardware read is LIVE rather than a constant the compiler folded; changing the machine can | ✅ `smoke.py mono` |
 | **M1** machine health | every mode runs Hatari to the **end** of `--run-vbls` and asserts both halves: the exit status, and the log scanned for faults whose PC is not TOS's own memory-sizing probe | ✅ every mode |
-| **M2** a frame | `game_main_loop` runs, which needs a staged image the boot chain's products are actually in (§2). Catches: the wrong buffer published; the base-byte swap **in `flip_screen`'s own two call sites** (the swap in the shared translation is already caught at M1 — §3) | ⛔ blocked on §2 |
-| **M2** the original's post-boot RAM | the dump that unblocks the row above is also the **side-by-side**: our image against the shipped binary's own RAM at the `jmp $4a0`, which is Joust's M3 comparison arriving here rather than there (§2) | ⛔ owed |
+| **M2** the original's post-boot RAM | `atari/original.py` boots the shipped 1989 disks under Hatari, drives them past the two fire gates and the data-disk swap, and dumps the game's whole address space `[0x3f8,0x80000)` at **`$f8b4`** — the boot's last instruction. Seven pins from the inside (the relocated resource signature, `stage_load_window`'s two latched pointers, both vectors, the stage number, and game_main_loop's own code against the shipped file); a **mis-anchor measurement** (25.6% of the span differs one call earlier); two **negative controls** (no fire → no anchor, no data disk → no anchor); and a **reproducibility measurement** that finds ~500-650 of 523,272 bytes are one boot's accident (the figure moves between boots; `variance` owns it) and holds every band to a ceiling | ✅ `original.py dump / neighbour / variance / nofire / nodisk2` |
+| **M2** a frame | `game_main_loop` runs **fifty-two frames on the machine**, and at four anchored frames its 32000 framebuffer bytes and its sixteen hardware pens are **byte-identical to the shipped binary's** running the same fifty-two frames. Both sides read where the picture really is — ours out of the image at the address `flip_screen` published, theirs off the shipped binary's own screen by `savebin` at a breakpoint on `$4a0` | ✅ `smoke.py m2` |
+| **M2** mis-anchor control | our frames read off the NEIGHBOURING shipped frame, verdict inverted. The two rows a one-anchor shift can reach both fail; the other six are **excluded and printed**, because this game's picture toggles on a one-second cadence and half the shifts land on an identical frame (§9) | ✅ `smoke.py m2fault` |
+| **M2** the two flip-site mutants | **MEASURED DYING** (§9): the base-byte swap in `flip_screen`'s own two call sites, and the wrong buffer published. Neither touches an image byte — the framebuffer compare cannot see them — and both move the address read back off `$ffff8201/8203` | ✅ both CAUGHT |
 | **M3** the exits | `game_key_actions`' three endings `jmp` into the boot chain and `game_main_loop` reports them instead — the same "exits the reconstruction reports and its caller drops" that Joust's M3 completes in its shim. Nothing here completes them yet | ⛔ owed |
 | **M3** the joystick arms | the shim's ACIA handler files a report on `$fe`/`$ff` and **those arms have never executed**. Discharged by an interactive Hatari run with `--joy1 keys` and a human at the cursor keys, which is where Joust's M3 leaves steering too; a headless run cannot press a stick. **This row exists because a registered boundary with no discharging milestone is how an unpinned arm ships forever** | ⛔ owed, mechanism named |
 | **M3** a saved-state round trip | Joust's `HIGH.SCO` equivalent. **ABSENT BY CONSTRUCTION, not deferred**: `../project.toml`'s byte scan establishes that Wonder Boy performs no file I/O at all — one GEMDOS trap in the whole image, a `Super` — so there is no file for a round trip to exist over | n/a |
-| **M4** frame differential vs the original | our framebuffer against the shipped binary's, at matched anchors, both bitplanes and pens | ⛔ blocked on M2 |
-| **M5** hardware-state vector + rendered picture | the shifter read back at a frame anchor, and Hatari's own `screenshot`. Catches: the flash's two arms swapped | ⛔ blocked on M2 |
-| **M6** timelines | the ordered stream of shifter and PSG writes, reduced to a per-phase shape. Catches: the sink write moved above the timer store; and the PSG select/data race in §5 | ⛔ blocked on M2 |
+| **M4** frame differential vs the original | ~~blocked on M2~~ — **DELIVERED AS PART OF M2**, above: the two rows are the same comparison, and separating them was an artefact of expecting the dump to be a later milestone than the frame. The row is kept so the renumbering is visible rather than silent | ✅ folded into `smoke.py m2` |
+| **M5** hardware-state vector + rendered picture | M2 reads back ONE register (`$ffff8201/8203`, the row that kills the two flip-site mutants). The rest of Joust's vector — the YM-2149 file, resolution, refresh rate — and Hatari's own `screenshot` are not taken. Catches when it lands: **the flash's two arms swapped**, which M2 cannot see because its anchors are frames on which `WB_FLASH_TIMER` is zero | ⛔ owed, partly delivered |
+| **M6** timelines | the ordered stream of shifter and PSG writes, reduced to a per-phase shape. Catches: the sink write moved above the timer store; and the PSG select/data race in §5 | ⛔ owed |
 
 Verified on **TOS 1.04 and EmuTOS** (Hatari's bundled `tos.img`). **NOT "identical results on both
 ROMs"** — the honest split is that M1 is green on both, and two of its pieces behave differently:
@@ -66,7 +70,23 @@ brew install m68k-elf-gcc hatari              # one-time
 bash atari/build.sh m1    && python3 atari/smoke.py m1      # M1
 bash atari/build.sh m1    && python3 atari/smoke.py mono    #   ...its HARDWARE control
 bash atari/build.sh novbl && python3 atari/smoke.py novbl   #   ...and its negative control
+
+python3 atari/original.py dump                              # M2's image: MEASURED, not computed
+python3 atari/original.py frames                            #   ...and the shipped side's frames
+bash atari/build.sh m2    && python3 atari/smoke.py m2      # M2, the frame differential
+bash atari/build.sh m2    && python3 atari/smoke.py m2fault #   ...and its MIS-ANCHOR control
+
+python3 atari/original.py variance                          # what in the dump is one boot's luck
+python3 atari/original.py neighbour                         #   ...and the anchor's own evidence (§9)
+python3 atari/original.py nofire                            #   ...and the two boot controls
+python3 atari/original.py nodisk2
 ```
+
+**M2 is `original.py` first, always.** The image it needs cannot be computed — see §2 — and
+`build.sh m2` refuses rather than building against a missing dump, or against one whose three
+artefacts are not all from the same boot (they carry a manifest; the build verifies it). The dump
+needs **both shipped `.stx` disks** in `../bin/`. `neighbour` runs after `variance`, because the
+floor it has to clear is derived from the noise `variance` measures rather than written down.
 
 `smoke.py` finds a TOS ROM in `$WB_TOS_ROM`, then `tools/hatari/TOS*.img` newest first, then
 Hatari's bundled EmuTOS. Hatari needs `--memsize 4`: the 1 MiB image is the program's BSS. `build/`
@@ -83,6 +103,7 @@ and `disk/` are gitignored build artifacts; the full Hatari log of the last run 
 | `shim_include/tos.h` | the trap wrappers' prototypes — a short list, because the game issues one trap in its life |
 | `shim_include/wonderboy_target.h` | the two seams the cores name (`../src/game.c`, `../src/stage.c`) |
 | `shim_include/string.h` | a freestanding `<string.h>` — needed by the **kit's** `os.h`, not by the cores; deleting it on the grounds that nothing under `../src/` calls a string function fails the build in fifteen translation units |
+| `original.py` | **the shipped 1989 disks, driven under Hatari to a named anchor** — the post-boot RAM dump M2's image is, the register file and palette that go with it, the mis-anchor and reproducibility measurements, the two boot controls, and the shipped side of the frame differential |
 | `gen_image.py` | the staged image — and **the honesty line** about what a staged image is not |
 | `tos.ld` / `mkprg.py` | link at base 0, then wrap the ELF into a GEMDOS `.PRG` with a relocation table |
 | `build.sh` | compile + link + wrap + stage `disk/`, and assert the seam actually held |
@@ -142,15 +163,32 @@ buffers over `$44000..$70000`, and both screens. Two of the routines that produc
 merely unported but **unreconstructed** (the tile installer at `$e67e`, `sprites_cru_install` at
 `$e87c`), so their products cannot be computed host-side today at all.
 
-So this image can run the routines that read the PROGRAM, and it cannot run a frame. **M1's claim is
-drawn exactly on that line** and reaches nothing beyond it.
+So the M1 image can run the routines that read the PROGRAM, and it cannot run a frame. **M1's claim
+is drawn exactly on that line** and reaches nothing beyond it.
 
-**The obligation this leaves is recorded rather than discharged, and it is reachable.** The strongest
-reference for a staged image is the ORIGINAL's own post-boot RAM. The Copylock lives inside
-`SWB.PRG` rather than in the boot sector (`../../notes/bootsector.md`), disk 1's Pasti `.stx` boots
-under Hatari, and `projects/joust/recreate/atari/smoke.py` already does `--parse` + `savebin 0
-0x100000` against a shipped binary. A dump taken at the `jmp $4a0` that enters the frame loop would
-turn every fabricated range above into a measured one. Nothing here pretends otherwise.
+**THE OBLIGATION IS DISCHARGED, AND THE SENTENCE MOVES RATHER THAN GOING AWAY.** `atari/original.py`
+takes the reference this section named as reachable: the ORIGINAL's own post-boot RAM, dumped under
+Hatari at `$f8b4`. Every range above is present in the M2 image, measured. What is still fabricated
+is the *boot*, not the *data* — the chain remains unported and this image is its result handed over
+rather than recomputed, so a port of `$e67e` and `$e87c` would replace the dump. Until then the dump
+is the reference and `gen_image.py`'s PROVENANCE table is the receipt, checked on every build.
+
+Two things the discharge cost, both measured rather than assumed:
+
+- **The dump is not the same twice, and the figure MOVES.** Four boots read 536, 538, 591 and 605 of
+  523,272 bytes — the Copylock's 512-byte scratch band every time, 12-22 bytes of the playing sound
+  driver's state, 8-72 of the game's stack, and `WB_VBL_COUNTER`. `original.py variance` owns that
+  number (it prints it and writes `build/VARIANCE.txt`); this file cites the mode rather than
+  restating a reading that is stale on the next boot. The mode RAISES on a byte outside those four
+  bands *and* on a band that exceeds its ceiling — the band alone is a weak guard, the sound band
+  being 13,604 bytes wide to certify a couple of dozen. That guard found the fourth band itself.
+  None of them reaches a framebuffer or a pen, which is the whole of why M2's two surfaces can be
+  compared exactly against a *fresh* boot.
+- **The palette is the boot's product and does not live in RAM.** `set_palette` runs inside the
+  unported chain, so an image that staged only memory paints through whatever owned the shifter
+  last — measured on the first M2 run, which came back with TOS 1.04's own desktop palette. The
+  sixteen pens are dumped at the same anchor and published through the same sink `set_palette`
+  writes them through.
 
 ### 3. The screen base is TRANSLATED, and it is this port's one piece of real logic
 
@@ -265,6 +303,55 @@ the machine this ran on answered **`$f1`**, and the first draft — which had th
 controller's firmware, not of this port. What phase two then pins is that the answer **repeats**,
 which is a stronger claim than the constant was.
 
+### 9. M2, and what an anchored frame is worth
+
+The claim is one sentence: **fifty-two frames of the reconstruction run on a 68000, and at four of
+them its screen and its sixteen pens are the shipped 1989 binary's, byte for byte.** Four things make
+that more than a coincidence, and one of them is a limit.
+
+**The anchor's margin is measured against the instrument's own noise floor.** Two dumps of the same
+moment already differ by ~600 bytes, so "the two moments differ" is true of every pair this tool can
+produce — `original.py neighbour` therefore takes `variance`'s reading, requires the mis-anchor to
+clear ten times it (measured: ~134,000 against a ~5,900 floor, ~23x), and requires the two
+same-anchor boots NOT to. A floor nobody has shown to discriminate is not a floor.
+
+**The anchors are chosen by measurement, and the mis-anchor margin is printed.** This game at the top
+of stage 1 draws the *same picture every frame*: with no stick pushed nothing moves. Differencing the
+shipped binary's own consecutive frames over its first seventy (`original.py frames 70`) finds
+exactly two boundaries — frame 1→2 and frame 51→52 — each moving 988 of 32000 bytes over 24 scanlines
+from row 60. So the anchors are `1, 2, 51, 52`, the frames either side of each. **AND IT IS A BLINK,
+NOT A COUNTER**: frame 52 is byte-identical to frame 1 and frame 51 to frame 2, so the picture toggles
+on a one-second cadence rather than advancing. `smoke.py m2` prints every consecutive margin, saying
+which pairs are DETECTABLE and which are IDENTICAL PICTURES.
+
+**The control is the mis-anchor, and it excludes what it cannot break.** `m2fault` reads our frames
+off the *neighbouring* shipped frame and inverts its verdict. Because the picture toggles, only two
+of the eight rows can be broken by a one-anchor shift; the other six are **printed as excluded**,
+with the reason, exactly as M1's `novbl` excludes its entry-state-vacuous check. A row silently
+dropped from a control is a row nobody is running.
+
+**The framebuffer cannot see the shifter, so M2 reads it back.** `flip_screen`'s two
+`shifter_write_byte`s decide which buffer the machine DISPLAYS; they change no image byte. Both
+mutants over them therefore leave every compared pixel correct, and both are caught by one row —
+`$ffff8201/8203`, read in supervisor before the teardown:
+
+| mutant | measured under `smoke.py m2` |
+|---|---|
+| the base bytes swapped **at `flip_screen`'s own two call sites** (the swap in the shared translation was already caught at M1) | **CAUGHT** — the backend wrote `0x84a400` and the 24-bit bus handed back `0x4a400`, against `image + 0x78000` |
+| **the wrong buffer published** (`WB_SCREEN_BACK` instead of the front) | **CAUGHT** — `0xb9d00` read back against `0xc1d00` |
+| the flash's two arms swapped | **SURVIVES, and the reason is measured** — `WB_FLASH_TIMER` is `$0000` in the staged image, so `flash_step` returns before the write on all fifty-two frames and the arm never executes. Not an M2 weakness to fix but a branch the *anchor's own data* cannot reach; it is M5's, and staging a frame with the flash armed is what would reach it |
+
+**`sched_poll16` is discharged, and by the iteration count rather than by the frames.**
+`flip_screen`'s two waits are its only callers and they are uncapped spins on `WB_VBL_COUNTER`. A
+frame count says they returned; only the count of iterations says they SPUN — i.e. that what ended
+them was a level-4 interrupt raising the counter and not a predicate already true. Measured: **~17,100
+iterations over 52 frames**, ~330 per frame, against the 2 a wait that never spun would give.
+
+**Both ROMs, and the image lands somewhere else on each.** M2 is green on TOS 1.04 (image at
+`0x49d00`) and on EmuTOS, which lands it ~36 KB higher, with the published base following it both
+times — so the
+translation in §3 is demonstrably not a constant that happens to be right, on the frame path too.
+
 ## The bugs found on target
 
 Four, on the first three runs, and every one of them is the shape `docs/on-target-execution.md`
@@ -296,17 +383,22 @@ first thing to check when nothing ran is whether anything could have.*
 
 ## Known gaps
 
-- **No frame runs.** Everything in §2. Of the four shifter-sink mutants `../STATUS.md` measures as
-  surviving the whole differential suite, **M1 now kills one and a half**: the base-byte swap dies
-  where it lives in the shared translation (measured — the published address comes back
-  `image + 0x800700` against `WB_SCREEN_FRONT`'s `0x78000`, and the shifter read-back fires too,
-  though only because that particular swapped address overflows the 24-bit bus, so the addend pin is
-  the one that catches it BY CONSTRUCTION). The same swap in `flip_screen`'s own two call sites, the
-  wrong buffer published, the flash's two arms swapped and the sink write moved above the timer store
-  are all still surviving; the status table says which milestone catches each.
-- **`sched_poll16` is written and not pinned.** It cannot be until a frame runs — `flip_screen`'s two
-  waits are its only callers. It ships because `game_main_loop` will not link without it, and it is
-  recorded here and in `../STATUS.md` rather than counted as done.
+- **Of the four shifter-sink mutants `../STATUS.md` measures as surviving the whole differential
+  suite, THREE AND A HALF ARE NOW DEAD.** M1 killed the base-byte swap where it lives in the shared
+  translation; M2 kills the same swap at `flip_screen`'s own two call sites and the wrong buffer
+  published (§9). **Two are left**, and they are different kinds of left: the flash's two arms
+  swapped is *measured surviving* because the anchored window's own data never arms the flash (§9) —
+  M5's, and reachable only by staging a frame with `WB_FLASH_TIMER` non-zero; the sink write moved
+  above the timer store is untried, and is M6's.
+- **Only one frame's worth of the game is reached.** Fifty-two frames of a motionless stage 1 with
+  no stick pushed. Nothing that needs input, nothing that scrolls, no monster that has spawned, no
+  stage but the first. What M2 shows is that the frame loop and everything under it agree with the
+  original on the picture they draw *for this stage's opening second* — which is a much narrower
+  claim than "the game renders correctly" and is exactly as much as fifty-two static frames support.
+- **The staged image is one boot's, and the shipped side is another's.** ~500-650 of its 523,272
+  bytes differ between boots (§2). They are argued and measured not to reach a framebuffer or a pen, which
+  is what makes the comparison exact; a *whole-memory* differential against a fresh boot is not
+  available on those terms and is not attempted.
 - **The scancode path is pinned by a status byte, not by a key.** `sched_wait8` really spins and a
   real interrupt really ends it, but the byte is the IKBD's reset acknowledge; a headless Hatari has
   no keyboard, so the *game's* two waits (`$60e`, `$64e`, on scancode `$19`) have not been driven.

@@ -1732,6 +1732,24 @@ counted polls per RUN rather than per SITE.
 | `$694` `flip_screen` | 118 | **T3 HW_WRITE_ONLY** | **RECONSTRUCTED & GREEN.** The kit now counts polls and arrivals per WAIT SITE (`TRAP_MODEL.md`, Phase 8), so the routine's two waits are separable in one run. Its THREE registers stay dropped and unpinned, and the sweep MEASURES that rather than asserting it: four named mutants over them — the wrong buffer published, the two base bytes swapped, the flash's two arms swapped, the sink write moved above the timer store — all survive the whole suite |
 | `$4a0` `game_main_loop` | 106 | T0 itself; T3 transitively, through the flip | **RECONSTRUCTED & GREEN.** A composition of fifteen calls, and the tier it inherits is the worst of its callees' |
 
+**AND THE THREE DROPPED REGISTERS ARE NO LONGER UNPINNED — THE PIN IS OFF TARGET'S REACH, NOT THE
+ORACLE'S.** Batch 43 phase B runs the reconstruction on a 68000 with the shipped binary's own
+post-boot RAM staged, and `atari/README.md` §9 measures the four mutants above again *there*:
+
+| mutant over `flip_screen`'s dropped registers | under the differential suite | on target |
+| --- | --- | --- |
+| the two base bytes swapped (shared translation) | survives | **CAUGHT at M1** |
+| the two base bytes swapped (flip_screen's own two call sites) | survives | **CAUGHT at M2** |
+| the wrong buffer published | survives | **CAUGHT at M2** |
+| the flash's two arms swapped | survives | **still survives, and now for a MEASURED reason**: `WB_FLASH_TIMER` is `$0000` in the staged image, so the arm never executes in the anchored window. A data-reachability hole, not a surface hole |
+| the sink write moved above the timer store | survives | untried — M6's, the write timeline |
+
+**WHAT THAT ADDS TO THIS DOCUMENT'S ARGUMENT.** A T3 price says the oracle cannot see the write. It
+does not say the write is unpinnable — it says the pin is not in this harness. Three of the five
+mutants above died the moment a real shifter was on the other end of the call, and the fourth's
+survival turned out to be about the *data* the anchor stages rather than about the tier at all. The
+tier tells you which surface a pin has to come from; it does not tell you there is none.
+
 **THE LESSON FOR THIS DOCUMENT STANDS UNCHANGED, and it is now paid for twice: a T0 or T3 price is a
 statement that the oracle can SEE the routine, not that the harness can DRIVE it** — the two come
 apart wherever a routine waits on something outside itself, and §6's capability table has no column
@@ -2490,6 +2508,14 @@ or standing gap, not a to-do list:
    are claims about **98.6 %** of the image. The sweep does produce plausible-looking hardware
    operands inside it (an `$8800` at `$f1c6`, an `add.w D7,($40862ada)` at `$ed90`); they are decode
    artefacts and are excluded here.
+   **AND WHAT IS THERE AT RUN TIME IS NOT SIMPLY THE PLAINTEXT, MEASURED (batch 43 phase B).** The
+   sub-range `$f314..$f514` — 512 of these 1,970 bytes — holds something DIFFERENT after every boot:
+   `atari/original.py variance` differences two boots of the shipped disks stopped at the same
+   instruction and that band turns over completely each time, as a descending, wrapping sequence.
+   So those 512 bytes are the protection's own trace/timing scratch rather than code it decrypted,
+   and a dump of the running machine does not recover them as anything. It changes nothing about
+   this row's conclusion — the region is still unreadable and still outside every scan — but "the
+   ciphertext only ever exists decrypted at run time" is too strong for that part of it.
 5. **The steering analysis is intra-procedural, window-bounded (48 instructions) and stops at
    calls.** 10 reads came back `STEER` and 21 `WINDOW`; there is not one `DEAD` verdict in the file.
    Reading all 21 by hand: 6 are `bclr #6,$fffa11` interrupt acknowledges, 3 are the PSG
