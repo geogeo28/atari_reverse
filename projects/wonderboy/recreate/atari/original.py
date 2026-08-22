@@ -319,12 +319,15 @@ def boot_script(directory, disk2, extra_stops=()):
     return "\n".join(lines) + "\n"
 
 
-def run_original(build_script, tag, run_vbls=RUN_VBLS, fires=True):
+def run_original(build_script, tag, run_vbls=RUN_VBLS, fires=True, trace=None):
     """Boot disk 1 and run `build_script(directory, disk2_path)` against it.
 
     Returns (produced files, merged Hatari output, exit status). THE STREAMS ARE MERGED because
     Hatari writes its logging AND all debugger output to stderr; a parser reading stdout scans an
-    empty string for ever, which is a measured year-long blindness in the sibling project."""
+    empty string for ever, which is a measured year-long blindness in the sibling project.
+
+    `trace` is a Hatari `--trace` flag list, which is M6's instrument: the ordered stream of writes
+    that reached the hardware, rather than a snapshot of where they left it."""
     rom = find_tos()
     with tempfile.TemporaryDirectory() as tmp:
         directory = Path(tmp)
@@ -360,6 +363,8 @@ def run_original(build_script, tag, run_vbls=RUN_VBLS, fires=True):
         # the other. Frameskip is a HOST-side draw decision and changes no emulated cycle, so one
         # configuration for every mode costs nothing and removes a difference nobody was measuring.
         args += ["--frameskips", "0"]
+        if trace is not None:
+            args += ["--trace", trace]
         env = dict(os.environ, SDL_VIDEODRIVER="dummy", SDL_AUDIODRIVER="dummy")
         done = subprocess.run(args, env=env, stdin=subprocess.DEVNULL, text=True,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=RUN_TIMEOUT)
@@ -1012,6 +1017,389 @@ def frames_argument():
     return anchor_frames()
 
 
+# ---- M6: THE ORDERED WRITE TIMELINE ---------------------------------------------------------------
+#
+# THE SURFACE EVERY OTHER CHECK IN THIS PROJECT IS BLIND TO. M2's framebuffer, M5's pens, the
+# hardware-state vector and the rendered picture are all SNAPSHOTS: they say what the machine looked
+# like at four instants, and a program that arrives at the right state by a wrong route passes every
+# one of them. `../STATUS.md`'s surviving shifter-sink mutant is exactly that shape — the sink write
+# moved above the timer store changes no value at all, only the ORDER of two writes — and so is the
+# sibling project's 773-stomps bug, where a VBL handler re-armed the palette every vblank and each of
+# the 773 redundant loads wrote the same correct sixteen words.
+#
+# THE INSTRUMENT IS `io_write` AND NOT Joust's `video_color,psg_write`, for two measured reasons:
+#   * this game's timeline needs the SCREEN-BASE publication, which is `flip_screen`'s own per-frame
+#     heartbeat, and `--trace video_addr` emits nothing at all for a write to $ff8201/$ff8203
+#     (measured on Hatari 2.6.1: zero lines over a whole 52-frame run);
+#   * one stream removes the question of how two trace channels interleave, and interleaving is the
+#     only thing this check measures.
+#
+# ...AND IT IS PARSED HERE, ONCE, FOR BOTH SIDES. smoke.py runs `timeline_events` over its own log
+# and over the JSON this file leaves behind, so the shipped binary's stream and the reconstruction's
+# cannot be read by two parsers that have drifted apart. That is M5's lesson taken rather than
+# relearned (§10: one `vector_commands`, one `hardware_vector`).
+TIMELINE_TRACE = "io_write"
+# `IO write.b $ffff8800 = $07 pc=fc0086`. The WIDTH matters to nobody here — a pen is written as a
+# word and a base byte as a byte — but the ADDRESS is normalised, because the same register is named
+# two ways in one log: code that sign-extends a short absolute reaches $ffff8800 and code that does
+# not reaches $00ff8800. Measured, and it splits along the two sides — TOS and our C write $ffff88xx,
+# the shipped 1989 binary writes $00ff88xx — so a parser that keyed on the printed spelling would
+# have read one side's stream as empty and passed.
+IO_WRITE_RE = re.compile(r"^IO write\.[bwl] \$([0-9a-f]+) = \$([0-9a-f]+) pc=([0-9a-f]+)$")
+IO_ADDRESS_MASK = 0xffffff
+# Hatari COLLAPSES a run of identical consecutive trace lines into `N repeats of: <line>`, on a
+# doubling schedule. Measured over both sides' whole runs, the only line it ever collapses is the
+# MFP's `$fffffa11 = $00` — none of the five registers this timeline reads — but "measured today"
+# is not "cannot happen", and a collapsed run would silently shorten a stream this check compares
+# element for element. So it is DETECTED AND REFUSED rather than expanded on a guess about whether
+# the printed count is cumulative or incremental, which is a semantics this project has not pinned.
+TRACE_REPEAT_RE = re.compile(r"^(\d+) repeats of: (.*)$")
+
+
+def kit_constant(name):
+    """One plain-integer `#define` out of the recreate kit's `os.h`.
+
+    The two YM-2149 ports are the KIT's constants, not this game's — `../include/bus.h` names them
+    in prose and `../src/sound.c` reaches them through the kit — so they are scraped from where they
+    are defined rather than written down a third time (CLAUDE.md §5)."""
+    header = REC.parents[2] / "tools" / "recreate_kit" / "include" / "os.h"
+    found = re.search(r"^#define\s+%s\s+(0[xX][0-9a-fA-F]+|\d+)u?\b" % name, header.read_text(), re.M)
+    if not found:
+        raise SystemExit(f"{name} is not a plain-integer #define in {header}")
+    return int(found.group(1), 0)
+
+
+PSG_SELECT_PORT = kit_constant("OS_PSG_PORT_SELECT")
+PSG_DATA_PORT = kit_constant("OS_PSG_PORT_DATA")
+BASE_HIGH_REG = wb("SHIFTER_SCREEN_BASE_HIGH")
+BASE_MID_REG = wb("SHIFTER_SCREEN_BASE_MID")
+# Which byte of the screen address each of those two registers carries. An STF's video base has NO
+# low byte — bits 7..0 are always zero (docs/on-target-execution.md, taxonomy 8) — so these two are
+# the whole register, and `apply_base_write` below is the only place they are applied.
+BASE_HIGH_SHIFT, BASE_MID_SHIFT = 16, 8
+BASE_HIGH_MASK, BASE_MID_MASK = 0xff << BASE_HIGH_SHIFT, 0xff << BASE_MID_SHIFT
+PEN_FIRST_REG = wb("SHIFTER_PALETTE")
+PEN_LAST_REG = PEN_FIRST_REG + (PALETTE_PENS - 1) * 2
+# The five registers a Wonder Boy timeline is about. Everything else `io_write` carries — the MFP,
+# the FDC, the RS-232 — belongs to TOS and to the floppy, differs between a GEMDOS drive and a real
+# one by construction, and is dropped.
+TIMELINE_REGISTERS = frozenset(
+    [PSG_SELECT_PORT, PSG_DATA_PORT, BASE_HIGH_REG, BASE_MID_REG]
+    + [PEN_FIRST_REG + pen * 2 for pen in range(PALETTE_PENS)])
+
+
+# The flash countdown is a RAM word, not a register, so it needs a slot in the same ordered stream
+# that cannot collide with one. Negative is out of band by construction — every real register here is
+# a positive $ff8xxx — which is the encoding rule this project learned the hard way when an in-band
+# refusal sentinel collided with a zero table entry (../STATUS.md, batch 32).
+FLASH_TIMER_EVENT = -1
+
+
+def timeline_events(lines, flash_address=None):
+    """Hatari's trace, reduced to (register, value, pc) over TIMELINE_REGISTERS, in order.
+
+    With `flash_address`, the value-change breakpoint's own lines are folded into the SAME stream as
+    `FLASH_TIMER_EVENT` entries — which is the whole point of it: what `m6flash` compares is the
+    ORDER of a RAM store against a hardware write, and two separately-parsed lists could not say
+    which came first.
+
+    RETURNS `(events, problem)` and never raises: every caller is inside a checker whose contract is
+    a verdict, and a parse failure surfacing as a traceback would abort a negative control before it
+    could report which of its checks it had broken."""
+    watch = re.compile(FLASH_WATCH_RE_TEMPLATE % flash_address) if flash_address else None
+    events = []
+    for line in lines:
+        if watch:
+            watched = watch.match(line)
+            if watched:
+                events.append((FLASH_TIMER_EVENT, int(watched.group(1), 16), "watch"))
+                continue
+        line = line.strip()
+        collapsed = TRACE_REPEAT_RE.match(line)
+        if collapsed:
+            inner = IO_WRITE_RE.match(collapsed.group(2).strip())
+            if inner and (int(inner.group(1), 16) & IO_ADDRESS_MASK) in TIMELINE_REGISTERS:
+                return [], (f"Hatari collapsed {collapsed.group(1)} consecutive writes to "
+                            f"${int(inner.group(1), 16) & IO_ADDRESS_MASK:x} into one `repeats of` "
+                            f"line, so the ordered stream this compares is missing entries; see "
+                            f"TRACE_REPEAT_RE for why this is refused rather than expanded")
+            continue
+        write = IO_WRITE_RE.match(line)
+        if not write:
+            continue
+        register = int(write.group(1), 16) & IO_ADDRESS_MASK
+        if register in TIMELINE_REGISTERS:
+            events.append((register, int(write.group(2), 16), write.group(3)))
+    return events, None
+
+
+TIMELINE_FILE = "OTIMELINE.json"
+WINDOW_OPEN_BEACON, WINDOW_CLOSE_BEACON = "TIMELINE_WINDOW_OPEN", "TIMELINE_WINDOW_CLOSE"
+# The flash countdown's own word, watched as a VALUE-CHANGE breakpoint so that the RAM half of
+# `flip_screen`'s last pair is in the same ordered stream as the hardware half. Hatari has no
+# RAM-write trace; `($addr).w ! ($addr).w :trace` is its documented idiom for tracking a memory
+# value, and it is checked at instruction boundaries — one instruction coarser than the bus, and
+# enough here because the two writes this brackets are adjacent statements.
+#
+# THE LINE IT PRINTS is `  $714 = $1`, which is what `flash_watch_events` below matches.
+FLASH_WATCH_RE_TEMPLATE = r"^\s+\$0*%x = \$([0-9a-f]+)\s*$"
+
+
+def flash_watch_command(address):
+    """The debugger command that puts WB_FLASH_TIMER's word into the timeline."""
+    return f"b (${address:x}).w ! (${address:x}).w :trace"
+
+
+
+
+def apply_base_write(state, register, value):
+    """The shifter's base address after one write to it, or None if `register` is not one of its two.
+
+    THE ONE PLACE THE BASE REGISTER'S SEMANTICS LIVE. Which two registers it is and which byte of the
+    address each carries was written out three times before this existed — twice as the same masking
+    pair and once as a fold — and one of the copies was inside the function that produces the
+    publication list M6 compares. A fix to the rule (an STE's low byte at $ff820d would be one) that
+    reached the fold and not that copy would leave the comparison on the old rule with every count
+    still adding up."""
+    if register == BASE_HIGH_REG:
+        return (state & ~BASE_HIGH_MASK) | (value << BASE_HIGH_SHIFT)
+    if register == BASE_MID_REG:
+        return (state & ~BASE_MID_MASK) | (value << BASE_MID_SHIFT)
+    return None
+
+
+def base_state_after(events, state=0):
+    """Replay the base register over `events` and return the address they leave.
+
+    In THIS file because the two registers are, and both files replay them: smoke.py to classify a
+    window's writes and this one to record the address a window OPENS on."""
+    for register, value, _ in events:
+        moved = apply_base_write(state, register, value)
+        if moved is not None:
+            state = moved
+    return state
+
+
+def timeline_window(log, label):
+    """The lines before, and the lines between, the two beacons — the run's own window statement."""
+    lines = log.splitlines()
+    opened = next((i for i, line in enumerate(lines) if WINDOW_OPEN_BEACON in line), None)
+    closed = next((i for i, line in enumerate(lines) if WINDOW_CLOSE_BEACON in line), None)
+    if opened is None or closed is None:
+        return None, None, (f"the {label} run reached {WINDOW_OPEN_BEACON if opened is None else ''}"
+                            f"{' and ' if opened is None and closed is None else ''}"
+                            f"{WINDOW_CLOSE_BEACON if closed is None else ''} never — it did not run "
+                            f"the frames this timeline is over")
+    return lines[:opened], lines[opened:closed], None
+
+
+def timeline_script(directory, disk2, frames, flash_seed=None):
+    """Bracket the shipped binary's `frames` frames at the frame loop's own entry.
+
+    THE WINDOW IS THE SAME ANCHOR M2 AND M5 USE — `$4a0`, one arrival per frame — so the stream this
+    captures is over exactly the frames whose pictures and pens those modes compare. Hit 1 is the
+    boot's own `jmp` arriving before any frame has run, and hit `frames + 1` is the arrival after the
+    last one, so the two beacons bracket `frames` complete frames and nothing else.
+
+    `flash_seed` does at hit 1 exactly what `frames_script` does at hit 1 — the same declared
+    fabrication at the same instant — AND installs the countdown's watch there, in the same action
+    file, so the watch is live from before the first frame rather than from wherever a separate
+    breakpoint happened to land."""
+    opener = [f"echo {WINDOW_OPEN_BEACON}"]
+    if flash_seed is not None:
+        opener += [f"echo {FLASH_ARMED_BEACON}", poke_word(wb("FLASH_TIMER"), flash_seed),
+                   flash_watch_command(wb("FLASH_TIMER"))]
+    return boot_script(directory, disk2, extra_stops=[
+        (FRAME_LOOP_PC, FIRST_HIT, "TLOPEN.INI", opener),
+        (FRAME_LOOP_PC, frames + 1, "TLCLOSE.INI", [f"echo {WINDOW_CLOSE_BEACON}"])])
+
+
+def capture_shipped_window(frames, flash_seed, tag):
+    """Boot the shipped binary once and return its window as `(events before, events in)`.
+
+    ONE RECIPE FOR BOTH MODES. `timeline` records the window and `psgnoise` differences a second boot
+    against it, and they have to boot the SAME machine or the difference is between two experiments.
+    Written twice, they were not: the flash premise guard below existed only in `timeline`, so
+    `flashpsgnoise` could record a reading from a boot in which the poke never landed — and that
+    reading is what licenses M6's PSG exclusions."""
+    _, log, status = run_original(
+        lambda d, disk2: timeline_script(d, disk2, frames, flash_seed), tag, trace=TIMELINE_TRACE)
+    print(f"-- {tag}: ${FRAME_LOOP_PC:x} hits 1..{frames + 1}, hatari exit={status} "
+          f"(full log in {OUT / ('original-%s.log' % tag)})")
+    faults = machine_faults(log)
+    if faults:
+        raise SystemExit("FAIL: unhealthy machine: " + " | ".join(faults[:4]))
+    if flash_seed is not None and FLASH_ARMED_BEACON not in log:
+        raise SystemExit(f"FAIL: the flash poke never ran — ${FRAME_LOOP_PC:x} was never reached a "
+                         f"first time, so this side's WB_FLASH_TIMER is $0000 and its last four "
+                         f"instructions are dead")
+    before_lines, window, why = timeline_window(log, "shipped")
+    if why:
+        raise SystemExit("FAIL: " + why)
+    events, why = timeline_events(window, wb("FLASH_TIMER") if flash_seed is not None else None)
+    if why:
+        raise SystemExit("FAIL: " + why)
+    if not events:
+        raise SystemExit(f"FAIL: the shipped binary's {frames}-frame window carries no write to any "
+                         f"of the five registers this timeline reads — `{TIMELINE_TRACE}` produced "
+                         f"nothing, so Hatari's wording or its flag has moved")
+    # THE ADDRESS THE SHIFTER ALREADY HELD when the window opened, replayed out of everything before
+    # it. Without it the first write of the window — `flip_screen`'s high byte, which changes nothing
+    # because both of this binary's buffers are $07xxxx — reads as the window's first PUBLICATION,
+    # and the whole sequence comes out one flip out of phase. smoke.py's `base_writes` says what that
+    # measured.
+    before, why = timeline_events(before_lines)
+    if why:
+        raise SystemExit("FAIL: " + why)
+    return before, events
+
+
+def mode_timeline(frames, flash_seed=None):
+    """Capture the SHIPPED binary's ordered write stream over its first `frames` frames.
+
+    The flash run gets its own `F`-prefixed artefact for `mode_frames`' reason: it photographs a
+    DIFFERENT machine — `flip_screen`'s flash arms are live in it and dead in the other — and one
+    filename would let a plain comparison read the flashed stream the moment the two modes were run
+    in the wrong order."""
+    prefix = FRAME_PREFIXES[flash_seed is not None]
+    before, events = capture_shipped_window(
+        frames, flash_seed, "flashtimeline" if flash_seed is not None else "timeline")
+    BUILD.mkdir(exist_ok=True)
+    (BUILD / (prefix + TIMELINE_FILE)).write_text(json.dumps(
+        {"frames": frames, "events": events, "base_at_open": base_state_after(before)}))
+    print(f"   {len(events)} writes over {frames} frames -> {BUILD / (prefix + TIMELINE_FILE)}")
+    return True
+
+
+PSG_NOISE_FILE = "PSGNOISE.json"
+# REGISTERS ALREADY MEASURED TO MOVE BETWEEN TWO BOOTS OF THE SHIPPED BINARY, per fabrication, as a
+# COMMITTED floor under the reading rather than as something each machine must be lucky enough to
+# rediscover. `build/` is gitignored, so a reading kept only there starts empty on every clone.
+#
+# THE READINGS, batch 43 phase E, four pairs on TOS 1.04:
+#   * UNFLASHED: two pairs, 0 of 1,155 writes differing in each. Nothing to exclude, and `m6`
+#     therefore compares all eleven registers the window touches.
+#   * FLASHED: two pairs, one clean and one differing in 42 of 1,155 — every one of them channel A's
+#     tone period (registers 0 and 1), all inside the first eleven frames. THE PAIRING IS
+#     INTERMITTENT, so a run that happens to draw the quiet pair would license comparing a register
+#     already watched to move, and `m6flash` would go red for something neither binary did.
+#
+# Coherent with §10's `flashnoise` finding rather than an exception to it: the flashed boot is a
+# different machine — `../src/behavior.c` gates on the same countdown word — so it drives different
+# actors, and a sound effect whose pitch sweeps per vblank cannot land on the same value twice when
+# what varies is which vblank the floppy boot finished on.
+#
+# ONE-DIRECTIONAL, as the whole instrument is: this names registers demonstrably unstable, and says
+# nothing about the ones not in it. `mode_psg_noise` unions its own pairs on top and never subtracts.
+PSG_REGISTERS_KNOWN_UNSTABLE = {"": (), "F": (0, 1)}
+
+
+def psg_stream(events):
+    """The YM-2149 writes as (register, value), decoded from the select/data protocol.
+
+    In this file rather than smoke.py because BOTH sides' streams go through it — smoke.py's own
+    window and the JSON this file leaves behind — and §10's rule is that the two sides are measured
+    by one piece of code."""
+    pairs, selected = [], None
+    for register, value, _ in events:
+        if register == PSG_SELECT_PORT:
+            selected = value
+        elif register == PSG_DATA_PORT:
+            pairs.append((selected, value))
+    return pairs
+
+
+def sorted_registers(registers):
+    """Sort PSG register numbers, tolerating the `None` `psg_stream` files for an orphan data write.
+
+    A BARE `sorted()` RAISES ON THAT, and the orphan is deliberate rather than a parse failure:
+    smoke.py's comment on `psg_stream` records that a data write with no select before it is exactly
+    what README §5's select/data race would look like on the bus, so it is kept rather than dropped.
+    Keeping it and then crashing on it — after two Hatari boots — is the worst of both."""
+    return sorted(registers, key=lambda register: (register is not None, register))
+
+
+def mode_psg_noise(frames, flash_seed=None):
+    """WHICH OF THE SHIPPED BINARY'S OWN PSG WRITES ARE ONE BOOT'S ACCIDENT.
+
+    M6's sound assertion is that the shipped binary's ordered PSG stream is a prefix of ours, and
+    that claim is worth nothing over registers the shipped binary does not reproduce against ITSELF.
+    §10 already establishes the mechanism for the snapshot version of this — where the music is at
+    frame N depends on which vblank the boot finished on, and `vecnoise` measures it — and this is
+    the same measurement over the STREAM instead of over the register file.
+
+    ONE-DIRECTIONAL, AND THE MODE SAYS SO: a register that moves is demonstrably one boot's
+    accident; one that does not is not thereby shown to be stable. Two boots is not a sample that
+    could bound anything. So the exclusion this licenses is BY REGISTER, with this reading as its
+    evidence, and the reading doubles as a tripwire — a register moving that M6 does compare turns
+    up here first.
+
+    Diffed against `OTIMELINE.json`, which is a DIFFERENT BOOT of the same disks under the same
+    injections, exactly as `vecnoise` diffs against `frames`' vectors.
+
+    AND THE FLASH RUN GETS ITS OWN READING, for the reason §10 gives for `flashnoise`: the flashed
+    boot is a DIFFERENT MACHINE — `flip_screen`'s arms are live in it and `../src/behavior.c` gates
+    on the same word — so what a pair of unflashed boots reproduces says nothing about what a pair
+    of flashed ones does. One reading per fabrication, and `m6flash` reads the `F` one."""
+    tag = "flashpsgnoise" if flash_seed is not None else "psgnoise"
+    prefix = FRAME_PREFIXES[flash_seed is not None]
+    first = BUILD / (prefix + TIMELINE_FILE)
+    if not first.exists():
+        raise SystemExit(f"{first} is missing — this mode differences a second boot against the "
+                         f"first: run `python3 atari/original.py "
+                         f"{'flashtimeline' if prefix else 'timeline'}` before it")
+    reference = json.loads(first.read_text())
+    if reference["frames"] != frames:
+        raise SystemExit(f"{first} covers {reference['frames']} frames and this run covers {frames} "
+                         f"— two different windows cannot be differenced")
+    print(f"   (a SECOND boot, to be differenced against {first})")
+    _, events = capture_shipped_window(frames, flash_seed, tag)
+    once = psg_stream([tuple(event) for event in reference["events"]])
+    twice = psg_stream(events)
+    if len(once) != len(twice):
+        raise SystemExit(f"FAIL: the two boots wrote the PSG a different number of times "
+                         f"({len(once)} and {len(twice)}) — this reading differences them position "
+                         f"by position and cannot align two streams of different lengths. That is "
+                         f"itself a finding: record it rather than tolerating it")
+    moved = sorted_registers({once[i][0] for i in range(len(once)) if once[i] != twice[i]})
+    where = [i for i in range(len(once)) if once[i] != twice[i]]
+    frames_touched = sorted({position * frames // max(len(once), 1) for position in where})
+    # THE EVIDENCE ACCUMULATES RATHER THAN BEING REPLACED, and that is not bookkeeping — it is what
+    # a one-directional measurement means. MEASURED: this pairing is INTERMITTENT. Two plain boots
+    # came back with zero differences and a later pair came back with 42, the same 42 both times
+    # (registers 0 and 1, inside the first eleven frames). A reading that overwrote would therefore
+    # license comparing a register on Monday that it had already watched move on Sunday, and the
+    # mode would go red for something neither binary did. A register once seen to move stays
+    # excluded; the pair count says how much looking is behind that.
+    BUILD.mkdir(exist_ok=True)
+    path = BUILD / (prefix + PSG_NOISE_FILE)
+    # `.get` ON EVERY FIELD, because a reading written by an earlier shape of this record must not
+    # crash the mode two Hatari boots in. Measured: the first version of this guard checked `frames`
+    # with a default and then indexed `pairs` directly, so an existing file passed the guard and
+    # raised KeyError after the boots, losing the reading it had just taken.
+    before = json.loads(path.read_text()) if path.exists() else {}
+    if before.get("frames") != frames:
+        before = {}                                 # a reading of another window licenses nothing
+    pairs = before.get("pairs", 0) + 1
+    # BOTH NUMBERS ACCUMULATE, and that is an honesty fix rather than bookkeeping: `moved` was
+    # accumulated while `differing_positions` was overwritten by the latest pair, so a quiet third
+    # pair would have printed "registers [0, 1] are EXCLUDED because two boots write them
+    # differently (0 of 1155 writes)" — an evidence line refuting the exclusion it exists to justify.
+    differing = before.get("differing_positions", 0) + len(where)
+    moved = sorted_registers(set(moved) | set(before.get("moved", []))
+                             | set(PSG_REGISTERS_KNOWN_UNSTABLE[prefix]))
+    path.write_text(json.dumps(
+        {"frames": frames, "writes": len(once), "moved": moved,
+         "differing_positions": differing, "pairs": pairs,
+         "reproducible": sorted_registers({register for register, _ in once} - set(moved))}))
+    print(f"   {len(where)} of {len(once)} writes differ IN THIS PAIR; registers that moved in it: "
+          f"{sorted_registers({once[i][0] for i in where})}; frames touched: "
+          f"{frames_touched[:1] + ['..'] + frames_touched[-1:] if len(frames_touched) > 2 else frames_touched}")
+    print(f"   -> {path}: over {pairs} pair(s), {differing} differing write(s) and the excluded set "
+          f"is {moved}; M6 compares the rest and PRINTS the exclusion")
+    return True
+
+
 def mode_control(name, fires, disk2):
     """A negative control: remove one injection and require that the anchor is NOT reached."""
     def script(directory, disk2_path):
@@ -1152,6 +1540,12 @@ MODES = {
     "vecnoise": mode_vector_noise,
     "flashnoise": lambda: mode_vector_noise(lightning_flash_seed()),
     "flash": lambda: mode_frames(frames_argument(), lightning_flash_seed()),
+    # M6's shipped side. The frame count is the SHIM'S last anchor rather than a number written here,
+    # for `anchor_frames`' reason: the two sides have to time the same window.
+    "timeline": lambda: mode_timeline(max(anchor_frames())),
+    "flashtimeline": lambda: mode_timeline(max(anchor_frames()), lightning_flash_seed()),
+    "psgnoise": lambda: mode_psg_noise(max(anchor_frames())),
+    "flashpsgnoise": lambda: mode_psg_noise(max(anchor_frames()), lightning_flash_seed()),
     "nofire": lambda: mode_control("nofire", fires=False, disk2=True),
     "nodisk2": lambda: mode_control("nodisk2", fires=True, disk2=False),
 }

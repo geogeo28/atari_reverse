@@ -12319,8 +12319,11 @@ placed wherever the TPA fell, so the buffer the game means is at `image + $70000
 TOS's own memory — publishing the byte unchanged would point the shifter at the operating system. The
 two bytes are shadowed and re-emitted as `image_base + what the game asked for`; the shadow is
 load-bearing because the halves arrive in separate instructions and the sum can carry between them.
-Measured: `image_base 0x2a600` under TOS 1.04 and `0x33100` under EmuTOS, published `0xa2600` /
-`0xab100`. **Not a constant that happens to be right.**
+Measured at the time (batch 43 phase A, the M1 build): `image_base 0x2a600` under TOS 1.04 and
+`0x33100` under EmuTOS. **Not a constant that happens to be right** — and RE-MEASURED in phase E,
+where the same M1 build gives `0x2ae00` and the frame builds give `0x4a600` / `0x53000`: the base
+moves with the `.PRG`'s own length as well as with the ROM, so every figure quoted for it is a
+reading stamped with its build.
 
 ### M1, and what it is drawn on
 
@@ -13460,3 +13463,256 @@ sibling seam routing for guarded sweeps, the ~400 raw computed image accesses in
 encoder hoist, the tier partition, `scene_run_effect`'s fix, `$1ab4`, `bus.h`→kit, `src/map.c`'s
 unguarded `WB_ACTOR_X` write, which-monster-is-which. And on target: **M3's exits and joystick arms,
 and M6's timelines**, which is now where every remaining named on-target gap points.
+
+## Batch 43 phase E — M6, THE ORDERED WRITE TIMELINE: the last sink mutant, the sound, and a runner
+
+M2 compares what the reconstruction DREW at four instants; M5 compares the machine's registers and
+the rendered picture at the same four. **Both are snapshots, and a program that arrives at the right
+state by a wrong route passes them all.** This phase adds the surface they are blind to — what
+reached the hardware, in what order, across all fifty-two frames — and, because the user asked for
+it, `atari/run.sh`: one command that opens the reconstruction in a Hatari window with a joystick.
+
+**Thirteen** on-target modes are now green on **both ROMs** (TOS 1.04 and Hatari's bundled EmuTOS):
+`m1`, `mono`, `novbl`, `m2`, `m2fault`, `m5`, `m5skew`, `m5fault`, `m5flash`, `m6`, `m6rearm`,
+`m6flash`, `play`. `atari/README.md` §11 owns the argument. Suite unchanged at **6,140** — this phase
+touches `atari/` only; `src/` is byte-identical to phase D's (the one mutation was applied, measured
+and restored from a named backup outside the repo, verified by `shasum`).
+
+### What landed
+
+* **THE LAST SHIFTER-SINK MUTANT IS DEAD.** `../STATUS.md`'s batch 42 phase C measured four mutants
+  over the sinks surviving the whole differential suite; M1, M2 and M5 killed three. The survivor was
+  **the sink write moved above the timer store** — `flip_screen`'s last two statements swapped, whose
+  argument is the already-decremented local, so it changes **no value at all**, only the order two
+  writes reach the bus in. Measured both ways this phase: with it applied `m5flash` is **entirely
+  green** (framebuffer, sixteen pens, twenty hardware registers and the rendered PNG at all four
+  anchors) and `m6flash`'s order row is **RED**, with exactly the predicted shape — the first
+  decrement is followed by the *next* frame's colour write, and the last decrement is followed by
+  none at all. No shifter-sink mutant survives.
+* **THE PROJECT'S FIRST ON-TARGET ASSERTION ABOUT SOUND.** Over the window the shipped binary's
+  **1,155 PSG writes are an exact prefix of our 6,424**, register and value, in order. A prefix and
+  not an equality for a structural reason rather than a tolerance: the music is driven by
+  `snd_music_tick` from the VBLANK while the window is bounded by FRAMES, and the two sides spend a
+  different number of vblanks on a frame (measured, about 2 against 11½). §10 recorded why a
+  snapshot could not supply this and named this stream as the surface that could; it is now the
+  surface that does.
+* **...GATED ON ITS OWN REPRODUCIBILITY MEASUREMENT, and the gate earned its keep immediately.**
+  `original.py psgnoise` boots the shipped binary a second time and differences the streams; `m6`
+  refuses to run without the reading and PRINTS what it excludes. **An unflashed pair differs in 0 of
+  1,155 writes; a FLASHED pair differs in 42**, all of them channel A's tone period (registers 0 and
+  1) inside the first eleven frames. The failure was first seen as `m6flash` going red, and the
+  tempting wrong response — exclude registers 0 and 1 everywhere — would have thrown away the
+  full-strength assertion the unflashed pair supports. One reading per fabrication is `flashnoise`'s
+  rule (§10) and it is the rule that saved the row.
+* **THE RE-ARM CONTROL MEASURES ITS OWN INVISIBILITY.** `build.sh m6rearm` re-publishes the staged
+  palette after every frame — the sibling project's 773-stomps bug, reproduced on purpose. The
+  palette rows go red; and rather than *claiming* no snapshot can see it, the control runs M2's whole
+  frame differential inside itself and requires it to PASS. It does: 52 palette loads reach the
+  chip and all four anchors' pictures and pens are still byte-identical to the shipped binary's.
+  **51 of the 52 count as redundant, not 52**, and the gap is structural rather than rounding:
+  redundancy is a property of a consecutive PAIR and the window opens immediately after the
+  staged-palette load it is anchored on, so the first in-window load's pair with the BOOT load is
+  invisible to the counter. Harmless — the pinned value is zero and a missed pair cannot turn a
+  non-zero count into zero — and the docs said 52 until the independent gate re-derived it.
+* **`atari/run.sh`, and the joystick row's mechanism.** Builds the play build (`-DSMOKE_PLAY`: the
+  frame count and the watchdog lifted, both with the reason written where the knob is) and launches
+  Hatari windowed, with sound and `--joy1 keys`. `smoke.py play` is the half a headless run can
+  assert: **still flipping buffers when the run was cut off**, over 12,000 vblanks — 1,004 frames
+  under TOS 1.04 and 1,160 under EmuTOS, i.e. **four to five frames a second** on an 8 MHz 68000,
+  which is the number a reader should have before starting it. The count is ROM-dependent because
+  the ROM decides how much of the window is left after it boots, and the first draft of these docs
+  quoted one ROM's figure four times without naming it. The M3 joystick row moves from "owed, mechanism named" to "mechanism DELIVERED, the
+  arms still unexecuted headless", which is Joust's *partial by construction* wording for the same
+  split.
+
+### What the round FOUND, as opposed to what it built
+
+* **§3 WAS WRONG, AND THREE PHASES OF SNAPSHOTS COULD NOT SEE IT.** The claim was that the mixed
+  address the shifter holds between the two base-byte writes is the original's own rather than this
+  port's. It is this port's. The original's two buffers differ **only in the middle byte**
+  (`$070000`/`$078000`), so its high-byte store writes `$07` over `$07` and the shifter goes straight
+  from one real buffer to the other — **zero transients over fifty-two frames**. Ours differ in the
+  high byte too whenever the image base's middle byte carries, so ours passes through an address that
+  is neither buffer, once a frame. The reasoning error is general and worth carrying: *both sides
+  write two bytes* does not imply *both sides pass through a mixed address*. Corrected in
+  `atari/README.md` §3 and in `wonderboy_backend.c`, grep-to-zero verified whitespace-insensitively
+  (the retracted phrase spanned a line break and a naive grep missed it — **fold whitespace before
+  asserting a retraction has landed**).
+* **A FOURTH DEVIATION FROM THE BOOT, invisible until the bus was read in order.** The original's
+  boot publishes `$070000` at `$f90c`/`$f914` — the staged image's **BACK** buffer — while our
+  `publish_screen_base` publishes the FRONT one. The two agree from frame 1 onward, so the whole
+  consequence is which buffer is on the shifter during the shim's own setup. Left as it is (a shim
+  publishing the front buffer is the defensible choice) and **pinned** so it cannot drift.
+* **THREE PINNED CONSTANTS WERE ONE FACT WRITTEN DOWN THREE TIMES, and the other ROM proved it.**
+  The first draft pinned transients, idle writes and the publication offset at their TOS 1.04
+  readings. EmuTOS places the image at `0x53000`, whose middle byte does not carry — so the **same
+  binary** produces 0 transients instead of 52 and 156 idle writes instead of 104, and all three pins
+  broke at once. `expected_base_shape` now DERIVES the whole account from each side's own two buffer
+  addresses, which is why one assertion is right on both ROMs. **A pin that breaks on a second
+  machine was a derivation waiting to be written.** The two ROMs are now a hardware control for §3.
+* **THE CLASSIFIER HAD TO BE TOLD WHERE THE WINDOW OPENED, and the bug was hiding behind a correct
+  number.** Started from a zero base state, the first write of a window — the high byte, which
+  changes nothing — reads as the window's first publication. That gave our side 53 publications for
+  52 frames and shifted the whole sequence one flip out of phase, **while the shipped side's count
+  came out right by accident**, because its stale first byte `$07` happens to name a real buffer on
+  its own. One side visibly wrong and one side accidentally right is the shape to distrust.
+* **THE SAME REGISTER IS NAMED TWO WAYS IN ONE HATARI LOG.** Code that sign-extends a short absolute
+  reaches `$ffff8800`; code that does not reaches `$00ff8800` — and it splits cleanly along the two
+  sides, TOS and our C against the shipped 1989 binary. A parser keyed on the printed spelling reads
+  one side's stream as EMPTY and passes. Addresses are masked to 24 bits.
+
+### Instrument notes worth carrying to the next timeline
+
+* **`--trace io_write`, not Joust's `video_color,psg_write`.** Measured: `--trace video_addr` emits
+  **nothing at all** for a write to `$ff8201`/`$ff8203` on Hatari 2.6.1, and this game's timeline is
+  built on that publication. One stream also removes the question of how two channels interleave,
+  which is the only thing the check measures.
+* **Hatari collapses repeated trace lines** into `N repeats of: …` on a doubling schedule. Measured,
+  the only line it ever collapses is the MFP's `$fffffa11 = $00` — none of the five registers read
+  here — but a collapsed run would silently shorten a stream compared element for element, so it is
+  **detected and refused** rather than expanded on a guess about whether the printed count is
+  cumulative or incremental. That semantics is unpinned and does not need to be.
+* **Hatari refuses a RAM address in a breakpoint at `--parse` time** ("invalid address" for
+  `$4ad14` at power-on, while `$ffff9202` from its own documentation parses) because the machine has
+  not sized its memory. The watch is therefore **chained** off a `b VBL > 100` breakpoint, and its
+  address comes from `STATS.BIN` — so our side boots twice and the two boots are required to agree
+  about where GEMDOS put the program.
+* **A value-change breakpoint is the only RAM-write probe Hatari has**, and its hits fold into the
+  same ordered stream as the I/O writes under an out-of-band negative register number. It is an
+  instruction-boundary probe, one instruction coarser than the bus — enough only because the two
+  writes it brackets are adjacent statements. **A wider order claim would need a finer probe.**
+
+### What the review gate caught, and it was the round's best round
+
+Eight agent angles over the diff, and the gate found a live blocker plus five real weakenings that
+were already written. Recorded because each is a class, not a typo:
+
+* **A BLOCKING NameError IN THE HEADLINE FUNCTION.** A parameter renamed `shape` -> `base_bytes`,
+  the caller updated to pass the resolved value, and the BODY updated on neither count — so
+  `expected_base_shape` referenced an undefined name and every M6 mode would have tracebacked after
+  minutes of Hatari. It survived my own re-reads because the three modes had been green *before* the
+  rename and I did not re-run them after it. **A refactor between green runs is an unrun change.**
+* **THE CONTROL EXEMPTED THE ROWS IT DOES NOT TOUCH FROM BOTH HALVES.** `m6rearm` re-arms the palette
+  on OUR side, so the shipped binary's two palette rows must still PASS — they were filtered out of
+  the soundness check by the same substring that selected the inverted rows, leaving two checks
+  nobody was running. M1's `machine_driven` lesson, reproduced one control over. Found by me on a
+  re-read, then independently by two angles. It now also refuses when its inverted set is EMPTY.
+* **"BY CONSTRUCTION" WAS FALSE.** The play row asserted that the build could not reach a dump at
+  all, on the grounds that it never leaves `run_frames`. It can: the loop kept its THIRD exit, so a frame in which
+  `game_key_actions` takes one of its three endings breaks out, hands the machine back and writes
+  the record. What is true is "this run reached no dump, because it injects no input", and that is
+  now what the row says. The same overclaim was in `wonderboy_main.c`, `run.sh` and the README.
+  **Two of three exits removed is not "no exit"** — and the surviving one means the play build is
+  the first thing in this project that can drive M3's exits at all.
+* **A NUMBER QUOTED FOUR TIMES WITHOUT ITS INSTRUMENT.** "1,004 frames, about four frames a second"
+  went into `run.sh`, the README twice and this file — and it is the TOS 1.04 reading; EmuTOS gives
+  1,160, because the ROM decides how much of the `--run-vbls` window is left after it boots. The
+  same class as the stale `image_base` figures the same review found.
+* **THE EVIDENCE LINE REFUTED THE EXCLUSION IT JUSTIFIED.** `moved` accumulated across pairs while
+  `differing_positions` was overwritten by the latest, so a quiet third pair would have printed
+  "registers [0, 1] are EXCLUDED because two boots write them differently (0 of 1155 writes)". Both
+  numbers accumulate now, and the printed line names the pair count.
+* **A ROW THAT PASSES ON NO DATA.** `flash_order_checks` started `ordered = True` and let a loop
+  falsify it — so a watch that produced no events at all reported the row the last shifter-sink
+  mutant dies to as GREEN with an empty detail string. Guarded on the countdown's length.
+* Smaller, all real: a `KeyError` on any pre-existing `PSGNOISE.json` (a `.get` guard whose default
+  let the record through and then indexed a sibling key directly, losing a two-boot reading); a
+  recovery message naming `psgnoise` where `m6flash` needs `flashpsgnoise`; `sorted()` over a set
+  that `psg_stream` deliberately seeds with `None`; `run.sh` re-implementing `stage_drive` and
+  hard-coding a third copy of the machine size; a command substitution inside a here-doc that
+  `set -e` does not cover, which would have launched Hatari with `--tos '' --memsize ''`.
+
+**And one defect I introduced WHILE fixing the review's findings**: widening `palette_loads` to a
+three-tuple silently repointed the redundancy comparison at end POSITIONS instead of pen tables, so
+the 773-stomps counter would have read zero for ever. Caught by re-reading the function I had just
+changed rather than by any angle. **A tuple widened is every unpacking site rewritten.**
+
+**AN EIGHTH SWEEP-LIE MODE, and it fired in this phase's own final sweep.** `m5flash` came back
+"no M2.BIN — the frame build never reached its own dump" in a thirteen-mode run and passed
+immediately when re-run alone. The cause was not the build: `atari/disk/` is a SINGLE STAGED DRIVE
+shared by every mode, and a second process had called `stage_drive` — `run.sh`'s own staging test —
+while the sweep's Hatari was mid-boot, so the .PRG changed under a running machine. Same class as the
+already-recorded "concurrent Joust/Wonder Boy suites rebuilding one `liboracle.so`", one directory
+over: **anything that stages `atari/disk/` is exclusive, so an on-target sweep runs alone.** The tell
+is a mode failing for a reason that reads like a crash and then passing in isolation — which is
+exactly the shape the sweep-lie list exists to stop being believed as a real red.
+
+### The independent gate, and M3's exits DRIVEN for the first time
+
+A second, independent reviewer over the same diff found five more, all real. The one that mattered:
+
+* **THE PLAY RECORD SELF-REPORTED FAILURE ON EVERY PLAYER-DRIVEN EXIT.** `RB_VBL_TICKING` was
+  `frames_run == frames_requested` — a proxy for "the vblank is alive", on the reasoning that
+  `flip_screen` waits on the counter twice a frame. With `frames_requested` now the play build's
+  `0xffffffff` cap, the reachable third exit returns a frame count far below it, so the bit would
+  have been raised on a run that did exactly what it was told — **arriving as a red at the M3-exits
+  moment this build exists to create.** It is also redundant: `m2_checks` already compares those two
+  fields where the comparison means something. The check now asserts the liveness it is NAMED for —
+  `frames_run > 0 && shim_vbl_ticks >= MIN_VBLANKS_PER_FRAME * frames_run` — with the floor at ONE
+  per frame because that is what the two waits guarantee, not the ~11 this stage happens to cost.
+* **AND THE EXIT IS INJECTABLE, so the fix is demonstrated rather than argued.** `game_key_actions`
+  reads `WB_ROUND_END_RELOAD_REQUEST` at the top of the frame, so a chained `b VBL > n` breakpoint
+  poking that word drives the ROUND_END ending on the play build with no input device at all.
+  Measured: the loop broke after **7 frames / 90 shim vblanks**, handed the machine back, wrote both
+  records, and reported `loop_ending = 1` = `WB_KEY_ACTIONS_ROUND_END` with **`RB_VBL_TICKING` NOT
+  raised** (the only failed bit is the already-excluded `RB_PSG_PORT_A_DESELECTED`). The old check
+  fails that record by construction. `loop_ending` is now documented as M3'S EVIDENCE FIELD — it
+  names which of the three endings ran, which a frame count cannot — and `smoke.py play` prints it
+  whenever a record appears. **This is the first time any of the three exits has executed on target
+  in this project**; completing them (the `Pterm` hand-back asserted healthy) is still M3's, and
+  still owed.
+* **`run.sh` split its ROM path on whitespace.** `read -r ROM MEMSIZE` — a `$WB_TOS_ROM` containing a
+  space truncated the ROM and smuggled the remainder into the memory size, PAST the guard, which only
+  asked whether the size was non-empty. Now one value per line with the ROM LAST and the guard on the
+  last value read. Tested with a spaced symlink: the path arrives as a single argv element.
+* **It also copied two boot-policy pieces its own header claimed it did not** — the auto-boot name
+  (a THIRD spelling of `C:\WB.PRG`) and `--monitor rgb`. Both are now `DRIVE_PRG`/`AUTO_BOOT`/
+  `DEFAULT_MONITOR` in smoke.py, exported through the same one-liner that already exported the ROM
+  and the machine size, and `AUTO_BOOT` is built FROM `DRIVE_PRG` so the drive name and the boot
+  command cannot drift.
+* **The correction's own headline function kept the retracted number.** `expected_base_shape`'s
+  docstring still cited `0x33100` for EmuTOS while §3 had been corrected to `0x53000`. Fixed; the two
+  surviving occurrences in this file are a dated phase-A reading and this list, both explicitly
+  historical. **A retraction has to sweep the code it justifies, not only the prose.**
+* **A figure the instrument cannot print.** The docs put the re-arm control's redundant-load count
+  at 52; it prints **52 loads, 51 of them redundant**, and the gap is structural — redundancy is
+  a property of a consecutive PAIR and the window opens right after the staged-palette load it is
+  anchored on, so the first in-window load's pair with the BOOT load is invisible. Harmless (the
+  pinned value is zero) and now stated where the counter lives.
+
+One process note: the exit demonstration first wrote nothing because I hand-wrote `w <addr> <value>`
+instead of using `original.poke_word`, and Hatari's memory-write command takes a WIDTH first
+(`w w $addr $value`). The beacon fired, the poke did not, and the run looked like the exit was
+unreachable. **Verify the command exists before concluding the mechanism does not.**
+
+### Registered, with trigger and home
+
+* **M6's sound row has no standing injected control.** It has failed for real — the flashed
+  divergence that produced the reproducibility gate — but a demonstrated failure is not a control,
+  and nothing in `atari/` perturbs the PSG on purpose because the writes come from cores compiled
+  unchanged. **Trigger** — any change under `src/sound.c`. **Home** — `atari/README.md` §11, and a
+  `m6silent`-shaped build perturbing the shim's PSG sink the way `m5fault` perturbs a pen.
+* **M6 reads five registers and the machine has more.** The MFP, FDC and RS-232 writes in the same
+  trace are dropped: they belong to TOS and the floppy and differ between a GEMDOS drive and a real
+  one by construction. A reconstruction bug reaching one of them would not be seen. **Trigger** — any
+  core that starts writing a register outside the five. **Home** — `TIMELINE_REGISTERS`.
+* **The PSG reproducibility pairing is INTERMITTENT**, which is why the reading accumulates rather
+  than overwrites — a register once seen to move stays excluded, and the stored `pairs` count says
+  how much looking is behind that. Two boots is not a sample that could bound anything, and the
+  reading stays one-directional: a register that moves is one boot's accident, one that does not is
+  not thereby shown to be stable.
+* **`atari/README.md`'s `image_base` figures were STALE** (`0x2a600` for a build now landing at
+  `0x2ae00`; `0x33100` for EmuTOS, now `0x53000`). Corrected, and the paragraph now says the number
+  is a reading that moves with the `.PRG`'s length as well as the ROM. **Trigger** — quoting it
+  anywhere new. **Home** — §3.
+
+**CARRIED, unchanged**: everything batch 43 phase D carries, minus the two discharged on-target items
+(M6's timelines, and M3's joystick mechanism) — the sibling seam routing for guarded sweeps, the ~400
+raw computed image accesses in `src/`, the `$fffc00` hole between `bus.h` and the shim, the sound
+module's exit-X, the flute arm, `leaf.py`'s encoder hoist, the tier partition, `scene_run_effect`'s
+fix, `$1ab4`, `bus.h`→kit, `src/map.c`'s unguarded `WB_ACTOR_X` write, which-monster-is-which,
+Joust's deep-anchor render drift, the 2,218 unpinned `(d16,An)` bases, `prefix` threaded as a bare
+string through eight signatures (now nine — M6 added `shipped_timeline`), and the shipped side's
+artefacts re-read per anchor. **M3's EXITS remain the one on-target milestone still owed**: the three
+`game_key_actions` endings that `jmp` into the boot chain, with the `Pterm` hand-back asserted
+healthy. This phase did not reach them.

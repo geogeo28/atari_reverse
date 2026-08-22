@@ -2593,3 +2593,45 @@ answers a read outside the loaded image with zero and drops a write there, which
 answer and not a real ST's — that machine has RAM or the `$ff8000` I/O page at those addresses.
 `atari/README.md`'s "Known gaps" carries it. It is the same class as this file's own §6 caveat 8: a
 model priced as perfect is still a model.
+
+## 0o. Batch 43 phase E — no classification moves, and the first on-target evidence about the PSG
+
+Like phase C, this phase moves **no tier and no figure in this file**: it touches `atari/` only, and
+the classifier's question is about the ORIGINAL's operands. It is recorded here because it produces
+the first measurement this file has ever had about two of its own standing caveats.
+
+**§5's false-green surface, and the PSG.** §5 enumerates every steering hardware read and prices the
+harness's blindness to what the game *writes* to the sound chip as unmeasured on target. It is
+measured now, one window deep: `atari/smoke.py m6` compares the **ordered stream** of YM-2149 writes
+against the shipped binary's over fifty-two frames, and the shipped side's 1,155 (register, value)
+pairs are an **exact prefix** of the reconstruction's 6,424. That is not a claim about the model —
+the harness still cannot see a PSG write's effect — but it is a claim about the port: over that
+window, every write the original made, the reconstruction made, in the same order.
+
+**AND IT COMES WITH ITS OWN NOISE FLOOR, which §8's discipline requires.** `original.py psgnoise`
+boots the shipped binary a second time and differences the streams. Four pairs on TOS 1.04: two
+**unflashed** pairs, **0 of 1,155** writes differing in each; two **flashed** pairs, one differing in
+**42** — all of them channel A's tone period (registers 0 and 1) inside the first eleven frames — and
+one differing in none. So the assertion above is over all eleven registers in the unflashed window
+and nine in the flashed one, and the exclusion is printed rather than absorbed.
+
+**THE PAIRING IS INTERMITTENT, and that is the part §8 would want stated first.** One flashed pair
+differed and the next did not, so a reading taken today can license comparing a register the project
+has already watched move. Two mitigations, both of them §8's own shape: the per-machine reading
+ACCUMULATES rather than overwrites (a register once seen to move stays excluded, and a stored `pairs`
+count says how much looking is behind it), and `original.py`'s `PSG_REGISTERS_KNOWN_UNSTABLE` carries
+a **committed floor** — `build/` is gitignored, so a reading kept only there starts empty on every
+clone. The measurement is one-directional in exactly the sense §8 insists on: a register that moves
+is demonstrably one boot's accident; one that does not is **not thereby shown to be stable**, and two
+pairs is not a sample that could bound anything.
+
+**A SECOND UNPINNED MODELLING DECISION, in the same family as phase C's.** The timeline reads five
+registers — the screen base's two bytes, the sixteen pens and the two YM ports. The MFP, FDC and
+RS-232 writes that share the trace are dropped, because they belong to TOS and to the floppy and
+differ between a GEMDOS drive and a real one by construction. A reconstruction bug that reached one
+of those would not be seen by anything in this workspace. Same shape as §6 caveat 8, one surface
+over: an instrument priced as complete is still an instrument, and this one names its five.
+
+**THE FOURTH STANDING CHECK** — `atari/smoke.py m6`, `m6rearm` and `m6flash`, green on both ROMs, and
+`original.py timeline` / `psgnoise` (plus their `F`-prefixed pair) as their prerequisites.
+`atari/README.md` §11 carries the argument and the instrument's three measured gotchas.

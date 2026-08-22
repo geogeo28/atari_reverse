@@ -34,7 +34,7 @@ set -euo pipefail
 # they carry M2_ENTRY_UNWIND, and they are the ones smoke.py stages `PENS.IMG` for. smoke.py SCRAPES
 # this line rather than keeping its own list — a second spelling would let a new frame mode boot
 # without the palette it needs and report "no M2.BIN", which reads like a crash (CLAUDE.md §5).
-FRAME_MODES="m2 m5fault m5flash"
+FRAME_MODES="m2 m5fault m5flash m6rearm play"
 
 MODE="${1:-m1}"
 case "$MODE" in
@@ -69,6 +69,17 @@ case "$MODE" in
   # wonderboy_main.c's `arm_the_flash` has the census that says why it cannot be driven instead.
   # The seed itself is scraped from ../include/wonderboy.h below, once REC is known.
   m5flash) DEF="-DSMOKE_M2" ;;
+  # M6's NEGATIVE CONTROL: the frame build re-publishing the staged palette after every frame. The
+  # same sixteen words through the same sink, so no snapshot in this project can tell it from `m2` —
+  # the framebuffer, the pens, the hardware vector and the rendered picture are all identical. Only
+  # the ORDERED TIMELINE moves, which is what makes it the control that shows M6 can fail.
+  m6rearm) DEF="-DSMOKE_M2 -DSMOKE_M6_REARM" ;;
+  # THE BUILD A PERSON PLAYS, and the only one here that is not a measurement. It is `m2` with the
+  # frame count and the watchdog lifted (wonderboy_main.c's SMOKE_PLAY block says why each has to
+  # go), so the reconstruction's frame loop runs until the window is closed. `atari/run.sh` builds
+  # it and launches Hatari with a screen, sound and a joystick; `smoke.py play` is the half of it a
+  # headless run can assert.
+  play)  DEF="-DSMOKE_M2 -DSMOKE_PLAY" ;;
   *) echo "usage: build.sh [m1 | novbl | $(echo "$FRAME_MODES" | tr ' ' '|')]"; exit 2 ;;
 esac
 

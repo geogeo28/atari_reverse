@@ -207,8 +207,9 @@ int sched_poll16(uint8_t *image, uint32_t addr, uint32_t site_pc, uint16_t *seen
  * ../STATUS.md's batch 42 phase C measures the hole exactly: four named mutants over them — the
  * wrong buffer published, the two base bytes swapped, the flash's two arms swapped, and the sink
  * write moved above the timer store — ALL SURVIVE the whole differential suite. On target the sinks
- * become these two functions and every one of the four becomes measurable; README.md's milestone
- * table says by which check.
+ * become these two functions and every one of the four IS NOW MEASURED DYING; README.md's milestone
+ * table says by which check, and the last of them fell to M6 (README.md §11) because it changes no
+ * value at all — only the order two writes reach the bus in.
  *
  * THE SCREEN BASE NEEDS TRANSLATING AND THAT IS THIS FILE'S ONE PIECE OF REAL LOGIC.
  *
@@ -229,11 +230,20 @@ int sched_poll16(uint8_t *image, uint32_t addr, uint32_t site_pc, uint16_t *seen
  * `image_base` is 256-aligned — wonderboy_main.c rounds it up once at startup and READS THE RESULT
  * BACK. The game's own halves are 256-aligned by construction ($70000, $78000).
  *
- * ONE TRANSIENT IS INHERITED RATHER THAN ADDED: between the game's first byte and its second the
- * shifter is pointed at a mixed address, exactly as it is in the original, which also writes the two
- * bytes in two instructions. A vertical blank in that window displays one frame from the wrong
- * place. flip_screen issues both writes between its two waits, i.e. just after a vblank, which is
- * why the original gets away with it and so does this. */
+ * A TRANSIENT IS ADDED, AND M6 MEASURED IT. This comment used to claim the reverse — that the mixed
+ * address the shifter holds between the two stores below was something this port took over from the
+ * original rather than introduced, on the grounds that the original also writes two bytes in two
+ * instructions. The ordered write timeline refutes it; README.md §3 has it in full. In short: the
+ * ORIGINAL's two buffers differ ONLY in the middle byte ($070000 / $078000), so its high-byte store writes $07
+ * over $07 and the shifter goes straight from one real buffer to the other — measured, zero
+ * transients over fifty-two frames. Ours cannot, because `image_base + $70000` and
+ * `image_base + $78000` differ in the HIGH byte too whenever the base's middle byte carries; measured
+ * under TOS 1.04, one transient per frame, fifty-two of them, and `smoke.py`'s expected_base_shape
+ * pins that count on both sides.
+ *
+ * What survives of the old comment is why it does not matter in practice: a vertical blank in that
+ * one-instruction window would display one frame from the wrong place, and flip_screen issues both
+ * writes between its two waits, i.e. just after a vblank. */
 static uint32_t screen_base_shadow;      /* what the GAME asked for, in ITS address space */
 uint32_t wb_target_screen_base;          /* ...and what went on the bus. Read back by the smoke. */
 

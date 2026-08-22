@@ -544,7 +544,12 @@ struct m2_stats {
     uint32_t image_base;
     uint32_t frames_requested;
     uint32_t frames_run;
-    uint32_t loop_ending;           /* the WB_KEY_ACTIONS_* the last iteration returned */
+    /* The WB_KEY_ACTIONS_* the last iteration returned — and M3'S EVIDENCE FIELD, not a diagnostic.
+     * `game_key_actions`' three endings are the only way out of the play build's frame loop, so a
+     * play session that produced a record produced it BECAUSE one of them fired, and this field
+     * says WHICH: ROUND_END, LEVEL_SKIP or QUIT (../include/game.h). Reading it beats inferring the
+     * exit from the frame count, which cannot tell three endings apart. */
+    uint32_t loop_ending;
     uint32_t screen_front;          /* the image-space longword the last flip published */
     uint32_t screen_base_published; /* ...and the machine address it was translated to */
     uint32_t poll16_calls;          /* sched_poll16's iteration count — see run_frames */
@@ -731,6 +736,61 @@ static __attribute__((noinline)) void capture_the_frame(struct m2_stats *record,
  * M2.BIN. What this bounds is a loop that is merely far too slow. */
 #define M2_VBL_BUDGET 2000u
 
+/* The floor RB_VBL_TICKING holds the shim's own clock to, per frame the loop completed. ONE and not
+ * the measured ~11: `flip_screen` waits for the counter to CHANGE twice a frame, so one tick a frame
+ * is what the mechanism guarantees and eleven is what this stage happens to cost. A floor set at the
+ * reading would red on a lighter frame and would be measuring the game rather than the machine. */
+#define MIN_VBLANKS_PER_FRAME 1u
+
+/* ---- the PLAY build: the same frames, without either bound ---------------------------------------
+ *
+ * `-DSMOKE_PLAY` is what `atari/run.sh` builds, and it changes nothing about the frame except how
+ * many of them there are. Both bounds above exist for a HEADLESS run — a fixed count so the two
+ * sides compare the same fifty-two frames, and a watchdog so a loop that is merely far too slow
+ * ends with a record instead of hanging — and an interactive session wants neither: the original's
+ * frame loop is `do { ... } while (1)` with no exit instruction (../src/game.c), and a person
+ * watching is the thing that ends the run.
+ *
+ * THE WATCHDOG IS A FLAG RATHER THAN A HUGE BUDGET, because `shim_vbl_ticks + M2_VBL_BUDGET` is
+ * computed once and a budget near UINT32_MAX wraps the deadline BELOW the current tick — the
+ * watchdog would then fire on frame one and the play build would stop instantly. GCC folds the
+ * constant, so the headless builds keep exactly the instruction sequence they had.
+ *
+ * TWO OF `run_frames`' THREE EXITS ARE GONE; THE THIRD IS NOT, and the difference matters because
+ * the first draft of this comment claimed the loop could never be left. It can: a frame in which
+ * `game_key_actions` takes one of its three endings returns a `loop_ending` that is not
+ * WB_KEY_ACTIONS_RETURNED, and the loop breaks, hands the machine back and writes STATS.BIN like any
+ * other build. A HEADLESS play run injects no input, so no ending is reachable and no record appears
+ * — which is what `smoke.py play` asserts, in those words. A PERSON at `atari/run.sh` can reach one,
+ * and that is M3's owed milestone (the exits) rather than a defect here: this build is the first
+ * thing in the project that can drive them at all. */
+#ifdef SMOKE_PLAY
+#define M2_FRAME_LIMIT    0xffffffffu
+#define M2_WATCHDOG_ARMED 0
+#else
+#define M2_FRAME_LIMIT    M2_LAST_ANCHOR
+#define M2_WATCHDOG_ARMED 1
+#endif
+
+/* ---- M6's NEGATIVE CONTROL: a re-arm that changes nothing ----------------------------------------
+ *
+ * `-DSMOKE_M6_REARM` re-publishes the staged palette after every frame — the SAME sixteen words,
+ * through the same sink, so not one pen ever holds a different colour. Every snapshot this project
+ * takes stays green: the framebuffer is untouched, the pens read back the values they already had,
+ * the hardware-state vector is identical and so is the rendered picture. The only surface that can
+ * see it is the ORDER AND COUNT of what reached the chip, which is M6.
+ *
+ * IT IS THE SIBLING PROJECT'S OWN BUG, REPRODUCED ON PURPOSE. Joust's VBL handler re-armed
+ * `_colorptr` every vblank — 773 palette loads over a run in which the original performs four — and
+ * every snapshot in that project was green because each of the 773 loads wrote the same correct
+ * sixteen words. It was found by reading a trace by hand. Here it is a control, so that Wonder Boy's
+ * timeline is shown to be able to fail rather than assumed to be. */
+#ifdef SMOKE_M6_REARM
+#define M6_REARM_EVERY_FRAME 1
+#else
+#define M6_REARM_EVERY_FRAME 0
+#endif
+
 /* ---- M5's DECLARED FABRICATION: arming the flash ------------------------------------------------
  *
  * `flip_screen`'s last four instructions are a white-screen flash — `tst.w $714.l` at `$6e4` gates
@@ -778,7 +838,7 @@ static uint32_t run_frames(struct m2_stats *record) {
         ((uint8_t *)&sprites)[field] = 0;
     sprites.blit.unwind = M2_ENTRY_UNWIND;
 
-    for (frame = 0; frame < M2_LAST_ANCHOR; frame++) {
+    for (frame = 0; frame < M2_FRAME_LIMIT; frame++) {
         unsigned slot;
 
         record->loop_ending = game_main_loop(game_image, &sprites);
@@ -787,11 +847,13 @@ static uint32_t run_frames(struct m2_stats *record) {
         slot = anchor_slot(frame + 1);          /* the anchors are 1-based, like the debugger's hits */
         if (slot < M2_ANCHOR_COUNT)
             capture_the_frame(record, slot);
+        if (M6_REARM_EVERY_FRAME)
+            publish_staged_pens(record);        /* M6's control; changes no value, only the timeline */
         /* THE TWO BREAKS COUNT DIFFERENTLY, and an earlier draft returned `frame` for both. The
          * unwind above happens INSTEAD of a frame, so `frame` is the number that completed; the
          * watchdog here happens AFTER one, so it is `frame + 1`. Reporting the smaller number would
          * have reddened "every frame ran" on a run that ran every frame it was asked for. */
-        if (shim_vbl_ticks >= deadline)
+        if (M2_WATCHDOG_ARMED && shim_vbl_ticks >= deadline)
             return frame + 1u;
     }
     return frame;
@@ -910,9 +972,26 @@ int wonderboy_main(void) {
     m2.flash_timer_at_entry = image_word(WB_FLASH_TIMER);
     m2.capture_pc = (uint32_t)(uintptr_t)&capture_the_frame;
     m2.fault_pen = FAULTED_PEN;
-    m2.frames_requested = M2_LAST_ANCHOR;
+    /* THE LOOP'S OWN BOUND, not a second spelling of it. This was `M2_LAST_ANCHOR` until the play
+     * build made the two differ. */
+    m2.frames_requested = M2_FRAME_LIMIT;
     m2.frames_run = run_frames(&m2);
-    checked(RB_VBL_TICKING, m2.frames_run == m2.frames_requested);
+    /* RB_VBL_TICKING MEANS WHAT ITS NAME SAYS, and it did not until this edit. It was
+     * `frames_run == frames_requested` — a proxy, on the reasoning that `flip_screen` waits on the
+     * vblank counter twice a frame so a run that produced frames produced vblanks. The proxy is
+     * FALSE ON EVERY PLAYER-DRIVEN EXIT: `run_frames`' third exit is reachable in the play build
+     * (one of `game_key_actions`' three endings), and it returns a frame count far below the
+     * 0xffffffff cap, so the bit would be raised on a run that did exactly what it was told —
+     * arriving as a red precisely at the M3-exits moment this build exists to drive.
+     *
+     * It is also REDUNDANT as a frame-count check: `m2_checks`' "every frame ran" row already
+     * compares those two fields, on the modes where the comparison is meaningful. So this asserts
+     * the liveness it is named for instead — the counter the shim keeps independently of the
+     * reconstruction's own advanced, and advanced WITH the frames rather than merely being nonzero.
+     * A dead level-4 vector cannot satisfy it: `flip_screen`'s waits are uncapped spins, so frames
+     * would be 0 and the floor of one vblank per frame is what a stalled counter fails. */
+    checked(RB_VBL_TICKING,
+            m2.frames_run > 0u && shim_vbl_ticks >= MIN_VBLANKS_PER_FRAME * m2.frames_run);
     /* IN SUPERVISOR, AND BEFORE THE TEARDOWN, which is the only window in which this means
      * anything: `teardown` puts TOS's own base back, and a read after that would report the
      * desktop's screen and pass for ever. */

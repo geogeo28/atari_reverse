@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""M1, M2 and M5 — reconstructed Wonder Boy code on a 68000, asserted.
+"""M1, M2, M5 and M6 — reconstructed Wonder Boy code on a 68000, asserted.
 
     bash atari/build.sh m1    && python3 atari/smoke.py m1
     bash atari/build.sh novbl && python3 atari/smoke.py novbl     # M1's negative control
@@ -16,6 +16,23 @@
     bash atari/build.sh m5fault && python3 atari/smoke.py m5fault  # ...and its INJECTED-FAULT one
     python3 atari/original.py flash && python3 atari/original.py flashnoise   # the flash's own boots
     bash atari/build.sh m5flash && python3 atari/smoke.py m5flash  # ...THE FLASH ARMS, both sides
+
+    python3 atari/original.py timeline                              # M6 needs the shipped STREAM
+    bash atari/build.sh m2      && python3 atari/smoke.py m6        # THE ORDERED WRITE TIMELINE
+    bash atari/build.sh m6rearm && python3 atari/smoke.py m6rearm   # ...its RE-ARM control
+    python3 atari/original.py flashtimeline                         # ...and the flash run's stream
+    bash atari/build.sh m5flash && python3 atari/smoke.py m6flash   # ...flip_screen's last PAIR
+
+    bash atari/build.sh play  && python3 atari/smoke.py play        # the PLAY build, booted headless
+    bash atari/run.sh                                               # ...and played, with a screen
+
+WHAT M6 CLAIMS: over the same fifty-two frames, the ORDER in which writes reached the machine — not
+where they left it. The reconstruction's screen-base publications are the shipped binary's, flip for
+flip; neither side loads a palette while a stage runs or ever re-loads the one already on the chip;
+the shipped binary's PSG writes are an exact prefix of ours, register and value in order — which is
+this project's first on-target assertion about SOUND; and `m6flash` puts `flip_screen`'s last two
+writes in bus order, which is the only surface that can see the one shifter-sink mutant `../STATUS.md`
+measures as surviving everything else.
 
 WHAT M5 CLAIMS, over M2: at the same four anchors the machine ITSELF agrees — TWENTY registers of a
 thirty-six-register hardware-state vector, captured on both sides by the same debugger commands and
@@ -223,7 +240,7 @@ def stage_drive(prg):
     # and the mode reports a match.
     for stale in (STATS_FILE, M2_FILE, M2_FRAME_FILE, M2_PENS_FILE):
         (DISK / stale).unlink(missing_ok=True)
-    (DISK / "WB.PRG").write_bytes(Path(prg).read_bytes())
+    (DISK / DRIVE_PRG).write_bytes(Path(prg).read_bytes())
     image = prg.with_suffix(".IMG")
     if not image.exists():
         raise SystemExit(f"{image} is missing — rebuild with `bash atari/build.sh`, which keeps the "
@@ -243,7 +260,18 @@ def stage_drive(prg):
         (DISK / "PENS.IMG").write_bytes(pens.read_bytes())
 
 
-def run_hatari(prg, monitor="rgb", run_vbls=RUN_VBLS, parse=None, log_name="hatari.log"):
+# WHAT BOOTS, AND ON WHAT MACHINE — one spelling each, because `run.sh` needs the same answers and a
+# GUI launcher that disagreed with the headless modes about any of them would be playing a different
+# build on a different machine from the one every check in this file measured. `DRIVE_PRG` is the
+# name on the emulated drive and `AUTO_BOOT` is how TOS is told to run it; they are pinned to each
+# other below rather than written twice.
+DRIVE_PRG = "WB.PRG"
+AUTO_BOOT = "C:\\" + DRIVE_PRG
+DEFAULT_MONITOR = "rgb"
+
+
+def run_hatari(prg, monitor=DEFAULT_MONITOR, run_vbls=RUN_VBLS, parse=None, log_name="hatari.log",
+               trace=None):
     """Boot `prg` headless, run to the end of --run-vbls, and return the MERGED output.
 
     `parse` is an optional Hatari DEBUGGER script, which is how M5 reaches the machine's own
@@ -264,11 +292,15 @@ def run_hatari(prg, monitor="rgb", run_vbls=RUN_VBLS, parse=None, log_name="hata
     args = ["hatari", "--sound", "off", "--fast-forward", "on", "--confirm-quit", "off",
             "--statusbar", "off", "--drive-led", "off", "--frameskips", "0",
             "--memsize", str(MEMSIZE_MB), "--monitor", monitor,
-            "--run-vbls", str(run_vbls), "--harddrive", str(DISK), "--auto", "C:\\WB.PRG"]
+            "--run-vbls", str(run_vbls), "--harddrive", str(DISK), "--auto", AUTO_BOOT]
     if rom:
         args[1:1] = ["--tos", rom]
     if parse is not None:
         args += ["--parse", str(parse)]
+    # M6's instrument, and it rides along on a run that was happening anyway: the trace is what
+    # reached the hardware, in order, which is the one surface a snapshot cannot be.
+    if trace is not None:
+        args += ["--trace", trace]
     env = dict(os.environ, SDL_VIDEODRIVER="dummy", SDL_AUDIODRIVER="dummy")
     done = subprocess.run(args, env=env, stdin=subprocess.DEVNULL, text=True,
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -457,6 +489,36 @@ def unreachable_readbacks():
         "and seeds nothing, which is the point of M2's image and the cost of it.")
 
 
+def readback_checks(record):
+    """The two M1 read-back rows, for every mode that boots a build which writes STATS.BIN.
+
+    THE M1 READ-BACKS APPLY TO EVERY BUILD HERE, and dropping them is a defect this file has had
+    twice. The frame builds install the same two vectors, set the same video mode, publish the same
+    screen base and hand the machine back the same way; `STATS.BIN` is written on that path exactly
+    as on M1's. An earlier draft routed `m2` past the record and left all sixteen checks — including
+    every teardown restore — unasserted, so a frame build that never handed the machine back would
+    have reported a clean M2; the M6 modes then did the same thing again, reading the record only for
+    `image_base`. Extracted here so the next mode that reads `STATS.BIN` gets them by calling one
+    function rather than by remembering.
+
+    TWO WORDS AND NOT ONE: `readback_failed` says a write did not take, `readback_attempted` says
+    which checks RAN, and the second is compared against an exact mask — a check that quietly stops
+    executing is indistinguishable from a passing one in a bare fault word."""
+    want_attempted = mask(*BOOT_BITS, *TEARDOWN_BITS)
+    unreachable, why = unreachable_readbacks()
+    if why:
+        print(f"   note {why}")
+    return [
+        ("read-backs ran", record["readback_attempted"] == want_attempted,
+         f"attempted {record['readback_attempted']:#06x}, expected exactly {want_attempted:#06x}"),
+        ("read-backs passed", record["readback_failed"] & ~unreachable == 0,
+         f"failed {record['readback_failed']:#06x}"
+         + (" — " + ", ".join(n for n in RB if record["readback_failed"] >> RB[n] & 1)
+            if record["readback_failed"] else "")
+         + (f", of which {unreachable:#06x} is excluded" if unreachable else "")),
+    ]
+
+
 def m2_checks(record, stats, anchors, shift=0, prefix=""):
     """The frame differential, one row per anchor, plus the preconditions BOTH records carry.
 
@@ -478,23 +540,8 @@ def m2_checks(record, stats, anchors, shift=0, prefix=""):
     def add(name, ok, detail, key=None):
         checks.append((name, bool(ok), detail, key))
 
-    # THE M1 READ-BACKS APPLY TO THIS BUILD TOO, and an earlier draft of the M2 modes dropped them.
-    # The frame build installs the same two vectors, sets the same video mode, publishes the same
-    # screen base and hands the machine back the same way; STATS.BIN is written on this path exactly
-    # as on M1's. Routing m2 past `read_stats` left all sixteen checks — including every teardown
-    # restore — unasserted, so a frame build that never handed the machine back would have reported
-    # a clean M2. The frame rows are what M2 ADDS, not what it replaces.
-    want_attempted = mask(*BOOT_BITS, *TEARDOWN_BITS)
-    add("read-backs ran", stats["readback_attempted"] == want_attempted,
-        f"attempted {stats['readback_attempted']:#06x}, expected exactly {want_attempted:#06x}")
-    unreachable, why = unreachable_readbacks()
-    if why:
-        print(f"   note {why}")
-    add("read-backs passed", stats["readback_failed"] & ~unreachable == 0,
-        f"failed {stats['readback_failed']:#06x}"
-        + (" — " + ", ".join(n for n in RB if stats["readback_failed"] >> RB[n] & 1)
-           if stats["readback_failed"] else "")
-        + (f", of which {unreachable:#06x} is excluded" if unreachable else ""))
+    for name, ok, detail in readback_checks(stats):
+        add(name, ok, detail)
 
     add("every frame ran", record["frames_run"] == record["frames_requested"]
         and record["loop_ending"] == LOOP_RETURNED,
@@ -1365,21 +1412,736 @@ def determinism_problems(record, plain):
     return problems
 
 
+# ---- M6: THE ORDERED WRITE TIMELINE ---------------------------------------------------------------
+#
+# WHAT M6 ADDS OVER M2 AND M5, in one sentence: those compare WHERE the machine ended up at four
+# instants, and this compares WHAT REACHED IT, in order, across all fifty-two frames. The instrument
+# and its parser are original.py's — one spelling for both sides, §10's rule — and everything below
+# is the reduction and the comparison.
+TIMELINE_TRACE = original.TIMELINE_TRACE
+timeline_events = original.timeline_events
+FLASH_TIMER_EVENT = original.FLASH_TIMER_EVENT
+PSG_SELECT_PORT, PSG_DATA_PORT = original.PSG_SELECT_PORT, original.PSG_DATA_PORT
+BASE_HIGH_REG, BASE_MID_REG = original.BASE_HIGH_REG, original.BASE_MID_REG
+PEN_FIRST_REG, PEN_LAST_REG = original.PEN_FIRST_REG, original.PEN_LAST_REG
+TIMELINE_FILE = original.TIMELINE_FILE
+base_state_after = original.base_state_after
+# The image the shim runs the cores on is one flat array, and its LENGTH is what says whether a
+# published base is still inside it. The kit owns that number; scraped, not restated.
+IMAGE_SIZE = original.kit_constant("OS_IMAGE_SIZE")
+# `move.w #$777,$ff8240.l` at $6f8 — colour 0 while the flash countdown still has frames to run.
+FLASH_COLOUR_WHITE = wb("FLASH_COLOUR_WHITE")
+
+
+def palette_loads(events):
+    """Whole sixteen-pen loads, as (first position, position AFTER the last, the sixteen words).
+
+    BOTH ENDS, because the caller that opens a window on a load needs the second one and rediscovering
+    it costs a second definition of what a load's last write is. `set_palette` is sixteen separate
+    calls and the vblank handler's PSG writes interleave with them, so the end is NOT the start plus
+    sixteen.
+
+    A load is $ff8240 through $ff825e in order, which is what `set_palette` emits — one call per
+    colour, ../src/stage.c's own iteration. A partial burst is not a load and is dropped: it would
+    be `flip_screen`'s flash writing colour 0 alone, which is not a palette change."""
+    loads, pens, start = [], [], None
+    for position, (register, value, _) in enumerate(events):
+        if not PEN_FIRST_REG <= register <= PEN_LAST_REG:
+            continue
+        if register == PEN_FIRST_REG:
+            pens, start = [], position
+        elif start is None:
+            continue          # a burst that did not begin at pen 0 is not a load
+        pens.append(value)
+        if register == PEN_LAST_REG and len(pens) == PALETTE_PENS:
+            loads.append((start, position + 1, tuple(pens)))
+            # START CLEARED WITH THE PENS, which is the sibling project's own bug in this function:
+            # left set, any later burst reaching pen 15 without starting at pen 0 is filed at the
+            # PREVIOUS load's position.
+            pens, start = [], None
+    return loads
+
+
+def base_writes(events, buffers, opening_state):
+    """`flip_screen`'s screen-base publications, classified.
+
+    `opening_state` IS THE ADDRESS THE SHIFTER ALREADY HELD when the window opened, and it is a
+    parameter rather than zero because the first write of a window is usually IDLE — both sides open
+    mid-run, with a base already published, and `flip_screen`'s first of two byte writes is the one
+    that changes nothing. Started from zero, that write instead looks like the window's first
+    publication: measured, it gave our side 53 publications for 52 frames and put the whole sequence
+    one flip out of phase with the shipped binary's, while the shipped side's own count came out
+    right BY ACCIDENT (its stale first byte, $07, happens to name a real buffer on its own).
+
+    THE SHIFTER'S BASE IS TWO BYTE-WIDE REGISTERS and a publication is therefore a SEQUENCE of
+    writes, not one. Replaying them gives the address the shifter actually held after each, and each
+    write falls into exactly one of three kinds:
+
+      * a PUBLICATION — the state became one of the game's two screen buffers, and a different one
+        from the buffer last published. This is the per-frame heartbeat, and its ordered list is
+        what the two sides are compared on.
+      * a TRANSIENT — the state became an address that is NEITHER buffer. Real on the machine: the
+        shifter is pointed there until the next write. Counted, because the two sides do NOT have
+        the same number of them and the difference is this port's (README.md §3).
+      * an IDLE write — the byte written was the byte already there, so the state did not move.
+
+    `buffers` is the pair of addresses this side's game draws from; the caller derives them from the
+    staged image, which is where both sides' come from.
+
+    Publications carry their POSITION in the stream as well as their address, because the play mode
+    needs to know where the last one was and re-deriving that from a second loop is a second answer
+    to "what is a publication" — one that counts buffer -> transient -> the SAME buffer as a flip
+    while this one does not."""
+    state, published, publications, transients, idle = opening_state, opening_state, [], 0, 0
+    for position, (register, value, _) in enumerate(events):
+        moved = original.apply_base_write(state, register, value)
+        if moved is None:
+            continue
+        if moved == state:
+            idle += 1
+            continue
+        state = moved
+        if state not in buffers:
+            transients += 1
+        elif state != published:
+            publications.append((position, state))
+            published = state
+    return publications, transients, idle
+
+
+# The YM-2149 writes as (register, value), decoded from the select/data protocol — original.py's, so
+# that the two sides' streams are read by one piece of code.
+#
+# A DATA WRITE WITH NO SELECT BEFORE IT DECODES TO REGISTER `None` RATHER THAN BEING DROPPED, and
+# that is the point of decoding rather than comparing raw port writes: README.md §5 records that this
+# port reproduces the original's select/data race — an interrupt landing between a select and its
+# data writes the interrupted register's value into the interrupting one — and the surface named
+# there as the one that would show it is this stream.
+psg_stream = original.psg_stream
+
+
+def psg_noise_reading(mode, prefix):
+    """WHICH PSG REGISTERS THE SHIPPED BINARY DOES NOT REPRODUCE AGAINST ITSELF.
+
+    M6 REFUSES TO RUN WITHOUT IT, for M5's reason one surface over: comparing a register the shipped
+    binary writes differently on two of its own boots is not evidence in either direction, and a
+    comparison that happened to pass on one would have passed by accident. `original.py psgnoise` is
+    that measurement and it is STAMPED with the window it covers — a reading of a different number
+    of frames is refused rather than allowed to license this one.
+
+    ONE READING PER FABRICATION. The flashed boot is a different machine (README.md §10), so what a
+    pair of unflashed boots reproduces licenses nothing about a flashed pair, and `m6flash` reads
+    `FPSGNOISE.json`. That is `flashnoise`'s rule, one surface over.
+
+    THE READING IS A FLOOR PLUS WHAT THIS MACHINE HAS SEEN. `PSG_REGISTERS_KNOWN_UNSTABLE` carries
+    the registers already measured to move, committed, because the pairing is INTERMITTENT and
+    `build/` is gitignored: a clone that drew a quiet pair would otherwise compare a register this
+    project has already watched move, and go red for something neither binary did."""
+    path = BUILD / (prefix + original.PSG_NOISE_FILE)
+    if not path.exists():
+        raise SystemExit(f"{path} is missing — `smoke.py {mode}` will not compare a PSG stream "
+                         f"without knowing which of its registers are one boot's accident: run "
+                         f"`python3 atari/original.py "
+                         f"{'flashpsgnoise' if prefix else 'psgnoise'}` first (README.md §11)")
+    return json.loads(path.read_text())
+
+
+def our_timeline_window(events, image_base, staged_palette):
+    """Our side's fifty-two frames, cut out of the whole run by two events the run itself gives.
+
+    THE TWO SIDES' WINDOWS ARE CUT DIFFERENTLY AND THAT IS SAID RATHER THAN HIDDEN. The shipped
+    binary is under a debugger, so original.py brackets it on `$4a0`'s own hit counter — the same
+    anchor M2 and M5 use. Ours is not, so it is bracketed on two things the trace shows:
+
+      * the OPEN is `publish_staged_pens` — the first full sixteen-pen load whose words are the
+        staged palette. Everything before it is TOS's boot, including `publish_screen_base`, whose
+        base write is not a frame's.
+      * the CLOSE is the hand-back: the first base write that points the shifter OUTSIDE the image,
+        which is `teardown`/`Setscreen` putting the desktop's screen back. Nothing the frame loop
+        does can reach there — `capture_the_frame` bounds the front pointer to the image and the
+        smoke reds if it is out of range — so the first such write is the end of the game's run.
+
+    WHAT BINDS THE TWO WINDOWS TOGETHER is not the cutting but the result: both must contain the
+    same number of buffer publications and the same publication sequence modulo `image_base`. A
+    window cut in the wrong place changes that sequence's length or its phase."""
+    loads = palette_loads(events)
+    opened = next((end for _, end, pens in loads if pens == staged_palette), None)
+    if opened is None:
+        return None, None, (f"our run never loaded the staged palette — {len(loads)} full sixteen-pen "
+                            f"load(s) in the trace and none of them is PENS.IMG's, so the window this "
+                            f"timeline is over cannot be located")
+    state, closed = 0, None
+    for position, (register, value, _) in enumerate(events):
+        moved = original.apply_base_write(state, register, value)
+        if moved is None:
+            continue
+        state = moved
+        if position > opened and not image_base <= state < image_base + IMAGE_SIZE:
+            closed = position
+            break
+    if closed is None:
+        return None, None, ("our run never pointed the shifter back outside the image — it did not "
+                            "reach its own teardown, so the window has no end and the stream below "
+                            "would carry whatever the machine did afterwards")
+    return events[opened:closed], base_state_after(events[:opened]), None
+
+
+def timeline_shape(events, buffers, opening_state, back_buffer, frames, label):
+    """One side's window, reduced to a shape the other side's can be compared against."""
+    tables = [pens for _, _, pens in palette_loads(events)]
+    publications, transients, idle = base_writes(events, buffers, opening_state)
+    return {
+        "label": label,
+        "expected": expected_base_shape(BASE_BYTES_PER_PUBLICATION[label], buffers, opening_state,
+                                        back_buffer, frames),
+        "loads": tables,
+        # A load carrying the table already on the hardware. Zero on both sides here, and the number
+        # the sibling project's 773-stomps bug drove into the hundreds — which is what `m6rearm`
+        # reproduces on purpose so that this counter is shown able to move.
+        #
+        # IT UNDER-COUNTS BY EXACTLY ONE, STRUCTURALLY, AND THAT IS NOT ROUNDING. Redundancy is a
+        # property of a consecutive PAIR, and the window opens immediately after the staged-palette
+        # load that `our_timeline_window` anchors on — so the first load INSIDE the window has no
+        # in-window predecessor, and its pair with the boot load is invisible here. Measured on
+        # `m6rearm`: 52 loads, 51 redundant, where every one of the 52 carries the boot's own table.
+        # Harmless for the assertion (the pinned value is ZERO, and one missed pair cannot turn a
+        # non-zero count into zero) and stated because the two numbers differ by one for a reason.
+        "redundant": sum(1 for before, after in zip(tables, tables[1:]) if before == after),
+        "publications": [address for _, address in publications],
+        "transients": transients,
+        "idle_base_writes": idle,
+        "psg": psg_stream(events),
+    }
+
+
+# HOW MANY BYTES EACH SIDE WRITES TO PUBLISH ONE BASE, and this is the only number here that is
+# written down rather than derived — because it is the one a regression could change.
+#
+#   * the shipped binary writes TWO: `move.b $74d.l,$ff8201.l` then `move.b $74e.l,$ff8203.l`.
+#   * ours writes FOUR, and §3 is why: the game's two byte writes each enter the translating sink,
+#     and the sink must re-emit BOTH hardware bytes every time because the image offset can carry
+#     out of the middle byte into the high one, so neither byte can be translated without the other.
+BASE_BYTES_PER_PUBLICATION = {"ours": 4, "shipped": 2}
+NO_REDUNDANT_LOADS = 0
+
+
+def expected_base_shape(base_bytes, buffers, opening_state, back_buffer, frames):
+    """What this side's base-write counts MUST be — DERIVED FROM ITS OWN TWO BUFFER ADDRESSES.
+
+    Every number below used to be a constant, and every constant was the TOS 1.04 reading. EmuTOS
+    put the image somewhere else and all three went wrong at once, which is the tell that they were
+    one fact written down three times. The fact is arithmetic on the two addresses:
+
+    TRANSIENTS. A publication writes the high byte and then the middle byte, so between them the
+    shifter holds `(new high, old middle)`. That is a real address the machine is pointed at — but
+    only if the high byte MOVED. The original's two buffers are `$070000` and `$078000`, which differ
+    only in the middle byte, so its high-byte store writes `$07` over `$07` and no transient exists.
+    Ours are `image_base + $70000` and `image_base + $78000`, which differ in the high byte too
+    **iff the image base's middle byte carries** — measured on the frame builds, `0x4a600` under
+    TOS 1.04 carries and `0x53000` under EmuTOS does not, so the same binary produces 52 transients
+    on one ROM and none on the other. So: one per frame exactly when the two buffers' high bytes
+    differ.
+
+    PUBLICATIONS. One per frame, minus one if frame 1 publishes the address that was ALREADY on the
+    shifter. That is not a fudge either: `flip_screen` swaps front and back before publishing, so
+    frame 1 always publishes the staged BACK buffer, and whether that is a change depends on what
+    the side's own entry left there. The shipped boot leaves `$070000` (the back buffer) at
+    `$f90c`/`$f914`; `publish_screen_base` in our shim leaves the FRONT one. Hence the shipped
+    binary's list is one shorter, and the entry ours has extra is the FIRST — which is what lets the
+    comparison require everything after it to be the shipped binary's, address for address, so
+    "dropped one and gained a stray one elsewhere" cannot add up and pass.
+
+    IDLE WRITES are then whatever is left of the byte budget, which is what makes this a closed
+    account rather than three independent guesses: every base byte a side writes is a publication, a
+    transient, or a write that changed nothing."""
+    budget = base_bytes * frames
+    transients = frames if len({address >> 16 for address in buffers}) > 1 else 0
+    publications = frames - (0 if opening_state != back_buffer else 1)
+    return {"publications": publications, "transients": transients,
+            "idle_base_writes": budget - publications - transients}
+# No palette load at all inside the frame window, on either side: this game loads its palette when a
+# stage loads and never again while one runs. It is `m6rearm` that makes the row non-vacuous.
+NO_LOADS_IN_FRAMES = 0
+
+
+def compare_timelines(ours, theirs, image_base, frames, noise):
+    """Assert the two shapes against each other and against the per-frame pins.
+
+    Returns the same `(name, ok, detail)` rows the rest of this file reports, so `m6rearm` can
+    invert its verdict over named rows rather than over a bare boolean."""
+    checks = []
+    mine, shipped = ours["publications"], theirs["publications"]
+    translated = [address - image_base for address in mine]
+    # HOW FAR OUR LIST LEADS THEIRS IS DERIVED, not assumed: it is the difference between the two
+    # sides' own expected publication counts, which `expected_base_shape` computes from what each
+    # side's entry left on the shifter. Written down, this offset would have been the one number
+    # that still silently absorbed a real divergence.
+    lead = ours["expected"]["publications"] - theirs["expected"]["publications"]
+    checks.append((
+        "the frame heartbeat", translated[lead:] == shipped and len(mine) - len(shipped) == lead,
+        f"ours {len(mine)} buffer publications over {frames} frames, shipped {len(shipped)}; past "
+        f"our leading {lead} the two agree address for address — ours {[hex(a) for a in mine[:3]]} "
+        f"= image + {[hex(a) for a in translated[:3]]}, shipped {[hex(a) for a in shipped[:3]]}"))
+    for field in ("publications", "transients", "idle_base_writes"):
+        got = (len(ours[field]) if field == "publications" else ours[field],
+               len(theirs[field]) if field == "publications" else theirs[field])
+        want = (ours["expected"][field], theirs["expected"][field])
+        checks.append((f"base {field.replace('_', ' ')}", got == want,
+                       f"ours {got[0]}, shipped {got[1]}; each side's own two buffer addresses "
+                       f"require {want[0]}/{want[1]} (see expected_base_shape)"))
+    for shape in (ours, theirs):
+        checks.append((f"{shape['label']}: palette loads inside the frames",
+                       len(shape["loads"]) == NO_LOADS_IN_FRAMES,
+                       f"{len(shape['loads'])} full sixteen-pen load(s); this game loads its palette "
+                       f"when a stage loads and never again while one runs"))
+        checks.append((f"{shape['label']}: no load repeats the table already on the chip",
+                       shape["redundant"] == NO_REDUNDANT_LOADS,
+                       f"{shape['redundant']} redundant load(s) — the 773-stomps shape, which no "
+                       f"snapshot in this project can see"))
+    checks.append(compare_psg_streams(ours["psg"], theirs["psg"], frames, noise))
+    return checks
+
+
+def compare_psg_streams(ours, theirs, frames, noise):
+    """The shipped binary's PSG writes must be an exact PREFIX of ours, register and value in order.
+
+    A PREFIX AND NOT AN EQUALITY, AND THE DIRECTION IS MEASURED RATHER THAN CHOSEN. The music driver
+    is `snd_music_tick`, called from the vblank handler, so what advances the stream is VBLANKS —
+    while what bounds this window is FRAMES. The two sides do not spend the same number of vblanks on
+    a frame and are not required to: measured, the shipped binary takes about two and the
+    reconstruction about eleven and a half. So over the same fifty-two frames our stream is the
+    longer one, and every write the shipped binary made must be the write we made at that point in
+    the sequence.
+
+    THIS IS THE PROJECT'S FIRST ON-TARGET ASSERTION ABOUT SOUND. README.md §10 records why a
+    snapshot could not supply one — the YM file's music registers move between two boots of the
+    SHIPPED BINARY ITSELF, so comparing them proves nothing in either direction — and names this
+    stream as the surface that can.
+
+    THE FLOOR IS THE SHIPPED SIDE'S OWN COUNT, not a number written here: a prefix relation is
+    satisfied by a stream of length one, and a regression that silenced the chip after its first
+    write would otherwise print an identical-looking success.
+
+    AND IT IS COMPARED OVER THE REGISTERS THE SHIPPED BINARY REPRODUCES, which is `psgnoise`'s
+    reading rather than a list written here. MEASURED, and this row is why the reading exists: two
+    boots of the shipped binary differ in 42 of 1155 writes, all of them channel A's tone period
+    (registers 0 and 1) and all inside the first eleven frames. Comparing those would have been
+    comparing which vblank a floppy boot finished on. The excluded set is PRINTED — a check quietly
+    dropped from a comparison is a check nobody is running, which is M1's `machine_driven` lesson."""
+    excluded = set(noise["moved"])
+    ours = [(register, value) for register, value in ours if register not in excluded]
+    theirs = [(register, value) for register, value in theirs if register not in excluded]
+    if len(theirs) < frames:
+        return ("timeline sound", False,
+                f"the shipped binary issued only {len(theirs)} PSG writes over {frames} frames — "
+                f"fewer than one a frame, so its own stream is too short to be evidence of anything "
+                f"(measured, it makes 22 a frame)")
+    if len(ours) < len(theirs):
+        return ("timeline sound", False,
+                f"we issued {len(ours)} PSG writes against the shipped binary's {len(theirs)} — a "
+                f"prefix cannot be shorter than what it is a prefix of, and our window holds MORE "
+                f"vblanks than theirs, so this is the chip going quiet rather than a direction swap")
+    diverged = next((i for i in range(len(theirs)) if ours[i] != theirs[i]), None)
+    if diverged is None:
+        return ("timeline sound", True,
+                f"the shipped binary's {len(theirs)} PSG writes are an exact prefix of our "
+                f"{len(ours)} — register and value, in order — over registers "
+                f"{noise['reproducible']}; registers {noise['moved']} are EXCLUDED because two boots "
+                f"of the shipped binary itself write them differently "
+                f"({noise['differing_positions']} differing write(s) over {noise['pairs']} measured "
+                f"pair(s) of {noise['writes']})")
+    reg, value = ours[diverged]
+    their_reg, their_value = theirs[diverged]
+    return ("timeline sound", False,
+            f"PSG write {diverged} of {len(theirs)} differs — ours register {reg} = {value:#04x}, "
+            f"shipped register {their_reg} = {their_value:#04x}")
+
+
+def flash_order_checks(events, seed, label, watch_predates_frames):
+    """`flip_screen`'s last pair, in the order the bus saw it.
+
+    THE MUTANT THIS EXISTS FOR changes no value at all. `wr16(image + WB_FLASH_TIMER, flash)` and
+    `shifter_write_word(WB_SHIFTER_PALETTE, ...)` are adjacent statements whose argument is the
+    already-decremented local, so swapping them writes the same word to RAM and the same colour to
+    the chip — only later. `../STATUS.md` measures it surviving the whole differential suite and
+    every snapshot this directory takes, and it is the last of the four shifter-sink mutants alive.
+    The only thing that can see it is which of the two writes reached the bus first.
+
+    THE RAM HALF IS A VALUE-CHANGE BREAKPOINT, folded into the same stream by
+    `original.timeline_events` — Hatari has no RAM-write trace, and an instruction-boundary probe is
+    one instruction coarser than the bus, which is enough because the two writes are adjacent.
+
+    `seed` frames of countdown produce `seed` pairs: white while the timer still has frames to run,
+    black on the frame it reaches zero.
+
+    `watch_predates_frames` IS A PREMISE GUARD ON THE INSTRUMENT, and the two sides need different
+    ones because the watch is installed differently. On the shipped side it goes into the same
+    action file as the debugger's poke, after it, so its baseline is the seed and it never sees that
+    write. On ours it is installed on a vblank count, so it MUST see `arm_the_flash` write the seed —
+    and if it did not, it was installed after the frames began and the ordering below would be a
+    reading of whichever decrements happened to fall inside it."""
+    countdown = [(position, value) for position, (register, value, _) in enumerate(events)
+                 if register == FLASH_TIMER_EVENT]
+    values = [value for _, value in countdown]
+    checks = [(f"{label}: the countdown ran", values[-seed:] == list(range(seed - 1, -1, -1)),
+               f"the watched word took {values} — the last {seed} must be the countdown "
+               f"{list(range(seed - 1, -1, -1))}")]
+    if watch_predates_frames:
+        checks.append((f"{label}: the watch was live before the first frame",
+                       values[:1] == [seed],
+                       f"the watch's first event is {values[:1]}, and it has to be arm_the_flash "
+                       f"writing the seed {seed} — otherwise it was installed after the countdown "
+                       f"started and the order below is a reading of an unknown window"))
+    # AN EMPTY COUNTDOWN MUST NOT REPORT ORDERED. `ordered` starts True and the loop below is what
+    # can falsify it, so a watch that produced no events at all — Hatari's line wording moved, or the
+    # chained `:file` install silently failed — would report the row this project's last shifter-sink
+    # mutant dies to as a PASS on zero data. The neighbouring rows would red, but the row that
+    # carries the claim has to red on its own.
+    ordered = len(countdown[-seed:]) == seed
+    detail = [] if ordered else [f"only {len(countdown)} watch event(s), needed {seed}"]
+    for position, value in countdown[-seed:]:
+        # The colour write that belongs to this decrement is the NEXT write to colour 0 — and in the
+        # correct order there is nothing else between them. What the mutant does is put that write
+        # BEFORE the decrement, so the pen 0 write that follows belongs to the NEXT frame and the
+        # last decrement has none after it at all.
+        after = next((index for index in range(position + 1, len(events))
+                      if events[index][0] == PEN_FIRST_REG), None)
+        want = FLASH_COLOUR_WHITE if value else 0
+        got = events[after][1] if after is not None else None
+        ordered &= got == want
+        detail.append(f"timer:={value} then colour0:="
+                      + ("none" if got is None else f"{got:#05x}") + f" (want {want:#05x})")
+    checks.append((f"{label}: the timer store reaches the bus BEFORE the colour",
+                   ordered, "; ".join(detail)))
+    return checks
+
+
+def shipped_timeline(prefix, mode):
+    """The shipped side's window, read back off disk, with its producer named if it is missing."""
+    path = BUILD / (prefix + TIMELINE_FILE)
+    if not path.exists():
+        raise SystemExit(f"{path} is missing — `smoke.py {mode}` compares an ordered stream against "
+                         f"the shipped binary's and cannot compute one: run `python3 atari/"
+                         f"original.py {'flashtimeline' if prefix else 'timeline'}` first")
+    record = json.loads(path.read_text())
+    # The debugger writes them as lists; the rest of this file compares tuples against tuples.
+    return ([tuple(event) for event in record["events"]], record["frames"],
+            record["base_at_open"])
+
+
+# WHICH VBLANK THE FLASH WATCH IS INSTALLED ON, and why it is a count rather than an event. Hatari
+# refuses `b ($addr).w` for a RAM address at --parse time — measured: "invalid address" for
+# $4ad14 at power-on, while $ffff9202 in its own documentation parses — because the machine has not
+# sized its memory yet. So the watch is CHAINED: a breakpoint that costs nothing installs it once the
+# machine is up. 100 is well after TOS's memory sizing and well before the program is Pexec'd (~700),
+# and the run does not have to be trusted about that: `flash_order_checks`' premise guard requires
+# the watch to have seen `arm_the_flash` write the seed, which happens before frame one.
+M6_WATCH_INSTALL_VBL = 100
+
+
+def flash_watch_script(directory, image_base):
+    """The two-stage debugger script that puts our image's WB_FLASH_TIMER into the timeline."""
+    installer = directory / "M6WATCH.INI"
+    installer.write_text(original.flash_watch_command(image_base + wb("FLASH_TIMER")) + "\ncont\n")
+    chain = directory / "M6CHAIN.INI"
+    chain.write_text(f"b VBL > {M6_WATCH_INSTALL_VBL} :once :quiet :file {installer}\n")
+    return chain
+
+
+def mode_m6(mode, prefix, faulted):
+    """The ordered write timeline, and — for `m6flash` — `flip_screen`'s last pair in bus order.
+
+    `faulted` is `m6rearm`, whose verdict is INVERTED over the palette rows: it re-publishes the
+    staged palette after every frame, which changes no value anywhere, so a run in which those rows
+    still pass would mean the timeline is not reading what reaches the chip. Everything else it
+    asserts NORMALLY — `mode_m2`'s lesson, that a control has to know its own run was healthy before
+    its inversion means anything."""
+    theirs_events, frames, their_opening = shipped_timeline(prefix, mode)
+    noise = psg_noise_reading(mode, prefix)
+    if noise["frames"] != frames:
+        raise SystemExit(f"the PSG reproducibility reading covers {noise['frames']} frames and this "
+                         f"comparison is over {frames} — a measurement of a different window cannot "
+                         f"license this one: re-run `python3 atari/original.py "
+                         f"{'flashpsgnoise' if prefix else 'psgnoise'}`")
+    flashing = prefix != ""
+    prg = BUILD / M6_BUILDS[mode]
+    status, log, rom = run_hatari(prg, run_vbls=M2_RUN_VBLS, trace=TIMELINE_TRACE,
+                                  log_name=f"hatari-{mode}.log")
+    print(f"-- {mode}: TOS={rom or 'bundled EmuTOS'} hatari exit={status} "
+          f"(full log in {OUT / ('hatari-%s.log' % mode)})")
+    problems = check_machine_health(status, log)
+    stats, why = read_stats()
+    m2, m2_why = read_m2()
+    for missing in (why, m2_why):
+        if missing:
+            problems.append(missing)
+    if stats is None or m2 is None:
+        report(mode, [])
+        raise SystemExit("FAIL: " + "; ".join(problems))
+    image_base = stats["image_base"]
+
+    our_events, why = timeline_events(log.splitlines())
+    if why:
+        raise SystemExit("FAIL: " + why)
+    window, opening_state, why = our_timeline_window(our_events, image_base, staged_palette())
+    if why:
+        raise SystemExit("FAIL: " + why)
+
+    # THE BUFFERS COME FROM THE STAGED IMAGE — the same two longwords on both sides, because it is
+    # the same image; ours are translated by `image_base` and the shipped binary's are not, which is
+    # the whole of §3 in one line. `flip_screen` swaps before it publishes, so frame 1's target is
+    # the staged BACK buffer on either side.
+    buffers = {image_base + staged("SCREEN_FRONT"), image_base + staged("SCREEN_BACK")}
+    their_buffers = {staged("SCREEN_FRONT"), staged("SCREEN_BACK")}
+    ours = timeline_shape(window, buffers, opening_state,
+                          image_base + staged("SCREEN_BACK"), frames, "ours")
+    theirs = timeline_shape(theirs_events, their_buffers, their_opening,
+                            staged("SCREEN_BACK"), frames, "shipped")
+    checks = compare_timelines(ours, theirs, image_base, frames, noise)
+
+    order_checks = []
+    if flashing:
+        checks += m6_flash_order(prg, image_base, theirs_events, m2["flash_timer_at_entry"])
+    # THE RUN'S OWN HEALTH, ASSERTED RATHER THAN JUST READ. `m6` reads STATS.BIN for `image_base` and
+    # M2.BIN for the flash seed and, in its first draft, asserted nothing from either — which is the
+    # defect `m2_checks` already records having had once: a mode routed past the record leaves every
+    # read-back, including all four teardown restores, unchecked. A binary whose teardown stopped
+    # restoring a vector would red under `m2` and stay green here, on the same .PRG.
+    checks += readback_checks(stats)
+    report(f"{mode} (re-arm control — the PALETTE rows MUST fail)" if faulted else mode,
+           [(name, ok, detail) for name, ok, detail in checks])
+    print(f"   image at {image_base:#x}; our window {len(window)} writes over {frames} frames, "
+          f"the shipped binary's {len(theirs_events)}")
+
+    # ONLY OUR OWN PALETTE ROWS ARE INVERTED, and the distinction is the point rather than tidiness:
+    # `m6rearm` re-arms the palette on OUR side, so the shipped binary's two palette rows are checks
+    # this control does not touch and must therefore still PASS. Exempting them from both halves —
+    # not required to fail, not required to pass — would leave two checks nobody was running, which
+    # is M1's `machine_driven` lesson. Measured: written that way first.
+    inverted_rows = [name for name, _, _ in checks
+                     if name.startswith(f"{ours['label']}:")
+                     and ("palette loads" in name or "repeats the table" in name)]
+    if not faulted:
+        problems += [f"{name}: {detail}" for name, ok, detail in checks if not ok]
+        if problems:
+            raise SystemExit("FAIL: " + "; ".join(problems))
+        print(f"OK: {mode} — {frames} frames of writes in the order they reached the machine"
+              + (", and flip_screen's last pair in bus order" if flashing else ""))
+        return
+
+    problems += [f"{name}: {detail}" for name, ok, detail in checks
+                 if not ok and name not in inverted_rows]
+    # "INVISIBLE TO EVERY SNAPSHOT" IS MEASURED HERE, NOT CLAIMED BELOW. The whole argument for
+    # having a timeline is that this build is one no other surface can tell from `m2`, and a control
+    # that only showed the timeline going red would leave that half unexercised — the round's own
+    # standing lesson, that a claim made on four surfaces and executed on none is not a result. The
+    # run already wrote M2.BIN, FRAME.BIN and PENS.BIN, so the frame differential costs nothing and
+    # it must PASS: fifty-two redundant palette loads reached the chip and the pictures and the pens
+    # at all four anchors are still the shipped binary's.
+    snapshots = m2_checks(m2, stats, original.anchor_frames())
+    report("m6rearm: the snapshots the control must NOT move", [row[:3] for row in snapshots])
+    problems += [f"snapshot {name}: {detail}" for name, ok, detail, _ in snapshots if not ok]
+    if problems:
+        raise SystemExit("FAIL: the control's own run is not sound, so its inverted verdict says "
+                         "nothing: " + "; ".join(problems))
+    if not inverted_rows:
+        raise SystemExit("FAIL: the control has no row to invert — its own palette rows are not in "
+                         "the check list, so it cannot fail and proves nothing")
+    held = [name for name, ok, _ in checks if ok and name in inverted_rows]
+    if held:
+        raise SystemExit("FAIL: the re-arm control passed " + ", ".join(held) + " — a palette load "
+                         "per frame that changes no value reached the chip and the timeline did not "
+                         "see it, which is the 773-stomps shape this row exists for")
+    print(f"OK: re-publishing the palette every frame reddens the timeline and nothing else — "
+          f"{ours['redundant']} redundant loads over {frames} frames, invisible to every snapshot")
+
+
+def m6_flash_order(prg, image_base, theirs_events, seed):
+    """Boot our side a SECOND time with WB_FLASH_TIMER watched, and order both sides' last pair.
+
+    A SECOND BOOT BECAUSE THE WATCH NEEDS AN ADDRESS THE FIRST ONE REPORTS — `image_base` is where
+    GEMDOS put the program, and the debugger cannot be told a RAM address before the machine has
+    sized its memory (M6_WATCH_INSTALL_VBL). M5 boots our side twice for the same shape of reason,
+    and as there the two boots are REQUIRED TO AGREE: a different image base means the breakpoint
+    watched somebody else's memory."""
+    with tempfile.TemporaryDirectory() as tmp:
+        chain = flash_watch_script(Path(tmp), image_base)
+        status, log, _ = run_hatari(prg, run_vbls=M2_RUN_VBLS, trace=TIMELINE_TRACE, parse=chain,
+                                    log_name="hatari-m6flash-watch.log")
+    unhealthy = check_machine_health(status, log)
+    checks = [("the watched boot was healthy", not unhealthy, "; ".join(unhealthy) or "clean")]
+    again, why = read_stats()
+    checks.append(("both boots staged the image at one address",
+                   again is not None and again["image_base"] == image_base,
+                   f"{image_base:#x} then {'no record (%s)' % why if again is None else '%#x' % again['image_base']}"))
+    ours, why = timeline_events(log.splitlines(), image_base + wb("FLASH_TIMER"))
+    if why:
+        return checks + [("our watched stream parsed", False, why)]
+    return (checks + flash_order_checks(ours, seed, "ours", watch_predates_frames=True)
+            + flash_order_checks(theirs_events, seed, "shipped", watch_predates_frames=False))
+
+
+def staged_palette():
+    """The sixteen pens the frame build stages — the ORIGINAL's own, off its post-boot machine."""
+    blob = (DISK / "PENS.IMG").read_bytes()
+    return tuple(struct.unpack(">%dH" % PALETTE_PENS, blob))
+
+
+PLAY_RUN_VBLS = 12000
+# A PAL machine's vertical blank, and the only clock a `--run-vbls` figure can be turned into seconds
+# by. `--monitor rgb` is what every mode here boots with, so 50 rather than 60 or 71.
+VBLANKS_PER_SECOND = 50
+# How far into the run the LAST flip has to be for the play build to count as still running. The
+# build has no end — `run_frames`' count and its watchdog are both lifted — so what is asserted is
+# not that it finished but that it had not stopped: measured, its last buffer publication is 53 log
+# lines from the end of a 258,617-line trace, i.e. it was still flipping when --run-vbls cut it off.
+# The floor is loose on purpose. What it has to separate is "flipping at the end" from "stopped
+# somewhere in the middle", and the gap between those is the whole run — a tight floor would instead
+# be measuring how many PSG writes happen to follow the last flip before the emulator exits, which
+# is a quantity nothing controls.
+PLAY_STILL_RUNNING_FRACTION = 0.99
+
+
+def displayed_buffers(events):
+    """The two addresses the shifter actually DISPLAYED, found in the run rather than computed.
+
+    `mode_play` cannot ask the program where its image is — the play build never leaves the frame
+    loop and so never writes STATS.BIN — so the buffers have to come out of the trace. They are the
+    two states the shifter DWELLS in: a transient is superseded by the very next base write and a
+    buffer is held for a whole frame, so ranking states by how many events elapse while each is
+    current separates them by orders of magnitude rather than by a threshold.
+
+    AND THE PAIR IS THEN PINNED, which is what makes this a measurement instead of a guess: the two
+    winners must be exactly `WB_SCREEN_FRONT - WB_SCREEN_BACK` apart, the same distance the staged
+    image's own two longwords are. That identifies them as the game's buffers without knowing where
+    GEMDOS put the image."""
+    dwell, state, since = {}, 0, 0
+    for position, (register, value, _) in enumerate(events):
+        moved = original.apply_base_write(state, register, value)
+        if moved is None:
+            continue
+        dwell[state] = dwell.get(state, 0) + position - since
+        state, since = moved, position
+    dwell[state] = dwell.get(state, 0) + len(events) - since
+    ranked = sorted(dwell, key=dwell.get, reverse=True)[:2]
+    if len(ranked) < 2:
+        return None, "the play run pointed the shifter at fewer than two addresses — it never flipped"
+    apart = abs(ranked[0] - ranked[1])
+    want = abs(staged("SCREEN_FRONT") - staged("SCREEN_BACK"))
+    if apart != want:
+        return None, (f"the two addresses the shifter dwelt in, {hex(ranked[0])} and "
+                      f"{hex(ranked[1])}, are {apart:#x} apart and the staged image's two screen "
+                      f"buffers are {want:#x} apart — so they are not the game's two buffers and "
+                      f"counting flips between them would be counting something else")
+    return set(ranked), None
+
+
+def mode_play():
+    """The build a person plays, booted headless: does it keep running, and for how long?
+
+    WHAT THIS CAN ASSERT AND WHAT IT CANNOT, said plainly because the interesting half is the second.
+    It can assert that the frame loop keeps turning without either bound the headless modes give it,
+    that the machine stays healthy for four minutes of emulated time, and how many frames that is.
+    It CANNOT assert that the stick moves him: a headless run cannot press one, the ACIA handler's
+    two joystick arms therefore still have never executed, and `atari/run.sh` is the mechanism that
+    discharges them. Joust's play row makes the same split and calls it partial by construction."""
+    prg = BUILD / M6_BUILDS["play"]
+    status, log, rom = run_hatari(prg, run_vbls=PLAY_RUN_VBLS, trace=TIMELINE_TRACE,
+                                  log_name="hatari-play.log")
+    print(f"-- play: TOS={rom or 'bundled EmuTOS'} hatari exit={status} --run-vbls {PLAY_RUN_VBLS} "
+          f"(full log in {OUT / 'hatari-play.log'})")
+    problems = check_machine_health(status, log)
+    events, why = timeline_events(log.splitlines())
+    if why:
+        problems.append(why)
+    # WHERE the last flip is, not just how many there were: a build that ran a hundred frames and
+    # then hung would pass a bare count. The position is measured in EVENTS rather than in log lines,
+    # because the event stream is the only clock a run that writes no record has, and it keeps
+    # ticking (the vblank handler's PSG writes) for as long as the machine is alive.
+    buffers, why = displayed_buffers(events)
+    if why:
+        problems.append(why)
+        buffers = set()
+    # THE SAME `base_writes` THE DIFFERENTIAL USES, so "a buffer publication" has ONE definition in
+    # this file. Rolling a second replay here was the first draft's mistake and the two rules did not
+    # agree: this one would have counted buffer -> transient -> the SAME buffer as a flip, and our
+    # side emits a transient every frame by construction, so the play row's headline number was
+    # produced by a rule no other check uses. The opening state is 0 because a play run is read from
+    # power-on rather than from a window.
+    publications, _, _ = base_writes(events, buffers, 0)
+    flips = len(publications)
+    last_at = publications[-1][0] if publications else 0
+    reach = last_at / max(len(events) - 1, 1)
+    headless_frames = max(original.anchor_frames())
+    checks = [
+        ("the frame loop kept turning", flips > headless_frames,
+         f"{flips} buffer publications over {PLAY_RUN_VBLS} vblanks, alternating "
+         f"{sorted(hex(address) for address in buffers)} — the headless frame build stops itself at "
+         f"{headless_frames}"),
+        ("...and was still turning when the run was cut off", reach >= PLAY_STILL_RUNNING_FRACTION,
+         f"the last one is {reach:.4f} of the way through the {len(events)}-event stream (floor "
+         f"{PLAY_STILL_RUNNING_FRACTION}); a build that hung would leave it early"),
+        # NOT "by construction", and the difference is a claim this row had to give up. The frame
+        # count and the watchdog are gone in this build, but `run_frames`' THIRD exit is not: a frame
+        # in which `game_key_actions` takes one of its three endings returns a `loop_ending` that is
+        # not WB_KEY_ACTIONS_RETURNED and the loop breaks, hands the machine back and writes the
+        # record. This headless run injects no input, so no ending can be reached and the file is
+        # absent — which is what is asserted. A PERSON at `run.sh` can reach one, and that is M3's
+        # owed milestone rather than a defect in this row.
+        ("this run reached no dump (it injects no input)", not (DISK / STATS_FILE).exists(),
+         "with no joystick or key input, game_key_actions' three endings are unreachable, so the "
+         "loop never breaks and the shim never hands the machine back"),
+    ]
+    # ...AND IF ONE EVER DOES APPEAR, SAY WHICH EXIT MADE IT. A record here means an ending fired,
+    # which under a headless run means the premise above is wrong; under `run.sh` with a person at
+    # the keys it is M3's evidence. Either way the answer is a FIELD — `loop_ending` names which of
+    # the three endings ran — rather than something inferred from a frame count that cannot tell
+    # them apart.
+    ended, _ = read_m2()
+    if ended is not None:
+        print(f"   NOTE a record exists: game_main_loop ended with loop_ending="
+              f"{ended['loop_ending']} after {ended['frames_run']} frames — one of "
+              f"game_key_actions' three endings fired (../include/game.h names them)")
+    report("play", checks)
+    print(f"   {flips} frames in {PLAY_RUN_VBLS} vblanks = "
+          f"{flips / (PLAY_RUN_VBLS / float(VBLANKS_PER_SECOND)):.2f} frames a second of emulated "
+          f"time, on an 8 MHz 68000")
+    problems += [f"{name}: {detail}" for name, ok, detail in checks if not ok]
+    if problems:
+        raise SystemExit("FAIL: " + "; ".join(problems))
+    print("OK: play — the reconstruction runs indefinitely; run it with a screen: bash atari/run.sh")
+
+
 # Which .PRG each mode boots, and which shipped-side artefact set it compares against. `m5` and
 # `m5skew` share a build, as `m2` and `m2fault` do; `m5flash` is the only one whose shipped side is a
 # different boot of the original, which is what the artefact PREFIX names.
+M6_BUILDS = {"m6": "WB-m2.PRG", "m6rearm": "WB-m6rearm.PRG", "m6flash": "WB-m5flash.PRG",
+             "play": "WB-play.PRG"}
+M6_PREFIX = {"m6": "", "m6rearm": "", "m6flash": original.FRAME_PREFIXES[True]}
+# `play` is the ONE M6 build that is not a timeline comparison, so it has no shipped-side prefix and
+# `main` routes it separately. THE TWO LISTS ARE PINNED TO EACH OTHER rather than left to agree,
+# which is `build.sh`'s own FRAME_MODES lesson in Python: a mode added to M6_BUILDS and forgotten
+# here does not raise "unknown mode" — it falls through to the bottom of `main` and gets booted at
+# M1's --run-vbls and checked by `m1_checks`, which reports read-back failures on a frame build.
+PLAY_MODE = "play"
+assert set(M6_BUILDS) - set(M6_PREFIX) == {PLAY_MODE}, (
+    f"every M6 mode except {PLAY_MODE!r} needs a shipped-side prefix; "
+    f"{sorted(set(M6_BUILDS) - set(M6_PREFIX) - {PLAY_MODE})} has none")
+assert not set(M6_PREFIX) - set(M6_BUILDS), (
+    f"{sorted(set(M6_PREFIX) - set(M6_BUILDS))} has a prefix but no build to boot")
 PRG_FOR_MODE = {"m1": "WB-m1.PRG", "mono": "WB-m1.PRG", "novbl": "WB-novbl.PRG",
                 "m2": "WB-m2.PRG", "m2fault": "WB-m2.PRG"}
 M5_BUILDS = {"m5": "WB-m2.PRG", "m5skew": "WB-m2.PRG", "m5fault": "WB-m5fault.PRG",
              "m5flash": "WB-m5flash.PRG"}
 M5_PREFIX = {"m5": "", "m5skew": "", "m5fault": "", "m5flash": original.FRAME_PREFIXES[True]}
 # Which `build.sh` mode produces each smoke mode's binary, for the message a missing build gets.
-BUILD_FOR_MODE = {"mono": "m1", "m2fault": "m2", "m5": "m2", "m5skew": "m2"}
+BUILD_FOR_MODE = {"mono": "m1", "m2fault": "m2", "m5": "m2", "m5skew": "m2", "m6": "m2",
+                  "m6flash": "m5flash"}
 
 
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "m1"
-    prg = dict(PRG_FOR_MODE, **M5_BUILDS).get(mode)
+    prg = dict(PRG_FOR_MODE, **M5_BUILDS, **M6_BUILDS).get(mode)
     if prg is None:
         raise SystemExit(__doc__)
     prg = BUILD / prg
@@ -1388,6 +2150,14 @@ def main():
 
     if mode in M5_BUILDS:
         mode_m5([], mode, M5_PREFIX[mode])
+        return
+
+    if mode == PLAY_MODE:
+        mode_play()
+        return
+
+    if mode in M6_PREFIX:
+        mode_m6(mode, M6_PREFIX[mode], faulted=(mode == "m6rearm"))
         return
 
     frames = mode in ("m2", "m2fault")

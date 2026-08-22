@@ -123,7 +123,7 @@ cmt 0x74c Longword = address of the buffer currently being displayed; $74d/$74e 
 var 0x750 screen_back
 cmt 0x750 Longword = address of the buffer being drawn into. Initialised to $070000.
 fn 0xf906 video_set_lowres_50hz
-cmt 0xf906 $ffff8260 := 0 (low res, 320x200x16); screen base := $070000; $ffff820a := 2 (50 Hz PAL).
+cmt 0xf906 $ffff8260 := 0 (low res, 320x200x16); screen base := $070000; $ffff820a := 2 (50 Hz PAL). THE SCREEN BASE IS TWO IMMEDIATES, `move.b #$7,$ff8201.l` at $f90c and `move.b #$0,$ff8203.l` at $f914 -- this routine does NOT read WB_SCREEN_FRONT ($74c), and that matters to the port. $070000 is WB_SCREEN_*BACK*'s value in the post-boot image, so the shipped binary enters game_main_loop with the BACK buffer on the shifter, while recreate/atari/wonderboy_main.c's publish_screen_base publishes the FRONT one. flip_screen swaps before it publishes, so frame 1 publishes $070000 on both sides -- which is already there on the shipped side and a change on ours, and is why the two sides' publication lists differ by exactly one leading entry. Measured by the M6 write timeline (recreate/atari/README.md §11), not by reading this code: the two PCs above are where Hatari's io_write trace says the pre-window base writes came from.
 fn 0xf926 clear_both_screens
 cmt 0xf926 clr.l over $3f40 longwords from $70000 -- i.e. $70000..$7FD00, exactly the two 32000-byte screen buffers back to back.
 fn 0xf938 copy_screen

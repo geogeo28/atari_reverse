@@ -28,8 +28,8 @@ post-boot RAM off a real emulated machine and staging that.
 | **M2** a frame | `game_main_loop` runs **fifty-two frames on the machine**, and at four anchored frames its 32000 framebuffer bytes and its sixteen hardware pens are **byte-identical to the shipped binary's** running the same fifty-two frames. Both sides read where the picture really is — ours out of the image at the address `flip_screen` published, theirs off the shipped binary's own screen by `savebin` at a breakpoint on `$4a0` | ✅ `smoke.py m2` |
 | **M2** mis-anchor control | our frames read off the NEIGHBOURING shipped frame, verdict inverted. The two rows a one-anchor shift can reach both fail; the other six are **excluded and printed**, because this game's picture toggles on a one-second cadence and half the shifts land on an identical frame (§9) | ✅ `smoke.py m2fault` |
 | **M2** the two flip-site mutants | **MEASURED DYING** (§9): the base-byte swap in `flip_screen`'s own two call sites, and the wrong buffer published. Neither touches an image byte — the framebuffer compare cannot see them — and both move the address read back off `$ffff8201/8203` | ✅ both CAUGHT |
-| **M3** the exits | `game_key_actions`' three endings `jmp` into the boot chain and `game_main_loop` reports them instead — the same "exits the reconstruction reports and its caller drops" that Joust's M3 completes in its shim. Nothing here completes them yet | ⛔ owed |
-| **M3** the joystick arms | the shim's ACIA handler files a report on `$fe`/`$ff` and **those arms have never executed**. Discharged by an interactive Hatari run with `--joy1 keys` and a human at the cursor keys, which is where Joust's M3 leaves steering too; a headless run cannot press a stick. **This row exists because a registered boundary with no discharging milestone is how an unpinned arm ships forever** | ⛔ owed, mechanism named |
+| **M3** the exits | `game_key_actions`' three endings `jmp` into the boot chain and `game_main_loop` reports them instead — the same "exits the reconstruction reports and its caller drops" that Joust's M3 completes in its shim. **ONE HAS NOW EXECUTED**: the play build's frame loop keeps that third way out, and poking `WB_ROUND_END_RELOAD_REQUEST` from a chained breakpoint drives the ROUND_END ending with no input device at all — measured, the loop broke after 7 frames, handed the machine back and wrote a record reporting `loop_ending = 1`. What is still owed is the milestone rather than the mechanism: the three endings driven deliberately and the `Pterm` hand-back asserted healthy | ⛔ owed, one ending DRIVEN |
+| **M3** the joystick arms | the shim's ACIA handler files a report on `$fe`/`$ff` and **those arms have still never executed under any headless check** — a headless run cannot press a stick, and nothing here has changed that. What HAS changed is that the discharging mechanism now exists and is one command: **`bash atari/run.sh`** builds the play build and launches Hatari with `--joy1 keys`, a screen and sound, so a person at the cursor keys runs those arms. **PARTIAL BY CONSTRUCTION**, which is Joust's own wording for the same split: the runner is verified to the edge of the GUI (it builds, it stages, it boots, and `smoke.py play` proves the frame loop underneath it runs indefinitely), and what a human sees when they press left is not something this repository asserts | ⚠️ mechanism DELIVERED, the arms still unexecuted headless |
 | **M3** a saved-state round trip | Joust's `HIGH.SCO` equivalent. **ABSENT BY CONSTRUCTION, not deferred**: `../project.toml`'s byte scan establishes that Wonder Boy performs no file I/O at all — one GEMDOS trap in the whole image, a `Super` — so there is no file for a round trip to exist over | n/a |
 | **M4** frame differential vs the original | ~~blocked on M2~~ — **DELIVERED AS PART OF M2**, above: the two rows are the same comparison, and separating them was an artefact of expecting the dump to be a later milestone than the frame. The row is kept so the renumbering is visible rather than silent | ✅ folded into `smoke.py m2` |
 | **M5** the hardware-state vector | at the same four anchors, **twenty registers of the machine itself are identical on both sides** — the sixteen shifter pens, the resolution and sync registers, the refresh rate and the V-overscan — captured by the same debugger commands and read back by the same parser on each side (`original.py`'s `vector_commands` / `hardware_vector`). Our side is anchored on `capture_the_frame`'s own entry, at the address the binary **reports about itself**, so the vector is taken at the very instant `FRAME.BIN` is. The YM-2149's sixteen registers are captured and **printed but not compared**, for two named reasons (§10) | ✅ `smoke.py m5` |
@@ -37,12 +37,27 @@ post-boot RAM off a real emulated machine and staging that.
 | **M5** injected-fault control | `build.sh m5fault` corrupts **one pen** (pen 3, `$777`, the HUD's white — certainly on screen) on its way to the shifter. The three surfaces that read COLOUR — the pens, the vector, the picture — must go red and the framebuffer must not; and the vector's divergence must be **that pen and nothing else**, asserted | ✅ `smoke.py m5fault` |
 | **M5** mis-anchor control | our anchors read off the NEIGHBOURING shipped frame. The complement of the above: the bitplanes and the picture must fail (over the pairs a shift can reach — the rest excluded and printed), and the pens and the vector must NOT, because the palette is the same at every anchor and a frame shift writes no different register. Between the two controls **every surface fails in at least one and the three isolable ones pass in the other**; the rendered picture fails in both, because it reads colour AND drawn bytes (§10) | ✅ `smoke.py m5skew` |
 | **M5** the flash arms | `WB_FLASH_TIMER` armed on **both** sides with the original's own operand (`move.w #$2,$714.w` at `$1328`), at the same instant — our shim before its first `game_main_loop`, the shipped binary by a debugger poke at `$4a0`'s first arrival. A declared fabrication, because the raiser is unreachable in this window twice over (§10). Colour 0 goes white at anchor 1 and black at anchor 2, on both sides, and all four surfaces still agree | ✅ `smoke.py m5flash` |
-| **M6** timelines | the ordered stream of shifter and PSG writes, reduced to a per-phase shape. Catches: the sink write moved above the timer store; and the PSG select/data race in §5 | ⛔ owed |
+| **M6** the frame heartbeat | over the same fifty-two frames, `flip_screen`'s **screen-base publications are the shipped binary's, flip for flip** — fifty-two addresses in order, ours equal to theirs plus `image_base`. No snapshot sees this: M2 and M5 read four anchors, and a run that visited the right buffers in the wrong order at the other forty-eight would pass both. The two sides' write COUNTS differ and the difference is pinned rather than tolerated — one transient a frame on our side against none (§3's correction), two idle writes against one, and one leading publication because the shipped boot leaves `WB_SCREEN_BACK` on the shifter where our shim leaves `WB_SCREEN_FRONT` (§5) | ✅ `smoke.py m6` |
+| **M6** no redundant palette load | neither side loads a palette while a stage runs, and neither ever re-loads the table already on the chip. This is the sibling project's **773-stomps** shape, where a VBL handler re-armed `_colorptr` every vblank and every snapshot stayed green because all 773 loads wrote the same correct sixteen words | ✅ `smoke.py m6` |
+| **M6** the re-arm control | `build.sh m6rearm` re-publishes the staged palette after every frame — the same sixteen words, so not one pen ever holds a different colour. The palette rows must go red **and the snapshots must not**, which the control MEASURES rather than claims: it runs M2's whole frame differential and all four anchors' pictures and pens are still byte-identical to the shipped binary's, with **52 palette loads on the bus, 51 of them redundant** | ✅ `smoke.py m6rearm` |
+| **M6** the sound | **this project's first on-target assertion about sound.** The shipped binary's 1,155 PSG writes over the window are an **exact prefix of our 6,424** — register and value, in order. A prefix rather than an equality because the music is driven by the VBLANK and the window is bounded by FRAMES, and the two sides spend a different number of vblanks on a frame (about 2 against 11½); the direction is measured, and the floor is the shipped side's own count. §10 records why a snapshot could not supply this and named this stream as the surface that could | ✅ `smoke.py m6` |
+| **M6** the sound's reproducibility gate | `original.py psgnoise` boots the shipped binary a **second** time and differences the two streams, because comparing a register the original writes differently on two of its own boots is not evidence in either direction. `m6` refuses to run without the reading and PRINTS what it excludes. Measured: an unflashed pair differs in **0 of 1,155** writes, so `m6` compares all eleven registers; a **flashed** pair differs in **42 of 1,155**, all of them channel A's tone period (registers 0 and 1) inside the first eleven frames, so `m6flash` excludes those two and compares the other nine. One reading per fabrication, which is `flashnoise`'s rule (§10) | ✅ `original.py psgnoise` / `flashpsgnoise` |
+| **M6** the ORDER-ONLY mutant | **MEASURED DYING, and it is the last of the four shifter-sink mutants.** `flip_screen`'s timer store and its colour write are adjacent statements whose argument is the already-decremented local, so swapping them writes the same word to RAM and the same colour to the chip — only later. With it applied, `m5flash` is **entirely green** (framebuffer, pens, hardware vector and rendered picture at all four anchors) and `m6flash`'s order row is **RED**. Both sides are watched, and both must show the store reaching the bus before the colour | ✅ `smoke.py m6flash`, mutant CAUGHT |
+| **M6** the play build | the build a person plays, booted headless past 12,000 vblanks: **still flipping buffers when the run was cut off**, machine healthy throughout — 1,004 frames under TOS 1.04 and 1,160 under EmuTOS, i.e. four to five frames a second (the ROM decides how much of the window is left after it boots, so the count belongs to the ROM too). The two buffers are found in the trace rather than computed — a play run writes no record — and pinned by being exactly `WB_SCREEN_FRONT - WB_SCREEN_BACK` apart. What is asserted about its exit is that THIS run reached none, because it injects no input; a person can reach one, which is M3's owed milestone | ✅ `smoke.py play` |
 
-**Batch 43 phase D added the five M5 rows and killed the flash mutant.** All **nine** on-target
-modes — `m1`, `mono`, `novbl`, `m2`, `m2fault`, `m5`, `m5skew`, `m5fault`, `m5flash` — are green on
-**both ROMs**. §10 has the argument, including the two things M5 captures and does *not* compare and
-why. The one shifter-sink mutant still alive is the one no snapshot can ever see.
+**Batch 43 phase E added the seven M6 rows, killed the LAST shifter-sink mutant, and shipped
+`run.sh`.** All **thirteen** on-target modes — `m1`, `mono`, `novbl`, `m2`, `m2fault`, `m5`, `m5skew`,
+`m5fault`, `m5flash`, `m6`, `m6rearm`, `m6flash`, `play` — are green on **both ROMs**. §11 has the
+argument. Three things the phase produced that are worth the summary line:
+
+- **No shifter-sink mutant survives.** The order-only one is dead, measured both ways (§11).
+- **The sound has an on-target assertion** for the first time, and a reproducibility gate under it.
+- **§3 was wrong and is corrected**: this port ADDS a transient to the screen-base publication that
+  the original does not have. Three phases of snapshots could not see it; the first ordered read of
+  the bus did.
+
+**Batch 43 phase D added the five M5 rows and killed the flash mutant.** §10 has its argument,
+including the two things M5 captures and does *not* compare and why.
 
 **Batch 43 phase C moved no row.** It fixed the host-side worker crash (`../STATUS.md`) by routing
 `../src/map.c` and `../src/scene.c` through `../include/bus.h`, which changes the sixteen sources
@@ -57,9 +72,18 @@ already a declared on-target helper and `bus.h` is a header, not a core — and 
 Verified on **TOS 1.04 and EmuTOS** (Hatari's bundled `tos.img`). **NOT "identical results on both
 ROMs"** — the honest split is that M1 is green on both, and two of its pieces behave differently:
 
-- **The image lands somewhere else, and M1 notices.** `image_base` is `0x2a600` under TOS 1.04 and
-  `0x33100` under EmuTOS, and the published screen base follows it (`0xa2600` / `0xab100`). The
-  translation in §3 is therefore demonstrably not a constant that happens to be right.
+- **The image lands somewhere else, and M1 notices.** The M1 build's `image_base` is `0x2ae00` under
+  TOS 1.04 and the frame builds' is `0x4a600`; under EmuTOS the frame builds land at `0x53000`. The
+  published screen base follows it in every case. The translation in §3 is therefore demonstrably
+  not a constant that happens to be right.
+- **AND M6 TURNED THAT INTO A HARDWARE CONTROL FOR §3's CORRECTION.** The added transient exists
+  exactly when the image base's middle byte carries into the high one. `0x4a600` carries and
+  `0x53000` does not — so the **same binary** publishes 52 transients on TOS 1.04 and **none** on
+  EmuTOS, with the idle-write count taking up the slack (104 against 156). `expected_base_shape`
+  derives all three counts from the two buffer addresses rather than pinning the TOS 1.04 reading,
+  which is what lets one assertion be right on both ROMs. Writing them down instead is exactly what
+  this phase did first, and all three went wrong at once the moment the other ROM ran them — the
+  tell that they were one fact recorded three times.
 - **The YM2149 check is only non-trivial on TOS 1.04, AND THE CONTROL KNOWS IT.** Port A reads
   `0x25` at entry there and `0x27` under EmuTOS — i.e. EmuTOS has *already* deselected the drives,
   so on that ROM the assertion is satisfied by the entry state and witnesses nothing. It is the
@@ -80,6 +104,34 @@ ROM is supported.)
 
 Run against more than one ROM anyway: two of the three bugs the sibling port found on target were
 found by adding a *second* observation, and a second ROM was one of them.
+
+## Play it
+
+```bash
+bash atari/run.sh          # builds the play build if needed, then opens Hatari with a joystick
+```
+
+Cursor keys move, **Right-Ctrl** fires (Hatari's `--joy1 keys`; F12 → Joysticks shows the mapping),
+**Ctrl-Q** quits. The script's header is the honest description of what appears, and three lines of it
+matter before you start:
+
+- **You get the first playable stage, mid-game.** `game_main_loop` is entered the way the original
+  enters it — `jmp $4a0` with a stage already loaded — and the chain that loads one is unported
+  (§2), so there is no title screen, no credits and no attract mode. The stage comes from the
+  ORIGINAL's own post-boot RAM, measured off a real emulated machine.
+- **It runs until you close the window,** and that is measured rather than hoped: `smoke.py play`
+  boots the same binary headless for 12,000 vblanks and finds it still flipping buffers at the end.
+- **It runs at four to five frames a second** (measured headless: 1,004 frames in 12,000 vblanks
+  under TOS 1.04, 1,160 under EmuTOS, on an 8 MHz 68000). The
+  reconstruction is C compiled for a chip the original was hand-written for and no work has gone
+  into that gap. It is the game running and responding, not the game at speed.
+
+It **takes the machine** — real vectors at `$70` and `$118`, as the original does — and normally
+never gives it back, so Ctrl-Q is the way out and the headless run writes no `STATS.BIN`. *Normally*
+is exact: `run_frames` lost its frame count and its watchdog in this build but kept its third exit,
+so a frame in which `game_key_actions` takes one of its three endings DOES leave the loop, hand the
+machine back and write a record. No input means no ending, which is why the headless run never sees
+one — and a person who does has reached M3's owed milestone, which nothing here completes yet.
 
 ## Use
 
@@ -103,11 +155,29 @@ python3 atari/original.py flash                             # the flash run's ow
 python3 atari/original.py flashnoise                        #   ...and its own accident measurement
 bash atari/build.sh m5flash && python3 atari/smoke.py m5flash #   ...and the flash arms, both sides
 
+python3 atari/original.py timeline                          # M6's shipped STREAM, over 52 frames
+python3 atari/original.py psgnoise                          #   ...M6 REFUSES TO RUN WITHOUT THIS
+bash atari/build.sh m2      && python3 atari/smoke.py m6      # M6, the ordered write timeline
+bash atari/build.sh m6rearm && python3 atari/smoke.py m6rearm #   ...and its RE-ARM control
+python3 atari/original.py flashtimeline                     # the flash run's own stream...
+python3 atari/original.py flashpsgnoise                     #   ...and its own reproducibility gate
+bash atari/build.sh m5flash && python3 atari/smoke.py m6flash # flip_screen's last PAIR, in bus order
+
+bash atari/build.sh play    && python3 atari/smoke.py play  # the PLAY build, booted headless
+
 python3 atari/original.py variance                          # what in the dump is one boot's luck
 python3 atari/original.py neighbour                         #   ...and the anchor's own evidence (§9)
 python3 atari/original.py nofire                            #   ...and the two boot controls
 python3 atari/original.py nodisk2
 ```
+
+**M6 is `original.py` first, twice over.** `smoke.py m6` refuses without `build/OTIMELINE.json` (the
+shipped binary's own stream, which cannot be computed) and refuses again without
+`build/PSGNOISE.json` (which of the shipped binary's PSG registers are one boot's accident) — the
+same refusal `m5` makes over `VECNOISE.json` and for the same reason. Both readings are **stamped
+with the frame count they cover**, and one taken over a different window is refused rather than
+allowed to license this one. `m6flash` needs the `F`-prefixed pair of its own, because a flashed
+boot is a different machine (§10).
 
 **M5 is `original.py` first too, and `vecnoise` is not optional.** `smoke.py m5` refuses to run
 without `build/VECNOISE.json`, because without it the mode does not know which of the shipped
@@ -132,6 +202,13 @@ Hatari's bundled EmuTOS. Hatari needs `--memsize 4`: the 1 MiB image is the prog
 and `disk/` are gitignored build artifacts; the full Hatari log of the last run is kept in
 `out/hatari.log`, always, whether the mode passed or not.
 
+**RUN ONE MODE AT A TIME.** `disk/` is a single staged drive and every mode — and `run.sh` —
+restages it for its own build, so two of them at once means one machine's `.PRG` changing under the
+other while it boots. Measured, in this directory's own final sweep: `m5flash` came back "no
+`M2.BIN` — the frame build never reached its own dump" and passed immediately when re-run alone,
+because a `run.sh` staging test had rewritten the drive mid-boot. **A mode that fails for a reason
+reading like a crash and then passes in isolation is this, not a red.**
+
 ## Pieces
 
 | file | role |
@@ -147,6 +224,7 @@ and `disk/` are gitignored build artifacts; the full Hatari log of the last run 
 | `tos.ld` / `mkprg.py` | link at base 0, then wrap the ELF into a GEMDOS `.PRG` with a relocation table |
 | `build.sh` | compile + link + wrap + stage `disk/`, and assert the seam actually held |
 | `smoke.py` | headless Hatari: boot, run to completion, read `STATS.BIN` back, check it |
+| `run.sh` | **the one that is not a measurement** — build the play build and open Hatari with a screen, sound and a joystick. Its header is the honest account of what appears |
 
 ## The boundary decisions
 
@@ -249,13 +327,42 @@ has no low byte, so an unaligned base is truncated and the shifter displays from
 below what the game draws at — every byte in memory still correct, the picture's bitplanes permuted.
 A `__attribute__((aligned(256)))` does *not* fix that: it aligns the array inside `.bss`, and GEMDOS
 loads the `.PRG` wherever the TPA falls. `wonderboy_main.c` rounds the base up once at run time and
-**reads the result back**; measured on the M1 run, `image_base = 0x2a600` and the published base is
-`0xa2600` = image + `$78000`.
+**reads the result back**; measured on the M1 run under TOS 1.04, `image_base = 0x2ae00` and the
+published base is `0xa2e00` = image + `$78000`. **That number is a reading, not a constant** — it
+moves with the `.PRG`'s own length as well as with the ROM, so every figure quoted for it in this
+file is stamped with the build and the ROM it came off, and none of them is a value the code may
+assume.
 
-**One transient is inherited rather than added:** between the game's first byte and its second the
-shifter is pointed at a mixed address, exactly as it is in the original, which also writes two bytes
-in two instructions. `flip_screen` issues both between its two waits, i.e. just after a vblank,
-which is why the original gets away with it and so does this.
+**A TRANSIENT IS ADDED, AND M6 MEASURED IT.** This paragraph used to claim the reverse — that the
+mixed address the shifter holds between the two byte writes was something this port took over from
+the original rather than introduced, on the grounds that the original also writes two bytes in two
+instructions. The ordered write timeline (§11) refutes it, and the correction is worth the space
+because the reasoning error is a general one: *both sides write two bytes* does not imply *both
+sides pass through a mixed address*.
+
+The original's two buffers are `$070000` and `$078000`, which differ **only in the middle byte**. Its
+`move.b $74d.l,$ff8201.l` therefore writes `$07` over `$07` every single frame and the high half
+never moves: the shifter goes straight from one real buffer to the other and is never pointed
+anywhere else. **Measured: zero transients over fifty-two frames.**
+
+Ours cannot do that. The buffers become `image_base + $70000` and `image_base + $78000`, and when the
+image base's middle byte is `>= $80` the sum carries into the high byte — so our high byte really
+does change, and for one instruction the shifter points at an address that is neither buffer.
+Measured under TOS 1.04, with `image_base = 0x4a600`: the pair is `0xba600`/`0xc2600` and the
+transient is `0xb2600` or `0xca600`, **once per frame, fifty-two times**. `smoke.py`'s
+`expected_base_shape` derives that count on both sides from their own buffer addresses, rather
+than pinning it or tolerating it.
+
+It is **TPA-dependent, and that is measured rather than reasoned**: an image base whose middle byte
+is under `$80` produces no carry and no transient. EmuTOS puts the frame builds at `0x53000`, and
+there the **same binary** produces **zero** transients and three idle base writes a frame instead of
+two. So `smoke.py` does not pin a number at all — `expected_base_shape` derives the whole account
+(publications, transients, idle writes) from the two buffer addresses, and the two ROMs are then a
+hardware control for this paragraph.
+
+What survives of the old paragraph is the reason it does not matter in practice: `flip_screen`
+issues both writes between its two waits, i.e. just after a vblank, so the window in which a display
+could start from the wrong address is one instruction long and outside the visible frame.
 
 ### 4. Both interrupts, and the one the reconstruction does not have
 
@@ -283,7 +390,8 @@ every other channel's in-service bit at the same time.
 
 ### 5. What is deviated from the boot, and what is inherited from it
 
-Three, each stated because a silent deviation is the same shape as a bug:
+Four, each stated because a silent deviation is the same shape as a bug. The fourth was found by M6
+and had been invisible for three phases:
 
 - **MFP timers A and B are NOT masked**, although the boot masks them (`$e4e6`: IERA/IMRA := 0). This
   build hands the machine back and does GEMDOS I/O afterwards, both of which want TOS's own clock
@@ -296,7 +404,23 @@ Three, each stated because a silent deviation is the same shape as a bug:
   between a select and its data writes the interrupted register's value into the interrupting one.
   Masking here would be a change to what the machine does that no surface in this project could tell
   from the original, so it is recorded: the surface that would show it is the **PSG write timeline**
-  (`--trace psg_write`) compared against the shipped binary's, which is M6.
+  compared against the shipped binary's, which is §11. **It now exists, and it has not shown the race
+  firing**: over fifty-two frames the shipped binary's 1,155 (register, value) pairs are an exact
+  prefix of our 6,424, decoded through the select/data protocol — so no write in that window landed
+  in an interrupting register. That is a window's worth of evidence and not a proof the race cannot
+  happen; the decoder files a data write with no select before it under register `None`, which is
+  what such a landing would look like.
+- **`publish_screen_base` publishes `WB_SCREEN_FRONT`; the original's boot publishes
+  `WB_SCREEN_BACK`.** MEASURED by §11, from the writes before each side's window: the boot chain
+  writes `$070000` at `$f90c`/`$f914`, which is the staged image's BACK buffer, while our shim
+  publishes the FRONT one, `$078000`. Frame 1 then publishes `$070000` on both sides, because both
+  run the same image and `flip_screen` swaps the same longwords — so the two agree from frame 1
+  onward and the whole consequence is **which buffer is on the shifter for the length of the shim's
+  own setup**, before any frame has drawn. It is left as it is rather than "fixed", because
+  publishing the front buffer is the defensible thing for a shim to do and changing it to match
+  would be choosing the original's arbitrary state over a reasoned one; what M6 does instead is
+  **derive it** (`expected_base_shape`, from what each side's entry left on the shifter), so it
+  cannot drift unnoticed.
 
 ### 6. Every write is read back
 
@@ -539,6 +663,120 @@ With it armed, the survivor dies:
 That leaves **one** of the four shifter-sink mutants alive, and it is the one whose home has always
 been the next milestone rather than this one.
 
+### 11. M6, and what an ORDER is worth
+
+M2 compares what the reconstruction drew at four instants. M5 compares the machine's registers and
+the rendered picture at the same four. **Every one of those is a snapshot, and a program that
+arrives at the right state by a wrong route passes all of them.** M6 is the surface they are all
+blind to: what reached the hardware, in what order, across all fifty-two frames.
+
+**THE MUTANT THAT MADE IT NECESSARY, and it is now dead.** `flip_screen`'s last two statements are
+`wr16(image + WB_FLASH_TIMER, flash)` and `shifter_write_word(WB_SHIFTER_PALETTE, ...)`. The
+argument is the already-decremented local, so **swapping them changes no value anywhere** — the same
+word reaches RAM and the same colour reaches the chip. `../STATUS.md` measures it surviving the whole
+differential suite, and it survived every check in this directory too. Applied, and measured:
+`m5flash` stays **entirely green** — framebuffer, sixteen pens, twenty hardware registers and the
+rendered PNG, at all four anchors — while `m6flash`'s order row goes red with exactly the predicted
+shape (the first decrement is followed by the *next* frame's colour write, and the last decrement is
+followed by none at all). That pair of runs is the whole argument for this section.
+
+**THE INSTRUMENT IS `--trace io_write`, and not the sibling project's two flags.** Two measured
+reasons. First, this game's timeline needs `flip_screen`'s screen-base publication, and
+`--trace video_addr` emits **nothing at all** for a write to `$ff8201`/`$ff8203` on Hatari 2.6.1 —
+zero lines over a whole run. Second, one stream removes any question of how two trace channels
+interleave, and interleaving is the only thing this check measures.
+
+Three things about that instrument are worth carrying, because each of them cost a wrong reading:
+
+- **The same register is named two ways in one log.** Code that sign-extends a short absolute
+  reaches `$ffff8800`; code that does not reaches `$00ff8800`. It splits along the two sides — TOS
+  and our C write the first, the shipped 1989 binary writes the second — so a parser keyed on the
+  printed spelling reads one side's stream as EMPTY and passes. Addresses are masked to 24 bits.
+- **Hatari collapses repeated lines** into `N repeats of: …` on a doubling schedule. Measured over
+  both sides' whole runs, the only line it ever collapses is the MFP's `$fffffa11 = $00` — none of
+  the five registers this reads — but a collapsed run would silently shorten a stream compared
+  element for element, so it is **detected and refused** rather than expanded on a guess about
+  whether the printed count is cumulative or incremental.
+- **A window opens with a base already on the shifter, and the classifier has to be told.** Started
+  from zero, the first write of a window — `flip_screen`'s high byte, which changes nothing — reads
+  as the window's first publication. Measured: that gave our side 53 publications for 52 frames and
+  put the whole sequence one flip out of phase, **while the shipped side's own count came out right
+  by accident**, because its stale first byte `$07` happens to name a real buffer on its own. Both
+  sides now carry the address their window opened on.
+
+**HATARI HAS NO RAM-WRITE TRACE, so the order mutant needed a second probe.** The RAM half of the
+pair is a value-change breakpoint — `b ($addr).w ! ($addr).w :trace`, Hatari's own documented idiom —
+whose hits are folded into the SAME ordered stream as the I/O writes, under an out-of-band negative
+register number. It is an instruction-boundary probe, one instruction coarser than the bus, which is
+enough because the two writes are adjacent statements. Two things had to be arranged:
+
+- **The address is not accepted at `--parse` time.** Hatari answers "invalid address" for a RAM
+  address at power-on, while `$ffff9202` from its own documentation parses — the machine has not
+  sized its memory yet. So the watch is **chained**: a `b VBL > 100` breakpoint that costs nothing
+  installs it once the machine is up, and the address itself comes from `STATS.BIN`'s `image_base`,
+  which means our side is booted a second time. The two boots are then **required to agree** about
+  where GEMDOS put the program — M5's rule, because a different base means the breakpoint watched
+  somebody else's memory.
+- **The watch has to predate the frames, and each side proves it differently.** On the shipped side
+  it goes into the same action file as the debugger's poke, after it, so its baseline is the seed
+  and it never sees that write. On ours it is installed on a vblank count, so it MUST see
+  `arm_the_flash` write the seed — and the check requires that, because a watch installed after the
+  countdown began would be reading an unknown window.
+
+**THE SOUND, at last, and what bounds it.** §10 records that the YM-2149 file cannot be compared as
+a snapshot: two boots of the shipped binary itself write different sound registers at the same
+anchor, so the register file is captured, printed and compared by nothing. The STREAM can be
+compared, and it is: over the window, the shipped binary's **1,155 PSG writes are an exact prefix of
+our 6,424**, register and value, in order. A prefix and not an equality, and the asymmetry is
+structural rather than a tolerance — the music is driven by `snd_music_tick` from the VBLANK while
+the window is bounded by FRAMES, and the two sides spend a different number of vblanks on a frame
+(measured: about 2 against 11½). The floor is the shipped side's own count, because a prefix relation
+is satisfied by a stream of length one.
+
+**AND IT IS GATED ON A REPRODUCIBILITY MEASUREMENT, for the same reason `m5` is.** `original.py
+psgnoise` boots the shipped binary a second time and differences the two streams; `m6` refuses to run
+without the reading and **prints what it excludes**. The readings, and they are the interesting part:
+
+| fabrication | pairs taken | writes differing | registers | where |
+|---|---|---|---|---|
+| **unflashed** | 2 | **0** of 1,155 in both | none | — |
+| **flashed** | 2 | **42** of 1,155 in one, 0 in the other | 0 and 1 — channel A's tone period | inside the first eleven frames |
+
+So `m6` compares all eleven registers with nothing excluded, and `m6flash` compares nine. Three
+things about that table are the point:
+
+**One reading per fabrication is `flashnoise`'s rule (§10), and it earned its keep here.** The
+divergence was first seen as `m6flash` going red, and the tempting response — exclude registers 0
+and 1 everywhere on that evidence — would have thrown away the full-strength assertion the unflashed
+pairs support. It is also coherent rather than a coincidence: the flashed boot is a different
+machine, `../src/behavior.c` gates on the same countdown word, so it drives different actors, and a
+sound effect whose pitch sweeps per vblank cannot land on the same value twice when what varies is
+which vblank the floppy boot finished on.
+
+**THE PAIRING IS INTERMITTENT — one flashed pair differed and the next did not** — so the reading
+accumulates rather than overwrites: a register once seen to move stays excluded, and the stored
+`pairs` count says how much looking is behind that.
+
+**And the accumulation is not enough on its own, because `build/` is gitignored.** A fresh clone
+starts with an empty reading, and a clone that drew the quiet flashed pair would compare a register
+this project has already watched move — going red for something neither binary did.
+`PSG_REGISTERS_KNOWN_UNSTABLE` in `original.py` is therefore a **committed floor** under the reading,
+carrying `(0, 1)` for the flashed fabrication with these measurements as its citation. The
+per-machine pairs union on top of it and never subtract.
+
+The measurement is one-directional, exactly as `vecnoise` is: a register that moves is demonstrably
+one boot's accident; one that does not is **not thereby shown to be stable**, and two boots is not a
+sample that could bound anything.
+
+**WHAT M6 DOES NOT HAVE is a standing injected control over the SOUND row.** The re-arm control
+reddens the palette rows and the mutant reddens the order rows, and both are shown not to move
+anything else. Nothing in this directory perturbs the PSG stream on purpose — the writes come from
+the cores, which are compiled unchanged. The row is not unexercised, because it has failed for real
+(the flashed divergence above is what produced the reproducibility gate), but a demonstrated failure
+is not a control. **Registered**, with its trigger and home: the trigger is any change under
+`../src/sound.c`, and the home is a `m6silent`-shaped build that perturbs the stream through the
+shim's own PSG sink the way `m5fault` perturbs a pen through the shifter sink.
+
 ## The bugs found on target
 
 Four, on the first three runs, and every one of them is the shape `docs/on-target-execution.md`
@@ -585,19 +823,29 @@ first thing to check when nothing ran is whether anything could have.*
   43 phase C widened it to the whole of `../src/map.c` and `../src/scene.c`, so it is stated here
   rather than inherited quietly. Pinning it needs an on-target case that computes such an address on
   purpose and watches a surface that can see the answer; there is none today.
-- **Of the four shifter-sink mutants `../STATUS.md` measures as surviving the whole differential
-  suite, ONE IS LEFT.** M1 killed the base-byte swap where it lives in the shared translation; M2
-  killed the same swap at `flip_screen`'s own two call sites and the wrong buffer published (§9); M5
-  killed the flash's two arms swapped, by arming the countdown on both sides (§10). The survivor is
-  **the sink write moved above the timer store**, and it is not a coverage gap that more anchors
-  would close: it changes no value, only the order of two writes, so no snapshot can see it whatever
-  the data. It is M6's, and M6 is the ordered write timeline.
-- **The whole YM-2149 register file is captured on target and compared by nothing.** §10 has the two
-  reasons and the measurement behind the first; the consequence is that this project's *sound* has an
-  on-target witness (the registers are printed, both sides, every run) but no on-target assertion.
-  A snapshot cannot supply one — the music's phase is not controlled on either side — so the pin has
-  to be M6's write timeline, which would compare what reached the chip and in what order rather than
-  where the song had got to.
+- ~~**Of the four shifter-sink mutants `../STATUS.md` measures as surviving the whole differential
+  suite, ONE IS LEFT.**~~ **NONE IS LEFT.** M1 killed the base-byte swap where it lives in the shared
+  translation; M2 killed the same swap at `flip_screen`'s own two call sites and the wrong buffer
+  published (§9); M5 killed the flash's two arms swapped, by arming the countdown on both sides
+  (§10); **M6 killed the sink write moved above the timer store** (§11), which was the one no
+  snapshot could ever see because it changes no value, only an order. Measured both ways: with the
+  mutant applied `m5flash` is entirely green and `m6flash`'s order row is red.
+- **The whole YM-2149 register FILE is still captured on target and compared by nothing** — §10 has
+  the two reasons and the measurement behind the first, and neither has moved. What HAS changed is
+  that this is no longer the same thing as the sound being unasserted: §11 compares the ordered PSG
+  write STREAM, gated on its own reproducibility measurement, and over the fifty-two-frame window
+  the shipped binary's 1,155 writes are an exact prefix of ours. The register file remains a printed
+  witness because it is a snapshot of where the song had got to; the stream is the assertion.
+- **M6's sound row has no standing injected control.** It has failed for real — the flashed
+  divergence that produced the reproducibility gate — but a demonstrated failure is not a control,
+  and nothing here perturbs the PSG on purpose because the writes come from cores compiled
+  unchanged. Registered in §11 with its trigger (any change under `../src/sound.c`) and its home (a
+  `m6silent`-shaped build perturbing the shim's PSG sink the way `m5fault` perturbs a pen).
+- **M6 reads five registers and the machine has more.** The timeline covers the screen base, the
+  sixteen pens and the two YM ports — the surface this port actually drives. The MFP, the FDC and
+  the RS-232 writes in the same trace are dropped, because they belong to TOS and to the floppy and
+  differ between a GEMDOS drive and a real one by construction. A reconstruction bug that reached
+  one of those would not be seen.
 - **Only one frame's worth of the game is reached.** Fifty-two frames of a motionless stage 1 with
   no stick pushed. Nothing that needs input, nothing that scrolls, no monster that has spawned, no
   stage but the first. What M2 shows is that the frame loop and everything under it agree with the
