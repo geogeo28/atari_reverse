@@ -2017,6 +2017,23 @@ honest limit: that a real ST answers `$b0`/`$02`. `tools/recreate_kit/TRAP_MODEL
 
 ## 5. The false-green surface — every steering hardware read
 
+> *(Marked in place — **batch 43 phase A, 2026-08-21**. Two of the rows below are no longer a
+> surface at all in the on-target build: `atari/wonderboy_backend.c` implements `hw_read8` as the
+> read itself, so `$17c7e`'s `$fffa01` and `$17c90`'s `$ff820a` — **the BuggyBoy register** — answer
+> for themselves on the machine. It is measured rather than asserted: `atari/smoke.py m1` reads the
+> byte `tempo_drop_value` leaves in the image and gets `WB_SND_TICK_DROP_50HZ` on a colour boot, and
+> the SAME BINARY booted with `--monitor mono` gets `WB_SND_TICK_DROP_MONO`. A code control cannot
+> show that a hardware read is live rather than folded; changing the machine can, and that is the
+> only evidence in this project that any of these reads is real.*
+>
+> *The two VOLATILE rows — `$6910` in `rng_next` and `$51ae`/`$51b6` in `bcd_add_random_1_to_4`,
+> which mix the video address counter — are ALSO real on target, and that is where "the diff stays
+> clean while the game's randomness silently disappears" stops being true. They are not yet
+> EXERCISED: neither routine runs in M1. Registered, not discharged.*
+>
+> *Every other row below is unchanged. The FDC rows in particular are untouched — the floppy driver
+> is unported and the on-target build stages its image through GEMDOS instead.*
+
 The classifier reports **10 sites in 6 functions**:
 
 > *(Marked in place — §0i. **5 sites in 3 functions** today. The five `$fffa01`/`$ff820a` rows below

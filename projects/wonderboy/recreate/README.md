@@ -788,6 +788,14 @@ Give the pair one shared salt constant and say why beside it.
 
 ## Running
 
+`atari/` is a **second build of the same sources** and is documented in `atari/README.md`. It
+cross-compiles the sixteen `src/*.c` unchanged to 68000 and runs them as a GEMDOS `.PRG` under
+Hatari, replacing the kit's four models with real hardware. It is a separate build directory with a
+separate compiler and the differential `.so` never sees it, so `make test` below is unaffected —
+`atari/build.sh` asserts that by refusing a `.PRG` that any of the kit's off-target model symbols
+leaked into. The only trace of it in `src/` is a `#ifdef WB_ON_TARGET` arm on the three shifter
+sinks (`src/game.c`, `src/stage.c`), a define `make test` never passes.
+
 ```bash
 make venv      # once: .venv + pytest/pytest-xdist (see requirements.txt)
 make test      # build the candidate + the shared oracle, run the suite across cores

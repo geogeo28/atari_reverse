@@ -3389,6 +3389,11 @@
                                               * alike: what $f944 puts on the screen is not pinned by
                                               * anything (see set_palette in stage.h) */
 #define WB_PALETTE_COLOURS         16u      /* `move.l (a0)+,(a1)+` x 8 == 16 words */
+/* One shifter colour register per colour, so the registers are WB_PALETTE_ROW_BYTES/WB_PALETTE_COLOURS
+ * apart. DERIVED rather than written as 2, so a palette row and the register file it is copied into
+ * cannot disagree about their stride. Used only by the on-target arm of set_palette (src/stage.c),
+ * which is the one place a colour INDEX has to become a register ADDRESS. */
+#define WB_SHIFTER_PALETTE_STRIDE  (WB_PALETTE_ROW_BYTES / WB_PALETTE_COLOURS)
 
 #define WB_SCROLL_FOLLOW_BIAS_X    0x20u    /* `subi.w #$20,d0` at $f9b2 before WB_BG_SCROLL_POS_X is
                                              * subtracted: half a WB_MAP_CELL_PIXELS cell over the

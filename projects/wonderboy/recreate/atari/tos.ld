@@ -9,10 +9,10 @@
  * the whole load — to a 256-byte boundary and drop any per-symbol alignment inside .bss (SUBALIGN 1),
  * so .bss abuts text+data exactly while the 256-aligned load base keeps the image page-aligned.
  *
- * SHARED WITH projects/wonderboy/recreate/atari/tos.ld — the two are identical BELOW THIS PARAGRAPH
- * (each copy names the other, so the markers differ and nothing else does), and a change to either
- * belongs in both. Registered as a kit candidate alongside mkprg.py; until
- * that move happens, this marker is the only thing linking the copies.
+ * COPIED FROM projects/joust/recreate/atari/tos.ld. The two are identical BELOW THIS PARAGRAPH —
+ * each names the other, so the markers differ and nothing else does — and a change to either belongs
+ * in both. Copied rather than moved kit-side for mkprg.py's reason; registered as
+ * a kit candidate in ../STATUS.md's batch 43 phase A queue.
  */
 OUTPUT_FORMAT("elf32-m68k")
 ENTRY(_start)

@@ -12230,3 +12230,248 @@ and a `make_long` helper; a `subsystems.tsv` range for the spine.
 * **A COMPOSITION CASE IS THE ONLY THING THAT SEES A MID-FRAME REPUBLISH.** `panel_refresh_frame`
   rewrites the pointer `actor_spawn_pass` reads five calls later; no battery that enters either
   routine directly can find that, and a seed written from the callees' own cases will fight it.
+
+## Batch 43 phase A — THE ON-TARGET ARC OPENS: the reconstruction runs on a 68000
+
+Batch 42 phase C closed the spine and ended with a four-item list headed *"What playable still
+needs, now that the spine is whole"*. **This phase takes items 1-3 whole and opens item 4.** The four
+things the harness can only model — a seeded hardware read, the direct YM2149 ports, a scheduled
+write that releases a busy-wait, and three shifter registers the oracle drops — now have a
+target-side implementation, and `WB.PRG` boots under Hatari, takes the machine, runs reconstructed
+code driven by real interrupts, and hands it back.
+
+**`make test` 6,138 from a clean `build/`, unmoved by this phase**; **the kit suite 392**; and
+**`tools/test_hw_portability.py` 56 and green from the repo root** (the standing line every batch
+records since batch 33 — it is outside `make test` and has to be run on purpose). No function was
+ported this phase, so the verified count is unchanged at 314 / 40,976 bytes.
+
+**TWO BOOKKEEPING CORRECTIONS TO BATCH 42 PHASE C, so the baseline reconciles.** Its header says
+`make test` 6,136; the number after that phase's own fix pass was **6,138**, and the header's
+re-sweep kept the pre-fix count. 6,138 is therefore not a gain here — it is 42C's real figure, and
+this phase moved it by zero. Separately, **42C's `names.txt` was stranded by a staging slip** and
+reached the working tree without reaching that commit: the `cmt 0x4a0` and `cmt 0x604` edits sitting
+uncommitted alongside this phase's two plate appends are 42C's, not 43A's.
+
+The differential build never sees `atari/`, and `atari/build.sh` now MEASURES that rather than
+claiming it (below).
+
+### The backend surface is a SET, and it is six symbols
+
+Taken from the union of the sixteen `src/*.c` translation units' undefined symbols minus the game's
+own; `nm` on `build/libwonderboy.so` agrees (one undefined symbol, `bzero`, from `clear_message_
+buffer`'s 6400-byte clear in `src/text.c`).
+
+| symbol | call sites | on target |
+| --- | --- | --- |
+| `hw_read8` | 5 — `rng.c:33`, `behavior.c:2520,2522`, `sound.c:1057,1059` | the read itself |
+| `psg_port_write` | 10 — `game.c:308`, `sound.c` ×9 | `$ff8800` select, `$ff8802` data |
+| `psg_port_read` | 3 — `game.c:307`, `sound.c:146,1003` | select, then read back through `$ff8800` |
+| `sched_wait8` | 1 (two wait SITES reach it: `$60e`, `$64e`) | an uncapped spin |
+| `sched_poll16` | 2 — `flip_screen`'s `$6aa` and `$6d0` | one uncapped iteration |
+| `os_refused` | 1 — `sound.c:786` | not defined: `-DOS_NO_REFUSAL_TALLY` serves an inline identity |
+
+**AND THE COMPLEMENT, because a set is only a claim if its complement is one.** `sched_poll8` has
+**0** direct call sites and is deliberately not defined, so a future core that calls it gets a link
+error; `g_dosound` has **0** — this game never issues XBIOS `Dosound`; `os_giaccess`, `os_random`,
+`os_super`, `os_bconstat`, `os_bconin`, `os_crawio` and the whole staged-file model have **0** each.
+
+**THE SEAM IS THEREFORE THE LINK, NOT THE INCLUDE PATH, AND THAT IS A FACT ABOUT THIS GAME.** Joust
+needs a `shim_include/os.h` shadow because the five helpers it replaces are `static inline` and have
+no symbol; Wonder Boy calls none of them, because `project.toml`'s byte scan established that the
+whole program issues ONE trap in its life. Every kit dependency it has is a real symbol.
+
+**`build.sh` ASSERTS THE SEAM IN THREE DIRECTIONS** rather than describing it, and the third was the
+gate's find. No `g_hw_reset`, `g_psg_reset`, `g_sched_reset`, `g_dosound`, `g_os_refusal_reset` or
+`sched_poll8` may appear in the `.PRG`; all five symbols the backend owes must; and — the one a
+symbol scan structurally cannot do — **no core may call a `static inline` os.h helper.**
+
+**THE SYMBOL SCAN IS BLIND TO HALF THE KIT, AND THAT IS MEASURED, NOT ARGUED.** `os_random`,
+`os_giaccess`, `os_bconin`, `os_bconstat`, `os_crawio`, `os_super` and the whole staged-file family
+have no link symbol at all. A core that started calling one would compile THE MODEL into the PRG and
+this build would "verify" the reconstruction against a keyboard that does not exist — the project's
+own false-green class, arriving by the one door the post-link scan cannot watch. Planted
+`os_random(0)` in `src/rng.c` with the new tripwire disabled: **the PRG linked, exit 0, and `nm` found
+zero model symbols.** With the tripwire on it fails naming the file and the helper. The allowed set
+is two, `os_in_image` and `os_refused`, and adding a third is a decision about what the machine
+really answers — which is what the check exists to force into the open.
+
+**AND THE BANNER'S OWN CLAIM IS NOW MEASURED.** `build.sh` said the `.so` is unchanged and asserted
+nothing; it now preprocesses `src/game.c` and `src/stage.c` with the DIFFERENTIAL include path and no
+`-DWB_ON_TARGET`, and requires that not one `wb_target_` token survives (plus an `nm` of the built
+`.so` when one is present). RED-checked by deleting the `#ifdef` guard: the check fires with a count.
+That RED-check also found a defect in the check itself — the failure message spelt a tool name in
+backticks inside a double-quoted string, so bash **ran** it. A message on a path nobody has taken is
+a path nobody has taken.
+
+### The three sinks, and the one that needed arithmetic
+
+`src/game.c`'s `shifter_write_byte`/`_word` and `src/stage.c`'s `shifter_palette_write` gained a
+`#ifdef WB_ON_TARGET` arm — three lines each, forwarding to `atari/wonderboy_backend.c`. That define
+is passed only by `atari/build.sh`, so the `.so` compiles exactly as before.
+
+**THE SCREEN BASE HAS TO BE TRANSLATED, AND IT IS THIS PORT'S ONE PIECE OF REAL LOGIC.**
+`flip_screen` publishes an address out of the game's own space (`$070000` / `$078000`, the map
+`SWB.PRG` owns outright after relocating itself to `$400`). This build runs on a 1 MiB array GEMDOS
+placed wherever the TPA fell, so the buffer the game means is at `image + $70000` and `$070000` is
+TOS's own memory — publishing the byte unchanged would point the shifter at the operating system. The
+two bytes are shadowed and re-emitted as `image_base + what the game asked for`; the shadow is
+load-bearing because the halves arrive in separate instructions and the sum can carry between them.
+Measured: `image_base 0x2a600` under TOS 1.04 and `0x33100` under EmuTOS, published `0xa2600` /
+`0xab100`. **Not a constant that happens to be right.**
+
+### M1, and what it is drawn on
+
+The staged image is `harness.BASE_IMAGE` narrowed to `[0x3f8, 0x218d0)` with seven named seed words.
+**It fabricates almost none of the boot's result and says so**: `atari/gen_image.py`'s header
+enumerates every product it lacks, with an address range each (the tile bitmaps at `$1d43e`, the
+depacked overlay at `$217d8`, the sprite descriptors and cells at `$24898`/`$25298`, the eight
+pre-shifted buffers over `$44000..$70000`, both screens), and two of the routines that produce them —
+the tile installer at `$e67e` and `sprites_cru_install` at `$e87c` — are not merely unported but
+**unreconstructed**, so their products cannot be computed host-side at all today.
+
+So M1 claims only what a PROGRAM IMAGE plus a REAL MACHINE can show, and it is green on **TOS 1.04
+and EmuTOS**:
+
+1. `vbl_handler` runs on the level-4 autovector at 50 Hz — the image's `WB_VBL_COUNTER` equals the
+   shim's independent tick count, 66 for a 60-vblank ask.
+2. `tempo_drop_value` picks the tempo from **two real hardware reads**. This is **PORTABILITY.md §5's
+   false-green surface closed for the first time**: `$fffa01` and `$ff820a` are the pair the oracle
+   can only serve from a seed, and `$ff820a` is the register BuggyBoy shipped a green on all the way
+   to real hardware.
+3. The idle countdown expires and `floppy_deselect_drives` drives the **real YM2149**, read back
+   (`0x25 → 0x27`, keeping the five non-floppy bits).
+4. `sched_wait8`'s uncapped spin ends on a byte a **real interrupt** wrote.
+5. The screen base is translated and read back off the shifter.
+
+**THREE CONTROLS, AND ONE OF THEM IS NOT A CODE CHANGE.** `novbl` suppresses one store (the vector
+install) and every machine-driven check fails — while the two that do not depend on the vblank still
+pass, so the control is targeted rather than a blanket break. `mono` boots **the same binary** with a
+monochrome monitor and the tempo byte moves to `WB_SND_TICK_DROP_MONO`: a code control cannot show
+that a hardware read is LIVE rather than a constant the compiler folded, and changing the machine
+can. Every mode also runs Hatari to the END of `--run-vbls` and asserts the exit status *and* the
+merged log, because an incomplete hand-back is only visible after `Pterm`.
+
+### What is written and NOT pinned, stated rather than counted
+
+* **`sched_poll16`.** It cannot be pinned until a frame runs — `flip_screen`'s two waits are its only
+  callers — and it ships because `game_main_loop` will not link without it.
+* **The joystick arms of the shim's ACIA handler.** `$fe`/`$ff` have never executed: the IKBD sends
+  reports only in event-reporting mode with a stick that moves, and a headless Hatari has none. The
+  SCANCODE arm is the one M1 drives.
+* **The game's own two key waits** (`$60e`, `$64e`, on scancode `$19`). `sched_wait8` really spins and
+  a real interrupt really ends it, but the byte is the IKBD's reset acknowledge, not a keypress.
+* **`sound.c:786`'s refusal has no on-target story**, unchanged from batch 33: on target
+  `-DOS_NO_REFUSAL_TALLY` turns it into "return the sentinel", where the original reads a word of the
+  handlers' own instruction stream and `jmp`s through it.
+* **M1 KILLS ONE OF THE FOUR SHIFTER-SINK MUTANTS, and the gate is why.** The addend was printed and
+  never pinned; check 5 now compares `published - image_base` against `WB_SCREEN_FRONT`'s own
+  longword read out of the staged image. **Measured with the mutant applied**: the base-byte swap in
+  `wb_target_shifter_byte` publishes `image + 0x800700` against a staged `0x78000` and the mode
+  fails. Be exact about which home, though — that code is SHARED with `flip_screen`, so what dies is
+  the swap in the TRANSLATION; the same swap in `flip_screen`'s own two call sites is untouched,
+  because `flip_screen` does not run. (The shifter read-back fires on this mutant too, but only
+  because that particular swapped address overflows the 24-bit bus; the addend pin is the one that
+  catches it by construction.) The remaining three-and-a-half: the wrong buffer published and
+  `flip_screen`'s call-site swap at **M2**, the flash's two arms swapped at **M5**, the sink write
+  moved above the timer store at **M6**. A forward ledger, not a discharge.
+* **The PSG select/data pair is not atomic.** Two threads write the chip and an interrupt between a
+  select and its data corrupts one register — the ORIGINAL's race, reproduced rather than repaired,
+  because masking here is a change no surface in this project could tell from the original. The
+  surface that would show it is the M6 PSG timeline.
+
+### The bugs found on target
+
+Four, on the first three runs, and each is the shape `docs/on-target-execution.md` warns about.
+
+* **A NON-VOLATILE IMAGE READ IN A BUSY-WAIT — IN THE SHIM, ONE FILE OVER FROM THE COMMENT ABOUT
+  IT.** `await_ikbd_reply` spun on `game_image[WB_KEY_LAST_SCANCODE]`; GCC hoisted the load and the
+  reply landed unseen. `wonderboy_backend.c`'s `sched_wait8` reads through a `volatile` pointer for
+  exactly this reason and its comment says so. *The hazard you have documented is the one you stop
+  looking for.*
+* **A HARDWARE REGISTER THAT DOES NOT READ BACK WHAT YOU WROTE.** The shifter's resolution register
+  is two bits; the other six are bus noise. *A read-back is only a check if it reads back the bits
+  that exist.*
+* **A BOUND THAT OUTRAN THE RUN — TWICE, AND THE SECOND TIME IT COST THE CONTROL ITS EVIDENCE.**
+  Both the reply wait and the vblank watchdog were given spin counts longer than `--run-vbls`, so the
+  program never reached its own dump. On `novbl` that means "no record", which says nothing about
+  WHICH checks the control broke — **and a control that cannot say that is not a control.**
+* **`--run-vbls` SHORT ENOUGH TO PRECEDE THE DESKTOP.** At 900 the program was never `Pexec`'d; the
+  failure looked identical to a crash.
+
+### Lessons
+
+* **A CONSTANT YOU WROTE DOWN ABOUT A DEVICE IS A GUESS ABOUT ITS FIRMWARE.** The IKBD's documented
+  reset acknowledge is `$f0`; this machine answers `$f1`, and the first draft failed on a path that
+  was working. The interesting question was never "is it `$f0`" but "did an interrupt write the byte
+  the reconstruction spins on" — so the wait now LEARNS the byte and a second reset pins that it
+  REPEATS, which is a stronger claim than the constant was.
+* **A CHECK CAN PASS FOR THE WRONG REASON ON ONE MACHINE AND THE RIGHT REASON ON ANOTHER.** Port A
+  reads `0x25` at entry under TOS 1.04 and `0x27` under EmuTOS — so on EmuTOS the "drives
+  deselected" assertion is satisfied by the ENTRY STATE and witnesses nothing. Only the TOS 1.04 run
+  measures a change. Two ROMs, one of which can see the check.
+* **A CONTROL WHOSE CHECKS CANNOT ALL FAIL ON THIS MACHINE REPORTS A FALSE RED.** `novbl` inverts its
+  verdict, so it requires every machine-driven check to break — and on EmuTOS one of them cannot,
+  because port A already reads `0x27` at entry and the YM2149 assertion is satisfied by the entry
+  state. The control would have failed against a control that was working. Membership is now derived
+  from the run's OWN recorded entry byte and the exclusion is PRINTED: dropping it silently would be
+  the vacuous-green failure mode wearing the control's clothes.
+* **A SNAPSHOT THAT COMPARES TWO CLOCKS HAS TO TAKE THEM AT ONE INSTANT.** M1's first assertion is
+  `image counter == shim counter`, and the two were read either side of the teardown — so a vblank
+  in the window made the shim one ahead and the gate red on a correct build, perhaps once in a few
+  thousand runs. **That frequency is the danger, not the bug**: a red that rare gets dismissed as
+  flake. Closed by masking (four instructions in `wonderboy_os.s`) rather than by a seqlock retry,
+  which cannot close it — `wb_vbl_tick` increments the shim's counter BEFORE calling `vbl_handler`,
+  so a handler already in flight lands its image write between two equal readings.
+* **A REGISTERED BOUNDARY WITH NO DISCHARGING MILESTONE SHIPS FOREVER.** The ACIA handler's
+  `$fe`/`$ff` joystick arms had a trigger ("they have never executed") and no home. They have an M3
+  row now, with the mechanism named — an interactive Hatari run with `--joy1 keys`, because a
+  headless run cannot press a stick. Same pass gave the exits an M3 row, put Joust's side-by-side
+  into M2's post-boot-RAM row, and recorded that the `HIGH.SCO` equivalent is **absent by
+  construction** rather than deferred: this game performs no file I/O at all.
+* **THE HARDWARE CONTROL IS THE ONE A CODE CONTROL CANNOT REPLACE.** Every code-side control shows
+  that a branch was taken; only changing the MACHINE shows that the branch was steered by the
+  machine. `mono` costs one Hatari flag and it is the only evidence that `hw_read8` is not folded.
+* **A STAGED IMAGE IS A DECLARED FABRICATION, AND THE DECLARATION IS THE DELIVERABLE.** What makes
+  this one honest is not that it is small; it is that `gen_image.py` enumerates every boot product it
+  LACKS, by address, and names the two routines whose absence makes the rest uncomputable.
+* **LINE NUMBERS IN A DOC SELF-STALE ON THE COMMIT THAT WRITES THEM.** The backend's call-site table
+  cited `sched_poll16` at `game.c:386,401`; this phase's own `#ifdef` insertion, twelve lines above,
+  had already moved them to 398/413. The table now carries the `grep` that re-derives it, and says
+  that the COUNTS are what the claim rests on — `build.sh` checks the SET after every link and never
+  looks at a line number.
+* **"NOTHING IN `src/` CALLS IT" IS NOT "NOTHING NEEDS IT".** The cleanup pass deleted
+  `atari/shim_include/string.h` after grepping the sixteen cores for a string function and finding
+  none — and the build failed in fifteen translation units, because it is the KIT's `os.h:25` that
+  includes `<string.h>`, and everything reaching `include/bus.h` inherits it. A dependency census run
+  over the wrong layer is a census of the wrong thing; the deletion failed loudly, which is the only
+  reason it cost a rebuild rather than a batch.
+
+### Queue
+
+**LANDED THIS PHASE**: on-target `hw_read8` / `psg_port_read` / `psg_port_write` / `sched_wait8` /
+`sched_poll16`; the screen/shifter backend for `flip_screen`'s three sinks and `set_palette`'s
+sixteen; the `.PRG` itself (linker script, crt0, trap wrappers, both vector installs).
+
+**BORN THIS PHASE:**
+* **THE ORIGINAL'S POST-BOOT RAM, DUMPED UNDER HATARI.** The obligation `gen_image.py` records, and
+  it is reachable: the Copylock is inside `SWB.PRG` rather than in the boot sector, disk 1's Pasti
+  `.stx` boots, and Joust's `smoke.py` already does `--parse` + `savebin 0 0x100000` against a
+  shipped binary. A dump at the `jmp $4a0` turns every fabricated range into a measured one, and it
+  is what unblocks M2.
+* **THE TILE INSTALLER (`$e67e`) AND `sprites_cru_install` (`$e87c`).** The two boot products no
+  ported code can compute. The first is ~70 bytes; the second drives a `lea (d,PC)` dispatch of four
+  unrolled copiers at `$e91c`.
+* **A SECOND READ-BACK PAIR IF EITHER INTERRUPT HANDLER GAINS A CHECK.** One pair is enough today
+  only because neither handler records one; `|=` is not interrupt-atomic on the 68000.
+* **THE HEADLESS-HATARI LAUNCHER IS NOW A THIRD COPY** (here, Joust, and twice in BuggyBoy's
+  `render/atari/`), as are the 68000 trap wrappers. Joust's README already registers both as kit
+  candidates; this phase makes the count harder to ignore. `mkprg.py` and `tos.ld` were COPIED from
+  Joust verbatim rather than moved kit-side, because moving them is a kit change that touches two
+  other projects — recorded, not taken.
+* **THE FOUR `-Wimplicit-fallthrough` NOTES** `src/behavior.c` emits under the cross build. They are
+  the cores' own deliberate reproductions and predate this directory; annotating them is a change to
+  verified code that belongs to whoever owns that tier, but they are noise that could hide a new
+  warning.
+
+**CARRIED, unchanged**: everything batch 42 phase C carries, minus the three on-target backends and
+the `.PRG` above.

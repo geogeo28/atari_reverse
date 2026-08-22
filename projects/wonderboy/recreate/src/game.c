@@ -373,9 +373,21 @@ void vbl_handler(uint8_t *image) {
 /* One write to a shifter register the differential cannot see. Two widths because the original uses
  * two: the screen base goes out as two BYTES and colour 0 as a WORD. Written as calls rather than as
  * no code at all so that the reads that FEED them, and the order, stay where a reader meets them —
- * set_palette's argument, one file over. */
+ * set_palette's argument, one file over.
+ *
+ * ...and the on-target arm the paragraph above has promised since batch 12. WB_ON_TARGET is defined
+ * only by ../atari/build.sh, so the differential `.so` compiles the sinks exactly as before. The
+ * screen base is TRANSLATED rather than published — the game names an address in the 512 KB map it
+ * owns outright and this build runs on an array GEMDOS placed elsewhere — which is why the arm is a
+ * call into the shim and not a store here; ../atari/wonderboy_backend.c has the arithmetic. */
+#ifdef WB_ON_TARGET
+#include "wonderboy_target.h"
+static void shifter_write_byte(uint32_t reg, uint8_t value) { wb_target_shifter_byte(reg, value); }
+static void shifter_write_word(uint32_t reg, uint16_t value) { wb_target_shifter_word(reg, value); }
+#else
 static void shifter_write_byte(uint32_t reg, uint8_t value) { (void)reg; (void)value; }
 static void shifter_write_word(uint32_t reg, uint16_t value) { (void)reg; (void)value; }
+#endif
 
 /* $6aa..$6b4 — spin while WB_VBL_COUNTER is below WB_VBL_COUNTER_READY, as a SIGNED word: `cmpi.w
  * #$1,d0 / blt.s`. Nothing in this routine raises the counter; vbl_handler does, fifty times a

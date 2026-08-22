@@ -9,12 +9,12 @@ GEMDOS expects to add the load base to.
 
 Usage: mkprg.py demo.elf demo.bin out.prg
 
-SHARED WITH projects/wonderboy/recreate/atari/mkprg.py — the two files are identical BELOW THIS
-PARAGRAPH (each copy names the other, so the markers differ and nothing else does), and a change to
-either belongs in both. Neither is the canonical one: `tools/recreate_kit/` is where
-this ought to live, and it is registered as a kit candidate in projects/joust/recreate/atari/
-README.md ("Reviewed and deferred") and in projects/wonderboy/recreate/STATUS.md's batch 43 phase A
-queue. Until that move happens, this marker is the only thing linking the copies.
+COPIED FROM projects/joust/recreate/atari/mkprg.py, which is itself copied from the BuggyBoy build.
+The copies are identical BELOW THIS PARAGRAPH — each names the others, so the markers differ and
+nothing else does — and a change to any belongs in all of them. Copied
+rather than moved into `tools/recreate_kit/` because that move is a kit change touching two other
+projects; it is registered as a kit candidate in ../STATUS.md's batch 43 phase A queue and in
+Joust's own README.
 """
 import re
 import struct

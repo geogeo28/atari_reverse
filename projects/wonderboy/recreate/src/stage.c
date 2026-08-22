@@ -400,10 +400,21 @@ void game_restart_reset(uint8_t *image) {
  * place the claim is untested is the one place it is stated. ../STATUS.md registers the kit-side
  * remedy — a dropped-hardware-write LEDGER, which would make this pinnable the way psg.h made the
  * chip writes pinnable — as an idea, not as work this batch did. */
+#ifdef WB_ON_TARGET
+#include "wonderboy_target.h"
+/* The on-target arm this comment has promised since batch 12. The index arithmetic stays HERE, at
+ * the one place that iterates, so the shim's store takes an absolute register and has no loop and no
+ * indexed addressing mode of its own — see ../atari/wonderboy_backend.c for why that matters
+ * (docs/on-target-execution.md, taxonomy 6: Joust's sixteenth pen landed in the resolution register). */
+static void shifter_palette_write(unsigned index, uint16_t colour) {
+    wb_target_shifter_word(WB_SHIFTER_PALETTE + index * WB_SHIFTER_PALETTE_STRIDE, colour);
+}
+#else
 static void shifter_palette_write(unsigned index, uint16_t colour) {
     (void)index;
     (void)colour;
 }
+#endif
 
 uint32_t set_palette(uint8_t *image, uint32_t source) {
     for (unsigned colour = 0; colour < WB_PALETTE_COLOURS; colour++)
