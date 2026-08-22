@@ -116,6 +116,13 @@ uint32_t wb_target_image_base(void) {
     return (uint32_t)(uintptr_t)game_image;
 }
 
+/* One big-endian image word. `bus_read_word` is not used and this is not an oversight: that is the
+ * RECONSTRUCTION's accessor, with the kit's out-of-image answer behind it, and the image is a plain
+ * array to the shim. */
+static uint16_t image_word(uint32_t at) {
+    return (uint16_t)(((uint16_t)game_image[at] << 8) | game_image[at + 1u]);
+}
+
 /* ---- what the smoke reads back ---------------------------------------------------------------
  *
  * TWO WORDS, NOT ONE, and the reason is this workspace's sharpest recorded lesson: `readback_failed`
@@ -562,6 +569,30 @@ struct m2_stats {
      * rather than taken. Its own field because "no capture" and "a capture of zeros" are the same
      * bytes in FRAME.BIN, and only one of them is a reconstruction defect. */
     uint32_t screen_front_out_of_range;
+    /* WHERE `capture_the_frame` IS, AT RUN TIME — the address M5's debugger script breakpoints so
+     * that the hardware-state vector is taken at the very instant this shim photographs the frame.
+     *
+     * REPORTED BY THE BINARY ABOUT ITSELF rather than read out of build/wonderboy.elf: that ELF is
+     * overwritten by every build while the per-mode .PRGs persist, so it is not necessarily the
+     * running program's — the sibling project once anchored four bytes out off a stale one and went
+     * green on the wrong breakpoint. A binary reporting its own address cannot be the wrong binary.
+     * smoke.py additionally re-reads this field from the DEBUGGER run and requires it to equal the
+     * value the first run reported, which is what pins GEMDOS having placed the program identically
+     * in both. */
+    uint32_t capture_pc;
+    /* WB_FLASH_TIMER AS THE FRAME LOOP FINDS IT, and it is a measurement in both builds. Zero is the
+     * staged image's own value — the reason `flip_screen`'s flash arms are unreachable across all
+     * fifty-two frames, which atari/README.md §9 cites — and M5_FLASH_SEED is what a run that arms
+     * them declares. Read back out of the image AFTER any seeding, so the field witnesses the write
+     * landing rather than the constant the build was given. */
+    uint32_t flash_timer_at_entry;
+    /* WHICH PEN THIS BUILD CORRUPTED on its way to the shifter, or PALETTE_PENS for "none".
+     *
+     * REPORTED BY THE BINARY, for `capture_pc`'s reason one control over: the per-mode `.PRG`s
+     * persist while atari/build.sh is edited, so a smoke that scraped `-DM5_FAULT_PEN=` out of the
+     * script would be naming a pen the running binary need not have injected. The sentinel is
+     * OUT OF BAND — a pen number is 0..15 and this is 16 — so "no fault" cannot collide with pen 0. */
+    uint32_t fault_pen;
     /* THE ANCHOR LIST THE BINARY WAS COMPILED WITH, carried off the machine rather than re-read.
      * smoke.py scrapes the same `#define` out of this file at CHECK time, so without this the two
      * can be from different edits: change M2_ANCHOR_FRAMES and run the smoke without rebuilding,
@@ -605,23 +636,54 @@ static unsigned anchor_slot(uint32_t frame) {
  * colour, which is `../src/stage.c`'s own iteration and not a loop over an indexed pointer (that
  * addressing mode is what put Joust's sixteenth pen in the resolution register). Read back per pen,
  * because a partially-published palette and a fully-published one differ by one wrong colour. */
+/* M5'S SENSITIVITY CONTROL, and it is a real injected fault rather than a rearrangement of numbers
+ * already in hand. One pen is corrupted on its way to the shifter — the palette the hardware ends up
+ * holding is wrong by exactly one register while every byte the reconstruction DRAWS is untouched —
+ * so the surfaces that read the machine's colour (the pen compare and the hardware-state vector)
+ * must go red and the framebuffer compare must not. smoke.py's `m5fault` names both halves.
+ *
+ * The corrupted value is the pen's own bits inverted inside ST_PEN_MASK, so the fault cannot be
+ * masked away and cannot collide with the right answer. */
+/* Out of band on purpose: a pen number is 0..15, so this cannot be mistaken for pen 0. */
+#define NO_FAULTED_PEN PALETTE_PENS
+#ifdef M5_FAULT_PEN
+#define FAULTED_PEN M5_FAULT_PEN
+static uint16_t faulted(unsigned pen, uint16_t value) {
+    return pen == M5_FAULT_PEN ? (uint16_t)(value ^ ST_PEN_MASK) : value;
+}
+#else
+#define FAULTED_PEN NO_FAULTED_PEN
+static uint16_t faulted(unsigned pen, uint16_t value) { (void)pen; return value; }
+#endif
+
 static void publish_staged_pens(struct m2_stats *record) {
     unsigned pen;
 
     for (pen = 0; pen < PALETTE_PENS; pen++) {
         uint32_t reg = WB_SHIFTER_PALETTE + pen * sizeof(uint16_t);
+        /* THE READ-BACK IS AGAINST WHAT WAS PUBLISHED, not against the staged word, and the
+         * distinction is what keeps `m5fault` a targeted control: the shim really did put this value
+         * in the register, so its own plumbing check stays green and the only thing that reddens is
+         * the DIFFERENTIAL against the shipped binary. A control whose run is unsound proves
+         * nothing, and a corrupted publish that also broke this row would look like one. */
+        uint16_t published = faulted(pen, staged_pens[pen]);
 
-        wb_target_shifter_word(reg, staged_pens[pen]);
+        wb_target_shifter_word(reg, published);
         if ((*(volatile uint16_t *)(uintptr_t)(SHIFTER_PALETTE + pen * sizeof(uint16_t))
-             & ST_PEN_MASK) != (staged_pens[pen] & ST_PEN_MASK))
+             & ST_PEN_MASK) != (published & ST_PEN_MASK))
             record->pens_readback_failed |= 1u << pen;
     }
 }
 
 /* The two surfaces, read where each of them really lives: the picture out of the IMAGE at the
  * address the game itself published, and the pens off the SHIFTER. Neither is read from a place the
- * reconstruction chose to put a copy — that would compare our intention with the original's pixels. */
-static void capture_the_frame(struct m2_stats *record, unsigned slot) {
+ * reconstruction chose to put a copy — that would compare our intention with the original's pixels.
+ *
+ * `noinline` BECAUSE ITS ENTRY IS AN ANCHOR: M5 breakpoints this address to take the hardware-state
+ * vector at the same instant the two surfaces above are captured, and its Nth arrival IS the Nth
+ * anchor. Inlined, `capture_pc` would name an out-of-line copy the run never enters and the vector
+ * would simply never be taken — a loud failure rather than a wrong one, but a needless one. */
+static __attribute__((noinline)) void capture_the_frame(struct m2_stats *record, unsigned slot) {
     uint32_t front = ((uint32_t)game_image[WB_SCREEN_FRONT] << 24)
                      | ((uint32_t)game_image[WB_SCREEN_FRONT + 1] << 16)
                      | ((uint32_t)game_image[WB_SCREEN_FRONT + 2] << 8)
@@ -668,6 +730,40 @@ static void capture_the_frame(struct m2_stats *record, unsigned slot) {
  * level-4 vector therefore still hangs, and what ends that run is `--run-vbls` and a missing
  * M2.BIN. What this bounds is a loop that is merely far too slow. */
 #define M2_VBL_BUDGET 2000u
+
+/* ---- M5's DECLARED FABRICATION: arming the flash ------------------------------------------------
+ *
+ * `flip_screen`'s last four instructions are a white-screen flash — `tst.w $714.l` at `$6e4` gates
+ * them, `subq.w #1,$714.l` at `$6ee` counts the frames, and the two exclusive arms at `$6f8` and
+ * `$702` write colour 0 white or black. WB_FLASH_TIMER is `$0000` in the staged image, so all four
+ * are dead across every one of the fifty-two frames, and the mutant that swaps the two arms survives
+ * the whole differential suite for that reason and no other.
+ *
+ * IT CANNOT BE DRIVEN IN THIS WINDOW, and that is a census rather than an impression. The image has
+ * exactly ONE writer that RAISES the timer — `move.w #$2,$714.w` at `$1328`, inside
+ * `player_weapon_fire` ($1208), the LIGHTNING arm — and two independent gates stand in front of it
+ * here: this run injects no joystick byte at all (so `joy1_newly_pressed()` can never read `$80`),
+ * and the staged image's WB_EFFECT_RECORD_WRITE_PTR sits exactly at the list base, i.e. the player
+ * holds no item to fire. Reaching it honestly needs an item collected and two frames of held input,
+ * which is a milestone away.
+ *
+ * SO THE VALUE IS SEEDED, AND THE SEED IS THE ORIGINAL'S OWN OPERAND — `WB_PLAYER_LIGHTNING_FLASH`,
+ * the `#$2` at `$1328` — applied to BOTH sides at the SAME instant: this shim writes it into the
+ * image immediately before the first `game_main_loop`, and atari/original.py pokes the same word at
+ * `$4a0`'s FIRST arrival, which is the boot's own `jmp` landing before any frame has run. Two frames
+ * of countdown then put a white anchor and a black anchor inside the window, which is both arms.
+ *
+ * WHAT THIS IS NOT: it is not the game reaching the flash. It is the two sides given the same
+ * unreachable state and required to agree about what they do with it, and atari/README.md §10 says
+ * so where the claim is made. */
+#ifdef M5_FLASH_SEED
+static void arm_the_flash(void) {
+    game_image[WB_FLASH_TIMER] = (uint8_t)(M5_FLASH_SEED >> 8);
+    game_image[WB_FLASH_TIMER + 1u] = (uint8_t)M5_FLASH_SEED;
+}
+#else
+static void arm_the_flash(void) { }
+#endif
 
 static uint32_t run_frames(struct m2_stats *record) {
     sprite_pass_regs sprites;
@@ -760,10 +856,8 @@ static void sample_the_two_clocks(struct stats *record) {
     unsigned short sr = wb_irq_disable();
 
     record->shim_vbl_ticks = shim_vbl_ticks;
-    record->vbl_counter = (uint16_t)((game_image[WB_VBL_COUNTER] << 8)
-                                     | game_image[WB_VBL_COUNTER + 1]);
-    record->floppy_idle_timer = (uint16_t)((game_image[WB_FLOPPY_IDLE_TIMER] << 8)
-                                           | game_image[WB_FLOPPY_IDLE_TIMER + 1]);
+    record->vbl_counter = image_word(WB_VBL_COUNTER);
+    record->floppy_idle_timer = image_word(WB_FLOPPY_IDLE_TIMER);
     record->tick_drop_value = game_image[WB_SND_TICK_DROP_VALUE];
     record->key_last_scancode = game_image[WB_KEY_LAST_SCANCODE];
     wb_irq_restore(sr);
@@ -809,6 +903,13 @@ int wonderboy_main(void) {
     /* M2 runs FRAMES, and the vblank check comes with them rather than before them: `flip_screen`
      * waits for the counter twice per frame, so a run that produced frames produced vblanks. */
     publish_staged_pens(&m2);
+    arm_the_flash();
+    /* READ BACK OUT OF THE IMAGE, so the field witnesses the seed landing rather than repeating the
+     * constant the build was given — and so the unseeded builds report the $0000 that is the whole
+     * reason the flash arms are unreachable. */
+    m2.flash_timer_at_entry = image_word(WB_FLASH_TIMER);
+    m2.capture_pc = (uint32_t)(uintptr_t)&capture_the_frame;
+    m2.fault_pen = FAULTED_PEN;
     m2.frames_requested = M2_LAST_ANCHOR;
     m2.frames_run = run_frames(&m2);
     checked(RB_VBL_TICKING, m2.frames_run == m2.frames_requested);

@@ -797,10 +797,18 @@ leaked into. The only trace of it in `src/` is a `#ifdef WB_ON_TARGET` arm on th
 sinks (`src/game.c`, `src/stage.c`), a define `make test` never passes.
 
 **It also runs the ORIGINAL.** `atari/original.py` boots the shipped 1989 `.stx` disks under Hatari
-and drives them to named anchors, which is what supplies the two things no host-side computation in
-this project can: the staged image for the frame build (the boot's products, dumped at `$f8b4`) and
-the shipped side of the frame differential. `atari/README.md` §2 and §9 argue both. Note that it
-needs both disks in `../bin/` and that it is the one thing here whose inputs are not in git.
+and drives them to named anchors, which is what supplies the things no host-side computation in this
+project can: the staged image for the frame build (the boot's products, dumped at `$f8b4`), the
+shipped side of the frame differential, and — since batch 43 phase D — the shipped side's
+**hardware-state vector** and **rendered picture** at each anchor, plus the measurement of which of
+those registers are one boot's accident (`original.py vecnoise`). `atari/README.md` §2, §9 and §10
+argue all of them. Note that it needs both disks in `../bin/` and that it is the one thing here whose
+inputs are not in git.
+
+**Four of the four shifter writes `src/game.c` sinks off target are now pinned on target**, and the
+one mutant left over them is the one no snapshot can ever see (it reorders two writes without
+changing either value). `PORTABILITY.md`'s `flip_screen` row carries the table; the short version is
+that a T3 HW_WRITE_ONLY price says the *oracle* cannot see a write, not that it is unpinnable.
 
 ```bash
 make venv      # once: .venv + pytest/pytest-xdist (see requirements.txt)

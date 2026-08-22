@@ -308,7 +308,7 @@ def one_breakpoint_per_anchor(script):
     return script
 
 
-def run(prg, files, trace=None, parse=None, run_vbls=RUN_VBLS, debug_continues=0, render=False):
+def run(prg, files, trace=None, parse=None, run_vbls=RUN_VBLS, debug_continues=0):
     """Boot `prg` headless on a drive holding `files`, let Hatari run to the end of --run-vbls, and
     return everything it left behind: {filename: bytes}, the beacon names, Hatari's own output and
     its exit status.
@@ -329,17 +329,26 @@ def run(prg, files, trace=None, parse=None, run_vbls=RUN_VBLS, debug_continues=0
                                        if isinstance(data, str) else data)
         env = {**os.environ, "SDL_VIDEODRIVER": "dummy", "SDL_AUDIODRIVER": "dummy"}
         args = [hatari, "--sound", "off", "--fast-forward", "on", "--confirm-quit", "off",
-                # --statusbar off: it is emulator chrome, it differs with the ROM and the drive LED
-                # state, and it is not part of the picture the game draws.
-                "--statusbar", "off",
+                # THREE SETTINGS, and only the first was here. All are emulator chrome or emulator
+                # scheduling rather than the picture the game draws, and the sibling project measured
+                # what each costs a rendered compare (docs/on-target-execution.md).
+                #
+                # `--statusbar off` alone does NOT remove the drive LED, and the comment that used to
+                # sit here said it did: with the statusbar hidden Hatari draws the activity LED in
+                # the top-right BORDER instead, i.e. inside the photographed area. Measured here —
+                # frames 1 and 115 came back as TRUECOLOUR PNGs (IHDR colour type 2) while the deeper
+                # anchors were palette images (type 3), which is the LED's extra colours pushing
+                # Hatari's writer over the 256-colour line. Two files of different colour type can
+                # never match byte for byte whatever the pixels do.
+                "--statusbar", "off", "--drive-led", "off",
+                # ...and `--frameskips 0` UNIFORMLY, not only on the runs that photograph: under
+                # --fast-forward Hatari skips RENDERING frames it still emulates, so `screenshot`
+                # grabs whichever frame was last drawn. Conditioning it on `render` left this
+                # project's runs in two emulator configurations for no gain — frameskip is a
+                # host-side draw decision and changes no emulated cycle.
+                "--frameskips", "0",
                 "--memsize", str(MEMSIZE_MB), "--monitor", "rgb", "--tos-res", "low", "--tos", rom,
                 "--run-vbls", run_vbls, "--harddrive", str(drive), "--auto", "C:\\JOUST.PRG"]
-        if render:
-            # Only the runs that PHOTOGRAPH pay for this. `screenshot` grabs the display surface,
-            # and under --fast-forward Hatari skips RENDERING frames it still emulates, so a capture
-            # returns whichever frame was last drawn. Asking for every frame narrows the window but
-            # does NOT close it — see RENDER_ANCHORS for what is still not reproducible with it on.
-            args += ["--frameskips", "0"]
         if trace:
             args += ["--trace", trace, "--trace-file", str(drive / "TRACE.TXT")]
         if parse:
@@ -1275,6 +1284,11 @@ def compare_vectors(ours, theirs, samples):
 # off around each capture made the run take longer than the whole suite. Asserting on those anchors
 # would be asserting on noise, so the compare stays where it is deterministic and the rest is an
 # open blocker recorded in the README rather than a green that means nothing.
+#
+# RE-MEASURED IN BATCH 43 PHASE D, and the settings above were not the whole story: the drive LED
+# was being photographed (see `run`), which is now off. That removed real chrome from frames 1 and
+# 115 but did NOT settle the deep anchors — two boots still disagree at 150/180/210 — so this bound
+# does not move. README.md carries the reading, the trigger and the home.
 
 # ---- the TIMELINE: what reached the hardware, in what order ------------------------------------
 #
@@ -1578,8 +1592,7 @@ def our_captures(stats, samples, build, keep):
     breakpoint. A binary reporting its own addresses cannot be the wrong binary."""
     script = capture_script(keep, stats["poll_quit_key_pc"], samples, OUR_TAG)
     _, _, _, proc = run(prg_for(build), drive_files(), parse=script,
-                        debug_continues=STOPS_PER_ANCHOR * len(samples) + DEBUG_CONTINUE_SLACK,
-                        render=True)
+                        debug_continues=STOPS_PER_ANCHOR * len(samples) + DEBUG_CONTINUE_SLACK)
     vectors = {frame: hardware_vector(proc.stdout, keep, OUR_TAG, index, frame)
                for index, frame in enumerate(samples, 1)}
     return vectors, proc
@@ -1607,8 +1620,7 @@ def run_original_frames(base, screen, samples, rng_park, keep=None, trace=None):
                                    # (RNG cursor, Bconstat, Bconin) and any debugger entry we did
                                    # not schedule. Measured: 26 provided against ~12 prompt reads.
                                    debug_continues=(STOPS_PER_ANCHOR + 1) * len(samples)
-                                                   + DEBUG_CONTINUE_SLACK,
-                                   render=True)
+                                                   + DEBUG_CONTINUE_SLACK)
         # savebin writes to HOST paths, so the dumps land beside the script, not on the drive.
         frames, palettes = {}, {}
         for index in range(1, len(samples) + 1):
@@ -1631,18 +1643,22 @@ def run_original_frames(base, screen, samples, rng_park, keep=None, trace=None):
 # the point: a control that fails for the wrong reason proves nothing about the check it is for.
 INJECTED_FAULTS = {
     # A corrupted pen is a PALETTE fault: it must trip the pen compare, the hardware vector (which
-    # carries the same pens read a different way) and the rendered picture — and must leave the
-    # bitplanes alone, because the drawing is untouched.
-    # NOT "display": the rendered compare only asserts at frame 1 (RENDER_ANCHORS), and pen 5 does
-    # not appear in that frame's picture — measured, the PNGs match with the pen corrupted. Listing
-    # it would make this control fail for a reason that is about coverage, not about the fault.
-    # TIMELINE fails here too, and that is correct rather than a leak: the timeline compares the
-    # game-phase palette TABLES between the sides, and this control corrupts a pen on its way to the
-    # shifter, so a surface that looks at pen values sees it. Three surfaces see the value; what the
-    # control proves is that the two that must NOT move — the bitplanes and the rendered picture —
-    # do not.
-    "palette": {"fail": ("palette", "vector", "timeline"),
-                "pass": ("boot", "bitplanes", "display")},
+    # carries the same pens read a different way), the timeline (which compares the game-phase
+    # palette TABLES) and the rendered picture — and must leave the bitplanes alone, because the
+    # drawing is untouched.
+    #
+    # "display" WAS CLASSIFIED AS A PASS AND IS NOW A FAIL, and the correction is a fact about the
+    # PNG format rather than a tuning. The old reasoning was that pen 5 does not appear in frame 1's
+    # picture, measured by the PNGs matching with the pen corrupted — but that measurement was taken
+    # while the drive LED was still being photographed (see `run`), and the LED's extra colours had
+    # pushed Hatari's writer to a TRUECOLOUR image, which encodes only the pixels that are drawn.
+    # With `--drive-led off` the picture is a PALETTE image, and a palette PNG carries a PLTE chunk
+    # that IS the shifter's sixteen pens — verified byte for byte against the pens: $000 -> (0,0,0),
+    # $777 -> (238,238,238). So the rendered surface now reads every pen whether a pixel uses it or
+    # not, and a palette fault MUST move it. That is strictly more sensitive than before, and the old
+    # green was the LED hiding the palette from the one surface that should see it.
+    "palette": {"fail": ("palette", "vector", "timeline", "display"),
+                "pass": ("boot", "bitplanes")},
     # A misaligned screen is a DISPLAY fault: the boot assertion catches it, the picture differs,
     # and every memory surface still agrees. The hardware vector agrees too — the shifter's
     # registers are right; it is the base it fetches from that is not.
@@ -1834,7 +1850,6 @@ def play_vectors(stats):
                                    OUR_TAG))
         anchors = 2
         _, _, _, proc = run(prg_for("play"), drive_files(), parse=script, run_vbls=PLAY_RUN_VBLS,
-                            render=True,
                             debug_continues=STOPS_PER_ANCHOR * anchors + DEBUG_CONTINUE_SLACK)
         return (hardware_vector(proc.stdout, capture_dir, DESKTOP_TAG, 1, BOOT_ANCHOR),
                 hardware_vector(proc.stdout, capture_dir, OUR_TAG, 1, PLAY_ANCHOR_POLL),

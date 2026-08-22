@@ -30,6 +30,12 @@
 # than believed.
 set -euo pipefail
 
+# THE MODES THAT RUN FRAMES, in one place. They stage the original's post-boot RAM and its palette,
+# they carry M2_ENTRY_UNWIND, and they are the ones smoke.py stages `PENS.IMG` for. smoke.py SCRAPES
+# this line rather than keeping its own list — a second spelling would let a new frame mode boot
+# without the palette it needs and report "no M2.BIN", which reads like a crash (CLAUDE.md §5).
+FRAME_MODES="m2 m5fault m5flash"
+
 MODE="${1:-m1}"
 case "$MODE" in
   m1)    DEF="" ;;
@@ -38,7 +44,49 @@ case "$MODE" in
   # at the unwritten sentinel, the floppy timer never expires and the chip is never touched.
   novbl) DEF="-DSMOKE_NO_VBL_INSTALL" ;;
   m2)    DEF="-DSMOKE_M2" ;;
-  *) echo "usage: build.sh [m1 | novbl | m2]"; exit 2 ;;
+  # M5's SENSITIVITY CONTROL: the frame build with ONE pen corrupted on its way to the shifter. It is
+  # a machine-COLOUR fault and nothing else — the reconstruction draws the same bytes — so every
+  # surface that reads colour (the pens, the hardware vector, the rendered picture) must go red and
+  # the framebuffer compare must not.
+  #
+  # PEN 3 RATHER THAN AN ARBITRARY ONE, and the reason is the rendered half of that claim: pen 3 is
+  # $777, the white the HUD's panels and text are drawn in, so it is certainly on screen at every
+  # anchor. A pen that happened not to appear in the picture would make the control's `picture`
+  # arm fail for a reason about coverage rather than about the fault — which is the trap the sibling
+  # project fell into and had to document.
+  #
+  # SMOKE.PY DOES NOT READ THIS LINE. The number reaches the check through the RECORD — the shim
+  # publishes it as `M2.BIN`'s `fault_pen` and `assert_only_the_faulted_pen` requires the divergence
+  # to be at exactly that pen and no other. Scraping it out of this script instead was the round's
+  # own defect: the per-mode `.PRG`s persist while this file is edited, so the scrape would name a
+  # pen the running binary need not have injected — the staleness hazard `capture_pc` exists to
+  # avoid, reproduced one control over.
+  m5fault) DEF="-DSMOKE_M2 -DM5_FAULT_PEN=3" ;;
+  # M5's FLASH RUN: the frame build with `flip_screen`'s white-flash countdown armed. The seed is the
+  # ORIGINAL's own operand — `move.w #$2,$714.w` at $1328, the lightning arm of `player_weapon_fire`
+  # — and atari/original.py pokes the same word into the shipped binary at the same instant, so this
+  # is one declared fabrication applied to both sides rather than a fixture on ours.
+  # wonderboy_main.c's `arm_the_flash` has the census that says why it cannot be driven instead.
+  # The seed itself is scraped from ../include/wonderboy.h below, once REC is known.
+  m5flash) DEF="-DSMOKE_M2" ;;
+  *) echo "usage: build.sh [m1 | novbl | $(echo "$FRAME_MODES" | tr ' ' '|')]"; exit 2 ;;
+esac
+
+# Whether $MODE is one of FRAME_MODES, as a word match rather than a substring one.
+is_frame_mode() { case " $FRAME_MODES " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+
+# ...AND THE TWO LISTS IN THIS FILE ARE PINNED TO EACH OTHER. `FRAME_MODES` is what smoke.py scrapes,
+# but the `case` above is what decides whether a mode compiles -DSMOKE_M2 — so a new frame mode added
+# to one and not the other would stage the M1 image and report "no M2.BIN", which is exactly the
+# symptom FRAME_MODES exists to prevent. Derived from $DEF rather than restated a third time.
+case "$DEF" in
+  *-DSMOKE_M2*) is_frame_mode "$MODE" || {
+      echo "ERROR: mode '$MODE' compiles -DSMOKE_M2 but is not in FRAME_MODES=\"$FRAME_MODES\"."
+      echo "       It would be built as a frame binary and staged with the M1 image and no palette."
+      exit 1; } ;;
+  *) ! is_frame_mode "$MODE" || {
+      echo "ERROR: mode '$MODE' is in FRAME_MODES but does not compile -DSMOKE_M2."
+      exit 1; } ;;
 esac
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -51,13 +99,24 @@ mkdir -p "$BUILD" "$DISK"
 
 CC=m68k-elf-gcc
 
+# THE FLASH SEED IS THE ORIGINAL'S OWN OPERAND, scraped from the header that quotes the instruction
+# rather than written here — one canonical definition, and a build that cannot find it refuses rather
+# than compiling an empty `-DM5_FLASH_SEED=`.
+if [ "$MODE" = m5flash ]; then
+  FLASH_SEED=$(sed -n 's/^#define WB_PLAYER_LIGHTNING_FLASH *\([0-9][0-9]*\)u.*/\1/p' \
+               "$REC/include/wonderboy.h")
+  [ -n "$FLASH_SEED" ] || { echo "ERROR: no WB_PLAYER_LIGHTNING_FLASH in $REC/include/wonderboy.h";
+                            exit 1; }
+  DEF="$DEF -DM5_FLASH_SEED=$FLASH_SEED"
+fi
+
 # The image comes FIRST: its byte length is the one source of truth for how much wonderboy_main.c
 # must read back in, and both it and the address it lands at are passed straight to the compiler.
 # WB_STAGED_AT is scraped from ../project.toml rather than written here — that file is where the
 # 0x3f8 load base is argued for, and a second spelling could drift from the loader gen_image.py uses.
 echo ">> stage drive"
 PY="$REC/.venv/bin/python"; [ -x "$PY" ] || PY=python3
-if [ "$MODE" = m2 ]; then
+if is_frame_mode "$MODE"; then
   # THE M2 IMAGE IS MEASURED, NOT COMPUTED, and this is where that costs something: the dump has to
   # exist before the build, and a stale one is worse than a missing one because it would build.
   DUMP="$BUILD/ORIGRAM.BIN"; REGS="$BUILD/ORIGREGS.txt"; PENS="$BUILD/ORIGPENS.BIN"
@@ -233,10 +292,10 @@ cp "$BUILD/$PRG" "$BUILD/WB-$MODE.PRG"
 # re-stage from, `smoke.py m2` after `build.sh m1` boots the frame build over the M1 image — which
 # is how the first draft failed, loudly here but silently for any future pair whose sizes agree.
 cp "$DISK/WB.IMG" "$BUILD/WB-$MODE.IMG"
-# The palette belongs to m2 alone. Keyed on the MODE and not on the file's existence: a
+# The palette belongs to the FRAME modes alone. Keyed on the MODE and not on the file's existence: a
 # `[ -f ... ] && cp ...` would have copied m2's leftover into an m1 build (measured, harmlessly —
 # nothing reads it there), and as the tail of a `set -e` script a false test aborts the build.
-if [ "$MODE" = m2 ]; then
+if is_frame_mode "$MODE"; then
   cp "$DISK/PENS.IMG" "$BUILD/WB-$MODE.PENS"
 else
   rm -f "$DISK/PENS.IMG" "$BUILD/WB-$MODE.PENS"

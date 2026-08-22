@@ -5,6 +5,9 @@
     python3 atari/original.py neighbour   # ...and the MIS-ANCHOR measurement (see ANCHOR below)
     python3 atari/original.py variance    # ...and how much of it is NOT reproducible (see below)
     python3 atari/original.py frames [N]  # the shipped binary's first N frames, for the side-by-side
+    python3 atari/original.py vecnoise    # ...and which of M5's registers are one boot's accident
+    python3 atari/original.py flash  [N]  # ...the same, with WB_FLASH_TIMER armed (M5, see below)
+    python3 atari/original.py flashnoise  # ...and the same accident measurement on the FLASHED boot
     python3 atari/original.py nofire      # NEGATIVE CONTROL: no fire injections -> no anchor
     python3 atari/original.py nodisk2     # NEGATIVE CONTROL: no data disk     -> no anchor
 
@@ -106,6 +109,7 @@ the sixteen pens are such surfaces — the Copylock band is never read, the soun
 YM2149 and not the shifter, and the stack is the boot's. A whole-memory comparison is not.
 """
 import hashlib
+import json
 import os
 import re
 import struct
@@ -166,6 +170,12 @@ RUN_TIMEOUT = 600
 DUMP_FILE = "ORIGRAM.BIN"
 REGISTERS_FILE = "ORIGREGS.txt"
 PENS_FILE = "ORIGPENS.BIN"
+# What one anchor's capture leaves on the host, by file suffix. `run_original` collects exactly these
+# out of the run's temporary directory — a set rather than "everything", so the debugger scripts and
+# the symlinked disks are not swept up as artefacts.
+PENS_SUFFIX, RESOLUTION_SUFFIX, SYNC_SUFFIX, PICTURE_SUFFIX = "pens", "rez", "sync", "png"
+CAPTURE_SUFFIXES = frozenset((".bin", "." + PENS_SUFFIX, "." + RESOLUTION_SUFFIX,
+                              "." + SYNC_SUFFIX, "." + PICTURE_SUFFIX))
 # The shifter's sixteen colour registers, in the 32-bit form the debugger reads I/O space at. The
 # register NUMBER has one definition — the reconstruction's own 24-bit WB_SHIFTER_PALETTE — and the
 # high byte is the I/O page a 68000's address bus ignores. wonderboy_main.c derives its spelling the
@@ -184,8 +194,32 @@ ST_PEN_MASK = 0x0777
 
 
 def pen_words(blob):
-    """The sixteen pens of a 32-byte palette dump, masked to the bits the hardware has."""
-    return [word & ST_PEN_MASK for word in struct.unpack(">%dH" % PALETTE_PENS, blob)]
+    """A palette dump's words, masked to the bits the hardware has.
+
+    LENGTH FROM THE BLOB, not from PALETTE_PENS, so the one masking rule serves a single anchor's
+    thirty-two bytes and a whole run's four anchors alike. Three copies of `& ST_PEN_MASK` is three
+    places for the reason above it — the ST implements three bits per gun — to be edited in two."""
+    return [word & ST_PEN_MASK for word in struct.unpack(">%dH" % (len(blob) // 2), blob)]
+
+
+def c_constant(name):
+    """One plain-integer `#define` out of wonderboy_main.c.
+
+    THE SHIM'S CONSTANTS HAVE NO HEADER for ../test/layout.py to scrape, so this is how a number that
+    lives in the C reaches the Python that checks it. A missing or non-literal define RAISES rather
+    than defaulting: a check that silently substitutes its own idea of a constant is exactly the
+    across-a-language-boundary drift CLAUDE.md §5 forbids.
+
+    It lives HERE rather than in smoke.py because both files need it — smoke.py for the record
+    formats, this file for the machine registers M5's vector reads — and two scrapers over one header
+    is one scraper that quietly stops matching."""
+    found = re.search(r"^#define\s+%s\s+(0[xX][0-9a-fA-F]+|\d+)u?\b" % name,
+                      (HERE / "wonderboy_main.c").read_text(), re.M)
+    if not found:
+        raise SystemExit(f"{name} is not a plain-integer #define in wonderboy_main.c")
+    return int(found.group(1), 0)
+
+
 ANCHOR_BEACON = "ANCHOR_REACHED"
 REGISTERS_BEACON = "REGISTERS_DUMPED"
 
@@ -217,8 +251,40 @@ def action_file(directory, name, *commands):
     return f":file {path}"
 
 
+def anchor_breakpoint(pc, hit, action):
+    """One anchor's breakpoint line, and THE ONLY PLACE IT IS SPELLED.
+
+    Hatari counts hits from 1 and REJECTS an explicit `:1`, so the first arrival is a bare `:once` —
+    a parser quirk of the debugger, not a choice, and one that has to be got right identically on
+    both sides of a differential. `boot_script` below and `smoke.py`'s own capture script both come
+    through here, so the two cannot drift.
+
+    `action` is an `action_file` clause."""
+    count = "" if hit == FIRST_HIT else f":{hit} "
+    return f"b pc = ${pc:x} {count}:once :quiet " + action
+
+
+def refuse_repeated_arrivals(stops):
+    """Refuse a script that sets two breakpoints on the same PC AND the same arrival.
+
+    The invariant is per ARRIVAL, not per PC: the frame differential deliberately sets N breakpoints
+    on $4a0 told apart by their counts. What must not recur is two selecting the SAME hit — their
+    counters interfere, and the measured consequence in the sibling project was captures and dumps
+    arriving from different moments and being compared as if from one. `stops` is (pc, hit) pairs."""
+    stops = list(stops)
+    if len(set(stops)) != len(stops):
+        raise SystemExit("two breakpoints select the same arrival at the same PC: their counters "
+                         "interfere, and the anchors would fire at moments other than the ones "
+                         "asked for. Give each anchor ONE breakpoint whose action file does all of "
+                         "that anchor's work.")
+
+
 def poke_byte(addr, value):
     return f"w b ${addr:x} ${value:x}"
+
+
+def poke_word(addr, value):
+    return f"w w ${addr:x} ${value:x}"
 
 
 def boot_script(directory, disk2, extra_stops=()):
@@ -229,14 +295,9 @@ def boot_script(directory, disk2, extra_stops=()):
     the dump below and by smoke.py's frame differential, so the injections that make the shipped
     side comparable have ONE spelling and cannot drift between the two runs that are compared.
 
-    `hit` is which arrival at `pc` to stop on, 1-based as Hatari counts them. THE GUARD BELOW KEYS ON
-    THE PAIR AND NOT ON THE PC, which is not a detail: the frame differential deliberately sets N
-    breakpoints on the SAME address ($4a0, once per frame) told apart by their counts, so a guard
-    keyed on the address alone would reject the harness's own scripts — and its first draft did not
-    see them at all, because `frames_script` built those lines itself and went round it. What must
-    not recur is two breakpoints selecting the SAME arrival: their counters interfere, and the
-    measured consequence in the sibling project was captures and dumps arriving from different
-    moments and being compared as if from one."""
+    `hit` is which arrival at `pc` to stop on, 1-based as Hatari counts them; `anchor_breakpoint`
+    owns the spelling and `refuse_repeated_arrivals` owns the guard, so smoke.py's own capture script
+    goes through the same two rather than round them — which its first draft did."""
     joy1 = wb("JOY1_STATE")
     lines = [
         f"b pc = ${TITLE_FIRE_PRESS_PC:x} :once :quiet "
@@ -252,17 +313,9 @@ def boot_script(directory, disk2, extra_stops=()):
         lines.append(f"b pc = ${DATA_DISK_SWAP_PC:x} :once :quiet "
                      + action_file(directory, "SWAP.INI", "echo DATA_DISK_INSERTED",
                                    f"setopt --disk-a {disk2}"))
-    if len({(pc, hit) for pc, hit, _, _ in extra_stops}) != len(extra_stops):
-        raise SystemExit("two breakpoints select the same arrival at the same PC: their counters "
-                         "interfere, and the anchors would fire at moments other than the ones "
-                         "asked for. Give each anchor ONE breakpoint whose action file does all of "
-                         "that anchor's work.")
+    refuse_repeated_arrivals((pc, hit) for pc, hit, _, _ in extra_stops)
     for pc, hit, name, commands in extra_stops:
-        # Hatari counts hits from 1 and REJECTS an explicit `:1`, so the first arrival is a bare
-        # `:once`. That is a parser quirk of the debugger, not a choice.
-        count = "" if hit == FIRST_HIT else f":{hit} "
-        lines.append(f"b pc = ${pc:x} {count}:once :quiet "
-                     + action_file(directory, name, *commands))
+        lines.append(anchor_breakpoint(pc, hit, action_file(directory, name, *commands)))
     return "\n".join(lines) + "\n"
 
 
@@ -283,12 +336,30 @@ def run_original(build_script, tag, run_vbls=RUN_VBLS, fires=True):
         if not fires:
             script = "\n".join(line for line in script.splitlines() if "FIRE" not in line) + "\n"
         (directory / "CMD.INI").write_text(script)
+        # `--drive-led off` alongside `--statusbar off`: with the statusbar hidden Hatari draws an
+        # activity LED in the top-right BORDER, which is emulator chrome inside the photographed
+        # area. It is passed on EVERY mode rather than only the photographing ones because it is a
+        # display-layer overlay that changes no emulated cycle — smoke.py's `run_hatari` has the
+        # measurement that made it necessary.
         args = ["hatari", "--sound", "off", "--fast-forward", "on", "--confirm-quit", "off",
-                "--statusbar", "off", "--memsize", str(MEMSIZE_MB), "--monitor", "rgb",
+                "--statusbar", "off", "--drive-led", "off",
+                "--memsize", str(MEMSIZE_MB), "--monitor", "rgb",
                 "--run-vbls", str(run_vbls), "--disk-a", str(directory / "d1.stx"),
                 "--parse", str(directory / "CMD.INI")]
         if rom:
             args[1:1] = ["--tos", rom]
+        # `--frameskips 0` ON EVERY MODE, not only the photographing ones. Under --fast-forward Hatari
+        # SKIPS RENDERING frames it still emulates, so `screenshot` grabs whichever frame was last
+        # drawn — the shipped side's first pictures came back with the default 5-frame skip and no two
+        # runs agreed. Asking for every frame narrows the window; it does not close it, which is why
+        # atari/README.md §10's rendered claim is bounded by a measurement.
+        #
+        # AN EARLIER DRAFT PASSED IT ONLY FOR `frames`/`flash`/`vecnoise`, and that was the mistake:
+        # it split this file's runs into two emulator configurations, with `variance`'s per-band
+        # ceilings measured under one and the `frames` artefacts M2 and M5 compare against produced by
+        # the other. Frameskip is a HOST-side draw decision and changes no emulated cycle, so one
+        # configuration for every mode costs nothing and removes a difference nobody was measuring.
+        args += ["--frameskips", "0"]
         env = dict(os.environ, SDL_VIDEODRIVER="dummy", SDL_AUDIODRIVER="dummy")
         done = subprocess.run(args, env=env, stdin=subprocess.DEVNULL, text=True,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=RUN_TIMEOUT)
@@ -301,7 +372,8 @@ def run_original(build_script, tag, run_vbls=RUN_VBLS, fires=True):
             raise SystemExit(f"FAIL: Hatari's output carries none of its own logging (status "
                              f"{done.returncode}) — every check below would read an empty string")
         produced = {path.name: path.read_bytes()
-                    for path in directory.iterdir() if path.suffix.upper() == ".BIN"}
+                    for path in directory.iterdir()
+                    if path.suffix.lower() in CAPTURE_SUFFIXES}
         return produced, done.stdout, done.returncode
 
 
@@ -316,6 +388,161 @@ def machine_faults(log):
             continue
         faults.append(line.strip())
     return faults
+
+
+# ---- M5: the HARDWARE-STATE VECTOR, and the rendered picture -------------------------------------
+#
+# THE ONE SPELLING, FOR BOTH SIDES. The commands that TAKE a capture and the parser that READS it
+# back live here together, and smoke.py drives both sides through them — so the reconstruction's run
+# and the shipped binary's cannot drift into measuring different things. Joust's writer and reader
+# each grew their own idea of the marker terminator and every one of its frame modes died at the
+# first anchor; one definition is the fix.
+#
+# WHAT IS HONESTLY CAPTURABLE, and what each entry really is:
+#   * the sixteen PENS, the RESOLUTION register and the SYNC register are read out of I/O space by
+#     `savebin` — genuine reads of the emulated hardware, at the same addresses and the same widths
+#     wonderboy_main.c's own read-backs use;
+#   * the VIDEO BASE, the REFRESH RATE and the V-OVERSCAN come from the debugger's `info video`;
+#   * the sixteen YM-2149 registers come from `info ym`, and THIS ONE IS NOT A HARDWARE READ. The
+#     PSG's register file cannot be read through $ff8800 without first writing a select, which is
+#     itself a write with side effects, so there is no honest read to take. `info ym` reports
+#     HATARI'S MODEL of the chip — the values it has been written. That is the right capture for a
+#     differential, because both sides are measured the same way and a register one program sets and
+#     the other does not still shows up; what it cannot witness is anything the real chip would do
+#     that the model does not.
+VECTOR_MARKER_PREFIX, VECTOR_MARKER_END = "VECTOR-", "."
+# The terminator is what keeps `VECTOR-OUR-1` from also matching `VECTOR-OUR-10`.
+VECTOR_MARKER_RE = re.compile(VECTOR_MARKER_PREFIX + r"[A-Z]+-\d+" + re.escape(VECTOR_MARKER_END))
+# Which side a capture came from. Load-bearing twice — it names the files on disk AND the `echo`
+# marker the log is split on — so it has one definition rather than a literal at each site.
+OUR_TAG, THEIR_TAG = "OUR", "THEIR"
+
+# The two single-register reads, in the 32-bit form the debugger addresses I/O space at. Scraped from
+# wonderboy_main.c rather than restated: that file's `snapshot`/`install` write and read back these
+# very registers, and a second spelling here would be a differential against an address the shim
+# never touched. Read as ONE BYTE each, which is the width the shim's own `io8` reads use.
+SHIFTER_RESOLUTION = c_constant("SHIFTER_RES")
+SHIFTER_SYNC = c_constant("SHIFTER_SYNC")
+REGISTER_BYTE = 1
+# THE RESOLUTION REGISTER IS TWO BITS WIDE and the other six read back as whatever was last on the
+# bus — atari/README.md's on-target bug #2, found by an unmasked read-back failing against a machine
+# that had done exactly what it was told. Same constant the shim masks with.
+ST_RESOLUTION_MASK = c_constant("SHIFTER_RES_MASK")
+# $ff820a implements TWO bits — 0 external sync, 1 the 50/60 Hz select `video_set_lowres_50hz` writes
+# — and the rest float, so the same reasoning applies one register over. The mask is wider than the
+# shim's own read-back (which checks only the 50 Hz bit) because this is a DIFFERENTIAL: bit 0 is a
+# real bit both sides have and neither writes, so comparing it is free evidence rather than noise.
+ST_SYNC_MASK = 0x03
+YM_REGISTERS = 16
+# How many entries the vector must COMPARE, so that a capture or a parser going quiet is a RED rather
+# than an `IDENTICAL` printed over a stump: the pens, the YM file, and the four singletons
+# (resolution, sync, refresh rate, V-overscan). VECTOR_REPORT_ONLY's names are not compared and are
+# not counted here.
+VECTOR_SINGLETONS = ("resolution", "sync", "refresh_hz", "v_overscan")
+VECTOR_REGISTERS = PALETTE_PENS + YM_REGISTERS + len(VECTOR_SINGLETONS)
+# CAPTURED AND PRINTED, BUT NOT COMPARED. The two sides legitimately draw from different addresses —
+# ours inside a GEMDOS-placed image, the shipped binary in the 512 KB map it owns outright — and the
+# other three are the emulator's own position in its run, not the machine's state. Named explicitly
+# rather than inferred from a spelling convention, so what is exempt is a list one can read.
+VECTOR_REPORT_ONLY = ("video_base", "vbl_counter", "hbl_line", "frame_skips")
+# `info video`'s lines, as (name, pattern). Everything here is parsed; VECTOR_REPORT_ONLY above is
+# what decides which of them the differential then looks at.
+VIDEO_INFO_FIELDS = (("video_base", r"Video base\s*:\s*(0x[0-9a-fA-F]+)"),
+                     ("vbl_counter", r"VBL counter\s*:\s*(\d+)"),
+                     ("hbl_line", r"HBL line\s*:\s*(\d+)"),
+                     ("v_overscan", r"V-overscan\s*:\s*(\S+)"),
+                     ("refresh_hz", r"Refresh rate\s*:\s*(\d+)"),
+                     ("frame_skips", r"Frame skips\s*:\s*(\d+)"))
+YM_INFO_RE = re.compile(r"Reg \$([0-9A-F]{2}) : \$([0-9A-F]{2})")
+
+
+def vector_marker(tag, index):
+    return f"{VECTOR_MARKER_PREFIX}{tag}-{index}{VECTOR_MARKER_END}"
+
+
+def capture_name(tag, index, suffix):
+    """What one anchor's capture of `suffix` is CALLED. Same reason as the marker: the debugger
+    script that WRITES these and the compare that READS them are far apart, so they share one
+    spelling instead of each carrying their own."""
+    return f"{tag}{index}.{suffix}"
+
+
+def capture_path(directory, tag, index, suffix):
+    return Path(directory) / capture_name(tag, index, suffix)
+
+
+def vector_commands(directory, tag, index):
+    """The debugger commands that take one anchor's hardware-state vector, WHERE THE ANCHOR FIRES.
+
+    Not at the following vblank, which is where the picture below is taken: this is the same instant
+    the two sides' framebuffers and pens are compared at, so the vector's own pens cross-check that
+    comparison through an entirely different path — `savebin` off the register file against a CPU
+    read by the running program."""
+    return [f"echo {vector_marker(tag, index)}", "info video", "info ym",
+            f"savebin {capture_path(directory, tag, index, PENS_SUFFIX)} "
+            f"${SHIFTER_PALETTE:x} {PALETTE_BYTES}",
+            f"savebin {capture_path(directory, tag, index, RESOLUTION_SUFFIX)} "
+            f"${SHIFTER_RESOLUTION:x} {REGISTER_BYTE}",
+            f"savebin {capture_path(directory, tag, index, SYNC_SUFFIX)} "
+            f"${SHIFTER_SYNC:x} {REGISTER_BYTE}"]
+
+
+def picture_command(directory, tag, index):
+    """STOP-THEN-SHOOT: arm a breakpoint at the NEXT vblank, and photograph there.
+
+    `screenshot` renders the emulator's display surface, which is built scanline by scanline, so a
+    capture taken where the anchor happens to fire mixes that frame with the one before —
+    deterministic only if the picture is static. `b VBL > VBL` (Hatari substitutes the expression's
+    CURRENT value on the right, so this reads "the next vblank") holds the machine until a frame
+    boundary, where the surface holds one completed frame.
+
+    A SECOND STOP RATHER THAN A SECOND TOP-LEVEL BREAKPOINT: two breakpoints selecting the same
+    arrival interfere with each other's counters, which is what `boot_script`'s duplicate guard is
+    for. This one is armed from inside the anchor's own action file and disarms itself."""
+    shot = Path(directory) / f"{tag}SHOT{index}.INI"
+    shot.write_text(f"screenshot {capture_path(directory, tag, index, PICTURE_SUFFIX)}\ncont\n")
+    return f"b VBL > VBL :once :quiet :file {shot}"
+
+
+def read_capture(captures, tag, index, suffix, frame):
+    """One capture artefact out of {filename: bytes}, or a failure that names the ANCHOR.
+
+    The likeliest failure of the whole capture path is an anchor that never fires, and its symptom is
+    a missing file. A bare KeyError points at a filename; this points at the moment."""
+    name = capture_name(tag, index, suffix)
+    if name not in captures:
+        raise SystemExit(f"no {suffix} capture from the {tag} side at frame {frame} (anchor "
+                         f"{index}) — the anchor never fired, or its capture chain did not run")
+    return captures[name]
+
+
+def hardware_vector(log, captures, tag, index, frame):
+    """One anchor's hardware-state vector, as a dict of named registers.
+
+    `captures` is {filename: bytes} — what the run left behind — so the shipped side and ours reach
+    this through the same reader whether their files came off a temporary drive or a script dir."""
+    # THE BODY IS CUT AT THE NEXT MARKER. Without the cut it runs to the end of the whole log, a
+    # findall over it collects every LATER anchor's `info ym` block too, and every anchor ends up
+    # holding the LAST one's registers — sixteen of the compared entries would be one measurement
+    # repeated four times, exactly the vacuity this surface exists to remove.
+    block = log.split(vector_marker(tag, index), 1)
+    if len(block) < 2:
+        raise SystemExit(f"no hardware-state vector for anchor {index} ({tag}, frame {frame}) — the "
+                         f"capture breakpoint never fired")
+    body = VECTOR_MARKER_RE.split(block[1], maxsplit=1)[0]
+    vector = {}
+    for name, pattern in VIDEO_INFO_FIELDS:
+        found = re.search(pattern, body)
+        if found:
+            vector[name] = found.group(1)
+    for register, value in YM_INFO_RE.findall(body):
+        vector[f"ym{int(register, 16):02d}"] = int(value, 16)
+    for pen, word in enumerate(pen_words(read_capture(captures, tag, index, PENS_SUFFIX, frame))):
+        vector[f"pen{pen:02d}"] = word
+    vector["resolution"] = (read_capture(captures, tag, index, RESOLUTION_SUFFIX, frame)[0]
+                            & ST_RESOLUTION_MASK)
+    vector["sync"] = read_capture(captures, tag, index, SYNC_SUFFIX, frame)[0] & ST_SYNC_MASK
+    return vector
 
 
 # ---- the pins ------------------------------------------------------------------------------
@@ -696,43 +923,84 @@ FRAME_LOOP_PC = 0x4a0             # `game_main_loop` — one entry per frame, an
 SCREEN_REGION = (0x70000, 0x80000)  # both 32000-byte screens and the game's stack, in one savebin
 
 
-def frames_script(directory, disk2, frames):
+def frames_script(directory, disk2, frames, flash_seed=None):
     """Anchor the SHIPPED binary at each frame in `frames` and photograph it there.
 
     Hit 1 of $4a0 is the boot's own `jmp` arriving, i.e. BEFORE any frame has run, so frame N's
     RESULT is on screen at hit N+1. Hatari counts hits from 1 and rejects an explicit `:1`, which is
     why no anchor here is ever hit 1 — and hit 1 is not a frame anyway.
 
-    Three savebins per anchor, in ONE action file rather than three breakpoints: two breakpoints on
-    the same PC and hit count disturb each other's counters, and the measured consequence in the
+    Everything one anchor does is in ONE action file rather than several breakpoints: two breakpoints
+    on the same PC and hit count disturb each other's counters, and the measured consequence in the
     sibling project was captures and dumps arriving from different moments. Anchors are told apart
-    by the HIT COUNT and share a PC, which is why boot_script's duplicate guard keys on the pair."""
+    by the HIT COUNT and share a PC, which is why boot_script's duplicate guard keys on the pair.
+
+    `flash_seed` uses hit 1 — the arrival no frame owns — to poke WB_FLASH_TIMER before the first
+    frame runs. That is M5's declared fabrication, and the instant is chosen so that it matches, on
+    this side, exactly where wonderboy_main.c's `arm_the_flash` writes the same word on ours: after
+    the boot, before frame 1."""
     low, high = SCREEN_REGION
     stops = [(FRAME_LOOP_PC, frame + 1, f"F{frame}.INI", [
         f"savebin {directory / ('OSCR%d.BIN' % frame)} ${low:x} {high - low:#x}",
         f"savebin {directory / ('OFRONT%d.BIN' % frame)} ${wb('SCREEN_FRONT'):x} 4",
-        f"savebin {directory / ('OPEN%d.BIN' % frame)} ${SHIFTER_PALETTE:x} {PALETTE_BYTES}",
-        f"echo FRAME_{frame}_CAPTURED"]) for frame in frames]
+        f"savebin {directory / ('OPEN%d.BIN' % frame)} ${SHIFTER_PALETTE:x} {PALETTE_BYTES}"]
+        + vector_commands(directory, THEIR_TAG, index)
+        + [picture_command(directory, THEIR_TAG, index), f"echo FRAME_{frame}_CAPTURED"])
+        for index, frame in enumerate(frames, 1)]
+    if flash_seed is not None:
+        stops.append((FRAME_LOOP_PC, FIRST_HIT, "FLASH.INI",
+                      [f"echo {FLASH_ARMED_BEACON}",
+                       poke_word(wb("FLASH_TIMER"), flash_seed)]))
     return boot_script(directory, disk2, extra_stops=stops)
 
 
-def mode_frames(frames):
-    """Photograph the shipped binary at `frames`, for smoke.py's side-by-side."""
-    produced, log, status = run_original(lambda d, disk2: frames_script(d, disk2, frames), "frames")
-    print(f"-- frames: anchors {frames} at ${FRAME_LOOP_PC:x}, hatari exit={status} "
-          f"(full log in {OUT / 'original-frames.log'})")
+# WHERE THE SHIPPED SIDE'S CAPTURES LAND, and why a flash run gets its own names: the two runs
+# photograph DIFFERENT machines (one with `flip_screen`'s flash arms live, one without), and a shared
+# filename would let `smoke.py m5` compare our unflashed frames against the flashed side's pens the
+# moment the two modes were run in the wrong order. One prefix per fabrication.
+FRAME_PREFIXES = {False: "", True: "F"}
+# Which mode PRODUCED a prefix's artefact set. One definition, because two `'flash' if prefix else
+# 'frames'` ternaries — in this file and in smoke.py — are two places that would print the wrong
+# recovery command the day a third artefact set exists.
+FRAME_PRODUCER = {"": "frames", "F": "flash"}
+FLASH_ARMED_BEACON = "FLASH_ARMED"
+VECTOR_FILE, PICTURE_FILE = "OVEC%d.json", "OPNG%d.png"
+
+
+def mode_frames(frames, flash_seed=None):
+    """Photograph the shipped binary at `frames`, for smoke.py's side-by-side.
+
+    Each anchor leaves five artefacts: the screen region, the front-buffer pointer, the sixteen pens,
+    the HARDWARE-STATE VECTOR and the rendered picture. The vector is parsed HERE — by the one reader
+    both sides use — and stored as JSON, because the shipped side runs minutes before ours and the
+    two have to meet on disk without either re-implementing the other's parse."""
+    tag = "flash" if flash_seed is not None else "frames"
+    prefix = FRAME_PREFIXES[flash_seed is not None]
+    produced, log, status = run_original(
+        lambda d, disk2: frames_script(d, disk2, frames, flash_seed), tag)
+    print(f"-- {tag}: anchors {frames} at ${FRAME_LOOP_PC:x}, hatari exit={status} "
+          f"(full log in {OUT / ('original-%s.log' % tag)})")
     faults = machine_faults(log)
     if faults:
         raise SystemExit("FAIL: unhealthy machine: " + " | ".join(faults[:4]))
+    if flash_seed is not None and FLASH_ARMED_BEACON not in log:
+        raise SystemExit(f"FAIL: the flash poke never ran — ${FRAME_LOOP_PC:x} was never reached a "
+                         f"first time, so this side's WB_FLASH_TIMER is the staged $0000 and the "
+                         f"comparison would be against a machine that is not flashing")
     BUILD.mkdir(exist_ok=True)
-    for frame in frames:
+    for index, frame in enumerate(frames, 1):
         for stem in ("OSCR", "OFRONT", "OPEN"):
             name = f"{stem}{frame}.BIN"
             if name not in produced:
                 raise SystemExit(f"FAIL: the shipped binary produced no {name} — it did not reach "
                                  f"frame {frame}, so there is nothing to compare against")
-            (BUILD / name).write_bytes(produced[name])
-    print(f"   {len(frames)} frames captured into {BUILD}")
+            (BUILD / (prefix + name)).write_bytes(produced[name])
+        vector = hardware_vector(log, produced, THEIR_TAG, index, frame)
+        (BUILD / (prefix + VECTOR_FILE % frame)).write_text(json.dumps(vector, sort_keys=True))
+        (BUILD / (prefix + PICTURE_FILE % frame)).write_bytes(
+            read_capture(produced, THEIR_TAG, index, PICTURE_SUFFIX, frame))
+    print(f"   {len(frames)} frames captured into {BUILD} as {prefix or '(no prefix)'}*: "
+          f"screens, pens, {VECTOR_REGISTERS}-register vectors and rendered pictures")
     return True
 
 
@@ -761,11 +1029,129 @@ def mode_control(name, fires, disk2):
     return True
 
 
+# ---- WHAT THE VECTOR CAPTURES BUT DOES NOT COMPARE, and the two reasons ---------------------------
+#
+# THE WHOLE YM-2149 FILE IS CAPTURED, PRINTED AND NOT COMPARED. That is a bigger exclusion than the
+# sibling project's — its M5 compares all sixteen — and the difference is a property of this game
+# rather than of this harness: Joust's anchors sit on a silent title screen, and Wonder Boy's sit
+# inside a stage with its music playing.
+#
+#   * ym00..ym13, THE SOUND CHIP. Where the music is at frame N depends on which vblank the boot
+#     finished on and on how many vblanks each side's frame loop spends per frame — and NEITHER is
+#     controlled. `variance` already names the mechanism on the memory side ("a song is playing at
+#     the anchor and its driver's cursors depend on which vblank the boot finished on"), and
+#     `vecnoise` below measures it arriving at the chip: two boots of the SHIPPED BINARY ITSELF write
+#     different values at the same anchor. A snapshot of these registers is therefore not evidence in
+#     either direction, and a comparison that happened to pass on them would have passed by accident.
+#     THE SURFACE THAT CAN COMPARE SOUND IS THE WRITE TIMELINE, which is M6's and is owed.
+#   * ym14, ym15, THE TWO PARALLEL PORTS — not the sound chip at all. Port A carries the floppy
+#     drive-select lines, so whoever owns the machine's disks writes it, and the two sides own
+#     different disks: measured, the shipped binary (booted from its own floppy) leaves $27, drives
+#     deselected, while our side — loaded off a GEMDOS hard drive by a TOS still polling for a floppy
+#     — reads $25. Neither is the game's frame loop, and M1's RB_PSG_PORT_A_DESELECTED is where that
+#     write IS asserted.
+YM_SOUND_REGISTERS = tuple("ym%02d" % register for register in range(14))
+YM_PARALLEL_PORTS = ("ym14", "ym15")
+VECTOR_UNCOMPARED = YM_SOUND_REGISTERS + YM_PARALLEL_PORTS
+
+# `vecnoise`'s reading: WHICH registers two boots of the shipped binary actually disagreed about.
+# It is the EVIDENCE for the first exclusion above and a TRIPWIRE for everything else — a pen, the
+# resolution or the sync bit turning out to be boot-dependent would be a far larger fact than a music
+# cursor, and absorbing it into an exclusion list is exactly how a surface goes quiet. So anything
+# outside VECTOR_UNCOMPARED raises, here and again in smoke.py where the file is read.
+VECTOR_NOISE_FILE = "VECNOISE.json"
+
+
+def mode_vector_noise(flash_seed=None):
+    """A SECOND boot at the same anchors, differenced against `frames`' vectors register by register.
+
+    `flash_seed` measures the FLASHED boot instead, and it is not a luxury: `m5flash` compares colour
+    0, which on that boot is driven by a countdown seeded at a breakpoint and decremented by
+    `flip_screen`. If its phase at an anchor were boot-dependent — the class this mode exists to
+    detect — `pen00` would be a boot-dependent COMPARED register and every disagreement would read as
+    a reconstruction defect. The reading taken over the unflashed boot cannot see that, because
+    nothing is driving colour 0 there.
+
+    Two boots is not a sample that could BOUND anything, and this mode does not pretend otherwise:
+    what it establishes is one-directional. A register that moves is demonstrably one boot's
+    accident; a register that does not move is not thereby shown to be stable. That is why the
+    compared set is decided by kind, above, and this measurement is its evidence and its tripwire."""
+    frames = frames_argument()
+    prefix = FRAME_PREFIXES[flash_seed is not None]
+    tag = "flashnoise" if flash_seed is not None else "vecnoise"
+    first = {frame: BUILD / (prefix + VECTOR_FILE % frame) for frame in frames}
+    missing = [str(path) for path in first.values() if not path.exists()]
+    if missing:
+        raise SystemExit(f"run `original.py {'flash' if flash_seed is not None else 'frames'}` first "
+                         f"— {', '.join(missing)} is the boot this one is differenced against")
+    produced, log, status = run_original(
+        lambda d, disk2: frames_script(d, disk2, frames, flash_seed), tag)
+    print(f"-- {tag}: a second boot at anchors {frames}, hatari exit={status}")
+    faults = machine_faults(log)
+    if faults:
+        raise SystemExit("FAIL: unhealthy machine: " + " | ".join(faults[:4]))
+    moved, seen = set(), set()
+    for index, frame in enumerate(frames, 1):
+        earlier = json.loads(first[frame].read_text())
+        later = hardware_vector(log, produced, THEIR_TAG, index, frame)
+        names = sorted(set(earlier) | set(later))
+        seen |= set(names)
+        differ = [name for name in names
+                  if name not in VECTOR_REPORT_ONLY and earlier.get(name) != later.get(name)]
+        print(f"     frame {frame:>3}: {len(differ)} of {len(names)} registers moved between two "
+              f"boots" + (": " + ", ".join(f"{name} {earlier.get(name)}->{later.get(name)}"
+                                           for name in differ) if differ else ""))
+        moved |= set(differ)
+    outside = sorted(moved - set(VECTOR_UNCOMPARED))
+    if outside:
+        raise SystemExit(f"FAIL: {outside} moved between two boots of the same binary, and they are "
+                         f"registers M5 COMPARES. A boot-dependent pen, resolution or sync bit is a "
+                         f"much larger fact than a music cursor: it would mean the vector's compared "
+                         f"half is not reproducible either, and it must not be absorbed into an "
+                         f"exclusion list.")
+    if not moved:
+        raise SystemExit("FAIL: two independent boots produced an identical vector at every anchor. "
+                         "That is not the machine this game runs on — its music driver's cursors are "
+                         "boot-dependent and `variance` measures them moving in memory — so either "
+                         "the second boot is not independent (a cached artefact?) or the capture is "
+                         "not reading the chip. Either way the exclusion above rests on nothing.")
+    # STAMPED WITH WHAT IT COVERS, because a bare list of names licenses any run at all. The anchors
+    # and the register names this boot actually saw are what make the reading answerable to the run
+    # that reads it: a later anchor set, or a 37th register, is a measurement nobody has taken, and
+    # smoke.py refuses rather than inheriting this one's authority. (Same reason `original.py dump`
+    # stamps a manifest over its three artefacts.)
+    (BUILD / (prefix + VECTOR_NOISE_FILE)).write_text(json.dumps(
+        {"moved": sorted(moved), "anchors": frames, "registers": sorted(seen)}, sort_keys=True))
+    print(f"OK: {len(moved)} registers are one boot's accident ({', '.join(sorted(moved))}), and "
+          f"every one of them is inside the {len(VECTOR_UNCOMPARED)} that M5 captures without "
+          f"comparing. {BUILD / (prefix + VECTOR_NOISE_FILE)} records the reading, stamped with the "
+          f"anchors {frames} and the register names it covers; smoke.py refuses a run those do not "
+          f"cover.")
+    return True
+
+
+def lightning_flash_seed():
+    """M5's seed, from the header that quotes the instruction that writes it.
+
+    `move.w #$2,$714.w` at $1328 — `player_weapon_fire`'s LIGHTNING arm, the image's ONLY writer that
+    raises WB_FLASH_TIMER. Scraped rather than written down, so this side and atari/build.sh's
+    `m5flash` cannot poke and compile different words (CLAUDE.md §5).
+
+    NOT `flash_seed`, which is the name `frames_script` and `mode_frames` give their PARAMETER: the
+    two would shadow each other inside those bodies, and the obvious later edit — defaulting the
+    parameter from the scraper — would raise UnboundLocalError in a mode that costs a two-minute
+    boot to reach."""
+    return wb("PLAYER_LIGHTNING_FLASH")
+
+
 MODES = {
     "dump": mode_dump,
     "neighbour": mode_neighbour,
     "variance": mode_variance,
     "frames": lambda: mode_frames(frames_argument()),
+    "vecnoise": mode_vector_noise,
+    "flashnoise": lambda: mode_vector_noise(lightning_flash_seed()),
+    "flash": lambda: mode_frames(frames_argument(), lightning_flash_seed()),
     "nofire": lambda: mode_control("nofire", fires=False, disk2=True),
     "nodisk2": lambda: mode_control("nodisk2", fires=True, disk2=False),
 }

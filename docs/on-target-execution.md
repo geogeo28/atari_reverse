@@ -349,9 +349,52 @@ byte-identical framebuffer, a byte-identical palette, and a wrong picture.
   the address was aligned.
 - **And witness the rendered picture at least once.** Hatari's debugger `screenshot <file>` drives
   the emulator's real video path, so a PNG of your run and one of the original at the same frame
-  anchor is a display-level comparison; the encoder is the same on both sides, so the files are
-  byte-comparable. Control it by deliberately misaligning the screen: every memory check must still
-  pass and the picture must not.
+  anchor is a display-level comparison. Control it by deliberately misaligning the screen: every
+  memory check must still pass and the picture must not.
+- **A PNG comparison is a comparison of the ENCODER'S CHOICES as well as the pixels, and three
+  Hatari settings decide whether it can succeed at all.** An earlier revision of this section
+  justified a byte comparison by an argument about the two runs sharing one encoder; Wonder Boy's M5
+  refuted it and measured all three of the reasons:
+  * **`--frameskips 0`.** Under `--fast-forward` Hatari still emulates every frame but does not
+    RENDER every frame, and `screenshot` grabs the last *rendered* surface — so without this a
+    capture returns whichever frame happened to be drawn, and no two runs agree.
+  * **`--drive-led off`, not just `--statusbar off`.** With the statusbar hidden Hatari draws a small
+    activity LED **in the top-right border**, i.e. inside the photographed area. If one side touches
+    a disk and the other does not, the picture differs by a coloured rectangle that is emulator
+    chrome — and worse, the extra colours push Hatari's PNG writer from a palette image (colour type
+    3) to a truecolour one (type 2), so the two files can never match byte for byte whatever the
+    pixels do. **A colour-type difference in the IHDR is the tell**: it means the comparison was
+    never about the game.
+  * **Stop-then-shoot.** The display surface is built scanline by scanline, so a capture taken where
+    an anchor happens to fire mixes that frame with the one before. Break at the anchor, then arm
+    `b VBL > VBL :once` (Hatari substitutes the expression's current value on the right, so this
+    reads "the next vblank") and photograph from *that* breakpoint's action file.
+  With all three, measure rather than assume: run each side twice and diff the pictures per anchor.
+  Assert only on the anchors that come back byte-identical on both sides — the rest are noise, and a
+  green over them means nothing.
+- **A PALETTE-MODE PNG CARRIES THE PALETTE, so the rendered picture reads pens no pixel uses.** This
+  is the other half of the colour-type tell above and it is worth knowing for its own sake: a
+  colour-type-3 PNG's `PLTE` chunk is literally the shifter's sixteen colour registers — verified
+  byte for byte ($000 → `(0,0,0)`, $777 → `(238,238,238)`). A truecolour (type 2) image encodes only
+  the pixels that are drawn and carries no such table. So the same fault — one corrupted pen — is
+  invisible to a truecolour capture and visible to a palette one, and **removing the LED makes the
+  rendered surface strictly more sensitive rather than merely cleaner.** Measured in Joust: its
+  palette negative control classified the rendered picture as a surface the fault must NOT move, on
+  a measurement taken while the LED was inflating the picture to truecolour; with `--drive-led off`
+  that classification is simply wrong and the control now (correctly) requires the picture to move.
+  If your project has a control that says a palette fault leaves the picture alone, check the IHDR
+  colour type before believing it.
+- **DO NOT ASSUME THE THREE SETTINGS EXPLAIN EVERY IRREPRODUCIBLE ANCHOR — measure the residue.**
+  Measured across the two projects, two boots of the shipped side each: Wonder Boy is byte-identical
+  at all four of its anchors. Joust, with the settings applied, is byte-identical at three of six —
+  the LED came out of frames 1 and 115 (IHDR colour type 2 → 3, 5697 → 3270 bytes), and the deeper
+  anchors 150/180/210 still disagree between two boots, as at least one of them did before. So the
+  recipe accounts for the CHROME and not for the deep-anchor variance, whose cause is unmeasured and
+  is registered as a blocker at Joust's own surfaces rather than explained here. Two runs cannot rank
+  two configurations against a quantity that is itself nondeterministic, and the temptation this
+  paragraph replaced was to close the gap with a one-line causal claim — that the two projects'
+  different anchor counts were a property of the games rather than of the settings — which nobody
+  had measured and which the measurement above partly contradicts.
 
 ## The observable surfaces
 
@@ -363,7 +406,7 @@ have shown me if it were wrong?"**
 |---|---|---|
 | **memory** | framebuffers and image bytes, dumped by the program or by `savebin` | anything that never lands in RAM: the shifter, the PSG, the IKBD, TOS's own variables |
 | **the trap ledger** | which OS calls were made, with what arguments (Hatari `--trace xbios,gemdos`) | what the *device* did with them |
-| **the hardware-state vector** | the registers themselves, read back at a frame anchor — shifter pens, resolution, YM file, video base | the ORDER things reached them, and anything between two anchors |
+| **the hardware-state vector** | the registers themselves, read back at a frame anchor — shifter pens, resolution, YM file, video base | the ORDER things reached them, and anything between two anchors. **And any register whose value is a PHASE rather than a state**: if the game has music playing at the anchor, the PSG's sound registers depend on which vblank the boot finished on, and two boots of the *same binary* disagree about them. Measure that before comparing them (boot the original twice and diff the vectors); what moves is not evidence, and the surface that can compare it is the timeline below |
 | **rendered pixels** | Hatari `screenshot`, i.e. the emulator's real video path | nothing about *why*; and it is only as reproducible as the emulator's frame rendering |
 | **timelines** | the ordered stream of hardware writes (`--trace video_color,psg_write`), reduced to a per-phase shape | values it does not sample; it is a shape, not a state |
 | **exit status and the log** | the emulator's own return code plus its bus/address-error and halt lines | anything the machine survives *and* does not log |

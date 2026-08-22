@@ -12633,7 +12633,7 @@ for ever).
 | --- | --- | --- |
 | the base bytes swapped **at `flip_screen`'s own two call sites** | **CAUGHT** | the backend wrote `0x84a400`, the 24-bit bus handed back `0x4a400`, against `image + 0x78000` = `0xc1d00` |
 | **the wrong buffer published** (`WB_SCREEN_BACK`) | **CAUGHT** | `0xb9d00` read back against `0xc1d00` |
-| the flash's two arms swapped | **SURVIVES — and the reason is measured, not guessed** | `WB_FLASH_TIMER` is `$0000` in the staged image, so `flash_step` returns before the write on all fifty-two frames. A branch the anchor's own data cannot reach, exactly the class this project's coverage canon names; reaching it means staging a frame with the flash armed, which is M5's |
+| the flash's two arms swapped | **SURVIVED THIS PHASE — and the reason is measured, not guessed**; *killed in phase D, below* | `WB_FLASH_TIMER` is `$0000` in the staged image, so `flip_screen` returns before the write on all fifty-two frames. A branch the anchor's own data cannot reach, exactly the class this project's coverage canon names; reaching it means arming the countdown, which is M5's and is what phase D does |
 
 So of the four shifter-sink mutants the differential suite could not kill, **three and a half are now
 dead** (M1 took the shared-translation half of the base swap). The fourth, the sink write moved above
@@ -13162,3 +13162,301 @@ particular **M5 (the hardware-state vector) and the FLASH-ARM SURVIVOR were NOT 
 and the mechanism phase B named for reaching them — a second dump with the flash armed, driven
 identically into the original as a declared fabrication — is untouched. So are M3's exits and the
 joystick arms, and M6's timelines.
+
+## Batch 43 phase D — M5, THE HARDWARE-STATE VECTOR: the machine compared, and the flash arm killed
+
+M2 compares what the reconstruction DREW and reads one hardware register back. This phase compares
+**the machine**: at the same four anchors, twenty registers captured on both sides by the same
+debugger commands and read back by the same parser, plus the picture Hatari actually renders. Nine
+on-target modes are green on **both ROMs** (TOS 1.04 and Hatari's bundled EmuTOS), and the
+shifter-sink survivor that has outlived every differential since batch 12 is dead.
+
+`atari/README.md` §10 is the surface that owns the argument; this section records what the round
+found. Suite unchanged at **6,140** — this phase touches `atari/` and one plate, not `src/`.
+
+### What landed
+
+* **THE VECTOR, ONE SPELLING FOR BOTH SIDES.** `atari/original.py` grew `vector_commands`,
+  `picture_command` and `hardware_vector`; `smoke.py` drives our side through the same three. Forty
+  entries are captured — the sixteen shifter pens and the resolution and sync registers by
+  `savebin` out of I/O space, the sixteen YM-2149 registers and the refresh rate, V-overscan,
+  video base, VBL counter, HBL line and frame-skip count out of the debugger's `info`. **The count
+  that matters is 36**, which is the captured set MINUS the four report-only entries just named — the
+  same number `VECTOR_REGISTERS` computes and the same one the compared count of 20 is taken from.
+* **OUR SIDE IS ANCHORED ON AN ADDRESS THE BINARY REPORTS ABOUT ITSELF.** `capture_the_frame` is now
+  `noinline` and its run-time address rides in `M2.BIN` as `capture_pc`; the debugger run breakpoints
+  it, so the Nth arrival IS the Nth anchor and the vector is taken at the instant `FRAME.BIN` is.
+  Reading the address out of `build/wonderboy.elf` would risk a stale ELF from a later build.
+* **A FREE DETERMINISM CONTROL.** The vector needs a second boot of our side (the shim cannot read
+  the PSG's file, and the rendered surface is the emulator's), so the two boots are required to agree
+  about `capture_pc`, the image base, the framebuffer and the pens. That is what pins GEMDOS having
+  placed the program identically in both, which is the premise the breakpoint rests on.
+* **THE RENDERED PICTURE, AT ALL FOUR ANCHORS, BYTE-IDENTICAL.** Stop-then-shoot on both sides
+  (break at the anchor, arm `b VBL > VBL`, photograph at the frame boundary) with `--frameskips 0`.
+  The bound is MEASURED, not chosen: two runs of each side produce byte-identical PNGs at all four.
+* **TWO CONTROLS THAT PARTITION THE SURFACES.** `m5fault` (a new build: one pen corrupted on its way
+  to the shifter) must break the pens, the vector and the picture and must leave the bitplanes alone
+  — and the vector's divergence must be *that pen and nothing else*. `m5skew` must break the
+  bitplanes and the picture and must leave the pens and the vector alone. Every surface fails in at
+  least one of the two, and the three that can be isolated pass in the other; the rendered picture is
+  the exception and both controls move it, because it reads colour AND drawn bytes.
+* **THE FLASH ARM, ARMED ON BOTH SIDES, AND THE MUTANT DEAD.** `../names.txt` `cmt 0x714` now carries
+  a full-width writer/reader census: `move.w #$2,$714.w` at `$1328` (`player_weapon_fire`'s LIGHTNING
+  arm) is the image's ONLY raiser, and the anchored window cannot reach it twice over — no joystick
+  byte is injected, and the staged image's `WB_EFFECT_RECORD_WRITE_PTR` sits at the list base, so the
+  player holds no item to fire. `m5flash` therefore SEEDS the word, with that instruction's own
+  operand, on both sides at the same instant: our shim before its first `game_main_loop`, the shipped
+  binary by a debugger poke at `$4a0`'s first arrival. Colour 0 goes white at anchor 1 and black at
+  anchor 2 on both sides, and all four surfaces still agree.
+
+| shifter-sink mutant | verdict | where |
+| --- | --- | --- |
+| the base bytes swapped, shared translation | CAUGHT | M1 |
+| the base bytes swapped, `flip_screen`'s call sites | CAUGHT | M2 |
+| the wrong buffer published | CAUGHT | M2 |
+| **the flash's two arms swapped** | **CAUGHT — three surfaces, both arms** | **M5 (`m5flash`)** |
+| the sink write moved above the timer store | SURVIVES, structurally | M6's |
+
+The survivor is not a coverage gap that more anchors would close. Moving `shifter_write_word` above
+`wr16(image + WB_FLASH_TIMER, flash)` changes no value at all — the argument is the already
+decremented local — only the ORDER of two writes. Measured surviving `m5flash` with the flash live,
+which is the strongest snapshot this project can build. **No snapshot will ever see it**, and saying
+so is more useful than adding anchors.
+
+### What the round found
+
+* **THE YM-2149's FILE IS NOT COMPARABLE AT A SNAPSHOT, AND THE MEASUREMENT SAYS SO OUT LOUD.** The
+  first `m5` run came back red on four to seven YM registers per anchor, and the tempting reading —
+  "the sound port diverges" — is wrong. `original.py vecnoise` boots the SHIPPED BINARY a second time
+  and differences the vectors: **`ym00`, `ym02`, `ym04`, `ym08` and `ym10` move between two boots of
+  the shipped binary itself**, at the same anchors. That is `variance`'s sound band arriving at the
+  chip — the music's cursors depend on which vblank the boot finished on — so a snapshot of those
+  registers is not evidence in either direction. The whole sound file is excluded BY KIND with that
+  measurement as its evidence, and `ym14`/`ym15` separately because they are the parallel ports and
+  carry floppy drive select (shipped `$27`, ours `$25`: one side booted off its own floppy, the other
+  off a GEMDOS drive under a TOS still polling for one). **Worth reading anyway: at anchor 1 the two
+  sides' whole YM file is identical apart from that port.** The pin the sound needs is the ordered
+  write timeline, M6's.
+* **A TWO-SAMPLE MEASUREMENT CANNOT BOUND ANYTHING, AND THE FIRST DRAFT USED IT AS THE EXCLUSION
+  LIST.** `vecnoise` found five registers moving; our-vs-shipped also disagreed on `ym01`, `ym03` and
+  `ym09` — the COARSE companions of the fine bytes it had caught. Excluding exactly the measured five
+  would have reddened the mode on registers the same mechanism moves, and would have implied a floor
+  the sample cannot support. So the set is decided by KIND and `vecnoise` is re-cast as its evidence
+  and as a **tripwire**: anything moving that M5 *does* compare raises, in `vecnoise` and again in
+  `smoke.py` where the file is read. `vecnoise` also raises if NOTHING moved — an identical vector
+  from two boots would mean the second boot was not independent, or the capture is not reading the
+  chip, and either way the exclusion would rest on nothing.
+* **THE RENDERED COMPARE'S FIRST FAILURE WAS EMULATOR CHROME.** Every anchor's PNG differed, and not
+  because of the game: with the statusbar hidden Hatari draws an activity **LED in the top-right
+  border**, our side touches a GEMDOS drive and the shipped side does not — and the extra colours
+  pushed Hatari's PNG writer from a palette image (colour type 3) to a truecolour one (type 2), so
+  the two encodings could never have matched byte for byte whatever the pixels did. `--drive-led off`
+  on both sides. *A byte comparison of an encoder's output compares the encoder's choices too, and
+  the tell was the colour type, not the pixels.*
+* **THE DETERMINISM CONTROL CAUGHT ITS OWN AUTHOR ON A LESSON THIS FILE ALREADY RECORDS.** Its first
+  draft compared `PENS.BIN` raw between our two boots and reddened them. The pens are read by the CPU
+  and the fourth bit of every gun does not exist — it reads back as whatever was last on the bus — so
+  two boots of one binary legitimately differ there. It compares masked now. Same class as on-target
+  bug #2, one register over, and written by someone who had just read that paragraph.
+* **THE FLASH RUN COMPARED TWO DIFFERENT BOOTS AS ONE.** `m5flash`'s vector rows took the flashed
+  boot's artefacts and its pen rows took the unflashed boot's, because `shipped_frame` had no prefix
+  parameter. The symptom was self-contradictory in a useful way: the vector called colour 0 white and
+  the pen row called it a divergence, in the same run. *Two artefact sets from two boots of the
+  original now differ by a filename prefix, and the reader takes it.*
+* **THE HEADLINE OUTRAN THE MEASUREMENT, AND THE CODE FIXED IT.** The success line first said "a
+  36-register hardware-state vector"; the run compares 20 of them. `vector_exclusions` returns the
+  compared count for exactly that line, so the claim cannot drift from the exclusion set again.
+
+### What the gate found
+
+Six finder angles over the diff, and the round's theme is **a claim that could not fail**. Every one
+below is fixed in this phase's own commit.
+
+* **`m5flash`'s HEADLINE FABRICATION WAS PRINTED AND NEVER ASSERTED — and two angles found it
+  independently.** The mode is not a control, so it takes the plain agree-with-the-shipped-binary
+  path; `flash_timer_at_entry` appeared only inside an f-string. The failure it left open is the one
+  a two-sided differential is structurally blind to: **the seed comes from ONE constant that both
+  sides scrape**, so anything that zeroes it disarms BOTH, colour 0 never moves, all four surfaces
+  agree, and the mode prints OK while the mutant it exists to kill is alive again. Now two rows:
+  our side's read-back must equal the seed (`$0000` in the other three modes), and the shipped
+  binary's flashed boot must DIFFER from its own unflashed boot in the compared set — measured
+  against the artefacts on disk, not against an expectation. *A fault that hits both sides at once
+  is invisible to a differential; only an assertion about the state can see it.*
+* **THE RECORD GREW A FIELD AND THE PARSER DID NOT.** `fault_pen` was added to `struct m2_stats`
+  and not to `M2_FIELDS`/`M2_FORMAT` — 84 bytes against 80 — which would have killed every M2 and M5
+  mode at `read_m2`. The version check the record carries did its job; the point is that the author
+  added the field and the reader in two different edits and ran nothing in between.
+* **A SCRAPE OF `build.sh` REPRODUCED THE STALENESS HAZARD `capture_pc` EXISTS TO AVOID, one control
+  over.** `wonderboy_main.c` argues at length that the anchor address must be reported BY THE BINARY
+  because the per-mode `.PRG`s persist while the build script is edited — and the fault control then
+  scraped `-DM5_FAULT_PEN=` out of that same script to name the pen a persisting `WB-m5fault.PRG`
+  had injected. The pen is reported in the record now, with an OUT-OF-BAND sentinel so a build with
+  no fault in it cannot pass for one that faulted pen 0.
+* **THE TRIPWIRE HAD NEVER LOOKED AT THE BOOT IT LICENSED.** `vecnoise` measures which registers two
+  boots of the shipped binary disagree about — but only on the UNFLASHED boot, while `m5flash`
+  compares a colour 0 that the flashed boot drives from a debugger-seeded countdown. `flashnoise` is
+  the flashed boot's own reading, and the reading is stamped with the anchors and register names it
+  covers so a run it does not cover is refused rather than licensed.
+* **THE `--frameskips 0` SPLIT, AND THE ASSERTION THAT STRADDLED IT.** The flag was first passed only
+  by the photographing runs, which left each side in two emulator configurations — and `smoke.py`'s
+  determinism control then REQUIRED byte-identity across ours. Frameskip is a host-side draw
+  decision and changes no emulated cycle, so it is unconditional on both sides now and the split is
+  gone. Its sibling: the shipped side's `variance` ceilings had been measured under one
+  configuration and the `frames` artefacts produced under the other.
+* **TWO GUARDS THAT COULD NOT FIRE, both asymmetric with their own other half.** The control's
+  totality check compared two written-down lists to each other rather than to the surfaces the rows
+  actually carry, so a fifth surface would be asserted by neither control while the guard against
+  exactly that went on passing. And the `pass` half had no minimum-row guard where the `fail` half
+  did — "the fault leaves the pens alone" is satisfied by a run with no pen rows.
+* **THE RENDERED ROW WAS GATED ON ONE END OF ITS PAIR.** `if frame not in RENDER_ANCHORS` while the
+  comparison is against `against`'s picture, so the day an anchor is measured non-reproducible the
+  skew control would compare against a PNG the harness had just declared noise — and then explain
+  the exclusion with a reason that is not the reason. Both ends now, and the weak
+  "at least one anchor is rendered" guard became "every anchor is rendered or NAMED as one that
+  cannot be" (`RENDER_NOT_REPRODUCIBLE`, empty today).
+* **A CHECK'S DIAGNOSTIC WAS UNREACHABLE FROM WHERE IT WAS WRITTEN.** The two boots' `capture_pc`
+  comparison sat after the vectors were parsed — but a moved address means the breakpoint never
+  fired and the parse has already raised, with a message about a missing capture rather than about
+  the placement that explains it. Moved to the moment the second record lands.
+* **AND THE ROUND'S OWN PROSE OUTRAN IT TWICE.** A summary line claimed each of the four surfaces
+  failed in one control and passed in the other; that is false of the rendered picture, which reads
+  colour AND drawn bytes and therefore fails in both — the table ten lines below its own claim said
+  so already. And this section opened with a count of the captured entries that was four short of
+  the list it then enumerated: the smaller number is the captured set MINUS the report-only names,
+  and only one of the two was labelled. Both greped to zero. *A retraction is landed when the old
+  phrase greps to zero, and the phrase to scan for is the one that was written, not the one that was
+  meant — and the retraction must DESCRIBE the wording it retires rather than reproduce it, or the
+  grep finds the retraction and the correction never lands. That rule caught this file three times
+  in one phase, twice in text written to record it catching the first.*
+
+`docs/on-target-execution.md` took the transferable half. Its justification for byte-comparing two
+`screenshot` PNGs rested on the two runs sharing one encoder, and this round refuted it: the drive
+LED's colours moved Hatari's writer from a palette image to a truecolour one, so the files could not
+have matched whatever the pixels did. It now carries the three settings that make the comparison
+possible at all, plus the rule that the anchors it asserts on must be measured rather than chosen.
+Its hardware-state-vector row now warns about registers whose value is a PHASE rather than a state.
+
+### The independent gate, and the cross-project measurement it forced
+
+A second, independent reviewer took the round's own prose apart. Five findings; two were prose
+(`build.sh` still teaching the retired scrape design after the pen moved into the record; `vecnoise`'s
+OK line garbled) and one was the retraction rule biting its own author twice — both retractions of
+the PNG claim REPRODUCED the phrase they retired, in `docs/on-target-execution.md` and again here.
+All greped to zero, whitespace-normalised. The other two were substantive:
+
+* **THE PLATE'S CENSUS WAS WIDER THAN ITS RECIPE, and the flash license rests on the plate.** A
+  `(d16,PC)` operand encodes a DISPLACEMENT and never the literal halfword `$0714`, so the raw-image
+  halfword scan could not cross-check that form at all; `(d16,An)` needs its base pinned. The claim
+  was widened rather than narrowed, by a MODE-SHAPED sweep: `tools/prg_dis.py`'s `ea()` instrumented
+  to record mode/register/displacement over all 40,446 instructions and 37,320 EA operands, plus —
+  for the form the halfword scan is blind to — an alignment-independent displacement scan of the only
+  window that can encode it (`$3f8..$8713`, 24.6% of the image), **self-tested by re-finding 226 of
+  the image's 226 `(d16,PC)` operands with 0 misses**. Result: zero `(d16,PC)` references, and
+  `(An)`-indirect impossible because no `lea`/`movea` anywhere loads the constant `$714`. The four
+  known sites stand. **What the sweep also caught: the reader set was undercounted** — `subq.w` at
+  `$6ee` is read-modify-write, so it is a reader as well as a writer, and the plate had filed it
+  under WRITERS alone. The residue is COUNTED, not waved away: 2,218 genuinely open in-code
+  `(d16,An)` sites, 996 + 126 indexed forms with unbounded index registers, 142 `movep`.
+* **A CAUSAL SENTENCE NOBODY HAD MEASURED, papering over a live hazard in a sibling project.** The
+  docs claimed the two projects' different rendered-anchor counts were a property of the games. The
+  reviewer's point was sharper than the style complaint: Joust's own harness passes only
+  `--statusbar off`, whose comment believed it removed the drive LED — which this round refuted —
+  and its five non-reproducible deep anchors are exactly consistent with the mechanism. **So it was
+  measured rather than deleted**, two boots of Joust's shipped side before and after:
+
+| | frames 1 / 115 | frames 150 / 180 / 210 | frame 240 |
+| --- | --- | --- | --- |
+| `--statusbar off` only | reproducible, but **IHDR colour type 2** (5697 / 5839 B) | 150 differs between two boots | reproducible |
+| `+ --drive-led off`, `--frameskips 0` uniform | reproducible, **type 3** (3270 / 3407 B) | all three differ between two boots | reproducible |
+
+  **The LED was in Joust's pictures the whole time, including the one frame its rendered compare
+  asserts on.** It never reddened anything — both sides carried it alike — so what it did instead was
+  certify a picture with emulator chrome in it, which is the worse failure because it is silent. The
+  deep-anchor drift is a DIFFERENT effect that the settings do not fix, and two runs cannot rank two
+  configurations against a nondeterministic quantity, so `RENDER_ANCHORS` there does not move and the
+  residue is registered at Joust's `atari/README.md` with a trigger and a home.
+* **AND THE FIX MADE A SIBLING'S SURFACE STRICTLY MORE SENSITIVE, which broke a control for the right
+  reason.** Joust's palette negative control classified the rendered picture as a surface a corrupted
+  pen must NOT move — measured, but measured while the LED had inflated the picture to truecolour.
+  **A palette-mode PNG's `PLTE` chunk IS the shifter's sixteen pens**, verified byte for byte
+  (`$000` → `(0,0,0)`, `$777` → `(238,238,238)`), so a type-3 capture witnesses every pen whether a
+  pixel uses it or not and a type-2 capture witnesses none of them. With the LED gone the
+  classification is simply wrong; it now requires `palette+vector+timeline+display` to fail and
+  `boot+bitplanes` to pass, and passes. *Removing chrome from a photograph is not only cosmetic — it
+  can change which faults the photograph can see, and in this case it is the reason M5's own
+  `m5fault` picture arm must fail a priori rather than because pen 3 happens to be visible.*
+
+Joust's `title`, `framediff`, `framediff-fault` and `framediff-skew` are green with the change.
+(Its three `framediff` `.PRG`s were refused by its own freshness guard first — **pre-existing**
+staleness, `Aug 1 03:44` binaries against `Aug 1 11:58` sources, nothing this round touched — and
+were rebuilt.)
+
+### Queue
+
+**LANDED THIS PHASE**: the hardware-state vector and the rendered picture on both sides
+(`original.py` `vector_commands`/`picture_command`/`hardware_vector`/`read_capture`, `smoke.py`'s
+`m5`/`m5skew`/`m5fault`/`m5flash`); `original.py`'s `vecnoise`, `flash` and `flashnoise`; `build.sh`'s
+`FRAME_MODES` list, its two new builds and the guard that pins that list to its own `case` arms;
+`capture_pc`, `flash_timer_at_entry`, `fault_pen` and `arm_the_flash` in `wonderboy_main.c`;
+`../names.txt` `cmt 0x714`'s MODE-SHAPED writer/reader census; the three rendered settings and the
+palette-control correction in `projects/joust/recreate/atari/` (`smoke.py`, `README.md`); and, out of
+the gate, `flash_checks`,
+`RENDER_NOT_REPRODUCIBLE` + `require_every_anchor_is_rendered`, the stamped `VECNOISE.json`, one
+spelling of the breakpoint form and its same-arrival guard (`original.anchor_breakpoint` /
+`refuse_repeated_arrivals`, used by both sides), one masking rule (`original.pen_words`), and
+`docs/on-target-execution.md`'s three Hatari screenshot settings.
+
+**DISCHARGED THIS PHASE**: M5 (the hardware-state vector and the rendered picture, with both
+controls); the FLASH-ARM SURVIVOR, carried since batch 42 phase B; `original.py`'s duplicate
+`c_constant` (one definition, shared).
+
+**BORN THIS PHASE:**
+* **THE SOUND HAS AN ON-TARGET WITNESS AND NO ON-TARGET ASSERTION.** The YM file is captured and
+  printed both sides every run, and compared by nothing. It cannot be fixed with more anchors; it
+  needs M6's write timeline.
+* **`vecnoise` IS A TWO-BOOT READING AND IT SAYS WHAT THAT BUYS.** One-directional: a register that
+  moves is demonstrably one boot's accident, one that does not is not thereby shown stable. Nothing
+  downstream treats it as a floor, and the tripwire is the reason it is worth keeping.
+* **THE FLASH IS SEEDED, NOT DRIVEN.** `m5flash` gives both sides the same unreachable state and
+  requires them to agree about it. Driving it honestly needs an item collected and two frames of held
+  input, i.e. the joystick milestone M3 still owes.
+* **M5's SHIPPED SIDE IS FOUR BOOTS OF THE ORIGINAL.** `frames`, `vecnoise`, `flash`, `flashnoise`.
+  Each is ~2 minutes of real-speed floppy, and the artefacts in `atari/build/` carry no manifest the
+  way the M2 dump's three do — a stale `OVEC*.json` beside a fresh `OSCR*.BIN` would compare two
+  moments. `VECNOISE.json` is the one that IS stamped (with its anchors and register names, and
+  checked); the other four artefact kinds are not. The M2 manifest's pattern is the remedy.
+* **THE TWO SIDES BUILD THE HATARI COMMAND LINE SEPARATELY, and this phase edited both copies in
+  lockstep twice.** `smoke.py`'s `run_hatari` and `original.py`'s `run_original` each spell the same
+  nine chrome/`--sound`/`--fast-forward`/`--frameskips` tokens, the same `--tos` insertion, the same
+  `SDL_*=dummy` env, the same merged-stream `subprocess.run`, the same banner check and their own
+  `MEMSIZE_MB`. Only the media argument genuinely differs. The rendered compare is a byte-for-byte
+  PNG diff of two Hatari runs, so it is meaningful only while the two lists agree about everything
+  that reaches the surface — and the `--drive-led off` fix above had to be applied twice, in two
+  edits, for exactly that reason. One `hatari_command(...)` in `original.py` that both extend.
+* **`prefix` IS THREADED THROUGH EIGHT SIGNATURES AS A BARE STRING.** It selects which boot of the
+  original an artefact set came from, and the fact of WHICH `original.py` mode produced it is a
+  second half the code kept re-deriving (now one `FRAME_PRODUCER` table). A third artefact set — a
+  second fabrication, or M6's — changes eight signatures. One small record chosen once in `main`.
+* **JOUST'S DEEP-ANCHOR RENDER DRIFT IS UNEXPLAINED, and is now known NOT to be the three settings.**
+  Measured this phase: with `--drive-led off` and uniform `--frameskips 0`, two boots of its shipped
+  side still disagree at anchors 150/180/210. **Trigger** — any attempt to widen a `RENDER_ANCHORS`
+  anywhere in this workspace. **Home** — `projects/joust/recreate/atari/README.md`, which carries the
+  reading. What would close it is a repeat count above two per configuration with the per-anchor
+  digests kept; nothing in either suite does that today, and a two-run sample cannot rank two
+  configurations against a nondeterministic quantity.
+* **2,218 `(d16,An)` SITES IN THE IMAGE HAVE UNPINNED BASES, and every address census in this project
+  inherits that.** `cmt 0x714`'s sweep counted them rather than waving them away, which is the right
+  shape — but it is the same residue for any address, so the next plate that claims a full-width
+  census either re-counts it or cites this one. Pinning them needs base-range propagation the
+  disassembler does not do.
+* **THE SHIPPED SIDE'S ARTEFACTS ARE RE-READ PER ANCHOR.** `shipped_frame` re-reads a 65 KB `OSCR`
+  three to five times per run, `their_capture` reads each PNG and each vector twice. Small against
+  two Hatari boots, and an `lru_cache` on three functions removes both the cost and the (real)
+  hazard that two reads of one anchor disagree if `original.py` is re-run alongside.
+
+**CARRIED, unchanged**: everything batch 43 phase C carries, minus the two discharged items — the
+sibling seam routing for guarded sweeps, the ~400 raw computed image accesses in `src/`, the
+`$fffc00` hole between `bus.h` and the shim, the sound module's exit-X, the flute arm, `leaf.py`'s
+encoder hoist, the tier partition, `scene_run_effect`'s fix, `$1ab4`, `bus.h`→kit, `src/map.c`'s
+unguarded `WB_ACTOR_X` write, which-monster-is-which. And on target: **M3's exits and joystick arms,
+and M6's timelines**, which is now where every remaining named on-target gap points.

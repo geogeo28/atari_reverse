@@ -455,8 +455,42 @@ so the bound is drawn where **both** ROMs are reproducible on every repeat rathe
 run happened to agree. Asserting on the rest would be asserting on noise: it stays an open blocker
 rather than a green that means nothing.
 
-Two more details. The status bar is turned **off**: it is emulator chrome that varies with the ROM
-and the drive LED, not part of the picture the game draws. And the anchor address comes from
+**BATCH 43 PHASE D (Wonder Boy's M5) FOUND HALF THE CAUSE, AND IT WAS NOT THE GAME.** Two things
+came back from the sibling project's own rendered compare and were then measured here, two boots of
+the shipped side each:
+
+- **The drive LED was in these pictures the whole time, including the one frame this asserts on.**
+  `--statusbar off` does *not* remove it — with the status bar hidden Hatari draws the activity LED
+  in the top-right **border**, inside the photographed area. Measured: frames 1 and 115 came back as
+  **truecolour** PNGs (IHDR colour type 2, 5697 / 5839 bytes) while the deeper anchors were palette
+  images (type 3); with `--drive-led off` they become palette images too (3270 / 3407 bytes). It
+  never turned the compare red — both sides had the LED in the same state — so what it did instead
+  was **certify a picture with emulator chrome in it**, which is the worse failure because it is
+  silent. `--drive-led off` is now passed, and `--frameskips 0` with it uniformly rather than only
+  on the runs that photograph (it is a host-side draw decision and changes no emulated cycle, so the
+  two configurations bought nothing).
+- **THE DEEP-ANCHOR DRIFT IS A DIFFERENT EFFECT AND IS STILL UNEXPLAINED.** With all three settings
+  applied, two boots of the shipped side are byte-identical at 1, 115 and 240 and disagree at 150,
+  180 and 210 — and at least one of those disagreed before the change as well. **Two runs cannot
+  rank two configurations against a quantity that is itself nondeterministic**, so this is *not* a
+  claim that the settings made it worse; it is a measurement that they did not fix it.
+  `RENDER_ANCHORS` therefore stays at frame 1.
+  - **Trigger** — any attempt to widen `RENDER_ANCHORS`, or any rendered compare added to a deeper
+    anchor in this project or a sibling.
+  - **Home** — this row, and Wonder Boy's `atari/README.md` §10, which records the settings and the
+    4/4 reading its own anchors give. The measurement that would close it is a repeat count above
+    two per configuration with the per-anchor digests kept, which nothing in the suite does today.
+
+**AND ONE CONTROL'S CLASSIFICATION WAS WRONG BECAUSE OF THE LED.** `framediff-fault` listed the
+rendered picture as a surface a corrupted pen must *not* move, on a measurement taken while the
+picture was truecolour. A **palette-mode PNG's `PLTE` chunk is the shifter's sixteen pens** —
+verified byte for byte, `$000` → `(0,0,0)`, `$777` → `(238,238,238)` — so once the LED is gone the
+picture reads every pen whether a pixel uses it or not, and a palette fault *must* move it. The
+control now requires `palette+vector+timeline+display` to fail and `boot+bitplanes` to pass, and
+passes. Removing the chrome made this surface **strictly more sensitive**, not merely cleaner.
+
+Two more details. The status bar and the drive LED are turned **off**: both are emulator chrome that
+varies with the ROM and with disk activity, and neither is part of the picture the game draws. And the anchor address comes from
 `STATS.BIN` — the binary reports `poll_quit_key`'s run-time address about *itself*, because
 `build/joust.elf` is overwritten by every build while the per-mode `.PRG`s persist, and a stale ELF
 once supplied an anchor four bytes out and the mode went green on the wrong breakpoint. Each anchor

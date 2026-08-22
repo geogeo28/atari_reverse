@@ -1734,21 +1734,37 @@ counted polls per RUN rather than per SITE.
 
 **AND THE THREE DROPPED REGISTERS ARE NO LONGER UNPINNED — THE PIN IS OFF TARGET'S REACH, NOT THE
 ORACLE'S.** Batch 43 phase B runs the reconstruction on a 68000 with the shipped binary's own
-post-boot RAM staged, and `atari/README.md` §9 measures the four mutants above again *there*:
+post-boot RAM staged, and phase D adds the hardware-state vector and the rendered picture on top of
+it. `atari/README.md` §9 and §10 measure the five mutants above again *there*:
 
 | mutant over `flip_screen`'s dropped registers | under the differential suite | on target |
 | --- | --- | --- |
 | the two base bytes swapped (shared translation) | survives | **CAUGHT at M1** |
 | the two base bytes swapped (flip_screen's own two call sites) | survives | **CAUGHT at M2** |
 | the wrong buffer published | survives | **CAUGHT at M2** |
-| the flash's two arms swapped | survives | **still survives, and now for a MEASURED reason**: `WB_FLASH_TIMER` is `$0000` in the staged image, so the arm never executes in the anchored window. A data-reachability hole, not a surface hole |
-| the sink write moved above the timer store | survives | untried — M6's, the write timeline |
+| the flash's two arms swapped | survives | **CAUGHT at M5** (`smoke.py m5flash`), on three surfaces and at both arms. Its phase-B survival was a data-reachability hole and not a surface hole, exactly as recorded: `WB_FLASH_TIMER` is `$0000` in the staged image, and the census in `../names.txt` `cmt 0x714` shows the image's only raiser is unreachable in the anchored window twice over. M5 seeds the word on BOTH sides with that raiser's own operand |
+| the sink write moved above the timer store | survives | **SURVIVES ON TARGET TOO, and structurally.** Measured under `m5flash` with the flash live — the strongest snapshot this project can build. It changes no value, only the order of two writes, so no snapshot will ever see it. M6's, the write timeline |
 
 **WHAT THAT ADDS TO THIS DOCUMENT'S ARGUMENT.** A T3 price says the oracle cannot see the write. It
-does not say the write is unpinnable — it says the pin is not in this harness. Three of the five
-mutants above died the moment a real shifter was on the other end of the call, and the fourth's
-survival turned out to be about the *data* the anchor stages rather than about the tier at all. The
-tier tells you which surface a pin has to come from; it does not tell you there is none.
+does not say the write is unpinnable — it says the pin is not in this harness. Four of the five
+mutants above died the moment a real shifter was on the other end of the call, and the fourth needed
+only a state the anchor's own data could not reach, seeded identically into both sides. The tier
+tells you which surface a pin has to come from; it does not tell you there is none.
+
+**AND THE FIFTH IS THE INTERESTING ONE.** It is the only mutant here whose survival is a statement
+about the KIND of surface rather than about coverage: it is invisible to a snapshot at any anchor,
+under any data, because the two orderings leave identical state. That is a genuinely different
+verdict from "the oracle drops the write" and from "the window never reaches it", and it is the case
+this document's tier vocabulary has no word for — a routine whose price is not what the oracle can
+see, nor what the harness can drive, but what a *point-in-time comparison* can distinguish at all.
+
+**WHAT M5 DOES AND DOES NOT PIN ABOUT THE PSG.** Phase D captures the whole YM-2149 register file on
+both sides at every anchor and compares NONE of it, and the reason is measured rather than assumed:
+two boots of the SHIPPED BINARY ITSELF write different sound registers at the same anchor
+(`original.py vecnoise` — `ym00`, `ym02`, `ym04`, `ym08`, `ym10`), because the music's cursors depend
+on which vblank the boot finished on. So this document's T2 PSG pricing keeps its meaning unchanged
+on target: the direct YM ports are real hardware there, and what a snapshot still cannot supply is
+an *assertion* about them. The only surface that could is the ordered write timeline, M6's.
 
 **THE LESSON FOR THIS DOCUMENT STANDS UNCHANGED, and it is now paid for twice: a T0 or T3 price is a
 statement that the oracle can SEE the routine, not that the harness can DRIVE it** — the two come
