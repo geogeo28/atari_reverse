@@ -94,6 +94,37 @@ CASES = [
     # --- and the neighbours the family must NOT swallow
     ("b101", 2, "eor.b d0,d1"),        # line B's REGISTER form is an ordinary EOR, not CMPM
     ("c141", 2, "exg d0,d1"),          # EXG still wins its own opmode
+    # --- MOVE to/from SR and CCR. Line 4 with the size field 11, which the CLR/NEG/NOT/TST table
+    # drops. Another LENGTH bug where the ea takes an extension word: `move.w #$2700,sr` is four
+    # bytes and used to decode as `dc.w $46fc` plus whatever the immediate looked like, desyncing
+    # the sweep from there. Found by the Wonder Boy boot-chain census (batch 44 phase A) — the very
+    # first instruction of that program's cold_start is the first case below.
+    ("46fc2700", 4, "move.w #$2700,sr"),
+    ("46fc2300", 4, "move.w #$2300,sr"),
+    ("44fc0000", 4, "move.w #$0,ccr"),
+    ("46c0", 2, "move.w d0,sr"),
+    ("46df", 2, "move.w (a7)+,sr"),
+    ("40c7", 2, "move.w sr,d7"),
+    ("40f90000e482", 6, "move.w sr,$e482.l"),
+    # --- and the neighbours THOSE must not swallow: same lines, a real size field.
+    ("4280", 2, "clr.l d0"),
+    ("4a40", 2, "tst.w d0"),
+    ("4ac0", 2, "tas d0"),
+    # --- the EA GATE on those three forms, which the first draft of the block did not have. It
+    # accepted all 64 ea encodings, so three DESTINATION modes that cannot exist decoded as 4-byte
+    # instructions where the old `dc.w` was 2 — a NEW desync in data, put there by the fix for a
+    # desync in data. `MOVE from SR` needs a data-ALTERABLE destination; `MOVE to SR`/`to CCR` read a
+    # DATA source and so may be pc-relative or immediate; neither accepts An. The lengths are what
+    # matter here: every case below must stay TWO bytes.
+    ("40fc4e71", 2, "dc.w $40fc"),     # move.w sr,#imm — a destination cannot be immediate
+    ("40fa4e71", 2, "dc.w $40fa"),     # ...nor d16(pc)
+    ("40fb4e71", 2, "dc.w $40fb"),     # ...nor indexed pc
+    ("40c8", 2, "dc.w $40c8"),         # ...nor An
+    ("46c8", 2, "dc.w $46c8"),         # An is not a source either
+    ("44c8", 2, "dc.w $44c8"),
+    # ...while the SOURCE forms the gate must still let through
+    ("46fa0004", 4, "move.w $6(pc),sr"),
+    ("44fa0004", 4, "move.w $6(pc),ccr"),
 ]
 
 # --- opcode-space sweep for the "impossible destination" tell ------------------------

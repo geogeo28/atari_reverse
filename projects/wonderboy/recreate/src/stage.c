@@ -424,6 +424,25 @@ uint32_t set_palette(uint8_t *image, uint32_t source) {
     return addr_add(source, WB_PALETTE_ROW_BYTES);
 }
 
+/* $e7f4, the boot chain's palette clear — `lea $ff8240.l,a0` then eight `clr.l (a0)+`. It is here
+ * rather than in src/boot.c because it is `set_palette` with a zero for a source, and the two would
+ * otherwise hold two copies of the shifter sink and its on-target arm.
+ *
+ * IT INHERITS set_palette's UNTESTED CLAIM WHOLE, and has nothing of its own to put beside it: the
+ * sixteen writes go to an address the loaded image does not have, so the oracle drops all of them
+ * and this routine's entire observable effect on a differential is that it touches no image byte.
+ * That IS pinnable and test/test_boot.py pins it, but WHICH registers were cleared is not — the same
+ * hole, registered in the same place, waiting on the same kit-side dropped-write ledger.
+ *
+ * The original leaves a0 at WB_SHIFTER_PALETTE + WB_PALETTE_ROW_BYTES and no caller reads it; that
+ * is returned for set_palette's reason, so the one advancing cursor a case can compare is present. */
+uint32_t clear_palette(uint8_t *image) {
+    (void)image;   /* every core takes the image; this one addresses only the shifter */
+    for (unsigned colour = 0; colour < WB_PALETTE_COLOURS; colour++)
+        shifter_palette_write(colour, 0);
+    return addr_add(WB_SHIFTER_PALETTE, WB_PALETTE_ROW_BYTES);
+}
+
 /* $f95c. THE HINGE EVERY STAGE TRANSITION GOES THROUGH — six call sites, each of which loads the
  * same three registers: `map` (a0) is the level map, `start` (a1) the WB_START_RECORD_LEN-byte start
  * record, and `tiles` (a6) the tile bank.

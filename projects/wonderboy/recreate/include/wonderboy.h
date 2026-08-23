@@ -4355,4 +4355,109 @@
                                              * already its own decimal value */
 #define WB_STAGE_NUMBER_BCD_CARRY  6u       /* `subq.w #6,d2` — one BCD tens carry */
 
+/* --- THE BOOT CHAIN (src/boot.c) ---------------------------------------------------------------
+ *
+ * Everything from the PRG entry to the `jmp $4a0` that starts the frame loop. The inventory —
+ * which of its routines are reconstructed and which are not — is in ../STATUS.md, batch 44 phase A.
+ */
+
+/* $f926 / $f938 / $f93c: the boot's three block movers. The two screen buffers are the only
+ * addresses any of them names outright; `copy_longs` takes all three of its operands in registers. */
+#define WB_SCREEN_LOW              0x70000u /* `lea $70000.l,a0` — the lower of the two buffers */
+#define WB_SCREEN_HIGH             0x78000u /* the upper one; the pair the shifter is flipped between
+                                             * (WB_SCREEN_FRONT / WB_SCREEN_BACK hold pointers to
+                                             * them, and are NOT these addresses) */
+#define WB_SCREEN_BYTES            32000u   /* 320x200 over WB_PLANES bitplanes */
+#define WB_SCREEN_CLEAR_LONGS      0x3f40u  /* `move.w #$3f3f,d0` + 1. NOT two screens back to back:
+                                             * == (WB_SCREEN_HIGH + WB_SCREEN_BYTES - WB_SCREEN_LOW)
+                                             * / 4, so the run also crosses the 768-byte gap between
+                                             * the low buffer's end and the high buffer's start */
+#define WB_SCREEN_COPY_LONGS       0x1f40u  /* `move.w #$1f3f,d0` + 1 == WB_SCREEN_BYTES / 4 */
+
+/* $e67e: THE TILE INSTALLER. Runs once per stage load, immediately after TILEDATA.RAD has been
+ * depacked to WB_TILE_BANK. Walks the first WB_TILE_INSTALL_COUNT entries of WB_TILE_INDEX_TABLE —
+ * which arrive with the OVERLAY, since the table lies past the program's last byte — copies each
+ * named tile's bitmap out of the depacked bank into WB_TILE_BITMAPS in table order, and REWRITES the
+ * entry it just spent with its own position. So the table leaves as the identity and the bank the
+ * scroll engine reads is packed in the order the map asks for.
+ *
+ * IT HAS NO `rts`. The body falls off its end into the boot's continuation at $e6c6, which is why
+ * ../names.txt gives it a `var` and not an `fn` (it is inside Ghidra's 632-byte function at $e494)
+ * and why its differential runs to a checkpoint. */
+#define WB_TILE_BANK               0x4f000u /* `lea $4f000.l,a1` — where TILEDATA.RAD depacks to */
+#define WB_TILE_INSTALL_COUNT      0x78u    /* `cmp.w #$78,d0`: 120 tiles copied AND re-indexed */
+#define WB_TILE_INSTALL_END        0x80u    /* `cmp.w #$80,d0`: eight more entries re-indexed with no
+                                             * bitmap copied behind them */
+#define WB_TILE_INSTALL_FALLTHROUGH 0xe6c6u /* where the body runs off its end into the boot's
+                                             * continuation. It is the routine's extent AND its
+                                             * differential's checkpoint, and both test modules read
+                                             * it from here rather than each spelling it */
+
+/* $e87c: SPRITES_CRU_INSTALL, the other boot product no ported code could compute. SPRITES.CRU is
+ * loaded RAW to WB_SPRITE_CRU_LOAD and never depacked; this routine slides its table down over
+ * WB_RESOURCE_HEADER, then walks a per-stage bitmask and, for every descriptor the mask marks,
+ * copies that sprite's cell words out of the file body into WB_SPRITE_CRU_CELLS and replaces the
+ * descriptor's pointer with the cell's offset from WB_RESOURCE_TABLE. An unmarked descriptor is
+ * given WB_SPRITE_CRU_UNMARKED, which is that same offset for the cell area's own base. */
+#define WB_SPRITE_CRU_LOAD_OFF     2560u    /* `lea 2560(a5),a1` */
+/* Spelt as literals rather than as sums of the parts below them, because test/layout.py scrapes
+ * PLAIN-INTEGER defines only and a computed one would be invisible to Python — the exact way a C
+ * constant and its Python reading drift apart. test_boot.py cross-pins each against its derivation
+ * instead, so both spellings have to agree. */
+#define WB_SPRITE_CRU_LOAD         0x25298u /* == WB_RESOURCE_HEADER + WB_SPRITE_CRU_LOAD_OFF, and
+                                             * the `lea $25298.l,a1` the boot loads the file with */
+#define WB_SPRITE_CRU_SLIDE_LONGS  0x97au   /* `move.w #$979,d0` + 1 */
+#define WB_SPRITE_CRU_FILE_HEADER  64u      /* the .CRU header the body starts after: the file is
+                                             * 279,034 bytes and its own length field reads 278,970 */
+#define WB_SPRITE_CRU_BODY         0x252d8u /* == WB_SPRITE_CRU_LOAD + WB_SPRITE_CRU_FILE_HEADER;
+                                             * `adda.l #$252d8,a0` — a descriptor's pointer is an
+                                             * offset from here */
+#define WB_SPRITE_CRU_CELLS        0x26e80u /* `lea $26e80.l,a3`, where the cells are laid down */
+#define WB_SPRITE_CRU_MASK_TABLE   0xe978u  /* `lea $e978.l,a4` — one WB_SPRITE_CRU_MASK_STRIDE row
+                                             * per stage, in the .PRG itself */
+#define WB_SPRITE_CRU_MASK_SHIFT   6u       /* `lsl.w #6,d0` — a WORD shift, so a stage number of 0
+                                             * indexes row -1 and lands 64 KB past the table */
+#define WB_SPRITE_CRU_MASK_STRIDE  64u      /* == 1 << WB_SPRITE_CRU_MASK_SHIFT, cross-pinned in
+                                             * test_boot.py for WB_SPRITE_CRU_LOAD's reason */
+#define WB_SPRITE_CRU_FIRST_DESC   84u      /* `lea 84(a5),a5` — the first descriptor. That is
+                                             * WB_RESOURCE_TABLE's own offset from
+                                             * WB_RESOURCE_HEADER (64) plus ONE
+                                             * WB_RESOURCE_RECORD_BYTES record, i.e. the walk starts
+                                             * at the table's SECOND record. Cross-pinned in
+                                             * test_boot.py, because an earlier revision of this
+                                             * comment described an arithmetic that gives 64 and a
+                                             * reader checking it would have "fixed" the literal */
+#define WB_SPRITE_CRU_GROUPS       31u      /* `move.w #$1e,d5` + 1 mask words, of the 32 a row holds */
+#define WB_SPRITE_CRU_GROUP_SLOTS  16u      /* `move.w #$f,d6` + 1 — one descriptor per mask BIT.
+                                             * The LAST group takes the `tst.w d5 / beq` arm and runs
+                                             * ONE slot, so the walk covers
+                                             * (WB_SPRITE_CRU_GROUPS - 1) * this + 1 descriptors */
+#define WB_SPRITE_CRU_DESC_COPIER  4u       /* `move.b 4(a5),d0` — index into WB_SPRITE_CRU_COPIERS */
+#define WB_SPRITE_CRU_DESC_COUNT   5u       /* `move.b 5(a5),d1` — a `dbf` count, so cells + 1 */
+#define WB_SPRITE_CRU_UNMARKED     0x25a8u  /* `move.l #$25a8,(a5)` == WB_SPRITE_CRU_CELLS -
+                                             * WB_RESOURCE_TABLE, i.e. the cell base's own offset */
+#define WB_SPRITE_CRU_COPY_TABLE   0xe91cu  /* four longwords, `lea $e91c,a1 / lsl.w #2,d0 /
+                                             * movea.l 0(a1,d0.w),a1 / jsr (a1)` */
+#define WB_SPRITE_CRU_COPIERS      4u       /* how many entries that table has */
+/* The four longwords it holds, and the cell width each of them copies. The port dispatches on the
+ * ADDRESS rather than on the selector byte, so these are the table's contents and not a restatement
+ * of its index — test/test_boot.py requires the shipped table to equal them. */
+#define WB_SPRITE_CRU_COPY_5W      0xe92cu
+#define WB_SPRITE_CRU_COPY_10W     0xe938u
+#define WB_SPRITE_CRU_COPY_15W     0xe948u
+#define WB_SPRITE_CRU_COPY_20W     0xe95eu
+#define WB_SPRITE_CRU_WORDS_5      5u       /* $e92c: `move.w` + 2 x `move.l` per cell */
+#define WB_SPRITE_CRU_WORDS_10     10u      /* $e938: 5 x `move.l` */
+#define WB_SPRITE_CRU_WORDS_15     15u      /* $e948: `move.w` + 7 x `move.l` */
+#define WB_SPRITE_CRU_WORDS_20     20u      /* $e95e: 10 x `move.l` */
+/* The two things `sprites_cru_install` reports, which the 68000 reports nothing of: its caller's
+ * `bsr.w` at $e6e8 spends no register, so these are OUT OF BAND by construction rather than by
+ * choosing a value the routine cannot otherwise produce. */
+#define WB_SPRITE_CRU_INSTALLED    0u
+#define WB_SPRITE_CRU_UNKNOWN_COPIER 1u     /* the table longword was none of the four entries above.
+                                             * UNREACHABLE from the shipped file — every marked
+                                             * descriptor of every stage selects 0..3
+                                             * (test/test_boot.py's census) — and the original would
+                                             * `jsr` through whatever the read produced */
+
 #endif /* WONDERBOY_H */

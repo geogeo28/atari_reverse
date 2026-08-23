@@ -2669,3 +2669,40 @@ each: the undriven boot, the cheat word's own control, and the three endings), p
 `atari/smoke.py runsh`, which parses the one command line no headless mode executes.
 `atari/README.md` §12 carries the argument, including why the tail readings hang off the program's
 own `Pterm` and not off a vblank count.
+
+## 0q. Batch 44 phase A (2026-08-22): the BOOT CHAIN counted, and why its remainder is a hardware wall
+
+**NO RE-SCAN WAS RUN** — §0l's banner still stands, and `../out/hw_scan.tsv` still predates batch
+33's decoder fix. What this phase adds is a census of a region no `subsystems.tsv` row has ever
+claimed: the boot chain, `recreate/test/test_boot_inventory.py`, 57 routines and 4,598 bytes reached
+from the PRG entry and from `show_data_disk_prompt`.
+
+**IT MATTERS TO THIS FILE BECAUSE THE REMAINDER IS ALMOST ALL `T4`.** Of the 2,730 unported bytes,
+**1,644 — sixty per cent — are the raw WD1772/DMA driver and the FAT12 layer above it** (`$5e3e..$6528`,
+summed over the walk's own segments rather than estimated) — the
+routines architecture.md §2.2 enumerates, whose entire observable surface is `$ffff8604`-`$ffff860d`,
+`$ffff8800/8802` and `$fffffa01` bit 5. **The memory differential cannot see any of it**, and the
+kit has no floppy device model, so these are not "unported because nobody got to them": they are
+unportable with today's capabilities, in the same sense §5's steering reads were before Phase 7.
+That is the honest reason the `.PRG` still cannot boot from its own entry, and it is a capability
+question for §6 rather than a scheduling one.
+
+**WHAT DID MOVE, and none of it changes a hardware classification.** Ten routines became verified
+(362 bytes): three block movers, the two boot products (`bg_tile_install` `$e67e`,
+`sprites_cru_install` `$e87c`) and four cell copiers — all PURE MEMORY, which is exactly why they
+were takeable — plus `clear_palette` (`$e7f4`), which is pure shifter.
+
+**`clear_palette` JOINS `set_palette` ON §5's LIST, and it is the same entry twice.** Sixteen writes
+to `$ffff8240`, all dropped by the oracle because the address is off the loaded image, so the
+routine's whole differential surface is "it touched no image byte". WHICH registers were cleared is
+unpinned and unpinnable until the dropped-hardware-write ledger §6 prices gets built. The count of
+routines in this project whose OUTPUT is a dropped hardware write is now **two**, not one.
+
+**AND ONE BLIND SPOT §8 DID NOT HAVE.** Every count in this file comes from a scan of a LISTING or of
+Ghidra's reference model, and this phase found `tools/prg_dis.py` reporting the wrong LENGTH for
+`move to SR`/`CCR` — eight sites in the boot chain, including `cold_start`'s first instruction. A
+sweep that desyncs there drops instructions rather than printing nonsense (docs/m68k-disassembly.md
+§"A desynced sweep **drops** instructions"), so any hardware-access count taken from a listing across
+one of those sites was a LOWER BOUND without saying so. `hw_scan.tsv` is Ghidra-derived and so is not
+affected; the byte scans in `../notes/architecture.md` §2.3 are operand scans and are not either. It
+is recorded here because the next re-scan should not re-learn it.

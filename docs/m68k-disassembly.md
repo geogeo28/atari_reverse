@@ -112,6 +112,23 @@ the decoder: `cd tools/recreate_kit && make test`.
 `MOVEP` was the same family's other **length** bug, fixed the same day: `0000 rrr 1 1xx 001 aaa`
 plus a displacement word = 4 bytes, which `prg_dis` read as a 2-byte dynamic bit op (`btst d0,a0`).
 
+**`MOVE to SR` / `MOVE to CCR` was a THIRD length bug, and it sat in line 4 until 2026-08-22.**
+`0100 0110 11 mmmrrr` (to SR), `0100 0100 11 mmmrrr` (to CCR) and `0100 0000 11 mmmrrr` (from SR)
+put the value `11` in the size field, where the `CLR`/`NEG`/`NEGX`/`NOT`/`TST` table it shares the
+line with has no entry — so the decoder fell through to `dc.w` and reported **two** bytes for the
+four-byte `move.w #imm,sr`. The immediate was then decoded as an instruction of its own and the
+sweep desynced from there. Found by Wonder Boy's boot-chain census (batch 44 phase A), whose walk
+refuses any reached instruction that decodes to `dc.w` — and what it caught was the FIRST
+instruction of that program's `cold_start`: `move.w #$2700,sr`, the supervisor-mode entry that
+almost every ST program opens with. Eight sites in that boot chain alone.
+
+**Two lessons on top of the fix.** First, *the census you write to bound your own error can find the
+error in the instrument* — the assertion existed to stop the walk drifting, not to audit `prg_dis`.
+Second, a new block inserted into a line's `if`-chain is as dangerous for what it STEALS as for what
+it misses, so the reference encodings pin the three neighbours (`clr.l d0`, `tst.w d0`, `tas d0`)
+alongside the seven new forms. **Any listing generated before that date is stale wherever a program
+touches SR or CCR** — regenerate before reading an address off one.
+
 **The whole two-register family is DECODED since 2026-08-13** — `ABCD`/`SBCD`, `ADDX`/`SUBX` and
 `CMPM`. They had sat on a "knowingly unhandled, mnemonic-only" list here since 2026-07-28, and
 fifteen days later the cost landed: Wonder Boy's `$51ac` ends `c101`, which the old decoder printed

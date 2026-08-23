@@ -120,6 +120,18 @@ include/scroll.h           the whole background scroll subsystem — prototypes,
                            the blit's sixteen jump-table variants are one function with a column
 src/rad.c                  the resource depacker (rad_depack @ 0x5d62) — the reconstruction's cores
                            live here, one file per subsystem
+src/boot.c                 THE BOOT CHAIN (batch 44 phase A): the three block movers the boot uses
+                           (copy_longs $f93c, copy_screen $f938, clear_both_screens $f926) and the
+                           TWO BOOT PRODUCTS — bg_tile_install ($e67e), which packs the tile bank
+                           the scroll engine reads out of the depacked TILEDATA.RAD, and
+                           sprites_cru_install ($e87c) with its four cell copiers, which turns the
+                           raw SPRITES.CRU into the cells the blitters read. Those two are what
+                           atari/gen_image.py had named since batch 43 phase A as the reason the
+                           staged image could not be computed host-side. clear_palette ($e7f4) is
+                           boot-chain code that is NOT here: it lives in src/stage.c beside
+                           set_palette, because the two share one shifter sink.
+                           test/test_boot_inventory.py counts the whole chain — 57 routines, 4,598
+                           bytes — and its tripwires are what caught the prg_dis length bug
 src/effects.c              the effect handlers and the state stubs above them — and, since batch
                            38, the FOURTEEN pickup effects behind the sibling table at $105ac,
                            which are the same kind of leaf one dispatch over and which reuse this

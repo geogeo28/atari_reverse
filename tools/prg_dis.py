@@ -120,6 +120,16 @@ def ea(d, p, mode, reg, size, pc_after_op):
     return "?", 0
 
 
+# MOVE to/from SR and CCR: (format, reads_a_source). Line 4 with the size field 11, which is why
+# they fall outside the CLR/NEG/NOT/TST table whose `size == 3` arm drops through to `dc.w`.
+SR_MOVES = {0x40c0: ("move.w sr,%s", False), 0x44c0: ("move.w %s,ccr", True),
+            0x46c0: ("move.w %s,sr", True)}
+# Which mode-7 registers each direction accepts. A DESTINATION must be alterable, so it takes only
+# the two absolutes; a SOURCE may also be pc-relative or immediate. (Mode 1, An, is illegal for both
+# and is refused separately — an An operand here is the mis-decode tell the opcode sweep hunts for.)
+SR_DEST_MODES = (0, 1)              # abs.w, abs.l
+SR_SOURCE_MODES = (0, 1, 2, 3, 4)   # ...plus d16(pc), idx(pc), immediate
+
 SZC = {0: ".b", 1: ".w", 2: ".l"}
 # In lines 9/B/D, opmode 011/111 is the "<ea> -> An, word/long" form (SUBA/CMPA/ADDA).
 # Lines 8 and C have no such form — the 68000 cannot OR/AND into an address register — so
@@ -286,6 +296,23 @@ def decode(d, p, base):
         if (w & 0xf1c0) == 0x41c0:
             t, c = ea(d, p + 2, (w >> 3) & 7, w & 7, 2, pc2)
             return 2 + c, "lea %s,a%d" % (t, (w >> 9) & 7)
+        # MOVE to/from the status registers. Line 4 with the size field = 11, which is why they fall
+        # past the CLR/NEG/NOT/TST table below — whose `size == 3` arm drops straight through to
+        # `dc.w`. This is a LENGTH bug and not only a missing mnemonic: `move.w #$2700,sr` is FOUR
+        # bytes, so a listing that reported two decoded the immediate as an instruction of its own
+        # and desynced from there. Wonder Boy's `cold_start` ($400) opens with exactly that.
+        # THE EA MUST BE GATED, and the first draft of this block did not gate it — which put a NEW
+        # desync into data, the exact bug it was written to remove. `MOVE from SR` takes a DATA
+        # ALTERABLE destination, so `$40fa`/`$40fb`/`$40fc` (d16-PC, indexed-PC, immediate) are not
+        # instructions; ungated they consumed FOUR bytes where the old `dc.w` consumed two. `MOVE to
+        # SR`/`to CCR` read a DATA source, so those three ARE legal there. Neither form accepts An.
+        sr_form = SR_MOVES.get(w & 0xffc0)
+        if sr_form is not None:
+            mode, reg = (w >> 3) & 7, w & 7
+            allowed = SR_SOURCE_MODES if sr_form[1] else SR_DEST_MODES
+            if mode != EA_AN and (mode != 7 or reg in allowed):
+                t, c = ea(d, p + 2, mode, reg, 1, pc2)
+                return 2 + c, sr_form[0] % t
         # CLR/NEG/NEGX/NOT/TST + TAS
         onea = {0x40: "negx", 0x42: "clr", 0x44: "neg", 0x46: "not", 0x4a: "tst"}
         hi = (w >> 8) & 0xff

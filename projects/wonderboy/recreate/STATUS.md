@@ -13905,3 +13905,459 @@ standing queue — the sibling seam routing for guarded sweeps, the ~400 raw com
 `src/map.c`'s unguarded `WB_ACTOR_X` write, which-monster-is-which, Joust's deep-anchor render drift,
 the 2,218 unpinned `(d16,An)` bases, `prefix` threaded as a bare string through nine signatures, and
 the shipped side's artefacts re-read per anchor.
+
+## Batch 44 phase A — THE BOOT CHAIN OPENS: the inventory, the two boot products, and a decoder gap in a shared tool
+
+Every batch since 43 phase A has recorded the same debt: `game_main_loop` is `jmp`ed into with the
+ORIGINAL's post-boot RAM staged under it, so there is no title screen, no credits, no stage loader
+and no second stage. The reason was never that the boot chain is hard — it is that **nobody had
+counted it**. This phase counts it, and then takes the two routines the count says are worth the
+most: the two boot products `recreate/atari/gen_image.py` has named since batch 43 phase A as the
+reason the staged image cannot be computed host-side.
+
+**Verified 324, 41,338 bytes; `make test` 6,250** from a clean `build/` (6,140 after batch 43
+phase F, and all 110 of the growth is this phase's two new batteries). **Kit suite 392**;
+**`tools/test_hw_portability.py` 56 and green from the repo root**; **all sixteen on-target modes
+green on both ROMs**, unchanged in substance — the `.PRG` now links `src/boot.c` and still passes
+`build.sh`'s three seam assertions.
+
+> **A SHARED TOOL MOVED, AND IT IS NOT THE KIT RUNTIME BUT IT IS SHARED.** `tools/prg_dis.py` — the
+> linear-sweep disassembler every project's listing comes out of — could not decode `move to SR` or
+> `move to CCR`, and that is a **LENGTH** bug, not a missing mnemonic: it reported two bytes for a
+> four-byte instruction, so a sweep desynced on the immediate and every address after it was
+> fiction. Wonder Boy's `cold_start` at `$400` OPENS with `move.w #$2700,sr`. Fixed, and pinned by
+> ten reference encodings in `tools/recreate_kit/test/test_prg_dis.py` (which also pins the three
+> neighbours the new block must not swallow). **Every project's `out/*_dis.txt` is stale at these
+> sites until it is regenerated** — for this project that is eight sites in the boot chain alone.
+
+### §1 THE INVENTORY — 57 routines, 4,598 bytes, and no unresolved transfer
+
+`recreate/test/test_boot_inventory.py` walks the boot chain from bytes and IS the table below; the
+numbers here are scraped from it rather than read off a listing. Recursive descent over the
+RELOCATED image from two roots — the PRG entry's relocator at `$217d8`, and `show_data_disk_prompt`
+at `$e494`, which is entered by `jmp` from `$700e` and would otherwise be missed entirely.
+
+**THE WALK DOES NOT STOP AT A `jmp`**, and that is a fact about this program rather than a choice:
+the boot is one long FALL-THROUGH CHAIN. `$217d8` jumps to `$400`, which jumps to `$e482`, which
+falls into `$f8bc`, which jumps to `$e48c`, which branches to `$e4e6`, which runs to `$e708`.
+Treating those as routine boundaries would invent five routines the original does not have — so the
+partition below is by CALL TARGET, and `cold_start`'s 18 bytes belong to no call target at all.
+
+**Reached: 1,185 instructions, 4,598 bytes. Ported 1,868 bytes, unported 2,730** —
+plus `bg_tile_install`'s 72 reconstructed bytes, which the split counts on the UNPORTED side because
+they sit inside `show_data_disk_prompt`'s 632-byte segment. Stated rather than smoothed over: the
+two numbers answer different questions and only the second is about this phase's work.
+
+**THERE ARE TWO 57s AND THEY ARE DIFFERENT SETS.** The table below has **57 rows**; the call graph
+has **57 targets**; they share **54**. The coincidence is arithmetic, not a fact about the program,
+so both are pinned and the difference is asserted as set membership rather than as two equal
+integers (`test_the_two_fifty_sevens_are_different_sets`) — one new edge would move one side only.
+
+* **Rows that are not call targets (3)**: `cold_start` (`$400`), entered by the relocator's `jmp` and
+  by nothing else, and the two ROOTS. Boundaries are never rows — the walk stops at them, so they own
+  no bytes.
+* **Call targets that are not rows (3)**: the boundaries that are reached by a CALL —
+  `copylock_entry` and the sound module's two stub entries. `game_main_loop` is the fourth boundary
+  and is in neither list, because it is arrived at by `jmp $4a0.w` and never called; the case asserts
+  that too, since a `jsr` to it would mean the spine is being called from the boot chain and the
+  walk's stop is in the wrong place.
+
+THE TRIPWIRES ARE WHAT MAKE IT AN INVENTORY RATHER THAN AN ESTIMATE, and each is a case:
+
+* **Every transfer whose target is not in its operand must be DECLARED**, with the instructions that
+  load the register written beside it. There are four — `$e550` and `$fa1e`/`$fa28` into the sound
+  module's stub table, and `$e8fc`, the copier dispatch. An undeclared one fails the walk. RED-checked
+  by deleting the `$e8fc` declaration: five cases go red, including the one named for it.
+* **Every boundary must be ARRIVED AT.** Three of the four are call targets; `game_main_loop` is
+  reached by `jmp $4a0.w` from `$f8b4` and by nothing else, so a check over call edges alone would
+  have called the spine unreached. That was a real defect in the first draft of the walk.
+* **No reached instruction may decode to `dc.w`.** This is the one that fired — see the banner above.
+  RED-checked by disabling the new decoder block: two cases go red, the named one among them.
+* **The partition may lose no byte.** Also a real find: `cold_start` sits below the lowest call
+  target and its 18 bytes were being dropped silently until the sum was asserted.
+
+### §2 THE COPYLOCK BOUNDARY, as landed
+
+**Unchanged in substance, and deliberately so — the prior stub is the precedent and this phase reuses
+it rather than reinventing it.** `recreate/test/copylock.py` (built batch 19-era, and the argument is
+in `../notes/architecture.md` §2.5) offers `Stub.DISARM` and `Stub.ENTRY_RTS`, applies BOTH by
+default, and refuses any run whose memory shows the protection executed. What this phase adds is the
+boundary's place in a counted map rather than a new mechanism:
+
+* `copylock_entry` (`$ecca`) is a declared BOUNDARY of the walk, reached by exactly one call edge —
+  `jsr $ecca.l` at `$e7bc`, inside `load_resource_by_index`, gated on `copylock_arm_flag`.
+* Its 1,970 encrypted bytes are **not walked, not counted, and not portable**: the blob decrypts one
+  longword of itself per single-step exception, so there is no source text. The 4,598-byte figure
+  above is a statement about the PLAINTEXT boot chain and says so.
+* **The exclusion is structural, not statistical.** Recorded here again because it is the thing a
+  reader will otherwise assume is a to-do: the fuzzy-byte check is unpinnable *because the code
+  performing it cannot be read*, not merely because fuzzy bytes are non-deterministic.
+* **No routine this phase ported is downstream of it.** Both installers run on data already in RAM,
+  so neither needs the protection modelled or stubbed — which is exactly why they were the two worth
+  taking first.
+
+### §3 WHAT LANDED, AND WHAT PINS IT
+
+Ten routines, 362 bytes, all of them PURE MEMORY except the one that is pure shifter. `src/boot.c`
+is new; `clear_palette` went into `src/stage.c` beside `set_palette`, because the two share one
+shifter sink and a second copy of it is the divergence nothing catches.
+
+| addr | routine | bytes | what pins it |
+|---|---|---:|---|
+| `$f93c` | `copy_longs` | 8 | 4 counts including the boot's own `$31f`, plus BOTH overlap directions — an ascending `move.l (a0)+,(a1)+` smears its first longword where a memmove would not, so a port written with `memmove` fails |
+| `$f938` | `copy_screen` | 4 | the boot's own operands (`$78000` → `$70000`), write set exactly 32000 bytes |
+| `$f926` | `clear_both_screens` | 18 | the write set is the whole span, asserted as a SET |
+| `$e7f4` | `clear_palette` | 24 | writes no image byte; a0 left at `$ff8260`. **Its output is NOT pinned and cannot be** — see §4 |
+| `$e67e` | `bg_tile_install` | 72 | **all 37 shipped `OVALAY*.RAD`**, each depacked to `$217d8` with `TILEDATA.RAD` depacked to `$4f000`, run to the checkpoint `$e6c6`; plus a poisoned attribution pass and a property case that the index leaves as the identity |
+| `$e87c` | `sprites_cru_install` | 160 | the shipped 279,034-byte `SPRITES.CRU` against **every stage number `level_seq_table` produces** (1..9, 16, 17), each a different mask row and a different cell total |
+| `$e92c`/`$e938`/`$e948`/`$e95e` | the four cell copiers | 76 | entered directly, 3 counts each including 61 — the largest any shipped descriptor carries |
+
+**THE TWO INSTALLERS ARE THE HEADLINE.** They are what turns `TILEDATA.RAD` into the tile bank at
+`WB_TILE_BITMAPS` and `SPRITES.CRU` into the cells at `WB_SPRITE_CRU_CELLS` — the two products
+`gen_image.py`'s header has enumerated as uncomputable since batch 43 phase A. They are computable
+now, and their differentials run on the game's own shipped files depacked by the game's own depacker,
+so what is compared is the real product and not a synthetic stand-in.
+
+Four things the port had to get right, each of them a mutant that was verified to kill:
+
+* **`bg_tile_install` reads the index entry it is about to overwrite.** `move.w (a0),d1` then, after
+  the copy, `move.w d0,(a0)+`. Swapping the two turns the pass into the identity on its first run.
+* **`sprites_cru_install`'s LAST group runs ONE slot, not sixteen** (`tst.w d5 / beq`), which is why
+  the descriptor count is 30×16+1 = 481 and not a round multiple.
+* **Its stage row is 16-bit arithmetic added as a LONGWORD.** `clr.l d0 / move.w $bd88,d0`
+  zero-extends and every step after it is a `.w` op, so a stage number of 0 would index row −1 as
+  `$ffc0` and read 64 KB ABOVE the mask table, not below it. No shipped sequence entry produces one.
+* **The descriptor pointer is read and rewritten in DIFFERENT SPACES** — in as an offset from
+  `$252d8` (the file body), out as an offset from `$248d8` (what `resource_table_relocate` later adds
+  back). Swapping them is invisible to everything but the cells' own bytes.
+
+**THE DISPATCH AT `$e8f0` IS UNBOUNDED, AND THE REFUSAL IS CENSUSED RATHER THAN DIFFERENTIATED.**
+`movea.l 0(a1,d0.w),a1 / jsr (a1)` scales a descriptor byte by four into a four-entry table, so a
+byte above 3 fetches past it and the original jumps through whatever that is — behaviour a port
+cannot reproduce and the oracle cannot survive. The port reports `WB_SPRITE_CRU_UNKNOWN_COPIER`,
+out of band because the `jsr` at `$e6e8` spends no register. What makes that a guard on unreachable
+input rather than an invented branch is a census over **every shipped stage and every descriptor its
+mask marks**: the selector is only ever 0..3, and **all four are reached**, so the differential above
+exercises every copier. The port also dispatches on the table's LONGWORD rather than on the selector
+byte, so a moved entry fails as a wrong copier instead of being absorbed by a `switch`.
+
+### §4 KNOWINGLY UNPINNED
+
+* **`clear_palette`'s sixteen writes**, exactly as `set_palette`'s are not. `$ff8240` is off the
+  loaded image, so the oracle drops all eight `clr.l`s and the whole observable effect is that the
+  routine touches no image byte and leaves a0 at `$ff8260`. WHICH registers were cleared is
+  untestable until the kit gains a dropped-hardware-write ledger — the same remedy already registered
+  for `set_palette`, unchanged and not this phase's work.
+* **`bg_tile_install`'s second run.** It rewrites the index it read, so running it twice is not the
+  same operation twice. Nothing in the game does; no case claims anything about it.
+* **The 14 unnamed call targets** the walk found — eleven inside the raw FDC/DMA driver
+  (`$5f76`, `$5fc4`, `$604a`, `$6068`, `$6092`, `$60da`, `$6118`, `$637e`, `$63c0`, `$6488`,
+  `$64ea`), plus `$e710`, `$e768` and `$f89e`. Recorded as a list a case holds rather than fixed: an
+  `fn` directive is a claim about a routine's START, and this phase did not read their extents. A
+  call target with no name is a routine no differential can even refer to, since `leaf.entry_of`
+  looks names up — so the list is the next phase's work queue.
+  **FOURTEEN AND NOT FIFTEEN, and the one that came off is worth naming.** `$17af8` has no name
+  either, but it is `SND_STUB_TABLE + 28` — a declared boundary, an entry of the sound module's stub
+  table whose extent `cmt 0x17adc` documents and whose body (`snd_stop`) has been ported since batch
+  21b. Listing it as a routine whose extent nobody had read was simply false, and the case now
+  excludes every declared boundary and asserts the complement, so nothing can fall between the two
+  lists.
+
+The whole table, scraped from `test_boot_inventory.py`:
+
+| addr | name | bytes | ported | callers |
+|---|---|---:|---|---:|
+| `$400` | cold_start | 18 |  | 0 |
+| `$1f36` | actor_table_reset | 30 | ported | 3 |
+| `$5d62` | rad_depack | 178 | ported | 5 |
+| `$5e14` | rad_refill_bit_buffer | 12 |  | 3 |
+| `$5e20` | rad_get_bits | 26 |  | 4 |
+| `$5e7c` | disk_load_file | 138 |  | 1 |
+| `$5f06` | fat_calc_data_start | 112 |  | 1 |
+| `$5f76` | **unnamed** | 78 |  | 1 |
+| `$5fc4` | **unnamed** | 134 |  | 1 |
+| `$604a` | **unnamed** | 30 |  | 1 |
+| `$6068` | **unnamed** | 42 |  | 1 |
+| `$6092` | **unnamed** | 72 |  | 1 |
+| `$60da` | **unnamed** | 62 |  | 1 |
+| `$6118` | **unnamed** | 160 |  | 5 |
+| `$61b8` | fat_find_dir_entry | 138 |  | 1 |
+| `$6242` | floppy_select_drive_a | 38 |  | 1 |
+| `$6278` | fdc_dma_read_addr | 32 |  | 1 |
+| `$6298` | fdc_dma_set_addr | 32 |  | 1 |
+| `$62b8` | fdc_dma_set_addr_to_dirbuf | 8 |  | 5 |
+| `$62c8` | fdc_dma_restore_addr | 8 |  | 1 |
+| `$62d0` | fdc_wait_irq | 56 |  | 3 |
+| `$6308` | fdc_wait_irq_bounded | 118 |  | 1 |
+| `$637e` | **unnamed** | 56 |  | 4 |
+| `$63b6` | fdc_delay | 10 |  | 2 |
+| `$63c0` | **unnamed** | 72 |  | 3 |
+| `$6408` | fdc_restore | 84 |  | 2 |
+| `$645e` | fdc_write_data_reg | 14 |  | 10 |
+| `$646c` | fdc_read_data_reg | 14 |  | 3 |
+| `$647a` | fdc_force_interrupt | 14 |  | 4 |
+| `$6488` | **unnamed** | 98 |  | 1 |
+| `$64ea` | **unnamed** | 24 |  | 3 |
+| `$e494` | show_data_disk_prompt | 632 |  | 0 |
+| `$e710` | **unnamed** | 88 |  | 1 |
+| `$e768` | **unnamed** | 26 |  | 2 |
+| `$e782` | load_resource_by_index | 104 |  | 6 |
+| `$e7f4` | clear_palette | 24 | ported | 2 |
+| `$e80c` | hud_draw_lives | 112 | ported | 1 |
+| `$e87c` | sprites_cru_install | 160 | ported | 1 |
+| `$e92c` | sprite_cru_copy_5w | 12 | ported | 1 |
+| `$e938` | sprite_cru_copy_10w | 16 | ported | 1 |
+| `$e948` | sprite_cru_copy_15w | 22 | ported | 1 |
+| `$e95e` | sprite_cru_copy_20w | 26 | ported | 1 |
+| `$f89e` | **unnamed** | 78 |  | 1 |
+| `$f8f0` | ikbd_disable_mouse | 22 |  | 1 |
+| `$f906` | video_set_lowres_50hz | 32 |  | 1 |
+| `$f926` | clear_both_screens | 18 | ported | 1 |
+| `$f938` | copy_screen | 4 | ported | 1 |
+| `$f93c` | copy_longs | 8 | ported | 2 |
+| `$f944` | set_palette | 24 | ported | 4 |
+| `$f95c` | stage_load_window | 210 | ported | 1 |
+| `$fa30` | bg_build_buffer | 214 | ported | 1 |
+| `$fb06` | stage_publish_scroll_state | 320 | ported | 1 |
+| `$fd46` | bg_build_preshifted_copies | 198 | ported | 1 |
+| `$fe1e` | resource_table_relocate | 44 | ported | 1 |
+| `$fe4a` | game_restart_reset | 136 | ported | 1 |
+| `$fed2` | stage_reset_state | 112 | ported | 1 |
+| `$217d8` | startup_relocate_and_run | 48 |  | 0 |
+
+
+
+### §5 THE SWEEP — four rounds, and the third is the one worth reading
+
+Every build forced a relink (`rm -f build/*.so`), the sources were restored in a `finally` and
+re-verified BY NAME, and the runner refuses a mutant whose anchor does not match exactly once — so
+an edit that applied nowhere is REPORTED rather than counted as a kill. That refusal earned its keep
+in round 3.
+
+| round | over | result |
+|---|---|---|
+| 1 | the reconstruction as first written | **17 killed, 0 survived** |
+| 2 | the INVENTORY's own tripwires | **2 killed** — a census that cannot fail is not a census |
+| 3 | the reconstruction after the review's refactor | **19 killed, 1 SURVIVED, 1 SKIPPED** |
+| 4 | the same, with the hole closed and the mutant re-aimed | **22 killed, 0 survived** |
+
+**ROUND 3 IS THE ROUND THAT DID WORK.** Its survivor was
+`WB_SPRITE_CRU_UNKNOWN_COPIER` turned into "pretend it was the 5-word copier" — green, because no
+case drove the refusal arm at all. Its SKIP was a mutant whose anchor the review's own
+`copy_long_run` refactor had moved, which is exactly the failure the anchor check exists to make
+loud: counted as a non-kill rather than silently passing. Both are closed in round 4, which also
+adds two mutants the refactor made possible (the shared run copying one longword too few, and its
+destination cursor never advancing) and one that keys the dispatch by index instead of by the table
+longword.
+
+The twenty-two: the tile copy's length, its stride, its count, its READ/WRITE order, its tail; the
+CRU's last-group slot count, its carry test, its rotate-vs-shift, its two rebasing constants
+swapped, its unmarked constant, its slide length, its BCD stage fold, its refusal arm, its dispatch
+key and its dispatch width; the copier's odd-word lead and its cell count; the shared run's length
+and its cursor; `copy_longs`' count; `clear_both_screens`' span; and `clear_palette`'s cursor.
+
+**Round 2's two, spelt out because they are what makes the inventory a census rather than a
+reading**: disabling the new `move to SR`/`CCR` decoder block reddens the undecoded-instruction case
+(and the size case with it), and deleting the `$e8fc` indirect declaration reddens five, the
+unresolved-transfer case among them. A third RED-check, added with the layout guard the review
+asked for, overlaps the two scratch buffers and reddens fifteen cases.
+
+### §6 WHAT THE GATE AND THE TRIPWIRES FOUND
+
+* **A LENGTH BUG IN A SHARED TOOL, FOUND BY A CHECK WRITTEN FOR SOMETHING ELSE.** The
+  no-`dc.w` assertion exists so the walk cannot desync; what it caught was `prg_dis` mis-decoding the
+  boot's very first instruction. *The census you write to bound your own error finds the error in
+  the instrument.* The fix is pinned by encoding, and the three neighbours the new block must not
+  swallow (`clr.l d0`, `tst.w d0`, `tas d0`) are pinned beside it — a new block in a `case`-like
+  chain is as dangerous for what it steals as for what it misses.
+* **A BOUNDARY CHECK THAT COULD NOT SEE ITS OWN BOUNDARY.** The first draft asked whether each
+  declared boundary was a CALL target. `game_main_loop` is reached by `jmp` and by nothing else, so
+  the spine — the most important boundary in the file — would have been reported unreached, and the
+  check would have failed for a reason that had nothing to do with the boot chain. Fixed by tracking
+  every edge, call or not.
+* **A PARTITION THAT SILENTLY DROPPED A ROUTINE.** `cold_start`'s 18 bytes are below the lowest call
+  target, so the segment arithmetic discarded them and the ported/unported split was over 4,580 of
+  4,598 bytes. A sum assertion is four lines and it is the only reason this was visible; the split
+  looked perfectly healthy without it.
+* **A RECORDED COUNT THAT WAS RIGHT WHEN MEASURED AND WRONG WHEN COMMITTED.** The inventory's
+  instruction total was taken BEFORE the decoder fix and asserted after it (1,191 against 1,185).
+  The case failed exactly as it should. *A number scraped from an instrument you are about to repair
+  is a number with a shelf life.*
+* **A MUTANT THAT PROVED NOTHING BECAUSE IT WAS MIS-AIMED.** The first attempt at reverting the
+  decoder fix changed only the `move FROM sr` key — a form the boot chain does not contain — and the
+  suite stayed green. Read as a survivor it would have been a false coverage hole; read properly it
+  was a bad mutant. *Before believing a survivor, check the mutant changed something the test's own
+  inputs can reach.*
+* **A CORPUS COUNT THAT NAMED THE WRONG SET.** `OVERLAY_COUNT` was recorded as 39, which is the
+  number of `.RAD` files on disk 2 — the `OVALAY*` subset is 37, and the other two are `DATADISK.RAD`
+  and `TILEDATA.RAD`, neither of which carries a tile index. The corpus case caught it on its first
+  run, which is what corpus cases are for.
+
+### §6b WHAT THE INDEPENDENT GATE FOUND — including a bug this phase's own fix introduced
+
+The `my-code-review` gate ran at `high` over the whole diff. **Its best find is the one that says
+most about the phase**, and it is a defect in the `prg_dis` repair above:
+
+* **THE FIX FOR A DESYNC PUT A NEW DESYNC IN.** The first draft of the `move to SR`/`CCR` block
+  matched on `w & 0xffc0` and accepted **all 64 effective-address encodings**. But `MOVE from SR`
+  needs a data-ALTERABLE destination, so `$40fa`, `$40fb` and `$40fc` (d16-PC, indexed-PC,
+  immediate) are not instructions at all — and ungated they consumed **four bytes where the old
+  `dc.w` consumed two**. Two reviewers found it independently, and one of them found it LIVE: the
+  regenerated listing of this very program printed `01c084: 40fc4cfe  move.w sr,#$4cfe` inside map
+  data, shifting every address after `$1c084`. `JOUST.PRG` contains the same byte pair. The EA is
+  now gated (`SR_DEST_MODES` / `SR_SOURCE_MODES`, and An refused for both directions) and eight more
+  encodings pin it, six of them required to stay TWO bytes. **Re-measured over the whole opcode
+  space, old decoder against new: 156 words changed, 60 of them in length, and ZERO were previously
+  anything but `dc.w`** — so no existing decode was stolen.
+* **AND THE SWEEP THAT WAS SUPPOSED TO CATCH IT COULD NOT SEE IT.** `test_no_impossible_address_
+  register_destination` hunts An destinations of AND/OR/EOR/ADD/SUB; `move` is not in that tuple, so
+  the 24 impossible `move.w sr,aN` / `move.w aN,ccr` decodes the ungated block produced passed it
+  silently. The gate removes them, but the lesson stands: **a whole-opcode-space sweep is only as
+  wide as its mnemonic filter**, and the next block added under a mnemonic outside it gets the same
+  free pass.
+* **A MUTANT THE SWEEP COULD NOT KILL, and the reviewer had already named it.** Round 2's
+  `WB_SPRITE_CRU_UNKNOWN_COPIER` refusal had NO case: turning it into "pretend it was the 5-word
+  copier" left the whole suite green. It is now driven candidate-only (the oracle cannot survive the
+  original's `jsr` through a wild longword), with a control that the same stage without the poked
+  selector returns `WB_SPRITE_CRU_INSTALLED`, and a second case reading the longword a selector of 4
+  actually fetches. **An unreachable arm nothing pins is an arm the next edit silently changes.**
+* **A REFUSAL THAT FABRICATED WRITES.** The first draft flagged an unknown copier and walked on, so
+  it would have laid every remaining marked sprite's cells at the same unadvanced address and
+  stamped the same offset into each of ~480 descriptors — hundreds of invented writes past the point
+  the port knew it could not model the run. It now returns at the point of refusal. The one
+  descriptor longword written just before STAYS written, because the original writes it before it
+  reads the selector at all.
+* **UNDEFINED BEHAVIOUR ON THE PATH A COMMENT ADVERTISED.** `(row - 1) << 6` on a `uint16_t`
+  promotes to `int`, so the stage-0 case the comment describes as "indexes row -1 as `$ffc0`" was a
+  left shift of a negative value — UB, and `-fsanitize=undefined` would trap it. Unsigned now.
+* **A POISON THAT ATE ITS OWN EVIDENCE.** `copy_longs`' two OVERLAP cases place the destination
+  inside the source, and the poison poke was applied second — so 28 of each case's 32 distinct
+  source bytes were overwritten with the poison constant and 28 destination bytes were already
+  right. The cases still passed and still failed under a memmove mutant, but on four bytes instead
+  of thirty-two. Poison first, seed over it.
+* **THREE PLATES ASSERTED MORE THAN THE BYTES DO, two of them written by this phase.** `cmt 0xf93c`
+  claimed `sprites_cru_install`'s slide calls `copy_longs`; that slide is an INLINE loop at `$e88c`
+  with the registers the other way round, and calling `copy_longs` from there is a factoring of the
+  PORT. `cmt 0xe95e` was edited into self-contradiction — the same range called both the mask table
+  and sprite bitmap data — and its "850 bytes of sprite BITMAP DATA" was wrong anyway: 704 are the
+  eleven mask rows and `$ec38` is `lives_icon_bitmap`, already named. Both retracted, and the mask
+  table finally has a `var` of its own. `WB_SPRITE_CRU_FIRST_DESC`'s comment described an arithmetic
+  giving 64 for a constant of 84.
+* **A CLAIM ABOUT A WORK QUEUE THAT WAS FALSE FOR ONE ENTRY.** `$17af8` was listed among "routines
+  whose extents this phase did not read"; it is a declared boundary, an entry of the sound module's
+  stub table, ported since batch 21b. Fourteen, not fifteen — and the case now asserts the
+  complement so nothing can fall between the two lists.
+* **A CASE THAT SAID "DERIVED" AND HAND-TYPED NINE NUMBERS.** `test_this_phase_reconstructed_the_
+  bytes_it_claims` checked one transcription against another; it now sums each routine's extent out
+  of the walk's own segments, so the 362 in §3 is machine-checked against the image.
+* **Also fixed**: the scratch buffers had no layout guard (`test_rad_depack.py` guards its own pair
+  and this battery inherited the addresses without the protection — RED-checked by overlapping
+  them); `WB_SCREEN_BYTES` was a second 32,000 in a header that already defines the canonical pair,
+  now cross-pinned; the corpus file was re-read ~44 times per worker, now cached; and `$e6e8` is a
+  `bsr.w`, not a `jsr`, in all three places that cited it.
+
+**OUT OF SCOPE, RECORDED NOT FIXED**: `names.txt` carries two pre-existing duplicate `cmt`
+directives (`$1023a`, `$10394`) — ApplyNames is last-wins, so one of each is dead. And the BCD stage
+fold (`if (n > 9) n -= 6`) is now spelt in both `src/rng.c` and `src/boot.c`; sharing it would edit
+verified code in another tier.
+
+### §6c ON TARGET: nothing new, and that is the claim
+
+No mode was added and no backend symbol moved. What DID change is that the `.PRG` now links
+`src/boot.c`, so the binary is longer and `image_base` moves with it — which every mode re-measures
+in its own two-pass boot rather than assuming, so the ladder is the check that the new translation
+unit did not disturb anything. `atari/build.sh`'s three seam assertions still pass: no model symbol
+in the `.PRG`, all five backend symbols present, and no core calling a `static inline` os.h helper.
+`src/boot.c` calls none of them — it is pure memory and `bus.h` — so the seam is unchanged by
+construction as well as by measurement.
+
+**The ladder was run TWICE, before and after the review's changes to `src/boot.c`**, because a
+refactor of code the `.PRG` links is a change to the `.PRG`. Both times: sixteen modes, two ROMs,
+zero red.
+
+**AND THE ON-TARGET GOAL OF STEP 3 WAS NOT REACHED.** No `.PRG` boots from its own entry, and no
+mode renders the real `TITLESCR.RAD` and compares it against the original's title framebuffer. Both
+need the resource LOAD path, which is §7's disk wall. A mode that staged its input would not be
+testing the boot, so none was added — the honest stop is here, and the inventory is what says how
+far away the next rung is.
+
+### §6d PROCESS: A SESSION SCRATCHPAD IS SHARED STATE, and this phase destroyed a prototype in it
+
+**The loss, plainly.** This phase's inventory walker was prototyped as `scratchpad/walk.py`. That
+filename already existed — a previous session's spine-inventory prototype — and writing it
+overwrote the earlier file outright. A second script, `walk2.py`, was then APPENDED to; that one was
+caught and restored byte-for-byte from its own tail, and verified by name. `walk.py`'s contents are
+gone. Nothing in the repo was touched, and the lost file's successors (`walk2.py`, `walk3.py`)
+survive, so the practical cost is small — but the mechanism is the same one that cost this project
+real work twice before, and it earns a rule.
+
+**WHY THE EXISTING DISCIPLINE DID NOT COVER IT.** Batches 35 and 39 both lost untracked work and both
+answered with the same rule — *step 0a: take a NAMED BACKUP OUTSIDE THE REPO before destructive
+work* — and this phase DID take that backup, at `scratchpad/batch44a_backup/`. It covered
+`names.txt`, `STATUS.md`, `src/`, `include/`, `test/`: **the repo surfaces**. What it did not cover
+is the scratchpad itself, because the scratchpad was where the backup was being kept. The rule
+protected the thing it was pointed at and had nothing to say about the ground it stood on.
+
+**THE RULE, so the next inventory agent inherits it.** The session scratchpad is shared across
+sessions and phases, not private to the current one:
+
+1. **Own a subdirectory per phase.** Write every new file under `scratchpad/<phase>/` — this phase
+   moved to `scratchpad/b44a/` after the loss, and nothing collided afterwards. A bare
+   `scratchpad/foo.py` is a name in a namespace other sessions are already using.
+2. **A generic prototype name is a collision waiting to happen.** `walk.py`, `sweep.py`,
+   `analyse.py`, `dis.py`, `probe.py` are exactly the names two sessions independently pick. The
+   scratchpad already held all five before this phase started.
+3. **Treat a scratchpad write like a repo write when the file exists.** `Write` reports "updated"
+   rather than "created" for an existing path, and that word is the whole warning. Read it.
+4. **Extend the named-backup discipline to any scratch file you did not create this phase**, for the
+   same reason step 0a exists: version control will not recover it.
+
+**AND THE HALF THAT WORKED.** The append to `walk2.py` was recoverable because the damage was
+additive and the original's tail was still identifiable. The overwrite was not. *Appending to a file
+you do not own is survivable; truncating one is not* — which is an argument for `>>` over `>` in a
+shared directory, and for never using `Write` on a path you have not just created.
+
+### §7 QUEUE
+
+**LANDED THIS PHASE**: the boot-chain inventory and its four tripwires; `src/boot.c` with the two
+boot products, the three block movers and the four cell copiers; `clear_palette` in `src/stage.c`;
+the `move to SR`/`CCR` decoder fix in `tools/prg_dis.py` with ten pinned encodings.
+
+**BORN THIS PHASE:**
+* **THE FOURTEEN UNNAMED CALL TARGETS** (§4). The next phase's own opening move: read their extents,
+  give them `fn` directives, and the FDC/DMA driver becomes addressable by a differential for the
+  first time.
+* **EVERY PROJECT'S LISTING IS STALE AT `move to SR`/`CCR`.** `out/wonderboy_dis.txt` was regenerated
+  during this phase's research but the copy in the repo is not this phase's work; Joust's and
+  BuggyBoy's are untouched. Trigger: any address read off a listing near one of those instructions.
+* **THE DISK PATH IS THE REAL WALL, and it is now measured rather than assumed.** Of the 2,730
+  unported boot-chain bytes, **1,644 — sixty per cent — are the raw WD1772/DMA driver and its FAT12
+  layer** (`$5e3e..$6528`, architecture.md §2.2's extent, summed over the walk's own segments), code
+  whose whole surface is hardware the memory differential cannot see. **PINNED, not just measured**:
+  `test_the_disk_wall_is_the_share_of_the_remainder_the_docs_claim` re-derives the 1,644 and the 60 %
+  floor from the walk every run, and a second case fixes the BAND — every `fdc_`/`fat_`/`floppy_`/
+  `disk_` name in the map must fall inside it and the routines either side must fall outside. Both
+  RED-checked by widening the band. The figure first reached prose as a round estimate a hundred and
+  forty-four short, and was corrected only because writing the case measured it. Another 38 are `rad_depack`'s
+  two leaf helpers, which are folded into the ported body and have no symbol of their own; the
+  remaining 1,048 are everything else. Porting it needs a device
+  model (the kit has none) or an honest boundary per routine. That decision is the next phase's, and
+  it is the one that decides whether the `.PRG` can ever boot from its own entry.
+* **`bg_tile_install` HAS NO `fn` AND SO NO ENTRY IN THE FUNCTION TABLE'S USUAL SENSE.** It carries a
+  `var`, because an `fn` inside Ghidra's 632-byte `$e494` function truncates that routine on the next
+  `reapply.sh` (cmt 0xe5ba's rule). Counted in the 324 all the same, since the `.so` defines it.
+
+**CARRIED, unchanged**: everything batch 43 phase F carries — the joystick arms, the sibling seam
+routing for guarded sweeps, the ~400 raw computed image accesses in `src/`, the `$fffc00` hole
+between `bus.h` and the shim, the sound module's exit-X, the flute arm, `leaf.py`'s encoder hoist,
+the tier partition, `scene_run_effect`'s fix, `$1ab4`, `bus.h`→kit, `src/map.c`'s unguarded
+`WB_ACTOR_X` write, which-monster-is-which, Joust's deep-anchor render drift, the 2,218 unpinned
+`(d16,An)` bases, `prefix` threaded as a bare string through nine signatures, and the shipped side's
+artefacts re-read per anchor.
+
+**NOT REACHED THIS PHASE, and named rather than left implied**: the on-target goal of step 3 — a
+`.PRG` that boots from its OWN entry through title → stage load → gameplay, or the honest
+intermediate of rendering the real `TITLESCR.RAD` on target and byte-comparing it against the
+original's title framebuffer. Both need the resource LOAD path, which is the disk wall above. The
+sixteen existing modes are green and unchanged; no new mode was added, because a mode that staged
+its input would not be testing the boot.

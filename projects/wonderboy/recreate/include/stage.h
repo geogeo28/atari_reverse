@@ -83,6 +83,11 @@ void game_life_restart_reset(uint8_t *image);
  * Reached from $f95c (the stage's own palette) and from three sites in the boot prompt at $e494. */
 uint32_t set_palette(uint8_t *image, uint32_t source);
 
+/* $e7f4 — the same sixteen registers written with zero, and the same untested claim. Two call sites,
+ * both in the boot: $e494's prompt and $e4ea's continuation. Returns the cursor the original leaves
+ * a0 at, which no caller reads. */
+uint32_t clear_palette(uint8_t *image);
+
 /* $f95c — THE STAGE-TRANSITION HINGE: every stage entry in the game goes through it.
  *
  * The three entry REGISTERS are its arguments, and all six call sites load all three: `map` (a0) is
