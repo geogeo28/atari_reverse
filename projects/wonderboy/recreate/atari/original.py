@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Boot the SHIPPED 1989 disks under Hatari and drive them to a named anchor.
 
+    python3 atari/original.py title       # the TITLE screen at $e556, for the title differential
     python3 atari/original.py dump        # the post-boot RAM, at the anchor, with its pins
     python3 atari/original.py neighbour   # ...and the MIS-ANCHOR measurement (see ANCHOR below)
     python3 atari/original.py variance    # ...and how much of it is NOT reproducible (see below)
@@ -184,6 +185,9 @@ SHIFTER_IO_PAGE = 0xff000000
 SHIFTER_PALETTE = SHIFTER_IO_PAGE | wb("SHIFTER_PALETTE")
 PALETTE_PENS = wb("PALETTE_COLOURS")
 PALETTE_BYTES = PALETTE_PENS * 2
+# One ST low-res screen. THE ONE PYTHON DEFINITION, for ST_PEN_MASK's reason below: smoke.py imports
+# it from here, and wonderboy_main.c's SCREEN_BYTES is the C spelling of the same two constants.
+SCREEN_BYTES = wb("SCREEN_LINE") * wb("SCREEN_SCANLINES")
 # The ST implements THREE bits per gun; the fourth bit of each nibble does not exist and a CPU read
 # of a colour register returns it as whatever was last on the bus. So OUR side's pens (read by the
 # program) carry that noise and the shipped side's (read by `savebin`, straight out of Hatari's
@@ -1042,6 +1046,65 @@ def mode_frames(frames, flash_seed=None):
     return True
 
 
+# ---- the TITLE screen, on the shipped side ------------------------------------------------------
+#
+# THE EARLIEST MOMENT IN THIS FILE, and the cheapest: the title picture is on screen before the boot
+# has asked for anything but disk 1, so this mode needs no data disk, no fire and no anchor past the
+# one instruction. `$e556` is `tst.b $877.w` — the first of the pair the boot spins on waiting for
+# the stick — and its FIRST arrival is the instant after `set_palette` has run and before a player
+# could have answered. That is exactly what `smoke.py title` photographs on our side.
+#
+# THE FIRE INJECTIONS ARE TURNED OFF, and not only because they are unnecessary. `boot_script` puts
+# its own `:once` breakpoint on this very PC to press the stick, and two breakpoints selecting the
+# same arrival at the same PC interfere with each other's counters — `refuse_repeated_arrivals` is
+# the guard for exactly that, and it cannot see boot_script's own four lines. `fires=False` removes
+# them, which leaves this mode's anchor the only thing stopping at $e556.
+TITLE_SCREEN_FILE = "OTITLE.BIN"
+TITLE_PENS_FILE = "OTITLEPEN.BIN"
+TITLE_BEACON = "TITLE_CAPTURED"
+WB_SCREEN_LOW = wb("SCREEN_LOW")
+
+
+def mode_title():
+    """Photograph the shipped binary's title screen at $e556, for smoke.py's side-by-side."""
+    def script(directory, disk2):
+        return boot_script(directory, None, extra_stops=[
+            (TITLE_FIRE_PRESS_PC, FIRST_HIT, "TITLE.INI", [
+                f"echo {TITLE_BEACON}",
+                # The visible buffer, and the buffer is not in doubt here as it is for a frame:
+                # $f906 publishes WB_SCREEN_LOW as two immediates and nothing has flipped since.
+                f"savebin {directory / TITLE_SCREEN_FILE} ${WB_SCREEN_LOW:x} {SCREEN_BYTES:#x}",
+                f"savebin {directory / TITLE_PENS_FILE} ${SHIFTER_PALETTE:x} {PALETTE_BYTES}"])])
+
+    produced, log, status = run_original(script, "title", fires=False)
+    print(f"-- title: anchor ${TITLE_FIRE_PRESS_PC:x}, hatari exit={status} "
+          f"(full log in {OUT / 'original-title.log'})")
+    faults = machine_faults(log)
+    if faults:
+        raise SystemExit("FAIL: unhealthy machine: " + " | ".join(faults[:4]))
+    if TITLE_BEACON not in log:
+        raise SystemExit(f"FAIL: the boot never reached ${TITLE_FIRE_PRESS_PC:x} — no title screen "
+                         f"was drawn, so there is nothing for the reconstruction to be compared to")
+    missing = [name for name in (TITLE_SCREEN_FILE, TITLE_PENS_FILE) if name not in produced]
+    if missing:
+        raise SystemExit(f"FAIL: the anchor fired but produced no {', '.join(missing)}")
+    BUILD.mkdir(exist_ok=True)
+    for name in (TITLE_SCREEN_FILE, TITLE_PENS_FILE):
+        (BUILD / name).write_bytes(produced[name])
+    # A PICTURE OF NOTHING WOULD PASS EVERY CHECK ABOVE, and an all-zero screen is precisely what a
+    # boot that stopped one call too early leaves — `clear_both_screens` ($e4ee) runs before the
+    # load. So the artefact is required to be a picture, here, where it is written.
+    drawn = sum(1 for byte in produced[TITLE_SCREEN_FILE] if byte)
+    if not drawn:
+        raise SystemExit(f"FAIL: {TITLE_SCREEN_FILE} is {SCREEN_BYTES} zero bytes — the anchor fired "
+                         f"over the CLEARED screen, not over a depacked one")
+    print(f"   {BUILD / TITLE_SCREEN_FILE}: {SCREEN_BYTES} bytes at {WB_SCREEN_LOW:#x}, "
+          f"{drawn} of them non-zero")
+    print(f"   {BUILD / TITLE_PENS_FILE}: " + " ".join(
+        "%03x" % pen for pen in pen_words(produced[TITLE_PENS_FILE])))
+    return True
+
+
 def frames_argument():
     """`frames` with no argument takes the shim's anchors; `frames N` takes 1..N, which is the form
     that MEASURED those anchors in the first place (see wonderboy_main.c's M2_ANCHOR_FRAMES)."""
@@ -1566,6 +1629,7 @@ def lightning_flash_seed():
 
 
 MODES = {
+    "title": mode_title,
     "dump": mode_dump,
     "neighbour": mode_neighbour,
     "variance": mode_variance,

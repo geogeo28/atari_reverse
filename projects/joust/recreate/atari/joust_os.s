@@ -103,7 +103,20 @@ Fwrite:
 | ------------------------------------------------------------ GEMDOS control (trap #1) --------
 
 | long Super(void *stack)       GEMDOS 0x20 — Super(0) enters supervisor and returns the old SSP;
-| Super(that value) goes back to user mode. Balanced pairs only (see joust_main.c).
+| Super(that value) goes back to user mode.
+|
+| RETRACTION (2026-08-23, from Wonder Boy's batch 44 phase B): the note here used to claim that
+| pairing the two calls was the whole of the requirement, and pointed at joust_main.c for it. That is
+| NOT sufficient. TOS returns to user mode on the USP as
+| it stood when Super(0) ran and does NOT reload it from the supervisor stack — so this wrapper is
+| correct only while the compiler leaves %sp at the same depth at both call sites, and m68k GCC
+| defers and combines argument pops. Wonder Boy's two depths diverged by twelve bytes the moment a
+| load was inserted ahead of its Super(0); the rts popped stale stack and the program died AFTER a
+| clean teardown with every read-back green. Joust has five leave sites and is currently lucky, not
+| correct. The fix is one instruction — plant the USP yourself immediately before the trap; see
+| projects/wonderboy/recreate/atari/wonderboy_os.s's wb_leave_supervisor and
+| docs/on-target-execution.md bug 9. NOT APPLIED HERE: Joust is closed and this phase did not re-run
+| its on-target ladder, so the change is registered rather than made.
     .globl  Super
 Super:
     movem.l %d2/%a2,-(%sp)

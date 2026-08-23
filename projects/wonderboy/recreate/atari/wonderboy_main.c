@@ -49,6 +49,9 @@
 #include "sched.h"
 #include "wonderboy.h"
 #include "game.h"
+#include "boot.h"
+#include "rad.h"
+#include "stage.h"
 #include "tos.h"
 #include "wonderboy_target.h"
 
@@ -98,6 +101,76 @@
 #define M2_ANCHOR_FRAMES 1, 2, 51, 52
 #endif
 
+/* ---- the TITLE build: the boot's own first picture ---------------------------------------------
+ *
+ * `-DSMOKE_TITLE` swaps what the shim does between taking the machine and handing it back for the
+ * THIRD time, and it is the first build here whose picture the reconstruction PRODUCES rather than
+ * inherits. M2 stages the original's post-boot RAM because the chain that loads a stage is unported;
+ * the title screen's chain is FIVE calls long and every one of them is now reconstructed, so this
+ * build starts from the program image alone — the same one M1 stages — and draws the screen:
+ *
+ *   $e526  load_resource_by_index(WB_RESOURCE_TITLESCR, WB_RESOURCE_LOAD_BUFFER)  (../src/boot.c)
+ *   $e536  rad_depack(WB_RESOURCE_LOAD_BUFFER -> TITLE_DEPACK_DEST)               (../src/rad.c)
+ *   $e540  set_palette(TITLE_PALETTE_SRC)                                         (../src/stage.c)
+ *
+ * ...with $e4ea's `clear_palette` and $e4ee's `clear_both_screens` in front of them, as the boot has
+ * them. The first of those calls crosses the FILE-LOAD SEAM (the kit's include/disk.h), so this is
+ * also the first build in which a reconstructed routine asks the machine for a file.
+ *
+ * WHAT IS DEVIATED FROM THE BOOT, and it is three things, all stated where the claim is made
+ * (atari/README.md §13):
+ *
+ *   THE COPYLOCK IS NOT ARMED. `$e51e` writes `#$ffff` to WB_COPYLOCK_ARM_FLAG immediately before
+ *   this load, and `load_resource_by_index`'s armed arm would report WB_LOAD_COPYLOCK_RAN — the
+ *   port's way of saying "the protection would have run here", since the blob cannot be ported and
+ *   is not stubbed. So the flag is left at the $0000 the shipped file carries, the load reports
+ *   WB_LOAD_OK, and the record carries the flag as read out of the image so that the smoke asserts
+ *   it rather than taking this paragraph's word for it. Nothing on the compared surfaces depends on
+ *   it: the protection decrypts nothing this picture is made of — the file is on the disk in the
+ *   clear and `rad_depack` is the only thing that touches it.
+ *
+ *   THE LOAD RUNS IN USER MODE, BEFORE the machine is taken, where everything else in this slice
+ *   runs in supervisor. That is this file's standing rule for GEMDOS (see the banner: handle
+ *   allocation misbehaves when entered from supervisor under Hatari's GEMDOS drive), and it costs
+ *   nothing here because the load touches only image bytes — WB_LOAD_RETRY_INDEX/_DEST, WB_JOY1_STATE
+ *   and the destination — and the clears that the boot performs before it touch a disjoint range
+ *   ($ff8240.. and WB_SCREEN_LOW..) which nothing in the load reads.
+ *
+ *   THE SOUND REQUEST AT $e546 IS NOT MADE. `move.w #$8,d0 / lea $17adc.l,a0 / jsr (a0)` starts the
+ *   title music between `set_palette` and the fire wait. It writes no framebuffer byte and no
+ *   colour register, so neither compared surface can see it; the surface that could is M6's ordered
+ *   PSG stream, and this build does not carry one.
+ */
+#ifdef SMOKE_TITLE
+/* WHICH RESOURCE THIS BUILD DEPACKS, and the default is the one the boot loads first. The override
+ * is the mode's NEGATIVE CONTROL: `build.sh titlecredits` compiles WB_RESOURCE_CREDITS, so the same
+ * code draws the game's OTHER shipped picture into the same buffer through the same three calls,
+ * and every row of the comparison that a different picture can break must break.
+ *
+ * REPORTED BY THE BINARY in the record below, for `fault_pen`'s reason: the per-mode `.PRG`s persist
+ * while this file is edited, so a smoke that scraped the `-D` out of build.sh would be naming a
+ * resource the running binary need not have loaded. */
+#ifndef TITLE_RESOURCE
+#define TITLE_RESOURCE WB_RESOURCE_TITLESCR
+#endif
+
+/* `lea $6ff80.l,a1` at $e530 — the ORIGINAL's own operand, and not a number derived here. What it
+ * buys is written down as an assertion instead: the depacked file is 128 bytes of header-and-palette
+ * followed by exactly one screen, so `TITLE_DEPACK_DEST + unpacked` lands on WB_SCREEN_LOW's end and
+ * the picture is inflated STRAIGHT INTO the visible buffer. The record carries the unpacked length
+ * out of the file's own header and smoke.py pins that arithmetic. */
+#define TITLE_DEPACK_DEST  0x6ff80u
+/* `lea $6ff84.l,a0` at $e53a — the sixteen palette words inside that prefix. */
+#define TITLE_PALETTE_SRC  (TITLE_DEPACK_DEST + 4u)
+#endif
+
+/* THE TWO BUILDS THAT PHOTOGRAPH THE MACHINE, as one condition rather than two lists. Both carry a
+ * 32000-byte framebuffer and the machine's sixteen pens off in the same two files, read back by the
+ * same code in smoke.py, so what they share is defined once below and what differs is theirs. */
+#if defined(SMOKE_M2) || defined(SMOKE_TITLE)
+#define SMOKE_CAPTURES 1
+#endif
+
 /* ---- the image -------------------------------------------------------------------------------
  *
  * 1 MiB, plus 256 bytes of slack the base is rounded up into. THE ROUND-UP IS NOT COSMETIC: an STF's
@@ -122,6 +195,14 @@ uint32_t wb_target_image_base(void) {
 static uint16_t image_word(uint32_t at) {
     return (uint16_t)(((uint16_t)game_image[at] << 8) | game_image[at + 1u]);
 }
+
+/* ...and one longword. Only the photographing builds read one — M2 the front-buffer pointer, the
+ * title build the .RAD header's two lengths — so it is compiled with them. */
+#ifdef SMOKE_CAPTURES
+static uint32_t image_long(uint32_t at) {
+    return ((uint32_t)image_word(at) << 16) | image_word(at + 2u);
+}
+#endif
 
 /* ---- what the smoke reads back ---------------------------------------------------------------
  *
@@ -409,17 +490,38 @@ static void install(void) {
  * take. The two bytes are the image's, read exactly where flip_screen reads them ($74d/$74e, i.e.
  * bits 23-16 and 15-8 of WB_SCREEN_FRONT), so this is the boot's `screen base := $70000` performed
  * on the reconstruction's terms rather than on the shim's. */
-static void publish_screen_base(void) {
+static void publish_base_bytes(uint8_t high, uint8_t mid) {
     uint32_t want;
 
-    wb_target_shifter_byte(WB_SHIFTER_SCREEN_BASE_HIGH, game_image[WB_SCREEN_FRONT_BITS_16_23]);
-    wb_target_shifter_byte(WB_SHIFTER_SCREEN_BASE_MID, game_image[WB_SCREEN_FRONT_BITS_8_15]);
+    wb_target_shifter_byte(WB_SHIFTER_SCREEN_BASE_HIGH, high);
+    wb_target_shifter_byte(WB_SHIFTER_SCREEN_BASE_MID, mid);
 
     want = wb_target_screen_base;
     checked(RB_SCREEN_BASE_PUBLISHED,
             *io8(SHIFTER_BASE_HI) == (uint8_t)(want >> 16)
             && *io8(SHIFTER_BASE_MID) == (uint8_t)(want >> 8));
 }
+
+/* EXACTLY ONE OF THE TWO IS COMPILED, keyed on the build, because the boot publishes the base two
+ * different ways at two different moments and this shim stands in for whichever one its build is at.
+ *
+ * THE TITLE'S BASE IS NOT WB_SCREEN_FRONT'S, and that is the boot's own arrangement rather than a
+ * choice here. `video_set_lowres_50hz` ($f906) publishes it as two IMMEDIATES —
+ * `move.b #$7,$ff8201.l` / `move.b #$0,$ff8203.l`, i.e. WB_SCREEN_LOW — and never reads the pointer
+ * pair; WB_SCREEN_FRONT is the FRAME LOOP's, and the shipped file carries WB_SCREEN_HIGH in it,
+ * which is the buffer the title picture is NOT in. Publishing that instead would display 32000
+ * bytes of the screen the depack does not reach. The two bytes are taken apart from the one
+ * constant rather than written as 7 and 0. */
+#ifdef SMOKE_TITLE
+static void publish_screen_base(void) {
+    publish_base_bytes((uint8_t)(WB_SCREEN_LOW >> 16), (uint8_t)(WB_SCREEN_LOW >> 8));
+}
+#else
+static void publish_screen_base(void) {
+    publish_base_bytes(game_image[WB_SCREEN_FRONT_BITS_16_23],
+                       game_image[WB_SCREEN_FRONT_BITS_8_15]);
+}
+#endif
 
 static void teardown(void) {
     /* SMOKE_M3_NO_HANDBACK is M3's HAND-BACK CONTROL (build.sh m3fault), and it is `novbl`'s shape at
@@ -519,11 +621,13 @@ static void dump_stats(const struct stats *record) {
  * checks STATS.BIN's size against a format string, so growing the record per build mode would make
  * the M1 parser's own version check fire on an M2 run and vice versa. Two records, two magics, two
  * readers, and neither can silently misread the other's bytes. */
-#ifdef SMOKE_M2
-#define M2_MAGIC 0x57424132u        /* 'WBA2' */
-/* How many anchors the record has room to carry. Not a limit on M2_ANCHOR_FRAMES — the static
- * assertion below refuses a longer list rather than truncating one. */
-#define M2_ANCHOR_MAX 8u
+/* ---- what the PHOTOGRAPHING builds share --------------------------------------------------------
+ *
+ * M2 takes four pictures of a running frame loop and the title build takes one of a screen the boot
+ * chain drew, but the SURFACE is the same in both: 32000 bytes out of the image and sixteen words
+ * off the shifter, in FRAME.BIN and PENS.BIN, sized from the same header constants smoke.py reads.
+ * Defined here rather than twice, so a build cannot photograph a differently-shaped screen. */
+#ifdef SMOKE_CAPTURES
 /* DERIVED, not restated. Both numbers already have one canonical definition in ../include/
  * wonderboy.h, which ../test/layout.py scrapes for the Python side — so smoke.py and this file
  * compute them from the SAME two constants instead of each writing 32000 and 16 down. */
@@ -535,9 +639,28 @@ static void dump_stats(const struct stats *record) {
  * lesson the resolution register taught this file on its first on-target run, one register over. */
 #define ST_PEN_MASK  0x0777u
 
-static const char M2_FILE[] = "M2.BIN";
 static const char FRAME_FILE[] = "FRAME.BIN";
 static const char PENS_FILE[] = "PENS.BIN";
+
+/* One colour register per pen, read where the picture's colour really is. Unmasked on purpose: the
+ * comparison against the shipped binary is done on both sides through `original.pen_words`, which
+ * owns the masking rule, and a second application here would be a second place to correct it. */
+static void read_shifter_pens(uint16_t *into) {
+    unsigned pen;
+
+    for (pen = 0; pen < PALETTE_PENS; pen++)
+        into[pen] = *(volatile uint16_t *)(uintptr_t)(SHIFTER_PALETTE
+                                                      + pen * WB_SHIFTER_PALETTE_STRIDE);
+}
+#endif /* SMOKE_CAPTURES */
+
+#ifdef SMOKE_M2
+#define M2_MAGIC 0x57424132u        /* 'WBA2' */
+/* How many anchors the record has room to carry. Not a limit on M2_ANCHOR_FRAMES — the static
+ * assertion below refuses a longer list rather than truncating one. */
+#define M2_ANCHOR_MAX 8u
+
+static const char M2_FILE[] = "M2.BIN";
 /* The pens the ORIGINAL's boot left in the shifter, staged beside WB.IMG.
  *
  * THE PALETTE IS THE BOOT'S PRODUCT AND IT DOES NOT LIVE IN RAM. `set_palette` is called from
@@ -699,11 +822,7 @@ static void publish_staged_pens(struct m2_stats *record) {
  * anchor. Inlined, `capture_pc` would name an out-of-line copy the run never enters and the vector
  * would simply never be taken — a loud failure rather than a wrong one, but a needless one. */
 static __attribute__((noinline)) void capture_the_frame(struct m2_stats *record, unsigned slot) {
-    uint32_t front = ((uint32_t)game_image[WB_SCREEN_FRONT] << 24)
-                     | ((uint32_t)game_image[WB_SCREEN_FRONT + 1] << 16)
-                     | ((uint32_t)game_image[WB_SCREEN_FRONT + 2] << 8)
-                     | game_image[WB_SCREEN_FRONT + 3];
-    unsigned pen;
+    uint32_t front = image_long(WB_SCREEN_FRONT);
 
     record->screen_front = front;
     /* THE ADDRESS IS BOUNDED BEFORE IT IS FOLLOWED, and it is the one image value this shim reads
@@ -717,9 +836,7 @@ static __attribute__((noinline)) void capture_the_frame(struct m2_stats *record,
         return;
     }
     memcpy(captured_frames[slot], game_image + front, SCREEN_BYTES);
-    for (pen = 0; pen < PALETTE_PENS; pen++)
-        captured_pens[slot][pen] = *(volatile uint16_t *)(uintptr_t)(SHIFTER_PALETTE
-                                                                     + pen * sizeof(uint16_t));
+    read_shifter_pens(captured_pens[slot]);
 }
 
 /* Run the reconstruction's own frame loop, and stop for any of three reasons rather than one.
@@ -874,6 +991,102 @@ static uint32_t run_frames(struct m2_stats *record) {
 #endif /* SMOKE_M2 */
 
 
+/* ---- the title screen, drawn by the reconstruction ---------------------------------------------
+ *
+ * The SMOKE_TITLE banner near the top of this file says what this build is and what it deviates
+ * from. This is the code: a record, one screen's worth of capture, and the boot slice in the two
+ * halves the privilege rule cuts it into.
+ *
+ * A THIRD RECORD FOR THE THIRD BUILD, for the reason M2 got a second one: smoke.py checks each
+ * record's size against its own format string, so one record that grew per build mode would make
+ * every other mode's version check fire. Three records, three magics, three readers. */
+#ifdef SMOKE_TITLE
+#define TITLE_MAGIC 0x57424133u     /* 'WBA3' */
+
+static const char TITLE_FILE[] = "TITLE.BIN";
+
+struct title_stats {
+    uint32_t magic;
+    uint32_t bytes;                 /* sizeof(struct title_stats) — the version check */
+    uint32_t image_base;
+    /* WHICH ROW OF WB_RESOURCE_FILE_TABLE THIS BINARY ASKED FOR. Reported rather than scraped out
+     * of build.sh, for `fault_pen`'s reason: the per-mode `.PRG`s outlive an edit to the script. */
+    uint32_t resource_index;
+    /* WB_COPYLOCK_ARM_FLAG as the load found it. The boot arms it at $e51e and this build does not
+     * (see the banner), so this must be $0000 and `load_result` must be WB_LOAD_OK — the pair is
+     * the honesty note made checkable instead of merely written down. */
+    uint32_t copylock_arm_flag;
+    uint32_t load_result;           /* load_resource_by_index's WB_LOAD_* (../include/wonderboy.h) */
+    /* The .RAD header's OWN two lengths, read back out of the destination after the load. They are
+     * what says the file arrived — a refused load leaves the buffer's zeros — and `unpacked_bytes`
+     * is what pins the geometry claim TITLE_DEPACK_DEST rests on. */
+    uint32_t packed_bytes;
+    uint32_t unpacked_bytes;
+    uint32_t depack_result;         /* rad_depack's d0; WB_RAD_BAD_CHECKSUM is its one status */
+    uint32_t depack_dest;
+    uint32_t captured_at;           /* where the 32000 photographed bytes were read from */
+    uint32_t screen_base_published; /* ...and the machine address the shifter was pointed at */
+    uint32_t shifter_base;          /* $ffff8201/8203 READ BACK, at the instant of the photograph */
+    /* Which of the sixteen pens `set_palette` put on the chip does not read back as the word it
+     * was given. Not an RB_* bit, for the reason M2's own pen field is not one. */
+    uint32_t pens_readback_failed;
+};
+
+static uint8_t captured_title[SCREEN_BYTES];
+static uint16_t captured_title_pens[PALETTE_PENS];
+
+/* USER MODE, before the machine is taken: the one file read the RECONSTRUCTION itself performs. */
+static void load_the_title(struct title_stats *record) {
+    record->resource_index = TITLE_RESOURCE;
+    record->copylock_arm_flag = image_word(WB_COPYLOCK_ARM_FLAG);
+    record->load_result = load_resource_by_index(game_image, TITLE_RESOURCE,
+                                                 WB_RESOURCE_LOAD_BUFFER);
+    record->packed_bytes = image_long(WB_RESOURCE_LOAD_BUFFER + RAD_HDR_PACKED_OFF);
+    record->unpacked_bytes = image_long(WB_RESOURCE_LOAD_BUFFER + RAD_HDR_UNPACKED_OFF);
+}
+
+/* SUPERVISOR: the boot's two clears, the depack, the palette — and the photograph.
+ *
+ * THE PICTURE IS READ WHERE THE SHIFTER IS POINTED, which is M2's rule and not a restatement of
+ * where the depack was aimed. This build's `publish_screen_base` put WB_SCREEN_LOW on the bus, so that is
+ * what a display shows and that is what is compared; whether the depack's own arithmetic lands
+ * there is a SEPARATE claim, carried by `depack_dest` and `unpacked_bytes` and asserted by
+ * smoke.py. A capture taken at `depack_dest + prefix` would make those two agree by construction. */
+static void draw_the_title(struct title_stats *record) {
+    unsigned pen;
+
+    (void)clear_palette(game_image);            /* $e4ea */
+    clear_both_screens(game_image);             /* $e4ee */
+
+    record->depack_dest = TITLE_DEPACK_DEST;
+    record->depack_result = rad_depack(game_image, WB_RESOURCE_LOAD_BUFFER, TITLE_DEPACK_DEST);
+    (void)set_palette(game_image, TITLE_PALETTE_SRC);
+
+    /* THE PALETTE'S PLUMBING, CHECKED SEPARATELY FROM THE DIFFERENTIAL — the same split
+     * `publish_staged_pens` makes for M2's control: this asks only whether the sixteen words the
+     * depacked prefix holds are the sixteen the chip holds, so a divergence against the SHIPPED
+     * binary's pens is about the picture and not about the shim's wiring. */
+    for (pen = 0; pen < PALETTE_PENS; pen++) {
+        uint32_t at = pen * WB_SHIFTER_PALETTE_STRIDE;
+        uint16_t wanted = image_word(TITLE_PALETTE_SRC + at);
+        uint16_t held = *(volatile uint16_t *)(uintptr_t)(SHIFTER_PALETTE + at);
+
+        if ((held & ST_PEN_MASK) != (wanted & ST_PEN_MASK))
+            record->pens_readback_failed |= 1u << pen;
+    }
+
+    record->captured_at = WB_SCREEN_LOW;
+    memcpy(captured_title, game_image + WB_SCREEN_LOW, SCREEN_BYTES);
+    read_shifter_pens(captured_title_pens);
+    /* IN SUPERVISOR AND AT THE PHOTOGRAPH, which is the only instant it means anything: `teardown`
+     * puts TOS's own base back, and a read after that reports the desktop's screen for ever. */
+    record->shifter_base = ((uint32_t)*io8(SHIFTER_BASE_HI) << 16)
+                           | ((uint32_t)*io8(SHIFTER_BASE_MID) << 8);
+}
+
+#endif /* SMOKE_TITLE */
+
+
 /* ---- the run ----------------------------------------------------------------------------------- */
 
 /* An escape from the vblank loop that does not depend on the vblank loop's own clock, so a dead VBL
@@ -965,6 +1178,9 @@ int wonderboy_main(void) {
 #ifdef SMOKE_M2
     struct m2_stats m2;
 #endif
+#ifdef SMOKE_TITLE
+    struct title_stats title;
+#endif
     void *ssp;
     unsigned field;
 
@@ -973,6 +1189,10 @@ int wonderboy_main(void) {
 #ifdef SMOKE_M2
     for (field = 0; field < sizeof(m2); field++)
         ((uint8_t *)&m2)[field] = 0;
+#endif
+#ifdef SMOKE_TITLE
+    for (field = 0; field < sizeof(title); field++)
+        ((uint8_t *)&title)[field] = 0;
 #endif
 
     game_image = (uint8_t *)(((uintptr_t)image_storage + (IMAGE_ALIGN - 1u))
@@ -984,6 +1204,11 @@ int wonderboy_main(void) {
 #ifdef SMOKE_M2
     if (!stage_file(STAGED_PENS_FILE, (long)sizeof(staged_pens), staged_pens))
         return 1;
+#endif
+#ifdef SMOKE_TITLE
+    /* THE RECONSTRUCTION'S OWN FILE READ, and it happens HERE — in user mode, with the rest of this
+     * file's GEMDOS I/O — rather than beside the depack it feeds. The SMOKE_TITLE banner argues it. */
+    load_the_title(&title);
 #endif
     saved.tos_logbase = (uint32_t)Logbase();
     saved.tos_physbase = (uint32_t)Physbase();
@@ -1033,6 +1258,15 @@ int wonderboy_main(void) {
     m2.shifter_base = ((uint32_t)*io8(SHIFTER_BASE_HI) << 16)
                       | ((uint32_t)*io8(SHIFTER_BASE_MID) << 8);
 #else
+#ifdef SMOKE_TITLE
+    /* THE PICTURE IS DRAWN AND PHOTOGRAPHED BEFORE THE VBLANK COUNT, not after it. The count is
+     * M1's — every read-back below it needs the machine to have driven the reconstruction for a
+     * while, and RB_PSG_PORT_A_DESELECTED needs gen_image.py's seeded floppy countdown to expire —
+     * but the moment this build is a differential ABOUT is the one the boot's own `$e556` is: the
+     * screen as `set_palette` leaves it. Photographing after sixty vblanks of `vbl_handler` would
+     * be comparing a different instant from the shipped side's for no gain. */
+    draw_the_title(&title);
+#endif
     checked(RB_VBL_TICKING, run_vblanks(SMOKE_VBLS));
 #endif
     record.psg_port_a_after_run = psg_port_read(WB_PSG_REG_PORT_A);
@@ -1046,7 +1280,10 @@ int wonderboy_main(void) {
     sample_the_two_clocks(&record);
 
     teardown();
-    (void)Super(ssp);
+    /* NOT `Super(ssp)`, and wonderboy_os.s has the measurement: TOS returns to user mode on the USP
+     * the FIRST `Super(0)` froze, so a plain round trip only works while the compiler leaves the
+     * stack at the same depth at both call sites. It did until this file grew a third build. */
+    (void)wb_leave_supervisor(ssp);
 
     /* USER MODE again: TOS's screen pointer as well as the shifter (only Setscreen updates
      * `_v_bas_ad`, which TOS's own — now restored — VBL reloads the shifter from). */
@@ -1075,6 +1312,15 @@ int wonderboy_main(void) {
     write_file(M2_FILE, &m2, (long)sizeof(m2));
     write_file(FRAME_FILE, captured_frames, (long)sizeof(captured_frames));
     write_file(PENS_FILE, captured_pens, (long)sizeof(captured_pens));
+#endif
+#ifdef SMOKE_TITLE
+    title.magic = TITLE_MAGIC;
+    title.bytes = sizeof(title);
+    title.image_base = (uint32_t)(uintptr_t)game_image;
+    title.screen_base_published = wb_target_screen_base;
+    write_file(TITLE_FILE, &title, (long)sizeof(title));
+    write_file(FRAME_FILE, captured_title, (long)sizeof(captured_title));
+    write_file(PENS_FILE, captured_title_pens, (long)sizeof(captured_title_pens));
 #endif
     return 0;
 }

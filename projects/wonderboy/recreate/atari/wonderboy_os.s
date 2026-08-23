@@ -103,8 +103,8 @@ Fwrite:
 
 | ------------------------------------------------------------ GEMDOS control (trap #1) --------
 
-| long Super(void *stack)       GEMDOS 0x20 — Super(0) enters supervisor and returns the old SSP;
-| Super(that value) goes back to user mode. Balanced pairs only (see wonderboy_main.c).
+| long Super(void *stack)       GEMDOS 0x20 — Super(0) ENTERS supervisor and returns the old SSP.
+| The way BACK is wb_leave_supervisor below and NOT this routine; the paragraph there says why.
 |
 | It is the ONE trap the original issues in its whole life (../project.toml's byte scan of the
 | image), which is why this file is short: Wonder Boy drives the hardware itself.
@@ -113,6 +113,39 @@ Super:
     movem.l %d2/%a2,-(%sp)
     move.l  12(%sp),-(%sp)
     move.w  #0x20,-(%sp)
+    trap    #1
+    addq.l  #6,%sp
+    movem.l (%sp)+,%d2/%a2
+    rts
+
+| long wb_leave_supervisor(void *ssp)   GEMDOS 0x20 again — the RETURN half, made safe.
+|
+| WHY THIS IS NOT JUST `Super(ssp)`, AND IT IS A DEFECT THIS DIRECTORY SHIPPED RATHER THAN A
+| REFINEMENT. TOS goes back to user mode by loading %a7 from the USER stack pointer, and the USP it
+| uses is the one FROZEN when `Super(0)` was called — measured on TOS 1.04, it does not set the USP
+| from the supervisor stack on the way out. So a plain `Super(ssp)` returns onto the stack position
+| the FIRST call stood at, and the wrapper's own unwind (`addq #6` / `movem` / `rts`) reads from
+| there. That is right only while the compiler leaves %sp at the SAME depth at both call sites, and
+| m68k GCC does not promise it: it DEFERS argument pops and combines them, so an edit anywhere
+| between the two calls can move one of them.
+|
+| MEASURED, and it is how the fault was found: with the title slice added ahead of `Super(0)`, %sp
+| at the second call sat 12 bytes above the first (`USP 003f7f52` against `ISP 003f7f5e`), the `rts`
+| popped stale stack and the program died reading $26520020 — AFTER the teardown, with every
+| read-back green and no record written. The M1 build's two calls are at the same depth
+| (`USP 003f7fa2` == `ISP 003f7fa2`) and it survives on that coincidence.
+|
+| So this sets the USER stack pointer to the supervisor stack it is standing on, one instruction
+| before the trap, which makes the return independent of where either call was made. `move %a0,%usp`
+| is privileged; this routine is supervisor-only by construction, since nothing else has a supervisor
+| stack pointer to hand back.
+    .globl  wb_leave_supervisor
+wb_leave_supervisor:
+    movem.l %d2/%a2,-(%sp)
+    move.l  12(%sp),-(%sp)          | the SSP Super(0) handed back
+    move.w  #0x20,-(%sp)
+    move.l  %sp,%a0
+    move.l  %a0,%usp                | ...so the return lands %a7 exactly here, whatever GCC did
     trap    #1
     addq.l  #6,%sp
     movem.l (%sp)+,%d2/%a2

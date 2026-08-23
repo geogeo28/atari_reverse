@@ -14361,3 +14361,432 @@ intermediate of rendering the real `TITLESCR.RAD` on target and byte-comparing i
 original's title framebuffer. Both need the resource LOAD path, which is the disk wall above. The
 sixteen existing modes are green and unchanged; no new mode was added, because a mode that staged
 its input would not be testing the boot.
+
+## Batch 44 phase B — THE DISK WALL: the seam found, the boundary declared, the load path ported
+
+Phase A counted the boot chain and left one question: **2,730 unported bytes, 1,644 of them a raw
+WD1772/DMA driver the memory differential cannot see — is that a wall or a seam?** This phase reads
+the bytes and answers **seam**, at an address, with the crossings enumerated — and then walks
+through it: **the `.PRG` renders the real `TITLESCR.RAD` and the framebuffer is the shipped
+binary's, byte for byte, on both ROMs.**
+
+**Verified 330, 41,652 bytes** (+6 routines, +314 bytes: 218 in whole segments plus the dispatcher's
+96, both DERIVED in `test_phase_b_reconstructed_the_bytes_it_claims`); **`make test` 6,349** from a
+clean `build/` (6,253 after phase A; all 96 of the growth is this phase, twelve of them cases the
+review gate's findings produced). **Kit suite 392**; **`tools/test_hw_portability.py` 56 and green from
+the repo root**. **THE KIT MOVED** — see the banner below.
+
+> **A KIT SURFACE WAS ADDED, AND IT IS SHARED BY EVERY PROJECT.** `tools/recreate_kit/include/disk.h`
+> and `src/disk.c` define `disk_read_file(mem, name_ptr, dest)` — "put the whole of this named file
+> at this address" — over the staged-file model `os.h` has had since BuggyBoy. It is **minimal** (one
+> function, one contract, no ledger, no new trap) and **game-agnostic**: any reconstruction whose
+> boot chain ends in a sector driver wants the same cut. It is documented as TRAP_MODEL.md's **Phase
+> 9**, which also carries the boundary discipline the seam obliges. No existing project's behaviour
+> changes: nothing else calls it, and `kit.mk` linking one more file into every candidate is why the
+> kit suite was re-run.
+
+### §1 THE SEAM — where file-shaped becomes sector-shaped, read off the bytes
+
+`disk_load_file` (`$5e7c`) is entered with **a0 on a twelve-character DOS name and a1 on a
+destination**, and it returns 0 or a negative error. Everything below it is sector-shaped: it reads
+the boot sector, computes the FAT/root/data geometry from the BPB, walks the directory, follows the
+cluster chain and programs the DMA. So the cut falls **at** that routine — it is the lowest one whose
+INPUTS are file-shaped, and the last one whose whole contract a substitution can honour.
+
+**THE NAME IS ALREADY A FILENAME, and that is the fact that makes the substitution free.**
+`load_resource_by_index` does `lsl.l #4,d0 / lea resource_file_table,a0 / lea (a0,d0.w),a0`, landing
+on sixteen bytes holding a NUL-padded `"NNNNNNNN.EEE"`; `fat_find_dir_entry` then compares exactly
+a0's bytes 0..7 and 9..11 against a FAT12 directory entry, skipping the dot. So the same pointer that
+goes to the FDC layer is the one the port hands the seam — no name is built. The forty rows are
+the game's whole resource ID space: 0 `TITLESCR.RAD`, 1 `CREDITS .RAD`, 2..36 the thirty-five
+`OVALAY*`, 37 `TILEDATA.RAD`, 38 `SPRITES .CRU`, 39 `DATADISK.RAD`.
+(`test_the_seam_s_inputs_are_file_shaped` derives the eleven compared offsets out of the image;
+`test_the_resource_table_rows_are_the_filenames_the_substitution_needs` walks all forty rows.)
+
+**AND IT IS NOT QUITE FREE — TWO ROWS NEED A TRANSLATION, AND THE MACHINE IS WHAT SAID SO.** FAT12
+space-pads a short stem, so `CREDITS .RAD` and `SPRITES .CRU` carry an INTERNAL space. Off target
+that is nothing: the staged-file model matches bytes and has no path syntax. **On target GEMDOS reads
+a space as a real path character**, so the backend drops spaces before `Fopen` and `smoke.py` stages
+the drive by the same rule. The two statements of the substitution therefore differ, below the seam,
+in exactly two rows.
+
+*The way this was found is the point.* This phase's own case asserted `name == name.strip()`, which
+is TRUE of an internal space — a check that looked like it covered padding and did not. Nothing off
+target could have caught it, because nothing off target cares. It failed on a real Atari, on the
+first build that tried to open `CREDITS .RAD`. The case now pins the SET of padded rows instead of
+the property, so a third one cannot appear silently. **A predicate that is true for the wrong reason
+is worse than no predicate: it reads as coverage.**
+
+### §2 THE CROSSINGS — a SET of four, enumerated and each classified
+
+The boundary is only worth the name if its edges are counted, so they are, three ways
+(`test_boot_inventory.py`, "THE SEAM"):
+
+* **THE BOOT CHAIN CROSSES EXACTLY ONCE**, at `jsr $5e7c.w` (`$e79c`) inside
+  `load_resource_by_index` — over the walk's own REACHED instructions, so it is about code that runs
+  and not about bytes that decode. The seam has that one boot-chain caller and no other.
+* **THE WHOLE IMAGE ENCODES FOUR EDGES IN**, and each is named. A census over encodings, because a
+  linear sweep of 136 KB decodes data as instructions and a grep for `$5e7c` answers with
+  coincidences; each hit is then classified by decoding forward from a routine `names.txt` names, so
+  "that one is data" is a measurement:
+
+  | at | what |
+  |---|---|
+  | `$e79c` | **THE SEAM** |
+  | `$73e` | **THE SECOND EDGE, AND IT IS AN INTERRUPT** — the level-4 handler's `jsr $6268.l` when `floppy_idle_timer` expires. *No walk over call edges can find it, because a vector is not a call*, and phase A's inventory therefore never saw it. Its target `floppy_deselect_drives` has been reconstructed since batch 42 phase B |
+  | `$f56a` | the Copylock's failure arm calling `fdc_restore` — inside a boundary already counted |
+  | `$6532` | **not an instruction**: the low word of `lea $6586.l,a1`'s operand inside `actor_aim_velocity`, which reads as `bmi.s`. The false positive the classifier exists for |
+
+* **AND THE BAND TRANSFERS OUT NOWHERE AT ALL.** Every encoded transfer from inside the band to
+  outside it is an operand fragment; the band is a **closed subgraph** that leaves only by `rts`.
+  That is what makes excluding it safe rather than a hole — a boundary whose interior called back
+  into ported code would need every such call modelled.
+
+All four cases are RED-checked: dropping the VBL edge, calling the `$6532` fragment real, widening
+the band, and claiming a second boot-chain caller each redden exactly the case named for them.
+
+### §3 THE DECISION, and the two it was taken against
+
+**THE HYBRID, all three parts of it.** (a) Port everything above the seam differentially; (b) declare
+the 1,644 bytes below it a counted boundary like the Copylock; (c) implement the seam as a DECLARED
+SUBSTITUTION through the file traps — the staged-file model off target, GEMDOS on it.
+
+**The evidence that decided it** is §1 and §2 together: the seam is one edge, its inputs are already
+a filename, and the band is closed. The two alternatives were weighed and rejected on that evidence,
+not on taste:
+
+* **A WD1772 device model in the kit** — rejected, and registered rather than built. It would model a
+  chip in order to verify 1,644 bytes of code whose whole output is *the file's bytes at an address*,
+  which the seam already delivers. Nothing above the seam reads any of the driver's state; the one
+  routine inside the band that outside code touches is `floppy_deselect_drives`, and that is ported.
+* **A STAGED-LOAD BOUNDARY** (declare the whole load path unportable and keep staging the original's
+  post-boot RAM) — rejected because §1 showed the seam is a *file* interface. Drawing the boundary
+  above `load_resource_by_index` would have excluded 218 bytes of ordinary, differentiable memory
+  code for no reason but the name of the routine below them.
+
+**WHAT THE SUBSTITUTION IS NOT.** It is not the original's loading. It does not touch the FDC, does
+not seek, does not spin a motor, does not take the ~3 s the idle timer measures, and cannot fail the
+way a real disk fails. It reproduces the seam's CONTRACT — the named file's bytes at the destination,
+0 or negative back — and nothing else. That is stated here because it is exactly the kind of claim
+that decays into "the loader is ported" if nobody writes down which half was substituted.
+
+### §4 WHAT LANDED, AND WHAT PINS IT
+
+Six routines, **218 bytes in whole segments** plus three pieces of the dispatcher that the segment
+arithmetic cannot see (they live inside `show_data_disk_prompt`'s unported segment, exactly as
+`bg_tile_install` does — `test_phase_b_reconstructed_the_bytes_it_claims` asserts both facts, so a
+reader cannot take 2,730 − 2,512 = 218 for the whole of the work).
+
+| addr | routine | bytes | what pins it |
+|---|---|---:|---|
+| `$e782` | `load_resource_by_index` | 104 | four shipped resources at their own indices, ACROSS THE SEAM, with the same substitution poked into the oracle as 68000; both index-arithmetic mistakes driven as real differentials; three armed values |
+| `$e710` | `stage_actors_init` | 88 | both side arms, poisoned, with the write set asserted as the three whole tables |
+| `$e768` | `actor_apply_stage_side` | 26 | both records × four flag values, including two the game never writes |
+| `$e5ba` | `stage_sequence_advance` | — | three rows × both arms of the re-entry word |
+| `$e5d8` | `stage_sequence_resource` | — | all 35 shipped rows, plus the eight-bit wrap on a poked ordinal |
+| `$e5fe` | `stage_sequence_apply_row` | — | all 35 shipped rows |
+
+The dispatcher's three rows carry no byte count in that table because the segment arithmetic has none
+to give: their 96 bytes are derived instead from the four CUTS the header now defines once
+(`WB_SEQ_RESOURCE_AT/_END`, `WB_SEQ_ADVANCE_END`, `WB_SEQ_APPLY_AT/_END`), which both batteries read —
+`test_boot.py` stops each differential at the next cut and the inventory sums the same four addresses,
+so a cut that moved could not be right in one file and stale in the other.
+
+**THE ORACLE PERFORMS THE SAME SUBSTITUTION, and that is what makes this a differential at all.**
+`test_boot.py`'s `SEAM_STUB` is seventy bytes of hand-assembled `Fopen`/`Fread`/`Fclose` poked over
+`disk_load_file`, returning 0 or −1 — the seam's own contract, not a byte count. Both sides then go
+through the staged-file model, **whose entire state is in the image** (the table, the cursors, the
+open flags, the bytes), so the ordinary byte diff is what holds the C statement of the substitution
+and the 68000 one equal. Nothing is taken on trust because the seam was declared. The stub is pinned
+BY DECODE — `prg_dis` over its own bytes, three traps, the three opcodes, and the Fread count equal
+to the port's — because a hand-assembled stub is the one input to a differential that nothing else
+checks, and a wrong displacement expresses itself as a puzzling diff far from its cause.
+
+Four things the port had to get right, each a verified kill:
+
+* **The index is scaled as a LONGWORD and used as a WORD, signed.** `lsl.l #4` reaches past 16 bits
+  but the `lea`'s brief extension word selects `d0.w`. Both mistakes are driven as REAL
+  differentials rather than argued: index `$1000` wraps to row 0 and must load `TITLESCR.RAD`, and
+  index `$800` sign-extends to a row 32 KB BELOW the table — where the case SEEDS a name and stages
+  its file, which is batch 38's rule about making a refusal's target reachable before asserting on it.
+* **The guard is a `tst.w`, not an equality.** Any nonzero arms the protection; the game only ever
+  writes `$ffff`, so a port comparing for equality is green on every shipped path. The sweep found
+  it and `$0001`/`$8000` close it.
+* **The two retry longwords are written on EVERY load**, not only on the error path.
+* **`stage_actors_init`'s two passes are ordered.** The three fields go over records
+  `actor_table_reset` has just zeroed; reversing them leaves the type at 0.
+
+### §5 THE SWEEP — and a survivor round that was a bad mutant, not a hole
+
+| round | over | result |
+|---|---|---|
+| 1 | the reconstruction as first written | **23 killed, 4 SURVIVED** |
+| 2 | the same, three holes closed and one mutant re-aimed | **28 killed, 0 survived, 0 un-applied** |
+
+Every build forced a relink, sources were restored in a `finally` and re-verified by digest, and an
+anchor matching other than exactly once is REPORTED rather than counted.
+
+**THE FOUR SURVIVORS WERE NOT ONE KIND OF THING**, and separating them is the round's content:
+
+* **Two were the ERROR ARM, and the hole is in the MODEL, not in the cases** — see §6.
+* **One was a real coverage hole**: the Copylock guard's `tst.w`, closed by driving three armed
+  values instead of one.
+* **AND ONE WAS A BAD MUTANT.** "Writes the fields before the reset" moved *one* field early and then
+  ran the whole normal body after it, so the final state was identical — a mutant that changed
+  nothing, read as a survivor. Re-aimed to move the WHOLE field pass, it kills. *Before believing a
+  survivor, check the mutant changed something the test's own inputs can reach* — phase A wrote that
+  lesson down and this phase needed it again, which is what a lesson being real looks like.
+
+### §6 KNOWINGLY UNPINNED
+
+* **THE ERROR ARM HAS NO DIFFERENTIAL AVAILABLE TO IT, and the reason is a property of the kit.**
+  `os_fopen`/`os_fread` have exactly two answers — served and refused — and a refusal sets the shim's
+  `g_unmodeled` so `emu.run` raises before any comparison happens. That is right: it is what stops a
+  loader reading an unstaged file from being falsely verified. But it means **the oracle cannot be
+  made to return a negative `disk_load_file`**, so the arm the original takes on a disk error is
+  driven CANDIDATE-ONLY, against a second statement of its two instructions, with a control that the
+  same call with the file staged returns `WB_LOAD_OK` and leaves `joy1_state` alone. Both branches of
+  the seam's own failure are reached (an unstaged name; a read that would leave the image), so both
+  survivors are dead — but what pins them is weaker than the oracle and the case says so.
+  **THE REMEDY IS A KIT CHANGE AND IS REGISTERED, NOT BUILT**: a staged name declared PRESENT BUT
+  UNREADABLE — the third answer the two-valued model lacks. Registered in TRAP_MODEL.md Phase 9.
+* **THE INTERACTIVE RETRY IS NOT MODELLED AT ALL.** On a negative return the original turns colour 0
+  red, clears `joy1_state`, spins until the IKBD handler makes it negative, restores d0/a1 and loads
+  again. The colour is off-image; the spin's release is an interrupt this run cannot schedule. The
+  port makes the arm's ONE image write and reports `WB_LOAD_DISK_ERROR`. A port that looped here
+  would be inventing a second load no case asked for.
+* **`SPRITES.CRU` CANNOT BE LOADED ACROSS THE SEAM IN A DIFFERENTIAL.** Its 279,034 bytes exceed the
+  whole staging area the model has to lay files in. Four of the boot's five named loads are pinned
+  and the fifth is not; the boundary between them is a size, and it is stated rather than left as a
+  gap. (`sprites_cru_install` itself, which consumes the file, has been pinned on the real 279,034
+  bytes since phase A — it is the LOAD that cannot be staged, not the install.)
+* **THE ARMED ARM'S CALL IS THE COPYLOCK, and remains structurally unpinnable.** The port reports
+  which arm it took; the oracle survives only because `copylock.py` pokes an `rts` over the blob. Per
+  that module's own docstring, this differential is the one that must call `assert_did_not_execute`
+  BY HAND — it does, on every load case, because `differential()` does not hand back the image the
+  witness compares against.
+
+### §6b ON TARGET: THE .PRG RENDERS THE REAL TITLE SCREEN, BYTE FOR BYTE
+
+**The goal batch 43 phase F and 44 phase A both named as not reached is reached.** `smoke.py title`
+builds a `.PRG` that runs the reconstruction's own load path over the game's own shipped
+`TITLESCR.RAD` — `load_resource_by_index(0, $49800)` -> `rad_depack($49800 -> $6ff80)` ->
+`set_palette($6ff84)` — and compares the result against the ORIGINAL booted to `$e556`, the fire-wait
+the title screen spins on. **0 of 32,000 framebuffer bytes differ and all sixteen pens agree, on both
+ROMs.** The geometry is a pinned row rather than a description: 16,620 on disk, 32,128 unpacked, and
+`$6ff80 + 32128 == $70000 + 32000` — the title depacks a 128-byte header/palette prefix straight into
+the visible framebuffer.
+
+**Eighteen modes on two ROMs, all green**, twice, after a clean rebuild of all ten builds. The two
+new ones are `title` and its control `titlecredits`, which runs `CREDITS.RAD` through the same three
+calls: 21,581 of 32,000 bytes and 15 of 16 pens red, with a guard that raises if the control breaks
+no row. **Because a control that breaks BOTH surfaces pins neither alone, two named mutants back
+it**: `TITLE_DEPACK_DEST + 2` reddens the framebuffer and leaves the pens (21,904 bytes), and
+deleting `set_palette` reddens the pens and leaves the framebuffer at 0 of 32,000. A fail/pass
+partition, each way round.
+
+**THE BACKEND IS THE SEAM'S ON-TARGET HALF**: `disk_read_file` in `atari/wonderboy_backend.c`, real
+GEMDOS, both addresses bounded by `os_in_image`. It is now the SIXTH required backend symbol in
+`build.sh`'s post-link scan, and the three seam assertions still pass — `src/boot.c` calls
+`disk_read_file` and no `os_*` helper, so the static-inline tripwire is unmoved.
+
+**AND A SEVENTH ON-TARGET BUG CLASS, LATENT UNDER ALL SIXTEEN PREVIOUS GREEN MODES.** The
+`Super(0)` / `Super(ssp)` unwind was correct only by the compiler's stack scheduling: TOS returns to
+user mode on the USP *frozen at `Super(0)`*, and does not reload it from the supervisor stack. So the
+wrapper worked while GCC happened to leave `%sp` at the same depth at both call sites — and m68k GCC
+defers and combines argument pops. Adding the title load moved it twelve bytes (`USP $3f7f52` against
+`ISP $3f7f5e`), the `rts` popped stale stack and the machine died at `$26520020` **after a clean
+teardown with every read-back green**. M1 had measured `USP == ISP` and that was luck. Fixed by
+`wb_leave_supervisor` in `wonderboy_os.s`, which sets USP := SSP one instruction before the trap;
+every build's teardown changed, which is why the whole ladder was re-swept. *A wrapper that is
+correct because of where the compiler left the stack is a wrapper that is not correct.*
+
+**WHAT THE TITLE BUILD DOES DIFFERENTLY FROM THE ORIGINAL**, declared in `atari/README.md` and not
+smoothed over: the load runs in USER mode before `Super` (GEMDOS may not be called from supervisor),
+the Copylock is not armed — asserted, by `copylock_arm_flag == 0` *and* `load_result == WB_LOAD_OK` —
+and the `$e546` sound request is not made.
+
+**PART 3 WAS SCOPED AND NOT TAKEN.** The credits screen needs no new port (`copy_screen`,
+`game_restart_reset`, one pen write) and its shipped anchor `$e5aa` collides with nothing. It was not
+built because a rung is a build plus a control plus an anchor plus two ROMs, and half of one is worth
+less than an honest stop.
+
+**gen_image.py's staged dump is UNCHANGED and still needed.** The title build computes its own input
+from the shipped `.RAD`; M2 and everything above it still anchor on the original's post-boot RAM,
+which needs the mid-game state no boot produces. The dump's role moves when the boot reaches
+`game_main_loop`, and it has not.
+
+### §6c WHAT THE INDEPENDENT GATE FOUND — four pins that were true for the wrong reason
+
+The `my-code-review` gate ran at `high` over the whole diff. **Its theme is a single failure mode**,
+and this phase produced four instances of it: *a check that reads as coverage and is satisfied by
+something other than what it names.*
+
+* **A POISON THAT ALREADY HELD THE BIT.** `actor_apply_stage_side`'s case seeded the flags byte with
+  `POISON = 0x5a`, whose **bit 3 is already set** — the very bit `bset #3` writes. So all three
+  RAISING values were pinned as "did not clear it" and the raise was never observed at all, while the
+  docstring claimed `$0001` and `$8000` "raise the bit exactly as `$ffff` does". Both polarities are
+  seeded now, DERIVED from POISON, with a case asserting the two seeds really disagree on that bit —
+  because if POISON ever changes, the pair silently stops being a pair.
+* **A SIGN EXTENSION THAT NOTHING REACHED.** `src/boot.c`'s banner says the dispatcher's row index has
+  "the same sign extension" as `load_resource_by_index`'s, and that one got two dedicated cases.
+  This one had none: the shipped table has 35 rows, so no case drove an index whose scaled value
+  leaves sixteen bits, and **deleting the extension was green across the whole suite** — verified.
+  Three indices now drive it ($1000 → exactly $8000, i.e. negative; $1fff; $2000 → wraps to the
+  table), as REAL differentials rather than a census, because the routine reads the row it computes.
+  Re-checked under the same mutant: three cases red. *A claim that two sites share a rule is a claim
+  that both are pinned; here one was and one was not, and the banner said otherwise.*
+* **A TAUTOLOGY DRESSED AS AN ASYMMETRY.** `test_the_a30_table_gets_no_followed_record` asserted that
+  the A30 table's slot 12 is not one of the two followed addresses — which FOLLOWS from three
+  distinct tables being three distinct addresses, and so could not fail. It now reads the run's own
+  write values and requires exactly two records to carry the entry type; a new mutant that shapes a
+  third is in the sweep, and it kills.
+* **AND A DIFF THAT WAS VACUOUS.** `stage_sequence_resource` writes NOTHING, so `leaf.run` comparing
+  two untouched images proved nothing about it — the corpus case checked its return against a RANGE.
+  Its whole output is d0, so the comparison that means something is the candidate's return against
+  the oracle's own register, and that is what both its cases do now.
+
+**AND A REUSE FINDING THAT WAS A WHOLE MODULE.** The seam stub was hand-assembled with its own
+two-pass layout and its own short-branch encoder — and `leaf.py` already owns `asm`, `place`, `lab`
+and `bcc_s`, hoisted there precisely because two batteries wanted them. The hand-rolled copy also had
+a second spelling of "the displacement counts from the byte after the branch word" and could only
+branch FORWARD. Rewritten through `leaf.asm`; the stub is unchanged byte for byte, which is the point.
+`sign_ext16` from the kit's `machine.h` replaced two spellings of `(uint32_t)(int32_t)(int16_t)`, and
+a dead `arm=` parameter this phase's own later edits had orphaned is gone.
+
+**THREE STALE STATEMENTS, one of them in the source of truth.** `cmt 0xe5d8` said an ordinal of `$fe`
+"wraps to 1" — it wraps to **0**, and `boot.h`, `boot.c` and the case that drives it all said so;
+three reviewers found it independently. `cmt 0xe5ba` still opened "UNPORTED … hence the tag" after
+this phase removed the tag and ported the routine. And `shim_include/tos.h` still asserted that the
+reconstruction made no file call whatsoever, which the seam's own backend falsifies from that header.
+
+**AND THE RETRACTIONS THEMSELVES FAILED THE RULE THEY WERE OBEYING.** All three were written to name
+what they were correcting — and named it by QUOTING it, so the retracted phrase was still in the
+tree, three times, in the very edits that retired it. This phase then asserted here that the old
+phrases grepped to zero, which was false and was checked by nobody. Worse, one of the three would
+have survived a careful grep anyway: the Joust retraction wrapped its quotation across an assembler
+comment prefix, so the phrase sat in the tree in two pieces and a plain search for it matched nothing.
+*This very paragraph quoted that phrase in its first draft, and the new scan failed on its first run
+because of it* — which is the most useful thing the case could have done.
+All three are DESCRIPTIONS now, and the scan that says so is whitespace-normalised and lives in
+`test_boot_inventory.py` rather than in a shell command nobody re-runs. *The grep-to-zero rule needs
+a normalised scanner and a case, or it is a rule that reports success on line breaks.* **Two plates also named `stage_side_flag`
+and `stage_second_load_flag`, which carried no `var` directive** — so `reapply.sh` would have left
+them `DAT_*` and `leaf.entry_of` could not have found them. Both now exist.
+
+**A NUMBER THAT DRIFTED UNDER ITS OWN GUARD.** `DISK_WALL_PERCENT_FLOOR = 60` was written to stop the
+disk band's share of the remainder drifting in prose — and then this phase ported 218 bytes of that
+remainder, so the same 1,644 became 65 % of 2,512 while the floor stayed green with five points of
+slack. Re-pinned at 65. *A floor is only a pin while it is tight; the denominator moving is exactly
+the event it was built for, and it slept through it.* The band's bounds also had FOUR spellings
+(`WB_DISK_BAND_LO/HI`, the inventory's own pair, and `AIM_VELOCITY`); the tests read the header now.
+
+**AND THE OUT-EDGE CENSUS WAS DECIDED THE WRONG WAY.** "The band transfers out nowhere" classified
+each hit by decoding 1,644 bytes forward from the band's first byte — so one decoder miss anywhere in
+the driver would desync every boundary after it and report a real out-edge as data. It asks the
+WALK now, which has already visited those bytes and whose decode is guarded by
+`test_no_reached_instruction_is_undecoded`. The verdict is unchanged; the method is decidable.
+
+**RECORDED, NOT FIXED** (each named so the next phase inherits it rather than rediscovers it): the
+error arm's `move.w #$700,$ff8240` is not reproduced even as a shifter sink, so an on-target load
+failure shows no red screen — the port declines the whole interactive arm and this is part of it;
+`title_checks` duplicates four blocks of `m2_checks` and the picture comparison now has two
+implementations; the oracle-side seam machinery (`SEAM_STUB`, `_seam_pokes`) belongs beside
+`copylock.py` as a `diskseam.py`, which is the altitude this project already chose for its first
+declared boundary; `smoke.py`'s title branch boots inline in `main` where its three siblings each
+boot in their own function; and the new `WB_RESOURCE_*` index block shares a prefix with the
+pre-existing `WB_RESOURCE_*` in-RAM record family, whose stride is 20 bytes against this one's 16.
+
+### §6e THE SECOND GATE ROUND — the census was passing on ignorance
+
+A second independent finder re-derived the crossings from the raw image and re-ran the walk. Its
+findings are sharper than the first round's, because they are about the CENSUS rather than about the
+port — and the census is what the phase's whole decision rests on.
+
+* **THE CLOSED-SUBGRAPH CASE WAS PASSING VACUOUSLY.** It classified each scan hit by asking
+  `addr in REACHED` — and **all seven of its hits are outside REACHED**, so the question answered the
+  same whether the address was an operand fragment or a real transfer. The band is 1,770 bytes and
+  the walk reaches 1,626 of them; the other **144 are unwalked** (`disk_check_signature`, which only
+  the Copylock enters; `floppy_deselect_drives`, which only the vblank vector reaches; the state
+  block) — and one hit, `$5e42`, sits inside the first of those. Nothing established what it was.
+  *"Not a walked instruction start" and "an operand fragment" are different claims, and 144 bytes is
+  where they come apart.* Every hit is now classified POSITIVELY and has to name the instruction
+  containing it — `$5e42` is inside `disk_check_signature`'s `move.l a7,$64f8.l`, the low word of
+  whose operand reads as a `bcc.b`. Two RED-checks: making `$5e42` an instruction start reports it as
+  a real out-edge, and removing the unwalked anchor makes the blind spot **fail loudly** instead of
+  passing.
+* **THE IN-EDGE CENSUS WAS MODE-SHAPED**, which is this binary's oldest trap — seven prior sightings.
+  The scan read absolute and `Bcc` forms only, so `jsr/jmp d16(pc)` (`$4eba`/`$4efa`) and `DBcc`
+  were invisible: all three resolve statically, none holds an address. Added, and **RED-checked by
+  PLANTING each form** into a scratch image and requiring the scan to resolve it — with a control
+  that replacing the opcode with a `nop` stops it resolving, so the case reads the FORM and not the
+  operand. Reverting the support fails exactly the three added forms and no others. The real image's
+  edge set is unchanged, which is now a measurement rather than a silence. The forms that *cannot*
+  be resolved (`jsr/jmp d8(pc,Xn)`, `jsr/jmp (An)`) are named and asserted absent from the band.
+* **AND THE GREP-TO-ZERO RULE FAILED THREE TIMES IN ONE ROUND, INSIDE THE EDITS THAT OBEYED IT.**
+  Every one of this phase's three retractions named its target by QUOTING it, so the retired phrase
+  was still in the tree — and §6c asserted the greps were clean, which nobody had run. One of the
+  three would have defeated a careful grep anyway: the Joust retraction wrapped its quotation across
+  an assembler comment prefix, so the phrase existed in two pieces and matched nothing. All three are
+  descriptions now, and the rule is a CASE: a whitespace-and-comment-furniture-normalised scan over
+  fourteen surfaces, with a control that fires if the normaliser ever returns empty. **It failed on
+  its first run** — on a fourth quotation, in this very section, that no reviewer had flagged.
+  *A rule enforced by a shell command nobody re-runs is a rule that reports success on line breaks.*
+* **The seam banner overclaimed.** "Every byte except the four of the `jsr`" contradicted the same
+  file's scoping of the error arm 280 lines below it. Two exclusions named now, not one.
+* **A blank line terminates a Markdown table**, so TRAP_MODEL's Phase 8 row — already broken before
+  this phase — and the Phase 9 row this phase added were rendering as a headerless island. Both
+  reattached; the lead-in's "two things" was stale against four rows and now says what is there.
+
+### §7 QUEUE
+
+**LANDED THIS PHASE**: the seam analysis and its four census cases; the kit's Phase 9
+`disk_read_file`; `load_resource_by_index`, `stage_actors_init`, `actor_apply_stage_side` and the
+dispatcher's three pieces; the inventory's counts moved to 2,086 / 2,512 and its unnamed-call-target
+queue from fourteen to twelve.
+
+**BORN THIS PHASE:**
+* **A STAGED NAME THAT IS PRESENT BUT UNREADABLE** — the kit's missing third answer (§6). Until it
+  exists, every reconstructed loader's error arm is candidate-only.
+* **ELEVEN OF THE TWELVE REMAINING UNNAMED CALL TARGETS ARE INSIDE THE BOUNDARY.** That changes what
+  the queue MEANS: naming them is no longer the next phase's work but the boundary's content, and a
+  boundary's content is what a boundary exists to leave unread. The twelfth is `$f89e`, which is
+  above the seam and is ordinary boot-tail code.
+* **THE BOOT HAS A DEAD TAIL, and it contains a write.** `$e6fc`'s `bsr.w $f89e` never returns:
+  `$f89e` contains no `rts` at all and ends in `jmp $4a0.w` at `$f8b4`. So `$e700`'s
+  `move.b #$ff,text_request` — "dismiss the message box", and one of the fifty-two writers
+  `cmt 0xc030`'s census counts — and the second `jmp $4a0.w` at `$e708` never execute. Twelve bytes.
+  Nothing noticed because the dead path's destination is where control goes anyway. LANDED as a case
+  and as a correction to that plate, not left as a lead. It also says what the inventory's 4,598 IS:
+  a MAY-EXECUTE count, because a recursive descent continues past every `bsr` rather than proving
+  non-return for each one — the twelve bytes are in the total and the case says so.
+* **THE VBL EDGE IS A LIVE INTERACTION FOR ANY ON-TARGET BOOT.** The handler counts
+  `floppy_idle_timer` down and deselects the drive; a GEMDOS substitution never arms that timer, so
+  on target the two mechanisms do not meet. Harmless as long as nothing else reads the timer — which
+  nothing does — but it is a difference between the substitution and the original and belongs on this
+  list rather than in a comment.
+
+* **THE `Super` UNWIND WAS A COMPILER ACCIDENT** (§6b), and the class generalises: any on-target
+  wrapper whose correctness depends on the stack depth at two call sites is one edit from breaking,
+  silently, after a clean teardown. `wb_leave_supervisor` fixes this one. Nothing audits the class.
+* **THE TWO SPACE-PADDED ROWS ARE THE ONLY KNOWN PLACE THE TWO STATEMENTS OF THE SUBSTITUTION
+  DIFFER.** Pinned as a set. If a later phase makes the kit's file model path-aware, they converge.
+* **THE CREDITS RUNG IS ONE BUILD AWAY** and its anchor is identified (`$e5aa`). After it: the
+  data-disk prompt, the stage load, and the handover to `game_main_loop` — which is what would retire
+  `gen_image.py`'s staged dump for the play build.
+
+* **THE FOUR "TRUE FOR THE WRONG REASON" PINS ARE A CLASS, NOT FOUR ACCIDENTS** (§6c). Nothing in
+  this project audits for it. The shapes seen so far: a poison that already holds the value under
+  test; a rule claimed to be shared by two sites where only one is driven; an assertion that follows
+  from its own premise; and a byte-diff over a routine that writes nothing. All four passed a
+  mutation sweep, because a sweep only kills what a case can see.
+
+* **THE RETRACTION SCAN IS WONDER-BOY-LOCAL AND THE RULE IS WORKSPACE-WIDE.** It lives in
+  `test_boot_inventory.py` and lists fourteen surfaces by hand, one of them in `projects/joust/`. The
+  rule it enforces is `docs/methodology.md`'s, so the scanner belongs beside it — a `tools/` check
+  over every project's docs, or a pre-commit hook. Registered, not built.
+* **THE 144 UNWALKED BAND BYTES ARE ANCHORED BY A HAND-WRITTEN PAIR.** `UNWALKED_BAND_ANCHORS` names
+  `disk_check_signature` and `floppy_deselect_drives`; a third unwalked routine appearing in the band
+  would make the scan assert rather than answer, which is the right failure but not an automatic fix.
+
+**CARRIED, unchanged**: everything phase A carries.

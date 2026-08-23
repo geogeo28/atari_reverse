@@ -82,6 +82,96 @@
  * an `rts` here to elide the disk access. */
 #define WB_DISK_LOAD_FILE         0x5e7cu
 
+/* ---- THE DISK SEAM (batch 44 phase B) ---------------------------------------------------------
+ *
+ * `disk_load_file` above is not merely "a call to elide": it is THE SEAM, the lowest routine of the
+ * boot chain whose inputs are FILE-SHAPED. It is entered with a0 on a twelve-character DOS name and
+ * a1 on a destination, and everything it reaches — 1,644 bytes over 26 routines — is the raw
+ * WD1772/DMA driver and the FAT12 layer, which the memory differential cannot see. ../STATUS.md's
+ * batch 44 phase B carries the census that says the boot chain crosses it EXACTLY ONCE.
+ *
+ * So the band is a declared BOUNDARY, as the Copylock is, and `load_resource_by_index` calls
+ * `disk_read_file` (the kit's tools/recreate_kit/include/disk.h) across it — the same file's bytes
+ * at the same address, fetched through GEMDOS instead of through the controller. A DECLARED
+ * SUBSTITUTION, stated twice: in C here, and in hand-assembled 68000 that test/test_boot.py pokes
+ * over `disk_load_file` so the ORACLE performs the same one. The staged-file model's whole state
+ * lives in the image, so the ordinary byte diff is what holds the two statements equal. */
+#define WB_DISK_BAND_LO           0x5e3eu  /* disk_check_signature, the band's first byte */
+#define WB_DISK_BAND_HI           0x6528u  /* exclusive: actor_aim_velocity, the first byte after
+                                            * the driver's state block */
+#define WB_DISK_SEAM_CALL         0xe79cu  /* `jsr disk_load_file.w` — THE one boot-chain edge in */
+#define WB_DISK_SEAM_VBL_CALL     0x73eu   /* ...and the SECOND edge, which is not on the boot chain
+                                            * at all: the level-4 handler's `jsr $6268.l` when the
+                                            * idle timer expires. An interrupt, so no walk over call
+                                            * edges can find it */
+#define WB_FLOPPY_DESELECT_ALL    0x6268u  /* its target: `move.b #$7,d0` into the shared PSG port-A
+                                            * write at $624c — both drive-select bits high */
+
+/* ---- the load path ABOVE the seam -------------------------------------------------------------
+ *
+ * `load_resource_by_index` ($e782) is the single entry point for all disk loading: seven call sites
+ * in the image, six on the boot chain and the seventh on the Copylock's failure arm. It turns an
+ * INDEX into a name, calls the seam, and — on the first load of the boot — runs the protection. */
+#define WB_RESOURCE_FILE_TABLE     0x2143eu /* `lea $2143e.l,a0`: 40 rows of a NUL-terminated
+                                             * twelve-byte "NNNNNNNN.EEE" — the row IS the filename,
+                                             * which is why the seam builds no name. TWO rows are
+                                             * FAT12 space-padded (`CREDITS .RAD`, `SPRITES .CRU`)
+                                             * and only the ON-TARGET side has to care: GEMDOS reads
+                                             * a space as a real path character, the kit's staged-
+                                             * file model matches bytes. src/boot.c says more */
+#define WB_RESOURCE_FILE_ROW_SHIFT 4u       /* `lsl.l #4,d0` — 16 bytes a row */
+#define WB_RESOURCE_FILE_COUNT     40u      /* rows 0..39; the first index with no row of its own */
+#define WB_RESOURCE_TITLESCR       0u       /* the index order IS the ID space the sequence uses */
+#define WB_RESOURCE_CREDITS        1u
+#define WB_RESOURCE_FIRST_OVERLAY  2u       /* `addq.b #2,d0` on level_seq_table[0] lands here */
+#define WB_RESOURCE_TILEDATA       0x25u
+#define WB_RESOURCE_SPRITES_CRU    0x26u
+#define WB_RESOURCE_DATADISK       0x27u
+#define WB_RESOURCE_LOAD_BUFFER    0x49800u /* every caller but SPRITES.CRU's a1 — the packed file
+                                             * lands here and rad_depack takes it from there */
+#define WB_LOAD_RETRY_INDEX        0xe7ecu  /* longword: d0 saved for the error path's retry... */
+#define WB_LOAD_RETRY_DEST         0xe7f0u  /* ...and a1 beside it. Both written on EVERY load */
+#define WB_LOAD_ERROR_TAIL         0xe7ceu  /* `clr.b joy1_state` — the error arm's first byte, and
+                                             * the checkpoint the differential of that arm stops at */
+#define WB_LOAD_ERROR_WAIT         0xe7d2u  /* `tst.b joy1_state` — the interactive spin this port
+                                             * declines to model. See load_resource_by_index. */
+
+/* What load_resource_by_index reports. All three are OUT OF BAND: the original leaves d0 holding
+ * `disk_load_file`'s own return and no caller reads it, so no value here can collide with one the
+ * game spends. */
+#define WB_LOAD_OK                 0u       /* the file is at its destination, protection not armed */
+#define WB_LOAD_COPYLOCK_RAN       1u       /* ...and the armed arm ran, so the flag was cleared */
+#define WB_LOAD_DISK_ERROR         2u       /* the seam refused; the port stops at WB_LOAD_ERROR_TAIL */
+
+/* ---- the per-stage load dispatcher ($e5ba) ----------------------------------------------------- */
+#define WB_LEVEL_SEQ_TABLE         0x216c0u /* `lea $216c0.l,a0`: 35 rows, one per OVALAY* file */
+#define WB_LEVEL_SEQ_ROWS          35u      /* == WB_RESOURCE_TILEDATA - WB_RESOURCE_FIRST_OVERLAY */
+#define WB_LEVEL_SEQ_RECORD_BYTES  8u       /* `lsl.l #3,d0` */
+#define WB_LEVEL_SEQ_OVERLAY       0u       /* byte: the overlay ordinal, +2 to index the file table */
+#define WB_LEVEL_SEQ_SECOND_LOAD   1u       /* byte: what stage_second_load_flag is set to, but only
+                                             * while WB_STAGE_REENTRY is zero */
+#define WB_LEVEL_SEQ_SIDE          2u       /* byte: nonzero -> stage_side_flag := WB_STATE_FLAG_SET */
+#define WB_LEVEL_SEQ_STAGE         3u       /* byte: the stage/round number, into WB_STAGE_NUMBER */
+/* WHERE THE DISPATCHER IS CUT. Its own `bsr load_resource_by_index` splits one straight-line block
+ * into pieces that are entered separately, and the index computation nests INSIDE the first. Defined
+ * once here because two batteries need them: test_boot.py stops each differential at the next cut,
+ * and test_boot_inventory.py derives the phase's byte count from the same four addresses. */
+#define WB_SEQ_RESOURCE_AT   0xe5d8u  /* `moveq #0,d0` — stage_sequence_resource, nested */
+#define WB_SEQ_RESOURCE_END  0xe5deu  /* `clr.b stage_second_load_flag` — back in the advance */
+#define WB_SEQ_ADVANCE_END   0xe5f4u  /* `lea $49800.l,a1` — the load's own argument setup */
+#define WB_SEQ_APPLY_AT      0xe5feu  /* `tst.b 2(a0)` — stage_sequence_apply_row, after the load */
+#define WB_SEQ_APPLY_END     0xe624u  /* `move.w #$31f,d0` — the first instruction past all three */
+#define WB_STAGE_SECOND_LOAD_FLAG  0xe70cu  /* byte: gates the SPRITES.CRU load at $e6c6 */
+#define WB_STAGE_SIDE_FLAG         0xe70eu  /* word: read only by actor_apply_stage_side ($e768) */
+/* What stage_actors_init ($e710) stamps into BOTH followed records, over the zeroes
+ * actor_table_reset has just left. The type is WB_ACTOR_TYPE_PLAYER; these are the footprint. */
+#define WB_STAGE_ENTRY_HALF_WIDTH  0xau     /* `move.w #$a,14(a0)` */
+#define WB_STAGE_ENTRY_SIZE_SECOND 0x14u    /* `move.w #$14,16(a0)`. NOT one `move.l` — the two
+                                             * stores are separate here, unlike every spawn site */
+/* The dispatcher's two other operands already have names, and are NOT respelt here: `tst.w $c26.w`
+ * at $e5e4 reads WB_LIFE_RESTART_ENTRY_C26 (nonzero suppresses the second load; $e6ec clears it once
+ * the stage is built), and `clr.w $6ef0.w` at $e5ba clears WB_ACTOR_PLATFORM_RIDDEN. */
+
 #define WB_COPYLOCK_ENTRY         0xeccau  /* copylock_entry; the entry stub pokes an `rts` here */
 #define WB_COPYLOCK_REG_SAVE      0xecd4u  /* `movem.l d0-a7,(a6)` lands here — the blob's FIRST write */
 #define WB_COPYLOCK_REG_SAVE_LEN  0x60u    /* 64 B of d0-a7 then 32 B of vectors $8..$27 */

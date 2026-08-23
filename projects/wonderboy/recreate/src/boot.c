@@ -20,7 +20,9 @@
  */
 #include "boot.h"
 
+#include "actor.h"
 #include "bus.h"
+#include "disk.h"
 #include "machine.h"
 #include "wonderboy.h"
 
@@ -238,4 +240,138 @@ uint32_t sprites_cru_install(uint8_t *image) {
         }
     }
     return WB_SPRITE_CRU_INSTALLED;
+}
+
+/* ================================================================================================
+ * THE LOAD PATH ABOVE THE DISK SEAM (batch 44 phase B)
+ *
+ * Everything below this line runs ABOVE `disk_load_file` ($5e7c) — the lowest routine of the boot
+ * chain whose inputs are file-shaped. That routine and the 1,644 bytes it reaches are a declared
+ * BOUNDARY (../STATUS.md batch 44 phase B; the census that says the boot chain crosses it exactly
+ * once is in test/test_boot_inventory.py), and `load_resource_by_index` calls the kit's
+ * `disk_read_file` across it. Off target that is the staged-file model; on target it is GEMDOS.
+ * ================================================================================================ */
+
+/* $e782. THE SINGLE ENTRY POINT FOR ALL DISK LOADING — seven call sites in the image.
+ *
+ * THE ROW IS ALREADY A FILENAME, which is most of what makes the seam cheap. `lsl.l #4,d0 /
+ * lea WB_RESOURCE_FILE_TABLE,a0 / lea (a0,d0.w),a0` lands on sixteen bytes holding a NUL-terminated
+ * "NNNNNNNN.EEE", and `fat_find_dir_entry` compares exactly those twelve characters (skipping the
+ * dot at [8]) against a FAT12 directory entry. So the same pointer this port hands `disk_read_file`
+ * is the one the original hands its own reader.
+ *
+ * IT IS NOT QUITE FREE, AND THE EXCEPTION IS TWO ROWS. FAT12 space-pads a short stem to eight
+ * characters, so `CREDITS .RAD` and `SPRITES .CRU` carry an INTERNAL space. The kit's staged-file
+ * model matches bytes and has no path syntax, so off target the row goes through untranslated;
+ * GEMDOS has a path syntax in which a space is a real character, so the ON-TARGET backend drops
+ * spaces before `Fopen`. That is a difference between the two statements of the substitution, it
+ * lives entirely below this seam, and it is pinned as a SET in test/test_boot.py — an earlier
+ * revision of this banner claimed no translation at all, and the machine disagreed.
+ *
+ * THE INDEX IS SCALED AS A LONGWORD AND USED AS A WORD. `lsl.l #4` reaches past 16 bits, but the
+ * `lea`'s brief extension word selects `d0.w` and SIGN-EXTENDS it — so an index of $1000 names the
+ * table itself and an index of $0800 names 32 KB BELOW it. No caller produces either; the shipped
+ * indices are 0..$27 and `stage_sequence_resource` below cannot exceed $ff.
+ *
+ * TWO IMAGE WRITES BEFORE THE LOAD, ALWAYS: d0 and a1 into WB_LOAD_RETRY_INDEX/_DEST. They exist for
+ * the error path's retry and are written whether or not it is taken.
+ *
+ * WHAT THIS PORT DECLINES TO MODEL, and it is one thing: the error arm's INTERACTIVE RETRY. On a
+ * negative return the original turns colour 0 red, clears WB_JOY1_STATE, spins until the IKBD
+ * handler makes it negative, restores d0/a1 and loads again. The spin is an interrupt-driven wait
+ * whose release is not this run's to schedule, and the colour is off-image. What IS an image write
+ * is the `clr.b` — so the port makes that write and returns WB_LOAD_DISK_ERROR at WB_LOAD_ERROR_WAIT,
+ * which is where test/test_boot.py stops the oracle. Reported rather than retried, because a port
+ * that looped here would be inventing a second load the case never asked for.
+ *
+ * THE ARMED ARM RUNS THE COPYLOCK, which cannot be ported and is not stubbed here either: the port
+ * reports WB_LOAD_COPYLOCK_RAN and clears the flag, which is what the original does either side of
+ * the call. The oracle reaches the same state only because test/copylock.py has poked an `rts` over
+ * the blob — so a case on this arm owes the witness that the protection really did not execute, and
+ * copylock.py's own docstring names this differential as the one that must call it by hand. */
+uint32_t load_resource_by_index(uint8_t *image, uint32_t index, uint32_t dest) {
+    bus_write_long(image, WB_LOAD_RETRY_INDEX, index);
+    bus_write_long(image, WB_LOAD_RETRY_DEST, dest);
+
+    uint32_t scaled = index << WB_RESOURCE_FILE_ROW_SHIFT;
+    uint32_t name = addr_add(WB_RESOURCE_FILE_TABLE, sign_ext16(scaled));
+
+    if (disk_read_file(image, name, dest) != DISK_READ_OK) {
+        bus_write_byte(image, WB_JOY1_STATE, 0);
+        return WB_LOAD_DISK_ERROR;
+    }
+    if (bus_read_word(image, WB_COPYLOCK_ARM_FLAG) == 0)
+        return WB_LOAD_OK;
+    bus_write_word(image, WB_COPYLOCK_ARM_FLAG, 0);
+    return WB_LOAD_COPYLOCK_RAN;
+}
+
+/* $e768. Two `bsr` callers, both in `stage_actors_init`, and WB_STAGE_SIDE_FLAG's ONLY reader. */
+void actor_apply_stage_side(uint8_t *image, uint32_t record) {
+    if (bus_read_word(image, WB_STAGE_SIDE_FLAG) != 0)
+        flag_set(image, record, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SIDE_BIT);
+    else
+        flag_clear(image, record, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SIDE_BIT);
+}
+
+/* $e710. The stage's actors, from nothing: empty all three tables, then give the two FOLLOWED
+ * records — slot WB_ACTOR_FOLLOWED_SLOT of the default table and of the A32 one — the shape the
+ * player enters a stage with. The A30 table has no followed record and gets none.
+ *
+ * THE THREE FIELDS ARE WRITTEN OVER A RECORD `actor_table_reset` HAS ALREADY ZEROED, so the order of
+ * the two passes is load-bearing: reversing them would leave the type at 0. */
+void stage_actors_init(uint8_t *image) {
+    static const uint32_t TABLES[] = {WB_ACTOR_TABLE_DEFAULT, WB_ACTOR_TABLE_A30,
+                                      WB_ACTOR_TABLE_A32};
+    static const uint32_t FOLLOWED[] = {WB_ACTOR_FOLLOWED_DEFAULT, WB_ACTOR_FOLLOWED_A32};
+
+    for (unsigned i = 0; i < sizeof TABLES / sizeof TABLES[0]; i++)
+        actor_table_reset(image, TABLES[i]);
+
+    for (unsigned i = 0; i < sizeof FOLLOWED / sizeof FOLLOWED[0]; i++) {
+        set_field_w(image, FOLLOWED[i], WB_ACTOR_TYPE, WB_ACTOR_TYPE_PLAYER);
+        set_field_w(image, FOLLOWED[i], WB_ACTOR_HALF_WIDTH, WB_STAGE_ENTRY_HALF_WIDTH);
+        set_field_w(image, FOLLOWED[i], WB_ACTOR_SIZE_SECOND, WB_STAGE_ENTRY_SIZE_SECOND);
+        actor_apply_stage_side(image, FOLLOWED[i]);
+    }
+}
+
+/* $e5ba..$e5f2 — see boot.h for why the dispatcher is three functions and not one.
+ *
+ * THE ROW IS THE PRE-INCREMENT VALUE, AND THE STORE HAPPENS FIRST. `move.w $216be,d0` takes the old
+ * index into d0, `addq.w #1,$216be` steps the word in memory, and only then does the shift scale d0
+ * — so the row is the index the run ARRIVED with, and a run that fails after this point has already
+ * consumed it. Reading the word back after the store would name the NEXT row. */
+uint32_t stage_sequence_advance(uint8_t *image) {
+    bus_write_word(image, WB_ACTOR_PLATFORM_RIDDEN, 0);
+
+    uint16_t at = bus_read_word(image, WB_LEVEL_SEQ_INDEX);
+    bus_write_word(image, WB_LEVEL_SEQ_INDEX, (uint16_t)(at + 1));
+    /* `lsl.l #3` on a zero-extended word, indexed as `d0.w` — the same longword-scale/word-index
+     * pairing load_resource_by_index has, and with the same sign extension past row 4095. */
+    uint32_t row = addr_add(WB_LEVEL_SEQ_TABLE,
+                            sign_ext16((uint32_t)at * WB_LEVEL_SEQ_RECORD_BYTES));
+
+    /* CLEARED UNCONDITIONALLY, then set only on the first entry to the stage. A re-entry (a life
+     * lost, WB_LIFE_RESTART_ENTRY_C26 nonzero) leaves it zero, which is what stops the boot's
+     * SPRITES.CRU load — and the protection with it — running a second time. */
+    bus_write_byte(image, WB_STAGE_SECOND_LOAD_FLAG, 0);
+    if (bus_read_word(image, WB_LIFE_RESTART_ENTRY_C26) == 0)
+        bus_write_byte(image, WB_STAGE_SECOND_LOAD_FLAG,
+                       field_b(image, row, WB_LEVEL_SEQ_SECOND_LOAD));
+    return row;
+}
+
+uint32_t stage_sequence_resource(uint8_t *image, uint32_t row) {
+    /* `addq.b #2,d0` over a zero-extended byte: the sum is taken in EIGHT bits and the upper 24 of
+     * d0 stay zero, so $ff + 2 is 1 and not $101. */
+    return (uint8_t)(field_b(image, row, WB_LEVEL_SEQ_OVERLAY) + WB_RESOURCE_FIRST_OVERLAY);
+}
+
+void stage_sequence_apply_row(uint8_t *image, uint32_t row) {
+    bus_write_word(image, WB_STAGE_SIDE_FLAG,
+                   field_b(image, row, WB_LEVEL_SEQ_SIDE) != 0 ? WB_STATE_FLAG_SET : 0);
+    /* `clr.w d0 / move.b 3(a0),d0 / move.w d0,$bd88` — a zero-extended BYTE, so the stage number is
+     * never negative however the row is filled. */
+    bus_write_word(image, WB_STAGE_NUMBER, field_b(image, row, WB_LEVEL_SEQ_STAGE));
 }

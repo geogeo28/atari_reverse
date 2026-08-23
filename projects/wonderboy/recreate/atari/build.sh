@@ -11,6 +11,10 @@
 #                          program plus seeds, and the shim runs game_main_loop rather than counting
 #                          vblanks. Needs `python3 atari/original.py dump` first — the image cannot
 #                          be computed, only measured (gen_image.py's honesty line).
+#   build.sh title      -> the TITLE build: M1's image, plus the boot's own five-call title slice —
+#                          load TITLESCR.RAD across the file seam, depack it, set the palette. The
+#                          first picture here the reconstruction DRAWS rather than inherits.
+#   build.sh titlecredits -> its NEGATIVE CONTROL: the same three calls aimed at CREDITS.RAD.
 #
 # Writes disk/{WB.PRG,WB.IMG} and keeps build/WB-<mode>.PRG so a check needing two builds in
 # sequence does not have to rebuild. build/ and disk/ are gitignored (repo .gitignore already covers
@@ -22,12 +26,12 @@
 # `assert_the_differential_build_is_unchanged` below MEASURES that rather than asserting it in prose.
 #
 # THE SEAM IS THE LINK, not the include path. Every kit symbol Wonder Boy calls is a real symbol, so
-# the kit's src/{hw,psg,sched,os_refusal,dosound_log}.c are simply left out. THE SURFACE IS SIX
-# SYMBOLS AND wonderboy_backend.c OWES FIVE OF THEM: `os_refused` is the sixth and is deliberately
-# NOT defined, because -DOS_NO_REFUSAL_TALLY makes the kit's own os.h serve an inline identity for
-# it. Joust needs a `shim_include/os.h` shadow because the helpers it replaces are `static inline`;
-# this game calls none of those — which is a property of the CORES and so is checked, below, rather
-# than believed.
+# the kit's src/{hw,psg,sched,disk,os_refusal,dosound_log}.c are simply left out. THE SURFACE IS
+# SEVEN SYMBOLS AND wonderboy_backend.c OWES SIX OF THEM: `os_refused` is the seventh and is
+# deliberately NOT defined, because -DOS_NO_REFUSAL_TALLY makes the kit's own os.h serve an inline
+# identity for it. Joust needs a `shim_include/os.h` shadow because the helpers it replaces are
+# `static inline`; this game calls none of those — which is a property of the CORES and so is
+# checked, below, rather than believed.
 set -euo pipefail
 
 # THE MODES THAT RUN FRAMES, in one place. They stage the original's post-boot RAM and its palette,
@@ -82,13 +86,31 @@ case "$MODE" in
   # shows M3's Pterm rows CAN fail, and it is the sibling project's real bug reproduced on purpose
   # (a handler left hooked into memory GEMDOS had taken back, found only by running past the exit).
   m3fault) DEF="-DSMOKE_M2 -DSMOKE_M3_NO_HANDBACK" ;;
+  # THE TITLE BUILD: the first picture in this directory the RECONSTRUCTION produces rather than
+  # inherits. It stages the M1 image — the program plus gen_image.py's seeds, no measured RAM at all
+  # — and runs the boot's own five-call title slice over it, ending in a 32000-byte screen and
+  # sixteen pens that are compared against the shipped binary's at `$e556`. It needs the .RAD files
+  # on the drive, which smoke.py's `stage_drive` puts there.
+  title)  DEF="-DSMOKE_TITLE" ;;
+  # ...AND ITS NEGATIVE CONTROL: the same three calls, aimed at the game's OTHER shipped picture.
+  # CREDITS.RAD depacks to the same 32,128 bytes through the same code into the same buffer, so
+  # nothing about the run's shape moves — only the bytes on the screen — and every row of the
+  # comparison that a different picture can break must break. The index is compiled in and REPORTED
+  # BY THE BINARY (wonderboy_main.c's `resource_index`), which is `fault_pen`'s rule: the per-mode
+  # `.PRG`s outlive an edit to this script, so a smoke that scraped the `-D` from here could name a
+  # resource the running binary never asked for.
+  #
+  # THE INDEX IS SCRAPED FROM ../include/wonderboy.h rather than written as 1, so this control and
+  # the reconstruction's own WB_RESOURCE_* enumeration cannot drift (CLAUDE.md §5).
+  titlecredits) DEF="-DSMOKE_TITLE" ;;
   # THE BUILD A PERSON PLAYS, and the only one here that is not a measurement. It is `m2` with the
   # frame count and the watchdog lifted (wonderboy_main.c's SMOKE_PLAY block says why each has to
   # go), so the reconstruction's frame loop runs until the window is closed. `atari/run.sh` builds
   # it and launches Hatari with a screen, sound and a joystick; `smoke.py play` is the half of it a
   # headless run can assert.
   play)  DEF="-DSMOKE_M2 -DSMOKE_PLAY" ;;
-  *) echo "usage: build.sh [m1 | novbl | $(echo "$FRAME_MODES" | tr ' ' '|')]"; exit 2 ;;
+  *) echo "usage: build.sh [m1 | novbl | title | titlecredits | $(echo "$FRAME_MODES" | tr ' ' '|')]"
+     exit 2 ;;
 esac
 
 # Whether $MODE is one of FRAME_MODES, as a word match rather than a substring one.
@@ -118,15 +140,23 @@ mkdir -p "$BUILD" "$DISK"
 
 CC=m68k-elf-gcc
 
-# THE FLASH SEED IS THE ORIGINAL'S OWN OPERAND, scraped from the header that quotes the instruction
-# rather than written here — one canonical definition, and a build that cannot find it refuses rather
-# than compiling an empty `-DM5_FLASH_SEED=`.
+# A NUMBER A BUILD NEEDS IS SCRAPED FROM THE HEADER THAT DEFINES IT, never written here — one
+# canonical definition (CLAUDE.md §5), and a build that cannot find it refuses rather than compiling
+# an empty `-DFOO=`. Every `-D` below whose value belongs to the reconstruction comes through here.
+wb_constant() {
+  local VALUE
+  VALUE=$(sed -n "s/^#define $1 *\([0-9][0-9]*\)u.*/\1/p" "$REC/include/wonderboy.h")
+  [ -n "$VALUE" ] || { echo "ERROR: no plain-integer $1 in $REC/include/wonderboy.h" >&2; return 1; }
+  echo "$VALUE"
+}
+
+# The flash seed is the ORIGINAL's own operand — `move.w #$2,$714.w` at $1328, the lightning arm.
 if [ "$MODE" = m5flash ]; then
-  FLASH_SEED=$(sed -n 's/^#define WB_PLAYER_LIGHTNING_FLASH *\([0-9][0-9]*\)u.*/\1/p' \
-               "$REC/include/wonderboy.h")
-  [ -n "$FLASH_SEED" ] || { echo "ERROR: no WB_PLAYER_LIGHTNING_FLASH in $REC/include/wonderboy.h";
-                            exit 1; }
-  DEF="$DEF -DM5_FLASH_SEED=$FLASH_SEED"
+  DEF="$DEF -DM5_FLASH_SEED=$(wb_constant WB_PLAYER_LIGHTNING_FLASH)" || exit 1
+fi
+# ...and the title control's resource is the game's own index for CREDITS.RAD.
+if [ "$MODE" = titlecredits ]; then
+  DEF="$DEF -DTITLE_RESOURCE=$(wb_constant WB_RESOURCE_CREDITS)" || exit 1
 fi
 
 # The image comes FIRST: its byte length is the one source of truth for how much wonderboy_main.c
@@ -285,10 +315,15 @@ for MODEL in g_hw_reset g_psg_reset g_sched_reset g_dosound g_os_refusal_reset s
   fi
 done
 
-# ...and the mirror: the FIVE the backend owes must all be there, so a core that stopped calling one
-# cannot quietly shrink the surface README.md enumerates. Five and not six: the surface is six
-# symbols, and the sixth — `os_refused` — is deliberately undefined here (see the banner).
-for SYM in hw_read8 psg_port_read psg_port_write sched_wait8 sched_poll16; do
+# ...and the mirror: the SIX the backend owes must all be there, so a core that stopped calling one
+# cannot quietly shrink the surface README.md enumerates. Six and not seven: the surface is seven
+# symbols, and the seventh — `os_refused` — is deliberately undefined here (see the banner).
+#
+# `disk_read_file` is the newest of the six and the one whose absence would be quietest. It is a
+# REAL symbol rather than a `static inline` precisely so this loop can see it (the kit's own
+# include/disk.h says so in as many words), and the kit's src/disk.c — the staged-file half — is
+# left out of the link exactly as src/hw.c and src/psg.c are.
+for SYM in hw_read8 psg_port_read psg_port_write sched_wait8 sched_poll16 disk_read_file; do
   m68k-elf-nm "$BUILD/wonderboy.elf" | awk '$3=="'"$SYM"'"{found=1} END{exit !found}' \
     || { echo "ERROR: $SYM is not in the PRG — wonderboy_backend.c no longer covers the surface"; exit 1; }
 done

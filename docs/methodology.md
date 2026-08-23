@@ -355,3 +355,52 @@ The rule is about the KEY, not about the extent:
   expression never changed the answer. What killed the mutation was a case standing the actor
   EXACTLY on a cell boundary. Read the arithmetic term by term and ask, for each, which seed value
   makes it observable at all.
+
+## Porting a boot chain that ends in a disk controller: find the SEAM, don't model the chip
+
+Almost every disk-loading game's boot chain bottoms out in code the differential cannot see — a
+WD1772/DMA state machine and, above it, whatever filesystem the publisher used. It looks like a wall,
+and the instinctive next move is to price a device model. **Usually that is the wrong move**, and the
+reason is worth internalising: the driver's entire output is *the file's bytes at an address*, and a
+harness that can serve files can deliver that without modelling a chip.
+
+**The move is to find the seam.** Walk DOWN the call graph from the load path and ask of each
+routine: *are its inputs file-shaped or sector-shaped?* A name and a destination is file-shaped. A
+track, a side and a sector count is sector-shaped. The seam is the **lowest routine whose inputs are
+still file-shaped** — the last one whose whole contract a substitution can honour. In Wonder Boy it
+is `disk_load_file`, entered with a 12-character DOS name in a0 and a destination in a1, and the
+1,644 bytes below it are exactly the part nobody needs to read.
+
+**Then earn the right to cut there, with three measurements, not with an argument:**
+
+1. **Count the edges IN.** Over the code that RUNS (a recursive-descent walk, not a listing grep),
+   how many transfers cross into the region? One is a seam. Several may still be, but each has to be
+   named. Do the same census over the whole image's transfer ENCODINGS, and classify each hit by
+   whether its address is an instruction start in a decode anchored at a routine you have read —
+   a linear sweep of a big image decodes data as instructions, so "there are only four" is only a
+   claim once the false positives are identified rather than waved away.
+2. **Count the edges OUT.** If the region is a *closed subgraph* — it leaves only by `rts` — the
+   exclusion is an edge. If its interior calls back into ported code, the exclusion is a hole and
+   every such call has to be modelled first.
+3. **Look for the edges no call graph can show you.** Wonder Boy's second edge is an *interrupt*: the
+   vblank handler counts a floppy idle timer down and deselects the drive. A walk over call edges
+   cannot find it, because a vector is not a call — so scan the encodings too, and read whatever the
+   boot installs in the vector table.
+
+**The substitution has to be stated twice.** Implement the seam in C for the reconstruction, and poke
+the SAME substitution into the oracle as hand-assembled traps over the original's own seam routine.
+Then both sides go through the harness's staged-file model, whose state is in the image, and the
+ordinary byte diff is what holds the two statements equal. A seam that is only declared is a seam
+nobody checks; a seam performed identically on both sides makes every byte above it differentiable.
+Pin the hand-assembled stub BY DECODE — it is the one input to a differential that nothing else
+checks, and a wrong branch displacement shows up as a puzzling diff a long way from its cause.
+
+**And write down what the substitution is NOT.** It does not seek, does not spin a motor, does not
+take the time the real one takes, and cannot fail the way a real disk fails. That paragraph is what
+stops "the seam is substituted" decaying into "the loader is ported" three phases later.
+
+**The one thing that gets harder.** A file model with two answers — served and refused — cannot say
+"the disk said no", because a refusal has to sink the whole run (otherwise an unstaged file is a
+false green). So the caller's ERROR arm has no differential available to it and must be driven
+candidate-only. Recognise that as a property of the *model* rather than a gap in your cases, and
+register the fix: a staged name declared present but unreadable.

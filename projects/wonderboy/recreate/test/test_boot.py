@@ -33,6 +33,7 @@ import functools
 
 import pytest
 
+import copylock
 import harness
 import leaf
 from layout import wb
@@ -40,6 +41,7 @@ from layout import wb
 import depack_rad                                              # noqa: E402  (harness put tools/ on
 import emu                                                     # noqa: E402   sys.path)
 import loader                                                  # noqa: E402
+import prg_dis                                                 # noqa: E402
 
 BIN = harness.PRG.resolve().parents[2]                # projects/wonderboy/bin (PRG: bin/disk1/AUTO)
 DISK2 = "disk2_repaired"
@@ -99,6 +101,13 @@ ENTRY_INSNS = {
     "sprite_cru_copy_10w": b"\x26\xd8",                          # move.l (a0)+,(a3)+
     "sprite_cru_copy_15w": b"\x36\xd8",
     "sprite_cru_copy_20w": b"\x26\xd8",
+    # ...and the load path above the disk seam (batch 44 phase B)
+    "load_resource_by_index": b"\x2f\x08",                        # move.l a0,-(a7)
+    "stage_actors_init": b"\x41\xf9\x00\x00\x99\x6c",             # lea $996c.l,a0
+    "actor_apply_stage_side": b"\x4a\x79\x00\x00\xe7\x0e",         # tst.w $e70e.l
+    "stage_sequence_advance": b"\x42\x78\x6e\xf0",                # clr.w $6ef0.w
+    "stage_sequence_resource": b"\x70\x00",                      # moveq #0,d0
+    "stage_sequence_apply_row": b"\x4a\x28\x00\x02",              # tst.b 2(a0)
 }
 
 
@@ -666,3 +675,657 @@ def test_the_longword_an_out_of_range_selector_fetches_is_not_a_copier():
         f"normally and the case above would prove nothing")
     assert past == wb("SPRITE_CRU_COPY_5W"), (
         "the table no longer ends where the first copier begins, so this case's reasoning is stale")
+
+
+# =================================================================================================
+# THE LOAD PATH ABOVE THE DISK SEAM (batch 44 phase B)
+#
+# `disk_load_file` ($5e7c) is the lowest routine of the boot chain whose inputs are FILE-SHAPED — a
+# twelve-character DOS name in a0, a destination in a1 — and the 1,644 bytes it reaches are the raw
+# WD1772/DMA driver and the FAT12 layer above it. test_boot_inventory.py's census is what says the
+# boot chain crosses that seam EXACTLY ONCE, at `jsr $5e7c.w` inside `load_resource_by_index`; the
+# band is a declared boundary and the port calls the kit's `disk_read_file` across it.
+#
+# SO THE ORACLE HAS TO PERFORM THE SAME SUBSTITUTION, and that is what SEAM_STUB below is: the same
+# open-read-close, hand-assembled as GEMDOS traps and poked over `disk_load_file`. Both sides then go
+# through the kit's staged-file model, whose WHOLE state — the table, the cursors, the open flags and
+# the bytes — lives inside the image, so the ordinary byte diff is what holds the C statement of the
+# substitution and the 68000 one equal. Nothing here is taken on trust because the seam was declared.
+#
+# WHAT THAT DOES AND DOES NOT PIN, with TWO exclusions and not one. Differentially it pins the index
+# scaling, the row address, the two retry longwords, the Copylock guard on both arms, and the file
+# landing whole at its destination. It does NOT pin:
+#   * the four bytes of the `jsr` itself — that is the seam, and substituting it is the point;
+#   * THE ERROR ARM, which no differential in this file covers. The staged-file model answers served
+#     or REFUSED and a refusal sinks the run, so the oracle cannot be made to return a negative
+#     `disk_load_file` at all; both of that arm's cases are candidate-only and say so where they sit,
+#     ~280 lines down. An earlier revision of this banner said "every byte except the four of the
+#     `jsr`", which contradicted the file's own scoping of exactly that arm.
+# Neither exclusion covers the original's FDC driver, which is unpinned by declaration — the point of
+# calling it a boundary rather than a to-do.
+# =================================================================================================
+
+DISK_LOAD_FILE = wb("DISK_LOAD_FILE")
+# The seam routine's extent, DERIVED from its own neighbour rather than transcribed: the stub is
+# poked over these bytes and an assertion that it fits is worth nothing if the number can drift.
+DISK_LOAD_FILE_BYTES = leaf.entry_of("fat_calc_data_start") - DISK_LOAD_FILE
+GEMDOS_HEADER_LEN = 28            # prg_dis.decode takes a FILE offset, not an image one
+RESOURCE_FILE_TABLE = wb("RESOURCE_FILE_TABLE")
+RESOURCE_FILE_ROW_SHIFT = wb("RESOURCE_FILE_ROW_SHIFT")
+RESOURCE_FILE_COUNT = wb("RESOURCE_FILE_COUNT")
+RESOURCE_LOAD_BUFFER = wb("RESOURCE_LOAD_BUFFER")
+LOAD_RETRY_INDEX = wb("LOAD_RETRY_INDEX")
+LOAD_RETRY_DEST = wb("LOAD_RETRY_DEST")
+LOAD_OK = wb("LOAD_OK")
+LOAD_COPYLOCK_RAN = wb("LOAD_COPYLOCK_RAN")
+LOAD_DISK_ERROR = wb("LOAD_DISK_ERROR")
+COPYLOCK_ARM_FLAG = wb("COPYLOCK_ARM_FLAG")
+COPYLOCK_ARM_FLAG_LEN = wb("COPYLOCK_ARM_FLAG_LEN")
+JOY1_STATE = wb("JOY1_STATE")
+
+LEVEL_SEQ_TABLE = wb("LEVEL_SEQ_TABLE")
+LEVEL_SEQ_ROWS = wb("LEVEL_SEQ_ROWS")
+LEVEL_SEQ_INDEX = wb("LEVEL_SEQ_INDEX")
+LEVEL_SEQ_RECORD_BYTES = wb("LEVEL_SEQ_RECORD_BYTES")
+LEVEL_SEQ_OVERLAY = wb("LEVEL_SEQ_OVERLAY")
+LEVEL_SEQ_SECOND_LOAD = wb("LEVEL_SEQ_SECOND_LOAD")
+LEVEL_SEQ_SIDE = wb("LEVEL_SEQ_SIDE")
+LEVEL_SEQ_STAGE = wb("LEVEL_SEQ_STAGE")
+STAGE_SECOND_LOAD_FLAG = wb("STAGE_SECOND_LOAD_FLAG")
+STAGE_SIDE_FLAG = wb("STAGE_SIDE_FLAG")
+STAGE_NUMBER = wb("STAGE_NUMBER")
+LIFE_RESTART_ENTRY_C26 = wb("LIFE_RESTART_ENTRY_C26")
+ACTOR_PLATFORM_RIDDEN = wb("ACTOR_PLATFORM_RIDDEN")
+STATE_FLAG_SET = wb("STATE_FLAG_SET")
+RESOURCE_FIRST_OVERLAY = wb("RESOURCE_FIRST_OVERLAY")
+
+ACTOR_TABLES = (wb("ACTOR_TABLE_DEFAULT"), wb("ACTOR_TABLE_A30"), wb("ACTOR_TABLE_A32"))
+ACTOR_FOLLOWED = (wb("ACTOR_FOLLOWED_DEFAULT"), wb("ACTOR_FOLLOWED_A32"))
+
+
+# --- the seam stub: the substitution, stated in 68000 ---------------------------------------------
+# One `Fopen`, one `Fread` for more than any file holds, one `Fclose`, and 0 or -1 in d0 — which is
+# `disk_load_file`'s own contract (0 on success, negative on error) and NOT a byte count, because a
+# byte count is something the original never hands its caller.
+#
+# THE STUB IS PINNED BY DECODE, not by a comment. `test_the_seam_stub_is_the_gemdos_calls_it_claims`
+# runs prg_dis over these bytes and requires the mnemonics — an encoder slip here would otherwise
+# express itself as a puzzling image diff a long way from its cause.
+_STUB_FOPEN = 0x3d
+_STUB_FREAD = 0x3f
+_STUB_FCLOSE = 0x3e
+TRAP_1 = b"\x4e\x41"                 # the GEMDOS trap all three calls go through
+# The same "more than any file holds" the port passes (tools/recreate_kit/src/disk.c's
+# DISK_READ_TO_EOF), so the two statements of the substitution ask the model the same question.
+_STUB_READ_TO_EOF = harness.OS_IMAGE_SIZE
+
+
+BMI_S_OPCODE = 0x6b00               # `bmi.s <d8>`, as leaf.bcc_s takes its condition
+
+
+def _seam_stub():
+    """`disk_load_file`'s bytes replaced by the GEMDOS substitution the port makes. a0 = name,
+    a1 = destination, d0 = 0 / -1 out; d1 and the stack are the stub's own.
+
+    Assembled through `leaf.asm`, which owns the label pass and the short-branch displacement rule
+    (`leaf.bcc_s`, `leaf.BRANCH_EXTENSION`). An earlier revision hand-rolled both, and the copy could
+    only branch FORWARD — so the stub silently could not have grown a loop, and the `2` in
+    "counted from the byte after the branch word" existed twice."""
+    return leaf.asm(0, [
+        b"\x2f\x09",                              #        move.l a1,-(a7)   save the destination
+        b"\x42\x67",                              #        clr.w -(a7)       Fopen mode 0
+        b"\x2f\x08",                              #        move.l a0,-(a7)
+        b"\x3f\x3c" + leaf.word(_STUB_FOPEN),
+        TRAP_1,
+        b"\x4f\xef\x00\x08",                      #        lea 8(a7),a7
+        b"\x22\x5f",                              #        movea.l (a7)+,a1  the destination back
+        b"\x4a\x80",                              #        tst.l d0
+        leaf.bcc_s(BMI_S_OPCODE, "fail"),
+        b"\x32\x00",                              #        move.w d0,d1      the handle
+        b"\x2f\x09",                              #        move.l a1,-(a7)   Fread buf
+        b"\x2f\x3c" + leaf.longword(_STUB_READ_TO_EOF),
+        b"\x3f\x01",                              #        move.w d1,-(a7)
+        b"\x3f\x3c" + leaf.word(_STUB_FREAD),
+        TRAP_1,
+        b"\x4f\xef\x00\x0c",                      #        lea 12(a7),a7
+        b"\x2f\x00",                              #        move.l d0,-(a7)   keep the byte count
+        b"\x3f\x01",                              #        move.w d1,-(a7)
+        b"\x3f\x3c" + leaf.word(_STUB_FCLOSE),
+        TRAP_1,
+        b"\x58\x8f",                              #        addq.l #4,a7
+        b"\x20\x1f",                              #        move.l (a7)+,d0   ...and test it
+        b"\x4a\x80",                              #        tst.l d0
+        leaf.bcc_s(BMI_S_OPCODE, "fail"),
+        leaf.moveq(0, 0),                         #        moveq #0,d0       DISK_READ_OK
+        leaf.RTS,
+        leaf.lab("fail"),
+        b"\x70\xff",                              # fail:  moveq #-1,d0
+        leaf.RTS,
+    ])
+
+
+SEAM_STUB = _seam_stub()
+# The stub's own instruction count, plus the ten of load_resource_by_index around it and a margin
+# for the two `trap`s. Stated so `max_insns` stays a cap and not a formality.
+SEAM_INSN_CAP = 64
+
+
+def _seam_pokes(name, data):
+    """Poke dict for one staged file: the stub over the seam, and the file in the model. A case that
+    wants the Copylock armed adds the flag itself, because it also has to add the entry stub."""
+    stage_pokes, _ = harness.stage_files([(name, data)])
+    return {DISK_LOAD_FILE: SEAM_STUB, **stage_pokes}
+
+def test_the_seam_stub_is_the_gemdos_calls_it_claims():
+    """Decode the substitution rather than trust the comment beside it. A hand-assembled stub is the
+    one input to a differential that nothing else checks: it is not read out of the image, so a
+    wrong opcode or displacement expresses itself as a puzzling diff inside the routine under test.
+
+    Also pins that it FITS. `disk_load_file` is 138 bytes and the stub is poked over its first
+    bytes; a longer one would spill into `fat_calc_data_start`, which is inside the boundary and so
+    is code no case would notice being clobbered."""
+    at, decoded = 0, []
+    while at < len(SEAM_STUB):
+        length, text = prg_dis.decode(bytes(GEMDOS_HEADER_LEN) + SEAM_STUB, GEMDOS_HEADER_LEN + at,
+                                      0)
+        assert not text.startswith("dc.w"), f"the stub does not decode at byte {at}: {text}"
+        decoded.append(text)
+        at += length
+    assert at == len(SEAM_STUB), "the stub's last instruction runs past its own end"
+    traps = [i for i, text in enumerate(decoded) if text.startswith("trap")]
+    assert len(traps) == 3, f"the substitution makes {len(traps)} traps, not the Fopen/Fread/Fclose 3"
+    for want in (f"move.w #${_STUB_FOPEN:x},-(a7)", f"move.w #${_STUB_FREAD:x},-(a7)",
+                 f"move.w #${_STUB_FCLOSE:x},-(a7)"):
+        assert want in decoded, f"the stub never pushes {want}"
+    assert f"move.l #${_STUB_READ_TO_EOF:x},-(a7)" in decoded, (
+        "the stub's Fread count is not the DISK_READ_TO_EOF the port passes, so the two statements "
+        "of the substitution ask the model different questions")
+    assert len(SEAM_STUB) <= DISK_LOAD_FILE_BYTES, (
+        f"the {len(SEAM_STUB)}-byte stub does not fit disk_load_file's {DISK_LOAD_FILE_BYTES}")
+
+
+def test_the_resource_table_rows_are_the_filenames_the_substitution_needs():
+    """Every row of WB_RESOURCE_FILE_TABLE is a NUL-terminated 8.3 name that fits the model's name
+    field, so the seam can be handed the same pointer `fat_find_dir_entry` is.
+
+    AND TWO ROWS ARE SPACE-PADDED, WHICH IS WHERE THE TWO SIDES OF THE SUBSTITUTION DIFFER. FAT12
+    pads a short stem to eight characters, so `CREDITS .RAD` and `SPRITES .CRU` carry an INTERNAL
+    space. The kit's staged-file model has no path syntax and matches the bytes, so off target the
+    row goes to `os_fopen` untranslated and the harness stages it under exactly that name. GEMDOS
+    does have a path syntax and a space is a real character in it, so the ON-TARGET backend
+    (`atari/wonderboy_backend.c`'s `gemdos_name`) drops spaces before `Fopen`, and `atari/smoke.py`
+    stages the drive by the same rule.
+
+    THE SET IS PINNED RATHER THAN THE PROPERTY, because the property is what an earlier draft of this
+    case got wrong: it asserted `name == name.strip()`, which is TRUE of an internal space, and the
+    error was found by running on a real machine instead. A third padded row appearing must fail
+    here — and it would be a row the on-target rule handles and this comment no longer describes."""
+    names = []
+    for index in range(RESOURCE_FILE_COUNT):
+        row = RESOURCE_FILE_TABLE + (index << RESOURCE_FILE_ROW_SHIFT)
+        raw = bytes(harness.BASE_IMAGE[row:row + (1 << RESOURCE_FILE_ROW_SHIFT)])
+        assert b"\x00" in raw, f"row {index} at {row:#x} has no terminator: {raw!r}"
+        name = raw[:raw.index(b"\x00")].decode("ascii")
+        assert len(name) < harness.OS_FS_NAME, f"{name!r} will not fit the model's name field"
+        assert name == name.strip(), f"row {index} is {name!r} — outer padding, not an 8.3 name"
+        names.append(name)
+    padded = {index: name for index, name in enumerate(names) if " " in name}
+    assert padded == {wb("RESOURCE_CREDITS"): "CREDITS .RAD",
+                      wb("RESOURCE_SPRITES_CRU"): "SPRITES .CRU"}, (
+        f"the space-padded rows are {padded}, not the two the on-target backend's `gemdos_name` and "
+        f"atari/smoke.py's staging rule are written for")
+    assert names[wb("RESOURCE_TITLESCR")] == "TITLESCR.RAD"
+    assert names[wb("RESOURCE_CREDITS")] == "CREDITS .RAD"
+    assert names[wb("RESOURCE_TILEDATA")] == "TILEDATA.RAD"
+    assert names[wb("RESOURCE_SPRITES_CRU")] == "SPRITES .CRU"
+    assert names[wb("RESOURCE_DATADISK")] == "DATADISK.RAD"
+    overlays = names[RESOURCE_FIRST_OVERLAY:wb("RESOURCE_TILEDATA")]
+    assert len(overlays) == LEVEL_SEQ_ROWS and all(n.startswith("OVALAY") for n in overlays), (
+        f"the {len(overlays)} rows between CREDITS and TILEDATA are not all overlays: {overlays}")
+
+
+# --- load_resource_by_index ($e782), across the seam -----------------------------------------------
+
+_LOAD_RESOURCE = leaf.register_glue("load_resource_by_index", [ctypes.c_uint32] * 2,
+                                    ctypes.c_uint32)
+
+
+def _load_allowed(dest, span):
+    """Every band `load_resource_by_index` may write: the file's landing place, the two retry
+    longwords, the Copylock's flag, and the model's own table entry for the staged file — the last
+    of which is exactly what makes the substitution comparable, since it is in the image."""
+    return [(dest, span), (LOAD_RETRY_INDEX, LONGWORD_LEN), (LOAD_RETRY_DEST, LONGWORD_LEN),
+            (COPYLOCK_ARM_FLAG, COPYLOCK_ARM_FLAG_LEN),
+            (harness.OS_FS_TABLE, harness.OS_FS_ENTRY)]
+
+
+def _run_load(index, name, data, dest, poison=False):
+    what = f"load_resource_by_index({index}, {dest:#x}) -> {name}"
+    assert dest + len(data) <= harness.OS_FS_TABLE, (
+        f"{len(data)} bytes at {dest:#x} reach the staged-file table at {harness.OS_FS_TABLE:#x}")
+    pokes = _seam_pokes(name, data)
+    before = harness.make_image(pokes)
+    info = leaf.run("load_resource_by_index", _LOAD_RESOURCE(index, dest),
+                    _load_allowed(dest, len(data)), what,
+                    regs={"d0": index, "a1": dest, "_pokes": pokes}, poison=poison,
+                    max_insns=SEAM_INSN_CAP)
+    after, _, _ = emu.run(bytearray(before), leaf.entry_of("load_resource_by_index"),
+                          {"d0": index, "a1": dest}, max_insns=SEAM_INSN_CAP)
+    # copylock.py's own docstring names THIS differential as the one that must ask by hand: a run
+    # driven through `differential` gets no witness, because `differential` does not hand back the
+    # image the witness compares against.
+    copylock.assert_did_not_execute(before, after, leaf.entry_of("load_resource_by_index"))
+    assert bytes(after[dest:dest + len(data)]) == data, (
+        f"{what}: the ORACLE's own run did not land the file whole, so this case is comparing two "
+        f"sides of a substitution that does not work")
+    return info
+
+
+def test_the_title_screen_loads_across_the_seam():
+    """THE ROUND'S HEADLINE, and the load the on-target boot needs: index 0 with the boot's own
+    destination, over the shipped 16,620-byte TITLESCR.RAD."""
+    info = _run_load(wb("RESOURCE_TITLESCR"), "TITLESCR.RAD",
+                     (BIN / "disk1" / "TITLESCR.RAD").read_bytes(), RESOURCE_LOAD_BUFFER)
+    assert info["ret"] == LOAD_OK, f"the port reported {info['ret']}, not WB_LOAD_OK"
+
+
+@pytest.mark.parametrize("index,name,where", [
+    (wb("RESOURCE_TITLESCR"), "TITLESCR.RAD", "disk1"),
+    (wb("RESOURCE_CREDITS"), "CREDITS .RAD", "disk1"),
+    (wb("RESOURCE_DATADISK"), "DATADISK.RAD", DISK2),
+    (wb("RESOURCE_TILEDATA"), "TILEDATA.RAD", DISK2),
+])
+def test_every_boot_resource_that_fits_the_model_loads_across_the_seam(index, name, where):
+    """The boot's own four named loads, each at its own index — so the index scaling is exercised by
+    the values the game really passes and not by one of them.
+
+    SPRITES.CRU IS THE FIFTH AND IS NOT HERE. Its 279,034 bytes are larger than the whole staging
+    area the model has to lay files in, so it cannot be staged at all; the boundary between "this
+    load is pinned" and "this one is not" is a size, and it is stated rather than left as a gap."""
+    # The HOST path, not the GEMDOS one. It looks like the backend's `gemdos_name` and smoke.py's
+    # staging rule and is neither: the extracted corpus on this machine is named `CREDITS.RAD`, so
+    # this drops the FAT pad to find a FILE, while those two drop it to satisfy a path syntax. The
+    # name STAGED into the model keeps its space, because that is what the game's table holds.
+    data = (BIN / where / name.replace(" ", "")).read_bytes()
+    info = _run_load(index, name, data, RESOURCE_LOAD_BUFFER)
+    assert info["ret"] == LOAD_OK
+
+
+def test_the_smallest_boot_resource_loads_under_the_attribution_pass():
+    """One poisoned run, so the case cannot pass on a destination byte the reconstruction never
+    wrote. DATADISK.RAD because it is the smallest of the four and every one drives the same path."""
+    _run_load(wb("RESOURCE_DATADISK"), "DATADISK.RAD",
+              (BIN / DISK2 / "DATADISK.RAD").read_bytes(), RESOURCE_LOAD_BUFFER, poison=True)
+
+
+def test_the_load_is_repeated_at_a_destination_the_boot_never_uses():
+    """The destination is a PARAMETER, and every case above passes the same one. A second address
+    separates "the port writes where it was told" from "the port writes where the boot happens to
+    want", which the boot's own operand cannot."""
+    _run_load(wb("RESOURCE_DATADISK"), "DATADISK.RAD",
+              (BIN / DISK2 / "DATADISK.RAD").read_bytes(), DST_AT)
+
+
+@pytest.mark.parametrize("armed", [0xffff, 1, 0x8000])
+def test_the_first_load_of_the_boot_runs_the_copylock_and_disarms_it(armed):
+    """THE ARMED ARM. `tst.w copylock_arm_flag / jsr copylock_entry / clr.w copylock_arm_flag` — the
+    protection runs on the FIRST resource load and never again, and the port reports which arm it
+    took because it cannot reproduce what the call does.
+
+    THREE ARMED VALUES, because `tst.w` is a test against ZERO and not against $ffff. The game only
+    ever writes $ffff, so a port that compared for equality would be green on every shipped path —
+    which is exactly what a mutation sweep found, and what $0001 and $8000 are here to stop.
+
+    The oracle only survives this because test/copylock.py has poked an `rts` over the blob, so the
+    run carries that module's witness: what is compared is the game's memory and not a trace
+    decryptor's leavings. Stub.ENTRY_RTS and not DISARM — DISARM is the state this case is trying to
+    reach, so disarming it up front would be testing the other arm."""
+    data = (BIN / DISK2 / "DATADISK.RAD").read_bytes()
+    pokes = {**_seam_pokes("DATADISK.RAD", data),
+             COPYLOCK_ARM_FLAG: armed.to_bytes(COPYLOCK_ARM_FLAG_LEN, "big"),
+             **copylock.stub_pokes(copylock.Stub.ENTRY_RTS)}
+    before = harness.make_image(pokes)
+    entry = leaf.entry_of("load_resource_by_index")
+    info = leaf.run("load_resource_by_index",
+                    _LOAD_RESOURCE(wb("RESOURCE_DATADISK"), RESOURCE_LOAD_BUFFER),
+                    _load_allowed(RESOURCE_LOAD_BUFFER, len(data)),
+                    f"load_resource_by_index with copylock_arm_flag = {armed:#x}",
+                    regs={"d0": wb("RESOURCE_DATADISK"), "a1": RESOURCE_LOAD_BUFFER,
+                          "_pokes": pokes}, poison=False, max_insns=SEAM_INSN_CAP)
+    after, _, _ = emu.run(bytearray(before), entry,
+                          {"d0": wb("RESOURCE_DATADISK"), "a1": RESOURCE_LOAD_BUFFER},
+                          max_insns=SEAM_INSN_CAP)
+    copylock.assert_did_not_execute(before, after, entry)
+    assert info["ret"] == LOAD_COPYLOCK_RAN, (
+        f"the port reported {info['ret']}, not WB_LOAD_COPYLOCK_RAN — it did not take the armed arm")
+    assert bytes(after[COPYLOCK_ARM_FLAG:COPYLOCK_ARM_FLAG + COPYLOCK_ARM_FLAG_LEN]) \
+        == copylock.DISARMED, "the original left the flag armed, so the guard would run twice"
+
+
+def test_an_index_of_0x1000_wraps_to_row_zero_and_loads_the_title_screen():
+    """THE SCALED INDEX IS USED AS A WORD. `lsl.l #4` on $1000 gives $10000, and the `lea`'s brief
+    extension word selects `d0.w` — so the high half is dropped and the row is the table's FIRST,
+    which is TITLESCR.RAD. A port that kept 32 bits would address 64 KB above the table.
+
+    A real differential and not a census: the wrapped row IS a staged filename, so the model can
+    serve it and both sides can be compared."""
+    data = (BIN / "disk1" / "TITLESCR.RAD").read_bytes()
+    info = _run_load(1 << (16 - RESOURCE_FILE_ROW_SHIFT), "TITLESCR.RAD", data,
+                     RESOURCE_LOAD_BUFFER)
+    assert info["ret"] == LOAD_OK
+
+
+def test_an_index_past_0x7ff_names_a_row_below_the_table_because_the_word_is_signed():
+    """...AND THE WORD IS SIGNED. $800 scales to $8000, which `d0.w` sign-extends to -32768, so the
+    row is 32 KB BELOW WB_RESOURCE_FILE_TABLE and not above it. The two mistakes a port can make
+    here — the wrong width and the wrong signedness — differ only past this index, so this is the
+    case that separates them, and it needs the difference to be REACHABLE: the name is SEEDED at the
+    address the original's own `lea` computes, which is the discipline batch 38's unbounded dispatch
+    established (seed an entry the original really jumps to, do not assert about one it cannot).
+
+    THE PREMISE IS ASSERTED, not assumed: if the seeded row were not below the table this case would
+    pass while proving nothing about the sign."""
+    below = RESOURCE_FILE_TABLE - 0x8000
+    assert below < RESOURCE_FILE_TABLE and loader.PROGRAM_END > below >= 0, (
+        f"{below:#x} is not a seedable address below the table, so this case cannot run")
+    name = "SIGNED  .ROW"
+    data = (BIN / DISK2 / "DATADISK.RAD").read_bytes()
+    index = 0x8000 >> RESOURCE_FILE_ROW_SHIFT
+    pokes = {**_seam_pokes(name, data), below: name.encode("ascii") + b"\x00"}
+    what = f"load_resource_by_index({index:#x}) -> the row at {below:#x}"
+    info = leaf.run("load_resource_by_index", _LOAD_RESOURCE(index, DST_AT),
+                    _load_allowed(DST_AT, len(data)) + [(below, len(name) + 1)], what,
+                    regs={"d0": index, "a1": DST_AT, "_pokes": pokes}, poison=False,
+                    max_insns=SEAM_INSN_CAP)
+    assert info["ret"] == LOAD_OK, (
+        f"{what}: the port reported {info['ret']} — it did not reach the row the original's `lea` "
+        f"computes, so its index arithmetic is not the 68000's")
+
+
+# --- the stage's actors ($e710 / $e768) -----------------------------------------------------------
+
+_APPLY_SIDE = leaf.register_glue("actor_apply_stage_side", [ctypes.c_uint32])
+
+# $e710's three `actor_table_reset` calls plus the two records' four stores each. Each reset walks 19
+# records marking them free, which is what makes the cap a geometry statement rather than a guess.
+ACTOR_TABLE_RECORDS = 19
+ACTOR_RECORD_BYTES = wb("ACTOR_RECORD_BYTES")
+ACTOR_TABLE_SPAN = ACTOR_TABLE_RECORDS * ACTOR_RECORD_BYTES
+STAGE_ACTORS_INSN_CAP = 3 * ACTOR_TABLE_RECORDS * 16 + 64
+
+
+# POISON is 0x5a = 0b01011010, which already has BIT 3 SET. A case that seeds only the poison can
+# therefore not tell `bset #3` from a no-op — it observes the CLEARING arm and nothing else, which is
+# what an earlier revision of the case below did while its docstring claimed otherwise. Both
+# polarities are seeded, and the pair is derived from POISON so it cannot drift away from it.
+SIDE_BIT_SEEDS = (POISON, POISON & ~(1 << wb("ACTOR_FLAG_SIDE_BIT")))
+
+
+def test_the_poison_alone_cannot_observe_the_side_bit_being_raised():
+    """The premise of the seeding above, asserted rather than commented: if POISON ever changed to a
+    value with bit 3 clear, the second seed would become the redundant one and this pair would stop
+    being a pair. Either way the case below needs one of each, and this is what says so."""
+    bit = 1 << wb("ACTOR_FLAG_SIDE_BIT")
+    assert len({seed & bit for seed in SIDE_BIT_SEEDS}) == 2, (
+        f"the two seeds {[hex(s) for s in SIDE_BIT_SEEDS]} agree on bit "
+        f"{wb('ACTOR_FLAG_SIDE_BIT')}, so one arm of actor_apply_stage_side writes what was already "
+        f"there and is unobservable")
+
+
+@pytest.mark.parametrize("seed", SIDE_BIT_SEEDS)
+@pytest.mark.parametrize("side", [0, STATE_FLAG_SET, 1, 0x8000])
+@pytest.mark.parametrize("record", ACTOR_FOLLOWED)
+def test_the_stage_side_flag_sets_or_clears_the_side_bit(record, side, seed):
+    """`tst.w stage_side_flag` is a WORD test against zero, not a test of a particular value — so
+    $0001 and $8000 raise the bit exactly as $ffff does. Both records, because the routine takes the
+    one it acts on in a0 and a port that ignored the parameter would pass on one of them. And BOTH
+    SEEDS, because the bit has to be observed changing in each direction — see SIDE_BIT_SEEDS."""
+    what = (f"actor_apply_stage_side({record:#x}) with stage_side_flag = {side:#x} over a flags byte "
+            f"of {seed:#x}")
+    pokes = {STAGE_SIDE_FLAG: side.to_bytes(WORD_LEN, "big"),
+             record + wb("ACTOR_FLAGS"): bytes([seed])}
+    leaf.run("actor_apply_stage_side", _APPLY_SIDE(record),
+             [(record + wb("ACTOR_FLAGS"), 1)], what,
+             regs={"a0": record, "_pokes": pokes})
+
+
+def _run_stage_actors_init(side, poison=False):
+    what = f"stage_actors_init with stage_side_flag = {side:#x}"
+    pokes = {STAGE_SIDE_FLAG: side.to_bytes(WORD_LEN, "big")}
+    for table in ACTOR_TABLES:
+        pokes[table] = bytes([POISON]) * ACTOR_TABLE_SPAN
+    allowed = [(table, ACTOR_TABLE_SPAN) for table in ACTOR_TABLES]
+    return leaf.run("stage_actors_init", leaf.image_glue("stage_actors_init"), allowed, what,
+                    regs={"_pokes": pokes}, poison=poison, max_insns=STAGE_ACTORS_INSN_CAP)
+
+
+@pytest.mark.parametrize("side", [0, STATE_FLAG_SET])
+def test_the_stage_s_actors_are_built_from_nothing(side):
+    """All three tables emptied and both followed records given the entry shape, over a table
+    poisoned first — so a field the reconstruction never wrote cannot pass by already being right.
+    Both arms of the side flag, because the last thing the routine does is apply it twice."""
+    info = _run_stage_actors_init(side)
+    written = leaf.program_writes(info)
+    assert set(leaf.merge_bands(written)) == {(table, ACTOR_TABLE_SPAN) for table in ACTOR_TABLES}, (
+        f"the original wrote {leaf.merge_bands(written)}, not the three whole tables — so either a "
+        f"reset stopped short or the followed records are not inside the tables this case poisons")
+
+
+def test_the_stage_s_actors_are_built_under_the_attribution_pass():
+    """One poisoned run. It is the case that would catch a port whose two passes ran the other way
+    round, since actor_table_reset's zeroes would then land ON TOP of the three fields."""
+    _run_stage_actors_init(STATE_FLAG_SET, poison=True)
+
+
+def test_the_a30_table_gets_no_followed_record():
+    """THE ASYMMETRY: three tables, two shaped records. Asked of the RUN's own write values rather
+    than of the constants — an earlier revision asserted that the A30 table's slot 12 was not one of
+    the two followed addresses, which FOLLOWS from the three tables being distinct and so could not
+    fail. What can fail is the count of records the original leaves carrying the entry type."""
+    slot = wb("ACTOR_FOLLOWED_SLOT") * ACTOR_RECORD_BYTES
+    assert ACTOR_FOLLOWED == (wb("ACTOR_TABLE_DEFAULT") + slot, wb("ACTOR_TABLE_A32") + slot), (
+        "WB_ACTOR_FOLLOWED_* are no longer slot WB_ACTOR_FOLLOWED_SLOT of their tables")
+    written = leaf.program_writes(_run_stage_actors_init(STATE_FLAG_SET))
+    shaped = [table + record * ACTOR_RECORD_BYTES
+              for table in ACTOR_TABLES for record in range(ACTOR_TABLE_RECORDS)
+              if _word_written(written, table + record * ACTOR_RECORD_BYTES + wb("ACTOR_TYPE"))
+              == wb("ACTOR_TYPE_PLAYER")]
+    assert shaped == list(ACTOR_FOLLOWED), (
+        f"the original left WB_ACTOR_TYPE_PLAYER in {[hex(a) for a in shaped]}, not in the two "
+        f"followed records — so either A30 got one or one of the other two did not")
+
+
+def _word_written(written, at):
+    """The WORD the oracle's write set left at `at`. Every byte of these tables is written by the
+    run (actor_table_reset covers them), so a missing byte is a real failure and not a gap."""
+    return (written[at] << 8) | written[at + 1]
+
+
+# --- the per-stage dispatcher ($e5ba / $e5d8 / $e5fe) ----------------------------------------------
+# One straight-line block with `bsr load_resource_by_index` in the middle of it, so it is entered in
+# three places and diffed in three. Each piece's `stop_pc` is the next piece's entry.
+
+_SEQ_RESOURCE = leaf.register_glue("stage_sequence_resource", [ctypes.c_uint32], ctypes.c_uint32)
+_SEQ_APPLY = leaf.register_glue("stage_sequence_apply_row", [ctypes.c_uint32])
+# THE THREE PIECES INTERLEAVE rather than following one another: `stage_sequence_resource`'s three
+# instructions sit INSIDE `stage_sequence_advance`'s run, between the row arithmetic and the two
+# WB_STAGE_SECOND_LOAD_FLAG stores. They write nothing, so running the whole of $e5ba..$e5f2 diffs
+# the advance correctly; entering at $e5d8 diffs the index computation on its own.
+SEQ_ADVANCE_END = wb("SEQ_ADVANCE_END")
+SEQ_RESOURCE_END = wb("SEQ_RESOURCE_END")
+SEQ_APPLY_END = wb("SEQ_APPLY_END")
+
+
+def _row_of(index):
+    return LEVEL_SEQ_TABLE + index * LEVEL_SEQ_RECORD_BYTES
+
+
+@pytest.mark.parametrize("reentry", [0, 1])
+@pytest.mark.parametrize("index", [0, 1, LEVEL_SEQ_ROWS - 1])
+def test_the_dispatcher_takes_its_row_and_steps_the_index(index, reentry):
+    """$e5ba..$e5f2 over the shipped table, at both arms of WB_LIFE_RESTART_ENTRY_C26.
+
+    THE RE-ENTRY ARM IS WHAT STOPS THE SECOND LOAD RUNNING TWICE: `clr.b` unconditionally, then the
+    row's byte only while that word is zero. A port that wrote the row's byte either way would put
+    the boot back through SPRITES.CRU — and the Copylock with it — every time a life is lost."""
+    what = f"stage_sequence_advance at row {index}, reentry {reentry}"
+    pokes = {LEVEL_SEQ_INDEX: index.to_bytes(WORD_LEN, "big"),
+             LIFE_RESTART_ENTRY_C26: reentry.to_bytes(WORD_LEN, "big"),
+             STAGE_SECOND_LOAD_FLAG: bytes([POISON]),
+             ACTOR_PLATFORM_RIDDEN: bytes([POISON]) * WORD_LEN}
+    info = leaf.run("stage_sequence_advance",
+                    leaf.image_glue("stage_sequence_advance", ctypes.c_uint32),
+                    [(ACTOR_PLATFORM_RIDDEN, WORD_LEN), (LEVEL_SEQ_INDEX, WORD_LEN),
+                     (STAGE_SECOND_LOAD_FLAG, 1)], what,
+                    regs={"_pokes": pokes}, stop_pc=SEQ_ADVANCE_END)
+    assert info["ret"] == _row_of(index), (
+        f"{what}: the port returned {info['ret']:#x} as the row, not {_row_of(index):#x}")
+    assert info["regs"]["a0"] == _row_of(index), (
+        f"{what}: the ORIGINAL left a0 at {info['regs']['a0']:#x}, so this case's row model is "
+        f"wrong and the two halves below would be diffed against the wrong record")
+
+
+@pytest.mark.parametrize("index", range(wb("LEVEL_SEQ_ROWS")))
+def test_every_shipped_sequence_row_names_a_resource_and_a_stage(index):
+    """The corpus case: all 35 rows, through both halves the load sits between. What it exercises
+    that a single row cannot is the SPREAD of the four bytes — every overlay ordinal the game ships,
+    both values of the side byte, and every stage number `level_seq_table` produces."""
+    row = _row_of(index)
+    what = f"stage_sequence_resource on row {index}"
+    info = leaf.run("stage_sequence_resource", _SEQ_RESOURCE(row), [], what,
+                    regs={"a0": row}, stop_pc=SEQ_RESOURCE_END)
+    # THE IMAGE DIFF IS VACUOUS HERE — the routine writes nothing, so `leaf.run` comparing two
+    # untouched images proves nothing about it. Its whole output is d0, and the comparison that
+    # means something is the candidate's return against the ORACLE'S OWN register.
+    assert info["ret"] == info["regs"]["d0"], (
+        f"{what}: the port returned {info['ret']:#x} and the original left d0 at "
+        f"{info['regs']['d0']:#x}")
+    assert RESOURCE_FIRST_OVERLAY <= info["ret"] < wb("RESOURCE_TILEDATA"), (
+        f"row {index} names resource {info['ret']}, which is not one of the overlays")
+    pokes = {STAGE_SIDE_FLAG: bytes([POISON]) * WORD_LEN,
+             STAGE_NUMBER: bytes([POISON]) * WORD_LEN}
+    leaf.run("stage_sequence_apply_row", _SEQ_APPLY(row),
+             [(STAGE_SIDE_FLAG, WORD_LEN), (STAGE_NUMBER, WORD_LEN)],
+             f"stage_sequence_apply_row on row {index}",
+             regs={"a0": row, "_pokes": pokes}, stop_pc=SEQ_APPLY_END)
+
+
+def test_the_overlay_ordinal_is_added_in_eight_bits():
+    """`addq.b #2,d0` on a zero-extended byte, so $fe wraps to 0 rather than reaching row 256.
+    No shipped row does it — the census above says every ordinal is small — so this is driven on a
+    POKED row, which is what makes the wrap reachable at all rather than merely arguable."""
+    row = _row_of(0)
+    for ordinal, want in ((0, RESOURCE_FIRST_OVERLAY), (0xfd, 0xff), (0xfe, 0), (0xff, 1)):
+        pokes = {row + LEVEL_SEQ_OVERLAY: bytes([ordinal])}
+        info = leaf.run("stage_sequence_resource", _SEQ_RESOURCE(row), [],
+                        f"stage_sequence_resource on a poked ordinal of {ordinal:#x}",
+                        regs={"a0": row, "_pokes": pokes},
+                        stop_pc=SEQ_RESOURCE_END)
+        assert info["ret"] == info["regs"]["d0"] == want, (
+            f"an ordinal of {ordinal:#x} gave {info['ret']:#x} with the original at "
+            f"{info['regs']['d0']:#x}, not {want:#x} — the port's add is not an eight-bit one")
+
+
+# --- the error arm: why it is CANDIDATE-ONLY, and what still pins it -------------------------------
+#
+# THE MODEL HAS EXACTLY TWO ANSWERS AND "THE DISK SAID NO" IS NOT ONE OF THEM. os.h's staged-file
+# model serves a call or REFUSES it, and a refusal sets the shim's `g_unmodeled` so `emu.run` raises
+# before any comparison happens. That is right — it is what stops a loader reading a file nobody
+# staged from being falsely verified — but it means the oracle cannot be made to return a NEGATIVE
+# `disk_load_file` result, so the arm the original takes on a disk error has no differential
+# available to it. Not "hard"; unavailable.
+#
+# So the arm is driven candidate-only, and the case owes the reader what that is worth: it compares
+# the port against a second statement of the original's own two instructions, which is weaker than
+# the oracle and stronger than nothing. THE REMEDY IS A KIT CHANGE and is registered in ../STATUS.md:
+# a staged name declared PRESENT BUT UNREADABLE, which is the one answer the two-valued model lacks.
+
+def test_a_load_the_seam_refuses_clears_joy1_state_and_reports_the_error():
+    """`clr.b joy1_state` is the error arm's only image write — the red colour 0 beside it is off the
+    image, and the interactive retry after it is a spin this port declines to model.
+
+    THE PREMISE IS THE REFUSAL, and it is staged by staging NOTHING: the poke dict carries no file at
+    all, so `os_fopen` finds no entry for TITLESCR.RAD's row and refuses. The control below is what
+    says the refusal is doing the work rather than the arm being the port's only answer."""
+    pokes = {JOY1_STATE: bytes([POISON])}
+    ret, image = leaf.run_candidate_only(_LOAD_RESOURCE(wb("RESOURCE_TITLESCR"), DST_AT), pokes)
+    assert ret == LOAD_DISK_ERROR, (
+        f"a load with nothing staged returned {ret}, not WB_LOAD_DISK_ERROR — the port did not take "
+        f"the error arm, so neither of this case's claims is about that arm")
+    assert image[JOY1_STATE] == 0, (
+        f"the error arm left joy1_state at {image[JOY1_STATE]:#x}, so it did not make the one image "
+        f"write the original makes before it starts waiting for fire")
+    # ...and the control, so the case cannot pass because every run reports the error.
+    data = (BIN / DISK2 / "DATADISK.RAD").read_bytes()
+    served, image = leaf.run_candidate_only(_LOAD_RESOURCE(wb("RESOURCE_DATADISK"), DST_AT),
+                                            {**_seam_pokes("DATADISK.RAD", data), **pokes})
+    assert served == LOAD_OK and image[JOY1_STATE] == POISON, (
+        f"the same call WITH the file staged returned {served} and left joy1_state at "
+        f"{image[JOY1_STATE]:#x} — so this case would pass whether or not the refusal did anything")
+
+
+def test_a_read_that_leaves_the_image_is_a_failed_load_and_not_a_successful_one():
+    """The seam's OTHER failure, which is a different branch of tools/recreate_kit/src/disk.c: the
+    file OPENS and the READ refuses. `os_fread` refuses a copy that would run off the end of the
+    image, so a destination near the top reaches it — and it is the only way to reach it, since
+    every other refusal happens at the `Fopen`.
+
+    Without this the `got < 0` arm is unreachable and a port that returned DISK_READ_OK regardless
+    would be green, which a mutation sweep demonstrated."""
+    data = (BIN / DISK2 / "DATADISK.RAD").read_bytes()
+    over_the_top = harness.OS_IMAGE_SIZE - len(data) // 2
+    ret, _ = leaf.run_candidate_only(_LOAD_RESOURCE(wb("RESOURCE_DATADISK"), over_the_top),
+                                     _seam_pokes("DATADISK.RAD", data))
+    assert ret == LOAD_DISK_ERROR, (
+        f"a {len(data)}-byte read at {over_the_top:#x} — which runs {len(data) // 2} bytes past the "
+        f"{harness.OS_IMAGE_SIZE:#x} image — returned {ret}, not WB_LOAD_DISK_ERROR")
+
+
+def test_the_one_boot_resource_the_model_cannot_stage_is_the_one_named():
+    """WHY FOUR LOADS AND NOT FIVE, measured rather than asserted. `SPRITES.CRU` is larger than the
+    whole staging area the model has to lay files in, so it cannot be staged at all and its load has
+    no differential. The boundary between "pinned" and "not" is a SIZE, and a case is where a size
+    belongs — prose would drift the day the staging area moved.
+
+    It also checks the complement: every OTHER boot resource DOES fit, so "four" is not four
+    arbitrary files but the whole of what is stageable."""
+    staging = emu.STACK_GUARD_LO - harness.OS_FS_STAGING
+    sizes = {"TITLESCR.RAD": (BIN / "disk1" / "TITLESCR.RAD").stat().st_size,
+             "CREDITS.RAD": (BIN / "disk1" / "CREDITS.RAD").stat().st_size,
+             "TILEDATA.RAD": (BIN / DISK2 / "TILEDATA.RAD").stat().st_size,
+             "DATADISK.RAD": (BIN / DISK2 / "DATADISK.RAD").stat().st_size,
+             "SPRITES.CRU": (BIN / DISK2 / "SPRITES.CRU").stat().st_size}
+    too_big = sorted(name for name, size in sizes.items() if size > staging)
+    assert too_big == ["SPRITES.CRU"], (
+        f"the boot resources that do not fit the model's {staging} bytes of staging are {too_big}, "
+        f"not the one ../STATUS.md names")
+
+
+@pytest.mark.parametrize("at,offset", [(0x1000, -0x8000), (0x1fff, -8), (0x2000, 0)])
+def test_the_sequence_index_is_scaled_as_a_longword_and_indexed_as_a_signed_word(at, offset):
+    """`lsl.l #3` then `lea 0(a0,d0.w)` — the SAME pairing `load_resource_by_index` has, and the
+    banner in src/boot.c claims they are the same rule. That claim had no case: the shipped table has
+    35 rows, so nothing drove an index whose scaled value leaves sixteen bits, and deleting the sign
+    extension was green across the whole suite. The three indices here are where the two mistakes a
+    port can make diverge — $1000 scales to exactly $8000 and reads NEGATIVE, $1fff is the last row
+    below that, and $2000 wraps to the table itself.
+
+    A REAL DIFFERENTIAL, not a census: the routine READS the row it computes (`move.b 1(a0)` into
+    stage_second_load_flag), so wherever the address lands the original fetches a byte from it and
+    the port must fetch the same one. `offset` is this case's independent model of the arithmetic —
+    computed here from the 68000's rule rather than taken from the port."""
+    what = f"stage_sequence_advance at a sequence index of {at:#x}"
+    row = (LEVEL_SEQ_TABLE + offset) & (harness.OS_IMAGE_SIZE - 1)
+    assert offset == 0 or row != LEVEL_SEQ_TABLE, f"{what}: this index does not move the row at all"
+    pokes = {LEVEL_SEQ_INDEX: at.to_bytes(WORD_LEN, "big"),
+             LIFE_RESTART_ENTRY_C26: bytes(WORD_LEN),
+             STAGE_SECOND_LOAD_FLAG: bytes([POISON]),
+             ACTOR_PLATFORM_RIDDEN: bytes([POISON]) * WORD_LEN}
+    info = leaf.run("stage_sequence_advance",
+                    leaf.image_glue("stage_sequence_advance", ctypes.c_uint32),
+                    [(ACTOR_PLATFORM_RIDDEN, WORD_LEN), (LEVEL_SEQ_INDEX, WORD_LEN),
+                     (STAGE_SECOND_LOAD_FLAG, 1)], what,
+                    regs={"_pokes": pokes}, stop_pc=SEQ_ADVANCE_END)
+    assert info["ret"] == info["regs"]["a0"] == row, (
+        f"{what}: the port returned {info['ret']:#x} and the original left a0 at "
+        f"{info['regs']['a0']:#x}; the 68000's own arithmetic gives {row:#x}")

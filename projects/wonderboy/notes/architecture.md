@@ -234,6 +234,24 @@ FAT helpers `$5f06`, `$5f76`, `$5fc4`, `$604a`, `$6068`, `$6092`, `$60da` all si
 *below* `$6118`, and `fdc_restore` (`$6408`) calls `$645e`/`$646c`/`$64ea`
 *above* it. `rad_depack` ends at `$5e3a`, immediately below the driver.
 
+**BATCH 44 PHASE B — THIS WHOLE REGION IS NOW A DECLARED BOUNDARY, AND `disk_load_file` IS ITS SEAM.**
+`$5e7c` is the lowest routine here whose INPUTS are file-shaped: a0 on a twelve-character DOS name,
+a1 on a destination, 0 or negative back. Everything it reaches is sector-shaped, and the
+reconstruction does not port any of it — `load_resource_by_index` calls the kit's `disk_read_file`
+across the cut instead (TRAP_MODEL.md Phase 9), which is the same file's bytes at the same address
+through GEMDOS rather than through the controller. The boundary's edges are ENUMERATED and machine-
+checked in `recreate/test/test_boot_inventory.py`: the boot chain crosses in exactly once (`$e79c`),
+the whole image encodes four edges in (the seam; the vblank handler's `jsr $6268.l` at `$73e` when
+`floppy_idle_timer` expires; the Copylock's failure arm; and one operand fragment that is not an
+instruction), and the band transfers OUT nowhere at all — it is a closed subgraph that leaves by
+`rts`. See `recreate/STATUS.md` batch 44 phase B for the decision and its terms.
+
+**ONE CORRECTION TO THE EXTENTS ABOVE.** This section says the driver's code runs to `$64f0`, and
+`floppy_deselect_drives` (`$6268`) is inside it — but that routine is NOT part of the 1,644 unported
+bytes the boundary excludes, because the boot chain never reaches it and the figure is summed over
+the boot walk's own segments. It has been reconstructed since batch 42 phase B, called from the
+vblank handler. Two counts, both right about different questions.
+
 | register | hits | where |
 |---|---:|---|
 | `$ffff8604` FDC data/access | 2 | `$6464`, `$6472` |

@@ -6,8 +6,8 @@
  * (`src/game.c`, `src/stage.c`). Each of those headers says in as many words that a build for the
  * real machine excludes the kit's own C sources and supplies its own. This file is that supply.
  *
- * THE SURFACE IS A SET, AND IT IS SIX SYMBOLS PLUS THREE SINK SITES — enumerated, not estimated.
- * Taken from the union of the sixteen translation units under `../src/`, undefined symbols minus the
+ * THE SURFACE IS A SET, AND IT IS SEVEN SYMBOLS PLUS THREE SINK SITES — enumerated, not estimated.
+ * Taken from the union of the translation units under `../src/`, undefined symbols minus the
  * game's own; the kit's own `nm` agrees (`build/libwonderboy.so` has exactly one undefined symbol,
  * `bzero`, because kit.mk sweeps the kit sources into the same .so).
  *
@@ -16,6 +16,8 @@
  *   psg_port_read   3 call sites   ../src/game.c:307, ../src/sound.c:146,1003
  *   sched_wait8     1 call site    ../src/game.c:47   (two wait SITES reach it: $60e and $64e)
  *   sched_poll16    2 call sites   ../src/game.c:398, 413
+ *   disk_read_file  1 call site    ../src/boot.c — `load_resource_by_index` ($e782), THE FILE-LOAD
+ *                                  SEAM (the kit's include/disk.h argues why it is a seam at all)
  *   os_refused      1 call site    ../src/sound.c:786 — NOT defined here: -DOS_NO_REFUSAL_TALLY makes
  *                                  the kit's os.h serve a `static inline` identity (os.h:57)
  *
@@ -23,7 +25,7 @@
  * insertion in ../src/game.c moved `sched_poll16`'s pair from 386/401 to 398/413 and the first draft
  * of this table shipped the old ones. Re-derive rather than trust:
  *
- *     grep -nE '\b(hw_read8|psg_port_read|psg_port_write|sched_wait8|sched_poll16|os_refused)\s*\(' ../src/*.c
+ *     grep -nE '\b(hw_read8|psg_port_read|psg_port_write|sched_wait8|sched_poll16|disk_read_file|os_refused)\s*\(' ../src/*.c
  *
  * The COUNTS are what the claim rests on; ../atari/build.sh checks the SET after every link and does
  * not look at line numbers at all.
@@ -40,8 +42,11 @@
  *                   link symbol; Wonder Boy calls none of them (project.toml's byte scan: the whole
  *                   program issues ONE TOS trap in its life, a Super). Every kit dependency this
  *                   game has is a real symbol, so the seam is pure link-time replacement.
- *   os_in_image     2 call sites (../src/blit.c) — `static inline` arithmetic over OS_IMAGE_SIZE,
- *                   correct on target unchanged.
+ *   os_in_image     2 call sites in the cores (../src/blit.c) — `static inline` arithmetic over
+ *                   OS_IMAGE_SIZE, correct on target unchanged. THIS FILE calls it too, four times
+ *                   (disk_read_file's two bounds, image_byte, image_word); those are not core calls
+ *                   and are not what the seam scan is about, but they are why the count read wrong
+ *                   to a reviewer and so are named here.
  *
  * THE ADDRESSES ARE WRITTEN IN THE 24-BIT BUS FORM the reconstruction spells (`$ff820a`, `$fffa01`)
  * and put on the bus in the CPU's own form (`$ffff820a`, `$fffffa01`) by `hw_addr` below. On a 68000
@@ -54,8 +59,10 @@
 #include "psg.h"
 #include "sched.h"
 #include "os.h"
+#include "disk.h"
 #include "wonderboy.h"
 
+#include "tos.h"
 #include "wonderboy_target.h"
 
 /* The 68000 puts 24 bits on the bus, so $00ff820a and $ffff820a are the same register. The
@@ -132,6 +139,88 @@ void psg_port_write(unsigned reg, uint8_t value) {
 uint8_t psg_port_read(unsigned reg) {
     *hw_byte(OS_PSG_PORT_SELECT) = (uint8_t)reg;
     return *hw_byte(OS_PSG_PORT_SELECT);
+}
+
+
+/* ---- disk.h: the file-load seam becomes GEMDOS -------------------------------------------------
+ *
+ * The kit's include/disk.h argues why a floppy loader is CUT rather than ported: everything below a
+ * file name and a destination is a WD1772 state machine and a FAT12 walk, which no memory
+ * differential can see. Off target the substitution is the staged-file model; here it is the three
+ * GEMDOS calls the model was written to imitate, in the same order and with the same bookkeeping.
+ *
+ * THE NAME IS 8.3-PADDED AND GEMDOS DOES NOT WANT THE PADDING — which is one thing the seam is NOT
+ * free of, and it was found by reading the table rather than by a test. `../src/boot.c`'s banner
+ * says the row "lands on sixteen bytes holding a NUL-padded NNNNNNNN.EEE ... the same pointer goes
+ * to Fopen", and that is true of thirty-eight of the forty rows. It is FALSE of the two whose stem
+ * is shorter than eight characters, and both are files the boot really loads:
+ *
+ *     row $01  "CREDITS .RAD"      row $26  "SPRITES .CRU"
+ *
+ * The padding is correct where the original reads it: `fat_find_dir_entry` compares those twelve
+ * bytes against a FAT12 DIRECTORY ENTRY, whose name field is space-padded by the filesystem. GEMDOS
+ * `Fopen` takes a PATH, in which a space is a character like any other, so handing it the padded
+ * form asks for a file called "CREDITS .RAD" and gets ENOENT. The two forms are the same name
+ * written for two different interfaces, and converting between them is what the substitution owes —
+ * this is the FAT form's only difference from the path form, since a DOS 8.3 name cannot itself
+ * contain a space. So every space is dropped and nothing else is touched.
+ *
+ * THIS IS THE ONE PLACE THE PORT ISSUES A TOS TRAP THE ORIGINAL DOES NOT. ../project.toml's byte
+ * scan finds exactly one `trap` in the whole shipped image, a Super; every load it performs goes to
+ * the controller directly. So the deviation is not a detail of this function, it IS the seam, and
+ * the honest statement of it is: the bytes arriving at `dest` are the file's, and the route they
+ * took to get there is the operating system's rather than the game's.
+ *
+ * BOTH ADDRESSES ARE IMAGE ADDRESSES and are translated exactly as `sched_wait8`'s are — masked to
+ * the 68000's 24-bit bus and bounded by `os_in_image`, the same test both shores use. The name is
+ * bounded by ONE TABLE ROW because that is what the table guarantees: sixteen bytes holding twelve
+ * characters and at least four NULs, so a row wholly inside the image cannot run `Fopen` off the
+ * end of it.
+ *
+ * THE COUNT IS THE IMAGE TAIL, and that is the model's ceiling written the way the machine can
+ * enforce it. `../../../tools/recreate_kit/src/disk.c` asks for OS_IMAGE_SIZE and leans on
+ * `os_fread` to clamp to the file's remaining length and then refuse a copy that would leave the
+ * image; GEMDOS does the first of those and not the second, so the bound is applied here instead.
+ * ONE RESIDUAL DIFFERENCE, stated rather than papered over: a file LONGER than the tail is
+ * truncated here and refused (-1) by the model. No shipped resource is within two orders of
+ * magnitude of it — TITLESCR.RAD is 16,620 bytes and CREDITS.RAD 7,160 against a 747,520-byte tail
+ * at WB_RESOURCE_LOAD_BUFFER — and a whole disk would not fit in the image either way. */
+#define DISK_FOPEN_READ  0                                 /* GEMDOS Fopen mode 0: read-only */
+#define DISK_NAME_BYTES  (1u << WB_RESOURCE_FILE_ROW_SHIFT) /* one WB_RESOURCE_FILE_TABLE row */
+#define DISK_FAT_PAD     ' '                               /* what FAT pads a short 8.3 field with */
+
+/* The row's twelve characters as a GEMDOS path: NUL-terminated, padding dropped. The buffer is
+ * this function's own rather than the caller's because the only thing it is ever built from is a
+ * table row, and one place that knows the row's width is one place to get it wrong. */
+static const char *gemdos_name(const uint8_t *row) {
+    static char path[DISK_NAME_BYTES];      /* one row's worth, so the NUL always has somewhere */
+    unsigned from;
+    unsigned to = 0;
+
+    for (from = 0; from < DISK_NAME_BYTES - 1u && row[from] != '\0'; from++)
+        if (row[from] != DISK_FAT_PAD)
+            path[to++] = (char)row[from];
+    path[to] = '\0';
+    return path;
+}
+
+int32_t disk_read_file(uint8_t *mem, uint32_t name_ptr, uint32_t dest) {
+    uint32_t name_at = name_ptr & WB_BUS_ADDR_MASK;
+    uint32_t dest_at = dest & WB_BUS_ADDR_MASK;
+    long handle;
+    long got;
+
+    if (!os_in_image(name_at, DISK_NAME_BYTES) || !os_in_image(dest_at, 1))
+        return DISK_READ_FAILED;
+
+    handle = Fopen(gemdos_name(mem + name_at), DISK_FOPEN_READ);
+    if (handle < 0)
+        return DISK_READ_FAILED;
+    got = Fread((short)handle, (long)(OS_IMAGE_SIZE - dest_at), mem + dest_at);
+    /* CLOSED EVEN ON A FAILED READ, for the kit's reason one shore over: a leaked handle is a
+     * finite resource, and the shim goes on to write its own record through the same table. */
+    (void)Fclose((short)handle);
+    return got < 0 ? DISK_READ_FAILED : DISK_READ_OK;
 }
 
 

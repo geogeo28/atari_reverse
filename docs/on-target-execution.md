@@ -162,7 +162,7 @@ add a seam, the core/no-op side must have **no image effect** (or the oracle-mod
 differential test still holds; put the real trap/hardware poke only in the PRG override, and gate it
 on `hw_ready` if it touches supervisor-only I/O space (`$ffff8xxx`, `$fffffcxx`) before `Super(0)`.
 
-## Bug taxonomy (each one hit in a real build — 1-5 in BuggyBoy, 6-8 in Joust)
+## Bug taxonomy (each one hit in a real build — 1-5 in BuggyBoy, 6-8 in Joust, 9 in Wonder Boy)
 
 ### 1. Endianness tax — byte-shuffle accessors on a big-endian target
 
@@ -395,6 +395,39 @@ byte-identical framebuffer, a byte-identical palette, and a wrong picture.
   paragraph replaced was to close the gap with a one-line causal claim — that the two projects'
   different anchor counts were a property of the games rather than of the settings — which nobody
   had measured and which the measurement above partly contradicts.
+
+### 9. `Super(0)` / `Super(ssp)` is not a balanced pair — TOS returns on the USP it froze
+
+**The bug.** The standard supervisor wrapper is `ssp = Super(0); …; Super(ssp);` and every project in
+this workspace ships it, commented "balanced pairs only". It is not a pair. **TOS returns to user
+mode on the USP as it stood when `Super(0)` ran, and does not reload USP from the supervisor stack.**
+So the unwind is correct only while the compiler leaves `%sp` at the same depth at BOTH call sites —
+and m68k GCC defers and combines argument pops, so it very often does not.
+
+**How it presents, which is the worst part.** Wonder Boy hit this the moment a title-screen load was
+added ahead of the `Super(0)`: the two depths diverged by twelve bytes (`USP $3f7f52` against
+`ISP $3f7f5e`), the `rts` after the second `Super` popped stale stack, and the program died at
+`$26520020`. **After a clean teardown, with every read-back green and every record written.** The
+crash is in the epilogue, so all the evidence a mode collects says the run succeeded. An earlier
+build had measured `USP == ISP` and read that as correctness; it was the compiler's stack schedule.
+
+**The fix**, one instruction: plant the USP yourself immediately before the trap that leaves
+supervisor mode — `move.l %a0,%usp` with the SSP-to-be in `%a0` — so the value TOS returns on is the
+one you chose rather than the one it happened to freeze. Wonder Boy's is `wb_leave_supervisor` in
+`projects/wonderboy/recreate/atari/wonderboy_os.s`.
+
+**WHO ELSE IS EXPOSED.** Any project using the plain wrapper. `projects/joust/recreate/atari/joust_os.s`
+ships the byte-identical `Super` and `joust_main.c` leaves supervisor mode at five sites; Joust is
+recorded as closed and hardware-confirmed, which means it is *currently* lucky rather than *correct*
+— one inserted statement between its `Super(0)` and its `Super(ssp)` reproduces this. Not fixed there
+by the phase that found it, and registered as such.
+
+**The general rule this is an instance of.** *A wrapper whose correctness depends on where the
+compiler left the stack is not correct.* Anything that captures machine state at one point and
+restores it at another — supervisor mode, an interrupt mask, a vector — should restore from a value
+it OWNS, not from one the ABI happens to preserve. And a teardown defect is invisible to every
+surface that samples state before teardown, so the surface that catches this class is the exit status
+and the machine-health scan of the merged stream, not the record the program writes.
 
 ## The observable surfaces
 

@@ -2,7 +2,7 @@
 
 This takes the reconstruction past the differential harness: it **cross-compiles the very same
 verified C cores to 68000** (`m68k-elf-gcc`) and runs them as a GEMDOS `.PRG` under Hatari with a
-real TOS ROM. The sixteen translation units under `../src/` are compiled **unchanged** except for one
+real TOS ROM. The seventeen translation units under `../src/` are compiled **unchanged** except for one
 flag they themselves anticipate, and this directory supplies only the hardware boundary the harness
 models away.
 
@@ -49,10 +49,19 @@ post-boot RAM off a real emulated machine and staging that.
 | **M6** the sound's reproducibility gate | `original.py psgnoise` boots the shipped binary a **second** time and differences the two streams, because comparing a register the original writes differently on two of its own boots is not evidence in either direction. `m6` refuses to run without the reading and PRINTS what it excludes. Measured: an unflashed pair differs in **0 of 1,155** writes, so `m6` compares all eleven registers; a **flashed** pair differs in **42 of 1,155**, all of them channel A's tone period (registers 0 and 1) inside the first eleven frames, so `m6flash` excludes those two and compares the other nine. One reading per fabrication, which is `flashnoise`'s rule (§10) | ✅ `original.py psgnoise` / `flashpsgnoise` |
 | **M6** the ORDER-ONLY mutant | **MEASURED DYING, and it is the last of the four shifter-sink mutants.** `flip_screen`'s timer store and its colour write are adjacent statements whose argument is the already-decremented local, so swapping them writes the same word to RAM and the same colour to the chip — only later. With it applied, `m5flash` is **entirely green** (framebuffer, pens, hardware vector and rendered picture at all four anchors) and `m6flash`'s order row is **RED**. Both sides are watched, and both must show the store reaching the bus before the colour | ✅ `smoke.py m6flash`, mutant CAUGHT |
 | **M6** the play build | the build a person plays, booted headless past 12,000 vblanks: **still flipping buffers when the run was cut off**, machine healthy throughout — 1,004 frames under TOS 1.04 and 1,160 under EmuTOS, i.e. four to five frames a second (the ROM decides how much of the window is left after it boots, so the count belongs to the ROM too). The two buffers are found in the trace rather than computed — a play run writes no record — and pinned by being exactly `WB_SCREEN_FRONT - WB_SCREEN_BACK` apart. What is asserted about its exit is that THIS run reached none, because it injects no input; a person can reach one, and what happens when they do is M3's, driven on the frame build that shares this build's whole exit path | ✅ `smoke.py play` |
+| **M7** the title screen, DRAWN | the first picture here the reconstruction PRODUCES rather than inherits. From **M1's image** — the shipped `SWB.PRG` plus `gen_image.py`'s seeds, no measured RAM — the boot's own five-call title slice runs on the machine: `load_resource_by_index` asks GEMDOS for `TITLESCR.RAD` **across the file-load seam**, `rad_depack` inflates its 16,620 shipped bytes to 32,128, and `set_palette` puts sixteen words on the chip. Against the shipped binary at `$e556`: **0 of 32000 framebuffer bytes differ and all sixteen pens agree**. The geometry is pinned from the file's own header rather than described, and the Copylock is left UNARMED with the flag and the load's return both asserted (§13) | ✅ `smoke.py title` |
+| **M7** different-picture control | `build.sh titlecredits` aims the same three calls at the game's OTHER shipped picture. Every precondition is asserted normally and only the two picture rows are inverted; the mode refuses to pass if the other picture breaks none of them. Measured: **both** break — 21,581 of 32,000 bytes over 200 scanlines, and fifteen of sixteen pens (pen 0 is black in both) | ✅ `smoke.py titlecredits` |
+| **M7** the two named mutants | the control breaks BOTH picture rows, so it says nothing about either alone. Two mutants do: the depack destination moved one word (**CAUGHT** — geometry red, 21,904 bytes differ, pens untouched) and `set_palette` deleted (**CAUGHT** — `pens_readback_failed = 0xfffe`, pens 1-15 differ, **0 of 32000 framebuffer bytes**). The second is the fail/pass partition, and the two rows are therefore separately breakable (§13) | ✅ both CAUGHT |
 
-**Batch 43 phase F walked the ladder's last rung.** All **sixteen** on-target modes — `m1`, `mono`,
-`novbl`, `m2`, `m2fault`, `m5`, `m5skew`, `m5fault`, `m5flash`, `m6`, `m6rearm`, `m6flash`, **`m3`**,
-**`m3fault`**, `play`, **`runsh`** — are green on **both ROMs**. Every milestone from M1 to M6 now has
+**Batch 44 phase B drew the first picture of the game's own.** The eighteen on-target modes — the
+sixteen below plus **`title`** and **`titlecredits`** (§13) — are green on **both ROMs**. That phase
+also landed the **file-load seam** (the kit's `include/disk.h`), which gives the backend its seventh
+symbol, and it found the seventh on-target bug: the `Super(0)`/`Super(ssp)` round trip had been
+correct by the compiler's stack scheduling and nothing else, under every green mode before it.
+
+**Batch 43 phase F walked the ladder's last rung.** All **sixteen** on-target modes of that batch —
+`m1`, `mono`, `novbl`, `m2`, `m2fault`, `m5`, `m5skew`, `m5fault`, `m5flash`, `m6`, `m6rearm`,
+`m6flash`, **`m3`**, **`m3fault`**, `play`, **`runsh`** — are green on **both ROMs**. Every milestone from M1 to M6 now has
 a control of its own, and the one thing on this page that is still owed is not a rung: it is the boot
 chain outside the spine (§2). §12 has the argument, and the phase's own two findings are in "The bugs
 found on target": an uncapped wait that hung the exit on every key-driven ending, and a launcher
@@ -133,7 +142,9 @@ matter before you start:
 - **You get the first playable stage, mid-game.** `game_main_loop` is entered the way the original
   enters it — `jmp $4a0` with a stage already loaded — and the chain that loads one is unported
   (§2), so there is no title screen, no credits and no attract mode. The stage comes from the
-  ORIGINAL's own post-boot RAM, measured off a real emulated machine.
+  ORIGINAL's own post-boot RAM, measured off a real emulated machine. (The title screen the
+  reconstruction CAN draw is `build.sh title` — §13 — and it is a measurement, not a session: it
+  draws the picture, photographs it and hands the machine back.)
 - **It runs until you close the window,** and that is measured rather than hoped: `smoke.py play`
   boots the same binary headless for 12,000 vblanks and finds it still flipping buffers at the end.
 - **It runs at four to five frames a second** (measured headless: 1,004 frames in 12,000 vblanks
@@ -187,6 +198,10 @@ bash atari/build.sh m5flash && python3 atari/smoke.py m6flash # flip_screen's la
 bash atari/build.sh m2      && python3 atari/smoke.py m3      # M3, THE THREE EXITS + the hand-back
 bash atari/build.sh m3fault && python3 atari/smoke.py m3fault #   ...and its HAND-BACK control
 
+python3 atari/original.py title                             # M7: the SHIPPED title screen at $e556
+bash atari/build.sh title        && python3 atari/smoke.py title        # M7, THE TITLE DRAWN HERE
+bash atari/build.sh titlecredits && python3 atari/smoke.py titlecredits #   ...its PICTURE control
+
 bash atari/build.sh play    && python3 atari/smoke.py play  # the PLAY build, booted headless
 python3 atari/smoke.py runsh                                #   ...and the line run.sh actually execs
 
@@ -238,13 +253,13 @@ reading like a crash and then passes in isolation is this, not a red.**
 
 | file | role |
 |------|------|
-| `wonderboy_backend.c` | **the six kit symbols, made hardware** — plus the three shifter sinks and the freestanding `memset`/`memcpy`/`bzero` this `-nostdlib` link has no libc for (`bzero` is the compiler's own rewrite of `clear_message_buffer`'s 6400-byte clear in `../src/text.c`, and the only libc symbol the cores reach) |
+| `wonderboy_backend.c` | **the seven kit symbols, made hardware** — plus the three shifter sinks and the freestanding `memset`/`memcpy`/`bzero` this `-nostdlib` link has no libc for (`bzero` is the compiler's own rewrite of `clear_message_buffer`'s 6400-byte clear in `../src/text.c`, and the only libc symbol the cores reach) |
 | `wonderboy_main.c` | the shim: stage the image, take the machine, run, hand it back, write `STATS.BIN` |
-| `wonderboy_os.s` | `_start`, the TOS trap wrappers, and the two interrupt entries (`movem` pair + `rte`, and the MFP end-of-interrupt) |
+| `wonderboy_os.s` | `_start`, the TOS trap wrappers, the two interrupt entries (`movem` pair + `rte`, and the MFP end-of-interrupt), and `wb_leave_supervisor` — the way BACK out of supervisor mode, which is not `Super(ssp)` and bug **7** says why |
 | `shim_include/tos.h` | the trap wrappers' prototypes — a short list, because the game issues one trap in its life |
 | `shim_include/wonderboy_target.h` | the two seams the cores name (`../src/game.c`, `../src/stage.c`) |
 | `shim_include/string.h` | a freestanding `<string.h>` — needed by the **kit's** `os.h`, not by the cores; deleting it on the grounds that nothing under `../src/` calls a string function fails the build in fifteen translation units |
-| `original.py` | **the shipped 1989 disks, driven under Hatari to a named anchor** — the post-boot RAM dump M2's image is, the register file and palette that go with it, the mis-anchor and reproducibility measurements, the two boot controls, and the shipped side of the frame differential |
+| `original.py` | **the shipped 1989 disks, driven under Hatari to a named anchor** — the post-boot RAM dump M2's image is, the register file and palette that go with it, the mis-anchor and reproducibility measurements, the two boot controls, the shipped side of the frame differential, and (M7) the title screen at `$e556` |
 | `gen_image.py` | the staged image — and **the honesty line** about what a staged image is not |
 | `tos.ld` / `mkprg.py` | link at base 0, then wrap the ELF into a GEMDOS `.PRG` with a relocation table |
 | `build.sh` | compile + link + wrap + stage `disk/`, and assert the seam actually held |
@@ -265,8 +280,8 @@ The game drives the WD1772, the DMA chip, the MFP, the ACIA and the YM2149 itsel
 dependency the reconstruction has is a **real link-time symbol**, and the seam is simply: leave the
 kit's own C sources out of the link and supply your own.
 
-**THE SURFACE IS A SET, AND IT IS SIX SYMBOLS.** Taken from the union of the sixteen translation
-units' undefined symbols minus the game's own; `nm` on the differential `.so` agrees.
+**THE SURFACE IS A SET, AND IT IS SEVEN SYMBOLS.** Taken from the union of the seventeen
+translation units' undefined symbols minus the game's own; `nm` on the differential `.so` agrees.
 
 | symbol | call sites | on target |
 |---|---|---|
@@ -275,6 +290,7 @@ units' undefined symbols minus the game's own; `nm` on the differential `.so` ag
 | `psg_port_read` | 3 — `../src/game.c`, `../src/sound.c` ×2 | select, then read back through `$ff8800` |
 | `sched_wait8` | 1 (two wait SITES reach it: `$60e`, `$64e`) | an uncapped spin; the ACIA interrupt ends it |
 | `sched_poll16` | 2 — `flip_screen`'s two waits, `$6aa` and `$6d0` | one uncapped iteration; the caller owns the predicate |
+| `disk_read_file` | 1 — `load_resource_by_index` (`$e782`), `../src/boot.c` | GEMDOS `Fopen`/`Fread`/`Fclose`. THE FILE-LOAD SEAM (§13) |
 | `os_refused` | 1 — `../src/sound.c:786` | **not defined**: `-DOS_NO_REFUSAL_TALLY` makes the kit's `os.h` serve an inline identity |
 
 And the complement, because a set is only a claim if its complement is one: `sched_poll8` has **0**
@@ -285,7 +301,7 @@ and the whole TOS trap model have **0** each.
 **`build.sh` asserts the seam rather than describing it**, in both directions: no `g_hw_reset`,
 `g_psg_reset`, `g_sched_reset`, `g_dosound`, `g_os_refusal_reset` or `sched_poll8` may appear in the
 `.PRG` (a kit source leaking into the link would reintroduce the model silently, and the build would
-"verify" against it), and all five of the symbols the backend owes **must**.
+"verify" against it), and all six of the symbols the backend owes **must**.
 
 ### 2. The staged image, and what it is a fabrication of
 
@@ -947,12 +963,134 @@ beginning `Error`" — the exit status says nothing, because `--help` itself exi
 runs that and then adds the control that makes it a check: the SAME argument list with `--sound on`
 put back must be refused, which is the defect that shipped, shown dying.
 
+### 13. The title screen, and what the reconstruction's OWN picture is worth
+
+Every picture before this one in this directory was **inherited**. M2's frame differential is exact
+at four anchors, and every byte the frame loop reads was measured off a real machine — §2 is the
+honest account of why (`game_main_loop` is `jmp`ed into with a stage already loaded, and the chain
+that loads one is unported). A reader is entitled to ask what the reconstruction PRODUCES.
+
+The title screen is the answer, because its whole chain is five calls and all five are reconstructed:
+
+```
+  $e4ea  clear_palette()                                                    ../src/stage.c
+  $e4ee  clear_both_screens()                                               ../src/boot.c
+  $e526  load_resource_by_index(WB_RESOURCE_TITLESCR, WB_RESOURCE_LOAD_BUFFER)   ../src/boot.c
+  $e536  rad_depack(WB_RESOURCE_LOAD_BUFFER -> $6ff80)                      ../src/rad.c
+  $e540  set_palette($6ff84)                                                ../src/stage.c
+```
+
+So `build.sh title` stages **M1's image** — the shipped `SWB.PRG` relocated, plus `gen_image.py`'s
+named seeds, and not one byte of measured RAM — asks the machine for `TITLESCR.RAD`, inflates it and
+sets the palette. `smoke.py title` compares the 32000 bytes at `WB_SCREEN_LOW` and the sixteen pens
+against the SHIPPED binary's own at `$e556` (`original.py title`), which is the instruction the boot
+spins on waiting for the stick, i.e. the first instant after `set_palette` has run.
+
+**Measured: 0 of 32000 bytes differ, and all sixteen pens agree** (`000 777 760 640 532 030 040 167
+333 666 203 754 643 444 700 500`), on both ROMs. It is the first row here whose picture the
+reconstruction drew from the game's own shipped file rather than from a dump of the original.
+
+**THE GEOMETRY IS PINNED, NOT DESCRIBED.** `$6ff80` is the original's own operand (`lea $6ff80.l,a1`
+at `$e530`) and is written as that; what makes it work is asserted from the FILE's own header
+instead — `TITLESCR.RAD` is 16,620 bytes on disk (16,608 packed under a 12-byte header) and
+**32,128 unpacked**, and 32,128 is 128 bytes of header-and-palette prefix plus **exactly one
+screen**, so the inflate ends on `WB_SCREEN_LOW`'s last
+byte and the picture lands straight in the visible buffer. The record carries both lengths as read
+back out of the load buffer, and the row `depack_dest + unpacked == WB_SCREEN_LOW + 32000` is what
+holds the arithmetic. The base is published the way `$f906` publishes it — two immediates, i.e.
+`WB_SCREEN_LOW` — and **not** from `WB_SCREEN_FRONT`, which is the frame loop's pointer and which the
+shipped file carries as `WB_SCREEN_HIGH`: the buffer the picture is *not* in.
+
+**WHERE THE CUT FALLS, because the kit's `include/disk.h` says a project that uses the seam owes its
+reader exactly this.** The boot chain is cut at `$e79c` — `jsr disk_load_file.w`, inside
+`load_resource_by_index` and the ONE edge into the driver on the boot chain. Everything below it is
+excluded: `[$5e3e, $6528)`, `disk_check_signature` through the driver's state block, a WD1772/DMA
+state machine and a FAT12 walk whose effects no memory differential can see. A **second** edge into
+that band exists and is not on the boot chain at all — the level-4 handler's `jsr $6268.l` when the
+idle timer expires (`floppy_deselect_drives`), which this port DOES run and which reaches the YM2149
+rather than the controller. Off target the substitution is the kit's staged-file model; here it is
+GEMDOS, and the difference is that the ORIGINAL issues one `trap` in its whole life while this build
+issues three per load. What is claimed is only that the bytes at `dest` are the file's.
+
+**THE SEAM IS NOT QUITE FREE, AND THE TABLE SAYS SO.** `../src/boot.c` argues that the file-load
+substitution costs no name-building, because the row of `WB_RESOURCE_FILE_TABLE` already holds a
+NUL-padded `NNNNNNNN.EEE` and "the same pointer goes to `Fopen`". That is true of **thirty-eight of
+the forty rows**. It is false of the two whose stem is shorter than eight characters —
+`"CREDITS .RAD"` (row `$01`) and `"SPRITES .CRU"` (row `$26`) — and both are files the boot really
+loads. The padding is correct where the ORIGINAL reads it: `fat_find_dir_entry` compares those twelve
+bytes against a FAT12 directory entry, whose name field the filesystem space-pads. GEMDOS `Fopen`
+takes a PATH, in which a space is an ordinary character. So `wonderboy_backend.c` drops every space
+and nothing else — a DOS 8.3 name cannot contain one — and `smoke.py` stages the drive under names it
+derives from the same table by the same rule, so **the two spellings are pinned to each other by the
+run**: if either were wrong the file staged and the file asked for would differ and the load would
+return `WB_LOAD_DISK_ERROR`.
+
+**THREE DEVIATIONS FROM THE BOOT, and each is a row rather than a paragraph:**
+
+- **The Copylock is NOT armed.** `$e51e` writes `#$ffff` to `WB_COPYLOCK_ARM_FLAG` immediately before
+  this load, and `load_resource_by_index`'s armed arm would report `WB_LOAD_COPYLOCK_RAN` — the
+  port's way of saying "the protection would have run here", since the blob cannot be ported and is
+  not stubbed. The flag is left at the `$0000` the shipped file carries. **This is asserted, not
+  stated**: the record carries the flag as the load found it and the load's own return beside it, and
+  the mode reds if either moves. Nothing on the compared surfaces depends on it — the file is on the
+  disk in the clear and `rad_depack` is the only thing that touches it.
+- **The load runs in USER mode, before the machine is taken**, where the rest of the slice runs in
+  supervisor. That is this directory's standing rule for GEMDOS (handle allocation misbehaves when
+  entered from supervisor under Hatari's GEMDOS drive — a bug this workspace has shipped once), and
+  it costs nothing here because the load touches only image bytes and the two clears the boot
+  performs before it touch a disjoint range.
+- **The sound request at `$e546` is not made.** `move.w #$8,d0 / lea $17adc.l,a0 / jsr (a0)` starts
+  the title music between `set_palette` and the fire wait. It writes no framebuffer byte and no
+  colour register; the surface that could see it is M6's ordered PSG stream, and this build carries
+  none.
+
+**THE CONTROL IS THE GAME'S OTHER PICTURE.** `build.sh titlecredits` compiles `WB_RESOURCE_CREDITS`
+into the same three calls — `CREDITS.RAD` depacks to the same 32,128 bytes into the same buffer, so
+nothing about the run's shape moves and every precondition above is asserted NORMALLY (`m2fault`'s
+rule: a control whose own run is unsound proves nothing, and "the picture differs" is satisfied by a
+run that drew no picture). Only the two picture rows are inverted, and the mode refuses to pass if
+the other picture breaks **none** of them. Measured: **both** break — 21,581 of 32,000 bytes over 200
+scanlines, and fifteen of the sixteen pens (pen 0 is black in both). The index is REPORTED BY THE
+BINARY, for `fault_pen`'s reason: the per-mode `.PRG`s outlive an edit to `build.sh`, so a scrape
+could name a resource the running binary never asked for.
+
+**AND TWO NAMED MUTANTS, because the control breaks BOTH picture rows and so says nothing about
+either one on its own.** Each was applied, built, run and restored:
+
+| mutant | must redden | measured |
+|---|---|---|
+| `TITLE_DEPACK_DEST` + 2 — the inflate lands one word below the visible buffer | the geometry row and the bitplanes; NOT the pens (the palette source is `dest + 4` and moves with it) | **CAUGHT**: geometry red, 21,904 of 32,000 bytes differ, pens still `000 777 760 …` |
+| `set_palette` deleted — the picture is drawn and the chip is left as `clear_palette` left it | the pens, twice (the plumbing row and the differential); NOT the bitplanes | **CAUGHT**: `pens_readback_failed = 0xfffe`, pens 1-15 differ, **0 of 32000 framebuffer bytes** |
+
+The second is the fail/pass partition the control cannot supply: it shows the pens row failing while
+the framebuffer row stays green, so the two surfaces are separately breakable and neither is passing
+because the other is. (Pen 0 survives it because `clear_palette` leaves `$000` and the title's own
+pen 0 is `$000` — the same reason M5 chose pen 3.)
+
+**WHAT THIS IS NOT.** It is not the boot. `$e4e6`'s `video_set_lowres_50hz`, the MFP mask, the vector
+install and everything after the fire wait — the credits screen, the data-disk prompt, the stage
+load, the tile installer, `sprites_cru_install` — are still the shim's or still unported. What it is:
+the first proof on a 68000 that this reconstruction can turn a file on the game's own disk into the
+game's own picture.
+
+**THE NEXT RUNG IS SCOPED AND NOT TAKEN.** The CREDITS screen (`$e562`..`$e5a2`) needs no new port:
+it is this slice again at a different destination — `load_resource_by_index(WB_RESOURCE_CREDITS)`,
+`rad_depack` to `$77f80`, `set_palette($77f84)` — plus `copy_screen($78000 -> $70000)` (`$f938`,
+`../include/boot.h`), `game_restart_reset` (`$fe4a`, `../src/stage.c`, which falls through into the
+life reset and so DRAWS `hud_draw_lives`' three cells over the picture), and one colour write
+(`move.w #$77,$ff8254`, pen 10). Its shipped-side anchor is `$e5aa` — the `clr.b $877.w` immediately
+before the credits fire wait — which is chosen because it collides with none of `boot_script`'s own
+four `:once` breakpoints, and so needs neither `fires=False` nor a hook into their action files. It
+is not built here: a rung is a build, a control, a shipped-side anchor and two ROMs, and half of one
+is worse than none.
+
 ## The bugs found on target
 
-Six, and every one of them is the shape `docs/on-target-execution.md` warns about: real behaviour in
-code the differential harness cannot execute at all. The first four came off the first three runs;
-the last two came off M3, from the two pieces nothing had ever executed — the exit path and the
-runner's own command line.
+Seven, and every one of them is the shape `docs/on-target-execution.md` warns about: real behaviour
+in code the differential harness cannot execute at all. The first four came off the first three runs;
+the next two came off M3, from the two pieces nothing had ever executed — the exit path and the
+runner's own command line; the seventh came off the title build, and it had been latent under every
+green mode before it.
 
 **1. A non-volatile image read in a busy-wait — in the SHIM, one file over from the comment about
 it.** `await_ikbd_reply` spun on `game_image[WB_KEY_LAST_SCANCODE]`. `game_image` is a plain array to
@@ -995,8 +1133,36 @@ Thirteen green headless modes and a launcher that died at argument parsing, beca
 one command that is not `run_hatari`'s. §12 has the probe and its control. *Lesson: a command with no
 check is not covered by the checks next to it, however many of those are green.*
 
+**7. THE RETURN FROM SUPERVISOR MODE WAS WORKING BY COINCIDENCE**, and the coincidence was the
+compiler's stack scheduling. `Super(0)` / `Super(ssp)` is the standard TOS round trip and this shim
+had used it since M1. TOS goes back to user mode by loading `%a7` from the USER stack pointer — and
+the USP it uses is the one FROZEN when `Super(0)` was called; **measured on TOS 1.04, it does not
+set the USP from the supervisor stack on the way out**. So `Super(ssp)` returns onto the stack
+position the FIRST call stood at, and the wrapper's own unwind (`addq #6` / `movem` / `rts`) reads
+from there. That is right only while the compiler leaves `%sp` at the same depth at both call sites,
+and m68k GCC does not promise it: it DEFERS argument pops and combines them, so an edit anywhere
+between the two calls can move one of them.
+
+The title slice is such an edit. With its load ahead of `Super(0)`, `%sp` at the second call sat 12
+bytes above the first — `USP 003f7f52` against `ISP 003f7f5e`, read out of the debugger at the trap —
+the `rts` popped stale stack and the program died reading `$26520020`. The M1 build's two calls are
+at the same depth (`USP 003f7fa2` == `ISP 003f7fa2`) and had been surviving on that.
+
+The fix is `wonderboy_os.s`'s `wb_leave_supervisor`, which sets the USER stack pointer to the
+supervisor stack it is standing on **one instruction before the trap**, so the return no longer
+depends on where either call was made. *Lesson: the failure looked like a defect in the new code and
+was a defect in the oldest code in the file — and its symptom was a machine that had already passed
+every read-back, torn the machine down cleanly, and then died on the way out with no record. Sixteen
+green modes had been one compiler decision away from it.*
+
 ## Known gaps
 
+- **The file load is a DECLARED SUBSTITUTION and on target it is the OPERATING SYSTEM.** §13 has the
+  cut and its two edges. What no check here can see: the original reads its resources by driving the
+  WD1772 and walking FAT12 itself, and this build asks GEMDOS. Sector order, retries, the disk's own
+  protection outside the Copylock, and the interactive retry on a read error (`WB_LOAD_ERROR_WAIT` —
+  `../src/boot.c` declines to model the spin) are all outside every surface this directory has. The
+  framebuffer compare says the BYTES arrived; it says nothing about how.
 - **`bus.h`'s out-of-image answer is an ORACLE'S answer FOR MOST ADDRESSES, compiled into the `.PRG`
   and UNPINNED here.** A read outside the game's 1 MB returns zero and a write there is dropped.
   Off-image that matches the shim on everything **except the seven hardware addresses `../include/

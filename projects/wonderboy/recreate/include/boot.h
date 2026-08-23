@@ -38,4 +38,36 @@ uint32_t sprite_cru_copy_20w(uint8_t *image, uint32_t src, uint32_t dst, uint16_
  * caller's `bsr.w` at $e6e8 spends no register, so both codes are out of band. */
 uint32_t sprites_cru_install(uint8_t *image);
 
+/* $e782: the single entry point for all disk loading. Turn `index` into its row of
+ * WB_RESOURCE_FILE_TABLE, hand that name and `dest` ACROSS THE DISK SEAM (see wonderboy.h), and on
+ * the first load of the boot run the Copylock. Returns WB_LOAD_OK, WB_LOAD_COPYLOCK_RAN or
+ * WB_LOAD_DISK_ERROR — all three out of band, because the original leaves d0 holding the seam's own
+ * return and no caller reads it. */
+uint32_t load_resource_by_index(uint8_t *image, uint32_t index, uint32_t dest);
+
+/* $e768: raise or clear WB_ACTOR_FLAG_SIDE_BIT on one record, from WB_STAGE_SIDE_FLAG. */
+void actor_apply_stage_side(uint8_t *image, uint32_t record);
+
+/* $e710: empty all three actor tables and give the two followed records the stage's entry shape. */
+void stage_actors_init(uint8_t *image);
+
+/* THE PER-STAGE DISPATCHER AT $e5ba, IN THE THREE PIECES ITS OWN `bsr` CUTS IT INTO. The original is
+ * one straight-line block with `bsr load_resource_by_index` in the middle of it, and what survives
+ * that call is the ROW POINTER in a0 — which is the whole reason load_resource_by_index opens with
+ * `move.l a0,-(a7)`. Each piece is entered and diffed on its own; src/boot.c says where the cuts
+ * fall and what the caller owes. */
+
+/* $e5ba..$e5f2: clear WB_ACTOR_PLATFORM_RIDDEN, take WB_LEVEL_SEQ_INDEX's row and step the index
+ * past it, and publish WB_STAGE_SECOND_LOAD_FLAG. Returns the row's address. */
+uint32_t stage_sequence_advance(uint8_t *image);
+
+/* $e5d8..$e5dc: `moveq #0,d0 / move.b (a0),d0 / addq.b #2,d0` — the row's overlay ordinal turned
+ * into a WB_RESOURCE_FILE_TABLE index. A BYTE add, so an ordinal of $fe wraps to 0 (TITLESCR) rather
+ * than naming a row past the table's end. */
+uint32_t stage_sequence_resource(uint8_t *image, uint32_t row);
+
+/* $e5fe..$e622: the two stores that follow the load — WB_STAGE_SIDE_FLAG from the row's side byte,
+ * and WB_STAGE_NUMBER from its stage byte. */
+void stage_sequence_apply_row(uint8_t *image, uint32_t row);
+
 #endif /* WONDERBOY_BOOT_H */

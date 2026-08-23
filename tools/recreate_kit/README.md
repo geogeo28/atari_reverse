@@ -81,6 +81,16 @@ candidate has to mirror by hand — everything else the trap model touches is pl
 `$ff8800`/`$ff8802` PSG write stream and the register contents a read of that port returns, which are
 the next group. See [`TRAP_MODEL.md`](TRAP_MODEL.md).
 
+### The file-load seam (`disk_read_file`)
+
+A game whose boot chain ends in a raw floppy controller cuts it at the lowest FILE-SHAPED routine and
+calls `disk_read_file` (`include/disk.h`) across the cut. `src/disk.c` supplies it off target, over
+`os_fopen`/`os_fread`/`os_fclose`; an on-target build defines its own with the real GEMDOS traps and
+does not compile this file, exactly as it does not compile `src/hw.c`. It exports NO ledger — every
+byte of the staged-file model lives in the image, so the ordinary diff already compares it. See
+[`TRAP_MODEL.md`](TRAP_MODEL.md)'s Phase 9 for the boundary discipline the seam obliges, and
+`projects/wonderboy/recreate/STATUS.md`'s batch 44 phase B for the first game to use it.
+
 The harness still treats the group as *optional* at import (it probes the three accessors once), so
 a candidate built outside `kit.mk` keeps working: it is then served without the ledger while the
 oracle issues no `Dosound` at all, and `differential()` fails with that diagnostic the moment one

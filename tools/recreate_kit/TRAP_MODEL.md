@@ -1395,7 +1395,11 @@ closed for itself and it is recorded here as one.
 Everything the model reads or writes in the image is shared by construction — a reconstruction that
 calls `os_bconstat`/`os_bconin`/`os_crawio`/`os_giaccess`/`os_random`/`os_fopen`/`os_fcreate`/
 `os_fread`/`os_fwrite`/`os_fclose` from `include/os.h` agrees with the oracle byte for byte and has
-nothing to mirror by hand. Two things are **not** in the image and must be matched explicitly:
+nothing to mirror by hand. The table below is what is left: five rows of state the model keeps
+OUTSIDE the image, which a candidate must mirror explicitly, and one — the file-load seam — that is
+not off-image state at all but a symbol the candidate has to supply. (This sentence read "two
+things" while the table had four such rows, which is how long a count in prose survives without a
+case.)
 
 | what | where the oracle keeps it | what the candidate must do |
 | --- | --- | --- |
@@ -1403,8 +1407,8 @@ nothing to mirror by hand. Two things are **not** in the image and must be match
 | direct `$ff8800`/`$ff8802` PSG accesses, **reads included** | `shim.c`'s `g_psg_kind`/`g_psg_reg`/`g_psg_val` ledger | emit the same ordered `(kind, reg, val)` stream — call `psg_port_write()` / `psg_port_read()` from `psg.h` (BuggyBoy predates it and emits through `g_REFRESH` out-params instead) |
 | the YM2149's register contents, which a read-back returns | `shim.c`'s `g_psg_file` + its known mask | `psg_port_read()`/`psg_port_write()` keep the same file; `harness.differential` compares it, and the case seeds both sides with `psg_seed=` (Phase 6) |
 | reads of the modeled hardware bytes `$fffa01`, `$ff820a`, `$ff8207`, `$ff8209` | `shim.c`'s `g_hw_log_slot`/`g_hw_log_val` ledger + `g_hw_file` | emit the same ordered `(slot, val)` stream — call `hw_read8()` from `hw.h` with an `OS_HW_*` constant; the case declares both sides' bytes with `hw_seed=` (Phase 7). A VOLATILE one (`$ff8207`/`$ff8209`) may be read at most ONCE per run: a second read is refused, and the remedy is the case's shape — end it before the second read, or split it into two runs |
-
 | a memory byte an EXTERNAL AGENT writes while the run is in flight (an interrupt storing a scancode) | `shim.c`'s `g_sched` list, applied by arrival count per declared WAIT SITE | poll the byte through `sched_poll8()`/`sched_poll16()` from `sched.h`, once per wait iteration, NAMING the site (the original compare's PC); the case declares the store with `schedule=` and the sites with `wait_sites=` (Phase 8), and `harness.differential` compares the candidate's polls against the oracle's arrivals SITE BY SITE |
+| the FILE-LOAD SEAM (Phase 9) | nothing — the substitution is in the image | define `disk_read_file` (`disk.h`). Off target `src/disk.c` supplies it; an ON-TARGET build must define its own, and the project's build should require the symbol so a core calling it cannot silently link the model |
 
 `OS_SUPER_TOKEN` is not off-image state but it is still a shared value: a reconstruction of a
 function that calls `Super` must return the same constant, since the program can store it into the
@@ -1456,6 +1460,56 @@ must read the oracle's final image, not its write set (`test_input.py::_oracle_f
 `harness.differential(poison=True)` poisons exactly the oracle's write set, so a byte only the
 *model* wrote is never canaried: a candidate that omits it can still pass the attribution check by
 landing on a value the input image already held.
+
+## Phase 9 — the FILE-LOAD SEAM (`disk_read_file`), for a game that loads from floppy
+
+**Added by Wonder Boy's batch 44 phase B, and kit-wide rather than that game's.** It is not a trap:
+it is a named CUT in a reconstruction, sitting on top of the file traps Phase 4's neighbours already
+model, and it exists so that a boot chain ending in a raw disk controller can be ported at all.
+
+**The problem.** A game that loads from floppy reaches its files through a WD1772/DMA state machine
+and whatever on-disk filesystem the publisher used. Every effect of that code is hardware, so the
+memory differential can see none of it — and a kit that modelled the controller would be modelling a
+chip in order to verify code nobody wants to read. Wonder Boy's is 1,644 bytes over 26 routines.
+
+**The cut.** Find the LOWEST routine of the chain whose inputs are FILE-SHAPED — a name and a
+destination — rather than sector-shaped, declare everything it reaches an excluded boundary with its
+edges enumerated, and call `disk_read_file` across the cut:
+
+```c
+int32_t disk_read_file(uint8_t *mem, uint32_t name_ptr, uint32_t dest);  /* include/disk.h */
+```
+
+`DISK_READ_OK` (0) or `DISK_READ_FAILED` (-1) — the SEAM'S CONTRACT and deliberately not a byte
+count, because the routine being substituted for reports success and failure and a caller that
+tested a length would be testing something the original never handed it. There is no length
+argument either: both sides ask for more than any file holds and are served what there is, which is
+what GEMDOS `Fread` does on the machine and what `os_fread` does here.
+
+**Modeled**: `src/disk.c`, over `os_fopen`/`os_fread`/`os_fclose`. Off target only, exactly like
+`src/hw.c` — an on-target build issues the real traps and the project's backend defines the symbol.
+It is a REAL symbol and deliberately not a `static inline` in `os.h`: an inline would compile into
+the `.PRG` with nothing for a linker scan to catch, which is the false-green class the on-target
+seam checks exist to refuse.
+
+**No ledger, and that is a decision.** `src/hw.c` and `src/psg.c` export ordered streams because
+what they model is OFF-IMAGE. This is the opposite: the staged-file table, every cursor, every open
+flag and every byte served live INSIDE the image, so a candidate that opened the wrong file, read
+the wrong count or forgot to close is separable from a correct one by the ordinary byte diff. A
+ledger here would compare the model against itself.
+
+**What makes the substitution checkable rather than merely declared.** A case pokes the SAME
+substitution into the oracle, hand-assembled as GEMDOS traps over the original's own seam routine.
+Both sides then go through this model and the byte diff holds the C statement and the 68000 one
+equal. Wonder Boy's `test_boot.py` (`SEAM_STUB`) is the worked example, and it decodes its own stub
+rather than trusting the comment beside it.
+
+**Not captured**, and it is the one gap worth naming: **the model cannot say "the disk said no".**
+`os_fopen`/`os_fread` have exactly two answers, served and refused, and a refusal sets `g_unmodeled`
+so `emu.run` raises before any comparison. That is right — it is what stops a loader reading an
+unstaged file from being falsely verified — but it means a caller's ERROR arm has no differential
+available to it and must be driven candidate-only. The remedy, unbuilt: a staged name declared
+PRESENT BUT UNREADABLE, which is the third answer the two-valued model lacks.
 
 ## Still unmodeled (an honest raise is the right answer)
 

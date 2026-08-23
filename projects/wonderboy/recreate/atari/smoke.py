@@ -26,6 +26,10 @@
     bash atari/build.sh m2      && python3 atari/smoke.py m3        # M3: THE THREE EXITS, DRIVEN
     bash atari/build.sh m3fault && python3 atari/smoke.py m3fault   # ...its HAND-BACK control
 
+    python3 atari/original.py title                                 # the SHIPPED title screen
+    bash atari/build.sh title        && python3 atari/smoke.py title        # THE TITLE, DRAWN HERE
+    bash atari/build.sh titlecredits && python3 atari/smoke.py titlecredits # ...its PICTURE control
+
     bash atari/build.sh play  && python3 atari/smoke.py play        # the PLAY build, booted headless
     python3 atari/smoke.py runsh                                    # ...and the line run.sh execs
     bash atari/run.sh                                               # ...and played, with a screen
@@ -191,19 +195,24 @@ def gen_image_constant(name):
     return int(found.group(1), 0)
 
 
-def staged(name, width=4):
-    """A named image word, read out of the staged image the .PRG actually loaded.
+def staged_block(addr, length, what):
+    """`length` bytes at Ghidra address `addr`, out of the staged image the .PRG actually loaded.
 
     Not written down here and not taken from the .PRG's own report: these are the very bytes the
     reconstruction ran on. WB_STAGED_AT comes from project.toml for build.sh's reason — that file is
-    where the 0x3f8 load base is argued for."""
+    where the 0x3f8 load base is argued for. `what` names the caller's subject in the failure."""
     base = int(re.search(r"^load_base\s*=\s*(0x[0-9a-fA-F]+)",
                          (REC / "project.toml").read_text(), re.M).group(1), 16)
-    at = wb(name) - base
+    at = addr - base
     blob = (DISK / "WB.IMG").read_bytes()
-    if not 0 <= at or at + width > len(blob):
-        raise SystemExit(f"WB_{name} is outside the staged block — cannot read it back")
-    return int.from_bytes(blob[at:at + width], "big")
+    if not 0 <= at or at + length > len(blob):
+        raise SystemExit(f"{what} is outside the staged block — cannot read it back")
+    return blob[at:at + length]
+
+
+def staged(name, width=4):
+    """A named image word, read out of the staged image."""
+    return int.from_bytes(staged_block(wb(name), width, f"WB_{name}"), "big")
 
 
 def staged_screen_front():
@@ -242,6 +251,55 @@ FAULT_PC_RE = original.FAULT_PC_RE
 HATARI_BANNER_RE = original.HATARI_BANNER_RE
 
 
+# ---- the resources the drive stands in for -------------------------------------------------------
+#
+# THE TITLE BUILD ASKS THE MACHINE FOR A FILE BY NAME, so the drive has to carry the file. Disk 1
+# holds exactly two resources — TITLESCR.RAD and CREDITS.RAD, beside AUTO/SWB.PRG — and both title
+# builds get both, because which one a `.PRG` will ask for is compiled into it and only reported
+# afterwards. Staging the pair is what makes the mode and its control boot the same drive.
+RESOURCE_ROW_BYTES = 1 << wb("RESOURCE_FILE_ROW_SHIFT")
+RESOURCE_FILE_COUNT = wb("RESOURCE_FILE_COUNT")
+DISK1_RESOURCES = (wb("RESOURCE_TITLESCR"), wb("RESOURCE_CREDITS"))
+# What FAT pads a short 8.3 field with, and what a GEMDOS path must not carry. See `resource_name`.
+FAT_PAD = b" "
+
+
+def resource_name(index):
+    """Row `index` of WB_RESOURCE_FILE_TABLE as a GEMDOS path, out of the staged image itself.
+
+    THE PADDING IS DROPPED HERE FOR THE REASON THE BACKEND DROPS IT. The row is a FAT12 directory
+    entry's name field — space-padded to eight characters, which two of the forty rows really are
+    ("CREDITS .RAD", "SPRITES .CRU") — and GEMDOS `Fopen` takes a path, in which a space is an
+    ordinary character. wonderboy_backend.c's `gemdos_name` performs exactly this translation on the
+    machine, and the two spellings are PINNED TO EACH OTHER BY THE RUN rather than by inspection: if
+    either of them were wrong the file staged here and the file the .PRG asks for would differ, the
+    load would return WB_LOAD_DISK_ERROR, and the mode's first row would be red.
+
+    Read out of the image the .PRG loaded rather than written down, so the two sides cannot name
+    different files, and so the shipped table stays the single source of what a resource is called.
+    """
+    # A NUMBER THE BINARY REPORTED IS NOT A ROW UNTIL IT IS CHECKED. `title_checks` prints this
+    # name inside the very row that asserts the index, so an out-of-range one has to come back as
+    # text rather than as a read past the staged block — a traceback there would throw away the
+    # whole report, and the boot that paid for it, exactly as an unguarded capture read once did.
+    if index >= RESOURCE_FILE_COUNT:
+        return f"<row {index:#x}, past the {RESOURCE_FILE_COUNT}-row table>"
+    row = staged_block(wb("RESOURCE_FILE_TABLE") + index * RESOURCE_ROW_BYTES,
+                       RESOURCE_ROW_BYTES, f"WB_RESOURCE_FILE_TABLE row {index}")
+    return row.split(b"\0")[0].replace(FAT_PAD, b"").decode("ascii")
+
+
+def stage_resources():
+    """Copy disk 1's two .RAD resources onto the emulated drive, under the names the table gives."""
+    for index in DISK1_RESOURCES:
+        name = resource_name(index)
+        shipped = original.BIN / "disk1" / name
+        if not shipped.exists():
+            raise SystemExit(f"{shipped} is missing — WB_RESOURCE_FILE_TABLE row {index} names it "
+                             f"and the title build asks the machine for it by that name")
+        (DISK / name).write_bytes(shipped.read_bytes())
+
+
 def stage_drive(prg):
     """Put the .PRG on the drive TOGETHER WITH THE IMAGE IT WAS BUILT AGAINST.
 
@@ -253,9 +311,15 @@ def stage_drive(prg):
     # EVERY output the program can write is deleted first. A stale FRAME.BIN from the previous build
     # is the shape of failure that PASSES: the run crashes, the comparison reads yesterday's picture,
     # and the mode reports a match.
-    for stale in (STATS_FILE, M2_FILE, M2_FRAME_FILE, M2_PENS_FILE,
+    for stale in (STATS_FILE, M2_FILE, TITLE_FILE, M2_FRAME_FILE, M2_PENS_FILE,
                   M3_RESCUED_M2, M3_RESCUED_STATS):
         (DISK / stale).unlink(missing_ok=True)
+    # ...AND EVERY RESOURCE, by extension rather than by name. A `.RAD` this mode did not stage is
+    # one the PREVIOUS mode did, and a title build asks the machine for its file BY NAME — so a
+    # leftover is a picture from another run that the depack would happily inflate. The names come
+    # out of the image below, which is not written yet, so the sweep keys on what they all are.
+    for stale in DISK.glob("*.RAD"):
+        stale.unlink()
     (DISK / DRIVE_PRG).write_bytes(Path(prg).read_bytes())
     image = prg.with_suffix(".IMG")
     if not image.exists():
@@ -274,6 +338,11 @@ def stage_drive(prg):
             raise SystemExit(f"{pens} is missing — the frame build stages the original's sixteen "
                              f"pens beside its image; rebuild with `bash atari/build.sh m2`")
         (DISK / "PENS.IMG").write_bytes(pens.read_bytes())
+    # THE TITLE BUILDS GET DISK 1's RESOURCES, and keyed on the BUILD for the reason the palette is:
+    # a build that reached the drive without them would report WB_LOAD_DISK_ERROR, which reads like
+    # a defect in the reconstruction rather than a missing fixture.
+    if prg.name in TITLE_PRGS:
+        stage_resources()
 
 
 # WHAT BOOTS, AND ON WHAT MACHINE — one spelling each, because `run.sh` needs the same answers and a
@@ -410,7 +479,7 @@ M2_MAGIC = c_constant("M2_MAGIC")  # 'WBA2'
 # dimensions and the pen count are `../include/wonderboy.h`'s, which test/layout.py scrapes and
 # wonderboy_main.c `#include`s; the pen mask and the loop's normal return are the shim's and
 # `../include/game.h`'s. CLAUDE.md §5: one canonical definition, the other pinned to it.
-SCREEN_BYTES = wb("SCREEN_LINE") * wb("SCREEN_SCANLINES")
+SCREEN_BYTES = original.SCREEN_BYTES
 PALETTE_PENS = original.PALETTE_PENS
 PALETTE_BYTES = original.PALETTE_BYTES
 ST_PEN_MASK = original.ST_PEN_MASK
@@ -885,6 +954,256 @@ def shiftable_pairs(anchors, shift, prefix=""):
         if pen_words(my_pens) != pen_words(their_pens):
             keys.add((PENS, frame, against))
     return keys
+
+
+# ---- the TITLE: the first picture the reconstruction DRAWS ----------------------------------------
+#
+# WHAT THIS CLAIMS, and it is a different kind of claim from M2's. M2 runs reconstructed code over
+# the ORIGINAL's post-boot RAM, because the chain that produces that RAM is unported; every byte the
+# frame loop reads was measured off a real machine. The title screen needs none of that: its whole
+# chain is five calls, all reconstructed, and this mode starts from the PROGRAM IMAGE — the same
+# bytes `smoke.py m1` stages, the shipped file plus gen_image.py's named seeds — asks the machine
+# for TITLESCR.RAD across the file-load seam, inflates it and sets the palette. What is compared is
+# the 32000 bytes at WB_SCREEN_LOW and the sixteen pens, against the SHIPPED binary's own at $e556.
+#
+# So this is the first row in this directory where the picture is the reconstruction's product
+# rather than its inheritance, and the first time a reconstructed routine asks the machine for a
+# file. atari/README.md §13 has the three deviations from the boot that make it possible.
+TITLE_FILE = "TITLE.BIN"
+TITLE_FORMAT = ">14I"
+TITLE_FIELDS = ("magic", "bytes", "image_base", "resource_index", "copylock_arm_flag",
+                "load_result", "packed_bytes", "unpacked_bytes", "depack_result", "depack_dest",
+                "captured_at", "screen_base_published", "shifter_base", "pens_readback_failed")
+TITLE_MAGIC = c_constant("TITLE_MAGIC")  # 'WBA3'
+
+# The boot's own answers, from the headers that define them (test/layout.py), so this file and the
+# reconstruction cannot disagree about what "the load worked" or "the depack failed" mean.
+LOAD_OK = wb("LOAD_OK")
+RAD_BAD_CHECKSUM = wb("RAD_BAD_CHECKSUM")
+RESOURCE_LOAD_BUFFER = wb("RESOURCE_LOAD_BUFFER")
+SCREEN_LOW = original.WB_SCREEN_LOW
+# The Copylock arm flag as this build must leave it. $e51e writes $ffff here before the shipped
+# load; the reconstruction does not arm it, so `load_resource_by_index` takes its unarmed arm.
+COPYLOCK_UNARMED = 0
+NO_PENS_FAILED = 0
+
+
+def rad_constant(name):
+    """One plain-integer `#define RAD_*` out of ../include/rad.h.
+
+    ../test/layout.py scrapes nine headers and every name it takes is `WB_`-prefixed; the depacker's
+    FILE FORMAT constants are `RAD_`-prefixed and live in a tenth. Rather than widen that module for
+    one caller, this reads the three header offsets the check below needs, by the same rule: a
+    missing or non-literal define raises instead of defaulting."""
+    found = re.search(r"^#define\s+%s\s+(0[xX][0-9a-fA-F]+|\d+)u?\b" % name,
+                      (REC / "include" / "rad.h").read_text(), re.M)
+    if not found:
+        raise SystemExit(f"{name} is not a plain-integer #define in ../include/rad.h")
+    return int(found.group(1), 0)
+
+
+RAD_HDR_PACKED_OFF = rad_constant("RAD_HDR_PACKED_OFF")
+RAD_HDR_UNPACKED_OFF = rad_constant("RAD_HDR_UNPACKED_OFF")
+RAD_HDR_LEN = rad_constant("RAD_HDR_LEN")
+
+
+def read_title(name=TITLE_FILE):
+    """The title build's record, or a failure that says which half of the run did not happen."""
+    path = DISK / name
+    if not path.exists():
+        return None, f"no {name} — the title build never reached its own dump"
+    blob = path.read_bytes()
+    want = struct.calcsize(TITLE_FORMAT)
+    if len(blob) != want:
+        return None, f"{name} is {len(blob)} bytes, expected {want}"
+    record = dict(zip(TITLE_FIELDS, struct.unpack(TITLE_FORMAT, blob)))
+    if record["magic"] != TITLE_MAGIC:
+        return None, f"{name} magic {record['magic']:#x} != {TITLE_MAGIC:#x}"
+    if record["bytes"] != want:
+        return None, f"{name} says {record['bytes']} bytes, this parser expects {want}"
+    return record, None
+
+
+def rad_header(index):
+    """(packed, unpacked, filesize) of the SHIPPED .RAD file row `index` names, off the host disk.
+
+    The two lengths the .PRG reports are read out of its own load buffer, i.e. out of bytes GEMDOS
+    put there; these are the same two fields in the file as it sits in ../bin/disk1. Comparing them
+    is what says the seam moved THE FILE and not merely something."""
+    shipped = (original.BIN / "disk1" / resource_name(index)).read_bytes()
+    return (int.from_bytes(shipped[RAD_HDR_PACKED_OFF:RAD_HDR_PACKED_OFF + 4], "big"),
+            int.from_bytes(shipped[RAD_HDR_UNPACKED_OFF:RAD_HDR_UNPACKED_OFF + 4], "big"),
+            len(shipped))
+
+
+def shipped_title():
+    """The shipped binary's title screen and pens, as `original.py title` left them."""
+    names = (original.TITLE_SCREEN_FILE, original.TITLE_PENS_FILE)
+    missing = [name for name in names if not (original.BUILD / name).exists()]
+    if missing:
+        raise SystemExit(f"{', '.join(missing)} is missing — run `python3 atari/original.py title`")
+    return tuple((original.BUILD / name).read_bytes() for name in names)
+
+
+def title_checks(record, stats, want_resource):
+    """The title differential, as `(name, ok, detail, key)` rows.
+
+    `key` is `None` for a precondition and the SURFACE for a comparison row, which is what lets the
+    control invert exactly the two rows a different picture can break and assert the rest normally —
+    `m2_checks`' structural key, with one anchor instead of four so the pair alone is the key."""
+    checks = []
+
+    def add(name, ok, detail, key=None):
+        checks.append((name, bool(ok), detail, key))
+
+    for name, ok, detail in readback_checks(stats):
+        add(name, ok, detail)
+
+    # WHICH BINARY IS RUNNING, asserted before anything it reports is believed. The per-mode `.PRG`s
+    # persist across edits to build.sh, so the mode's whole verdict rests on this row: `titlecredits`
+    # reporting WB_RESOURCE_TITLESCR would be the control silently running the thing it controls.
+    add("this build asked for the resource the mode names",
+        record["resource_index"] == want_resource,
+        f"resource_index={record['resource_index']:#x} "
+        f"({resource_name(record['resource_index'])}), the mode expects "
+        f"{want_resource:#x} ({resource_name(want_resource)})")
+    # THE HONESTY NOTE, MADE CHECKABLE. $e51e arms the Copylock immediately before the shipped load
+    # and this build does not, so the flag must be as the .PRG ships it and the load must have taken
+    # its unarmed arm. A run that reported WB_LOAD_COPYLOCK_RAN would be claiming the protection had
+    # a part in this picture, which is the one thing this port cannot say.
+    add("the Copylock was not armed, and the load says so",
+        record["copylock_arm_flag"] == COPYLOCK_UNARMED and record["load_result"] == LOAD_OK,
+        f"WB_COPYLOCK_ARM_FLAG={record['copylock_arm_flag']:#06x}, load_resource_by_index returned "
+        f"{record['load_result']} (WB_LOAD_OK={LOAD_OK})")
+
+    # THE SHIPPED SIDE IS CHOSEN BY THE MODE, not by the number the binary reported. Which file
+    # this run was supposed to load is the mode's own fact and is asserted a row above; taking the
+    # reference from the record instead would let a build that loaded the wrong resource compare
+    # itself against the wrong resource and agree.
+    packed, unpacked, filesize = rad_header(want_resource)
+    add("the file the machine served is the file on the disk",
+        record["packed_bytes"] == packed and record["unpacked_bytes"] == unpacked
+        and packed + RAD_HDR_LEN == filesize,
+        f"the buffer at {RESOURCE_LOAD_BUFFER:#x} holds a header saying "
+        f"{record['packed_bytes']}/{record['unpacked_bytes']} packed/unpacked; the shipped "
+        f"{resource_name(want_resource)} is {filesize} bytes and says {packed}/{unpacked}")
+    add("the depack ran to a clean checksum", record["depack_result"] != RAD_BAD_CHECKSUM,
+        f"rad_depack returned {record['depack_result']:#x} "
+        f"(WB_RAD_BAD_CHECKSUM={RAD_BAD_CHECKSUM:#x})")
+    # THE GEOMETRY, PINNED RATHER THAN DESCRIBED. TITLE_DEPACK_DEST is the original's own operand
+    # ($e530's `lea $6ff80.l,a1`) and what makes it work is that the depacked file is a prefix plus
+    # exactly one screen — so the inflate ENDS on the visible buffer's last byte. Asserted from the
+    # file's own header, so a resource of a different shape reds here instead of drawing off-screen.
+    add("the picture is inflated onto the visible buffer",
+        record["depack_dest"] + record["unpacked_bytes"] == SCREEN_LOW + SCREEN_BYTES
+        and record["captured_at"] == SCREEN_LOW,
+        f"depacked {record['unpacked_bytes']} bytes to {record['depack_dest']:#x}, i.e. "
+        f"[{record['depack_dest']:#x},{record['depack_dest'] + record['unpacked_bytes']:#x}); "
+        f"WB_SCREEN_LOW is [{SCREEN_LOW:#x},{SCREEN_LOW + SCREEN_BYTES:#x}) and the capture was "
+        f"taken at {record['captured_at']:#x}")
+    want_base = record["image_base"] + SCREEN_LOW
+    add("the shifter displays the buffer the depack filled",
+        record["shifter_base"] == want_base and record["screen_base_published"] == want_base,
+        f"$ffff8201/8203 read back {record['shifter_base']:#x}, the backend wrote "
+        f"{record['screen_base_published']:#x}, the image is at {record['image_base']:#x} so "
+        f"WB_SCREEN_LOW is at {want_base:#x}")
+    add("set_palette reached the chip", record["pens_readback_failed"] == NO_PENS_FAILED,
+        f"pens that did not read back as the depacked prefix's own words: "
+        f"{record['pens_readback_failed']:#06x}")
+
+    missing = [name for name in (M2_FRAME_FILE, M2_PENS_FILE) if not (DISK / name).exists()]
+    if missing:
+        add("the captures were written", False,
+            f"{', '.join(missing)} absent although {TITLE_FILE} was written — the run reached its "
+            f"own dump, so this is the capture write failing rather than the program dying")
+        return checks
+    ours = (DISK / M2_FRAME_FILE).read_bytes()
+    our_pens = (DISK / M2_PENS_FILE).read_bytes()
+    if len(ours) != SCREEN_BYTES or len(our_pens) != PALETTE_BYTES:
+        add("the capture is the right size", False,
+            f"{len(ours)} frame bytes and {len(our_pens)} pen bytes, expected {SCREEN_BYTES} "
+            f"and {PALETTE_BYTES}")
+        return checks
+
+    theirs, their_pens = shipped_title()
+    wrong = [] if ours == theirs else [at for at in range(SCREEN_BYTES) if ours[at] != theirs[at]]
+    rows = sorted({at // wb("SCREEN_LINE") for at in wrong})
+    add("the title screen's bitplanes", not wrong,
+        f"{len(wrong)} of {SCREEN_BYTES} bytes differ over {len(rows)} scanlines"
+        + (f" {rows[:8]}" if rows else ""), BITPLANES)
+    mine_pens, shipped_pens = pen_words(our_pens), pen_words(their_pens)
+    wrong_pens = [pen for pen in range(PALETTE_PENS) if mine_pens[pen] != shipped_pens[pen]]
+    add("the title screen's pens", not wrong_pens,
+        f"pens {wrong_pens} differ" if wrong_pens
+        else " ".join("%03x" % pen for pen in mine_pens), PENS)
+    return checks
+
+
+TITLE_MODE, TITLE_CONTROL_MODE = "title", "titlecredits"
+# WHICH RESOURCE EACH MODE'S BINARY MUST HAVE ASKED FOR. The control's whole content is that it is a
+# DIFFERENT picture through the same code, so the pair is asserted to be a pair — a control compiled
+# with the same index as the mode would pass its inversion only by being broken some other way.
+TITLE_RESOURCE_FOR_MODE = {TITLE_MODE: wb("RESOURCE_TITLESCR"),
+                           TITLE_CONTROL_MODE: wb("RESOURCE_CREDITS")}
+assert TITLE_RESOURCE_FOR_MODE[TITLE_MODE] != TITLE_RESOURCE_FOR_MODE[TITLE_CONTROL_MODE], (
+    "the title control depacks the same resource as the mode it controls, so it cannot fail")
+# The mode and its control boot DIFFERENT binaries — the control's difference IS a compiled-in
+# resource index — unlike `m2`/`m2fault`, whose control is a shift applied on this side.
+TITLE_BUILDS = {mode: f"WB-{mode}.PRG" for mode in TITLE_RESOURCE_FOR_MODE}
+# ...and which .PRG names `stage_drive` must put disk 1's resources beside, as a set, for the same
+# reason FRAME_BUILDS is one: the test there is on the BINARY, not on the mode that booted it.
+TITLE_PRGS = frozenset(TITLE_BUILDS.values())
+
+
+def mode_title(problems, mode):
+    """The title differential, and its DIFFERENT-PICTURE control."""
+    control = mode == TITLE_CONTROL_MODE
+    record, why = read_title()
+    stats, stats_why = read_stats()
+    for missing in (why, stats_why):
+        if missing:
+            problems.append(missing)
+    if record is None or stats is None:
+        report(mode, [])
+        raise SystemExit("FAIL: " + "; ".join(problems))
+
+    checks = title_checks(record, stats, TITLE_RESOURCE_FOR_MODE[mode])
+    report(f"{mode} (different-picture control — the PICTURE rows MUST fail)" if control else mode,
+           checks)
+    print(f"   image at {record['image_base']:#x}, {resource_name(record['resource_index'])} "
+          f"({record['packed_bytes']} packed) inflated to {record['unpacked_bytes']} bytes at "
+          f"{record['depack_dest']:#x}, shifter at {record['shifter_base']:#x}")
+
+    if not control:
+        problems += [f"{name}: {detail}" for name, ok, detail, _ in checks if not ok]
+        if problems:
+            raise SystemExit("FAIL: " + "; ".join(problems))
+        print("OK: the title screen — the reconstruction loaded TITLESCR.RAD across the file seam, "
+              "depacked it and set the palette on a 68000, and its 32000 bytes and sixteen pens "
+              "are the shipped binary's")
+        return
+
+    # THE CONTROL ASSERTS ITS PRECONDITIONS NORMALLY and inverts only the picture rows — `m2fault`'s
+    # rule, and for its reason: a control whose own run was unsound proves nothing, and "the picture
+    # differs" is satisfied by a run that drew no picture at all.
+    preconditions = [(name, ok, detail) for name, ok, detail, key in checks if key is None]
+    problems += [f"{name}: {detail}" for name, ok, detail in preconditions if not ok]
+    if problems:
+        raise SystemExit("FAIL: the control's own run is not sound, so its inverted verdict says "
+                         "nothing: " + "; ".join(problems))
+    broken = [name for name, ok, _, key in checks if key is not None and not ok]
+    held = [name for name, ok, _, key in checks if key is not None and ok]
+    if not broken:
+        raise SystemExit("FAIL: the other picture broke NO row — this control cannot fail and "
+                         "proves nothing, so the comparison above is not reading what it names")
+    for name in held:
+        # NAMED, NOT SWALLOWED. A row the other picture happens not to move is a row this control
+        # does not cover, and saying which is the difference between an exclusion and an omission.
+        print(f"   note {name!r} held: the two shipped pictures do not differ on this surface, so "
+              f"swapping one for the other changes nothing this row could see")
+    print(f"OK: {len(broken)} of {len(broken) + len(held)} picture rows FAIL when the same three "
+          f"calls are aimed at {resource_name(record['resource_index'])} instead "
+          f"({len(held)} named above)")
 
 
 # ---- M5: the hardware-state vector, and the rendered picture -------------------------------------
@@ -2752,7 +3071,7 @@ def main():
     if mode == RUNSH_MODE:
         mode_runsh()
         return
-    prg = dict(PRG_FOR_MODE, **M5_BUILDS, **M6_BUILDS, **M3_BUILDS).get(mode)
+    prg = dict(PRG_FOR_MODE, **M5_BUILDS, **M6_BUILDS, **M3_BUILDS, **TITLE_BUILDS).get(mode)
     if prg is None:
         raise SystemExit(__doc__)
     prg = BUILD / prg
@@ -2761,6 +3080,15 @@ def main():
 
     if mode in M3_BUILDS:
         mode_m3(mode)
+        return
+
+    if mode in TITLE_BUILDS:
+        # The title build runs the boot slice ONCE and then M1's vblank count, so it is bounded by
+        # the M1 run length rather than the frame builds'.
+        status, log, rom = run_hatari(prg)
+        print(f"-- {mode}: TOS={rom or 'bundled EmuTOS'} hatari exit={status} "
+              f"(full log in {OUT / 'hatari.log'})")
+        mode_title(check_machine_health(status, log), mode)
         return
 
     if mode in M5_BUILDS:

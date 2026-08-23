@@ -2706,3 +2706,47 @@ sweep that desyncs there drops instructions rather than printing nonsense (docs/
 one of those sites was a LOWER BOUND without saying so. `hw_scan.tsv` is Ghidra-derived and so is not
 affected; the byte scans in `../notes/architecture.md` §2.3 are operand scans and are not either. It
 is recorded here because the next re-scan should not re-learn it.
+
+## 0r. Batch 44 phase B (2026-08-22): the wall is a SEAM, and a T4 region became a declared boundary
+
+**NO RE-SCAN WAS RUN** — §0l's banner stands. What changes here is not a measurement but a
+CLASSIFICATION: §0q priced 1,644 bytes as "unportable with today's capabilities", and this phase
+shows that the right answer for them is not a capability at all but a **boundary with one edge**.
+
+**THE CHANGE OF KIND, in one sentence.** §0q read the disk driver the way this file reads every other
+hardware region — count the accesses, price the model that would be needed, and register it. But a
+loader is not a steering read: its whole output is *the file's bytes at an address*, and the routine
+that asks for them (`disk_load_file`, `$5e7c`) is entered with **a name and a destination**. So the
+region does not need to be modelled, it needs to be **cut around**, and the kit's new
+`disk_read_file` (TRAP_MODEL.md Phase 9) is the cut. That is a different answer from "build a WD1772
+model", and the difference is worth stating in this file because §6's price list would otherwise
+carry a device model nobody should build.
+
+**WHAT MAKES IT A BOUNDARY AND NOT A HOLE**, measured in `test_boot_inventory.py`:
+
+* the boot chain crosses into `[$5e3e,$6528)` **exactly once**, at `jsr $5e7c.w` (`$e79c`);
+* the whole image encodes **four** edges in, each classified — the seam, an INTERRUPT edge at `$73e`
+  (the vblank handler's floppy-motor timeout, which no walk over call edges can see), the Copylock's
+  failure arm, and one operand fragment;
+* and **the band transfers out nowhere at all** — a closed subgraph that leaves by `rts`. A boundary
+  whose interior called back into ported code would be a hole; this one is an edge.
+
+**THE HARDWARE CLASSIFICATIONS THEMSELVES ARE UNCHANGED.** `disk (WD1772 FDC + DMA)` is still T4,
+still 684 bytes of hardware surface, still unportable. What moved is that it is now EXCLUDED by
+declaration rather than pending, and the exclusion has terms: the substitution reproduces the seam's
+contract and nothing else — no seek, no motor, no `floppy_idle_timer`, and no way to fail the way a
+real disk fails.
+
+**ONE INTERACTION THIS FILE SHOULD OWN.** The vblank handler counts `floppy_idle_timer` (`$64f2`)
+down and calls `floppy_deselect_drives` (`$6268`, reconstructed since batch 42 phase B) when it
+expires. A GEMDOS substitution **never arms that timer**, so on target the two mechanisms do not
+meet: the reconstruction will never deselect a drive because it never selects one. Harmless — nothing
+else reads the timer — but it is a real difference between the substitution and the original, and it
+is the kind of thing that is invisible until a later phase wonders why a PSG port-A write it expected
+never happens.
+
+**AND ONE NEW ENTRY FOR §6's PRICE LIST, which is cheap rather than a device model.** The staged-file
+model answers served or REFUSED, and a refusal sinks the run — so a reconstructed loader's ERROR arm
+has no differential available to it and is candidate-only. What is missing is a third answer: a
+staged name declared **present but unreadable**. It is a field in an existing table and a branch in
+`os_fopen`, not a subsystem.
