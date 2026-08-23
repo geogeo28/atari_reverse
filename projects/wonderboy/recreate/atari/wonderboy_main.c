@@ -110,8 +110,8 @@
  * build starts from the program image alone — the same one M1 stages — and draws the screen:
  *
  *   $e526  load_resource_by_index(WB_RESOURCE_TITLESCR, WB_RESOURCE_LOAD_BUFFER)  (../src/boot.c)
- *   $e536  rad_depack(WB_RESOURCE_LOAD_BUFFER -> TITLE_DEPACK_DEST)               (../src/rad.c)
- *   $e540  set_palette(TITLE_PALETTE_SRC)                                         (../src/stage.c)
+ *   $e536  rad_depack(WB_RESOURCE_LOAD_BUFFER -> WB_TITLE_DEPACK_DEST)               (../src/rad.c)
+ *   $e540  set_palette(WB_TITLE_PALETTE_SRC)                                         (../src/stage.c)
  *
  * ...with $e4ea's `clear_palette` and $e4ee's `clear_both_screens` in front of them, as the boot has
  * them. The first of those calls crosses the FILE-LOAD SEAM (the kit's include/disk.h), so this is
@@ -154,14 +154,14 @@
 #define TITLE_RESOURCE WB_RESOURCE_TITLESCR
 #endif
 
-/* `lea $6ff80.l,a1` at $e530 — the ORIGINAL's own operand, and not a number derived here. What it
- * buys is written down as an assertion instead: the depacked file is 128 bytes of header-and-palette
- * followed by exactly one screen, so `TITLE_DEPACK_DEST + unpacked` lands on WB_SCREEN_LOW's end and
- * the picture is inflated STRAIGHT INTO the visible buffer. The record carries the unpacked length
- * out of the file's own header and smoke.py pins that arithmetic. */
-#define TITLE_DEPACK_DEST  0x6ff80u
-/* `lea $6ff84.l,a0` at $e53a — the sixteen palette words inside that prefix. */
-#define TITLE_PALETTE_SRC  (TITLE_DEPACK_DEST + 4u)
+/* The depack destination and its palette row are ../include/wonderboy.h's WB_TITLE_DEPACK_DEST and
+ * WB_TITLE_PALETTE_SRC — the ORIGINAL's own operands at $e530 and $e53a, and since batch 44 phase C
+ * the SAME two constants ../src/boot.c's `boot_title_screen` uses, so this build and the core cannot
+ * disagree about where the picture goes. What the first of them buys is written down as an assertion
+ * instead: the depacked file is WB_RAD_PICTURE_PREFIX bytes of header-and-palette followed by exactly
+ * one screen, so the destination plus the unpacked length lands on WB_SCREEN_LOW's end and the
+ * picture is inflated STRAIGHT INTO the visible buffer. The record carries the unpacked length out of
+ * the file's own header and smoke.py pins that arithmetic. */
 #endif
 
 /* THE TWO BUILDS THAT PHOTOGRAPH THE MACHINE, as one condition rather than two lists. Both carry a
@@ -1019,7 +1019,7 @@ struct title_stats {
     uint32_t load_result;           /* load_resource_by_index's WB_LOAD_* (../include/wonderboy.h) */
     /* The .RAD header's OWN two lengths, read back out of the destination after the load. They are
      * what says the file arrived — a refused load leaves the buffer's zeros — and `unpacked_bytes`
-     * is what pins the geometry claim TITLE_DEPACK_DEST rests on. */
+     * is what pins the geometry claim WB_TITLE_DEPACK_DEST rests on. */
     uint32_t packed_bytes;
     uint32_t unpacked_bytes;
     uint32_t depack_result;         /* rad_depack's d0; WB_RAD_BAD_CHECKSUM is its one status */
@@ -1047,6 +1047,12 @@ static void load_the_title(struct title_stats *record) {
 
 /* SUPERVISOR: the boot's two clears, the depack, the palette — and the photograph.
  *
+ * THE CANONICAL COMPOSITION IS ../src/boot.c's `boot_title_screen` ($e512..$e550, batch 44 phase C),
+ * which this function deliberately MIRRORS rather than calls. It departs from it in exactly the
+ * three ways README.md §13 declares: the Copylock is not armed, the load runs in USER mode, and the
+ * sound request at $e546 is not made. So a change to the boot's ORDER or OPERANDS belongs in that
+ * function first, and here only to keep the mirror true.
+ *
  * THE PICTURE IS READ WHERE THE SHIFTER IS POINTED, which is M2's rule and not a restatement of
  * where the depack was aimed. This build's `publish_screen_base` put WB_SCREEN_LOW on the bus, so that is
  * what a display shows and that is what is compared; whether the depack's own arithmetic lands
@@ -1058,9 +1064,9 @@ static void draw_the_title(struct title_stats *record) {
     (void)clear_palette(game_image);            /* $e4ea */
     clear_both_screens(game_image);             /* $e4ee */
 
-    record->depack_dest = TITLE_DEPACK_DEST;
-    record->depack_result = rad_depack(game_image, WB_RESOURCE_LOAD_BUFFER, TITLE_DEPACK_DEST);
-    (void)set_palette(game_image, TITLE_PALETTE_SRC);
+    record->depack_dest = WB_TITLE_DEPACK_DEST;
+    record->depack_result = rad_depack(game_image, WB_RESOURCE_LOAD_BUFFER, WB_TITLE_DEPACK_DEST);
+    (void)set_palette(game_image, WB_TITLE_PALETTE_SRC);
 
     /* THE PALETTE'S PLUMBING, CHECKED SEPARATELY FROM THE DIFFERENTIAL — the same split
      * `publish_staged_pens` makes for M2's control: this asks only whether the sixteen words the
@@ -1068,7 +1074,7 @@ static void draw_the_title(struct title_stats *record) {
      * binary's pens is about the picture and not about the shim's wiring. */
     for (pen = 0; pen < PALETTE_PENS; pen++) {
         uint32_t at = pen * WB_SHIFTER_PALETTE_STRIDE;
-        uint16_t wanted = image_word(TITLE_PALETTE_SRC + at);
+        uint16_t wanted = image_word(WB_TITLE_PALETTE_SRC + at);
         uint16_t held = *(volatile uint16_t *)(uintptr_t)(SHIFTER_PALETTE + at);
 
         if ((held & ST_PEN_MASK) != (wanted & ST_PEN_MASK))

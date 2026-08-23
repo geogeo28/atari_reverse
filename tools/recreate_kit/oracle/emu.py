@@ -65,6 +65,24 @@ _LIB.osh_run.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32, ctypes
                          ctypes.c_uint32, _u32p]
 _LIB.osh_run.restype = ctypes.c_int
 _LIB.osh_num_writes.restype = ctypes.c_uint32
+# shim.c's MAX_WRITES, mirrored — and CROSS-CHECKED against the .so below, the way OSH_OUT_REGS is.
+# `logw` SATURATES rather than wrapping (`if (g_wn < MAX_WRITES) g_waddr[g_wn++] = a;`), so
+# `osh_num_writes() >= MAX_WRITES` is the ledger sitting at its cap with every further event
+# dropped uncounted. run() reports that per run; harness.differential refuses a comparison made
+# against such a set. A drift here would be silent in the worst direction — a mirror set too HIGH
+# disarms both — which is exactly why it is asked of the .so rather than kept by hand.
+MAX_WRITES = 1 << 22
+if not hasattr(_LIB, "osh_max_writes"):
+    raise _stale_oracle(
+        "osh_max_writes",
+        "so the write ledger's cap cannot be read back, and a run whose write set was truncated at "
+        "it could not be told from one that fit.")
+_LIB.osh_max_writes.restype = ctypes.c_uint32
+if _LIB.osh_max_writes() != MAX_WRITES:
+    raise RuntimeError(
+        f"liboracle.so caps its write ledger at {_LIB.osh_max_writes()} events but this emu.py "
+        f"mirrors {MAX_WRITES} — the shim and its Python mirror have drifted, and a truncated write "
+        f"set would be reported as a complete one. Rebuild with `make -C tools/recreate_kit oracle`.")
 _LIB.osh_write_addrs.restype = _u32p
 _LIB.osh_unmodeled.restype = ctypes.c_uint32
 _LIB.osh_min_a7.restype = ctypes.c_uint32
@@ -779,7 +797,9 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     ``stop_pc`` is an optional checkpoint PC: with it set, the run stops when it reaches that
     address instead of only at rts — the way to diff a function that never returns (its final
     memory is trustworthy at the checkpoint). ``writes`` is {addr: byte} for every byte the
-    code stored (stack writes included). ``out_regs`` holds every register the run leaves —
+    code stored (stack writes included) — and it is INCOMPLETE, silently, on a run that made more
+    than ``MAX_WRITES`` write events, which ``out_regs["writes_truncated"]`` is how to find out.
+    ``out_regs`` holds every register the run leaves —
     ``REPORTED_REGS``, i.e. d0..d7 and a0..a6 at return (A7 is the harness's own; ``min_a7`` reports
     the only thing about it a case can use) — plus the ledger entries appended below.
 
@@ -980,6 +1000,20 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     waddr = _LIB.osh_write_addrs()
     writes = {waddr[i]: mem[waddr[i]] for i in range(n)}
     out_regs = dict(zip(REPORTED_REGS, out))
+    # THE WRITE LEDGER'S OWN TRUNCATION, REPORTED RATHER THAN REFUSED — and it is the quietest of
+    # the three ledgers: the PSG's and the hardware's each COUNT what they dropped, while shim.c's
+    # `logw` simply stops recording at MAX_WRITES. `writes` above is keyed by ADDRESS, so a caller
+    # counting it sees distinct BYTES and cannot tell a capped run from a complete one.
+    #
+    # NOT A CAUSE, and the split is the one this file already makes for a wide hardware read: a
+    # truncated write ledger does not FABRICATE anything — the final memory is exact and every
+    # register is the run's own — it only makes one ancillary product incomplete. Bare `emu.run`
+    # callers who never look at `writes` are served (a Copylock run into the blob legitimately
+    # fills the ledger and is compared on its MEMORY), and `harness.differential`, which is where a
+    # write set becomes a claim, refuses it — `_vet_write_ledger_below_cap`. Same shape as
+    # `_vet_hw_reads_are_declared` above: recorded for every run, refused where it could go green
+    # for the wrong reason.
+    out_regs["writes_truncated"] = _LIB.osh_num_writes() >= MAX_WRITES
     out_regs["min_a7"] = _LIB.osh_min_a7()   # deepest stack pointer; used to vet diff exclude bands
     out_regs["heap"] = _LIB.osh_heap()       # Malloc bump pointer at the end of the run (diagnostics)
     out_regs["malloc_calls"] = _LIB.osh_malloc_count()   # serviced GEMDOS Malloc traps this run

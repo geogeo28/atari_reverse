@@ -691,6 +691,30 @@ def _vet_ledger_below_cap(what, oracle_entries, cand_entries, cap, const_name):
         f"(its mirror in harness.py is pinned to it)")
 
 
+def _vet_write_ledger_below_cap(entry, o_regs):
+    """Refuse a differential whose ORACLE run filled the write ledger.
+
+    `shim.c`'s `logw` saturates at `emu.MAX_WRITES` write events and counts nothing past it, so the
+    write set `emu.run` hands back is truncated without saying so — and a truncated write set is
+    exactly the input a band check reads as "the run wrote nowhere else". That is the same class of
+    blind green `_vet_ledger_below_cap` refuses one tier down for the two off-image ledgers.
+
+    HERE AND NOT IN `emu.run`, deliberately. Truncation fabricates nothing: the final memory is the
+    run's own and so is every register. A bare `emu.run` caller that never looks at the write set is
+    therefore served — a Copylock run into the blob fills the ledger honestly and is compared on its
+    MEMORY (projects/wonderboy's test_copylock.py). A DIFFERENTIAL is where a write set becomes a
+    claim, so this is where it is refused. The split, and its precedent, are stated in `emu.run`.
+    """
+    if not o_regs.get("writes_truncated"):
+        return
+    raise AssertionError(
+        f"the oracle run of {entry:#x} filled the write ledger ({emu.MAX_WRITES} events; shim.c's "
+        f"MAX_WRITES) and the rest were dropped, so its write set is truncated and any band check "
+        f"made against it would be blind past the cap. Shorten the run — a stop_pc earlier in the "
+        f"routine — or raise MAX_WRITES in tools/recreate_kit/oracle/shim.c (its mirror in "
+        f"oracle/emu.py is pinned to it by hand)")
+
+
 def _psg_event_text(events):
     """One ledger's events as readable text: ``r7=0xc0`` for a write, ``r7->0xc0`` for a read."""
     return [f"r{reg}{'=' if kind == OS_PSG_EVENT_WRITE else '->'}{value:#04x}"
@@ -1205,6 +1229,7 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
                                         wait_sites=wait_sites)
 
     _vet_exclude_bands(exclude, o_regs["min_a7"])
+    _vet_write_ledger_below_cap(entry, o_regs)
     _vet_psg_seed_reaches_the_path(entry, psg_seed, pokes, o_regs)
     # Before the candidate runs at all: a case whose oracle was served a fabricated hardware byte
     # cannot be made honest by anything the candidate does, and the remedy names the seed to add.

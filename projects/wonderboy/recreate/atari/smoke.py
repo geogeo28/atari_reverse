@@ -1090,7 +1090,7 @@ def title_checks(record, stats, want_resource):
     add("the depack ran to a clean checksum", record["depack_result"] != RAD_BAD_CHECKSUM,
         f"rad_depack returned {record['depack_result']:#x} "
         f"(WB_RAD_BAD_CHECKSUM={RAD_BAD_CHECKSUM:#x})")
-    # THE GEOMETRY, PINNED RATHER THAN DESCRIBED. TITLE_DEPACK_DEST is the original's own operand
+    # THE GEOMETRY, PINNED RATHER THAN DESCRIBED. WB_TITLE_DEPACK_DEST is the original's own operand
     # ($e530's `lea $6ff80.l,a1`) and what makes it work is that the depacked file is a prefix plus
     # exactly one screen — so the inflate ENDS on the visible buffer's last byte. Asserted from the
     # file's own header, so a resource of a different shape reds here instead of drawing off-screen.

@@ -441,14 +441,25 @@ differential sees through); and the two seeded read models, whose probes also li
 `src/hw.c` so they can run the **candidate** side against the oracle's — a miniature differential,
 with mutant reconstructions as its negative control.
 
-Two more, `test_psg_differential.py` and `test_hw_differential.py`, go one step further and run the
-**real harness**: `test/kit_smoke_project.py` builds a throwaway project in a temp directory — a
+Three more, `test_psg_differential.py`, `test_hw_differential.py` and `test_write_ledger.py`, go one
+step further and run the **real harness**: `test/kit_smoke_project.py` builds a throwaway project in a temp directory — a
 hand-assembled `.PRG`, and a candidate `.so` from `test/kit_candidate.c` plus `src/` — binds the kit
 to it, and both suites make actual `harness.differential()` calls through it. That is the only way to
 exercise the code that *compares* the two sides, since it lives in `harness`. They **skip** without
 the shared `liboracle.so` or a C compiler, and they share ONE binding: `project.load` freezes it
 process-wide, so `kit_smoke_project.bind()` is memoized and whichever suite asks first builds it —
 which is also why this directory's `make test` runs serially.
+
+`test_write_ledger.py` is the newest of the three and pins a SPLIT rather than a model. `shim.c`'s
+write ledger saturates at `MAX_WRITES` and counts nothing past it, so a run that overflows reports a
+truncated write set as a complete one; `emu.run` therefore REPORTS the saturation
+(`out_regs["writes_truncated"]`) without refusing — the run's memory and registers are exact, and a
+bare caller that never spends the write set is entitled to it — while `harness.differential`
+REFUSES, because a differential is where a write set becomes a claim. Both arms are cases, because a
+"fix" in either direction reads as tidying. The cap itself is exported (`osh_max_writes`) so
+`emu.py`'s mirror is checked at import rather than kept by hand: it is sized from the largest real
+run in the workspace (BuggyBoy's `unpack_graphics`, 1,315,224 events), which overflowed the previous
+cap by a quarter and had been comparing against a truncated set unnoticed until this guard landed.
 
 Everything else must keep running in a bare checkout — no oracle build, no candidate `.so` — which is
 why the poked-input geometry was moved into `os_map.py` to be tested here at all.

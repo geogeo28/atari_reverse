@@ -341,7 +341,9 @@ def test_the_dispatch_table_holds_the_four_entries_the_port_dispatches_on():
 # return to be confused with the checkpoint, because the routine has none. The coverage assertion
 # below is still made, because it says the TAIL loop ran and not merely that the run stopped.
 
-OVERLAY_AT = 0x217d8                   # `lea $217d8.l,a1` at $e63e — where every OVALAY*.RAD depacks
+# `lea $217d8.l,a1` at $e63e — where every OVALAY*.RAD depacks. Scraped rather than re-typed since
+# batch 44 phase C gave the operand a name: src/boot.c's stage slice spends the same address.
+OVERLAY_AT = wb("OVERLAY_DEPACK_DEST")
 TILE_BANK = wb("TILE_BANK")
 TILE_BITMAPS = wb("TILE_BITMAPS")
 TILE_BITMAP_LEN = wb("TILE_BITMAP_LEN")
@@ -810,11 +812,24 @@ SEAM_STUB = _seam_stub()
 SEAM_INSN_CAP = 64
 
 
-def _seam_pokes(name, data):
-    """Poke dict for one staged file: the stub over the seam, and the file in the model. A case that
-    wants the Copylock armed adds the flag itself, because it also has to add the entry stub."""
-    stage_pokes, _ = harness.stage_files([(name, data)])
+# The kit's staged-file area, as a length: the model lays files contiguously from OS_FS_STAGING and
+# refuses one that would reach the stack guard. It bounds which of the boot's resources can be
+# staged at all — the size case below and test_boot_chain.py's sprite prefix both spend it, and a
+# second derivation is exactly what would drift the day the model grew a per-file header.
+STAGING_CAPACITY = emu.STACK_GUARD_LO - harness.OS_FS_STAGING
+
+
+def seam_pokes(files):
+    """Poke dict for a run's staged files: the stub over the seam, and each `(name, data)` in the
+    model. A case that wants the Copylock armed adds the flag itself, because it also has to add the
+    entry stub.
+
+    It takes a LIST because test_boot_chain.py's composed slices load two and three files apiece,
+    and a second spelling of the substitution's poke shape is exactly what would drift the day the
+    stub's address or the staging convention moved."""
+    stage_pokes, _ = harness.stage_files(files)
     return {DISK_LOAD_FILE: SEAM_STUB, **stage_pokes}
+
 
 def test_the_seam_stub_is_the_gemdos_calls_it_claims():
     """Decode the substitution rather than trust the comment beside it. A hand-assembled stub is the
@@ -903,7 +918,7 @@ def _run_load(index, name, data, dest, poison=False):
     what = f"load_resource_by_index({index}, {dest:#x}) -> {name}"
     assert dest + len(data) <= harness.OS_FS_TABLE, (
         f"{len(data)} bytes at {dest:#x} reach the staged-file table at {harness.OS_FS_TABLE:#x}")
-    pokes = _seam_pokes(name, data)
+    pokes = seam_pokes([(name, data)])
     before = harness.make_image(pokes)
     info = leaf.run("load_resource_by_index", _LOAD_RESOURCE(index, dest),
                     _load_allowed(dest, len(data)), what,
@@ -981,7 +996,7 @@ def test_the_first_load_of_the_boot_runs_the_copylock_and_disarms_it(armed):
     decryptor's leavings. Stub.ENTRY_RTS and not DISARM — DISARM is the state this case is trying to
     reach, so disarming it up front would be testing the other arm."""
     data = (BIN / DISK2 / "DATADISK.RAD").read_bytes()
-    pokes = {**_seam_pokes("DATADISK.RAD", data),
+    pokes = {**seam_pokes([("DATADISK.RAD", data)]),
              COPYLOCK_ARM_FLAG: armed.to_bytes(COPYLOCK_ARM_FLAG_LEN, "big"),
              **copylock.stub_pokes(copylock.Stub.ENTRY_RTS)}
     before = harness.make_image(pokes)
@@ -1031,7 +1046,7 @@ def test_an_index_past_0x7ff_names_a_row_below_the_table_because_the_word_is_sig
     name = "SIGNED  .ROW"
     data = (BIN / DISK2 / "DATADISK.RAD").read_bytes()
     index = 0x8000 >> RESOURCE_FILE_ROW_SHIFT
-    pokes = {**_seam_pokes(name, data), below: name.encode("ascii") + b"\x00"}
+    pokes = {**seam_pokes([(name, data)]), below: name.encode("ascii") + b"\x00"}
     what = f"load_resource_by_index({index:#x}) -> the row at {below:#x}"
     info = leaf.run("load_resource_by_index", _LOAD_RESOURCE(index, DST_AT),
                     _load_allowed(DST_AT, len(data)) + [(below, len(name) + 1)], what,
@@ -1258,7 +1273,7 @@ def test_a_load_the_seam_refuses_clears_joy1_state_and_reports_the_error():
     # ...and the control, so the case cannot pass because every run reports the error.
     data = (BIN / DISK2 / "DATADISK.RAD").read_bytes()
     served, image = leaf.run_candidate_only(_LOAD_RESOURCE(wb("RESOURCE_DATADISK"), DST_AT),
-                                            {**_seam_pokes("DATADISK.RAD", data), **pokes})
+                                            {**seam_pokes([("DATADISK.RAD", data)]), **pokes})
     assert served == LOAD_OK and image[JOY1_STATE] == POISON, (
         f"the same call WITH the file staged returned {served} and left joy1_state at "
         f"{image[JOY1_STATE]:#x} — so this case would pass whether or not the refusal did anything")
@@ -1275,7 +1290,7 @@ def test_a_read_that_leaves_the_image_is_a_failed_load_and_not_a_successful_one(
     data = (BIN / DISK2 / "DATADISK.RAD").read_bytes()
     over_the_top = harness.OS_IMAGE_SIZE - len(data) // 2
     ret, _ = leaf.run_candidate_only(_LOAD_RESOURCE(wb("RESOURCE_DATADISK"), over_the_top),
-                                     _seam_pokes("DATADISK.RAD", data))
+                                     seam_pokes([("DATADISK.RAD", data)]))
     assert ret == LOAD_DISK_ERROR, (
         f"a {len(data)}-byte read at {over_the_top:#x} — which runs {len(data) // 2} bytes past the "
         f"{harness.OS_IMAGE_SIZE:#x} image — returned {ret}, not WB_LOAD_DISK_ERROR")
@@ -1289,16 +1304,15 @@ def test_the_one_boot_resource_the_model_cannot_stage_is_the_one_named():
 
     It also checks the complement: every OTHER boot resource DOES fit, so "four" is not four
     arbitrary files but the whole of what is stageable."""
-    staging = emu.STACK_GUARD_LO - harness.OS_FS_STAGING
     sizes = {"TITLESCR.RAD": (BIN / "disk1" / "TITLESCR.RAD").stat().st_size,
              "CREDITS.RAD": (BIN / "disk1" / "CREDITS.RAD").stat().st_size,
              "TILEDATA.RAD": (BIN / DISK2 / "TILEDATA.RAD").stat().st_size,
              "DATADISK.RAD": (BIN / DISK2 / "DATADISK.RAD").stat().st_size,
              "SPRITES.CRU": (BIN / DISK2 / "SPRITES.CRU").stat().st_size}
-    too_big = sorted(name for name, size in sizes.items() if size > staging)
+    too_big = sorted(name for name, size in sizes.items() if size > STAGING_CAPACITY)
     assert too_big == ["SPRITES.CRU"], (
-        f"the boot resources that do not fit the model's {staging} bytes of staging are {too_big}, "
-        f"not the one ../STATUS.md names")
+        f"the boot resources that do not fit the model's {STAGING_CAPACITY} bytes of staging are "
+        f"{too_big}, not the one ../STATUS.md names")
 
 
 @pytest.mark.parametrize("at,offset", [(0x1000, -0x8000), (0x1fff, -8), (0x2000, 0)])

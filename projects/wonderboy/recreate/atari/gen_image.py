@@ -28,24 +28,49 @@ address IT chose, which is not 0x3f8.
 =======================  THE HONESTY LINE  =======================
 
 **A STAGED IMAGE IS A DECLARED FABRICATION OF THE BOOT'S RESULT.** `game_main_loop` is `jmp`ed into
-with a stage already loaded; the chain that loads it — the FDC driver, the Copylock at $ecca,
-`load_resource_by_index`, the tile installer at $e67e and `sprites_cru_install` at $e87c — is
-UNPORTED, and two of those routines are not merely unported but unreconstructed, so their products
-cannot be computed host-side at all today.
+with a stage already loaded, and THIS FILE does not load one.
+
+What is unported has shrunk since that sentence was first written and the shape of the claim has
+changed with it. `load_resource_by_index`, the tile installer at $e67e and `sprites_cru_install` at
+$e87c are all RECONSTRUCTED (batch 44 phases A and B), and batch 44 phase C composed the whole chain
+that calls them — `boot_load_stage` in `../src/boot.c`, $e5ba..$f8b4, differentially verified against
+the original end to end. So the products below CAN be computed host-side now. What is still unported
+is the FDC driver below the file-load seam and the Copylock at $ecca, and what is still true of THIS
+file is simpler and narrower: **it stages a dump because nothing here runs that chain**, not because
+the chain cannot be run.
+
+**AND "CAN BE COMPUTED" HAS TWO CONDITIONS, both measured and both still standing.** The chain runs
+off target only through phase B's GEMDOS **substitution** at the file-load seam — `disk_read_file`
+stands in for `$5e7c` and the FDC driver below it never executes. And the kit's staged-file model
+lays files contiguously into an area whose size is the model's own — `STAGING_CAPACITY` in
+`../test/test_boot.py`, derived there from the staging base and the stack guard — and **`SPRITES.CRU`
+does not fit it**. So the sprite arm is driven over the PREFIX of that file which fits beside
+whatever else the case stages, which makes the prefix's length a property of the case and not a
+number to write down here. `../test/test_boot_chain.py`'s
+`test_the_sprites_file_is_staged_as_the_prefix_the_model_can_hold` is what derives and pins it;
+`../test/test_boot.py` is what measures that this is the only boot resource the model cannot hold
+whole. A build that wired `boot_load_stage` in here would meet the same ceiling, so it is written
+down where the wiring would happen and not only in the batch notes.
 
 **THE M1 IMAGE FABRICATES ALMOST ALL OF IT**, as a range of zeros each (the map is
 `../project.toml`'s, the chain `../STATUS.md`'s):
 
   $1d43e..$2103e  bg_tile_bitmaps      120 x $80 tiles the $e67e loop selects out of depacked
-                                       TILEDATA.RAD. UNPORTED routine.
+                                       TILEDATA.RAD. `bg_tile_install` IS ported, so the range is
+                                       computable — and cheaply: it needs TILEDATA.RAD, `rad_depack`
+                                       and that one installer, NOT a run of the whole stage chain.
+                                       What stands in the way is this file itself: it links no
+                                       compiled core and calls no reconstruction, so there is
+                                       nothing here to run. Same reason for the two below.
   $217d8..$254c0  the depacked level overlay (OVALAY<stage>.RAD), which carries bg_tile_index at
-                                       $21e90 and the map. `rad_depack` IS ported and verified, so
-                                       this one is computable — deliberately not taken here, because
-                                       an overlay without the tile bitmaps and the sprite pool below
-                                       is a stage that still cannot be drawn.
+                                       $21e90 and the map. `rad_depack` IS ported and verified, and
+                                       this range too is computable; same reason for leaving it.
   $24898..       resource_table_header / the 20-byte sprite descriptors, and
-  $25298..       the SPRITES.CRU cell data `sprites_cru_install` selects per stage. UNPORTED routine,
-                                       and the resting extent is not established anywhere.
+  $25298..       the SPRITES.CRU cell data `sprites_cru_install` selects per stage. The routine IS
+                                       ported. TWO things stand between that and a computed range:
+                                       the resting extent is still not established anywhere, which
+                                       is why the range is written open-ended, and the whole file
+                                       does not fit the staged-file model (above).
   $44000..$70000 the eight $5800 pre-shifted scroll buffers. The builders ARE ported.
   $70000/$78000  the two 32000-byte screens.
 
@@ -55,9 +80,11 @@ So the M1 image can run the routines that read the PROGRAM, and it cannot run a 
 above is present in it, MEASURED off the shipped 1989 binary at `$f8b4` under Hatari — see
 `atari/original.py` for the anchor, the three injections that stand in for a player, the two negative
 controls that show the injections are what carry the boot there, and the mis-anchor measurement. What
-remains fabricated is that nothing in THIS build produced them: the boot chain is still unported, and
-this image is its result handed over rather than its result recomputed. A port of $e67e and $e87c
-would replace the dump; until then the dump is the reference, and PROVENANCE below is the receipt.
+remains fabricated is that nothing in THIS build produced them: this image is the boot's result handed
+over rather than its result recomputed. That is now a statement about THIS FILE and not about what is
+reconstructed — the chain that would produce them is composed and verified off target (batch 44 phase
+C's `boot_load_stage`), and what would replace the dump is an on-target build that RUNS it. Until
+that build exists the dump is the reference, and PROVENANCE below is the receipt.
 
 AND WHAT IT DOES NOT MEASURE, because it is not the same twice: 512 bytes at $f314..$f514 are the
 COPYLOCK'S RUN-TIME SCRATCH. The shipped file's bytes there disassemble as line-A words and

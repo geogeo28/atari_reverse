@@ -14790,3 +14790,321 @@ queue from fourteen to twelve.
   would make the scan assert rather than answer, which is the right failure but not an automatic fix.
 
 **CARRIED, unchanged**: everything phase A carries.
+
+## Batch 44 phase C — THE BOOT CHAIN COMPOSED: three slices, end to end, against the original
+
+Phase A counted the boot chain and phase B walked through its disk wall. Both left the same gap:
+**every routine on the chain from the title load to `jmp $4a0.w` was verified ONE AT A TIME, and
+nothing said what the boot DOES with them.** This phase composes the chain — three C functions, cut
+where the boot's own fire waits cut it — and drives each one against the oracle over its whole range,
+so the ORDER and the OPERANDS are pinned and not only the leaves.
+
+**Verified 330, 41,652 bytes — UNCHANGED, and that is the honest number.** The three functions this
+phase adds are COMPOSITIONS: every byte they reconstruct inside an already-verified routine is
+already in that total, and the "Functions (by address)" table is per-ROUTINE, so none of the three
+earns a row. What they DO newly reconstruct is the instructions BETWEEN the calls — the argument
+setup, the arming, the second-load gate, the `clr.w` — and nothing derives that count today. Typing
+one would be the mistake §6's own finding is about; **deriving it in `test_boot_inventory.py` is
+QUEUED**, beside the same file's existing derivations for phases A and B.
+`test_boot_inventory.py`'s ported/unported split is likewise unchanged at **2,086 / 2,512** — §5.
+
+**`make test` 6,398** from a clean `build/`, **6,363 measured immediately before this phase**; +35 —
+**33** in the new `test/test_boot_chain.py` and **2** in `test/test_boot_inventory.py`, whose
+retraction scan now carries this phase's own two retired phrases. (Phase B's banner above records
+6,349; the fourteen between that and 6,363 are not this phase's and are not accounted for here.)
+**Kit suite 395** (+3: the write ledger's report-and-refuse, §6), **`tools/test_hw_portability.py`
+56**, **Joust 4,369**, **BuggyBoy 292** — run serially.
+
+### §1 WHAT WAS COMPOSED, AND WHERE THE CUTS FALL
+
+The boot's continuation breaks three times for a **fire wait** — `clr.b joy1_state`, then `tst.b /
+bpl` until the IKBD handler makes the byte negative and `tst.b / bmi` until it is positive again. A
+spin on a byte no instruction of the run stores is the shim's and the schedule model's business, not
+C's, so the waits ARE the boundaries and each function runs from one to the next:
+
+| C (`src/boot.c`) | range | what it composes |
+|---|---|---|
+| `boot_title_screen` | `$e512..$e550` | arm `copylock_arm_flag`, load `TITLESCR.RAD`, `rad_depack` to `$6ff80`, `set_palette` from `$6ff84`, `snd_play_song(8)` |
+| `boot_credits_screen` | `$e562..$e5a2` | load `CREDITS .RAD`, depack to `$77f80`, `set_palette`, `copy_screen($78000 -> $70000)`, `game_restart_reset`, colour register 10 := `$77` |
+| `boot_load_stage` | `$e5ba..$f8b4` | the sequence row, its overlay, the resource table's park/restore, `TILEDATA.RAD`, `bg_tile_install`, the gated `SPRITES.CRU` load and `sprites_cru_install`, the actors, the relocation, the state reset and `$f89e`'s hand-off to `stage_load_window` |
+
+**THE PROLOGUE AT `$e4e6..$e510` IS DELIBERATELY NOT IN THE FIRST OF THEM**, and the reason is not
+that its steps are unported: two of its six (`clear_palette`, `clear_both_screens`) have been
+reconstructed since phase A. The other four are the video mode, the MFP timer masks, the `$70` vector
+and two `move.w #imm,sr` — privileged hardware setup a C function cannot make — and splitting one
+prologue between the shim and the core would leave nobody owning it. **WHAT THE SHIM ACTUALLY DOES
+WITH IT IS A SHORTER LIST**, and `atari/README.md` §13's deviation table is where it is stated: the
+title build makes the palette and screen clears and publishes the video mode, does NOT mask the MFP
+timers, and installs its own vbl vector rather than `$716`. Crediting the shim with the WHOLE
+prologue would be a fresh overclaim in place of a retired one, and crediting it with none of it
+would be the retired one again. The slices start at `$e512` either way.
+
+**THE THIRD SLICE ENDS IN A TRANSFER AND NOT IN A RETURN.** `$e6fc`'s `bsr.w $f89e` never comes back
+— phase B's own finding — so the C's last act is the `stage_load_window` call and its caller is what
+jumps. `$e700` and `$e708` stay unreproduced, exactly as that finding said.
+
+**WHAT EACH SLICE REPORTS** is one of the `WB_LOAD_*` codes, folded from its own loads by
+`load_or_stop`: `WB_LOAD_COPYLOCK_RAN` when a load took the armed arm, and `WB_LOAD_DISK_ERROR` the
+moment one is refused — on which the slice STOPS. That stop is the port's statement of the original's
+own control flow: the original is sitting in `load_resource_by_index`'s interactive retry, so a port
+that carried on would be inflating a buffer the file never arrived in. **A `WB_LOAD_DISK_ERROR`
+RETURN LEAVES TWO RESIDUES BEHIND**, and the code says neither: `copylock_arm_flag` is still ARMED
+whenever the refused load was one the slice armed (the error return in `load_resource_by_index`
+never touches it), and in `boot_load_stage` `level_seq_index` has ALREADY been stepped. The original
+meets neither, because it retries the same load IN PLACE; a caller that retried by re-entering a
+slice would owe both. `src/boot.c`'s `load_or_stop` banner states that contract, and
+`test_boot_chain.py` asserts the flag's post-value on every one of the five refusal paths.
+
+### §2 THE DIFFERENTIAL — how a two-and-a-half-million-instruction slice is compared
+
+`test/test_boot_chain.py`, 33 cases. Each enters the ORACLE at the slice's first instruction with the
+seam stub poked over `disk_load_file` and the run's resources staged in the kit's file model, runs to
+the slice's last instruction, and requires the whole image to agree with the C run on a copy of the
+same image. Measured: **735,940 instructions** for the title, **394,190** for the credits,
+**2,509,776** for the stage slice on the arm that also installs the sprites.
+
+* **THE WITNESS IS OWED AND IS PAID.** A `stop_pc` run stops at EITHER the checkpoint or an `rts`,
+  and the kit reports only that one of them fired. Every case here requires the oracle to have
+  EXECUTED the slice's last instruction (`leaf.run_reaching`'s discipline, spelt locally because
+  these entries have no `fn` to hand `leaf.run`), so a run that returned early cannot pass.
+* **BOTH ARMS OF THE SECOND LOAD ARE DRIVEN, AND CLAIMED BOTH WAYS.** The armed arm is witnessed by
+  `$e6d0` having executed; the one-load arm by `$e6d0` NOT having executed. The latter is driven
+  twice — once through a re-entry (`life_restart_entry_c26` nonzero) and once through a SHIPPED
+  sequence row whose second-load byte is zero, so the arm is reachable from the game's own data and
+  not only from a poke.
+* **THE COPYLOCK WITNESS IS ASKED BY HAND**, on both arming slices, because `harness.differential`
+  does not hand back the image `copylock.assert_did_not_execute` compares against — `copylock.py`'s
+  docstring names this class of case as the one that must.
+* **A NON-VACUITY CHECK ON THE PICTURE.** The title case also requires the original's own
+  `WB_SCREEN_LOW` not to be all zeros, so "the two sides agree" cannot be agreement about an empty
+  buffer.
+* **TWO OPERANDS ARE PINNED AGAINST THE SHIPPED INSTRUCTION BYTES**, decoded out of
+  `harness.BASE_IMAGE`: `$e5a2`'s `move.w #imm,abs.l` must name
+  `WB_SHIFTER_PALETTE + WB_CREDITS_PROMPT_PEN * stride` and carry `WB_CREDITS_PROMPT_COLOUR`, and
+  `$e546`'s `move.w #imm,d0` must carry `WB_TITLE_SONG`. The PEN is the one nothing else can reach —
+  a colour register off the loaded image — and naming the wrong one was invisible to the whole suite
+  until this case; it is now red (§4's C5). The SONG id is not in that position: the title
+  differential already catches a wrong one through the bytes the sound module lays down (§4's T5
+  dies twice), but it catches it as a wrong PRODUCT, and this is the claim itself.
+* **A REFUSAL'S RESIDUE IS ASSERTED AS A VALUE, not permitted as a band.** All five refusal paths
+  now state what `copylock_arm_flag` holds afterwards: ARMED where the refused load was one the
+  slice armed (the title slice's, and the stage slice's `SPRITES.CRU`), and the shipped image's own
+  byte on the three that arm nothing. §4's T6 is the mutant that says the difference matters.
+* **THE PARK AND RESTORE ARE PINNED AS A PROPERTY, not only as bytes in a diff:** a marked
+  3,200-byte block at `resource_table_header` comes back unchanged, and the case first asserts out of
+  the overlay's OWN header that the depack really does inflate over that address ($217d8..$254c0
+  crosses $24898), so a smaller overlay would fail it rather than make it vacuous.
+
+### §3 THE THREE DEVIATIONS, EACH DECLARED
+
+1. **`rad_depack` PARKS ITS CALLER'S `a7`** in `rad_saved_sp` (`$5e3a`), and a C composition has no
+   such register — the hole `src/rad.c`'s `g_rad_depack` glue fills one level down. The kit REFUSES
+   to drop the band from the diff (`harness._vet_exclude_bands`: it lies far below any stack the run
+   touches, so excluding it could hide real output), which is right. So the case HANDS the candidate
+   the value instead and the diff still covers the write. It is not an assumption made true: all four
+   of the boot's depack calls are a plain `jsr` from their slice's top level, so a wrong depth shows
+   up as a different oracle longword and the diff says so.
+2. **`SPRITES.CRU` IS STAGED AS A PREFIX.** Its 279,034 bytes do not fit the model's 258,048-byte
+   staging area (phase B measured that and the case re-derives it), so the armed arm runs over the
+   217,576-byte prefix that fits beside the other two staged files. Both cores read identical bytes,
+   so what that case pins is the CHAIN — the arm, the index, the destination, the installer running
+   inside it. The installer's product over the WHOLE file is `test_boot.py`'s, which pokes all
+   279,034 bytes into the image and never goes through the seam.
+3. **THE CREDITS SLICE'S PEN IS INVISIBLE.** `move.w #$77,$ff8254.l` is a shifter colour register,
+   off the loaded image; the oracle drops the write and the port's own sink compiles to nothing off
+   target. Deleting it is a SURVIVING mutant (§4) and is recorded as one. Its two OPERANDS are not
+   invisible, though, and since the review gate they are pinned against the shipped instruction's
+   own bytes (§2) — so what is unobservable is that the write HAPPENS, not which register it names.
+
+### §4 THE MUTATION TABLE
+
+**Twenty-one mutants over `src/boot.c` and `include/wonderboy.h` — seventeen in the sweep, and four
+the review gate added — run under the recipe in `README.md` ("Running a mutation sweep"): a named
+backup outside the repo first, a forced relink before every run, the returncode of an UNPIPED
+pytest, restore by copying the snapshot back, and a whole-suite confirmation for every subset
+survivor. 18 caught, 3 survivors, each declared.**
+
+| # | mutant | verdict |
+|---|---|---|
+| T1 | title: do not arm `copylock_arm_flag` | caught |
+| T2 | title: depack two bytes above `WB_TITLE_DEPACK_DEST` | caught |
+| T3 | title: drop `snd_play_song` | caught |
+| T4 | title: take the palette from the depack destination instead of the prefix | **SURVIVED** |
+| C1 | credits: run `game_restart_reset` BEFORE `copy_screen` | **SURVIVED** |
+| C2 | credits: copy the screen the other way round | caught |
+| C3 | credits: drop the colour-register-10 write | **SURVIVED** |
+| C4 | credits: drop `game_restart_reset` | caught |
+| S1 | stage: drop the resource-table restore | caught |
+| S2 | stage: park the table the wrong way round | caught |
+| S3 | stage: drop `stage_sequence_apply_row` | caught |
+| S4 | stage: depack the overlay two bytes high | caught |
+| S5 | stage: invert the second-load gate | caught |
+| S6 | stage: leave `life_restart_entry_c26` alone | caught |
+| S7 | stage: hand the hinge `start` and `tiles` the other way round | caught |
+| S8 | stage: load `TILEDATA.RAD` to the tile bank instead of the buffer | caught |
+| S9 | stage: do not stop when a load is refused (the FIRST load) | caught — **AFTER the sweep found the hole** |
+| S10 | stage: do not stop when the SPRITES.CRU load is refused | caught — **AFTER the review found the hole** |
+| T5 | title: ask the sound module for song 9 instead of 8 | caught, TWICE — the title differential and the new instruction-byte case |
+| T6 | title: disarm `copylock_arm_flag` on the refusal path | caught — by the new residue assertion ALONE |
+| C5 | credits: raise colour register 11 instead of 10 | caught — by the new instruction-byte case ALONE |
+
+**S10 IS THE REVIEW GATE'S, AND IT IS S9'S SHAPE AGAIN.** `boot_load_stage` has THREE refusal
+stops and every case drove the first, because the poke dict always staged the overlay and
+TILEDATA. A reviewer named it; a case per stop now drives all three, each asserting BOTH SIDES of
+its own stop — the product before it present, the product after it absent — and deleting the
+SPRITES.CRU stop is red. Two of the three stops had no case at all until it was asked for.
+
+**S9 IS THE SWEEP'S FINDING AND IT IS THE VALUABLE ONE.** The refusal case as first written asserted
+only that the DEPACK DESTINATION was untouched, and the mutant survived it: `rad_depack` handed the
+refused load's zeroed buffer reads an unpacked length of 0 and fills BACKWARDS from the destination,
+so the four bytes AT the destination are precisely the ones it does not write. The case now
+enumerates EVERY byte that changed and requires them to be a subset of what the slice had already
+written when it asked for the file, and the mutant dies. A case that watches one address is watching
+the wrong thing whenever the routine under test fills away from it.
+
+**THE THREE SURVIVORS ARE DECLARED HOLES, NOT UNKNOWNS.**
+
+* **T4 and C3 are the same hole**: `set_palette` and the single-pen write both go to
+  `WB_SHIFTER_PALETTE`, which is off the loaded image. The oracle drops the write, the kit has no
+  ledger for a dropped hardware WRITE (`include/hw.h` models READS), and the port's sink compiles to
+  nothing off target — so which words went to which colour register is invisible to every memory
+  differential in this project, and has been since batch 12. `test_stage.py` and `test_boot.py` say
+  the same of `set_palette` and `clear_palette`. The kit-side remedy (a dropped-write ledger) stays
+  registered; the on-target rung is what will see these instead — `atari/README.md` §13's title row
+  already reads the sixteen pens back off the chip.
+* **C1 IS NOT A HOLE IN THE CASES, IT IS A PROPERTY OF THE CODE**, and it corrects a claim this phase
+  first wrote down as pinned. `game_restart_reset` draws the lives into BOTH screen buffers at the
+  same offsets, and `copy_screen` makes the two buffers equal either way — so reset-then-copy and
+  copy-then-reset end on IDENTICAL memory. The order in `src/boot.c` is the listing's; nothing off
+  target can pin it, and both the plate and the banner now say so rather than claiming otherwise.
+
+### §5 WHAT DID NOT MOVE, AND WHY THAT IS RIGHT
+
+`test_boot_inventory.py`'s ported/unported byte split is **unchanged at 2,086 / 2,512**, and so are
+both phases' own reconstructed-byte figures and the project's verified-function tally. That is
+correct rather than an oversight: the split is
+computed over SEGMENTS the boot chain's call graph owns, and all three composed slices lie inside
+`show_data_disk_prompt`'s 632-byte segment — which is unported as a whole and stays so, exactly as
+`bg_tile_install` and the dispatcher's three pieces already do. **A composition of already-ported
+bytes ports no new SEGMENT**; what it adds is a claim about their order, which the inventory does not
+count — and the instructions between the calls, which it cannot see. That second half is real
+reconstruction and is left UNCOUNTED rather than estimated: the derivation belongs in the inventory
+beside the phase A and phase B ones, and is queued. The three slices therefore carry `cmt` plates and no directives: `$e512` and `$e562`
+have none at all, and `$e5ba` cannot have one of its own because one address carries one name and
+`stage_sequence_advance` has it.
+
+### §6 FINDS
+
+* **THE ORACLE'S WRITE LEDGER DROPPED SILENTLY, THE GUARD WRITTEN FOR IT COULD NOT FIRE, AND THE
+  KIT NOW CARRIES THE REAL ONE.** `tools/recreate_kit/oracle/shim.c`'s `logw` keeps at most
+  `MAX_WRITES` (1 << 20) write EVENTS and saturates there without a word, so an overflowed run
+  reports a TRUNCATED write set and every band check made against it is weaker than it looks. These
+  are the project's biggest runs — a back-copying depacker, a screen copy and two installers in one
+  — so the exposure is real. A guard on `len(info["writes"])` was written in the battery and the
+  review gate measured it UNFIRABLE: `emu.run` returns a dict keyed by ADDRESS, and the
+  distinct-address count is bounded by the 1 MiB image, which is the same number. It was deleted
+  rather than left reading as a safeguard.
+  **LANDED, kit-side, in this commit** rather than left queued, in three parts. (1) `emu.run`
+  REPORTS the saturation, as `out_regs["writes_truncated"]`, and does not refuse on it — truncation
+  fabricates nothing, the final memory and every register are the run's own, and a bare `emu.run`
+  caller that never spends the write set is entitled to be served. That is not hypothetical: this
+  project's own `test_copylock.py` drives a run INTO the protection blob, which fills the ledger
+  honestly and is compared on its MEMORY. (2) `harness.differential` REFUSES on it, because a
+  differential is where a write set becomes a claim — the same split `_vet_hw_reads_are_declared`
+  already makes for a wide hardware read. (3) `shim.c` exports `osh_max_writes()`, so the Python
+  mirror is cross-checked at import the way `OSH_OUT_REGS` is, rather than kept by hand.
+  `tools/recreate_kit/test/test_write_ledger.py` drives both halves and their control.
+  **AND IT FOUND ONE IMMEDIATELY, in a sibling project.** BuggyBoy's `unpack_graphics` differential
+  makes **1,315,224** write events and had been overflowing the old 1 << 20 cap by a quarter — its
+  write-band check has been blind past the cap for as long as it has existed, and nothing said so.
+  The cap is raised to **1 << 22** (4,194,304), sized from that measurement rather than roundly.
+  **AND IT IS A WATCH.** Measured event counts for the three slices: **83,770** (title), **89,821**
+  (credits), **674,932** (the armed stage arm) — the worst at **16%** of the ledger, **6.2x** of
+  headroom. A slice that grew past it now REDS instead of quietly weakening every band check.
+* **`shifter_palette_write` WAS A THIRD COPY WAITING TO HAPPEN.** `src/game.c` and `src/stage.c` each
+  carry their own `WB_ON_TARGET`-guarded shifter sink; the credits slice needed a single-pen write and
+  would have made a third. It is exported from `src/stage.c` instead, so the off-target drop and the
+  on-target `wb_target_shifter_word` stay one statement. The `src/game.c` pair is untouched and is
+  still a second copy — noted, not folded in.
+* **`atari/gen_image.py`'s HONESTY LINE WAS STALE SINCE PHASE A** and said so in four places: it
+  named `load_resource_by_index`, `$e67e` and `$e87c` as unported and called two of them
+  unreconstructed. Corrected minimally and truthfully — the routines ARE ported and the chain that
+  calls them is now composed and verified; what remains true of that file is narrower, that it stages
+  a dump because nothing in THAT build runs the chain.
+* **A CLAIM THIS PHASE WROTE DOWN AS PINNED WAS NOT** — the credits slice's last two steps, §4's C1.
+  It was written into a case docstring, a plate and a banner before a mutant was pointed at it, and
+  all three now say the opposite. The general shape is `docs/methodology.md`'s: an order that is
+  faithful to the listing is not thereby observable, and "the case would catch it" is a measurement,
+  not a reading.
+* **THE REVIEW GATE FOUND FOUR FALSE CLAIMS THIS PHASE HAD WRITTEN DOWN**, and they are worth
+  naming because all four were prose, not code, and three were in the SOURCE OF TRUTH. (1) The plate
+  gave the park's size in the wrong unit, overstating it fourfold; it is 800 longwords, 3,200 bytes. (2) It called the title load
+  the only one that runs the protection; `$e6dc` arms it again for `SPRITES.CRU`, so a first stage
+  entry runs it twice. (3) `src/boot.c` gave the arming as the REASON a re-entry does not run the
+  guard — backwards: the arming is inside the gate, so an arm not taken never arms. (4) The banner
+  credited the shim with performing the whole `$e4e6` prologue faithfully; `atari/README.md`
+  §13 lists the MFP mask and the vbl vector as declared deviations, so two of its six steps are not
+  made at all. Each was a claim that read as
+  measured and was not. The differentials were right throughout — angle A re-derived all three
+  compositions against the listing and found them instruction-exact.
+* **A NUMBER IN PROSE THAT NOTHING COUNTS DRIFTS.** This phase's own banner said three of the 35
+  sequence rows ask for no second load. The table holds **twenty-four** — the one-load arm is the
+  ordinary case and not an edge one. Caught by counting rather than by reading, and the count is now
+  a case (`SHIPPED_ONE_LOAD_ROWS`) so the banner cannot drift from the table again.
+* **THE TITLE PICTURE'S TWO ADDRESSES HAD TWO SPELLINGS.** Its depack destination and its palette
+  row were private, unprefixed `#define`s of `atari/wonderboy_main.c`, invisible to everything else.
+  They are now `WB_TITLE_DEPACK_DEST` and `WB_TITLE_PALETTE_SRC` in `include/wonderboy.h`, which
+  `test/layout.py` scrapes, so the core, the shim and Python read one definition; the two prose
+  references that named the shim's private pair (`atari/README.md` §13's mutant row,
+  `atari/smoke.py`'s geometry comment) moved with them. **AND THE PALETTE ROW IS DERIVED**, as the
+  shim's pair was and as the first draft of the header pair was not: the review gate found the two
+  spelt as independent literals, which would have let a moved destination leave its palette row
+  behind — and §13's own mutant row rests on the two moving together. Both palette sources are now
+  `#define`d as `<dest> + WB_RAD_PICTURE_PALETTE_OFF`. `test/layout.py` scrapes plain literals only,
+  so nothing in Python reads them any more: `test_boot_chain.py` states the offset's own claim (the
+  row lies inside the prefix) and leaves the destinations to the differential, which catches a
+  two-byte move on either picture (§4's T2 and S4).
+* **FIFTEEN OF `game_restart_reset`'s STORES WERE TRUE FOR THE WRONG REASON**, and the review gate
+  measured it: the shipped `.PRG` already holds, at fifteen of the twenty-odd addresses that routine
+  writes, exactly the value it writes — `WB_LIVES` is 3 and it writes 3, the effect list is `$ffff`
+  and it writes `$ffff`, a dozen state words are zero and are written zero. The credits slice's
+  differential runs with the attribution pass off (it would poison the depacker's own input), so
+  those stores were unattributable. `test_stage.py`'s reset seeding is now imported rather than
+  restated, and the stage slice seeds the three actor tables for the same reason. This is
+  `../STATUS.md`'s own "TRUE FOR THE WRONG REASON" class, caught by a reviewer reading the base
+  image rather than by a sweep.
+
+### §7 WHAT IS DELIBERATELY NOT HERE
+
+**The on-target rung.** Nothing in this phase builds or runs a `.PRG`: `boot_credits_screen` is what
+`atari/README.md` §13's "credits rung" needs and `boot_load_stage` is what would retire
+`gen_image.py`'s staged dump for the play build, and BOTH are the next phase's work. This one is the
+host half — the compositions and their differentials — and the three functions are sitting there
+verified, waiting for a shim slice to call them.
+
+**QUEUED — the review gate's out-of-scope findings, kept out of this commit** (each is a real
+cleanup; none is a correctness defect, and folding them in would have made a prose-and-tests batch
+into a refactor):
+
+* unify `test_boot_chain.py`'s `_run_slice` / `_slice_glue` with `leaf.run` and `leaf.image_glue` —
+  the battery re-implements the runner because a composed slice has no `fn` to hand it.
+* consolidate `_title_allowed` with `test_boot.py`'s `_load_allowed`, `_row_name` with that file's
+  own row decoder, and the two Copylock-flag read-and-compare slices into a `copylock.py` helper.
+* merge the three parallel per-slice dicts (`_STOPPED_BANDS` / `_STOPPED_EVIDENCE` / `_STOPPED_ARMED`)
+  into one table keyed by slice, so a fourth fact about a stop cannot be added to two of three.
+* reuse the differential's own oracle image for the Copylock witness instead of running the slice a
+  second time — blocked on a kit change: `harness.differential` does not return that image.
+* diff the image in chunks, and carry `leaf.stray_writes`' permitted set as a bitmap — both are
+  measurable speed-ups on million-instruction runs and neither changes a claim.
+* unify `src/game.c`'s `WB_ON_TARGET` shifter sink with `src/stage.c`'s, which is now the exported
+  one. Two copies remain; `build.sh`'s scan sees every core, so a third would be caught.
+* add `include/boot.h` to `test/layout.py`'s scraped headers and move the per-module operands there,
+  so `wonderboy.h` stops carrying constants only one module spends.
+* promote `_park_saved_sp` into `leaf.py` — every future composed slice that calls `rad_depack`
+  needs it, and it is a fact about the RUNNER's stack rather than about this battery.
+* trim the boot-chain's banner prose, which now states the same cut-and-wait argument in four places
+  (`src/boot.c`, `include/boot.h`, `include/wonderboy.h`, `test/test_boot_chain.py`).
+* derive the instructions BETWEEN the calls in `test_boot_inventory.py`, so this phase's own
+  reconstructed-byte contribution is counted rather than left uncounted (§5).
+
+**CARRIED, unchanged**: everything phases A and B carry.

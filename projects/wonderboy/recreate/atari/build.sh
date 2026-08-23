@@ -230,14 +230,19 @@ CORES="$(ls "$REC"/src/*.c)"
 strip_comments() { $CC -fpreprocessed -E -P "$1" 2>/dev/null; }
 
 # ---- the claim in the banner, measured ---------------------------------------------------------
-# -DWB_ON_TARGET is passed HERE and nowhere else, so the `#ifdef` arms in ../src/game.c and
-# ../src/stage.c must vanish for the differential build. Asserted at the SOURCE, by preprocessing
-# the two touched cores exactly as kit.mk does — without the define — and requiring that not one
-# `wb_target_` token survives. A source-level check rather than an artifact comparison because it
-# holds whether or not a .so has been built, and because it names the two files that carry the risk.
+# -DWB_ON_TARGET is passed HERE and nowhere else, so every `#ifdef WB_ON_TARGET` arm in ../src/ must
+# vanish for the differential build. Asserted at the SOURCE, by preprocessing each core exactly as
+# kit.mk does — without the define — and requiring that not one `wb_target_` token survives. A
+# source-level check rather than an artifact comparison because it holds whether or not a .so has
+# been built.
+#
+# EVERY CORE, not the two that carry a guard today. Two did when this was written (game.c and
+# stage.c) and naming them made the scan blind to the third: batch 44 phase C exported stage.c's
+# shifter sink precisely so that boot.c would NOT grow one, and a scan that only ever looked at two
+# files could not have said so.
 assert_the_differential_build_is_unchanged() {
   local HOST_CC="${CC_HOST:-cc}" LEAKED
-  for CORE in "$REC/src/game.c" "$REC/src/stage.c"; do
+  for CORE in $CORES; do
     LEAKED=$($HOST_CC -E -I"$REC/include" -I"$KIT/include" "$CORE" 2>/dev/null \
              | grep -c 'wb_target_' || true)
     [ "$LEAKED" = "0" ] || {

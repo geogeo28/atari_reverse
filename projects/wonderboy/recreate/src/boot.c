@@ -24,6 +24,9 @@
 #include "bus.h"
 #include "disk.h"
 #include "machine.h"
+#include "rad.h"
+#include "sound.h"
+#include "stage.h"
 #include "wonderboy.h"
 
 /* `move.l (a0)+,(a1)+` run `longs` times, with both cursors left where the post-increments leave
@@ -374,4 +377,203 @@ void stage_sequence_apply_row(uint8_t *image, uint32_t row) {
     /* `clr.w d0 / move.b 3(a0),d0 / move.w d0,$bd88` — a zero-extended BYTE, so the stage number is
      * never negative however the row is filled. */
     bus_write_word(image, WB_STAGE_NUMBER, field_b(image, row, WB_LEVEL_SEQ_STAGE));
+}
+
+
+/* ================================================================================================
+ * THE BOOT CHAIN COMPOSED (batch 44 phase C)
+ *
+ * Everything above this line is a routine the boot CALLS. The three below are the boot ITSELF — the
+ * straight-line runs of those calls that lie between $e4e6's prologue and the `jmp $4a0.w` that
+ * starts the frame loop. Nothing here is new behaviour: every callee was reconstructed in phase A or
+ * B, or in batches 12/26 for src/stage.c's. What these add is the ORDER and the OPERANDS, which is
+ * exactly what an inventory of individually-verified leaves cannot state.
+ *
+ * WHERE THE CUTS FALL, AND WHY THERE. The boot breaks three times for a FIRE WAIT — `clr.b
+ * WB_JOY1_STATE`, then `tst.b / bpl` until the IKBD handler makes the byte negative and `tst.b /
+ * bmi` until it is positive again. That is a spin on a byte no instruction of the run writes, so it
+ * is the shim's and the schedule model's business and not C's (../atari/README.md §13), and the
+ * waits are therefore the natural boundaries: each function starts where a wait ended and stops
+ * where the next one begins. WB_BOOT_TITLE_AT/_END and their two pairs in include/wonderboy.h are
+ * those addresses, and test/test_boot_chain.py enters and stops the oracle at exactly them.
+ *
+ * WHAT IS NOT HERE, and it is one block: the PROLOGUE at $e4e6..$e510 — `video_set_lowres_50hz`,
+ * `clear_palette`, `clear_both_screens`, the MFP timer masks, the vbl vector and two `move.w #imm,sr`.
+ * Two of its six steps ARE reconstructed (the palette clear and the screen clear), and they are
+ * still left out, because the other four are privileged hardware setup a C function cannot make and
+ * splitting the block would leave the shim holding two halves of one prologue. WHAT ../atari/'s
+ * title build ACTUALLY DOES with it is a shorter list and is stated there rather than assumed here:
+ * it makes the palette and screen clears and publishes the video mode, and it DECLARES the rest as
+ * deviations — the MFP timer masks are not made and the vbl vector it installs is its own, not
+ * $716 (atari/README.md §13's deviation list). The differential ranges below start at $e512, past
+ * all six, either way.
+ *
+ * WHAT EACH SLICE REPORTS. One of the WB_LOAD_* codes, and it is out of band for the same reason
+ * `load_resource_by_index`'s are — the original leaves d0 holding whatever its last call left and
+ * nothing reads it. A refused load STOPS the slice where it happened: the original would be sitting
+ * in the error arm's interactive retry (see load_resource_by_index above) and everything after that
+ * point would be inflating a buffer the file never arrived in, so carrying on would be inventing a
+ * run rather than reproducing one.
+ * ================================================================================================ */
+
+/* One of a slice's loads, and what the slice makes of the answer. Returns whether the chain may go
+ * on — it may not once the seam has refused — and raises `*report` to WB_LOAD_COPYLOCK_RAN for the
+ * load that took the armed arm, so a slice with three loads still has one code to hand back.
+ *
+ * A REFUSAL DISCARDS THE FOLD, deliberately: the caller returns WB_LOAD_DISK_ERROR outright rather
+ * than a code meaning "the protection ran and then a load was refused". There is one code to give
+ * and the refusal is the one the caller has to act on.
+ *
+ * WHAT A WB_LOAD_DISK_ERROR RETURN LEAVES BEHIND, since the code itself says none of it. TWO
+ * residues, and neither is recoverable from the other:
+ *   1. WB_COPYLOCK_ARM_FLAG MAY BE LEFT ARMED. `load_resource_by_index` clears it on exactly one
+ *      path — the load that was armed AND was served — and its error return never touches it. So a
+ *      refused load that the slice had armed returns with $ffff still standing (boot_title_screen's
+ *      only load, and boot_load_stage's SPRITES.CRU load, are both of that kind). A CLEARED flag is
+ *      no better as evidence: it reads the same whether the guard ran or nothing ever armed it.
+ *   2. WB_LEVEL_SEQ_INDEX HAS ALREADY BEEN STEPPED in boot_load_stage, because $e5ba's
+ *      `stage_sequence_advance` consumes the row before the first load is asked for.
+ *
+ * SO A RETRY MUST NOT BE A SECOND CALL TO THE SLICE. The original retries the same load IN PLACE,
+ * inside `load_resource_by_index`'s interactive error arm, and can therefore never skip a sequence
+ * row nor arm a load it did not mean to. A caller that instead retried by RE-ENTERING one of these
+ * functions owes both residues first — put WB_LEVEL_SEQ_INDEX back, and disarm the flag. Nothing
+ * here does that for it; the stop is a declared deviation and stays one. */
+static int load_or_stop(uint8_t *image, uint32_t index, uint32_t dest, uint32_t *report) {
+    uint32_t result = load_resource_by_index(image, index, dest);
+
+    if (result == WB_LOAD_COPYLOCK_RAN)
+        *report = result;
+    return result != WB_LOAD_DISK_ERROR;
+}
+
+/* $e512..$e550. THE FIRST PICTURE, and the first load of the run.
+ *
+ * THE PROTECTION IS ARMED HERE AND NOWHERE EARLIER. `move.w #$ffff,$e7cc.l` at $e51e is what makes
+ * the load below take `load_resource_by_index`'s armed arm, so this slice reports
+ * WB_LOAD_COPYLOCK_RAN on every run in which the seam serves the file — which is the port's way of
+ * saying the blob would have executed, since it cannot be reproduced. ../atari/'s SMOKE_TITLE build
+ * deliberately does NOT arm it and says why; a differential of this function does, because the
+ * original does.
+ *
+ * THE DEPACK IS AIMED WB_RAD_PICTURE_PREFIX BELOW THE SCREEN, which is what puts the picture in
+ * WB_SCREEN_LOW without a copy: the file inflates to a prefix and exactly one screen, and the
+ * palette row the next call reads is inside that prefix. Both are cross-pinned in
+ * test/test_boot_chain.py rather than argued here.
+ *
+ * THE SOUND REQUEST IS PART OF THE SLICE. `move.w #$8,d0 / lea $17adc.l,a0 / jsr (a0)` is stub 0 of
+ * the sound module — snd_play_song — and it is the one call here that leaves state a later frame
+ * reads. */
+uint32_t boot_title_screen(uint8_t *image) {
+    uint32_t report = WB_LOAD_OK;
+
+    bus_write_word(image, WB_COPYLOCK_ARM_FLAG, WB_STATE_FLAG_SET);
+    if (!load_or_stop(image, WB_RESOURCE_TITLESCR, WB_RESOURCE_LOAD_BUFFER, &report))
+        return WB_LOAD_DISK_ERROR;
+    (void)rad_depack(image, WB_RESOURCE_LOAD_BUFFER, WB_TITLE_DEPACK_DEST);
+    (void)set_palette(image, WB_TITLE_PALETTE_SRC);
+    snd_play_song(image, WB_TITLE_SONG);
+    return report;
+}
+
+/* $e562..$e5a2. THE CREDITS, AND THE NEW GAME.
+ *
+ * IT INFLATES ONTO THE OTHER BUFFER AND THEN COPIES DOWN. The depack is aimed at
+ * WB_CREDITS_DEPACK_DEST, so the picture lands in WB_SCREEN_HIGH, and `copy_screen` moves it to
+ * WB_SCREEN_LOW — the buffer the shifter was pointed at by the prologue. The title slice needed no
+ * such copy because its own depack landed in WB_SCREEN_LOW directly; this one cannot inflate there,
+ * because that is where the title picture the player is still looking at is.
+ *
+ * `game_restart_reset` IS A NEW GAME, not a redraw: it clears WB_LEVEL_SEQ_INDEX, so the stage slice
+ * below starts at row 0. THE ORDER OF IT AND THE COPY IS THE LISTING'S AND IS NOT PINNED, which was
+ * measured rather than assumed — swapping them is a surviving mutant (../STATUS.md, batch 44 phase
+ * C). It draws the lives into BOTH screen buffers at the same offsets and the copy makes the two
+ * equal either way, so reset-then-copy ends on identical memory. Faithful order, unpinnable claim.
+ *
+ * THE PEN IS THE ONE THING NO DIFFERENTIAL CAN SEE. `move.w #$77,$ff8254.l` raises colour register
+ * WB_CREDITS_PROMPT_PEN after the picture's own palette has been set, and it goes through
+ * src/stage.c's sink for `set_palette`'s reason: the address is off the loaded image, the oracle
+ * drops the write, and the on-target arm performs it. What a case CAN show is that neither side
+ * leaves an image byte behind for it, and test/test_boot_chain.py says exactly that and no more. */
+uint32_t boot_credits_screen(uint8_t *image) {
+    uint32_t report = WB_LOAD_OK;
+
+    if (!load_or_stop(image, WB_RESOURCE_CREDITS, WB_RESOURCE_LOAD_BUFFER, &report))
+        return WB_LOAD_DISK_ERROR;
+    (void)rad_depack(image, WB_RESOURCE_LOAD_BUFFER, WB_CREDITS_DEPACK_DEST);
+    (void)set_palette(image, WB_CREDITS_PALETTE_SRC);
+    copy_screen(image, WB_SCREEN_HIGH, WB_SCREEN_LOW);
+    game_restart_reset(image);
+    shifter_palette_write(WB_CREDITS_PROMPT_PEN, WB_CREDITS_PROMPT_COLOUR);
+    return report;
+}
+
+/* $e5ba..$f8b4. THE PER-STAGE LOAD — every stage the game plays is entered through this.
+ *
+ * IT ENDS IN A TRANSFER AND NOT IN A RETURN. $e6fc's `bsr.w $f89e` never comes back: $f89e loads the
+ * hinge's three registers, calls it, and `jmp $4a0.w`s into game_main_loop. So the two instructions
+ * after that `bsr` — $e700's `move.b #$ff,$c030.l` and $e708's own `jmp $4a0.w` — are unreachable,
+ * and they are not reproduced. The C returns instead, which is the port's statement of "the original
+ * would be in the frame loop now"; its caller is what jumps.
+ *
+ * THE SAVE AND RESTORE AROUND THE OVERLAY DEPACK ARE ABOUT ONE TABLE. WB_RESOURCE_HEADER lies past
+ * the program's last byte and arrives from disk (../../names.txt's cmt 0x24898): the signature byte
+ * `resource_table_relocate` guards on, the record count, and WB_RESOURCE_TABLE's records — which
+ * `sprites_cru_install` has filled with the stage's sprite cells. The overlay inflates over
+ * $217d8..$254c0, which CROSSES that table, so the WB_RESOURCE_TABLE_SAVE_LONGS longwords are parked
+ * at WB_RESOURCE_TABLE_SAVE and put straight back. Whatever the overlay put there is discarded,
+ * unread; on the first stage of a run the parked bytes are the RAM's own, and it is SPRITES.CRU,
+ * loaded a few instructions later, that fills the table for the first time.
+ *
+ * TILEDATA.RAD IS LOADED INTO THE BACKGROUND BUFFER. `lea $44000.l,a1` is WB_BG_BUFFER_BASE, which
+ * the hinge's first builder will draw the stage's window into at the end of this same slice — so the
+ * packed file is parked in the one large buffer whose contents are about to be overwritten anyway.
+ * The two uses are the same address and are spelt as the one constant.
+ *
+ * THE SECOND LOAD IS THE STAGE'S SPRITES, AND IT IS GATED. WB_STAGE_SECOND_LOAD_FLAG comes out of the
+ * sequence row, but only on a FIRST entry — `stage_sequence_advance` leaves it zero whenever
+ * WB_LIFE_RESTART_ENTRY_C26 is set — so a life lost re-enters the stage without reloading
+ * SPRITES.CRU. THE PROTECTION GOES WITH IT: $e6dc's arming is INSIDE the gate, so an arm that is not
+ * taken never arms and never runs the guard. A MAJORITY of the game's own 35 sequence rows carry a
+ * zero in that byte and take the same arm on a FIRST entry — so the one-load arm is the ordinary
+ * case and not an edge one, which an earlier revision of this banner had backwards. The count lives
+ * in test/test_boot_chain.py's SHIPPED_ONE_LOAD_ROWS, which measures it off the table; a number in
+ * prose that nothing counts is a number that drifts.
+ *
+ * THE `clr.w` AT $e6ec IS WHAT MAKES THE RE-ENTRY ARM ONE-SHOT: the flag that suppressed the load is
+ * taken down once the stage is built, so the NEXT stage loads its sprites again. */
+uint32_t boot_load_stage(uint8_t *image) {
+    uint32_t report = WB_LOAD_OK;
+    uint32_t row = stage_sequence_advance(image);
+
+    if (!load_or_stop(image, stage_sequence_resource(image, row), WB_RESOURCE_LOAD_BUFFER, &report))
+        return WB_LOAD_DISK_ERROR;
+    stage_sequence_apply_row(image, row);
+
+    copy_longs(image, WB_RESOURCE_HEADER, WB_RESOURCE_TABLE_SAVE,
+               (uint16_t)(WB_RESOURCE_TABLE_SAVE_LONGS - 1));
+    (void)rad_depack(image, WB_RESOURCE_LOAD_BUFFER, WB_OVERLAY_DEPACK_DEST);
+    copy_longs(image, WB_RESOURCE_TABLE_SAVE, WB_RESOURCE_HEADER,
+               (uint16_t)(WB_RESOURCE_TABLE_SAVE_LONGS - 1));
+
+    if (!load_or_stop(image, WB_RESOURCE_TILEDATA, WB_BG_BUFFER_BASE, &report))
+        return WB_LOAD_DISK_ERROR;
+    (void)rad_depack(image, WB_BG_BUFFER_BASE, WB_TILE_BANK);
+    bg_tile_install(image);
+
+    if (bus_read_byte(image, WB_STAGE_SECOND_LOAD_FLAG) != 0) {
+        bus_write_word(image, WB_COPYLOCK_ARM_FLAG, WB_STATE_FLAG_SET);
+        if (!load_or_stop(image, WB_RESOURCE_SPRITES_CRU, WB_SPRITE_CRU_LOAD, &report))
+            return WB_LOAD_DISK_ERROR;
+        (void)sprites_cru_install(image);
+    }
+
+    bus_write_word(image, WB_LIFE_RESTART_ENTRY_C26, 0);
+    stage_actors_init(image);
+    resource_table_relocate(image);
+    stage_reset_state(image);
+    /* $f89e's three `lea`s, in the hinge's own argument order: map (a0), start (a1), tiles (a6).
+     * The start record IS the head of the overlay just inflated at WB_OVERLAY_DEPACK_DEST. */
+    stage_load_window(image, WB_MAP_ROW_STRIDE, WB_OVERLAY_DEPACK_DEST, WB_TILE_BITMAPS);
+    return report;
 }

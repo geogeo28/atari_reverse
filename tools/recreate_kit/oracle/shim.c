@@ -29,7 +29,16 @@
 static uint8_t *g_mem;
 static uint32_t g_size;
 
-#define MAX_WRITES (1u << 20)
+/* THE WRITE LEDGER'S CAP, and `logw` SATURATES at it rather than wrapping — so a run past it leaves
+ * `g_wn` sitting here and every further address is dropped uncounted. That silence is why the cap is
+ * EXPORTED (osh_max_writes): emu.py mirrors it, cross-checks the mirror against this, reports the
+ * saturation per run, and harness.differential refuses a comparison made against a truncated set.
+ *
+ * SIZED FROM THE REAL RUNS RATHER THAN ROUNDLY: the biggest differential in the workspace is
+ * BuggyBoy's `unpack_graphics`, measured at 1,315,224 events, which overflowed the previous
+ * 1 << 20 cap by a quarter and had been comparing against a truncated write set unnoticed. This
+ * leaves it 3.2x of headroom. The cost is BSS, committed a page at a time as a run fills it. */
+#define MAX_WRITES (1u << 22)
 static uint32_t g_waddr[MAX_WRITES];
 static uint32_t g_wn;
 
@@ -1070,6 +1079,10 @@ int osh_run_bench(uint8_t *mem, uint32_t size, uint32_t entry, uint32_t arg0,
  * buffer from its own mirror and checks it against this before the first run. */
 uint32_t        osh_out_regs(void)    { return OSH_OUT_REGS; }
 uint32_t        osh_num_writes(void)  { return g_wn; }
+/* The write ledger's cap. `g_wn == this` means the ledger saturated and osh_write_addrs() is a
+ * truncated set — see MAX_WRITES above for why the number is what it is. Exported so emu.py's
+ * mirror is a checked one rather than a hand-kept one. */
+uint32_t        osh_max_writes(void)  { return MAX_WRITES; }
 const uint32_t *osh_write_addrs(void) { return g_waddr; }
 uint32_t        osh_unmodeled(void)   { return g_unmodeled; }
 uint32_t        osh_min_a7(void)      { return g_min_a7; }

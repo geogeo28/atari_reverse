@@ -955,7 +955,17 @@ RETRACTED_PHRASES = {
                            "body read",
     "tos.h's file-call claim": "the reconstruction makes no file call at all",
     "joust_os.s's Super note": "Balanced pairs only",
+    # Batch 44 phase C's own two, both caught by the review gate and both retired the same round.
+    # The prologue one is the shape this rule is about: the correction was written INTO the same
+    # paragraph as the claim, quoting it, so the phrase survived its own retraction twice over.
+    "the boot-chain banner's prologue claim": "in the boot's order",
+    "the resource-table park's unit": "3,200 LONGWORDS",
 }
+# NOT REGISTERED, and it is worth saying why rather than leaving a gap. Phase C also retired two
+# IDENTIFIER spellings — the shim's private title depack destination and palette source, now
+# `WB_`-prefixed in include/wonderboy.h. A scan cannot enforce those: the new spelling CONTAINS the
+# old one as a substring, so the grep would match every correct use. The rule reaches phrases, not
+# renames; the rename's own protection is that the shim no longer defines them (build.sh compiles it).
 RETRACTION_SURFACES = (
     "../names.txt", "STATUS.md", "PORTABILITY.md", "src/boot.c", "include/boot.h",
     "include/wonderboy.h", "atari/shim_include/tos.h", "atari/wonderboy_backend.c",

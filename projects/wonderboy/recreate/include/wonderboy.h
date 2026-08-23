@@ -4550,4 +4550,78 @@
                                              * (test/test_boot.py's census) — and the original would
                                              * `jsr` through whatever the read produced */
 
+/* ---- THE BOOT CHAIN COMPOSED: the three slices between the fire waits (batch 44 phase C) -------
+ *
+ * $e4e6's continuation is one straight-line run of calls broken THREE TIMES by a fire wait — `clr.b
+ * WB_JOY1_STATE` and two `tst.b` spins on the byte only the IKBD interrupt writes. Those waits are
+ * hardware and stay the shim's (../atari/README.md §13); what lies BETWEEN them is composition, and
+ * src/boot.c holds the three functions that make it. The addresses here are what both languages cut
+ * the run at: the C names none of them, the differential enters and stops at them, and
+ * test/test_boot_chain.py reads the INSTRUCTION at each of them out of the loaded image and
+ * requires it to be the one named here. WB_BOOT_STAGE_AT is cross-pinned against ../../names.txt as
+ * well, because it is the one of the nine that carries a directive.
+ *
+ * THE THREE PICTURES SHARE ONE SHAPE. TITLESCR.RAD, CREDITS.RAD and DATADISK.RAD all inflate to
+ * WB_RAD_PICTURE_PREFIX + WB_SCREEN_BYTES, so a depack aimed WB_RAD_PICTURE_PREFIX bytes below a
+ * screen buffer lands the picture IN that buffer and leaves its palette row in the prefix. That is
+ * the arithmetic the boot's `lea` operands express and it is cross-pinned rather than restated. */
+#define WB_RAD_PICTURE_PALETTE_OFF 4u       /* `lea dest+4,a0` — the palette row inside the prefix */
+#define WB_RAD_PICTURE_PREFIX      0x80u    /* dest + this == the screen buffer the picture fills */
+
+/* $e512..$e550 — boot_title_screen: arm the protection, load TITLESCR.RAD, inflate it into
+ * WB_SCREEN_LOW, put its palette on the shifter and start the title tune. */
+#define WB_BOOT_TITLE_AT           0xe512u  /* `move.l #$0,d0` — the slice's first instruction */
+#define WB_BOOT_TITLE_SONG_AT      0xe550u  /* `jsr (a0)` — the last instruction, and the witness a
+                                             * differential of this slice really reached its end */
+#define WB_BOOT_TITLE_END          0xe552u  /* `clr.b $877.w` — the fire wait, which is the shim's */
+#define WB_TITLE_DEPACK_DEST       0x6ff80u /* `lea $6ff80.l,a1` at $e530 */
+/* `lea $6ff84.l,a0` at $e53a — DERIVED and not restated, because the two operands are one geometry:
+ * the palette row is inside the prefix the depack destination points at, so a destination that
+ * moved without its palette row would be a picture whose pens came from somewhere else. */
+#define WB_TITLE_PALETTE_SRC       (WB_TITLE_DEPACK_DEST + WB_RAD_PICTURE_PALETTE_OFF)
+#define WB_TITLE_SONG              8u       /* `move.w #$8,d0` at $e546 — snd_play_song's song id */
+#define WB_BOOT_TITLE_SONG_ID_AT   0xe546u  /* ...that instruction's own address, so a case can read
+                                             * the immediate back out of the image */
+
+/* $e562..$e5a2 — boot_credits_screen: load CREDITS.RAD, inflate it ONTO WB_SCREEN_HIGH, copy that
+ * down onto the buffer the shifter is showing, reset the game for a new run and raise one pen. */
+#define WB_BOOT_CREDITS_AT         0xe562u  /* `move.l #$1,d0` */
+#define WB_BOOT_CREDITS_PEN_AT     0xe5a2u  /* `move.w #$77,$ff8254.l` — the slice's last instruction
+                                             * and its differential's witness */
+#define WB_BOOT_CREDITS_END        0xe5aau  /* the second fire wait */
+#define WB_CREDITS_DEPACK_DEST     0x77f80u /* `lea $77f80.l,a1` at $e578 — and at $e4c0, where
+                                             * show_data_disk_prompt inflates DATADISK.RAD to the
+                                             * same place through the same three calls */
+/* `lea $77f84.l,a0` at $e582 (and $e4ca) — derived from its own destination for the title pair's
+ * reason: one geometry, one definition. */
+#define WB_CREDITS_PALETTE_SRC     (WB_CREDITS_DEPACK_DEST + WB_RAD_PICTURE_PALETTE_OFF)
+#define WB_CREDITS_PROMPT_PEN      10u      /* `move.w #$77,$ff8254.l` == WB_SHIFTER_PALETTE + 20,
+                                             * so colour register 10. WHICH element of the credits
+                                             * picture that pen draws is not established here */
+#define WB_CREDITS_PROMPT_COLOUR   0x77u    /* ...and the word written to it */
+
+/* $e5ba..$f8b4 — boot_load_stage: the per-stage load, from the sequence row to the `jmp $4a0.w`
+ * that starts the frame loop. It ENDS in a transfer and not in an `rts`: $e6fc's `bsr.w $f89e`
+ * never comes back, because $f89e sets up three registers, calls the stage-transition hinge and
+ * jumps into game_main_loop — so $e700 and $e708 are unreachable and are not reproduced. */
+#define WB_BOOT_STAGE_AT           0xe5bau  /* `clr.w $6ef0.w`. ../../names.txt gives this address to
+                                             * `stage_sequence_advance`, which is the FIRST piece of
+                                             * this slice: one address carries one name, and the
+                                             * piece had it first */
+#define WB_BOOT_STAGE_SPRITES_AT   0xe6d0u  /* `lea $25298.l,a1` — the second-load arm's first
+                                             * instruction, and the witness that arm ran */
+#define WB_BOOT_STAGE_JMP_AT       0xf8b4u  /* `jmp $4a0.w` — the slice's last instruction */
+#define WB_OVERLAY_DEPACK_DEST     0x217d8u /* `lea $217d8.l,a1` at $e63e: where every OVALAY*.RAD
+                                             * inflates, and ALSO the start record $f89e hands the
+                                             * hinge. It is the PRG's own relocator's address (see
+                                             * ../../names.txt's fn 0x217d8) — dead by the time the
+                                             * boot gets here, so the overlay lands on top of it */
+#define WB_RESOURCE_TABLE_SAVE     0x5f800u /* `lea $5f800.l,a1` at $e62e — where the resource table
+                                             * is parked across the overlay depack */
+#define WB_RESOURCE_TABLE_SAVE_LONGS 0x320u /* `move.w #$31f,d0` + 1 == 800 LONGWORDS, i.e. 3,200
+                                             * bytes from WB_RESOURCE_HEADER. The overlay inflates over
+                                             * $217d8..$254c0 and so crosses that table; the save and
+                                             * the restore either side of the depack are what carry
+                                             * it through */
+
 #endif /* WONDERBOY_H */

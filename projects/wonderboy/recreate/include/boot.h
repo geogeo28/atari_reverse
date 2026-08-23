@@ -70,4 +70,31 @@ uint32_t stage_sequence_resource(uint8_t *image, uint32_t row);
  * and WB_STAGE_NUMBER from its stage byte. */
 void stage_sequence_apply_row(uint8_t *image, uint32_t row);
 
+
+/* THE THREE COMPOSED SLICES ($e512 / $e562 / $e5ba), batch 44 phase C. Each is a run of the calls
+ * above and of src/stage.c's, cut where the boot's own FIRE WAITS cut it: `clr.b WB_JOY1_STATE`
+ * and two `tst.b` spins on a byte only the IKBD interrupt writes. The waits are hardware and stay
+ * the shim's; everything between them is here. src/boot.c says what each one deviates from, and
+ * the cut addresses are WB_BOOT_* in wonderboy.h, so the reconstruction's own header and its
+ * differential cannot disagree about where a slice begins or ends. (../atari/ does not name them
+ * yet — it shares WB_TITLE_DEPACK_DEST and WB_TITLE_PALETTE_SRC, and will want these when the
+ * on-target rung calls the slices.)
+ *
+ * ALL THREE RETURN ONE OF THE WB_LOAD_* CODES, which is `load_resource_by_index`'s own report
+ * raised to the strongest thing any of the slice's loads said. Out of band for the same reason its
+ * are: the original leaves d0 holding whatever its last call left and nothing reads it. */
+
+/* $e512..$e550 — arm the protection, load TITLESCR.RAD, inflate it into WB_SCREEN_LOW, put its
+ * palette on the shifter, start WB_TITLE_SONG. The video/vector prologue at $e4e6 is NOT here. */
+uint32_t boot_title_screen(uint8_t *image);
+
+/* $e562..$e5a2 — load CREDITS.RAD, inflate it onto WB_SCREEN_HIGH, copy that down onto the buffer
+ * the shifter is showing, run the new-game reset and raise WB_CREDITS_PROMPT_PEN. */
+uint32_t boot_credits_screen(uint8_t *image);
+
+/* $e5ba..$f8b4 — the per-stage load: the sequence row, its overlay, TILEDATA.RAD and the two
+ * installers, and then the hinge that draws the stage and jumps into game_main_loop. It ends in a
+ * TRANSFER, so the last thing it does is call `stage_load_window` and return. */
+uint32_t boot_load_stage(uint8_t *image);
+
 #endif /* WONDERBOY_BOOT_H */

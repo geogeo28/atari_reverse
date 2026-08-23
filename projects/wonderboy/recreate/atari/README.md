@@ -1059,7 +1059,7 @@ either one on its own.** Each was applied, built, run and restored:
 
 | mutant | must redden | measured |
 |---|---|---|
-| `TITLE_DEPACK_DEST` + 2 — the inflate lands one word below the visible buffer | the geometry row and the bitplanes; NOT the pens (the palette source is `dest + 4` and moves with it) | **CAUGHT**: geometry red, 21,904 of 32,000 bytes differ, pens still `000 777 760 …` |
+| `WB_TITLE_DEPACK_DEST` + 2 — the inflate lands one word below the visible buffer | the geometry row and the bitplanes; NOT the pens (`WB_TITLE_PALETTE_SRC` is `#define`d as `WB_TITLE_DEPACK_DEST + WB_RAD_PICTURE_PALETTE_OFF`, so it moves with the destination) | **CAUGHT**: geometry red, 21,904 of 32,000 bytes differ, pens still `000 777 760 …` |
 | `set_palette` deleted — the picture is drawn and the chip is left as `clear_palette` left it | the pens, twice (the plumbing row and the differential); NOT the bitplanes | **CAUGHT**: `pens_readback_failed = 0xfffe`, pens 1-15 differ, **0 of 32000 framebuffer bytes** |
 
 The second is the fail/pass partition the control cannot supply: it shows the pens row failing while
