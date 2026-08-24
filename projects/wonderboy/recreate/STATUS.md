@@ -16326,3 +16326,19 @@ It fits with 75,776 bytes to spare. Two rows on the shipped data disk (`OVALAY10
 - **The joystick, still.** No headless check has ever run the ACIA handler's two joystick arms
   (`atari/README.md` §12), and a person at a real stick is what runs them for the first time.
   `OWN.BIN`'s `fire_gates_crossed`, off the probe disk, is where that gets written down.
+
+## Performance — the `__umodsi3` in the sprite blit (2026-08-24)
+
+Hatari's CPU profiler, measured on the running reconstruction: **4.75 fps against the original's
+25**, with **47% of every frame inside libgcc's `__umodsi3`** (and the `__udivsi3`/`__mulsi3` under
+it). The 68000 has no 32-bit divide, so the `% WB_BLIT_SCRATCH_REGS` in `src/blit.c`'s `mask_reg`
+and `plane_reg` compiled to a ~900-cycle library call — **856 of them per frame**, from the nine
+sites `blit_load_cell`/`blit_swap_cell`/`blit_column` inline into `blit_row`.
+
+Both now wrap with one conditional subtract instead — same values, no divide, and no table to keep
+in step with `WB_BLIT_COLUMNS_MAX`; the bound that makes a single subtract enough (a cell is one mask
+word followed by `WB_PLANES` planes) is pinned by a `_Static_assert` beside the helpers, and
+`m68k-elf-nm` on `blit.c`'s object lists no `si3` helper at all. On target the profiler then read
+**9.45 fps at 838 K cycles a frame** (from 4.75 / 1,646 K), `blit_row` down from 42,000 to 8,807
+cycles a call — `python3 atari/profile.py ours`. Suite unchanged at 6,417 green, and flipping the
+wrap's comparison goes RED in `test/test_blit.py`.

@@ -131,17 +131,32 @@ static void blit_write_word(uint8_t *image, uint32_t addr, uint16_t value)
 
 /* Which of d0..d5 holds cell `cell`'s mask — d1, d0, d5, d4 for cells 0..3. The original steps the
  * window DOWN one register per cell so that the cell it is loading never overwrites the one it is
- * still merging from. */
+ * still merging from.
+ *
+ * Both helpers wrote that walk as a `%` until the profiler read the row loop: the 68000 has no
+ * 32-bit divide, so every `%` was a libgcc call — 856 of them a frame. What lets a conditional
+ * subtract stand in for it is that the callers keep each sum within ONE window of the wrap point:
+ * cell <= WB_BLIT_COLUMNS_MAX - 2 (blit_row draws cells = columns - 1, for columns 2..5) and
+ * plane <= WB_PLANES - 1, so plane_reg's sum is at most
+ * (WB_BLIT_SCRATCH_REGS - 1) + 1 + (WB_PLANES - 1) = 9 < 2 * WB_BLIT_SCRATCH_REGS. */
+_Static_assert(WB_BLIT_CELL_WORDS == WB_PLANES + 1u,
+               "blit_load_cell passes word - 1 as plane for word < WB_BLIT_CELL_WORDS, so the plane "
+               "bound above holds only while a cell is one mask word followed by WB_PLANES planes");
+
 static unsigned mask_reg(unsigned cell)
 {
-    return (WB_BLIT_SCRATCH_REGS + 1u - cell) % WB_BLIT_SCRATCH_REGS;
+    unsigned reg = WB_BLIT_SCRATCH_REGS + 1u - cell;
+
+    return reg < WB_BLIT_SCRATCH_REGS ? reg : reg - WB_BLIT_SCRATCH_REGS;
 }
 
 /* ...and the four planes, which follow the mask upward through the same window. `plane` is 0-based,
  * so the four words of a cell after its mask are plane_reg(cell, 0..WB_PLANES-1). */
 static unsigned plane_reg(unsigned cell, unsigned plane)
 {
-    return (mask_reg(cell) + 1u + plane) % WB_BLIT_SCRATCH_REGS;
+    unsigned reg = mask_reg(cell) + 1u + plane;
+
+    return reg < WB_BLIT_SCRATCH_REGS ? reg : reg - WB_BLIT_SCRATCH_REGS;
 }
 
 /* `btst #n,WB_BLIT_CLIP_MASK`: the LEFTMOST column is the HIGHEST bit, so a mask of 1 draws the
