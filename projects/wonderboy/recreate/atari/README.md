@@ -59,15 +59,19 @@ post-boot RAM off a real emulated machine and staging that.
 | **M8** the fire gates, DRIVEN | the boot spins twice on a byte only the IKBD writes, and headless nothing presses a stick. Each half of each gate is its own `noinline` function whose PC **the binary reports about itself**, and `smoke.py` pokes `WB_JOY1_STATE` at those four arrivals — **the same mechanism `original.py`'s `boot_script` uses on the shipped side** at `$e556`/`$e55c` and `$e5ae`/`$e5b4`. Two boots, M3's shape: pass one measures `image_base` and the two PCs, pass two is aimed with them and must re-report the same base | ✅ `smoke.py boot` |
 | **M8** the pokes' negative control | not a separate run: **pass one IS it.** Undriven, the chain must run `boot_title_screen`, sit at the FIRST gate until the bound runs out, report the timeout, and never reach the credits or the stage — measured, `fire_waits_timed_out` = 1, `fire_gates_crossed` = 0, both later slices `BOOT_SLICE_NOT_RUN` and no `BOOT.IMG` at all. So the pokes are shown to be what carries the boot rather than assumed to be | ✅ `smoke.py boot` pass 1 |
 | **M8** the span's MIS-ANCHOR control | M2's `m2fault` applied to a whole image instead of a frame, and it costs no second boot: the SAME band table is applied to `original.py neighbour`'s span — the shipped binary's own RAM at **`$e6fc`, one call earlier** — and the residue must clear a floor derived from `original.py variance`'s reading. Measured: **0 bytes outside the bands at the right anchor, 133,078 one call earlier, against a 5,310 floor** — a 25x margin, both directions | ✅ `smoke.py boot` |
-| **M9** THE OWN-ENTRY PLAY | **the reconstruction boots itself, and every ending comes back to the boot.** `build.sh ownplay` stages **M1's image** — the shipped `SWB.PRG` plus `gen_image.py`'s seeds, no measured RAM, no `PENS.IMG` — runs `../src/boot.c`'s **four** composed slices to a playable stage, and then enters `game_main_loop`. All **five** of the frame loop's endings are wired to the addresses the original's own `jmp`s name — three of `game_key_actions`' and two the BEHAVIOUR PASS hands up from the player tier — so a round end, a level skip, a life spent or a collision reload the stage (`$e5ba`), and ESC or a game-over box draw the data-disk prompt (`$e494`) and walk the FALL-THROUGH at `$e4e4` into the whole chain again. Five passes, green on **both ROMs**; §15 owns the numbers | ✅ `smoke.py ownplay` |
+| **M9** THE OWN-ENTRY PLAY | **the reconstruction boots itself, and every ending comes back to the boot.** `build.sh ownplay` stages **M1's image** — the shipped `SWB.PRG` plus `gen_image.py`'s seeds, no measured RAM, no `PENS.IMG` — runs `../src/boot.c`'s **four** composed slices to a playable stage, and then enters `game_main_loop`. All **five** of the frame loop's endings are wired to the addresses the original's own `jmp`s name — three of `game_key_actions`' and two the BEHAVIOUR PASS hands up from the player tier — so a round end, a level skip, a life spent or a collision reload the stage (`$e5ba`), and ESC or a game-over box draw the data-disk prompt (`$e494`) and walk the FALL-THROUGH at `$e4e4` into the whole chain again. **Six** passes, green on **both ROMs**; §15 owns the numbers | ✅ `smoke.py ownplay` |
 | **M9** the player's OWN endings | the phase-E gate's headline. The shipped image holds three `jmp $e494.l` and four `jmp $e5ba.l`, and only three of the seven are `game_key_actions`' — the other four are the PLAYER's, reported up through `actor_behavior_pass` and **discarded by `game_main_loop`**, so on the own-entry build a death silently kept the frame loop turning. Threaded now (`WB_LOOP_EXIT_DATA_DISK` / `WB_LOOP_EXIT_RELOAD` in `../include/game.h`), with three host cases driving the report through the loop's return and three mutants — drop the report, swap the two destinations, drop the loop exit — all caught. §15 | ✅ `make test` |
 | **M9** the interactive binary, BOOTED | `run.sh` launches `WB-ownrun.PRG` and no headless mode booted it — the gap the `--sound on` defect lived in, one binary along. `smoke.py ownrun` boots it: it takes the machine, crosses the file seam for `TITLESCR.RAD`, puts the picture's palette on the chip and then waits at the title's fire gate **for ever, by design** (`-DSMOKE_PLAY` lifts the spin bound), with the vertical-blank handler still ticking. What it CANNOT reach headless is the frame loop, and that is measured rather than assumed: there is no record, so no `image_base` and no wait PC to aim a poke with | ✅ `smoke.py ownrun` |
-| **M9** the data-disk prompt, DRAWN | the FOURTH composed slice and the last unported one between an ending and the frame loop: `$e494..$e4d4` — `clear_palette`, the screen base to `WB_SCREEN_HIGH`, `DATADISK.RAD` across the file-load seam, `rad_depack`, `set_palette`. Differentially verified against the oracle over its whole range with its write set stated EXACTLY (`test/test_boot_chain.py`), and its two `move.b #imm,$ff820x.l` operands decoded out of the shipped image — the write itself is off the loaded image and stays unpinned (§15) | ✅ `make test` |
-| **M9** the reload, DRIVEN | the headline of the five passes. `WB_ROUND_END_RELOAD_REQUEST` poked at `capture_the_frame`'s SECOND arrival — M3's own mechanism — and then measured on the far side: the ending fired, `boot_load_stage` RAN AGAIN on target, the sequence and stage numbers both stepped, and `OVALAY02.RAD`'s own start record is what is at `$217d8` — inflated host-side by `tools/depack_rad.py` and compared, with the two rows' values asserted to DIFFER first. §15's table has the figures | ✅ `smoke.py ownplay` pass 3 |
+| **M9** the data-disk prompt, DRAWN | the FOURTH composed slice and the last unported one between an ending and the frame loop: `$e494..$e4d4` — `clear_palette`, the screen base to `WB_SCREEN_HIGH`, `DATADISK.RAD` across the file-load seam, `rad_depack`, `set_palette`. Differentially verified against the oracle over its whole range with its write set stated EXACTLY (`test/test_boot_chain.py`), and its two `move.b #imm,$ff820x.l` operands decoded out of the shipped image. **The write itself is no longer unpinned**: since batch 44 phase F the ESC pass reads both registers back off the chip and requires the base to have MOVED to `WB_SCREEN_HIGH` — the row below (§15) | ✅ `make test` + `smoke.py ownplay` |
+| **M9** the reload, DRIVEN | the headline of the six passes. `WB_ROUND_END_RELOAD_REQUEST` poked at `capture_the_frame`'s SECOND arrival — M3's own mechanism — and then measured on the far side: the ending fired, `boot_load_stage` RAN AGAIN on target, the sequence and stage numbers both stepped, and `OVALAY02.RAD`'s own start record is what is at `$217d8` — inflated host-side by `tools/depack_rad.py` and compared, with the two rows' values asserted to DIFFER first. §15's table has the figures | ✅ `smoke.py ownplay` pass 3 |
 | **M9** ESC, DRIVEN | the second ending driven, and the one that exercises the new slice on the machine: `boot_prompt_screen` reported `WB_LOAD_OK`, every gate of the only pass that walks the chain TWICE was crossed, and the run came back on the sequence's FIRST row because `game_restart_reset` lives inside the credits slice — and it was still flipping buffers on the far side of the restart. §15's table has the figures | ✅ `smoke.py ownplay` pass 4 |
+| **M9** the prompt PICTURE | the THIRD picture the reconstruction produces, and the first reached through an ENDING rather than through the boot. `original.py prompt` drives the SHIPPED binary's own ESC arm — both fire gates, the data-disk swap, the frame loop, then `WB_KEY_LAST_SCANCODE` := ESC at a named frame — and photographs `WB_SCREEN_HIGH` at **`$e4d6`**, the `clr.b $877.w` the slice falls into. Ours is photographed between `boot_prompt_screen`'s return and its fire gate. Both surfaces are identical on **both ROMs**; §15 owns the figures and the pen list | ✅ `smoke.py ownplay` pass 4 |
+| **M9** THE PROMPT'S SCREEN BASE, at last | `$e498`/`$e4a0` publish `WB_SCREEN_HIGH` and **two mutants of that publish survived every surface this project had** through phase E — deleted outright, and its two bytes swapped — because the registers are off the loaded image and the oracle drops the write (`../STATUS.md` batch 44 phase E §4, P3/P5). The photograph reads both registers back **off the chip** and requires the base to have **MOVED** there. It is a change and not a value on purpose: as a bare value the row was measured GREEN under the deleted-publish mutant, because after an even frame count `flip_screen` has already left the base on that very buffer. The ESC passes therefore drive one frame earlier (§15) | ✅ `smoke.py ownplay` passes 4 + 6 |
+| **M9** the prompt picture's control | the same reader, the same captured bytes, the game's OTHER picture — §13's shape without a second build, since the resource is `boot_prompt_screen`'s own operand in a verified core. Both picture rows must BREAK against the shipped TITLE screen, and the premise that the two shipped pictures differ on BOTH surfaces is checked before a boot is paid for. The credits picture was measured first and REJECTED as the control, because it breaks the pens row by a single pen: `DATADISK.RAD` and `CREDITS.RAD` ship the same palette row and only `$e5a2`'s override separates them. §15 owns both measurements | ✅ `smoke.py ownplay` pass 4 |
 | **M9** the two negative controls | not separate runs. **Pass 1** is undriven: the ladder must sit at the FIRST half of the FIRST gate, report the timeout and never enter the frame loop (`stopped_at` = `OWN_STOP_BOOT`), which is what makes the pokes below the thing that carries them. **Pass 2** answers the chain's gates and drives NO ending: no reloads, no restarts, one leg, and the stage still row 0's — so "the stage moved" in pass 3 is shown to be the ending's doing rather than something the ladder does on its own. Pass 2's flip count is also passes 3 and 4's baseline. §15 | ✅ `smoke.py ownplay` passes 1-2 |
 | **M9** the entry unwind, PRODUCED | the one place this could have leaned on the dump. The frame builds seed `sprites.blit.unwind` (a5) from `ORIGREGS.txt`'s measured A5; an own-entry build must produce it. **It is `bg_build_buffer`'s own `lea $21e90.l,a5` at `$fa5e`** — the only a5 writer in the hinge, taken on the arm the shipped tile bank forces — so the build compiles `WB_TILE_INDEX_TABLE`. Measured twice, independently: the ORACLE's a5 at the `jmp $4a0.w` after running `boot_load_stage`'s whole range from the program image is `$21e90` (with `$1d43e` in a6, the row that makes it mean something), and the dump's A5 is the same number. **The dump is a witness here, not the source**, and the row says so when there is none | ✅ `make test` + `smoke.py ownplay` pass 1 |
-| **M9** the retry policy, DRIVEN | a `WB_LOAD_DISK_ERROR` from `boot_load_stage` leaves `WB_LEVEL_SEQ_INDEX` already stepped and may leave `WB_COPYLOCK_ARM_FLAG` armed (`../src/boot.c`'s `load_or_stop`), and neither residue is recoverable from the other — the original never has the problem because it retries the same load IN PLACE, inside an interactive error arm this port declines to model. So the ladder **stops**, records which rung it stopped at and what the slice reported, and hands the machine back. A DECLARED deviation, not a defect — and no longer only a declaration: **pass 5 withholds `OVALAY02.RAD` from the drive** and drives the whole thing with real data, MEASURING the index residue the policy is built around | ✅ `smoke.py ownplay` pass 5 |
+| **M9** the retry policy, DRIVEN | a `WB_LOAD_DISK_ERROR` from `boot_load_stage` leaves `WB_LEVEL_SEQ_INDEX` already stepped and may leave `WB_COPYLOCK_ARM_FLAG` armed (`../src/boot.c`'s `load_or_stop`), and neither residue is recoverable from the other — the original never has the problem because it retries the same load IN PLACE, inside an interactive error arm this port declines to model. So the ladder **stops**, records which rung it stopped at and what the slice reported, and hands the machine back. A DECLARED deviation, not a defect — and no longer only a declaration: **passes 5 and 6 withhold a file each from the drive** and drive the whole thing with real data. Pass 5 withholds `OVALAY02.RAD` and MEASURES the index residue the policy is built around; pass 6 withholds `DATADISK.RAD` and executes the OTHER stop arm, whose residue is the INVERSE — the prompt steps no sequence state at all, and what it leaves is on the hardware | ✅ `smoke.py ownplay` passes 5 + 6 |
+| **M9** BOTH stop arms, EXECUTED | through phase E three of `run_the_own_entry`'s five stop arms had been executed by nothing at all: four green passes, three untouched `switch` arms. Two are driven now, each by a volume that does not carry a file the reconstruction asks for BY NAME — no poke past the ending, no injected fault, exactly what a player with the wrong disk in would have. `OWN_STOP_RELOAD` (pass 5) and `OWN_STOP_RESTART` (pass 6), each with its own measured residue. `OWN_STOP_LEG_LIMIT` needs a ladder that CYCLES, which nothing here produces, and stays declared in Known gaps | ✅ `smoke.py ownplay` passes 5 + 6 |
 | **M8** the MIS-RUN control | `build.sh bootfault` suppresses `boot_credits_screen`'s call and nothing else — both gates still crossed, both other slices still called, the record still complete. Measured on both ROMs: **13 of 14 breakable rows fail** — 21,714 of 32,000 credits bytes, fifteen of sixteen pens, and every stage pin, because `game_restart_reset` lives inside the suppressed slice and is what puts `WB_LEVEL_SEQ_INDEX` at 0. **The fourteenth HOLDS and is named rather than swallowed**: `WB_LIFE_RESTART_ENTRY_C26` is zero in the shipped image, so neither a chain that ran nor one that stopped can move it. That cascade is the port's own `load_or_stop` contract firing, and it is why this control cannot also be the SPAN's — the chain stops before a span is taken, so the row above owns that (§14) | ✅ `smoke.py bootfault` |
 
 **Batch 44 phase D RAN THE BOOT CHAIN, and the staged dump stopped being a fabrication.** The twenty
@@ -174,7 +178,7 @@ what appears, and four lines of it matter before you start:
   staged and no `original.py dump` is needed.**
 - **The endings come back to the boot.** A round end (and the cheat's level skip) load the next
   stage; ESC draws the data-disk prompt and then walks the whole chain again. Both are measured
-  headless on both ROMs — `smoke.py ownplay`, four passes — with the sequence index and the stage
+  headless on both ROMs — `smoke.py ownplay`, six passes — with the sequence index and the stage
   number read back out of the running image and the SECOND stage's overlay identified by its own
   start record.
 - **It runs at four to five frames a second** (measured headless on the frame build: 1,004 frames in
@@ -238,7 +242,10 @@ python3 atari/original.py credits                            # M8: the SHIPPED c
 bash atari/build.sh boot         && python3 atari/smoke.py boot         # M8, THE WHOLE CHAIN, RUN
 bash atari/build.sh bootfault    && python3 atari/smoke.py bootfault    #   ...its MIS-RUN control
 
-bash atari/build.sh ownplay && python3 atari/smoke.py ownplay # M9, THE OWN-ENTRY PLAY: four passes
+python3 atari/original.py prompt                             # M9: the SHIPPED data-disk prompt at
+                                                            #     $e4d6, ESC driven in the frame loop
+bash atari/build.sh ownplay && python3 atari/smoke.py ownplay # M9, THE OWN-ENTRY PLAY: six passes
+bash atari/build.sh ownrun  && python3 atari/smoke.py ownrun  #   ...the interactive binary, headless
 bash atari/build.sh ownrun  && bash atari/run.sh            #   ...the same ladder, for a person
 
 bash atari/build.sh play    && python3 atari/smoke.py play  # the M2-STAGED frame loop, run long
@@ -270,6 +277,13 @@ machine*: colour 0 there is driven by a countdown the debugger seeds and `flip_s
 `pen00` is a compared register whose reproducibility the unflashed reading says nothing about. That
 is why the flash artefacts carry their own `F` prefix, `VECNOISE.json` included.
 
+**M9 IS `original.py` TWICE, and one of them it shares.** `smoke.py ownplay` refuses without
+`build/OPROMPT.BIN` (the shipped data-disk prompt at `$e4d6`, which needs `original.py prompt` — the
+only capture in that file reached by DRIVING an ending rather than by anchoring the boot) and
+without `build/OTITLE.BIN`, M7's own shipped title screen, which is the picture its two picture rows
+are controlled against. Both are asked for BEFORE the first of six boots is paid for, so a reader who
+has run neither gets the two commands rather than a refusal with four green runs thrown away.
+
 **M8 is `original.py` FOUR TIMES.** `smoke.py boot` refuses without `build/OCREDITS.BIN` (the shipped
 credits screen at `$e5aa`), without `build/ORIGRAM.BIN` and its manifest (the measured post-boot
 image its own recomputation is differenced against), and without `build/VARIANCE.txt` **and**
@@ -300,7 +314,7 @@ reading like a crash and then passes in isolation is this, not a red.**
 
 | file | role |
 |------|------|
-| `wonderboy_backend.c` | **the seven kit symbols, made hardware** — plus the three shifter sinks and the freestanding `memset`/`memcpy`/`bzero` this `-nostdlib` link has no libc for (`bzero` is the compiler's own rewrite of `clear_message_buffer`'s 6400-byte clear in `../src/text.c`, and the only libc symbol the cores reach) |
+| `wonderboy_backend.c` | **the seven kit symbols, made hardware** — plus the two shifter sink sites (three until batch 44 phase F folded the port's second copy of the arm into `../src/shifter.c`) and the freestanding `memset`/`memcpy`/`bzero` this `-nostdlib` link has no libc for (`bzero` is the compiler's own rewrite of `clear_message_buffer`'s 6400-byte clear in `../src/text.c`, and the only libc symbol the cores reach) |
 | `wonderboy_main.c` | the shim: stage the image, take the machine, run, hand it back, write `STATS.BIN` |
 | `wonderboy_os.s` | `_start`, the TOS trap wrappers, the two interrupt entries (`movem` pair + `rte`, and the MFP end-of-interrupt), and `wb_leave_supervisor` — the way BACK out of supervisor mode, which is not `Super(ssp)` and bug **7** says why |
 | `shim_include/tos.h` | the trap wrappers' prototypes — a short list, because the game issues one trap in its life |
@@ -786,7 +800,7 @@ arrives at the right state by a wrong route passes all of them.** M6 is the surf
 blind to: what reached the hardware, in what order, across all fifty-two frames.
 
 **THE MUTANT THAT MADE IT NECESSARY, and it is now dead.** `flip_screen`'s last two statements are
-`wr16(image + WB_FLASH_TIMER, flash)` and `shifter_write_word(WB_SHIFTER_PALETTE, ...)`. The
+`wr16(image + WB_FLASH_TIMER, flash)` and `shifter_palette_write(WB_FLASH_PEN, ...)`. The
 argument is the already-decremented local, so **swapping them changes no value anywhere** — the same
 word reaches RAM and the same colour reaches the chip. `../STATUS.md` measures it surviving the whole
 differential suite, and it survived every check in this directory too. Applied, and measured:
@@ -1328,17 +1342,19 @@ pass is sized for.
 - **The credits picture has no second-picture control of its own.** `bootfault` breaks both picture
   rows at once, exactly as §13's `titlecredits` does, so it says nothing about either alone. §13
   needed two named mutants for that and this rung has not run them.
-- **The data-disk prompt's screen base is unpinned in both directions** (§15). Deleting the two
-  `move.b`s, and sending them to each other's registers, both SURVIVE the whole host suite — they go
-  to `$ff8201`/`$ff8203`, off the loaded image, so the oracle drops them; and `smoke.py ownplay`
-  asserts the prompt LOADED rather than what the shifter was pointed at while it drew. The surface
-  that would catch it is M5's hardware-state capture aimed at `$e4d4`, or the kit-side
-  dropped-hardware-write ledger `set_palette` has been waiting on since batch 12. Registered in
-  `../STATUS.md`.
-- **The prompt picture itself is not differenced.** M7's `title` and M8's `credits` rows photograph
-  their picture and compare it against the shipped binary's at a named anchor; the prompt has no such
-  row, because the shipped side's `$e4d4` is reachable only by driving the ORIGINAL's own ESC ending
-  under `original.py`. Registered.
+- **RETIRED, batch 44 phase F — "the data-disk prompt's screen base is unpinned in both
+  directions" and "the prompt picture itself is not differenced".** Both rows stood here through
+  phase E and both are now false; they are described rather than deleted, because a gap that was
+  closed is worth as much as one that was not. The first said that deleting the two `move.b`s and
+  sending them to each other's registers (P3/P5) both SURVIVE, and named "M5's hardware-state capture
+  aimed at `$e4d4`" as the surface that would catch them — the anchor is `$e4d6` (§15: `$e4d4` is
+  inside `jsr $f944.l`'s operand), and the surface turned out to be neither M5's nor a ledger but the
+  own-entry ESC pass reading both registers back off the chip and requiring the base to have MOVED.
+  The second said the shipped side's anchor "is reachable only by driving the ORIGINAL's own ESC
+  ending under `original.py`" — which was true, and is what `original.py prompt` now does. Line 65's
+  M9 rows and §15 own both readings. What remains genuinely open is the kit-side
+  dropped-hardware-write LEDGER `set_palette` has been waiting on since batch 12, which would pin
+  these writes for the HOST differential rather than only on target; registered in `../STATUS.md`.
 - **The own-entry build's frames are not compared against anything.** It and the frame builds enter
   `game_main_loop` from different states — one from a boot this machine ran, one from a boot Hatari
   measured — and the ~500-650 reproducibility bytes §14 owns lie between them. A frame differential
@@ -1417,17 +1433,19 @@ then fills. That is why it needs no `copy_screen` where `boot_credits_screen` do
 inflates into the same buffer and copies DOWN, because the prologue left the shifter on the other
 one.
 
-Those two writes go through `../src/game.c`'s screen-base sink, exported this phase so that
-`src/boot.c` reaches `flip_screen`'s own on-target arm instead of growing a second one — the same
-move batch 44 phase C made for `shifter_palette_write`. **They are off the loaded image, so no
-differential can see them happen**, and the two mutants that delete or swap them SURVIVE the whole
-host suite (`../STATUS.md` batch 44 phase E §4). What IS pinned is their IDENTITY: two cases decode
+Those two writes go through the screen-base sink in `../src/shifter.c` — since batch 44 phase F the
+port's ONE statement of a shifter write, with `flip_screen`'s pair and the palette row that used to
+live in two other files. **They are off the loaded image, so no HOST differential can see them
+happen**, and the two mutants that delete or swap them SURVIVE the whole host suite
+(`../STATUS.md` batch 44 phase E §4). What the host suite pins is their IDENTITY: two cases decode
 the shipped `move.b #imm,abs.l` at `$e498` and `$e4a0` and require the destination longwords to be
 `WB_SHIFTER_SCREEN_BASE_HIGH`/`_MID` and the immediates to be bits 23-16 and 15-8 of
 `WB_SCREEN_HIGH`, which the picture-geometry case independently shows is the buffer the depack fills.
-So the base and the depack are shown to be one arrangement even while the write's HAPPENING stays
-unobservable — and this rung does not close that either, because `smoke.py ownplay` asserts the
-prompt LOADED rather than what the shifter was pointed at during it. Named in Known gaps.
+
+**AND THE HAPPENING IS NOW PINNED TOO, ON THE MACHINE.** The prompt photograph below reads
+`$ffff8201`/`$ffff8203` back off the chip at the instant `set_palette` returns, so the base is a
+MEASURED value rather than an argued one, and both mutants die there — the deletion and the byte
+swap, on both ROMs. That closes the phase-E gap rather than restating it.
 
 #### The a5 question, which is where an own-entry claim can quietly cheat
 
@@ -1459,7 +1477,7 @@ port does not thread the register back out through `bg_build_buffer` → `stage_
 `boot_load_stage`; that would change three verified functions' signatures and every call site to
 carry a value nothing reads.
 
-#### The five passes
+#### The six passes
 
 **THIS TABLE OWNS THE NUMBERS.** Every other surface that mentions a pass — the M9 rows at the top of
 this file, `../STATUS.md`'s phase E — cites it rather than restating a figure, which is §14's own
@@ -1470,23 +1488,25 @@ place or they disagree in three.
 |---|---|---|
 | 1 | nothing | the addresses every poke below is aimed with, AND the negative control: the ladder must stop at the FIRST half of the FIRST gate (`stopped_at` = `OWN_STOP_BOOT`), never reaching a stage or the frame loop. Two read-back bits are EXCLUDED here with the reason printed — the pass never enters the frame loop, so `RB_VBL_TICKING` has no frames to be live over and `entry_unwind` is a field never written |
 | 2 | both chain gates | the chain runs, one leg of 52 frames, 52 buffer publications, and **the stage does not move** — 0 reloads, 0 restarts, `last_ending` = `WB_KEY_ACTIONS_RETURNED`, sequence index 1, `OVALAY01`'s start record in memory |
-| 3 | + `WB_ROUND_END_RELOAD_REQUEST` | `last_ending` = 1, one reload, index **1 → 2**, stage number **1 → 2**, `OVALAY02`'s start record in memory, 54 publications over two legs |
-| 4 | + `WB_KEY_LAST_SCANCODE` = ESC | `last_ending` = 3, `boot_prompt_screen` = `WB_LOAD_OK`, **5 of 5 gates** (the only pass that walks the chain twice), one restart, back on the sequence's FIRST row, and 54 publications against pass 2's 52 — still flipping on the far side of the restart |
+| 3 | + `WB_ROUND_END_RELOAD_REQUEST`, at `capture_the_frame`'s **SECOND** arrival (`M3_POKE_ANCHOR`) | `last_ending` = 1, one reload, index **1 → 2**, stage number **1 → 2**, `OVALAY02`'s start record in memory, 54 publications over 54 frames in two legs |
+| 4 | + `WB_KEY_LAST_SCANCODE` = ESC, at `capture_the_frame`'s **FIRST** arrival (`OWN_QUIT_POKE_ANCHOR`, not pass 3's second — the screen-base row below says why) | `last_ending` = 3, `boot_prompt_screen` = `WB_LOAD_OK`, **5 of 5 gates** (the only pass that walks the chain twice), one restart, back on the sequence's FIRST row, and **55 publications over 53 frames in two legs** against pass 2's 52 — still flipping on the far side of the restart. (An earlier revision of this row read "54 publications" against 54 frames, which is pass 3's reading: this pass drives one frame earlier and takes its ending on a different frame, so the two counts are not the same number.) |
 | 5 | the round end again, with `OVALAY02.RAD` **withheld from the drive** | THE RETRY POLICY'S OWN ARM, with real data and no fault injected: the reload refuses (`WB_LOAD_DISK_ERROR`), the ladder stops at `OWN_STOP_RELOAD`, **no second leg runs**, and the residue is MEASURED — `WB_LEVEL_SEQ_INDEX` is one past the row that never loaded while row 0's overlay is still what is in memory |
+| 6 | ESC again, with `DATADISK.RAD` **withheld from the drive** | THE OTHER STOP ARM, the same way — and its residue is pass 5's INVERTED. The prompt refuses (`WB_LOAD_DISK_ERROR`), the ladder stops at `OWN_STOP_RESTART`, no second leg runs, **two gates are crossed and not five** (the refusal is above the prompt's own gate), and NO sequence state moves at all: index, stage number and the overlay in memory are pass 2's, because `boot_prompt_screen` steps nothing. What it DOES leave is on the hardware — no picture was taken (`prompt_captured_at` = 0, no `PROMPT.BIN`), and the shifter is stranded on `WB_SCREEN_HIGH`, the buffer whose picture never arrived |
 
 **EVERY PASS GRADES THE MACHINE.** `readback_checks` — the two vectors installed and restored, the
 resolution and sync set and restored, the screen base published, the IKBD answering, the YM2149's
-port A deselected and put back — runs in all five. It did not until the phase-E gate, and this is the
-build that most needs it: the own-entry build puts its own palette and its own screen base up, out of
+port A deselected and put back — runs in every one. It did not until the phase-E gate, and this is
+the build that most needs it: the own-entry build puts its own palette and its own screen base up, out of
 its own boot chain, so a build that took the machine and set nothing up would have produced a
 perfectly parseable record with nothing on the screen. `RB_VBL_TICKING` is graded on
 `frame_loop_vbl_ticks` here and not on the run's total, because the boot chain spends several hundred
 vblanks of its own and a floor read off the total would be met by those alone.
 
-**EACH PASS ARMS ONLY THE GATES IT CAN CROSS, AND ASSERTS THE COUNT.** Passes 2, 3 and 5 walk the
+**EACH PASS ARMS ONLY THE GATES IT CAN CROSS, AND ASSERTS THE COUNT.** Passes 2, 3, 5 and 6 walk the
 chain once (two gates); pass 4 walks it twice with the prompt's in between (five). Arming five where
 two are reachable is not free — an unanswered gate stops the ladder — so the count is a row rather
-than a setting.
+than a setting. Pass 6 is the sharpest case: it drives the SAME ending as pass 4 and arms two,
+because the refusal falls above the prompt's own gate.
 
 **WHICH OVERLAY CROSSED THE SEAM IS MEASURED.** Every stage's overlay inflates to the same
 `WB_OVERLAY_DEPACK_DEST`, so `stage_map_ptr` and `stage_start_ptr` are the same two numbers whichever
@@ -1501,6 +1521,63 @@ would not have worked: `OVALAY01.RAD` and `OVALAY02.RAD` both inflate to 15,592 
 (`OVALAY4B`, `OVALAY5B`, `OVALAY6A`, `OVALAY9A`), so all seven staged resources come off the
 AUTHENTIC dump and `refuse_a_hybrid_resource` prints that the five it can check are byte-identical in
 `disk2_repaired/`.
+
+#### The prompt's own picture, and the row that had to become a CHANGE
+
+Through phase E this rung asserted that `boot_prompt_screen` reported `WB_LOAD_OK` and that the
+ladder went on. It never looked at what was on the screen — which is the one thing a data-disk prompt
+IS. §13's title rung and §14's credits rung both photograph their picture against the shipped
+binary's; this one now does too, and it is the first of the three whose shipped-side anchor is not on
+the boot path at all.
+
+**THE SHIPPED SIDE HAD TO BE DRIVEN TO AN ENDING.** `$e494` is reached by three `jmp`s and not one of
+them is the boot: `$e490` is `bra.w $e4e6`, which steps straight over the prompt. So
+`original.py prompt` carries the shipped binary all the way in — both fire gates, the data-disk swap
+at `$e5ba`, into the frame loop — and then pokes `WB_KEY_LAST_SCANCODE` := ESC at a named frame,
+which is `game_key_actions`' own `$580` arm and the same byte `smoke.py m3` pokes on our side. It
+worked on the first run: five beacons, the picture 3,454 of 32,000 bytes non-zero.
+
+**THE ANCHOR IS `$e4d6` AND IT IS NOT `$e4d4`.** `jsr $f944.l` at `$e4d0` is six bytes, so `$e4d4` is
+inside its operand and no instruction begins there. `$e4d6` is `clr.b $877.w` — the instruction the
+slice falls into, the first after `set_palette` and before anything waits for a player — which is
+exactly the choice `$e5aa` and `$e556` are, one slice over. It collides with none of `boot_script`'s
+four `:once` fire breakpoints. Ours is photographed between `boot_prompt_screen`'s return and
+`fire_gate`, which is the same instruction boundary.
+
+**Measured: 0 of 32000 bytes differ, and all sixteen pens agree**
+(`000 333 555 777 600 654 740 040 061 067 007 330 430 542 551 770`), on both ROMs — and it reads
+`WB_SCREEN_HIGH` where the other two read `WB_SCREEN_LOW`, because this is the one slice that
+publishes its own base and inflates into the buffer it published.
+
+**THE CONTROL IS THE GAME'S OTHER PICTURE, AND WHICH ONE IS A MEASUREMENT.** §13 controls its
+differential by compiling a different resource into the same calls; this rung cannot, because the
+resource is `boot_prompt_screen`'s own operand inside a verified core and a second `.PRG` differing
+by a `-D` would be a fifth own-entry build for one row. So the same reader is asked the same question
+about the same captured bytes against a picture the run certainly did not draw, and both rows must
+BREAK. The credits screen was the obvious candidate and was **rejected on the measurement**: it
+breaks the bitplanes row by 12,437 of 32,000 bytes and the pens row by **exactly one pen**, because
+`DATADISK.RAD` and `CREDITS.RAD` ship the same sixteen-word palette row and only `$e5a2`'s override
+of pen 10 separates them. The TITLE screen breaks them by **19,821 bytes and fifteen of sixteen
+pens** — §13's own figure, for §13's own reason (pen 0 is black in both).
+
+**AND THE SCREEN-BASE ROW IS A CHANGE AND NOT A VALUE, WHICH IT LEARNED THE HARD WAY.** The first
+draft asserted only that `$ffff8201`/`$ffff8203` READ as `WB_SCREEN_HIGH` at the photograph. The
+phase-E mutant P3 — the publish deleted outright — was applied to it and came back **GREEN on both
+ROMs**, because `flip_screen` publishes the buffer that has just BECOME the front one and after an
+EVEN frame count the base is already on that very buffer: the ending inherits the right answer and
+the prompt's own write changes nothing an observer can see. That is the identical shape to the
+off-target hole the row was written to close. So the record carries the base as the ENDING left it
+(`prompt_base_before`), the row requires it to have MOVED, and the ESC passes drive one frame
+earlier (`OWN_QUIT_POKE_ANCHOR` = 1, against M3's 2) so that the base starts on the other buffer.
+Re-measured with the mutant: **CAUGHT**, in pass 4 and again in pass 6.
+
+**AND PASS 6'S STRANDED-BASE ROW IS THE SAME SHAPE, for the same reason.** It asks about the same
+register on the arm where the picture never arrives, and through phase F's first draft it asked as a
+VALUE — which is exactly the form measured green above, kept honest only by the anchor this pass
+happens to share with pass 4. It is a MOVE now too (`prompt_base_before` != `WB_SCREEN_HIGH` and the
+base at the exit == it), so a future anchor whose parity changed would RED here with that sentence
+in the row's own detail rather than passing quietly. `OWN_QUIT_POKE_ANCHOR`'s comment in `smoke.py`
+records that both ESC passes depend on it.
 
 #### The retry policy, which is to stop
 
@@ -1568,8 +1645,24 @@ longer stages the dump, and the frame modes still do, for a reason rather than b
   the ladder's total includes the several hundred the five loads and four depacks spend — so on this
   build the bit was met whatever the frame loop did. `frame_loop_vbl_ticks` brackets the legs alone.
 - **Three of the ladder's five stop arms were executed by nothing.** Four green passes, and
-  `OWN_STOP_RELOAD` / `OWN_STOP_RESTART` / `OWN_STOP_LEG_LIMIT` had never run. Pass 5 drives the
-  first with real data; the other two are named in Known gaps.
+  `OWN_STOP_RELOAD` / `OWN_STOP_RESTART` / `OWN_STOP_LEG_LIMIT` had never run. Passes 5 and 6 drive
+  the first two with real data — a volume that does not carry a file the reconstruction asks for by
+  name — and their residues turn out to be opposites, which is why both were worth driving rather
+  than one standing for the pair. `OWN_STOP_LEG_LIMIT` is named in Known gaps.
+- **A ROW THAT PINNED A HARDWARE WRITE WAS SATISFIED BY THE FRAME LOOP.** The prompt's screen-base
+  row, first written as "the base READS as `WB_SCREEN_HIGH`", went green under the very mutant it
+  existed to kill. `flip_screen` had already left the base there, because the ESC ending was driven
+  after an even number of frames. It asserts a MOVE now and the passes are driven one frame earlier;
+  §15 has the whole account. **The lesson is one the docs already carry in another accent** — a pin
+  on a value some other writer also produces is a pin on nothing, and the way to find out is to
+  apply the mutant rather than to reason about the surface.
+- **A MUTANT THAT ADDS A WRITE IS NOT A MUTANT THAT MOVES ONE.** The M6 order mutant was first
+  applied by INSERTING the sink write above the timer store and leaving the original below it, which
+  compiles to the colour being written twice a frame — and `flash_order_checks` looks for the NEXT
+  colour write after each decrement, which was still the correct one. It read as SURVIVED. The
+  corrected mutant, which deletes the original line, is **CAUGHT**, and only that row reds. Two
+  minutes of "why did that survive" is what the generated code was for: the `-S` output showed the
+  call emitted twice.
 
 ## The bugs found on target
 
@@ -1644,13 +1737,13 @@ green modes had been one compiler decision away from it.*
 
 ## Known gaps
 
-- **TWO OF THE LADDER'S FIVE STOP ARMS ARE EXECUTED BY NOTHING.** `OWN_STOP_RELOAD` is driven by
-  pass 5 (§15) with a real withheld file. `OWN_STOP_RESTART` — the prompt slice, or the chain after
-  it, refusing — and `OWN_STOP_LEG_LIMIT` — a headless run taking more endings than
-  `OWN_LEG_LIMIT` allows — are not. The first is reachable by the same mechanism (withhold
-  `DATADISK.RAD` and drive ESC) and is a cheap sixth pass; the second cannot be reached without a
-  ladder that cycles, which nothing here produces. **KNOWINGLY UNPINNED**, with the trigger: any
-  change to `run_the_own_entry`'s switch.
+- ~~**TWO OF THE LADDER'S FIVE STOP ARMS ARE EXECUTED BY NOTHING.**~~ **ONE IS.**
+  `OWN_STOP_RELOAD` is driven by pass 5 and `OWN_STOP_RESTART` by pass 6 (§15), each with a real
+  withheld file and no injected fault. **`OWN_STOP_LEG_LIMIT` — a headless run taking more endings
+  than `OWN_LEG_LIMIT` allows — is not, and cannot be without a ladder that CYCLES, which nothing
+  here produces**: every driven pass takes one ending, and a run that took four would need an input
+  source this directory does not have. **KNOWINGLY UNPINNED**, with the trigger: any change to
+  `run_the_own_entry`'s switch.
 - **THE OWN-ENTRY BUILD'S FRAME LOOP IS NOT REACHED BY `smoke.py ownrun`**, and that is a property
   of the build rather than an omission. `-DSMOKE_PLAY` lifts the fire gates' spin bound, so the
   uncapped binary waits at the title's gate for a person; the headless ladder answers its gates with
@@ -1689,12 +1782,26 @@ green modes had been one compiler decision away from it.*
   rather than inherited quietly. Pinning it needs an on-target case that computes such an address on
   purpose and watches a surface that can see the answer; there is none today.
 - ~~**Of the four shifter-sink mutants `../STATUS.md` measures as surviving the whole differential
-  suite, ONE IS LEFT.**~~ **NONE IS LEFT.** M1 killed the base-byte swap where it lives in the shared
+  suite, ONE IS LEFT.**~~ **NONE IS LEFT — AND THAT NOW COVERS THE PROMPT'S PAIR AS WELL** (P3 and
+  P5, batch 44 phase E §4: the base publish deleted and its two bytes swapped, both measured
+  SURVIVING the whole host suite). §15's prompt photograph reads the two registers back off the chip
+  and requires the base to have MOVED; both mutants die there, on both ROMs. Every shifter write
+  this port makes now has an on-target surface, and they all go through one module
+  (`../src/shifter.c`) rather than three. M1 killed the base-byte swap where it lives in the shared
   translation; M2 killed the same swap at `flip_screen`'s own two call sites and the wrong buffer
   published (§9); M5 killed the flash's two arms swapped, by arming the countdown on both sides
   (§10); **M6 killed the sink write moved above the timer store** (§11), which was the one no
   snapshot could ever see because it changes no value, only an order. Measured both ways: with the
   mutant applied `m5flash` is entirely green and `m6flash`'s order row is red.
+- **A SINK WRITE THIS PORT DROPS ENTIRELY IS CAUGHT BY THE OWN-ENTRY BUILD AND NOT BY M1 OR M2.**
+  Measured this phase: deleting the MID byte from `shifter_screen_base_write` leaves M1 and M2 green
+  — M1 publishes its base through the shim's own `publish_base_bytes` and never reaches the core's
+  sink, and M2 compares the IMAGE's framebuffer bytes, which a mis-pointed shifter does not move —
+  while `smoke.py ownplay` reds in three passes, because the buffer-publication count collapses to
+  one. The SWAP is caught by M2 (§9) and the ORDER by M6 (§11). So the three sink mutations have
+  three different homes and no single mode covers the family; that is a property of what each mode
+  looks at rather than a hole, and it is stated here so that a future change to `../src/shifter.c` is
+  known to need more than one mode to clear it.
 - **The whole YM-2149 register FILE is still captured on target and compared by nothing** — §10 has
   the two reasons and the measurement behind the first, and neither has moved. What HAS changed is
   that this is no longer the same thing as the sound being unasserted: §11 compares the ordered PSG

@@ -118,6 +118,14 @@ include/scroll.h           the whole background scroll subsystem — prototypes,
                            why a step returns a FLAG (the original returns it through its own
                            return address, and vertically it consumes TWO calls that way), and why
                            the blit's sixteen jump-table variants are one function with a column
+include/shifter.h          THE PORT'S ONE SHIFTER SINK (batch 44 phase F): the screen base at
+                           $ff8201/$ff8203 and the sixteen colour registers at $ff8240, which lie
+                           off the loaded image and which the oracle therefore DROPS. Three files
+                           make those writes and two of them used to carry their own copy of the
+                           on-target arm; this header is the one declaration, holds the off-target
+                           empties as `static inline` (so the callers' generated code is what it
+                           was before the module existed — the reason is measured there), and
+                           states what a memory differential can and cannot see about any of them
 src/rad.c                  the resource depacker (rad_depack @ 0x5d62) — the reconstruction's cores
                            live here, one file per subsystem
 src/boot.c                 THE BOOT CHAIN (batches 44 phase A-C): the three block movers the boot uses
@@ -129,7 +137,12 @@ src/boot.c                 THE BOOT CHAIN (batches 44 phase A-C): the three bloc
                            atari/gen_image.py had named since batch 43 phase A as the reason the
                            staged image could not be computed host-side. clear_palette ($e7f4) is
                            boot-chain code that is NOT here: it lives in src/stage.c beside
-                           set_palette, because the two share one shifter sink.
+                           set_palette, because it IS set_palette with a zero for a source. (The
+                           earlier reason given here — "because the two share one shifter sink" —
+                           is RETRACTED: since batch 44 phase F the sink is include/shifter.h's and
+                           every file reaches it, so sharing it is no longer a reason for anything
+                           to live anywhere. The routines are still neighbours, on the argument
+                           above.)
                            test/test_boot_inventory.py counts the whole chain — 57 routines, 4,598
                            bytes — and its tripwires are what caught the prg_dis length bug.
                            Phase B added the load path above the disk seam
@@ -334,6 +347,10 @@ src/rng.c                  the game's PRNG (rng_next, $68c6, ten callers) and BO
                            parameters. One module because a draw's whole result is the generator's
                            low three (resp. five) bits, so a battery that pinned them apart would
                            pin neither
+src/shifter.c              the ON-TARGET half of that sink, and nothing else: two routines, one
+                           store each, under the port's single `WB_ON_TARGET` guard.
+                           atari/build.sh's `assert_the_sink_arm_lives_in_one_place` scans every
+                           core and every header and refuses a second copy of that guard
 src/scroll.c               the whole scroll subsystem, producer and consumer. The ENGINE ($7522..
                            $8228 + $d28): the frame queue and its dispatch pass, four request
                            handlers, four position steps, the two column fills that redraw the
@@ -815,12 +832,13 @@ Give the pair one shared salt constant and say why beside it.
 ## Running
 
 `atari/` is a **second build of the same sources** and is documented in `atari/README.md`. It
-cross-compiles the sixteen `src/*.c` unchanged to 68000 and runs them as a GEMDOS `.PRG` under
+cross-compiles the eighteen `src/*.c` unchanged to 68000 and runs them as a GEMDOS `.PRG` under
 Hatari, replacing the kit's four models with real hardware. It is a separate build directory with a
 separate compiler and the differential `.so` never sees it, so `make test` below is unaffected —
 `atari/build.sh` asserts that by refusing a `.PRG` that any of the kit's off-target model symbols
-leaked into. The only trace of it in `src/` is a `#ifdef WB_ON_TARGET` arm on the three shifter
-sinks (`src/game.c`, `src/stage.c`), a define `make test` never passes.
+leaked into. The only trace of it in `src/` is the `WB_ON_TARGET` arm of the port's one shifter sink
+(`include/shifter.h` and `src/shifter.c`), a define `make test` never passes — and `build.sh` scans
+every core and every header to refuse a second copy of it.
 
 **Modes green on two ROMs, and since batch 43 phase F they include the ENDS of the run.**
 `game_key_actions`' three endings are driven on the machine one run each (`smoke.py m3`), and the
@@ -832,11 +850,11 @@ executed by none of them, and driving it found a hang: `atari/README.md` §8 and
 **AND SINCE BATCH 44 PHASE E THE PROGRAM BOOTS ITSELF AND THE ENDINGS COME BACK.** `smoke.py ownplay`
 is one binary that stages the shipped `SWB.PRG` plus `gen_image.py`'s seeds — no measured RAM, no
 staged palette — runs `src/boot.c`'s **four** composed slices to a playable stage, and then enters
-`game_main_loop` with all three endings wired to the addresses the original's own `jmp`s name: a
+`game_main_loop` with all five endings wired to the addresses the original's own `jmp`s name: a
 round end reloads the next stage (measured: sequence index 1 → 2, and `OVALAY02.RAD`'s own start
 record in memory), and ESC draws the data-disk prompt and walks the whole chain again. **`bash
 atari/run.sh` opens that build**, so playing it starts at the real title screen. `atari/README.md`
-§15 has the four passes, the retry policy and the a5 question — the one place an own-entry claim can
+§15 has the six passes, the retry policy and the a5 question — the one place an own-entry claim can
 quietly lean on the dump, resolved by finding the boot's own producer for it and measuring the
 oracle's a5 at the `jmp $4a0.w`.
 
@@ -849,10 +867,12 @@ those registers are one boot's accident (`original.py vecnoise`). `atari/README.
 argue all of them. Note that it needs both disks in `../bin/` and that it is the one thing here whose
 inputs are not in git.
 
-**Four of the four shifter writes `src/game.c` sinks off target are now pinned on target**, and the
-one mutant left over them is the one no snapshot can ever see (it reorders two writes without
-changing either value). `PORTABILITY.md`'s `flip_screen` row carries the table; the short version is
-that a T3 HW_WRITE_ONLY price says the *oracle* cannot see a write, not that it is unpinnable.
+**Every shifter write the port drops off target is now pinned on target**, `flip_screen`'s two and
+the boot's alike — including the order-only mutant that reorders `flip_screen`'s timer store and its
+colour write without changing either value, which no snapshot can see and `smoke.py m6flash`'s bus
+timeline kills. The sink itself is `include/shifter.h`'s, not `src/game.c`'s, since batch 44 phase F.
+`PORTABILITY.md`'s `flip_screen` row carries the table; the short version is that a T3 HW_WRITE_ONLY
+price says the *oracle* cannot see a write, not that it is unpinnable.
 
 ```bash
 make venv      # once: .venv + pytest/pytest-xdist (see requirements.txt)

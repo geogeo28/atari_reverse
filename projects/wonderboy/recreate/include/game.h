@@ -173,17 +173,9 @@ void vbl_handler(uint8_t *image);
  * nothing on this side. The same standing hole set_palette has carried since batch 12. */
 void flip_screen(uint8_t *image);
 
-/* THE SCREEN-BASE SINK, exported for src/stage.c's `shifter_palette_write` reason: two routines in
- * two files publish a buffer to $ff8201/$ff8203 — `flip_screen` from the image's own front-buffer
- * bytes and src/boot.c's `boot_prompt_screen` from two immediates — and a second copy of the
- * WB_ON_TARGET arm in the second file is the thing this avoids.
- *
- * IT TAKES THE TWO BYTES AND NOT AN ADDRESS, because that is what the hardware has: an STF's video
- * base register is bits 23-16 and 15-8 in two registers with no low byte, both callers write them as
- * two separate `move.b`s, and the shim's own translation shadows them one at a time
- * (../atari/wonderboy_backend.c). A single address argument would hide the pair the backend has to
- * see. Off target both writes are dropped, as every shifter write in this port is. */
-void shifter_screen_base_write(uint8_t high, uint8_t mid);
+/* THE SCREEN-BASE SINK IS NOT DECLARED HERE. `shifter_screen_base_write` is ../include/shifter.h's,
+ * with the palette write src/stage.c used to export and the word write `flip_screen`'s flash makes:
+ * one module states the port's whole shifter boundary and its one `#ifdef WB_ON_TARGET` arm. */
 
 /* $4a0 — THE FRAME LOOP, and the routine every other name in this header is called BY. One call of
  * this function is ONE ITERATION: the original's `bra.s $4a0` at $508 is where a case checkpoints

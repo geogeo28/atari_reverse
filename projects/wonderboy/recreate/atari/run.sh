@@ -37,7 +37,7 @@
 #   stage), and ESC draws the data-disk prompt and then walks the whole chain again — prompt, title,
 #   credits, stage. THE OTHER TWO ARE THE PLAYER'S, and they are the ones a person meets without
 #   pressing anything: spending a life or walking into the collision map's exit tile reloads the
-#   stage, and the game-over box expiring draws the data-disk prompt. MEASURED headless, five
+#   stage, and the game-over box expiring draws the data-disk prompt. MEASURED headless, six
 #   passes, both ROMs: `smoke.py ownplay`. This binary itself is booted by `smoke.py ownrun`, which
 #   is what says the uncapped build links, boots and gets through the file seam.
 #
@@ -59,9 +59,11 @@
 #   return into. Here every one of the five endings goes back into the chain, which is what the
 #   original does, so no ending ends the program. ONE THING STILL CAN end it: a stage load the drive
 #   cannot answer stops the ladder and hands the machine back with the reason in its record — the
-#   declared retry policy (README §15), driven headless by `smoke.py ownplay` pass 5. The hand-back itself is still asserted, on the frame build that shares
-#   this build's exit path: all three endings driven and the two vectors read back from outside the
-#   program (smoke.py m3, README §12). Driving them is also what found the hang that used to follow
+#   declared retry policy (README §15), driven headless by `smoke.py ownplay` passes 5 AND 6: one
+#   withholds the next stage's overlay and stops at the reload arm, one withholds the prompt's own
+#   picture and stops at the restart arm, both with real data and no fault injected. The hand-back
+#   itself is still asserted, on the frame build that shares this build's exit path: all three
+#   endings driven and the two vectors read back from outside the program (smoke.py m3, README §12). Driving them is also what found the hang that used to follow
 #   any key-driven exit (README §8).
 #
 #   WHAT IS NOT ASSERTED BY ANYTHING: that the stick MOVES HIM. The ACIA handler's two joystick arms

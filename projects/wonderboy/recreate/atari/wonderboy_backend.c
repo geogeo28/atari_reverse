@@ -3,10 +3,14 @@
  * The differential harness models four things the loaded image cannot hold: a seeded hardware READ
  * (`hw.h`), the direct YM2149 ports (`psg.h`), a scheduled write that releases a busy-wait
  * (`sched.h`), and the shifter WRITES the reconstruction sinks because the oracle drops them
- * (`src/game.c`, `src/stage.c`). Each of those headers says in as many words that a build for the
- * real machine excludes the kit's own C sources and supplies its own. This file is that supply.
+ * (`include/shifter.h`, which is the port's ONE statement of them since batch 44 phase F). Each of
+ * those headers says in as many words that a build for the real machine excludes the kit's own C
+ * sources and supplies its own. This file is that supply.
  *
- * THE SURFACE IS A SET, AND IT IS SEVEN SYMBOLS PLUS THREE SINK SITES — enumerated, not estimated.
+ * THE SURFACE IS A SET, AND IT IS SEVEN SYMBOLS PLUS TWO SINK SITES — enumerated, not estimated.
+ * (THREE until batch 44 phase F, when the port's second copy of the sink arm was folded into
+ * ../src/shifter.c: `wb_target_shifter_byte` and `wb_target_shifter_word` are now named at exactly
+ * one call site each, in that file, and nowhere else under ../src/.)
  * Taken from the union of the translation units under `../src/`, undefined symbols minus the
  * game's own; the kit's own `nm` agrees (`build/libwonderboy.so` has exactly one undefined symbol,
  * `bzero`, because kit.mk sweeps the kit sources into the same .so).
@@ -292,13 +296,20 @@ int sched_poll16(uint8_t *image, uint32_t addr, uint32_t site_pc, uint16_t *seen
 
 /* ---- the shifter sinks become stores ----------------------------------------------------------
  *
- * ../src/game.c and ../src/stage.c sink four write instructions over three registers, and
- * ../STATUS.md's batch 42 phase C measures the hole exactly: four named mutants over them — the
- * wrong buffer published, the two base bytes swapped, the flash's two arms swapped, and the sink
- * write moved above the timer store — ALL SURVIVE the whole differential suite. On target the sinks
- * become these two functions and every one of the four IS NOW MEASURED DYING; README.md's milestone
- * table says by which check, and the last of them fell to M6 (README.md §11) because it changes no
- * value at all — only the order two writes reach the bus in.
+ * The port sinks its shifter writes through ONE module (../include/shifter.h and ../src/shifter.c),
+ * and ../STATUS.md measures the hole those writes leave exactly. SIX named mutants over them survive
+ * the whole differential suite, because the registers are off the loaded image and the oracle drops
+ * every write to them. Four are `flip_screen`'s, from batch 42 phase C — the wrong buffer published,
+ * the two base bytes swapped, the flash's two arms swapped, and the sink write moved above the timer
+ * store. Two more are the data-disk prompt's, from batch 44 phase E — its base publish deleted
+ * outright (P3), and its two bytes sent to each other's registers (P5).
+ *
+ * ON TARGET THE SINKS BECOME THESE TWO FUNCTIONS AND ALL SIX ARE NOW MEASURED DYING. README.md's
+ * milestone table says by which check. The order-only one fell to M6 (README.md §11) because it
+ * changes no value at all — only the order two writes reach the bus in — and the prompt's two fell
+ * to the own-entry ESC passes (README.md §15), which read both registers back off the chip and
+ * require the base to have MOVED rather than merely to READ as the right buffer: as a bare value
+ * that row was itself measured GREEN under P3.
  *
  * THE SCREEN BASE NEEDS TRANSLATING AND THAT IS THIS FILE'S ONE PIECE OF REAL LOGIC.
  *

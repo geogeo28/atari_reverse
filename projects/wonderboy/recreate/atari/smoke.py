@@ -338,11 +338,22 @@ def stage_drive(prg, withhold=()):
     .PRG has its own length compiled in. Copying only the .PRG means `smoke.py m2` after
     `build.sh m1` boots the frame build over the M1 image; measured, and it failed as "no M2.BIN",
     which reads like a crash. build.sh keeps `WB-<mode>.IMG` beside `WB-<mode>.PRG` for this."""
+    # THE WHOLE DRIVE IS REMADE ON EVERY CALL, AND THAT IS DELIBERATE. Phase F's first draft cached
+    # the fixtures on (build, withhold set) and skipped the copy when they matched; measured, that
+    # saved ~1.8 ms per staging — about 5 ms across `mode_ownplay`'s six boots, against ~33 seconds
+    # of Hatari each — and bought a module-global that a later DISK/-touching path could leave stale.
+    # The failure it would then produce is the one this project exists to refuse: a pass booting over
+    # the PREVIOUS pass's drive still satisfies pass 5's and pass 6's own refusal signatures, because
+    # "the file is not on the volume" is exactly what a stale withhold leaves behind. Copying is
+    # cheap and being certain is not, so nothing here remembers anything.
+    prg = Path(prg)
+
     # EVERY output the program can write is deleted first. A stale FRAME.BIN from the previous build
     # is the shape of failure that PASSES: the run crashes, the comparison reads yesterday's picture,
     # and the mode reports a match.
     for stale in (STATS_FILE, M2_FILE, TITLE_FILE, BOOT_FILE, BOOT_IMAGE_FILE, OWN_FILE,
-                  M2_FRAME_FILE, M2_PENS_FILE, M3_RESCUED_M2, M3_RESCUED_STATS):
+                  M2_FRAME_FILE, M2_PENS_FILE, OWN_PROMPT_FILE, OWN_PROMPT_PENS_FILE,
+                  M3_RESCUED_M2, M3_RESCUED_STATS):
         (DISK / stale).unlink(missing_ok=True)
     # ...AND EVERY RESOURCE, by extension rather than by name. A `.RAD` this mode did not stage is
     # one the PREVIOUS mode did, and a title build asks the machine for its file BY NAME — so a
@@ -351,7 +362,7 @@ def stage_drive(prg, withhold=()):
     for pattern in RESOURCE_GLOBS:
         for stale in DISK.glob(pattern):
             stale.unlink()
-    (DISK / DRIVE_PRG).write_bytes(Path(prg).read_bytes())
+    (DISK / DRIVE_PRG).write_bytes(prg.read_bytes())
     image = prg.with_suffix(".IMG")
     if not image.exists():
         raise SystemExit(f"{image} is missing — rebuild with `bash atari/build.sh`, which keeps the "
@@ -624,6 +635,19 @@ def shipped_frame(frame, prefix=""):
 pen_words = original.pen_words
 
 
+def differing_bytes(mine, theirs):
+    """Which byte offsets two same-length screen captures disagree at.
+
+    THE COMMON CASE IS EQUAL, AND THE SHORT-CIRCUIT IS THE WHOLE REASON THIS IS A FUNCTION. A
+    32000-iteration Python comprehension to establish equality is 32000 interpreter steps per
+    comparison for something the interpreter does in one `memcmp`, and this file makes that
+    comparison four anchors deep in the frame modes, once per picture differential and once more in
+    the prompt control's premise. Written out three times it was short-circuited in two of them."""
+    if mine == theirs:
+        return []
+    return [at for at in range(len(theirs)) if mine[at] != theirs[at]]
+
+
 # THE ONE M1 READ-BACK M2'S DATA CANNOT REACH, derived from the staged image and PRINTED.
 #
 # `RB_PSG_PORT_A_DESELECTED` asserts a TRANSITION: `vbl_handler` counts WB_FLOPPY_IDLE_TIMER down,
@@ -779,11 +803,7 @@ def m2_checks(record, stats, anchors, shift=0, prefix=""):
         against = anchors[(index + shift) % len(anchors)]
         theirs, front, their_pens = shipped_frame(against, prefix)
         mine = ours[index * SCREEN_BYTES:(index + 1) * SCREEN_BYTES]
-        # The common case is EQUAL, and a 32000-iteration Python comprehension to establish that is
-        # ~4 anchors x 32000 interpreter steps per run for a `bytes` comparison the interpreter does
-        # in one memcmp. Locate the differing bytes only once there are some.
-        wrong = ([] if mine == theirs
-                 else [at for at in range(SCREEN_BYTES) if mine[at] != theirs[at]])
+        wrong = differing_bytes(mine, theirs)
         rows = sorted({at // wb("SCREEN_LINE") for at in wrong})
         add(f"frame {frame} bitplanes" + (f" (vs shipped {against})" if shift else ""),
             not wrong,
@@ -1108,32 +1128,38 @@ def shipped_picture(screen_file, pens_file, mode):
     return tuple((original.BUILD / name).read_bytes() for name in names)
 
 
-def picture_rows(theirs, their_pens, what, record_file):
+def picture_rows(theirs, their_pens, what, record_file, captures=None):
     """The two rows a photographed screen comes down to, and the two guards under them.
 
     `(name, ok, detail, key)` per row, with the SURFACE as the key — `title_checks`' structural key,
     so a control can invert exactly the two rows a different picture can break. `what` names the
     picture in the row labels and `record_file` names the record whose presence makes a missing
-    capture a WRITE failure rather than a dead program."""
+    capture a WRITE failure rather than a dead program.
+
+    `captures` is the (screen, pens) pair on OUR drive, defaulting to the pair the title and boot
+    builds write. The own-entry build cannot use those two names — it also compiles -DSMOKE_M2 and
+    they are already the frame loop's anchor captures — so it names its own, and this stays the one
+    reader for every picture in this file."""
     rows = []
+    ours_name, our_pens_name = captures or (M2_FRAME_FILE, M2_PENS_FILE)
 
     def add(name, ok, detail, key=None):
         rows.append((name, bool(ok), detail, key))
 
-    missing = [name for name in (M2_FRAME_FILE, M2_PENS_FILE) if not (DISK / name).exists()]
+    missing = [name for name in (ours_name, our_pens_name) if not (DISK / name).exists()]
     if missing:
         add("the captures were written", False,
             f"{', '.join(missing)} absent although {record_file} was written — the run reached its "
             f"own dump, so this is the capture write failing rather than the program dying")
         return rows
-    ours = (DISK / M2_FRAME_FILE).read_bytes()
-    our_pens = (DISK / M2_PENS_FILE).read_bytes()
+    ours = (DISK / ours_name).read_bytes()
+    our_pens = (DISK / our_pens_name).read_bytes()
     if len(ours) != SCREEN_BYTES or len(our_pens) != PALETTE_BYTES:
         add("the capture is the right size", False,
             f"{len(ours)} frame bytes and {len(our_pens)} pen bytes, expected {SCREEN_BYTES} "
             f"and {PALETTE_BYTES}")
         return rows
-    wrong = [] if ours == theirs else [at for at in range(SCREEN_BYTES) if ours[at] != theirs[at]]
+    wrong = differing_bytes(ours, theirs)
     line_bytes = wb("SCREEN_LINE")
     scanlines = sorted({at // line_bytes for at in wrong})
     add(f"the {what} screen's bitplanes", not wrong,
@@ -1332,9 +1358,10 @@ def assert_the_record_matches_the_c(struct, fields):
     wrong number — some passing spuriously, others reddening for what reads like a reconstruction
     defect. `readback_bits` sets the precedent of reading the C rather than restating it.
 
-    IT COVERS THE BOOT RECORD ONLY TODAY. The other three (`STATS.BIN`, `M2.BIN`, `TITLE.BIN`) have
-    the same hole and are not fixed here — an out-of-scope change to three working readers — but the
-    helper is written to take any of them. QUEUED in ../STATUS.md.
+    IT COVERS TWO OF THE FIVE RECORDS TODAY — `boot_stats` and, since batch 44 phase E,
+    `own_stats`. The other three (`STATS.BIN`, `M2.BIN`, `TITLE.BIN`) have the same hole and are not
+    fixed here — an out-of-scope change to three working readers — but the helper is written to take
+    any of them. QUEUED in ../STATUS.md.
 
     AND IT SCRAPES THE WORKING TREE, WHICH IS WHY `refuse_a_stale_build` EXISTS. The declaration read
     here and the bytes graded below come from two different artefacts, so on their own they can be
@@ -1523,6 +1550,20 @@ def shipped_resource(name, trees):
                      f"and the build being staged asks for it by that name")
 
 
+# WHICH NOTES HAVE ALREADY BEEN SAID. A mode that boots six times re-stages six times (see
+# `stage_drive`) and every staging re-runs the corpus check, which is the point — but printing its
+# result six times says nothing the first line did not. This gates the NOTE and never the check, so
+# "measured on every run" below stays literally true, and it is deliberately not a cache of anything
+# the drive's contents depend on.
+_notes_said = set()
+
+
+def note_once(text):
+    if text not in _notes_said:
+        _notes_said.add(text)
+        print(text)
+
+
 def refuse_a_hybrid_resource(staged):
     """Refuse to stage a resource whose two shipped trees disagree, and say which agree.
 
@@ -1548,9 +1589,10 @@ def refuse_a_hybrid_resource(staged):
                 f"pressed disk cannot be substituted silently.")
         compared.append(name)
     if compared:
-        print(f"   note the {len(compared)} staged resources that {BOOT_RESOURCE_HYBRID_TREE}/ also "
-              f"carries are byte-identical in it ({', '.join(compared)}), so the repaired tree's "
-              f"four damaged overlays are not in this evidence")
+        note_once(f"   note the {len(compared)} staged resources that "
+                  f"{BOOT_RESOURCE_HYBRID_TREE}/ also carries are byte-identical in it "
+                  f"({', '.join(compared)}), so the repaired tree's four damaged overlays are not "
+                  f"in this evidence")
 
 
 def stage_resources(indices, trees):
@@ -3265,11 +3307,11 @@ def flash_order_checks(events, seed, label, watch_predates_frames):
     """`flip_screen`'s last pair, in the order the bus saw it.
 
     THE MUTANT THIS EXISTS FOR changes no value at all. `wr16(image + WB_FLASH_TIMER, flash)` and
-    `shifter_write_word(WB_SHIFTER_PALETTE, ...)` are adjacent statements whose argument is the
+    `shifter_palette_write(WB_FLASH_PEN, ...)` are adjacent statements whose argument is the
     already-decremented local, so swapping them writes the same word to RAM and the same colour to
     the chip — only later. `../STATUS.md` measures it surviving the whole differential suite and
-    every snapshot this directory takes, and it is the last of the four shifter-sink mutants alive.
-    The only thing that can see it is which of the two writes reached the bus first.
+    every snapshot this directory takes; this row is the only thing anywhere that can see it, and
+    what it sees is which of the two writes reached the bus first.
 
     THE RAM HALF IS A VALUE-CHANGE BREAKPOINT, folded into the same stream by
     `original.timeline_events` — Hatari has no RAM-write trace, and an instruction-boundary probe is
@@ -3805,22 +3847,30 @@ def m3_plain_script(directory):
     return script
 
 
-def ending_poke_breakpoint(directory, base, capture_pc, pokes, action_name, *before):
+def ending_poke_breakpoint(directory, base, capture_pc, pokes, action_name, *before,
+                           arrival=M3_POKE_ANCHOR):
     """The breakpoint that injects a `game_key_actions` ending — and the one BOTH driven modes make.
 
-    THE ENDING IS DRIVEN AT `capture_the_frame`'s M3_POKE_ANCHOR ARRIVAL in both, which is inside
-    the frame loop and after any boot, so the anchor that drives an ending on the FRAME build drives
-    the same ending on the OWN-ENTRY one. Two spellings of that is two places the arrival, the
-    beacon or the poke's base can drift — and the base is `image_base`, the one number whose
-    mis-aiming is INVISIBLE rather than loud: the poke lands somewhere harmless, the ending never
-    fires, and the run reads as a build that simply did not take it.
+    THE ENDING IS DRIVEN AT ONE OF `capture_the_frame`'s ARRIVALS in both, which is inside the frame
+    loop and after any boot, so the mechanism that drives an ending on the FRAME build drives the
+    same ending on the OWN-ENTRY one. Two spellings of that is two places the arrival, the beacon or
+    the poke's base can drift — and the base is `image_base`, the one number whose mis-aiming is
+    INVISIBLE rather than loud: the poke lands somewhere harmless, the ending never fires, and the
+    run reads as a build that simply did not take it.
+
+    WHICH ARRIVAL IS THE CALLER'S, AND THE TWO MODES DO NOT AGREE. M3_POKE_ANCHOR is the default and
+    is M3's own — the SECOND arrival, so a run has already photographed a frame before the ending
+    fires. `mode_ownplay`'s two ESC passes pass OWN_QUIT_POKE_ANCHOR instead, which is a MEASUREMENT:
+    the prompt's screen-base rows are about a hardware register the frame loop also writes, and the
+    parity of the completed frame count decides whether the publish they pin can be seen at all.
+    That constant's own comment has the reading.
 
     `before` is what a mode does BEFORE the pokes, in the same action file and therefore at the same
     instant: M3 photographs the two vectors as the shim left them, and the own-entry ladder has
     nothing to add."""
-    original.refuse_repeated_arrivals([(capture_pc, M3_POKE_ANCHOR)])
+    original.refuse_repeated_arrivals([(capture_pc, arrival)])
     return original.anchor_breakpoint(
-        capture_pc, M3_POKE_ANCHOR,
+        capture_pc, arrival,
         original.action_file(directory, action_name, f"echo {M3_POKE_BEACON}", *before,
                              *[entry.poke(base + entry.offset, entry.value) for entry in pokes]))
 
@@ -4115,7 +4165,7 @@ def mode_m3(mode):
 # own `jmp`s name, so a round end really does load the next stage and ESC really does show the
 # data-disk prompt and start over.
 #
-# FOUR PASSES, AND THE FIRST TWO ARE THE THIRD'S CONTROLS:
+# SIX PASSES, AND THE FIRST TWO ARE THE THIRD'S CONTROLS:
 #   1. UNDRIVEN — nothing injected. The chain must sit at its first fire gate exactly as `mode_boot`'s
 #      pass one does, and it is where the addresses the pokes below are aimed with come from.
 #   2. FIRE ONLY — both gates answered and no ending driven. The stage must stay where the boot put
@@ -4129,7 +4179,15 @@ def mode_m3(mode):
 #   4. ESC, DRIVEN — the same poke set M3's QUIT ending uses. The prompt slice must draw, its gate
 #      and the boot's two must be crossed again, and `game_restart_reset` inside the credits slice
 #      must put the sequence back to its first row. This is the pass that exercises
-#      `boot_prompt_screen` and `own_restart` on the machine.
+#      `boot_prompt_screen` and `own_restart` on the machine — and, since batch 44 phase F, the pass
+#      that PHOTOGRAPHS the prompt and compares it against the shipped binary's own picture, taken
+#      at `$e4d6` by `original.py prompt` after driving the SHIPPED side's ESC ending. Its two
+#      picture rows have a control that can fail: the same reader, the game's other picture.
+#   5. THE ROUND END WITH ITS OVERLAY WITHHELD — the reload arm's stop, with real data.
+#   6. ESC WITH DATADISK.RAD WITHHELD — the restart arm's stop, the same way. Five of
+#      `run_the_own_entry`'s six exits are executed by these six passes; the sixth (OWN_STOP_LEG_
+#      LIMIT) needs a ladder that cycles, which nothing here produces, and is declared in
+#      atari/README.md's Known gaps.
 #
 # WHICH OVERLAY CROSSED, MEASURED. Every stage's overlay inflates to the same address, so the run
 # reports the first LONGWORD of what landed there and this file inflates the shipped file host-side
@@ -4139,6 +4197,8 @@ def mode_m3(mode):
 OWN_FILE = "OWN.BIN"
 OWN_FIELDS = ("magic", "bytes", "image_base",
               "prompt_result", "title_result", "credits_result", "stage_result",
+              "prompt_captured_at", "prompt_base_before", "prompt_shifter_base",
+              "prompt_pens_readback_failed",
               "fire_press_pc", "fire_release_pc", "fire_gates_crossed", "fire_waits_timed_out",
               "fire_wait_timed_out_pc",
               "entry_unwind", "legs_run", "reloads", "restarts", "last_ending", "stopped_at",
@@ -4161,6 +4221,57 @@ OWN_STOP_NAMES = {c_constant(name): name for name in
 OWN_STOP_BOOT = c_constant("OWN_STOP_BOOT")
 OWN_STOP_FRAME_LIMIT = c_constant("OWN_STOP_FRAME_LIMIT")
 OWN_STOP_RELOAD = c_constant("OWN_STOP_RELOAD")
+OWN_STOP_RESTART = c_constant("OWN_STOP_RESTART")
+
+# WHERE THE OWN-ENTRY BUILD PUTS THE PROMPT PICTURE. Not FRAME.BIN/PENS.BIN — this build also
+# compiles -DSMOKE_M2 and those two are already the frame loop's anchor captures, which is exactly
+# the collision `picture_rows`' `captures` argument exists for.
+OWN_PROMPT_FILE = "PROMPT.BIN"
+OWN_PROMPT_PENS_FILE = "PROMPTPN.BIN"
+OWN_PROMPT_CAPTURES = (OWN_PROMPT_FILE, OWN_PROMPT_PENS_FILE)
+# The `original.py` mode that photographs this mode's shipped side, named once for
+# BOOT_CREDITS_ANCHOR_MODE's reason: the refusal a missing artefact produces is then the command a
+# reader can paste.
+PROMPT_ANCHOR_MODE = "prompt"
+# WHICH ARRIVAL AT `capture_the_frame` THE ESC PASSES POKE AT, and it is NOT M3's — which is a
+# measurement rather than a preference, and the one that turned the prompt's base row from a pin
+# that could not fail into one that can.
+#
+# `flip_screen` publishes the buffer that has just BECOME the front one, so the base at an ending is
+# decided by the parity of the leg's frame count. M3's anchor is the SECOND arrival, i.e. two frames
+# flipped, and measured that leaves the base already on WB_SCREEN_HIGH — the very buffer
+# `boot_prompt_screen` then publishes. The phase-E mutant P3 (the publish deleted outright) was
+# applied to the first draft of this row and came back GREEN on both ROMs for exactly that reason.
+# One frame earlier the base is on WB_SCREEN_LOW and the publish is the only thing that can move it.
+#
+# IT COSTS M3'S TWO STATED REASONS NOTHING: `capture_the_frame`'s FIRST arrival is still after a
+# whole frame has run under the debugger, and it is if anything earlier in the window, so the tail is
+# longer rather than shorter. It is scoped to the ESC passes because they are the only ones whose
+# claim is about a hardware register the frame loop also writes.
+OWN_QUIT_POKE_ANCHOR = 1
+# AND PASS 6 DEPENDS ON THE SAME PARITY, for the same reason on the other arm: its stranded-base row
+# is `prompt_base_before != WB_SCREEN_HIGH and the base at the exit == WB_SCREEN_HIGH`, and an anchor
+# whose frame count already left the base there would make the conjunct's second half true of a run
+# that published nothing. Both ESC passes therefore pass this anchor, and neither takes M3's.
+#
+# ...AND THE INSTANT BOTH SIDES PHOTOGRAPH, WHICH IS A FRAME AND NOT AN ANCHOR NUMBER. The two
+# constants are DIFFERENT KINDS and comparing them directly was the first draft's mistake:
+# `original.PROMPT_ESC_ANCHOR` is a 1-based index INTO `anchor_frames()`, while this one is an
+# ARRIVAL COUNT at `capture_the_frame`. The shim calls that routine once per anchor frame in the
+# FRAME LOOP's order, so its Nth arrival is at the Nth SMALLEST anchor — `sorted(...)[N - 1]` — and
+# the two numbers agree only for as long as M2_ANCHOR_FRAMES happens to be written in ascending
+# order. What has to hold is that the ESC poke lands after the same number of completed frames on
+# both sides, so that is what is asserted: the shipped side's `prompt_esc_stop` breakpoints
+# `$4a0`'s hit `frame + 1`, i.e. the start of the frame after `frame`, and ours pokes at the arrival
+# that follows the frame below.
+_THEIR_ESC_FRAME = original.anchor_frames()[original.PROMPT_ESC_ANCHOR - 1]
+_OUR_ESC_FRAME = sorted(original.anchor_frames())[OWN_QUIT_POKE_ANCHOR - 1]
+assert _THEIR_ESC_FRAME == _OUR_ESC_FRAME, (
+    f"the shipped side pokes ESC once frame {_THEIR_ESC_FRAME} has finished (anchor_frames() index "
+    f"{original.PROMPT_ESC_ANCHOR}) and this side once frame {_OUR_ESC_FRAME} has (capture_the_frame "
+    f"arrival {OWN_QUIT_POKE_ANCHOR} of {original.anchor_frames()}) — the two prompt pictures would "
+    f"be of two different runs' frames, and the base parity the row above depends on is decided by "
+    f"exactly that count")
 
 
 def own_stop(record):
@@ -4202,9 +4313,12 @@ LEGS_WITH_ONE_ENDING = 2
 # THE `--run-vbls` THIS MODE NEEDS, BRACKETED RATHER THAN GUESSED — and the bracket is the point,
 # because the first draft's 20,000 was a round number nobody had measured against.
 #
-# MEASURED (TOS 1.04, all five passes): 4,000 is green and 3,000 is not — at 3,000 the fire-only
-# pass is cut off before it writes `OWN.BIN` and the mode reports "never reached its own dump",
-# which reads like a crash. So the floor is between 3,000 and 4,000 and this is TWICE it. Every
+# MEASURED (TOS 1.04, over the five passes that existed when it was bracketed): 4,000 is green and
+# 3,000 is not — at 3,000 the fire-only pass is cut off before it writes `OWN.BIN` and the mode
+# reports "never reached its own dump", which reads like a crash. So the floor is between 3,000 and
+# 4,000 and this is TWICE it. The sixth pass does not move the floor and is not re-bracketed here:
+# it stops at the prompt's refusal, and measured it spends ~562 shim vblanks against the longest
+# pass's ~1,690. Every
 # vblank above the floor is wall-clock spent five times over (Hatari runs the WHOLE window whatever
 # the program does: 20,000 measured 14.3 s per pass), so headroom is not free.
 #
@@ -4469,32 +4583,42 @@ def mode_ownrun():
           f"endings are `smoke.py ownplay`'s and the joystick is a person's.")
 
 
-def own_script(directory, plain, frames, pokes, gates, after_release=None):
+def own_script(directory, plain, frames, pokes, gates, after_release=None,
+               arrival=M3_POKE_ANCHOR):
     """The debugger script for one driven pass: the fire gates, and optionally one ending.
 
     TWO MECHANISMS, BOTH SHARED WITH THE MODE THEY CAME FROM. The gates are `fire_gate_lines`, the
     boot mode's own, aimed at the addresses THIS run reported about itself; the ending is
-    `ending_poke_breakpoint`, M3's own, which is where the anchor and the beacon are stated."""
+    `ending_poke_breakpoint`, M3's own, which is where the beacon is stated and the arrival's default
+    lives. `arrival` is passed through because the ESC passes drive at OWN_QUIT_POKE_ANCHOR and not
+    at M3's — see that constant for the measurement."""
     directory = Path(directory)
     lines = fire_gate_lines(directory, plain, gates, after_release)
     if pokes:
         lines.append(ending_poke_breakpoint(directory, plain["image_base"], frames["capture_pc"],
-                                            pokes, "OWNPOKE.INI"))
+                                            pokes, "OWNPOKE.INI", arrival=arrival))
     script = directory / "OWNCMD.INI"
     script.write_text("\n".join(lines) + "\n")
     return script
 
 
 def drive_the_own_run(prg, plain, frames, tag, pokes, gates, what, after_release=None, trace=False,
-                      withhold=()):
+                      withhold=(), arrival=M3_POKE_ANCHOR):
     """Boot the own-entry build again with `pokes` injected, and bring back its three records.
 
     `trace` IS OFF BY DEFAULT AND ASKED FOR BY THE PASSES THAT PARSE IT. Hatari's write trace is
     tens of megabytes over this mode's run — the boot chain alone depacks four pictures — and a log
     nothing reads is cost with no evidence in it. The two passes that count buffer publications turn
-    it on; the ones that grade fields do not."""
+    it on; the ones that grade fields do not.
+
+    `arrival` IS WHICH OF `capture_the_frame`'s ARRIVALS CARRIES THE POKE, defaulting to M3's. The
+    two ESC passes pass OWN_QUIT_POKE_ANCHOR, because their screen-base rows are about the parity of
+    the completed frame count; every argument here is passed on BY KEYWORD for that reason — an
+    inserted parameter that bound `arrival` positionally would put those passes back on M3's anchor
+    silently, and the row they exist for would go green without being able to fail."""
     with tempfile.TemporaryDirectory() as tmp:
-        script = own_script(tmp, plain, frames, pokes, gates, after_release)
+        script = own_script(tmp, plain, frames, pokes, gates, after_release=after_release,
+                            arrival=arrival)
         status, log, rom = run_hatari(prg, run_vbls=OWN_RUN_VBLS, parse=script,
                                       trace=TIMELINE_TRACE if trace else None,
                                       log_name=f"hatari-{OWN_MODE}-{tag}.log", withhold=withhold)
@@ -4505,7 +4629,7 @@ def drive_the_own_run(prg, plain, frames, tag, pokes, gates, what, after_release
         if missing:
             raise SystemExit(f"FAIL: {what} left no readable record ({missing})")
     if pokes and M3_POKE_BEACON not in log:
-        raise SystemExit(f"FAIL: {what}'s poke breakpoint never fired — arrival {M3_POKE_ANCHOR} at "
+        raise SystemExit(f"FAIL: {what}'s poke breakpoint never fired — arrival {arrival} at "
                          f"capture_the_frame ({frames['capture_pc']:#x}) was never reached, so "
                          f"nothing was injected and this run is not a drive")
     if record["image_base"] != plain["image_base"]:
@@ -4625,6 +4749,135 @@ def own_stage_rows(record, row, what, index_row=None):
     ]
 
 
+def own_prompt_rows(record, theirs, their_pens):
+    """THE PROMPT PICTURE, and the screen base under it — the rows pass 4 gained in phase F.
+
+    Through phase E this mode asserted that `boot_prompt_screen` reported WB_LOAD_OK and that the
+    ladder went on. It never looked at what was on the screen, which is the one thing a data-disk
+    prompt IS — so the picture is compared here against the SHIPPED binary's own, photographed at
+    `$e4d6` by `original.py prompt` after driving the shipped side's ESC ending.
+
+    AND THE BASE PUBLISH IS PINNED HERE FOR THE FIRST TIME. `../STATUS.md` batch 44 phase E §4
+    measured two mutants SURVIVING every surface this project had — the prompt's screen-base publish
+    deleted (P3) and its two bytes sent to each other's registers (P5) — because $ff8201/$ff8203 are
+    off the loaded image and the oracle drops the write. `prompt_shifter_base` is those two registers
+    READ BACK off the chip at the photograph's own instant, so a build that never published, or
+    published the wrong buffer, reds.
+
+    AND THE ROW IS A CHANGE AND NOT A VALUE, WHICH IT HAD TO LEARN THE HARD WAY. The first draft of
+    this row asserted only that the base READS as WB_SCREEN_HIGH at the photograph — and P3 was
+    applied to it and SURVIVED, green, on both ROMs. `flip_screen` publishes the buffer that has just
+    become the front one, so after an EVEN number of frames the base is ALREADY WB_SCREEN_HIGH and
+    the ending inherits it; the prompt's own publish then changes nothing an observer can see, which
+    is the identical shape to the off-target hole it was written to close. The pass therefore drives
+    ESC at an anchor whose frame count leaves the base on the OTHER buffer (OWN_QUIT_POKE_ANCHOR) and
+    this row requires the base to have MOVED. A parity that ever changed would red here with that
+    sentence rather than passing quietly."""
+    want_base = record["image_base"] + original.WB_SCREEN_HIGH
+    before = record["prompt_base_before"]
+    rows = [
+        ("the prompt was photographed at the buffer its own base names",
+         record["prompt_captured_at"] == original.WB_SCREEN_HIGH,
+         f"prompt_captured_at={record['prompt_captured_at']:#x}, WB_PROMPT_SCREEN_BASE is "
+         f"WB_SCREEN_HIGH ({original.WB_SCREEN_HIGH:#x})"),
+        # THE ROW THAT KILLS P3 AND P5, and it is the only one in this directory that can — but only
+        # because it is a CHANGE. See the docstring: as a bare value it was measured surviving P3.
+        ("...and $e498/$e4a0 MOVED the shifter there — both registers read back off the chip",
+         before != want_base and record["prompt_shifter_base"] == want_base,
+         f"the ending left the base at {before:#x} and the photograph found {record['prompt_shifter_base']:#x}; "
+         f"the image is at {record['image_base']:#x} so WB_SCREEN_HIGH translates to {want_base:#x}"
+         + ("" if before != want_base else
+            " — THE ENDING ALREADY LEFT IT THERE, so this pass cannot see the publish at all: drive "
+            "ESC at an anchor whose frame count leaves the base on the other buffer")),
+        ("...and every pen read back as DATADISK.RAD's own palette row left it",
+         record["prompt_pens_readback_failed"] == NO_PENS_FAILED,
+         f"prompt_pens_readback_failed={record['prompt_pens_readback_failed']:#06x}"),
+    ]
+    # THREE-TUPLES, LIKE `prompt_control_rows` AND LIKE EVERY OTHER ROW LIST `report` IS HANDED.
+    # `picture_rows` returns FOUR — the fourth is the SURFACE key, which exists so that the control
+    # below can invert exactly the two rows a different picture can break — and pass 4 is not
+    # inverting anything, so it dropped the key at the call site. Dropped here instead, where the
+    # reason it exists at all is one line away.
+    return rows + [(name, ok, detail)
+                   for name, ok, detail, _ in picture_rows(theirs, their_pens, "data-disk prompt",
+                                                           OWN_FILE, captures=OWN_PROMPT_CAPTURES)]
+
+
+def require_the_prompt_pictures_differ(theirs, their_pens, control, control_pens, control_name):
+    """The control's PREMISE, asked before any boot is paid for: the two shipped pictures differ.
+
+    `mode_boot`'s rule and `own_stage_rows`' — a comparison whose two references are equal cannot
+    tell them apart, so the thing that makes the control below a control is checked first, on
+    artefacts that are already on disk, rather than after two 8,000-vblank runs.
+
+    BOTH SURFACES, BECAUSE THE CONTROL INVERTS BOTH. `prompt_control_rows` requires the bitplanes
+    row AND the pens row to break, and its whole reason for choosing the title picture over the
+    credits one is a PEN COUNT — the credits screen ships DATADISK.RAD's own sixteen-word palette row
+    and differs by exactly one pen. A premise that asked only about the 32000 bytes would let a
+    future picture with an identical palette through, and the pens half of the control would then be
+    a row that cannot fail. Returns (bytes differing, pens differing), which is what the mode
+    prints."""
+    for surface, mine, other, width in (("bitplanes", theirs, control, f"{SCREEN_BYTES} bytes"),
+                                        ("palette row", their_pens, control_pens,
+                                         f"{PALETTE_PENS} pens")):
+        if mine == other:
+            raise SystemExit(
+                f"FAIL: the shipped data-disk prompt and the shipped {control_name} picture carry "
+                f"the same {width} ({surface}), so a reader comparing our capture against either "
+                f"could not tell them apart on that surface and the control below would have a row "
+                f"that cannot fail")
+    their_pen_words, control_pen_words = pen_words(their_pens), pen_words(control_pens)
+    return (len(differing_bytes(theirs, control)),
+            sum(1 for pen in range(PALETTE_PENS)
+                if their_pen_words[pen] != control_pen_words[pen]))
+
+
+def prompt_control_rows(control, control_pens, control_name):
+    """THE CONTROL: our OWN prompt capture read against the game's OTHER picture, inverted.
+
+    §13 controls the title differential by compiling a DIFFERENT resource into the same three calls
+    and requiring both picture rows to break. This mode cannot do that: the resource the prompt asks
+    for is `boot_prompt_screen`'s own operand inside a verified core, and a second `.PRG` differing
+    by a `-D` would be a fifth own-entry build for one row. What it does instead is ask the SAME
+    READER the same question about the same captured bytes against a picture the run certainly did
+    not draw — one already photographed for another mode — and require the comparison to FAIL on
+    both surfaces.
+
+    THE TITLE PICTURE AND NOT THE CREDITS ONE, AND THAT IS A MEASUREMENT RATHER THAN A PREFERENCE.
+    The credits screen is the obvious candidate — it is this mode's neighbour, it inflates to the
+    same destination, and `mode_boot` already needs it. Measured against our prompt capture it breaks
+    the bitplanes row by 12,437 of 32,000 bytes and the pens row by exactly ONE pen, because
+    DATADISK.RAD and CREDITS.RAD ship the SAME sixteen-word palette row and the only thing that
+    separates them is `$e5a2`'s own override of WB_CREDITS_PROMPT_PEN. A control that breaks a
+    surface by one pen is a control that would stop breaking it the day that instruction moved. The
+    title picture breaks the same two rows by 19,821 bytes and FIFTEEN of sixteen pens — §13's own
+    figure, and for §13's own reason: pen 0 is black in both.
+
+    THE INVERSION IS OVER OUR CAPTURE AND NOT OVER THE TWO SHIPPED FILES, which is the difference
+    between a control and an arithmetic identity: `require_the_prompt_pictures_differ` establishes
+    that the two references are not the same bytes, and this establishes that the reader which said
+    "0 of 32000 differ" about one of them says something else about the other. A reader that always
+    agreed, or a capture file left over from another run, fails here while passing above.
+
+    Returns the rows AS INVERTED — a broken row is a PASS — so `report` prints them the way every
+    other control in this file prints its own.
+
+    AND IT REFUSES TO INVERT ANYTHING BUT THE TWO PICTURE SURFACES, which is `m2fault`'s structural
+    rule and here it is load-bearing: `picture_rows` reports a MISSING capture as a single failed row
+    rather than as two, and inverting that would turn "our prompt picture is not on the drive" into a
+    green control. The keys are what tell the two apart, so the shapes are checked before the
+    inversion."""
+    rows = picture_rows(control, control_pens, f"{control_name} CONTROL", OWN_FILE,
+                        captures=OWN_PROMPT_CAPTURES)
+    if sorted(key for _, _, _, key in rows if key is not None) != sorted((BITPLANES, PENS)):
+        raise SystemExit(
+            "FAIL: the prompt control read something other than the two picture surfaces — "
+            + "; ".join(f"{name}: {detail}" for name, _, detail, _ in rows)
+            + ". Inverting that would report a MISSING or malformed capture as a green control")
+    return [(f"the control: our prompt is NOT the {control_name} picture — {name}", not ok, detail)
+            for name, ok, detail, _ in rows]
+
+
 def mode_ownplay():
     """THE OWN-ENTRY PLAY: the boot loads the stage, and every ending comes back to it."""
     prg = BUILD / OWN_BUILDS[OWN_MODE]
@@ -4637,6 +4890,17 @@ def mode_ownplay():
             f"FAIL: {resource_name(overlay_resource(FIRST_SEQ_ROW))} and "
             f"{resource_name(overlay_resource(SECOND_SEQ_ROW))} carry the same start-record entry "
             f"position, so this mode cannot tell a reload from a repeat")
+    # THE SHIPPED SIDE'S TWO PICTURES, LOADED BEFORE THE FIRST BOOT IS PAID FOR — `mode_boot`'s
+    # `require_the_shipped_side` rule. The prompt is what pass 4 compares against; the TITLE picture
+    # is the control it is compared against second (`prompt_control_rows` measures why that one and
+    # not the credits screen), and the premise that the two are not the same bytes is checked here
+    # rather than after four runs.
+    their_prompt, their_prompt_pens = shipped_picture(
+        original.PROMPT_SCREEN_FILE, original.PROMPT_PENS_FILE, PROMPT_ANCHOR_MODE)
+    control_picture, control_pens = shipped_picture(
+        original.TITLE_SCREEN_FILE, original.TITLE_PENS_FILE, TITLE_MODE)
+    control_bytes, control_pen_count = require_the_prompt_pictures_differ(
+        their_prompt, their_prompt_pens, control_picture, control_pens, TITLE_MODE)
     plain, frames, plain_stats, plain_log, plain_status = measure_the_undriven_own_run(prg)
     problems = check_machine_health(plain_status, plain_log)
 
@@ -4714,7 +4978,7 @@ def mode_ownplay():
     # crosses all five gates, because it is the one that walks the chain twice.
     record, m2, stats, log, status, rom = drive_the_own_run(
         prg, plain, frames, QUIT_ENDING.tag, QUIT_ENDING.pokes, OWN_FIRE_GATES, QUIT_ENDING.arm,
-        after_release=release_the_quit_key(plain), trace=True)
+        after_release=release_the_quit_key(plain), trace=True, arrival=OWN_QUIT_POKE_ANCHOR)
     problems += check_machine_health(status, log)
     flips, why = own_flips(log, record["image_base"], "the ESC pass")
     checks = own_chain_rows(record, m2, stats, OWN_FIRE_GATES) + [
@@ -4744,12 +5008,22 @@ def mode_ownplay():
          flips is not None and flips > undriven_flips,
          why or f"{flips} buffer publications against the one-leg pass's {undriven_flips}, over "
                 f"{record['frames_total']} frames in {record['legs_run']} legs"),
-    ] + own_stage_rows(record, FIRST_SEQ_ROW, "after the restart — game_restart_reset put it back")
-    report(f"{OWN_MODE} pass 4 — ESC, DRIVEN: the prompt, and the whole chain again", checks)
+    ] + own_stage_rows(record, FIRST_SEQ_ROW, "after the restart — game_restart_reset put it back") \
+      + own_prompt_rows(record, their_prompt, their_prompt_pens)
+    report(f"{OWN_MODE} pass 4 — ESC, DRIVEN: the prompt, its PICTURE, and the whole chain again",
+           checks)
     print(f"   TOS={rom or 'bundled EmuTOS'} hatari exit={status}; "
           f"{record['vbl_ticks_at_exit']} shim vblanks (full log in "
           f"{OUT / f'hatari-{OWN_MODE}-{QUIT_ENDING.tag}.log'})")
     problems += [f"pass 4 {name}: {detail}" for name, ok, detail in checks if not ok]
+
+    # ...AND THE CONTROL FOR THE TWO PICTURE ROWS ABOVE, over the very bytes pass 4 captured.
+    control = prompt_control_rows(control_picture, control_pens, TITLE_MODE)
+    report(f"{OWN_MODE} pass 4 CONTROL — the same reader, the game's OTHER picture", control)
+    print(f"   the two SHIPPED pictures differ in {control_bytes} of {SCREEN_BYTES} bytes and "
+          f"{control_pen_count} of {PALETTE_PENS} pens, which is what makes BOTH inverted rows able "
+          f"to fail")
+    problems += [f"pass 4 control {name}: {detail}" for name, ok, detail in control if not ok]
 
     # PASS FIVE: THE SAME ROUND END, WITH THE STAGE IT ASKS FOR NOT ON THE DRIVE — the retry
     # policy's own arm, driven rather than argued.
@@ -4803,15 +5077,101 @@ def mode_ownplay():
           f"{OUT / f'hatari-{OWN_MODE}-noreload.log'})")
     problems += [f"pass 5 {name}: {detail}" for name, ok, detail in checks if not ok]
 
+    # PASS SIX: ESC AGAIN, WITH THE PROMPT'S OWN PICTURE NOT ON THE DRIVE — the LAST of
+    # `run_the_own_entry`'s stop arms that anything here can reach, driven the way pass 5 drives its
+    # sibling: real data, no poke past the ending, no injected fault. The volume simply does not
+    # carry DATADISK.RAD, which is what a player with the wrong disk in the drive would have, and
+    # `boot_prompt_screen` refuses on the name it asks for.
+    #
+    # IT ARMS TWO GATES AND NOT FIVE, and that is the shape of the claim rather than a setting: the
+    # refusal happens BEFORE the prompt's own fire gate, so the chain's two on the way in are all
+    # this pass can cross and `own_chain_rows` asserts the count. `release_the_quit_key` is
+    # deliberately NOT passed either — it exists to let go of ESC at the prompt's gate so a SECOND
+    # leg does not quit on its own first frame, and this pass has neither that gate nor a second leg.
+    #
+    # AND THE RESIDUE IS DIFFERENT FROM PASS 5'S, WHICH IS WHY BOTH ARMS ARE WORTH DRIVING. A refused
+    # RELOAD leaves WB_LEVEL_SEQ_INDEX one row past the picture in memory, because
+    # `stage_sequence_advance` steps it at the top of the slice and the load refuses below it. A
+    # refused RESTART steps nothing at all — `boot_prompt_screen` touches no sequence state — so the
+    # stage rows below are the SAME rows pass 2 asserts about a run that took no ending. What the
+    # prompt DOES leave is on the hardware: `clear_palette` and then a screen base pointing at
+    # WB_SCREEN_HIGH, the buffer whose picture never arrived, and the ladder stops before
+    # `chain_prologue` can take the display back off it.
+    withheld_prompt = resource_name(wb("RESOURCE_DATADISK"))
+    record, m2, stats, log, status, rom = drive_the_own_run(
+        prg, plain, frames, "noprompt", QUIT_ENDING.pokes, OWN_CHAIN_GATES,
+        "the withheld-prompt pass", withhold=(withheld_prompt,), arrival=OWN_QUIT_POKE_ANCHOR)
+    problems += check_machine_health(status, log)
+    stranded_base = record["image_base"] + original.WB_SCREEN_HIGH
+    base_before_the_prompt = record["prompt_base_before"]
+    checks = own_chain_rows(record, m2, stats, OWN_CHAIN_GATES) + [
+        (f"{QUIT_ENDING.arm} left the frame loop, as it did in pass 4",
+         record["last_ending"] == QUIT_ENDING.code and record["restarts"] == 1,
+         f"last_ending={record['last_ending']}, {record['restarts']} restart(s) attempted"),
+        (f"...and the prompt was REFUSED, because {withheld_prompt} is not on the volume",
+         record["prompt_result"] == LOAD_DISK_ERROR,
+         f"boot_prompt_screen returned {record['prompt_result']} "
+         f"(WB_LOAD_DISK_ERROR={LOAD_DISK_ERROR})"),
+        ("...and the ladder STOPPED there rather than walking the chain again",
+         record["stopped_at"] == OWN_STOP_RESTART,
+         f"stopped_at={own_stop(record)} — the arm that records where it stopped and hands the "
+         f"machine back"),
+        ("...and no second leg ran", record["legs_run"] == LEGS_WITHOUT_AN_ENDING,
+         f"{record['legs_run']} leg(s) against pass 4's {LEGS_WITH_ONE_ENDING} over the same "
+         f"ending — a ladder that carried on would have run another"),
+        # THE RESIDUE, HALF ONE: no picture. The refusal is ABOVE the depack and the palette set, so
+        # `capture_the_prompt` is never reached and the drive carries no PROMPT.BIN — which is what
+        # tells this stop apart from one that drew a picture and then failed to write it.
+        ("...and no prompt picture was taken, because the refusal is above the depack",
+         record["prompt_captured_at"] == 0 and not (DISK / OWN_PROMPT_FILE).exists(),
+         f"prompt_captured_at={record['prompt_captured_at']:#x} and {OWN_PROMPT_FILE} is "
+         f"{'present' if (DISK / OWN_PROMPT_FILE).exists() else 'absent'}"),
+        # THE RESIDUE, HALF TWO: the display is left on the buffer the picture never reached. The
+        # prompt publishes WB_SCREEN_HIGH before it asks for the file, and the ladder stops before
+        # `chain_prologue`'s own publish would have taken it back to WB_SCREEN_LOW. Read by the shim
+        # off $ffff8201/8203 in supervisor, BEFORE `teardown` puts TOS's base back.
+        #
+        # AND IT IS A MOVE AND NOT A VALUE, WHICH IS `own_prompt_rows`' LESSON APPLIED TO THIS ARM.
+        # Pass 4's first draft asserted exactly this shape — the base READS as WB_SCREEN_HIGH — and
+        # the P3 mutant (the publish deleted outright) came back GREEN on both ROMs, because
+        # `flip_screen` publishes the buffer that has just become the front one and an even completed
+        # frame count leaves the base already there. This pass drives the same ending at the same
+        # anchor for that reason (OWN_QUIT_POKE_ANCHOR), and this row requires the base to have
+        # MOVED, so the same mutant reddens here too. `prompt_base_before` is taken by `own_restart`
+        # before the slice, which is above the refusal, so it is on the record on this path as well.
+        ("...and $e498/$e4a0 MOVED the shifter onto WB_SCREEN_HIGH — the buffer the picture never "
+         "arrived in",
+         base_before_the_prompt != stranded_base and m2["shifter_base"] == stranded_base,
+         f"the ending left the base at {base_before_the_prompt:#x} and the exit found "
+         f"{m2['shifter_base']:#x}; the image is at {record['image_base']:#x}, so WB_SCREEN_HIGH is "
+         f"{stranded_base:#x}. $e498/$e4a0 published it before the load and nothing after the "
+         f"refusal moves it"
+         + ("" if base_before_the_prompt != stranded_base else
+            " — THE ENDING ALREADY LEFT IT THERE, so this pass cannot see the publish at all: drive "
+            "ESC at an anchor whose frame count leaves the base on the other buffer")),
+    ] + own_stage_rows(record, FIRST_SEQ_ROW,
+                       "the refused prompt stepped NO sequence state — pass 5's residue inverted")
+    report(f"{OWN_MODE} pass 6 — THE WITHHELD PROMPT: the restart arm's own stop", checks)
+    print(f"   TOS={rom or 'bundled EmuTOS'} hatari exit={status}; {withheld_prompt} withheld; "
+          f"{record['vbl_ticks_at_exit']} shim vblanks (full log in "
+          f"{OUT / f'hatari-{OWN_MODE}-noprompt.log'})")
+    problems += [f"pass 6 {name}: {detail}" for name, ok, detail in checks if not ok]
+
     if problems:
         raise SystemExit("FAIL: " + "; ".join(problems))
     print("OK: THE OWN-ENTRY PLAY — the reconstruction booted itself from the shipped program and "
           "its own seven files, entered the frame loop over the stage IT loaded, and took two of "
           "the frame loop's five endings back into the boot chain: a round end reloaded the next "
-          "stage and ESC drew the data-disk prompt and started over. A fifth pass then withheld the "
-          "reload's own overlay and the ladder stopped where its retry policy says it stops. The "
+          "stage and ESC drew the data-disk prompt and started over. Two further passes withheld a "
+          "file each and the ladder stopped where its retry policy says it stops, once for a "
+          "reload and once for a restart. The "
           "level skip shares the round end's unwind and is M3's; the player's own two endings are "
           "driven host-side (test_game.py); the joystick is still a person's job (atari/run.sh).")
+    print("    ...and the prompt it drew is the SHIPPED binary's own picture, byte for byte and pen "
+          "for pen, against a capture taken at $e4d6 after driving the shipped side's ESC ending — "
+          "with the base publish under it read back off the chip, which is the first surface in "
+          "this project that can see that write at all. Two withheld-file passes then executed the "
+          "ladder's reload and restart stop arms with data a player could really have.")
 
 
 # ---- the runner's own exec line, parsed ------------------------------------------------------------
@@ -4968,7 +5328,7 @@ def main():
         return
 
     if mode in OWN_BUILDS:
-        # FOUR PASSES and its own --run-vbls, for `mode_boot`'s reason and one more: two of them
+        # SIX PASSES and its own --run-vbls, for `mode_boot`'s reason and one more: three of them
         # drive an ending, so the ladder has a whole second stage to load inside the window.
         mode_ownplay()
         return

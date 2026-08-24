@@ -18,6 +18,7 @@
 #include "player.h"  /* the WB_PLAYER_* unwind codes the behaviour pass hands up — see the loop */
 #include "scene.h"
 #include "scroll.h"
+#include "shifter.h"  /* the port's one shifter sink — the base publish and the flash */
 #include "sound.h"
 #include "stage.h"
 #include "text.h"
@@ -375,31 +376,17 @@ void vbl_handler(uint8_t *image) {
  * ordinary `volatile` stores and the sinks compile out.
  */
 
-/* One write to a shifter register the differential cannot see. Two widths because the original uses
- * two: the screen base goes out as two BYTES and colour 0 as a WORD. Written as calls rather than as
- * no code at all so that the reads that FEED them, and the order, stay where a reader meets them —
- * set_palette's argument, one file over.
+/* The two writes this file makes to a shifter register the differential cannot see — the screen
+ * base as two BYTES and the lightning flash's colour 0 as a WORD — go through ../include/shifter.h,
+ * which is the port's ONE statement of the sink and of its on-target arm. That header has the whole
+ * argument; what stays here is the reads that FEED the writes and the order they are made in, which
+ * is the part that is reconstruction.
  *
- * ...and the on-target arm the paragraph above has promised since batch 12. WB_ON_TARGET is defined
- * only by ../atari/build.sh, so the differential `.so` compiles the sinks exactly as before. The
- * screen base is TRANSLATED rather than published — the game names an address in the 512 KB map it
- * owns outright and this build runs on an array GEMDOS placed elsewhere — which is why the arm is a
- * call into the shim and not a store here; ../atari/wonderboy_backend.c has the arithmetic. */
-#ifdef WB_ON_TARGET
-#include "wonderboy_target.h"
-static void shifter_write_byte(uint32_t reg, uint8_t value) { wb_target_shifter_byte(reg, value); }
-static void shifter_write_word(uint32_t reg, uint16_t value) { wb_target_shifter_word(reg, value); }
-#else
-static void shifter_write_byte(uint32_t reg, uint8_t value) { (void)reg; (void)value; }
-static void shifter_write_word(uint32_t reg, uint16_t value) { (void)reg; (void)value; }
-#endif
-
-/* ...and the one of those two that a second file needs. See include/game.h for why it takes the
- * pair of bytes rather than the address they compose. */
-void shifter_screen_base_write(uint8_t high, uint8_t mid) {
-    shifter_write_byte(WB_SHIFTER_SCREEN_BASE_HIGH, high);
-    shifter_write_byte(WB_SHIFTER_SCREEN_BASE_MID, mid);
-}
+ * THE FLASH IS A PALETTE WRITE AND IS SPELT AS ONE. `move.w #$777,$ff8240.l` names WB_SHIFTER_PALETTE
+ * itself, which is colour register 0 — WB_FLASH_PEN — so it goes through the same
+ * `shifter_palette_write` the palette row does rather than through a raw-address word write of its
+ * own. The store that reaches the bus is the same address at the same instant either way; what the
+ * pen spelling removes is a public sink that could name any shifter register from anywhere. */
 
 /* $6aa..$6b4 — spin while WB_VBL_COUNTER is below WB_VBL_COUNTER_READY, as a SIGNED word: `cmpi.w
  * #$1,d0 / blt.s`. Nothing in this routine raises the counter; vbl_handler does, fifty times a
@@ -456,7 +443,7 @@ void flip_screen(uint8_t *image) {
     /* The two arms are EXCLUSIVE and both write colour 0: white while the countdown still has
      * frames to run, black on the frame it reaches zero. `subq.w #1 / beq.w` branches on the
      * DECREMENT's result, which is the word just stored. */
-    shifter_write_word(WB_SHIFTER_PALETTE, flash ? WB_FLASH_COLOUR_WHITE : 0);
+    shifter_palette_write(WB_FLASH_PEN, flash ? WB_FLASH_COLOUR_WHITE : 0);
 }
 
 

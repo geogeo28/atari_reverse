@@ -964,6 +964,11 @@ RETRACTED_PHRASES = {
     # paragraph as the claim, quoting it, so the phrase survived its own retraction twice over.
     "the boot-chain banner's prologue claim": "in the boot's order",
     "the resource-table park's unit": "3,200 LONGWORDS",
+    # Batch 44 phase F: PORTABILITY.md's order-mutant row called the mutant a structural
+    # on-target survivor; smoke.py m6flash measured it dying. The row's first correction
+    # QUOTED the retired verdict inside its own retraction (the rule's oldest failure mode)
+    # and was rewritten as a description at the commit gate.
+    "PORTABILITY's order-mutant verdict": "SURVIVES ON TARGET TOO, and structurally",
     # Batch 44 phase E's three, all of them the SLICE COUNT: `boot_prompt_screen` made the composed
     # set four, and three surfaces said three. The third is a forward-looking note that came true —
     # ../atari/ now names WB_BOOT_PROMPT_* and calls all four slices — and a note about what a

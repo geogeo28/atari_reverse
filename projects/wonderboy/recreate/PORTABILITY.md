@@ -1729,7 +1729,7 @@ counted polls per RUN rather than per SITE.
 
 | addr | bytes | tier | what happened in batch 42 phase C |
 | --- | ---: | --- | --- |
-| `$694` `flip_screen` | 118 | **T3 HW_WRITE_ONLY** | **RECONSTRUCTED & GREEN.** The kit now counts polls and arrivals per WAIT SITE (`TRAP_MODEL.md`, Phase 8), so the routine's two waits are separable in one run. Its THREE registers stay dropped and unpinned, and the sweep MEASURES that rather than asserting it: four named mutants over them — the wrong buffer published, the two base bytes swapped, the flash's two arms swapped, the sink write moved above the timer store — all survive the whole suite |
+| `$694` `flip_screen` | 118 | **T3 HW_WRITE_ONLY** | **RECONSTRUCTED & GREEN.** The kit now counts polls and arrivals per WAIT SITE (`TRAP_MODEL.md`, Phase 8), so the routine's two waits are separable in one run. Its THREE registers stay dropped and unpinned IN THIS HARNESS, and the sweep MEASURES that rather than asserting it: four named mutants over them — the wrong buffer published, the two base bytes swapped, the flash's two arms swapped, the sink write moved above the timer store — all survive the whole suite. Every one of the four dies ON TARGET; the table below says by which mode |
 | `$4a0` `game_main_loop` | 106 | T0 itself; T3 transitively, through the flip | **RECONSTRUCTED & GREEN.** A composition of fifteen calls, and the tier it inherits is the worst of its callees' |
 
 **AND THE THREE DROPPED REGISTERS ARE NO LONGER UNPINNED — THE PIN IS OFF TARGET'S REACH, NOT THE
@@ -1743,20 +1743,22 @@ it. `atari/README.md` §9 and §10 measure the five mutants above again *there*:
 | the two base bytes swapped (flip_screen's own two call sites) | survives | **CAUGHT at M2** |
 | the wrong buffer published | survives | **CAUGHT at M2** |
 | the flash's two arms swapped | survives | **CAUGHT at M5** (`smoke.py m5flash`), on three surfaces and at both arms. Its phase-B survival was a data-reachability hole and not a surface hole, exactly as recorded: `WB_FLASH_TIMER` is `$0000` in the staged image, and the census in `../names.txt` `cmt 0x714` shows the image's only raiser is unreachable in the anchored window twice over. M5 seeds the word on BOTH sides with that raiser's own operand |
-| the sink write moved above the timer store | survives | **SURVIVES ON TARGET TOO, and structurally.** Measured under `m5flash` with the flash live — the strongest snapshot this project can build. It changes no value, only the order of two writes, so no snapshot will ever see it. M6's, the write timeline |
+| the sink write moved above the timer store | survives | **CAUGHT at M6** (`smoke.py m6flash`), and it is the only one here that no SNAPSHOT could ever have caught. It changes no value, only the order of two writes, so `m5flash` is entirely green with it applied — measured, with the flash live, which is the strongest snapshot this project can build. What sees it is the ORDERED WRITE TIMELINE: both sides are watched and both must show the timer store reaching the bus before the colour. (An earlier revision of this row declared the mutant a structural on-target survivor — invisible to any snapshot — and ended there. The survivor half is RETRACTED; the invisibility half is exactly right and is why the pin had to come from a different KIND of surface.) |
 
 **WHAT THAT ADDS TO THIS DOCUMENT'S ARGUMENT.** A T3 price says the oracle cannot see the write. It
-does not say the write is unpinnable — it says the pin is not in this harness. Four of the five
-mutants above died the moment a real shifter was on the other end of the call, and the fourth needed
-only a state the anchor's own data could not reach, seeded identically into both sides. The tier
-tells you which surface a pin has to come from; it does not tell you there is none.
+does not say the write is unpinnable — it says the pin is not in this harness. **All five** mutants
+above are now dead on target: three died the moment a real shifter was on the other end of the call,
+the fourth needed only a state the anchor's own data could not reach (seeded identically into both
+sides), and the fifth needed a different KIND of surface. The tier tells you which surface a pin has
+to come from; it does not tell you there is none.
 
-**AND THE FIFTH IS THE INTERESTING ONE.** It is the only mutant here whose survival is a statement
-about the KIND of surface rather than about coverage: it is invisible to a snapshot at any anchor,
-under any data, because the two orderings leave identical state. That is a genuinely different
-verdict from "the oracle drops the write" and from "the window never reaches it", and it is the case
-this document's tier vocabulary has no word for — a routine whose price is not what the oracle can
-see, nor what the harness can drive, but what a *point-in-time comparison* can distinguish at all.
+**AND THE FIFTH IS THE INTERESTING ONE.** It is the only mutant here that no SNAPSHOT could catch,
+at any anchor, under any data, because the two orderings leave identical state. That is a genuinely
+different verdict from "the oracle drops the write" and from "the window never reaches it", and it is
+the case this document's tier vocabulary has no word for — a routine whose price is not what the
+oracle can see, nor what the harness can drive, but what a *point-in-time comparison* can distinguish
+at all. **The answer was to stop comparing points in time**: `smoke.py m6flash` compares the ORDER
+the writes reach the bus in, on both sides, and the mutant reds there.
 
 **WHAT M5 DOES AND DOES NOT PIN ABOUT THE PSG.** Phase D captures the whole YM-2149 register file on
 both sides at every anchor and compares NONE of it, and the reason is measured rather than assumed:

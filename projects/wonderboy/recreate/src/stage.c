@@ -46,6 +46,7 @@
 #include "hud.h"            /* the perfect-bonus arm IS bcd_add_score_bd70 */
 #include "machine.h"
 #include "scroll.h"         /* copy_longwords — a tile row is the same run of `move.l (a0)+,(a1)+` */
+#include "shifter.h"        /* the port's one shifter sink — set_palette's and clear_palette's */
 #include "sound.h"          /* $f95c's tail IS the sound module: stub +0 or stub +28 */
 #include "stage.h"
 #include "wonderboy.h"
@@ -386,40 +387,24 @@ void game_restart_reset(uint8_t *image) {
 
 /* --- $f944: the shifter palette, and $f95c, the stage-transition hinge above it ----------------- */
 
-/* ONE COLOUR REGISTER OF THE SHIFTER, and the one thing in this file a differential cannot see.
+/* THE SIXTEEN COLOUR REGISTERS, and the one thing in this file a differential cannot see.
  *
  * WB_SHIFTER_PALETTE is off the 68000's 24-bit bus as far as the loaded image goes, so the oracle
  * DROPS the original's eight `move.l`s exactly as it drops every other hardware write (the kit's
  * hw.h says so: there is no `hw_write8` to mirror them with). Nothing on either side records that
  * the colours went anywhere, so a reconstruction that wrote the wrong sixteen words — or none —
- * differs from this one by nothing the harness compares. On target this is
- * `((volatile uint16_t *)WB_SHIFTER_PALETTE)[index] = colour`, and the sink is compiled out.
+ * differs from this one by nothing the harness compares. ../STATUS.md registers the kit-side remedy
+ * — a dropped-hardware-write LEDGER, which would make this pinnable the way psg.h made the chip
+ * writes pinnable — as an idea, not as work any batch has done.
  *
- * It is written as a call rather than as no code at all so that the READ of the palette row, the
- * count and the order stay in the reconstruction where a reader meets them, and so that the one
- * place the claim is untested is the one place it is stated. ../STATUS.md registers the kit-side
- * remedy — a dropped-hardware-write LEDGER, which would make this pinnable the way psg.h made the
- * chip writes pinnable — as an idea, not as work this batch did.
- *
- * EXPORTED SINCE BATCH 44 PHASE C, because the credits slice writes ONE pen ($e5a2's
- * `move.w #$77,$ff8254.l`) rather than a row, and src/boot.c reaches this sink instead of growing a
- * third copy of the WB_ON_TARGET arm beside src/game.c's and this file's. The index arithmetic still
- * happens here, which is the whole reason the shim's store takes an absolute register. */
-#ifdef WB_ON_TARGET
-#include "wonderboy_target.h"
-/* The on-target arm this comment has promised since batch 12. The index arithmetic stays HERE, at
- * the one place that iterates, so the shim's store takes an absolute register and has no loop and no
- * indexed addressing mode of its own — see ../atari/wonderboy_backend.c for why that matters
- * (docs/on-target-execution.md, taxonomy 6: Joust's sixteenth pen landed in the resolution register). */
-void shifter_palette_write(unsigned index, uint16_t colour) {
-    wb_target_shifter_word(WB_SHIFTER_PALETTE + index * WB_SHIFTER_PALETTE_STRIDE, colour);
-}
-#else
-void shifter_palette_write(unsigned index, uint16_t colour) {
-    (void)index;
-    (void)colour;
-}
-#endif
+ * THE WRITE ITSELF IS `shifter_palette_write`, THE PORT'S ONE SHIFTER SINK (../include/shifter.h,
+ * with the on-target stores in src/shifter.c), and it is there rather than here because three files
+ * make shifter writes and two of them used to carry their own copy of the `WB_ON_TARGET` arm — one
+ * correction away from two files writing to different places on the one build where the write is
+ * real. That header has the argument, and why its off-target half is `static inline`. What stays here is the
+ * READ of the palette row, the count and the ORDER, which is the part of these two routines that is
+ * reconstruction, and the reason the sink is a call rather than no code at all: compiling it out
+ * would take the reads with it and leave the one place the claim is untested unstated. */
 
 uint32_t set_palette(uint8_t *image, uint32_t source) {
     for (unsigned colour = 0; colour < WB_PALETTE_COLOURS; colour++)
@@ -430,8 +415,8 @@ uint32_t set_palette(uint8_t *image, uint32_t source) {
 }
 
 /* $e7f4, the boot chain's palette clear — `lea $ff8240.l,a0` then eight `clr.l (a0)+`. It is here
- * rather than in src/boot.c because it is `set_palette` with a zero for a source, and the two would
- * otherwise hold two copies of the shifter sink and its on-target arm.
+ * rather than in src/boot.c because it is `set_palette` with a zero for a source, and the two belong
+ * beside each other for that reason alone.
  *
  * IT INHERITS set_palette's UNTESTED CLAIM WHOLE, and has nothing of its own to put beside it: the
  * sixteen writes go to an address the loaded image does not have, so the oracle drops all of them

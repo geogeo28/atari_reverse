@@ -10,7 +10,10 @@
  * no disk. That is what makes them differentiable at all — the rest of the boot chain is the raw
  * WD1772/DMA driver, the FAT12 layer above it, and the Copylock, none of which the memory
  * differential can see. `clear_palette` is the one boot routine that touches hardware and it lives
- * beside `set_palette` in src/stage.c, because the two share one shifter sink.
+ * beside `set_palette` in src/stage.c, because it IS `set_palette` with a zero for a source. (The
+ * reason given here through batch 44 phase E — "because the two share one shifter sink" — is
+ * RETRACTED: the sink is ../include/shifter.h's and every file reaches it, so sharing it is no
+ * longer a reason for anything to live anywhere.)
  *
  * THE TWO INSTALLERS ARE THE POINT. `bg_tile_install` and `sprites_cru_install` are the routines
  * recreate/atari/gen_image.py has named since batch 43 phase A as the reason the staged image cannot
@@ -23,9 +26,9 @@
 #include "actor.h"
 #include "bus.h"
 #include "disk.h"
-#include "game.h"     /* shifter_screen_base_write — the prompt slice's base publish */
 #include "machine.h"
 #include "rad.h"
+#include "shifter.h"  /* the base publish and the credits pen — the port's one sink */
 #include "sound.h"
 #include "stage.h"
 #include "wonderboy.h"
@@ -478,9 +481,9 @@ static int load_or_stop(uint8_t *image, uint32_t index, uint32_t dest, uint32_t 
  * move.b #$80,$ff8203.l` is WB_PROMPT_SCREEN_BASE, i.e. WB_SCREEN_HIGH, which is the buffer the
  * depack two calls later fills — so the picture is shown out of the buffer it lands in and no copy
  * is needed, where `boot_credits_screen` inflates into the same buffer and copies down because the
- * shifter is pointed at the other one. It goes through src/game.c's screen-base sink for
- * `shifter_palette_write`'s reason: the address is off the loaded image, the oracle drops the write
- * and the on-target arm performs it, and a second copy of that arm in this file is what the export
+ * shifter is pointed at the other one. It goes through the port's ONE shifter sink
+ * (../include/shifter.h): the address is off the loaded image, the oracle drops the write and the
+ * on-target arm performs it, and a second copy of that arm in this file is what the shared module
  * avoids. WHICH REGISTERS AND WHICH BYTES is decoded out of the shipped instructions in
  * test/test_boot_chain.py, so the write's identity is pinned even while its happening is not.
  *

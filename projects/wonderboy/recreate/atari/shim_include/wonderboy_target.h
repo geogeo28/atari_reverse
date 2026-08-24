@@ -7,10 +7,14 @@
  * instead. `shim_include/` is on the include path only for this file and `string.h`.
  *
  * WHAT IS DECLARED HERE is the pair of things that CANNOT be a link-time replacement, because the
- * reconstruction's own code has to name them: the shifter writes it sinks. `../src/game.c` and
- * `../src/stage.c` carry a `#ifdef WB_ON_TARGET` arm — three lines each — that forwards their sink
- * helpers to the two functions below. Off target the arm does not compile and the differential `.so`
- * is byte-identical, which `build.sh`'s own check asserts rather than assumes.
+ * reconstruction's own code has to name them: the shifter writes it sinks. ONE FILE forwards them —
+ * `../../src/shifter.c`, the on-target half of the port's single sink module — and it is the only
+ * core with a `WB_ON_TARGET` arm at all. (Through batch 44 phase E there were two, `../../src/game.c`
+ * for the screen base and the colour-0 flash and `../../src/stage.c` for the palette row; phase F
+ * folded them together, and `build.sh`'s `assert_the_sink_arm_lives_in_one_place` refuses a third.)
+ * Off target that arm does not compile — the empties are `static inline` in `../../include/shifter.h`
+ * so the callers' generated code is unchanged — and the differential `.so` never names anything
+ * here, which `build.sh`'s own check asserts rather than assumes.
  */
 #ifndef WONDERBOY_TARGET_H
 #define WONDERBOY_TARGET_H

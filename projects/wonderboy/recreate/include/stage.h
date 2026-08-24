@@ -83,15 +83,9 @@ void game_life_restart_reset(uint8_t *image);
  * Reached from $f95c (the stage's own palette) and from three sites in the boot prompt at $e494. */
 uint32_t set_palette(uint8_t *image, uint32_t source);
 
-/* $f944's own SINK, one shifter colour register. Exported for src/boot.c's credits slice, which
- * writes a single pen where this file's two callers write a whole row — one statement of the sink,
- * so the off-target drop and the on-target `wb_target_shifter_word` cannot diverge between the two
- * files. It inherits set_palette's untested claim above whole: nothing in a memory differential can
- * see it, whichever caller makes the write.
- *
- * The IMAGE is not a parameter, exactly as it is not one for the writes set_palette makes: the
- * destination is a hardware register and not an image byte. */
-void shifter_palette_write(unsigned index, uint16_t colour);
+/* $f944's own SINK IS NOT DECLARED HERE. `shifter_palette_write` is ../include/shifter.h's, beside
+ * the screen-base pair src/game.c used to export: one module states the port's whole shifter
+ * boundary. It inherits set_palette's untested claim above whole, whichever caller makes the write. */
 
 /* $e7f4 — the same sixteen registers written with zero, and the same untested claim. Two call sites,
  * both in the boot: $e494's prompt and $e4ea's continuation. Returns the cursor the original leaves

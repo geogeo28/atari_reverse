@@ -2671,6 +2671,11 @@
 #define WB_FLASH_COLOUR_WHITE        0x777u    /* `move.w #$777,$ff8240.l` at $6f8 — colour 0 while
                                                 * WB_FLASH_TIMER runs; `clr.w` at $702 on the frame
                                                 * it reaches zero */
+/* ...and WHICH colour register those two instructions name. $ff8240 is WB_SHIFTER_PALETTE itself,
+ * i.e. pen 0, and it is spelt as a pen because that is how the port's sink is reached: the flash is
+ * `shifter_palette_write(WB_FLASH_PEN, ...)` and not a raw-address word write of its own
+ * (../include/shifter.h). Compare WB_CREDITS_PROMPT_PEN, the boot's own one-pen raise. */
+#define WB_FLASH_PEN                 0u
 #define WB_FLOPPY_IDLE_TIMER         0x64f2u  /* word countdown vbl_handler decrements; on the frame
                                                * it reaches zero the handler deselects the drives.
                                                * floppy_unwind_return arms it with $96 (150 frames,
@@ -3485,15 +3490,20 @@
 #define WB_PALETTE_ROW_BYTES       32u      /* == 1 << WB_PALETTE_ROW_SHIFT == WB_PALETTE_COLOURS
                                              * words: one whole shifter palette */
 #define WB_SHIFTER_PALETTE         0xff8240u /* `lea $ff8240.l,a1` — the ST's 16 colour registers.
-                                              * OFF the image on the 24-bit bus, so every write to it
-                                              * is DROPPED by the oracle and by the reconstruction
-                                              * alike: what $f944 puts on the screen is not pinned by
-                                              * anything (see set_palette in stage.h) */
+                                              * OFF the image on the 24-bit bus, so OFF TARGET every
+                                              * write to it is DROPPED by the oracle and by the
+                                              * reconstruction alike: what $f944 puts on the screen is
+                                              * not pinned by any memory differential. The port's one
+                                              * sink and the whole argument are in shifter.h; on
+                                              * target the writes are real and ../atari/README.md
+                                              * §§10-11, 15 say which mode pins each */
 #define WB_PALETTE_COLOURS         16u      /* `move.l (a0)+,(a1)+` x 8 == 16 words */
 /* One shifter colour register per colour, so the registers are WB_PALETTE_ROW_BYTES/WB_PALETTE_COLOURS
  * apart. DERIVED rather than written as 2, so a palette row and the register file it is copied into
- * cannot disagree about their stride. Used only by the on-target arm of set_palette (src/stage.c),
- * which is the one place a colour INDEX has to become a register ADDRESS. */
+ * cannot disagree about their stride. Used at exactly one place — `shifter_palette_write` in
+ * src/shifter.c, which is the one place a colour INDEX has to become a register ADDRESS, and which
+ * is compiled ONLY on target: off target that routine is a `static inline` empty in shifter.h, so
+ * the multiply below does not evaluate on the differential build at all. */
 #define WB_SHIFTER_PALETTE_STRIDE  (WB_PALETTE_ROW_BYTES / WB_PALETTE_COLOURS)
 
 #define WB_SCROLL_FOLLOW_BIAS_X    0x20u    /* `subi.w #$20,d0` at $f9b2 before WB_BG_SCROLL_POS_X is

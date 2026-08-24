@@ -15736,3 +15736,277 @@ implied — §6.
   `stage_drive` on every boot. Harmless and measurable (it is what the withhold mechanism hooks
   into), but it is five copies of seven resources per mode run.
 * **CARRIED, unchanged**: everything phases A, B, C and D carry.
+
+## Batch 44 phase F — THE OWN-ENTRY SEAMS CLOSED: the prompt's picture, its base publish, and one sink
+
+Phase E left four things on the table and this phase is all four: a stop arm nothing executed, a
+picture nothing looked at, a hardware write nothing could see, and a sink written out in two files.
+None of them is new reconstruction — the four composed slices are unchanged — and that is the shape
+of the phase: **every rung here closes a seam that was already declared open.**
+
+**Verified 330, 41,652 bytes — UNCHANGED**, and for phase E's reason: nothing new was reconstructed.
+`shifter_write_word` / `shifter_screen_base_write` / `shifter_palette_write` are a SINK moved between
+files, not a routine ported.
+
+**`make test`: 6,416 — UNCHANGED, and that is the assertion rather than the absence of one.** §3 is a
+mechanical refactor of two verified cores and the host suite is what says it changed no behaviour: it
+must stay at phase E's count, from a clean `build/`, with no test moving. It does. **The suite is not
+the only thing that had to be unchanged, and §3 records what the first draft of it moved.**
+
+### §1 WHAT WAS BUILT
+
+| file | what it gained |
+|---|---|
+| `src/shifter.c` / `include/shifter.h` | **NEW, and the whole of §3**: the port's ONE shifter sink. TWO public names — `shifter_screen_base_write` and `shifter_palette_write` — and the single `WB_ON_TARGET` arm they share. The header holds the OFF-target halves as `static inline` empties and the `.c` holds the on-target stores; the raw-address word write is `static` inside the `.c` |
+| `src/game.c` / `src/stage.c` / `src/boot.c` | the three sinks and their two copies of that arm REMOVED; each file keeps the reads that feed the writes and the order it makes them in, which is the part that is reconstruction |
+| `include/game.h` / `include/stage.h` | the two declarations moved out, each leaving a line saying where they went |
+| `include/wonderboy.h` | `WB_FLASH_PEN` — WHICH colour register `move.w #$777,$ff8240.l` names, so `flip_screen`'s flash reaches the sink as a PEN and no raw-address word write is public |
+| `test/layout.py` | `include/shifter.h` on the scraped header list. It defines nothing today, which is the point: a constant added there later would otherwise be a second spelling this scraper could not see |
+| `atari/original.py` | `mode_prompt` — the shipped binary's data-disk prompt at `$e4d6`, reached by DRIVING its own ESC ending; `capture_boot_picture` generalised over the buffer, the data-disk swap and an injected drive |
+| `atari/wonderboy_main.c` | `capture_the_prompt` and the own record's four new fields; the photograph module widened to its third build; `READ_THE_STAGE_PINS` folds the eight-pin duplication the phase-E gate registered |
+| `atari/smoke.py` | pass 6 (the withheld prompt), the prompt picture rows and their control, `OWN_QUIT_POKE_ANCHOR` and the anchor cross-pin, `picture_rows(captures=)`, and `differing_bytes` |
+
+### §2 THE PROMPT PICTURE — the first capture reached through an ENDING
+
+`$e494` is entered by three `jmp`s and not one is the boot: `$e490` is `bra.w $e4e6`, which steps over
+the prompt entirely. So the shipped side is DRIVEN — both fire gates, the data-disk swap at `$e5ba`,
+into the frame loop, then `WB_KEY_LAST_SCANCODE` := ESC at a named frame, which is
+`game_key_actions`' `$580` arm and the same byte `smoke.py m3` pokes on our side. It worked on the
+first run.
+
+**THE ANCHOR IS `$e4d6`, NOT `$e4d4`.** `jsr $f944.l` at `$e4d0` is six bytes, so `$e4d4` is inside
+its operand and no instruction begins there. `$e4d6` is `clr.b $877.w` — `WB_BOOT_PROMPT_END`, the
+instruction the slice falls into — which is the identical choice `$e5aa` and `$e556` are one slice
+over, and it collides with none of `boot_script`'s four `:once` fire breakpoints.
+
+**Both surfaces are identical, on BOTH ROMs**; `atari/README.md` §15 owns the figures and the pen
+list, as it owns every other pass number here. It reads `WB_SCREEN_HIGH` where §13's and §14's
+captures read `WB_SCREEN_LOW`, because this is the one slice that publishes its own base and inflates
+into the buffer it published.
+
+**THE CONTROL IS THE TITLE PICTURE AND THE CHOICE IS A MEASUREMENT.** The credits screen is the
+obvious candidate — same buffer, same depack destination, already on disk for `mode_boot` — and it
+was REJECTED on the numbers: against our capture it breaks the bitplanes row but the pens row by
+**exactly one pen**, because `DATADISK.RAD` and `CREDITS.RAD` ship the same sixteen-word palette row
+and only `$e5a2`'s override of pen 10 separates them. A control that breaks a surface by one pen
+stops breaking it the day that instruction moves. The title screen breaks both rows wide;
+`atari/README.md` §15 has both readings.
+
+**AND THE PREMISE IS CHECKED ON BOTH SURFACES**, before a boot is paid for: the two SHIPPED pictures
+must differ in their bytes AND in their pen words. The first draft asked only about the 32,000 bytes
+— while the whole rationale for choosing this control over the credits one is a PEN COUNT, so a
+future picture with an identical palette would have passed the premise and left the pens half of the
+control unable to fail.
+
+### §2b THE ROW THAT WAS SATISFIED BY THE FRAME LOOP — this phase's headline defect
+
+Phase E §4 measured two mutants surviving every surface this project had: **P3**, the prompt's
+screen-base publish deleted outright, and **P5**, its two bytes sent to each other's registers. The
+photograph was supposed to kill both by reading `$ffff8201`/`$ffff8203` back off the chip.
+
+**The first draft of that row went GREEN under P3, on both ROMs.** `flip_screen` publishes the buffer
+that has just BECOME the front one, so the base at an ending is decided by the parity of the leg's
+frame count — and M3's poke anchor is the SECOND arrival, i.e. two frames flipped, which leaves the
+base already on `WB_SCREEN_HIGH`. The ending inherits the right answer and the prompt's own write
+changes nothing an observer can see. **That is the identical shape to the off-target hole the row was
+written to close**, reproduced one layer up.
+
+Fixed on both halves: the record carries the base as the ENDING left it (`prompt_base_before`), the
+row requires a MOVE rather than a value, and the ESC passes drive one frame earlier
+(`OWN_QUIT_POKE_ANCHOR` = 1 against M3's 2 — which costs M3's two stated reasons nothing, since the
+first arrival is still after a whole frame and leaves a longer tail). Re-measured: **P3 CAUGHT** in
+pass 4 and again in pass 6; **P5 CAUGHT** the same way. Both are dead, on both ROMs.
+
+**AND THE MUTANT ITSELF LIED ONCE, WHICH IS THE SECOND HALF OF THE LESSON.** The M6 order mutant was
+first applied by INSERTING the sink write above the timer store and leaving the original below it —
+which compiles to the colour being written twice a frame, and `flash_order_checks` looks for the NEXT
+colour write after each decrement, which was still the correct one. It read as SURVIVED. The `-S`
+output showed the call emitted twice. A mutant that ADDS is not a mutant that MOVES; the corrected
+one is **CAUGHT**, and only that row reds.
+
+### §3 THE SINK UNIFICATION — three files, one module, and what "no behaviour change" cost
+
+Three cores made shifter writes and TWO of them carried their own copy of the `WB_ON_TARGET` arm
+(`src/game.c` for the screen base and the colour-0 flash, `src/stage.c` for the palette row) — one
+correction away from two files writing to different places on the one build where the write is real.
+The sink is now one module: `include/shifter.h` declares it, `src/shifter.c` holds the on-target
+stores, and no other file in the port carries the guard.
+
+**AND THE FIRST DRAFT OF THAT MOVE CHANGED THE GENERATED CODE, WHICH IS THE HALF `make test` CANNOT
+SEE.** The differential `.so` is linked from separately compiled translation units, so an empty sink
+DEFINED in another one is a real call the compiler has to make. Moving the routines out and leaving
+extern empties behind turned `set_palette` from **two instructions** off target — the whole
+sixteen-iteration loop deleted, reads and all — into that loop with sixteen `bl
+shifter_palette_write` in it; `stage.o` went from 25 call sites to 58. Nothing OBSERVABLE moved (the
+sink still writes nowhere and the suite still counted 6,416), but the suite that pins this port would
+have been measuring different generated code from the one the batch that verified it measured, for no
+gain at all. **Fixed by putting the off-target halves in the HEADER as `static inline` empties**, so
+every caller's codegen is what it was: `cc -O2 -S` now emits the identical assembly for `src/game.c`,
+`src/stage.c` and `src/boot.c` as HEAD did, minus the two exported empty stubs that no longer exist —
+and `src/boot.c` is BETTER than HEAD, whose two calls into stage.c's and game.c's exported empties
+were already real (phase C's export had opened that hole one file early).
+
+**THE RAW-ADDRESS WORD WRITE IS GONE FROM THE PUBLIC SURFACE.** `shifter_write_word(reg, value)`
+escaped the module as an export whose only outside caller was `flip_screen`'s colour-0 flash — which
+is `shifter_palette_write(0, ...)` spelt the long way. It is `static` in `src/shifter.c` now and the
+flash goes through the pen spelling (`WB_FLASH_PEN`), so nothing outside the module can name a
+shifter register at all. The store on the bus is the same address at the same instant, which is not
+an argument: `smoke.py m6flash`'s ORDER row is green on the new spelling and the order mutant
+re-applied to it is **CAUGHT** (`timer:=1 then colour0:=0x000 (want 0x777)`).
+
+**WHAT WOULD CATCH A SECOND COPY OF THE ARM IS A NEW CHECK, AND THE OLD CLAIM WAS FALSE BY
+CONSTRUCTION.** `assert_the_differential_build_is_unchanged` was credited with it; it cannot be,
+because it preprocesses each core WITHOUT `-DWB_ON_TARGET`, so a second `#ifdef WB_ON_TARGET` arm's
+contents vanish before its grep ever runs — and the `nm` half is blind the same way, because the
+`.so` is built without the define too. What that check really measures is the thing it is named for:
+that no core reaches `wb_target_*` OUTSIDE a guard. `assert_the_sink_arm_lives_in_one_place` is the
+new one: comments stripped, preprocessor NOT run, over every core AND every project header, the set
+of files naming `WB_ON_TARGET` must be exactly `include/shifter.h src/shifter.c`. RED-checked by
+planting a dummy arm in `src/text.c` — it refused, naming all three files — and the plant removed.
+
+**IT IS STILL A REFACTOR AND THE EVIDENCE IS THAT NOTHING MOVED**: `make test` 6,416 from a clean
+`build/` with no test edited, 0 `wb_target_*` leaks at the source and none in the `.so`, HEAD-equal
+off-target codegen, and the target modes that pin the write ORDER and the TRANSLATION all green.
+
+**THE THREE SINK MUTATIONS HAVE THREE DIFFERENT HOMES**, measured rather than assumed:
+
+| mutation | caught by | measured |
+|---|---|---|
+| the MID byte write DROPPED | `smoke.py ownplay` | **CAUGHT** — passes 2/3/4 red, buffer publications collapse to 1. **Survives M1 and M2**: M1 publishes its base through the shim's own `publish_base_bytes` and never reaches the core's sink, and M2 compares the IMAGE's framebuffer bytes, which a mis-pointed shifter does not move |
+| the two byte writes SWAPPED | `smoke.py m2` | **CAUGHT** — "the shifter displays the buffer the last flip published" |
+| the palette word write MOVED above the timer store | `smoke.py m6flash` | **CAUGHT** — the order row alone reds, `timer:=1 then colour0:=0x000 (want 0x777)` |
+
+No single mode covers the family, which is a property of what each mode looks at rather than a hole;
+`atari/README.md`'s Known gaps states it so a future change to the sink module is known to need more
+than one mode to clear it.
+
+### §4 THE EIGHT-PIN FOLD, AND THE STAGING CACHE THAT WAS MEASURED AND REMOVED
+
+`take_the_span` and `take_the_own_pins` each spelled out the same eight image reads under the same
+interrupt mask — eight chances for one build's reading to drift from the other's while both stay
+green, against the SAME `original.py dump` fields. `READ_THE_STAGE_PINS` is one statement of them: a
+MACRO for `PUBLISH_FIRE_GATES`' two reasons (two builds with two record types cannot share a function
+that writes into one, and a nested member would vanish from smoke.py's field-order scrape). **The
+interrupt mask stays the caller's**, deliberately — the boot build's has to cover half a megabyte of
+`memcpy` after the reads.
+
+**THE DRIVE IS STILL REMADE ON EVERY BOOT, AND THE CACHE THAT WAS HERE IS REMOVED.** This phase's
+first draft staged the fixtures once per (build, withhold set) and swept only the OUTPUTS per boot.
+The logic was sound and it was measured at **~1.8 ms saved per staging** — about 5 ms across
+`mode_ownplay`'s six boots, against ~33 seconds of Hatari each. What it bought for that was a module
+global that a later `disk/`-touching path could leave stale, and the failure it would then produce is
+the one this project exists to refuse: a pass booting over the PREVIOUS pass's drive still satisfies
+pass 5's and pass 6's own refusal signatures, because "the file is not on the volume" is exactly what
+a stale withhold leaves behind. It also falsified two standing docstrings — the corpus check's
+"measured on every run", and `stage_drive`'s own per-boot sweep paragraph. Copying is cheap and being
+certain is not. The one thing the cache was also doing — printing the corpus note once per pass set
+rather than once per boot — is a `note_once` guard on the PRINT alone; the CHECK still runs on every
+staging, so "measured on every run" is literally true again. (`run.sh`'s own stdout is already
+protected by its `redirect_stdout` and never depended on this.)
+
+### §5 WHAT IS RETIRED FROM PHASE E'S §6 AND §7
+
+* **`OWN_STOP_RESTART`** — pass 6, with `DATADISK.RAD` withheld. Its residue is pass 5's INVERTED: the
+  prompt steps NO sequence state (index, stage number and the overlay in memory are pass 2's), and
+  what it leaves is on the hardware — no picture taken (`prompt_captured_at` = 0, no `PROMPT.BIN`,
+  because the refusal is above the depack) and the shifter stranded on `WB_SCREEN_HIGH`, the buffer
+  whose picture never arrived. Two gates crossed and not five, because the refusal falls above the
+  prompt's own gate.
+* **THE PROMPT PICTURE'S DIFFERENTIAL** — §2.
+* **THE PROMPT'S SCREEN BASE, both off target and on** — §2b. The off-target half is unchanged (the
+  oracle still drops the write); the ON-target half is closed.
+* **THE SINK UNIFICATION** — §3.
+* **`take_the_span` / `take_the_own_pins`** — §4. **THE DRIVE STAGED ONCE PER PASS** is NOT retired:
+  it was implemented, measured, and then removed again on cost/benefit — §4 has the reading, and §7
+  carries it back as a queue line rather than as a discharge.
+
+### §6 KNOWINGLY UNPINNED
+
+* **`OWN_STOP_LEG_LIMIT` IS STILL EXECUTED BY NOTHING**, and it cannot be reached without a ladder
+  that CYCLES: every driven pass takes one ending, and a run that took four would need an input
+  source this directory does not have. Trigger unchanged: any change to `run_the_own_entry`'s switch.
+* **`game_main_loop` STILL DISCARDS THE PASS'S PORT BOUNDARIES.** Unchanged from phase E §6.
+* **THE ESC RESTART DOES NOT RE-MAKE ALL OF `$e4e6`.** Unchanged, and still argued rather than
+  measured.
+* **THE PROMPT PICTURE IS ONE INSTANT OF ONE RESTART.** `capture_the_prompt` records the LAST
+  restart's, and every headless pass takes exactly one (`restarts` is asserted per pass). A ladder
+  that restarted twice would leave the second picture in the record, which is the right answer for a
+  field describing where the run got to — but no pass exercises it.
+* **THE SHIPPED SIDE'S ESC DRIVE IS ONE FRAME'S.** `original.py prompt` pokes at one anchor and the
+  picture is a file inflated over the whole of `WB_SCREEN_HIGH`, so nothing the frame loop drew
+  survives into it whichever frame the key lands on. That is an argument, not a measurement: no run
+  here photographs the prompt from two different frames and compares.
+* **NOTHING PINS THE PROMPT'S PALETTE CLEAR.** `boot_prompt_screen` calls `clear_palette` before the
+  base and before the load, and on the refusal path (pass 6) that is the only thing it did that a
+  chip could show. The pass measures the base and not the sixteen zeros; reading them would need
+  either a second capture on the refusal arm or the trace filtered to the program's own writes, and
+  neither is built.
+
+### §7 QUEUE
+
+* **`boot_prompt_screen` has no row in `PORTABILITY.md`** — phase E's queue, still open, and its
+  honest entry has CHANGED: the "survives / on target" pair is no longer empty, because §2b closes
+  the on-target column for both P3 and P5. **QUEUED.**
+* **`assert_the_record_matches_the_c` covers TWO of five records.** Unchanged.
+* **The three debugger-script builders are still three.** Unchanged.
+* **`test_boot_inventory.py`'s composed-byte derivation.** Unchanged.
+* **`run_vblanks` is unused in every `-DSMOKE_M2` build.** Unchanged, and deliberately not folded in.
+* **`atari/README.md` §15 GREW BY 77 LINES THIS PHASE** (228 → 305), and calling that "trimmed" —
+  which phase F's §5 did — conflates a section being TOUCHED with a length problem being
+  DISCHARGED. The M9 rows at the top of the file now cite §15 rather than restating its figures,
+  which is a real reduction of DUPLICATION and no reduction at all in §15's own length. **QUEUED:**
+  a prose pass over §15 as its own piece of work, with the line count as its acceptance criterion.
+* **THE DRIVE IS STAGED FROM SCRATCH ON EVERY BOOT**, six times over for `ownplay` — `run_hatari`
+  calls `stage_drive` per boot and it copies a 107 KB `.PRG`, a 136 KB image and seven resources
+  each time. Phase F implemented the cache, measured it at ~1.8 ms per staging against ~33 s of
+  Hatari, and REMOVED it again (§4) because a module global that can stale is the wrong price for
+  5 ms per mode run. **QUEUED** only in the sense that a future harness change might make staging
+  expensive enough to be worth a correctness argument; it is not worth one today.
+* **PASSES 5 AND 6 ARE ONE EXPERIMENT ON TWO ARMS.** Four of their rows are the same shape — the
+  ending fired, the load was refused, the ladder stopped, no second leg ran — and a helper over them
+  is the obvious fold. It RESISTED a small change and is queued rather than forced: telling the two
+  arms apart needs the ending, the attempt counter (`reloads`/`restarts`), the result field
+  (`stage_result`/`prompt_result`), the stop code, the sibling pass number and the "rather than"
+  clause — six parameters for four rows — and each row's own multi-line rationale differs between
+  the arms, which is the evidence rather than decoration. **QUEUED** with that reading attached, so
+  the next attempt starts from why it is not three parameters.
+* **`original.py`'s OTHER ANCHOR PCs ARE STILL LITERALS.** `PROMPT_ANCHOR_PC` is now
+  `wb("BOOT_PROMPT_END")`, so the two sides of the prompt differential cannot photograph different
+  instants. `TITLE_FIRE_PRESS_PC`, `CREDITS_WAIT_CLEAR_PC`, `DATA_DISK_SWAP_PC` and their siblings
+  are the same hole with the same fix available, and are NOT changed here — they are three working
+  differentials' anchors and an out-of-scope edit to them belongs in its own pass. **QUEUED.**
+* **CARRIED, unchanged**: everything phases A, B, C, D and E carry.
+
+### §8 WHAT THE PRE-COMMIT GATE CHANGED, AND WHAT IT MEASURED
+
+The review ran before the commit and found eleven correctness-or-measurement items and eleven stale
+doc surfaces. §3 and §4 above absorb the two biggest (the codegen the sink move moved, and the staging
+cache). The rest, with what each is pinned by:
+
+| finding | what it was | what it is now |
+|---|---|---|
+| the sink move UN-ELIDED the host no-ops | `set_palette` compiled to a real sixteen-call loop off target | `static inline` empties in the header; `cc -O2 -S` HEAD-equal for game/stage/boot (§3) |
+| the arm tripwire was false by construction | credited to a check that preprocesses the arm away | `assert_the_sink_arm_lives_in_one_place`, RED-checked (§3) |
+| three hand-written copies of the shifter-base compose | `wonderboy_main.c` composed `$ffff8201/8203` three times, and TWO of them are the two SIDES of the row that kills P3/P5 | one `read_the_shifter_base()`, `READ_THE_STAGE_PINS`' precedent |
+| pass 6's stranded-base row could go vacuous | a VALUE — the shape measured green under P3 one pass over | a MOVE, like pass 4's, with the parity dependence stated where `OWN_QUIT_POKE_ANCHOR` is defined. P3 and P5 are now each caught TWICE |
+| the anchor cross-pin equated unlike kinds | `original.PROMPT_ESC_ANCHOR == OWN_QUIT_POKE_ANCHOR` — an INDEX against an ARRIVAL COUNT, agreeing only while `M2_ANCHOR_FRAMES` is ascending | the pin is about the INSTANT: the frame the shipped poke follows must equal the frame our arrival follows (`sorted(...)`, because arrivals come in frame order) |
+| `arrival` threaded positionally | one positional argument among keywords — an inserted parameter would have bound it silently and put the ESC passes back on M3's anchor | keyword everywhere, and the three docstrings that claimed ONE arrival for both modes corrected |
+| `shifter_write_word` was a public raw-address export | its only outside caller was the flash, which IS `shifter_palette_write(0, …)` | `static`; the flash is `WB_FLASH_PEN`. Order pin re-measured green, order mutant re-applied and **CAUGHT** (§3) |
+| `capture_boot_picture`'s collision guard covered only the anchor | the new `drive` stops went past it and past `refuse_repeated_arrivals`, which never sees `boot_script`'s own `:once` stops | every stop's PC is tested, against the fire PCs AND the data-disk swap |
+| `PROMPT_ESC_BEACON` was echoed and never asserted | a run whose ESC poke never fired would have reported "no prompt picture was drawn" | every `echo` a drive stop makes is required in the log, derived from the stop rather than restated, and checked BEFORE the anchor's own beacon |
+| the control's premise covered bytes but not pens | while the control's whole selection rationale is a PEN COUNT | both surfaces, refused up front with the named reason (§2) |
+| `PROMPT_ANCHOR_PC` was a literal `0xe4d6` | two sides of one differential could photograph two instants | `wb("BOOT_PROMPT_END")`; the older literal PCs are §7 |
+
+**AND ONE EFFICIENCY WIN WORTH THE NAME.** `original.py`'s three capture modes emulated a whole
+12,000-vblank window after taking their photograph. `quit` as the last command of the anchor's own
+action file ends the run there: **title 9.5 s → 1.8, credits 9.8 → 2.3, prompt 10.4 → 4.0**, with all
+six artefacts BYTE-IDENTICAL either way (md5) and Hatari's exit status still 0. The health scan still
+reads the log up to the capture, which is the window the photograph is OF; a run whose anchor never
+fires never reaches the `quit` and the beacon check reports it exactly as before.
+
+**AND ONE THAT WAS REFUSED, because it conflates two clocks.** "A per-pass `--run-vbls` so pass 6
+stops at its measured ~562-vblank need" reads the SHIM's vblank counter as though it were Hatari's
+window. It is not, and `OWN_RUN_VBLS`' own comment says so in as many words: the longest pass reports
+~1,690 shim vblanks against a window of 8,000, and sizing the window from that figure would cut every
+run off inside TOS's own boot. The floor was bracketed by measurement (green at 4,000, not at 3,000)
+and pass 6 does not move it. No change.

@@ -3,6 +3,7 @@
 
     python3 atari/original.py title       # the TITLE screen at $e556, for the title differential
     python3 atari/original.py credits     # the CREDITS screen at $e5aa, one fire gate later
+    python3 atari/original.py prompt      # the DATA-DISK PROMPT at $e4d6, ESC driven in the loop
     python3 atari/original.py dump        # the post-boot RAM, at the anchor, with its pins
     python3 atari/original.py neighbour   # ...and the MIS-ANCHOR measurement (see ANCHOR below)
     python3 atari/original.py variance    # ...and how much of it is NOT reproducible (see below)
@@ -1119,40 +1120,122 @@ def mode_frames(frames, flash_seed=None):
 # as two immediates and nothing between the boot's start and either anchor flips it. The title
 # depacks straight into it; the credits depacks into the OTHER buffer and copies down. So the
 # address the shifter is showing is the address both captures are taken at, on both sides.
+#
+# THE DATA-DISK PROMPT is the third picture and the only one the BOOT never draws: `$e494` is
+# reached by three `jmp`s and not one of them is on the boot path (`$e490` is `bra.w $e4e6`, which
+# steps over the whole prompt). So this one is reached by DRIVING THE SHIPPED BINARY'S OWN ESC
+# ENDING — the boot carried past both fire gates and through the data-disk swap into the frame loop,
+# then WB_KEY_LAST_SCANCODE poked with ESC at a named frame, exactly as `smoke.py m3` drives the same
+# arm on our side. `game_key_actions` reads that byte at `$580`, the second call of every frame.
+#
+# ITS ANCHOR IS `$e4d6` — `clr.b $877.w`, the instruction the slice falls into — and it is the same
+# choice `$e5aa` and `$e556` are: the first instruction after the reconstructed slice's last and
+# before anything waits for a player. It is NOT `$e4d4`: `jsr $f944.l` at `$e4d0` is six bytes, so
+# $e4d4 is inside its operand and no instruction begins there. It collides with none of
+# `boot_script`'s four `:once` fire breakpoints, so it needs neither `fires=False` nor a hook into
+# their action files.
+#
+# AND IT READS WB_SCREEN_HIGH, where the other two read WB_SCREEN_LOW. `$e498`/`$e4a0` publish
+# `WB_PROMPT_SCREEN_BASE` before the load and the depack at `$e4c6` inflates into that very buffer,
+# so — as for the other two — the address the shifter is showing is the address the capture is taken
+# at, on both sides.
 TITLE_SCREEN_FILE = "OTITLE.BIN"
 TITLE_PENS_FILE = "OTITLEPEN.BIN"
 CREDITS_SCREEN_FILE = "OCREDITS.BIN"
 CREDITS_PENS_FILE = "OCREDPEN.BIN"
+PROMPT_SCREEN_FILE = "OPROMPT.BIN"
+PROMPT_PENS_FILE = "OPROMPTP.BIN"
 WB_SCREEN_LOW = wb("SCREEN_LOW")
+WB_SCREEN_HIGH = wb("SCREEN_HIGH")
+# `clr.b $877.w`, the prompt's own anchor — TAKEN FROM THE HEADER and not written down again. Both
+# sides of this differential have to photograph one instruction: ours is `capture_the_prompt`, called
+# where WB_BOOT_PROMPT_END names, and a second spelling of the address here is the two sides
+# photographing two instants while both stay green (CLAUDE.md §5). The older literal PCs above
+# (TITLE_FIRE_PRESS_PC, CREDITS_WAIT_CLEAR_PC and their siblings) are the same hole and are queued in
+# ../STATUS.md §7 rather than changed under this batch.
+PROMPT_ANCHOR_PC = wb("BOOT_PROMPT_END")
+PROMPT_ESC_BEACON = "PROMPT_ESC_POKED"
+# WHICH ANCHOR FRAME THE KEY IS POKED AT — a 1-based index INTO `anchor_frames()`, and the FIRST of
+# them. `smoke.py`'s `OWN_QUIT_POKE_ANCHOR` is the same instant expressed in ITS units (which arrival
+# at `capture_the_frame` carries the poke), and the two are cross-pinned there — as the FRAME each
+# side's ESC lands after, because the two numbers are different kinds and only look alike.
+#
+# THE PICTURE DOES NOT DEPEND ON IT and OUR SIDE'S SCREEN-BASE ROW DOES, which is why the number is
+# the first arrival and not M3's second. The prompt inflates a file over the whole of WB_SCREEN_HIGH,
+# so no frame the loop had drawn survives into the photograph whichever frame ESC fires on; but
+# `flip_screen` publishes the buffer that has just become the front one, so an EVEN frame count
+# leaves the shifter already on the buffer the prompt is about to publish and smoke.py's row for
+# that publish could not then fail. Matched here so the two sides are anchored at one instant.
+PROMPT_ESC_ANCHOR = 1
 
 
-def capture_boot_picture(tag, anchor_pc, screen_file, pens_file, fires):
-    """Photograph WB_SCREEN_LOW and the sixteen pens at `anchor_pc`, and write both to build/.
+def echoed_beacons(stops):
+    """Every beacon a `boot_script` stop echoes, in order — the stop's own spelling of its name."""
+    return [command.split(None, 1)[1] for _, _, _, commands in stops
+            for command in commands if command.startswith("echo ")]
 
-    ONE ROUTINE FOR BOTH PICTURES, because the two differ in three values and in nothing else —
-    which mode, which instruction, and whether the boot has to be carried through a fire gate to
-    reach it. Two copies of this would be two chances for one side of a differential to photograph a
-    different thing from the other (CLAUDE.md §6).
+
+def capture_boot_picture(tag, anchor_pc, screen_file, pens_file, fires,
+                         at=None, swap_the_data_disk=False, drive=()):
+    """Photograph one screen buffer and the sixteen pens at `anchor_pc`, and write both to build/.
+
+    ONE ROUTINE FOR ALL THREE PICTURES, because they differ in a handful of values and in nothing
+    else — which mode, which instruction, which buffer, and how far the boot has to be carried to
+    reach the moment. Three copies of this would be three chances for one side of a differential to
+    photograph a different thing from the other (CLAUDE.md §6).
+
+    `at` is the buffer, defaulting to WB_SCREEN_LOW, which is where the title and credits pictures
+    are; the data-disk prompt publishes WB_SCREEN_HIGH and inflates into it, so that mode names its
+    own. `swap_the_data_disk` puts disk 2 in the drive at `$e5ba` — the boot's own swap point — which
+    the two pictures BEFORE the stage load do not need and the one AFTER it cannot do without.
+    `drive` is extra `boot_script` stops the mode injects on its way to the anchor, which is how the
+    prompt mode reaches an instruction only an ENDING leads to.
 
     `fires` WAS A HARDCODED FALSE AND IS NOW AN ARGUMENT, so the invariant that forced it is checked
     here rather than left in prose. `boot_script` puts its own `:once` breakpoint on each of the four
-    fire PCs, and two breakpoints selecting the same arrival at the same PC interfere with each
-    other's counters — which is exactly what `refuse_repeated_arrivals` refuses, and which it cannot
-    see, because it is handed `extra_stops` alone. So an anchor ON one of those four may not run with
-    the injections in place."""
-    if fires and anchor_pc in FIRE_INJECTION_PCS:
-        raise SystemExit(f"FAIL: ${anchor_pc:x} is one of boot_script's own fire breakpoints and "
-                         f"this capture asked for the injections too — the two would select the "
-                         f"same arrival at the same PC and the photograph would be taken at a "
-                         f"moment other than the one named. Pass fires=False, as `title` does.")
-    beacon = f"{tag.upper()}_CAPTURED"
+    fire PCs and, when a disk 2 is passed, a fifth on the swap; two breakpoints selecting the same
+    arrival at the same PC interfere with each other's counters — which is exactly what
+    `refuse_repeated_arrivals` refuses, and which it cannot see, because it is handed `extra_stops`
+    alone. So no stop this routine adds may sit on a PC `boot_script` has already claimed.
 
+    THE GUARD COVERS THE `drive` STOPS AND NOT ONLY THE ANCHOR, which the first draft got wrong: a
+    mode that reaches its anchor by injecting stops of its own has as many chances to collide as it
+    has stops, and `drive` is the argument that made that possible."""
+    claimed = {}
+    if fires:
+        claimed.update({pc: "one of boot_script's own fire breakpoints" for pc in FIRE_INJECTION_PCS})
+    if swap_the_data_disk:
+        claimed[DATA_DISK_SWAP_PC] = "boot_script's own data-disk swap breakpoint"
+    for pc, whose in ([(anchor_pc, "this capture's anchor")]
+                      + [(stop[0], "one of this capture's drive stops") for stop in drive]):
+        if pc in claimed:
+            raise SystemExit(f"FAIL: ${pc:x} is {whose} AND {claimed[pc]}, which this capture asked "
+                             f"for too — the two would select the same arrival at the same PC and "
+                             f"the photograph would be taken at a moment other than the one named. "
+                             f"Pass fires=False, as `title` does, or move the stop.")
+    beacon = f"{tag.upper()}_CAPTURED"
+    at = WB_SCREEN_LOW if at is None else at
+
+    # ...AND THE RUN ENDS AT THE ANCHOR. `quit` is the LAST command of the anchor's own action file,
+    # after both `savebin`s, so Hatari stops the moment the photograph is taken instead of emulating
+    # the rest of a 12,000-vblank window nothing in this mode reads. MEASURED, all three modes, with
+    # all six artefacts BYTE-IDENTICAL either way (md5): title 9.5 s -> 1.8 s, credits 9.8 -> 2.3,
+    # prompt 10.4 -> 4.0.
+    #
+    # THE EXIT STATUS IS STILL 0 AND THE HEALTH SCAN STILL BITES, which is what had to be checked
+    # before this was worth anything: a scripted quit is an ordinary Hatari exit, and
+    # `machine_faults` reads the log up to it — i.e. exactly the window the photograph is OF. A fault
+    # after the capture was never evidence about the capture. And a run whose anchor never fires
+    # never reaches this `quit` at all: it plays the whole window out and the beacon check below is
+    # what reports it, unchanged.
     def script(directory, disk2):
-        return boot_script(directory, None, extra_stops=[
+        return boot_script(directory, disk2 if swap_the_data_disk else None,
+                           extra_stops=list(drive) + [
             (anchor_pc, FIRST_HIT, "PICTURE.INI", [
                 f"echo {beacon}",
-                f"savebin {directory / screen_file} ${WB_SCREEN_LOW:x} {SCREEN_BYTES:#x}",
-                f"savebin {directory / pens_file} ${SHIFTER_PALETTE:x} {PALETTE_BYTES}"])])
+                f"savebin {directory / screen_file} ${at:x} {SCREEN_BYTES:#x}",
+                f"savebin {directory / pens_file} ${SHIFTER_PALETTE:x} {PALETTE_BYTES}",
+                "quit"])])
 
     produced, log, status = run_original(script, tag, fires=fires)
     print(f"-- {tag}: anchor ${anchor_pc:x}, hatari exit={status} "
@@ -1160,6 +1243,17 @@ def capture_boot_picture(tag, anchor_pc, screen_file, pens_file, fires):
     faults = machine_faults(log)
     if faults:
         raise SystemExit("FAIL: unhealthy machine: " + " | ".join(faults[:4]))
+    # EVERY DRIVE STOP FIRED, ASKED BEFORE THE ANCHOR IS. A mode that injects stops to REACH its
+    # anchor has one failure the anchor's own beacon reports as the wrong thing: if the ESC poke
+    # never happened, the boot never took the ending, the anchor is never reached, and "no prompt
+    # picture was drawn" is true but says nothing about the cause. So each stop is named by the
+    # `echo` it makes — derived from the stop itself rather than restated, so a beacon renamed in one
+    # place cannot be checked for under its old name here.
+    for stop_beacon in echoed_beacons(drive):
+        if stop_beacon not in log:
+            raise SystemExit(f"FAIL: {tag}'s {stop_beacon} stop never fired — the run never reached "
+                             f"the moment that leads to ${anchor_pc:x}, so whatever the anchor did "
+                             f"or did not do afterwards is not evidence about this mode")
     if beacon not in log:
         raise SystemExit(f"FAIL: the boot never reached ${anchor_pc:x} — no {tag} picture was "
                          f"drawn, so there is nothing for the reconstruction to be compared to")
@@ -1176,7 +1270,7 @@ def capture_boot_picture(tag, anchor_pc, screen_file, pens_file, fires):
     if not drawn:
         raise SystemExit(f"FAIL: {screen_file} is {SCREEN_BYTES} zero bytes — the anchor fired "
                          f"over the CLEARED screen, not over a depacked one")
-    print(f"   {BUILD / screen_file}: {SCREEN_BYTES} bytes at {WB_SCREEN_LOW:#x}, "
+    print(f"   {BUILD / screen_file}: {SCREEN_BYTES} bytes at {at:#x}, "
           f"{drawn} of them non-zero")
     print(f"   {BUILD / pens_file}: " + " ".join(
         "%03x" % pen for pen in pen_words(produced[pens_file])))
@@ -1193,6 +1287,34 @@ def mode_credits():
     """Photograph the shipped binary's credits screen at $e5aa, one fire gate later."""
     return capture_boot_picture("credits", CREDITS_WAIT_CLEAR_PC, CREDITS_SCREEN_FILE,
                                 CREDITS_PENS_FILE, fires=True)
+
+
+def prompt_esc_stop():
+    """The one poke that turns a running game into the data-disk prompt: ESC, at a named frame.
+
+    `$4a0`'s hit N+1 is the START of frame N+1, i.e. the instant frame N finished — `frames_script`'s
+    own convention, and the shipped-side twin of `capture_the_frame`'s Nth arrival, which is where
+    smoke.py's M3 pokes the identical byte with the identical value. `game_key_actions` is the frame's
+    SECOND call ($4a4) and reads WB_KEY_LAST_SCANCODE at $580, so the arm fires inside that frame.
+
+    THE KEY IS NEVER RELEASED AND THAT IS CORRECT HERE, where it would not be on a run that carried
+    on: the debugger's poke stays in the byte for ever, which is what a key physically held down
+    would do, and this run stops at the prompt's own anchor before anything reads it again."""
+    frame = anchor_frames()[PROMPT_ESC_ANCHOR - 1]
+    return (FRAME_LOOP_PC, frame + 1, "ESCPOKE.INI",
+            [f"echo {PROMPT_ESC_BEACON}",
+             poke_byte(wb("KEY_LAST_SCANCODE"), wb("KEY_SCANCODE_ESC"))])
+
+
+def mode_prompt():
+    """Photograph the shipped binary's DATA-DISK PROMPT at $e4d6, after driving its own ESC ending.
+
+    THE ONLY ONE OF THE THREE PICTURES THE BOOT DOES NOT DRAW. It needs the whole boot (both fire
+    gates AND the data-disk swap, because `$e494`'s load asks disk 2 for DATADISK.RAD), then a frame
+    loop, then the ending — so it is the deepest anchor in this file that is not the dump's."""
+    return capture_boot_picture("prompt", PROMPT_ANCHOR_PC, PROMPT_SCREEN_FILE, PROMPT_PENS_FILE,
+                                fires=True, at=WB_SCREEN_HIGH, swap_the_data_disk=True,
+                                drive=(prompt_esc_stop(),))
 
 
 def frames_argument():
@@ -1721,6 +1843,7 @@ def lightning_flash_seed():
 MODES = {
     "title": mode_title,
     "credits": mode_credits,
+    "prompt": mode_prompt,
     "dump": mode_dump,
     "neighbour": mode_neighbour,
     "variance": mode_variance,

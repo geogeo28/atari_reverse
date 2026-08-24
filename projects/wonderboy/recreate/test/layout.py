@@ -28,9 +28,14 @@ from pathlib import Path
 
 _INCLUDE = Path(__file__).resolve().parents[1] / "include"
 _HEADER = _INCLUDE / "wonderboy.h"
+# THE LIST IS FIXED AND A HEADER OUTSIDE IT IS INVISIBLE, which is why `shifter.h` is on it while
+# defining nothing today: a constant added there later would otherwise be a second spelling of an
+# address that this scraper — and therefore every case that pins Python against the C — could not
+# see. The cost of carrying a header with no `#define`s is one path; the cost of leaving one off is
+# a silent duplicate.
 _HEADERS = (_HEADER, _INCLUDE / "blit.h", _INCLUDE / "effects.h", _INCLUDE / "scene.h",
             _INCLUDE / "actor.h", _INCLUDE / "behavior.h", _INCLUDE / "player.h",
-            _INCLUDE / "hud.h", _INCLUDE / "game.h")
+            _INCLUDE / "hud.h", _INCLUDE / "game.h", _INCLUDE / "shifter.h")
 
 # `#define WB_NAME 0x1234u` / `#define WB_NAME 3u` — a plain integer literal and nothing else. The
 # trailing lookahead makes the literal the WHOLE definition, so a compound expression is skipped

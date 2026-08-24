@@ -39,9 +39,11 @@
 # projects/*/recreate/atari/{build,disk}/).
 #
 # THE CORES ARE COMPILED UNCHANGED except for one flag they themselves anticipate: -DWB_ON_TARGET
-# turns the `#ifdef` arm inside `../src/game.c`'s and `../src/stage.c`'s shifter sinks into real
-# stores. The differential .so never sees that define, so `make test` is untouched — and
-# `assert_the_differential_build_is_unchanged` below MEASURES that rather than asserting it in prose.
+# turns the arm inside the port's ONE shifter sink — `../src/shifter.c` and `../include/shifter.h` —
+# into real stores. The differential .so never sees that define, so `make test` is untouched, and two
+# checks below MEASURE that rather than asserting it in prose:
+# `assert_the_differential_build_is_unchanged` (no core reaches `wb_target_*` outside a guard) and
+# `assert_the_sink_arm_lives_in_one_place` (no second file grows a guard of its own).
 #
 # THE SEAM IS THE LINK, not the include path. Every kit symbol Wonder Boy calls is a real symbol, so
 # the kit's src/{hw,psg,sched,disk,os_refusal,dosound_log}.c are simply left out. THE SURFACE IS
@@ -325,10 +327,18 @@ strip_comments() { $CC -fpreprocessed -E -P "$1" 2>/dev/null; }
 # source-level check rather than an artifact comparison because it holds whether or not a .so has
 # been built.
 #
-# EVERY CORE, not the two that carry a guard today. Two did when this was written (game.c and
-# stage.c) and naming them made the scan blind to the third: batch 44 phase C exported stage.c's
+# EVERY CORE, not the one that carries a guard today. TWO did when this was written (game.c and
+# stage.c) and naming them made the scan blind to a third: batch 44 phase C exported stage.c's
 # shifter sink precisely so that boot.c would NOT grow one, and a scan that only ever looked at two
 # files could not have said so.
+#
+# AND IT IS BLIND TO A SECOND COPY OF THE ARM, WHICH IT WAS ONCE CLAIMED TO CATCH. This scan
+# preprocesses WITHOUT the define, so the contents of any `#ifdef WB_ON_TARGET` arm are GONE before
+# the grep ever runs — and the `nm` half below is blind the same way, because the .so is built
+# without the define too. What this pair really measures is the thing it is named for: that no core
+# reaches `wb_target_*` OUTSIDE a guard, i.e. that the differential build is the same code it was.
+# `assert_the_sink_arm_lives_in_one_place` below is the check that a second guard would trip, and it
+# has to look at the source WITH the comments stripped and WITHOUT the preprocessor.
 assert_the_differential_build_is_unchanged() {
   local HOST_CC="${CC_HOST:-cc}" LEAKED
   for CORE in $CORES; do
@@ -351,6 +361,36 @@ assert_the_differential_build_is_unchanged() {
     echo "ERROR: $REC/build/libwonderboy.so names wb_target_* — the differential build is NOT unchanged"
     exit 1
   fi
+}
+
+# ---- ...and the second copy of the arm, which the scan above CANNOT see -----------------------
+# The port's shifter sink is ONE module — `../include/shifter.h` declares it and holds the off-target
+# empties, `../src/shifter.c` defines the on-target stores — and that is the whole point of the
+# module: a `WB_ON_TARGET` arm written out twice is one correction away from two files writing to
+# different places on the one build where the write is real (batch 44 phase F folded two such copies
+# together; phase C had already stopped a third).
+#
+# NOTHING ABOVE WOULD NOTICE A FOURTH. The scan above preprocesses without the define, so a new
+# `#ifdef WB_ON_TARGET` arm in another core disappears before its grep. So the guard is counted HERE,
+# at the source: comments stripped (the sink module's own prose names the macro, and so does
+# ../include/game.h's pointer to it) and the preprocessor NOT run, over every core and every project
+# header. The allowed set is exactly the two files the module is, named once.
+SINK_MODULE_FILES="include/shifter.h src/shifter.c"
+
+assert_the_sink_arm_lives_in_one_place() {
+  local FOUND
+  FOUND=$(for FILE in "$REC"/include/*.h "$REC"/src/*.c; do
+            if strip_comments "$FILE" | grep -q 'WB_ON_TARGET'; then echo "${FILE#"$REC"/}"; fi
+          done | sort | tr '\n' ' ')
+  FOUND="${FOUND% }"
+  [ "$FOUND" = "$SINK_MODULE_FILES" ] || {
+    echo "ERROR: the WB_ON_TARGET arm is in [$FOUND], and the sink module is [$SINK_MODULE_FILES]."
+    echo "       A second copy of the arm is one correction away from two files writing to two"
+    echo "       different places on the one build where the write is real, and NOTHING ELSE in this"
+    echo "       script can see it: assert_the_differential_build_is_unchanged preprocesses without"
+    echo "       the define, so the new arm's contents are gone before its grep runs. Reach the sink"
+    echo "       through ../include/shifter.h, or move the module and update SINK_MODULE_FILES."
+    exit 1; }
 }
 
 # ---- the seam tripwire the symbol scan CANNOT be --------------------------------------------
@@ -388,6 +428,7 @@ assert_no_core_calls_a_modelled_os_helper() {
 
 echo ">> check the seam (the differential build, and the static-inline half the symbol scan misses)"
 assert_the_differential_build_is_unchanged
+assert_the_sink_arm_lives_in_one_place
 assert_no_core_calls_a_modelled_os_helper
 
 echo ">> compile + link (base 0, keep relocs)"
