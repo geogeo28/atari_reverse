@@ -41,6 +41,14 @@
  * OUTSIDE that window, in user mode, at both ends: GEMDOS handle allocation misbehaves when entered
  * from supervisor under Hatari's GEMDOS drive, which is a bug this workspace has already shipped
  * once (projects/buggyboy's game_os.s).
+ *
+ * ...WITH ONE DECLARED EXCEPTION, AND IT IS THIS BUILD'S ONLY ONE. `-DSMOKE_BOOT` calls
+ * ../src/boot.c's three slices, which INTERLEAVE five GEMDOS loads with `set_palette`'s sixteen
+ * writes to $ff8240 and the shifter's own base — so those five run INSIDE the supervisor window,
+ * five times a run, because hoisting them would mean cutting the slices open. The alternative that
+ * was weighed (dropping to user mode inside `disk_read_file`), the reason it was rejected, and the
+ * measurement that stands in for the rule are in atari/README.md §14. Every other build here, and
+ * every other file read in this one, obeys the paragraph above.
  */
 #include <stdint.h>
 
@@ -164,10 +172,100 @@
  * the file's own header and smoke.py pins that arithmetic. */
 #endif
 
-/* THE TWO BUILDS THAT PHOTOGRAPH THE MACHINE, as one condition rather than two lists. Both carry a
- * 32000-byte framebuffer and the machine's sixteen pens off in the same two files, read back by the
- * same code in smoke.py, so what they share is defined once below and what differs is theirs. */
-#if defined(SMOKE_M2) || defined(SMOKE_TITLE)
+/* ---- the BOOT build: the whole chain, on the machine ---------------------------------------------
+ *
+ * `-DSMOKE_BOOT` is the title build's rung and then two more. Where SMOKE_TITLE MIRRORS the first of
+ * ../src/boot.c's three composed slices, this build CALLS all three, in the boot's own order, with
+ * the boot's own fire gates between them:
+ *
+ *   boot_title_screen()    $e512..$e550   arm the protection, TITLESCR.RAD, depack, palette, song 8
+ *   [the fire gate]        $e552..$e560   clr.b WB_JOY1_STATE, then the two spins
+ *   boot_credits_screen()  $e562..$e5a2   CREDITS.RAD, depack, palette, copy down, new game, pen 10
+ *   [the fire gate]        $e5aa..$e5b8   the same pair again
+ *   boot_load_stage()      $e5ba..$f8b4   the sequence row, its overlay, TILEDATA.RAD, SPRITES.CRU,
+ *                                         the two installers, the actors, and the hinge
+ *
+ * ...and then it writes the whole game span out, which is the point: `atari/original.py dump` takes
+ * the ORIGINAL's RAM at `$f8b4` and `gen_image.py` stages it, because nothing in this directory ran
+ * the chain that produces it. This build runs the chain. What it emits is the same span RECOMPUTED,
+ * and smoke.py differences the two band by band.
+ *
+ * WHAT IS DEVIATED FROM THE BOOT, and it is six things. The first three are SMOKE_TITLE's, one of
+ * them inverted; the last three are this build's own. atari/README.md §14 is where each is argued.
+ *
+ *   THE PROLOGUE AT $e4e6..$e510 IS THE SHIM'S, as it is for SMOKE_TITLE: the palette and screen
+ *   clears and the video mode are made, the MFP timer masks are NOT, and the level-4 vector installed
+ *   is this file's `wb_vbl_entry` rather than the game's own $716.
+ *
+ *   THE COPYLOCK IS ARMED — the opposite of SMOKE_TITLE, and not a change of mind. `boot_title_screen`
+ *   performs $e51e's `move.w #$ffff,$e7cc.l` because the original does, so `load_resource_by_index`
+ *   takes its ARMED arm and reports WB_LOAD_COPYLOCK_RAN. That code is the port's way of saying "the
+ *   blob would have executed here"; the blob itself is NOT reproduced and NOT stubbed, so nothing on
+ *   this machine runs the protection. The record carries all three slices' codes and smoke.py asserts
+ *   which loads took which arm, so the statement is checkable rather than written down.
+ *
+ *   THE LOADS RUN IN SUPERVISOR. SMOKE_TITLE hoists its one load out of the machine-taken window
+ *   because it can — the load is the first thing the slice does. This chain interleaves five loads
+ *   with `set_palette`'s sixteen writes to $ff8240, a single colour register and the shifter's own
+ *   base, and an I/O-space access from user mode is a bus error — so the loads cannot be hoisted
+ *   without cutting the slices open, which would make this build a re-implementation of ../src/boot.c
+ *   rather than a caller of it. README.md §14 has the alternative that was weighed (dropping to user
+ *   mode inside `disk_read_file` and coming back) and why the measurement was preferred to it.
+ *
+ *   THE FIRE GATES ARE BOUNDED SPINS AND A DEBUGGER DRIVES THEM. The boot waits on a byte only the
+ *   IKBD interrupt writes; headless, nothing presses a stick. So each half of each gate is its own
+ *   `noinline` function whose address this record reports, and smoke.py pokes WB_JOY1_STATE at those
+ *   PCs — the SAME mechanism atari/original.py uses on the shipped side, where `boot_script` pokes
+ *   the same byte at $e556/$e55c. The bound is `SPINS_LONG`, well inside `--run-vbls`, because a
+ *   wait that outruns the harness is not a watchdog (README.md's bug 3).
+ *
+ *   THE DATA-DISK PROMPT IS NOT REACHED. The original's boot asks a player to swap disks between the
+ *   credits and the stage load ($e494's `show_data_disk_prompt`, which is unported); this build's
+ *   GEMDOS drive carries disk 1's two resources and disk 2's three side by side, so
+ *   `boot_load_stage` finds OVALAY01.RAD, TILEDATA.RAD and SPRITES.CRU without a swap. One volume
+ *   where the original has two.
+ *
+ *   THE IMAGE IS SNAPSHOTTED AT THE SLICE'S OWN LAST INSTANT, not at the end of the run. The write
+ *   itself is GEMDOS and so has to wait for user mode, and between the two `vbl_handler` keeps
+ *   running — the music tick, the idle countdown — so a span written at the end would be the span at
+ *   teardown and not the span at the `$f8b4`-equivalent moment `original.py` dumps. It is copied
+ *   aside the instant `boot_load_stage` returns, with interrupts masked so no vblank can land inside
+ *   the copy, and the copy is what reaches the file.
+ */
+#ifdef SMOKE_BOOT
+/* WB_JOY1_STATE's bit 7 is the fire button in the IKBD's joystick report, and the boot's two
+ * `tst.b`/`bpl`/`bmi` pairs are testing exactly that bit through the sign. DERIVED FROM
+ * WB_JOY1_FIRE_BIT rather than written as `0x80`: the bit NUMBER has one definition in
+ * ../include/wonderboy.h, which ../test/layout.py scrapes for the Python side, and a third spelling
+ * of the mask is a third place for the two shores to stop naming the same bit (CLAUDE.md §5). */
+#define FIRE_DOWN_BIT    (1u << WB_JOY1_FIRE_BIT)
+#define FIRE_NONE        0x00u
+/* The span this build writes out: the game's whole address space, which is `original.py`'s
+ * GAME_SPAN_END and the `movea.l #$80000,a7` the game itself performs. */
+#define BOOT_SPAN_AT     WB_STAGED_AT
+#define BOOT_SPAN_END    WB_ST_MEMORY_TOP
+#define BOOT_SPAN_BYTES  (BOOT_SPAN_END - BOOT_SPAN_AT)
+/* A slice that never ran, told apart from WB_LOAD_OK (which is 0). Out of band because the three
+ * WB_LOAD_* codes are 0, 1 and 2, and a mode that read "did not run" as "loaded fine" would report a
+ * green boot for a chain that stopped at its first gate. */
+#define BOOT_SLICE_NOT_RUN 0xffffffffu
+#endif
+
+/* THE TITLE AND BOOT BUILDS ARE MUTUALLY EXCLUSIVE, AND THE COMPILER IS WHAT SAYS SO. They share one
+ * `photographed_screen`/`photographed_pens` pair and both write the same FRAME_FILE and PENS_FILE, so
+ * a binary carrying both would photograph twice into one buffer and smoke.py could not tell which
+ * routine produced the file it grades. Until now the contract rested on `build.sh`'s `case` arm
+ * choosing one `-D` — a script one edit away from passing both — where PROGRAM_BYTES' own missing-`-D`
+ * check is enforced here, in the file that depends on it. */
+#if defined(SMOKE_TITLE) && defined(SMOKE_BOOT)
+#error "SMOKE_TITLE and SMOKE_BOOT share one capture buffer and one FRAME.BIN — build exactly one"
+#endif
+
+/* THE THREE BUILDS THAT PHOTOGRAPH THE MACHINE, as one condition rather than three lists. Each
+ * carries a 32000-byte framebuffer and the machine's sixteen pens off in the same two files, read
+ * back by the same code in smoke.py, so what they share is defined once below and what differs is
+ * theirs. */
+#if defined(SMOKE_M2) || defined(SMOKE_TITLE) || defined(SMOKE_BOOT)
 #define SMOKE_CAPTURES 1
 #endif
 
@@ -512,7 +610,7 @@ static void publish_base_bytes(uint8_t high, uint8_t mid) {
  * which is the buffer the title picture is NOT in. Publishing that instead would display 32000
  * bytes of the screen the depack does not reach. The two bytes are taken apart from the one
  * constant rather than written as 7 and 0. */
-#ifdef SMOKE_TITLE
+#if defined(SMOKE_TITLE) || defined(SMOKE_BOOT)
 static void publish_screen_base(void) {
     publish_base_bytes((uint8_t)(WB_SCREEN_LOW >> 16), (uint8_t)(WB_SCREEN_LOW >> 8));
 }
@@ -623,10 +721,11 @@ static void dump_stats(const struct stats *record) {
  * readers, and neither can silently misread the other's bytes. */
 /* ---- what the PHOTOGRAPHING builds share --------------------------------------------------------
  *
- * M2 takes four pictures of a running frame loop and the title build takes one of a screen the boot
- * chain drew, but the SURFACE is the same in both: 32000 bytes out of the image and sixteen words
- * off the shifter, in FRAME.BIN and PENS.BIN, sized from the same header constants smoke.py reads.
- * Defined here rather than twice, so a build cannot photograph a differently-shaped screen. */
+ * M2 takes four pictures of a running frame loop, the title build takes one of the screen its slice
+ * drew and the BOOT build takes one of the credits screen at its own anchor — but the SURFACE is the
+ * same in all three: 32000 bytes out of the image and sixteen words off the shifter, in FRAME.BIN
+ * and PENS.BIN, sized from the same header constants smoke.py reads. Defined here rather than three
+ * times, so a build cannot photograph a differently-shaped screen. */
 #ifdef SMOKE_CAPTURES
 /* DERIVED, not restated. Both numbers already have one canonical definition in ../include/
  * wonderboy.h, which ../test/layout.py scrapes for the Python side — so smoke.py and this file
@@ -653,6 +752,78 @@ static void read_shifter_pens(uint16_t *into) {
                                                       + pen * WB_SHIFTER_PALETTE_STRIDE);
 }
 #endif /* SMOKE_CAPTURES */
+
+/* ---- what the TWO PICTURE BUILDS share, which is the whole photograph ---------------------------
+ *
+ * The title build and the boot build take the same photograph of the same buffer at their own
+ * anchors: the sixteen pens checked against the words the slice put there, the 32000 bytes at
+ * WB_SCREEN_LOW, the chip's own sixteen registers, and the shifter base read where it means
+ * something. Written once, because the pen compare and the base reassembly are the ONLY surfaces
+ * that can see `set_palette` and the shifter at all (the oracle drops both writes), and a
+ * correction applied to one copy would leave the other build reading the wrong thing at the only
+ * instant it means anything.
+ *
+ * THE TWO BUILDS ARE MUTUALLY EXCLUSIVE, so the buffers are one pair rather than two: `build.sh`
+ * compiles -DSMOKE_TITLE or -DSMOKE_BOOT and never both, and both write the same FRAME_FILE and
+ * PENS_FILE, so two pairs would be 32 KB of .bss that only ever half fills — and smoke.py could not
+ * tell which routine produced the file it grades. */
+#if defined(SMOKE_TITLE) || defined(SMOKE_BOOT)
+static uint8_t photographed_screen[SCREEN_BYTES];
+static uint16_t photographed_pens[PALETTE_PENS];
+
+/* NO PEN IS EXPECTED TO DIFFER FROM THE PICTURE'S OWN WORD — the title slice's case. The boot's
+ * credits slice passes WB_CREDITS_PROMPT_PEN instead, because `$e5a2` raises that one register to
+ * WB_CREDITS_PROMPT_COLOUR after `set_palette` has run. Out of band because a pen index is
+ * 0..PALETTE_PENS-1, which is `NO_FAULTED_PEN`'s own trick one block over. */
+#define NO_OVERRIDDEN_PEN PALETTE_PENS
+
+/* The .RAD header the load left at WB_RESOURCE_LOAD_BUFFER, into the caller's two record fields. It
+ * is what says the file arrived: a refused load leaves the buffer as it found it. Shared by the two
+ * builds because both read the same two longwords out of the same buffer after a load. */
+static void read_rad_header(uint32_t *packed, uint32_t *unpacked) {
+    *packed = image_long(WB_RESOURCE_LOAD_BUFFER + RAD_HDR_PACKED_OFF);
+    *unpacked = image_long(WB_RESOURCE_LOAD_BUFFER + RAD_HDR_UNPACKED_OFF);
+}
+
+/* Photograph the visible buffer and the chip, and hand back which pens did NOT read back as the
+ * slice left them. `capture_at` is the image address the 32000 bytes are read from — and it is
+ * REPORTED THROUGH `*captured_at` BY THE ROUTINE THAT USES IT, not written down again by the caller:
+ * smoke.py asserts `captured_at == WB_SCREEN_LOW`, and while the caller set the field and this
+ * function copied from a constant of its own the two could not disagree, so the row was a compile-time
+ * constant compared against itself. Now a caller that photographs the wrong buffer reds.
+ * `palette_src` is the image address the slice's `set_palette` read from; `overridden_pen` /
+ * `overridden_colour` are the one register a later instruction raised, or NO_OVERRIDDEN_PEN.
+ * `*shifter_base` takes $ffff8201/8203 as they read AT THE PHOTOGRAPH, which is the only instant they
+ * mean anything: `teardown` puts TOS's own base back and a read after that reports the desktop's
+ * screen for ever.
+ *
+ * THE PICTURE IS READ WHERE THE SHIFTER IS POINTED, which is M2's rule and not a restatement of
+ * where the depack was aimed: whether the slice's own arithmetic landed there is a SEPARATE claim,
+ * carried by the record's `depack_dest`/`unpacked_bytes` and asserted by smoke.py. */
+static uint32_t photograph_the_screen(uint32_t capture_at, uint32_t palette_src,
+                                      unsigned overridden_pen, uint16_t overridden_colour,
+                                      uint32_t *captured_at, uint32_t *shifter_base) {
+    uint32_t pens_readback_failed = 0;
+    unsigned pen;
+
+    for (pen = 0; pen < PALETTE_PENS; pen++) {
+        uint32_t at = pen * WB_SHIFTER_PALETTE_STRIDE;
+        uint16_t wanted = (pen == overridden_pen) ? overridden_colour
+                                                  : image_word(palette_src + at);
+        uint16_t held = *(volatile uint16_t *)(uintptr_t)(SHIFTER_PALETTE + at);
+
+        if ((held & ST_PEN_MASK) != (wanted & ST_PEN_MASK))
+            pens_readback_failed |= 1u << pen;
+    }
+
+    memcpy(photographed_screen, game_image + capture_at, SCREEN_BYTES);
+    read_shifter_pens(photographed_pens);
+    *captured_at = capture_at;
+    *shifter_base = ((uint32_t)*io8(SHIFTER_BASE_HI) << 16)
+                    | ((uint32_t)*io8(SHIFTER_BASE_MID) << 8);
+    return pens_readback_failed;
+}
+#endif /* SMOKE_TITLE || SMOKE_BOOT */
 
 #ifdef SMOKE_M2
 #define M2_MAGIC 0x57424132u        /* 'WBA2' */
@@ -1032,17 +1203,13 @@ struct title_stats {
     uint32_t pens_readback_failed;
 };
 
-static uint8_t captured_title[SCREEN_BYTES];
-static uint16_t captured_title_pens[PALETTE_PENS];
-
 /* USER MODE, before the machine is taken: the one file read the RECONSTRUCTION itself performs. */
 static void load_the_title(struct title_stats *record) {
     record->resource_index = TITLE_RESOURCE;
     record->copylock_arm_flag = image_word(WB_COPYLOCK_ARM_FLAG);
     record->load_result = load_resource_by_index(game_image, TITLE_RESOURCE,
                                                  WB_RESOURCE_LOAD_BUFFER);
-    record->packed_bytes = image_long(WB_RESOURCE_LOAD_BUFFER + RAD_HDR_PACKED_OFF);
-    record->unpacked_bytes = image_long(WB_RESOURCE_LOAD_BUFFER + RAD_HDR_UNPACKED_OFF);
+    read_rad_header(&record->packed_bytes, &record->unpacked_bytes);
 }
 
 /* SUPERVISOR: the boot's two clears, the depack, the palette — and the photograph.
@@ -1059,8 +1226,6 @@ static void load_the_title(struct title_stats *record) {
  * there is a SEPARATE claim, carried by `depack_dest` and `unpacked_bytes` and asserted by
  * smoke.py. A capture taken at `depack_dest + prefix` would make those two agree by construction. */
 static void draw_the_title(struct title_stats *record) {
-    unsigned pen;
-
     (void)clear_palette(game_image);            /* $e4ea */
     clear_both_screens(game_image);             /* $e4ee */
 
@@ -1071,26 +1236,233 @@ static void draw_the_title(struct title_stats *record) {
     /* THE PALETTE'S PLUMBING, CHECKED SEPARATELY FROM THE DIFFERENTIAL — the same split
      * `publish_staged_pens` makes for M2's control: this asks only whether the sixteen words the
      * depacked prefix holds are the sixteen the chip holds, so a divergence against the SHIPPED
-     * binary's pens is about the picture and not about the shim's wiring. */
-    for (pen = 0; pen < PALETTE_PENS; pen++) {
-        uint32_t at = pen * WB_SHIFTER_PALETTE_STRIDE;
-        uint16_t wanted = image_word(WB_TITLE_PALETTE_SRC + at);
-        uint16_t held = *(volatile uint16_t *)(uintptr_t)(SHIFTER_PALETTE + at);
-
-        if ((held & ST_PEN_MASK) != (wanted & ST_PEN_MASK))
-            record->pens_readback_failed |= 1u << pen;
-    }
-
-    record->captured_at = WB_SCREEN_LOW;
-    memcpy(captured_title, game_image + WB_SCREEN_LOW, SCREEN_BYTES);
-    read_shifter_pens(captured_title_pens);
-    /* IN SUPERVISOR AND AT THE PHOTOGRAPH, which is the only instant it means anything: `teardown`
-     * puts TOS's own base back, and a read after that reports the desktop's screen for ever. */
-    record->shifter_base = ((uint32_t)*io8(SHIFTER_BASE_HI) << 16)
-                           | ((uint32_t)*io8(SHIFTER_BASE_MID) << 8);
+     * binary's pens is about the picture and not about the shim's wiring. Nothing raises a pen
+     * after `set_palette` in this slice, so no register is overridden. */
+    record->pens_readback_failed = photograph_the_screen(WB_SCREEN_LOW, WB_TITLE_PALETTE_SRC,
+                                                         NO_OVERRIDDEN_PEN, 0,
+                                                         &record->captured_at,
+                                                         &record->shifter_base);
 }
 
 #endif /* SMOKE_TITLE */
+
+/* ---- the BOOT build's record, its two waits, and the recomputed span ----------------------------
+ *
+ * A FOURTH RECORD FOR THE FOURTH BUILD, for the reason M2 got a second one and the title build a
+ * third: smoke.py checks each record's size against its own format string, so one record that grew
+ * per build mode would make every other mode's version check fire. Four records, four magics, four
+ * readers, and none can silently misread another's bytes. */
+#ifdef SMOKE_BOOT
+#define BOOT_MAGIC 0x57424134u      /* 'WBA4' */
+
+static const char BOOT_FILE[] = "BOOT.BIN";
+/* The recomputed span. Named for what it is rather than for the mode: `WB.IMG` is what GEMDOS hands
+ * this program on the way IN, and this is what the program computed on the way out. */
+static const char BOOT_IMAGE_FILE[] = "BOOT.IMG";
+
+struct boot_stats {
+    uint32_t magic;
+    uint32_t bytes;                 /* sizeof(struct boot_stats) — the version check */
+    uint32_t image_base;
+    /* THE THREE SLICES' OWN REPORTS, each one of ../include/wonderboy.h's WB_LOAD_* codes or
+     * BOOT_SLICE_NOT_RUN. Two of them must be WB_LOAD_COPYLOCK_RAN, because the title slice and the
+     * stage slice's SPRITES.CRU load are the two the original arms. */
+    uint32_t title_result;
+    uint32_t credits_result;
+    uint32_t stage_result;
+    /* WHERE THE TWO FIRE WAITS ARE, so smoke.py can aim its pokes at the addresses the BINARY
+     * reports about itself rather than at a symbol read out of a possibly-stale ELF — `capture_pc`'s
+     * rule, and the reason M3's first pass exists. Each is entered twice: once for the title gate
+     * and once for the credits gate. */
+    uint32_t fire_press_pc;
+    uint32_t fire_release_pc;
+    uint32_t fire_gates_crossed;    /* both halves answered */
+    uint32_t fire_waits_timed_out;  /* ...and a half that spun out its bound instead */
+    /* WHICH HALF THAT WAS — one of the two PCs above, or 0 if none ran out. The banner says the
+     * waits are separate functions so a timeout can name itself; a shared counter alone could not,
+     * and "0 of 2 gates, 1 timed out" reads the same whether the press poke missed or the release
+     * one did. It is the undriven pass's own strongest row: nothing injected must stop at the
+     * FIRST half of the FIRST gate, which is `fire_press_pc` and no other address. */
+    uint32_t fire_wait_timed_out_pc;
+    /* Each picture's .RAD header as read back out of the load buffer AFTER its own load — what says
+     * the file arrived, since a refused load leaves the buffer as it found it. */
+    uint32_t title_packed;
+    uint32_t title_unpacked;
+    uint32_t credits_packed;
+    uint32_t credits_unpacked;
+    /* WB_COPYLOCK_ARM_FLAG at the end of the chain. `load_resource_by_index` clears it on the armed
+     * arm, so a chain that ran to the end must leave it clear; a chain that stopped on a refused
+     * load it had armed leaves it standing (../src/boot.c's `load_or_stop`). */
+    uint32_t copylock_arm_flag;
+    /* Which of the sixteen pens does not read back as the word the credits slice put there. Pen
+     * WB_CREDITS_PROMPT_PEN is expected to hold WB_CREDITS_PROMPT_COLOUR and the other fifteen the
+     * depacked prefix's own words — which is the ONE surface that can see `$e5a2`'s write at all
+     * (../STATUS.md batch 44 phase C, §4's C3: the oracle drops it). */
+    uint32_t pens_readback_failed;
+    uint32_t captured_at;           /* where the 32000 photographed bytes were read from */
+    uint32_t screen_base_published;
+    uint32_t shifter_base;          /* $ffff8201/8203 READ BACK, at the instant of the photograph */
+    /* THE PINS FROM THE INSIDE, at the instant `boot_load_stage` returns. These are M2's own seven
+     * (atari/original.py's `check_pins`) asked of the RECOMPUTED image instead of the measured one:
+     * state the shipped `.PRG` does not carry and only a completed chain leaves. */
+    uint32_t stage_map_ptr;
+    uint32_t stage_start_ptr;
+    uint32_t resource_signature;
+    uint32_t stage_number;
+    uint32_t level_seq_index;
+    uint32_t stage_second_load_flag;
+    uint32_t stage_side_flag;
+    /* ...and the word `$e6ec`'s `clr.w` takes down, which is what makes the sprite load one-shot:
+     * a life lost re-enters the stage with this raised and the SPRITES.CRU load — and the
+     * protection with it — is suppressed. */
+    uint32_t life_restart_entry_c26;
+    /* The span written to BOOT.IMG, and the shim's own vblank count at the two instants that bound
+     * the chain — which is what says how much of `vbl_handler`'s work is inside the picture. */
+    uint32_t span_bytes;
+    uint32_t vbl_ticks_at_span;
+    uint32_t vbl_ticks_at_exit;
+};
+
+/* THE SPAN IS COPIED ASIDE RATHER THAN WRITTEN WHERE IT IS TAKEN, and the banner argues it: the
+ * write is GEMDOS and so waits for user mode, and `vbl_handler` runs in between. Half a megabyte of
+ * .bss against a machine `smoke.py` boots with --memsize 4. */
+static uint8_t boot_span[BOOT_SPAN_BYTES];
+
+/* One half of the boot's fire gate, each in its own function SO THAT IT HAS ITS OWN ADDRESS. The
+ * record reports both, smoke.py breakpoints them, and the poke it makes there is the joystick byte
+ * the IKBD would have filed — which is exactly what `original.py`'s `boot_script` does to the
+ * shipped binary at $e556 and $e55c.
+ *
+ * BOUNDED, and by the spin count rather than by the vblank clock, for `run_vblanks`' reason: the
+ * bound has to be shorter than `--run-vbls` or an undriven run reports "no record", which says
+ * nothing about WHICH half of the gate was never answered. The PLAY build will want these uncapped,
+ * as the original's are; that build is not this one.
+ *
+ * `volatile`, because the byte is written by an interrupt (or by the debugger) and nothing the loop
+ * body does can change it — README.md's bug 1, one file over from the comment about it. THE TWO
+ * HALVES DIFFER ONLY IN `WAITED_FOR`, so the body — and the `volatile` that fixed bug 1 — is written
+ * ONCE and the macro stamps out the two DISTINCT symbols the record has to report separately. */
+#define FIRE_WAIT(name, waited_for)                                                     \
+    static __attribute__((noinline)) int name(void) {                                   \
+        volatile uint8_t *fire = (volatile uint8_t *)(game_image + WB_JOY1_STATE);      \
+        uint32_t spins = SPINS_LONG;                                                    \
+                                                                                        \
+        while (!(waited_for))                                                           \
+            if (--spins == 0u)                                                          \
+                return 0;                                                               \
+        return 1;                                                                       \
+    }
+
+FIRE_WAIT(wait_fire_pressed, (*fire & FIRE_DOWN_BIT) != 0u)
+FIRE_WAIT(wait_fire_released, (*fire & FIRE_DOWN_BIT) == 0u)
+
+/* `$e552` and `$e5aa`: the boot's own `clr.b WB_JOY1_STATE` and the two spins after it. */
+static int fire_gate(struct boot_stats *record) {
+    game_image[WB_JOY1_STATE] = FIRE_NONE;
+    if (!wait_fire_pressed())
+        record->fire_wait_timed_out_pc = record->fire_press_pc;
+    else if (!wait_fire_released())
+        record->fire_wait_timed_out_pc = record->fire_release_pc;
+    else {
+        record->fire_gates_crossed++;
+        return 1;
+    }
+    record->fire_waits_timed_out++;
+    return 0;
+}
+
+/* The credits picture, photographed at the boot's OWN anchor — `$e5aa`, the instruction after
+ * `boot_credits_screen`'s last and before the gate. Read where the SHIFTER IS POINTED, which is M2's
+ * rule: `publish_screen_base` put WB_SCREEN_LOW on the bus and `copy_screen` brought the picture
+ * down onto it, so that is the buffer a display shows and that is the buffer compared. */
+static void capture_the_credits(struct boot_stats *record) {
+    /* THE PROMPT PEN IS EXPECTED TO DIFFER FROM THE PICTURE'S OWN WORD, and that is the check rather
+     * than an exception to it: `$e5a2` raises WB_CREDITS_PROMPT_PEN to WB_CREDITS_PROMPT_COLOUR
+     * after `set_palette` has run, so the chip must hold the depacked prefix's fifteen words and
+     * that one. It is the ONE surface that can see that instruction at all — ../STATUS.md batch 44
+     * phase C §4's C3 records it SURVIVING every host differential, because the oracle drops a write
+     * to a register off the loaded image. */
+    record->pens_readback_failed = photograph_the_screen(WB_SCREEN_LOW, WB_CREDITS_PALETTE_SRC,
+                                                         WB_CREDITS_PROMPT_PEN,
+                                                         WB_CREDITS_PROMPT_COLOUR,
+                                                         &record->captured_at,
+                                                         &record->shifter_base);
+}
+
+/* The span, and the seven pins, taken at the instant `boot_load_stage` returns — the
+ * `$f8b4`-equivalent, which is where `atari/original.py dump` takes the image this one is compared
+ * against.
+ *
+ * INTERRUPTS ARE MASKED FOR THE COPY, and not for tidiness: `vbl_handler` is the reconstruction's
+ * own and it writes the image — the music tick, the idle countdown, its own counter — so a vblank
+ * landing inside half a megabyte of `memcpy` would leave a span that is two moments spliced. */
+static void take_the_span(struct boot_stats *record) {
+    unsigned short sr = wb_irq_disable();
+
+    /* THE PINS ARE INSIDE THE SAME MASK AS THE COPY, and that is the whole point of the mask rather
+     * than an extra. Every one of them is compared against `original.py dump`'s, which Hatari takes
+     * atomically at `$f8b4`; read outside the mask they could describe a moment `vbl_handler` had
+     * already moved the span past, and a pin disagreeing with the span it describes would be an
+     * INTERMITTENT red on a correct build — the shape `sample_the_two_clocks` one block over exists
+     * to not have. */
+    record->vbl_ticks_at_span = shim_vbl_ticks;
+    record->stage_map_ptr = image_long(WB_STAGE_MAP_PTR);
+    record->stage_start_ptr = image_long(WB_STAGE_START_PTR);
+    record->resource_signature = game_image[WB_RESOURCE_HEADER];
+    record->stage_number = image_word(WB_STAGE_NUMBER);
+    record->level_seq_index = image_word(WB_LEVEL_SEQ_INDEX);
+    record->stage_second_load_flag = game_image[WB_STAGE_SECOND_LOAD_FLAG];
+    record->stage_side_flag = image_word(WB_STAGE_SIDE_FLAG);
+    record->life_restart_entry_c26 = image_word(WB_LIFE_RESTART_ENTRY_C26);
+    memcpy(boot_span, game_image + BOOT_SPAN_AT, BOOT_SPAN_BYTES);
+    wb_irq_restore(sr);
+    record->span_bytes = BOOT_SPAN_BYTES;
+}
+
+/* THE CHAIN, in the boot's own order, STOPPING WHERE THE BOOT WOULD STOP. A refused load leaves the
+ * original sitting in `load_resource_by_index`'s interactive retry, so ../src/boot.c's slices return
+ * WB_LOAD_DISK_ERROR rather than inflating a buffer the file never arrived in; this honours the same
+ * contract one level up, and an unanswered fire gate stops it for the same reason — the original
+ * would still be waiting. Every stop is reported, so a short run is a red with a reason rather than
+ * a missing record. */
+static void run_the_boot(struct boot_stats *record) {
+    record->fire_press_pc = (uint32_t)(uintptr_t)&wait_fire_pressed;
+    record->fire_release_pc = (uint32_t)(uintptr_t)&wait_fire_released;
+
+    /* The two steps of the boot's prologue ($e4e6..$e510) that ARE reconstructed, made here exactly
+     * as `draw_the_title` makes them. The other four are privileged hardware setup this shim stands
+     * in for its own way — `install` and `publish_screen_base` above — and the banner declares that.
+     * Both are near no-ops over this image, whose screens are `.bss` and whose palette `set_palette`
+     * overwrites; they are made because the boot makes them, which is the only reason a slice's
+     * neighbour belongs in a build that calls the slice. */
+    (void)clear_palette(game_image);            /* $e4ea */
+    clear_both_screens(game_image);             /* $e4ee */
+
+    record->title_result = boot_title_screen(game_image);
+    read_rad_header(&record->title_packed, &record->title_unpacked);
+    if (record->title_result == WB_LOAD_DISK_ERROR || !fire_gate(record))
+        return;
+
+    /* BOOT_FAULT_SKIP_CREDITS is the mis-run control (build.sh bootfault), and it is `novbl`'s
+     * shape in the middle of the chain: one call suppressed and nothing else — the same two gates,
+     * the same other two slices, the same record, the same span written. `read_rad_header` still
+     * runs, so the buffer it reports is the TITLE's file left over, which is the control saying out
+     * loud that no credits file was asked for. */
+#ifndef BOOT_FAULT_SKIP_CREDITS
+    record->credits_result = boot_credits_screen(game_image);
+#endif
+    read_rad_header(&record->credits_packed, &record->credits_unpacked);
+    capture_the_credits(record);
+    if (record->credits_result == WB_LOAD_DISK_ERROR || !fire_gate(record))
+        return;
+
+    record->stage_result = boot_load_stage(game_image);
+    if (record->stage_result == WB_LOAD_DISK_ERROR)
+        return;
+    take_the_span(record);
+}
+
+#endif /* SMOKE_BOOT */
 
 
 /* ---- the run ----------------------------------------------------------------------------------- */
@@ -1187,6 +1559,9 @@ int wonderboy_main(void) {
 #ifdef SMOKE_TITLE
     struct title_stats title;
 #endif
+#ifdef SMOKE_BOOT
+    struct boot_stats boot;
+#endif
     void *ssp;
     unsigned field;
 
@@ -1199,6 +1574,15 @@ int wonderboy_main(void) {
 #ifdef SMOKE_TITLE
     for (field = 0; field < sizeof(title); field++)
         ((uint8_t *)&title)[field] = 0;
+#endif
+#ifdef SMOKE_BOOT
+    for (field = 0; field < sizeof(boot); field++)
+        ((uint8_t *)&boot)[field] = 0;
+    /* ...and the three slice reports to "did not run", which zero does not mean here: WB_LOAD_OK is
+     * itself 0, so a chain that stopped at its first gate would report two clean loads. */
+    boot.title_result = BOOT_SLICE_NOT_RUN;
+    boot.credits_result = BOOT_SLICE_NOT_RUN;
+    boot.stage_result = BOOT_SLICE_NOT_RUN;
 #endif
 
     game_image = (uint8_t *)(((uintptr_t)image_storage + (IMAGE_ALIGN - 1u))
@@ -1273,6 +1657,28 @@ int wonderboy_main(void) {
      * be comparing a different instant from the shipped side's for no gain. */
     draw_the_title(&title);
 #endif
+#ifdef SMOKE_BOOT
+    /* THE WHOLE CHAIN. The moment this build is a differential ABOUT is `$f8b4`, the instant
+     * `boot_load_stage` returns, and every vblank after it moves `vbl_handler`'s own writes further
+     * from the span the shipped side dumped — which is why `take_the_span` copies the image aside
+     * THERE rather than letting the file write decide the instant. What follows this line therefore
+     * costs the comparison nothing. */
+    run_the_boot(&boot);
+    boot.copylock_arm_flag = image_word(WB_COPYLOCK_ARM_FLAG);
+#endif
+    /* THE SAME BOUNDED WAIT EVERY OTHER NON-FRAME BUILD MAKES — and IN THE BOOT BUILD IT IS
+     * ENTRY-STATE-VACUOUS, which is stated here rather than left for a reader to infer from the
+     * count. Five disk loads and four depacks have already cost hundreds of vblanks by the time this
+     * line runs (measured: ~525, `vbl_ticks_at_span`), so `run_vblanks` returns without waiting and
+     * RB_VBL_TICKING is satisfied by the state the chain arrived in. It witnesses nothing there. THE
+     * NON-VACUOUS READING OF THE SAME FACT is `vbl_ticks_at_span` against the same SMOKE_VBLS floor,
+     * which smoke.py's "the machine drove the chain, not just the tail" row asserts and which
+     * `boot_checks` PRINTS this bit's vacuity beside (`unreachable_readbacks`' rule, one mode over).
+     *
+     * It is still a WAIT rather than a sample because a chain that stopped early on its own terms —
+     * a resource the drive does not carry — would otherwise redden this bit and make the real cause,
+     * which is the load rows below, the SECOND thing a reader sees. `run_vblanks` is bounded by
+     * SPINS_LONG, so a dead level-4 vector still reds here with a record rather than hanging. */
     checked(RB_VBL_TICKING, run_vblanks(SMOKE_VBLS));
 #endif
     record.psg_port_a_after_run = psg_port_read(WB_PSG_REG_PORT_A);
@@ -1319,14 +1725,31 @@ int wonderboy_main(void) {
     write_file(FRAME_FILE, captured_frames, (long)sizeof(captured_frames));
     write_file(PENS_FILE, captured_pens, (long)sizeof(captured_pens));
 #endif
+#ifdef SMOKE_BOOT
+    boot.magic = BOOT_MAGIC;
+    boot.bytes = sizeof(boot);
+    boot.image_base = (uint32_t)(uintptr_t)game_image;
+    boot.screen_base_published = wb_target_screen_base;
+    /* The shim's own clock at the program's exit, against `vbl_ticks_at_span`'s reading at the
+     * `$f8b4`-equivalent instant: the pair is what says how much of `vbl_handler`'s work happened
+     * AFTER the span was taken and therefore cannot be in it. */
+    boot.vbl_ticks_at_exit = shim_vbl_ticks;
+    write_file(BOOT_FILE, &boot, (long)sizeof(boot));
+    write_file(FRAME_FILE, photographed_screen, (long)sizeof(photographed_screen));
+    write_file(PENS_FILE, photographed_pens, (long)sizeof(photographed_pens));
+    /* THE HEADLINE, and it is written LAST because it is the largest: half a megabyte of image the
+     * reconstruction computed, where `gen_image.py --dump` stages half a megabyte it was handed. */
+    if (boot.span_bytes)
+        write_file(BOOT_IMAGE_FILE, boot_span, (long)sizeof(boot_span));
+#endif
 #ifdef SMOKE_TITLE
     title.magic = TITLE_MAGIC;
     title.bytes = sizeof(title);
     title.image_base = (uint32_t)(uintptr_t)game_image;
     title.screen_base_published = wb_target_screen_base;
     write_file(TITLE_FILE, &title, (long)sizeof(title));
-    write_file(FRAME_FILE, captured_title, (long)sizeof(captured_title));
-    write_file(PENS_FILE, captured_title_pens, (long)sizeof(captured_title_pens));
+    write_file(FRAME_FILE, photographed_screen, (long)sizeof(photographed_screen));
+    write_file(PENS_FILE, photographed_pens, (long)sizeof(photographed_pens));
 #endif
     return 0;
 }

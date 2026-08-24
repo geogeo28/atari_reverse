@@ -15108,3 +15108,250 @@ into a refactor):
   reconstructed-byte contribution is counted rather than left uncounted (§5).
 
 **CARRIED, unchanged**: everything phases A and B carry.
+
+## Batch 44 phase D — THE ON-TARGET BOOT RUNG: the chain runs, and the staged dump is recomputed
+
+Phase C composed the boot chain into three C functions and verified each against the oracle over its
+whole range, and closed with one sentence in §7: "**The on-target rung.** Nothing in this phase builds
+or runs a `.PRG`: `boot_credits_screen` is what `atari/README.md` §13's 'credits rung' needs and
+`boot_load_stage` is what would retire `gen_image.py`'s staged dump for the play build, and BOTH are
+the next phase's work." This phase is that work, and it reached further than the credits screen it
+was scoped around.
+
+**THE HEADLINE IS NOT THE PICTURE.** `atari/smoke.py boot` runs all three slices on a 68000, in the
+boot's own order, with the boot's own two fire gates between them, over **M1's image** — the shipped
+`SWB.PRG` plus `gen_image.py`'s named seeds and not one byte of measured RAM. Five real files come
+off the emulated drive across the file-load seam. Then, at the instant `boot_load_stage` returns —
+the `$f8b4`-equivalent, which is where `atari/original.py dump` takes its measurement — the shim
+writes the game's whole address space `[0x3f8,0x80000)` out, and the smoke differences it against
+that dump band by band.
+
+**Measured on TOS 1.04 and EmuTOS: ~522,500 of 523,272 bytes are the measured dump's own. The few
+hundred that differ all fall inside TEN NAMED BANDS — four of them `original.py variance`'s, held to
+that mode's OWN ceilings, and six that are small objects owned entirely by something this build does
+not run and so carry none. ZERO bytes differ outside every band, on both ROMs.** The exact figures
+MOVE — with the ROM, and with which vblank a boot finishes on — so `atari/README.md` §14's band
+table is the one surface that carries them and this one cites it, which is `original.py
+mode_variance`'s own rule. That table is also the argument; this section is what the phase did and
+what it found.
+
+**Verified 330, 41,652 bytes — UNCHANGED, and correctly so.** This phase reconstructs nothing: it
+CALLS phase C's three compositions from a target-side shim and measures what they produce on a real
+68000. No `src/*.c` behaviour changed, no function was ported, and the "Functions (by address)" table
+does not move.
+
+**`make test`: 6,398 passed** off a clean build (`rm -f build/*.so && make test`), which is the count
+phase C left — the host side is untouched apart from `atari/`, which the suite does not compile, and
+the four constants this phase added to `include/wonderboy.h` are scraped by `test/layout.py` without
+adding a case. Measured rather than claimed. The verification for this phase is the on-target modes,
+and there are two new ones.
+
+### §1 WHAT WAS BUILT
+
+| file | what it gained |
+|---|---|
+| `atari/wonderboy_main.c` | `-DSMOKE_BOOT`: a fourth build mode, a fourth record (`BOOT.BIN`, magic `WBA4`), the two `noinline` fire waits, `run_the_boot`, `capture_the_credits`, `take_the_span`, and a 512 KB `.bss` snapshot buffer |
+| `atari/build.sh` | `boot` and `bootfault` |
+| `atari/smoke.py` | `mode_boot` — two passes, the credits differential, the span's band table, the mis-anchor control — and `stage_resources` widened from disk 1's two resources to the chain's five |
+| `atari/original.py` | `credits`: the shipped binary's credits screen and pens at `$e5aa`. `mode_title` and it are now one routine, `capture_boot_picture`, because they differ in three values and nothing else. `neighbour` now KEEPS its mis-anchored span, which is what M8's own control is taken against. `differing_addresses` is the ONE byte walk both files' band diffs come off |
+| `include/wonderboy.h` | four addresses the span's band table needs and the header did not carry, each one `../names.txt` already pins: `WB_FLOPPY_PREAMBLE_FLAG` (`$64f0`), `WB_FAT_DIR_BUFFER` (`$64f4`), `WB_TOS_STACK_SAVE` (`$f8b8`) and `WB_COPYLOCK_DECRYPT_CURSOR_LEN`. The header is the port's source of truth for an address; a band bound spelt as a bare literal is one that can stop naming the same bytes |
+
+**THE TWO NEW MODES ARE GREEN ON BOTH ROMS**, and so are the eighteen before them — `title` was
+re-run on both after the shared `capture_boot_picture` refactor and is still 0 of 32000 bytes.
+
+### §2 THE SIX DEVIATIONS, AND THE ONE THAT WAS A DECISION
+
+`atari/README.md` §14 has the table. Five of the six are statements of what a shim is; the sixth was
+a choice with an alternative, and it is recorded here because it breaks a standing rule of that
+directory:
+
+**THE GEMDOS LOADS RUN IN SUPERVISOR.** The rule is that GEMDOS is entered from user mode, because
+"handle allocation misbehaves when entered from supervisor under Hatari's GEMDOS drive — a bug this
+workspace has already shipped once". The title build obeys it by hoisting its ONE load out of the
+machine-taken window. This chain cannot: five loads are interleaved with `set_palette`'s sixteen
+writes to `$ff8240`, a single colour register and the shifter's base, and an I/O access from user
+mode is a bus error — so hoisting them means cutting the slices open, which would make the shim a
+re-implementation of `src/boot.c` rather than a caller of it.
+
+The alternative was to drop to user mode inside `wonderboy_backend.c`'s `disk_read_file` and come
+back. Rejected on two grounds:
+
+* **The sibling project's own record says the trigger was not the privilege level.** That bug was
+  traced, after a long isolation, to the ORDER of the trap wrappers in the entry `.s` — file I/O
+  first — and `wonderboy_os.s` already has them there.
+* **A nested `Super` round trip inside a core's callee is a bigger deviation than the one it
+  avoids, and it lands in exactly the place bug 7 lives** (`atari/README.md`: `Super(0)`/`Super(ssp)`
+  returns onto the USP frozen at the FIRST call).
+
+**AND IT IS A MEASUREMENT, NOT A RULE FOLLOWED.** A bad handle is `Fread` on the keyboard, which
+returns garbage or blocks — so the evidence is not the absence of a crash. What the record carries is
+each slice's `WB_LOAD_*` code, both pictures' `.RAD` header lengths read back out of the load buffer
+and compared against the shipped files on the host disk, the credits framebuffer against the shipped
+binary's, and the whole recomputed span. Green on both ROMs, five loads a run, including the
+279,034-byte `SPRITES.CRU`.
+
+### §3 THE THREE CONTROLS, AND THE ONE THAT COULD NOT DO TWO JOBS
+
+* **The undriven pass IS the fire pokes' control**, not a run bolted on. Pass one measures
+  `image_base` and the two waits' PCs, and must report that the chain sat at the FIRST gate until its
+  bound ran out — `fire_waits_timed_out` = 1, `fire_gates_crossed` = 0, both later slices
+  `BOOT_SLICE_NOT_RUN`, no `BOOT.IMG` at all. Pass two is aimed with those numbers and must re-report
+  the same base (M3's and M5's rule).
+* **The mis-anchor is the SPAN's control**, and it costs no second boot: the same band table applied
+  to `original.py neighbour`'s span — the shipped binary's own RAM at `$e6fc`, one call before the
+  frame loop. Measured: **0 bytes outside the bands at the right anchor, 133,078 one call earlier,
+  against a 5,310-byte floor** (`original.py variance`'s own reading times `MIS_ANCHOR_FLOOR_MULTIPLE`).
+* **`bootfault` is the picture's and the chain's**, and it is the middle slice's call suppressed.
+  Measured on both ROMs: **13 of 14 breakable rows fail** — 21,714 of 32,000 credits bytes, fifteen
+  of sixteen pens, every stage pin. The fourteenth HOLDS and is named:
+  `WB_LIFE_RESTART_ENTRY_C26` is already zero in the shipped image, so no suppression can move it.
+
+**THE FINDING IS WHY THE THIRD CANNOT BE THE SECOND.** `bootfault` was designed to be the span's
+control too: suppress the MIDDLE slice so the run's shape does not move, and watch the named bands
+redden. The run's shape moves anyway, and correctly — `game_restart_reset` lives inside
+`boot_credits_screen` and is what puts `WB_LEVEL_SEQ_INDEX` at 0, so without it
+`stage_sequence_advance` consumes a different sequence row, asks for an overlay that is not on the
+drive, and `load_or_stop` stops the chain. **No span is taken at all**, and a control that removes the
+artefact cannot show the comparison over it discriminating. The mis-anchor was built for that job
+instead, and `bootfault`'s breakable set was widened to say what it really reaches rather than left
+looking targeted.
+
+### §4 WHAT THE ON-TARGET RUN KILLED THAT THE HOST SUITE COULD NOT
+
+**§4's C3 IS DEAD.** Phase C's mutation table records three survivors, and one of them is "credits:
+drop the colour-register-10 write". `move.w #$77,$ff8254.l` goes to a shifter register off the loaded
+image: the oracle drops the write, the kit has no ledger for a dropped hardware WRITE, and the port's
+sink compiles to nothing off target — so no memory differential in this project can tell whether it
+happened. `capture_the_credits` reads all sixteen pens back **off the chip** and requires pen
+`WB_CREDITS_PROMPT_PEN` to hold `WB_CREDITS_PROMPT_COLOUR` while the other fifteen hold the depacked
+prefix's own words, and the shipped-side pen comparison says the same thing a second way (both sides'
+pen 10 reads `$077`). The mutant's home was named in phase C as "the on-target rung"; this is it.
+
+**T4 IS PROBABLY DEAD TOO AND IS NOT CLAIMED.** "Take the palette from the depack destination instead
+of the prefix" would move fifteen pens against the shipped binary's, which this mode compares — but
+the mutant was not applied, built and run, and a mutant nobody killed is not a mutant that is dead
+(`docs/methodology.md`). **QUEUED**, with its home: `build.sh boot` and the pens row.
+
+**C1 IS UNTOUCHED AND STILL A PROPERTY OF THE CODE.** `game_restart_reset` and `copy_screen` in
+either order end on identical memory, and reading a screen off the machine does not change that.
+
+### §5 WHAT THE SPAN DIFF FOUND THAT NOTHING ELSE HAD
+
+The first run left **77 bytes in 26 clusters** outside the bands the phase had written down, and
+every one of them turned out to have a plate in `../names.txt` already. Four new bands came out of
+reading them rather than out of guessing:
+
+* **THE COPYLOCK HAS A SECOND SCRATCH REGION**, and it is TWO objects rather than one: `$ecd4..$ed34`
+  (`copylock_reg_save`, 96 bytes: d0-a7 and exception vectors `$8..$27`) and `$ed3e..$ed46`
+  (`copylock_decrypt_cursor`, two longwords). The first draft carried them as one `$ecd4..$ed46`
+  hull, which is 114 bytes where `names.txt` names 104 — so the ten at `$ed34..$ed3e`, which nothing
+  names, were absorbed by a `WHOLE_BAND` that did not claim them. The review gate caught it; they are
+  RESIDUE now and measure 0, so a run in which they start moving reds. `gen_image.py`'s PROVENANCE
+  names only `$f314..$f514`, and `original.py variance` **cannot see either of these at all**: two
+  boots of the original write the same bytes there, so they are reproducible between them and a real
+  difference against a run that never executed the blob. Named in `gen_image.py` now as well.
+* **`rad_saved_a7` (`$5e3a`) ARRIVES ON TARGET AS A DIFFERENCE.** Phase C §3.1 declares it as a
+  deviation off target — a C composition has no such register and the case hands the candidate the
+  value. On target nothing hands it anything, so the four bytes are the shipped side's real stack
+  pointer and ours are zero. The same deviation, seen from the other shore.
+* **`tos_stack_save` (`$f8b8`)** — stashed by `sys_save_tos_stack` at `$e484`, which is in the boot's
+  entry ABOVE the three slices this build calls.
+* **THE EIGHT BYTES BELOW THE PROGRAM BODY (`$3f8..$400`)** are a property of the two IMAGES rather
+  than of either boot: `project.toml`'s load base is `$3f8` and the body is at `$400`, so the staged
+  image carries the loaded file's `jmp $217d8.l` prelude there and the original's RAM at that absolute
+  address never did.
+
+**AND ONE BAND WAS WRITTEN AND THEN RETIRED, because a band that claims nothing is one nobody is
+running.** `fat_dir_buffer` (`$64f4`) points at the sector staging buffer the driver reads the boot
+sector, the FAT and the root directory into — an obvious exclusion, and not one: the pointer lands at
+`$6cf10`, inside the eight pre-shifted scroll buffers `stage_load_window` rebuilds at the end of the
+stage slice on BOTH sides, so its reading is 0. It is REPORTED as a measurement instead, so a run in
+which it stopped being 0 says so twice.
+
+### §6 FINDS
+
+* **THREE PIN READINGS THAT LOOKED LIKE CHECKS AND WERE VACUOUS**, and the second and third were
+  found by the review gate reading the staged image rather than the code. `WB_LIFE_RESTART_ENTRY_C26 == 0` reads as "the
+  `clr.w` at `$e6ec` ran", and on this image it is satisfied by the byte the `.PRG` ships: the word
+  lies inside `player_pending_event_gate`'s own code and is already zero. **And
+  `WB_LEVEL_SEQ_INDEX == 1` is the same shape** — the shipped image carries `1` at `$216be`, which is
+  exactly what one clear-and-step leaves, so the row cannot tell the credits slice's reset and the
+  stage slice's advance from neither having happened. Both rows now PRINT the vacuity
+  (`machine_driven`'s rule, one mode over) and name what DOES discriminate: for the index it is the
+  stage slice's own load, because an unreset index consumes row 1 whose overlay is not on the drive.
+  **And so is the SIDE half of "the sequence row's own two bytes were published"** — row 0's side
+  byte is `0`, so `stage_sequence_apply_row` publishes `0` into `WB_STAGE_SIDE_FLAG`, which the
+  staged image already holds at `0`. Its companion half is NOT vacuous (`WB_LEVEL_SEQ_SECOND_LOAD`
+  is `1` in the row against a staged `0`), so the row prints the two halves separately rather than
+  sharing one verdict. This is `../STATUS.md`'s own "TRUE FOR THE WRONG REASON" class, on target,
+  three times in one phase — and each time the tell was the STAGED IMAGE, not the code.
+* **TWO EXPECTATIONS THIS PHASE WROTE DOWN WERE WRONG ABOUT THE RECONSTRUCTION, and the machine said
+  so.** `WB_LEVEL_SEQ_INDEX` was asserted in BYTES (`rows * 8`); it is an index in ROWS —
+  `stage_sequence_advance` does `at + 1` and the `lsl.l #3` is applied where the row is addressed.
+  And `WB_STAGE_SECOND_LOAD_FLAG` was asserted to be taken down by `$e6ec`'s `clr.w`; that `clr.w`
+  clears `WB_LIFE_RESTART_ENTRY_C26`, and the gate byte stays as the sequence row set it. Both are
+  now checked against the shipped table's own row bytes instead of against a number.
+* **A BAND'S WHY-STRING WAS MEASURABLY FALSE FOR ONE WORD INSIDE IT.** The FDC state block's
+  exclusion read "the file-load substitution never writes it — the driver below the seam does not
+  run here", and `WB_FLOPPY_IDLE_TIMER` (`$64f2`) is inside that band and IS written on this side:
+  `gen_image.py` seeds it and OUR `vbl_handler` counts it down — it is the very word
+  `RB_PSG_PORT_A_DESELECTED` waits for. The band's EXTENT was right and its REASON was half of one;
+  it now names both. A band excused by a false reason is a band nobody could re-derive.
+* **A CONTROL DESIGNED FOR TWO JOBS DID ONE**, §3 above.
+* **TWO ROWS THAT COULD NOT HAVE FAILED, AND THE GATE FOUND BOTH.** `captured_at` was assigned a
+  compile-time constant by the caller and compared against the same constant in Python while
+  `photograph_the_screen` copied from a constant of its own — a row comparing a number with itself.
+  It now takes the capture address as an argument and writes the record field, so a caller aimed at
+  the wrong buffer reds. And the two passes' agreement check compared only `image_base`, which is
+  256-aligned and therefore COARSER than the two fire-wait PCs pass two re-uses: a TPA shift under
+  256 bytes would leave it green with all four breakpoints stale. All three numbers are compared now.
+* **THE RECORD PARSER'S FIELD-ORDER PIN HAD A STALE-BUILD DOOR.** `assert_the_record_matches_the_c`
+  scrapes the WORKING TREE, so a `.PRG` older than the C would be graded by the new declaration and
+  emit the old byte order — the exact swapped-pair hole the assertion exists to close, arriving the
+  other way round. `refuse_a_stale_build` requires the `.PRG` the mode runs to be no older than
+  `wonderboy_main.c` (red-checked). The hole stays REGISTERED for the other three records, §7.
+* **FOUR VERBATIM RECORD READERS, THREE BYTE WALKS, TWO FIXTURE LOADS.** `read_stats`/`read_m2`/
+  `read_title`/`read_boot` are one `read_record`; the span walk is `original.differing_addresses`,
+  imported, so the mis-anchor control's numerator and its floor come off one implementation; and
+  `require_the_shipped_side` now RETURNS its fixtures instead of touching them and letting each call
+  site load them again (the manifest line printed twice, and a dump re-made between the two reads
+  would have been verified by one read and graded by the other).
+* **`original.py`'s TWO PICTURE MODES WERE ONE ROUTINE WAITING TO HAPPEN.** `mode_title` and
+  `mode_credits` differ in a mode name, an instruction address and whether the boot has to be carried
+  through a fire gate. Written as `capture_boot_picture` with three arguments, because two copies of
+  a photograph routine is two chances for one side of a differential to photograph a different thing
+  from the other.
+
+### §7 WHAT IS DELIBERATELY NOT HERE
+
+* **THE PLAY BUILD STILL BOOTS ON THE STAGED DUMP.** `gen_image.py --dump` is unchanged and every
+  frame mode (`m2`, `m5*`, `m6*`, `m3*`, `play`) still stages `original.py dump`'s measurement.
+  Switching them is a build-ordering change — the image would have to be produced by a RUN of the
+  boot build rather than by a script that links no compiled core — and it is stated in `gen_image.py`
+  rather than implied.
+* **THE DATA-DISK PROMPT ARM.** `show_data_disk_prompt` (`$e494`) is unported and the emulated drive
+  is one volume, so `DATADISK.RAD` (row `$27`) is the one boot resource nothing here asks for.
+* **THE FIRE WAITS STAY CAPPED.** The play build will want them uncapped, as the original's are; that
+  build is not this one, and a wait that outruns `--run-vbls` is not a watchdog.
+* **T4's MUTANT**, §4.
+* **THE OTHER THREE RECORDS' FIELD ORDER IS STILL UNPINNED.** `assert_the_record_matches_the_c`
+  scrapes `struct boot_stats`' declaration and refuses a field list that is not the C's, in order —
+  the hole the size-and-magic check cannot see, since every field of every record here is a
+  `uint32_t` and a swapped pair leaves the blob the same length. It covers the BOOT record only;
+  `STATS.BIN`, `M2.BIN` and `TITLE.BIN` have the same hole. **QUEUED** rather than folded in: three
+  working readers is an out-of-scope change, and the helper already takes any struct name.
+* **THE THREE BAND-DIFF ENGINES ARE STILL THREE.** `gen_image.report_provenance`,
+  `original.mode_variance` and `smoke.span_diff` each walk two spans against a named band table with
+  its own CEILING SEMANTICS — provenance's, variance's per-band ceilings, and smoke's mixture of
+  imported ceilings and `WHOLE_BAND`. The byte WALK is now one function (`original.differing_addresses`,
+  imported by smoke) but the three tables and their three verdict rules are not. **QUEUED**: unify
+  them, and state the three ceiling semantics before collapsing them rather than after.
+* **THE THREE DEBUGGER-SCRIPT BUILDERS ARE STILL THREE.** `boot_fire_script`, `our_capture_script`
+  and `m3_script` each assemble `anchor_breakpoint` + `action_file` lines over a list of stops.
+  **QUEUED**.
+* **THE RECORD SCRAPER LIVES IN smoke.py AND ITS SIBLING IN original.py.**
+  `assert_the_record_matches_the_c` reads `wonderboy_main.c` for a struct declaration where
+  `original.c_constant` reads the same file for a `#define`, and that file's comment already says two
+  scrapers over one header is one scraper that quietly stops matching. **QUEUED**: move it beside
+  `c_constant`.
+* **CARRIED, unchanged**: everything phases A, B and C carry, including phase C's queued list.

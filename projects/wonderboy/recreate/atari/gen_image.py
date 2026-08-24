@@ -6,6 +6,9 @@ TWO IMAGES, and the difference between them is the whole of §2 of atari/README.
     gen_image.py <SWB.PRG> <out/WB.IMG>                    # M1: the PROGRAM, plus named seeds
     gen_image.py <SWB.PRG> <out/WB.IMG> --dump <RAM.BIN>   # M2: the ORIGINAL's post-boot RAM
 
+The M1 branch is also what the BOOT build stages (`build.sh boot`), which is the build that RUNS the
+chain this file cannot and recomputes the M2 branch's span — see THE HONESTY LINE below.
+
 WHAT THE M1 IMAGE EMITS is the differential harness's OWN base image, narrowed to the bytes that are
 not zero: the relocated `SWB.PRG` over ``[0x3f8, 0x218d0)``, with a named set of seed words written
 into it. `recreate_kit.harness.BASE_IMAGE` is built by exactly one call (``loader.load_image(PRG)``),
@@ -80,11 +83,26 @@ So the M1 image can run the routines that read the PROGRAM, and it cannot run a 
 above is present in it, MEASURED off the shipped 1989 binary at `$f8b4` under Hatari — see
 `atari/original.py` for the anchor, the three injections that stand in for a player, the two negative
 controls that show the injections are what carry the boot there, and the mis-anchor measurement. What
-remains fabricated is that nothing in THIS build produced them: this image is the boot's result handed
-over rather than its result recomputed. That is now a statement about THIS FILE and not about what is
-reconstructed — the chain that would produce them is composed and verified off target (batch 44 phase
-C's `boot_load_stage`), and what would replace the dump is an on-target build that RUNS it. Until
-that build exists the dump is the reference, and PROVENANCE below is the receipt.
+remains fabricated is that nothing in THIS FILE produced them: this image is the boot's result handed
+over rather than its result recomputed.
+
+**AND THE BUILD THAT RECOMPUTES IT NOW EXISTS, WHICH CHANGES WHAT THAT SENTENCE COSTS.**
+`atari/smoke.py boot` (batch 44 phase D, `atari/README.md` §14) runs all three of `../src/boot.c`'s
+composed slices on a 68000 over the M1 IMAGE — the branch above, seeds and all — and writes the same
+span `[0x3f8,0x80000)` out at the instant `boot_load_stage` returns. Measured on both ROMs: **~522,500
+of 523,272 bytes are identical to the dump this file stages**, the few hundred that differ all fall
+inside ten named bands -- four of them `original.py variance`'s own, held to that mode's ceilings --
+and NOTHING unnamed is left over. The exact per-band figures MOVE (with the ROM, and with which
+vblank a boot finishes on) and `atari/README.md` §14's table is the surface that owns them; that is
+`original.py mode_variance`'s own rule, applied one shore over. So the dump is no longer the ONLY
+route to those bytes and the fabrication clause has an expiry date on it.
+
+**WHAT HAS NOT CHANGED IS WHAT THIS FILE DOES.** `--dump` still stages `original.py dump`'s
+measurement, and every frame mode — `m2`, `m5*`, `m6*`, `m3*`, `play` — still boots on it. Switching
+them to the recomputed span is a build-ordering change rather than a discovery: the image would have
+to be produced by a RUN of the boot build rather than by this script, which links no compiled core
+and calls no reconstruction. Until that ordering exists the dump is what is staged, and PROVENANCE
+below is the receipt.
 
 AND WHAT IT DOES NOT MEASURE, because it is not the same twice: 512 bytes at $f314..$f514 are the
 COPYLOCK'S RUN-TIME SCRATCH. The shipped file's bytes there disassemble as line-A words and
@@ -94,6 +112,15 @@ accident inside the staged span rather than a measured product. It is inert — 
 between `copylock_illegal_handler` ($ee02) and `copylock_restore_state` ($f542), no reconstructed
 function is inside it, and nothing under `../src/` reads there — and it is named here because an
 image that calls itself the original's memory owes a list of which of its bytes are not.
+
+IT IS NOT THE PROTECTION'S ONLY SCRATCH INSIDE THE SPAN, and `atari/smoke.py boot` is what found the
+second — two objects rather than the one hull the first draft wrote: $ecd4..$ed34, the blob's own
+register/vector save area, and $ed3e..$ed46, its decrypt cursor. It is absent
+from the band above and from `original.py variance`'s table for the same reason — the protection
+writes the SAME bytes there on every boot, so it is reproducible between two of them and invisible
+to a measurement that differences two boots. What it is not invisible to is a run that never
+executed the blob at all, which is what the boot build is. Against the shipped FILE, which is what
+PROVENANCE below compares, it is measured content like any other and sits inside the residue.
 
 ==================================================================
 

@@ -99,6 +99,15 @@
 #define WB_DISK_BAND_LO           0x5e3eu  /* disk_check_signature, the band's first byte */
 #define WB_DISK_BAND_HI           0x6528u  /* exclusive: actor_aim_velocity, the first byte after
                                             * the driver's state block */
+/* ...and the state block's OWN first byte, which is where the driver's code ends and its data
+ * begins. ../names.txt `var 0x64f0 floppy_preamble_flag` opens the run of `var`s that ends at
+ * WB_DISK_BAND_HI — the preamble flags, the DMA cursors, the BPB geometry, the retry counter.
+ * Defined here because `atari/smoke.py`'s span band is [WB_FLOPPY_PREAMBLE_FLAG, WB_DISK_BAND_HI)
+ * and half a bound spelt as a bare literal is half a bound that can stop naming the same bytes. */
+#define WB_FLOPPY_PREAMBLE_FLAG   0x64f0u
+/* The pointer inside that block the boot sector, the FAT and the root directory are read through;
+ * ../names.txt cmt 0x64f4 adds that the cluster extent list is built at +5120. */
+#define WB_FAT_DIR_BUFFER         0x64f4u
 #define WB_DISK_SEAM_CALL         0xe79cu  /* `jsr disk_load_file.w` — THE one boot-chain edge in */
 #define WB_DISK_SEAM_VBL_CALL     0x73eu   /* ...and the SECOND edge, which is not on the boot chain
                                             * at all: the level-4 handler's `jsr $6268.l` when the
@@ -177,6 +186,8 @@
 #define WB_COPYLOCK_REG_SAVE_LEN  0x60u    /* 64 B of d0-a7 then 32 B of vectors $8..$27 */
 #define WB_COPYLOCK_REGS_SAVED    0xed50u  /* the PC one instruction past that `movem` */
 #define WB_COPYLOCK_DECRYPT_CURSOR 0xed3eu /* `move.l a0,(a0)` primes the trace decryptor's cursor */
+#define WB_COPYLOCK_DECRYPT_CURSOR_LEN 8u  /* ../names.txt cmt 0xed3e: "Two longwords" — [0] is the
+                                            * address currently plaintext, [4] its ciphertext */
 #define WB_COPYLOCK_VECTORS_INSTALLED 0xee1au /* the PC past the decryptor's `move.l a0,$24/$20` pair */
 #define WB_COPYLOCK_CODE_END      0xf576u  /* end (exclusive): `jmp $6bb8.w` at $f572 is the last
                                             * instruction, and $f576 starts the four plaintext
@@ -4611,6 +4622,12 @@
 #define WB_BOOT_STAGE_SPRITES_AT   0xe6d0u  /* `lea $25298.l,a1` — the second-load arm's first
                                              * instruction, and the witness that arm ran */
 #define WB_BOOT_STAGE_JMP_AT       0xf8b4u  /* `jmp $4a0.w` — the slice's last instruction */
+/* The longword the boot's ENTRY parks the TOS-supplied a7 in — ../names.txt cmt 0xf8b8:
+ * `sys_save_tos_stack` at $e484, above the three slices above, and the game's only recorded route
+ * back to TOS. Defined here because `atari/smoke.py`'s span band names it and the header is the
+ * port's source of truth for an address. */
+#define WB_TOS_STACK_SAVE          0xf8b8u
+#define WB_TOS_STACK_SAVE_LEN      4u
 #define WB_OVERLAY_DEPACK_DEST     0x217d8u /* `lea $217d8.l,a1` at $e63e: where every OVALAY*.RAD
                                              * inflates, and ALSO the start record $f89e hands the
                                              * hinge. It is the PRG's own relocator's address (see

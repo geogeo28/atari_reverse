@@ -15,6 +15,15 @@
 #                          load TITLESCR.RAD across the file seam, depack it, set the palette. The
 #                          first picture here the reconstruction DRAWS rather than inherits.
 #   build.sh titlecredits -> its NEGATIVE CONTROL: the same three calls aimed at CREDITS.RAD.
+#   build.sh boot       -> the BOOT build: M1's image again, and ALL THREE of ../src/boot.c's
+#                          composed slices in the boot's own order, with the boot's own fire gates
+#                          between them — the title, the credits and the per-stage load. It ends by
+#                          writing the whole game span out as BOOT.IMG, which is `original.py dump`'s
+#                          measured image RECOMPUTED.
+#   build.sh bootfault  -> its MIS-RUN CONTROL: the same build with the CREDITS slice's call
+#                          suppressed and nothing else, so the run's shape — both gates, the other
+#                          two slices, the span written — is unchanged and what must redden is the
+#                          credits picture and the span's own named bands.
 #
 # Writes disk/{WB.PRG,WB.IMG} and keeps build/WB-<mode>.PRG so a check needing two builds in
 # sequence does not have to rebuild. build/ and disk/ are gitignored (repo .gitignore already covers
@@ -103,13 +112,27 @@ case "$MODE" in
   # THE INDEX IS SCRAPED FROM ../include/wonderboy.h rather than written as 1, so this control and
   # the reconstruction's own WB_RESOURCE_* enumeration cannot drift (CLAUDE.md §5).
   titlecredits) DEF="-DSMOKE_TITLE" ;;
+  # THE BOOT BUILD: the whole chain, on the machine. It stages M1's image — the shipped program plus
+  # gen_image.py's named seeds, not one byte of measured RAM — runs ../src/boot.c's three composed
+  # slices in the boot's own order, and writes the game's whole address space out at the instant
+  # `boot_load_stage` returns. That span is what `atari/original.py dump` MEASURES off the shipped
+  # binary at $f8b4 and what gen_image.py stages; this build computes it. smoke.py differences the
+  # two band by band, with every band named.
+  boot)  DEF="-DSMOKE_BOOT" ;;
+  # ...AND ITS MIS-RUN CONTROL: the middle slice's call suppressed, and nothing else. The middle one
+  # on purpose — both fire gates are still crossed, both other slices still run, the span is still
+  # written and the record is still complete, so the control's own run is SOUND (m2fault's rule) and
+  # the only thing that changed is that one slice's work is missing. What must then redden is the
+  # credits picture AND the span diff's named bands, and the mode must say WHICH.
+  bootfault) DEF="-DSMOKE_BOOT -DBOOT_FAULT_SKIP_CREDITS" ;;
   # THE BUILD A PERSON PLAYS, and the only one here that is not a measurement. It is `m2` with the
   # frame count and the watchdog lifted (wonderboy_main.c's SMOKE_PLAY block says why each has to
   # go), so the reconstruction's frame loop runs until the window is closed. `atari/run.sh` builds
   # it and launches Hatari with a screen, sound and a joystick; `smoke.py play` is the half of it a
   # headless run can assert.
   play)  DEF="-DSMOKE_M2 -DSMOKE_PLAY" ;;
-  *) echo "usage: build.sh [m1 | novbl | title | titlecredits | $(echo "$FRAME_MODES" | tr ' ' '|')]"
+  *) echo "usage: build.sh [m1 | novbl | title | titlecredits | boot | bootfault |" \
+          "$(echo "$FRAME_MODES" | tr ' ' '|')]"
      exit 2 ;;
 esac
 

@@ -52,6 +52,24 @@ post-boot RAM off a real emulated machine and staging that.
 | **M7** the title screen, DRAWN | the first picture here the reconstruction PRODUCES rather than inherits. From **M1's image** — the shipped `SWB.PRG` plus `gen_image.py`'s seeds, no measured RAM — the boot's own five-call title slice runs on the machine: `load_resource_by_index` asks GEMDOS for `TITLESCR.RAD` **across the file-load seam**, `rad_depack` inflates its 16,620 shipped bytes to 32,128, and `set_palette` puts sixteen words on the chip. Against the shipped binary at `$e556`: **0 of 32000 framebuffer bytes differ and all sixteen pens agree**. The geometry is pinned from the file's own header rather than described, and the Copylock is left UNARMED with the flag and the load's return both asserted (§13) | ✅ `smoke.py title` |
 | **M7** different-picture control | `build.sh titlecredits` aims the same three calls at the game's OTHER shipped picture. Every precondition is asserted normally and only the two picture rows are inverted; the mode refuses to pass if the other picture breaks none of them. Measured: **both** break — 21,581 of 32,000 bytes over 200 scanlines, and fifteen of sixteen pens (pen 0 is black in both) | ✅ `smoke.py titlecredits` |
 | **M7** the two named mutants | the control breaks BOTH picture rows, so it says nothing about either alone. Two mutants do: the depack destination moved one word (**CAUGHT** — geometry red, 21,904 bytes differ, pens untouched) and `set_palette` deleted (**CAUGHT** — `pens_readback_failed = 0xfffe`, pens 1-15 differ, **0 of 32000 framebuffer bytes**). The second is the fail/pass partition, and the two rows are therefore separately breakable (§13) | ✅ both CAUGHT |
+| **M8** the boot chain, RUN | the rung §13 scoped and did not take. `../src/boot.c`'s **three composed slices** run on the machine in the boot's own order, over **M1's image** — the shipped `SWB.PRG` plus `gen_image.py`'s seeds, no measured RAM — with the boot's own two fire gates between them: `boot_title_screen` ($e512), `boot_credits_screen` ($e562), `boot_load_stage` ($e5ba..$f8b4). **Five real files** come off the emulated drive across the file-load seam (`TITLESCR.RAD`, `CREDITS.RAD`, `OVALAY01.RAD`, `TILEDATA.RAD`, `SPRITES.CRU`), four `rad_depack`s inflate them, both installers run, and the slices report `WB_LOAD_COPYLOCK_RAN` for the two loads the chain ARMS and `WB_LOAD_OK` for the one it does not — asserted, with the flag read back clear at the end | ✅ `smoke.py boot` |
+| **M8** the credits picture | the second picture the reconstruction PRODUCES. Against the shipped binary at **`$e5aa`** (`original.py credits` — the `clr.b $877.w` after `boot_credits_screen`'s last instruction and before the credits fire wait): **0 of 32000 framebuffer bytes differ and all sixteen pens agree** (`000 333 555 777 600 654 740 040 061 067 077 330 430 542 551 770`), on both ROMs. Pen 10 is `$077` on both sides, which is `$e5a2`'s single colour write — **the mutant `../STATUS.md` batch 44 phase C measures as SURVIVING every host differential** (§4's C3: the oracle drops a write to a register off the loaded image). It dies here | ✅ `smoke.py boot` |
+| **M8** THE RECOMPUTED POST-BOOT IMAGE | the headline, and it is what `gen_image.py`'s fabrication clause was about. At the instant `boot_load_stage` returns — the `$f8b4`-equivalent, where `original.py dump` takes its measurement — the shim writes the game's whole address space `[0x3f8,0x80000)` out as `BOOT.IMG`, and `smoke.py` differences it against that dump **band by band with every band named**. Measured on both ROMs: **~522,500 of 523,272 bytes are the measured dump's own** — the figure moves with the ROM and §14's band table owns it — the few hundred that differ ALL fall inside **ten named bands**, and **0 bytes differ outside every band**. Four of the ten are `original.py variance`'s — the bands two boots of the SHIPPED BINARY ITSELF cannot reproduce — held to *that mode's* ceilings, so in those the recomputation differs from the dump by no more than the original differs from itself (§14) | ✅ `smoke.py boot` |
+| **M8** the seven pins, from the inside | M2's own `check_pins` asked of the RECOMPUTED image rather than of the measured one: the relocated resource signature (`'E'` at `$24898`), `stage_load_window`'s two latched pointers (`$22090` and `$217d8`), the stage number (1), the sequence index advanced by exactly one ROW, and the sequence row's own two published bytes. **THREE of those readings are entry-state-vacuous on this image and every one of them says so** — two whole pins (`WB_LIFE_RESTART_ENTRY_C26`, already zero in the shipped file, and `WB_LEVEL_SEQ_INDEX`, already `1`) and the SIDE half of the sequence row's pair, whose staged word is already the `0` the row publishes. Each prints its vacuity rather than reading as coverage (§14) | ✅ `smoke.py boot` |
+| **M8** the fire gates, DRIVEN | the boot spins twice on a byte only the IKBD writes, and headless nothing presses a stick. Each half of each gate is its own `noinline` function whose PC **the binary reports about itself**, and `smoke.py` pokes `WB_JOY1_STATE` at those four arrivals — **the same mechanism `original.py`'s `boot_script` uses on the shipped side** at `$e556`/`$e55c` and `$e5ae`/`$e5b4`. Two boots, M3's shape: pass one measures `image_base` and the two PCs, pass two is aimed with them and must re-report the same base | ✅ `smoke.py boot` |
+| **M8** the pokes' negative control | not a separate run: **pass one IS it.** Undriven, the chain must run `boot_title_screen`, sit at the FIRST gate until the bound runs out, report the timeout, and never reach the credits or the stage — measured, `fire_waits_timed_out` = 1, `fire_gates_crossed` = 0, both later slices `BOOT_SLICE_NOT_RUN` and no `BOOT.IMG` at all. So the pokes are shown to be what carries the boot rather than assumed to be | ✅ `smoke.py boot` pass 1 |
+| **M8** the span's MIS-ANCHOR control | M2's `m2fault` applied to a whole image instead of a frame, and it costs no second boot: the SAME band table is applied to `original.py neighbour`'s span — the shipped binary's own RAM at **`$e6fc`, one call earlier** — and the residue must clear a floor derived from `original.py variance`'s reading. Measured: **0 bytes outside the bands at the right anchor, 133,078 one call earlier, against a 5,310 floor** — a 25x margin, both directions | ✅ `smoke.py boot` |
+| **M8** the MIS-RUN control | `build.sh bootfault` suppresses `boot_credits_screen`'s call and nothing else — both gates still crossed, both other slices still called, the record still complete. Measured on both ROMs: **13 of 14 breakable rows fail** — 21,714 of 32,000 credits bytes, fifteen of sixteen pens, and every stage pin, because `game_restart_reset` lives inside the suppressed slice and is what puts `WB_LEVEL_SEQ_INDEX` at 0. **The fourteenth HOLDS and is named rather than swallowed**: `WB_LIFE_RESTART_ENTRY_C26` is zero in the shipped image, so neither a chain that ran nor one that stopped can move it. That cascade is the port's own `load_or_stop` contract firing, and it is why this control cannot also be the SPAN's — the chain stops before a span is taken, so the row above owns that (§14) | ✅ `smoke.py bootfault` |
+
+**Batch 44 phase D RAN THE BOOT CHAIN, and the staged dump stopped being a fabrication.** The twenty
+on-target modes — the eighteen below plus **`boot`** and **`bootfault`** (§14) — are green on **both
+ROMs**. All three of `../src/boot.c`'s composed slices execute on the machine over M1's image, five
+real files come off the drive across the file-load seam, the credits screen is the shipped binary's
+byte for byte, and the post-boot image `gen_image.py` has been STAGING as a measurement is now
+**RECOMPUTED**: ~522,500 of 523,272 bytes identical (§14's table owns the figure), the rest all inside ten named bands
+— four of them `original.py variance`'s own, held to that mode's ceilings — and **nothing unnamed
+left over**. §14 has the band table, the six
+deviations, and the three controls.
 
 **Batch 44 phase B drew the first picture of the game's own.** The eighteen on-target modes — the
 sixteen below plus **`title`** and **`titlecredits`** (§13) — are green on **both ROMs**. That phase
@@ -202,6 +220,10 @@ python3 atari/original.py title                             # M7: the SHIPPED ti
 bash atari/build.sh title        && python3 atari/smoke.py title        # M7, THE TITLE DRAWN HERE
 bash atari/build.sh titlecredits && python3 atari/smoke.py titlecredits #   ...its PICTURE control
 
+python3 atari/original.py credits                            # M8: the SHIPPED credits at $e5aa
+bash atari/build.sh boot         && python3 atari/smoke.py boot         # M8, THE WHOLE CHAIN, RUN
+bash atari/build.sh bootfault    && python3 atari/smoke.py bootfault    #   ...its MIS-RUN control
+
 bash atari/build.sh play    && python3 atari/smoke.py play  # the PLAY build, booted headless
 python3 atari/smoke.py runsh                                #   ...and the line run.sh actually execs
 
@@ -231,6 +253,14 @@ machine*: colour 0 there is driven by a countdown the debugger seeds and `flip_s
 `pen00` is a compared register whose reproducibility the unflashed reading says nothing about. That
 is why the flash artefacts carry their own `F` prefix, `VECNOISE.json` included.
 
+**M8 is `original.py` FOUR TIMES.** `smoke.py boot` refuses without `build/OCREDITS.BIN` (the shipped
+credits screen at `$e5aa`), without `build/ORIGRAM.BIN` and its manifest (the measured post-boot
+image its own recomputation is differenced against), and without `build/VARIANCE.txt` **and**
+`build/ORIGNEIG.BIN` — the boot-to-boot noise floor and the shipped binary's own span one call
+earlier, which together are the span comparison's mis-anchor control (§14). None of the four can be
+computed, and a mode that quietly skipped its own control would be asserting a comparison nobody had
+shown could fail.
+
 **M2 is `original.py` first, always.** The image it needs cannot be computed — see §2 — and
 `build.sh m2` refuses rather than building against a missing dump, or against one whose three
 artefacts are not all from the same boot (they carry a manifest; the build verifies it). The dump
@@ -259,7 +289,7 @@ reading like a crash and then passes in isolation is this, not a red.**
 | `shim_include/tos.h` | the trap wrappers' prototypes — a short list, because the game issues one trap in its life |
 | `shim_include/wonderboy_target.h` | the two seams the cores name (`../src/game.c`, `../src/stage.c`) |
 | `shim_include/string.h` | a freestanding `<string.h>` — needed by the **kit's** `os.h`, not by the cores; deleting it on the grounds that nothing under `../src/` calls a string function fails the build in fifteen translation units |
-| `original.py` | **the shipped 1989 disks, driven under Hatari to a named anchor** — the post-boot RAM dump M2's image is, the register file and palette that go with it, the mis-anchor and reproducibility measurements, the two boot controls, the shipped side of the frame differential, and (M7) the title screen at `$e556` |
+| `original.py` | **the shipped 1989 disks, driven under Hatari to a named anchor** — the post-boot RAM dump M2's image is, the register file and palette that go with it, the mis-anchor and reproducibility measurements, the two boot controls, the shipped side of the frame differential, (M7) the title screen at `$e556` and (M8) the credits screen at `$e5aa`. `neighbour` also KEEPS its mis-anchored span, which is M8's own control (§14) |
 | `gen_image.py` | the staged image — and **the honesty line** about what a staged image is not |
 | `tos.ld` / `mkprg.py` | link at base 0, then wrap the ELF into a GEMDOS `.PRG` with a relocation table |
 | `build.sh` | compile + link + wrap + stage `disk/`, and assert the seam actually held |
@@ -323,6 +353,13 @@ merely unported but **unreconstructed** (the tile installer at `$e67e`, `sprites
 
 So the M1 image can run the routines that read the PROGRAM, and it cannot run a frame. **M1's claim
 is drawn exactly on that line** and reaches nothing beyond it.
+
+**AND SINCE §14 THE OBLIGATION IS DISCHARGED TWICE.** The paragraph below is the first discharge —
+the reference taken off the ORIGINAL — and it is still what every frame mode boots on. What batch 44
+phase D adds is the second: `smoke.py boot` RECOMPUTES that same span from M1's image by running the
+boot chain on the machine, and ~522,500 of its 523,272 bytes are the dump's own with nothing unnamed
+left over. So "the boot is fabricated, not the data" is now true of THIS FILE's staging step rather
+than of this directory.
 
 **THE OBLIGATION IS DISCHARGED, AND THE SENTENCE MOVES RATHER THAN GOING AWAY.** `atari/original.py`
 takes the reference this section named as reachable: the ORIGINAL's own post-boot RAM, dumped under
@@ -1073,7 +1110,14 @@ load, the tile installer, `sprites_cru_install` — are still the shim's or stil
 the first proof on a 68000 that this reconstruction can turn a file on the game's own disk into the
 game's own picture.
 
-**THE NEXT RUNG IS SCOPED AND NOT TAKEN.** The CREDITS screen (`$e562`..`$e5a2`) needs no new port:
+**THE NEXT RUNG WAS SCOPED HERE AND IS NOW TAKEN — §14 is it, and it reached past the picture it was
+scoped around to the whole chain and the post-boot image.** The paragraph below is left as this
+section wrote it, because what it got right is worth more than the retraction: the scope, the
+shipped-side anchor and the reason for it were all correct, and the only thing it did not foresee is
+that once the credits slice runs, `boot_load_stage` is the next call and there is nothing between it
+and `$f8b4`.
+
+**~~THE NEXT RUNG IS SCOPED AND NOT TAKEN.~~** The CREDITS screen (`$e562`..`$e5a2`) needs no new port:
 it is this slice again at a different destination — `load_resource_by_index(WB_RESOURCE_CREDITS)`,
 `rad_depack` to `$77f80`, `set_palette($77f84)` — plus `copy_screen($78000 -> $70000)` (`$f938`,
 `../include/boot.h`), `game_restart_reset` (`$fe4a`, `../src/stage.c`, which falls through into the
@@ -1083,6 +1127,188 @@ before the credits fire wait — which is chosen because it collides with none o
 four `:once` breakpoints, and so needs neither `fires=False` nor a hook into their action files. It
 is not built here: a rung is a build, a control, a shipped-side anchor and two ROMs, and half of one
 is worse than none.
+
+### 14. M8, and what a RECOMPUTED image is worth
+
+§13 ended with a rung scoped and not taken: "a rung is a build, a control, a shipped-side anchor and
+two ROMs, and half of one is worse than none." This is that rung, and it turned out to reach one
+further than the credits screen it was scoped around.
+
+**THE CLAIM IS TWO SENTENCES.** The reconstruction's own boot chain — all three of `../src/boot.c`'s
+composed slices, in the boot's own order, with the boot's own fire gates between them — runs on a
+68000 over the shipped program and the five files on the game's own disks, and the credits screen it
+draws is the shipped 1989 binary's, byte for byte, on both ROMs. And the image it is holding when
+`boot_load_stage` returns is **the image `atari/original.py dump` measures off that binary**, outside
+ten named bands and with nothing unnamed left over.
+
+**WHY THE SECOND SENTENCE MATTERS MORE THAN THE FIRST.** Every green row above M7 rests somewhere on
+that dump. `gen_image.py` stages it, `build.sh m2` refuses without it, M2's frames are drawn out of
+it, M5's registers and M6's timeline are taken while the frame loop runs over it — and its own
+honesty line says what it is: "the boot's result handed over rather than its result recomputed."
+That sentence has been the last fabrication in this directory. For every byte outside §14's band
+table it is now a **measurement instead of a promise**: the two spans agree, and the one that ran
+the chain is ours.
+
+**WHAT IT IS NOT.** It is not the play build switching to a computed image — `gen_image.py` still
+stages the dump, every frame mode still boots on it, and swapping them is the next rung's work and
+is stated in that file rather than implied here. It is not the boot the ORIGINAL performs: the
+protection blob never executes, the FDC driver below the seam never runs, and no player swaps a
+disk. The deviations are the six below, each one a row rather than a paragraph.
+
+#### The six deviations, and the two decisions inside them
+
+| deviation | what it is, and what is asserted about it |
+|---|---|
+| **the prologue at `$e4e6..$e510` is the shim's** | as it is for the title build (§13). The two reconstructed steps ARE made — `clear_palette` and `clear_both_screens`, one after the other as the boot has them — and the other four are the shim's own: the video mode is published as `$f906` publishes it, the MFP timers are **not** masked, and the level-4 vector installed is `wb_vbl_entry` rather than the game's `$716`. `../STATUS.md` batch 44 phase C §1 argues why splitting one prologue between the shim and a core would leave nobody owning it |
+| **the Copylock is ARMED and never RUNS** — the opposite of §13's row, and not a change of mind | `boot_title_screen` performs `$e51e`'s `move.w #$ffff,$e7cc.l` and `boot_load_stage` performs `$e6dc`'s, because the original does. So `load_resource_by_index` takes its ARMED arm twice and the two slices report `WB_LOAD_COPYLOCK_RAN`, which is the port's way of saying the blob would have executed. It is neither ported nor stubbed, so nothing on this machine runs it — and the consequence is **visible in the span**: `[0xecd4,0xed34)` and `[0xed3e,0xed46)`, the blob's own register/vector save area and its decrypt cursor, hold the shipped file's zeros here and the protection's own bytes there. Asserted three ways: both slice codes, the flag read back CLEAR at the end (`load_resource_by_index` clears it on the armed arm), and those two bands |
+| **the loads run in SUPERVISOR** | §13 hoists its one load out of the machine-taken window because it can — the load is the first thing that slice does. This chain interleaves five loads with `set_palette`'s sixteen writes to `$ff8240`, a single colour register and the shifter's base, and an I/O-space access from user mode is a bus error, so the loads cannot be hoisted without cutting the slices open — which would make this build a re-implementation of `../src/boot.c` instead of a caller of it. **The decision, and the measurement under it, are below** |
+| **the fire gates are BOUNDED spins and a debugger drives them** | the boot waits on a byte only the IKBD interrupt writes. Each half of each gate is its own `noinline` function whose address the record reports, and `smoke.py` pokes `WB_JOY1_STATE` at those four arrivals — the same thing `original.py`'s `boot_script` does to the shipped binary at `$e556`/`$e55c`/`$e5ae`/`$e5b4`, which is the symmetry that makes it evidence rather than a fixture. The bound is `SPINS_LONG` (~6 s), well inside `--run-vbls`, because a wait that outruns the harness is not a watchdog (bug **3**). **The play build will want them uncapped, as the original's are; that build is not this one** |
+| **the data-disk prompt is not reached** | the original's boot stops between the credits and the stage load and asks a player to swap disks (`$e494`'s `show_data_disk_prompt`, unported). This build's GEMDOS drive carries disk 1's two resources and disk 2's three side by side, so `boot_load_stage` finds `OVALAY01.RAD`, `TILEDATA.RAD` and `SPRITES.CRU` without a swap. One volume where the original has two, and `DATADISK.RAD` — row `$27` of the table — is never asked for |
+| **the span is snapshotted, not written where it is taken** | the write is GEMDOS and so waits for user mode, and `vbl_handler` keeps running in between — the music tick, the idle countdown, its own counter. A span written at the end of the run would be the span at teardown and not the span at the `$f8b4`-equivalent instant. It is copied aside the moment `boot_load_stage` returns, **with interrupts masked** so no vblank can land inside half a megabyte of `memcpy`, and the copy is what reaches the file. The record carries the shim's vblank count at both instants so the gap is a reading rather than a hope |
+
+**THE SUPERVISOR DECISION, AND WHY IT WAS TAKEN RATHER THAN THE ALTERNATIVE.** This directory's
+standing rule is that GEMDOS is entered from USER mode, because "handle allocation misbehaves when
+entered from supervisor under Hatari's GEMDOS drive — a bug this workspace has already shipped once"
+(`wonderboy_main.c`'s banner, and `projects/buggyboy`'s `game_os.s`). The alternative to breaking it
+was to drop to user mode inside `wonderboy_backend.c`'s `disk_read_file` and come back for each of
+the five loads. It was weighed and rejected on two grounds, and the second is the one that decided
+it:
+
+- **The sibling project's own record says the trigger was not the privilege level.** That bug was
+  traced, after a long isolation, to the ORDER of the trap wrappers in the entry `.s` — the file-I/O
+  wrappers have to come first — and `wonderboy_os.s` already has them there.
+- **A nested `Super` round trip inside the reconstruction's own call chain is a bigger deviation than
+  the one it avoids, and it is in exactly the place bug 7 lives.** `Super(0)`/`Super(ssp)` returns
+  onto the USP frozen at the FIRST call, which is why this shim has `wb_leave_supervisor` at all; a
+  second, nested pair taken from inside a core's callee would put that hazard on a path no other mode
+  executes.
+
+**SO IT IS A MEASUREMENT RATHER THAN A RULE FOLLOWED**, and the measurement is not the absence of a
+crash: a bad handle is `Fread` on the keyboard, which returns garbage or blocks. What the record
+carries instead is each slice's `WB_LOAD_*` code, **both pictures' `.RAD` header lengths read back
+out of the load buffer and compared against the shipped files on the host disk**, the credits
+framebuffer against the shipped binary's, and the whole recomputed span. A load that did not deliver
+the file cannot produce any of them. Measured green on both ROMs, five loads a run, including the
+279,034-byte `SPRITES.CRU`.
+
+#### The band table, and what a band has to earn
+
+Every byte of `[0x3f8,0x80000)` that differs between the recomputed span and the measured dump is in
+one of these. **FOUR OF THE TEN CARRY A CEILING AND SIX DO NOT, and the difference is the table's
+own point.** The four are `original.py variance`'s — the bands two boots of the SHIPPED BINARY
+ITSELF cannot reproduce — and they are held to *that mode's* ceilings, which bite: the sound
+module's is 256 of a 13,604-byte band. So in those four, the recomputation differs from the measured
+dump by no more than the original differs from itself. The other six are small objects owned
+entirely by something this build does not run, so **any byte of them may legitimately differ and the
+bound is the band's own extent**; giving them a ceiling equal to their width would be a tautology
+wearing a check's clothes, and the code says `WHOLE_BAND` rather than pretending otherwise.
+
+**THIS TABLE IS THE SURFACE THAT OWNS THE FIGURES.** They MOVE — with the ROM, and with which
+vblank a boot finishes on — so every other surface (`gen_image.py`, `../STATUS.md`, the milestone
+table above) cites this one with a range instead of restating a number of its own, which is
+`original.py mode_variance`'s own rule for the same reason. The readings below are TOS 1.04's;
+EmuTOS's differ only in the sound band (31 rather than 27), i.e. **522,506 of 523,272 bytes are the
+dump's own under TOS 1.04 and 522,502 under EmuTOS**, and **0 outside every band on both**.
+
+| band | measured | ceiling | why it differs |
+|---|---:|---:|---|
+| the copylock's scratch `[0xf314,0xf514)` | 509 | 512 | **`original.py variance`'s**: the protection writes different bytes there on every boot of the original itself |
+| the sound module's state `[0x17adc,0x1b000)` | 27 | 256 | **`variance`'s**: both sides run `snd_play_song(8)` at the title, and where the song has got to depends on which vblank each boot finished on. The one band whose reading moves with the ROM (31 on EmuTOS) |
+| the game's stack `[0x7f000,0x80000)` | 124 | 512 | **`variance`'s**: the original sets its own `a7` to `$80000` and pushes below it |
+| `vbl_handler`'s counter `[0x74a,0x74c)` | 2 | 2 | **`variance`'s**: which vblank the boot finished on. A PHASE, not content |
+| the FDC driver's state block `[0x64f0,0x6528)` | 27 of 56 | none | **two reasons, and the first draft carried only one.** Most of it is never written here — the driver below the seam does not run — but `WB_FLOPPY_IDLE_TIMER` (`$64f2`) lies INSIDE the band and IS written on this side: `gen_image.py` seeds it and OUR `vbl_handler` counts it down, which is the very word `RB_PSG_PORT_A_DESELECTED` waits for. The band is the run of `var` directives `../names.txt` gives the driver, from `WB_FLOPPY_PREAMBLE_FLAG` to `WB_DISK_BAND_HI` where `actor_aim_velocity` begins. **Derived from the name map, not measured off the diff** |
+| `rad_depack`'s parked `a7` `[0x5e3a,0x5e3e)` | 3 of 4 | none | `../names.txt` cmt `0x5e3a`: the depacker parks its caller's `a7` there. A C composition has no such register — **`../STATUS.md` batch 44 phase C §3.1's own declared deviation**, arriving on target |
+| the copylock's register save `[0xecd4,0xed34)` | 60 of 96 | none | the blob is armed and never runs here (above), so its 96-byte `movem` save area stays the shipped file's zeros. **`variance` cannot see this band at all** — two boots of the original write the same bytes there, so it is reproducible between them and a real difference against a run that never executed the blob |
+| the copylock's decrypt cursor `[0xed3e,0xed46)` | 5 of 8 | none | `../names.txt` cmt `0xed3e`: two longwords, the address currently plaintext and its ciphertext. Nothing here primes them. **A SEPARATE BAND FROM THE ONE ABOVE, and that is the fix rather than filing**: `[0xecd4,0xed46)` as one hull is 114 bytes where the name map names 96 and 8, and the ten between them (`$ed34..$ed3e`) are named by nothing — silently absorbed by a `WHOLE_BAND` that did not claim them, which is exactly what the zero residue exists to refuse. They are RESIDUE now, and measured 0 |
+| the boot's parked TOS stack pointer `[0xf8b8,0xf8bc)` | 3 of 4 | none | `../names.txt` cmt `0xf8b8`: stashed by `sys_save_tos_stack` at `$e484`, which is in the boot's entry ABOVE the three slices this build calls. This shim's route back to TOS is `Pterm` |
+| the staged image's pre-body bytes `[0x3f8,0x400)` | 6 of 8 | none | a property of the two IMAGES rather than of either boot: `../project.toml`'s load base is `$3f8` and the body is at `$400`, so the staged image carries the loaded file's `jmp $217d8.l` prelude there and the original's RAM at that absolute address never did — `startup_relocate_and_run` COPIED the body to `$400`. Present before either side executed an instruction |
+| **everything else** | **0** | **0** | the claim |
+
+**THE RESIDUE CEILING IS ZERO AND THAT IS THE POINT.** An unnamed byte is this mode's finding, not
+its tolerance. The mode prints the residue's contiguous runs when there are any, which is how the
+last four bands in that table were named: the first run of this build left 77 bytes in 26 clusters,
+and every one of them turned out to have a plate in `../names.txt` already.
+
+**ONE BAND THAT WAS WRITTEN AND THEN RETIRED, because a band that claims nothing is one nobody is
+running.** `fat_dir_buffer` (`$64f4`) points at the sector staging buffer the driver reads the boot
+sector, the FAT and the root directory into. It looked like an obvious exclusion and it is not one:
+the pointer lands at `$6cf10`, inside the eight pre-shifted scroll buffers `stage_load_window`
+rebuilds at the end of the stage slice **on both sides**, so the region is overwritten before either
+run reaches the anchor and its reading is 0. It is reported as a measurement instead of claimed as a
+band, so a run in which it stopped being 0 says so twice — there and as residue.
+
+#### The controls, and why there are three
+
+**The mis-anchor is the one that controls the SPAN**, and it is `m2fault`'s precedent taken
+literally: the same band table applied to `original.py neighbour`'s span, the shipped binary's own
+RAM at `$e6fc` — the `bsr.w $f89e` one call before the frame loop. It costs no second boot of
+anything. The floor it has to clear is `original.py variance`'s reading times
+`MIS_ANCHOR_FLOOR_MULTIPLE`, for §9's reason: two dumps of the same moment already differ by
+hundreds of bytes (`build/VARIANCE.txt` owns that reading), so "the two differ" is true of every pair
+this instrument can produce. **Measured: 0 bytes outside the bands at the right anchor and 133,078
+one call earlier, against a floor of 5,310.** It is the same FLOOR `original.py neighbour` uses and
+not the same COMPARISON: that mode counts every differing byte and this one counts only the residue
+outside the named bands, so this control clears the shared floor on the strictly smaller numerator.
+
+**The mis-run control cannot also be that one, and finding out why was the round's own measurement.**
+`build.sh bootfault` suppresses `boot_credits_screen`'s call — the MIDDLE slice, chosen so that the
+run's shape would not move. It moves anyway, and correctly: `game_restart_reset` lives inside that
+slice and is what puts `WB_LEVEL_SEQ_INDEX` at 0, so without it `stage_sequence_advance` consumes a
+different sequence row, asks for an overlay that is not on the drive, and `../src/boot.c`'s
+`load_or_stop` stops the chain — which means **no span is taken at all**, and a control that removes
+the artefact cannot show the comparison over it discriminating. So the two jobs are split: the
+mis-anchor controls the span diff, and `bootfault` controls the picture and everything downstream of
+the suppressed slice. Its breakable set is widened to say so rather than left to look targeted, and
+what it still asserts NORMALLY is a real precondition set — the sixteen read-backs, the title
+slice's armed load and its file, both fire gates, the shifter base, the protection left disarmed.
+Measured on both ROMs: **13 of 14 breakable rows fail**, and the fourteenth is PRINTED as
+uncovered rather than counted as a pass — `WB_LIFE_RESTART_ENTRY_C26` is already zero in the shipped
+image, so this suppression cannot move it. A row a control happens not to reach is a row it does not
+cover, and saying which is the difference between an exclusion and an omission.
+
+**The third control is not a build.** Pass one of every `boot` run is the undriven boot, and it is
+required to sit at the FIRST fire gate until its bound runs out — so the four debugger pokes are
+shown to be what carries the chain rather than assumed to be. Its `image_base` and its two wait PCs
+are what pass two is aimed with, and **pass two must re-report all three** (M3's and M5's rule):
+`image_base` alone is 256-aligned and so coarser than the PCs the pokes are actually set on, and a
+TPA shift under 256 bytes would leave that row green with every breakpoint stale. Under `bootfault`
+one of its own rows is **vacuous and says so** — that build compiles the credits call out, so
+"the credits slice never ran" is true there by construction; the stage row is not, since nothing
+suppresses that call. And it runs on the M1 `--run-vbls`, not the boot's: what it has to reach is
+the FIRST gate and one `SPINS_LONG` timeout, which is a fraction of the five-load chain the driven
+pass is sized for.
+
+#### What this rung leaves owed
+
+- **The play build still boots on the staged dump.** `gen_image.py --dump` is unchanged and every
+  frame mode still stages `original.py dump`'s measurement. Switching them is a build-ordering
+  change (the image would have to be produced by a run rather than by a script) and it is stated in
+  `gen_image.py` rather than implied here.
+- **The data-disk prompt has no on-target story.** `show_data_disk_prompt` (`$e494`) is unported and
+  this drive is one volume, so `DATADISK.RAD` is the one boot resource nothing here asks for.
+- **THREE OF THE PIN READINGS ARE ENTRY-STATE-VACUOUS ON THIS IMAGE, and every one of them prints
+  it.** The shipped `.PRG` already carries zero at `WB_LIFE_RESTART_ENTRY_C26` (`$c26`), so nothing
+  here can tell `$e6ec`'s `clr.w` from the byte it was handed; it already carries **1** at
+  `WB_LEVEL_SEQ_INDEX` (`$216be`), which is exactly what one clear-and-step leaves, so that row
+  cannot tell the credits slice's reset and the stage slice's advance from neither having happened;
+  and the SIDE half of "the sequence row's own two bytes were published" is the same shape a third
+  time — row 0's side byte is `0`, so `stage_sequence_apply_row` publishes `0` into a word the
+  staged image already holds at `0`. What DOES tell the index apart is the stage slice's own load —
+  an index left unreset consumes row 1, whose overlay is not on the drive — but that is the load row
+  doing the work and the pin says so rather than reading as coverage it does not have. The SIDE
+  half's companion, `WB_STAGE_SECOND_LOAD_FLAG`, is NOT vacuous (row 0's byte is `1` against a
+  staged `0`), which is why the two halves print separately instead of sharing one verdict.
+  `machine_driven`'s rule, applied to a pin.
+- **THE RECORD'S FIELD ORDER IS PINNED FOR THIS BUILD AND NOT FOR THE OTHER THREE.** Every field of
+  all four records is a `uint32_t`, so the size-and-magic check catches an ADDED field and not a
+  MOVED one — a swapped pair leaves the blob the same length and every row compares its expectation
+  against another field's value. `assert_the_record_matches_the_c` scrapes `struct boot_stats`'
+  declaration and refuses a mismatch (red-checked); `STATS.BIN`, `M2.BIN` and `TITLE.BIN` still have
+  the hole, and closing it is an out-of-scope change to three working readers. Registered in
+  `../STATUS.md`.
+- **The credits picture has no second-picture control of its own.** `bootfault` breaks both picture
+  rows at once, exactly as §13's `titlecredits` does, so it says nothing about either alone. §13
+  needed two named mutants for that and this rung has not run them.
 
 ## The bugs found on target
 

@@ -2,6 +2,7 @@
 """Boot the SHIPPED 1989 disks under Hatari and drive them to a named anchor.
 
     python3 atari/original.py title       # the TITLE screen at $e556, for the title differential
+    python3 atari/original.py credits     # the CREDITS screen at $e5aa, one fire gate later
     python3 atari/original.py dump        # the post-boot RAM, at the anchor, with its pins
     python3 atari/original.py neighbour   # ...and the MIS-ANCHOR measurement (see ANCHOR below)
     python3 atari/original.py variance    # ...and how much of it is NOT reproducible (see below)
@@ -139,13 +140,26 @@ DISK2 = BIN / "Wonderboy in Monsterland (1989)(Activision)(Disk 2 of 2)[a][!].st
 # Runtime == Ghidra (see the header). Each is the instruction quoted beside it.
 TITLE_FIRE_PRESS_PC = 0xe556      # `tst.b $877.w`  / `bpl.s $e556` — wait for the stick's bit 7
 TITLE_FIRE_RELEASE_PC = 0xe55c    # `tst.b $877.w`  / `bmi.s $e55c` — ...and for it to go away
+CREDITS_WAIT_CLEAR_PC = 0xe5aa    # `clr.b $877.w` — WB_BOOT_CREDITS_END, the credits ANCHOR:
+                                  # the instruction after boot_credits_screen's last and before the
+                                  # wait below, so it collides with none of the four fire stops
 CREDITS_FIRE_PRESS_PC = 0xe5ae    # the same pair after CREDITS.RAD
 CREDITS_FIRE_RELEASE_PC = 0xe5b4
 DATA_DISK_SWAP_PC = 0xe5ba        # `clr.w $6ef0.w`, stage_sequence_advance's first instruction
 STAGE_LOAD_CALL_PC = 0xe6fc       # `bsr.w $f89e` — the NEIGHBOUR anchor, one call before the frame
 BOOT_ANCHOR_PC = 0xf8b4           # `jmp $4a0.w` — THE ANCHOR: the boot's last instruction
 
-FIRE_DOWN = 0x80                  # bit 7 of the IKBD joystick report; ../include/wonderboy.h:141
+# THE FOUR PCs `boot_script` PUTS ITS OWN `:once` BREAKPOINTS ON, as a set, so an anchor that lands
+# on one can be refused rather than silently sharing an arrival with an injection.
+FIRE_INJECTION_PCS = (TITLE_FIRE_PRESS_PC, TITLE_FIRE_RELEASE_PC,
+                      CREDITS_FIRE_PRESS_PC, CREDITS_FIRE_RELEASE_PC)
+
+# The fire button in the IKBD's joystick report, DERIVED FROM THE HEADER's bit number rather than
+# written as 0x80 — the same constant `wonderboy_main.c`'s FIRE_DOWN_BIT shifts, so the poke this
+# file makes into the shipped binary and the mask the shim's own waits test cannot name different
+# bits (CLAUDE.md §5). The earlier spelling cited a header LINE, which had since moved onto
+# WB_LOAD_OK.
+FIRE_DOWN = 1 << wb("JOY1_FIRE_BIT")
 FIRE_UP = 0x00
 FIRST_HIT = 1                     # Hatari's hit counter is 1-based AND it rejects an explicit `:1`
 
@@ -762,9 +776,21 @@ def mode_dump():
 MIS_ANCHOR_FLOOR_MULTIPLE = 10
 
 
+def differing_addresses(first, second, base=WB_STAGED_AT):
+    """Every Ghidra address at which two staged spans differ.
+
+    ONE WALK, AND EVERY FIGURE ON EITHER SHORE COMES OFF IT. `mode_variance`'s band table, this
+    file's own mis-anchor margin and `smoke.py`'s band diff all count the same thing over the same
+    two spans, and each of the three once had its own comprehension. That matters most in
+    `smoke.py`'s mis-anchor control, which compares a NUMERATOR it computes against a FLOOR this
+    module measured: two implementations of one measurement there is a control grading itself with a
+    different instrument from the one it is controlling."""
+    return [base + at for at, (mine, theirs) in enumerate(zip(first, second)) if mine != theirs]
+
+
 def span_difference(first, second):
     """How many bytes of two staged spans differ."""
-    return sum(1 for a, b in zip(first, second) if a != b)
+    return len(differing_addresses(first, second))
 
 
 def mode_neighbour():
@@ -789,6 +815,11 @@ def mode_neighbour():
     noise = int(reading.read_text().strip())
     floor = noise * MIS_ANCHOR_FLOOR_MULTIPLE
     at_anchor = anchor.read_bytes()
+    # THE KEPT SPAN GOES BEFORE THE BOOT, not only after the checks. `smoke.py boot` reads it as its
+    # own control, and a run of this mode that ends in a refusal must leave no artefact for that
+    # control to be taken against — otherwise a failed re-measurement leaves the PREVIOUS one
+    # standing and the control reports on evidence this session did not produce.
+    (BUILD / NEIGHBOUR_DUMP_FILE).unlink(missing_ok=True)
 
     ram, _, _ = dump_at(STAGE_LOAD_CALL_PC, "neighbour")
     if ram is None:
@@ -816,8 +847,13 @@ def mode_neighbour():
                         f"the same one, so clearing it means nothing")
     if problems:
         raise SystemExit("FAIL: " + "; ".join(problems))
+    # KEPT, for `smoke.py boot`'s span control, and written only once both margins have held —
+    # `mode_dump`'s rule, every check before every write. The file was unlinked before the boot, so
+    # a run that reached neither check leaves none either.
+    (BUILD / NEIGHBOUR_DUMP_FILE).write_bytes(before)
     print(f"OK: a one-call mis-anchor clears the floor by {differ / max(floor, 1):.0f}x and the "
-          f"same moment does not reach it — the margin discriminates in both directions")
+          f"same moment does not reach it — the margin discriminates in both directions "
+          f"({BUILD / NEIGHBOUR_DUMP_FILE} keeps the mis-anchored span)")
     return True
 
 
@@ -851,6 +887,14 @@ VARIANCE_BANDS = (
 # mis-anchor margin is only meaningful against the noise this instrument actually measures.
 SECOND_DUMP_FILE = "ORIGRAM2.BIN"
 VARIANCE_FILE = "VARIANCE.txt"
+# ...AND THE MIS-ANCHORED SPAN ITSELF, kept rather than measured and thrown away. `smoke.py boot`
+# differences the RECOMPUTED post-boot image against `DUMP_FILE`; this is the same instrument's
+# reading of a moment ONE CALL EARLIER, and it is what shows that comparison can fail. The floor it
+# has to clear is `VARIANCE_FILE`'s — the same floor `mode_neighbour` uses, but NOT the same
+# comparison: this mode counts every differing byte, where `smoke.py`'s control counts only the ones
+# OUTSIDE its named bands. Band-excluding the numerator can only make it smaller, so that control
+# clears the shared floor on strictly less evidence than this one does.
+NEIGHBOUR_DUMP_FILE = "ORIGNEIG.BIN"
 
 # ---- the boot manifest -------------------------------------------------------------------------
 #
@@ -918,7 +962,7 @@ def mode_variance():
     if ram is None:
         raise SystemExit(f"FAIL: the second boot never reached ${BOOT_ANCHOR_PC:x}")
     a, b = first.read_bytes(), ram[WB_STAGED_AT:GAME_SPAN_END]
-    differ = [i + WB_STAGED_AT for i, (x, y) in enumerate(zip(a, b)) if x != y]
+    differ = differing_addresses(a, b)
     print(f"   two independent boots differ in {len(differ)} of {len(a)} bytes")
 
     problems = []
@@ -1046,63 +1090,109 @@ def mode_frames(frames, flash_seed=None):
     return True
 
 
-# ---- the TITLE screen, on the shipped side ------------------------------------------------------
+# ---- the TWO BOOT PICTURES, on the shipped side ---------------------------------------------------
 #
-# THE EARLIEST MOMENT IN THIS FILE, and the cheapest: the title picture is on screen before the boot
-# has asked for anything but disk 1, so this mode needs no data disk, no fire and no anchor past the
-# one instruction. `$e556` is `tst.b $877.w` — the first of the pair the boot spins on waiting for
-# the stick — and its FIRST arrival is the instant after `set_palette` has run and before a player
-# could have answered. That is exactly what `smoke.py title` photographs on our side.
+# THE TITLE is the earliest moment in this file, and the cheapest: the picture is on screen before
+# the boot has asked for anything but disk 1, so it needs no data disk, no fire and no anchor past
+# the one instruction. `$e556` is `tst.b $877.w` — the first of the pair the boot spins on waiting
+# for the stick — and its FIRST arrival is the instant after `set_palette` has run and before a
+# player could have answered. That is exactly what `smoke.py title` photographs on our side.
 #
-# THE FIRE INJECTIONS ARE TURNED OFF, and not only because they are unnecessary. `boot_script` puts
-# its own `:once` breakpoint on this very PC to press the stick, and two breakpoints selecting the
-# same arrival at the same PC interfere with each other's counters — `refuse_repeated_arrivals` is
-# the guard for exactly that, and it cannot see boot_script's own four lines. `fires=False` removes
-# them, which leaves this mode's anchor the only thing stopping at $e556.
+# THE TITLE'S FIRE INJECTIONS ARE TURNED OFF, and not only because they are unnecessary.
+# `boot_script` puts its own `:once` breakpoint on this very PC to press the stick, and two
+# breakpoints selecting the same arrival at the same PC interfere with each other's counters —
+# `refuse_repeated_arrivals` is the guard for exactly that, and it cannot see boot_script's own four
+# lines. `fires=False` removes them, which leaves that mode's anchor the only thing stopping at
+# $e556.
+#
+# THE CREDITS is one fire gate later and so is the FIRST anchor in this file that needs the
+# injections. Its anchor is `$e5aa` — `clr.b $877.w`, the instruction immediately before the credits
+# fire wait — which is chosen because it collides with NONE of `boot_script`'s four `:once`
+# breakpoints ($e556/$e55c press and release the title's stick, $e5ae/$e5b4 the credits' own), so it
+# needs neither `fires=False` nor a hook into their action files. At that instruction the whole of
+# `boot_credits_screen` has run: `rad_depack` inflated CREDITS.RAD onto WB_SCREEN_HIGH,
+# `set_palette` put its sixteen words on the chip, `copy_screen` brought the picture down onto
+# WB_SCREEN_LOW — the buffer $f906 pointed the shifter at — `game_restart_reset` drew the three
+# lives over it, and `move.w #$77,$ff8254.l` raised pen WB_CREDITS_PROMPT_PEN.
+#
+# BOTH READ WB_SCREEN_LOW, and for one reason: `video_set_lowres_50hz` ($f906) publishes that buffer
+# as two immediates and nothing between the boot's start and either anchor flips it. The title
+# depacks straight into it; the credits depacks into the OTHER buffer and copies down. So the
+# address the shifter is showing is the address both captures are taken at, on both sides.
 TITLE_SCREEN_FILE = "OTITLE.BIN"
 TITLE_PENS_FILE = "OTITLEPEN.BIN"
-TITLE_BEACON = "TITLE_CAPTURED"
+CREDITS_SCREEN_FILE = "OCREDITS.BIN"
+CREDITS_PENS_FILE = "OCREDPEN.BIN"
 WB_SCREEN_LOW = wb("SCREEN_LOW")
+
+
+def capture_boot_picture(tag, anchor_pc, screen_file, pens_file, fires):
+    """Photograph WB_SCREEN_LOW and the sixteen pens at `anchor_pc`, and write both to build/.
+
+    ONE ROUTINE FOR BOTH PICTURES, because the two differ in three values and in nothing else —
+    which mode, which instruction, and whether the boot has to be carried through a fire gate to
+    reach it. Two copies of this would be two chances for one side of a differential to photograph a
+    different thing from the other (CLAUDE.md §6).
+
+    `fires` WAS A HARDCODED FALSE AND IS NOW AN ARGUMENT, so the invariant that forced it is checked
+    here rather than left in prose. `boot_script` puts its own `:once` breakpoint on each of the four
+    fire PCs, and two breakpoints selecting the same arrival at the same PC interfere with each
+    other's counters — which is exactly what `refuse_repeated_arrivals` refuses, and which it cannot
+    see, because it is handed `extra_stops` alone. So an anchor ON one of those four may not run with
+    the injections in place."""
+    if fires and anchor_pc in FIRE_INJECTION_PCS:
+        raise SystemExit(f"FAIL: ${anchor_pc:x} is one of boot_script's own fire breakpoints and "
+                         f"this capture asked for the injections too — the two would select the "
+                         f"same arrival at the same PC and the photograph would be taken at a "
+                         f"moment other than the one named. Pass fires=False, as `title` does.")
+    beacon = f"{tag.upper()}_CAPTURED"
+
+    def script(directory, disk2):
+        return boot_script(directory, None, extra_stops=[
+            (anchor_pc, FIRST_HIT, "PICTURE.INI", [
+                f"echo {beacon}",
+                f"savebin {directory / screen_file} ${WB_SCREEN_LOW:x} {SCREEN_BYTES:#x}",
+                f"savebin {directory / pens_file} ${SHIFTER_PALETTE:x} {PALETTE_BYTES}"])])
+
+    produced, log, status = run_original(script, tag, fires=fires)
+    print(f"-- {tag}: anchor ${anchor_pc:x}, hatari exit={status} "
+          f"(full log in {OUT / ('original-%s.log' % tag)})")
+    faults = machine_faults(log)
+    if faults:
+        raise SystemExit("FAIL: unhealthy machine: " + " | ".join(faults[:4]))
+    if beacon not in log:
+        raise SystemExit(f"FAIL: the boot never reached ${anchor_pc:x} — no {tag} picture was "
+                         f"drawn, so there is nothing for the reconstruction to be compared to")
+    missing = [name for name in (screen_file, pens_file) if name not in produced]
+    if missing:
+        raise SystemExit(f"FAIL: the anchor fired but produced no {', '.join(missing)}")
+    BUILD.mkdir(exist_ok=True)
+    for name in (screen_file, pens_file):
+        (BUILD / name).write_bytes(produced[name])
+    # A PICTURE OF NOTHING WOULD PASS EVERY CHECK ABOVE, and an all-zero screen is precisely what a
+    # boot that stopped one call too early leaves — `clear_both_screens` ($e4ee) runs before the
+    # title load. So the artefact is required to be a picture, here, where it is written.
+    drawn = sum(1 for byte in produced[screen_file] if byte)
+    if not drawn:
+        raise SystemExit(f"FAIL: {screen_file} is {SCREEN_BYTES} zero bytes — the anchor fired "
+                         f"over the CLEARED screen, not over a depacked one")
+    print(f"   {BUILD / screen_file}: {SCREEN_BYTES} bytes at {WB_SCREEN_LOW:#x}, "
+          f"{drawn} of them non-zero")
+    print(f"   {BUILD / pens_file}: " + " ".join(
+        "%03x" % pen for pen in pen_words(produced[pens_file])))
+    return True
 
 
 def mode_title():
     """Photograph the shipped binary's title screen at $e556, for smoke.py's side-by-side."""
-    def script(directory, disk2):
-        return boot_script(directory, None, extra_stops=[
-            (TITLE_FIRE_PRESS_PC, FIRST_HIT, "TITLE.INI", [
-                f"echo {TITLE_BEACON}",
-                # The visible buffer, and the buffer is not in doubt here as it is for a frame:
-                # $f906 publishes WB_SCREEN_LOW as two immediates and nothing has flipped since.
-                f"savebin {directory / TITLE_SCREEN_FILE} ${WB_SCREEN_LOW:x} {SCREEN_BYTES:#x}",
-                f"savebin {directory / TITLE_PENS_FILE} ${SHIFTER_PALETTE:x} {PALETTE_BYTES}"])])
+    return capture_boot_picture("title", TITLE_FIRE_PRESS_PC, TITLE_SCREEN_FILE, TITLE_PENS_FILE,
+                                fires=False)
 
-    produced, log, status = run_original(script, "title", fires=False)
-    print(f"-- title: anchor ${TITLE_FIRE_PRESS_PC:x}, hatari exit={status} "
-          f"(full log in {OUT / 'original-title.log'})")
-    faults = machine_faults(log)
-    if faults:
-        raise SystemExit("FAIL: unhealthy machine: " + " | ".join(faults[:4]))
-    if TITLE_BEACON not in log:
-        raise SystemExit(f"FAIL: the boot never reached ${TITLE_FIRE_PRESS_PC:x} — no title screen "
-                         f"was drawn, so there is nothing for the reconstruction to be compared to")
-    missing = [name for name in (TITLE_SCREEN_FILE, TITLE_PENS_FILE) if name not in produced]
-    if missing:
-        raise SystemExit(f"FAIL: the anchor fired but produced no {', '.join(missing)}")
-    BUILD.mkdir(exist_ok=True)
-    for name in (TITLE_SCREEN_FILE, TITLE_PENS_FILE):
-        (BUILD / name).write_bytes(produced[name])
-    # A PICTURE OF NOTHING WOULD PASS EVERY CHECK ABOVE, and an all-zero screen is precisely what a
-    # boot that stopped one call too early leaves — `clear_both_screens` ($e4ee) runs before the
-    # load. So the artefact is required to be a picture, here, where it is written.
-    drawn = sum(1 for byte in produced[TITLE_SCREEN_FILE] if byte)
-    if not drawn:
-        raise SystemExit(f"FAIL: {TITLE_SCREEN_FILE} is {SCREEN_BYTES} zero bytes — the anchor fired "
-                         f"over the CLEARED screen, not over a depacked one")
-    print(f"   {BUILD / TITLE_SCREEN_FILE}: {SCREEN_BYTES} bytes at {WB_SCREEN_LOW:#x}, "
-          f"{drawn} of them non-zero")
-    print(f"   {BUILD / TITLE_PENS_FILE}: " + " ".join(
-        "%03x" % pen for pen in pen_words(produced[TITLE_PENS_FILE])))
-    return True
+
+def mode_credits():
+    """Photograph the shipped binary's credits screen at $e5aa, one fire gate later."""
+    return capture_boot_picture("credits", CREDITS_WAIT_CLEAR_PC, CREDITS_SCREEN_FILE,
+                                CREDITS_PENS_FILE, fires=True)
 
 
 def frames_argument():
@@ -1630,6 +1720,7 @@ def lightning_flash_seed():
 
 MODES = {
     "title": mode_title,
+    "credits": mode_credits,
     "dump": mode_dump,
     "neighbour": mode_neighbour,
     "variance": mode_variance,

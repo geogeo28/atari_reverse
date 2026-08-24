@@ -31,6 +31,11 @@
     bash atari/build.sh titlecredits && python3 atari/smoke.py titlecredits # ...its PICTURE control
 
     bash atari/build.sh play  && python3 atari/smoke.py play        # the PLAY build, booted headless
+    python3 atari/original.py credits                               # the SHIPPED credits screen
+    python3 atari/original.py dump                                  # ...and its post-boot image
+    bash atari/build.sh boot      && python3 atari/smoke.py boot      # THE WHOLE CHAIN, ON TARGET
+    bash atari/build.sh bootfault && python3 atari/smoke.py bootfault # ...its MIS-RUN control
+
     python3 atari/smoke.py runsh                                    # ...and the line run.sh execs
     bash atari/run.sh                                               # ...and played, with a screen
 
@@ -97,7 +102,10 @@ Running past the program's own exit is not tidiness: WB.PRG installs two excepti
 supervisor, and an incomplete hand-back is only visible AFTER Pterm, when TOS is running on with
 whatever the shim left hooked.
 """
+import bisect
 import collections
+import fnmatch
+import functools
 import json
 import os
 import re
@@ -195,16 +203,30 @@ def gen_image_constant(name):
     return int(found.group(1), 0)
 
 
+@functools.lru_cache(maxsize=None)
+def _staged_image(path, mtime):
+    """The staged image's bytes, cached on (path, mtime).
+
+    KEYED ON THE MTIME AND NOT ONLY THE PATH, because `stage_drive` REWRITES this file between the
+    passes of a two-boot mode — a cache on the path alone would serve the previous mode's image to
+    every `staged()` reader after the first. Every mode reads a handful of named words out of a
+    136 KB (M1) or 523 KB (frame) file and the readers are scattered, so the file was being re-read
+    once per constant."""
+    del mtime                                            # part of the key, not of the read
+    return Path(path).read_bytes()
+
+
 def staged_block(addr, length, what):
     """`length` bytes at Ghidra address `addr`, out of the staged image the .PRG actually loaded.
 
     Not written down here and not taken from the .PRG's own report: these are the very bytes the
-    reconstruction ran on. WB_STAGED_AT comes from project.toml for build.sh's reason — that file is
-    where the 0x3f8 load base is argued for. `what` names the caller's subject in the failure."""
-    base = int(re.search(r"^load_base\s*=\s*(0x[0-9a-fA-F]+)",
-                         (REC / "project.toml").read_text(), re.M).group(1), 16)
-    at = addr - base
-    blob = (DISK / "WB.IMG").read_bytes()
+    reconstruction ran on. The load base comes through `original.WB_STAGED_AT`, which scrapes
+    project.toml for build.sh's reason — that file is where the 0x3f8 base is argued for, and this
+    file already spells it that way everywhere else. `what` names the caller's subject in the
+    failure."""
+    at = addr - original.WB_STAGED_AT
+    image = DISK / "WB.IMG"
+    blob = _staged_image(str(image), image.stat().st_mtime_ns)
     if not 0 <= at or at + length > len(blob):
         raise SystemExit(f"{what} is outside the staged block — cannot read it back")
     return blob[at:at + length]
@@ -262,6 +284,10 @@ RESOURCE_FILE_COUNT = wb("RESOURCE_FILE_COUNT")
 DISK1_RESOURCES = (wb("RESOURCE_TITLESCR"), wb("RESOURCE_CREDITS"))
 # What FAT pads a short 8.3 field with, and what a GEMDOS path must not carry. See `resource_name`.
 FAT_PAD = b" "
+# HOW `stage_drive` SWEEPS THE PREVIOUS MODE'S RESOURCES OFF THE DRIVE. It cannot ask
+# `resource_name` — the image the names come out of is not staged yet at that point — so it keys on
+# the two extensions the forty rows carry, which `stage_resources` re-derives per file it stages.
+RESOURCE_GLOBS = ("*.RAD", "*.CRU")
 
 
 def resource_name(index):
@@ -289,17 +315,6 @@ def resource_name(index):
     return row.split(b"\0")[0].replace(FAT_PAD, b"").decode("ascii")
 
 
-def stage_resources():
-    """Copy disk 1's two .RAD resources onto the emulated drive, under the names the table gives."""
-    for index in DISK1_RESOURCES:
-        name = resource_name(index)
-        shipped = original.BIN / "disk1" / name
-        if not shipped.exists():
-            raise SystemExit(f"{shipped} is missing — WB_RESOURCE_FILE_TABLE row {index} names it "
-                             f"and the title build asks the machine for it by that name")
-        (DISK / name).write_bytes(shipped.read_bytes())
-
-
 def stage_drive(prg):
     """Put the .PRG on the drive TOGETHER WITH THE IMAGE IT WAS BUILT AGAINST.
 
@@ -311,15 +326,16 @@ def stage_drive(prg):
     # EVERY output the program can write is deleted first. A stale FRAME.BIN from the previous build
     # is the shape of failure that PASSES: the run crashes, the comparison reads yesterday's picture,
     # and the mode reports a match.
-    for stale in (STATS_FILE, M2_FILE, TITLE_FILE, M2_FRAME_FILE, M2_PENS_FILE,
-                  M3_RESCUED_M2, M3_RESCUED_STATS):
+    for stale in (STATS_FILE, M2_FILE, TITLE_FILE, BOOT_FILE, BOOT_IMAGE_FILE, M2_FRAME_FILE,
+                  M2_PENS_FILE, M3_RESCUED_M2, M3_RESCUED_STATS):
         (DISK / stale).unlink(missing_ok=True)
     # ...AND EVERY RESOURCE, by extension rather than by name. A `.RAD` this mode did not stage is
     # one the PREVIOUS mode did, and a title build asks the machine for its file BY NAME — so a
     # leftover is a picture from another run that the depack would happily inflate. The names come
     # out of the image below, which is not written yet, so the sweep keys on what they all are.
-    for stale in DISK.glob("*.RAD"):
-        stale.unlink()
+    for pattern in RESOURCE_GLOBS:
+        for stale in DISK.glob(pattern):
+            stale.unlink()
     (DISK / DRIVE_PRG).write_bytes(Path(prg).read_bytes())
     image = prg.with_suffix(".IMG")
     if not image.exists():
@@ -342,7 +358,13 @@ def stage_drive(prg):
     # a build that reached the drive without them would report WB_LOAD_DISK_ERROR, which reads like
     # a defect in the reconstruction rather than a missing fixture.
     if prg.name in TITLE_PRGS:
-        stage_resources()
+        stage_resources(DISK1_RESOURCES, DISK1_TREES)
+    # ...AND THE BOOT BUILDS GET THE WHOLE CHAIN'S SET, which is disk 1's two and disk 2's three.
+    # The original's boot asks a player to swap disks between them; this drive is one volume, which
+    # is a declared deviation (atari/README.md §14) and the reason the data-disk prompt is never
+    # reached.
+    if prg.name in BOOT_PRGS:
+        stage_resources(boot_resource_indices(), BOOT_RESOURCE_TREES)
 
 
 # WHAT BOOTS, AND ON WHAT MACHINE — one spelling each, because `run.sh` needs the same answers and a
@@ -411,23 +433,42 @@ def check_machine_health(status, log, assert_status=True):
     return problems
 
 
-def read_stats(name=STATS_FILE):
-    """`name` is a parameter for M3's sake: a run whose machine is deliberately left broken can
-    REBOOT and write a second record over the first, so M3 has the debugger move both records aside
-    at the exit and reads them under those names."""
+# WHERE A FORMAT WIDER THAN ITS FIELD LIST PUTS THE SURPLUS. Only `M2.BIN` has one — the anchor
+# words the binary was compiled with — and it is KEPT rather than dropped, because the reader that
+# needs it is the one pinning those anchors against this file's own. Not a C field name, and spelt
+# so it cannot be mistaken for one.
+RECORD_TRAILING = "_trailing"
+
+
+def read_record(name, fields, fmt, magic, what):
+    """One of the four records off the drive: present, the right size, the right magic, and its own
+    `bytes` field agreeing with this parser.
+
+    (record, None) or (None, why). ONE READER FOR FOUR RECORDS, and it was four verbatim copies —
+    four places for the version check that stops one build's bytes being read as another build's to
+    be corrected in three. `what` names the build in the "never reached its own dump" message, and
+    every caller passes `name` because M3 has the debugger rename two of them aside at the exit: a
+    run whose machine is deliberately left broken can REBOOT and write a second record over the
+    first."""
     path = DISK / name
     if not path.exists():
-        return None, f"no {name} — the program never reached its own dump"
+        return None, f"no {name} — {what} never reached its own dump"
     blob = path.read_bytes()
-    want = struct.calcsize(STATS_FORMAT)
+    want = struct.calcsize(fmt)
     if len(blob) != want:
         return None, f"{name} is {len(blob)} bytes, expected {want}"
-    record = dict(zip(STATS_FIELDS, struct.unpack(STATS_FORMAT, blob)))
-    if record["magic"] != STATS_MAGIC:
-        return None, f"{name} magic {record['magic']:#x} != {STATS_MAGIC:#x}"
+    unpacked = struct.unpack(fmt, blob)
+    record = dict(zip(fields, unpacked))
+    if record["magic"] != magic:
+        return None, f"{name} magic {record['magic']:#x} != {magic:#x}"
     if record["bytes"] != want:
         return None, f"{name} says {record['bytes']} bytes, this parser expects {want}"
+    record[RECORD_TRAILING] = unpacked[len(fields):]
     return record, None
+
+
+def read_stats(name=STATS_FILE):
+    return read_record(name, STATS_FIELDS, STATS_FORMAT, STATS_MAGIC, "the program")
 
 
 # ---- M2: the frame differential -----------------------------------------------------------------
@@ -484,6 +525,9 @@ PALETTE_PENS = original.PALETTE_PENS
 PALETTE_BYTES = original.PALETTE_BYTES
 ST_PEN_MASK = original.ST_PEN_MASK
 LOOP_RETURNED = wb("KEY_ACTIONS_RETURNED")
+# One 68000 longword. Hoisted above its first user (M3's `savebin` widths) when the boot section
+# below needed it too — CLAUDE.md §5's narrowest scope that covers both uses.
+LONGWORD_BYTES = 4
 # Two waits per frame, each spinning until a level-4 interrupt moves WB_VBL_COUNTER. A count barely
 # above 2 per frame would mean the predicate was already true and nothing ever spun — which is what
 # `sched_poll16` shipping unpinned looked like. Measured: ~330 per frame.
@@ -497,26 +541,16 @@ BITPLANES, PENS = "bitplanes", "pens"
 
 
 def read_m2(name=M2_FILE):
-    """`name` is a parameter for the reason `read_stats` gives one."""
-    path = DISK / name
-    if not path.exists():
-        return None, f"no {name} — the frame build never reached its own dump"
-    blob = path.read_bytes()
-    want = struct.calcsize(M2_FORMAT)
-    if len(blob) != want:
-        return None, f"{name} is {len(blob)} bytes, expected {want}"
-    unpacked = struct.unpack(M2_FORMAT, blob)
-    record = dict(zip(M2_FIELDS, unpacked))
-    if record["magic"] != M2_MAGIC:
-        return None, f"{name} magic {record['magic']:#x} != {M2_MAGIC:#x}"
-    if record["bytes"] != want:
-        return None, f"{name} says {record['bytes']} bytes, this parser expects {want}"
+    """The frame build's record, plus the one check no other record needs."""
+    record, why = read_record(name, M2_FIELDS, M2_FORMAT, M2_MAGIC, "the frame build")
+    if record is None:
+        return None, why
     # THE ANCHORS THE BINARY RAN, against the anchors this file is about to label its rows with.
     # Both are M2_ANCHOR_FRAMES — one compiled into the .PRG, one scraped from the source NOW — so
     # editing the list and running the smoke without rebuilding would otherwise compare slot 2 (the
     # binary's frame 51) against the shipped frame the new list names, and print the new label on
     # it. The count alone is not enough, because the failure that matters keeps the count.
-    ran = list(unpacked[len(M2_FIELDS):][:record["anchor_count"]])
+    ran = list(record[RECORD_TRAILING][:record["anchor_count"]])
     want_anchors = original.anchor_frames()
     if ran != want_anchors:
         return None, (f"{name} was built for anchors {ran} but wonderboy_main.c now says "
@@ -1008,20 +1042,7 @@ RAD_HDR_LEN = rad_constant("RAD_HDR_LEN")
 
 
 def read_title(name=TITLE_FILE):
-    """The title build's record, or a failure that says which half of the run did not happen."""
-    path = DISK / name
-    if not path.exists():
-        return None, f"no {name} — the title build never reached its own dump"
-    blob = path.read_bytes()
-    want = struct.calcsize(TITLE_FORMAT)
-    if len(blob) != want:
-        return None, f"{name} is {len(blob)} bytes, expected {want}"
-    record = dict(zip(TITLE_FIELDS, struct.unpack(TITLE_FORMAT, blob)))
-    if record["magic"] != TITLE_MAGIC:
-        return None, f"{name} magic {record['magic']:#x} != {TITLE_MAGIC:#x}"
-    if record["bytes"] != want:
-        return None, f"{name} says {record['bytes']} bytes, this parser expects {want}"
-    return record, None
+    return read_record(name, TITLE_FIELDS, TITLE_FORMAT, TITLE_MAGIC, "the title build")
 
 
 def rad_header(index):
@@ -1036,13 +1057,58 @@ def rad_header(index):
             len(shipped))
 
 
-def shipped_title():
-    """The shipped binary's title screen and pens, as `original.py title` left them."""
-    names = (original.TITLE_SCREEN_FILE, original.TITLE_PENS_FILE)
+def shipped_picture(screen_file, pens_file, mode):
+    """(screen, pens) as `original.py <mode>` left them, or a refusal naming the mode to run.
+
+    ONE READER FOR THE TWO ANCHORS. `original.py` collapsed its own two capture modes into
+    `capture_boot_picture` because they differ in three values and nothing else; this is the same
+    collapse on this shore, so the two sides of one differential cannot come to disagree about how a
+    photograph is read back."""
+    names = (screen_file, pens_file)
     missing = [name for name in names if not (original.BUILD / name).exists()]
     if missing:
-        raise SystemExit(f"{', '.join(missing)} is missing — run `python3 atari/original.py title`")
+        raise SystemExit(f"{', '.join(missing)} is missing — run "
+                         f"`python3 atari/original.py {mode}`")
     return tuple((original.BUILD / name).read_bytes() for name in names)
+
+
+def picture_rows(theirs, their_pens, what, record_file):
+    """The two rows a photographed screen comes down to, and the two guards under them.
+
+    `(name, ok, detail, key)` per row, with the SURFACE as the key — `title_checks`' structural key,
+    so a control can invert exactly the two rows a different picture can break. `what` names the
+    picture in the row labels and `record_file` names the record whose presence makes a missing
+    capture a WRITE failure rather than a dead program."""
+    rows = []
+
+    def add(name, ok, detail, key=None):
+        rows.append((name, bool(ok), detail, key))
+
+    missing = [name for name in (M2_FRAME_FILE, M2_PENS_FILE) if not (DISK / name).exists()]
+    if missing:
+        add("the captures were written", False,
+            f"{', '.join(missing)} absent although {record_file} was written — the run reached its "
+            f"own dump, so this is the capture write failing rather than the program dying")
+        return rows
+    ours = (DISK / M2_FRAME_FILE).read_bytes()
+    our_pens = (DISK / M2_PENS_FILE).read_bytes()
+    if len(ours) != SCREEN_BYTES or len(our_pens) != PALETTE_BYTES:
+        add("the capture is the right size", False,
+            f"{len(ours)} frame bytes and {len(our_pens)} pen bytes, expected {SCREEN_BYTES} "
+            f"and {PALETTE_BYTES}")
+        return rows
+    wrong = [] if ours == theirs else [at for at in range(SCREEN_BYTES) if ours[at] != theirs[at]]
+    line_bytes = wb("SCREEN_LINE")
+    scanlines = sorted({at // line_bytes for at in wrong})
+    add(f"the {what} screen's bitplanes", not wrong,
+        f"{len(wrong)} of {SCREEN_BYTES} bytes differ over {len(scanlines)} scanlines"
+        + (f" {scanlines[:8]}" if scanlines else ""), BITPLANES)
+    mine_pens, shipped_pens = pen_words(our_pens), pen_words(their_pens)
+    wrong_pens = [pen for pen in range(PALETTE_PENS) if mine_pens[pen] != shipped_pens[pen]]
+    add(f"the {what} screen's pens", not wrong_pens,
+        f"pens {wrong_pens} differ" if wrong_pens
+        else " ".join("%03x" % pen for pen in mine_pens), PENS)
+    return rows
 
 
 def title_checks(record, stats, want_resource):
@@ -1111,32 +1177,9 @@ def title_checks(record, stats, want_resource):
         f"pens that did not read back as the depacked prefix's own words: "
         f"{record['pens_readback_failed']:#06x}")
 
-    missing = [name for name in (M2_FRAME_FILE, M2_PENS_FILE) if not (DISK / name).exists()]
-    if missing:
-        add("the captures were written", False,
-            f"{', '.join(missing)} absent although {TITLE_FILE} was written — the run reached its "
-            f"own dump, so this is the capture write failing rather than the program dying")
-        return checks
-    ours = (DISK / M2_FRAME_FILE).read_bytes()
-    our_pens = (DISK / M2_PENS_FILE).read_bytes()
-    if len(ours) != SCREEN_BYTES or len(our_pens) != PALETTE_BYTES:
-        add("the capture is the right size", False,
-            f"{len(ours)} frame bytes and {len(our_pens)} pen bytes, expected {SCREEN_BYTES} "
-            f"and {PALETTE_BYTES}")
-        return checks
-
-    theirs, their_pens = shipped_title()
-    wrong = [] if ours == theirs else [at for at in range(SCREEN_BYTES) if ours[at] != theirs[at]]
-    rows = sorted({at // wb("SCREEN_LINE") for at in wrong})
-    add("the title screen's bitplanes", not wrong,
-        f"{len(wrong)} of {SCREEN_BYTES} bytes differ over {len(rows)} scanlines"
-        + (f" {rows[:8]}" if rows else ""), BITPLANES)
-    mine_pens, shipped_pens = pen_words(our_pens), pen_words(their_pens)
-    wrong_pens = [pen for pen in range(PALETTE_PENS) if mine_pens[pen] != shipped_pens[pen]]
-    add("the title screen's pens", not wrong_pens,
-        f"pens {wrong_pens} differ" if wrong_pens
-        else " ".join("%03x" % pen for pen in mine_pens), PENS)
-    return checks
+    theirs, their_pens = shipped_picture(original.TITLE_SCREEN_FILE, original.TITLE_PENS_FILE,
+                                        TITLE_MODE)
+    return checks + picture_rows(theirs, their_pens, "title", TITLE_FILE)
 
 
 TITLE_MODE, TITLE_CONTROL_MODE = "title", "titlecredits"
@@ -1204,6 +1247,1028 @@ def mode_title(problems, mode):
     print(f"OK: {len(broken)} of {len(broken) + len(held)} picture rows FAIL when the same three "
           f"calls are aimed at {resource_name(record['resource_index'])} instead "
           f"({len(held)} named above)")
+
+
+# ---- THE BOOT: the whole chain on the machine, and the post-boot image RECOMPUTED -----------------
+#
+# WHAT THIS CLAIMS, and it is the strongest claim in this file. Every picture and every frame above
+# it rests, somewhere, on `atari/original.py dump` — the ORIGINAL's own post-boot RAM, measured off a
+# real emulated machine at `$f8b4` and staged by `gen_image.py`, because nothing here ran the chain
+# that produces it. This mode runs the chain: ../src/boot.c's three composed slices, in the boot's
+# own order, with the boot's own fire gates between them, over M1's image — the shipped program plus
+# gen_image.py's named seeds and not one byte of measured RAM.
+#
+# TWO SURFACES COME OFF IT. The CREDITS picture, compared against the shipped binary's own at `$e5aa`
+# exactly as the title picture is compared at `$e556`; and the whole game span `[0x3f8,0x80000)`,
+# written out at the instant `boot_load_stage` returns and differenced against the dump BAND BY BAND,
+# with every band named and every unnamed byte required to be equal.
+#
+# THE SECOND IS WHAT DISSOLVES gen_image.py's FABRICATION CLAUSE. That file says the M2 image "is the
+# boot's result handed over rather than its result recomputed". For every byte outside the bands
+# below, this mode measures that the two are the same — so the sentence stops being a promise about
+# code that exists and becomes a reading.
+BOOT_FILE = "BOOT.BIN"
+BOOT_IMAGE_FILE = "BOOT.IMG"
+# The record, named in the same order wonderboy_main.c declares it. THE SIZE IS CHECKED, so a field
+# added in C and not here is a loud parse error rather than a silently misread record — and it is a
+# FOURTH record with a fourth magic for the reason there are three already: one record that grew per
+# build mode would make every other mode's version check fire.
+BOOT_FIELDS = ("magic", "bytes", "image_base",
+               "title_result", "credits_result", "stage_result",
+               "fire_press_pc", "fire_release_pc", "fire_gates_crossed", "fire_waits_timed_out",
+               "fire_wait_timed_out_pc",
+               "title_packed", "title_unpacked", "credits_packed", "credits_unpacked",
+               "copylock_arm_flag", "pens_readback_failed", "captured_at",
+               "screen_base_published", "shifter_base",
+               "stage_map_ptr", "stage_start_ptr", "resource_signature", "stage_number",
+               "level_seq_index", "stage_second_load_flag", "stage_side_flag",
+               "life_restart_entry_c26",
+               "span_bytes", "vbl_ticks_at_span", "vbl_ticks_at_exit")
+BOOT_FORMAT = ">%dI" % len(BOOT_FIELDS)
+
+
+def assert_the_record_matches_the_c(struct, fields):
+    """Refuse a field list that is not the C struct's, IN ORDER.
+
+    THE SIZE CHECK CATCHES AN ADDED FIELD AND NOT A MOVED ONE, which is the hole this closes. Every
+    field of these records is a `uint32_t`, so swapping two leaves the blob the same length with the
+    same magic: `read_*` returns cleanly and every row below compares its expectation against the
+    wrong number — some passing spuriously, others reddening for what reads like a reconstruction
+    defect. `readback_bits` sets the precedent of reading the C rather than restating it.
+
+    IT COVERS THE BOOT RECORD ONLY TODAY. The other three (`STATS.BIN`, `M2.BIN`, `TITLE.BIN`) have
+    the same hole and are not fixed here — an out-of-scope change to three working readers — but the
+    helper is written to take any of them. QUEUED in ../STATUS.md.
+
+    AND IT SCRAPES THE WORKING TREE, WHICH IS WHY `refuse_a_stale_build` EXISTS. The declaration read
+    here and the bytes graded below come from two different artefacts, so on their own they can be
+    from two different edits — see that function."""
+    source = (HERE / "wonderboy_main.c").read_text()
+    body = re.search(r"^struct %s \{(.*?)^\};" % struct, source, re.S | re.M)
+    if not body:
+        raise SystemExit(f"struct {struct} is no longer declared in wonderboy_main.c — the record "
+                         f"this file parses has no definition to be pinned against")
+    declared = tuple(re.findall(r"^\s+uint32_t\s+(\w+);", body.group(1), re.M))
+    if declared != tuple(fields):
+        raise SystemExit(f"struct {struct} declares {declared} and this file names {tuple(fields)} "
+                         f"— the two disagree about which longword is which, so every row below "
+                         f"would compare its expectation against another field's value")
+
+
+assert_the_record_matches_the_c("boot_stats", BOOT_FIELDS)
+
+
+def refuse_a_stale_build(prg, build_mode):
+    """Refuse a `.PRG` older than the C whose struct declaration the record parser was pinned to.
+
+    THE ASSERTION ABOVE CLOSES A HOLE AND THIS CLOSES THE DOOR IT ARRIVES THROUGH. The scrape reads
+    the WORKING TREE and the run grades a BINARY, so without this the two can be from different
+    edits: swap two `uint32_t` fields in `struct boot_stats`, run the mode without rebuilding, and
+    the scrape compares the new declaration against the new field list, agrees, and every row below
+    reads the OLD binary's byte order under the new names — the exact swapped-pair failure the
+    assertion exists to catch, wearing a stale build's clothes. It is `capture_pc`'s documented
+    hazard ("the per-mode `.PRG`s persist while this file is edited") applied to the record's shape
+    rather than to one field's value.
+
+    MTIME AND NOT A DIGEST, because what has to be refused is an ORDERING and the build is what
+    establishes it: `build.sh` compiles the C into the `.PRG`, so a `.PRG` at least as new as the C
+    cannot predate the declaration that was scraped."""
+    if prg.stat().st_mtime_ns >= (HERE / "wonderboy_main.c").stat().st_mtime_ns:
+        return
+    raise SystemExit(f"FAIL: {prg.name} is older than wonderboy_main.c, whose `struct boot_stats` "
+                     f"declaration this file scraped to pin the record's field order — so the rows "
+                     f"below would grade the old binary's longwords under the new names. Rebuild "
+                     f"with `bash atari/build.sh {build_mode}`.")
+
+
+BOOT_MAGIC = c_constant("BOOT_MAGIC")            # 'WBA4'
+BOOT_SLICE_NOT_RUN = c_constant("BOOT_SLICE_NOT_RUN")
+
+BOOT_MODE, BOOT_FAULT_MODE = "boot", "bootfault"
+BOOT_BUILDS = {BOOT_MODE: "WB-boot.PRG", BOOT_FAULT_MODE: "WB-bootfault.PRG"}
+BOOT_PRGS = frozenset(BOOT_BUILDS.values())
+# THE DRIVEN PASS'S BOUND, AND IT IS DERIVED RATHER THAN ROUND. The chain is five disk loads, four
+# depacks and two installers on an 8 MHz 68000, on top of TOS's own boot. Measured: the driven run
+# reaches its span at ~525 shim vblanks and exits at ~537, so the PROGRAM is a few hundred vblanks
+# and `RUN_VBLS`' own budget (TOS's boot, thousands, plus a tail) is the rest.
+#
+# WHAT THE MARGIN OVER `RUN_VBLS` IS FOR is the case this pass exists to be able to report: all four
+# debugger pokes missing. Each unanswered half then spins out `SPINS_LONG` (~6 s, ~300 vblanks)
+# before the shim gives up, so a wholly undriven driven-pass costs up to ~1,200 vblanks MORE than a
+# working one — and it has to reach its own record anyway, because `fire_wait_timed_out_pc` naming
+# the half that was missed is the whole diagnosis. 6,000 + ~540 + ~1,200 is under 8,000 and this is
+# half as much again. It is its OWN number and not the play build's, which happens to be the same
+# and means something else (how long a person's build is watched flipping buffers).
+#
+# THE UNDRIVEN PASS DOES NOT USE IT — it runs on `RUN_VBLS`; `measure_the_undriven_boot_chain` says
+# why.
+BOOT_RUN_VBLS = 12000
+# THE ROW GROUPS THIS MODE'S CONTROL CAN INVERT. `CREDITS_SLICE_ROW` is every row that reads
+# something the suppressed slice produced OTHER than the picture; the two picture surfaces keep
+# `title_checks`' own keys (BITPLANES, PENS) so the two modes' reports read alike; `SPAN_ROW` is the
+# recomputed image. Structural keys rather than formatted names, for `m2_checks`' reason.
+CREDITS_SLICE_ROW = "credits-slice"
+STAGE_PIN_ROW = "stage-pin"
+SPAN_ROW = "span"
+
+# WHAT THE BOOT'S SLICES MUST REPORT, from the headers that define them. Two of the five loads are
+# ARMED by the chain — $e51e before TITLESCR.RAD and $e6dc before SPRITES.CRU — so the slices holding
+# them must report WB_LOAD_COPYLOCK_RAN, which is the port's way of saying the protection blob would
+# have executed. Nothing on this machine runs it: it is neither ported nor stubbed.
+LOAD_COPYLOCK_RAN = wb("LOAD_COPYLOCK_RAN")
+CREDITS_PROMPT_PEN = wb("CREDITS_PROMPT_PEN")
+CREDITS_PROMPT_COLOUR = wb("CREDITS_PROMPT_COLOUR")
+# `load_resource_by_index` clears the flag on the armed arm, so a chain that ran to the end leaves it
+# down. Spelt as the same constant the title mode uses, because it is the same word.
+COPYLOCK_CLEAR = COPYLOCK_UNARMED
+FIRE_DOWN = original.FIRE_DOWN
+FIRE_UP = original.FIRE_UP
+# How many fire gates the chain has. Each has two halves — a press and a release — so this is also
+# what turns the two waits' PCs into the four debugger stops `boot_fire_script` sets, and what the
+# record's gate count is compared against. One spelling rather than a 2 and a 4 in four places.
+BOOT_FIRE_GATES = 2
+# What each fire poke echoes into the log. Not parsed — the record's own `fire_gates_crossed` is what
+# asserts the pokes landed — but a debugger script that says which stop fired is the difference
+# between reading a Hatari log and guessing at one.
+BOOT_FIRE_BEACON = "BOOT_FIRE"
+# The `original.py` mode that photographs this mode's shipped side, named once so the refusal message
+# a missing artefact produces is the command a reader can paste.
+BOOT_CREDITS_ANCHOR_MODE = "credits"
+# The first row of WB_LEVEL_SEQ_TABLE — the one `game_restart_reset` leaves WB_LEVEL_SEQ_INDEX on,
+# and therefore the one `stage_sequence_advance` consumes. After that one step the index must have
+# advanced by exactly one row, which is a pin on BOTH sides (the shipped boot took the same step).
+FIRST_SEQ_ROW = 0
+SEQ_ROWS_STEPPED = 1
+
+
+def read_boot(name=BOOT_FILE):
+    return read_record(name, BOOT_FIELDS, BOOT_FORMAT, BOOT_MAGIC, "the boot build")
+
+
+def first_sequence_row():
+    """WB_LEVEL_SEQ_TABLE's first row, out of the staged image the .PRG actually loaded.
+
+    ONE LOOKUP FOR THE TWO SIDES OF ONE CLAIM. The STAGING side reads it to know which overlay file
+    to put on the drive, and the CHECKING side reads it to know which bytes the run must have
+    published; two copies of the expression would let the harness stage the resource for one row and
+    grade the run against another."""
+    return staged_block(wb("LEVEL_SEQ_TABLE") + FIRST_SEQ_ROW * wb("LEVEL_SEQ_RECORD_BYTES"),
+                        wb("LEVEL_SEQ_RECORD_BYTES"), f"WB_LEVEL_SEQ_TABLE row {FIRST_SEQ_ROW}")
+
+
+def boot_resource_indices():
+    """The five rows of WB_RESOURCE_FILE_TABLE this chain asks the machine for, DERIVED.
+
+    Four of them are constants of the chain (TITLESCR, CREDITS, TILEDATA, SPRITES.CRU); the fifth
+    is the OVERLAY, which `stage_sequence_resource` computes as the sequence row's own ordinal plus
+    WB_RESOURCE_FIRST_OVERLAY. Reading that row out of the staged image rather than writing `2` here
+    is what keeps this list and the reconstruction's own arithmetic from drifting — and the run pins
+    it either way, because a file staged under the wrong name makes the load return
+    WB_LOAD_DISK_ERROR and the mode's first row red.
+
+    THE FIRST TWO ARE DISK1_RESOURCES, not a second listing of them: this chain begins with the
+    title build's own slice, so its set is that set PLUS the data disk's three."""
+    overlay = first_sequence_row()[wb("LEVEL_SEQ_OVERLAY")] + wb("RESOURCE_FIRST_OVERLAY")
+    return DISK1_RESOURCES + (overlay, wb("RESOURCE_TILEDATA"), wb("RESOURCE_SPRITES_CRU"))
+
+
+# WHICH SHIPPED TREE EACH RESOURCE COMES OFF, and the corpus gotcha that goes with it. `bin/disk2/`
+# is the AUTHENTIC dump of the pressed data disk and four of its overlays are damaged;
+# `bin/disk2_repaired/` is a HYBRID and is evidence about nothing. This mode stages from the
+# authentic tree — and PROVES the choice cannot matter by requiring every file it stages to be
+# byte-identical in both, which is measured on every run rather than asserted here in prose.
+DISK1_TREE = "disk1"
+BOOT_RESOURCE_TREE = "disk2"
+BOOT_RESOURCE_HYBRID_TREE = "disk2_repaired"
+# THE SEARCH IS KEYED BY CALLER AND NOT BY THE FILE, and the asymmetry is the point. The TITLE
+# modes' claim is about the 1989 DISK 1 picture (M7), so their two resources may come off disk 1 and
+# nowhere else: searching both trees for them would let a same-named file on the data disk stand in
+# silently and the mode would still report green. The boot chain really does span both volumes —
+# that is its declared one-volume deviation (README.md §14) — so its five search both.
+DISK1_TREES = (DISK1_TREE,)
+BOOT_RESOURCE_TREES = (DISK1_TREE, BOOT_RESOURCE_TREE)
+
+
+def shipped_resource(name, trees):
+    """The shipped file `name` and which of `trees` it came off, searched in that order."""
+    for tree in trees:
+        candidate = original.BIN / tree / name
+        if candidate.exists():
+            return candidate, tree
+    raise SystemExit(f"{name} is on none of {', '.join(trees)} — WB_RESOURCE_FILE_TABLE names it "
+                     f"and the build being staged asks for it by that name")
+
+
+def refuse_a_hybrid_resource(staged):
+    """Refuse to stage a resource whose two shipped trees disagree, and say which agree.
+
+    THE CORPUS GOTCHA, AS A CHECK. `bin/disk2/` is the AUTHENTIC dump of the pressed data disk and
+    four of its overlays are damaged; `bin/disk2_repaired/` is a HYBRID and is evidence about
+    nothing. This mode stages from the authentic tree, and the choice is PROVEN not to matter by
+    requiring every file it stages that also exists in the hybrid tree to be byte-identical there —
+    measured on every run rather than asserted in prose.
+
+    IT RUNS BEFORE ANY FILE IS WRITTEN, which is `original.py`'s `mode_dump` rule ("every check
+    before every write"): a refusal from inside the copy loop would leave the drive holding some of
+    the five resources beside a `.PRG` and an image that had already been staged."""
+    compared = []
+    for name, shipped, tree in staged:
+        hybrid = original.BIN / BOOT_RESOURCE_HYBRID_TREE / name
+        if not hybrid.exists():
+            continue
+        if hybrid.read_bytes() != shipped.read_bytes():
+            raise SystemExit(
+                f"FAIL: {name} differs between {tree}/ and {BOOT_RESOURCE_HYBRID_TREE}/, so this "
+                f"run's evidence depends on which tree it was staged from. The authentic dump is "
+                f"{tree}/ and the repaired tree is a hybrid; a boot resource that is damaged on the "
+                f"pressed disk cannot be substituted silently.")
+        compared.append(name)
+    if compared:
+        print(f"   note the {len(compared)} staged resources that {BOOT_RESOURCE_HYBRID_TREE}/ also "
+              f"carries are byte-identical in it ({', '.join(compared)}), so the repaired tree's "
+              f"four damaged overlays are not in this evidence")
+
+
+def stage_resources(indices, trees):
+    """Copy the shipped resources `indices` name onto the emulated drive, under the table's names.
+
+    `trees` is the caller's own search order — see `shipped_resource`, where the asymmetry is
+    argued."""
+    staged = [(resource_name(index),) + shipped_resource(resource_name(index), trees)
+              for index in indices]
+    refuse_a_hybrid_resource(staged)
+    # ...AND THE NEXT MODE MUST BE ABLE TO SWEEP THEM OFF. `stage_drive` cannot ask `resource_name`
+    # which files to delete — the image the names come out of is not staged yet at that point — so it
+    # keys on RESOURCE_GLOBS, and a resource staged under an extension that tuple does not cover
+    # would be left behind for a later build to load BY NAME. That is the failure the sweep exists to
+    # prevent and it would pass rather than red, so it is refused here, where the name is known.
+    uncovered = sorted({name for name, _, _ in staged
+                        if not any(fnmatch.fnmatch(name, pattern) for pattern in RESOURCE_GLOBS)})
+    if uncovered:
+        raise SystemExit(f"FAIL: {', '.join(uncovered)} would be staged under an extension "
+                         f"RESOURCE_GLOBS {RESOURCE_GLOBS} does not sweep, so the NEXT mode would "
+                         f"boot with this run's resource still on the drive")
+    for name, shipped, _ in staged:
+        (DISK / name).write_bytes(shipped.read_bytes())
+
+
+# ---- the span diff, band by band ------------------------------------------------------------------
+#
+# THE BANDS ARE NAMED AND JUSTIFIED, and everything outside them must be BYTE-EQUAL. That is the
+# whole discipline of gen_image.py's PROVENANCE table applied one level up: there the dump is checked
+# against the shipped FILE, here the recomputed span is checked against the DUMP.
+#
+# FOUR OF THE TEN BANDS ARE NOT THIS MODE'S AT ALL — they are `original.py variance`'s, the bands that
+# differ between two boots of the SHIPPED BINARY ITSELF at the same anchor. A difference the original
+# cannot reproduce against itself is not one this reconstruction can be asked to reproduce, so they
+# are imported rather than restated (CLAUDE.md §5), and a band added there arrives here.
+#
+# THE REST ARE THIS MODE'S OWN, and each says what makes it differ:
+# THE ONE ADDRESS THIS TABLE NEEDS THAT ../include/wonderboy.h DOES NOT DEFINE. Everything else below
+# comes through `wb()`, because the header is the port's source of truth for an address and a second
+# spelling is one that can stop naming the same bytes (CLAUDE.md §5).
+PROGRAM_BODY_AT = 0x400         # where `startup_relocate_and_run` copies the body to, and therefore
+                                # the first byte the two images can be expected to agree on
+
+# A BAND WHOSE WHOLE WIDTH MAY TURN OVER, told apart from one held to a measured reading. The four
+# imported bands carry `original.py variance`'s own ceilings, which bite: the sound module's is 256
+# of 13,604 bytes and the stack's 512 of 4,096, so growing into the slack is as loud as a byte
+# outside every band. THE SIX BELOW CANNOT BE HELD THAT WAY AND SAY SO instead of carrying a
+# ceiling equal to their own width, which would read as a check and be a tautology: each is a small
+# object owned entirely by something this build does not run — a driver's state block, a parked
+# stack pointer, the protection's register save, its decrypt cursor, the boot entry's TOS stack
+# word, the loader's prelude — so any byte of it may legitimately differ and the BOUND is the band's
+# own extent.
+WHOLE_BAND = None
+
+BOOT_SPAN_BANDS = tuple((name, start, end, ceiling,
+                         "irreproducible between two boots of the shipped binary itself "
+                         "(original.py variance), and held to that mode's own ceiling")
+                        for name, start, end, ceiling in original.VARIANCE_BANDS) + (
+    # WB_DISK_BAND_HI is where `actor_aim_velocity` begins, i.e. the first byte after the driver's
+    # state block; the block starts at WB_FLOPPY_PREAMBLE_FLAG, the first of the `var`s ../names.txt
+    # gives it. TWO REASONS, NOT ONE, and the first draft's single reason was measurably false for a
+    # word inside the band. Most of the block is never written here: batch 44 phase B cut the chain
+    # at `disk_load_file` ($5e7c) and everything below that is a WD1772 state machine this build does
+    # not run, where the original's boot programmed a real controller five times. But
+    # WB_FLOPPY_IDLE_TIMER ($64f2) lies INSIDE it and IS written on this side — gen_image.py seeds it
+    # and `vbl_handler`, the reconstruction's own, counts it down; it is the very word
+    # RB_PSG_PORT_A_DESELECTED waits for. So the two sides' readings of that word are two different
+    # clocks, which is a difference this band has to hold as much as the unwritten bytes are.
+    ("the FDC driver's state block", wb("FLOPPY_PREAMBLE_FLAG"), wb("DISK_BAND_HI"), WHOLE_BAND,
+     "the driver below the seam does not run here, so the substitution never writes most of it — and "
+     "WB_FLOPPY_IDLE_TIMER inside it is OUR vbl_handler's own countdown off gen_image.py's seed"),
+    # ...AND ONE LONGWORD OF THE DEPACKER'S, which is not the driver's at all. ../names.txt cmt
+    # 0x5e3a: "rad_depack parks the entry a7 here and restores it on the success path only". A C
+    # composition has no such register, which is ../STATUS.md batch 44 phase C's OWN declared
+    # deviation (§3.1) — off target the differential hands the candidate the value; here nothing
+    # writes it and the shipped side's four bytes are its real stack pointer.
+    ("rad_depack's parked a7", wb("RAD_SAVED_SP"), wb("RAD_SAVED_SP") + wb("RAD_SAVED_SP_LEN"),
+     WHOLE_BAND,
+     "../names.txt cmt 0x5e3a — the depacker parks its caller's a7 there and this port has no such "
+     "register (../STATUS.md batch 44 phase C §3.1)"),
+    # THE COPYLOCK'S SECOND SCRATCH, and `gen_image.py`'s PROVENANCE table names only the first.
+    # The shipped file carries zeros in both of the objects below and this build leaves them zero,
+    # because it ARMS the protection (the original does) and never RUNS it — the blob is neither
+    # ported nor stubbed. `original.py variance` cannot see either band at all: two boots of the
+    # original write the same bytes there, so they are reproducible between them and a real
+    # difference against a run that never executed the blob.
+    #
+    # TWO EXACT BANDS AND NOT ONE HULL OVER BOTH, which was the first draft. `[REG_SAVE, CURSOR+8)`
+    # is 114 bytes where ../names.txt names 96 and 8; the ten between them ($ed34..$ed3e) are named
+    # by nothing, and a WHOLE_BAND hull swallowed them silently — an unnamed byte absorbed by a band
+    # that does not claim it is exactly what BOOT_SPAN_RESIDUE_CEILING exists to refuse. Each object
+    # now carries its own header-pinned length, and those ten bytes are RESIDUE: measured equal, and
+    # they red if they stop being.
+    ("the copylock's register save", wb("COPYLOCK_REG_SAVE"),
+     wb("COPYLOCK_REG_SAVE") + wb("COPYLOCK_REG_SAVE_LEN"), WHOLE_BAND,
+     "where the blob's `movem.l d0-a7,(a6)` and its vector save land; armed and never run here, so "
+     "it stays the shipped file's zeros (../names.txt cmt 0xecd4)"),
+    ("the copylock's decrypt cursor", wb("COPYLOCK_DECRYPT_CURSOR"),
+     wb("COPYLOCK_DECRYPT_CURSOR") + wb("COPYLOCK_DECRYPT_CURSOR_LEN"), WHOLE_BAND,
+     "the trace decryptor's two longwords — the address currently plaintext and its ciphertext; "
+     "nothing here primes them (../names.txt cmt 0xed3e)"),
+    # ONE LONGWORD OF THE BOOT'S OWN PROLOGUE. ../names.txt cmt 0xf8b8: `sys_save_tos_stack` at
+    # $e484 stashes the TOS-supplied a7 there, which is the game's only recorded route back to TOS.
+    # $e484 is in the boot's entry, ABOVE the three slices this build calls, so nothing here writes
+    # it — and this shim's own route back to TOS is `Pterm`, not that longword.
+    ("the boot's parked TOS stack pointer", wb("TOS_STACK_SAVE"),
+     wb("TOS_STACK_SAVE") + wb("TOS_STACK_SAVE_LEN"), WHOLE_BAND,
+     "../names.txt cmt 0xf8b8 — stashed by $e484, which is in the boot's entry above the three "
+     "slices this build calls"),
+    # AND THE BYTES BELOW THE PROGRAM BODY, which are a property of the two IMAGES rather than of
+    # either boot: `project.toml`'s load base is $3f8 and the body is at $400, so the staged image
+    # carries the loaded file's `jmp $217d8.l` prelude there, while the ORIGINAL's RAM at that
+    # absolute address never held it — `startup_relocate_and_run` COPIED the body to $400 from
+    # wherever GEMDOS put the file. Present before either side executed an instruction.
+    ("the staged image's pre-body bytes", original.WB_STAGED_AT, PROGRAM_BODY_AT, WHOLE_BAND,
+     "the staged image carries the loaded file's prelude below the body at $400; the original's RAM "
+     "at that absolute address never did"),
+)
+
+# EVERYTHING THE NAMED BANDS DO NOT CLAIM, as one figure with a ceiling — gen_image.py's own rule
+# and its reason: a band is a weak guard on its own (the sound module's is 13 KB wide to certify a
+# couple of dozen bytes), so the residue is computed after the bands rather than as a last row of
+# them, where reordering the table would silently change what it measures.
+#
+# THE CEILING IS ZERO, and that is the whole claim. An unnamed byte is this mode's finding, not its
+# tolerance: what it exists to say is that outside the bands above, the span the reconstruction
+# COMPUTED is the span `original.py dump` MEASURED, byte for byte.
+BOOT_SPAN_RESIDUE_CEILING = 0
+# How many residue clusters to print. Enough to name a band from, short enough to read.
+BOOT_RESIDUE_CLUSTERS_SHOWN = 12
+
+# `fat_dir_buffer` (WB_FAT_DIR_BUFFER) is a POINTER in the driver's state block; ../names.txt cmt
+# 0x64f4 says the boot sector, the FAT and the root directory are read through it and the cluster
+# extent list is built at +5120. The extent below is therefore derived from the image, not written
+# here.
+FAT_EXTENT_LIST_OFF = 5120
+FAT_EXTENT_LIST_BYTES = 512
+
+
+def fat_buffer_extent(at, whose):
+    """(start, end) of the driver's sector staging buffer, from one side's `fat_dir_buffer`."""
+    end = at + FAT_EXTENT_LIST_OFF + FAT_EXTENT_LIST_BYTES
+    # THE POINTER IS DERIVED AND SO IS CHECKED. The read is bounded, the region it NAMES is not —
+    # and the band above says this build never writes the driver's state block, so a pointer that
+    # read 0 is entirely plausible. The note would then print a reassuring "0 bytes differ" over
+    # [0,0x1600), indistinguishable from the real reading, and the argument for not making this a
+    # band would quietly stop holding.
+    if not original.WB_STAGED_AT <= at < end <= original.GAME_SPAN_END:
+        raise SystemExit(f"FAIL: {whose} fat_dir_buffer ({wb('FAT_DIR_BUFFER'):#x}) points at "
+                         f"{at:#x}, whose extent [{at:#x},{end:#x}) is not inside the game span "
+                         f"[{original.WB_STAGED_AT:#x},{original.GAME_SPAN_END:#x}) — the note "
+                         f"below would be reading somewhere else entirely")
+    return at, end
+
+
+def fat_buffer_extents(measured, base):
+    """The sector staging buffer as EACH SIDE's own `fat_dir_buffer` names it, as (whose, lo, hi).
+
+    NOT A BAND, AND THE MEASUREMENT IS WHY. ../names.txt cmt 0x64f4 says the boot sector, the FAT
+    and the root directory are read through this pointer and the cluster extent list is built at
+    +FAT_EXTENT_LIST_OFF — all of it the driver's work, none of which happens here. It would be an
+    exclusion but for where the pointer lands: inside WB_BG_BUFFER_BASE's span, which
+    `stage_load_window` rebuilds at the end of the stage slice on BOTH sides. So the region is
+    overwritten before either run reaches the anchor, its reading is 0, and an exclusion that
+    claims nothing is one nobody is running. It is reported instead, so a run in which it stopped
+    being 0 says so twice — here and as residue.
+
+    BOTH POINTERS ARE READ, because the note argues about BOTH SIDES and the pointer lives INSIDE
+    the FDC band this table declares free to differ. Reading it from our image alone and then
+    saying "on both sides" was a claim about a region only one side had named."""
+    at = wb("FAT_DIR_BUFFER") - base
+    ours = int.from_bytes(staged_block(wb("FAT_DIR_BUFFER"), LONGWORD_BYTES, "fat_dir_buffer"),
+                          "big")
+    theirs = int.from_bytes(measured[at:at + LONGWORD_BYTES], "big")
+    if ours == theirs:
+        return (("both sides",) + fat_buffer_extent(ours, "the staged image's"),)
+    return (("the recomputed span",) + fat_buffer_extent(ours, "the staged image's"),
+            ("the measured dump",) + fat_buffer_extent(theirs, "the measured dump's"))
+
+
+def clusters(addresses):
+    """Contiguous runs of `addresses`, as (start, length) — what a residue looks like as bands."""
+    runs = []
+    for at in addresses:
+        if runs and at == runs[-1][0] + runs[-1][1]:
+            runs[-1] = (runs[-1][0], runs[-1][1] + 1)
+        else:
+            runs.append((at, 1))
+    return runs
+
+
+# ONE WALK OF HALF A MEGABYTE, AND EVERY FIGURE BELOW COMES OFF IT — and it is `original.py`'s walk,
+# not a second one. The first draft of this section counted the differences three times (once for the
+# bands, once for the printed headline, once per cluster listing), and even collapsed to one it was
+# still a copy of the comprehension `mode_variance` uses. That mattered here more than anywhere: the
+# mis-anchor control below takes its NUMERATOR from this walk and its FLOOR from `original.py
+# variance`'s reading, so two implementations would be a control graded with a different instrument
+# from the one it controls.
+differing_addresses = original.differing_addresses
+
+
+def span_diff(ours, theirs, base):
+    """(rows, differ, residue) for the recomputed span against the measured dump.
+
+    `rows` is one `(name, ok, detail)` per band — the band's reading against its own ceiling —
+    `differ` is every differing address, and `residue` is the subset outside every band, which is
+    the row this mode exists to assert."""
+    if len(ours) != len(theirs):
+        return [("the two spans are the same length", False,
+                 f"{len(ours)} recomputed against {len(theirs)} measured")], None, None
+    differ = differing_addresses(ours, theirs, base)
+    rows = []
+    claimed = set()
+    for name, start, end, ceiling, why in BOOT_SPAN_BANDS:
+        inside = [at for at in differ if start <= at < end]
+        claimed |= set(inside)
+        # A BAND WITH A CEILING IS A BOUNDED EXCLUSION AND ONE WITHOUT IS AN OWNED REGION, and the
+        # difference is printed rather than blurred. The four imported bands carry `original.py
+        # variance`'s OWN ceilings, which is the strong reading: this recomputation differs from the
+        # measured dump by no more, in those bands, than two boots of the original differ from each
+        # other. The six WHOLE_BAND ones are small objects owned entirely by something this build
+        # does not run, so any byte of them may differ and a ceiling equal to the band's width would
+        # be a tautology wearing a check's clothes.
+        rows.append((f"band: {name}", ceiling is WHOLE_BAND or len(inside) <= ceiling,
+                     f"[{start:#x},{end:#x}): {len(inside)} of {end - start} bytes differ, "
+                     + ("no ceiling" if ceiling is WHOLE_BAND else f"ceiling {ceiling}")
+                     + f" — {why}"))
+    return rows, differ, [at for at in differ if at not in claimed]
+
+
+def report_span(span_bytes, base, differ, residue, measured):
+    """Print what the ROWS DO NOT CARRY, which is what is left for a reader to see.
+
+    THE BAND READINGS ARE NOT PRINTED HERE, and they were: every band's `detail` is already a row in
+    `boot_span_rows`' return, which `report` prints a few lines below under the mode banner — so each
+    band's line appeared twice, ten duplicated lines above the report they duplicate. What only this
+    function has is the headline, the `fat_dir_buffer` note (a measurement rather than a band) and
+    the residue's contiguous runs, which is how the last bands in the table were named."""
+    for whose, lo, hi in fat_buffer_extents(measured, base):
+        # `differ` is sorted, so the count inside an extent is the gap between two insertion points
+        # rather than a tenth walk of half a megabyte.
+        moved = bisect.bisect_left(differ, hi) - bisect.bisect_left(differ, lo)
+        print(f"   note the FDC's sector staging buffer as {whose} name it, [{lo:#x},{hi:#x}): "
+              f"{moved} bytes differ — `stage_load_window` rebuilds that region on both sides, so "
+              f"it needs no exclusion")
+    print(f"   the recomputed span [{base:#x},{base + span_bytes:#x}): "
+          f"{span_bytes - len(differ)} of {span_bytes} bytes are the measured dump's own")
+    if residue:
+        runs = clusters(residue)
+        print(f"   OUTSIDE EVERY NAMED BAND: {len(residue)} bytes, in {len(runs)} runs:")
+        for start, length in runs[:BOOT_RESIDUE_CLUSTERS_SHOWN]:
+            print(f"     {start:#x}..{start + length:#x}  {length} bytes")
+
+
+def measured_dump():
+    """`original.py dump`'s span — the image this mode's own span is differenced against."""
+    path = original.BUILD / original.DUMP_FILE
+    if not path.exists():
+        raise SystemExit(f"{path} is missing — run `python3 atari/original.py dump`, which is the "
+                         f"MEASURED half of this comparison")
+    ok, message = original.check_manifest(original.BUILD)
+    if not ok:
+        raise SystemExit(f"FAIL: {message}")
+    print(f"   {message}")
+    return path.read_bytes()
+
+
+def boot_checks(record, stats, want_pens, want_screen):
+    """The boot differential, as `(name, ok, detail, key)` rows.
+
+    `key` is `None` for a precondition, a SURFACE for the credits comparison rows, and
+    SPAN_ROWS for the recomputed image — `title_checks`' structural key with one more group, so the
+    mis-run control can invert exactly the rows a suppressed slice can break and assert the rest
+    normally (m2fault's rule)."""
+    checks = []
+
+    def add(name, ok, detail, key=None):
+        checks.append((name, bool(ok), detail, key))
+
+    for name, ok, detail in readback_checks(stats):
+        add(name, ok, detail)
+
+    # RB_VBL_TICKING IS ENTRY-STATE-VACUOUS IN THIS MODE, and the note is what stops it reading as
+    # coverage — `unreachable_readbacks`' rule, one function over, applied to a bit whose vacuity is
+    # a property of the RUN rather than of the staged image. The shim's `run_vblanks(SMOKE_VBLS)`
+    # comes AFTER the whole chain, which has already spent hundreds of vblanks, so it returns without
+    # waiting for anything. What reads the same fact non-vacuously is the `vbl_ticks_at_span` row
+    # below, and it is asserted rather than printed.
+    if record["vbl_ticks_at_span"] >= SMOKE_VBLS:
+        print(f"   note 'RB_VBL_TICKING' is vacuous in this mode: the chain had already spent "
+              f"{record['vbl_ticks_at_span']} shim vblanks by the time it reached the span, so the "
+              f"shim's wait for {SMOKE_VBLS} was satisfied before it was made. The non-vacuous "
+              f"reading is 'the machine drove the chain, not just the tail' below.")
+
+    # THE CHAIN RAN TO ITS END, and each slice's own report says how. Two of the five loads are armed
+    # by the chain itself, so the two slices that hold them must say WB_LOAD_COPYLOCK_RAN and the
+    # credits slice — which arms nothing — must say WB_LOAD_OK. One loop rather than three
+    # hand-written rows, for the reason the `.RAD` header loop twelve lines below is one: three
+    # copies of a row differing in four values is three chances to key one of them wrong, which is
+    # this round's own recorded defect one function down.
+    for row, slice_fn, field, want, want_name, key in (
+            ("the title slice ran the armed load", "boot_title_screen", "title_result",
+             LOAD_COPYLOCK_RAN, "WB_LOAD_COPYLOCK_RAN", None),
+            ("the credits slice loaded unarmed", "boot_credits_screen", "credits_result",
+             LOAD_OK, "WB_LOAD_OK", CREDITS_SLICE_ROW),
+            ("the stage slice ran the armed SPRITES.CRU load", "boot_load_stage", "stage_result",
+             LOAD_COPYLOCK_RAN, "WB_LOAD_COPYLOCK_RAN", STAGE_PIN_ROW)):
+        add(row, record[field] == want,
+            f"{slice_fn} returned {record[field]} ({want_name}={want})", key)
+    # ...AND ITS TRUTH IS COUPLED TO WHERE A SUPPRESSION STOPS THE CHAIN, which the detail says
+    # rather than leaves for a reader to discover. `load_resource_by_index` clears the flag on the
+    # armed arm, so "left down" means the LAST armed load ran. Today the mis-run control's cascade
+    # stops at the UNARMED overlay load, downstream of the title's arming and upstream of
+    # SPRITES.CRU's — so the flag is down in both modes and this stays a precondition. A cascade that
+    # moved to stop at the armed SPRITES.CRU load instead would leave the flag standing at $ffff, and
+    # the control would abort as "its own run is not sound" for a control that was working. Left
+    # UNKEYED deliberately: in the mode this file has, the row really is a precondition, and keying
+    # it would invert a row the suppression does not move.
+    add("the protection is left disarmed", record["copylock_arm_flag"] == COPYLOCK_CLEAR,
+        f"WB_COPYLOCK_ARM_FLAG={record['copylock_arm_flag']:#06x} — load_resource_by_index clears "
+        f"it on the armed arm, so a chain that ran to the end leaves it down. Coupled to WHERE a "
+        f"stop lands: a chain stopped at the armed SPRITES.CRU load would leave this at $ffff and "
+        f"read as an unsound control rather than as the stop it is")
+
+    # BOTH FIRE GATES WERE CROSSED AND NEITHER WAIT TIMED OUT. This is what the driven pass adds over
+    # the undriven one, and the undriven one is where it is shown to be the pokes that do it.
+    add("both fire gates were crossed", record["fire_gates_crossed"] == BOOT_FIRE_GATES
+        and record["fire_waits_timed_out"] == 0,
+        f"{record['fire_gates_crossed']} of {BOOT_FIRE_GATES} gates, "
+        f"{record['fire_waits_timed_out']} waits timed out"
+        + (f" at {record['fire_wait_timed_out_pc']:#x} — the "
+           + ("PRESS" if record["fire_wait_timed_out_pc"] == record["fire_press_pc"] else "RELEASE")
+           + " half, so it is that poke that did not land"
+           if record["fire_wait_timed_out_pc"] else ""))
+
+    # THE TWO PICTURES' FILES ARE THE FILES ON THE DISK, read out of the load buffer after each load.
+    for which, index in (("title", wb("RESOURCE_TITLESCR")), ("credits", wb("RESOURCE_CREDITS"))):
+        packed, unpacked, filesize = rad_header(index)
+        add(f"the {which} file the machine served is the file on the disk",
+            record[f"{which}_packed"] == packed and record[f"{which}_unpacked"] == unpacked
+            and packed + RAD_HDR_LEN == filesize,
+            f"the buffer at {RESOURCE_LOAD_BUFFER:#x} held {record[f'{which}_packed']}/"
+            f"{record[f'{which}_unpacked']} packed/unpacked after the load; the shipped "
+            f"{resource_name(index)} is {filesize} bytes and says {packed}/{unpacked}",
+            CREDITS_SLICE_ROW if which == "credits" else None)
+
+    want_base = record["image_base"] + SCREEN_LOW
+    add("the shifter displays the buffer copy_screen filled",
+        record["shifter_base"] == want_base and record["screen_base_published"] == want_base
+        and record["captured_at"] == SCREEN_LOW,
+        f"$ffff8201/8203 read back {record['shifter_base']:#x}, the backend wrote "
+        f"{record['screen_base_published']:#x}, the capture was taken at "
+        f"{record['captured_at']:#x} and the image is at {record['image_base']:#x}")
+    # THE ONE SURFACE THAT CAN SEE `$e5a2`. ../STATUS.md batch 44 phase C measures the credits
+    # slice's single colour write as a SURVIVING mutant off target — the oracle drops a write to a
+    # register outside the loaded image, so no host differential can tell whether it happened. Here
+    # the pen is read back off the chip and required to hold WB_CREDITS_PROMPT_COLOUR while the other
+    # fifteen hold the depacked prefix's own words.
+    add("set_palette reached the chip, and so did the prompt pen",
+        record["pens_readback_failed"] == NO_PENS_FAILED,
+        f"pens that did not read back as the credits slice put them (pen {CREDITS_PROMPT_PEN} "
+        f"expected {CREDITS_PROMPT_COLOUR:#05x}, the rest the depacked prefix's): "
+        f"{record['pens_readback_failed']:#06x}", CREDITS_SLICE_ROW)
+
+    # THE CHAIN RAN ON THE MACHINE, not in the tail. `run_vblanks(SMOKE_VBLS)` after the chain would
+    # satisfy RB_VBL_TICKING on its own, so without this row the two readings the record carries
+    # would be printed and asserted by nothing — and the C's claim that five loads and four depacks
+    # take hundreds of vblanks would be prose. The floor is the same SMOKE_VBLS, taken at the SPAN's
+    # instant, so what it says is that the machine was driving the reconstruction all the way to
+    # `$f8b4` and not only afterwards.
+    add("the machine drove the chain, not just the tail",
+        record["vbl_ticks_at_span"] >= SMOKE_VBLS
+        and record["vbl_ticks_at_exit"] >= record["vbl_ticks_at_span"],
+        f"{record['vbl_ticks_at_span']} shim vblanks to the span and "
+        f"{record['vbl_ticks_at_exit']} to the exit, against a floor of {SMOKE_VBLS}",
+        STAGE_PIN_ROW)
+
+    # THE PINS FROM THE INSIDE, which are `original.py`'s own seven asked of the RECOMPUTED image.
+    # State the shipped `.PRG` does not carry and only a completed chain leaves.
+    add("resource_table_relocate stamped the header",
+        record["resource_signature"] == original.RESOURCE_SIGNATURE,
+        f"{wb('RESOURCE_HEADER'):#x} = {record['resource_signature']:#04x}, want "
+        f"{original.RESOURCE_SIGNATURE:#04x} ('E')", STAGE_PIN_ROW)
+    add("stage_load_window latched the map and the start record",
+        record["stage_map_ptr"] == wb("MAP_ROW_STRIDE")
+        and record["stage_start_ptr"] == original.STAGE_START_PTR_VALUE,
+        f"WB_STAGE_MAP_PTR={record['stage_map_ptr']:#x} (want {wb('MAP_ROW_STRIDE'):#x}), "
+        f"WB_STAGE_START_PTR={record['stage_start_ptr']:#x} "
+        f"(want {original.STAGE_START_PTR_VALUE:#x})", STAGE_PIN_ROW)
+    add("the first stage is loaded", record["stage_number"] == original.FIRST_STAGE_NUMBER,
+        f"WB_STAGE_NUMBER={record['stage_number']}, want {original.FIRST_STAGE_NUMBER}",
+        STAGE_PIN_ROW)
+    # ONE ROW CONSUMED AND NO MORE. `game_restart_reset` (inside the credits slice) clears the index
+    # and `stage_sequence_advance` steps it past the row it took — an INDEX IN ROWS, not in bytes
+    # (`at + 1`, with the `lsl.l #3` applied where the row is addressed). Both sides stepped exactly
+    # once, so they must agree on the value and not merely on its being nonzero. It is a
+    # credits-slice row because it is that slice's `game_restart_reset` that put the index at 0.
+    staged_seq_index = staged("LEVEL_SEQ_INDEX", width=2)
+    add("the sequence advanced by exactly one row", record["level_seq_index"] == SEQ_ROWS_STEPPED,
+        f"WB_LEVEL_SEQ_INDEX={record['level_seq_index']} rows, want {SEQ_ROWS_STEPPED}"
+        + (f" — VACUOUS on this image: the staged word is already {staged_seq_index}, so this row "
+           f"cannot tell the credits slice's clear and the stage slice's step from neither having "
+           f"happened. What DOES tell them apart is the stage slice's own load: an index left "
+           f"unreset consumes row {SEQ_ROWS_STEPPED}, whose overlay is not on the drive"
+           if staged_seq_index == SEQ_ROWS_STEPPED else
+           f", against {staged_seq_index} in the staged image — the step is witnessed"),
+        CREDITS_SLICE_ROW)
+    # THE ROW'S TWO PUBLISHED BYTES, against the row the image itself carries. `stage_sequence_advance`
+    # copies WB_LEVEL_SEQ_SECOND_LOAD out of the row (on a first entry) and `stage_sequence_apply_row`
+    # turns WB_LEVEL_SEQ_SIDE into WB_STATE_FLAG_SET or 0, so both are the shipped table's own data
+    # arriving in the right words rather than numbers written here.
+    row = first_sequence_row()
+    want_side = wb("STATE_FLAG_SET") if row[wb("LEVEL_SEQ_SIDE")] else 0
+    # ...AND THE SIDE HALF OF IT IS ENTRY-STATE-VACUOUS ON THIS IMAGE, WHICH IT PRINTS. Row 0's own
+    # side byte is 0, so `stage_sequence_apply_row` publishes 0 — and the staged image already
+    # carries 0 in WB_STAGE_SIDE_FLAG, so that half cannot tell the publish from the byte the .PRG
+    # ships. The SECOND_LOAD half is not vacuous whenever the row's byte and the staged word differ,
+    # and the two are printed separately rather than blurred into one verdict — the §6 notes' style,
+    # applied to the two halves of one row.
+    staged_side = staged("STAGE_SIDE_FLAG", width=2)
+    side_witnessed = staged_side != want_side
+    add("the sequence row's own two bytes were published",
+        record["stage_second_load_flag"] == row[wb("LEVEL_SEQ_SECOND_LOAD")]
+        and record["stage_side_flag"] == want_side,
+        f"WB_STAGE_SECOND_LOAD_FLAG={record['stage_second_load_flag']:#04x} (row "
+        f"{FIRST_SEQ_ROW}'s byte is {row[wb('LEVEL_SEQ_SECOND_LOAD')]:#04x}), "
+        f"WB_STAGE_SIDE_FLAG={record['stage_side_flag']:#06x} (want {want_side:#06x})"
+        + (f", against {staged_side:#06x} in the staged image — the side publish is witnessed"
+           if side_witnessed else
+           f" — the SIDE half is VACUOUS on this image: row {FIRST_SEQ_ROW}'s side byte is 0 and "
+           f"the staged word is already {staged_side:#06x}, so it cannot tell "
+           f"`stage_sequence_apply_row`'s publish from the entry state. The SECOND_LOAD half is "
+           f"what this row witnesses"),
+        STAGE_PIN_ROW)
+    # ...AND THE `clr.w` AT $e6ec MADE THE RE-ENTRY ARM ONE-SHOT: the word that would have SUPPRESSED
+    # the sprite load is taken down once the stage is built, so the next stage loads its own sprites.
+    # ...AND IT IS ENTRY-STATE-VACUOUS ON THIS IMAGE, WHICH THE ROW SAYS RATHER THAN HIDES. The
+    # word lies inside `player_pending_event_gate`'s own code and the shipped `.PRG` already carries
+    # zero there, so on the M1 image this cannot tell the `clr.w` from the byte it was handed —
+    # `machine_driven`'s rule, one mode over: a check whose entry state satisfies it witnesses
+    # nothing and the note is what stops it reading as coverage.
+    staged_reentry = staged("LIFE_RESTART_ENTRY_C26", width=2)
+    add("the re-entry word was taken down", record["life_restart_entry_c26"] == 0,
+        f"WB_LIFE_RESTART_ENTRY_C26={record['life_restart_entry_c26']:#06x}"
+        + (" — VACUOUS on this image: the staged word is already 0, so this row cannot tell $e6ec's "
+           "clr.w from the entry state" if staged_reentry == 0 else
+           f", against {staged_reentry:#06x} in the staged image — the clr.w is witnessed"),
+        # A STAGE PIN AND NOT A PRECONDITION, although it reads like one: the field is written only
+        # inside `take_the_span`, which the mis-run control never reaches, so left unkeyed it would
+        # have counted the record's zero-init as a verified green row in the one mode where nothing
+        # measured it.
+        STAGE_PIN_ROW)
+
+    # ---- the credits picture, against the shipped binary's own at $e5aa, through the SAME rows
+    # the title differential uses. `picture_rows` is where they live; a second copy here would let
+    # the two halves of one differential drift (`original.py`'s `capture_boot_picture`, this shore).
+    return checks + picture_rows(want_screen, want_pens, "credits", BOOT_FILE)
+
+
+def boot_span_rows(record, theirs, mis_anchor):
+    """The recomputed span's own rows: it was written, it is the right length, and it AGREES.
+
+    `theirs` is the measured dump and `mis_anchor` the control's two fixtures, both handed in by
+    `require_the_shipped_side` so that nothing here loads a fixture a second time — a dump re-made
+    between two reads would otherwise be graded by one and reported by the other. `mis_anchor` is
+    `None` in the mode that cannot reach the control; see below."""
+    checks = []
+
+    def add(name, ok, detail):
+        checks.append((name, bool(ok), detail, SPAN_ROW))
+
+    base = original.WB_STAGED_AT
+    path = DISK / BOOT_IMAGE_FILE
+    if not path.exists():
+        # WHICH OF THE TWO IT IS, from the record rather than from an assumption: `span_bytes` is set
+        # inside `take_the_span`, so a non-zero reading with no file means the SPAN was taken and the
+        # GEMDOS write failed — a host problem (a full disk, a read-only checkout) wearing the
+        # reconstruction's clothes. `write_file` reports nothing, so the record is the only witness.
+        add("the span was written", False,
+            f"no {BOOT_IMAGE_FILE}, and the record says span_bytes={record['span_bytes']} — "
+            + ("boot_load_stage did not return, so there was no $f8b4-equivalent instant to take "
+               "it at" if record["span_bytes"] == 0 else
+               "the span WAS taken at that instant, so this is the file write failing rather than "
+               "the chain"))
+        return checks
+    ours = path.read_bytes()
+    add("the span is the game's whole address space",
+        len(ours) == len(theirs) and record["span_bytes"] == len(theirs),
+        f"{len(ours)} bytes written, {record['span_bytes']} reported, "
+        f"[{base:#x},{base + len(theirs):#x}) is {len(theirs)}")
+    if len(ours) != len(theirs):
+        return checks
+    rows, differ, residue = span_diff(ours, theirs, base)
+    report_span(len(ours), base, differ, residue, theirs)
+    checks += [(f"span {name}", ok, detail, SPAN_ROW) for name, ok, detail in rows]
+    add("every byte outside the named bands is the measured dump's",
+        len(residue) <= BOOT_SPAN_RESIDUE_CEILING,
+        f"{len(residue)} bytes differ outside every named band, against a ceiling of "
+        f"{BOOT_SPAN_RESIDUE_CEILING}"
+        + (f"; first at {residue[0]:#x}" if residue else ""))
+    # THE CONTROL IS NOT ONE OF THE SPAN'S ROWS, and keying it as one was this round's own defect:
+    # `add` stamps SPAN_ROW, the mis-run control inverts every SPAN_ROW, and a mis-anchor that had
+    # STOPPED discriminating would then have been counted as evidence the control worked. It is a
+    # precondition — a comparison shown to be able to fail — so it carries no key.
+    #
+    # IT IS REACHED IN ONE MODE, not both, and the fixtures are demanded accordingly. `bootfault`
+    # stops the chain before a span is taken (README.md §14: `game_restart_reset` lives in the
+    # suppressed slice), so this line is below that mode's early return and its two fixtures are not
+    # asked for up front. `mis_anchor or require_the_mis_anchor()` is what keeps that an OPTIMISATION
+    # rather than an assumption: if a future cascade did leave the fault mode with a span, the
+    # fixtures are still required — here instead of before the boot.
+    checks.append(mis_anchored_span_control(ours, base,
+                                            mis_anchor or require_the_mis_anchor()) + (None,))
+    return checks
+
+
+# HOW FAR ABOVE THE INSTRUMENT'S OWN NOISE the mis-anchor has to sit, and it is `original.py`'s own
+# multiple rather than a second one: the floor is `variance`'s measured reading times this, which is
+# exactly what `mode_neighbour` requires of the shipped side's own one-call slip.
+MIS_ANCHOR_FLOOR_MULTIPLE = original.MIS_ANCHOR_FLOOR_MULTIPLE
+
+
+def require_the_mis_anchor():
+    """(the noise reading, the mis-anchored span) — or a refusal naming the two modes that make them.
+
+    NOT MANIFEST-PINNED TO THE DUMP'S BOOT, and that is stated rather than left to look tighter than
+    it is. `build.sh m2` verifies the dump, its registers and its palette against one manifest
+    because a frame staged from mixed artefacts is a silent wrong answer; this pair is a CONTROL, and
+    what it has to be is a span taken at a different ANCHOR, which is a property of the run that took
+    it and not of which boot it came from. What `mode_neighbour` does guarantee is that a run which
+    failed to discriminate leaves no artefact at all: it unlinks the file before the boot."""
+    reading = original.BUILD / original.VARIANCE_FILE
+    mis_anchored = original.BUILD / original.NEIGHBOUR_DUMP_FILE
+    missing = [path for path in (reading, mis_anchored) if not path.exists()]
+    if missing:
+        raise SystemExit(f"{', '.join(str(path) for path in missing)} is missing — run "
+                         f"`python3 atari/original.py variance` and then `neighbour`, which measure "
+                         f"the instrument's noise floor and keep the mis-anchored span this mode's "
+                         f"own comparison is controlled against")
+    return reading, mis_anchored
+
+
+def mis_anchored_span_control(ours, base, mis_anchor):
+    """(name, ok, detail) — THE SPAN COMPARISON, SHOWN TO BE ABLE TO FAIL.
+
+    THE CONTROL IS THE MIS-ANCHOR, and that is M2's precedent taken literally: `smoke.py m2fault`
+    reads our frames off the NEIGHBOURING shipped frame and inverts its verdict, and this reads our
+    span off the shipped binary's own dump at `$e6fc` — the `bsr.w $f89e` ONE CALL before the frame
+    loop, which `original.py neighbour` measures and keeps. Everything else about the run is
+    unchanged: no second boot, no second binary, no build. What has to happen is that the SAME band
+    table, applied to a span from a moment one call earlier, leaves a residue enormously above the
+    instrument's own noise floor.
+
+    WHY THIS RATHER THAN A SUPPRESSED CALL. A mis-run control is a build (`bootfault`, below) and it
+    shows the CHAIN can fail; what it cannot show is that this comparison discriminates, because the
+    credits slice is upstream of the stage load — suppress it and the chain stops before a span is
+    taken at all, so the diff never runs. The mis-anchor exercises the diff itself, which is the
+    row it exists to control.
+
+    THE FLOOR IS `original.py variance`'s READING and not a number written here. Two dumps of the
+    same moment already differ by hundreds of bytes — the figure MOVES between boots and
+    `build/VARIANCE.txt` is the surface that owns it — so "the two differ" is true of every pair this
+    instrument can produce; a floor nobody has shown to discriminate is not a floor (§9).
+
+    IT IS THE SAME FLOOR `mode_neighbour` USES AND NOT THE SAME COMPARISON, which an earlier draft
+    called symmetrical. That mode counts EVERY differing byte; this one counts only the RESIDUE —
+    the bytes outside the named bands — so the numerator here is strictly the smaller of the two and
+    clearing the shared floor is strictly the harder claim. Measured, the margin is wide either way
+    (a hundred thousand-odd bytes against a floor in the thousands), which is why the asymmetry is
+    recorded rather than corrected for."""
+    reading, mis_anchored = mis_anchor
+    floor = int(reading.read_text().strip()) * MIS_ANCHOR_FLOOR_MULTIPLE
+    _, _, residue = span_diff(ours, mis_anchored.read_bytes(), base)
+    return ("...and reading it off the ANCHOR ONE CALL EARLIER breaks that",
+            residue is not None and len(residue) > floor,
+            f"{0 if residue is None else len(residue)} bytes differ outside every named band "
+            f"against ${original.STAGE_LOAD_CALL_PC:x}'s span, over a floor of {floor} "
+            f"({MIS_ANCHOR_FLOOR_MULTIPLE}x the boot-to-boot noise original.py variance measured)")
+
+
+def boot_fire_script(directory, record):
+    """The debugger script that presses and releases the stick at both of the chain's gates.
+
+    THE SAME MECHANISM THE SHIPPED SIDE USES, which is the whole reason this is honest rather than a
+    fixture: `original.py`'s `boot_script` pokes WB_JOY1_STATE at `$e556`/`$e55c` and `$e5ae`/`$e5b4`
+    — the addresses of the ORIGINAL's own two waits — and this pokes the same image byte at the
+    addresses OUR two waits report about themselves. Both sides' boots are carried past their fire
+    gates by a debugger standing in for a person, and neither side is patched.
+
+    Each wait is entered twice, once per gate, so the four stops are two PCs by two arrivals —
+    which `refuse_repeated_arrivals` accepts and two breakpoints on one arrival would not."""
+    directory = Path(directory)
+    joy1 = record["image_base"] + wb("JOY1_STATE")
+    stops = []
+    for gate in range(BOOT_FIRE_GATES):
+        arrival = gate + original.FIRST_HIT
+        stops += [(record["fire_press_pc"], arrival, f"PRESS{gate}", FIRE_DOWN),
+                  (record["fire_release_pc"], arrival, f"RELEASE{gate}", FIRE_UP)]
+    original.refuse_repeated_arrivals([(pc, hit) for pc, hit, _, _ in stops])
+    lines = [original.anchor_breakpoint(pc, hit, original.action_file(
+                 directory, f"BF{index}.INI", f"echo {BOOT_FIRE_BEACON}_{what}",
+                 original.poke_byte(joy1, value)))
+             for index, (pc, hit, what, value) in enumerate(stops)]
+    script = directory / "BOOTCMD.INI"
+    script.write_text("\n".join(lines) + "\n")
+    return script
+
+
+def measure_the_undriven_boot_chain(prg, mode):
+    """PASS ONE: boot with no poke at all, and take three things off it.
+
+    Two are the numbers the pokes below are aimed with — where GEMDOS put the image, and where the
+    two fire waits are — and the third is THE NEGATIVE CONTROL FOR THE POKES: with nothing injected
+    the chain must sit at its FIRST gate until the bound runs out, report the timeout, and never
+    reach the credits or the stage. A pass in which the chain got further on its own would mean the
+    pokes below are not what carries it.
+
+    IT RUNS ON THE M1 BOUND AND NOT THE BOOT'S, and that is a measurement rather than thrift. What
+    this pass has to reach is the FIRST fire gate — one load and one depack — and then spin out
+    `SPINS_LONG` (~6 s, ~300 vblanks) and tear down, which `RUN_VBLS` clears many times over.
+    `BOOT_RUN_VBLS` is sized for the whole five-load chain, which this pass provably never runs.
+    Measured, same binary, same host, undriven: 8.08 s at 12,000 vblanks against 4.52 s at 6,000 —
+    3.6 s a mode, and there are two boot modes. The DRIVEN pass below still gets `BOOT_RUN_VBLS`."""
+    status, log, rom = run_hatari(prg, run_vbls=RUN_VBLS,
+                                  log_name=f"hatari-{mode}-plain.log")
+    record, why = read_boot()
+    if record is None:
+        raise SystemExit(f"FAIL: the undriven pass left no readable record ({why})")
+    # THE CREDITS ROW IS VACUOUS IN THE FAULT BUILD, WHICH IT SAYS. `bootfault` compiles the credits
+    # call out entirely (-DBOOT_FAULT_SKIP_CREDITS), so `credits_result` stays BOOT_SLICE_NOT_RUN by
+    # construction there and the row cannot tell the unanswered gate from the suppression. The stage
+    # row is NOT vacuous in either mode: nothing suppresses that call, so its report is real evidence
+    # that the chain stopped upstream of it.
+    credits_vacuous = (" — VACUOUS in this build: the credits call is compiled out, so this row "
+                       "cannot tell the unanswered gate from the suppression"
+                       if mode == BOOT_FAULT_MODE else "")
+    control = [
+        ("the title slice ran on its own", record["title_result"] == LOAD_COPYLOCK_RAN,
+         f"boot_title_screen returned {record['title_result']}"),
+        # ...AND AT THE PRESS HALF OF THE FIRST GATE, which is the address it must be and no other:
+        # a run that stopped at the RELEASE half would mean something had already made the byte
+        # negative, and this pass injects nothing.
+        ("...and the FIRST fire wait timed out, at its PRESS half",
+         record["fire_waits_timed_out"] == 1 and record["fire_gates_crossed"] == 0
+         and record["fire_wait_timed_out_pc"] == record["fire_press_pc"],
+         f"{record['fire_waits_timed_out']} timed out at {record['fire_wait_timed_out_pc']:#x} "
+         f"(wait_fire_pressed is at {record['fire_press_pc']:#x}, wait_fire_released at "
+         f"{record['fire_release_pc']:#x}), {record['fire_gates_crossed']} gates crossed"),
+        ("...so the credits slice never ran",
+         record["credits_result"] == BOOT_SLICE_NOT_RUN,
+         f"boot_credits_screen's report is {record['credits_result']:#x} "
+         f"(BOOT_SLICE_NOT_RUN={BOOT_SLICE_NOT_RUN:#x})" + credits_vacuous),
+        ("...nor the stage slice", record["stage_result"] == BOOT_SLICE_NOT_RUN,
+         f"boot_load_stage's report is {record['stage_result']:#x}"),
+        ("...and no span was taken", record["span_bytes"] == 0
+         and not (DISK / BOOT_IMAGE_FILE).exists(),
+         f"span_bytes={record['span_bytes']}, {BOOT_IMAGE_FILE} "
+         f"{'present' if (DISK / BOOT_IMAGE_FILE).exists() else 'absent'}"),
+    ]
+    report(f"{mode} pass 1 — the UNDRIVEN boot, which is the fire pokes' negative control", control)
+    print(f"   TOS={rom or 'bundled EmuTOS'} hatari exit={status}; image at "
+          f"{record['image_base']:#x}, the two waits at {record['fire_press_pc']:#x} and "
+          f"{record['fire_release_pc']:#x}, {record['vbl_ticks_at_exit']} shim vblanks")
+    broken = [f"{name}: {detail}" for name, ok, detail in control if not ok]
+    if broken:
+        raise SystemExit("FAIL: the negative control did not hold, so the driven run below could "
+                         "not mean anything: " + "; ".join(broken))
+    return record, log, status
+
+
+def require_the_shipped_side(reaches_the_span_control):
+    """Everything `original.py` owes this mode, LOADED before the first boot is paid for.
+
+    Each fixture raises on its own when it is reached, and all of them used to be reached AFTER two
+    full 12,000-vblank runs — so a reader who had not run `original.py credits` paid for both boots
+    and then got a refusal instead of a report, with every green row already computed thrown away.
+    That is the hazard `resource_name`'s own comment names, one function over. The fixtures are all
+    knowable before the emulator starts, so they are asked for here.
+
+    AND THEY ARE RETURNED RATHER THAN MERELY TOUCHED. Loading each of them a second time at the point
+    of use was two readings of one fixture: the manifest line printed twice, and a dump re-made
+    between the two reads would have been VERIFIED by the first read and GRADED by the second.
+
+    `reaches_the_span_control` is False for the mis-run mode, whose chain stops before a span is
+    taken — so the mis-anchor control is never reached there and demanding its two fixtures up front
+    would refuse a mode that does not need them. `boot_span_rows` still requires them if that mode
+    ever does produce a span."""
+    screen, pens = shipped_picture(original.CREDITS_SCREEN_FILE, original.CREDITS_PENS_FILE,
+                                   BOOT_CREDITS_ANCHOR_MODE)
+    return (screen, pens, measured_dump(),
+            require_the_mis_anchor() if reaches_the_span_control else None)
+
+
+def mode_boot(mode):
+    """THE BOOT: two passes, the credits picture, and the post-boot image RECOMPUTED."""
+    control = mode == BOOT_FAULT_MODE
+    prg = BUILD / BOOT_BUILDS[mode]
+    refuse_a_stale_build(prg, mode)
+    their_screen, their_pens, theirs, mis_anchor = require_the_shipped_side(not control)
+    plain, plain_log, plain_status = measure_the_undriven_boot_chain(prg, mode)
+    problems = check_machine_health(plain_status, plain_log)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        script = boot_fire_script(tmp, plain)
+        status, log, rom = run_hatari(prg, run_vbls=BOOT_RUN_VBLS, parse=script,
+                                      log_name=f"hatari-{mode}-driven.log")
+    problems += check_machine_health(status, log)
+    record, why = read_boot()
+    stats, stats_why = read_stats()
+    for missing in (why, stats_why):
+        if missing:
+            problems.append(missing)
+    if record is None or stats is None:
+        report(mode, [])
+        raise SystemExit("FAIL: " + "; ".join(problems))
+    # THE TWO PASSES MUST AGREE ABOUT WHERE THE PROGRAM IS, which is M5's and M3's rule: a different
+    # base means the pokes went into somebody else's memory and the run below is not a drive.
+    #
+    # THE THREE NUMBERS THE POKES WERE AIMED WITH, NOT ONLY THE BASE. `image_base` is 256-aligned
+    # (wonderboy_main.c's IMAGE_ALIGN) and so is strictly COARSER than the two fire-wait PCs pass two
+    # reuses out of pass one: a TPA shift of less than 256 bytes leaves this row green while every
+    # breakpoint is set on a stale address, and the four pokes then land nowhere. M3 pins `capture_pc`
+    # across its own two passes for exactly this reason.
+    for field, what in (("image_base", "put the image at"),
+                        ("fire_press_pc", "reports wait_fire_pressed at"),
+                        ("fire_release_pc", "reports wait_fire_released at")):
+        if record[field] != plain[field]:
+            problems.append(f"the driven boot {what} {record[field]:#x} where the undriven one "
+                            f"reported {plain[field]:#x} — the pokes were aimed with the wrong "
+                            f"address")
+
+    checks = boot_checks(record, stats, their_pens, their_screen)
+    checks += boot_span_rows(record, theirs, mis_anchor)
+    report(f"{mode} (mis-run control — the CREDITS SLICE's rows and the SPAN MUST fail)" if control
+           else mode, checks)
+    print(f"   TOS={rom or 'bundled EmuTOS'} hatari exit={status}; image at "
+          f"{record['image_base']:#x}, {record['vbl_ticks_at_span']} shim vblanks to the span and "
+          f"{record['vbl_ticks_at_exit']} to the exit (full log in "
+          f"{OUT / f'hatari-{mode}-driven.log'})")
+
+    if not control:
+        problems += [f"{name}: {detail}" for name, ok, detail, _ in checks if not ok]
+        if problems:
+            raise SystemExit("FAIL: " + "; ".join(problems))
+        print("OK: THE BOOT — the reconstruction ran all three of the boot chain's composed slices "
+              "on a 68000 over the shipped program and its own five files, drew the credits screen "
+              "byte-identically to the shipped binary's, and RECOMPUTED the post-boot image that "
+              "gen_image.py has been staging as a measurement")
+        return
+
+    # THE CONTROL ASSERTS ITS PRECONDITIONS NORMALLY and inverts only the rows the suppressed slice
+    # can reach — `m2fault`'s rule, and for its reason: a control whose own run was unsound proves
+    # nothing, and "the span differs" is satisfied by a run that computed no span at all.
+    # WHAT A SUPPRESSED CREDITS SLICE CAN REACH, and it is more than that slice's own rows —
+    # measured rather than assumed. `game_restart_reset` lives inside it and is what puts
+    # WB_LEVEL_SEQ_INDEX at 0, so without it `stage_sequence_advance` consumes a DIFFERENT sequence
+    # row, asks for an overlay that is not on the drive, and `load_or_stop` stops the chain. Every
+    # stage pin and the span itself are therefore downstream of the suppression and are inverted with
+    # it. What stays asserted NORMALLY is still a real precondition set (m2fault's rule): the
+    # sixteen read-backs, the title slice's armed load and its file, both fire gates, the shifter
+    # base and the protection left disarmed.
+    breakable = (CREDITS_SLICE_ROW, STAGE_PIN_ROW, BITPLANES, PENS, SPAN_ROW)
+    preconditions = [(name, ok, detail) for name, ok, detail, key in checks if key not in breakable]
+    problems += [f"{name}: {detail}" for name, ok, detail in preconditions if not ok]
+    if problems:
+        raise SystemExit("FAIL: the control's own run is not sound, so its inverted verdict says "
+                         "nothing: " + "; ".join(problems))
+    broken = [name for name, ok, _, key in checks if key in breakable and not ok]
+    held = [name for name, ok, _, key in checks if key in breakable and ok]
+    if not broken:
+        raise SystemExit("FAIL: suppressing the credits slice broke NO row — this control cannot "
+                         "fail and proves nothing, so the rows above are not reading what they name")
+    for name in held:
+        # NAMED, NOT SWALLOWED — `mode_title`'s rule. A row the suppression happens not to move is a
+        # row this control does not cover, and saying which is the difference between an exclusion
+        # and an omission. `WB_LIFE_RESTART_ENTRY_C26` is the standing one: the shipped image already
+        # carries zero there, so neither a chain that ran nor one that stopped can move it.
+        print(f"   note {name!r} held: suppressing boot_credits_screen moves nothing this row can "
+              f"see, so this control does not cover it")
+    print(f"OK: {len(broken)} of {len(broken) + len(held)} breakable rows FAIL with "
+          f"boot_credits_screen's call suppressed ({len(held)} named above)")
+
 
 
 # ---- M5: the hardware-state vector, and the rendered picture -------------------------------------
@@ -2548,7 +3613,6 @@ VEC_MFP_ACIA = c_constant("VEC_MFP_ACIA")
 # level-4 vector back leaves this frozen, whatever else the machine appears to be doing. Not scraped
 # from anywhere, because it is TOS's number and this project defines none of TOS.
 TOS_FRCLOCK = 0x466
-LONGWORD_BYTES = 4
 
 M3_POKE_BEACON = "M3_POKE"
 M3_EXIT_BEACON = "M3_EXIT"
@@ -3071,7 +4135,8 @@ def main():
     if mode == RUNSH_MODE:
         mode_runsh()
         return
-    prg = dict(PRG_FOR_MODE, **M5_BUILDS, **M6_BUILDS, **M3_BUILDS, **TITLE_BUILDS).get(mode)
+    prg = dict(PRG_FOR_MODE, **M5_BUILDS, **M6_BUILDS, **M3_BUILDS, **TITLE_BUILDS,
+               **BOOT_BUILDS).get(mode)
     if prg is None:
         raise SystemExit(__doc__)
     prg = BUILD / prg
@@ -3082,7 +4147,20 @@ def main():
         mode_m3(mode)
         return
 
+    if mode in BOOT_BUILDS:
+        # TWO PASSES AND ITS OWN --run-vbls, so it routes before the single-boot modes below.
+        mode_boot(mode)
+        return
+
     if mode in TITLE_BUILDS:
+        # THE SHIPPED SIDE IS ASKED FOR BEFORE THE BOOT IS PAID FOR — `mode_boot`'s rule, and here
+        # for a second reason. `title_checks` used to reach `shipped_picture` on its way to
+        # `picture_rows`, so a fresh checkout with no `original.py title` behind it raised the
+        # SHIPPED-side refusal at the very point `picture_rows`' own guard exists to diagnose the
+        # LOCAL capture ("the run reached its own dump, so this is the capture write failing rather
+        # than the program dying"). Front-loading it puts each failure back under the row that
+        # explains it.
+        shipped_picture(original.TITLE_SCREEN_FILE, original.TITLE_PENS_FILE, TITLE_MODE)
         # The title build runs the boot slice ONCE and then M1's vblank count, so it is bounded by
         # the M1 run length rather than the frame builds'.
         status, log, rom = run_hatari(prg)
