@@ -40,6 +40,41 @@
 #define WB_KEY_ACTIONS_QUIT        3u  /* $58c..$598: ESC — start the music fade, then unwind into
                                         * the data-disk prompt at $e494 */
 
+/* ...AND THE LOOP'S OTHER TWO WAYS OUT, WHICH ARE NOT game_key_actions'. `game_main_loop` returns
+ * one number for all of them, so these continue the block above rather than starting a space of
+ * their own — one iteration has one ending, and a caller that had to consult two fields to learn
+ * which could get them out of step.
+ *
+ * THE CENSUS IS THE IMAGE'S, and it is what says two more codes are needed and not one. The shipped
+ * bytes hold THREE `jmp $e494.l` and FOUR `jmp $e5ba.l`, and only three of the seven are
+ * game_key_actions':
+ *
+ *   $e494   $598  game_key_actions' ESC arm         -> WB_KEY_ACTIONS_QUIT
+ *           $bdc  player_pending_event_gate's game-over box expiry (player.h,
+ *                 WB_PLAYER_GATE_DATADISK_UNWIND)   -> WB_LOOP_EXIT_DATA_DISK
+ *           $700e actor_behavior_type61's terminator, which the Copylock failure path also reaches
+ *                 (behavior.h, WB_SHOW_DATA_DISK_PROMPT) -> WB_LOOP_EXIT_DATA_DISK
+ *   $e5ba   $550  game_key_actions' round end       -> WB_KEY_ACTIONS_ROUND_END
+ *           $56e  ...and its level skip             -> WB_KEY_ACTIONS_LEVEL_SKIP
+ *           $c20  the gate's spend-a-life restart (WB_PLAYER_GATE_RESTART_UNWIND)
+ *                                                   -> WB_LOOP_EXIT_RELOAD
+ *           $1626 player_run_map_cell's triple pop (WB_PLAYER_COLLIDE_UNWIND), which the gate's own
+ *                 `bra.w $1622` at $d16 shares      -> WB_LOOP_EXIT_RELOAD
+ *
+ * The four in the second column all reach the loop through `game_latch_input_and_step_actors` — the
+ * behaviour pass hands its callee's report up unchanged (behavior.h) — and until batch 44 phase E's
+ * gate the loop DISCARDED it, so a player's death kept the frame loop turning on the own-entry
+ * build where the original had left it. TWO CODES AND NOT FOUR because the loop is reporting the
+ * TRANSFER it cannot make and there are two destinations; WHICH arm produced it is the pass's own
+ * report, and the batteries that drive each arm are the ones that name it.
+ *
+ * EVERY OTHER REPORT THE PASS CAN MAKE LEAVES THE LOOP RUNNING, and that is deliberate: a refusal,
+ * a runaway or an unreconstructed handler's entry address is a boundary of THIS PORT, not a place
+ * the original went, so there is no transfer to stand in for. ../STATUS.md §6 carries what that
+ * costs on target. */
+#define WB_LOOP_EXIT_DATA_DISK     4u  /* the pass reported a `jmp $e494.l`: show_data_disk_prompt */
+#define WB_LOOP_EXIT_RELOAD        5u  /* ...or a `jmp $e5ba.l`: the level-entry band */
+
 /* $53e — game_main_loop's SECOND leading `bsr`, and the game's whole keyboard. It turns the last
  * IKBD scancode into one of five actions (pause, quit, level skip, the cheat sequence's next step,
  * the cheat's Help toggle) and, before any of them, consumes the round-end reload request.
@@ -57,8 +92,14 @@ void game_unpause_on_key_release(uint8_t *image);
 
 /* $882 — `bsr joy1_latch_edge / bsr actor_behavior_pass / rts`, and the last of the four calls
  * game_main_loop's $66e-gated block makes. The order is the point: the latch produces the joystick
- * edge the behaviour pass then reads. */
-void game_latch_input_and_step_actors(uint8_t *image);
+ * edge the behaviour pass then reads.
+ *
+ * RETURNS THE PASS'S REPORT VERBATIM — one of behavior.h's WB_ACTOR_DISPATCH_* codes, one of
+ * player.h's WB_PLAYER_* ones, or the entry address of a handler this port does not have. The
+ * ORIGINAL drops the d0 the `bsr` leaves and this routine's own `rts` carries nothing; what travels
+ * here is the out-of-band boundary report, which is a port artefact and has to reach a caller that
+ * can act on it. WB_LOOP_EXIT_* above says which four values `game_main_loop` acts on. */
+uint32_t game_latch_input_and_step_actors(uint8_t *image);
 
 /* $50a — snap WB_SCROLL_FOLLOW_X/_Y to even pixels, rounding x UP instead of down while the
  * followed actor's WB_ACTOR_FLAG_SIDE_BIT is set. Between bg_scroll_blit and sprite_draw_pass,
@@ -132,13 +173,26 @@ void vbl_handler(uint8_t *image);
  * nothing on this side. The same standing hole set_palette has carried since batch 12. */
 void flip_screen(uint8_t *image);
 
+/* THE SCREEN-BASE SINK, exported for src/stage.c's `shifter_palette_write` reason: two routines in
+ * two files publish a buffer to $ff8201/$ff8203 — `flip_screen` from the image's own front-buffer
+ * bytes and src/boot.c's `boot_prompt_screen` from two immediates — and a second copy of the
+ * WB_ON_TARGET arm in the second file is the thing this avoids.
+ *
+ * IT TAKES THE TWO BYTES AND NOT AN ADDRESS, because that is what the hardware has: an STF's video
+ * base register is bits 23-16 and 15-8 in two registers with no low byte, both callers write them as
+ * two separate `move.b`s, and the shim's own translation shadows them one at a time
+ * (../atari/wonderboy_backend.c). A single address argument would hide the pair the backend has to
+ * see. Off target both writes are dropped, as every shifter write in this port is. */
+void shifter_screen_base_write(uint8_t high, uint8_t mid);
+
 /* $4a0 — THE FRAME LOOP, and the routine every other name in this header is called BY. One call of
  * this function is ONE ITERATION: the original's `bra.s $4a0` at $508 is where a case checkpoints
  * it, since the loop has no exit instruction at all.
  *
- * Returns one of the WB_KEY_ACTIONS_* above. WB_KEY_ACTIONS_RETURNED means the iteration ran to the
- * backward branch; anything else means `game_key_actions` unwound out of the loop into the boot
- * chain, which is a transfer this reconstruction reports rather than makes.
+ * Returns one of the WB_KEY_ACTIONS_* / WB_LOOP_EXIT_* codes above. WB_KEY_ACTIONS_RETURNED means
+ * the iteration ran to the backward branch; anything else means the original unwound out of the
+ * loop into the boot chain, which is a transfer this reconstruction reports rather than makes —
+ * from `game_key_actions` for the first three and from the behaviour pass for the last two.
  *
  * `sprites` is `sprite_draw_pass`' register file (include/blit.h) — the loop's only argument,
  * because that is the loop's only callee with a register interface. */

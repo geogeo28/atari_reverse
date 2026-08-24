@@ -24,6 +24,15 @@
 #                          suppressed and nothing else, so the run's shape — both gates, the other
 #                          two slices, the span written — is unchanged and what must redden is the
 #                          credits picture and the span's own named bands.
+#   build.sh ownplay    -> THE OWN-ENTRY BUILD: the boot build's chain AND the frame loop, with
+#                          `game_key_actions`' three endings wired to the addresses the original's
+#                          own `jmp`s name — a round end or a level skip reloads the stage, ESC
+#                          shows the data-disk prompt and walks the whole chain again. It stages
+#                          M1's image and NO palette: the boot puts the pens up itself. Headless
+#                          bounds: the fire gates spin out, the frame loop stops at its anchor
+#                          count, and the ladder takes at most OWN_LEG_LIMIT endings.
+#   build.sh ownrun     -> the same build with every bound lifted (-DSMOKE_PLAY), which is what
+#                          `atari/run.sh` launches for a person.
 #
 # Writes disk/{WB.PRG,WB.IMG} and keeps build/WB-<mode>.PRG so a check needing two builds in
 # sequence does not have to rebuild. build/ and disk/ are gitignored (repo .gitignore already covers
@@ -48,6 +57,20 @@ set -euo pipefail
 # this line rather than keeping its own list — a second spelling would let a new frame mode boot
 # without the palette it needs and report "no M2.BIN", which reads like a crash (CLAUDE.md §5).
 FRAME_MODES="m2 m5fault m5flash m6rearm m3fault play"
+
+# ...AND THE MODES THAT RUN FRAMES OVER AN IMAGE THEY COMPUTED THEMSELVES. They compile -DSMOKE_M2
+# for `run_frames` exactly as the list above does, and they stage the M1 image and no palette,
+# because their own boot chain produces both. So they are the one exception to the rule below, and
+# they are named rather than special-cased inside it.
+#
+# smoke.py DOES NOT SCRAPE THIS LINE, and an earlier draft of this comment said it did — which is
+# the kind of claim that makes a reader stop looking for the drift it promises is impossible. What
+# smoke.py holds is the two BUILD NAMES (`OWN_BUILDS`, `OWN_RUN_BUILD`), and they are pinned to this
+# line the other way round: `smoke.py ownplay` and `smoke.py ownrun` name .PRGs this script writes as
+# `WB-<mode>.PRG`, so a mode renamed here and not there fails at the .PRG lookup with the build
+# command printed. FRAME_MODES is scraped because smoke.py has to STAGE differently for those modes;
+# nothing about these two needs a list.
+OWN_ENTRY_MODES="ownplay ownrun"
 
 MODE="${1:-m1}"
 case "$MODE" in
@@ -131,27 +154,70 @@ case "$MODE" in
   # it and launches Hatari with a screen, sound and a joystick; `smoke.py play` is the half of it a
   # headless run can assert.
   play)  DEF="-DSMOKE_M2 -DSMOKE_PLAY" ;;
+  # THE OWN-ENTRY BUILD. -DSMOKE_M2 is passed EXPLICITLY rather than being implied inside the C, so
+  # a reader of this script — and the FRAME_MODES/OWN_ENTRY_MODES check below — can see that the
+  # frame loop is compiled in. What makes it an own-entry build is that it is NOT in FRAME_MODES: it
+  # stages the program plus seeds, and the boot chain it runs is what fills the rest.
+  ownplay) DEF="-DSMOKE_OWNPLAY -DSMOKE_M2" ;;
+  # ...and the one a person plays. -DSMOKE_PLAY lifts the frame count, the frame watchdog and the
+  # fire waits' spin bound in one, which is the same switch the `play` build throws.
+  ownrun)  DEF="-DSMOKE_OWNPLAY -DSMOKE_M2 -DSMOKE_PLAY" ;;
   *) echo "usage: build.sh [m1 | novbl | title | titlecredits | boot | bootfault |" \
-          "$(echo "$FRAME_MODES" | tr ' ' '|')]"
+          "$(echo "$FRAME_MODES $OWN_ENTRY_MODES" | tr ' ' '|')]"
      exit 2 ;;
 esac
 
-# Whether $MODE is one of FRAME_MODES, as a word match rather than a substring one.
-is_frame_mode() { case " $FRAME_MODES " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+# Whether $MODE is in a space-separated list, as a word match rather than a substring one.
+in_list() { case " $2 " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+is_frame_mode() { in_list "$1" "$FRAME_MODES"; }
+is_own_entry_mode() { in_list "$1" "$OWN_ENTRY_MODES"; }
 
-# ...AND THE TWO LISTS IN THIS FILE ARE PINNED TO EACH OTHER. `FRAME_MODES` is what smoke.py scrapes,
-# but the `case` above is what decides whether a mode compiles -DSMOKE_M2 — so a new frame mode added
-# to one and not the other would stage the M1 image and report "no M2.BIN", which is exactly the
-# symptom FRAME_MODES exists to prevent. Derived from $DEF rather than restated a third time.
+# ...AND THE TWO LISTS IN THIS FILE ARE PINNED TO THE `case` ABOVE, IN BOTH DIRECTIONS. `FRAME_MODES`
+# is what smoke.py scrapes, but the `case` is what decides what a mode actually compiles — so a mode
+# in one and not the other would stage the wrong image and report "no M2.BIN", which reads like a
+# crash. Every check below is derived from $DEF rather than restating a `-D` a third time.
+#
+# BOTH DIRECTIONS, because one is not a pin. The first draft asked only "does a -DSMOKE_M2 build
+# appear in a list", so a mode LISTED in either list that had lost its `-D` passed silently — an
+# own-entry mode without -DSMOKE_OWNPLAY builds an M1 binary under an own-entry name, and smoke.py
+# then reports "no OWN.BIN" about a build that never had a ladder in it.
+has_define() { case " $DEF " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+
 case "$DEF" in
-  *-DSMOKE_M2*) is_frame_mode "$MODE" || {
-      echo "ERROR: mode '$MODE' compiles -DSMOKE_M2 but is not in FRAME_MODES=\"$FRAME_MODES\"."
-      echo "       It would be built as a frame binary and staged with the M1 image and no palette."
+  *-DSMOKE_M2*) is_frame_mode "$MODE" || is_own_entry_mode "$MODE" || {
+      echo "ERROR: mode '$MODE' compiles -DSMOKE_M2 but is in neither FRAME_MODES=\"$FRAME_MODES\""
+      echo "       nor OWN_ENTRY_MODES=\"$OWN_ENTRY_MODES\". It would be built as a frame binary"
+      echo "       and staged with the M1 image and no palette."
       exit 1; } ;;
   *) ! is_frame_mode "$MODE" || {
       echo "ERROR: mode '$MODE' is in FRAME_MODES but does not compile -DSMOKE_M2."
+      exit 1; }
+     ! is_own_entry_mode "$MODE" || {
+      echo "ERROR: mode '$MODE' is in OWN_ENTRY_MODES but does not compile -DSMOKE_M2, so it has no"
+      echo "       frame loop — the ladder would boot the chain and have nothing to enter."
       exit 1; } ;;
 esac
+# ...and the other half of the own-entry pin: the list's members must carry the define that MAKES
+# them own-entry builds. -DSMOKE_M2 alone is a frame build under an own-entry name.
+if is_own_entry_mode "$MODE" && ! has_define "-DSMOKE_OWNPLAY"; then
+  echo "ERROR: mode '$MODE' is in OWN_ENTRY_MODES but does not compile -DSMOKE_OWNPLAY — it would"
+  echo "       build a frame binary, and smoke.py would report \"no OWN.BIN\" about a run that"
+  echo "       never had a ladder in it."
+  exit 1
+fi
+if has_define "-DSMOKE_OWNPLAY" && ! is_own_entry_mode "$MODE"; then
+  echo "ERROR: mode '$MODE' compiles -DSMOKE_OWNPLAY but is not in OWN_ENTRY_MODES=\"$OWN_ENTRY_MODES\","
+  echo "       so it would be staged as a plain build."
+  exit 1
+fi
+# ...and the two lists must not overlap, or `is_frame_mode` would send an own-entry build to the
+# dump. Checked rather than trusted, because the two are edited for different reasons.
+for OWN in $OWN_ENTRY_MODES; do
+  ! is_frame_mode "$OWN" || {
+    echo "ERROR: '$OWN' is in BOTH FRAME_MODES and OWN_ENTRY_MODES — it would be staged with the"
+    echo "       original's measured RAM, which is exactly what an own-entry build must not have."
+    exit 1; }
+done
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REC="$(cd "$HERE/.." && pwd)"                             # recreate/

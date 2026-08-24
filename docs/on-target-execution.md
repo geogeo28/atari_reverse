@@ -162,7 +162,13 @@ add a seam, the core/no-op side must have **no image effect** (or the oracle-mod
 differential test still holds; put the real trap/hardware poke only in the PRG override, and gate it
 on `hw_ready` if it touches supervisor-only I/O space (`$ffff8xxx`, `$fffffcxx`) before `Super(0)`.
 
-## Bug taxonomy (each one hit in a real build — 1-5 in BuggyBoy, 6-8 in Joust, 9 in Wonder Boy)
+## Bug taxonomy (1-5 in BuggyBoy, 6-8 in Joust, 9-10 in Wonder Boy)
+
+Entries **1-9 were each HIT in a real build** and are written from the wreckage. **Entry 10 was
+not**: it is the one shape here that a review caught at the design stage, before the build that
+would have carried it shipped — which is why it reads as a method rather than as a post-mortem, and
+why it is worth having anyway. A shape that is cheap to avoid once you have seen it named is exactly
+what a taxonomy is for; the honest label there is "avoided", not "survived".
 
 ### 1. Endianness tax — byte-shuffle accessors on a big-endian target
 
@@ -428,6 +434,51 @@ restores it at another — supervisor mode, an interrupt mask, a vector — shou
 it OWNS, not from one the ABI happens to preserve. And a teardown defect is invisible to every
 surface that samples state before teardown, so the surface that catches this class is the exit status
 and the machine-health scan of the merged stream, not the record the program writes.
+
+### 10. An entry register seeded from a dump — find its PRODUCER instead
+
+**Not hit — caught in review.** Wonder Boy's own-entry build was designed with the producer already
+found, so no build ever shipped the seed this entry warns about. What makes it worth writing down is
+that the seed would have been INVISIBLE: the number is correct either way, so every surface stays
+green whether it was produced or copied, and nothing in a passing run would ever have raised the
+question.
+
+**The bug shape.** A reconstruction that is `jmp`ed into inherits registers, and a port with no
+registers has to get them from somewhere. Wonder Boy's frame loop takes one: `sprite_draw_pass`'
+`unwind` (a5). Every frame build seeded it from `ORIGREGS.txt` — the ORIGINAL's a5, measured off the
+emulator at the boot's last instruction — which is exactly right while the build is a DIFFERENTIAL
+against that boot. **The moment a build claims to boot itself, that seed is the whole claim leaning
+on the measurement it exists to retire**, and nothing in a green run says so: the number is correct,
+so every surface stays green whether it was produced or copied.
+
+**The method, and it is three cheap steps.**
+
+1. **Census the writers.** Grep the disassembly for every instruction whose destination is that
+   register (`,a5` at full width, `lea`/`movea`/`movem` alike) and intersect with what the entry path
+   reaches. Wonder Boy's hinge has exactly one: `lea $21e90.l,a5` inside `bg_build_buffer`.
+2. **Check the ARM is taken, and say what forces it.** That `lea` sits behind a `tst.w` on a flag the
+   caller sets from `cmpa.l #<tile bank>,a6` — so the value is produced only when the shipped bank is
+   the one handed in. A row that asserts a6 is what makes the a5 row mean anything.
+3. **Ask the ORACLE.** A differential harness that hands back the oracle's exit register file
+   (`emu.run`'s `REPORTED_REGS`) can be asked directly: run the entry routine's whole range from the
+   program image and assert the register at the transfer. Wonder Boy's is `$21e90` on all three arms
+   — which is the `lea`'s own operand, and a named constant the port already had for other reasons.
+
+**What that buys.** The build compiles the CONSTANT ITS OWN CODE NAMES, and the dump becomes a
+WITNESS — cross-checked when one happens to be present, and explicitly not consulted when it is not.
+The row says which it did, rather than skipping silently.
+
+**And say what the register is worth.** Wonder Boy's a5 is never dereferenced by the frame loop — it
+is decremented by off-screen sprites and read by nothing — so no observable byte depends on its
+value. That is worth measuring and writing down: it converts "we must get this exactly right" into
+"we carry it because the original carries it", which is a different maintenance obligation. The
+opposite answer (a register the port really does spend) is the one that makes step 3 load-bearing.
+
+**The general rule.** *Any constant a port takes from a measurement is a claim about the original
+that nothing re-checks.* Find the instruction that produces it, name that instruction's operand, and
+keep the measurement as a cross-check. If it genuinely cannot be produced — a value the machine
+supplies rather than the program — say so where the seed is, and name the surface that would notice
+if it drifted.
 
 ## The observable surfaces
 

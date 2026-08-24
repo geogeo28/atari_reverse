@@ -1,13 +1,16 @@
-"""THE BOOT CHAIN COMPOSED, differentially: the three slices between the boot's fire waits.
+"""THE BOOT CHAIN COMPOSED, differentially: the four slices between the boot's fire waits.
 
 test_boot.py verifies the boot's routines ONE AT A TIME — the block movers, the two installers, the
 load path, the dispatcher's three pieces. Every one of them is green and none of them says what the
 boot DOES with them. This battery is the other half: src/boot.c's `boot_title_screen`,
-`boot_credits_screen` and `boot_load_stage` are the runs of those calls in the boot's own order with
-the boot's own operands, and each case here enters the ORACLE at that slice's first instruction, runs
-it to the instruction the slice ends at, and requires the whole image to agree.
+`boot_credits_screen`, `boot_load_stage` and `boot_prompt_screen` are the runs of those calls in the
+boot's own order with the boot's own operands, and each case here enters the ORACLE at that slice's
+first instruction, runs it to the instruction the slice ends at, and requires the whole image to
+agree. The fourth is the ESC ending's — `show_data_disk_prompt` at $e494, which no run of the other
+three reaches — and it is here because it is cut by a wait of the same shape and is composed of the
+same calls.
 
-WHY THREE AND WHY THERE. $e4e6's continuation breaks three times for a FIRE WAIT — `clr.b
+WHY THESE CUTS AND WHY THERE. $e4e6's continuation breaks three times for a FIRE WAIT — `clr.b
 WB_JOY1_STATE`, then two `tst.b` spins on a byte only the IKBD interrupt writes. A spin on a byte no
 instruction of the run stores is the shim's and the schedule model's business, not C's, so the waits
 are the boundaries and each slice runs from one to the next. WB_BOOT_*_AT / _END in
@@ -88,6 +91,11 @@ TITLE_END = wb("BOOT_TITLE_END")
 CREDITS_AT = wb("BOOT_CREDITS_AT")
 CREDITS_PEN_AT = wb("BOOT_CREDITS_PEN_AT")
 CREDITS_END = wb("BOOT_CREDITS_END")
+PROMPT_AT = wb("BOOT_PROMPT_AT")
+PROMPT_PALETTE_AT = wb("BOOT_PROMPT_PALETTE_AT")
+PROMPT_END = wb("BOOT_PROMPT_END")
+PROMPT_BASE_HI_AT = wb("BOOT_PROMPT_BASE_HI_AT")
+PROMPT_BASE_MID_AT = wb("BOOT_PROMPT_BASE_MID_AT")
 STAGE_AT = wb("BOOT_STAGE_AT")
 STAGE_SPRITES_AT = wb("BOOT_STAGE_SPRITES_AT")
 STAGE_JMP_AT = wb("BOOT_STAGE_JMP_AT")
@@ -103,6 +111,13 @@ CREDITS_DEPACK_DEST = wb("CREDITS_DEPACK_DEST")
 # case below states instead is the offset's own claim — that the row lies INSIDE the prefix, so the
 # palette words are not part of the picture; and what pins the destinations themselves is the
 # differential (depacking two bytes high is a caught mutant, ../STATUS.md §4's T2 and S4).
+# ...and the same holds for the PROMPT slice's three operands: WB_PROMPT_SCREEN_BASE,
+# WB_PROMPT_DEPACK_DEST and WB_PROMPT_PALETTE_SRC are all DERIVED #defines (WB_SCREEN_HIGH and the
+# credits pair, because the prompt inflates the same shape into the same buffer), so layout.py
+# cannot scrape them and this file has no independent value to cross-pin them against. What it
+# states instead is the claim each derivation rests on: the picture case below says the geometry
+# holds for DATADISK.RAD, and the base case says the two shipped `move.b` immediates really do
+# compose SCREEN_HIGH.
 PICTURE_PALETTE_OFF = wb("RAD_PICTURE_PALETTE_OFF")
 PICTURE_PREFIX = wb("RAD_PICTURE_PREFIX")
 RAD_SAVED_SP = wb("RAD_SAVED_SP")
@@ -123,6 +138,9 @@ PALETTE_STRIDE = wb("PALETTE_ROW_BYTES") // wb("PALETTE_COLOURS")
 # ENTRY_INSNS: a constant that drifted fails at collection instead of inside a two-million-
 # instruction run.
 CUT_INSNS = {
+    PROMPT_AT: b"\x61\x00\x03\x5e",                       # bsr.w $e7f4       (clear_palette)
+    PROMPT_PALETTE_AT: b"\x4e\xb9\x00\x00\xf9\x44",        # jsr $f944.l       (set_palette)
+    PROMPT_END: b"\x42\x38\x08\x77",                      # clr.b $877.w      (the fourth wait)
     TITLE_AT: b"\x20\x3c\x00\x00\x00\x00",              # move.l #$0,d0     (WB_RESOURCE_TITLESCR)
     TITLE_SONG_AT: b"\x4e\x90",                         # jsr (a0)          (the sound module)
     TITLE_END: b"\x42\x38\x08\x77",                     # clr.b $877.w      (the fire wait)
@@ -137,6 +155,7 @@ CUT_INSNS = {
 # The measured instruction counts, so each cap stays a cap. The depacker dominates every one of these
 # runs and its count is a property of the STREAM rather than of a geometry a case can derive —
 # test_rad_depack.py caps itself the same way and for the same reason.
+PROMPT_INSN_CAP = 1_000_000         # measured 168,262
 TITLE_INSN_CAP = 1_500_000          # measured 735,940
 CREDITS_INSN_CAP = 1_000_000        # measured 394,190
 # ...the last of them measured on the arm that also installs the sprites, over the TRUNCATED
@@ -180,6 +199,9 @@ def test_every_cut_is_the_instruction_this_battery_believes_is_there(at):
 
 _IMM_AT = 2                     # every one of these forms carries its immediate word at +2...
 _ABS_AT = 4                     # ...and `move.w #imm,abs.l` its destination longword at +4
+_BYTE_IMM_AT = 3                # `move.b #imm,abs.l` still spends a whole word on its immediate,
+                                # so the BYTE the 68000 stores is the second half of it
+BYTE_LEN = 1
 
 
 def _operand(at, off, length):
@@ -216,6 +238,41 @@ def test_the_title_song_is_the_one_the_original_asks_for():
         f"WB_TITLE_SONG is {TITLE_SONG}")
 
 
+# `move.b #imm,abs.l`, the form both of the prompt's base writes take.
+_MOVE_B_IMM_TO_ABS = b"\x13\xfc"
+
+# (the instruction, the register it must name, how far up SCREEN_HIGH its byte comes from). The two
+# halves of one address in two instructions, which is what an STF's video base register is
+# (../atari/wonderboy_backend.c): bits 23-16 and 15-8, and no low byte at all.
+PROMPT_BASE_WRITES = (
+    (PROMPT_BASE_HI_AT, wb("SHIFTER_SCREEN_BASE_HIGH"), 16),
+    (PROMPT_BASE_MID_AT, wb("SHIFTER_SCREEN_BASE_MID"), 8),
+)
+
+
+@pytest.mark.parametrize("at,register,shift", PROMPT_BASE_WRITES,
+                         ids=["$ff8201 (bits 23-16)", "$ff8203 (bits 15-8)"])
+def test_the_prompt_points_the_shifter_at_the_buffer_its_picture_lands_in(at, register, shift):
+    """$e498 and $e4a0, decoded rather than re-typed — the ONE claim in this slice that no memory
+    differential can make. Both writes go to the shifter, off the loaded image, so the oracle drops
+    them and src/boot.c's sink compiles to nothing off target; the credits pen's cell (§4's C3) one
+    slice over is the same hole. WHAT IS STATED HERE is the write's IDENTITY: that the register is
+    the one WB_SHIFTER_SCREEN_BASE_* names, and that the byte is the corresponding half of
+    WB_SCREEN_HIGH — which is WB_PROMPT_SCREEN_BASE, and which the picture case below independently
+    shows is the buffer WB_PROMPT_DEPACK_DEST inflates into. Together those two say the base and the
+    depack are one arrangement, which is the thing a derived #define cannot say for itself."""
+    assert bytes(harness.BASE_IMAGE[at:at + len(_MOVE_B_IMM_TO_ABS)]) == _MOVE_B_IMM_TO_ABS, (
+        f"{at:#x} is not a `move.b #imm,abs.l`, so WB_BOOT_PROMPT_BASE_* does not point at one of "
+        f"the two instructions that publish the screen base")
+    assert _operand(at, _ABS_AT, LONGWORD_LEN) == register, (
+        f"{at:#x} writes {_operand(at, _ABS_AT, LONGWORD_LEN):#x}, not the shifter register "
+        f"{register:#x} the port's screen-base sink sends this byte to")
+    assert _operand(at, _BYTE_IMM_AT, BYTE_LEN) == (SCREEN_HIGH >> shift) & 0xff, (
+        f"{at:#x} publishes {_operand(at, _BYTE_IMM_AT, BYTE_LEN):#x} where bits {shift + 7}-{shift} "
+        f"of WB_SCREEN_HIGH ({SCREEN_HIGH:#x}) are {(SCREEN_HIGH >> shift) & 0xff:#x} — the prompt "
+        f"would show a buffer its own depack does not fill")
+
+
 def test_the_stage_slice_starts_where_the_name_map_puts_the_dispatcher():
     """WB_BOOT_STAGE_AT has no `var` of its own and cannot have one: ../../names.txt already gives
     $e5ba to `stage_sequence_advance`, which is this slice's FIRST piece and had the address first
@@ -231,9 +288,9 @@ def test_the_stage_slice_starts_where_the_name_map_puts_the_dispatcher():
 
 PICTURES = (("TITLESCR.RAD", "disk1", TITLE_DEPACK_DEST, SCREEN_LOW),
             ("CREDITS.RAD", "disk1", CREDITS_DEPACK_DEST, SCREEN_HIGH),
-            # ...and the third picture, which no slice here draws: show_data_disk_prompt inflates
-            # DATADISK.RAD to the CREDITS pair through the same three calls, so it is the control
-            # that says the shape below belongs to the FORMAT and not to one file.
+            # ...and the third picture, which `boot_prompt_screen` draws through the same three
+            # calls into the same buffer. Its row is what says WB_PROMPT_DEPACK_DEST — a derived
+            # #define spelt as the credits one — is right for THIS file and not only for CREDITS.RAD.
             ("DATADISK.RAD", DISK2, CREDITS_DEPACK_DEST, SCREEN_HIGH))
 
 
@@ -360,6 +417,81 @@ def _run_slice(entry, name, stop_pc, transfer, pokes, allowed, what, max_insns, 
         f"{what}: {len(stray)} write(s) outside {[(hex(a), n) for a, n in allowed]}, e.g. "
         f"{harness.label(stray[0])} @ {stray[0]:#x}")
     return info
+
+
+# --- the prompt slice ($e494..$e4d4) --------------------------------------------------------------
+#
+# THE ONE SLICE THE BOOT DOES NOT RUN. `show_data_disk_prompt` is entered by a `jmp $e494.l`, and
+# the shipped image holds THREE of them — $598 (ESC's `game_key_actions` arm, the only one that
+# fades the music first), $bdc (the player gate's game-over box expiring) and $700e (slot 61's
+# message terminator, which the Copylock failure path also reaches). ../src/boot.c has the census.
+# Its own fire wait falls through into $e4e6, so the slice is each of those restarts' first half and
+# the boot continuation is its second. Same shape as the title slice and a shorter one: a clear, a
+# base publish, a load, a depack and a palette, with nothing armed and no sound.
+#
+# THE CUTS BELOW ARE THE SLICE'S ($e494..$e4d4) AND NOT THE ROUTINE'S PROMPT HALF ($e494..$e4e4):
+# $e4d6..$e4e4 is the fire wait, which is hardware and is the shim's.
+
+DATADISK = BIN / DISK2 / "DATADISK.RAD"
+
+
+def _prompt_pokes():
+    """Just the staged file. NOTHING ELSE NEEDS SEEDING and that is a property of the slice rather
+    than an omission: its two hardware calls (`clear_palette`, the base publish) write no image byte
+    at all, and the other three write the load buffer, the picture and `load_resource_by_index`'s two
+    retry longwords — none of which the shipped image already holds the post-run value of. The
+    credits slice needs `_reset_pokes` because fifteen of `game_restart_reset`'s stores land on bytes
+    that already hold what it writes; this slice has no such store."""
+    return seam_pokes([("DATADISK.RAD", DATADISK.read_bytes())])
+
+
+def _prompt_allowed():
+    """The prompt slice's write set, stated EXACTLY — the title slice's discipline, and it is shorter
+    here because two of this slice's five calls touch no image byte. So a composition that also
+    cleared a screen, or copied one down onto the other buffer as the credits slice does, fails on
+    the band it had no business touching as well as on the bytes."""
+    return [(CREDITS_DEPACK_DEST, PICTURE_PREFIX + SCREEN_BYTES),      # $e4c6's depack
+            (RESOURCE_LOAD_BUFFER, DATADISK.stat().st_size),          # ...and where it read it from
+            (RAD_SAVED_SP, RAD_SAVED_SP_LEN),                         # the depacker's parked a7
+            (LOAD_RETRY_INDEX, LONGWORD_LEN), (LOAD_RETRY_DEST, LONGWORD_LEN),
+            (harness.OS_FS_TABLE, harness.OS_FS_ENTRY)]
+
+
+def test_the_prompt_slice_draws_the_data_disk_screen():
+    """$e494..$e4d4 whole, over the shipped DATADISK.RAD, with the write set stated exactly.
+
+    IT ARMS NOTHING, which is the row below: WB_COPYLOCK_ARM_FLAG is never written on this path, so
+    the slice reports WB_LOAD_OK and the protection is not claimed to have run. That distinguishes it
+    from the title slice, whose otherwise identical three calls are preceded by `$e51e`."""
+    pokes = _prompt_pokes()
+    info = _run_slice(PROMPT_AT, "boot_prompt_screen", PROMPT_END, PROMPT_PALETTE_AT,
+                      pokes, _prompt_allowed(),
+                      "boot_prompt_screen over DATADISK.RAD", PROMPT_INSN_CAP)
+    assert info["ret"] == LOAD_OK, (
+        f"the slice reported {info['ret']}, not WB_LOAD_OK — nothing on this path arms the "
+        f"protection, so no load of it can take load_resource_by_index's armed arm")
+
+
+def test_the_prompt_slice_leaves_the_other_buffer_alone():
+    """WHY THIS SLICE NEEDS NO `copy_screen`, as a property rather than as a band in the list above.
+
+    `boot_credits_screen` inflates into WB_SCREEN_HIGH and then copies the picture DOWN onto
+    WB_SCREEN_LOW, because the prologue pointed the shifter at the low buffer. This slice points the
+    shifter at the HIGH one first ($e498/$e4a0, the two operand cases above) and so shows the buffer
+    it inflates into — which is only true while WB_SCREEN_LOW comes out untouched. Candidate-only,
+    and sound because the differential above carries the same region to the original byte for byte;
+    what this adds is the claim said in its own terms, so a port that grew a copy fails on a row
+    that names the reason instead of only on 32000 bytes of diff."""
+    poison = bytes([POISON]) * LONGWORD_LEN
+    pokes = {**_prompt_pokes(), SCREEN_LOW: poison}
+    ret, image = leaf.run_candidate_only(_slice_glue("boot_prompt_screen"), pokes)
+    assert ret == LOAD_OK, f"the slice stopped early ({ret}), so it never drew anything"
+    assert bytes(image[SCREEN_LOW:SCREEN_LOW + len(poison)]) == poison, (
+        "the prompt slice wrote WB_SCREEN_LOW — it copied its picture down onto the buffer the "
+        "credits slice copies onto, and the shifter is not pointed there")
+    assert bytes(image[SCREEN_HIGH:SCREEN_HIGH + SCREEN_BYTES]) != bytes(SCREEN_BYTES), (
+        "WB_SCREEN_HIGH came out all zeros, so this slice drew no picture at all and the assertion "
+        "above is about an empty buffer")
 
 
 # --- the title slice ($e512..$e550) ---------------------------------------------------------------
@@ -574,6 +706,46 @@ def test_the_sprites_file_is_staged_as_the_prefix_the_model_can_hold():
         "needs to be and the arm reads more fabricated bytes than it has to")
 
 
+# THE a5 THE BOOT LEAVES FOR THE FRAME LOOP, and where it comes from.
+#
+# `sprite_draw_pass` has one register that is a real input — `blit.unwind`, a5 (../include/blit.h) —
+# and ../atari/'s frame builds seed it from `build/ORIGREGS.txt`, the ORIGINAL's measured A5 at
+# `$f8b4`. An OWN-ENTRY build has no dump to take it from, so it has to know who PRODUCES it, and
+# these two rows are that answer measured rather than argued.
+#
+# THE PRODUCER IS `bg_build_buffer`'s `lea $21e90.l,a5` at $fa5e — the one instruction in the hinge
+# that writes a5, run once per map cell on the arm the shipped tile bank takes. Its operand is
+# WB_TILE_INDEX_TABLE, which is the table ../src/stage.c's `tile_number` already reads through, so
+# the own-entry build's `M2_ENTRY_UNWIND` is not a new constant and not a copied measurement.
+#
+# WHAT THE ORACLE IS ASKED. Every `_run_stage` case below runs the SHIPPED code from $e5ba to the
+# `jmp $4a0.w`, so `info["a5"]` is the 68000's own a5 at the instant the frame loop is entered — on
+# a run staged from the program image alone. Measured: $21e90 on all three arms, and $1d43e in a6,
+# which is WB_TILE_BITMAPS and therefore the reason the indexed arm was the one taken.
+BOOT_ENTRY_UNWIND = wb("TILE_INDEX_TABLE")
+TILE_BITMAPS = wb("TILE_BITMAPS")
+
+
+def _assert_the_boot_produces_the_frame_loops_unwind(info, what):
+    """a5 and a6 at the `jmp $4a0.w`, out of the oracle's own register file.
+
+    NOT A CLAIM ABOUT THE PORT — nothing in ../src/ keeps a5, and the C composition has no such
+    register — but about what the ORIGINAL leaves there, which is the fact ../atari/'s own-entry
+    build needs and would otherwise have to take from a dump. The a6 row is what makes the a5 row
+    mean something: `stage_load_window`'s `cmpa.l #$1d43e,a6` is what clears WB_STAGE_RAW_TILE_INDEX
+    and so what makes `$fa5e` execute at all, and a run handed a different bank would leave a5 at
+    whatever it happened to hold."""
+    regs = info["regs"]      # emu.REPORTED_REGS — the ORACLE's d0..d7/a0..a6 at the stop
+    assert regs["a6"] == TILE_BITMAPS, (
+        f"{what}: the hinge was handed a tile bank of {regs['a6']:#x} and not WB_TILE_BITMAPS "
+        f"({TILE_BITMAPS:#x}), so `bg_build_buffer`'s indexed arm need not have run and the a5 "
+        f"below would be whatever the boot left rather than what it produced")
+    assert regs["a5"] == BOOT_ENTRY_UNWIND, (
+        f"{what}: the original entered game_main_loop with a5 = {regs['a5']:#x}, and $fa5e's "
+        f"`lea $21e90.l,a5` makes it WB_TILE_INDEX_TABLE ({BOOT_ENTRY_UNWIND:#x}) — the number "
+        f"../atari/wonderboy_main.c compiles into the own-entry build as M2_ENTRY_UNWIND")
+
+
 def _run_stage(row, reentry, sprites, what):
     pokes = _stage_pokes(row, reentry, sprites)
     info = _run_slice(STAGE_AT, "boot_load_stage", STAGE_END, STAGE_JMP_AT,
@@ -583,6 +755,7 @@ def _run_stage(row, reentry, sprites, what):
     assert info["ret"] == (LOAD_COPYLOCK_RAN if sprites else LOAD_OK), (
         f"{what}: the slice reported {info['ret']}, which is not what the "
         f"{'armed' if sprites else 'one-load'} arm gives")
+    _assert_the_boot_produces_the_frame_loops_unwind(info, what)
     return info
 
 
@@ -683,6 +856,8 @@ def test_the_resource_table_survives_the_overlay_that_inflates_over_it():
 _STOPPED_BANDS = {
     "boot_title_screen": ((COPYLOCK_ARM_FLAG, COPYLOCK_ARM_FLAG_LEN),),        # $e51e's arming
     "boot_credits_screen": (),                                                 # nothing at all
+    # ...nor this one: the clear and the base publish ahead of its load are both off the image.
+    "boot_prompt_screen": (),
     "boot_load_stage": ((wb("ACTOR_PLATFORM_RIDDEN"), WORD_LEN),               # ...and $e5ba's
                         (LEVEL_SEQ_INDEX, WORD_LEN),                           #    three stores
                         (wb("STAGE_SECOND_LOAD_FLAG"), 1)),
@@ -700,6 +875,11 @@ _LOAD_BANDS = ((LOAD_RETRY_INDEX, LONGWORD_LEN), (LOAD_RETRY_DEST, LONGWORD_LEN)
 _STOPPED_EVIDENCE = {
     "boot_title_screen": (COPYLOCK_ARM_FLAG, COPYLOCK_ARM_FLAG_LEN),   # $e51e armed the protection
     "boot_credits_screen": None,                                       # it does nothing beforehand
+    # ...and this one does two things beforehand, NEITHER of which an image byte can witness — a
+    # palette clear and a screen-base publish, both to registers off the loaded image. So its
+    # refusal case is bounded and has no positive evidence to offer, which is said rather than
+    # papered over: what the run above pins is that the slice stops, not where it stopped from.
+    "boot_prompt_screen": None,
     "boot_load_stage": (LEVEL_SEQ_INDEX, WORD_LEN),                    # $e5cc stepped the sequence
 }
 # ...and WHAT THE FLAG IS LEFT HOLDING, which is a residue and not a permission. `load_resource_by_
@@ -711,6 +891,7 @@ _STOPPED_EVIDENCE = {
 # True = the slice armed before the load this case refuses.
 _STOPPED_ARMED = {"boot_title_screen": True,        # $e51e arms, and the refused load is that one
                   "boot_credits_screen": False,     # nothing on this slice ever arms
+                  "boot_prompt_screen": False,      # ...nor this one
                   "boot_load_stage": False}         # the FIRST load is refused; $e6dc is far past it
 
 
@@ -829,6 +1010,7 @@ def test_the_stage_slice_stops_at_whichever_of_its_three_loads_is_refused(refuse
 _SERVED_CASE = {
     "boot_title_screen": (_title_pokes, TITLE_DEPACK_DEST),
     "boot_credits_screen": (_credits_pokes, CREDITS_DEPACK_DEST),
+    "boot_prompt_screen": (_prompt_pokes, CREDITS_DEPACK_DEST),
     "boot_load_stage": (lambda: _stage_pokes(0, reentry=1, sprites=False),
                         wb("OVERLAY_DEPACK_DEST")),
 }

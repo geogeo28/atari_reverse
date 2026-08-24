@@ -71,18 +71,30 @@ uint32_t stage_sequence_resource(uint8_t *image, uint32_t row);
 void stage_sequence_apply_row(uint8_t *image, uint32_t row);
 
 
-/* THE THREE COMPOSED SLICES ($e512 / $e562 / $e5ba), batch 44 phase C. Each is a run of the calls
+/* THE FOUR COMPOSED SLICES ($e494 / $e512 / $e562 / $e5ba), batch 44 phases C and E. Each is a run
+ * of the calls
  * above and of src/stage.c's, cut where the boot's own FIRE WAITS cut it: `clr.b WB_JOY1_STATE`
  * and two `tst.b` spins on a byte only the IKBD interrupt writes. The waits are hardware and stay
  * the shim's; everything between them is here. src/boot.c says what each one deviates from, and
  * the cut addresses are WB_BOOT_* in wonderboy.h, so the reconstruction's own header and its
- * differential cannot disagree about where a slice begins or ends. (../atari/ does not name them
- * yet — it shares WB_TITLE_DEPACK_DEST and WB_TITLE_PALETTE_SRC, and will want these when the
- * on-target rung calls the slices.)
+ * differential cannot disagree about where a slice begins or ends.
  *
- * ALL THREE RETURN ONE OF THE WB_LOAD_* CODES, which is `load_resource_by_index`'s own report
+ * THREE OF THEM ARE THE BOOT AND THE FOURTH IS AN ENDING'S — THREE ENDINGS', in fact.
+ * `boot_prompt_screen` is never reached from the other three: what reaches it is a `jmp $e494.l`,
+ * and the image holds three of those (ESC's `game_key_actions` arm at $598, the player gate's
+ * game-over expiry at $bdc, and slot 61's terminator at $700e — src/boot.c has the census). The
+ * prompt's own fire wait then falls through into the boot continuation, so the chain a player walks
+ * is prompt, then title, then credits, then stage, and only the last three are what the machine
+ * does on its way in. ../atari/'s own-entry build calls all four and wires all three endings.
+ *
+ * ALL FOUR RETURN ONE OF THE WB_LOAD_* CODES, which is `load_resource_by_index`'s own report
  * raised to the strongest thing any of the slice's loads said. Out of band for the same reason its
  * are: the original leaves d0 holding whatever its last call left and nothing reads it. */
+
+/* $e494..$e4d4 — clear the palette, point the shifter at WB_SCREEN_HIGH, load DATADISK.RAD, inflate
+ * it into that buffer and put its palette up. It arms nothing, so it reports WB_LOAD_OK or
+ * WB_LOAD_DISK_ERROR and never WB_LOAD_COPYLOCK_RAN. */
+uint32_t boot_prompt_screen(uint8_t *image);
 
 /* $e512..$e550 — arm the protection, load TITLESCR.RAD, inflate it into WB_SCREEN_LOW, put its
  * palette on the shifter, start WB_TITLE_SONG. The video/vector prologue at $e4e6 is NOT here. */

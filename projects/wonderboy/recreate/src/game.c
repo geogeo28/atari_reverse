@@ -15,6 +15,7 @@
 #include "bus.h"
 #include "hud.h"
 #include "input.h"
+#include "player.h"  /* the WB_PLAYER_* unwind codes the behaviour pass hands up — see the loop */
 #include "scene.h"
 #include "scroll.h"
 #include "sound.h"
@@ -156,11 +157,15 @@ void game_unpause_on_key_release(uint8_t *image) {
  * below it is what reads the edge that shift produces. game_main_loop's $66e-gated block reaches it
  * last of the four, so a PAUSED frame runs neither.
  *
- * The pass's own d0 (which exit its walk took) is dropped here: `bsr $8d0 / rts` leaves it in the
- * register and nothing up the chain reads it. */
-void game_latch_input_and_step_actors(uint8_t *image) {
+ * THE ORIGINAL'S d0 IS DROPPED AND THE PORT'S REPORT IS NOT, and the two are different things.
+ * `bsr $8d0 / rts` leaves the walk's d0 in the register and nothing up the chain reads it — that is
+ * the original, and it is why this routine takes no notice of it. What this returns is the
+ * out-of-band boundary report the reconstruction invented (../include/behavior.h), and four of its
+ * values are the original TRANSFERRING out of the frame loop; game_main_loop is where those four
+ * are acted on. */
+uint32_t game_latch_input_and_step_actors(uint8_t *image) {
     joy1_latch_edge(image);
-    (void)actor_behavior_pass(image);
+    return actor_behavior_pass(image);
 }
 
 
@@ -389,6 +394,13 @@ static void shifter_write_byte(uint32_t reg, uint8_t value) { (void)reg; (void)v
 static void shifter_write_word(uint32_t reg, uint16_t value) { (void)reg; (void)value; }
 #endif
 
+/* ...and the one of those two that a second file needs. See include/game.h for why it takes the
+ * pair of bytes rather than the address they compose. */
+void shifter_screen_base_write(uint8_t high, uint8_t mid) {
+    shifter_write_byte(WB_SHIFTER_SCREEN_BASE_HIGH, high);
+    shifter_write_byte(WB_SHIFTER_SCREEN_BASE_MID, mid);
+}
+
 /* $6aa..$6b4 — spin while WB_VBL_COUNTER is below WB_VBL_COUNTER_READY, as a SIGNED word: `cmpi.w
  * #$1,d0 / blt.s`. Nothing in this routine raises the counter; vbl_handler does, fifty times a
  * second, and off target the case's schedule is what stands in for it. */
@@ -427,10 +439,8 @@ void flip_screen(uint8_t *image) {
     /* AFTER the swap and AFTER the wait, so what is published is the buffer that has just BECOME
      * the front one — the two `move.b`s read $74d/$74e, which are inside the longword written two
      * instructions above. */
-    shifter_write_byte(WB_SHIFTER_SCREEN_BASE_HIGH,
-                       bus_read_byte(image, WB_SCREEN_FRONT_BITS_16_23));
-    shifter_write_byte(WB_SHIFTER_SCREEN_BASE_MID,
-                       bus_read_byte(image, WB_SCREEN_FRONT_BITS_8_15));
+    shifter_screen_base_write(bus_read_byte(image, WB_SCREEN_FRONT_BITS_16_23),
+                              bus_read_byte(image, WB_SCREEN_FRONT_BITS_8_15));
 
     if (!wait_for_vbl_tick(image))
         return;
@@ -468,15 +478,47 @@ void flip_screen(uint8_t *image) {
  * at $508 — the same shape the scene driver's tails use — so what is compared is the whole frame's
  * memory at the instant control turns round.
  *
- * BUT $508 IS NOT THE ONLY WAY OUT OF ONE ITERATION. Three of `game_key_actions`' endings POP this
- * routine's return address and `jmp` into the boot chain, so a frame entered with the round-end
- * request raised — or with the cheat on and N held, or with ESC held — leaves through the second
- * `bsr` and never reaches $508. This function reports which, in place of the transfer it cannot
- * make, and a case for such a frame checkpoints game_key_actions' own `jmp` instead.
+ * BUT $508 IS NOT THE ONLY WAY OUT OF ONE ITERATION — THERE ARE FIVE MORE, AND THEY ARE NOT ALL
+ * game_key_actions'. Three of that routine's endings POP this routine's return address and `jmp`
+ * into the boot chain, so a frame entered with the round-end request raised — or with the cheat on
+ * and N held, or with ESC held — leaves through the second `bsr` and never reaches $508. The other
+ * two leave through the FOURTH call of the gated block: the behaviour pass hands its callee's
+ * report up unchanged, and four of that report's values are the player's own `jmp`s into the very
+ * same two boot addresses (../include/game.h's census). This function reports WHICH of the five, in
+ * place of the transfer it cannot make, and a case for such a frame checkpoints the original's own
+ * `jmp` instead.
  *
  * THE ONE ARGUMENT IS THE SPRITE PASS'S REGISTER FILE. Everything else the loop calls reads and
  * writes memory alone; `sprite_draw_pass` is register glue (include/blit.h), and its `unwind` is a
  * real input the frame carries in a5. */
+
+/* Which of the loop's two REMAINING exits `report` names, or WB_KEY_ACTIONS_RETURNED for a report
+ * that leaves the frame running. `report` is `actor_behavior_pass`' answer for the whole walk.
+ *
+ * THE FOUR VALUES ARE A CENSUS OF THE IMAGE AND NOT A GUESS, and ../include/game.h has it beside
+ * the two codes: they are the four `jmp`s into the boot chain that lie BELOW this pass in the call
+ * graph, out of the seven the shipped bytes hold. The other three are game_key_actions' own and
+ * never reach here.
+ *
+ * A `switch` RATHER THAN A RANGE TEST, because the report's number space is shared by three headers
+ * (behavior.h's four codes, player.h's six, and a handler's entry ADDRESS) and nothing about a
+ * value's magnitude says which it is. Every unlisted value — a refusal, a runaway, an
+ * unreconstructed handler, or WB_ACTOR_DISPATCH_RAN itself — leaves the loop running: those are
+ * boundaries of THIS PORT rather than places the original went, so there is no transfer to stand in
+ * for. ../STATUS.md §6 records what that costs on target. */
+static uint32_t loop_exit_for_pass_report(uint32_t report) {
+    switch (report) {
+    case WB_PLAYER_GATE_DATADISK_UNWIND:    /* $bd8/$bdc — the game-over box's expiry */
+    case WB_SHOW_DATA_DISK_PROMPT:          /* $700a/$700e — slot 61's terminator */
+        return WB_LOOP_EXIT_DATA_DISK;
+    case WB_PLAYER_GATE_RESTART_UNWIND:     /* $c1c/$c20 — a life spent, the stage reloaded */
+    case WB_PLAYER_COLLIDE_UNWIND:          /* $1622/$1626 — the collision map's triple pop */
+        return WB_LOOP_EXIT_RELOAD;
+    default:
+        return WB_KEY_ACTIONS_RETURNED;
+    }
+}
+
 uint32_t game_main_loop(uint8_t *image, sprite_pass_regs *sprites) {
     game_unpause_on_key_release(image);                     /* $4a0 */
     uint32_t action = game_key_actions(image);              /* $4a4 */
@@ -490,7 +532,11 @@ uint32_t game_main_loop(uint8_t *image, sprite_pass_regs *sprites) {
         round_bonus_run_frame(image);                       /* $4b2 */
         panel_refresh_frame(image);                         /* $4b8 */
         (void)scene_run_frame(image);                       /* $4be — which tail it took is dropped */
-        game_latch_input_and_step_actors(image);            /* $4c4 */
+        /* $4c4. THE PASS'S REPORT IS NOT DROPPED, and four of its values end the iteration where
+         * the original's own `jmp` does — see `loop_exit_for_pass_report` above. */
+        uint32_t unwound = loop_exit_for_pass_report(game_latch_input_and_step_actors(image));
+        if (unwound != WB_KEY_ACTIONS_RETURNED)
+            return unwound;                                 /* $bdc / $700e / $c20 / $1626 */
     }
     project_followed_actor(image);                          /* $4ca */
     bg_scroll_run_queue(image);                             /* $4d0 */

@@ -36,6 +36,9 @@
     bash atari/build.sh boot      && python3 atari/smoke.py boot      # THE WHOLE CHAIN, ON TARGET
     bash atari/build.sh bootfault && python3 atari/smoke.py bootfault # ...its MIS-RUN control
 
+    bash atari/build.sh ownplay && python3 atari/smoke.py ownplay   # THE OWN-ENTRY PLAY, 5 passes
+    bash atari/build.sh ownrun  && python3 atari/smoke.py ownrun    # ...and the UNCAPPED build,
+                                                                    #    booted headless (run.sh's)
     python3 atari/smoke.py runsh                                    # ...and the line run.sh execs
     bash atari/run.sh                                               # ...and played, with a screen
 
@@ -122,6 +125,11 @@ sys.path.insert(0, str(REC / "test"))
 from layout import wb                                        # noqa: E402
 sys.path.insert(0, str(HERE))
 import original                                              # noqa: E402
+# reverse/tools — `depack_rad` is what lets the own-entry mode say WHICH overlay crossed the seam,
+# by inflating the shipped file host-side and comparing its first longword against the run's own.
+# Same path insert gen_image.py makes, for the same directory and the same reason.
+sys.path.insert(0, str(HERE.parents[3] / "tools"))
+import depack_rad                                            # noqa: E402
 
 DISK = HERE / "disk"
 BUILD = HERE / "build"
@@ -315,8 +323,15 @@ def resource_name(index):
     return row.split(b"\0")[0].replace(FAT_PAD, b"").decode("ascii")
 
 
-def stage_drive(prg):
+def stage_drive(prg, withhold=()):
     """Put the .PRG on the drive TOGETHER WITH THE IMAGE IT WAS BUILT AGAINST.
+
+    `withhold` names staged resources to take back OFF the drive again, and it is how a mode drives
+    a REFUSAL with real data: the reconstruction asks the machine for a file by the name the
+    resource table carries, and a name the volume does not answer is exactly what
+    `load_resource_by_index` refuses on. Removed after staging rather than skipped during it, so the
+    corpus checks (`refuse_a_hybrid_resource`) still run over the whole set and a withheld name that
+    was never staged in the first place is refused below rather than passing silently.
 
     THE IMAGE IS PART OF THE BUILD, NOT PART OF THE DRIVE. The modes stage different images — M1 the
     program plus seeds, M2 the original's post-boot RAM, 136,408 bytes against 523,272 — and each
@@ -326,8 +341,8 @@ def stage_drive(prg):
     # EVERY output the program can write is deleted first. A stale FRAME.BIN from the previous build
     # is the shape of failure that PASSES: the run crashes, the comparison reads yesterday's picture,
     # and the mode reports a match.
-    for stale in (STATS_FILE, M2_FILE, TITLE_FILE, BOOT_FILE, BOOT_IMAGE_FILE, M2_FRAME_FILE,
-                  M2_PENS_FILE, M3_RESCUED_M2, M3_RESCUED_STATS):
+    for stale in (STATS_FILE, M2_FILE, TITLE_FILE, BOOT_FILE, BOOT_IMAGE_FILE, OWN_FILE,
+                  M2_FRAME_FILE, M2_PENS_FILE, M3_RESCUED_M2, M3_RESCUED_STATS):
         (DISK / stale).unlink(missing_ok=True)
     # ...AND EVERY RESOURCE, by extension rather than by name. A `.RAD` this mode did not stage is
     # one the PREVIOUS mode did, and a title build asks the machine for its file BY NAME — so a
@@ -365,6 +380,19 @@ def stage_drive(prg):
     # reached.
     if prg.name in BOOT_PRGS:
         stage_resources(boot_resource_indices(), BOOT_RESOURCE_TREES)
+    # ...AND THE OWN-ENTRY BUILDS GET TWO MORE, because two of their resources are reached only by an
+    # ENDING: the second sequence row's overlay, which a round end loads, and DATADISK.RAD, which
+    # ESC's prompt draws. A ladder that could not find one would stop with the code in its record —
+    # which is the honest answer to a missing file and reads nothing like a fixture that was
+    # forgotten, so the fixture is staged here where the build is known.
+    if prg.name in OWN_PRGS:
+        stage_resources(own_resource_indices(), BOOT_RESOURCE_TREES)
+    for name in withhold:
+        staged = DISK / name
+        if not staged.exists():
+            raise SystemExit(f"FAIL: {name} was to be withheld from the drive, but this build "
+                             f"never staged it — so the run would refuse for a reason nobody chose")
+        staged.unlink()
 
 
 # WHAT BOOTS, AND ON WHAT MACHINE — one spelling each, because `run.sh` needs the same answers and a
@@ -378,7 +406,7 @@ DEFAULT_MONITOR = "rgb"
 
 
 def run_hatari(prg, monitor=DEFAULT_MONITOR, run_vbls=RUN_VBLS, parse=None, log_name="hatari.log",
-               trace=None):
+               trace=None, withhold=()):
     """Boot `prg` headless, run to the end of --run-vbls, and return the MERGED output.
 
     `parse` is an optional Hatari DEBUGGER script, which is how M5 reaches the machine's own
@@ -387,7 +415,7 @@ def run_hatari(prg, monitor=DEFAULT_MONITOR, run_vbls=RUN_VBLS, parse=None, log_
     under --fast-forward Hatari skips rendering frames it still emulates — asking for every frame
     narrows the window in which a capture returns whichever frame was drawn last. It does NOT close
     it; atari/README.md §10 has the measurement of what is left."""
-    stage_drive(prg)
+    stage_drive(prg, withhold)
 
     rom = find_tos()
     # `--statusbar off` AND `--drive-led off`: both are emulator chrome, and the LED is the one that
@@ -632,7 +660,7 @@ RB_RAN_ROW = "read-backs ran"
 RB_PASSED_ROW = "read-backs passed"
 
 
-def readback_checks(record):
+def readback_checks(record, also_unreachable=()):
     """The two M1 read-back rows, for every mode that boots a build which writes STATS.BIN.
 
     THE M1 READ-BACKS APPLY TO EVERY BUILD HERE, and dropping them is a defect this file has had
@@ -651,6 +679,14 @@ def readback_checks(record):
     unreachable, why = unreachable_readbacks()
     if why:
         print(f"   note {why}")
+    # ...AND THE BITS A PARTICULAR PASS CANNOT REACH, on the same terms: EXCLUDED WITH THE REASON
+    # PRINTED rather than quietly dropped, because a check nobody is running and a check that passed
+    # read the same in a bare fault word. The caller names them because the reason is the caller's —
+    # `unreachable_readbacks` above answers from the staged image, and this answers from what the
+    # RUN was asked to do. Each entry is (bit name, why this run cannot reach it).
+    for name, reason in also_unreachable:
+        unreachable |= mask(name)
+        print(f"   note '{name}' is excluded: {reason}")
     return [
         (RB_RAN_ROW, record["readback_attempted"] == want_attempted,
          f"attempted {record['readback_attempted']:#06x}, expected exactly {want_attempted:#06x}"),
@@ -1318,7 +1354,7 @@ def assert_the_record_matches_the_c(struct, fields):
 assert_the_record_matches_the_c("boot_stats", BOOT_FIELDS)
 
 
-def refuse_a_stale_build(prg, build_mode):
+def refuse_a_stale_build(prg, build_mode, struct="boot_stats"):
     """Refuse a `.PRG` older than the C whose struct declaration the record parser was pinned to.
 
     THE ASSERTION ABOVE CLOSES A HOLE AND THIS CLOSES THE DOOR IT ARRIVES THROUGH. The scrape reads
@@ -1335,7 +1371,7 @@ def refuse_a_stale_build(prg, build_mode):
     cannot predate the declaration that was scraped."""
     if prg.stat().st_mtime_ns >= (HERE / "wonderboy_main.c").stat().st_mtime_ns:
         return
-    raise SystemExit(f"FAIL: {prg.name} is older than wonderboy_main.c, whose `struct boot_stats` "
+    raise SystemExit(f"FAIL: {prg.name} is older than wonderboy_main.c, whose `struct {struct}` "
                      f"declaration this file scraped to pin the record's field order — so the rows "
                      f"below would grade the old binary's longwords under the new names. Rebuild "
                      f"with `bash atari/build.sh {build_mode}`.")
@@ -1376,6 +1412,8 @@ SPAN_ROW = "span"
 # them must report WB_LOAD_COPYLOCK_RAN, which is the port's way of saying the protection blob would
 # have executed. Nothing on this machine runs it: it is neither ported nor stubbed.
 LOAD_COPYLOCK_RAN = wb("LOAD_COPYLOCK_RAN")
+# ...and the code a slice reports when the seam refused its load — the own-entry ladder's stop.
+LOAD_DISK_ERROR = wb("LOAD_DISK_ERROR")
 CREDITS_PROMPT_PEN = wb("CREDITS_PROMPT_PEN")
 CREDITS_PROMPT_COLOUR = wb("CREDITS_PROMPT_COLOUR")
 # `load_resource_by_index` clears the flag on the armed arm, so a chain that ran to the end leaves it
@@ -1401,19 +1439,38 @@ FIRST_SEQ_ROW = 0
 SEQ_ROWS_STEPPED = 1
 
 
+def refuse_unless_the_control_holds(control, what_depends_on_it):
+    """Stop the mode unless every row of an UNDRIVEN pass held.
+
+    THREE MODES OPEN THE SAME WAY and this is the shape they share: measure the machine with nothing
+    injected, assert that nothing happened, and only then pay for the driven runs whose pokes are
+    aimed with the addresses that pass reported. A control that failed makes every number below it
+    unreadable — the addresses may be stale, the arm may have fired on its own — so the mode stops
+    HERE rather than printing a wall of rows that cannot mean anything.
+
+    `what_depends_on_it` names what is being refused, because "the negative control did not hold" on
+    its own does not say which run is now impossible.
+    """
+    broken = [f"{name}: {detail}" for name, ok, detail in control if not ok]
+    if broken:
+        raise SystemExit(f"FAIL: the negative control did not hold, so {what_depends_on_it} could "
+                         f"not mean anything: " + "; ".join(broken))
+
+
 def read_boot(name=BOOT_FILE):
     return read_record(name, BOOT_FIELDS, BOOT_FORMAT, BOOT_MAGIC, "the boot build")
 
 
-def first_sequence_row():
-    """WB_LEVEL_SEQ_TABLE's first row, out of the staged image the .PRG actually loaded.
+def sequence_row(row):
+    """WB_LEVEL_SEQ_TABLE's row `row`, out of the staged image the .PRG actually loaded.
 
     ONE LOOKUP FOR THE TWO SIDES OF ONE CLAIM. The STAGING side reads it to know which overlay file
     to put on the drive, and the CHECKING side reads it to know which bytes the run must have
     published; two copies of the expression would let the harness stage the resource for one row and
-    grade the run against another."""
-    return staged_block(wb("LEVEL_SEQ_TABLE") + FIRST_SEQ_ROW * wb("LEVEL_SEQ_RECORD_BYTES"),
-                        wb("LEVEL_SEQ_RECORD_BYTES"), f"WB_LEVEL_SEQ_TABLE row {FIRST_SEQ_ROW}")
+    grade the run against another. The own-entry mode reads the SECOND row as well, because an
+    ending that reloads is what makes the sequence step."""
+    return staged_block(wb("LEVEL_SEQ_TABLE") + row * wb("LEVEL_SEQ_RECORD_BYTES"),
+                        wb("LEVEL_SEQ_RECORD_BYTES"), f"WB_LEVEL_SEQ_TABLE row {row}")
 
 
 def boot_resource_indices():
@@ -1428,8 +1485,15 @@ def boot_resource_indices():
 
     THE FIRST TWO ARE DISK1_RESOURCES, not a second listing of them: this chain begins with the
     title build's own slice, so its set is that set PLUS the data disk's three."""
-    overlay = first_sequence_row()[wb("LEVEL_SEQ_OVERLAY")] + wb("RESOURCE_FIRST_OVERLAY")
-    return DISK1_RESOURCES + (overlay, wb("RESOURCE_TILEDATA"), wb("RESOURCE_SPRITES_CRU"))
+    return DISK1_RESOURCES + (overlay_resource(FIRST_SEQ_ROW),
+                              wb("RESOURCE_TILEDATA"), wb("RESOURCE_SPRITES_CRU"))
+
+
+def overlay_resource(row):
+    """WB_RESOURCE_FILE_TABLE's index for the overlay sequence row `row` names — the reconstruction's
+    own `stage_sequence_resource` arithmetic (the row's ordinal plus WB_RESOURCE_FIRST_OVERLAY), read
+    out of the staged image rather than written down. A BYTE add, as the original's `addq.b #2` is."""
+    return (sequence_row(row)[wb("LEVEL_SEQ_OVERLAY")] + wb("RESOURCE_FIRST_OVERLAY")) & 0xff
 
 
 # WHICH SHIPPED TREE EACH RESOURCE COMES OFF, and the corpus gotcha that goes with it. `bin/disk2/`
@@ -1898,7 +1962,7 @@ def boot_checks(record, stats, want_pens, want_screen):
     # copies WB_LEVEL_SEQ_SECOND_LOAD out of the row (on a first entry) and `stage_sequence_apply_row`
     # turns WB_LEVEL_SEQ_SIDE into WB_STATE_FLAG_SET or 0, so both are the shipped table's own data
     # arriving in the right words rather than numbers written here.
-    row = first_sequence_row()
+    row = sequence_row(FIRST_SEQ_ROW)
     want_side = wb("STATE_FLAG_SET") if row[wb("LEVEL_SEQ_SIDE")] else 0
     # ...AND THE SIDE HALF OF IT IS ENTRY-STATE-VACUOUS ON THIS IMAGE, WHICH IT PRINTS. Row 0's own
     # side byte is 0, so `stage_sequence_apply_row` publishes 0 — and the staged image already
@@ -2078,21 +2142,40 @@ def boot_fire_script(directory, record):
 
     Each wait is entered twice, once per gate, so the four stops are two PCs by two arrivals —
     which `refuse_repeated_arrivals` accepts and two breakpoints on one arrival would not."""
+    script = Path(directory) / "BOOTCMD.INI"
+    script.write_text("\n".join(fire_gate_lines(directory, record, BOOT_FIRE_GATES)) + "\n")
+    return script
+
+
+def fire_gate_lines(directory, record, gates, after_release=None):
+    """The debugger lines that press and release the stick at the run's first `gates` fire gates.
+
+    SHARED WITH THE OWN-ENTRY MODE, which crosses more of them than the boot has: ESC's ending walks
+    the data-disk prompt's gate and then the boot continuation's two again, so a run that is driven
+    through a restart answers five. The arrival number is what separates them — each half is one
+    function with one address, entered once per gate — so the list is a `gates` x 2 grid of stops
+    and nothing about it is boot-specific.
+
+    `after_release` is {gate index: [extra debugger commands]}, appended to that gate's RELEASE
+    action. It exists because one poke has to land at a moment that is already a breakpoint and
+    Hatari takes one action per (address, arrival): the ESC pass holds a scancode in the image, and
+    without a release the NEXT leg quits on its first frame and restarts again. Folded into the
+    existing action rather than set as a second breakpoint on the same arrival, which
+    `refuse_repeated_arrivals` would — rightly — reject."""
     directory = Path(directory)
+    after_release = after_release or {}
     joy1 = record["image_base"] + wb("JOY1_STATE")
     stops = []
-    for gate in range(BOOT_FIRE_GATES):
+    for gate in range(gates):
         arrival = gate + original.FIRST_HIT
-        stops += [(record["fire_press_pc"], arrival, f"PRESS{gate}", FIRE_DOWN),
-                  (record["fire_release_pc"], arrival, f"RELEASE{gate}", FIRE_UP)]
-    original.refuse_repeated_arrivals([(pc, hit) for pc, hit, _, _ in stops])
-    lines = [original.anchor_breakpoint(pc, hit, original.action_file(
-                 directory, f"BF{index}.INI", f"echo {BOOT_FIRE_BEACON}_{what}",
-                 original.poke_byte(joy1, value)))
-             for index, (pc, hit, what, value) in enumerate(stops)]
-    script = directory / "BOOTCMD.INI"
-    script.write_text("\n".join(lines) + "\n")
-    return script
+        stops += [(record["fire_press_pc"], arrival, f"PRESS{gate}", FIRE_DOWN, ()),
+                  (record["fire_release_pc"], arrival, f"RELEASE{gate}", FIRE_UP,
+                   tuple(after_release.get(gate, ())))]
+    original.refuse_repeated_arrivals([(pc, hit) for pc, hit, _, _, _ in stops])
+    return [original.anchor_breakpoint(pc, hit, original.action_file(
+                directory, f"BF{index}.INI", f"echo {BOOT_FIRE_BEACON}_{what}",
+                original.poke_byte(joy1, value), *extra))
+            for index, (pc, hit, what, value, extra) in enumerate(stops)]
 
 
 def measure_the_undriven_boot_chain(prg, mode):
@@ -2150,10 +2233,7 @@ def measure_the_undriven_boot_chain(prg, mode):
     print(f"   TOS={rom or 'bundled EmuTOS'} hatari exit={status}; image at "
           f"{record['image_base']:#x}, the two waits at {record['fire_press_pc']:#x} and "
           f"{record['fire_release_pc']:#x}, {record['vbl_ticks_at_exit']} shim vblanks")
-    broken = [f"{name}: {detail}" for name, ok, detail in control if not ok]
-    if broken:
-        raise SystemExit("FAIL: the negative control did not hold, so the driven run below could "
-                         "not mean anything: " + "; ".join(broken))
+    refuse_unless_the_control_holds(control, "the driven run below")
     return record, log, status
 
 
@@ -3512,9 +3592,14 @@ def mode_play():
         # record. This headless run injects no input, so no ending can be reached and the file is
         # absent — which is what is asserted. A PERSON at `run.sh` can reach one, and that is M3's
         # owed milestone rather than a defect in this row.
-        ("this run reached no dump (it injects no input)", not (DISK / STATS_FILE).exists(),
-         "with no joystick or key input, game_key_actions' three endings are unreachable, so the "
-         "loop never breaks and the shim never hands the machine back"),
+        # MEASURED OVER THIS WINDOW, NOT PROVEN. Three of the frame loop's five endings are keys and
+        # a headless run presses none; the other two are the PLAYER's — a life spent, a game-over box
+        # expiring — and a run that pressed nothing can still reach those if the game kills him. Over
+        # PLAY_RUN_VBLS on the staged frame image it does not, and that is what this row says.
+        ("this run reached no ending (measured over its window)", not (DISK / STATS_FILE).exists(),
+         "no key is pressed and no stick is moved, so game_key_actions' three endings cannot fire; "
+         "the player's own two can in principle and do not here — the loop never breaks and the "
+         "shim never hands the machine back"),
     ]
     # ...AND IF ONE EVER DOES APPEAR, SAY WHICH EXIT MADE IT. A record here means an ending fired,
     # which under a headless run means the premise above is wrong; under `run.sh` with a person at
@@ -3720,6 +3805,26 @@ def m3_plain_script(directory):
     return script
 
 
+def ending_poke_breakpoint(directory, base, capture_pc, pokes, action_name, *before):
+    """The breakpoint that injects a `game_key_actions` ending — and the one BOTH driven modes make.
+
+    THE ENDING IS DRIVEN AT `capture_the_frame`'s M3_POKE_ANCHOR ARRIVAL in both, which is inside
+    the frame loop and after any boot, so the anchor that drives an ending on the FRAME build drives
+    the same ending on the OWN-ENTRY one. Two spellings of that is two places the arrival, the
+    beacon or the poke's base can drift — and the base is `image_base`, the one number whose
+    mis-aiming is INVISIBLE rather than loud: the poke lands somewhere harmless, the ending never
+    fires, and the run reads as a build that simply did not take it.
+
+    `before` is what a mode does BEFORE the pokes, in the same action file and therefore at the same
+    instant: M3 photographs the two vectors as the shim left them, and the own-entry ladder has
+    nothing to add."""
+    original.refuse_repeated_arrivals([(capture_pc, M3_POKE_ANCHOR)])
+    return original.anchor_breakpoint(
+        capture_pc, M3_POKE_ANCHOR,
+        original.action_file(directory, action_name, f"echo {M3_POKE_BEACON}", *before,
+                             *[entry.poke(base + entry.offset, entry.value) for entry in pokes]))
+
+
 def m3_script(directory, base, capture_pc, pokes):
     """The debugger script that injects `pokes` and then watches the machine outlive the program.
 
@@ -3729,10 +3834,6 @@ def m3_script(directory, base, capture_pc, pokes):
     vblank, where the two vectors and TOS's frame clock are read back, and Pterm+M3_TAIL_STEPS,
     where the clock is read again because one reading cannot show motion."""
     directory = Path(directory)
-    poke_commands = [f"echo {M3_POKE_BEACON}",
-                     m3_save(directory, M3_VBL_VECTOR_RUNNING, VEC_LEVEL4_VBL),
-                     m3_save(directory, M3_ACIA_VECTOR_RUNNING, VEC_MFP_ACIA)]
-    poke_commands += [entry.poke(base + entry.offset, entry.value) for entry in pokes]
     tail = [
         original.vbl_breakpoint(original.VBL_NEXT, original.action_file(
             directory, "M3TAILA.INI", f"echo {M3_TAIL_BEACONS[0]}",
@@ -3743,13 +3844,12 @@ def m3_script(directory, base, capture_pc, pokes):
             directory, "M3TAILB.INI", f"echo {M3_TAIL_BEACONS[1]}",
             m3_save(directory, M3_CLOCK_LATE, TOS_FRCLOCK)), hit=M3_TAIL_STEPS),
     ]
-    # The same-arrival guard and the breakpoint's own spelling are original.py's, for the reason
-    # `our_capture_script` gives: a second spelling on this side is one that can quietly stop
-    # matching the shipped side's.
-    original.refuse_repeated_arrivals([(capture_pc, M3_POKE_ANCHOR)])
+    # THE TWO VECTORS ARE PHOTOGRAPHED IN THE SAME ACTION FILE AS THE POKES, so they are read at the
+    # instant the ending is injected rather than at some later breakpoint of their own.
     lines = [
-        original.anchor_breakpoint(capture_pc, M3_POKE_ANCHOR,
-                                   original.action_file(directory, "M3POKE.INI", *poke_commands)),
+        ending_poke_breakpoint(directory, base, capture_pc, pokes, "M3POKE.INI",
+                               m3_save(directory, M3_VBL_VECTOR_RUNNING, VEC_LEVEL4_VBL),
+                               m3_save(directory, M3_ACIA_VECTOR_RUNNING, VEC_MFP_ACIA)),
         m3_exit_breakpoint(directory, tail),
     ]
     script = directory / "M3CMD.INI"
@@ -3881,10 +3981,7 @@ def measure_the_undriven_boot(prg, mode):
     report(f"{mode} pass 1 — the UNDRIVEN boot, which is M3's negative control", control)
     print(f"   TOS={rom or 'bundled EmuTOS'} hatari exit={status}; image at "
           f"{record['image_base']:#x}, capture_the_frame at {record['capture_pc']:#x}")
-    broken = [f"{name}: {detail}" for name, ok, detail in control if not ok]
-    if broken:
-        raise SystemExit("FAIL: the negative control did not hold, so no driven run below could "
-                         "mean anything: " + "; ".join(broken))
+    refuse_unless_the_control_holds(control, "the driven runs below")
     return record, log, status
 
 
@@ -4008,6 +4105,715 @@ def mode_m3(mode):
           f"machine handed back to a TOS still ticking {M3_TAIL_GAP} vblanks later")
 
 
+
+# ---- THE OWN-ENTRY BUILD: booted by itself, and every ending walked back into the chain ----------
+#
+# WHAT THIS MODE CLAIMS, and it is the one claim no other mode here can make: the reconstruction
+# BOOTS ITSELF. `mode_boot` runs the chain and stops at `$f8b4`; the frame modes start at `$4a0` over
+# the ORIGINAL's measured RAM. This build does both halves in one run — M1's image in, the boot
+# chain, the frame loop — and then wires `game_key_actions`' endings to the addresses the original's
+# own `jmp`s name, so a round end really does load the next stage and ESC really does show the
+# data-disk prompt and start over.
+#
+# FOUR PASSES, AND THE FIRST TWO ARE THE THIRD'S CONTROLS:
+#   1. UNDRIVEN — nothing injected. The chain must sit at its first fire gate exactly as `mode_boot`'s
+#      pass one does, and it is where the addresses the pokes below are aimed with come from.
+#   2. FIRE ONLY — both gates answered and no ending driven. The stage must stay where the boot put
+#      it: no reload, no restart, and the overlay in memory is still the first row's. This is the
+#      negative control for pass three, and without it "the stage moved" could be something the run
+#      does on its own.
+#   3. THE ROUND END, DRIVEN — `WB_ROUND_END_RELOAD_REQUEST` poked at `capture_the_frame`'s second
+#      arrival, which is M3's own mechanism and its own anchor. The frame loop must leave, the ladder
+#      must call `boot_load_stage` AGAIN, the sequence must step, the SECOND overlay must cross the
+#      seam, and the frame loop must run again on the other side of it.
+#   4. ESC, DRIVEN — the same poke set M3's QUIT ending uses. The prompt slice must draw, its gate
+#      and the boot's two must be crossed again, and `game_restart_reset` inside the credits slice
+#      must put the sequence back to its first row. This is the pass that exercises
+#      `boot_prompt_screen` and `own_restart` on the machine.
+#
+# WHICH OVERLAY CROSSED, MEASURED. Every stage's overlay inflates to the same address, so the run
+# reports the first LONGWORD of what landed there and this file inflates the shipped file host-side
+# and compares — after asserting the two rows' heads DIFFER, so the comparison cannot pass by their
+# being equal.
+
+OWN_FILE = "OWN.BIN"
+OWN_FIELDS = ("magic", "bytes", "image_base",
+              "prompt_result", "title_result", "credits_result", "stage_result",
+              "fire_press_pc", "fire_release_pc", "fire_gates_crossed", "fire_waits_timed_out",
+              "fire_wait_timed_out_pc",
+              "entry_unwind", "legs_run", "reloads", "restarts", "last_ending", "stopped_at",
+              "frames_total", "frame_loop_vbl_ticks",
+              "stage_map_ptr", "stage_start_ptr", "resource_signature", "stage_number",
+              "level_seq_index", "stage_second_load_flag", "stage_side_flag",
+              "life_restart_entry_c26", "stage_entry_follow", "copylock_arm_flag",
+              "vbl_ticks_at_exit")
+OWN_FORMAT = ">%dI" % len(OWN_FIELDS)
+assert_the_record_matches_the_c("own_stats", OWN_FIELDS)
+
+OWN_MAGIC = c_constant("OWN_MAGIC")              # 'WBA5'
+# WHY THE LADDER STOPPED — wonderboy_main.c's OWN_STOP_*, scraped rather than restated, and named
+# here so a `stopped_at` that is not the expected one reads as a rung rather than as a number. The
+# LEG_LIMIT one is included for completeness: no pass below can reach it, and a run that did would
+# print its name instead of a bare 5.
+OWN_STOP_NAMES = {c_constant(name): name for name in
+                  ("OWN_STOP_BOOT", "OWN_STOP_FRAME_LIMIT", "OWN_STOP_RELOAD", "OWN_STOP_RESTART",
+                   "OWN_STOP_LEG_LIMIT")}
+OWN_STOP_BOOT = c_constant("OWN_STOP_BOOT")
+OWN_STOP_FRAME_LIMIT = c_constant("OWN_STOP_FRAME_LIMIT")
+OWN_STOP_RELOAD = c_constant("OWN_STOP_RELOAD")
+
+
+def own_stop(record):
+    """`stopped_at`, as the rung it names."""
+    return f"{record['stopped_at']} = {OWN_STOP_NAMES.get(record['stopped_at'], 'UNKNOWN')}"
+
+OWN_MODE = "ownplay"
+# The build `atari/run.sh` launches: the same ladder with every bound lifted. It is not a smoke mode
+# — an uncapped run has no end to assert — but the drive it needs is this file's, so its `.PRG` is
+# named here and `stage_drive` keys on both.
+OWN_RUN_BUILD = "WB-ownrun.PRG"
+OWN_BUILDS = {OWN_MODE: "WB-ownplay.PRG"}
+OWN_PRGS = frozenset(OWN_BUILDS.values()) | {OWN_RUN_BUILD}
+
+# HOW MANY GATES EACH PASS CAN CROSS, and it is not the same number for all of them — which is the
+# point of naming three. A pass that only walks the chain crosses the chain's own two; ESC's pass
+# walks the prompt's and then the chain's two AGAIN, so it crosses five. DERIVED from
+# BOOT_FIRE_GATES rather than written as 2 and 5, because what ESC re-walks IS the boot chain and a
+# chain that grew a gate must grow both readings.
+#
+# ARMING MORE THAN A PASS CAN CROSS IS NOT FREE: an unanswered gate stops the ladder, so a pass that
+# armed five and crossed two would look identical to one that armed two — and `fire_gates_crossed`
+# is then asserted per pass, so a pass whose gates were miscounted reds instead of quietly running
+# short.
+OWN_PROMPT_GATES = 1
+OWN_CHAIN_GATES = BOOT_FIRE_GATES
+OWN_RESTART_GATES = OWN_PROMPT_GATES + OWN_CHAIN_GATES
+OWN_FIRE_GATES = OWN_CHAIN_GATES + OWN_RESTART_GATES
+
+# The two sequence rows this mode is about: the one the boot loads and the one a reload steps to.
+# WB_LEVEL_SEQ_INDEX AFTER A LOAD IS THE SAME ARITHMETIC — `game_restart_reset` (inside the credits
+# slice) leaves the index at FIRST_SEQ_ROW and `stage_sequence_advance` steps it once per load — so
+# the row a run ended on and the index it reports are ONE expression, not two that can drift.
+SECOND_SEQ_ROW = FIRST_SEQ_ROW + SEQ_ROWS_STEPPED
+# How many times the ladder enters the frame loop in each driven pass: once, or once more after the
+# ending that reloads or restarts.
+LEGS_WITHOUT_AN_ENDING = 1
+LEGS_WITH_ONE_ENDING = 2
+# THE `--run-vbls` THIS MODE NEEDS, BRACKETED RATHER THAN GUESSED — and the bracket is the point,
+# because the first draft's 20,000 was a round number nobody had measured against.
+#
+# MEASURED (TOS 1.04, all five passes): 4,000 is green and 3,000 is not — at 3,000 the fire-only
+# pass is cut off before it writes `OWN.BIN` and the mode reports "never reached its own dump",
+# which reads like a crash. So the floor is between 3,000 and 4,000 and this is TWICE it. Every
+# vblank above the floor is wall-clock spent five times over (Hatari runs the WHOLE window whatever
+# the program does: 20,000 measured 14.3 s per pass), so headroom is not free.
+#
+# IT IS NOT THE SAME CLOCK AS THE RECORD'S. `vbl_ticks_at_exit` counts the SHIM's vertical blanks —
+# only while the reconstruction's own level-4 vector is installed — and the longest pass reports
+# ~1,700 of those against a window of thousands. Sizing this from that figure would cut every run
+# off inside TOS's own boot; the two numbers are printed side by side per pass so neither is
+# mistaken for the other.
+OWN_RUN_VBLS = 8000
+
+# The ROUND-END ending, out of M3's own table rather than re-poked here: same word, same value, same
+# reason. M3 drives it on the FRAME build to show the loop can be left; this mode drives it on the
+# own-entry build to show where it comes back to.
+ROUND_END_ENDING = next(e for e in M3_ENDINGS if e.code == wb("KEY_ACTIONS_ROUND_END"))
+QUIT_ENDING = next(e for e in M3_ENDINGS if e.code == wb("KEY_ACTIONS_QUIT"))
+# Which gate of ESC's ladder the key is let go at: the PROMPT's, which is the first one after the
+# ending. Derived from the boot's own gate count, so it names the same gate however the chain grows.
+QUIT_RELEASE_GATE = BOOT_FIRE_GATES
+# What WB_KEY_LAST_SCANCODE holds when no key has been reported — wonderboy_main.c's own
+# IKBD_NOTHING_SAID, and the value `reset_and_hear_back` clears it to before every reset.
+IKBD_NOTHING_SAID = c_constant("IKBD_NOTHING_SAID")
+
+
+def release_the_quit_key(plain):
+    """Let go of ESC once the data-disk prompt is up — one poke, at a gate that is already a stop.
+
+    THE POKE IS A PRESS AND A PLAYER IS NOT. `game_key_actions`' ESC arm reads WB_KEY_LAST_SCANCODE,
+    and the debugger's poke leaves it there for ever — so without this the SECOND leg quits on its
+    own first frame and restarts again, which is what a key physically held down would really do and
+    is not what this pass is about. Clearing it at the prompt's own gate is the release the IKBD
+    would have delivered while the picture was being loaded, and it is the same byte, poked the same
+    way, as the press. Measured before it existed: two restarts, five gates spent, and the ladder
+    stopping at OWN_STOP_RESTART because the sixth gate was never armed."""
+    return {QUIT_RELEASE_GATE: [original.poke_byte(plain["image_base"] + wb("KEY_LAST_SCANCODE"),
+                                                   IKBD_NOTHING_SAID)]}
+
+
+def read_own(name=OWN_FILE):
+    return read_record(name, OWN_FIELDS, OWN_FORMAT, OWN_MAGIC, "the own-entry build")
+
+
+def own_resource_indices():
+    """Every row of WB_RESOURCE_FILE_TABLE this ladder can ask the machine for.
+
+    The boot chain's five, plus the two only an ENDING reaches: the SECOND sequence row's overlay
+    (which a round end or a level skip loads) and DATADISK.RAD (which ESC's prompt draws). Derived
+    from the table and the sequence exactly as `boot_resource_indices` is — a file staged under a
+    name the reconstruction does not ask for would simply sit there, and the load would refuse."""
+    return boot_resource_indices() + (overlay_resource(SECOND_SEQ_ROW), wb("RESOURCE_DATADISK"))
+
+
+@functools.lru_cache(maxsize=None)
+def overlay_entry_follow(row):
+    """The start record's entry position inside the overlay sequence row `row` names, HOST-SIDE.
+
+    This is the half of "the second overlay crossed the seam" that does not come off the machine.
+    The run reports the longword its own `rad_depack` left at WB_OVERLAY_DEPACK_DEST +
+    WB_START_FOLLOW_X — the two words `stage_load_window` copies into the followed actor — and this
+    is what the shipped file says should be there, inflated by tools/depack_rad.py from the same
+    bytes `stage_resources` put on the drive.
+
+    THE FIRST LONGWORD WOULD NOT HAVE DONE, and it was measured rather than assumed: OVALAY01 and
+    OVALAY02 both open `00 00 00 06` and first differ at byte 5, so a fingerprint taken at offset 0
+    would have been equal for the two stages this mode is about and the reload unobservable."""
+    name = resource_name(overlay_resource(row))
+    shipped, _ = shipped_resource(name, BOOT_RESOURCE_TREES)
+    data = shipped.read_bytes()
+    at = wb("START_FOLLOW_X")
+    inflated = depack_rad.depack(data, depack_rad.parse_header(data))
+    return int.from_bytes(inflated[at:at + LONGWORD_BYTES], "big")
+
+
+def own_stage_number(row):
+    """The stage number sequence row `row` publishes — `stage_sequence_apply_row`'s zero-extended
+    byte, read out of the staged image so this file and the reconstruction cannot disagree."""
+    return sequence_row(row)[wb("LEVEL_SEQ_STAGE")]
+
+
+def measure_the_undriven_own_run(prg):
+    """PASS ONE: no poke at all — the addresses the pokes below are aimed with, and their control.
+
+    It is `measure_the_undriven_boot_chain`'s job for this build and it asserts the same thing: with
+    nothing injected the ladder must stop at the FIRST half of the FIRST gate. What it adds is the
+    frame record, because this mode's pokes are aimed at `capture_the_frame` as M3's are — so a run
+    that never reached the frame loop still has to report where that function is."""
+    status, log, rom = run_hatari(prg, run_vbls=RUN_VBLS, log_name=f"hatari-{OWN_MODE}-plain.log")
+    record, why = read_own()
+    frames, frames_why = read_m2()
+    stats, stats_why = read_stats()
+    for missing in (why, frames_why, stats_why):
+        if missing:
+            raise SystemExit(f"FAIL: the undriven pass left no readable record ({missing})")
+    control = readback_checks(stats, also_unreachable=(
+        ("RB_VBL_TICKING",
+         "this pass deliberately never enters the frame loop — the ladder stops at the FIRST fire "
+         "gate — so `frames_run` is 0 and the bit's own floor of one vblank per frame cannot be "
+         "met. That the loop was never entered is this pass's own headline row below, asserted "
+         "there; the driven passes grade the bit non-vacuously"),)) + [
+        ("the title slice ran on its own", record["title_result"] == LOAD_COPYLOCK_RAN,
+         f"boot_title_screen returned {record['title_result']}"),
+        ("...and the FIRST fire wait timed out, at its PRESS half",
+         record["fire_waits_timed_out"] == 1 and record["fire_gates_crossed"] == 0
+         and record["fire_wait_timed_out_pc"] == record["fire_press_pc"],
+         f"{record['fire_waits_timed_out']} timed out at {record['fire_wait_timed_out_pc']:#x} "
+         f"(wait_fire_pressed is at {record['fire_press_pc']:#x})"),
+        ("...so the ladder never reached a stage", record["stopped_at"] == OWN_STOP_BOOT,
+         f"stopped_at={own_stop(record)}"),
+        ("...and the frame loop was never entered", record["legs_run"] == 0,
+         f"{record['legs_run']} legs, {record['frames_total']} frames"),
+    ]
+    report(f"{OWN_MODE} pass 1 — the UNDRIVEN run, which is every poke below's negative control",
+           control)
+    print(f"   TOS={rom or 'bundled EmuTOS'} hatari exit={status}; image at "
+          f"{record['image_base']:#x}, capture_the_frame at {frames['capture_pc']:#x}, the two "
+          f"waits at {record['fire_press_pc']:#x} and {record['fire_release_pc']:#x}")
+    refuse_unless_the_control_holds(control, "the driven runs below")
+    return record, frames, stats, log, status
+
+
+def the_unwind_agrees_with_the_measured_a5(record):
+    """The a5 the frame loop was ENTERED with, against `bg_build_buffer`'s own `lea` operand — and
+    against `build/ORIGREGS.txt`'s measured A5 when there is one.
+
+    THE DUMP IS A WITNESS HERE AND NOT THE SOURCE, which is the whole point of the row. The frame
+    builds SEED `sprites.blit.unwind` from that measurement; this build PRODUCES the number, from
+    `bg_build_buffer`'s `lea $21e90.l,a5` at $fa5e — ../test/test_boot_chain.py runs the oracle over
+    `boot_load_stage`'s whole range and requires the 68000's own a5 at the `jmp $4a0.w` to be it. So
+    a dump that disagreed would be news; a dump that is absent costs this build nothing, and the row
+    says so rather than being silently skipped.
+
+    THE FIELD IS READ BACK OUT OF THE REGISTER FILE AND NOT COPIED FROM THE MACRO, and without that
+    this row could not fail. `build.sh` passes -DM2_ENTRY_UNWIND to the FRAME modes only, so the
+    own-entry build always compiles the fallback #define — and a record that published that macro
+    would be compared here against the same header constant, agreeing by construction however the
+    seeding line was edited. `run_frames` reports `sprites.blit.unwind` as the loop was entered with
+    it instead, so an edit to that line reddens this row."""
+    want = wb("TILE_INDEX_TABLE")
+    if record["entry_unwind"] != want:
+        return ("the entry unwind is the boot's own producer", False,
+                f"the build reports {record['entry_unwind']:#x} and $fa5e's `lea` operand is "
+                f"WB_TILE_INDEX_TABLE ({want:#x})")
+    regs = BUILD / "ORIGREGS.txt"
+    if not regs.exists():
+        return ("the entry unwind is the boot's own producer", True,
+                f"{want:#x} = WB_TILE_INDEX_TABLE, $fa5e's own operand — NOT CROSS-CHECKED here, "
+                f"because {regs.name} is absent and this build needs no dump; the oracle row in "
+                f"../test/test_boot_chain.py is what pins it")
+    measured = original.register(regs.read_text(), "A5")
+    return ("the entry unwind is the boot's own producer, and the dump agrees", measured == want,
+            f"{want:#x} = WB_TILE_INDEX_TABLE, produced by $fa5e's `lea`; the original's measured "
+            f"A5 at $f8b4 is {measured:#x}")
+
+
+OWN_RUN_MODE = "ownrun"
+OWN_RUN_BUILDS = {OWN_RUN_MODE: OWN_RUN_BUILD}
+# THE WINDOW THIS MODE BOOTS FOR, and it is the BOOT mode's own rather than a fourth number: this
+# run has to get TOS up, get the program loaded and get the title slice's load and depack across the
+# seam, which is exactly what `mode_boot` sized 12,000 vblanks for. Measured at 2,000 the run was cut
+# off DURING `clear_palette` — the shim's own vblank counter is not Hatari's, and a shim figure of
+# ~500 for a whole chain is not a `--run-vbls` of 500. Everything after the title slice is the
+# heartbeat this mode reads, and there is no reason to make the window longer: the build waits at its
+# first fire gate for ever, by design.
+OWN_RUN_BOOT_VBLS = BOOT_RUN_VBLS
+# ...AND HOW MUCH HEARTBEAT COUNTS AS ALIVE. One vertical blank is one music tick and a tick is
+# several YM2149 writes, so a machine that survived even a second past the title slice leaves
+# hundreds of events. Set an order of magnitude below what a healthy run measures (~200,000), so the
+# row fails on a DEAD machine rather than on a slow one.
+OWN_RUN_ALIVE_EVENTS = 10000
+
+
+def mode_ownrun():
+    """THE BINARY `atari/run.sh` LAUNCHES, booted headless — the one build a person actually plays.
+
+    IT EXISTS BECAUSE THE SWAP LEFT THE INTERACTIVE BINARY UNBOOTED BY ANYTHING. `run.sh` stopped
+    launching `WB-play.PRG` in batch 44 phase E and nothing booted `WB-ownrun.PRG` in its place, so
+    the binary a person opens had no headless check at all. That is exactly the gap the `--sound on`
+    defect lived in — one line no headless mode executed, found by a person at the first real launch
+    — and this is that gap on the BINARY, where `smoke.py runsh` is the same gap on the command line.
+
+    WHAT IT ASSERTS: the build boots, takes the machine, crosses the file seam for TITLESCR.RAD,
+    depacks it and puts its palette on the chip — and then keeps running, with the vertical-blank
+    handler ticking, for the rest of the window.
+
+    AND WHAT IT CANNOT, WHICH IS MEASURED RATHER THAN ASSUMED. THIS BUILD DOES NOT REACH THE FRAME
+    LOOP HEADLESS, and that is correct behaviour rather than a defect: -DSMOKE_PLAY lifts the fire
+    gates' spin bound as well as the frame count (wonderboy_main.c's FIRE_SPIN_DECL argues why a
+    ninety-minute counter is not "uncapped"), so the title screen waits for a person for ever. The
+    headless ladder answers its gates with a debugger poke aimed at the two wait PCs THE RECORD
+    REPORTS — and this build writes no record, because with every bound lifted the ladder never ends,
+    never hands the machine back and never reaches `write_file`. So there is no `image_base` to aim a
+    poke with and no wait PC to aim it at; measured, an undriven run of this binary sits at the first
+    gate and publishes no buffer at all. The frame loop, the ladder's five endings and every pin are
+    `ownplay`'s, on a binary that differs from this one by one `-D`. The joystick is a person's, which
+    is `mode_play`'s standing row and unchanged.
+
+    SO WHAT THIS MODE COVERS IS THE HALF THAT DIFFERS: that the `-DSMOKE_PLAY` build links, boots,
+    takes the machine and gets through the seam — none of which the capped build can witness for it,
+    because a binary is only checked by being run."""
+    prg = BUILD / OWN_RUN_BUILD
+    status, log, rom = run_hatari(prg, run_vbls=OWN_RUN_BOOT_VBLS, trace=TIMELINE_TRACE,
+                                  log_name=f"hatari-{OWN_RUN_MODE}.log")
+    print(f"-- {OWN_RUN_MODE}: TOS={rom or 'bundled EmuTOS'} hatari exit={status} "
+          f"--run-vbls {OWN_RUN_BOOT_VBLS} (full log in {OUT / f'hatari-{OWN_RUN_MODE}.log'})")
+    problems = check_machine_health(status, log)
+    events, why = timeline_events(log.splitlines())
+    if why:
+        raise SystemExit(f"FAIL: {OWN_RUN_MODE} left no readable write timeline ({why}) — with no "
+                         f"record to read, the stream is the only surface this mode has")
+
+    # THE SHIFTER'S BASE MOVED, which is the cheapest evidence that the reconstruction took the
+    # video hardware: `install` and `chain_prologue` publish it, and a build that died before
+    # either would leave TOS's own base standing for the whole window.
+    state, moves = 0, 0
+    for register, value, _ in events:
+        moved = original.apply_base_write(state, register, value)
+        if moved is not None and moved != state:
+            moves += 1
+        state = state if moved is None else moved
+    # ...AND THE PALETTE THE TITLE SLICE PUT THERE. `clear_palette` writes sixteen zeros at $e4ea and
+    # `set_palette` writes the depacked picture's own sixteen at $e540, so a chip left holding zeros
+    # is a chain that got as far as the clear and no further — a refused load, or a depack that never
+    # ran. This is the ONE surface a headless run of this build has for the file seam.
+    pens = [(register, value) for register, value, _ in events
+            if PEN_FIRST_REG <= register <= PEN_LAST_REG]
+    chip = {}
+    for register, value in pens:
+        chip[register] = value
+    lit = sum(1 for value in chip.values() if value)
+    # ...AND THE MACHINE WAS STILL RUNNING AFTERWARDS. `vbl_handler` ticks the music every vertical
+    # blank and the music writes the YM2149, so the PSG stream is the heartbeat — measured from the
+    # LAST pen write onward, which is the instant the title slice finished. A hung or dead machine
+    # emits nothing after it; one waiting at a fire gate emits for the rest of the window.
+    last_pen = max((position for position, (register, _, _) in enumerate(events)
+                    if PEN_FIRST_REG <= register <= PEN_LAST_REG), default=-1)
+    after = len(events) - 1 - last_pen if last_pen >= 0 else 0
+    checks = [
+        ("the build took the video hardware", moves > 0,
+         f"{moves} screen-base change(s) in the stream, ending at {state:#x}"),
+        ("...and the title slice crossed the seam and put its palette on the chip",
+         len(chip) == PALETTE_PENS and lit > 0,
+         f"{len(chip)} of {PALETTE_PENS} pen registers written, {lit} of them non-zero — "
+         f"clear_palette's sixteen zeros are what a chain that never reached set_palette leaves"),
+        ("...and the machine was still ticking when the window closed", after >= OWN_RUN_ALIVE_EVENTS,
+         f"{after} write events after the last pen write (floor {OWN_RUN_ALIVE_EVENTS}); the "
+         f"vertical-blank handler's music tick is what produces them, so a dead machine leaves 0"),
+        # ...AND IT NEVER ENDED, which is this build's whole contract and is asserted from the
+        # ABSENCE of the file the ladder writes on its way out. A record here means a bound this
+        # build is supposed to have lifted fired anyway.
+        ("...and the ladder never ended, so no record was written",
+         not (DISK / OWN_FILE).exists() and not (DISK / STATS_FILE).exists(),
+         f"{OWN_FILE} and {STATS_FILE} are both absent — with every bound lifted the ladder has no "
+         f"exit, which is what `atari/run.sh` documents (Ctrl-Q is how a person leaves)"),
+    ]
+    report(f"{OWN_RUN_MODE} — the interactive binary, booted headless", checks)
+    problems += [f"{name}: {detail}" for name, ok, detail in checks if not ok]
+    if problems:
+        raise SystemExit("FAIL: " + "; ".join(problems))
+    print(f"OK: {OWN_RUN_BUILD} — the binary `atari/run.sh` launches boots, takes the machine, loads "
+          f"and depacks TITLESCR.RAD across the seam, puts its palette on the chip and then waits at "
+          f"the title's fire gate with the vertical-blank handler still ticking. It waits for ever "
+          f"there BY DESIGN (-DSMOKE_PLAY lifts the spin bound), so the frame loop and the ladder's "
+          f"endings are `smoke.py ownplay`'s and the joystick is a person's.")
+
+
+def own_script(directory, plain, frames, pokes, gates, after_release=None):
+    """The debugger script for one driven pass: the fire gates, and optionally one ending.
+
+    TWO MECHANISMS, BOTH SHARED WITH THE MODE THEY CAME FROM. The gates are `fire_gate_lines`, the
+    boot mode's own, aimed at the addresses THIS run reported about itself; the ending is
+    `ending_poke_breakpoint`, M3's own, which is where the anchor and the beacon are stated."""
+    directory = Path(directory)
+    lines = fire_gate_lines(directory, plain, gates, after_release)
+    if pokes:
+        lines.append(ending_poke_breakpoint(directory, plain["image_base"], frames["capture_pc"],
+                                            pokes, "OWNPOKE.INI"))
+    script = directory / "OWNCMD.INI"
+    script.write_text("\n".join(lines) + "\n")
+    return script
+
+
+def drive_the_own_run(prg, plain, frames, tag, pokes, gates, what, after_release=None, trace=False,
+                      withhold=()):
+    """Boot the own-entry build again with `pokes` injected, and bring back its three records.
+
+    `trace` IS OFF BY DEFAULT AND ASKED FOR BY THE PASSES THAT PARSE IT. Hatari's write trace is
+    tens of megabytes over this mode's run — the boot chain alone depacks four pictures — and a log
+    nothing reads is cost with no evidence in it. The two passes that count buffer publications turn
+    it on; the ones that grade fields do not."""
+    with tempfile.TemporaryDirectory() as tmp:
+        script = own_script(tmp, plain, frames, pokes, gates, after_release)
+        status, log, rom = run_hatari(prg, run_vbls=OWN_RUN_VBLS, parse=script,
+                                      trace=TIMELINE_TRACE if trace else None,
+                                      log_name=f"hatari-{OWN_MODE}-{tag}.log", withhold=withhold)
+    record, why = read_own()
+    m2, m2_why = read_m2()
+    stats, stats_why = read_stats()
+    for missing in (why, m2_why, stats_why):
+        if missing:
+            raise SystemExit(f"FAIL: {what} left no readable record ({missing})")
+    if pokes and M3_POKE_BEACON not in log:
+        raise SystemExit(f"FAIL: {what}'s poke breakpoint never fired — arrival {M3_POKE_ANCHOR} at "
+                         f"capture_the_frame ({frames['capture_pc']:#x}) was never reached, so "
+                         f"nothing was injected and this run is not a drive")
+    if record["image_base"] != plain["image_base"]:
+        raise SystemExit(f"FAIL: {what} put the image at {record['image_base']:#x} where the "
+                         f"undriven run reported {plain['image_base']:#x} — every poke was aimed "
+                         f"with the wrong address")
+    return record, m2, stats, log, status, rom
+
+
+def own_flips(log, image_base, what):
+    """How many times `flip_screen` pointed the shifter at one of the game's two screen buffers.
+
+    IT IS THE HEARTBEAT AND IT IS WHY THE TRACE IS ON. The record says the ladder took an ending and
+    called `boot_load_stage` again; only the ORDERED write stream says the frame loop was still
+    flipping buffers afterwards.
+
+    THE TWO BUFFERS ARE COMPUTED AND NOT INFERRED, which is where this parts company with
+    `mode_play`'s `displayed_buffers`. That function RANKS the addresses the shifter dwells in,
+    which works for a build that enters the frame loop immediately — and does not work here:
+    measured, an own-entry run spends its first ~500 vblanks in the boot chain's five loads and four
+    depacks with TOS's own screen still on the bus, so the dwell ranking picked $3f8000 (TOS's) over
+    one of the game's and the pair failed its own "WB_SCREEN_FRONT - WB_SCREEN_BACK apart" guard.
+    This build reports where GEMDOS put its image, so the two addresses `wb_target_shifter_byte`
+    publishes are simply `image_base + WB_SCREEN_LOW` and `+ WB_SCREEN_HIGH` — which is the same
+    arithmetic the backend does, from the same two constants."""
+    events, why = timeline_events(log.splitlines())
+    if why:
+        return None, f"{what}: {why}"
+    buffers = {image_base + wb("SCREEN_LOW"), image_base + wb("SCREEN_HIGH")}
+    publications, _, _ = base_writes(events, buffers, 0)
+    return len(publications), None
+
+
+def own_chain_rows(record, m2, stats, gates):
+    """The rows every pass of this mode shares: the MACHINE was taken and given back, the boot chain
+    ran, its gates were crossed, and the frame loop was entered.
+
+    THE READ-BACK ROWS ARE FIRST AND THEY ARE THE ONES THIS BUILD MOST NEEDS. `readback_checks` is
+    every mode's health scan — the two vectors installed and restored, the resolution and sync set
+    and restored, the screen base published, the IKBD answering, the YM2149's port A deselected and
+    put back — and this mode ran without them for a phase. It is the build that publishes its own
+    palette and its own screen base, from its own boot chain, so a build that took the machine and
+    did not set it up would produce a perfectly parseable record with nothing on the screen.
+
+    `gates` is how many fire gates THIS pass can cross, which is not the same for all four (see
+    OWN_FIRE_GATES): asserting the count per pass is what stops a pass arming five and silently
+    crossing two."""
+    return readback_checks(stats) + [
+        # THE TWO PICTURE SLICES, AND NOT THE STAGE ONE. `stage_result` is the LAST stage load's,
+        # and the ladder loads a stage on every reload and every restart — so it is a per-pass
+        # reading and each pass grades it below. That the chain's FIRST stage load succeeded is
+        # witnessed by the frame loop having been entered at all, three rows down.
+        ("the boot chain's two picture slices ran on its own image",
+         record["title_result"] == LOAD_COPYLOCK_RAN and record["credits_result"] == LOAD_OK,
+         f"title={record['title_result']} credits={record['credits_result']} "
+         f"(WB_LOAD_COPYLOCK_RAN={LOAD_COPYLOCK_RAN}, WB_LOAD_OK={LOAD_OK}); the last stage load "
+         f"returned {record['stage_result']}"),
+        ("...and the protection was left disarmed", record["copylock_arm_flag"] == COPYLOCK_CLEAR,
+         f"copylock_arm_flag={record['copylock_arm_flag']:#x}"),
+        ("...and the resource table arrived and was relocated",
+         record["resource_signature"] == wb("RESOURCE_RELOCATED"),
+         f"WB_RESOURCE_HEADER={record['resource_signature']:#x}, expected "
+         f"{wb('RESOURCE_RELOCATED'):#x}"),
+        ("the frame loop was entered over what the boot loaded", record["legs_run"] > 0,
+         f"{record['legs_run']} leg(s), {record['frames_total']} frames, last shifter base "
+         f"{m2['shifter_base']:#x}"),
+        # THE FRAME LOOP'S OWN CLOCK, printed beside the whole run's so the difference is visible.
+        # RB_VBL_TICKING is graded on the FORMER in this build (wonderboy_main.c says why): the boot
+        # chain spends several hundred vblanks on five loads and four depacks, and a floor read off
+        # `vbl_ticks_at_exit` would be satisfied by those alone whatever the frame loop did.
+        ("...and the frame loop's own vblanks track its frames",
+         record["frame_loop_vbl_ticks"] >= record["frames_total"] > 0,
+         f"{record['frame_loop_vbl_ticks']} shim vblanks inside the legs over "
+         f"{record['frames_total']} frames, out of {record['vbl_ticks_at_exit']} for the whole run "
+         f"— the boot chain's are the difference"),
+        ("...and every fire gate this pass arms was answered",
+         record["fire_gates_crossed"] == gates and record["fire_waits_timed_out"] == 0,
+         f"{record['fire_gates_crossed']} of {gates} gates crossed, "
+         f"{record['fire_waits_timed_out']} timed out"
+         + (f" (last at {record['fire_wait_timed_out_pc']:#x})"
+            if record["fire_waits_timed_out"] else "")),
+        # THE a5 THE LOOP WAS ENTERED WITH, and it belongs to the passes that ENTER it: the undriven
+        # pass stops at the first gate, so its `entry_unwind` is the zero of a field never written
+        # and a row asked there would be about nothing.
+        the_unwind_agrees_with_the_measured_a5(record),
+    ]
+
+
+def own_stage_rows(record, row, what, index_row=None):
+    """WHICH STAGE THE RUN ENDED ON, stated three ways: the sequence index, the stage number, and
+    the overlay that is actually in memory — the last of which is only telling because `mode_ownplay`
+    asserts, before any boot is paid for, that the two rows this mode is about do not share it.
+
+    `index_row` IS THE ROW THE INDEX WAS STEPPED PAST, and it is normally the same row: a load that
+    succeeded consumed the row whose overlay is now in memory. IT IS NOT THE SAME ON A REFUSAL, and
+    that asymmetry is the whole of the retry policy's first residue — `stage_sequence_advance` steps
+    the index at the TOP of the slice and the load can fail below it, so a refused reload leaves the
+    index one row further on than the picture. Pass 5 drives that and names both rows, which is the
+    difference between measuring the residue and being surprised by it."""
+    seq = (row if index_row is None else index_row) + SEQ_ROWS_STEPPED
+    other = SECOND_SEQ_ROW if row == FIRST_SEQ_ROW else FIRST_SEQ_ROW
+    return [
+        (f"{what}: the sequence index is one past row {seq - SEQ_ROWS_STEPPED}",
+         record["level_seq_index"] == seq,
+         f"WB_LEVEL_SEQ_INDEX={record['level_seq_index']}, expected {seq} "
+         f"(stage_sequence_advance steps the index past the row it consumes)"),
+        (f"{what}: the stage number is row {row}'s",
+         record["stage_number"] == own_stage_number(row),
+         f"WB_STAGE_NUMBER={record['stage_number']}, and WB_LEVEL_SEQ_TABLE row {row} carries "
+         f"{own_stage_number(row)}"),
+        (f"{what}: row {row}'s overlay is the one in memory",
+         record["stage_entry_follow"] == overlay_entry_follow(row),
+         f"the start record's entry position at WB_OVERLAY_DEPACK_DEST+{wb('START_FOLLOW_X')} is "
+         f"{record['stage_entry_follow']:#010x}; {resource_name(overlay_resource(row))} inflates to "
+         f"{overlay_entry_follow(row):#010x} and {resource_name(overlay_resource(other))} to "
+         f"{overlay_entry_follow(other):#010x}"),
+    ]
+
+
+def mode_ownplay():
+    """THE OWN-ENTRY PLAY: the boot loads the stage, and every ending comes back to it."""
+    prg = BUILD / OWN_BUILDS[OWN_MODE]
+    refuse_a_stale_build(prg, OWN_MODE, "own_stats")
+    # THE TWO ROWS' OVERLAYS MUST DIFFER, asked BEFORE any boot is paid for (`mode_boot`'s rule):
+    # every stage inflates its overlay to the same address, so a fingerprint the two rows share would
+    # make "row N's overlay is the one in memory" true of both and the reload unobservable.
+    if overlay_entry_follow(FIRST_SEQ_ROW) == overlay_entry_follow(SECOND_SEQ_ROW):
+        raise SystemExit(
+            f"FAIL: {resource_name(overlay_resource(FIRST_SEQ_ROW))} and "
+            f"{resource_name(overlay_resource(SECOND_SEQ_ROW))} carry the same start-record entry "
+            f"position, so this mode cannot tell a reload from a repeat")
+    plain, frames, plain_stats, plain_log, plain_status = measure_the_undriven_own_run(prg)
+    problems = check_machine_health(plain_status, plain_log)
+
+    # PASS TWO: the chain's own two gates answered, nothing else. The control for pass three. It
+    # arms exactly what it can cross — the ladder never leaves the frame loop here, so the prompt's
+    # gate and the chain's second walk are not reached and arming them would say nothing.
+    record, m2, stats, log, status, rom = drive_the_own_run(
+        prg, plain, frames, "fire", (), OWN_CHAIN_GATES, "the fire-only pass", trace=True)
+    problems += check_machine_health(status, log)
+    flips, why = own_flips(log, record["image_base"], "the fire-only pass")
+    checks = own_chain_rows(record, m2, stats, OWN_CHAIN_GATES) + [
+        ("the boot's own stage load ran the armed SPRITES.CRU load",
+         record["stage_result"] == LOAD_COPYLOCK_RAN,
+         f"boot_load_stage returned {record['stage_result']} "
+         f"(WB_LOAD_COPYLOCK_RAN={LOAD_COPYLOCK_RAN})"),
+        ("no ending was taken, so the stage did not move",
+         record["reloads"] == 0 and record["restarts"] == 0
+         and record["legs_run"] == LEGS_WITHOUT_AN_ENDING
+         and record["last_ending"] == LOOP_RETURNED
+         and record["stopped_at"] == OWN_STOP_FRAME_LIMIT,
+         f"{record['reloads']} reloads, {record['restarts']} restarts, {record['legs_run']} leg(s), "
+         f"last_ending={record['last_ending']} (WB_KEY_ACTIONS_RETURNED={LOOP_RETURNED}), "
+         f"stopped_at={own_stop(record)}"),
+        # THE ONE-LEG FLIP COUNT, which is pass three's baseline rather than a claim of its own.
+        ("...and the frame loop flipped buffers", flips is not None and flips >= record["frames_total"],
+         why or f"{flips} buffer publications over {record['frames_total']} frames — one leg's worth"),
+    ] + own_stage_rows(record, FIRST_SEQ_ROW, "undriven")
+    report(f"{OWN_MODE} pass 2 — FIRE ONLY: the control that says the stage moves for a reason",
+           checks)
+    print(f"   TOS={rom or 'bundled EmuTOS'} hatari exit={status}; {record['fire_gates_crossed']} "
+          f"gates crossed, {record['frames_total']} frames (full log in "
+          f"{OUT / f'hatari-{OWN_MODE}-fire.log'})")
+    problems += [f"pass 2 {name}: {detail}" for name, ok, detail in checks if not ok]
+    undriven_flips = flips or 0
+
+    # PASS THREE: the round end, driven. It reloads a stage rather than restarting the chain, so it
+    # crosses the same two gates the pass above does and no more — the reload enters `$e5ba` below
+    # the credits gate.
+    record, m2, stats, log, status, rom = drive_the_own_run(
+        prg, plain, frames, ROUND_END_ENDING.tag, ROUND_END_ENDING.pokes, OWN_CHAIN_GATES,
+        ROUND_END_ENDING.arm, trace=True)
+    problems += check_machine_health(status, log)
+    flips, why = own_flips(log, record["image_base"], "the round-end pass")
+    checks = own_chain_rows(record, m2, stats, OWN_CHAIN_GATES) + [
+        (f"{ROUND_END_ENDING.arm} left the frame loop", record["last_ending"] == ROUND_END_ENDING.code,
+         f"last_ending={record['last_ending']} = {ROUND_END_ENDING.arm} "
+         f"({ROUND_END_ENDING.code}); the original's own `jmp` goes to "
+         f"{ROUND_END_ENDING.unwind:#x} and this ladder calls boot_load_stage"),
+        ("...and boot_load_stage RAN AGAIN on target",
+         record["reloads"] == 1 and record["stage_result"] != LOAD_DISK_ERROR,
+         f"{record['reloads']} reload(s), the second stage load returned {record['stage_result']}"),
+        ("...and the frame loop ran again after it",
+         record["legs_run"] == LEGS_WITH_ONE_ENDING
+         and record["stopped_at"] == OWN_STOP_FRAME_LIMIT,
+         f"{record['legs_run']} legs, {record['frames_total']} frames, "
+         f"stopped_at={own_stop(record)}"),
+        # THE HEARTBEAT, AND IT IS A COMPARISON RATHER THAN A FLOOR. `mode_play` asks how far into
+        # its event stream the LAST flip is, because that build never ends; this ladder does end —
+        # it runs its second leg out and hands the machine back — so "still flipping at the cut-off"
+        # is not the question. The question is whether the frame loop turned again AFTER the reload,
+        # and the fire-only pass is the baseline that answers it: one leg there, two here, so a run
+        # that reloaded and then stopped flipping fails this while satisfying every field above.
+        ("...and it was still flipping buffers on the far side of the reload",
+         flips is not None and flips > undriven_flips,
+         why or f"{flips} buffer publications against the one-leg pass's {undriven_flips}, over "
+                f"{record['frames_total']} frames in {record['legs_run']} legs"),
+    ] + own_stage_rows(record, SECOND_SEQ_ROW, "after the reload")
+    report(f"{OWN_MODE} pass 3 — THE ROUND END, DRIVEN: the ending that reloads the stage", checks)
+    print(f"   TOS={rom or 'bundled EmuTOS'} hatari exit={status}; {record['fire_gates_crossed']} "
+          f"gates crossed, {record['vbl_ticks_at_exit']} shim vblanks (full log in "
+          f"{OUT / f'hatari-{OWN_MODE}-{ROUND_END_ENDING.tag}.log'})")
+    problems += [f"pass 3 {name}: {detail}" for name, ok, detail in checks if not ok]
+
+    # PASS FOUR: ESC, driven — the prompt slice and the whole chain again. It is the one pass that
+    # crosses all five gates, because it is the one that walks the chain twice.
+    record, m2, stats, log, status, rom = drive_the_own_run(
+        prg, plain, frames, QUIT_ENDING.tag, QUIT_ENDING.pokes, OWN_FIRE_GATES, QUIT_ENDING.arm,
+        after_release=release_the_quit_key(plain), trace=True)
+    problems += check_machine_health(status, log)
+    flips, why = own_flips(log, record["image_base"], "the ESC pass")
+    checks = own_chain_rows(record, m2, stats, OWN_FIRE_GATES) + [
+        (f"{QUIT_ENDING.arm} left the frame loop", record["last_ending"] == QUIT_ENDING.code,
+         f"last_ending={record['last_ending']} = {QUIT_ENDING.arm} ({QUIT_ENDING.code}); the "
+         f"original's own `jmp` goes to {QUIT_ENDING.unwind:#x}, which is show_data_disk_prompt"),
+        ("...and the chain after it loaded a stage again",
+         record["stage_result"] == LOAD_COPYLOCK_RAN,
+         f"the stage load after the restart returned {record['stage_result']} "
+         f"(WB_LOAD_COPYLOCK_RAN={LOAD_COPYLOCK_RAN})"),
+        ("...and boot_prompt_screen drew the data-disk picture",
+         record["prompt_result"] == LOAD_OK and record["restarts"] == 1,
+         f"prompt_result={record['prompt_result']} (WB_LOAD_OK={LOAD_OK}, never run is "
+         f"{BOOT_SLICE_NOT_RUN:#x}), {record['restarts']} restart(s)"),
+        # THE LADDER WENT ROUND AND CAME BACK, which is a claim about LEGS and is what this row is
+        # named for. The sequence row it came back to is `own_stage_rows`' four rows below.
+        ("...and the ladder ran a SECOND leg after the restart",
+         record["legs_run"] == LEGS_WITH_ONE_ENDING and record["stopped_at"] == OWN_STOP_FRAME_LIMIT,
+         f"{record['legs_run']} legs, {record['frames_total']} frames, "
+         f"stopped_at={own_stop(record)}"),
+        # ...AND IT WAS STILL FLIPPING BUFFERS ON THE FAR SIDE OF IT, which is pass 3's own argument
+        # applied to the ending that walks the WHOLE chain again rather than one stage load: every
+        # field above can be satisfied by a ladder that restarted and then sat still. The baseline
+        # is the same one-leg pass, and the comparison is against it rather than against a floor,
+        # for the reason pass 3 states.
+        ("...and it was still flipping buffers on the far side of the restart",
+         flips is not None and flips > undriven_flips,
+         why or f"{flips} buffer publications against the one-leg pass's {undriven_flips}, over "
+                f"{record['frames_total']} frames in {record['legs_run']} legs"),
+    ] + own_stage_rows(record, FIRST_SEQ_ROW, "after the restart — game_restart_reset put it back")
+    report(f"{OWN_MODE} pass 4 — ESC, DRIVEN: the prompt, and the whole chain again", checks)
+    print(f"   TOS={rom or 'bundled EmuTOS'} hatari exit={status}; "
+          f"{record['vbl_ticks_at_exit']} shim vblanks (full log in "
+          f"{OUT / f'hatari-{OWN_MODE}-{QUIT_ENDING.tag}.log'})")
+    problems += [f"pass 4 {name}: {detail}" for name, ok, detail in checks if not ok]
+
+    # PASS FIVE: THE SAME ROUND END, WITH THE STAGE IT ASKS FOR NOT ON THE DRIVE — the retry
+    # policy's own arm, driven rather than argued.
+    #
+    # `run_the_own_entry`'s three STOP arms (OWN_STOP_RELOAD, OWN_STOP_RESTART, OWN_STOP_LEG_LIMIT)
+    # exist because a refused load leaves TWO residues neither recoverable from the other, so the
+    # ladder stops rather than retrying by calling the slice again (wonderboy_main.c's banner, and
+    # ../STATUS.md §3). Through phase E's first draft NO PASS EXECUTED ANY OF THEM: three arms of the
+    # switch, four green passes, and not one of them a witness.
+    #
+    # THE DATA IS REAL AND NOT FABRICATED, which is the whole shape of this pass. Nothing is poked
+    # and no code is faulted: the drive simply does not carry OVALAY02.RAD, exactly as it would not
+    # if a player had the wrong disk in — and the reconstruction's own `load_resource_by_index`
+    # refuses on the name it asks for. Everything ABOVE the reload is unchanged from pass 3, which is
+    # what makes the difference attributable: the chain runs, the frame loop runs a leg, the round
+    # end fires, and then the reload has nowhere to come from.
+    withheld = resource_name(overlay_resource(SECOND_SEQ_ROW))
+    record, m2, stats, log, status, rom = drive_the_own_run(
+        prg, plain, frames, "noreload", ROUND_END_ENDING.pokes, OWN_CHAIN_GATES,
+        "the withheld-overlay pass", withhold=(withheld,))
+    problems += check_machine_health(status, log)
+    checks = own_chain_rows(record, m2, stats, OWN_CHAIN_GATES) + [
+        (f"{ROUND_END_ENDING.arm} left the frame loop, as it did in pass 3",
+         record["last_ending"] == ROUND_END_ENDING.code and record["reloads"] == 1,
+         f"last_ending={record['last_ending']}, {record['reloads']} reload(s) attempted"),
+        (f"...and the reload was REFUSED, because {withheld} is not on the volume",
+         record["stage_result"] == LOAD_DISK_ERROR,
+         f"boot_load_stage returned {record['stage_result']} "
+         f"(WB_LOAD_DISK_ERROR={LOAD_DISK_ERROR})"),
+        ("...and the ladder STOPPED there rather than retrying the slice",
+         record["stopped_at"] == OWN_STOP_RELOAD,
+         f"stopped_at={own_stop(record)} — the arm that records where it stopped and hands the "
+         f"machine back"),
+        # AND IT DID NOT GO ROUND AGAIN, which is the half a `stopped_at` alone does not say: a
+        # ladder that retried would have entered the frame loop a second time and pass 3's own
+        # two-leg reading is the number this is against.
+        ("...and no second leg ran", record["legs_run"] == LEGS_WITHOUT_AN_ENDING,
+         f"{record['legs_run']} leg(s) against pass 3's {LEGS_WITH_ONE_ENDING} over the same "
+         f"ending — a retry would have run another"),
+        # ...AND THE RESIDUE THE RETRY POLICY IS BUILT AROUND, MEASURED. `stage_sequence_advance`
+        # steps WB_LEVEL_SEQ_INDEX at the TOP of the slice and the load refuses below it, so the
+        # index is one past the row that was never loaded while the picture in memory is still the
+        # PREVIOUS row's. That is exactly the state a caller which "retried" by calling the slice
+        # again would skip a row from, and it is why this ladder stops instead — argued in
+        # wonderboy_main.c's banner since phase E and driven on a 68000 here.
+    ] + own_stage_rows(record, FIRST_SEQ_ROW, "the refused reload left row 0's picture in memory",
+                       index_row=SECOND_SEQ_ROW)
+    report(f"{OWN_MODE} pass 5 — THE WITHHELD OVERLAY: the retry policy's own stop arm", checks)
+    print(f"   TOS={rom or 'bundled EmuTOS'} hatari exit={status}; {withheld} withheld; "
+          f"{record['vbl_ticks_at_exit']} shim vblanks (full log in "
+          f"{OUT / f'hatari-{OWN_MODE}-noreload.log'})")
+    problems += [f"pass 5 {name}: {detail}" for name, ok, detail in checks if not ok]
+
+    if problems:
+        raise SystemExit("FAIL: " + "; ".join(problems))
+    print("OK: THE OWN-ENTRY PLAY — the reconstruction booted itself from the shipped program and "
+          "its own seven files, entered the frame loop over the stage IT loaded, and took two of "
+          "the frame loop's five endings back into the boot chain: a round end reloaded the next "
+          "stage and ESC drew the data-disk prompt and started over. A fifth pass then withheld the "
+          "reload's own overlay and the ladder stopped where its retry policy says it stops. The "
+          "level skip shares the round end's unwind and is M3's; the player's own two endings are "
+          "driven host-side (test_game.py); the joystick is still a person's job (atari/run.sh).")
+
+
 # ---- the runner's own exec line, parsed ------------------------------------------------------------
 #
 # THE ONE LINE NO HEADLESS MODE EXECUTES. Every check in this file boots Hatari with `run_hatari`'s
@@ -4057,8 +4863,9 @@ def runsh_argv(output):
 def mode_runsh():
     """The interactive invocation, parsed — and shown to be able to fail.
 
-    It restages `atari/disk/` for the play build, exactly as `run.sh` does, so it is not a mode to
-    interleave with another one's run."""
+    It restages `atari/disk/` for whichever build `run.sh` launches — the OWN-ENTRY one since batch
+    44 phase E, which means the .PRG, its image and the ladder's seven resources — exactly as
+    `run.sh` does, so it is not a mode to interleave with another one's run."""
     done = subprocess.run(["bash", str(HERE / "run.sh"), RUNSH_PARSE_CHECK], text=True,
                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT)
@@ -4128,6 +4935,7 @@ BUILD_FOR_MODE = {"mono": "m1", "m2fault": "m2", "m5": "m2", "m5skew": "m2", "m6
                   "m6flash": "m5flash", M3_MODE: "m2"}
 
 
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "m1"
     # `runsh` boots nothing itself — it asks run.sh for the command IT would boot — so it is routed
@@ -4136,7 +4944,7 @@ def main():
         mode_runsh()
         return
     prg = dict(PRG_FOR_MODE, **M5_BUILDS, **M6_BUILDS, **M3_BUILDS, **TITLE_BUILDS,
-               **BOOT_BUILDS).get(mode)
+               **BOOT_BUILDS, **OWN_BUILDS, **OWN_RUN_BUILDS).get(mode)
     if prg is None:
         raise SystemExit(__doc__)
     prg = BUILD / prg
@@ -4150,6 +4958,19 @@ def main():
     if mode in BOOT_BUILDS:
         # TWO PASSES AND ITS OWN --run-vbls, so it routes before the single-boot modes below.
         mode_boot(mode)
+        return
+
+    if mode in OWN_RUN_BUILDS:
+        # THE UNCAPPED BUILD, and it routes before the ladder's own mode because it shares neither
+        # its passes nor its --run-vbls: it writes no record, so there is nothing to drive and
+        # nothing to read back.
+        mode_ownrun()
+        return
+
+    if mode in OWN_BUILDS:
+        # FOUR PASSES and its own --run-vbls, for `mode_boot`'s reason and one more: two of them
+        # drive an ending, so the ladder has a whole second stage to load inside the window.
+        mode_ownplay()
         return
 
     if mode in TITLE_BUILDS:

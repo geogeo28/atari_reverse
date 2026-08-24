@@ -77,7 +77,13 @@ down where the wiring would happen and not only in the batch notes.
   $44000..$70000 the eight $5800 pre-shifted scroll buffers. The builders ARE ported.
   $70000/$78000  the two 32000-byte screens.
 
-So the M1 image can run the routines that read the PROGRAM, and it cannot run a frame.
+So the M1 image can run the routines that read the PROGRAM. IT CANNOT RUN A FRAME AS IT STANDS,
+and that is a statement about the IMAGE and not about the build — the ranges above are what a frame
+reads and this file does not write them. What CAN run a frame over this image is a build that
+FILLS them first, which is what the own-entry one does: `atari/build.sh ownplay` takes the M1 branch
+of this script and then runs `../src/boot.c`'s four composed slices on the machine, and those five
+loads and four depacks are exactly the ranges listed above. The sentence three paragraphs down says
+so; an earlier revision of this one read as though no build could, which contradicted it.
 
 **THE M2 IMAGE FABRICATES THE BOOT AND NOT THE DATA, AND THAT IS A DIFFERENT SENTENCE.** Every range
 above is present in it, MEASURED off the shipped 1989 binary at `$f8b4` under Hatari — see
@@ -97,12 +103,19 @@ vblank a boot finishes on) and `atari/README.md` §14's table is the surface tha
 `original.py mode_variance`'s own rule, applied one shore over. So the dump is no longer the ONLY
 route to those bytes and the fabrication clause has an expiry date on it.
 
-**WHAT HAS NOT CHANGED IS WHAT THIS FILE DOES.** `--dump` still stages `original.py dump`'s
-measurement, and every frame mode — `m2`, `m5*`, `m6*`, `m3*`, `play` — still boots on it. Switching
-them to the recomputed span is a build-ordering change rather than a discovery: the image would have
-to be produced by a RUN of the boot build rather than by this script, which links no compiled core
-and calls no reconstruction. Until that ordering exists the dump is what is staged, and PROVENANCE
-below is the receipt.
+**AND THE BUILD A PERSON PLAYS NO LONGER STAGES IT AT ALL** (batch 44 phase E, `atari/README.md`
+§15). `atari/run.sh` opens the OWN-ENTRY build, which takes the M1 branch of this script — the
+shipped program plus the seeds, no `--dump` — runs the boot chain's four composed slices to a
+playable stage and then enters `game_main_loop`, with every `game_key_actions` ending wired back into
+the chain. It stages no `PENS.IMG` either: the palette is the boot's own product here, put on the
+chip by three `set_palette` calls. So the fabrication clause has moved off the play build entirely.
+
+**WHAT STILL STAGES THE DUMP IS THE FRAME MODES, AND THEY SHOULD.** `m2`, `m5*`, `m6*`, `m3*` and
+`play` are DIFFERENTIALS against anchored frames of the shipped binary, and their whole point is that
+both sides start from the same MEASURED entry state — the same RAM, the same sixteen pens, the same
+a5. An own-entry image would start from a state the shipped side never had, and four anchored frames
+would have nothing to be compared against. So `--dump` is unchanged for those six, and PROVENANCE
+below is the receipt: the dump is what they stage, for a reason rather than by inertia.
 
 AND WHAT IT DOES NOT MEASURE, because it is not the same twice: 512 bytes at $f314..$f514 are the
 COPYLOCK'S RUN-TIME SCRATCH. The shipped file's bytes there disassemble as line-A words and

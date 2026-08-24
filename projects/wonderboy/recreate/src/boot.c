@@ -23,6 +23,7 @@
 #include "actor.h"
 #include "bus.h"
 #include "disk.h"
+#include "game.h"     /* shifter_screen_base_write — the prompt slice's base publish */
 #include "machine.h"
 #include "rad.h"
 #include "sound.h"
@@ -381,11 +382,12 @@ void stage_sequence_apply_row(uint8_t *image, uint32_t row) {
 
 
 /* ================================================================================================
- * THE BOOT CHAIN COMPOSED (batch 44 phase C)
+ * THE BOOT CHAIN COMPOSED (batch 44 phases C and E)
  *
- * Everything above this line is a routine the boot CALLS. The three below are the boot ITSELF — the
+ * Everything above this line is a routine the boot CALLS. The four below are the boot ITSELF — the
  * straight-line runs of those calls that lie between $e4e6's prologue and the `jmp $4a0.w` that
- * starts the frame loop. Nothing here is new behaviour: every callee was reconstructed in phase A or
+ * starts the frame loop, plus the data-disk prompt the ESC ending unwinds into, which falls through
+ * into that same prologue. Nothing here is new behaviour: every callee was reconstructed in phase A or
  * B, or in batches 12/26 for src/stage.c's. What these add is the ORDER and the OPERANDS, which is
  * exactly what an inventory of individually-verified leaves cannot state.
  *
@@ -394,8 +396,9 @@ void stage_sequence_apply_row(uint8_t *image, uint32_t row) {
  * bmi` until it is positive again. That is a spin on a byte no instruction of the run writes, so it
  * is the shim's and the schedule model's business and not C's (../atari/README.md §13), and the
  * waits are therefore the natural boundaries: each function starts where a wait ended and stops
- * where the next one begins. WB_BOOT_TITLE_AT/_END and their two pairs in include/wonderboy.h are
- * those addresses, and test/test_boot_chain.py enters and stops the oracle at exactly them.
+ * where the next one begins. WB_BOOT_TITLE_AT/_END and their three pairs in include/wonderboy.h are
+ * those addresses, and test/test_boot_chain.py enters and stops the oracle at exactly them. The
+ * PROMPT slice ends at a FOURTH wait of the same shape ($e4d6), which is cut the same way.
  *
  * WHAT IS NOT HERE, and it is one block: the PROLOGUE at $e4e6..$e510 — `video_set_lowres_50hz`,
  * `clear_palette`, `clear_both_screens`, the MFP timer masks, the vbl vector and two `move.w #imm,sr`.
@@ -445,6 +448,56 @@ static int load_or_stop(uint8_t *image, uint32_t index, uint32_t dest, uint32_t 
     if (result == WB_LOAD_COPYLOCK_RAN)
         *report = result;
     return result != WB_LOAD_DISK_ERROR;
+}
+
+/* $e494..$e4d4. THE DATA-DISK PROMPT — the fourth slice, and the one the boot never runs.
+ *
+ * WHO REACHES IT, AND IT IS THREE PLACES. The shipped image holds exactly three `jmp $e494.l` and
+ * they are three different endings sharing one destination — an earlier revision of this plate
+ * counted one, and named the wrong one:
+ *
+ *   $598   `game_key_actions`' ESC arm (../include/game.h's WB_KEY_ACTIONS_QUIT), and the only one
+ *          of the three that fades the music first: `jsr 84(a0)` at $594 is snd_start_fadeout
+ *   $bdc   `player_pending_event_gate`'s game-over box expiring, after `lea 4(a7),a7` at $bd8
+ *          discards ONE return address — and with NO fade; the two instructions are adjacent
+ *   $700e  `actor_behavior_type61`'s message sequence reaching its terminator, after
+ *          `movea.l #$80000,a7` throws the whole stack away. The Copylock failure path enters that
+ *          same sequence, which is why $700e is reached on two quite different occasions
+ *
+ * NONE OF THEM IS AN EXIT: the picture goes up, the player presses fire at $e4d6, and the wait
+ * FALLS THROUGH into $e4e6 — the boot continuation — which draws the title again. Every one of the
+ * three restarts the game.
+ *
+ * TWO EXTENTS AND THEY ARE NOT THE SAME NUMBER. `boot_prompt_screen` reconstructs $e494..$e4d4, the
+ * SLICE — up to and including `set_palette` at $e4d0. The routine's PROMPT HALF runs to $e4e4,
+ * because $e4d6..$e4e4 is the fire wait, which is hardware and stays the shim's; $e4e4 is where the
+ * fall-through happens. (Ghidra's function at $e494 is 632 bytes because it swallows the boot
+ * continuation beyond that; ../names.txt cmt 0xe494 has that census.)
+ *
+ * THE SCREEN BASE IS PUBLISHED HERE AND NOWHERE ELSE IN THE FOUR SLICES. `move.b #$7,$ff8201.l /
+ * move.b #$80,$ff8203.l` is WB_PROMPT_SCREEN_BASE, i.e. WB_SCREEN_HIGH, which is the buffer the
+ * depack two calls later fills — so the picture is shown out of the buffer it lands in and no copy
+ * is needed, where `boot_credits_screen` inflates into the same buffer and copies down because the
+ * shifter is pointed at the other one. It goes through src/game.c's screen-base sink for
+ * `shifter_palette_write`'s reason: the address is off the loaded image, the oracle drops the write
+ * and the on-target arm performs it, and a second copy of that arm in this file is what the export
+ * avoids. WHICH REGISTERS AND WHICH BYTES is decoded out of the shipped instructions in
+ * test/test_boot_chain.py, so the write's identity is pinned even while its happening is not.
+ *
+ * THE CLEAR COMES FIRST. `bsr.w $e7f4` is `clear_palette`, before the base and before the load, so
+ * the screen the base is about to show is black until `set_palette` puts this picture's own row up.
+ * It writes no image byte, which is why nothing below it can observe the order. */
+uint32_t boot_prompt_screen(uint8_t *image) {
+    uint32_t report = WB_LOAD_OK;
+
+    (void)clear_palette(image);
+    shifter_screen_base_write((uint8_t)(WB_PROMPT_SCREEN_BASE >> 16),
+                              (uint8_t)(WB_PROMPT_SCREEN_BASE >> 8));
+    if (!load_or_stop(image, WB_RESOURCE_DATADISK, WB_RESOURCE_LOAD_BUFFER, &report))
+        return WB_LOAD_DISK_ERROR;
+    (void)rad_depack(image, WB_RESOURCE_LOAD_BUFFER, WB_PROMPT_DEPACK_DEST);
+    (void)set_palette(image, WB_PROMPT_PALETTE_SRC);
+    return report;
 }
 
 /* $e512..$e550. THE FIRST PICTURE, and the first load of the run.

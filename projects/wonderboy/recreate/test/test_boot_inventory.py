@@ -273,11 +273,15 @@ PORTED = leaf.ported_entries()
 # owns them. Both move when a routine is ported, which is the point of recording them.
 BOOT_CHAIN_PORTED_BYTES = 2086
 BOOT_CHAIN_UNPORTED_BYTES = 2512
-# ...and the figure the split UNDER-REPORTS, because a segment is ported or not as a whole. THREE
-# reconstructions sit INSIDE show_data_disk_prompt's 632-byte segment, which is unported, so all of
-# them are counted on the unported side above: `bg_tile_install`'s 72 bytes, and batch 44 phase B's
-# three pieces of the per-stage dispatcher. Stated rather than smoothed over — the two numbers answer
-# different questions and only the second is about a phase's own work.
+# ...and the figure the split UNDER-REPORTS, because a segment is ported or not as a whole, and this
+# is the segment it under-reports MOST. Everything below sits INSIDE show_data_disk_prompt's 632-byte
+# segment, which is unported because no `src/` symbol carries the name at $e494, so every byte of it
+# is counted on the unported side above: `bg_tile_install`'s 72 bytes; batch 44 phase B's three
+# pieces of the per-stage dispatcher; batch 44 phase C's three composed slices, whose own composed
+# bytes nothing derives yet; and batch 44 phase E's `boot_prompt_screen`, which is $e494..$e4d4 —
+# the segment's own first 66 bytes. Stated rather than smoothed over: the two numbers answer
+# different questions and only the second is about a phase's own work, and DERIVING the composed
+# count is queued in ../STATUS.md rather than typed here.
 BOOT_CHAIN_BYTES_RECONSTRUCTED_THIS_PHASE = 362                 # batch 44 phase A
 BOOT_CHAIN_BYTES_RECONSTRUCTED_PHASE_B = 218                    # ...and phase B, in whole segments
 # The dispatcher's three pieces, which own no segment because they live inside an unported one. Their
@@ -960,8 +964,34 @@ RETRACTED_PHRASES = {
     # paragraph as the claim, quoting it, so the phrase survived its own retraction twice over.
     "the boot-chain banner's prologue claim": "in the boot's order",
     "the resource-table park's unit": "3,200 LONGWORDS",
+    # Batch 44 phase E's three, all of them the SLICE COUNT: `boot_prompt_screen` made the composed
+    # set four, and three surfaces said three. The third is a forward-looking note that came true —
+    # ../atari/ now names WB_BOOT_PROMPT_* and calls all four slices — and a note about what a
+    # future phase will want is exactly the kind that outlives the phase and stops being read.
+    "src/boot.c's slice count": "The three below are the boot ITSELF",
+    "include/boot.h's slice count": "ALL THREE RETURN ONE OF THE WB_LOAD_* CODES",
+    "include/boot.h's on-target note": "does not name them yet",
+    # ...AND THE PHASE-E GATE'S OWN THREE, all of them the prompt's ENTRANCE CENSUS — which was
+    # wrong in two different ways across five surfaces (src/boot.c, include/boot.h,
+    # include/wonderboy.h, test/test_boot_chain.py and ../names.txt). It counted ONE entrance where
+    # the shipped image holds three `jmp $e494.l`, and it identified the one it named ($700e, slot
+    # 61's message terminator) as the tail of ESC's music fade — which is $598, three sites away.
+    # Two spellings of the second are registered because two surfaces phrased it differently.
+    "the prompt's entrance count": "has one entrance",
+    "the prompt's entrance identity": "the tail of the music fade",
+    "the prompt's entrance identity, wonderboy.h's spelling": "ending's music fade ($700e)",
 }
-# NOT REGISTERED, and it is worth saying why rather than leaving a gap. Phase C also retired two
+# NOT REGISTERED, AND THE FIRST REASON IS THAT A SCAN CANNOT BE RUN AGAINST A HISTORY. Phase E's
+# opening paragraph quoted three of phase D's §7 queue entries verbatim — the play build's staged
+# dump, the unported prompt arm, the still-capped fire waits — and the phase-E gate found it. The
+# OPENER is rewritten to describe them (that is the defect, and it is fixed), but the phrases
+# themselves are registered nowhere: ../STATUS.md is an APPEND-ONLY batch history and phase D's own
+# §7 still contains them, where they were true when written. Making those greps reach zero would
+# mean editing a closed phase's record of what it knew, which is a worse failure than the one the
+# rule prevents. THE HISTORICAL HITS ARE NAMED HERE INSTEAD, which is what the rule asks of a
+# correction it cannot enforce: phase D §7, three entries, retired by phase E.
+#
+# ...AND THE SECOND. Phase C also retired two
 # IDENTIFIER spellings — the shim's private title depack destination and palette source, now
 # `WB_`-prefixed in include/wonderboy.h. A scan cannot enforce those: the new spelling CONTAINS the
 # old one as a substring, so the grep would match every correct use. The rule reaches phrases, not
@@ -969,7 +999,7 @@ RETRACTED_PHRASES = {
 RETRACTION_SURFACES = (
     "../names.txt", "STATUS.md", "PORTABILITY.md", "src/boot.c", "include/boot.h",
     "include/wonderboy.h", "atari/shim_include/tos.h", "atari/wonderboy_backend.c",
-    "atari/README.md", "../notes/architecture.md",
+    "atari/README.md", "atari/gen_image.py", "atari/wonderboy_main.c", "../notes/architecture.md",
     "../../../docs/on-target-execution.md", "../../../docs/methodology.md",
     "../../../tools/recreate_kit/TRAP_MODEL.md",
     "../../../projects/joust/recreate/atari/joust_os.s",

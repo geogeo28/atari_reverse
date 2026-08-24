@@ -4611,6 +4611,40 @@
                                              * picture that pen draws is not established here */
 #define WB_CREDITS_PROMPT_COLOUR   0x77u    /* ...and the word written to it */
 
+/* $e494..$e4d4 — boot_prompt_screen (batch 44 phase E): the DATA-DISK PROMPT. It is the fourth
+ * slice and the only one the boot itself never runs — `show_data_disk_prompt` is entered by a
+ * `jmp $e494.l`, of which the image holds THREE ($598 the ESC arm, $bdc the player gate's game-over
+ * expiry, $700e slot 61's terminator; src/boot.c has the census). It draws the picture, waits for
+ * fire at $e4d6 and FALLS THROUGH into $e4e6, which is the boot continuation. So each of those
+ * three endings is a restart and not an exit, and this slice is what stands between them and the
+ * title screen again.
+ *
+ * THE TWO EXTENTS DIFFER AND BOTH ARE USED HERE. The constants below cut the SLICE at $e4d4 —
+ * $e494..$e4d4 is what the C reconstructs — while the routine's prompt half runs to $e4e4, since
+ * $e4d6..$e4e4 is the fire wait the shim stands in for.
+ *
+ * IT IS THE ONE SLICE THAT PUBLISHES A SCREEN BASE. `move.b #$7,$ff8201.l / move.b #$80,$ff8203.l`
+ * points the shifter at WB_SCREEN_HIGH — the buffer this picture is about to inflate into — where
+ * the title and credits slices leave the base the prologue's `video_set_lowres_50hz` published.
+ * The two immediates are decoded out of the shipped instructions in test/test_boot_chain.py and
+ * required to compose the constant below, so the pair cannot drift from the buffer. */
+#define WB_BOOT_PROMPT_AT          0xe494u  /* `bsr.w $e7f4` — clear_palette, the slice's first */
+#define WB_BOOT_PROMPT_PALETTE_AT  0xe4d0u  /* `jsr $f944.l` — the last instruction, and the witness
+                                             * a differential of this slice reached its end */
+#define WB_BOOT_PROMPT_END         0xe4d6u  /* `clr.b $877.w` — the fire wait, which is the shim's */
+#define WB_BOOT_PROMPT_BASE_HI_AT  0xe498u  /* `move.b #$7,$ff8201.l` ...and its own address, so a
+                                             * case can read the immediate and the register back */
+#define WB_BOOT_PROMPT_BASE_MID_AT 0xe4a0u  /* `move.b #$80,$ff8203.l` */
+/* The base those two publish. DERIVED, because it is the buffer the depack below aims at and the
+ * two are one arrangement: a base that moved without its picture would show the other screen. */
+#define WB_PROMPT_SCREEN_BASE      WB_SCREEN_HIGH
+/* `lea $77f80.l,a1` at $e4c0 and `lea $77f84.l,a0` at $e4ca — THE SAME two operands the credits
+ * slice carries, because both pictures inflate into WB_SCREEN_HIGH. Spelt as the credits pair
+ * rather than as a second literal: one geometry, one definition (CLAUDE.md §5), and
+ * WB_CREDITS_DEPACK_DEST's own note already names $e4c0 as its second operand site. */
+#define WB_PROMPT_DEPACK_DEST      WB_CREDITS_DEPACK_DEST
+#define WB_PROMPT_PALETTE_SRC      WB_CREDITS_PALETTE_SRC
+
 /* $e5ba..$f8b4 — boot_load_stage: the per-stage load, from the sequence row to the `jmp $4a0.w`
  * that starts the frame loop. It ENDS in a transfer and not in an `rts`: $e6fc's `bsr.w $f89e`
  * never comes back, because $f89e sets up three registers, calls the stage-transition hinge and

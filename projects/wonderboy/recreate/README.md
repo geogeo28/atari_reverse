@@ -822,12 +822,23 @@ separate compiler and the differential `.so` never sees it, so `make test` below
 leaked into. The only trace of it in `src/` is a `#ifdef WB_ON_TARGET` arm on the three shifter
 sinks (`src/game.c`, `src/stage.c`), a define `make test` never passes.
 
-**Sixteen modes, green on two ROMs, and since batch 43 phase F they include the ENDS of the run.**
+**Modes green on two ROMs, and since batch 43 phase F they include the ENDS of the run.**
 `game_key_actions`' three endings are driven on the machine one run each (`smoke.py m3`), and the
 `Pterm` hand-back is asserted from outside the program — both vectors and TOS's own frame clock, read
 one vblank after the exit — with `m3fault` the build that suppresses the two restores and must redden
 every one of those rows and no other. That path had been compiled into thirteen green modes and
 executed by none of them, and driving it found a hang: `atari/README.md` §8 and §12.
+
+**AND SINCE BATCH 44 PHASE E THE PROGRAM BOOTS ITSELF AND THE ENDINGS COME BACK.** `smoke.py ownplay`
+is one binary that stages the shipped `SWB.PRG` plus `gen_image.py`'s seeds — no measured RAM, no
+staged palette — runs `src/boot.c`'s **four** composed slices to a playable stage, and then enters
+`game_main_loop` with all three endings wired to the addresses the original's own `jmp`s name: a
+round end reloads the next stage (measured: sequence index 1 → 2, and `OVALAY02.RAD`'s own start
+record in memory), and ESC draws the data-disk prompt and walks the whole chain again. **`bash
+atari/run.sh` opens that build**, so playing it starts at the real title screen. `atari/README.md`
+§15 has the four passes, the retry policy and the a5 question — the one place an own-entry claim can
+quietly lean on the dump, resolved by finding the boot's own producer for it and measuring the
+oracle's a5 at the `jmp $4a0.w`.
 
 **It also runs the ORIGINAL.** `atari/original.py` boots the shipped 1989 `.stx` disks under Hatari
 and drives them to named anchors, which is what supplies the things no host-side computation in this

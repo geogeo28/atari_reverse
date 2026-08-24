@@ -1216,6 +1216,10 @@ PSG_EVENT_WRITE = harness.OS_PSG_EVENT_WRITE
 # --- $882: joy1_latch_edge then actor_behavior_pass ----------------------------------------------
 
 _LATCH_AND_STEP = leaf.image_glue("game_latch_input_and_step_actors")
+# ...and the same symbol bound so that a case can read the REPORT back. Two bindings rather
+# than one restype for all, because the rows above are about the two calls' WRITES and
+# comparing a return the original does not have would be noise in them.
+_LATCH_AND_STEP_REPORT = leaf.image_glue("game_latch_input_and_step_actors", ctypes.c_uint32)
 LATCH_AND_STEP_ENTRY = leaf.entry_of("game_latch_input_and_step_actors")
 
 
@@ -2729,6 +2733,163 @@ def test_a_frame_whose_key_actions_UNWIND_never_reaches_the_backward_branch():
     assert info["ret"] == ROUND_END, (
         f"{what}: the loop reported {info['ret']} rather than the unwind it took")
     assert FRAME_TICK_B39A not in info["writes"], f"{what}: the frame ran on past the unwind"
+
+
+# --- AND THE TWO WAYS OUT THAT ARE THE PLAYER'S, NOT THE KEYS' -----------------------------------
+#
+# THE SHIPPED IMAGE HOLDS SEVEN `jmp`s INTO THE BOOT CHAIN AND game_key_actions MAKES THREE. The
+# other four are below the loop's FOURTH gated call — `game_latch_input_and_step_actors` runs the
+# behaviour pass, the pass hands its callee's report up unchanged, and four of that report's values
+# are the player's own transfers out of the frame:
+#
+#   $bdc / $700e -> $e494  the game-over box expiring, and slot 61's message sequence ending
+#   $c20 / $1626 -> $e5ba  a life spent, and the collision map's triple pop
+#
+# UNTIL BATCH 44 PHASE E'S GATE THE LOOP DISCARDED THAT REPORT, so on the own-entry build a player's
+# death left the frame loop turning where the original had gone back to the boot chain. The two rows
+# below are what that fix rests on: each drives one of the two DESTINATIONS through the whole frame
+# and requires the loop to name it. The gate's own batteries (test_player.py) drive each ARM; what
+# these add is that the report reaches the loop's return at all, and that the loop maps it to the
+# right one of the two — a row for only one code would leave the mapping's two arms swappable.
+#
+# THE SEED IS THIS FILE'S WHOLE FRAME PLUS ONE PLAYER, and it is composed that way round on purpose:
+# `_frame_pokes` is coherent across the fifteen calls (the screens, the spawn table, the scroll
+# counters that a keyed seed once ran for 1.5 million instructions), and what an unwind case adds is
+# the record the walk dispatches and the words the player tier reads. The unwind fires on the fourth
+# call, so calls five to fifteen never run at all — which is itself asserted below.
+from test_player import (DEATH_BOX_EXPIRED_B0C, DEATH_MESSAGE_POSTED_B0A,        # noqa: E402
+                         GATE_DATADISK_SITE, GATE_DATADISK_TAKEN_AT, LIVES, MAP_STRIDE,
+                         PLAYER_X, PLAYER_Y, QUIET_FLAGS, QUIET_FLAGS2, TILE_39, TYPE_PLAYER,
+                         UNWIND_SITE, UNWIND_TAKEN_AT, _WALK_QUIET_RECORD, _cell_for)
+
+LOOP_EXIT_DATA_DISK = wb("LOOP_EXIT_DATA_DISK")
+LOOP_EXIT_RELOAD = wb("LOOP_EXIT_RELOAD")
+
+# WHICH SLOT OF `_frame_pokes`' EIGHT THE PLAYER TAKES. Slot 0, so the walk dispatches him on its
+# first step and the seven free records behind him are never reached — the shortest frame that can
+# reach the player tier, and the one whose instruction count stays inside FRAME_INSN_CAP.
+PLAYER_SLOT = 0
+PLAYER_RECORD = _record(TABLE_DEFAULT, PLAYER_SLOT)
+# A value no arm of the player tier produces, so a word this seed forgets cannot quietly pass for
+# one it set. test_player.py's own, and imported rather than re-picked would be better — it is a
+# module-private name there, so it is restated here with the reason attached.
+PLAYER_MARKER = 0x5a
+
+
+def _player_frame_pokes(what, arms):
+    """`_frame_pokes` with WB_ACTOR_TABLE_SELECTED's slot 0 turned into the player, plus `arms` —
+    the words that choose WHICH of the player frame's nine calls does something.
+
+    Every byte the walk and the frame read is stated, for `_WALK_QUIET_RECORD`'s reason one file
+    over: a field left to the seed's keyed bytes would choose a branch this case is not about.
+    """
+    pokes = _frame_pokes(what)
+    player = {PLAYER_RECORD + ACTOR_X: word(PLAYER_X),
+              PLAYER_RECORD + ACTOR_Y: word(PLAYER_Y),
+              PLAYER_RECORD + wb("ACTOR_TYPE"): word(TYPE_PLAYER),
+              PLAYER_RECORD + wb("ACTOR_FLAGS"): bytes([QUIET_FLAGS]),
+              PLAYER_RECORD + wb("ACTOR_FLAGS2"): bytes([QUIET_FLAGS2])}
+    player.update({PLAYER_RECORD + offset: bytes([value])
+                   for offset, value in _WALK_QUIET_RECORD.items()})
+    # The frame's own nine gate words, all on their SILENT arm except the ones `arms` names.
+    quiet = {wb("HUD_METER_VALUE"): word(1),           # the death check returns at once
+             wb("STAGE_RESET_BLOCK"): word(0),         # ...and so does the pending-event gate
+             wb("STAGE_ANIM_REQUEST_B0E"): word(0),
+             wb("SCENE_ALIGN_REQUEST_B14"): word(0),
+             wb("ACTOR_PLATFORM_RIDDEN"): word(1),     # the fall is skipped
+             wb("STATE_FLAG_A32"): word(1),            # ...and so is the map cell
+             wb("STAGE_ANIM_DONE_B10"): word(PLAYER_MARKER),
+             EVENT_FINISHED_E1BE: word(0)}             # ...and the round bonus returns at once
+    return leaf.overlay(pokes, player, quiet, arms)
+
+
+# ...AND WHAT THE PLAYER TIER ADDS TO THE FRAME'S OWN BANDS. Two, and both belong to calls the
+# quiet frame never makes: his record (the walk's five calls above the unwind write inside it) and
+# the ladder pass's step word. test_player.py's own unwind row names exactly this pair.
+UNWOUND_FRAME_REGIONS = FRAME_REGIONS + (
+    (PLAYER_RECORD, wb("ACTOR_RECORD_BYTES"), "the player's own record, written by the walk"),
+    (wb("TILE_33_STEP"), WORD, "...and the ladder pass's step word"),
+)
+
+
+def _run_unwound_frame(what, pokes, exit_code, stop_pc, via):
+    """One iteration that never reaches $508 because the PLAYER left it. The oracle is checkpointed
+    at the original's own `jmp` and witnessed by the pop above it, exactly as the round-end row is;
+    the write bands are the frame's plus the player's two, and everything the eleven calls below the
+    pair own is simply unreached."""
+    info = leaf.run_reaching("game_main_loop", _loop_glue, _bands(UNWOUND_FRAME_REGIONS), what, via,
+                             regs={"_pokes": pokes}, poison=False, max_insns=FRAME_INSN_CAP,
+                             stop_pc=stop_pc)
+    assert info["ret"] == exit_code, (
+        f"{what}: the loop reported {info['ret']}, not the transfer it made ({exit_code}) — the "
+        f"behaviour pass's report is what carries it")
+    # THE FRAME REALLY REACHED THE PAIR AND REALLY STOPPED THERE, said from both sides. The second
+    # of the four gated calls wrote its tick, so the iteration was not cut short before the pass;
+    # `flip_screen`'s buffer swap is absent, so none of the eleven calls below the pair ran.
+    assert FRAME_TICK_B39A in info["writes"], (
+        f"{what}: panel_refresh_frame never ran, so the frame stopped ABOVE the pair and this case "
+        f"is not about the unwind it says it is")
+    assert SCREEN_FRONT not in info["writes"], (
+        f"{what}: the frame flipped, so it ran on past the unwind instead of leaving through it")
+    return info
+
+
+def test_the_players_COLLISION_unwind_leaves_the_loop_as_a_stage_RELOAD():
+    """`lea 12(a7),a7 / jmp $e5ba.l` at $1622, reached through the whole frame: the walk dispatches
+    the player, his frame's eighth call is `player_run_map_cell`, and the cell he stands on is
+    WB_MAP_TILE_39. THREE return addresses go, this iteration's among them, so the loop cannot
+    return and reports WB_LOOP_EXIT_RELOAD in place of the transfer.
+
+    WB_STATE_FLAG_A32 IS TAKEN DOWN AND THAT IS THE WHOLE ARMING: the frame's `tst.w` at $a64 is
+    what stands between an ordinary frame and this call, and every other case in this file leaves it
+    raised."""
+    what = "game_main_loop, the frame the player's collision map unwinds"
+    pokes = _player_frame_pokes(what, {wb("STATE_FLAG_A32"): word(0),
+                                       wb("MAP_ROW_STRIDE"): word(MAP_STRIDE),
+                                       _cell_for(PLAYER_X, PLAYER_Y): bytes([TILE_39])})
+
+    _run_unwound_frame(what, pokes, LOOP_EXIT_RELOAD, UNWIND_SITE, UNWIND_TAKEN_AT)
+
+
+def test_the_players_GAME_OVER_unwind_leaves_the_loop_for_the_DATA_DISK_prompt():
+    """`lea 4(a7),a7 / jmp $e494.l` at $bd8 — the game-over box's expiry, which fires from the
+    player frame's SECOND call and so runs none of the seven below it either.
+
+    IT IS THE OTHER DESTINATION AND THAT IS WHY IT IS HERE. With only the row above, a mapping that
+    answered WB_LOOP_EXIT_RELOAD for all four transfer codes would pass — and the own-entry ladder
+    would reload a stage where the original shows the data-disk prompt. NO MUSIC FADE IS EXPECTED ON
+    THIS PATH: the fade is `jsr 84(a0)` at $594, inside game_key_actions' ESC arm, and the
+    original's $bd8 pops and `jmp`s with nothing in between."""
+    what = "game_main_loop, the frame the game-over box unwinds"
+    pokes = _player_frame_pokes(what, {wb("STAGE_RESET_BLOCK"): word(PLAYER_MARKER),
+                                       DEATH_MESSAGE_POSTED_B0A: word(PLAYER_MARKER),
+                                       DEATH_BOX_EXPIRED_B0C: word(PLAYER_MARKER),
+                                       wb("TEXT_BOX_ACTIVE"): bytes([1]),
+                                       LIVES: word(2)})
+
+    _run_unwound_frame(what, pokes, LOOP_EXIT_DATA_DISK, GATE_DATADISK_SITE, GATE_DATADISK_TAKEN_AT)
+
+
+def test_the_input_and_actors_pair_HANDS_THE_REPORT_UP_rather_than_dropping_it():
+    """$882, and the site the defect was AT. `bsr joy1_latch_edge / bsr actor_behavior_pass / rts`
+    leaves the walk's d0 in a register the ORIGINAL never reads — and the reconstruction's report is
+    a different thing, out of band, standing in for a transfer the port cannot make. A port that
+    dropped it (this one did, until batch 44 phase E) leaves the identical image on every case in
+    this file, because the transfer writes nothing: the whole difference is the value returned.
+    """
+    what = "game_latch_input_and_step_actors, the player's collision unwind"
+    pokes = _player_frame_pokes(what, {wb("STATE_FLAG_A32"): word(0),
+                                       wb("MAP_ROW_STRIDE"): word(MAP_STRIDE),
+                                       _cell_for(PLAYER_X, PLAYER_Y): bytes([TILE_39])})
+
+    info = leaf.run_reaching("game_latch_input_and_step_actors", _LATCH_AND_STEP_REPORT,
+                             _bands(UNWOUND_FRAME_REGIONS), what, UNWIND_TAKEN_AT,
+                             regs={"_pokes": pokes}, poison=False, max_insns=FRAME_INSN_CAP,
+                             stop_pc=UNWIND_SITE)
+    assert info["ret"] == wb("PLAYER_COLLIDE_UNWIND"), (
+        f"{what}: the pair reported {info['ret']}, not the walk's own "
+        f"{wb('PLAYER_COLLIDE_UNWIND')} — a report renamed on its way up is a second spelling of "
+        f"one ending")
 
 
 # --- the busy frame, the premise under it, and the frame that runs THREE waits ---------------------
