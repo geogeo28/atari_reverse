@@ -215,6 +215,35 @@ directly). So a wrapper that mishandles the calling convention has **no test cov
   (`Fcreate`/`Fopen` read the full longword then use `move.w %d0`).
 - **Fix:** read the longword and use its low word, matching the working wrappers.
 
+**The register half of the same class, and it is the one that bombs.** GCC's m68k SysV ABI treats
+`%d2-%d7`/`%a2-%a6` as callee-saved and caches live values in them across a call to a wrapper; TOS
+preserves only `%d3-%d7`/`%a3-%a6`. So **`%d2`/`%a2` are exactly the pair the compiler expects to
+survive and TOS may destroy**, and every wrapper must `movem.l %d2/%a2,-(%sp)` around its `trap`.
+
+- **Real example:** BuggyBoy's `remaster/render/atari/os.s` shipped a three-bombs-on-the-STE crash —
+  TOS's `Ikbdws` returned `phystop-1` in `%d2` while GCC cached a pointer there
+  (`projects/buggyboy/recreate/README.md`, "On-target register rule").
+- **Symptom:** hardware-only. One live variable in the *caller* is corrupted, so the fault surfaces
+  far from the wrapper and never in emulation, because a given TOS build may leave a benign value in
+  the pair. The oracle cannot see the class at all: it services traps in-process and clobbers
+  nothing.
+- **Diagnosis:** read every routine in the `.s` that contains a `trap` and check for both halves of
+  the `movem` pair. Note the argument offsets move with it (+12 rather than +4 for the first arg).
+- **Fix, and the surface that keeps it fixed:** save the pair — and add a **source scan to the
+  build** that fails when a routine containing a `trap` does not, since nothing else in a project
+  can see it. `tools/assert_trap_registers.sh` is that scan, game-agnostic: it walks each routine
+  from its label to the NEXT label (not to its first `rts`, which would leave everything past a
+  guard clause unread), flags one that traps *and returns* without both halves of the pair, asserts
+  the COUNT of wrappers it evaluated so a rotted pattern reds rather than passing vacuously, and
+  proves on every run that it can fail by re-running the same program over the source with the save
+  halves stripped and again with the restore halves stripped.
+- **The class is workspace-wide; the gate currently guards ONE project.** Wonder Boy's
+  `atari/build.sh` calls it with its own wrapper count. Joust and BuggyBoy do not call it — those are
+  their projects and wiring it in is their commit — but all four sibling `os.s` files were run
+  through it by hand on 2026-08-24 and parse clean: `joust_os.s` 19 returning wrappers,
+  `buggyboy/recreate/render/atari/os.s` 8, `game_os.s` 15, `remaster/render/atari/os.s` 17, every one
+  of them saving the pair. Queued in `projects/wonderboy/recreate/STATUS.md` §7.
+
 ### 4. Compiler-vs-asm codegen — call-heavy inner loops
 
 The readable cores lean on `memcpy`/`memset` and small helpers. GCC does **not** always inline a
@@ -494,6 +523,18 @@ have shown me if it were wrong?"**
 | **rendered pixels** | Hatari `screenshot`, i.e. the emulator's real video path | nothing about *why*; and it is only as reproducible as the emulator's frame rendering |
 | **timelines** | the ordered stream of hardware writes (`--trace video_color,psg_write`), reduced to a per-phase shape | values it does not sample; it is a shape, not a state |
 | **exit status and the log** | the emulator's own return code plus its bus/address-error and halt lines | anything the machine survives *and* does not log |
+
+**A gotcha that makes one of these surfaces lie, and it is the emulator's rather than the machine's.**
+Hatari 2.6.1 exits on `--run-vbls` **without writing a modified `.ST` floppy image back to the host
+file**. Measured (Wonder Boy batch 44 phase G): the run's GEMDOS trace showed all five
+`Fcreate`/`Fwrite` pairs and the FDC trace 276 `type II write sector` commands, while the image's
+sha256 never changed — the sectors reached the emulated disk and stopped there. Quitting from the
+**debugger** does flush it, because that path ejects both drives, so a check that needs the bytes
+must end on a breakpoint whose action is `quit` and keep `--run-vbls` as the backstop for a machine
+that hangs first. It is an instrument and not a deviation: nothing about the emulated machine
+changes. The corollary bites the other way too — **a debugger quit will flush a disk a pass did not
+mean to modify**, so a pass that claims a volume was left alone should assert its digest rather than
+trust the trap ledger. (`projects/wonderboy/recreate/atari/smoke.py`, `floppy_flush_script`.)
 
 **The rule: every on-target change names the surface that would catch its failure. If it names none,
 that is the finding** — not a reason to proceed carefully. Add the surface, or record in `STATUS.md`

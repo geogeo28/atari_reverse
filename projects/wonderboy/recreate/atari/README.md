@@ -73,6 +73,13 @@ post-boot RAM off a real emulated machine and staging that.
 | **M9** the retry policy, DRIVEN | a `WB_LOAD_DISK_ERROR` from `boot_load_stage` leaves `WB_LEVEL_SEQ_INDEX` already stepped and may leave `WB_COPYLOCK_ARM_FLAG` armed (`../src/boot.c`'s `load_or_stop`), and neither residue is recoverable from the other — the original never has the problem because it retries the same load IN PLACE, inside an interactive error arm this port declines to model. So the ladder **stops**, records which rung it stopped at and what the slice reported, and hands the machine back. A DECLARED deviation, not a defect — and no longer only a declaration: **passes 5 and 6 withhold a file each from the drive** and drive the whole thing with real data. Pass 5 withholds `OVALAY02.RAD` and MEASURES the index residue the policy is built around; pass 6 withholds `DATADISK.RAD` and executes the OTHER stop arm, whose residue is the INVERSE — the prompt steps no sequence state at all, and what it leaves is on the hardware | ✅ `smoke.py ownplay` passes 5 + 6 |
 | **M9** BOTH stop arms, EXECUTED | through phase E three of `run_the_own_entry`'s five stop arms had been executed by nothing at all: four green passes, three untouched `switch` arms. Two are driven now, each by a volume that does not carry a file the reconstruction asks for BY NAME — no poke past the ending, no injected fault, exactly what a player with the wrong disk in would have. `OWN_STOP_RELOAD` (pass 5) and `OWN_STOP_RESTART` (pass 6), each with its own measured residue. `OWN_STOP_LEG_LIMIT` needs a ladder that CYCLES, which nothing here produces, and stays declared in Known gaps | ✅ `smoke.py ownplay` passes 5 + 6 |
 | **M8** the MIS-RUN control | `build.sh bootfault` suppresses `boot_credits_screen`'s call and nothing else — both gates still crossed, both other slices still called, the record still complete. Measured on both ROMs: **13 of 14 breakable rows fail** — 21,714 of 32,000 credits bytes, fifteen of sixteen pens, and every stage pin, because `game_restart_reset` lives inside the suppressed slice and is what puts `WB_LEVEL_SEQ_INDEX` at 0. **The fourteenth HOLDS and is named rather than swallowed**: `WB_LIFE_RESTART_ENTRY_C26` is zero in the shipped image, so neither a chain that ran nor one that stopped can move it. That cascade is the port's own `load_or_stop` contract firing, and it is why this control cannot also be the SPAN's — the chain stops before a span is taken, so the row above owns that (§14) | ✅ `smoke.py bootfault` |
+| **M10** THE FLOPPY | **the reconstruction boots off a disk a real Atari can read, with no host in the machine.** `tools/st_build.py` writes a 720 KB double-sided FAT12 volume — the format `gw/README.md` prescribes for an unprotected disk — carrying the play build as `\AUTO\WB.PRG`, its image, and **all forty rows** of `WB_RESOURCE_FILE_TABLE`. Hatari boots it with `--disk-a` and **no GEMDOS drive at all**, so nothing hands TOS a program: TOS's own AUTO-folder loader runs it, and every `Fopen` the seam makes goes through TOS's FAT12 walk and the WD1772 instead of a host directory. Same binary and the same three liveness rows as `ownrun`, so a difference between the two modes is a difference the MEDIA made | ✅ `smoke.py floppy` |
+| **M10** the paths, from TOS's own mouth | the question only this mode can ask. An AUTO-folder program's default path is not the drive root a `--auto` launch gives it, and the shim opens **bare filenames** (`Fopen("WB.IMG")`). TOS's GEMDOS trace is the one surface that can see a PATH — every other check in the directory sees the CONSEQUENCE of a load and is equally happy whichever directory it came from — and it reports `Pexec(0, "\AUTO\WB.PRG")`, then `Fopen("WB.IMG")` and `Fopen("TITLESCR.RAD")` resolving from `\`. **No path handling had to change** | ✅ `smoke.py floppy` |
+| **M10** the record comes home ON THE DISK | the evidence channel a machine with no debugger has. `WBPROBE.ST` carries the record-writing build; the run `Fcreate`s its five files onto the volume it booted from, and `tools/st_extract.py` lifts them back out of the .ST — through the **same** `read_record` parser the GEMDOS drive's copy goes through. So this file's writer is verified by TOS reading it, and its reader by TOS's own GEMDOS writing what it parses. **A Hatari gotcha is in the way and is measured**: `--run-vbls` exits WITHOUT flushing a modified .ST (the run's GEMDOS trace showed all five `Fcreate`/`Fwrite` pairs and the FDC trace 276 `type II write sector` commands, with the image's digest unchanged); a debugger `quit` does, so every pass ends on one | ✅ `smoke.py floppy` |
+| **M10** the two controls | **a volume that does not carry `TITLESCR.RAD`** must refuse in the ladder's own named way — `boot_title_screen` returns `WB_LOAD_DISK_ERROR`, the ladder stops in the boot with **no** fire gate reached (pass 2 reaches one and times out there, so the two runs are distinguishable), and it still writes its record, so the refusal is a REPORT and not a crash. And **a 1 MB machine** must not run the program at all: TOS still `Pexec`s `\AUTO\WB.PRG` and the program never opens `WB.IMG`, because its own header asks GEMDOS for 1,315,566 bytes. That is `atari/HARDWARE.md`'s RAM requirement, measured on the machine rather than asserted in prose | ✅ `smoke.py floppy` |
+| **M10** what the media COSTS, measured | the title screen is up ~1,600 vblanks after power-on (~32 s at 50 Hz) against a ceiling of 3,200, and the title's own load-and-depack **window** is graded against a second ceiling of 600 — that window is the part the media owns. **The floppy is not the slower route to the title**, which was the expectation and is wrong: `--auto` makes TOS boot to the desktop before it runs anything while an AUTO-folder program runs before the desktop exists. Both figures are **printed by the pass off the run it just did** rather than restated here; repeated runs on TOS 1.04 do not agree to better than tens of vblanks (batch 44 phase G: first pen 1,593 and 1,607, window 277 and 192) | ✅ `smoke.py floppy` |
+| **M10** a read-back that stops meaning anything on real media | and it is the T4 class one register over. `RB_PSG_PORT_A_DESELECTED` is the program reading PSG port A back at the end of its run — a statement about the reconstruction only while nothing else touches that register. On a GEMDOS drive nothing does; **with a real disk in the drive TOS polls it for media change all run long** (hundreds of ROM writes to register 14, against 2 from the reconstruction), so the read-back reads whoever wrote last: measured, `$25` where the program had left `$27`. **The assertion moves rather than goes away** — the mode excludes the bit and holds `floppy_deselect_drives`' own write, off the pc-filtered write timeline, to exactly the byte the read-back wanted, grading the race by ORDERING (a ROM write after ours) | ✅ `smoke.py floppy` |
+| **M10** the trap-wrapper audit, and its build gate | the class that fails ONLY on hardware, pre-empted. TOS preserves `%d3-%d7`/`%a3-%a6` and GCC caches live values in `%d2`/`%a2`, so a wrapper that does not save that pair silently corrupts a variable in its C caller — three bombs on the STE in BuggyBoy, invisible to every differential (`docs/on-target-execution.md` taxonomy 3). **All ten wrappers in `wonderboy_os.s` were already correct** (ten `movem` pairs, arguments offset by the eight bytes they cost, no trap anywhere else in the build). What did not exist was a surface that would notice a regression: `build.sh` now runs [`tools/assert_trap_registers.sh`](../../../../tools/assert_trap_registers.sh) — game-agnostic, routine by routine from a label to the NEXT label, exempting a routine that traps and never returns, asserting the wrapper COUNT so a rotted pattern cannot pass vacuously, and re-running the same scan over the source with the save halves and then the restore halves stripped as its own two controls. Verified by mutation against three shapes: a deleted save half, the same with a commented `rts`, and the same behind a guard clause's early `rts` | ✅ `build.sh <any mode>` |
 
 **Batch 44 phase D RAN THE BOOT CHAIN, and the staged dump stopped being a fabrication.** The twenty
 on-target modes — the eighteen below plus **`boot`** and **`bootfault`** (§14) — are green on **both
@@ -188,6 +195,12 @@ what appears, and four lines of it matter before you start:
 - **The stick is still the one thing nothing headless has exercised.** The ACIA handler's two
   joystick arms have never executed under any check here, and a person at the cursor keys is what
   runs them (§12's M3 joystick row has the measurement of why).
+- **And to play it on a real Atari, write the disk.** `python3 atari/smoke.py floppy` builds
+  `atari/out/WBOOT.ST` — a 720 KB FAT12 floppy carrying the same build as `\AUTO\WB.PRG` and all
+  forty of the game's resources — and boots it under Hatari with the disk as the only media (§16).
+  **[`atari/HARDWARE.md`](HARDWARE.md)** is the runbook for the machine: what to write it with, what
+  the boot looks like, which hardware reads to watch, how to bring evidence back, and what emulation
+  cannot prove.
 
 It **takes the machine** — real vectors at `$70` and `$118`, as the original does — and **never gives
 it back on its own**, so Ctrl-Q is the way out. That is a CHANGE from the `play` build this replaced:
@@ -247,6 +260,11 @@ python3 atari/original.py prompt                             # M9: the SHIPPED d
 bash atari/build.sh ownplay && python3 atari/smoke.py ownplay # M9, THE OWN-ENTRY PLAY: six passes
 bash atari/build.sh ownrun  && python3 atari/smoke.py ownrun  #   ...the interactive binary, headless
 bash atari/build.sh ownrun  && bash atari/run.sh            #   ...the same ladder, for a person
+python3 atari/smoke.py floppy                               # M10, THE FLOPPY: both builds written to
+                                                            #     720 KB FAT12 images and booted with
+                                                            #     the disk as the ONLY media, by TOS's
+                                                            #     own AUTO-folder loader (§16). Then
+                                                            #     atari/HARDWARE.md, for real iron.
 
 bash atari/build.sh play    && python3 atari/smoke.py play  # the M2-STAGED frame loop, run long
 python3 atari/smoke.py runsh                                #   ...and the line run.sh actually execs
@@ -325,6 +343,7 @@ reading like a crash and then passes in isolation is this, not a red.**
 | `tos.ld` / `mkprg.py` | link at base 0, then wrap the ELF into a GEMDOS `.PRG` with a relocation table |
 | `build.sh` | compile + link + wrap + stage `disk/`, and assert the seam actually held |
 | `smoke.py` | headless Hatari: boot, run to completion, read `STATS.BIN` back, check it |
+| `HARDWARE.md` | **the runbook for the machine no check here can reach** — writing the disk with `gw`, what the boot looks like, the trap-wrapper rule and the gate that keeps it, the hardware reads to watch on iron, how to bring evidence home, and what emulation cannot prove. The floppy itself is not built here: `tools/st_build.py` writes it and `tools/st_extract.py` reads it back (§16) |
 | `run.sh` | **the one that is not a measurement** — build the OWN-ENTRY build (`ownrun`) and open Hatari with a screen, sound and a joystick. Its header is the honest account of what appears. `run.sh parsecheck` is the only thing that runs its `exec` line without opening a machine, and it has now caught two defects there (§15) |
 
 ## The boundary decisions
@@ -1663,6 +1682,141 @@ longer stages the dump, and the frame modes still do, for a reason rather than b
   corrected mutant, which deletes the original line, is **CAUGHT**, and only that row reds. Two
   minutes of "why did that survive" is what the generated code was for: the `-S` output showed the
   call emitted twice.
+
+### 16. The floppy, and what a boot with no host in it is worth
+
+Every mode above this one boots off **Hatari's GEMDOS drive**: a host directory the emulator answers
+`Fopen` from, with no filesystem, no controller and no latency, handed the `.PRG` to autostart with
+`--auto C:\WB.PRG`. It is a perfectly good instrument and it is not a route a real Atari has. §15
+closed the last seam *inside* the program; this one closes the seam *under* it.
+
+`tools/st_build.py` writes a **720 KB double-sided FAT12 volume** — `gw`'s `atarist.720`, the
+format `gw/README.md` prescribes for an unprotected disk, because it is the one that can be written
+*verified*. `smoke.py floppy` boots it with `--disk-a` and no `--harddrive` at all, and four things
+about the run are new:
+
+- **Nothing hands TOS a program.** The binary sits in `\AUTO\` and TOS's own AUTO-folder loader runs
+  it before the desktop exists. That is what a person switching a machine on will get, and it is a
+  different context from a `--auto` launch — in particular a different default path.
+- **Every `Fopen` is a FAT12 walk and a WD1772 transfer**, performed by TOS, not by the emulator.
+- **Every `Fwrite` lands on the disk**, which is the only evidence channel a machine with no
+  debugger has.
+- **TOS's own GEMDOS trace is available**, and it is the one surface in this directory that can see
+  a PATH. Everything else sees the *consequence* of a load — a palette on the chip, a depacked
+  longword, a refusal code — and every one of those is equally happy whichever directory the file
+  came out of.
+
+#### Why a builder, and why it lives in `tools/`
+
+Three reasons for a builder at all, and only the first is about dependencies. `mtools` is not part of
+this workspace's toolchain and a runbook step a person has to install first is a step that will be
+skipped. The Atari boot sector is **not** the DOS one — TOS *executes* sector 0 when its 256
+big-endian words sum to `$1234` and merely mounts the volume otherwise, so `mformat` can only produce
+a *mountable* disk by accident (`st_build` picks a content-derived serial that makes the sum come out
+wrong on purpose, re-drawing it on the one-in-65,536 collision, and then asserts it). And the build
+has to be **deterministic**, because the sha256 it publishes is the only thing binding the image four
+passes proved to the bytes a person writes to a floppy.
+
+**Neither half is this project's.** `tools/st_build.py` is the writer and
+[`tools/st_extract.py`](../../../../tools/st_extract.py) — which this workspace already had — is the
+reader, and both are game-agnostic: what goes on the volume is `smoke.py`'s policy, the filesystem is
+theirs. That split retired a reader this directory used to carry beside the builder, and not only for
+reuse: the promoted one bounds the FAT by the BPB's own length, guards a cluster chain against
+looping, cross-checks a chain against the size its directory entry claims, and follows a
+subdirectory across its **whole** chain rather than its first cluster. The last is the case this
+project actually has — a disk handed back from a real machine has had TOS writing to it, and an
+`\AUTO\` TOS had grown read as *"the file is not there"*. `tools/test_st_floppy.py` pins that case
+directly.
+
+**And the two halves cross-check through TOS itself.** The game loading its resources off an image
+`st_build` wrote is TOS's own FAT12 code reading that writer; the record `st_extract` parses was
+written by TOS's own GEMDOS. The direct round trip is worth pinning too and is, in `tools/`, but it
+is the weaker of the two proofs.
+
+#### The Hatari gotcha in the way
+
+**`--run-vbls` exits without writing a modified `.ST` back to the host file.** Measured: the run's
+GEMDOS trace showed all five `Fcreate`/`Fwrite` pairs, the FDC trace showed 276 `type II write
+sector` commands, and the image's digest never changed — the sectors reached the emulated disk and
+stopped there. Quitting from the **debugger** does flush it, because that path ejects both drives.
+So every pass ends on a breakpoint whose action is `quit`, and `--run-vbls` becomes the backstop for
+a machine that hangs before reaching it. It is an instrument and not a deviation: nothing about the
+emulated machine changes, and on real hardware there is nothing to arrange.
+
+#### The four passes
+
+| pass | disk | what it establishes |
+|---|---|---|
+| 1 | **`WBOOT.ST`** — the play build, all forty resource rows | TOS ran `\AUTO\WB.PRG`; the shim's bare filenames resolved from that context **and the volume answered them** (see below); the build took the video hardware, crossed the seam for `TITLESCR.RAD`, put its palette on the chip and was still ticking when the window closed; it reached the title inside two ceilings, one on arrival and one on the load **window**; and the image is **byte-for-byte unchanged after the boot** — the uncapped build's whole contract, asserted of the file rather than of the trace |
+| 2 | **`WBPROBE.ST`** — the record-writing build, six rows | the same, plus: the ladder ran the title slice, timed out at the FIRST half of the FIRST fire gate with nothing driving it, stopped there — and **its record came home on the disk**, parsed by the same reader the drive's copy goes through |
+| 3 | the same disk **without `TITLESCR.RAD`** | the CONTROL. `boot_title_screen` returns `WB_LOAD_DISK_ERROR`, the ladder stops in the boot with **no** fire gate reached (pass 2 reached one, so the runs are distinguishable), and it still writes its record — the refusal is a REPORT, not a crash. Nothing is faulted and no code changes: the volume simply does not carry the file |
+| 4 | `WBPROBE.ST`, **written again**, in a **1 MB** machine | the OTHER control. TOS still finds and `Pexec`s the program; it never opens `WB.IMG`, because the `.PRG`'s header asks GEMDOS for 1,315,566 bytes. The disk is rewritten first for a reason that is not tidiness — pass 2's record is still ON it, and a control that read the volume as it stood would report the previous pass's evidence as this one's. Measured: it is how this control first went red. It runs through the **same function** as passes 2 and 3 (`expect_record=False`), so the rewrite comes from shared code rather than from remembering |
+
+#### Two things the media changed, and one it did not
+
+**It did not change the paths.** The AUTO-folder boot's default path is `\`, the shim's bare
+filenames resolve, and no path handling had to be added — asserted from TOS's trace rather than
+inferred from the picture appearing.
+
+The trace carries the **ask** and the **answer** separately, and the rows say which is which. Hatari
+does not log a GEMDOS return, so an `Fopen` line alone is only what the program wanted: pass 3's disk
+does not carry `TITLESCR.RAD` and logs the identical line. What a granted open leaves is a *handle*,
+and the `Fread` on it is the next call — so the read that follows an open is that open's receipt.
+Measured, on the two disks that differ by one file: on the probe disk `Fopen("TITLESCR.RAD")` is
+followed by `Fread(6, ...)`; on the control disk the next line is the ladder's first `Fcreate`.
+
+**It changed what one read-back means, and the assertion MOVED rather than went away.**
+`RB_PSG_PORT_A_DESELECTED` is the program reading PSG port A back at the end of its run — a statement
+about the reconstruction only while nothing else touches that register. With a real disk in the drive
+**TOS polls it for media change all run long** (hundreds of ROM writes to register 14, against 2 from
+the reconstruction), so the read-back reads whoever wrote last: measured, it saw `$25` where the
+program had left `$27`. The mode excludes the bit and puts the assertion somewhere the ROM cannot
+reach it — the **ordered write timeline, filtered to the program's own pcs** — where
+`floppy_deselect_drives`' write is held to exactly the byte the read-back wanted, entry keep-bits and
+all. The race is then graded by **ordering** (a ROM write after ours) rather than asserted by a bare
+count. This is `PORTABILITY.md` §5's T4 class arriving one register over: not a read the oracle
+answers with a constant, but a read whose answer stops being the port's own.
+
+**It changed the timing, and not in the direction expected.** The floppy reaches the title screen
+*earlier* than the GEMDOS drive, because `--auto` makes TOS boot all the way to the desktop before it
+runs anything while an AUTO-folder program runs before the desktop exists. What the media really
+costs is the **window** between `clear_palette` and `set_palette` — the FAT12 walk and every sector
+the WD1772 fetched for one 16,620-byte file — and pass 1 grades that window against its own ceiling
+rather than only the arrival. **The figures are not restated here**: pass 1 prints both off the run
+it just did, which is the only copy that cannot go stale, and repeated runs do not agree to better
+than tens of vblanks (batch 44 phase G, TOS 1.04: first pen 1,593 and 1,607 on two runs a minute
+apart, window 277 and 192).
+
+#### What is on each disk, and the one cut
+
+The play disk carries **all forty rows** of `WB_RESOURCE_FILE_TABLE`, which is more than any headless
+mode stages: `boot_resource_indices` stages five and `own_resource_indices` seven, because those are
+the files their ladders reach, and a disk carrying only those would fail at the first stage nobody
+had smoke-tested. It fits with 75,776 bytes to spare.
+
+The probe disk leaves off **`SPRITES.CRU`**, and the arithmetic is the whole reason: the
+record-writing build writes `FRAME.BIN`, 128,000 bytes, onto the volume it booted from, and the full
+set leaves 132,096 bytes free against the 132,160 the five records need — **64 bytes short**.
+The probe set is also asserted to carry **none of the damaged rows below**: it is an evidence disk,
+and a record measured across 1989's bad sectors would be a measurement of the media.
+`SPRITES.CRU` is 279,034 of them. The cost is stated rather than hidden: a person who presses fire
+on the probe disk reaches the credits and then a recorded `WB_LOAD_DISK_ERROR`, which is one of
+`run_the_own_entry`'s own stop arms and not a crash.
+
+**And four of the forty overlays are damaged on the pressed data disk.** `OVALAY4B.RAD`,
+`OVALAY5B.RAD`, `OVALAY6A.RAD` and `OVALAY9A.RAD` differ between `bin/disk2/` (the authentic dump)
+and `bin/disk2_repaired/` (a hybrid). `refuse_a_hybrid_resource` REFUSES on exactly that, because a
+differential's evidence must not depend on which tree it was staged from — but the play disk is not
+evidence about 1989, it is a disk to play, so it carries the **authentic** bytes and the mode NAMES
+the four on every build. One comparison, two verdicts, and `hybrid_disagreements` is where it is
+stated once.
+
+#### What this still cannot say
+
+It is Hatari's FDC reading a file. A real WD1772, a real drive's seek times, index alignment and
+marginal media are all outside it, and so is a TOS that is not 1.04. **`atari/HARDWARE.md`** is the
+runbook for the machine that can say those things, and its last section is the honest list of what
+this mode is not.
 
 ## The bugs found on target
 

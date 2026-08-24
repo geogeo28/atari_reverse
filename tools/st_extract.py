@@ -317,6 +317,25 @@ def _walk_entries(image, entries, visited_dirs):
     return out
 
 
+def read_file(image, path):
+    """The bytes of one file ("OWN.BIN", "AUTO/WB.PRG") out of `image`, or None if it is not there.
+
+    The programmatic half of `extract`, for a caller that wants one named file rather than a tree —
+    the case that brought this here is lifting a record off a floppy a real Atari wrote. It goes
+    through the SAME `walk` and the same `file_bytes`, so a chain that loops, runs into a bad cluster
+    or disagrees with the directory entry's size lands in `image.warnings` for this caller exactly as
+    it does for an extraction.
+
+    Case-insensitive and separator-insensitive: names are upper-case on the volume, and a caller may
+    spell the path with either slash.
+    """
+    want = path.replace("\\", "/").strip("/").upper()
+    for entry in walk(image):
+        if not entry["is_dir"] and entry["path"].upper() == want:
+            return image.file_bytes(entry)
+    return None
+
+
 def _magic(head):
     printable = "".join(chr(b) if 32 <= b < 127 else "." for b in head)
     return "%-*s %s" % (MAGIC_BYTES * 2, head.hex(), printable)

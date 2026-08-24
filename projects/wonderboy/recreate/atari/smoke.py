@@ -42,6 +42,22 @@
     python3 atari/smoke.py runsh                                    # ...and the line run.sh execs
     bash atari/run.sh                                               # ...and played, with a screen
 
+    bash atari/build.sh ownplay && bash atari/build.sh ownrun
+    python3 atari/smoke.py floppy   # M10: THE FLOPPY — both builds written to 720 KB FAT12 images
+                                    #      (tools/st_build.py) and booted with the disk as the ONLY
+                                    #      media, by TOS's own AUTO-folder loader. 4 passes, 2 of them
+                                    #      controls. atari/HARDWARE.md is what to do with the disks.
+
+WHAT M10 CLAIMS: that all of the above was measured on media a real Atari does not have, and that
+the program boots off media it does. Every mode above uses Hatari's GEMDOS drive — a host directory
+with no filesystem, no controller and no latency — and is handed its .PRG to autostart. The floppy
+mode writes a 720 KB FAT12 volume, puts the binary in the AUTO folder, and lets TOS boot it: the seam's
+`Fopen`s then go through TOS's own FAT12 walk and the WD1772, and TOS's GEMDOS trace is what says
+which paths resolved. The record-writing build's record comes back OUT of the .ST image, which is the
+evidence channel a hardware session has and a debugger-less machine needs. Two controls: a volume
+missing one resource must refuse in the ladder's own named way, and a 1 MB machine must not run the
+program at all.
+
 WHAT M3 CLAIMS: `game_key_actions` has three endings that are not returns — they pop the frame loop's
 return address and `jmp` into the unported boot chain — and all three are MADE TO HAPPEN on the
 machine, one run each, each reporting its own `loop_ending`. Then the program exits, and the machine
@@ -109,6 +125,7 @@ import bisect
 import collections
 import fnmatch
 import functools
+import hashlib
 import json
 import os
 import re
@@ -130,6 +147,12 @@ import original                                              # noqa: E402
 # Same path insert gen_image.py makes, for the same directory and the same reason.
 sys.path.insert(0, str(HERE.parents[3] / "tools"))
 import depack_rad                                            # noqa: E402
+# THE FLOPPY'S TWO HALVES, BOTH FROM `tools/` AND NEITHER FROM THIS DIRECTORY. `st_build` writes the
+# 720 KB FAT12 volume the hardware session boots (§16 argues why it is not mtools) and `st_extract`
+# reads one back — the hardened reader this workspace already had, rather than a second parser
+# written beside the writer. §16 has the argument.
+import st_build                                              # noqa: E402
+import st_extract                                            # noqa: E402
 
 DISK = HERE / "disk"
 BUILD = HERE / "build"
@@ -233,7 +256,7 @@ def staged_block(addr, length, what):
     file already spells it that way everywhere else. `what` names the caller's subject in the
     failure."""
     at = addr - original.WB_STAGED_AT
-    image = DISK / "WB.IMG"
+    image = DISK / DRIVE_IMAGE
     blob = _staged_image(str(image), image.stat().st_mtime_ns)
     if not 0 <= at or at + length > len(blob):
         raise SystemExit(f"{what} is outside the staged block — cannot read it back")
@@ -367,7 +390,7 @@ def stage_drive(prg, withhold=()):
     if not image.exists():
         raise SystemExit(f"{image} is missing — rebuild with `bash atari/build.sh`, which keeps the "
                          f"image beside the .PRG it was compiled for")
-    (DISK / "WB.IMG").write_bytes(image.read_bytes())
+    (DISK / DRIVE_IMAGE).write_bytes(image.read_bytes())
     # THE PALETTE IS REQUIRED WHEREVER THE BUILD PRODUCED ONE, and "if it exists" was the wrong
     # test: build.sh emits `WB-<mode>.PENS` for the frame build and deletes it for the others, so a
     # frame build whose palette went missing would silently boot with none — and `stage_file` in the
@@ -412,12 +435,16 @@ def stage_drive(prg, withhold=()):
 # name on the emulated drive and `AUTO_BOOT` is how TOS is told to run it; they are pinned to each
 # other below rather than written twice.
 DRIVE_PRG = "WB.PRG"
+# ...AND THE IMAGE BESIDE IT, which wonderboy_main.c's `IMAGE_FILE` opens by this name. Spelled once
+# here because three places need it: the staging that writes it, `staged_block` that reads it back,
+# and `build_floppy`, which puts the same name on a real volume.
+DRIVE_IMAGE = "WB.IMG"
 AUTO_BOOT = "C:\\" + DRIVE_PRG
 DEFAULT_MONITOR = "rgb"
 
 
 def run_hatari(prg, monitor=DEFAULT_MONITOR, run_vbls=RUN_VBLS, parse=None, log_name="hatari.log",
-               trace=None, withhold=()):
+               trace=None, withhold=(), floppy=None, memsize=MEMSIZE_MB):
     """Boot `prg` headless, run to the end of --run-vbls, and return the MERGED output.
 
     `parse` is an optional Hatari DEBUGGER script, which is how M5 reaches the machine's own
@@ -425,8 +452,22 @@ def run_hatari(prg, monitor=DEFAULT_MONITOR, run_vbls=RUN_VBLS, parse=None, log_
     that carries one also gets `--frameskips 0`, because `screenshot` grabs the RENDERED surface and
     under --fast-forward Hatari skips rendering frames it still emulates — asking for every frame
     narrows the window in which a capture returns whichever frame was drawn last. It does NOT close
-    it; atari/README.md §10 has the measurement of what is left."""
-    stage_drive(prg, withhold)
+    it; atari/README.md §10 has the measurement of what is left.
+
+    `floppy` is a .ST IMAGE PATH, and it swaps the whole media story: drive A: carries that image,
+    there is no GEMDOS drive at all, and TOS boots the volume and runs its `\\AUTO\\*.PRG` itself
+    instead of being handed a program to autostart. `prg` is then ignored — the binary is already
+    inside the image, put there by `st_build.build`. §16 is the argument for why that is a
+    different measurement rather than the same one on other media.
+
+    THE OPTION LIST IS ONE LIST FOR BOTH ROUTES ON PURPOSE. Everything a mode measures — the monitor,
+    the fault allowlist, the frameskip, the trace — has to be the same on the floppy as on the drive
+    or the floppy mode would be comparing two machines and calling the difference the media."""
+    if floppy is None:
+        stage_drive(prg, withhold)
+    elif withhold:
+        raise SystemExit("FAIL: `withhold` takes a file off the GEMDOS drive; a floppy's contents "
+                         "are chosen when the image is built, so pass a shorter file list instead")
 
     rom = find_tos()
     # `--statusbar off` AND `--drive-led off`: both are emulator chrome, and the LED is the one that
@@ -435,10 +476,12 @@ def run_hatari(prg, monitor=DEFAULT_MONITOR, run_vbls=RUN_VBLS, parse=None, log_
     # compare differed by a green rectangle outside the game's 320x200 — and the extra colours pushed
     # Hatari's PNG writer from a palette image to a truecolour one, so the two encodings could never
     # have matched byte for byte whatever the pixels did. Chrome is not the picture the game draws.
+    media = (["--disk-a", str(floppy), "--protect-floppy", "off"] if floppy is not None
+             else ["--harddrive", str(DISK), "--auto", AUTO_BOOT])
     args = ["hatari", "--sound", "off", "--fast-forward", "on", "--confirm-quit", "off",
             "--statusbar", "off", "--drive-led", "off", "--frameskips", "0",
-            "--memsize", str(MEMSIZE_MB), "--monitor", monitor,
-            "--run-vbls", str(run_vbls), "--harddrive", str(DISK), "--auto", AUTO_BOOT]
+            "--memsize", str(memsize), "--monitor", monitor,
+            "--run-vbls", str(run_vbls)] + media
     if rom:
         args[1:1] = ["--tos", rom]
     if parse is not None:
@@ -479,7 +522,7 @@ def check_machine_health(status, log, assert_status=True):
 RECORD_TRAILING = "_trailing"
 
 
-def read_record(name, fields, fmt, magic, what):
+def read_record(name, fields, fmt, magic, what, blob=None):
     """One of the four records off the drive: present, the right size, the right magic, and its own
     `bytes` field agreeing with this parser.
 
@@ -488,11 +531,18 @@ def read_record(name, fields, fmt, magic, what):
     be corrected in three. `what` names the build in the "never reached its own dump" message, and
     every caller passes `name` because M3 has the debugger rename two of them aside at the exit: a
     run whose machine is deliberately left broken can REBOOT and write a second record over the
-    first."""
-    path = DISK / name
-    if not path.exists():
-        return None, f"no {name} — {what} never reached its own dump"
-    blob = path.read_bytes()
+    first.
+
+    `blob` supplies the bytes from SOMEWHERE THAT IS NOT THE GEMDOS DRIVE, and there is exactly one
+    such place: a run that booted off a floppy wrote its record onto the floppy, and `mode_floppy`
+    lifts it out of the .ST image (§16). The parsing — size, magic, self-reported length — is the
+    same on either route, which is the point of the parameter: what came home on a disk gets the
+    check the drive's copy gets, not a looser one."""
+    if blob is None:
+        path = DISK / name
+        if not path.exists():
+            return None, f"no {name} — {what} never reached its own dump"
+        blob = path.read_bytes()
     want = struct.calcsize(fmt)
     if len(blob) != want:
         return None, f"{name} is {len(blob)} bytes, expected {want}"
@@ -506,8 +556,8 @@ def read_record(name, fields, fmt, magic, what):
     return record, None
 
 
-def read_stats(name=STATS_FILE):
-    return read_record(name, STATS_FIELDS, STATS_FORMAT, STATS_MAGIC, "the program")
+def read_stats(name=STATS_FILE, blob=None):
+    return read_record(name, STATS_FIELDS, STATS_FORMAT, STATS_MAGIC, "the program", blob)
 
 
 # ---- M2: the frame differential -----------------------------------------------------------------
@@ -1564,6 +1614,24 @@ def note_once(text):
         print(text)
 
 
+def hybrid_disagreements(staged):
+    """(disagreed, agreed) — which of `staged` the AUTHENTIC dump and the REPAIRED tree differ on.
+
+    ONE COMPARISON, TWO VERDICTS, and the callers are entitled to different ones. A differential's
+    evidence must not depend on which tree it was staged from, so `refuse_a_hybrid_resource` below
+    REFUSES on any disagreement. The floppy's play disk cannot: it carries all forty resource rows
+    and four of them really are damaged on the pressed data disk, which is a fact about 1989 media
+    rather than about this build — so `floppy_resource_files` reports them and writes the authentic
+    bytes anyway (§16). Files the hybrid tree does not carry at all are neither, and are skipped."""
+    disagreed, agreed = [], []
+    for name, shipped, _tree in staged:
+        hybrid = original.BIN / BOOT_RESOURCE_HYBRID_TREE / name
+        if not hybrid.exists():
+            continue
+        (disagreed if hybrid.read_bytes() != shipped.read_bytes() else agreed).append(name)
+    return disagreed, agreed
+
+
 def refuse_a_hybrid_resource(staged):
     """Refuse to stage a resource whose two shipped trees disagree, and say which agree.
 
@@ -1576,18 +1644,13 @@ def refuse_a_hybrid_resource(staged):
     IT RUNS BEFORE ANY FILE IS WRITTEN, which is `original.py`'s `mode_dump` rule ("every check
     before every write"): a refusal from inside the copy loop would leave the drive holding some of
     the five resources beside a `.PRG` and an image that had already been staged."""
-    compared = []
-    for name, shipped, tree in staged:
-        hybrid = original.BIN / BOOT_RESOURCE_HYBRID_TREE / name
-        if not hybrid.exists():
-            continue
-        if hybrid.read_bytes() != shipped.read_bytes():
-            raise SystemExit(
-                f"FAIL: {name} differs between {tree}/ and {BOOT_RESOURCE_HYBRID_TREE}/, so this "
-                f"run's evidence depends on which tree it was staged from. The authentic dump is "
-                f"{tree}/ and the repaired tree is a hybrid; a boot resource that is damaged on the "
-                f"pressed disk cannot be substituted silently.")
-        compared.append(name)
+    disagreed, compared = hybrid_disagreements(staged)
+    if disagreed:
+        raise SystemExit(
+            f"FAIL: {', '.join(disagreed)} differ(s) between the authentic dump and "
+            f"{BOOT_RESOURCE_HYBRID_TREE}/, so this run's evidence depends on which tree it was "
+            f"staged from. The authentic dump is the one staged and the repaired tree is a hybrid; "
+            f"a boot resource that is damaged on the pressed disk cannot be substituted silently.")
     if compared:
         note_once(f"   note the {len(compared)} staged resources that "
                   f"{BOOT_RESOURCE_HYBRID_TREE}/ also carries are byte-identical in it "
@@ -2972,6 +3035,19 @@ BASE_HIGH_REG, BASE_MID_REG = original.BASE_HIGH_REG, original.BASE_MID_REG
 PEN_FIRST_REG, PEN_LAST_REG = original.PEN_FIRST_REG, original.PEN_LAST_REG
 TIMELINE_FILE = original.TIMELINE_FILE
 base_state_after = original.base_state_after
+# WHERE THE OPERATING SYSTEM'S OWN CODE STARTS. EmuTOS sits at $e00000 and TOS 1.04 at $fc0000;
+# everything below is RAM, which is where the .PRG and the staged image both live. Every scan that
+# asks "did the RECONSTRUCTION do this?" needs the distinction, and on a GEMDOS drive it looks
+# unnecessary because TOS never touches the FDC there — measured on FLOPPY media, TOS's ROM alone
+# moves the screen base three times and writes all sixteen pens during its own boot, which is enough
+# to satisfy two liveness rows with the program never running. So the floor is applied wherever a
+# row means "the reconstruction", not only in `mode_floppy`.
+ROM_PC_FLOOR = 0xe00000
+
+
+def written_by_the_reconstruction(events):
+    """`events` with TOS's own ROM writes dropped — the stream a row about THE PROGRAM must read."""
+    return [event for event in events if int(event[2], 16) < ROM_PC_FLOOR]
 # The image the shim runs the cores on is one flat array, and its LENGTH is what says whether a
 # published base is still inside it. The kit owns that number; scraped, not restated.
 IMAGE_SIZE = original.kit_constant("OS_IMAGE_SIZE")
@@ -4356,8 +4432,8 @@ def release_the_quit_key(plain):
                                                    IKBD_NOTHING_SAID)]}
 
 
-def read_own(name=OWN_FILE):
-    return read_record(name, OWN_FIELDS, OWN_FORMAT, OWN_MAGIC, "the own-entry build")
+def read_own(name=OWN_FILE, blob=None):
+    return read_record(name, OWN_FIELDS, OWN_FORMAT, OWN_MAGIC, "the own-entry build", blob)
 
 
 def own_resource_indices():
@@ -4489,6 +4565,59 @@ OWN_RUN_BOOT_VBLS = BOOT_RUN_VBLS
 OWN_RUN_ALIVE_EVENTS = 10000
 
 
+def liveness_checks(events):
+    """THE THREE ROWS A BUILD THAT WRITES NO RECORD CAN STILL BE HELD TO, off the write timeline.
+
+    Shared by `mode_ownrun` and by `mode_floppy`'s play pass, which boot the SAME binary off two
+    different media (§16). One statement of the rows, because a floppy pass that graded liveness by
+    its own slightly different arithmetic could report a difference that was the harness's rather
+    than the disk's — and telling those two apart is the entire point of booting it twice.
+
+    AND THE ROM'S OWN WRITES ARE DROPPED FIRST, which is not tidiness on this media: measured on the
+    play floppy, TOS 1.04's boot MOVES THE SCREEN BASE THREE TIMES and writes ALL SIXTEEN PENS before
+    the AUTO loader runs anything, so the first two rows below were satisfied by the operating system
+    and would have stayed green with the program dead. On the GEMDOS drive the same filter changes
+    nothing, which is why the hole was invisible until the disk existed."""
+    events = written_by_the_reconstruction(events)
+    # THE SHIFTER'S BASE MOVED, which is the cheapest evidence that the reconstruction took the
+    # video hardware: `install` and `chain_prologue` publish it, and a build that died before
+    # either would leave TOS's own base standing for the whole window.
+    state, moves = 0, 0
+    for register, value, _ in events:
+        moved = original.apply_base_write(state, register, value)
+        if moved is not None and moved != state:
+            moves += 1
+        state = state if moved is None else moved
+    # ...AND THE PALETTE THE TITLE SLICE PUT THERE. `clear_palette` writes sixteen zeros at $e4ea and
+    # `set_palette` writes the depacked picture's own sixteen at $e540, so a chip left holding zeros
+    # is a chain that got as far as the clear and no further — a refused load, or a depack that never
+    # ran. This is the ONE surface a headless run of this build has for the file seam.
+    chip = {}
+    for register, value, _ in events:
+        if PEN_FIRST_REG <= register <= PEN_LAST_REG:
+            chip[register] = value
+    lit = sum(1 for value in chip.values() if value)
+    # ...AND THE MACHINE WAS STILL RUNNING AFTERWARDS. `vbl_handler` ticks the music every vertical
+    # blank and the music writes the YM2149, so the PSG stream is the heartbeat — measured from the
+    # LAST pen write onward, which is the instant the title slice finished. A hung or dead machine
+    # emits nothing after it; one waiting at a fire gate emits for the rest of the window.
+    last_pen = max((position for position, (register, _, _) in enumerate(events)
+                    if PEN_FIRST_REG <= register <= PEN_LAST_REG), default=-1)
+    after = len(events) - 1 - last_pen if last_pen >= 0 else 0
+    return [
+        ("the build took the video hardware", moves > 0,
+         f"{moves} screen-base change(s) by the PROGRAM (TOS's own ROM writes are excluded), "
+         f"ending at {state:#x}"),
+        ("...and the title slice crossed the seam and put its palette on the chip",
+         len(chip) == PALETTE_PENS and lit > 0,
+         f"{len(chip)} of {PALETTE_PENS} pen registers written, {lit} of them non-zero — "
+         f"clear_palette's sixteen zeros are what a chain that never reached set_palette leaves"),
+        ("...and the machine was still ticking when the window closed", after >= OWN_RUN_ALIVE_EVENTS,
+         f"{after} write events after the last pen write (floor {OWN_RUN_ALIVE_EVENTS}); the "
+         f"vertical-blank handler's music tick is what produces them, so a dead machine leaves 0"),
+    ]
+
+
 def mode_ownrun():
     """THE BINARY `atari/run.sh` LAUNCHES, booted headless — the one build a person actually plays.
 
@@ -4528,42 +4657,7 @@ def mode_ownrun():
         raise SystemExit(f"FAIL: {OWN_RUN_MODE} left no readable write timeline ({why}) — with no "
                          f"record to read, the stream is the only surface this mode has")
 
-    # THE SHIFTER'S BASE MOVED, which is the cheapest evidence that the reconstruction took the
-    # video hardware: `install` and `chain_prologue` publish it, and a build that died before
-    # either would leave TOS's own base standing for the whole window.
-    state, moves = 0, 0
-    for register, value, _ in events:
-        moved = original.apply_base_write(state, register, value)
-        if moved is not None and moved != state:
-            moves += 1
-        state = state if moved is None else moved
-    # ...AND THE PALETTE THE TITLE SLICE PUT THERE. `clear_palette` writes sixteen zeros at $e4ea and
-    # `set_palette` writes the depacked picture's own sixteen at $e540, so a chip left holding zeros
-    # is a chain that got as far as the clear and no further — a refused load, or a depack that never
-    # ran. This is the ONE surface a headless run of this build has for the file seam.
-    pens = [(register, value) for register, value, _ in events
-            if PEN_FIRST_REG <= register <= PEN_LAST_REG]
-    chip = {}
-    for register, value in pens:
-        chip[register] = value
-    lit = sum(1 for value in chip.values() if value)
-    # ...AND THE MACHINE WAS STILL RUNNING AFTERWARDS. `vbl_handler` ticks the music every vertical
-    # blank and the music writes the YM2149, so the PSG stream is the heartbeat — measured from the
-    # LAST pen write onward, which is the instant the title slice finished. A hung or dead machine
-    # emits nothing after it; one waiting at a fire gate emits for the rest of the window.
-    last_pen = max((position for position, (register, _, _) in enumerate(events)
-                    if PEN_FIRST_REG <= register <= PEN_LAST_REG), default=-1)
-    after = len(events) - 1 - last_pen if last_pen >= 0 else 0
-    checks = [
-        ("the build took the video hardware", moves > 0,
-         f"{moves} screen-base change(s) in the stream, ending at {state:#x}"),
-        ("...and the title slice crossed the seam and put its palette on the chip",
-         len(chip) == PALETTE_PENS and lit > 0,
-         f"{len(chip)} of {PALETTE_PENS} pen registers written, {lit} of them non-zero — "
-         f"clear_palette's sixteen zeros are what a chain that never reached set_palette leaves"),
-        ("...and the machine was still ticking when the window closed", after >= OWN_RUN_ALIVE_EVENTS,
-         f"{after} write events after the last pen write (floor {OWN_RUN_ALIVE_EVENTS}); the "
-         f"vertical-blank handler's music tick is what produces them, so a dead machine leaves 0"),
+    checks = liveness_checks(events) + [
         # ...AND IT NEVER ENDED, which is this build's whole contract and is asserted from the
         # ABSENCE of the file the ladder writes on its way out. A record here means a bound this
         # build is supposed to have lifted fired anyway.
@@ -5296,12 +5390,662 @@ BUILD_FOR_MODE = {"mono": "m1", "m2fault": "m2", "m5": "m2", "m5skew": "m2", "m6
 
 
 
+# ---- M10: THE FLOPPY, and what a boot with no host in it is worth --------------------------------
+#
+# Every mode above boots off HATARI'S GEMDOS DRIVE: a host directory the emulator answers `Fopen`
+# from, with no filesystem, no controller and no latency. That is not a route a real Atari has. This
+# mode builds the volume the user's STE will actually boot — a 720 KB FAT12 floppy, written by
+# `tools/st_build.py` — and runs the SAME binaries off it, so everything between the seam and the
+# bytes is TOS's own FAT12 walk and its WD1772 driver rather than the emulator's shortcut.
+#
+# WHAT IS NEW HERE AND NOT A REPEAT: the boot itself. Nothing hands TOS a program — the .PRG sits in
+# `\AUTO\` and TOS's own AUTO-folder loader runs it before the desktop appears, which is what a
+# person switching the machine on will get. That changes the program's default path from the GEMDOS
+# drive's root to the floppy's, and the shim opens BARE FILENAMES (`Fopen("WB.IMG")`), so whether
+# those still resolve is a question only this mode can answer. It answers it from TOS's own GEMDOS
+# trace, which names every path the seam opened.
+FLOPPY_MODE = "floppy"
+FLOPPY_PLAY_IMAGE = "WBOOT.ST"          # what a person plays: the uncapped build and all forty rows
+FLOPPY_PROBE_IMAGE = "WBPROBE.ST"       # ...and the instrument: the build that writes a record
+FLOPPY_CONTROL_IMAGE = "WBNOTITL.ST"    # ...and the control: the probe disk with one file missing
+FLOPPY_PLAY_LABEL, FLOPPY_PROBE_LABEL = "WONDERBOY", "WB PROBE"
+# The six bytes of the boot sector's OEM field. It is not read by anything — TOS ignores it — but it
+# is what a person peering at sector 0 of a disk they found in a drawer will see first.
+FLOPPY_OEM_NAME = b"WBRECR"
+# THE MACHINE `atari/HARDWARE.md` ASKS FOR, and it is arithmetic before it is a preference: the
+# .PRG's own header asks GEMDOS for text + data + bss, which is 1,315,566 bytes for the play build.
+# A 1 MB STE cannot load it at all, and the fourth pass below MEASURES that rather than asserting it.
+FLOPPY_MEMSIZE_MB = 2
+FLOPPY_TOO_SMALL_MEMSIZE_MB = 1
+# TOS's own GEMDOS trace, which is what says WHICH FILE the seam opened and by what path. The write
+# timeline rides along on the same run.
+#
+# THE VBLANK CLOCK IS ASKED FOR ONLY WHERE IT IS READ, which is pass 1: `pen_window` is its one
+# consumer, and `video_vbl` on a 12,000-vblank boot is twelve thousand lines nothing parses in the
+# record passes. Traces are not free — the play run's log is 10 MB — so each pass names the surfaces
+# it grades.
+GEMDOS_TRACE, VBL_TRACE = "gemdos", "video_vbl"
+FLOPPY_PLAY_TRACE = ",".join((TIMELINE_TRACE, VBL_TRACE, GEMDOS_TRACE))
+FLOPPY_RECORD_TRACE = ",".join((TIMELINE_TRACE, GEMDOS_TRACE))
+# WHERE TOS FINDS THE PROGRAM, spelled once and used both to BUILD the image and to assert the trace
+# line that proves TOS ran it from there.
+FLOPPY_AUTO_PATH = "\\AUTO\\" + DRIVE_PRG
+# HOW LONG AFTER THE DEBUGGER'S QUIT THE EMULATOR IS STILL ALLOWED TO RUN. `--run-vbls` is the
+# backstop for a run that never reaches the breakpoint — a hung machine — and it must be LATER than
+# the breakpoint or it would be the thing that ends every run and the flush below would never happen.
+FLOPPY_BACKSTOP_VBLS = 500
+# HOW LONG THE RECORD PASSES RUN, and it is shorter than pass 1's on purpose. Those passes end when
+# the ladder has written its five files, and MEASURED (TOS 1.04, probe disk, batch 44 phase G) the
+# last `Fwrite` lands at vblank 4,469. Every vblank past the breakpoint is wall clock spent for
+# nothing — Hatari runs the whole window whatever the program does — so they stop at 6,000, which is
+# ~1,530 vblanks (~30 s of emulated machine) of margin over the measurement.
+#
+# PASS 1 KEEPS THE FULL `OWN_RUN_BOOT_VBLS` WINDOW and does not use this: its third liveness row
+# counts the heartbeat AFTER the title screen is up, so the window past the title IS the measurement.
+FLOPPY_RECORD_VBLS = 6000
+# THE CEILING ON THE TITLE SCREEN'S ARRIVAL, in vertical blanks from power-on, and it is a
+# REGRESSION GUARD ON LOAD TIME rather than a correctness row. The measurements themselves are not
+# written down here — `floppy_play_pass` PRINTS them from the run it just did, which is the only
+# copy that cannot go stale (README and atari/HARDWARE.md cite that print, naming the run). What is
+# written down is the two ceilings, each about twice its measured figure, so a change that doubled
+# the floppy's work reds here instead of being absorbed by a window sized for a hang.
+#
+# TWO CEILINGS AND NOT ONE, because they guard different costs. The FIRST pen is mostly TOS's own
+# boot, and the floppy is NOT the slower route to it — measured, the same binary on the GEMDOS drive
+# reaches its first pen LATER, because `--auto` makes TOS boot all the way to the desktop before it
+# runs anything while an AUTO-folder program runs before the desktop exists. What the floppy really
+# costs is the WINDOW between the first pen and the last: TOS's FAT12 walk and every sector the
+# WD1772 fetched for one 16,620-byte file, against a host directory's memcpy on the GEMDOS drive.
+# That window is the media cost this row claims to guard, so it is graded too.
+#
+# THE MARGIN IS SIZED FOR THE SPREAD AND NOT FOR ONE RUN. Repeated boots of the same image on TOS
+# 1.04 do not agree: the first pen moved by ~15 vblanks between two runs a minute apart and the
+# window by ~85 (192 and 277 vblanks, batch 44 phase G). Both ceilings are therefore about twice the
+# LARGEST figure seen, not twice one measurement — a ceiling a normal run can brush is a ceiling
+# that gets raised rather than read.
+FLOPPY_TITLE_VBLS = 3200
+FLOPPY_TITLE_WINDOW_VBLS = 600
+
+# EVERY ROW OF THE RESOURCE TABLE, which is what a REAL PLAYTHROUGH needs and is more than any
+# headless mode stages. `boot_resource_indices` stages five and `own_resource_indices` seven, because
+# those are the files their ladders reach; a person who plays past stage 1 reaches the rest, and a
+# disk that carried only the seven would fail at the first stage nobody had smoke-tested.
+FLOPPY_ALL_ROWS = tuple(range(RESOURCE_FILE_COUNT))
+# ...AND THE ONE ROW THE PROBE DISK LEAVES OFF. It is a SPACE decision and the arithmetic is the
+# whole of it: the record-writing build writes FRAME.BIN, 128,000 bytes, onto the volume it booted
+# from, and the full set leaves 132,096 bytes free against the 132,160 the five records need — 64
+# bytes short. SPRITES.CRU is 279,034 of them, so leaving it off buys 273 clusters and nothing else
+# has to be cut. The cost is stated rather than hidden: a person who presses fire on the PROBE disk
+# reaches the credits and then a recorded WB_LOAD_DISK_ERROR from `boot_load_stage`, which is one of
+# `run_the_own_entry`'s own stop arms and not a crash. The disk a person PLAYS is the other one.
+FLOPPY_PROBE_OMITS = (wb("RESOURCE_SPRITES_CRU"),)
+
+PSG_PORT_A_REG = wb("PSG_REG_PORT_A")
+
+GEMDOS_PEXEC_RE = re.compile(r'^GEMDOS 0x4B Pexec\(0, "([^"]*)"')
+GEMDOS_FOPEN_RE = re.compile(r'^GEMDOS 0x3D Fopen\("([^"]*)"')
+GEMDOS_FCREATE_RE = re.compile(r'^GEMDOS 0x3C Fcreate\("([^"]*)"')
+# THE ANSWER TO AN `Fopen`, and the only form of one this trace carries. Hatari does not log a
+# GEMDOS call's RETURN value, so a refused open and a granted one print the same line — but a
+# granted one leaves a HANDLE, and the next thing the shim does with a resource is read it. So the
+# `Fread(handle, ...)` that follows an open is that open's receipt.
+GEMDOS_FREAD_RE = re.compile(r"^GEMDOS 0x3F Fread\((\d+),")
+GEMDOS_LINE_PREFIX = "GEMDOS "
+VBL_LINE_RE = re.compile(r"^VBL (\d+)")
+
+
+def gemdos_calls(lines):
+    """(executed, opened, created, answered) off TOS's GEMDOS trace.
+
+    THE ONE SURFACE THAT CAN SEE A PATH. Every other check in this file sees the CONSEQUENCE of a
+    load — a palette on the chip, a depacked longword, a refusal code — and all of those are equally
+    happy whichever directory the file came out of. The AUTO-folder boot moves the program's default
+    path, and this is what makes "the bare name still resolved" an observation rather than a hope.
+
+    `answered` is the subset of `opened` whose very next GEMDOS call was an `Fread` — the names the
+    volume ANSWERED with a handle, as against the names the program merely ASKED for. Measured on the
+    two disks that differ by one file: on the probe disk `Fopen("TITLESCR.RAD")` is followed by
+    `Fread(6, ...)`, and on the control disk that does not carry it the next line is the ladder's
+    first `Fcreate`."""
+    executed, opened, created, answered = [], [], [], []
+    just_opened = None
+    for line in lines:
+        line = line.strip()
+        if not line.startswith(GEMDOS_LINE_PREFIX):
+            continue
+        if just_opened is not None and GEMDOS_FREAD_RE.match(line):
+            answered.append(just_opened)
+        opening = GEMDOS_FOPEN_RE.match(line)
+        # Any GEMDOS line that is not this open's own `Fread` ends its chance to be answered, so a
+        # read five calls later cannot be mistaken for this open's receipt.
+        just_opened = opening.group(1) if opening else None
+        for pattern, into in ((GEMDOS_PEXEC_RE, executed), (GEMDOS_FCREATE_RE, created)):
+            found = pattern.match(line)
+            if found:
+                into.append(found.group(1))
+        if opening:
+            opened.append(opening.group(1))
+    return executed, opened, created, answered
+
+
+def pen_window(lines):
+    """(first, last) vertical blank at which a shifter pen register was written, or (None, None).
+
+    The title screen's palette IS the picture arriving, so the first of these is when the machine
+    finished loading and depacking TITLESCR.RAD across the seam — which on this media includes TOS's
+    FAT12 walk and every sector the WD1772 fetched. Hatari's own `video_vbl` trace is the clock, so
+    the number is the emulated machine's rather than the host's."""
+    vbl, first, last = 0, None, None
+    for line in lines:
+        line = line.strip()
+        counted = VBL_LINE_RE.match(line)
+        if counted:
+            vbl = int(counted.group(1))
+            continue
+        write = original.IO_WRITE_RE.match(line)
+        if not write or int(write.group(3), 16) >= ROM_PC_FLOOR:
+            continue                    # TOS sets its own palette before the program ever runs
+        if PEN_FIRST_REG <= (int(write.group(1), 16) & original.IO_ADDRESS_MASK) <= PEN_LAST_REG:
+            first = vbl if first is None else first
+            last = vbl
+    return first, last
+
+
+def psg_port_a_writes(events):
+    """Every write to YM2149 register 14 in `events`, as (value, pc, from_rom), in order.
+
+    THE REGISTER THE FLOPPY DRIVE SELECT BITS LIVE ON, and on this media two different programs write
+    it. Port A is selected by a write to the SELECT port and then written through the DATA port, so
+    the pairs have to be walked rather than filtered — which is why this returns a list and its two
+    callers ask it different questions."""
+    selected, writes = None, []
+    for register, value, pc in events:
+        if register == PSG_SELECT_PORT:
+            selected = value
+        elif register == PSG_DATA_PORT and selected == PSG_PORT_A_REG:
+            writes.append((value, int(pc, 16), int(pc, 16) >= ROM_PC_FLOOR))
+    return writes
+
+
+def drive_select_rows(events, port_a_at_entry):
+    """What the reconstruction did to the drive-select bits, and what TOS did after it.
+
+    THE SURFACE THAT REPLACES A READ-BACK THIS MEDIA MAKES MEANINGLESS. `RB_PSG_PORT_A_DESELECTED` is
+    the program reading port A back at the end of its run and asserting the drives are deselected
+    with every other bit as it found them — a statement about the RECONSTRUCTION only while nothing
+    else touches the register. On a GEMDOS drive nothing does: TOS never goes near the FDC. With a
+    real disk in the drive TOS polls it for media change all run long, so that read-back becomes a
+    race the ROM usually wins (measured, TOS 1.04: the read-back saw $25, the ROM's poll, where the
+    program had left $27).
+
+    MASKING THE BIT OFF WOULD HAVE COST THE ASSERTION ENTIRELY, so the surface MOVES instead of
+    shrinking: `floppy_deselect_drives`' own write is read out of the ordered write timeline,
+    pc-filtered to the program, and held to the EXACT byte the read-back would have wanted —
+    `port_a_at_entry`'s keep bits with WB_PSG_DRIVES_DESELECTED under them. That the drives were
+    deselected is asserted here rather than excused.
+
+    THE PROGRAM'S LAST WRITE IS NOT THAT ONE and must not be asserted to be: the teardown restores
+    port A to the value it found (measured, TOS 1.04 with a disk in the drive: $27 to deselect, then
+    $24 to hand back), which is `RB_PSG_PORT_A_RESTORED`'s business and not this row's.
+
+    The race is then a CONTEXT ROW rather than a reason, and it is graded by ORDERING: TOS's ROM
+    wrote the register AFTER we did. That is the fact that makes the read-back's arm unreachable, and
+    a run where the ROM never wrote at all — or wrote only before us — would have to be explained."""
+    writes = psg_port_a_writes(events)
+    ours = [write for write in writes if not write[2]]
+    rom = [write for write in writes if write[2]]
+    deselect = (port_a_at_entry & PSG_PORT_A_KEEP) | PSG_DRIVES_DESELECTED
+    deselected = [write for write in ours if write[0] == deselect]
+    # Everything in the ordered stream past our last write is by definition the ROM's, so "a ROM
+    # write after ours" is exactly "we wrote, and the last writer was not us".
+    rom_after_us = bool(ours) and writes[-1][2]
+    return [
+        ("the reconstruction's own write DESELECTED the drives", bool(deselected),
+         f"{len(ours)} write(s) to YM2149 register {PSG_PORT_A_REG} from a pc below "
+         f"{ROM_PC_FLOOR:#x} — {', '.join(f'{value:#04x}' for value, _pc, _rom in ours) or 'none'} "
+         f"— of which {len(deselected)} is exactly {deselect:#04x}, the byte port A read "
+         f"{port_a_at_entry:#04x} at entry demands (keep mask {PSG_PORT_A_KEEP:#04x}, drives "
+         f"{PSG_DRIVES_DESELECTED}); the last of ours is the teardown's restore"),
+        ("...and TOS's ROM wrote the same register AFTER it, which is why the read-back cannot",
+         rom_after_us,
+         f"{len(rom)} ROM write(s) to it during this run, polling the real disk for media change; "
+         f"the last is at pc {rom[-1][1]:#x}" if rom else "no ROM write to it at all — then the "
+         f"read-back was excluded for a race that did not happen"),
+    ]
+
+
+def floppy_resource_files(indices):
+    """([(volume name, host path)], damaged) for the resource rows `indices`.
+
+    `damaged` are the rows the AUTHENTIC dump and the REPAIRED tree disagree on — four of the forty,
+    and they are on the play disk because the play disk is not evidence about 1989: it is a disk to
+    play. `hybrid_disagreements` is the same comparison `refuse_a_hybrid_resource` refuses on, and
+    §16 has the argument for why the two callers are entitled to different verdicts."""
+    staged = [(resource_name(index),) + shipped_resource(resource_name(index), BOOT_RESOURCE_TREES)
+              for index in indices]
+    damaged, _agreed = hybrid_disagreements(staged)
+    return [(name, shipped) for name, shipped, _tree in staged], damaged
+
+
+def build_floppy(image, prg, indices, label):
+    """Write one bootable-by-AUTO .ST and return (path, layout, damaged rows).
+
+    The FILESYSTEM is `tools/st_build.py`'s (§16); what goes on this volume — the `.PRG` in `\\AUTO\\`
+    so TOS starts it, its image beside it in the root, and which resource rows — is this project's
+    policy and lives here."""
+    files, damaged = floppy_resource_files(indices)
+    path = OUT / image
+    OUT.mkdir(exist_ok=True)
+    layout = st_build.build(path, [(DRIVE_IMAGE, prg.with_suffix(".IMG"))] + files,
+                            [(DRIVE_PRG, prg)], label, FLOPPY_OEM_NAME)
+    return path, layout, damaged
+
+
+def refuse_a_damaged_row_on_an_evidence_disk(damaged, image_name):
+    """The probe disks carry a RECORD home, so a row the two resource trees disagree on may not ride
+    along on one unremarked.
+
+    THE PLAY DISK IS ENTITLED TO THEM AND THESE ARE NOT: `floppy_resource_files` reports the four
+    damaged overlays on `WBOOT.ST` because that disk is a disk to play, and `hybrid_disagreements`'
+    other caller refuses outright. The probe set is seven rows and none of them is damaged today —
+    asserted rather than assumed, so that adding an overlay to the probe set later fails loudly here
+    instead of quietly putting 1989's bad sectors inside a measurement."""
+    if damaged:
+        raise SystemExit(f"FAIL: {image_name} is an evidence disk and carries {len(damaged)} row(s) "
+                         f"the authentic dump and the repaired tree disagree on: "
+                         f"{', '.join(damaged)}. Either take them off the probe set, or say in the "
+                         f"pass what a record measured across damaged media is worth.")
+
+
+def floppy_flush_script(directory, at_vbl):
+    """The debugger script that makes Hatari SAVE THE FLOPPY — and the emulator gotcha behind it.
+
+    MEASURED IN BATCH 44 PHASE G: Hatari 2.6.1 exits on `--run-vbls` WITHOUT writing a modified .ST
+    back to the host file. That run's own traces are what say the writes happened — GEMDOS reported
+    all five `Fcreate`/`Fwrite` pairs and the FDC reported 276 `type II write sector` commands —
+    while the image's digest never changed, so the sectors reached the emulated disk and stopped
+    there. Quitting from the DEBUGGER does flush it, because that path ejects both drives. So every
+    pass below ends on a breakpoint whose action is `quit`, and `--run-vbls` becomes the backstop for
+    a machine that hangs before reaching it.
+
+    IT IS AN INSTRUMENT AND NOT A DEVIATION. Nothing about the emulated machine changes and the bytes
+    recovered are the ones the program wrote; what the script changes is whether the host gets to see
+    them. On real hardware there is nothing to arrange — the sectors are already on the disk, which
+    is the whole reason `atari/HARDWARE.md` can ask for the disk back as evidence.
+
+    WRITTEN OUT RATHER THAN BUILT WITH `original.action_file`, for one reason worth the four lines:
+    that helper appends `cont` to every action, and an action that has already quit would carry a
+    line that can never run. A script this short says more by being literal."""
+    action = directory / "flush.act"
+    action.write_text("quit 0\n")
+    script = directory / "flush.ini"
+    script.write_text(original.vbl_breakpoint(at_vbl, f":file {action}") + "\n")
+    return script
+
+
+def boot_floppy(image, tag, run_vbls, memsize=FLOPPY_MEMSIZE_MB, trace=FLOPPY_RECORD_TRACE):
+    """Boot `image` as drive A: with no host drive at all, and flush it back on the way out."""
+    with tempfile.TemporaryDirectory() as directory:
+        script = floppy_flush_script(Path(directory), run_vbls)
+        status, log, rom = run_hatari(None, run_vbls=run_vbls + FLOPPY_BACKSTOP_VBLS,
+                                      parse=script, trace=trace, floppy=image, memsize=memsize,
+                                      log_name=f"hatari-{FLOPPY_MODE}-{tag}.log")
+    print(f"-- {FLOPPY_MODE}/{tag}: TOS={rom or 'bundled EmuTOS'} hatari exit={status} "
+          f"--memsize {memsize} --disk-a {image.name}, no GEMDOS drive "
+          f"(full log in {OUT / f'hatari-{FLOPPY_MODE}-{tag}.log'})")
+    return status, log, rom
+
+
+def file_off_the_floppy(image, name):
+    """(bytes or None, dirty-read warnings) for one file on the .ST at `image`.
+
+    THE ONE PLACE A BLOB COMES OFF A VOLUME, and it goes through `tools/st_extract.py` rather than a
+    reader written beside the builder. That is not only reuse: the promoted reader takes its geometry
+    from the BPB, bounds the FAT by the BPB's own length, guards a cluster chain against looping,
+    cross-checks a chain against the size its directory entry claims, and walks a subdirectory ACROSS
+    ITS WHOLE CHAIN. The last one is the case this project actually has — a disk handed back from a
+    real machine has had TOS writing to it, and an `\\AUTO\\` that TOS grew past one cluster would
+    have read as "the file is not there" to a reader that followed only the first."""
+    volume = st_extract.Fat12Image(Path(image).read_bytes())
+    blob = st_extract.read_file(volume, name)
+    return blob, tuple(volume.warnings)
+
+
+def record_off_the_floppy(image, name, reader, what):
+    """One record lifted out of the .ST the run booted from — the hardware session's own channel.
+
+    It goes through the SAME parser the GEMDOS drive's copy goes through (`read_record`'s `blob`),
+    so a record that came home on a disk is held to the size, magic and self-reported length the
+    drive's is. What differs is only the sentence when it is absent, which has to name the volume."""
+    blob, warnings = file_off_the_floppy(image, name)
+    for warning in warnings:
+        print(f"   note {Path(image).name}: {warning}")
+    if blob is None:
+        return None, (f"no {name} on {Path(image).name} — {what} never reached its own dump, or "
+                      f"never ran at all")
+    return reader(blob=blob)
+
+
+def read_own_off_the_floppy(image, name=OWN_FILE):
+    """THE RUNBOOK'S ENTRY POINT: the own-entry record off a disk a real Atari wrote, or a REFUSAL.
+
+    `atari/HARDWARE.md` §7 is a person at a keyboard with a floppy that has been in an STE, and the
+    obvious spelling — `read_own(blob=read_file(image, "OWN.BIN"))` — has a silent failure that was
+    measured rather than imagined: a missing file makes `read_file` return None, `read_own`'s `blob`
+    parameter reads None as "no blob was supplied", and it falls back to `atari/disk/OWN.BIN` — THE
+    LAST EMULATED RUN'S RECORD. The person would read a green record off their own host and conclude
+    their hardware run had worked.
+
+    So the runbook is given a function that cannot do that. An absent record RAISES and says which
+    volume it looked at; nothing here can reach the GEMDOS drive at all."""
+    blob, warnings = file_off_the_floppy(image, name)
+    for warning in warnings:
+        print(f"note {Path(image).name}: {warning}")
+    if blob is None:
+        raise SystemExit(f"FAIL: there is no {name} on {Path(image).name}. The run never reached "
+                         f"its own dump — or this is not the disk it wrote. Nothing on the GEMDOS "
+                         f"drive is an answer to this question.")
+    record, why = read_own(blob=blob)
+    if why:
+        raise SystemExit(f"FAIL: {Path(image).name} carries a {name} this parser cannot read ({why})")
+    return record
+
+
+def floppy_boot_rows(log, expect_records, expect_title=True):
+    """The rows every pass shares: TOS ran the AUTO program, and the seam's paths resolved.
+
+    `expect_records` says whether the ladder is supposed to have ended and written its record, which
+    is the ONE thing the play disk and the probe disk differ on above the media."""
+    title = resource_name(wb("RESOURCE_TITLESCR"))
+    executed, opened, created, answered = gemdos_calls(log.splitlines())
+    return [
+        ("TOS ran the program out of the floppy's AUTO folder", FLOPPY_AUTO_PATH in executed,
+         f"GEMDOS Pexec(0, ...) was called on {executed or 'nothing'}; nothing on this command "
+         f"line hands TOS a program, so this is TOS's own AUTO-folder loader"),
+        ("...and the shim's BARE filenames resolved from that context",
+         DRIVE_IMAGE in answered,
+         f"Fopen({DRIVE_IMAGE!r}) is in TOS's GEMDOS trace and an Fread on its handle follows — the "
+         f"shim opens unqualified names (wonderboy_main.c's IMAGE_FILE), so an AUTO boot whose "
+         f"default path was `\\AUTO\\` rather than `\\` would have failed here and nowhere else"),
+        # THE ASK AND THE ANSWER, and they are two rows because two disks differ on exactly the
+        # second. Hatari's trace does not log a GEMDOS return, so the `Fopen` line alone is only
+        # what the program WANTED — the control disk without the file logs the identical line. The
+        # `Fread` that follows carries the handle the open returned, so it is the volume answering.
+        (f"...and the title slice asked the volume for {title} BY the table's name",
+         title in opened,
+         f"{len(opened)} GEMDOS Fopen(s): {', '.join(opened[:6])}"
+         + (" ..." if len(opened) > 6 else "")),
+        (f"...and the volume ANSWERED for {title}" if expect_title
+         else f"...and the volume did NOT answer for {title}, because it does not carry it",
+         (title in answered) == expect_title,
+         f"{len(answered)} of those {len(opened)} open(s) were followed by an Fread on the handle "
+         f"they returned: {', '.join(answered[:6]) or 'none'}"
+         + (" ..." if len(answered) > 6 else "")),
+        ("...and the record files were created on the floppy" if expect_records
+         else "...and nothing was written back to the floppy",
+         bool(created) == expect_records,
+         f"GEMDOS Fcreate(s): {', '.join(created) or 'none'}"),
+    ]
+
+
+def floppy_play_pass():
+    """PASS ONE — THE DISK A PERSON PLAYS, booted with the floppy as the only media.
+
+    Same binary and same three liveness rows as `mode_ownrun` (`liveness_checks`), so that a
+    difference between the two modes is a difference the MEDIA made. What this pass adds is the
+    thing only this media has: a measured latency, and TOS's own account of which paths were opened.
+    """
+    prg = BUILD / OWN_RUN_BUILD
+    image, layout, damaged = build_floppy(FLOPPY_PLAY_IMAGE, prg, FLOPPY_ALL_ROWS, FLOPPY_PLAY_LABEL)
+    print(f"-- {FLOPPY_PLAY_IMAGE}: {OWN_RUN_BUILD} as {FLOPPY_AUTO_PATH}, its image, and all "
+          f"{len(FLOPPY_ALL_ROWS)} resource rows")
+    print(layout)
+    if damaged:
+        print(f"   note {len(damaged)} of them are DAMAGED on the pressed data disk and differ "
+              f"between bin/{BOOT_RESOURCE_TREE}/ and bin/{BOOT_RESOURCE_HYBRID_TREE}/: "
+              f"{', '.join(damaged)}. The authentic dump is what is written; see atari/HARDWARE.md.")
+    status, log, rom = boot_floppy(image, "play", OWN_RUN_BOOT_VBLS, trace=FLOPPY_PLAY_TRACE)
+    problems = check_machine_health(status, log)
+    events, why = timeline_events(log.splitlines())
+    if why:
+        raise SystemExit(f"FAIL: the play disk left no readable write timeline ({why})")
+    first_pen, last_pen = pen_window(log.splitlines())
+    window = None if first_pen is None else last_pen - first_pen
+    checks = floppy_boot_rows(log, expect_records=False) + liveness_checks(events) + [
+        ("...and the title screen was up inside the ceiling", first_pen is not None
+         and first_pen <= FLOPPY_TITLE_VBLS,
+         f"the first shifter pen write is at vblank {first_pen} "
+         f"(ceiling {FLOPPY_TITLE_VBLS} = {FLOPPY_TITLE_VBLS / VBLANKS_PER_SECOND:.0f} s at "
+         f"{VBLANKS_PER_SECOND} Hz); TOS's own boot is most of it and the floppy's loads are the "
+         f"rest"),
+        # ...AND THE HALF OF THAT NUMBER THE MEDIA REALLY OWNS. The first pen is dominated by TOS's
+        # boot, which is the same however the program was started; the WINDOW to the last pen is the
+        # title slice's own load and depack, which on this media is a FAT12 walk and every sector
+        # the WD1772 fetched. A change that made the floppy path slower would move this and barely
+        # move the row above, so the cost the pass claims to guard is graded here.
+        ("...and the title's own LOAD WINDOW is inside its ceiling",
+         window is not None and window <= FLOPPY_TITLE_WINDOW_VBLS,
+         f"the last pen is at vblank {last_pen}, so the load-and-depack window is {window} vblanks "
+         f"(~{(window or 0) / VBLANKS_PER_SECOND:.1f} s), against a ceiling of "
+         f"{FLOPPY_TITLE_WINDOW_VBLS} — a little over twice the figure this run just measured"),
+        # ...AND THE DISK IS STILL THE DISK. The play build writes nothing, and this asserts it of
+        # the IMAGE rather than of the GEMDOS trace: `floppy_flush_script` makes the debugger's quit
+        # save a modified .ST back to the host, so a build that had written to its own volume WOULD
+        # change these bytes. It is also the binding `atari/HARDWARE.md` §3 asks a person to check
+        # before `gw/write_disk.sh` — the digest proved here is the digest they write.
+        ("...and the disk it booted is byte-for-byte the disk that was proved",
+         hashlib.sha256(image.read_bytes()).hexdigest() == layout.digest,
+         f"sha256 {layout.digest} before the boot and "
+         f"{hashlib.sha256(image.read_bytes()).hexdigest()} after it; the play build has no "
+         f"Fcreate at all, so any difference is the emulator or a write nobody meant"),
+    ]
+    report(f"{FLOPPY_MODE} pass 1 — {FLOPPY_PLAY_IMAGE}, the disk a person plays", checks)
+    return problems + [f"{name}: {detail}" for name, ok, detail in checks if not ok], first_pen
+
+
+def floppy_probe_pass(image_name, label, indices, tag, title, expect_record=True,
+                      memsize=FLOPPY_MEMSIZE_MB, expect_title=True):
+    """A pass on the RECORD-WRITING build, whose evidence is read back OUT of the image it booted.
+
+    ONE FUNCTION FOR THE PASS AND BOTH ITS CONTROLS, because everything they share is scaffolding and
+    what they differ on is one variable each — and that is exactly what has to be attributable. Pass
+    2 is the measurement; pass 3 takes TITLESCR.RAD off the disk; pass 4 takes memory off the
+    machine and therefore expects NO record at all. Down to the debugger script, the same code runs
+    three times.
+
+    `expect_record` false is pass 4's whole shape: the .PRG cannot be loaded into a 1 MB TPA, so the
+    run must reach `Pexec` and nothing after it. That pass returns its own rows and no record, and
+    the caller adds what only it can say.
+
+    RETURNS (problems, checks, record or None, image)."""
+    prg = BUILD / OWN_BUILDS[OWN_MODE]
+    image, layout, damaged = build_floppy(image_name, prg, indices, label)
+    refuse_a_damaged_row_on_an_evidence_disk(damaged, image_name)
+    print(f"-- {image_name}: {OWN_BUILDS[OWN_MODE]} as {FLOPPY_AUTO_PATH}, its image, and "
+          f"{len(indices)} resource row(s)")
+    print(layout)
+    status, log, rom = boot_floppy(image, tag, FLOPPY_RECORD_VBLS, memsize=memsize,
+                                   trace=FLOPPY_RECORD_TRACE if expect_record else GEMDOS_TRACE)
+    problems = check_machine_health(status, log)
+    record, why = record_off_the_floppy(image, OWN_FILE, read_own, "the own-entry build")
+
+    if not expect_record:
+        executed, opened, created, _answered = gemdos_calls(log.splitlines())
+        return problems, [
+            ("TOS still found the program and tried to run it", FLOPPY_AUTO_PATH in executed,
+             f"Pexec(0, ...) on {executed or 'nothing'} — a freshly written copy of the disk pass "
+             f"2 booted, so the only difference between the two runs is the size of the machine"),
+            ("...but the program never opened its image", DRIVE_IMAGE not in opened,
+             f"{len(opened)} Fopen(s): {', '.join(opened[:6]) or 'none'} — with {memsize} MB there "
+             f"is no TPA big enough for the .PRG's own bss"),
+            ("...and nothing came home on the disk", record is None and not created,
+             why or f"Fcreate(s): {', '.join(created)}"),
+        ], None, image
+
+    stats, stats_why = record_off_the_floppy(image, STATS_FILE, read_stats, "the program")
+    if why or stats_why:
+        report(title, floppy_boot_rows(log, expect_records=True, expect_title=expect_title))
+        raise SystemExit(f"FAIL: {why or stats_why}")
+    events, timeline_why = timeline_events(log.splitlines())
+    if timeline_why:
+        raise SystemExit(f"FAIL: {image.name} left no readable write timeline ({timeline_why}) — "
+                         f"the drive-select rows below are read out of it")
+    checks = floppy_boot_rows(log, expect_records=True, expect_title=expect_title) + readback_checks(
+        stats, (
+            ("RB_VBL_TICKING",
+             "this pass never enters the frame loop — the ladder stops at the first fire gate, or "
+             "before it — so `frames_run` is 0 and the bit's own floor of one vblank per frame "
+             "cannot be met; the rows below are what say where it stopped"),
+            ("RB_PSG_PORT_A_DESELECTED",
+             "the program reads port A back at the very end of its run, and on THIS media TOS is "
+             "still polling the real disk for media change then, so the read-back is a race the ROM "
+             "usually wins. The assertion is not dropped, it MOVES: the two rows below hold the "
+             "reconstruction's own DESELECT write to exactly the byte this bit would have demanded, "
+             "off the ordered write timeline, and grade the race by ordering. Non-vacuous on the "
+             "GEMDOS drive (`smoke.py ownplay`); a HARDWARE-ONLY caveat here — atari/HARDWARE.md §8"),)) \
+        + drive_select_rows(events, stats["psg_port_a_at_entry"]) + [
+        ("the record came home ON THE FLOPPY", True,
+         f"{struct.calcsize(OWN_FORMAT)} bytes of {OWN_FILE} and "
+         f"{struct.calcsize(STATS_FORMAT)} of {STATS_FILE}, written by GEMDOS through TOS's own "
+         f"FAT12 and read back out of {image.name} by tools/st_extract.py — the channel "
+         f"atari/HARDWARE.md asks a person to bring back from the STE"),
+    ]
+    return problems, checks, record, image
+
+
+def floppy_missing_resource_control(probe_rows):
+    """CONTROL ONE — the same disk without TITLESCR.RAD, which must fail in the NAMED way.
+
+    THE DATA IS REAL AND NOTHING IS FAULTED, which is `mode_ownplay`'s pass-five shape: the volume
+    simply does not carry the file, exactly as it would not if a person had written the disk wrong,
+    and `load_resource_by_index` refuses on the name it asked for. A control that made the machine
+    crash would prove only that a crash is possible."""
+    withheld = wb("RESOURCE_TITLESCR")
+    kept = tuple(index for index in probe_rows if index != withheld)
+    title = (f"{FLOPPY_MODE} pass 3 — the CONTROL: {FLOPPY_CONTROL_IMAGE}, without "
+             f"{resource_name(withheld)}")
+    problems, checks, record, _image = floppy_probe_pass(
+        FLOPPY_CONTROL_IMAGE, FLOPPY_PROBE_LABEL, kept, "notitle", title, expect_title=False)
+    checks += [
+        (f"the title slice was REFUSED, because {resource_name(withheld)} is not on the volume",
+         record["title_result"] == LOAD_DISK_ERROR,
+         f"boot_title_screen returned {record['title_result']} "
+         f"(WB_LOAD_DISK_ERROR={LOAD_DISK_ERROR})"),
+        ("...and the ladder stopped in the boot rather than reaching a fire gate",
+         record["stopped_at"] == OWN_STOP_BOOT and record["fire_waits_timed_out"] == 0,
+         f"stopped_at={own_stop(record)}, {record['fire_waits_timed_out']} fire wait(s) timed out "
+         f"— pass 2 reached the gate and timed out there, so the two runs are distinguishable"),
+        ("...and it still wrote its record, so the refusal is a REPORT and not a crash",
+         record["magic"] == OWN_MAGIC, f"{OWN_FILE} carries {record['magic']:#x}"),
+    ]
+    report(title, checks)
+    return problems + [f"{name}: {detail}" for name, ok, detail in checks if not ok]
+
+
+def floppy_small_memory_control(probe_rows):
+    """CONTROL TWO — the same disk in a 1 MB machine, which must not run the program at all.
+
+    WHY THIS IS A MEASUREMENT AND NOT A CAUTION IN A README. The .PRG asks GEMDOS for its text, data
+    and bss in one allocation; for this build that is over 1.3 MB, so a 1 MB STE cannot Pexec it and
+    the AUTO loader moves on to the desktop with no diagnosis a person would recognise as "not
+    enough memory". The failure on real hardware is a game that simply never appears, and it would be
+    read as a bad disk. So the size the runbook asks for is pinned here, on the machine.
+
+    AND ITS OWN NEGATIVE CONTROL IS PASS 2, which ran this same disk with this same script in a
+    2 MB machine and DID leave a record — so "no record" here is the memory and not a flush that
+    never happened.
+
+    THE DISK IS WRITTEN AGAIN FIRST, and that is not tidiness: pass 2 booted this image and its
+    record is still ON it, so a control that read the volume as it stands would find an OWN.BIN and
+    report the previous pass's evidence as this one's. Measured — it is how this control first went
+    red — and the fix is a fresh volume rather than a filename to remember. `floppy_probe_pass`
+    rewrites the image on every call, so this control gets that for free rather than by remembering.
+
+    AND ITS WINDOW IS THE OTHER PASSES', which is a claim it has to make honestly: `FLOPPY_RECORD_VBLS`
+    is sized for a run that WRITES its record, and this one is asserting an ABSENCE. The pass above
+    reached its last `Fwrite` at vblank 4,469 out of the same 6,000 — so a machine that could load
+    the program at all had ~1,500 vblanks of slack in which to do it, and "no record" here is the
+    memory rather than a window that closed early. The 1 MB run does not get that far anyway: its
+    GEMDOS trace ends at the failed `Pexec` a few hundred vblanks in."""
+    title = (f"{FLOPPY_MODE} pass 4 — the CONTROL: {FLOPPY_TOO_SMALL_MEMSIZE_MB} MB, which is not "
+             f"enough machine")
+    problems, checks, _record, _image = floppy_probe_pass(
+        FLOPPY_PROBE_IMAGE, FLOPPY_PROBE_LABEL, probe_rows, "1mb", title,
+        expect_record=False, memsize=FLOPPY_TOO_SMALL_MEMSIZE_MB)
+    report(title, checks)
+    return problems + [f"{name}: {detail}" for name, ok, detail in checks if not ok]
+
+
+def mode_floppy():
+    """THE DISK, and the four passes that say it boots.
+
+    Read `atari/HARDWARE.md` beside this: the images this mode writes are the ones `gw/write_disk.sh`
+    puts on a physical floppy, and the runbook is what a person does with them."""
+    # BOTH BINARIES ARE CHECKED BEFORE EITHER IS BOOTED, and both against the C the record parser was
+    # pinned to. This mode is the only one that boots TWO builds, and it was checking neither: a
+    # `WB-ownrun.PRG` from before a field swap would have been written to the play disk and graded
+    # green, and a stale `WB-ownplay.PRG` would have had its record read under the new names.
+    for build_mode, name in ((OWN_RUN_MODE, OWN_RUN_BUILD), (OWN_MODE, OWN_BUILDS[OWN_MODE])):
+        prg = BUILD / name
+        if not prg.exists():
+            raise SystemExit(f"{prg} — {FLOPPY_MODE} boots both own-entry builds; run "
+                             f"`bash atari/build.sh {build_mode}` first")
+        refuse_a_stale_build(prg, build_mode, "own_stats")
+
+    # THE GEMDOS DRIVE IS STAGED FIRST AND THEN NOT USED. `resource_name` and `sequence_row` read the
+    # staged image out of `atari/disk/`, so the names that go on the floppy come from the same place
+    # every other mode's do — and staging also sweeps the previous mode's records off, so a stale
+    # OWN.BIN cannot be mistaken for one this mode recovered.
+    stage_drive(BUILD / OWN_RUN_BUILD)
+
+    problems, first_pen = floppy_play_pass()
+
+    probe_rows = tuple(index for index in own_resource_indices() if index not in FLOPPY_PROBE_OMITS)
+    probe_title = f"{FLOPPY_MODE} pass 2 — {FLOPPY_PROBE_IMAGE}, the record read back off the disk"
+    more, checks, record, _probe_image = floppy_probe_pass(
+        FLOPPY_PROBE_IMAGE, FLOPPY_PROBE_LABEL, probe_rows, "probe", probe_title)
+    checks += [
+        ("the title slice ran on its own, off the floppy",
+         record["title_result"] == LOAD_COPYLOCK_RAN,
+         f"boot_title_screen returned {record['title_result']} "
+         f"(WB_LOAD_COPYLOCK_RAN={LOAD_COPYLOCK_RAN})"),
+        ("...and the FIRST fire wait timed out, at its PRESS half",
+         record["fire_waits_timed_out"] == 1 and record["fire_gates_crossed"] == 0
+         and record["fire_wait_timed_out_pc"] == record["fire_press_pc"],
+         f"{record['fire_waits_timed_out']} timed out at {record['fire_wait_timed_out_pc']:#x} "
+         f"(wait_fire_pressed is at {record['fire_press_pc']:#x}) — nothing drives this run, so "
+         f"the gate is answered by SPINS_LONG and by nothing else"),
+        ("...and the ladder stopped there", record["stopped_at"] == OWN_STOP_BOOT,
+         f"stopped_at={own_stop(record)}"),
+    ]
+    report(probe_title, checks)
+    problems += more + [f"{name}: {detail}" for name, ok, detail in checks if not ok]
+    refuse_unless_the_control_holds(checks, "the two controls below")
+
+    problems += floppy_missing_resource_control(probe_rows)
+    problems += floppy_small_memory_control(probe_rows)
+
+    if problems:
+        raise SystemExit("FAIL: " + "; ".join(problems))
+    print(f"OK: M10 — the reconstruction boots off a 720 KB FAT12 floppy as the only media, run by "
+          f"TOS's own AUTO-folder loader, with every file the seam asks for coming through TOS's "
+          f"FAT12 and the WD1772 rather than a host directory. The title screen is up "
+          f"{first_pen} vblanks after power-on; the record the ladder writes comes home ON THE "
+          f"DISK. {OUT / FLOPPY_PLAY_IMAGE} is what `gw/write_disk.sh` writes — see "
+          f"atari/HARDWARE.md.")
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "m1"
     # `runsh` boots nothing itself — it asks run.sh for the command IT would boot — so it is routed
     # before the .PRG lookup below rather than being given a build it does not use.
     if mode == RUNSH_MODE:
         mode_runsh()
+        return
+    # `floppy` boots IMAGES it builds itself rather than a .PRG off the drive, so it routes before
+    # the lookup below — the binaries it needs are named inside it, one per pass.
+    if mode == FLOPPY_MODE:
+        mode_floppy()
         return
     prg = dict(PRG_FOR_MODE, **M5_BUILDS, **M6_BUILDS, **M3_BUILDS, **TITLE_BUILDS,
                **BOOT_BUILDS, **OWN_BUILDS, **OWN_RUN_BUILDS).get(mode)

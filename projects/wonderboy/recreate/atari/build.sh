@@ -223,7 +223,8 @@ done
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REC="$(cd "$HERE/.." && pwd)"                             # recreate/
-KIT="$(cd "$REC/../../../tools/recreate_kit" && pwd)"     # the shared harness
+TOOLS="$(cd "$REC/../../../tools" && pwd)"                # the workspace's game-agnostic tooling
+KIT="$TOOLS/recreate_kit"                                 # the shared harness
 BIN="$REC/../bin"                                         # projects/wonderboy/bin
 BUILD="$HERE/build"; DISK="$HERE/disk"
 PRG="WB.PRG"
@@ -426,10 +427,37 @@ assert_no_core_calls_a_modelled_os_helper() {
     exit 1; }
 }
 
+
+# ---- the trap wrappers' register discipline, which NOTHING ELSE HERE CAN SEE ------------------
+#
+# THE SIBLING PROJECT'S FIRST REAL-HARDWARE BUG CLASS, pre-empted as a build gate. TOS preserves
+# only %d3-%d7/%a3-%a6 across a trap, while m68k GCC believes %d2 and %a2 are callee-saved and
+# caches live values in them across a call to any wrapper in wonderboy_os.s. A wrapper that does not
+# save that pair silently corrupts one variable IN ITS CALLER — `docs/on-target-execution.md` has
+# the measurement, where it cost BuggyBoy three bombs on the STE and was green under every
+# differential the project had.
+#
+# EVERY WRAPPER IN THIS DIRECTORY ALREADY DOES IT (audited, batch 44 phase G: ten routines, ten
+# `movem` pairs, argument offsets at +12 to match). What did NOT exist was anything that would
+# notice if one stopped: the fault is invisible to `make test` (the differential does not run this
+# file), to every `smoke.py` mode (Hatari's TOS happens not to clobber the pair), and to the
+# compiler. So the discipline is asserted at the SOURCE, which is the one place it is legible.
+#
+# ROUTINE BY ROUTINE AND NOT FILE-WIDE, because a file-wide grep would be satisfied by ONE wrapper
+# saving the pair while a new one next to it did not.
+#
+# THE SCAN ITSELF LIVES IN `tools/`, because the class is the WORKSPACE'S and not this game's: every
+# port here compiles C against TOS through a hand-written `.s`, and the bug that motivates the gate
+# was BuggyBoy's. `tools/assert_trap_registers.sh` has the argument, the routine-close rule and its
+# own two mutation controls; this file supplies the one thing that is project policy — HOW MANY
+# wrappers there are to find.
+WONDERBOY_TRAP_WRAPPERS=10   # audited batch 44 phase G; `_start`'s Pterm0 never returns and is not one
+
 echo ">> check the seam (the differential build, and the static-inline half the symbol scan misses)"
 assert_the_differential_build_is_unchanged
 assert_the_sink_arm_lives_in_one_place
 assert_no_core_calls_a_modelled_os_helper
+bash "$TOOLS/assert_trap_registers.sh" --expect "$WONDERBOY_TRAP_WRAPPERS" "$HERE/wonderboy_os.s"
 
 echo ">> compile + link (base 0, keep relocs)"
 $CC $CFLAGS $DEF -T "$HERE/tos.ld" -Wl,--emit-relocs \
