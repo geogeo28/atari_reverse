@@ -10,8 +10,10 @@ GEMDOS expects to add the load base to.
 Usage: mkprg.py demo.elf demo.bin out.prg
 
 COPIED FROM projects/joust/recreate/atari/mkprg.py, which is itself copied from the BuggyBoy build.
-The copies are identical BELOW THIS PARAGRAPH — each names the others, so the markers differ and
-nothing else does — and a change to any belongs in all of them. Copied
+The copies were identical BELOW THIS PARAGRAPH and are now ONE ADDITION apart: `nm_rows`, the single
+parse of `m68k-elf-nm`'s output that `sym_value` and atari/profile.py share. It belongs in the other
+copies too — it is behaviour-neutral there, `sym_value` being the only caller — and every other
+change to any of them still belongs in all of them. Copied
 rather than moved into `tools/recreate_kit/` because that move is a kit change touching two other
 projects; it is registered as a kit candidate in ../STATUS.md's batch 43 phase A queue and in
 Joust's own README.
@@ -22,6 +24,7 @@ import subprocess
 import sys
 
 READELF = "m68k-elf-readelf"
+NM = "m68k-elf-nm"
 
 
 def bss_size(elf):
@@ -33,14 +36,20 @@ def bss_size(elf):
     return 0
 
 
+def nm_rows(elf):
+    """Every `nm` row as (value, type letter, name) — THE ONE PARSE of that output.
+
+    A row with no value (`U some_undefined_symbol`) has two fields and names nothing that can be
+    placed at an address, so it is dropped here rather than at each caller. `sym_value` below takes
+    one row out of this; atari/profile.py builds a whole Hatari symbol table out of it."""
+    listing = subprocess.check_output([NM, str(elf)], text=True)
+    rows = (line.split() for line in listing.splitlines())
+    return [(int(fields[0], 16), fields[1], fields[2]) for fields in rows if len(fields) == 3]
+
+
 def sym_value(elf, name):
     """Value of a symbol (e.g. _bss_start) from nm, or None."""
-    out = subprocess.check_output(["m68k-elf-nm", elf], text=True)
-    for line in out.splitlines():
-        parts = line.split()
-        if len(parts) == 3 and parts[2] == name:
-            return int(parts[0], 16)
-    return None
+    return next((value for value, _, symbol in nm_rows(elf) if symbol == name), None)
 
 
 def abs_fixups(elf):

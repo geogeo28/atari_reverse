@@ -260,13 +260,18 @@ def find_tos():
     return None
 
 
-def action_file(directory, name, *commands):
+def action_file(directory, name, *commands, tail="cont"):
     """Write one breakpoint's action file and return the `:file` clause that runs it.
 
     These are HOST paths the debugger reads and writes; they are deliberately not on any emulated
-    drive, where the game could see them."""
+    drive, where the game could see them.
+
+    `tail` is the last line, and it is `cont` for every anchor that hands the machine back — which
+    is all of them but one: profile.py's window CLOSES on its breakpoint, so its action file ends in
+    `q` instead. The parameter exists so that file still writes its script through here, rather than
+    spelling `:file <path>` a second time to get a different last line."""
     path = directory / name
-    path.write_text("".join(command + "\n" for command in commands) + "cont\n")
+    path.write_text("".join(command + "\n" for command in commands) + tail + "\n")
     return f":file {path}"
 
 

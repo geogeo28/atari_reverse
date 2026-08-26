@@ -647,6 +647,47 @@ hardware" into a localised answer. All are cheap and were decisive in the BuggyB
   stream is consulted but nothing it feeds is drawn that early. Reporting that is the difference
   between evidence and theatre.
 
+- **Hatari's CPU profiler — per-function cycles, on the shipped binary as well as yours.** The
+  strongest cost instrument available, because it needs no instrumentation inside either program:
+  the ORIGINAL can be measured exactly the way your port is, over a window of the same length, and
+  every number then becomes a ratio instead of an emulator's arithmetic. Wonder Boy's
+  `atari/profile.py` is the worked example — 1000 vblanks of each side, opened at the frame loop,
+  with a same-name cycles-per-call table at the bottom. Seven things about it that cost a session
+  each to learn:
+  * **Load the symbols BEFORE `profile on`, and `symbols autoload off` before THAT.** Autoloading
+    frees and replaces the table on every debugger entry, so a table loaded with it still on is gone
+    by the time the window closes; and the profiler's callsite buffer is SIZED at `profile on`, so
+    symbols arriving afterwards get no slots and `profile callers` comes back empty.
+  * **Pass the load offset as a NUMBER, then pin it.** `symbols <file> $12596` works; `symbols
+    <file> TEXT` — the debugger's own variable for the running program's text — is not accepted
+    there. Compute the base as above, then check it: `e TEXT` prints `$12596 (hex)` into the log and
+    must equal the offset you placed the symbols with. A WRONG BASE DOES NOT COME BACK EMPTY —
+    Hatari resolves a PC to the nearest symbol BELOW it, so every cycle is still attributed, to the
+    wrong name, in a report that looks right. "Did any frames land?" does not catch it either:
+    whatever name sits nearest below the frame loop collects its arrivals.
+  * **`b VBL > N` cannot open the window.** It fires during TOS's own boot, which spends >2,000
+    vblanks probing an absent floppy before your `.PRG` is loaded at all. Open at a PC and CLOSE
+    from inside that breakpoint's action file with the stop-then-shoot idiom `b VBL > VBL :1000`,
+    where the hit count IS the number of vblanks later. That action file ends in `q`, not `cont`.
+  * **`used cycles` is printed PER MEMORY REGION.** RAM and ROM TOS are separate blocks of one
+    `profile stats` dump, so a regex that takes the first match silently drops the OS time — which
+    one side of a differential has and the other does not (1.2% of the window, for one port). Sum
+    the regions, and anchor the parse after your own `echo` so it cannot read an earlier dump's.
+  * **An `= N s` entry can carry no totals at all.** Hatari attaches inclusive/exclusive
+    calls/instructions/cycles only to subroutine arrivals it could attribute; the unknown caller at
+    the moment profiling was switched on (`0xffffffff = 1 s`) has none. Dividing the charged cycles
+    by the number of arrivals then reads low — 25%, measured, on a frame-capture routine. Take the
+    call count from the EXCLUSIVE totals' first field and keep "arrivals" as the separate notion it
+    is (it is what a frame count needs).
+  * **A function entered by `bra`/`jmp` gets no totals either**, and its cost is folded into the
+    jsr-entered ancestor that reached it. 18 of one shipped binary's 91 profiled functions were in
+    that class — including its frame loop — so a per-call table has to exclude them and say so,
+    rather than print a zero.
+  * **Symbol names contain dots.** GCC emits `foo.part.0` clones, and a `\w+` pattern for the callee
+    name at the end of a `profile callers` row truncates the entire report at the first one: 41
+    functions parsed out of 86, no error anywhere. Split on the separator, not on a name shape, and
+    keep a completeness guard (rows parsed == callee rows in the block).
+
 - **Raster colour-bars for timing.** Set the border to a different colour before each per-frame
   stage; the on-screen *height* of each colour band is that stage's share of the frame. A single
   dominant band = the bottleneck. (Caveat: if everything "flashes with no dominant colour," the cost

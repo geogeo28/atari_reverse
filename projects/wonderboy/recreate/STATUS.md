@@ -16355,3 +16355,9 @@ scroll/stage tests. On target: **9.80 fps at 818 K cycles a frame** (from 9.45 /
 message-box blit ×15 → ×6 per call. The sprite blit is now the dominant cost: `blit_row` 268 K a
 frame, ×13 the original's — its per-word bounds guards and memory-resident register window are the
 next lever.
+
+Queued from the profiler's own review: (1) `atari/mkprg.py` writes a zero-length DRI symbol table,
+so Hatari cannot autoload the play build's symbols — emitting one from the same `nm` rows would let
+the debugger place them itself in ONE boot and retire `profile.py`'s m2-then-play load-address detour;
+(2) the profiler's game-agnostic half (nm → symbol file, the `profile callers` parser, the window
+scripts) is a kit candidate — Joust and BuggyBoy would copy it verbatim otherwise.

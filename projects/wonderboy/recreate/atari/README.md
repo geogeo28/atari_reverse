@@ -269,6 +269,10 @@ python3 atari/smoke.py floppy                               # M10, THE FLOPPY: b
 bash atari/build.sh play    && python3 atari/smoke.py play  # the M2-STAGED frame loop, run long
 python3 atari/smoke.py runsh                                #   ...and the line run.sh actually execs
 
+python3 atari/profile.py ours                               # WHAT A FRAME COSTS: 1000 vblanks of
+python3 atari/profile.py original                           #   Hatari's CPU profiler, both sides...
+python3 atari/profile.py compare                            #   ...and the same function's ratio
+
 python3 atari/original.py variance                          # what in the dump is one boot's luck
 python3 atari/original.py neighbour                         #   ...and the anchor's own evidence (§9)
 python3 atari/original.py nofire                            #   ...and the two boot controls
@@ -328,6 +332,42 @@ other while it boots. Measured, in this directory's own final sweep: `m5flash` c
 because a `run.sh` staging test had rewritten the drive mid-boot. **A mode that fails for a reason
 reading like a crash and then passes in isolation is this, not a red.**
 
+**`profile.py` is the only mode here that measures COST rather than correctness**, and it measures
+both binaries the same way: 1000 vblanks of Hatari's CPU profiler, opened where the frame loop is
+first reached and closed 1000 vblanks later, with each side's symbols from its own map — ours from
+`m68k-elf-nm` over the linked ELF (placed at the load address the frame build's own `capture_pc`
+reports, because TOS chooses it), the shipped side's from `../names.txt`, whose addresses are runtime
+PCs already. Frames are the arrivals at `game_main_loop`, so the fps is counted rather than timed.
+`ours` builds `m2` (to measure the load address) then `play` (the binary actually profiled); each
+side leaves `out/profile-<side>.{log,json}`; `compare` reads the two back. It restages `disk/` like
+every other mode, so **RUN ONE MODE AT A TIME** covers it too. Two Hatari facts it is built around:
+symbols must be loaded **before** `profile on` and with `symbols autoload off` **before that**
+(autoload frees the table on every debugger entry, and the callsite buffer is sized at `profile on`,
+so late symbols get no slots and the report comes back empty); and the window **cannot** be opened
+on `b VBL > N`, because TOS spends >2,000 vblanks probing the absent floppy before the `.PRG` runs —
+it is opened at a PC and closed from inside that breakpoint's action file with `b VBL > VBL :1000`.
+
+The baseline, both sides over the same 1000-vblank window (2026-08-25 at `036ee78`, TOS 1.04,
+`--memsize 4`; cycles are every profiled region's, ROM TOS included). The last column is the top of
+`print_side`'s own ranking by inclusive cycles, nested callees and all — `blit_sprite_w3` is inside
+`sprite_draw_pass`, `bg_scroll_copy_column` inside `bg_scroll_blit`:
+
+| | frames | fps | cycles/frame | the biggest costs per frame (inclusive), as the tool ranks them |
+|---|---|---|---|---|
+| **ours** | 196 | 9.80 | 817.6K (797.6K inside `game_main_loop`) | `sprite_draw_pass` 281.1K · `blit_sprite_w3` 272.4K · `blit_row` 267.7K · `bg_scroll_blit` 208.3K · `flip_screen` 131.2K |
+| **original** | 500 | 25.00 | 320.4K | `flip_screen` 124.4K · `bg_scroll_blit` 105.2K · `panel_refresh_frame` 33.7K |
+
+Same-function ratios worth the name: `blit_sprite_w3` **x13.3**, `sprite_draw_pass` **x11.3**,
+`text_run_message_box` **x6.0**, the actor tier **x3-4** across the board (the bus guards), and
+`flip_screen` **x1.1** — most of it now the vblank wait, which is what a frame finishing early
+looks like. The ladder so far: 95 frames / 4.75 fps / 1,646K per frame before `blit_row`'s
+`__umodsi3` went (`b5da465`), 189 / 9.45 / 838K after it, 196 / 9.80 / 818K once `copy_longwords`
+walked local pointers (`036ee78`). Two readings the table cannot give: a function entered by
+`bra`/`jmp` rather than `jsr` carries no cycle totals in Hatari's report — 18 of the shipped side's
+91, `game_main_loop` among them — so its cost is folded into the nearest `jsr`-entered ancestor and
+the ratio table leaves it out rather than print a zero; and `cyc/call` divides by the calls Hatari
+could ATTRIBUTE (the exclusive totals' own count), which is why `arrivals` is a separate column.
+
 ## Pieces
 
 | file | role |
@@ -343,6 +383,7 @@ reading like a crash and then passes in isolation is this, not a red.**
 | `tos.ld` / `mkprg.py` | link at base 0, then wrap the ELF into a GEMDOS `.PRG` with a relocation table |
 | `build.sh` | compile + link + wrap + stage `disk/`, and assert the seam actually held |
 | `smoke.py` | headless Hatari: boot, run to completion, read `STATS.BIN` back, check it |
+| `profile.py` | **what a frame COSTS** — 1000 vblanks of Hatari's CPU profiler over each side, per-function calls and inclusive/exclusive cycles, and the same-name ratio table that says which function to look at next. The only mode here that is not a correctness check |
 | `HARDWARE.md` | **the runbook for the machine no check here can reach** — writing the disk with `gw`, what the boot looks like, the trap-wrapper rule and the gate that keeps it, the hardware reads to watch on iron, how to bring evidence home, and what emulation cannot prove. The floppy itself is not built here: `tools/st_build.py` writes it and `tools/st_extract.py` reads it back (§16) |
 | `run.sh` | **the one that is not a measurement** — build the OWN-ENTRY build (`ownrun`) and open Hatari with a screen, sound and a joystick. Its header is the honest account of what appears. `run.sh parsecheck` is the only thing that runs its `exec` line without opening a machine, and it has now caught two defects there (§15) |
 
