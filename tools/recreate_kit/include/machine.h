@@ -79,6 +79,23 @@ static inline uint32_t rotate_left32(uint32_t value, unsigned count) {
     return (value << count) | (value >> (32 - count));
 }
 
+/* 68k `ror.l #n,Dn` / `ror.l Dm,Dn` — the mirror of the above, TOTAL on exactly the same terms: the
+ * `& 31` is the register form's own mod, and the count of 0 is the 68000's no-op where C's
+ * `value << 32` is undefined. Both notes above apply here word for word, the immediate form's
+ * 0-means-8 encoding included.
+ *
+ * It is spelt as the right rotate it is rather than as `rotate_left32(value, 32 - count)`, which is
+ * the same VALUE for every count. The reason is cycles: the 68000's register-form rotate costs two
+ * per bit turned, so a caller whose count is a small right rotation — a sprite's sub-word shift is
+ * the low nibble of a screen x — pays for 0..15 bits here and for 17..32 through the mirror. Wonder
+ * Boy's sprite blitters measured that difference; see projects/wonderboy/recreate/STATUS.md. */
+static inline uint32_t rotate_right32(uint32_t value, unsigned count) {
+    count &= 31;
+    if (count == 0)
+        return value;
+    return (value >> count) | (value << (32 - count));
+}
+
 /* 68k `.b` op on a word register: the result byte replaces the low byte, and the high byte is
  * left untouched (byte ops don't carry into it) — e.g. addq.b / asl.b applied to a data reg. */
 static inline uint16_t set_low_byte(uint16_t word, uint8_t byte) {

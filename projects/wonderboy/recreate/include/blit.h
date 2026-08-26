@@ -61,6 +61,32 @@
 #define WB_BLIT_ROW_ADVANCE(columns) \
     (WB_SCREEN_LINE - ((columns) * WB_BLIT_COLUMN_BYTES - WB_STATE_WORD_LEN))
 
+/* WHAT ONE ROW TOUCHES, as two spans: the row's source cells laid end to end from a0, and `columns`
+ * whole columns of screen from a1. src/blit.c asks os_in_image ONCE PER ROW over these rather than
+ * once per word, so each has to be the row's geometry EXACTLY — one word short and the walk would
+ * stop asking for a word that still needed it.
+ *
+ * The destination span is the last plane word's END, not the cursor's resting place WB_STATE_WORD_LEN
+ * short of it (the row's final `or.w` does not post-increment). That is the same scanline the `lea`
+ * above measures from the other end, so the two macros are one number written twice:
+ *
+ *     WB_BLIT_ROW_DEST_BYTES(n) == WB_SCREEN_LINE - WB_BLIT_ROW_ADVANCE(n) + WB_STATE_WORD_LEN
+ *
+ * and the assertion below is that identity, so an edit to either that drifts from the other fails to
+ * compile. Both sides are linear in the column count, so pinning the two ends pins every width. */
+#define WB_BLIT_ROW_SOURCE_BYTES(columns) \
+    (((columns) - 1u) * (WB_BLIT_CELL_WORDS * WB_STATE_WORD_LEN))
+#define WB_BLIT_ROW_DEST_BYTES(columns)   ((columns) * WB_BLIT_COLUMN_BYTES)
+
+#define WB_BLIT_ROW_SPANS_AGREE(columns)                             \
+    (WB_BLIT_ROW_DEST_BYTES(columns)                                 \
+     == (unsigned)(WB_SCREEN_LINE - WB_BLIT_ROW_ADVANCE(columns) + WB_STATE_WORD_LEN))
+
+_Static_assert(WB_BLIT_ROW_SPANS_AGREE(WB_BLIT_COLUMNS_MIN)
+               && WB_BLIT_ROW_SPANS_AGREE(WB_BLIT_COLUMNS_MAX),
+               "a row's destination span and the `lea` that closes the row are the same scanline "
+               "read from either end, and one of the two has been changed without the other");
+
 /* --- clipping ---------------------------------------------------------------------------------- */
 /* The byte the preludes write and the clipped bodies `btst`. Bit 0 is the RIGHTMOST column. */
 #define WB_BLIT_CLIP_MASK         0x9966u

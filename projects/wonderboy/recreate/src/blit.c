@@ -69,19 +69,32 @@
 #define WB_BLIT_UNCLIPPED         0
 #define WB_BLIT_CLIPPED           1
 
+/* The axis the two row walks below are specialised on, and the argument every access helper they
+ * inline carries: WB_BLIT_ROW_IN_IMAGE for a row blit_row has PROVED lies wholly inside the image,
+ * WB_BLIT_ROW_CHECKED for one it has not. See blit_row. */
+#define WB_BLIT_ROW_IN_IMAGE      1
+#define WB_BLIT_ROW_CHECKED       0
+
 /* One width, which is one entry in each of the three jump tables. */
 typedef struct {
     unsigned columns;                /* 16-pixel columns per row; cells per row is one fewer */
     uint16_t row_advance;            /* the `lea N(a1),a1` that closes a row */
+    uint32_t source_bytes;           /* what one row reads from a0, and what one writes from a1 —
+                                      * blit.h's row-geometry section derives both and pins the
+                                      * second against row_advance. They are per WIDTH, so they are
+                                      * table entries rather than a computation per row. */
+    uint32_t dest_bytes;
     int counts_rows_up_front;        /* the `addq.w #1,d7 / tst / beq / bmi` only $9594/$900a have */
     unsigned deferred_merge_column;  /* the clipped body's late `or.w`; see the file comment */
 } blit_width;
 
 /* One row of that table. Everything but the quirk follows from the column count, so the width
- * number is written once per width and the two derivations are stated once for all four. */
+ * number is written once per width and the derivations are stated once for all four. */
 #define BLIT_WIDTH(n, deferred) {                                    \
     .columns = (n),                                                  \
     .row_advance = WB_BLIT_ROW_ADVANCE(n),                           \
+    .source_bytes = WB_BLIT_ROW_SOURCE_BYTES(n),                     \
+    .dest_bytes = WB_BLIT_ROW_DEST_BYTES(n),                         \
     .counts_rows_up_front = (n) == WB_BLIT_GUARDED_COLUMNS,          \
     .deferred_merge_column = (deferred),                             \
 }
@@ -91,13 +104,16 @@ static const blit_width BLIT_W3 = BLIT_WIDTH(3, WB_BLIT_NO_DEFERRED_MERGE);
 static const blit_width BLIT_W4 = BLIT_WIDTH(4, WB_BLIT_DEFERRED_MERGE_COLUMN);
 static const blit_width BLIT_W5 = BLIT_WIDTH(5, WB_BLIT_NO_DEFERRED_MERGE);
 
-/* 68k `ror.l Dm,Dn`, as the kit's `rotate_left32` mirrored — a 32-bit rotate is cyclic, so rotating
- * right by n is rotating left by 32-n, and rotate_left32's own `& 31` makes a count of 0 the
- * 68000's no-op rather than C's undefined `value >> 32`. Exact for every count a register can hold:
- * the 68000 rotates by Dm mod 64, and mod 64 then mod 32 is mod 32. */
-static uint32_t rotate_right32(uint32_t value, unsigned count)
+/* THE COUNT EVERY ROTATE OF ONE BLIT TURNS BY, taken apart ONCE FOR THE WHOLE BLIT rather than once
+ * per word. `shift` is d6, and nothing in this family writes it — not a row, not a column, not a
+ * prelude — so the reduction is invariant over every row the entry count draws, and
+ * blit_sprite_rows computes it before its first row and hands it down. The five bits are exact for
+ * every count a register can hold, for the kit's rotate_right32's own reason: the 68000 rotates by
+ * Dm mod 64 and a 32-bit rotate is cyclic mod 32, and mod 64 then mod 32 is mod 32. Doing it here
+ * leaves the rotate's own `& 31` a fold rather than an instruction. */
+static unsigned blit_rotation(const sprite_blit_regs *regs)
 {
-    return rotate_left32(value, 32u - (count & 31u));
+    return regs->shift & 31u;
 }
 
 /* 68k `swap Dn`: the half the rotate pushed out of this column comes down into the low word, which
@@ -108,23 +124,38 @@ static uint32_t swap_halves(uint32_t value)
     return rotate_left32(value, WB_BLIT_SWAP_BITS);
 }
 
-/* One word of the image, addressed THE WAY THE ORACLE'S BUS DOES.
+/* One word of the image, addressed THE WAY THE ORACLE'S BUS DOES — ON THE ARM THAT HAS TO ASK.
  *
  * `source` and `dest` are entry registers: the caller hands them addresses and nothing bounds
  * either, so a wrong one is not a wrong pixel but a walk off the end of the image — into the host
  * heap here, where the 68000 side merely reaches an address the shim does not map. The shim answers
  * a read past the image with zeros and DROPS the write (tools/recreate_kit/oracle/shim.c), so that
- * is what these do, and an insane address then diverges nowhere rather than corrupting the test
- * process. Every address inside the image goes through unchanged, which is what the battery pins —
- * this is the divergence class src/rad.c's comment registers, closed for this family because the
- * runaway `dbf` below can walk 10 MB of screen from one bad row count. */
-static uint16_t blit_read_word(const uint8_t *image, uint32_t addr)
+ * is what the CHECKED arm of each of these does, and an insane address then diverges nowhere rather
+ * than corrupting the test process. Every address inside the image goes through unchanged, which is
+ * what the battery pins — this is the divergence class src/rad.c's comment registers, closed for
+ * this family because the runaway `dbf` below can walk 10 MB of screen from one bad row count.
+ *
+ * The OTHER arm asks nothing, and is the same answer rather than a weaker one: `row_in_image` is
+ * WB_BLIT_ROW_IN_IMAGE only for a row blit_row has PROVED lies wholly inside the image, where the
+ * guard could only ever say yes. It is a COMPILE-TIME CONSTANT in both of the walks below — that is
+ * what the two instantiations there are for — so each of them keeps one arm of these and no test.
+ * Which arm a given row takes is therefore blit_row's decision alone, and the two spans it decides
+ * on are blit.h's. */
+static inline __attribute__((always_inline))
+uint16_t blit_read_word(const uint8_t *image, uint32_t addr, int row_in_image)
 {
+    if (row_in_image)
+        return be16(image + addr);
     return os_in_image(addr, WB_STATE_WORD_LEN) ? be16(image + addr) : 0;
 }
 
-static void blit_write_word(uint8_t *image, uint32_t addr, uint16_t value)
+static inline __attribute__((always_inline))
+void blit_write_word(uint8_t *image, uint32_t addr, uint16_t value, int row_in_image)
 {
+    if (row_in_image) {
+        wr16(image + addr, value);
+        return;
+    }
     if (os_in_image(addr, WB_STATE_WORD_LEN))
         wr16(image + addr, value);
 }
@@ -159,6 +190,20 @@ static unsigned plane_reg(unsigned cell, unsigned plane)
     return reg < WB_BLIT_SCRATCH_REGS ? reg : reg - WB_BLIT_SCRATCH_REGS;
 }
 
+/* THE WHOLE WINDOW WALK IS THIS ONE STEP. A cell's WB_BLIT_CELL_WORDS words land in consecutive
+ * registers from mask_reg(cell) upward — that is plane_reg's `mask_reg + 1 + plane` — and the
+ * window steps DOWN one register per cell, so mask_reg(cell - 1) is mask_reg(cell) + 1. Put
+ * together: the register a word FOLDS FROM is the one above the register it lands in, WHICH IS
+ * ALSO WHERE THE NEXT WORD OF THE CELL LANDS. So a cell's five words are five steps from one
+ * starting position and each word takes the step once, where naming both positions recomputed two
+ * of mask_reg's conditional subtracts per word and scaled both — the 68000 has no scaled index
+ * mode, so every `scratch[i]` was a multiply by four ahead of the access. Hence a pointer, and a
+ * conditional wrap rather than a `%` for mask_reg's own reason. */
+static uint32_t *next_reg(uint32_t *window, uint32_t *reg)
+{
+    return reg + 1 < window + WB_BLIT_SCRATCH_REGS ? reg + 1 : window;
+}
+
 /* `btst #n,WB_BLIT_CLIP_MASK`: the LEFTMOST column is the HIGHEST bit, so a mask of 1 draws the
  * rightmost column alone and one of all-ones draws every column. */
 static unsigned column_bit(const blit_width *width, unsigned column)
@@ -191,63 +236,102 @@ static uint32_t or_wrapped_half(uint32_t loaded, uint32_t wrapped)
  * `defer_last_merge` holds the FOURTH plane's fold back for the caller to do inside the drawn arm
  * of its `btst` — the four-column clipped body's quirk, and nothing else's.
  */
-static void blit_load_cell(const uint8_t *image, sprite_blit_regs *regs, unsigned cell,
-                           int defer_last_merge)
+static inline __attribute__((always_inline))
+void blit_load_cell(const uint8_t *image, sprite_blit_regs *regs, unsigned cell,
+                    int defer_last_merge, unsigned rotation, int row_in_image)
 {
+    uint32_t *window = regs->scratch;
+    uint32_t *reg = window + mask_reg(cell);
+    uint32_t source = regs->source;
+    /* Which word's fold is held back, as a NUMBER — WB_BLIT_CELL_WORDS, one past the last, for the
+     * columns and widths that have no such quirk. The quirk is a property of the whole cell, so
+     * asking it once here leaves the loop one comparison rather than a test of both. */
+    unsigned hold_back_word = defer_last_merge ? WB_BLIT_CELL_WORDS - 1u : WB_BLIT_CELL_WORDS;
+
     for (unsigned word = 0; word < WB_BLIT_CELL_WORDS; word++) {
         /* The cell's five words are the mask and then the four planes, in that order. */
         int is_mask = (word == 0);
-        unsigned reg = is_mask ? mask_reg(cell) : plane_reg(cell, word - 1);
-        uint32_t loaded = rotate_right32(
-            (is_mask ? WB_BLIT_MASK_FILL : 0u) | blit_read_word(image, regs->source), regs->shift);
+        uint32_t loaded = rotate_right32((is_mask ? WB_BLIT_MASK_FILL : 0u)
+                                             | blit_read_word(image, source, row_in_image),
+                                         rotation);
+        uint32_t *wrapped = next_reg(window, reg);
 
-        regs->source = addr_add(regs->source, WB_STATE_WORD_LEN);
+        source = addr_add(source, WB_STATE_WORD_LEN);
         if (cell == 0) {
-            regs->scratch[reg] = loaded;
-            continue;
+            *reg = loaded;
+        } else {
+            int hold_back = (word == hold_back_word);
+
+            *wrapped = swap_halves(*wrapped);
+            *reg = hold_back ? loaded
+                 : is_mask   ? and_wrapped_half(loaded, *wrapped)
+                             : or_wrapped_half(loaded, *wrapped);
         }
-
-        unsigned wrapped = is_mask ? mask_reg(cell - 1) : plane_reg(cell - 1, word - 1);
-        int hold_back = defer_last_merge && word == WB_BLIT_CELL_WORDS - 1;
-
-        regs->scratch[wrapped] = swap_halves(regs->scratch[wrapped]);
-        regs->scratch[reg] = hold_back ? loaded
-                           : is_mask   ? and_wrapped_half(loaded, regs->scratch[wrapped])
-                                       : or_wrapped_half(loaded, regs->scratch[wrapped]);
+        reg = wrapped;
     }
+    /* THE CURSOR IS WALKED IN A LOCAL AND WRITTEN BACK ONCE, for src/scroll.c's `copy_longwords`
+     * reason and not merely for tidiness: while it lives behind the caller's pointer GCC cannot
+     * prove a store through `image` does not alias it, so it must be reloaded after every write and
+     * cannot be an induction variable. That comment carries the measured before-and-after; here the
+     * licence is the same one — nothing between these five reads looks at `regs->source`. */
+    regs->source = source;
 }
 
 /* The row's LAST column is the last cell's wrapped half on its own, so all five of that cell's
  * registers are swapped and drawn from as they stand. */
-static void blit_swap_cell(sprite_blit_regs *regs, unsigned cell)
+static inline __attribute__((always_inline))
+void blit_swap_cell(sprite_blit_regs *regs, unsigned cell)
 {
-    regs->scratch[mask_reg(cell)] = swap_halves(regs->scratch[mask_reg(cell)]);
-    for (unsigned plane = 0; plane < WB_PLANES; plane++)
-        regs->scratch[plane_reg(cell, plane)] = swap_halves(regs->scratch[plane_reg(cell, plane)]);
+    uint32_t *window = regs->scratch;
+    uint32_t *reg = window + mask_reg(cell);
+
+    for (unsigned word = 0; word < WB_BLIT_CELL_WORDS; word++) {
+        *reg = swap_halves(*reg);
+        reg = next_reg(window, reg);
+    }
 }
 
 /* One 16-pixel column: `and.w mask,(a1) / or.w plane,(a1)+` per plane, the last of them without the
  * post-increment. The original spells the read-modify-write as two stores to the same word; one
  * store of the same value leaves the same byte and the same write set. */
-static void blit_column(uint8_t *image, sprite_blit_regs *regs, unsigned cell, int is_last)
+static inline __attribute__((always_inline))
+void blit_column(uint8_t *image, sprite_blit_regs *regs, unsigned cell, int is_last,
+                 int row_in_image)
 {
-    uint16_t mask = (uint16_t)regs->scratch[mask_reg(cell)];
+    uint32_t *window = regs->scratch;
+    uint32_t *reg = window + mask_reg(cell);
+    uint16_t mask = (uint16_t)*reg;
+    uint32_t dest = regs->dest;
 
     for (unsigned plane = 0; plane < WB_PLANES; plane++) {
-        uint16_t under = blit_read_word(image, regs->dest);
-        uint16_t plane_word = (uint16_t)regs->scratch[plane_reg(cell, plane)];
+        uint16_t under = blit_read_word(image, dest, row_in_image);
+        uint16_t plane_word;
 
-        blit_write_word(image, regs->dest, (uint16_t)((under & mask) | plane_word));
+        reg = next_reg(window, reg);
+        plane_word = (uint16_t)*reg;
+        blit_write_word(image, dest, (uint16_t)((under & mask) | plane_word), row_in_image);
         if (!(is_last && plane == WB_PLANES - 1))
-            regs->dest = addr_add(regs->dest, WB_STATE_WORD_LEN);
+            dest = addr_add(dest, WB_STATE_WORD_LEN);
     }
+    regs->dest = dest;
 }
 
-/* One row of the sprite: `columns` columns drawn from `columns - 1` source cells, then the `lea`
- * that steps the screen cursor to the next scanline. In a clipped body a column whose bit is clear
- * is stepped over instead of drawn, at the same cost, so this closes at the same place either way.
- */
-static void blit_row(uint8_t *image, sprite_blit_regs *regs, const blit_width *width, int clipped)
+/* One row of the sprite: `columns` columns drawn from `columns - 1` source cells. In a clipped body
+ * a column whose bit is clear is stepped over instead of drawn, at the same cost, so this closes at
+ * the same place either way.
+ *
+ * WRITTEN ONCE AND COMPILED TWICE, by the two wrappers under it. `row_in_image` is a constant in
+ * each instantiation, so every test of it here and in the four helpers this inlines folds away and
+ * each walk keeps ONE arm of the off-image guard and no test at all — which is the entire point of
+ * asking that question per row. GCC does not clone a function on a constant argument by itself at
+ * -O2 (that wants -fipa-cp-clone), so the specialisation is spelt rather than hoped for.
+ *
+ * `always_inline` is on the four helpers as well as on this, and it has to be BOTH: an earlier
+ * attempt put it on the walk alone, and GCC answered by declining to inline blit_load_cell and
+ * blit_column into the now-larger body — six arguments on the stack per cell and per column. */
+static inline __attribute__((always_inline))
+void blit_row_body(uint8_t *image, sprite_blit_regs *regs, const blit_width *width,
+                   int clipped, unsigned rotation, int row_in_image)
 {
     unsigned cells = width->columns - 1u;
 
@@ -259,7 +343,7 @@ static void blit_row(uint8_t *image, sprite_blit_regs *regs, const blit_width *w
         if (is_last)
             blit_swap_cell(regs, cell);
         else
-            blit_load_cell(image, regs, cell, defer);
+            blit_load_cell(image, regs, cell, defer, rotation, row_in_image);
 
         if (clipped && !(image[WB_BLIT_CLIP_MASK] & column_bit(width, column))) {
             regs->dest = addr_add(regs->dest, is_last ? WB_BLIT_LAST_COLUMN_BYTES
@@ -274,8 +358,41 @@ static void blit_row(uint8_t *image, sprite_blit_regs *regs, const blit_width *w
                 regs->scratch[plane_reg(cell, last_plane)],
                 regs->scratch[plane_reg(cell - 1u, last_plane)]);
         }
-        blit_column(image, regs, cell, is_last);
+        blit_column(image, regs, cell, is_last, row_in_image);
     }
+}
+
+/* The two instantiations. Each is a whole copy of the walk above with one arm of the guard in it. */
+static void blit_row_walk_in_image(uint8_t *image, sprite_blit_regs *regs, const blit_width *width,
+                                   int clipped, unsigned rotation)
+{
+    blit_row_body(image, regs, width, clipped, rotation, WB_BLIT_ROW_IN_IMAGE);
+}
+
+static void blit_row_walk_checked(uint8_t *image, sprite_blit_regs *regs, const blit_width *width,
+                                  int clipped, unsigned rotation)
+{
+    blit_row_body(image, regs, width, clipped, rotation, WB_BLIT_ROW_CHECKED);
+}
+
+/* The row, plus the `lea` that steps the screen cursor to the next scanline — and THE OFF-IMAGE
+ * GUARD, HOISTED OFF THE WORDS AND ONTO THE ROW.
+ *
+ * Inside the image a checked access IS the bare one: blit_read_word and blit_write_word differ from
+ * `be16`/`wr16` only where os_in_image says no. So proving the row's two spans lie inside the image
+ * proves it for every word the walk goes on to touch — blit.h's WB_BLIT_ROW_SOURCE_BYTES and
+ * WB_BLIT_ROW_DEST_BYTES are what makes that a PROOF and not a hope, and both are what a row really
+ * touches rather than a word less. Where either span is not wholly inside, nothing is proved about
+ * any of its words and each is asked as before: that is the runaway `dbf`'s 10 MB of screen, which
+ * is exactly the case a hoist must not smuggle a write into. */
+static void blit_row(uint8_t *image, sprite_blit_regs *regs, const blit_width *width, int clipped,
+                     unsigned rotation)
+{
+    if (os_in_image(regs->source, width->source_bytes)
+        && os_in_image(regs->dest, width->dest_bytes))
+        blit_row_walk_in_image(image, regs, width, clipped, rotation);
+    else
+        blit_row_walk_checked(image, regs, width, clipped, rotation);
     regs->dest = addr_add(regs->dest, width->row_advance);
 }
 
@@ -283,6 +400,8 @@ static void blit_row(uint8_t *image, sprite_blit_regs *regs, const blit_width *w
 static void blit_sprite_rows(uint8_t *image, sprite_blit_regs *regs, const blit_width *width,
                              int clipped)
 {
+    unsigned rotation = blit_rotation(regs);
+
     if (width->counts_rows_up_front) {
         /* `addq.w #1,d7`, ONCE — the `dbf` at the bottom jumps back to the `tst.w d7` below it,
          * not to the bump. The `beq` and the `bmi` between them refuse every count that is not
@@ -290,7 +409,7 @@ static void blit_sprite_rows(uint8_t *image, sprite_blit_regs *regs, const blit_
          * `beq` with the counter at zero. */
         regs->rows = set_low_word(regs->rows, (uint16_t)(regs->rows + 1u));
         while ((int16_t)(uint16_t)regs->rows > 0) {
-            blit_row(image, regs, width, clipped);
+            blit_row(image, regs, width, clipped, rotation);
             regs->rows = set_low_word(regs->rows, (uint16_t)(regs->rows - 1u));
         }
         return;
@@ -301,7 +420,7 @@ static void blit_sprite_rows(uint8_t *image, sprite_blit_regs *regs, const blit_
      * `blit_read_word`/`blit_write_word`'s off-image guard is what lets both sides survive the
      * 10 MB of screen this then walks. */
     do {
-        blit_row(image, regs, width, clipped);
+        blit_row(image, regs, width, clipped, rotation);
         regs->rows = set_low_word(regs->rows, (uint16_t)(regs->rows - 1u));
     } while ((uint16_t)regs->rows != (uint16_t)-1);
 }

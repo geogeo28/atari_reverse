@@ -108,8 +108,10 @@ static inline uint32_t bus_read_long(const uint8_t *image, uint32_t at) {
  * than one that guards neither: the address it refused to trust for a read is trusted for a write,
  * and a write past the image walks off the ctypes buffer into the host heap where the 68000 side
  * merely reaches an address the shim does not map. The shim DROPS such a write, so that is what
- * these do — the same answer src/blit.c's `blit_write_word` gives for the same reason, and the same
- * divergence class closed the same way. */
+ * these do — the same divergence class src/blit.c closes, and closed the same way. The blitter's
+ * `blit_write_word` gives this answer on ONE of its two arms: a row it has proved lies wholly
+ * inside the image is written straight through, which is the same answer because inside the image
+ * a dropped write cannot happen. Where nothing is proved, its guarded arm is this one exactly. */
 static inline void bus_write_byte(uint8_t *image, uint32_t at, uint8_t value) {
     uint32_t address = at & WB_BUS_ADDR_MASK;
     if (os_in_image(address, 1))

@@ -16361,3 +16361,66 @@ so Hatari cannot autoload the play build's symbols — emitting one from the sam
 the debugger place them itself in ONE boot and retire `profile.py`'s m2-then-play load-address detour;
 (2) the profiler's game-agnostic half (nm → symbol file, the `profile callers` parser, the window
 scripts) is a kit candidate — Joust and BuggyBoy would copy it verbatim otherwise.
+
+**The sprite blit stops asking per word (2026-08-25).** `blit_row` paid three tolls on each of a
+row's 22 words: an `os_in_image` mask-and-compare inside `blit_read_word`/`blit_write_word`, two of
+`mask_reg`/`plane_reg`'s conditional subtracts plus their ×4 scaling to reach a window that lives in
+memory behind a pointer, and a rotate spelt as `rotate_left32(value, 32 - count)`. All three are
+loop-invariant, or provable one level up. The guard is now asked ONCE PER ROW over two spans — the
+row's cells laid end to end, and `columns * WB_BLIT_COLUMN_BYTES` of screen, which is the last plane
+word's END and not the cursor's resting place two bytes short of it — and a row that proves both
+reads and writes straight through, while a row that proves neither is asked per word exactly as
+before: inside the image a checked access IS the bare one, which is what makes the hoist a proof
+rather than a shortcut. Both spans are `WB_BLIT_ROW_SOURCE_BYTES`/`WB_BLIT_ROW_DEST_BYTES` in
+`include/blit.h`, per-width fields of `blit_width` rather than a computation per row, and a
+`_Static_assert` there pins the destination span against `WB_BLIT_ROW_ADVANCE` — the two are one
+scanline read from either end, so neither can drift alone. The window is walked by POINTER and by one
+step rather than two — the register a word folds from is the register the next word lands in, so a
+cell's five words are five `next_reg`s from `mask_reg(cell)` — and the rotate is now the right rotate
+it is, over a count `blit_rotation` reduces ONCE FOR THE WHOLE BLIT (nothing in the family writes d6):
+GCC emits `ror.l` by the shift's 0..15 where the mirrored left form emitted `rol.l` by 17..32, at the
+68000's two cycles a bit. `rotate_right32` lives beside `rotate_left32` in the kit's `machine.h`,
+keeping its own `& 31` and its 0-is-identity arm — total for every count a register can hold, which
+the caller's reduction then folds away rather than replaces.
+
+**THE CODEGEN IS TWO WALKS, SPELT.** At -O2 GCC emits ONE body per static function and does not clone
+one on a constant argument (that wants `-fipa-cp-clone`), so a `guarded` parameter is a real register
+tested per word — the first draft of this change loaded it into d4 and branched on it at three sites,
+while claiming in a comment that it did not. The walk is now an `always_inline` body instantiated by
+two thin wrappers: `m68k-elf-objdump` on the target object shows `blit_row_walk_in_image` at 848 bytes
+with NO `os_in_image` comparison anywhere in it and `blit_row_walk_checked` at 906 with six. The
+attribute has to be on the four access helpers as well as on the body — on the body alone GCC answers
+by un-inlining `blit_load_cell`/`blit_column` and passing six arguments on the stack per cell and per
+column, which is what an earlier attempt measured. The price is size: `blit.c`'s object is 4,400 bytes
+against 3,450 for the single walk (3,608 before the batch), still free of `si3` helpers.
+
+On target, `python3 atari/profile.py ours`: **12.20 fps at 657 K cycles a frame** (from 9.80 / 818 K),
+the row loop 268 K → 153 K a frame (`blit_row` is inlined into `blit_sprite_rows` now, so that is the
+symbol the profiler names), a row 11,220 → 5,995 cycles inside the walk and 6,360 with the per-row
+guard and the closing `lea`, `blit_sprite_w3` against the original ×13 → ×7.5. Suite **6,433** green
+(16 new: the image-edge case ×3 sides, and four widths of the source-edge one).
+
+**THE SURFACE IS NOT `make test`, AND THE BAND COMPARE IS WHY.** `harness.differential` diffs the
+candidate over `[0, emu.STACK_GUARD_LO)` alone, because the oracle runs its own machine stack above
+that — so a case that draws at the END of the image is checked for its registers and for the oracle's
+write ADDRESSES and not for one byte of what the reconstruction drew, and XOR-ing the value written
+there passed the whole suite. The image-edge case
+(`test_a_row_reaching_the_end_of_the_image_drops_the_word_that_falls_off`) now runs the candidate a
+second time alone (`leaf.run_candidate_only`) and requires its own image over
+`[STACK_GUARD_LO, IMAGE_SIZE)` to be the model's byte for byte; that XOR reddens all twelve of its
+variants, and the case is parametrised over the three clip sides, since a clipped column steps the
+cursor without drawing and the span argument rests on exactly that. The SOURCE span had no case at
+all until now — every case put a0 at SPRITE_SOURCE, mid-image, where halving the span is invisible —
+so `test_a_row_reading_off_the_end_of_the_image_reads_zeros` places a0 so the row's last cell word is
+the first one off the image, with an ordinary mid-screen destination. What NEITHER can see is an
+access PAST `IMAGE_SIZE`, which lands in no image: all three of the hoist's mutations — the fast path
+taken unconditionally, a destination span one word short, a source span one word short — PASS the
+whole suite and fault (Bus error) under `recreate_kit.guarded_image`, which is therefore this change's
+gate. (Unmasking the rotate count is unkillable rather than unpinned: every host and the 68000 reduce
+a shift count themselves, so the mask in `machine.h` is totality, not behaviour a case can reach.)
+
+Queued for the kit: an opt-in top-band compare — or a movable stack guard — so an image-edge case can
+be DIFFED on the candidate instead of checked against a second Python statement of the same blit.
+Anything further off the blit still reads as no fps at all: `flip_screen`'s wait absorbs it now that
+the frame sits at 4.1 vblanks (244 frames in 1,000), so the next step wants the WHOLE frame under
+four, where `bg_scroll_copy_column`'s 209 K a frame is the largest single cost left.

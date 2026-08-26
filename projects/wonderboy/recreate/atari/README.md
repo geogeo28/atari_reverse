@@ -362,7 +362,9 @@ Same-function ratios worth the name: `blit_sprite_w3` **x13.3**, `sprite_draw_pa
 `flip_screen` **x1.1** — most of it now the vblank wait, which is what a frame finishing early
 looks like. The ladder so far: 95 frames / 4.75 fps / 1,646K per frame before `blit_row`'s
 `__umodsi3` went (`b5da465`), 189 / 9.45 / 838K after it, 196 / 9.80 / 818K once `copy_longwords`
-walked local pointers (`036ee78`). Two readings the table cannot give: a function entered by
+walked local pointers (`036ee78`), 244 / 12.20 / 657K once the sprite blit stopped asking per word
+(the frame now sits at 4.1 vblanks, so the next blit saving lands in `flip_screen`'s wait until the
+whole frame fits under four). Two readings the table cannot give: a function entered by
 `bra`/`jmp` rather than `jsr` carries no cycle totals in Hatari's report — 18 of the shipped side's
 91, `game_main_loop` among them — so its cost is folded into the nearest `jsr`-entered ancestor and
 the ratio table leaves it out rather than print a zero; and `cyc/call` divides by the calls Hatari

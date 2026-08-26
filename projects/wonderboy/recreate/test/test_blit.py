@@ -603,6 +603,18 @@ def _swap(value):
     return rotate_left32(value, SWAP_BITS)
 
 
+# THE HIGHEST ADDRESS A WORD STILL FITS AT, as `os_in_image(addr, 2)` spells it. Off the image the
+# oracle's shim answers a read with zero and DROPS a write, and src/blit.c's blit_read_word and
+# blit_write_word reproduce that — so the walk below has to.
+#
+# TWO CASES REACH IT, and neither is the runaway `dbf`: that one runs no model at all (65,536 rows
+# of Python cost tens of seconds, so `test_a_negative_height_runs_a_wider_body_away` compares two
+# implementations rather than three). The two are the pair that place ONE ROW against the end of the
+# image — `test_a_row_reaching_the_end_of_the_image_drops_the_word_that_falls_off` on the write side
+# and `test_a_row_reading_off_the_end_of_the_image_reads_zeros` on the read side.
+LAST_WORD_ADDRESS = loader.IMAGE_SIZE - WORD_LEN
+
+
 def model_blit(image, width, side, entry):
     """({address: final byte}, {register: final value}) for one call, walked in Python.
 
@@ -629,7 +641,15 @@ def model_blit(image, width, side, entry):
         written.add(CLIP_MASK)
 
     def read_word(addr):
+        if addr > LAST_WORD_ADDRESS:
+            return 0
         return int.from_bytes(bytes(mem[addr:addr + WORD_LEN]), "big")
+
+    def write_word(addr, value):
+        if addr > LAST_WORD_ADDRESS:
+            return
+        mem[addr:addr + WORD_LEN] = value.to_bytes(WORD_LEN, "big")
+        written.update(range(addr, addr + WORD_LEN))
 
     def take_word():
         nonlocal source
@@ -663,8 +683,7 @@ def model_blit(image, width, side, entry):
         mask, planes = cell_registers(cell)
         for plane, reg in enumerate(planes):
             value = (read_word(dest) & (scratch[mask] & WORD_MASK)) | (scratch[reg] & WORD_MASK)
-            mem[dest:dest + WORD_LEN] = value.to_bytes(WORD_LEN, "big")
-            written.update(range(dest, dest + WORD_LEN))
+            write_word(dest, value)
             if not (is_last and plane == PLANES - 1):
                 dest = (dest + WORD_LEN) & LONG_MASK
 
@@ -889,7 +908,7 @@ def _blit_glue(name, entry):
     return _regs_glue(_blit_box, _BLIT_FNS[name], entry)
 
 
-def _entry_registers(case, x, shift, rows, dest, unwind):
+def _entry_registers(case, x, shift, rows, dest, unwind, source=SPRITE_SOURCE):
     """The fifteen longwords a case is entered with.
 
     The high halves are GARBAGE on purpose: d4 is compared with `cmp.w`, d6 is a rotate count the
@@ -907,33 +926,73 @@ def _entry_registers(case, x, shift, rows, dest, unwind):
     entry["d4"] = (garbage(4) << 16) | (x & WORD_MASK)
     entry["d6"] = (garbage(6) << 16) | (shift & WORD_MASK)
     entry["d7"] = (garbage(7) << 16) | (rows & WORD_MASK)
-    entry["a0"] = SPRITE_SOURCE
+    entry["a0"] = source
     entry["a1"] = dest
     entry["a5"] = unwind
     return entry
 
 
-def _case_pokes(case):
-    """What a case seeds: its own sprite, the screen band, and the clip byte.
+def _case_pokes(case, source=SPRITE_SOURCE):
+    """What a case seeds: its own sprite AT THE ADDRESS a0 is handed, the screen band, and the clip
+    byte.
 
     ONE statement of the seeding convention, so a case that wants to model something a second way
     (the late merge below, the unshifted last column) rebuilds the image from this rather than
     restating which salt goes where — two statements of it could drift, and the second one would
     then be modelling a different image from the one that ran.
+
+    ``source`` is SPRITE_SOURCE for every case but the one that lays a row's cells against the END
+    OF THE IMAGE, where the block is cut to what still fits: past loader.IMAGE_SIZE there is nothing
+    to seed, and the words that fall off there are what that case is about.
     """
     return {
-        SPRITE_SOURCE: keyed_block(SPRITE_SOURCE, SPRITE_BYTES, case_salt(case)),
+        source: keyed_block(source, min(SPRITE_BYTES, loader.IMAGE_SIZE - source), case_salt(case)),
         SCREEN_BUFFERS[0]: SCREEN_SEED,
         CLIP_MASK: bytes([CLIP_MASK_SEED]),
     }
 
 
+# THE BAND THE KIT'S DIFFERENTIAL DOES NOT COMPARE. `harness.differential` diffs the candidate
+# against the oracle over [0, emu.STACK_GUARD_LO) alone, because the oracle runs its own machine
+# stack in everything above — so for a case whose destination is UP HERE the differential states the
+# registers and the oracle's write ADDRESSES and not one byte of what the reconstruction drew. The
+# `top_band` argument below closes that on the candidate side.
+TOP_BAND = (emu.STACK_GUARD_LO, loader.IMAGE_SIZE)
+
+
+def _assert_candidate_top_band(name, entry, pokes, image, expected_writes, what):
+    """The RECONSTRUCTION's own image over TOP_BAND, byte for byte against the model.
+
+    The oracle cannot supply this band (see TOP_BAND), so this is C against a SECOND STATEMENT of
+    the blit rather than against the machine — weaker than a differential and what there is up here,
+    which is `leaf.run_candidate_only`'s own rule. It states both halves: the bytes a drawn column
+    puts down, and the bytes above STACK_GUARD_LO that the row must leave exactly as it found them.
+
+    WHAT IT STILL CANNOT SEE is a write PAST loader.IMAGE_SIZE, which lands outside the candidate's
+    buffer and in nobody's image. Only the kit's guarded-image sweep can — see STATUS.md's
+    "## Performance".
+    """
+    lo, hi = TOP_BAND
+    _returned, drawn = leaf.run_candidate_only(_blit_glue(name, entry), pokes)
+    expected = bytearray(bytes(image[lo:hi]))
+    for addr, value in expected_writes.items():
+        if lo <= addr < hi:
+            expected[addr - lo] = value
+    first = next((a for a in range(lo, hi) if drawn[a] != expected[a - lo]), -1)
+    assert first < 0, (
+        f"{what}: the reconstruction's own bytes over [{lo:#x}, {hi:#x}) — the band the "
+        f"differential stops short of — are not the model's; first difference at {first:#x}")
+
+
 def _run_blit(case, columns, side, x=0, shift=0, rows=1, y=DEST_ROW, unwind=UNWIND_BASE,
-              screen=SCREEN_BUFFERS[0]):
+              screen=SCREEN_BUFFERS[0], source=SPRITE_SOURCE, top_band=False):
     """One case: the model, the oracle and the reconstruction over one seeded image.
 
     Returns (model writes, model registers, oracle info) once the three have been required to agree
     — so a case asserting anything further is asserting on all of them.
+
+    ``source`` is a0, which every case but the source-edge one leaves at SPRITE_SOURCE. ``top_band``
+    adds the candidate-side check above, for a case that draws where the differential cannot look.
     """
     width = WIDTHS[columns]
     name = blitter_name(columns, side)
@@ -943,8 +1002,8 @@ def _run_blit(case, columns, side, x=0, shift=0, rows=1, y=DEST_ROW, unwind=UNWI
     # consulted.
     cap = _insn_cap(width, rows)
 
-    pokes = _case_pokes(case)
-    entry = _entry_registers(case, x, shift, rows, dest, unwind)
+    pokes = _case_pokes(case, source)
+    entry = _entry_registers(case, x, shift, rows, dest, unwind, source)
     image = make_image(pokes)
     expected_writes, expected_regs = model_blit(image, width, side, entry)
 
@@ -965,6 +1024,8 @@ def _run_blit(case, columns, side, x=0, shift=0, rows=1, y=DEST_ROW, unwind=UNWI
         assert info["ret"][reg] == expected_regs[reg], (
             f"{what}: the reconstruction left {reg}={info['ret'][reg]:#010x}, not the model's "
             f"{expected_regs[reg]:#010x}")
+    if top_band:
+        _assert_candidate_top_band(name, entry, pokes, image, expected_writes, what)
     return expected_writes, expected_regs, info
 
 
@@ -999,6 +1060,105 @@ def test_a_blit_draws_wherever_its_destination_points(screen):
     """a1 is an argument, not a global: the same sprite is blitted into both of the game's screen
     buffers, so a reconstruction that reached for one of them would fail on the other."""
     _run_blit(f"screen-{screen:#x}", 4, MID, x=ON_SCREEN_X, shift=3, rows=2, screen=screen)
+
+
+def _screen_ending_at_image_end(columns, x, y):
+    """The screen base that puts a `columns`-wide row's LAST plane word exactly at the end of the
+    image, so every word of the row but that one is written and that one is dropped."""
+    offset, _row = _screen_offset(x, y)
+    dest = loader.IMAGE_SIZE - columns * COLUMN_BYTES + WORD_LEN
+    return (dest - SCREEN_ORIGIN - s16(offset)) & LONG_MASK
+
+
+def _edge_case_x(columns, side):
+    """A screen x that clips ONE column off the side under test, so the row still spans its whole
+    width while drawing one column fewer — which is the property the span argument rests on."""
+    if side == LEFT:
+        return LEFT_X
+    if side == RIGHT:
+        # One below the arm that drops a single RIGHTMOST column, and above the arm below it.
+        return SCREEN_EDGE_X - COLUMN_PIXELS * (columns - 1) - 1
+    return ON_SCREEN_X
+
+
+@pytest.mark.parametrize("columns", COLUMNS)
+@pytest.mark.parametrize("side", SIDES)
+def test_a_row_reaching_the_end_of_the_image_drops_the_word_that_falls_off(columns, side):
+    """A row whose last word is the FIRST one off the image — the boundary itself, drawn to the byte.
+
+    THE GEOMETRY IS REAL: a1 is a screen base like any other and this one is placed so that the
+    row's span ends exactly at the end of the image, which is where a row that walks off it must
+    stop. Both halves of that are asserted: the cursor a1 comes back on, which says the row ended
+    where the span says it does, and that nothing was written outside [a1's entry value, the end of
+    the image).
+
+    ONE COLUMN IS CLIPPED OFF EACH EDGE by the LEFT and RIGHT parameters, and they end at the same
+    place the unclipped one does — the clipped column steps the cursor by the two distances it would
+    have drawn over. That is the claim src/blit.c's row-span comment rests on, and without these two
+    it would be an argument rather than a case.
+
+    WHY IT IS HERE. src/blit.c asks os_in_image ONCE PER ROW, over the row's whole destination span,
+    and reads and writes without asking again when the answer is yes. That span has to be the last
+    plane word's END and not the cursor's resting place two bytes short of it — an off-by-one there
+    would take the unasking path for exactly this row and put a word past the end of the image.
+
+    WHAT PINS WHAT, because these three bands are not all covered by the same thing:
+      * The registers, the oracle's write ADDRESSES and the whole image BELOW emu.STACK_GUARD_LO
+        are the differential's, as for any case.
+      * The BYTES DRAWN HERE are above STACK_GUARD_LO, where the differential does not look at all —
+        `top_band=True` is what compares them, on the candidate against the model (TOP_BAND).
+      * A write PAST the image reaches no image at all: only the kit's guarded-image sweep
+        (`recreate_kit.guarded_image`) sees it, and under that sweep the span-one-word-short mutation
+        faults here. See recreate/STATUS.md's "## Performance".
+    """
+    x = _edge_case_x(columns, side)
+    screen = _screen_ending_at_image_end(columns, x, DEST_ROW)
+    dest = _dest_for(x, DEST_ROW, screen)
+    row_end = dest + columns * COLUMN_BYTES - WORD_LEN
+    writes, regs, _info = _run_blit(f"image-edge-w{columns}-{side}", columns, side,
+                                    x=x, shift=5, rows=0, screen=screen, top_band=True)
+
+    assert row_end == loader.IMAGE_SIZE, (
+        f"w{columns} {side} was meant to end its row at the image's end, not at {row_end:#x}")
+    assert regs["a1"] == (row_end + WIDTHS[columns].row_advance) & LONG_MASK, (
+        f"w{columns} {side}: the cursor did not rest on the word that falls off before the `lea`")
+    # The clip byte a prelude writes is not part of the row; everything else the row puts down is.
+    drawn = set(writes) - {CLIP_MASK}
+    assert drawn and drawn <= set(range(dest, loader.IMAGE_SIZE)), (
+        f"w{columns} {side} drew {len(drawn)} byte(s), not all of them inside "
+        f"[{dest:#x}, {loader.IMAGE_SIZE:#x})")
+
+
+def _source_ending_at_image_end(columns):
+    """The a0 that puts a row's LAST SOURCE WORD at the first address off the image, so every cell
+    word but that one is read out of the image and that one reads as zero."""
+    return loader.IMAGE_SIZE - (columns - 1) * CELL_BYTES + WORD_LEN
+
+
+@pytest.mark.parametrize("columns", COLUMNS)
+def test_a_row_reading_off_the_end_of_the_image_reads_zeros(columns):
+    """...and the SOURCE side of the same boundary, which no other case reaches.
+
+    a0 is an entry register like a1, and this one is placed so that the row's cells end exactly at
+    the end of the image: the last word of the last cell is the first that does not fit, the shim
+    answers it with zero, and that zero is a plane the LAST column then draws. The destination is an
+    ordinary mid-screen one, so what the zero changes lands squarely inside the band the differential
+    compares — which is what makes this case a pin rather than an argument.
+
+    WHY IT IS HERE. src/blit.c asks os_in_image once per row over the SOURCE span too, and a span
+    one word short would prove the row in-image and read this last word straight off the host heap
+    rather than as the zero both the oracle and the model give it. Every case before this one had
+    its whole source at SPRITE_SOURCE, in the middle of the image, where a short span is invisible.
+    """
+    source = _source_ending_at_image_end(columns)
+    writes, regs, _info = _run_blit(f"source-edge-w{columns}", columns, MID,
+                                    x=ON_SCREEN_X, shift=5, rows=0, source=source)
+
+    assert regs["a0"] == (loader.IMAGE_SIZE + WORD_LEN) & LONG_MASK, (
+        f"w{columns} did not walk its source cursor to one word past the end of the image")
+    assert writes and max(writes) < emu.STACK_GUARD_LO, (
+        f"w{columns} drew outside the band the differential compares, so the zero this case is "
+        f"about would not be pinned by anything")
 
 
 def test_a_blit_writes_exactly_its_own_rectangle():
