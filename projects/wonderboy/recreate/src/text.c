@@ -38,9 +38,14 @@
 #include <stdint.h>
 
 #include "machine.h"
-#include "scroll.h"     /* copy_longwords — the blit below is the same run of `move.l (a0)+,(a1)+` */
+#include "scroll.h"     /* copy_constant_longwords — the blit below is that run of `move.l (a0)+,(a1)+` */
 #include "text.h"
 #include "wonderboy.h"
+
+/* The box's row is a STRAIGHT run of `move.l (a0)+,(a1)+`, spelt by scroll.h's ladder — which can
+ * only spell a run it has a case for, and copies NOTHING past that. */
+_Static_assert(WB_TEXT_BLIT_LONGWORDS <= COPY_CONSTANT_RUN_MAX_LONGWORDS,
+               "the message box's row must be a length copy_constant_run has a case for");
 
 /* Where the fourth plane byte of a row sits relative to the row's own start. */
 #define TEXT_LAST_PLANE_OFFSET ((WB_PLANES - 1u) * WB_PLANE_STRIDE)
@@ -216,7 +221,7 @@ static void blit_message_box(uint8_t *image) {
     uint32_t scanlines = (uint32_t)image[WB_TEXT_BOX_ROWS] << WB_TEXT_BLIT_ROW_SHIFT;
     uint16_t remaining = (uint16_t)(scanlines - 1u);
     do {
-        copy_longwords(image, &source, &dest, WB_TEXT_BLIT_LONGWORDS);
+        copy_constant_longwords(image, &source, &dest, WB_TEXT_BLIT_LONGWORDS);
         dest = addr_add(dest, WB_TEXT_BLIT_SKIP);
     } while (remaining-- != 0);
 }

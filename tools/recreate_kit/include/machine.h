@@ -136,4 +136,38 @@ static inline unsigned byte_sub_extend(uint8_t minuend, uint8_t subtrahend) {
     return minuend < subtrahend;
 }
 
+/* WHAT KEEPS A SPELT-OUT COPY RUN A POSTINCREMENT RUN. The 68000 has no block move, so a copy is a
+ * run of `move.l (a0)+,(a1)+` at 20 cycles a longword, and a reconstruction spells that run out.
+ * GCC will not leave it alone: its induction-variable pass sees ONE base with constant offsets and
+ * addresses every copy after the first as `move.l d16(a0),d16(a1)` — 28 cycles for the pair against
+ * the postincrement's 20 — batching the increments into a `lea` at the end of the run. Declaring the
+ * cursor modified by an opaque `asm` hides that relationship, so each copy addresses through the
+ * cursor it actually advances. It emits nothing, on the target and on the differential's host alike.
+ *
+ * IT APPLIES TO EVERY STEP THE RUN MAKES, not only to the copies. An adjustment made in the middle
+ * of a run — a ring buffer's `cursor -= row_bytes` at a seam — folds into the NEXT copy's
+ * displacement in exactly the same way if it is left outside the barrier: measured, `move.l
+ * -128(a1),(a0)+ / lea -124(a1),a1` (24 + 8 cycles) where the barrier gives back the original's own
+ * `lea -128(a1),a1` and a postincrement copy (8 + 20), 4 cycles a run. Barrier the cursor after any
+ * adjustment that has to stay its own `lea`.
+ *
+ * AND THE CONSTRAINT SAYS WHICH REGISTER CLASS, on the one target where that is a distinction. A
+ * plain `+r` is GENERAL_REGS on m68k — data registers included — and the m68k allocator takes it up:
+ * it parks the cursor in a DATA register and shuffles it back, `move.l a0,d0 / movea.l d0,a0`, 8
+ * cycles a time. How far it goes depends on how much else the body is holding, so the constraint is
+ * pinned rather than trusted: measured on Wonder Boy's background blit (2026-08-26), `+r` puts two
+ * such shuffles inside every scanline of the wrapped half and costs 64 bytes across src/scroll.c;
+ * measured on the shape that run had BEFORE its sixteen bodies were split out, it put one around
+ * EVERY copy — 248 bytes of body for what `+a` assembled in 126. `+a` is the address-register class
+ * the postincrement addressing needs, so it is what the target asks for and there is nothing to
+ * re-measure. `__m68k__` is what m68k-elf-gcc defines; every other host has no such class and takes
+ * the generic barrier, where the run is portable C either way and only the differential's answers
+ * matter. */
+#ifdef __m68k__
+#define CURSOR_BARRIER_CONSTRAINT "+a"
+#else
+#define CURSOR_BARRIER_CONSTRAINT "+r"
+#endif
+#define CURSOR_BARRIER(cursor) __asm__("" : CURSOR_BARRIER_CONSTRAINT(cursor))
+
 #endif /* RECREATE_KIT_MACHINE_H */

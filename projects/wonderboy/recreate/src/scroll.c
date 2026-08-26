@@ -707,169 +707,109 @@ void bg_scroll_run_queue(uint8_t *image) {
  * the domain really is 0..15; `column` outside it has no defined behaviour here and cannot have.
  */
 
-/* One `move.l (a0)+,(a1)+`. The cursors are taken by pointer so that the runs below can share one
- * body; inlined into a pair of locals it is that single instruction.
+/* ---- the sixteen copy routines at $83b6..$8dfe -------------------------------------------------
  *
- * THE EMPTY `asm` IS WHAT KEEPS IT THAT INSTRUCTION. Spell a run of these out and GCC's
- * induction-variable pass sees one base with constant offsets and addresses every copy but the
- * first as `move.l d16(a0),d16(a1)` — 28 cycles where the postincrement pair costs 20, which is
- * most of what unrolling was for. Declaring both cursors modified by an opaque asm hides that
- * relationship, so each copy addresses through the cursor it actually advances. It emits nothing,
- * and both compilers this file is built with take it: m68k-elf-gcc for the target, the host cc for
- * the differential.
+ * WHAT MAKES THEM FAST is that each one's split is a CONSTANT WHERE IT IS ASSEMBLED. A variant's
+ * body is thirty `move.l (a0)+,(a1)+` with no loop control at all — 600 cycles, then a `lea` or two
+ * and one `dbf`, ~626 a scanline. One body taking `column` as an argument cannot reach that from the
+ * other side: it pays a `dbf` per unrolled block, a three-test tail, and both runs' pointers
+ * re-derived from each scanline's start. Measured over the whole blit, that was 148.8 K cycles a
+ * call against the original's 105.3 K.
  *
- * IT IS ONE OF TWO ALIASING WORKAROUNDS IN THE TREE and they are opposites, which is worth knowing
- * from either end: this one HIDES a relationship GCC would otherwise exploit (that the two cursors
- * are one base plus constants), while src/blit.c's `blit_sprite_rows` copies the caller's register
- * file into a LOCAL to destroy one GCC has to assume (that a store through `image` may hit `*regs`),
- * so that the file can live in registers for the whole blit. */
-static inline void copy_one_longword(const uint8_t **from, uint8_t **to) {
-    wr32(*to, be32(*from));
-    *from += WB_LONGWORD_BYTES;
-    *to += WB_LONGWORD_BYTES;
-    __asm__("" : "+r"(*from), "+r"(*to));
-}
+ * SO THE SPLIT IS MADE A CONSTANT THE SAME WAY THE ORIGINAL'S IS: `copy_column_halves` is
+ * `always_inline` and takes `before_seam` by value, DEFINE_COPY_VARIANT instantiates the whole
+ * routine once per column with LONGWORDS_BEFORE_THE_SEAM(column) folded into it, and
+ * BG_SCROLL_COPY_BY_COLUMN is this port's spelling of the jump table at WB_BG_BLIT_TABLE. The
+ * variant is entered ONCE per blit and does its own second half, which is what $82f8 does — its two
+ * `jmp (a2)` at $8350/$8364 are the two arms of one `subi.w #$10,d6 / bpl`, not two entries.
+ * ../STATUS.md's "## Performance" carries the numbers this bought.
+ */
 
-/* WHY THE RUN IS UNROLLED. The 68000 has no block move, so a copy is a run of `move.l (a0)+,(a1)+`
- * at 20 cycles a longword — and the original spends nothing else on it: all sixteen blit variants
- * are STRAIGHT runs with no loop at all, and so is the message box's. C cannot emit a run whose
- * length it does not know, but it can amortise the loop: eight longwords under one `dbf` costs
- * ~1 cycle a longword of control where a longword-at-a-time loop costs ~16. */
-#define COPY_BLOCK_LONGWORDS 8u
-/* Both halves below are spelt for this exact size: the block is two runs of four, and the tail that
- * follows it covers a remainder of 0..7 in a four, a two and a one. */
-_Static_assert(COPY_BLOCK_LONGWORDS == 4u + 4u && COPY_BLOCK_LONGWORDS - 1u == 4u + 2u + 1u,
-               "the block is two runs of four and the tail covers every remainder under it");
-
-/* Four `move.l (a0)+,(a1)+` and no loop control at all. Spelt out rather than written as a `for`
- * over a constant count because GCC re-rolls that back into a counted loop on -m68000 -O2 (measured:
- * the run came back as `move.l (a1)+,(a0)+ / cmpa.l a0,a2 / bne`, the ~36 cycles a longword this is
- * here to be rid of). The original spells its own run out too.
- *
- * THE TREE'S OTHER UNROLL IS `#pragma GCC unroll` (src/blit.c's column loop), and the two are not
- * interchangeable. The pragma unrolls a loop the COMPILER can count, and blit.c's trip count is
- * `width->columns` — a runtime load, which -O2 declines to unroll at all and only -O3's constant
- * propagation turns into a number (measured; atari/build.sh keeps blit.c off its -O2 list for
- * exactly that). This run's count is a compile-time constant already, and spelling it out is what
- * survives BOTH levels — which it has to, the differential building this file at the host's -O2. */
-static inline void copy_four_longwords(const uint8_t **from, uint8_t **to) {
-    copy_one_longword(from, to);
-    copy_one_longword(from, to);
-    copy_one_longword(from, to);
-    copy_one_longword(from, to);
-}
-
-/* Both cursors advance by `longwords * 4` and the caller adds that itself, because taking them BY
- * VALUE is what keeps them in address registers: behind a `uint8_t **` they go back to memory for
- * the aliasing reason copy_longwords sets out below, inlined or not.
- *
- * ALWAYS INLINE, because GCC's own heuristic says no and the call is not affordable here: two of
- * them a scanline, ~160 cycles apiece in argument pushes, `movem` and `rts` against the ~600 the
- * scanline's copying itself costs. */
-static inline __attribute__((always_inline))
-void copy_longword_run(const uint8_t *from, uint8_t *to, unsigned longwords) {
-    const uint8_t *source = from;
-    uint8_t *dest = to;
-    unsigned blocks = longwords / COPY_BLOCK_LONGWORDS;
-    unsigned tail = longwords % COPY_BLOCK_LONGWORDS;
-
-    while (blocks-- != 0) {
-        copy_four_longwords(&source, &dest);
-        copy_four_longwords(&source, &dest);
-    }
-    /* The tail taken in halves rather than one at a time: a remainder of six is a run of four and a
-     * run of two under three tests, where a loop would be six trips plus its own setup. Counting
-     * blocks and tail separately is also what lets GCC hoist both out of a caller's scanline loop,
-     * where `longwords` is the same every time round. */
-    if ((tail & 4u) != 0)
-        copy_four_longwords(&source, &dest);
-    if ((tail & 2u) != 0) {
-        copy_one_longword(&source, &dest);
-        copy_one_longword(&source, &dest);
-    }
-    if ((tail & 1u) != 0)
-        copy_one_longword(&source, &dest);
-}
-
-/* Declared in scroll.h and shared with src/text.c and src/stage.c — see the note there.
- *
- * THE CURSORS ARE WALKED AS LOCAL POINTERS AND WRITTEN BACK ONCE, which is a codegen requirement
- * rather than a style choice, and this is the frame's hottest loop so it is worth the words. While
- * a cursor lives behind the caller's `uint32_t *`, GCC cannot prove the store does not alias it and
- * so refuses either one a register induction variable: on -m68000 -O2 the body came out as SIX
- * instructions per longword — `movea.l a0,a3 / suba.l a2,a3 / move.l (a3,a1.l),(a0)+ / addq.l #1,d0
- * / cmp.l d1,d0 / bcs`, ~64 cycles — against the one `move.l (a0)+,(a1)+` (20) the original spends.
- * Read once into locals it became three, ~36; unrolled by COPY_BLOCK_LONGWORDS it is ~22.
- *
- * Nothing observable moves. `advanced` is `longwords * 4` in 32 bits, so each cursor comes back
- * exactly where 4n successive addr_add steps left it, wrap included; the run is still a forward
- * longword-at-a-time copy in the same order, so an overlapping source and destination see what they
- * did. On the target be32/wr32 ARE the aligned native accesses (see the kit's machine.h), which is
- * what lets the pair fuse into one `move.l`; on the little-endian host they stay the byte assembly
- * the differential runs, so the same source serves both. */
-void copy_longwords(uint8_t *image, uint32_t *source, uint32_t *dest, unsigned longwords) {
-    copy_longword_run(image + *source, image + *dest, longwords);
-
-    uint32_t advanced = (uint32_t)longwords * WB_LONGWORD_BYTES;
-    *source = addr_add(*source, advanced);
-    *dest = addr_add(*dest, advanced);
-}
+/* scroll.h's ladder is spelt to COPY_CONSTANT_RUN_MAX_LONGWORDS, and a scanline's two runs are
+ * `before` and `WB_BG_BLIT_LONGWORDS - before`: neither can name a length it has no case for. */
+_Static_assert(WB_BG_BLIT_LONGWORDS <= COPY_CONSTANT_RUN_MAX_LONGWORDS,
+               "a scanline's runs must be lengths copy_constant_run has a case for");
+/* The scanline steps below advance each cursor by a whole row MINUS what the runs already walked, so
+ * the scanline's two spellings — its byte length and its longword count — have to be one scanline. */
+_Static_assert(WB_BG_BLIT_ROW_BYTES == WB_BG_BLIT_LONGWORDS * WB_LONGWORD_BYTES,
+               "WB_BG_BLIT_ROW_BYTES and WB_BG_BLIT_LONGWORDS must describe the same scanline");
 
 /* How much of the scanline comes out of the source row before the copy reaches the row's END. The
  * column starts WB_BG_CELL_LONGWORDS * column into a row of WB_BG_ROW_LONGWORDS, so columns 0 and 1
  * never reach it at all — which is why their two variants are the twelve bytes shorter ones, and
- * why this is capped at the whole scanline rather than left to run past it. */
-static unsigned longwords_before_the_seam(uint32_t column) {
-    unsigned to_the_rows_end = WB_BG_ROW_LONGWORDS - WB_BG_CELL_LONGWORDS * column;
-    return to_the_rows_end < WB_BG_BLIT_LONGWORDS ? to_the_rows_end : WB_BG_BLIT_LONGWORDS;
-}
+ * why this is capped at the whole scanline rather than left to run past it.
+ *
+ * A MACRO AND NOT AN INLINE FUNCTION, because what the run below needs is a constant EXPRESSION and
+ * not a value the inliner will get round to folding: `copy_constant_run` has to be straight-line in
+ * both of this file's builds, the target's and the differential's host one. */
+#define LONGWORDS_BEFORE_THE_SEAM(column)                                                          \
+    ((WB_BG_ROW_LONGWORDS - WB_BG_CELL_LONGWORDS * (column)) < WB_BG_BLIT_LONGWORDS                \
+     ? (WB_BG_ROW_LONGWORDS - WB_BG_CELL_LONGWORDS * (column))                                     \
+     : WB_BG_BLIT_LONGWORDS)
 
 /* One half of a variant: `rows + 1` scanlines under a single `dbf`, so a count that arrived
  * NEGATIVE would run 65536 of them. Reproduced by construction — `rows` is a word and the loop a
  * do/while, so `$ffff` becomes 65536 trips — and out of reach through bg_scroll_blit, whose two
  * counts always sum to WB_BG_BLIT_SCANLINES.
  *
- * BOTH RUN LENGTHS ARE THE COLUMN'S, not the scanline's, so they are the caller's arguments and not
- * recomputed here — the whole point of the original's sixteen variants is that each one's split is
- * fixed. The cursors are walked as locals for the reason copy_longwords states.
+ * `before_seam` IS THE COLUMN'S CONSTANT, arriving through an always-inlined call from one of the
+ * sixteen entry points below, and every decision in the body is folded out of it: the two run
+ * lengths, whether the seam `lea` happens at all, and the source's step to the next scanline.
+ * Nothing about a scanline is decided while one is being copied — which is the whole difference
+ * between this and the original's sixteen bodies being none.
  *
- * AND THEY ARE WALKED AS HOST POINTERS, WHICH IS A TRADE AND NOT A FREE ONE. machine.h's rule is to
- * do the address arithmetic in 32 bits FIRST and add `image` last, so that a cursor stepping past
- * 2^32 wraps where the 68000's address ALU wraps; here `from` and `to` are advanced as host pointers
- * for the whole run of scanlines, and a source within one buffer row of 2^32 would run off the end of
- * `image` instead of wrapping to its start. NO DEFINED CASE MOVES: the code this replaced formed
- * `image + *source` on its very first scanline, which for such a cursor was already a pointer outside
- * the image and undefined on both sides of the differential. The write-back below is the arithmetic
- * that is OBSERVABLE, and it is still `addr_add` in 32 bits, so the cursors the caller gets back wrap
- * exactly as they did. */
-static void copy_scanlines(uint8_t *image, unsigned before_seam, unsigned after_seam,
-                           uint32_t *source, uint32_t *dest, uint16_t rows) {
+ * AND THE CURSORS ARE WALKED AS HOST POINTERS, WHICH IS A TRADE AND NOT A FREE ONE. machine.h's rule
+ * is to do the address arithmetic in 32 bits FIRST and add `image` last, so that a cursor stepping
+ * past 2^32 wraps where the 68000's address ALU wraps; here `from` and `to` are advanced as host
+ * pointers for the whole run of scanlines, and a source within one buffer row of 2^32 would run off
+ * the end of `image` instead of wrapping to its start. NO DEFINED CASE MOVES: the code this replaced
+ * formed `image + *source` on its very first scanline, which for such a cursor was already a pointer
+ * outside the image and undefined on both sides of the differential. The write-back below is the
+ * arithmetic that is OBSERVABLE, and it is still `addr_add` in 32 bits, so the cursors the caller
+ * gets back wrap exactly as they did. */
+static inline __attribute__((always_inline))
+void copy_scanlines(uint8_t *image, unsigned before_seam, uint32_t *source, uint32_t *dest,
+                    uint16_t rows) {
+    unsigned after_seam = WB_BG_BLIT_LONGWORDS - before_seam;
     const uint8_t *from = image + *source;
     uint8_t *to = image + *dest;
-    uint32_t scanlines = (uint32_t)rows + 1;    /* a `dbf` runs its count and then once more */
-    uint32_t remaining = scanlines;
+    /* What the copy MOVES, and the count that moves it. A `dbf` runs its argument and then once
+     * more, so the two differ by one — and `remaining` IS that d7/d6: a word, decremented and tested
+     * AFTER the body, which is the shape GCC turns back into the `dbf` itself (a pre-decrementing
+     * `--remaining != 0` came out as `subq.w`/`bne`, 4 cycles a scanline more). It is also what
+     * reproduces the runaway above without a special case: `$ffff` counts down through zero. */
+    uint32_t scanlines = (uint32_t)rows + 1;
+    uint16_t remaining = rows;
 
-    unsigned before_bytes = before_seam * WB_LONGWORD_BYTES;
+    /* `addq.l #8,a0` where the whole scanline came out of one run, `lea 136(a0),a0` where the seam
+     * sent the cursor a source row back first: either way the next scanline begins one
+     * WB_BG_BUFFER_LINE on from this one's, and the runs have already walked WB_BG_BLIT_ROW_BYTES
+     * of the way there. */
+    unsigned source_step = (WB_BG_BUFFER_LINE - WB_BG_BLIT_ROW_BYTES)
+                           + (after_seam != 0 ? WB_BG_BUFFER_LINE : 0);
 
     do {
-        copy_longword_run(from, to, before_seam);
+        copy_constant_run(&from, &to, before_seam);
         /* `lea -128(a0),a0` — the run walked to the source row's END, and the rest of the scanline
          * comes from its START, not from the next row. Columns 0 and 1 never reach the row's end at
          * all, so their two variants have no such `lea` and `after_seam` is zero: the test is what
          * keeps THIS port from forming `from - 128` for them, an address the original never computes
-         * and one that is undefined for a source in the first 128 bytes of the image. `after_seam` is
-         * the caller's constant for the whole run, so the branch is hoisted out of the loop. */
-        if (after_seam != 0)
-            copy_longword_run((from + before_bytes) - WB_BG_BUFFER_LINE, to + before_bytes,
-                              after_seam);
-        /* `lea 40(a1),a1` and `lea 136(a0),a0`: whichever side of the seam the scanline was split
-         * at, it ends one whole screen row and one whole buffer row on. Advancing by those two
-         * constants rather than by the pieces is what keeps the run's two address registers free —
-         * spelt as the pieces, GCC hoists them into a2-a5 and the copy falls back on data
-         * registers, which costs more than the 8 cycles the split arithmetic saves. */
-        from += WB_BG_BUFFER_LINE;
-        to += WB_SCREEN_LINE;
-    } while (--remaining != 0);
+         * and one that is undefined for a source in the first 128 bytes of the image. It is the
+         * caller's constant, so the branch is not in the emitted body at all.
+         *
+         * THE REWIND IS BARRIERED LIKE A COPY, and for the same reason: left outside, it is not an
+         * instruction at all — GCC folds it into the next copy's displacement and gives back
+         * `move.l -128(a1),(a0)+ / lea -124(a1),a1` (24 + 8 cycles) where the barriered form is the
+         * original's own `lea -128(a1),a1` and a postincrement copy (8 + 20). Measured on the target
+         * at 4 cycles a scanline, on each of the fourteen variants that have a seam. */
+        if (after_seam != 0) {
+            from -= WB_BG_BUFFER_LINE;
+            CURSOR_BARRIER(from);
+            copy_constant_run(&from, &to, after_seam);
+        }
+        from += source_step;
+        to += WB_SCREEN_LINE - WB_BG_BLIT_ROW_BYTES;    /* `lea 40(a1),a1` */
+    } while (remaining-- != 0);
 
     /* Whichever side of the seam a scanline was split at, it leaves the source exactly one buffer
      * row on and the destination exactly one screen row on — so the cursors the caller gets back
@@ -878,18 +818,84 @@ static void copy_scanlines(uint8_t *image, unsigned before_seam, unsigned after_
     *dest = addr_add(*dest, scanlines * WB_SCREEN_LINE);
 }
 
-void bg_scroll_copy_column(uint8_t *image, uint32_t column, uint32_t source, uint32_t dest,
-                           uint32_t first_rows, uint32_t second_rows) {
-    unsigned before_seam = longwords_before_the_seam(column);
-    unsigned after_seam = WB_BG_BLIT_LONGWORDS - before_seam;
-
-    copy_scanlines(image, before_seam, after_seam, &source, &dest, (uint16_t)first_rows);
+/* A WHOLE variant: the two halves and the `tst.w d6 / bpl` between them. This is the body the
+ * dispatcher jumps into and does not return to until the copy is finished — the original enters a
+ * variant ONCE and decides its own second half internally, so a port that called in twice would pay
+ * two prologues and two epilogues for one blit. */
+static inline __attribute__((always_inline))
+void copy_column_halves(uint8_t *image, unsigned before_seam, uint32_t source, uint32_t dest,
+                        uint32_t first_rows, uint32_t second_rows) {
+    copy_scanlines(image, before_seam, &source, &dest, (uint16_t)first_rows);
+    /* `tst.w d6 / bpl / rts`: the dispatcher's non-wrapping arm hands over a negative marker, and
+     * the variant returns on it. The `bpl` reads N alone, which is why this is a signed WORD test
+     * on the low half and not a comparison. */
     if ((int16_t)(uint16_t)second_rows < 0)
         return;
     /* `lea -$5800(a0),a0`: the first half ran off the buffer's end, so the second starts one whole
      * buffer back — the same column of the row 176 scanlines earlier, i.e. the buffer's own top. */
     source = addr_add(source, (uint32_t)-(int32_t)WB_BG_BUFFER_LEN);
-    copy_scanlines(image, before_seam, after_seam, &source, &dest, (uint16_t)second_rows);
+    copy_scanlines(image, before_seam, &source, &dest, (uint16_t)second_rows);
+}
+
+/* One of the sixteen bodies at $83b6..$8dfe, ../names.txt's own names for them. `image`, the two
+ * cursors and the two `dbf` counts are the a0/a1/d7/d6 the dispatcher hands over. */
+typedef void (*bg_scroll_copy_routine)(uint8_t *image, uint32_t source, uint32_t dest,
+                                       uint32_t first_rows, uint32_t second_rows);
+
+/* Generated rather than spelt sixteen times over: the bodies differ in ONE number and that number is
+ * derived from the column rather than written down, so there is no table of splits to drift out of
+ * step with the seam arithmetic above. The assertion is the table's bound restated at each body — a
+ * column outside WB_BG_SCROLL_X's own range has no entry to be, and the two file-scope assertions
+ * above bound the run lengths it produces. */
+#define DEFINE_COPY_VARIANT(column)                                                                \
+    static void bg_scroll_copy_x##column(uint8_t *image, uint32_t source, uint32_t dest,           \
+                                         uint32_t first_rows, uint32_t second_rows) {              \
+        _Static_assert((column) < WB_BG_BLIT_VARIANTS,                                             \
+                       "every body is one of WB_BG_SCROLL_X's own sixteen columns");               \
+        copy_column_halves(image, LONGWORDS_BEFORE_THE_SEAM(column), source, dest, first_rows,     \
+                           second_rows);                                                           \
+    }
+
+DEFINE_COPY_VARIANT(0)   DEFINE_COPY_VARIANT(1)   DEFINE_COPY_VARIANT(2)   DEFINE_COPY_VARIANT(3)
+DEFINE_COPY_VARIANT(4)   DEFINE_COPY_VARIANT(5)   DEFINE_COPY_VARIANT(6)   DEFINE_COPY_VARIANT(7)
+DEFINE_COPY_VARIANT(8)   DEFINE_COPY_VARIANT(9)   DEFINE_COPY_VARIANT(10)  DEFINE_COPY_VARIANT(11)
+DEFINE_COPY_VARIANT(12)  DEFINE_COPY_VARIANT(13)  DEFINE_COPY_VARIANT(14)  DEFINE_COPY_VARIANT(15)
+
+/* WB_BG_BLIT_TABLE, as this port holds it — and the ORDER is pinned by behaviour, not by the names.
+ * test/test_scroll.py runs test_every_copy_variant_moves_the_scanlines_its_own_seam_splits over
+ * range(BG_BLIT_VARIANTS), entered AT the variant, so an index wired to the wrong body moves the
+ * wrong pixels for that column and no other; its BLIT_CASES then drive the same sixteen through the
+ * dispatcher from the three position words. (The image's own sixteen longwords are checked against
+ * ../names.txt separately — that is what makes the family exactly these sixteen bodies, not what
+ * orders the table here.)
+ *
+ * COLUMNS 0 AND 1 SHARE A SPLIT — both copy the whole scanline in one run, since neither reaches the
+ * source row's end — so GCC's identical-code folding emits fifteen bodies and turns x1 into a `bra`
+ * onto x0. That is a codegen fact, not a hole in the table: the entry is still its own symbol and
+ * still reached by index 1. */
+_Static_assert(WB_BG_BLIT_VARIANTS == WB_BG_PHASE_MASK + 1u,
+               "the nibble the dispatch masks with must be the whole of the table's index");
+static const bg_scroll_copy_routine BG_SCROLL_COPY_BY_COLUMN[WB_BG_BLIT_VARIANTS] = {
+    bg_scroll_copy_x0,  bg_scroll_copy_x1,  bg_scroll_copy_x2,  bg_scroll_copy_x3,
+    bg_scroll_copy_x4,  bg_scroll_copy_x5,  bg_scroll_copy_x6,  bg_scroll_copy_x7,
+    bg_scroll_copy_x8,  bg_scroll_copy_x9,  bg_scroll_copy_x10, bg_scroll_copy_x11,
+    bg_scroll_copy_x12, bg_scroll_copy_x13, bg_scroll_copy_x14, bg_scroll_copy_x15,
+};
+
+void bg_scroll_copy_column(uint8_t *image, uint32_t column, uint32_t source, uint32_t dest,
+                           uint32_t first_rows, uint32_t second_rows) {
+    /* THE MASK IS WHAT KEEPS THIS INSIDE THE LANGUAGE. `movea.l (0,a2,d1.w),a2` bounds nothing: a
+     * column past 15 makes the original jump through whatever longword follows the table. Reading a
+     * C array past its end is not "somewhere", it is undefined, so the index is masked to the
+     * table's own extent — the read stays in bounds and a column outside the domain reaches a body
+     * of the family rather than leaving the language.
+     *
+     * NOTHING IN THE DOMAIN CHANGES, and the domain is the IMAGE's:
+     * test_the_column_is_a_nibble_wherever_the_image_writes_it requires every writer of
+     * WB_BG_SCROLL_X to end in `andi.w #$f`, so column >= 16 is a value no writer in the game can
+     * produce and the mask is a no-op on every value one can. */
+    BG_SCROLL_COPY_BY_COLUMN[column & WB_BG_PHASE_MASK](image, source, dest, first_rows,
+                                                        second_rows);
 }
 
 /* $82f8. Three position words become one source address, one screen address and the two `dbf`

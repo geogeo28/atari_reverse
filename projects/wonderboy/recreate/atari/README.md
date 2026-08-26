@@ -347,21 +347,24 @@ so late symbols get no slots and the report comes back empty); and the window **
 on `b VBL > N`, because TOS spends >2,000 vblanks probing the absent floppy before the `.PRG` runs —
 it is opened at a PC and closed from inside that breakpoint's action file with `b VBL > VBL :1000`.
 
-The baseline, both sides over the same 1000-vblank window (2026-08-25, the working tree of the
-four-levers + per-unit -O3 batch; TOS 1.04, `--memsize 4`; cycles are every profiled region's, ROM
-TOS included). The last column is the top of `print_side`'s own ranking by inclusive cycles, nested
-callees and all — `blit_sprite_w3` is inside `sprite_draw_pass`, `copy_scanlines` inside
-`bg_scroll_blit`, and `game_main_loop` (330.4K, the whole frame) is left out of it as the container
-it is:
+The baseline, both sides over the same 1000-vblank window (2026-08-26, the working tree of the
+per-column blit batch; TOS 1.04, `--memsize 4`; cycles are every profiled region's, ROM TOS
+included). The last column is the top of `print_side`'s own ranking by inclusive cycles, nested
+callees and all — `blit_sprite_w3` is inside `sprite_draw_pass`, `bg_scroll_copy_x*` inside
+`bg_scroll_blit`, and `game_main_loop` (320.3K, the whole frame) is left out of it as the container
+it is. `bg_scroll_copy_x*` is the whole sixteen-body family; in this window `WB_BG_SCROLL_X` is 0
+every frame, so all of it is `bg_scroll_copy_x0`:
 
 | | frames | fps | cycles/frame | the biggest costs per frame (inclusive), as the tool ranks them |
 |---|---|---|---|---|
-| **ours** | 472 | 23.60 | 339.5K (330.4K inside `game_main_loop`) | `bg_scroll_blit` 148.8K · `copy_scanlines` 147.8K · `actor_behavior_pass` 57.0K · `actor_dispatch_behavior` 52.9K · `panel_refresh_frame` 41.2K · `sprite_draw_pass` 39.0K · `blit_sprite_w3` 29.1K · `blit_sprite_rows` 28.9K · `flip_screen` 26.2K |
+| **ours** | 488 | 24.40 | 328.4K (320.3K inside `game_main_loop`) | `bg_scroll_blit` 111.6K · `bg_scroll_copy_x*` 111.0K · `actor_behavior_pass` 57.1K · `flip_screen` 54.2K · `actor_dispatch_behavior` 53.0K · `panel_refresh_frame` 41.0K · `sprite_draw_pass` 39.0K · `blit_sprite_w3` 29.1K · `blit_sprite_rows` 28.9K |
 | **original** | 500 | 25.00 | 320.5K | `flip_screen` 124.4K · `bg_scroll_blit` 105.3K · `panel_refresh_frame` 33.7K · `sprite_draw_pass` 25.1K · `blit_sprite_w3` 20.6K |
 
-**The whole frame is x1.06 the original's**, which is the number that matters and the one this table
-now exists to keep. Same-function ratios worth the name: `bg_scroll_blit` **x1.4** and
-`blit_sprite_w3` **x1.4** (both were x13-ish when this table was first written),
+**The whole frame is x1.02 the original's**, which is the number that matters and the one this table
+now exists to keep. Same-function ratios worth the name: `bg_scroll_blit` **x1.06** — the sixteen
+copy variants are sixteen bodies again, entered once each, and what is left of that ratio is interrupt
+time landing inside the blit rather than the copy (../STATUS.md, "## Performance") — `blit_sprite_w3`
+**x1.4** (both were x13-ish when this table was first written),
 `sprite_draw_pass` **x1.6**, `panel_refresh_frame` **x1.2**, `text_run_message_box` **x2.5**, the
 actor tier **x2.4-4.3** across the board (the bus guards, and now the largest ratios left), and
 `flip_screen` **x0.2** — it is almost all vblank wait on both sides, so OURS being five times
@@ -371,14 +374,18 @@ The ladder so far: 95 frames / 4.75 fps / 1,646K per frame before `blit_row`'s `
 (`b5da465`), 189 / 9.45 / 838K after it, 196 / 9.80 / 818K once `copy_longwords` walked local
 pointers (`036ee78`), 244 / 12.20 / 657K once the sprite blit stopped asking per word, 331 / 16.55 /
 484K after the 2026-08-25 batch (the scroll's unrolled copy run, the sound tick off a module-base
-pointer, the sprite blit's per-blit guard and register file, and -O3 per translation unit), and
+pointer, the sprite blit's per-blit guard and register file, and -O3 per translation unit),
 472 / 23.60 / 339.5K once `copy_scanlines` stopped forming its wrap-back pointer for the two column
-variants that have no seam.
+variants that have no seam, and 488 / 24.40 / 328.4K once each column's seam split became a
+compile-time constant and the blit went back to being sixteen straight-line bodies.
 
 **FPS IS NOW QUANTISED, AND HARD.** `flip_screen` waits for a vblank, so a frame costs a whole number
-of them: the original's is exactly 2.00 (500 frames in 1,000 vblanks) and ours is **2.12** (472) —
-some frames take two and some three. The last entry in that ladder is what that means in practice:
-9K cycles of work, 0.06 of a vblank, moved most frames off three and was worth **7 fps**. So read
+of them: the original's is exactly 2.00 (500 frames in 1,000 vblanks) and ours is **2.05** (488) —
+some frames take two and some three. The second-to-last entry in that ladder is what that means in
+practice: 9K cycles of work, 0.06 of a vblank, moved most frames off three and was worth **7 fps**;
+the last, 37K cycles off the single most expensive function and 11K off the frame, was worth only
+**0.8**, because the frame is still 8K over two vblanks and `bg_scroll_blit` has just 6K left to
+give. So read
 fps here as a step function and `cycles/frame` as the continuous quantity, and expect any regression
 that pushes the frame's work back over two vblanks to cost a third of the frame rate at once.
 
@@ -387,6 +394,13 @@ Two readings the table cannot give: a function entered by
 91, `game_main_loop` among them — so its cost is folded into the nearest `jsr`-entered ancestor and
 the ratio table leaves it out rather than print a zero; and `cyc/call` divides by the calls Hatari
 could ATTRIBUTE (the exclusive totals' own count), which is why `arrivals` is a separate column.
+
+**THE SIXTEEN COPY VARIANTS ARE THAT FIRST CASE, and it is worth knowing before reaching for their
+row.** `$82f8` reaches `bg_scroll_copy_x0` by `jmp (a2)`, so the shipped side reports it 80,000
+arrivals and **zero calls**, and no `x1.0`-style ratio for it can exist however the port names its
+own bodies. The comparison to make by hand is our `bg_scroll_copy_x0` EXCLUSIVE against the shipped
+`bg_scroll_blit` EXCLUSIVE — the same body's cycles on both sides, since the shipped variant's are
+folded into its dispatcher — which is 102.4K against 101.5K, +0.9%.
 
 **OUR SIDE'S SYMBOLS ARE FOLDED ONTO THEIR BASE NAME**, because the build requires
 `-fipa-cp-clone`: one source function reaches the map as `hud_plot_digit` beside

@@ -269,11 +269,12 @@ void blit_load_cell(const uint8_t *image, sprite_blit_regs *regs, unsigned cell,
         }
         reg = wrapped;
     }
-    /* THE CURSOR IS WALKED IN A LOCAL AND WRITTEN BACK ONCE, for src/scroll.c's `copy_longwords`
-     * reason and not merely for tidiness: while it lives behind the caller's pointer GCC cannot
-     * prove a store through `image` does not alias it, so it must be reloaded after every write and
-     * cannot be an induction variable. That comment carries the measured before-and-after; here the
-     * licence is the same one — nothing between these five reads looks at `regs->source`. */
+    /* THE CURSOR IS WALKED IN A LOCAL AND WRITTEN BACK ONCE, for include/scroll.h's
+     * `copy_constant_longwords` reason and not merely for tidiness: while it lives behind the
+     * caller's pointer GCC cannot prove a store through `image` does not alias it, so it must be
+     * reloaded after every write and cannot be an induction variable. That comment carries the
+     * measured before-and-after; here the licence is the same one — nothing between these five
+     * reads looks at `regs->source`. */
     regs->source = source;
 }
 
@@ -350,7 +351,7 @@ void blit_row_body(uint8_t *image, sprite_blit_regs *regs, const blit_width *wid
      * on the next line. THE PRAGMA IS A NO-OP AT -O2, where `width->columns` is a runtime load and
      * GCC declines to unroll it at all; src/scroll.c's copy run is unrolled the other way — the
      * copies SPELT OUT one after another — precisely because that file's runs must survive -O2 as
-     * well. That file's `copy_four_longwords` states the other half of this note. */
+     * well. include/scroll.h's `copy_constant_run` states the other half of this note. */
     _Static_assert(WB_BLIT_COLUMNS_MAX == 5u,
                    "the `#pragma GCC unroll` below carries the widest column count as a literal, "
                    "and WB_BLIT_COLUMNS_MAX has moved away from it");

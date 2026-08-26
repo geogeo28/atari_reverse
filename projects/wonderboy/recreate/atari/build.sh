@@ -369,13 +369,25 @@ UNITS_BUILT_AT_O2=(
 )
 
 # ...AND THE UNITS THAT MAY NEVER JOIN IT. The four levers measured on 2026-08-25 exist ONLY at -O3,
-# so moving one of these to the list above would hand its bytes back and take the frame with them —
-# silently, because nothing in `make test` and nothing else in this script measures a cycle:
+# so moving one of these to the list above would hand its bytes back and take the WORK in the frame
+# with them — silently, because nothing in `make test` and nothing else in this script measures a
+# cycle. Whether that work shows up as frame RATE is a separate question, and scroll.c's re-measured
+# entry below is the one that answers it "not today": read each entry for what it actually claims.
 #   blit.c   the column loop is unrolled by a `#pragma GCC unroll` that -O2 DECLINES (the trip count
 #            is a runtime `width->columns` until constant propagation makes it a literal), and the
 #            register file only scalarises once those subscripts are constants: 74.2 K -> a fallback
 #            of 153 K cycles a frame, and the clone assertion after the link is the tripwire
-#   scroll.c the copy run's block/tail split and the seam hoist are shaped for -O3's unrolling
+#   scroll.c NOT for its sixteen copy bodies, which is what this entry used to say: those are
+#            instruction-for-instruction IDENTICAL at -O2 (compared per symbol, 2026-08-26 —
+#            their runs are spelt out and their splits are compile-time constants, so there is
+#            nothing left for -O3 to do to them). It is the ENGINE above them. At -O2 the
+#            serve/step/fill tier stops being inlined into the queue drain:
+#            bg_scroll_run_queue 9,790 -> 14,205 cycles a call and bg_scroll_serve_requests
+#            296 -> 403, which is +4.4 K cycles a frame for 4,166 B of text. The FRAME itself
+#            does not move (328.4 K, 24.40 fps either way) because flip_screen's vblank spin
+#            absorbs it — and that is the reason to KEEP the -O3 rather than to spend it: the
+#            frame sits ~8 K over two whole vblanks, so 4.4 K is over half the headroom left
+#            before a third vblank comes back and takes a third of the frame rate with it
 #   hud.c    -fipa-cp-clone specialises the glyph plotter per digit width (2,100 -> 833 cycles)
 #   sound.c  the tick tier's d16(a3) addressing — 76 absolute address constants down to 10
 UNITS_THAT_MUST_STAY_AT_O3="src_blit.c src_scroll.c src_hud.c src_sound.c"

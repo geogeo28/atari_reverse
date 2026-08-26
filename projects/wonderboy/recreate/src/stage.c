@@ -45,11 +45,16 @@
 
 #include "hud.h"            /* the perfect-bonus arm IS bcd_add_score_bd70 */
 #include "machine.h"
-#include "scroll.h"         /* copy_longwords — a tile row is the same run of `move.l (a0)+,(a1)+` */
+#include "scroll.h"         /* copy_constant_longwords — a tile row is that run of `move.l (a0)+,(a1)+` */
 #include "shifter.h"        /* the port's one shifter sink — set_palette's and clear_palette's */
 #include "sound.h"          /* $f95c's tail IS the sound module: stub +0 or stub +28 */
 #include "stage.h"
 #include "wonderboy.h"
+
+/* A tile row is a STRAIGHT run of `move.l (a0)+,(a1)+`, spelt by scroll.h's ladder — which can
+ * only spell a run it has a case for, and copies NOTHING past that. */
+_Static_assert(WB_BG_CELL_BYTES / WB_LONGWORD_BYTES <= COPY_CONSTANT_RUN_MAX_LONGWORDS,
+               "a tile row must be a length copy_constant_run has a case for");
 
 #define BYTE_MASK 0xffu
 #define WORD_BITS 16u
@@ -76,11 +81,12 @@ static uint32_t tile_number(const uint8_t *image, uint8_t cell) {
  * fifteen above it: the whole tile leaves the cursor exactly one cell further along the scanline.
  * Returned that way rather than computed by the caller, so a mutated step reaches this loop.
  *
- * The row itself is copy_longwords — the same postincrementing run the scroll's blit and the message
- * box's are built out of, and the third user src/scroll.c's registration named as the trigger. */
+ * The row itself is copy_constant_longwords — the same postincrementing run the scroll's blit and
+ * the message box's are built out of, and the third user src/scroll.c's registration named as the
+ * trigger. Its length is a constant here as it is there, so the row is two `move.l` and no loop. */
 static uint32_t draw_tile(uint8_t *image, uint32_t bitmap, uint32_t dest) {
     for (unsigned row = 0; row < WB_BG_TILE_ROWS; row++) {
-        copy_longwords(image, &bitmap, &dest, WB_BG_CELL_BYTES / WB_LONGWORD_BYTES);
+        copy_constant_longwords(image, &bitmap, &dest, WB_BG_CELL_BYTES / WB_LONGWORD_BYTES);
         dest = addr_add(dest, row + 1 == WB_BG_TILE_ROWS
                               ? (uint32_t)-(int32_t)WB_BG_BUILD_CELL_REWIND
                               : WB_BG_BUILD_ROW_SKIP);

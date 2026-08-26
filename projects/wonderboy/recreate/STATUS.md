@@ -16554,3 +16554,116 @@ window, our 472 frames against the original's 500. Suite **6,453** green; `make 
   reads a symbol name GCC is free to choose; the floor is 1 for that reason (above), and what
   actually catches the regression it stands in for is `python3 atari/profile.py ours`. If that
   assertion ever fires or ever has to be relaxed again, profile first and believe the cycles.
+
+**`bg_scroll_blit` IS AT PARITY — the sixteen variants are sixteen bodies again (2026-08-26).** The
+lever the bullet above prices and leaves NOT DONE, taken: `src/scroll.c`'s copy is **148.8 K cycles a
+call → 111.6 K** against the original's 105.3 K (**x1.4 → x1.06**), and the frame **23.60 → 24.40 fps,
+339.5 K → 328.4 K cycles**. What was wrong was never the run's shape but its ARGUMENT: `column`
+reached the copy as a runtime value, so one body served all sixteen splits and paid a `dbf` per
+eight-longword block, a three-test tail, and both runs' pointers re-derived from each scanline's
+start — ~800 cycles a scanline against the original's ~626. Now the split is a compile-time constant
+the way the original's is: `LONGWORDS_BEFORE_THE_SEAM` is a macro, `copy_scanlines` and
+`copy_column_halves` are `always_inline`, and `DEFINE_COPY_VARIANT` instantiates the WHOLE routine
+sixteen times — **`bg_scroll_copy_x0..x15`, ../names.txt's own names for `$83b6..$8dfe`** — behind
+`BG_SCROLL_COPY_BY_COLUMN`, this port's spelling of `bg_scroll_blit_table` at `$8366`. **A variant is
+entered ONCE per blit and does its own second half**, which is what `$82f8` does (its two `jmp (a2)`
+are the two arms of one `subi.w #$10,d6 / bpl`, not two entries): the `tst.w d6 / bpl` return and the
+`lea -$5800(a0),a0` rewind are inside the body, so a wrapping frame pays one prologue and not two.
+The dispatch masks `column` to a nibble — not because the domain is wider (every writer of
+`WB_BG_SCROLL_X` ends in `andi.w #$f`, which
+`test_the_column_is_a_nibble_wherever_the_image_writes_it` requires) but because reading a C array
+past its end is undefined where the original's unbounded `movea.l (0,a2,d1.w),a2` merely lands
+somewhere; masked, an out-of-domain column reaches a body of the family instead of leaving the
+language.
+
+**FOUR CODEGEN FACTS, all measured on the target's own build:** (1) a Duff-style `switch` fallthrough
+of `COPY_CONSTANT_RUN_MAX_LONGWORDS` `copy_one_longword` folds to the exact straight run when the
+count is constant — no compare chain survives, which `-fno-jump-tables` makes checkable; a `for` over
+the same constant re-rolls. (2) `machine.h`'s `CURSOR_BARRIER` has to sit on the SEAM REWIND as well
+as on the copies: `from -= WB_BG_BUFFER_LINE` left outside it is not an instruction at all — GCC
+folds it into the next copy's displacement and emits `move.l -128(a1),(a0)+ / lea -124(a1),a1`
+(24 + 8 cycles) where the barriered form is the original's own `lea -128(a1),a1` and a postincrement
+copy (8 + 20). **4 cycles a scanline on each of the fourteen variants that have a seam**, and the
+target objdump of `bg_scroll_copy_x3` now reads 26 `move.l (a0)+,(a1)+`, `lea -128(a0),a0`, 4 more,
+`lea 136(a0),a0`, `lea 40(a1),a1`, `dbf` — the shipped body's own shape. (3) The barrier's constraint
+is `+a` under `__m68k__`: with `+r` the allocator parks the cursor in a DATA register and shuffles it
+back, and how far it goes depends on the body's pressure — today two `move.l a0,d0 / movea.l d0,a0`
+per scanline of the wrapped half and 64 bytes over `src/scroll.c`; on the shape this run had before
+the sixteen bodies were split out, one around EVERY copy (248 bytes of body for what `+a` assembles
+in 126). (4) The scanline counter is a `uint16_t` tested AFTER the body (`while (remaining-- != 0)`),
+which is what GCC turns back into `dbf` — worth 4 cycles a scanline over `subq.w`/`bne`, and it
+reproduces the runaway `$ffff` count without a special case. Column 0 assembles to the shipped bytes
+instruction for instruction: thirty `move.l (a0)+,(a1)+`, `addq.l #8,a0`, `lea 40(a1),a1`, `dbf`.
+
+**THE BARRIER IS KIT KNOWLEDGE AND HAS MOVED THERE.** `CURSOR_BARRIER` / `CURSOR_BARRIER_CONSTRAINT`
+now live in `tools/recreate_kit/include/machine.h` with the three measurements above written down —
+the postincrement-vs-`d16(An)` batching, the mid-run rewind, and the register class — and no game
+file carries an `#ifdef __m68k__` any more. **AND THE CONSTANT COPIER SERVES EVERY CONSTANT CALLER.**
+`copy_constant_run` and `copy_constant_longwords` are `always_inline` in `include/scroll.h`, and
+`src/text.c`'s message box (`WB_TEXT_BLIT_LONGWORDS` = 22) and `src/stage.c`'s tile row
+(`WB_BG_CELL_BYTES / WB_LONGWORD_BYTES` = 2) call them: both now fold to straight runs on the target
+(text.c's twenty-two `move.l (a2)+,(a0)+` with no loop; stage.c's pair inside a fully unrolled tile),
+where before they made a real call per row into a block/tail loop. With that, **no runtime-count
+caller was left and `copy_longwords`, `copy_longword_run`, `copy_four_longwords` and
+`COPY_BLOCK_LONGWORDS` are deleted** — the registration those carried (trigger = a user in ANOTHER
+project, home = the kit's `machine.h`) moves onto the pair that replaced them, and `src/blit.c`'s two
+comments that cited them by name now cite `copy_constant_longwords` / `copy_constant_run`.
+
+**ASSERTS THAT MEAN SOMETHING.** The generator's old `_Static_assert` compared a length against the
+length it was derived from and could not fail; it is now `(column) < WB_BG_BLIT_VARIANTS` — the
+table's own bound restated at each body — plus two at file scope that the cursor arithmetic really
+depends on: `WB_BG_BLIT_LONGWORDS <= COPY_CONSTANT_RUN_MAX_LONGWORDS` (the ladder's top case, now
+named) and `WB_BG_BLIT_ROW_BYTES == WB_BG_BLIT_LONGWORDS * WB_LONGWORD_BYTES`. `src/text.c` and
+`src/stage.c` assert their own lengths against the ladder beside the constants, because a length it
+cannot spell would copy NOTHING rather than fail. That is what makes `copy_constant_run`'s `default`
+arm dead — the `after_seam != 0` guard never calls with 0 and the asserts bound every length a caller
+can name — and its comment now says so instead of naming columns that never reach it.
+
+**WHAT THE PROFILED WINDOW CAN AND CANNOT SEE, stated because two of the four fixes are off its
+path.** In the measured 1,000 vblanks `WB_BG_SCROLL_X` is 0 every frame and the window never runs off
+the buffer's end, so the blit is `bg_scroll_copy_x0`'s FIRST half and nothing else: the seam rewind
+(columns 2..15) and the second-half entry are never executed, and the frame reads 328.4 K / 24.40 fps
+with them fixed exactly as it did before. **Their surface is the target objdump and the differential,
+not the profile** — `test_every_copy_variant_moves_the_scanlines_its_own_seam_splits` drives all
+sixteen splits against the oracle and
+`test_a_copy_variant_stops_at_its_first_half_when_the_second_count_is_negative` drives the marker.
+**AND THE SAME-NAME RATIO TABLE CANNOT HOLD THEM EITHER**, which is worth recording as a limit of
+`atari/profile.py` rather than a gap to fix: the original ENTERS a variant by `jmp`, so Hatari
+charges it 80,000 arrivals and **zero calls**, and `print_ratios` (rightly) refuses a cycles-per-call
+ratio to a function with no attributed calls on both sides. What the naming did buy is `print_side`'s
+ranking, where our own row is now `bg_scroll_copy_x0` — the shipped name — against the original's
+`bg_scroll_blit` exclusive, which is the same body's cycles: **102.4 K a call against 101.5 K
+(+0.9%)**. The ~6.4 K inclusive gap that is left is interrupt time landing inside a 110 K-cycle span —
+our vbl/sound tier runs x2.2, so the blit absorbs 8.7 K of handler where the original absorbs 3.8 K.
+That is the sound bullet's cost, counted here. **The frame is still 2.05 vblanks** (488 frames in
+1,000), so the whole batch is worth 0.8 fps and not the step to 25: two vblanks is 320.5 K against our
+328.4 K, and the blit's own floor is only 6.4 K away — the rest has to come from the sound and actor
+tiers.
+
+**`atari/build.sh`'s `-O3` ENTRY FOR `src_scroll.c` WAS STALE AND IS NOW MEASURED.** It said the copy
+run's block/tail split was "shaped for -O3's unrolling", which the sixteen bodies disprove: compiled
+at -O2 they are **instruction-for-instruction identical** (all sixteen compared per symbol, modulo
+absolute branch targets) — their runs are spelt out and their splits are constants, so there is
+nothing left to unroll. The file still stays at -O3, for a different and now-recorded reason: at -O2
+the ENGINE above the copy stops being inlined into the queue drain — `bg_scroll_run_queue`
+**9,790 → 14,205** cycles a call, `bg_scroll_serve_requests` **296 → 403**, `bg_scroll_step_left` /
+`_step_down` / `_raise_requests` reappearing as their own frames — **+4.4 K cycles a frame for
+4,166 B of text**. The FRAME does not move either way (328.4 K, 24.40 fps), because `flip_screen`'s
+vblank spin absorbs the difference; that is precisely why the -O3 is kept rather than spent, since the
+frame sits ~8 K over two whole vblanks and 4.4 K is over half the headroom before a third one comes
+back.
+
+**SURFACES.** No behaviour moved, so no test moved with it: the differential's write set, returned
+cursors (including the 32-bit wrap of the write-back) and the negative second-count early return are
+compared against the Musashi oracle unchanged — `make test` **6,453** green, `make guarded` clean over
+10,043 guarded candidate runs, `atari/build.sh ownrun` + `atari/smoke.py floppy` OK (M10 boots, the
+record comes home on the disk). **MUTATIONS**, restored after each: one longword too FEW (drop
+`COPY_LONGWORD_STEP(1)`) → **178 RED**, one too MANY → **169 RED** — both now reach the text and
+stage tiers as well, which is the shared copier being shared; **column 3 given column 2's split** →
+exactly `test_every_copy_variant_moves_the_scanlines_its_own_seam_splits[3]`, one case, which pins
+the mask and the table order too since a wrong index sends a column to another column's body; **the
+second half never drawn** → **23 RED** across the variant, blit and frame-composition families.
+**CODE**, the price on a 720 K floppy: `scroll.o` text 9,124 → **12,270 B** (sixteen whole routines —
+242 B for x0, 254 for x2..x15, and 4 for x1, which GCC folds onto x0 as a `braw` because columns 0
+and 1 share a split — plus a 64-byte table), `WB.PRG` text 154,368 → **158,208 B**, and `WBOOT.ST`
+27,648 → **24,576 bytes free** of 728,064.
