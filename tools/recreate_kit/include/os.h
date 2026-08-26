@@ -470,6 +470,29 @@ static inline int os_in_image(uint32_t addr, uint32_t count) {
     return addr <= OS_IMAGE_SIZE && count <= OS_IMAGE_SIZE - addr;
 }
 
+/* THE SAME QUESTION FOR AN OPERAND WHOSE WIDTH IS A COMPILE-TIME CONSTANT — a bus accessor's 1, 2 or
+ * 4, a blitter's screen word — AS THE ONE COMPARISON IT IS. The two clauses above collapse when the
+ * count cannot wrap: given `addr <= OS_IMAGE_SIZE`, the second is exactly `addr <= OS_IMAGE_SIZE -
+ * width`, which already implies the first, and an `addr` past OS_IMAGE_SIZE fails both. So this is
+ * EQUAL to os_in_image for every address a longword can hold, at the image's last byte as well as
+ * inside it — not a loosening. What it is not equal to is os_in_image's CODE: GCC does not fold the
+ * pair on its own even with the count a literal, and each surviving comparison is a branch its two
+ * arms get duplicated through. Measured on Wonder Boy (2026-08-26, -O3, on the linked ELF): 8,420
+ * bytes of .text over the whole program, nearly all of it the behaviour tier, where the six
+ * accessors in its include/bus.h inline at ~980 call sites. Not a cycle lever — the walking frame
+ * did not move — a FLOPPY one; that project's STATUS.md, "## Performance", has both halves.
+ *
+ * The width is asserted rather than assumed: os_in_image's wrap-safety argument is what makes the
+ * subtraction on the left safe here, and a width larger than the image would underflow it into a
+ * 4 GB bound that says yes to everything. `__extension__` is what lets a declaration — the assertion
+ * — sit inside an expression; both toolchains the kit builds under take it. */
+#define os_in_image_fixed(addr, width) __extension__ ({                                            \
+    _Static_assert((width) <= OS_IMAGE_SIZE,                                                       \
+                   "os_in_image_fixed subtracts its width from OS_IMAGE_SIZE, which underflows "   \
+                   "into a 4 GB bound for a width larger than the image");                         \
+    (uint32_t)(addr) <= OS_IMAGE_SIZE - (uint32_t)(width);                                         \
+})
+
 /* ---- SCHEDULED WRITES: what an EXTERNAL AGENT stores mid-run (TRAP_MODEL.md, "Phase 8") -----
  *
  * A routine that BUSY-WAITS on a memory byte its own instructions never write cannot be run at all

@@ -272,6 +272,10 @@ python3 atari/smoke.py runsh                                #   ...and the line 
 python3 atari/profile.py ours                               # WHAT A FRAME COSTS: 1000 vblanks of
 python3 atari/profile.py original                           #   Hatari's CPU profiler, both sides...
 python3 atari/profile.py compare                            #   ...and the same function's ratio
+python3 atari/profile.py frames                             #   ...and OUR frames one at a time:
+                                                            #     work, wait, vblanks per frame
+python3 atari/profile.py compare --walk                     # ...all four with the stick held RIGHT,
+                                                            #   which is the frame that is expensive
 
 python3 atari/original.py variance                          # what in the dump is one boot's luck
 python3 atari/original.py neighbour                         #   ...and the anchor's own evidence (§9)
@@ -347,9 +351,28 @@ so late symbols get no slots and the report comes back empty); and the window **
 on `b VBL > N`, because TOS spends >2,000 vblanks probing the absent floppy before the `.PRG` runs —
 it is opened at a PC and closed from inside that breakpoint's action file with `b VBL > VBL :1000`.
 
+**`frames` IS THE MODE THAT DOES NOT AVERAGE**, and it is the one to reach for when `cycles/frame`
+refuses to move. Two per-arrival breakpoints on our side — `game_main_loop` and `flip_screen` — make
+each frame a WORK span (loop → flip) and a WAIT span (flip → next loop), and it prints the work's
+min/median/max, the histogram of frame lengths in vblanks, and every frame longer than two, with the
+`M2_ANCHOR_FRAMES` ones labelled. `out/frames-<scenario>.txt` gets an `index work wait` row a frame.
+The clock is the debugger's own entry line (`CPU=$..., VBL=N, FrameCycles=M`) off a breakpoint whose
+action file is nothing but `cont`: `:trace` prints only a match count and `:quiet` suppresses exactly
+that line.
+
+**`--walk` HOLDS THE JOYSTICK RIGHT** for the whole window, on any of the four modes, because the
+scrolling frame is the expensive one and the standing frame is not the one to tune against. It is
+ONE poke of `WB_JOY1_STATE` in the window's opening script — with no real joystick events the IKBD
+handler never rewrites the byte, and it cannot be a per-frame breakpoint because **Hatari stops
+profiling on every debugger entry** (measured: the window came back with one frame in it). Walking
+runs write `-walk` files so both baselines coexist, and `compare` refuses to read an idle json
+against a walking one. `frames --walk` measures a BURST: the held stick scrolls the screen for ~109
+frames and then walks the player into something, after which the frames are two vblanks again — the
+1000-vblank profile window opens at the first frame, so it is that burst.
+
 The baseline, both sides over the same 1000-vblank window (2026-08-26, the working tree of the
-per-column blit batch; TOS 1.04, `--memsize 4`; cycles are every profiled region's, ROM TOS
-included). The last column is the top of `print_side`'s own ranking by inclusive cycles, nested
+sprite-pass and column-fill lever batch; TOS 1.04, `--memsize 4`; cycles are every profiled region's,
+ROM TOS included). All four rows were re-read on that one tree. The last column is the top of `print_side`'s own ranking by inclusive cycles, nested
 callees and all — `blit_sprite_w3` is inside `sprite_draw_pass`, `bg_scroll_copy_x*` inside
 `bg_scroll_blit`, and `game_main_loop` (320.3K, the whole frame) is left out of it as the container
 it is. `bg_scroll_copy_x*` is the whole sixteen-body family; in this window `WB_BG_SCROLL_X` is 0
@@ -357,18 +380,55 @@ every frame, so all of it is `bg_scroll_copy_x0`:
 
 | | frames | fps | cycles/frame | the biggest costs per frame (inclusive), as the tool ranks them |
 |---|---|---|---|---|
-| **ours** | 488 | 24.40 | 328.4K (320.3K inside `game_main_loop`) | `bg_scroll_blit` 111.6K · `bg_scroll_copy_x*` 111.0K · `actor_behavior_pass` 57.1K · `flip_screen` 54.2K · `actor_dispatch_behavior` 53.0K · `panel_refresh_frame` 41.0K · `sprite_draw_pass` 39.0K · `blit_sprite_w3` 29.1K · `blit_sprite_rows` 28.9K |
+| **ours** | 488 | 24.40 | 328.4K (319.8K inside `game_main_loop`) | `bg_scroll_blit` 109.6K · `bg_scroll_copy_x*` 109.0K · `flip_screen` 62.1K · `actor_behavior_pass` 54.8K · `actor_dispatch_behavior` 51.8K · `panel_refresh_frame` 41.2K · `sprite_draw_pass` 35.4K · `blit_sprite_w3` 25.4K |
 | **original** | 500 | 25.00 | 320.5K | `flip_screen` 124.4K · `bg_scroll_blit` 105.3K · `panel_refresh_frame` 33.7K · `sprite_draw_pass` 25.1K · `blit_sprite_w3` 20.6K |
+| **ours, `--walk`** | 442 | 22.10 | 362.6K (353.8K inside `game_main_loop`) | `bg_scroll_blit` 110.8K · `bg_scroll_copy_x6` 84.8K · `actor_behavior_pass` 60.6K · `sprite_draw_pass` 59.5K · `actor_dispatch_behavior` 57.3K · `flip_screen` 41.3K · `panel_refresh_frame` 41.1K · `bg_scroll_run_queue` 31.1K · `bg_scroll_serve_requests` 28.0K · `fill_column` 27.7K · `blit_sprite_w3` 26.3K |
+| **original, `--walk`** | 464 | 23.20 | 345.1K | `flip_screen` 108.6K · `bg_scroll_blit` 105.5K · `sprite_draw_pass` 44.1K · `panel_refresh_frame` 33.7K · `bg_scroll_run_queue` 28.0K · `bg_scroll_serve_requests` 26.7K · `blit_sprite_w3` 21.9K · `actor_behavior_pass` 17.1K |
 
 **The whole frame is x1.02 the original's**, which is the number that matters and the one this table
-now exists to keep. Same-function ratios worth the name: `bg_scroll_blit` **x1.06** — the sixteen
-copy variants are sixteen bodies again, entered once each, and what is left of that ratio is interrupt
-time landing inside the blit rather than the copy (../STATUS.md, "## Performance") — `blit_sprite_w3`
-**x1.4** (both were x13-ish when this table was first written),
-`sprite_draw_pass` **x1.6**, `panel_refresh_frame` **x1.2**, `text_run_message_box` **x2.5**, the
-actor tier **x2.4-4.3** across the board (the bus guards, and now the largest ratios left), and
-`flip_screen` **x0.2** — it is almost all vblank wait on both sides, so OURS being five times
-CHEAPER just means we arrive later and wait less.
+now exists to keep. Same-function ratios worth the name, read off `compare --walk`: `bg_scroll_blit`
+**x1.05** — the sixteen copy variants are sixteen bodies again, entered once each, and what is left of
+that ratio is interrupt time landing inside the blit rather than the copy (../STATUS.md,
+"## Performance") — `blit_sprite_w3` **x1.2** and `blit_clip_right_w3` **x1.3** (both were x13-ish when
+this table was first written), `sprite_draw_pass` **x1.3**, `bg_scroll_run_queue` **x1.1**,
+`panel_refresh_frame` **x1.2**, `text_run_message_box` **x1.1**, the actor tier **x1.9-x4.4** across
+the board (the largest ratios left, and now the only large ones), and `flip_screen` **x0.4** — it is
+almost all vblank wait on both sides, so OURS being cheaper just means we arrive later and wait less.
+One ratio is an artefact and not a cost: `bg_scroll_serve_requests` reads **x10.4** per call because
+the shipped side is ENTERED ten times as often for the same work (4,106 calls against our 394), so it
+is the per-FRAME line (28.0 K on both sides) that compares.
+
+**THE WALKING ROWS ARE THE ONES TO TUNE AGAINST, AND THE ORIGINAL IS NOT 25 fps IN THEM EITHER.**
+With the stick held right the shipped binary drops to **23.20**, so the target while the screen
+scrolls is 464 frames and not 500; ours is **22.10**, ~17 K cycles a frame behind (362.6 K against
+345.1 K). That gap is the idle window's gap, larger, AND IT IS NOW ALMOST ALL ONE TIER: **the actor
+tier +43.5 K a frame** (`actor_behavior_pass` 60.6 K against 17.1 K) against **the sprite pass
++15.4 K** (59.5 K against 44.1 K), the panel +7.4 K (41.1 K against 33.7 K), the sound tick +6.2 K
+(14.6 K against 8.4 K) and **the scroll's fill tier +3.1 K** (`bg_scroll_run_queue` 31.1 K against
+28.0 K) — against which `flip_screen` reads 41.3 K to the original's 108.6 K, which is arriving later
+and waiting less rather than a saving. The two levers of this batch are why the sprite and fill lines
+read as they do: the sprite pass was +21.0 K before the blit's clip split and per-word guard, and the
+fill tier +7.6 K before `src/scroll.c`'s host-pointer cursors. What is left to spend is the actor
+tier, and ../STATUS.md's "## Performance" has the standing measurements on it.
+
+**THE ACTOR TIER'S SHARE THAT IS BUS GUARDS IS 9.1 K CYCLES A FRAME**, measured 2026-08-26 by
+compiling `include/bus.h`'s field helpers with the mask and bound deleted outright — an experiment,
+not a candidate: `actor_behavior_pass` **57.0 K -> 47.9 K** and `actor_dispatch_behavior`
+**8,860 -> 7,497** cycles a call. (57.0 against the table's 57.1 because the day's tree carries
+another unit's in-flight edit; every figure in this paragraph is one run of that same tree, and the
+profiler repeats to the digit on a given build.) Spending it from inside the header does not work; the
+record-REACH fast path that was written for it is **NO-GO** (57.0 -> 59.7 K inlined, 60.3 K with the
+slow arm out of line, and +14.8 KB / +12.0 KB of `WB.PRG` against 23,552 bytes free on `WBOOT.ST`).
+../STATUS.md, "## Performance", owns that measurement.
+
+**AND `cycles/frame` IN THE TABLE ABOVE IS NOT A CONTINUOUS QUANTITY, whatever the paragraph below
+says.** It is the window's cycles divided by the frames in it, so it moves only when the frame COUNT
+does: all four builds of that experiment — HEAD, both fast-path variants, and the one with no guards
+at all — read **488 frames / 24.40 fps / 328.4 K** to the digit. `flip_screen`'s vblank spin absorbed
+the whole 9.1 K, and the missing frames are not ones the actor tier is heavy in. (This paragraph
+first put those missing frames down to three-vblank frames; `frames` has since shown there are none
+in an idle run at all — the shortfall is the four capture anchors, two paragraphs down.) Read the
+ladder below as a record of what moved the frame COUNT.
 
 The ladder so far: 95 frames / 4.75 fps / 1,646K per frame before `blit_row`'s `__umodsi3` went
 (`b5da465`), 189 / 9.45 / 838K after it, 196 / 9.80 / 818K once `copy_longwords` walked local
@@ -379,15 +439,22 @@ pointer, the sprite blit's per-blit guard and register file, and -O3 per transla
 variants that have no seam, and 488 / 24.40 / 328.4K once each column's seam split became a
 compile-time constant and the blit went back to being sixteen straight-line bodies.
 
-**FPS IS NOW QUANTISED, AND HARD.** `flip_screen` waits for a vblank, so a frame costs a whole number
-of them: the original's is exactly 2.00 (500 frames in 1,000 vblanks) and ours is **2.05** (488) —
-some frames take two and some three. The second-to-last entry in that ladder is what that means in
-practice: 9K cycles of work, 0.06 of a vblank, moved most frames off three and was worth **7 fps**;
-the last, 37K cycles off the single most expensive function and 11K off the frame, was worth only
-**0.8**, because the frame is still 8K over two vblanks and `bg_scroll_blit` has just 6K left to
-give. So read
-fps here as a step function and `cycles/frame` as the continuous quantity, and expect any regression
-that pushes the frame's work back over two vblanks to cost a third of the frame rate at once.
+**FPS IS QUANTISED, AND HARD.** `flip_screen` waits for a vblank, so a frame costs a whole number of
+them and fps moves in steps: the original's idle frame is exactly 2.00 (500 frames in 1,000 vblanks)
+and ours reads **2.05** (488). The ladder above is what that meant in practice while the frame was
+genuinely over budget — 9K cycles of work, 0.06 of a vblank, moved most frames off three and was
+worth **7 fps**; the next 37K off the single most expensive function was worth **0.8**. Read fps as
+a step function, and expect any regression that pushes the frame's work back over two vblanks to
+cost a third of the frame rate at once.
+
+**BUT THE IDLE 24.40 IS NOW A CAP, NOT A COST, AND `frames` IS WHERE THE TRUTH IS.** The per-frame
+timeline says the idle frame has ALREADY made it: **3,023 of 3,027 frames are exactly two vblanks**,
+work median 264.6K against the 320.8K two vblanks buys. The four that are not are frames 0, 1, 50 and
+51 — `M2_ANCHOR_FRAMES`, indexed from zero — and they are 8-9 vblanks of WAIT, not of work, because
+`capture_the_frame` copies 32 KB after the flip. Those four cost 25 vblanks, which is 12.5 frames,
+and 500 − 12 = **488**: the whole gap in the table's idle row is the instrumentation, and no speedup
+can close it while the window is photographed. So run `frames` before believing an idle `fps`, and
+use `--walk` for a frame that still has headroom in it (ours 22.10 against the original's own 23.20).
 
 Two readings the table cannot give: a function entered by
 `bra`/`jmp` rather than `jsr` carries no cycle totals in Hatari's report — 18 of the shipped side's
@@ -405,8 +472,11 @@ folded into its dispatcher — which is 102.4K against 101.5K, +0.9%.
 **OUR SIDE'S SYMBOLS ARE FOLDED ONTO THEIR BASE NAME**, because the build requires
 `-fipa-cp-clone`: one source function reaches the map as `hud_plot_digit` beside
 `hud_plot_digit.constprop.0`, and a routine whose every call site was specialised
-(`blit_sprite_rows`) had no row under its own name at all until `profile.py` started stripping
-`.constprop.N` / `.part.N` / `.isra.N`. The shipped side comes out of `../names.txt` and has no
+(`blit_sprite_rows_clipped`) had no row under its own name at all until `profile.py` started
+stripping `.constprop.N` / `.part.N` / `.isra.N`. A HAND-WRITTEN SPLIT IS NOT FOLDED, though:
+`blit_sprite_rows_plain` is a second function in the source rather than a clone, and it has no row of
+its own for the opposite reason — GCC inlines it bodily into `blit_sprite_w2`..`w5`, so those four
+rows are where its cycles are. The shipped side comes out of `../names.txt` and has no
 clones, so nothing about its rows changes and the ratios are still like for like.
 
 ## Pieces
@@ -424,7 +494,7 @@ clones, so nothing about its rows changes and the ratios are still like for like
 | `tos.ld` / `mkprg.py` | link at base 0, then wrap the ELF into a GEMDOS `.PRG` with a relocation table |
 | `build.sh` | compile + link + wrap + stage `disk/`, and assert the seam actually held |
 | `smoke.py` | headless Hatari: boot, run to completion, read `STATS.BIN` back, check it |
-| `profile.py` | **what a frame COSTS** — 1000 vblanks of Hatari's CPU profiler over each side, per-function calls and inclusive/exclusive cycles, and the same-name ratio table that says which function to look at next. The only mode here that is not a correctness check |
+| `profile.py` | **what a frame COSTS** — 1000 vblanks of Hatari's CPU profiler over each side, per-function calls and inclusive/exclusive cycles, and the same-name ratio table that says which function to look at next; `frames` times OUR frames one at a time (work, wait, vblanks) where the window average cannot, and `--walk` runs any of them with the stick held right. The only mode here that is not a correctness check |
 | `HARDWARE.md` | **the runbook for the machine no check here can reach** — writing the disk with `gw`, what the boot looks like, the trap-wrapper rule and the gate that keeps it, the hardware reads to watch on iron, how to bring evidence home, and what emulation cannot prove. The floppy itself is not built here: `tools/st_build.py` writes it and `tools/st_extract.py` reads it back (§16) |
 | `run.sh` | **the one that is not a measurement** — build the OWN-ENTRY build (`ownrun`) and open Hatari with a screen, sound and a joystick. Its header is the honest account of what appears. `run.sh parsecheck` is the only thing that runs its `exec` line without opening a machine, and it has now caught two defects there (§15) |
 

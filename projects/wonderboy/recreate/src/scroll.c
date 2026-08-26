@@ -97,7 +97,8 @@ static const bg_edge BG_EDGE_LEFT = {
 /* The two cursors a fill's tile loop advances, and the map cell it reads next. Passed as one object
  * because the second half of a fill resumes all three where the first half left them. */
 typedef struct {
-    uint32_t ored;      /* a1 */
+    uint32_t ored;      /* a1 — and the cell clear_cells masks down: the mask is a PREPARATION for
+                         *      this OR, so the two walk one cursor and not two */
     uint32_t written;   /* a2 */
     uint32_t map;       /* a3 */
 } bg_cursors;
@@ -145,21 +146,136 @@ static uint32_t tile_bitmap(const uint8_t *image, uint8_t map_cell) {
     return addr_add(WB_TILE_BITMAPS, (uint32_t)tile * WB_TILE_BITMAP_LEN);
 }
 
+/* WHAT THE FILL WALKS AS A HOST POINTER, AND WHY — the argument this file makes ONCE, for every
+ * cursor in it that is walked rather than indexed (`copy_scanlines` in the blit tier below cites it
+ * rather than restating it). Both loops below step a cursor one 8-byte cell
+ * and one 128-byte scanline at a time across a whole buffer, and machine.h's rule — the address
+ * arithmetic in 32 bits, `image` added last — buys an indexed `and.l d6,(a0,d0.l)` where the
+ * original has a postincrement `and.l d6,(a0)+`, plus the hoisted base register per unrolled
+ * scanline that goes with it. So the DESTINATION cursors are walked as host pointers for the run,
+ * exactly as bg_scroll_blit's copy_scanlines walks its own and on the same terms: no defined case
+ * moves, because a cursor within a buffer's length of 2^32 was already `image + <past the image>`
+ * on the first scanline of the code this replaces, and each loop hands its caller back an
+ * `addr_add` done once, so what the fill's second half resumes from still wraps where the 68000
+ * wraps.
+ *
+ * The TILE SOURCE is walked the same way and needs no such argument, because it CANNOT wrap: its
+ * base is `WB_TILE_BITMAPS + tile * WB_TILE_BITMAP_LEN` for a tile number that is a WORD, i.e. at
+ * most $81d3be, and one pass walks 128 bytes of it. (That it can address far past the tiles —
+ * tile_bitmap's own warning — is a different thing, and unchanged: the read was already
+ * `image + <that address>`.) The MAP cursor is the one that stays a 32-bit address: it is indexed
+ * rather than walked, its stride is a signed word out of the image, and a wrap there is a byte the
+ * fill would really read.
+ *
+ * THE ROW FILL BELOW IS DELIBERATELY LEFT ALONE. copy_row_cells has the same shape and would take
+ * the same treatment, but it runs on a VERTICAL scroll — which the walking timeline that measured
+ * this never raises — so it has no measurement behind it, and an unmeasured lever is not one this
+ * file spends. */
+
+/* WHAT ONE PASS OF EITHER LOOP BELOW COVERS, and the only thing fill_column needs back from them
+ * now that they walk host pointers: `tile_rows + 1` tile rows, each WB_BG_TILE_ROWS scanlines a
+ * WB_BG_BUFFER_LINE apart. Spelt as one multiply in the 32 bits the address ALU works in, where the
+ * loops themselves step, and asserted rather than assumed — the loops walk the scanline stride and
+ * this walks the block, so the two spellings have to be one distance. */
+_Static_assert(WB_BG_TILE_BLOCK_LEN == WB_BG_TILE_ROWS * WB_BG_BUFFER_LINE,
+               "a tile block must be WB_BG_TILE_ROWS scanlines of one buffer line");
+/* ...and the same for the cell the tile loop walks a plane word at a time: four `move.w (a4)+` is
+ * one 8-byte cell, which is what lets it postincrement rather than re-base. */
+_Static_assert(WB_BG_CELL_BYTES == WB_PLANES * WB_PLANE_STRIDE,
+               "a cell must be WB_PLANES plane words");
+static uint32_t tile_rows_span(uint16_t tile_rows) {
+    return ((uint32_t)tile_rows + 1) * WB_BG_TILE_BLOCK_LEN;
+}
+
+/* THE LICENCE draw_tiles' TWO STORES REST ON, checked rather than asserted in prose. The scanline it
+ * ORs and the scanline it overwrites are `second_cell` apart — ±WB_BG_CELL_BYTES, i.e. exactly one
+ * cell, so they abut and cannot overlap — and where the row wraps that becomes `second_cell +
+ * wrap_delta`, WB_BG_BUFFER_LINE minus a cell in the other direction. Both edges' tables are built
+ * out of those two constants and nothing else, so ONE test covers all four cases: as long as a
+ * buffer scanline holds at least two cells, no WB_BG_SCROLL_X can bring the pair within a cell of
+ * each other, and the order the two stores happen in is unobservable. */
+_Static_assert(WB_BG_BUFFER_LINE - WB_BG_CELL_BYTES >= WB_BG_CELL_BYTES,
+               "the ORed and the written cell must stay at least one cell apart, at the wrap as "
+               "well as away from it, or draw_tiles' two stores would alias and their order show");
+
+/* The two loops below close on a CONSTANT count — sixteen scanlines — and machine.h's COUNT_BARRIER
+ * is what keeps each of them the `dbf` the original closes with; the measurement and the reason its
+ * register class is `+d` are stated there, beside CURSOR_BARRIER's. A loop whose count arrives at
+ * run time needs no barrier: the tile loops take theirs from the split table, which GCC cannot read,
+ * and already close with a `dbf`.
+ */
+
 /* `16 x { and.l d6,(a0)+ ; and.l d6,(a0)+ ; lea 120(a0),a0 }` under one `dbf`: `tile_rows + 1` tile
- * rows of scanlines, each having its 8-byte cell masked down. Returns the advanced cursor, which
- * the second half of the fill resumes from. */
-static uint32_t clear_cells(uint8_t *image, uint32_t cursor, uint32_t mask, uint16_t tile_rows) {
+ * rows of scanlines, each having its 8-byte cell masked down. The cursor is the caller's own, and
+ * the caller advances it by tile_rows_span — the tile loop below walks the SAME cell and needs it
+ * advanced by the same distance, so there is one cursor and not two.
+ *
+ * GCC unrolls the sixteen scanlines and addresses all thirty-two longwords off the ONE base the
+ * tile row starts at (`and.l d2,1924(a0)` at the far end), spending one `lea 2048(a0),a0` a tile row
+ * where the original spends sixteen `lea 120(a0),a0` — a few percent behind the original rather than
+ * at parity. What it is a long way ahead of is the same C with the cursor a 32-bit image offset,
+ * which came out as thirty-two indexed `and.l d1,(a1,d0.l)` off thirty-two spilled base registers:
+ * 128 bytes of stack frame and sixty `lea`/`move.l` of prologue per half of the fill. All three
+ * shapes measured — see ../STATUS.md, "## Performance".
+ *
+ * THAT SHAPE IS THE -O3 ONE, and this file's -O3 is atari/build.sh's decision — its
+ * UNITS_THAT_MUST_STAY_AT_O3, the list that names the units whose -O3 codegen the frame is made of
+ * and refuses to let UNITS_BUILT_AT_O2 take one back — not this loop's: at -O2 the same C comes out
+ * as two parallel cursors with a `lea 128` apiece every scanline, which is the opposite of the
+ * paragraph above. */
+static void clear_cells(uint8_t *image, uint32_t cursor, uint32_t mask, uint16_t tile_rows) {
+    uint8_t *cell = image + cursor;
     uint16_t remaining = tile_rows;
     do {
         for (unsigned row = 0; row < WB_BG_TILE_ROWS; row++) {
-            for (unsigned at = 0; at < WB_BG_CELL_BYTES; at += sizeof(uint32_t)) {
-                uint32_t cell = addr_add(cursor, at);
-                wr32(image + cell, be32(image + cell) & mask);
-            }
-            cursor = addr_add(cursor, WB_BG_BUFFER_LINE);
+            for (unsigned at = 0; at < WB_BG_CELL_BYTES; at += sizeof(uint32_t))
+                wr32(cell + at, be32(cell + at) & mask);
+            cell += WB_BG_BUFFER_LINE;
         }
     } while (remaining-- != 0);
-    return cursor;
+}
+
+/* `or.w dN,(a1)+` four times over — the low word of each rotated longword ORed into the cell the
+ * two-pixel scroll left standing.
+ *
+ * SPELT AS DISPLACEMENTS OFF ONE BASE where the write below is a postincrement chain, because GCC
+ * will not fold a memory-destination READ-MODIFY-WRITE into `(An)+` however the C is written: the
+ * postincrement spelling comes out as `or.w dN,(a0) / addq.l #2,a0`, 20 cycles where the
+ * displacement is 16 and the original's own `or.w dN,(a1)+` is 12. Measured on the target, all
+ * three; the plain stores DO fold, so they keep the cursor.
+ *
+ * NOT or_plane_words / write_plane_words, which the pre-shift tier below spells for the same four
+ * plane words. Those take a 32-bit image address and a `uint16_t[WB_PLANES]`, which is what a
+ * routine walking a row cell by cell wants; these take the walked cursor and the ROTATED longwords
+ * whose low word is the half going out, which is what keeps this loop's addressing off the image
+ * base. Sharing one body would put the indexed addressing back into the hottest loop in the file. */
+static inline __attribute__((always_inline))
+uint8_t *or_words_into_cell(uint8_t *cell, const uint32_t *planes) {
+    for (unsigned plane = 0; plane < WB_PLANES; plane++) {
+        uint8_t *word = cell + plane * WB_PLANE_STRIDE;
+        wr16(word, (uint16_t)(be16(word) | (uint16_t)planes[plane]));
+    }
+    return cell + WB_BG_CELL_BYTES;
+}
+
+/* `move.w dN,(a2)+` four times over — the same four words written rather than ORed, into the cell
+ * the scroll uncovered. */
+static inline __attribute__((always_inline))
+uint8_t *write_words_to_cell(uint8_t *cell, const uint32_t *planes) {
+    for (unsigned plane = 0; plane < WB_PLANES; plane++) {
+        wr16(cell, (uint16_t)planes[plane]);
+        cell += WB_PLANE_STRIDE;
+        CURSOR_BARRIER(cell);
+    }
+    return cell;
+}
+
+/* `swap dN` four times over: the half of each rotated longword that has not been stored yet brought
+ * down into the low word, which a rotate by a whole word is. */
+static inline __attribute__((always_inline))
+void swap_plane_halves(uint32_t *planes) {
+    for (unsigned plane = 0; plane < WB_PLANES; plane++)
+        planes[plane] = rotate_left32(planes[plane], WORD_BITS);
 }
 
 /* One map cell per pass, `tile_rows + 1` of them, walking DOWN the map by its row stride. Each of a
@@ -169,57 +285,90 @@ static uint32_t clear_cells(uint8_t *image, uint32_t cursor, uint32_t mask, uint
  *
  * The original reads all four planes into d0-d3 before storing any, and this does the same. The two
  * cells never overlap — they are 8 or 120 bytes apart for either edge and every WB_BG_SCROLL_X — so
- * the order the two stores happen in is unobservable, and only the read/write order matters. */
+ * the order the two stores happen in is unobservable, and only the read/write order matters.
+ *
+ * THE LOW HALF GOES OUT FIRST ON BOTH EDGES, which is what lets one body be both: the right edge's
+ * `move.w dN,(a2)+` at $7d7a and the left's `or.w dN,(a1)+` at $8014 are the same act on different
+ * cells, and the four `swap dN` between them are a rotate by a whole word. */
 static void draw_tiles(uint8_t *image, bg_cursors *at, unsigned shift, uint16_t tile_rows,
                        const bg_edge *edge) {
+    uint8_t *ored = image + at->ored;
+    uint8_t *written = image + at->written;
+    /* `lea 120(a1),a1 / lea 120(a2),a2`: the four words walked the cell, and this is what is left of
+     * the 128-byte scanline. ONLY THE WRITTEN CURSOR ASSEMBLES TO THAT `lea 120`. Its four
+     * `move.w dN,(a2)+` really do walk the cell, so its step is the leftover; the ORed cursor's four
+     * `or.w` are displacements off ONE base (or_words_into_cell says why), so it never moves inside
+     * the cell and GCC folds its cell step together with this one into a single `lea 128(a1),a1`.
+     * Same instruction and same cycles either way — there is nothing here to barrier apart. */
+    const unsigned rest_of_scanline = WB_BG_BUFFER_LINE - WB_BG_CELL_BYTES;
+    uint32_t map = at->map;
     uint16_t remaining = tile_rows;
-    do {
-        uint32_t tile = tile_bitmap(image, image[at->map]);
-        at->map = addr_add(at->map, sign_ext16(be16(image + WB_MAP_ROW_STRIDE)));
-        for (unsigned row = 0; row < WB_BG_TILE_ROWS; row++) {
-            uint32_t rotated[WB_PLANES];
-            for (unsigned plane = 0; plane < WB_PLANES; plane++)
-                rotated[plane] = rotate_left32(
-                    be16(image + addr_add(tile, plane * WB_PLANE_STRIDE)), shift);
-            tile = addr_add(tile, WB_BG_CELL_BYTES);
 
+    do {
+        const uint8_t *tile = image + tile_bitmap(image, image[map]);
+        map = addr_add(map, sign_ext16(be16(image + WB_MAP_ROW_STRIDE)));
+
+        uint16_t scanline = WB_BG_TILE_ROWS - 1;    /* `move.w #$f,d4`, and the `dbf d4` under it */
+        COUNT_BARRIER(scanline);
+        do {
+            uint32_t rotated[WB_PLANES];
             for (unsigned plane = 0; plane < WB_PLANES; plane++) {
-                uint16_t low = (uint16_t)rotated[plane];
-                uint16_t high = (uint16_t)(rotated[plane] >> 16);
-                uint32_t ored = addr_add(at->ored, plane * WB_PLANE_STRIDE);
-                uint32_t written = addr_add(at->written, plane * WB_PLANE_STRIDE);
-                wr16(image + ored,
-                     be16(image + ored) | (edge->or_takes_low_half ? low : high));
-                wr16(image + written, edge->or_takes_low_half ? high : low);
+                rotated[plane] = rotate_left32(be16(tile), shift);
+                tile += WB_PLANE_STRIDE;
+                CURSOR_BARRIER(tile);
             }
-            at->ored = addr_add(at->ored, WB_BG_BUFFER_LINE);
-            at->written = addr_add(at->written, WB_BG_BUFFER_LINE);
-        }
+
+            /* ONE selection, not one per half: the low half goes out first on both edges, so all
+             * the edge decides is which of the two stores that first one is — and the `swap` that
+             * brings the other half down sits between them either way. */
+            if (edge->or_takes_low_half) {
+                ored = or_words_into_cell(ored, rotated);
+                swap_plane_halves(rotated);
+                written = write_words_to_cell(written, rotated);
+            } else {
+                written = write_words_to_cell(written, rotated);
+                swap_plane_halves(rotated);
+                ored = or_words_into_cell(ored, rotated);
+            }
+
+            ored += rest_of_scanline;
+            CURSOR_BARRIER(ored);
+            written += rest_of_scanline;
+            CURSOR_BARRIER(written);
+        } while (scanline-- != 0);
     } while (remaining-- != 0);
+
+    /* The three cursors as the loop leaves them, in the 32 bits the address ALU works in. Both cell
+     * cursors walked the same span — that is why clear_cells and this loop share one of them — so
+     * the span is named once here rather than spelt at each of the two write-backs. */
+    const uint32_t rows_span = tile_rows_span(tile_rows);
+    at->ored = addr_add(at->ored, rows_span);
+    at->written = addr_add(at->written, rows_span);
+    at->map = map;
 }
 
 /* The whole of $7c08 and $7eb2. Each draws the column in TWO halves because the buffer is a ring:
- * the first runs from the coarse scroll row to the buffer's end, then all three cursors step back
+ * the first runs from the coarse scroll row to the buffer's end, then both cell cursors step back
  * one whole buffer and the second runs from its start. The two counts sum to
  * WB_BG_BUFFER_TILE_ROWS - 2, so the column is always drawn exactly once over. A negative second
  * count means the window began at the buffer's top and there is no second half. */
 static void fill_column(uint8_t *image, const bg_edge *edge) {
-    uint32_t cleared = column_origin(image, edge);
-    uint32_t written = addr_add(cleared, (uint32_t)edge->second_cell);
+    uint32_t ored = column_origin(image, edge);
+    uint32_t written = addr_add(ored, (uint32_t)edge->second_cell);
     if (be16(image + WB_BG_SCROLL_X) == edge->wrap_at_scroll_x)
         written = addr_add(written, (uint32_t)edge->wrap_delta);
 
     publish_split_counts(image);
     uint32_t mask = edge_mask(image, edge);
     bg_cursors at = {
-        .ored = cleared,
+        .ored = ored,
         .written = written,
         .map = addr_add(WB_MAP_DATA,
                         sign_ext16((uint16_t)(be16(image + WB_BG_MAP_CURSOR) + edge->map_offset))),
     };
 
     uint16_t first = be16(image + WB_BG_FILL_COUNTS);
-    cleared = clear_cells(image, cleared, mask, first);
+    clear_cells(image, at.ored, mask, first);
 
     unsigned shift = be16(image + WB_BG_SCROLL_PHASE);
     if (edge->full_cell_at_phase_zero && shift == 0) {
@@ -228,14 +377,13 @@ static void fill_column(uint8_t *image, const bg_edge *edge) {
     }
     draw_tiles(image, &at, shift, first, edge);
 
-    cleared = addr_add(cleared, (uint32_t)-(int32_t)WB_BG_BUFFER_LEN);
     at.ored = addr_add(at.ored, (uint32_t)-(int32_t)WB_BG_BUFFER_LEN);
     at.written = addr_add(at.written, (uint32_t)-(int32_t)WB_BG_BUFFER_LEN);
 
     uint16_t second = be16(image + WB_BG_FILL_COUNT_SECOND);
     if ((int16_t)second < 0)
         return;
-    clear_cells(image, cleared, mask, second);
+    clear_cells(image, at.ored, mask, second);
     draw_tiles(image, &at, shift, second, edge);
 }
 
@@ -758,15 +906,10 @@ _Static_assert(WB_BG_BLIT_ROW_BYTES == WB_BG_BLIT_LONGWORDS * WB_LONGWORD_BYTES,
  * Nothing about a scanline is decided while one is being copied — which is the whole difference
  * between this and the original's sixteen bodies being none.
  *
- * AND THE CURSORS ARE WALKED AS HOST POINTERS, WHICH IS A TRADE AND NOT A FREE ONE. machine.h's rule
- * is to do the address arithmetic in 32 bits FIRST and add `image` last, so that a cursor stepping
- * past 2^32 wraps where the 68000's address ALU wraps; here `from` and `to` are advanced as host
- * pointers for the whole run of scanlines, and a source within one buffer row of 2^32 would run off
- * the end of `image` instead of wrapping to its start. NO DEFINED CASE MOVES: the code this replaced
- * formed `image + *source` on its very first scanline, which for such a cursor was already a pointer
- * outside the image and undefined on both sides of the differential. The write-back below is the
- * arithmetic that is OBSERVABLE, and it is still `addr_add` in 32 bits, so the cursors the caller
- * gets back wrap exactly as they did. */
+ * AND THE CURSORS ARE WALKED AS HOST POINTERS, on the terms this file states once — see "WHAT THE
+ * FILL WALKS AS A HOST POINTER, AND WHY" above `tile_bitmap`. `from` and `to` are host pointers for
+ * the whole run of scanlines and the write-back below is `addr_add` in 32 bits, so the cursors the
+ * caller gets back wrap exactly as they did. */
 static inline __attribute__((always_inline))
 void copy_scanlines(uint8_t *image, unsigned before_seam, uint32_t *source, uint32_t *dest,
                     uint16_t rows) {

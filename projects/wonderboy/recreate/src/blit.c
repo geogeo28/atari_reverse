@@ -63,9 +63,9 @@
 /* `deferred_merge_column` for the three widths whose clipped bodies have no such quirk. */
 #define WB_BLIT_NO_DEFERRED_MERGE 0xffu
 
-/* `blit_sprite_rows`' own argument: whether the body tests WB_BLIT_CLIP_MASK per column at all. The
- * four table_mid entries do not, and never read the byte; the eight preludes reach the same body
- * with it on, having just written it. */
+/* `blit_sprite_rows_body`'s own argument: whether the body tests WB_BLIT_CLIP_MASK per column at
+ * all. The four table_mid entries do not, and never read the byte; the eight preludes reach the
+ * same walk with it on, having just written it. */
 #define WB_BLIT_UNCLIPPED         0
 #define WB_BLIT_CLIPPED           1
 
@@ -107,9 +107,9 @@ static const blit_width BLIT_W5 = BLIT_WIDTH(5, WB_BLIT_NO_DEFERRED_MERGE);
 /* THE COUNT EVERY ROTATE OF ONE BLIT TURNS BY, taken apart ONCE FOR THE WHOLE BLIT rather than once
  * per word. `shift` is d6, and nothing in this family writes it — not a row, not a column, not a
  * prelude — so the reduction is invariant over every row the entry count draws, and
- * blit_sprite_rows computes it before its first row and hands it down. The five bits are exact for
- * every count a register can hold, for the kit's rotate_right32's own reason: the 68000 rotates by
- * Dm mod 64 and a 32-bit rotate is cyclic mod 32, and mod 64 then mod 32 is mod 32. Doing it here
+ * blit_sprite_rows_body computes it before its first row and hands it down. The five bits are exact
+ * for every count a register can hold, for the kit's rotate_right32's own reason: the 68000 rotates
+ * by Dm mod 64 and a 32-bit rotate is cyclic mod 32, and mod 64 then mod 32 is mod 32. Doing it here
  * leaves the rotate's own `& 31` a fold rather than an instruction. */
 static unsigned blit_rotation(const sprite_blit_regs *regs)
 {
@@ -141,12 +141,32 @@ static uint32_t swap_halves(uint32_t value)
  * what the two instantiations there are for — so each of them keeps one arm of these and no test.
  * Which arm a given row takes is therefore blit_row's decision alone, and the two spans it decides
  * on are blit.h's. */
+
+/* The kit's own `os_in_image` for the ONE width this file ever asks it about — a screen word — in
+ * its constant-width form, which is the SAME predicate as a single comparison. os.h states the
+ * collapse and the wrap-safety argument behind it once, where the two forms are defined together, so
+ * this is a name for that call and not a second derivation of it.
+ *
+ * WHY THE ONE COMPARISON IS WORTH ASKING FOR HERE. This is the guard on every word of the CHECKED
+ * walk, which is inlined once per width and clip case, and each comparison the two-clause form keeps
+ * is a branch the two walks around it get duplicated through — thousands of bytes of text over the
+ * twelve entry points, for a walk no drawn sprite ever takes (measured; see ../STATUS.md,
+ * "## Performance"). The surface that would catch a version of this that is one word too generous is
+ * `make guarded`, where the image's surroundings are PROT_NONE and a read past the end faults rather
+ * than differing. The boundary itself is pinned against the oracle's bus by test/test_blit.py's
+ * `test_a_row_reaching_the_end_of_the_image_drops_the_word_that_falls_off` and its reading twin. */
+static inline __attribute__((always_inline))
+int blit_word_in_image(uint32_t addr)
+{
+    return os_in_image_fixed(addr, WB_STATE_WORD_LEN);
+}
+
 static inline __attribute__((always_inline))
 uint16_t blit_read_word(const uint8_t *image, uint32_t addr, int row_in_image)
 {
     if (row_in_image)
         return be16(image + addr);
-    return os_in_image(addr, WB_STATE_WORD_LEN) ? be16(image + addr) : 0;
+    return blit_word_in_image(addr) ? be16(image + addr) : 0;
 }
 
 static inline __attribute__((always_inline))
@@ -156,7 +176,7 @@ void blit_write_word(uint8_t *image, uint32_t addr, uint16_t value, int row_in_i
         wr16(image + addr, value);
         return;
     }
-    if (os_in_image(addr, WB_STATE_WORD_LEN))
+    if (blit_word_in_image(addr))
         wr16(image + addr, value);
 }
 
@@ -384,8 +404,8 @@ void blit_row_body(uint8_t *image, sprite_blit_regs *regs, const blit_width *wid
 }
 
 /* The two instantiations. Each is a whole copy of the walk above with one arm of the guard in it.
- * `always_inline` for blit_row_body's own reason and for one more: a call that was not inlined
- * would take the address of blit_sprite_rows' local register file, and a file whose address escapes
+ * `always_inline` for blit_row_body's own reason and for one more: a call that was not inlined would
+ * take the address of blit_sprite_rows_body's local register file, and a file whose address escapes
  * is a file GCC must keep in memory. */
 static inline __attribute__((always_inline))
 void blit_row_walk_in_image(uint8_t *image, sprite_blit_regs *regs, const blit_width *width,
@@ -416,7 +436,10 @@ static int spans_in_image(uint32_t source, uint32_t source_bytes,
  * GUARD, HOISTED OFF THE WORDS AND ONTO THE ROW.
  *
  * Inside the image a checked access IS the bare one: blit_read_word and blit_write_word differ from
- * `be16`/`wr16` only where os_in_image says no. So proving the row's two spans lie inside the image
+ * `be16`/`wr16` only where blit_word_in_image says no, and the two tiers ask ONE question at two
+ * widths — the word tier through os.h's constant-width `os_in_image_fixed`, this tier and the blit
+ * tier through `spans_in_image`, and both of those reduce to the kit's `os_in_image`. So proving the
+ * row's two spans lie inside the image
  * proves it for every word the walk goes on to touch — blit.h's WB_BLIT_ROW_SOURCE_BYTES and
  * WB_BLIT_ROW_DEST_BYTES are what makes that a PROOF and not a hope, and both are what a row really
  * touches rather than a word less. Where either span is not wholly inside, nothing is proved about
@@ -426,8 +449,9 @@ static int spans_in_image(uint32_t source, uint32_t source_bytes,
  * `blit_in_image` is the SAME PROOF taken one level further out, by blit_span_in_image below: when
  * the caller has already bounded every row of the blit, this row's own two questions have a known
  * answer and are not put. */
-static void blit_row(uint8_t *image, sprite_blit_regs *regs, const blit_width *width, int clipped,
-                     unsigned rotation, int blit_in_image)
+static inline __attribute__((always_inline))
+void blit_row(uint8_t *image, sprite_blit_regs *regs, const blit_width *width, int clipped,
+              unsigned rotation, int blit_in_image)
 {
     if (blit_in_image
         || spans_in_image(regs->source, width->source_bytes, regs->dest, width->dest_bytes))
@@ -437,15 +461,40 @@ static void blit_row(uint8_t *image, sprite_blit_regs *regs, const blit_width *w
     regs->dest = addr_add(regs->dest, width->row_advance);
 }
 
-/* One pass of either loop shape below: the row, and the `subq.w #1,d7` that counts it off. The two
- * shapes step the counter identically — as a WORD, so d7's high half survives the whole blit — and
- * differ only in which end of the loop they test it at, so the step is written once here rather
- * than once in each. */
-static void blit_row_and_step_count(uint8_t *image, sprite_blit_regs *file, const blit_width *width,
-                                    int clipped, unsigned rotation, int blit_in_image)
+/* THE TWO LOOP SHAPES, READ OFF THE ENTRY COUNT BEFORE THE FIRST ROW: how many rows the shape
+ * draws, and the word it leaves d7's low half at. NEITHER DEPENDS ON THE WALK, so the counter does
+ * not have to live in a register across it — which is the whole point of asking here.
+ *
+ *   * `addq.w #1,d7 / tst.w d7 / beq / bmi`, the two-column bodies' guard: the bumped count is the
+ *     number of rows, and the `dbf` at the bottom jumps back to the `tst`, so a positive count is
+ *     stepped down to exactly zero. A count that is not positive draws nothing and is left where it
+ *     stands — the `beq` and the `bmi` exit without touching it again.
+ *   * `dbf d7,<top>` alone: the row is drawn before the count is looked at, so an entry value of N
+ *     draws N + 1 rows — 65,536 for $ffff, the negative-height runaway the pass reaches — and the
+ *     exit condition IS the counter back at $ffff, whatever it entered as.
+ *
+ * The 68000 has eight data registers and one row needs all of them: the six-word source window, the
+ * rotation count and one temporary to merge a screen word through. A counter stepped per row is a
+ * ninth, and the two it displaced were spilled to the stack and reloaded every row (measured at -O3,
+ * 2026-08-26: 1074 cycles a row at three columns, against the original's 758). */
+typedef struct {
+    uint32_t rows;        /* rows drawn — up to 65,536, so this is a longword and not d7's word */
+    uint16_t exit_count;  /* the low word of d7 the caller gets back */
+} blit_row_count;
+
+static blit_row_count blit_count_rows(uint32_t rows, int counts_rows_up_front)
 {
-    blit_row(image, file, width, clipped, rotation, blit_in_image);
-    file->rows = set_low_word(file->rows, (uint16_t)(file->rows - 1u));
+    int16_t bumped = (int16_t)(uint16_t)(rows + 1u);
+    blit_row_count counted;
+
+    if (!counts_rows_up_front) {
+        counted.rows = (uint32_t)(uint16_t)rows + 1u;
+        counted.exit_count = (uint16_t)-1;
+        return counted;
+    }
+    counted.rows = bumped > 0 ? (uint32_t)bumped : 0u;
+    counted.exit_count = bumped > 0 ? 0u : (uint16_t)bumped;
+    return counted;
 }
 
 /* ...AND THE SAME GUARD HOISTED AGAIN, OFF THE ROW AND ONTO THE WHOLE BLIT. Both cursors advance
@@ -462,20 +511,21 @@ static void blit_row_and_step_count(uint8_t *image, sprite_blit_regs *file, cons
  * the screen span at most that many whole scanlines. */
 static int blit_span_in_image(const sprite_blit_regs *regs, const blit_width *width, uint32_t rows)
 {
-    /* NEITHER SHAPE BELOW CAN ASK THIS — the counted one declines to ask at all when its count is
-     * refused, and the `dbf` one's count is `rows + 1` and so at least 1. It is here because the
-     * `rows - 1u` on the next line would otherwise underflow into a 4 GB span, and because a third
-     * shape asking it should get NO: a blit that touches nothing has nothing proved about it, and
-     * failing closed costs only the per-row question the walk would have asked anyway. */
+    /* BOTH SHAPES REACH THIS WITH A COUNT OF ZERO — the counted one every time it refuses its
+     * count, since the single call below asks for both shapes rather than short-circuiting on one —
+     * and this guard is what makes that safe: the `rows - 1u` on the next line would otherwise
+     * underflow into a 4 GB span that answers yes to everything. It FAILS CLOSED on purpose, and a
+     * shape added later gets the same answer: a blit that touches nothing has nothing proved about
+     * it, and saying so costs only the per-row question a walk of no rows never asks. */
     if (rows == 0)
         return 0;
     return spans_in_image(regs->source, rows * width->source_bytes,
                           regs->dest, (rows - 1u) * WB_BLIT_ROW_DEST_STEP + width->dest_bytes);
 }
 
-/* The whole blit: one row per pass of whichever of the two loop shapes this width uses. Each shape
- * reads its own row count off its own entry state and bounds the walk with it before the first row
- * — one decision for the blit rather than one per row.
+/* The whole blit: the rows this width's loop shape draws, and the counter it leaves behind. Both
+ * come off the entry state before the first row, which is also what bounds the walk — one decision
+ * for the blit rather than one per row.
  *
  * THE REGISTER FILE IS A LOCAL FOR THE LENGTH OF THE BLIT and the caller's is written back once,
  * which is what the 68000 does with d0..d7/a0/a1 and what this port could not do while every word
@@ -484,44 +534,69 @@ static int blit_span_in_image(const sprite_blit_regs *regs, const blit_width *wi
  * the walk had written. Nothing outside this function can see `file` — which is why the two walks
  * above are `always_inline` — so with the column loop unrolled its subscripts are constants and the
  * whole file lives in registers for the whole walk. blit_load_cell already made this argument for
- * the source cursor within ONE cell; this is the same one, for the whole blit. */
-static void blit_sprite_rows(uint8_t *image, sprite_blit_regs *regs, const blit_width *width,
-                             int clipped)
+ * the source cursor within ONE cell; this is the same one, for the whole blit.
+ *
+ * AND IT IS COMPILED ONCE PER CLIP CASE, by the two functions under it, for the same reason the row
+ * walk is compiled once per guard arm: `clipped` decides three things per column — the `btst`, the
+ * step over an undrawn column and the deferred merge — and while it was a runtime argument GCC held
+ * ONE body for both cases and allocated registers for the harder of the two. The window needs all
+ * eight data registers (see blit_count_rows), so there was nothing left to pay a clipped body's
+ * extra live values out of: measured at -O3 on 2026-08-26, the three-column unclipped row spilled a
+ * window word to the stack, parked four more in address registers and cost 1004 cycles, against 924
+ * with the two cases compiled apart.
+ *
+ * THE PRICE IS TEXT, and it is the one thing in this file that is not free: the two cases no longer
+ * share their tails, so the walk is assembled eight times over — four table_mid entries with the
+ * unclipped body inlined into them, four per-width clones of the clipped one — where before it was
+ * assembled four times. That is several clusters of the boot floppy's remaining headroom, and
+ * atari/build.sh's own -O3 accounting is the ledger it belongs in (tools/st_build.py refuses an
+ * overflow rather than truncating). What buys it is where the walking frame spends its sprite pass:
+ * blit_sprite_w3 and blit_clip_right_w3 are ~95 % of it. Both sides of the trade are measured in
+ * ../STATUS.md, "## Performance". Undoing it is three lines — the `always_inline` above, the two
+ * wrappers below and their call sites. */
+static inline __attribute__((always_inline))
+void blit_sprite_rows_body(uint8_t *image, sprite_blit_regs *regs, const blit_width *width,
+                           int clipped)
 {
     sprite_blit_regs file = *regs;
     unsigned rotation = blit_rotation(&file);
-    int blit_in_image;
+    blit_row_count counted = blit_count_rows(file.rows, width->counts_rows_up_front);
+    /* A shape that refuses its count draws nothing, and blit_span_in_image answers a span of no
+     * rows with a no of its own — so the bound is asked once here for both shapes. */
+    int blit_in_image = blit_span_in_image(&file, width, counted.rows);
 
-    if (width->counts_rows_up_front) {
-        /* `addq.w #1,d7`, ONCE — the `dbf` at the bottom jumps back to the `tst.w d7` below it,
-         * not to the bump. The `beq` and the `bmi` between them refuse every count that is not
-         * positive, so the `dbf` on this path always branches and the loop always exits on the
-         * `beq` with the counter at zero. The bumped count IS the number of rows drawn, once a
-         * refusal is read as the none it draws. */
-        int16_t counted;
+    for (uint32_t left = counted.rows; left != 0; left--)
+        blit_row(image, &file, width, clipped, rotation, blit_in_image);
 
-        file.rows = set_low_word(file.rows, (uint16_t)(file.rows + 1u));
-        counted = (int16_t)(uint16_t)file.rows;
-        /* A refused count draws nothing, so the bound is not asked for at all rather than asked
-         * about a span of no rows. */
-        blit_in_image = counted > 0 && blit_span_in_image(&file, width, (uint32_t)counted);
-        while ((int16_t)(uint16_t)file.rows > 0)
-            blit_row_and_step_count(image, &file, width, clipped, rotation, blit_in_image);
-    } else {
-        /* `dbf d7,<top>` alone: the row is drawn BEFORE the count is looked at, so `rows` is a
-         * "one fewer than this many" and an entry value of $ffff draws 65,536 rows rather than
-         * none. REACHED, by a descriptor with a negative height — see the file comment and
-         * test/test_blit.py. `blit_read_word`/`blit_write_word`'s off-image guard is what lets both
-         * sides survive the 10 MB of screen this then walks, and the bound above declines it for
-         * exactly that reason. */
-        blit_in_image = blit_span_in_image(&file, width, (uint32_t)(uint16_t)file.rows + 1u);
-        do {
-            blit_row_and_step_count(image, &file, width, clipped, rotation, blit_in_image);
-        } while ((uint16_t)file.rows != (uint16_t)-1);
-    }
-    /* ONE write-back for both shapes, which is what makes the local file safe to add a third exit
-     * to: a shape that forgot it would leave the caller's registers at their entry values. */
+    /* ONE write-back for both shapes, counter included: the exit value is blit_count_rows'
+     * business, so a shape added here cannot forget to leave the caller's registers where the
+     * original does.
+     *
+     * THIS IS WHERE THE d7 INVARIANT IS LOAD-BEARING. `file.rows` is d7, and nothing between here
+     * and the copy at the top of this function writes it — the walk takes its trip count from
+     * `counted`, and `counted.exit_count` was decided before the first row — so the HIGH half being
+     * written back is still the caller's own, which is what the original leaves there (every body
+     * touches d7 as a word). A walk that stepped `file.rows` per row would both lose that half and
+     * make this `set_low_word` overwrite a counter it no longer owns. */
+    file.rows = set_low_word(file.rows, counted.exit_count);
     *regs = file;
+}
+
+/* The two clip cases of that body. Each is `blit_sprite_rows` for the entry points below it — the
+ * four table_mid ones reach the first, the eight preludes the second — and -O3 specialises each per
+ * width, by whichever route is cheaper for its call count: the plain one has four callers and is
+ * INLINED into all four, leaving no out-of-line body at all, while the clipped one's eight callers
+ * get four `-fipa-cp-clone` clones, one per width table entry. atari/build.sh checks for BOTH
+ * outcomes after the link, because either of them de-specialising is the same lost frame. */
+static void blit_sprite_rows_plain(uint8_t *image, sprite_blit_regs *regs, const blit_width *width)
+{
+    blit_sprite_rows_body(image, regs, width, WB_BLIT_UNCLIPPED);
+}
+
+static void blit_sprite_rows_clipped(uint8_t *image, sprite_blit_regs *regs,
+                                     const blit_width *width)
+{
+    blit_sprite_rows_body(image, regs, width, WB_BLIT_CLIPPED);
 }
 
 /* The screen x a prelude clips against: d4's low word, SIGNED — every threshold is compared with a
@@ -540,7 +615,7 @@ static void blit_clip_left(uint8_t *image, sprite_blit_regs *regs, const blit_wi
     for (unsigned dropped = 1; dropped < width->columns; dropped++) {
         if (clip_x(regs) >= -(int16_t)(WB_BLIT_COLUMN_PIXELS * dropped)) {
             image[WB_BLIT_CLIP_MASK] = (uint8_t)((1u << (width->columns - dropped)) - 1u);
-            blit_sprite_rows(image, regs, width, WB_BLIT_CLIPPED);
+            blit_sprite_rows_clipped(image, regs, width);
             return;
         }
     }
@@ -560,7 +635,7 @@ static void blit_clip_right(uint8_t *image, sprite_blit_regs *regs, const blit_w
                                       - WB_BLIT_COLUMN_PIXELS * (width->columns - dropped));
         if (clip_x(regs) < threshold) {
             image[WB_BLIT_CLIP_MASK] = (uint8_t)(all_columns & ~((1u << dropped) - 1u));
-            blit_sprite_rows(image, regs, width, WB_BLIT_CLIPPED);
+            blit_sprite_rows_clipped(image, regs, width);
             return;
         }
     }
@@ -570,22 +645,22 @@ static void blit_clip_right(uint8_t *image, sprite_blit_regs *regs, const blit_w
 
 void blit_sprite_w2(uint8_t *image, sprite_blit_regs *regs)
 {
-    blit_sprite_rows(image, regs, &BLIT_W2, WB_BLIT_UNCLIPPED);
+    blit_sprite_rows_plain(image, regs, &BLIT_W2);
 }
 
 void blit_sprite_w3(uint8_t *image, sprite_blit_regs *regs)
 {
-    blit_sprite_rows(image, regs, &BLIT_W3, WB_BLIT_UNCLIPPED);
+    blit_sprite_rows_plain(image, regs, &BLIT_W3);
 }
 
 void blit_sprite_w4(uint8_t *image, sprite_blit_regs *regs)
 {
-    blit_sprite_rows(image, regs, &BLIT_W4, WB_BLIT_UNCLIPPED);
+    blit_sprite_rows_plain(image, regs, &BLIT_W4);
 }
 
 void blit_sprite_w5(uint8_t *image, sprite_blit_regs *regs)
 {
-    blit_sprite_rows(image, regs, &BLIT_W5, WB_BLIT_UNCLIPPED);
+    blit_sprite_rows_plain(image, regs, &BLIT_W5);
 }
 
 

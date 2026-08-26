@@ -70,6 +70,9 @@ import pytest
 import harness
 import leaf
 import loader
+# After `harness`, which is what binds loader.IMAGE_SIZE — emu derives its stack constants from it
+# and refuses to import before that (oracle/emu.py). Only STACK_GUARD_LO is wanted here.
+import emu   # noqa: E402
 from leaf import (LONGWORD_BYTES, RTS, WORD_BYTES, addi_w_dn, addq_b_d16, addq_b_dn, addq_w_d16,
                   addq_w_ind, andi_w_dn, bcd_expected, jsr_ind, move_b_dn_d16, subq_b_d16,
                   subq_w_d16,
@@ -6678,6 +6681,92 @@ def test_the_overlap_cases_reach_every_bit_both_ways():
             seen.add((bit, bool(mask & (1 << bit))))
     for bit in (STRIKE_BIT, BODY_BIT, POINT_BIT):
         assert (bit, True) in seen and (bit, False) in seen, f"bit {bit} is never driven both ways"
+
+
+# --- a record that STRADDLES the image's top ------------------------------------------------------
+# The THIRD kind of record address, and the only one nothing else here drives. `REFUSED_RECORD` below
+# is wholly past the image and folds back into it round the 24-bit bus; every other case in this file
+# sits a record comfortably inside. This one has its BASE inside and its far fields outside, so
+# include/bus.h has to answer the same record two different ways within one call.
+#
+# IT IS THE PIN A PER-RECORD GUARD WOULD NEED, which is why it is here rather than left to the class
+# argument. bus.h's own comment records a fast path that was tried and measured NO-GO: prove a
+# record's whole reach in ONE compare and then index straight through. Any future attempt at that —
+# in this header or hoisted into the walk — is correct on records wholly in and wholly out, and can
+# only go wrong on this one. Nothing drove it before, so nothing would have said so.
+#
+# `harness.IMAGE_SIZE - SIZE_SECOND` is the one base that makes that visible in a routine which
+# writes nothing: WB_ACTOR_HALF_WIDTH is then the LAST word inside the image and
+# WB_ACTOR_SIZE_SECOND begins on the first byte past it, so the box this routine builds has the
+# seeded width and a height of zero, and the mask it returns is compared as a register.
+#
+# WHAT CATCHES A RECORD TRUSTED WHOLE. Under `make guarded` the far field's read lands in the
+# PROT_NONE reservation above the image and the case dies where it happens — measured: mutating the
+# guard away fails this case there. Under `make test` it reads host heap, and the seed below is
+# chosen so that any value from 4 up changes the answer (see the assertion) — but the heap read as
+# zero when that mutation was run, and the suite stayed green. The guarded sweep is the surface.
+STRADDLE_ACTOR = harness.IMAGE_SIZE - SIZE_SECOND
+
+# The followed record placed 2 pixels below the straddling box's top edge: with the height read as
+# zero the strike box sits just clear of it, and with the seeded height it does not.
+STRADDLE_FOLLOWED_X, STRADDLE_FOLLOWED_Y = 0x01f0, 0x0182
+
+
+def test_a_record_straddling_the_image_top_answers_its_far_field_with_zero():
+    """`move.w 16(a0),d0` with a0 sixteen bytes below the image's top — the operand is off the end.
+
+    WHAT IT PINS WITH bus.h AS IT STANDS is the PER-FIELD drop: both cores bound the whole operand
+    and answer 0, so the box is a zero-height line and the mask loses its strike bit, and the
+    assertion below separates that from the mask the seeded height would give. What it pins against
+    a FUTURE per-record fast path is a FAULT rather than an answer — a port that proved the record's
+    reach once and then indexed straight through reads past the image, which under `make guarded`
+    lands in the PROT_NONE reservation and kills the case where it happens. Under `make test` that
+    same read is host heap and can come back zero, so the guarded sweep is the surface (see the
+    comment above STRADDLE_ACTOR).
+
+    THE DIFFERENTIAL CANNOT LOOK AT THIS RECORD. It sits above `emu.STACK_GUARD_LO`, and
+    `harness.differential` compares only the prefix below that — so the byte-for-byte agreement
+    every other case here leans on stops short of the very bytes this one is about, and
+    `program_writes` below speaks for the ORACLE alone. The candidate's own top band is compared by
+    hand at the end, test_blit.py's `_assert_candidate_top_band` way."""
+    what = "actor_followed_overlap_mask straddling the image top"
+    pokes = leaf.overlay(
+        _overlap_pokes(case_salt(what), STRADDLE_FOLLOWED_X, STRADDLE_FOLLOWED_Y, STRIKE_LO),
+        # No WB_ACTOR_SIZE_SECOND: there is nowhere to put it, which is the point of the case.
+        _record_fields(STRADDLE_ACTOR, {ACTOR_X: (OVERLAP_ACTOR_X, WORD_BYTES),
+                                        ACTOR_Y: (OVERLAP_ACTOR_Y, WORD_BYTES),
+                                        HALF_WIDTH: (OVERLAP_ACTOR_HALF_WIDTH, WORD_BYTES)}))
+
+    # A zero tail on the model's image is exactly what the bus answers past the top, so the model
+    # needs no arm of its own for the field that is not there.
+    expected = _model_overlap_mask(harness.make_image(pokes) + bytes(RECORD_BYTES),
+                                   STRADDLE_ACTOR, FOLLOWED_DEFAULT)
+    # ...and the same geometry with the height PRESENT, which is what a heap read would produce.
+    # ACTOR carries OVERLAP_ACTOR_HEIGHT on the same x, y and half-width as the straddling record.
+    seeded = _model_overlap_mask(harness.make_image(pokes), ACTOR, FOLLOWED_DEFAULT)
+    assert expected and expected != seeded, (
+        f"{what}: the straddling mask is {expected:#x} against the seeded {seeded:#x} — the case "
+        f"does not separate a zeroed far field from a read one")
+
+    info = leaf.run(OVERLAP, _OVERLAP(STRADDLE_ACTOR), [], what,
+                    regs={"a0": STRADDLE_ACTOR, "_pokes": pokes}, max_insns=_cap(OVERLAP))
+
+    assert not program_writes(info), f"{what}: the ORIGINAL wrote memory, which this routine does not"
+    assert info["regs"]["d0"] & 0xffff == expected, (
+        f"{what}: the ORIGINAL answered {info['regs']['d0'] & 0xffff:#x}, not {expected:#x}")
+    assert info["ret"] == expected, (
+        f"{what}: the reconstruction answered {info['ret']:#x} against {expected:#x}")
+
+    # ...and the half no differential covers: the RECONSTRUCTION's own bytes over the excluded band,
+    # which is where the straddling record lives. This routine writes nothing, so every byte up here
+    # must still be the one the pokes put there.
+    lo, hi = emu.STACK_GUARD_LO, harness.IMAGE_SIZE
+    _answer, candidate = leaf.run_candidate_only(_OVERLAP(STRADDLE_ACTOR), pokes)
+    untouched = harness.make_image(pokes)
+    first = next((a for a in range(lo, hi) if candidate[a] != untouched[a]), -1)
+    assert first < 0, (
+        f"{what}: the reconstruction changed a byte over [{lo:#x}, {hi:#x}) — the band the "
+        f"differential stops short of — first at {first:#x}")
 
 
 # --- $23b6: did anything the player threw land ------------------------------------------------------

@@ -652,7 +652,7 @@ hardware" into a localised answer. All are cheap and were decisive in the BuggyB
   the ORIGINAL can be measured exactly the way your port is, over a window of the same length, and
   every number then becomes a ratio instead of an emulator's arithmetic. Wonder Boy's
   `atari/profile.py` is the worked example — 1000 vblanks of each side, opened at the frame loop,
-  with a same-name cycles-per-call table at the bottom. Seven things about it that cost a session
+  with a same-name cycles-per-call table at the bottom. Nine things about it that cost a session
   each to learn:
   * **Load the symbols BEFORE `profile on`, and `symbols autoload off` before THAT.** Autoloading
     frees and replaces the table on every debugger entry, so a table loaded with it still on is gone
@@ -687,6 +687,21 @@ hardware" into a localised answer. All are cheap and were decisive in the BuggyB
     name at the end of a `profile callers` row truncates the entire report at the first one: 41
     functions parsed out of 86, no error anywhere. Split on the separator, not on a name shape, and
     keep a completeness guard (rows parsed == callee rows in the block).
+  * **PROFILING STOPS ON EVERY DEBUGGER ENTRY — hold state with ONE poke in the opening script,
+    never a per-frame breakpoint.** Measuring the game with the joystick held (the scrolling frame is
+    the expensive one) means poking the byte the input handler writes; the first attempt re-poked it
+    at every arrival at the frame loop and the window came back with ONE frame in it. Put the poke in
+    the window's own opening action file, before `profile on`, and rely on the machine to leave it
+    alone: with no real input events nothing rewrites that byte for the rest of the window.
+  * **`:trace` prints a match count, not the VBL line; a `cont`-only action file is the per-frame
+    clock.** What prints `CPU=$..., VBL=N, FrameCycles=M` is a plain debugger ENTRY, and `:quiet` is
+    exactly what suppresses it — so a breakpoint whose action file is nothing but `cont` times every
+    arrival for free (`VBL * cycles-per-vblank + FrameCycles` is an absolute cycle count) while
+    `:trace` gives you a total at the end of the run and nothing else. That is how to time the frames
+    THEMSELVES rather than the window: a breakpoint at the frame loop and one at the buffer flip make
+    each frame a WORK span and a WAIT span, and a window average cannot see either. Worth doing at
+    least once — it is what showed that one port's "24.40 fps against 25.00" was 3,023 of 3,027
+    frames already at the full rate, with the whole shortfall in four instrumentation frames.
 
 - **Raster colour-bars for timing.** Set the border to a different colour before each per-frame
   stage; the on-screen *height* of each colour band is that stage's share of the frame. A single

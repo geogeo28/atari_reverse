@@ -40,7 +40,9 @@
  * It lives in this header rather than in the kit's machine.h because every user is this game;
  * ../STATUS.md holds that registration on its reason rather than a count — trigger = a user in
  * ANOTHER project, home = tools/recreate_kit/include/machine.h. What DID belong to the kit is the
- * codegen barrier the run is built on, and it is there: machine.h's CURSOR_BARRIER.
+ * codegen barrier the run is built on, and it is there: machine.h's CURSOR_BARRIER. So is its
+ * sibling for a `dbf` COUNT, COUNT_BARRIER — the two are one parameterised REGISTER_BARRIER now,
+ * differing only in the register class they pin, and the kit states both measurements in one place.
  */
 
 /* One `move.l (a0)+,(a1)+`. The cursors are taken by pointer so that the runs below can share one
@@ -49,9 +51,9 @@
  *
  * THE BARRIER IS ONE OF TWO ALIASING WORKAROUNDS IN THE TREE and they are opposites, which is worth
  * knowing from either end: this one HIDES a relationship GCC would otherwise exploit (that the two
- * cursors are one base plus constants), while src/blit.c's `blit_sprite_rows` copies the caller's
- * register file into a LOCAL to destroy one GCC has to assume (that a store through `image` may hit
- * `*regs`), so that the file can live in registers for the whole blit. */
+ * cursors are one base plus constants), while src/blit.c's `blit_sprite_rows_body` copies the
+ * caller's register file into a LOCAL to destroy one GCC has to assume (that a store through
+ * `image` may hit `*regs`), so that the file can live in registers for the whole blit. */
 static inline void copy_one_longword(const uint8_t **from, uint8_t **to) {
     wr32(*to, be32(*from));
     *from += WB_LONGWORD_BYTES;

@@ -16595,10 +16595,14 @@ which is what GCC turns back into `dbf` — worth 4 cycles a scanline over `subq
 reproduces the runaway `$ffff` count without a special case. Column 0 assembles to the shipped bytes
 instruction for instruction: thirty `move.l (a0)+,(a1)+`, `addq.l #8,a0`, `lea 40(a1),a1`, `dbf`.
 
-**THE BARRIER IS KIT KNOWLEDGE AND HAS MOVED THERE.** `CURSOR_BARRIER` / `CURSOR_BARRIER_CONSTRAINT`
-now live in `tools/recreate_kit/include/machine.h` with the three measurements above written down —
-the postincrement-vs-`d16(An)` batching, the mid-run rewind, and the register class — and no game
-file carries an `#ifdef __m68k__` any more. **AND THE CONSTANT COPIER SERVES EVERY CONSTANT CALLER.**
+**THE BARRIER IS KIT KNOWLEDGE AND HAS MOVED THERE, BOTH OF IT.** The cursor barrier and the `dbf`
+COUNT barrier are ONE parameterised `REGISTER_BARRIER(var, constraint)` in
+`tools/recreate_kit/include/machine.h`, with `CURSOR_BARRIER` pinning the address class and
+`COUNT_BARRIER` the data class, and the four measurements written down once beside them — the
+postincrement-vs-`d16(An)` batching, the mid-run rewind, `+a` against `+r` for a cursor, and `+d`
+against `+r` for a counter `dbf` can only close on. `src/scroll.c` no longer defines a barrier of its
+own, and no game file carries an `#ifdef __m68k__` any more (2026-08-26: checked over
+`recreate/{src,include,atari}`). **AND THE CONSTANT COPIER SERVES EVERY CONSTANT CALLER.**
 `copy_constant_run` and `copy_constant_longwords` are `always_inline` in `include/scroll.h`, and
 `src/text.c`'s message box (`WB_TEXT_BLIT_LONGWORDS` = 22) and `src/stage.c`'s tile row
 (`WB_BG_CELL_BYTES / WB_LONGWORD_BYTES` = 2) call them: both now fold to straight runs on the target
@@ -16667,3 +16671,218 @@ second half never drawn** → **23 RED** across the variant, blit and frame-comp
 242 B for x0, 254 for x2..x15, and 4 for x1, which GCC folds onto x0 as a `braw` because columns 0
 and 1 share a split — plus a 64-byte table), `WB.PRG` text 154,368 → **158,208 B**, and `WBOOT.ST`
 27,648 → **24,576 bytes free** of 728,064.
+
+**THE ACTOR TIER'S BUS GUARDS: 9.1 K CYCLES A FRAME, AND NO WAY TO SPEND THEM FROM `include/bus.h`
+(2026-08-26).** `actor_behavior_pass` is 57.0 K cycles a frame against the original's 15.9 K, and the
+suspect was `field_b`/`field_w`/`set_field_*`/`flag_*`: each goes through `bus_read_*`, which masks to
+24 bits and runs `os_in_image` PER FIELD, so a handler making twenty accesses on one record pays
+twenty `andi.l #$ffffff / cmpi.l / bhi` — ~40 cycles apiece — where the original spells
+`move.w d16(a0),d0`. **The suspicion is confirmed and the size of it is now known**: compiled with
+those guards deleted outright (no bound, no mask, semantics abandoned — an experiment, not a
+candidate) the pass reads **47.9 K** and `actor_dispatch_behavior` 7,497 cycles a call against 8,860.
+So the guards are worth **9.1 K a frame**, which is more than the ~8 K the frame sits over two
+vblanks. The PLAYER tier pays them too, at cycles a call: `player_step_and_arm` **950 -> 604**,
+`player_run_map_cell` **493 -> 442**, `player_gate_on_1516` **744 -> 659**, `player_stage_transition`
+**1,072 -> 953**, `player_weapon_fire` **193 -> 192**. Against the original the same-function ratios
+move `actor_behavior_pass` x3.6 -> **x3.0**, `actor_dispatch_behavior` x3.7 -> **x3.2**,
+`actor_fall_and_settle` x3.6 -> **x3.4** and `player_step_and_arm` x3.3 -> **x2.1** — so the guards
+are a third of the actor tier's gap and no more; the rest is C against straight-line 68000.
+
+**THE RECORD-REACH FAST PATH WAS THE WAY TO SPEND IT AND IT IS NO-GO.** Ask ONCE whether a record's
+whole `WB_ACTOR_RECORD_BYTES` reach lies inside the image and, if so, index straight through;
+otherwise fall to today's per-field arm. It is exactly semantics-preserving — the predicate depends
+only on the base, so `record + offset` cannot wrap the bus and `os_in_image(record + offset, width)`
+is discharged rather than skipped, and a record that FOLDS or STRADDLES misses it and is answered
+field by field as now. The -O3 codegen is the intended shape (one `cmpil #1048544` covering four
+`d16(An,Dn)` field accesses in `actor_swoop_state3_descend`; the per-field `andi.l` count in
+`behavior.o` falls 827 → 210 with the slow arm out of line). **On the machine it is slower anyway**,
+because both arms inline at every one of the ~800 sites: `actor_behavior_pass` **57.0 → 59.7 K**,
+and **60.3 K** with the slow arm behind `noinline` (which also forces `weak` linkage — a `static`
+body in a header is one copy per translation unit and `atari/profile.py` refuses an ELF naming a
+symbol twice — and stops GCC inlining the tier's helpers into the handlers). `WB.PRG` text grows
+**+14.8 KB** inlined and **+12.0 KB** weak, against **23,552 bytes free** on `WBOOT.ST`. Reverted;
+`include/bus.h` carries the finding beside the helpers so it is not re-tried blind.
+
+**THE FRAME DID NOT MOVE IN ANY OF THE FOUR BUILDS** — 488 frames in 1,000 vblanks, 24.40 fps, 328.4 K
+cycles a frame, including the one with the guards deleted. `flip_screen`'s vblank spin absorbs the
+whole 9.1 K, and the 24 frames that take three vblanks are not the ones the actor tier is heavy in.
+**So `cycles/frame` is not the continuous quantity `atari/README.md`'s table calls it**: it is
+`window cycles / frames`, and it moves only when the frame COUNT does. Whatever finally buys the
+steady 25 has to come off the frames that are actually over, and the next honest lever is to prove a
+record ONCE AT THE WALK and hand a trusted base down to the handlers — a change to the callers, not
+to `include/bus.h`.
+
+**SURFACE.** The straddling record — base inside the image, far fields outside — is the one address
+class a per-record guard can get wrong, and nothing drove it: `REFUSED_RECORD` is wholly outside and
+folds back in, every other case sits comfortably inside.
+`test_a_record_straddling_the_image_top_answers_its_far_field_with_zero` now pins it, running
+`actor_followed_overlap_mask` on a record at `IMAGE_SIZE - WB_ACTOR_SIZE_SECOND` so its half-width is
+the last word in the image and its height is the first byte past. Mutating the guard away is **RED
+under `make guarded`** (7 cases, this one and the six `REFUSED_RECORD` folds) and **GREEN under
+`make test`** — the heap past the buffer read as zero, exactly as the oracle does — so the guarded
+sweep is the surface and the differential is not. Suite **6,454** green (6,453 + this case), `make
+guarded` clean over 10,045 guarded candidate runs, `atari/build.sh ownrun` + `atari/smoke.py floppy`
+OK. Two more mutations, both on the reverted experiment: a reach constant two bytes too small is
+GREEN and correctly so — one constant bounds the predicate AND the offset test, so the reach is a
+tuning knob and not a correctness one, and no value of it can drift the two apart; and the one
+genuinely unsafe value, below the widest operand where the offset test's `REACH - width` wraps, was
+refused at COMPILE time by the `_Static_assert` the experiment carried. Neither survives into the
+tree, which is why they are recorded here rather than pinned.
+
+**THE FRAME, ONE AT A TIME — `python3 atari/profile.py frames` (2026-08-26).** Every figure above
+this line is a window AVERAGE, and the paragraph before it already caught that lying: four builds
+that differed by 9.1 K cycles a frame all read `488 frames / 24.40 fps / 328.4 K` to the digit.
+`frames` times the frames THEMSELVES — a per-arrival breakpoint on `game_main_loop` and one on
+`flip_screen`, so a frame is WORK (loop → flip) plus WAIT (flip → next loop) and its length is a
+whole number of vblanks.
+
+**IDLE, THE FRAME IS ALREADY A STEADY 25 fps.** 3,027 frames, **3,023 of them exactly two vblanks**,
+work median **264.6 K** against the 320.8 K two vblanks buys, and exactly ONE frame whose work is
+over it. The four long frames are 0, 1, 50 and 51 — `M2_ANCHOR_FRAMES` 1, 2, 51, 52, indexed from
+zero — and they are 8-9 vblanks of WAIT rather than of work: `capture_the_frame`'s 32 KB copies are
+taken after the flip. **That is the whole of the 488-against-500 gap** `profile.py ours` reports:
+those four cost 25 vblanks over budget, which is 12.5 frames, and 500 − 12 = 488. The reconstruction
+drops no idle frame; the instrumentation does. **The paragraph above put those missing frames down to
+"the 24 frames that take three vblanks" — there are none**: in 3,027 idle frames the histogram is
+`2 x 3023   8 x 3   9 x 1`, and the four long ones are the anchors.
+
+**WALKING, NEITHER SIDE IS 25.** With the stick held right for the whole window (`--walk`): ours
+**441 frames / 22.05 fps / 363.4 K a frame**, the original **464 / 23.20 / 345.1 K**. The target
+while the screen scrolls is the original's 464, not 500. The gap is ~18 K cycles a frame and it sits
+where the idle window said it did: **the actor tier +45.6 K** (`actor_behavior_pass` 62.7 K a frame
+against 17.1 K; `actor_dispatch_behavior` x3.8 a call), **the sprite pass +21.0 K** (65.1 K against
+44.1 K, `blit_sprite_w3` x1.4), **the scroll's fill tier +7.6 K** (`bg_scroll_run_queue` 35.6 K
+against 28.0 K), the panel +7.4 K and the sound tick +6.6 K. Against all of that `flip_screen` is
+**29.8 K to the original's 108.6 K** — we reach the flip later and wait less, which is the same x0.3
+the idle window shows and is not a saving.
+
+**AND `--walk` MEASURES A BURST, which is worth knowing before reading it.** In the 2,963-frame
+walking timeline only **93 frames are over two vblanks, and every one of them is in the first 109**:
+the held stick walks the player until the screen stops scrolling, after which the frames go back to
+two (work median 293 K against the idle 264.6 K — the walking animation and the actors still run,
+but nothing is over budget). The 1,000-vblank profile window opens at the first frame, so the
+walking window IS that burst; a longer one would dilute it.
+
+**THE TWO HATARI FACTS THIS COST.** Profiling **stops on every debugger entry**, so state a window
+needs held has to be poked ONCE from the window's opening script — the first `--walk` re-poked the
+joystick byte at every frame-loop arrival and the window came back with ONE frame in it. And
+`:trace` prints **no per-arrival line**, only a match count when the run ends; what prints
+`CPU=$..., VBL=N, FrameCycles=M` is a plain debugger ENTRY, and `:quiet` is exactly what suppresses
+it — so a breakpoint whose action file is nothing but `cont` is a per-frame clock that costs the
+machine no cycles. Both are in `atari/profile.py`'s header and in `docs/on-target-execution.md`'s
+profiler list. (The walking figures are one run of the 2026-08-26 working tree, this batch's scroll
+and sound edits in it; the idle ones re-read 488 / 24.40 / 328.4 K to the digit on the same tree.)
+
+**Sound tick: the module base reaches the whole tier, and the two per-tick passes stop paying for
+the trip (2026-08-26).** `snd_sfx_tick`, `snd_channel_period_and_volume` and `snd_channel_step` now
+address the module through a base PARAMETER and the music record through a POINTER, the tier
+`$17ca0` and `$18208` already used — 50 module-absolute immediates gone from the three (7/10/33 →
+0/0/11, the 11 left being `module_address`'s own base and the two a3-relative pointer tables, which
+a negative index must keep reading image-relative). That alone was worth only 146 cyc/tick, because
+a stack-passed base costs the CALLER a fourth `move.l -(sp)` on top of `jsr`/`rts`/`movem` — ~190
+cycles a call site. So `$1a5da`'s and `$18208`'s bodies are `always_inline` into the tick that calls
+them and read the a3 it already holds; `$18106`'s keeps its `noinline` (reached on ~1/5 of ticks —
+561 calls to 999 — where inlining would spend ~6 KB to chase ~106 cyc/tick), and `$17ca0`'s
+`noinline` was re-verified byte-identical. `sfx_reload_period`'s `add.b`/`addx.b` carry came off a
+32-bit sum and now comes off `add_byte` (moved above its new first user). **`vbl_handler` 8,662 →
+6,729 cyc/tick (−22.3 %), `snd_music_tick` 8,522 → 6,590 (x2.2 → x1.7 of the original's 3,868),
+≈3.95 K cycles a frame back.** Text +658 B. Suite 6,454 green off a clean `build/`; two mutations
+(drop the reload carry; the yield ladder always reading channel A's flag) go RED in `test_sound.py`.
+**Left unpinned:** `profile.py compare` no longer shows ratio rows for
+`snd_sfx_tick`/`snd_channel_period_and_volume` — the tick calls the inlined bodies and the table
+matches our symbols against `names.txt`, so their cost folds into `music_tick_over_module`, which
+never had a counterpart. The next door in the tick is `psg_port_write` at 640 cyc/tick (10 calls ×
+64) where the original writes the ports inline — `psg.c`, not `sound.c`.
+
+**The sprite tier's row walk (2026-08-26, `src/blit.c`).** The walking frame's sprite pass was 64.8 K cycles against
+the original's 44.2 K; three changes to the blitters take it to 59.4 K, and what remains is the pass's own bookkeeping
+(10.3 K against 4.4 K) plus the 68000's addressing modes. (1) THE ROW COUNTER LEFT THE REGISTER FILE: both loop shapes'
+row count and their exit word are readable off the entry count before the first row — the two-column guard draws its
+bumped count and exits at zero, the `dbf` draws N + 1 and always exits at $ffff — so `blit_count_rows` answers both and
+the walk is a plain trip count with `d7` written once. One row needs all eight data registers (the six-word window, the
+rotation, one merge temporary); a counter stepped per row was a ninth, and the two it displaced were spilled to the
+stack every row. 1074 → 1000 cycles a three-column row, 316 bytes smaller. (2) `blit_sprite_rows` IS COMPILED ONCE PER
+CLIP CASE: while `clipped` was a runtime argument GCC held one body for both and allocated registers for the harder of
+the two; apart, the unclipped row spills nothing, swaps in place and parks nothing in address registers: 1004 → 924
+against the original's own 758 on the same model. The price is 8,852 bytes of text and ~9 clusters of the boot floppy
+(18,432 B free of 728,064; `smoke.py floppy` still OK), and the comment at `blit_sprite_rows_body` says how to undo it
+in three lines. (3) THE PER-WORD OFF-IMAGE GUARD IS ONE COMPARISON: `os_in_image(addr, WB_STATE_WORD_LEN)` is exactly
+`addr <= OS_IMAGE_SIZE - WB_STATE_WORD_LEN` — the kit spells it wrap-safe because *its* count comes off the emulated
+stack, and here it is a compile-time word — and each comparison was a branch the cold checked walk got duplicated
+through, once per width and clip case: 33,740 → 29,512 bytes for a walk no drawn sprite takes. MEASURED
+(`atari/profile.py compare --walk`): `blit_sprite_w3` 30,103 → 26,307 cycles a call against 21,909 (x1.37 → x1.20),
+`blit_clip_right_w3` 4,809 → 4,508 against 3,489, `blit_sprite_w2` 11,097 → 9,192; the pass 64.8 K → 59.4 K a frame
+against 44.2 K — this change's own share of the frame is ~5.4 K. Suite 6,454 green, `make guarded` clean; mutations
+(the exit word $ffff → 0; the `dbf` trip count one short; the word guard widened by a word) go RED. STILL OPEN AND
+MEASURED: ~124 of the 166 cycles a three-column row still gives away is the original's `and.w Dn,(a1)` /
+`or.w Dn,(a1)+` at 24 cycles a plane word against our `d16(An)` load/and/or/store at 32 — GCC forms post-increment
+only in a rolled loop, and rolling the column loop gives back the register-window folding the unroll buys.
+
+**THE OFF-IMAGE GUARD'S SECOND COMPARISON, DELETED TREE-WIDE: 8,420 BYTES OF `.text` BACK (2026-08-26).** The kit's
+`os_in_image(addr, count)` is `addr <= OS_IMAGE_SIZE && count <= OS_IMAGE_SIZE - addr`, spelt wrap-safe because ITS
+count comes off the emulated program's stack. Every caller in this port passes a COMPILE-TIME width — `include/bus.h`'s
+six accessors pass 1, 2 or 4 and `src/blit.c`'s word guard passes `WB_STATE_WORD_LEN` — and for a width that cannot
+wrap the two clauses collapse to one: `addr <= OS_IMAGE_SIZE - width` implies the first, and an `addr` past the image
+fails both. VERIFIED EQUAL, not argued: a host program compared the two predicates at all three widths over the WHOLE
+24-bit masked address range (`WB_BUS_ADDR_MASK`), including `OS_IMAGE_SIZE - 1 / OS_IMAGE_SIZE / OS_IMAGE_SIZE + 1` —
+identical everywhere. `blit.c` had already spelt the collapse by hand; it is now
+`tools/recreate_kit/include/os.h`'s `os_in_image_fixed(addr, width)`, with the wrap-safety argument stated ONCE where
+both forms are defined and a `_Static_assert` per call site that the width fits the image. MEASURED on the linked ELF:
+`.text` 164,072 → 155,652 B (−8,420), nearly all of it `src/behavior.c`'s object (47,658 → 39,480 B) where the
+accessors inline at ~980 sites; the boot floppy went 18,432 → 26,624 bytes free, eight clusters. THE FRAME DID NOT
+MOVE — `profile.py ours --walk` reads 442 frames / 22.10 fps / 362.6 K either side of it — so this is a FLOPPY lever
+and not a cycle one, and it is recorded as such. `atari/build.sh`'s `OS_HELPERS_WITH_AN_ON_TARGET_MEANING` gained the
+new name, which is the check that forces that decision into the open. Suite 6,454 green, `make guarded` clean, target
+codegen of `blit_sprite_w2`..`w5` and the four `blit_sprite_rows_clipped` clones byte-identical across the change.
+
+**THE CLIP SPLIT'S PRICE RE-MEASURED, AND THE CHEAPER SHAPE LOOKED FOR AND NOT FOUND (2026-08-26).** Three shapes of
+`blit_sprite_rows` built on one tree, `.text` of the linked ELF: (a) ONE body with `clipped` a runtime argument, which
+`-fipa-cp-clone` specialises on WIDTH only (four `blit_sprite_rows.constprop.N`) — 146,804 B; (b) TODAY'S hand split
+into `_plain` / `_clipped`, which GCC inlines the plain half into `blit_sprite_w2`..`w5` and clones the clipped half
+four times — 155,652 B, i.e. **the split costs 8,848 B** (all of it `src/blit.c`'s object, 19,022 → 27,870 B, so the
+object delta and the `.text` delta are the same number here — an earlier note reading 8,852 was right, not an
+object-file artefact); (c) ONE body with the once-per-blit setup shared and only the ROW LOOP written twice, once per
+clip constant — 176,622 B, **+20,970 B over (b)** for at best the same row, because GCC then clones on both axes and
+carries both loops in the clones. So (b) stands: it is the cheapest shape that keeps the 924-cycle unclipped row, and
+(c) is registered here as an experiment MADE rather than a lever to try again. THE BUILD GATE NOW WITNESSES BOTH
+HALVES of (b): `atari/build.sh` requires ≥ 1 `blit_sprite_rows_clipped.constprop` clone AND zero out-of-line
+`blit_sprite_rows_plain` symbols, because the old clone-only grep stayed green while the plain path — most of the
+sprites a walking frame draws — de-specialised. Both arms RED-checked: `noinline` on `_plain` refuses (4 out-of-line
+bodies), `src_blit.c` moved to `UNITS_BUILT_AT_O2` refuses (0 clipped clones).
+
+**The column fill at x1.10 of the original: 87,692 → 67,882 cycles a call (2026-08-26, `src/scroll.c`).** Walking is
+where the frame spills, and the scroll's FILL tier was the largest single piece of it: `fill_column` 87,692 cycles a
+call against `bg_scroll_fill_right_column`'s 61,604 over the same 182 calls, x1.42. All of the gap was one mistake made
+three ways — machine.h's rule (address arithmetic in 32 bits, `image` added last) applied to a cursor that is WALKED
+rather than indexed, which `copy_scanlines` already knew and the fill tier did not. `clear_cells` SPILLED THIRTY-TWO
+BASE REGISTERS (with the cursor a 32-bit offset GCC unrolled the sixteen scanlines and hoisted a base per longword —
+128 bytes of frame, sixty `lea`/`move.l` of prologue per half of the fill, `and.l d1,(a1,d0.l)` at 26 cycles); as a
+host pointer all thirty-two go off ONE base at 24 and one `lea 2048(a0),a0` a tile row: 792 cycles a tile row against
+the original's 778. `draw_tiles` RE-DERIVED BOTH DESTINATIONS PER PLANE and took the half it stores with
+`move.l/clr.w/swap` (12) where the original takes it with one `swap` (4); written the original's way round — the LOW
+half of every rotated longword out first (`move.w dN,(a2)+` at $7d7a on the right edge, `or.w dN,(a1)+` at $8014 on
+the left), then four `swap`, then the other half — the scanline is 214 + 8n cycles against 202 + 8n. BOTH LOOP
+COUNTERS WERE LITERALS GCC COULD READ, so neither closed with a `dbf`; `COUNT_BARRIER` — CURSOR_BARRIER's trick one
+register class over, `+d` on the target (`dbf` counts a DATA register), `+r` off it (clang/arm64 rejects `+d`) — gives
+back `moveq #15,d5 / dbf d5`. (It has since moved to the kit as the data-class arm of `REGISTER_BARRIER`; see the
+barrier paragraph above.) WHAT IS LEFT IS THE C FLOOR: GCC will not fold a memory-destination read-modify-write
+into `(An)+` however the C is spelt (`or.w dN,(a0) / addq.l #2,a0` 20, `or.w dN,d16(a0)` 16, the original's
+`or.w dN,(a1)+` 12), so the four ORs cost 12 cycles a scanline, 2,112 a call, more than the original's — closing that
+means four hand-assembled instructions with a differential of their own. MEASURED in an isolated worktree at HEAD plus
+this file alone: `fill_column` 87,692 → 67,882, `draw_tiles` 71,725 → 58,249, `bg_scroll_run_queue` 41.6 K → 31.4 K a
+frame against the original's 28.0 K (x1.1); `scroll.o` text 12,270 → 10,590 B. SURFACES: no behaviour moved, so no
+test moved — `make test` 6,454 green, `make guarded` clean; mutations: `tile_rows_span`'s `+ 1` → `+ 0` (the cursor
+the fill's second half resumes from) 31 RED, the scanline count one short 35 RED. ONE PROPERTY IS DELIBERATELY
+UNPINNED: the per-scanline store ORDER changed — all four words of one cell, then all four of the other, where the old
+code interleaved them per plane — and `_run_fill` compares an unordered address→byte map, so reversing the plane loop
+survives; it matches the original now where it did not before, and what makes the order unobservable is the two
+cells' non-overlap (8 or 120 bytes apart for either edge and every `WB_BG_SCROLL_X`) — which is now
+a `_Static_assert` over the two constants both edge tables are built from
+(`WB_BG_BUFFER_LINE - WB_BG_CELL_BYTES >= WB_BG_CELL_BYTES`) rather than a paragraph, though still
+not a behavioural test. `clear_cells` no
+longer returns a cursor (it masks the SAME cell the tile loop then ORs into); `tile_rows_span` names the span both
+loops walk, with `_Static_assert`s pinning `WB_BG_TILE_BLOCK_LEN == WB_BG_TILE_ROWS * WB_BG_BUFFER_LINE` and
+`WB_BG_CELL_BYTES == WB_PLANES * WB_PLANE_STRIDE`. QUEUED, measured and not spent: `draw_tiles` as `always_inline`
+(~700 cycles a call for +154 B), the two `addi.l #imm32` bases the original keeps in a4/a5 (~220), the `andi.l #65535`
+zero-extend (~180) — ~1 K a call, ~430 a frame; `copy_row_cells` in the ROW fill has exactly the shape `clear_cells`
+had and is left alone because it runs on a VERTICAL scroll, which the walking timeline never raises.

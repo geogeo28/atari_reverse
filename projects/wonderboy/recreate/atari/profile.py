@@ -14,7 +14,7 @@ between the two sides at the same named function is a finding. That table is the
 PCs already (`load_base` is `0x3f8` — see ../project.toml, original.py's header, and the refusal in
 `names_txt_symbols` that pins that premise rather than trusting it).
 
-TWO HATARI FACTS, both load-bearing:
+FOUR HATARI FACTS, all load-bearing:
 
   * SYMBOLS MUST BE LOADED BEFORE `profile on`, and `symbols autoload off` before THAT. Autoloading
     frees and replaces the table on every debugger entry, so a table loaded with it still on is gone
@@ -29,6 +29,17 @@ TWO HATARI FACTS, both load-bearing:
     stop-then-shoot idiom `b VBL > VBL :1000`, where the hit count IS the number of vblanks later
     (original.py's `vbl_breakpoint` documents why that is the only way to say "N vblanks later").
 
+  * PROFILING STOPS ON EVERY DEBUGGER ENTRY. So machine state a whole window needs held has to be
+    poked ONCE, from the window's own opening script, and never from a per-frame breakpoint —
+    measured: `--walk`'s first draft re-poked the joystick byte at each arrival at the frame loop
+    and the window came back with ONE frame in it. One poke is enough here because with no real
+    joystick events the IKBD handler never writes WB_JOY1_STATE again.
+
+  * `:trace` PRINTS NO PER-ARRIVAL LINE — only a match count when the run ends. What prints
+    `CPU=$..., VBL=N, FrameCycles=M` is a plain debugger ENTRY, and `:quiet` is what suppresses it.
+    So a breakpoint whose action file is nothing but `cont` is a per-arrival clock that costs the
+    emulated machine no cycles, and that is the whole instrument behind the `frames` mode.
+
 WHY OUR SIDE'S SYMBOLS ARE FOLDED AND THE ORIGINAL'S ARE NOT. The build REQUIRES `-fipa-cp-clone`
 (atari/build.sh's `UNITS_THAT_MUST_STAY_AT_O3` and its clone check after the link): specialising a
 routine per constant argument is what gives the sprite blit's column loop a trip count to unroll and
@@ -36,9 +47,16 @@ the HUD's glyph plotter a width, and it is worth ~79 K cycles a frame. What it c
 that one function arrives in the map as several symbols (`hud_plot_digit` beside
 `hud_plot_digit.constprop.0`), so its cycles are split across rows that each look small — and a
 routine whose every call site was specialised has no row under its own name at all
-(`blit_sprite_rows`). The clone suffix is a naming artefact of the pass and never a distinction the
-ORIGINAL made, so a row here is the base symbol and `CLONE_SUFFIX_RE` is what strips it. The
-shipped side comes out of `../names.txt`, which has no clones, so nothing about it changes.
+(`blit_sprite_rows_clipped`, which reaches the map only as its four `.constprop.N` clones). The
+clone suffix is a naming artefact of the pass and never a distinction the ORIGINAL made, so a row
+here is the base symbol and `CLONE_SUFFIX_RE` is what strips it. The shipped side comes out of
+`../names.txt`, which has no clones, so nothing about it changes.
+
+A HAND-WRITTEN SPLIT IS NOT FOLDED, and that is deliberate: `blit_sprite_rows_plain` and
+`blit_sprite_rows_clipped` are two functions in the source, not one GCC specialised, so they get
+their own rows and no rule here joins them. A split half can also have NO row at all — the plain one
+is inlined bodily into its four entry points — in which case its cycles are inside the callers, and
+`blit_sprite_w2`..`blit_sprite_w5` are the rows to read for it.
 
 WHAT THE NUMBERS DO AND DO NOT COVER. `window_cycles` is EVERY profiled region summed — our side
 spends ~1.2% of its window in ROM TOS, and a figure that quietly dropped it would flatter one side
@@ -52,6 +70,12 @@ Use:
     python3 atari/profile.py ours        # builds m2 + play, profiles the reconstruction
     python3 atari/profile.py original    # boots the shipped disks, profiles them
     python3 atari/profile.py compare     # reads both .json files back and diffs them
+    python3 atari/profile.py frames      # OUR per-frame timeline: work, wait, vblanks per frame
+
+    ... --walk    # on any of the four: hold the joystick RIGHT for the whole window, so what is
+                  # measured is a walking player rather than a standing one. The scrolling frame is
+                  # the expensive one and neither side reaches 25 fps in it. Walking runs write
+                  # `-walk` files, so the idle and walking baselines coexist rather than overwrite.
 
 `ours` REBUILDS BOTH MODES EVERY TIME, on purpose: a stale .PRG measured against a fresh ELF's
 symbol map is this directory's documented hazard (atari/README.md, "RUN ONE MODE AT A TIME"), and it
@@ -60,13 +84,22 @@ would show up as a plausible report rather than as an error.
 `ours` and `original` each leave `out/profile-<side>.log` (the whole run, `profile stats` included)
 and `out/profile-<side>.json` (what was parsed out of it), and print their own side's summary.
 `compare` needs both to have been run.
+
+WHAT `frames` IS FOR, AND WHY IT IS NOT THE PROFILER. Every figure above is a WINDOW AVERAGE, and
+`cycles/frame` is the window's cycles divided by the frames in it — so it moves only when the frame
+COUNT does, and a change worth thousands of cycles can leave it to the digit (../STATUS.md, "##
+Performance"). `frames` measures the frames THEMSELVES: two per-arrival breakpoints, one at the
+frame loop's entry and one at the flip, so a frame is WORK (loop -> flip) plus WAIT (flip -> next
+loop) and its length is a whole number of vblanks, which is what fps here actually is. It leaves
+`out/frames-<scenario>.txt`, one `index work wait` row a frame.
 """
 import json
 import re
 import subprocess
 import sys
-from collections import namedtuple
+from collections import Counter, namedtuple
 from pathlib import Path
+from statistics import median
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mkprg                                                 # noqa: E402
@@ -82,6 +115,11 @@ VBL_HZ = 50
 # WHAT A FRAME IS, ON BOTH SIDES: one arrival at the frame loop's entry. The name is also the
 # original's window anchor — `../names.txt` gives its runtime PC — so the two uses cannot drift.
 FRAME_SYMBOL = "game_main_loop"
+# The other end of a frame's WORK: `flip_screen` waits for a vblank and swaps the buffers, so its
+# entry is the moment the frame's computing is done and its waiting begins. Only the `frames` mode
+# needs it, and that mode measures OUR side alone — the same timeline of the shipped binary would be
+# one more boot of the disks and no question here has needed it yet.
+FLIP_SYMBOL = "flip_screen"
 # OUR side's anchor is the frame CAPTURE rather than the loop entry, because it is the one PC whose
 # runtime address the reconstruction reports back (`M2.BIN`'s `capture_pc`) — which is what makes
 # the ELF's link-time offsets placeable at all. See `our_text_base`.
@@ -117,6 +155,40 @@ NAME_COLUMN = 34
 # report's own headings, and a third spelling would be a file one subcommand writes and the other
 # never finds.
 OURS, SHIPPED = "ours", "original"
+# The two modes that read rather than measure, spelled once for the same reason.
+COMPARE, FRAMES = "compare", "frames"
+WALK_FLAG = "--walk"
+# WHAT `--walk` ADDS TO A NAME. The idle and the walking window measure different programs-in-flight
+# and neither is the other's baseline, so they get different files rather than the second
+# overwriting the first — and `compare` refuses to read one against the other (see `load`).
+WALK_SUFFIX = "-walk"
+IDLE, WALKING = "idle", "walk"          # the `frames` scenarios, and its output file's name
+
+# HOLDING THE STICK. The byte the game polls is WB_JOY1_STATE, written by nothing but the IKBD
+# interrupt's handler; `include/wonderboy.h` names it and the bit, and `original.py`'s own fire
+# injections poke the same byte — so the two cannot drift into different bits of different
+# addresses.
+WB_JOY1_STATE = original.wb("JOY1_STATE")
+JOY_RIGHT = 1 << original.wb("JOY1_RIGHT_BIT")
+
+# ---- the per-frame timeline's clock ---------------------------------------------------------
+# Every debugger ENTRY prints this, and it is the only clock the `frames` mode has.
+DEBUGGER_ENTRY_RE = re.compile(r"CPU=\$([0-9a-f]+), VBL=(\d+), FrameCycles=(\d+)")
+# FrameCycles restarts at each vblank, so an absolute cycle is VBL * CYCLES_PER_VBL + FrameCycles.
+# The ST's PAL video frame is 512 cycles x 313 lines = 160,256, a hair under the CPU clock's own
+# fiftieth below, so this conversion runs ~0.1% long on the WHOLE-VBLANK part of a span — ~170
+# cycles, against readings taken to a whole vblank and a work figure that is almost all
+# within-frame cycles. The one constant is used for both directions, so the two agree with each
+# other whatever it is.
+ST_CPU_HZ = 8021247
+CYCLES_PER_VBL = ST_CPU_HZ / VBL_HZ
+# A frame that costs more than this is over its budget: `flip_screen` then waits for the vblank
+# AFTER the one it was aiming at, and the frame takes three rather than two.
+FRAME_BUDGET_VBLS = 2
+# The shim's frames are numbered from 1 (wonderboy_main.c's M2_ANCHOR_FRAMES) and this timeline
+# indexes from 0, so an anchor frame is at index `frame - FIRST_FRAME_NUMBER`.
+FIRST_FRAME_NUMBER = 1
+HEAVY_FRAMES_LISTED = 12
 
 OUT = smoke.OUT
 NAMES_TXT = original.REC.parent / "names.txt"
@@ -288,11 +360,41 @@ def our_text_base(measure_offsets):
     status, log, _ = smoke.run_hatari(prg_for(MEASURE_BUILD), run_vbls=smoke.M2_RUN_VBLS,
                                       log_name=f"profile-{MEASURE_BUILD}.log")
     require_healthy(f"the {MEASURE_BUILD} run that measures our load address", status, log)
+    record = m2_record("our text base cannot be measured")
+    return record["capture_pc"] - symbol_pc(measure_offsets, OURS_ANCHOR_SYMBOL, ELF_NAME)
+
+
+def m2_record(needed_for):
+    """The frame build's record, or a refusal naming what could not be measured without it."""
     record, why = smoke.read_m2()
     if record is None:
-        raise SystemExit(f"FAIL: the frame build left no usable record, so our text base cannot be "
-                         f"measured — {why}")
-    return record["capture_pc"] - symbol_pc(measure_offsets, OURS_ANCHOR_SYMBOL, ELF_NAME)
+        raise SystemExit(f"FAIL: the frame build left no usable record, so {needed_for} — {why}")
+    return record
+
+
+def our_joy1_state():
+    """WHERE THE JOYSTICK BYTE IS IN OUR IMAGE — image-relative, because TOS chose the address.
+
+    The shipped binary runs at the addresses ../names.txt names, so WB_JOY1_STATE is that byte's
+    runtime address there and nothing has to be measured. Ours is the same offset into an image
+    staged wherever the .PRG landed, which only the frame build's own record can place."""
+    placed = m2_record("the joystick byte cannot be placed in our image")
+    return placed["image_base"] + WB_JOY1_STATE
+
+
+def joystick_hold(walk, joy1_state):
+    """THE ONE POKE that holds the stick RIGHT for a whole window — or nothing, on an idle run.
+
+    It belongs in the window's OPENING action file, before `profile on`, and it must be the ONLY
+    one: Hatari stops profiling on every debugger entry, so a breakpoint that re-pokes the byte
+    each frame closes the window with one frame in it (measured — this file's header). One is
+    enough because with no real joystick events the IKBD handler never writes the byte again."""
+    return [original.poke_byte(joy1_state, JOY_RIGHT)] if walk else []
+
+
+def side_name(side, walk):
+    """The side's name in every file it writes and every heading it prints."""
+    return side + WALK_SUFFIX if walk else side
 
 
 def pin_load_base(log, text_base):
@@ -328,26 +430,29 @@ def pin_load_base(log, text_base):
                          f"below, which is not ours")
 
 
-def profile_ours():
+def profile_ours(walk=False):
     """Two boots: one to find out where our text lands, one to profile the frame loop there."""
+    side = side_name(OURS, walk)
     measure_offsets = build(MEASURE_BUILD)
     text_base = our_text_base(measure_offsets)
+    # Off the SAME boot's record the base above came from, so both answers describe one image.
+    hold = joystick_hold(walk, our_joy1_state())
     play_offsets = build(PROFILE_BUILD)
-    symbol_file = write_symbol_file(play_offsets, OUT / f"profile-{OURS}.sym")
-    commands = profile_on_commands(symbol_file, dump_script(OURS), text_base)
-    on = original.action_file(OUT, f"profile-{OURS}-on.ini", *commands)
-    start = OUT / f"profile-{OURS}-start.ini"
+    symbol_file = write_symbol_file(play_offsets, OUT / f"profile-{side}.sym")
+    commands = hold + profile_on_commands(symbol_file, dump_script(side), text_base)
+    on = original.action_file(OUT, f"profile-{side}-on.ini", *commands)
+    start = OUT / f"profile-{side}-start.ini"
     anchor_pc = text_base + symbol_pc(play_offsets, OURS_ANCHOR_SYMBOL, ELF_NAME)
     start.write_text(original.anchor_breakpoint(anchor_pc, original.FIRST_HIT, on) + "\n")
     print(f"our text landed at {text_base:#x}; profiling from {OURS_ANCHOR_SYMBOL} at {anchor_pc:#x}")
     status, log, _ = smoke.run_hatari(prg_for(PROFILE_BUILD), run_vbls=PROFILE_RUN_VBLS,
-                                      parse=start, log_name=log_path(OURS).name)
+                                      parse=start, log_name=log_path(side).name)
     require_healthy("the profiled run of our own build", status, log)
     pin_load_base(log, text_base)
     return log
 
 
-def profile_original():
+def profile_original(walk=False):
     """One boot of the shipped disks, with the window opened at the frame loop's own entry.
 
     The boot script is `original.py`'s, unchanged: the same two fire injections and the same disk
@@ -357,9 +462,13 @@ def profile_original():
 
     There is no load base to pin on this side: the shipped image runs where ../names.txt says it
     does, which `names_txt_symbols` refuses to assume."""
+    side = side_name(SHIPPED, walk)
     symbols = names_txt_symbols()
-    symbol_file = write_symbol_file(symbols, OUT / f"profile-{SHIPPED}.sym")
-    commands = profile_on_commands(symbol_file, dump_script(SHIPPED))
+    symbol_file = write_symbol_file(symbols, OUT / f"profile-{side}.sym")
+    # The stick is poked AFTER the boot script's own fire injections, whose last act is to release
+    # the same byte — this anchor is past both of them.
+    commands = joystick_hold(walk, WB_JOY1_STATE) + profile_on_commands(symbol_file,
+                                                                        dump_script(side))
     anchor_pc = symbol_pc(symbols, FRAME_SYMBOL, NAMES_TXT)
     print(f"profiling the shipped binary from {FRAME_SYMBOL} at {anchor_pc:#x}")
 
@@ -367,9 +476,10 @@ def profile_original():
         stops = [(anchor_pc, original.FIRST_HIT, "PROFON.INI", commands)]
         return original.boot_script(directory, disk2, extra_stops=stops)
 
-    _, log, status = original.run_original(script, "profile", run_vbls=PROFILE_RUN_VBLS)
+    _, log, status = original.run_original(script, side_name("profile", walk),
+                                           run_vbls=PROFILE_RUN_VBLS)
     require_healthy("the profiled run of the shipped disks", status, log)
-    log_path(SHIPPED).write_text(log)
+    log_path(side).write_text(log)
     return log
 
 
@@ -406,6 +516,9 @@ def window_cycles(log):
 # GCC's interprocedural passes rename what they specialise: `-fipa-cp-clone` appends
 # `.constprop.N`, `-fipa-sra` `.isra.N`, and partial inlining `.part.N`, and a routine can carry
 # more than one. All of them name the same source function, so the profile aggregates onto the base.
+# ONLY THOSE SUFFIXES. Two functions the SOURCE wrote apart — `blit_sprite_rows_plain` against
+# `blit_sprite_rows_clipped` — stay two rows, because they are two bodies a reader can change one of;
+# and a body with no row at all was inlined rather than folded (see the docstring above).
 CLONE_SUFFIX_RE = re.compile(r"(?:\.(?:constprop|part|isra)\.\d+)+$")
 
 
@@ -481,24 +594,37 @@ def frame_count(data):
     return data["functions"].get(FRAME_SYMBOL, {}).get("arrivals", 0)
 
 
-def summarise(side, log):
+def summarise(side, walk, log):
     """Turn one run's log into the side's .json. The log itself is written by the run that made it."""
     OUT.mkdir(exist_ok=True)
-    data = {"side": side, "window_vbls": WINDOW_VBLS, "window_cycles": window_cycles(log),
-            "functions": parse_callers(log)}
+    name = side_name(side, walk)
+    data = {"side": name, "walk": walk, "window_vbls": WINDOW_VBLS,
+            "window_cycles": window_cycles(log), "functions": parse_callers(log)}
     if not frame_count(data):
         raise SystemExit(f"FAIL: nothing arrived at {FRAME_SYMBOL} in the window — either the "
                          f"symbols were not loaded (they must precede `profile on`) or the window "
                          f"opened somewhere other than the frame loop")
-    (OUT / f"profile-{side}.json").write_text(json.dumps(data, indent=1, sort_keys=True))
+    (OUT / f"profile-{name}.json").write_text(json.dumps(data, indent=1, sort_keys=True))
     return data
 
 
-def load(side):
-    path = OUT / f"profile-{side}.json"
+def load(side, walk):
+    """One side's .json, refused unless it was measured under the scenario being asked about.
+
+    The scenario is READ OUT OF THE FILE rather than inferred from its name, so a json copied over
+    another, or one written before `--walk` existed, cannot be compared against the other scenario:
+    an idle window against a walking one would print a ratio table of two different games."""
+    name = side_name(side, walk)
+    path = OUT / f"profile-{name}.json"
     if not path.exists():
-        raise SystemExit(f"FAIL: {path} is missing — run `python3 atari/profile.py {side}` first")
-    return json.loads(path.read_text())
+        raise SystemExit(f"FAIL: {path} is missing — run `python3 atari/profile.py {side}"
+                         f"{' ' + WALK_FLAG if walk else ''}` first")
+    data = json.loads(path.read_text())
+    if bool(data.get("walk", False)) != walk:
+        raise SystemExit(f"FAIL: {path} was measured with the joystick "
+                         f"{'idle' if walk else 'held right'} but is being read as the "
+                         f"{'walking' if walk else 'idle'} baseline — re-run that side")
+    return data
 
 
 def print_side(data):
@@ -560,12 +686,12 @@ def print_ratios(ours, theirs):
               f"({row.theirs_calls:>6} calls)   x{row.ratio:.1f}")
 
 
-def compare():
+def compare(walk=False):
     """Both sides' summaries and the ratio table, refusing two windows of different lengths.
 
     Per-frame and per-call figures survive a window change; `frames`, `fps` and `window_cycles` do
     not, and the table prints them side by side as though they were comparable."""
-    ours, theirs = load(OURS), load(SHIPPED)
+    ours, theirs = load(OURS, walk), load(SHIPPED, walk)
     if ours["window_vbls"] != theirs["window_vbls"]:
         raise SystemExit(f"FAIL: the two sides were measured over different windows "
                          f"({ours['window_vbls']} vblanks vs {theirs['window_vbls']}) — re-run both "
@@ -575,15 +701,137 @@ def compare():
     print_ratios(ours, theirs)
 
 
+# ---- the per-frame timeline -----------------------------------------------------------------
+# One frame, split where the computing stops: WORK is the frame loop's entry to the flip's, WAIT is
+# the flip's to the next frame loop's — almost all of it `flip_screen`'s spin on the vblank counter.
+Frame = namedtuple("Frame", "work wait")
+
+
+def trace_breakpoint(pc, action):
+    """A breakpoint that stays armed and PRINTS on every arrival — the timeline's whole clock.
+
+    Deliberately NOT `anchor_breakpoint`'s spelling, whose `:once :quiet` is wrong in both halves
+    here: this one has to fire every frame, and the reading IS the debugger's own entry line
+    (`CPU=$..., VBL=N, FrameCycles=M`), which `:quiet` is precisely what suppresses. `:trace` is not
+    it either — it prints no line at all, only a match count when the run ends."""
+    return f"b pc = ${pc:x} {action}"
+
+
+def frame_events(log, loop_pc, flip_pc):
+    """The run's arrivals at the two PCs as (pc, absolute cycle), in the order they were made."""
+    events = []
+    for pc, vbl, frame_cycles in DEBUGGER_ENTRY_RE.findall(log):
+        pc = int(pc, 16)
+        if pc in (loop_pc, flip_pc):
+            events.append((pc, int(vbl) * CYCLES_PER_VBL + int(frame_cycles)))
+    return events
+
+
+def frame_timings(events, loop_pc, flip_pc):
+    """Every COMPLETE loop -> flip -> loop triple in the stream, as its (work, wait) pair.
+
+    Complete triples only, and that is not fastidiousness: `--run-vbls` stops the machine wherever
+    it happens to be, so the stream ends mid-frame, and a run whose breakpoints were armed before
+    the .PRG was loaded can begin anywhere too. Either half-frame would otherwise be reported as a
+    frame that did no work or no waiting."""
+    wanted = [loop_pc, flip_pc, loop_pc]
+    timings = []
+    at = 0
+    while at + len(wanted) <= len(events):
+        triple = events[at:at + len(wanted)]
+        if [pc for pc, _ in triple] != wanted:
+            at += 1
+            continue
+        (_, loop_at), (_, flip_at), (_, next_loop_at) = triple
+        timings.append(Frame(flip_at - loop_at, next_loop_at - flip_at))
+        # The third event is the NEXT frame's first, so the walk steps by two and not by three.
+        at += 2
+    return timings
+
+
+def frame_vblanks(frame):
+    """How many vblanks a frame took, which is the only length the machine can give it."""
+    return round((frame.work + frame.wait) / CYCLES_PER_VBL)
+
+
+def print_frames(timings, scenario):
+    """The readings a timeline has that a window average does not, and the rows behind them."""
+    if not timings:
+        raise SystemExit(f"FAIL: the {scenario} run produced no complete "
+                         f"{FRAME_SYMBOL} -> {FLIP_SYMBOL} -> {FRAME_SYMBOL} triple — the two "
+                         f"breakpoints never fired in that order, so nothing here is a frame")
+    work = [frame.work for frame in timings]
+    budget = FRAME_BUDGET_VBLS * CYCLES_PER_VBL
+    lengths = Counter(frame_vblanks(frame) for frame in timings)
+    # The frame build PHOTOGRAPHS its anchor frames, and a 32 KB copy is not the game's own work.
+    # It lands in the WAIT rather than the work — the capture is taken after the flip — so a frame
+    # that is eight vblanks long with a two-vblank work is this and not a slow frame.
+    anchors = {frame - FIRST_FRAME_NUMBER for frame in original.anchor_frames()}
+    print(f"\n== OURS, {scenario}: {len(timings)} frames ==")
+    print(f"   work cycles a frame: min {min(work):>9,.0f}   median {median(work):>9,.0f}"
+          f"   max {max(work):>9,.0f}")
+    print("   frame length in vblanks: "
+          + "   ".join(f"{vbls} x {count}" for vbls, count in sorted(lengths.items())))
+    late = sum(1 for frame in timings if frame.work > budget)
+    print(f"   frames whose WORK is over the {FRAME_BUDGET_VBLS}-vblank budget ({budget:,.0f} "
+          f"cycles) — the game itself late: {late}")
+    over = [(index, frame) for index, frame in enumerate(timings)
+            if frame_vblanks(frame) > FRAME_BUDGET_VBLS]
+    print(f"   frames LONGER than {FRAME_BUDGET_VBLS} vblanks: {len(over)}")
+    for index, frame in over[:HEAVY_FRAMES_LISTED]:
+        anchor = "   <- M2 capture anchor: instrumentation, not the game" if index in anchors \
+            else ""
+        print(f"      frame {index:<6} {frame_vblanks(frame):>2} vbls   work {frame.work:>9,.0f}"
+              f"   wait {frame.wait:>9,.0f}{anchor}")
+    if len(over) > HEAVY_FRAMES_LISTED:
+        print(f"      ... and {len(over) - HEAVY_FRAMES_LISTED} more, in the file below")
+    path = OUT / f"frames-{scenario}.txt"
+    path.write_text("".join(f"{index} {frame.work:.0f} {frame.wait:.0f}\n"
+                            for index, frame in enumerate(timings)))
+    print(f"   {path} — one `index work wait` row a frame")
+
+
+def frames_timeline(walk=False):
+    """OUR frames, one by one: boot the play build with a clock on the two PCs and read them off it.
+
+    The same two builds `ours` needs and for the same reason — the frame build reports where TOS put
+    our text, and the play build is the one worth timing."""
+    scenario = WALKING if walk else IDLE
+    measure_offsets = build(MEASURE_BUILD)
+    text_base = our_text_base(measure_offsets)
+    joy1_state = our_joy1_state()
+    play_offsets = build(PROFILE_BUILD)
+    loop_pc = text_base + symbol_pc(play_offsets, FRAME_SYMBOL, ELF_NAME)
+    flip_pc = text_base + symbol_pc(play_offsets, FLIP_SYMBOL, ELF_NAME)
+    # NOTHING IS PROFILED HERE, so the rule the windows live under does not apply: the per-frame
+    # debugger entry is already being made, and re-poking the stick from it costs no emulated cycle
+    # and holds it however the game's own code treats the byte.
+    loop_action = original.action_file(OUT, "FRLOOP.INI", *joystick_hold(walk, joy1_state))
+    flip_action = original.action_file(OUT, "FRFLIP.INI")
+    start = OUT / f"frames-{scenario}-start.ini"
+    start.write_text(trace_breakpoint(loop_pc, loop_action) + "\n"
+                     + trace_breakpoint(flip_pc, flip_action) + "\n")
+    print(f"our text landed at {text_base:#x}; timing {FRAME_SYMBOL} at {loop_pc:#x} against "
+          f"{FLIP_SYMBOL} at {flip_pc:#x}")
+    status, log, _ = smoke.run_hatari(prg_for(PROFILE_BUILD), run_vbls=PROFILE_RUN_VBLS,
+                                      parse=start, log_name=f"frames-{scenario}.log")
+    require_healthy(f"the {scenario} per-frame timeline run", status, log)
+    print_frames(frame_timings(frame_events(log, loop_pc, flip_pc), loop_pc, flip_pc), scenario)
+
+
 def main():
-    mode = sys.argv[1] if len(sys.argv) > 1 else ""
+    args = [argument for argument in sys.argv[1:] if argument != WALK_FLAG]
+    walk = WALK_FLAG in sys.argv[1:]
+    mode = args[0] if len(args) == 1 else ""
     OUT.mkdir(exist_ok=True)
     if mode == OURS:
-        print_side(summarise(OURS, profile_ours()))
+        print_side(summarise(OURS, walk, profile_ours(walk)))
     elif mode == SHIPPED:
-        print_side(summarise(SHIPPED, profile_original()))
-    elif mode == "compare":
-        compare()
+        print_side(summarise(SHIPPED, walk, profile_original(walk)))
+    elif mode == COMPARE:
+        compare(walk)
+    elif mode == FRAMES:
+        frames_timeline(walk)
     else:
         raise SystemExit(__doc__)
 

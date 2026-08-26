@@ -315,9 +315,11 @@ DEF="$DEF -DPROGRAM_BYTES=$IMG_BYTES -DWB_STAGED_AT=$STAGED_AT"
 #
 #   -O3 IS WHAT THE FRAME IS MADE OF: 656.7 K -> 496.1 K cycles a frame, 12.20 -> 16.15 fps, from the
 #   same sources. -fipa-cp-clone specialises a routine per CONSTANT argument, so the sprite blit's
-#   ONE algorithm gets a clone per width table entry (blit_sprite_rows.constprop.N: 153 K -> 74 K a
-#   frame) and the HUD's glyph plotter one per digit width (hud_plot_digit 2,100 -> 833 cycles, the
-#   original's 862) — without the source giving up its one-algorithm shape.
+#   ONE algorithm is assembled once per width table entry (153 K -> 74 K a frame) — today as four
+#   `blit_sprite_rows_clipped.constprop.N` clones plus the unclipped walk inlined bodily into
+#   `blit_sprite_w2`..`blit_sprite_w5`, which is the pair of outcomes the clone check after the link
+#   witnesses — and the HUD's glyph plotter gets one per digit width (hud_plot_digit 2,100 -> 833
+#   cycles, the original's 862), without the source giving up its one-algorithm shape.
 #
 #   AND THE PRICE IS CODE, PAID ON A 720 K FLOPPY. At -O3 everywhere WB.PRG went 107 -> 183 KB and
 #   the boot disk (smoke.py's `build_floppy`, tools/st_build.py) came down to 1,024 bytes free of
@@ -325,7 +327,14 @@ DEF="$DEF -DPROGRAM_BYTES=$IMG_BYTES -DWB_STAGED_AT=$STAGED_AT"
 #   simply would not have built. Buying that headroom back means asking each unit what its -O3 bytes
 #   returned in the frame, which is what the list below records. MEASURED OVER THE WHOLE CHANGE:
 #   WB-play.PRG 180,245 -> 154,384 B, the boot disk 1,024 -> 27,648 bytes free, and the frame
-#   468.6 K -> 484.1 K cycles, 17.10 -> 16.55 fps. Only ~1.8 K of those cycles is WORK; the other
+#   468.6 K -> 484.1 K cycles, 17.10 -> 16.55 fps. THE DISK HAS SPENT SOME OF THAT BACK AND BOUGHT
+#   MORE OF IT BACK SINCE, and the ledger is kept here. Two levers moved it, both measured on the
+#   LINKED ELF by building the tree with and without them (2026-08-26): the sprite blit's clip split
+#   COST 8,848 bytes of .text (146,804 -> 155,652, and src/blit.c's object carries all of it), and
+#   folding ../include/bus.h's six accessors onto os.h's constant-width `os_in_image_fixed` GAVE BACK
+#   8,420 (164,072 -> 155,652, nearly all of it src/behavior.c's). Net today: 26,624 bytes free on the
+#   boot floppy — 18,432 before the second lever landed — with `python3 atari/smoke.py floppy` still
+#   OK. A cluster is 1,024 B, so those two levers are worth ~9 of them each, in opposite directions. Only ~1.8 K of those cycles is WORK; the other
 #   ~14.8 K is flip_screen's two vblank spins (../src/game.c's `wait_for_vbl_ready` and
 #   `wait_for_vbl_tick`, through `sched_poll16`) waiting longer, because the frame already sits on a
 #   vblank boundary and 1.8 K of work tips it past. The units NOT on the list — the frame loop —
@@ -401,11 +410,10 @@ opt_level_for() { in_list "$(unit_key "$1")" "${UNITS_BUILT_AT_O2[*]}" && echo -
 # happened, and that is the failure being watched for.
 #
 # IT IS NOT A COUNT OF WIDTHS, and must not be read as one. How many clones GCC emits, and what it
-# names them, is GCC's business: it clones on the `clipped` axis as well as the width one, it merges
-# bodies that come out identical, and `.constprop.N` is a naming artefact of the pass rather than a
-# per-width guarantee. Today's build happens to carry four. A floor set at today's number would
-# fail on a compiler upgrade that emitted three good clones, and pass on one that emitted four
-# useless ones — so the floor is 1, the honest claim.
+# names them, is GCC's business: it merges bodies that come out identical, and `.constprop.N` is a
+# naming artefact of the pass rather than a per-width guarantee. Today's build happens to carry four.
+# A floor set at today's number would fail on a compiler upgrade that emitted three good clones, and
+# pass on one that emitted four useless ones — so the floor is 1, the honest claim.
 #
 # THE REGRESSION THIS STANDS IN FOR — the frame losing ~79 K cycles because the column loop went
 # back to being runtime-counted — IS ONLY REALLY CAUGHT BY `python3 atari/profile.py ours`. That is
@@ -501,11 +509,14 @@ assert_the_sink_arm_lives_in_one_place() {
 # exist. That is precisely the false-green class the whole project is built to refuse.
 #
 # So the cores are scanned at the SOURCE for calls to anything named os_*, and the allowed set is
-# named here. It is two: `os_in_image` is pure arithmetic over OS_IMAGE_SIZE and correct unchanged,
-# and `os_refused` compiles to an inline identity under -DOS_NO_REFUSAL_TALLY. Anything else is a
-# model with no on-target meaning, and adding one to this list is a decision about what the machine
-# really answers — which is the decision this check exists to force someone to make in the open.
-OS_HELPERS_WITH_AN_ON_TARGET_MEANING="os_in_image|os_refused"
+# named here. It is three: `os_in_image` is pure arithmetic over OS_IMAGE_SIZE and correct unchanged,
+# `os_in_image_fixed` is that same arithmetic collapsed for a compile-time operand width (os.h proves
+# the two equal where it defines them, and ../include/bus.h's six accessors and ../src/blit.c's word
+# guard are its callers), and `os_refused` compiles to an inline identity under -DOS_NO_REFUSAL_TALLY.
+# Anything else is a model with no on-target meaning, and adding one to this list is a decision about
+# what the machine really answers — which is the decision this check exists to force someone to make
+# in the open.
+OS_HELPERS_WITH_AN_ON_TARGET_MEANING="os_in_image|os_in_image_fixed|os_refused"
 
 assert_no_core_calls_a_modelled_os_helper() {
   local FOUND
@@ -617,13 +628,41 @@ ENTRY=$(m68k-elf-nm "$BUILD/wonderboy.elf" | awk '$3=="_start"{print $1}')
 # end of the whole chain — constant propagation specialises blit_sprite_rows per `blit_width`, which
 # gives the column loop a constant trip count to unroll, which gives SRA constant subscripts to put
 # the register file in registers. No clones means none of it happened.
-BLIT_CLONES=$(m68k-elf-nm "$BUILD/wonderboy.elf" | grep -c 'blit_sprite_rows\.constprop' || true)
+# A SUFFIX WILDCARD on the name: the body being specialised is spelt `blit_sprite_rows_body` and
+# reached through `_plain`/`_clipped`, and what is checked is the PASS, not one of those spellings.
+#
+# BOTH CLIP PATHS ARE WITNESSED, and they are witnessed DIFFERENTLY because -O3 specialises them by
+# different routes. blit.c hand-splits the walk into `blit_sprite_rows_plain` (four callers) and
+# `blit_sprite_rows_clipped` (eight), and GCC then INLINES the plain one into all four of its entry
+# points — so it has no out-of-line body at all — while the clipped one comes back as `.constprop.N`
+# clones. A check that greps only for clones therefore says nothing whatever about the plain path:
+# it would stay green while that path de-specialised into one runtime-width body, which is the
+# ~79 K-cycle regression on the side of the split that draws most of the sprites. So:
+#
+#   * the CLIPPED path must show at least BLIT_WIDTH_CLONES_MIN clones, and
+#   * the PLAIN path must show NO out-of-line symbol whatever — every entry point carrying its own
+#     inlined copy is what makes `width` a constant there. An out-of-line `blit_sprite_rows_plain`
+#     means GCC stopped doing that, and whether it replaced it with per-width clones or with one
+#     runtime-width body, the shape this ledger's numbers were measured on has moved and has to be
+#     re-measured (`python3 atari/profile.py ours --walk`) rather than waved through.
+BLIT_CLONES=$(m68k-elf-nm "$BUILD/wonderboy.elf" | grep -c 'blit_sprite_rows_clipped\.constprop' || true)
 [ "$BLIT_CLONES" -ge "$BLIT_WIDTH_CLONES_MIN" ] || {
-  echo "ERROR: the linked ELF has $BLIT_CLONES blit_sprite_rows.constprop clone(s), not"
-  echo "       $BLIT_WIDTH_CLONES_MIN or more — the sprite blit was NOT specialised per width, so"
-  echo "       its column loop is a runtime-counted loop again and the frame has just lost ~79 K"
-  echo "       cycles. The usual cause is blit.c reaching UNITS_BUILT_AT_O2, or -fipa-cp-clone"
-  echo "       going away from -O3; ../STATUS.md's \"## Performance\" has the measurement."
+  echo "ERROR: the linked ELF has $BLIT_CLONES blit_sprite_rows_clipped.constprop clone(s), not"
+  echo "       $BLIT_WIDTH_CLONES_MIN or more — the CLIPPED sprite blit was NOT specialised per"
+  echo "       width, so its column loop is a runtime-counted loop again and the frame has just"
+  echo "       lost ~79 K cycles. The usual cause is blit.c reaching UNITS_BUILT_AT_O2, or"
+  echo "       -fipa-cp-clone going away from -O3; ../STATUS.md's \"## Performance\" has the"
+  echo "       measurement."
+  exit 1; }
+BLIT_PLAIN_BODIES=$(m68k-elf-nm "$BUILD/wonderboy.elf" | grep -c 'blit_sprite_rows_plain' || true)
+[ "$BLIT_PLAIN_BODIES" -eq 0 ] || {
+  echo "ERROR: the linked ELF carries $BLIT_PLAIN_BODIES out-of-line blit_sprite_rows_plain"
+  echo "       symbol(s). The UNCLIPPED sprite blit is supposed to be inlined into blit_sprite_w2"
+  echo "       ..w5 outright, which is what makes its column count a compile-time constant there;"
+  echo "       an out-of-line body means GCC stopped, and the plain path — most of the sprites the"
+  echo "       walking frame draws — is no longer specialised the way this build's numbers were"
+  echo "       measured. Re-measure with \`python3 atari/profile.py ours --walk\` before changing"
+  echo "       this check; ../STATUS.md's \"## Performance\" has the measurement."
   exit 1; }
 
 # NONE of the kit's off-target models may have been linked in. The build leaves their sources out,

@@ -162,12 +162,36 @@ static inline unsigned byte_sub_extend(uint8_t minuend, uint8_t subtrahend) {
  * the postincrement addressing needs, so it is what the target asks for and there is nothing to
  * re-measure. `__m68k__` is what m68k-elf-gcc defines; every other host has no such class and takes
  * the generic barrier, where the run is portable C either way and only the differential's answers
- * matter. */
+ * matter.
+ *
+ * THE SAME TRICK ONE REGISTER CLASS OVER IS A LOOP COUNT, which is why the barrier is parameterised
+ * by its class here rather than spelt a second time in a game file. A count GCC can read off the
+ * source is not a counter to it at all: over a CONSTANT number of iterations it re-derives the
+ * loop's end and spends `moveq #16 / subq.w #1,dN / bne` (14 cycles), or folds the test into the
+ * ENCLOSING loop's as a `dbne` (26). An empty `asm` on the counter hides the literal and the loop
+ * comes back as the `dbf` (10) the original closes with — measured on Wonder Boy's background fill
+ * (src/scroll.c's clear_cells and draw_tiles), whose sixteen scanlines are a literal.
+ *
+ * ITS CLASS IS `+d`, and pinned for the mirror of the reason above: `dbf` counts a DATA register, so
+ * a `+r` the m68k allocator chose to satisfy with an ADDRESS register would hold a register the loop
+ * cannot close on and quietly buy nothing. Off the target there is no such class and no `dbf` to buy
+ * — and `+d` is not even a valid constraint on every host (clang/arm64 rejects it outright) — so
+ * both classes collapse to the generic barrier there.
+ *
+ * ONLY A LOOP WHOSE COUNT IS A CONSTANT needs COUNT_BARRIER: a count that arrives at run time is
+ * already opaque to GCC and already closes with a `dbf`. Both macros emit nothing, on the target and
+ * on the differential's host alike. */
 #ifdef __m68k__
-#define CURSOR_BARRIER_CONSTRAINT "+a"
+#define REGISTER_BARRIER_ADDRESS_CLASS "+a"
+#define REGISTER_BARRIER_DATA_CLASS    "+d"
 #else
-#define CURSOR_BARRIER_CONSTRAINT "+r"
+#define REGISTER_BARRIER_ADDRESS_CLASS "+r"
+#define REGISTER_BARRIER_DATA_CLASS    "+r"
 #endif
-#define CURSOR_BARRIER(cursor) __asm__("" : CURSOR_BARRIER_CONSTRAINT(cursor))
+#define REGISTER_BARRIER(var, constraint) __asm__("" : constraint(var))
+/* A pointer walked by postincrement — the copy run above. */
+#define CURSOR_BARRIER(cursor) REGISTER_BARRIER(cursor, REGISTER_BARRIER_ADDRESS_CLASS)
+/* ...and a loop counter that has to stay a `dbf`. */
+#define COUNT_BARRIER(count)   REGISTER_BARRIER(count, REGISTER_BARRIER_DATA_CLASS)
 
 #endif /* RECREATE_KIT_MACHINE_H */

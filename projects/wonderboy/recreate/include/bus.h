@@ -6,7 +6,7 @@
  * from a run at another load base. Any of them can name an address the loaded image does not have.
  *
  * NINE MODULES SPELL IT NOW, and the count is here rather than in prose because it is the number
- * that decides whether this belongs in the kit. Grep `src/*.c` for any of this header's names:
+ * that decides whether this belongs in the kit. Grep the src/ units for any of this header's names:
  * src/behavior.c 640, src/player.c 160, src/scene.c 66, src/map.c 59, src/game.c 36, src/sound.c 10,
  * src/effects.c 5, src/actor.c 2, src/rng.c 1 (batch 43 phase C, which folded map.c and scene.c
  * whole). Promoting the header to tools/recreate_kit/include/ is registered in ../STATUS.md.
@@ -76,10 +76,17 @@
  * every address but the seven above.
  *
  * MASK BEFORE GUARD, in that order. Guarding first would refuse an address the machine folds back
- * into the image, and the guard is not a substitute for the mask: it is the second half of it. */
+ * into the image, and the guard is not a substitute for the mask: it is the second half of it.
+ *
+ * AND THE GUARD IS THE KIT'S `os_in_image` IN ITS CONSTANT-WIDTH FORM. Every operand width in this
+ * header is a literal 1, 2 or 4, and os.h's `os_in_image_fixed` is that predicate's collapse to one
+ * comparison for exactly that case — the same answer at every address, including the image's last
+ * bytes, and one branch instead of two at each of the ~980 sites these six inline into. GCC does not
+ * make the collapse on its own; src/blit.c measured what the second comparison costs when a guard is
+ * inlined this widely. */
 static inline uint8_t bus_read_byte(const uint8_t *image, uint32_t at) {
     uint32_t address = at & WB_BUS_ADDR_MASK;
-    return os_in_image(address, 1) ? image[address] : (uint8_t)0;
+    return os_in_image_fixed(address, 1) ? image[address] : (uint8_t)0;
 }
 
 /* The same rule at the two wider operand sizes, for src/behavior.c: the per-frame actor walk
@@ -94,12 +101,12 @@ static inline uint8_t bus_read_byte(const uint8_t *image, uint32_t at) {
  * well as inside it. */
 static inline uint16_t bus_read_word(const uint8_t *image, uint32_t at) {
     uint32_t address = at & WB_BUS_ADDR_MASK;
-    return os_in_image(address, 2) ? be16(image + address) : (uint16_t)0;
+    return os_in_image_fixed(address, 2) ? be16(image + address) : (uint16_t)0;
 }
 
 static inline uint32_t bus_read_long(const uint8_t *image, uint32_t at) {
     uint32_t address = at & WB_BUS_ADDR_MASK;
-    return os_in_image(address, 4) ? be32(image + address) : 0u;
+    return os_in_image_fixed(address, 4) ? be32(image + address) : 0u;
 }
 
 /* ...and the WRITE side of the same rule, which is the half a guarded read alone does not buy.
@@ -114,13 +121,13 @@ static inline uint32_t bus_read_long(const uint8_t *image, uint32_t at) {
  * a dropped write cannot happen. Where nothing is proved, its guarded arm is this one exactly. */
 static inline void bus_write_byte(uint8_t *image, uint32_t at, uint8_t value) {
     uint32_t address = at & WB_BUS_ADDR_MASK;
-    if (os_in_image(address, 1))
+    if (os_in_image_fixed(address, 1))
         image[address] = value;
 }
 
 static inline void bus_write_word(uint8_t *image, uint32_t at, uint16_t value) {
     uint32_t address = at & WB_BUS_ADDR_MASK;
-    if (os_in_image(address, 2))
+    if (os_in_image_fixed(address, 2))
         wr16(image + address, value);
 }
 
@@ -130,7 +137,7 @@ static inline void bus_write_word(uint8_t *image, uint32_t at, uint16_t value) {
  * a pair of word writes would land the first half. */
 static inline void bus_write_long(uint8_t *image, uint32_t at, uint32_t value) {
     uint32_t address = at & WB_BUS_ADDR_MASK;
-    if (os_in_image(address, 4))
+    if (os_in_image_fixed(address, 4))
         wr32(image + address, value);
 }
 
@@ -151,7 +158,13 @@ static inline void bus_write_long(uint8_t *image, uint32_t at, uint32_t value) {
  *
  * `field_w` returns a SIGNED word because every caller that does arithmetic on a coordinate wants
  * the 68000's own sign; a caller that wants the raw bits casts.
- */
+ *
+ * ONE GUARD PER RECORD WAS TRIED HERE AND MEASURED NO-GO (2026-08-26): proving a record's whole
+ * reach once and then indexing straight through is semantically sound and gives the -O3 codegen its
+ * intended shape, but both arms inline at every one of the ~800 sites and the frame got slower and
+ * the .PRG bigger. The guards ARE worth real cycles, so the prize stands — it just needs the record
+ * proved at the WALK and a trusted base handed down, which is a change to the callers and not to
+ * this header; ../STATUS.md, "## Performance", owns every figure and the verdict. */
 static inline uint8_t field_b(const uint8_t *image, uint32_t record, uint32_t offset) {
     return bus_read_byte(image, addr_add(record, offset));
 }

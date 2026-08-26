@@ -85,6 +85,23 @@ static uint32_t module_pointer(const uint8_t *image, uint32_t table, uint32_t by
  * object (`m68k-elf-objdump -d`, the immediates in the module's own address range): the tick body
  * carried 76 of them across 341 instructions before this change and carries 10 across 259 after.
  *
+ * ...AND THE CALL THAT CARRIES IT HAS TO GO, for the two passes that run EVERY tick. A parameter is
+ * free to the CALLEE and dear to the CALLER: GCC passes it on the stack, so `module` costs a fourth
+ * `move.l -(sp)` at every call site, on top of the `jsr`/`rts` and the callee's own `movem` pair —
+ * about 190 cycles a call, which is a third of what $18208 costs in total. Measured over 1000
+ * vblanks with atari/profile.py, the base-as-parameter change alone moved the whole VBL tick 8,662
+ * to 8,513 cycles; the same change with $1a5da's and $18208's bodies `always_inline`d into the tick
+ * that calls them — so that they read the a3 the tick ALREADY holds and pass nothing — moved it to
+ * 6,728, and letting GCC choose for $18106 took it to 6,611. Both inlined bodies keep their
+ * out-of-line copy for sound.h's published entry, which is why the inlining costs 754 bytes of text
+ * and not a duplicate of the whole tier.
+ *
+ * IT IS NOT THE RULE FOR THE WHOLE FILE, AND EVERY EXCEPTION WAS BUILT BOTH WAYS. Exactly one
+ * `noinline` survives — music_tick_over_module's, and its own comment says it is a guarantee rather
+ * than a lever — while $18106's row step, the SFX arm and the PRNG carry no attribute at all, each
+ * for a number written down at its definition. The rule is that a claim about inlining in this file
+ * is a measurement or it is not made.
+ *
  * `address` IS A MODULE-REGION ADDRESS — every use below passes a wonderboy.h constant, one of the
  * small functions of a channel number that return one, or such a constant plus an index INTO the
  * table it names — and the subtraction is spelt in uint32_t so that it is the 68000's own
@@ -112,16 +129,40 @@ static uint32_t module_pointer(const uint8_t *image, uint32_t table, uint32_t by
  * index and reads whatever the host has there; PAST the reach, `d16(a3)` cannot name the byte and
  * the addressing mode this whole macro exists to buy is silently not the one GCC emits.
  *
- * The two extremes were re-derived by grepping every SND_BYTE/SND_AT use, 2026-08-25:
- * WB_SND_ENGINE_ENABLED ($17c56) is the lowest address any of them names, and the END of the three
- * SFX channel states ($1aaca) is the top of the highest region any of them reaches into — the
- * highest single use is `sfx_channel_state(2) + WB_SND_DESC_MIXER_BITS`, inside it. */
-_Static_assert(WB_SND_ENGINE_ENABLED >= WB_SND_MODULE_BASE
-               && WB_SND_SFX_STATE + WB_SND_CHANNELS * WB_SND_SFX_STATE_LEN
-                  - WB_SND_MODULE_BASE <= SND_MODULE_D16_REACH,
+ * IT IS THE REGIONS THAT ARE PINNED, NOT JUST THE OUTERMOST ADDRESS. Re-derived by grepping every
+ * SND_BYTE/SND_AT use, 2026-08-26: four regions are reached through an INDEX, and every remaining use
+ * is a lone wonderboy.h constant lying between the first region's base and the last one's top. A
+ * single assertion on the outermost of the four would pass while a region UNDER it moved out of the
+ * window — the SFX states can move above the PRNG state without the PRNG's own top noticing — so
+ * each of the four is asserted at both of its ends.
+ *
+ * Their extents, lowest first: the three music channel records ($17bc6..$17c56), the note-period
+ * table ($1836e..$1842e), the three SFX channel states ($1aa7c..$1aaca) and the PRNG state
+ * ($1aae6..$1aaea). The lowest of the eight ends is WB_SND_MUSIC_CHANNEL_STATE, which is what makes
+ * every scalar between them safe against the base; the highest is the PRNG's top. */
+#define SND_REGION_IN_WINDOW(base, end) \
+    ((base) >= WB_SND_MODULE_BASE && (end) - WB_SND_MODULE_BASE <= SND_MODULE_D16_REACH)
+
+_Static_assert(SND_REGION_IN_WINDOW(WB_SND_MUSIC_CHANNEL_STATE,
+                                    WB_SND_MUSIC_CHANNEL_STATE
+                                    + WB_SND_CHANNELS * WB_SND_MUSIC_CHANNEL_LEN)
+               && SND_REGION_IN_WINDOW(WB_SND_NOTE_PERIOD_TABLE,
+                                       WB_SND_NOTE_PERIOD_TABLE
+                                       + WB_SND_NOTE_PERIOD_ENTRIES * WB_SND_TABLE_ENTRY_LEN)
+               && SND_REGION_IN_WINDOW(WB_SND_SFX_STATE,
+                                       WB_SND_SFX_STATE + WB_SND_CHANNELS * WB_SND_SFX_STATE_LEN)
+               && SND_REGION_IN_WINDOW(WB_SND_PRNG_STATE,
+                                       WB_SND_PRNG_STATE + WB_SND_PRNG_STATE_LEN),
                "an SND_BYTE address has left the module window: below WB_SND_MODULE_BASE the "
                "macro's subtraction wraps into a 4 GB index off the host image, and past the d16 "
                "reach the `d16(a3)` addressing mode it exists to buy is not what GCC can emit");
+
+/* `lea $1738c(pc),a3` — the base itself, made from an image. THE FILE'S ONLY SPELLING OF IT: every
+ * `module` below either arrives as a parameter or comes from here, so grepping this name finds the
+ * complete set of places the base is manufactured (THE PUBLISHED DOORS, further down). */
+static uint8_t *module_base(uint8_t *image) {
+    return image + WB_SND_MODULE_BASE;
+}
 
 /* Arm the channel's SFX state from descriptor `effect_id`, exactly as one of $1a48a's three arms
  * does. `channel` is 0/1/2, not the caller's d1 — the mapping is snd_trigger_effect's. */
@@ -256,25 +297,66 @@ void snd_start_fadeout(uint8_t *image) {
 /* `roxl.w <ea>` — a word in memory rotated left THROUGH the X flag. Returns the bit that left the
  * top, which is the X the next one takes. Spelt as a helper because the order of the module's two
  * calls is the whole mechanism: the LOW word first, so its top bit feeds the high word's bottom. */
-static unsigned roxl_word(uint8_t *image, uint32_t at, unsigned extend) {
-    uint16_t value = be16(image + at);
-    wr16(image + at, (uint16_t)((value << 1) | extend));
+static unsigned roxl_word(uint8_t *at, unsigned extend) {
+    uint16_t value = be16(at);
+    wr16(at, (uint16_t)((value << 1) | extend));
     return value >> 15;
 }
 
-uint8_t snd_prng_step(uint8_t *image) {
+/* $1aae2's body, over the module base — see SND_BYTE for why the base is a parameter everywhere
+ * below and a local only in the published entries.
+ *
+ * NO ATTRIBUTE EITHER, AND HERE THE MEASUREMENT IS THAT THERE IS NOTHING TO DECIDE: at -O3 GCC
+ * already inlines this into both of its call sites, so the linked ELF holds no
+ * `prng_step_over_module` symbol at all, and adding `always_inline` leaves the .text byte for byte
+ * the same size (162,528 either way) with `vbl_handler` unmoved at 6,728. Twelve instructions with
+ * two callers is below every threshold the pass has. */
+static uint8_t prng_step_over_module(uint8_t *module) {
     /* `andi.b #$48 / addi.b #$38 / lsl.b #2` — the mask keeps bits 3 and 6 and the bias is what
      * carries bit 3 into bit 6, so the bit the shift pushes into X is bit 3 XOR bit 6. */
-    uint8_t taps = (uint8_t)((image[WB_SND_PRNG_STATE] & WB_SND_PRNG_TAP_MASK)
+    uint8_t taps = (uint8_t)((SND_BYTE(module, WB_SND_PRNG_STATE) & WB_SND_PRNG_TAP_MASK)
                              + WB_SND_PRNG_TAP_BIAS);
     unsigned extend = (taps >> WB_SND_PRNG_FEEDBACK_BIT) & 1u;
 
-    extend = roxl_word(image, WB_SND_PRNG_STATE + WB_SND_PRNG_LOW_WORD, extend);
-    roxl_word(image, WB_SND_PRNG_STATE, extend);
+    extend = roxl_word(SND_AT(module, WB_SND_PRNG_STATE + WB_SND_PRNG_LOW_WORD), extend);
+    roxl_word(SND_AT(module, WB_SND_PRNG_STATE), extend);
 
     /* `move.b $1aae6(pc),d0` again — the state's NEW top byte, and a byte move, so the rest of d0
      * is the caller's (sound.h). */
-    return image[WB_SND_PRNG_STATE];
+    return SND_BYTE(module, WB_SND_PRNG_STATE);
+}
+
+/* THE FIVE PUBLISHED DOORS of the tick tier, and all sound.h promises: an `image` and an ADDRESS,
+ * which is what the original's caller holds and what a differential case supplies. Each makes the
+ * module base — and, for the two that are handed a record, the pointer — that its body wants, and
+ * `module_base` above is what they make it with, so its call sites ARE this list:
+ * snd_prng_step (here), snd_sfx_tick, snd_channel_period_and_volume, snd_channel_step and
+ * snd_music_tick_body at the bottom of the file.
+ *
+ * FOUR OF THE FIVE ARE DEAD ON TARGET — the tick reaches those bodies directly, and grep finds no
+ * caller of them outside this file and test_sound.py — so the copy of an `always_inline` body that
+ * lands in one of the four addresses the module absolutely again, through the local base SND_BYTE's
+ * banner describes. That costs the harness a few cycles it does not measure and the frame nothing at
+ * all. The fifth, snd_music_tick_body, is the one the game calls: src/game.c reaches it through
+ * snd_music_tick every vertical blank. */
+uint8_t snd_prng_step(uint8_t *image) {
+    return prng_step_over_module(module_base(image));
+}
+
+/* `addi.b #imm,Dn` — the wrapped byte sum, and the CARRY OUT the `bcc`/`bcs` after it reads. Both
+ * of the portamento's octave steps are this instruction, and the second is a loop condition; so is
+ * the `add.b`/`addx.b` pair the SFX pitch reload below spells.
+ *
+ * THE CARRY IS READ OFF THE WRAP, not off bit 8 of a wider sum. A byte add carries exactly when its
+ * result lands below the value it started from, so the two spellings are the same predicate — but
+ * this one leaves the arithmetic a byte wide, which is what the 68000 does. The wider form makes
+ * GCC widen both operands and shift bit 8 back down (two `andi.l`, an `add.l` and an `lsr.l #8` —
+ * 64 cycles to recover a flag the add itself set), and the portamento's octave loop below pays that
+ * once per iteration. */
+static uint8_t add_byte(uint8_t value, uint8_t addend, unsigned *carry) {
+    uint8_t sum = (uint8_t)(value + addend);
+    *carry = sum < value;
+    return sum;
 }
 
 /* ---- $1a5da: the SFX tick, one arm per channel -------------------------------------------------
@@ -289,15 +371,21 @@ uint8_t snd_prng_step(uint8_t *image) {
 /* $1a66a..$1a683 — the constant pitch slide, applied only on the ticks the secondary counter lets
  * through. `tst.b / beq / bpl`: zero does nothing, a POSITIVE direction subtracts and a negative one
  * adds, so a descriptor byte of $ff slides the period UP. */
-static void sfx_slide_period(uint8_t *image, uint32_t state, uint32_t mix_period) {
-    int8_t direction = (int8_t)image[state + WB_SND_DESC_SLIDE_DIRECTION];
+static void sfx_slide_period(uint8_t *state, uint8_t *mix_period) {
+    int8_t direction = (int8_t)state[WB_SND_DESC_SLIDE_DIRECTION];
     if (direction == 0)
         return;
 
-    uint16_t amount = be16(image + state + WB_SND_DESC_SLIDE_AMOUNT);
-    uint16_t period = be16(image + mix_period);
-    wr16(image + mix_period, (uint16_t)(direction < 0 ? period + amount : period - amount));
+    uint16_t amount = be16(state + WB_SND_DESC_SLIDE_AMOUNT);
+    uint16_t period = be16(mix_period);
+    wr16(mix_period, (uint16_t)(direction < 0 ? period + amount : period - amount));
 }
+
+/* The other half of the mix period word wonderboy.h's WB_SND_MIX_PERIOD_LOW names. A big-endian
+ * word's high byte is its first, so this is 0 — worth a name only because it is the byte the `addx`
+ * below lands in, and a bare `mix_period[0]` there reads as "the word" rather than as "the half the
+ * carry goes into". */
+#define WB_SND_MIX_PERIOD_HIGH    0u
 
 /* $1a62e..$1a654 — rewrite the channel's mix period from the descriptor's own tone period plus a
  * delta byte, which is the PRNG's when the descriptor asks for it (ids 12, 20 and 21 do).
@@ -305,18 +393,23 @@ static void sfx_slide_period(uint8_t *image, uint32_t state, uint32_t mix_period
  * THE DELTA IS ADDED TO BOTH HALVES. `add.b d0,lo` then `addx.b d0,hi` puts the SAME byte into the
  * high half as well, carry included, so the effect on the 16-bit period is `+ delta * 257` and not
  * `+ delta`. With the PRNG flag clear the delta is 0 and the period is copied verbatim. */
-static void sfx_reload_period(uint8_t *image, uint32_t state, uint32_t mix_period,
+static void sfx_reload_period(uint8_t *module, uint8_t *state, uint8_t *mix_period,
                               unsigned channel) {
-    image[state + WB_SND_DESC_SLIDE_COUNT]--;
-    image[state + WB_SND_STATE_PERIOD_COUNT] = image[state + WB_SND_DESC_PERIOD_STEP];
+    state[WB_SND_DESC_SLIDE_COUNT]--;
+    state[WB_SND_STATE_PERIOD_COUNT] = state[WB_SND_DESC_PERIOD_STEP];
 
-    uint8_t delta = image[state + WB_SND_DESC_USE_PRNG];
+    uint8_t delta = state[WB_SND_DESC_USE_PRNG];
     if (delta != 0)
-        delta = image[WB_SND_PRNG_STATE + channel];
+        delta = SND_BYTE(module, WB_SND_PRNG_STATE + channel);
 
-    unsigned low = (unsigned)image[state + WB_SND_DESC_TONE_PERIOD + WB_SND_MIX_PERIOD_LOW] + delta;
-    image[mix_period + WB_SND_MIX_PERIOD_LOW] = (uint8_t)low;
-    image[mix_period] = (uint8_t)(image[state + WB_SND_DESC_TONE_PERIOD] + delta + (low >> 8));
+    /* `add.b d0,lo / addx.b d0,hi` — the X the second add takes is the FIRST one's carry out of the
+     * byte, which is what `add_byte` hands back; a 16-bit sum shifted down said the same thing and
+     * made GCC spend a 32-bit add and shift per reload to say it. */
+    unsigned carry;
+    mix_period[WB_SND_MIX_PERIOD_LOW] =
+        add_byte(state[WB_SND_DESC_TONE_PERIOD + WB_SND_MIX_PERIOD_LOW], delta, &carry);
+    mix_period[WB_SND_MIX_PERIOD_HIGH] =
+        (uint8_t)(state[WB_SND_DESC_TONE_PERIOD + WB_SND_MIX_PERIOD_HIGH] + delta + carry);
 }
 
 /* $1a61c..$1a690 — everything between the duration decrement and the volume stream: the pitch
@@ -325,84 +418,105 @@ static void sfx_reload_period(uint8_t *image, uint32_t state, uint32_t mix_perio
  * THE ONE EARLY EXIT ($1a62c's `beq`) SKIPS ALL OF IT, countdown included — a channel whose period
  * countdown has expired with neither a sustain flag nor a slide step left goes straight to the
  * volume stream. */
-static void sfx_step_period(uint8_t *image, uint32_t state, uint32_t mix_period, unsigned channel) {
-    if (image[state + WB_SND_STATE_PERIOD_COUNT] == 0) {
-        if (image[state + WB_SND_DESC_SUSTAIN] == 0 && image[state + WB_SND_DESC_SLIDE_COUNT] == 0)
+static void sfx_step_period(uint8_t *module, uint8_t *state, uint8_t *mix_period,
+                            unsigned channel) {
+    if (state[WB_SND_STATE_PERIOD_COUNT] == 0) {
+        if (state[WB_SND_DESC_SUSTAIN] == 0 && state[WB_SND_DESC_SLIDE_COUNT] == 0)
             return;
-        sfx_reload_period(image, state, mix_period, channel);
+        sfx_reload_period(module, state, mix_period, channel);
     }
-    image[state + WB_SND_STATE_PERIOD_COUNT]--;
+    state[WB_SND_STATE_PERIOD_COUNT]--;
 
     /* $1a65a — a reload of 0 disables the counter entirely and the slide then runs every tick. */
-    uint8_t second_reload = image[state + WB_SND_DESC_SECOND_RELOAD];
+    uint8_t second_reload = state[WB_SND_DESC_SECOND_RELOAD];
     int slide_due = 1;
     if (second_reload != 0) {
-        slide_due = (--image[state + WB_SND_STATE_SECOND_COUNT] == 0);
+        slide_due = (--state[WB_SND_STATE_SECOND_COUNT] == 0);
         if (slide_due)
-            image[state + WB_SND_STATE_SECOND_COUNT] = second_reload;
+            state[WB_SND_STATE_SECOND_COUNT] = second_reload;
     }
     if (slide_due)
-        sfx_slide_period(image, state, mix_period);
+        sfx_slide_period(state, mix_period);
 
     /* $1a684 — the noise period is the LOW byte of whichever channel wrote it last, and all three
      * arms write the one shared byte (WB_SND_SFX_MIX_NOISE). */
-    if (!(image[state + WB_SND_DESC_MIXER_BITS] & WB_SND_MIXER_NOISE_OFF))
-        image[WB_SND_SFX_MIX_NOISE] = image[mix_period + WB_SND_MIX_PERIOD_LOW];
+    if (!(state[WB_SND_DESC_MIXER_BITS] & WB_SND_MIXER_NOISE_OFF))
+        SND_BYTE(module, WB_SND_SFX_MIX_NOISE) = mix_period[WB_SND_MIX_PERIOD_LOW];
 }
 
 /* $1a692..$1a6ba — one step of the channel's volume stream, taken when the volume countdown runs
  * out. A byte from $00 to $7f is the volume; $80 loops back to the stream's base and takes the byte
  * there; ANY OTHER negative byte holds — the cursor is not advanced and the volume is not written,
  * so nothing at all is stored. */
-static void sfx_step_volume(uint8_t *image, uint32_t state, unsigned channel) {
-    if (--image[state + WB_SND_STATE_VOLUME_COUNT] != 0)
+static void sfx_step_volume(uint8_t *image, uint8_t *module, uint8_t *state, unsigned channel) {
+    if (--state[WB_SND_STATE_VOLUME_COUNT] != 0)
         return;
-    image[state + WB_SND_STATE_VOLUME_COUNT] = image[state + WB_SND_DESC_VOLUME_STEP];
+    state[WB_SND_STATE_VOLUME_COUNT] = state[WB_SND_DESC_VOLUME_STEP];
 
-    uint32_t cursor = be32(image + state + WB_SND_STATE_STREAM_CURSOR);
+    uint32_t cursor = be32(state + WB_SND_STATE_STREAM_CURSOR);
     uint8_t value = bus_read_byte(image, cursor);
     cursor = addr_add(cursor, 1);
     if ((int8_t)value < 0) {
         if (value != WB_SND_VOLUME_STREAM_LOOP)
             return;
-        cursor = be32(image + state + WB_SND_STATE_STREAM_BASE);
+        cursor = be32(state + WB_SND_STATE_STREAM_BASE);
         value = bus_read_byte(image, cursor);
         cursor = addr_add(cursor, 1);
     }
-    wr32(image + state + WB_SND_STATE_STREAM_CURSOR, cursor);
-    image[WB_SND_SFX_MIX_VOLUME + channel] = value;
+    wr32(state + WB_SND_STATE_STREAM_CURSOR, cursor);
+    SND_BYTE(module, WB_SND_SFX_MIX_VOLUME + channel) = value;
 }
 
-/* One arm. `channel` is 0/1/2 and every block it addresses is a base plus that channel's stride. */
-static void sfx_tick_channel(uint8_t *image, unsigned channel) {
-    uint32_t state = sfx_channel_state(channel);
-    uint32_t mix_period = sfx_mix_period(channel);
+/* One arm. `channel` is 0/1/2 and every block it addresses is a base plus that channel's stride.
+ *
+ * IT STAYS OUT OF LINE INSIDE AN `always_inline` PATH, which is not the inconsistency it looks. The
+ * three `jsr`s to it in the -O3 tick are the only calls left in there, and they were tried the other
+ * way: `always_inline` here costs 204 bytes of text AND 151 cycles a tick (162,528 -> 162,732 B,
+ * `vbl_handler` 6,728 -> 6,879, idle window, 1000 vblanks). SLOWER, because the two things pull
+ * opposite ways — three copies of a 450-byte body swell the tick that runs on EVERY vblank, while
+ * the body itself runs on hardly any of them: 51 arrivals in 999 ticks even with the player walking
+ * and an effect firing, since `sfx_tick_over_module`'s `bmi` gate turns the whole pass away
+ * whenever channel A is idle. A call that is not made costs nothing; the code around it does. */
+static void sfx_tick_channel(uint8_t *image, uint8_t *module, unsigned channel) {
+    uint8_t *state = SND_AT(module, sfx_channel_state(channel));
+    uint8_t *mix_period = SND_AT(module, sfx_mix_period(channel));
 
     /* $1a602 — the effect is over only when BOTH its duration and its sustain flag have run out,
      * and then the channel disarms itself and silences the module's own PSG volume shadow (NOT the
      * SFX mix volume: the store is a3+4046, which is WB_SND_PSG_SHADOW + WB_PSG_REG_VOLUME_A). */
-    if (image[state + WB_SND_DESC_DURATION] == 0 && image[state + WB_SND_DESC_SUSTAIN] == 0) {
-        image[WB_SND_SFX_ACTIVE_FLAGS + channel] = WB_SND_SFX_INACTIVE;
-        image[WB_SND_PSG_SHADOW + WB_PSG_REG_VOLUME_A + channel] = WB_PSG_VOLUME_SILENT;
+    if (state[WB_SND_DESC_DURATION] == 0 && state[WB_SND_DESC_SUSTAIN] == 0) {
+        SND_BYTE(module, WB_SND_SFX_ACTIVE_FLAGS + channel) = WB_SND_SFX_INACTIVE;
+        SND_BYTE(module, WB_SND_PSG_SHADOW + WB_PSG_REG_VOLUME_A + channel) = WB_PSG_VOLUME_SILENT;
         return;
     }
-    image[state + WB_SND_DESC_DURATION]--;
+    state[WB_SND_DESC_DURATION]--;
 
-    sfx_step_period(image, state, mix_period, channel);
-    sfx_step_volume(image, state, channel);
+    sfx_step_period(module, state, mix_period, channel);
+    sfx_step_volume(image, module, state, channel);
 }
 
-void snd_sfx_tick(uint8_t *image) {
-    snd_prng_step(image);
+/* $1a5da's body over the module base — the tick tier's door, called by music_tick_over_module with
+ * the a3 it already holds so that none of the module globals above needs an absolute address.
+ *
+ * INLINED INTO THAT CALLER RATHER THAN CALLED, because it runs on EVERY tick: see SND_BYTE's second
+ * paragraph for the ~190 cycles a call site costs and the 8,513-to-6,728 that removing this one and
+ * $18208's bought. snd_sfx_tick below keeps the out-of-line copy the harness binds. */
+static inline __attribute__((always_inline))
+void sfx_tick_over_module(uint8_t *image, uint8_t *module) {
+    prng_step_over_module(module);
 
     /* `tst.b 2254(a3) / bmi` — channel A's flag alone can end the WHOLE tick, before B and C are
      * even looked at. Below that the three are one test each. */
-    if ((int8_t)image[WB_SND_SFX_ACTIVE_FLAGS + WB_SND_CHANNEL_A] < 0)
+    if ((int8_t)SND_BYTE(module, WB_SND_SFX_ACTIVE_FLAGS + WB_SND_CHANNEL_A) < 0)
         return;
 
     for (unsigned channel = 0; channel < WB_SND_CHANNELS; channel++)
-        if (image[WB_SND_SFX_ACTIVE_FLAGS + channel] != 0)
-            sfx_tick_channel(image, channel);
+        if (SND_BYTE(module, WB_SND_SFX_ACTIVE_FLAGS + channel) != 0)
+            sfx_tick_channel(image, module, channel);
+}
+
+void snd_sfx_tick(uint8_t *image) {
+    sfx_tick_over_module(image, module_base(image));
 }
 
 /* ---- $18208: one music channel's period and volume ----------------------------------------------
@@ -419,27 +533,13 @@ void snd_sfx_tick(uint8_t *image) {
  * own globals.
  *
  * THE THREE BASES ARE ALWAYS IN THIS ORDER — `image`, then `module`, then `channel`, then whatever
- * else the function takes — and each function takes the prefix of them it actually reads through.
- * They are all `uint8_t *`, so nothing in the language tells two of them apart at a call site and
- * the one order is what a reviewer has to check against; the convention is stated here rather than
- * left to be inferred from whichever neighbour is read first. Checked over the whole file,
- * 2026-08-25: forty-five definitions, every one a prefix of that order.
+ * else the function takes — and each function takes the ones it actually reads through, in that
+ * relative order. They are all `uint8_t *`, so nothing in the language tells two of them apart at a
+ * call site and the one order is what a reviewer has to check against; the convention is stated here
+ * rather than left to be inferred from whichever neighbour is read first. Re-checked over the whole
+ * file 2026-08-26, after the SFX tick and the pattern stepper took the module base and the record
+ * pointer too: sixty-one definitions, and no two of the three ever appear the other way round.
  */
-
-/* `addi.b #imm,Dn` — the wrapped byte sum, and the CARRY OUT the `bcc`/`bcs` after it reads. Both
- * of the portamento's octave steps are this instruction, and the second is a loop condition.
- *
- * THE CARRY IS READ OFF THE WRAP, not off bit 8 of a wider sum. A byte add carries exactly when its
- * result lands below the value it started from, so the two spellings are the same predicate — but
- * this one leaves the arithmetic a byte wide, which is what the 68000 does. The wider form makes
- * GCC widen both operands and shift bit 8 back down (two `andi.l`, an `add.l` and an `lsr.l #8` —
- * 64 cycles to recover a flag the add itself set), and the portamento's octave loop below pays that
- * once per iteration. */
-static uint8_t add_byte(uint8_t value, uint8_t addend, unsigned *carry) {
-    uint8_t sum = (uint8_t)(value + addend);
-    *carry = sum < value;
-    return sum;
-}
 
 /* $18214..$18236 — one step of the volume envelope.
  *
@@ -579,16 +679,18 @@ static void publish_mixer_and_noise(uint8_t *module, uint8_t *channel, uint8_t f
     SND_BYTE(module, WB_SND_PSG_SHADOW + WB_PSG_REG_MIXER) = merged;
 }
 
-void snd_channel_period_and_volume(uint8_t *image, uint32_t record, snd_channel_mix *mix) {
-    uint8_t *channel = image + record;                    /* a0 — see the tier banner above */
-    /* The base every MODULE global below is reached through, so that a read of the module's own
-     * state reads differently here from a read of the record — which is the whole point of SND_BYTE.
-     * It buys no cycles in this function and is not meant to: `module` is a LOCAL here, and
-     * `image + WB_SND_MODULE_BASE + (ADDRESS - WB_SND_MODULE_BASE)` folds straight back to the
-     * absolute address it started as (measured — the object is byte-identical either way). Only a
-     * base that arrives as an opaque PARAMETER stays in a3, and this entry cannot have one: its
-     * signature is the address-taking one sound.h publishes and test_sound.py binds. */
-    uint8_t *module = image + WB_SND_MODULE_BASE;
+/* $18208's body over the module base. The base is a PARAMETER here for the reason SND_BYTE gives:
+ * written as a local it folds straight back into an absolute address per access, and this pass makes
+ * eleven module-global accesses three times a tick. sound.h's published entry below is the door that
+ * makes the base (see THE FIVE PUBLISHED DOORS above), and the tick calls this one with the a3 it
+ * already holds.
+ *
+ * AND IT IS INLINED INTO THAT CALLER for sfx_tick_over_module's reason, which lands three times over
+ * here: publish_channels runs this pass once per channel on every tick, so the call sequence alone
+ * was ~570 of the tick's cycles. */
+static inline __attribute__((always_inline))
+void channel_period_and_volume_over_module(uint8_t *image, uint8_t *module, uint8_t *channel,
+                                           snd_channel_mix *mix) {
     uint8_t flags = channel[WB_SND_CH_FLAGS];             /* d7 */
 
     if (flags & WB_SND_CH_FLAG_ENVELOPE)
@@ -625,6 +727,10 @@ void snd_channel_period_and_volume(uint8_t *image, uint32_t record, snd_channel_
     mix->volume = set_low_byte(scratch, channel[WB_SND_CH_VOLUME]);
 }
 
+void snd_channel_period_and_volume(uint8_t *image, uint32_t record, snd_channel_mix *mix) {
+    channel_period_and_volume_over_module(image, module_base(image), image + record, mix);
+}
+
 /* ---- $18106 and $17fd4..$18105: the pattern stepper and its twenty-four opcodes -----------------
  *
  * ONE ROUTINE IN TWO PIECES. $18106's last instruction is the `jmp (a3,a2.w)` that enters a handler,
@@ -654,67 +760,67 @@ typedef enum {
 /* $18188 — the OTHER path out of the stepper, taken while the row is still running: with the slide
  * flag set the current note walks by one, up or down as bit 7 says, and with it clear the routine
  * returns having done nothing but spend the countdown. */
-static void apply_pitch_slide(uint8_t *image, uint32_t record) {
-    uint8_t flags = image[record + WB_SND_CH_FLAGS];
+static void apply_pitch_slide(uint8_t *channel) {
+    uint8_t flags = channel[WB_SND_CH_FLAGS];
     if (!(flags & WB_SND_CH_FLAG_SLIDE))
         return;
     if (flags & WB_SND_CH_FLAG_SLIDE_UP)
-        image[record + WB_SND_CH_NOTE]++;
+        channel[WB_SND_CH_NOTE]++;
     else
-        image[record + WB_SND_CH_NOTE]--;
+        channel[WB_SND_CH_NOTE]--;
 }
 
 /* $1811e — a note byte. It also RESTARTS THE INSTRUMENT: the envelope cursor goes back to its base
  * and the stream's first byte becomes both the held value and this tick's volume, which is why a
  * channel that has run its envelope out sounds again on the next note. */
-static void start_note(uint8_t *image, uint32_t record, uint8_t note) {
-    image[record + WB_SND_CH_NOTE] = note;
+static void start_note(uint8_t *image, uint8_t *module, uint8_t *channel, uint8_t note) {
+    channel[WB_SND_CH_NOTE] = note;
 
     /* $18122 — opcodes $8b/$8c arm this and $8a disarms it: with it set the NOISE period tracks the
      * note the channel is playing. */
-    if (image[record + WB_SND_CH_NOISE_TRACKS_NOTE] != 0)
-        image[WB_SND_NOISE_PERIOD_BASE] = note;
+    if (channel[WB_SND_CH_NOISE_TRACKS_NOTE] != 0)
+        SND_BYTE(module, WB_SND_NOISE_PERIOD_BASE) = note;
 
-    uint32_t envelope = be32(image + record + WB_SND_CH_ENVELOPE_BASE);
-    wr32(image + record + WB_SND_CH_ENVELOPE_CURSOR, envelope);
+    uint32_t envelope = be32(channel + WB_SND_CH_ENVELOPE_BASE);
+    wr32(channel + WB_SND_CH_ENVELOPE_CURSOR, envelope);
     /* The original reads `(a2)` twice, once into +40 and once into +30. The only store between the
      * two is the cursor's, so both reads see the same byte and one fetch says the same thing. */
     uint8_t first = bus_read_byte(image, envelope);
-    image[record + WB_SND_CH_ENVELOPE_LAST] = first;
-    image[record + WB_SND_CH_VOLUME] = first;
-    image[record + WB_SND_CH_ENVELOPE_COUNT] = image[record + WB_SND_CH_ENVELOPE_SPEED];
-    image[record + WB_SND_CH_FLAGS] |= WB_SND_CH_FLAG_ENVELOPE;
+    channel[WB_SND_CH_ENVELOPE_LAST] = first;
+    channel[WB_SND_CH_VOLUME] = first;
+    channel[WB_SND_CH_ENVELOPE_COUNT] = channel[WB_SND_CH_ENVELOPE_SPEED];
+    channel[WB_SND_CH_FLAGS] |= WB_SND_CH_FLAG_ENVELOPE;
 }
 
 /* $18152 — the row's last act. A channel that has ASKED to yield (+45 non-zero, opcode $90) is handed
  * over only if every ARMED SFX channel has its noise turned off, and the ladder leaves the whole
  * routine the moment one does not: three `tst`/`btst` pairs whose only shared exit is the `rts`. */
-static void take_yield_if_no_sfx_noise(uint8_t *image, uint32_t record) {
-    if (image[record + WB_SND_CH_YIELD] == 0)
+static void take_yield_if_no_sfx_noise(uint8_t *module, uint8_t *channel) {
+    if (channel[WB_SND_CH_YIELD] == 0)
         return;
-    for (unsigned channel = 0; channel < WB_SND_CHANNELS; channel++) {
-        uint32_t state = sfx_channel_state(channel);
-        if (image[WB_SND_SFX_ACTIVE_FLAGS + channel] != 0
-            && !(image[state + WB_SND_DESC_MIXER_BITS] & WB_SND_MIXER_NOISE_OFF))
+    for (unsigned sfx = 0; sfx < WB_SND_CHANNELS; sfx++) {
+        uint8_t *state = SND_AT(module, sfx_channel_state(sfx));
+        if (SND_BYTE(module, WB_SND_SFX_ACTIVE_FLAGS + sfx) != 0
+            && !(state[WB_SND_DESC_MIXER_BITS] & WB_SND_MIXER_NOISE_OFF))
             return;
     }
-    image[record + WB_SND_CH_YIELD] = WB_SND_CH_YIELD_ASKED;
+    channel[WB_SND_CH_YIELD] = WB_SND_CH_YIELD_ASKED;
 }
 
 /* $18148 — reload the countdown, store the cursor the walk stopped at, and try the hand-over. */
-static void end_row(uint8_t *image, uint32_t record, uint32_t cursor) {
-    image[record + WB_SND_CH_DURATION] = image[record + WB_SND_CH_DURATION_RELOAD];
-    wr32(image + record + WB_SND_CH_PATTERN_CURSOR, cursor);
-    take_yield_if_no_sfx_noise(image, record);
+static void end_row(uint8_t *module, uint8_t *channel, uint32_t cursor) {
+    channel[WB_SND_CH_DURATION] = channel[WB_SND_CH_DURATION_RELOAD];
+    wr32(channel + WB_SND_CH_PATTERN_CURSOR, cursor);
+    take_yield_if_no_sfx_noise(module, channel);
 }
 
 /* $1801e — opcode $87, the sequence walk. The table is a run of a3-relative WORD pattern offsets
  * ending in 0000, and the terminator RESTARTS it at entry 0 with the index left at 2 — so every song
  * loops for ever unless a pattern executes $8e. The restarted read takes entry 0 itself, because the
  * reset reloads the table offset WITHOUT the index it had just added to it. */
-static uint32_t next_pattern(uint8_t *image, uint32_t record) {
-    uint16_t table = be16(image + record + WB_SND_CH_SEQUENCE_OFFSET);
-    uint16_t index = be16(image + record + WB_SND_CH_SEQUENCE_INDEX);
+static uint32_t next_pattern(uint8_t *image, uint8_t *channel) {
+    uint16_t table = be16(channel + WB_SND_CH_SEQUENCE_OFFSET);
+    uint16_t index = be16(channel + WB_SND_CH_SEQUENCE_INDEX);
     uint16_t entry = (uint16_t)(table + index);    /* `adda.w d0,a2`, then read back as `a2.w` */
     uint16_t next_index = (uint16_t)(index + WB_SND_TABLE_ENTRY_LEN);
 
@@ -726,7 +832,7 @@ static uint32_t next_pattern(uint8_t *image, uint32_t record) {
      * then does `move.w d0,10(a0)` at $1803c store the new index — so a sequence table that names the
      * index field itself reads the OLD index, not the one this call is about to leave. */
     uint32_t pattern = module_address(be16(image + module_address(entry)));
-    wr16(image + record + WB_SND_CH_SEQUENCE_INDEX, next_index);
+    wr16(channel + WB_SND_CH_SEQUENCE_INDEX, next_index);
     return pattern;
 }
 
@@ -734,28 +840,28 @@ static uint32_t next_pattern(uint8_t *image, uint32_t record) {
  * the noise ROUTING mask take the value `bits` selects and the rest of the mask survives, spelt as
  * the module's usual `eor/and/eor` merge. Each also writes the note-tracking flag, and the two write
  * it OPPOSITE ways round ($8b arms it, $8a clears it). */
-static void merge_noise_route(uint8_t *image, uint32_t record, uint8_t bits, uint8_t tracks_note) {
-    uint8_t mask = image[record + WB_SND_CH_MIXER_MASK];
-    uint8_t routing = image[WB_SND_NOISE_ROUTE_MASK];
-    image[WB_SND_NOISE_ROUTE_MASK] = (uint8_t)((((mask & bits) ^ routing) & mask) ^ routing);
-    image[record + WB_SND_CH_NOISE_TRACKS_NOTE] = tracks_note;
+static void merge_noise_route(uint8_t *module, uint8_t *channel, uint8_t bits, uint8_t tracks_note) {
+    uint8_t mask = channel[WB_SND_CH_MIXER_MASK];
+    uint8_t routing = SND_BYTE(module, WB_SND_NOISE_ROUTE_MASK);
+    SND_BYTE(module, WB_SND_NOISE_ROUTE_MASK) = (uint8_t)((((mask & bits) ^ routing) & mask) ^ routing);
+    channel[WB_SND_CH_NOISE_TRACKS_NOTE] = tracks_note;
 }
 
 /* $181de — opcode $d0+n. The envelope SPEED is the byte BEFORE the stream (`move.b -(a2),26(a0)`),
  * which is why the instrument data at $1ab24 is one byte longer than each envelope. */
-static void select_instrument(uint8_t *image, uint32_t record, uint32_t index) {
+static void select_instrument(uint8_t *image, uint8_t *channel, uint32_t index) {
     uint32_t stream = module_table_entry(image, WB_SND_INSTRUMENT_PTR_TABLE, index);
-    wr32(image + record + WB_SND_CH_ENVELOPE_BASE, stream);
-    image[record + WB_SND_CH_ENVELOPE_SPEED] = bus_read_byte(image, addr_add(stream, (uint32_t)-1));
+    wr32(channel + WB_SND_CH_ENVELOPE_BASE, stream);
+    channel[WB_SND_CH_ENVELOPE_SPEED] = bus_read_byte(image, addr_add(stream, (uint32_t)-1));
 }
 
 /* $181bc — opcode $c0+n, and also $b8..$bf, whose decoded index is $f8..$ff: entry 248 to 255 of a
  * table that holds SIXTEEN, i.e. 232 to 239 entries past its end. Both the cursor and the loop base
  * take the stream, so a fresh arpeggio starts at its first entry. */
-static void select_arpeggio(uint8_t *image, uint32_t record, uint32_t index) {
+static void select_arpeggio(uint8_t *image, uint8_t *channel, uint32_t index) {
     uint32_t stream = module_table_entry(image, WB_SND_ARPEGGIO_PTR_TABLE, index);
-    wr32(image + record + WB_SND_CH_ARPEGGIO_CURSOR, stream);
-    wr32(image + record + WB_SND_CH_ARPEGGIO_BASE, stream);
+    wr32(channel + WB_SND_CH_ARPEGGIO_CURSOR, stream);
+    wr32(channel + WB_SND_CH_ARPEGGIO_BASE, stream);
 }
 
 /* One byte of operand, `move.b (a1)+,…`, out of the same dirty band every other cursor comes from. */
@@ -771,91 +877,92 @@ static uint8_t next_operand(const uint8_t *image, uint32_t *cursor) {
  * them and two of its entries share a target ($83 and $8d are one handler). The fall-throughs the
  * original gets for free are spelt out: $86 into $85's `bset`, and $88 into $82's control store.
  */
-static pattern_exit run_pattern_opcode(uint8_t *image, uint32_t record, unsigned index,
-                                       uint32_t *cursor, uint32_t sfx_channel) {
+static pattern_exit run_pattern_opcode(uint8_t *image, uint8_t *module, uint8_t *channel,
+                                       unsigned index, uint32_t *cursor, uint32_t sfx_channel) {
     switch (index) {
     case 0x00:  /* $80 — rest: silence this row and take no note */
-        image[record + WB_SND_CH_VOLUME] = 0;
+        channel[WB_SND_CH_VOLUME] = 0;
         return PATTERN_ROW_DONE;
     case 0x01:  /* $81 — portamento off */
-        image[record + WB_SND_CH_PORTA_CONTROL] = 0;
+        channel[WB_SND_CH_PORTA_CONTROL] = 0;
         return PATTERN_READ_NEXT;
     case 0x02:  /* $82 — portamento on */
-        image[record + WB_SND_CH_PORTA_CONTROL] = WB_SND_CH_PORTA_ENABLED;
+        channel[WB_SND_CH_PORTA_CONTROL] = WB_SND_CH_PORTA_ENABLED;
         return PATTERN_READ_NEXT;
     case 0x03:  /* $83 */
     case 0x0d:  /* ...and $8d, the same handler through two table entries */
-        image[record + WB_SND_CH_FLAGS] |= WB_SND_CH_FLAG_MARK;
+        channel[WB_SND_CH_FLAGS] |= WB_SND_CH_FLAG_MARK;
         return PATTERN_READ_NEXT;
     case 0x04:  /* $84 — vibrato on, depth and speed */
-        wr16(image + record + WB_SND_CH_VIBRATO_ACC, 0);
-        image[record + WB_SND_CH_FLAGS] |= WB_SND_CH_FLAG_VIBRATO;
-        image[record + WB_SND_CH_VIBRATO_DEPTH] = next_operand(image, cursor);
-        image[record + WB_SND_CH_VIBRATO_SPEED] = next_operand(image, cursor);
+        wr16(channel + WB_SND_CH_VIBRATO_ACC, 0);
+        channel[WB_SND_CH_FLAGS] |= WB_SND_CH_FLAG_VIBRATO;
+        channel[WB_SND_CH_VIBRATO_DEPTH] = next_operand(image, cursor);
+        channel[WB_SND_CH_VIBRATO_SPEED] = next_operand(image, cursor);
         return PATTERN_READ_NEXT;
     case 0x06:  /* $86 — slide UP, which is $85 with bit 7 set first and then FALLS INTO it */
-        image[record + WB_SND_CH_FLAGS] |= WB_SND_CH_FLAG_SLIDE_UP;
+        channel[WB_SND_CH_FLAGS] |= WB_SND_CH_FLAG_SLIDE_UP;
         /* fall through */
     case 0x05:  /* $85 — slide on */
-        image[record + WB_SND_CH_FLAGS] |= WB_SND_CH_FLAG_SLIDE;
+        channel[WB_SND_CH_FLAGS] |= WB_SND_CH_FLAG_SLIDE;
         return PATTERN_READ_NEXT;
     case 0x07:  /* $87 — advance to the next pattern in the sequence */
-        *cursor = next_pattern(image, record);
+        *cursor = next_pattern(image, channel);
         return PATTERN_READ_NEXT;
     case 0x08:  /* $88 — portamento step, then limit and current from ONE byte, then FALL INTO $82 */
-        image[record + WB_SND_CH_PORTA_STEP] = next_operand(image, cursor);
-        image[record + WB_SND_CH_PORTA_LIMIT] = bus_read_byte(image, *cursor);
-        image[record + WB_SND_CH_PORTA_CURRENT] = next_operand(image, cursor);
-        image[record + WB_SND_CH_PORTA_CONTROL] = WB_SND_CH_PORTA_ENABLED;
+        channel[WB_SND_CH_PORTA_STEP] = next_operand(image, cursor);
+        channel[WB_SND_CH_PORTA_LIMIT] = bus_read_byte(image, *cursor);
+        channel[WB_SND_CH_PORTA_CURRENT] = next_operand(image, cursor);
+        channel[WB_SND_CH_PORTA_CONTROL] = WB_SND_CH_PORTA_ENABLED;
         return PATTERN_READ_NEXT;
     case 0x09:  /* $89 — global transpose, which is the module's and not the channel's */
-        image[WB_SND_GLOBAL_TRANSPOSE] = next_operand(image, cursor);
+        SND_BYTE(module, WB_SND_GLOBAL_TRANSPOSE) = next_operand(image, cursor);
         return PATTERN_READ_NEXT;
     case 0x0a:  /* $8a — route the NOISE enables, and stop tracking the note */
-        merge_noise_route(image, record, WB_SND_MIXER_NOISE_BITS, 0);
+        merge_noise_route(module, channel, WB_SND_MIXER_NOISE_BITS, 0);
         return PATTERN_READ_NEXT;
     case 0x0b:  /* $8b — route the TONE enables, and track the note */
-        merge_noise_route(image, record, WB_SND_NOISE_TONE_BITS, WB_SND_CH_TRACKS_NOTE_SET);
+        merge_noise_route(module, channel, WB_SND_NOISE_TONE_BITS, WB_SND_CH_TRACKS_NOTE_SET);
         return PATTERN_READ_NEXT;
     case 0x0c: {  /* $8c — drop this channel out of the routing mask entirely. The mask is read
                    * TWICE because the original reads it twice: `and.b d2,d0` builds `~mask & routing`
                    * in a register and `and.b d0,2273(a3)` then ANDs that back into memory. The second
                    * read is algebraically redundant — `&= ~mask` would do — and is kept because
                    * these two instructions are what the entry pin asserts. */
-        uint8_t mask = image[record + WB_SND_CH_MIXER_MASK];
-        image[WB_SND_NOISE_ROUTE_MASK] &= (uint8_t)(~mask & image[WB_SND_NOISE_ROUTE_MASK]);
-        image[record + WB_SND_CH_NOISE_TRACKS_NOTE] = WB_SND_CH_TRACKS_NOTE_SET;
+        uint8_t mask = channel[WB_SND_CH_MIXER_MASK];
+        SND_BYTE(module, WB_SND_NOISE_ROUTE_MASK) &=
+            (uint8_t)(~mask & SND_BYTE(module, WB_SND_NOISE_ROUTE_MASK));
+        channel[WB_SND_CH_NOISE_TRACKS_NOTE] = WB_SND_CH_TRACKS_NOTE_SET;
         return PATTERN_READ_NEXT;
     }
     case 0x0e:  /* $8e — end of song. sound.h says why this is a status and not a `longjmp`. */
         return PATTERN_SONG_ENDED;
     case 0x0f:  /* $8f — run the envelope, and close the row without a note */
-        image[record + WB_SND_CH_FLAGS] |= WB_SND_CH_FLAG_ENVELOPE;
+        channel[WB_SND_CH_FLAGS] |= WB_SND_CH_FLAG_ENVELOPE;
         return PATTERN_ROW_DONE;
     case 0x10:  /* $90 — offer this channel to the SFX engine */
-        image[record + WB_SND_CH_YIELD] = WB_SND_CH_YIELD_ASKED;
+        channel[WB_SND_CH_YIELD] = WB_SND_CH_YIELD_ASKED;
         return PATTERN_READ_NEXT;
     case 0x11:  /* $91 — take it back */
-        image[record + WB_SND_CH_YIELD] = 0;
+        channel[WB_SND_CH_YIELD] = 0;
         return PATTERN_READ_NEXT;
     case 0x12:  /* $92 — detune */
-        image[record + WB_SND_CH_DETUNE] = next_operand(image, cursor);
+        channel[WB_SND_CH_DETUNE] = next_operand(image, cursor);
         return PATTERN_READ_NEXT;
     case 0x13:  /* $93 — a new sequence table, as two BYTES over the word, and back to its entry 0 */
-        image[record + WB_SND_CH_SEQUENCE_OFFSET] = next_operand(image, cursor);
-        image[record + WB_SND_CH_SEQUENCE_OFFSET + 1] = next_operand(image, cursor);
-        wr16(image + record + WB_SND_CH_SEQUENCE_INDEX, 0);
+        channel[WB_SND_CH_SEQUENCE_OFFSET] = next_operand(image, cursor);
+        channel[WB_SND_CH_SEQUENCE_OFFSET + 1] = next_operand(image, cursor);
+        wr16(channel + WB_SND_CH_SEQUENCE_INDEX, 0);
         return PATTERN_READ_NEXT;
     case 0x14:  /* $94 — song speed, into both the field and its copy */
-        image[WB_SND_SONG_SPEED] = next_operand(image, cursor);
-        image[WB_SND_SONG_SPEED_COPY] = image[WB_SND_SONG_SPEED];
+        SND_BYTE(module, WB_SND_SONG_SPEED) = next_operand(image, cursor);
+        SND_BYTE(module, WB_SND_SONG_SPEED_COPY) = SND_BYTE(module, WB_SND_SONG_SPEED);
         return PATTERN_READ_NEXT;
     case 0x15:  /* $95 — fade rate, and the countdown reloaded from it */
-        image[WB_SND_FADE_RATE] = next_operand(image, cursor);
-        image[WB_SND_FADE_COUNTDOWN] = image[WB_SND_FADE_RATE];
+        SND_BYTE(module, WB_SND_FADE_RATE) = next_operand(image, cursor);
+        SND_BYTE(module, WB_SND_FADE_COUNTDOWN) = SND_BYTE(module, WB_SND_FADE_RATE);
         return PATTERN_READ_NEXT;
     case 0x16:  /* $96 — master volume */
-        image[WB_SND_MASTER_VOLUME] = next_operand(image, cursor);
+        SND_BYTE(module, WB_SND_MASTER_VOLUME) = next_operand(image, cursor);
         return PATTERN_READ_NEXT;
     case 0x17:  /* $97 — trigger an SFX from the music stream, ON WHATEVER CHANNEL d1 HOLDS. The
                  * module's one latent defect, reproduced and not fixed: `move.b (a1)+,d0` is the
@@ -880,51 +987,77 @@ static pattern_exit run_pattern_opcode(uint8_t *image, uint32_t record, unsigned
 /* $181a6 — the range decoder. NOT a mask: a `cmp.b` and then a chain of `addi.b`+`bcs`, each carry
  * saying the byte had reached that range's floor. The third add's carry is never tested, so the
  * arpeggio arm takes whatever is left — which is what sends $b8..$bf past the arpeggio table. */
-static pattern_exit decode_pattern_byte(uint8_t *image, uint32_t record, uint8_t byte,
-                                        uint32_t *cursor, uint32_t sfx_channel) {
+static pattern_exit decode_pattern_byte(uint8_t *image, uint8_t *module, uint8_t *channel,
+                                        uint8_t byte, uint32_t *cursor, uint32_t sfx_channel) {
     if (byte < WB_SND_PATTERN_CMD_LIMIT)
-        return run_pattern_opcode(image, record, byte & WB_SND_PATTERN_CMD_INDEX_MASK, cursor,
+        return run_pattern_opcode(image, module, channel, byte & WB_SND_PATTERN_CMD_INDEX_MASK, cursor,
                                   sfx_channel);
 
     unsigned carry;
     uint8_t decoded = add_byte(byte, WB_SND_PATTERN_DURATION_BIAS, &carry);
     if (carry) {
-        image[record + WB_SND_CH_DURATION_RELOAD] = (uint8_t)(decoded + WB_SND_PATTERN_DURATION_MIN);
+        channel[WB_SND_CH_DURATION_RELOAD] = (uint8_t)(decoded + WB_SND_PATTERN_DURATION_MIN);
         return PATTERN_READ_NEXT;
     }
     decoded = add_byte(decoded, WB_SND_PATTERN_INSTRUMENT_BIAS, &carry);
     if (carry) {
-        select_instrument(image, record, decoded);
+        select_instrument(image, channel, decoded);
         return PATTERN_READ_NEXT;
     }
-    select_arpeggio(image, record, add_byte(decoded, WB_SND_PATTERN_ARPEGGIO_BIAS, &carry));
+    select_arpeggio(image, channel, add_byte(decoded, WB_SND_PATTERN_ARPEGGIO_BIAS, &carry));
     return PATTERN_READ_NEXT;
 }
 
-snd_step_result snd_channel_step(uint8_t *image, uint32_t record, uint32_t sfx_channel) {
+/* $18106's body over the module base and the record POINTER — the same two-register tier $18208 was
+ * given, and for the same measured reason: this pass touches the record on nearly every line and the
+ * module's globals on a dozen more, and an address held as a uint32_t costs a scaled-index mode and
+ * a 32-bit immediate where a base register costs a `d16(An)`.
+ *
+ * NO INLINING ATTRIBUTE, AND THAT IS THE MEASUREMENT AND NOT AN OMISSION. This pass is entered on
+ * about a fifth of the ticks (561 calls to 999 over the profiled window), so neither of the two
+ * neighbouring answers is obviously right and all three were built. Idle window, 1000 vblanks,
+ * `python3 atari/profile.py ours`, reading `vbl_handler` cyc/call and the linked .text:
+ *
+ *     `noinline`               162,528 B   6,728 cycles a tick
+ *     no attribute             162,680 B   6,611          <- this
+ *     `always_inline`          162,940 B   6,708
+ *
+ * GCC's own answer is neither: it PARTIALLY inlines the body, leaving `channel_step_over_module`'s
+ * cold tail out of line as a `.part.0` that 199 of the 561 entries still reach, and the prologue
+ * the other 362 pay disappears. 152 bytes for 117 cycles a tick — 2.05 ticks a frame over that
+ * window, so 240 cycles a frame — is 0.63 KB per K cycles a frame, between src_blit.c's 0.2 and
+ * src_behavior.c's 9 on atari/build.sh's own scale. So the attribute that was here is what was
+ * costing the cycles, and the honest thing is to write down what was measured and leave the
+ * decision with the compiler. */
+static snd_step_result channel_step_over_module(uint8_t *image, uint8_t *module, uint8_t *channel,
+                                                uint32_t sfx_channel) {
     /* $18106 — the countdown, and the test is on the RESULT of the decrement. */
-    if (--image[record + WB_SND_CH_DURATION] != 0) {
-        apply_pitch_slide(image, record);
+    if (--channel[WB_SND_CH_DURATION] != 0) {
+        apply_pitch_slide(channel);
         return SND_STEP_RETURNED;
     }
 
-    image[record + WB_SND_CH_FLAGS] = 0;
-    uint32_t cursor = be32(image + record + WB_SND_CH_PATTERN_CURSOR);
+    channel[WB_SND_CH_FLAGS] = 0;
+    uint32_t cursor = be32(channel + WB_SND_CH_PATTERN_CURSOR);
     for (;;) {
         uint8_t byte = bus_read_byte(image, cursor);
         cursor = addr_add(cursor, 1);
         if (byte < WB_SND_PATTERN_NOTE_LIMIT) {         /* `bmi` — $00..$7f is a note */
-            start_note(image, record, byte);
+            start_note(image, module, channel, byte);
             break;
         }
-        pattern_exit exit = decode_pattern_byte(image, record, byte, &cursor, sfx_channel);
+        pattern_exit exit = decode_pattern_byte(image, module, channel, byte, &cursor, sfx_channel);
         if (exit == PATTERN_SONG_ENDED)
             return SND_STEP_SONG_ENDED;
         if (exit == PATTERN_ROW_DONE)
             break;
     }
-    end_row(image, record, cursor);
+    end_row(module, channel, cursor);
     return SND_STEP_RETURNED;
+}
+
+snd_step_result snd_channel_step(uint8_t *image, uint32_t record, uint32_t sfx_channel) {
+    return channel_step_over_module(image, module_base(image), image + record, sfx_channel);
 }
 
 /* ---- $17ca0: the tick body, and $17c74's tempo selector below it ---------------------------------
@@ -992,8 +1125,8 @@ static snd_step_result step_rows(uint8_t *image, uint8_t *module) {
         return SND_STEP_RETURNED;
 
     for (unsigned channel = 0; channel < WB_SND_CHANNELS; channel++)
-        if (snd_channel_step(image, music_channel(channel), SND_TRIGGER_CHANNEL_UNMODELLED)
-            == SND_STEP_SONG_ENDED)
+        if (channel_step_over_module(image, module, SND_AT(module, music_channel(channel)),
+                                     SND_TRIGGER_CHANNEL_UNMODELLED) == SND_STEP_SONG_ENDED)
             return SND_STEP_SONG_ENDED;
     return SND_STEP_RETURNED;
 }
@@ -1009,14 +1142,16 @@ static snd_step_result step_rows(uint8_t *image, uint8_t *module) {
  *
  * THE ATTENUATION IS READ ONCE, ABOVE THE LOOP, where the original re-reads the byte on each of its
  * three arms. THE LICENCE IS WHAT THE LOOP'S CALLEES WRITE, and not the master volume's neighbours:
- * $17c57 is TWO bytes past the last music record ($17bc6..$17c55), and $17c56 between them is
- * WB_SND_ENGINE_ENABLED — a byte snd_sfx_tick DOES write, so "past the records" is not on its own an
- * argument about this one. What the loop below calls is $18208 and nothing else, and $18208 writes
- * only three things: fields of the record it is handed (offsets up to 47, inside
- * WB_SND_MUSIC_CHANNEL_LEN and so below $17c56), the noise globals at $17c6b/$17c6c, and the mixer
- * shadow at $18352+. None of them is $17c57. A read the image cannot have changed is not an
- * observable of this differential (only writes, the PSG ledger and the hardware read stream are), so
- * hoisting it drops two loads a tick and changes nothing else.
+ * $17c57 is TWO bytes past the last music record ($17bc6..$17c55), but "just past the records" is no
+ * argument at all — the byte between them, $17c56 WB_SND_ENGINE_ENABLED, is written three times in
+ * the image ($17bc0, $17f28, $17f8c) by routines that are simply not in the tick's call graph, which
+ * is a fact about WHO CALLS WHAT and not about where the byte sits. So the argument is made the same
+ * way here: what the loop below calls is $18208 and nothing else, and $18208 writes only three
+ * things — fields of the record it is handed (offsets up to 47, inside WB_SND_MUSIC_CHANNEL_LEN and
+ * so below $17c56), the noise globals at $17c6b/$17c6c, and the mixer shadow at $18352+. None of
+ * them is $17c57. A read the image cannot have changed is not an observable of this differential
+ * (only writes, the PSG ledger and the hardware read stream are), so hoisting it drops two loads a
+ * tick and changes nothing else.
  *
  * The record half of that is asserted rather than asserted-in-prose: the three records end where the
  * assertion below says, so a channel record that grew would fail to compile instead of quietly
@@ -1035,7 +1170,8 @@ static void publish_channels(uint8_t *image, uint8_t *module) {
         /* d0/d1 on entry. Only d0's LOW WORD and d1's low byte are read back, and $18208 writes both
          * before the tick looks — so what the register carried in cannot reach the image. */
         snd_channel_mix mix = {0, 0};
-        snd_channel_period_and_volume(image, music_channel(channel), &mix);
+        channel_period_and_volume_over_module(image, module, SND_AT(module, music_channel(channel)),
+                                              &mix);
 
         wr16(SND_AT(module, WB_SND_PERIOD_SCRATCH), (uint16_t)mix.period);
         SND_BYTE(module, shadow_tone_period(channel)) = (uint8_t)mix.period;
@@ -1128,8 +1264,9 @@ static void write_shadow_to_psg(const uint8_t *module) {
  * access, which is the whole of SND_BYTE's argument above — and a body inlined into its one caller
  * would have exactly that local.
  *
- * MEASURED, 2026-08-25: removing the attribute gives a BYTE-IDENTICAL object, because GCC declines
- * to inline an ~800-instruction function into anything at any level. So the attribute is not what
+ * RE-MEASURED 2026-08-26, with $1a5da's and $18208's bodies now inlined INTO this one: removing the
+ * attribute still gives a byte-identical `.text`, because GCC declines to inline a function this
+ * size (476 instructions, 1,664 bytes) into anything at any level. So the attribute is not what
  * buys the addressing today; it is the guarantee that the body cannot lose it by SHRINKING — which
  * is a thing a tier still being reconstructed can do — and it is written down here rather than left
  * to be rediscovered by whoever finds the tick suddenly 26 cycles a byte again. */
@@ -1150,9 +1287,21 @@ void music_tick_over_module(uint8_t *image, uint8_t *module) {
     if (carry)
         return;
 
-    snd_sfx_tick(image);
+    sfx_tick_over_module(image, module);
 
-    /* $17cba — re-read, because snd_sfx_tick's end-of-effect arm can have cleared it. */
+    /* $17cba — a SECOND `tst.b 2250(a3)`, and it is NOT a re-read of a byte the SFX tick can have
+     * changed. Nothing in the tick tier writes WB_SND_ENGINE_ENABLED: the whole image holds three
+     * stores to it, all outside this file's tick path — `st 2250(a3)` at $17bc0 (snd_play_song),
+     * `sf 2250(a3)` at $17f28 (snd_stop) and `st 2250(a3)` at $17f8c (snd_resume). What the SFX
+     * tick's end-of-effect arm clears is $17c5a, FOUR bytes higher: `sf 2254(a3) / clr.b 4046(a3)`
+     * at $1a60e — WB_SND_SFX_ACTIVE_FLAGS and the PSG volume shadow, which is what
+     * sfx_tick_channel writes above.
+     *
+     * THE TEST IS HERE BECAUSE THE GATE ADMITS TWO STATES. $17ca0 falls through on `2250 != 0` OR
+     * on a non-zero SFX flag long, so control reaches the SFX tick with the engine STOPPED and an
+     * effect still running. Everything below — the fade, the row step, the channel publish — is the
+     * MUSIC tier and must not run in that state, so the gate's first disjunct is asked again on its
+     * own. `beq.w $17d90` then skips straight to the mixer merge, which is what the `if` spells. */
     if (SND_BYTE(module, WB_SND_ENGINE_ENABLED) != WB_SND_ENGINE_DISABLED) {
         if (step_fade(module) == SND_STEP_SONG_ENDED) {
             end_song(image, module);
@@ -1173,10 +1322,11 @@ void music_tick_over_module(uint8_t *image, uint8_t *module) {
     write_shadow_to_psg(module);
 }
 
-/* The door the module base is made at. The ORIGINAL has no instruction here — $17ca0 INHERITS a3
- * from whoever called it (sound.h) — so this line is the port's, not the module's. */
+/* The fifth of THE FIVE PUBLISHED DOORS, and the only one the game itself calls. The ORIGINAL has no
+ * instruction here — $17ca0 INHERITS a3 from whoever called it (sound.h) — so this line is the
+ * port's, not the module's. */
 void snd_music_tick_body(uint8_t *image) {
-    music_tick_over_module(image, image + WB_SND_MODULE_BASE);
+    music_tick_over_module(image, module_base(image));
 }
 
 /* $17c78..$17c9f — the tempo selector's THREE-WAY CHOICE, as the value it settles on.
