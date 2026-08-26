@@ -55,7 +55,7 @@ $(ORACLE): $(KIT)/oracle/shim.c $(KIT)/include/os.h $(MUSASHI)/m68kcpu.c $(GENDI
 	  $(MUSASHI)/m68kcpu.c $(GENDIR)/m68kops.c $(MUSASHI)/softfloat/softfloat.c $(KIT)/oracle/shim.c \
 	  -o $(ORACLE)
 
-.PHONY: test clean venv oracle
+.PHONY: test clean venv oracle guarded
 # (Re)build just the shared Musashi oracle.
 oracle: $(ORACLE)
 
@@ -69,6 +69,22 @@ venv:
 PYTEST_ARGS ?= -n auto
 test: $(CAND) $(ORACLE)
 	$(PY) -m pytest -q $(PYTEST_ARGS) test
+
+# The same suite over an image whose surroundings are PROT_NONE, so a candidate that indexes its
+# `uint8_t *image` past either end FAULTS instead of quietly reading the host heap. It is the
+# surface for any change that bounds a SPAN rather than a single access — a span one element too
+# generous proves a walk in-image that is not, and reads where there is no image to differ.
+#
+# DELIBERATELY NOT PART OF `test`, and it must not become one: a fault is a dead pytest worker and
+# not a named assertion, so the run is a CENSUS of that class rather than a gate (README.md, "The
+# guarded-image sweep, and the seam it hangs on", has the whole argument). Darwin/BSD only — the
+# plugin refuses at `pytest_configure` elsewhere.
+#
+# PYTHONPATH reaches `tools/`, which is $(KIT)'s parent, because the plugin is imported as
+# `recreate_kit.guarded_image`; everything else is the `test` target with that plugin loaded.
+GUARDED_PYTEST_ARGS ?= -n auto
+guarded: $(CAND) $(ORACLE)
+	PYTHONPATH=$(KIT)/.. $(PY) -m pytest -q $(GUARDED_PYTEST_ARGS) -p recreate_kit.guarded_image test
 
 # Project artifacts only. The oracle + generated opcode tables in $(GENDIR) are SHARED by every
 # project (and would be deleted out from under a concurrent build), so they have their own target

@@ -401,10 +401,13 @@ invisible to the differential in both directions: it passes when the heap is qui
 pytest worker when the page is not mapped.
 
 ```bash
+make guarded    # from any projects/<game>/recreate — kit.mk's target, so every project has it
+# ...which is this, and `kit.mk` is where the incantation lives rather than here:
 PYTHONPATH=<reverse>/tools .venv/bin/python -m pytest -q -n auto -p recreate_kit.guarded_image test
 ```
 
-**Not part of any `make test`**, because a fault is a dead worker and not a named assertion. Under
+**Not part of any `make test`**, and `make guarded` is deliberately its own target rather than a
+step of that one, because a fault is a dead worker and not a named assertion. Under
 `-n auto` xdist names the test that was running and carries on, which makes the run a CENSUS of the
 class rather than a gate; what it finds gets pinned afterwards by an ordinary differential case. It
 cannot see a raw access that stays INSIDE the buffer. Darwin/BSD only — it refuses at

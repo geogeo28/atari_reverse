@@ -47,13 +47,15 @@
  *                   program issues ONE TOS trap in its life, a Super). Every kit dependency this
  *                   game has is a real symbol, so the seam is pure link-time replacement.
  *   os_in_image     4 call sites in the cores, all in ../src/blit.c — two in the sprite blit's own
- *                   word accessors and two in the ROW guard that lets a proved-in-image row skip
- *                   them; `static inline` arithmetic over OS_IMAGE_SIZE, correct on target
- *                   unchanged. THIS FILE calls it four more times (disk_read_file's two bounds,
- *                   image_byte, image_word); those are not core calls and are not what the seam
- *                   scan is about, but they are why the count read wrong to a reviewer and so are
- *                   named here. ../include/bus.h's guarded accessors call it too, from a header
- *                   rather than from a core, and are outside this count for the same reason.
+ *                   word accessors, and two on one line of `spans_in_image`, the source-and-
+ *                   destination predicate BOTH hoists ask: the per-ROW guard and the per-BLIT one
+ *                   that lets a proved-in-image walk skip the accessors' own two; `static inline`
+ *                   arithmetic over OS_IMAGE_SIZE, correct on target unchanged. THIS FILE calls it
+ *                   four more times (disk_read_file's two bounds, image_byte, image_word); those
+ *                   are not core calls and are not what the seam scan is about, but they are why
+ *                   the count read wrong to a reviewer and so are named here. ../include/bus.h's
+ *                   guarded accessors call it too, from a header rather than from a core, and are
+ *                   outside this count for the same reason.
  *
  * THE ADDRESSES ARE WRITTEN IN THE 24-BIT BUS FORM the reconstruction spells (`$ff820a`, `$fffa01`)
  * and put on the bus in the CPU's own form (`$ffff820a`, `$fffffa01`) by `hw_addr` below. On a 68000

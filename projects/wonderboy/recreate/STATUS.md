@@ -16394,7 +16394,8 @@ by un-inlining `blit_load_cell`/`blit_column` and passing six arguments on the s
 column, which is what an earlier attempt measured. The price is size: `blit.c`'s object is 4,400 bytes
 against 3,450 for the single walk (3,608 before the batch), still free of `si3` helpers.
 
-On target, `python3 atari/profile.py ours`: **12.20 fps at 657 K cycles a frame** (from 9.80 / 818 K),
+On target, `python3 atari/profile.py ours` (SUPERSEDED — the batch below takes it to 23.60 / 339.5 K):
+**12.20 fps at 657 K cycles a frame** (from 9.80 / 818 K),
 the row loop 268 K → 153 K a frame (`blit_row` is inlined into `blit_sprite_rows` now, so that is the
 symbol the profiler names), a row 11,220 → 5,995 cycles inside the walk and 6,360 with the per-row
 guard and the closing `lea`, `blit_sprite_w3` against the original ×13 → ×7.5. Suite **6,433** green
@@ -16424,3 +16425,132 @@ be DIFFED on the candidate instead of checked against a second Python statement 
 Anything further off the blit still reads as no fps at all: `flip_screen`'s wait absorbs it now that
 the frame sits at 4.1 vblanks (244 frames in 1,000), so the next step wants the WHOLE frame under
 four, where `bg_scroll_copy_column`'s 209 K a frame is the largest single cost left.
+
+### The four levers and -O3 per unit (2026-08-25) — and the fifth, which was a bounds fix
+
+**23.60 fps at 339.5 K cycles a frame, against the original's 25.00 at 320.5 K — x1.06.** From
+12.20 / 657 K at the head of this section, in one batch. What follows is what each piece bought,
+and the last of them is the one nobody was profiling.
+
+**The scroll's copy run, unrolled (`src/scroll.c`).** The longword copy was a
+`move.l (a3)+,(a0)+ / cmp.l / bne` — ~36 cycles a longword against the original's straight-line
+20 — so the run is now eight longwords under one `dbf` (two spelt-out fours) plus a halving tail,
+and the seam split is hoisted out of the scanline loop into the caller's two constants. Two things
+had to be spelt rather than written: GCC RE-ROLLS a `for` over a constant trip count back into a
+counted loop on -m68000, and its induction-variable pass rewrites a spelt-out run as
+`move.l d16(a0),d16(a1)` (28 cycles) unless an empty `asm` hides the two cursors' relationship.
+`bg_scroll_blit` **208.7 K -> 157.8 K** a frame.
+
+**The sound tick off a module-base pointer (`src/sound.c`).** The original holds the module's base
+in a3 and reads every global as `d16(a3)`, 12 cycles; `image[ADDRESS]` cannot be that — the
+displacement field is 16 bits and the module sits at $1738c — so it was 26 cycles a byte through an
+index. The base now arrives as an opaque PARAMETER (`music_tick_over_module`), which is the only
+form GCC cannot fold back to an absolute address. Counted in the -O3 object over the tick body:
+**76 module-address immediates across 341 instructions -> 10 across 259**. `vbl_handler`
+**10,364 -> 8,663** cycles a tick, `snd_music_tick` **x2.64 -> x2.2** the original. The record tier
+took the same treatment (`snd_channel_period_and_volume` now walks `a0` as a pointer), and
+`add_byte` reads its carry off the byte WRAP rather than off bit 8 of a wider sum, which is what
+the portamento's octave loop was paying an `andi.l`/`add.l`/`lsr.l #8` for per iteration.
+
+**The sprite blit's guard hoisted again, and its register file made local (`src/blit.c`).** The
+off-image guard was already once per ROW; it is now also once per BLIT, over the two spans stretched
+by the row count (`blit_span_in_image`), and the caller's register file is copied into a LOCAL for
+the length of the blit so that a store through `image` cannot alias it — which is what lets the
+column loop unroll and SRA put the window in registers. `blit_sprite_rows` **74.2 K -> 28.9 K** a
+frame, `blit_sprite_w3` **x1.4** the original (was x7.5). The price is code: `blit.c`'s object text
+**17,962 -> 20,912 B**.
+
+**-O3, PER TRANSLATION UNIT (`atari/build.sh`).** -O3 everywhere is **656.7 K -> 496.1 K** a frame,
+almost all of it `-fipa-cp-clone` specialising a routine per constant argument — the sprite blit
+gets a clone per width (which is what gives the column loop a trip count to unroll), the HUD's glyph
+plotter one per digit width (**2,100 -> 833** cycles, the original's 862). It also took `WB.PRG`
+107 -> 183 KB and the boot floppy down to **1,024 bytes free of 728,064**, where the next kilobyte of
+anything would not have built. So the level is now chosen per unit out of one named list,
+`UNITS_BUILT_AT_O2`, each entry carrying its own measurement: `behavior.c` (+16,818 B for 1.8 K
+cycles — ~9 KB per K cycles, against `blit.c`'s 0.2), `rad.c` and `boot.c` (boot slices, never in a
+frame), and the shim's two units. Over the whole change: `WB-play.PRG` **180,245 -> 154,384 B**, the
+floppy **1,024 -> 27,648 bytes free**, the frame 468.6 K (all-O3) -> **484.1 K**. Two guards keep
+that from reverting in silence — `UNITS_THAT_MUST_STAY_AT_O3` refuses the four units whose codegen
+the frame is made of (both lists checked against the units this build actually compiles — a renamed
+`hud.c` refuses rather than silently protecting nothing, RED-checked by misspelling an entry), and
+the linked ELF must carry at least ONE `blit_sprite_rows.constprop` clone. The floor is 1 and not
+today's 4 on purpose: how many clones GCC emits and what it calls them is the pass's business (it
+clones on the `clipped` axis too, and merges identical bodies), so ZERO — the specialisation not
+happening at all — is the only honest claim a symbol count can make. The regression it stands in
+for, the column loop going back to runtime-counted, is only truly caught by
+`python3 atari/profile.py ours`; that is the surface and the clone check is a cheap tripwire in
+front of it. RED-checked by moving `blit.c` to the -O2 list. **`-flto` on top FAILS `build.sh m2`
+today: registered here as an experiment NOT DONE, not as a lever measured.**
+
+**...AND THE FIFTH, WHICH WAS A CORRECTNESS FIX.** `copy_scanlines` formed its wrap-back source
+pointer `(from + before_bytes) - WB_BG_BUFFER_LINE` unconditionally, and for columns 0 and 1 —
+whose seam falls outside the thirty longwords, so `after_seam` is zero and the run is empty — that
+is `from - 8`, an address the original never computes (their two variants have no `lea -128(a0)`)
+and undefined C for any source in the image's first eight bytes. Forming it only when
+`after_seam != 0` was meant to cost nothing. Measured, both sides of the change, same window:
+**484.1 K / 16.55 fps -> 339.5 K / 23.60 fps.** The direct saving is small — `bg_scroll_blit`
+**157.8 K -> 148.8 K**, x1.4 the original's 105.3 K — and the rest is QUANTISATION: `flip_screen`
+waits for a vblank, so a frame whose work sits just over 2 vblanks costs 3, and 9 K of work was
+what put it over. The mechanism is -O3 unswitching the scanline loop on the now-invariant test
+(`copy_scanlines` 173 -> 188 instructions, 5 -> 8 back-edges: two loop bodies where there was one),
+so the two variants that have no second run lose its address arithmetic and setup entirely.
+
+**THE FRAME IS NOW A HAIR OVER TWO VBLANKS**, 472 frames in 1,000 (2.12), where the original is
+exactly 500 (2.00). That is the most sensitive place the frame has ever sat: ~9 K cycles of work —
+0.06 of a vblank — is worth 7 fps in either direction, so a single unmeasured regression anywhere
+in the frame now shows up as a third of the frame rate. Read every fps number after this one as
+quantised, and `cycles/frame` as the honest quantity.
+
+**THE SURFACES, HONESTLY.** The two hoists are BOUNDS changes, and `make test` cannot see a bound
+that is one word or one row too generous: the candidate's image is a Python `bytearray` and the
+bytes past it read back as zero, which is exactly what the shim would have returned. All four
+mutations — the row span and the blit span, source side and destination side, one word short and
+one row short — PASS the whole suite and FAULT under `recreate_kit.guarded_image`. That sweep
+therefore is the surface, and it now has a target: **`make guarded`** (10,043 guarded candidate
+runs, 6,453 passed, Darwin-only). The target lives in `tools/recreate_kit/kit.mk` rather than in
+this project's Makefile — it is built entirely of kit variables, so joust and buggyboy have it for
+free — and the workspace `CLAUDE.md`'s review gate now requires it of any diff touching
+`src/blit.c`'s or `src/scroll.c`'s bounds arithmetic. `test_blit.py`'s two
+image-edge cases are what it faults IN: each is now parametrised over two row counts, since a blit
+of one row cannot tell a per-blit bound that is one row out from a right one, and the two counts
+differ per side because the two spans approach `emu.STACK_TOP` at different rates (the destination
+by whole scanlines, so 1 is its ceiling; the source by cells, so 5 is).
+
+What `make test` DOES catch, mutation by mutation: in the scroll, copying one longword short reddens
+`test_every_copy_variant_moves_the_scanlines_its_own_seam_splits`,
+`test_a_blit_writes_exactly_the_visible_window`, `test_game.py`'s frame cases and
+`test_boot_chain.py`'s stage slice; in the sound, `add_byte`'s carry as `<=` reddens 19 rows across
+`test_sound.py` and `test_game.py`, and reading the attenuation above the volume mask reddens 11
+including `test_the_master_volume_attenuates_every_channel_and_clamps_at_silence`. The attenuation
+hoist's LICENCE is worth stating exactly, because the obvious argument is wrong: $17c57 is TWO bytes
+past the last music record ($17bc6..$17c55) and $17c56 between them is `WB_SND_ENGINE_ENABLED`,
+which `snd_sfx_tick` does write. What makes the hoist sound is what the LOOP's callees write —
+$18208 writes record fields at offsets <= 47, the two noise globals and the mixer shadow, and none
+of them is $17c57 — with the record half pinned by a `_Static_assert`.
+
+**THE LEVERS THAT ARE LEFT, priced.** All figures `python3 atari/profile.py compare`, same 1000-vblank
+window, our 472 frames against the original's 500. Suite **6,453** green; `make guarded` clean.
+
+* **`bg_scroll_blit`, x1.4 — the whole gap, and then some.** 148.8 K a frame against the original's
+  105.3 K: **43.5 K a frame more than they spend there**, where the whole frame is only 19.0 K
+  (339.5 K vs 320.5 K) over theirs. Normalised to the window both sides share it is **~17.5 K a
+  vblank** (70.2 K vs 52.7 K), which is the honest way to read it, since we run 2.12 vblanks to their
+  2.00. The rest of the difference is given back at `flip_screen`, where we wait **98.2 K less** —
+  arriving later and waiting less is the whole shape of the x1.06. Bring the scroll to parity and
+  the frame goes under two vblanks, which by the quantisation note above is worth a step of fps and
+  not a slope. `copy_scanlines` is 147.8 K of that 148.8 K and 138.9 K of it is EXCLUSIVE — it is
+  one straight-line copy run and the remaining lever on it is `movem.l` or hand-asm, which needs
+  its own C-vs-asm differential (BuggyBoy's `src/asm/` is the precedent). **NOT DONE**, and not
+  attempted in this batch.
+* **The sound tick, ~2 K a vblank.** `snd_channel_period_and_volume` **x1.9** (1,214 cycles a call
+  against 656, 2,997 calls on each side) and `snd_sfx_tick` **x2.5** (601 against 236, 999 calls) —
+  together 2.04 M cycles over the window, **2.0 K a vblank / 4.3 K a frame**. Real, and an order of
+  magnitude below the scroll: worth taking only after it.
+* **The actor tier, x2.4-4.3, is the largest RATIO left** (`actor_followed_overlap_mask` x4.3,
+  `actor_settle_on_tile_1_or_2` x4.3, `actor_step_left_against_map` x4.2, `actor_behavior_pass`
+  x3.6 at 57.0 K a frame). It is the bus guards, and it is a FIDELITY trade rather than a codegen
+  one — see this file's earlier note on `include/bus.h`.
+* **The clone-count assertion is the batch's most fragile guard, and it is not the surface.** It
+  reads a symbol name GCC is free to choose; the floor is 1 for that reason (above), and what
+  actually catches the regression it stands in for is `python3 atari/profile.py ours`. If that
+  assertion ever fires or ever has to be relaxed again, profile first and believe the cycles.

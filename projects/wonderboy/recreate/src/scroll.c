@@ -707,7 +707,91 @@ void bg_scroll_run_queue(uint8_t *image) {
  * the domain really is 0..15; `column` outside it has no defined behaviour here and cannot have.
  */
 
-/* Declared in scroll.h and shared with src/text.c — see the note there.
+/* One `move.l (a0)+,(a1)+`. The cursors are taken by pointer so that the runs below can share one
+ * body; inlined into a pair of locals it is that single instruction.
+ *
+ * THE EMPTY `asm` IS WHAT KEEPS IT THAT INSTRUCTION. Spell a run of these out and GCC's
+ * induction-variable pass sees one base with constant offsets and addresses every copy but the
+ * first as `move.l d16(a0),d16(a1)` — 28 cycles where the postincrement pair costs 20, which is
+ * most of what unrolling was for. Declaring both cursors modified by an opaque asm hides that
+ * relationship, so each copy addresses through the cursor it actually advances. It emits nothing,
+ * and both compilers this file is built with take it: m68k-elf-gcc for the target, the host cc for
+ * the differential.
+ *
+ * IT IS ONE OF TWO ALIASING WORKAROUNDS IN THE TREE and they are opposites, which is worth knowing
+ * from either end: this one HIDES a relationship GCC would otherwise exploit (that the two cursors
+ * are one base plus constants), while src/blit.c's `blit_sprite_rows` copies the caller's register
+ * file into a LOCAL to destroy one GCC has to assume (that a store through `image` may hit `*regs`),
+ * so that the file can live in registers for the whole blit. */
+static inline void copy_one_longword(const uint8_t **from, uint8_t **to) {
+    wr32(*to, be32(*from));
+    *from += WB_LONGWORD_BYTES;
+    *to += WB_LONGWORD_BYTES;
+    __asm__("" : "+r"(*from), "+r"(*to));
+}
+
+/* WHY THE RUN IS UNROLLED. The 68000 has no block move, so a copy is a run of `move.l (a0)+,(a1)+`
+ * at 20 cycles a longword — and the original spends nothing else on it: all sixteen blit variants
+ * are STRAIGHT runs with no loop at all, and so is the message box's. C cannot emit a run whose
+ * length it does not know, but it can amortise the loop: eight longwords under one `dbf` costs
+ * ~1 cycle a longword of control where a longword-at-a-time loop costs ~16. */
+#define COPY_BLOCK_LONGWORDS 8u
+/* Both halves below are spelt for this exact size: the block is two runs of four, and the tail that
+ * follows it covers a remainder of 0..7 in a four, a two and a one. */
+_Static_assert(COPY_BLOCK_LONGWORDS == 4u + 4u && COPY_BLOCK_LONGWORDS - 1u == 4u + 2u + 1u,
+               "the block is two runs of four and the tail covers every remainder under it");
+
+/* Four `move.l (a0)+,(a1)+` and no loop control at all. Spelt out rather than written as a `for`
+ * over a constant count because GCC re-rolls that back into a counted loop on -m68000 -O2 (measured:
+ * the run came back as `move.l (a1)+,(a0)+ / cmpa.l a0,a2 / bne`, the ~36 cycles a longword this is
+ * here to be rid of). The original spells its own run out too.
+ *
+ * THE TREE'S OTHER UNROLL IS `#pragma GCC unroll` (src/blit.c's column loop), and the two are not
+ * interchangeable. The pragma unrolls a loop the COMPILER can count, and blit.c's trip count is
+ * `width->columns` — a runtime load, which -O2 declines to unroll at all and only -O3's constant
+ * propagation turns into a number (measured; atari/build.sh keeps blit.c off its -O2 list for
+ * exactly that). This run's count is a compile-time constant already, and spelling it out is what
+ * survives BOTH levels — which it has to, the differential building this file at the host's -O2. */
+static inline void copy_four_longwords(const uint8_t **from, uint8_t **to) {
+    copy_one_longword(from, to);
+    copy_one_longword(from, to);
+    copy_one_longword(from, to);
+    copy_one_longword(from, to);
+}
+
+/* Both cursors advance by `longwords * 4` and the caller adds that itself, because taking them BY
+ * VALUE is what keeps them in address registers: behind a `uint8_t **` they go back to memory for
+ * the aliasing reason copy_longwords sets out below, inlined or not.
+ *
+ * ALWAYS INLINE, because GCC's own heuristic says no and the call is not affordable here: two of
+ * them a scanline, ~160 cycles apiece in argument pushes, `movem` and `rts` against the ~600 the
+ * scanline's copying itself costs. */
+static inline __attribute__((always_inline))
+void copy_longword_run(const uint8_t *from, uint8_t *to, unsigned longwords) {
+    const uint8_t *source = from;
+    uint8_t *dest = to;
+    unsigned blocks = longwords / COPY_BLOCK_LONGWORDS;
+    unsigned tail = longwords % COPY_BLOCK_LONGWORDS;
+
+    while (blocks-- != 0) {
+        copy_four_longwords(&source, &dest);
+        copy_four_longwords(&source, &dest);
+    }
+    /* The tail taken in halves rather than one at a time: a remainder of six is a run of four and a
+     * run of two under three tests, where a loop would be six trips plus its own setup. Counting
+     * blocks and tail separately is also what lets GCC hoist both out of a caller's scanline loop,
+     * where `longwords` is the same every time round. */
+    if ((tail & 4u) != 0)
+        copy_four_longwords(&source, &dest);
+    if ((tail & 2u) != 0) {
+        copy_one_longword(&source, &dest);
+        copy_one_longword(&source, &dest);
+    }
+    if ((tail & 1u) != 0)
+        copy_one_longword(&source, &dest);
+}
+
+/* Declared in scroll.h and shared with src/text.c and src/stage.c — see the note there.
  *
  * THE CURSORS ARE WALKED AS LOCAL POINTERS AND WRITTEN BACK ONCE, which is a codegen requirement
  * rather than a style choice, and this is the frame's hottest loop so it is worth the words. While
@@ -715,72 +799,97 @@ void bg_scroll_run_queue(uint8_t *image) {
  * so refuses either one a register induction variable: on -m68000 -O2 the body came out as SIX
  * instructions per longword — `movea.l a0,a3 / suba.l a2,a3 / move.l (a3,a1.l),(a0)+ / addq.l #1,d0
  * / cmp.l d1,d0 / bcs`, ~64 cycles — against the one `move.l (a0)+,(a1)+` (20) the original spends.
- * Read once into locals it becomes three — `move.l (a1)+,(a0)+ / cmpa.l d0,a0 / bne`, ~36.
+ * Read once into locals it became three, ~36; unrolled by COPY_BLOCK_LONGWORDS it is ~22.
  *
  * Nothing observable moves. `advanced` is `longwords * 4` in 32 bits, so each cursor comes back
- * exactly where 4n successive addr_add steps left it, wrap included; the loop is still a forward
- * longword-at-a-time copy, so an overlapping source and destination see the same order they did.
- * On the target be32/wr32 ARE the aligned native accesses (see the kit's machine.h), which is what
- * lets the pair fuse into one `move.l`; on the little-endian host they stay the byte assembly the
- * differential runs, so the same source serves both. */
+ * exactly where 4n successive addr_add steps left it, wrap included; the run is still a forward
+ * longword-at-a-time copy in the same order, so an overlapping source and destination see what they
+ * did. On the target be32/wr32 ARE the aligned native accesses (see the kit's machine.h), which is
+ * what lets the pair fuse into one `move.l`; on the little-endian host they stay the byte assembly
+ * the differential runs, so the same source serves both. */
 void copy_longwords(uint8_t *image, uint32_t *source, uint32_t *dest, unsigned longwords) {
-    const uint8_t *from = image + *source;
-    uint8_t *to = image + *dest;
-    unsigned remaining = longwords;
-    while (remaining-- != 0) {
-        wr32(to, be32(from));
-        from += sizeof(uint32_t);
-        to += sizeof(uint32_t);
-    }
-    uint32_t advanced = (uint32_t)longwords * sizeof(uint32_t);
+    copy_longword_run(image + *source, image + *dest, longwords);
+
+    uint32_t advanced = (uint32_t)longwords * WB_LONGWORD_BYTES;
     *source = addr_add(*source, advanced);
     *dest = addr_add(*dest, advanced);
 }
 
 /* How much of the scanline comes out of the source row before the copy reaches the row's END. The
  * column starts WB_BG_CELL_LONGWORDS * column into a row of WB_BG_ROW_LONGWORDS, so columns 0 and 1
- * never reach it at all — which is why their two variants are the twelve bytes shorter ones. */
+ * never reach it at all — which is why their two variants are the twelve bytes shorter ones, and
+ * why this is capped at the whole scanline rather than left to run past it. */
 static unsigned longwords_before_the_seam(uint32_t column) {
-    return WB_BG_ROW_LONGWORDS - WB_BG_CELL_LONGWORDS * column;
-}
-
-static void copy_one_scanline(uint8_t *image, uint32_t column, uint32_t *source, uint32_t *dest) {
-    unsigned before_seam = longwords_before_the_seam(column);
-    int wraps = before_seam < WB_BG_BLIT_LONGWORDS;
-
-    copy_longwords(image, source, dest, wraps ? before_seam : WB_BG_BLIT_LONGWORDS);
-    if (wraps) {
-        /* `lea -128(a0),a0` — back to the START of the same source row, not on to the next one. */
-        *source = addr_add(*source, (uint32_t)-(int32_t)WB_BG_BUFFER_LINE);
-        copy_longwords(image, source, dest, WB_BG_BLIT_LONGWORDS - before_seam);
-    }
-    /* `lea 40(a1),a1` on to the next SCREEN scanline, and `addq.l #8,a0` (or `lea 136(a0),a0`,
-     * which is that plus the row the wrap above rewound) on to the same column of the next source
-     * row. Both variants therefore leave a0 advanced by exactly one WB_BG_BUFFER_LINE. */
-    *dest = addr_add(*dest, WB_SCREEN_LINE - WB_BG_BLIT_ROW_BYTES);
-    *source = addr_add(*source, WB_BG_CELL_BYTES + (wraps ? WB_BG_BUFFER_LINE : 0));
+    unsigned to_the_rows_end = WB_BG_ROW_LONGWORDS - WB_BG_CELL_LONGWORDS * column;
+    return to_the_rows_end < WB_BG_BLIT_LONGWORDS ? to_the_rows_end : WB_BG_BLIT_LONGWORDS;
 }
 
 /* One half of a variant: `rows + 1` scanlines under a single `dbf`, so a count that arrived
- * NEGATIVE would run 65536 of them. Reproduced by construction (`uint16_t`, do/while) and out of
- * reach through bg_scroll_blit, whose two counts always sum to WB_BG_BLIT_SCANLINES. */
-static void copy_scanlines(uint8_t *image, uint32_t column, uint32_t *source, uint32_t *dest,
-                           uint16_t rows) {
-    uint16_t remaining = rows;
+ * NEGATIVE would run 65536 of them. Reproduced by construction — `rows` is a word and the loop a
+ * do/while, so `$ffff` becomes 65536 trips — and out of reach through bg_scroll_blit, whose two
+ * counts always sum to WB_BG_BLIT_SCANLINES.
+ *
+ * BOTH RUN LENGTHS ARE THE COLUMN'S, not the scanline's, so they are the caller's arguments and not
+ * recomputed here — the whole point of the original's sixteen variants is that each one's split is
+ * fixed. The cursors are walked as locals for the reason copy_longwords states.
+ *
+ * AND THEY ARE WALKED AS HOST POINTERS, WHICH IS A TRADE AND NOT A FREE ONE. machine.h's rule is to
+ * do the address arithmetic in 32 bits FIRST and add `image` last, so that a cursor stepping past
+ * 2^32 wraps where the 68000's address ALU wraps; here `from` and `to` are advanced as host pointers
+ * for the whole run of scanlines, and a source within one buffer row of 2^32 would run off the end of
+ * `image` instead of wrapping to its start. NO DEFINED CASE MOVES: the code this replaced formed
+ * `image + *source` on its very first scanline, which for such a cursor was already a pointer outside
+ * the image and undefined on both sides of the differential. The write-back below is the arithmetic
+ * that is OBSERVABLE, and it is still `addr_add` in 32 bits, so the cursors the caller gets back wrap
+ * exactly as they did. */
+static void copy_scanlines(uint8_t *image, unsigned before_seam, unsigned after_seam,
+                           uint32_t *source, uint32_t *dest, uint16_t rows) {
+    const uint8_t *from = image + *source;
+    uint8_t *to = image + *dest;
+    uint32_t scanlines = (uint32_t)rows + 1;    /* a `dbf` runs its count and then once more */
+    uint32_t remaining = scanlines;
+
+    unsigned before_bytes = before_seam * WB_LONGWORD_BYTES;
+
     do {
-        copy_one_scanline(image, column, source, dest);
-    } while (remaining-- != 0);
+        copy_longword_run(from, to, before_seam);
+        /* `lea -128(a0),a0` — the run walked to the source row's END, and the rest of the scanline
+         * comes from its START, not from the next row. Columns 0 and 1 never reach the row's end at
+         * all, so their two variants have no such `lea` and `after_seam` is zero: the test is what
+         * keeps THIS port from forming `from - 128` for them, an address the original never computes
+         * and one that is undefined for a source in the first 128 bytes of the image. `after_seam` is
+         * the caller's constant for the whole run, so the branch is hoisted out of the loop. */
+        if (after_seam != 0)
+            copy_longword_run((from + before_bytes) - WB_BG_BUFFER_LINE, to + before_bytes,
+                              after_seam);
+        /* `lea 40(a1),a1` and `lea 136(a0),a0`: whichever side of the seam the scanline was split
+         * at, it ends one whole screen row and one whole buffer row on. Advancing by those two
+         * constants rather than by the pieces is what keeps the run's two address registers free —
+         * spelt as the pieces, GCC hoists them into a2-a5 and the copy falls back on data
+         * registers, which costs more than the 8 cycles the split arithmetic saves. */
+        from += WB_BG_BUFFER_LINE;
+        to += WB_SCREEN_LINE;
+    } while (--remaining != 0);
+
+    /* Whichever side of the seam a scanline was split at, it leaves the source exactly one buffer
+     * row on and the destination exactly one screen row on — so the cursors the caller gets back
+     * are the loop's own arithmetic done once, in the 32 bits the address ALU works in. */
+    *source = addr_add(*source, scanlines * WB_BG_BUFFER_LINE);
+    *dest = addr_add(*dest, scanlines * WB_SCREEN_LINE);
 }
 
 void bg_scroll_copy_column(uint8_t *image, uint32_t column, uint32_t source, uint32_t dest,
                            uint32_t first_rows, uint32_t second_rows) {
-    copy_scanlines(image, column, &source, &dest, (uint16_t)first_rows);
+    unsigned before_seam = longwords_before_the_seam(column);
+    unsigned after_seam = WB_BG_BLIT_LONGWORDS - before_seam;
+
+    copy_scanlines(image, before_seam, after_seam, &source, &dest, (uint16_t)first_rows);
     if ((int16_t)(uint16_t)second_rows < 0)
         return;
     /* `lea -$5800(a0),a0`: the first half ran off the buffer's end, so the second starts one whole
      * buffer back — the same column of the row 176 scanlines earlier, i.e. the buffer's own top. */
     source = addr_add(source, (uint32_t)-(int32_t)WB_BG_BUFFER_LEN);
-    copy_scanlines(image, column, &source, &dest, (uint16_t)second_rows);
+    copy_scanlines(image, before_seam, after_seam, &source, &dest, (uint16_t)second_rows);
 }
 
 /* $82f8. Three position words become one source address, one screen address and the two `dbf`

@@ -877,6 +877,7 @@ price says the *oracle* cannot see a write, not that it is unpinnable.
 ```bash
 make venv      # once: .venv + pytest/pytest-xdist (see requirements.txt)
 make test      # build the candidate + the shared oracle, run the suite across cores
+make guarded   # the same suite over a PROT_NONE-fenced image — see below; NOT part of `make test`
 make oracle    # rebuild only the shared Musashi oracle
 make clean     # this project's build/ only — the oracle is shared, see the kit README
 ```
@@ -892,8 +893,21 @@ projects/wonderboy/recreate/.venv/bin/python -m pytest -q tools/test_hw_portabil
 
 # 2. the GUARDED-IMAGE sweep: every candidate run on an image with PROT_NONE either side, so a raw
 #    `image + <computed address>` that leaves the 1 MB buffer FAULTS instead of reading the host heap
+make guarded
+#    ...which is this, and the KIT's kit.mk keeps the incantation rather than this README — the
+#    target is shared, so joust and buggyboy have it too:
 PYTHONPATH=../../../tools .venv/bin/python -m pytest -q -n auto -p recreate_kit.guarded_image test
 ```
+
+**IT IS THE SURFACE FOR EVERY BOUNDS CHANGE IN `src/blit.c` AND `src/scroll.c`, and `make test` is
+not.** Both files ask their off-image guard once per SPAN rather than once per word — a row's two
+spans, and the whole blit's — and a span one word or one row too generous proves a walk in-image
+that is not, then reads and writes PAST the image. There is no image there to differ: the
+candidate's buffer is a Python `bytearray` and the bytes just past it read back as the same zero the
+shim would have returned. Measured 2026-08-25: all four such mutations (row and blit, source and
+destination, one word short and one row short) pass the whole suite green and FAULT here. Run
+`make guarded` after touching a span, a stride or a row count in either file; `STATUS.md`'s
+"## Performance" has the numbers and `test/test_blit.py`'s two image-edge cases are where it faults.
 
 The sweep is not in `make test` because a fault is a dead worker rather than a named assertion: under
 `-n auto` xdist reports which test was running and carries on, which makes the run a CENSUS of the

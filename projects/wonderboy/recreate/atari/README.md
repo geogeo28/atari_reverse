@@ -347,28 +347,53 @@ so late symbols get no slots and the report comes back empty); and the window **
 on `b VBL > N`, because TOS spends >2,000 vblanks probing the absent floppy before the `.PRG` runs —
 it is opened at a PC and closed from inside that breakpoint's action file with `b VBL > VBL :1000`.
 
-The baseline, both sides over the same 1000-vblank window (2026-08-25 at `036ee78`, TOS 1.04,
-`--memsize 4`; cycles are every profiled region's, ROM TOS included). The last column is the top of
-`print_side`'s own ranking by inclusive cycles, nested callees and all — `blit_sprite_w3` is inside
-`sprite_draw_pass`, `bg_scroll_copy_column` inside `bg_scroll_blit`:
+The baseline, both sides over the same 1000-vblank window (2026-08-25, the working tree of the
+four-levers + per-unit -O3 batch; TOS 1.04, `--memsize 4`; cycles are every profiled region's, ROM
+TOS included). The last column is the top of `print_side`'s own ranking by inclusive cycles, nested
+callees and all — `blit_sprite_w3` is inside `sprite_draw_pass`, `copy_scanlines` inside
+`bg_scroll_blit`, and `game_main_loop` (330.4K, the whole frame) is left out of it as the container
+it is:
 
 | | frames | fps | cycles/frame | the biggest costs per frame (inclusive), as the tool ranks them |
 |---|---|---|---|---|
-| **ours** | 196 | 9.80 | 817.6K (797.6K inside `game_main_loop`) | `sprite_draw_pass` 281.1K · `blit_sprite_w3` 272.4K · `blit_row` 267.7K · `bg_scroll_blit` 208.3K · `flip_screen` 131.2K |
-| **original** | 500 | 25.00 | 320.4K | `flip_screen` 124.4K · `bg_scroll_blit` 105.2K · `panel_refresh_frame` 33.7K |
+| **ours** | 472 | 23.60 | 339.5K (330.4K inside `game_main_loop`) | `bg_scroll_blit` 148.8K · `copy_scanlines` 147.8K · `actor_behavior_pass` 57.0K · `actor_dispatch_behavior` 52.9K · `panel_refresh_frame` 41.2K · `sprite_draw_pass` 39.0K · `blit_sprite_w3` 29.1K · `blit_sprite_rows` 28.9K · `flip_screen` 26.2K |
+| **original** | 500 | 25.00 | 320.5K | `flip_screen` 124.4K · `bg_scroll_blit` 105.3K · `panel_refresh_frame` 33.7K · `sprite_draw_pass` 25.1K · `blit_sprite_w3` 20.6K |
 
-Same-function ratios worth the name: `blit_sprite_w3` **x13.3**, `sprite_draw_pass` **x11.3**,
-`text_run_message_box` **x6.0**, the actor tier **x3-4** across the board (the bus guards), and
-`flip_screen` **x1.1** — most of it now the vblank wait, which is what a frame finishing early
-looks like. The ladder so far: 95 frames / 4.75 fps / 1,646K per frame before `blit_row`'s
-`__umodsi3` went (`b5da465`), 189 / 9.45 / 838K after it, 196 / 9.80 / 818K once `copy_longwords`
-walked local pointers (`036ee78`), 244 / 12.20 / 657K once the sprite blit stopped asking per word
-(the frame now sits at 4.1 vblanks, so the next blit saving lands in `flip_screen`'s wait until the
-whole frame fits under four). Two readings the table cannot give: a function entered by
+**The whole frame is x1.06 the original's**, which is the number that matters and the one this table
+now exists to keep. Same-function ratios worth the name: `bg_scroll_blit` **x1.4** and
+`blit_sprite_w3` **x1.4** (both were x13-ish when this table was first written),
+`sprite_draw_pass` **x1.6**, `panel_refresh_frame` **x1.2**, `text_run_message_box` **x2.5**, the
+actor tier **x2.4-4.3** across the board (the bus guards, and now the largest ratios left), and
+`flip_screen` **x0.2** — it is almost all vblank wait on both sides, so OURS being five times
+CHEAPER just means we arrive later and wait less.
+
+The ladder so far: 95 frames / 4.75 fps / 1,646K per frame before `blit_row`'s `__umodsi3` went
+(`b5da465`), 189 / 9.45 / 838K after it, 196 / 9.80 / 818K once `copy_longwords` walked local
+pointers (`036ee78`), 244 / 12.20 / 657K once the sprite blit stopped asking per word, 331 / 16.55 /
+484K after the 2026-08-25 batch (the scroll's unrolled copy run, the sound tick off a module-base
+pointer, the sprite blit's per-blit guard and register file, and -O3 per translation unit), and
+472 / 23.60 / 339.5K once `copy_scanlines` stopped forming its wrap-back pointer for the two column
+variants that have no seam.
+
+**FPS IS NOW QUANTISED, AND HARD.** `flip_screen` waits for a vblank, so a frame costs a whole number
+of them: the original's is exactly 2.00 (500 frames in 1,000 vblanks) and ours is **2.12** (472) —
+some frames take two and some three. The last entry in that ladder is what that means in practice:
+9K cycles of work, 0.06 of a vblank, moved most frames off three and was worth **7 fps**. So read
+fps here as a step function and `cycles/frame` as the continuous quantity, and expect any regression
+that pushes the frame's work back over two vblanks to cost a third of the frame rate at once.
+
+Two readings the table cannot give: a function entered by
 `bra`/`jmp` rather than `jsr` carries no cycle totals in Hatari's report — 18 of the shipped side's
 91, `game_main_loop` among them — so its cost is folded into the nearest `jsr`-entered ancestor and
 the ratio table leaves it out rather than print a zero; and `cyc/call` divides by the calls Hatari
 could ATTRIBUTE (the exclusive totals' own count), which is why `arrivals` is a separate column.
+
+**OUR SIDE'S SYMBOLS ARE FOLDED ONTO THEIR BASE NAME**, because the build requires
+`-fipa-cp-clone`: one source function reaches the map as `hud_plot_digit` beside
+`hud_plot_digit.constprop.0`, and a routine whose every call site was specialised
+(`blit_sprite_rows`) had no row under its own name at all until `profile.py` started stripping
+`.constprop.N` / `.part.N` / `.isra.N`. The shipped side comes out of `../names.txt` and has no
+clones, so nothing about its rows changes and the ratios are still like for like.
 
 ## Pieces
 

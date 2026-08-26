@@ -87,6 +87,28 @@ _Static_assert(WB_BLIT_ROW_SPANS_AGREE(WB_BLIT_COLUMNS_MIN)
                "a row's destination span and the `lea` that closes the row are the same scanline "
                "read from either end, and one of the two has been changed without the other");
 
+/* ...and WHAT A WHOLE BLIT TOUCHES, which is those two spans stretched by the row count. The source
+ * cells of consecutive rows are laid END TO END, so a blit reads `rows * WB_BLIT_ROW_SOURCE_BYTES`
+ * from a0 without a gap. The screen rows are ONE SCANLINE apart, so the last row starts
+ * (rows - 1) steps along and ends its own span later — which is what src/blit.c's
+ * blit_span_in_image asks os_in_image ONCE PER BLIT over.
+ *
+ * THIS IS AN ASSUMPTION AND NOT AN IDENTITY, which is why there is no _Static_assert under it. The
+ * scanline is not what the walk STEPS BY; it is what the walk's own two distances happen to add up
+ * to, and both of those live in src/blit.c's CODE rather than in any macro here: blit_column omits
+ * the post-increment after the LAST plane it writes, and the `lea` at the bottom of blit_row covers
+ * the rest of the scanline. Restating that sum out of WB_BLIT_ROW_DEST_BYTES and
+ * WB_BLIT_ROW_ADVANCE would only be WB_BLIT_ROW_SPANS_AGREE above with the scanline moved to the
+ * other side — the two cancel, and the assertion would read WB_SCREEN_LINE == WB_SCREEN_LINE.
+ *
+ * WHAT PINS IT IS THE WALK ITSELF: test/test_blit.py's
+ * `test_a_blit_leaves_its_screen_cursor_one_scanline_per_row_on` runs a multi-row blit at every
+ * width and requires the a1 it comes back with to be the a1 it went in with plus one WB_SCREEN_LINE
+ * per row drawn. Drop blit_column's missing post-increment, or change either distance without the
+ * other, and that case reddens — which is the mutation this constant would otherwise be trusted
+ * through. */
+#define WB_BLIT_ROW_DEST_STEP     WB_SCREEN_LINE
+
 /* --- clipping ---------------------------------------------------------------------------------- */
 /* The byte the preludes write and the clipped bodies `btst`. Bit 0 is the RIGHTMOST column. */
 #define WB_BLIT_CLIP_MASK         0x9966u

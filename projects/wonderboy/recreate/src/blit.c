@@ -335,6 +335,26 @@ void blit_row_body(uint8_t *image, sprite_blit_regs *regs, const blit_width *wid
 {
     unsigned cells = width->columns - 1u;
 
+    /* THE COLUMN LOOP IS UNROLLED, and that is what carries the width constant the rest of the way
+     * down. `cell` is then a NUMBER in each copy, so mask_reg, plane_reg, next_reg and column_bit
+     * all fold — where the rolled loop recomputed the window position per column and stepped the
+     * pointer with a live wrap test per WORD (`cmp`/`bcs`/`move` against the window's end, ten
+     * times a cell), each unrolled column now names its six registers by fixed displacement and
+     * tests nothing. It is also what lets the register file above live in registers at all: SRA
+     * only scalarises an array whose subscripts are constants. Measured at -O3, 2026-08-25.
+     *
+     * FIVE, SPELT AS A LITERAL, and the assertion sits here rather than in the header because
+     * `#pragma` is one of the few places C does not macro-expand its argument — so the line below
+     * is WB_BLIT_COLUMNS_MAX written a second time, and this is the pin CLAUDE.md §5 asks for when
+     * a value has to be. A width wider than five columns changes the header and fails to compile
+     * on the next line. THE PRAGMA IS A NO-OP AT -O2, where `width->columns` is a runtime load and
+     * GCC declines to unroll it at all; src/scroll.c's copy run is unrolled the other way — the
+     * copies SPELT OUT one after another — precisely because that file's runs must survive -O2 as
+     * well. That file's `copy_four_longwords` states the other half of this note. */
+    _Static_assert(WB_BLIT_COLUMNS_MAX == 5u,
+                   "the `#pragma GCC unroll` below carries the widest column count as a literal, "
+                   "and WB_BLIT_COLUMNS_MAX has moved away from it");
+#pragma GCC unroll 5
     for (unsigned column = 0; column < width->columns; column++) {
         int is_last = (column == cells);
         unsigned cell = is_last ? cells - 1u : column;
@@ -362,17 +382,33 @@ void blit_row_body(uint8_t *image, sprite_blit_regs *regs, const blit_width *wid
     }
 }
 
-/* The two instantiations. Each is a whole copy of the walk above with one arm of the guard in it. */
-static void blit_row_walk_in_image(uint8_t *image, sprite_blit_regs *regs, const blit_width *width,
-                                   int clipped, unsigned rotation)
+/* The two instantiations. Each is a whole copy of the walk above with one arm of the guard in it.
+ * `always_inline` for blit_row_body's own reason and for one more: a call that was not inlined
+ * would take the address of blit_sprite_rows' local register file, and a file whose address escapes
+ * is a file GCC must keep in memory. */
+static inline __attribute__((always_inline))
+void blit_row_walk_in_image(uint8_t *image, sprite_blit_regs *regs, const blit_width *width,
+                            int clipped, unsigned rotation)
 {
     blit_row_body(image, regs, width, clipped, rotation, WB_BLIT_ROW_IN_IMAGE);
 }
 
-static void blit_row_walk_checked(uint8_t *image, sprite_blit_regs *regs, const blit_width *width,
-                                  int clipped, unsigned rotation)
+static inline __attribute__((always_inline))
+void blit_row_walk_checked(uint8_t *image, sprite_blit_regs *regs, const blit_width *width,
+                           int clipped, unsigned rotation)
 {
     blit_row_body(image, regs, width, clipped, rotation, WB_BLIT_ROW_CHECKED);
+}
+
+/* THE QUESTION BOTH HOISTS BELOW ASK, written once: a source span from a0 and a destination span
+ * from a1, both wholly inside the image. Its two callers differ only in how far they stretch the
+ * pair — over ONE row (blit_row) or over every row of the blit (blit_span_in_image) — so the
+ * predicate is one function rather than the same conjunction spelt twice, and a change to what
+ * "inside" means lands on both. */
+static int spans_in_image(uint32_t source, uint32_t source_bytes,
+                          uint32_t dest, uint32_t dest_bytes)
+{
+    return os_in_image(source, source_bytes) && os_in_image(dest, dest_bytes);
 }
 
 /* The row, plus the `lea` that steps the screen cursor to the next scanline — and THE OFF-IMAGE
@@ -384,45 +420,107 @@ static void blit_row_walk_checked(uint8_t *image, sprite_blit_regs *regs, const 
  * WB_BLIT_ROW_DEST_BYTES are what makes that a PROOF and not a hope, and both are what a row really
  * touches rather than a word less. Where either span is not wholly inside, nothing is proved about
  * any of its words and each is asked as before: that is the runaway `dbf`'s 10 MB of screen, which
- * is exactly the case a hoist must not smuggle a write into. */
+ * is exactly the case a hoist must not smuggle a write into.
+ *
+ * `blit_in_image` is the SAME PROOF taken one level further out, by blit_span_in_image below: when
+ * the caller has already bounded every row of the blit, this row's own two questions have a known
+ * answer and are not put. */
 static void blit_row(uint8_t *image, sprite_blit_regs *regs, const blit_width *width, int clipped,
-                     unsigned rotation)
+                     unsigned rotation, int blit_in_image)
 {
-    if (os_in_image(regs->source, width->source_bytes)
-        && os_in_image(regs->dest, width->dest_bytes))
+    if (blit_in_image
+        || spans_in_image(regs->source, width->source_bytes, regs->dest, width->dest_bytes))
         blit_row_walk_in_image(image, regs, width, clipped, rotation);
     else
         blit_row_walk_checked(image, regs, width, clipped, rotation);
     regs->dest = addr_add(regs->dest, width->row_advance);
 }
 
-/* The whole blit: one row per pass of whichever of the two loop shapes this width uses. */
+/* One pass of either loop shape below: the row, and the `subq.w #1,d7` that counts it off. The two
+ * shapes step the counter identically — as a WORD, so d7's high half survives the whole blit — and
+ * differ only in which end of the loop they test it at, so the step is written once here rather
+ * than once in each. */
+static void blit_row_and_step_count(uint8_t *image, sprite_blit_regs *file, const blit_width *width,
+                                    int clipped, unsigned rotation, int blit_in_image)
+{
+    blit_row(image, file, width, clipped, rotation, blit_in_image);
+    file->rows = set_low_word(file->rows, (uint16_t)(file->rows - 1u));
+}
+
+/* ...AND THE SAME GUARD HOISTED AGAIN, OFF THE ROW AND ONTO THE WHOLE BLIT. Both cursors advance
+ * MONOTONICALLY across the rows and by a fixed step — the source by one row's cells, the screen by
+ * WB_BLIT_ROW_DEST_STEP (blit.h) — so the union of every row's span is ONE span on each side, and
+ * os_in_image over those two decides for every row the blit will draw at once. Where it holds,
+ * blit_row's own question could only ever be answered yes and is not asked; where it does not,
+ * NOTHING is proved about any row and blit_row asks per row exactly as before. That fallback is not
+ * a nicety: it is what keeps the runaway `dbf`'s 65,536 rows dropping their off-image writes one at
+ * a time, as the oracle's bus does.
+ *
+ * `rows` is the number the caller's loop will DRAW. Neither product can overflow a longword: `rows`
+ * is at most 65,536, one row's source is at most WB_BLIT_ROW_SOURCE_BYTES(WB_BLIT_COLUMNS_MAX) and
+ * the screen span at most that many whole scanlines. */
+static int blit_span_in_image(const sprite_blit_regs *regs, const blit_width *width, uint32_t rows)
+{
+    /* NEITHER SHAPE BELOW CAN ASK THIS — the counted one declines to ask at all when its count is
+     * refused, and the `dbf` one's count is `rows + 1` and so at least 1. It is here because the
+     * `rows - 1u` on the next line would otherwise underflow into a 4 GB span, and because a third
+     * shape asking it should get NO: a blit that touches nothing has nothing proved about it, and
+     * failing closed costs only the per-row question the walk would have asked anyway. */
+    if (rows == 0)
+        return 0;
+    return spans_in_image(regs->source, rows * width->source_bytes,
+                          regs->dest, (rows - 1u) * WB_BLIT_ROW_DEST_STEP + width->dest_bytes);
+}
+
+/* The whole blit: one row per pass of whichever of the two loop shapes this width uses. Each shape
+ * reads its own row count off its own entry state and bounds the walk with it before the first row
+ * — one decision for the blit rather than one per row.
+ *
+ * THE REGISTER FILE IS A LOCAL FOR THE LENGTH OF THE BLIT and the caller's is written back once,
+ * which is what the 68000 does with d0..d7/a0/a1 and what this port could not do while every word
+ * reached the file through the caller's pointer: a store through `image` may alias `*regs` for all
+ * GCC knows, so each of the window's six words and both cursors had to be re-read after every plane
+ * the walk had written. Nothing outside this function can see `file` — which is why the two walks
+ * above are `always_inline` — so with the column loop unrolled its subscripts are constants and the
+ * whole file lives in registers for the whole walk. blit_load_cell already made this argument for
+ * the source cursor within ONE cell; this is the same one, for the whole blit. */
 static void blit_sprite_rows(uint8_t *image, sprite_blit_regs *regs, const blit_width *width,
                              int clipped)
 {
-    unsigned rotation = blit_rotation(regs);
+    sprite_blit_regs file = *regs;
+    unsigned rotation = blit_rotation(&file);
+    int blit_in_image;
 
     if (width->counts_rows_up_front) {
         /* `addq.w #1,d7`, ONCE — the `dbf` at the bottom jumps back to the `tst.w d7` below it,
          * not to the bump. The `beq` and the `bmi` between them refuse every count that is not
          * positive, so the `dbf` on this path always branches and the loop always exits on the
-         * `beq` with the counter at zero. */
-        regs->rows = set_low_word(regs->rows, (uint16_t)(regs->rows + 1u));
-        while ((int16_t)(uint16_t)regs->rows > 0) {
-            blit_row(image, regs, width, clipped, rotation);
-            regs->rows = set_low_word(regs->rows, (uint16_t)(regs->rows - 1u));
-        }
-        return;
+         * `beq` with the counter at zero. The bumped count IS the number of rows drawn, once a
+         * refusal is read as the none it draws. */
+        int16_t counted;
+
+        file.rows = set_low_word(file.rows, (uint16_t)(file.rows + 1u));
+        counted = (int16_t)(uint16_t)file.rows;
+        /* A refused count draws nothing, so the bound is not asked for at all rather than asked
+         * about a span of no rows. */
+        blit_in_image = counted > 0 && blit_span_in_image(&file, width, (uint32_t)counted);
+        while ((int16_t)(uint16_t)file.rows > 0)
+            blit_row_and_step_count(image, &file, width, clipped, rotation, blit_in_image);
+    } else {
+        /* `dbf d7,<top>` alone: the row is drawn BEFORE the count is looked at, so `rows` is a
+         * "one fewer than this many" and an entry value of $ffff draws 65,536 rows rather than
+         * none. REACHED, by a descriptor with a negative height — see the file comment and
+         * test/test_blit.py. `blit_read_word`/`blit_write_word`'s off-image guard is what lets both
+         * sides survive the 10 MB of screen this then walks, and the bound above declines it for
+         * exactly that reason. */
+        blit_in_image = blit_span_in_image(&file, width, (uint32_t)(uint16_t)file.rows + 1u);
+        do {
+            blit_row_and_step_count(image, &file, width, clipped, rotation, blit_in_image);
+        } while ((uint16_t)file.rows != (uint16_t)-1);
     }
-    /* `dbf d7,<top>` alone: the row is drawn BEFORE the count is looked at, so `rows` is a
-     * "one fewer than this many" and an entry value of $ffff draws 65,536 rows rather than none.
-     * REACHED, by a descriptor with a negative height — see the file comment and test/test_blit.py.
-     * `blit_read_word`/`blit_write_word`'s off-image guard is what lets both sides survive the
-     * 10 MB of screen this then walks. */
-    do {
-        blit_row(image, regs, width, clipped, rotation);
-        regs->rows = set_low_word(regs->rows, (uint16_t)(regs->rows - 1u));
-    } while ((uint16_t)regs->rows != (uint16_t)-1);
+    /* ONE write-back for both shapes, which is what makes the local file safe to add a third exit
+     * to: a shape that forgot it would leave the caller's registers at their entry values. */
+    *regs = file;
 }
 
 /* The screen x a prelude clips against: d4's low word, SIGNED — every threshold is compared with a

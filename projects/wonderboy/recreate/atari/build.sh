@@ -309,11 +309,97 @@ DEF="$DEF -DPROGRAM_BYTES=$IMG_BYTES -DWB_STAGED_AT=$STAGED_AT"
 #   (../src/sound.c:786) then simply returns its sentinel, which is the routine bailing out of a
 #   malformed sound pattern — and ../STATUS.md records that that opcode band ($98..$b7) has no
 #   on-target story of its own yet.
+# THERE IS NO -O HERE, and that is the point: the level is chosen PER TRANSLATION UNIT by
+#   `opt_level_for` below, out of the one list `UNITS_BUILT_AT_O2`. The reason is a pair of
+#   measurements (atari/profile.py, 2026-08-25, at 519b177).
+#
+#   -O3 IS WHAT THE FRAME IS MADE OF: 656.7 K -> 496.1 K cycles a frame, 12.20 -> 16.15 fps, from the
+#   same sources. -fipa-cp-clone specialises a routine per CONSTANT argument, so the sprite blit's
+#   ONE algorithm gets a clone per width table entry (blit_sprite_rows.constprop.N: 153 K -> 74 K a
+#   frame) and the HUD's glyph plotter one per digit width (hud_plot_digit 2,100 -> 833 cycles, the
+#   original's 862) — without the source giving up its one-algorithm shape.
+#
+#   AND THE PRICE IS CODE, PAID ON A 720 K FLOPPY. At -O3 everywhere WB.PRG went 107 -> 183 KB and
+#   the boot disk (smoke.py's `build_floppy`, tools/st_build.py) came down to 1,024 bytes free of
+#   728,064 — st_build.py refuses an overflow, so the next kilobyte of anything, resource or code,
+#   simply would not have built. Buying that headroom back means asking each unit what its -O3 bytes
+#   returned in the frame, which is what the list below records. MEASURED OVER THE WHOLE CHANGE:
+#   WB-play.PRG 180,245 -> 154,384 B, the boot disk 1,024 -> 27,648 bytes free, and the frame
+#   468.6 K -> 484.1 K cycles, 17.10 -> 16.55 fps. Only ~1.8 K of those cycles is WORK; the other
+#   ~14.8 K is flip_screen's two vblank spins (../src/game.c's `wait_for_vbl_ready` and
+#   `wait_for_vbl_tick`, through `sched_poll16`) waiting longer, because the frame already sits on a
+#   vblank boundary and 1.8 K of work tips it past. The units NOT on the list — the frame loop —
+#   keep -O3, and nothing about the link changes.
+#
+#   -flto on top FAILS this script's own checks today and is registered in ../STATUS.md's
+#   "## Performance", under this batch, as an experiment NOT DONE rather than a lever measured.
 # shim_include is on the path for tos.h / wonderboy_target.h / string.h ONLY; it shadows no kit header.
-CFLAGS="-m68000 -O2 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \
+CFLAGS="-m68000 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \
         -fomit-frame-pointer -nostdlib -DOS_NO_REFUSAL_TALLY -DWB_ON_TARGET \
         -I$HERE/shim_include -I$REC/include -I$KIT/include -Wall -Wextra -Wno-array-bounds"
 CORES="$(ls "$REC"/src/*.c)"
+
+# ---- the optimisation level, one list, one measurement per entry --------------------------------
+# HOW A UNIT IS NAMED, everywhere below: `<directory>_<file.ext>`. $UNITS spans TWO directories —
+# this one and ../src — so a bare basename is not a name: two `.c` files called the same thing in
+# the two would share one object path and one optimisation level, and the second compile would
+# overwrite the first's object with no warning from anything here. The extension is kept because it
+# is part of the file, not because it separates anything: `wonderboy_os.s` and a hypothetical
+# `wonderboy_os.c` in one directory are told apart by it, but two directories are not.
+unit_key() { printf '%s_%s' "$(basename "$(dirname "$1")")" "$(basename "$1")"; }
+
+# THE DEFAULT IS -O3 (the banner above). This is its exception list, and every entry carries the
+# number that put it there: the unit's -O2 -> -O3 text growth, against what the frame did with it.
+# One list rather than a level repeated at each compile (CLAUDE.md §5), so that "why is this file
+# built differently" is answered where the difference is made.
+UNITS_BUILT_AT_O2=(
+  src_behavior.c            # +16,818 B — the largest growth in the tree and the worst trade in it:
+                            #   at -O2 the behaviour tier costs 1.8 K cycles a frame
+                            #   (actor_behavior_pass, inclusive: 54.7 K -> 56.5 K), so those bytes
+                            #   bought ~9 KB per K cycles, against src_blit.c's 16,660 B for the
+                            #   sprite blit's 79 K, which is 0.2
+  src_rad.c                 # +4,776 B — the .RAD depacker runs in the BOOT slices, never in a frame
+  src_boot.c                # +1,762 B — the composed boot slices themselves, same reason
+  atari_wonderboy_main.c    # +2,148 B — the shim: entry, staging, the record. Boot and teardown
+  atari_wonderboy_backend.c # +1,360 B — the shim's kit surface. Its one hot routine is
+                            #   `sched_poll16`, and that is flip_screen's vblank SPIN, so what it
+                            #   costs is the waiting and not the code around it: 162.6 -> 162.5
+                            #   cycles a call at -O2, with the number of calls following the frame
+                            #   rather than the compiler
+)
+
+# ...AND THE UNITS THAT MAY NEVER JOIN IT. The four levers measured on 2026-08-25 exist ONLY at -O3,
+# so moving one of these to the list above would hand its bytes back and take the frame with them —
+# silently, because nothing in `make test` and nothing else in this script measures a cycle:
+#   blit.c   the column loop is unrolled by a `#pragma GCC unroll` that -O2 DECLINES (the trip count
+#            is a runtime `width->columns` until constant propagation makes it a literal), and the
+#            register file only scalarises once those subscripts are constants: 74.2 K -> a fallback
+#            of 153 K cycles a frame, and the clone assertion after the link is the tripwire
+#   scroll.c the copy run's block/tail split and the seam hoist are shaped for -O3's unrolling
+#   hud.c    -fipa-cp-clone specialises the glyph plotter per digit width (2,100 -> 833 cycles)
+#   sound.c  the tick tier's d16(a3) addressing — 76 absolute address constants down to 10
+UNITS_THAT_MUST_STAY_AT_O3="src_blit.c src_scroll.c src_hud.c src_sound.c"
+
+# -O2 for the units named above, -O3 for every other one.
+opt_level_for() { in_list "$(unit_key "$1")" "${UNITS_BUILT_AT_O2[*]}" && echo -O2 || echo -O3; }
+
+# THE SPECIALISATION HAPPENED AT ALL — which is the whole of what this floor claims. -fipa-cp-clone
+# is what turns blit.c's one algorithm into bodies with `width` a constant in each, which is what
+# gives the `#pragma GCC unroll` above a trip count to work on; ZERO clones means none of that
+# happened, and that is the failure being watched for.
+#
+# IT IS NOT A COUNT OF WIDTHS, and must not be read as one. How many clones GCC emits, and what it
+# names them, is GCC's business: it clones on the `clipped` axis as well as the width one, it merges
+# bodies that come out identical, and `.constprop.N` is a naming artefact of the pass rather than a
+# per-width guarantee. Today's build happens to carry four. A floor set at today's number would
+# fail on a compiler upgrade that emitted three good clones, and pass on one that emitted four
+# useless ones — so the floor is 1, the honest claim.
+#
+# THE REGRESSION THIS STANDS IN FOR — the frame losing ~79 K cycles because the column loop went
+# back to being runtime-counted — IS ONLY REALLY CAUGHT BY `python3 atari/profile.py ours`. That is
+# the surface; this is a cheap tripwire in front of it, and neither `make test` nor anything else in
+# this script measures a cycle.
+BLIT_WIDTH_CLONES_MIN=1
 
 # Comments stripped WITHOUT expanding includes: -fpreprocessed tells the preprocessor its input is
 # already preprocessed, so `#include` is left alone while comments and line splices go. Both scans
@@ -459,14 +545,74 @@ assert_the_sink_arm_lives_in_one_place
 assert_no_core_calls_a_modelled_os_helper
 bash "$TOOLS/assert_trap_registers.sh" --expect "$WONDERBOY_TRAP_WRAPPERS" "$HERE/wonderboy_os.s"
 
+# THE UNITS, IN LINK ORDER. `wonderboy_os.s` FIRST and everything else after it, because `_start`
+# is its first instruction and GEMDOS enters the .PRG at the first byte of text — the check just
+# below the link is what says so, and it is the reason this list is an ORDER and not a set.
+UNITS="$HERE/wonderboy_os.s $HERE/wonderboy_main.c $HERE/wonderboy_backend.c $CORES"
+
+# ...AND BOTH LEVEL LISTS ARE PINNED TO IT. A renamed or deleted unit would leave its name in one of
+# them doing nothing — UNITS_BUILT_AT_O2 would stop buying its floppy bytes, and worse,
+# UNITS_THAT_MUST_STAY_AT_O3 would stop protecting anything while still reading as a guard — a
+# decision reverting itself in silence, which is exactly what naming the lists was meant to prevent.
+# Checked rather than trusted, because the lists and $UNITS are edited for unrelated reasons.
+UNIT_KEYS="$(for UNIT in $UNITS; do printf '%s ' "$(unit_key "$UNIT")"; done)"
+assert_names_a_real_unit() {  # $1 = the key, $2 = the list it came from
+  in_list "$1" "$UNIT_KEYS" || {
+    echo "ERROR: $2 names '$1', which is not a unit this build compiles — so it is doing"
+    echo "       nothing, and whatever replaced it is being built at the default -O3 with no"
+    echo "       decision behind it. Update the list; each entry's measurement says what to redo."
+    echo "       Units are keyed <directory>_<file.ext>, e.g. src_blit.c / atari_wonderboy_main.c."
+    exit 1; }
+}
+for UNIT_AT_O3 in $UNITS_THAT_MUST_STAY_AT_O3; do
+  assert_names_a_real_unit "$UNIT_AT_O3" UNITS_THAT_MUST_STAY_AT_O3
+done
+for UNIT_AT_O2 in "${UNITS_BUILT_AT_O2[@]}"; do
+  assert_names_a_real_unit "$UNIT_AT_O2" UNITS_BUILT_AT_O2
+  if in_list "$UNIT_AT_O2" "$UNITS_THAT_MUST_STAY_AT_O3"; then
+    echo "ERROR: UNITS_BUILT_AT_O2 names '$UNIT_AT_O2', which is one of the units whose -O3 codegen"
+    echo "       the frame is MADE of (UNITS_THAT_MUST_STAY_AT_O3, with the measurement per unit)."
+    echo "       Dropping it to -O2 buys floppy bytes and pays for them in cycles that nothing here"
+    echo "       and nothing in \`make test\` would report. Take the bytes somewhere else, or"
+    echo "       re-measure this unit with atari/profile.py and move it out of that list first."
+    exit 1
+  fi
+done
+
 echo ">> compile + link (base 0, keep relocs)"
-$CC $CFLAGS $DEF -T "$HERE/tos.ld" -Wl,--emit-relocs \
-    "$HERE/wonderboy_os.s" "$HERE/wonderboy_main.c" "$HERE/wonderboy_backend.c" $CORES \
-    -lgcc -o "$BUILD/wonderboy.elf"
+# ONE OBJECT PER UNIT, so each can carry its own -O; the objects are then linked in the same order
+# the sources used to be passed in, with the same flags. Named by `unit_key` — the same key the
+# level list is written in — so that units from the two source directories cannot collide here
+# either, and so that "which object is this file's" has one answer.
+OBJ="$BUILD/obj"; mkdir -p "$OBJ"; rm -f "$OBJ"/*.o
+OBJECTS=""
+for UNIT in $UNITS; do
+  OBJECT="$OBJ/$(unit_key "$UNIT").o"
+  $CC $CFLAGS "$(opt_level_for "$UNIT")" $DEF -c "$UNIT" -o "$OBJECT"
+  OBJECTS="$OBJECTS $OBJECT"
+done
+# CFLAGS and not $DEF: the link still needs -m68000/-nostdlib/-ffreestanding to pick the right
+# libgcc and startup behaviour, while the -D's are preprocessor-only and now belong to the -c step.
+$CC $CFLAGS -T "$HERE/tos.ld" -Wl,--emit-relocs $OBJECTS -lgcc -o "$BUILD/wonderboy.elf"
 
 # _start must sit at the very first byte of text (GEMDOS enters there).
 ENTRY=$(m68k-elf-nm "$BUILD/wonderboy.elf" | awk '$3=="_start"{print $1}')
 [ "$ENTRY" = "00000000" ] || { echo "ERROR: _start not at 0 (got $ENTRY)"; exit 1; }
+
+# ...AND THE -O3 CODEGEN ITSELF, CHECKED RATHER THAN ASSUMED. Everything above verifies WHAT is in
+# the PRG; this is the one check on HOW it was compiled, and it is here because the level is now a
+# per-unit decision a future edit can reverse in one line of a bash array. The clones are the visible
+# end of the whole chain — constant propagation specialises blit_sprite_rows per `blit_width`, which
+# gives the column loop a constant trip count to unroll, which gives SRA constant subscripts to put
+# the register file in registers. No clones means none of it happened.
+BLIT_CLONES=$(m68k-elf-nm "$BUILD/wonderboy.elf" | grep -c 'blit_sprite_rows\.constprop' || true)
+[ "$BLIT_CLONES" -ge "$BLIT_WIDTH_CLONES_MIN" ] || {
+  echo "ERROR: the linked ELF has $BLIT_CLONES blit_sprite_rows.constprop clone(s), not"
+  echo "       $BLIT_WIDTH_CLONES_MIN or more — the sprite blit was NOT specialised per width, so"
+  echo "       its column loop is a runtime-counted loop again and the frame has just lost ~79 K"
+  echo "       cycles. The usual cause is blit.c reaching UNITS_BUILT_AT_O2, or -fipa-cp-clone"
+  echo "       going away from -O3; ../STATUS.md's \"## Performance\" has the measurement."
+  exit 1; }
 
 # NONE of the kit's off-target models may have been linked in. The build leaves their sources out,
 # but a header that grew a `static inline` fallback — or a core that started calling one — would

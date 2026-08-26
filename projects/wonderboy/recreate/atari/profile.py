@@ -29,6 +29,17 @@ TWO HATARI FACTS, both load-bearing:
     stop-then-shoot idiom `b VBL > VBL :1000`, where the hit count IS the number of vblanks later
     (original.py's `vbl_breakpoint` documents why that is the only way to say "N vblanks later").
 
+WHY OUR SIDE'S SYMBOLS ARE FOLDED AND THE ORIGINAL'S ARE NOT. The build REQUIRES `-fipa-cp-clone`
+(atari/build.sh's `UNITS_THAT_MUST_STAY_AT_O3` and its clone check after the link): specialising a
+routine per constant argument is what gives the sprite blit's column loop a trip count to unroll and
+the HUD's glyph plotter a width, and it is worth ~79 K cycles a frame. What it costs the PROFILE is
+that one function arrives in the map as several symbols (`hud_plot_digit` beside
+`hud_plot_digit.constprop.0`), so its cycles are split across rows that each look small — and a
+routine whose every call site was specialised has no row under its own name at all
+(`blit_sprite_rows`). The clone suffix is a naming artefact of the pass and never a distinction the
+ORIGINAL made, so a row here is the base symbol and `CLONE_SUFFIX_RE` is what strips it. The
+shipped side comes out of `../names.txt`, which has no clones, so nothing about it changes.
+
 WHAT THE NUMBERS DO AND DO NOT COVER. `window_cycles` is EVERY profiled region summed — our side
 spends ~1.2% of its window in ROM TOS, and a figure that quietly dropped it would flatter one side
 and not the other. The per-function table is narrower: Hatari attaches cycle totals only to
@@ -392,6 +403,17 @@ def window_cycles(log):
     return sum(regions)
 
 
+# GCC's interprocedural passes rename what they specialise: `-fipa-cp-clone` appends
+# `.constprop.N`, `-fipa-sra` `.isra.N`, and partial inlining `.part.N`, and a routine can carry
+# more than one. All of them name the same source function, so the profile aggregates onto the base.
+CLONE_SUFFIX_RE = re.compile(r"(?:\.(?:constprop|part|isra)\.\d+)+$")
+
+
+def base_symbol(name):
+    """The source function a linker symbol belongs to, whatever GCC specialised it into."""
+    return CLONE_SUFFIX_RE.sub("", name)
+
+
 def parse_callers(log):
     """The callers report as {name: {calls, arrivals, inclusive, exclusive}}.
 
@@ -427,7 +449,8 @@ def parse_callers(log):
         # report at it — 41 functions parsed out of 86, and no error anywhere.
         if not callers or " " in name:
             continue
-        totals = rows.setdefault(name, dict(calls=0, arrivals=0, inclusive=0, exclusive=0))
+        totals = rows.setdefault(base_symbol(name),
+                                 dict(calls=0, arrivals=0, inclusive=0, exclusive=0))
         for entry in CALLER_RE.finditer(callers):
             count, kind, groups = int(entry.group(1)), entry.group(2), entry.group(3).split()
             totals["arrivals"] += count
@@ -492,8 +515,12 @@ def print_side(data):
           f"= {frames / seconds:.2f} fps ==")
     print(f"   {window / max(1, frames) / 1e3:9.1f}K cycles/frame over the whole window "
           f"({window / 1e6:.1f}M cycles, every profiled region)")
+    # PER FRAME, over the same `frames` the line above divides by — the two numbers sit next to each
+    # other and are read as a pair ("of the whole window's N, M is inside the frame loop"), so they
+    # cannot be per-arrival and per-charged-call respectively. `calls` still gates the line, because
+    # a frame loop Hatari charged nothing to has no inclusive total to print.
     if loop.get("calls"):
-        print(f"   {loop[INCLUSIVE] / loop['calls'] / 1e3:9.1f}K cycles/frame inside "
+        print(f"   {loop[INCLUSIVE] / frames / 1e3:9.1f}K cycles/frame inside "
               f"{FRAME_SYMBOL} itself")
     print(f"   {'function':<{NAME_COLUMN}} {'calls':>7} {'arrivals':>9} {'incl/frame':>12} "
           f"{'excl/frame':>12} {'cyc/call':>10}")

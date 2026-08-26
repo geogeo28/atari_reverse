@@ -1062,12 +1062,100 @@ def test_a_blit_draws_wherever_its_destination_points(screen):
     _run_blit(f"screen-{screen:#x}", 4, MID, x=ON_SCREEN_X, shift=3, rows=2, screen=screen)
 
 
-def _screen_ending_at_image_end(columns, x, y):
-    """The screen base that puts a `columns`-wide row's LAST plane word exactly at the end of the
-    image, so every word of the row but that one is written and that one is dropped."""
+# The entry row count the cursor-walk case below uses. It has to be at least one — the shapes read
+# `rows` as "one fewer than this many" — because with a SINGLE row the closing `lea` is the only
+# distance in the walk and the missing post-increment it complements is invisible.
+CURSOR_WALK_ROWS = 3
+
+
+@pytest.mark.parametrize("columns", COLUMNS)
+def test_a_blit_leaves_its_screen_cursor_one_scanline_per_row_on(columns):
+    """THE PER-ROW DESTINATION STEP, pinned where it actually lives: in the walk.
+
+    include/blit.h's WB_BLIT_ROW_DEST_STEP is the whole per-blit bound's stride and it is a plain
+    WB_SCREEN_LINE, but nothing in that header can assert it — the scanline is not a distance the
+    walk steps by, it is what the walk's own TWO distances add up to, and both of them are code:
+    blit_column omits the post-increment after the last plane word it writes, and the `lea` at the
+    bottom of the row covers the rest of the scanline. Restating the sum out of the two macros only
+    cancels back to WB_SCREEN_LINE == WB_SCREEN_LINE.
+
+    So it is asserted over the register the walk comes back with. A multi-row unclipped blit at each
+    width must leave a1 exactly one scanline per DRAWN row past the a1 it was entered with — one
+    number covering both distances at once, over more than one row so that the two are separable.
+    """
+    x, rows = ON_SCREEN_X, CURSOR_WALK_ROWS
+    entry_dest = _dest_for(x, DEST_ROW, SCREEN_BUFFERS[0])
+    drawn = rows + 1                       # both loop shapes read d7 as "one fewer than this many"
+
+    _writes, _regs, info = _run_blit(f"cursor-walk-w{columns}", columns, MID,
+                                     x=x, shift=5, rows=rows)
+
+    assert info["ret"]["a1"] == (entry_dest + drawn * SCREEN_LINE) & LONG_MASK, (
+        f"w{columns}: {drawn} rows moved the screen cursor by "
+        f"{(info['ret']['a1'] - entry_dest) & LONG_MASK} bytes, not {drawn} whole scanlines")
+
+
+def _dest_ending_at_image_end(columns, rows):
+    """The a1 such a blit STARTS at — its own first plane word. It does not depend on the screen x:
+    the base below is chosen to put the sprite here whatever the x is. Named separately because the
+    ceiling check under the row counts asks the same question of it."""
+    return loader.IMAGE_SIZE - rows * SCREEN_LINE - columns * COLUMN_BYTES + WORD_LEN
+
+
+def _screen_ending_at_image_end(columns, x, y, rows):
+    """The screen base that puts a `columns`-wide blit's LAST plane word exactly at the end of the
+    image, so every word of it but that one is written and that one is dropped.
+
+    ``rows`` is the ENTRY count, so the blit draws one more than that, each a whole SCREEN_LINE
+    below the one before — and the base steps back over all of them, which is what makes the last
+    row rather than the first the one that runs off the end.
+    """
     offset, _row = _screen_offset(x, y)
-    dest = loader.IMAGE_SIZE - columns * COLUMN_BYTES + WORD_LEN
-    return (dest - SCREEN_ORIGIN - s16(offset)) & LONG_MASK
+    return (_dest_ending_at_image_end(columns, rows) - SCREEN_ORIGIN - s16(offset)) & LONG_MASK
+
+
+# The row counts the two image-edge cases below are drawn at. Both lists open with a ONE-row blit —
+# the boundary itself — and then add a multi-row one, which is what puts the PER-BLIT bound's row
+# factor under the mutation sweep: src/blit.c bounds a whole blit in one decision and falls back to
+# the per-row question when that fails, and a blit of one row cannot tell a bound that is one row
+# out from a right one (with one row the per-row and per-blit spans ARE the same span).
+#
+# THE TWO CEILINGS ARE DIFFERENT, because the two spans grow towards the end of the image from
+# opposite sides of emu.STACK_TOP, where the oracle's own machine stack starts and grows DOWN.
+#
+# The DESTINATION span is measured back from IMAGE_SIZE by whole SCREEN_LINEs, so it descends fast:
+# at the widest width a two-row entry count (three rows drawn) already puts a1 at 0xffe9a, below
+# STACK_TOP (0xfff00) — the blit would then be overwriting the oracle's live stack. One is the last
+# count that does not.
+DEST_EDGE_ROW_COUNTS = (0, 1)
+# ...ASKED OF THE GEOMETRY RATHER THAN LEFT AS ARITHMETIC IN THE PARAGRAPH ABOVE. emu.STACK_TOP is
+# the kit's constant and can move under this file; if it ever does, the largest count here would
+# quietly start blitting over the oracle's live machine stack and the case would fail as a
+# differential mismatch somewhere else entirely.
+assert _dest_ending_at_image_end(max(COLUMNS), max(DEST_EDGE_ROW_COUNTS)) >= emu.STACK_TOP, (
+    f"DEST_EDGE_ROW_COUNTS' largest count puts width {max(COLUMNS)}'s a1 at "
+    f"{_dest_ending_at_image_end(max(COLUMNS), max(DEST_EDGE_ROW_COUNTS)):#x}, below "
+    f"emu.STACK_TOP ({emu.STACK_TOP:#x}) — lower the count")
+
+
+def _source_ending_at_image_end(columns, rows):
+    """The a0 that puts the LAST SOURCE WORD of the LAST row at the first address off the image, so
+    every cell word but that one is read out of the image and that one reads as zero. The rows' cells
+    are laid end to end, so `rows + 1` of them are what the base steps back over."""
+    return loader.IMAGE_SIZE - (rows + 1) * (columns - 1) * CELL_BYTES + WORD_LEN
+
+
+# The SOURCE span is the rows' cells laid end to end — 40 bytes a row at the widest width, not 160 —
+# so it descends four times more slowly and has room the destination has not: the same two-row count
+# leaves a0 at 0xfff8a, 138 bytes ABOVE STACK_TOP and clear of the stack entirely. The ceiling is
+# where the widest width's base would cross STACK_TOP, and this is it: an entry count of 5 (six rows
+# of four cells) puts a0 at 0xfff12, and 6 would put it at 0xffeea, below.
+SOURCE_EDGE_ROW_COUNTS = (0, 5)
+assert (_source_ending_at_image_end(max(COLUMNS), max(SOURCE_EDGE_ROW_COUNTS))
+        >= emu.STACK_TOP), (
+    f"SOURCE_EDGE_ROW_COUNTS' largest count puts width {max(COLUMNS)}'s a0 at "
+    f"{_source_ending_at_image_end(max(COLUMNS), max(SOURCE_EDGE_ROW_COUNTS)):#x}, below "
+    f"emu.STACK_TOP ({emu.STACK_TOP:#x}) — lower the count")
 
 
 def _edge_case_x(columns, side):
@@ -1083,7 +1171,8 @@ def _edge_case_x(columns, side):
 
 @pytest.mark.parametrize("columns", COLUMNS)
 @pytest.mark.parametrize("side", SIDES)
-def test_a_row_reaching_the_end_of_the_image_drops_the_word_that_falls_off(columns, side):
+@pytest.mark.parametrize("rows", DEST_EDGE_ROW_COUNTS)
+def test_a_row_reaching_the_end_of_the_image_drops_the_word_that_falls_off(columns, side, rows):
     """A row whose last word is the FIRST one off the image — the boundary itself, drawn to the byte.
 
     THE GEOMETRY IS REAL: a1 is a screen base like any other and this one is placed so that the
@@ -1102,6 +1191,12 @@ def test_a_row_reaching_the_end_of_the_image_drops_the_word_that_falls_off(colum
     plane word's END and not the cursor's resting place two bytes short of it — an off-by-one there
     would take the unasking path for exactly this row and put a word past the end of the image.
 
+    ...AND ONCE PER BLIT, over every row at once, which is the second row count here. The per-blit
+    span is the row's stretched by the number of rows and one scanline of stride, so a bound a row
+    or a word too generous proves a walk in-image that is not, takes the unasking path for the LAST
+    row and puts that word past the end. A blit of one row cannot see either slip: with one row the
+    two spans are the same span.
+
     WHAT PINS WHAT, because these three bands are not all covered by the same thing:
       * The registers, the oracle's write ADDRESSES and the whole image BELOW emu.STACK_GUARD_LO
         are the differential's, as for any case.
@@ -1112,14 +1207,14 @@ def test_a_row_reaching_the_end_of_the_image_drops_the_word_that_falls_off(colum
         faults here. See recreate/STATUS.md's "## Performance".
     """
     x = _edge_case_x(columns, side)
-    screen = _screen_ending_at_image_end(columns, x, DEST_ROW)
+    screen = _screen_ending_at_image_end(columns, x, DEST_ROW, rows)
     dest = _dest_for(x, DEST_ROW, screen)
-    row_end = dest + columns * COLUMN_BYTES - WORD_LEN
-    writes, regs, _info = _run_blit(f"image-edge-w{columns}-{side}", columns, side,
-                                    x=x, shift=5, rows=0, screen=screen, top_band=True)
+    row_end = dest + rows * SCREEN_LINE + columns * COLUMN_BYTES - WORD_LEN
+    writes, regs, _info = _run_blit(f"image-edge-w{columns}-{side}-r{rows}", columns, side,
+                                    x=x, shift=5, rows=rows, screen=screen, top_band=True)
 
     assert row_end == loader.IMAGE_SIZE, (
-        f"w{columns} {side} was meant to end its row at the image's end, not at {row_end:#x}")
+        f"w{columns} {side} was meant to end its last row at the image's end, not at {row_end:#x}")
     assert regs["a1"] == (row_end + WIDTHS[columns].row_advance) & LONG_MASK, (
         f"w{columns} {side}: the cursor did not rest on the word that falls off before the `lea`")
     # The clip byte a prelude writes is not part of the row; everything else the row puts down is.
@@ -1129,30 +1224,41 @@ def test_a_row_reaching_the_end_of_the_image_drops_the_word_that_falls_off(colum
         f"[{dest:#x}, {loader.IMAGE_SIZE:#x})")
 
 
-def _source_ending_at_image_end(columns):
-    """The a0 that puts a row's LAST SOURCE WORD at the first address off the image, so every cell
-    word but that one is read out of the image and that one reads as zero."""
-    return loader.IMAGE_SIZE - (columns - 1) * CELL_BYTES + WORD_LEN
-
-
 @pytest.mark.parametrize("columns", COLUMNS)
-def test_a_row_reading_off_the_end_of_the_image_reads_zeros(columns):
+@pytest.mark.parametrize("rows", SOURCE_EDGE_ROW_COUNTS)
+def test_a_row_reading_off_the_end_of_the_image_reads_zeros(columns, rows):
     """...and the SOURCE side of the same boundary, which no other case reaches.
 
-    a0 is an entry register like a1, and this one is placed so that the row's cells end exactly at
-    the end of the image: the last word of the last cell is the first that does not fit, the shim
+    a0 is an entry register like a1, and this one is placed so that the last row's cells end exactly
+    at the end of the image: the last word of the last cell is the first that does not fit, the shim
     answers it with zero, and that zero is a plane the LAST column then draws. The destination is an
-    ordinary mid-screen one, so what the zero changes lands squarely inside the band the differential
-    compares — which is what makes this case a pin rather than an argument.
+    ordinary mid-screen one, which the last assertion holds it to.
 
-    WHY IT IS HERE. src/blit.c asks os_in_image once per row over the SOURCE span too, and a span
-    one word short would prove the row in-image and read this last word straight off the host heap
-    rather than as the zero both the oracle and the model give it. Every case before this one had
-    its whole source at SPRITE_SOURCE, in the middle of the image, where a short span is invisible.
+    WHY IT IS HERE. src/blit.c asks os_in_image once per row over the SOURCE span too, and once per
+    BLIT over every row of it — see the destination case above for what the second row count is for.
+    A span one word or one row short would prove the walk in-image and read this last word straight
+    off the host heap rather than as the zero both the oracle and the model give it. Every case
+    before this one had its whole source at SPRITE_SOURCE, in the middle of the image, where a short
+    span is invisible.
+
+    WHAT PINS WHAT, and this case's answer is NOT the differential — measured, 2026-08-25:
+      * The DRAWN BYTES are ordinary mid-screen ones and the differential compares them, which is
+        what the `max(writes) < emu.STACK_GUARD_LO` assertion below keeps true. What it cannot do is
+        tell the two readings apart: the harness's candidate buffer is IMAGE_SIZE bytes of a Python
+        `bytearray`, and the bytes just past it read back as zero as well — so a source span one word
+        or one row SHORT reads the same zero the shim would have given it, draws the same pixels and
+        passes this case and the whole of `make test`.
+      * What that short span really does is read PAST the image, which reaches no image at all. Only
+        the kit's guarded-image sweep (`recreate_kit.guarded_image`, `make guarded`) sees it, and
+        under that sweep the short-span mutations fault HERE. That sweep is this case's gate, exactly
+        as it is the destination case's — see recreate/STATUS.md's "## Performance".
+      * What this case pins on its own is the WALK: that a0 comes back one word past the end of the
+        image (so the cells really were laid end to end over every row) and that the blit drew where
+        it was told to.
     """
-    source = _source_ending_at_image_end(columns)
-    writes, regs, _info = _run_blit(f"source-edge-w{columns}", columns, MID,
-                                    x=ON_SCREEN_X, shift=5, rows=0, source=source)
+    source = _source_ending_at_image_end(columns, rows)
+    writes, regs, _info = _run_blit(f"source-edge-w{columns}-r{rows}", columns, MID,
+                                    x=ON_SCREEN_X, shift=5, rows=rows, source=source)
 
     assert regs["a0"] == (loader.IMAGE_SIZE + WORD_LEN) & LONG_MASK, (
         f"w{columns} did not walk its source cursor to one word past the end of the image")

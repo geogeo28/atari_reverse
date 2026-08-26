@@ -120,6 +120,9 @@ then fix what you find (or justify leaving it) before the docs gate:
   hardware or OS-state write): memory / trap ledger / hardware-state vector / rendered pixels /
   timelines / exit status — see `docs/on-target-execution.md`, "The observable surfaces". **If the
   change names no surface, that is the finding**: add one, or record it unpinned in `STATUS.md`.
+- **A diff touching `src/blit.c`'s or `src/scroll.c`'s bounds arithmetic must also pass
+  `make guarded`** — a span one word or one row too generous reads past the image, where `make test`
+  has no image to differ and every such mutation passes it green (measured 2026-08-25).
 - **Mutation-test the gate's own coverage** on reconstructed code: flip a constant, delete a
   branch, off-by-one an index — rebuild and re-run. A mutation the suite does not catch is a
   coverage hole, and in port work it usually means a branch the game's own data never exercises.
