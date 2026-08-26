@@ -707,13 +707,34 @@ void bg_scroll_run_queue(uint8_t *image) {
  * the domain really is 0..15; `column` outside it has no defined behaviour here and cannot have.
  */
 
-/* Declared in scroll.h and shared with src/text.c — see the note there. */
+/* Declared in scroll.h and shared with src/text.c — see the note there.
+ *
+ * THE CURSORS ARE WALKED AS LOCAL POINTERS AND WRITTEN BACK ONCE, which is a codegen requirement
+ * rather than a style choice, and this is the frame's hottest loop so it is worth the words. While
+ * a cursor lives behind the caller's `uint32_t *`, GCC cannot prove the store does not alias it and
+ * so refuses either one a register induction variable: on -m68000 -O2 the body came out as SIX
+ * instructions per longword — `movea.l a0,a3 / suba.l a2,a3 / move.l (a3,a1.l),(a0)+ / addq.l #1,d0
+ * / cmp.l d1,d0 / bcs`, ~64 cycles — against the one `move.l (a0)+,(a1)+` (20) the original spends.
+ * Read once into locals it becomes three — `move.l (a1)+,(a0)+ / cmpa.l d0,a0 / bne`, ~36.
+ *
+ * Nothing observable moves. `advanced` is `longwords * 4` in 32 bits, so each cursor comes back
+ * exactly where 4n successive addr_add steps left it, wrap included; the loop is still a forward
+ * longword-at-a-time copy, so an overlapping source and destination see the same order they did.
+ * On the target be32/wr32 ARE the aligned native accesses (see the kit's machine.h), which is what
+ * lets the pair fuse into one `move.l`; on the little-endian host they stay the byte assembly the
+ * differential runs, so the same source serves both. */
 void copy_longwords(uint8_t *image, uint32_t *source, uint32_t *dest, unsigned longwords) {
-    for (unsigned at = 0; at < longwords; at++) {
-        wr32(image + *dest, be32(image + *source));
-        *source = addr_add(*source, sizeof(uint32_t));
-        *dest = addr_add(*dest, sizeof(uint32_t));
+    const uint8_t *from = image + *source;
+    uint8_t *to = image + *dest;
+    unsigned remaining = longwords;
+    while (remaining-- != 0) {
+        wr32(to, be32(from));
+        from += sizeof(uint32_t);
+        to += sizeof(uint32_t);
     }
+    uint32_t advanced = (uint32_t)longwords * sizeof(uint32_t);
+    *source = addr_add(*source, advanced);
+    *dest = addr_add(*dest, advanced);
 }
 
 /* How much of the scanline comes out of the source row before the copy reaches the row's END. The

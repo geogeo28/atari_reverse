@@ -16342,3 +16342,16 @@ word followed by `WB_PLANES` planes) is pinned by a `_Static_assert` beside the 
 **9.45 fps at 838 K cycles a frame** (from 4.75 / 1,646 K), `blit_row` down from 42,000 to 8,807
 cycles a call — `python3 atari/profile.py ours`. Suite unchanged at 6,417 green, and flipping the
 wrap's comparison goes RED in `test/test_blit.py`.
+
+**`copy_longwords` walks local pointers (2026-08-25).** The scroll's column copy — and the text-box
+and stage-load blits that share the helper — carried its two cursors behind the caller's `uint32_t *`,
+which GCC on -m68000 cannot keep in registers: six instructions per longword (`movea.l / suba.l /
+move.l (a3,a1.l),(a0)+ / addq.l / cmp.l / bcs`, ~64 cycles) against the original's one
+`move.l (a0)+,(a1)+` (20). Read into locals and written back once — `advanced = 4n` in 32 bits, so
+the cursors land exactly where n `addr_add` steps left them, wrap included — the loop is
+`move.l (a3)+,(a0)+ / cmp.l / bne`. Suite 6,417 green; copying n-1 longwords goes RED in four
+scroll/stage tests. On target: **9.80 fps at 818 K cycles a frame** (from 9.45 / 838 K),
+`bg_scroll_copy_column` 344 K → 208 K a frame (the original's whole `bg_scroll_blit` is 105 K), the
+message-box blit ×15 → ×6 per call. The sprite blit is now the dominant cost: `blit_row` 268 K a
+frame, ×13 the original's — its per-word bounds guards and memory-resident register window are the
+next lever.
