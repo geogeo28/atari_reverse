@@ -17325,3 +17325,11 @@ floppy at 39,936 B free, moving `src_behavior.c` off `UNITS_BUILT_AT_O2` was mea
 ~11 KB per K cycles, the worst trade the tree has priced. `build.sh`'s list stands. The actor tier's remaining x2.4
 is the C bodies against hand assembly — no guard, mask or call left to remove — and the next step there is asm with
 its own differential, not a flag.
+
+**The floppy's free figure, re-measured off a clean rebuild (2026-08-26, `2e302db`): 38,912 B free, not 39,936.**
+`WB-ownrun.PRG` links to **144,832 B** (text 143,104, 1,384 fixups), and a detached-worktree rebuild of `fb1e135`
+itself gives the same 144,832 — the build is deterministic, and the `144,298 / 39,936` recorded above were read off
+an intermediate build of that session, not the committed tree. 534 bytes crossed one 1,024-byte cluster; every other
+figure (frame, fps, the four floppy passes, sha256 `177fdc3c…`) stands. `WBOOT.ST` carries `WB.PRG` 144,832 +
+`WB.IMG` 136,408 + all 40 rows = 689,152 B in 673 clusters. The `28,672` in the -O3 paragraph was measured against
+the same intermediate base and is likewise ~1 KB optimistic; the trade's verdict does not move.
