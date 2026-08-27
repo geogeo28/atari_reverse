@@ -104,6 +104,20 @@ include/behavior.h         the per-actor BEHAVIOUR tier's foundation: the walk (
                            and the two overlap tests forty-two and twenty-five of them run every
                            frame — plus the three DISPATCH CODES the port returns in place of a
                            `jmp` it declines to follow
+include/actor_view.h       THE ACTOR'S OWN RECORD, PROVED ONCE (2026-08-26): the door every routine
+                           src/behavior.c publishes is entered through decides in one `os_in_image`
+                           whether the record's 32 bytes are all there, and the `rec_*` family then
+                           indexes them with neither a mask nor a bound where bus.h carried both at
+                           each of 613 sites. A record the image does not wholly hold runs against a
+                           scratch with a per-byte LIVE mask — because bus.h DROPS a write to a
+                           field outside the image and a plain scratch keeps it, which two RE-READ
+                           cases in test_behavior.py pin. Opened by src/behavior.c, src/map.c,
+                           src/player.c and src/actor.c; every OTHER record they touch — a shot, a
+                           minion, a scene descriptor — and every MAP CELL is still bus.h's
+src/actor_view.c           the two halves of that header a `static` in a header could not be: the
+                           SLOW arm (out of line, so a hundred doors do not each carry a copy of a
+                           32-iteration fill) and the all-live mask. One definition each, because
+                           atari/profile.py refuses a link that names a symbol twice
 include/text.h             the message box: the once-a-frame driver's three arms, the glyph
                            plotter's two entry points, and why the prelude calls the plotter (the
                            original has no `rts` in it — it falls through)
@@ -323,7 +337,11 @@ src/map.c                  the COLLISION MAP the actors walk on — a second map
                            then both settles) and the 2x2 tile stamp ($1af0). Its header records the
                            one place the pair of maps is not symmetric, which $10a2 reproduces
                            rather than tidies — and why $1492, whose body physically encloses
-                           actor_accelerate_fall's 32 bytes, is written as a routine that CALLS it
+                           actor_accelerate_fall's 32 bytes, is written as a routine that CALLS it.
+                           Every routine here is TWO since 2026-08-26: a `_body` taking the
+                           ActorRecord its caller proved, and the published name as a DOOR over it
+                           for a caller holding only the address (include/map.h). src/player.c is
+                           split the same way
 src/text.c                 the WHOLE text subsystem. The driver ($bd8a): compose a message into
                            the 88-byte-wide 4-plane buffer on the frame it is requested, then
                            re-blit that buffer to screen_back every frame until its countdown ends.

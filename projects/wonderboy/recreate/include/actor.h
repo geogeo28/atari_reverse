@@ -14,6 +14,7 @@
 
 #include <stdint.h>
 
+#include "actor_view.h"
 #include "bus.h"
 
 /* $67e0 — the a1 fifteen call sites want: WB_ACTOR_FOLLOWED_A32 while WB_STATE_FLAG_A32 is
@@ -21,13 +22,19 @@
 uint32_t followed_actor_record(const uint8_t *image);
 
 /* $67c2 — set WB_ACTOR_FLAG_SIDE_BIT in `actor`'s flag byte while the followed actor is to its
- * left, clear it otherwise. `actor` is the original's a0. Thirty-four `bsr` callers. */
+ * left, clear it otherwise. `actor` is the original's a0. Thirty-four `bsr` callers.
+ *
+ * A DOOR AND A BODY, as everything in this file that touches the caller's OWN record is: the body
+ * takes the record a caller has already proved, the door proves it for a caller that has not. Which
+ * one to call is not a preference — see include/actor_view.h. */
 void actor_set_side_flag(uint8_t *image, uint32_t actor);
+void actor_set_side_flag_body(const uint8_t *image, ActorRecord record);
 
 /* $67f8 — 0 while the followed actor is within `reach` of `actor` horizontally, and
  * WB_ACTOR_OUT_OF_REACH beyond it. `reach` is the original's d0 and so is the result: only the low
  * word is written, so the caller's own high half comes back. Five `bsr` callers. */
 uint32_t actor_followed_x_within(const uint8_t *image, uint32_t actor, uint32_t reach);
+uint32_t actor_followed_x_within_body(const uint8_t *image, ActorRecord record, uint32_t reach);
 
 /* $6528 — the AIM TABLE. `from_*` is the original's (d0, d1), `to_*` its (d2, d3) and `row` its d4;
  * the pair written back through `dx`/`dy` is the (d0, d1) it returns, and they are the ONLY two
@@ -75,6 +82,7 @@ void actor_spawn_from_template(uint8_t *image, uint32_t template_record, uint32_
  * into WB_ACTOR_SPEED. `speed` is the original's d0. Seven control-flow sites: four `bsr` and three
  * `bra.w` tail jumps. */
 void actor_start_motion_at_speed(uint8_t *image, uint32_t actor, uint32_t speed);
+void actor_start_motion_at_speed_body(ActorRecord record, uint32_t speed);
 
 /* `bset #0,8(a0) / bset #1,8(a0) / bclr #2,8(a0) / move.b #n,11(a0)` — four writes the image spells
  * INLINE at seven sites, four in the behaviour tier ($2f46, $2fb0, $3528, $357a) and three in the
@@ -90,13 +98,27 @@ void actor_start_motion_at_speed(uint8_t *image, uint32_t actor, uint32_t speed)
  * than the bus: not one of those seven sites calls that routine, so each battery's entry pin holds
  * these four writes inline and a call would be a claim the original does not make. ($2af2 also
  * spells them `bclr #2 / bset #0 / bset #1`, which is one byte and one final value either way, so
- * only a pin can see the difference.) src/actor.c's own copies write the buffer DIRECTLY rather than
- * through this header and are left alone; ../STATUS.md records that asymmetry. */
-static inline void launch_at_inline_speed(uint8_t *image, uint32_t record, uint8_t speed) {
-    flag_set(image, record, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVING_BIT);
-    flag_set(image, record, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_LAUNCHED_BIT);
-    flag_clear(image, record, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT);
-    set_field_b(image, record, WB_ACTOR_SPEED, speed);
+ * only a pin can see the difference.) The two bodies now write the same bytes by the same route —
+ * src/actor.c's copies reached the buffer DIRECTLY until the record view took that away — so what
+ * keeps them apart is only which ORIGINAL each stands for; ../STATUS.md records that. */
+static inline void launch_at_inline_speed_body(ActorRecord record, uint8_t speed) {
+    rec_flag_set(record, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVING_BIT);
+    rec_flag_set(record, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_LAUNCHED_BIT);
+    rec_flag_clear(record, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT);
+    rec_set_b(record, WB_ACTOR_SPEED, speed);
+}
+
+/* ...and the same four writes for a record NOBODY has proved, which is what the two scene-trigger
+ * spawns in src/player.c hold: a slot the allocator just handed back, reached by address. It opens
+ * a door rather than spelling the four `field_*` calls a second time — one bound for the record
+ * instead of four for its bytes, and no second copy of the four writes to drift. A caller working
+ * on its OWN record calls the body, never this (include/actor_view.h). */
+static inline void launch_at_inline_speed(uint8_t *image, uint32_t slot, uint8_t speed) {
+    ActorView view;
+    ActorRecord record = actor_view_open(&view, image, slot);
+
+    launch_at_inline_speed_body(record, speed);
+    actor_view_close(&view);
 }
 
 
@@ -115,12 +137,11 @@ static inline void launch_at_inline_speed(uint8_t *image, uint32_t record, uint8
  * the fetch reaches the table plus a SIGN-EXTENDED word, so a cursor outside 0..$3e reads outside
  * the 32 entries and a negative one reads below them, and the `andi.w #$3f` lands only on what goes
  * back to memory. */
-static inline void actor_drift_x_step(uint8_t *image, uint32_t actor, uint32_t cursor_at) {
+static inline void actor_drift_x_step(uint8_t *image, ActorRecord record, uint32_t cursor_at) {
     uint16_t cursor = be16(image + cursor_at);
     uint16_t drift = bus_read_word(image, addr_add(WB_ACTOR_TYPE30_DRIFT, sign_ext16(cursor)));
 
-    set_field_w(image, actor, WB_ACTOR_X,
-                (uint16_t)((uint16_t)field_w(image, actor, WB_ACTOR_X) + drift));
+    rec_set_w(record, WB_ACTOR_X, (uint16_t)((uint16_t)rec_w(record, WB_ACTOR_X) + drift));
     wr16(image + cursor_at,
          (uint16_t)((cursor + WB_ACTOR_TYPE30_DRIFT_STRIDE) & WB_ACTOR_TYPE30_DRIFT_MASK));
 }
@@ -128,8 +149,15 @@ static inline void actor_drift_x_step(uint8_t *image, uint32_t actor, uint32_t c
 
 /* $14d6 — the fall's per-frame step: unsupported, falling, and one more unit of WB_ACTOR_SPEED
  * until it is exactly WB_ACTOR_FALL_SPEED_MAX. Reached by `bsr` from $13a6 and by `blt.w` from
- * $14c0, inside the routine at $1492. */
+ * $14c0, inside the routine at $1492.
+ *
+ * A DOOR AND A BODY, as src/map.c's settles are (include/map.h says why): its only caller is
+ * `actor_settle_on_tile_1_or_2`'s not-found arm, which already holds the record proved. The door
+ * keeps the published name test_actor.py binds. THE BODY IS ALSO THE FIRST TIME THIS ROUTINE IS
+ * BOUNDED — it reached its two fields through a raw `image + addr_add(actor, ...)`, which off the
+ * image is the host heap rather than the shim's dropped write. */
 void actor_accelerate_fall(uint8_t *image, uint32_t actor);
+void actor_accelerate_fall_body(ActorRecord record);
 
 /* --- the per-frame spawn pass -------------------------------------------------------------------
  *
@@ -159,17 +187,23 @@ void actor_template_set_hitpoints(uint8_t *image, uint32_t template_record);
  * $2a6c), one either side of a `btst #3,8(a0)`; $2b70 is its second arm and not an entry point. */
 void actor_hop_or_flip_side(uint8_t *image, uint32_t actor, uint32_t step_outcome,
                             uint32_t ground_flags);
+void actor_hop_or_flip_side_body(ActorRecord record, uint32_t step_outcome,
+                                 uint32_t ground_flags);
 
 /* $2b82 — flip the side flag when the step was blocked or a ONE-cell drop lies ahead. Ten `bsr`
  * callers. Ghidra records 20 bytes for it; the true extent is 12 plus the shared tail. */
 void actor_toggle_side_flag(uint8_t *image, uint32_t actor, uint32_t step_outcome,
                             uint32_t ground_flags);
+void actor_toggle_side_flag_body(ActorRecord record, uint32_t step_outcome,
+                                 uint32_t ground_flags);
 
 /* $2b8e — $2b82's test over a longer tail, and only for a SUPPORTED record: flip the side flag and
  * launch at WB_ACTOR_TURN_LAUNCH_SPEED, which is actor_start_motion_at_speed's three writes with
  * the speed spelt inline. Two `bsr` callers ($37c8, $37de); Ghidra has no function here at all. */
 void actor_turn_and_launch(uint8_t *image, uint32_t actor, uint32_t step_outcome,
                            uint32_t ground_flags);
+void actor_turn_and_launch_body(ActorRecord record, uint32_t step_outcome,
+                                uint32_t ground_flags);
 
 /* --- the two damage paths -----------------------------------------------------------------------
  *
@@ -184,7 +218,11 @@ void actor_turn_and_launch(uint8_t *image, uint32_t actor, uint32_t step_outcome
  * knock the record back, whichever pool paid. A record already carrying
  * WB_ACTOR_FLAGS2_INVULNERABLE_BIT is left completely alone. Thirty-eight control-flow sites: ten
  * `bsr.w` and twenty-eight tail jumps. */
-void actor_damage_followed(uint8_t *image, uint32_t attacker);
+void actor_damage_followed(uint8_t *image, uint32_t actor);      /* `actor` IS the attacker: the
+                                                                  * door's first two parameters are
+                                                                  * named for the macro that writes
+                                                                  * it (include/actor_view.h) */
+void actor_damage_followed_body(uint8_t *image, ActorRecord attacker);
 
 /* $6ade — the LAST FORTY-TWO BYTES of that routine, and a shared tail rather than only its ending:
  * WB_ACTOR_DAMAGE_FOLLOWED_SFX on WB_SND_CHANNEL_A, then `actor_start_motion_at_speed` at
@@ -196,13 +234,15 @@ void actor_damage_followed(uint8_t *image, uint32_t attacker);
  * The three flag bits it writes are `bset #0 / bset #1 / bclr #2` where $2af2 spells
  * `bclr #2 / bset #0 / bset #1`; one byte, one final value, so only the entry pin can tell the two
  * orders apart. */
-void actor_knock_back_and_launch(uint8_t *image, uint32_t record);
+void actor_knock_back_and_launch(uint8_t *image, uint32_t actor);
+void actor_knock_back_and_launch_body(uint8_t *image, ActorRecord record);
 
 /* $6b46 — deal one: WB_EFFECT_RECORD_LIST's first byte plus one, DOUBLED while WB_HUD_SLOT_BBC0
  * (the gauntlet) has a charge, off the WB_SPAWN_HITPOINTS pool of `actor`'s own template. On a pool
  * that reaches zero or goes negative, WB_ACTOR_FLAGS2_DEFEATED_BIT goes up on `actor`. Twenty-five
  * control-flow sites: one `bsr.w` ($709a) and twenty-four `bra.w`. */
 void actor_damage_template_hitpoints(uint8_t *image, uint32_t actor);
+void actor_damage_template_hitpoints_body(uint8_t *image, ActorRecord record);
 
 /* --- and what happens when one of them wins ------------------------------------------------------
  *
@@ -241,6 +281,7 @@ void actor_damage_template_hitpoints(uint8_t *image, uint32_t actor);
 /* $6bb8 — `actor` is the original's a0, the record that just died. Returns one of the two exits
  * above. Twenty-nine control-flow sites: 24 `bne.w`, 4 `bra.w` and the Copylock's `jmp`. */
 uint32_t actor_defeat_and_score(uint8_t *image, uint32_t actor);
+uint32_t actor_defeat_and_score_body(uint8_t *image, uint32_t actor, ActorRecord record);
 
 /* $6cdc — rebuild `actor` (a0) as a new kind, drawn for `template_record` (a1) unless that template
  * forces one. `entry_d2` is the caller's d2, handed straight to whichever draw runs because its HIGH

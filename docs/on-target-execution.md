@@ -378,6 +378,22 @@ byte-identical framebuffer, a byte-identical palette, and a wrong picture.
   Do not go looking for a linker script to blame: if yours uses `SUBALIGN(1)` in `.bss` so that BSS
   abuts text+data (which GEMDOS requires), that is doing a different and necessary job, and removing
   it will break the load without fixing anything here.
+- **...but `SUBALIGN(1)` has a fault of its own, and `-ffunction-sections`/`--gc-sections` sets it
+  off.** Packing `.bss` at BYTE granularity does not just abut it to text+data — it strips the word
+  alignment the 68000 requires of every `move.w`/`move.l`, so a longword datum lands on an ODD
+  address whenever the object before it has odd size, and the program dies at its first store to it
+  with an **Address Error**. Nothing in the C defends against it: `SUBALIGN` overrides a variable's
+  own `__attribute__((aligned))`. A tree can be even by luck for years and then fault because an
+  unrelated edit moved `.bss` by one byte — and adopting `--gc-sections` re-rolls that dice EVERY
+  build, since collecting an unreferenced datum reshuffles `.bss` on the linker's reachability walk.
+  `SUBALIGN(2)` keeps the abutment (the dot is already aligned when `.bss` opens) and costs at most
+  one padding byte per object. Two more things to expect from that flag pair, both measured on
+  m68k-elf binutils: this `ld` DOES drop the relocations of the sections it discards, so
+  `--emit-relocs` leaves nothing stale for a `.PRG` wrapper to trip over — but the fixup count
+  **RISES**, because a reference between two functions that shared one `.text`, where the assembler
+  resolved it with no relocation at all, becomes an absolute 32-bit reference once the two are in
+  different sections. Worked example: `projects/wonderboy/recreate/STATUS.md`, "## Performance",
+  2026-08-26.
 - **Fix:** reserve slack and round the buffer's base up at RUN TIME, then hand that to `Setscreen`.
 - **Assert it every boot, in two instructions:** `Setscreen`, a `Vsync` (TOS applies it from its own
   VBL), then `Physbase()` — and compare the read-back with what you passed. They are equal only if

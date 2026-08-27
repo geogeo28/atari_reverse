@@ -69,20 +69,21 @@ static int16_t actor_x(const uint8_t *image, uint32_t record) {
     return (int16_t)be16(image + addr_add(record, WB_ACTOR_X));
 }
 
-void actor_set_side_flag(uint8_t *image, uint32_t actor) {
-    const uint8_t side = (uint8_t)(1u << WB_ACTOR_FLAG_SIDE_BIT);
-    uint8_t *flags = image + addr_add(actor, WB_ACTOR_FLAGS);
-
+/* The FOLLOWED record is somebody else's and goes through bus.h; the record in a0 is the caller's
+ * own and comes through the door as every other own-record access in this file now does. */
+void actor_set_side_flag_body(const uint8_t *image, ActorRecord record) {
     /* `cmp.w d0,d1 / ble` on (followed.x, actor.x): the bit is raised only where the actor is
      * STRICTLY to the right of the followed one, i.e. where the followed one is to its left. */
-    if (actor_x(image, actor) > actor_x(image, followed_actor_record(image)))
-        *flags |= side;
+    if (rec_w(record, WB_ACTOR_X) > actor_x(image, followed_actor_record(image)))
+        rec_flag_set(record, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SIDE_BIT);
     else
-        *flags &= (uint8_t)~side;
+        rec_flag_clear(record, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SIDE_BIT);
 }
 
-uint32_t actor_followed_x_within(const uint8_t *image, uint32_t actor, uint32_t reach) {
-    int16_t here = actor_x(image, actor);
+ACTOR_DOOR_VOID(actor_set_side_flag, image, record)
+
+uint32_t actor_followed_x_within_body(const uint8_t *image, ActorRecord record, uint32_t reach) {
+    int16_t here = rec_w(record, WB_ACTOR_X);
     int16_t followed = actor_x(image, followed_actor_record(image));
     int outside;
 
@@ -96,6 +97,10 @@ uint32_t actor_followed_x_within(const uint8_t *image, uint32_t actor, uint32_t 
 
     return set_low_word(reach, outside ? WB_ACTOR_OUT_OF_REACH : 0);
 }
+
+ACTOR_DOOR_READING_SIG(uint32_t, actor_followed_x_within,
+                       (const uint8_t *image, uint32_t actor, uint32_t reach),
+                       (image, record, reach))
 
 /* --- $6528: the aim table ------------------------------------------------------------------------
  *
@@ -361,31 +366,39 @@ void actor_spawn_from_template(uint8_t *image, uint32_t template_record, uint32_
  * with the two `bset`s and the `bclr` in two different orders. The bits are disjoint and the
  * differential compares the byte the run ENDS on, so the order is not observable and the three sites
  * are one helper here; each caller keeps the comment that says how its own bytes read. */
-static void actor_set_moving_unsupported(uint8_t *image, uint32_t actor) {
-    uint8_t *flags = image + addr_add(actor, WB_ACTOR_FLAGS);
-
-    *flags |= (uint8_t)((1u << WB_ACTOR_FLAG_MOVING_BIT) | (1u << WB_ACTOR_FLAG_LAUNCHED_BIT));
-    *flags &= (uint8_t)~(1u << WB_ACTOR_FLAG_SUPPORTED_BIT);
+static void actor_set_moving_unsupported(ActorRecord record) {
+    rec_flag_set(record, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_MOVING_BIT);
+    rec_flag_set(record, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_LAUNCHED_BIT);
+    rec_flag_clear(record, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT);
 }
 
-void actor_start_motion_at_speed(uint8_t *image, uint32_t actor, uint32_t speed) {
+void actor_start_motion_at_speed_body(ActorRecord record, uint32_t speed) {
     /* `bclr #2 / bset #0 / bset #1` — the clear first here, the two raises first at $6cdc. */
-    actor_set_moving_unsupported(image, actor);
-    image[addr_add(actor, WB_ACTOR_SPEED)] = (uint8_t)speed;    /* `move.b d0,11(a0)` */
+    actor_set_moving_unsupported(record);
+    rec_set_b(record, WB_ACTOR_SPEED, (uint8_t)speed);         /* `move.b d0,11(a0)` */
 }
 
-void actor_accelerate_fall(uint8_t *image, uint32_t actor) {
-    uint8_t *flags = image + addr_add(actor, WB_ACTOR_FLAGS);
-    uint8_t *speed = image + addr_add(actor, WB_ACTOR_SPEED);
+ACTOR_DOOR_VOID_SIG(actor_start_motion_at_speed,
+                    (uint8_t *image, uint32_t actor, uint32_t speed),
+                    (record, speed))
 
-    *flags &= (uint8_t)~(1u << WB_ACTOR_FLAG_SUPPORTED_BIT);
-    *flags |= (uint8_t)(1u << WB_ACTOR_FLAG_FALLING_BIT);
+void actor_accelerate_fall_body(ActorRecord record) {
+    uint8_t speed;
+
+    rec_flag_clear(record, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT);
+    rec_flag_set(record, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_FALLING_BIT);
+
+    /* Read BELOW the two flag writes, where `move.b 11(a0),d0` sits — the offsets cannot alias, so
+     * hoisting it would be invisible, but this file's plates keep read order the point. */
+    speed = rec_b(record, WB_ACTOR_SPEED);
 
     /* `cmpi.b #$8,d0 / beq`: the terminal speed is reached EXACTLY, so a record already carrying a
      * larger byte keeps climbing — and `addq.b` wraps rather than saturating. */
-    if (*speed != WB_ACTOR_FALL_SPEED_MAX)
-        *speed = (uint8_t)(*speed + 1);
+    if (speed != WB_ACTOR_FALL_SPEED_MAX)
+        rec_set_b(record, WB_ACTOR_SPEED, (uint8_t)(speed + 1));
 }
+
+ACTOR_DOOR_VOID(actor_accelerate_fall, record)
 
 /* --- the per-frame spawn pass ($ff42, $1006a) ---------------------------------------------------
  *
@@ -510,8 +523,8 @@ void actor_template_set_hitpoints(uint8_t *image, uint32_t template_record) {
  * $2b7a, which four branches reach and no call does — `flip_side_flag` below is those eight bytes,
  * and test_actor.py pins all three whole bodies including it.
  */
-static void flip_side_flag(uint8_t *image, uint32_t actor) {
-    image[addr_add(actor, WB_ACTOR_FLAGS)] ^= (uint8_t)(1u << WB_ACTOR_FLAG_SIDE_BIT);
+static void flip_side_flag(ActorRecord record) {
+    rec_flag_flip(record, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SIDE_BIT);
 }
 
 /* `tst.b d0` — only the LOW BYTE decides, so a caller's high bits are invisible to all three. */
@@ -525,44 +538,54 @@ static int ground_flag(uint32_t ground_flags, unsigned bit) {
     return (ground_flags & (1u << bit)) != 0;
 }
 
-void actor_hop_or_flip_side(uint8_t *image, uint32_t actor, uint32_t step_outcome,
-                            uint32_t ground_flags) {
+void actor_hop_or_flip_side_body(ActorRecord record, uint32_t step_outcome,
+                                 uint32_t ground_flags) {
     if (!step_was_blocked(step_outcome)) {
         /* The step went through: the only thing that turns the actor round is a two-cell drop. */
         if (ground_flag(ground_flags, WB_ACTOR_GROUND_DROP_TWO_BIT))
-            flip_side_flag(image, actor);
+            flip_side_flag(record);
         return;
     }
     if (ground_flag(ground_flags, WB_ACTOR_GROUND_STEP_UP_BIT))
-        actor_start_motion_at_speed(image, actor, WB_ACTOR_HOP_SPEED);
+        actor_start_motion_at_speed_body(record, WB_ACTOR_HOP_SPEED);
     else
-        flip_side_flag(image, actor);
+        flip_side_flag(record);
 }
 
-void actor_toggle_side_flag(uint8_t *image, uint32_t actor, uint32_t step_outcome,
-                            uint32_t ground_flags) {
+ACTOR_DOOR_VOID_SIG(actor_hop_or_flip_side,
+                    (uint8_t *image, uint32_t actor, uint32_t step_outcome, uint32_t ground_flags),
+                    (record, step_outcome, ground_flags))
+
+void actor_toggle_side_flag_body(ActorRecord record, uint32_t step_outcome,
+                                 uint32_t ground_flags) {
     if (step_was_blocked(step_outcome) || ground_flag(ground_flags, WB_ACTOR_GROUND_DROP_ONE_BIT))
-        flip_side_flag(image, actor);
+        flip_side_flag(record);
 }
 
-void actor_turn_and_launch(uint8_t *image, uint32_t actor, uint32_t step_outcome,
-                           uint32_t ground_flags) {
-    uint8_t *flags = image + addr_add(actor, WB_ACTOR_FLAGS);
+ACTOR_DOOR_VOID_SIG(actor_toggle_side_flag,
+                    (uint8_t *image, uint32_t actor, uint32_t step_outcome, uint32_t ground_flags),
+                    (record, step_outcome, ground_flags))
 
+void actor_turn_and_launch_body(ActorRecord record, uint32_t step_outcome,
+                                uint32_t ground_flags) {
     if (!step_was_blocked(step_outcome) && !ground_flag(ground_flags, WB_ACTOR_GROUND_DROP_ONE_BIT))
         return;
 
     /* `btst #2,8(a0) / beq`: a record that is not SUPPORTED is left entirely alone — the side flip
      * included, which is the whole difference between this and actor_toggle_side_flag's head. */
-    if (!(*flags & (1u << WB_ACTOR_FLAG_SUPPORTED_BIT)))
+    if (!rec_flag_is_set(record, WB_ACTOR_FLAGS, WB_ACTOR_FLAG_SUPPORTED_BIT))
         return;
 
     /* The rest is `bchg #3` over exactly what actor_start_motion_at_speed writes, with the speed a
      * literal rather than a register — which is why it is spelt out here instead of calling it. */
-    flip_side_flag(image, actor);
-    actor_set_moving_unsupported(image, actor);
-    image[addr_add(actor, WB_ACTOR_SPEED)] = WB_ACTOR_TURN_LAUNCH_SPEED;
+    flip_side_flag(record);
+    actor_set_moving_unsupported(record);
+    rec_set_b(record, WB_ACTOR_SPEED, WB_ACTOR_TURN_LAUNCH_SPEED);
 }
+
+ACTOR_DOOR_VOID_SIG(actor_turn_and_launch,
+                    (uint8_t *image, uint32_t actor, uint32_t step_outcome, uint32_t ground_flags),
+                    (record, step_outcome, ground_flags))
 
 /* --- $69fe and $6b46: the two damage paths ------------------------------------------------------
  *
@@ -620,8 +643,8 @@ static int hud_slot_spend_charge(uint8_t *image, uint32_t slot, uint8_t message_
  * `moveq #0,d0 / move.b 19(a0),d0 / bmi` — the byte's SIGN BIT is a discriminator, not part of a
  * slot number: a byte of $80 or more carries the damage in its own low seven bits and no table is
  * read at all. */
-static uint16_t actor_damage_word(const uint8_t *image, uint32_t attacker) {
-    uint8_t slot = image[addr_add(attacker, WB_ACTOR_TEMPLATE_SLOT)];
+static uint16_t actor_damage_word(const uint8_t *image, ActorRecord attacker) {
+    uint8_t slot = rec_b(attacker, WB_ACTOR_TEMPLATE_SLOT);
 
     if (slot & (uint8_t)~WB_ACTOR_DAMAGE_INLINE_MASK)
         return slot & WB_ACTOR_DAMAGE_INLINE_MASK;
@@ -654,25 +677,28 @@ static void actor_charge_damage(uint8_t *image, uint32_t record, uint16_t damage
     image[addr_add(record, WB_ACTOR_FLICKER_COUNTDOWN)] = WB_ACTOR_DAMAGE_FLICKER_FRAMES;
 }
 
-void actor_damage_followed(uint8_t *image, uint32_t attacker) {
+/* THE ATTACKER'S RECORD IS THE CALLER'S OWN and comes through the door; the record being DAMAGED is
+ * the followed one, which this routine chooses for itself and which therefore stays on bus.h. Two
+ * different records, and only one of them has been proved. */
+void actor_damage_followed_body(uint8_t *image, ActorRecord attacker) {
     /* `tst.b $a32.w` — the mode word's HIGH BYTE, where every other reader of it in the image is a
      * `tst.w` (../names.txt). The game only ever writes $0000 or $ffff, so the two readings agree
      * on its own data and part company on a small positive word — in the OPPOSITE direction from
      * `followed_actor_record`, whose `bne` on the same word picks the A32 record for a $0001 this
      * one leaves on the default. */
-    uint32_t record = image[WB_STATE_FLAG_A32] != 0 ? WB_ACTOR_FOLLOWED_A32
-                                                    : WB_ACTOR_FOLLOWED_DEFAULT;
-    uint8_t *flags = image + addr_add(record, WB_ACTOR_FLAGS);
-    uint8_t *flags2 = image + addr_add(record, WB_ACTOR_FLAGS2);
+    uint32_t damaged = image[WB_STATE_FLAG_A32] != 0 ? WB_ACTOR_FOLLOWED_A32
+                                                     : WB_ACTOR_FOLLOWED_DEFAULT;
+    uint8_t *flags = image + addr_add(damaged, WB_ACTOR_FLAGS);
+    uint8_t *flags2 = image + addr_add(damaged, WB_ACTOR_FLAGS2);
 
     /* The one path out that writes NOTHING AT ALL. */
     if (*flags2 & (1u << WB_ACTOR_FLAGS2_INVULNERABLE_BIT))
         return;
 
     *flags2 |= (uint8_t)(1u << WB_ACTOR_FLAGS2_BIT_0);
-    image[addr_add(record, WB_ACTOR_FIELD_31)] = (uint8_t)(
+    image[addr_add(damaged, WB_ACTOR_FIELD_31)] = (uint8_t)(
         WB_ACTOR_DAMAGE_FIELD_31_BASE - 2 * be16(image + WB_EFFECT_STATE_BD66));
-    image[addr_add(record, WB_ACTOR_FIELD_22)] = 0;
+    image[addr_add(damaged, WB_ACTOR_FIELD_22)] = 0;
 
     /* `bset #6,8(a1) / bne`: the flicker goes up either way, and the whole COST of the hit is
      * skipped when it was already up — a record still flickering from the last one is knocked back
@@ -680,34 +706,38 @@ void actor_damage_followed(uint8_t *image, uint32_t attacker) {
     int was_flickering = *flags & (1u << WB_ACTOR_FLAG_FLICKER_BIT);
     *flags |= (uint8_t)(1u << WB_ACTOR_FLAG_FLICKER_BIT);
     if (!was_flickering)
-        actor_charge_damage(image, record, actor_damage_word(image, attacker));
+        actor_charge_damage(image, damaged, actor_damage_word(image, attacker));
 
     /* `move.w (a1),d0 / move.w (a0),d1 / cmp.w d0,d1 / bgt` — the same signed comparison
      * `actor_set_side_flag` makes, read the other way round (the bit lands on the record being
      * damaged, not on the attacker) and INCLUSIVE where that one's `ble` is strict: an attacker
      * exactly level with the record raises the bit here and would clear it there. */
-    if (actor_x(image, attacker) > actor_x(image, record)) {
+    if (rec_w(attacker, WB_ACTOR_X) > actor_x(image, damaged)) {
         *flags &= (uint8_t)~(1u << WB_ACTOR_FLAG_SIDE_BIT);
-        image[addr_add(record, WB_ACTOR_FIELD_30)] = 0;
+        image[addr_add(damaged, WB_ACTOR_FIELD_30)] = 0;
     } else {
         *flags |= (uint8_t)(1u << WB_ACTOR_FLAG_SIDE_BIT);
-        image[addr_add(record, WB_ACTOR_FIELD_30)] = WB_ACTOR_DAMAGE_FIELD_30_SET;
+        image[addr_add(damaged, WB_ACTOR_FIELD_30)] = WB_ACTOR_DAMAGE_FIELD_30_SET;
     }
 
-    actor_knock_back_and_launch(image, record);
+    actor_knock_back_and_launch(image, damaged);
 }
 
-void actor_knock_back_and_launch(uint8_t *image, uint32_t record) {
+ACTOR_DOOR_VOID(actor_damage_followed, image, record)
+
+void actor_knock_back_and_launch_body(uint8_t *image, ActorRecord record) {
     snd_call_trigger_effect(image, WB_ACTOR_DAMAGE_FOLLOWED_SFX, WB_SND_CHANNEL_A);
 
     /* The three flag bits and the speed byte `actor_start_motion_at_speed` writes, reached here as
      * `bset #0 / bset #1 / bclr #2` against $2af2's `bclr #2 / bset #0 / bset #1`. One byte and one
      * final value, so the two orders are indistinguishable in the image; the instruction stream is
      * what test/test_actor.py's entry pin carries. */
-    actor_start_motion_at_speed(image, record, WB_ACTOR_DAMAGE_KNOCKBACK_SPEED);
+    actor_start_motion_at_speed_body(record, WB_ACTOR_DAMAGE_KNOCKBACK_SPEED);
 }
 
-void actor_damage_template_hitpoints(uint8_t *image, uint32_t actor) {
+ACTOR_DOOR_VOID(actor_knock_back_and_launch, image, record)
+
+void actor_damage_template_hitpoints_body(uint8_t *image, ActorRecord record) {
     /* FIRST, before a byte of state is read — which is why no seeding could ever avoid this call. */
     snd_call_trigger_effect(image, WB_ACTOR_DAMAGE_TEMPLATE_SFX, WB_SND_CHANNEL_B);
 
@@ -715,7 +745,7 @@ void actor_damage_template_hitpoints(uint8_t *image, uint32_t actor) {
      * documents, and here too the slot is a BYTE, so the product stays inside the positive half. */
     uint32_t template_record = addr_add(
         be32(image + WB_TABLE_PTR_21E8C),
-        (uint32_t)image[addr_add(actor, WB_ACTOR_TEMPLATE_SLOT)] * WB_SPAWN_RECORD_BYTES);
+        (uint32_t)rec_b(record, WB_ACTOR_TEMPLATE_SLOT) * WB_SPAWN_RECORD_BYTES);
 
     /* `moveq #0,d0 / move.b $b444.l,d0 / addq.b #1,d0` — the list's first BYTE, and a BYTE add, so
      * a $ff there comes back 0 rather than $100. */
@@ -734,8 +764,10 @@ void actor_damage_template_hitpoints(uint8_t *image, uint32_t actor) {
     /* `beq` then `bmi`, so a pool landing EXACTLY on zero is spent too — and the test is signed, so
      * a pool of $8000 that the subtraction carries into the positive half is not. */
     if ((int16_t)left <= 0)
-        image[addr_add(actor, WB_ACTOR_FLAGS2)] |= (uint8_t)(1u << WB_ACTOR_FLAGS2_DEFEATED_BIT);
+        rec_flag_set(record, WB_ACTOR_FLAGS2, WB_ACTOR_FLAGS2_DEFEATED_BIT);
 }
+
+ACTOR_DOOR_VOID(actor_damage_template_hitpoints, image, record)
 
 /* ---- $6bb8 + $6cdc: paying for a defeat, and what comes back ----------------------------------
  *
@@ -765,7 +797,7 @@ void actor_damage_template_hitpoints(uint8_t *image, uint32_t actor) {
 /* $6c38 — the retire tail, and it has THREE entrances: the unscored type's `beq`, the kill count's
  * `ble` falling through, and the respawn continuation's `bmi` on a negative kind. One helper here
  * for the same reason it is one block there. */
-static uint32_t retire_slot(uint8_t *image, uint32_t actor, uint32_t template_record) {
+static uint32_t retire_slot(uint8_t *image, ActorRecord record, uint32_t template_record) {
     /* `movea.l $21e8c.l,a6` — the pointer is loaded a SECOND time here, after the score add. It
      * cannot have moved (only $b372 writes it), so this is the original's shape rather than a
      * dependency, and reproducing it costs one read. */
@@ -773,7 +805,7 @@ static uint32_t retire_slot(uint8_t *image, uint32_t actor, uint32_t template_re
 
     spawn_header_set(image, table, WB_SPAWN_HEADER_LIVE,
                      (uint16_t)(spawn_header_word(image, table, WB_SPAWN_HEADER_LIVE) - 1));
-    wr16(image + addr_add(actor, WB_ACTOR_X), WB_ACTOR_FREE_MARKER);
+    rec_set_w(record, WB_ACTOR_X, WB_ACTOR_FREE_MARKER);
 
     /* `tst.w -2(a6) / beq` — ANY nonzero wrapped flag re-arms, not only WB_SPAWN_WRAPPED_SET, which
      * is what $ff42's own `cmpi.w #$ffff` on the same word tests for. The two readings agree on
@@ -797,8 +829,8 @@ static uint32_t retire_slot(uint8_t *image, uint32_t actor, uint32_t template_re
  * That is also why WB_BUS_ADDR_MASK does not appear here where src/rng.c needs it: nothing in this
  * arithmetic can reach $01000000 in the first place.
  */
-uint32_t actor_respawn_as_new_kind(uint8_t *image, uint32_t actor, uint32_t template_record,
-                                   uint32_t entry_d2) {
+static uint32_t actor_respawn_as_new_kind_body(uint8_t *image, ActorRecord record,
+                                              uint32_t template_record, uint32_t entry_d2) {
     /* `moveq #0,d0` and then a `.w` read of ONE of the two forced-kind fields, so d0's high half is
      * zero on every arm — and a nonzero field skips the draw entirely. Which field, and so which
      * draw, is `cmpi.w #$2,6(a1) / beq`: an equality test on the count the `addq` just raised, so
@@ -818,48 +850,55 @@ uint32_t actor_respawn_as_new_kind(uint8_t *image, uint32_t actor, uint32_t temp
     /* `tst.w d0 / bmi.w $6c38` — a forced kind with its top bit set frees the slot instead. A drawn
      * one never can: WB_STAGE_KIND_MASK bounds it to 0..31. */
     if ((int16_t)kind < 0)
-        return retire_slot(image, actor, template_record);
+        return retire_slot(image, record, template_record);
 
-    image[addr_add(actor, WB_ACTOR_KIND)] = (uint8_t)kind;   /* `move.b d0,20(a0)` — the LOW byte */
+    rec_set_b(record, WB_ACTOR_KIND, (uint8_t)kind);         /* `move.b d0,20(a0)` — the LOW byte */
 
     /* `bset #0 / bset #1 / bclr #2` on WB_ACTOR_FLAGS: actor_start_motion_at_speed's three writes in
      * a different order, over a speed this routine spells inline rather than taking in d0. */
-    actor_set_moving_unsupported(image, actor);
+    actor_set_moving_unsupported(record);
 
-    image[addr_add(actor, WB_ACTOR_FIELD_10)] = WB_ACTOR_RESPAWN_FIELD_10;
-    image[addr_add(actor, WB_ACTOR_SPEED)] = WB_ACTOR_RESPAWN_SPEED;
-    image[addr_add(actor, WB_ACTOR_FIELD_12)] = WB_ACTOR_RESPAWN_FIELD_12;
-    image[addr_add(actor, WB_ACTOR_FIELD_30)] = WB_ACTOR_RESPAWN_FIELD_30;
+    rec_set_b(record, WB_ACTOR_FIELD_10, WB_ACTOR_RESPAWN_FIELD_10);
+    rec_set_b(record, WB_ACTOR_SPEED, WB_ACTOR_RESPAWN_SPEED);
+    rec_set_b(record, WB_ACTOR_FIELD_12, WB_ACTOR_RESPAWN_FIELD_12);
+    rec_set_b(record, WB_ACTOR_FIELD_30, WB_ACTOR_RESPAWN_FIELD_30);
 
     /* The two `move.w (a2)+` are read-then-write IN ORDER, not two reads and two writes: an actor
      * record overlapping the table would see its own first store in the second read. */
     uint32_t row = addr_add(WB_ACTOR_KIND_TABLE,
                             sign_ext16((uint16_t)(kind << WB_ACTOR_KIND_RECORD_SHIFT)));
-    wr16(image + addr_add(actor, WB_ACTOR_TYPE),
-         be16(image + addr_add(row, WB_ACTOR_KIND_TYPE)));
-    wr16(image + addr_add(actor, WB_ACTOR_SPRITE),
-         be16(image + addr_add(row, WB_ACTOR_KIND_SPRITE)));
-    wr32(image + addr_add(actor, WB_ACTOR_HALF_WIDTH), WB_ACTOR_RESPAWN_SIZE);
+    rec_set_w(record, WB_ACTOR_TYPE, be16(image + addr_add(row, WB_ACTOR_KIND_TYPE)));
+    rec_set_w(record, WB_ACTOR_SPRITE, be16(image + addr_add(row, WB_ACTOR_KIND_SPRITE)));
+    /* `move.l #$40006,14(a0)` — ONE longword over WB_ACTOR_HALF_WIDTH and WB_ACTOR_SIZE_SECOND, so
+     * `rec_set_l`'s whole-operand rule and not two word stores (include/actor_view.h). */
+    rec_set_l(record, WB_ACTOR_HALF_WIDTH, WB_ACTOR_RESPAWN_SIZE);
     return WB_ACTOR_DEFEAT_RESPAWN;
 }
 
-uint32_t actor_defeat_and_score(uint8_t *image, uint32_t actor) {
+ACTOR_DOOR_RETURNING_SIG(uint32_t, actor_respawn_as_new_kind,
+                         (uint8_t *image, uint32_t actor, uint32_t template_record,
+                          uint32_t entry_d2),
+                         (image, record, template_record, entry_d2))
+
+/* `actor` survives the door here where every other body in this file dropped it: the boss test
+ * below compares the record's ADDRESS, which is not something its bytes can answer. */
+uint32_t actor_defeat_and_score_body(uint8_t *image, uint32_t actor, ActorRecord record) {
     if (be16(image + WB_STATE_FLAG_A32) != 0 && actor == WB_BOSS_FRAGMENT_ORIGIN) {
         snd_stop(image);
         wr16(image + WB_BOSS_DEFEAT_FLAG, WB_BOSS_DEFEAT_SET);
         snd_call_trigger_effect(image, WB_BOSS_DEFEAT_SFX, WB_SND_CHANNEL_A);
         hud_meter_add_clamped(image, WB_BOSS_DEFEAT_METER_BONUS);
     }
-    image[addr_add(actor, WB_ACTOR_FIELD_18)] = 0;
+    rec_set_b(record, WB_ACTOR_FIELD_18, 0);
 
     /* `lsl.l #5,d0 / lea 0(a1,d0.w),a1` — a LONG shift indexed by a WORD, the pair
      * actor_damage_template_hitpoints spells too: the slot is a byte, so the product stays inside
      * the positive half of the word and the sign extension never bites. */
     uint32_t table = be32(image + WB_TABLE_PTR_21E8C);
     uint32_t template_record = addr_add(table, sign_ext16(
-        (uint32_t)image[addr_add(actor, WB_ACTOR_TEMPLATE_SLOT)] << WB_ACTOR_TEMPLATE_SLOT_SHIFT));
+        (uint32_t)rec_b(record, WB_ACTOR_TEMPLATE_SLOT) << WB_ACTOR_TEMPLATE_SLOT_SHIFT));
 
-    if (be16(image + addr_add(actor, WB_ACTOR_TYPE)) != WB_ACTOR_TYPE_UNSCORED) {
+    if ((uint16_t)rec_w(record, WB_ACTOR_TYPE) != WB_ACTOR_TYPE_UNSCORED) {
         uint16_t spawn_type = be16(image + addr_add(template_record, WB_SPAWN_TYPE));
         uint16_t index = (uint16_t)(spawn_type << WB_SPAWN_SCORE_SHIFT);
         /* THE ENTRY X IS PRODUCED BY THIS RUN, so it is threaded rather than claimed: `lsl.w #2,d2`
@@ -881,8 +920,10 @@ uint32_t actor_defeat_and_score(uint8_t *image, uint32_t actor) {
          * the high half and the `lsl.w #2` left the scaled type in the low word, and nothing between
          * here and the `bsr` writes either. */
         if ((int16_t)kills <= (int16_t)WB_SPAWN_KILL_RESPAWN_LIMIT)
-            return actor_respawn_as_new_kind(image, actor, template_record, index);
+            return actor_respawn_as_new_kind_body(image, record, template_record, index);
     }
 
-    return retire_slot(image, actor, template_record);
+    return retire_slot(image, record, template_record);
 }
+
+ACTOR_DOOR_RETURNING(actor_defeat_and_score, image, actor, record)

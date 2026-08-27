@@ -15,14 +15,14 @@
  * game's own; the kit's own `nm` agrees (`build/libwonderboy.so` has exactly one undefined symbol,
  * `bzero`, because kit.mk sweeps the kit sources into the same .so).
  *
- *   hw_read8        5 call sites   ../src/rng.c:33, ../src/behavior.c:2520,2522, ../src/sound.c:1057,1059
- *   psg_port_write 10 call sites   ../src/game.c:308, ../src/sound.c:145,147,148,149,989,995,996,998,1005
- *   psg_port_read   3 call sites   ../src/game.c:307, ../src/sound.c:146,1003
- *   sched_wait8     1 call site    ../src/game.c:47   (two wait SITES reach it: $60e and $64e)
- *   sched_poll16    2 call sites   ../src/game.c:398, 413
- *   disk_read_file  1 call site    ../src/boot.c — `load_resource_by_index` ($e782), THE FILE-LOAD
+ *   hw_read8        5 call sites   ../src/rng.c:33, ../src/behavior.c:2692,2694, ../src/sound.c:1343,1345
+ *   psg_port_write 10 call sites   ../src/game.c:314, ../src/sound.c:241,243,244,245,1242,1249,1250,1252,1259
+ *   psg_port_read   3 call sites   ../src/game.c:313, ../src/sound.c:242,1257
+ *   sched_wait8     1 call site    ../src/game.c:49   (two wait SITES reach it: $60e and $64e)
+ *   sched_poll16    2 call sites   ../src/game.c:397, 412
+ *   disk_read_file  1 call site    ../src/boot.c:306 — `load_resource_by_index` ($e782), THE FILE-LOAD
  *                                  SEAM (the kit's include/disk.h argues why it is a seam at all)
- *   os_refused      1 call site    ../src/sound.c:786 — NOT defined here: -DOS_NO_REFUSAL_TALLY makes
+ *   os_refused      1 call site    ../src/sound.c:983 — NOT defined here: -DOS_NO_REFUSAL_TALLY makes
  *                                  the kit's os.h serve a `static inline` identity (os.h:57)
  *
  * THE LINE NUMBERS ARE A SNAPSHOT AND THEY SELF-STALED ONCE ALREADY — this very commit's `#ifdef`
@@ -46,16 +46,20 @@
  *                   link symbol; Wonder Boy calls none of them (project.toml's byte scan: the whole
  *                   program issues ONE TOS trap in its life, a Super). Every kit dependency this
  *                   game has is a real symbol, so the seam is pure link-time replacement.
- *   os_in_image     4 call sites in the cores, all in ../src/blit.c — two in the sprite blit's own
- *                   word accessors, and two on one line of `spans_in_image`, the source-and-
- *                   destination predicate BOTH hoists ask: the per-ROW guard and the per-BLIT one
- *                   that lets a proved-in-image walk skip the accessors' own two; `static inline`
- *                   arithmetic over OS_IMAGE_SIZE, correct on target unchanged. THIS FILE calls it
- *                   four more times (disk_read_file's two bounds, image_byte, image_word); those
- *                   are not core calls and are not what the seam scan is about, but they are why
- *                   the count read wrong to a reviewer and so are named here. ../include/bus.h's
- *                   guarded accessors call it too, from a header rather than from a core, and are
- *                   outside this count for the same reason.
+ *   os_in_image     4 call sites in the cores, on three lines. THREE are ../src/blit.c's: the
+ *                   sprite blit's own word accessors share one predicate (blit.c:161), and
+ *                   `spans_in_image` (blit.c:432) asks two on one line — the source-and-
+ *                   destination pair BOTH hoists need: the per-ROW guard and the per-BLIT one
+ *                   that lets a proved-in-image walk skip the accessors' own. THE FOURTH IS
+ *                   ../src/actor_view.c:56, one predicate per byte of a record the door could not
+ *                   prove whole — the live mask include/actor_view.h describes. All `static
+ *                   inline` arithmetic over OS_IMAGE_SIZE, correct on target unchanged. THIS FILE
+ *                   calls it four more times (disk_read_file's two bounds, image_byte,
+ *                   image_word); those are not core calls and are not what the seam scan is
+ *                   about, but they are why the count read wrong to a reviewer and so are named
+ *                   here. ../include/bus.h's guarded accessors and actor_view.h's own door bound
+ *                   call it from HEADERS rather than from a core, and are outside this count for
+ *                   the same reason.
  *
  * THE ADDRESSES ARE WRITTEN IN THE 24-BIT BUS FORM the reconstruction spells (`$ff820a`, `$fffa01`)
  * and put on the bus in the CPU's own form (`$ffff820a`, `$fffffa01`) by `hw_addr` below. On a 68000

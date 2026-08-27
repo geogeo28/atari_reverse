@@ -13,6 +13,8 @@
 #include <stddef.h>         /* NULL — the two wrappers below drop the probes' X report */
 #include <stdint.h>
 
+#include "actor_view.h"     /* ActorRecord: what every routine here takes, and what a door proves */
+
 /* THE PROBES REPORT A THIRD THING, AND IT IS A CONDITION-CODE BIT: the 68000 X flag they leave.
  *
  * `exit_extend` is that bit, a PURE OUTPUT — neither probe ever passes the caller's X through,
@@ -35,6 +37,34 @@
  * survives to the dispatcher is a per-handler question no case here asks and no case here needs to.
  */
 
+/* --- EVERY ROUTINE HERE IS TWO: A DOOR AND A BODY ----------------------------------------------
+ *
+ * The collision map's probes and settles all work on ONE actor record, and every field of it used to
+ * be a `field_*` call — mask to 24 bits, bound against the image, index. include/actor_view.h proves
+ * a record ONCE, in the door its caller was entered through; so each routine below is published
+ * twice:
+ *
+ *   * `name(image, actor, ...)` — THE DOOR. The original's own register interface, what test_map.py
+ *     binds by name, and what a caller holding only an address calls. It opens the view, runs the
+ *     body and closes it.
+ *   * `name_body(image, record, ...)` — THE BODY, for a caller that has ALREADY proved this record:
+ *     src/behavior.c's handlers, each entered through a door of its own, and src/player.c's frame.
+ *     `image` stays because the CELLS, the two map bases and the level's limit word are not record
+ *     fields. ONLY THE THREE BODIES A SECOND MODULE CALLS ARE DECLARED HERE — the two probes' and
+ *     the fall's. The two settles' and the two cell lookups' are reached from src/map.c alone, so
+ *     they are `static` there and only their doors are published; a `_body` declared here that
+ *     nobody outside could call would be interface nothing holds up.
+ *
+ * A CALLER MUST NOT OPEN A SECOND DOOR ON A RECORD IT ALREADY HOLDS — two views on the slow arm are
+ * two scratches, and the second is filled from an image the first has not given back to yet
+ * (include/actor_view.h). Hold the record, call the body.
+ *
+ * THE TWO CELL LOOKUPS KEEP THEIR `const uint8_t *image`, which is the whole claim their plates
+ * make: they write no memory at all. They are opened through `actor_view_open_reading`, the door
+ * that discards the const in one place and marks the view as having nothing to give back
+ * (include/actor_view.h). Everything else here writes the record and takes the image as it is.
+ */
+
 /* $10a2 — step `actor` LEFT by `step` pixels, refusing to enter a WB_MAP_TILE_BLOCK cell, and
  * report what is under the cell it stopped on.
  *
@@ -49,6 +79,8 @@
  * arms of a direction test; only actor_fall_and_settle $1334 has more, 46. */
 uint32_t actor_step_left_against_map(uint8_t *image, uint32_t actor, uint32_t step,
                                      uint32_t *ground, unsigned *exit_extend);
+uint32_t actor_step_left_against_map_body(uint8_t *image, ActorRecord record, uint32_t step,
+                                          uint32_t *ground, unsigned *exit_extend);
 
 /* $1170 — step `actor` RIGHT by `step` pixels, refusing to enter a WB_MAP_TILE_BLOCK cell, and
  * refusing to take its right edge past the level's own.
@@ -72,6 +104,8 @@ uint32_t actor_step_left_against_map(uint8_t *image, uint32_t actor, uint32_t st
  * it and $10a2's interface is that pair. */
 uint32_t actor_step_right_against_map(uint8_t *image, uint32_t actor, uint32_t step,
                                       uint32_t *ground, unsigned *exit_extend);
+uint32_t actor_step_right_against_map_body(uint8_t *image, ActorRecord record, uint32_t step,
+                                           uint32_t *ground, unsigned *exit_extend);
 
 /* The registers $13c8 takes and leaves, which is the whole of its interface — it writes no memory.
  * Register map: cell = a6, sub_cell = d2, cell_index = d3, span = d7, column = d0, row = d1.
@@ -156,6 +190,7 @@ uint32_t actor_settle_on_tile_1_or_2(uint8_t *image, uint32_t actor, uint32_t ce
  * `move.b #$2,d7`, which replaces only the low BYTE — so what they step by carries whatever this
  * routine left above it (src/behavior.c). */
 uint32_t actor_fall_and_settle(uint8_t *image, uint32_t actor, uint32_t entry_span);
+uint32_t actor_fall_and_settle_body(uint8_t *image, ActorRecord record, uint32_t entry_span);
 
 /* What a call hands `entry_span` where nothing reads the register back. The value really is the
  * CALLER's own entry d7 — a death arm reaches the settle without $23b6 or $5c6e having run, and
@@ -188,14 +223,14 @@ void map_stamp_block(uint8_t *image);
  * stay here rather than moving back: TWENTY-FOUR call sites in behavior.c is reason enough for a
  * named wrapper, and phase F's frame will bring the X-reporting spelling back into a second module.
  * Same rule, and the same `static inline`, as bus.h's record accessors. */
-static inline uint32_t step_left(uint8_t *image, uint32_t actor, uint32_t step) {
+static inline uint32_t step_left(uint8_t *image, ActorRecord record, uint32_t step) {
     uint32_t ground = 0;
-    return actor_step_left_against_map(image, actor, step, &ground, NULL);
+    return actor_step_left_against_map_body(image, record, step, &ground, NULL);
 }
 
-static inline uint32_t step_right(uint8_t *image, uint32_t actor, uint32_t step) {
+static inline uint32_t step_right(uint8_t *image, ActorRecord record, uint32_t step) {
     uint32_t ground = 0;
-    return actor_step_right_against_map(image, actor, step, &ground, NULL);
+    return actor_step_right_against_map_body(image, record, step, &ground, NULL);
 }
 
 #endif /* WONDERBOY_MAP_H */

@@ -89,6 +89,8 @@
 
 #include <stdint.h>
 
+#include "actor_view.h"     /* ActorRecord: what the bodies below take, and what a door proves */
+
 /* $a76 — THE DEATH CHECK, the frame's first call ($a38). It runs only while
  * WB_HUD_METER_VALUE is zero, and the two arms are what happens when the player has just run out.
  *
@@ -152,6 +154,7 @@ void player_meter_empty_check(uint8_t *image, uint32_t actor, unsigned *extend);
  * two overwrites. The sixth, the LAUNCH at $ea6, leaves the sound routine's, which this port has
  * never read and no frame that also fires can reach; src/player.c's plates carry both readings. */
 void player_jump_step(uint8_t *image, uint32_t actor, unsigned *extend);
+void player_jump_step_body(uint8_t *image, ActorRecord record, unsigned *extend);
 
 /* $d84 — THE LADDER, called at $a60, after the fall pass. It does nothing at all unless
  * WB_TILE_33_FLAG is up, i.e. unless `actor_fall_and_settle`'s player-only head found tile

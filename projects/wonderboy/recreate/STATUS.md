@@ -16886,3 +16886,434 @@ loops walk, with `_Static_assert`s pinning `WB_BG_TILE_BLOCK_LEN == WB_BG_TILE_R
 (~700 cycles a call for +154 B), the two `addi.l #imm32` bases the original keeps in a4/a5 (~220), the `andi.l #65535`
 zero-extend (~180) — ~1 K a call, ~430 a frame; `copy_row_cells` in the ROW fill has exactly the shape `clear_cells`
 had and is left alone because it runs on a VERTICAL scroll, which the walking timeline never raises.
+
+**THE ACTOR'S OWN RECORD PROVED ONCE PER DOOR: `actor_behavior_pass` 60.6 K -> 56.7 K cycles a frame
+(2026-08-26, `include/actor_view.h` + `src/behavior.c`).** The behaviour tier reaches an actor's own
+record 613 times, and every one of those sites was `field_w(image, actor, off)` — mask to 24 bits,
+bound against the image, then index, three instructions ahead of the `move.w d16(a0)` the original
+spells. The paragraph above this one measured what all of bus.h's guards cost the tier (9.1 K a
+frame) and recorded the per-ACCESS fast/slow arm as NO-GO; this is the same prize taken the way that
+measurement said to take it — **once per record, by whoever knows its address**, which is the door a
+published routine is entered through. `ActorView`/`ActorRecord` and the `rec_*` family are the
+mechanism, `ACTOR_DOOR_RETURNING`/`_VOID` the doors (include/actor_view.h derives the count, which
+has moved since), and `<name>_body` the `static` half
+that takes the proved record; a routine inside the file calls the BODY and never the door, because
+two doors on one record would be two scratches. Every record that is NOT the actor's own — the
+followed slot, a shot, a minion, a seed, an escort, a band, 120 sites — stays on bus.h and keeps its
+guard, which is why the two families are named alike: the line says which record has been proved.
+
+**A RECORD IS THIRTY-TWO BYTES AND THIRTY-TWO ANSWERS, and the second half is what the first draft
+got wrong.** A scratch filled through `bus_read_byte` and given back at the door reproduces the READ
+side exactly and the WRITE side not at all: bus.h DROPS a write to a field outside the image, so the
+next read of it is zero again, while a scratch keeps what was written. The two swoop RE-READ
+parametrisations in `test_behavior.py` — six cases in all, under the plate "the two RE-READ pins: a
+record whose coordinate stores are DROPPED" — are built on precisely that: `addq.w #4,(a0) /
+cmp.w (a0),d0` at a record at `$fffff0` whose x is off the image and whose FIELD_22 folds back onto
+`$6` and is not. They went RED on the first build, which is what the record's `live` mask
+answers: one byte per record byte, `$ff` where the bus carries it, and EVERY write masked with it.
+Dead bytes are then zero for free on the read side, which is where the many accesses are. The mask
+costs **1.7 K cycles a frame** (56.7 K against 55.1 K with the three `rec_set_*` masks deleted — an
+experiment, not a candidate) and it is the price of the arm those six cases pin.
+
+**THE DISPATCH IS A COMPARE TREE.** `ported_handler` walked a 61-row `{target, handler}` array from
+the top for every dispatch of every live record; it is a `switch (target)` now, which GCC compiles —
+the unit is `-fno-jump-tables` and the targets are sparse image addresses — into a balanced tree of
+about six `cmpil`/`beqw` ending in a tail `jmp`, all of it inlined into `actor_dispatch_behavior`.
+
+NUMBERS, all `profile.py ours --walk` on this tree back to back with HEAD `35e9378`:
+`actor_behavior_pass` **60.6 K -> 56.7 K** a frame against the original's 17.1 K (x3.54 -> **x3.32**),
+`actor_dispatch_behavior` **8,917 -> 8,318** cycles a call, `actor_followed_overlap_mask`
+**1,264 -> 923** (x4.3 -> **x3.2**) and `actor_hop_ascend_step` **315 -> 135** (x6.7 -> **x2.9**) —
+those last two now also gain from their internal callers entering the BODY, so the `jsr`/`rts` pair
+goes with the guard. `actor_fall_and_settle` (3,839 -> 3,843), `actor_step_left/right_against_map`
+and `actor_map_cell_lookup` did NOT move and are the tier's largest ratios now (x4.4, x4.2, x3.5,
+x3.3): they live in `src/map.c` and `src/player.c`, are entered with the record ADDRESS, and are
+phase two. **THE FRAME COUNT DID NOT MOVE** — 442 frames / 22.10 fps either side, for the reason
+`atari/README.md` states about `cycles/frame` being frames-derived and the frame being
+vblank-quantised — so this is 3.9 K of headroom banked, not an fps. In the `-O2` m68k object:
+`andil #16777215` **568 -> 278** and `cmpil #1048574` **298 -> 164**, `.text` 39,480 -> 43,424 B
+(+3,944, the eighty-one doors and the compare tree), and the boot floppy went 26,624 -> **22,528 B
+free**. `atari/profile.py`'s ratio table learned that a `_body` is half of the door it is named
+after, without which those eighty-one routines drop out of it entirely.
+
+SURFACES AND MUTATIONS. Suite **6,456** green (6,454 plus the two new pins), `make guarded` clean.
+The door's bound: `os_in_image(address, 1)` — trust every record whole — is **RED under
+`make guarded`** (the worker CRASHES inside the straddle pin, in the PROT_NONE reservation above the
+image, exactly as that case's docstring predicted a per-record fast path would) and **GREEN under
+`make test`**, so the guarded sweep is the surface and the plain suite is not. `WB_ACTOR_RECORD_BYTES
+- 16` is RED the same way; **`- 1` through `- 15` SURVIVE both**, and that is an honest hole rather
+than a pin: the only record any case places against the image's top is `IMAGE_SIZE - 16`, driving a
+routine whose deepest field is at offset 16, so a bound short by less than sixteen never makes a case
+touch a byte that is not there. Closing it needs a case that drives a handler reaching
+`WB_ACTOR_FIELD_31` at a record straddling by ONE byte, which is registered here and not written.
+The give-back: deleting `actor_view_close`'s copy is RED on
+`test_swoop_state{2,3}_gives_back_the_store_that_DID_land` — the two cases added with this change,
+because all six existing refused-record cases are ones where NOTHING is written and a door that
+dropped its scratch on the floor passed every one of them. The dispatch: swapping the handlers two
+`case`s return **SURVIVES**, which is a PRE-EXISTING hole and not this change's — the old array had
+it identically — because `test_the_dispatcher_transfers_to_the_slot_the_type_names` seeds every
+handler on its QUIETEST arm, so two ported slots that both write nothing on that seed are
+interchangeable to it. Registered, not fixed here.
+
+WHAT THE SLOW ARM IS NOT, registered as a hole with its standing. A helper entered with the record's
+ADDRESS — `src/map.c`'s probes, `src/player.c`'s walk — reads the IMAGE, so on the scratch arm it
+does not see what the handler has written into the scratch since the door opened. The give-back
+compares against `as_found` and writes back only the bytes the HANDLER changed, so such a helper's
+own stores are not clobbered, but the read ordering is not modelled. Three cases in the suite reach
+the arm and no frame the game has run does: every record the game builds lies inside the image. The
+per-byte `live` mask is also exact only because every word and longword field of a record is at an
+EVEN offset and both of a record's possible boundaries carry the parity of its address, so an odd
+record base is one of the two shapes the argument does not cover (the phase-two section below has the
+other, a LONGWORD field, which an even base does NOT save) — and this one the ORACLE cannot execute,
+since `move.w d16(a0)` with an odd a0 is an address error. `include/actor_view.h` carries both
+arguments in full. **PHASE THREE CLOSED BOTH the address-helper hole (by construction, at 74 more call
+sites) and the longword one (`rec_l`/`rec_set_l` are whole-operand now); the odd base is the only
+shape still standing, and it is the one no oracle can pose.**
+
+**PHASE TWO: THE VIEW THROUGH THE HELPERS — `actor_behavior_pass` 56.7 K -> 41.6 K cycles a frame
+(2026-08-26, `src/map.c` + `src/player.c` + `src/actor.c` + `src/actor_view.c`).** The paragraph above
+banked 3.9 K and named where the rest was: the helpers a handler calls with the record's ADDRESS,
+which then went back through `bus.h` per field. All of them now take the `ActorRecord` the caller
+proved — `src/map.c`'s two step probes, its two cell lookups and both settles, `src/actor.c`'s
+`actor_accelerate_fall`, and `src/player.c`'s walk, weapon, stage transition, map cell and event gate,
+55 routines in that file alone. Each published name stays exactly what it was and becomes a DOOR
+(`ACTOR_DOOR_*`, plus a new `_SIG` pair for the routines that carry parameters of their own), and the
+handlers call the `_body` half with the record they already hold, because two doors on one record
+would be two scratches. `image` stays wherever a MAP CELL is reached: a cell address is computed from
+coordinates and can leave the image, so that guard is semantic and is not touched — this change moves
+only what a record OFFSET reaches.
+
+WHAT IT BOUGHT, `profile.py --walk` back to back on this tree: `actor_fall_and_settle`
+**3,843 -> 1,691** cycles a call against the original's 1,084 (x3.5 -> **x1.6**),
+`actor_step_left_against_map` **1,535 -> 1,208** (x4.4 -> x3.4), `actor_step_right_against_map`
+**1,506 -> 1,187** (x3.6 -> x2.8), `player_step_and_arm` **2,756 -> 2,149** (x3.9 -> x3.0),
+`player_stage_transition` **1,251 -> 1,062**, `actor_dispatch_behavior` **8,318 -> 5,979** cycles a
+call, and the tier as a whole **56.7 K -> 41.6 K** a frame against 17.1 K (x3.32 -> **x2.4**). EVERY
+FIGURE HERE IS `atari/out/profile-ours-walk.json`'s, read back rather than remembered — an earlier
+draft of this paragraph carried three different numbers for the tier (42.6 K in its headline, 41.6 K
+in its body) because two of them were taken before the review fixes at the foot of this entry landed.
+`player_run_map_cell` is NOT in the list for a related reason: it had no row on the tree this was
+measured on, because GCC inlined it into the player's frame there. (It is back out of line and back
+in the table in the phase-three entry below, at 484 against 345.)
+Of the tier's figure, **1.8 K is one `always_inline`**: GCC at -O3 inlines `actor_settle_on_tile_1_or_2`
+and both cell lookups into the fall by itself and leaves `actor_settle_on_platform` out of line, at six
+stacked arguments a call and six falls a frame. Forcing it is measured both ways — **44.4 K without,
+42.6 K with**, a PAIR taken on the tree as it then stood and kept as a pair, for ~218 bytes of
+`src/map.c`'s object — and the frame is 443 / 22.15 fps / 361.7 K either way. `actor_settle_on_platform`,
+`actor_settle_on_tile_1_or_2`, `actor_map_cell_lookup` and `actor_map_cell_from_actor_x` have no rows
+any more: their bodies are `static` in `src/map.c` and inline into the fall, which is where the
+original's own 130-byte routine has them. Frames **442 -> 443** (22.10 -> 22.15 fps, 362.6 K -> 361.7 K
+a frame). In the `-O3` m68k objects: `src/map.c` 4,472 -> **3,738** B with `andil #16777215`
+**46 -> 17** and `cmpil #1048574` **42 -> 2**, `src/player.c` 11,648 -> 13,298 with **120 -> 77** and
+**43 -> 22**, `src/behavior.c` 56,444 -> 56,334 with **365 -> 348** and **194 -> 178**,
+`src/actor.c` 3,640 -> 3,794 with **0 -> 1** and 0 (the fall step was reaching its two
+fields through a RAW `image + addr_add(...)`, unbounded — the body is the first time it is bounded at
+all). `src/player.c` grows because ten doors and a hundred-odd `ActorRecord` arguments are two words
+where an address was one; the floppy still gained (below).
+
+ONE ROW WENT THE OTHER WAY AND IT IS THE MASK: `player_gate_on_1516` **741 -> 906** cycles a call. Its
+chain — the jump step, the ascent, the launch, the wing-boot hover — is nearly all WRITES, and
+`rec_set_*` pays a load and an AND of the `live` byte at every one where `set_field_*` paid a guard it
+mostly passed. The mask is not removable per access for phase one's reason (both arms inline at every
+site); it is the price of the six dropped-store cases and it is registered here rather than hidden.
+
+`ACTOR_RECORD_ALL_LIVE` AND THE SLOW ARM MOVED OUT OF THE HEADER into `src/actor_view.c`, and the
+reason is a tool refusing rather than tidiness: `atari/profile.py` aggregates cycles BY NAME and
+**refuses a link that names any symbol twice**, because one would be charged with the other's work —
+which is exactly what a header `static` becomes once four modules include it. `static inline
+__attribute__((noinline))` is not the answer either: GCC on m68k warns (-Wattributes) and drops the
+attribute that matters, which would have inlined a thirty-two-iteration fill into a hundred doors.
+
+**AND THE ON-TARGET SURFACE CAUGHT A LATENT LINKER-SCRIPT FAULT, which is the finding of this phase.**
+`python3 atari/smoke.py floppy` went RED with `Address Error writing at address $54c23, PC=$ae94` —
+`move.l %d2,game_image`, a longword store to an ODD address, before the image was ever opened.
+`atari/tos.ld` said `.bss (NOLOAD) : SUBALIGN(1)`, which packs .bss at BYTE granularity and so strips
+the word alignment the 68000 requires of every `move.w`/`move.l`: any bss object lands odd as soon as
+the object before it has odd size, and this change moved .bss by one byte. `wonderboy_main.c`'s
+`game_image` POINTER landed at $4a0d5 and the program died at its first store to it. Nothing in the C
+can defend against it — SUBALIGN overrides a variable's own `__attribute__((aligned))` — so the fix is
+`SUBALIGN(2)`, which costs at most one padding byte per object and moves nothing else, since the dot
+is already 256-aligned when `.bss` opens. **`projects/joust/recreate/atari/tos.ld` is the same file
+and carries the same latent fault**; it is registered here and NOT edited, because that project has
+concurrent work. THE SURFACE IS `smoke.py floppy` and nothing smaller: `make test` and `make guarded`
+run on the host, where an odd word access is legal.
+
+THE REVIEW GATE FOUND FOUR THINGS AND THEY ARE FIXED HERE, one of them the same class as the linker
+script's. (1) `ACTOR_RECORD_ALL_LIVE` is a `const uint8_t[]`, ABI alignment **1**, and `rec_set_w` /
+`rec_set_l` fetch it with `be16`/`be32` — which on the big-endian target are a real `move.w`/`move.l`.
+An odd base is an ADDRESS ERROR at every masked store on the FAST arm, i.e. at every store the game
+makes, and the linked ELF was even by luck: `.rodata` folds into `.text` and one odd-sized input ahead
+of it decides. It carries `__attribute__((aligned(4)))` now, and NO SURFACE HERE CAN SEE THE FAULT —
+the differential `.so` is little-endian and takes `machine.h`'s byte-wise arm. (2) `src/player.c`'s
+frame called the DOOR `player_gate_on_1516` while holding the record its own door had proved; its body
+is published in `include/behavior.h` now and the frame calls that. (3) `actor_behavior_type12` did the
+same with `actor_anim_step_facing_list` — the one call site phase one's sweep missed, because it is
+the only multi-line one. (4) Nine `src/player.c` `_body` halves were external with no prototype in any
+header; they are `static`, which is what `include/map.h` already says the rule is.
+
+SURFACES AND MUTATIONS. `make test` **6,456** green (unchanged — this phase moves no behaviour and
+adds no case), `make guarded` clean over 10,048 guarded candidate runs, `bash atari/build.sh ownrun`
+OK and `python3 atari/smoke.py floppy` OK on all four passes, the play disk at **39,936 bytes free**
+(the day's `-ffunction-sections`/`--gc-sections` batch had just taken it from 22,528 to 43,008; this
+change spends ~4 K of that). Two mutations inside converted helpers, both RED after a forced relink:
+`actor_probe_row` reading `WB_ACTOR_X` instead of `WB_ACTOR_Y` reddens
+`test_player.py::test_a_BLOCKED_walk_step_clears_the_speed_through_the_probes_own_player_arm` and both
+`test_the_walks_exit_X_reaches_the_weapons_sbcd` parametrisations; `player_take_walk_step` reading
+`WB_ACTOR_FIELD_23` instead of `_22` reddens all eight
+`test_the_walk_raises_its_speed_on_ONE_FRAME_IN_FOUR` cases and
+`test_FIRE_TOGETHER_WITH_A_DIRECTION_still_arms_the_record`.
+
+WHAT THIS CLOSES AND WHAT IT DOES NOT. Phase one registered a hole: on the SCRATCH arm, a helper
+entered with the record's ADDRESS reads the IMAGE and does not see what the handler has written into
+the scratch. **Every helper named above now takes the view instead of the address, so for them the
+hole is closed by construction** — there is one set of bytes and both sides read it. What is left of
+it is the handful of routines that still take an address because they reach a record that is NOT the
+actor's own (`actor_alloc_slot_high`'s shot, the scene triggers' descriptor, `actor_damage_followed`'s
+followed slot); those are on `bus.h` by design, and a record the game builds is never on the scratch
+arm anyway.
+
+AND ONE HOLE IS NEW, made by putting a door over `actor_behavior_type01_player` — the player's WHOLE
+frame is now inside one view where phase one had none. **CLOSED BY PHASE THREE below, which is where
+this stopped being three call sites and turned out to be a class of seventy-four.** Three of its arms reach the player's OWN record
+by ADDRESS, through `src/actor.c` helpers that write the image: `player_tile_hurt`'s
+`actor_knock_back_and_launch`, `player_tile_34`'s `launch_at_inline_speed` and `gate_death_rise`'s
+`actor_drift_x_step`. The give-back writes back every byte the HANDLER changed, which protects a byte
+only the HELPER changed — and not a byte BOTH changed. `player_tile_hurt` is exactly that: it sets
+`WB_ACTOR_FLAG_FLICKER_BIT` in the scratch and then lets the knock-back rewrite the same
+`WB_ACTOR_FLAGS` byte in the image, so on the SCRATCH arm the close puts the handler's copy back and
+the knock-back's MOVING/LAUNCHED/SUPPORTED bits are lost. On the fast arm nothing changes — one set of
+bytes, same order — and no case in the suite drives slot 1 at a record the image does not wholly hold,
+so it is an honest hole rather than a live divergence. Closing it means giving those three helpers a
+record-taking body too, which is the same move again and is registered here rather than done.
+
+AND ONE MORE HOLE FOUND WHILE EXTENDING `rec_l`'s use INTO src/player.c, which belongs to phase one's
+per-byte model and was registered here rather than fixed. **PHASE THREE FIXED IT** — the two longword
+accessors ask the mask ONE question instead of four, which is `bus.h`'s own whole-operand rule — and
+the paragraph is kept because the argument for why the WORD case does not need that is still live. The parity argument in `include/actor_view.h`
+— "an even-offset field straddles a boundary at `k` only when `k` is odd" — is true of a WORD and NOT
+of a LONGWORD: a four-byte field at even offset `f` straddles a boundary at `f + 2`, which is even. A
+record whose base puts the image's top or the 24-bit wrap exactly two bytes into one of the three
+longword fields (offsets 0, `WB_ACTOR_FIELD_22`, `WB_ACTOR_FIELD_26`, so k = 2, 24, 28) would read as
+two real bytes and two zeros where `bus.h` drops the whole operand and answers zero. No case reaches
+it — both straddling records the suite builds land on k = 16, which splits no field — so it is an
+honest hole and not a live divergence. Closing it wants a case placing a record at
+`IMAGE_SIZE - 24` and driving a handler that reads `WB_ACTOR_FIELD_22` as a longword.
+
+**PHASE THREE: THE HOLE WAS A CLASS, NOT THREE SITES (2026-08-26, `src/actor.c` + `include/actor.h`
++ `src/behavior.c` + `src/player.c` + `include/actor_view.h`).** Phase two registered three call
+sites where a body reached its OWN record by ADDRESS through an `src/actor.c` helper. The review
+counted the class properly and it is **seventy-four**: `actor_set_side_flag` at 28 sites,
+`actor_damage_template_hitpoints` at 23, `actor_damage_followed` at 27, `actor_defeat_and_score` at
+10, plus `actor_start_motion_at_speed`, `launch_at_inline_speed`, `actor_drift_x_step`,
+`actor_hop_or_flip_side`, `actor_toggle_side_flag`, `actor_turn_and_launch`,
+`actor_knock_back_and_launch` and `actor_followed_x_within`. Every one of them read or wrote the
+IMAGE while the caller's body was reading and writing a SCRATCH, so on the slow arm the two bypassed
+each other and the give-back then wrote the scratch's copy over the helper's store. The sharpest
+instance is the monster damage chain, and it is a divergence rather than an ordering nicety:
+`type07_take_damage` calls `actor_damage_template_hitpoints`, which raises
+`WB_ACTOR_FLAGS2_DEFEATED_BIT` in the image, and then reads the bit back three instructions later out
+of the scratch — where it is not — so the frame does not enter `actor_defeat_and_score` at all.
+`actor_behavior_type06` had the same shape one level down: `actor_start_motion_at_speed` cleared
+SUPPORTED in the image and the very next `rec_flag_is_set` read the scratch.
+
+**CLOSED BY CONSTRUCTION, the way phase two closed `src/map.c` and `src/player.c`.** Every helper in
+that list is now a `_body` taking the `ActorRecord`, with the published `(image, actor, ...)` name
+kept as a DOOR through the `ACTOR_DOOR_*` macros — including the ones that were only reachable
+through another: `actor_respawn_as_new_kind` and the retire tail under `actor_defeat_and_score`,
+`actor_damage_word` under `actor_damage_followed`, and the two `static` writers
+(`flip_side_flag`, `actor_set_moving_unsupported`) all three of the step-outcome routines share.
+`actor_set_side_flag` was also the tree's last RAW own-record pointer — `image + addr_add(actor,
+WB_ACTOR_FLAGS)`, no mask and no bound, the same unguarded class as the fall step phase two fixed.
+Dropping `actor` from every body that no longer needed it is a fixpoint and it ran to one: 25 more
+signatures lost the parameter, `monster_contact` and `actor_hit_by_player_shot` among them.
+
+WHAT IS LEFT, ENUMERATED, because "closed by construction" is only worth what its complement is.
+Grepping the tree for a call from inside a body to anything taking the record's address leaves three
+things and no fourth. (1) **THE DISPATCH TIER**, `dispatch_player_frame` and
+`actor_dispatch_behavior`, which read `WB_ACTOR_TYPE` through `bus.h` to CHOOSE a handler — no door
+is open yet, which is the point. (2) **ONE ADDRESS COMPARE**: `actor_defeat_and_score_body` keeps
+`actor` for `actor == WB_BOSS_FRAGMENT_ORIGIN`, which is a question about the address and not about
+the bytes. (3) **HELPERS REACHING A DIFFERENT RECORD** — `actor_damage_followed_body` opening the
+knock-back's door on the FOLLOWED slot, `src/player.c`'s two scene-trigger spawns opening
+`launch_at_inline_speed`'s on a slot the allocator just returned, and every `field_*` on a shot, a
+minion, a seed, an escort or a band. Those are `bus.h`'s by design and cannot alias the record the
+door proved.
+
+**THE PIN, RED BEFORE AND GREEN AFTER.**
+`test_slot07_reads_back_the_DEFEATED_bit_ITS_OWN_damage_arm_raised` drives slot 7's damage arm at a
+record based `IMAGE_SIZE - 20`, which puts `WB_ACTOR_TEMPLATE_SLOT` on the image's LAST byte: every
+field the contact, the damage and the retire touch is live, everything from `WB_ACTOR_KIND` up is off
+the end, and the offset is even and splits no field. The template carries ONE hit point, so the
+frame's own damage raises the bit, and a kill count past `WB_SPAWN_KILL_RESPAWN_LIMIT` sends the
+defeat down the RETIRE tail (the respawn tail draws a kind off a modeled hardware byte, which is a
+declaration this case has no business making). It was RED on the pre-fix tree with the signature the
+class predicts — the reconstruction never scored (`bcd_score_bd70+2`: oracle $20, ours $00), never
+lowered the spawn header's live count ($30ffb: $0e against $0f), never raised the kill count ($31047:
+6 against 5) and never re-armed the template ($3105e/f) — i.e. it never entered
+`actor_defeat_and_score` at all. It is green now, and it also asserts the record's own two bytes out
+of a candidate-only run, because the record sits above `emu.STACK_GUARD_LO` where the differential
+does not look.
+
+**THE GIVE-BACK IS A BLANKET COPY NOW, and deleting `as_found` is a result rather than a tidy-up.**
+The review measured that making `actor_view_close_scratch` write back unconditionally left the whole
+suite green and `make guarded` blind — so the selectivity was unpinned. What it protected was a byte
+the BODY never touched that something else changed while the door was open, and after the conversion
+above the only candidate for "something else" is a routine writing a GLOBAL that falls inside the
+record's window. On the scratch arm that window can only be two things — the image's very top, where
+a record straddles it, or `$0..$1f`, where a record above `$ffffe0` wraps onto the 68000's vector
+page — and no reconstructed routine writes either. A guard nothing can fail is a guard nobody can
+maintain, so the close is 32 `bus_write_byte`s and `ActorView` is 32 bytes smaller. The two
+`test_swoop_state{2,3}_gives_back_the_store_that_DID_land` pins still hold the give-back itself.
+
+**AND THE LONGWORD HOLE IS CLOSED RATHER THAN REGISTERED.** `rec_l`/`rec_set_l` ask the live mask ONE
+question — are all four bytes carried? — and answer zero / drop the whole store when they are not,
+which is `bus_read_long`/`bus_write_long`'s rule exactly; on the fast arm the question is a pointer
+comparison against `ACTOR_RECORD_ALL_LIVE`. That had to happen for phase three to convert
+`actor_respawn_as_new_kind` at all: its `move.l #$40006,14(a0)` is a longword at
+`WB_ACTOR_HALF_WIDTH`, whose boundary is k = 16 — the offset BOTH straddling records in the suite sit
+on, where a per-byte model would have written two bytes and the oracle none.
+
+TWO SMALLER THINGS THE REVIEW ASKED FOR AND ONE IT DID NOT. The eight doors phase one spelt out by
+hand are the macros now, so `grep -rc '^ACTOR_DOOR_' src` is the whole census (111, plus one
+`static inline` door in `include/actor.h` that cannot be a macro) and `include/actor_view.h` is the
+ONE place that number is written. `include/map.h`'s two cell probes have their `const uint8_t *image`
+back — their plates claim they write no memory, and the compiler holds them to it again — through
+`actor_view_open_reading`, a door that discards the const in one place and marks the view as having
+nothing to give back, so even the scratch arm cannot write through it; `actor_followed_x_within` is
+opened the same way. The `rec_*` accessors now assert `offset + width <= WB_ACTOR_RECORD_BYTES` on
+the HOST build only: six routines take the offset as a runtime parameter, and past the record it is a
+wrong field on the fast arm (which the differential catches) and the door's own smashed stack frame
+on the scratch arm (which it cannot). The switch is the kit's new `-DRECREATE_HOST_DIFFERENTIAL` and
+deliberately not `WB_ON_TARGET`, which `atari/build.sh`'s `assert_the_sink_arm_lives_in_one_place`
+reserves for the shifter sink — it refused the build outright, which is the gate working. WHAT THE
+GUARD COVERS TODAY IS EVERY SITE AND COSTS NOTHING AT ANY OF THEM: at -O2 the `.so` links no
+`__assert_rtn` at all, because every offset constant-folds once the six runtime-offset helpers inline
+into their callers — so the check is a compile-time proof there and a real branch at -O0, and it
+becomes a real branch at -O2 the day a site's offset stops being constant, which is the day it is
+for.
+
+**THE FAST-ARM WRITE MASK: MEASURED, NO-GO.** Phase two priced the `live` mask at 1.7 K cycles a
+frame and the review asked whether a pointer compare could skip it where the record is wholly live
+(`if (record.live != ACTOR_RECORD_ALL_LIVE) value &= …` in `rec_set_b`/`rec_set_w`). It buys **0.3 K
+a frame** — `actor_behavior_pass` 42.3 K -> 42.0 K, frames 443 / 22.15 fps / 361.7 K unchanged — for
+**+6,678 B** in `src/behavior.c`'s object, +2,124 in `src/player.c`'s, +538 in `src/actor.c`'s and
++266 in `src/map.c`'s, which is **+7,971 B of `WB-m2.PRG`**. That is 26.6 KB per K cycles a frame,
+three times worse than the worst trade this tree has accepted (`src/behavior.c` at -O2, 9 KB per K).
+Reverted, and recorded here so the next reader does not re-run it.
+
+NUMBERS AND SURFACES. `make test` **6,457** green from a clean relink (6,456 plus the pin above),
+`make guarded` clean over 10,050 guarded candidate runs, `bash atari/build.sh m2` and `ownrun` OK,
+`python3 atari/smoke.py floppy` OK on all four passes. `profile.py ours --walk`: 443 frames /
+22.15 fps / 361.7 K a frame, unchanged to the digit; `actor_behavior_pass` **41.6 K -> 42.3 K** a
+frame (x2.4 -> **x2.5**) and `actor_dispatch_behavior` **5,979 -> 6,071** cycles a call. THAT IS A
+REGRESSION AND IT IS THE PRICE OF THE FIX: the helpers this entry converted now take two words where
+they took one, and the three-bit motion contract that was one read-modify-write of the flags byte is
+three `rec_flag_*` calls. 0.7 K a frame for a divergence class closed by construction, on a frame the
+count of which did not move. In the m68k objects, at the levels `atari/build.sh` really compiles them
+(`src/behavior.c` -O2, the rest -O3): `src/behavior.c` **43,424 -> 43,490** B with
+`andil #16777215` **250** and `cmpil #1048574` 128, `src/player.c` **13,298 -> 12,006** with
+**77 -> 60** and **22 -> 16**, `src/map.c` 3,738 -> 3,770, `src/actor.c` **3,794 -> 7,284** and
+`src/actor_view.c` 216 -> 194. `src/actor.c` nearly doubling is the DOORS, and every one of them is
+DEAD on target — nothing in the game calls `actor_set_side_flag` by address any more, only the
+`.so`'s ctypes bindings do — so `--gc-sections` takes the lot: `nm` finds none of the four biggest in
+the linked ELF and `WB-m2.PRG`'s text goes **136,304 -> 136,960** (+656). MUTATIONS, both RED after a
+forced relink: `actor_set_side_flag_body` reading `WB_ACTOR_Y` instead of `WB_ACTOR_X` reddens
+`test_the_family37_struck_arm_faces_on_the_arm_the_bytes_say[slot26|slot27-struck-by-point]` and
+three `test_slot21_*` cases; `retire_slot` writing the free marker over `WB_ACTOR_Y` reddens
+`test_slot38_runs_the_entry_its_kind_rows_index_names[entry12|entry13]`, four
+`test_the_effect_handlers_post_lands_ON_TOP_of_the_bonus_box` cases and
+`test_slot38s_countdown_expires_TWICE_like_slot_28s`.
+
+THREE COUNTS THAT HAD DRIFTED, fixed with the greps that derive them rather than by hand.
+`include/bus.h`'s eleven-module census read `src/behavior.c` 171 and `src/game.c` 37 against a
+comment-stripped 170 and 36. `atari/wonderboy_backend.c`'s seam table had every line number stale
+(`hw_read8` at behavior.c 2520/2522 and sound.c 1057/1059, none of which are those calls any more)
+and claimed `os_in_image`'s four core call sites were "all in `../src/blit.c`" when one of them is
+`src/actor_view.c`'s live-mask fill. And `atari/profile.py`'s `_body` fold had no guard against our
+side carrying BOTH halves of a split routine — which is what a door that stopped inlining would
+produce, one shipped row compared against two of ours; it refuses that now, the way `symbol_map`
+refuses a duplicated name, and for the same stated reason.
+
+`--gc-sections` MEASURED, ADOPTED AND THEN REVIEWED (2026-08-26) — and the blocker that stood
+against it was misdiagnosed twice. `atari/build.sh` now compiles `-ffunction-sections
+-fdata-sections` and links `-Wl,--gc-sections`, so a function or a datum no live call reaches is not
+in the `.PRG`. Measured over the tree as it stands, every one of the fourteen modes built: **m2
+`.text` 136,304 B** (`WB-m2.PRG` 138,047, 1,264 fixups), **ownrun 142,396** (`WB-ownrun.PRG`
+144,298, 1,359), and at the far end **m1 7,285** — a mode that counts vblanks and draws nothing now
+links seven kilobytes instead of a hundred and fifty. The boot floppy carries **39,936 bytes free of
+728,064**. **THE FRAME IS UNCHANGED TO THE CYCLE**, measured at adoption on a clean tree at
+35e9378: `atari/profile.py ours` reported 488 frames in 1,000 vblanks = 24.40 fps at 328.4 K
+cycles/frame both ways. What goes is the four out-of-line
+`snd_*` doors, `load_resource_by_index` and the file-load tier under it in the modes that never
+boot, and every other unreached body. THE FIRST DIAGNOSIS SAID THE RELOCATION TABLE, and it was
+wrong: this binutils drops the relocations of the sections it discards, and the fixup count GOES UP
+rather than down, because a reference between two functions that used to sit inside one `.text` —
+where the assembler resolved it with no relocation at all — becomes an absolute 32-bit reference
+once the two are in different sections. THE SECOND DIAGNOSIS, the Address Error two frames in, was
+`atari/tos.ld`'s `.bss SUBALIGN(1)`: collecting an unreferenced datum reshuffles `.bss` and byte
+packing then puts a longword on an odd address. Reproduced at HEAD with the flags on and
+`SUBALIGN(1)` restored — `move.l %d2,$53a5b` at PC $1289c — and green at `SUBALIGN(2)`, which is the
+batch-44 alignment fix above; **this lever depends on it and no relocation filter would ever have
+found it**.
+
+THE REVIEW PASS FOUND SEVEN THINGS AND THEY ARE FIXED HERE. **The one that mattered most was not in
+the relocation code at all: `--gc-sections` had broken six of the fourteen build modes and nobody
+had built them.** `build.sh`'s `-O3` codegen gate asks for `blit_sprite_rows_clipped.constprop`
+clones, and it asked the LINKED ELF; m1, novbl, title, titlecredits, boot and bootfault draw no
+sprite, so the collector takes the whole blit tier and the ELF answers "no clones" — the gate failed
+them outright, and the adoption's own surface line (`build.sh m2|play|ownrun|ownplay`) had touched
+none of the six. THE RULE THE WHOLE BATCH TURNS ON, and it is now written at the LDFLAGS: **what the
+COMPILER produced is a property of an object file; what THIS mode reaches is a property of the
+linked ELF; a check that asks the ELF the first kind of question is answering about the mode
+instead.** So the clone gate and its `blit_sprite_rows_plain`-must-be-inlined half now ask
+`src/blit.c`'s own object (where the four clones are, in every mode), and the MIRROR gate — the kit's
+off-target models must be ABSENT — now asks the objects the link was given rather than the ELF,
+because an ELF with no `g_hw_reset` in it no longer means no unit defined one: it can equally mean a
+leaked unit this mode never reached, which is the exact state that verifies green here and links the
+model into the next mode that does.
+
+AND THE OTHER HALF OF THAT RULE IS A NEW GATE. The six-symbol backend-surface check asks the
+backend's object, which proves the backend still DEFINES the six — no more, since an object cannot
+see its callers; the comment above it claimed "a core that stopped calling one cannot quietly shrink
+the surface", which was a power it never had. The calling half is now a second gate that asks the
+ELF what SURVIVED the collector, and it is MODE-AWARE because reachability is. Measured across all
+fourteen modes: `hw_read8`, `psg_port_read`, `psg_port_write`, `sched_wait8` and the sink's
+`wb_target_shifter_byte` are live in EVERY mode; `sched_poll16` (flip_screen's two vblank spins) and
+`wb_target_shifter_word` (the palette) only in the modes that RUN FRAMES; `disk_read_file` in
+neither list, since the frame modes never boot. Mutation-checked by demanding `sched_poll16` of m1 —
+red, naming the mode.
+
+`atari/mkprg.py` WAS REWORKED AROUND WHAT IT MAY REFUSE, and five of the review's findings are in
+it. **Every guard was a bare `assert`** — reproduced: under `python3 -O` the old file wrapped a
+`.PRG` with a corrupted fixup and exited 0 — so they are explicit `SystemExit("REFUSED: …")` now,
+and the same corruption is refused under `-O` and `PYTHONOPTIMIZE=2`. **`assert target < limit`
+refused a legal one-past-the-end pointer**: reproduced with `char arr[64]; char *const p = arr + 64;`
+as the last `.bss` object, whose fixup targets `_bss_end` exactly — the bound is `<=`. **The
+relocation-row pattern hard-coded `+`**: `readelf` prints a negative addend as `sym - 4` (reproduced
+with `other - 4` across two objects), and the old pattern refused the whole build as an unreadable
+row; the sign is parsed and applied, and an empty symbol-name column is tolerated too. **The
+discarded count gated nothing**, and an offset in the alignment padding BETWEEN two sections is
+inside the file, matches no span and was silently dropped; the three cases are classified now —
+inside a loaded section is normal, wholly past the end of the flat binary is dead and dropped with a
+count, and inside the binary but in no section is REFUSED, because relocating it adds the load base
+to a live byte that is not a pointer. And the constants are named (the fixup's four bytes, the
+GEMDOS table's 254-byte span and its skip byte, the ELF `A` flag) with ONE `readelf -S` parser
+behind both `bss_size` and `loaded_sections`, which had been reading the same output two ways.
+
+`atari/tos.ld`'s KEEP WAS NARROWED. `KEEP(*(.text))` roots every plain `.text` in the link, libgcc's
+members included, and changes the placement order the old `*(.text .text.*)` gave; it is
+`KEEP(*atari_wonderboy_os.s.o(.text))` now — the one object that is not `-ffunction-sections`, whose
+`_start`, ten trap wrappers and two interrupt entries are reached at RUNTIME and named by no
+relocation. Measured both ways: `.text` is 136,304 either way, but the `.PRG` bytes DIFFER (the
+placement moves two bytes from offset $15e), so the narrow form is the one the numbers above belong
+to. It stays inert while `ENTRY(_start)` roots that section; it is there for the day that stops
+being true, where the failure would be a machine that hangs rather than a link that complains.
+
+SURFACES AND MUTATIONS. All **fourteen** modes of `bash atari/build.sh` OK (they were eight),
+`smoke.py m2` OK (52 frames, 0/32,000 at all four anchors), `smoke.py m6` OK, `smoke.py floppy` OK
+(four passes, 39,936 B free), `python3 -O atari/mkprg.py` refuses a corrupted table and wraps the
+clean one to a `WB-m2.PRG` identical to the build's. Five mutations, all RED: a corrupted target
+longword, a fabricated entry inside the image but in no section (refused) and one past its end
+(dropped, counted), a fixup dropped between the list and the table, and `sched_poll16` demanded of
+m1. The two reproductions above (`arr + 64` and `other - 4`) were built against this very `tos.ld`
+and are accepted now and refused by the old file.

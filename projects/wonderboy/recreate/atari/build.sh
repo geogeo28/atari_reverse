@@ -344,8 +344,30 @@ DEF="$DEF -DPROGRAM_BYTES=$IMG_BYTES -DWB_STAGED_AT=$STAGED_AT"
 #   "## Performance", under this batch, as an experiment NOT DONE rather than a lever measured.
 # shim_include is on the path for tos.h / wonderboy_target.h / string.h ONLY; it shadows no kit header.
 CFLAGS="-m68000 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \
-        -fomit-frame-pointer -nostdlib -DOS_NO_REFUSAL_TALLY -DWB_ON_TARGET \
+        -fomit-frame-pointer -nostdlib -ffunction-sections -fdata-sections \
+        -DOS_NO_REFUSAL_TALLY -DWB_ON_TARGET \
         -I$HERE/shim_include -I$REC/include -I$KIT/include -Wall -Wextra -Wno-array-bounds"
+# -ffunction-sections -fdata-sections + LDFLAGS' --gc-sections: THE FLOPPY'S OTHER LEVER, and the
+# only one on this list that costs NO CYCLES. Each function and each datum gets its own input
+# section, so the link drops every body no live call reaches: the four out-of-line `snd_*` doors,
+# `load_resource_by_index` and the file-load tier under it in the modes that never boot, and the
+# rest. The frame is identical to the cycle either way; what it buys is floppy bytes.
+# IT HAS TWO PRICES AND BOTH ARE CHECKED RATHER THAN TRUSTED:
+#   * tos.ld's `.bss SUBALIGN(2)`. Collecting an unreferenced datum RESHUFFLES .bss, and byte
+#     packing then puts a longword on an odd address — an Address Error two frames in, not a
+#     relocation bug and not something a reloc filter could ever have found. That file says so too.
+#   * mkprg.py's fixup classification. The fixup count RISES, because a reference between two
+#     functions that used to share one `.text` — where the assembler resolved it with no relocation
+#     at all — becomes an absolute 32-bit reference once the two are in different sections; and an
+#     `ld` that left an entry behind for a section it discarded would corrupt a live byte in
+#     silence. That file says what it refuses.
+# AND IT SORTS EVERY CHECK BELOW BY WHAT CAN ANSWER IT: what the COMPILER produced is a property of
+# an object file, what THIS mode reaches is a property of the linked ELF, and a check that asks the
+# ELF the first kind of question is answering about the mode instead — which is how the -O3 codegen
+# gate came to fail the six modes that draw nothing.
+# ../STATUS.md's "## Performance" (2026-08-26) is canonical for the measurements: the per-mode .text
+# and .PRG sizes, the floppy's free bytes, the frame, and the fixup counts.
+LDFLAGS="-Wl,--emit-relocs -Wl,--gc-sections"
 CORES="$(ls "$REC"/src/*.c)"
 
 # ---- the optimisation level, one list, one measurement per entry --------------------------------
@@ -616,7 +638,7 @@ for UNIT in $UNITS; do
 done
 # CFLAGS and not $DEF: the link still needs -m68000/-nostdlib/-ffreestanding to pick the right
 # libgcc and startup behaviour, while the -D's are preprocessor-only and now belong to the -c step.
-$CC $CFLAGS -T "$HERE/tos.ld" -Wl,--emit-relocs $OBJECTS -lgcc -o "$BUILD/wonderboy.elf"
+$CC $CFLAGS $LDFLAGS -T "$HERE/tos.ld" $OBJECTS -lgcc -o "$BUILD/wonderboy.elf"
 
 # _start must sit at the very first byte of text (GEMDOS enters there).
 ENTRY=$(m68k-elf-nm "$BUILD/wonderboy.elf" | awk '$3=="_start"{print $1}')
@@ -645,18 +667,25 @@ ENTRY=$(m68k-elf-nm "$BUILD/wonderboy.elf" | awk '$3=="_start"{print $1}')
 #     means GCC stopped doing that, and whether it replaced it with per-width clones or with one
 #     runtime-width body, the shape this ledger's numbers were measured on has moved and has to be
 #     re-measured (`python3 atari/profile.py ours --walk`) rather than waved through.
-BLIT_CLONES=$(m68k-elf-nm "$BUILD/wonderboy.elf" | grep -c 'blit_sprite_rows_clipped\.constprop' || true)
+#
+# ASKED OF src/blit.c'S OWN OBJECT, NOT OF THE LINKED ELF, and the difference is --gc-sections. This
+# is a question about the COMPILE, and the object is where the compile's output is; the ELF holds
+# only what THIS mode reaches. The six modes that run no frame (m1, novbl, title, boot and their
+# controls) draw no sprite at all, so the collector takes the whole blit tier and the ELF answers
+# "no clones" for them — which is not a de-specialised build, it is a mode that never asked.
+BLIT_OBJ="$OBJ/$(unit_key "$REC/src/blit.c").o"
+BLIT_CLONES=$(m68k-elf-nm "$BLIT_OBJ" | grep -c 'blit_sprite_rows_clipped\.constprop' || true)
 [ "$BLIT_CLONES" -ge "$BLIT_WIDTH_CLONES_MIN" ] || {
-  echo "ERROR: the linked ELF has $BLIT_CLONES blit_sprite_rows_clipped.constprop clone(s), not"
+  echo "ERROR: src/blit.c's object has $BLIT_CLONES blit_sprite_rows_clipped.constprop clone(s), not"
   echo "       $BLIT_WIDTH_CLONES_MIN or more — the CLIPPED sprite blit was NOT specialised per"
   echo "       width, so its column loop is a runtime-counted loop again and the frame has just"
   echo "       lost ~79 K cycles. The usual cause is blit.c reaching UNITS_BUILT_AT_O2, or"
   echo "       -fipa-cp-clone going away from -O3; ../STATUS.md's \"## Performance\" has the"
   echo "       measurement."
   exit 1; }
-BLIT_PLAIN_BODIES=$(m68k-elf-nm "$BUILD/wonderboy.elf" | grep -c 'blit_sprite_rows_plain' || true)
+BLIT_PLAIN_BODIES=$(m68k-elf-nm "$BLIT_OBJ" | grep -c 'blit_sprite_rows_plain' || true)
 [ "$BLIT_PLAIN_BODIES" -eq 0 ] || {
-  echo "ERROR: the linked ELF carries $BLIT_PLAIN_BODIES out-of-line blit_sprite_rows_plain"
+  echo "ERROR: src/blit.c's object carries $BLIT_PLAIN_BODIES out-of-line blit_sprite_rows_plain"
   echo "       symbol(s). The UNCLIPPED sprite blit is supposed to be inlined into blit_sprite_w2"
   echo "       ..w5 outright, which is what makes its column count a compile-time constant there;"
   echo "       an out-of-line body means GCC stopped, and the plain path — most of the sprites the"
@@ -665,27 +694,81 @@ BLIT_PLAIN_BODIES=$(m68k-elf-nm "$BUILD/wonderboy.elf" | grep -c 'blit_sprite_ro
   echo "       this check; ../STATUS.md's \"## Performance\" has the measurement."
   exit 1; }
 
-# NONE of the kit's off-target models may have been linked in. The build leaves their sources out,
+# NONE of the kit's off-target models may have been in this link. The build leaves their sources out,
 # but a header that grew a `static inline` fallback — or a core that started calling one — would
 # reintroduce the model silently and this build would "verify" against it. Checked, not trusted.
+#
+# ASKED OF THE OBJECTS THE LINK WAS GIVEN, NOT OF THE LINKED ELF, and the difference is
+# --gc-sections. An ELF with no `g_hw_reset` in it USED to mean no unit defined one; it now means
+# either that or "a unit defines it and this mode happens not to reach it" — and the second is
+# precisely the state that would verify green here and link the model into the next mode that does.
+# Collection cannot hide a leaked unit from the objects: they are pre-collection by construction.
 for MODEL in g_hw_reset g_psg_reset g_sched_reset g_dosound g_os_refusal_reset sched_poll8; do
-  if m68k-elf-nm "$BUILD/wonderboy.elf" | awk '$3=="'"$MODEL"'"{found=1} END{exit !found}'; then
-    echo "ERROR: the off-target model symbol $MODEL is in the PRG — a kit src/*.c leaked into the link"
+  if m68k-elf-nm $OBJECTS | awk '$2!="U" && $3=="'"$MODEL"'"{found=1} END{exit !found}'; then
+    echo "ERROR: the off-target model symbol $MODEL is DEFINED by an object in this link — a kit"
+    echo "       src/*.c leaked in, or a header grew a static-inline fallback of its own"
     exit 1
   fi
 done
 
-# ...and the mirror: the SIX the backend owes must all be there, so a core that stopped calling one
-# cannot quietly shrink the surface README.md enumerates. Six and not seven: the surface is seven
-# symbols, and the seventh — `os_refused` — is deliberately undefined here (see the banner).
+# ...and the mirror: the SIX the backend owes must all be DEFINED by it, so the surface README.md
+# enumerates cannot quietly shrink. Six and not seven: the surface is seven symbols, and the
+# seventh — `os_refused` — is deliberately undefined here (see the banner).
 #
 # `disk_read_file` is the newest of the six and the one whose absence would be quietest. It is a
 # REAL symbol rather than a `static inline` precisely so this loop can see it (the kit's own
 # include/disk.h says so in as many words), and the kit's src/disk.c — the staged-file half — is
 # left out of the link exactly as src/hw.c and src/psg.c are.
+#
+# ASKED OF THE BACKEND'S OWN OBJECT, NOT OF THE LINKED ELF, and the difference is --gc-sections.
+# What this gate has always meant is the sentence above it — "wonderboy_backend.c owes six symbols"
+# — and that is a property of the BACKEND, which the object file answers directly. The linked ELF
+# stopped being able to answer it: a door the game does not open in THIS mode is now collected out
+# of the image, and `disk_read_file` is exactly that door — `load_resource_by_index` is only ever
+# called from a boot slice, so in m2, which never boots, nothing reaches it and the linker drops it.
+# Forcing it live with `-Wl,-u` was the first fix and it is the wrong one: it puts a symbol in the
+# PRG to satisfy a check, spends the floppy bytes the collector had just returned, and leaves the
+# check reporting on a root this script planted rather than on the backend. The object file is
+# pre-collection by construction, so the gate keeps its full power in every mode.
+#
+# WHAT IT PROVES IS EXACTLY THAT — the backend still DEFINES the six — and no more. An object cannot
+# see its callers, so this gate never could tell whether anything still CALLS one; an earlier
+# spelling of this comment said "a core that stopped calling one cannot quietly shrink the surface",
+# which claimed a power neither the object nor, under --gc-sections, the linked ELF has by itself.
+# The calling half is the gate right below, and the two together are what that sentence meant.
+BACKEND_OBJ="$OBJ/$(unit_key "$HERE/wonderboy_backend.c").o"
 for SYM in hw_read8 psg_port_read psg_port_write sched_wait8 sched_poll16 disk_read_file; do
+  m68k-elf-nm "$BACKEND_OBJ" | awk '$2!="U" && $3=="'"$SYM"'"{found=1} END{exit !found}' \
+    || { echo "ERROR: $SYM is not defined by wonderboy_backend.c — it no longer covers the surface"; exit 1; }
+done
+
+# ...AND THE CALLING HALF, which IS a question for the linked ELF, and which is MODE-AWARE because
+# reachability is. Under --gc-sections a symbol reaches the .PRG only if a live call chain in THIS
+# mode reaches it, so its absence there says a core stopped calling it — the failure the gate above
+# cannot see, and the one that would leave the port driving the machine through fewer doors than
+# README.md says it does. WHICH symbols may be demanded of WHICH mode is measured rather than
+# assumed (all fourteen modes, 2026-08-26):
+#
+#   * every mode reads the hardware, drives the PSG, waits on a key and publishes the screen base
+#     through the port's ONE sink — SURFACE_LIVE_ALWAYS.
+#   * only the modes that RUN FRAMES reach `sched_poll16` (flip_screen's two vblank spins) and
+#     `wb_target_shifter_word` (the palette, which m1 and its control never put up) —
+#     SURFACE_LIVE_IN_A_FRAME.
+#   * `disk_read_file` is on NEITHER list, and that is the whole reason the gate above asks the
+#     object: the frame modes never boot, so nothing reaches it and the collector drops it.
+SURFACE_LIVE_ALWAYS="hw_read8 psg_port_read psg_port_write sched_wait8 wb_target_shifter_byte"
+SURFACE_LIVE_IN_A_FRAME="sched_poll16 wb_target_shifter_word"
+SURFACE_MUST_BE_LIVE="$SURFACE_LIVE_ALWAYS"
+if is_frame_mode "$MODE" || is_own_entry_mode "$MODE"; then
+  SURFACE_MUST_BE_LIVE="$SURFACE_MUST_BE_LIVE $SURFACE_LIVE_IN_A_FRAME"
+fi
+for SYM in $SURFACE_MUST_BE_LIVE; do
   m68k-elf-nm "$BUILD/wonderboy.elf" | awk '$3=="'"$SYM"'"{found=1} END{exit !found}' \
-    || { echo "ERROR: $SYM is not in the PRG — wonderboy_backend.c no longer covers the surface"; exit 1; }
+    || { echo "ERROR: $SYM is defined but NOT LIVE in the '$MODE' .PRG — no live call reaches it,"
+         echo "       so --gc-sections dropped it. Something stopped going through the kit's"
+         echo "       surface (or through the port's one shifter sink); the backend still defines"
+         echo "       it, which is why the gate above stayed green."
+         exit 1; }
 done
 
 # Drop .debug_* (and their .rela.debug_*, which carry odd-offset fixups mkprg would choke on);

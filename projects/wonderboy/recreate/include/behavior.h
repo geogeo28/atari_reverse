@@ -13,6 +13,13 @@
  * whose bodies are behaviour-tier code; slot 1, the player's frame, is src/player.c's, and as of
  * batch 41 phase F ALL SIXTY-TWO ROWS ARE RECONSTRUCTED.
  *
+ * EVERY NAME HERE IS A DOOR, AND THE SIGNATURE IS THE POINT OF SAYING SO. Since 2026-08-26 each
+ * published routine that takes an actor is one `ACTOR_DOOR_*` line that proves the record's
+ * thirty-two bytes once (include/actor_view.h) in front of a `static <name>_body`; the door keeps
+ * this file's signature exactly, which is what test_behavior.py binds through ctypes and what every
+ * other module calls. Nothing outside src/behavior.c can see the body, and nothing needs to — but a
+ * profile or a disassembly will show the body's name where it used to show this one.
+ *
  * EVERY ROUTINE HERE TAKES 68000 REGISTERS, the convention actor.h sets: a record address in a0, a
  * step in d7, a frame list in a1, a band record in a2. Two hand a register BACK — $5c6e's overlap
  * mask and $23b6's verdict are its d0 and d7 and are read by every one of their callers — and one
@@ -32,6 +39,8 @@
 #define WONDERBOY_BEHAVIOR_H
 
 #include <stdint.h>
+
+#include "actor_view.h"     /* ActorRecord: what the `_body` half of a door takes */
 
 /* --- the walk and the dispatch ($8d0, $928) -----------------------------------------------------
  *
@@ -639,5 +648,10 @@ uint32_t actor_behavior_type57(uint8_t *image, uint32_t actor);
  * $a46. See the body's plate in src/behavior.c for the six exits it models and the one it does not.
  */
 void player_gate_on_1516(uint8_t *image, uint32_t actor, unsigned *extend);
+/* ...and its body, for a caller that has already proved this record: the two handlers in
+ * src/behavior.c and src/player.c's own frame, which reaches it at $a46 holding the record its door
+ * proved. Calling the DOOR from there would open a second view on one record — two scratches on the
+ * slow arm, the second filled from an image the first has not given back to (include/actor_view.h). */
+void player_gate_on_1516_body(uint8_t *image, ActorRecord record, unsigned *extend);
 
 #endif /* WONDERBOY_BEHAVIOR_H */

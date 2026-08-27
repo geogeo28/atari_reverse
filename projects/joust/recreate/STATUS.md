@@ -214,3 +214,18 @@ is a limit of what a headless run can witness, stated so a green is not read as 
   writes the same surfaces (KBDVBASE vectors, `conterm`, `_vblqueue`) and has no read-backs. The
   mechanism — bit registry, two words, the exact-mask assertion, the C-source bridge — is
   game-agnostic and belongs in `tools/recreate_kit/`; it is not there yet.
+- **`atari/tos.ld` carries the same latent `.bss SUBALIGN(1)` fault Wonder Boy hit, and
+  `atari/mkprg.py` has no fixup filter.** Byte-packing `.bss` does not only abut it to text+data; it
+  strips the word alignment the 68000 requires, so a longword datum lands on an odd address whenever
+  the object before it has odd size — an **Address Error** at the first store, not a relocation bug,
+  and nothing in the C can defend against it (`SUBALIGN` overrides a variable's own
+  `__attribute__((aligned))`). Joust is even by luck today. The day this link grows an odd-sized
+  `.bss` object — or adopts `-ffunction-sections`/`--gc-sections`, which reshuffles `.bss` on the
+  linker's reachability walk and was worth ~15 KB of `.text` next door — it dies at the first
+  store to whichever datum landed odd.
+  Wonder Boy's fix is `SUBALIGN(2)`, one padding byte per object; its `mkprg.py` also classifies
+  every `--emit-relocs` fixup against the loaded sections, reads each surviving one back out of the
+  flat binary to check it holds its own target, and refuses through `SystemExit` rather than
+  `assert` (which `python3 -O` strips — reproduced: the old file wrapped a corrupted `.PRG` and
+  exited 0). Both files are copies of Joust's and have now DIVERGED from them. See
+  `projects/wonderboy/recreate/STATUS.md`, "## Performance", 2026-08-26.

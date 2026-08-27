@@ -5739,7 +5739,13 @@ def _quiet_record(name, actor):
 # --- $928: the dispatch, entry by entry -------------------------------------------------------------
 @pytest.mark.parametrize("slot", range(BEHAVIOR_SLOTS), ids=lambda v: f"slot{v:02d}")
 def test_the_dispatcher_transfers_to_the_slot_the_type_names(slot):
-    """ONE CASE PER TABLE ENTRY, and it is the whole pin on src/behavior.c's BEHAVIOR_SLOTS array.
+    """ONE CASE PER TABLE ENTRY, and it is the whole pin on `ported_handler`'s target-to-handler map.
+
+    WHAT IT DOES NOT PIN, measured 2026-08-26: the seeding below puts each handler on its QUIETEST
+    arm, so two ported slots that both write nothing on that seed are interchangeable to this case —
+    swapping the handlers slots 2 and 3 map to leaves the whole suite green. The map was a
+    `{target, handler}` array and is a `switch` now; the hole is the same in both and predates
+    either. ../STATUS.md, "## Performance", registers it.
 
     For an UNPORTED slot the reconstruction returns the address it would have transferred to and the
     oracle is stopped at that same address — so the two agree on WHICH handler, with `cov_visited`
@@ -8083,7 +8089,8 @@ def test_slot54_lets_a_rider_under_its_own_power_go():
 # What pins the VALUES is the differential itself — leaf.run compares the whole image either way —
 # and what this band adds is "and nothing outside these".
 from test_actor import (EFFECT_RECORD_LIST, SLOT_BBC0,                           # noqa: E402
-                        SPAWN_HITPOINTS, SPAWN_RECORD_BYTES, SPAWN_TYPE, TABLE_PTR,
+                        SPAWN_HITPOINTS, SPAWN_KILL_COUNT, SPAWN_RECORD_BYTES, SPAWN_TYPE,
+                        TABLE_PTR,
                         TEMPLATE_SLOTS, TEMPLATE_TABLE, TEXT_REQUEST, _model_damage_followed,
                         _model_damage_template, _model_defeat, _template_band)
 from test_actor import DAMAGE_FOLLOWED_SFX, DAMAGE_TEMPLATE_SFX, SND_CHANNEL_B   # noqa: E402
@@ -8099,7 +8106,7 @@ TEMPLATE_POOL = 0x40
 TEMPLATE_BAND_BYTES = TEMPLATE_SLOTS * SPAWN_RECORD_BYTES
 
 
-def _foreign_band(image, own, model):
+def _foreign_band(image, own, model, actor=ACTOR):
     """The addresses a foreign tail may write, taken from test_actor.py's OWN models rather than
     listed here — a hand-written list of regions would be the second copy that could disagree with
     the battery owning them while both stayed green.
@@ -8107,22 +8114,23 @@ def _foreign_band(image, own, model):
     ``own`` is what the handler itself writes BEFORE the tail jump, applied to a copy first so the
     model reads the image the routine it models really would (the `bset #0,9(a0)` is one of that
     routine's inputs). ``model`` names the tail: the two damage paths compose with their SFX
-    trigger's write set, the defeat composes its own.
+    trigger's write set, the defeat composes its own. ``actor`` is the record the tail is entered
+    on, which every case but the straddling one below runs at ACTOR.
     """
     after = bytearray(image)
     for addr, value in own.items():
         after[addr] = value
     named = dict(own)
     if model == "damage-template":
-        named.update(_model_damage_template(after, ACTOR)[2])
+        named.update(_model_damage_template(after, actor)[2])
         named.update(_sfx_bytes(after, DAMAGE_TEMPLATE_SFX, SND_CHANNEL_B))
     elif model == "damage-followed":
-        followed = _model_damage_followed(after, ACTOR)[1]
+        followed = _model_damage_followed(after, actor)[1]
         named.update(followed)
         if followed:            # the invulnerable arm never reaches the trigger either
             named.update(_sfx_bytes(after, DAMAGE_FOLLOWED_SFX, SND_CHANNEL_A))
     else:
-        named.update(_model_defeat(after, ACTOR)[2])
+        named.update(_model_defeat(after, actor)[2])
     return merge_bands(named) + HANDLER_WRITE_BAND
 
 
@@ -9887,6 +9895,38 @@ def test_swoop_state3_compares_the_y_it_STORED_and_not_the_one_it_computed(launc
         f"{what}: the swoop ended, so the compare read the computed y and not the stored one")
 
 
+# ...and the same two arms with the store that DOES land, which is what pins the GIVING BACK.
+# The four rows above are all cases where nothing is written at all, so a door that dropped its
+# scratch on the floor would pass every one of them — measured: deleting `actor_view_close`'s
+# give-back leaves the whole suite green without these two. Here the compare goes the other way and
+# each arm writes WB_ACTOR_FIELD_22, which folds to $6 and IS inside the image, so the write has to
+# come back out of the scratch and into the image for the differential to agree.
+def test_swoop_state2_gives_back_the_store_that_DID_land():
+    """The arrival the four rows above do not reach: with x re-read as ZERO, a followed record at x
+    0 is NOT above it, so the original falls out of the `bgt` and stamps WB_ACTOR_SWOOP_DESCEND."""
+    what = "actor_swoop_state2_home_x arriving on a refused record"
+    pokes = _refused_record_pokes(what, {REFUSED_FIELD_22: bytes([SWOOP_HOME_X]),
+                                         FOLLOWED_DEFAULT + ACTOR_X: word(0)})
+
+    written = _run_swoop_on_refused_record(SWOOP_STATE2, what, pokes)
+    assert written.get(REFUSED_FIELD_22) == SWOOP_DESCEND, (
+        f"{what}: {REFUSED_FIELD_22:#x} holds {written.get(REFUSED_FIELD_22)}, not the "
+        f"{SWOOP_DESCEND:#x} the arrival stamps — the case no longer reaches the arm it is for")
+
+
+def test_swoop_state3_gives_back_the_store_that_DID_land():
+    """The end of the swoop, for the same reason: y is re-read as ZERO and a launch height of 0 is
+    not below it, so the original ends the swoop and stamps WB_ACTOR_SWOOP_ACQUIRE."""
+    what = "actor_swoop_state3_descend ending on a refused record"
+    pokes = _refused_record_pokes(what, {REFUSED_FIELD_22: bytes([SWOOP_DESCEND]),
+                                         REFUSED_FIELD_26: word(0)})
+
+    written = _run_swoop_on_refused_record(SWOOP_STATE3, what, pokes)
+    assert written.get(REFUSED_FIELD_22) == SWOOP_ACQUIRE, (
+        f"{what}: {REFUSED_FIELD_22:#x} holds {written.get(REFUSED_FIELD_22)}, not the "
+        f"{SWOOP_ACQUIRE:#x} the ending stamps — the case no longer reaches the arm it is for")
+
+
 # --- state 3's discarded probe answer, as slot 52's control is ------------------------------------
 def test_swoop_state3_rises_even_when_the_map_refuses_its_step():
     """Nothing follows the `bsr` — no `tst.b d0` — so a wall stops this state by leaving x alone and
@@ -9942,6 +9982,98 @@ def test_slot07_transfers_to_the_defeat_when_the_damage_kills_it():
         f"{what}: the template was not touched, so actor_defeat_and_score never ran")
     assert _high_record(0) + ACTOR_TYPE not in written, (
         f"{what}: a dead record fired its burst — the defeat's tail jump did not end the frame")
+
+
+# --- ...and the same exit at a record the image does not wholly hold ------------------------------
+# THE DEFEATED BIT'S ROUND TRIP, which is the one thing the case above cannot ask: it SEEDS the bit,
+# so nothing in that frame has to write it and read it back. Here the frame RAISES it — the damage
+# arm spends the template pool to zero — and reads it three instructions later, so the write and the
+# read have to reach the same byte. On a record wholly inside the image they do whatever route each
+# takes. On a record the door has to hold in a SCRATCH they do only if every helper on the chain
+# reaches it through the view the door proved: a helper that indexes the image by ADDRESS writes a
+# byte the body then cannot see, and the give-back finishes the job by putting the scratch's stale
+# copy back on top of it.
+#
+# WHERE THE DIVERGENCE SHOWS IS BELOW THE STACK GUARD, which is what makes this an ordinary
+# differential rather than the top-band comparison `test_a_record_straddling_the_image_top_...` has
+# to make: a frame that misses the bit never enters actor_defeat_and_score, so the score, the kill
+# count and the spawn header's live count all stay as they were. The record's OWN bytes are still
+# above the guard, and the two assertions at the end are what speaks for them.
+#
+# THE BASE PUTS WB_ACTOR_TEMPLATE_SLOT ON THE IMAGE'S LAST BYTE. Every field the contact, the damage
+# and the retire read or write is then live — up to and including WB_ACTOR_SIZE_SECOND, which is
+# what `STRADDLE_ACTOR` above deliberately cuts — and everything from WB_ACTOR_KIND up is off the
+# end, read as 0 and written nowhere on both sides. The offset is even and no word or longword field
+# of the record spans it, which is what include/actor_view.h's parity argument needs.
+DEFEAT_STRADDLE_ACTOR = harness.IMAGE_SIZE - (TEMPLATE_SLOT + 1)
+DEFEAT_STRADDLE_SLOT = 2                  # its template, and the one this case empties
+# Past WB_SPAWN_KILL_RESPAWN_LIMIT, so the defeat takes the RETIRE tail: the respawn tail draws a
+# kind off a MODELED hardware byte, which is a declaration this case would otherwise have to make
+# about a case that is not about the draw.
+DEFEAT_STRADDLE_KILLS = wb("SPAWN_KILL_RESPAWN_LIMIT") + 3
+
+
+def test_slot07_reads_back_the_DEFEATED_bit_ITS_OWN_damage_arm_raised():
+    """`bset #3,9(a0)` in actor_damage_template_hitpoints and `btst #3,9(a0)` back at $7160, with a
+    record the image only holds twenty bytes of in between."""
+    what = "actor_behavior_type07 defeated by its own damage, straddling the image top"
+    template = TEMPLATE_TABLE + DEFEAT_STRADDLE_SLOT * SPAWN_RECORD_BYTES
+    pokes = leaf.overlay(
+        _template_environment(case_salt(what), _slot07_pokes(what)),
+        _record_fields(DEFEAT_STRADDLE_ACTOR, {
+            ACTOR_X: (SWOOP_ACTOR_X, WORD_BYTES), ACTOR_Y: (SWOOP_ACTOR_Y, WORD_BYTES),
+            ACTOR_TYPE: (7, WORD_BYTES),
+            HALF_WIDTH: (4, WORD_BYTES), SIZE_SECOND: (8, WORD_BYTES),
+            ACTOR_FLAGS: (1 << SIDE_BIT, 1), FLAGS2: (0, 1),
+            FIELD_18: (6, 1), TEMPLATE_SLOT: (DEFEAT_STRADDLE_SLOT, 1)}),
+        # The followed record's POINT inside the straddling box and its own footprint clear of it —
+        # `_point_geometry` for a record that is not ACTOR.
+        {FOLLOWED_DEFAULT + ACTOR_X: word(SWOOP_ACTOR_X - POINT_RIGHT),
+         FOLLOWED_DEFAULT + ACTOR_Y: word(SWOOP_ACTOR_Y - 4 + POINT_UP),
+         FOLLOWED_DEFAULT + ACTOR_SPRITE: word(POINT_LO),
+         FOLLOWED_DEFAULT + HALF_WIDTH: word(0), FOLLOWED_DEFAULT + SIZE_SECOND: word(0),
+         FOLLOWED_DEFAULT + FLAGS2: bytes([0]),
+         # ONE hit point, so this frame's own damage is what empties the pool...
+         template + SPAWN_HITPOINTS: word(1),
+         template + SPAWN_KILL_COUNT: word(DEFEAT_STRADDLE_KILLS)})
+
+    image = harness.make_image(pokes)
+    mask = _model_overlap_mask(image, DEFEAT_STRADDLE_ACTOR, FOLLOWED_DEFAULT)
+    assert mask & (1 << POINT_BIT) and not mask & (1 << BODY_BIT), (
+        f"{what}: the seed does not reach bit 2 alone, so this case drives another arm")
+    own = {DEFEAT_STRADDLE_ACTOR + FLAGS2: image[DEFEAT_STRADDLE_ACTOR + FLAGS2] | (1 << FLAGS2_BIT_0),
+           DEFEAT_STRADDLE_ACTOR + FIELD_18: 0}
+    # ...plus the record itself, which HANDLER_WRITE_BAND covers for every case that runs inside the
+    # tables and covers for none that runs here. Only the LIVE prefix: a write above the image's top
+    # is dropped by both cores and reaches no ledger. $701c's side flag and the hit animation's
+    # cursor are in it, and so is the free marker the retire tail stamps over the x.
+    band = (_foreign_band(image, own, "damage-template", DEFEAT_STRADDLE_ACTOR)
+            + _foreign_band(image, own, "defeat", DEFEAT_STRADDLE_ACTOR)
+            + [(DEFEAT_STRADDLE_ACTOR, harness.IMAGE_SIZE - DEFEAT_STRADDLE_ACTOR)])
+
+    info = leaf.run(TYPE07, _HANDLER_GLUE[TYPE07](DEFEAT_STRADDLE_ACTOR), band, what,
+                    regs={"a0": DEFEAT_STRADDLE_ACTOR, "_pokes": pokes}, poison=False,
+                    max_insns=_handler_cap(TYPE07))
+    assert info["ret"] == DISPATCH_RAN, (
+        f"{what}: the reconstruction reported {info['ret']:#x}, not the {DISPATCH_RAN:#x} the "
+        f"defeat arm ends at")
+    written = program_writes(info)
+    assert written[DEFEAT_STRADDLE_ACTOR + FLAGS2] & (1 << DEFEATED_BIT), (
+        f"{what}: the ORIGINAL's own damage arm did not raise the bit, so this case is not about "
+        f"the round trip it is named for")
+    assert BCD_SCORE in written, (
+        f"{what}: the ORIGINAL did not score, so the defeat never ran and the differential below "
+        f"the guard has nothing to compare")
+
+    # ...and the half no differential covers, the straddling record's own bytes: the bit has to be
+    # DOWN in neither copy — the ORACLE leaves it up and so must the reconstruction, which is the
+    # give-back putting back what the helper wrote rather than what the scratch remembered.
+    _answer, candidate = leaf.run_candidate_only(_HANDLER_GLUE[TYPE07](DEFEAT_STRADDLE_ACTOR), pokes)
+    assert candidate[DEFEAT_STRADDLE_ACTOR + FLAGS2] & (1 << DEFEATED_BIT), (
+        f"{what}: the reconstruction's own 9(a0) came back {candidate[DEFEAT_STRADDLE_ACTOR + FLAGS2]:#04x} "
+        f"— the bit the damage arm raised was lost between the helper and the read back")
+    assert leaf.u16(candidate, DEFEAT_STRADDLE_ACTOR + ACTOR_X) == FREE_MARKER, (
+        f"{what}: the reconstruction did not free the slot, so its defeat tail never ran")
 
 
 # --- the two prologues with the spawn gate DOWN ---------------------------------------------------

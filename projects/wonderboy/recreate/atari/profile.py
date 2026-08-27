@@ -664,6 +664,38 @@ def print_side(data):
 Ratio = namedtuple("Ratio", "ratio name ours_per_call ours_calls theirs_per_call theirs_calls")
 
 
+# A DOOR AND ITS BODY ARE ONE ROUTINE TO THE SHIPPED SIDE. `src/behavior.c` splits every routine it
+# publishes into `name` — a door that proves the actor's record once — and `static name_body`, which
+# is where the work happens and which the file's own callers enter directly (include/actor_view.h).
+# The original has one symbol for the pair, so without this every door in the behaviour tier falls
+# out of the table entirely (include/actor_view.h counts them): measured when the split landed, and it took
+# `actor_followed_overlap_mask` (x3.2) and `actor_hop_ascend_step` (x2.9) with it. The clone suffixes
+# GCC appends (`.isra.N`, `.constprop.N`) are already off by the time a name reaches here.
+BODY_SUFFIX = "_body"
+
+
+def shipped_name(name):
+    """What the ORIGINAL calls the routine this symbol is half of, or the name unchanged."""
+    return name[:-len(BODY_SUFFIX)] if name.endswith(BODY_SUFFIX) else name
+
+
+def refuse_split_pairs(names):
+    """Refuse a side that carries BOTH halves of a split routine as separate symbols.
+
+    The fold above is sound only while exactly one half of each pair survives the link: today the
+    door inlines into its callers and only `name_body` is left. A door that stopped inlining — one
+    grown past the inliner's budget, or one whose address is taken — would put TWO of our rows on
+    ONE shipped row, each with its own share of the pair's cycles and neither comparable to it. That
+    is `symbol_map`'s duplicate refusal one level up, and for the same reason: this report
+    aggregates by NAME."""
+    both = sorted(name for name in names
+                  if name.endswith(BODY_SUFFIX) and shipped_name(name) in names)
+    if both:
+        raise SystemExit(f"FAIL: our side carries both halves of {len(both)} split routine(s) "
+                         f"(e.g. {both[0]} and {shipped_name(both[0])}) — the door stopped "
+                         f"inlining, so one shipped row would be compared against two of ours")
+
+
 def print_ratios(ours, theirs):
     """The output this file exists for: the same function, both sides, cycles per call.
 
@@ -672,8 +704,9 @@ def print_ratios(ours, theirs):
     print(f"\n== SAME-NAME functions, inclusive cycles per call "
           f"(>= {MIN_RATIO_CALLS} calls on both sides) ==")
     rows = []
+    refuse_split_pairs(set(ours["functions"]))
     for name, mine in ours["functions"].items():
-        shipped = theirs["functions"].get(name)
+        shipped = theirs["functions"].get(name) or theirs["functions"].get(shipped_name(name))
         if not shipped or min(mine["calls"], shipped["calls"]) < MIN_RATIO_CALLS:
             continue
         mine_per_call = mine[INCLUSIVE] / mine["calls"]

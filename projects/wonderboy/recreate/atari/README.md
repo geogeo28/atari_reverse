@@ -382,7 +382,7 @@ every frame, so all of it is `bg_scroll_copy_x0`:
 |---|---|---|---|---|
 | **ours** | 488 | 24.40 | 328.4K (319.8K inside `game_main_loop`) | `bg_scroll_blit` 109.6K · `bg_scroll_copy_x*` 109.0K · `flip_screen` 62.1K · `actor_behavior_pass` 54.8K · `actor_dispatch_behavior` 51.8K · `panel_refresh_frame` 41.2K · `sprite_draw_pass` 35.4K · `blit_sprite_w3` 25.4K |
 | **original** | 500 | 25.00 | 320.5K | `flip_screen` 124.4K · `bg_scroll_blit` 105.3K · `panel_refresh_frame` 33.7K · `sprite_draw_pass` 25.1K · `blit_sprite_w3` 20.6K |
-| **ours, `--walk`** | 442 | 22.10 | 362.6K (353.8K inside `game_main_loop`) | `bg_scroll_blit` 110.8K · `bg_scroll_copy_x6` 84.8K · `actor_behavior_pass` 60.6K · `sprite_draw_pass` 59.5K · `actor_dispatch_behavior` 57.3K · `flip_screen` 41.3K · `panel_refresh_frame` 41.1K · `bg_scroll_run_queue` 31.1K · `bg_scroll_serve_requests` 28.0K · `fill_column` 27.7K · `blit_sprite_w3` 26.3K |
+| **ours, `--walk`** | 443 | 22.15 | 361.7K (353.0K inside `game_main_loop`) | `bg_scroll_blit` 110.6K · `bg_scroll_copy_x6` 84.8K · `flip_screen` 59.6K · `sprite_draw_pass` 59.6K · `actor_behavior_pass` 41.6K · `panel_refresh_frame` 41.2K · `actor_dispatch_behavior` 38.4K · `bg_scroll_run_queue` 31.1K · `bg_scroll_serve_requests` 28.0K · `fill_column` 27.6K · `blit_sprite_w3` 26.3K |
 | **original, `--walk`** | 464 | 23.20 | 345.1K | `flip_screen` 108.6K · `bg_scroll_blit` 105.5K · `sprite_draw_pass` 44.1K · `panel_refresh_frame` 33.7K · `bg_scroll_run_queue` 28.0K · `bg_scroll_serve_requests` 26.7K · `blit_sprite_w3` 21.9K · `actor_behavior_pass` 17.1K |
 
 **The whole frame is x1.02 the original's**, which is the number that matters and the one this table
@@ -391,8 +391,11 @@ now exists to keep. Same-function ratios worth the name, read off `compare --wal
 that ratio is interrupt time landing inside the blit rather than the copy (../STATUS.md,
 "## Performance") — `blit_sprite_w3` **x1.2** and `blit_clip_right_w3` **x1.3** (both were x13-ish when
 this table was first written), `sprite_draw_pass` **x1.3**, `bg_scroll_run_queue` **x1.1**,
-`panel_refresh_frame` **x1.2**, `text_run_message_box` **x1.1**, the actor tier **x1.9-x4.4** across
-the board (the largest ratios left, and now the only large ones), and `flip_screen` **x0.4** — it is
+`panel_refresh_frame` **x1.2**, `text_run_message_box` **x1.1**, the actor tier **x1.2-x3.5** across
+the board (the largest ratios left, and now the only large ones — the two map probes at x3.4/x2.8 and
+the player's walk at x3.0 are what is on top of it, while `actor_fall_and_settle`, the tier's biggest
+single cost, is down to **x1.6** and both settles and both cell lookups no longer appear at all: they
+inline into it), and `flip_screen` **x0.5** — it is
 almost all vblank wait on both sides, so OURS being cheaper just means we arrive later and wait less.
 One ratio is an artefact and not a cost: `bg_scroll_serve_requests` reads **x10.4** per call because
 the shipped side is ENTERED ten times as often for the same work (4,106 calls against our 394), so it
@@ -400,12 +403,13 @@ is the per-FRAME line (28.0 K on both sides) that compares.
 
 **THE WALKING ROWS ARE THE ONES TO TUNE AGAINST, AND THE ORIGINAL IS NOT 25 fps IN THEM EITHER.**
 With the stick held right the shipped binary drops to **23.20**, so the target while the screen
-scrolls is 464 frames and not 500; ours is **22.10**, ~17 K cycles a frame behind (362.6 K against
-345.1 K). That gap is the idle window's gap, larger, AND IT IS NOW ALMOST ALL ONE TIER: **the actor
-tier +43.5 K a frame** (`actor_behavior_pass` 60.6 K against 17.1 K) against **the sprite pass
-+15.4 K** (59.5 K against 44.1 K), the panel +7.4 K (41.1 K against 33.7 K), the sound tick +6.2 K
+scrolls is 464 frames and not 500; ours is **22.15**, ~16 K cycles a frame behind (361.7 K against
+345.1 K). That gap is the idle window's gap, larger, and the actor tier is no longer most of it:
+**the actor tier +24.5 K a frame** (`actor_behavior_pass` 41.6 K against 17.1 K — it was +39.6 K
+before the record view reached the map and player helpers) against **the sprite pass +15.4 K**
+(59.6 K against 44.2 K), the panel +7.5 K (41.2 K against 33.7 K), the sound tick +6.2 K
 (14.6 K against 8.4 K) and **the scroll's fill tier +3.1 K** (`bg_scroll_run_queue` 31.1 K against
-28.0 K) — against which `flip_screen` reads 41.3 K to the original's 108.6 K, which is arriving later
+28.0 K) — against which `flip_screen` reads 59.6 K to the original's 108.7 K, which is arriving later
 and waiting less rather than a saving. The two levers of this batch are why the sprite and fill lines
 read as they do: the sprite pass was +21.0 K before the blit's clip split and per-word guard, and the
 fill tier +7.6 K before `src/scroll.c`'s host-pointer cursors. What is left to spend is the actor
@@ -420,6 +424,44 @@ profiler repeats to the digit on a given build.) Spending it from inside the hea
 record-REACH fast path that was written for it is **NO-GO** (57.0 -> 59.7 K inlined, 60.3 K with the
 slow arm out of line, and +14.8 KB / +12.0 KB of `WB.PRG` against 23,552 bytes free on `WBOOT.ST`).
 ../STATUS.md, "## Performance", owns that measurement.
+
+**AND PART OF IT HAS NOW BEEN SPENT, FROM THE CALLERS RATHER THAN THE HEADER (2026-08-26).**
+`src/behavior.c` proves an actor's own record ONCE, in the door each published routine is entered
+through, and reaches its 613 own-record fields through `include/actor_view.h`'s `rec_*` family with
+no mask and no bound; the 120 sites that touch ANOTHER record stay on `bus.h`. Measured back to back
+with `35e9378` on this tree: `actor_behavior_pass` **60.6 K -> 56.7 K** a frame (x3.54 -> **x3.32**),
+`actor_dispatch_behavior` **8,917 -> 8,318** cycles a call, `actor_followed_overlap_mask`
+**1,264 -> 923** and `actor_hop_ascend_step` **315 -> 135**. The frame COUNT did not move — 442 / 22.10
+either side, for the quantisation reason below — so it is headroom banked. The rest of the 9.1 K is in
+`src/map.c` and `src/player.c`, which are entered with the record ADDRESS and are the next lever;
+../STATUS.md, "## Performance", carries the design, the `live`-mask argument the dropped-store cases
+force, and the mutations.
+
+**AND THAT NEXT LEVER IS SPENT (2026-08-26): `actor_behavior_pass` 56.7 K -> 41.6 K a frame.**
+`src/map.c`'s probes and settles, `src/actor.c`'s fall step and `src/player.c`'s walk, weapon,
+transition and gate all take the `ActorRecord` their caller proved; each keeps its published
+`(image, actor)` name as a DOOR for a caller that has only the address, and the behaviour handlers
+call the `_body` half with the record their own door proved. `actor_fall_and_settle` **3,843 -> 1,691**
+cycles a call against the original's 1,084 (x3.5 -> **x1.6**), with both settles and both cell lookups
+inlined into it; `actor_step_left/right_against_map` **1,535/1,506 -> 1,208/1,187** (x4.4/x3.6 ->
+**x3.4/x2.8**), `player_step_and_arm` **2,756 -> 2,149** (x3.0), `player_stage_transition`
+**1,251 -> 1,062**, `player_run_map_cell` **620 -> 419** (x1.2), and `actor_dispatch_behavior`
+**8,318 -> 5,979** cycles a call. The frame count moves by one, 442 -> **443**. 1.8 K of the tier's
+saving is one `always_inline` on `actor_settle_on_platform`, measured both ways (44.4 K without,
+42.6 K with when it was taken, for ~218 bytes of `src/map.c`'s object). ONE ROW WENT THE
+OTHER WAY — `player_gate_on_1516` **741 -> 906** — and ../STATUS.md says why: the `live` write mask
+costs a load and an AND per store, which on a write-heavy chain is more than the guard it replaced.
+
+**AND PHASE THREE GAVE 0.7 K OF IT BACK, ON PURPOSE (2026-08-26).** Phase two left seventy-four call
+sites where a behaviour body reached its OWN record by ADDRESS through an `src/actor.c` helper — the
+side flag, both damage paths, the defeat, the launches — so on the door's scratch arm the body and
+the helper wrote past each other. All of them take the record now, which costs a second word at each
+call and turns one read-modify-write of the flags byte into three: `actor_behavior_pass`
+**41.6 K -> 42.3 K** a frame and `actor_dispatch_behavior` **5,979 -> 6,071** cycles a call, with the
+frame count unmoved at 443 / 22.15 fps / 361.7 K. `src/player.c`'s object SHRANK by 1,292 B and
+`src/actor.c`'s grew by 3,490 — all of it doors nothing on target calls, which `--gc-sections` takes,
+so `WB-m2.PRG` is +656 B. A fast-arm skip of the `live` write mask was measured with it and is
+**NO-GO** (0.3 K a frame for +7,971 B of `.PRG`); ../STATUS.md, "## Performance", owns both.
 
 **AND `cycles/frame` IN THE TABLE ABOVE IS NOT A CONTINUOUS QUANTITY, whatever the paragraph below
 says.** It is the window's cycles divided by the frames in it, so it moves only when the frame COUNT
@@ -454,7 +496,7 @@ work median 264.6K against the 320.8K two vblanks buys. The four that are not ar
 `capture_the_frame` copies 32 KB after the flip. Those four cost 25 vblanks, which is 12.5 frames,
 and 500 − 12 = **488**: the whole gap in the table's idle row is the instrumentation, and no speedup
 can close it while the window is photographed. So run `frames` before believing an idle `fps`, and
-use `--walk` for a frame that still has headroom in it (ours 22.10 against the original's own 23.20).
+use `--walk` for a frame that still has headroom in it (ours 22.15 against the original's own 23.20).
 
 Two readings the table cannot give: a function entered by
 `bra`/`jmp` rather than `jsr` carries no cycle totals in Hatari's report — 18 of the shipped side's
@@ -491,7 +533,7 @@ clones, so nothing about its rows changes and the ratios are still like for like
 | `shim_include/string.h` | a freestanding `<string.h>` — needed by the **kit's** `os.h`, not by the cores; deleting it on the grounds that nothing under `../src/` calls a string function fails the build in fifteen translation units |
 | `original.py` | **the shipped 1989 disks, driven under Hatari to a named anchor** — the post-boot RAM dump M2's image is, the register file and palette that go with it, the mis-anchor and reproducibility measurements, the two boot controls, the shipped side of the frame differential, (M7) the title screen at `$e556` and (M8) the credits screen at `$e5aa`. `neighbour` also KEEPS its mis-anchored span, which is M8's own control (§14) |
 | `gen_image.py` | the staged image — and **the honesty line** about what a staged image is not |
-| `tos.ld` / `mkprg.py` | link at base 0, then wrap the ELF into a GEMDOS `.PRG` with a relocation table |
+| `tos.ld` / `mkprg.py` | link at base 0, then wrap the ELF into a GEMDOS `.PRG` with a relocation table. Both carry the `--gc-sections` link's two costs: `tos.ld` KEEPs `wonderboy_os.s`'s object's whole `.text` (the entry and the interrupt glue, which no relocation names) and caps `.bss` at `SUBALIGN(2)` (**collecting a datum reshuffles `.bss`, and byte packing then puts a longword on an odd address — an Address Error, not a relocation bug**), while `mkprg.py` classifies every fixup by where it lives — a fixup past the end of the flat binary is dead and dropped, one inside it but in no loaded section is REFUSED — and reads every surviving one back out of the image to check it holds its own target |
 | `build.sh` | compile + link + wrap + stage `disk/`, and assert the seam actually held |
 | `smoke.py` | headless Hatari: boot, run to completion, read `STATS.BIN` back, check it |
 | `profile.py` | **what a frame COSTS** — 1000 vblanks of Hatari's CPU profiler over each side, per-function calls and inclusive/exclusive cycles, and the same-name ratio table that says which function to look at next; `frames` times OUR frames one at a time (work, wait, vblanks) where the window average cannot, and `--walk` runs any of them with the stick held right. The only mode here that is not a correctness check |
@@ -530,10 +572,17 @@ direct call sites and is deliberately *not* defined, so a future core that calls
 error; `g_dosound` has **0** — this game never issues XBIOS `Dosound`; the whole staged-file model
 and the whole TOS trap model have **0** each.
 
-**`build.sh` asserts the seam rather than describing it**, in both directions: no `g_hw_reset`,
-`g_psg_reset`, `g_sched_reset`, `g_dosound`, `g_os_refusal_reset` or `sched_poll8` may appear in the
-`.PRG` (a kit source leaking into the link would reintroduce the model silently, and the build would
-"verify" against it), and all six of the symbols the backend owes **must**.
+**`build.sh` asserts the seam rather than describing it**, and `--gc-sections` split that assertion
+into two questions with two different witnesses. **THE OBJECTS** answer what the compile produced,
+and they are pre-collection by construction: no `g_hw_reset`, `g_psg_reset`, `g_sched_reset`,
+`g_dosound`, `g_os_refusal_reset` or `sched_poll8` may be DEFINED by any object the link is given (a
+kit source leaking in would reintroduce the model silently, and the build would "verify" against
+it), and `wonderboy_backend.c`'s own object must define all six the backend owes. **THE LINKED ELF**
+answers what THIS mode reaches, which is a different claim and a mode-aware one: `hw_read8`,
+`psg_port_read`, `psg_port_write`, `sched_wait8` and the sink's `wb_target_shifter_byte` must be LIVE
+in every mode, `sched_poll16` and `wb_target_shifter_word` in every mode that runs frames, and
+`disk_read_file` in NEITHER list — the frame modes never boot, so nothing reaches it and the
+collector drops it, which is exactly why the definition half asks the object.
 
 ### 2. The staged image, and what it is a fabrication of
 

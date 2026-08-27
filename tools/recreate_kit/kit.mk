@@ -8,7 +8,12 @@
 # Builds the reconstruction (candidate) and the Musashi-backed oracle, then runs the
 # differential harness. `make test` rebuilds both libs and runs pytest.
 CC      ?= clang
-CFLAGS  ?= -std=c11 -O2 -fPIC -Wall -Wextra -Iinclude -I$(KIT)/include
+# -DRECREATE_HOST_DIFFERENTIAL marks THIS build — the candidate .so the harness dlopens — as opposed
+# to a project's own on-target build, which compiles the same cores with its own flags and never
+# defines it. A core keys a HOST-ONLY check on it (a bound the differential cannot state, asserted
+# where there is a process to abort); nothing behavioural may hang off it, or the two builds would
+# stop being the same program.
+CFLAGS  ?= -std=c11 -O2 -fPIC -Wall -Wextra -DRECREATE_HOST_DIFFERENTIAL -Iinclude -I$(KIT)/include
 PY      := .venv/bin/python
 
 CAND    := build/lib$(GAME).so

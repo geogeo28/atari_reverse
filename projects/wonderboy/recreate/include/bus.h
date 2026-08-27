@@ -5,11 +5,21 @@
  * arpeggio and volume-stream cursors, which come out of image bands the .PRG ships holding residue
  * from a run at another load base. Any of them can name an address the loaded image does not have.
  *
- * NINE MODULES SPELL IT NOW, and the count is here rather than in prose because it is the number
+ * ELEVEN MODULES SPELL IT NOW, and the count is here rather than in prose because it is the number
  * that decides whether this belongs in the kit. Grep the src/ units for any of this header's names:
- * src/behavior.c 640, src/player.c 160, src/scene.c 66, src/map.c 59, src/game.c 36, src/sound.c 10,
- * src/effects.c 5, src/actor.c 2, src/rng.c 1 (batch 43 phase C, which folded map.c and scene.c
- * whole). Promoting the header to tools/recreate_kit/include/ is registered in ../STATUS.md.
+ * src/behavior.c 170, src/scene.c 67, src/player.c 60, src/boot.c 43, src/game.c 36, src/map.c 16,
+ * src/sound.c 9, src/effects.c 5, src/actor.c 2, src/actor_view.c 2, src/rng.c 1 — comment-stripped,
+ * which is what makes them reproducible rather than remembered. Promoting the header to
+ * tools/recreate_kit/include/ is registered in ../STATUS.md.
+ *
+ * THE THREE BIGGEST USERS SHRANK BY 800 SITES BETWEEN THEM — behavior.c 640 -> 171, player.c
+ * 160 -> 60, map.c 59 -> 16 — and it is the reason the paragraph at the bottom of this file is now
+ * history: their accesses to an ACTOR'S OWN record moved to actor_view.h, which proves that record
+ * once in the door the routine is entered through and then indexes it with neither a mask nor a
+ * bound. What is left in them is every record NOBODY proved — the followed slot, a shot, a minion, a
+ * seed, an escort, a band, a scene descriptor — plus the two dispatch-tier routines that read one
+ * field to CHOOSE a handler, plus every MAP CELL, whose address is computed from coordinates and can
+ * leave the image. The other modules are untouched and this is still their header.
  *
  * WHY IT IS A PROJECT HEADER and not tools/recreate_kit/include/machine.h, where `addr_add` and
  * `set_low_word` live: machine.h is the KIT's, shared by every game, and this pairs a 68000 fact
@@ -162,9 +172,13 @@ static inline void bus_write_long(uint8_t *image, uint32_t at, uint32_t value) {
  * ONE GUARD PER RECORD WAS TRIED HERE AND MEASURED NO-GO (2026-08-26): proving a record's whole
  * reach once and then indexing straight through is semantically sound and gives the -O3 codegen its
  * intended shape, but both arms inline at every one of the ~800 sites and the frame got slower and
- * the .PRG bigger. The guards ARE worth real cycles, so the prize stands — it just needs the record
- * proved at the WALK and a trusted base handed down, which is a change to the callers and not to
- * this header; ../STATUS.md, "## Performance", owns every figure and the verdict. */
+ * the .PRG bigger. The guards ARE worth real cycles, so the prize stood — and it was taken the way
+ * that measurement said to take it: the record proved by the CALLER and a trusted base handed down,
+ * which is include/actor_view.h and a change to src/behavior.c rather than to this header, and then
+ * through the HELPERS those handlers call — src/map.c's probes and settles, src/player.c's walk,
+ * src/actor.c's damage, defeat and fall. The modules still here are the ones whose callers have not
+ * been given a door. ../STATUS.md, "## Performance", owns every figure this paragraph would
+ * otherwise repeat. */
 static inline uint8_t field_b(const uint8_t *image, uint32_t record, uint32_t offset) {
     return bus_read_byte(image, addr_add(record, offset));
 }
