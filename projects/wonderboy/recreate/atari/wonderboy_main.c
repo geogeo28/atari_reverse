@@ -702,6 +702,30 @@ static void clear_the_palette_and_screens(void) {
 #endif
 
 static void teardown(void) {
+    /* PORT A GOES BACK FIRST, BEFORE THE VECTORS, AND THE ORDER IS THE ASSERTION'S. On floppy media
+     * TOS's own `flopvbl` polls the drive for media change on EVERY vertical blank — hundreds of
+     * writes to this same register per run, at pc $fc15fe on TOS 1.04 — and that poll is dead only
+     * while OUR handler owns the level-4 vector. Hand $70 back first and the ROM resumes on the very
+     * next vblank, so a poll landing between this write and its read-back reddens a restore that was
+     * correct. Measured on `smoke.py floppy` pass 3 (2026-08-26): `read-backs failed 0x4040`, one red
+     * in a gate run that had been green minutes earlier, and the batch-44 phase-G queue had named
+     * this exact race as unclosed. It is fixed by ORDER rather than by excluding the bit.
+     *
+     * NOTHING OF OURS CAN WRITE THE REGISTER HERE EITHER. `vbl_handler` reaches port A only through
+     * the idle countdown, `run_out_the_floppy_idle_fuse` has already run it to zero before the
+     * record is sampled, and the handler returns on a zero without touching the chip — and that
+     * premise is not prose: `smoke.py`'s "floppy idle timer expired" row reads the same word out of
+     * the record and would be red first if it did not hold. In `novbl` and `m3fault` nothing is on
+     * $70 at all.
+     *
+     * NOT ONE OF THE HAND-BACK CONTROL'S ASSERTIONS. SMOKE_M3_NO_HANDBACK breaks the claims that the
+     * MACHINE was given back — the two vector read-backs below, the debugger's own $70/$118
+     * comparison and TOS's frame clock. Restoring port A is a courtesy to the drive rather than a
+     * hand-back of a vector, it is not suppressed by that build and never was, so moving it above
+     * the vectors leaves the control breaking exactly the set it broke before. */
+    psg_port_write(WB_PSG_REG_PORT_A, saved.psg_port_a);
+    checked(RB_PSG_PORT_A_RESTORED, psg_port_read(WB_PSG_REG_PORT_A) == saved.psg_port_a);
+
     /* SMOKE_M3_NO_HANDBACK is M3's HAND-BACK CONTROL (build.sh m3fault), and it is `novbl`'s shape at
      * the other end of the run: the two vector stores suppressed and nothing else — the same install,
      * the same frames, the same ending driven, the same record written. What must then fail is every
@@ -728,9 +752,6 @@ static void teardown(void) {
     checked(RB_SCREEN_BASE_RESTORED,
             *io8(SHIFTER_BASE_HI) == (uint8_t)(saved.tos_physbase >> 16)
             && *io8(SHIFTER_BASE_MID) == (uint8_t)(saved.tos_physbase >> 8));
-
-    psg_port_write(WB_PSG_REG_PORT_A, saved.psg_port_a);
-    checked(RB_PSG_PORT_A_RESTORED, psg_port_read(WB_PSG_REG_PORT_A) == saved.psg_port_a);
 
     /* The IKBD is put back with the two commands its own reset displaced.
      *
@@ -2055,6 +2076,31 @@ static int run_vblanks(uint32_t want) {
     return 1;
 }
 
+/* Wait out WB_FLOPPY_IDLE_TIMER, so the port-A read-back below asks its question at a moment the
+ * answer exists.
+ *
+ * WHY IT IS NEEDED AT ALL, AND ONLY SINCE THE SEAM GREW THE DRIVER'S PROTOCOL. `vbl_handler` runs
+ * that word down and calls `floppy_deselect_drives` on the frame it reaches zero, which is the ONE
+ * write RB_PSG_PORT_A_DESELECTED is about. M1 loads no file, so gen_image.py's five-vblank seed
+ * fires well inside SMOKE_VBLS and this returns at once. Every mode that BOOTS goes through the file
+ * seam, which cancels that seed before its first load and re-arms the fuse with
+ * WB_FLOPPY_IDLE_REARM_FRAMES after each one (../src/boot.c) — so in those the deselect is due 150
+ * vblanks after the LAST load, which may be after the run would otherwise have ended.
+ *
+ * THE BOUND IS A HANG GUARD AND NOT AN ASSERTION, which is why nothing is done with its result: a
+ * fuse that never reaches zero leaves the word in the record, and `smoke.py`'s "floppy idle timer
+ * expired" row is what reads it and reddens. SPINS_LONG is ~6 s at 8 MHz against the fuse's ~3 s,
+ * the same margin `run_vblanks` relies on. The read is `volatile` for `await_ikbd_reply`'s measured
+ * reason: `game_image` is a plain array to the compiler and an interrupt is what changes it. */
+static void run_out_the_floppy_idle_fuse(void) {
+    volatile uint16_t *fuse = (volatile uint16_t *)(game_image + WB_FLOPPY_IDLE_TIMER);
+    uint32_t spins = SPINS_LONG;
+
+    while (*fuse != 0)
+        if (--spins == 0)
+            return;
+}
+
 /* One reset, and WHAT THE CONTROLLER ANSWERED — discovered rather than assumed, for the reason
  * `await_ikbd_reply` gives.
  *
@@ -2290,6 +2336,7 @@ int wonderboy_main(void) {
      * SPINS_LONG, so a dead level-4 vector still reds here with a record rather than hanging. */
     checked(RB_VBL_TICKING, run_vblanks(SMOKE_VBLS));
 #endif
+    run_out_the_floppy_idle_fuse();
     record.psg_port_a_after_run = psg_port_read(WB_PSG_REG_PORT_A);
     checked(RB_PSG_PORT_A_DESELECTED,
             (record.psg_port_a_after_run & ~WB_PSG_PORT_A_KEEP) == WB_PSG_DRIVES_DESELECTED

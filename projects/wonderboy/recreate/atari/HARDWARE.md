@@ -38,9 +38,14 @@ never loaded. **On real hardware this failure looks like a disk that does nothin
 spins, the desktop appears, no game. If that is what you see, check the RAM before you suspect the
 disk.
 
+**AND IT IS NOT THE ONLY FAILURE WITH THAT SHAPE**: the idle-fuse race (§8) looked identical on a
+4 MB STE — desktop, no title, no bombs. **`WBPROBE.ST`'s record tells them apart**: the memory
+failure never opens `WB.IMG` at all, the fuse failure opens it, opens `TITLESCR.RAD` too, and stops
+with `title_result = WB_LOAD_DISK_ERROR`. That is why §9 asks you to boot the probe disk and keep it.
+
 ## 3. Writing the disks
 
-Build them first, which also runs the four emulated passes that say they work:
+Build them first, which also runs the five emulated passes that say they work:
 
 ```bash
 bash atari/build.sh ownrun && bash atari/build.sh ownplay
@@ -59,7 +64,7 @@ every file, its clusters, the total, the free bytes and the volume's **sha256** 
 floppy` prints that report for each image as it builds it. One copy, and it is the one that was
 measured. Read it off the run you just did.
 
-**Check the digest before you write.** The image the four passes proved and the image on your floppy
+**Check the digest before you write.** The image the five passes proved and the image on your floppy
 are only the same file if you say so, and nothing else in this chain binds them:
 
 ```bash
@@ -111,6 +116,10 @@ That is a property of the build and not a fault.
 
 Times will differ from the table: it is measured on an emulated 8 MHz ST with `--fast-forward`
 disabled for the FDC, and your drive's seek times are your drive's.
+
+**ABOUT THREE SECONDS AFTER EACH LOAD THE DRIVE GOES QUIET AND ITS LIGHT GOES OUT** — that is the
+original's own idle protocol, reproduced (§8). **What you must NOT see is the drive going quiet
+WHILE it is loading**: that is the failure §8 describes, and it ends at the desktop.
 
 ## 5. The trap-wrapper audit — the class that fails ONLY on hardware
 
@@ -238,7 +247,8 @@ that is news, and `OWN.BIN`'s `fire_gates_crossed` is where it is written down.
 | what | why |
 |---|---|
 | **One disk, no disk swap.** | The original asks you to swap to the data disk between the credits and stage 1. Everything is on one volume here, so the swap never happens. The *prompt* is still drawn by ESC (README §15). |
-| **The drive-select read-back does not mean what it means in emulation.** | `RB_PSG_PORT_A_DESELECTED` is the program reading YM2149 port A back at the end of its run. On a GEMDOS drive nothing else touches that register; with a **real disk in the drive TOS polls it for media change all run long**, so the read-back reads whoever wrote last and that is usually the ROM (measured: the read-back saw `$25`, the ROM's poll, where the program had left `$27`). **The assertion is not dropped, it moves**: `smoke.py floppy` excludes the bit and instead asserts, off the ordered write timeline and filtered to the program's own pcs, that `floppy_deselect_drives` wrote exactly the byte the read-back wanted — and that the ROM wrote *after* it, which is why the read-back could not see it. The ROM's write count is printed per run rather than written down: it is TOS **1.04's** polling rate over that pass's window (hundreds), and the STE's own ROM is a different program with a different one. |
+| **The drive-select read-back does not mean what it means in emulation.** | `RB_PSG_PORT_A_DESELECTED` is the program reading YM2149 port A back at the end of its run. On a GEMDOS drive nothing else touches that register; with a **real disk in the drive TOS polls it for media change all run long**, so the read-back reads whoever wrote last and that is usually the ROM (measured: the read-back saw `$25`, the ROM's poll, where the program had left `$27`). **The assertion is not dropped, it moves**: `smoke.py floppy` excludes the bit and instead asserts, off the ordered write timeline and filtered to the program's own pcs, that `floppy_deselect_drives` wrote exactly the byte the read-back wanted — and that the ROM wrote *after* it, which is why the read-back could not see it. The ROM's write count is printed per run rather than written down: it is TOS **1.04's** polling rate over that pass's window (hundreds), and the STE's own ROM is a different program with a different one. **`RB_PSG_PORT_A_RESTORED` — the teardown's read-back of the SAME register — lost that race once (2026-08-26) and is fixed by ORDER, not by an exclusion**: the restore and its read-back now run before the level-4 vector goes back to TOS, so the ROM's poll is still dead when they run. On iron the poll is your own drive's ROM, so if this bit ever reds, suspect the order of a teardown edit before you suspect the chip. |
+| **The drive deselects ~3 s after each load, not during one.** | `WB_FLOPPY_IDLE_TIMER` is the original's own idle countdown, `vbl_handler` runs it down to `floppy_deselect_drives`, and the two instructions that keep it out of a disk operation live below the file-load seam — so **the seam carries that protocol itself**. It did not until 2026-08-26, and until then the fuse could expire mid-sector: on a 4 MB STE that stopped the boot at the title with the desktop coming back and **no bombs, no diagnosis**. Fixed, and pinned by `smoke.py floppy` booting the play disk on **two ROMs** (it reproduces on EmuTOS, not on TOS 1.04) with a row that forbids a write of ours to port A while a disk operation is open. **The measurement, the trace and what stays unpinned: `../STATUS.md` batch 44 phase H.** |
 | **Loads are slower and audible.** | The seam is GEMDOS, so every resource is a FAT12 walk and a WD1772 transfer. The original drove the controller itself. §4 has the measured cost. |
 | **Four overlays are damaged on the pressed data disk.** | `OVALAY4B.RAD`, `OVALAY5B.RAD`, `OVALAY6A.RAD`, `OVALAY9A.RAD` differ between the authentic dump (`bin/disk2/`) and the repaired tree. **`WBOOT.ST` carries the authentic bytes**, because a play disk built from a hybrid would be evidence about nothing. The stages those overlays serve may not load correctly, and that is 1989 media rather than this port. `smoke.py floppy` names them on every build. |
 | **No music tempo change on a mono monitor, because there is no picture.** | The build is low-res only. |
@@ -274,9 +284,11 @@ on the machine, and a record that stops early says where.
 
 - **That a real WD1772 and a real drive read these disks.** Hatari's FDC is a model; the media is a
   file. Timing, seek behaviour, index alignment and marginal media are all outside it.
-- **That a real TOS behaves like this one.** Every check ran on TOS 1.04 (and EmuTOS where noted).
-  The STE's own ROM is a different program, and the register-clobber class in §5 is precisely a
-  class where "a different TOS" is the whole difference.
+- **That a real TOS behaves like this one.** Every check ran on TOS 1.04 (and EmuTOS where noted —
+  the floppy mode now runs its play disk on BOTH, which it did not before phase H). The STE's own ROM
+  is a different program, and the register-clobber class in §5 is precisely a class where "a
+  different TOS" is the whole difference. **No longer hypothetical**: §8's race gave three different
+  answers on three ROMs.
 - **That the picture is right.** The differential compares memory and the sixteen pens; §6's last
   two rows are two STE registers between the memory and the screen that nothing here reads back.
 - **That the joystick works.** Nothing headless has ever run those two code paths (§7).

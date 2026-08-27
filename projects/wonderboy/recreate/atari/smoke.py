@@ -275,6 +275,9 @@ def staged_screen_front():
 
 
 FLOPPY_IDLE_TICKS = gen_image_constant("FLOPPY_IDLE_TICKS")
+# ...and what the file-load seam puts back after every load, which is the original driver's own
+# `floppy_unwind_return` value (../include/wonderboy.h).
+FLOPPY_IDLE_REARM_FRAMES = wb("FLOPPY_IDLE_REARM_FRAMES")
 TICK_DROP_UNWRITTEN = gen_image_constant("TICK_DROP_UNWRITTEN")
 
 
@@ -443,9 +446,26 @@ AUTO_BOOT = "C:\\" + DRIVE_PRG
 DEFAULT_MONITOR = "rgb"
 
 
+# WHAT `tos` MEANS WHEN A CALLER PASSES IT, and why the default cannot just be `find_tos()`.
+# `find_tos` answers None for "no ROM file named", which Hatari reads as "boot your own bundled
+# EmuTOS" — so None is a real ROM choice and cannot double as "the caller said nothing". This
+# sentinel is the second value, and the only caller that overrides it is the floppy mode's EmuTOS
+# pass, which has to name the ROM rather than inherit whichever one this machine happens to carry.
+TOS_FROM_THE_ENVIRONMENT = object()
+BUNDLED_EMUTOS = None
+BUNDLED_EMUTOS_NAME = "Hatari's own bundled EmuTOS"
+
+
 def run_hatari(prg, monitor=DEFAULT_MONITOR, run_vbls=RUN_VBLS, parse=None, log_name="hatari.log",
-               trace=None, withhold=(), floppy=None, memsize=MEMSIZE_MB):
+               trace=None, withhold=(), floppy=None, memsize=MEMSIZE_MB,
+               tos=TOS_FROM_THE_ENVIRONMENT):
     """Boot `prg` headless, run to the end of --run-vbls, and return the MERGED output.
+
+    `tos` names the ROM. Left alone it is whatever `find_tos` finds — `$WB_TOS_ROM`, then
+    `tools/hatari/TOS*.img` newest first, then Hatari's bundled EmuTOS — which is how "both ROMs"
+    coverage has always been got, by running the whole file twice with the environment changed. A
+    caller passes `BUNDLED_EMUTOS` when the ROM is part of the MEASUREMENT rather than the machine it
+    happened to run on.
 
     `parse` is an optional Hatari DEBUGGER script, which is how M5 reaches the machine's own
     registers: the shim can read the shifter but not the YM-2149's file, and the debugger can. A run
@@ -469,7 +489,7 @@ def run_hatari(prg, monitor=DEFAULT_MONITOR, run_vbls=RUN_VBLS, parse=None, log_
         raise SystemExit("FAIL: `withhold` takes a file off the GEMDOS drive; a floppy's contents "
                          "are chosen when the image is built, so pass a shorter file list instead")
 
-    rom = find_tos()
+    rom = find_tos() if tos is TOS_FROM_THE_ENVIRONMENT else tos
     # `--statusbar off` AND `--drive-led off`: both are emulator chrome, and the LED is the one that
     # bit. With the statusbar hidden Hatari draws a small activity LED in the top-right BORDER, our
     # side's run touches the GEMDOS drive and the shipped side's does not, so the first rendered
@@ -501,6 +521,37 @@ def run_hatari(prg, monitor=DEFAULT_MONITOR, run_vbls=RUN_VBLS, parse=None, log_
     return done.returncode, done.stdout, rom
 
 
+def a_new_rom_probe_hint(faults):
+    """A sentence for the operator when every surviving fault looks like TOS sizing memory from a pc
+    this file has not seen before, or "" when it does not.
+
+    `original.machine_faults` excuses TOS's memory-sizing probe by its EXACT pc and never by "the pc
+    is in ROM", because a stale vector sends the CPU into ROM code and a range test would excuse the
+    very class the scan exists for. **That rule is not loosened here and must not be**: this only
+    changes the MESSAGE. A ROM the allowlist was not written for — a different TOS version, a
+    different machine type — probes from a different address, and the whole mode then fails with a
+    bus error the reader has to go and identify by hand. Naming the likely cause, and where to record
+    it once confirmed, is the difference between a five-minute answer and an afternoon.
+
+    THE TEST IS DELIBERATELY NARROW: every surviving fault at ONE pc, and that pc in ROM. A real
+    defect of the classes this scan is for — a stale vector, a wild pointer — does not usually
+    present as a single repeated ROM address, and where it does the hint still says "confirm", not
+    "excuse"."""
+    pcs = {found.group(1) for found in
+           (original.FAULT_PC_RE.search(line) for line in faults) if found}
+    if len(pcs) != 1:
+        return ""
+    only = pcs.pop()
+    if int(only.lstrip("$"), 16) < ROM_PC_FLOOR:
+        return ""
+    return (f" — NOTE: all {len(faults)} fault(s) are at the single ROM pc {only}, which is the shape "
+            f"of TOS's own memory-sizing probe from an address this file has not met. "
+            f"original.MEMORY_PROBE_PCS carries {', '.join(original.MEMORY_PROBE_PCS)}. CONFIRM it "
+            f"is the probe (disassemble it; the probe faults on purpose while sizing RAM and the run "
+            f"continues past it) before adding it there — the allowlist is pc-EXACT on purpose, and "
+            f"excusing a pc because it is in ROM would excuse the stale-vector class this scan is for")
+
+
 def check_machine_health(status, log, assert_status=True):
     """Both halves: the emulator's return code, and its log scanned for what the code survives."""
     if not HATARI_BANNER_RE.search(log):
@@ -509,7 +560,7 @@ def check_machine_health(status, log, assert_status=True):
     faults = original.machine_faults(log)     # the same scan the shipped-side runs get
     problems = []
     if faults:
-        problems.append("unhealthy machine: " + " | ".join(faults[:4]))
+        problems.append("unhealthy machine: " + " | ".join(faults[:4]) + a_new_rom_probe_hint(faults))
     if assert_status and status != 0:
         problems.append(f"Hatari exited {status}")
     return problems
@@ -702,10 +753,15 @@ def differing_bytes(mine, theirs):
 #
 # `RB_PSG_PORT_A_DESELECTED` asserts a TRANSITION: `vbl_handler` counts WB_FLOPPY_IDLE_TIMER down,
 # and on the tick it reaches zero `floppy_deselect_drives` writes the real YM2149. M1 SEEDS that
-# countdown (gen_image.py's FLOPPY_IDLE_TICKS) precisely so a short run witnesses the write. M2 seeds
-# nothing — its image is the original's own post-boot RAM — and the original's boot ran its countdown
-# out long before the anchor, so the word is already $0000 and the arm cannot fire in fifty-two
-# frames. Measured, not assumed: the value is read back out of the staged image below.
+# countdown (gen_image.py's FLOPPY_IDLE_TICKS) precisely so a short run witnesses the write, and M1
+# is also the only mode in which the SEED is what fires: every mode that loads a file goes through
+# the seam, which CANCELS the seeded fuse before its first load and RE-ARMS it with
+# WB_FLOPPY_IDLE_REARM_FRAMES after each one (../src/boot.c). In those the write is due 150 vblanks
+# after the last load, which is why the shim waits the fuse out before reading port A back
+# (wonderboy_main.c's `run_out_the_floppy_idle_fuse`). M2 seeds nothing — its image is the original's
+# own post-boot RAM — and the original's boot ran its countdown out long before the anchor, so the
+# word is already $0000 and the arm cannot fire in fifty-two frames. Measured, not assumed: the value
+# is read back out of the staged image below.
 #
 # It is EXCLUDED rather than asserted-and-failing, and the exclusion is PRINTED — M1's
 # `machine_driven` rule, that a check quietly dropped from a run is a check nobody is running. And it
@@ -928,9 +984,12 @@ def m1_checks(record):
         f"(50Hz={TICK_DROP_50HZ:#04x}, mono={TICK_DROP_MONO:#04x}, "
         f"never-written sentinel={TICK_DROP_UNWRITTEN:#04x})")
 
-    # 3. The idle countdown expired and the real YM2149 took the write.
+    # 3. The idle countdown expired and the real YM2149 took the write. In M1 the countdown is
+    #    gen_image.py's seed; in every mode that LOADS, the seam has cancelled that seed and re-armed
+    #    the fuse behind the last load, and `run_out_the_floppy_idle_fuse` is what waits it out.
     add("floppy idle timer expired", record["floppy_idle_timer"] == 0,
-        f"WB_FLOPPY_IDLE_TIMER={record['floppy_idle_timer']}, seeded to {FLOPPY_IDLE_TICKS}")
+        f"WB_FLOPPY_IDLE_TIMER={record['floppy_idle_timer']}, seeded to {FLOPPY_IDLE_TICKS} and "
+        f"re-armed to {FLOPPY_IDLE_REARM_FRAMES} by each seam load")
     add("the real YM2149 deselected the drives",
         record["psg_port_a_after_run"] & ~PSG_PORT_A_KEEP & 0xff == PSG_DRIVES_DESELECTED
         and record["psg_port_a_after_run"] & PSG_PORT_A_KEEP
@@ -1720,13 +1779,15 @@ BOOT_SPAN_BANDS = tuple((name, start, end, ceiling,
     # word inside the band. Most of the block is never written here: batch 44 phase B cut the chain
     # at `disk_load_file` ($5e7c) and everything below that is a WD1772 state machine this build does
     # not run, where the original's boot programmed a real controller five times. But
-    # WB_FLOPPY_IDLE_TIMER ($64f2) lies INSIDE it and IS written on this side — gen_image.py seeds it
-    # and `vbl_handler`, the reconstruction's own, counts it down; it is the very word
+    # WB_FLOPPY_IDLE_TIMER ($64f2) lies INSIDE it and IS written on this side by THREE writers, not one:
+    # gen_image.py seeds it and `vbl_handler` counts it down, and the SEAM cancels and re-arms it
+    # around every load exactly as the driver below the cut does (../src/boot.c). It is the very word
     # RB_PSG_PORT_A_DESELECTED waits for. So the two sides' readings of that word are two different
     # clocks, which is a difference this band has to hold as much as the unwritten bytes are.
     ("the FDC driver's state block", wb("FLOPPY_PREAMBLE_FLAG"), wb("DISK_BAND_HI"), WHOLE_BAND,
      "the driver below the seam does not run here, so the substitution never writes most of it — and "
-     "WB_FLOPPY_IDLE_TIMER inside it is OUR vbl_handler's own countdown off gen_image.py's seed"),
+     "WB_FLOPPY_IDLE_TIMER inside it is OUR vbl_handler's own countdown, off gen_image.py's seed and "
+     "the seam's own re-arm"),
     # ...AND ONE LONGWORD OF THE DEPACKER'S, which is not the driver's at all. ../names.txt cmt
     # 0x5e3a: "rad_depack parks the entry a7 here and restores it on the success path only". A C
     # composition has no such register, which is ../STATUS.md batch 44 phase C's OWN declared
@@ -5424,8 +5485,11 @@ FLOPPY_TOO_SMALL_MEMSIZE_MB = 1
 # consumer, and `video_vbl` on a 12,000-vblank boot is twelve thousand lines nothing parses in the
 # record passes. Traces are not free — the play run's log is 10 MB — so each pass names the surfaces
 # it grades.
-GEMDOS_TRACE, VBL_TRACE = "gemdos", "video_vbl"
-FLOPPY_PLAY_TRACE = ",".join((TIMELINE_TRACE, VBL_TRACE, GEMDOS_TRACE))
+# ...AND THE CONTROLLER'S OWN, which only the play passes ask for. `port_a_writes_inside_a_disk_operation`
+# needs the FDC's account of when a sector read was in flight in the SAME ordered stream as the
+# GEMDOS calls and the YM2149 writes, and Hatari prints all three to one place.
+GEMDOS_TRACE, VBL_TRACE, FDC_TRACE = "gemdos", "video_vbl", "fdc"
+FLOPPY_PLAY_TRACE = ",".join((TIMELINE_TRACE, VBL_TRACE, GEMDOS_TRACE, FDC_TRACE))
 FLOPPY_RECORD_TRACE = ",".join((TIMELINE_TRACE, GEMDOS_TRACE))
 # WHERE TOS FINDS THE PROGRAM, spelled once and used both to BUILD the image and to assert the trace
 # line that proves TOS ran it from there.
@@ -5551,20 +5615,152 @@ def pen_window(lines):
     return first, last
 
 
+class PortALatch:
+    """The YM2149's own two-port protocol, in ONE place.
+
+    The chip has a SELECT port and a DATA port: a write to the first latches which of its sixteen
+    registers the next write to the second lands in. So "a write to port A" is a PAIR that has to be
+    walked in order, and the latch persists across everything in between — which is why this is an
+    object with state rather than a filter over a list.
+
+    TWO CALLERS NEEDED IT AND THE SECOND WROTE THE STATE MACHINE AGAIN. `psg_port_a_writes` walks
+    `timeline_events`' reduced (register, value, pc) tuples; `port_a_writes_inside_a_disk_operation`
+    walks Hatari's RAW lines, because it has to see the FDC and GEMDOS lines interleaved with the
+    writes and a reduced stream has thrown those away. Their inputs differ; the chip does not."""
+
+    def __init__(self):
+        self.selected = None
+
+    def wrote_port_a(self, register, value):
+        """The port A byte this write puts on the chip, or None if this write is not one."""
+        if register == PSG_SELECT_PORT:
+            self.selected = value
+            return None
+        if register == PSG_DATA_PORT and self.selected == PSG_PORT_A_REG:
+            return value
+        return None
+
+
 def psg_port_a_writes(events):
     """Every write to YM2149 register 14 in `events`, as (value, pc, from_rom), in order.
 
     THE REGISTER THE FLOPPY DRIVE SELECT BITS LIVE ON, and on this media two different programs write
-    it. Port A is selected by a write to the SELECT port and then written through the DATA port, so
-    the pairs have to be walked rather than filtered — which is why this returns a list and its two
-    callers ask it different questions."""
-    selected, writes = None, []
+    it — which is why this returns a list and its two callers ask it different questions."""
+    latch, writes = PortALatch(), []
     for register, value, pc in events:
-        if register == PSG_SELECT_PORT:
-            selected = value
-        elif register == PSG_DATA_PORT and selected == PSG_PORT_A_REG:
-            writes.append((value, int(pc, 16), int(pc, 16) >= ROM_PC_FLOOR))
+        byte = latch.wrote_port_a(register, value)
+        if byte is not None:
+            writes.append((byte, int(pc, 16), int(pc, 16) >= ROM_PC_FLOOR))
     return writes
+
+
+# WHAT "A DISK OPERATION IS IN FLIGHT" LOOKS LIKE IN A TRACE, from two INDEPENDENT directions.
+#
+# GEMDOS is the one this port's seam is cut at: `disk_read_file` is an `Fopen`, an `Fread` and an
+# `Fclose` (../atari/wonderboy_backend.c), and the span from the open to the close is exactly the
+# span the C holds WB_FLOPPY_IDLE_TIMER at zero across. The FDC is the hardware fact underneath it:
+# a `type II read sector` is the WD1772 streaming a sector into DMA, ended by `complete command` (or
+# by TOS aborting it with a `type IV force int`).
+#
+# THEY ARE TRACKED SEPARATELY AND THE FIRST DRAFT SHARED ONE STACK — a real defect the review gate
+# caught. `fdc complete command` is emitted for EVERY WD1772 command, type I seeks and restores
+# included, so on `hatari-floppy-play.log` there are 754 completions against 588 read-sector opens:
+# a shared stack let a seek's completion pop the GEMDOS entry and CLOSE the file window early.
+# MEASURED, by replaying both logics over the archived logs and comparing against the raw
+# `Fopen`..`Fclose` line spans: the shared stack held the file window open for **51.0%** of that span
+# on the play log and **51.5%** on the reverted one; two independent trackers hold it open for
+# **100%** of both. One counter per account, and a write inside EITHER is a violation.
+GEMDOS_OPENING_RE = re.compile(r'^GEMDOS 0x3[DC] F(?:open|create)\("([^"]*)"')
+GEMDOS_CLOSING_RE = re.compile(r"^GEMDOS 0x3E Fclose\(")
+# ...and WHOSE call it was. `GEMDOS_FOPEN_RE` above captures only the name, and every GEMDOS line
+# carries its caller's pc — `at PC=0x...` on an `Fopen`, `at PC 0x...` on an `Fclose`/`Fcreate`, one
+# regex for both. TOS opens files of its own (`DESKTOP.INF`) from ROM pcs, and counting those would
+# make the row's vacuity guard pass on a run in which the PROGRAM opened nothing.
+GEMDOS_PC_RE = re.compile(r"\bat PC ?=?\s*0x([0-9a-fA-F]+)")
+FDC_LINE_PREFIX = "fdc "
+FDC_READ_SECTOR_RE = re.compile(r"^fdc type II read sector ")
+FDC_COMMAND_CLOSED_RE = re.compile(r"^fdc (?:complete command|type IV force int)")
+# ...and the vblank an `fdc` line was printed at, which is what makes a violation reportable. It is
+# guarded by the prefix above rather than searched blind: `VBL=` appears on other trace families too,
+# and a bare search would take the clock from whichever line happened to carry one.
+FDC_VBL_RE = re.compile(r"\bVBL=(\d+)\b")
+
+# One violation, named by the window that caught it — GEMDOS or FDC — so a red says which account
+# was open and not merely that something was.
+FuseViolation = collections.namedtuple("FuseViolation", "window opened_at at value pc")
+GEMDOS_WINDOW = "an open file (GEMDOS Fopen..Fclose)"
+FDC_WINDOW = "a sector read in flight (FDC type II read sector..complete command)"
+
+
+def port_a_writes_inside_a_disk_operation(lines):
+    """(violations, program-side file opens) — THE MECHANISM PIN, named after the bug it exists for
+    (../STATUS.md, batch 44 phase H).
+
+    WB_FLOPPY_IDLE_TIMER expiring inside a load is what stopped the play disk on a real STE.
+    `vbl_handler` called `floppy_deselect_drives`, which dropped both drive-select lines on YM2149
+    port A while the WD1772 had a `type II read sector` in flight; the sector timed out, the ROM's
+    retry did not re-select the drive it thought it still had, `Fread` returned negative and the boot
+    stopped at the title with the desktop coming back. The fix is the seam carrying the original
+    driver's own protocol — disarm the fuse for the load, re-arm it after (../src/boot.c) — and this
+    is the surface that catches it one level below "the title screen appeared": it walks the GEMDOS,
+    FDC and IO-write traces as ONE ordered stream and requires that no PROGRAM-side write to port A
+    lands while a disk operation is open, by either account. A ROM-side write is TOS's own business.
+
+    THE TWO WINDOWS ARE NOT THE SAME STRENGTH AND THAT IS DELIBERATE. The FDC one is what really
+    broke, and on its own it is a RACE: measured, the reverted build's deselect lands inside a sector
+    read on one disk and 27 scanlines before the next command on another, and adding `io_write` to
+    the trace was enough to move it. The GEMDOS one is DETERMINISTIC — the fuse is armed five vblanks
+    after `install()` and the first load runs for thousands — and it is also the exact span the C
+    statement of the protocol covers. **Measured on both archived reverted logs — the pre-fix disk a
+    real STE refused, and a rebuild whose boot happened to survive the race — it is the GEMDOS window
+    that catches them and the FDC window that catches neither**: `$27` from `vbl_handler`'s own pc,
+    one vblank after `TITLESCR.RAD` was opened. So the pin is the union: the hardware fact where it
+    can be seen, the seam's own window always.
+
+    THE SECOND RETURN IS THE VACUITY GUARD AND IT COUNTS THE PROGRAM'S OPENS ONLY. Counting disk
+    operations of any kind would be dead on this media — TOS reads four to nine sectors before it
+    even `Pexec`s the program — so a run in which the reconstruction never opened a file would
+    satisfy the guard on the ROM's own traffic. The caller says so where it grades the row."""
+    latch, vbl = PortALatch(), 0
+    program_opens, open_files, reading_at, violations = 0, [], None, []
+    for line in lines:
+        line = line.strip()
+        counted = VBL_LINE_RE.match(line)
+        if counted:
+            vbl = int(counted.group(1))
+            continue
+        if line.startswith(FDC_LINE_PREFIX):
+            at = FDC_VBL_RE.search(line)
+            if at:
+                vbl = int(at.group(1))
+            if FDC_READ_SECTOR_RE.match(line):
+                reading_at = vbl
+            elif FDC_COMMAND_CLOSED_RE.match(line):
+                reading_at = None
+            continue
+        if line.startswith(GEMDOS_LINE_PREFIX):
+            caller = GEMDOS_PC_RE.search(line)
+            if not caller or int(caller.group(1), 16) >= ROM_PC_FLOOR:
+                continue                # TOS's own files are not this port's disk operations
+            if GEMDOS_OPENING_RE.match(line):
+                program_opens += 1
+                open_files.append(vbl)
+            elif GEMDOS_CLOSING_RE.match(line) and open_files:
+                open_files.pop()
+            continue
+        write = original.IO_WRITE_RE.match(line)
+        if not write:
+            continue
+        register = int(write.group(1), 16) & original.IO_ADDRESS_MASK
+        byte = latch.wrote_port_a(register, int(write.group(2), 16))
+        pc = int(write.group(3), 16)
+        if byte is None or pc >= ROM_PC_FLOOR:
+            continue
+        if open_files:
+            violations.append(FuseViolation(GEMDOS_WINDOW, open_files[0], vbl, byte, pc))
+        elif reading_at is not None:
+            violations.append(FuseViolation(FDC_WINDOW, reading_at, vbl, byte, pc))
+    return violations, program_opens
 
 
 def drive_select_rows(events, port_a_at_entry):
@@ -5683,13 +5879,14 @@ def floppy_flush_script(directory, at_vbl):
     return script
 
 
-def boot_floppy(image, tag, run_vbls, memsize=FLOPPY_MEMSIZE_MB, trace=FLOPPY_RECORD_TRACE):
+def boot_floppy(image, tag, run_vbls, memsize=FLOPPY_MEMSIZE_MB, trace=FLOPPY_RECORD_TRACE,
+                tos=TOS_FROM_THE_ENVIRONMENT):
     """Boot `image` as drive A: with no host drive at all, and flush it back on the way out."""
     with tempfile.TemporaryDirectory() as directory:
         script = floppy_flush_script(Path(directory), run_vbls)
         status, log, rom = run_hatari(None, run_vbls=run_vbls + FLOPPY_BACKSTOP_VBLS,
                                       parse=script, trace=trace, floppy=image, memsize=memsize,
-                                      log_name=f"hatari-{FLOPPY_MODE}-{tag}.log")
+                                      log_name=f"hatari-{FLOPPY_MODE}-{tag}.log", tos=tos)
     print(f"-- {FLOPPY_MODE}/{tag}: TOS={rom or 'bundled EmuTOS'} hatari exit={status} "
           f"--memsize {memsize} --disk-a {image.name}, no GEMDOS drive "
           f"(full log in {OUT / f'hatari-{FLOPPY_MODE}-{tag}.log'})")
@@ -5788,13 +5985,30 @@ def floppy_boot_rows(log, expect_records, expect_title=True):
     ]
 
 
-def floppy_play_pass():
-    """PASS ONE — THE DISK A PERSON PLAYS, booted with the floppy as the only media.
+# The ROM's own address space, rounded to the megabyte its reset code runs in — $fc0000 for TOS 1.x
+# on an ST, $e00000 for EmuTOS and the later TOSes. Hatari does not print which image it loaded, but
+# WHERE the first instruction ran is in every trace, and that is a property of the RUN rather than of
+# the command line.
+ROM_BASE_ROUNDING = 0x10000
 
-    Same binary and same three liveness rows as `mode_ownrun` (`liveness_checks`), so that a
-    difference between the two modes is a difference the MEDIA made. What this pass adds is the
-    thing only this media has: a measured latency, and TOS's own account of which paths were opened.
-    """
+
+def rom_reset_base(log):
+    """The ROM address the machine started executing in, or None if the log carries no ROM pc."""
+    for line in log.splitlines():
+        write = original.IO_WRITE_RE.match(line.strip())
+        if write and int(write.group(3), 16) >= ROM_PC_FLOOR:
+            return int(write.group(3), 16) & ~(ROM_BASE_ROUNDING - 1)
+    return None
+
+
+def build_the_play_disk():
+    """`WBOOT.ST`, built ONCE, with its layout and digest reported once.
+
+    THE REPORT IS THE MEASUREMENT, and `atari/HARDWARE.md` §3 tells a person to read the sizes and
+    the sha256 off the run they just did rather than off prose — "one copy, and it is the one that
+    was measured". Two play passes boot this disk, so building it per pass would print two layouts
+    and two digests of two separately-written files and make that instruction ambiguous. Built here,
+    handed to both."""
     prg = BUILD / OWN_RUN_BUILD
     image, layout, damaged = build_floppy(FLOPPY_PLAY_IMAGE, prg, FLOPPY_ALL_ROWS, FLOPPY_PLAY_LABEL)
     print(f"-- {FLOPPY_PLAY_IMAGE}: {OWN_RUN_BUILD} as {FLOPPY_AUTO_PATH}, its image, and all "
@@ -5804,13 +6018,40 @@ def floppy_play_pass():
         print(f"   note {len(damaged)} of them are DAMAGED on the pressed data disk and differ "
               f"between bin/{BOOT_RESOURCE_TREE}/ and bin/{BOOT_RESOURCE_HYBRID_TREE}/: "
               f"{', '.join(damaged)}. The authentic dump is what is written; see atari/HARDWARE.md.")
-    status, log, rom = boot_floppy(image, "play", OWN_RUN_BOOT_VBLS, trace=FLOPPY_PLAY_TRACE)
+    return image, layout
+
+
+def floppy_play_pass(image, layout, title, tag, tos=TOS_FROM_THE_ENVIRONMENT):
+    """THE DISK A PERSON PLAYS, booted with the floppy as the only media — run TWICE, once per ROM.
+
+    Same binary and same three liveness rows as `mode_ownrun` (`liveness_checks`), so that a
+    difference between the two modes is a difference the MEDIA made. What this pass adds is the
+    thing only this media has: a measured latency, and TOS's own account of which paths were opened.
+
+    ONE FUNCTION FOR BOTH ROMS, and the ROM is the only variable — the mode's own discipline for a
+    pass and its controls. Pass 1 takes whichever ROM the environment names (TOS 1.04 here); pass 5
+    names Hatari's bundled EmuTOS, because the ROM is part of THAT measurement: EmuTOS is where the
+    idle-fuse race was first reproduced and TOS 1.04 is the ROM that happened to win it (batch 44
+    phase H). A floppy pass on EmuTOS had never been run, which is why the failure reached a real
+    machine before it reached this file.
+
+    THE ROM IS RETURNED BECAUSE "BOTH ROMS" IS A CLAIM THAT HAS TO BE CHECKED. `find_tos` answers
+    None when no `TOS*.img` is present and `$WB_TOS_ROM` is unset, and that is the SAME answer pass
+    5 forces — so on a machine without the ROM files both passes would boot EmuTOS and the mode would
+    print "on BOTH ROMs" over one. `mode_floppy` compares what the two runs actually booted.
+
+    EVERY ROW IS TAGGED with `tag`, so a FAIL in the mode's problem list names which ROM produced
+    it — two passes running one function otherwise report identical row names."""
+    status, log, rom = boot_floppy(image, tag, OWN_RUN_BOOT_VBLS, trace=FLOPPY_PLAY_TRACE, tos=tos)
     problems = check_machine_health(status, log)
     events, why = timeline_events(log.splitlines())
     if why:
         raise SystemExit(f"FAIL: the play disk left no readable write timeline ({why})")
+    reset_base = rom_reset_base(log)
     first_pen, last_pen = pen_window(log.splitlines())
     window = None if first_pen is None else last_pen - first_pen
+    inside, program_opens = port_a_writes_inside_a_disk_operation(log.splitlines())
+    after = hashlib.sha256(image.read_bytes()).hexdigest()
     checks = floppy_boot_rows(log, expect_records=False) + liveness_checks(events) + [
         ("...and the title screen was up inside the ceiling", first_pen is not None
          and first_pen <= FLOPPY_TITLE_VBLS,
@@ -5834,13 +6075,33 @@ def floppy_play_pass():
         # change these bytes. It is also the binding `atari/HARDWARE.md` §3 asks a person to check
         # before `gw/write_disk.sh` — the digest proved here is the digest they write.
         ("...and the disk it booted is byte-for-byte the disk that was proved",
-         hashlib.sha256(image.read_bytes()).hexdigest() == layout.digest,
-         f"sha256 {layout.digest} before the boot and "
-         f"{hashlib.sha256(image.read_bytes()).hexdigest()} after it; the play build has no "
+         after == layout.digest,
+         f"sha256 {layout.digest} before the boot and {after} after it; the play build has no "
          f"Fcreate at all, so any difference is the emulator or a write nobody meant"),
+        # ...AND THE MECHANISM UNDER ALL OF IT, one level below "the title screen appeared". The row
+        # above says the picture arrived; this says WHY it could, and it is the row that reddens for
+        # the reason rather than for the symptom (`port_a_writes_inside_a_disk_operation`).
+        #
+        # THE VACUITY GUARD COUNTS THE PROGRAM'S OWN OPENS, and counting disk operations of any kind
+        # would be dead here: TOS reads four to nine sectors off this volume before it `Pexec`s
+        # anything, so the guard would be satisfied by the ROM on a run in which the reconstruction
+        # opened nothing at all.
+        ("...and no write of OURS to the drive-select lines landed inside a disk operation",
+         not inside and program_opens > 0,
+         f"{program_opens} file(s) opened by the PROGRAM (pc below {ROM_PC_FLOOR:#x}; TOS's own are "
+         f"not counted), and {len(inside)} program-side write(s) to YM2149 register "
+         f"{PSG_PORT_A_REG} inside an open operation"
+         + (f" — the first {inside[0].value:#04x} at pc {inside[0].pc:#x} on vblank {inside[0].at}, "
+            f"caught by {inside[0].window}, open since vblank {inside[0].opened_at}" if inside
+            else "; the fuse the seam disarms for each load is what would put one there")
+         + ("" if program_opens else " — the program opened no file at all, so this row would pass "
+                                     "vacuously")),
     ]
-    report(f"{FLOPPY_MODE} pass 1 — {FLOPPY_PLAY_IMAGE}, the disk a person plays", checks)
-    return problems + [f"{name}: {detail}" for name, ok, detail in checks if not ok], first_pen
+    report(title, checks)
+    print(f"   {tag}: TOS={Path(rom).name if rom else BUNDLED_EMUTOS_NAME}, whose reset code ran at "
+          f"{reset_base:#x}" if reset_base is not None else f"   {tag}: no ROM pc in the trace")
+    return (problems + [f"{tag}/{name}: {detail}" for name, ok, detail in checks if not ok],
+            first_pen, rom, reset_base)
 
 
 def floppy_probe_pass(image_name, label, indices, tag, title, expect_record=True,
@@ -5976,8 +6237,34 @@ def floppy_small_memory_control(probe_rows):
     return problems + [f"{name}: {detail}" for name, ok, detail in checks if not ok]
 
 
+def refuse_unless_two_roms(play_rom, play_base, emutos_rom, emutos_base):
+    """The claim passes 1 and 5 exist to make, CHECKED — because "on both ROMs" is a claim.
+
+    `find_tos` answers None, which is Hatari's bundled EmuTOS, whenever there is no
+    `tools/hatari/TOS*.img` and no `$WB_TOS_ROM` — and that is exactly the ROM pass 5 forces. On such
+    a machine both passes boot the same ROM and the mode's closing line would report one run repeated
+    as a comparison. It REFUSES rather than warns: a mode whose headline is a comparison cannot
+    report having compared nothing.
+
+    THE SECOND HALF IS PRINTED RATHER THAN REFUSED, and the difference is what each fact is worth.
+    The refusal compares what each pass ASKED for, which is what catches the missing-ROM-file case.
+    `rom_reset_base` is what each pass actually RAN, taken off its own trace — a stronger kind of
+    fact, but not a sound refusal on its own, because two different images legitimately share a base
+    ($e00000 is EmuTOS's and TOS 2.06's alike). So an equal base is a note: it is what one ROM booted
+    twice would look like, and worth a reader seeing."""
+    if play_rom == emutos_rom:
+        raise SystemExit(
+            f"FAIL: passes 1 and 5 both booted {play_rom or BUNDLED_EMUTOS_NAME}, so this mode has "
+            f"not run on two ROMs. Pass 5 always takes the bundled EmuTOS; pass 1 takes "
+            f"`$WB_TOS_ROM`, then `tools/hatari/TOS*.img` newest first — put a TOS image in one of "
+            f"those or this comparison is a repetition.")
+    if play_base is not None and play_base == emutos_base:
+        print(f"   note both passes' reset code ran at {play_base:#x} — two images sharing one ROM "
+              f"base, which is legitimate but is also what one ROM booted twice would look like.")
+
+
 def mode_floppy():
-    """THE DISK, and the four passes that say it boots.
+    """THE DISK, and the five passes that say it boots.
 
     Read `atari/HARDWARE.md` beside this: the images this mode writes are the ones `gw/write_disk.sh`
     puts on a physical floppy, and the runbook is what a person does with them."""
@@ -5998,7 +6285,12 @@ def mode_floppy():
     # OWN.BIN cannot be mistaken for one this mode recovered.
     stage_drive(BUILD / OWN_RUN_BUILD)
 
-    problems, first_pen = floppy_play_pass()
+    # BUILT ONCE AND BOOTED TWICE. Passes 1 and 5 differ in the ROM and in nothing else, the disk
+    # included — see `build_the_play_disk` for why the layout and digest are reported once.
+    play_image, play_layout = build_the_play_disk()
+    play_title = f"{FLOPPY_MODE} pass 1 — {FLOPPY_PLAY_IMAGE}, the disk a person plays"
+    problems, first_pen, play_rom, play_base = floppy_play_pass(play_image, play_layout, play_title,
+                                                                "play")
 
     probe_rows = tuple(index for index in own_resource_indices() if index not in FLOPPY_PROBE_OMITS)
     probe_title = f"{FLOPPY_MODE} pass 2 — {FLOPPY_PROBE_IMAGE}, the record read back off the disk"
@@ -6025,14 +6317,32 @@ def mode_floppy():
     problems += floppy_missing_resource_control(probe_rows)
     problems += floppy_small_memory_control(probe_rows)
 
+    # PASS 5 — THE SAME DISK, THE OTHER ROM. Every mode in this file has always been run on both
+    # ROMs by changing the environment and running it again; THIS pass names EmuTOS in the code,
+    # because on the floppy the ROM is not machine trivia. The idle-fuse race (batch 44 phase H)
+    # fails under EmuTOS on any machine type and any memory size, and TOS 1.04 happens to win it —
+    # so a floppy mode that only ever ran on whichever ROM `tools/hatari/` carried was blind to the
+    # one bug that reached a real STE. It is LAST because it is the slowest pass and everything
+    # before it is cheaper evidence of the same disk.
+    emutos_title = (f"{FLOPPY_MODE} pass 5 — {FLOPPY_PLAY_IMAGE} under EmuTOS, the ROM the idle "
+                    f"fuse raced")
+    more, emutos_pen, emutos_rom, emutos_base = floppy_play_pass(
+        play_image, play_layout, emutos_title, "play-emutos", tos=BUNDLED_EMUTOS)
+    problems += more
+
+    refuse_unless_two_roms(play_rom, play_base, emutos_rom, emutos_base)
+
     if problems:
         raise SystemExit("FAIL: " + "; ".join(problems))
     print(f"OK: M10 — the reconstruction boots off a 720 KB FAT12 floppy as the only media, run by "
           f"TOS's own AUTO-folder loader, with every file the seam asks for coming through TOS's "
           f"FAT12 and the WD1772 rather than a host directory. The title screen is up "
-          f"{first_pen} vblanks after power-on; the record the ladder writes comes home ON THE "
-          f"DISK. {OUT / FLOPPY_PLAY_IMAGE} is what `gw/write_disk.sh` writes — see "
-          f"atari/HARDWARE.md.")
+          f"{first_pen} vblanks after power-on on "
+          f"{Path(play_rom).name if play_rom else BUNDLED_EMUTOS_NAME} and {emutos_pen} on "
+          f"{BUNDLED_EMUTOS_NAME} — two ROMs, one disk — with no write of the "
+          f"reconstruction's own to the drive-select lines landing inside an open disk operation; "
+          f"the record the ladder writes comes home ON THE DISK. {OUT / FLOPPY_PLAY_IMAGE} is what "
+          f"`gw/write_disk.sh` writes — see atari/HARDWARE.md.")
 
 
 def main():

@@ -14761,10 +14761,15 @@ queue from fourteen to twelve.
   a MAY-EXECUTE count, because a recursive descent continues past every `bsr` rather than proving
   non-return for each one — the twelve bytes are in the total and the case says so.
 * **THE VBL EDGE IS A LIVE INTERACTION FOR ANY ON-TARGET BOOT.** The handler counts
-  `floppy_idle_timer` down and deselects the drive; a GEMDOS substitution never arms that timer, so
-  on target the two mechanisms do not meet. Harmless as long as nothing else reads the timer — which
-  nothing does — but it is a difference between the substitution and the original and belongs on this
-  list rather than in a comment.
+  `floppy_idle_timer` down and deselects the drive; the substitution replaces the routines that
+  managed that timer, so on target the handler's countdown runs against a GEMDOS load nothing has
+  told it about. **RETRACTED, 2026-08-26 (phase H):** this entry originally concluded that the two
+  mechanisms therefore never meet on target and that the difference was harmless because nothing else
+  reads the timer. Both halves were wrong. They meet through `gen_image.py`'s own seed, which arms the
+  countdown five vblanks before `install()`; and the reader that matters is not in the image at all —
+  it is the WD1772, through `floppy_deselect_drives`' write to the drive-select lines. The fuse
+  expiring inside the title load is what stopped the play disk on a real STE. Phase H at the end of
+  this file has the measurement and the fix.
 
 * **THE `Super` UNWIND WAS A COMPILER ACCIDENT** (§6b), and the class generalises: any on-target
   wrapper whose correctness depends on the stack depth at two call sites is one edit from breaking,
@@ -16304,6 +16309,19 @@ counts), so the queue item is *wiring*, not a suspected defect. Also queued from
 itself green by accident on floppy media. It passed on both probe passes; nothing here proves it
 could fail.
 
+**RETIRED 2026-08-26 (phase H) — IT COULD FAIL, AND IT DID.** The queue item guessed right. A gate
+run of `smoke.py floppy` went red on **pass 3** with `read-backs failed 0x4040` — `RB_VBL_TICKING`
+(excluded on that pass) and `RB_PSG_PORT_A_RESTORED` — while pass 2, the same build minutes earlier,
+was green: intermittent, exactly as a race is. The cause was ORDER in `teardown`, not the restore:
+the level-4 vector went back to TOS *first*, TOS's `flopvbl` media-change poll resumed on the next
+vblank (hundreds of writes to this register per run on floppy media, pc `$fc15fe` on TOS 1.04), and
+only then did the port-A write and its read-back run — so a ROM poll landing between the two reddened
+a restore that was correct. Phase H's own three-second fuse wait shifted the phase enough to lose the
+race once. **Fixed structurally rather than by excluding the bit**: the port-A restore and its
+read-back now run ABOVE both vector restores, where the ROM's poll is still dead because our handler
+still owns `$70`. Phase H below has the argument for why nothing of ours can write the register there
+either, and the fact that this is not one of the hand-back control's assertions.
+
 **THE PLAY DISK CARRIES ALL FORTY ROWS**, which is more than any headless mode stages
 (`boot_resource_indices` five, `own_resource_indices` seven) — because those are the files their
 ladders reach, and a disk carrying only those would fail at the first stage nobody had smoke-tested.
@@ -17333,3 +17351,234 @@ an intermediate build of that session, not the committed tree. 534 bytes crossed
 figure (frame, fps, the four floppy passes, sha256 `177fdc3c…`) stands. `WBOOT.ST` carries `WB.PRG` 144,832 +
 `WB.IMG` 136,408 + all 40 rows = 689,152 B in 673 clusters. The `28,672` in the -O3 paragraph was measured against
 the same intermediate base and is likewise ~1 KB optimistic; the trade's verdict does not move.
+
+
+## Batch 44 phase H — THE FIRST IRON RESULT: the idle fuse inside the first read
+
+Phase G put the reconstruction on a floppy and wrote the runbook. This phase is what came back from
+the machine the runbook pointed at: **`WBOOT.ST` booted a 4 MB STE (TOS 1.62) to the desktop — no
+title screen, no bombs, no diagnosis.** It is the first defect this project has had that only real
+media could produce, and it turns out to have had a name in the original binary all along.
+
+**Verified 330, 41,652 bytes — UNCHANGED.** Nothing new was reconstructed; what changed is a
+routine that already existed, `load_resource_by_index` ($e782), which now carries two writes the
+original makes below the cut.
+
+**`make test`: 6,461 from a clean `build/`** (6,457 before; +1 for the seam's re-arm differential,
++1 for the one-call-site gate below, and +2 for the two phrases registered in
+`test_boot_inventory.py`'s `RETRACTED_PHRASES`, which is a `parametrize` set and so one entry per
+case. The refusal arm's fuse assertion is not a case of its own — it rides on the error-arm case that
+already stages that refusal).
+`WB-ownrun.PRG` is **144,829 B** against 144,832 before this phase — the two `bus_write_word`s and
+the shim's wait fit inside existing alignment and the teardown reorder gave three bytes back — so
+`WBOOT.ST` still carries 689,152 B in 673 clusters with **38,912 B free of 728,064** and the disk's
+layout does not move. Its sha256 is
+`4eb3a320728c557020cc2d44cf6621c19e6bcdc233941c809e8e979e32c43834`, reproduced by three independent
+builds of this tree — which is what makes `atari/HARDWARE.md` §3's "check the digest before you
+write" a check rather than a hope.
+
+### §1 THE RACE, MEASURED
+
+The trace says it in four lines. `--trace gemdos,fdc`, EmuTOS, `--machine st --memsize 2`:
+
+```
+fdc type II read sector sector=0x6 ... tr=0x1f side=1 drive=0 dmasector=1 addr=0xa9700 VBL=1271
+fdc start motor without spinup                                                        VBL=1271
+fdc change drive/side io_porta_old=0x4 io_porta_new=0x7 side 1->0 drive 0->-1          VBL=1272
+fdc write 8604 command=0xd0   (type IV force int — TOS giving up)                      VBL=1346
+```
+
+`io_porta_new=0x7` is **`floppy_deselect_drives`** — `WB_PSG_DRIVES_DESELECTED`, both drives off and
+the side flipped — written by **our** `vbl_handler` one vblank into a sector read. The sector never
+completes; 74 vblanks later EmuTOS force-interrupts, retries **without re-selecting the drive it
+believes it still has**, `Fread` returns negative, the seam reports `DISK_READ_FAILED`,
+`boot_title_screen` returns `WB_LOAD_DISK_ERROR`, the ladder records `OWN_STOP_BOOT` and the shim
+hands the machine back with `Pterm0`. The desktop appears. Nothing crashed, so nothing said anything.
+
+**HOW THE FUSE CAME TO BE BURNING AT ALL, and it is the project's own seed.** `gen_image.py` seeds
+`WB_FLOPPY_IDLE_TIMER` with `FLOPPY_IDLE_TICKS = 5` so that M1 — the mode that loads no file — can
+witness `floppy_deselect_drives` reaching a real YM2149 inside a short run. On target the shim stages
+`WB.IMG`, calls `install()`, and the boot chain's very first act is the file seam. Five vblanks
+later the fuse fires, and by then the machine is in the middle of GEMDOS reading `TITLESCR.RAD`.
+
+**AND WHY EVERY EMULATED PASS HAD BEEN GREEN.** The floppy mode had only ever been run on whichever
+ROM `tools/hatari/` carried, which is **TOS 1.04**, and TOS 1.04 happens to win this race. Under
+EmuTOS it loses, on any machine type and any memory size — and the STE's own ROM, with a real drive's
+seek and spin-up under it, lost too. **The EmuTOS × floppy combination had never been run.**
+
+### §2 THE ORIGINAL ALREADY HAD A PROTOCOL, AND THE SEAM HAD DROPPED IT
+
+Reading the driver phase B declared a boundary is what named the bug:
+
+* **`floppy_select_drive_a` ($6242)** — `move.b #$5,d0 / clr.w $64f2.l`, then falls through into
+  `psg_set_drive_select`. Every disk operation **starts** by disarming the fuse.
+* **`floppy_unwind_return` ($644e)** — `move.w #$96,$64f2.l / movea.l $64f8.l,a7 / rts`. The common
+  exit of the whole floppy stack **arms** it with 150 frames (~3 s at 50 Hz).
+
+Both routines are **below** the cut, so the substitution replaced them and reproduced neither. The
+fix is `load_resource_by_index` making those two writes itself, around its call to `disk_read_file`:
+zero before, `WB_FLOPPY_IDLE_REARM_FRAMES` ($96) after, **on the success arm and the refusal arm
+alike**, because the original arms on both — every error path in the driver `bra`s to that same exit.
+
+**ARMED ON BOTH ARMS — CHECKED AGAINST THE LISTING, not assumed.** There is exactly one shipped exit
+that skips the arm: `disk_load_file`'s `beq.w $6456` at `$5efa`, which jumps past the `move.w` to the
+stack restore. It is taken only when `floppy_restore_after_load_flag` ($64f1) is zero; that byte is
+`$01` in the image and **nothing in the image writes it**, so no run of the shipped program reaches
+it. Same for `floppy_preamble_flag` ($64f0) on the disarm side. The port reproduces the reachable
+protocol and this paragraph is where the unreachable branch is recorded rather than silently ported.
+
+### §3 WHAT IS PINNED, AND BY WHICH SURFACE
+
+The two halves of the protocol are **not** pinned by the same thing, and saying so is the point.
+
+**THE RE-ARM IS PINNED OFF TARGET, DIFFERENTIALLY.** `test_boot.py`'s seam stub — the hand-assembled
+GEMDOS substitution poked over `disk_load_file` for the oracle — now carries the same two writes in
+`floppy_unwind_return`'s own shape: a `clr.w` at entry and a single common exit that arms and returns,
+reached by both arms through a `bra.s`. So the byte diff holds the C statement and the 68000 one
+equal, and `WB_FLOPPY_IDLE_TIMER` joins the bands `load_resource_by_index` is entitled to write
+(`_load_allowed`, and `test_boot_chain.py`'s `_LOAD_BANDS` and two slice write sets).
+`test_the_seam_re_arms_the_drivers_idle_fuse_on_the_way_out` is the differential, seeded
+mid-countdown; the REFUSAL arm's re-arm is asserted inside
+`test_a_load_the_seam_refuses_clears_joy1_state_and_reports_the_error`, which already stages that
+refusal — candidate-only, for the reason that arm has always been candidate-only (the file model has
+no "present but unreadable" answer). **RED-checked**: with the C reverted the first reports
+`floppy_idle_timer+1 (0x64f3): oracle=0x96 cand=0x55` and the second `the refused load left the idle
+fuse at 85, not 150`.
+
+**AND ONE STRUCTURAL GATE, because the protocol is a property of the SEAM and not of a function.**
+`test_the_file_load_seam_is_crossed_in_exactly_one_place` counts `disk_read_file(` over `src/*.c` and
+requires exactly one, in `boot.c`, in a file that names WB_FLOPPY_IDLE_TIMER. A second crossing would
+be a load with no fuse handling around it and nothing else would notice — the differential compares
+final memory, where a missing disarm is invisible by construction. RED-checked by planting a second
+call in `src/rng.c`: *"the file-load seam is crossed 2 times, not once"*.
+
+**AND THE RETRACTION REGISTER EARNED ITS KEEP AGAIN.** Phase B's claim was registered in
+`RETRACTED_PHRASES` on the way out, and the scan immediately found a copy of it in **`PORTABILITY.md`**
+— a surface this phase had not thought to open. That file's §"one interaction this file should own"
+now carries the re-decision, and the general lesson with it: *a declared boundary can owe its caller
+more than the routine's return value*, which is the shape of this whole defect.
+
+**THE DISARM IS INVISIBLE TO EVERY OFF-TARGET SURFACE, and that is a fact about the comparison rather
+than a gap in the cases.** The arm overwrites whatever the disarm left, so final memory is identical
+either way; nothing runs concurrently with the seam under the oracle, so no case can observe the word
+*during* the load. **The surface that catches it is the machine**, and this phase adds it.
+
+**`smoke.py floppy` PASS 5 — the same play disk under EmuTOS.** `run_hatari` gained an explicit `tos`
+parameter (`BUNDLED_EMUTOS` names Hatari's own ROM; the default is still `find_tos()`, so "both ROMs"
+by environment still works), and `floppy_play_pass` is now one function run twice, the ROM its only
+variable. Pass 5 requires the title's pens exactly as pass 1 does — this is the combination that
+reproduced on a real machine and had never been run.
+
+**THE DISK IS BUILT ONCE AND THE ROMS ARE COMPARED, both of which the review gate asked for and both
+of which are about a claim being checkable.** `build_the_play_disk` writes `WBOOT.ST` and prints its
+layout and sha256 ONCE, because `atari/HARDWARE.md` §3 tells a person to read those off the run they
+just did — two passes each writing their own copy would have made that instruction ambiguous. And the
+mode now REFUSES when the two passes booted the same ROM: `find_tos` answers None — Hatari's bundled
+EmuTOS — whenever there is no `tools/hatari/TOS*.img` and no `$WB_TOS_ROM`, which is exactly what
+pass 5 forces, so on such a machine the old code would have printed "on BOTH ROMs" over one ROM run
+twice. Every row of each pass is tagged with its pass name so a FAIL says which ROM produced it, and
+the closing line prints BOTH passes' first-pen vblanks instead of attributing pass 1's to both
+(measured this round: **1,801 vblanks on TOS 1.04 and 1,261 on EmuTOS**, one disk).
+
+**AND THE ROM IDENTITY IS TAKEN FROM THE RUN AS WELL AS FROM THE ARGUMENT.** Hatari does not print
+which image it loaded, but WHERE the machine started executing is in every trace, so `rom_reset_base`
+reads it off the first ROM-side pc: **`$fc0000` for TOS 1.04 and `$e00000` for EmuTOS**, printed per
+pass. It is a NOTE and not a second refusal, because two different images legitimately share a base
+($e00000 is EmuTOS's and TOS 2.06's alike) — the refusal stays on the selection, which is the half
+that is sound. `refuse_unless_two_roms` is a named function for the same reason the mode's other
+refusals are: it is RED-checkable in a second, and it was (`(None, None)` refuses with the message
+that names both search paths; the real pair is accepted; two images at one base print the note).
+
+**...AND THE MECHANISM ROW UNDER IT.** `port_a_writes_inside_a_disk_operation` walks the GEMDOS, FDC
+and IO-write traces as ONE ordered stream and requires that **no program-side write to YM2149 port A
+lands while a disk operation is open**. Both play passes carry it (`FLOPPY_PLAY_TRACE` gained `fdc`),
+and it is the row that reddens for the *reason* rather than for the symptom. Its vacuity guard counts
+the PROGRAM's own `Fopen`/`Fcreate` calls (pc below the ROM floor) rather than disk operations of any
+kind — on this media TOS reads four to nine sectors before it even `Pexec`s the program, so the
+obvious guard would have been satisfied by the ROM's traffic on a run in which the reconstruction
+opened nothing.
+
+**THE TWO WINDOWS ARE TRACKED INDEPENDENTLY, and the first draft shared one stack — a real defect the
+review gate caught and the measurement is worth keeping.** `fdc complete command` is emitted for
+EVERY WD1772 command, type I seeks and restores included: 754 completions against 588 read-sector
+opens on the play log. A shared stack therefore let a *seek's* completion pop the *file's* entry and
+close the GEMDOS window early. Replaying both logics over the archived logs against the raw
+`Fopen`..`Fclose` line spans: the shared stack held the file window open for **51.0%** of that span
+on the play log and **51.5%** on the reverted one; two independent counters hold it open for **100%**
+of both. The YM2149 select/data pairing that both this and `psg_port_a_writes` need is now one
+`PortALatch` rather than two copies of the same state machine.
+
+**THE TWO WINDOWS ARE NOT THE SAME STRENGTH, AND THIS WAS MEASURED RATHER THAN ASSUMED.** The brief
+this phase was written to asked for the FDC window alone — no program write between a `type II read
+sector` and its completion — which is exactly what broke. On its own it is a **race**: a build with
+the fix reverted put its deselect inside a read on the archived disk, and **27 scanlines before the
+next command** on a rebuild, and merely adding `io_write` to the trace was enough to move it. So the
+FDC window alone is a pin that passes about half the time. The **GEMDOS** window — `Fopen` to
+`Fclose` — is deterministic (the fuse is armed 5 vblanks after `install()` and the first load runs
+for thousands) and is also the exact span the C holds the word at zero across. The pin is the union:
+the hardware fact where it can be seen, the seam's own window always. **RED-checked on four logs**:
+both fixed passes report 0 violations over 2 program-side opens; **both reverted builds report 1
+each — `$27` from `vbl_handler`'s own pc, one vblank after `TITLESCR.RAD` was opened, and in both it
+is the GEMDOS window that catches it and the FDC window that catches neither.** That includes the
+reverted build whose boot happened to survive the race, which is the case the FDC window alone would
+have called green.
+
+**THE SHIM WAITS THE FUSE OUT.** `run_out_the_floppy_idle_fuse` spins, bounded by `SPINS_LONG` (~6 s
+against the fuse's ~3 s), until the word reaches zero, immediately before the port-A read-back. Every
+mode that loads a file now has its fuse re-armed behind the last load rather than spent five vblanks
+in, so `RB_PSG_PORT_A_DESELECTED` and the "floppy idle timer expired" row would otherwise be asking
+their question before the answer exists. The bound is a **hang guard and not an assertion** — a fuse
+that never reaches zero leaves its value in the record, and that row is what reddens.
+
+**AND THE PHASE SHIFT CASHED IN A QUEUED RACE, which is worth its own line because the fix is in the
+same file and is NOT about the fuse.** The three-second wait moved the teardown far enough for
+`RB_PSG_PORT_A_RESTORED` to lose a race phase G had queued as "not proven able to fail": the gate run
+went red on floppy pass 3 with `read-backs failed 0x4040`, pass 2 having been green minutes earlier.
+`teardown` handed the level-4 vector back to TOS BEFORE restoring port A, so TOS's `flopvbl`
+media-change poll — dead only while our handler owns `$70` — resumed on the next vblank and could
+land between our write and our read-back. **The restore and its read-back moved above both vector
+restores.** Nothing of ours can write the register there: `vbl_handler` reaches port A only through
+the idle countdown, `run_out_the_floppy_idle_fuse` has already run that to zero, the handler returns
+on a zero without touching the chip — and that premise is graded rather than argued, because
+`smoke.py`'s "floppy idle timer expired" row reads the same word out of the record and would be red
+first. It is also **not one of the hand-back control's assertions**: `build.sh m3fault` suppresses the
+two vector stores, and re-running it after the move still breaks exactly `RB_VBL_VECTOR_RESTORED`,
+`RB_ACIA_VECTOR_RESTORED`, the debugger's `$70`/`$118` comparison and TOS's frame clock —
+`RB_PSG_PORT_A_RESTORED` is not in that set and never was. `drive_select_rows`' two pass-2 rows are
+unaffected and were re-read: our restore is still the last of OUR writes and the ROM's still follow
+it — more certainly than before, since the poll now cannot resume until after the restore. Measured:
+`smoke.py floppy` run twice end to end, both fully green, both probe passes reporting `failed 0x0040`
+where the red run reported `0x4040`.
+
+### §4 WHAT THE REVIEW GATE ADDED THAT IS NOT ABOUT THIS BUG
+
+Two of the gate's findings are general and are recorded here so they are not re-derived:
+
+* **`docs/on-target-execution.md` taxonomy class 11** — *a live interrupt handler reading state whose
+  protocol lives below a declared seam*. The taxonomy's first entry hit on real hardware by a person
+  switching a machine on rather than by a differential. It names why the class is invisible off
+  target (the arm overwrites the disarm, so final memory is identical), why it is ROM-dependent, and
+  the pin shape: a trace-window row taking the union of the seam's window and the hardware's, plus a
+  ROM the passes were not running. `PORTABILITY.md`'s own entry carries the boundary-pricing half:
+  *a declared boundary owes its caller more than the substituted routine's return value*.
+* **`check_machine_health` now names a likely cause when every surviving fault shares one ROM pc** —
+  the shape of TOS sizing memory from an address `original.MEMORY_PROBE_PCS` was not written for,
+  which is what a new ROM or machine type produces. It changes the MESSAGE only: the allowlist stays
+  pc-EXACT, because excusing a pc for being in ROM would excuse the stale-vector class the scan is
+  for, and the hint says "confirm", not "excuse".
+
+### §5 WHAT REMAINS UNPINNED
+
+* **THE REAL MACHINE HAS NOT SEEN THE FIX.** Everything in §3 is emulated. The runbook
+  (`atari/HARDWARE.md`) still has to be walked on the user's STE with a freshly written `WBOOT.ST`
+  before this phase can be called closed. **That is the open item.**
+* **THE DISARM HAS NO OFF-TARGET PIN AT ALL** (§3). If a later kit phase gives the file model a
+  "present but unreadable" answer, it still would not help: the disarm is about *when*, not *what*,
+  and the host differential has no clock. A candidate remedy — a seam model that ticked the fuse
+  while it served — would be modelling the machine to check the model, and is not proposed.
+* **THE RE-ARM VALUE IS PINNED, THE COUNTDOWN'S CONSEQUENCE IS NOT.** Nothing asserts that 150 frames
+  is long enough for anything in particular. It is the original's number, cited, and that is all it
+  is; a shorter one would still be a legal fuse and would still pass every case here.
+* **`FLOPPY_IDLE_TICKS = 5` STAYS, and its role is now narrower than its name.** It is M1's witness
+  and M1's alone — every booting mode cancels it before it can fire. `gen_image.py` and `smoke.py`
+  say so where the seed and the rows are, so the next reader does not re-derive it from a trace.

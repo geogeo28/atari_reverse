@@ -176,6 +176,14 @@ def seeds():
         # ...and the countdown whose expiry is the ONE arm of vbl_handler that reaches the YM2149.
         # Seeded to a small value so the M1 run witnesses floppy_deselect_drives on a real chip;
         # smoke.py reads this same number out of the map below rather than restating it.
+        #
+        # THE SEED IS M1'S ALONE, and every mode that LOADS A FILE overwrites it before it can fire.
+        # The seam carries the original driver's idle-fuse protocol (../src/boot.c's
+        # `load_resource_by_index`): it CANCELS this countdown ahead of each load — which is what
+        # keeps `floppy_deselect_drives` from dropping the drive-select lines with a sector read in
+        # flight, the failure that stopped the boot on a real STE — and RE-ARMS it with
+        # WB_FLOPPY_IDLE_REARM_FRAMES afterwards. So in M1 the fuse expires five vblanks in, and in
+        # every booting mode it expires 150 vblanks after the LAST load.
         wb("FLOPPY_IDLE_TIMER"): word(FLOPPY_IDLE_TICKS),
 
         # snd_music_tick_body's ENTRY GATE ($17ca0): it returns at once while the engine is disabled
@@ -203,8 +211,9 @@ def seeds():
     }
 
 
-# vblanks before the idle timer expires. Small enough that a short run witnesses the expiry, and
-# larger than 1 so that the DECREMENT arm is exercised and not only the fire.
+# vblanks before the idle timer expires IN M1, the one mode that loads no file and so never has the
+# seed cancelled out from under it (see the seed's own note). Small enough that a short run witnesses
+# the expiry, and larger than 1 so that the DECREMENT arm is exercised and not only the fire.
 FLOPPY_IDLE_TICKS = 5
 
 # Not WB_SND_TICK_DROP_50HZ ($00), _60HZ ($2b) or _MONO ($48). $ff is outside the set of three, which

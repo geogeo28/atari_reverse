@@ -2741,11 +2741,25 @@ real disk fails.
 
 **ONE INTERACTION THIS FILE SHOULD OWN.** The vblank handler counts `floppy_idle_timer` (`$64f2`)
 down and calls `floppy_deselect_drives` (`$6268`, reconstructed since batch 42 phase B) when it
-expires. A GEMDOS substitution **never arms that timer**, so on target the two mechanisms do not
-meet: the reconstruction will never deselect a drive because it never selects one. Harmless — nothing
-else reads the timer — but it is a real difference between the substitution and the original, and it
-is the kind of thing that is invisible until a later phase wonders why a PSG port-A write it expected
-never happens.
+expires. The substitution replaces the two routines that managed that word —
+`floppy_select_drive_a` clears it as a disk operation starts, `floppy_unwind_return` arms it as one
+ends — so a port that does nothing about it has a live countdown running against a GEMDOS load that
+never told it anything.
+
+**RETRACTED AND RE-DECIDED, 2026-08-26 (`STATUS.md` batch 44 phase H, which is the measured copy).**
+This paragraph originally concluded that the countdown and the substitution therefore never interact
+on target, and that the difference was harmless because nothing in the image reads the word. Both
+halves were wrong, and a real STE is what said so: they interact through `atari/gen_image.py`'s seed,
+and the reader that matters is the WD1772 rather than anything in the image. **The seam now carries
+the original's protocol itself** (`src/boot.c`'s `load_resource_by_index`).
+
+**AND THE GENERAL LESSON IS THIS FILE'S BUSINESS, which is why the entry stays here.** *A declared
+boundary owes its caller more than the substituted routine's return value: it owes any SHARED STATE
+that routine maintained for code outside the boundary.* Pricing a boundary means reading the excluded
+code far enough to find such state — a `clr`/`move` pair on a global at a subsystem's entry and
+common exit is the signature — and it bites hardest where the outside reader is an INTERRUPT HANDLER,
+because that is the part of a reconstruction that keeps running while a substituted call is in
+flight. `docs/on-target-execution.md` taxonomy class 11 is the general write-up.
 
 **AND ONE NEW ENTRY FOR §6's PRICE LIST, which is cheap rather than a device model.** The staged-file
 model answers served or REFUSED, and a refusal sinks the run — so a reconstructed loader's ERROR arm

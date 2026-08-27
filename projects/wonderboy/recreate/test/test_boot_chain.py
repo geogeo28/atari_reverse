@@ -71,7 +71,8 @@ import leaf
 from layout import wb
 
 from test_boot import (ACTOR_TABLES, ACTOR_TABLE_SPAN, BIN, COPYLOCK_ARM_FLAG,
-                       COPYLOCK_ARM_FLAG_LEN, DISK2, LEVEL_SEQ_INDEX, LEVEL_SEQ_SECOND_LOAD,
+                       COPYLOCK_ARM_FLAG_LEN, DISK2, FLOPPY_IDLE_TIMER, LEVEL_SEQ_INDEX,
+                       LEVEL_SEQ_SECOND_LOAD,
                        LIFE_RESTART_ENTRY_C26, LOAD_COPYLOCK_RAN, LOAD_DISK_ERROR, LOAD_OK,
                        LOAD_RETRY_DEST, LOAD_RETRY_INDEX, LONGWORD_LEN, POISON,
                        RESOURCE_LOAD_BUFFER, SCREEN_BYTES, SCREEN_HIGH, SCREEN_LOW, WORD_LEN,
@@ -454,6 +455,7 @@ def _prompt_allowed():
             (RESOURCE_LOAD_BUFFER, DATADISK.stat().st_size),          # ...and where it read it from
             (RAD_SAVED_SP, RAD_SAVED_SP_LEN),                         # the depacker's parked a7
             (LOAD_RETRY_INDEX, LONGWORD_LEN), (LOAD_RETRY_DEST, LONGWORD_LEN),
+            (FLOPPY_IDLE_TIMER, WORD_LEN),                            # the seam's re-armed fuse
             (harness.OS_FS_TABLE, harness.OS_FS_ENTRY)]
 
 
@@ -520,6 +522,7 @@ def _title_allowed(image):
         (RAD_SAVED_SP, RAD_SAVED_SP_LEN),                        # the depacker's parked a7
         (LOAD_RETRY_INDEX, LONGWORD_LEN), (LOAD_RETRY_DEST, LONGWORD_LEN),
         (COPYLOCK_ARM_FLAG, COPYLOCK_ARM_FLAG_LEN),
+        (FLOPPY_IDLE_TIMER, WORD_LEN),                           # the seam's re-armed fuse
         (harness.OS_FS_TABLE, harness.OS_FS_ENTRY),
     ]
 
@@ -862,10 +865,12 @@ _STOPPED_BANDS = {
                         (LEVEL_SEQ_INDEX, WORD_LEN),                           #    three stores
                         (wb("STAGE_SECOND_LOAD_FLAG"), 1)),
 }
-# `load_resource_by_index`'s own, on every slice: the two retry longwords it writes before the call
-# and the `clr.b` its error arm makes (test_boot.py pins both).
+# `load_resource_by_index`'s own, on every slice: the two retry longwords it writes before the call,
+# the `clr.b` its error arm makes, and WB_FLOPPY_IDLE_TIMER — the driver's idle fuse, which the seam
+# disarms for the load and re-arms on the way out of BOTH arms, this one included (test_boot.py pins
+# all three).
 _LOAD_BANDS = ((LOAD_RETRY_INDEX, LONGWORD_LEN), (LOAD_RETRY_DEST, LONGWORD_LEN),
-               (wb("JOY1_STATE"), 1))
+               (wb("JOY1_STATE"), 1), (FLOPPY_IDLE_TIMER, WORD_LEN))
 # ...and the byte each slice must be SHOWN to have written before it asked for the file. The bands
 # above are permissions, and a permission is not evidence: a port that reported the error before
 # doing any of the pre-load work would satisfy every one of them. Each entry names an address whose

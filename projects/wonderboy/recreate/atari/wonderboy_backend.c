@@ -20,7 +20,7 @@
  *   psg_port_read   3 call sites   ../src/game.c:313, ../src/sound.c:242,1257
  *   sched_wait8     1 call site    ../src/game.c:49   (two wait SITES reach it: $60e and $64e)
  *   sched_poll16    2 call sites   ../src/game.c:397, 412
- *   disk_read_file  1 call site    ../src/boot.c:306 — `load_resource_by_index` ($e782), THE FILE-LOAD
+ *   disk_read_file  1 call site    ../src/boot.c — `load_resource_by_index` ($e782), THE FILE-LOAD
  *                                  SEAM (the kit's include/disk.h argues why it is a seam at all)
  *   os_refused      1 call site    ../src/sound.c:983 — NOT defined here: -DOS_NO_REFUSAL_TALLY makes
  *                                  the kit's os.h serve a `static inline` identity (os.h:57)

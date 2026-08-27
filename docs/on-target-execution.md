@@ -162,11 +162,11 @@ add a seam, the core/no-op side must have **no image effect** (or the oracle-mod
 differential test still holds; put the real trap/hardware poke only in the PRG override, and gate it
 on `hw_ready` if it touches supervisor-only I/O space (`$ffff8xxx`, `$fffffcxx`) before `Super(0)`.
 
-## Bug taxonomy (1-5 in BuggyBoy, 6-8 in Joust, 9-10 in Wonder Boy)
+## Bug taxonomy (1-5 in BuggyBoy, 6-8 in Joust, 9-11 in Wonder Boy)
 
-Entries **1-9 were each HIT in a real build** and are written from the wreckage. **Entry 10 was
-not**: it is the one shape here that a review caught at the design stage, before the build that
-would have carried it shipped — which is why it reads as a method rather than as a post-mortem, and
+Entries **1-9 and 11 were each HIT in a real build** and are written from the wreckage — 11 on a real
+Atari, by a person who switched the machine on. **Entry 10 was not**: it is the one shape here that a
+review caught at the design stage, before the build that would have carried it shipped — which is why it reads as a method rather than as a post-mortem, and
 why it is worth having anyway. A shape that is cheap to avoid once you have seen it named is exactly
 what a taxonomy is for; the honest label there is "avoided", not "survived".
 
@@ -524,6 +524,51 @@ that nothing re-checks.* Find the instruction that produces it, name that instru
 keep the measurement as a cross-check. If it genuinely cannot be produced — a value the machine
 supplies rather than the program — say so where the seed is, and name the surface that would notice
 if it drifted.
+
+### 11. A live interrupt handler reading state whose PROTOCOL lives below a declared seam
+
+**Hit on iron.** Wonder Boy's play floppy booted a 4 MB STE to the desktop — no title screen, no
+bombs, no diagnosis — with every emulated surface green. `projects/wonderboy/recreate/STATUS.md`
+batch 44 phase H has the trace and the fix.
+
+**The bug shape, and it is a seam's second obligation.** Declaring a boundary (§"The seam pattern")
+prices what the substituted code RETURNS. It does not price what that code did to shared state on the
+way. Wonder Boy's boot chain is cut above `disk_load_file`, so the WD1772 driver is excluded — but
+two instructions inside that driver are a protocol with the rest of the program: `floppy_select_drive_a`
+clears an idle countdown as a disk operation starts, and `floppy_unwind_return` arms it as one ends.
+The countdown's OTHER end is the vertical-blank handler, which is on the reconstruction's side of the
+cut and is **live on target**, and what it does when the countdown expires is drop the drive-select
+lines on the sound chip. Substituting the driver dropped the protocol and left the handler running
+against a GEMDOS read that had told it nothing: the fuse expired one vblank into the first sector,
+the read timed out, the ROM's retry did not re-select, and the boot reported a disk error.
+
+**Why every host surface was green, and this is the part worth internalising.** The protocol is
+*clear, then arm*. The arm overwrites the clear, so a final-memory differential sees the same bytes
+whether the clear happened or not — the disarm is a claim about WHEN, and a harness with no clock and
+nothing running concurrently has no way to ask. The half that IS visible (the arm's value) can be
+pinned differentially and tells you nothing about the half that bites.
+
+**Why it was ROM-dependent, which is what kept it off the machine's own list of suspects.** It is a
+race, and the ROM's driver decides it. Under Hatari it fails on EmuTOS and passes on TOS 1.04 — and
+TOS 1.04 was the only ROM the floppy mode had ever been run on, because the ROM search picks whatever
+image the tree happens to carry. The STE's 1.62 lost it too. One defect, three answers.
+
+**How to find the class before it finds you.** For every routine inside a declared boundary, ask not
+only what it returns but **what shared state it writes that something OUTSIDE the boundary reads** —
+and read the excluded code far enough to answer. A `clr`/`move` pair on a global at the entry and the
+common exit of an excluded subsystem is the signature. Interrupt handlers are where it bites, because
+they are the one part of a reconstruction that keeps running while a substituted call is in flight.
+
+**The pin shape, and it is two things.** First, a **trace-window row**: assert off the emulator's
+ordered trace that the reconstruction makes no write to the shared hardware while the operation is
+open. Wonder Boy's walks the GEMDOS and FDC traces as one stream and forbids a program-side write to
+the drive-select register while a file is open or a sector is in flight — and it takes the union of
+two windows on purpose, because the hardware-level one (sector in flight) is itself a race that a
+reverted build wins about half the time, while the seam-level one (`Fopen`..`Fclose`) is deterministic
+and is exactly the span the code holds the state across. Second, **a ROM the passes were not running**:
+the combination that reproduced had never been exercised, so the mode now boots the same disk on two
+ROMs and refuses if they turn out to be the same one. A pin that cannot fail on the machine that
+failed is not a pin.
 
 ## The observable surfaces
 

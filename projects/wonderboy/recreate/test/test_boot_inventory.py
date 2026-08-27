@@ -985,6 +985,11 @@ RETRACTED_PHRASES = {
     "the prompt's entrance count": "has one entrance",
     "the prompt's entrance identity": "the tail of the music fade",
     "the prompt's entrance identity, wonderboy.h's spelling": "ending's music fade ($700e)",
+    # Batch 44 phase H: phase B's own deviation list said the vblank handler's idle countdown and the
+    # GEMDOS substitution never meet on target. They meet through `gen_image.py`'s seed, and the
+    # reader that matters is the WD1772 rather than anything in the image — measured on a real STE.
+    "phase B's idle-timer deviation": "so on target the two mechanisms do not meet",
+    "phase B's idle-timer harmlessness": "Harmless as long as nothing else reads the timer",
 }
 # NOT REGISTERED, AND THE FIRST REASON IS THAT A SCAN CANNOT BE RUN AGAINST A HISTORY. Phase E's
 # opening paragraph quoted three of phase D's §7 queue entries verbatim — the play build's staged
@@ -1005,6 +1010,10 @@ RETRACTION_SURFACES = (
     "../names.txt", "STATUS.md", "PORTABILITY.md", "src/boot.c", "include/boot.h",
     "include/wonderboy.h", "atari/shim_include/tos.h", "atari/wonderboy_backend.c",
     "atari/README.md", "atari/gen_image.py", "atari/wonderboy_main.c", "../notes/architecture.md",
+    # Batch 44 phase H writes the re-decided idle-fuse claim into both of these, so both are places
+    # the retracted spelling could come back. The runbook is prose a person reads on the machine and
+    # the smoke is where the rows that grade it live — neither was scanned before.
+    "atari/HARDWARE.md", "atari/smoke.py",
     "../../../docs/on-target-execution.md", "../../../docs/methodology.md",
     "../../../tools/recreate_kit/TRAP_MODEL.md",
     "../../../projects/joust/recreate/atari/joust_os.s",
@@ -1043,3 +1052,38 @@ def test_the_retraction_scan_can_actually_find_a_phrase():
     assert len(_normalised(RETRACTION_SURFACES[0])) > 1000, (
         f"{RETRACTION_SURFACES[0]} normalised to almost nothing, so the scan is reading an empty "
         f"surface and every phrase would look absent")
+
+
+# --- the seam's ONE call site -----------------------------------------------------------------
+#
+# WHY THIS IS WORTH A CASE. Batch 44 phase H gave `load_resource_by_index` two writes that belong to
+# the driver BELOW the cut — WB_FLOPPY_IDLE_TIMER disarmed for the load and re-armed after it — and
+# that protocol is correct only while the seam is crossed in exactly one place. A second
+# `disk_read_file(` call anywhere in `src/` would be a load with no fuse handling around it, and
+# nothing else in the suite would notice: the differential compares final memory, and a second call
+# site's missing disarm is invisible there for the reason ../STATUS.md phase H §3 states.
+#
+# It is the SOURCE that is counted rather than the call graph, because that is the property being
+# held: `atari/wonderboy_backend.c`'s own header table says "1 call site" and `atari/build.sh`'s
+# symbol gate says the symbol is REACHED, but neither of them says it is reached once.
+SEAM_CALL = re.compile(r"\bdisk_read_file\s*\(")
+
+
+def test_the_file_load_seam_is_crossed_in_exactly_one_place():
+    """One `disk_read_file(` call in the whole reconstruction, and it is `load_resource_by_index`'s.
+
+    A comment mentioning the name is not a call, so the pattern requires the open parenthesis; the
+    banner text in `src/boot.c` names the routine several times without matching."""
+    sites = [(path.name, at + 1, line.strip())
+             for path in sorted((HERE / "src").glob("*.c"))
+             for at, line in enumerate(path.read_text().splitlines())
+             if SEAM_CALL.search(line)]
+    assert len(sites) == 1, (
+        f"the file-load seam is crossed {len(sites)} times, not once: {sites}. Each crossing needs "
+        f"WB_FLOPPY_IDLE_TIMER disarmed and re-armed around it (../STATUS.md batch 44 phase H), and "
+        f"a missing pair is invisible to every host differential")
+    where, _at, call = sites[0]
+    assert where == "boot.c", f"the one crossing moved to src/{where}, which this comment no longer describes"
+    assert "WB_FLOPPY_IDLE_TIMER" in (HERE / "src" / where).read_text(), (
+        f"src/{where} crosses the seam and never names WB_FLOPPY_IDLE_TIMER, so the fuse protocol "
+        f"the crossing owes its caller is not there: {call}")

@@ -724,6 +724,10 @@ LOAD_DISK_ERROR = wb("LOAD_DISK_ERROR")
 COPYLOCK_ARM_FLAG = wb("COPYLOCK_ARM_FLAG")
 COPYLOCK_ARM_FLAG_LEN = wb("COPYLOCK_ARM_FLAG_LEN")
 JOY1_STATE = wb("JOY1_STATE")
+# THE FUSE THE SEAM CARRIES ACROSS THE CUT — `_seam_stub` and ../src/boot.c both write these, and
+# `_load_allowed` names the word as a band the run is entitled to touch.
+FLOPPY_IDLE_TIMER = wb("FLOPPY_IDLE_TIMER")
+FLOPPY_IDLE_REARM_FRAMES = wb("FLOPPY_IDLE_REARM_FRAMES")
 
 LEVEL_SEQ_TABLE = wb("LEVEL_SEQ_TABLE")
 LEVEL_SEQ_ROWS = wb("LEVEL_SEQ_ROWS")
@@ -769,11 +773,21 @@ def _seam_stub():
     """`disk_load_file`'s bytes replaced by the GEMDOS substitution the port makes. a0 = name,
     a1 = destination, d0 = 0 / -1 out; d1 and the stack are the stub's own.
 
+    IT KEEPS THE IDLE FUSE THE WAY THE ROUTINE IT REPLACES DOES, which is the half of the
+    substitution that is not GEMDOS. `disk_load_file` opens through `floppy_select_drive_a` ($6242),
+    whose `clr.w $64f2.l` disarms WB_FLOPPY_IDLE_TIMER for the duration, and every one of its exits
+    — the success path and all nine error `bra`s — leaves through `floppy_unwind_return` ($644e),
+    whose `move.w #$96,$64f2.l` re-arms it. So the stub clears at entry and arms at a COMMON EXIT of
+    its own, in that routine's shape rather than beside each `rts`. The port makes the same two
+    writes at the seam (../src/boot.c's `load_resource_by_index`), and it is the byte diff between
+    the two that holds them equal.
+
     Assembled through `leaf.asm`, which owns the label pass and the short-branch displacement rule
     (`leaf.bcc_s`, `leaf.BRANCH_EXTENSION`). An earlier revision hand-rolled both, and the copy could
     only branch FORWARD — so the stub silently could not have grown a loop, and the `2` in
     "counted from the byte after the branch word" existed twice."""
     return leaf.asm(0, [
+        leaf.clr_w_abs_l(FLOPPY_IDLE_TIMER),      #        clr.w $64f2.l     floppy_select_drive_a's
         b"\x2f\x09",                              #        move.l a1,-(a7)   save the destination
         b"\x42\x67",                              #        clr.w -(a7)       Fopen mode 0
         b"\x2f\x08",                              #        move.l a0,-(a7)
@@ -799,10 +813,12 @@ def _seam_stub():
         b"\x4a\x80",                              #        tst.l d0
         leaf.bcc_s(BMI_S_OPCODE, "fail"),
         leaf.moveq(0, 0),                         #        moveq #0,d0       DISK_READ_OK
-        leaf.RTS,
+        leaf.bra_s("unwind"),
         leaf.lab("fail"),
         b"\x70\xff",                              # fail:  moveq #-1,d0
-        leaf.RTS,
+        leaf.lab("unwind"),
+        leaf.move_w_imm_abs_l(FLOPPY_IDLE_REARM_FRAMES, FLOPPY_IDLE_TIMER),
+        leaf.RTS,                                 # unwind: floppy_unwind_return's own two lines
     ])
 
 
@@ -907,10 +923,11 @@ _LOAD_RESOURCE = leaf.register_glue("load_resource_by_index", [ctypes.c_uint32] 
 
 def _load_allowed(dest, span):
     """Every band `load_resource_by_index` may write: the file's landing place, the two retry
-    longwords, the Copylock's flag, and the model's own table entry for the staged file — the last
-    of which is exactly what makes the substitution comparable, since it is in the image."""
+    longwords, the Copylock's flag, WB_FLOPPY_IDLE_TIMER — the fuse the seam disarms and re-arms on
+    the driver's behalf — and the model's own table entry for the staged file, the last of which is
+    exactly what makes the substitution comparable, since it is in the image."""
     return [(dest, span), (LOAD_RETRY_INDEX, LONGWORD_LEN), (LOAD_RETRY_DEST, LONGWORD_LEN),
-            (COPYLOCK_ARM_FLAG, COPYLOCK_ARM_FLAG_LEN),
+            (COPYLOCK_ARM_FLAG, COPYLOCK_ARM_FLAG_LEN), (FLOPPY_IDLE_TIMER, WORD_LEN),
             (harness.OS_FS_TABLE, harness.OS_FS_ENTRY)]
 
 
@@ -1015,6 +1032,48 @@ def test_the_first_load_of_the_boot_runs_the_copylock_and_disarms_it(armed):
         f"the port reported {info['ret']}, not WB_LOAD_COPYLOCK_RAN — it did not take the armed arm")
     assert bytes(after[COPYLOCK_ARM_FLAG:COPYLOCK_ARM_FLAG + COPYLOCK_ARM_FLAG_LEN]) \
         == copylock.DISARMED, "the original left the flag armed, so the guard would run twice"
+
+
+# THE FUSE'S SEED FOR A CASE: neither zero (which is where a disarm would leave it, so a stub that
+# only cleared would pass) nor the re-arm value (which is where an arm leaves it, so a run that did
+# nothing at all would pass). It is a plausible mid-countdown reading, which is the state a real
+# machine is in when a load is asked for.
+IDLE_FUSE_MID_COUNTDOWN = 0x55
+
+
+def test_the_seam_re_arms_the_drivers_idle_fuse_on_the_way_out():
+    """THE HALF OF `disk_load_file` THAT IS NOT GEMDOS, and the load-bearing one on real hardware.
+
+    WB_FLOPPY_IDLE_TIMER is the countdown `vbl_handler` runs down to `floppy_deselect_drives`. Below
+    the cut the original disarms it as a disk operation starts and re-arms it with $96 as one ends;
+    this port makes both writes at the seam and `_seam_stub` makes them in the routine's own shape,
+    so the byte diff is what holds the two statements equal.
+
+    WHAT THIS CASE PINS IS THE RE-ARM ON THE SUCCESS ARM, and it says so rather than claiming more.
+    The REFUSAL arm arms too — the original's exit is common to both — and that half is pinned inside
+    `test_a_load_the_seam_refuses_clears_joy1_state_and_reports_the_error`, which already stages that
+    premise; a second run of it here would be a second staging of one refusal.
+
+    THE DISARM IS PINNED BY NEITHER, and is invisible to any comparison of FINAL memory because the
+    arm overwrites it whatever it was. The surface that catches a missing disarm is the machine —
+    `atari/smoke.py floppy`'s two-ROM play passes and the disk-operation window row beside them,
+    where the fuse expiring inside the first load is what stopped the boot on a real STE
+    (../STATUS.md, batch 44 phase H)."""
+    data = (BIN / DISK2 / "DATADISK.RAD").read_bytes()
+    index = wb("RESOURCE_DATADISK")
+    what = f"load_resource_by_index({index}) over a fuse at {IDLE_FUSE_MID_COUNTDOWN}"
+    pokes = {**seam_pokes([("DATADISK.RAD", data)]),
+             FLOPPY_IDLE_TIMER: IDLE_FUSE_MID_COUNTDOWN.to_bytes(WORD_LEN, "big")}
+    info = leaf.run("load_resource_by_index", _LOAD_RESOURCE(index, DST_AT),
+                    _load_allowed(DST_AT, len(data)), what,
+                    regs={"d0": index, "a1": DST_AT, "_pokes": pokes}, poison=False,
+                    max_insns=SEAM_INSN_CAP)
+    assert info["ret"] == LOAD_OK, f"{what}: the port reported {info['ret']}, not WB_LOAD_OK"
+    left = leaf.read_int(info, FLOPPY_IDLE_TIMER, WORD_LEN, what)
+    assert left == FLOPPY_IDLE_REARM_FRAMES, (
+        f"{what}: the seam left the fuse at {left}, not the {FLOPPY_IDLE_REARM_FRAMES} "
+        f"`floppy_unwind_return` arms it with — so on target the drives would never be deselected "
+        f"after a load")
 
 
 def test_an_index_of_0x1000_wraps_to_row_zero_and_loads_the_title_screen():
@@ -1259,17 +1318,30 @@ def test_a_load_the_seam_refuses_clears_joy1_state_and_reports_the_error():
     """`clr.b joy1_state` is the error arm's only image write — the red colour 0 beside it is off the
     image, and the interactive retry after it is a spin this port declines to model.
 
+    ...AND THE IDLE FUSE IS RE-ARMED ON THIS ARM TOO, which is the second claim and rides on the same
+    staged refusal rather than on a run of its own. The original arms it at `floppy_unwind_return`,
+    which is the common exit of the whole floppy stack: every error path in the driver `bra`s there,
+    so a port that armed only on success would leave the drives selected after a failed load. The
+    SUCCESS half is `test_the_seam_re_arms_the_drivers_idle_fuse_on_the_way_out` above, where the
+    oracle can be asked; here the model has no answer to compare against, which is what the section
+    banner is about.
+
     THE PREMISE IS THE REFUSAL, and it is staged by staging NOTHING: the poke dict carries no file at
     all, so `os_fopen` finds no entry for TITLESCR.RAD's row and refuses. The control below is what
     says the refusal is doing the work rather than the arm being the port's only answer."""
-    pokes = {JOY1_STATE: bytes([POISON])}
+    pokes = {JOY1_STATE: bytes([POISON]),
+             FLOPPY_IDLE_TIMER: IDLE_FUSE_MID_COUNTDOWN.to_bytes(WORD_LEN, "big")}
     ret, image = leaf.run_candidate_only(_LOAD_RESOURCE(wb("RESOURCE_TITLESCR"), DST_AT), pokes)
     assert ret == LOAD_DISK_ERROR, (
         f"a load with nothing staged returned {ret}, not WB_LOAD_DISK_ERROR — the port did not take "
-        f"the error arm, so neither of this case's claims is about that arm")
+        f"the error arm, so none of this case's claims is about that arm")
     assert image[JOY1_STATE] == 0, (
         f"the error arm left joy1_state at {image[JOY1_STATE]:#x}, so it did not make the one image "
         f"write the original makes before it starts waiting for fire")
+    left = int.from_bytes(image[FLOPPY_IDLE_TIMER:FLOPPY_IDLE_TIMER + WORD_LEN], "big")
+    assert left == FLOPPY_IDLE_REARM_FRAMES, (
+        f"the refused load left the idle fuse at {left}, not {FLOPPY_IDLE_REARM_FRAMES} — the port "
+        f"armed on the success path only, where the original arms on both")
     # ...and the control, so the case cannot pass because every run reports the error.
     data = (BIN / DISK2 / "DATADISK.RAD").read_bytes()
     served, image = leaf.run_candidate_only(_LOAD_RESOURCE(wb("RESOURCE_DATADISK"), DST_AT),

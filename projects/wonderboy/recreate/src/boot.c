@@ -303,7 +303,25 @@ uint32_t load_resource_by_index(uint8_t *image, uint32_t index, uint32_t dest) {
     uint32_t scaled = index << WB_RESOURCE_FILE_ROW_SHIFT;
     uint32_t name = addr_add(WB_RESOURCE_FILE_TABLE, sign_ext16(scaled));
 
-    if (disk_read_file(image, name, dest) != DISK_READ_OK) {
+    /* THE IDLE FUSE IS THE ONE THING BELOW THE SEAM THIS PORT STILL HAS TO DO, and the machine is
+     * what taught it. WB_FLOPPY_IDLE_TIMER is a countdown `vbl_handler` — reconstructed, and live on
+     * target — runs down to `floppy_deselect_drives`, which drops both drive-select lines on the
+     * YM2149. In the original the driver kept it out of its own way: `floppy_select_drive_a` clears
+     * it as a disk operation starts and `floppy_unwind_return` re-arms it as one ends (both cited in
+     * ../include/wonderboy.h). Both of those routines are BELOW the cut, so the substitution has to
+     * carry the protocol itself or the countdown expires with a read in flight — which is exactly
+     * what happened on a real STE: the deselect landed between a `type II read sector` and its
+     * completion, the sector timed out, GEMDOS returned an error and the boot stopped at the title.
+     *
+     * ARMED ON BOTH ARMS, because the original arms on both: every error path in the driver `bra`s
+     * to that same common exit. (The one shipped path that does not is `disk_load_file`'s
+     * `beq.w $6456` shortcut, which needs `floppy_restore_after_load_flag` ($64f1) zero — it is $01
+     * in the image and nothing writes it, so no run of the shipped program takes it.) */
+    bus_write_word(image, WB_FLOPPY_IDLE_TIMER, 0);
+    int32_t served = disk_read_file(image, name, dest);
+    bus_write_word(image, WB_FLOPPY_IDLE_TIMER, WB_FLOPPY_IDLE_REARM_FRAMES);
+
+    if (served != DISK_READ_OK) {
         bus_write_byte(image, WB_JOY1_STATE, 0);
         return WB_LOAD_DISK_ERROR;
     }

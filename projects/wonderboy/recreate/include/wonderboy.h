@@ -2680,6 +2680,15 @@
                                                * it reaches zero the handler deselects the drives.
                                                * floppy_unwind_return arms it with $96 (150 frames,
                                                * ~3 s at 50 Hz) */
+/* ...and the OTHER end of the protocol, which the plate above does not mention: every disk operation
+ * also DISARMS the countdown as it starts — `floppy_select_drive_a` ($6242, ../../names.txt cmt
+ * 0x6242) opens with `clr.w $64f2.l` at $6246 — so the fuse cannot expire with a WD1772 command in
+ * flight. Both ends live BELOW the file-load seam, so src/boot.c's `load_resource_by_index`
+ * reproduces them there (../STATUS.md batch 44 phase H). The disarmed value is a plain zero and is
+ * spelt as one. */
+#define WB_FLOPPY_IDLE_REARM_FRAMES  0x96u    /* `move.w #$96,$64f2.l` at $644e (floppy_unwind_return,
+                                               * cmt 0x644e) — 150 frames, ~3 s, and armed by the
+                                               * success path and all nine error `bra`s alike */
 
 /* The IKBD scancodes game_key_actions ($53e) and game_unpause_on_key_release ($638) compare
  * WB_KEY_LAST_SCANCODE against. The handler stores the code with bit 7 SET on release, which is why
