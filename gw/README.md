@@ -270,6 +270,41 @@ caught exactly. An STX gives no such per-track signal, so the converted output i
 only checked for a plausible size — enough to catch a truncated STX, but a subtly
 corrupt one can still pass. Writing the `.scp` gold master avoids the question.
 
+### Unprotected disk? Write the `.st`, not the `.scp`
+
+The "write the `.scp` gold master" advice is for *protected* disks, where a flux write
+is the only route that can reproduce the protection. For a disk with **no** protection
+it is the wrong choice: the flux route cannot be verified (see the next section), so a
+single silently mis-written track slips through — and because a game reads far more of
+the disk than just its boot tracks, a bad track well past the boot area produces a
+backup that starts up fine and then dies part-way through loading.
+
+**Prove the disk is unprotected first**, from the flux you already have — no re-read:
+
+```bash
+gw convert --format atarist.360 dumps/robocop_disk1/robocop_disk1.scp /tmp/probe.st
+```
+
+Single-sided ST games use `atarist.360` (80 cyl × 1 head × 9 sec, despite the format
+name); double-sided use `atarist.720`. A clean disk decodes **100%** with every sector
+present (`Found 720 sectors of 720`) and gw's per-track map is all dots. Weak-bit or
+bad-sector protection shows up here as `X`s, a sector count below 9 on some track, or
+per-revolution variance — if you see any of that, it *is* protected: keep the `.scp`
+and write that instead.
+
+If it decodes clean, keep the decoded `.st` and write **that**, verified:
+
+```bash
+./write_disk.sh dumps/robocop_disk1/robocop_disk1.st   # gw reads every track back, retries a bad one
+```
+
+`write_disk.sh` infers the format from the image's byte size, so a 368640-byte
+single-sided image writes as `atarist.360` automatically. A track that still fails to
+verify after gw's retries is a media or drive fault (clean the heads, try another
+drive), not a bad image. Proven on RoboCop (Ocean 1989): both disks are plain
+single-sided DOS disks, an unverified `.scp` flux write booted to the title and then
+dropped to TOS mid-load, and a verified `.st` write is the fix.
+
 ### What verify actually does
 
 From gw 1.23's `tools/write.py`, verify is skipped when:
