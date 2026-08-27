@@ -17317,3 +17317,11 @@ longword, a fabricated entry inside the image but in no section (refused) and on
 (dropped, counted), a fixup dropped between the list and the table, and `sched_poll16` demanded of
 m1. The two reproductions above (`arr + 64` and `other - 4`) were built against this very `tos.ld`
 and are accepted now and refused by the old file.
+
+**`src/behavior.c` at -O3, re-measured after the view (2026-08-26): NO-GO.** With the record view in and the
+floppy at 39,936 B free, moving `src_behavior.c` off `UNITS_BUILT_AT_O2` was measured on the walking window:
+`actor_behavior_pass` 42.3 K → 41.3 K a frame (x2.5 → x2.4 the original's 17.1 K), the frame unchanged at
+443 / 22.15 / 361.7 K, for `WB-ownrun.PRG` 144,298 → 155,587 B and the boot floppy 39,936 → 28,672 B free —
+~11 KB per K cycles, the worst trade the tree has priced. `build.sh`'s list stands. The actor tier's remaining x2.4
+is the C bodies against hand assembly — no guard, mask or call left to remove — and the next step there is asm with
+its own differential, not a flag.
