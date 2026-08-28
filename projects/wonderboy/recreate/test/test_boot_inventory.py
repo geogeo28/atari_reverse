@@ -969,6 +969,12 @@ RETRACTED_PHRASES = {
     # QUOTED the retired verdict inside its own retraction (the rule's oldest failure mode)
     # and was rewritten as a description at the commit gate.
     "PORTABILITY's order-mutant verdict": "SURVIVES ON TARGET TOO, and structurally",
+    # Batch 44 phase H addendum: the shim's `ikbd_send` comment attributed the transmitter poll to
+    # $f8f8, which is the TAIL ikbd_disable_mouse falls into and not the routine — the entry is
+    # $f8f0, where the command byte and the ACIA's base are loaded. Registered WITH ITS BACKTICKS
+    # because that is how it was written and `_normalised` does not strip them: the bare spelling
+    # would match nothing and pass for ever, which is the vacuous-control shape this block is about.
+    "the shim's ikbd_send citation": "`ikbd_disable_mouse` ($f8f8)",
     # Batch 44 phase E's three, all of them the SLICE COUNT: `boot_prompt_screen` made the composed
     # set four, and three surfaces said three. The third is a forward-looking note that came true —
     # ../atari/ now names WB_BOOT_PROMPT_* and calls all four slices — and a note about what a

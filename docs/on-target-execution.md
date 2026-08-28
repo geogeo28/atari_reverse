@@ -162,13 +162,14 @@ add a seam, the core/no-op side must have **no image effect** (or the oracle-mod
 differential test still holds; put the real trap/hardware poke only in the PRG override, and gate it
 on `hw_ready` if it touches supervisor-only I/O space (`$ffff8xxx`, `$fffffcxx`) before `Super(0)`.
 
-## Bug taxonomy (1-5 in BuggyBoy, 6-8 in Joust, 9-11 in Wonder Boy)
+## Bug taxonomy (1-5 in BuggyBoy, 6-8 in Joust, 9-12 in Wonder Boy)
 
-Entries **1-9 and 11 were each HIT in a real build** and are written from the wreckage — 11 on a real
-Atari, by a person who switched the machine on. **Entry 10 was not**: it is the one shape here that a
-review caught at the design stage, before the build that would have carried it shipped — which is why it reads as a method rather than as a post-mortem, and
-why it is worth having anyway. A shape that is cheap to avoid once you have seen it named is exactly
-what a taxonomy is for; the honest label there is "avoided", not "survived".
+Entries **1-9, 11 and 12 were each HIT in a real build** and are written from the wreckage — 11 and
+12 on a real Atari, by a person who switched the machine on. **Entry 10 was not**: it is the one
+shape here that a review caught at the design stage, before the build that would have carried it
+shipped — which is why it reads as a method rather than as a post-mortem, and why it is worth having
+anyway. A shape that is cheap to avoid once you have seen it named is exactly what a taxonomy is
+for; the honest label there is "avoided", not "survived".
 
 ### 1. Endianness tax — byte-shuffle accessors on a big-endian target
 
@@ -569,6 +570,59 @@ and is exactly the span the code holds the state across. Second, **a ROM the pas
 the combination that reproduced had never been exercised, so the mode now boots the same disk on two
 ROMs and refuses if they turn out to be the same one. A pin that cannot fail on the machine that
 failed is not a pin.
+
+### 12. A gate crossed by a poke is a gate whose input path never ran
+
+**Hit on iron, on the same machine as 11 and one run later.** Wonder Boy's play floppy now booted the
+user's 4 MB STE to the title screen, and **fire did not pass the title gate** with the stick confirmed
+in port 1. `projects/wonderboy/recreate/STATUS.md`'s batch 44 phase H addendum has the record.
+
+**The defect itself is 11's other half** — a write to a device register that a substituted boot slice
+did not reproduce, invisible to a host differential for the same reason 11's was — and if that were
+all, it would belong there. What earns it its own entry is why nothing *emulated* found it either:
+the harness had been satisfying the very wait the defect broke, by injection, for three phases.
+
+**The bug shape.** The reconstruction reproduced the boot's *continuation* (`$e4e6`: video mode,
+palette, screens, vectors) and not the eight-byte link in front of it. That link, `init_ikbd`
+(`$e48c`), is `bsr` to a routine that writes one byte to the IKBD's ACIA — command `$12`, *disable
+mouse* — and `bra` on. One command, in the whole 41 KB binary, in a routine whose entire body is a
+transmitter poll and a store. It is the easiest thing in a boot to read past: it configures a
+peripheral, returns nothing, writes no image byte, and every differential in the project is green
+without it.
+
+**Why it was fatal rather than cosmetic, and this is the transferable half.** A device left in its
+default mode does not merely behave differently — *it can route your input somewhere you are not
+looking*. On a real ST, joystick 1's fire line and the mouse's right button are the same wire, and
+while the mouse is enabled the 6301 reports a press as a **mouse packet** rather than as the joystick
+report the game polls. So the game's own fire byte never changed. The failure presented as "the
+joystick does not work", and the joystick was working: the machine's record showed 35 IKBD bytes
+delivered through the reconstruction's own ACIA interrupt, none of them a joystick report.
+
+**Why every emulated pass was green, and this is the lesson the entry is named for.** Headless
+checks cannot press a button, so they answer
+input waits by writing the awaited byte at the wait's own PC — a legitimate technique, used on both
+sides of the differential, and it makes the gate observable while leaving **everything upstream of
+the byte unexecuted**: the controller's mode, the device's report format, the handler's decode. The
+project had said so in its own README for three phases ("the joystick arms have never executed under
+any headless check") and had classified that as a coverage gap in the *handler* rather than as a hole
+that could hide a defect in the *boot*.
+
+**How to find the class before it finds you.** When you cut a boot into slices, **enumerate the
+writes to device registers that no slice reproduces** — not the calls, the writes. A one-instruction
+store to a peripheral is a configuration decision with no return value, so nothing downstream in a
+host differential can miss it. Then, separately: list every wait your harness satisfies by injection,
+and write down what that injection *skips*. That list is the part of the machine your suite has never
+run.
+
+**The pin shape, and its honest limit.** Two surfaces, because neither is sufficient. A **record
+field** carrying the send's own verdict (did the transmitter go ready, or did the bounded wait spin
+out) says what the program believed; a **trace row** over the emulator's I/O-write log says the byte
+reached the register — exactly once, from a pc below the ROM (the ROM sends commands of its own), and
+before the program drew anything. Prove both red, and note that they fail *differently*: suppressing
+the send reddens the field, while claiming the send without making it leaves the field green and
+reddens the trace row. **What neither can do is exercise the input path**, because the emulator can
+only take real joystick events from its host's window. That stays a runbook step — a build, a person
+and a documented fire key — and saying so is more useful than a check that looks like coverage.
 
 ## The observable surfaces
 

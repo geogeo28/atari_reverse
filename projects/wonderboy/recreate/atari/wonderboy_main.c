@@ -419,6 +419,22 @@ static void checked(unsigned bit, int ok) {
  * safe as that sentinel because it is not a scancode the IKBD can send: scancode 0 does not exist,
  * and every status and header byte it does send has bit 7 set. */
 #define IKBD_NOTHING_SAID 0x00u
+/* THE ONE COMMAND THE ORIGINAL SENDS, AND WITHOUT IT FIRE DOES NOT REACH THE GAME.
+ *
+ * `init_ikbd` ($e48c) is `bsr.w ikbd_disable_mouse ($f8f0)` then `bra.w $e4e6`, and $f8f0 is
+ * `move.b #$12,d1 / lea $fc00.w,a1` falling into the TDRE poll at $f8f8 — the whole of the boot's
+ * IKBD setup, and this port sent none of it until batch 44's phase-H addendum. On a real ST the
+ * mouse's right button and joystick 1's fire are the same line, so with the mouse enabled a press
+ * arrives as a MOUSE packet and never as the $ff joystick report `wb_acia_byte` files — which is why
+ * fire could not pass the title gate on the user's STE. ../STATUS.md's batch 44 phase H addendum has
+ * the record, the mechanism and the Hatari citation; ../names.txt cmt 0xf8f0 has the bytes.
+ *
+ * IT NARROWS THE READING HAZARD one line down and does not close it: a mouse packet's delta bytes
+ * can be $fe or $ff (-2 and -1), which `wb_acia_byte` would file as joystick-report headers, and
+ * $12 is STORED rather than DRAINED — packets already in the controller's pipeline still arrive, and
+ * on this build they arrive after `install` has put our own vector on $118. What it removes is the
+ * source of new ones. */
+#define IKBD_DISABLE_MOUSE 0x12u
 #define IKBD_MOUSE_REL   0x08u   /* teardown: put the desktop's mouse back on relative reporting */
 /* ../names.txt cmt 0x754: "$FE/$FF are the IKBD joystick-report headers". Not in
  * ../include/wonderboy.h because the handler that decodes them ($754) is unported and no
@@ -575,8 +591,8 @@ static void snapshot(void) {
 #define SPINS_LONG   2000000u
 
 /* Hand the IKBD a byte, once its transmitter has room. The original's own `ikbd_disable_mouse`
- * ($f8f8) does exactly this — poll $fffc00 for transmit-ready and store to $fffc02 — rather than
- * going through XBIOS Ikbdws, and this build has no reason to differ. */
+ * ($f8f0) does exactly this — its tail at $f8f8 polls $fffc00 for transmit-ready and stores to
+ * $fffc02 — rather than going through XBIOS Ikbdws, and this build has no reason to differ. */
 static int ikbd_tx_ready(uint32_t spins) {
     while (!(*io8(ACIA_STATUS) & (1u << ACIA_TDRE_BIT)))
         if (--spins == 0)
@@ -621,6 +637,25 @@ static uint8_t await_ikbd_reply(void) {
     return seen;
 }
 
+/* Whether `install`'s one IKBD command was taken by the transmitter, carried to `struct stats`.
+ *
+ * IT NAMES THE SEND AND NOT THE DEVICE, and the distinction is real rather than pedantic: by the
+ * time the record is written the mouse is BACK ON. `pin_sched_wait8`'s resets restore the
+ * controller's defaults and `teardown` asks for relative reporting on purpose, so a field called
+ * `ikbd_mouse_disabled` would be false at exactly the moment it is read out.
+ *
+ * NOT A READ-BACK BIT, and not for want of wanting one: all sixteen of `readback_failed`'s are
+ * classified and spoken for, and a seventeenth would mean widening both words and every mask
+ * smoke.py compares them against. It is also not a read-back in kind — nothing reads $fffffc02 to
+ * see what went in — so a record field that says whether TDRE ever came is the honest surface, and
+ * smoke.py grades it beside those two words in `readback_checks`.
+ *
+ * IT IS CARVED OUT OF `struct stats`' EXISTING PADDING, so `sizeof` does not move and a record
+ * written by a build from before this field parses rather than failing its size check. That is the
+ * safe direction and it was measured on the STE probe disk's own STATS.BIN: `ZERO_RECORD` zeroes
+ * the pad, so an older record reads 0 — "nothing was sent", which is exactly what that build did. */
+static uint8_t ikbd_mouse_disable_sent;
+
 static void install(void) {
     checked(RB_IMAGE_BASE_ALIGNED, ((uintptr_t)game_image & (IMAGE_ALIGN - 1u)) == 0);
 
@@ -635,6 +670,17 @@ static void install(void) {
 
     *io32(VEC_MFP_ACIA) = (uint32_t)(uintptr_t)wb_acia_entry;
     checked(RB_ACIA_VECTOR_INSTALLED, *io32(VEC_MFP_ACIA) == (uint32_t)(uintptr_t)wb_acia_entry);
+
+    /* `init_ikbd` ($e48c), AND IN THE BOOT'S OWN POSITION: hw_init_vectors ($f8bc) `jmp`s to it with
+     * $70 and $118 already installed, and it `bra`s on to the prologue at $e4e6, whose first call is
+     * the video mode below. So the send sits between the two here for the same reason it sits
+     * between them there.
+     *
+     * ONCE PER PROGRAM, WHICH IS WHY IT IS HERE AND NOT IN `chain_prologue`. The original runs $e48c
+     * exactly once — every ENDING re-enters the chain at $e4e6, by the fall-through at $e4e4, and
+     * none of them comes back through $e48c — so a send in the prologue would fire again on every
+     * ESC restart. `install` is called once, from `wonderboy_main`, in every build. */
+    ikbd_mouse_disable_sent = (uint8_t)ikbd_send(IKBD_DISABLE_MOUSE);
 
     /* video_set_lowres_50hz ($f906), minus the screen base, which goes out below through the
      * reconstruction's own translated path instead of as a raw poke. MFP timers A and B are NOT
@@ -772,7 +818,19 @@ static void teardown(void) {
  * Written after the hand-back, in user mode, as one big-endian struct. smoke.py names every field in
  * the same order and CHECKS THE SIZE, so a field added in C and not in Python is a loud parse error
  * rather than a silently misread record. */
-#define STATS_MAGIC   0x57424131u   /* 'WBA1' */
+/* 'WBA6', and it was 'WBA1' until the $12 send landed. THE RECORD DID NOT CHANGE SIZE — the send's
+ * verdict is carved out of the old `pad[2]` — so nothing else in the parse could tell a record
+ * written before that build from one written after it, and the pad reads 0, which is
+ * indistinguishable from "the transmitter never went ready". A record that predates the send must be
+ * REFUSED BY NAME, not graded, so the version moves.
+ *
+ * 'WBA2' IS NOT AVAILABLE and the obvious bump would have collided: M2.BIN already carries it
+ * (`M2_MAGIC`), and the whole point of a magic per record is that no reader can silently accept
+ * another's bytes. The next free value in the series is taken instead. */
+#define STATS_MAGIC   0x57424136u   /* 'WBA6' */
+/* ...AND THE ONE IT REPLACED, kept so smoke.py can say WHICH build wrote a record it is refusing.
+ * A refusal that only prints two hex numbers sends a reader looking for a corrupt file. */
+#define STATS_MAGIC_BEFORE_MOUSE_DISABLE 0x57424131u  /* 'WBA1' */
 
 /* Zero one of this file's five records, byte by byte. FIVE HAND-WRITTEN COPIES OF THE SAME LOOP IS
  * FIVE PLACES ONE CAN BE FORGOTTEN when a sixth build arrives, and a record that is not zeroed
@@ -804,7 +862,8 @@ struct stats {
     uint8_t  key_last_scancode;
     uint8_t  sched_wait_returned;
     uint8_t  ikbd_last_byte;
-    uint8_t  pad[2];
+    uint8_t  ikbd_mouse_disable_sent;  /* `install`'s $e48c send: 1 if TDRE came, 0 if it never did */
+    uint8_t  pad[1];
 };
 
 #define FCREATE_RW 0
@@ -2110,8 +2169,27 @@ static void run_out_the_floppy_idle_fuse(void) {
  * aimed at a byte the IKBD will never send. Measured by `smoke.py m3`'s first key-driven ending, and
  * isolated: poking the scancode ALONE, with no ending driven at all, hangs the run identically. */
 static uint8_t reset_and_hear_back(void) {
+    uint8_t heard;
+
     game_image[WB_KEY_LAST_SCANCODE] = IKBD_NOTHING_SAID;
-    return ikbd_reset() ? await_ikbd_reply() : IKBD_NOTHING_SAID;
+    if (!ikbd_reset())
+        return IKBD_NOTHING_SAID;
+    heard = await_ikbd_reply();
+
+    /* AND THE MOUSE GOES BACK OFF, because the reset just turned it on. `$80 $01` restores the
+     * controller's power-on defaults, of which relative mouse reporting is one — so between here and
+     * the next reset the 6301 is once again reporting nudges as $f8..$fb packets whose delta bytes
+     * can be $fe/$ff, which `wb_acia_byte` files as joystick-report headers. This whole sequence is
+     * the SHIM's and not the original's (the original never resets the IKBD at all), so it is the
+     * shim's job not to leave a hazard the game's own boot had removed.
+     *
+     * ONLY WHEN A REPLY WAS HEARD, which is what makes this a send at a known-idle moment rather
+     * than a byte pushed at a controller still in self-test. The residual window is the LAST reset,
+     * the one `pin_sched_wait8` sends for `sched_wait8` to observe: its reply is that function's
+     * evidence, so nothing can be sent between them, and that window stays open by construction. */
+    if (heard != IKBD_NOTHING_SAID)
+        (void)ikbd_send(IKBD_DISABLE_MOUSE);
+    return heard;
 }
 
 /* The `sched_wait8` pin, and it is a genuine spin rather than a byte already in place.
@@ -2363,6 +2441,7 @@ int wonderboy_main(void) {
     record.screen_base_published = wb_target_screen_base;
     record.ikbd_bytes = ikbd_bytes;
     record.ikbd_last_byte = ikbd_last_byte;
+    record.ikbd_mouse_disable_sent = ikbd_mouse_disable_sent;
     record.readback_failed = readback_failed;
     record.readback_attempted = readback_attempted;
     dump_stats(&record);

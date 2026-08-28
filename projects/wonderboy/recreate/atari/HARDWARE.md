@@ -104,7 +104,7 @@ Insert `WBOOT.ST`, power on, hands off.
 | 0 | memory test, the TOS boot screen | |
 | ~32 s | the screen goes **black**, then the **title screen** appears | `smoke.py floppy` pass 1 prints both figures off the run it just did — the vblank of the first shifter pen write and of the last. TOS's own boot is most of the first; the **window** between them is the title's own load and depack, and that is the part the floppy owns. Batch 44 phase G, TOS 1.04, two runs a minute apart: first pen 1,593 and 1,607, window 277 and 192 vblanks (~4–5.5 s). Repeated runs do not agree to better than that. |
 | then | it **waits at the title for fire**, for ever | `-DSMOKE_PLAY` removes the gate's spin bound by design |
-| fire | the **credits** screen loads | |
+| fire | the **credits** screen loads | joystick 1, port 1. **This did not work before 2026-08-27** — see §8's row on the mouse, and the fix is `install` sending IKBD command `$12` |
 | fire | stage 1's overlay, tiles and sprites load; the frame loop starts | |
 
 Then it plays, at **four to five frames a second** (README's "Play it" has the measurement and the
@@ -230,7 +230,10 @@ your own host and call it a hardware result.
 
 `OWN.BIN` (140 B) is the ladder's own account of the run: which slices ran, what each returned, how
 many fire gates were crossed, where it stopped. `STATS.BIN` (40 B) carries M1's sixteen read-back
-bits, the two clocks and the two hardware reads of §6. `M2.BIN`, `FRAME.BIN` (128,000 B) and
+bits, the two clocks, the two hardware reads of §6 and **`ikbd_mouse_disable_sent`** — whether the
+ACIA's transmitter took `init_ikbd`'s `$12` (§8's row on the mouse). **A `STATS.BIN` written before
+that send is REFUSED by name rather than graded**: it is the same 40 bytes and its version word is
+the older one, so a reader would otherwise report a failed send about a build that made none. `M2.BIN`, `FRAME.BIN` (128,000 B) and
 `PENS.BIN` carry the frame record and four captured screens.
 
 **If you do press fire**, the run goes further and the record says so — and on that disk the stage
@@ -251,6 +254,7 @@ that is news, and `OWN.BIN`'s `fire_gates_crossed` is where it is written down.
 | **The drive deselects ~3 s after each load, not during one.** | `WB_FLOPPY_IDLE_TIMER` is the original's own idle countdown, `vbl_handler` runs it down to `floppy_deselect_drives`, and the two instructions that keep it out of a disk operation live below the file-load seam — so **the seam carries that protocol itself**. It did not until 2026-08-26, and until then the fuse could expire mid-sector: on a 4 MB STE that stopped the boot at the title with the desktop coming back and **no bombs, no diagnosis**. Fixed, and pinned by `smoke.py floppy` booting the play disk on **two ROMs** (it reproduces on EmuTOS, not on TOS 1.04) with a row that forbids a write of ours to port A while a disk operation is open. **The measurement, the trace and what stays unpinned: `../STATUS.md` batch 44 phase H.** |
 | **Loads are slower and audible.** | The seam is GEMDOS, so every resource is a FAT12 walk and a WD1772 transfer. The original drove the controller itself. §4 has the measured cost. |
 | **Four overlays are damaged on the pressed data disk.** | `OVALAY4B.RAD`, `OVALAY5B.RAD`, `OVALAY6A.RAD`, `OVALAY9A.RAD` differ between the authentic dump (`bin/disk2/`) and the repaired tree. **`WBOOT.ST` carries the authentic bytes**, because a play disk built from a hybrid would be evidence about nothing. The stages those overlays serve may not load correctly, and that is 1989 media rather than this port. `smoke.py floppy` names them on every build. |
+| **The mouse stops working the moment the game starts, and comes back on reset.** | The original's own behaviour, reproduced: `init_ikbd` (`$e48c`) sends IKBD command `$12`, disable mouse — and it is what makes fire work at all, because on a real ST joystick 1's fire and the mouse's right button are the same line. **`../STATUS.md` batch 44 phase H addendum has the mechanism and the STE's own record.** This build never hands the machine back (§4), so the reset button is what gives you the mouse; the `$08` in `teardown` is for the modes that do return. |
 | **No music tempo change on a mono monitor, because there is no picture.** | The build is low-res only. |
 | **It runs at 4–5 fps.** | C compiled for a chip the original was hand-written for. No work has gone into that gap. |
 

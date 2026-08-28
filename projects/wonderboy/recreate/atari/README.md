@@ -718,6 +718,54 @@ The MFP end-of-interrupt is `bclr` on ISRB and not a store: the 68901's in-servi
 cleared by writing a **zero** to the bit and ones everywhere else, so a `move.b #~0x40` would clear
 every other channel's in-service bit at the same time.
 
+**AND THE BOOT SENDS THE CONTROLLER ONE COMMAND, WHICH THIS BUILD DID NOT UNTIL THE SECOND IRON
+RUN.** `hw_init_vectors` does not `rts` — it `jmp`s to `init_ikbd` (`$e48c`), whose whole body is
+`bsr.w ikbd_disable_mouse ($f8f0)` then `bra.w $e4e6`. `$f8f0` is `move.b #$12,d1 / lea $fc00.w,a1`
+falling into a TDRE poll and a store to `$fffffc02`: **IKBD command `$12`, disable mouse**, and it is
+the only IKBD command anywhere in the binary. `install` now makes that send, in the boot's own
+position — after the two vectors, before the video mode `$e4e6` opens with — and **once per program**,
+because every ending re-enters the chain at `$e4e6` through the fall-through at `$e4e4` and none of
+them comes back through `$e48c`.
+
+It is not a fidelity footnote: **on a real ST joystick 1's fire and the mouse's right button are the
+same line**, so with the mouse left on a press arrives as a mouse packet, `$877` never changes, and
+every `tst.b $877 / bmi` fire wait in the boot is a hang — which is what the user's 4 MB STE did.
+**`../STATUS.md`'s batch 44 phase H addendum has the mechanism, the machine's own record and the
+Hatari citation.** The same command also *narrows* a reading hazard in the handler above (a mouse
+packet's delta bytes can be `$fe`/`$ff`, which it would file as joystick-report headers) without
+closing it: `$12` stops new packets, it does not drain ones already in the controller's pipeline.
+
+**TWO SURFACES CARRY IT, and neither could have caught it alone.** `struct stats`'
+`ikbd_mouse_disable_sent` is `ikbd_send`'s own verdict — 1 if TDRE came inside `SPINS_SHORT`, 0 if
+the bounded wait spun out and nothing went to the chip. It is named for the SEND because by the time
+the record is written the mouse is back ON (`pin_sched_wait8`'s resets, and `teardown`'s `$08` on
+purpose), and it is graded by **both** of this file's record scans — `readback_checks`, which every
+mode that writes a record calls, and `m1_checks`, which keeps its own copy of those rows.
+
+That field says what the program *believed*; the second surface watches the bus.
+`ikbd_disable_mouse_row` walks Hatari's `io_write` trace — pc below `$e00000`, since TOS sends IKBD
+commands of its own — and splits its claim at the first program-side **pen** write. Before it, the
+program's IKBD bytes must be exactly `[$12]`: *once*, *before the picture*, and *nothing undid it*
+(a reset in there restores the controller's defaults, mouse included, and is refused by value). After
+it, every `$12` must be a re-send, immediately preceded by the `$80 $01` whose reply
+`reset_and_hear_back` just heard — which keeps the *once* claim alive across the shim's own
+end-of-run traffic. The boundary is the picture and not the first reset, because a first draft
+bounded it that way and was measured green under a reset injected right after the send: the injected
+reset closed the window ahead of itself.
+
+It runs on `smoke.py ownplay` passes 2 and **4** and on all four of `smoke.py floppy`'s traced
+passes. Pass 4 is the ESC pass, the only one that walks the boot chain twice, and it is where a
+drifted send shows its *repetition*: measured, pass 2 sees one stray `$12` and pass 4 sees two, one
+per chain entry. Three mutants were proved red — suppressing the send reddens the field; *claiming*
+the send without making it leaves the field green and reddens the trace row; and both the drift into
+`chain_prologue` and a reset slipped in after the send redden the trace row while the field stays
+green.
+
+**The record's version word moved with the field.** It had to: the verdict byte came out of the
+record's existing padding, so a `STATS.BIN` from a build before the send is the same 40 bytes with a
+zero there, which is indistinguishable from "the transmitter never went ready". `read_stats` now
+refuses such a record **by name** instead of grading it.
+
 ### 5. What is deviated from the boot, and what is inherited from it
 
 Four, each stated because a silent deviation is the same shape as a bug. The fourth was found by M6
@@ -2023,11 +2071,16 @@ this mode is not.
 
 ## The bugs found on target
 
-Seven, and every one of them is the shape `docs/on-target-execution.md` warns about: real behaviour
+Eight, and every one of them is the shape `docs/on-target-execution.md` warns about: real behaviour
 in code the differential harness cannot execute at all. The first four came off the first three runs;
 the next two came off M3, from the two pieces nothing had ever executed — the exit path and the
 runner's own command line; the seventh came off the title build, and it had been latent under every
-green mode before it.
+green mode before it; **the eighth came off a real Atari ST**.
+
+One more belongs to the project and not to this directory: the floppy idle fuse expiring inside
+GEMDOS's first read, which stopped the disk on the user's STE at the FIRST iron run. Its defect and
+its fix are in `../src/boot.c`'s seam, so `../STATUS.md` batch 44 phase H owns it and
+`docs/on-target-execution.md` class 11 generalises it.
 
 **1. A non-volatile image read in a busy-wait — in the SHIM, one file over from the comment about
 it.** `await_ikbd_reply` spun on `game_image[WB_KEY_LAST_SCANCODE]`. `game_image` is a plain array to
@@ -2091,6 +2144,25 @@ depends on where either call was made. *Lesson: the failure looked like a defect
 was a defect in the oldest code in the file — and its symptom was a machine that had already passed
 every read-back, torn the machine down cleanly, and then died on the way out with no record. Sixteen
 green modes had been one compiler decision away from it.*
+
+**8. THE BOOT'S ONE IKBD COMMAND WAS NEVER SENT, AND FIRE COULD NOT REACH THE GAME.** Found on the
+user's 4 MB STE (TOS 1.62), on the SECOND iron run: the title screen came up and the fire gate never
+answered a stick that was confirmed in port 1. This shim reproduced the boot continuation at `$e4e6`
+and not the eight-byte link in front of it, `init_ikbd` (`$e48c`), whose whole job is to send IKBD
+command `$12` — and on a real ST that command is what routes fire to the joystick report rather than
+to the mouse. **`../STATUS.md`'s batch 44 phase H addendum has the mechanism and the probe disk's own
+record**, which is the proof rather than an inference: the ACIA interrupt path was working perfectly
+and delivered thirty-five bytes, not one of them a joystick report. §4 has the fix and its two
+surfaces.
+
+*Lesson: a gate crossed by a poke is a gate whose input path never ran.* Every headless pass of
+`smoke.py ownplay` and `smoke.py boot` answers the fire waits by poking `WB_JOY1_STATE` at the wait's
+own PC — deliberately, and §14's deviation table says so — which means no emulated run in this
+project has ever driven the IKBD's joystick arms at all. The surface that would have caught this is
+an emulated run with **real** IKBD input, and Hatari can only take that from SDL events, so it stays
+a runbook step rather than a check: `bash atari/run.sh`, a person, and a fire key (`run.sh` now names
+it and how to remap it). What IS automated is the narrower claim the fix can make — that the `$12`
+went out, on the bus, once, before anything was drawn.
 
 ## Known gaps
 

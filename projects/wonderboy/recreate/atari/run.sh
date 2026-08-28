@@ -22,6 +22,21 @@
 # Hatari owns that mapping, not this script: if fire is somewhere else on your build, F12 ->
 # "Joysticks" shows and changes it. Ctrl-Q is how you leave — see "WHAT YOU WILL SEE" below.
 #
+# IF FIRE DOES NOTHING, CHECK THE KEY FIRST AND THEN SUSPECT THE BUILD — both branches are real and
+# they are told apart in that order every time:
+#
+#   * THE KEY. Hatari's default fire for `--joy1 keys` is RIGHT-Control, and most Mac keyboards do
+#     not have one. F12 -> "Joysticks" -> port 1 -> "Define keys" rebinds it to something you can
+#     press. Do that before concluding anything about the reconstruction.
+#   * THE BUILD. A fire gate that still never answers WITH A KEY YOU HAVE SEEN WORK is the build,
+#     and there is a known shape for it: the boot's IKBD mouse-disable not going out, which leaves
+#     the controller reporting fire as a mouse button. README §4 has that one.
+#
+# Worth rebinding rather than working around, because THIS IS THE ONLY TEST THIS PROJECT HAS OF THE
+# JOYSTICK INPUT PATH: every headless pass answers the fire gates by poking WB_JOY1_STATE at the
+# wait's own PC, so a person pressing fire here is the only thing that has ever driven the ACIA
+# handler's `$ff` joystick arm — which is how that defect reached a real STE before it reached a row.
+#
 # WHAT YOU WILL SEE, stated exactly, because it is both more and less than "the game".
 #
 #   THE PROGRAM BOOTS ITSELF. Since batch 44 phase E this is the OWN-ENTRY build: the drive carries
@@ -65,6 +80,12 @@
 #   itself is still asserted, on the frame build that shares this build's exit path: all three
 #   endings driven and the two vectors read back from outside the program (smoke.py m3, README §12). Driving them is also what found the hang that used to follow
 #   any key-driven exit (README §8).
+#
+#   THE MOUSE IS TURNED OFF WHILE THE GAME RUNS, as the original turns it off: `install` sends IKBD
+#   command $12 at boot, which is `init_ikbd` ($e48c) reproduced, and it is what makes fire work at
+#   all — on a real ST joystick 1's fire and the mouse's RIGHT BUTTON are the same line. THIS BUILD
+#   NEVER GIVES THE MACHINE BACK, so nothing here re-enables it: the reset button, or closing Hatari,
+#   is what returns your mouse. STATUS.md's batch 44 phase H addendum has the mechanism.
 #
 #   WHAT IS NOT ASSERTED BY ANYTHING: that the stick MOVES HIM. The ACIA handler's two joystick arms
 #   have never executed under any headless check, and that boundary is MEASURED rather than assumed

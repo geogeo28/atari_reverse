@@ -180,13 +180,13 @@ STATS_FILE = "STATS.BIN"
 # ---- the record, named in the same order wonderboy_main.c declares it -------------------------
 # THE SIZE IS CHECKED, so a field added in C and not here is a loud parse error rather than a
 # silently misread record.
-STATS_FORMAT = ">IIIIIIHHHHBBBBBB2x"
+STATS_FORMAT = ">IIIIIIHHHHBBBBBBB1x"
 STATS_FIELDS = ("magic", "bytes", "image_base", "screen_base_published", "shim_vbl_ticks",
                 "ikbd_bytes", "readback_failed", "readback_attempted", "vbl_counter",
                 "floppy_idle_timer", "tick_drop_value", "psg_port_a_at_entry",
                 "psg_port_a_after_run", "key_last_scancode", "sched_wait_returned",
-                "ikbd_last_byte")
-STATS_MAGIC = 0x57424131          # 'WBA1' — wonderboy_main.c's STATS_MAGIC
+                "ikbd_last_byte", "ikbd_mouse_disable_sent")
+# STATS_MAGIC and the version it replaced are scraped from the C, below `c_constant`'s own binding.
 
 
 def readback_bits():
@@ -288,6 +288,17 @@ TICK_DROP_UNWRITTEN = gen_image_constant("TICK_DROP_UNWRITTEN")
 c_constant = original.c_constant
 
 SMOKE_VBLS = c_constant("SMOKE_VBLS")
+
+# THE RECORD'S VERSION, scraped rather than restated — it moved once already (see below) and a copy
+# here would have gone on accepting the old one. Its fields and format are up with `STATS_FIELDS`;
+# only the two numbers need `c_constant`, which is why they are here and not there.
+STATS_MAGIC = c_constant("STATS_MAGIC")
+# ...AND THE VERSION IT REPLACED, so a record written before the $12 send is refused BY NAME. The
+# record did not change size — the send's verdict came out of the old `pad[2]` — so nothing in the
+# parse could tell the two apart, and that pad reads 0, which is exactly what "the transmitter never
+# went ready" reads as. Without this a pre-$12 build's record would be graded as a FAILED SEND rather
+# than as a record that cannot answer the question. Measured on the STE probe disk, which is one.
+STATS_MAGIC_BEFORE_MOUSE_DISABLE = c_constant("STATS_MAGIC_BEFORE_MOUSE_DISABLE")
 
 
 # ---- Hatari -----------------------------------------------------------------------------------
@@ -608,7 +619,14 @@ def read_record(name, fields, fmt, magic, what, blob=None):
 
 
 def read_stats(name=STATS_FILE, blob=None):
-    return read_record(name, STATS_FIELDS, STATS_FORMAT, STATS_MAGIC, "the program", blob)
+    record, why = read_record(name, STATS_FIELDS, STATS_FORMAT, STATS_MAGIC, "the program", blob)
+    if record is None and why and f"{STATS_MAGIC_BEFORE_MOUSE_DISABLE:#x}" in why:
+        return None, (f"{name} is a record from a build BEFORE the $12 send (magic "
+                      f"{STATS_MAGIC_BEFORE_MOUSE_DISABLE:#x}, now {STATS_MAGIC:#x}). It is the same "
+                      f"SIZE as a current one and its `ikbd_mouse_disable_sent` byte is the old "
+                      f"padding, which reads 0 — so grading it would report a failed send about a "
+                      f"build that made none. Re-run the machine on a current .PRG")
+    return record, why
 
 
 # ---- M2: the frame differential -----------------------------------------------------------------
@@ -789,6 +807,28 @@ def unreachable_readbacks():
 RB_RAN_ROW = "read-backs ran"
 RB_PASSED_ROW = "read-backs passed"
 
+# `init_ikbd`'s ONE command and the register it goes to, scraped from the shim rather than restated.
+IKBD_DISABLE_MOUSE = c_constant("IKBD_DISABLE_MOUSE")
+ACIA_DATA = c_constant("ACIA_DATA")
+
+
+def ikbd_mouse_row(record):
+    """The record's half of `init_ikbd` ($e48c): the transmitter had room and took the byte.
+
+    IT IS A FIELD AND NOT A READ-BACK BIT — wonderboy_main.c's `ikbd_mouse_disable_sent` says why —
+    so it is graded here, beside the two words, on every mode that reads STATS.BIN. What it CANNOT
+    say is that the byte reached $fffffc02: it reports `ikbd_send`'s own verdict, i.e. that TDRE came
+    within SPINS_SHORT. `ikbd_disable_mouse_row` is the surface that watches the bus.
+
+    NOR CAN IT SAY THE MOUSE IS OFF at the moment it is read: by then `pin_sched_wait8`'s last reset
+    has turned it back on and `teardown` has asked for relative reporting on purpose. The field is
+    named for the SEND, and that is the whole of what it witnesses."""
+    return ("init_ikbd's mouse-disable command was taken by the ACIA",
+            record["ikbd_mouse_disable_sent"] == 1,
+            f"ikbd_mouse_disable_sent={record['ikbd_mouse_disable_sent']} — 1 means the transmitter "
+            f"went ready and {IKBD_DISABLE_MOUSE:#04x} was stored to {ACIA_DATA:#010x}, 0 means the "
+            f"bounded TDRE wait spun out and NOTHING was sent")
+
 
 def readback_checks(record, also_unreachable=()):
     """The two M1 read-back rows, for every mode that boots a build which writes STATS.BIN.
@@ -804,7 +844,13 @@ def readback_checks(record, also_unreachable=()):
 
     TWO WORDS AND NOT ONE: `readback_failed` says a write did not take, `readback_attempted` says
     which checks RAN, and the second is compared against an exact mask — a check that quietly stops
-    executing is indistinguishable from a passing one in a bare fault word."""
+    executing is indistinguishable from a passing one in a bare fault word.
+
+    THREE ROWS, AND THE THIRD IS NOT A READ-BACK. `ikbd_mouse_row` grades a record FIELD, not a bit
+    in either word: nothing reads $fffffc02 back, so `install`'s one IKBD command cannot be checked
+    the way every write above it is, and it rides here because this is the function every mode that
+    writes a record already calls. The count matters to callers — M3 places each of these rows into
+    a must-break or must-hold list BY NAME, and a fourth added silently would land in neither."""
     want_attempted = mask(*BOOT_BITS, *TEARDOWN_BITS)
     unreachable, why = unreachable_readbacks()
     if why:
@@ -825,6 +871,7 @@ def readback_checks(record, also_unreachable=()):
          + (" — " + ", ".join(n for n in RB if record["readback_failed"] >> RB[n] & 1)
             if record["readback_failed"] else "")
          + (f", of which {unreachable:#06x} is excluded" if unreachable else "")),
+        ikbd_mouse_row(record),
     ]
 
 
@@ -967,6 +1014,7 @@ def m1_checks(record):
         f"failed {record['readback_failed']:#06x}"
         + (" — " + ", ".join(n for n in RB if record["readback_failed"] >> RB[n] & 1)
            if record["readback_failed"] else ""))
+    add(*ikbd_mouse_row(record))
 
     # 1. The reconstruction's own clock tracks the machine's. Both counters are 16-bit in the image
     #    and 32-bit in the shim, so compare the low word; they are equal, not merely close, because
@@ -3109,6 +3157,186 @@ ROM_PC_FLOOR = 0xe00000
 def written_by_the_reconstruction(events):
     """`events` with TOS's own ROM writes dropped — the stream a row about THE PROGRAM must read."""
     return [event for event in events if int(event[2], 16) < ROM_PC_FLOOR]
+
+
+# ---- the IO-write trace, walked ONCE ------------------------------------------------------------
+#
+# THREE CHECKS WALK HATARI'S RAW LOG for `IO write` lines, and each one used to carry its own copy of
+# the parse, the address mask and the ROM floor: `pen_window`, `port_a_writes_inside_a_disk_operation`
+# and the IKBD row below. `original.timeline_events` is a FOURTH walk and stays separate on purpose —
+# it reduces to an ordered stream over `TIMELINE_REGISTERS` for the differential, which is a different
+# question — but it owns the two facts about the log's SHAPE, and those are what the copies kept
+# re-deriving. They now live here.
+# Hatari's `video_vbl` clock, printed as `VBL n`. Only the floppy modes ask for that trace
+# family; where it is absent every event simply carries vblank 0, which is why the checks
+# that must work on `ownplay` read POSITIONS instead.
+VBL_LINE_RE = re.compile(r"^VBL (\d+)")
+# The two bytes of the IKBD reset `pin_sched_wait8` sends, scraped from the shim — the pair
+# that restores the controller's defaults, mouse reporting included.
+IKBD_RESET_BYTES = (c_constant("IKBD_RESET_0"), c_constant("IKBD_RESET_1"))
+IoWrite = collections.namedtuple("IoWrite", "position register value pc vbl")
+
+
+def io_write_fields(line):
+    """One raw trace line as (register, value, pc), or None if it is not an `IO write`.
+
+    THE ADDRESS MASK IS APPLIED HERE AND NOWHERE ELSE. The same register is named two ways in one
+    log — code that sign-extends a short absolute reaches `$ffff8800`, code that does not reaches
+    `$00ff8800` — and `original.IO_ADDRESS_MASK` is what makes those one address. A caller that
+    matched on the printed spelling would read one side's stream as empty and pass."""
+    write = original.IO_WRITE_RE.match(line)
+    if not write:
+        return None
+    return (int(write.group(1), 16) & original.IO_ADDRESS_MASK,
+            int(write.group(2), 16), int(write.group(3), 16))
+
+
+def collapsed_io_write(line, guarded):
+    """The problem string if `line` collapses a run of writes to a register in `guarded`, else None.
+
+    IT HAS TO LIVE IN THE WALK AND NOT ONLY IN `timeline_events`. Hatari folds consecutive identical
+    trace lines into `N repeats of: <line>`, and a collapsed run silently drops entries. That
+    function refuses on it — but `ownplay` pass 2 parses no timeline at all, so a guard living only
+    there would leave the IKBD row reading a shortened stream and calling it evidence. Refused rather
+    than expanded, for `TRACE_REPEAT_RE`'s own reason: whether the printed count is cumulative or
+    incremental is a semantics this project has not pinned.
+
+    `guarded` IS THE CALLER'S OWN REGISTER SET AND THE GUARD IS NOT BLANKET, which is
+    `timeline_events`' design and was measured to matter twice.
+
+    FIRST, THE REGISTER. A collapsed run of a register nobody reads is harmless, BECAUSE every claim
+    these walks make is about ORDER and dropping entries uniformly shifts every later position by the
+    same amount. Blanket-refusing reddens every archived log in `out/`: Hatari routinely collapses
+    the MFP's `$fffffa11`, which no check here reads.
+
+    SECOND, THE PC, and this one was found by the guard itself on its first EmuTOS run. **EmuTOS
+    initialises the IKBD from `pc=$e0d078` and writes `$00` to `$fffffc02` three times running**, so
+    Hatari collapsed a run on the very register the IKBD row reads — and the row went red on a build
+    that was correct. Those are the ROM's writes; this walk filters them out, so their loss cannot
+    move a claim about the PROGRAM's. The floor is therefore applied HERE as well as in the walk. A
+    collapsed run of a register a caller reads FROM A PROGRAM PC is the real thing — an entry it must
+    see is simply gone — and that is what this refuses."""
+    collapsed = original.TRACE_REPEAT_RE.match(line)
+    if not collapsed:
+        return None
+    inner = io_write_fields(collapsed.group(2).strip())
+    if not inner or inner[0] not in guarded or inner[2] >= ROM_PC_FLOOR:
+        return None
+    return (f"Hatari collapsed {collapsed.group(1)} consecutive writes to ${inner[0]:x} into one "
+            f"`repeats of` line at pc {inner[2]:#x}, so the ordered stream this reads is missing "
+            f"entries")
+
+
+# WHICH REGISTERS EACH WALK DEPENDS ON, named where the walk is rather than at the call sites.
+PEN_REGISTERS = frozenset(range(PEN_FIRST_REG, PEN_LAST_REG + 2, 2))
+PSG_REGISTERS = frozenset((PSG_SELECT_PORT, PSG_DATA_PORT))
+
+
+def program_io_writes(lines, guarded):
+    """(the reconstruction's own IO writes, problem) — the walk two of the three checks share.
+
+    `position` COUNTS EVERY `IO write` LINE, the ROM's included, and only the program's are yielded.
+    Ordering claims are then about the whole bus stream: "the $12 came before the first pen" is true
+    of the machine and not merely of a filtered view of it. `vbl` is the last `VBL n` the log printed,
+    or 0 where the run's trace family does not carry one — `ownplay` traces `io_write` alone, which
+    is why the IKBD row below reads POSITIONS and the floppy's `pen_window` reads vblanks.
+
+    THE ROM FLOOR IS APPLIED, AND THAT IS WHY `port_a_writes_inside_a_disk_operation` DOES NOT USE
+    THIS. That check tracks the YM2149's select/data latch, which is CHIP state that TOS writes too —
+    filtering the ROM out of its input would make it read a data write against whichever register the
+    program last selected, which is not the register the chip had. It shares `io_write_fields` and
+    `collapsed_io_write` instead, and keeps its own loop because it also has to see the GEMDOS and
+    FDC lines interleaved.
+
+    RETURNS `(events, problem)` and never raises, which is `timeline_events`' contract: every caller
+    is inside a checker whose job is a verdict."""
+    events, position, vbl = [], 0, 0
+    for line in lines:
+        line = line.strip()
+        problem = collapsed_io_write(line, guarded)
+        if problem:
+            return [], problem
+        counted = VBL_LINE_RE.match(line)
+        if counted:
+            vbl = int(counted.group(1))
+            continue
+        fields = io_write_fields(line)
+        if not fields:
+            continue
+        position += 1
+        register, value, pc = fields
+        if pc < ROM_PC_FLOOR:
+            events.append(IoWrite(position, register, value, pc, vbl))
+    return events, None
+
+
+# THE IKBD'S OWN DATA REGISTER, masked as `program_io_writes` masks every register it yields.
+ACIA_DATA_REG = ACIA_DATA & original.IO_ADDRESS_MASK
+
+
+def ikbd_disable_mouse_row(lines, what, ends=True):
+    """THE BUS'S OWN ANSWER to `init_ikbd` ($e48c), for the modes whose trace carries `io_write`.
+
+    `ikbd_mouse_row` reads the record and so reports what `ikbd_send` BELIEVED; this watches the
+    store land — at $fffffc02, from a pc below the ROM (TOS sends IKBD commands of its own during
+    boot, and a scan without the floor would be green on the ROM's traffic alone).
+
+    TWO CLAIMS, SPLIT AT THE FIRST PEN, and the boundary is the PICTURE rather than anything the
+    IKBD traffic itself decides. An earlier draft bounded the boot's window at the first program-side
+    RESET byte, and that was circular: it was measured green under a mutant that sent a reset
+    immediately after the `$12` in `install`, because the injected reset simply closed the window
+    ahead of itself. The first pen is decided by the boot drawing something, which no IKBD byte can
+    move.
+
+    BEFORE THE FIRST PEN the program's IKBD bytes must be **exactly `[$12]`** — one byte, that byte.
+    That is *once*, *before the picture* and *nothing undid it* in a single statement: a reset in
+    there would restore the controller's defaults, mouse included, and is refused BY VALUE rather
+    than merely counted.
+
+    AFTER IT, EVERY `$12` MUST BE A RE-SEND, i.e. immediately preceded by the `$80 $01` whose reply
+    `reset_and_hear_back` just heard. That is what makes the *once* claim survive the shim's own
+    end-of-run traffic: a send that had drifted into `chain_prologue` — which every ESC ending
+    re-enters, where `init_ikbd` is entered by nothing — appears in the tail with a pen or a palette
+    write in front of it instead of a reset, and is caught wherever in the chain it sits. `ownplay`
+    pass 4 is the pass that can produce one, being the only one that walks the boot chain twice.
+
+    `ends` IS FALSE FOR THE PLAY BUILDS, whose ladder never returns — no `pin_sched_wait8`, no
+    `teardown` — so the tail must be EMPTY and the `$12` is the only IKBD byte in the whole log.
+
+    THE PEN IS ALSO THE VACUITY GUARD: a run that drew nothing would satisfy "before the first pen"
+    with no pen to be before, so a stream with no program-side pen write in it is a red."""
+    events, problem = program_io_writes(lines, PEN_REGISTERS | {ACIA_DATA_REG})
+    name = f"{what}: init_ikbd's {IKBD_DISABLE_MOUSE:#04x} is the boot's ONLY IKBD byte, before a pen"
+    if problem:
+        return (name, False, problem)
+
+    commands = [event for event in events if event.register == ACIA_DATA_REG]
+    first_pen = next((event.position for event in events if event.register in PEN_REGISTERS), None)
+    boot = [c.value for c in commands if first_pen is not None and c.position < first_pen]
+    tail = [c.value for c in commands if first_pen is None or c.position >= first_pen]
+    # A `$12` in the tail is legitimate only as `reset_and_hear_back`'s re-send, which follows the
+    # two reset bytes it just heard the reply to. Anything else there is a send this port did not
+    # mean to make — the drift `chain_prologue` would produce.
+    stray = [at for at, value in enumerate(tail)
+             if value == IKBD_DISABLE_MOUSE and list(tail[max(at - 2, 0):at]) != list(IKBD_RESET_BYTES)]
+
+    ok = (first_pen is not None and boot == [IKBD_DISABLE_MOUSE]
+          and not stray and (ends or not tail))
+    return (name, ok,
+            "before the first program-side pen write"
+            + (f" (at {first_pen})" if first_pen is not None
+               else " — but the program wrote NO pen at all, so this row would pass vacuously")
+            + f" the program sent {len(boot)} IKBD byte(s) ["
+            + ", ".join(f"{value:#04x}" for value in boot) + "]"
+            + (f", the first from pc {commands[0].pc:#x}" if commands else "")
+            + (f"; after it {len(tail)} more, of which {len(stray)} {IKBD_DISABLE_MOUSE:#04x}(s) do "
+               f"NOT follow a reset (the end-of-run sequence is `pin_sched_wait8`'s resets, the "
+               f"{IKBD_DISABLE_MOUSE:#04x} re-sent after each reply, then teardown's mouse-relative)"
+               if ends else
+               f"; and {len(tail)} after it, which must be none — this build never tears down")
+            + (f": {[hex(v) for v in tail[:12]]}" if tail and (stray or not ends) else ""))
+
+
 # The image the shim runs the cores on is one flat array, and its LENGTH is what says whether a
 # published base is still inside it. The kit owns that number; scraped, not restated.
 IMAGE_SIZE = original.kit_constant("OS_IMAGE_SIZE")
@@ -4125,11 +4353,19 @@ def m3_checks(record, stats, plain, ending, captured, reached_pterm):
          + ("" if None in (early, late) else f" (+{late - early})"), HANDBACK_ROWS),
     ]
     # The record's OWN teardown verdict, from the inside, beside the debugger's from the outside.
-    # `RB_PASSED_ROW` carries every restore bit, so it is the hand-back's row here; `RB_RAN_ROW` says
-    # the checks executed at all and must hold whatever the control suppresses.
+    #
+    # EACH OF THE THREE IS PLACED BY NAME AND NOT BY AN `else`, because `m3fault` splits these rows
+    # into must-BREAK (HANDBACK_ROWS) and must-HOLD (ENDING_ROWS) and a row in the wrong list is a
+    # check nobody is running:
+    #   * RB_PASSED_ROW carries every restore bit, so it is the hand-back's own row and must break.
+    #   * RB_RAN_ROW says the checks executed at all, and must hold whatever is suppressed.
+    #   * the mouse row is `install`'s — a BOOT-time fact, decided before the frame loop was entered
+    #     and untouched by suppressing two vector restores at the exit. It must hold, and if it ever
+    #     broke here that would be the control reaching further than it is aimed. ENDING_ROWS is the
+    #     must-hold list's name (it predates the row) rather than a claim that this is an ending.
+    handback = {RB_PASSED_ROW}
     for name, ok, detail in readback_checks(stats):
-        checks.append((name, ok, detail,
-                       HANDBACK_ROWS if name == RB_PASSED_ROW else ENDING_ROWS))
+        checks.append((name, ok, detail, HANDBACK_ROWS if name in handback else ENDING_ROWS))
     return [(name, bool(ok), detail, group) for name, ok, detail, group in checks]
 
 
@@ -4794,7 +5030,7 @@ def drive_the_own_run(prg, plain, frames, tag, pokes, gates, what, after_release
     return record, m2, stats, log, status, rom
 
 
-def own_flips(log, image_base, what):
+def own_flips(lines, image_base, what):
     """How many times `flip_screen` pointed the shifter at one of the game's two screen buffers.
 
     IT IS THE HEARTBEAT AND IT IS WHY THE TRACE IS ON. The record says the ladder took an ending and
@@ -4810,7 +5046,7 @@ def own_flips(log, image_base, what):
     This build reports where GEMDOS put its image, so the two addresses `wb_target_shifter_byte`
     publishes are simply `image_base + WB_SCREEN_LOW` and `+ WB_SCREEN_HIGH` — which is the same
     arithmetic the backend does, from the same two constants."""
-    events, why = timeline_events(log.splitlines())
+    events, why = timeline_events(lines)
     if why:
         return None, f"{what}: {why}"
     buffers = {image_base + wb("SCREEN_LOW"), image_base + wb("SCREEN_HIGH")}
@@ -5065,7 +5301,8 @@ def mode_ownplay():
     record, m2, stats, log, status, rom = drive_the_own_run(
         prg, plain, frames, "fire", (), OWN_CHAIN_GATES, "the fire-only pass", trace=True)
     problems += check_machine_health(status, log)
-    flips, why = own_flips(log, record["image_base"], "the fire-only pass")
+    lines = log.splitlines()
+    flips, why = own_flips(lines, record["image_base"], "the fire-only pass")
     checks = own_chain_rows(record, m2, stats, OWN_CHAIN_GATES) + [
         ("the boot's own stage load ran the armed SPRITES.CRU load",
          record["stage_result"] == LOAD_COPYLOCK_RAN,
@@ -5082,6 +5319,9 @@ def mode_ownplay():
         # THE ONE-LEG FLIP COUNT, which is pass three's baseline rather than a claim of its own.
         ("...and the frame loop flipped buffers", flips is not None and flips >= record["frames_total"],
          why or f"{flips} buffer publications over {record['frames_total']} frames — one leg's worth"),
+        # ...AND THE BOOT'S ONE IKBD COMMAND, WATCHED ON THE BUS. This is the pass that carries the
+        # trace and boots the whole chain, so it is where the write's position is meaningful.
+        ikbd_disable_mouse_row(lines, "the fire-only pass"),
     ] + own_stage_rows(record, FIRST_SEQ_ROW, "undriven")
     report(f"{OWN_MODE} pass 2 — FIRE ONLY: the control that says the stage moves for a reason",
            checks)
@@ -5098,7 +5338,8 @@ def mode_ownplay():
         prg, plain, frames, ROUND_END_ENDING.tag, ROUND_END_ENDING.pokes, OWN_CHAIN_GATES,
         ROUND_END_ENDING.arm, trace=True)
     problems += check_machine_health(status, log)
-    flips, why = own_flips(log, record["image_base"], "the round-end pass")
+    lines = log.splitlines()
+    flips, why = own_flips(lines, record["image_base"], "the round-end pass")
     checks = own_chain_rows(record, m2, stats, OWN_CHAIN_GATES) + [
         (f"{ROUND_END_ENDING.arm} left the frame loop", record["last_ending"] == ROUND_END_ENDING.code,
          f"last_ending={record['last_ending']} = {ROUND_END_ENDING.arm} "
@@ -5135,7 +5376,8 @@ def mode_ownplay():
         prg, plain, frames, QUIT_ENDING.tag, QUIT_ENDING.pokes, OWN_FIRE_GATES, QUIT_ENDING.arm,
         after_release=release_the_quit_key(plain), trace=True, arrival=OWN_QUIT_POKE_ANCHOR)
     problems += check_machine_health(status, log)
-    flips, why = own_flips(log, record["image_base"], "the ESC pass")
+    lines = log.splitlines()
+    flips, why = own_flips(lines, record["image_base"], "the ESC pass")
     checks = own_chain_rows(record, m2, stats, OWN_FIRE_GATES) + [
         (f"{QUIT_ENDING.arm} left the frame loop", record["last_ending"] == QUIT_ENDING.code,
          f"last_ending={record['last_ending']} = {QUIT_ENDING.arm} ({QUIT_ENDING.code}); the "
@@ -5163,6 +5405,12 @@ def mode_ownplay():
          flips is not None and flips > undriven_flips,
          why or f"{flips} buffer publications against the one-leg pass's {undriven_flips}, over "
                 f"{record['frames_total']} frames in {record['legs_run']} legs"),
+        # ...AND THE $12 WAS STILL SENT ONCE, WHICH ONLY THIS PASS CAN SAY. `init_ikbd` ($e48c) runs
+        # once in the original and every ending re-enters the chain BELOW it, at $e4e6 — so a send
+        # that had drifted into `chain_prologue` would be made again on this ending and nowhere else.
+        # Pass 2's copy of the row is a one-chain run and cannot exceed one whatever the code does;
+        # this is the pass that walks the chain twice, so this is where the count means something.
+        ikbd_disable_mouse_row(lines, "the ESC pass, which walks the chain twice"),
     ] + own_stage_rows(record, FIRST_SEQ_ROW, "after the restart — game_restart_reset put it back") \
       + own_prompt_rows(record, their_prompt, their_prompt_pens)
     report(f"{OWN_MODE} pass 4 — ESC, DRIVEN: the prompt, its PICTURE, and the whole chain again",
@@ -5555,7 +5803,6 @@ GEMDOS_FCREATE_RE = re.compile(r'^GEMDOS 0x3C Fcreate\("([^"]*)"')
 # `Fread(handle, ...)` that follows an open is that open's receipt.
 GEMDOS_FREAD_RE = re.compile(r"^GEMDOS 0x3F Fread\((\d+),")
 GEMDOS_LINE_PREFIX = "GEMDOS "
-VBL_LINE_RE = re.compile(r"^VBL (\d+)")
 
 
 def gemdos_calls(lines):
@@ -5599,20 +5846,11 @@ def pen_window(lines):
     finished loading and depacking TITLESCR.RAD across the seam — which on this media includes TOS's
     FAT12 walk and every sector the WD1772 fetched. Hatari's own `video_vbl` trace is the clock, so
     the number is the emulated machine's rather than the host's."""
-    vbl, first, last = 0, None, None
-    for line in lines:
-        line = line.strip()
-        counted = VBL_LINE_RE.match(line)
-        if counted:
-            vbl = int(counted.group(1))
-            continue
-        write = original.IO_WRITE_RE.match(line)
-        if not write or int(write.group(3), 16) >= ROM_PC_FLOOR:
-            continue                    # TOS sets its own palette before the program ever runs
-        if PEN_FIRST_REG <= (int(write.group(1), 16) & original.IO_ADDRESS_MASK) <= PEN_LAST_REG:
-            first = vbl if first is None else first
-            last = vbl
-    return first, last
+    events, problem = program_io_writes(lines, PEN_REGISTERS)
+    if problem:
+        return None, None               # the caller's rows grade a missing window as a red
+    pens = [event.vbl for event in events if event.register in PEN_REGISTERS]
+    return (pens[0], pens[-1]) if pens else (None, None)
 
 
 class PortALatch:
@@ -5717,6 +5955,14 @@ def port_a_writes_inside_a_disk_operation(lines):
     one vblank after `TITLESCR.RAD` was opened. So the pin is the union: the hardware fact where it
     can be seen, the seam's own window always.
 
+    IT KEEPS ITS OWN LOOP RATHER THAN TAKING `program_io_writes`, for two reasons that are both
+    about correctness and not about style: it has to see the GEMDOS and FDC lines INTERLEAVED with
+    the writes, which a walk that yields only writes has thrown away; and the YM2149's select/data
+    latch is CHIP state that TOS writes too, so a stream with the ROM filtered out would read a data
+    write against whichever register the PROGRAM last selected instead of the one the chip had. What
+    it does share is the parse, the address mask and the collapse guard — `io_write_fields` and
+    `collapsed_io_write`. THE THIRD RETURN is that guard's verdict.
+
     THE SECOND RETURN IS THE VACUITY GUARD AND IT COUNTS THE PROGRAM'S OPENS ONLY. Counting disk
     operations of any kind would be dead on this media — TOS reads four to nine sectors before it
     even `Pexec`s the program — so a run in which the reconstruction never opened a file would
@@ -5725,6 +5971,9 @@ def port_a_writes_inside_a_disk_operation(lines):
     program_opens, open_files, reading_at, violations = 0, [], None, []
     for line in lines:
         line = line.strip()
+        problem = collapsed_io_write(line, PSG_REGISTERS)
+        if problem:
+            return [], 0, problem
         counted = VBL_LINE_RE.match(line)
         if counted:
             vbl = int(counted.group(1))
@@ -5748,19 +5997,18 @@ def port_a_writes_inside_a_disk_operation(lines):
             elif GEMDOS_CLOSING_RE.match(line) and open_files:
                 open_files.pop()
             continue
-        write = original.IO_WRITE_RE.match(line)
-        if not write:
+        fields = io_write_fields(line)
+        if not fields:
             continue
-        register = int(write.group(1), 16) & original.IO_ADDRESS_MASK
-        byte = latch.wrote_port_a(register, int(write.group(2), 16))
-        pc = int(write.group(3), 16)
+        register, value, pc = fields
+        byte = latch.wrote_port_a(register, value)
         if byte is None or pc >= ROM_PC_FLOOR:
             continue
         if open_files:
             violations.append(FuseViolation(GEMDOS_WINDOW, open_files[0], vbl, byte, pc))
         elif reading_at is not None:
             violations.append(FuseViolation(FDC_WINDOW, reading_at, vbl, byte, pc))
-    return violations, program_opens
+    return violations, program_opens, None
 
 
 def drive_select_rows(events, port_a_at_entry):
@@ -6044,13 +6292,19 @@ def floppy_play_pass(image, layout, title, tag, tos=TOS_FROM_THE_ENVIRONMENT):
     it — two passes running one function otherwise report identical row names."""
     status, log, rom = boot_floppy(image, tag, OWN_RUN_BOOT_VBLS, trace=FLOPPY_PLAY_TRACE, tos=tos)
     problems = check_machine_health(status, log)
-    events, why = timeline_events(log.splitlines())
+    # ONE SPLIT, PASSED DOWN. Four checks below read this log line by line; splitting it four times
+    # is four copies of a megabytes-long list and four places for one of them to be given a different
+    # log by an edit.
+    lines = log.splitlines()
+    events, why = timeline_events(lines)
     if why:
         raise SystemExit(f"FAIL: the play disk left no readable write timeline ({why})")
     reset_base = rom_reset_base(log)
-    first_pen, last_pen = pen_window(log.splitlines())
+    first_pen, last_pen = pen_window(lines)
     window = None if first_pen is None else last_pen - first_pen
-    inside, program_opens = port_a_writes_inside_a_disk_operation(log.splitlines())
+    inside, program_opens, fuse_why = port_a_writes_inside_a_disk_operation(lines)
+    if fuse_why:
+        raise SystemExit(f"FAIL: the play disk's trace cannot be walked ({fuse_why})")
     after = hashlib.sha256(image.read_bytes()).hexdigest()
     checks = floppy_boot_rows(log, expect_records=False) + liveness_checks(events) + [
         ("...and the title screen was up inside the ceiling", first_pen is not None
@@ -6096,6 +6350,13 @@ def floppy_play_pass(image, layout, title, tag, tos=TOS_FROM_THE_ENVIRONMENT):
             else "; the fuse the seam disarms for each load is what would put one there")
          + ("" if program_opens else " — the program opened no file at all, so this row would pass "
                                      "vacuously")),
+        # ...AND THE BOOT'S ONE IKBD COMMAND, on the build and the media a person actually plays.
+        # This pass never ends, so `pin_sched_wait8`'s resets and `teardown`'s $08 never go out and
+        # the $12 is the ONLY IKBD byte in the whole log — which is the shape the row reports.
+        # `ends=False`: this build's ladder never returns, so there is no `pin_sched_wait8` and no
+        # `teardown` — the boot's $12 is the only IKBD byte in the whole log and the row says so
+        # exactly, rather than settling for "one before the first pen".
+        ikbd_disable_mouse_row(lines, tag, ends=False),
     ]
     report(title, checks)
     print(f"   {tag}: TOS={Path(rom).name if rom else BUNDLED_EMUTOS_NAME}, whose reset code ran at "
@@ -6147,7 +6408,8 @@ def floppy_probe_pass(image_name, label, indices, tag, title, expect_record=True
     if why or stats_why:
         report(title, floppy_boot_rows(log, expect_records=True, expect_title=expect_title))
         raise SystemExit(f"FAIL: {why or stats_why}")
-    events, timeline_why = timeline_events(log.splitlines())
+    lines = log.splitlines()
+    events, timeline_why = timeline_events(lines)
     if timeline_why:
         raise SystemExit(f"FAIL: {image.name} left no readable write timeline ({timeline_why}) — "
                          f"the drive-select rows below are read out of it")
@@ -6165,6 +6427,9 @@ def floppy_probe_pass(image_name, label, indices, tag, title, expect_record=True
              "off the ordered write timeline, and grade the race by ordering. Non-vacuous on the "
              "GEMDOS drive (`smoke.py ownplay`); a HARDWARE-ONLY caveat here — atari/HARDWARE.md §8"),)) \
         + drive_select_rows(events, stats["psg_port_a_at_entry"]) + [
+        # THE BOOT'S ONE IKBD COMMAND, ON THE MEDIA THE STE BOOTS. `expect_record` is what puts
+        # `io_write` in this pass's trace, so the row is inside this branch and not above it.
+        ikbd_disable_mouse_row(lines, image.name),
         ("the record came home ON THE FLOPPY", True,
          f"{struct.calcsize(OWN_FORMAT)} bytes of {OWN_FILE} and "
          f"{struct.calcsize(STATS_FORMAT)} of {STATS_FILE}, written by GEMDOS through TOS's own "
