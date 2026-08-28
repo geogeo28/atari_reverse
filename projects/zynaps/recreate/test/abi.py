@@ -99,6 +99,43 @@ def flag_call_pokes(routine, condition):
     return {STUB: code}
 
 
+# --- a second stub shape: routines that CLOBBER A0, so it cannot be the result cursor ------------
+#
+# `register_call_pokes` above stores through A0, which only works while the routine leaves A0 alone.
+# `copy_block_words` @ 0x13858 walks A0 as its source pointer, and the sine routines leave their
+# answer in D0 while using A0 for the table, so those need a store that names its own destination.
+# `movem.l <list>,RESULT` is that store: one instruction, an absolute-long destination, and a
+# register list the case chooses.
+_MOVEM_L_TO_ABS_LONG = 0x48f9    # movem.l <list>,xxx.l — dir 0 (regs to memory), mode 111 reg 001
+_MOVEM_BIT = {**{f"d{n}": n for n in range(8)}, **{f"a{n}": 8 + n for n in range(7)}}
+
+
+def register_dump_pokes(routine, registers):
+    """Pokes that call `routine` and `movem.l` the named registers to RESULT.
+
+        jsr     routine
+        movem.l <registers>,RESULT
+        rts
+
+    Unlike `register_call_pokes` this needs no register of its own, so it suits a routine that walks
+    A0. THE ORDER IS THE INSTRUCTION'S, NOT THE CALLER'S: `movem.l` always stores D0..D7 then
+    A0..A6 ascending, whatever order the list was written in, and the candidate glue must mirror
+    that. So the argument is required to be in that order already — a list that is not is a bug in
+    the case rather than something to sort silently, since the glue beside it would then be storing
+    in an order the test author did not read.
+    """
+    bits = [_MOVEM_BIT[name] for name in registers]
+    assert bits == sorted(set(bits)), (
+        f"{registers} is not in movem order — the instruction stores d0..d7 then a0..a6 ascending, "
+        f"and the candidate glue mirrors that order")
+    mask = sum(1 << bit for bit in bits)
+    code = (b"\x4e\xb9" + routine.to_bytes(4, "big")            # jsr imm.l
+            + _MOVEM_L_TO_ABS_LONG.to_bytes(2, "big")
+            + mask.to_bytes(2, "big") + RESULT.to_bytes(4, "big")
+            + b"\x4e\x75")                                      # rts
+    return {STUB: code}
+
+
 # --- APPENDED: recording the CONDITION CODES, for a routine whose whole answer is a flag ---
 #
 # The four type-class tests (0x12dc6, 0x13d3e, 0x13d6e, 0x140f6) and `collision_chain_walk`
@@ -169,3 +206,64 @@ def seed_spans(seed, spans, guard=0):
             merged.append([lo, hi])
     rng = random.Random(seed)
     return {lo: rng.randbytes(hi - lo) for lo, hi in merged}
+
+
+def call_sequence_pokes(routines):
+    """Pokes that `jsr` each routine in `routines`, in order, and then `rts`.
+
+        jsr     routines[0]
+        jsr     routines[1]
+        ...
+        rts
+
+    For a routine whose interesting behaviour is what it does over SEVERAL calls — the sound
+    driver's VBL tick, whose state carries from one frame to the next. Running the sequence as ONE
+    oracle run is what lets the differential compare it at all: `differential` rebuilds the image
+    from BASE_IMAGE for every call, so N separate cases would each re-run frame 1. It also puts the
+    whole N-frame chip-register stream into one PSG ledger, where the ORDER across frames is
+    compared and not only within them.
+
+    EVERY ROUTINE LISTED MUST PRESERVE THE REGISTERS THE NEXT ONE NEEDS, and that is the caller's
+    check, not something this builder can make: the stub emits nothing between the calls. The sound
+    driver's routines preserve everything (`movem.l` at both ends); a routine that preserves only
+    some of its registers can still be chained, but the case has to say which register it is
+    leaning on and why that holds — see `test_fileio.py::test_load_leaves_the_handle_word_behind`,
+    which leans on the trap model leaving A0 alone.
+    """
+    code = b"".join(b"\x4e\xb9" + routine.to_bytes(4, "big") for routine in routines)
+    return {STUB: code + b"\x4e\x75"}
+
+
+# --- a third stub shape: an INTERRUPT handler, which returns with `rte` and not `rts` -------------
+#
+# `emu.run` enters a routine with one return address on the stack and stops when the `rts` pops it.
+# An interrupt handler pops a whole 68000 exception frame instead — the status register as a word,
+# then the interrupted PC as a longword — so entering one directly would return to whatever those
+# six bytes happened to be. This stub builds the frame the handler expects and jumps into it:
+#
+#     pea     resume          ; the frame's PC longword
+#     move.w  #SR,-(a7)       ; ...and the status register beneath it
+#     jmp     handler         ; the handler's `rte` pops both and lands on `resume`
+#   resume:
+#     rts                     ; ...which is the ordinary return emu.run is waiting for
+#
+# Both pushes land inside the stack-guard band the differential already drops, so the frame itself
+# is never compared — only what the handler did with the rest of the image.
+_PEA_ABS_LONG = 0x4879           # pea xxx.l
+_MOVE_W_IMM_TO_PREDEC_A7 = 0x3f3c
+_JMP_ABS_LONG = 0x4ef9
+# Supervisor set, interrupt mask 3 — the state an interrupt is taken in, and the one the model
+# already runs in (it never leaves supervisor mode; TRAP_MODEL.md, Phase 2).
+INTERRUPT_SR = 0x2300
+_INTERRUPT_STUB_RESUME = 16      # pea (6) + move.w (4) + jmp (6)
+
+
+def interrupt_frame_pokes(handler):
+    """Pokes that enter `handler` around a 68000 interrupt frame, so its `rte` returns cleanly."""
+    resume = STUB + _INTERRUPT_STUB_RESUME
+    code = (_PEA_ABS_LONG.to_bytes(2, "big") + resume.to_bytes(4, "big")
+            + _MOVE_W_IMM_TO_PREDEC_A7.to_bytes(2, "big") + INTERRUPT_SR.to_bytes(2, "big")
+            + _JMP_ABS_LONG.to_bytes(2, "big") + handler.to_bytes(4, "big")
+            + b"\x4e\x75")                                      # rts, at `resume`
+    assert len(code) == _INTERRUPT_STUB_RESUME + 2, "the resume offset no longer names the rts"
+    return {STUB: code}

@@ -148,11 +148,29 @@ two ways of saying the same run.
 |---------------|------|-------|--------|--------------|
 | `0x13bf8` | `rand16` | 46 | ✅ verified | the state the binary ships with (0x83e4f2b3, pinned against the image's own bytes, not against a second draw — 65,536 states share any 16-bit output), the LFSR's 0 fixed point, both all-ones/one-bit extremes, the tap mask itself, an 8-draw chain checked against an independently written Python Galois step (so oracle and candidate could not agree on a wrong step count), 400-case sharded fuzz; D0 compared against the oracle's own D0 on every case; poison on 4 seeds |
 
-## Verified — sound (1)
+## Verified — sound (13)
+
+**The whole driver, end to end.** `test_music_frames` arms the in-game tune and runs the VBL tick
+for up to 32 frames as ONE oracle run: tune 0x0b spawns 0x0c and 0x0d on voices 2 and 3, so all
+three voices, both modulation machines, the noise sweep and the mixer are live at once over the
+game's own data — and the whole multi-frame chip-register stream lands in a single PSG ledger, where
+the order ACROSS frames is compared and not only within one.
 
 | Addr (Ghidra) | Name | Bytes | Status | Verification |
 |---------------|------|-------|--------|--------------|
+| `0x16ac8` | `sound_start` | 106 | ✅ verified | all 256 sound numbers (past the 45 real tunes the stream pointer lands in the tune data, and for 52 of them below the tables entirely — armed either way); every channel code 0..5 and 0xff against a shipped tune with NO `0xfa` header, which is the arm where D0 alone decides; the alternate code 4 over a shipped `fa 04` tune with the toggle byte poked to each of 0/1/2/3/0xff — the SHIPPED value is 2, so the round robin runs voice 3, voice 2, ... and not the 1/3 names.txt's comment on 0x16e90 assumed; hi-garbage in both arguments; poison on three tunes, which is what holds all three stream pointers separately. `movem.l` saves and restores every register, so memory is the whole of its effect |
 | `0x16b32` | `sound_lookup_tune` | 28 | ✅ verified | all 256 sound numbers, sharded four ways, which is what pins `adda.w`'s SIGN EXTENSION: 52 of the words a number can reach have bit 15 set (the first at 45, 0x80c8 → 0xf2b0, below the load base), so dropping `sign_ext16` fails at 45. Also hi-garbage and a set high byte in D1 (only `andi.w #$ff` matters, and D1's high word must come back untouched); poison on 4, including the boot tune 0x0b and the first negative offset. The routine writes NO memory, so its answers reach the diff through a `jsr`+store stub (`test/abi.py`) |
+| `0x16b4e` | `sound_reset_psg` | 70 | ✅ verified | the three enable bytes, three volumes and the mixer are diffed in the image; the FLUSH is diffed by the kit's ordered PSG access ledger, which is the only surface that can see it — a candidate pushing ten registers instead of fourteen, or pushing them ASCENDING, fails there while leaving an identical shadow behind (both mutations measured killed). The case also asserts the oracle logged exactly 14 accesses, so the ledger comparison cannot be silently comparing nothing |
+| `0x16b94` | `sound_tick` | 66 | ✅ verified | driven at 1/2/3/8/32 frames of the real in-game tune, chained through one stub so the driver's state carries frame to frame; each run asserts the ledger holds exactly `frames * 11` accesses, which pins BOTH the register count (10..0 — pushing 11..13 would retrigger the envelope) and the descending order. Flush-before-tick is held by the same ledger: the frame-1 stream is the SHIPPED shadow, not the one the tick computes |
+| `0x16bd6` | `sound_voice_tick` | 26 | ✅ verified | disabled/enabled, countdown 1 (fetches) and 2 (does not), and countdown 0 — which `subq.b`+`bne` WRAPS to 0xff rather than fetching on. The second enable test is held by its own case: a stream whose first row is command 0xe1 stops the voice inside the fetch, and the modulation that follows must not run (mutation measured killed) |
+| `0x16bf0` | `sound_voice_next_row` | 438 (span, including its command handlers) | ✅ verified | one synthetic stream per opcode the dispatcher forks on — note, rest, the note range's top, the first command opcode, and every one of 0xe1/0xe4/0xe5/0xe6/0xe8/0xe9/0xea/0xec/0xf0/0xfc/0xfd/0xfe plus two unknown-command values; the jump/loop/exhausted-loop trio over their three pointers; the pending-noise flag at 0/1/2/0xff (the original decrements and branches on zero, so ONLY 1 is a noise note); the transpose over both bytes' signs and a rest, which skips it. Then eight SHIPPED tunes run from their own first row, so every command the game itself uses is driven on its own operands. Synthetic streams are justified only for the two arms the shipped data cannot reach (the unknown-command skip and 0xfc), and they are still opcode bytes the interpreter is built to read |
+| `0x16c82` | `sound_cmd_swap_tunes` | 46 | ✅ verified | THROUGH THE INTERPRETER, not as its own entry: the routine ends in `bra` back into `sound_voice_next_row`'s loop and has no `rts` of its own, so it is driven by an `0xec` row. Both swapped words are diffed, and the `subq.l #1,a0` — the command takes NO operand, so the byte after the opcode is read as the next opcode — is held by the note that follows it in the stream (mutation measured killed) |
+| `0x16cec` | `sound_lookup_modtable` | 28 | ✅ verified | the same 256-number sweep as its tune twin, as a SEPARATE battery rather than a parametrized one because the two answer in different registers: this one's answer is A0, which is the store-through-A0 stub's own cursor, so it needs the `movem.l` stub instead — and the stub's order is what proves which register carries the answer |
+| `0x16da6` | `sound_voice_modulate` | 94 | ✅ verified | the pitch-sweep arm over five periods including 0, which is the early return (nothing sounding, nothing to sweep) and the only input that reaches it; the arpeggio arm over three phase bytes and three offsets — only the frame the phase flips to ZERO adds the offset, so one of the two notes is the row's own. NO POISON PASS: measured, its outputs include both machines' counters and the phase byte, all of which it branches on |
+| `0x16e04` | `sound_set_note_period` | 36 | ✅ verified | all 256 note numbers (the table holds 100, so 100..255 read the modulation index behind it — the byte mask is the routine's only bound), into each of the three voices' shadow pairs. The DOUBLING and the low-byte-first store are both pinned (dropping the `lsl.w #1` is measured killed) |
+| `0x16e28` | `sound_noise_modulate` | 32 | ✅ verified | register 6 swept across the four-bit mask's edge (0/1/8/0xf/0x7f/0xff) over a real modulation record, which is what separates masking-before-adding from masking-after and holds the 0x80 bias |
+| `0x16e48` | `sound_modtable_step_a4` | 2 | ✅ verified | the two-byte entry that sets the counters to the record's own base; driven by every case in the family below, and separated from the 0x16e4a entry by `test_modtable_step_separate_counter_pointer`, which runs the same record with the counters equal and unequal |
+| `0x16e4a` | `sound_modtable_step` | 56 | ✅ verified | six SHIPPED modulation tables (the operands of the game's own 0xe8/0xe9/0xea rows), each walked over every first-counter value from 0 to past its own hold byte — which is what drives all three exits (neutral, delta-only, delta-plus-cursor-step); five second-counter values; and the 0xff terminator followed to a restart pointer aimed at a DIFFERENT table, so a candidate restarting in place differs. NO POISON PASS: measured, the counters are both its outputs and its control flow |
 
 ## Verified — sprite (6)
 
@@ -406,6 +424,78 @@ or an on-target trace would see it; the byte diff cannot.
 | `0x113c0`, `0x11c00`, `0x11d30` | `frame_weapons_and_spawn_stage`, `frame_draw_objects_and_collide`, `frame_resolve_hits_and_game_state` | The three frame stages — orchestrators over most of the game. Deferred to world-staging once their callees exist, per the playbook's order of attack |
 | `0x14444` | `ikbd_send_cmd` | Blocked at KIT level. NOT restated here: the one explanation is its row in "Not reconstructed, and why" at the end of this file, and nothing in this slice depends on it |
 
+## Verified — text (3)
+
+The font is BSS and so is not in the `.PRG`: `_start` loads extchars.dat over it, so every case here
+stages the real 1920 bytes from `../bin/disk`. Drawing against the zeroed bss would make every mask
+and every plane byte 0x00 — a cleared cell for EVERY character, which would hide any glyph-indexing
+mistake at all.
+
+| Addr (Ghidra) | Name | Bytes | Status | Verification |
+|---------------|------|-------|--------|--------------|
+| `0x12e40` | `draw_text_record` | 38 | ✅ verified | every one of the twelve `{column, row, text, 0}` records the game ships, drawn from the image's own bytes at its own column and row — which is what holds the column's SIGN extension against the row's ZERO extension, since the shipped rows run to 168 and a signed reading would put the credit lines above the screen. Plus synthetic edges: an empty string, both ends of the column byte's sign, a row byte of 0xff, and a run through the table arm. The cursor comes back ONE PAST the terminator and is dumped by the `movem.l` stub, so a caller walking a list of records is covered; poison over one record |
+| `0x136f6` | `draw_bcd_number` | 26 | ✅ verified | six longwords including 0 (which draws eight zeroes, not one), 0x99999999 and two with nibbles above 9 — the digit is turned into a character by adding 0x30 with no range check, so those draw ':' through '?'. A rightmost column of 7 walks the run off the left of the row into the previous one, which a forward-stepping candidate would not do (mutation measured killed); hi-garbage in the column; poison over all eight cells |
+| `0x13710` | `draw_char` | 186 | ✅ verified | all 256 character codes, sharded four ways — exhaustive because the routine forks FIVE ways and two of the boundaries are single values (0x40 goes through the table, 0x41 does not); above 0x7f the arithmetic arm indexes past the 48-glyph font and below 0x20 the table arm indexes before the table, both in-image and both driven. Then columns 0..40 for each of the five arms, which is what holds the odd/even cell address — a `column * 4` reconstruction agrees on every even column and is wrong on every odd one. Every case draws over a NOISY frame, which is what makes the AND mask visible at all; the space's no-op is an empty diff over that noise; poison on four arms |
+
+## Verified — util (8)
+
+`rand16` is the ninth routine of this subsystem and has its own section above (it lives in
+`src/rng.c`). `entity_ptr_from_index` and its second entry are the two left; see the table at the
+bottom.
+
+| Addr (Ghidra) | Name | Bytes | Status | Verification |
+|---------------|------|-------|--------|--------------|
+| `0x13858` | `copy_block_words` | 14 | ✅ verified | the five byte counts the game's own call sites pass, plus odd counts (the odd byte is DISCARDED), five source/destination overlaps at word and row granularity — which is what holds the copy's forward direction — and the two counts only the dumped registers can tell apart: 0 (which `dbf` wraps to 0x10000 words, run in place so the traffic stays inside the scratch band) and 0x20004, whose half exceeds a word so that `lsr.l`/`sub.l` differ from their word twins ONLY in the counter D2 comes back with. Destination seeded, so a short copy differs; poison |
+| `0x1424c` | `angle_to_target` | 136 | ✅ verified | a ring of 81 source/target pairs covering all eight octants, both axes and both diagonals; single-bit sweeps over both coordinates of both records, which separate `btst #2` from its neighbours and prove only the TARGET is rounded up; coordinates with bit 15 set, held by `lsr.w`'s logical shift; the zero vector, the one input that runs the search's counter all the way to 0; 400-case sharded fuzz; poison on four quadrants |
+| `0x142d4` | `entity_set_velocity_from_angle` | 50 | ✅ verified | every one of the 64 circle angles against six speed bytes straddling the sign bit (`ext.w` before `muls.w` — an unsigned reading agrees on 0..0x7f and differs above), plus four angles ABOVE 0x3f, where the x index's byte mask reads past the 64-word table while the y index's `& 0x3f` stays inside it; hi-garbage in D0, D1 and D3 |
+| `0x14306` | `entity_apply_velocity` | 26 | ✅ verified | seven velocity words × seven × four positions, including both extremes whose `<< 8` fills the longword. NOTE FOR `include/entity.h`, WHICH IS FROZEN: its `ENTITY_X`/`ENTITY_Y` are tagged `.w signed`, but this routine adds a LONGWORD at both offsets — the fields are 32-bit fixed point with 8 fractional bits and the tagged word is their integer half, which is also why `ENTITY_Y` is four bytes past `ENTITY_X` rather than two. Nothing is wrong today (the box test reads only the integer half); the tag is narrower than the field |
+| `0x143f8` | `entity_apply_accel` | 76 | ✅ verified | all 256 direction bytes, sharded four ways — exhaustive because the four bits are two EXCLUSIVE pairs tested in order and because, with neither bit of a pair set, the original branches PAST its own store, so that axis's word must come back untouched; wrap cases at both ends of the word; hi-garbage in D1. Its acceleration pair (0x16/0x18) is named in `include/util.h` because the frozen `entity.h` does not have it — see the note under "Not reconstructed" |
+| `0x15644` | `cos_scaled` | 16 | ✅ verified | all 360 degrees plus the wrap boundary either side and two negative angles; names.txt reports NO caller for this entry, and it is reconstructed because it falls straight into `sin_scaled` — a port that stopped at the fall-through boundary would leave a live entry point out |
+| `0x15654` | `sin_scaled` | 64 | ✅ verified | all 360 degrees at both ends of the amplitude range, the three fold boundaries either side, and the angles OUTSIDE 0..359 — which is what holds the compares' SIGNEDNESS: 0x8000 and 0xffff take the FIRST arm, where an unsigned reading would take the fourth. Poison on five angles |
+| `0x15694` | `sin_quadrant_scaled` | 22 | ✅ verified | every angle in the 91-word first-quadrant table against six amplitudes; five angles that index BELOW the table (the `d0.w` index register sign-extends, and every reachable address is still in-image); hi-garbage in both arguments. The answer is a `swap`, not a shift — the product's low half comes back in D0's HIGH word, and `>> 16` agrees on the low word and differs on that one (mutation measured killed) |
+
+## Verified — fileio (1)
+
+| Addr (Ghidra) | Name | Bytes | Status | Verification |
+|---------------|------|-------|--------|--------------|
+| `0x144e8` | `load_file` | 68 | ✅ verified | four of the game's own files (extchars.dat, power.dat, status.pi1, lev1.map) staged from `../bin/disk` under the names the IMAGE holds — read out of the table at 0x19686 rather than typed, so a staged name that did not match would fail to open and the model REFUSES rather than fabricating a handle; short counts, a count past the end of the file, and a count of 0; the destination seeded with noise so a short read leaves some of it standing; two loads chained through one stub, which is what holds the handle word being rewritten; poison. The failure path (an unstaged name → Fopen -1) is UNREACHABLE under the model: `os_fopen` tallies a refusal and `differential` throws the case away, which is the correct answer — a case that tested it would be testing `shim.c` |
+
+## Verified — irq (7)
+
+Every handler returns with `rte`, so each case enters through `abi.interrupt_frame_pokes` — a stub
+that pushes the 68000 exception frame the handler pops and lands its `rte` on an ordinary `rts`. The
+frame is inside the stack-guard band the differential already drops.
+
+**WHAT THESE ROWS DO NOT CLAIM.** `$ff8240..` (the shifter's colour registers) and `$fffa0f` (the
+MFP's in-service register B) are outside the 1 MiB image: the oracle DROPS an off-image write and
+the candidate makes none, so **no case here can fail on a palette upload or an interrupt
+acknowledge**. Six of the seven handlers make one or both. `src/irq.c` routes them through
+`shifter_write_palette` / `shifter_clear_pen0` / `mfp_ack_timer_b`, and those three live in
+`src/irq_hw_offtarget.c` — a translation unit a build for the real Atari does NOT compile, which is
+the split `tools/recreate_kit/src/psg.c` uses for the one hardware surface the kit does model. So
+the omission is one named file rather than a silence spread through six routines, and a target
+build cannot inherit the no-ops by accident. **The surface that would catch it** is a kit-level
+hardware-write ledger
+mirroring `psg.h`'s — one write feeding an ordered ledger both sides compare — or, on target, a
+Hatari register snapshot (`docs/on-target-execution.md`). Until one exists these are the same class
+as `ikbd_send_cmd` below, and the rows say which half of each handler is held.
+
+| Addr (Ghidra) | Name | Bytes | Status | Verification |
+|---------------|------|-------|--------|--------------|
+| `0x106a2` | `vbl_isr_title` | 12 | ✅ verified | IN-IMAGE HALF ONLY — the sound tick, over an armed voice, compared in memory and through the PSG ledger. Its `clr.w $ff8240` is off-image and unpinned (see above) |
+| `0x106ae` | `timer_b_raster_isr` | 200 | ✅ verified | IN-IMAGE HALF ONLY — both colour cycles at, and either side of, the frame they fire on, over a shadow seeded with DISTINCT random words — over equal words (or the zeroes the `.PRG` ships for most pens) both machines would be invisible. The countdown of 0 is the case that matters: `subq.b`+`bne` wraps it to 0xff and does NOT fire, which is what an `if (--n <= 0)` reconstruction gets wrong. The two periods differ (8 and 4), so a candidate reloading both from one constant differs on one; poison. Its eight-longword palette upload is off-image and unpinned |
+| `0x10776` | `vbl_isr` | 12 | ✅ verified | THE ONE HANDLER WITH NO HARDWARE STORE AT ALL, and so the only one held end to end: the sync flag over three values, and the sound tick with a voice armed, compared in memory and through the PSG ledger |
+| `0x10782` | `timer_b_isr` | 16 | ✅ verified | IN-IMAGE HALF ONLY — the sync flag over three values, which is the whole of its in-image effect. Its `bclr #0,$fffa0f` is off-image and, unlike the palette, has no shadow at all — nothing about it is visible in the image |
+| `0x12c9e` | `attract_vbl_isr` | 34 | ✅ verified | IN-IMAGE HALF ONLY — the line word, the sync flag and the list cursor, each seeded with a value the handler cannot produce (0x1234, 0x01, 0xdeadbeef) so a missing write shows up on the plain pass, plus the sound tick. Its `clr.w $ff8240` is off-image and unpinned |
+| `0x12cc0` | `attract_rasterbar_isr` | 130 | ✅ verified | IN-IMAGE HALF ONLY — both band edges either side of each — the line is incremented FIRST, so entering on 0x26 puts the handler on 0x27, the first line outside — and the signed arm (a line of 0xffff increments to 0 and is BELOW the band, not far above it); three cursor positions walking the list; and a count of 0, which `subi.w` wraps to 0xffff so the pair is NOT retired. The count word is decremented IN PLACE, so the list is consumed as the band is painted; poison. Its colour store and its acknowledge are off-image and unpinned. The two out-of-band arms differ only in a delay loop with no memory effect, which is not reconstructed |
+| `0x13c26` | `vbl_menu` | 120 | ✅ verified | IN-IMAGE HALF ONLY — every phase byte the counter can hold, including the three that never occur in play (2, 3, 0xff): the original counts UP and compares against 2, so a phase starting above 1 runs all the way round rather than wrapping next frame — which is what separates the instruction pair from the `^ 1` toggle a paraphrase would write (mutation measured killed). Its own eight-longword palette upload is off-image and unpinned |
+
+**NO POISON PASS ON THE FOUR HANDLERS THAT TICK THE SOUND DRIVER.** Measured, not assumed: with
+`poison=True` both `vbl_isr` and `attract_vbl_isr` fail inside the driver at `psg_reg_shadow+1`,
+because the tick's outputs include the modulation counters and the tune cursor, which are also its
+control flow. What holds them instead is that every flag and pointer a case drives is seeded with a
+value the handler cannot produce.
+
 ## Suite-wide checks (not functions, so not counted above)
 
 | file | what it holds |
@@ -494,14 +584,81 @@ cannot do is observe the read/store ORDER (every preshift store lands in slots 1
 comes from slot 0), which is why the order needed cases of its own and went unheld until it got
 them.
 
+## Mutation check — sound / util / text / fileio / irq
+
+A second sweep, kept separate from the one above so that the two agents' counts never have to be
+merged into one number. **Thirty-six mutations, 33 killed, 3 survivors**, each rebuilt with
+`rm -f build/*.so` first and every one run from a green baseline. The four that touch code the
+pre-commit review reshaped (the shared little-endian pair, the modulation stepper's counter helper,
+the `swap`) were RE-RUN after that reshaping rather than carried over.
+
+| mutation | result |
+|---|---|
+| `loop_passes` dropped from `copy_block_words`' row count | killed |
+| `sin_quadrant_scaled`'s `swap` replaced by `>> 16` | killed |
+| `ANGLE_FLAG_SWAPPED` 0x0f -> 0x1f | killed |
+| `VELOCITY_QUARTER_TURN` 0x10 -> 0x11 | killed |
+| `entity_apply_velocity`'s `<< 8` -> `<< 7` | killed |
+| `entity_apply_accel`'s subtract arm disabled | killed |
+| `PLANE_STRIDE` 2 -> 1 | killed |
+| `draw_bcd_number` steps the column FORWARD | killed |
+| `draw_text_record`'s column read UNSIGNED | killed |
+| `draw_char`'s space compared as a WORD not a byte | killed |
+| `draw_char`'s letter threshold compared UNSIGNED | killed |
+| `SOUND_STREAM_CHANNEL_TAG` 0xfa -> 0xfb | killed |
+| the SFX voice toggle XORs 2 instead of 1 | killed |
+| the shadow flush pushed ASCENDING (image identical; only the PSG ledger sees it) | killed |
+| `PSG_TICK_FLUSH_REGS` 11 -> 10 | killed |
+| the note period's doubling dropped | killed |
+| `MOD_DELTA_NEUTRAL` 0x80 -> 0x81 | killed |
+| `SOUND_ROW_NOTE_MAX` 0x65 -> 0x64 | killed |
+| `VOICE_MOD_TEMPLATE_BYTES` 12 -> 11 | killed |
+| the pitch sweep adds the step once instead of twice | killed |
+| `sound_voice_tick`'s SECOND enable test deleted | killed |
+| `sound_cmd_swap_tunes` stops backing the cursor up one byte | killed |
+| `le16` read big-endian (the shared little-endian helper, so this is every table at once) | killed. Worth recording that it USED to be killed as a HANG: while the read was spelt out three times, mutating only the modulation index left the tune lookup right and sent the candidate's interpreter round for ever, and a candidate infinite loop is a hung pytest worker rather than a named assertion (the oracle has an instruction cap; the candidate has none). Collapsing the three copies into one helper is what turned it into an ordinary red |
+| the modulation stepper's SECOND counter arm deleted (the repeat count never elapses, so the cursor never steps) | killed |
+| `load_file`'s handle store deleted | killed |
+| `PALETTE_ROTATE_PERIOD` 4 -> 8 | killed |
+| the palette swap long left unswapped | killed |
+| `countdown_elapsed` fires on `> 0x80` instead of `== 0` | killed |
+| the cycle-word rotation one word short | killed |
+| `vbl_isr`'s sync-flag clear deleted | killed |
+| the attract bar's count test replaced by "always retire" | killed |
+| the attract band's upper edge `>=` -> `>` | killed |
+| `vbl_menu`'s phase wrap `==` -> `>=` | killed |
+| `angle_to_target`'s octant-swap compare read UNSIGNED | **SURVIVED** |
+| `sin_scaled`'s first fold boundary `<=` -> `<` | **SURVIVED** |
+| `load_file` closes from the REGISTER instead of re-reading `A_file_handle` | **SURVIVED** |
+
+All three survivors are **unobservable by construction**, not coverage holes, and none can be
+reached by seeding real data:
+
+* *`angle_to_target`'s swap compare.* Both legs have already been made non-negative by the two
+  negations above it, and the only value where a signed and an unsigned compare disagree is 0x8000
+  (whose negation is itself). The legs are cell deltas — coordinates are shifted right by 3 before
+  subtraction — so they span at most −0x1fff..0x2000 for any 16-bit coordinate pair. 0x8000 is
+  unreachable, and the two readings agree on every input the routine can be handed.
+* *`sin_scaled`'s 90-degree boundary.* At exactly 90 the first arm computes `sin_q1(90)` and the
+  second `sin_q1(180 − 90)`, which is the same call. The fold is continuous there, so `<=` and `<`
+  are the same function. The 360-degree boundary in `cos_scaled` is the same argument one wrap
+  further out (`sin_scaled(360)` folds back to `sin_q1(0)`, which is `sin_scaled(0)`), and it is
+  recorded here rather than as a second row because it is one fact, not two.
+* *`load_file`'s handle round trip.* The word it stores and the word it reads back are the same
+  value with nothing between them that could change it, so closing from the register agrees on every
+  input. The store itself IS pinned — deleting it is killed above — and it is the round trip, not
+  the store, that no case can see.
+
 ## Not reconstructed, and why
 
 | Addr | Name | Status |
 |---|---|---|
-| `0x16ac8` | `sound_start` | **NOT blocked — verifiable today, and the next sound row.** An earlier revision of this file claimed it "needs the direct-PSG surfaces"; that was wrong and is retracted. Its body (0x16ac8..0x16b30) reads: `movem.l`, `bsr` to the already-verified `sound_lookup_tune`, `cmpi.b #$fa,(a1)` with an optional channel byte, an `eori.b #1` toggle on the byte at 0x16e90, a three-way select between the voice-slot structures at 0x16eaa / 0x16edc / 0x16f0e, seven stores into the chosen one, `movem.l`, `rts`. No trap, no hardware address, and every store lands in the text segment where the image diff sees it. The YM2149 writes belong to the routines BELOW it — `lea $ffff8800.l,a1` appears at 0x16b82 and 0x16b9e, inside 0x16b4e and its neighbour, which are separate functions |
-| `0x153c0` | `sprite_bank_build_preshift8` | Not blocked either: it composes 0x13858 (unported) with the already-verified `sprite_preshift8_2px`, and is the natural next sprite row |
-| `0x144e8` | `load_file` | Trap-bound (GEMDOS `Fopen`/`Fread`/`Fclose`), and the model serves all three from staged files — so reconstructible, just deferred past the pure leaves per the playbook's order of attack |
-| `0x13c26` | `vbl_menu` | Partly off-image and NOT a plain call. It uploads eight longs from `palette_current` (0x19f46) to `$ff8240..$ff825c`, which the diff cannot see; it also ticks `raster_phase_counter` (0x198a8) mod 2 and clears `vbl_wait_flag` (0x198a7), which it can. Two further obstacles the earlier row omitted: it ends in `bsr.w $16b94` — an unported callee that writes in-image state, so the row cannot be verified before that one is — and it returns with **`rte`**, not `rts`, because it is the VBL vector installed at `$70`. Entering it needs an interrupt frame on the stack rather than the harness's ordinary return address |
+| `0x153c0` | `sprite_bank_build_preshift8` | Not blocked either: it composes the now-verified 0x13858 (`copy_block_words`) with the already-verified `sprite_preshift8_2px`, and is the natural next sprite row |
+| `0x141c0` | `entity_ptr_from_index` (and `0x141c2`, its D6 entry) | Not blocked — a four-instruction leaf — but its base address is `entity_table` (0x17a8e), which `../out/globals.tsv` assigns to the **player** subsystem. There is no `include/player.h` yet, and a subsystem reads another's global by including ITS header rather than restating the address (README.md), so writing `A_entity_table` into `include/util.h` would plant the duplicate `test_constants.py` exists to refuse. It belongs to whichever change lands `player.h`, and the two entries port together |
+| `0x12a28` | `title_screen_draw` | The last `text` routine. It composes `draw_text_record` (verified) with the ZYNAPS logo blit and a buffer flip, both of which belong to subsystems this agent does not own — the logo blit is `sprite`'s and the flip is `video`'s |
+| `0x156ac` | `asteroids_load_and_build` | The second `fileio` routine. Its `load_file` half is verified now; the rest expands bigast.dat's six masked sprites into 8-frame 3-cell banks, which is sprite work and reads as the natural pair to `sprite_bank_build_preshift8` above |
+| — | the whole `hud` and `highscore` subsystems | Untouched this session, and neither is blocked: the HUD's ten routines are blits into the status panel that compose `draw_char`/`draw_bcd_number` (verified) with the panel graphics from status.pi1 and power.dat, and the four high-score routines compose those with the table and — for `highscore_enter_name` — the input model. They are the next natural rows once the panel's own staging exists |
+| `0x16e90`, `0x19932`, `0x19a0a` | three name-map corrections | Not code: `../out/names_sound.txt` carries them for the orchestrator. Two `var` lines point one byte early at the previous record's terminator (the code loads 0x19933 and 0x19a0b), and the comment on the SFX toggle assumes a 0/1 byte where the `.PRG` ships 2 |
 | `0x14444` | `ikbd_send_cmd` | **Blocked at the KIT level, and the earlier row prescribed the wrong fix.** The routine spins on bit 1 of the IKBD ACIA status at `$fffc00` and then writes `$fffc02`. Adding `$fffc00` to `os.h`'s `OS_HW_*` set as a VOLATILE address does NOT work: VOLATILE means one declaration describes exactly one read and a SECOND read in the same run is refused — but a spin loop's whole nature is re-reading. Nor does a STATIC declaration, whose contract is that the machine's answer never changes; a status byte that must read "not ready" and then "ready" is precisely what the Phase 7 model excludes. And the write half has no ledger at all: `hw.h` exports `hw_read8` and no `hw_write8`, so a reconstruction's `$fffc02` store would be invisible on both sides. The correct fix is a shim-level ACIA model (a status byte that becomes ready after a declared number of polls, the way `sched.c` counts polls per wait site) plus an IKBD write ledger mirroring `psg.c` — playbook §5's "model the input hardware registers so busy-waits terminate". That is kit work, not this project's, and the surface that would catch it is on-target rather than the differential |
 | `0x14456` | `ikbd_acia_isr` | Same `$fffc00`/`$fffc02` gap as above, and it is an interrupt handler entered around a frame rather than a called routine |
 | `0x15838` | `mothership_sprite_preshift` | **Blocked only on file OWNERSHIP, not on anything technical.** The body is `asteroid_preshift_bank`'s exact shape one geometry wider — five cells 400 bytes apart, 40 rows, a 2000-byte frame stride — and would share the same `shift_masked_frame_right_1px` helper. Its tail then sets four completion flags (`boss_in_playfield` 0x19aad, `mothership_phase_active` 0x198b0, `mothership_phase_frames` 0x19efe, `mothership_prep_stage` 0x19911), and `../out/globals.tsv` puts all four in the **mothership** subsystem — so their addresses belong in `include/mothership.h`, which the agent owning that subsystem creates. Spelling them in `sprite.h` instead would trip `test_constants.py`'s duplicate-address check the moment that header lands. Port it in the change that can include it |
@@ -510,5 +667,5 @@ them.
 
 ## Suite
 
-`make test` — **1268 passed**. `make guarded` — same count, 8623
+`make test` — **1589 passed**. `make guarded` — same count, 13480
 candidate runs guarded across 10 workers, no fault.
