@@ -46,8 +46,11 @@
  * unpinned as an OFFSET: the only ported reader reaches it through the word read above, which names
  * ENTITY_ALIVE, so nothing yet fails if this number is wrong. */
 #define ENTITY_PIXEL_HIT   0x0fu
-#define ENTITY_TYPE        0x11u  /* .b — class id, the index into the 0x19196 / 0x191a4 / 0x191ac
-                                   * class bitmaps.
+#define ENTITY_TYPE        0x11u  /* .b — class id; entity_type_in_mask (0x13bc2) indexes it into the
+                                   * 14-byte class bitmaps at 0x19164 / 0x19172 / 0x19180 (enemy.h) —
+                                   * no caller bounds the type. Past +0x1a the record is a UNION:
+                                   * +0x1b is also the script VM's fire countdown and +0x21 an
+                                   * asteroid speed flag (second roles named in enemy.h).
                                    * pinned by test_enemy.py::test_ground_skips_dead_and_wrong_type */
 #define ENTITY_DX          0x12u  /* .w — cos64[angle]*speed (0x142d4). pinned by
                                    * test_enemy.py::test_op_halt_zeroes_both_velocity_words */
