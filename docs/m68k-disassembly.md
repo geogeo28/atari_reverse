@@ -163,24 +163,29 @@ length and the sweep are right; what is lost is the whole difference between `0(
 `0(a0,d0.l)`, which is exactly the class that bit Wonder Boy's spawn pass below. Read the bytes
 whenever a listing shows `idx(An)` and the index's width matters.
 
-## A relocated listing does not relocate every operand
+## A relocated listing relocates every operand — since 2026-08-28
 
 `prg_dis.py` prints operands at their **runtime** address once a load base is given, and tags the
-ones the relocation table covers `<RELOC ptr>`. It does that for the addressing modes — but **not
-for a longword IMMEDIATE**, even though the tag is printed there too. The two look identical in the
-listing and only one of them has had the base added:
+ones the relocation table covers `<RELOC ptr>`. It now does that for **both** shapes the table
+covers — the absolute addressing modes and a longword **IMMEDIATE**:
 
 ```
-013d58: 4df9 000091ac    lea $191ac.l,a6        <RELOC ptr>   <- base added, 0x91ac -> 0x191ac
-0155ee: 257c 0005791e    move.l #$5791e,10(a2)  <RELOC ptr>   <- base NOT added, real value 0x6791e
+013d58: 4df9 000091ac      lea $191ac.l,a6        <RELOC ptr>   <- stored 0x91ac  + base
+0155ee: 257c 0005791e 000a  move.l #$6791e,10(a2)  <RELOC ptr>   <- stored 0x5791e + base
 ```
 
-So a global's address read off a `move.l #imm,<ea>` line is **one load base too low**. That is a
-quiet failure: the wrong constant still points inside the image, so nothing faults — it simply
-reads or writes the wrong place, and only a differential case that actually drives that store will
-notice. Zynaps' `shot_to_puff` shipped with `0x5791e` for its hit-flash sprite and was caught by the
-first differential run; three neighbouring `fire_*` routines carry the same shape, and so do the
-`cmt` lines a naming pass wrote from the same listing.
+The second line used to print `#$5791e`: the base was added to the address column and to the
+`lea`'s operand, but not to the immediate, and the tag looked the same either way. It was a quiet
+failure: the un-based
+constant still points inside the image, so nothing faults — the code simply reads or writes the
+wrong place, and only a differential case that actually drives that store notices. Zynaps'
+`shot_to_puff` shipped with `0x5791e` for its hit-flash sprite and was caught by the first
+differential run; three neighbouring `fire_*` routines carried the same shape, and so did four
+`cmt` lines a naming pass wrote from the same listing (`grep CORRECTION projects/zynaps/names.txt`).
+
+**Reading a listing generated before 2026-08-28?** Add the load base yourself to any *immediate*
+tagged `<RELOC ptr>` — `#$5791e` in a `--base 0x10000` listing means `0x6791e`. Regenerating the
+listing is the safer move; nothing else in the file changes.
 
 **Check an immediate against a second source before naming it.** Ghidra's decompiler applies the
 relocation (`&DAT_0006791e`), and so does the loaded image the harness hands a test — two agreeing
@@ -206,17 +211,20 @@ whether its own image offset is in the relocation table. See
 [`binary-formats.md`](binary-formats.md) for the table's format.
 
 **`prg_dis.py --base` relocates the operands too, and did not always.** Given `--base`, the listing
-now prints an absolute-long operand the relocation table lists at its RUN-TIME address, so a line
-reads `move.l $195f4.l,d5   <RELOC ptr>` rather than `move.l $95f4.l,d5` — the operand agrees with
-the address column on its left and with the project's `names.txt`, and the `<RELOC ptr>` tag is what
-says the value was adjusted. Operands the table does NOT list are left exactly as stored, which is
-what keeps hardware registers (`lea $ffff8800.l,a1`) and 68000 vectors (`$70.l`) readable.
+prints every longword the relocation table lists — absolute-long operand *and* 32-bit immediate — at
+its RUN-TIME address, so lines read `move.l $195f4.l,d5` and `move.l #$6791e,10(a2)` rather than
+`$95f4.l` and `#$5791e`. The operand then agrees with the address column on its left and with the
+project's `names.txt`, and the `<RELOC ptr>` tag is what says the value was adjusted. Longwords the
+table does NOT list are left exactly as stored, which is what keeps hardware registers
+(`lea $ffff8800.l,a1`) and 68000 vectors (`$70.l`) readable. The two halves landed separately: the
+addressing modes in `d81609b` (2026-08-27), the immediates the day after.
 
-Before that change the address column was relocated and the operands were not, so every
+Before those changes the address column was relocated and the operands were not, so every
 reloc-flagged operand in a `--base` listing was one load base short. If you are reading an OLDER
 listing — or any tool that prints the raw longword — add the load base to any operand tagged
 `<RELOC ptr>` before looking it up. It is a quiet failure: the wrong address usually exists, so the
-name you find belongs to some other variable.
+name you find belongs to some other variable. `tools/recreate_kit/test/test_prg_dis.py`
+(`RELOC_CASES`) pins both shapes.
 
 **A BYTE write into a register is a byte write, and the three bytes above it are whoever's they
 were.** `move.b #$2,d7` leaves d7's bits 8..31 alone, so a routine that then reads d7 as a *word* is

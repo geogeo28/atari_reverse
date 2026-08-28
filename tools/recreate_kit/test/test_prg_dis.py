@@ -165,6 +165,50 @@ def decode_one(encoding):
     return prg_dis.decode(b"\x00" * GEMDOS_HEADER_LEN + image + TRAILING_PAD, GEMDOS_HEADER_LEN, 0)
 
 
+# --- relocated 32-bit immediates ---------------------------------------------------
+# A longword the DRI relocation table lists is a pointer assembled TEXT-RELATIVE, and nothing says
+# it has to sit in data: it can be an instruction's IMMEDIATE field. The loader adds the load base
+# to it exactly as it does to an abs.l operand, so a --base listing has to print it relocated. It
+# did not until 2026-08-28, and the raw value looks perfectly plausible — it still points inside
+# the image — so two naming passes read Zynaps' `move.l #$5791e,10(a2)` as address 0x5791e when the
+# store really targets 0x6791e (see docs/m68k-disassembly.md). The first two cases below ARE that
+# instruction's immediate, in the `move.l #imm,d0` form.
+RELOC_BASE = 0x10000
+MOVE_L_IMM_TO_D0 = "203c0005791e"       # immediate at image offset 2
+CMPI_L_IMM_D0 = "0c8000007832"          # line-0 immediate path, also at image offset 2
+IMMEDIATE_IMAGE_OFFSET = 2
+
+# (encoding, image offsets the reloc table lists, expected text)
+RELOC_CASES = [
+    (MOVE_L_IMM_TO_D0, {IMMEDIATE_IMAGE_OFFSET}, "move.l #$6791e,d0"),
+    (MOVE_L_IMM_TO_D0, set(), "move.l #$5791e,d0"),        # not in the table -> printed as stored
+    (CMPI_L_IMM_D0, {IMMEDIATE_IMAGE_OFFSET}, "cmpi.l #$17832,d0"),
+    (CMPI_L_IMM_D0, set(), "cmpi.l #$7832,d0"),
+    # The abs.l operand this fix generalizes, kept alongside so the two stay in step.
+    ("2039000091ac", {IMMEDIATE_IMAGE_OFFSET}, "move.l $191ac.l,d0"),
+    ("2039000091ac", set(), "move.l $91ac.l,d0"),
+]
+
+
+def decode_relocated(encoding, fixes, base=RELOC_BASE):
+    """Decode `encoding` at image offset 0 with `fixes` as the relocation table's image offsets."""
+    image = bytes.fromhex(encoding)
+    return prg_dis.decode(b"\x00" * GEMDOS_HEADER_LEN + image + TRAILING_PAD,
+                          GEMDOS_HEADER_LEN, base, fixes)
+
+
+def test_relocated_long_immediates():
+    """A 32-bit immediate in the relocation table prints relocated; every other one prints raw."""
+    failures = []
+    for encoding, fixes, want_text in RELOC_CASES:
+        _, got_text = decode_relocated(encoding, fixes)
+        if got_text != want_text:
+            failures.append("  %-14s fixes=%-6s got %-24r want %r"
+                            % (encoding, sorted(fixes), got_text, want_text))
+    assert not failures, ("prg_dis mis-relocated %d operand(s) at base 0x%x:\n%s"
+                          % (len(failures), RELOC_BASE, "\n".join(failures)))
+
+
 def test_decoder_matches_reference_encodings():
     failures = []
     for encoding, want_len, want_text in CASES:
@@ -219,7 +263,8 @@ def test_no_impossible_address_register_destination():
 
 
 if __name__ == "__main__":
-    tests = [test_decoder_matches_reference_encodings, test_no_impossible_address_register_destination]
+    tests = [test_decoder_matches_reference_encodings, test_relocated_long_immediates,
+             test_no_impossible_address_register_destination]
     failed = 0
     for t in tests:
         try:

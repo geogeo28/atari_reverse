@@ -5,9 +5,10 @@ Stdlib only. Priority is *correct instruction length* (via 68000 effective-addre
 extension-word rules) so the linear sweep does not desync; mnemonic fidelity is
 "good enough for a first pass" — refine in Ghidra. Traps are auto-named, and
 longwords listed in the relocation table are flagged `<RELOC ptr>` (they are
-absolute pointers, i.e. future labels) AND printed relocated: the file stores them
-text-relative, so with --base the operand shown is the address the instruction will
-really touch, matching the address column and the project's names.txt.
+absolute pointers, i.e. future labels) AND printed relocated, absolute-long operands
+and 32-bit immediates alike: the file stores them text-relative, so with --base the
+operand shown is the address the instruction will really touch, matching the address
+column and the project's names.txt.
 
 Usage: python3 prg_dis.py FILE.PRG [--data] [--start OFF] [--len N] [--base ADDR]
 
@@ -99,8 +100,26 @@ def parse_reloc(d, h):
 EA_AN = 1  # ea mode field 001 = "An direct"; illegal for many ops, which makes it a decode tell
 
 
+def _reloc_long(d, p, fixes, base):
+    """Read the longword at file offset `p`, relocated when the relocation table lists it.
+
+    The DRI table fixes up longwords by IMAGE offset and does not care what the longword MEANS:
+    it may be a pointer in data, an absolute-long operand, or an instruction's 32-bit IMMEDIATE
+    field (`move.l #ptr,10(a2)`, `pea`, `cmpi.l #ptr`). The GEMDOS loader adds the load base to
+    every one of them, so printing the stored value is one load base short of the address the
+    program will really use. `fixes` is None when the caller has no table, and `base` 0 makes
+    this a no-op — a listing without --base still shows the file's raw longwords.
+    """
+    value = rd32(d, p)
+    if fixes is not None and (p - HEADER_LEN) in fixes:
+        value = (value + base) & 0xffffffff
+    return value
+
+
 def _ea(d, p, mode, reg, size, pc_after_op, fixes=None, base=0):
-    """Render one effective address. `fixes`/`base` relocate an abs.l the reloc table lists."""
+    """Render one effective address. `fixes`/`base` relocate an abs.l or a long immediate
+    the relocation table lists.
+    """
     if mode == 0: return "d%d" % reg, 0
     if mode == 1: return "a%d" % reg, 0
     if mode == 2: return "(a%d)" % reg, 0
@@ -113,15 +132,12 @@ def _ea(d, p, mode, reg, size, pc_after_op, fixes=None, base=0):
     if mode == 7:
         if reg == 0: return "$%x.w" % rd16(d, p), 2
         if reg == 1:
-            value = rd32(d, p)
             # A longword in the relocation table holds a pointer stored TEXT-RELATIVE, which the
             # GEMDOS loader fixes up by adding the load base. Print what the instruction will
             # actually address at run time, so the operand agrees with the address column on the
             # left (and with names.txt) instead of being one load base short. disasm() still tags
             # the line `<RELOC ptr>`, which is what says the operand was adjusted.
-            if fixes is not None and (p - HEADER_LEN) in fixes:
-                value = (value + base) & 0xffffffff
-            return "$%x.l" % value, 4
+            return "$%x.l" % _reloc_long(d, p, fixes, base), 4
         if reg == 2:
             disp = s16(rd16(d, p))
             return "$%x(pc)" % ((pc_after_op + disp) & 0xffffff), 2
@@ -129,7 +145,9 @@ def _ea(d, p, mode, reg, size, pc_after_op, fixes=None, base=0):
             rd16(d, p)
             return "idx(pc)", 2
         if reg == 4:
-            if size == 2: return "#$%x" % rd32(d, p), 4
+            # A 32-bit immediate the relocation table lists is a POINTER assembled text-relative,
+            # exactly like an abs.l operand, so it gets the same treatment — see _reloc_long.
+            if size == 2: return "#$%x" % _reloc_long(d, p, fixes, base), 4
             return "#$%x" % (rd16(d, p) & (0xff if size == 0 else 0xffff)), 2
     return "?", 0
 
@@ -197,7 +215,8 @@ def decode(d, p, base, fixes=None):
     """Decode one instruction at file offset p. Return (nbytes, text).
 
     `fixes` is the relocation table's image offsets (parse_reloc); pass it with a `base` to have
-    absolute-long operands printed relocated. Omitted, operands print exactly as stored.
+    absolute-long operands AND 32-bit immediates printed relocated. Omitted, operands print exactly
+    as stored.
     """
     w = rd16(d, p)
     pc2 = base + (p - 28) + 2  # image address just past opcode word (for pc-relative)
@@ -245,7 +264,7 @@ def decode(d, p, base, fixes=None):
             size = (w >> 6) & 3
             m, r = (w >> 3) & 7, w & 7
             if size == 2:
-                imm, ic = rd32(d, p + 2), 4
+                imm, ic = _reloc_long(d, p + 2, fixes, base), 4
             else:
                 imm, ic = rd16(d, p + 2), 2
             t, c = ea(d, p + 2 + ic, m, r, size, pc2 + ic)
