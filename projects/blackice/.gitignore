@@ -1,0 +1,12 @@
+# generated artefacts
+pipeline/out/
+build/
+host/out/
+art/out/
+atari/build/
+atari/disk/
+__pycache__/
+.pytest_cache/
+*.o
+*.elf
+*.bin.tmp
