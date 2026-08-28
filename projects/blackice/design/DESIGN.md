@@ -12,10 +12,12 @@ screen layout in `art/ART_DIRECTION.md` §5 and the HUD strip it describes are l
 ones (§15.1, §17). Where the two documents disagree on colour, indices, contrast gates or HUD
 geometry, `ART_DIRECTION.md` is the authority and this document is the defect.
 
-**Unmeasured numbers.** The renderer spike (`scratchpad/spike/REPORT.md`) has not run. Every cycle
-figure in **§17** is therefore **TBD — measured by the spike**. No cycle number in this document is
-an estimate dressed as a measurement. RAM, projection, palette and trace figures *are* arithmetic
-and are committed.
+**Measured numbers.** The renderer spike has run (`spike/REPORT.md`, Milestone 0). Every cycle
+figure in **§17** is now either **measured** on a stock STE under Hatari, **derived** from a measured
+unit rate — and labelled as such — or explicitly **unbooked** where the spike could not see it. No
+cycle number in this document is an estimate dressed as a measurement. RAM, projection, palette and
+trace figures *are* arithmetic and are committed. Two orchestrator decisions taken on the spike's
+result — `FOCAL_ROWS` = 115 and `COLOUR_FAR_FILL` = 5 — are recorded in §19.
 
 ---
 
@@ -81,14 +83,20 @@ multiple of `0x11` so nothing quantises. `palette.ste_colour_word` does the STE 
 low-bit-is-MSB swizzle — never hand-encode it. Y = 0.299R + 0.587G + 0.114B on the 8-bit expansion;
 every Y below is reproduced from `python palette.py`.
 
+**The table below is a generated mirror of `art/palette.py`, not a second source of truth.** Every
+hex, STE word, Y and role in it comes from `PALETTE` and `luminance()` in that module, and a
+pipeline test pins the two equal so a palette edit that does not reach this document fails the
+build. It drifted once already — v2 carried index 15 as `#333355` / Y 54.9 after the art pass's
+Revision 2 had moved it to `#444466` / Y 71.9 — which is why the pin exists.
+
 | Idx | Hex | STE | Y | Role | Walls may use |
 |---:|---|---|--:|---|---|
-| 0 | `#000000` | `$000` | 0.0 | void — floor, ceiling, far-fill, border | yes |
+| 0 | `#000000` | `$000` | 0.0 | void — floor, ceiling, border | yes |
 | 1 | `#66EEFF` | `$37F` | 199.3 | cyan 1 — lit trim | yes |
 | 2 | `#33CCEE` | `$967` | 162.1 | cyan 2 — panel face | yes |
 | 3 | `#2299CC` | `$1C6` | 123.2 | cyan 3 — panel body | yes |
 | 4 | `#116688` | `$834` | 80.5 | cyan 4 — shadow side | yes |
-| 5 | `#113366` | `$893` | 46.6 | cyan 5 — deep recess / fog | yes |
+| 5 | `#113366` | `$893` | 46.6 | cyan 5 — deep recess / fog / **far fill** (`COLOUR_FAR_FILL`) | yes |
 | 6 | `#FF88EE` | `$F47` | 183.2 | magenta 1 — ICE lit trim | yes |
 | 7 | `#DD55CC` | `$EA6` | 139.2 | magenta 2 — ICE face | yes |
 | 8 | `#BB33AA` | `$D95` | 105.2 | magenta 3 — ICE body | yes |
@@ -98,15 +106,15 @@ every Y below is reproduced from `python palette.py`.
 | 12 | `#FFFFFF` | `$FFF` | 255.0 | **rim-light, muzzle flash, HUD text** | **NO — RESERVED** |
 | 13 | `#FF7722` | `$FB1` | 150.0 | **enemy core / Sentry iris / trace danger** | **NO — RESERVED** |
 | 14 | `#33CC66` | `$963` | 146.6 | integrity green — health, exit lamps, satisfied locks | yes |
-| 15 | `#333355` | `$99A` | 54.9 | slate — structural shadow, HUD trim, **sprite transparency key** | yes |
+| 15 | `#444466` | `$223` | 71.9 | slate — structural trim, HUD trim, **sprite transparency key** | yes |
 
 **Exactly two registers are reserved: 12 (white) and 13 (orange).** Walls may not use those two and
 may use every other register. Two *accents*, not five — which is what lets `circuit_lattice` have
 live yellow vias, the door have hazard bands, and `exit_gate` be green. **Register 15 is legal in
 walls and in the HUD as a colour, but it is the sprite transparency key**, so no sprite may use it
 as a colour; a sprite's 15s are holes. Sprite shading must go through `drawlib.shade_sprite`, which
-preserves the key — a plain `shade` would fog index 15 to void at band 3 and paint a far enemy's
-transparent pixels black.
+preserves the key — a plain `shade` remaps index 15 like any other colour (to cyan 4 at band 3,
+cyan 5 at band 4) and would paint a far enemy's transparent pixels solid.
 
 **The magenta-on-magenta hole is closed by the rim, not by taking magenta away from the walls.**
 Both ramps are wall-legal and they interleave in luminance rather than being luminance twins:
@@ -116,8 +124,10 @@ magenta 64.2 / cyan 46.6 / magenta 23.0.
 ### The palette gate — measured thresholds, not a paragraph
 
 Two committed harnesses run in the art pipeline (`make`, or `python build_art.py`) before any frame
-ships, and **refuse the build** on failure. These thresholds replace the design's earlier ΔY ≥ 40
-rule, which was written against a palette that no longer exists:
+ships, and **refuse the build** on failure. They carry three gates, each with a stated threshold and
+a measured result — the two are not the same number and are not written as if they were. These
+thresholds replace the design's earlier ΔY ≥ 40 rule, which was written against a palette that no
+longer exists:
 
 1. **`rimtest.py` — the rim gate. Threshold ≥ 24 Y.** It composites every rimmed sprite over every
    wall texture at every depth band — 8 × 10 × 5 = **400 combinations** — finds the wall pixels
@@ -127,9 +137,17 @@ rule, which was written against a palette that no longer exists:
    colours are *identical* to the wall colour they border. That 0.0 is the size of the hole the rim
    closes, measured rather than asserted, and it is why the 1-pixel white rim on every silhouette
    edge is non-negotiable.
-2. **`palette.py` — the ramp gate. Threshold ≥ 16 Y and ≥ 40 chroma.** Minimum luminance gap
-   between any cyan rung and any magenta rung, **in every depth band**: **16.0 Y**. Minimum chroma
-   distance in the (Cb, Cr) plane: **41.5**. Infrastructure never reads as ICE at any distance.
+2. **`palette.py` — the ramp gate. Thresholds `MIN_CROSS_RAMP_LUMA` = 12.0 Y and
+   `MIN_CROSS_RAMP_CHROMA` = 40.0.** Those are the *thresholds*; the **measurements** are the
+   minimum luminance gap between any cyan rung and any magenta rung alive **in every depth band**,
+   **16.0 Y**, and the minimum chroma distance in the (Cb, Cr) plane, **41.5**. Both clear their
+   threshold in all five bands. Infrastructure never reads as ICE at any distance.
+3. **`palette.py` — the wall-pair gate. Threshold: `dY ≥ 12.0` OR `dChroma ≥ 40.0`.** Every pair
+   of wall-legal colours that can share a wall **in the same band**, not just cyan against magenta.
+   Tightest pair in the palette: **slate (15) against cyan 4, dY 8.6 / dChroma 44.9, margin 1.12** —
+   carried by hue, not luminance. This gate is why slate moved from `#333355` to `#444466`: at
+   Y 54.9 it sat **8.2 Y** from cyan 5 on the same panel and no gate was looking; the two are now
+   **25.2 Y** apart.
 
 White's headroom over the brightest colour a wall is allowed to contain — data yellow at
 Y 223.7 — is **31.3 Y**, and that single number is why the rim works.
@@ -167,15 +185,20 @@ adjacency is rare — but it is an argument, not a measurement, and `rimtest.py`
 
 Distance fog is a **table remap, never a new colour**: `palette.shade_table(band)` returns 16
 entries and the shading term is `band = min(distance / BAND + is_north_south_face, 4)` — one add.
-Band 3 is the two darkest rungs of each ramp; band 4 is the darkest rung and then void, so
-far-clipping is diegetic. **Registers 12 and 13 never fog** — a rim-light that fades stops being a
-guarantee, and a far enemy's live core is exactly the thing you must still see. Emissive accents
-(11, 14) hold for three bands and then go to slate and void.
+Band 3 keeps each ramp's **lit trim** (rung 0 → rung 2) and collapses everything below it to the
+darkest rung; band 4 keeps the darkest rung and then void, so far-clipping is diegetic.
+**Registers 12, 13 and 14 never fog** — a rim-light that fades stops being a guarantee, a far
+enemy's live core is exactly the thing you must still see, and green is the exit, which has to be a
+landmark from across the sector. **Nothing fogs to void except a ramp rung**: data (11) and slate
+(15) fog *up* into the cyan ramp — `11 → cyan 2 → cyan 4`, `15 → cyan 4 → cyan 5` — because a
+wall-legal colour that fogged to black punched holes shaped exactly like authored damage, so
+distance manufactured corruption (`ART_DIRECTION.md` Revision 2, fix 1).
 
 The renderer does not pay for the lookup: the loader applies `shade_table` once per band to produce
-the baked bands in §17.4, so the inner loop stays a single fetch per texel. One authoring
-consequence, from `ART_DIRECTION.md` §8: **green dies at band 3**, so an `exit_gate` past about 9
-cells is not green — level design places exit gates inside band 2 or the landmark stops being one.
+the baked bands in §17.4, so the inner loop stays a single fetch per texel. *(v2 carried an
+authoring rule that **green dies at band 3**, so exit gates had to sit inside band 2. Revision 2 of
+the art pass closed it: index 14 does not fog at all, and an `exit_gate` is green from any distance.
+The level-design constraint is lifted.)*
 
 ---
 
@@ -267,7 +290,7 @@ column count changes a fixed cost the throttle cannot touch.
 - **OVERCLOCK** — you see the whole room, tokens ping on the HUD compass at 20 cells, and Spike
   reaches 20 cells. The cost: enemies see you 50% further, the trace climbs 1.6×, you move 20%
   slower, and it carries the worst frame rate in the game.
-  *Sentry state at range is a **colour**, not a shape*: at 20 cells a 1-cell billboard is 3.2
+  *Sentry state at range is a **colour**, not a shape*: at 20 cells a 1-cell billboard is 5.8
   chunky rows tall (§17.1), so the Sentry carries a **1-pixel state light** — register 14
   (integrity green) when the iris is closed, register 13 (orange, the reserved live-and-hostile
   accent) when it is charging or open. Neither register fogs (§3), so one pixel survives any
@@ -277,6 +300,14 @@ column count changes a fixed cost the throttle cannot touch.
 (slate) at UNDERCLOCK and NOMINAL and in register 13 `#FF7722` at OVERCLOCK — the line changes
 *register*, never register 15's value, so the sprite transparency key is untouched; and the
 far-fill boundary visibly moves.
+
+**`COLOUR_FAR_FILL` = index 5** (cyan 5, `#113366`, Y 46.6) — the flat colour the renderer writes
+beyond the render radius. **Not index 0**: against a void (0) ceiling and floor a void far fill is
+invisible, so the boundary the throttle is supposed to *move* could not be seen moving, and the
+radius clamp read as nothing at all rather than as a wall of fog. Cyan 5 is one rung above void, it
+is the ramp's own fog rung so the far fill and a band-4 wall agree in hue, and it costs nothing:
+the planar band fill writes a flat colour at 2.71 cycles/byte whatever the index is (§17.3).
+Decision D2, §19.
 
 The throttle is a *route* decision, not a combat toggle: underclock to move, nominal to fight,
 overclock to find. Changing it costs 12 ticks (0.48 s) of locked input — **including** the direct
@@ -382,6 +413,10 @@ destroyed = **3**. Tracer: walk A, walk B, attack, dissolve 1, dissolve 2 = **5*
 walk pair). Black ICE: idle A, idle B, attack, teleport flash, dissolve 1, dissolve 2 = **6**.
 Anchor: intact, cracked, broken = **3**. Enemy/anchor total **22**, authored at **64×64**. Plus 9
 pickup frames and 2 hit-spark frames = **11** authored at **32×32**. **33 sprite frames** in all.
+*(At `FOCAL_ROWS` = 115 a 64×64 source is 1:1 with a wall face at **1.80 cells**, not at 1.0 as v2
+stated under `FOCAL_ROWS` 64. Closer than that it is upscaled, and the ceiling is the render window:
+80 rows = **1.25× vertically**, 160 columns = 2.5× horizontally before the sprite is clipped away.
+The source resolution is unchanged; only the distance at which it is 1:1 moved — decision D1, §19.)*
 *(Art-pass status, from `ART_DIRECTION.md` §8: the shipped pass delivers **one pose per enemy** and
 no walk, attack or dissolve frames. That is outstanding art work against this spec, not a change to
 it; the RAM ledger books all 33. It also delivers one view per enemy, so a strafing Tracer slides
@@ -397,8 +432,10 @@ whole AI rests on it.
   a non-OPEN door is a wall). **One byte per cell**, value = cell distance in steps, **radius
   limited to 20 cells**, `255` = out of range or unreachable. 48×48 = 2,304 B resident.
 - **Cadence.** Recomputed **every 8 sim ticks** (3.125 Hz). Worst case visits ≤ π·20² ≈ 1,257 cells
-  from a ring-buffer queue; amortised over 8 ticks this is the cheapest AI in the design. Cycle
-  cost TBD by the spike, budgeted in §17's sim row.
+  from a ring-buffer queue; amortised over 8 ticks this is the cheapest AI in the design. The
+  Milestone 0 spike did not cover it (no sim); §17.3's sim row **derives** it at the engine review's
+  compiled-C rate — ≈244 cycles a cell visit, so ≤ 306,708 per rebuild, **38,339 per frame
+  amortised**. That is 12% of the 80-column budget, which is cheap but not free.
 - **Movement (Wolf3D style).** An enemy at a cell centre picks the neighbour with the **lowest
   field value** — best of 8, with a corner check (a diagonal is legal only if both orthogonal
   neighbours are open) — and **commits** to it, moving at its speed until it reaches that cell's
@@ -430,8 +467,10 @@ door and wait out a melee-only roster.
 ### 8.2 The per-frame sprite-pixel budget
 
 Counting sprites is wrong — cost scales with on-screen *area*. The engine budgets **destination
-chunky pixels**, `SPR_PX_BUDGET` (value TBD from the spike; provisionally **6,000** at 160 columns,
-**3,000** at 80).
+chunky pixels**, `SPR_PX_BUDGET` — still provisional at **6,000** at 160 columns and **3,000** at
+80, because the Milestone 0 spike drew no sprites and so produced no masked-sprite rate to set it
+from. See the flag at the end of this subsection: the provisional value is known to be far too
+generous.
 
 **What counts.** A sprite's contribution is the pixels it would actually write: **after** clipping
 its projected rectangle to the 160×80 render window, and **after** the per-column depth test
@@ -451,10 +490,20 @@ Each frame:
 **The budget is now bounded, and here is the bound.** The exempt sprite is itself window-clipped,
 so it can cost at most 160 × 80 = **12,800** chunky pixels. Worst-case sprite cost per frame is
 therefore `12,800 + SPR_PX_BUDGET` = **18,800** at 160 columns. In the real case that motivated the
-rule — a four-Watchdog pack at contact range, 0.6 cells — the exempt dog projects 107 × 107 and
-clips to **107 × 80 = 8,560 px**; the other three are admitted against the 6,000 budget and the
-farthest of them may flicker out for a frame. **That flicker is the documented failure mode**, and
-it is the correct thing to lose: the dog eating you is always drawn.
+rule — a four-Watchdog pack at contact range, 0.6 cells — the exempt dog projects **191.7 × 191.7**
+at `FOCAL_ROWS` = 115 and clips to the **whole window, 12,800 px**; the other three are admitted
+against the 6,000 budget and the farthest of them may flicker out for a frame. **That flicker is the
+documented failure mode**, and it is the correct thing to lose: the dog eating you is always drawn.
+*(v2 had this dog at 107 × 80 = 8,560 px under `FOCAL_ROWS` 64, which left the worst case, 14,560,
+below the 18,800 ceiling. At 115 the nearest attacker fills the window and the two have merged —
+decision D1, §19.)*
+
+**`SPR_PX_BUDGET` = 6,000 is provisional and is now known to be far too generous.** The spike drew
+no sprites, so there is still no masked-sprite rate; but at the measured **66.6 cyc/px** wall-texel
+*floor*, 6,000 px is **399,600 cycles** — 83% of the whole 160-column frame budget and 1.25× the
+80-column one (§17.3). The value must be re-derived from a measured rate at Milestone 1 and will
+fall by roughly an order of magnitude. The **rule** above — count after clipping and after the depth
+test, exempt the nearest attacker, drop farthest-first — is unaffected by what the number becomes.
 
 Consequence for authoring: pack sizes are a *design* limit, not a render limit.
 
@@ -672,10 +721,10 @@ both shipped maps. The text file is a `# key: value` header followed by the map 
 8. **Warning (not a refusal):** any floor cell with fewer than two open neighbours that is not a
    Sentry alcove — the 1-cell pocket that reads as dead geometry and that a chase AI has no reason
    to enter. Both shipped maps are warning-free.
-9. **Warning (not a refusal):** an `X` exit-plating run or a `>` gate whose nearest floor cell on
-   the approach is beyond **band 2** (about 9 cells). Integrity green fogs to slate at band 3
-   (§3), so a gate first seen from further than that is not green and stops reading as the
-   landmark. Both shipped maps are warning-free.
+9. ~~**Warning:** an exit gate first seen beyond band 2.~~ **Withdrawn.** It rested on integrity
+   green fogging out at band 3; `palette.py`'s `BAND_ACCENT_MAP` holds index 14 unfogged in all
+   five bands (§3), so a gate is green from any distance and there is nothing to warn about. The
+   compiler carries eight rules, not nine. Both shipped maps remain warning-free.
 
 ### Legend (fixed; the compiler owns this table)
 
@@ -953,9 +1002,9 @@ outright. The snarl at 1 preempts an equal-priority shot rather than being silen
 | Constant | Value | Meaning |
 |---|--:|---|
 | `FOV_DEG` | **60°** | horizontal field of view (`FOV_BRADS` = 171) |
-| `COLS` | **160** (80 in low detail) | ray columns across the window |
+| `COLS` | **80** (160 in high detail) | ray columns across the window; 80 is the shipping default (§17.3) |
 | `FOCAL_COLS` | **138.6** = 80 / tan(30°) | horizontal focal length in columns; `atan(80 / 138.6)` = 30.0° ✓ |
-| `FOCAL_ROWS` | **64** | vertical focal length in rows |
+| `FOCAL_ROWS` | **115** | vertical focal length in rows — **decision D1 (§19); v2 shipped 64** |
 | `WALL_HEIGHT_CELLS` | **1.0** | a wall is exactly one cell tall |
 | `ENEMY_HEIGHT_CELLS` | **1.0** | **Wolf3D convention: an enemy billboard is one cell tall — the same height as a wall at the same distance** |
 | `PICKUP_HEIGHT_CELLS` | **0.5** | 32×32 pickups occupy the **lower half** of the cell height |
@@ -964,89 +1013,309 @@ outright. The snarl at 1 preempts an equal-priority shot rather than being silen
 **The two projection identities everything derives from:**
 
 ```
-wall_rows(d)    = FOCAL_ROWS / d          =  64   / d      (d = perpendicular distance, cells)
-sprite_rows(d)  = FOCAL_ROWS * h / d      =  64*h / d       (h = ENEMY/PICKUP_HEIGHT_CELLS)
+wall_rows(d)    = FOCAL_ROWS / d          =  115   / d      (d = perpendicular distance, cells)
+sprite_rows(d)  = FOCAL_ROWS * h / d      =  115*h / d       (h = ENEMY/PICKUP_HEIGHT_CELLS)
 sprite_cols(d)  = sprite_rows(d)          (square source, drawn square in chunky space)
 ```
 
-A wall fills the 80-row window at **d = 0.8 cells** (64 / 0.8 = 80). At d = 1.0 it is 64 rows, so
-a corridor at one cell leaves 8 rows of ceiling and 8 of floor. A 64×64 enemy sprite is scaled to
-`64/d` rows — identically to a wall — so an enemy standing against a wall is exactly as tall as it.
+A wall fills the 80-row window at **d = 1.44 cells** (115 / 1.44 = 79.9). Inside that distance it is
+clipped and the window carries **no ceiling and no floor at all**: at d = 1.0 a wall projects 115
+rows into 80. Ceiling and floor only appear beyond 1.44 cells. A 64×64 enemy sprite is scaled to
+`115/d` rows — identically to a wall — so an enemy standing against a wall is exactly as tall as it.
 
 | d (cells) | wall / enemy rows | enemy cols | 1-cell wall face, cols |
 |--:|--:|--:|--:|
-| 0.6 | 106.7 (clipped 80) | 106.7 | 231.0 |
-| 0.8 | 80.0 | 80.0 | 173.2 |
-| 1.0 | 64.0 | 64.0 | 138.6 |
-| 2.0 | 32.0 | 32.0 | 69.3 |
-| 2.5 | **25.6** | 25.6 | 55.4 |
-| 6 (UNDERCLOCK radius) | 10.7 | 10.7 | 23.1 |
-| 12 (NOMINAL radius) | 5.3 | 5.3 | 11.5 |
-| 20 (OVERCLOCK radius) | **3.2** | 3.2 | 6.9 |
+| 0.6 | 191.7 (clipped 80) | 191.7 (clipped 160) | 231.0 |
+| 0.8 | 143.8 (clipped 80) | 143.8 | 173.2 |
+| 1.0 | 115.0 (clipped 80) | 115.0 | 138.6 |
+| **1.44** | **79.9** — the window-filling distance | 79.9 | 96.3 |
+| 2.0 | 57.5 | 57.5 | 69.3 |
+| 2.5 | **46.0** | 46.0 | 55.4 |
+| 6 (UNDERCLOCK radius) | 19.2 | 19.2 | 23.1 |
+| 12 (NOMINAL radius) | 9.6 | 9.6 | 11.5 |
+| 20 (OVERCLOCK radius) | **5.8** | 5.8 | 6.9 |
 
-**Aspect, owned rather than discovered.** `FOCAL_ROWS` (64) and `FOCAL_COLS` (138.6) are
-independent, and a chunky pixel is 2×2 screen pixels on a 320×200 display whose pixel is 0.833 as
-wide as it is tall on a 4:3 monitor. A 1×1 wall face therefore reads **1.81× wider than tall** —
-Wolf3D's own figure is about 1.44, so this is the same family, one notch wider. It is deliberate:
-corridors read low and broad, which suits a machine interior, and it keeps `FOCAL_ROWS` a power of
-two so the column-height LUT is a shift. **`FOCAL_ROWS` is the single knob** if playtest says the
-world is too squashed; nothing else in this document depends on its value except the table above
-and the WC fixtures below.
+**Aspect, owned — and now square.** `FOCAL_ROWS` (115) and `FOCAL_COLS` (138.6) are independent, and
+a chunky pixel is 2×2 screen pixels on a 320×200 display whose pixel is 0.833 as wide as it is tall
+on a 4:3 monitor. The rendered shape of a 1×1 wall face is therefore
+`(FOCAL_COLS / FOCAL_ROWS) × 0.833` = **1.004 — square to within 0.5%**. Exactly square is
+`FOCAL_ROWS` = 138.6 × 0.833 = 115.5; 115 is the integer beside it.
 
-### 17.2 Detail levels — what 80 columns actually saves
+**v2 shipped 64**, which renders that same face **1.81× wider than tall** — a doorway nearly twice
+as wide as it is tall, in a game about corridors, and a look nobody chose on purpose. It is
+corrected to 115 by decision D1 (§19).
+The old value's one argument was that 64 is a power of two so the column-height table is a shift;
+the height comes off the 2,048-entry reciprocal LUT the raycast already carries (§17.4), so the
+shift was never load-bearing.
 
-**80-column mode halves the column-draw stage. It does not touch the c2p.** The chunky buffer stays
-160×80 either way; the engine picks whichever of the two implementations the spike measures cheaper:
+**`FOCAL_ROWS` is the single aspect knob**, and it scales with the window: 115 is
+`1.4375 × WINDOW_ROWS`, so a different window height keeps the aspect by keeping that ratio. Five
+things depend on its value and move with it — the table above, §5's Sentry-at-20-cells figure, §8's
+sprite-authoring ratio, §8.2's contact-range clip, and §17.3's WC fixtures.
 
-- **(a) Double-write.** Cast 80 rays; each writes its 4-pixel-wide column into two adjacent chunky
-  columns. Buffer stays 160×80, c2p unchanged, one c2p table.
-- **(b) Narrow buffer.** Cast 80 rays into an 80×80 chunky buffer; the c2p pass doubles 4× on the
-  way out. Buffer 6,400 B, **a second c2p routine** (not a second table — the same 8bpp→4bpl table
-  is indexed twice per source byte).
+### 17.2 Detail levels — what 80 columns actually saves, measured
 
-Either way the saving is **the DDA (halved), the wall column fill (halved), and the sprite budget
-(halved)** — never the fixed planar output. v1's claim that the fallback saved c2p cycles was false
-and the gate built on it is replaced below.
+**80-column mode halves the raycast and the column draw, cuts the c2p by 37%, and leaves the band
+fill untouched.** v2 asserted that the c2p was untouched by the column count; the spike measured it
+and that was wrong. Source for every figure in this subsection: **spike, Hatari STE, 160x100 window,
+band fill, rotating view** (`spike/REPORT.md`).
 
-### 17.3 Cycle budget — worst case, all TBD
+| Stage | 160 columns | 80 columns | ratio |
+|---|--:|--:|--:|
+| raycast | 404,556 | 204,078 | 0.50 |
+| wall columns → chunky | 298,448 | 149,715 | 0.50 |
+| planar band fill | 62,579 | 62,546 | **1.00** |
+| c2p + pixel double | 148,583 | 93,738 | **0.63** |
+| **total frame** | **914,165** | **510,078** | 0.56 |
 
-The spike measures **three canonical worst-case frames**, which then become permanent replay-golden
-fixtures in `test/` and gate every renderer commit:
+The c2p falls because the chunky buffer is **80 wide**, so its table-driven loop does half as many
+source lookups even though it emits the same 25,600 planar bytes: **41.6 cycles per logical pixel at
+80 columns against 33.1 at 160** — dearer per pixel, half the pixels, 63% of the cost. Only the band
+fill is genuinely fixed, because it writes the screen and not the buffer.
 
-- **WC-A "Corridor"** — nose-to-wall at d = 0.8, all 160 columns at the full 80-row window height,
-  zero sprites: **12,800** textured pixels.
-- **WC-B "Ambush"** — 160 columns of wall at d = 2.0 (32 rows each = 5,120 textured px) plus
-  **three Watchdogs at 2.5 cells, 25.6 rows and 25.6 columns each = 655 px each, 1,966 px total**.
-  (v1 claimed 64×64 per dog here; under the stated projection that would need a 2-cell-tall dog
-  whose head is through the ceiling. This is the corrected fixture.)
-- **WC-C "Contact"** — the sprite worst case: four Watchdogs at 0.6 cells with 160 columns of wall
-  behind them. The exempt nearest attacker clips to **107 × 80 = 8,560 px**; the rest are admitted
-  against `SPR_PX_BUDGET` = 6,000, giving the hard bound of **14,560 sprite px** (and an absolute
-  ceiling of 12,800 + 6,000 = 18,800 if a sprite fills the window).
+**Implementation (b) is chosen, because it is the one that was measured.** The spike casts 80 rays
+into an 80-wide chunky buffer and the c2p expands 4× on the way out — each logical pixel becomes
+4 screen pixels wide and 2 lines tall. v2's option (a), double-writing into a 160-wide buffer, would
+hold the c2p at its 160-column cost and give the 37% straight back; it is **withdrawn**. The
+80-column c2p is a second **routine**, not a second table: both index the same pre-shifted 8bpp→4bpl
+tables (8 KB high detail + 4 KB low, built at boot).
 
-| Stage | WC-A | WC-B | WC-C | Note |
-|---|---|---|---|---|
-| c2p + pixel double, 160x80 → 320x160 | TBD | TBD | TBD | **fixed, content-independent**, 25,600 planar bytes out. `ART_DIRECTION.md` §5 scales the critique's full-screen figure to **128k–160k cycles** for this layout — an *estimate*, carried here as the number the spike must confirm or kill |
-| DDA cast, 160 rays | TBD | TBD | TBD | reciprocal LUT, no per-ray divide; +½ step in door cells |
-| Wall columns → chunky buffer | TBD | TBD | TBD | unrolled height classes |
-| Sprites, budgeted (§8.2) | 0 | TBD | TBD | 1,966 px (WC-B) / ≤14,560 px (WC-C) |
-| Sim tick incl. BFS field (§8.1), amortised | TBD | TBD | TBD | BFS ≤ 1,257 cells every 8 ticks |
-| HUD dirty-rect writes (§15.1) | TBD | TBD | TBD | its own row, not folded into "misc" |
-| Audio + input | TBD | TBD | TBD | DMA replay steals bus cycles — measure, do not assume zero |
-| **Total, 160 columns — budget 480,000** | TBD | TBD | TBD | 3 VBLs = 16.7 fps ≥ the BRIEF's 14 |
-| **Total, 80 columns — budget 320,000** | TBD | TBD | TBD | 2 VBLs = 25 fps ≥ the BRIEF's 20 |
+The 80-column chunky buffer is 6,400 B against 12,800 for 160×80. §17.4 keeps the 12,800, because
+160-column mode still ships as an option and the buffer is allocated once for the larger of the two.
+
+*(The one thing not looked at as a picture: an 80-column logical pixel is 4 screen px wide by
+2 lines tall. The spike verified it as a number, not as a look.)*
+
+### 17.3 Cycle budget — measured by the Milestone 0 spike
+
+**Source for every measured figure below: `spike/REPORT.md`** — `SPIKE.PRG` under Hatari 2.6.1,
+`--machine ste`, EmuTOS 1.0.6, 1 MB, a **160x100** window, eight passes of 32 frames, timed with the
+MFP's own clock and read out of RAM, cross-checked against the `RESULT.TXT` the program itself wrote
+(largest disagreement 24.7 µs, its own integer rounding). Cycles are at **8.000 MHz**; a PAL ST runs
+at 8.0106, so every cycle figure here is 0.13% low. Rows tagged *derived* are computed from a
+measured unit rate rather than measured directly; rows tagged *unbooked* the spike could not see.
+
+#### The measured unit rates — the model everything below is built from
+
+| Rate | Measured | Source |
+|---|--:|---|
+| c2p, 160 columns | **33.1** cyc / logical px = **5,296** cyc per view row | spike, Hatari STE, 160x100 window |
+| c2p, 80 columns | **41.6** cyc / logical px = **3,328** cyc per view row | spike, Hatari STE, 160x100 window |
+| column loop, wall texel | **66.6** cyc / px | spike, Hatari STE, 160x100 window |
+| column loop, ceiling/floor texel inside the band | **30.8** cyc / px | spike, Hatari STE, 160x100 window |
+| planar solid fill | **2.71** cyc / byte = **867** cyc per view row outside the band (320 planar bytes = 160 per screen line × 2 lines) | spike, Hatari STE, 160x100 window |
+| raycast, compiled C | **2,530** cyc / ray; **2,800** down a long corridor | spike, Hatari STE, 160x100 window |
+| DDA step, compiled C | **≈244** cyc (first estimated at ~60) | engine review |
+| wall texel, compiled C | **116–124** cyc / px, against **66.6** in asm | engine review |
+
+The measured loops run **4–11% over** their hand-counted 68000 instruction-table sums, consistently
+across five independent loops — prefetch and bus behaviour a naive cycle count does not model, and
+the consistency is the useful part. c2p and fill are **exactly linear in view rows** (5,289 against
+5,307 cycles per row at 100 and at 28 rows), which is what licenses the scaling below.
+
+The two compiled-C rates are the engine review's, not the spike's, and they reconcile with it:
+2,530 cycles a ray at ≈244 cycles a step is **≈10 DDA steps per ray**, which is what a room grid
+should cost. *(The spike report's own back-of-envelope puts the step at 82 cycles, which would need
+31 steps a ray. The two disagree and the disagreement is open; ≈244 is the planning figure because
+it is the measured one and it is the one that reconciles with the per-ray total.)* The wall-texel
+pair is the standing argument for asm in the inner loops — **compiled C is 1.7–1.9× the asm rate** —
+and it is why the spike's per-column loop is asm and why item 3 of the ladder below is the raycast.
+
+#### The frame model
+
+```
+raycast  = COLS x 2,530                        (2,800 down a long corridor)
+columns  = COLS x band_rows x 66.6             (worst case: every band texel a wall texel)
+fill     = (WINDOW_ROWS - band_rows) x 867
+c2p      = band_rows x 5,296  (160 columns)  |  band_rows x 3,328  (80 columns)
+sprites  = sprite_px x 66.6                    (floor: the transparency test is not in that rate)
+```
+
+`band_rows` is `max(bottom) - min(top)` over all columns; outside it the view is flat colour written
+straight to the screen by the fill. Because the band is a min/max over the columns, every column's
+ceiling, wall and floor runs are non-negative by construction and sum to the band height exactly, so
+**the drawer needs no clipping anywhere** — a measured property of the design, not an assumption.
+
+#### The spike's own scene, scaled to the shipping 160x80 window
+
+The spike ran a 160x**100** window. c2p and the fill are exactly linear in view rows and the drawer
+is linear in band rows, so those three stages scale by 80/100 = **0.8**; the raycast is per column,
+not per row, and **does not scale**.
+
+| Configuration | raycast | columns | band fill | c2p | **total** | VBLs | fps |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| 160 cols, fixed (down a long corridor) | 447,668 | 224,748 | 50,094 | 118,970 | **841,480** | 6 | 8.3 |
+| 160 cols, rotating | 404,556 | 238,758 | 50,063 | 118,866 | **812,243** | 6 | 8.3 |
+| 80 cols, fixed (down a long corridor) | 225,088 | 112,699 | 50,298 | 74,970 | **463,055** | 3 | 16.7 |
+| **80 cols, rotating — the shipping mode** | 204,078 | 119,772 | 50,037 | 74,990 | **448,877** | 3 | **16.7** |
+
+The fixed viewpoint looks straight down a line of aligned doorways, so its rays travel further and
+its raycast is the dearer of the two — that is the map, not the renderer.
+
+Ceiling and floor **in the chunky buffer** instead of as a planar band fill was measured too, and it
+is not close: **1,570,066 against 914,165** at 160 columns and **855,519 against 510,078** at 80
+(both at 160x100) — a 40–42% saving on the whole frame for the band fill, the single largest lever
+in the spike. The band fill is decided and is already built.
+
+Two caveats on that scaled column, both pointing the same way: the scene's band averaged **28 of
+100 rows**, so these totals carry its depth mix and not a corridor's; and `FOCAL_ROWS` = 115
+(decision D1) projects taller walls at a given distance than the spike's own projection did, which
+makes the band taller again. **Treat this table as the floor and the WC fixtures below as the
+ceiling.**
+
+#### The three worst-case fixtures, recomputed at `FOCAL_ROWS` = 115
+
+They become permanent replay-golden fixtures in `test/` and gate every renderer commit.
+
+- **WC-A "Corridor"** — a wall inside 1.44 cells, so it fills the window: 160 columns × 80 rows =
+  **12,800** wall texels, band = the whole window, no fill, no sprites. *(v2 set this at d = 0.8,
+  the distance at which `FOCAL_ROWS` 64 filled the window. At 115 any wall inside 1.44 cells does,
+  which makes the fixture **commoner, not rarer** — a 1-cell corridor's side walls are at 0.5.)*
+- **WC-B "Ambush"** — 160 columns of wall at d = 2.0 (**57.5 rows** each; band 58 rows; **9,280**
+  wall texels) plus **three Watchdogs at 2.5 cells, 46 rows × 46 columns = 2,116 px each, 6,348 px
+  total**. *(v2 had 25.6 rows / 655 px each under `FOCAL_ROWS` 64.)*
+- **WC-C "Contact"** — four Watchdogs at 0.6 cells with 160 columns of wall behind them at full
+  window height. At 115 a 1-cell billboard at 0.6 cells projects **191.7 × 191.7** and clips to the
+  whole window, so the exempt nearest attacker costs **160 × 80 = 12,800 px**; the other three are
+  admitted against `SPR_PX_BUDGET` = 6,000 (§8.2), for **18,800 sprite px** — and **9,400** at 80
+  columns, where the exempt dog clips to 80 × 80 = 6,400 and the budget is 3,000. *(v2 had 107 × 80 =
+  8,560 exempt and a 14,560 bound distinct from §8.2's 18,800 absolute ceiling. At 115 the nearest
+  attacker does fill the window, so the bound and the ceiling have merged into one number.)*
+
+**160 columns — budget 480,000 cycles (3 VBLs, 16.7 fps)**
+
+| Stage | WC-A | WC-B | WC-C | Basis |
+|---|--:|--:|--:|---|
+| DDA cast, 160 rays | 404,800 | 404,800 | 404,800 | 160 × 2,530 — *measured rate* |
+| Wall columns → chunky buffer | 852,480 | 618,048 | 852,480 | band px × 66.6 — *measured rate* |
+| Planar band fill | 0 | 19,074 | 0 | (80 − band) × 867 — *measured rate* |
+| c2p + pixel double, 160x80 → 320x160 | 423,680 | 307,168 | 423,680 | band × 5,296 — *measured rate* |
+| Sprites, budgeted (§8.2) | 0 | 422,777 | 1,252,080 | sprite px × 66.6 — *derived, a floor* |
+| **Render subtotal** | **1,680,960** | **1,771,867** | **2,933,040** | |
+| Sim tick incl. BFS field (§8.1), amortised | 38,339 | 38,339 | 38,339 | ≤1,257 cells × ≈244 every 8 ticks — *derived* |
+| HUD dirty-rect writes (§15.1) | 6,374 | 6,374 | 6,374 | ≤2,352 planar B × 2.71 — *derived, all fields* |
+| Audio + input | — | — | — | ***unbooked*** — the spike has no sound and no input path |
+| **Total** | **1,725,673** | **1,816,580** | **2,977,753** | |
+| **× the 480,000 budget** | **3.6×** | **3.8×** | **6.2×** | |
+
+**80 columns — budget 320,000 cycles (2 VBLs, 25 fps)**
+
+| Stage | WC-A | WC-B | WC-C | Basis |
+|---|--:|--:|--:|---|
+| DDA cast, 80 rays | 202,400 | 202,400 | 202,400 | 80 × 2,530 — *measured rate* |
+| Wall columns → chunky buffer | 426,240 | 309,024 | 426,240 | band px × 66.6 — *measured rate* |
+| Planar band fill | 0 | 19,074 | 0 | (80 − band) × 867 — *measured rate* |
+| c2p + pixel double, 80x80 → 320x160 | 266,240 | 193,024 | 266,240 | band × 3,328 — *measured rate* |
+| Sprites, budgeted (§8.2) | 0 | 211,388 | 626,040 | sprite px × 66.6 — *derived, a floor* |
+| **Render subtotal** | **894,880** | **934,910** | **1,520,920** | |
+| Sim + HUD, as above | 44,713 | 44,713 | 44,713 | *derived* |
+| Audio + input | — | — | — | ***unbooked*** |
+| **Total** | **939,593** | **979,623** | **1,565,633** | |
+| **× the 320,000 budget** | **2.9×** | **3.1×** | **4.9×** | |
+
+The c2p row settles an open estimate: `ART_DIRECTION.md` §5 scaled the critique's full-screen figure
+to **128k–160k cycles** for this layout, and the spike **kills it** — converting all 80 rows at 160
+columns measures **423,680**, 2.6–3.3× the estimate. The c2p is affordable at all only because the
+band fill keeps most rows out of it. It is also **not** content-independent, as v2 called it: with
+the band fill it costs `band_rows × 5,296`, and the band is what the scene decides.
+
+**One number this subsection falsifies and does not own.** `SPR_PX_BUDGET` = 6,000 chunky px (§8.2)
+was set before any rate existed. At the measured 66.6 cyc/px **floor** it is **399,600 cycles on its
+own** — 83% of the whole 160-column budget and 1.25× the whole 80-column one. It has to fall by
+roughly an order of magnitude, and it must be set from a measured **masked**-sprite rate, which the
+spike did not produce because it drew no sprites. Owed by Milestone 1; §8.2's provisional value is
+left standing until there is a measurement to replace it with.
+
+#### Gate and verdict
 
 **Two budgets, because there are two flip locks.** On a 50 Hz PAL flip lock the only frame rates
 available are 25 (2 VBLs), 16.7 (3) and 12.5 (4). There is no 20 fps, so the BRIEF's *"≥ 20 fps at
 80 columns"* means **2 VBLs = 320,000 cycles**, and *"≥ 14 fps at 160 columns"* means **3 VBLs =
-480,000 cycles**. Each mode locks to its own cadence; the engine does not free-run.
+480,000 cycles**. Each mode locks to its own cadence; the engine does not free-run. **The gate
+stands exactly as written**, on the measured total frame and not on the c2p.
 
-**Gate, decided now so it is not decided in month 3 — and stated on the total frame, not on c2p:**
-if the **measured total frame** at 160 columns exceeds **480,000 cycles** on WC-A, WC-B or WC-C,
-then **80 columns becomes the shipping default** and 160 becomes an options-screen setting.
-Pin all three measurements in `STATUS.md` before any further art is produced.
-*(`ART_DIRECTION.md` §5 still cites v1's 130,000-cycle **c2p-only** gate. That gate is superseded
-by this one — finding 3 showed a c2p-only gate measures a cost the fallback cannot change.)*
+What the spike predicts, plainly:
+
+- **80 columns with the band fill passes, and is the shipping default.** 448,877 render cycles at
+  160x80 — under the 480,000 line, **3 VBLs, 16.7 fps**, above the BRIEF's 14 fps floor.
+- **160 columns fails, and not narrowly.** 812,243 render cycles — **1.7× the 480,000 gate**,
+  6 VBLs, **8.3 fps**. It stays an options-screen setting and will not hold a frame rate until
+  items 3 and 4 of the ladder land.
+- **Neither mode reaches the 320,000-cycle / 25 fps line**, and the 25 fps target is withdrawn until
+  it does: 80 columns is 1.4× over it. Item 3 (the raycast in asm, ≈100,000 cycles at 80 columns)
+  plus item 4 brings it within reach; nothing available today does.
+- **The margin at 80 columns is thin, not comfortable.** 480,000 − 448,877 leaves **31,123 cycles**
+  for sim, HUD and audio, and the derived sim + HUD rows alone are **44,713** — about 2.8% over the
+  3-VBL line before a single sample plays. The ladder starts now, not "if the gate trips".
+- **The WC fixtures pass in neither mode** — 2.9× to 4.9× budget even at 80 columns. WC-A is the one
+  to fix first and it is not exotic: at `FOCAL_ROWS` = 115 any wall inside 1.44 cells fills the
+  window, which a 1-cell corridor's side walls always do.
+
+The gate's conditional — *if the 160-column frame exceeds 480,000 cycles, 80 columns becomes the
+shipping default and 160 becomes an options-screen setting* — **has fired**. 80 columns is the
+default (§18 item 8 already assumed it). Pin all three fixtures in `STATUS.md` as replay goldens
+before any further art is produced.
+*(`ART_DIRECTION.md` §5 still cites v1's 130,000-cycle **c2p-only** gate. That gate is superseded by
+this one — a c2p-only gate measures a cost the fallback cannot change, and the measurement above
+shows the c2p is neither fixed nor the dominant stage.)*
+
+**Carried forward from the spike as unverified**, and not to be forgotten because §17 now has
+numbers in it: every figure is Hatari 2.6.1's 68000 model, not real hardware, and the ST's video DMA
+contention in particular is a model rather than a measurement; interrupts were left enabled during
+timing (EmuTOS's 200 Hz and VBL handlers are inside every number, expected well under 1%); sound,
+input, sprites, the HUD, double buffering and the blitter are absent from every measured stage; and
+three of 160 columns disagreed with a float reference by 6–7 rows, all three grazing rays at a wall
+corner, where a fixed-point DDA can legitimately enter a different cell — but so can an off-by-one
+in the seed distances, and the spike does not distinguish the two.
+
+#### The mitigation ladder, in the order the measurements support
+
+This replaces v2's single if-then, whose only lever was the column count.
+
+1. **80 columns, with the band fill — done, and the default.** 448,877 against 812,243 at 160x80,
+   and the band fill alone is a measured 40–42% of the whole frame. Both are already built.
+2. **Window rows.** c2p and fill are exactly linear in view rows and the drawer is linear in band
+   rows. Going from the spike's 100 rows to the shipping 80 is already worth **101,922 cycles at
+   160 columns / 61,201 at 80**; any further trim is linear in the same rates, which makes it the
+   cheapest remaining win — and a shorter window is what a Wolfenstein-style HUD wants anyway.
+3. **The raycast in asm.** It is **40–49% of the frame at both column counts** — the largest single
+   stage — at 2,530 cycles a ray, and its DDA step is ≈244 cycles of compiled C against 50–60 hand
+   written. Halving the stage is worth **≈200,000 cycles at 160 columns, ≈100,000 at 80**, and it is
+   the item that puts 80 columns near the 320,000 line.
+4. **Per-group bands.** The band is `min`/`max` over *all* columns today; per 8-column group it is
+   far tighter in any view with mixed depth, and both the c2p and the fill are paid per row
+   converted. Cost: a restructured c2p inner loop reading at a row stride, **+17% per group** by
+   instruction count, against a large cut in rows.
+
+**Considered, not scheduled:** 8 colours / 3 planes in the 3D view removes one of the c2p's two
+accumulators and half its stores — about a quarter of the c2p — but the art pass has already
+authored 16 registers under two measured gates (§3), so this is no longer the free look decision the
+spike could still call it.
+
+**Measured and rejected:** a 16-bit-index c2p table (four logical pixels per lookup) at 512 KB per
+plane pair on a 1 MB machine; byte-per-pixel chunky, which costs the c2p four extra indexed longword
+reads per 16-pixel group (≈156,000 cycles at 160 columns) to save ≈32,000 on the drawer's odd-column
+`or.w`; and per-column planar writes, at the BRIEF's own ≈80 cycles/pixel against the 33.1 the table
+c2p measures.
+
+#### Engineering note — the GCC 16 `move.l` post-increment hazard
+
+The spike found it on the way, and it reaches **every screen-buffer copy in the platform layer**.
+GCC 16 folds a copy between two arrays whose addresses are both known at build time into a **single**
+address register — `move.l (%a0)+,(d,%a0,%d0.l)` with `d = destination − source`. On the 68000 the
+source operand is fetched and `%a0` post-incremented **before** the destination's effective address
+is calculated, so every longword lands four bytes too high and the whole copied block is shifted by
+one slot. It reads as a struct-layout disagreement, not as a code-generation fault: it was found
+because a published record's magic word was at the right address and every field after it was one
+late. `volatile` on the destination does **not** stop it — the fold is a choice of addressing mode
+and GCC still emits exactly one store — but hiding the destination pointer from the optimiser behind
+an empty `__asm__` constraint does. **Rule for this codebase: no fixed-address-to-fixed-address
+block copy is written in plain C.** The screen flip, the HUD panel blit (§15.1), resource unpacks
+into fixed buffers and any hardware shadow all go through one platform-layer copy helper whose
+destination is laundered through that barrier, or through asm. **Open:** the hazard is measured only
+under Hatari 2.6.1 and was not cross-checked against the Musashi oracle, so *which* of GCC and
+Hatari is right about the semantics is unsettled. The fix removes the aliasing entirely and is
+therefore independent of that answer.
 
 ### 17.4 RAM ledger — committed arithmetic
 
@@ -1149,7 +1418,9 @@ the 100% exfil → THE KERNEL and the anchor boss → results screen and grades 
    room instead. Saves 9 sprite frames and the mirroring AI.
 2. Levels 5 and 7 → a 6-level game. The corrupted sectors (4, 6) stay; they are the identity.
 3. DMA samples → YM-only SFX. Frees ~86 KB of disk and 88 KB of RAM.
-4. 160-column mode → the game ships at 80 columns, which the BRIEF already blesses at 25 fps.
+4. 160-column mode → the game ships at 80 columns. *(The BRIEF blesses that mode at 25 fps; the
+   spike measures it at **16.7 fps**, 3 VBLs — §17.3. The mode is still the right one to keep; the
+   25 fps figure is not.)*
 5. The Tracer. **Moved down from third**: it is now in the first playable, it shares the Watchdog's
    distance field so it costs no new AI, and cutting it turns the trace meter from a resource into
    a pure timer. It goes last because it is the cheapest thing in the build with a real verb.
@@ -1161,17 +1432,29 @@ field. Those five are the difference between this game and a raycaster tech demo
 
 ---
 
-## 19. Changelog — v1 → v2
+## 19. Changelog — v1 → v2, then v2.1
 
-Every finding in `DESIGN_REVIEW.md`, with its resolution. Section references are to v2.
+Every finding in `DESIGN_REVIEW.md`, with its resolution. Section references are to v2. **v2.1**
+below records what changed after v2 shipped: the Milestone 0 spike's measurements landing in §17,
+and three orchestrator decisions taken on them. Where a v2 finding is superseded, the supersession
+is written into that finding's row rather than the row being rewritten.
+
+### v2.1 — decisions taken on the Milestone 0 spike and the art pass's Revision 2
+
+| # | Decision | Rationale, and everything it moves |
+|---|---|---|
+| **D1** | **`FOCAL_ROWS` = 115**, not 64 | v2 picked 64 for a power of two and then *measured* the consequence honestly — a 1×1 wall face **1.81× wider than tall** — without acting on it. With `FOCAL_COLS` = 138.6 and the ST's 0.833 pixel aspect, `FOCAL_ROWS` 64 renders a cell face at **1.8:1**: a doorway wider than it is tall, in a game about corridors. **115** makes it **1.004:1 — square** (exactly square is 115.5; 115 is the integer beside it). The power-of-two argument was never load-bearing: the column height comes off the reciprocal LUT the raycast already carries. Moved with it: §17.1's identities and distance table; a wall now fills the 80-row window at **1.44 cells**, not 0.8; §5's Sentry at 20 cells, **3.2 → 5.8 rows**; §8's sprite 1:1 distance, **d = 1.0 → 1.80 cells**, drawn upscale capped by the window at 1.25× vertically; §8.2's contact-range dog, **107 × 80 = 8,560 px → the whole window, 12,800 px**, which merges the worst case with the 18,800 ceiling; §17.3's **WC-B (three Watchdogs at 2.5 cells = 46 rows / 2,116 px each, 6,348 total)** and **WC-A** (any wall inside 1.44 cells fills the window, which makes that fixture commoner, not rarer). |
+| **D2** | **`COLOUR_FAR_FILL` = index 5** (cyan 5, `#113366`, Y 46.6), not index 0 | The far fill is the flat colour written beyond the render radius, and index 0 is also the ceiling, the floor and the border — so a void far fill against a void ceiling and floor is **invisible**, and §5's claim that "the far-fill boundary visibly moves" with the throttle described something no one could see. Cyan 5 is one rung above void, it is the cyan ramp's own fog rung so the far fill agrees in hue with a band-4 wall, and it is free: the planar band fill writes a flat colour at **2.71 cycles/byte** whatever the index is (§17.3). Moved with it: §3's register 0 role loses "far-fill" and register 5 gains it; §5 states the constant. |
+| **D3** | **§3's palette table is regenerated from `art/palette.py`, and pinned to it** | §3 had drifted from the module it claims to mirror. Index 15 was carried as `#333355` / `$99A` / Y 54.9 after the art pass's Revision 2 had moved it to **`#444466` / `$223` / Y 71.9** — it sat 8.2 Y from cyan 5 on the same panel and no gate was looking; the two are now 25.2 Y apart. Three further corrections: **slate no longer fogs to void at band 3** (`BAND_ACCENT_MAP` sends 15 → cyan 4 → cyan 5, and 11 → cyan 2 → cyan 4 — nothing fogs to void but a ramp rung, because a wall-legal colour going black punched holes shaped like authored damage); the ramp gate's **thresholds are 12.0 Y / 40.0 chroma** and 16.0 Y / 41.5 are its **measured results**, a distinction v2 collapsed into one number; and a **third gate** exists that v2 never mentioned — every wall-legal pair that can share a wall in a band, `dY ≥ 12` **or** `dChroma ≥ 40`, tightest pair slate vs cyan 4 at margin 1.12. Consequences: **index 14 never fogs**, so v2's "green dies at band 3" authoring rule and **§11's compiler warning 9** are both withdrawn (the compiler carries eight rules); and §3 now says in its own text that it is a **generated mirror** of `ART_DIRECTION.md` §3, with a pipeline test pinning the two equal so the next drift fails the build. |
+| — | **§17 carries measurements, not TBDs** | The Milestone 0 spike ran on a stock STE under Hatari (`spike/REPORT.md`). §17.3's every stage is now a measured figure, a figure *derived* from a measured unit rate, or an explicitly *unbooked* row, each labelled. The **gate is unchanged** — 480,000 cycles at 160 columns, 320,000 at 80 — and it has **fired**: 160 columns measures 812,243 render cycles at 160x80 (1.7× over, 8.3 fps) and **80 columns measures 448,877 (3 VBLs, 16.7 fps) and is the shipping default**. v2's single if-then is replaced by the spike's ordered ladder — 80 columns, window rows, the raycast in asm, per-group bands. The GCC 16 `move.l` post-increment hazard the spike found is written up in §17.3 as a platform-layer rule. |
 
 ### BLOCKERs
 
 | # | Finding | Resolution |
 |---|---|---|
 | 1 | Level 2 cannot run under the first-playable feature set | **ACCEPTED, option (a) plus more.** §18 ships **all** door variants sharing the one mechanism — 16, 17, 18 and 19 — and **the Tracer is in the first playable**. Level 2 stands as drawn (with §12–13's independent corrections from finding 6 and NITs 35/37). |
-| 2 | FOV, projection constant and enemy world height never stated | **ACCEPTED.** New §17.1 names `FOV_DEG` 60, `COLS` 160/80, `FOCAL_COLS` = 80/tan 30° = **138.6**, `FOCAL_ROWS` = **64**, `WALL_HEIGHT_CELLS` = `ENEMY_HEIGHT_CELLS` = **1.0** (Wolf3D convention), `PICKUP_HEIGHT_CELLS` = 0.5, plus a distance table and an owned aspect figure (1.81× wider than tall). WC-B recomputed: **three Watchdogs at 2.5 cells = 25.6 rows / 655 px each, 1,966 px total** — not 64×64. |
-| 3 | The c2p fallback gate saves nothing | **ACCEPTED.** §17.2: 80-column mode halves the **column-draw** stage, never the c2p; the chunky buffer stays 160×80 and the engine picks the cheaper of double-write (a) or narrow-buffer + 4× expand (b). §17.3's gate is re-stated on the **measured total frame**: ship 80 columns as default if the 160-column frame exceeds **480,000 cycles (3 VBLs)** on WC-A/B/C. §5's UNDERCLOCK claim is corrected to "partial and honest". |
+| 2 | FOV, projection constant and enemy world height never stated | **ACCEPTED.** New §17.1 names `FOV_DEG` 60, `COLS` 160/80, `FOCAL_COLS` = 80/tan 30° = **138.6**, `FOCAL_ROWS` = **64**, `WALL_HEIGHT_CELLS` = `ENEMY_HEIGHT_CELLS` = **1.0** (Wolf3D convention), `PICKUP_HEIGHT_CELLS` = 0.5, plus a distance table and an owned aspect figure (1.81× wider than tall). WC-B recomputed: **three Watchdogs at 2.5 cells = 25.6 rows / 655 px each, 1,966 px total** — not 64×64. **Superseded by D1:** `FOCAL_ROWS` is **115**, the face is square (1.004), and WC-B's dogs are **46 rows / 2,116 px each, 6,348 px total**. |
+| 3 | The c2p fallback gate saves nothing | **ACCEPTED, and half of it since measured wrong.** §17.2 said: 80-column mode halves the **column-draw** stage, never the c2p; the chunky buffer stays 160×80 and the engine picks the cheaper of double-write (a) or narrow-buffer + 4× expand (b). §17.3's gate is re-stated on the **measured total frame**: ship 80 columns as default if the 160-column frame exceeds **480,000 cycles (3 VBLs)** on WC-A/B/C. §5's UNDERCLOCK claim is corrected to "partial and honest". **Measured correction (spike):** 80 columns *does* cut the c2p, by **37%** (148,583 → 93,738), because the buffer is 80 wide and the loop does half the table lookups; only the **planar band fill** is genuinely fixed. Option (b) is chosen because it is what was measured; option (a) is withdrawn. The gate itself has now **fired** — 160 columns measures 812,243 against the 480,000 line. |
 | 4 | The Sentry is an entity inside a wall cell | **ACCEPTED, with the orchestrator's variant rather than the reviewer's.** §8: the Sentry is a **floor entity in a 1-cell alcove** (three wall neighbours, one open side), drawn as an ordinary billboard against the alcove's back wall — no wall-texture override, no depth bias, no z-fight, sprite total stays 33. §11 rule 5 enforces the alcove; the legend collision is fixed (`s` → cell 0 + entity; `X` alone owns texture 8). The anchor `*` gets the same treatment: a free-standing floor entity with a 0.4-cell solid disc. All three shipped Sentry positions already satisfy the alcove rule unchanged. |
 | 5 | The door plane is under-specified | **ACCEPTED.** §10.1: plane at the **cell midline perpendicular to the door's axis**; the axis is the compiler-validated open-neighbour pair and is stored in the level; the DDA **advances half a step on entering a door cell** and checks the ray is still inside before accepting the hit. §10.2 gives the state machine CLOSED → OPENING (12 ticks, blocks) → OPEN (75) → CLOSING (12, reverts to OPENING if a body is in the cell) → CLOSED. **v1 renders 2-state**; the slide offset is later polish. Collision treats any non-OPEN door cell as solid, and the Spike DDA uses the same predicate. |
 | 6 | The stated jamb rule rejects both shipped maps | **ACCEPTED, with the maps corrected rather than the rule bent twice.** §11 rule 3: an ordinary door has **exactly two opposite open neighbours** (that pair is its axis). Rule 4: a **terminal** door (21, 23) must be **on the map border** with exactly one open neighbour, and seals the border. Both maps were re-validated and all three named cells failed, so all three moved: level 1's `S` → **(15,31)** and its `>` → **(15,0)**; level 2's `S` → **(15,31)** and its `>` → **(27,0)**. The convention inconsistency the reviewer flagged is now one convention: *every `S` and every `>` is an arch in the outer wall*. Re-run: 0 errors, 0 dead-end warnings, lock order `[p]` / `[q],[p]`, exit reachable in both. |
@@ -1182,7 +1465,7 @@ Every finding in `DESIGN_REVIEW.md`, with its resolution. Section references are
 
 | # | Finding | Resolution |
 |---|---|---|
-| 9 | Sprite budget unbounded in the case it exists for | **ACCEPTED, per the orchestrator's exemption rule.** §8.2: pixels are counted **after** window clipping and **after** the per-column depth test; **only the nearest attacker is exempt**; everything else is dropped **farthest-first**. Hard bound = `12,800 + SPR_PX_BUDGET` = 18,800 at 160 columns; the four-dogs-at-0.6-cells case costs 8,560 (exempt) + 6,000 and the farthest dog flickers — the documented failure mode. Fixture **WC-C "Contact"** added for exactly this case, alongside the corrected WC-B. |
+| 9 | Sprite budget unbounded in the case it exists for | **ACCEPTED, per the orchestrator's exemption rule.** §8.2: pixels are counted **after** window clipping and **after** the per-column depth test; **only the nearest attacker is exempt**; everything else is dropped **farthest-first**. Hard bound = `12,800 + SPR_PX_BUDGET` = 18,800 at 160 columns; the four-dogs-at-0.6-cells case costs 8,560 (exempt) + 6,000 and the farthest dog flickers — the documented failure mode. **Superseded by D1:** at `FOCAL_ROWS` 115 the exempt dog fills the window, so the case costs **12,800 + 6,000 = 18,800** and the worst case equals the ceiling. **And flagged by the spike:** 6,000 px is 399,600 cycles at the measured 66.6 cyc/px floor and must fall by about an order of magnitude (§8.2, §17.3). Fixture **WC-C "Contact"** added for exactly this case, alongside the corrected WC-B. |
 | 10 | The white rim does not separate enemies from band 1 | **ACCEPTED, and then superseded by the art pass — which measured it rather than asserting it.** The finding is real and the mechanism is now `art/rimtest.py`: every rimmed sprite over every wall texture at every band, **400 combinations**, threshold **≥ 24 Y**, **0 failures, worst margin 31.3 Y**, and **0.0 Y with the rim deleted**. The palette that produced those numbers is `ART_DIRECTION.md` §3's, restated in §3 here; the design's own ΔY ≥ 40 rule and its interim palette are withdrawn, because 40 was a guess and 24/31.3 is a measurement over the art that actually ships. v1's fatal case — data yellow at ΔY 2 from band 1 — is gone: the brightest wall-legal colour is data yellow at Y 223.7 and the rim clears it by 31.3. The reviewer's two-tone rim is **not adopted**: `rimtest.py` passes with a single white rim, and the 0.0 Y number shows exactly what that rim is buying. |
 | 11 | Palette variants re-open the wall-forbidden-accent hole | **ACCEPTED, in the final palette's terms.** §3's variant invariant: a `palette_variant` or trace threshold may recolour **only registers 1–10, the two wall ramps**; registers 0, 11, 12, 13, 14 and 15 are byte-identical in every variant. Reserved 12 and 13 therefore stay reserved, register 15 stays a usable transparency key, and — the load-bearing consequence — the rim gate's binding case is **data yellow (11)**, which no variant touches, so **31.3 Y is the worst margin in all four variants by construction**. CORRUPT loads the magenta ramp into 1–5 (both ramps magenta, the rim carrying the separation, exactly as `ART_DIRECTION.md` §3 argues for `firewall_chevron`); DEGRADED is `shade_table(1)` with no new hexes; KERNEL is art-pass authored under both gates. Both harnesses are still run per variant. |
 | 12 | Par pace alone drives the back half to HARDENED | **ACCEPTED, retuned with the arithmetic shown.** §9.1 defines a **reference run** (par pace, LOS 20% of par, every locked door once, 3 noise shots, 4 hits, half the Tracers killed, no scrubber) and tunes `trace_base_rate` to **0.18 %/s** on every level. Nets: 49.0 / 53.0 / 62.0 / 54.0 / **69.5 / 66.0 / 66.0 / 75.0** — levels 5–8 land near 70%, the orchestrator's target. Locked-door cost dropped 5% → **3%** and now fires **once per door per sector** (finding 17). `trace_base_rate` stays per-level in the header and is printed in §14. |
@@ -1201,9 +1484,9 @@ Every finding in `DESIGN_REVIEW.md`, with its resolution. Section references are
 | 25 | The first playable has no defined ending | **ACCEPTED verbatim.** §15 adds the **SECTOR CLEAR** overlay and the **RUN COMPLETE** screen (after level 2 in the first playable); §9 defines the deferred-Hunter 100% behaviour as HARDENED palette + the death path. All three are in §18. |
 | 26 | No hit or pickup feedback at all | **ACCEPTED.** §10: a 2-frame full-screen palette flash — one 16-word write shifting both wall ramps toward register **13** (orange) on damage and toward register **12** (white) on pickup — in the first playable. It touches only registers 1–10, so §3's variant invariant holds and both gates still pass. |
 | 27 | `tools/mklevel.py` is a prerequisite and not in the ladder | **ACCEPTED verbatim.** It is **item 0** of §18, shipping with its validator as unit tests over both maps. |
-| 28 | One 480,000-cycle column cannot serve two frame-rate targets | **ACCEPTED, including the PAL correction.** §17.3 carries **two** budget rows: 160 columns → 3 VBLs → **480,000** → 16.7 fps (≥ 14 ✓); 80 columns → 2 VBLs → **320,000** → 25 fps (≥ 20 ✓). The reviewer's point that there is no 20 fps on a 50 Hz flip lock is adopted, so the 80-column budget is 320,000, not 400,000. |
-| 29 | OVERCLOCK's payoff is not visible at 20 cells | **ACCEPTED, reviewer's second option.** §17.1's table makes it arithmetic: at 20 cells a 1-cell billboard is **3.2 chunky rows**. §5 drops the "iris readable at range" claim and gives the Sentry a **1-pixel state light** — register **14** (green) when the iris is closed, register **13** (orange) when charging or open. A colour, not a shape; and because §3 exempts 12 and 13 from fogging, the light does not dim with distance either. |
-| 30 | 32×32 sprite source under-resolved | **ACCEPTED, and settled before art.** §8 / §17.4: enemies and anchors are authored at **64×64** (1:1 with a wall face at d = 1.0, never upscaled beyond 1.7× at contact range); pickups stay 32×32 at half cell height, where they are never large. Cost is booked: 180,224 + 22,528 B. |
+| 28 | One 480,000-cycle column cannot serve two frame-rate targets | **ACCEPTED, including the PAL correction.** §17.3 carries **two** budget rows: 160 columns → 3 VBLs → **480,000** → 16.7 fps (≥ 14 ✓); 80 columns → 2 VBLs → **320,000** → 25 fps (≥ 20 ✓). **Both budgets stand; the spike says only one of them is reachable** — 80 columns measures 448,877, which is 3 VBLs / 16.7 fps, so the 25 fps target is withdrawn until the raycast is in asm (§17.3). The reviewer's point that there is no 20 fps on a 50 Hz flip lock is adopted, so the 80-column budget is 320,000, not 400,000. |
+| 29 | OVERCLOCK's payoff is not visible at 20 cells | **ACCEPTED, reviewer's second option.** §17.1's table makes it arithmetic: at 20 cells a 1-cell billboard is **5.8 chunky rows** (3.2 before D1). §5 drops the "iris readable at range" claim and gives the Sentry a **1-pixel state light** — register **14** (green) when the iris is closed, register **13** (orange) when charging or open. A colour, not a shape; and because §3 exempts 12 and 13 from fogging, the light does not dim with distance either. |
+| 30 | 32×32 sprite source under-resolved | **ACCEPTED, and settled before art.** §8 / §17.4: enemies and anchors are authored at **64×64** (**D1 moves the 1:1 distance to d = 1.80 cells and caps the drawn upscale at the window: 1.25× vertically**, was "1:1 at d = 1.0, never beyond 1.7×"); pickups stay 32×32 at half cell height, where they are never large. Cost is booked: 180,224 + 22,528 B. |
 | 31 | Level 1 does not deliver the lesson §12 claims | **ACCEPTED verbatim.** Watchdogs moved from (22,14), (24,19), (27,20), (4,21) to **(26,17), (24,19), (27,20), (25,21)** — every pairwise distance 2.24–4.12 cells, inside one 6-cell wake cluster in the east kennel, exiting through the row-16 gap in a line. The west room's dog is deleted; the `i` pickup it guarded stays. §12's prose is updated to match. |
 | 32 | Joystick-only players cannot pause or abort | **ACCEPTED by removing the claim, not by adding a gesture.** Finding 7 already requires Alt on the keyboard for strafe, so a keyboard is in hand. §6 states plainly that P, Esc, 1/2 and 7/8/9 are keyboard-only and that the game is completable with **joystick + Alt** — no hidden stick chord is added, because a hidden chord is what finding 7 was about. |
 
@@ -1233,31 +1516,37 @@ in this document is now its numbering. What changed against the palette v2 first
   Data yellow (11), integrity green (14) and both magenta rungs return to the walls — which is what
   lets `circuit_lattice` carry live vias, the door carry hazard bands and `exit_gate` be green.
 - **Index mapping applied throughout:** old 12 green → **14**; old 13 white → **12**; old 14 alarm
-  → **13**; old 15 grid → **15** (now slate `#333355`, and also the **sprite transparency key**).
+  → **13**; old 15 grid → **15** (slate, and also the **sprite transparency key**; its value moved
+  again in the art pass's Revision 2, `#333355` → `#444466`, Y 54.9 → 71.9 — see D3 below).
   Both ramps have new hex values; §3 carries the table verbatim from `ART_DIRECTION.md` §3.
 - **The gate is measured, not asserted.** The design's `MIN_ACCENT_DELTA_Y = 40` is withdrawn in
   favour of `rimtest.py`'s **≥ 24 Y over 400 sprite × wall × band combinations (worst measured
-  31.3 Y, 0 failures, 0.0 Y with the rim deleted)** and `palette.py`'s **≥ 16 Y / ≥ 40 chroma**
-  ramp separation (measured 16.0 Y / 41.5). The actual thresholds are stated in §3; where the art's
+  31.3 Y, 0 failures, 0.0 Y with the rim deleted)** and `palette.py`'s ramp separation — whose
+  *thresholds* are **≥ 12 Y / ≥ 40 chroma** and whose *measurements* are 16.0 Y / 41.5, a
+  distinction v2 collapsed (D3 below). The actual thresholds are stated in §3; where the art's
   numbers are below 40, the art's numbers are the gate, because they are measured over the art that
   ships.
 - **Register 15 is legal in walls and the HUD but never a sprite colour** — sprites' 15s are holes,
   and sprite shading goes through `drawlib.shade_sprite`, which preserves the key.
 - **Depth fog is `palette.shade_table(band)`**, an index remap, baked into §17.4's bands by the
-  loader so the inner loop still pays one fetch. 12 and 13 never fog; 11 and 14 hold three bands.
+  loader so the inner loop still pays one fetch. **12, 13 and 14 never fog** (Revision 2 added 14);
+  11 and 15 hold three bands and then fog *up* into the cyan ramp, never to void (D3 below).
 - **HUD** — `ART_DIRECTION.md` §5's layout is the shipped one (§15.1): a 320×40 planar strip at
   1:1 on the bottom 40 lines, **64-glyph** 8×8 font in register 12, no raster split. The ledger row
   drops from 12,544 to **6,912 B** and headroom rises to **76,464 B (~75 KB)**.
 - **One honest gap carried forward:** reserved orange (13, Y 150.0) is only 3.3 Y from wall-legal
   green (14, Y 146.6), and `rimtest.py` does not cover core-against-wall adjacency. Named in §3.
-- **One authoring constraint carried forward:** green fogs out at band 3, so exit gates must be
-  placed inside band 2 — now compiler warning 9 (§11).
+- ~~**One authoring constraint carried forward:** green fogs out at band 3, so exit gates must be
+  placed inside band 2 — now compiler warning 9 (§11).~~ **Withdrawn by D3:** index 14 does not fog,
+  and §11's warning 9 is withdrawn with it.
 
 ### Reviewer suggestions considered and **not** adopted
 
-- **Two-tone (white + black) rim** (finding 10a). Rejected: the rebuilt palette guarantees ΔY ≥ 40
-  against every wall register, so the inner black edge buys nothing and costs a source pixel on
-  every silhouette at 64×64.
+- **Two-tone (white + black) rim** (finding 10a). Rejected: `rimtest.py` measures the white rim at
+  a worst margin of **31.3 Y** over all 400 sprite × wall × band combinations, against a **24 Y**
+  threshold, so the inner black edge buys nothing and costs a source pixel on every silhouette at
+  64×64. *(v2 justified this with a "ΔY ≥ 40 against every wall register" claim that no gate in the
+  pipeline makes — the measured headroom is 31.3 Y. The rejection stands on the measurement.)*
 - **Sentry as a wall-texture override** (finding 4, reviewer's recommendation). Rejected in favour
   of the orchestrator's alcove entity: it keeps the sprite count at 33, avoids +61,440 B of panel
   textures the ledger cannot now afford, and needs no change to the shipped Sentry positions.
