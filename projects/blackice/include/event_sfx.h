@@ -61,6 +61,18 @@
 #define EVENT_SFX_EXFIL_SIREN     9
 #define EVENT_SFX_BANK_COUNT      10
 
+/*
+ * The bank's four drum voices, which the song's own drum lane plays and NO game
+ * code ever names: no EventId maps to them and EVENT_SFX_OF_ID never yields one.
+ * They are mirrored here only so the bank-vs-cue-map pin above covers the whole
+ * generated header, and so EVENT_SFX_BANK_COUNT stays readable as "the cues" -
+ * the drums live above it, at BLACKICE_DRUM_FIRST.
+ */
+#define EVENT_SFX_DRUM_KICK       10
+#define EVENT_SFX_DRUM_SNARE      11
+#define EVENT_SFX_DRUM_HAT        12
+#define EVENT_SFX_DRUM_CLAP       13
+
 /* This id asks for no sound: EV_NONE, and every HUD message line. */
 #define EVENT_SFX_NONE            0xff
 

@@ -279,6 +279,21 @@ a gap and not a bug — and inaudible in this harness.
 
 ---
 
+## The clock every scenario above was played on
+
+**`play_headless.py` boots EmuTOS at its default country, which comes up 60 Hz NTSC.** Measured
+from Hatari's own CPU cycle counter on a game run: 133,554 cycles a vblank, **59.90 Hz**, from the
+first blank — the ROM chooses it before this program runs. `VBLS_PER_TICK` is `50 / SIM_HZ`, so
+**every scenario in this file was played at a 30 Hz simulation and not 25**: a fifth faster than
+the machine DESIGN specifies, with the music a fifth sharp.
+
+Nothing in the table above is thereby wrong — the verdicts are about what happens, not how fast —
+but the two places it could matter are named here rather than left to be rediscovered: the timings
+in scenario 3b (how long a held key turns for) and any judgement about how quickly the trace meter
+fills. `--country uk` is the fix; `atari/record_audio.py` passes it and the QA driver does not yet.
+
+---
+
 ## Artefacts
 
 Screenshots, logs and per-scenario transcripts are under the session scratchpad:

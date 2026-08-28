@@ -2,7 +2,7 @@
 #ifndef SONG_DATA_H
 #define SONG_DATA_H
 
-#define DEMO_SONG_BYTES 1892
+#define DEMO_SONG_BYTES 1896
 
 extern const unsigned char demo_song[DEMO_SONG_BYTES];
 

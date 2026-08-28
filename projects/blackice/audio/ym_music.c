@@ -45,7 +45,7 @@
 
 /* --------------------------------------------------------------------- the song blob layout ---- */
 
-#define SONG_MAGIC              0x594D5331UL   /* 'YMS1' */
+#define SONG_MAGIC              0x594D5332UL   /* 'YMS2' */
 
 #define SONG_OFF_MAGIC             0
 #define SONG_OFF_SPEED             4    /* u16: frames per row */
@@ -54,11 +54,20 @@
 #define SONG_OFF_PATTERN_COUNT     8    /* u8  */
 #define SONG_OFF_INSTRUMENT_COUNT  9    /* u8  */
 #define SONG_OFF_SFX_COUNT        10    /* u8  */
+#define SONG_OFF_DRUM_LIMIT       11    /* u8: one past the highest bank index; 0 = no drum lane */
 #define SONG_OFF_ORDER            12    /* u16: offset of the sequence, one pattern index per byte */
 #define SONG_OFF_PATTERN_TABLE    14    /* u16: offset of pattern_count u16 pattern offsets */
 #define SONG_OFF_INSTRUMENT_TABLE 16    /* u16: offset of instrument_count u16 instrument offsets */
 #define SONG_OFF_SFX_TABLE        18    /* u16: offset of sfx_count SFX macros */
-#define SONG_HEADER_BYTES         20    /* nothing below this offset is a table */
+#define SONG_OFF_DRUM_TABLE       20    /* u16: offset of pattern_count u16 drum lane offsets */
+#define SONG_HEADER_BYTES         24    /* nothing below this offset is a table */
+
+/* THE DRUM LANE: one byte per row, beside the three YM channels but not one of them. The byte is
+ * an index into the DMA SAMPLE BANK, so the lane is a fourth track that costs no chip voice — and
+ * on a machine with no DMA sound it simply never gets played, which is why the YM arrangement
+ * still has its own percussion channel. See ym_music.h: ym_music_take_drum_hit. */
+#define DRUM_ROW_EMPTY             0    /* no hit on this row */
+#define DRUM_ROW_FIRST             1    /* row byte n encodes bank sample index n - DRUM_ROW_FIRST */
 
 /* A pattern row is one (note, instrument) byte pair per channel, channels in A, B, C order. */
 #define ROW_BYTES_PER_CHANNEL      2
@@ -136,6 +145,8 @@ static uint8_t  song_order_len;
 static uint8_t  song_pattern_count;
 static uint8_t  song_instrument_count;
 static uint8_t  song_sfx_count;
+static uint8_t  song_drum_limit;      /* 0 when the song has no drum lane */
+static const uint8_t *drum_table;     /* pattern_count u16 offsets, one lane per pattern */
 
 static YmChannel channel[YM_CHANNEL_COUNT];
 static uint8_t  order_index;
@@ -146,6 +157,12 @@ static uint8_t  sequencer_running;
 /* The SFX request ym_music_sfx_play lodges and the tick performs. One aligned word, written by
  * anyone and read by the tick — which is the whole of the locking, and ym_music.h says why. */
 static volatile uint16_t sfx_request = SFX_REQUEST_NONE;
+
+/* The drum lane's pending hit, written by the tick and taken by the platform. One aligned word,
+ * for the same reason sfx_request is one: the store is indivisible on a 68000, so the tick can
+ * publish it from inside a level-4 interrupt with no mask and no handshake. ym_music.h states who
+ * may read it and when. */
+static volatile uint16_t drum_request = YM_DRUM_NONE;
 
 /* Which mixer bits each channel owns. A table, not a shift — see this file's header. */
 static const uint8_t psg_mixer_tone_off[YM_CHANNEL_COUNT] = {
@@ -325,12 +342,31 @@ static void channel_step(YmChannel *ch, YmVoiceOut *out)
 
 /* ----------------------------------------------------------------------------- the sequencer --- */
 
+/* The row's drum hit, published for the platform to fire. Read once per ROW, not per frame, and
+ * the whole of it is a byte load and a word store — the lane costs the tick nothing measurable,
+ * which is the point of it living here rather than in a second sequencer. */
+static void sequencer_read_drum(uint8_t pattern_index)
+{
+    uint8_t hit;
+
+    if (song_drum_limit == 0) {
+        return;
+    }
+    hit = blob_at(blob_word(drum_table + pattern_index * sizeof(uint16_t)))[row_index];
+    if (hit != DRUM_ROW_EMPTY) {
+        drum_request = (uint16_t)(hit - DRUM_ROW_FIRST);
+    }
+}
+
 static void sequencer_read_row(void)
 {
+    uint8_t pattern_index = order[order_index];
     const uint8_t *pattern = blob_at(blob_word(pattern_table
-                                               + order[order_index] * sizeof(uint16_t)));
+                                               + pattern_index * sizeof(uint16_t)));
     const uint8_t *cell = pattern + (uint16_t)row_index * ROW_BYTES;
     uint8_t index;
+
+    sequencer_read_drum(pattern_index);
 
     for (index = 0; index < YM_CHANNEL_COUNT; index++, cell += ROW_BYTES_PER_CHANNEL) {
         YmChannel *ch = &channel[index];
@@ -415,7 +451,9 @@ static int span_is_inside_the_blob(uint32_t offset, uint32_t length)
     return offset <= song_bytes && length <= song_bytes - offset;
 }
 
-/* The four tables the header names, checked before anything reads through them. */
+/* The four tables the header always names, checked before anything reads through them. The fifth —
+ * the drum lane offset table — is conditional on the song having a lane at all, so it is checked in
+ * drum_lanes_are_inside_the_blob instead. */
 static int header_tables_are_inside_the_blob(void)
 {
     return span_is_inside_the_blob(offset_of(order), song_order_len)
@@ -505,6 +543,44 @@ static int instruments_are_inside_the_blob(void)
     return 1;
 }
 
+/* Every drum lane is inside the blob, and every byte in it agrees with the header's own limit.
+ *
+ * THIS IS SELF-CONSISTENCY, NOT A BANK CHECK — song_drum_limit comes out of the same blob as the
+ * lane bytes, so what it buys is that the lane cannot name past what the song was WRITTEN for.
+ * What stops an out-of-range index reaching the hardware is dma_sfx_play, which range-checks every
+ * index against the bank it was given. Nothing here can know the bank: a song built for a
+ * fourteen-sample bank and linked against a smaller one will simply have those hits refused, with
+ * no error and no ledger signal, which is a build mistake rather than a runtime one. */
+static int drum_lanes_are_inside_the_blob(void)
+{
+    uint8_t index;
+    uint8_t row;
+
+    if (song_drum_limit == 0) {
+        return 1;                 /* no lane: nothing to check, and the tick never looks */
+    }
+    if (!span_is_inside_the_blob(offset_of(drum_table),
+                                 (uint32_t)song_pattern_count * sizeof(uint16_t))) {
+        return 0;
+    }
+    for (index = 0; index < song_pattern_count; index++) {
+        uint16_t offset = blob_word(drum_table + index * sizeof(uint16_t));
+        const uint8_t *lane;
+
+        if (!span_is_inside_the_blob(offset, song_rows_per_pattern)) {
+            return 0;
+        }
+        lane = blob_at(offset);
+        for (row = 0; row < song_rows_per_pattern; row++) {
+            if (lane[row] != DRUM_ROW_EMPTY
+                && (uint8_t)(lane[row] - DRUM_ROW_FIRST) >= song_drum_limit) {
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
+
 /* Every SFX macro names an instrument that exists and a note that is one. The looping check is the
  * one rule here that is musical rather than structural: an envelope that loops never ends, so a
  * macro built on one would hold channel C for the rest of the run and the music would never get it
@@ -534,6 +610,7 @@ static int song_structure_is_sound(void)
         && order_names_a_pattern()
         && patterns_are_inside_the_blob()
         && instruments_are_inside_the_blob()
+        && drum_lanes_are_inside_the_blob()
         && sfx_macros_are_playable();
 }
 
@@ -544,6 +621,7 @@ int ym_music_init(const void *song_blob, uint32_t bytes)
     song = 0;
     sequencer_running = 0;
     sfx_request = SFX_REQUEST_NONE;
+    drum_request = YM_DRUM_NONE;
     /* An odd blob would make blob_signed_word an address error two frames in, so it is refused
      * here where the caller can still do something about it. */
     if (blob == 0 || (((uint32_t)blob) & 1) != 0 || bytes < SONG_HEADER_BYTES) {
@@ -564,10 +642,12 @@ int ym_music_init(const void *song_blob, uint32_t bytes)
     song_pattern_count = blob[SONG_OFF_PATTERN_COUNT];
     song_instrument_count = blob[SONG_OFF_INSTRUMENT_COUNT];
     song_sfx_count = blob[SONG_OFF_SFX_COUNT];
+    song_drum_limit = blob[SONG_OFF_DRUM_LIMIT];
     order = blob_at(blob_word(blob + SONG_OFF_ORDER));
     pattern_table = blob_at(blob_word(blob + SONG_OFF_PATTERN_TABLE));
     instrument_table = blob_at(blob_word(blob + SONG_OFF_INSTRUMENT_TABLE));
     sfx_table = blob_at(blob_word(blob + SONG_OFF_SFX_TABLE));
+    drum_table = blob_at(blob_word(blob + SONG_OFF_DRUM_TABLE));
 
     if (!song_structure_is_sound()) {
         song = 0;
@@ -592,7 +672,17 @@ void ym_music_start(void)
     row_index = 0;
     frames_to_next_row = 0;
     sfx_request = SFX_REQUEST_NONE;
+    /* A hit the platform never took belongs to the song that was playing, not to this one. */
+    drum_request = YM_DRUM_NONE;
     sequencer_running = 1;
+}
+
+uint16_t ym_music_take_drum_hit(void)
+{
+    uint16_t hit = drum_request;
+
+    drum_request = YM_DRUM_NONE;
+    return hit;
 }
 
 void ym_music_set_speed(uint16_t frames_per_row)
@@ -609,6 +699,7 @@ void ym_music_stop(void)
 
     sequencer_running = 0;
     sfx_request = SFX_REQUEST_NONE;
+    drum_request = YM_DRUM_NONE;
     for (index = 0; index < PSG_REG_COUNT; index++) {
         reg[index] = 0;
     }

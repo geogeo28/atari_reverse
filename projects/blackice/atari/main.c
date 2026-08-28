@@ -35,6 +35,9 @@
 
 #include "ym_music.h"
 #include "blackice_song.h"
+#include "dma_sfx.h"
+#include "blackice_sfx_bank.h"
+#include "blackice_sfx_ids.h"
 #include "blackice_sfx_ids.h"
 
 #ifdef BLACKICE_BENCH
@@ -269,6 +272,10 @@ static HudState g_hud_shown[2];
 static volatile int g_flip_pending;
 static int g_vbl_installed;
 static int g_music_ready;
+/* The song's drum lane needs BOTH: a song the driver accepted and a DMA chip that took the
+ * bank. On a plain ST the second is 0, dma_sfx refuses every call, and the YM kit's own noise
+ * channel carries the drums (audio/ym_music.h). */
+static int g_drums_ready;
 
 static volatile unsigned long g_vbl_count;
 static volatile uint8_t g_joy_sticky;   /* DESIGN 4.2: every joystick bit seen since the last read */
@@ -461,7 +468,17 @@ void bi_vbl_tick(void)
     }
     g_joy_sticky |= bi_joy_port1;
     if (g_music_ready) {
+        /* THE ORDER AND THE TICK RATE ARE THE CONTRACT (audio/ym_music.h): the take is a
+         * read-then-clear, so whoever ticks must take on the SAME blank. A taker that runs at the
+         * simulation's 25 Hz would not merely miss every second hit, it would play stale ones a
+         * blank late — the drum arriving after the beat is worse than the drum never arriving. */
+        unsigned int drum_hit;
+
         ym_music_tick();
+        drum_hit = ym_music_take_drum_hit();
+        if (drum_hit != YM_DRUM_NONE && g_drums_ready) {
+            dma_sfx_play((uint8_t)drum_hit, YM_DRUM_PRIORITY);
+        }
     }
 }
 
@@ -1631,6 +1648,12 @@ typedef struct {
     /* cast.S's self-check: RenderColumns that differed from src/raycast.c's, over the whole run.
      * Anything but zero means the asm cast and its oracle disagree and the run is void. */
     unsigned long cast_mismatches;
+    /* What the audio drivers accepted at boot, so a silent run is diagnosable from the ledger and
+     * not only from a listener. song_accept is ym_music_init's verdict on the blob (it refuses the
+     * old 'YMS1' format outright); bank_accept is dma_sfx_init's, which is 0 on every plain ST
+     * because there is no DMA sound chip to take the bank. */
+    unsigned long song_accept;
+    unsigned long bank_accept;
     BiPassLedger  pass[BI_BENCH_PASSES];
 } BiLedger;
 
@@ -1773,6 +1796,8 @@ static void write_bench_text(void)
     p = put_field(p, "/", assets_arena_capacity());
     p = put_field(p, " screen=", (unsigned long)g_screen[0]);
     p = put_field(p, " cast_mismatches=", g_ledger.cast_mismatches);
+    p = put_field(p, " song_accept=", g_ledger.song_accept);
+    p = put_field(p, " bank_accept=", g_ledger.bank_accept);
     p = put_str(p, "\r\n");
     for (index = 0; index < g_ledger.pass_count; ++index) {
         const BiPassLedger *pass = &g_ledger.pass[index];
@@ -2074,6 +2099,8 @@ static void bench(void)
         run_pass(index, 1);
     }
     g_ledger.cast_mismatches = g_cast_mismatches;
+    g_ledger.song_accept = (unsigned long)g_music_ready;
+    g_ledger.bank_accept = (unsigned long)g_drums_ready;
     /* The captured pass is replayed once more, untimed, so the picture on screen belongs to it:
      * Hatari's screenshot hands back the last surface RENDERED, and the last TIMED pass is not
      * necessarily the one the ledger names. */
@@ -2200,6 +2227,7 @@ int blackice_main(void)
     build_palette_variants();
     set_palette(g_palette_variants[PALETTE_VARIANT_CLEAN]);
     g_music_ready = ym_music_init(blackice_score, BLACKICE_SCORE_BYTES);
+    g_drums_ready = dma_sfx_init(blackice_sfx_bank, BLACKICE_SFX_BANK_BYTES);
     if (g_music_ready) {
         ym_music_start();
     }
@@ -2214,6 +2242,9 @@ int blackice_main(void)
     remove_vectors();
     if (g_music_ready) {
         ym_music_stop();
+    }
+    if (g_drums_ready) {
+        dma_sfx_stop();
     }
     leave_game_video();
     bi_leave_supervisor(g_saved_ssp);

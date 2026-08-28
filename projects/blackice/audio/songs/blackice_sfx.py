@@ -24,6 +24,7 @@ about the build rather than a promise in two docstrings.
 import argparse
 import json
 import pathlib
+import re
 import sys
 
 import numpy as np
@@ -53,10 +54,44 @@ SFX_CATALOGUE = blackice.SFX_CATALOGUE
 SFX_NAMES = [entry["name"] for entry in SFX_CATALOGUE]
 SFX_SECONDS = blackice.SFX_SECONDS
 
+# THE DRUM LANE'S SAMPLES SHARE THIS BANK, straight after the cues, because the lane byte in a song
+# is a bank index and there is only one bank. blackice.py's DRUM_BANK is the numbering and it is
+# derived from these two lists being concatenated in this order.
+DRUM_CATALOGUE = blackice.DRUM_CATALOGUE
+DRUM_NAMES = [entry["name"] for entry in DRUM_CATALOGUE]
+DRUM_SECONDS = blackice.DRUM_SECONDS
+BANK_NAMES = SFX_NAMES + DRUM_NAMES
+
 # Every cue is ramped to zero over its last few milliseconds. The DMA stops dead at the end of a
 # frame, so a sample that ends mid-waveform is a step to silence — an audible click, and the louder
 # the sound the worse it is. Measured before this: sentry_charge ended at 30% of full scale.
 SFX_FADE_OUT_MS = 4.0
+
+def drum_priority_from_the_driver():
+    """ym_music.h's YM_DRUM_PRIORITY, read from the header rather than copied.
+
+    The number has to be the same on both sides of the language boundary — the C hands it to
+    dma_sfx_play and this file records it in the bank's metadata for the verifier to print — and
+    two files cannot import each other, so the one that is normative is read."""
+    header = (AUDIO_DIR / "ym_music.h").read_text()
+    found = re.search(r"^#define\s+YM_DRUM_PRIORITY\s+(\d+)", header, re.M)
+    if not found:
+        raise SystemExit("ym_music.h defines no YM_DRUM_PRIORITY — the drum lane's priority has "
+                         "moved or been renamed, and this bank's metadata would be a guess")
+    return int(found.group(1))
+
+
+DRUM_PRIORITY = drum_priority_from_the_driver()
+
+# HOW THE KIT SITS AGAINST ITSELF. Peak normalisation makes every sample as loud as the format
+# allows, which is right for one-off cues and wrong for four sounds that play together every row —
+# a hi-hat at the same peak as a kick is a hi-hat a real kit would put well below it. These duck
+# the lane's quieter voices after the normalise. The hat is ducked less than a mixing desk would:
+# the YM percussion channel is playing its own hat on the same row underneath, and the verifier
+# has to be able to tell this one from the kick at the same instant (per-sample floor, 90%).
+DRUM_GAINS = {"kick": 1.0, "snare": 0.95, "clap": 0.9, "hat": 0.75}
+
+CLAP_BURSTS = 3                   # the slaps before the tail; fewer reads as a snare
 
 
 # ------------------------------------------------------------------------------- oscillators ----
@@ -116,6 +151,26 @@ def fade_edges(signal, in_ms, out_ms):
     if fall:
         gain[-fall:] = np.linspace(1.0, 0.0, fall)
     return signal * gain
+
+
+# The bank runs at 12,517 Hz, so Nyquist is 6,258 Hz and a ONE-POLE filter's corner saturates well
+# below it: measured, any cutoff above about 6 kHz gives the same ~3 kHz corner, and any cutoff
+# above about 5 kHz on the low pass is transparent. Cutoffs here are only meaningful below ~3 kHz,
+# which is why the hat's is named rather than written as a number nobody can check.
+HAT_CORNER_HZ = 6000.0            # the top of the one-pole's useful range: a ~3 kHz corner
+
+
+def high_pass(signal, cutoff_hz):
+    """What the one-pole low pass leaves behind. Crude, and exactly right for a hi-hat: the sound
+    of a hat IS the top of a noise burst with its body taken away."""
+    return signal - low_pass(signal, cutoff_hz)
+
+
+def saturate(signal, drive):
+    """Soft clipping. A drum that has been driven into its own ceiling reads as LOUD at a level
+    that does not actually clip the 8-bit sample — which is most of what "punchy" means once the
+    peak is already at full scale and there is nowhere left to go."""
+    return np.tanh(signal * drive)
 
 
 def at(target, source, seconds_in):
@@ -262,7 +317,74 @@ def synth_exfil_siren(rng):
     return fade_edges(wail * tremolo(seconds, 5.0, 0.2) + wind, 40.0, 90.0)
 
 
+# ------------------------------------------------------------------------- the four drum lane --
+
+def synth_kick(rng):
+    """A 400 -> 52 Hz pitch drop under a fast decay, driven into its own ceiling.
+
+    THE SWEEP IS STEEP ON PURPOSE, and not only because it is what a beater sounds like. The bass
+    line sits at 87-220 Hz and strikes on every row; a kick that lingered in that register would be
+    a decaying tone in the same band as a freshly struck bass note, which is a thing the verifier
+    cannot tell it from. Measured at 180 Hz down: the kick reference read 0.45-0.50 on rows it had
+    never played, and 16 hi-hats went to its bin. Starting at 400 Hz puts most of the correlated
+    part of the sound above the bass entirely, and what is left is a chirp too steep to resemble
+    anything holding still."""
+    seconds = DRUM_SECONDS["kick"]
+    body = phase_tone(exponential_hz(seconds, 400.0, 52.0)) * decay(seconds, 0.022)
+    click = high_pass(noise(rng, seconds), 1800.0) * decay(seconds, 0.004) * 0.6
+    return saturate(body, 1.8) + click
+
+
+def synth_snare(rng):
+    """Noise with a tuned body under it. The two tones are what stop it reading as a hi-hat with a
+    long tail, and they are why the cross-correlation can tell the two apart."""
+    seconds = DRUM_SECONDS["snare"]
+    rasp = high_pass(noise(rng, seconds), 400.0) * decay(seconds, 0.035)
+    body = (phase_tone(constant_hz(seconds, 190.0)) + 0.7 * phase_tone(constant_hz(seconds, 285.0))
+            ) * decay(seconds, 0.022)
+    return saturate(rasp * 1.2 + body * 0.8, 1.3)
+
+
+def synth_hat(rng):
+    """55 ms of the very top of a noise burst — a corner near 3 kHz, the top half of the band.
+
+    Short enough that it is over long before the next eighth, which keeps a hat on every offbeat
+    from turning the lane into a wash; bright enough that it shares no band with the kick, the
+    snare's body or the bass line, which is what makes it identifiable at all.
+
+    The decay FILLS those 55 ms rather than spiking and stopping. A hat whose energy was all in its
+    first 10 ms measured as a 45 ms reference that is 80% silence, and a correlation normalised by
+    the recording's energy over that whole window then reads the YM arrangement in the other 35 ms
+    as noise on the answer: 21 of 58 hats went to the wrong bin at a half-life of 0.009 s."""
+    seconds = DRUM_SECONDS["hat"]
+    return high_pass(noise(rng, seconds), HAT_CORNER_HZ) * decay(seconds, 0.018)
+
+
+def synth_clap(rng):
+    """CLAP_BURSTS bursts 9 ms apart and then a tail — the structure IS the clap, and it is also
+    what makes it unmistakable for a snare at the same instant in a correlation."""
+    seconds = DRUM_SECONDS["clap"]
+    burst_seconds = 0.02
+    burst_spacing_seconds = 0.009
+
+    out = np.zeros(frames(seconds))
+    def clap_band(signal):
+        return high_pass(low_pass(signal, 2600.0), 700.0)
+
+    for index in range(CLAP_BURSTS):
+        burst = clap_band(noise(rng, burst_seconds)) * decay(burst_seconds, 0.004)
+        at(out, burst, index * burst_spacing_seconds)
+    tail_start = CLAP_BURSTS * burst_spacing_seconds
+    tail_seconds = seconds - tail_start
+    at(out, clap_band(noise(rng, tail_seconds)) * decay(tail_seconds, 0.026), tail_start)
+    return saturate(out, 1.4)
+
+
 SYNTHESIZERS = {
+    "kick": synth_kick,
+    "snare": synth_snare,
+    "hat": synth_hat,
+    "clap": synth_clap,
     "buster_shot": synth_buster_shot,
     "spike_shot": synth_spike_shot,
     "watchdog_snarl": synth_watchdog_snarl,
@@ -322,10 +444,17 @@ def main():
                         help=f"build from <dir>/<name>.wav for {', '.join(SFX_NAMES)}")
     args = parser.parse_args()
 
-    samples = mk_samples.build_samples(args.wav_dir, SFX_NAMES, synthesize, SYNTH_SEED)
+    samples = mk_samples.build_samples(args.wav_dir, BANK_NAMES, synthesize, SYNTH_SEED,
+                                       gains=DRUM_GAINS)
     blob, meta = mk_samples.pack(samples)
-    for entry, cue in zip(meta["samples"], SFX_CATALOGUE):
-        entry["priority"] = cue["priority"]
+    # The cues carry DESIGN.md's priority; the drum lane's samples are fired at YM_DRUM_PRIORITY,
+    # which is 0 — below every cue, so a cue always cuts a drum and a drum never cuts a cue.
+    priorities = ([cue["priority"] for cue in SFX_CATALOGUE]
+                  + [DRUM_PRIORITY] * len(DRUM_CATALOGUE))
+    for entry, priority in zip(meta["samples"], priorities):
+        entry["priority"] = priority
+    meta["drum_first_index"] = len(SFX_CATALOGUE)
+    meta["drum_bank"] = blackice.DRUM_BANK
 
     OUT.mkdir(exist_ok=True)
     (OUT / "blackice_sfx_bank.bin").write_bytes(blob)
@@ -333,8 +462,10 @@ def main():
     write_bank_source(blob, meta)
 
     total = sum(entry["seconds"] for entry in meta["samples"])
+    drum_bytes = sum(entry["bytes"] for entry in meta["samples"][len(SFX_CATALOGUE):])
     print(f"blackice bank: {len(blob)} bytes (budget {mk_samples.BANK_SIZE_BUDGET}), "
-          f"{len(samples)} samples, {total:.2f} s at {SAMPLE_RATE_HZ} Hz")
+          f"{len(samples)} samples ({len(SFX_CATALOGUE)} cues + {len(DRUM_CATALOGUE)} drum lane, "
+          f"{drum_bytes} B), {total:.2f} s at {SAMPLE_RATE_HZ} Hz")
     for index, entry in enumerate(meta["samples"]):
         print(f"  {index}  {entry['name']:<16} {entry['bytes']:6d} B  {entry['seconds']:.2f} s  "
               f"priority {entry['priority']}")

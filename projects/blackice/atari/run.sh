@@ -11,6 +11,8 @@
 #   Z / X         strafe             1 / 2        weapon      7 / 8 / 9   throttle      P   pause
 #   Space         fire (keyboard)    Esc          quit to the desktop        Ctrl-Q   quit Hatari
 #
+# `--country uk` boots EmuTOS as a PAL machine: at its default country it comes up 60 Hz, the 25 Hz
+# simulation then ticks at 30 Hz and the music plays a fifth sharp (atari/README.md, fault 10).
 # The title screen waits for fire. The ROM is Hatari's bundled EmuTOS (TOS 1.0x in tools/hatari has no
 # STE support); set BI_TOS_ROM=/path/to/tos162.img to boot a real STE TOS instead.
 set -euo pipefail
@@ -26,7 +28,7 @@ case "$MODE" in
   *) echo "usage: run.sh [floppy|gemdos|parsecheck]" >&2; exit 2 ;;
 esac
 
-ARGS=(--machine ste --memsize 1 --monitor rgb --sound 44100 --joy1 keys --confirm-quit off
+ARGS=(--machine ste --memsize 1 --country uk --monitor rgb --sound 44100 --joy1 keys --confirm-quit off
       --statusbar off --drive-led off --frameskips 0 --zoom 2 "${MEDIA[@]}")
 [ -n "${BI_TOS_ROM:-}" ] && ARGS=(--tos "$BI_TOS_ROM" "${ARGS[@]}")
 

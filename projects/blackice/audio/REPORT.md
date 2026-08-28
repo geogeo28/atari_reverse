@@ -9,8 +9,8 @@ ym_music.c/.h   ym_psg.S/.h     3-voice YM2149 replayer, one tick per VBL, softw
 dma_sfx.c/.h                    STE DMA one-shot sample voice, 8-bit signed mono @ 12.5 kHz
 mk_song.py                      song description -> binary blob + song_data.c + ym_notes.h + sfx_ids.h
 mk_samples.py                   WAVs (or synthesized placeholders) -> sample blob + sfx_bank.c
-songs/blackice.py               THE GAME'S SCORE — five songs + ten YM macros (songs/README.md)
-songs/blackice_sfx.py           THE GAME'S CUES  — ten DMA samples, synthesized
+songs/blackice.py               THE GAME'S SCORE — five songs, ten YM macros, the drum lanes
+songs/blackice_sfx.py           THE GAME'S CUES  — ten DMA cues + four drum samples (songs/README.md)
 audiotest.c  audio_os.s         the harness: installs the tick, plays, measures, restores
 verify.py                       runs it in Hatari, analyses the recorded audio + the register trace
 profile_tick.py                 Hatari's CPU profiler, per symbol and per instruction
@@ -21,11 +21,14 @@ Makefile  tos.ld  mkprg.py      the m68k-elf build (tos.ld/mkprg.py copied from 
 
 | .PRG | bytes | material | check |
 |---|--:|---|---|
-| `disk/AUDIOTEST.PRG` | 43,244 | the demo tune and six placeholder samples | `make verify` |
-| `disk/BICETEST.PRG` | 69,891 | the BLACK ICE score and its ten cues | `make verify-blackice` |
+| `disk/AUDIOTEST.PRG` | 43,508 | the demo tune and six placeholder samples | `make verify` |
+| `disk/BICETEST.PRG` | 76,569 | the BLACK ICE score, its ten cues and its drum lane | `make verify-blackice` |
 
-Both pass every check they run — 19 for the demo, 20 for BLACK ICE (it adds the tempo check). The
-demo's table is below and BLACK ICE's is in `songs/README.md` §7. Every
+`make listen-blackice` runs the second one and writes `out/audio-blackice.wav` and nothing else —
+no trace, no plain-ST run, no checks. It is the one output here meant for ears.
+
+Both pass every check they run — 19 for the demo, 24 for BLACK ICE (it adds the tempo check and
+four for the drum lane). The demo's table is below and BLACK ICE's is in `songs/README.md` §9. Every
 generated source AND every `out/*_meta.json` the verifier reads is a Make target, so
 `make clean && make verify` from a fresh tree is this directory's acceptance test.
 
@@ -90,15 +93,17 @@ Big-endian, byte-addressed, word-aligned. `mk_song.py`'s docstring is the normat
 the shape.
 
 ```
-header, 20 bytes
-   0  'YMS1'                         12  u16 offset of the order (one pattern index per byte)
+header, 24 bytes
+   0  'YMS2'                         12  u16 offset of the order (one pattern index per byte)
    4  u16 frames per row (tempo)     14  u16 offset of the pattern offset table
    6  u8  rows per pattern           16  u16 offset of the instrument offset table
    7  u8  order length               18  u16 offset of the SFX macro table
-   8  u8  pattern count
-   9  u8  instrument count       pattern:  rows x 3 x (note byte, instrument byte), channels A,B,C
-  10  u8  sfx count                       note 0 = nothing, 1 = note off, n>=2 = semitone n-2
-  11  u8  reserved                        instrument 0 = keep the channel's last, n>=1 = the nth
+   8  u8  pattern count              20  u16 offset of the drum lane offset table (0 = none)
+   9  u8  instrument count           22  u16 reserved
+  10  u8  sfx count             pattern:  rows x 3 x (note byte, instrument byte), channels A,B,C
+  11  u8  drum sample limit            note 0 = nothing, 1 = note off, n>=2 = semitone n-2
+       (0 = there is no lane)         instrument 0 = keep the channel's last, n>=1 = the nth
+                            drum lane:  one byte per row; 0 = no hit, n>=1 = DMA bank index n-1
 
 instrument, 10-byte head then two tables       sfx macro, 4 bytes
    0  u8  flags: 1 tone, 2 noise, 4 vol loops     0  u8 instrument (1-based)
@@ -115,7 +120,7 @@ instrument, 10-byte head then two tables       sfx macro, 4 bytes
 A **non-looping volume table is also the note's length**: when it runs out the driver releases the
 channel. That one rule is how percussion ends itself and how a stolen SFX channel is handed back.
 
-**The demo tune**: 1,892 bytes (budget 4,096) — 8 patterns of 32 rows, a 16-entry sequence, 12
+**The demo tune**: 1,896 bytes (budget 4,096) — 8 patterns of 32 rows, a 16-entry sequence, 12
 instruments, 6 SFX macros. 3,072 frames = **61.4 s** at 50 Hz, 6 frames/row. D minor, dark: a
 root-and-octave bass pulse, a vibrato lead that becomes an arpeggiated triad in the tense section,
 and noise percussion on channel C — the channel an SFX steals, so a hit silences the drums and
@@ -130,8 +135,8 @@ recorded WAVs (any rate, 8- or 16-bit, mono or stereo) when they exist.
 
 ## 3. The measured tick cost
 
-**2,962 CPU cycles per frame** on the demo tune and **2,922** on the BLACK ICE score at its fastest
-trace band, against the 3,000 budget. That is 370 µs, or **1.9% of a 160,000-cycle frame**.
+**2,982 CPU cycles per frame** on the demo tune and **2,902** on the BLACK ICE score at its fastest
+trace band, against the 3,000 budget. That is 373 µs, or **1.9% of a 160,000-cycle frame**.
 
 Measured by the .PRG itself: two loops timed against the 200 Hz counter at `$4ba`, one empty and one
 calling `ym_music_tick`, each about half a second long so TOS's own vblank and timer handlers inflate
@@ -151,7 +156,8 @@ Getting there took four changes, all measured with `profile_tick.py --addresses`
 | the pitch-slide field read as an aligned word instead of two bytes | −~150 |
 | the eleven hardware writes moved to `ym_psg.S` | −~130 |
 | the SFX request became a pending word the tick performs (review item 6) | +20 |
-| **final** | **2,962** |
+| the drum lane's row byte and the word it publishes (one row in `speed` frames) | +20 |
+| **final** | **2,982** |
 
 `ym_psg.S` is the only assembly in the driver and it exists for one measured reason. In C, GCC folds
 the chip address into every store — `move.b d16(a0),d1` / `move.b #n,$ffff8800.w` /
@@ -177,7 +183,7 @@ Then a second run of the *same* .PRG on `--machine st` with TOS 1.04.
 ```
 check                               result  detail
 machine is an STE                   PASS    _MCH cookie says STE-class
-songs accepted                      PASS    1 song(s), 1892 bytes: demo_song 61.4 s
+songs accepted                      PASS    1 song(s), 1896 bytes: demo_song 61.4 s
 sample bank accepted                PASS    6 samples, 36110 bytes
 vblank tick installed               PASS    _vblqueue slot 1
 frames run                          PASS    950 of 950
@@ -279,6 +285,15 @@ bug that needs the *audio*, not the registers, as the surface.
 `songs/` is BLACK ICE's score and cues, authored against the format above and proven by the second
 harness. **`songs/README.md` is that work's report**; the two things it added to the engine are:
 
+- **The drum lane** — a fourth track, and the format's one structural change (`'YMS1'` became
+  `'YMS2'`). A song may carry one byte per row naming a sample in the DMA bank; the tick does not
+  play it but PUBLISHES it, in one aligned word, and the platform hands it to `dma_sfx_play` at
+  priority 0. So `ym_music.c` still knows nothing about `$ffff89xx`, the song data is identical on
+  both machines, and a plain ST simply has nobody to hand the hit to while its YM percussion
+  channel plays on. Measured: 106 of 110 hits in a 20 s window are identified in the recording as
+  the sample the lane asked for — against 26 of 110 on the same .PRG on a plain ST, where the DMA
+  never plays a byte and everything else about the run is identical — and the tick still costs
+  2,902 cycles a frame.
 - **`ym_music_set_speed(frames_per_row)`** — the one API the format was missing. It changes the
   tempo of the song that is already playing without restarting it, which is how DESIGN.md §16's
   four trace bands are one 2,154-byte blob at four speeds (11/10/9/8 frames per row = 136.4 /

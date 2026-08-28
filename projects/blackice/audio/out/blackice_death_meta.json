@@ -1,4 +1,6 @@
 {
+ "drum_bank": {},
+ "drum_hits_per_loop": 0,
  "speed": 6,
  "rows": 24,
  "order": [
@@ -17,7 +19,8 @@
    "instrument": "fall",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 0,
@@ -29,7 +32,8 @@
    "instrument": "fall",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 0,
@@ -41,7 +45,8 @@
    "instrument": "crash",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 48,
@@ -53,7 +58,8 @@
    "instrument": "fall",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 48,
@@ -65,7 +71,8 @@
    "instrument": "fall",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 48,
@@ -77,7 +84,8 @@
    "instrument": "crash",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 96,
@@ -89,7 +97,8 @@
    "instrument": "fall",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 96,
@@ -101,7 +110,8 @@
    "instrument": "fall",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 96,
@@ -113,7 +123,8 @@
    "instrument": "crash",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 120,
@@ -125,11 +136,12 @@
    "instrument": "crash",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   }
  ],
  "symbol": "blackice_death",
- "bytes": 264,
+ "bytes": 306,
  "band_speeds": [
   11,
   10,

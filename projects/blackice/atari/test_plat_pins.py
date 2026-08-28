@@ -309,3 +309,19 @@ def test_page_zero_addresses_match_plat_h():
 def test_teardown_palette_region_matches_plat_h():
     palette = TEARDOWN_REGION_ADDRESSES["palette"]
     assert_matches_c("verify.TEARDOWN_REGIONS['palette']", palette, "PALETTE_ADDR")
+
+
+def test_no_game_cue_uses_the_drum_priority():
+    """DESIGN's DMA mixer takes the LOWEST priority number as the most important, and the VBL hands
+    the song's drum lane YM_DRUM_PRIORITY on every hit.  If a game cue were ever authored at that
+    same number the drums would preempt it (or it them) on a tie, so the reservation is a rule the
+    bank has to keep and not a convention the audio pass remembers."""
+    ids = (HERE.parent / "audio" / "blackice_sfx_ids.h").read_text()
+    drum_priority = int(re.search(r"#define\s+YM_DRUM_PRIORITY\s+(\d+)",
+                                  (HERE.parent / "audio" / "ym_music.h").read_text()).group(1))
+    priorities = re.search(r"blackice_sfx_priority\[[^\]]*\]\s*=\s*\{([^}]*)\}", ids).group(1)
+    cue_priorities = [int(value) for value in priorities.replace(" ", "").split(",") if value]
+    assert cue_priorities, "blackice_sfx_ids.h names no cue priorities — the pin parsed nothing"
+    assert min(cue_priorities) > drum_priority, (
+        f"a game cue is authored at priority {min(cue_priorities)}, which is the drum lane's "
+        f"reserved YM_DRUM_PRIORITY ({drum_priority})")

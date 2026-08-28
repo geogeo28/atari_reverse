@@ -22,4 +22,16 @@
  * strictly lower one is dropped, never queued (DESIGN.md §16). */
 static const unsigned char blackice_sfx_priority[BLACKICE_SFX_COUNT] = { 1, 2, 1, 2, 2, 2, 3, 3, 2, 3 };
 
+/* THE DRUM LANE'S SAMPLES share the same bank, straight after the cues. No game code names these —
+ * the song's drum lane carries the bank index and ym_music_take_drum_hit hands it back — but they
+ * are declared here because the numbering is a contract between the song and the bank, and a
+ * contract nobody can see is one somebody will break. */
+#define BLACKICE_DRUM_COUNT 4
+#define BLACKICE_DRUM_FIRST 10
+
+#define SFX_DRUM_KICK        10
+#define SFX_DRUM_SNARE       11
+#define SFX_DRUM_HAT         12
+#define SFX_DRUM_CLAP        13
+
 #endif /* BLACKICE_SFX_IDS_H */

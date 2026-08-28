@@ -57,6 +57,37 @@ void ym_music_tick(void);
  * but it races the tick, so call it from the VBL or under Supexec. */
 void ym_music_set_speed(uint16_t frames_per_row);
 
+/* THE DRUM LANE — the fourth track, and the only part of this driver that is not the YM.
+ *
+ * A song may carry one byte per row beside its three channels, naming a sample in the STE's DMA
+ * bank (mk_song.py's `drums` / `drum_bank`). The tick does not play it: it PUBLISHES it, and the
+ * platform decides. That split is deliberate — this file knows nothing about $ffff89xx, the song
+ * data stays one thing on both machines, and a plain ST simply never has anyone to hand the hit to
+ * while its YM percussion channel plays on unchanged.
+ *
+ * Returns the bank sample index the current row asked for, or YM_DRUM_NONE, and clears the slot.
+ *
+ * CALL IT ON EVERY TICK, FROM THE SAME VBL, IMMEDIATELY AFTER IT. Two hazards, and the rule
+ * closes both. The take is a read then a clear, so a tick landing between the two would have its
+ * hit thrown away — which cannot happen where the tick is what just returned. And the slot is only
+ * ever WRITTEN by a row that carries a hit, never cleared by one that does not, so a caller
+ * polling slower than the row rate does not merely miss hits: the one it eventually finds is
+ * stale, and fires on a row the song left silent. A hit is never duplicated — the slot is cleared
+ * by the taker — so loss and staleness are the whole hazard. The platform's adoption is three
+ * lines:
+ *
+ *     ym_music_tick();
+ *     hit = ym_music_take_drum_hit();
+ *     if (hit != YM_DRUM_NONE) { dma_sfx_play((uint8_t)hit, YM_DRUM_PRIORITY); }
+ *
+ * YM_DRUM_PRIORITY is 0 and every game cue is 1 or more, so a cue always preempts a drum and a
+ * drum never preempts a cue (dma_sfx.h states the rule). On a plain ST dma_sfx_play refuses and
+ * writes nothing, which is the whole of "silently skipped". */
+#define YM_DRUM_NONE      0xFFFFu
+#define YM_DRUM_PRIORITY  0        /* below every cue: the drums lose every argument they enter */
+
+uint16_t ym_music_take_drum_hit(void);
+
 /* Steal the SFX channel for the short instrument+note macro `sfx_index` names in the song blob.
  * Returns 1 if the macro was accepted, 0 if the index is out of range, the macro names an
  * instrument that cannot be played as one (see mk_song.py: a looping volume table would never

@@ -217,7 +217,7 @@
  * (main.c refuses to run if it is not) and far below the stack GEMDOS leaves at the top of RAM. */
 #define BI_LEDGER_ADDR              0xc0000L
 #define BI_LEDGER_MAGIC             0x424c4b31L /* 'BLK1' */
-#define BI_LEDGER_VERSION           1
+#define BI_LEDGER_VERSION           2
 /* What atari/bench.py's debugger script `savebin`s from BI_LEDGER_ADDR: a fixed, generous window,
  * so the pass table can grow without the harness and the target having to move together. */
 #define BI_LEDGER_CAPTURE_BYTES     4096

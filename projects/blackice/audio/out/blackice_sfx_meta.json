@@ -1,76 +1,111 @@
 {
  "rate_hz": 12517,
- "bytes": 60176,
+ "bytes": 65404,
  "samples": [
   {
    "name": "buster_shot",
-   "offset": 88,
+   "offset": 120,
    "bytes": 1252,
    "seconds": 0.10002396740433012,
    "priority": 1
   },
   {
    "name": "spike_shot",
-   "offset": 1340,
+   "offset": 1372,
    "bytes": 4382,
    "seconds": 0.3500838859151554,
    "priority": 2
   },
   {
    "name": "watchdog_snarl",
-   "offset": 5722,
+   "offset": 5754,
    "bytes": 3756,
    "seconds": 0.30007190221299035,
    "priority": 1
   },
   {
    "name": "sentry_charge",
-   "offset": 9478,
+   "offset": 9510,
    "bytes": 5634,
    "seconds": 0.4501078533194855,
    "priority": 2
   },
   {
    "name": "gate_open",
-   "offset": 15112,
+   "offset": 15144,
    "bytes": 6884,
    "seconds": 0.5499720380282815,
    "priority": 2
   },
   {
    "name": "token_grab",
-   "offset": 21996,
+   "offset": 22028,
    "bytes": 3130,
    "seconds": 0.25005991851082526,
    "priority": 2
   },
   {
    "name": "trace_alarm",
-   "offset": 25126,
+   "offset": 25158,
    "bytes": 11266,
    "seconds": 0.9000559239434369,
    "priority": 3
   },
   {
    "name": "player_hit",
-   "offset": 36392,
+   "offset": 36424,
    "bytes": 3756,
    "seconds": 0.30007190221299035,
    "priority": 3
   },
   {
    "name": "enemy_dissolve",
-   "offset": 40148,
+   "offset": 40180,
    "bytes": 5008,
    "seconds": 0.40009586961732047,
    "priority": 2
   },
   {
    "name": "exfil_siren",
-   "offset": 45156,
+   "offset": 45188,
    "bytes": 15020,
    "seconds": 1.1999680434608933,
    "priority": 3
+  },
+  {
+   "name": "kick",
+   "offset": 60208,
+   "bytes": 1378,
+   "seconds": 0.11009027722297675,
+   "priority": 0
+  },
+  {
+   "name": "snare",
+   "offset": 61586,
+   "bytes": 1502,
+   "seconds": 0.11999680434608932,
+   "priority": 0
+  },
+  {
+   "name": "hat",
+   "offset": 63088,
+   "bytes": 688,
+   "seconds": 0.05496524726372134,
+   "priority": 0
+  },
+  {
+   "name": "clap",
+   "offset": 63776,
+   "bytes": 1628,
+   "seconds": 0.13006311416473595,
+   "priority": 0
   }
- ]
+ ],
+ "drum_first_index": 10,
+ "drum_bank": {
+  "kick": 10,
+  "snare": 11,
+  "hat": 12,
+  "clap": 13
+ }
 }

@@ -55,12 +55,13 @@ MONITOR = "rgb"
 # knowing where GEMDOS loaded the program. Every field is a 32-bit big-endian unsigned.
 LEDGER_ADDR = 0xC0000
 LEDGER_MAGIC = 0x424C4B31       # 'BLK1'
-LEDGER_VERSION = 1
+LEDGER_VERSION = 2
 
 # Header, in order, at LEDGER_ADDR + 0.
 HEADER_FIELDS = ("magic", "version", "tick_ns", "cpu_hz", "pass_count", "timer_c_max",
-                 "stage_count", "capture_pass", "capture_frame", "cast_mismatches")
-HEADER_BYTES = len(HEADER_FIELDS) * 4                       # 40
+                 "stage_count", "capture_pass", "capture_frame", "cast_mismatches",
+                 "song_accept", "bank_accept")
+HEADER_BYTES = len(HEADER_FIELDS) * 4                       # 48
 
 # One measured pass: an 8-byte NUL-padded ASCII name, then longwords, then the per-stage triples.
 PASS_NAME_BYTES = 8
@@ -329,6 +330,11 @@ def print_header(header):
         refuse(f"the asm raycast disagreed with src/raycast.c on {header['cast_mismatches']} "
                "columns — the numbers below describe a renderer that is not the engine")
     print(f"  cast self-check: {header['cast_mismatches']} column(s) differ from src/raycast.c")
+    # What the audio drivers took at boot. A refused song is a silent run that still benchmarks
+    # perfectly, so it is reported rather than inferred; a refused BANK is normal on a plain ST and
+    # only means the YM kit is carrying the drums by itself.
+    print(f"  audio: song_accept={header['song_accept']} bank_accept={header['bank_accept']}"
+          f"{'' if header['song_accept'] else '  (the song was REFUSED — check the blob format)'}")
     if header["timer_c_max"] > TIMER_C_RELOAD:
         print(f"  WARNING: timer C counted to {header['timer_c_max']}, ABOVE the "
               f"{TIMER_C_RELOAD} reload the clock arithmetic assumes — this TOS programmed the "

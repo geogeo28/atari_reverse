@@ -2,7 +2,8 @@
 #
 #   make                   both .PRGs: disk/AUDIOTEST.PRG and disk/BICETEST.PRG
 #   make verify            AUDIOTEST.PRG in Hatari — mk_song.py's demo tune, mk_samples.py's six
-#   make verify-blackice   BICETEST.PRG in Hatari — the BLACK ICE score and its ten cues
+#   make verify-blackice   BICETEST.PRG in Hatari — the BLACK ICE score, cues and drum lane
+#   make listen-blackice   the same run recorded to out/audio-blackice.wav, no checks
 #   make clean
 #
 # THE GENERATED SOURCES ARE BUILD PRODUCTS, not checked-in data: song_data.*, sfx_bank.*,
@@ -67,7 +68,7 @@ DEMO_OBJECTS   := $(COMMON_OBJECTS) $(BUILD)/audiotest.o $(BUILD)/song_data.o $(
 BICE_OBJECTS   := $(COMMON_OBJECTS) $(BUILD)/bicetest.o $(BUILD)/blackice_song.o \
                   $(BUILD)/blackice_sfx_bank.o
 
-.PHONY: all verify verify-blackice clean
+.PHONY: all verify verify-blackice listen-blackice clean
 
 all: $(DISK)/AUDIOTEST.PRG $(DISK)/BICETEST.PRG
 
@@ -136,6 +137,11 @@ verify: $(DISK)/AUDIOTEST.PRG $(DEMO_SONG_FILES) $(DEMO_BANK_FILES) | $(OUT)
 
 verify-blackice: $(DISK)/BICETEST.PRG $(BICE_SONG_FILES) $(BICE_BANK_FILES) | $(OUT)
 	$(PYTHON) verify.py --blackice
+
+# The one output here meant for ears rather than numbers: the same BICETEST.PRG, recorded off the
+# emulated STE and written as a .wav the host can play. No trace, no plain-ST run, no checks.
+listen-blackice: $(DISK)/BICETEST.PRG $(BICE_SONG_FILES) $(BICE_BANK_FILES) | $(OUT)
+	$(PYTHON) verify.py --blackice --listen
 
 clean:
 	rm -rf $(BUILD) $(DISK) $(OUT) $(GENERATED) __pycache__ $(SONGS)/__pycache__

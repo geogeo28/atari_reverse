@@ -14,23 +14,33 @@ WHAT A DESCRIPTION IS. A dict with four keys, all of them small enough to hand-w
                  token strings of `rows` tokens each. A token is `...` (nothing), `===` (note off),
                  `D-2` (a note, holding the channel's current instrument) or `D-2:kick`.
     order        [pattern name, ...] — played in turn and then looped
+    drum_bank    {sample name: index into the DMA sample bank} — optional; its presence is what
+                 gives the song a drum lane
+    drums        {pattern name: token string of `rows` tokens} — optional, one token per row,
+                 `...` for nothing or a drum_bank name. THE FOURTH TRACK: it plays through the
+                 STE's DMA voice, not the YM, so it costs no chip channel and simply does not
+                 exist on a plain ST (see ym_music.h: ym_music_take_drum_hit).
 
 THE BINARY FORMAT (big-endian; ym_music.c's SONG_OFF_* constants are the other half of this):
 
-    header, 20 bytes
-        0  'YMS1'
+    header, 24 bytes
+        0  'YMS2'
         4  u16 speed (frames per row)
         6  u8  rows per pattern
         7  u8  order length
         8  u8  pattern count
         9  u8  instrument count
        10  u8  sfx count
-       11  u8  reserved (0)
+       11  u8  drum sample limit — one past the highest bank index the lane names, 0 = no lane
        12  u16 offset of the order (one pattern index per byte)
        14  u16 offset of the pattern offset table (pattern count u16 entries)
        16  u16 offset of the instrument offset table (instrument count u16 entries)
        18  u16 offset of the SFX macro table (sfx count 4-byte entries)
+       20  u16 offset of the drum lane offset table (pattern count u16 entries), 0 = no lane
+       22  u16 reserved (0)
     pattern      rows x 3 x (note byte, instrument byte); channels in A, B, C order
+    drum lane    one byte per row, in the pattern's own row order:
+                 0 = no hit, n >= 1 = DMA bank sample index n - 1
                  note 0 = nothing, 1 = note off, n >= 2 = semitone index n - 2
                  instrument 0 = keep the channel's last, n >= 1 = the nth instrument
     instrument   10-byte head then volume table then arpeggio table
@@ -83,8 +93,14 @@ INSTRUMENT_KEEP = 0
 CHANNEL_COUNT = 3
 ROW_BYTES = CHANNEL_COUNT * 2
 
-SONG_MAGIC = b"YMS1"
-SONG_HEADER_BYTES = 20
+SONG_MAGIC = b"YMS2"
+SONG_HEADER_BYTES = 24
+
+# The drum lane's row byte. 0 is "no hit" so that an absent lane and a silent row encode the same
+# way, which is why a bank index is stored biased by one.
+DRUM_ROW_EMPTY = 0
+DRUM_ROW_FIRST = 1
+DRUM_BANK_INDEX_MAX = 0xFE          # biased by DRUM_ROW_FIRST, the row byte must stay a byte
 INSTRUMENT_HEAD_BYTES = 10
 
 INSTRUMENT_FLAG_TONE = 0x01
@@ -331,6 +347,43 @@ def encode_pattern(name, channels, rows, instrument_ids):
     return bytes(out)
 
 
+def encode_drum_lane(name, tokens_text, rows, drum_bank):
+    """One pattern's drum lane -> `rows` bytes, one per row.
+
+    The lane is the ONE part of a pattern that names no YM channel: each byte is an index into the
+    DMA sample bank, biased by DRUM_ROW_FIRST so that 0 can mean "no hit". It is a fourth track
+    that costs no chip voice, which is the whole reason it exists."""
+    tokens = tokens_text.split()
+    if len(tokens) != rows:
+        raise SongError(f"pattern '{name}' has a {len(tokens)}-token drum lane, not {rows}")
+    out = bytearray()
+    for row, token in enumerate(tokens):
+        if token == TOKEN_EMPTY:
+            out.append(DRUM_ROW_EMPTY)
+        elif token in drum_bank:
+            out.append(DRUM_ROW_FIRST + drum_bank[token])
+        else:
+            raise SongError(f"pattern '{name}' drum row {row}: '{token}' is not in the drum bank "
+                            f"({', '.join(sorted(drum_bank)) or 'which is empty'})")
+    return bytes(out)
+
+
+def drum_sample_limit(drum_bank):
+    """One past the highest bank index the lane can name — the driver's own range check, and 0 when
+    the song has no lane at all.
+
+    EVERY index is range-checked, not just the highest: a negative one would encode as
+    DRUM_ROW_FIRST + (-1) = DRUM_ROW_EMPTY and turn a hit into silence, which is the one kind of
+    mistake in this file that produces a valid blob and a wrong song."""
+    if not drum_bank:
+        return 0
+    for name, index in sorted(drum_bank.items()):
+        if not 0 <= index <= DRUM_BANK_INDEX_MAX:
+            raise SongError(f"drum '{name}' is bank index {index}, outside "
+                            f"0..{DRUM_BANK_INDEX_MAX}")
+    return max(drum_bank.values()) + 1
+
+
 def encode_sfx(entry, instrument_ids, instruments):
     if entry["instrument"] not in instrument_ids:
         raise SongError(f"sfx '{entry['name']}' names no instrument called '{entry['instrument']}'")
@@ -370,6 +423,20 @@ def compile_song(description):
     sfx = [encode_sfx(entry, instrument_ids, description["instruments"])
            for entry in description["sfx"]]
     order = bytes(pattern_ids[name] for name in description["order"])
+    # THE LANE IS PER PATTERN AND ALWAYS COMPLETE. A pattern the description left out of `drums`
+    # still gets a lane of silence, so the driver can index the lane table by pattern with no
+    # second "does this one have drums" test in the tick.
+    drum_bank = description.get("drum_bank", {})
+    drum_text = description.get("drums", {})
+    unknown = set(drum_text) - set(pattern_names)
+    if unknown:
+        raise SongError(f"the drum lane names patterns that do not exist: {sorted(unknown)}")
+    if drum_text and not drum_bank:
+        raise SongError("the description has `drums` but no `drum_bank`, so every token in it "
+                        "names nothing — which would compile to a song with no lane at all")
+    drum_sample_limit(drum_bank)      # range-checked here, before any index is encoded
+    drum_lanes = [encode_drum_lane(name, drum_text.get(name, spread({}, rows)), rows, drum_bank)
+                  for name in pattern_names] if drum_bank else []
 
     # Lay the sections out after the header, each on an even offset: the blob may be Fread into a
     # buffer and a 68000 must not meet an odd word inside it.
@@ -392,14 +459,20 @@ def compile_song(description):
                           b"".join(off.to_bytes(2, "big") for off in pattern_offsets))
     instrument_table = place("instrument_table",
                              b"".join(off.to_bytes(2, "big") for off in instrument_offsets))
+    drum_offsets = [place(f"drum{index}", chunk) for index, chunk in enumerate(drum_lanes)]
+    drum_table = place("drum_table",
+                       b"".join(off.to_bytes(2, "big") for off in drum_offsets)) if drum_lanes else 0
 
     header = bytearray(SONG_MAGIC)
     header += description["speed"].to_bytes(2, "big")
-    header += bytes([rows, len(order), len(patterns), len(instruments), len(sfx), 0])
+    header += bytes([rows, len(order), len(patterns), len(instruments), len(sfx),
+                     drum_sample_limit(drum_bank)])
     header += offsets["order"].to_bytes(2, "big")
     header += pattern_table.to_bytes(2, "big")
     header += instrument_table.to_bytes(2, "big")
     header += sfx_offset.to_bytes(2, "big")
+    header += drum_table.to_bytes(2, "big")
+    header += (0).to_bytes(2, "big")
     assert len(header) == SONG_HEADER_BYTES
 
     blob = bytes(header) + bytes(body)
@@ -412,10 +485,13 @@ def song_metadata(description, rows, pattern_ids):
     """What verify.py needs to predict what the emulator should sound like: the tempo, and every
     note the sequencer will trigger, with the frequency the CHIP will produce for it.
 
-    Each event carries two properties of the instrument SOUNDING IT, because the spectral check can
-    only look for a fundamental where one will be there long enough to find: `tone` (the percussion
-    channel's notes still pick a period, and it is the noise generator that is audible) and
-    `sustains` (a one-shot envelope is over in a few frames, so its note has no steady state)."""
+    Each event carries three properties of the instrument SOUNDING IT, because the spectral check
+    can only look for a fundamental where one will be there long enough to find: `tone` (the
+    percussion channel's notes still pick a period, and it is the noise generator that is audible),
+    `sustains` (a one-shot envelope is over in a few frames, so its note has no steady state) and
+    `arpeggiated` — an arpeggio steps the pitch EVERY FRAME, so the note's written root is present
+    for only its share of the window and the peak there is not evidence about the driver either
+    way. A checker that did not know this would read a chord as a detuned note."""
     events = []
     frame = 0
     playing = [None] * CHANNEL_COUNT
@@ -436,9 +512,15 @@ def song_metadata(description, rows, pattern_ids):
                                "instrument": playing[channel],
                                "tone": bool(spec.get("tone", True)),
                                "noise": bool(spec.get("noise", False)),
-                               "sustains": spec.get("volume_loop") is not None})
+                               "sustains": spec.get("volume_loop") is not None,
+                               "arpeggiated": bool(spec.get("arpeggio"))})
             frame += description["speed"]
-    return {"speed": description["speed"], "rows": rows,
+    drum_bank = description.get("drum_bank", {})
+    drum_text = description.get("drums", {})
+    hits_per_loop = sum(sum(1 for token in drum_text.get(name, "").split() if token != TOKEN_EMPTY)
+                        for name in description["order"])
+    return {"drum_bank": drum_bank, "drum_hits_per_loop": hits_per_loop,
+            "speed": description["speed"], "rows": rows,
             "order": [pattern_ids[name] for name in description["order"]],
             "frames_total": frame, "sfx": [entry["name"] for entry in description["sfx"]],
             "events": events}

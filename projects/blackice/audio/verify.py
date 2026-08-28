@@ -73,25 +73,33 @@ DEMO_FRAMES = 950
 DEMO_SFX_FIRST_FRAME = 300
 DEMO_SFX_LAST_FRAME = 850
 # ...and the BLACKICE_MODE=1 build's, which must stay equal to audiotest.c's #if branch.
-BICE_FRAMES = 2600
-BICE_SFX_FIRST_FRAME = 1450
-BICE_SFX_LAST_FRAME = 1900
+BICE_FRAMES = 3700
+BICE_SFX_FIRST_FRAME = 2450
+BICE_SFX_LAST_FRAME = 2900
 BICE_TITLE_FRAMES = 400
 BICE_BAND_FIRST_FRAME = BICE_TITLE_FRAMES + 1
 BICE_BAND_FRAMES = 250
+BICE_BAND_COUNT = 4
+# The drum window: band 3 held at one tempo for 20 s, after its own tempo window has been measured.
+BICE_DRUM_FIRST_FRAME = BICE_BAND_FIRST_FRAME + BICE_BAND_COUNT * BICE_BAND_FRAMES
+BICE_DRUM_FRAMES = 1000
 BICE_SONG_STEMS = ("blackice_title", "blackice_score", "blackice_death", "blackice_clear",
                    "blackice_exfil")
 
 SFX_INTERVAL_FRAMES = 50
 PROBE_EVENTS = 3           # the priority probe's three requests, past the rotation
 LEDGER_MAGIC = 0x41554431
-LEDGER_VERSION = 3
+LEDGER_VERSION = 6
 LEDGER_SFX_SLOTS = 16
+LEDGER_DRUM_SLOTS = 160
+LEDGER_DRUM_INDEX_MASK = 0xFF
+LEDGER_DRUM_FRAME_SHIFT = 8
 LEDGER_FIELDS = ("magic", "version", "text_probe", "machine_has_dma", "song_accepted",
                  "bank_accepted", "vbl_slot", "frames_run", "hz200_elapsed",
                  "bench_idle_iterations", "bench_hz200_idle", "bench_tick_iterations",
                  "bench_hz200_tick", "sfx_events", "dma_starts", "ym_starts", "sfx_refused",
-                 "probe_claim_started", "probe_lower_started", "probe_preempt_started")
+                 "probe_claim_started", "probe_lower_started", "probe_preempt_started",
+                 "drum_requests", "drum_started", "drum_window_hits", "drum_window_started")
 VBL_SLOT_NONE = 0xFFFF
 
 # The tick's budget, and the arithmetic that turns two 200 Hz counts into cycles.
@@ -158,6 +166,31 @@ TEMPO_RATE_MAX_HZ = 8.0           # ...which spans every speed the score is ever
 # says this window is more like band 2 than like the other three — and this says it is band 2's
 # rate in absolute terms, which is what catches all four bands being wrong by the same factor.
 TEMPO_RATE_TOLERANCE = 0.03
+
+# HOW A DRUM IS SAID TO HAVE PLAYED. Not the cue test: the lane repeats the same four samples every
+# few rows, so a hat correlates just as well with the NEXT hat and the peak-over-background ratio
+# that identifies a one-off cue means nothing here. The question the lane actually raises is which
+# of the four played at this row — so all four are correlated at the row's own instant and the
+# strongest has to be the one the ledger says fired. That is a classification, and it is the
+# strongest statement the audio can make about a sound that recurs.
+DRUM_CORRELATE_MS = 45            # the most of a drum that is ever correlated...
+DRUM_MIN_CORRELATE_MS = 12        # ...and the least, whatever its envelope says
+DRUM_ENERGY_FRACTION = 0.90       # of the reference's energy: the rest is its own decayed tail
+DRUM_SEARCH_MS = 20               # ...held to the window's anchor, which TRACKS the clock skew
+DRUM_CLOCK_SEARCH_MS = 150        # how far the clock fit may look for a kick...
+DRUM_CLOCK_INLIER_MS = 40         # ...and how far from the median an answer may be and be believed
+DRUM_CLOCK_MIN_KICKS = 8          # the fit needs this many that agree, or it is not a clock
+DRUM_CLOCK_SAMPLE = "kick"        # the loudest, least ambiguous thing in the lane
+# THE LAG THE CLOCK FIT IS ALLOWED TO ABSORB. The fit has a slope and an offset, and the offset
+# would otherwise swallow ANY constant error — a lane published a row late, a platform polling the
+# take one frame behind — and still report a perfect identification. Measured, +8 frames (one whole
+# row at band 3) scored 110/110 before this bound existed. What the offset is FOR is the vblank-to-
+# DAC latency and the recording's own onset estimate, both of which are a frame or two.
+DRUM_LAG_BUDGET_MS = 45.0
+
+
+DRUM_IDENTIFY_FRACTION = 0.90     # of the window's hits, and of each sample's own hits
+MISREAD_ROWS_SHOWN = 8            # of the misread hits, printed so a failure names itself
 
 TRACE_FLAGS = "psg_write,dmasound"
 PSG_ENVELOPE_FIRST_REG = 11       # registers 11-13; the driver must never write one
@@ -283,15 +316,21 @@ def read_ledger(path):
     if not path.exists():
         fail(f"the run left no {path.name} — the .PRG never reached its own teardown")
     raw = path.read_bytes()
-    want = 4 * (len(LEDGER_FIELDS) + 2 * LEDGER_SFX_SLOTS)
+    want = 4 * (len(LEDGER_FIELDS) + 2 * LEDGER_SFX_SLOTS + LEDGER_DRUM_SLOTS)
     if len(raw) != want:
         fail(f"{path.name} is {len(raw)} bytes, this parser expects {want} — audiotest.c's "
              f"record and this file have drifted apart")
     values = struct.unpack(f">{len(LEDGER_FIELDS)}I", raw[:4 * len(LEDGER_FIELDS)])
     record = dict(zip(LEDGER_FIELDS, values))
-    tail = struct.unpack(f">{2 * LEDGER_SFX_SLOTS}I", raw[4 * len(LEDGER_FIELDS):])
+    tail = struct.unpack(f">{2 * LEDGER_SFX_SLOTS + LEDGER_DRUM_SLOTS}I",
+                         raw[4 * len(LEDGER_FIELDS):])
     record["sfx_frame"] = list(tail[:LEDGER_SFX_SLOTS])
-    record["sfx_index"] = list(tail[LEDGER_SFX_SLOTS:])
+    record["sfx_index"] = list(tail[LEDGER_SFX_SLOTS:2 * LEDGER_SFX_SLOTS])
+    # (frame << 8) | bank index, packed by audiotest.c's fire_drum_hit.
+    packed = tail[2 * LEDGER_SFX_SLOTS:]
+    hits = min(record["drum_window_hits"], LEDGER_DRUM_SLOTS)
+    record["drum_hits"] = [(word >> LEDGER_DRUM_FRAME_SHIFT, word & LEDGER_DRUM_INDEX_MASK)
+                           for word in packed[:hits]]
     if record["magic"] != LEDGER_MAGIC or record["version"] != LEDGER_VERSION:
         fail(f"{path.name} carries magic {record['magic']:#x} version {record['version']}, not "
              f"{LEDGER_MAGIC:#x} version {LEDGER_VERSION}")
@@ -386,7 +425,11 @@ def note_segments(meta, first_frame, last_frame):
     for events in per_channel.values():
         for index, event in enumerate(events):
             end = events[index + 1]["frame"] if index + 1 < len(events) else last_frame
-            if not (event["tone"] and event["sustains"]):
+            # An arpeggiated instrument steps the pitch every frame, so its written root is in the
+            # window for only its share of the chord and the peak there says nothing about the
+            # driver. mk_song.py's metadata marks them; reading a chord as a detuned note is what a
+            # checker that did not know this would do.
+            if not (event["tone"] and event["sustains"]) or event.get("arpeggiated"):
                 continue
             if event["frame"] < first_frame or event["frame"] >= last_frame:
                 continue
@@ -460,24 +503,38 @@ def check_notes(mono, onset, meta, vbl_hz, window_frames):
 
 # ---------------------------------------------------------------------------- the DMA SFX check --
 
-def sample_reference(bank_meta, blob, index):
-    """(the sample's LOUDEST stretch, resampled and normalised, how far into the sample it starts).
+def loudest_stretch(bank_meta, blob, index, correlate_ms, trim=False):
+    """(the sample's LOUDEST `correlate_ms`, resampled to the recording's rate and normalised, how
+    far into the sample that stretch starts).
 
     The loudest stretch and not the first: `door` opens on a swell that is near silence for a
     quarter of a second, and correlating that against a window with music in it scores no better
-    than noise — the sound is present and the check would call it absent."""
+    than noise — the sound is present and the check would call it absent.
+
+    `trim` then cuts the tail off, which the drum lane wants and the cues do not. A reference padded
+    out with its own decay is mostly silence, and the correlation is normalised by the RECORDING's
+    energy over the whole reference — so the silent part contributes nothing but the arrangement
+    playing underneath it, a divisor with no matching numerator. The cues are one-offs measured
+    against a background, where that costs nothing; the lane's four are compared with each other,
+    where it is the difference between telling a hi-hat from a kick and not."""
     entry = bank_meta["samples"][index]
     data = np.frombuffer(blob[entry["offset"]:entry["offset"] + entry["bytes"]],
                          dtype=np.int8).astype(np.float64)
-    keep = min(data.size, int(bank_meta["rate_hz"] * SFX_CORRELATE_MS / 1000))
+    keep = min(data.size, int(bank_meta["rate_hz"] * correlate_ms / 1000))
     energy = np.convolve(data ** 2, np.ones(keep), mode="valid")
     start = int(np.argmax(energy))
     window = data[start:start + keep]
+    if trim:
+        window = window[:trimmed_length(window, bank_meta["rate_hz"])]
     count = int(round(window.size * AUDIO_RATE_HZ / bank_meta["rate_hz"]))
     resampled = np.interp(np.linspace(0.0, window.size - 1, count), np.arange(window.size), window)
-    norm = np.linalg.norm(resampled) or 1.0
     lead = int(round(start * AUDIO_RATE_HZ / bank_meta["rate_hz"]))
-    return resampled / norm, lead
+    return resampled / (np.linalg.norm(resampled) or EPSILON), lead
+
+
+def sample_reference(bank_meta, blob, index):
+    """One CUE's reference: its loudest SFX_CORRELATE_MS, untrimmed."""
+    return loudest_stretch(bank_meta, blob, index, SFX_CORRELATE_MS)
 
 
 def correlation_profile(mono, centre, reference, span_ms):
@@ -498,7 +555,11 @@ def correlation_profile(mono, centre, reference, span_ms):
 
 
 def match_sample(mono, centre, reference, search_ms):
-    """(peak correlation, its offset in ms, peak / background). See SFX_PEAK_RATIO_FLOOR."""
+    """(peak correlation, its offset in ms, peak / background). See SFX_PEAK_RATIO_FLOOR.
+
+    The BACKGROUND is what separates this from best_correlation: a cue fires once, so what says it
+    played is a spike standing over the correlation of the same sample against the surrounding
+    music. A drum recurs every few rows, which is why the lane is measured by comparison instead."""
     scores, start = correlation_profile(mono, centre, reference, SFX_BACKGROUND_MS)
     background = float(np.median(scores)) or EPSILON
     search = int(AUDIO_RATE_HZ * search_ms / 1000)
@@ -543,6 +604,147 @@ def check_sfx(mono, onset, record, bank_meta, blob, vbl_hz, last_frame):
                             and ratio >= SFX_PEAK_RATIO_FLOOR
                             and abs(offset_ms) <= SFX_SEARCH_MS)})
     return rows, anchor
+
+
+# ------------------------------------------------------------------------ the drum lane check ---
+
+def trimmed_length(window, rate_hz):
+    """How much of `window` holds DRUM_ENERGY_FRACTION of its energy, floored at a length short
+    enough to still be a waveform and not a click."""
+    cumulative = np.cumsum(window ** 2)
+    if cumulative[-1] <= 0.0:
+        return window.size
+    needed = int(np.searchsorted(cumulative, DRUM_ENERGY_FRACTION * cumulative[-1])) + 1
+    return max(needed, min(window.size, int(rate_hz * DRUM_MIN_CORRELATE_MS / 1000)))
+
+
+def drum_references(bank_meta, blob):
+    """{bank index: (reference, lead samples)} for every sample the drum lane can name."""
+    return {index: loudest_stretch(bank_meta, blob, index, DRUM_CORRELATE_MS, trim=True)
+            for index in range(bank_meta["drum_first_index"], len(bank_meta["samples"]))}
+
+
+def best_correlation(mono, centre, reference, search_ms):
+    """(the reference's best |correlation| within `search_ms` of `centre`, its offset in ms)."""
+    scores, start = correlation_profile(mono, centre, reference, search_ms)
+    if scores.size == 0:
+        return 0.0, 0.0
+    peak = int(np.argmax(scores))
+    return float(scores[peak]), (start + peak - centre) * 1000.0 / AUDIO_RATE_HZ
+
+
+def drum_clock(mono, onset, hits, references, vbl_hz, kick_index):
+    """A linear map from a hit's frame to where its audio really is, fitted on the KICKS.
+
+    TWO THINGS ARE BEING SEPARATED HERE, and conflating them is what makes a drum check lie. WHEN a
+    sample fired and WHICH one it was are the ledger's, from the machine. Where the recording sits
+    against that is a property of HATARI — its audio clock and its vblank clock drift about 0.08%
+    apart, 16 ms across this window, and the onset is only good to a frame either way. So the clock
+    is measured first, on the one sample that is loud and unambiguous, and by fitting a straight
+    line through every kick rather than trusting any single one; identification then runs against a
+    timeline that is already right, which is the only way its answer is about the driver.
+
+    The fitted lag is RETURNED, not just applied, because a fit that can absorb any offset can
+    absorb a defect: the caller bounds it against DRUM_LAG_BUDGET_MS.
+
+    One circularity to name: the fit uses rows the ledger labels a kick, so the kick column of the
+    identification that follows is scored at a centre the kick's own correlation chose. The other
+    three samples — 74 of the window's 110 hits — are held to a timeline they had no vote in."""
+    reference, lead = references[kick_index]
+    measured = [(frame, best_correlation(mono, onset + int(frame * AUDIO_RATE_HZ / vbl_hz) + lead,
+                                         reference, DRUM_CLOCK_SEARCH_MS)[1])
+                for frame, fired in hits if fired == kick_index]
+    # THE FIT IS ON THE ONES THAT AGREE. A wide search has to be wide enough to find the offset
+    # before it is known, and at that width the kick reference sometimes locks onto the row before
+    # instead — measured, 4 kicks of 36 answered about one row early. Least squares has no defence
+    # against that (one outlier at -147 ms moves the intercept by 16), so the median says where the
+    # answer is and only the ones near it are fitted.
+    frames = np.array([frame for frame, _ in measured], dtype=np.float64)
+    offsets = np.array([offset for _, offset in measured], dtype=np.float64)
+    inlier = np.abs(offsets - np.median(offsets)) <= DRUM_CLOCK_INLIER_MS
+    if int(inlier.sum()) < DRUM_CLOCK_MIN_KICKS:
+        fail(f"only {int(inlier.sum())} of {len(measured)} kicks in the drum window agree on an "
+             f"offset (need {DRUM_CLOCK_MIN_KICKS}) — there is no clock to fit, which means the "
+             f"lane is not where the ledger says it is")
+    slope, intercept = np.polyfit(frames[inlier], offsets[inlier], 1)
+    lag_ms = lambda frame: slope * frame + intercept
+    return (lambda frame: int(lag_ms(frame) * AUDIO_RATE_HZ / 1000.0),
+            [lag_ms(float(frames[0])), lag_ms(float(frames[-1]))])
+
+
+def drum_lane_is_gridded(record, profile):
+    """Is every recorded hit inside the drum window, and on the row grid the band's speed sets?
+
+    A hit is published by the row step and by nothing else, so consecutive hits must be a whole
+    number of rows apart. This is the surface for the one failure the audio cannot see: a hit the
+    platform never took is simply absent, and absence looks exactly like a silent row."""
+    rows_apart = profile.band_speeds[-1]        # the drum window is held at the fastest band
+    frames = [frame for frame, _ in record["drum_hits"]]
+    if not frames:
+        return False
+    if frames[0] < BICE_DRUM_FIRST_FRAME or frames[-1] >= BICE_DRUM_FIRST_FRAME + BICE_DRUM_FRAMES:
+        return False
+    return all(0 < later - earlier and (later - earlier) % rows_apart == 0
+               for earlier, later in zip(frames, frames[1:]))
+
+
+def check_drums(mono, onset, record, bank_meta, blob, vbl_hz):
+    """Every drum-lane hit the .PRG recorded, identified in the recording at its own row time.
+
+    EACH CANDIDATE IS SCORED AGAINST ITS OWN BACKGROUND, not against the other candidates' raw
+    numbers, and that correction is the whole of what makes this measure the lane rather than the
+    arrangement. A correlation here is <recording, reference>, and the recording is the YM
+    arrangement PLUS one drum — so a reference that happens to resemble the YM part scores well on
+    every row whether it played or not. Measured: the kick reference read ~0.45 on rows it had
+    never played, because the bass strikes on every row and a low chirp resembles a struck bass
+    note; the hi-hat, which shares a band with nothing, reached 0.34 on rows it DID play.
+    Comparing those raw numbers compares the two references. Subtracting each one's own background
+    leaves the part of the correlation the drum itself put there."""
+    hits = record["drum_hits"]
+    if not hits:
+        return []
+    references = drum_references(bank_meta, blob)
+    kick_index = bank_meta["drum_bank"][DRUM_CLOCK_SAMPLE]
+    clock, lag_ms = drum_clock(mono, onset, hits, references, vbl_hz, kick_index)
+
+    raw = {index: [] for index in references}
+    offsets = {index: [] for index in references}
+    for frame, _ in hits:
+        centre = onset + int(frame * AUDIO_RATE_HZ / vbl_hz) + clock(frame)
+        for index, (reference, lead) in references.items():
+            score, offset_ms = best_correlation(mono, centre + lead, reference, DRUM_SEARCH_MS)
+            raw[index].append(score)
+            offsets[index].append(offset_ms)
+    # Each reference's background is what it reads ON THE ROWS IT DID NOT PLAY — which the ledger
+    # names, so this is not a quantile standing in for the idea, it is the idea. The kick reference
+    # reads 0.2-0.5 on a bass attack whether a kick was struck or not; the hi-hat, which shares a
+    # band with nothing, reads near zero unless it played. Subtracting each one's own level leaves
+    # the part of the correlation that this drum, and only this drum, put there.
+    # ...on the rows it did NOT play, which the ledger names. A sample that is the only one the
+    # window ever fired has no such rows, and np.median([]) is nan — which is truthy, so an `or 0.0`
+    # guard would not catch it and every contrast downstream would be nan.
+    def background_of(index):
+        elsewhere = [value for value, (_, fired) in zip(raw[index], hits) if fired != index]
+        return float(np.median(elsewhere)) if elsewhere else 0.0
+
+    background = {index: background_of(index) for index in raw}
+
+    rows = []
+    for slot, (frame, fired) in enumerate(hits):
+        contrast = {index: raw[index][slot] - background[index] for index in references}
+        # max() on a dict breaks ties by insertion order, i.e. by bank index; sorting on the
+        # contrast alone makes the answer independent of how the references were enumerated.
+        heard = max(sorted(contrast), key=contrast.get)
+        rows.append({"frame": frame, "fired": fired, "heard": heard,
+                     "name": bank_meta["samples"][fired]["name"],
+                     "heard_name": bank_meta["samples"][heard]["name"],
+                     "correlation": raw[fired][slot], "contrast": contrast[fired],
+                     "offset_ms": offsets[fired][slot],
+                     # The offset is NOT part of this: best_correlation clips its own search to
+                     # DRUM_SEARCH_MS, so a bound on it here would be a tautology. The timing
+                     # assertion is the clock's fitted lag, checked once by the caller.
+                     "ok": heard == fired})
+    return rows, lag_ms
 
 
 # ------------------------------------------------------------------- the trace-band tempo check --
@@ -680,11 +882,34 @@ class Report:
         return "\n".join(lines)
 
 
+def record_only(profile):
+    """`make listen-blackice`: the same .PRG, the same machine, recorded and written as a .wav —
+    and nothing else. No trace (its log is tens of megabytes and nothing here reads it), no
+    plain-ST run, no analysis. This is the one output in this directory meant for a pair of ears
+    rather than a number, so it is deliberately not a check that can fail."""
+    profile.ledger.unlink(missing_ok=True)
+    profile.avi.unlink(missing_ok=True)
+    run_hatari(MACHINE_STE, BUNDLED_EMUTOS,
+               ["--disable-video", "on", "--avirecord", "--avi-file", str(profile.avi)],
+               f"hatari-listen{profile.suffix}.log", profile.prg,
+               profile.frames + EMUTOS_BOOT_VBLS)
+    stereo, chunks = avi_audio(profile.avi)
+    # Trimmed to the first note. A third of the recording is the ROM booting, and a file that opens
+    # with 17 seconds of silence is one nobody listens to the end of.
+    music = stereo[find_music_onset(stereo.mean(axis=1)):]
+    write_wav(profile.wav, music)
+    print(f"{profile.wav}: {music.shape[0] / AUDIO_RATE_HZ:.1f} s of music, {AUDIO_RATE_HZ} Hz "
+          f"stereo, from {chunks} chunks — {profile.frames} frames of {profile.name}")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--blackice", action="store_true",
                         help="run BICETEST.PRG: the BLACK ICE score and its ten cues")
     parser.add_argument("--keep", action="store_true", help="analyse out/ without re-running Hatari")
+    parser.add_argument("--listen", action="store_true",
+                        help="record the run to a .wav and stop: no trace, no ST run, no checks")
     args = parser.parse_args()
 
     profile = blackice_profile(read_band_speeds()) if args.blackice else demo_profile()
@@ -693,6 +918,8 @@ def main():
     if not BUNDLED_EMUTOS.exists():
         fail(f"no EmuTOS at {BUNDLED_EMUTOS}; the STE half of this test needs an STE-capable ROM")
 
+    if args.listen:
+        return record_only(profile)
     if args.keep:
         record = read_ledger(profile.ste_ledger)
     else:
@@ -777,6 +1004,50 @@ def main():
                  f"{sfx_passed}/{len(sfx_rows)} match the packed bytes at the frame they were "
                  f"fired (peak >= {SFX_PEAK_RATIO_FLOOR:.0f}x the background correlation)")
 
+    drum_rows = []
+    if profile.band_speeds is not None:
+        drum_rows, drum_lag_ms = check_drums(mono, onset, record, bank_meta, blob, measured_vbl_hz)
+        identified = sum(1 for row in drum_rows if row["ok"])
+        rate = identified / len(drum_rows) if drum_rows else 0.0
+        # PER SAMPLE AS WELL AS OVERALL. 58 of the window's 110 hits are hi-hats, so an aggregate
+        # floor says nothing about a rare one: relabelling all five claps still scores 95%. Every
+        # sample the lane names has to clear the floor on its own.
+        per_sample = sorted({row["name"] for row in drum_rows})
+        worst = min((sum(1 for row in drum_rows if row["name"] == name and row["ok"])
+                     / sum(1 for row in drum_rows if row["name"] == name), name)
+                    for name in per_sample) if per_sample else (0.0, "-")
+        report.check("drum lane identified",
+                     drum_rows and rate >= DRUM_IDENTIFY_FRACTION
+                     and worst[0] >= DRUM_IDENTIFY_FRACTION,
+                     f"{identified}/{len(drum_rows)} hits ({rate * 100:.1f}%, floor "
+                     f"{DRUM_IDENTIFY_FRACTION * 100:.0f}%) are the sample the lane asked for over "
+                     f"{BICE_DRUM_FRAMES / PAL_VBL_HZ:.0f} s at one tempo; worst sample "
+                     f"'{worst[1]}' at {worst[0] * 100:.1f}%")
+        # WHERE the lane sits, which the identification deliberately does not answer: the clock fit
+        # would otherwise absorb a constant error — a lane published a row late reads as a perfect
+        # score — so the offset it fitted is bounded here instead.
+        report.check("the drum lane is on the row grid",
+                     max(abs(lag) for lag in drum_lag_ms) <= DRUM_LAG_BUDGET_MS
+                     and drum_lane_is_gridded(record, profile),
+                     f"lag {drum_lag_ms[0]:+.1f} ms at the window's first hit and "
+                     f"{drum_lag_ms[1]:+.1f} ms at its last (budget +/-{DRUM_LAG_BUDGET_MS:.0f}, "
+                     f"a row is {1000.0 / (measured_vbl_hz / profile.band_speeds[-1]):.0f} ms); "
+                     f"every hit inside the window and on a row boundary")
+        report.check("every drum hit reached the DMA",
+                     record["drum_window_started"] == record["drum_window_hits"]
+                     and record["drum_window_hits"] > 0,
+                     f"{record['drum_window_started']} of {record['drum_window_hits']} hits in the "
+                     f"drum window started the voice — no cue fires there, so a refusal would be "
+                     f"a defect")
+        # The other half of the priority rule, and the run-wide numbers are where it shows: the
+        # rotation and the probe DO fire cues, and every lane row that landed under one was
+        # dropped. A drum lane that never lost an argument would mean YM_DRUM_PRIORITY was wrong.
+        outranked = record["drum_requests"] - record["drum_started"]
+        report.check("a cue outranks the drum lane", outranked > 0,
+                     f"{outranked} of {record['drum_requests']} lane hits over the whole run were "
+                     f"refused while a cue held the voice (the lane plays at YM_DRUM_PRIORITY, "
+                     f"below every cue)")
+
     tempo_rows = []
     if profile.band_speeds is not None:
         tempo_rows = check_band_tempo(mono, onset, profile, measured_vbl_hz)
@@ -792,8 +1063,13 @@ def main():
                  f"registers {psg_regs} written {len(ours['psg'])} times; the hardware envelope "
                  f"(11-13) never touched; {rom['psg']} ROM writes ignored")
     dma_starts = sum(1 for value in ours["dma"] if value & 1)
-    report.check("DMA control writes in order", dma_starts == record["dma_starts"],
-                 f"{len(ours['dma'])} control writes, {dma_starts} of them a start")
+    # The cues AND the drum lane share the one voice, so the hardware's own count of starts is the
+    # sum of the two the .PRG counted. That the two agree is what says no start happened that
+    # neither path asked for, and none was asked for that never reached the chip.
+    expected_starts = record["dma_starts"] + record["drum_started"]
+    report.check("DMA control writes in order", dma_starts == expected_starts,
+                 f"{len(ours['dma'])} control writes, {dma_starts} of them a start "
+                 f"({record['dma_starts']} cues + {record['drum_started']} drum lane)")
     route = dict(ours["microwire"])
     report.check("LMC1992 routed and turned up",
                  route.get("mixing") == 1 and route.get("master volume") == 40,
@@ -805,10 +1081,11 @@ def main():
                      st["machine_has_dma"] == 0 and st["bank_accepted"] == 0
                      and st["dma_starts"] == 0 and st["frames_run"] == profile.frames
                      and st["ym_starts"] == rotation_events + 2
-                     and st["probe_lower_started"] == 0,
+                     and st["probe_lower_started"] == 0 and st["drum_started"] == 0,
                      f"the same .PRG on a TOS 1.04 ST: no _MCH STE, bank refused, "
                      f"{st['ym_starts']} SFX on the YM, {st['dma_starts']} on the DMA, "
-                     f"{st['frames_run']} frames, probe refusal held")
+                     f"{st['drum_requests']} drum-lane hits published and {st['drum_started']} "
+                     f"played, {st['frames_run']} frames, probe refusal held")
 
     print(report.render())
     print()
@@ -825,6 +1102,23 @@ def main():
         print(f"    {row['frame']:5d}  {row['index']:2d}  {row['name']:<14} "
               f"{row['correlation']:11.3f}  {row['ratio']:7.1f}  {row['offset_ms']:9.1f}  "
               f"{'ok' if row['ok'] else 'NO'}")
+    if drum_rows:
+        misread = [row for row in drum_rows if not row["ok"]]
+        print()
+        print(f"  Drum lane check — {len(drum_rows)} hits over "
+              f"{BICE_DRUM_FRAMES / PAL_VBL_HZ:.0f} s at one tempo, each scored against every lane "
+              f"sample (fitted lag {drum_lag_ms[0]:+.1f} to {drum_lag_ms[1]:+.1f} ms)")
+        print("    sample    identified  mean correlation  mean contrast")
+        for name in sorted({row["name"] for row in drum_rows}):
+            same = [row for row in drum_rows if row["name"] == name]
+            good = sum(1 for row in same if row["ok"])
+            mean = sum(row["correlation"] for row in same) / len(same)
+            lift = sum(row["contrast"] for row in same) / len(same)
+            print(f"    {name:<8}  {good:4d}/{len(same):<4d}   {mean:11.3f}  {lift:13.3f}")
+        print(f"    {len(misread)} misread")
+        for row in misread[:MISREAD_ROWS_SHOWN]:
+            print(f"      frame {row['frame']}: the lane said {row['name']}, the recording says "
+                  f"{row['heard_name']} ({row['correlation']:.3f}, {row['offset_ms']:+.1f} ms)")
     if tempo_rows:
         print()
         print("  Trace band check (which row rate the recording's own pulse beats at)")

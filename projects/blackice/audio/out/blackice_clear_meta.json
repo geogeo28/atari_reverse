@@ -1,4 +1,6 @@
 {
+ "drum_bank": {},
+ "drum_hits_per_loop": 0,
  "speed": 6,
  "rows": 32,
  "order": [
@@ -17,7 +19,8 @@
    "instrument": "rise",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 0,
@@ -29,7 +32,8 @@
    "instrument": "rise",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 0,
@@ -41,7 +45,8 @@
    "instrument": "ping",
    "tone": true,
    "noise": false,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": true
   },
   {
    "frame": 48,
@@ -53,7 +58,8 @@
    "instrument": "rise",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 48,
@@ -65,7 +71,8 @@
    "instrument": "rise",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 72,
@@ -77,7 +84,8 @@
    "instrument": "ping",
    "tone": true,
    "noise": false,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": true
   },
   {
    "frame": 96,
@@ -89,7 +97,8 @@
    "instrument": "rise",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 96,
@@ -101,7 +110,8 @@
    "instrument": "rise",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 120,
@@ -113,7 +123,8 @@
    "instrument": "rise",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 120,
@@ -125,7 +136,8 @@
    "instrument": "ping",
    "tone": true,
    "noise": false,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": true
   },
   {
    "frame": 144,
@@ -137,7 +149,8 @@
    "instrument": "rise",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 144,
@@ -149,7 +162,8 @@
    "instrument": "rise",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 168,
@@ -161,11 +175,12 @@
    "instrument": "ping",
    "tone": true,
    "noise": false,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": true
   }
  ],
  "symbol": "blackice_clear",
- "bytes": 312,
+ "bytes": 354,
  "band_speeds": [
   11,
   10,

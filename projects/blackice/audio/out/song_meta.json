@@ -1,4 +1,6 @@
 {
+ "drum_bank": {},
+ "drum_hits_per_loop": 0,
  "speed": 6,
  "rows": 32,
  "order": [
@@ -39,7 +41,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 18,
@@ -51,7 +54,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 24,
@@ -63,7 +67,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 36,
@@ -75,7 +80,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 48,
@@ -87,7 +93,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 66,
@@ -99,7 +106,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 72,
@@ -111,7 +119,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 84,
@@ -123,7 +132,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 96,
@@ -135,7 +145,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 96,
@@ -147,7 +158,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 114,
@@ -159,7 +171,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 120,
@@ -171,7 +184,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 120,
@@ -183,7 +197,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 132,
@@ -195,7 +210,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 144,
@@ -207,7 +223,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 144,
@@ -219,7 +236,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 162,
@@ -231,7 +249,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 168,
@@ -243,7 +262,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 168,
@@ -255,7 +275,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 180,
@@ -267,7 +288,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 192,
@@ -279,7 +301,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 192,
@@ -291,7 +314,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 204,
@@ -303,7 +327,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 210,
@@ -315,7 +340,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 216,
@@ -327,7 +353,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 216,
@@ -339,7 +366,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 228,
@@ -351,7 +379,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 228,
@@ -363,7 +392,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 240,
@@ -375,7 +405,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 240,
@@ -387,7 +418,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 240,
@@ -399,7 +431,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 252,
@@ -411,7 +444,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 258,
@@ -423,7 +457,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 264,
@@ -435,7 +470,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 264,
@@ -447,7 +483,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 264,
@@ -459,7 +496,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 276,
@@ -471,7 +509,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 276,
@@ -483,7 +522,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 288,
@@ -495,7 +535,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 288,
@@ -507,7 +548,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 288,
@@ -519,7 +561,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 300,
@@ -531,7 +574,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 306,
@@ -543,7 +587,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 312,
@@ -555,7 +600,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 312,
@@ -567,7 +613,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 324,
@@ -579,7 +626,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 324,
@@ -591,7 +639,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 336,
@@ -603,7 +652,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 336,
@@ -615,7 +665,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 336,
@@ -627,7 +678,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 348,
@@ -639,7 +691,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 354,
@@ -651,7 +704,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 360,
@@ -663,7 +717,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 360,
@@ -675,7 +730,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 372,
@@ -687,7 +743,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 372,
@@ -699,7 +756,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 384,
@@ -711,7 +769,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 384,
@@ -723,7 +782,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 384,
@@ -735,7 +795,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 396,
@@ -747,7 +808,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 402,
@@ -759,7 +821,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 408,
@@ -771,7 +834,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 408,
@@ -783,7 +847,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 408,
@@ -795,7 +860,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 420,
@@ -807,7 +873,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 420,
@@ -819,7 +886,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 420,
@@ -831,7 +899,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 432,
@@ -843,7 +912,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 432,
@@ -855,7 +925,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 432,
@@ -867,7 +938,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 444,
@@ -879,7 +951,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 450,
@@ -891,7 +964,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 456,
@@ -903,7 +977,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 456,
@@ -915,7 +990,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 468,
@@ -927,7 +1003,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 468,
@@ -939,7 +1016,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 480,
@@ -951,7 +1029,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 480,
@@ -963,7 +1042,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 480,
@@ -975,7 +1055,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 492,
@@ -987,7 +1068,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 498,
@@ -999,7 +1081,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 504,
@@ -1011,7 +1094,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 504,
@@ -1023,7 +1107,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 504,
@@ -1035,7 +1120,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 516,
@@ -1047,7 +1133,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 516,
@@ -1059,7 +1146,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 528,
@@ -1071,7 +1159,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 528,
@@ -1083,7 +1172,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 528,
@@ -1095,7 +1185,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 540,
@@ -1107,7 +1198,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 546,
@@ -1119,7 +1211,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 552,
@@ -1131,7 +1224,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 552,
@@ -1143,7 +1237,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 552,
@@ -1155,7 +1250,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 564,
@@ -1167,7 +1263,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 564,
@@ -1179,7 +1276,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 576,
@@ -1191,7 +1289,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 576,
@@ -1203,7 +1302,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 576,
@@ -1215,7 +1315,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 588,
@@ -1227,7 +1328,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 594,
@@ -1239,7 +1341,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 600,
@@ -1251,7 +1354,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 600,
@@ -1263,7 +1367,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 600,
@@ -1275,7 +1380,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 612,
@@ -1287,7 +1393,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 612,
@@ -1299,7 +1406,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 624,
@@ -1311,7 +1419,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 624,
@@ -1323,7 +1432,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 624,
@@ -1335,7 +1445,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 636,
@@ -1347,7 +1458,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 642,
@@ -1359,7 +1471,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 648,
@@ -1371,7 +1484,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 648,
@@ -1383,7 +1497,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 648,
@@ -1395,7 +1510,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 660,
@@ -1407,7 +1523,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 660,
@@ -1419,7 +1536,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 672,
@@ -1431,7 +1549,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 672,
@@ -1443,7 +1562,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 672,
@@ -1455,7 +1575,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 684,
@@ -1467,7 +1588,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 690,
@@ -1479,7 +1601,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 696,
@@ -1491,7 +1614,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 696,
@@ -1503,7 +1627,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 696,
@@ -1515,7 +1640,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 708,
@@ -1527,7 +1653,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 708,
@@ -1539,7 +1666,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 720,
@@ -1551,7 +1679,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 720,
@@ -1563,7 +1692,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 720,
@@ -1575,7 +1705,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 732,
@@ -1587,7 +1718,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 732,
@@ -1599,7 +1731,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 738,
@@ -1611,7 +1744,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 744,
@@ -1623,7 +1757,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 744,
@@ -1635,7 +1770,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 756,
@@ -1647,7 +1783,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 756,
@@ -1659,7 +1796,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 768,
@@ -1671,7 +1809,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 768,
@@ -1683,7 +1822,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 768,
@@ -1695,7 +1835,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 780,
@@ -1707,7 +1848,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 786,
@@ -1719,7 +1861,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 792,
@@ -1731,7 +1874,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 792,
@@ -1743,7 +1887,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 792,
@@ -1755,7 +1900,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 804,
@@ -1767,7 +1913,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 804,
@@ -1779,7 +1926,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 804,
@@ -1791,7 +1939,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 816,
@@ -1803,7 +1952,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 816,
@@ -1815,7 +1965,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 816,
@@ -1827,7 +1978,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 828,
@@ -1839,7 +1991,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 834,
@@ -1851,7 +2004,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 840,
@@ -1863,7 +2017,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 840,
@@ -1875,7 +2030,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 852,
@@ -1887,7 +2043,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 852,
@@ -1899,7 +2056,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 864,
@@ -1911,7 +2069,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 864,
@@ -1923,7 +2082,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 864,
@@ -1935,7 +2095,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 876,
@@ -1947,7 +2108,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 882,
@@ -1959,7 +2121,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 888,
@@ -1971,7 +2134,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 888,
@@ -1983,7 +2147,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 888,
@@ -1995,7 +2160,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 900,
@@ -2007,7 +2173,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 900,
@@ -2019,7 +2186,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 912,
@@ -2031,7 +2199,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 912,
@@ -2043,7 +2212,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 912,
@@ -2055,7 +2225,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 924,
@@ -2067,7 +2238,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 930,
@@ -2079,7 +2251,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 936,
@@ -2091,7 +2264,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 936,
@@ -2103,7 +2277,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 936,
@@ -2115,7 +2290,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 948,
@@ -2127,7 +2303,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 948,
@@ -2139,7 +2316,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 960,
@@ -2151,7 +2329,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 960,
@@ -2163,7 +2342,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 960,
@@ -2175,7 +2355,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 972,
@@ -2187,7 +2368,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 978,
@@ -2199,7 +2381,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 984,
@@ -2211,7 +2394,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 984,
@@ -2223,7 +2407,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 984,
@@ -2235,7 +2420,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 996,
@@ -2247,7 +2433,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 996,
@@ -2259,7 +2446,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1008,
@@ -2271,7 +2459,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1008,
@@ -2283,7 +2472,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1008,
@@ -2295,7 +2485,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1020,
@@ -2307,7 +2498,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1026,
@@ -2319,7 +2511,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1032,
@@ -2331,7 +2524,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1032,
@@ -2343,7 +2537,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1032,
@@ -2355,7 +2550,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1044,
@@ -2367,7 +2563,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1044,
@@ -2379,7 +2576,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1056,
@@ -2391,7 +2589,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1056,
@@ -2403,7 +2602,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1056,
@@ -2415,7 +2615,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1068,
@@ -2427,7 +2628,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1074,
@@ -2439,7 +2641,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1080,
@@ -2451,7 +2654,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1080,
@@ -2463,7 +2667,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1080,
@@ -2475,7 +2680,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1092,
@@ -2487,7 +2693,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1092,
@@ -2499,7 +2706,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1104,
@@ -2511,7 +2719,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1104,
@@ -2523,7 +2732,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1104,
@@ -2535,7 +2745,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1116,
@@ -2547,7 +2758,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1116,
@@ -2559,7 +2771,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1122,
@@ -2571,7 +2784,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1128,
@@ -2583,7 +2797,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1128,
@@ -2595,7 +2810,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1140,
@@ -2607,7 +2823,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1140,
@@ -2619,7 +2836,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1152,
@@ -2631,7 +2849,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1152,
@@ -2643,7 +2862,8 @@
    "instrument": "chord",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 1152,
@@ -2655,7 +2875,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1164,
@@ -2667,7 +2888,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1170,
@@ -2679,7 +2901,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1176,
@@ -2691,7 +2914,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1176,
@@ -2703,7 +2927,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1188,
@@ -2715,7 +2940,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1188,
@@ -2727,7 +2953,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1200,
@@ -2739,7 +2966,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1200,
@@ -2751,7 +2979,8 @@
    "instrument": "chord",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 1200,
@@ -2763,7 +2992,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1212,
@@ -2775,7 +3005,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1218,
@@ -2787,7 +3018,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1224,
@@ -2799,7 +3031,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1224,
@@ -2811,7 +3044,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1236,
@@ -2823,7 +3057,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1236,
@@ -2835,7 +3070,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1248,
@@ -2847,7 +3083,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1248,
@@ -2859,7 +3096,8 @@
    "instrument": "chord",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 1248,
@@ -2871,7 +3109,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1260,
@@ -2883,7 +3122,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1266,
@@ -2895,7 +3135,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1272,
@@ -2907,7 +3148,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1272,
@@ -2919,7 +3161,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1284,
@@ -2931,7 +3174,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1284,
@@ -2943,7 +3187,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1296,
@@ -2955,7 +3200,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1296,
@@ -2967,7 +3213,8 @@
    "instrument": "chord",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 1296,
@@ -2979,7 +3226,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1308,
@@ -2991,7 +3239,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1314,
@@ -3003,7 +3252,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1320,
@@ -3015,7 +3265,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1320,
@@ -3027,7 +3278,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1332,
@@ -3039,7 +3291,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1332,
@@ -3051,7 +3304,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1344,
@@ -3063,7 +3317,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1344,
@@ -3075,7 +3330,8 @@
    "instrument": "chord",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 1344,
@@ -3087,7 +3343,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1356,
@@ -3099,7 +3356,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1362,
@@ -3111,7 +3369,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1368,
@@ -3123,7 +3382,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1368,
@@ -3135,7 +3395,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1380,
@@ -3147,7 +3408,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1380,
@@ -3159,7 +3421,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1392,
@@ -3171,7 +3434,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1392,
@@ -3183,7 +3447,8 @@
    "instrument": "chord",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 1392,
@@ -3195,7 +3460,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1404,
@@ -3207,7 +3473,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1410,
@@ -3219,7 +3486,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1416,
@@ -3231,7 +3499,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1416,
@@ -3243,7 +3512,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1428,
@@ -3255,7 +3525,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1428,
@@ -3267,7 +3538,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1440,
@@ -3279,7 +3551,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1440,
@@ -3291,7 +3564,8 @@
    "instrument": "chord",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 1440,
@@ -3303,7 +3577,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1452,
@@ -3315,7 +3590,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1458,
@@ -3327,7 +3603,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1464,
@@ -3339,7 +3616,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1464,
@@ -3351,7 +3629,8 @@
    "instrument": "chord",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 1464,
@@ -3363,7 +3642,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1476,
@@ -3375,7 +3655,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1476,
@@ -3387,7 +3668,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1488,
@@ -3399,7 +3681,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1488,
@@ -3411,7 +3694,8 @@
    "instrument": "chord",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 1488,
@@ -3423,7 +3707,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1500,
@@ -3435,7 +3720,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1506,
@@ -3447,7 +3733,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1512,
@@ -3459,7 +3746,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1512,
@@ -3471,7 +3759,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1524,
@@ -3483,7 +3772,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1524,
@@ -3495,7 +3785,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1536,
@@ -3507,7 +3798,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1536,
@@ -3519,7 +3811,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1536,
@@ -3531,7 +3824,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1548,
@@ -3543,7 +3837,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1554,
@@ -3555,7 +3850,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1560,
@@ -3567,7 +3863,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1560,
@@ -3579,7 +3876,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1560,
@@ -3591,7 +3889,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1572,
@@ -3603,7 +3902,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1572,
@@ -3615,7 +3915,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1572,
@@ -3627,7 +3928,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1584,
@@ -3639,7 +3941,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1584,
@@ -3651,7 +3954,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1584,
@@ -3663,7 +3967,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1596,
@@ -3675,7 +3980,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1602,
@@ -3687,7 +3993,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1608,
@@ -3699,7 +4006,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1608,
@@ -3711,7 +4019,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1620,
@@ -3723,7 +4032,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1620,
@@ -3735,7 +4045,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1632,
@@ -3747,7 +4058,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1632,
@@ -3759,7 +4071,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1632,
@@ -3771,7 +4084,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1644,
@@ -3783,7 +4097,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1650,
@@ -3795,7 +4110,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1656,
@@ -3807,7 +4123,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1656,
@@ -3819,7 +4136,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1656,
@@ -3831,7 +4149,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1668,
@@ -3843,7 +4162,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1668,
@@ -3855,7 +4175,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1680,
@@ -3867,7 +4188,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1680,
@@ -3879,7 +4201,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1680,
@@ -3891,7 +4214,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1692,
@@ -3903,7 +4227,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1698,
@@ -3915,7 +4240,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1704,
@@ -3927,7 +4253,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1704,
@@ -3939,7 +4266,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1704,
@@ -3951,7 +4279,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1716,
@@ -3963,7 +4292,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1716,
@@ -3975,7 +4305,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1728,
@@ -3987,7 +4318,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1728,
@@ -3999,7 +4331,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1728,
@@ -4011,7 +4344,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1740,
@@ -4023,7 +4357,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1746,
@@ -4035,7 +4370,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1752,
@@ -4047,7 +4383,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1752,
@@ -4059,7 +4396,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1752,
@@ -4071,7 +4409,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1764,
@@ -4083,7 +4422,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1764,
@@ -4095,7 +4435,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1776,
@@ -4107,7 +4448,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1776,
@@ -4119,7 +4461,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1776,
@@ -4131,7 +4474,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1788,
@@ -4143,7 +4487,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1794,
@@ -4155,7 +4500,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1800,
@@ -4167,7 +4513,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1800,
@@ -4179,7 +4526,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1800,
@@ -4191,7 +4539,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1812,
@@ -4203,7 +4552,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1812,
@@ -4215,7 +4565,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1824,
@@ -4227,7 +4578,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1824,
@@ -4239,7 +4591,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1824,
@@ -4251,7 +4604,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1836,
@@ -4263,7 +4617,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1842,
@@ -4275,7 +4630,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1848,
@@ -4287,7 +4643,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1848,
@@ -4299,7 +4656,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1848,
@@ -4311,7 +4669,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1860,
@@ -4323,7 +4682,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1860,
@@ -4335,7 +4695,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1872,
@@ -4347,7 +4708,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1872,
@@ -4359,7 +4721,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1872,
@@ -4371,7 +4734,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1884,
@@ -4383,7 +4747,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1884,
@@ -4395,7 +4760,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1890,
@@ -4407,7 +4773,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1896,
@@ -4419,7 +4786,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1896,
@@ -4431,7 +4799,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1908,
@@ -4443,7 +4812,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1908,
@@ -4455,7 +4825,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1920,
@@ -4467,7 +4838,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1920,
@@ -4479,7 +4851,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1920,
@@ -4491,7 +4864,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 1938,
@@ -4503,7 +4877,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1944,
@@ -4515,7 +4890,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1956,
@@ -4527,7 +4903,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1968,
@@ -4539,7 +4916,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1986,
@@ -4551,7 +4929,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 1992,
@@ -4563,7 +4942,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2004,
@@ -4575,7 +4955,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2016,
@@ -4587,7 +4968,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2016,
@@ -4599,7 +4981,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2016,
@@ -4611,7 +4994,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2034,
@@ -4623,7 +5007,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2040,
@@ -4635,7 +5020,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2052,
@@ -4647,7 +5033,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2064,
@@ -4659,7 +5046,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2082,
@@ -4671,7 +5059,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2088,
@@ -4683,7 +5072,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2100,
@@ -4695,7 +5085,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2112,
@@ -4707,7 +5098,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2112,
@@ -4719,7 +5111,8 @@
    "instrument": "chord",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 2112,
@@ -4731,7 +5124,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2124,
@@ -4743,7 +5137,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2130,
@@ -4755,7 +5150,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2136,
@@ -4767,7 +5163,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2136,
@@ -4779,7 +5176,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2148,
@@ -4791,7 +5189,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2148,
@@ -4803,7 +5202,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2160,
@@ -4815,7 +5215,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2160,
@@ -4827,7 +5228,8 @@
    "instrument": "chord",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 2160,
@@ -4839,7 +5241,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2172,
@@ -4851,7 +5254,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2178,
@@ -4863,7 +5267,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2184,
@@ -4875,7 +5280,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2184,
@@ -4887,7 +5293,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2196,
@@ -4899,7 +5306,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2196,
@@ -4911,7 +5319,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2208,
@@ -4923,7 +5332,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2208,
@@ -4935,7 +5345,8 @@
    "instrument": "chord",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 2208,
@@ -4947,7 +5358,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2220,
@@ -4959,7 +5371,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2226,
@@ -4971,7 +5384,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2232,
@@ -4983,7 +5397,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2232,
@@ -4995,7 +5410,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2244,
@@ -5007,7 +5423,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2244,
@@ -5019,7 +5436,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2256,
@@ -5031,7 +5449,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2256,
@@ -5043,7 +5462,8 @@
    "instrument": "chord",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 2256,
@@ -5055,7 +5475,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2268,
@@ -5067,7 +5488,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2274,
@@ -5079,7 +5501,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2280,
@@ -5091,7 +5514,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2280,
@@ -5103,7 +5527,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2292,
@@ -5115,7 +5540,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2292,
@@ -5127,7 +5553,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2304,
@@ -5139,7 +5566,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2304,
@@ -5151,7 +5579,8 @@
    "instrument": "chord",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 2304,
@@ -5163,7 +5592,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2316,
@@ -5175,7 +5605,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2322,
@@ -5187,7 +5618,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2328,
@@ -5199,7 +5631,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2328,
@@ -5211,7 +5644,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2340,
@@ -5223,7 +5657,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2340,
@@ -5235,7 +5670,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2352,
@@ -5247,7 +5683,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2352,
@@ -5259,7 +5696,8 @@
    "instrument": "chord",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 2352,
@@ -5271,7 +5709,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2364,
@@ -5283,7 +5722,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2370,
@@ -5295,7 +5735,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2376,
@@ -5307,7 +5748,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2376,
@@ -5319,7 +5761,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2388,
@@ -5331,7 +5774,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2388,
@@ -5343,7 +5787,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2400,
@@ -5355,7 +5800,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2400,
@@ -5367,7 +5813,8 @@
    "instrument": "chord",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 2400,
@@ -5379,7 +5826,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2412,
@@ -5391,7 +5839,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2418,
@@ -5403,7 +5852,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2424,
@@ -5415,7 +5865,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2424,
@@ -5427,7 +5878,8 @@
    "instrument": "chord",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 2424,
@@ -5439,7 +5891,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2436,
@@ -5451,7 +5904,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2436,
@@ -5463,7 +5917,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2448,
@@ -5475,7 +5930,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2448,
@@ -5487,7 +5943,8 @@
    "instrument": "chord",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": true
   },
   {
    "frame": 2448,
@@ -5499,7 +5956,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2460,
@@ -5511,7 +5969,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2466,
@@ -5523,7 +5982,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2472,
@@ -5535,7 +5995,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2472,
@@ -5547,7 +6008,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2484,
@@ -5559,7 +6021,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2484,
@@ -5571,7 +6034,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2496,
@@ -5583,7 +6047,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2496,
@@ -5595,7 +6060,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2496,
@@ -5607,7 +6073,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2508,
@@ -5619,7 +6086,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2514,
@@ -5631,7 +6099,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2520,
@@ -5643,7 +6112,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2520,
@@ -5655,7 +6125,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2520,
@@ -5667,7 +6138,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2532,
@@ -5679,7 +6151,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2532,
@@ -5691,7 +6164,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2532,
@@ -5703,7 +6177,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2544,
@@ -5715,7 +6190,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2544,
@@ -5727,7 +6203,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2544,
@@ -5739,7 +6216,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2556,
@@ -5751,7 +6229,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2562,
@@ -5763,7 +6242,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2568,
@@ -5775,7 +6255,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2568,
@@ -5787,7 +6268,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2580,
@@ -5799,7 +6281,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2580,
@@ -5811,7 +6294,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2592,
@@ -5823,7 +6307,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2592,
@@ -5835,7 +6320,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2592,
@@ -5847,7 +6333,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2604,
@@ -5859,7 +6346,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2610,
@@ -5871,7 +6359,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2616,
@@ -5883,7 +6372,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2616,
@@ -5895,7 +6385,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2616,
@@ -5907,7 +6398,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2628,
@@ -5919,7 +6411,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2628,
@@ -5931,7 +6424,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2640,
@@ -5943,7 +6437,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2640,
@@ -5955,7 +6450,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2640,
@@ -5967,7 +6463,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2652,
@@ -5979,7 +6476,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2658,
@@ -5991,7 +6489,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2664,
@@ -6003,7 +6502,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2664,
@@ -6015,7 +6515,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2664,
@@ -6027,7 +6528,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2676,
@@ -6039,7 +6541,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2676,
@@ -6051,7 +6554,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2688,
@@ -6063,7 +6567,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2688,
@@ -6075,7 +6580,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2688,
@@ -6087,7 +6593,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2700,
@@ -6099,7 +6606,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2706,
@@ -6111,7 +6619,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2712,
@@ -6123,7 +6632,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2712,
@@ -6135,7 +6645,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2712,
@@ -6147,7 +6658,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2724,
@@ -6159,7 +6671,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2724,
@@ -6171,7 +6684,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2736,
@@ -6183,7 +6697,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2736,
@@ -6195,7 +6710,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2736,
@@ -6207,7 +6723,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2748,
@@ -6219,7 +6736,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2754,
@@ -6231,7 +6749,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2760,
@@ -6243,7 +6762,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2760,
@@ -6255,7 +6775,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2760,
@@ -6267,7 +6788,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2772,
@@ -6279,7 +6801,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2772,
@@ -6291,7 +6814,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2784,
@@ -6303,7 +6827,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2784,
@@ -6315,7 +6840,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2784,
@@ -6327,7 +6853,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2796,
@@ -6339,7 +6866,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2802,
@@ -6351,7 +6879,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2808,
@@ -6363,7 +6892,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2808,
@@ -6375,7 +6905,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2808,
@@ -6387,7 +6918,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2820,
@@ -6399,7 +6931,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2820,
@@ -6411,7 +6944,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2832,
@@ -6423,7 +6957,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2832,
@@ -6435,7 +6970,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2832,
@@ -6447,7 +6983,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2844,
@@ -6459,7 +6996,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2844,
@@ -6471,7 +7009,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2850,
@@ -6483,7 +7022,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2856,
@@ -6495,7 +7035,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2856,
@@ -6507,7 +7048,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2868,
@@ -6519,7 +7061,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2868,
@@ -6531,7 +7074,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2880,
@@ -6543,7 +7087,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2880,
@@ -6555,7 +7100,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2880,
@@ -6567,7 +7113,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2892,
@@ -6579,7 +7126,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2898,
@@ -6591,7 +7139,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2904,
@@ -6603,7 +7152,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2904,
@@ -6615,7 +7165,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2916,
@@ -6627,7 +7178,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2916,
@@ -6639,7 +7191,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2928,
@@ -6651,7 +7204,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2928,
@@ -6663,7 +7217,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2928,
@@ -6675,7 +7230,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2940,
@@ -6687,7 +7243,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2946,
@@ -6699,7 +7256,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2952,
@@ -6711,7 +7269,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2952,
@@ -6723,7 +7282,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2964,
@@ -6735,7 +7295,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2964,
@@ -6747,7 +7308,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2976,
@@ -6759,7 +7321,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2976,
@@ -6771,7 +7334,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 2976,
@@ -6783,7 +7347,8 @@
    "instrument": "kick",
    "tone": true,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2988,
@@ -6795,7 +7360,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 2994,
@@ -6807,7 +7373,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 3000,
@@ -6819,7 +7386,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 3000,
@@ -6831,7 +7399,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 3012,
@@ -6843,7 +7412,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 3012,
@@ -6855,7 +7425,8 @@
    "instrument": "hat",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 3024,
@@ -6867,7 +7438,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 3024,
@@ -6879,7 +7451,8 @@
    "instrument": "lead",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 3024,
@@ -6891,7 +7464,8 @@
    "instrument": "snare",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 3042,
@@ -6903,7 +7477,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 3048,
@@ -6915,7 +7490,8 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   },
   {
    "frame": 3060,
@@ -6927,9 +7503,10 @@
    "instrument": "bass",
    "tone": true,
    "noise": false,
-   "sustains": true
+   "sustains": true,
+   "arpeggiated": false
   }
  ],
  "symbol": "demo_song",
- "bytes": 1892
+ "bytes": 1896
 }

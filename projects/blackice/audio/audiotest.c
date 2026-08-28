@@ -117,36 +117,48 @@ static uint16_t vbl_queue_length(void)
 
 /* THE BLACK ICE TIMELINE, in vblanks. Every boundary is a frame the recording is held to, and the
  * three long windows are long on purpose:
- *   1..400        the title theme alone. Its notes are held four rows (0.96 s), so this is the
- *                 window verify.py measures pitch in — nothing but music is in it.
+ *   1..400        the title theme alone — no cue fires, and the score has not been bound. Its
+ *                 drone holds each note two rows (0.48 s), so this is the window verify.py
+ *                 measures pitch in. The title's own drum lane DOES play here; it carries no kick
+ *                 for exactly that reason (songs/README.md 5).
  *   401..1400     the score, ONE blob, re-tempoed at each band boundary. 250 frames (5 s) a band
  *                 because the tempo check reads the row rate off the recording's own amplitude
  *                 envelope, and telling 4.55 Hz from 5.00 Hz needs a window several seconds long.
- *   1450..1900    one cue a second, the ten fired once each, over the score at band 3.
- *   1970..1972    the priority probe (below).
- *   2000, 2200    the death and level-clear stings, each given more frames than it lasts.
- *   2450..        the 100% exfil pulse.
- *   ..2600        the tail. */
+ *   1401..2400    band 3 held for 20 s: the DRUM WINDOW. Every lane hit in it is written to the
+ *                 ledger with the frame it fired on, and the host identifies each one in the
+ *                 recording. No cue fires here, so every drum that is refused is a defect.
+ *   2450..2900    one cue a second, the ten fired once each, over the score at band 3.
+ *   2970..2972    the priority probe (below).
+ *   3030, 3230    the death and level-clear stings, each given more frames than it lasts.
+ *   3480..        the 100% exfil pulse.
+ *   ..3700        the tail. */
 #define BICE_TITLE_FRAMES      400u
 #define BICE_BAND_FRAMES       250u
 #define BICE_SCORE_FRAME       (BICE_TITLE_FRAMES + 1u)
 #define BICE_BAND_FRAME(band)  (BICE_SCORE_FRAME + (band) * BICE_BAND_FRAMES)
-#define BICE_DEATH_FRAME      2000u
-#define BICE_CLEAR_FRAME      2200u
-#define BICE_EXFIL_FRAME      2450u
+/* The drum window opens where band 3's tempo window closes and holds ONE tempo for 20 s. The
+ * lane's rows land at the row rate, so a window that spanned a speed change would have the host
+ * predicting hit times through a tempo schedule; holding band 3 makes the ledger's own frame
+ * numbers the whole timeline. */
+#define BICE_DRUM_FIRST_FRAME  (BICE_BAND_FRAME(3u) + BICE_BAND_FRAMES)
+#define BICE_DRUM_FRAMES      1000u
+#define BICE_DRUM_LAST_FRAME   (BICE_DRUM_FIRST_FRAME + BICE_DRUM_FRAMES)
+#define BICE_DEATH_FRAME      3030u
+#define BICE_CLEAR_FRAME      3230u
+#define BICE_EXFIL_FRAME      3480u
 
-#define DEMO_FRAMES           2600u
-#define SFX_FIRST_FRAME       1450u
+#define DEMO_FRAMES           3700u
+#define SFX_FIRST_FRAME       2450u
 #define SFX_INTERVAL_FRAMES     50u
-#define SFX_LAST_FRAME        1900u
+#define SFX_LAST_FRAME        2900u
 
-/* Past 1960, which is where the rotation's last cue — the 1.20 s exfil siren fired at 1900 — stops
+/* Past 2960, which is where the rotation's last cue — the 1.20 s exfil siren fired at 2900 — stops
  * sounding. The probe claims the voice with that same siren, and starting it while the first one
  * is still playing would cut short the sound the rotation is being judged on: a defect in the
  * TEST, and a recording cannot tell that from a defect in the player. */
-#define PROBE_FRAME_CLAIM     1970u
-#define PROBE_FRAME_LOWER     1971u
-#define PROBE_FRAME_PREEMPT   1972u
+#define PROBE_FRAME_CLAIM     2970u
+#define PROBE_FRAME_LOWER     2971u
+#define PROBE_FRAME_PREEMPT   2972u
 /* Priority 3 claims, priority 1 is refused under it, and priority 3 — EQUAL, not higher — takes it
  * back. Equal preempting is DESIGN.md 16's rule stated without ambiguity, and it is the half of
  * the rule a "strictly greater" implementation would still pass a lower-loses test with. */
@@ -211,7 +223,7 @@ static uint16_t vbl_queue_length(void)
 /* --------------------------------------------------------------------------- the ledger ------- */
 
 #define LEDGER_MAGIC     0x41554431UL   /* 'AUD1' */
-#define LEDGER_VERSION   3
+#define LEDGER_VERSION   6
 /* THE SLOT COUNT IS FIXED, because verify.py's `>%dI` unpack is one shape for both builds — but
  * each build's timeline produces a different number of events, so the count is ASSERTED against
  * the timeline rather than checked by hand. Without this, a build whose rotation outgrew the
@@ -222,6 +234,27 @@ static uint16_t vbl_queue_length(void)
                            + PROBE_EVENT_COUNT)
 #define LEDGER_SFX_SLOTS 16
 typedef char ledger_has_a_slot_for_every_sfx_event[LEDGER_SFX_SLOTS >= SFX_EVENT_COUNT ? 1 : -1];
+
+/* THE DRUM WINDOW'S HITS, one packed word each: the frame it fired on, and the bank sample index
+ * the lane named. Packed because the host's whole use of it is "which sample, at which frame", and
+ * two parallel arrays of 160 would be 640 bytes of .PRG for no more information.
+ *
+ * The slot count covers the window at the FASTEST tempo the window is ever played at — one hit per
+ * row, and a row is BAND_SPEEDS[3] frames — with room over. Only hits inside the window are
+ * recorded; the title's and the exfil pulse's lanes still play, they are simply not the evidence. */
+#define LEDGER_DRUM_SLOTS       160
+#define LEDGER_DRUM_INDEX_MASK  0xFFu
+#define LEDGER_DRUM_FRAME_SHIFT 8
+
+#if BLACKICE_MODE
+/* One hit per row is the most a lane can carry, and the window's rows are its frames divided by
+ * the fastest speed it is ever played at. Asserted rather than counted by hand: a window that
+ * outgrew the array would silently record only its first 160 hits, and the host would measure a
+ * short list without knowing it was short. */
+#define DRUM_WINDOW_MAX_HITS (BICE_DRUM_FRAMES / BLACKICE_FASTEST_BAND_SPEED + 1u)
+typedef char ledger_has_a_slot_for_every_drum_hit[LEDGER_DRUM_SLOTS >= DRUM_WINDOW_MAX_HITS
+                                                  ? 1 : -1];
+#endif
 #define LEDGER_ATTR      0
 
 /* Every field is a 32-bit big-endian word, so the struct has no padding and verify.py's `>%dI`
@@ -250,8 +283,17 @@ typedef struct {
     uint32_t probe_claim_started;   /* the priority probe's three answers, in order */
     uint32_t probe_lower_started;   /* ...this one must be 0: a quieter claim loses */
     uint32_t probe_preempt_started;
+    uint32_t drum_requests;         /* every hit the lane published, over the whole run */
+    /* How many of them the DMA voice TOOK — not how many were heard. On a frame carrying both a
+     * lane hit and a cue, the drum starts first and the cue overwrites it microseconds later; the
+     * hardware saw both starts, which is why the trace check sums this with the cue count. */
+    uint32_t drum_started;
+    uint32_t drum_window_hits;      /* how many are recorded below */
+    uint32_t drum_window_started;   /* ...and how many of those started the voice. No cue fires
+                                     * inside the window, so a difference is a defect. */
     uint32_t sfx_frame[LEDGER_SFX_SLOTS];
     uint32_t sfx_index[LEDGER_SFX_SLOTS];
+    uint32_t drum_hit[LEDGER_DRUM_SLOTS];   /* (frame << 8) | bank sample index */
 } AudioTestLedger;
 
 static AudioTestLedger ledger;
@@ -380,6 +422,41 @@ static void run_priority_probe(void)
     }
 }
 
+#if BLACKICE_MODE
+
+/* THE FOURTH TRACK, and the whole of the platform's part in it. The driver published a bank index
+ * for this row; this hands it to the DMA voice at YM_DRUM_PRIORITY, which is 0 — below every cue,
+ * so a gunshot always cuts a hi-hat and a hi-hat never cuts a gunshot.
+ *
+ * It is called IMMEDIATELY after ym_music_tick, in the same vblank, because ym_music.h's take is a
+ * read then a clear and a tick landing between the two would throw the hit away.
+ *
+ * On a plain ST dma_sfx_play refuses and writes no $ffff89xx byte, so this costs one refused call
+ * a row and the lane simply does not exist — which is why channel C still carries a full YM kit. */
+static void fire_drum_hit(void)
+{
+    uint16_t hit = ym_music_take_drum_hit();
+    int started;
+
+    if (hit == YM_DRUM_NONE) {
+        return;
+    }
+    started = dma_sfx_play((uint8_t)hit, YM_DRUM_PRIORITY);
+    ledger.drum_requests++;
+    if (started) {
+        ledger.drum_started++;
+    }
+    if (frame_counter >= BICE_DRUM_FIRST_FRAME && frame_counter < BICE_DRUM_LAST_FRAME
+        && ledger.drum_window_hits < LEDGER_DRUM_SLOTS) {
+        ledger.drum_hit[ledger.drum_window_hits] =
+            (frame_counter << LEDGER_DRUM_FRAME_SHIFT) | (hit & LEDGER_DRUM_INDEX_MASK);
+        ledger.drum_window_hits++;
+        ledger.drum_window_started += (uint32_t)started;
+    }
+}
+
+#endif /* BLACKICE_MODE */
+
 /* The body audio_os.s's audio_vbl_entry calls, once per vblank, from TOS's queue walk. */
 void audio_vbl_tick(void)
 {
@@ -388,6 +465,9 @@ void audio_vbl_tick(void)
     step_song_schedule();
 #endif
     ym_music_tick();
+#if BLACKICE_MODE
+    fire_drum_hit();
+#endif
 
     if (frame_counter > SFX_LAST_FRAME) {
         run_priority_probe();

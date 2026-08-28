@@ -169,8 +169,16 @@ def normalise(signal, headroom=0.94):
     return signal * (headroom / peak)
 
 
-def to_signed_bytes(signal):
-    quantised = np.clip(np.rint(normalise(signal) * SAMPLE_FULL_SCALE), SAMPLE_MIN, SAMPLE_MAX)
+def to_signed_bytes(signal, gain=1.0):
+    """Peak-normalise, then apply `gain`, then quantise.
+
+    THE GAIN HAS TO COME AFTER THE NORMALISE or it does nothing: every sound in a bank is brought
+    to the same peak, so whatever balance a synthesizer set between its own layers survives and
+    whatever balance it wanted against OTHER samples does not. A bank whose sounds are meant to be
+    heard together — a drum kit — needs to say so here. Default 1.0: a bank of one-off cues, which
+    are never heard at once, wants every one of them as loud as the format allows."""
+    quantised = np.clip(np.rint(normalise(signal) * gain * SAMPLE_FULL_SCALE),
+                        SAMPLE_MIN, SAMPLE_MAX)
     return quantised.astype(np.int8).tobytes()
 
 
@@ -230,21 +238,22 @@ def synthesize_placeholder(name, rng):
     return SYNTHESIZERS[name](rng)
 
 
-def build_samples(wav_dir, names=None, synthesize=synthesize_placeholder, seed=SYNTH_SEED):
+def build_samples(wav_dir, names=None, synthesize=synthesize_placeholder, seed=SYNTH_SEED,
+                  gains=None):
     """[(name, packed bytes)] for `names`, from `wav_dir/<name>.wav` when there is one and from
     `synthesize(name, rng)` otherwise.
 
     Parameterised because songs/blackice_sfx.py builds a SECOND bank with its own names, its own
-    synthesizers and its own seed; the WAV path, the quantiser and the seeded RNG are the same
-    machinery either way and there should be one copy of it. The defaults are this module's own
-    six placeholders, so mk_samples.py's own behaviour is unchanged."""
+    synthesizers, its own seed and its own relative levels; the WAV path, the quantiser and the
+    seeded RNG are the same machinery either way and there should be one copy of it. The defaults
+    are this module's own six placeholders at full scale, so mk_samples.py's behaviour is
+    unchanged."""
     rng = np.random.default_rng(seed)
+    levels = gains or {}
     samples = []
     for name in names if names is not None else SFX_NAMES:
-        if wav_dir is not None:
-            samples.append((name, to_signed_bytes(read_wav(wav_dir / f"{name}.wav"))))
-        else:
-            samples.append((name, to_signed_bytes(synthesize(name, rng))))
+        source = read_wav(wav_dir / f"{name}.wav") if wav_dir is not None else synthesize(name, rng)
+        samples.append((name, to_signed_bytes(source, levels.get(name, 1.0))))
     return samples
 
 

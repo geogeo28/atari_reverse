@@ -252,10 +252,11 @@ Measured with `m68k-elf-size` and `m68k-elf-nm`, and against the running machine
 
 | | bytes |
 |---|--:|
-| `BLACKICE.PRG` on disk (text 43,078 + data 3 + the relocation table) | 44,254 |
-| `BENCH.PRG` (the extra .bss is the cast self-check's shadow scratch) | 44,663 |
-| `BLACKICE.PAK` | 13,394 |
-| **resident `.bss`, game build** | **411,360** |
+| `BLACKICE.PRG` on disk (text 110,848 + data 0 + the relocation table) | 112,135 |
+| `BENCH.PRG` (the extra .bss is the cast self-check's shadow scratch) | 112,827 |
+| — of that text, the DMA drum bank (`audio/blackice_sfx_bank.c`, const) | 65,404 |
+| `BLACKICE.PAK` | 24,568 |
+| **resident `.bss`, game build** | **411,400** |
 | — resource arena, 195,968 resident and 202,613 at its peak (see below) | 262,144 |
 | — two 320x200 screens, 256-aligned, plus a page of alignment slack | 64,256 |
 | — `GameState` (the game layer's entity table, occupancy and nav field) | 16,786 |
@@ -265,17 +266,22 @@ Measured with `m68k-elf-size` and `m68k-elf-nm`, and against the running machine
 | — resident `Level` | 4,454 |
 | — `RenderScratch` (the column list, the wall distances, the sprite list) | 3,074 |
 | — PAK directory, `BiTables`, the pristine entity list, the cell-texture map | 1,792 |
-| **program + `.bss`** | **454,441** |
+| **program + `.bss`** | **522,248** |
 | TOS/GEMDOS and its buffers, measured as the TPA's offset from 0 | ~89,000 |
-| **total against 1,048,576** | **~543,000** |
+| **total against 1,048,576** | **~611,000** |
 
-Roughly **480 KB spare**, which is the honest consequence of one texture set resident (DESIGN 17.4's
+Roughly **412 KB spare**, which is the honest consequence of one texture set resident (DESIGN 17.4's
 rule) and of the shading remap: the ledger's 269,312-byte baked wall set is 81,920 bytes here.
 
 The arena holds 10 wall textures at 8,192, 9 sprite images at 8,320, the 32,000-byte title page,
 the 6,400-byte HUD strip and the 768-byte font: **195,968 resident**. The peak is higher and comes
 while the title is being unpacked — 195,200 already down plus its own 7,413 packed bytes — for
 **202,613**, leaving 59,531 spare.
+
+**The sample bank is text, not arena.** The four drum voices the song's own lane plays are one
+65,404-byte `const` array linked into both .PRG files, because the DMA chip reads them where they
+lie and a resource that is never unpacked has nothing to gain from the arena. It is the whole of
+the program's growth this pass — the arena's peak did not move.
 
 **The arena is one block with two ends.** Resident assets grow up from the bottom; a member's packed
 bytes and its expanded byte-per-texel image are temporaries taken from the top and released as soon
@@ -284,6 +290,48 @@ as it is converted, so the transient 60 KB never becomes 60 KB of permanent `.bs
 **The ledger lives at `$c0000`,** a fixed absolute address so a Hatari debugger script can `savebin`
 it without knowing where GEMDOS put us. `main.c` refuses to run if `.bss` has grown into it or if it
 is inside the stack; both bounds are checked at boot rather than assumed.
+
+---
+
+## The drum lane
+
+DESIGN 16's kit is a YM song; `audio/`'s second pass added a lane of sampled drums that the song
+publishes and the platform is expected to PLAY. `main.c`'s vertical blank does exactly what
+`audio/ym_music.h` specifies, on every tick and in this order:
+
+```c
+ym_music_tick();
+drum_hit = ym_music_take_drum_hit();
+if (drum_hit != YM_DRUM_NONE && g_drums_ready) {
+    dma_sfx_play((uint8_t)drum_hit, YM_DRUM_PRIORITY);
+}
+```
+
+The take is a read-then-clear, so a taker slower than the row rate does not merely MISS hits, it
+plays stale ones a blank late. Priority 0 is the lane's and no cue may use it —
+`test_plat_pins.py` parses `audio/blackice_sfx_ids.h` and fails if a game cue is ever authored
+there.
+
+**Both accept bits are published.** `ym_music_init` refuses the old `YMS1` song format and
+`dma_sfx_init` refuses every machine with no DMA sound, so a silent run is diagnosable from the
+ledger rather than from a listener: the header carries `song_accept` and `bank_accept`, and
+`BENCH.TXT` prints them.
+
+| machine | `song_accept` | `bank_accept` | what the player hears |
+|---|--:|--:|---|
+| STE, EmuTOS (`bench.py`) | 1 | 1 | the YM kit and the sampled drums |
+| plain ST, TOS 1.04 | 1 | 0 | the YM kit alone, carrying the drums itself |
+
+**And the lane is measured in the game, not only in the audio test.** `record_audio.py` plays a
+title-to-play run under Hatari with the audio recorded and the `dmasound` trace on, recovers every
+DMA play the game made from the trace (the frame-address writes name WHICH drum, the vblank counter
+says WHEN), and hands that hit list to `audio/verify.py`'s own `check_drums` — the same clock fit
+and the same background-corrected identification the audio pass uses, imported rather than copied.
+
+**466 hits over 128 s, 425 identified as the sample the lane asked for: a 91.2% hit rate**
+(kick 151/152, snare 43/43, clap 24/24, hat 207/247 — the hi-hat is the quietest voice and shares
+its band with the arrangement, and it is the audio pass's worst column too), with the fitted audio
+clock at -9.9 to -2.9 ms across the window. `audio/verify.py` calls 90% the bar.
 
 ---
 
@@ -337,6 +385,11 @@ against a CONTROL boot with no program at all — without which the check measur
 system: EmuTOS itself moves palette pen 7 from `0555` to `0ddd` and installs its own routine in
 `_vblqueue` slot 0 on the way to the desktop. **PASS.**
 
+**the drum lane** (`record_audio.py`) — the platform taking the song's drum hits and playing them.
+The failure it exists for is invisible to every other surface: a vertical blank that ticks the music
+and forgets the take is silent in exactly the way a correct one is quiet between hits.
+**PASS: 425 of 466 hits (91.2%) identified in the game's own recording.**
+
 **machine health** (`verify.py`) — bus errors, address errors, illegal instructions, exit status.
 **PASS**: EmuTOS's seven RAM-sizing probes at `PC=$e00d98` and nothing else.
 
@@ -384,7 +437,7 @@ without the archive changing.
 
 ## Faults found on the way
 
-Nine. The first three were found by running the thing; the rest by the review gate reading it
+Ten. The first three were found by running the thing; the rest by the review gate reading it
 against the engine it consumes.
 
 1. **The palette landed one register high.** GCC 16 folds a copy between two addresses it knows at
@@ -427,6 +480,17 @@ against the engine it consumes.
 9. **`make verify` did not run the bench**, so it compared whatever screenshot `out/` happened to
    hold. That is how the first mutation sweep of this gate came back green on a deliberately broken
    drawer. `verify` depends on `bench` now.
+10. **EVERY HEADLESS RUN IN THIS DIRECTORY HAS BEEN ON A 60 Hz MACHINE.** EmuTOS takes its vblank
+   rate from the country it is booted with, and left at the default it comes up NTSC: measured off
+   Hatari's own CPU cycle counter, **133,554 cycles a vblank — 59.90 Hz**, from the very first
+   blank, before this program runs. `VBLS_PER_TICK` is `50 / SIM_HZ`, so under `bench.py`,
+   `verify.py`, `play_headless.py` and `run.sh` the simulation has been ticking at 30 Hz and not
+   25, and the music with it, a fifth fast. It was found here because the song is authored in PAL
+   rows and the drum identification collapsed from 96% to 32% when the hits were looked for on a
+   50 Hz grid; `audio/verify.py` had already met it and passes `--country uk`, which is the fix.
+   **`record_audio.py` boots PAL. The other four are unchanged and this is an open item** — none of
+   their verdicts is wrong (the pixel surfaces are counted in frames, and `bench.py`'s microseconds
+   come from timer C), but every number either derives from that measures *seconds* is a fifth out.
 
 ---
 
@@ -545,6 +609,9 @@ bench.py        two headless Hatari runs -> the screenshot, the ledger, the tabl
 overlay.c/.h    the title screen and the between-sector overlays: planar text, no shifting.
                 It duplicates hud.c's glyph writer and should not — see its header for why
 verify.py       the rendered-pixels surface, the silhouette, teardown and machine health
+record_audio.py the drum-lane surface: records the game's audio, recovers the hits it played
+                from Hatari's dmasound trace, and identifies them with audio/verify.py's own
+                check_drums.  --reuse re-analyses the recording already in out/
 QA.md           the game played headless, scenario by scenario, with the verdicts
 play_headless.py  the driver QA.md is written from: keys into a live Hatari, screenshots,
                 GameState read out of RAM
@@ -552,6 +619,8 @@ test_plat_pins.py  a pytest that parses plat.h and asserts every constant bench.
                 re-typed still equals the C's — it caught the ledger header changing under them
 tos.ld          copied from ../spike/, itself from projects/wonderboy/recreate/atari/
 mkprg.py        copied unchanged from the same place
+st_title_hatari.png     the title as disk/BLACKICE.ST boots it, captured headless at VBL 1500
+out/game_audio.wav      the title-to-play recording record_audio.py measures the drum lane in
 out/frame.png           the captured frame, with Hatari's borders
 out/frame_screen.png    the same frame cropped to the 320x200 screen
 out/diff.png            written by verify.py when the pixels disagree

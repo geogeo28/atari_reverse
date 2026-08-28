@@ -1,4 +1,11 @@
 {
+ "drum_bank": {
+  "kick": 10,
+  "snare": 11,
+  "hat": 12,
+  "clap": 13
+ },
+ "drum_hits_per_loop": 16,
  "speed": 7,
  "rows": 16,
  "order": [
@@ -28,7 +35,8 @@
    "instrument": "pulse",
    "tone": true,
    "noise": false,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 0,
@@ -40,7 +48,8 @@
    "instrument": "clock",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 7,
@@ -52,7 +61,8 @@
    "instrument": "clock",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 14,
@@ -64,7 +74,8 @@
    "instrument": "pulse",
    "tone": true,
    "noise": false,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 14,
@@ -76,7 +87,8 @@
    "instrument": "clock",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 21,
@@ -88,7 +100,8 @@
    "instrument": "clock",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 28,
@@ -100,7 +113,8 @@
    "instrument": "pulse",
    "tone": true,
    "noise": false,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 28,
@@ -112,7 +126,8 @@
    "instrument": "clock",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 35,
@@ -124,7 +139,8 @@
    "instrument": "clock",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 42,
@@ -136,7 +152,8 @@
    "instrument": "pulse",
    "tone": true,
    "noise": false,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 42,
@@ -148,7 +165,8 @@
    "instrument": "clock",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 49,
@@ -160,7 +178,8 @@
    "instrument": "clock",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 56,
@@ -172,7 +191,8 @@
    "instrument": "pulse",
    "tone": true,
    "noise": false,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 56,
@@ -184,7 +204,8 @@
    "instrument": "clock",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 63,
@@ -196,7 +217,8 @@
    "instrument": "clock",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 70,
@@ -208,7 +230,8 @@
    "instrument": "pulse",
    "tone": true,
    "noise": false,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 70,
@@ -220,7 +243,8 @@
    "instrument": "clock",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 77,
@@ -232,7 +256,8 @@
    "instrument": "clock",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 84,
@@ -244,7 +269,8 @@
    "instrument": "pulse",
    "tone": true,
    "noise": false,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 84,
@@ -256,7 +282,8 @@
    "instrument": "clock",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 91,
@@ -268,7 +295,8 @@
    "instrument": "clock",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 98,
@@ -280,7 +308,8 @@
    "instrument": "pulse",
    "tone": true,
    "noise": false,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 98,
@@ -292,7 +321,8 @@
    "instrument": "clock",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   },
   {
    "frame": 105,
@@ -304,11 +334,12 @@
    "instrument": "clock",
    "tone": false,
    "noise": true,
-   "sustains": false
+   "sustains": false,
+   "arpeggiated": false
   }
  ],
  "symbol": "blackice_exfil",
- "bytes": 586,
+ "bytes": 608,
  "band_speeds": [
   11,
   10,

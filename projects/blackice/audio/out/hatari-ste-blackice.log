@@ -11,4 +11,4 @@ WARN : Bus Error reading at address $6d3148, PC=$e00d98 addr_e3=e00d98 op_e3=4a1
 WARN : Bus Error reading at address $400000, PC=$e00d98 addr_e3=e00d98 op_e3=4a10
 WARN : Bus Error reading at address $d003c3, PC=$e00d98 addr_e3=e00d98 op_e3=4a10
 WARN : No GEMDOS dir '/Volumes/Workspace/repos/my_repos/atari/reverse/projects/blackice/audio/disk/AUTO'
-INFO : SPEED: 198.5 VBL/s (3450/17.4s), diff=0.0%
+INFO : SPEED: 202.9 VBL/s (4550/22.4s), diff=0.0%

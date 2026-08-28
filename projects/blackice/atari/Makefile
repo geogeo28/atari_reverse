@@ -52,8 +52,11 @@ ENGINE_SRC := $(ENGINE)/src/tables.c $(ENGINE)/src/rng.c $(ENGINE)/src/hash.c $(
               $(ENGINE)/src/sim.c $(ENGINE)/src/entities.c $(ENGINE)/src/ai.c \
               $(ENGINE)/src/weapons.c $(ENGINE)/src/pickups.c $(ENGINE)/src/trace.c \
               $(ENGINE)/src/events.c
-# DESIGN 16: the first playable is YM-only, so the DMA sample path is not linked.
-AUDIO_SRC  := $(ENGINE)/audio/ym_music.c $(ENGINE)/audio/blackice_song.c
+# DESIGN 16's YM kit plus the DMA sample path: the song's drum lane hands the VBL a bank index
+# every tick and dma_sfx plays it, so the bank blob (65,404 B of const data) is linked into both
+# PRGs.  On a plain ST dma_sfx refuses at init and the YM kit carries the drums by itself.
+AUDIO_SRC  := $(ENGINE)/audio/ym_music.c $(ENGINE)/audio/blackice_song.c \
+              $(ENGINE)/audio/dma_sfx.c $(ENGINE)/audio/blackice_sfx_bank.c
 PLATFORM_SRC := main.c hud.c assets.c overlay.c
 SHARED_SRC := $(ENGINE)/pipeline/depack.c
 
