@@ -34,11 +34,14 @@
 #define ENTITY_Y           0x04u  /* .w signed — playfield y.  pinned by test_entity.py */
 /* .w — sprite rows in bits 0..14; bit 15 is a FLAG the weapon code owns (include/weapon.h's
  * SHOT_LOCK_SLOT_B), which is why every reader of the count masks with collision.h's
- * ENTITY_HEIGHT_MASK. Offset pinned by test_mothership.py::test_place_tail_attribution; the mask by
- * test_collision.py::test_height_is_masked_and_wraps and test_weapon.py::test_shot_retire_kind32 */
+ * ENTITY_HEIGHT_MASK — every reader except draw_sprite_masked (0x15ace), which feeds the raw word
+ * to its dbf (an unreachable arm, see STATUS.md). Offset pinned by
+ * test_mothership.py::test_place_tail_attribution and test_sprite.py (draw_sprite_masked); the mask
+ * by test_collision.py::test_height_is_masked_and_wraps and test_weapon.py::test_shot_retire_kind32 */
 #define ENTITY_HEIGHT      0x08u
 #define ENTITY_SPRITE      0x0au  /* .l — pointer to the sprite bank. pinned by
-                                   * test_enemy.py::test_anim_cycle_frames, test_weapon.py::test_shot_to_puff */
+                                   * test_enemy.py::test_anim_cycle_frames, test_weapon.py::test_shot_to_puff,
+                                   * test_sprite.py (draw_sprite_masked) */
 /* .b — alive / animation state, bit 7 = exploding. PINNED BY test_entity.py, and its NEIGHBOUR
  * matters: entity_kill_if_offscreen reads the two as one word (`tst.w 14(a2)`) and clears only this
  * byte (`clr.b 14(a2)`). See src/entity.c. */
