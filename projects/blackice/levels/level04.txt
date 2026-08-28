@@ -7,7 +7,8 @@
 # start_x: 9
 # start_y: 35
 # start_facing: 0
-# trace_base_rate: 16
+# rng_seed: 4004
+# trace_base_rate: 180
 # trace_start: 0
 # trace_carry_cap: 25
 # par_ticks: 4500
@@ -19,8 +20,8 @@
 # note: route: @ -> east wing ALPHA -> door 1 -> copy A east -> riser -> copy B BETA -> door 2 -> north hall -> exit
 # note: corruption: copy B starts one cell west of copy A; five seam doors frozen at 3/8 open
 
-########################################
-###XXXXXXXXXXXXXXXXXsXXXXXXXXXXXXX>XX###
+##################################>#####
+###XXXXXXXXXXXXXXXXXsXXXXXXXXXXXXX.XX###
 ###..................................###
 ###......................w...........###
 ###.....w....i.......................###
@@ -57,5 +58,5 @@
 ###......@.......######..........w...###
 ###..............######..c...........###
 ###..............######..............###
+#########.##############################
 #########S##############################
-########################################
