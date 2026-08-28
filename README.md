@@ -378,10 +378,14 @@ framebuffer they paint with the game's own palette words. One thing the seam can
 at the address the boot's own load lands on and the stage's sprite install is redone over it whole
 — with every marked sprite's installed cells then checked byte for byte against the file, because
 without that check 28 of stage 1's 143 sprites quietly installed depacked tile data instead. The
-two vertical-blank waits inside `flip_screen` are answered by the kit's scheduled-write model, the
-play frames come from one fixed joystick script, and the video address counter both of the game's
-PRNGs read is a declared constant — so the whole set is a function of the binary and the game's
-own files, which the script asserts by rendering it twice and comparing.
+two vertical-blank waits inside `flip_screen` are answered by the kit's scheduled-write model and
+the play frames come from one fixed joystick script. The game's only entropy is the shifter's
+video address counter at `$ff8207`/`$ff8209`, which `rng_next` and `bcd_add_random_1_to_4` read
+and which the kit's seeded-hardware model answers with whatever the run declares: on a machine
+that counter is a clock, so each play frame here declares the next byte of **one fixed
+pseudo-random sequence keyed by the frame index** rather than a single constant for the whole run.
+The whole set is therefore a function of the binary, the game's own files, that joystick script
+and that sequence — which the script asserts by rendering it twice and comparing.
 
 Every play picture is drawn on a screen the **whole boot chain** built, in the boot's own order —
 the prologue's clears, then the title, credits and stage slices — because the status panel's
@@ -422,45 +426,69 @@ happen. Then the drawing: `project_followed_actor`, `bg_scroll_run_queue`, `proj
 only in where each splits its thirty `move.l`s about the source row's 128-byte ring seam —
 `game_snap_follow_cursor`, `sprite_draw_pass` and the twelve blitters it dispatches into
 (`blit_sprite_w2`..`w5` and their left- and right-clipping siblings), `actor_spawn_pass`,
-`text_run_message_box`, and `flip_screen` last. The middle frame is lap 200 of a fixed joystick
-script — right held, jump on a beat — which has the hero in the air beside the shop's door with a
-snail on the ledge above him. The sheet beside it is the game's own bitmaps at their own
-addresses, drawn by `sprite_draw_pass` onto the screen `clear_both_screens` left behind; only the
-destinations are ours. Which twenty are shown is not a list chosen here either — it is every
-sprite that same run actually put into a screen record, so the sheet is this stage's cast rather
-than a selection: four green crawlers, two snails, four frames of the hero's own walk, the
-seven-frame spin of a gold coin, and three boulders.
+`text_run_message_box`, and `flip_screen` last. The middle frame is lap 157 of a fixed joystick
+script — walk held, jump on a beat, fire on another — and it is **not a lap number chosen here**:
+the run stops at the first frame that draws at least three sprites whole inside the play window,
+and fails if none does, so a caption naming what is in a picture cannot go stale under a fix that
+shifts the run. What that frame has is the hero in the air between a spinning gold coin and the
+tree stump with the shop's door in it, with a red cobra on the ledge ahead beside the arrow sign.
+The sheet beside it is the game's own bitmaps at their own addresses, drawn by `sprite_draw_pass`
+onto the screen `clear_both_screens` left behind; only the destinations are ours. Which twenty are
+shown is not a list chosen here either — it is every sprite that same run actually put into a
+screen record, so the sheet is this stage's cast rather than a selection: four green snakes, two
+red cobras, four frames of the hero's own walk, the seven-frame spin of a gold coin, and three
+boulders.
 
-| Stage 2 — the town, and a message | Stage 4 — the desert | Stage 5 — the castle wall |
+| Round 4 — over the brick platforms | Round 5 — the wood | Round 5 — the vine shaft |
 |:---:|:---:|:---:|
-| ![](assets/wonderboy/stage2-town.png) | ![](assets/wonderboy/stage4-desert.png) | ![](assets/wonderboy/stage5-castle.png) |
+| ![](assets/wonderboy/stage4-sky.png) | ![](assets/wonderboy/stage5-woods.png) | ![](assets/wonderboy/stage5-cave.png) |
 
-The later stages are reached through **the game's own level-skip cheat**, typed rather than poked:
+The later rounds are reached through **the game's own level-skip cheat**, typed rather than poked:
 `game_key_actions`' walk at $5a8 steps a cursor along the four scancodes the binary carries at
 $608 — `$61 $30 $13 $1e`, which are UNDO, B, R and A — and raises the cheat word when the cursor
 meets its terminator. With that word up, N takes the arm at $556, which pops the frame loop's
 return address and `jmp`s to $e5ba: `boot_load_stage` again, one sequence row further on. The
 reconstruction cannot make that transfer, so it reports `WB_KEY_ACTIONS_LEVEL_SKIP` and the caller
 runs the slice — which is exactly the wiring the on-target build uses for the same ending. One
-thing here is this script's own and not the game's: the sequence cursor is put at the round before
-the one being shown, because the honest route to round eleven — playing there — is not something a
+thing here is this script's own and not the game's: the sequence cursor is put at the row before
+the one being shown, because the honest route to round eight — playing there — is not something a
 fixed joystick script can do. Everything either side of that is the boot's.
 
-Each picture above is a different tile bank and a different row of the in-program palette table.
-The town is frame 30, and the box over it is `text_run_message_box` — the frame loop's fourteenth
-call — composing and blitting the message every stage entry posts, the first entry of the table at
-`$a09c`. The other two are frame 120, by which time it has expired.
+Two things about **which** rounds these are came out of getting the pictures wrong first, and both
+are now checks rather than choices. The script takes the walk direction from the loaded row's own
+start record: `boot_load_stage` drops the hero at `WB_START_FOLLOW_X`, and two of these rows start
+him at 1928 and 1432 — the far end of a map he is meant to walk *back* along, with an arrow tile on
+the ground saying so. Holding right there pinned him against a wall for 1400 frames with every
+creature off the left edge, which is what the first published desert and castle pictures were. And
+`sprites_cru_install` writes an UNMARKED sentinel into every descriptor the **round's** mask does
+not mark, wholesale — rounds 2, 3, 10 and 11 do not mark the frames of a hero who has not picked up
+the armour of the rounds before him, and arriving with a round-1 hero is exactly what the cheat
+does, so in those rounds he was drawn as a band of scrambled bytes at his own position. The town of
+round 2 and the golden keep of round 11 were in this gallery until that was found; the set is now
+chosen among the rounds the skip can honestly show, and the script refuses a picture whose hero has
+no cells.
 
-| Stage 8 — over the lava | Stage 11 — the keep, the last round |
+| Round 6 — the spiked corridor | Round 8 — over the lava |
 |:---:|:---:|
-| ![](assets/wonderboy/stage8-lava.png) | ![](assets/wonderboy/stage11-keep.png) |
+| ![](assets/wonderboy/stage6-dungeon.png) | ![](assets/wonderboy/stage8-lava.png) |
+
+Each is a different overlay file, and each frame was chosen the same way stage 1's was — the first
+frames 100…800 with at least a stated number of sprites whole inside the window, asserted before
+the PNG is written. So the wood really does have three monkeys in its trees with gold hanging
+between them — and a `GOLD` counter reading 16 beside a `SCORE` of 20, both earned by that run —
+the vine shaft really has a blue flier, a falling boulder and thrown blades around a helmeted hero
+with his sword out, and the lava has three creatures and two more pieces of gold. The message box
+every stage entry posts — the frame loop's fourteenth call, `text_run_message_box`, composing the
+first entry of the message table at `$a09c` — is long gone by then, so it is checked on the way
+past at frame 30 instead of photographed, and checked in both directions: three of these five rows
+hold it over frames 0…49 exactly, and two — the vine shaft and the lava — post no message at all.
 
 The panel is the same one in all seven play pictures, and reading it is the quickest way to see
 that the boot chain did its work: `LIFE`, `SCORE`, `HIGH`, `GOLD` and the slot frames are the
 credits picture's own artwork, while the hearts, the digits and the `RND:` number are what
-`game_restart_reset`, `panel_refresh_frame` and the `hud_draw_*` routines paint over it. `RND:`
-also settles a figure this README had wrong: the keep is round **eleven**, not seventeen —
-`WB_STAGE_NUMBER` is packed BCD, so `$11` is eleven, and the panel spells it out. Four of the data
+`game_restart_reset`, `panel_refresh_frame` and the `hud_draw_*` routines paint over it. `RND:` is
+also the quickest check on a figure this README once had wrong: `WB_STAGE_NUMBER` is packed BCD, so
+`$11` is round eleven and not seventeen, and the panel spells the digits out. Four of the data
 disk's overlays are damaged on the pressed original — `OVALAY4B`, `OVALAY5B`, `OVALAY6A` and
 `OVALAY9A`, the only files this project keeps two corpora of — and every picture here is rendered
 from the **authentic** `bin/disk2/` dump, with the script refusing to load one of those four, so

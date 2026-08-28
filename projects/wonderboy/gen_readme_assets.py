@@ -26,13 +26,15 @@ need YOUR OWN copy of the game under `bin/` — the AUTHENTIC `disk2/`, not the 
 hybrid — and a built candidate; no game code or data is distributed with this repository.
 
 Output goes to the tracked `<workspace>/assets/wonderboy/*.png`, and every run is
-byte-identical: the whole set is a function of `SWB.PRG` and the game's own resource files,
-the play frames come from one fixed joystick script, and nothing reads a clock. The game's
-two entropy sources are the video address counter ($ff8207/$ff8209), which the kit's seeded
-hardware model answers with a declared constant — so `rng_next` and `bcd_add_random_1_to_4`
-draw the same numbers every run. THAT IS ASSERTED AND NOT CLAIMED: `main` renders the whole
-set TWICE and refuses a picture whose two renderings differ, which the run is quick enough
-(a second or two) to afford. Re-run:
+byte-identical: the whole set is a function of `SWB.PRG`, the game's own resource files, one
+fixed joystick script and one fixed pseudo-random sequence, and nothing reads a clock. That
+last one is the game's only entropy: `rng_next` and `bcd_add_random_1_to_4` read the shifter's
+video address counter ($ff8207/$ff8209), which on a machine is a clock and which the kit's
+seeded hardware model answers with whatever the run DECLARES — so each play frame here declares
+a new byte of `video_counter_for`'s fixed sequence rather than one constant for the whole run.
+THAT THE SET IS STILL REPRODUCIBLE IS ASSERTED AND NOT CLAIMED: `main` renders the whole set
+TWICE and refuses a picture whose two renderings differ, which the run is quick enough (a
+second or two) to afford. Re-run:
 
     cd recreate && make venv && make   # once: the venv and libwonderboy.so
     ./.venv/bin/python ../gen_readme_assets.py
@@ -90,6 +92,7 @@ PALETTE_TABLE = wb("PALETTE_TABLE")
 PALETTE_ROW_SHIFT = wb("PALETTE_ROW_SHIFT")
 STAGE_START_PTR = wb("STAGE_START_PTR")
 START_PALETTE = wb("START_PALETTE")
+START_FOLLOW_X = wb("START_FOLLOW_X")
 STAGE_NUMBER = wb("STAGE_NUMBER")
 SPRITE_CRU_LOAD = wb("SPRITE_CRU_LOAD")
 LEVEL_SEQ_INDEX = wb("LEVEL_SEQ_INDEX")
@@ -97,6 +100,7 @@ FIRST_SEQUENCE_ROW = 0           # what game_restart_reset leaves the cursor at
 LEVEL_SEQ_TABLE = wb("LEVEL_SEQ_TABLE")
 LEVEL_SEQ_RECORD_BYTES = wb("LEVEL_SEQ_RECORD_BYTES")
 LEVEL_SEQ_OVERLAY = wb("LEVEL_SEQ_OVERLAY")
+LEVEL_SEQ_SECOND_LOAD = wb("LEVEL_SEQ_SECOND_LOAD")
 LIFE_RESTART_ENTRY_C26 = wb("LIFE_RESTART_ENTRY_C26")
 RESOURCE_FILE_TABLE = wb("RESOURCE_FILE_TABLE")
 RESOURCE_FILE_ROW_BYTES = 1 << wb("RESOURCE_FILE_ROW_SHIFT")
@@ -143,7 +147,7 @@ TEXT_MESSAGE_TABLE = wb("TEXT_MESSAGE_TABLE")
 TEXT_MESSAGE_PTR_SHIFT = wb("TEXT_MESSAGE_PTR_SHIFT")
 # The message every stage entry posts. include/wonderboy.h names the ids whose text a reconstructed
 # routine needed, and this is not one of them — it is simply the FIRST entry of the table, which is
-# what `WB_TEXT_MESSAGE_FIRST_ID` is the base of. `_assert_the_stage_entry_box_is_up` reads the
+# what `WB_TEXT_MESSAGE_FIRST_ID` is the base of. `_assert_the_stage_entry_box` reads the
 # string back out of the table rather than trusting this line.
 TEXT_MESSAGE_LETS_GO = wb("TEXT_MESSAGE_FIRST_ID")
 TEXT_MESSAGE_FIRST_ID = wb("TEXT_MESSAGE_FIRST_ID")
@@ -162,6 +166,8 @@ BG_BLIT_ROW_BYTES = wb("BG_BLIT_ROW_BYTES")
 ORIGINAL_RAM = RECREATE / "atari" / "build" / "ORIGRAM.BIN"
 ORIGINAL_RAM_BASE = 0x3f8        # ../recreate/project.toml's load base, which is the dump's own
 ACTOR_SCREEN_SPRITE = wb("ACTOR_SCREEN_SPRITE")
+ACTOR_FOLLOWED_DEFAULT = wb("ACTOR_FOLLOWED_DEFAULT")
+ACTOR_SPRITE = wb("ACTOR_SPRITE")
 SPRITE_DESC_X_OFFSET = wb("SPRITE_DESC_X_OFFSET")
 SPRITE_DESC_Y_OFFSET = wb("SPRITE_DESC_Y_OFFSET")
 SPRITE_DESC_HEIGHT = wb("SPRITE_DESC_HEIGHT")
@@ -203,22 +209,24 @@ KEY_ACTIONS_RETURNED = wb("KEY_ACTIONS_RETURNED")
 KEY_ACTIONS_LEVEL_SKIP = wb("KEY_ACTIONS_LEVEL_SKIP")
 
 # ---- the joystick, as the IKBD reports it ---------------------------------------------------------
+JOY_LEFT = 1 << wb("JOY1_LEFT_BIT")
 JOY_RIGHT = 1 << wb("JOY1_RIGHT_BIT")
 JOY_UP = 1 << wb("JOY1_UP_BIT")          # ...which is also the JUMP, on its rising edge
 JOY_FIRE = 1 << wb("JOY1_FIRE_BIT")
 
 # THE ONE JOYSTICK SCRIPT every play frame below is driven from, and it is fixed rather than seeded
-# from a generator: walk right, jump on a fixed beat, and press fire on another. A rising edge is
-# what the game acts on (`joy1_newly_pressed`), so each press is held for JUMP_HELD_FRAMES and then
-# released. The two periods are coprime with each other and with the sample points below, so no
+# from a generator: walk the way the loaded stage runs (`_walk_direction`), jump on a fixed beat, and
+# press fire on another. A rising edge is what the game acts on (`joy1_newly_pressed`), so each press
+# is held for JUMP_HELD_FRAMES and then released. The two periods are coprime with each other, so no
 # picture lands on the same phase of both.
 JUMP_PERIOD, JUMP_PHASE, JUMP_HELD_FRAMES = 16, 4, 2
 FIRE_PERIOD, FIRE_PHASE = 23, 7
 
 
-def joystick_for(frame):
-    """The byte the IKBD would have left in WB_JOY1_STATE on `frame` of the script above."""
-    byte = JOY_RIGHT
+def joystick_for(frame, walk):
+    """The byte the IKBD would have left in WB_JOY1_STATE on `frame` of the script above, with
+    `walk` (JOY_LEFT or JOY_RIGHT) held all the way through."""
+    byte = walk
     if JUMP_PHASE <= frame % JUMP_PERIOD < JUMP_PHASE + JUMP_HELD_FRAMES:
         byte |= JOY_UP
     if frame % FIRE_PERIOD == FIRE_PHASE:
@@ -226,25 +234,39 @@ def joystick_for(frame):
     return byte
 
 
-# WHICH FRAME OF THE STAGE-1 RUN IS SHOWN, and it is chosen for what it shows rather than for being
-# the earliest frame that shows it: the hero is in the air beside the shop's door with a snail on the
-# ledge above him. The claim is asserted before the picture is written (`render_stage1`), so a
-# reconstruction fix that shifts the run fails loudly instead of quietly re-rendering an ordinary
-# frame under a caption naming a monster that is no longer in it.
-STAGE1_WALK_FRAME = 200
-STAGE1_WALK_SPRITES = 2       # ...and how many sprites that frame really has inside the window
+# WHICH FRAME OF A PLAY RUN IS SHOWN — chosen by WHAT IT SHOWS and not by a number typed here.
+# `_play_to_a_busy_frame` walks the script and stops on the first frame of this window with at least
+# a picture's own minimum of sprites whole inside the play window, and refuses if the window runs
+# out; so a caption that names creatures cannot go stale under a reconstruction fix that shifts the
+# run, and a picture cannot quietly come out as background and a hero.
+#
+# THE WINDOW'S TWO ENDS ARE BOTH MEASURED. Before PLAY_WINDOW_FIRST the stage has not scrolled far
+# enough for anything but the hero to be on screen — every stage here reaches its first busy frame
+# after it. PLAY_WINDOW_LAST is short of the earliest frame at which a run of this script ends
+# (stage 2's hero loses a life at frame 869), because an ending is a different picture and
+# `_step` refuses one.
+PLAY_WINDOW_FIRST, PLAY_WINDOW_LAST = 100, 800
+STAGE1_WALK_SPRITES = 3          # what stage 1's walking picture must have in it
 
 # ---- the later stages, reached through the game's own level-skip cheat ---------------------------
 # The run boots the row BEFORE each of these and then types the cheat, so both overlays are staged
-# and `_assert_overlay_is_undamaged` checks both. Chosen for five different tile banks — a town, a
-# desert, a castle wall seen from outside, a stage over open water and the golden keep — and no two
-# of them share a palette row either. `claim` is what the picture's caption asserts beyond "this row
-# loaded", checked before the PNG is written; `None` means the caption claims only the stage.
-_Stage = collections.namedtuple("_Stage", "row name frames claim")
-SKIP_FRAMES = 120                # frames of the joystick script to run after the stage has loaded
-# ...and the one picture taken earlier than that, because it is of the message box every stage entry
-# posts and the box lives WB_TEXT_LIFETIME_DEFAULT (50) frames. Measured: the box is up over frames
-# 0..49 of every stage the cheat reaches, and 30 is far enough in for the hero to have moved.
+# and `_assert_overlay_is_undamaged` checks both. Five different overlays and five scenes that look
+# nothing alike — open sky over brick platforms, a wood, a vine shaft underground, a spiked brick
+# corridor and a run over lava.
+#
+# AND CHOSEN AMONG THE ROUNDS THE SKIP CAN ACTUALLY SHOW, which is `_assert_the_hero_is_installed`'s
+# note: rounds 2, 3, 10 and 11 do not mark the frames of an unarmoured hero, so a cheat that arrives
+# there with a round-1 hero draws him as noise. The town of round 2 and the golden keep of round 11
+# were in this set until that was found, and both were wrong in exactly that way.
+#
+# `sprites` is the minimum the picture's caption is allowed to describe — the frame chosen is the
+# first in the window that has at least that many — and `entry_box` is whether this row's entry
+# posts a message box, which three of the five do.
+_Stage = collections.namedtuple("_Stage", "row name sprites entry_box")
+# The one thing checked on the way past rather than photographed: that entry message box, which
+# lives WB_TEXT_LIFETIME_DEFAULT (50) frames and is therefore long gone by the frame a picture is
+# taken on. Measured: where there is a box it is up over frames 0..49 exactly, so 30 is inside it
+# with room either side and far enough in for the hero to have moved.
 STAGE_ENTRY_BOX_FRAME = 30
 
 # ---- the sprite sheet ----------------------------------------------------------------------------
@@ -311,6 +333,46 @@ FLIP_WAIT_SITES = (FLIP_READY_WAIT_PC, FLIP_TICK_WAIT_PC)
 _FLIP_ENTRIES = emu.schedule_entries(list(FLIP_SCHEDULE))
 
 
+# ---- THE ENTROPY, DECLARED PER FRAME ---------------------------------------------------------------
+#
+# The game's only random source is a CLOCK: `rng_next` ($68c6) reads the shifter's video address
+# counter at $ff8209 and `bcd_add_random_1_to_4` ($51ac) reads $ff8209 and $ff8207, and off target
+# the kit's seeded-hardware model (TRAP_MODEL.md's Phase 7) answers both with whatever the run
+# declared — an undeclared read is a REFUSAL, which is why a constant was declared here at all. One
+# constant for a whole run is a counter that never moves, which no machine's is, so each play frame
+# declares the next byte of the fixed sequence below instead. It is a function of the frame index
+# and of nothing else, which is what leaves the set byte-identical run to run.
+#
+# WHAT THE SEQUENCE ACTUALLY MOVES IN THIS SET, measured rather than hoped for: over the frames these
+# pictures are taken from, `game_main_loop` reaches `rng_next` in the KEEP alone — every other run
+# ends with WB_RNG_COUNTER_A..C still at zero, so no behaviour draw was made — and reaches
+# `bcd_add_random_1_to_4` wherever gold is paid, which jitters the amount. It is not why the stages
+# were once empty; PLAY_WINDOW_FIRST and `_walk_direction` are.
+VIDEO_COUNTER_SEED = 0x1f
+# The 16-bit LCG with the full period: every seed visits all 65,536 states, so the high byte the
+# frames read is not a short cycle that could beat against JUMP_PERIOD or FIRE_PERIOD.
+VIDEO_COUNTER_MULTIPLIER, VIDEO_COUNTER_INCREMENT = 25173, 13849
+VIDEO_COUNTER_STATES = 1 << 16
+VIDEO_COUNTER_HIGH_BYTE = 8      # ...and which eight bits of a state a frame declares
+
+
+@functools.lru_cache(maxsize=None)
+def _video_counter_sequence():
+    """The generator's whole period, built once."""
+    sequence, state = [], VIDEO_COUNTER_SEED
+    for _ in range(VIDEO_COUNTER_STATES):
+        state = (state * VIDEO_COUNTER_MULTIPLIER + VIDEO_COUNTER_INCREMENT) % VIDEO_COUNTER_STATES
+        sequence.append(state >> VIDEO_COUNTER_HIGH_BYTE)
+    return tuple(sequence)
+
+
+def video_counter_for(frame):
+    """What $ff8207 and $ff8209 are declared to hold on `frame`. No run here is long enough to
+    reach the wrap, which is there so the function is total rather than because it is used."""
+    sequence = _video_counter_sequence()
+    return sequence[frame % len(sequence)]
+
+
 def _check_no_refused_os_calls(what):
     """Fail if the run made an `os_*` call the kit's TOS model refuses to serve.
 
@@ -333,6 +395,10 @@ def _fresh(pokes):
     The three seeds are the ones every case in ../recreate/test/ that reaches this code declares:
     the video address counter both PRNGs read, the YM2149 mixer `snd_play_song` reads back, and an
     empty schedule so nothing survives from the previous picture.
+
+    The counter is `hw_declared()`'s own default here, which is the byte the boot slices run on and
+    the one the pin against the original's post-boot RAM was measured with; `_run_frame` re-declares
+    it per frame once the frame loop starts.
     """
     buf = harness.candidate_image(harness.make_image(pokes))
     harness._lib.g_os_refusal_reset()
@@ -604,25 +670,48 @@ def _reinstall_the_sprites(buf, what):
         f"boot_load_stage built, so the detour changed something the background is made of")
 
 
-def _boot_stage(buf, what):
-    """One run of `boot_load_stage` ($e5ba..$f8b4): advance the level sequence, load the row's
-    overlay and the tile bank across the seam, install the tiles and (on a first entry to a stage)
-    the sprites, reset the actor tables and build the scroll engine's eight pre-shifted buffers.
+def _row_loads_the_sprites(buf):
+    """Whether the row the sequence is ABOUT to load will read SPRITES.CRU.
 
-    The install is then REDONE over the whole file, and pinned — see the two routines above. It is
-    conditional on the same byte the slice's own arm is: a row the sequence enters for a second time
-    loads no sprites, so there is nothing of this stage's to reinstall or to check.
+    `boot_load_stage` gates its second load on WB_STAGE_SECOND_LOAD_FLAG, which
+    `stage_sequence_apply_row` takes from the row's own WB_LEVEL_SEQ_SECOND_LOAD byte — and it is a
+    MAJORITY of the game's 35 rows that carry a zero there (src/boot.c). The other half of the gate,
+    WB_LIFE_RESTART_ENTRY_C26, is asserted clear before every chain here, so the row byte is the
+    whole answer.
     """
-    _place_sprites_file(buf)
+    row = _u16(buf, LEVEL_SEQ_INDEX)
+    return harness.BASE_IMAGE[LEVEL_SEQ_TABLE + row * LEVEL_SEQ_RECORD_BYTES
+                              + LEVEL_SEQ_SECOND_LOAD] != 0
+
+
+def _boot_stage(buf, what, sprites_installed=False):
+    """One run of `boot_load_stage` ($e5ba..$f8b4): advance the level sequence, load the row's
+    overlay and the tile bank across the seam, install the tiles and (on a row that asks for them)
+    the sprites, reset the actor tables and build the scroll engine's eight pre-shifted buffers.
+    Answers whether this image now holds a round's installed sprite cells.
+
+    THE RAW FILE IS PLACED ONLY FOR A LOAD THAT READS IT, and that is not tidiness: placing it
+    scribbles 279,034 bytes over the region an EARLIER row's install already filled with cells, and
+    a row whose WB_LEVEL_SEQ_SECOND_LOAD byte is zero installs nothing of its own to repair them
+    with. Doing it unconditionally therefore left every second-area row drawing the previous round's
+    sprites as raw file bytes; on the machine the file is simply not read there and the cells stand.
+
+    `sprites_installed` carries that standing forward, so the cells are checked against the file
+    after a no-install row too — the property being stated is that they are still the file's.
+    """
+    if _row_loads_the_sprites(buf):
+        _place_sprites_file(buf)
     result = _bind("boot_load_stage")(buf)
     assert result in (LOAD_OK, LOAD_COPYLOCK_RAN), (
         f"{what}: boot_load_stage reported {result} — the seam refused one of the row's resources, "
         f"so no stage was loaded")
     _check_no_refused_os_calls(what)
+    installed = sprites_installed or bool(buf[STAGE_SECOND_LOAD_FLAG])
     if buf[STAGE_SECOND_LOAD_FLAG]:
         _reinstall_the_sprites(buf, what)
+    if installed:
         _assert_the_cells_are_the_file(buf, what)
-    return result
+    return installed
 
 
 def _stage_number(buf):
@@ -721,7 +810,7 @@ def _run_the_boot_chain(buf, what, at_row=FIRST_SEQUENCE_ROW):
         f"re-entry arm and load no sprites")
     if at_row != FIRST_SEQUENCE_ROW:
         struct.pack_into(">H", buf, LEVEL_SEQ_INDEX, at_row)
-    return _boot_stage(buf, what)
+    return _boot_stage(buf, what)          # ...whether that row installed a round's sprite cells
 
 
 def _stage_palette_src(buf):
@@ -731,16 +820,39 @@ def _stage_palette_src(buf):
     return PALETTE_TABLE + (buf[start + START_PALETTE] << PALETTE_ROW_SHIFT)
 
 
-def _run_frame(buf, sprites, joystick=0, scancode=0):
+def _walk_direction(buf):
+    """Which way the loaded stage is walked, taken from the stage's OWN START RECORD.
+
+    THE SCRIPT USED TO HOLD RIGHT EVERYWHERE AND TWO PICTURES WERE THE PRICE. `boot_load_stage`
+    latches the row's start record and drops the followed actor at its WB_START_FOLLOW_X, and two of
+    the rows below start him at 1928 and 1432 — the far end of a map he is meant to walk BACK along,
+    with an arrow tile on the ground saying so. Holding right there pins him against the wall for
+    the whole run: measured, 1400 frames in which the hero never moved a pixel and not one creature
+    was ever inside the window, because every one of them was off the LEFT edge. That is what the
+    first published set's desert and castle pictures were.
+
+    A start beyond the first screenful is the signal and it separates the two cases with room to
+    spare: the rows walked rightwards start the hero at 24..88, and the two walked leftwards at 1432
+    and 1928. WB_LEVEL_SEQ_SIDE is NOT the signal, though it looks like one — it is set on the keep's
+    row too, which starts at 24 and is walked rightwards, and `actor_apply_stage_side` spends it on
+    an actor's facing bit rather than on the map.
+    """
+    start = _u32(buf, STAGE_START_PTR)
+    return JOY_LEFT if _u16(buf, start + START_FOLLOW_X) >= SCREEN_WIDTH else JOY_RIGHT
+
+
+def _run_frame(buf, sprites, frame, joystick=0, scancode=0):
     """One lap of `game_main_loop` ($4a0), driven the way the machine drives it.
 
     The two bytes written first are the ones an interrupt would have left: WB_JOY1_STATE is what the
     IKBD's joystick-1 report handler stores and WB_KEY_LAST_SCANCODE what its keyboard arm stores.
     The schedule is re-installed per frame because each entry fires once, and `flip_screen` zeroes
-    the counter on its way out — so every frame's two waits are the same two.
+    the counter on its way out — so every frame's two waits are the same two. The hardware seed is
+    re-installed for the same reason a machine's counter has moved on: see `video_counter_for`.
     """
     buf[JOY1_STATE] = joystick
     buf[KEY_LAST_SCANCODE] = scancode
+    _seed_candidate_hw(leaf.hw_declared(video_counter_for(frame)))
     _seed_candidate_sched(_FLIP_ENTRIES, FLIP_WAIT_SITES)
     return _bind("game_main_loop", (ctypes.POINTER(_PassRegs),))(buf, ctypes.byref(sprites))
 
@@ -758,20 +870,63 @@ def _entered_frame_loop():
     return sprites
 
 
-def _play(buf, sprites, frames, what, first_frame=0):
-    """`frames` laps of the frame loop on the fixed joystick script, refusing to end early.
+def _step(buf, sprites, frame, walk, what):
+    """One lap of the frame loop on the fixed joystick script, refusing to end early.
 
     An ending is not a failure of the reconstruction — the loop has five of them and a run that
     presses nothing can still reach two (../include/game.h) — but it IS a different picture from the
     one the caller asked for, so it fails here with the ending named.
     """
-    for frame in range(first_frame, first_frame + frames):
-        ending = _run_frame(buf, sprites, joystick_for(frame))
-        assert ending == KEY_ACTIONS_RETURNED, (
-            f"{what}: frame {frame} left the frame loop reporting {ending} (include/game.h's "
-            f"WB_KEY_ACTIONS_* / WB_LOOP_EXIT_*), so the run no longer reaches the frame this "
-            f"picture is of")
-    _check_no_refused_os_calls(what)
+    ending = _run_frame(buf, sprites, frame, joystick_for(frame, walk))
+    assert ending == KEY_ACTIONS_RETURNED, (
+        f"{what}: frame {frame} left the frame loop reporting {ending} (include/game.h's "
+        f"WB_KEY_ACTIONS_* / WB_LOOP_EXIT_*), so the run no longer reaches the frame this "
+        f"picture is of")
+
+
+def _assert_the_hero_is_installed(buf, what):
+    """The followed actor's own sprite has cells, and is not the UNMARKED sentinel.
+
+    THIS PICTURE CLASS CAME OUT WRONG WITHOUT IT, and it looked like a rendering bug rather than a
+    route one. `sprites_cru_install` writes WB_SPRITE_CRU_UNMARKED into every descriptor the ROUND's
+    mask does not mark — wholesale, so a round that does not mark a sprite leaves its descriptor
+    pointing at the cell area's base and the pass draws whatever is there. Rounds 2, 3, 10 and 11 do
+    not mark the frames a hero WITHOUT the armour of the rounds before him uses (measured over the
+    shipped mask table, rounds 1..11), and the level-skip cheat is exactly how you arrive at round 2
+    with a round-1 hero: he came out as a band of scrambled bytes at his own position, in two of the
+    five stage pictures this set first published.
+
+    So this refuses that picture rather than drawing it, and the rows below are chosen among the
+    rounds whose mask marks the hero the skip actually brings.
+    """
+    sprite = _u16(buf, ACTOR_FOLLOWED_DEFAULT + ACTOR_SPRITE)
+    installed = _u32(buf, RESOURCE_TABLE + sprite * RESOURCE_RECORD_BYTES)
+    assert installed != RESOURCE_TABLE + SPRITE_CRU_UNMARKED, (
+        f"{what}: the hero's sprite {sprite} has no cells — this round's mask did not mark it, so "
+        f"the pass would draw the unmarked sentinel's bytes where the hero should be")
+
+
+def _play_to_a_busy_frame(buf, sprites, walk, minimum, what, first_frame=0):
+    """Play until the picture has something in it, and say which frame that was and what is in it.
+
+    The frame is the FIRST of [PLAY_WINDOW_FIRST, PLAY_WINDOW_LAST] that draws `minimum` sprites
+    whole inside the play window, which the hero is one of on every run here — so a minimum of three
+    is him and two others, and `_sprites_in_the_window`'s own bounds make even that a lower bound on
+    what the picture shows. Running out of window is a refusal and not a shrug: a picture nothing
+    has walked into is exactly the failure this replaced.
+    """
+    for frame in range(first_frame, PLAY_WINDOW_LAST + 1):
+        _step(buf, sprites, frame, walk, what)
+        drawn = _sprites_in_the_window(buf)
+        if frame >= PLAY_WINDOW_FIRST and drawn >= minimum:
+            _check_no_refused_os_calls(what)
+            _assert_the_hero_is_installed(buf, what)
+            return frame, drawn
+    raise AssertionError(
+        f"{what}: no frame of {PLAY_WINDOW_FIRST}..{PLAY_WINDOW_LAST} draws {minimum} sprite(s) "
+        f"whole inside the window, so this picture would be background and a hero under a caption "
+        f"naming creatures — the run has shifted, or this stage is not walked the way "
+        f"`_walk_direction` says it is")
 
 
 def _drawn_screen(buf):
@@ -795,16 +950,16 @@ def render_stage1():
     _assert_the_screens_are_the_originals(buf, "stage 1")
     palette_at = _stage_palette_src(buf)
     sprites = _entered_frame_loop()
+    walk = _walk_direction(buf)
 
-    _play(buf, sprites, 1, "stage 1's first frame")
+    _step(buf, sprites, 0, walk, "stage 1's first frame")
+    _check_no_refused_os_calls("stage 1's first frame")
+    _assert_the_hero_is_installed(buf, "stage 1's first frame")
     pictures.append(_screen("stage1-start", buf, _drawn_screen(buf), palette_at))
 
-    _play(buf, sprites, STAGE1_WALK_FRAME - 1, "stage 1, walking", first_frame=1)
-    drawn = _sprites_in_the_window(buf)
-    assert drawn >= STAGE1_WALK_SPRITES, (
-        f"frame {STAGE1_WALK_FRAME} draws {drawn} sprite(s) inside the window, not the "
-        f"{STAGE1_WALK_SPRITES} this picture's caption names — the run has shifted and the hero is "
-        f"no longer sharing the frame with a monster")
+    frame, drawn = _play_to_a_busy_frame(buf, sprites, walk, STAGE1_WALK_SPRITES,
+                                         "stage 1, walking", first_frame=1)
+    print(f"    stage1-walk: frame {frame}, {drawn} sprites inside the window")
     pictures.append(_screen("stage1-walk", buf, _drawn_screen(buf), palette_at))
     return pictures
 
@@ -867,14 +1022,15 @@ def _type_the_cheat_and_skip(buf, sprites, what):
     which the cursor meets the terminator and the cheat is raised. That last frame carries no
     scancode of its own — the terminator arm does not compare one.
     """
-    for scancode in _cheat_scancodes() + (0,):
-        ending = _run_frame(buf, sprites, scancode=scancode)
+    typed = _cheat_scancodes() + (0,)
+    for frame, scancode in enumerate(typed):
+        ending = _run_frame(buf, sprites, frame, scancode=scancode)
         assert ending == KEY_ACTIONS_RETURNED, (
             f"{what}: typing the cheat left the frame loop reporting {ending}")
     assert _u16(buf, KEY_SEQUENCE_MATCHED) == KEY_SEQUENCE_MATCHED_SET, (
         f"{what}: the sequence walk did not raise WB_KEY_SEQUENCE_MATCHED, so N would be an "
         f"ordinary keypress and no level would be skipped")
-    ending = _run_frame(buf, sprites, scancode=KEY_SCANCODE_N)
+    ending = _run_frame(buf, sprites, len(typed), scancode=KEY_SCANCODE_N)
     assert ending == KEY_ACTIONS_LEVEL_SKIP, (
         f"{what}: N with the cheat raised reported {ending}, not WB_KEY_ACTIONS_LEVEL_SKIP")
 
@@ -924,19 +1080,31 @@ def _assert_the_box_says(buf, message_id, what):
         f"produces a different WB_TEXT_BUFFER, so the caption names the wrong message")
 
 
-def _assert_the_stage_entry_box_is_up(buf, what):
-    """The stage-2 picture's caption, as two checks: a box is up, and it is the one every stage
-    entry posts.
+def _assert_the_stage_entry_box(buf, expected, what):
+    """What the stage entry posted, checked on the way past STAGE_ENTRY_BOX_FRAME: a box is up and
+    is the "Let's go." one, or — for the one row that posts nothing — no box is up at all.
 
-    WITHOUT THE FIRST OF THESE THE CAPTION IS LUCK, and it was: the box lives 50 frames and this
-    picture is taken on frame 30 of them. An earlier revision of this script captioned a DIFFERENT
-    stage's frame 120 as carrying a box, and running the boot chain whole — which changed the run —
-    left the caption describing a message box over a picture with none in it.
+    IT IS CHECKED AND NO LONGER PHOTOGRAPHED. The box lives WB_TEXT_LIFETIME_DEFAULT frames and this
+    set's play pictures are now taken hundreds of frames in, where there is something in the window
+    to see; but a stage entry that stopped posting its message would otherwise go unnoticed by
+    anything here, so the check stayed and moved to where the box really is. A caption may say the
+    entry posts a message because this ran, not because a picture happens to show one — which is the
+    same mistake in the other direction that an earlier revision made, captioning a stage's frame
+    120 as carrying a box it no longer had.
+
+    BOTH DIRECTIONS ARE STATED because the rows are not alike, which is itself a measurement: three
+    of the five rows below hold the box over frames 0..49 exactly, and two — the vine shaft and the
+    lava — post no message at all.
     """
     active = buf[TEXT_BOX_ACTIVE]
+    if not expected:
+        assert active != TEXT_BOX_ACTIVE_SET, (
+            f"{what}: WB_TEXT_BOX_ACTIVE is set on frame {STAGE_ENTRY_BOX_FRAME}, but this row is "
+            f"the one measured to enter without a message box")
+        return
     assert active == TEXT_BOX_ACTIVE_SET, (
-        f"{what}: WB_TEXT_BOX_ACTIVE is {active:#04x}, not WB_TEXT_BOX_ACTIVE_SET — there is no "
-        f"message box on this frame and the caption describes one")
+        f"{what}: WB_TEXT_BOX_ACTIVE is {active:#04x}, not WB_TEXT_BOX_ACTIVE_SET — this row's "
+        f"entry no longer posts the message every other row's does")
     at = TEXT_MESSAGE_TABLE + ((TEXT_MESSAGE_LETS_GO - TEXT_MESSAGE_FIRST_ID)
                               << TEXT_MESSAGE_PTR_SHIFT)
     text = bytes(harness.BASE_IMAGE[_u32(harness.BASE_IMAGE, at):][:0x20])
@@ -946,11 +1114,11 @@ def _assert_the_stage_entry_box_is_up(buf, what):
     _assert_the_box_says(buf, TEXT_MESSAGE_LETS_GO, what)
 
 
-SKIPPED_STAGES = (_Stage(1, "stage2-town", STAGE_ENTRY_BOX_FRAME, _assert_the_stage_entry_box_is_up),
-                  _Stage(7, "stage4-desert", SKIP_FRAMES, None),
-                  _Stage(11, "stage5-castle", SKIP_FRAMES, None),
-                  _Stage(23, "stage8-lava", SKIP_FRAMES, None),
-                  _Stage(33, "stage11-keep", SKIP_FRAMES, None))
+SKIPPED_STAGES = (_Stage(7, "stage4-sky", 4, True),
+                  _Stage(11, "stage5-woods", 7, True),
+                  _Stage(12, "stage5-cave", 5, False),
+                  _Stage(16, "stage6-dungeon", 4, True),
+                  _Stage(23, "stage8-lava", 6, False))
 
 
 def render_skipped_stages():
@@ -964,21 +1132,26 @@ def render_skipped_stages():
     for stage in SKIPPED_STAGES:
         what = f"{stage.name} (sequence row {stage.row})"
         buf = _fresh(_stage_pokes(stage.row - 1, stage.row))
-        _run_the_boot_chain(buf, f"{what}: the row before it", at_row=stage.row - 1)
+        installed = _run_the_boot_chain(buf, f"{what}: the row before it", at_row=stage.row - 1)
         sprites = _entered_frame_loop()
         _type_the_cheat_and_skip(buf, sprites, what)
         before = _both_screens(buf)
-        _boot_stage(buf, what)
+        _boot_stage(buf, what, sprites_installed=installed)
         _assert_the_stage_load_left_the_panel(buf, before, what)
-        palette_at = _stage_palette_src(buf)
-        _play(buf, sprites, stage.frames, what)
         landed = _u16(buf, LEVEL_SEQ_INDEX) - 1
         assert landed == stage.row, (
             f"{what}: the skip landed on sequence row {landed}, not the row this picture names")
+        palette_at = _stage_palette_src(buf)
+        walk = _walk_direction(buf)
+
+        for frame in range(STAGE_ENTRY_BOX_FRAME + 1):
+            _step(buf, sprites, frame, walk, what)
+        _assert_the_stage_entry_box(buf, stage.entry_box, what)
+        frame, drawn = _play_to_a_busy_frame(buf, sprites, walk, stage.sprites, what,
+                                             first_frame=STAGE_ENTRY_BOX_FRAME + 1)
         print(f"    {stage.name}: sequence row {landed}, {_overlay_name(landed)}, "
-              f"round {_stage_number(buf)}")
-        if stage.claim is not None:
-            stage.claim(buf, what)
+              f"round {_stage_number(buf)}, walking "
+              f"{'left' if walk == JOY_LEFT else 'right'}, frame {frame}, {drawn} sprites")
         pictures.append(_screen(stage.name, buf, _drawn_screen(buf), palette_at))
     return pictures
 
@@ -993,7 +1166,7 @@ def render_skipped_stages():
 # the band, the screen address, the sub-word shift and the dispatch into one of src/blit.c's twelve.
 
 
-def _sprites_the_run_showed(buf, sprites, frames):
+def _sprites_the_run_showed(buf, sprites, walk, frames):
     """Every sprite index the stage's own play put into a screen record over `frames` frames.
 
     WHY THE SHEET IS THIS AND NOT THE FIRST N OF THE MARKED SET: stage 1 marks 143 descriptors and a
@@ -1004,7 +1177,7 @@ def _sprites_the_run_showed(buf, sprites, frames):
     shown = []
     marked = {descriptor.sprite for descriptor in _installed_descriptors(buf)}
     for frame in range(frames):
-        _run_frame(buf, sprites, joystick_for(frame))
+        _run_frame(buf, sprites, frame, joystick_for(frame, walk))
         for slot in range(ACTOR_SCREEN_RECORD_COUNT):
             sprite = _u16(buf, ACTOR_SCREEN_RECORDS + slot * ACTOR_SCREEN_RECORD_BYTES
                           + ACTOR_SCREEN_SPRITE)
@@ -1061,7 +1234,7 @@ def render_sprite_sheet():
     _run_the_boot_chain(buf, "the sprite sheet's stage")
     palette_at = _stage_palette_src(buf)
     sprites = _entered_frame_loop()
-    cast = _sprites_the_run_showed(buf, sprites, SHEET_SCAN_FRAMES)
+    cast = _sprites_the_run_showed(buf, sprites, _walk_direction(buf), SHEET_SCAN_FRAMES)
     slots = [(x, y) for y in SHEET_ROWS for x in SHEET_COLUMNS]
     assert len(cast) >= len(slots), (
         f"the run showed {len(cast)} sprite(s) and the sheet has {len(slots)} slots — it would be "
