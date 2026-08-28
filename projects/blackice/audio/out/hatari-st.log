@@ -1,0 +1,5 @@
+INFO : Hatari v2.6.1, compiled on:  Aug 15 2025, 14:15:22
+INFO : GEMDOS HDD emulation, C: <-> /Volumes/Workspace/repos/my_repos/atari/reverse/projects/blackice/audio/disk.
+INFO : OS clock ticks / second: 100
+WARN : No GEMDOS dir '/Volumes/Workspace/repos/my_repos/atari/reverse/projects/blackice/audio/disk/AUTO'
+INFO : SPEED: 1785.7 VBL/s (3000/1.7s), diff=0.0%

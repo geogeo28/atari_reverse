@@ -1,0 +1,14 @@
+INFO : Hatari v2.6.1, compiled on:  Aug 15 2025, 14:15:22
+INFO : GEMDOS HDD emulation, C: <-> /Volumes/Workspace/repos/my_repos/atari/reverse/projects/blackice/audio/disk.
+WARN : => EmuTOS country code: 3 (United Kingdom), PAL
+INFO : AVI recording has been started in /Volumes/Workspace/repos/my_repos/atari/reverse/projects/blackice/audio/out/audio-blackice.avi
+INFO : OS clock ticks / second: 100
+WARN : Bus Error reading at address $ffffa200, PC=$e00d98 addr_e3=e00d98 op_e3=4a10
+WARN : Bus Error reading at address $400000, PC=$e00d98 addr_e3=e00d98 op_e3=4a10
+WARN : Bus Error reading at address $6c4710, PC=$e00d98 addr_e3=e00d98 op_e3=4a10
+WARN : Bus Error reading at address $5d1234, PC=$e00d98 addr_e3=e00d98 op_e3=4a10
+WARN : Bus Error reading at address $6d3148, PC=$e00d98 addr_e3=e00d98 op_e3=4a10
+WARN : Bus Error reading at address $400000, PC=$e00d98 addr_e3=e00d98 op_e3=4a10
+WARN : Bus Error reading at address $d003c3, PC=$e00d98 addr_e3=e00d98 op_e3=4a10
+WARN : No GEMDOS dir '/Volumes/Workspace/repos/my_repos/atari/reverse/projects/blackice/audio/disk/AUTO'
+INFO : SPEED: 198.5 VBL/s (3450/17.4s), diff=0.0%

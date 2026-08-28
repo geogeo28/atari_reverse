@@ -1,0 +1,139 @@
+{
+ "speed": 6,
+ "rows": 24,
+ "order": [
+  0
+ ],
+ "frames_total": 144,
+ "sfx": [],
+ "events": [
+  {
+   "frame": 0,
+   "order": 0,
+   "row": 0,
+   "channel": 0,
+   "note": 21,
+   "hz": 110.03521126760563,
+   "instrument": "fall",
+   "tone": true,
+   "noise": false,
+   "sustains": true
+  },
+  {
+   "frame": 0,
+   "order": 0,
+   "row": 0,
+   "channel": 1,
+   "note": 45,
+   "hz": 440.14084507042253,
+   "instrument": "fall",
+   "tone": true,
+   "noise": false,
+   "sustains": true
+  },
+  {
+   "frame": 0,
+   "order": 0,
+   "row": 0,
+   "channel": 2,
+   "note": 12,
+   "hz": 65.41077969649398,
+   "instrument": "crash",
+   "tone": false,
+   "noise": true,
+   "sustains": false
+  },
+  {
+   "frame": 48,
+   "order": 0,
+   "row": 8,
+   "channel": 0,
+   "note": 15,
+   "hz": 77.78469197261978,
+   "instrument": "fall",
+   "tone": true,
+   "noise": false,
+   "sustains": true
+  },
+  {
+   "frame": 48,
+   "order": 0,
+   "row": 8,
+   "channel": 1,
+   "note": 39,
+   "hz": 310.9452736318408,
+   "instrument": "fall",
+   "tone": true,
+   "noise": false,
+   "sustains": true
+  },
+  {
+   "frame": 48,
+   "order": 0,
+   "row": 8,
+   "channel": 2,
+   "note": 12,
+   "hz": 65.41077969649398,
+   "instrument": "crash",
+   "tone": false,
+   "noise": true,
+   "sustains": false
+  },
+  {
+   "frame": 96,
+   "order": 0,
+   "row": 16,
+   "channel": 0,
+   "note": 10,
+   "hz": 58.27505827505828,
+   "instrument": "fall",
+   "tone": true,
+   "noise": false,
+   "sustains": true
+  },
+  {
+   "frame": 96,
+   "order": 0,
+   "row": 16,
+   "channel": 1,
+   "note": 34,
+   "hz": 233.2089552238806,
+   "instrument": "fall",
+   "tone": true,
+   "noise": false,
+   "sustains": true
+  },
+  {
+   "frame": 96,
+   "order": 0,
+   "row": 16,
+   "channel": 2,
+   "note": 12,
+   "hz": 65.41077969649398,
+   "instrument": "crash",
+   "tone": false,
+   "noise": true,
+   "sustains": false
+  },
+  {
+   "frame": 120,
+   "order": 0,
+   "row": 20,
+   "channel": 2,
+   "note": 12,
+   "hz": 65.41077969649398,
+   "instrument": "crash",
+   "tone": false,
+   "noise": true,
+   "sustains": false
+  }
+ ],
+ "symbol": "blackice_death",
+ "bytes": 264,
+ "band_speeds": [
+  11,
+  10,
+  9,
+  8
+ ]
+}

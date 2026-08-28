@@ -1,0 +1,42 @@
+{
+ "rate_hz": 12517,
+ "bytes": 36110,
+ "samples": [
+  {
+   "name": "gunshot",
+   "offset": 56,
+   "bytes": 4006,
+   "seconds": 0.3200447391547495
+  },
+  {
+   "name": "door",
+   "offset": 4062,
+   "bytes": 11266,
+   "seconds": 0.9000559239434369
+  },
+  {
+   "name": "pickup",
+   "offset": 15328,
+   "bytes": 3756,
+   "seconds": 0.30007190221299035
+  },
+  {
+   "name": "enemy_hit",
+   "offset": 19084,
+   "bytes": 2004,
+   "seconds": 0.16010226092514182
+  },
+  {
+   "name": "player_hurt",
+   "offset": 21088,
+   "bytes": 5634,
+   "seconds": 0.4501078533194855
+  },
+  {
+   "name": "enemy_death",
+   "offset": 26722,
+   "bytes": 9388,
+   "seconds": 0.7500199728369418
+  }
+ ]
+}

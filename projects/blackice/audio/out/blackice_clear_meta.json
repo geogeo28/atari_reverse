@@ -1,0 +1,175 @@
+{
+ "speed": 6,
+ "rows": 32,
+ "order": [
+  0
+ ],
+ "frames_total": 192,
+ "sfx": [],
+ "events": [
+  {
+   "frame": 0,
+   "order": 0,
+   "row": 0,
+   "channel": 0,
+   "note": 21,
+   "hz": 110.03521126760563,
+   "instrument": "rise",
+   "tone": true,
+   "noise": false,
+   "sustains": true
+  },
+  {
+   "frame": 0,
+   "order": 0,
+   "row": 0,
+   "channel": 1,
+   "note": 45,
+   "hz": 440.14084507042253,
+   "instrument": "rise",
+   "tone": true,
+   "noise": false,
+   "sustains": true
+  },
+  {
+   "frame": 0,
+   "order": 0,
+   "row": 0,
+   "channel": 2,
+   "note": 57,
+   "hz": 880.2816901408451,
+   "instrument": "ping",
+   "tone": true,
+   "noise": false,
+   "sustains": false
+  },
+  {
+   "frame": 48,
+   "order": 0,
+   "row": 8,
+   "channel": 0,
+   "note": 24,
+   "hz": 130.7531380753138,
+   "instrument": "rise",
+   "tone": true,
+   "noise": false,
+   "sustains": true
+  },
+  {
+   "frame": 48,
+   "order": 0,
+   "row": 8,
+   "channel": 1,
+   "note": 48,
+   "hz": 523.0125523012553,
+   "instrument": "rise",
+   "tone": true,
+   "noise": false,
+   "sustains": true
+  },
+  {
+   "frame": 72,
+   "order": 0,
+   "row": 12,
+   "channel": 2,
+   "note": 60,
+   "hz": 1050.420168067227,
+   "instrument": "ping",
+   "tone": true,
+   "noise": false,
+   "sustains": false
+  },
+  {
+   "frame": 96,
+   "order": 0,
+   "row": 16,
+   "channel": 0,
+   "note": 17,
+   "hz": 87.29050279329608,
+   "instrument": "rise",
+   "tone": true,
+   "noise": false,
+   "sustains": true
+  },
+  {
+   "frame": 96,
+   "order": 0,
+   "row": 16,
+   "channel": 1,
+   "note": 41,
+   "hz": 349.16201117318434,
+   "instrument": "rise",
+   "tone": true,
+   "noise": false,
+   "sustains": true
+  },
+  {
+   "frame": 120,
+   "order": 0,
+   "row": 20,
+   "channel": 1,
+   "note": 45,
+   "hz": 440.14084507042253,
+   "instrument": "rise",
+   "tone": true,
+   "noise": false,
+   "sustains": true
+  },
+  {
+   "frame": 120,
+   "order": 0,
+   "row": 20,
+   "channel": 2,
+   "note": 64,
+   "hz": 1315.7894736842106,
+   "instrument": "ping",
+   "tone": true,
+   "noise": false,
+   "sustains": false
+  },
+  {
+   "frame": 144,
+   "order": 0,
+   "row": 24,
+   "channel": 0,
+   "note": 21,
+   "hz": 110.03521126760563,
+   "instrument": "rise",
+   "tone": true,
+   "noise": false,
+   "sustains": true
+  },
+  {
+   "frame": 144,
+   "order": 0,
+   "row": 24,
+   "channel": 1,
+   "note": 48,
+   "hz": 523.0125523012553,
+   "instrument": "rise",
+   "tone": true,
+   "noise": false,
+   "sustains": true
+  },
+  {
+   "frame": 168,
+   "order": 0,
+   "row": 28,
+   "channel": 2,
+   "note": 69,
+   "hz": 1760.5633802816901,
+   "instrument": "ping",
+   "tone": true,
+   "noise": false,
+   "sustains": false
+  }
+ ],
+ "symbol": "blackice_clear",
+ "bytes": 312,
+ "band_speeds": [
+  11,
+  10,
+  9,
+  8
+ ]
+}

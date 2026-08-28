@@ -1,0 +1,76 @@
+{
+ "rate_hz": 12517,
+ "bytes": 60176,
+ "samples": [
+  {
+   "name": "buster_shot",
+   "offset": 88,
+   "bytes": 1252,
+   "seconds": 0.10002396740433012,
+   "priority": 1
+  },
+  {
+   "name": "spike_shot",
+   "offset": 1340,
+   "bytes": 4382,
+   "seconds": 0.3500838859151554,
+   "priority": 2
+  },
+  {
+   "name": "watchdog_snarl",
+   "offset": 5722,
+   "bytes": 3756,
+   "seconds": 0.30007190221299035,
+   "priority": 1
+  },
+  {
+   "name": "sentry_charge",
+   "offset": 9478,
+   "bytes": 5634,
+   "seconds": 0.4501078533194855,
+   "priority": 2
+  },
+  {
+   "name": "gate_open",
+   "offset": 15112,
+   "bytes": 6884,
+   "seconds": 0.5499720380282815,
+   "priority": 2
+  },
+  {
+   "name": "token_grab",
+   "offset": 21996,
+   "bytes": 3130,
+   "seconds": 0.25005991851082526,
+   "priority": 2
+  },
+  {
+   "name": "trace_alarm",
+   "offset": 25126,
+   "bytes": 11266,
+   "seconds": 0.9000559239434369,
+   "priority": 3
+  },
+  {
+   "name": "player_hit",
+   "offset": 36392,
+   "bytes": 3756,
+   "seconds": 0.30007190221299035,
+   "priority": 3
+  },
+  {
+   "name": "enemy_dissolve",
+   "offset": 40148,
+   "bytes": 5008,
+   "seconds": 0.40009586961732047,
+   "priority": 2
+  },
+  {
+   "name": "exfil_siren",
+   "offset": 45156,
+   "bytes": 15020,
+   "seconds": 1.1999680434608933,
+   "priority": 3
+  }
+ ]
+}
