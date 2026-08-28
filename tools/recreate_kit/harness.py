@@ -1156,7 +1156,14 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excl
     _vet_hw_state(entry, po_regs)
     _vet_schedule_ran_the_same_wait(entry, po_regs)
     pc_final = bytes(buf)
-    bad = [a for a in range(guard_lo) if po_final[a] != pc_final[a] and not excluded(a)]
+    # Same fast path as the plain compare in differential(): the byte-by-byte walk below is ~200x
+    # the cost of one bytes() compare over a 1 MiB prefix, and it is only ever needed to LOCATE a
+    # difference. Measured on Zynaps' suite, where every attribution pass is clean: 49 ms per call
+    # against 0.24 ms, ~15% of the whole run.
+    if bytes(po_final[:guard_lo]) == bytes(pc_final[:guard_lo]):
+        bad = []
+    else:
+        bad = [a for a in range(guard_lo) if po_final[a] != pc_final[a] and not excluded(a)]
     if bad:
         a = bad[0]
         raise AssertionError(

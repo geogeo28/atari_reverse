@@ -182,6 +182,19 @@ Ghidra's `PrgLoader` does too), and when a constant lands suspiciously near the 
 whether its own image offset is in the relocation table. See
 [`binary-formats.md`](binary-formats.md) for the table's format.
 
+**`prg_dis.py --base` relocates the operands too, and did not always.** Given `--base`, the listing
+now prints an absolute-long operand the relocation table lists at its RUN-TIME address, so a line
+reads `move.l $195f4.l,d5   <RELOC ptr>` rather than `move.l $95f4.l,d5` — the operand agrees with
+the address column on its left and with the project's `names.txt`, and the `<RELOC ptr>` tag is what
+says the value was adjusted. Operands the table does NOT list are left exactly as stored, which is
+what keeps hardware registers (`lea $ffff8800.l,a1`) and 68000 vectors (`$70.l`) readable.
+
+Before that change the address column was relocated and the operands were not, so every
+reloc-flagged operand in a `--base` listing was one load base short. If you are reading an OLDER
+listing — or any tool that prints the raw longword — add the load base to any operand tagged
+`<RELOC ptr>` before looking it up. It is a quiet failure: the wrong address usually exists, so the
+name you find belongs to some other variable.
+
 **A BYTE write into a register is a byte write, and the three bytes above it are whoever's they
 were.** `move.b #$2,d7` leaves d7's bits 8..31 alone, so a routine that then reads d7 as a *word* is
 reading its own immediate ORed with whatever the previous call parked above it. That makes the

@@ -13,6 +13,9 @@
 
 #include <stdint.h>
 
+#include "machine.h"   /* the shared 68000 primitives: loop_passes + COUNT_MASK_*, the rotates,
+                        * the big-endian accessors. What is below is only what THIS game adds. */
+
 #define SCREEN_ROW_BYTES 0xa0u   /* 160: one low-res scanline (320 px / 16 px per cell * 8 bytes) */
 #define CELL_PIXELS      16u     /* pixels spanned by one 4-plane cell */
 #define CELL_BYTES       8u      /* bytes in one 4-plane cell (four bitplane words) */
@@ -20,17 +23,10 @@
                                   * (`moveq #$4` in the original) */
 
 /* ================================================================================================
- * 68000 semantics the reconstructions lean on.
+ * 68000 semantics the reconstructions lean on. The width-independent ones (loop_passes and its
+ * count masks, the 32- and 16-bit rotates) moved to the kit's machine.h, included above, so that
+ * Zynaps' byte-identical copy could go away; what stays here is what only Joust's code shapes need.
  * ============================================================================================= */
-
-/* The 68000 counts a loop down with `subq` + `bne`, which tests only the operand size: the loop
- * always runs at least once, and a zero count wraps to the full range of that size. */
-#define COUNT_MASK_BYTE  0xffu     /* `subq.b #1,dn`: 0 means 256 passes */
-#define COUNT_MASK_WORD  0xffffu   /* `subq.w #1,dn`: 0 means 65536 passes */
-
-static inline unsigned loop_passes(uint32_t count, uint32_t size_mask) {
-    return ((count - 1u) & size_mask) + 1u;
-}
 
 /* A shift or rotate with a register count takes that count from the low 6 bits of the register,
  * then performs that many single-bit steps. For a shift that means anything >= 32 clears the

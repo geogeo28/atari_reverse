@@ -4,8 +4,10 @@
 Stdlib only. Priority is *correct instruction length* (via 68000 effective-address
 extension-word rules) so the linear sweep does not desync; mnemonic fidelity is
 "good enough for a first pass" — refine in Ghidra. Traps are auto-named, and
-longwords listed in the relocation table are flagged (they are absolute pointers,
-i.e. future labels).
+longwords listed in the relocation table are flagged `<RELOC ptr>` (they are
+absolute pointers, i.e. future labels) AND printed relocated: the file stores them
+text-relative, so with --base the operand shown is the address the instruction will
+really touch, matching the address column and the project's names.txt.
 
 Usage: python3 prg_dis.py FILE.PRG [--data] [--start OFF] [--len N] [--base ADDR]
 
@@ -17,6 +19,8 @@ line and silently mismatches the project's names.txt. See docs/m68k-disassembly.
 """
 import struct
 import sys
+
+HEADER_LEN = 28   # GEMDOS .PRG header; a file offset is an image offset plus this
 
 # --- GEMDOS (trap #1) / BIOS (#13) / XBIOS (#14) function names -----------------
 GEMDOS = {
@@ -95,7 +99,8 @@ def parse_reloc(d, h):
 EA_AN = 1  # ea mode field 001 = "An direct"; illegal for many ops, which makes it a decode tell
 
 
-def ea(d, p, mode, reg, size, pc_after_op):
+def _ea(d, p, mode, reg, size, pc_after_op, fixes=None, base=0):
+    """Render one effective address. `fixes`/`base` relocate an abs.l the reloc table lists."""
     if mode == 0: return "d%d" % reg, 0
     if mode == 1: return "a%d" % reg, 0
     if mode == 2: return "(a%d)" % reg, 0
@@ -107,7 +112,16 @@ def ea(d, p, mode, reg, size, pc_after_op):
         return "idx(a%d)" % reg, 2
     if mode == 7:
         if reg == 0: return "$%x.w" % rd16(d, p), 2
-        if reg == 1: return "$%x.l" % rd32(d, p), 4
+        if reg == 1:
+            value = rd32(d, p)
+            # A longword in the relocation table holds a pointer stored TEXT-RELATIVE, which the
+            # GEMDOS loader fixes up by adding the load base. Print what the instruction will
+            # actually address at run time, so the operand agrees with the address column on the
+            # left (and with names.txt) instead of being one load base short. disasm() still tags
+            # the line `<RELOC ptr>`, which is what says the operand was adjusted.
+            if fixes is not None and (p - HEADER_LEN) in fixes:
+                value = (value + base) & 0xffffffff
+            return "$%x.l" % value, 4
         if reg == 2:
             disp = s16(rd16(d, p))
             return "$%x(pc)" % ((pc_after_op + disp) & 0xffffff), 2
@@ -179,11 +193,18 @@ CC2 = ["t", "f", "hi", "ls", "cc", "cs", "ne", "eq",
        "vc", "vs", "pl", "mi", "ge", "lt", "gt", "le"]
 
 
-def decode(d, p, base):
-    """Decode one instruction at file offset p. Return (nbytes, text)."""
+def decode(d, p, base, fixes=None):
+    """Decode one instruction at file offset p. Return (nbytes, text).
+
+    `fixes` is the relocation table's image offsets (parse_reloc); pass it with a `base` to have
+    absolute-long operands printed relocated. Omitted, operands print exactly as stored.
+    """
     w = rd16(d, p)
     pc2 = base + (p - 28) + 2  # image address just past opcode word (for pc-relative)
     top = w >> 12
+
+    def ea(d, p, mode, reg, size, pc_after_op):
+        return _ea(d, p, mode, reg, size, pc_after_op, fixes, base)
 
     def two_ea(size, moff, mode, r):  # helper: render ea and add its length
         t, c = ea(d, p + 2, mode, r, size, pc2)
@@ -397,7 +418,7 @@ def disasm(d, h, start, length, fixes, base=0):
         img_off = p - 28          # offset within the loaded image (what `fixes` indexes)
         addr = img_off + base     # address the instruction runs at
         try:
-            n, txt = decode(d, p, base)
+            n, txt = decode(d, p, base, fixes)
         except Exception as e:
             n, txt = 2, "dc.w $%04x  ; <decode err %s>" % (rd16(d, p), e)
         # trap annotation
@@ -469,8 +490,8 @@ def main():
         else "looks like plain code+data"
     print("text entropy=%.2f bits/byte  -> %s" % (ent, hint))
     print("LOAD BASE = 0x%x  -> every address below is %s" %
-          (base, "a RUNTIME address (image offset + base)" if base
-           else "an IMAGE OFFSET (pass --base to get runtime addresses)"))
+          (base, "a RUNTIME address (image offset + base), operands tagged <RELOC ptr> included"
+           if base else "an IMAGE OFFSET (pass --base to get runtime addresses)"))
     print("=" * 78)
 
     if "--data" in sys.argv:

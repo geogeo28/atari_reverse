@@ -56,6 +56,34 @@ static inline uint32_t sign_ext8(uint32_t value) { return (uint32_t)(int32_t)(in
  * bits whichever way the value is read. */
 static inline uint32_t addr_add(uint32_t base, uint32_t delta) { return base + delta; }
 
+/* HOW MANY PASSES A DOWN-COUNTING LOOP MAKES. The 68000 has no loop instruction that counts a
+ * register to zero and tests it in one width-independent way, so a reconstruction has to say which
+ * of the two idioms it is transcribing. This models the `subq`+`bne` one:
+ *
+ *     loop:  ...body...
+ *            subq.w #1,Dn
+ *            bne    loop
+ *
+ * `count` is what Dn holds at the TOP of the first pass. `bne` tests only the operand size, so the
+ * body always runs at least once and a count of 0 wraps to the full range of that size (0x100 for
+ * `.b`, 0x10000 for `.w`) rather than running none.
+ *
+ * A `dbf Dn,loop` loop is the SAME function with `Dn + 1`, not the same argument: `dbf` decrements
+ * and then exits at -1 rather than at 0, so a register holding N makes N+1 passes. A caller
+ * transcribing a `dbf` therefore hands this the passes the register stands for, which is usually
+ * already what the surrounding arithmetic computed — Zynaps' `lsr.w #1,d2 / sub.w #$1,d2 / dbf`
+ * leaves `d2 = words - 1` and the reconstruction passes `words`.
+ *
+ * Both projects previously carried byte-identical private copies of this (joust.h, zynaps.h) whose
+ * comments disagreed about which instruction it modelled; that is why the semantics are stated here
+ * and nowhere else. */
+#define COUNT_MASK_BYTE 0xffu     /* `subq.b #1,Dn` + `bne`: 0 means 256 passes */
+#define COUNT_MASK_WORD 0xffffu   /* `subq.w #1,Dn` + `bne`: 0 means 65536 passes */
+
+static inline unsigned loop_passes(uint32_t count, uint32_t size_mask) {
+    return ((count - 1u) & size_mask) + 1u;
+}
+
 /* 68k `rol.l #n,Dn` / `rol.l Dm,Dn` — a 32-bit ROTATE, not a shift: the bits that leave the top come
  * back in at the bottom. Total for EVERY count a caller can hand it, which C's own shifts are not:
  *
@@ -96,6 +124,31 @@ static inline uint32_t rotate_right32(uint32_t value, unsigned count) {
     return (value >> count) | (value << (32 - count));
 }
 
+/* 68k `rol.w` / `ror.w` — the same pair one operand size down, and total on the same terms: a
+ * 16-bit rotate is cyclic mod 16, so `count & 15` is the register form's own mod rather than a
+ * clamp, and it makes a count of 0 the 68000's no-op where C's `value >> 16` is undefined. The
+ * immediate form's 0-means-8 encoding applies here too — decode the count field before calling.
+ *
+ * `rotate_right16` is Zynaps' sprite pre-shifter, which turns one bitmap word into a bank of
+ * phase-shifted copies; `rotate_left16` has no caller yet and is here for the same reason the
+ * 32-bit pair is a pair — an asymmetric set reads as an oversight at the call site that needs the
+ * other direction. */
+#define ROTATE_COUNT_MASK_WORD 0xfu
+
+static inline uint16_t rotate_left16(uint16_t value, unsigned count) {
+    count &= ROTATE_COUNT_MASK_WORD;
+    if (count == 0)
+        return value;
+    return (uint16_t)((value << count) | (value >> (16u - count)));
+}
+
+static inline uint16_t rotate_right16(uint16_t value, unsigned count) {
+    count &= ROTATE_COUNT_MASK_WORD;
+    if (count == 0)
+        return value;
+    return (uint16_t)((value >> count) | (value << (16u - count)));
+}
+
 /* 68k `.b` op on a word register: the result byte replaces the low byte, and the high byte is
  * left untouched (byte ops don't carry into it) — e.g. addq.b / asl.b applied to a data reg. */
 static inline uint16_t set_low_byte(uint16_t word, uint8_t byte) {
@@ -120,6 +173,16 @@ static inline uint32_t set_low_word(uint32_t value, uint16_t low) {
  * subtrahend borrowed. They are named rather than spelt at each site because `(a + b) < a` is the
  * shape a reader mistakes for a bounds check. `neg` is `word_sub_extend(0, value)`, which is set
  * unless the operand was zero. */
+/* THE RESULT `sub.w` LEAVES IN A REGISTER HOLDING A LONGWORD: only the low word is touched, and
+ * the borrow out of it does NOT reach the high half. So `lsl.l #3,d5 / sub.w d2,d5` is 7*d2 only
+ * while 8*d2 fits in 16 bits; above that the high word keeps the un-decremented product and the
+ * result is 0x10000 too large. Named because `7 * n` is what such a sequence is nearly always
+ * written as, and the two stop agreeing exactly where a reconstruction stops being faithful.
+ * (The flag half of the same instruction is `word_sub_extend` below.) */
+static inline uint32_t word_sub(uint32_t reg, uint16_t subtrahend) {
+    return set_low_word(reg, (uint16_t)((uint16_t)reg - subtrahend));
+}
+
 static inline unsigned word_add_extend(uint16_t augend, uint16_t addend) {
     return (uint16_t)(augend + addend) < augend;
 }
