@@ -120,6 +120,13 @@ mismatches and exits nonzero. Run it with the workspace's python — `python3
 tools/extract_gfx.py [OUT_DIR]`, output defaulting to `out/gfx` (gitignored, like the rest of the
 game's data). It needs Pillow.
 
+`gen_readme_assets.py` is the smaller, tracked cousin of that: it renders the workspace README's
+Wonder Boy gallery into `assets/wonderboy/*.png` by *running the reconstruction* rather than by
+decoding the files — the four composed boot slices and `game_main_loop` itself, host-side, with the
+game's resources served across the kit's file-load seam and no emulator or TOS ROM in the loop. Run
+it under `recreate/`'s venv (`./.venv/bin/python ../gen_readme_assets.py`); it renders the set twice
+and refuses to write a picture whose two renderings differ.
+
 ## Hearing the music
 
 `tools/extract_audio.py` is the audio twin — but where the art sits in data files, the music is a

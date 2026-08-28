@@ -17364,7 +17364,9 @@ media could produce, and it turns out to have had a name in the original binary 
 routine that already existed, `load_resource_by_index` ($e782), which now carries two writes the
 original makes below the cut.
 
-**`make test`: 6,461 from a clean `build/`** (6,457 before; +1 for the seam's re-arm differential,
+**`make test`: 6,462 from a clean `build/`** (this row said 6,461 when it was written; the extra
+case is the retraction scanner's, which parametrizes over RETRACTED_PHRASES — the addendum below
+registered one more phrase in it) (6,457 before; +1 for the seam's re-arm differential,
 +1 for the one-call-site gate below, and +2 for the two phrases registered in
 `test_boot_inventory.py`'s `RETRACTED_PHRASES`, which is a `parametrize` set and so one entry per
 case. The refusal arm's fuse assertion is not a case of its own — it rides on the error-arm case that
@@ -17592,7 +17594,8 @@ this port sent not at all.
 
 **Verified 330, 41,652 bytes — UNCHANGED.** Nothing was reconstructed here either; what changed is
 `atari/wonderboy_main.c`'s `install`, which now reproduces the eight-byte boot link it had been
-skipping. `make test` is **6,461 from a clean `build/`**, unchanged, and that is the honest number:
+skipping. `make test` is **6,462 from a clean `build/`** (6,461 when this was written, before this
+addendum registered one more RETRACTED_PHRASES entry of its own), unchanged, and that is the honest number:
 the fix is a store to a hardware register in the on-target shim, which the host differential has no
 image byte to see. **The surfaces it names are two smoke rows**, below.
 

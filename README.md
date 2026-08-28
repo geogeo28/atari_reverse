@@ -3,7 +3,7 @@
 Recovering lost 1980s Atari ST games from their shipped executables: disassemble one, name every
 function, rewrite it as readable C **proven byte-for-byte against the original machine code**, and
 run that C back on a 68000. The tooling and the [documentation](docs/README.md) are game-agnostic —
-point them at any GEMDOS `.PRG`. **Two games are solved with them.**
+point them at any GEMDOS `.PRG`. **Three games are solved with them.**
 
 <p align="center">
   <img src="assets/buggyboy/race-leg1.png" width="640" alt="Buggy Boy in-race frame rendered by the C reconstruction">
@@ -23,6 +23,14 @@ is not shaped around the first: **75/75 functions verified** · **4368 different
 playable `JOUST.PRG` cross-compiled back to m68k and pinned against the shipped binary frame by
 frame. It stops at the proving stage — there is **no Joust remaster**. See
 [The second game — Joust](#the-second-game--joust).
+
+**Wonder Boy in Monsterland** (Activision/Sega, 1989) is the third, and the first taken from
+original, uncracked disks rather than from a release someone had already stripped: **330 functions
+verified** · **41,652 bytes of the original's machine code** · **6462 differential tests** · and a
+`.PRG` that is the first thing in this repository to leave the emulator entirely. It boots a **real
+4 MB STE from its own 720 KB floppy**, through TOS's `AUTO` folder, with no host in the machine —
+and three sessions at that machine found two defects every emulated surface here had been green on.
+See [The third game — Wonder Boy in Monsterland](#the-third-game--wonder-boy-in-monsterland).
 
 > **No game data is distributed here.** No `.PRG`, no `COURSES.DAT`, no `GRAPHICS.GRA`, no
 > `HIGH.SCO`, no TOS ROM. Bring your own copy; see [Credits & legal](#credits--legal).
@@ -56,7 +64,9 @@ against stage 2's verified cores.
 
 Buggy Boy went through all three. Joust goes through the first two and then straight onto the
 68000: same disassemble-and-name loop, same differential proof, same cross-compile back to a `.PRG`
-— no stage 3.
+— no stage 3. Wonder Boy takes the same two stages and then carries the `.PRG` one rung further
+than either: not just onto the 68000 under an emulator, but onto a **real Atari STE, booted from a
+720 KB floppy the build writes itself**, which is where the last two bugs were found.
 
 ---
 
@@ -239,9 +249,9 @@ hand-off no C `_start` can make) that is disclosed rather than papered over.
 Rendered **host-side by the reconstruction**, with no emulator and no TOS ROM in the loop:
 `projects/joust/gen_readme_assets.py` loads your own `JOUST.PRG` through the kit, drives the
 verified cores over ctypes exactly as the tests do, and de-interleaves the framebuffer they paint
-with the game's own palette words. Every picture is a function of the binary alone — the high-score
-record staged is the blank one the `.PRG` itself carries, not the save file next to it — so the
-whole set is byte-identical every run.
+with the game's own palette words. Every picture is a function of the binary alone — the
+high-score record staged is the blank one the `.PRG` itself carries, not the save file next to it
+— so the whole set is byte-identical every run.
 
 | Title screen | Wave 1 begins | A joust, and a loose egg |
 |:---:|:---:|:---:|
@@ -286,6 +296,163 @@ in the original, reproduced rather than tidied.
 
 ---
 
+## The third game — Wonder Boy in Monsterland
+
+[`projects/wonderboy/`](projects/wonderboy/) is the same pipeline pointed at a game that never
+reaches an operating system. `AUTO/SWB.PRG` makes **one trap instruction in 136 KB** — a `Super` —
+and drives the WD1772 floppy controller and the DMA chip itself, with its own FAT12 layer, because
+the copy protection lives in sectors numbered outside the standard range that no OS call can
+address. It also copies itself to the absolute address `$400` and lives there, so Ghidra recovers
+57 functions at the workspace's default load base and 186 at the right one. Two original Pasti
+`.stx` images go in; a solved resource cruncher, a decoded FAT12 filesystem and a named 68000
+program come out.
+
+**Four things had to move in the tooling, and three of them are now shared.** The kit gained a
+**file-load seam**: a game whose boot chain bottoms out in a sector driver cuts it at the lowest
+routine whose inputs are *file-shaped* — a name and a destination — and calls `disk_read_file`
+across the cut, which is the staged-file model off target and real GEMDOS on it
+([`TRAP_MODEL.md`](tools/recreate_kit/TRAP_MODEL.md)'s Phase 9). The **boot chain is composed from
+slices** rather than ported as one routine, because the original cuts itself into four with fire
+waits only an IKBD interrupt can end: `boot_title_screen`, `boot_credits_screen`, `boot_load_stage`
+and `boot_prompt_screen`, each verified whole against the oracle across the seam. The port has
+**one shifter sink** (`src/shifter.c`) — the screen base and the sixteen colour registers are off
+the 68000's 24-bit bus as far as the loaded image goes, so every write to them meets in one file
+with one on-target arm, and a build gate refuses a second copy of it. And `atari/mkprg.py`,
+`tools/st_build.py`, [`atari/HARDWARE.md`](projects/wonderboy/recreate/atari/HARDWARE.md) and
+`tools/assert_trap_registers.sh` are what turn the cross-compiled cores into a **bootable 720 KB
+FAT12 floppy** and keep them safe on the way — that last one because TOS preserves fewer registers
+across a trap than GCC's m68k ABI believes are callee-saved, which was three bombs in Buggy Boy.
+
+**Status: 330 functions verified · 41,652 bytes of the original's machine code · 6462 differential
+tests** (plus 392 in the shared kit), and the per-function table, every boundary and every limit
+that is disclosed rather than closed are in
+[`recreate/STATUS.md`](projects/wonderboy/recreate/STATUS.md). What the harness can and cannot see
+is measured rather than asserted:
+[`recreate/PORTABILITY.md`](projects/wonderboy/recreate/PORTABILITY.md) reports that **80.7 % of
+the program's believed code is now inside the measurement**, and that only 226 bytes of it remain
+genuinely unknown.
+
+**On target the ladder runs to ten rungs.**
+[`recreate/atari/`](projects/wonderboy/recreate/atari/README.md) cross-compiles the same verified
+cores to m68k and climbs from "a real machine drives the reconstruction" (M1: `vbl_handler` runs on
+the level-4 autovector fifty times a second, and its own word has to agree with the shim's
+independent tick count) to "the reconstruction boots itself off a floppy" (M10). In between: at four
+anchored frames of real play the **32000 framebuffer bytes**, the **sixteen hardware pens** and
+Hatari's own **rendered picture** are identical to the shipped 1989 binary's, on EmuTOS and on TOS
+1.04 (M2/M5); the screen-base publications match flip for flip, and the shipped binary's 1,155 PSG
+writes over the window are an exact prefix of ours (M6); the boot chain then **recomputes** the
+post-boot RAM those rungs had staged from a dump of the original — **~522,500 of 523,272 bytes
+identical, the rest inside ten named bands and nothing unnamed left over** (M8); and M9 wires every
+one of `game_main_loop`'s five endings back into the boot chain, so `atari/run.sh` opens a build
+that boots its own title screen, reloads on a round end and restarts on ESC. M10 puts all forty
+resources and the 144,831-byte `WB-ownrun.PRG` on one 720 KB disk — **689,152 bytes in 673 clusters,
+38,912 free of 728,064** — booted by TOS's own `AUTO` loader with no host directory behind it.
+
+**Then somebody switched an Atari on, and it said two things nothing here could.** The disk booted
+a 4 MB STE (TOS 1.62) **to the desktop**: our own `vbl_handler` was counting down an idle fuse that
+expired one vblank into the first GEMDOS sector read, dropped the drive-select lines mid-transfer,
+and the ROM's retry did not re-select. The protocol that arms and disarms that fuse lives in two
+instructions *below* the declared seam, so the substitution had dropped it — and because the arm
+overwrites the disarm, a final-memory differential sees the same bytes either way and cannot ask
+the question at all. Fixed, and the disk came back with **the title screen up and fire doing
+nothing**. The boot's eight-byte `init_ikbd` sends the only IKBD command in the whole binary —
+`$12`, *disable mouse* — and the port had not reproduced it; on a real ST joystick 1's fire line
+and the mouse's right button are the same wire, so the 6301 was reporting every press as a mouse
+packet the game does not read. The machine's own record showed 35 IKBD bytes delivered and not one
+of them a joystick report. Both fixed, and the third run played: title, fire, credits, fire, stage
+1's overlay, tiles and sprites, and the frame loop — on the machine. The two shapes are entries
+**11** and **12** of [`docs/on-target-execution.md`](docs/on-target-execution.md)'s twelve-entry
+taxonomy — *a live interrupt handler reading state whose protocol lives below a declared seam*, and
+*a gate crossed by a poke is a gate whose input path never ran* — and they are Wonder Boy's own two
+contributions to it from the machine. It is not the first: entry 3's register half is Buggy Boy's
+three-bombs-on-the-STE crash, found the same way.
+
+### Gallery — Wonder Boy
+
+Rendered **host-side by the reconstruction**, with no emulator and no TOS ROM in the loop:
+`projects/wonderboy/gen_readme_assets.py` loads your own `SWB.PRG` through the kit, serves the
+game's own resource files across the file-load seam, and drives the same entry points the tests
+drive — the four composed boot slices and `game_main_loop` itself — then de-interleaves the
+framebuffer they paint with the game's own palette words. One thing the seam cannot do:
+`SPRITES.CRU` is 279,034 bytes and the kit's whole staging area is 258,048, so the file is placed
+at the address the boot's own load lands on and the stage's sprite install is redone over it whole
+— with every marked sprite's installed cells then checked byte for byte against the file, because
+without that check 28 of stage 1's 143 sprites quietly installed depacked tile data instead. The
+two vertical-blank waits inside `flip_screen` are answered by the kit's scheduled-write model, the
+play frames come from one fixed joystick script, and the video address counter both of the game's
+PRNGs read is a declared constant — so the whole set is a function of the binary and the game's
+own files, which the script asserts by rendering it twice and comparing.
+
+| Title | Credits | The data-disk prompt |
+|:---:|:---:|:---:|
+| ![](assets/wonderboy/title.png) | ![](assets/wonderboy/credits.png) | ![](assets/wonderboy/prompt.png) |
+
+`boot_title_screen` ($e512..$e550) arms the protection, asks `load_resource_by_index` for
+`TITLESCR.RAD` across the seam, inflates it with `rad_depack` straight onto the screen buffer and
+hands its palette row to `set_palette`. `boot_credits_screen` does the same for `CREDITS.RAD`,
+copies the result down onto the buffer the shifter is showing, and then runs `game_restart_reset`
+over it — a new game, which is what draws the status panel's lives over the picture. The third is
+`boot_prompt_screen` ($e494..$e4d4), the slice all three of the game's `jmp $e494.l`
+endings land in: ESC, the game-over box expiring, and the message terminator the protection's own
+failure path also reaches.
+
+| Stage 1 begins | …and is played | The cast |
+|:---:|:---:|:---:|
+| ![](assets/wonderboy/stage1-start.png) | ![](assets/wonderboy/stage1-walk.png) | ![](assets/wonderboy/sprites.png) |
+
+`boot_load_stage` ($e5ba..$f8b4) is the fourth slice and the longest: the level-sequence row, its
+overlay, `TILEDATA.RAD` through `bg_tile_install`, `SPRITES.CRU` through `sprites_cru_install`,
+the actor tables, and `stage_load_window`, which fills the scroll engine's **eight pre-shifted
+copies** of the visible window. Everything after that is the frame loop's own fifteen calls, run
+whole and in its order: the two keyboard ones, then the round bonus, then `panel_refresh_frame`
+over `hud_draw_lives`, `hud_draw_meter` and the rest, the scene driver, and
+`game_latch_input_and_step_actors` — which is where the joystick edge and every actor's behaviour
+happen. Then the drawing: `project_followed_actor`, `bg_scroll_run_queue`, `project_actor_list`,
+`bg_scroll_blit` — whose sixteen straight-line bodies, `bg_scroll_copy_x0` through `_x15`, differ
+only in where each splits its thirty `move.l`s about the source row's 128-byte ring seam —
+`game_snap_follow_cursor`, `sprite_draw_pass` and the twelve blitters it dispatches into
+(`blit_sprite_w2`..`w5` and their left- and right-clipping siblings), `actor_spawn_pass`,
+`text_run_message_box`, and `flip_screen` last. The middle frame is lap 200 of a fixed joystick
+script — right held, jump on a beat — which has the hero in the air beside the shop's door with a
+snail on the ledge above him. The sheet beside it is the game's own bitmaps at their own
+addresses, drawn by `sprite_draw_pass` onto the screen `clear_both_screens` left behind; only the
+destinations are ours. Which twenty are shown is not a list chosen here either — it is every
+sprite that same run actually put into a screen record, so the sheet is this stage's cast rather
+than a selection: four green crawlers, two snails, four frames of the hero's own walk, the
+seven-frame spin of a gold coin, and three boulders.
+
+| Stage 2 — the town | Stage 4 — the desert | Stage 5 — the castle wall |
+|:---:|:---:|:---:|
+| ![](assets/wonderboy/stage2-town.png) | ![](assets/wonderboy/stage4-desert.png) | ![](assets/wonderboy/stage5-castle.png) |
+
+The later stages are reached through **the game's own level-skip cheat**, typed rather than poked:
+`game_key_actions`' walk at $5a8 steps a cursor along the four scancodes the binary carries at $608
+— `$61 $30 $13 $1e`, which are UNDO, B, R and A — and raises the cheat word when the cursor meets
+its terminator. With that word up, N takes the arm at $556, which pops the frame loop's return
+address and `jmp`s to $e5ba: `boot_load_stage` again, one sequence row further on. The
+reconstruction cannot make that transfer, so it reports `WB_KEY_ACTIONS_LEVEL_SKIP` and the caller
+runs the slice — which is exactly the wiring the on-target build uses for the same ending. Each
+picture above is 120 frames of the same joystick script after the new stage has loaded, and each is
+a different tile bank and a different row of the in-program palette table.
+
+| Stage 8 — a message box | Stage 11 — the keep, the last round |
+|:---:|:---:|
+| ![](assets/wonderboy/stage8-message.png) | ![](assets/wonderboy/stage11-keep.png) |
+
+`text_run_message_box` is the frame loop's fourteenth call, and this is it working: the box, its
+frame and its two lines of glyphs are drawn over the finished picture every frame a message is
+posted. What it says here is the cheat's *other* effect — a raised cheat word takes
+`player_meter_empty_check`'s revival arm with an empty medicine slot and then skips the re-arm, so
+the meter refills on every death for ever — which is why the LIFE meter beside it reads 20 of 28,
+the `WB_PLAYER_METER_REVIVE` that arm writes rather than a full bar. The keep is round **eleven**,
+the last the level sequence has; the panel's stage number is packed BCD, so `$11` is 11 and not 17.
+Four of the data disk's overlays are damaged on the pressed original — `OVALAY4B`, `OVALAY5B`,
+`OVALAY6A` and `OVALAY9A`, the only files this project keeps two corpora of — and every picture here
+is rendered from the **authentic** `bin/disk2/` dump, with the script refusing to load one of those
+four, so no stage that needs them is shown.
+
+---
+
 ## Quick start
 
 **Prerequisites:** Ghidra 12 (scripts are Java — Ghidra 12 dropped Jython), JDK 21, Python 3.10+,
@@ -309,6 +476,16 @@ cd ../../joust/recreate
 make venv && make test          # the shared kit's oracle + the C cores, the differential suite
 ./.venv/bin/python ../gen_readme_assets.py   # re-render this README's Joust images, host-side
 bash atari/build.sh && bash atari/run.sh     # ...or play it on a 68000, under Hatari
+
+# 4. ...or the Wonder Boy one (needs your own bin/disk1/ and bin/disk2/ under projects/wonderboy/)
+cd ../../wonderboy/recreate
+make venv && make test                       # the shared kit + the C cores, the differential suite
+./.venv/bin/python ../gen_readme_assets.py   # re-render this README's Wonder Boy images, host-side
+bash atari/build.sh ownrun && bash atari/run.sh   # ...or play it on a 68000, under Hatari
+python3 atari/smoke.py floppy                # ...or build atari/out/WBOOT.ST — a bootable 720 KB
+                                             # FAT12 floppy carrying the build and all 40 resources.
+                                             # gw/write_disk.sh puts it on real media; see
+                                             # atari/HARDWARE.md for the STE runbook.
 ```
 
 ## Repo layout
@@ -332,12 +509,14 @@ reverse/
 │                             TOS traps — bound to a game by its recreate/project.toml
 └── projects/                 one directory per game, scaffolded by new_project.sh
     ├── buggyboy/             names.txt · decomp.c · recreate/ · remaster/ · docs/
-    └── joust/                names.txt · decomp.c · recreate/ (+ atari/ — the playable PRG)
+    ├── joust/                names.txt · decomp.c · recreate/ (+ atari/ — the playable PRG)
+    └── wonderboy/            names.txt · decomp.c · recreate/ (+ atari/ — the PRG, and the
+                              720 KB floppy it boots a real STE from) · notes/ · tools/
 ```
 
 ## Documentation
 
-Thirteen domain guides, each grounded in real evidence from the two solved games but written as
+Thirteen domain guides, each grounded in real evidence from the three solved games but written as
 general procedure.
 Start with [`docs/00-overview.md`](docs/00-overview.md) for the end-to-end workflow and a "what kind
 of file is this?" decision tree, then [`docs/agent-playbook.md`](docs/agent-playbook.md) for the
@@ -357,13 +536,18 @@ verification loop that ties the rest together. Full index: [`docs/README.md`](do
 
 ## Use it on another binary
 
-Nothing above is game specific except the two directories under `projects/`. `new_project.sh`
+Nothing above is game specific except the three directories under `projects/`. `new_project.sh`
 scaffolds a new target, the Ghidra scripts and the naming loop work on any GEMDOS executable, and
 the differential harness is now a shared component rather than a pattern to copy — `recreate_kit`
 takes the entry addresses and the memory image from a `project.toml`, as Joust's second use of it
-showed. If the entry point disassembles to garbage the binary is packed; `prg_dis.py` prints
-entropy, and [`docs/packed-executables.md`](docs/packed-executables.md) covers unpacking it — live
-in Hatari and analyzing the memory dump, or statically once the packer is understood.
+showed. A game binds the kit's optional capabilities the same way: Joust needed none of them,
+Wonder Boy needed two — the **file-load seam** (`disk_read_file`, for a boot chain that ends in a
+raw sector driver) and the **scheduled-write model** (for a routine that busy-waits on a byte only
+an interrupt ever stores). If the entry point disassembles to garbage the binary is packed;
+`prg_dis.py` prints entropy, and [`docs/packed-executables.md`](docs/packed-executables.md) covers
+unpacking it — live in Hatari and analyzing the memory dump, or statically once the packer is
+understood. And if it barely uses the OS at all, check where it really runs: a `.PRG` with almost no
+relocations is position-dependent, and Wonder Boy's own README has how that was found.
 
 ## Credits & legal
 
@@ -379,8 +563,20 @@ Williams Electronics' 1982 coin-op, of which this is a licensed home conversion;
 here is the later Gamex release, whose own `README.TXT` is signed "PP". All rights in the game and
 in the arcade original belong to their respective owners.
 
+**Wonder Boy in Monsterland** for the Atari ST — the binary carries no copyright string at all, so
+the credit reproduced here is the game's own credits screen, drawn by the reconstruction above and
+transcribed verbatim: *"WONDERBOY IN MONSTERLAND / 1987 SEGA / WESTONE. / ALL RIGHTS RESERVED. /
+ACTIVISION.AUTHORISED USER. / CONVERSION BY IMAGES DESIGN. / GRAPHICS - JASON LIHOU, ANDREW PANG /
+MUSIC - DAVID WHITTAKER / PROGRAM - LAURA.P.PAUL."*, over the SEGA and ActiVision logos and the line
+*"A SOFTWARE STUDIOS PRODUCTION"*. `names.txt`'s own header dates the release to Activision/Sega,
+1989. The arcade original is Westone and Sega's 1987 *Wonder Boy in Monster Land*, of which this is
+a licensed home conversion. All rights in the game and in the arcade original belong to their
+respective owners.
+
 This repository contains **no game code or data** — no executable, no `COURSES.DAT`, no
-`GRAPHICS.GRA`, no `JOUST.PRG`, no `JOUSTS.CTE`, no `HIGH.SCO`, no TOS ROM image. It holds analysis,
+`GRAPHICS.GRA`, no `JOUST.PRG`, no `JOUSTS.CTE`, no `HIGH.SCO`, no `SWB.PRG`, none of the `.RAD`
+resources (`TITLESCR`, `CREDITS`, `DATADISK`, `TILEDATA` and the thirty-seven `OVALAY*` overlays),
+no `SPRITES.CRU`, no disk image of any kind, and no TOS ROM image. It holds analysis,
 documentation, tooling, and independently written C. The images in this README are output of that
 reconstruction, included to document what it produces; reproducing them at all requires the game
 files this repository does not ship. Running any of it requires a copy of the game you already own.
@@ -390,4 +586,4 @@ Reverse engineering here is for interoperability, preservation and study.
 **License.** The work in this repository — the tooling, the documentation and the reconstructed C —
 is Copyright © 2026 Geoffrey Anneheim and released under the **GNU General Public License, version
 2** ([`LICENSE`](LICENSE)). That covers this repository's own contents only; it grants no rights in
-Buggy Boy or Joust, both of which remain the property of their owners.
+Buggy Boy, Joust or Wonder Boy in Monsterland, all of which remain the property of their owners.
