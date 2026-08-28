@@ -61,3 +61,37 @@ def register_call_pokes(routine, stores):
             + b"".join(_store_through_a0(r) for r in stores)
             + b"\x4e\x75")                                      # rts
     return {STUB: code}
+
+
+# `Scc <ea>` — 0101 cccc 11 mmmrrr — with the destination fixed at (A0) (mode 010, register 000).
+# It stores 0xff when the condition holds and 0x00 when it does not; those two bytes ARE the answer
+# the differential compares, so a reconstruction mirrors them rather than picking its own encoding
+# (include/enemy.h, SCC_BYTE_TRUE / SCC_BYTE_FALSE).
+_SCC_TO_A0 = {"cs": 0x55d0, "eq": 0x57d0}
+
+
+def flag_call_pokes(routine, condition):
+    """Pokes that call `routine` and store the FLAG it answers in, through A0.
+
+        jsr     routine
+        s<cond> (a0)
+        rts
+
+    A 68000 routine whose answer is a condition code — the script VM's handlers return "run the next
+    opcode" in the CARRY, and the class-bitmap test returns its bit in Z — writes no memory the image
+    diff could compare, so the stub turns that bit into a byte the diff CAN see. `condition` is the
+    Scc suffix the caller's own branch uses (`bcs` -> "cs", `beq` -> "eq"), so the stub asks the
+    same question the game asks.
+
+    Point A0 at RESULT through the run's registers; the flag byte lands there.
+
+    IT STORES THE FLAG AND NOTHING ELSE, deliberately. A routine that answers in a flag AND a
+    register is served by comparing the register against the oracle's own (`differential`'s
+    `info["regs"]`), which is what `test_enemy.py`'s enemy_alloc_slot cases do — so the stub needs no
+    second store, and adding one before a caller exists would ship an unassembled encoding that no
+    case in the suite executes.
+    """
+    code = (b"\x4e\xb9" + routine.to_bytes(4, "big")            # jsr imm.l
+            + _SCC_TO_A0[condition].to_bytes(2, "big")
+            + b"\x4e\x75")                                      # rts
+    return {STUB: code}

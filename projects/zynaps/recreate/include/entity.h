@@ -24,12 +24,20 @@
 /* ================================================================================================
  * THE RECORD — frozen. names.txt 0x17a8e: "20 records x 0x2c".
  * ============================================================================================= */
-#define ENTITY_STRIDE      0x2cu  /* names.txt, unpinned (no ported routine steps by it yet) */
+/* pinned by test_enemy.py::test_alloc_finds_the_first_free_slot, which puts the one free record at
+ * each of eight positions and compares the returned pointer against the oracle's own A2 — so a
+ * wrong stride returns a wrong address rather than merely a wrong count. (The array walks that
+ * seed one record past the end pin the record COUNT, which is a different claim.) */
+#define ENTITY_STRIDE      0x2cu
 
 #define ENTITY_X           0x00u  /* .w signed — playfield x.  pinned by test_entity.py */
 #define ENTITY_Y           0x04u  /* .w signed — playfield y.  pinned by test_entity.py */
-#define ENTITY_HEIGHT      0x08u  /* .w, masked &0x7fff — sprite rows.      names.txt, unpinned */
-#define ENTITY_SPRITE      0x0au  /* .l — pointer to the sprite bank.        names.txt, unpinned */
+/* .w, masked &0x7fff — sprite rows. THE OFFSET is pinned by
+ * test_mothership.py::test_place_tail_attribution (mothership_place_tail writes 0x28 into every
+ * segment); the MASK has no ported reader yet and stays names.txt's, unpinned. */
+#define ENTITY_HEIGHT      0x08u
+#define ENTITY_SPRITE      0x0au  /* .l — pointer to the sprite bank.
+                                   * pinned by test_enemy.py::test_anim_cycle_frames */
 /* .b — alive / animation state, bit 7 = exploding. PINNED BY test_entity.py, and its NEIGHBOUR
  * matters: entity_kill_if_offscreen reads the two as one word (`tst.w 14(a2)`) and clears only this
  * byte (`clr.b 14(a2)`). See src/entity.c. */
@@ -39,13 +47,16 @@
  * ENTITY_ALIVE, so nothing yet fails if this number is wrong. */
 #define ENTITY_PIXEL_HIT   0x0fu
 #define ENTITY_TYPE        0x11u  /* .b — class id, the index into the 0x19196 / 0x191a4 / 0x191ac
-                                   * class bitmaps.                          names.txt, unpinned */
-#define ENTITY_DX          0x12u  /* .w — cos64[angle]*speed (0x142d4).      names.txt, unpinned */
-#define ENTITY_DY          0x14u  /* .w — sin64[angle]*speed (0x142d4).      names.txt, unpinned */
+                                   * class bitmaps.
+                                   * pinned by test_enemy.py::test_ground_skips_dead_and_wrong_type */
+#define ENTITY_DX          0x12u  /* .w — cos64[angle]*speed (0x142d4). pinned by
+                                   * test_enemy.py::test_op_halt_zeroes_both_velocity_words */
+#define ENTITY_DY          0x14u  /* .w — sin64[angle]*speed (0x142d4). pinned by the same test */
 #define ENTITY_HP          0x1au  /* .b — hit points, or a seeker's target.  names.txt, unpinned */
 #define ENTITY_BOUNCE      0x1bu  /* .b                                      names.txt, unpinned */
-#define ENTITY_ANIM_FRAME  0x20u  /* .b                                      names.txt, unpinned */
-#define ENTITY_SQUADRON    0x21u  /* .b — squadron id.                       names.txt, unpinned */
+#define ENTITY_ANIM_FRAME  0x20u  /* .b  pinned by test_enemy.py::test_anim_cycle_frames */
+#define ENTITY_SQUADRON    0x21u  /* .b — squadron id. pinned by
+                                   * test_enemy.py::test_despawn_credits_the_squadron */
 
 /* ================================================================================================
  * Prototypes.
