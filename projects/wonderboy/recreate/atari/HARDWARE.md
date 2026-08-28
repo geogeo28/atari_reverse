@@ -104,7 +104,7 @@ Insert `WBOOT.ST`, power on, hands off.
 | 0 | memory test, the TOS boot screen | |
 | ~32 s | the screen goes **black**, then the **title screen** appears | `smoke.py floppy` pass 1 prints both figures off the run it just did — the vblank of the first shifter pen write and of the last. TOS's own boot is most of the first; the **window** between them is the title's own load and depack, and that is the part the floppy owns. Batch 44 phase G, TOS 1.04, two runs a minute apart: first pen 1,593 and 1,607, window 277 and 192 vblanks (~4–5.5 s). Repeated runs do not agree to better than that. |
 | then | it **waits at the title for fire**, for ever | `-DSMOKE_PLAY` removes the gate's spin bound by design |
-| fire | the **credits** screen loads | joystick 1, port 1. **This did not work before 2026-08-27** — see §8's row on the mouse, and the fix is `install` sending IKBD command `$12` |
+| fire | the **credits** screen loads | joystick 1, port 1. **This did not work before 2026-08-27** — see §8's row on the mouse, and the fix is `install` sending IKBD command `$12`. **Confirmed on the STE the same day** (STATUS phase H addendum §7): title → credits → stage 1 |
 | fire | stage 1's overlay, tiles and sprites load; the frame loop starts | |
 
 Then it plays, at **four to five frames a second** (README's "Play it" has the measurement and the

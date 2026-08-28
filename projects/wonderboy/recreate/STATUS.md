@@ -17569,9 +17569,9 @@ Two of the gate's findings are general and are recorded here so they are not re-
 
 ### §5 WHAT REMAINS UNPINNED
 
-* **THE REAL MACHINE HAS NOT SEEN THE FIX.** Everything in §3 is emulated. The runbook
-  (`atari/HARDWARE.md`) still has to be walked on the user's STE with a freshly written `WBOOT.ST`
-  before this phase can be called closed. **That is the open item.**
+* **THE REAL MACHINE HAS SEEN THE FIX — CLOSED 2026-08-27.** The bullet that stood here named the
+  STE run as the open item; the second iron run (the addendum's §1) booted to the title, and the third
+  (the addendum's §7) went on through both fire gates to stage 1. Nothing in §3 needed to change.
 * **THE DISARM HAS NO OFF-TARGET PIN AT ALL** (§3). If a later kit phase gives the file model a
   "present but unreadable" answer, it still would not help: the disarm is about *when*, not *what*,
   and the host differential has no clock. A candidate remedy — a seam model that ticked the fuse
@@ -17759,9 +17759,8 @@ enumerate every wait the harness satisfies by injection and write down what that
 
 ### §6 WHAT REMAINS UNPINNED
 
-* **THE MACHINE HAS NOT SEEN THIS FIX EITHER.** Everything above is emulated except the record in §1.
-  The disk has to be rewritten and the STE run again, and the thing to check is the one thing no
-  check here can: **press fire at the title and get the credits screen.** That is the open item.
+* **THE MACHINE HAS SEEN THIS FIX — CLOSED 2026-08-27, §7 below.** The bullet that stood here named
+  the fire press at the title as the open item; the third iron run answered it.
 * **THE JOYSTICK ARMS ARE STILL UNEXECUTED HEADLESS.** The `$12` row asserts the *command* went out;
   it says nothing about a report coming back. Unchanged from phase G, and now with a named cost.
 * **THE MOUSE-PACKET READING HAZARD IS ARGUED, NOT DRIVEN.** Nothing feeds `wb_acia_byte` a mouse
@@ -17782,3 +17781,24 @@ enumerate every wait the harness satisfies by injection and write down what that
   row reads, from code this walk filters out anyway. The narrowing is sound only while these checks
   make ORDERING claims, which they do today; a future count claim over this walk would need the
   guard widened first.
+
+### §7 THE THIRD IRON RESULT — fire passes the title, and the machine plays
+
+**2026-08-27, the user's 4 MB STE, TOS 1.62, joystick in port 1, `WBOOT.ST` sha256 `13ee2ea8…`
+(commit `b2e42c6`) written by `gw/write_disk.sh` with every track verified.** Reset, power on, hands
+off: the title screen came up; fire (press and release) loaded the **credits**; fire again loaded
+**stage 1's overlay, tiles and sprites and the frame loop started**. Reported by the person at the
+machine, not measured by anything here — this is the one rung of the ladder no surface in this tree can
+reach, and it is the rung the whole of batch 44 was built to arrive at.
+
+What that closes, by name: §6's first bullet (this fix on iron), phase H §5's first bullet (the idle
+fuse on iron — already implied by the second run's title, now confirmed through two loads more), and
+`atari/HARDWARE.md` §8's "the joystick, still" row from phase G — the ACIA handler's joystick arm has
+now executed on a real 6301, with a real stick, and delivered a `$FF` packet with bit 7 set. What it
+does NOT close: the arms are still unexecuted HEADLESS (§6's second bullet stands), the mouse-packet
+reading hazard is still argued rather than driven, and nothing past stage 1's first frame has been
+watched on iron — the play itself (scrolling, sound, the endings back into the chain) is the next
+thing a person at the machine can report on. Three iron runs, three findings, three fixes, and the
+count of things only the machine could have told us is now three: the fuse inside the first read, the
+mouse on the fire line, and — from phase G — nothing at all about the disk and the ROM, which behaved.
+
