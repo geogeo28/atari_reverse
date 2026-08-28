@@ -8,6 +8,16 @@ entry points `recreate/test/` drives through ctypes — `src/boot.c`'s four comp
 slices and `src/game.c`'s `game_main_loop` — and de-interleaves the Atari low-res framebuffer
 they paint, with the game's own palette words, into a PNG.
 
+EVERY PLAY PICTURE RUNS THE WHOLE BOOT CHAIN, in the boot's own order, and that is not
+thoroughness for its own sake: the status panel's ARTWORK is drawn by no routine in the game.
+It is part of the credits picture, which `boot_credits_screen` copies down onto the buffer the
+shifter is showing; `boot_load_stage` fills scroll buffers and touches no screen, and the first
+frame paints the play window over the middle. A stage booted without the two slices above it
+therefore shows the panel's counters over nothing, which looks plausible and is wrong — the
+first published version of this set did exactly that. `_assert_the_screens_are_the_originals`
+is what stops it recurring: both buffers are compared against the shipped 1989 binary's own
+post-boot RAM.
+
 Nothing here needs Hatari or a TOS ROM: the game's resources arrive through the kit's
 FILE-LOAD SEAM (`disk_read_file` over the staged-file model, TRAP_MODEL.md's Phase 9) instead
 of through the WD1772 driver, and the two vertical-blank waits inside `flip_screen` are
@@ -22,7 +32,7 @@ two entropy sources are the video address counter ($ff8207/$ff8209), which the k
 hardware model answers with a declared constant — so `rng_next` and `bcd_add_random_1_to_4`
 draw the same numbers every run. THAT IS ASSERTED AND NOT CLAIMED: `main` renders the whole
 set TWICE and refuses a picture whose two renderings differ, which the run is quick enough
-(well under a second) to afford. Re-run:
+(a second or two) to afford. Re-run:
 
     cd recreate && make venv && make   # once: the venv and libwonderboy.so
     ./.venv/bin/python ../gen_readme_assets.py
@@ -83,6 +93,7 @@ START_PALETTE = wb("START_PALETTE")
 STAGE_NUMBER = wb("STAGE_NUMBER")
 SPRITE_CRU_LOAD = wb("SPRITE_CRU_LOAD")
 LEVEL_SEQ_INDEX = wb("LEVEL_SEQ_INDEX")
+FIRST_SEQUENCE_ROW = 0           # what game_restart_reset leaves the cursor at
 LEVEL_SEQ_TABLE = wb("LEVEL_SEQ_TABLE")
 LEVEL_SEQ_RECORD_BYTES = wb("LEVEL_SEQ_RECORD_BYTES")
 LEVEL_SEQ_OVERLAY = wb("LEVEL_SEQ_OVERLAY")
@@ -128,10 +139,28 @@ TEXT_BOX_ACTIVE_SET = wb("TEXT_BOX_ACTIVE_SET")
 TEXT_REQUEST = wb("TEXT_REQUEST")
 TEXT_BUFFER = wb("TEXT_BUFFER")
 TEXT_BUFFER_LEN = wb("TEXT_BUFFER_LEN")
-TEXT_MESSAGE_REVIVAL_USED = wb("TEXT_MESSAGE_REVIVAL_USED")
-HUD_METER_VALUE = wb("HUD_METER_VALUE")
-HUD_METER_MAX = wb("HUD_METER_MAX")
-PLAYER_METER_REVIVE = wb("PLAYER_METER_REVIVE")
+TEXT_MESSAGE_TABLE = wb("TEXT_MESSAGE_TABLE")
+TEXT_MESSAGE_PTR_SHIFT = wb("TEXT_MESSAGE_PTR_SHIFT")
+# The message every stage entry posts. include/wonderboy.h names the ids whose text a reconstructed
+# routine needed, and this is not one of them — it is simply the FIRST entry of the table, which is
+# what `WB_TEXT_MESSAGE_FIRST_ID` is the base of. `_assert_the_stage_entry_box_is_up` reads the
+# string back out of the table rather than trusting this line.
+TEXT_MESSAGE_LETS_GO = wb("TEXT_MESSAGE_FIRST_ID")
+TEXT_MESSAGE_FIRST_ID = wb("TEXT_MESSAGE_FIRST_ID")
+LETS_GO_TEXT = b"Let's go."
+SCREEN_LINE = wb("SCREEN_LINE")
+SCREEN_BYTES = wb("SCREEN_BYTES")
+BG_BLIT_SCREEN_ORIGIN = wb("BG_BLIT_SCREEN_ORIGIN")
+BG_BLIT_SCANLINES = wb("BG_BLIT_SCANLINES")
+BG_BLIT_ROW_BYTES = wb("BG_BLIT_ROW_BYTES")
+
+# THE ORIGINAL'S OWN POST-BOOT RAM, if this checkout has it: `atari/original.py dump` drives the
+# shipped 1989 binary under Hatari to `$f8b4` — the instruction `boot_load_stage` returns to, which
+# is exactly where the chain below stops — and writes [$3f8, $80000) out. It is a build artefact of
+# the user's own machine (`atari/build/` is gitignored), so the pin that uses it says so and stands
+# down when it is absent rather than refusing to render.
+ORIGINAL_RAM = RECREATE / "atari" / "build" / "ORIGRAM.BIN"
+ORIGINAL_RAM_BASE = 0x3f8        # ../recreate/project.toml's load base, which is the dump's own
 ACTOR_SCREEN_SPRITE = wb("ACTOR_SCREEN_SPRITE")
 SPRITE_DESC_X_OFFSET = wb("SPRITE_DESC_X_OFFSET")
 SPRITE_DESC_Y_OFFSET = wb("SPRITE_DESC_Y_OFFSET")
@@ -211,8 +240,12 @@ STAGE1_WALK_SPRITES = 2       # ...and how many sprites that frame really has in
 # desert, a castle wall seen from outside, a stage over open water and the golden keep — and no two
 # of them share a palette row either. `claim` is what the picture's caption asserts beyond "this row
 # loaded", checked before the PNG is written; `None` means the caption claims only the stage.
-_Stage = collections.namedtuple("_Stage", "row name claim")
+_Stage = collections.namedtuple("_Stage", "row name frames claim")
 SKIP_FRAMES = 120                # frames of the joystick script to run after the stage has loaded
+# ...and the one picture taken earlier than that, because it is of the message box every stage entry
+# posts and the box lives WB_TEXT_LIFETIME_DEFAULT (50) frames. Measured: the box is up over frames
+# 0..49 of every stage the cheat reaches, and 30 is far enough in for the hero to have moved.
+STAGE_ENTRY_BOX_FRAME = 30
 
 # ---- the sprite sheet ----------------------------------------------------------------------------
 # Where each sprite is put on the blank screen — and THE GRID IS NOT WHERE THE SPRITES LAND, which is
@@ -440,8 +473,9 @@ def _sprites_cru():
 
 
 def _stage_files(rows):
-    """The seam's file list for booting `rows` — each row's overlay, the tile bank, and as much of
-    SPRITES.CRU as the model can hold beside them.
+    """The seam's file list for running the WHOLE CHAIN over `rows` — the title and credits
+    pictures, each row's overlay, the tile bank, and as much of SPRITES.CRU as the model can hold
+    beside them. Six files at most, against the model's eight slots.
 
     SPRITES.CRU DOES NOT FIT THE STAGED-FILE MODEL, which is measured rather than assumed
     (`test/test_boot_chain.py`'s `test_the_sprites_file_is_staged_as_the_prefix_the_model_can_hold`):
@@ -454,7 +488,9 @@ def _stage_files(rows):
     names = list(dict.fromkeys(_overlay_name(row) for row in rows))
     for name in names:
         _assert_overlay_is_undamaged(name)
-    files = [(name, _resource(DISK2, name)) for name in names]
+    files = [(TITLE_FILE, _resource(DISK1, TITLE_FILE)),
+             (CREDITS_FILE, _resource(DISK1, CREDITS_FILE))]
+    files += [(name, _resource(DISK2, name)) for name in names]
     files.append((TILEDATA_FILE, _resource(DISK2, TILEDATA_FILE)))
     room = STAGING_CAPACITY - sum(len(data) for _, data in files)
     assert room > 0, (
@@ -602,6 +638,92 @@ def _stage_number(buf):
     return tens * 10 + units
 
 
+# The bytes of a screen buffer the background blit does NOT fill, which is where the status panel
+# lives: `bg_scroll_blit` starts WB_BG_BLIT_SCREEN_ORIGIN into the buffer and lays
+# WB_BG_BLIT_ROW_BYTES down each of WB_BG_BLIT_SCANLINES rows, so the panel is the rows above and
+# below that window plus the columns left of it. Computed once — it is a property of the geometry.
+def _panel_offsets():
+    top_row, left_byte = divmod(BG_BLIT_SCREEN_ORIGIN, SCREEN_LINE)
+    window = set()
+    for row in range(top_row, top_row + BG_BLIT_SCANLINES):
+        window |= set(range(row * SCREEN_LINE + left_byte,
+                            row * SCREEN_LINE + left_byte + BG_BLIT_ROW_BYTES))
+    return frozenset(range(SCREEN_BYTES)) - window
+
+
+PANEL_OFFSETS = _panel_offsets()
+
+
+def _assert_the_screens_are_the_originals(buf, what):
+    """Both screen buffers, byte for byte against the ORIGINAL's own post-boot RAM.
+
+    THIS IS WHY THE CHAIN IS RUN WHOLE, and it is the check that would have caught the set this
+    script first published: the status panel's artwork — the LIFE/SCORE/HIGH/GOLD labels, the slot
+    frames — is not drawn by anything in the game. It is part of the CREDITS picture, which
+    `boot_credits_screen` inflates and then copies down onto the buffer the shifter is showing;
+    `boot_load_stage` only fills scroll buffers, and the first frame paints the play window over the
+    middle of it. Booting a stage without the two slices above it therefore leaves a panel with the
+    counters on it and no artwork under them, which looks plausible and is wrong.
+
+    The dump is `atari/original.py dump`'s: the shipped 1989 binary driven under Hatari to `$f8b4`,
+    the instruction `boot_load_stage` returns to. It is a build artefact of the user's own machine,
+    so this stands down when the checkout has not got one — but it does not soften: with the dump
+    present the two buffers must agree with it exactly, and 0 is the measured answer.
+    """
+    if not ORIGINAL_RAM.is_file():
+        print(f"    (no {ORIGINAL_RAM.name}: the screens are not pinned against the original's RAM)")
+        return
+    dump = ORIGINAL_RAM.read_bytes()
+    for base, name in ((SCREEN_LOW, "WB_SCREEN_LOW"), (SCREEN_HIGH, "WB_SCREEN_HIGH")):
+        ours = bytes(buf[base:base + SCREEN_BYTES])
+        theirs = dump[base - ORIGINAL_RAM_BASE:base - ORIGINAL_RAM_BASE + SCREEN_BYTES]
+        differing = [offset for offset in range(SCREEN_BYTES) if ours[offset] != theirs[offset]]
+        assert not differing, (
+            f"{what}: {len(differing)} of {SCREEN_BYTES} bytes of {name} differ from the original's "
+            f"own post-boot RAM (first at {base + differing[0]:#x}), of which "
+            f"{len(set(differing) & PANEL_OFFSETS)} are in the status panel — the boot chain this "
+            f"picture ran did not leave the screen the original's boot leaves")
+    print(f"    both screen buffers are byte-identical to {ORIGINAL_RAM.name}")
+
+
+def _run_the_boot_chain(buf, what, at_row=FIRST_SEQUENCE_ROW):
+    """The boot, in the original's own order and on one pair of buffers.
+
+    `chain_prologue`'s two reconstructed steps first — `clear_palette` at $e4ea and
+    `clear_both_screens` at $e4ee; its third, the screen-base publish, is a shifter write the loaded
+    image does not have — then the three slices the fire waits cut the boot into. It is the same
+    sequence `atari/wonderboy_main.c`'s `run_the_boot_chain` runs on the machine, which is why the
+    on-target rungs and this script now draw the same panel.
+
+    THE FIRST STAGE NEEDS NO SEEDING AT ALL, and that is the point of running the chain rather than
+    the stage slice alone: `game_restart_reset`, inside the credits slice, is what puts the sequence
+    cursor at its first row, so `at_row` defaults to the row the boot itself reaches and nothing
+    here is written into the image. A LATER row is this script's one declared deviation — the cursor
+    is put where a player who had reached that round would have left it, because the honest route
+    (playing there) is not something a fixed joystick script can do. The reset is pinned first, so
+    the deviation is a visible write over a known value rather than a poke into the unknown.
+    """
+    _bind("clear_palette")(buf)
+    _bind("clear_both_screens", returns=False)(buf)
+    title = _bind("boot_title_screen")(buf)
+    assert title == LOAD_COPYLOCK_RAN, (
+        f"{what}: boot_title_screen reported {title}, not WB_LOAD_COPYLOCK_RAN")
+    credits = _bind("boot_credits_screen")(buf)
+    assert credits == LOAD_OK, f"{what}: boot_credits_screen reported {credits}, not WB_LOAD_OK"
+    _check_no_refused_os_calls(f"{what}: the title and credits slices")
+
+    reset_to = _u16(buf, LEVEL_SEQ_INDEX)
+    assert reset_to == FIRST_SEQUENCE_ROW, (
+        f"{what}: the credits slice left WB_LEVEL_SEQ_INDEX at {reset_to}, not the "
+        f"{FIRST_SEQUENCE_ROW} game_restart_reset writes — the boot no longer starts a new game")
+    assert _u16(buf, LIFE_RESTART_ENTRY_C26) == 0, (
+        f"{what}: WB_LIFE_RESTART_ENTRY_C26 is not clear, so the stage slice would take the "
+        f"re-entry arm and load no sprites")
+    if at_row != FIRST_SEQUENCE_ROW:
+        struct.pack_into(">H", buf, LEVEL_SEQ_INDEX, at_row)
+    return _boot_stage(buf, what)
+
+
 def _stage_palette_src(buf):
     """Where `stage_load_window`'s `set_palette` read this stage's sixteen words: the row of
     WB_PALETTE_TABLE the loaded stage's START record names."""
@@ -669,7 +791,8 @@ def render_stage1():
     """
     pictures = []
     buf = _fresh(_stage_pokes(SHEET_STAGE_ROW))
-    _boot_stage(buf, "stage 1")
+    _run_the_boot_chain(buf, "stage 1")
+    _assert_the_screens_are_the_originals(buf, "stage 1")
     palette_at = _stage_palette_src(buf)
     sprites = _entered_frame_loop()
 
@@ -706,15 +829,14 @@ def _sprites_in_the_window(buf):
 
 
 def _stage_pokes(*rows):
-    """A fresh image staged for booting `rows`, in order: the seam's files, the sequence cursor and
-    the re-entry word that says this is a first entry to the stage (so its sprites are loaded too).
+    """A fresh image staged for booting `rows`: the seam's files, and NOTHING ELSE.
 
-    The raw SPRITES.CRU is NOT poked here — `_place_sprites_file` is the one statement of where that
-    file goes, and it has to run before every boot rather than once per image."""
-    pokes = dict(seam_pokes(_stage_files(rows)))
-    pokes[LEVEL_SEQ_INDEX] = rows[0].to_bytes(2, "big")
-    pokes[LIFE_RESTART_ENTRY_C26] = (0).to_bytes(2, "big")
-    return pokes
+    Neither the sequence cursor nor the re-entry word is seeded any more, because the boot writes
+    both itself — `game_restart_reset` inside the credits slice does — and a poke here would be
+    overwritten by it anyway. The raw SPRITES.CRU is not poked here either: `_place_sprites_file` is
+    the one statement of where that file goes, and it runs before every boot rather than once per
+    image."""
+    return dict(seam_pokes(_stage_files(rows)))
 
 
 # ---------------------------------------------------------------- the later stages, through the cheat
@@ -757,6 +879,33 @@ def _type_the_cheat_and_skip(buf, sprites, what):
         f"{what}: N with the cheat raised reported {ending}, not WB_KEY_ACTIONS_LEVEL_SKIP")
 
 
+def _both_screens(buf):
+    return (bytes(buf[SCREEN_LOW:SCREEN_LOW + SCREEN_BYTES]),
+            bytes(buf[SCREEN_HIGH:SCREEN_HIGH + SCREEN_BYTES]))
+
+
+def _assert_the_stage_load_left_the_panel(buf, before, what):
+    """A reload must not disturb the panel the credits slice drew, and the check is the whole of it:
+    `boot_load_stage` writes neither screen buffer at all.
+
+    It fills the scroll engine's eight buffers and the sprite cells; the first frame after it paints
+    the play WINDOW over the middle of a screen. So the panel a player sees in round eleven is still
+    the one the credits picture put there in round one — which is what the machine does, and why the
+    ladder's own reloads (`atari/wonderboy_main.c`) need nothing else. Stated over BOTH buffers and
+    not just the panel columns, because "it touched nothing" is the property, and a load that
+    scribbled inside the window would be just as wrong.
+    """
+    low, high = _both_screens(buf)
+    for was, now, name in ((before[0], low, "WB_SCREEN_LOW"), (before[1], high, "WB_SCREEN_HIGH")):
+        if was == now:
+            continue
+        differing = [offset for offset in range(SCREEN_BYTES) if was[offset] != now[offset]]
+        raise AssertionError(
+            f"{what}: the stage load changed {len(differing)} bytes of {name}, "
+            f"{len(set(differing) & PANEL_OFFSETS)} of them in the status panel — the boot's own "
+            f"reload is not supposed to touch a screen at all")
+
+
 def _assert_the_box_says(buf, message_id, what):
     """Name the message the live box is showing, by composing that id again and comparing.
 
@@ -775,32 +924,33 @@ def _assert_the_box_says(buf, message_id, what):
         f"produces a different WB_TEXT_BUFFER, so the caption names the wrong message")
 
 
-def _assert_the_revival_box_is_up(buf, what):
-    """The stage-8 picture's caption, as three checks: a box is up, it is the revival message, and
-    the meter really was refilled by the cheat's own arm.
+def _assert_the_stage_entry_box_is_up(buf, what):
+    """The stage-2 picture's caption, as two checks: a box is up, and it is the one every stage
+    entry posts.
 
-    WITHOUT THE FIRST OF THESE THE CAPTION WAS LUCK. Only 30 of the run's 120 frames carry a box at
-    all, so a change that shifted the run by a few frames would have left a caption describing a
-    message box over a picture with none in it.
+    WITHOUT THE FIRST OF THESE THE CAPTION IS LUCK, and it was: the box lives 50 frames and this
+    picture is taken on frame 30 of them. An earlier revision of this script captioned a DIFFERENT
+    stage's frame 120 as carrying a box, and running the boot chain whole — which changed the run —
+    left the caption describing a message box over a picture with none in it.
     """
     active = buf[TEXT_BOX_ACTIVE]
     assert active == TEXT_BOX_ACTIVE_SET, (
         f"{what}: WB_TEXT_BOX_ACTIVE is {active:#04x}, not WB_TEXT_BOX_ACTIVE_SET — there is no "
         f"message box on this frame and the caption describes one")
-    _assert_the_box_says(buf, TEXT_MESSAGE_REVIVAL_USED, what)
-    meter, maximum = _u16(buf, HUD_METER_VALUE), _u16(buf, HUD_METER_MAX)
-    assert meter == PLAYER_METER_REVIVE, (
-        f"{what}: WB_HUD_METER_VALUE is {meter} of {maximum}, not the WB_PLAYER_METER_REVIVE "
-        f"({PLAYER_METER_REVIVE}) the cheat's revival arm refills it to — the box may be up for "
-        f"some other reason")
-    print(f"    the meter reads {meter} of {maximum}")
+    at = TEXT_MESSAGE_TABLE + ((TEXT_MESSAGE_LETS_GO - TEXT_MESSAGE_FIRST_ID)
+                              << TEXT_MESSAGE_PTR_SHIFT)
+    text = bytes(harness.BASE_IMAGE[_u32(harness.BASE_IMAGE, at):][:0x20])
+    assert LETS_GO_TEXT in text, (
+        f"{what}: the message table's first entry is {text!r}, which does not carry "
+        f"{LETS_GO_TEXT!r} — the caption quotes a string this binary does not have there")
+    _assert_the_box_says(buf, TEXT_MESSAGE_LETS_GO, what)
 
 
-SKIPPED_STAGES = (_Stage(1, "stage2-town", None),
-                  _Stage(7, "stage4-desert", None),
-                  _Stage(11, "stage5-castle", None),
-                  _Stage(23, "stage8-message", _assert_the_revival_box_is_up),
-                  _Stage(33, "stage11-keep", None))
+SKIPPED_STAGES = (_Stage(1, "stage2-town", STAGE_ENTRY_BOX_FRAME, _assert_the_stage_entry_box_is_up),
+                  _Stage(7, "stage4-desert", SKIP_FRAMES, None),
+                  _Stage(11, "stage5-castle", SKIP_FRAMES, None),
+                  _Stage(23, "stage8-lava", SKIP_FRAMES, None),
+                  _Stage(33, "stage11-keep", SKIP_FRAMES, None))
 
 
 def render_skipped_stages():
@@ -814,12 +964,14 @@ def render_skipped_stages():
     for stage in SKIPPED_STAGES:
         what = f"{stage.name} (sequence row {stage.row})"
         buf = _fresh(_stage_pokes(stage.row - 1, stage.row))
-        _boot_stage(buf, f"{what}: the row before it")
+        _run_the_boot_chain(buf, f"{what}: the row before it", at_row=stage.row - 1)
         sprites = _entered_frame_loop()
         _type_the_cheat_and_skip(buf, sprites, what)
+        before = _both_screens(buf)
         _boot_stage(buf, what)
+        _assert_the_stage_load_left_the_panel(buf, before, what)
         palette_at = _stage_palette_src(buf)
-        _play(buf, sprites, SKIP_FRAMES, what)
+        _play(buf, sprites, stage.frames, what)
         landed = _u16(buf, LEVEL_SEQ_INDEX) - 1
         assert landed == stage.row, (
             f"{what}: the skip landed on sequence row {landed}, not the row this picture names")
@@ -906,7 +1058,7 @@ def render_sprite_sheet():
     dereferences.
     """
     buf = _fresh(_stage_pokes(SHEET_STAGE_ROW))
-    _boot_stage(buf, "the sprite sheet's stage")
+    _run_the_boot_chain(buf, "the sprite sheet's stage")
     palette_at = _stage_palette_src(buf)
     sprites = _entered_frame_loop()
     cast = _sprites_the_run_showed(buf, sprites, SHEET_SCAN_FRAMES)

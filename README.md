@@ -383,6 +383,16 @@ play frames come from one fixed joystick script, and the video address counter b
 PRNGs read is a declared constant — so the whole set is a function of the binary and the game's
 own files, which the script asserts by rendering it twice and comparing.
 
+Every play picture is drawn on a screen the **whole boot chain** built, in the boot's own order —
+the prologue's clears, then the title, credits and stage slices — because the status panel's
+artwork is drawn by no routine at all: it is part of the CREDITS picture, which
+`boot_credits_screen` copies down onto the buffer the shifter is showing, and the play window is
+then painted over the middle of it. That is checked rather than assumed: at the instant
+`boot_load_stage` returns, **both 32000-byte screen buffers are byte-identical to the original
+1989 binary's own post-boot RAM** — `atari/build/ORIGRAM.BIN`, dumped off the shipped game under
+Hatari at `$f8b4`, the same anchor the on-target rungs use — and the script fails if one byte of
+either differs.
+
 | Title | Credits | The data-disk prompt |
 |:---:|:---:|:---:|
 | ![](assets/wonderboy/title.png) | ![](assets/wonderboy/credits.png) | ![](assets/wonderboy/prompt.png) |
@@ -421,35 +431,40 @@ sprite that same run actually put into a screen record, so the sheet is this sta
 than a selection: four green crawlers, two snails, four frames of the hero's own walk, the
 seven-frame spin of a gold coin, and three boulders.
 
-| Stage 2 — the town | Stage 4 — the desert | Stage 5 — the castle wall |
+| Stage 2 — the town, and a message | Stage 4 — the desert | Stage 5 — the castle wall |
 |:---:|:---:|:---:|
 | ![](assets/wonderboy/stage2-town.png) | ![](assets/wonderboy/stage4-desert.png) | ![](assets/wonderboy/stage5-castle.png) |
 
 The later stages are reached through **the game's own level-skip cheat**, typed rather than poked:
-`game_key_actions`' walk at $5a8 steps a cursor along the four scancodes the binary carries at $608
-— `$61 $30 $13 $1e`, which are UNDO, B, R and A — and raises the cheat word when the cursor meets
-its terminator. With that word up, N takes the arm at $556, which pops the frame loop's return
-address and `jmp`s to $e5ba: `boot_load_stage` again, one sequence row further on. The
+`game_key_actions`' walk at $5a8 steps a cursor along the four scancodes the binary carries at
+$608 — `$61 $30 $13 $1e`, which are UNDO, B, R and A — and raises the cheat word when the cursor
+meets its terminator. With that word up, N takes the arm at $556, which pops the frame loop's
+return address and `jmp`s to $e5ba: `boot_load_stage` again, one sequence row further on. The
 reconstruction cannot make that transfer, so it reports `WB_KEY_ACTIONS_LEVEL_SKIP` and the caller
-runs the slice — which is exactly the wiring the on-target build uses for the same ending. Each
-picture above is 120 frames of the same joystick script after the new stage has loaded, and each is
-a different tile bank and a different row of the in-program palette table.
+runs the slice — which is exactly the wiring the on-target build uses for the same ending. One
+thing here is this script's own and not the game's: the sequence cursor is put at the round before
+the one being shown, because the honest route to round eleven — playing there — is not something a
+fixed joystick script can do. Everything either side of that is the boot's.
 
-| Stage 8 — a message box | Stage 11 — the keep, the last round |
+Each picture above is a different tile bank and a different row of the in-program palette table.
+The town is frame 30, and the box over it is `text_run_message_box` — the frame loop's fourteenth
+call — composing and blitting the message every stage entry posts, the first entry of the table at
+`$a09c`. The other two are frame 120, by which time it has expired.
+
+| Stage 8 — over the lava | Stage 11 — the keep, the last round |
 |:---:|:---:|
-| ![](assets/wonderboy/stage8-message.png) | ![](assets/wonderboy/stage11-keep.png) |
+| ![](assets/wonderboy/stage8-lava.png) | ![](assets/wonderboy/stage11-keep.png) |
 
-`text_run_message_box` is the frame loop's fourteenth call, and this is it working: the box, its
-frame and its two lines of glyphs are drawn over the finished picture every frame a message is
-posted. What it says here is the cheat's *other* effect — a raised cheat word takes
-`player_meter_empty_check`'s revival arm with an empty medicine slot and then skips the re-arm, so
-the meter refills on every death for ever — which is why the LIFE meter beside it reads 20 of 28,
-the `WB_PLAYER_METER_REVIVE` that arm writes rather than a full bar. The keep is round **eleven**,
-the last the level sequence has; the panel's stage number is packed BCD, so `$11` is 11 and not 17.
-Four of the data disk's overlays are damaged on the pressed original — `OVALAY4B`, `OVALAY5B`,
-`OVALAY6A` and `OVALAY9A`, the only files this project keeps two corpora of — and every picture here
-is rendered from the **authentic** `bin/disk2/` dump, with the script refusing to load one of those
-four, so no stage that needs them is shown.
+The panel is the same one in all seven play pictures, and reading it is the quickest way to see
+that the boot chain did its work: `LIFE`, `SCORE`, `HIGH`, `GOLD` and the slot frames are the
+credits picture's own artwork, while the hearts, the digits and the `RND:` number are what
+`game_restart_reset`, `panel_refresh_frame` and the `hud_draw_*` routines paint over it. `RND:`
+also settles a figure this README had wrong: the keep is round **eleven**, not seventeen —
+`WB_STAGE_NUMBER` is packed BCD, so `$11` is eleven, and the panel spells it out. Four of the data
+disk's overlays are damaged on the pressed original — `OVALAY4B`, `OVALAY5B`, `OVALAY6A` and
+`OVALAY9A`, the only files this project keeps two corpora of — and every picture here is rendered
+from the **authentic** `bin/disk2/` dump, with the script refusing to load one of those four, so
+no stage that needs them is shown.
 
 ---
 
