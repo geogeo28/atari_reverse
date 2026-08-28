@@ -27,3 +27,4 @@ tools/recreate_kit/oracle/build/
 # TOS ROM images — not redistributable (Atari copyright); supply your own locally
 tools/hatari/*.img
 **/TOS*.img
+.claude/worktrees/
