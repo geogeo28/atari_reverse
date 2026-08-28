@@ -48,8 +48,6 @@
  * bits in d1.b") is the provenance. src/util.c carries a second correction entity.h needs: its
  * `ENTITY_X`/`ENTITY_Y` tags read `.w signed`, but both fields are 32-bit.
  */
-#define ENTITY_AX 0x16u  /* .w — added to / subtracted from ENTITY_DX.  pinned by test_util.py */
-#define ENTITY_AY 0x18u  /* .w — the same for ENTITY_DY.                pinned by test_util.py */
 
 /* Which bit of D1 picks which adjustment, in entity_apply_accel. The pairs are exclusive and
  * tested in this order, so bit 3 wins over bit 4 and bit 5 over bit 6. */

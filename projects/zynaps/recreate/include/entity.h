@@ -30,8 +30,11 @@
  * (`lea 44(a2),a2`) and test_collision.py::test_unexplained_hit_at_every_index (`mulu.w #$2c,d0`). */
 #define ENTITY_STRIDE      0x2cu
 
-#define ENTITY_X           0x00u  /* .w signed — playfield x.  pinned by test_entity.py */
-#define ENTITY_Y           0x04u  /* .w signed — playfield y.  pinned by test_entity.py */
+#define ENTITY_X           0x00u  /* .w signed — playfield x (entity_apply_velocity @ 0x14306 adds a LONGWORD
+                                   * at +0, so the .w is the game's view, not the field's width).
+                                   * pinned by test_entity.py, test_util.py */
+#define ENTITY_Y           0x04u  /* .w signed — playfield y (same longword add at +4).
+                                   * pinned by test_entity.py, test_util.py */
 /* .w — sprite rows in bits 0..14; bit 15 is a FLAG the weapon code owns (include/weapon.h's
  * SHOT_LOCK_SLOT_B), which is why every reader of the count masks with collision.h's
  * ENTITY_HEIGHT_MASK — every reader except draw_sprite_masked (0x15ace), which feeds the raw word
@@ -63,6 +66,9 @@
 #define ENTITY_DX          0x12u  /* .w — cos64[angle]*speed (0x142d4). pinned by
                                    * test_enemy.py::test_op_halt_zeroes_both_velocity_words */
 #define ENTITY_DY          0x14u  /* .w — sin64[angle]*speed (0x142d4). pinned by the same test */
+#define ENTITY_AX          0x16u  /* .w — acceleration, added to / subtracted from ENTITY_DX by
+                                   * entity_apply_accel (0x143f8). pinned by test_util.py */
+#define ENTITY_AY          0x18u  /* .w — the same for ENTITY_DY. pinned by test_util.py */
 #define ENTITY_HP          0x1au  /* .b — hit points, or a seeker's target.  names.txt, unpinned */
 #define ENTITY_BOUNCE      0x1bu  /* .b                                      names.txt, unpinned */
 /* .b — the animation frame (enemies), the hit flash's frame counter, and ALSO the seeker's and the

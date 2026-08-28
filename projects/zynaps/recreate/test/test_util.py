@@ -29,7 +29,7 @@ ENTITY_X = 0x00              # mirror of include/entity.h
 ENTITY_Y = 0x04
 ENTITY_DX = 0x12
 ENTITY_DY = 0x14
-ENTITY_AX = 0x16             # mirror of include/util.h — entity.h is frozen and lacks the pair
+ENTITY_AX = 0x16             # mirror of include/entity.h
 ENTITY_AY = 0x18
 ENTITY_STRIDE = 0x2c
 
@@ -506,8 +506,8 @@ MIRRORS = (
     ("A_COS_TABLE_64", "include/util.h", "A_cos_table_64"),
     ("SIN_DEGREES_QUADRANT", "include/util.h", "SIN_DEGREES_QUADRANT"),
     ("SIN_DEGREES_FULL", "include/util.h", "SIN_DEGREES_FULL"),
-    ("ENTITY_AX", "include/util.h", "ENTITY_AX"),
-    ("ENTITY_AY", "include/util.h", "ENTITY_AY"),
+    ("ENTITY_AX", "include/entity.h", "ENTITY_AX"),
+    ("ENTITY_AY", "include/entity.h", "ENTITY_AY"),
     ("ENTITY_X", "include/entity.h", "ENTITY_X"),
     ("ENTITY_Y", "include/entity.h", "ENTITY_Y"),
     ("ENTITY_DX", "include/entity.h", "ENTITY_DX"),
