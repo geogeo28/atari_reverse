@@ -2,6 +2,7 @@
 #include "overlay.h"
 
 #include "assets.h"
+#include "mem.h"
 #include "plat.h"
 #include "tos.h"
 
@@ -40,6 +41,32 @@ void overlay_clear(uint8_t *screen)
     /* The HUD strip is left standing: the trace meter and the integrity bar are still true while a
      * SECTOR CLEAR overlay is up, and blanking them would be a lie about the run. */
     bi_fill(screen, (long)SCREEN_WINDOW_LINES * SCREEN_BYTES_PER_LINE, 0UL, 0UL);
+}
+
+/*
+ * The band the art leaves for a prompt: a flat slate panel under the picture, carrying the mockup's
+ * own "PRESS FIRE TO BREAK IN". That line names the joystick, which is the one input device this
+ * build cannot exercise; the platform paints over it with the controls it actually implements.
+ * Rows 177..187 of the art are that panel and its own text, all on OVERLAY_PEN_PANEL.
+ */
+#define TITLE_BAND_TOP      177
+#define TITLE_BAND_ROWS     11
+#define TITLE_PROMPT_ROW    179
+#define TITLE_PROMPT        "SPACE TO START   ESC TO QUIT"
+
+void overlay_title(uint8_t *screen)
+{
+    int row;
+
+    memcpy(screen, g_title_screen, TITLE_SCREEN_BYTES);
+    for (row = 0; row < TITLE_BAND_ROWS; ++row) {
+        int column;
+
+        for (column = 0; column < SCREEN_W; column += PIXELS_PER_BYTE) {
+            draw_byte_at(overlay_byte(screen, column, TITLE_BAND_TOP + row), 0xff, OVERLAY_PEN_PANEL);
+        }
+    }
+    overlay_centre(screen, TITLE_PROMPT_ROW, TITLE_PROMPT, OVERLAY_PEN_PULSE);
 }
 
 int overlay_text(uint8_t *screen, int x, int y, const char *text, uint8_t pen)

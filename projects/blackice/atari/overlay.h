@@ -21,9 +21,25 @@
 #define OVERLAY_PEN_DIM     3       /* #2299CC, cyan 3, for the second line */
 #define OVERLAY_PEN_ALERT   13      /* #FF7722, the reserved hostile accent */
 #define OVERLAY_PEN_VOID    0
+/* The one register art/out/native/title_screen.png leaves free, which is what makes the strapline
+ * pulse a palette write instead of a redraw. Asserted against the art in main.c's boot. */
+#define OVERLAY_PEN_PULSE   14
+/* The slate the title's strapline band is painted on: the far end of the pulse, where the prompt
+ * is invisible against its own panel. */
+#define OVERLAY_PEN_PANEL   15
 
 /* Blank the 3D window (the top SCREEN_WINDOW_LINES lines), leaving the HUD strip alone. */
 void overlay_clear(uint8_t *screen);
+
+/*
+ * The title art, whole-page, with the platform's own controls line written into the strapline band
+ * the art leaves for it.
+ *
+ * THE LINE IS DRAWN IN OVERLAY_PEN_PULSE, and that is the whole animation: register 14 is the ONE
+ * palette entry the title art never uses, so the caller can make the line breathe by writing that
+ * register on the vertical blank and nothing else on the screen moves. No redraw, one word a frame.
+ */
+void overlay_title(uint8_t *screen);
 
 /* One line of 8x8 glyphs at a whole-byte x. Returns the pen x after the string. */
 int overlay_text(uint8_t *screen, int x, int y, const char *text, uint8_t pen);

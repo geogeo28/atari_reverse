@@ -134,6 +134,7 @@ LOW_MEMORY_BYTES = 0x200
 V_BAS_AD_ADDR = 0x44E           # long: the screen the OS's VBL handler programs the shifter from
 NVBLS_ADDR = 0x454              # word: how many slots _vblqueue has
 VBLQUEUE_ADDR = 0x456           # long: the slot table itself
+CONTERM_ADDR = 0x484            # byte: TOS's key click (bit 0), bell (bit 2) and key repeat (bit 3)
 VBLQUEUE_SLOT_BYTES = 4
 
 # Regions dumped whole and required to come back byte for byte. Deliberately no video ADDRESS
@@ -466,8 +467,11 @@ def compare_teardown(dumps):
     for name, address, size, description in RESTORED_REGIONS:
         changed += teardown_row(f"{description} ${address:x}..${address + size - 1:x}",
                                 *pairs(lambda when, name=name: dumps[when, name]))
+    # conterm is here because the program CHANGES it and must change it back: it clears the key
+    # click and the bell so TOS stops playing the PSG over the game's own music, and that byte is
+    # the user's setting, not ours.
     for label, address, size in (("_v_bas_ad", V_BAS_AD_ADDR, 4), ("nvbls", NVBLS_ADDR, 2),
-                                 ("_vblqueue", VBLQUEUE_ADDR, 4)):
+                                 ("_vblqueue", VBLQUEUE_ADDR, 4), ("conterm", CONTERM_ADDR, 1)):
         changed += teardown_row(f"{label} ${address:x}", *pairs(
             lambda when, address=address, size=size:
             low_memory_field(dumps[when, "lowmem"], address, size)))

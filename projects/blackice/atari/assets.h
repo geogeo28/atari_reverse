@@ -34,6 +34,8 @@ extern uint16_t g_ste_palette[PALETTE_PENS];
 
 /* The static HUD backdrop: SCREEN_HUD_LINES scanlines of planar screen, blitted once per buffer. */
 extern const uint8_t *g_hud_backdrop;
+/* The title screen: a whole 320x200 planar page, in the same palette everything else uses. */
+extern const uint8_t *g_title_screen;
 /* 96 glyphs of 8x8, one bitplane, ASCII 32..127; glyph c starts at (c - 32) * FONT_GLYPH_BYTES. */
 extern const uint8_t *g_font;
 
@@ -42,6 +44,7 @@ extern const uint8_t *g_font;
 #define FONT_GLYPH_BYTES    8
 #define FONT_GLYPH_WIDTH    8
 #define HUD_BACKDROP_BYTES  (SCREEN_HUD_LINES * SCREEN_BYTES_PER_LINE)
+#define TITLE_SCREEN_BYTES  SCREEN_BYTES
 
 /* ---- results ------------------------------------------------------------------------------- */
 

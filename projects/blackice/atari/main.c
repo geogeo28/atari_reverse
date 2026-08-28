@@ -279,6 +279,7 @@ static void *g_saved_physbase;
 static void *g_saved_logbase;
 static short g_saved_rez;
 static uint16_t g_saved_palette[PALETTE_PENS];
+static uint8_t g_saved_conterm;
 static void **g_joyvec_slot;
 static void *g_saved_joyvec;
 static void **g_vbl_slot;
@@ -358,20 +359,41 @@ static uint16_t ste_nibble(uint8_t intensity)
 #define STE_CHANNELS        3
 #define STE_NIBBLE_MASK     0xf
 #define STE_INTENSITY_MAX   15
+#define STE_CHANNEL_BITS    4
 
-/* Blend a colour word halfway towards full white, channel by channel in intensity space. */
-static uint16_t ste_wash_to_white(uint16_t word)
+/*
+ * Mix two colour words channel by channel IN INTENSITY SPACE, `num` parts of `b` in `1 << shift`.
+ * Intensity space and not nibble space because the STE's nibble is a ROTATION of the value (its
+ * low bit is bit 3), so averaging the nibbles averages the wrong numbers.
+ *
+ * `shift` rather than a divisor: a divide by a runtime value is a call to libgcc's __udivsi3, which
+ * the Makefile's gate refuses, and every caller here wants a power of two anyway.
+ */
+static uint16_t ste_blend(uint16_t a, uint16_t b, uint16_t num, unsigned shift)
 {
+    int16_t den = (int16_t)(1 << shift);
     uint16_t out = 0;
     int channel;
 
     for (channel = 0; channel < STE_CHANNELS; ++channel) {
-        int shift = channel * 4;
-        uint8_t value = ste_intensity((uint8_t)((word >> shift) & STE_NIBBLE_MASK));
+        int at = channel * STE_CHANNEL_BITS;
+        int16_t from = ste_intensity((uint8_t)((a >> at) & STE_NIBBLE_MASK));
+        int16_t to = ste_intensity((uint8_t)((b >> at) & STE_NIBBLE_MASK));
+        /* Both products are at most 15 * 32, so mul16 is the 68000's own muls.w: written in `int`
+         * this was two calls to libgcc's __mulsi3 and the Makefile's gate refused the build. */
+        int32_t mixed = mul16(from, (int16_t)(den - (int16_t)num)) + mul16(to, (int16_t)num);
 
-        out |= (uint16_t)(ste_nibble((uint8_t)((value + STE_INTENSITY_MAX) / 2)) << shift);
+        out |= (uint16_t)(ste_nibble((uint8_t)(mixed >> shift)) << at);
     }
     return out;
+}
+
+#define STE_HALF_SHIFT      1
+
+/* Halfway towards full white: the flash, and the KERNEL variant's wash. */
+static uint16_t ste_wash_to_white(uint16_t word)
+{
+    return ste_blend(word, 0x0fff, 1, STE_HALF_SHIFT);
 }
 
 static void build_palette_variants(void)
@@ -1227,6 +1249,7 @@ static void enter_game_video(void)
 
 static void leave_game_video(void)
 {
+    *(volatile uint8_t *)CONTERM_ADDR = g_saved_conterm;
     set_palette(g_saved_palette);
     Setscreen(g_saved_logbase, g_saved_physbase, g_saved_rez);
 }
@@ -1367,27 +1390,47 @@ static void show_overlay(const char *line1, const char *line2, const char *line3
     drain_keyboard();
 }
 
-/* The title. DESIGN 15 wants the art pass's planar logotype here; TODO: blit a TITLE member once
- * mkpak.py packs art/out/native/title_screen.png, which is being wired as this lands. Until then
- * the font says it, which is enough to prove the flow. Returns 0 if the player quit instead. */
+/*
+ * The title, DESIGN 15's: the art pass's planar screen, whole-page, with the platform's own
+ * controls written into the strapline band the mockup leaves for a prompt (overlay.c says which
+ * rows and why). It is the same sixteen colours as the game, so there is no palette to swap.
+ *
+ * THE PROMPT BREATHES FOR THE COST OF ONE WORD A FRAME. The art uses fifteen of the sixteen
+ * registers and leaves 14 free, so the line is drawn in 14 and the pulse is a single palette write
+ * on the vertical blank — no redraw, no second page to keep in step, and nothing else on the screen
+ * moves. Register 14 is the HUD's integrity green, which is why play()'s first frame writes the
+ * whole palette back before anything is drawn in it.
+ *
+ * Returns 0 if the player quit instead of starting.
+ */
+#define TITLE_PULSE_VBLS    64      /* a power of two: the phase is a mask, not a __umodsi3 */
+#define TITLE_PULSE_SHIFT   5       /* the blend runs 0..32 over half a period */
+
+static void pulse_title_prompt(void)
+{
+    unsigned long phase = g_vbl_count & (TITLE_PULSE_VBLS - 1);
+    unsigned long ramp = phase < TITLE_PULSE_VBLS / 2 ? phase : TITLE_PULSE_VBLS - phase;
+    volatile uint16_t *pen = opaque_pointer((void *)PALETTE_ADDR);
+
+    pen[OVERLAY_PEN_PULSE] = ste_blend(g_ste_palette[OVERLAY_PEN_PANEL],
+                                       g_ste_palette[OVERLAY_PEN_TEXT],
+                                       (uint16_t)ramp, TITLE_PULSE_SHIFT);
+}
+
 static int title_screen(void)
 {
-    HudState hud;
     int buffer;
 
     set_palette(g_palette_variants[PALETTE_VARIANT_CLEAN]);
-    overlay_hud(&hud);
+    /* Both pages, because the pulse flips nothing and the shifter may be showing either. */
     for (buffer = 0; buffer < 2; ++buffer) {
-        overlay_clear(g_screen_back);
-        overlay_centre(g_screen_back, OVERLAY_LINE_1, "BLACK ICE", OVERLAY_PEN_TEXT);
-        overlay_centre(g_screen_back, OVERLAY_LINE_2, "SPACE TO START", OVERLAY_PEN_DIM);
-        overlay_centre(g_screen_back, OVERLAY_LINE_3, "ESC TO QUIT", OVERLAY_PEN_DIM);
-        hud_draw(g_screen_back, &hud, hud_record_for(g_screen_back));
+        overlay_title(g_screen_back);
         flip();
     }
     for (;;) {
         PlayerIntent intent = read_input();
 
+        pulse_title_prompt();
         if (intent.quit) {
             return 0;
         }
@@ -1503,6 +1546,10 @@ static void run_the_game(void)
             }
             memcpy(g_level_entities_pristine, g_level.entities, sizeof(g_level.entities));
             game_start_level(&g_state, &g_level, g_level.rng_seed, &sector_start);
+            /* The title screen is a whole page, so the HUD's backdrop has to be laid down again
+             * before the strip's live fields have anything to sit on. */
+            hud_blit_backdrop(g_screen[0]);
+            hud_blit_backdrop(g_screen[1]);
             hud_invalidate();
             outcome = play();
             if (outcome == OUTCOME_QUIT) {
@@ -2139,6 +2186,16 @@ int blackice_main(void)
      * This is the first thing done under Super because it is the one that has been waiting for
      * supervisor mode since the archive closed. */
     bi_floppy_deselect();
+    /*
+     * SILENCE TOS. Every keypress makes the system key click, and an alert makes the bell, both
+     * through the PSG this program's music driver owns — TOS playing over the top of the game. The
+     * byte is saved and put back on the way out, because it is the user's setting and not ours.
+     * Bit 3, the key repeat, is deliberately left as it was: read_input sees makes and repeats and
+     * never a release, so the held-key controls depend on it.
+     */
+    g_saved_conterm = *(volatile uint8_t *)CONTERM_ADDR;
+    *(volatile uint8_t *)CONTERM_ADDR =
+        (uint8_t)(g_saved_conterm & (uint8_t)~(CONTERM_KEYCLICK | CONTERM_BELL));
     save_palette(g_saved_palette);
     build_palette_variants();
     set_palette(g_palette_variants[PALETTE_VARIANT_CLEAN]);

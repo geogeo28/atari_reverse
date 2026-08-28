@@ -34,6 +34,14 @@
  * on every blank but the one it happened on. */
 #define V_BAS_AD_ADDR               0x44e
 
+/* TOS's terminal-behaviour flags. Bit 0 is the key CLICK and bit 2 the bell, both of which TOS
+ * makes through the PSG on every keypress — inside a game that owns the sound chip that is TOS
+ * playing over the top of it. Bit 3 (key repeat) is left alone: the keyboard controls depend on it
+ * (main.c's read_input reads makes and repeats, never releases). */
+#define CONTERM_ADDR                0x484
+#define CONTERM_KEYCLICK            0x01
+#define CONTERM_BELL                0x04
+
 /* MFP timer C is TOS's own 200 Hz tick; the sub-tick part is its down-counter. */
 #define HZ_200_ADDR                 0x4ba       /* _hz_200, a long, supervisor-only */
 #define FRCLOCK_ADDR                0x466       /* TOS's VBL frame counter, supervisor-only */

@@ -47,6 +47,7 @@ static unsigned long g_arena_temp_top;      /* temporaries, from g_arena + ARENA
 BiTables g_tables;
 uint16_t g_ste_palette[PALETTE_PENS];
 const uint8_t *g_hud_backdrop;
+const uint8_t *g_title_screen;
 const uint8_t *g_font;
 
 /* Defined here rather than linked from src/assets_data.c: on the target the sprite images
@@ -574,6 +575,9 @@ AssetsResult assets_load(const char *pak_path, Level *level)
     }
     if (result == ASSETS_OK) {
         result = load_blob("HUD", HUD_BACKDROP_BYTES, &g_hud_backdrop);
+    }
+    if (result == ASSETS_OK) {
+        result = load_blob("TITLE", TITLE_SCREEN_BYTES, &g_title_screen);
     }
     if (result == ASSETS_OK) {
         result = load_blob("FONT", FONT_GLYPH_COUNT * FONT_GLYPH_BYTES, &g_font);

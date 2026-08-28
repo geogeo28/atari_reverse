@@ -34,7 +34,8 @@ members in the archive were dead weight after the first. The loop is a state mac
 now, not a single `while (running)`:
 
 ```
-title  -> SPACE starts, ESC quits                         overlay.c, drawn with the HUD font
+title  -> SPACE starts, ESC quits          the art pass's TITLE member, whole page, with a
+                                          pulsing controls line in the strapline band
 sector -> assets_load_level(n) -> game_start_level -> play()
    DEAD   -> CONNECTION TERMINATED, 2 s, retry the SAME sector, the death carried into
              DESIGN 9's start rule (+10% trace a death, measured: a retry starts at 10.9%)
@@ -43,9 +44,30 @@ sector -> assets_load_level(n) -> game_start_level -> play()
    last   -> RUN COMPLETE, back to the title
 ```
 
-**The title is text, and that is temporary.** DESIGN 15 wants the art pass's planar logotype;
-`art/out/native/title_screen.png` exists and `mkpak.py` does not pack it yet, so `overlay.c` says
-it with the font. The TODO is in that file, and it is a blit when the member arrives.
+**The title is the art.** `mkpak.py` packs `art/out/native/title_screen.png` as the `TITLE` member
+(32,000 planar bytes, 7,413 packed) through the same palette check the HUD strip goes through, and
+the title state blits it whole to both pages. It is the same sixteen colours as the game, so there
+is no palette to swap on the way in or out.
+
+**The prompt breathes for one word a frame.** The mockup leaves a slate strapline band under the
+picture carrying its own "PRESS FIRE TO BREAK IN" — which names the one input device this build
+cannot exercise — so the platform paints that band and writes the controls it actually implements:
+`SPACE TO START   ESC TO QUIT`. The art uses fifteen of the sixteen registers and leaves **14** free,
+so the line is drawn in 14 and the pulse is a single palette write on the vertical blank: no redraw,
+no second page to keep in step, nothing else on screen moving. Register 14 is the HUD's integrity
+green, which is why `play()`'s first frame writes the whole palette back before anything is drawn in
+it — measured after a start, register 14 is `$963` again.
+
+**TOS is silenced while the game runs.** `conterm` ($484) has its key-click (bit 0) and bell (bit 2)
+cleared under Super at entry and the saved byte written back on the way out. Both matter here for
+the same reason: TOS makes those sounds *through the PSG*, which is the chip the music driver owns,
+so a keypress was TOS playing over the top of the game. Bit 3, the key repeat, is deliberately left
+alone — `read_input` sees makes and repeats and never a release, so the held-key controls depend
+on it.
+
+**Controls.** SPACE (or joystick fire) starts and shoots; the arrow keys and the stick move and
+turn; **Shift** turns left/right into strafe (not Alt — see below); Z and X strafe directly; 7/8/9
+set the clock throttle; P pauses; Esc leaves, from the title, a game or an overlay.
 
 **The trace meter recolours the world** (DESIGN 9, and QA defect 4). The archive ships one palette,
 so the variants are derived at boot: DEGRADED remaps registers 1-5 through the shade LUT, CORRUPT
@@ -234,7 +256,7 @@ Measured with `m68k-elf-size` and `m68k-elf-nm`, and against the running machine
 | `BENCH.PRG` (the extra .bss is the cast self-check's shadow scratch) | 44,663 |
 | `BLACKICE.PAK` | 13,394 |
 | **resident `.bss`, game build** | **411,360** |
-| — resource arena (163,968 in use: 10 textures at 8,192, 9 sprites at 8,320, HUD 6,400, font 768) | 262,144 |
+| — resource arena, 195,968 resident and 202,613 at its peak (see below) | 262,144 |
 | — two 320x200 screens, 256-aligned, plus a page of alignment slack | 64,256 |
 | — `GameState` (the game layer's entity table, occupancy and nav field) | 16,786 |
 | — the engine's two reciprocal tables (`g_slice_height`, `g_tex_step`) | 32,768 |
@@ -249,6 +271,11 @@ Measured with `m68k-elf-size` and `m68k-elf-nm`, and against the running machine
 
 Roughly **480 KB spare**, which is the honest consequence of one texture set resident (DESIGN 17.4's
 rule) and of the shading remap: the ledger's 269,312-byte baked wall set is 81,920 bytes here.
+
+The arena holds 10 wall textures at 8,192, 9 sprite images at 8,320, the 32,000-byte title page,
+the 6,400-byte HUD strip and the 768-byte font: **195,968 resident**. The peak is higher and comes
+while the title is being unpacked — 195,200 already down plus its own 7,413 packed bytes — for
+**202,613**, leaving 59,531 spare.
 
 **The arena is one block with two ends.** Resident assets grow up from the bottom; a member's packed
 bytes and its expanded byte-per-texel image are temporaries taken from the top and released as soon
@@ -304,7 +331,8 @@ disagreeing with the portable C reference.
 **PASS: 0 of 320 columns differ**, worst top and bottom delta 0.
 
 **teardown** (`verify.py`) — a program that draws correctly and leaves the machine broken. The
-video registers, `_v_bas_ad`, `nvbls` and the `_vblqueue` slots are compared before and after,
+video registers, `_v_bas_ad`, `nvbls`, `conterm` and the `_vblqueue` slots are compared before and
+after,
 against a CONTROL boot with no program at all — without which the check measures the operating
 system: EmuTOS itself moves palette pen 7 from `0555` to `0ddd` and installs its own routine in
 `_vblqueue` slot 0 on the way to the desktop. **PASS.**

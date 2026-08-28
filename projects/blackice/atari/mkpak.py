@@ -69,6 +69,11 @@ CHANNEL_TO_INTENSITY_SHIFT = 4      # 8-bit channel -> the STE's 4-bit intensity
 
 HUD_WIDTH = 320
 HUD_HEIGHT = 40
+#: The title is a whole screen of the same planar format, and it goes through the same palette
+#: check for the same reason: it is authored art whose pixel values are indices into the engine's
+#: table, and a divergence would repaint it in colours nobody chose.
+TITLE_WIDTH = 320
+TITLE_HEIGHT = 200
 HUD_PNG_MODE = "P"                  # palettised: the pixel VALUES are palette indices
 
 # ---- levels ------------------------------------------------------------------
@@ -90,6 +95,7 @@ MEMBER_WALLTEX = "WALLTEX"
 MEMBER_SPRTEX = "SPRTEX"
 MEMBER_PALETTE = "PALETTE"
 MEMBER_HUD = "HUD"
+MEMBER_TITLE = "TITLE"
 MEMBER_FONT = "FONT"
 
 METHOD_NAMES = {METHOD_STORED: "stored", METHOD_LZSS: "lzss"}
@@ -135,8 +141,15 @@ class PaletteMapRow(NamedTuple):
 
     @property
     def is_identity(self) -> bool:
-        """True when the index found itself and the colours are the same colour."""
-        return self.engine_index == self.png_index and self.delta_e == 0.0
+        """True when the index found itself and the two triples are the same bytes.
+
+        THE TEST IS ON THE INTEGERS, NOT ON delta_e. The contract is "the same sixteen colours",
+        which is an exact comparison of 8-bit triples; the Lab distance exists to name the nearest
+        WRONG colour when that fails, and is not itself evidence of anything. Written as
+        `delta_e == 0.0` this refused the title screen over index 15 matching itself at a distance
+        of 1.07e-14 - a round-trip through Lab and back, not a divergence.
+        """
+        return self.engine_index == self.png_index and self.engine_rgb == self.png_rgb
 
 
 def png_colours_of(png_path: Path, image: Image.Image, used_indices: list[int]) -> list[tuple[int, int, int]]:
@@ -198,14 +211,19 @@ def check_hud_palette_map(png_path: Path, rows: list[PaletteMapRow]) -> None:
                "diverged; make one import the other and regenerate src/tables.c.")
 
 
-def hud_member(png_path: Path, engine_rgb: list[tuple[int, int, int]]) -> bytes:
-    """The HUD strip as ST 4-bitplane word-interleaved bytes, 160 per row."""
+def planar_screen_member(png_path: Path, size: tuple[int, int],
+                         engine_rgb: list[tuple[int, int, int]]) -> bytes:
+    """A palettised PNG as ST 4-bitplane word-interleaved bytes, 160 per row.
+
+    Both the HUD strip and the title screen come through here: they are the same format at two
+    heights, and they need the same palette check for the same reason.
+    """
     image = Image.open(png_path)
     if image.mode != HUD_PNG_MODE:
         refuse(f"{png_path} is mode {image.mode!r}, expected {HUD_PNG_MODE!r} "
                "(its pixel values must be palette indices, not colours)")
-    if image.size != (HUD_WIDTH, HUD_HEIGHT):
-        refuse(f"{png_path} is {image.size[0]}x{image.size[1]}, expected {HUD_WIDTH}x{HUD_HEIGHT}")
+    if image.size != size:
+        refuse(f"{png_path} is {image.size[0]}x{image.size[1]}, expected {size[0]}x{size[1]}")
 
     # int32, not uint8: an out-of-range index has to be visible before any cast.
     indices = np.asarray(image, dtype=np.int32)
@@ -272,13 +290,15 @@ def verify_round_trip(pak_blob: bytes, members: dict[str, bytes]) -> None:
 # ---- driver -------------------------------------------------------------------
 
 
-def build_members(dumps_dir: Path, levels_dir: Path, hud_png: Path) -> dict[str, bytes]:
+def build_members(dumps_dir: Path, levels_dir: Path, hud_png: Path,
+                  title_png: Path) -> dict[str, bytes]:
     engine_rgb = read_engine_palette(dumps_dir)
     members = {
         MEMBER_WALLTEX: (dumps_dir / WALLTEX_DUMP).read_bytes(),
         MEMBER_SPRTEX: (dumps_dir / SPRTEX_DUMP).read_bytes(),
         MEMBER_PALETTE: ste_palette_member(engine_rgb),
-        MEMBER_HUD: hud_member(hud_png, engine_rgb),
+        MEMBER_HUD: planar_screen_member(hud_png, (HUD_WIDTH, HUD_HEIGHT), engine_rgb),
+        MEMBER_TITLE: planar_screen_member(title_png, (TITLE_WIDTH, TITLE_HEIGHT), engine_rgb),
         MEMBER_FONT: font.font_bytes(),
     }
     members.update(level_members(levels_dir))
@@ -290,10 +310,12 @@ def main() -> None:
     parser.add_argument("--dumps", required=True, type=Path, help="directory written by atari/dumpassets")
     parser.add_argument("--levels", required=True, type=Path, help="directory of compiled .bil level blobs")
     parser.add_argument("--hud", required=True, type=Path, help="320x40 palettised HUD strip PNG")
+    parser.add_argument("--title", required=True, type=Path,
+                        help="320x200 palettised title screen PNG")
     parser.add_argument("--out", required=True, type=Path, help="the .PAK to write")
     args = parser.parse_args()
 
-    members = build_members(args.dumps, args.levels, args.hud)
+    members = build_members(args.dumps, args.levels, args.hud, args.title)
     pak_blob = build_pak(members)
     args.out.write_bytes(pak_blob)
 

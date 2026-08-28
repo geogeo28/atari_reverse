@@ -68,6 +68,7 @@ COMMON_OBJ   := $(ASM_OBJ) $(ENGINE_OBJ) $(AUDIO_OBJ) $(SHARED_OBJ)
 HEADERS   := plat.h tos.h assets.h hud.h $(wildcard $(ENGINE)/include/*.h)
 LEVELS    := $(patsubst $(ENGINE)/levels/%.txt,$(ENGINE)/levels/%.bil,$(wildcard $(ENGINE)/levels/*.txt))
 HUD_ART   := $(ENGINE)/art/out/native/hud_strip.png
+TITLE_ART := $(ENGINE)/art/out/native/title_screen.png
 DUMPS     := $(BUILD)/dumps
 PAK       := $(DISK)/BLACKICE.PAK
 
@@ -210,8 +211,9 @@ $(DUMPS)/walltex.bin: $(BUILD)/dumpassets | $(DUMPS)
 $(ENGINE)/levels/%.bil: $(ENGINE)/levels/%.txt
 	$(MAKE) -C $(ENGINE) $@
 
-$(PAK): mkpak.py $(DUMPS)/walltex.bin $(HUD_ART) $(LEVELS) | $(DISK)
-	$(PYTHON) mkpak.py --dumps $(DUMPS) --levels $(ENGINE)/levels --hud $(HUD_ART) --out $@
+$(PAK): mkpak.py $(DUMPS)/walltex.bin $(HUD_ART) $(TITLE_ART) $(LEVELS) | $(DISK)
+	$(PYTHON) mkpak.py --dumps $(DUMPS) --levels $(ENGINE)/levels --hud $(HUD_ART) \
+	          --title $(TITLE_ART) --out $@
 
 # ---- measurement -----------------------------------------------------------------------------------
 
