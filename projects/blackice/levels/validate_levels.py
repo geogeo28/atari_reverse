@@ -2,7 +2,7 @@
 """BLACK ICE level validator - DESIGN.md v2.
 
 Parses any `levels/*.txt` authored in the v2 legend (SS11) and applies the eight compiler rules
-plus the two compiler warnings, so a map is proved sound before `tools/mklevel.py` compiles it:
+plus the one compiler warning, so a map is proved sound before `tools/mklevel.py` compiles it:
 
   rule 1  rectangular map, <= 64x64, exactly one `@` (and exactly one `>`)
   rule 2  sealed border: every border cell is a wall or a terminal door
@@ -14,7 +14,10 @@ plus the two compiler warnings, so a map is proved sound before `tools/mklevel.p
   rule 7  lock-ordered flood fill proving every token, every pickup and the exit are reachable in
           a legal token order - and reporting that order
   rule 8  WARNING: a floor cell with fewer than two open neighbours that is not a Sentry alcove
-  rule 9  WARNING: a `>` gate or `X` plating run first seen from beyond band 2 (SS3 fog)
+
+SS11's rule 9 - warning on an exit gate first seen beyond band 2 - is WITHDRAWN: it rested on
+integrity green fogging out at band 3, and `palette.py`'s BAND_ACCENT_MAP holds index 14 unfogged
+in all five bands (SS3), so a gate is green from any distance.  The compiler carries eight rules.
 
 Header fields are range-checked against the SS11 binary field widths and the SS9/SS14 shipped
 values, so a unit slip (a v1 per-tick `trace_base_rate`, say) is caught here and not in play.
@@ -24,36 +27,47 @@ Exit status 0 when every level passes; warnings never fail a level.
 """
 
 import os
+import pathlib
 import re
 import sys
 from collections import deque
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "tools"))
+import mklevel                                                  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # The legend and the numeric contract. DESIGN.md v2 SS9/SS11/SS14 own these.
+#
+# The glyph tables below are DERIVED from tools/mklevel.py's one legend, not
+# copied from it: a validator that passes a map the compiler then rejects - or
+# worse, passes one the compiler compiles differently - is not a validator.
+#
+# The RULES are mklevel's too.  Rules 3, 4, 5, 7 and 8 used to be implemented
+# twice, once here over glyphs and once (or not at all) there over cell values;
+# they now live in the compiler and this file calls them, so the compiler is the
+# single authority on what a legal map is.  What stays local is the REPORT:
+# names, roles, the header ranges and the summary table.
 # ---------------------------------------------------------------------------
 
-MAX_DIM = 64                     # grid is 64x64 cells maximum
-MAX_ENTITIES = 64                # the entity list is capped at 64 records
-BAND2_CELLS = 9                  # integrity green fogs to slate past band 2 (SS3)
-BRAD_TURN = 1024                 # 1024 brads = 360 degrees; 0 = north, clockwise
+MAX_DIM = mklevel.MAP_MAX_DIM    # grid is 64x64 cells maximum
+MAX_ENTITIES = mklevel.MAX_ENTITIES     # the entity list is capped at 64 records
+BRAD_TURN = mklevel.BRADS_PER_TURN      # 1024 brads = 360 degrees; 0 = north, clockwise
 SHIPPED_TRACE_BASE_RATE = 180    # thousandths of a percent per SECOND (SS9.1: 0.18 %/s)
 SHIPPED_TRACE_CARRY_CAP = 25     # percent - SS9 makes this the single authority on start value
 
-WALL_CELLS = {                   # glyph -> wall texture id (1..15)
-    '#': 1, '=': 2, '%': 3, '|': 4, '^': 5, '?': 6, 'A': 7, 'X': 8,
-}
-EXIT_PLATING = 'X'
-DOOR_CELLS = {                   # glyph -> door variant (16..31)
-    '+': 16, '1': 17, '2': 18, '3': 19, 'S': 21, '~': 22, '>': 23,
-}
-ORDINARY_DOORS = ('+', '1', '2', '3', '~')          # rule 3
+
+def _cells_between(low, high):
+    """Legend glyphs whose compiled cell value falls in [low, high]."""
+    return {glyph: cell for glyph, (cell, _entity, _start) in mklevel.LEGEND.items()
+            if low <= cell <= high}
+
+
+WALL_CELLS = _cells_between(1, mklevel.CELL_WALL_MAX)           # glyph -> wall texture id
+DOOR_CELLS = _cells_between(mklevel.CELL_DOOR_BASE, mklevel.CELL_DOOR_MAX)
 TERMINAL_DOORS = ('S', '>')                         # rule 4: on the border, one open neighbour
-ALWAYS_OPEN_DOORS = ('+', '>')                      # bump-to-open plain gate, and the exit gate
-NEVER_OPEN_DOORS = ('S', '~')                       # sealed arch, and the door jammed at 3/8
 
 START_GLYPH = '@'
 EXIT_GLYPH = '>'
-SENTRY_GLYPH = 's'
 FLOOR_ENTITIES = {               # every entity is a floor entity in v2; the cell compiles to 0
     'w': ('enemy', 'Watchdog'), 't': ('enemy', 'Tracer'), 'B': ('enemy', 'Black ICE'),
     's': ('enemy', 'Sentry'), '*': ('enemy', 'anchor'),
@@ -62,13 +76,23 @@ FLOOR_ENTITIES = {               # every entity is a floor entity in v2; the cel
     'i': ('pickup', 'integrity small'), 'I': ('pickup', 'integrity large'),
     'u': ('pickup', 'scrubber'), 'd': ('pickup', 'data cache'),
 }
+# FLOOR_ENTITIES carries names and roles mklevel has no opinion about, so it
+# stays spelled out - but WHICH glyphs place an entity is mklevel's to say, and
+# a glyph in one table and not the other is a defect in this file.
+assert set(FLOOR_ENTITIES) == {glyph for glyph, (_cell, entity, _start) in mklevel.LEGEND.items()
+                               if entity != mklevel.ENT["NONE"]}, \
+    "the validator's entity glyphs have drifted from tools/mklevel.py's legend"
+assert set(WALL_CELLS) | set(DOOR_CELLS) | set(FLOOR_ENTITIES) | {'.', '@'} \
+    == set(mklevel.LEGEND), "the validator does not cover the whole legend"
+
 ENEMY_GLYPHS = ('w', 's', 't', 'B', '*')
 TOKEN_GLYPHS = ('p', 'q', 'r')
 PICKUP_GLYPHS = ('c', 'C', 'i', 'I', 'u', 'd')
-TOKEN_FOR_DOOR = {'1': 'p', '2': 'q', '3': 'r'}     # locked door -> the token that opens it
-TOKEN_NAMES = {'p': 'ALPHA', 'q': 'BETA', 'r': 'GAMMA'}
-
-PASSABLE_BASE = set(FLOOR_ENTITIES) | {'.', START_GLYPH} | set(ALWAYS_OPEN_DOORS)
+# The lock order mklevel reports is a list of ENTITY TYPES, because that is what
+# the compiler sees; these are the names the table prints them under.
+TOKEN_NAMES = {mklevel.ENT['TOKEN_ALPHA']: 'ALPHA',
+               mklevel.ENT['TOKEN_BETA']: 'BETA',
+               mklevel.ENT['TOKEN_GAMMA']: 'GAMMA'}
 
 HEADER_RE = re.compile(r'^#\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*?)\s*$')
 FENCE_RE = re.compile(r'^\s*```')
@@ -86,8 +110,6 @@ HEADER_RANGES = {
 REQUIRED_KEYS = ('name', 'sector', 'palette_variant', 'texture_set', 'start_facing', 'rng_seed',
                  'trace_base_rate', 'trace_start', 'trace_carry_cap', 'par_ticks', 'entity_count')
 ROSTER_KEYS = (('watchdogs', 'w'), ('sentries', 's'), ('tracers', 't'))
-NEIGHBOURS = ((0, -1), (0, 1), (-1, 0), (1, 0))
-AXES = (((0, -1), (0, 1)), ((-1, 0), (1, 0)))       # north/south pair, west/east pair
 
 
 class Level:
@@ -111,25 +133,9 @@ class Level:
     def count(self, glyphs):
         return sum(len(self.at.get(g, ())) for g in glyphs)
 
-    def in_bounds(self, x, y):
-        return 0 <= x < self.width and 0 <= y < self.height
-
     def on_border(self, x, y):
         return x in (0, self.width - 1) or y in (0, self.height - 1)
 
-    def is_wall(self, x, y):
-        return self.glyph(x, y) in WALL_CELLS
-
-    def is_solid(self, x, y):
-        """Solid for the jamb and alcove rules: a wall, or a door (a closed door is not a gap)."""
-        ch = self.glyph(x, y)
-        return ch in WALL_CELLS or ch in DOOR_CELLS
-
-    def neighbours(self, x, y):
-        for dx, dy in NEIGHBOURS:
-            nx, ny = x + dx, y + dy
-            if self.in_bounds(nx, ny):
-                yield nx, ny
 
 
 def parse_level(path):
@@ -229,103 +235,35 @@ def check_singletons(lvl, errors):
                 errors.append('header %s=%s but %r sits at %d' % (key, lvl.header[key], START_GLYPH, value))
 
 
-def open_neighbours(lvl, x, y):
-    """Cells a body could stand in: not wall, not a door. Used by rules 3, 4 and 5."""
-    return [(nx, ny) for nx, ny in lvl.neighbours(x, y) if not lvl.is_solid(nx, ny)]
+def compiled(lvl, errors):
+    """Compile the map block the way tools/mklevel.py does, so the rules below
+    are asked of exactly the cells the compiler would produce."""
+    try:
+        width, height, cells, entities, start = mklevel.build_grid(lvl.rows)
+    except mklevel.LevelError as error:
+        errors.append(str(error))
+        return None, None, None
+    return mklevel.Grid(width, height, cells), entities, start
 
 
-def walkable_neighbours(lvl, x, y):
-    """Cells a body could move through, doors included. Used by warning 8."""
-    return [(nx, ny) for nx, ny in lvl.neighbours(x, y) if not lvl.is_wall(nx, ny)]
+def check_compiler_rules(grid, entities, start, errors, warnings):
+    """DESIGN 11 rules 3, 4, 5 and 7, and warning 8 - all delegated.
 
-
-def check_ordinary_doors(lvl, errors):
-    """Rule 3: exactly two opposite open neighbours - that pair is the door's axis."""
-    for glyph in ORDINARY_DOORS:
-        for x, y in lvl.at.get(glyph, ()):
-            if lvl.on_border(x, y):
-                errors.append('(%d,%d): ordinary door %r sits on the border (rule 4)' % (x, y, glyph))
-                continue
-            opened = open_neighbours(lvl, x, y)
-            axes = [1 for (adx, ady), (bdx, bdy) in AXES
-                    if (x + adx, y + ady) in opened and (x + bdx, y + bdy) in opened]
-            if len(opened) != 2 or len(axes) != 1:
-                errors.append('(%d,%d): door %r has %d open neighbours on %d axis/axes, expected 2 opposite'
-                              % (x, y, glyph, len(opened), len(axes)))
-
-
-def check_terminal_doors(lvl, errors):
-    """Rule 4: variants 21 and 23 lie on the border with exactly one open neighbour."""
-    for glyph in TERMINAL_DOORS:
-        for x, y in lvl.at.get(glyph, ()):
-            if not lvl.on_border(x, y):
-                errors.append('(%d,%d): terminal door %r is not on the map border' % (x, y, glyph))
-            opened = open_neighbours(lvl, x, y)
-            if len(opened) != 1:
-                errors.append('(%d,%d): terminal door %r has %d open neighbours, expected exactly 1'
-                              % (x, y, glyph, len(opened)))
-
-
-def check_sentries(lvl, errors):
-    """Rule 5: a Sentry alcove has exactly three wall neighbours and one open neighbour."""
-    for x, y in lvl.at.get(SENTRY_GLYPH, ()):
-        walls = [n for n in lvl.neighbours(x, y) if lvl.is_wall(*n)]
-        opened = open_neighbours(lvl, x, y)
-        if len(walls) != 3 or len(opened) != 1:
-            errors.append('(%d,%d): Sentry alcove has %d wall and %d open neighbours, expected 3 and 1'
-                          % (x, y, len(walls), len(opened)))
-
-
-def lock_ordered_reach(lvl):
-    """Rule 7: BFS from the start, unlocking a token door only once its token has been reached.
-
-    Returns (distance map, [token glyphs in the order they became reachable]). Re-running the flood
-    each time a token is picked up is what proves the route is walkable in a legal order rather
-    than merely connected once every door is assumed open.
+    mklevel raises on the FIRST failure rather than collecting them, so this
+    reports one rule failure at a time.  That is the trade for having one
+    implementation: the message is the compiler's own, and a map this file
+    passes is a map the compiler will compile.
     """
-    start = lvl.at.get(START_GLYPH, [])
-    if not start:
-        return {}, []
-    held, order, dist = set(), [], {}
-    while True:
-        passable = set(PASSABLE_BASE) | {d for d, tok in TOKEN_FOR_DOOR.items() if tok in held}
-        dist = {start[0]: 0}
-        queue = deque(start)
-        while queue:
-            x, y = queue.popleft()
-            if lvl.glyph(x, y) == EXIT_GLYPH:
-                continue                            # entering the exit ends the level: walk no further
-            for nx, ny in lvl.neighbours(x, y):
-                if (nx, ny) in dist or lvl.glyph(nx, ny) not in passable:
-                    continue
-                dist[(nx, ny)] = dist[(x, y)] + 1
-                queue.append((nx, ny))
-        gained = sorted({lvl.glyph(x, y) for (x, y) in dist if lvl.glyph(x, y) in TOKEN_GLYPHS} - held)
-        if not gained:
-            return dist, order
-        held |= set(gained)
-        order.append(gained)
-
-
-def check_reachability(lvl, dist, errors):
-    """Rule 7: the exit, every token and every pickup must fall inside the lock-ordered flood."""
-    exits = lvl.at.get(EXIT_GLYPH, [])
-    if exits and exits[0] not in dist:
-        errors.append('the sector exit at (%d,%d) is not reachable in a legal token order' % exits[0])
-    for glyph in TOKEN_GLYPHS + PICKUP_GLYPHS:
-        for x, y in lvl.at.get(glyph, ()):
-            if (x, y) not in dist:
-                errors.append('(%d,%d): %s %r is not reachable in a legal token order'
-                              % (x, y, FLOOR_ENTITIES[glyph][1], glyph))
-
-
-def check_entities_placed(lvl, dist, errors):
-    """Every entity stands on floor, and on floor the player can actually get to."""
-    for glyph in FLOOR_ENTITIES:
-        for x, y in lvl.at.get(glyph, ()):
-            if (x, y) not in dist:
-                errors.append('(%d,%d): %s %r is walled off from the player'
-                              % (x, y, FLOOR_ENTITIES[glyph][1], glyph))
+    try:
+        mklevel.validate_door_jambs(grid)
+        mklevel.validate_terminal_doors(grid)
+        mklevel.validate_sentry_alcoves(grid, entities)
+        mklevel.validate_reachable(grid, entities, start)
+    except mklevel.LevelError as error:
+        errors.append(str(error))
+    pockets = mklevel.warn_dead_ends(grid, entities)
+    warnings.extend(pockets)
+    return len(pockets)
 
 
 def check_counts(lvl, errors):
@@ -339,47 +277,6 @@ def check_counts(lvl, errors):
     for key, glyph in ROSTER_KEYS:
         if key in lvl.header and lvl.header[key] != lvl.count(glyph):
             errors.append('header %s=%s but the map holds %d' % (key, lvl.header[key], lvl.count(glyph)))
-
-
-def check_dead_ends(lvl, dist, warnings):
-    """Warning 8: a floor cell with fewer than two open neighbours that is not a Sentry alcove."""
-    pockets = []
-    for y, row in enumerate(lvl.rows):
-        for x, ch in enumerate(row):
-            if ch in WALL_CELLS or ch in DOOR_CELLS or ch == SENTRY_GLYPH:
-                continue
-            if len(walkable_neighbours(lvl, x, y)) < 2:
-                pockets.append((x, y))
-    for x, y in pockets:
-        warnings.append('(%d,%d): 1-cell pocket - floor with fewer than two open neighbours' % (x, y))
-    return len(pockets)
-
-
-def approach_run(lvl, x, y):
-    """How many floor cells you can see in a straight line out of a border gate."""
-    opened = open_neighbours(lvl, x, y)
-    if len(opened) != 1:
-        return 0
-    dx, dy = opened[0][0] - x, opened[0][1] - y
-    run, cx, cy = 0, x + dx, y + dy
-    while lvl.in_bounds(cx, cy) and not lvl.is_solid(cx, cy):
-        run += 1
-        cx, cy = cx + dx, cy + dy
-    return run
-
-
-def check_gate_band(lvl, warnings):
-    """Warning 9: the exit gate and its plating must first be seen inside band 2 (SS3 fog)."""
-    for x, y in lvl.at.get(EXIT_GLYPH, ()):
-        run = approach_run(lvl, x, y)
-        if run > BAND2_CELLS:
-            warnings.append('(%d,%d): exit gate is seen down a %d-cell straight approach, past band %d'
-                            % (x, y, run, BAND2_CELLS))
-    floors = [(x, y) for y, row in enumerate(lvl.rows) for x, ch in enumerate(row)
-              if ch not in WALL_CELLS and ch not in NEVER_OPEN_DOORS]
-    for x, y in lvl.at.get(EXIT_PLATING, ()):
-        if not any(max(abs(fx - x), abs(fy - y)) <= BAND2_CELLS for fx, fy in floors):
-            warnings.append('(%d,%d): exit plating has no floor cell inside band %d' % (x, y, BAND2_CELLS))
 
 
 def summarise(lvl, dist, order, warn_count):
@@ -415,15 +312,12 @@ def validate(path):
     check_glyphs(lvl, errors)
     check_border(lvl, errors)
     check_singletons(lvl, errors)
-    check_ordinary_doors(lvl, errors)
-    check_terminal_doors(lvl, errors)
-    check_sentries(lvl, errors)
-    dist, order = lock_ordered_reach(lvl)
-    check_reachability(lvl, dist, errors)
-    check_entities_placed(lvl, dist, errors)
     check_counts(lvl, errors)
-    warn_count = check_dead_ends(lvl, dist, warnings)
-    check_gate_band(lvl, warnings)
+    grid, entities, start = compiled(lvl, errors)
+    if grid is None:
+        return lvl, errors, warnings, None
+    warn_count = check_compiler_rules(grid, entities, start, errors, warnings)
+    dist, order = mklevel.lock_ordered_reach(grid, entities, start)
     return lvl, errors, warnings, summarise(lvl, dist, order, warn_count)
 
 

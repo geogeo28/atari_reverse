@@ -24,10 +24,13 @@ static void draw_textured_column(const RenderColumn *column, uint8_t *dst)
     const uint8_t *shade = g_shade_lut[column->band + column->side];
     uint16_t texel_v = column->tex_v;
     uint16_t step = column->tex_step;
-    uint16_t row;
+    /* Counted down in a local: `column->rows` reloaded through the pointer
+     * every iteration, because the compiler cannot prove the stores do not
+     * alias the RenderColumn. */
+    uint16_t rows = column->rows;
 
-    for (row = 0; row < column->rows; ++row) {
-        *dst++ = shade[texels[texel_v >> CELL_SHIFT]];
+    while (rows--) {
+        *dst++ = shade[texels[fix88_whole(texel_v)]];
         texel_v = (uint16_t)(texel_v + step);
     }
 }

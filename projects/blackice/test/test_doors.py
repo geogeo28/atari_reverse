@@ -10,11 +10,10 @@ import ctypes
 import pytest
 
 import blackice
-from blackice import CONST
-from test_raycast import make_level
+from blackice import CONST, make_level
 
-CELL = blackice.CELL_UNITS
-CENTRE = CELL // 2
+CELL = blackice.CELL
+CENTRE = blackice.CENTRE
 
 
 def corridor_with_door(lib, variant=None):
@@ -144,6 +143,7 @@ def test_a_closed_door_is_drawn_and_an_open_one_is_not(lib):
     one, which is the only thing that makes an opened door readable."""
     level = corridor_with_door(lib)
     state = blackice.new_state(lib, level)
+    state.detail_level = CONST["DETAIL_COLUMNS_160"]     # this test names that width
     scratch = blackice.RenderScratch()
     state.player.x = 1 * CELL + CENTRE
     state.player.y = 6 * CELL + CENTRE
@@ -161,3 +161,56 @@ def test_a_closed_door_is_drawn_and_an_open_one_is_not(lib):
 
     assert scratch.columns[centre_column].tex_id != CONST["TEX_GATE_PANEL"]
     assert scratch.wall_dist[centre_column] > closed_distance, "the ray did not pass through"
+
+
+def test_an_open_door_re_arms_when_it_is_touched_again(lib):
+    """Walking back into an open door must reset its hold timer.  Without that
+    arm, a door you are standing in the doorway of starts closing on schedule
+    and the player watches it shut in their face."""
+    level = corridor_with_door(lib)
+    state = blackice.new_state(lib, level)
+    cell = door_cell_index(level)
+
+    lib.game_touch_door(ctypes.byref(state), cell)
+    for _ in range(CONST["DOOR_OPENING_TICKS"]):
+        lib.game_step(ctypes.byref(state), 0)
+    assert state.doors[0].state == CONST["DOOR_STATE_OPEN"]
+
+    half = CONST["DOOR_OPEN_TICKS"] // 2
+    for _ in range(half):
+        lib.game_step(ctypes.byref(state), 0)
+    assert state.doors[0].timer == CONST["DOOR_OPEN_TICKS"] - half
+
+    assert lib.game_touch_door(ctypes.byref(state), cell) == 1
+    assert state.doors[0].timer == CONST["DOOR_OPEN_TICKS"], "the hold timer was not re-armed"
+    assert state.doors[0].state == CONST["DOOR_STATE_OPEN"], "a re-touch must not restart travel"
+
+
+@pytest.mark.parametrize("variant", ["DOOR_LOCK_ALPHA", "DOOR_LOCK_BETA", "DOOR_LOCK_GAMMA"])
+def test_a_locked_door_does_not_open_just_because_you_walked_into_it(lib, variant):
+    """DESIGN 10 gives 17/18/19 to the token ledger.  The engine's default
+    answer is no; the game layer replaces door_may_open to say yes."""
+    level = corridor_with_door(lib, CONST[variant])
+    state = blackice.new_state(lib, level)
+    cell = door_cell_index(level)
+
+    assert lib.game_touch_door(ctypes.byref(state), cell) == 0
+    for _ in range(CONST["DOOR_OPENING_TICKS"] * 4):
+        lib.game_step(ctypes.byref(state), 0)
+    assert state.doors[0].state == CONST["DOOR_STATE_CLOSED"]
+    assert blocks(state, cell)
+
+
+def test_the_sector_exit_is_never_a_door_that_opens(lib):
+    """A '>' is an arch in the OUTER wall.  Opening it would clear a border
+    cell's solid bit, and the DDA - which has no bounds test - would walk
+    straight out of the map through the hole."""
+    level = corridor_with_door(lib, CONST["DOOR_SECTOR_EXIT"])
+    state = blackice.new_state(lib, level)
+    cell = door_cell_index(level)
+
+    assert lib.game_touch_door(ctypes.byref(state), cell) == 0
+    for _ in range(CONST["DOOR_OPEN_TICKS"] * 2):
+        lib.game_step(ctypes.byref(state), 0)
+    assert state.doors[0].state == CONST["DOOR_STATE_CLOSED"]
+    assert blocks(state, cell), "the sector exit stopped blocking"

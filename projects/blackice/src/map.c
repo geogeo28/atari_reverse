@@ -21,9 +21,25 @@ uint8_t map_cell_texture(uint8_t cell_value)
 
 int door_variant_is_fixed(uint8_t variant)
 {
-    /* A corrupted door is frozen part-open forever and a sealed gate only ever
-     * opens as the 100%-trace exfil, which the sim layer above drives. */
-    return variant == DOOR_CORRUPTED || variant == DOOR_SEALED;
+    /*
+     * A corrupted door is frozen part-open forever; a sealed gate only ever
+     * opens as the 100%-trace exfil, which the sim layer above drives; and a
+     * sector exit is an arch that ENDS the level on contact rather than a leaf
+     * that travels - opening it would unblock a border cell and let the DDA,
+     * which has no bounds test, walk out of the map.
+     *
+     * HOOK for the game layer: game_touch_door returns 0 for a sector exit, so
+     * the "walking into `>` finishes the sector" rule is driven from the tick
+     * above (the bumped cell is reported to it), not from the door table.
+     */
+    return variant == DOOR_CORRUPTED || variant == DOOR_SEALED
+        || variant == DOOR_SECTOR_EXIT;
+}
+
+int door_variant_is_locked(uint8_t variant)
+{
+    return variant == DOOR_LOCK_ALPHA || variant == DOOR_LOCK_BETA
+        || variant == DOOR_LOCK_GAMMA;
 }
 
 void map_build_blocking(const MapGrid *grid, const Door *doors, uint16_t door_count,
@@ -48,21 +64,28 @@ void map_build_blocking(const MapGrid *grid, const Door *doors, uint16_t door_co
 
 uint16_t map_collect_doors(const MapGrid *grid, Door *doors)
 {
-    uint16_t cells = (uint16_t)grid->width * grid->height;
     uint16_t count = 0;
-    uint16_t i;
+    uint16_t index = 0;
+    uint8_t x;
+    uint8_t y;
 
-    for (i = 0; i < cells && count < DOOR_MAX_COUNT; ++i) {
-        uint8_t value = grid->cells[i];
+    /* x and y are walked alongside the index rather than divided out of it:
+     * this is the only place a door's cell coordinates are ever computed. */
+    for (y = 0; y < grid->height; ++y) {
+        for (x = 0; x < grid->width; ++x, ++index) {
+            uint8_t value = grid->cells[index];
 
-        if (!CELL_IS_DOOR(value)) {
-            continue;
+            if (!CELL_IS_DOOR(value) || count >= DOOR_MAX_COUNT) {
+                continue;
+            }
+            doors[count].cell = index;
+            doors[count].cell_x = x;
+            doors[count].cell_y = y;
+            doors[count].variant = value;
+            doors[count].state = DOOR_STATE_CLOSED;
+            doors[count].timer = 0;
+            ++count;
         }
-        doors[count].cell = i;
-        doors[count].variant = value;
-        doors[count].state = DOOR_STATE_CLOSED;
-        doors[count].timer = 0;
-        ++count;
     }
     return count;
 }

@@ -25,6 +25,15 @@ size_t bi_sizeof_door(void)          { return sizeof(Door); }
 size_t bi_offset_state_player(void)  { return offsetof(GameState, player); }
 size_t bi_offset_state_doors(void)   { return offsetof(GameState, doors); }
 size_t bi_offset_state_trace(void)   { return offsetof(GameState, trace_milli); }
+/* Where the engine half of GameState ends and the game layer begins.  The
+ * ctypes mirror only models the engine half, so this - not sizeof - is what
+ * pins it. */
+size_t bi_offset_state_gamelayer(void) { return offsetof(GameState, entities); }
+/* Three probes into the game layer's own fields, so the suite's mirror of it
+ * is pinned in the middle and not only at its start. */
+size_t bi_offset_state_nav(void)       { return offsetof(GameState, nav); }
+size_t bi_offset_state_events(void)    { return offsetof(GameState, events); }
+size_t bi_offset_state_integrity(void) { return offsetof(GameState, integrity); }
 size_t bi_offset_scratch_dist(void)  { return offsetof(RenderScratch, wall_dist); }
 size_t bi_offset_scratch_sprites(void) { return offsetof(RenderScratch, sprites); }
 size_t bi_offset_level_cells(void)   { return offsetof(Level, cells); }

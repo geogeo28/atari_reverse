@@ -39,7 +39,8 @@ extern const SpriteAsset *g_entity_sprites[ENT_TYPE_COUNT];
 /*
  * One visible billboard, fully projected and clipped.
  *
- * 68000 layout, 24 bytes (pointers are 4 bytes there; the host build is wider,
+ * 68000 layout, RENDER_SPRITE_BYTES_68K = 26 bytes (pointers are 4 bytes there;
+ * the host build is wider,
  * which is why the asm must use these documented offsets and not sizeof):
  *    +0  texels      ptr  64x64 column-major texels
  *    +4  spans       ptr  TEX_DIM SpriteSpan pairs
@@ -80,12 +81,28 @@ typedef struct {
 } SpriteList;
 
 /*
- * Project every live entity, cull, sort far-to-near and apply the per-frame
- * pixel budget.  DESIGN 8.2: the walk that spends the budget runs in drop
- * priority order (nearest first here, since no entity has an AI state yet), so
- * the nearest sprite is never dropped and the farthest go first.
+ * Project every live entity into a far-to-near list, then spend the per-frame
+ * pixel budget on it.
+ *
+ * DESIGN 8.2 asks that the nearest ATTACKER never be dropped - "the closest
+ * entity in ATTACK, or if none is attacking, the closest entity" - and TWO caps
+ * could drop one: SPRITE_MAX_VISIBLE, which is applied by inserting in distance
+ * order and evicting the farthest, and the pixel budget, which is spent from
+ * the near end.  Both cut from the far end only, and the exempt sprite is
+ * additionally kept whatever the budget says and charged nothing for it, which
+ * is what makes the worst case a window-filling sprite PLUS the budget.
  */
 void sprite_build_list(const GameState *state, SpriteList *list);
+
+/*
+ * DESIGN 8.2's cost function: the chunky pixels this billboard would actually
+ * write, AFTER its projected rectangle is clipped to the render window.  `cols`
+ * arrives already column-clipped; `rows` is the full projected height, because
+ * the drawer needs it to map texel rows onto screen rows, so the row clip lives
+ * here.  Published rather than static because it is the rule the whole budget
+ * rests on: a sprite 191 rows tall in an 80-row window costs 80.
+ */
+int32_t sprite_pixel_cost(const RenderSprite *sprite);
 
 /*
  * Draw the list into the chunky buffer, column-clipped against `wall_dist`

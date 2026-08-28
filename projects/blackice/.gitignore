@@ -17,3 +17,9 @@ spike/out/*.log
 spike/out/*.bin
 spike/out/*.txt
 !spike/out/table.txt
+
+# atari/ build output: out/ is the Hatari harness's scratch (debugger scripts, logs, screenshots,
+# memory dumps) and floppy/ is a staged copy of disk/. atari/Makefile's `clean` deletes both, which
+# is the same statement in the other direction.
+atari/out/
+atari/floppy/

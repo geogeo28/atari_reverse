@@ -8,7 +8,6 @@ import blackice
 
 def test_struct_sizes(lib):
     assert ctypes.sizeof(blackice.Level) == lib.bi_sizeof_level()
-    assert ctypes.sizeof(blackice.GameState) == lib.bi_sizeof_gamestate()
     assert ctypes.sizeof(blackice.RenderColumn) == lib.bi_sizeof_rendercolumn()
     assert ctypes.sizeof(blackice.RenderScratch) == lib.bi_sizeof_renderscratch()
     assert ctypes.sizeof(blackice.RenderSprite) == lib.bi_sizeof_rendersprite()
@@ -23,6 +22,18 @@ def test_struct_offsets(lib):
     assert blackice.RenderScratch.wall_dist.offset == lib.bi_offset_scratch_dist()
     assert blackice.RenderScratch.sprites.offset == lib.bi_offset_scratch_sprites()
     assert blackice.Level.cells.offset == lib.bi_offset_level_cells()
+
+
+def test_the_mirror_covers_the_whole_engine_half_of_gamestate(lib):
+    """game.h appends the game layer after trace_milli and promises never to
+    interleave it.  Two things must hold: the game layer starts exactly where
+    the named half ends - an inserted field would shift every offset the suite
+    reads, and comparing sizeof alone would never notice - and the opaque tail
+    is big enough that game_init, which writes the game layer, stays inside the
+    ctypes buffer."""
+    assert blackice.GameState.game_layer_tail.offset == lib.bi_offset_state_gamelayer()
+    assert ctypes.sizeof(blackice.GameState) >= lib.bi_sizeof_gamestate(), \
+        "the game layer outgrew GAME_LAYER_TAIL_BYTES"
 
 
 def test_render_column_is_the_documented_68000_record():

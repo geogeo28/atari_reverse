@@ -11,13 +11,21 @@ so a silent divergence would be a real defect.  test/test_tables.py pins them.
     python3 tools/mktables.py > src/tables.c
 """
 import math
+import pathlib
 import sys
+
+# art/palette.py is the SHIPPING palette and the shipping depth-band remaps: it
+# carries the reserved-accent rule, the "nothing fogs to void before band 4"
+# rule, and the proofs behind both.  Restating any of it here is how the engine
+# came to render the reserved white rim-light as green.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "art"))
+import palette as art_palette                                   # noqa: E402
 
 # --- mirrored from include/fixed.h / include/game_consts.h -----------------
 TRIG_TABLE_SIZE = 1024
 TRIG_ONE = 16384
 CELL_UNITS = 256
-DELTA_DIST_MAX = 32000
+DELTA_DIST_NEVER = 0xFFFF
 FOV_DEGREES = 60
 RENDER_COLUMNS_HIGH = 160
 RENDER_COLUMNS_LOW = 80
@@ -26,34 +34,17 @@ SHADE_LEVEL_COUNT = BAND_COUNT + 1
 PALETTE_SIZE = 16
 THROTTLE_MODE_COUNT = 3
 
-# --- DESIGN 3: the sixteen registers, fixed for the whole game -------------
-PALETTE_HEX = [
-    "000000", "CCFFFF", "77EEFF", "33BBEE", "1177BB", "003355",
-    "FFCCFF", "FF77DD", "DD33AA", "991177", "440044",
-    "FFFF66", "33FF66", "FFFFFF", "FF4400", "333344",
-]
+assert art_palette.DEPTH_BANDS == BAND_COUNT, \
+    "art defines %d depth bands, game_consts.h says %d" % (art_palette.DEPTH_BANDS, BAND_COUNT)
+assert art_palette.PALETTE_SIZE == PALETTE_SIZE
 
-# One step of fog: where each palette entry goes when it recedes one level.
-# Cyan and magenta walk their own ramps to the void; the accents (which are
-# sprite-only) join the nearest ramp so a distant enemy dims instead of
-# staying full-bright and destroying the baked-shading illusion.
-DARKEN_STEP = {
-    0: 0,
-    1: 2, 2: 3, 3: 4, 4: 5, 5: 0,
-    6: 7, 7: 8, 8: 9, 9: 10, 10: 0,
-    11: 3,      # data yellow -> mid cyan
-    12: 4,      # integrity green -> deep cyan
-    13: 1,      # white -> the cyan ramp's top
-    14: 8,      # alarm -> dark magenta
-    15: 5,      # horizon grid -> darkest cyan
-}
-
-# DESIGN 5.  Radius in cells, band count, column set, and the 8.8 multipliers.
+# DESIGN 5.  Radius in cells, band count and the 8.8 multipliers - and nothing
+# about the render width, which is the separate detail-level setting.
 THROTTLE_MODES = [
-    # name          radius bands cols_low speed trace budget
-    ("UNDERCLOCK",  6,     3,    True,    320,  128,  3000),
-    ("NOMINAL",     12,    5,    False,   256,  256,  6000),
-    ("OVERCLOCK",   20,    5,    False,   205,  410,  6000),
+    # name          radius bands speed trace
+    ("UNDERCLOCK",  6,     3,    320,  128),
+    ("NOMINAL",     12,    5,    256,  256),
+    ("OVERCLOCK",   20,    5,    205,  410),
 ]
 
 # Where each band ends, as a fraction of the render radius.  At radius 12 these
@@ -74,15 +65,23 @@ def delta_dist_table(sin_tab):
 
     Derived from the QUANTISED cosine the DDA will actually use, not from
     math.cos, so the step distances and the hit point stay self-consistent.
+
+    The value is EXACT wherever it is finite - the smallest non-zero |cos| the
+    table holds gives 256 * 16384 / 100 = 41943, which is why the entries are
+    unsigned words.  Rounding them down instead would make a near-axis ray
+    cross the perpendicular grid line up to 23% early, in the wrong cell.  The
+    four exactly-grid-parallel angles are DELTA_DIST_NEVER: no finite crossing.
     """
     out = []
     quarter = TRIG_TABLE_SIZE // 4
     for i in range(TRIG_TABLE_SIZE):
         cos14 = abs(sin_tab[(i + quarter) % TRIG_TABLE_SIZE])
         if cos14 == 0:
-            out.append(DELTA_DIST_MAX)
+            out.append(DELTA_DIST_NEVER)
         else:
-            out.append(min(DELTA_DIST_MAX, int(round(CELL_UNITS * TRIG_ONE / cos14))))
+            delta = int(round(CELL_UNITS * TRIG_ONE / cos14))
+            assert delta < DELTA_DIST_NEVER, "delta %d collides with the sentinel" % delta
+            out.append(delta)
     return out
 
 
@@ -105,17 +104,18 @@ def column_geometry(columns):
 
 
 def shade_lut():
-    """g_shade_lut[level][index]: `level` applications of one fog step."""
-    rows = []
-    for level in range(SHADE_LEVEL_COUNT):
-        row = []
-        for index in range(PALETTE_SIZE):
-            value = index
-            for _ in range(level):
-                value = DARKEN_STEP[value]
-            row.append(value)
-        rows.append(row)
-    return rows
+    """g_shade_lut[level][index], straight from art/palette.py's band tables.
+
+    The renderer composes the depth band and the face's lighting into ONE index
+    with `band + side`, so an unlit face reads exactly one band deeper than a
+    lit one at the same distance - which is why there is one more level than
+    there are bands.  The deepest band has nowhere deeper to go, so its lit and
+    unlit rows are the same table; that band is the far fill, where the cue has
+    nothing left to distinguish.
+    """
+    deepest = art_palette.DEPTH_BANDS - 1
+    return [list(art_palette.shade_table(min(level, deepest)))
+            for level in range(SHADE_LEVEL_COUNT)]
 
 
 def band_limits(radius_cells, bands):
@@ -160,27 +160,33 @@ def main():
     emit_array(out, "int16_t", "g_col_angle_low", angle_lo)
     emit_array(out, "uint16_t", "g_col_cos_low", cos_lo)
 
-    out.write("const ColumnSet g_column_sets[COLUMN_SET_COUNT] = {\n"
-              "    { RENDER_COLUMNS_HIGH, 0, 0, g_col_angle_high, g_col_cos_high },\n"
-              "    { RENDER_COLUMNS_LOW,  1, 0, g_col_angle_low,  g_col_cos_low  },\n"
+    # The budgets are spelled as their macro names, not their values: the C
+    # file includes game_consts.h, so there is no second copy to drift.
+    out.write("const ColumnSet g_column_sets[DETAIL_LEVEL_COUNT] = {\n"
+              "    /* DETAIL_COLUMNS_160 */ { RENDER_COLUMNS_HIGH, SPRITE_PIXEL_BUDGET_HIGH,"
+              " 0, 0, g_col_angle_high, g_col_cos_high },\n"
+              "    /* DETAIL_COLUMNS_80  */ { RENDER_COLUMNS_LOW,  SPRITE_PIXEL_BUDGET_LOW,"
+              "  1, 0, g_col_angle_low,  g_col_cos_low  },\n"
               "};\n\n")
 
     out.write("const ThrottleMode g_throttle_modes[THROTTLE_MODE_COUNT] = {\n")
-    for name, radius, bands, low, speed, trace, budget in THROTTLE_MODES:
+    for name, radius, bands, speed, trace in THROTTLE_MODES:
         limits = band_limits(radius, bands)
-        column_set = "COLUMN_SET_LOW" if low else "COLUMN_SET_HIGH"
-        out.write("    /* %s */ { %d, %d, %s, 0, %d, %d, %d, { %s } },\n"
-                  % (name, radius, bands, column_set, speed, trace, budget,
+        out.write("    /* %s */ { %d, %d, %d, %d, { %s } },\n"
+                  % (name, radius, bands, speed, trace,
                      ", ".join(str(v) for v in limits)))
     out.write("};\n\n")
 
-    out.write("const uint8_t g_palette_rgb[PALETTE_SIZE][3] = {\n")
-    for hexcode in PALETTE_HEX:
-        r, g, b = (int(hexcode[i:i + 2], 16) for i in (0, 2, 4))
-        out.write("    { 0x%02x, 0x%02x, 0x%02x },   /* #%s */\n" % (r, g, b, hexcode))
+    out.write("/* DESIGN 3's sixteen registers, from art/palette.py. */\n"
+              "const uint8_t g_palette_rgb[PALETTE_SIZE][3] = {\n")
+    for entry in art_palette.PALETTE:
+        r, g, b = entry.rgb
+        out.write("    { 0x%02x, 0x%02x, 0x%02x },   /* %-9s #%02X%02X%02X */\n"
+                  % (r, g, b, entry.name, r, g, b))
     out.write("};\n\n")
 
-    out.write("const uint8_t g_shade_lut[SHADE_LEVEL_COUNT][PALETTE_SIZE] = {\n")
+    out.write("/* Depth-band index remaps, from art/palette.py's shade_table(). */\n"
+              "const uint8_t g_shade_lut[SHADE_LEVEL_COUNT][PALETTE_SIZE] = {\n")
     for level, row in enumerate(shade_lut()):
         out.write("    /* level %d */ { %s },\n"
                   % (level, ", ".join("%2d" % v for v in row)))
@@ -188,6 +194,7 @@ def main():
 
     out.write("""uint16_t g_slice_height[DIST_TABLE_SIZE];
 uint16_t g_tex_step[DIST_TABLE_SIZE];
+uint8_t g_cell_texture[CELL_VALUE_COUNT];
 
 /*
  * Fill the two reciprocal tables.  The only divides in the engine live here and
@@ -209,6 +216,11 @@ void tables_init(void)
     for (dist = 0; dist < DIST_MIN_UNITS; ++dist) {
         g_slice_height[dist] = g_slice_height[DIST_MIN_UNITS];
         g_tex_step[dist] = g_tex_step[DIST_MIN_UNITS];
+    }
+    /* Asked once per value here rather than once per column at run time; the
+     * rule itself stays in map_cell_texture. */
+    for (dist = 0; dist < CELL_VALUE_COUNT; ++dist) {
+        g_cell_texture[dist] = map_cell_texture((uint8_t)dist);
     }
 }
 """)

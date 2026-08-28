@@ -17,14 +17,16 @@ GOLDEN = blackice.ROOT / "test" / "golden"
 LEVEL = blackice.ROOT / "levels" / "level1.txt"
 SCRIPT = blackice.ROOT / "test" / "scripts" / "walk.txt"
 FRAMES = 100
+# The goldens are the SHIPPING width, and say so rather than inheriting it.
+DETAIL = CONST["DETAIL_DEFAULT"]
 
 
 def run_host(tmp_path, seed=None, png="none", level=LEVEL):
     tmp_path.mkdir(parents=True, exist_ok=True)
     hashes = tmp_path / "hashes.txt"
     command = [str(blackice.HOST_BIN), "--level", str(level), "--script", str(SCRIPT),
-               "--frames", str(FRAMES), "--out", str(tmp_path), "--png", png,
-               "--hashes", str(hashes)]
+               "--frames", str(FRAMES), "--detail", str(DETAIL), "--out", str(tmp_path),
+               "--png", png, "--hashes", str(hashes)]
     if seed is not None:
         command += ["--seed", str(seed)]
     subprocess.run(command, check=True)
@@ -77,27 +79,33 @@ def test_the_committed_sample_frames_are_the_ones_that_were_hashed(frame):
     assert hashlib.sha256(committed).hexdigest() == digests[str(frame)]
 
 
-def test_the_rng_is_a_full_period_generator(lib):
-    """A 16-bit xorshift with a broken triple degenerates into a short cycle,
-    which would quietly stop being random long before anyone noticed."""
+def test_the_rng_is_the_design_lcg(lib):
+    """DESIGN 4.3 names the generator exactly: a 32-bit LCG with Numerical
+    Recipes' constants, handing out the HIGH half of the state because an LCG's
+    low bits have a short period (bit 0 alternates).  Both halves of that claim
+    are pinned here - the recurrence, and which half is published."""
     import ctypes
 
     rng = blackice.Rng()
-    lib.rng_seed.argtypes = [ctypes.POINTER(blackice.Rng), ctypes.c_uint16]
+    lib.rng_seed.argtypes = [ctypes.POINTER(blackice.Rng), ctypes.c_uint32]
     lib.rng_next.argtypes = [ctypes.POINTER(blackice.Rng)]
     lib.rng_next.restype = ctypes.c_uint16
     lib.rng_below.argtypes = [ctypes.POINTER(blackice.Rng), ctypes.c_uint16]
     lib.rng_below.restype = ctypes.c_uint16
 
-    lib.rng_seed(ctypes.byref(rng), 1)
-    seen = set()
-    for _ in range(65535):
-        seen.add(lib.rng_next(ctypes.byref(rng)))
-    assert len(seen) == 65535, "period is %d, not the full 65535" % len(seen)
-    assert 0 not in seen
+    mask = 0xffffffff
+    state = 12345
+    lib.rng_seed(ctypes.byref(rng), state)
+    assert rng.state == state, "a seed must be taken as given: every state is legal"
+    for _ in range(1000):
+        state = (state * CONST["RNG_MULTIPLIER"] + CONST["RNG_INCREMENT"]) & mask
+        assert lib.rng_next(ctypes.byref(rng)) == state >> 16
+        assert rng.state == state
 
-    lib.rng_seed(ctypes.byref(rng), 0)
-    assert rng.state == CONST["RNG_DEFAULT_SEED"], "zero must not be accepted as a seed"
+    # The low bit of an LCG state alternates; the published half must not.
+    lib.rng_seed(ctypes.byref(rng), 1)
+    draws = [lib.rng_next(ctypes.byref(rng)) for _ in range(2000)]
+    assert len(set(draws)) > 1900, "the published half is not mixing"
 
     lib.rng_seed(ctypes.byref(rng), 12345)
     assert all(lib.rng_below(ctypes.byref(rng), 6) < 6 for _ in range(500))
@@ -110,18 +118,8 @@ def test_the_walk_actually_opens_the_door(lib):
 
     level = blackice.parse_level(lib, LEVEL.read_text())
     state = blackice.new_state(lib, level)
-    tokens = {"forward": CONST["INPUT_FORWARD"], "back": CONST["INPUT_BACK"],
-              "turn_left": CONST["INPUT_TURN_LEFT"], "turn_right": CONST["INPUT_TURN_RIGHT"],
-              "-": 0}
-    script = []
-    for line in SCRIPT.read_text().splitlines():
-        if not line or line.startswith("#"):
-            continue
-        parts = line.split()
-        value = 0
-        for token in parts[1:]:
-            value |= tokens[token]
-        script += [value] * int(parts[0])
+    # One parser, shared with the host through its own token table.
+    script = blackice.parse_script(SCRIPT.read_text())
 
     opened = set()
     for tick in range(FRAMES):
@@ -134,3 +132,36 @@ def test_the_walk_actually_opens_the_door(lib):
     start = (level.start_cell_x, level.start_cell_y)
     moved = (state.player.x >> 8, state.player.y >> 8) != start
     assert moved, "the scripted walk never went anywhere"
+
+
+def test_the_host_refuses_a_broken_script(lib, tmp_path):
+    """A misspelled token used to be worth zero: the run silently became a
+    different run and still passed.  Both halves of a script line are checked."""
+    import subprocess
+
+    for body, why in [("10 forwrad\n", "misspelled token"),
+                      ("ten forward\n", "non-numeric repeat"),
+                      ("0 forward\n", "zero repeat")]:
+        script = tmp_path / "bad.txt"
+        script.write_text(body)
+        result = subprocess.run(
+            [str(blackice.HOST_BIN), "--level", str(LEVEL), "--script", str(script),
+             "--frames", "1", "--out", str(tmp_path), "--png", "none"],
+            capture_output=True)
+        assert result.returncode != 0, "the host accepted a script with a %s" % why
+
+
+def test_the_suite_and_the_host_read_a_script_the_same_way(lib):
+    """blackice.parse_script reads the host's own token table, so the two can
+    disagree only if that table is not what the host compiles."""
+    tokens = blackice.script_tokens()
+
+    assert tokens["forward"] == CONST["INPUT_FORWARD"]
+    assert tokens["throttle"] == CONST["INPUT_THROTTLE_NEXT"]
+    assert "use" not in tokens, "DESIGN 6 has no use key"
+    for name, bit in tokens.items():
+        assert bin(bit).count("1") == 1, "%s is not a single input bit" % name
+
+    script = blackice.parse_script(SCRIPT.read_text())
+    assert len(script) == 100
+    assert script[0] == CONST["INPUT_FORWARD"]

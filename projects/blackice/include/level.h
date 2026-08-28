@@ -20,13 +20,14 @@
  *    25     1  pad                   0
  *    26     1  start_x               player start cell
  *    27     1  start_y
- *    28     2  start_facing          brads, 0..1023
- *    30     2  trace_base_rate       thousandths of a percent per tick
- *    32     1  trace_start           percent
- *    33     1  trace_carry_cap       percent
- *    34     2  par_ticks             at SIM_HZ
- *    36     2  entity_count          <= LEVEL_MAX_ENTITIES
- *    38   w*h  cells, row major
+ *    28     2  start_facing          brads, 0..1023 (0 = north, clockwise)
+ *    30     4  rng_seed              seeds the DESIGN 4.3 LCG
+ *    34     2  trace_base_rate       thousandths of a percent per SECOND
+ *    36     1  trace_start           percent
+ *    37     1  trace_carry_cap       percent
+ *    38     2  par_ticks             at SIM_HZ
+ *    40     2  entity_count          <= LEVEL_MAX_ENTITIES
+ *    42   w*h  cells, row major
  *     .   5*n  entities: type u8, x u8, y u8, facing u8 (brads >> 2), extra u8
  * ---------------------------------------------------------------------------
  *
@@ -43,7 +44,7 @@
  *   'S' 21 sealed gate '~' 22 corrupted door   '>' 23 sector exit
  *   '@' player start (cell becomes empty; facing comes from the header)
  *   'w' 't' 'B' Watchdog / Tracer / Black ICE, cell becomes empty
- *   's' Sentry, a floor entity in an alcove  '*' anchor, cell becomes wall 7
+ *   's' Sentry, a floor entity in an alcove  '*' live anchor, a solid floor entity
  *   'p' 'q' 'r' tokens ALPHA / BETA / GAMMA
  *   'c' 'C' cycles small/large   'i' 'I' integrity small/large
  *   'u' scrubber                 'd' data cache
@@ -59,6 +60,7 @@
 #include "fixed.h"
 #include "game_consts.h"
 #include "map.h"
+#include "rng.h"
 
 /* 'BIL0', spelled out so the loader can compare bytes without a string. */
 #define LEVEL_BLOB_MAGIC_BYTES  4
@@ -66,8 +68,18 @@
 #define LEVEL_BLOB_MAGIC_1      'I'
 #define LEVEL_BLOB_MAGIC_2      'L'
 #define LEVEL_BLOB_MAGIC_3      '0'
-#define LEVEL_BLOB_HEADER_BYTES 38
+#define LEVEL_BLOB_HEADER_BYTES 42
 #define LEVEL_BLOB_ENTITY_BYTES 5
+
+/* Byte offsets of the multi-byte header fields, so neither the reader nor the
+ * writer spells a bare number that hides which field it addresses. */
+#define LEVEL_BLOB_OFF_START_FACING 28
+#define LEVEL_BLOB_OFF_RNG_SEED     30
+#define LEVEL_BLOB_OFF_TRACE_RATE   34
+#define LEVEL_BLOB_OFF_TRACE_START  36
+#define LEVEL_BLOB_OFF_TRACE_CAP    37
+#define LEVEL_BLOB_OFF_PAR_TICKS    38
+#define LEVEL_BLOB_OFF_ENTITY_COUNT 40
 
 typedef enum {
     ENT_NONE             = 0,
@@ -107,7 +119,8 @@ typedef struct {
     uint8_t  start_cell_x;
     uint8_t  start_cell_y;
     uint16_t start_facing_brads;
-    uint16_t trace_base_rate;       /* thousandths of a percent per tick */
+    uint32_t rng_seed;              /* DESIGN 4.3: the level's LCG seed */
+    uint16_t trace_base_rate;       /* thousandths of a percent per SECOND (DESIGN 9) */
     uint8_t  trace_start;           /* percent */
     uint8_t  trace_carry_cap;       /* percent */
     uint16_t par_ticks;
@@ -126,7 +139,10 @@ typedef enum {
     LEVEL_ERR_TOO_MANY    = 6,
     LEVEL_ERR_LEGEND      = 7,
     LEVEL_ERR_ROW_WIDTH   = 8,
-    LEVEL_ERR_RESERVED    = 9
+    LEVEL_ERR_RESERVED    = 9,
+    LEVEL_ERR_TEXTURE     = 10,     /* a cell names a texture slot that is empty */
+    LEVEL_ERR_START       = 11,     /* the start cell is off the grid or blocking */
+    LEVEL_ERR_ENTITY      = 12      /* an entity's type or cell is out of range */
 } LevelResult;
 
 /* Parse the ASCII source form.  `text` need not be NUL terminated. */

@@ -43,17 +43,24 @@
  * -------------------------------------------------------------------------
  * 68000 cost model (8 MHz, 160,000 cycles per 50 Hz frame, 480,000 per 3 VBLs)
  * -------------------------------------------------------------------------
- * Per ray (160 rays at NOMINAL/OVERCLOCK, 80 at UNDERCLOCK):
+ * The figures below are MEASURED off the compiled m68k code, not read off the
+ * instruction timings - the first draft of this model did the latter and was
+ * optimistic by 2.5 to 4 times, which is how a budget that did not fit looked
+ * like one that did.
+ *
+ * Per ray (160 rays at DETAIL_COLUMNS_160, 80 at DETAIL_COLUMNS_80):
  *   setup   two table reads for the delta distances, two `mulu` for the initial
  *           side distances, one `muls` for the perpendicular distance, one
- *           `muls` for the texture u              ~ 4 x 70 + 60 = 340 cyc
- *   DDA     per step: cmp.l, add.l, add index, btst on the solid bitmap, dbra
- *                                                ~ 60 cyc / step
+ *           `muls` for the texture u              ~ 340 cyc
+ *   DDA     per step: compare, add the delta, add the index, test the solid
+ *           bitmap, loop.  MEASURED at ~248 cyc/step for the compiled C - the
+ *           68000 has no scaled index mode, so the bitmap probe alone is a
+ *           shift, a mask, a byte load and a `btst`, and the compiler spills.
+ *           The hand-written version is the reason this is worth doing.
  *   emit    fill one RenderColumn                ~ 90 cyc
- *   NOMINAL: radius 12, typical ray 5 steps -> 730 cyc, worst 12 -> 1150 cyc.
- *            160 rays: typical 117,000, worst 184,000 cyc.
- *   UNDERCLOCK: radius 6, 80 rays, worst 80 x 790 = 63,000 cyc.
- *   OVERCLOCK: radius 20, worst 160 x 1630 = 261,000 cyc.
+ *   NOMINAL: radius 12, typical ray 5 steps -> ~1,700 cyc, worst 12 -> ~3,400.
+ *            160 rays: typical 270,000, worst 540,000 cyc.
+ *   OVERCLOCK: radius 20, worst 160 x ~5,400 = 860,000 cyc.
  *
  * Per wall pixel, reference drawer (shade LUT in the loop):
  *   move.b (a_tex,d_v.w),d_t          14
@@ -61,15 +68,19 @@
  *   add.w  d_fstep,d_frac              4   texel accumulator, fraction
  *   addx.w d_istep,d_texel             4   texel accumulator, integer
  *   dbra                              10
- *   -> ~50 cyc/px unrolled by one, ~32 cyc/px unrolled x8 with four texels
- *      packed into one `move.l` store.
+ *   -> the instruction timings say ~50 cyc/px.  The compiled C MEASURES at
+ *      ~124 cyc/px: the accumulator lives in memory, not in the addx pair.
+ *   The SPIKE's hand-written column loop measures 66.6 cyc/px, and its c2p
+ *   33 cyc/px - see spike/REPORT.md.  Those two are the numbers the budget
+ *   should be planned against, because they are what will ship.
  *   DESIGN's worst case WC-A is 160 columns x 80 rows = 12,800 pixels, which is
- *   410,000 cyc at 32/px and does NOT fit 480,000 alongside the c2p.  The
+ *   850,000 cyc at 66.6/px and does NOT fit 480,000 alongside the c2p.  The
  *   mitigations, in the order DESIGN 17 commits to them:
  *      (a) pre-shaded textures - DESIGN 17 bakes 5 depth bands at level load,
- *          which deletes the `move.b (a_shade,..)` and lands at ~22 cyc/px
- *          (282,000 for WC-A);
- *      (b) 80-column mode - halves it again to 141,000;
+ *          which deletes the `move.b (a_shade,..)` from the inner loop;
+ *      (b) 80-column mode, which HAS BEEN TAKEN: DETAIL_DEFAULT is
+ *          DETAIL_COLUMNS_80 (DESIGN v2.1 17.3), halving both the ray count
+ *          and the pixel count;
  *      (c) the render-radius throttle, which shortens slices, not their count.
  *   The reference C keeps the LUT in the loop because it must remain the
  *   byte-for-byte oracle for both variants; a pre-shaded texture is the same
@@ -95,17 +106,22 @@
  * WHAT IS MEASURED AND WHAT IS NOT
  * -------------------------------------------------------------------------
  * Measured (m68k-elf-gcc 16.1, -O2 -m68000 -ffreestanding, `make m68k`):
- *   raycast.o and draw.o reference NO libgcc arithmetic helper: every widening
- *   product is a `muls.w`, and there is no divide in either.  That is the
- *   property the cost model above depends on, and it only holds because every
- *   hot product goes through fixed.h's mul16 - written as 32x32 they became
- *   eleven __mulsi3 calls in render_cast alone.  Object sizes: raycast 1.5 KB,
- *   draw 0.4 KB, sprite 1.7 KB, tables 5.4 KB text + 32 KB bss.
- *   Two divides remain, both cold: one per visible sprite (the billboard's
- *   centre column) and one per door per tick (the cell's x and y).
- * NOT measured: every cycle count above.  They are read off the 68000 timing
- * tables, not off the Musashi oracle or Hatari, and the platform agent must
- * pin the real numbers before DESIGN 17's budget table can be filled in.
+ *   NO object in src/ references a libgcc arithmetic helper, with four named
+ *   and documented exceptions where the 32-bit arithmetic IS the algorithm and
+ *   the algorithm is cold (hash, rng, tables, and the game layer's own hashes).
+ *   The Makefile's `libgcc-gate` target enforces it, and it is a build failure
+ *   rather than a comment, because the whole cost model above depends on it:
+ *   every widening product is a `muls.w` and the sprite's one divide a `divs.w`.
+ *   That only holds because each hot product goes through fixed.h's mul16 -
+ *   written as 32x32 they became eleven __mulsi3 calls in render_cast alone.
+ *   Object sizes: raycast 1.6 KB, draw 0.4 KB, sprite 1.8 KB, tables 5.4 KB
+ *   text + 36 KB bss.
+ *   One divide remains on a per-frame path: the billboard's centre column, one
+ *   per visible sprite.
+ * The per-step and per-pixel cycle figures above ARE measured off the compiled
+ * code and off the spike's hand-written loops (spike/REPORT.md).  What is still
+ * open is the whole-frame number on real hardware: the platform agent must pin
+ * that on Hatari before DESIGN 17's budget table can be filled in.
  */
 #ifndef BLACKICE_RENDER_H
 #define BLACKICE_RENDER_H
@@ -125,6 +141,13 @@
 /* ---- the column list --------------------------------------------------- */
 
 #define COLUMN_TEX_FAR  0       /* past the throttle radius: flat COLOUR_FAR_FILL */
+
+/*
+ * The wall_dist entry of a column with no wall in it.  Larger than any real
+ * distance, so the sprite drawer's `sprite->dist >= wall_dist[x]` test lets
+ * every sprite through without a special case.
+ */
+#define WALL_DIST_NONE  0xffff
 
 #define SIDE_NS         0       /* ray crossed a horizontal grid line: lit face */
 #define SIDE_EW         1       /* ray crossed a vertical grid line: unlit face */
@@ -160,21 +183,37 @@ typedef struct {
 
 #define RENDER_COLUMN_BYTES 12
 
-/* ---- column sets ------------------------------------------------------- */
+/* ---- detail levels: the render width ----------------------------------- */
 
-#define COLUMN_SET_HIGH     0   /* 160 columns, 2 screen pixels wide */
-#define COLUMN_SET_LOW      1   /* 80 columns, 4 screen pixels wide */
-#define COLUMN_SET_COUNT    2
+/*
+ * How wide the frame is rendered, and NOTHING else.  DESIGN 5 makes the clock
+ * throttle a radius / speed / trace-rate trade; it deliberately does not touch
+ * the column count, so the two are separate settings and the throttle table
+ * below no longer names one.  Everything that scales with the width - the ray
+ * geometry, the sprite pixel budget - hangs off the ColumnSet.
+ */
+#define DETAIL_COLUMNS_160  0   /* 160 columns, 2 screen pixels wide */
+#define DETAIL_COLUMNS_80   1   /* 80 columns, 4 screen pixels wide */
+#define DETAIL_LEVEL_COUNT  2
+/*
+ * 80 columns is what SHIPS (DESIGN v2.1 17.3).  The measured worst case at 160
+ * is 812,000 cycles against a 480,000-cycle budget, and DESIGN 17 always named
+ * halving the width as the mitigation it would take.  160 stays selectable -
+ * it is the same code with a different table - for looking at the difference
+ * and for whatever the platform layer measures on real hardware.
+ */
+#define DETAIL_DEFAULT      DETAIL_COLUMNS_80
 
 typedef struct {
     uint16_t        count;
+    uint16_t        sprite_budget;  /* chunky pixels per frame (DESIGN 8.2) */
     uint8_t         width_shift;    /* 0 or 1: how much wider a column is than at 160 */
     uint8_t         pad;
     const int16_t  *angle;          /* per-column ray angle offset from the view angle */
     const uint16_t *cosine;         /* per-column fisheye correction, 1.14 */
 } ColumnSet;
 
-extern const ColumnSet g_column_sets[COLUMN_SET_COUNT];
+extern const ColumnSet g_column_sets[DETAIL_LEVEL_COUNT];
 extern const int16_t   g_col_angle_high[RENDER_COLUMNS_HIGH];
 extern const uint16_t  g_col_cos_high[RENDER_COLUMNS_HIGH];
 extern const int16_t   g_col_angle_low[RENDER_COLUMNS_LOW];
@@ -185,11 +224,8 @@ extern const uint16_t  g_col_cos_low[RENDER_COLUMNS_LOW];
 typedef struct {
     uint8_t  radius_cells;
     uint8_t  band_count;
-    uint8_t  column_set;
-    uint8_t  pad;
     uint16_t speed_scale;                   /* 8.8 */
     uint16_t trace_scale;                   /* 8.8 */
-    uint16_t sprite_budget;                 /* chunky pixels per frame */
     uint16_t band_limit[BAND_COUNT - 1];    /* map units; unused entries are 0xffff */
 } ThrottleMode;
 
@@ -202,7 +238,7 @@ static inline const ThrottleMode *render_mode(const GameState *state)
 
 static inline const ColumnSet *render_columns(const GameState *state)
 {
-    return &g_column_sets[render_mode(state)->column_set];
+    return &g_column_sets[state->detail_level];
 }
 
 /* ---- per-frame scratch (not simulation state, never hashed) ------------- */

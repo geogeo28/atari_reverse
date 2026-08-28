@@ -26,8 +26,6 @@
 #define PLAYER_TURN_SPEED       (24 * ANGLE_UNITS_PER_BRAD)
 /* 0.28 cells. */
 #define PLAYER_RADIUS           72
-/* How far in front of the player an explicit "use" reaches, in map units. */
-#define PLAYER_USE_REACH        192
 
 /* ---- doors -------------------------------------------------------------- */
 
@@ -79,6 +77,7 @@
 /* ---- texture geometry --------------------------------------------------- */
 
 #define TEX_DIM                 64
+#define TEX_DIM_SHIFT           6           /* log2(TEX_DIM) */
 #define TEX_SIZE                (TEX_DIM * TEX_DIM)
 #define TEX_INDEX_MASK          (TEX_DIM - 1)
 
@@ -89,14 +88,6 @@
  *     height_rows = FOCAL_ROWS / perpendicular_distance_in_cells
  * so, with distances carried in 8.8 map units,
  *     height_rows = WALL_PROJECTION_SCALE / perpendicular_distance_in_units.
- * FOCAL_ROWS = 64 puts a wall exactly across the 80-row window at 0.8 cells.
- *
- * A pleasant consequence of FOCAL_ROWS being equal to TEX_DIM: the texture step is
- *     (TEX_DIM << 8) / height == WALL_PROJECTION_SCALE / height == distance,
- * so g_tex_step[d] is d to within the rounding of two integer divides.  The
- * table is kept because it is exactly consistent with g_slice_height, but a
- * target build may drop it and step by the distance itself, drifting at most
- * a third of a texel over a full-height slice.
  *
  * Horizontal: the projection plane sits FOCAL_COLS = (RENDER_W_MAX / 2) /
  * tan(FOV / 2) = 80 / tan(30 deg) = 138.56 columns from the eye.  Only the
@@ -105,18 +96,24 @@
  * Both are independent of the column count: 80-column mode halves the
  * horizontal resolution but keeps all 80 rows, so the two modes share the
  * height and texture-step tables.
- */
-/*
- * MEASURED CAVEAT, for whoever owns DESIGN v2.  FOCAL_ROWS = 64 does not make
- * a cell cubic: horizontally a cell face spans FOCAL_COLS/d = 138.56/d columns
- * of 2 screen pixels, and an ST screen pixel is 0.833 as wide as it is tall, so
- * the face is 231/d screen units wide against 2 * FOCAL_ROWS/d = 128/d tall -
- * squat by 1.8 to 1; 115 is the value that squares it up.  64 is what the
- * design says, so 64 is what ships; override at the compiler to compare
- * (-DFOCAL_ROWS=115).
+ *
+ * WHY 115 AND NOT 64 (DESIGN v2.1 D1).  A cell face is FOCAL_COLS/d = 138.56/d columns wide,
+ * each 2 screen pixels; an ST low-resolution pixel is 0.833 as wide as it is
+ * tall; so the face measures 231/d screen units across against 2*FOCAL_ROWS/d
+ * tall.  Squaring those gives FOCAL_ROWS = 115.  The first draft used TEX_DIM,
+ * which projected every cell 1.8 to 1 SQUAT - corridors looked like letterbox
+ * slots and the world read as half its height.
+ *
+ * TEX_DIM used to be a pleasant coincidence here: with FOCAL_ROWS == TEX_DIM
+ * the texture step (TEX_DIM << 8) / height came out equal to the distance, so
+ * a target build could step by the distance itself and skip a table.  That
+ * shortcut is gone, and nothing depended on it: tables_init derives the step
+ * from the height it actually computed, which is exact for any FOCAL_ROWS.
+ *
+ * Override at the compiler to compare (-DFOCAL_ROWS=64).
  */
 #ifndef FOCAL_ROWS
-#define FOCAL_ROWS              TEX_DIM
+#define FOCAL_ROWS              115
 #endif
 #define WALL_PROJECTION_SCALE   ((int32_t)FOCAL_ROWS * CELL_UNITS)
 #define FOCAL_COLS_Q8           35472       /* 138.56 columns, 8.8 fixed */
@@ -159,6 +156,20 @@
 /* Hard stop on DDA work per ray; also bounds the worst-case frame. */
 #define DDA_MAX_STEPS           64
 
+/*
+ * The longest ray the widest throttle traces, and one past it.  A side
+ * distance at or beyond DDA_BEYOND_TRACE is "this axis is not crossed inside
+ * the trace", which is the value the DDA's own `hit_len > max_trace` test then
+ * breaks on - so the two ways a ray can end share one comparison.
+ *
+ * A delta distance longer than the whole trace can only ever push a side
+ * distance past the end, so the DDA clamps the value it ADDS each step to this
+ * and keeps the accumulator inside a 16-bit register.  The unclamped delta is
+ * still what the door-plane refinement uses, where the true length matters.
+ */
+#define DDA_MAX_TRACE_UNITS     (RENDER_RADIUS_MAX * CELL_UNITS)
+#define DDA_BEYOND_TRACE        (DDA_MAX_TRACE_UNITS + 1)
+
 /* ---- textures and sprites ---------------------------------------------- */
 
 #define WALL_TEXTURE_MAX        15          /* ids 1..15 */
@@ -181,7 +192,8 @@
 #define SPRITE_PROJ_X_DIVISOR   (WALL_PROJECTION_SCALE * 256 / FOCAL_COLS_Q8)
 /*
  * Chunky pixels of sprite the renderer will spend in one frame (DESIGN 8.2),
- * provisional: 6000 at 160 columns, 3000 at 80.
+ * provisional.  It scales with the render width, so it is a property of the
+ * detail level and not of the clock throttle: 6000 at 160 columns, 3000 at 80.
  */
 #define SPRITE_PIXEL_BUDGET_HIGH 6000
 #define SPRITE_PIXEL_BUDGET_LOW  3000

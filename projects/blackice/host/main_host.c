@@ -20,6 +20,7 @@
 
 #include "c2p.h"
 #include "game.h"
+#include "hash.h"
 #include "level.h"
 #include "render.h"
 #include "render_png.h"
@@ -50,7 +51,6 @@ static const InputToken INPUT_TOKENS[] = {
     { "turn_right", INPUT_TURN_RIGHT },
     { "strafe_left",  INPUT_STRAFE_LEFT },
     { "strafe_right", INPUT_STRAFE_RIGHT },
-    { "use",        INPUT_USE },
     { "fire",       INPUT_FIRE },
     { "throttle",   INPUT_THROTTLE_NEXT },
 };
@@ -99,7 +99,10 @@ static int load_level(const char *path)
     return 0;
 }
 
-static uint16_t token_bit(const char *token)
+/* The bit a token names, or -1 if it names nothing.  A misspelled token used
+ * to be worth zero, which silently turns a replay script into a DIFFERENT
+ * script that still runs and still passes. */
+static int token_bit(const char *token)
 {
     int i;
 
@@ -108,8 +111,7 @@ static uint16_t token_bit(const char *token)
             return INPUT_TOKENS[i].bit;
         }
     }
-    fprintf(stderr, "unknown input token '%s'\n", token);
-    return 0;
+    return -1;
 }
 
 static int load_script(const char *path)
@@ -125,6 +127,7 @@ static int load_script(const char *path)
     while (fgets(line, sizeof(line), file)) {
         char *cursor = line;
         char *token;
+        char *end;
         long repeat;
         uint16_t input = 0;
 
@@ -135,11 +138,25 @@ static int load_script(const char *path)
         if (!token) {
             continue;
         }
-        repeat = strtol(token, 0, 10);
+        repeat = strtol(token, &end, 10);
+        if (*end != '\0' || repeat <= 0) {
+            fprintf(stderr, "%s: '%s' is not a positive tick count\n", path, token);
+            fclose(file);
+            return -1;
+        }
         while ((token = strtok(0, " \t\r\n")) != 0) {
-            if (strcmp(token, "-") != 0) {
-                input |= token_bit(token);
+            int bit;
+
+            if (strcmp(token, "-") == 0) {
+                continue;
             }
+            bit = token_bit(token);
+            if (bit < 0) {
+                fprintf(stderr, "%s: unknown input token '%s'\n", path, token);
+                fclose(file);
+                return -1;
+            }
+            input |= (uint16_t)bit;
         }
         while (repeat-- > 0 && g_script_ticks < MAX_SCRIPT_TICKS) {
             g_script[g_script_ticks++] = input;
@@ -149,16 +166,11 @@ static int load_script(const char *path)
     return 0;
 }
 
-/* FNV-1a over the planar screen, so a frame can be compared without a PNG. */
+/* FNV-1a over the planar screen, so a frame can be compared without a PNG.
+ * The same hash the sim uses, from the same place - see include/hash.h. */
 static uint32_t screen_hash(const uint8_t *planar)
 {
-    uint32_t hash = 2166136261u;
-    size_t i;
-
-    for (i = 0; i < SCREEN_BYTES; ++i) {
-        hash = (hash ^ planar[i]) * 16777619u;
-    }
-    return hash;
+    return fnv_bytes(FNV_OFFSET_BASIS, planar, SCREEN_BYTES);
 }
 
 static int frame_wanted(const char *selection, uint32_t frame)
@@ -194,8 +206,10 @@ int main(int argc, char **argv)
     const char *png_selection = "none";
     const char *hash_path = 0;
     uint32_t frames = DEFAULT_FRAMES;
-    uint16_t seed = RNG_DEFAULT_SEED;
+    uint32_t seed = 0;
+    int seed_given = 0;
     int throttle = -1;
+    int detail = -1;
     FILE *hash_file = 0;
     uint32_t frame;
     int i;
@@ -211,9 +225,12 @@ int main(int argc, char **argv)
         } else if (strcmp(arg, "--frames") == 0 && value) {
             frames = (uint32_t)strtoul(argv[++i], 0, 10);
         } else if (strcmp(arg, "--seed") == 0 && value) {
-            seed = (uint16_t)strtoul(argv[++i], 0, 10);
+            seed = (uint32_t)strtoul(argv[++i], 0, 10);
+            seed_given = 1;
         } else if (strcmp(arg, "--throttle") == 0 && value) {
             throttle = (int)strtol(argv[++i], 0, 10);
+        } else if (strcmp(arg, "--detail") == 0 && value) {
+            detail = (int)strtol(argv[++i], 0, 10);
         } else if (strcmp(arg, "--out") == 0 && value) {
             out_dir = argv[++i];
         } else if (strcmp(arg, "--png") == 0 && value) {
@@ -227,7 +244,7 @@ int main(int argc, char **argv)
     }
     if (!level_path) {
         fprintf(stderr, "usage: %s --level PATH [--script PATH] [--frames N]"
-                        " [--seed N] [--throttle 0|1|2] [--out DIR]"
+                        " [--seed N] [--throttle 0|1|2] [--detail 0|1] [--out DIR]"
                         " [--png all|none|LIST] [--hashes PATH]\n", argv[0]);
         return 2;
     }
@@ -239,9 +256,13 @@ int main(int argc, char **argv)
     if (script_path && load_script(script_path) != 0) {
         return 1;
     }
-    game_init(&g_state, &g_level, seed);
+    /* DESIGN 4.3: the level header carries the run's seed; --seed forks it. */
+    game_init(&g_state, &g_level, seed_given ? seed : g_level.rng_seed);
     if (throttle >= 0 && throttle < THROTTLE_MODE_COUNT) {
         g_state.throttle = (uint8_t)throttle;
+    }
+    if (detail >= 0 && detail < DETAIL_LEVEL_COUNT) {
+        g_state.detail_level = (uint8_t)detail;
     }
     if (hash_path) {
         hash_file = fopen(hash_path, "w");

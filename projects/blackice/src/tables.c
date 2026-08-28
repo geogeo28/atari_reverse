@@ -120,7 +120,7 @@ const uint16_t g_inv_cos_dist[1024] = {
     1054, 1080, 1108, 1137, 1168, 1201, 1236, 1273, 1312, 1354, 1399, 1446,
     1497, 1552, 1611, 1676, 1745, 1820, 1902, 1993, 2091, 2201, 2322, 2459,
     2612, 2785, 2983, 3212, 3481, 3796, 4173, 4640, 5217, 5958, 6956, 8339,
-    10434, 13888, 20867, 32000, 32000, 32000, 20867, 13888, 10434, 8339, 6956, 5958,
+    10434, 13888, 20867, 41528, 65535, 41528, 20867, 13888, 10434, 8339, 6956, 5958,
     5217, 4640, 4173, 3796, 3481, 3212, 2983, 2785, 2612, 2459, 2322, 2201,
     2091, 1993, 1902, 1820, 1745, 1676, 1611, 1552, 1497, 1446, 1399, 1354,
     1312, 1273, 1236, 1201, 1168, 1137, 1108, 1080, 1054, 1029, 1004, 982,
@@ -162,8 +162,8 @@ const uint16_t g_inv_cos_dist[1024] = {
     882, 900, 919, 939, 960, 982, 1004, 1029, 1054, 1080, 1108, 1137,
     1168, 1201, 1236, 1273, 1312, 1354, 1399, 1446, 1497, 1552, 1611, 1676,
     1745, 1820, 1902, 1993, 2091, 2201, 2322, 2459, 2612, 2785, 2983, 3212,
-    3481, 3796, 4173, 4640, 5217, 5958, 6956, 8339, 10434, 13888, 20867, 32000,
-    32000, 32000, 20867, 13888, 10434, 8339, 6956, 5958, 5217, 4640, 4173, 3796,
+    3481, 3796, 4173, 4640, 5217, 5958, 6956, 8339, 10434, 13888, 20867, 41528,
+    65535, 41528, 20867, 13888, 10434, 8339, 6956, 5958, 5217, 4640, 4173, 3796,
     3481, 3212, 2983, 2785, 2612, 2459, 2322, 2201, 2091, 1993, 1902, 1820,
     1745, 1676, 1611, 1552, 1497, 1446, 1399, 1354, 1312, 1273, 1236, 1201,
     1168, 1137, 1108, 1080, 1054, 1029, 1004, 982, 960, 939, 919, 900,
@@ -241,47 +241,50 @@ const uint16_t g_col_cos_low[80] = {
     14833, 14750, 14666, 14581, 14495, 14409, 14321, 14233,
 };
 
-const ColumnSet g_column_sets[COLUMN_SET_COUNT] = {
-    { RENDER_COLUMNS_HIGH, 0, 0, g_col_angle_high, g_col_cos_high },
-    { RENDER_COLUMNS_LOW,  1, 0, g_col_angle_low,  g_col_cos_low  },
+const ColumnSet g_column_sets[DETAIL_LEVEL_COUNT] = {
+    /* DETAIL_COLUMNS_160 */ { RENDER_COLUMNS_HIGH, SPRITE_PIXEL_BUDGET_HIGH, 0, 0, g_col_angle_high, g_col_cos_high },
+    /* DETAIL_COLUMNS_80  */ { RENDER_COLUMNS_LOW,  SPRITE_PIXEL_BUDGET_LOW,  1, 0, g_col_angle_low,  g_col_cos_low  },
 };
 
 const ThrottleMode g_throttle_modes[THROTTLE_MODE_COUNT] = {
-    /* UNDERCLOCK */ { 6, 3, COLUMN_SET_LOW, 0, 320, 128, 3000, { 512, 1024, 65535, 65535 } },
-    /* NOMINAL */ { 12, 5, COLUMN_SET_HIGH, 0, 256, 256, 6000, { 512, 1024, 1792, 2816 } },
-    /* OVERCLOCK */ { 20, 5, COLUMN_SET_HIGH, 0, 205, 410, 6000, { 853, 1707, 2987, 4693 } },
+    /* UNDERCLOCK */ { 6, 3, 320, 128, { 512, 1024, 65535, 65535 } },
+    /* NOMINAL */ { 12, 5, 256, 256, { 512, 1024, 1792, 2816 } },
+    /* OVERCLOCK */ { 20, 5, 205, 410, { 853, 1707, 2987, 4693 } },
 };
 
+/* DESIGN 3's sixteen registers, from art/palette.py. */
 const uint8_t g_palette_rgb[PALETTE_SIZE][3] = {
-    { 0x00, 0x00, 0x00 },   /* #000000 */
-    { 0xcc, 0xff, 0xff },   /* #CCFFFF */
-    { 0x77, 0xee, 0xff },   /* #77EEFF */
-    { 0x33, 0xbb, 0xee },   /* #33BBEE */
-    { 0x11, 0x77, 0xbb },   /* #1177BB */
-    { 0x00, 0x33, 0x55 },   /* #003355 */
-    { 0xff, 0xcc, 0xff },   /* #FFCCFF */
-    { 0xff, 0x77, 0xdd },   /* #FF77DD */
-    { 0xdd, 0x33, 0xaa },   /* #DD33AA */
-    { 0x99, 0x11, 0x77 },   /* #991177 */
-    { 0x44, 0x00, 0x44 },   /* #440044 */
-    { 0xff, 0xff, 0x66 },   /* #FFFF66 */
-    { 0x33, 0xff, 0x66 },   /* #33FF66 */
-    { 0xff, 0xff, 0xff },   /* #FFFFFF */
-    { 0xff, 0x44, 0x00 },   /* #FF4400 */
-    { 0x33, 0x33, 0x44 },   /* #333344 */
+    { 0x00, 0x00, 0x00 },   /* VOID      #000000 */
+    { 0x66, 0xee, 0xff },   /* CYAN_1    #66EEFF */
+    { 0x33, 0xcc, 0xee },   /* CYAN_2    #33CCEE */
+    { 0x22, 0x99, 0xcc },   /* CYAN_3    #2299CC */
+    { 0x11, 0x66, 0x88 },   /* CYAN_4    #116688 */
+    { 0x11, 0x33, 0x66 },   /* CYAN_5    #113366 */
+    { 0xff, 0x88, 0xee },   /* MAG_1     #FF88EE */
+    { 0xdd, 0x55, 0xcc },   /* MAG_2     #DD55CC */
+    { 0xbb, 0x33, 0xaa },   /* MAG_3     #BB33AA */
+    { 0x88, 0x11, 0x77 },   /* MAG_4     #881177 */
+    { 0x33, 0x00, 0x44 },   /* MAG_5     #330044 */
+    { 0xff, 0xee, 0x44 },   /* DATA      #FFEE44 */
+    { 0xff, 0xff, 0xff },   /* RIM       #FFFFFF */
+    { 0xff, 0x77, 0x22 },   /* ALERT     #FF7722 */
+    { 0x33, 0xcc, 0x66 },   /* INTEGRITY #33CC66 */
+    { 0x44, 0x44, 0x66 },   /* GRID      #444466 */
 };
 
+/* Depth-band index remaps, from art/palette.py's shade_table(). */
 const uint8_t g_shade_lut[SHADE_LEVEL_COUNT][PALETTE_SIZE] = {
     /* level 0 */ {  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15 },
-    /* level 1 */ {  0,  2,  3,  4,  5,  0,  7,  8,  9, 10,  0,  3,  4,  1,  8,  5 },
-    /* level 2 */ {  0,  3,  4,  5,  0,  0,  8,  9, 10,  0,  0,  4,  5,  2,  9,  0 },
-    /* level 3 */ {  0,  4,  5,  0,  0,  0,  9, 10,  0,  0,  0,  5,  0,  3, 10,  0 },
-    /* level 4 */ {  0,  5,  0,  0,  0,  0, 10,  0,  0,  0,  0,  0,  0,  4,  0,  0 },
-    /* level 5 */ {  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  5,  0,  0 },
+    /* level 1 */ {  0,  2,  3,  4,  5,  5,  7,  8,  9, 10, 10, 11, 12, 13, 14, 15 },
+    /* level 2 */ {  0,  3,  4,  4,  5,  5,  8,  9,  9, 10, 10, 11, 12, 13, 14, 15 },
+    /* level 3 */ {  0,  3,  5,  5,  5,  5,  8, 10, 10, 10, 10,  2, 12, 13, 14,  4 },
+    /* level 4 */ {  0,  5,  5,  0,  0,  0, 10, 10,  0,  0,  0,  4, 12, 13, 14,  5 },
+    /* level 5 */ {  0,  5,  5,  0,  0,  0, 10, 10,  0,  0,  0,  4, 12, 13, 14,  5 },
 };
 
 uint16_t g_slice_height[DIST_TABLE_SIZE];
 uint16_t g_tex_step[DIST_TABLE_SIZE];
+uint8_t g_cell_texture[CELL_VALUE_COUNT];
 
 /*
  * Fill the two reciprocal tables.  The only divides in the engine live here and
@@ -303,5 +306,10 @@ void tables_init(void)
     for (dist = 0; dist < DIST_MIN_UNITS; ++dist) {
         g_slice_height[dist] = g_slice_height[DIST_MIN_UNITS];
         g_tex_step[dist] = g_tex_step[DIST_MIN_UNITS];
+    }
+    /* Asked once per value here rather than once per column at run time; the
+     * rule itself stays in map_cell_texture. */
+    for (dist = 0; dist < CELL_VALUE_COUNT; ++dist) {
+        g_cell_texture[dist] = map_cell_texture((uint8_t)dist);
     }
 }

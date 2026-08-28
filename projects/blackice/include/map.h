@@ -65,6 +65,10 @@
 
 typedef struct {
     uint16_t cell;          /* grid index: y * width + x */
+    uint8_t  cell_x;        /* the same cell as coordinates.  Carried rather */
+    uint8_t  cell_y;        /* than divided out: the 68000 has no 32-bit divide
+                             * and `cell / width` per door per tick was a
+                             * __divsi3 plus a __modsi3 in the tick loop. */
     uint8_t  variant;       /* the cell value, CELL_DOOR_BASE..CELL_DOOR_MAX */
     uint8_t  state;         /* DOOR_STATE_* */
     uint16_t timer;         /* ticks left in the current state */
@@ -109,15 +113,33 @@ static inline void map_set_blocking(MapBlocking *blocking, uint16_t cell, int bl
 /* Texture a cell is drawn with; 0 for an empty cell. */
 uint8_t map_cell_texture(uint8_t cell_value);
 
-/* A door variant that can never be opened by walking into it. */
+/*
+ * The same answer as a table, for the one caller that asks per column.  A cell
+ * is a byte, so every possible question fits in 256 entries; tables_init fills
+ * it by asking map_cell_texture, which stays the single definition of the rule.
+ */
+#define CELL_VALUE_COUNT 256
+extern uint8_t g_cell_texture[CELL_VALUE_COUNT];
+
+/* A door variant that can never be opened by walking into it, whatever the
+ * player carries: the frozen corrupted leaf, the sealed exfil arch and the
+ * sector exit (which ends the level instead of opening). */
 int door_variant_is_fixed(uint8_t variant);
+
+/* A door variant that opens only for the matching token (DESIGN 10).  Whether
+ * the body HAS that token is a game-layer question: see door_may_open. */
+int door_variant_is_locked(uint8_t variant);
 
 /* Rebuild the whole blocking bitmap from the grid and the current door state. */
 void map_build_blocking(const MapGrid *grid, const Door *doors, uint16_t door_count,
                         MapBlocking *blocking);
 
-/* Collect every door cell of the grid into `doors`, closed.  Returns the
- * count, capped at DOOR_MAX_COUNT. */
+/*
+ * Collect every door cell of the grid into `doors`, closed.  Returns the count
+ * written, capped at DOOR_MAX_COUNT.  Both level loaders refuse a grid with
+ * more door cells than that (LEVEL_ERR_TOO_MANY), so the cap here is a
+ * backstop for a hand-built grid and never silently drops a shipped door.
+ */
 uint16_t map_collect_doors(const MapGrid *grid, Door *doors);
 
 /*

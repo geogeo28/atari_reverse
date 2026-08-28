@@ -47,7 +47,31 @@ int32_t player_blocking_cell(fix88_t x, fix88_t y, const MapGrid *grid,
 /* Scale a per-tick speed by the throttle's 8.8 multiplier. */
 static int16_t scaled_speed(int16_t base, uint16_t speed_scale)
 {
-    return (int16_t)(mul16(base, (int16_t)speed_scale) >> 8);
+    return (int16_t)(mul16(base, (int16_t)speed_scale) >> FIX88_SHIFT);
+}
+
+/*
+ * Rotate a (forward, strafe) pair by the view angle into world map units.
+ *
+ * Its own function, and deliberately NOT inlined.  Folded into player_step -
+ * which also holds four live pointers - the m68k back end runs out of data
+ * registers and puts a multiplicand in an ADDRESS register, where `muls.w`
+ * cannot reach it, so the product comes out as a __mulsi3 call: 250 cycles for
+ * a 70-cycle instruction, and a build failure under the Makefile's libgcc
+ * gate.  Kept separate it is four `muls.w` and one `jsr`, and player_step runs
+ * 25 times a second, so the call costs nothing that matters.
+ */
+__attribute__((noinline))
+static void rotate_move(angle_t angle, int16_t forward, int16_t strafe,
+                        int32_t *move_x, int32_t *move_y)
+{
+    /* World x runs east and y runs south, so "right" is the view direction
+     * turned a quarter turn: (-sin, cos). */
+    int16_t cosine = angle_cos(angle);
+    int16_t sine = angle_sin(angle);
+
+    *move_x = (mul16(cosine, forward) - mul16(sine, strafe)) >> TRIG_SHIFT;
+    *move_y = (mul16(sine, forward) + mul16(cosine, strafe)) >> TRIG_SHIFT;
 }
 
 void player_step(Player *player, uint16_t input, uint16_t speed_scale,
@@ -55,8 +79,6 @@ void player_step(Player *player, uint16_t input, uint16_t speed_scale,
 {
     int16_t forward = 0;
     int16_t strafe = 0;
-    int16_t cosine;
-    int16_t sine;
     int32_t move_x;
     int32_t move_y;
     fix88_t target;
@@ -87,12 +109,7 @@ void player_step(Player *player, uint16_t input, uint16_t speed_scale,
         return;
     }
 
-    /* World x runs east and y runs south, so "right" is the view direction
-     * turned a quarter turn: (-sin, cos). */
-    cosine = angle_cos(player->angle);
-    sine = angle_sin(player->angle);
-    move_x = (mul16(cosine, forward) - mul16(sine, strafe)) >> TRIG_SHIFT;
-    move_y = (mul16(sine, forward) + mul16(cosine, strafe)) >> TRIG_SHIFT;
+    rotate_move(player->angle, forward, strafe, &move_x, &move_y);
 
     /* Axis-separated: a move blocked on one axis still delivers the other, and
      * that is exactly what sliding along a wall is. */
@@ -111,17 +128,4 @@ void player_step(Player *player, uint16_t input, uint16_t speed_scale,
     } else if (*bumped_cell < 0) {
         *bumped_cell = blocked;
     }
-}
-
-int32_t player_use_target(const Player *player, const MapGrid *grid)
-{
-    int32_t reach_x = mul16(angle_cos(player->angle), PLAYER_USE_REACH) >> TRIG_SHIFT;
-    int32_t reach_y = mul16(angle_sin(player->angle), PLAYER_USE_REACH) >> TRIG_SHIFT;
-    int16_t cell_x = (int16_t)((player->x + reach_x) >> CELL_SHIFT);
-    int16_t cell_y = (int16_t)((player->y + reach_y) >> CELL_SHIFT);
-
-    if (cell_x < 0 || cell_y < 0 || cell_x >= grid->width || cell_y >= grid->height) {
-        return -1;
-    }
-    return map_cell_index(grid, cell_x, cell_y);
 }

@@ -29,6 +29,20 @@
 typedef int16_t  fix88_t;   /* map coordinate or distance, 8.8 fixed */
 typedef uint16_t angle_t;   /* 0..65535 == one full turn */
 
+/*
+ * The fraction width of the 8.8 format.  It is numerically the same as
+ * CELL_SHIFT - one cell is 1.0 in map units - but the two mean different
+ * things, and a texel accumulator is not a grid coordinate.  Spell the one you
+ * mean.
+ */
+#define FIX88_SHIFT     8
+
+/* The whole part of an 8.8 value: what the accumulator indexes with. */
+static inline uint16_t fix88_whole(uint16_t value)
+{
+    return (uint16_t)(value >> FIX88_SHIFT);
+}
+
 /* ---- angles ----------------------------------------------------------- */
 
 #define ANGLE_QUARTER_TURN  16384
@@ -37,10 +51,18 @@ typedef uint16_t angle_t;   /* 0..65535 == one full turn */
  * DESIGN.md states angles in "brads", 1024 to a full turn, and the .bil level
  * file stores them that way.  The engine works in 16-bit angle_t so that a
  * turn is a plain uint16 add with free wraparound; brads convert on load.
+ *
+ * The two scales have different zeroes, and this is the only place that knows
+ * it.  DESIGN 11: brad 0 is NORTH (-y) and brads increase clockwise, so brad
+ * 256 is east.  angle_t 0 is EAST (+x), because the engine's direction vector
+ * is (cos, sin) and world y runs south.  East is therefore the shared ray, and
+ * the conversion is a quarter-turn subtraction that costs nothing at run time:
+ * every call site passes a level-file constant.
  */
 #define BRADS_PER_TURN          1024
 #define ANGLE_UNITS_PER_BRAD    (65536 / BRADS_PER_TURN)   /* 64 */
-#define ANGLE_FROM_BRADS(b)     ((angle_t)((uint16_t)(b) * ANGLE_UNITS_PER_BRAD))
+#define ANGLE_FROM_BRADS(b)     ((angle_t)((angle_t)((uint16_t)(b) * ANGLE_UNITS_PER_BRAD) \
+                                           - ANGLE_QUARTER_TURN))
 
 /* ---- the 68000's only widening multiply --------------------------------- */
 
@@ -58,6 +80,14 @@ static inline int32_t mul16(int16_t a, int16_t b)
     return (int32_t)a * (int32_t)b;
 }
 
+/* `mulu.w`, the unsigned twin: the same 16x16 -> 32 instruction, for the one
+ * product whose operands are genuinely unsigned words (a delta distance can be
+ * larger than INT16_MAX). */
+static inline uint32_t mulu16(uint16_t a, uint16_t b)
+{
+    return (uint32_t)a * (uint32_t)b;
+}
+
 /* ---- 1.14 trig tables -------------------------------------------------- */
 
 #define TRIG_ONE            16384       /* 1.0 in 1.14 fixed */
@@ -73,12 +103,20 @@ extern const int16_t g_sin_1024[TRIG_TABLE_SIZE];
  * Ray length gained per whole grid cell of travel along one axis, in map
  * units: CELL_UNITS / |cos(theta)| for the x axis.  This is the DDA's
  * "delta distance" and replaces the per-ray divide that the textbook
- * algorithm needs.  Near a grid-parallel ray the true value is unbounded, so
- * it saturates at DELTA_DIST_MAX - clamping *high* is the safe direction
- * because it only makes the DDA prefer the other axis, and the ray leaves the
- * map long before the error matters.
+ * algorithm needs.
+ *
+ * The table is EXACT for every angle that has a finite value.  The smallest
+ * non-zero |cos| the quantised table holds is 100/16384, so the largest real
+ * entry is 256 * 16384 / 100 = 41943 - which is why the entries are unsigned
+ * words and not int16.  Clamping them lower than that was a real defect: it
+ * makes the DDA think a near-axis ray crosses the perpendicular grid line up
+ * to 23% earlier than it does, which steps into the wrong cell and shows up as
+ * a one-column spike when the player hugs a wall and looks along it.
+ *
+ * The four exactly-grid-parallel angles have no finite value at all and store
+ * DELTA_DIST_NEVER: that axis is never crossed, at any range.
  */
-#define DELTA_DIST_MAX  32000
+#define DELTA_DIST_NEVER 0xffff
 extern const uint16_t g_inv_cos_dist[TRIG_TABLE_SIZE];
 
 /* Table index for an angle, and the quarter-turn shift that turns cos into sin. */

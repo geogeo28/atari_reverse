@@ -8,8 +8,7 @@ import ctypes
 import pytest
 
 import blackice
-from blackice import CONST
-from test_raycast import make_level
+from blackice import CONST, make_level
 
 PLANES = CONST["SCREEN_PLANES"]
 LINE_BYTES = CONST["SCREEN_BYTES_PER_LINE"]
@@ -109,6 +108,7 @@ def test_far_columns_use_the_far_fill_colour(lib):
     level = make_level(lib, width, height, cells, (20, 20))
     state = blackice.new_state(lib, level)
     state.throttle = CONST["THROTTLE_UNDERCLOCK"]           # radius 6 in a 40-cell room
+    state.detail_level = CONST["DETAIL_COLUMNS_80"]         # and half width, independently
     scratch = blackice.RenderScratch()
     chunky = blackice.chunky_buffer()
 
@@ -119,6 +119,84 @@ def test_far_columns_use_the_far_fill_colour(lib):
            if scratch.columns[c].tex_id == CONST["COLUMN_TEX_FAR"]]
     assert far, "nothing was cut off at radius 6 in a 40-cell room"
     for c in far:
-        assert scratch.wall_dist[c] == 0xffff
+        assert scratch.wall_dist[c] == CONST["WALL_DIST_NONE"]
         top = scratch.columns[c].top
         assert blackice.chunky_pixel(chunky, c, top) == CONST["COLOUR_FAR_FILL"]
+
+
+# ---------------------------------------------------------------------------
+# c2p against something other than its own inverse
+# ---------------------------------------------------------------------------
+
+def test_a_hand_computed_planar_group(lib):
+    """Every c2p test above compares the converter with planar_pixel, which is
+    the converter's own inverse: both could share a wrong bit order and agree.
+
+    So here is one 16-pixel group worked out by hand.  The ST packs 16 pixels
+    as four words, one per plane, leftmost pixel in bit 15; a pixel's colour
+    index is bit `plane` of its value across the four planes.
+    """
+    colours = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    chunky = blackice.chunky_buffer()
+    raw = bytearray(chunky.raw)
+    for x, colour in enumerate(colours):
+        for y in range(blackice.RENDER_H):
+            raw[x * blackice.RENDER_H + y] = colour
+    chunky.raw = bytes(raw)
+    planar = planar_buffer()
+
+    # 160 columns doubles each chunky pixel to two screen pixels, so this group
+    # of 16 screen pixels is chunky columns 0..7.
+    lib.c2p_window(chunky, CONST["RENDER_COLUMNS_HIGH"], planar)
+
+    screen = [colours[x // 2] for x in range(16)]
+    expected = []
+    for plane in range(PLANES):
+        word = 0
+        for bit, colour in enumerate(screen):
+            if (colour >> plane) & 1:
+                word |= 1 << (15 - bit)
+        expected += [word >> 8, word & 0xff]
+
+    assert list(planar.raw[:PLANES * 2]) == expected, "the first planar group is wrong"
+
+
+def test_c2p_agrees_with_the_art_pipelines_planar_writer(lib):
+    """host/c2p.c is a third implementation of the ST's planar format, and the
+    art pipeline's is the one the .PI1 files and the real art go through.  Two
+    implementations that only ever check themselves are two chances to be
+    wrong in the same way, so they are checked against each other."""
+    import sys
+
+    sys.path.insert(0, str(blackice.ROOT / "pipeline"))
+    import numpy
+    from stepix import planar as stepix_planar
+
+    # The engine's screen constants are the pipeline's, or the bytes the
+    # platform layer writes are not the bytes the art was built for.
+    assert stepix_planar.SCREEN_W == SCREEN_W
+    assert stepix_planar.SCREEN_H == CONST["SCREEN_H"]
+    assert stepix_planar.PLANES == PLANES
+    assert stepix_planar.SCREEN_ROW_BYTES == LINE_BYTES
+    assert stepix_planar.SCREEN_BYTES == SCREEN_BYTES
+
+    columns = CONST["RENDER_COLUMNS_HIGH"]
+    doubling = SCREEN_W // columns
+    chunky = blackice.chunky_buffer()
+    raw = bytearray(chunky.raw)
+    for x in range(columns):
+        for y in range(blackice.RENDER_H):
+            raw[x * blackice.RENDER_H + y] = (x * 5 + y * 11 + (x & y)) % CONST["PALETTE_SIZE"]
+    chunky.raw = bytes(raw)
+
+    planar = planar_buffer()
+    lib.c2p_window(chunky, columns, planar)
+
+    # The same image as a screen-shaped index array, doubled the way c2p does.
+    indices = numpy.zeros((WINDOW_LINES, SCREEN_W), dtype=numpy.uint8)
+    for y in range(WINDOW_LINES):
+        for x in range(SCREEN_W):
+            indices[y][x] = raw[(x // doubling) * blackice.RENDER_H + (y // 2)]
+
+    assert bytes(planar.raw[:WINDOW_LINES * LINE_BYTES]) == \
+        stepix_planar.indices_to_planar(indices)

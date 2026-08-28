@@ -14,20 +14,48 @@ golden frames are reproducible.
 
     python3 tools/mkassets.py > src/assets_placeholder.c
 """
+import pathlib
 import sys
 
-TEX_DIM = 64
-SPRITE_TRANSPARENT = 15
-SPAN_EMPTY_FIRST = 0xFF
-SPAN_EMPTY_LAST = 0x00
+_ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT / "tools"))
+sys.path.insert(0, str(_ROOT / "art"))
+sys.path.insert(0, str(_ROOT / "pipeline"))
+import numpy                                                    # noqa: E402
+from consts import CONST                                        # noqa: E402
+import palette as art_palette                                   # noqa: E402
+# pipeline/stepix is the reference implementation of both on-disk layouts.  The
+# placeholders go through it so that when the real art replaces them the bytes
+# are produced by the same code, not by a lookalike.
+from stepix import sprite as stepix_sprite                      # noqa: E402
+from stepix import texture as stepix_texture                    # noqa: E402
 
-# DESIGN 3: indices 6, 7, 11, 12 and 13 are sprite-only and must not appear in
-# a wall texture.  The generator asserts this rather than trusting itself.
-WALL_FORBIDDEN = frozenset((6, 7, 11, 12, 13))
+assert stepix_texture.TEXTURE_DIM == CONST["TEX_DIM"]
+assert stepix_sprite.SPAN_EMPTY_FIRST == CONST["SPRITE_SPAN_EMPTY_FIRST"]
+assert stepix_sprite.SPAN_EMPTY_LAST == CONST["SPRITE_SPAN_EMPTY_LAST"]
 
-VOID, CYAN_1, CYAN_2, CYAN_3, CYAN_4, CYAN_5 = 0, 1, 2, 3, 4, 5
-MAG_BRIGHT_1, MAG_BRIGHT_2, MAG_3, MAG_4, MAG_5 = 6, 7, 8, 9, 10
-DATA_YELLOW, INTEGRITY_GREEN, WHITE, ALARM, GRID = 11, 12, 13, 14, 15
+# Read, never restated: a generator that disagrees with the engine about the
+# texture size or the colour key produces art that is wrong in a way nothing
+# reports.
+TEX_DIM = CONST["TEX_DIM"]
+SPRITE_TRANSPARENT = CONST["SPRITE_TRANSPARENT"]
+SPAN_EMPTY_FIRST = CONST["SPRITE_SPAN_EMPTY_FIRST"]
+SPAN_EMPTY_LAST = CONST["SPRITE_SPAN_EMPTY_LAST"]
+WALL_TEXTURE_SLOTS = CONST["WALL_TEXTURE_MAX"] + 1              # slot 0 is the far-fill sentinel
+
+# The palette's roles, from the art department's own definition.  RIM and ALERT
+# are RESERVED: no wall texture may contain them, which is what makes a 1px
+# white rim-light readable against every wall at every depth.
+VOID = art_palette.VOID
+CYAN_1, CYAN_2, CYAN_3, CYAN_4, CYAN_5 = art_palette.CYAN_RAMP
+MAG_1, MAG_2, MAG_3, MAG_4, MAG_5 = art_palette.MAGENTA_RAMP
+DATA, RIM, ALERT, INTEGRITY, GRID = (art_palette.DATA, art_palette.RIM,
+                                     art_palette.ALERT, art_palette.INTEGRITY,
+                                     art_palette.GRID)
+WALL_FORBIDDEN = frozenset(art_palette.SPRITE_ONLY)
+
+assert SPRITE_TRANSPARENT == art_palette.TRANSPARENT_INDEX, \
+    "the engine's colour key and the art's disagree"
 
 LCG_MULTIPLIER = 1103515245
 LCG_INCREMENT = 12345
@@ -166,7 +194,8 @@ def anchor_pylon():
 
 
 def exit_plating():
-    """Heavy plates with alarm-orange trim: the way out is always marked."""
+    """Heavy plates with green trim: the way out is always marked, and green
+    is the exit lamp in art/palette.py's role table."""
     px = blank(CYAN_4)
     plate = 16
     for v in range(TEX_DIM):
@@ -174,7 +203,7 @@ def exit_plating():
             if v % plate < 2 or u % plate < 2:
                 px[v][u] = CYAN_5
             elif (v % plate) in (2, 3) and (u % plate) > 3:
-                px[v][u] = ALARM
+                px[v][u] = INTEGRITY
             elif (v % plate) < 9:
                 px[v][u] = CYAN_3
     return px
@@ -229,7 +258,7 @@ def billboard(body_colour, core_colour, radius_x, radius_y, centre_v):
             if r <= 1.0:
                 px[v][u] = core_colour if r < 0.35 else body_colour
             elif r <= 1.18:
-                px[v][u] = WHITE
+                px[v][u] = RIM
     return px
 
 
@@ -237,9 +266,9 @@ ENEMY_RADIUS_U, ENEMY_RADIUS_V, ENEMY_CENTRE_V = 18.0, 26.0, 32.0
 PICKUP_RADIUS_U, PICKUP_RADIUS_V, PICKUP_CENTRE_V = 11.0, 11.0, 48.0
 
 SPRITES = [
-    ("spr_enemy", lambda: billboard(MAG_BRIGHT_2, MAG_BRIGHT_1,
+    ("spr_enemy", lambda: billboard(MAG_2, MAG_1,
                                     ENEMY_RADIUS_U, ENEMY_RADIUS_V, ENEMY_CENTRE_V)),
-    ("spr_pickup", lambda: billboard(DATA_YELLOW, INTEGRITY_GREEN,
+    ("spr_pickup", lambda: billboard(DATA, INTEGRITY,
                                      PICKUP_RADIUS_U, PICKUP_RADIUS_V, PICKUP_CENTRE_V)),
 ]
 
@@ -272,20 +301,19 @@ BYTES_PER_LINE = 32
 
 
 def to_column_major(px):
-    return [px[v][u] for u in range(TEX_DIM) for v in range(TEX_DIM)]
+    """The pipeline's own transform, so the placeholders are laid out by the
+    same code that will lay out the real art."""
+    return list(stepix_texture.to_column_major(numpy.array(px, dtype=numpy.uint8)))
 
 
 def spans(px):
-    """First and last opaque texel row of each column.
+    """First and last opaque texel row of each column, from the pipeline.
 
-    An empty column is the canonical (SPAN_EMPTY_FIRST, SPAN_EMPTY_LAST) pair
-    the art pipeline writes; the drawer's skip test is simply first > last.
+    An empty column is the canonical (SPAN_EMPTY_FIRST, SPAN_EMPTY_LAST) pair;
+    the drawer's skip test is simply first > last.
     """
-    out = []
-    for u in range(TEX_DIM):
-        rows = [v for v in range(TEX_DIM) if px[v][u] != SPRITE_TRANSPARENT]
-        out.append((rows[0], rows[-1]) if rows else (SPAN_EMPTY_FIRST, SPAN_EMPTY_LAST))
-    return out
+    flat = stepix_sprite.column_spans(numpy.array(px, dtype=numpy.uint8), SPRITE_TRANSPARENT)
+    return [(flat[i], flat[i + 1]) for i in range(0, len(flat), 2)]
 
 
 def emit_bytes(out, name, data):
@@ -318,7 +346,7 @@ def main():
               "    0,   /* slot 0 is the far-fill sentinel, never a texture */\n")
     for name, _ in WALL_TEXTURES:
         out.write("    %s,\n" % name)
-    for _ in range(len(WALL_TEXTURES) + 1, 16):
+    for _ in range(len(WALL_TEXTURES) + 1, WALL_TEXTURE_SLOTS):
         out.write("    0,\n")
     out.write("};\n\n")
 

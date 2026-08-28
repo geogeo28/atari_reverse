@@ -9,6 +9,12 @@
  * No libc beyond what the target has: no stdio, no allocation, no strtol.
  */
 #include "level.h"
+/* ai_neighbour_dx/dy: DESIGN 11 rule 5's alcove is a neighbourhood shape, and
+ * ai.c owns the one definition of which neighbour is which. */
+#include "ai.h"
+/* g_wall_textures: a level may only name art that exists.  This is the one
+ * place the loader looks at the asset tables. */
+#include "render.h"
 
 typedef struct {
     char    glyph;
@@ -39,7 +45,7 @@ static const LegendEntry LEGEND[] = {
     { 't', CELL_EMPTY,           ENT_TRACER,          0 },
     { 'B', CELL_EMPTY,           ENT_BLACK_ICE,       0 },
     { 's', CELL_EMPTY,           ENT_SENTRY,          0 },
-    { '*', TEX_ANCHOR_PYLON,     ENT_ANCHOR,          0 },
+    { '*', CELL_EMPTY,           ENT_ANCHOR,          0 },
     { 'p', CELL_EMPTY,           ENT_TOKEN_ALPHA,     0 },
     { 'q', CELL_EMPTY,           ENT_TOKEN_BETA,      0 },
     { 'r', CELL_EMPTY,           ENT_TOKEN_GAMMA,     0 },
@@ -55,7 +61,8 @@ static const LegendEntry LEGEND[] = {
 
 /* Defaults for a source file that leaves a header key out. */
 #define DEFAULT_PAR_TICKS       3000
-#define DEFAULT_TRACE_RATE      400     /* thousandths of a percent per tick */
+/* DESIGN 9.1 ships 0.18 %/s on every level; the unit is per SECOND, not per tick. */
+#define DEFAULT_TRACE_RATE      180
 #define DEFAULT_TRACE_CARRY_CAP 25
 
 static const LegendEntry *legend_lookup(char glyph)
@@ -115,6 +122,7 @@ static void level_defaults(Level *level)
     level->start_cell_x = 0;
     level->start_cell_y = 0;
     level->start_facing_brads = 0;
+    level->rng_seed = RNG_DEFAULT_SEED;
     level->trace_base_rate = DEFAULT_TRACE_RATE;
     level->trace_start = 0;
     level->trace_carry_cap = DEFAULT_TRACE_CARRY_CAP;
@@ -146,6 +154,8 @@ static void apply_header_line(Level *level, const char *key, size_t key_len,
         level->start_facing_brads = (uint16_t)(number % BRADS_PER_TURN);
     } else if (text_equal(key, key_len, "par") || text_equal(key, key_len, "par_ticks")) {
         level->par_ticks = (uint16_t)number;
+    } else if (text_equal(key, key_len, "rng_seed")) {
+        level->rng_seed = number;
     } else if (text_equal(key, key_len, "trace_base_rate")) {
         level->trace_base_rate = (uint16_t)number;
     } else if (text_equal(key, key_len, "trace_start")) {
@@ -199,23 +209,168 @@ static void parse_header_line(Level *level, const char *line, size_t len)
 
 /* ---- validation --------------------------------------------------------- */
 
+/*
+ * DESIGN 11 rule 2: a border cell is a wall OR a terminal door.  A terminal
+ * door is as good a seal as a wall for the DDA, which has no bounds test in
+ * its inner loop, because it never opens under the caster: `S` and `>` are
+ * arches in the outer wall that are touched, never passed through.
+ */
+static int cell_seals_the_border(uint8_t cell)
+{
+    return CELL_IS_WALL(cell) || cell == DOOR_SEALED || cell == DOOR_SECTOR_EXIT;
+}
+
 static LevelResult validate_border(const Level *level)
 {
     uint8_t x, y;
 
+    /* Written as one unsigned word product, not `(height - 1) * width`: the
+     * integer promotions in that expression make it 32x32, which is a __mulsi3
+     * call on the 68000 and a build failure under the Makefile's libgcc gate. */
+    uint16_t last_row = (uint16_t)mulu16((uint16_t)(level->height - 1), level->width);
+
     for (x = 0; x < level->width; ++x) {
-        if (!CELL_IS_WALL(level->cells[x])
-            || !CELL_IS_WALL(level->cells[(level->height - 1) * level->width + x])) {
+        if (!cell_seals_the_border(level->cells[x])
+            || !cell_seals_the_border(level->cells[last_row + x])) {
             return LEVEL_ERR_BORDER;
         }
     }
     for (y = 0; y < level->height; ++y) {
-        if (!CELL_IS_WALL(level->cells[y * level->width])
-            || !CELL_IS_WALL(level->cells[y * level->width + level->width - 1])) {
+        if (!cell_seals_the_border(level->cells[y * level->width])
+            || !cell_seals_the_border(level->cells[y * level->width + level->width - 1])) {
             return LEVEL_ERR_BORDER;
         }
     }
     return LEVEL_OK;
+}
+
+/*
+ * Every cell must name art that exists and the door table must fit.
+ *
+ * A wall cell IS its texture id, and the shipped set leaves the top slots
+ * empty, so an unchecked id reaches draw.c as a NULL texture pointer: a
+ * segfault on the host and a read of the 68000 vector page on the target.
+ * Doors go through map_cell_texture for the same reason.
+ */
+static LevelResult validate_cells(const Level *level)
+{
+    uint16_t cells = (uint16_t)level->width * level->height;
+    uint16_t doors = 0;
+    uint16_t i;
+
+    for (i = 0; i < cells; ++i) {
+        uint8_t value = level->cells[i];
+        uint8_t texture = map_cell_texture(value);
+
+        if (value >= CELL_RESERVED_BASE) {
+            return LEVEL_ERR_RESERVED;
+        }
+        if (texture != 0 && g_wall_textures[texture] == 0) {
+            return LEVEL_ERR_TEXTURE;
+        }
+        if (CELL_IS_DOOR(value) && ++doors > DOOR_MAX_COUNT) {
+            return LEVEL_ERR_TOO_MANY;
+        }
+    }
+    return LEVEL_OK;
+}
+
+/* The DDA and the collider both start from the player's cell and neither has a
+ * bounds test, so a start off the grid or inside a wall walks the caster
+ * straight out of the map. */
+static LevelResult validate_start(const Level *level)
+{
+    uint16_t index;
+
+    if (level->start_cell_x >= level->width || level->start_cell_y >= level->height) {
+        return LEVEL_ERR_START;
+    }
+    index = (uint16_t)(level->start_cell_y * level->width + level->start_cell_x);
+    return level->cells[index] == CELL_EMPTY ? LEVEL_OK : LEVEL_ERR_START;
+}
+
+/*
+ * DESIGN 11 rule 5: a Sentry stands in a 1-cell alcove with exactly three wall
+ * neighbours and one open side, and DESIGN 8 makes that shape the authority on
+ * which way the turret looks.  The loader has to enforce it as well as the
+ * compiler: sentry_facing_from_alcove walks the four neighbours of the cell, so
+ * a Sentry authored on the border walks that scan off the end of the grid, and
+ * one in the open gets a facing chosen by whichever neighbour came first.
+ */
+static int sentry_alcove_is_well_formed(const Level *level, uint16_t cell)
+{
+    int walls = 0;
+    int n;
+
+    /* ai.c owns the neighbour order, and the accessors are what stop a second
+     * copy of it drifting from the one the mover and the flood walk. */
+    for (n = 0; n < NEIGHBOUR_ORTHO_COUNT; ++n) {
+        uint16_t neighbour = (uint16_t)(cell + ai_neighbour_dx(n)
+                                      + ai_neighbour_dy(n) * level->width);
+
+        /* A door is neither: an alcove closed by a leaf would open and shut. */
+        if (CELL_IS_WALL(level->cells[neighbour])) {
+            ++walls;
+        } else if (level->cells[neighbour] != CELL_EMPTY) {
+            return 0;
+        }
+    }
+    return walls == NEIGHBOUR_ORTHO_COUNT - 1;
+}
+
+/*
+ * An entity type indexes g_entity_sprites and its cell indexes the grid; both
+ * come straight off the file, so both are range-checked before anything reads
+ * through them.
+ *
+ * The cell must also be EMPTY floor.  Every entity glyph in DESIGN 11's legend
+ * compiles its cell to 0, so a body on a wall or in a door leaf is a corrupt
+ * file - and it is not a harmless one: entities_init claims that cell, the
+ * mover reads a body inside a wall, and the Sentry alcove scan runs off the
+ * grid entirely when the cell is on the border.
+ */
+static LevelResult validate_entities(const Level *level)
+{
+    uint16_t i;
+
+    if (level->entity_count > LEVEL_MAX_ENTITIES) {
+        return LEVEL_ERR_TOO_MANY;
+    }
+    for (i = 0; i < level->entity_count; ++i) {
+        const Entity *entity = &level->entities[i];
+        uint16_t cell;
+
+        if (entity->type >= ENT_TYPE_COUNT
+            || entity->cell_x >= level->width || entity->cell_y >= level->height) {
+            return LEVEL_ERR_ENTITY;
+        }
+        cell = (uint16_t)(entity->cell_y * level->width + entity->cell_x);
+        if (level->cells[cell] != CELL_EMPTY) {
+            return LEVEL_ERR_ENTITY;
+        }
+        if (entity->type == ENT_SENTRY && !sentry_alcove_is_well_formed(level, cell)) {
+            return LEVEL_ERR_ENTITY;
+        }
+    }
+    return LEVEL_OK;
+}
+
+/* The one gate both loaders run: whatever produced the Level, this is what
+ * makes it safe to render and to walk around in. */
+static LevelResult validate_level(const Level *level)
+{
+    LevelResult result = validate_border(level);
+
+    if (result == LEVEL_OK) {
+        result = validate_cells(level);
+    }
+    if (result == LEVEL_OK) {
+        result = validate_start(level);
+    }
+    if (result == LEVEL_OK) {
+        result = validate_entities(level);
+    }
+    return result;
 }
 
 /* ---- the ASCII source form ---------------------------------------------- */
@@ -302,7 +457,7 @@ LevelResult level_parse_text(const char *text, size_t len, Level *out)
     if (!have_start) {
         return LEVEL_ERR_NO_START;
     }
-    return validate_border(out);
+    return validate_level(out);
 }
 
 /* ---- the .bil blob ------------------------------------------------------ */
@@ -312,10 +467,24 @@ static uint16_t read_be16(const uint8_t *p)
     return (uint16_t)(((uint16_t)p[0] << 8) | p[1]);
 }
 
+static uint32_t read_be32(const uint8_t *p)
+{
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16)
+         | ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+}
+
 static void write_be16(uint8_t *p, uint16_t value)
 {
     p[0] = (uint8_t)(value >> 8);
     p[1] = (uint8_t)(value & 0xff);
+}
+
+static void write_be32(uint8_t *p, uint32_t value)
+{
+    p[0] = (uint8_t)(value >> 24);
+    p[1] = (uint8_t)(value >> 16);
+    p[2] = (uint8_t)(value >> 8);
+    p[3] = (uint8_t)value;
 }
 
 LevelResult level_load_blob(const uint8_t *data, size_t len, Level *out)
@@ -348,12 +517,13 @@ LevelResult level_load_blob(const uint8_t *data, size_t len, Level *out)
     out->texture_set        = data[24];
     out->start_cell_x       = data[26];
     out->start_cell_y       = data[27];
-    out->start_facing_brads = read_be16(data + 28);
-    out->trace_base_rate    = read_be16(data + 30);
-    out->trace_start        = data[32];
-    out->trace_carry_cap    = data[33];
-    out->par_ticks          = read_be16(data + 34);
-    out->entity_count       = read_be16(data + 36);
+    out->start_facing_brads = read_be16(data + LEVEL_BLOB_OFF_START_FACING);
+    out->rng_seed           = read_be32(data + LEVEL_BLOB_OFF_RNG_SEED);
+    out->trace_base_rate    = read_be16(data + LEVEL_BLOB_OFF_TRACE_RATE);
+    out->trace_start        = data[LEVEL_BLOB_OFF_TRACE_START];
+    out->trace_carry_cap    = data[LEVEL_BLOB_OFF_TRACE_CAP];
+    out->par_ticks          = read_be16(data + LEVEL_BLOB_OFF_PAR_TICKS);
+    out->entity_count       = read_be16(data + LEVEL_BLOB_OFF_ENTITY_COUNT);
 
     if (out->width == 0 || out->height == 0
         || out->width > MAP_MAX_DIM || out->height > MAP_MAX_DIM) {
@@ -369,13 +539,10 @@ LevelResult level_load_blob(const uint8_t *data, size_t len, Level *out)
         return LEVEL_ERR_SIZE;
     }
 
+    /* Copied first, checked afterwards by validate_level: every rule it
+     * applies is one the ASCII parser has to pass too, so they share it. */
     for (i = 0; i < grid_bytes; ++i) {
-        uint8_t value = data[LEVEL_BLOB_HEADER_BYTES + i];
-
-        if (value >= CELL_RESERVED_BASE) {
-            return LEVEL_ERR_RESERVED;
-        }
-        out->cells[i] = value;
+        out->cells[i] = data[LEVEL_BLOB_HEADER_BYTES + i];
     }
     for (i = 0; i < out->entity_count; ++i) {
         const uint8_t *rec = data + LEVEL_BLOB_HEADER_BYTES + grid_bytes
@@ -387,7 +554,7 @@ LevelResult level_load_blob(const uint8_t *data, size_t len, Level *out)
         out->entities[i].facing = rec[3];
         out->entities[i].extra  = rec[4];
     }
-    return validate_border(out);
+    return validate_level(out);
 }
 
 size_t level_write_blob(const Level *level, uint8_t *out, size_t capacity)
@@ -422,12 +589,13 @@ size_t level_write_blob(const Level *level, uint8_t *out, size_t capacity)
     out[25] = 0;
     out[26] = level->start_cell_x;
     out[27] = level->start_cell_y;
-    write_be16(out + 28, level->start_facing_brads);
-    write_be16(out + 30, level->trace_base_rate);
-    out[32] = level->trace_start;
-    out[33] = level->trace_carry_cap;
-    write_be16(out + 34, level->par_ticks);
-    write_be16(out + 36, level->entity_count);
+    write_be16(out + LEVEL_BLOB_OFF_START_FACING, level->start_facing_brads);
+    write_be32(out + LEVEL_BLOB_OFF_RNG_SEED, level->rng_seed);
+    write_be16(out + LEVEL_BLOB_OFF_TRACE_RATE, level->trace_base_rate);
+    out[LEVEL_BLOB_OFF_TRACE_START] = level->trace_start;
+    out[LEVEL_BLOB_OFF_TRACE_CAP] = level->trace_carry_cap;
+    write_be16(out + LEVEL_BLOB_OFF_PAR_TICKS, level->par_ticks);
+    write_be16(out + LEVEL_BLOB_OFF_ENTITY_COUNT, level->entity_count);
 
     for (i = 0; i < grid_bytes; ++i) {
         out[LEVEL_BLOB_HEADER_BYTES + i] = level->cells[i];

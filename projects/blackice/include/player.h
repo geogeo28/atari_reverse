@@ -20,7 +20,10 @@
 #define INPUT_TURN_RIGHT    0x0008
 #define INPUT_STRAFE_LEFT   0x0010
 #define INPUT_STRAFE_RIGHT  0x0020
-#define INPUT_USE           0x0040
+/* 0x0040 is retired, not reused: DESIGN 6 has no use key, doors open on a
+ * bump.  Replay scripts encode the raw mask, so the bit value stays reserved
+ * rather than being handed to the next control that comes along. */
+#define INPUT_RESERVED_0040 0x0040
 #define INPUT_FIRE          0x0080
 #define INPUT_THROTTLE_NEXT 0x0100
 
@@ -38,12 +41,6 @@ typedef struct {
  */
 void player_step(Player *player, uint16_t input, uint16_t speed_scale,
                  const MapGrid *grid, const MapBlocking *blocking, int32_t *bumped_cell);
-
-/*
- * The grid cell an explicit "use" reaches, or -1 if it is off the grid.
- * Cold path: only evaluated on a rising INPUT_USE edge.
- */
-int32_t player_use_target(const Player *player, const MapGrid *grid);
 
 /* Does a circle of PLAYER_RADIUS centred at (x, y) overlap a blocking cell?
  * Returns the blocking cell index, or -1. */
