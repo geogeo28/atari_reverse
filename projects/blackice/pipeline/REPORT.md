@@ -41,9 +41,8 @@ against; the Python is its reference implementation.
 
 ## Numbers measured
 
-**Tests: 542, all passing** (`python3 -m pytest tests/ -q`, ~1.3 s), across 9 files:
-palette 62, font 315, texture 20, planar 20, README-contract 17, quantize 15, sprite 15,
-pack 59, demo 19.
+**Tests: 584, all passing** (`~/miniconda3/envs/atari_reverse/bin/python -m pytest -q`, ~1.6 s) across 9 files
+(542 at first delivery; 42 added by the review fix pass — depacker negatives, header pins, range checks).
 
 **Compression** (`out/demo.pak`, LZSS unless the member would grow):
 
@@ -61,8 +60,8 @@ pack 59, demo 19.
 The four textures with their dark variants plus a full HUD screen fit in **10.6 KB packed**.
 Incompressible input is stored rather than inflated (verified: 3,000 random bytes → stored).
 
-**Depacker size**: `m68k-elf-gcc -m68000 -O2` compiles `depack.c` to **118 bytes of text**,
-zero data, zero bss.
+**Depacker size**: `m68k-elf-gcc -m68000 -O2` compiled the FIRST, unchecked `depack.c` to 118 bytes of text; the reviewed
+version with per-token bounds and a packed_len is **168 bytes at -Os / 176 at -O2**, zero data, zero bss.
 
 **Determinism**: two consecutive `python3 -m stepix.demo_assets out` runs produce a
 byte-identical `demo.pak` (sha256 `e9626ac5…`).

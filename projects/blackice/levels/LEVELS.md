@@ -163,16 +163,10 @@ floor/walls = cells; W/S/T = Watchdog/Sentry/Tracer; enemy includes anchors and 
 path = shortest start->exit walk once the gates you earn are open (token detours not counted);
 warn = rule 8 one-cell pockets; lock order = the token order the flood fill proved.
 
-8 level(s) checked, 6 passed, 2 failed
+8 level(s) checked, 8 passed, 0 failed  (level1/level2 re-authored from DESIGN v2 §12-13 in the gameplay wave)
 ```
 
-`level1.txt` / `level2.txt` are still the **v1** maps and fail the v2 rules: their terminal doors
-are one cell inside the border rather than on it (`S` at (15,30) in both; `>` at (15,2) and (27,1)),
-level 1's `>` has two open neighbours, `trace_base_rate` is the v1 per-tick 400, and the headers
-predate `palette_variant`, `start_facing`, `rng_seed`, `par_ticks` and `entity_count`. The v2 maps
-printed in §12–13 fix all of it; validated as a self-test from the document they report **0 errors,
-0 warnings, lock order `[ALPHA]` and `[BETA] [ALPHA]`**, which is exactly what §13 claims. Those two
-files are the engine agent's to re-author and were not edited here.
+`level1.txt` / `level2.txt` were re-authored glyph-for-glyph from DESIGN v2 §12–13 after this table was first written; they now pass every rule.
 
 ## Notes on the legend, and how ambiguities were resolved
 
@@ -192,7 +186,8 @@ files are the engine agent's to re-author and were not edited here.
   3 (6) and 6 (6) carry deliberate pockets that §2 device 1 and §14 explicitly ask for: dead-spur
   stubs, sealed voids behind jammed doors, drifted junctions, and one empty stamp alcove. Each is
   signed off in that level's `note` lines, per §14's instruction.
-- **Warning 9 (gate seen past band 2).** §11 states the symptom, not the metric. Read here as: the
+- **Warning 9 (gate seen past band 2) — WITHDRAWN in DESIGN v2.1** (integrity green no longer fogs at band 3, so
+  the premise is gone; the validator no longer emits it). Kept for the record of what shaped levels 6 and 7: the
   straight unobstructed run of open cells out of the gate must be ≤ 9 cells, so the green arch is
   first seen inside band 2. Both §12–13 maps pass it (runs of 8 and 2), and it is what drove level
   6's exit to a bent west throat and put a glyph column in level 7's exit chamber.
