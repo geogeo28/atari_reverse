@@ -10,3 +10,10 @@ __pycache__/
 *.o
 *.elf
 *.bin.tmp
+levels/*.bil
+spike/build/
+spike/disk/
+spike/out/*.log
+spike/out/*.bin
+spike/out/*.txt
+!spike/out/table.txt

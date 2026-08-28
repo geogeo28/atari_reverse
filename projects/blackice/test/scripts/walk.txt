@@ -1,0 +1,16 @@
+# BLACK ICE golden walk, 100 ticks on levels/level1.txt (INGRESS).
+#
+# Start (15,28) facing north in the boot chamber, walk the spine north into and
+# through the plain door at (15,22), look left and right in the corridor, then
+# push on north.  It exercises: textured walls at every band, the door state
+# machine bumped open by walking into it, wall sliding, and the pickup sprites
+# in the chamber.
+#
+# <ticks> <input token> ...
+24 forward
+6 -
+20 forward
+8 turn_right
+8 turn_left
+6 -
+28 forward

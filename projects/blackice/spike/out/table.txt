@@ -1,0 +1,33 @@
+-- plain run: hatari exit=0, log in /private/tmp/claude-501/-Volumes-Workspace-repos-my-repos-atari-reverse/1864b2d3-fef8-4d40-b1bf-a7281ba4ae2a/scratchpad/spike/out/hatari-plain.log
+-- debugger run: hatari exit=0, log in /private/tmp/claude-501/-Volumes-Workspace-repos-my-repos-atari-reverse/1864b2d3-fef8-4d40-b1bf-a7281ba4ae2a/scratchpad/spike/out/hatari-debug.log
+-- screenshot: /private/tmp/claude-501/-Volumes-Workspace-repos-my-repos-atari-reverse/1864b2d3-fef8-4d40-b1bf-a7281ba4ae2a/scratchpad/spike/out/frame.png  (cropped to the screen: /private/tmp/claude-501/-Volumes-Workspace-repos-my-repos-atari-reverse/1864b2d3-fef8-4d40-b1bf-a7281ba4ae2a/scratchpad/spike/out/frame_screen.png)
+
+ledger @ $80000  frames/pass=32  tick=26042 ns  cpu=8000000 Hz  screen=$f8000
+
+ cols      view  ceil/floor    raycast   columns      fill       c2p     total     fps       band
+-------------------------------------------------------------------------------------------------
+  160     fixed   band fill    55958.6   35116.8    7827.2   18589.1  117491.7   8.51      36-64
+  160  rotating   band fill    50569.5   37306.0    7822.4   18572.8  114270.7   8.75      36-64
+  160     fixed   in chunky    53760.5   79582.7     141.6   66039.3  199524.0   5.01      0-100
+  160  rotating   in chunky    48344.5   81650.6     155.4   66107.6  196258.2   5.10      0-100
+   80     fixed   band fill    28135.9   17609.3    7859.0   11714.0   65318.2  15.31      36-64
+   80  rotating   band fill    25509.8   18714.4    7818.3   11717.3   63759.8  15.68      36-64
+   80     fixed   in chunky    27036.5   39841.0     146.5   41530.5  108554.4   9.21      0-100
+   80  rotating   in chunky    24354.2   40929.1     140.8   41515.8  106939.8   9.35      0-100
+
+(microseconds per frame; total is the sum of the four stages on the visible screen)
+
+ cols      view  ceil/floor    raycast   columns      fill       c2p     total
+------------------------------------------------------------------------------
+  160     fixed   band fill     447668    280935     62618    148713    939934
+  160  rotating   band fill     404556    298448     62579    148583    914165
+  160     fixed   in chunky     430084    636662      1133    528314   1596192
+  160  rotating   in chunky     386756    653205      1244    528861   1570066
+   80     fixed   band fill     225088    140874     62872     93712    522546
+   80  rotating   band fill     204078    149715     62546     93738    510078
+   80     fixed   in chunky     216292    318728      1172    332244    868436
+   80  rotating   in chunky     194833    327433      1126    332127    855519
+
+(8 MHz CPU cycles per frame; the frame budget at 50 Hz is 160000)
+
+cross-check: ledger vs RESULT.TXT agree on all 8 passes (largest total difference 24.7 us, the program's own rounding)
