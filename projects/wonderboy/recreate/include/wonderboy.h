@@ -2715,9 +2715,17 @@
                                                * WB_TEXT_REQUEST's documented "dismiss the box" */
 #define WB_EFFECT_STATE_BD6A_LOW     0xbd6bu  /* the LOW byte of WB_EFFECT_STATE_BD6A, and the only
                                                * operand in the image that names it: `bchg #3,$bd6b.l`
-                                               * at $5f0, the cheat's Help action. What bit 3 of that
-                                               * state word buys is NOT decoded */
-#define WB_EFFECT_STATE_BD6A_CHEAT_BIT 3u     /* the bit that `bchg` flips */
+                                               * at $5f0, the cheat's Help action */
+#define WB_EFFECT_STATE_BD6A_CHEAT_BIT 3u     /* the bit that `bchg` flips, and it is worth 8 on the
+                                               * state word. That word is read four times in three
+                                               * routines and every read takes it as the player's
+                                               * STRENGTH (its own plate, above), so Help adds 8 to
+                                               * the jump's height AND 8 to the walk's top speed at
+                                               * once — a super-jump/super-run cheat, and nothing
+                                               * else. An image-wide scan of the $bd00 page finds
+                                               * no other reader; ../STATUS.md's batch 44 phase I
+                                               * has that census and the two binaries' agreement
+                                               * on target */
 
 #define WB_PLAYER_DEATH_SFX          0x16u    /* `move.w #$16,d0 / clr.w d1` — channel A */
 #define WB_PLAYER_DEATH_SONG         0x10u    /* `move.w #$10,d0 / jsr (a1)` on stub +0 */

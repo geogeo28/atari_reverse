@@ -33,7 +33,11 @@ KNOWINGLY NOT PINNED
     the case's claim about the ACIA, exactly as a `hw_seed` is a case's claim about the machine —
     explicit and shared instead of implicit. What the counts pin is that both sides run the same
     wait for the same number of iterations.
-  * WHAT bit 3 of `effect_state_bd6a` buys. The Help action flips it; nothing here reads it.
+  * WHAT bit 3 of `effect_state_bd6a` buys, HERE. It is decoded — the bit is worth 8 on the
+    player's strength word, so Help adds 8 to the jump's height and 8 to the walk's top
+    speed (../STATUS.md's batch 44 phase I) — but its three readers are `player_jump_step`,
+    `player_step_and_arm` and `player_reset_ground_state`, so test_player.py is where that
+    arithmetic is pinned. What this file pins is the flip.
 """
 import ctypes
 import re

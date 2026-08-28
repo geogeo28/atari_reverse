@@ -17805,3 +17805,82 @@ thing a person at the machine can report on. Three iron runs, three findings, th
 count of things only the machine could have told us is now three: the fuse inside the first read, the
 mouse on the fire line, and — from phase G — nothing at all about the disk and the ROM, which behaved.
 
+
+## Batch 44 phase I — THE HELP KEY'S BIT, DECODED: what the cheat's second action buys
+
+A person playing the reconstruction raised the game's own cheat (Undo, B, R, A — IKBD
+`$61 $30 $13 $1e`) and pressed **HELP**, and reported the main character coming out as a mess of
+pixels. `game_key_actions`' sixth arm is `bchg #3,$bd6b.l` at `$5f0`, and until now every surface in
+this tree said the same thing about it: *what that bit buys is NOT decoded*. This phase decodes it,
+and answers the report by running BOTH binaries.
+
+### §1 IT BUYS 8 ON THE PLAYER'S STRENGTH
+
+`$bd6a` (`WB_EFFECT_STATE_BD6A`) has **four** reads in the whole image — the three routines the
+batch-40 plate names, `player_step_and_arm` reading twice — and every one is
+`move.w $bd6a.l,d0` in the player tier:
+
+| read | routine | what it does with the word |
+|------|---------|----------------------------|
+| `$e0c`  | `player_jump_step`          | `addi.b #$8,d0` → `WB_ACTOR_FIELD_10`, the jump's launch speed |
+| `$fde`  | `player_step_and_arm`       | `addq.w #4,d0` → the walk's top speed (`cmp.b 22(a0),d0`) |
+| `$1048` | `player_step_and_arm`       | the same ceiling on the other turn arm |
+| `$1094` | `player_reset_ground_state` | `addq.b #8,d0` → `WB_ACTOR_SPEED` on leaving a ladder |
+
+So bit 3 adds **8 to the jump strength and 8 to the walk ceiling at once**, and buys nothing else:
+the Help key is a **super-jump / super-run** cheat. A stage starts on `$bd6a = 0`, so one press takes
+the jump strength from 8 to 16 and the walk ceiling from 4 to 12 — measured on the shipped binary,
+`WB_ACTOR_FIELD_10` stepping `08 → 10` on the frame after the `bchg` and the walk speed climbing to
+`0c`. Seeded with the largest value the three shop handlers write (`$bd6a = 4`) it is 20 and 16, and
+one jump then clears ~210 pixels.
+
+### §2 "NOTHING ELSE" IS A CENSUS, NOT A READING
+
+Every even offset of the relocated image was scanned for any word in the `$bd00` page — absolute
+long operands, immediates and `lea`/`movea` bases alike. Nothing loads a base register anywhere near
+`$bd6a`, so the four reads above plus the `clr.w` at `$fe86`, the four `move.w #imm,$bd6a.l` at
+`$102e2..$10300` and this one `bchg` are the entire traffic. That is the operand-hiding class which
+made the batch-40 plate wrong twice, answered by scanning the bytes rather than by grepping the
+disassembly's mnemonics.
+
+### §3 THE MESS OF PIXELS IS NOT OURS — four driven differentials, 320 artefacts, 0 differing
+
+Both binaries were driven headless under Hatari with ONE schedule — the sequence typed a key a
+frame, `$bd6a` seeded, HELP pressed and released, then the stick held right with jumps — anchored on
+each side's own per-frame entry (`$4a0` on the shipped side, `game_main_loop` on ours, its runtime
+address derived from the load offset the undriven run reports about itself) so that hit *N*+1 is the
+top of frame *N*+1 on both:
+
+| run | binary | window | captures | differing |
+|-----|--------|--------|----------|-----------|
+| walk only | shipped disks vs `WB-m2.PRG` | frames 12–48 | 40 | **0** |
+| walk + 24 jumps | shipped disks vs `WB-m2.PRG` | frames 60–292 | 120 | **0** |
+| `$bd6a := 4` then HELP, 3 jumps | shipped disks vs `WB-m2.PRG` | frames 12–50 | 80 | **0** |
+| the same | shipped disks vs **`WB-ownplay.PRG`** | frames 12–50 | 80 | **0** |
+
+Each capture is four artefacts — the three actor tables (`$9900+$800`), the effect-state block
+(`$bd60+$20`), the cheat's own words (`$600+$20`) and Hatari's **rendered picture**. All 320 are
+byte-identical, and the last row is the own-entry build, one `-D` from the binary `atari/run.sh`
+launches. Standing still, the press is invisible on the shipped side too: its frames either side of
+the `bchg` are the same 65,536 bytes of screen. (The 292-frame row needed `M2_ANCHOR_FRAMES`
+temporarily widened to reach past the 52-frame bound; the file is back as it was and `WB-m2.PRG` was
+rebuilt from it.)
+
+**WHAT THE PLAYER PROBABLY SAW, AND IT IS THE ORIGINAL'S.** With the boost the camera's vertical
+follow runs out of level: at a jump's apex the hero is drawn **clipped by the top of the play
+window**, a headless torso and legs alone. He also runs 12–16 pixels a frame, which wedges him
+against terrain the shipped game never expects him to reach at that speed. Both were photographed on
+the shipped disks first, and ours reproduces them to the byte. Nothing in either binary corrupts the
+sprite.
+
+### §4 KNOWINGLY UNPINNED
+
+* **THE SESSION IS STAGE 1 FROM A FRESH BOOT.** A run that had reached another stage, another player
+  form (`WB_EFFECT_STATE_21E4`) or the wing boots is outside this measurement.
+* **THE KEYS ARE POKED BYTES, NOT ACIA TRAFFIC.** Both sides poke `WB_KEY_LAST_SCANCODE` and
+  `WB_JOY1_STATE` directly, which is `original.py`'s standing method and is symmetric across the
+  differential — but a real `$62`/`$e2` pair arriving through the interrupt is not what was driven.
+* **NO NEW TEST SHIPPED.** The arithmetic bit 3 feeds is already pinned by `test_player.py`'s jump
+  and walk batteries (they seed `WB_EFFECT_STATE_BD6A` and check the `+8` and the `+4`), and the flip
+  itself by `test_game.py`. What has no surface in `make test` is the CENSUS in §2 — it is a scan of
+  the shipped image, and it is recorded here rather than asserted.
