@@ -398,5 +398,5 @@ them.
 
 ## Suite
 
-`make test` — **1113 passed**. `make guarded` — same count, 9
+`make test` — **1113 passed**. `make guarded` — same count, 8143
 candidate runs guarded across 10 workers, no fault.
