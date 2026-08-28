@@ -17884,3 +17884,94 @@ sprite.
   and walk batteries (they seed `WB_EFFECT_STATE_BD6A` and check the `+8` and the `+4`), and the flip
   itself by `test_game.py`. What has no surface in `make test` is the CENSUS in §2 — it is a scan of
   the shipped image, and it is recorded here rather than asserted.
+
+
+## Batch 44 phase I addendum (2026-08-27) — THE CHEAT'S OTHER ARM: the round a level skip lands in has no unarmoured hero
+
+Phase I answered "the main character is a mess of pixels" with the **HELP** arm and found nothing
+wrong. The report had a second reading, and this addendum measures it: the cheat's **level skip**
+(`N`, `game_key_actions`' `$556` arm) drops a **round-1 hero into round 2**, and the hero there really
+is a band of scrambled bytes. **It is the shipped game's own behaviour**, reproduced to the byte.
+
+**Verified 330, 41,652 bytes — UNCHANGED.** Nothing was reconstructed and nothing in `src/` changed.
+`make test` is **6,465 from a clean `build/`** (6,462 before), the three new cases being the census in
+§3 below.
+
+### §1 WHY THE SENTINEL IS THERE AT ALL
+
+`sprites_cru_install` (`$e87c`) writes `WB_SPRITE_CRU_UNMARKED` into every descriptor the round's
+mask row does **not** mark — wholesale, `move.l #$25a8,(a5)` before it ever looks at the selector. So
+an unmarked sprite's record points at `WB_SPRITE_CRU_CELLS`, the cell area's own base, and the sprite
+pass draws whatever the round happened to lay down first. There is no "missing sprite" arm; drawing
+the base bytes IS the unmarked case.
+
+### §2 WHICH SPRITE THE HERO IS, IS `$21e4`, AND THE SKIP DOES NOT SET IT
+
+`WB_EFFECT_STATE_21E4` picks one of the three 88-byte posture records at `$21e6 / $223e / $2296`, and
+the three name three consecutive families: **form 0 = sprites 260–267** (unarmoured, eight
+frames), form 1 = 270–283 and form 2 = 286–299 (ten distinct frames each). Its six writers say the
+whole story:
+
+| site | routine | form |
+|------|---------|------|
+| `$fe56` `clr.w`      | the new-game reset            | **0** — and it is always round 1 |
+| `$101c6` `#$1`       | `scene_exit_action_select_a30_table` — the exit tile | 1 |
+| `$c06` `#$1`         | `player_pending_event_gate` — the life restart | 1 |
+| `$10350/$60/$70` `#$2` | the three `$bd68` effect handlers | 2 |
+
+**Every way out of a round sets the form to 1 or 2 first.** The one transition that sets nothing is
+the cheat's level skip: `game_key_actions` returns `WB_KEY_ACTIONS_LEVEL_SKIP` and the four `jmp
+$e5ba.l` unwinds go straight to `boot_load_stage`. So form 0 can only ever be carried out of round 1
+by the cheat.
+
+### §3 AND THE MASK AGREES — five rounds do not carry form 0
+
+Counted over the shipped mask table (`$e978`, eleven `$40` rows) against the three posture records,
+now pinned by `test/test_boot.py`'s three new cases:
+
+| round | 2 | 3 | 4 | 10 | 11 | all others |
+|-------|---|---|---|----|----|-----------|
+| form-0 frames of 8 the mask does NOT mark | 8 | 8 | 3 | 8 | 8 | 0 |
+
+Forms 1 and 2 are marked in **every** round. So the shipped tables are exactly right for every route
+the game itself can take, and wrong only for the one route the cheat opens. Round 4 is the partial
+case, and the three it omits are exactly the RIGHT-FACING ones: 260 (idle-right, and the walk
+cycle's first frame), 261 and 262. Its jump, fall and whole left-facing cycle (263–267) are marked.
+
+### §4 BOTH BINARIES, 270 ARTEFACTS, 0 DIFFERING
+
+One schedule, both sides, anchored on each side's own per-frame entry (`$4a0` there,
+`game_main_loop` here) so hit *N* is the top of frame *N* on both: type the cheat over frames 3–6,
+press `N` at frame 8, release it at the top of the first round-2 frame, hold the stick right, and
+capture at 27 anchors (frame 7, the last of round 1, and 26 round-2 frames) — the actor block (`$98e0+$900`), the **whole `WB_RESOURCE_TABLE` descriptor
+block** (`$24898+$2a00`), `$bd60+$40`, `WB_LEVEL_SEQ_INDEX` and Hatari's **rendered picture**.
+
+| run | binary | captures | differing |
+|-----|--------|----------|-----------|
+| cheat + `N`, round 1 → round 2 | shipped disks vs **`WB-ownplay.PRG`** | 135 | **0** |
+| the control: `$21e4 := 1` first, then the same skip | the same pair | 135 | **0** |
+
+Both sides land on sequence row 1, `WB_STAGE_NUMBER = 2`, and on **every** round-2 frame the followed
+actor's sprite (260/261/262) resolves to `$26e80` — `WB_RESOURCE_TABLE + WB_SPRITE_CRU_UNMARKED`, the
+sentinel. The shipped disks' own picture of it is the hero as a band of brown-and-white rubble at his
+own position, under `RND: 2`.
+
+**THE CONTROL IS WHAT TURNS THAT INTO A DIAGNOSIS.** Poking `$21e4 := 1` before the skip — which is
+literally what `$101c6` does on the legitimate route out of round 1 — makes the same skip land with
+sprite **270**, descriptor `$2c8bc`, real cells, and the armoured hero draws correctly on both sides.
+Nothing else in the schedule changed.
+
+### §5 WHAT THIS MEANS FOR THE GALLERY, AND WHAT IS STILL UNPINNED
+
+The README gallery reaches its later stages by exactly this skip, so it may only use rounds whose
+mask carries form 0 — **not 2, 3, 4, 10 or 11**. `gen_readme_assets.py`'s
+`_assert_the_hero_is_installed` refuses such a picture rather than publishing it, which is the right
+shape: the picture would be faithful and still be a picture of a bug the player would blame on us.
+
+* **THE LEGITIMATE ROUTE WAS NOT PLAYED.** Reaching round 2 by walking into round 1's exit tile is
+  not a bounded headless run, so the exit action's `#$1` is read out of the image and driven as a
+  poke, not observed in play. What that leaves open is only whether some other write reaches `$21e4`
+  first; the six-writer census above is a byte scan and says none can.
+* **ONLY THE SKIP FROM ROW 0 TO ROW 1 RAN ON THE MACHINE.** `atari/disk/` stages two overlays, so
+  round 2 is the only round a headless skip can reach. Rounds 3, 4, 10 and 11 are the mask census's
+  word, not a driven run's.

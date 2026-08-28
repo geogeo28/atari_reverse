@@ -591,6 +591,118 @@ def test_no_shipped_descriptor_selects_a_copier_that_does_not_exist():
         f"{sorted(set(CRU_SELECTOR_WORDS) - seen)}")
 
 
+# --- the mask's own census: WHICH PLAYER FORM EACH ROUND CARRIES ------------------------------------
+# `sprites_cru_install` writes WB_SPRITE_CRU_UNMARKED into every descriptor the round's mask does NOT
+# mark, so a sprite the round did not install draws the cell area's base bytes wherever it is asked
+# for. WB_EFFECT_STATE_21E4 picks which of the three 88-byte posture records the player's own sprite
+# comes out of, and the three records name three consecutive sprite families — so "does this round
+# carry this player form" is a question about the shipped mask, and it has an answer.
+#
+# THE ANSWER IS THE POINT: five rounds do not carry the UNARMOURED form the game starts in, and that
+# is not a hole in the mask. EVERY WAY OUT OF A ROUND LEAVES THE FORM AT 1 OR 2 — the exit action's
+# `move.w #$1,$21e4.w` at $101c6, the life restart's at $c06, and the three `$bd68` effect handlers'
+# `#$2` at $10350/$10360/$10370 — and only `clr.w $21e4.w` at $fe56, the new-game reset, puts a run
+# in form 0, always on round 1. The one route that carries form 0 into another round is the cheat's
+# LEVEL SKIP, which sets no form at all; the shipped binary draws the sentinel's bytes there too
+# (../STATUS.md, batch 44 phase I addendum).
+POSTURE_TABLES = (wb("PLAYER_POSTURE_TABLE_0"), wb("PLAYER_POSTURE_TABLE_1"),
+                  wb("PLAYER_POSTURE_TABLE_2"))
+POSTURE_SPRITE_FIELDS = (wb("PLAYER_POSTURE_IDLE_RIGHT"), wb("PLAYER_POSTURE_IDLE_LEFT"),
+                         wb("PLAYER_POSTURE_JUMP_LEFT"), wb("PLAYER_POSTURE_JUMP_RIGHT"),
+                         wb("PLAYER_POSTURE_FALL_LEFT"), wb("PLAYER_POSTURE_FALL_RIGHT"))
+# The two walk cursors each hold a byte offset in the word BELOW their own table. HOW LONG THAT
+# TABLE IS COMES OUT OF THE RECORD'S GEOMETRY and is not written down again: the left cycle runs from
+# its own first word to the end of the record, which is the header's `54 + 2 + 32 ==
+# WB_PLAYER_POSTURE_BYTES` read as arithmetic. Written as a literal 16 it is a constant a mutation
+# can drop without the census below noticing, because the sixteen words name only eight sprites.
+POSTURE_WALK_CURSORS = (wb("PLAYER_POSTURE_WALK_RIGHT"), wb("PLAYER_POSTURE_WALK_LEFT"))
+POSTURE_WALK_FRAMES, _walk_spare = divmod(
+    wb("PLAYER_POSTURE_BYTES") - wb("PLAYER_POSTURE_WALK_LEFT") - WORD_LEN, WORD_LEN)
+UNARMOURED_FORM = 0                   # what `clr.w $21e4.w` at $fe56 leaves a new game in
+# THE ROUNDS WHOSE MASK DOES NOT CARRY THE WHOLE UNARMOURED FAMILY, and how many of its frames each
+# is missing — the census this file measures, recorded so an edit to the mask or to the posture
+# tables reddens instead of quietly changing which rounds the cheat can be used into.
+ROUNDS_MISSING_UNARMOURED_FRAMES = {2: 8, 3: 8, 4: 3, 10: 8, 11: 8}
+# Walk index 0 is the descriptor at WB_SPRITE_CRU_FIRST_DESC, and a sprite NUMBER indexes
+# WB_RESOURCE_TABLE — two bases one record apart, derived rather than written as 1.
+FIRST_WALKED_SPRITE, _spare = divmod(RESOURCE_HEADER + CRU_FIRST_DESC - RESOURCE_TABLE,
+                                     CRU_RECORD_BYTES)
+
+
+def _posture_family(table):
+    """Every sprite number one posture record names: the six single fields and the two walk cycles."""
+    def sprite(at):
+        return int.from_bytes(harness.BASE_IMAGE[table + at:table + at + WORD_LEN], "big")
+
+    return {sprite(field) for field in POSTURE_SPRITE_FIELDS} | {
+        sprite(cursor + WORD_LEN + frame * WORD_LEN)
+        for cursor in POSTURE_WALK_CURSORS for frame in range(POSTURE_WALK_FRAMES)}
+
+
+def _sprites_the_round_installs(stage):
+    """The sprite NUMBERS `stage`'s mask marks, out of the listing-derived walk."""
+    return {FIRST_WALKED_SPRITE + i
+            for i, descriptor in enumerate(_walk_descriptors(stage)) if descriptor is not None}
+
+
+def _round_of(stage):
+    """The stage number as the routine folds it: WB_STAGE_NUMBER is packed BCD, so 16 and 17 are
+    rounds 10 and 11."""
+    return stage - STAGE_BCD_CARRY if stage > STAGE_BCD_LIMIT else stage
+
+
+def test_the_posture_records_name_three_separate_sprite_families():
+    """The census below only means something if the three forms are three different sets of cells."""
+    assert _walk_spare == 0 and POSTURE_WALK_CURSORS[1] - POSTURE_WALK_CURSORS[0] - WORD_LEN \
+        == POSTURE_WALK_FRAMES * WORD_LEN, (
+        f"the two walk cycles are not both {POSTURE_WALK_FRAMES} words inside an "
+        f"{wb('PLAYER_POSTURE_BYTES')}-byte record, so _posture_family is reading past one of them")
+    assert _spare == 0, (
+        "WB_SPRITE_CRU_FIRST_DESC is not a whole number of records past WB_RESOURCE_TABLE, so a "
+        "walk index cannot be turned into a sprite number at all")
+    families = [_posture_family(table) for table in POSTURE_TABLES]
+    shared = sorted(set().union(*(a & b for i, a in enumerate(families)
+                                  for b in families[i + 1:])))
+    assert len(set.union(*families)) == sum(len(f) for f in families), (
+        f"the three posture records share sprite(s) {shared} — they are not three separate "
+        f"player appearances, so a round can carry one of them without carrying another")
+    assert wb("PLAYER_POSTURE_TABLE_1") - wb("PLAYER_POSTURE_TABLE_0") == wb("PLAYER_POSTURE_BYTES")
+    assert wb("PLAYER_POSTURE_TABLE_2") - wb("PLAYER_POSTURE_TABLE_1") == wb("PLAYER_POSTURE_BYTES")
+
+
+def test_every_round_carries_the_two_ARMOURED_player_forms():
+    """The positive half, and the one that says the game is playable everywhere it can be reached:
+    forms 1 and 2 — the two the exit action and the effect handlers put a run into — have cells in
+    every round the level sequence produces."""
+    for stage in SHIPPED_STAGES:
+        installed = _sprites_the_round_installs(stage)
+        for form, table in enumerate(POSTURE_TABLES):
+            if form == UNARMOURED_FORM:
+                continue
+            missing = sorted(_posture_family(table) - installed)
+            assert not missing, (
+                f"round {_round_of(stage)} does not install sprite(s) {missing} of player form "
+                f"{form} — a form the game's own exit action and effect handlers reach, so this "
+                f"round would draw the UNMARKED sentinel where the hero is")
+
+
+def test_five_rounds_do_not_carry_the_UNARMOURED_form_the_cheat_skips_into():
+    """The negative half. It is a census of the SHIPPED mask, not a defect: nothing but the level
+    skip carries form 0 out of round 1 (see this section's banner), and the shipped binary draws the
+    same scrambled hero there — measured on both binaries frame for frame."""
+    unarmoured = _posture_family(POSTURE_TABLES[UNARMOURED_FORM])
+    missing = {_round_of(stage): len(unarmoured - _sprites_the_round_installs(stage))
+               for stage in SHIPPED_STAGES}
+    assert {r: n for r, n in missing.items() if n} == ROUNDS_MISSING_UNARMOURED_FRAMES, (
+        f"the shipped mask now leaves the unarmoured family unmarked in {missing}, not in "
+        f"{ROUNDS_MISSING_UNARMOURED_FRAMES} — which rounds the cheat's level skip can be used into "
+        f"has changed")
+    first_round = _round_of(SHIPPED_STAGES[0])
+    assert missing[first_round] == 0, (
+        f"round {first_round}, where a new game starts in form 0, does not carry the unarmoured "
+        f"form — a fresh game could not draw its own hero, so this census reads the wrong table")
+
+
 def test_the_walk_covers_every_descriptor_the_masks_can_mark():
     """The group geometry, machine-checked: the LAST group runs one slot and not sixteen, which is
     why the count is not a round multiple. A port that missed the `tst.w d5 / beq` would walk 15
