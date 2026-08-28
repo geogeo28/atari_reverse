@@ -17,6 +17,8 @@ for its own reasons the moment a ported routine touches the screen — a false g
 baffling failure the day the first draw routine lands. `test_constants.py` pins the map clear of
 both the program and the framebuffers.
 """
+import random
+
 import harness  # noqa: F401  — imported for its side effect: it binds the kit to this project
 
 # The game's own hard-coded screen buffers, from ../names.txt (`screen_back` 0x1797e = 0x70300,
@@ -137,3 +139,33 @@ def register_call_eq_flag_pokes(routine, result, stores=()):
             + b"".join(_store_through_a0(r) for r in stores)
             + b"\x4e\x75")                                      # rts
     return {STUB: code}
+
+
+# The default noise margin either side of a seeded span. IT IS NOT TIDINESS: most of what these
+# routines write is bss, which the loaded image already holds as zeroes, so a candidate clearing or
+# copying sixteen bytes too far would write zeroes over zeroes and the diff would stay empty. The
+# margin is what turns "wrote past the end" into a difference.
+GUARD_BYTES = 16
+
+
+def seed_spans(seed, spans, guard=0):
+    """Noise over every byte a run touches, as a poke dict — the batteries' one seeder.
+
+    `spans` is an iterable of (lo, hi); `guard` widens each by that many bytes either side. Spans
+    are widened FIRST and merged after, so two pokes never cover one byte: `harness.make_image`
+    applies a poke dict in insertion order and the later one silently wins, which reads as "both
+    regions were seeded" when only one was.
+
+    Shared rather than per-battery because the merge is load-bearing and was written three times in
+    one change, one of the copies without it (test_video.py's block-blit overlaps, where the
+    destination poke swallowed the source strip's noise and both its guard bands).
+    """
+    widened = sorted([lo - guard, hi + guard] for lo, hi in spans)
+    merged = []
+    for lo, hi in widened:
+        if merged and lo <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], hi)
+        else:
+            merged.append([lo, hi])
+    rng = random.Random(seed)
+    return {lo: rng.randbytes(hi - lo) for lo, hi in merged}

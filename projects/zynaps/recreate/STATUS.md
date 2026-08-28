@@ -23,7 +23,12 @@ Where an argument is load-bearing it has ONE home, cited from the others:
 | where each shipped preshift width comes from | `src/sprite.c`, "SHIPPED WIDTHS" |
 | why the fuzz caps the frame width | `test/test_sprite.py`, `FUZZ_MAX_FRAME_BYTES` |
 | what the entity record's fields are, and which are held by a test | `include/entity.h` |
+| why a shifter write cannot be seen, and what the sink recovers instead | `include/video.h`, header comment |
+| what the masked sprite format is (mask word, four planes, 16-pixel cells) | `include/sprite.h`, "THE MASKED SPRITE FORMAT" |
+| how the scroller's pieces fit together | `include/scroll.h`, header comment |
 | how the differential method works | [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) |
+| why the sprite fuzz caps the height from BELOW | `test/test_sprite.py`, `BLIT_FUZZ_MIN_HEIGHT` |
+| why the map battery passes no `max_insns` | `test/test_scroll.py`, above the ctypes block |
 
 ## Verified — entity (1)
 
@@ -149,13 +154,117 @@ two ways of saying the same run.
 |---------------|------|-------|--------|--------------|
 | `0x16b32` | `sound_lookup_tune` | 28 | ✅ verified | all 256 sound numbers, sharded four ways, which is what pins `adda.w`'s SIGN EXTENSION: 52 of the words a number can reach have bit 15 set (the first at 45, 0x80c8 → 0xf2b0, below the load base), so dropping `sign_ext16` fails at 45. Also hi-garbage and a set high byte in D1 (only `andi.w #$ff` matters, and D1's high word must come back untouched); poison on 4, including the boot tune 0x0b and the first negative offset. The routine writes NO memory, so its answers reach the diff through a `jsr`+store stub (`test/abi.py`) |
 
-## Verified — sprite (3)
+## Verified — sprite (6)
 
 | Addr (Ghidra) | Name | Bytes | Status | Verification |
 |---------------|------|-------|--------|--------------|
 | `0x13bde` | `ship_sprite_deinterleave` | 26 | ✅ verified | disjoint, in-place (`A0 == A1`, which the seventh call site at 0x10132 does) and seven overlap offsets at row and word granularity — the read/store ORDERING is held by the overlap cases and by nothing else (measured: reversing the two half-row copies passes the in-place case and fails at +2/+10/+200/-1600); poison on the disjoint and the in-place shapes. Every byte of both destination frames is seeded with noise, so a candidate writing too few rows differs |
 | `0x153f6` | `sprite_preshift8_2px` | 42 | ✅ verified | all six shipped widths (0x1e/0x50/0x5a/0x6e/0xa0/0xc8 — 0x1e and 0x6e reach it only through the tail `bsr` at 0x153e6 inside `sprite_bank_build_preshift8`) in place, six widths disjoint down to the 2-byte minimum, `frame_bytes` 0 for the `dbf` wrap (65536 rows, in-image because the slot step is then 0), four source/destination overlaps that put the source inside a written slot — which is what holds the read/store ORDER, measured — hi-garbage in D2's high half, 240-case sharded fuzz shared with the 4-px twin; the end pointer compared against the oracle's A1 on every case; poison in place and disjoint. The whole 8-slot bank is seeded, so a candidate writing an extra slot differs |
 | `0x15420` | `sprite_preshift4_4px` | 46 | ✅ verified | same battery as the 2-px entry above. Seeding the slots it does NOT write (1, 3, 5, 7) is what makes the case a test at all — left as zeroes, a candidate that wrote all seven would pass |
+| `0x15758` | `asteroid_preshift_bank` | 114 | ✅ verified | all SIX shipped banks (0x1a8ae..0x23eae), each holding the bank the builder at 0x156ac would really have left there — rebuilt in the test from BIGAST.DAT's own bytes, two cells per row and a transparent third. Real data is what makes the MASK column's carry-in visible for what it is rather than as an arbitrary bit. Plus noise over a whole bank (there is no data-dependent branch, so noise separates the five word columns and the three cells better than a sprite does), a bank that is none of the six (so the base comes from A0), and poison. Mutations killed: the mask carry-in dropped, the 2-pixel pass step, the cell count |
+| `0x157ca` | `mothership_sprite_expand` | 110 | ✅ verified | its two ADDRESSES come from `include/mothership.h`, which owns the boss's data — this row's geometry constants are spelt `BOSS_SPRITE_*` and not `MOTHERSHIP_*` on purpose, because that header reads the same store at a different granularity (its `MOTHERSHIP_FRAME_BYTES` is 0xa0, one frame of the rotate banks its own routines build; the expander's frame is the five-cell 2000-byte one). Two verified readings of one buffer, so two names. Verified over all five boss sprites the disk ships (MOTHER1..5.DAT), whose 1600-byte length is itself the pin on the geometry — 40 rows of four 10-byte masked cells; noise in their place, which is what separates the four source cells from one another (a real sprite is symmetric enough that a transposed cell could still match); poison, which is what holds the synthesised fifth cell, whose four zero planes are otherwise indistinguishable from nothing written. Mutations killed: the source cell count, the blank cell's mask word |
+| `0x15ace` | `draw_sprite_masked` | 174 | ✅ verified | all eight even sub-cell phases at BOTH shipped D2 values (0x3e8 and 0x1e0 — half a mothership frame and half an asteroid frame, which is what makes `mulu.w d2,d0` land on the right slot); six x positions across the row; both x rejections and both y rejections one step either side of their edges, odd values included because `and.w #$fffe` runs before the tests; the top clip at one row visible, half and all but one; the bottom clip at four depths including the tallest sprite that needs none; the two clip arms' shared boundary; 200-case sharded fuzz over the whole coordinate box; poison. Twelve mutations, ALL KILLED (below) |
+
+## Verified — scroll (24)
+
+| Addr (Ghidra) | Name | Bytes | Status | Verification |
+|---------------|------|-------|--------|--------------|
+| `0x15920` | `map_rle_decompress` | 92 | ✅ verified | **all twelve levels the disk ships** (LEV1..9, X, Y, Z.MAP), unpacked from their own bytes at `tile_set_base` — twelve independent token streams, so the alternation of run and literal tokens, the run lengths and the literal spans are the level designers' and not a test author's guess at what a stream looks like. The whole 14400-byte column-major map is diffed against a noise-seeded destination, with a guard band either side (the map buffer is bss, so an overrun would otherwise write over zeroes and differ nowhere). Poison on level 1. Mutations killed: the 36-byte column stride, the run flag's bit, the row count |
+| `0x15d3e` | `blit_page0_to_playfield` | 24 | ✅ verified | one playfield from the fixed backdrop page onto whichever buffer `screen_back` names — both framebuffers and a third that is neither, which is what says it reads the pointer rather than an immediate; noise and guard bands both ends; poison. Mutation killed: source and destination reversed |
+| `0x15d56` | `scroll_page_to_screen_p00` | 66 | ✅ verified | window [8, 160), no wrap; entered at its own address, both buffers seeded over a whole playfield, plus its share of the 120-case fuzz — see the shared note below |
+| `0x15d98` | `scroll_page_to_screen_p01` | 70 | ✅ verified | window [16, 160) then [0, 8); entered at its own address, both buffers seeded over a whole playfield, plus its share of the 120-case fuzz — see the shared note below |
+| `0x15dde` | `scroll_page_to_screen_p02` | 70 | ✅ verified | window [24, 160) then [0, 16); entered at its own address, both buffers seeded over a whole playfield, plus its share of the 120-case fuzz — see the shared note below |
+| `0x15e24` | `scroll_page_to_screen_p03` | 70 | ✅ verified | window [32, 160) then [0, 24); entered at its own address, both buffers seeded over a whole playfield, plus its share of the 120-case fuzz — see the shared note below |
+| `0x15e6a` | `scroll_page_to_screen_p04` | 70 | ✅ verified | window [40, 160) then [0, 32); entered at its own address, both buffers seeded over a whole playfield, plus its share of the 120-case fuzz — see the shared note below |
+| `0x15eb0` | `scroll_page_to_screen_p05` | 70 | ✅ verified | window [48, 160) then [0, 40); entered at its own address, both buffers seeded over a whole playfield, plus its share of the 120-case fuzz — see the shared note below |
+| `0x15ef6` | `scroll_page_to_screen_p06` | 70 | ✅ verified | window [56, 160) then [0, 48); entered at its own address, both buffers seeded over a whole playfield, plus its share of the 120-case fuzz — see the shared note below |
+| `0x15f3c` | `scroll_page_to_screen_p07` | 70 | ✅ verified | window [64, 160) then [0, 56); entered at its own address, both buffers seeded over a whole playfield, plus its share of the 120-case fuzz — see the shared note below |
+| `0x15f82` | `scroll_page_to_screen_p08` | 70 | ✅ verified | window [72, 160) then [0, 64); entered at its own address, both buffers seeded over a whole playfield, plus its share of the 120-case fuzz — see the shared note below |
+| `0x15fc8` | `scroll_page_to_screen_p09` | 70 | ✅ verified | window [80, 160) then [0, 72); entered at its own address, both buffers seeded over a whole playfield, plus its share of the 120-case fuzz — see the shared note below |
+| `0x1600e` | `scroll_page_to_screen_p10` | 70 | ✅ verified | window [88, 160) then [0, 80); entered at its own address, both buffers seeded over a whole playfield, plus its share of the 120-case fuzz — see the shared note below |
+| `0x16054` | `scroll_page_to_screen_p11` | 70 | ✅ verified | window [96, 160) then [0, 88); entered at its own address, both buffers seeded over a whole playfield, plus its share of the 120-case fuzz — see the shared note below |
+| `0x1609a` | `scroll_page_to_screen_p12` | 70 | ✅ verified | window [104, 160) then [0, 96); entered at its own address, both buffers seeded over a whole playfield, plus its share of the 120-case fuzz — see the shared note below |
+| `0x160e0` | `scroll_page_to_screen_p13` | 70 | ✅ verified | window [112, 160) then [0, 104); entered at its own address, both buffers seeded over a whole playfield, plus its share of the 120-case fuzz — see the shared note below |
+| `0x16126` | `scroll_page_to_screen_p14` | 70 | ✅ verified | window [120, 160) then [0, 112); entered at its own address, both buffers seeded over a whole playfield, plus its share of the 120-case fuzz — see the shared note below |
+| `0x1616c` | `scroll_page_to_screen_p15` | 70 | ✅ verified | window [128, 160) then [0, 120); entered at its own address, both buffers seeded over a whole playfield, plus its share of the 120-case fuzz — see the shared note below |
+| `0x161b2` | `scroll_page_to_screen_p16` | 70 | ✅ verified | window [136, 160) then [0, 128); entered at its own address, both buffers seeded over a whole playfield, plus its share of the 120-case fuzz — see the shared note below |
+| `0x161f8` | `scroll_page_to_screen_p17` | 70 | ✅ verified | window [144, 160) then [0, 136); entered at its own address, both buffers seeded over a whole playfield, plus its share of the 120-case fuzz — see the shared note below |
+| `0x1623e` | `scroll_page_to_screen_p18` | 70 | ✅ verified | window [152, 160) then [0, 144); entered at its own address, both buffers seeded over a whole playfield, plus its share of the 120-case fuzz — see the shared note below |
+| `0x16284` | `scroll_page_to_screen_p19` | 62 | ✅ verified | window [0, 152), no wrap; entered at its own address, both buffers seeded over a whole playfield, plus its share of the 120-case fuzz — see the shared note below |
+| `0x169f2` | `scroll_emit_column_shift2` | 100 | ✅ verified | the workspace, the page column and the screen edge all seeded over a whole playfield — not over the 8 bytes a row receives — so a candidate writing a fifth plane or stepping by the wrong row stride differs. Both values of `scroll_prefill_hide_screen` (and a third, 0xff, since the guard is `tst.b`): set, the edge destination is redirected onto the page, so those cases are what say the redirect happens and the others are what say the edge is written when it does not. Also run at the game's own `scroll_col_workspace` with the edge at `screen_back + 152`. Poison. Mutations killed: the 2-pixel shift amount, the redirect inverted, the emitted half taken from the low word instead of the high |
+| `0x16a56` | `scroll_emit_column_shift0` | 80 | ✅ verified | the same battery. Its entry is pinned to TWENTY-TWO bytes rather than ten: the two emitters are the same routine but for one step and their first twenty bytes are byte-identical, so a shorter pin would let either address stand for the other |
+
+**The shared note the twenty blit rows cite.** They are one body twenty times over, differing only
+in where their ring window starts and in how the hand-unrolled `movem.l` runs are cut to land the
+wrap on a movem boundary. What that costs the reconstruction is one residual, and it is a residual
+of the CHUNKING and not of the copy: a movem pair reads a whole chunk before storing any of it, so
+the chunk boundaries would be observable if the page and the screen overlapped. They cannot — a page
+is one of the eight 0x5a00 buffers at `map_page_table` (0x1798a) and the screen is a framebuffer at
+0x70300/0x78000 — so `src/scroll.c` copies the window in order and the twenty chunk lists are
+**unmodelled by construction**, not untested. (Contrast `blit_graphic_block` in the video section,
+whose two strips CAN overlap and where the same question was a real defect.)
+
+## Verified — video (6)
+
+| Addr (Ghidra) | Name | Bytes | Status | Verification |
+|---------------|------|-------|--------|--------------|
+| `0x1296e` | `screen_clear` | 12 | ✅ verified | a whole 32000-byte frame at both of the game's hard-coded framebuffers and at a buffer that is neither (the destination is A0 and the routine cares about nothing else); noise with a 16-byte guard band either side, which is what makes an overrun visible at all — the buffers are bss and a candidate clearing too far would write zeroes over zeroes; poison. Mutation killed: the cleared span 4 bytes short |
+| `0x1297a` | `screen_flip_buffers` | 48 | ✅ verified | the pointer swap is diffed byte for byte over four buffer pairs, two of them arbitrary longwords (the routine never dereferences either pointer, so any word is a legal input and that is what pins the byte extraction over the whole range). The $ff8203/$ff8201 publish is OFF-IMAGE and is held instead against the ORACLE'S OWN registers — A0 keeps the buffer that was published and D0 keeps it shifted down 16 — so both bytes have an oracle-side witness. **RESIDUAL: that the bytes reach the shifter at all is unpinned**, and no image differential can pin it; the surface that would is an on-target one (`docs/on-target-execution.md` — a hardware-state vector or the rendered pixels). Mutation killed: the two base bytes swapped |
+| `0x12fc2` | `clear_backdrop_page0` | 18 | ✅ verified | one playfield's worth at the fixed page, noise + guard bands, poison. The address is an immediate in the routine, so the only thing a case can vary is what was there before. Mutation killed: the page address moved 4 bytes |
+| `0x134b8` | `blit_graphic_block` | 18 | ✅ verified | both shipped heights (D0 = 0x3f and 0x17), the one-row minimum — the count is a `dbf` register, so 0 must copy ONE row — hi-garbage above the word, six source/destination overlaps at row and word granularity, and poison. **The overlaps are what caught a real defect**: a `movem` pair reads a whole row before storing any of it, and an interleaved reconstruction read back its own stores from the third longword on at dst = src + 2. Mutation killed: the 32-byte row width |
+| `0x1597c` | `playfield_clear` | 66 | ✅ verified | the top 144 rows of whichever buffer `screen_back` names — both framebuffers and a third — noise + guard bands, poison. Mutation killed: the start moved one longword |
+| `0x153ae` | `set_palette_title` | 18 | ✅ verified | the routine writes NO image byte — its whole effect is sixteen colour registers at $ff8240 — so the oracle enters at a stub that stores the eight longwords it loaded (d0-d7) where the diff can see them, as `sound_lookup_tune` does for a register-only answer, and the candidate's glue publishes what its SINK recorded at the same address. Driven on the palette the binary ships with and on three noise rows, so each of the eight longwords must come from its own slot; poison, which is what stands between an unwritten sink and a green. **RESIDUAL: as with the flip above, that the row reaches $ff8240 is unpinned** and needs an on-target surface. Mutation killed: the upload one longword short |
+
+### Mutation check — video, scroll, sprite (this batch)
+
+Thirty-eight mutations across the three subsystems above, each rebuilt after `rm -f build/*.so`
+first (make's ~1 s mtime granularity has re-run an unmutated oracle in this workspace before) and
+every one run from a green baseline — **37 killed, 1 survivor**. The per-function rows above name
+the killed ones; the survivor is here.
+
+**A SECOND WAY A SWEEP LIES, met and defended against in this batch.** The stale-`.so` trap is
+already recorded above; this one is its sibling. `make test` exiting non-zero is only evidence when
+pytest actually RAN — and `.venv` here is a symlink into a shared tree, which a concurrent
+`make venv` broke for about a minute. Every mutant run in that window reported "killed" because
+`import pytest` failed, and the first sweep duly came back 38/38. The runner now refuses to score a
+run that produced no pytest summary line, and re-checks the baseline before and after the sweep;
+re-run under that guard, the true result is the 37/38 above. A sweep that kills EVERYTHING is the
+tell — one of these mutations is a known redundancy and had to survive.
+
+| mutation | result |
+|---|---|
+| `scroll_page_to_screen`'s ring wrap (`% SCREEN_ROW_BYTES`) deleted | **SURVIVED** |
+
+**And it is a redundancy, not a coverage hole.** The modulo only ever fires for phase 19, whose
+window start is `8 * 20` = 160; without it, `start` stays 160, the head span becomes
+`SCREEN_ROW_BYTES - start` = 0, and the wrapped span then copies all 152 bytes from the row's base —
+which is exactly what the modulo produces by making `start` 0. The two spellings agree on every
+phase because the wrap is expressed twice over. It stays as written because `% SCREEN_ROW_BYTES` is
+what says the page row is a RING; the other reading works by an accident of the head/tail
+arithmetic.
+
+**`draw_sprite_masked` carries one unpinned arm of the off-image class**, the same shape as the two
+`src/sprite.c` already records. Its row count is `ENTITY_HEIGHT` read as a WORD and NOT masked — the
+sibling blitter at 0x15b7c masks the same field with `and.w #$7fff` — so a height of 0, or any
+height with bit 15 set, reaches the `dbf` as 0 or as a negative word and the loop runs ~65536 rows
+at 160 bytes each. That leaves the image within a hundred rows: the oracle drops the accesses and a
+reconstruction indexing `image + addr` does not, which is the class `make guarded` exists to find and
+why `test_sprite.py`'s `BLIT_FUZZ_MIN_HEIGHT` is load-bearing rather than tidiness. Both arms are
+faithful and neither is reachable from a record any spawner writes — the shipped sprites are 32 and
+40 rows — so they stay as written and are recorded here rather than repaired.
+
+Two notes on what the batch's cases lean on:
+
+* **`draw_sprite_masked`'s entity records are CONSTRUCTED, and have to be.** `entity_table` and
+  `entity_boss_parts` are bss, so the binary carries no record to seed from — the game writes them
+  at run time. What the cases do not do is invent a shape the spawner cannot produce: every field is
+  one it sets, D2 is one of the two values the two call sites load, and the coordinates walk the
+  same playfield box the routine clips against.
+* **One height in that battery is bigger than any the game has.** The two clip arms are exclusive
+  arms of one `bge` and they agree at `y == PLAYFIELD_TOP_Y` for every height up to
+  `PLAYFIELD_ROWS`; only a taller sprite tells `<` from `<=` there (measured — the mutation survives
+  the rest of the battery). `BLIT_OVERSIZE_HEIGHT` is 152 rows and the tallest shipped sprite is the
+  mothership's 40, so that case is CONTRACT coverage and not game coverage.
 
 ## Verified — weapon (13)
 
@@ -395,8 +504,11 @@ them.
 | `0x13c26` | `vbl_menu` | Partly off-image and NOT a plain call. It uploads eight longs from `palette_current` (0x19f46) to `$ff8240..$ff825c`, which the diff cannot see; it also ticks `raster_phase_counter` (0x198a8) mod 2 and clears `vbl_wait_flag` (0x198a7), which it can. Two further obstacles the earlier row omitted: it ends in `bsr.w $16b94` — an unported callee that writes in-image state, so the row cannot be verified before that one is — and it returns with **`rte`**, not `rts`, because it is the VBL vector installed at `$70`. Entering it needs an interrupt frame on the stack rather than the harness's ordinary return address |
 | `0x14444` | `ikbd_send_cmd` | **Blocked at the KIT level, and the earlier row prescribed the wrong fix.** The routine spins on bit 1 of the IKBD ACIA status at `$fffc00` and then writes `$fffc02`. Adding `$fffc00` to `os.h`'s `OS_HW_*` set as a VOLATILE address does NOT work: VOLATILE means one declaration describes exactly one read and a SECOND read in the same run is refused — but a spin loop's whole nature is re-reading. Nor does a STATIC declaration, whose contract is that the machine's answer never changes; a status byte that must read "not ready" and then "ready" is precisely what the Phase 7 model excludes. And the write half has no ledger at all: `hw.h` exports `hw_read8` and no `hw_write8`, so a reconstruction's `$fffc02` store would be invisible on both sides. The correct fix is a shim-level ACIA model (a status byte that becomes ready after a declared number of polls, the way `sched.c` counts polls per wait site) plus an IKBD write ledger mirroring `psg.c` — playbook §5's "model the input hardware registers so busy-waits terminate". That is kit work, not this project's, and the surface that would catch it is on-target rather than the differential |
 | `0x14456` | `ikbd_acia_isr` | Same `$fffc00`/`$fffc02` gap as above, and it is an interrupt handler entered around a frame rather than a called routine |
+| `0x15838` | `mothership_sprite_preshift` | **Blocked only on file OWNERSHIP, not on anything technical.** The body is `asteroid_preshift_bank`'s exact shape one geometry wider — five cells 400 bytes apart, 40 rows, a 2000-byte frame stride — and would share the same `shift_masked_frame_right_1px` helper. Its tail then sets four completion flags (`boss_in_playfield` 0x19aad, `mothership_phase_active` 0x198b0, `mothership_phase_frames` 0x19efe, `mothership_prep_stage` 0x19911), and `../out/globals.tsv` puts all four in the **mothership** subsystem — so their addresses belong in `include/mothership.h`, which the agent owning that subsystem creates. Spelling them in `sprite.h` instead would trip `test_constants.py`'s duplicate-address check the moment that header lands. Port it in the change that can include it |
+| `0x15b7c` | `draw_sprite_masked_collide` | 450 bytes, and the widest of the sprite routines: three separate blit bodies chosen by x band (left edge, middle, right edge), a keep-mask pair read from `shift_mask_table` (0x1821e), and a terrain-collision flag stored through A5. Nothing about it is blocked — it needs a battery of its own, on the same constructed-record footing as `draw_sprite_masked` above plus a real `shift_mask_table` index |
+| `0x162c2` | `scroll_emit_tile_column` | ~1840 bytes, the largest routine in the scroll subsystem: eighteen hand-unrolled copies of one tile decode, three entry arms (`bmi` to 0x16642 and to 0x16482 on the two map words), and three destinations at once — the screen's right edge, the off-screen page and the 32-pixel workspace the two emitters drain. Not blocked; it is a body-read job rather than a mechanism problem, and it wants the map (`map_rle_decompress`, verified above) and the tile set staged from a real level so the tile indices it shifts by 64 are the game's own |
 
 ## Suite
 
-`make test` — **1113 passed**. `make guarded` — same count, 8143
+`make test` — **1268 passed**. `make guarded` — same count, 8623
 candidate runs guarded across 10 workers, no fault.
