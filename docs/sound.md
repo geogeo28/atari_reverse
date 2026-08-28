@@ -65,6 +65,39 @@ constants (`projects/buggyboy/remaster/include/sound.h`) are this table.
   (don't interrupt a higher-priority tune), set state, and call the tune-init routine —
   these are the hooks the game triggers on events (start, crash, checkpoint, game-over).
 
+## Z80/AY heritage in an ST conversion — two gotchas that read as bugs
+
+Many ST games are conversions of a Spectrum, Amstrad or MSX original, and the sound data usually
+crosses over with the code that read it rather than being re-authored. Both machines drove the same
+General Instrument AY-3-8910 the ST's YM2149 is a clone of, so the data is *nearly* portable — and
+the two places it is not both look like a reconstruction bug rather than a heritage artefact.
+
+**Word tables in the data are LITTLE-endian.** The Z80 is little-endian and the 68000 is not, so a
+table of 16-bit offsets carried over unchanged has to be read back byte-swapped. Zynaps'
+`sound_lookup_tune` (0x16b32) does exactly that, and the code makes it obvious once you expect it:
+
+```
+move.b 1(a1),d1     ; HIGH byte from the SECOND byte of the entry
+lsl.w  #8,d1
+move.b (a1),d1      ; ...and the low byte from the first
+```
+
+A 68000 routine that wanted a big-endian word would have written `move.w (a1),d1`. If you see a
+byte-swapped assembly like this — or, reading a table by hand, if the offsets look like garbage one
+way round and ascend the other — the data is imported, not corrupt. Zynaps' table reads
+0x019a, 0x023d, 0x02da, … little-endian and 0x9a01, 0x3d02, 0xda02, … big-endian; only one of those
+is a table.
+
+**Note periods are doubled.** The AY in a Spectrum runs at ~1.77 MHz and in an Amstrad/MSX at
+1 MHz, while the ST clocks its YM2149 at 2 MHz. Period = clock / (16 × frequency), so the same
+musical note needs roughly **twice** the period value on the ST. A conversion either re-tabulated
+its note table or left the old one and doubled at play time (`add.w d0,d0` / `lsl.w #1` on the
+period just before the `$ff8800` write). Finding a shift you cannot otherwise explain on the way to
+the period registers is a strong hint the note table is the original machine's; conversely, a port
+that reproduces such a table but drops the doubling plays an octave high, which no image diff can
+see — the periods only exist on the chip. That is a case for the direct-PSG ledger
+(`TRAP_MODEL.md`, Phase 6), which compares the register write stream rather than memory.
+
 ## Naming approach
 
 Anchor on the VBL-installed refresh routine and any exported symbols, then name outward:

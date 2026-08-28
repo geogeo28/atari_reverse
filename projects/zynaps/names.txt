@@ -1,0 +1,833 @@
+# ZYNAPS (Atari ST, Hewson Consultants 1988; coder "HOWIE", graphics Pete Lyon,
+# music/sfx J. Dave Rogers; ST conversion credited in-game to MICROWISH).
+# Binary: ZYNAPS17.PRG - plain 68000 GEMDOS PRG, text 0x10000..0x19f46 at Ghidra load
+# base 0x10000, no data segment, bss to 0x6e96e. Ghidra address = image offset + 0x10000.
+#
+# Sections below: entry+interrupts, front end, frame loop, entities, weapons, enemies,
+# mothership, collision, scroll/tiles, sprites/blit, HUD, text/score/high score, sound,
+# IKBD/file I/O, tables and globals.
+#
+# A trailing '# ctx' marks a name inferred from call context rather than a confirmed
+# body read (ApplyNames strips everything from the first '#'). Where two independent
+# readings disagreed the alternatives are kept in that tag.
+#
+# Verified facts worth keeping at the top:
+#  - The only OS calls are GEMDOS Super(0x20), Fopen/Fread/Fclose and one Line-A $a00a
+#    (hide mouse) at 0x10010. XBIOS Xbtimer at 0x16abe is inside dead code (0x16aa6).
+#    No FDC/DMA access, no protection check anywhere in the PRG.
+#  - Screen buffers are hard-coded absolute RAM at 0x70300 / 0x78000 (needs 512 KB);
+#    nothing is Malloc'd and the basepage is never shrunk.
+#  - Interrupts: VBL $70, MFP Timer B $120 (raster palette split), MFP ACIA $118 (IKBD).
+#  - Self-modifying data: per-section filenames are patched in place in the text segment
+#    (see the cmts on 0x196b5 / 0x196ab / 0x196ee / 0x19714 / 0x197e5).
+
+
+# ==== entry, interrupts and init ====
+fn 0x10000 _start
+fn 0x106a2 vbl_isr_title
+fn 0x106ae timer_b_raster_isr
+fn 0x10776 vbl_isr
+fn 0x10782 timer_b_isr
+
+# ==== player weapons, enemy fire, per-frame chain ====
+fn 0x11318 ship_move_up
+fn 0x1135a ship_move_down
+fn 0x113c0 frame_weapons_and_spawn_stage
+fn 0x11906 enemy_fire_and_update_shots
+fn 0x11a2c spawn_enemy_shot
+fn 0x11bbc enemy_shot_tick_type0b
+fn 0x11bde enemy_shot_tick_type0a
+fn 0x11c00 frame_draw_objects_and_collide
+fn 0x11cce object_pair_overlap_mark
+
+# ==== game state machine, screen flip ====
+fn 0x11d30 frame_resolve_hits_and_game_state
+fn 0x1296e screen_clear
+fn 0x1297a screen_flip_buffers
+fn 0x129aa status_panel_build_master
+fn 0x12a28 title_screen_draw
+
+# ==== front end: title, attract, high score, text ====
+fn 0x12ac2 title_attract_loop
+fn 0x12c9e attract_vbl_isr
+fn 0x12cc0 attract_rasterbar_isr
+fn 0x12d44 collision_chain_walk   # ctx (also read as: entity_pixel_hit_is_terrain)
+fn 0x12dc6 object_type_is_collidable   # ctx (also read as: entity_type_hits_terrain)
+fn 0x12df6 score_add_bcd
+fn 0x12e40 draw_text_record   # ctx (also read as: text_draw_string)
+fn 0x12e66 game_over_screen   # ctx (also read as: game_over_player)
+fn 0x12eae highscore_check_and_insert
+fn 0x12fc2 clear_backdrop_page0
+fn 0x12fd4 highscore_enter_name
+fn 0x1326e onscreen_keyboard_hit_test
+fn 0x13338 role_of_honour_screen
+fn 0x13426 player_intro_screen
+fn 0x134b8 blit_graphic_block   # ctx (also read as: blit_strip_32_bytes_per_row)
+fn 0x134ca draw_lives_icons
+fn 0x13568 draw_player_digit_shifted
+fn 0x135bc status_panel_redraw_all
+fn 0x136c8 draw_score_panel
+fn 0x136f6 draw_bcd_number
+fn 0x13710 draw_char
+fn 0x137ca draw_power_gauge
+
+# ==== entity motion, collision, power-ups, RNG ====
+fn 0x13828 count_free_wave_slots
+fn 0x13858 copy_block_words
+fn 0x13868 wavescript_spawn_wave
+fn 0x13898 wavescript_spawn_trio_type0e
+fn 0x13958 groundscript_spawn_type10
+fn 0x13a12 groundscript_spawn_type0f
+fn 0x13ad0 enemy_morph_to_type6   # ctx (also read as: projectile_to_ground_puff)
+fn 0x13af2 squadron_spawn_tick
+fn 0x13bc2 entity_type_in_mask
+fn 0x13bde ship_sprite_deinterleave
+fn 0x13bf8 rand16
+fn 0x13c26 vbl_menu
+fn 0x13c9e entity_kill_if_offscreen
+fn 0x13cd4 ship_resolve_entity_hits   # ctx (also read as: ship_resolve_object_hit)
+fn 0x13d3e entity_type_is_lockable   # ctx (also read as: entity_type_is_seeker_lockable)
+fn 0x13d6e entity_type_is_lethal   # ctx (also read as: entity_type_is_lethal_to_ship)
+fn 0x13d9e powerup_capsule_collected
+fn 0x13ede powerup_slot1_activate
+fn 0x13f72 powerup_downgrade_on_death   # ctx (also read as: powerups_downgrade_one_step)
+fn 0x13f9e fire_seeker
+fn 0x1401a fire_homing_missile
+fn 0x14092 entity_pos_from_ship
+fn 0x140a6 seeker_update
+fn 0x140f6 entity_type_is_missile_target
+fn 0x14126 homing_missile_update
+fn 0x141c0 entity_ptr_from_index
+fn 0x141c2 entity_ptr_from_index_d6
+fn 0x141d6 entity_steer_toward_target
+fn 0x1424c angle_to_target
+fn 0x142d4 entity_set_velocity_from_angle
+fn 0x14306 entity_apply_velocity
+fn 0x14324 fire_bomb
+fn 0x14376 bomb_update   # ctx (also read as: bomb_update_bounce)
+fn 0x143f8 entity_apply_accel
+fn 0x14444 ikbd_send_cmd
+
+# ==== IKBD, file I/O, HUD panel, entity script VM, mothership ====
+fn 0x14456 ikbd_acia_isr
+fn 0x144e8 load_file
+fn 0x1452c hud_draw_logo_anim
+fn 0x1459c hud_draw_powerup_icon
+fn 0x145da hud_draw_weapon_icon
+fn 0x14626 anim_ground_objects
+fn 0x14730 anim_enemy_type12
+fn 0x1476e anim_enemy_type14
+fn 0x147ac anim_enemy_type15_diving
+fn 0x147f2 enemies_animate_all
+fn 0x1483e anim_enemy_type17
+fn 0x1487c enemies_move_all
+fn 0x1494a enemy_move_type14_sine
+fn 0x1499e enemy_move_type16_left
+fn 0x149d2 enemy_move_type15_dive
+fn 0x14a64 actor_despawn
+fn 0x14a7c spawn_formation
+fn 0x14be0 enemy_alloc_slot
+fn 0x14c16 enemy_move_scripted
+fn 0x14c44 actor_clamp_y
+fn 0x14c66 actor_script_run
+fn 0x14cce actor_script_op_ext
+fn 0x14ce8 actor_script_op_loop_begin
+fn 0x14d00 actor_script_op_set_fire_rate
+fn 0x14d14 actor_script_op_bounce_fall
+fn 0x14d88 actor_script_op_fire
+fn 0x14da2 actor_script_op_set_heading
+fn 0x14dc0 actor_script_op_drift_left
+fn 0x14dd8 actor_script_op_halt
+fn 0x14de2 actor_script_op_random_heading
+fn 0x14e00 actor_script_op_loop_end
+fn 0x14e38 actor_script_op_aim_at_player
+fn 0x14e50 actor_script_op_step_left
+fn 0x14e5c actor_script_op_thrust_to_centre
+fn 0x14ec4 enemy_move_type17_left
+fn 0x14eda mothership_begin
+fn 0x14f18 mothership_place_tail
+fn 0x14f64 mothership_spawn_head
+
+# ==== sprite pre-shift, blitters, palette, map unpack, score ====
+fn 0x14fc8 mothership_move_and_place
+fn 0x1504a mothership_segments_respawn
+fn 0x15128 mothership_sprite_build_step
+fn 0x151ba mothership_segments_update
+fn 0x15222 mothership_segment_hit   # ctx (also read as: enemy_pair_take_hit)
+fn 0x152a4 player_shot_update_all
+fn 0x152ea shot_set_sprite_a
+fn 0x1530e enemy_set_sprite_b
+fn 0x15332 enemy_anim_puff_b
+fn 0x15370 shot_anim_puff
+fn 0x153ae set_palette_title
+fn 0x153c0 sprite_bank_build_preshift8
+fn 0x153f6 sprite_preshift8_2px
+fn 0x15420 sprite_preshift4_4px
+fn 0x1544e explosion_animate_all   # ctx (also read as: explosion_groups_animate)
+fn 0x15510 explosion_spawn   # ctx (also read as: explosion_group_spawn)
+fn 0x15582 shot_retire_kind32   # ctx (also read as: weapon_type32_retire)
+fn 0x155b4 shot_retire_kind36   # ctx (also read as: seeker_retire)
+fn 0x155c2 shot_retire_kind33   # ctx (also read as: bomb_retire)
+fn 0x155e2 shot_to_puff   # ctx (also read as: projectile_to_impact_puff)
+fn 0x15604 player_shots_clear
+fn 0x15644 cos_scaled
+fn 0x15654 sin_scaled
+fn 0x15694 sin_quadrant_scaled
+fn 0x156ac asteroids_load_and_build
+fn 0x15758 asteroid_preshift_bank
+fn 0x157ca mothership_sprite_expand
+fn 0x15838 mothership_sprite_preshift
+fn 0x158f4 mothership_draw
+fn 0x15920 map_rle_decompress
+fn 0x1597c playfield_clear
+fn 0x159be asteroids_draw
+fn 0x159f2 asteroids_move
+fn 0x15a6a asteroids_animate
+fn 0x15ace draw_sprite_masked
+
+# ==== scroll engine and PSG sound driver ====
+fn 0x15b7c draw_sprite_masked_collide
+fn 0x15d3e blit_page0_to_playfield
+fn 0x15d56 scroll_page_to_screen_p00
+fn 0x15d98 scroll_page_to_screen_p01
+fn 0x15dde scroll_page_to_screen_p02
+fn 0x15e24 scroll_page_to_screen_p03
+fn 0x15e6a scroll_page_to_screen_p04
+fn 0x15eb0 scroll_page_to_screen_p05
+fn 0x15ef6 scroll_page_to_screen_p06
+fn 0x15f3c scroll_page_to_screen_p07
+fn 0x15f82 scroll_page_to_screen_p08
+fn 0x15fc8 scroll_page_to_screen_p09
+fn 0x1600e scroll_page_to_screen_p10
+fn 0x16054 scroll_page_to_screen_p11
+fn 0x1609a scroll_page_to_screen_p12
+fn 0x160e0 scroll_page_to_screen_p13
+fn 0x16126 scroll_page_to_screen_p14
+fn 0x1616c scroll_page_to_screen_p15
+fn 0x161b2 scroll_page_to_screen_p16
+fn 0x161f8 scroll_page_to_screen_p17
+fn 0x1623e scroll_page_to_screen_p18
+fn 0x16284 scroll_page_to_screen_p19
+fn 0x162c2 scroll_emit_tile_column
+fn 0x169f2 scroll_emit_column_shift2
+fn 0x16a56 scroll_emit_column_shift0
+fn 0x16aa6 sound_install_timer_a_dead
+fn 0x16ac8 sound_start   # ctx (also read as: sound_play_effect)
+fn 0x16b32 sound_lookup_tune
+fn 0x16b4e sound_reset_psg
+fn 0x16b94 sound_tick
+fn 0x16bd6 sound_voice_tick
+fn 0x16bf0 sound_voice_next_row
+fn 0x16c82 sound_cmd_swap_tunes
+fn 0x16cec sound_lookup_modtable
+fn 0x16da6 sound_voice_modulate
+fn 0x16e04 sound_set_note_period
+fn 0x16e28 sound_noise_modulate
+fn 0x16e48 sound_modtable_step_a4
+fn 0x16e4a sound_modtable_step
+
+# ==== globals and tables ====
+var 0x16e82 psg_reg_shadow
+var 0x16e90 sfx_voice_toggle
+var 0x16e92 sound_noise_block
+var 0x16eaa sound_voice1
+var 0x16edc sound_voice2
+var 0x16f0e sound_voice3
+var 0x16f40 note_period_tbl
+var 0x17008 mod_table_index
+var 0x17058 tune_index
+var 0x170b2 mod_table_data
+var 0x171e8 tune_data
+var 0x1797e screen_back
+var 0x17982 screen_front
+var 0x17986 map_page_ptr
+var 0x1798a map_page_table
+var 0x179aa scroll_blit_jump_table
+var 0x179fa starfield_table
+var 0x17a42 starfield_pixel_masks
+var 0x17a62 actor_spawn_template
+var 0x17a8e entity_table   # ctx (also read as: object_table, actor_records, object_records)
+var 0x17b96 enemy_shot_slots   # ctx (also read as: entity_enemy_shots, enemy_records)
+var 0x17c1a enemy_slots   # ctx (also read as: entity_enemies, wave_enemy_slots, enemy_slot_pool, mothership_records)
+var 0x17d7a player_record
+var 0x17da6 ship_record_shadow
+var 0x17dd2 trail_drone_object   # ctx (also read as: entity_gunsight, drone_record)
+var 0x17dfe entity_null_target
+var 0x17e2a object_array_2   # ctx (also read as: squadron_slots, asteroid_records)
+var 0x18142 entity_boss_parts   # ctx (also read as: mothership_tail_records, mothership_column_records)
+var 0x1821e shift_mask_table   # ctx (also read as: sprite_shift_mask_tbl)
+var 0x1823e map_offset
+var 0x18242 map_ptr
+var 0x18246 gemdos_file_handle
+var 0x1824a map_event_script_ptr   # ctx (also read as: ground_script_cursor)
+var 0x1824e enemy_spawn_script_ptr   # ctx (also read as: wave_script_cursor)
+var 0x18252 collision_mask_table   # ctx (also read as: entity_collision_masks, collision_overlap_matrix, projectile_hit_masks)
+var 0x182d2 event_script_a_table
+var 0x18306 event_script_b_table
+var 0x1834a ground_script_data
+var 0x1854a wave_script_data
+var 0x18e46 sine_table_q1
+var 0x18efc sine_table   # ctx (also read as: cos_table_64)
+var 0x18f7c shot_variant_table
+var 0x18fc4 palette_hw_shadow
+var 0x18fd0 palette_cycle_words
+var 0x18fda palette_swap_long
+var 0x18fe4 palette_per_section_table
+var 0x19164 enemy_types_fire_homing
+var 0x19172 enemy_types_can_fire
+var 0x19180 enemy_types_fire_seeker
+var 0x1918e type_mask_missile_target
+var 0x19196 type_hits_terrain_bits   # ctx (also read as: collidable_type_bitmap)
+var 0x191a4 type_lethal_to_ship_bits   # ctx (also read as: type_mask_lethal_to_ship)
+var 0x191ac type_seeker_lockable_bits   # ctx (also read as: type_mask_lockable)
+var 0x191b4 anim_frames_type20
+var 0x191cc anim_frames_type22
+var 0x191e4 asteroid_bank_ptrs
+var 0x191fc explosion_small_frame_ptrs   # ctx (also read as: explosion_frame_ptrs)
+var 0x1922c explosion_large_frame_ptrs   # ctx (also read as: small_explosion_frame_ptrs)
+var 0x1925c anim_frames_type17
+var 0x1926c anim_frames_type14
+var 0x1927c anim_frames_type12
+var 0x1928c anim_frames_ground_t34
+var 0x1929c anim_frames_type16
+var 0x192ac shot_sprite_ptrs_a
+var 0x192cc enemy_sprite_ptrs_b
+var 0x192ec puff_frame_ptrs_b
+var 0x192fc puff_frame_ptrs
+var 0x1930c anim_frames_type15
+var 0x1931c hud_powerup_icons
+var 0x19330 hud_weapon_icons
+var 0x19348 powerup_activate_jumptable   # ctx (also read as: powerup_apply_table)
+var 0x1935c powerup_upgrade_jumptable   # ctx (also read as: powerup_reselect_table)
+var 0x19370 ship_speed_table
+var 0x19380 actor_move_table   # ctx (also read as: enemy_kind_handlers)
+var 0x193dc actor_anim_table
+var 0x19438 script_op_table
+var 0x19458 script_op_ext_table
+var 0x19498 formation_base_y
+var 0x194bc actor_script_table
+var 0x19504 formation_table
+var 0x195a8 explosion_particle_offsets   # ctx (also read as: explosion_piece_offsets)
+var 0x195cc scroll_pos
+var 0x195d0 saved_tos_vbl_vector
+var 0x195d4 ikbd_packet_ptr
+var 0x195d8 extra_life_threshold_bcd   # ctx (also read as: next_extra_life_score)
+var 0x195dc extra_life_threshold_step_bcd   # ctx (also read as: extra_life_score_step)
+var 0x195e0 score   # ctx (also read as: player_score_bcd)
+var 0x195e4 score_award_table_bcd
+var 0x195f0 score_value_segment
+var 0x195f4 rng_lfsr_state   # ctx (also read as: rng_state)
+var 0x195f8 palette_frontend
+var 0x19618 palette_boot   # ctx (also read as: palette_title)
+var 0x19638 palette_asteroid
+var 0x19664 explosion_group_members   # ctx (also read as: explosion_piece_indices)
+var 0x19670 control_lock_flags   # ctx (also read as: explosion_group_active_bits)
+var 0x19671 ikbd_packet_remaining
+var 0x19673 slot_dir_flags   # ctx
+var 0x19680 ikbd_joystick_state
+var 0x19681 joystick_state
+var 0x19683 palette_swap_countdown
+var 0x19684 palette_rotate_countdown
+var 0x19685 key_scancode
+var 0x19686 filename_zynlogo_dat
+var 0x19692 filename_zynpic_pic
+var 0x1969d filename_power_dat
+var 0x196a7 filename_lev1_map
+var 0x196b0 filename_alien_dat
+var 0x196bb filename_myship_dat
+var 0x196c6 filename_status_pi1
+var 0x196d1 filename_bullet_dat
+var 0x196dc filename_explode_dat
+var 0x196e8 filename_mother_dat
+var 0x196f4 filename_gemgraf_dat
+var 0x19700 filename_spinners_dat
+var 0x1970d filename_missile_dat
+var 0x1971a filename_smallexp_dat
+var 0x19727 filename_newbuls2_dat
+var 0x19734 filename_gndtarg1_dat
+var 0x19741 filename_seeker2_dat
+var 0x1974d filename_bigast_dat
+var 0x19758 filename_rocket_dat
+var 0x19763 filename_alseek_dat
+var 0x1976e filename_altexpl_dat
+var 0x1977a filename_newbomb_dat
+var 0x19786 filename_gunsight_dat
+var 0x19793 filename_sweap_dat
+var 0x1979d filename_ssweap_dat
+var 0x197a8 filename_smlogos_dat
+var 0x197b4 filename_extchars_dat
+var 0x197c1 filename_lifegra_dat
+var 0x197cd filename_hewlogo_dat
+var 0x197d9 filename_lev_map
+var 0x197e2 filename_zyn_dat
+var 0x197eb missile_variant_table
+var 0x197fc alien_variant_table
+var 0x1980c alien2_variant_table
+var 0x1981c mothership_variant_table
+var 0x1982c section_param_a_table
+var 0x1983c section_param_b_table
+var 0x1984c section_type_table
+var 0x1985c zyn_variant_table
+var 0x1986c section_palette_index_table
+var 0x1987c mothership_index
+var 0x1987d mothership_energy_by_section   # ctx (also read as: mothership_segment_hp_per_level)
+var 0x19884 enemy_pair_hitpoints   # ctx (also read as: record_hitpoints)
+var 0x1988d mothership_segment_energy   # ctx (also read as: mothership_segment_hp)
+var 0x19895 level_section
+var 0x19896 dying_player_section_index
+var 0x19897 section_ground_target_flag
+var 0x198a5 map_page
+var 0x198a6 map_column
+var 0x198a7 vbl_wait_flag   # ctx (also read as: menu_vsync_flag, menu_frame_flag)
+var 0x198a8 raster_phase_counter   # ctx (also read as: menu_frame_counter)
+var 0x198a9 starfield_layer2_phase
+var 0x198aa starfield_layer3_countdown
+var 0x198ab vsync_flag
+var 0x198ac anim_phase_b
+var 0x198ad explosion_phase_even
+var 0x198ae explosion_frame_toggle
+var 0x198af mothership_pending
+var 0x198b0 mothership_ready   # ctx (also read as: mothership_active, mothership_phase_active)
+var 0x198b1 scroll_frozen   # ctx (also read as: enemy_scroll_freeze, explosion_active)
+var 0x198b2 ship_tilt_countdown
+var 0x198b3 ship_tilt
+var 0x198b4 selected_weapon
+var 0x198b5 missile_launch_counter   # ctx
+var 0x198b6 bomb_launch_counter   # ctx
+var 0x198b7 free_wave_slot_count   # ctx (also read as: enemy_free_slot_count)
+var 0x198b8 seeker_launch_counter   # ctx
+var 0x198b9 fire_button_held
+var 0x198bb squadron_kill_counters   # ctx (also read as: formation_slot_marks, enemy_group_counts)
+var 0x198c1 ground_spawn_rnd_param   # ctx
+var 0x198c3 power_gauge_display   # ctx (also read as: power_gauge_level)
+var 0x198c4 death_event_flags   # ctx (also read as: ship_death_flags)
+var 0x198c5 explosion_phase_odd   # ctx (also read as: anim_phase_a, anim_freeze)
+var 0x198c6 attract_bar_scroll_timer
+var 0x198d6 char_to_glyph_table
+var 0x198fc asteroid_anim_toggle
+var 0x198fd asteroid_section_flag   # ctx (also read as: asteroid_level_flag)
+var 0x198fe squadron_spawn_countdown
+var 0x198ff ship_pos_history_index
+var 0x19900 trail_drone_active   # ctx (also read as: shots_cleared_flag)
+var 0x19901 fire_charge_counter
+var 0x19902 fire_charged   # ctx (also read as: powerup_select_armed, powerup_select_held, explosion_side_flag)
+var 0x19903 charge_flash_dir
+var 0x19904 panel_redraw_mask
+var 0x19905 powerup_cursor
+var 0x19906 powerup_active_slot   # ctx (also read as: weapon_icon_index)
+var 0x19907 ship_speed_level   # ctx (also read as: speed_level)
+var 0x19908 max_bullets   # ctx (also read as: weapon_power_level, missile_level)
+var 0x19909 active_bullets   # ctx (also read as: active_count_type34, bullets_live)
+var 0x1990a weapon_power_level   # ctx (also read as: shield_level, power_level)
+var 0x1990b active_weapon2_shots   # ctx (also read as: active_count_type32, missiles_live, shot_count_kind32)
+var 0x1990c active_weapon1_shots   # ctx (also read as: active_count_bombs, bombs_live, shot_count_kind33)
+var 0x1990d active_weapon4_shots   # ctx (also read as: active_count_seekers, seekers_live, shot_count_kind36)
+var 0x1990e panel_logo_frame
+var 0x19911 mothership_prep_stage   # ctx (also read as: mothership_setup_step, mothership_build_state)
+var 0x19912 ship_invulnerable
+var 0x19913 level_section_loaded
+var 0x19915 mothership_wave_clear_count
+var 0x19916 mothership_offscreen   # ctx (also read as: mothership_escaped)
+var 0x19917 seeker_lock_target_index   # ctx (also read as: drone_locked_target)
+var 0x19918 missile_lock_a   # ctx (also read as: shot_slot_busy)
+var 0x19919 missile_lock_b
+var 0x1991a lives   # ctx (also read as: lives_remaining)
+var 0x1991b current_player_index   # ctx (also read as: current_player)
+var 0x1991c game_initialised
+var 0x1991d player_count
+var 0x1991e msg_prepare_for_combat   # ctx (also read as: text_prepare_for_combat)
+var 0x19932 msg_player
+var 0x19933 text_player
+var 0x1993d msg_converted_by_microwish   # ctx (also read as: text_credit_converted)
+var 0x19956 msg_coding_howie   # ctx (also read as: text_credit_coding)
+var 0x19967 msg_graphics_pete_lyon   # ctx (also read as: text_credit_graphics)
+var 0x1997e msg_music_and_sound_fx   # ctx (also read as: text_credit_music)
+var 0x199a3 msg_menu_one_or_two_players   # ctx (also read as: text_menu_players)
+var 0x199c8 msg_role_of_honour   # ctx (also read as: text_role_of_honour)
+var 0x199d9 msg_game_over_player   # ctx (also read as: text_game_over_player)
+var 0x199ed attract_page_toggle
+var 0x199ee msg_new_high_score   # ctx (also read as: text_new_high_score)
+var 0x19a0a msg_please_enter_your_name
+var 0x19a0b text_please_enter_name
+var 0x19a24 msg_you_are_not_rated   # ctx (also read as: text_not_rated)
+var 0x19a39 scancode_to_char_table
+var 0x19aac show_prepare_for_combat
+var 0x19aad boss_sequence_active   # ctx (also read as: boss_in_playfield, mothership_active, no_scroll_map_flag)
+var 0x19aae squadron_spawn_enabled
+var 0x19aaf enemy_fire_chance_table
+var 0x19abf enemy_seeker_cooldown   # ctx (also read as: section_start_grace_counter)
+var 0x19ac0 section_end_delay_counter
+var 0x19ac1 scroll_prefill_hide_screen
+var 0x19ac2 actor_script_data
+var 0x19b85 formation_data
+var 0x19c33 formation_gfx_attrs
+var 0x19cc3 mothership_formation_by_section
+var 0x19cd3 mothership_spawn_param_by_section
+var 0x19ce4 name_entry_from_joystick
+var 0x19ce5 unused_section_end_flag
+var 0x19ce6 text_osk_row1
+var 0x19d05 text_osk_row2
+var 0x19d24 text_osk_row3
+var 0x19d44 osk_cursor_x
+var 0x19d46 osk_cursor_y
+var 0x19d48 name_entry_record
+var 0x19d5a highscore_table
+var 0x19dc8 gauge_c   # ctx (also read as: speed_decay_timer, powerup_flash_timer_speed)
+var 0x19dca gauge_a   # ctx (also read as: shield_decay_timer, powerup_flash_timer_weapon)
+var 0x19dcc gauge_b   # ctx (also read as: weapon_decay_timer, powerup_flash_timer_bullets)
+var 0x19dce panel_logo_countdown   # ctx (also read as: hud_logo_anim_timer)
+var 0x19dd0 mothership_x   # ctx (also read as: mothership_tail_x, mothership_draw_x)
+var 0x19dd2 mothership_y   # ctx (also read as: mothership_tail_y, mothership_draw_y)
+var 0x19dda lower_index_masks   # ctx (also read as: lower_index_mask_table)
+var 0x19e2e mothership_head_sprite
+var 0x19e84 section_restart_table
+var 0x19efe mothership_phase_timer   # ctx (also read as: mothership_phase_frames, mothership_frame_counter)
+var 0x19f02 player_records
+var 0x19f1e attract_page_timer
+var 0x19f20 attract_bar_hue
+var 0x19f22 attract_raster_line
+var 0x19f24 attract_raster_list_ptr
+var 0x19f28 attract_bar_pattern
+var 0x19f44 boss_hitpoints   # ctx (also read as: mothership_energy)
+var 0x19f46 palette_current   # ctx (also read as: menu_palette_shadow)
+var 0x19f66 palette_next
+var 0x19f86 ship_pos_history
+var 0x19fae scroll_col_workspace
+var 0x4b3be tile_set_base
+
+# ==== comments ====
+cmt 0x10000 Entry. GEMDOS Super(0) then movea.l d0,a7 (SP := old SSP) - this is why Ghidra shows in_D0 as the stack pointer for the whole function.
+cmt 0x10010 Line-A $a00a: hide the TOS mouse pointer.
+cmt 0x10012 Save the TOS VBL vector ($70) into saved_tos_vbl_vector, then IKBD $12 (disable mouse) + $15 (joystick interrogation mode).
+cmt 0x1002c Screen buffers are HARD-CODED absolute RAM: screen_back := 0x70300, screen_front := 0x78000. Needs a 512 KB machine; nothing is Malloc'd.
+cmt 0x10040 Load zynpic.pic (32000 B) straight into screen buffer A as the loading/title picture, then force low res (andi.b #$fc,$ff8260).
+cmt 0x10062 Install VBL vector $70 -> vbl_isr and MFP vector $120 -> timer_b_isr ($120 = MFP channel 8 = Timer B).
+cmt 0x1007a Start tune 0x0b (the title music) via sound_request.
+cmt 0x10088 ASSET LOAD TABLE: repeated (lea filename,a0 / lea dest,a1 / move.l #len,d1 / bsr load_file). See the per-file cmts on the filename table at 0x19686.
+cmt 0x1009e DEAD LOAD: the a0/a1/d1 setup for 'lev1.map' -> 0x478ae (0x3840 B) has NO bsr load_file; it falls through and a0/a1/d1 are overwritten by the myship.dat setup. The level map is really loaded per section at 0x109f2.
+cmt 0x102ee Sprite pre-processing pass: build the pre-shifted / transformed sprite banks from the loaded .DAT files via 0x153c0 / 0x153f6 / 0x13858 / 0x15420.
+cmt 0x104cc Install the IKBD ACIA handler: MFP vector $118 (channel 6) -> ikbd_acia_isr; ikbd_packet_ptr := ikbd_joystick_state.
+cmt 0x104f6 First-run gate: if game_initialised is set this is a restart, so re-show the title screen and restart the title tune before falling into the level setup.
+cmt 0x10500 Suspected typo in the original: 0x10500 clears player 1's field at 0x19f0c (record+0xa) but 0x10506 clears 0x19f18, which is player 2's record+8, not the matching record+0xa at 0x19f1a.
+cmt 0x1052c Clear both 32000-byte screen buffers, then copy the STATUS.PI1 panel image (0x2120 B from 0x41eae) into both at byte offset 23520 (row 147) - the status panel is the bottom 53 rows.
+cmt 0x10564 Copy three sub-images out of the loading picture still resident at 0x7f598 / 0x7ded8 / 0x7f238 into the panel graphics area - the panel is assembled from pieces of ZYNPIC.PIC.
+cmt 0x105c6 MFP Timer B calibration: install a scratch VBL (vbl_isr_calibrate) and Timer B stub, then binary-hunt the TBDR value ($fffa21) that puts the raster split at the right scanline. Writes TBDR until the read-back matches, spinning on vsync_flag each time.
+cmt 0x1067e Enable the interrupts the game uses: IERA/IMRA bit 0 = Timer B, IERB/IMRB bit 6 = ACIA (IKBD). Then jump to the session setup at 0x10792.
+cmt 0x106a2 Alternate VBL used while the title/attract screen is up: tick the sound driver, then force colour 0 to black.
+cmt 0x106ae Timer B raster split: write the 16-colour shadow palette_hw_shadow to $ff8240..$ff825c, then colour-cycle - swap the halves of the long at 0x18fda every palette_swap_countdown ticks and rotate the five words 0x18fd0..0x18fd8 every palette_rotate_countdown ticks. Clears ISRB bit 0.
+cmt 0x10776 VBL handler: clear vsync_flag (the frame-sync handshake the main loop spins on) and tick the sound driver.
+cmt 0x10782 Timer B handler (plain): clear vsync_flag and ISRB bit 0. Used when no raster split is wanted.
+cmt 0x10792 SESSION SETUP: build the two 14-byte per-player records at 0x19f02/0x19f10 (score 0, lives 3, section 0xff so the first advance wraps it to 0, map_ptr 0x478ae, weapon levels) and copy player 1's out into the live globals. In 1-player mode (0x1991d == 1) player 2 gets 0 lives.
+cmt 0x10814 ADVANCE LEVEL SECTION: level_section = (level_section + 1) & 0x0f; if it changed, load this section's assets. Reached by bra.w from 0x12930.
+cmt 0x1083a Per-section asset load, driven by the 16-byte tables at 0x197fc/0x1980c/0x1981c/0x197eb/0x1982c/0x1983c/0x1984c/0x1985c/0x1986c: patch the variant letter/digit into the filename in place, then load. alienX.dat (x2), motherN.dat, missileN.dat, levN.map, zynN.dat, rocket.dat or gndtarg1.dat.
+cmt 0x109cc Section-type test: if section_type_table[level_section] == 'q' this is an asteroid-field section - load bigast.dat via 0x156ac, set asteroid_section_flag, take the 0x19638 palette and skip the map load entirely.
+cmt 0x10a5e Per-section palette: 32 bytes (16 ST colour words) from the table at 0x18fe4 indexed by 0x1986c[level_section] * 32, staged into palette_next.
+cmt 0x10b6e START LEVEL SECTION. Reached by bra.w from 0x12842. Clears both 18-entry object arrays (0x17a8e and 0x17e2a, stride 0x2c, +0x0e = active flag), puts player 1 at (0x40,0x64) and player 2 at (0x50,0x64), and resets the ship sprite pointers to 0x577fe / 0x57e3e.
+cmt 0x10c4e Seek the map to this section's restart point: walk the word table at 0x19e84 (8 bytes per section, scanned backwards) for the last entry <= the current map offset; set map_ptr / map_offset and scroll_pos = (map_offset / 0x24) * 8.
+cmt 0x10cba PRE-RENDER THE BACKDROP: 160 iterations of scroll_draw_column filling all 8 pages x 20 columns of the 2560x144 off-screen level bitmap (0x1a8ae..0x478ae, 0x2d000 bytes). Inner counter map_page 0..7, outer map_column 0..19.
+cmt 0x10db2 Bind the two level event scripts for this section: pointer tables at 0x182d2 and 0x18306 indexed by 0x1986c[level_section]*4. Each script is a list of 4-byte records (word map-x, byte type, byte param) sorted by x; the cursors live at 0x1824a and 0x1824e. Type 0x0c sets and 0x0d clears 0x19aae.
+cmt 0x10e4c Reset the per-life state: both player records active, weapon/power-up levels, three 1000-unit gauges at 0x19dc8/0x19dca/0x19dcc, and the status-panel redraw request mask = 7.
+cmt 0x10f18 WAIT FOR FIRE: poll the joystick by sending IKBD $16 (interrogate) each pass and spinning until bit 7 of joystick_state is set, advancing the RNG so the seed depends on how long the player waited. Then start tune 0x27 (the in-game music) and commit the staged palette.
+cmt 0x10f4e FRAME LOOP HEAD. Closed by bra.w $10f4e at 0x1296a. a6 := screen_front. 0x1297a swaps the two pointers each frame and writes the new front buffer to $ff8201/$ff8203.
+cmt 0x10f58 Status-panel redraw jobs, gated by the bits of panel_redraw_mask: bit 4 -> 0x134ca, bit 0 -> draw_panel_weapon_row, bit 1 -> 0x145da, bit 2 -> 0x137ca; plus a 500-frame countdown (0x19dce) that re-runs the animated logo blit.
+cmt 0x10fda PAUSE: scancode $39 (space) pauses - wait for release, restart the palette cycle counters, then wait for the next space and its release.
+cmt 0x11024 Asteroid sections have no map: map_offset = (scroll_pos >> 3) * 0x24 and map_ptr = level map base + that.
+cmt 0x11046 SCROLL: a5 := page_table[map_page], cached in map_page_ptr; then either draw one fresh 16-pixel column into the backdrop (scroll_draw_column, dest = screen + 152) or run the alternate paths 0x169f2 / 0x16a56 chosen by 0x198b1.
+cmt 0x11102 MOTHERSHIP TRIGGER: once scroll_pos >= 0xc80 with no boss active, start the mothership; 0x1987c (the mothership index for this section) < 5 picks 0x14eda, >= 5 picks 0x1504a.
+cmt 0x1119e SCROLL BLIT: index the jump table at 0x179aa by map_column and jsr through it - one specialised routine per 16-pixel column phase (20 entries, 0x15d56..0x162c2). a6 = screen, a5 = page + map_column*8.
+cmt 0x111c4 PLAYER CONTROL, skipped when bit 1 of 0x19670 (controls locked) is set or the player record's +0x0e is 0 / negative (dead or exploding). a2 = player record 0x17d7a, d0 = joystick_state.
+cmt 0x111f4 Vertical tilt: every 4 frames step ship_tilt (0..3) toward the joystick direction, clamping y to 0x20..0x9c, and pick the ship sprite bank 0x577fe + ship_tilt * 0xc80 (frame stride 0x640).
+cmt 0x112a0 Joystick decode: bit 0 up -> 0x11318, bit 1 down -> 0x1135a, bit 3 right -> 0x1139e, bit 2 left -> decelerate x toward the 0x40/0x50 home column. Speed comes from the 8-byte entries of ship_speed_table (0 = dx, 4 = dy up, 6 = dy down) indexed by ship_speed_level.
+cmt 0x11318 a2=player rec, a6=0x19370 speed entry: y(+4)/mirror y(+0x30) -= a6[4], clamp >=0x20; bank 0x198b3 rolls down (0..6) every 4 frames (0x198b2)
+cmt 0x1135a a2=player rec, a6=0x19370 speed entry: y(+4)/mirror y(+0x30) += a6[6], clamp <=0x9c; bank 0x198b3 rolls up (0..6) every 4 frames (0x198b2)
+cmt 0x113c0 Frame stage, entry d0=joystick byte, a2=player rec: trail drone, fire/charge, weapon dispatch, bullet motion, spawn scripts; ends bra 0x11c00
+cmt 0x11906 Picks a random one of the 8 enemy slots at 0x17c1a, rolls the per-section fire chance 0x19aaf, spawns into the 3 shot slots at 0x17b96, ticks them
+cmt 0x11a2c a1=firing enemy, a0=player rec, a2=free shot slot, d3=0 -> aimed shot (type 0x0c or homing 0x0a) / d3=1 -> slow seeker 0x0b (cooldown 0x19abf)
+cmt 0x11bbc a2=shot rec. Type 0x0b seeker: life 0x20(a2)--; on expiry turns into an explosion (0x13ad0), else steer (0x141d6) + move/draw (0x13c9e)
+cmt 0x11bde a2=shot rec. Type 0x0a homing missile: life 0x20(a2)--; on expiry just clears alive(+0xe), else steer (0x141d6) + move/draw (0x13c9e)
+cmt 0x11c00 Frame stage: draws every live slot of the 20-entry object table 0x17a8e (0x15b7c), then builds the all-pairs collision mask 0x18252; bra 0x11d30
+cmt 0x11cce AABB test of object a2 (index a5) vs a1 (index a6); boxes 16 px wide x 8(a).w&0x7fff high. On overlap sets bit a6 in (a3) and bit a5 in (a4)
+cmt 0x11d30 frame chain stage 4: resolve the collision matrix, run the game-state machine, starfield, decay timers, scroll step, buffer flip. | exits: 0x10f4e frame-loop head / 0x10b6e restart section / 0x1083a reload section / 0x10814 next section / 0x10500 game over.
+cmt 0x11d3a enemy-shot terrain absorb: slots 8,7,6 whose blit hit background pixels (0x12d44) are killed; skipped while the boss owns the playfield (0x19aad).
+cmt 0x11d6a bouncing-bomb tick: every slot 0..5 of type 0x33 is steered by 0x14376 (gravity, bounce off terrain, retire at the bottom).
+cmt 0x11d92 seeker lock-on: work out what the gunsight (slot 19) sits on and publish it in 0x19917; while the boss is up (0x19aad) the answer is forced to 9.
+cmt 0x11dce no boss: scan enemy slots 9..16 for one overlapping the gunsight whose type is lockable (bit table 0x191ac); 0x19917 = its index, else 0.
+cmt 0x11e2e ship collision, only while the death explosion is not already running (0x19670 bit1).
+cmt 0x11e46 ship record 17: did the masked blit touch non-background pixels this frame (field 0xf)? If not, retry with record 18 at 0x11e8c.
+cmt 0x11e4e pixel hit explained by an entity >= 6 -> 0x13cd4 decides power-up pickup (type 0x11) vs death; explained by slots 0..5 (own shots) -> harmless.
+cmt 0x11e66 pixel hit with an EMPTY collision mask = the ship flew into the landscape -> instant death, explosion group 1, unless invulnerable (0x19912).
+cmt 0x11e8c the same two tests again for ship record 18, the other double-buffer copy of the ship.
+cmt 0x11ed4 player projectiles 0..5 that pixel-hit the background (0x12d44); type 0x37 (impact puff) is skipped.
+cmt 0x11f08 boss form: while 0x19aad is set the boss is painted into the playfield, so a shot "hitting terrain" hits it - sound 0x2c, 0x19f44 (boss HP) -= 1.
+cmt 0x11f38 boss destroyed: park the big explosion at (0x19dd0+0x50, 0x19dd2+6), award 0x195f0, explosion group 0, kill the 5 boss parts at 0x18142.
+cmt 0x11f94 projectile teardown by type: 0x32 -> 0x15582, 0x36 -> 0x155b4, 0x34 -> clear alive and decrement its active count 0x19909.
+cmt 0x11fe0 even frames (toggle 0x198ad): advance the small type-0x64 explosion on enemy slots 9..16, frames from the pointer table 0x191fc.
+cmt 0x12014 last explosion frame (13): decrement squadron counter 0x198bb[+0x21 & 0xf]; a wiped-out squadron leaves a power-up capsule (type 0x11, sprite 0x5f3be).
+cmt 0x1209c mid-animation: bump the frame counter in field 0xe (bit7 kept) and point field 0xa at 0x191fc[frame-1].
+cmt 0x120c8 odd frames (flag 0x198c5): the same for the larger type-0x65 explosion (frame table 0x1922c), which also drifts 3 px up.
+cmt 0x121b2 enemy rams the ship: enemy slots 9..16 whose collision mask has bit 17 or 18 set (0x60000); skipped while the ship is exploding.
+cmt 0x121f6 ram dispatch by type: 0x02 -> 0x15222, 0x10/0x0f lose a hit point (field 0x1a), 0x0e -> large explosion, 0x14/0x16 -> small explosion.
+cmt 0x122c2 ORIGINAL BUG: 33fc = move.w #$10,$00000008 (bus-error vector); almost certainly meant 337c = move.w #$10,8(a1). Same typo again at 0x123f4. | DEFECT in the original: encoded 33fc 0010 00000008 = move.w #$10,$00000008 - it writes the high word of the 68000 bus-error vector. Almost certainly a typo for 357c (move.w #$10,8(a2)), the form used at 0x12134. Same bug at 0x123f4.
+cmt 0x122f4 player shot vs enemy: 6x8 pairwise sweep of slots 0..5 against 9..16 through the 0x18276 mask rows, same type dispatch plus the shot's retire path.
+cmt 0x123f4 DEFECT in the original: same move.w #$10,$00000008 into the bus-error vector as at 0x122c2.
+cmt 0x1247e enemy shots 6..8 that pixel-hit the landscape with no entity overlap: type 0x0b leaves a ground puff (0x13ad0), type 0x0c just vanishes.
+cmt 0x124da parallax starfield layer 1: 6 stars from 0x179fa, 1 px/frame, plane 0 only, drawn only where all four planes read 0 so stars never sit on the playfield.
+cmt 0x12532 starfield layer 2: planes 0+2, moves only when 0x198a9 is clear (every other frame).
+cmt 0x1259e starfield layer 3: plane 2 only, moves only when 0x198aa is clear (every 4th frame). A star whose x goes negative respawns at 0x13f.
+cmt 0x12608 advance the two starfield speed dividers: 0x198aa counts 3..0, 0x198a9 toggles.
+cmt 0x12620 power-up decay: three 1000-frame timers step the shield 0x1990a (mirrored to HUD 0x198c3 + redraw bit 2), weapon 0x19908 (floor 2) and speed 0x19907.
+cmt 0x126aa advance the scroll: 0x195cc += 1, then map page 0x198a5 (wraps at 8) and column phase 0x198a6 (wraps at 0x14) unless scrolling is frozen (0x198b1).
+cmt 0x126ee end of frame: spin on raster phase 0x198a8 == 1, flip buffers, ask the IKBD for a joystick packet ($16), spin on 0x198a7, re-enable the ACIA IRQ.
+cmt 0x1271c state machine entry: for each active explosion group (0x19670 bits 1..0) check all six particles listed in 0x19664 reached frame 0x0d; result in d3.
+cmt 0x1276e PLAYER DEATH done: drop one speed/weapon level (0x13f72), 0x1991a -= 1; on the last life 0x12e66 prints GAME OVER and runs the high-score check.
+cmt 0x12796 player swap: save score/lives/section/map-ptr/power into 0x19f02 + 0x1991b*0xe, toggle 0x1991b, load the other player's record into the live globals.
+cmt 0x12820 three swaps with nobody left alive (d7 == 3) -> bra 0x10500 = game over, back to the title screen.
+cmt 0x12832 resume: same level section as the player who just died -> bra 0x10b6e (restart in place); a different section -> bra 0x1083a (reload its assets).
+cmt 0x12846 END-OF-SECTION explosion (group 0) finished: run the 0x19ac0 delay down, then bra 0x10814 = advance to the next level section.
+cmt 0x1285e mothership phase (0x198b0): at frame 1500 of 0x19efe it turns and leaves - motherships 0..4 use slots 9+10, 5..15 use slots 9,11,13,15 (stride 0x58).
+cmt 0x128ea motherships 5..15 only: clearing all eight enemy slots twice (0x19915 reaches 2) ends the section early -> bra 0x10814.
+cmt 0x12934 hard section end: 1600 mothership frames elapsed, or it flew off screen (0x19916) -> bra 0x10814. 0x19ce5 is set/cleared here and never read.
+cmt 0x12958 tick the post-restart grace counter 0x19abf down to 0, then bra 0x10f4e = frame-loop head.
+cmt 0x1296e a0 = 32000-byte screen buffer; writes 0x1f40 zero longs. Ghidra recovered no parameter - the argument is passed in a0.
+cmt 0x1297a swap 0x1797e (draw buffer) with 0x17982, then program $ff8201/$ff8203 from the new 0x17982 so the page just drawn becomes visible.
+cmt 0x129aa stamp the panel blocks (0x6c72e, 0x6c86e, 0x6c5ee) into back buffer 0x78000 rows 151/182/188, then snapshot rows 147..199 (0x2120 B) to 0x41eae.
+cmt 0x12a28 clear the draw buffer, blit the ZYNAPS logo at rows 10 and 92 from 0x6c8ee via 0x134b8, print the five credit/menu strings, then flip.
+cmt 0x12ac2 TITLE/ATTRACT LOOP. Installs its own VBL 0x12c9e + Timer B 0x12cc0, builds the raster colour-bar list, waits for key '1'/'2' or joystick fire.
+cmt 0x12b6a Builds the bar list in map page 0 (0x1a8ae): 7 runs from the (repeat,len) word pairs at 0x19f28; entries are word count + word colour, hue += 0x89 mod 0x777.
+cmt 0x12bc4 Every 2nd frame (0x198c6) the bar list scrolls one entry (16 pairs moved at 0x1a8f0, fresh hue at 0x1a8b0); 0x29 longs copied 0x1a8ae -> 0x1a976 for the ISR.
+cmt 0x12c2e Menu input: default 0x1991d = 2 players; scancode 2 (key '1') or fire -> 1 player; scancode 3 (key '2') -> 2 players. Both exit by rts back into _start.
+cmt 0x12c76 Page flip on the 0x2ee-frame timer 0x19f1e: toggles 0x199ed and redraws either ROLE OF HONOUR (0x13338) or the title screen (0x12a28).
+cmt 0x12c9e Attract VBL ($70): resets raster line 0x19f22, clears 0x198ab and $ff8240, rewinds bar pointer 0x19f24 to 0x1a976, ticks sound 0x16b94.
+cmt 0x12cc0 Attract Timer B ($120): on lines 1..0x26 counts down the (count,colour) pair at 0x19f24 and writes the next colour to $ff8240; bclr #0,$fffa0f.
+cmt 0x12d44 d0 = entity index; Z clear = the blit hit background pixels that no lower-indexed overlapping entity explains, i.e. it hit the landscape. | needs field 0xf set and the type bit in 0x19196, then follows mask & 0x19dda[i] ((1<<i)-1) down to the lowest colliding entity. | d0 = object index (0x17a8e, stride 0x2c). Needs rec+0xf set and rec+0x11 in bitmap 0x19196, then hops to the lowest-index overlap in 0x18252 & mask 0x19dda.
+cmt 0x12d78 Loop re-entry, skipping the type test. d7=1 (Z=0) when the object has no lower-index overlap; d7=0 (Z=1) if any object in the chain has rec+0xf clear.
+cmt 0x12dc6 a0 = entity; bit test of type 17(a0) in the MSB-first table 0x19196 (word (t>>3)&~1, bit (~t)&0xf). Types > 0x37 are never terrain-sensitive. | a0 = object record. Z=0 if type byte rec+0x11 (must be <= 0x37) has its bit set in the 56-bit big-endian bitmap at 0x19196; type > 0x37 gives d7=0, Z=1.
+cmt 0x12df6 a1 = one past the 4-byte BCD award; abcd-adds it to score 0x195e0, and past 0x195d8 awards a life (0x1991a++), bumps by 0x195dc, sets redraw bit 4. | a1 = one past a 4-byte packed-BCD value; abcd-adds it to score 0x195e0. At the 0x195d8 threshold: sound 0x10, lives++, threshold += 0x195dc, panel bit 4.
+cmt 0x12e40 a0 = screen base, a6 = {column.b, pixel_row.b, chars..., 0}; adds row*160 to a0 and calls the glyph blitter 0x13710 per character. | a0 = screen, a6 = record {byte col, byte row, chars, 0}. Adds row*160 to a0 and draws each char via 0x13710. a0 restored; a6 past the NUL, d1 = next column.
+cmt 0x12e66 clear the playfield, print "GAME OVER PLAYER " plus the digit for 0x1991b, then run the high-score check/entry at 0x12eae. | GAME OVER PLAYER n: clears the back buffer, draws record 0x199d9 plus the player digit at row 16, runs the high-score check, restores the palette if not rated.
+cmt 0x12eae Ranks the score in the 5-entry table 0x19d5a (22-byte stride). Beats none -> YOU ARE NOT RATED, return 0. Else shift down, run name entry, return 1.
+cmt 0x12fc2 Clears the 0x5a00-byte (144x160) off-screen backdrop page 0 at 0x1a8ae, reused as the front-end compose buffer (blitted to the screen by 0x15d3e).
+cmt 0x12fd4 PLEASE ENTER YOUR NAME. a0 = the high-score slot; stores the score, blanks the 15-char record 0x19d48, draws the keyboard rows, runs the edit loop at 0x13058.
+cmt 0x13058 Edit frame: gunsight cursor drawn as object 0 (x/y 0x19d44/0x19d46, sprite 0x6a61e), page 0 blitted to screen, joystick moves +/-2 px, fire picks a key.
+cmt 0x13124 Edit keys: 0x01 ESC / 0x61 UNDO clear; 0x0e BACKSPACE / 0x53 DELETE erase one; 0x1c RETURN / 0x72 ENTER commit 16 bytes to slot+6; else look up 0x19a39.
+cmt 0x13196 Redraws record 0x19d48 into backdrop page 0, plus the block cursor (char code 2) at column d4+9 of row 80 while under the 15-character limit.
+cmt 0x1326e Cursor (0x19d44,0x19d46) -> key scancode in d0, 0 if off grid. Y-0x20 picks row table 0x132e2 / 0x132fe / 0x1331a; column = (X-0x68)>>3, stride 3, 10 per row.
+cmt 0x13338 ROLE OF HONOUR: clears the back buffer, draws the 96x64 ZYNAPS logo and heading 0x199c8, then 5 rows - name record at entry+4, BCD score ending at column 14.
+cmt 0x13426 PLAYER n: stops sound, clears the back buffer, draws the logo at row 5 and record 0x19933 plus the player digit at row 80; adds PREPARE FOR COMBAT if 0x19aac.
+cmt 0x134b8 a6 = source (post-increment), a0 = destination, d0 = rows-1; copies 8 longs per row with movem and steps a0 by 160. | a6 = source (advanced), a0 = destination, d0 = rows-1. movem.l copy of 32 bytes (32 px, 4 planes) per row at 160-byte stride; the ZYNAPS and HEWSON logos.
+cmt 0x134ca Six life slots at row 167, columns 32..37, into BOTH buffers: full icon 0x6c8ae while slot < lives-1, else empty icon 0x6c8ce. Clears panel bit 4.
+cmt 0x13568 a0 = screen address. Draws font glyph 0x1991b+1 (the player's '1'/'2') shifted 4 pixels right, ANDing the glyph mask and ORing the 4 planes as words.
+cmt 0x135bc Full panel repaint of both buffers: power gauge, SCORE panel, PLAYER label + digit at row 182, HI-SCORE + top score at row 188, 0x1452c/0x1459c/0x145da, lives.
+cmt 0x136c8 a6 = screen buffer. Blits the 80x8 panel strip 0x6c72e to row 151 byte 120, then the 8 BCD digits of score 0x195e0 ending at column 38.
+cmt 0x136f6 a0 = row base, d1 = rightmost column, d6 = packed-BCD long. Draws 8 digits right to left via 0x13710, shifting d6 one nibble and decrementing d1.
+cmt 0x13710 d0 = char code, d1 = column, a0 = row base. 0x20 no-op; 1 clears the 8x8 cell; 2 fills it (cursor); >= 'A' -> glyph d0-0x37; else glyph 0x198d6[d0-0x20].
+cmt 0x1375e Glyph blit: font 0x6be6e (extchars.dat), 0x28 B/glyph = 8 rows of {mask, plane0..3}; each row ANDs the mask then ORs the plane byte, 160-byte stride.
+cmt 0x137ca Draws one of the four 64x8 power.dat frames (0x607be + level*0x100, level = 0x198c3 clamped to 3) at row 188 byte 72 in both screen buffers.
+cmt 0x13828 counts the 8 wave slots at 0x17c1a (stride 0x2c) with alive byte +0xe==0 -> 0x198b7; Z set when none free
+cmt 0x13858 word-wise block copy; a0=src a1=dst d2=byte count (even). Builds the pre-shifted sprite banks
+cmt 0x13868 attack-script default opcode; cursor 0x1824e += 4, tail-calls 0x14a7c. in d7=opcode d6=y d1=type a5=sprites; out d5=0/1/3 d7=pattern d4=y d3=0x180
+cmt 0x13898 attack-script opcode 0x0b; needs >=4 free slots, marks 0x198bb slot 3, spawns 3 type-0x0e enemies at x=0x190, sprite 0x60bbe, random y step
+cmt 0x13958 ground-script (cursor 0x1824a) spawner when 0x19897!=0; one type-0x10 enemy at scripted y+0x20, x=0x180, sprite 0x62e1e; 0x198c1 = rand&0x1f
+cmt 0x13a12 ground-script twin of 0x13958 when 0x19897==0; type 0x0f, 28(a2) cleared, same sprite and position
+cmt 0x13ad0 a2 = entity; convert it into a type-6 ground impact puff (sprite 0x58d1e, height 0x10, y -= 2, anim frame 1). | morphs entity a2 into type 6; 17=6, 8(a2)=0x10, y-=2, sprite 0x68d1e, 32(a2)=1. From a type-0x0b landing or timing out
+cmt 0x13af2 gated on 0x19aae; 0x198fe counts down, then fills the first all-dead trio in 0x17e2a (6 groups, stride 0x84) with random y/flags
+cmt 0x13bc2 generic type-class test; a6=8-byte bitmap, d0.b=type. a6+=(type>>3)&~1, bit=(~type)&15 of that word. Z=1 when clear. Clobbers d0/d6/a6
+cmt 0x13bde de-interleaves a 400-byte ship sprite source (a0) into two 200-byte frames at a1 and a1+0x640; 20 passes of 10 bytes each | Verified byte-for-byte by recreate/: each row is move.l/move.l/move.w into a1 then the same three into a2, strictly alternating, so the read/store interleave is observable whenever the source overlaps either frame. The 7th call site (bsr 0x10132) passes a0==a1==0x577fe and rewrites the staged file in place.
+cmt 0x13bf8 PRNG; 16-step Galois LFSR on the 32-bit state 0x195f4 (lsl.l #1, eori.l #$1d872b41 on carry), carries roxl'd into d0. Returns d0.w | Verified byte-for-byte by recreate/: the 16 carries land MSB-first, and d0's high word is zero (the entry moveq #0,d0 is its only writer).
+cmt 0x13c26 VBL vector $70 (set at 0x105ca/0x10650); uploads the 8-long palette 0x19f46 to $ff8240.., ticks 0x198a8 mod 2 clearing 0x198a7, bsr 0x16b94
+cmt 0x13c9e a2=entity; if word 14(a2) set, clears the alive byte unless x in (0x30,0x180) and y in (0x10,0xb0) | Verified byte-for-byte by recreate/: the tst.w spans BOTH 0xe (alive) and 0xf (the blitter's pixel-hit flag) while the clr.b writes only 0xe, so a record with alive=0 and pixel-hit set still enters the box test. All four compares are signed and both bounds exclusive, so the live band is x 0x31..0x17f, y 0x11..0xaf. tst.b and tst.w are indistinguishable in memory here: where they disagree the clear writes 0 over a 0.
+cmt 0x13cd4 a3 = the ship's collision-mask row; scan slots 6..17 for the set bit - type 0x11 is a power-up (sound 0x16), a type in 0x191a4 kills the ship. | a3=hit bitmask long; walks entities 6..17 (0x17b96) by bit index. Type 0x11 capsule -> 0x13d9e; else if 0x19912==0 and lethal -> 0x15510
+cmt 0x13d3e a2 = entity; bit test of type 17(a2) in the bit table 0x191ac. Types >= 0x32 are never lockable. | type 17(a2); Z=1 (no) when type>=0x32, else bit-tests it in the 0x191ac lockable-target class mask
+cmt 0x13d6e a4 = entity; bit test of type 17(a4) in the bit table 0x191a4. Types >= 0x32 are harmless to the ship. | type 17(a4); Z=1 when type>=0x32, else bit-tests it in the 0x191a4 lethal-to-ship class mask. Clobbers d5/d6/a6
+cmt 0x13d9e power-up bar; 0x19902 clear = advance cursor 0x19905 mod 5; else commit: slot0 = speed, slot1 -> 0x13f0e, new -> 0x19348[n], same -> 0x1935c[n]
+cmt 0x13ede entry 1 of the 0x19348 activate table; sets HUD flash timer 0x19dcc=1000. Unreachable: 0x13d9e diverts cursor==1 to 0x13f0e first
+cmt 0x13f72 lose one speed level (0x19907, floor 0) and one weapon level (0x19908, floor 2). Called when the player dies. | on ship loss, steps speed index 0x19907 down (floor 0) and max-bullet count 0x19908 down (floor 2)
+cmt 0x13f9e launches a type-0x36 seeker at the ship position (0x14092); sprite 0x6421e, speed 4, turn 2, TTL 0x4b, 0x198b8--; target 26(a2) = 0x19917 lock
+cmt 0x1401a launches a type-0x32 homing missile at the ship position into free slot a3; sprite 0x6421e, speed 5, TTL 0x64, no target yet (0x14), 0x198b5--
+cmt 0x14092 copies the ship shadow record 0x17da6 x/y words into 0(a2)/4(a2) - the spawn point for every player weapon
+cmt 0x140a6 a3=type-0x36 seeker; dead target 26(a2) retargets to 0x13 (drone if type 0x35) else 0x11 (ship); TTL-- -> 0x155b4, else steer 0x141d6
+cmt 0x140f6 type 17(a1); Z=1 when type>=0x32, else bit-tests it in the 0x1918e missile-targetable class mask. Clobbers d0/d1/a0
+cmt 0x14126 a3=type-0x32 missile; scans wave slots 9..0x10 from 26(a2)+1 for a 0x1918e type not locked by the other missile; lock -> 0x19918/0x19919
+cmt 0x141c0 a1 = 0x17a8e + d0.b*0x2c (entity index -> record). Clobbers d6/a1
+cmt 0x141c2 second entry point of 0x141c0 with the index already in d6
+cmt 0x141d6 homing steer for a2; 27(a2)-- reloads 28(a2), target 26(a2), angle 0x1424c, heading 29(a2) turns by <=31(a2) mod 0x40, 0x142d4, 0x14306
+cmt 0x1424c d0.b = 6-bit direction 0..0x3f from entity a2 to entity a1; dx/dy = x/y words >>3, octant eor'd into d3, sub-octant by slope compare
+cmt 0x142d4 a2=entity d0.b=angle 0..0x3f d1.b=speed; 18(a2)=cos64[angle]*speed, 20(a2)=cos64[(angle-0x10)&0x3f]*speed. Table 0x18efc, 64 words +/-256
+cmt 0x14306 a2=entity; adds sign-extended 18(a2)<<8 to the 32-bit x at 0(a2) and 20(a2)<<8 to the y at 4(a2). 16.16, integer in the high word
+cmt 0x14324 launches a type-0x33 bomb into free slot a3; sprite 0x6a11e, vx=0x200, ay=0x40 gravity, 3 bounces in 26(a2), 0x198b6--, tail-calls 0x14092
+cmt 0x14376 a3 = a type-0x33 bomb; on a terrain-only pixel hit play sound 0x11, invert and halve dy (+0x14), spend a bounce (+0x1a); gravity 0x20, retire past y 0xac. | a3=type-0x33 bomb, re-pointed at its hit mask 0x18252+idx*4; terrain hit 15(a2) bounces (vy=-vy/2); gravity via 0x143f8 d1=0x20; dies at y>=0xac
+cmt 0x143f8 a2=entity, d1.b dir bits: b3 vx+=ax, b4 vx-=ax, b5 vy+=ay, b6 vy-=ay (ax=22 ay=24 vx=18 vy=20), then falls into 0x14306
+cmt 0x14444 spins on bit 1 of the ACIA status $fffc00 (TX ready), then writes d0.b to $fffc02
+cmt 0x14456 MFP $118 ACIA ISR: $fffc00 bit7+bit0 gate; $fd header arms a 2-byte joy packet into 0x19680 via 0x195d4/0x19671; else scancode -> 0x19685
+cmt 0x144e8 a0=filename, a1=dst, d1=length: GEMDOS Fopen($3d,mode0)/Fread($3f)/Fclose($3e); handle word kept at 0x18246; d0/a0 clobbered
+cmt 0x1452c Toggles 0x1990e then blits the 80x32 smlogos.dat frame at 0x6b46e+toggle*0x500 to BOTH screens at +0x5dc8 (x=16,y=150); 5 col strips of 0x100
+cmt 0x1459c Blits the 32x26 sweap.dat icon 0x1931c[0x19905] to BOTH screens at +0x5ec0 (x=192,y=151) - the moving power-up-bar cursor
+cmt 0x145da d0=cell (0=left x=128, !=0 right x=160): blits the 16x18 ssweap.dat glyph 0x19330[0x19906] to BOTH screens at row 149
+cmt 0x14626 When 0x198c5==0 (half rate): for the 6 actors at 0x17a8e, if alive(+0xe) and type(+0x11)==0x34, cycle +0x20 over 4 frames from 0x1928c into +0xa
+cmt 0x1467e Actor anim handler, type 20 of 0x193dc: when 0x198ac==0 cycle +0x20 1..(0x1990f-1) and set sprite +0xa from the ping-pong table 0x191b4
+cmt 0x146ba Actor anim handler, type 22 of 0x193dc: when 0x198ac==0 cycle +0x20 1..(0x19910-1) and set sprite +0xa from the ping-pong table 0x191cc
+cmt 0x146f6 Actor anim handler, type 16 of 0x193dc: when 0x198ac==0 cycle +0x20 1..4 and set sprite +0xa from 0x1929c
+cmt 0x14730 Actor anim handler (a2=record), type 12 of table 0x193dc: when 0x198c5==0 cycle +0x20 1..4 and set sprite +0xa from spinners frames 0x1927c
+cmt 0x1476e Actor anim handler (a2=record), type 14 of table 0x193dc: when 0x198c5==0 cycle +0x20 1..4 and set sprite +0xa from 0x1926c
+cmt 0x147ac Actor anim handler (a2=record), type 15 of table 0x193dc: only while +0x1c (diving) is set and 0x198c5==0, cycle +0x20 1..4 from 0x1930c
+cmt 0x147f2 Flips 0x198ac then for the 11 actors at 0x17b96: if alive and type(+0x11)<0x32, call anim handler 0x193dc[type] with a2=record (d7/a2 preserved)
+cmt 0x1483e Actor anim handler (a2=record), type 17 of table 0x193dc: when 0x198ac!=0 (opposite half-frame) cycle +0x20 1..4 from gemgraf frames 0x1925c
+cmt 0x1487c For the 11 actors at 0x17b96: if alive and type(+0x11)<0x32, call move handler 0x19380[type] with a2=record, d6=slot index (d6/d7/a2 preserved)
+cmt 0x148c8 Null actor handler: a bare rts, the default entry of both 0x19380 and 0x193dc
+cmt 0x148ca DEAD CODE (no reference anywhere): sine-path patroller using d6 as slot index into 0x19673; sweeps left to x=0xc8 then right off at x=0x190
+cmt 0x1494a a2=record: x(+0) -= 4, despawn if negative; y(+4) = base(+0x1a) + sin(phase +0x1c, amp 6) via 0x15654; phase += 0x14 mod 0x168
+cmt 0x1499e a2=record: frozen while 0x198b1 set; else x(+0) -= 2 and despawn (dec 0x198bb[+0x21], clear +0xe) when x goes negative
+cmt 0x149d2 a2=record: x -= 2 unless 0x198b1; arms dive flag +0x1c when (x - player.x) <= |player.y - y|; while diving y -= 2 and despawns below y=0x10
+cmt 0x14a64 a2=record: decrement group population counter 0x198bb[+0x21] and clear the alive byte +0xe
+cmt 0x14a7c d7=formation idx (0x19504), d1=actor type, d3/d4=base x/y, d5->+0x2a, a5=sprite ptr: builds the template at 0x17a62 and fills free slots
+cmt 0x14be0 Returns a2 = first free (+0xe==0) of the 8 records at 0x17c1a with carry CLEAR; carry SET if 0x13828 says none free or the scan fails; d7 preserved
+cmt 0x14c16 a2=record, types 20/22: while 0x19aad (mothership) is set always run the script; else despawn outside x 0x30..0x1b8, otherwise 0x14c66 + 0x14c44
+cmt 0x14c44 a2=record: clamp the integer y word at +0x4 into 0x10..0xb0
+cmt 0x14c66 a2=record: script VM step - tick delay +0x26, fetch/execute opcode +0x28 via 0x19438[op&7] with d1=opcode; carry set from a handler = run next op
+cmt 0x14cce Opcode class 7 (a2=record, d1=opcode): dispatch extended sub-op (d1&0x78)>>3 through the 16-entry table 0x19458; carry propagates
+cmt 0x14ce8 Opcode class 1 (a2, d1): loop counter +0x27 = (d1&0x78)>>3 and loop-start pc +0x24 = current pc +0x22; carry set (continue)
+cmt 0x14d00 Opcode class 2 (a2, d1): fire countdown +0x1b and reload value +0x1c both = (d1&0x78)>>3; carry set (continue)
+cmt 0x14d14 Opcode class 3 (a2, d1): terrain test 0x12d44((a2-0x17a8e)/0x2c); on hit flip dy +0x14 / step x; gravity via 0x143f8 d1=0x20; floor at y=0xa0
+cmt 0x14d88 Opcode class 4 (a2, d1): shot mode +0x1a = 0x11, shot kind +0x1f = (d1&0x78)>>3, then launch via 0x141d6; carry clear (frame ends)
+cmt 0x14da2 Opcode class 5 (a2, d1): heading +0x1d = (d1&0x78)>>1 (16 of 64 dirs), velocity from 0x142d4(d0=heading, d1=speed +0x1e), integrate 0x14306
+cmt 0x14dc0 Ext sub-op 0 (a2): returns immediately while 0x198b1 is set, else x word +0x0 -= 2; carry clear (frame ends)
+cmt 0x14dd8 Ext sub-op 1 (a2): clear the velocity words dx +0x12 and dy +0x14
+cmt 0x14de2 Ext sub-op 2 (a2): heading +0x1d = rand(0x13bf8) & 0x3f, then 0x142d4/0x14306 with speed +0x1e; carry clear (frame ends)
+cmt 0x14e00 Ext sub-op 3 (a2): decrement loop counter +0x27; if non-zero rewind pc +0x22 to the loop start +0x24; carry set either way (continue)
+cmt 0x14e38 Ext sub-op 5 (a2): heading to the player record 0x17d7a via 0x1424c, velocity via 0x142d4 with speed +0x1e; carry set (continue)
+cmt 0x14e50 Ext sub-op 6 (a2): x word +0x0 -= 2 unconditionally; carry clear (frame ends)
+cmt 0x14e5c Ext sub-op 9 (a2): 0x143f8 thrust mask from x vs 0xd8 (bit3/bit4) and y vs 0x60 (bit5/bit6) - accelerates toward screen centre; carry clear
+cmt 0x14e8c Script ext sub-op 11 (a2): random +-1 nudge of the speed field +0x1e kept in 1..7; carry set (continue)
+cmt 0x14ebe Script ext sub-op 15: no-op that just clears carry, i.e. end this frame's script execution
+cmt 0x14ec4 a2=record: x(+0) -= 2 and clears alive(+0xe) at x < 0x30 - note it does NOT decrement the 0x198bb group counter, unlike 0x14a64
+cmt 0x14eda Only when all 8 enemy slots are free (0x13828==8): unpack mother1.dat to 0x310ae via 0x157ca, energy 0x19f44 = 0x1987d[section], anchor x=0x140
+cmt 0x14f18 Places the 5 tail segments at 0x18142 (stride 0x2c) at x = 0x19dd0 + 16*i, y = 0x19dd2, sprite = 0x310ae + i*0x190, +0x8=0x28, alive; sets 0x19911=1
+cmt 0x14f64 Mothership index < 5: pre-shift bank (0x15838, sets 0x19aad), spawn 2 type-1 actors via 0x14a7c (formation 0x19cc3[sec], y 0x19498[f], x 0x180)
+cmt 0x14fc8 Skips while 0x19670 bit0 (boss exploding); runs the move script on both 0x17c1a records, clamps y, sets 0x19dd0/0x19dd2 = x-0x40 / y-0x14
+cmt 0x1504a When all 8 0x17c1a records are free: revive the 4 children, clone parent x+0x10/y, kind 2, sprite 0x315ae, rows 0x10, hp from 0x1987d
+cmt 0x15128 Driven by 0x19911: step 1 copies two 160-B frames 0x5ed7e -> 0x310ae/0x315ae, steps 2-3 preshift each via 0x153f6, then flags ready
+cmt 0x151ba 4 kind-2 pairs at 0x17c1a (stride 0x58): script 0x14c66 + y clamp 0x14c44, mirror x+0x10/y into the shadow, kill outside x 0x10..0x1b8
+cmt 0x15222 a1 = one half of a two-slot type-0x02 enemy; decrement 0x19884[pair] and at zero explode both 0x2c halves (type 0x64, sprite 0x5cf7e), award 0x195f0. | a1 = hit child record; maps to its parent index, decrements 0x19884[idx]; at 0 explodes both (kind 0x64, sprite 0x5cf7e, x&~3) + BCD score 0x195f0
+cmt 0x152a4 Walks the 6 shot records at 0x17a8e; kind 0x32 and 0x36 -> 0x152ea, kind 0x37 -> 0x15370
+cmt 0x152ea a2 = record; sprite := 0x192ac[ 0x18f7c[ rec+0x1d ] ] -- per-variant shot graphic
+cmt 0x1530e a2 = record; sprite := 0x192cc[ 0x18f7c[ rec+0x1d ] ]; reached as entry 0x22 of the 0x19380 kind-handler table
+cmt 0x15332 a2 = record; frozen while 0x198c5; advances rec+0x20 1..4 from 0x192ec, kills at 5; entry 0x1d of the 0x19380 kind-handler table
+cmt 0x15370 a2 = record; frozen while 0x198c5; advances rec+0x20 1..4 from 0x192fc, kills at 5 -- the kind-0x37 hit-flash animation
+cmt 0x153ae Loads all 16 colour registers $ff8240..$ff825e from the 32-byte palette at 0x19618 in one movem pair -- whole palette, not a fade
+cmt 0x153c0 a0=src a1=dst d2=frame bytes d7=count-1; copies frame i to dst+i*8*d2 (0x13858) then 0x153f6-fills its 7 rotations -> 8-slot 2px preshift bank
+cmt 0x153f6 a0=src a1=dst d2=frame bytes; writes 7 copies at dst+n*d2 (n=1..7), every word ror.w #(2n) = 2n-px preshift; draw re-splits with the 0x1821e masks | Verified byte-for-byte by recreate/: slot 0 is never written (every call site passes a0==a1, so it is the source frame). Row count is (d2>>1) words through a dbf, so d2=0 means 65536 rows rather than none. The end-of-row step-back is 8*d2 minus d2 built with sub.w on a LONGWORD register, which stops equalling 7*d2 from d2=0x2000 up. Shipped d2: 0x50/0x5a/0xa0/0xc8 direct, plus 0x1e and 0x6e inherited through 0x153c0's tail bsr at 0x153e6.
+cmt 0x15420 a0=src a1=dst d2=frame bytes; as 0x153f6 but only slots 2/4/6 with ror.w #4/#8/#12 = 4-px steps, for objects whose x is forced to a multiple of 4 | Verified byte-for-byte by recreate/: slots 0,1,3,5,7 are never written; the step-back is 8*d2 minus d2 TWICE (same sub.w-on-a-longword caveat as 0x153f6). Shipped d2: 0xa0, 0x50 and 0x5a.
+cmt 0x1544e per-frame animation of both explosion groups; field 0x10 is the particle frame, 0x0d ends it, each live frame re-points field 0xa at 0x191fc[frame-1]. | Every other call (0x198ae): for each set bit of 0x19670 walk the 6 debris of 0x19664+bit*6, step rec+0x10 to 0xd, sprite from 0x191fc
+cmt 0x15510 a2 = the entity to explode at, d2 = group 0 or 1; sets bit d2 of 0x19670 and seeds the six entities in 0x19664[d2] with the offsets at 0x195a8. | a2=source record d2=group (0 boss, 1 player); sets 0x19670 bit d2, spawns the 6 debris of 0x19664 at x&~3 per 0x195a8 dx/dy/delay; sfx 0x14
+cmt 0x15582 a2 = a live type-0x32 shot; clear its slot flag in 0x19918/0x19919 (chosen by the sign of field 8), make it an impact puff, decrement 0x1990b. | a2 = record; kind 0x32 only: frees slot 0x19918/0x19919 (by rec+8 sign), converts to puff via 0x155e2, decrements 0x1990b
+cmt 0x155b4 a2 = a live type-0x36 seeker; turn it into an impact puff (0x155e2) and decrement the seeker count 0x1990d. | a2 = record; converts to puff via 0x155e2 and decrements 0x1990d (no kind check)
+cmt 0x155c2 a2 = a live type-0x33 bomb; turn it into an impact puff (0x155e2) and decrement the bomb count 0x1990c. | a2 = record; kind 0x33 only: converts to puff via 0x155e2 and decrements 0x1990c
+cmt 0x155e2 a2 = entity; y -= 3, type := 0x37, sprite := 0x5791e, height := 0x10, anim frame := 1. | a2 = record; y -= 3, kind := 0x37, sprite := 0x5791e, anim frame := 1, rows := 0x10 -- turns a spent shot into the hit flash
+cmt 0x15604 Kills the record at 0x17dd2, clears 0x19900, then retires every live kind-0x36 shot in 0x17a8e[0..5] via 0x155b4
+cmt 0x15644 d0 = angle 0..0x167 deg, d2 = amplitude; adds 90 deg (mod 360) and falls into 0x15654 -> signed cosine*amplitude in d0. No caller found in the sweep
+cmt 0x15654 d0 = angle 0..0x167 deg, d2 = amplitude -> signed sin(angle)*amplitude; folds 4 quadrants onto 0x15694; enemy sine paths (rec+0x1c = angle)
+cmt 0x15694 d0 = angle 0..0x5a deg, d2 = amplitude -> d0 = (sine_q1[angle] * d2) >> 16, unsigned first-quadrant only
+cmt 0x156ac Loads bigast.dat (0xf00 B) to 0x4b3be, then splits its 6 32x32 masked sprites into 8 identical 3-cell 960-B frames at 0x1a8ae (3rd cell blank)
+cmt 0x15758 a0 = 7680-B asteroid bank; shifts frames 1..7 right by 2,4..14 px with lsr/roxr chains across the 3 cells (mask +0, planes +2..+8), 32 rows of 10 B
+cmt 0x157ca Splits the 4-cell 64x40 masked sprite at 0x5ed7e into 8 identical 5-cell 80x40 2000-B frames at 0x310ae, 5th cell blanked (mask $ffff, planes 0)
+cmt 0x15838 Shifts 0x310ae frames 1..7 right by 2,4..14 px (lsr/roxr over the 5 cells, 40 rows of 10 B), sets 0x19aad/0x198b0, clears 0x19efe/0x19911
+cmt 0x158f4 Draws the 5 live column records at 0x18142 through 0x15ace with d2 = 0x3e8 (frame stride 2000)
+cmt 0x15920 Unpacks 0x4b3be -> 0x478ae: 18 word-columns x 400 rows of stride 0x24; count>0 = literal run, bit15 set = repeat one word (count & 0x7fff)
+cmt 0x1597c zero the 0x5a00-byte (144-row) playfield area of the draw buffer 0x1797e with movem stores. | Clears the 0x5a00-byte (144-row) playfield of the 0x1797e screen with 12-register movem.l -(a6) bursts; used when there is no scrolling map
+cmt 0x159be Draws the 6x3 column records at 0x17e2a through 0x15ace with d2 = 0x1e0 (frame stride 960)
+cmt 0x159f2 For the 18 asteroid column records: y +/- 1 by rec+0x1e wrapping in 0..0xb0, x -= 2 or 4 by rec+0x21, deactivate when x goes negative
+cmt 0x15a6a Every other call (0x198fc toggle): cycles rec+0x20 through 0..5 and sets sprite = 0x191e4[frame] + column*0x140 for the 3 columns of each asteroid
+cmt 0x15ace a2 = record, d2 = HALF the frame stride; blits one 16px column (10 B/row: mask + 4 planes) to 0x1797e, preshift (x&15)*d2, y clip 0x20..0xb0
+cmt 0x15b7c a2=object rec (0=x.w 4=y.w 8=h.w|b15 0xa=sprite bank 0xe=alive 0xf=collide), a5=&collide flag; screen from 0x1797e. World x=scr_x+64, y=scr_y+32.
+cmt 0x15b80 Sprite bank = 8 pre-shifted variants at 2px steps; variant stride h*10 B; row = mask.w + 4 plane words. Variant sel = (x&0xe), offset (x&0xe)*(h*5). | Sprite bank = 8 pre-shifted variants at 2px steps; variant stride h*10 B, row = mask.w + 4 plane words; variant = (x&0xe), offset (x&0xe)*h*5.
+cmt 0x15bb0 Clip: y>=0xb0 or y+h<=0x20 -> reject; top clip skips (0x20-y) rows (a1 += n*10); bottom clip h = 0xb0-y. Playfield rows are y-0x20 in 0..143. | Clip: y>=0xb0 or y+h<=0x20 -> reject; top clip skips (0x20-y) rows (a1 += n*10), bottom clip h = 0xb0-y. Playfield row = y-0x20, 0..143.
+cmt 0x15c08 d7 = long at 0x1821e+(x&0xf)*2 = in-word keep mask (ffffffff,3fff3fff,0fff0fff,..,00030003); d6 = ~d7 = carry-into-next-word mask.
+cmt 0x15c16 Three blit paths: x<0x40 -> 0x15cfa left-edge (one word col), x>0x170 -> 0x15cb6 right-edge at a0+152, else 0x15c4a full 32-px span.
+cmt 0x15c60 Collision: solid sprite bits AND background planes 2+3 (d3,d5) non-zero -> st (a5). Only planes 2/3 of the playfield are tested.
+cmt 0x15d56 a5=off-screen page 0x17986, a6=screen 0x1797e. 144 rows: copy 152 B (19 cols) from page[8..160) to screen[0..152). Row stride 160 both sides.
+cmt 0x15d98 phase 1: window starts at page byte 16; wraps via lea -160(a5) so the tail comes from the row's low end. 152 B/row x 144 rows.
+cmt 0x15dde phase 2: window start page byte 24, ring-wrapped, 152 B/row x 144 rows -> screen[0..152).
+cmt 0x15e24 phase 3: window start page byte 32, ring-wrapped, 152 B/row x 144 rows.
+cmt 0x15e6a phase 4: window start page byte 40, ring-wrapped, 152 B/row x 144 rows.
+cmt 0x15eb0 phase 5: window start page byte 48, ring-wrapped, 152 B/row x 144 rows.
+cmt 0x15ef6 phase 6: window start page byte 56, ring-wrapped, 152 B/row x 144 rows.
+cmt 0x15f3c phase 7: window start page byte 64, ring-wrapped, 152 B/row x 144 rows.
+cmt 0x15f82 phase 8: window start page byte 72, ring-wrapped, 152 B/row x 144 rows.
+cmt 0x15fc8 phase 9: window start page byte 80, ring-wrapped, 152 B/row x 144 rows.
+cmt 0x1600e phase 10: window start page byte 88, ring-wrapped, 152 B/row x 144 rows.
+cmt 0x16054 phase 11: window start page byte 96, ring-wrapped, 152 B/row x 144 rows.
+cmt 0x1609a phase 12: window start page byte 104, ring-wrapped, 152 B/row x 144 rows.
+cmt 0x160e0 phase 13: window start page byte 112, ring-wrapped, 152 B/row x 144 rows.
+cmt 0x16126 phase 14: window start page byte 120, ring-wrapped, 152 B/row x 144 rows.
+cmt 0x1616c phase 15: window start page byte 128, ring-wrapped, 152 B/row x 144 rows.
+cmt 0x161b2 phase 16: window start page byte 136, ring-wrapped, 152 B/row x 144 rows.
+cmt 0x161f8 phase 17: window start page byte 144, ring-wrapped, 152 B/row x 144 rows.
+cmt 0x1623e phase 18: window start page byte 152, ring-wrapped, 152 B/row x 144 rows.
+cmt 0x16284 phase 19: window start page byte 0 (no lea), 152 B/row x 144 rows; the only entry needing no ring wrap.
+cmt 0x162c2 Decode one 16-px map column from tiles. a0=screen+152 (x 304..319), a5=page+phase*8, a6=map col ptr (0x18242). 18 tile rows x 8 px = 144 rows. | Decode one 16-px map column from tiles. a0=screen+152 (x 304..319), a5=page+phase*8, a6=map col ptr 0x18242. 18 tile rows x 8 px = 144 rows.
+cmt 0x162cc If 0x19ac1 set (page prefill) a0:=a5 so nothing is written to the visible screen.
+cmt 0x162dc Tile idx.w for this column from (a6)+, and for the NEXT column from 34(a6) (= +36 = 0x24 = one map column). Bit 15 of an index = vertical mirror. | Tile idx.w for this column from (a6)+, for the NEXT column from 34(a6) (= +36 = 0x24, one map column). Bit 15 of an index = vertical mirror.
+cmt 0x162ea Tile = idx*64 B at 0x4b3be: 8 rows x 8 B, 4 planes word-interleaved = 16 px wide x 8 px tall. The same 8 B go to the screen and the page.
+cmt 0x16322 Also builds the 32-px shift workspace at 0x19fae: 4 longs/row = (thisTile.plane<<16)|nextTile.plane, 16 B x 144 rows, consumed by 0x169f2.
+cmt 0x16482 Variant: this tile normal, next tile mirrored (idx bit15) - next tile read backwards from +56 in -8 steps.
+cmt 0x1664a Variant: this tile mirrored, next tile normal.
+cmt 0x1680a Variant: both tiles mirrored.
+cmt 0x169f2 a0=0x19fae workspace, a1=page+phase*8, a2=screen+152 (a2:=a1 if 0x19ac1). 72 iters x 2 rows: lsl.l #2 the 8 longs, store back, emit high words.
+cmt 0x16a56 Same as 0x169f2 but WITHOUT the lsl - re-emits the workspace unshifted. Used when 0x198b1 (scroll frozen) so the same column is redrawn every frame. | As 0x169f2 but WITHOUT the lsl - re-emits the workspace unshifted. Used when 0x198b1 (scroll frozen) so the same column is redrawn each frame.
+cmt 0x16aa6 DEAD CODE - unreferenced. Would reset the PSG then Xbtimer(timer 0 = Timer A, ctrl 7, data 0xf4, vec 0x16b94) to run the sound tick off Timer A.
+cmt 0x16ac8 d1 = effect id; looks it up via 0x16b32, picks one of three PSG voice slots (0x16eaa/0x16edc/0x16f0e) and arms it. Ids used here: 0x11 0x16 0x1a 0x1c 0x2c. | Start tune/SFX: d1 = sound number 0..44 (index into 0x17058). A leading 0xfa <chan> sets d0: 1/2 = voice 1/2, 4 = alternate 1/3, else voice 3.
+cmt 0x16b06 Voice init: 24=0 off, 26/30/34 = stream ptr / loop start / loop restart, 25=1 (play next tick), 38=0 transpose, 46=0 arpeggio, 24=1 on. | Voice init: 24=0 off, 26/30/34 = stream ptr / loop start / loop restart, 25=1 (play next tick), 38=0 transpose, 46=0 arpeggio, then 24=1 on.
+cmt 0x16b32 d1 = sound number -> a1 = 0x171e8 + LE16 word at 0x17058+d1*2. The offset table is LITTLE-ENDIAN (data carried over from the Z80 original). | Verified byte-for-byte by recreate/ over all 256 numbers: the andi.w #$ff admits every one, and adda.w SIGN-EXTENDS the offset -- 52 of the 256 reachable words have bit 15 set (the first is number 45, 0x80c8), so those resolve BELOW the data base (0xf2b0 for that one, under the load base entirely). d1's high word is never touched.
+cmt 0x16b4e Silence: clear the active flag of all 3 voices, zero volume regs 8/9/10, mixer reg 7 = 0xff, then push shadow regs 13..0 to $ffff8800/$ffff8802.
+cmt 0x16b94 VBL sound tick (from 0x10776). Pushes shadow regs 10..0 to the chip, then ticks voice 1/2/3 (a4=block, a5=tone-period shadow) and the noise sweep.
+cmt 0x16bf0 Stream interpreter. Reads a (byte,byte) pair at 26(a4). <0x65 = note (+38(a4) transpose), arg = duration; 0x00 = rest. 0xe1..0xff = commands.
+cmt 0x16cec d1 = modulation-table number 0..30 -> a0 = 0x170b2 + LE16 word at 0x17008+d1*2. Little-endian offsets, as for the tune table.
+cmt 0x16d46 Note-on: 25=duration, 47=note, period from 0x16f40, volume shadow=0, copy the 12-B mod template 12..23(a4) over live 0..11(a4), update mixer reg 7.
+cmt 0x16e04 d0 = note 0..99 -> LE16 word at 0x16f40+note*2, doubled, stored LSB/MSB into (a5)/(a5+1) = that voice's PSG tone-period shadow pair.
+cmt 0x16e28 Steps the noise block at 0x16e92 and applies the delta to PSG reg 6 (noise period): reg6 = (reg6 + delta - 0x80) & 0xf.
+cmt 0x16e48 Entry point that sets a0 = a4 (live counters at +0/+1, cursor at +4) and falls through into 0x16e4a. Used for the volume table.
+cmt 0x16e82 PSG register shadow, reg n at +n. Regs 0..10 are pushed to $ffff8800 every VBL by 0x16b94; 0x16b4e pushes 13..0. Reg 7 = mixer, 6 = noise period.
+cmt 0x16e90 SFX round-robin toggle for 0xfa channel code 4: XOR 1 each time, 1 -> voice 1, 0 -> voice 3.
+cmt 0x16e92 Noise-period modulation block, 24 B, same layout as a voice block's first 24 B: +0/+1 counters, +4 cursor, +16 table start.
+cmt 0x16eaa Voice block, 50 B: +0..11 live mod state, +12..23 template, +24 active, +25 duration, +26 stream, +30 loop start, +34 loop restart, +38 transpose.
+cmt 0x16eab Voice block cont: +39 env flag, +40/41 mixer or/and masks, +42 &volume reg shadow, +46 arpeggio offset, +47 current note, +48 arpeggio phase.
+cmt 0x16edc Voice 2 control block (same 50-byte layout as 0x16eaa); its tone-period shadow is psg_reg_shadow+2.
+cmt 0x16f0e Voice 3 control block (same 50-byte layout as 0x16eaa); its tone-period shadow is psg_reg_shadow+4.
+cmt 0x16f40 Note period table, 100 LITTLE-ENDIAN words, chromatic (ratio 1.0595). Doubled before reaching the PSG - a 1 MHz AY table retuned for the ST's 2 MHz.
+cmt 0x17008 Modulation (volume/pitch/noise envelope) offset table, 31 used LE words, base 0x170b2.
+cmt 0x17058 Tune/SFX offset table, 45 LE words, base 0x171e8. Entry 0x0b = the title/in-game music, which spawns 0x0c and 0x0d on voices 2 and 3. | Beyond the 45 real entries the table is not bounded by the routine: 0x16b32's andi.w #$ff resolves numbers 45..255 too, reading the stream bytes at 0x171e8.. as if they were offsets, 52 of them with bit 15 set.
+cmt 0x171e8 Tune/SFX byte streams. Each starts 0xfa <chan>, then (note,duration) pairs and 0xe1..0xff commands; 0x0b = fa 01 fd 0c fe 0d ea 00 e8 08 e9 1d.
+cmt 0x1798a Eight pointers into the 2560x144 four-plane off-screen backdrop bitmap at 0x1a8ae..0x478ae (0x2d000 B). Stride 0x5a00 = 144 rows x 160 B. map_page indexes this table; map_column (0..19) picks the 8-byte / 16-pixel column within a page.
+cmt 0x179aa Twenty jump-table entries (0x15d56..0x162c2, ~0x44 B each) - one specialised scroll blit per 16-pixel column phase, reached by jsr (a1) at 0x111c2 with a6 = screen, a5 = page + map_column*8. | Jump table[20] -> scroll_page_to_screen_pNN, indexed by 0x198a6 (16-px column phase 0..19). Entry i starts the window at page byte (i+1)*8 mod 160.
+cmt 0x179fa 3 parallax layers x 6 stars x {screen byte offset.w, x.w}; x < 0 respawns at 0x13f.
+cmt 0x17a42 16 words 0x8000 >> n, indexed by star_x & 0xf.
+cmt 0x17a8e Object table: 20 records x 0x2c. [0-5] player shots, [6-8] enemy shots, [9-16] enemies (4 double-buffered), [17-18] player ship, [19] trail drone | entity_table, 0x2c-byte records: 0-5 player shots, 6-8 enemy shots, 9-16 enemies, 17+18 the ship's two buffer records, 19 gunsight, 39.. boss parts. | fields: +0 x.w  +4 y.w  +8 height.w(&0x7fff)  +0xa sprite ptr  +0xe alive/anim (bit7 = exploding)  +0x11 type | more: +0xf pixel-hit flag set by the blitter 0x15b7c  +0x14 dy  +0x1a hit points / seeker target  +0x1b bounce  +0x20 anim frame  +0x21 squadron id | entity table, 0x2c-byte records: 0-5 player shots, 9-0x10 wave enemies, 0x11 ship, 0x12 ship shadow, 0x13 drone, 0x14 null, 0x15.. squadrons
+cmt 0x1821e Eight longs: right-shift keep-masks for 0,2,4..14 px ($ffffffff,$3fff3fff,$0fff0fff..$00030003) -- pairs with the ror.w preshift banks | 16 words ffff,ffff,3fff,3fff,0fff,0fff,...,0003,0003 - read as a LONG at +(x&0xf)*2 to get the sprite's in-word keep mask for an even pixel shift.
+cmt 0x18252 21 longs built by 0x11c00: bit j of row i = entity i's box overlaps entity j this frame (symmetric). | one long per entity index: bitmask of the entities this projectile collided with this frame
+cmt 0x18e46 91 words = sin(0..90 deg) * 0xffff, first quadrant, used by 0x15694
+cmt 0x18efc 64-word cosine table, amplitude +/-256; 0x142d4 turns a 6-bit angle into vx/vy with it
+cmt 0x195a8 Six (dx.w, dy.w, start-frame.w) triples for the explosion debris; negative start frame = staggered delay
+cmt 0x195e4 four 4-byte BCD awards at 0x195e4/0x195e8/0x195ec/0x195f0; callers pass a1 = one past the wanted entry.
+cmt 0x195f4 32-bit LFSR state for 0x13bf8; image seed 0x83e4f2b3, taps 0x1d872b41
+cmt 0x19664 two 6-byte lists of entity indices: group 0 = {9,10,11,12,13,14} (boss / end of section), group 1 = {0,1,2,3,17,18} (the ship's own death). | Two groups of 6 record indices: group 0 = 9..14 (mothership), group 1 = 0,1,2,3,17,18 (player ship + shots)
+cmt 0x19670 bit0 = the end-of-section explosion group is running, bit1 = the ship-death group (also the "ship controls disabled" condition).
+cmt 0x19686 FILE TABLE (0-terminated lowercase names, loaded by load_file). 0x19686 zynlogo.dat 0x19692 zynpic.pic 0x1969d power.dat 0x196a7 lev1.map 0x196b0 alienb.dat 0x196bb myship.dat 0x196c6 status.pi1 0x196d1 bullet.dat 0x196dc explode.dat 0x196e8 mother1.dat 0x196f4 gemgraf.dat 0x19700 spinners.dat 0x1970d missile1.dat 0x1971a smallexp.dat 0x19727 newbuls2.dat 0x19734 gndtarg1.dat 0x19741 seeker2.dat 0x1974d bigast.dat 0x19758 rocket.dat 0x19763 alseek.dat 0x1976e altexpl.dat 0x1977a newbomb.dat 0x19786 gunsight.dat 0x19793 sweap.dat 0x1979d ssweap.dat 0x197a8 smlogos.dat 0x197b4 extchars.dat 0x197c1 lifegra.dat 0x197cd hewlogo.dat 0x197d9 lev5.map 0x197e2 zyn5.dat
+cmt 0x196ab Patched in place with section_type_table[level_section] to name lev1..lev9/X/Y/Z.map.
+cmt 0x196b5 Patched in place with alien_variant_table[level_section] to name alienA..alienH.dat.
+cmt 0x196ee Patched in place with mothership_variant_table[level_section]; mothership_index = that digit - '1'.
+cmt 0x19714 Patched in place with missile_variant_table[level_section] to name missile1..3.dat.
+cmt 0x197e5 Patched in place with zyn_variant_table[level_section] to name zyn1/3/8.dat.
+cmt 0x197eb Per-section variant tables, 16 bytes each, indexed by level_section: 0x197eb missile digit, 0x197fc alien letter, 0x1980c second alien letter, 0x1981c mothership digit, 0x1982c/0x1983c byte params, 0x1984c levN.map digit ('q' = asteroid section, no map), 0x1985c zynN.dat digit, 0x1986c palette/script index.
+cmt 0x198b1 Scroll frozen (mothership/end of section). Freezes the 0x198a5/0x198a6 advance at 0x126b4 and switches the column emit to the unshifted 0x16a56.
+cmt 0x198bb only six bytes are cleared at 0x10c02 but the index is masked with 0xf at 0x1202e/0x1210c - an out-of-range squadron id would corrupt 0x198c1..0x198ca.
+cmt 0x198c4 bit0 set when the ship is destroyed, bit1 when the boss is; cleared at 0x10be8 and read nowhere (it also aliases squadron_kill_counters[9]).
+cmt 0x1991d Number of players chosen on the title screen: 1 or 2, not a boolean - the existing name one_player_mode is misleading. | Player count, 1 or 2, not a boolean: the title menu writes 2 every frame and scancode 2 (key "1") or joystick fire sets it to 1. _start uses it at 0x107ce to zero player 2's lives in a 1-player game.
+cmt 0x1991e every message is {column.b, pixel_row.b, ASCII..., 0} - the two header bytes precede the text address quoted in the brief.
+cmt 0x19aad set by 0x158d6: the boss is painted into the playfield, so player shots that pixel-hit the background damage 0x19f44 instead of being absorbed.
+cmt 0x19ac1 Set while the 8 off-screen pages are prefilled (0x10cba, 160 = 20 phases x 8 shifts); makes the column emitters skip the visible screen.
+cmt 0x19ce5 the st/sf at 0x12934/0x12952 are the only accesses in the whole image - dead code.
+cmt 0x19dca 0x3e8-frame countdown that decays power_level 0x1990a by one, refreshes power_gauge_level 0x198c3 and sets panel_redraw_mask bit 2.
+cmt 0x19dda 21 longs, entry i = (1 << i) - 1; used to walk a collision chain downwards without looping.
+cmt 0x19f02 Two 14-byte per-player records (player 1 at 0x19f02, player 2 at 0x19f10): +0x00 score (long) -> 0x195e0, +0x04 lives -> 0x1991a, +0x05 level_section -> 0x19895, +0x06 map_ptr (long) -> 0x18242, +0x0a -> 0x19905, +0x0b -> 0x19908, +0x0c -> 0x19907 (ship speed). Swapped in and out when the players alternate. | two 14-byte (not 16) records: +0 score.l, +4 lives, +5 level section, +6 map ptr.l, +0xa 0x19905, +0xb weapon level, +0xc speed, +0xd spare.
+cmt 0x19fae Scroll shift workspace, 144 rows x 16 B = 0x900, ending exactly at map page 0 (0x1a8ae). Each row = 4 longs, plane n = (thisTile<<16)|nextTile.
+cmt 0x4b3be Tile/character set, 64 B per tile = 8 rows x 8 B = 16 px wide x 8 px tall, 4 bitplanes word-interleaved. Loaded from zynN.dat.

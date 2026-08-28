@@ -1,0 +1,38 @@
+# Binds the shared differential harness (tools/recreate_kit) to this game.
+# Read by recreate_kit.project.load(); paths are relative to this file's directory.
+name       = "zynaps"
+prg        = "../bin/ZYNAPS17.PRG"
+names      = "../names.txt"
+lib        = "build/libzynaps.so"
+load_base  = 0x10000     # matches PrgLoader / run.sh default (see CLAUDE.md); names.txt addresses
+                         # are Ghidra addresses at this base, so it must not move
+image_size = 0x100000    # 1 MiB, and it must equal os.h's OS_IMAGE_SIZE: program (text 0x9f46,
+                         # no data, bss 0x54a28 -> ends 0x6e96e) + the TOS model's staged-file
+                         # table at 0xbf000 + the stack at the top
+
+# Zynaps' bss runs to 0x6e96e, covering the TOS model's Malloc heap (os.h OS_HEAP_BASE = 0x20000).
+# That is harmless here because the game never allocates — established by an exhaustive BYTE SCAN of
+# the text (there is no data segment), not by reading a disassembly listing, whose linear sweep
+# desyncs on data and silently drops or invents trap sites (see docs/m68k-disassembly.md):
+#   * the byte pair `4e41` (trap #1, GEMDOS) occurs 6 times in the text. Two of them
+#     (0x136e7, 0x19a1f) are at ODD offsets, so they cannot be instructions at all — a 68000
+#     fetches only on word boundaries — and 0x19a1f sits inside the ASCII credits text;
+#   * the four EVEN sites are 0x10006, 0x144f4, 0x14510 and 0x14522, and every one is immediately
+#     preceded by an in-line `3f3c <sel>` selector immediate: 0x20 (Super), 0x3d (Fopen),
+#     0x3f (Fread) and 0x3e (Fclose). There is no register-loaded selector anywhere;
+#   * those four are in fact the ONLY `3f3c 00xx` GEMDOS pushes in the image. The whole text holds
+#     eight `3f3c` immediates: the four above plus 0xf4/0x07/0x1f/0x0000, which are the argument
+#     pushes and the opcode of the single XBIOS Xbtimer(0x1f) call at 0x16abe;
+#   * the byte pattern `3f 3c 00 48` (Malloc) / `3f 3c 00 4a` (Mshrink) occurs NOWHERE in the file
+#     at any alignment. The game was launched from AUTO\ and simply keeps the whole TPA that the
+#     GEMDOS loader already gave it — `_start` takes Super(0) and drops A7 onto the returned
+#     supervisor stack rather than sizing a heap.
+# So no modeled Malloc block can ever be handed out on top of the program. The claim is also
+# enforced per run: see harness._vet_os_memory_map() and emu._vet_no_malloc_over_program() under
+# tools/recreate_kit/.
+tos_malloc_unused = true
+
+# The other two fixed regions need no waiver and are clear by inspection:
+#   * the staged-file table / staging area (0xbf000 / 0xc0000) sit above the program's 0x6e96e end;
+#   * the harness-poked input block (0x600..0x61f) sits below load_base 0x10000, so
+#     `tos_poked_input_unused` is not a question here.
