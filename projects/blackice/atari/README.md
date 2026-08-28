@@ -16,6 +16,9 @@ the point: the thing measured is the thing that ships.
 
 ```sh
 make            # both .PRG, BLACKICE.PAK, and floppy/ staged as the shipping disk
+./run.sh        # PLAY: boots disk/BLACKICE.ST in the Hatari GUI (STE, sound, joystick on the cursor keys,
+                #       Right-Ctrl = fire; F12 -> Joysticks to rebind). `run.sh gemdos` uses disk/ instead.
+                #       disk/BLACKICE.ST is the 720 KB image to write to a real floppy (tools/st_build.py, sha256 printed).
 make bench      # headless Hatari -> the per-stage frame-time table below
 make verify     # the rendered-pixels surface: target vs the portable C reference
 ```

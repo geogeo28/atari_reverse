@@ -180,7 +180,15 @@ $(FLOPPY)/AUTO/BLACKICE.PRG: $(DISK)/BLACKICE.PRG | $(FLOPPY)/AUTO
 $(FLOPPY)/BLACKICE.PAK: $(PAK) | $(FLOPPY)
 	cp $< $@
 
-all: $(FLOPPY)/AUTO/BLACKICE.PRG $(FLOPPY)/BLACKICE.PAK
+all: $(FLOPPY)/AUTO/BLACKICE.PRG $(FLOPPY)/BLACKICE.PAK $(DISK)/BLACKICE.ST
+
+# The bootable 720 KB image: what `run.sh` boots and what goes onto a real floppy (tools/st_build.py
+# is deterministic, so its sha256 is the check that a physical write took). TOS runs AUTO\*.PRG
+# itself, so the emulator's own --auto is not involved on this route.
+ST_BUILD := ../../../tools/st_build.py
+$(DISK)/BLACKICE.ST: $(FLOPPY)/AUTO/BLACKICE.PRG $(FLOPPY)/BLACKICE.PAK $(ST_BUILD)
+	$(PYTHON) $(ST_BUILD) $@ --label BLACKICE --auto $(FLOPPY)/AUTO/BLACKICE.PRG:BLACKICE.PRG \
+	    $(FLOPPY)/BLACKICE.PAK:BLACKICE.PAK
 
 # ---- the resource archive --------------------------------------------------------------------------
 
