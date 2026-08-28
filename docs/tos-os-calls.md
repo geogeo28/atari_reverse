@@ -16,6 +16,35 @@ the annotation automatically; this doc is the reference + how to read the result
 
 Return value in `d0`. Caller cleans the stack (`addq`/`lea` after the trap).
 
+### Line-A (`$aXXX`) — the other OS entry, and it is not a `trap`
+
+The 68000 defines no instruction in the `$Axxx` opcode row: executing one takes the
+**Line-A exception** (vector 10, `$28`), which TOS points at its **Line-A graphics API**.
+So a Line-A call is a bare opcode word inline in the code — no selector push, no `trap`,
+and `AtariOsTrapAnnotate` never sees it. Registers, not the stack, carry the arguments.
+
+| Opcode | Call | Opcode | Call |
+|--------|------|--------|------|
+| `$a000` | Init | `$a008` | TextBlt |
+| `$a001` | Put pixel | `$a009` | Show mouse |
+| `$a002` | Get pixel | `$a00a` | Hide mouse |
+| `$a003` | Line | `$a00b` | Transform mouse |
+| `$a004` | Horizontal line | `$a00c` | Undraw sprite |
+| `$a005` | Filled rectangle | `$a00d` | Draw sprite |
+| `$a006` | Line-by-line filled polygon | `$a00e` | Copy raster form |
+| `$a007` | BitBlt | `$a00f` | Contour fill |
+
+`$a000` Init is the one with a return value: it hands back the **Line-A variable block**
+in `a0` (screen base, resolution, font and table pointers; `a1`/`a2` get the font header
+and the function tables), and must be called before any other Line-A call. Games that
+drive the hardware directly still use a couple of these, most often `$a000` and
+`$a009`/`$a00a` to show/hide the TOS mouse pointer at startup. Zynaps' `_start` hides the
+mouse with `$a00a` four instructions in.
+
+A Line-A word **stops Ghidra's 68000 disassembler dead** (there is no SLEIGH constructor
+for it), which can hide most of a program — see
+[`ghidra-pipeline.md`](ghidra-pipeline.md), "Line-A opcodes".
+
 ## Selectors you'll meet most
 
 **GEMDOS (trap #1):** `0x00` Pterm0, `0x09` Cconws, `0x20` Super, `0x2F` Fgetdta,

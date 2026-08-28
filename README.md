@@ -541,9 +541,11 @@ reverse/
 │   ├── extract_graphics.py   ST 4-plane / RLE graphics → PNG
 │   ├── depack_gamex.py       static depacker for the Gamex/"PP" LZSS cruncher
 │   ├── depack_lsd.py         static depacker for the "LSD!" backwards-LZ cruncher
-│   ├── ghidra_scripts/       PrgLoader · AtariOsTrapAnnotate · ExportDecompC · ApplyNames · …
+│   ├── ghidra_scripts/       PrgLoader · LineAResolve · SeedFunctions · AtariOsTrapAnnotate ·
+│                             ExportDecompC · ApplyNames · …
 │   ├── hw_portability.py     how much of a game a memory-only differential can verify
-│   ├── headless.sh           bootstrap: import → load → analyze → annotate → export
+│   ├── headless.sh           bootstrap: import → load → resolve Line-A → analyze →
+│                             seed orphan code → annotate → export
 │   ├── reapply.sh            fast naming loop: apply names.txt → re-export
 │   ├── hw_scan.sh            dump bodies + call graph + hardware accesses → TSV
 │   ├── hatari_run.sh         run a game in Hatari (unpack in-place, then dump memory)
@@ -571,8 +573,8 @@ verification loop that ties the rest together. Full index: [`docs/README.md`](do
 | [packed-executables](docs/packed-executables.md) | the entry is garbage — depack via Hatari before analyzing |
 | [m68k-disassembly](docs/m68k-disassembly.md) | read 68000 asm, avoid sweep desync, spot jump tables |
 | [ghidra-pipeline](docs/ghidra-pipeline.md) · [ghidra-gui](docs/ghidra-gui.md) | drive Ghidra headless, then explore interactively |
-| [tos-os-calls](docs/tos-os-calls.md) | GEMDOS/BIOS/XBIOS/GEM calls, basepage, loaders |
-| [hardware-map](docs/hardware-map.md) | video/sound/MFP/IKBD registers, interrupts, Line-A |
+| [tos-os-calls](docs/tos-os-calls.md) | GEMDOS/BIOS/XBIOS/GEM calls and Line-A `$aXXX`, basepage, loaders |
+| [hardware-map](docs/hardware-map.md) | video/sound/MFP/IKBD registers, interrupts |
 | [graphics](docs/graphics.md) · [sound](docs/sound.md) | planar bitmaps, palettes, RLE; the YM2149 driver |
 | [on-target-execution](docs/on-target-execution.md) | run the verified reconstruction on real hardware |
 | [methodology](docs/methodology.md) | actually name things: anchors → outward, verify, iterate |

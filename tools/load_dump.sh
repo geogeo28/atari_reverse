@@ -4,6 +4,9 @@
 # The dump is imported raw at <base_hex> (already relocated — no PrgLoader), then
 # LoadDump seeds the entry, auto-analysis runs, traps are annotated, C is exported.
 # processor defaults to 68000:BE:32:default (use 68000:BE:32:MC68030 for 68010/020/030 code).
+#
+# The LineAResolve / SeedFunctions steps below are the same three the .PRG path runs
+# (same SLEIGH, same entry-then-follow-flow shape) — keep them in sync with headless.sh.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -18,6 +21,9 @@ mkdir -p "$PROJ_DIR"
   -loader BinaryLoader -loader-baseAddr "$BASE" -processor "$PROC" \
   -scriptPath "$HERE/ghidra_scripts" \
   -preScript LoadDump.java "$ENTRY" \
+  -preScript LineAResolve.java \
+  -postScript LineAResolve.java reanalyze \
+  -postScript SeedFunctions.java \
   -postScript AtariOsTrapAnnotate.java \
   -postScript ExportDecompC.java "$OUT" \
   -overwrite

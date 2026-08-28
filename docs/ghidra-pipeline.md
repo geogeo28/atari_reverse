@@ -16,6 +16,8 @@ interactive exploration in the GUI, see [`ghidra-gui.md`](ghidra-gui.md).
 | Script | Role |
 |--------|------|
 | `PrgLoader.java` | Rebuild memory: create TEXT at base (arg 2, default `0x10000`), apply **all** relocations in place (the DRI `1` byte is a 254-byte SPAN, not a fixup — getting that wrong corrupts one longword every 254 bytes, see [`binary-formats.md`](binary-formats.md)), import DRI symbols as labels, set entry, disassemble. Args: `<prg-path> [base_hex]`. GUI: prompts for the file. |
+| `LineAResolve.java` | Resolve Line-A (`$aXXX`) opcodes so disassembly does not stop at them: define the word as data with a naming comment, fall-through-override past it, resume disassembly, re-body the host function. Arg `reanalyze` re-runs analysis over its changes. See "Line-A opcodes" below. |
+| `SeedFunctions.java` | Create a function at the start of every run of disassembled code that belongs to none — branch-only entry points and jump-table arms Ghidra reached but never attributed, which `ExportDecompC` would otherwise skip. Never seeds from a linear sweep. |
 | `AtariOsTrapAnnotate.java` | Comment every `trap` with its call name (GEMDOS/BIOS/XBIOS from the pushed selector; GEM AES/VDI from `d0`), and rename thin single-trap wrappers. |
 | `ExportDecompC.java` | Decompile every function to a text file (arg 1), with a function index. This is your reading material. |
 | `ApplyNames.java` | Apply a `names.txt` map (`fn`/`var`/`cmt`) back into the DB; disassembles+creates functions for jump-only handler stubs. Strips a trailing `# ctx` confidence tag on `fn`/`var` lines. |
@@ -41,8 +43,12 @@ bash projects/<name>/run.sh          # wraps tools/headless.sh
 ```
 This raw-imports the PRG (`68000:BE:32:default`, BinaryLoader base 0), runs `PrgLoader`
 **as a pre-script** (before analysis, so analysis sees the correct memory), then
-auto-analysis, then trap annotation, then `ExportDecompC` → `decomp.c`. The Ghidra
-project is left in `projects/<name>/ghidra_proj/` — openable in the GUI.
+`LineAResolve`, auto-analysis, `LineAResolve reanalyze` + `SeedFunctions`, then trap
+annotation, then `ExportDecompC` → `decomp.c`. The Ghidra project is left in
+`projects/<name>/ghidra_proj/` — openable in the GUI.
+
+`LineAResolve` runs twice on purpose: before analysis it unblocks the entry path, and
+after analysis it catches Line-A words in code only auto-analysis reached.
 
 Why raw import + pre-script (not a custom Ghidra Loader)? A real Loader needs a Gradle
 build against your Ghidra install; the pre-script approach is zero-build and equivalent.
@@ -77,11 +83,70 @@ A trailing `# ctx` tags a low-confidence, context-inferred name — `ApplyNames`
 (→ `out/names_dump.txt`), diff against `names.txt`, and merge new/changed lines back —
 `names.txt` stays the source of truth and survives a future re-import.
 
+## Line-A opcodes (`$aXXX`) — one word can hide a whole program
+
+**Symptom.** Auto-analysis finds a handful of functions in a 40 KB program, and the log
+carries `WARN Decompiling <addr>, pcode error at <addr>: Unable to resolve constructor`.
+On ZYNAPS17.PRG that was **44 functions** found, `_start` exported as 16 bytes, and 1 of
+its 4 trap sites annotated.
+
+**Mechanism.** The 68000 has no instruction in the `$Axxx` row — it takes the Line-A
+exception, which TOS routes to its graphics API (`$a000` init, `$a00a` hide mouse, … see
+[`tos-os-calls.md`](tos-os-calls.md), "Line-A"). Games call them inline, mid-function.
+Ghidra's 68000 SLEIGH has no constructor for `$aXXX`, so **disassembly halts at that
+word**. Zynaps' `_start` hides the mouse at `0x10010`, five instructions in; everything
+reached through its ~150 `bsr.w` calls stayed undiscovered.
+
+**What `LineAResolve` does.** For each instruction whose fall-through lands on an
+undisassembled `$aXXX` word: define the word as 2-byte data with an EOL comment naming
+the call, give the *preceding* instruction a fall-through override past it
+(`Instruction.setFallThrough`), disassemble from the next word, and — after the fixed
+point — recompute the body of the function the site sits in with
+`CreateFunctionCmd.fixupFunctionBody` (a body is frozen when the function is created, so
+without this `_start` still exports as 16 bytes). Repeated until no new sites appear.
+
+**Limitation — the C can be positively WRONG, not merely incomplete.** The override
+models the Line-A call as a **no-op**, but a Line-A call destroys `d0`–`d2`/`a0`–`a2`, and
+`$a000` *returns* the Line-A variable block in `a0` (font header in `a1`, tables in `a2`).
+So
+
+```
+lea   tbl,a0
+dc.w  $a000        ; a0 := Line-A variable block
+move.l 2(a0),d1
+```
+decompiles as a read of **`tbl+2`** when the hardware reads `Line-A_var_block+2`. Never
+trust `d0`–`d2`/`a0`–`a2` across a site without reading the comment the script leaves
+there — a pre-comment at the resume address, so it lands in `decomp.c`, not just in the
+GUI listing (the decompiler's EOL-comment option is off by default). A site whose
+registers are all reloaded before use — Zynaps' single `$a00a` — is unaffected. What you
+get either way is a `_start` that decompiles end to end instead of truncating.
+
+The script also reports any `$a00x` word it could **not** resolve: one that a branch or
+call jumps straight to, which the fall-through detection does not cover. It requires an
+incoming flow reference before reporting, because a value-only sweep is nearly all false
+positives — on `JOUST.PRG` it flags 4 words, every one of them a sprite bitmap row.
+
+**Result on Zynaps** (`bash projects/zynaps/run.sh`):
+
+| | before | after |
+|---|---|---|
+| functions | 44 | 159 |
+| trap sites annotated | 1 | 4 (every real one) |
+| `decomp.c` lines | 1,416 | 8,273 |
+
+The remaining trap sites a linear sweep reports are not misses: three are ASCII inside
+string tables (`"CODING"` → `4e47` = `trap #7`), and the XBIOS `Xbtimer` at `0x16abe` sits
+in a routine with **no reference anywhere in the image** — dead code no flow-based
+analysis can reach. Chase those by hand in the GUI, not by seeding from a linear sweep.
+
 ## Gotchas
 
 - `run.sh` **re-imports and wipes names** — only for the first bootstrap; iterate with `reapply.sh`.
 - If `ApplyNames` reports fewer applied than expected, an `fn` address may be data or an
   unreached jump target; it disassembles+creates then, but verify it landed.
 - One program per project keeps `-process <PROG.PRG>` unambiguous.
+- "Unable to resolve constructor" has two causes: a Line-A `$aXXX` word (above), or a
+  68010/020/030 instruction — for the latter, re-bootstrap with the `MC68030` processor.
 
 → Next: [`methodology.md`](methodology.md) for how to choose names.

@@ -9,8 +9,11 @@
 raw import into Ghidra (68000:BE:32)
   │  PrgLoader: rebuild TEXT at base, apply     → docs/ghidra-pipeline.md
   │  relocations, import symbols, set entry
+  │  LineAResolve: unblock $aXXX opcodes, which
+  │  otherwise halt disassembly mid-program
   ▼
-auto-analysis + trap annotation                → docs/tos-os-calls.md
+auto-analysis, LineAResolve again + SeedFunctions
+  │  (attribute the orphan code), trap annotation → docs/tos-os-calls.md
   │  ExportDecompC → decomp.c
   ▼
 NAMING LOOP  (the bulk of the work)             → docs/methodology.md

@@ -14,8 +14,8 @@ reference project, but written as general procedure for any Atari ST binary.
 | [m68k-disassembly](m68k-disassembly.md) | read 68000 asm, run `prg_dis.py`, avoid sweep desync, spot jump tables | assembly |
 | [ghidra-pipeline](ghidra-pipeline.md) | load into Ghidra correctly, run the headless pipeline, drive the naming loop | tooling |
 | [ghidra-gui](ghidra-gui.md) | explore interactively in the GUI: decompiler, xrefs, spot-renaming, syncing to names.txt | tooling |
-| [tos-os-calls](tos-os-calls.md) | identify GEMDOS/BIOS/XBIOS/GEM calls, basepage, loaders | OS internals |
-| [hardware-map](hardware-map.md) | decode direct hardware access (video/sound/MFP/IKBD), interrupts, Line-A | hardware |
+| [tos-os-calls](tos-os-calls.md) | identify GEMDOS/BIOS/XBIOS/GEM calls **and Line-A `$aXXX`**, basepage, loaders | OS internals |
+| [hardware-map](hardware-map.md) | decode direct hardware access (video/sound/MFP/IKBD), interrupts | hardware |
 | [graphics](graphics.md) | decode bitmaps: planar format, palettes, RLE, extract sprites to PNG | graphics |
 | [sound](sound.md) | find & read the YM2149 sound/music driver | audio |
 | [on-target-execution](on-target-execution.md) | **run the verified reconstruction on real hardware** — the seam pattern, the bug class the harness can't see (timing/endian/ABI/codegen), **measuring that blindness before you pick what to port** (`hw_scan.sh` / `hw_portability.py`), the diagnostic toolkit | on-target / perf |

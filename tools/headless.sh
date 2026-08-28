@@ -8,7 +8,12 @@
 # that use 68010/020/030 instructions (movec, moves, extended addressing, ...).
 #
 # Pipeline: raw import (68000 BE) -> PrgLoader (rebuild+reloc+symbols, pre-analysis)
-#           -> auto-analysis -> AtariOsTrapAnnotate -> ExportDecompC.
+#           -> LineAResolve -> auto-analysis -> LineAResolve (reanalyze)
+#           -> SeedFunctions -> AtariOsTrapAnnotate -> ExportDecompC.
+#
+# LineAResolve runs twice because a $aXXX opcode halts disassembly: once before
+# analysis (the entry path) and once after it (code only auto-analysis reached).
+# tools/load_dump.sh runs the same three steps — keep the two lists in sync.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -23,6 +28,9 @@ mkdir -p "$PROJ_DIR"
   -loader BinaryLoader -loader-baseAddr 0 -processor "$PROC" \
   -scriptPath "$HERE/ghidra_scripts" \
   -preScript PrgLoader.java "$PRG" "$BASE" \
+  -preScript LineAResolve.java \
+  -postScript LineAResolve.java reanalyze \
+  -postScript SeedFunctions.java \
   -postScript AtariOsTrapAnnotate.java \
   -postScript ExportDecompC.java "$OUT" \
   -overwrite

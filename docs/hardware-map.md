@@ -41,9 +41,12 @@ BuggyBoy's `flip_screen` toggles an index and writes the base to `$ffff8200`, th
 
 ## Line-A
 
-The ST's low-level graphics primitives, invoked by opcodes `$A000–$A00F` (illegal
-instructions the OS traps): `$A000` init, `$A001` put pixel, `$A002` get pixel, `$A00A`
-draw sprite, `$A00D` copy raster… BuggyBoy's loader uses `$A000`/`$A00A`/`$A00D`. Treat an
-`$A0xx` word as a Line-A call, not data.
+The ST's low-level graphics primitives, invoked by opcodes `$A000–$A00F` — illegal
+instructions the OS traps. Treat an `$A0xx` word as a Line-A call, not data. BuggyBoy's
+loader uses `$A000`/`$A00A`/`$A00D` = **init / hide mouse / draw sprite**.
+
+Full opcode table: [`tos-os-calls.md`](tos-os-calls.md), "Line-A". A Line-A word also
+**halts Ghidra's disassembler** — see [`ghidra-pipeline.md`](ghidra-pipeline.md),
+"Line-A opcodes".
 
 → Assets: [`graphics.md`](graphics.md), [`sound.md`](sound.md).
