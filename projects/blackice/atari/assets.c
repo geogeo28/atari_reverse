@@ -28,8 +28,15 @@
  *
  * The capacity fits DESIGN 17.4's whole resident wall set (15 textures at TEX_WORD_BYTES each is
  * 122,880) alongside the largest temporary that coexists with it, plus the sprites, the HUD, the
- * font and one level. assets_load refuses rather than overruns if a future art drop outgrows it. */
-#define ARENA_BYTES         (192 * 1024)
+ * font and one level. assets_load refuses rather than overruns if a future art drop outgrows it.
+ *
+ * THE PEAK IS INSIDE load_sprites, not at the end of the load: the SPRTEX temporary is still held
+ * while the nine sprite images are allocated permanently. Against DESIGN 17.4's 15-texture wall
+ * set that is 122,880 + 38,036 (SPRTEX raw) + 74,880 (9 sprites at SPRITE_SPAN_BYTES +
+ * TEX_WORD_BYTES) = 235,796, leaving 26,348 spare here. The shipped ten-texture set peaks at
+ * 194,836 — which is what took this from 192 KB: that size fit the two procedural placeholder
+ * billboards and was 2,692 bytes short of the nine the real art carries. */
+#define ARENA_BYTES         (256 * 1024)
 
 static uint8_t g_arena[ARENA_BYTES];
 static unsigned long g_arena_used;          /* permanent blocks, from g_arena upward */
@@ -42,11 +49,15 @@ uint16_t g_ste_palette[PALETTE_PENS];
 const uint8_t *g_hud_backdrop;
 const uint8_t *g_font;
 
-/* Defined here rather than linked from src/assets_placeholder.c: on the target the sprite images
+/* Defined here rather than linked from src/assets_data.c: on the target the sprite images
  * live in the arena, and their `texels` pointer is the WORD form render.S reads (see plat.h).
  * src/sprite.c only ever copies that pointer into a RenderSprite, so the type is honest about
  * ownership even though the pointee is words. */
-#define SPRITE_ASSET_MAX    8
+/* One distinct asset per entity type is the ceiling the SPRTEX blob can ever describe — its type
+ * map has exactly ENT_TYPE_COUNT entries — so the bound is that, and load_sprites can only refuse
+ * a blob that is actually malformed.  A hand-picked smaller number refuses valid art instead: 8
+ * was chosen when two procedural billboards covered every type, and the shipped set is nine. */
+#define SPRITE_ASSET_MAX    ENT_TYPE_COUNT
 
 static SpriteAsset g_sprite_assets[SPRITE_ASSET_MAX];
 const SpriteAsset *g_entity_sprites[ENT_TYPE_COUNT];
@@ -69,6 +80,9 @@ const uint8_t *g_wall_textures[WALL_TEXTURE_MAX + 1];
 static uint8_t g_directory[PAK_MAX_ENTRIES * PAK_ENTRY_BYTES];
 static uint16_t g_entry_count;
 static short g_pak_handle;
+/* Kept from the first open so a later sector can reopen the archive without the caller repeating
+ * the path; the string is a literal owned by main.c and outlives the run. */
+static const char *g_pak_path;
 
 static uint16_t read_be16(const uint8_t *p)
 {
@@ -482,9 +496,58 @@ static AssetsResult read_directory(void)
     return ASSETS_OK;
 }
 
-/* The level the first playable starts on. DESIGN 18's ladder puts sector 1 first, and the archive
- * numbers its levels from 1 in the order tools/mklevel.py compiled them. */
-#define LEVEL_MEMBER_FIRST      "LEVEL1"
+/*
+ * The archive numbers its levels from 1, in the order tools/mklevel.py compiled them, and a Level's
+ * own `sector_index` is that number minus one — so sector 0 is "LEVEL1". This used to be a single
+ * #define naming "LEVEL1" and nothing else ever loaded a level: the seven other members were dead
+ * weight and the game could never reach sector 2, which is DESIGN 18 item 1's whole first playable.
+ */
+#define LEVEL_MEMBER_PREFIX     "LEVEL"
+#define LEVEL_MEMBER_NAME_BYTES 8
+
+static void level_member_name(uint8_t sector_index, char *out)
+{
+    const char *prefix = LEVEL_MEMBER_PREFIX;
+    int at = 0;
+
+    while (*prefix) {
+        out[at++] = *prefix++;
+    }
+    out[at++] = (char)('1' + sector_index);     /* one digit: ASSETS_LEVEL_COUNT is under ten */
+    out[at] = '\0';
+}
+
+AssetsResult assets_load_level(uint8_t sector_index, Level *level)
+{
+    char name[LEVEL_MEMBER_NAME_BYTES + 1];
+    long handle;
+    AssetsResult result;
+
+    if (sector_index >= ASSETS_LEVEL_COUNT) {
+        return ASSETS_ERR_MISSING;
+    }
+    /* The path is only set once assets_load has opened the archive successfully. Without this a
+     * caller that reached here after a failed boot would hand Fopen a null pointer, and what GEMDOS
+     * does with one is not something this program should find out. */
+    if (!g_pak_path) {
+        return ASSETS_ERR_OPEN;
+    }
+    level_member_name(sector_index, name);
+    /* The archive is opened and closed around each load rather than held for the run: a GEMDOS
+     * handle costs nothing to reopen, and a program that has taken the vertical blank away from the
+     * desktop should not be holding a file open across a whole sector. */
+    handle = Fopen(g_pak_path, FOPEN_READ);
+    if (handle < 0) {
+        return ASSETS_ERR_OPEN;
+    }
+    g_pak_handle = (short)handle;
+    result = read_directory();
+    if (result == ASSETS_OK) {
+        result = load_level(name, level);
+    }
+    Fclose(g_pak_handle);
+    return result;
+}
 
 AssetsResult assets_load(const char *pak_path, Level *level)
 {
@@ -494,6 +557,7 @@ AssetsResult assets_load(const char *pak_path, Level *level)
     if (handle < 0) {
         return ASSETS_ERR_OPEN;
     }
+    g_pak_path = pak_path;
     g_pak_handle = (short)handle;
     g_arena_temp_top = ARENA_BYTES;
     build_shade_tables();
@@ -515,7 +579,7 @@ AssetsResult assets_load(const char *pak_path, Level *level)
         result = load_blob("FONT", FONT_GLYPH_COUNT * FONT_GLYPH_BYTES, &g_font);
     }
     if (result == ASSETS_OK) {
-        result = load_level(LEVEL_MEMBER_FIRST, level);
+        result = load_level(LEVEL_MEMBER_PREFIX "1", level);
     }
     Fclose(g_pak_handle);
     return result;

@@ -14,6 +14,7 @@ reproducible from it.
 |---|---|---|
 | build **A**, 02:11 | `90014b9bc1140f6a0bdb604d07d0797a1a32a8d8e278c5e9f2037ef45820f3ea` | every scenario below |
 | build **B**, 02:43 (asm cast, joystick port 1 only, ST-Low forced) | `d5e33e2ae7ab8d5c9c0317a395cd0f9fc6ad2d8755c315f9eb672062d47b91e5` | scenarios 1 and 2, re-run |
+| build **C** (this file's defects 1-7 and 10 fixed; the art pass's textures and nine sprite images) | `dd8834d9ec03e60b5aebd24ad24d81901e1210e37bc8298f37753101a4680954` | scenarios 3b, 4, 5, 7, 8 re-run — see § Re-test below |
 
 Build B renders **exactly** the same picture as A — the two boot frames differ in **0 of 204,800
 view pixels**, and only in the frame-time digits of the HUD — and it is **~25% faster**: that boot
@@ -40,6 +41,53 @@ defects that dominate the ranking (§ Defects 1 and 2) are in `main.c`'s frame l
 | 8 | Reach the exit → level clear → level 2 loads | **FAIL** | `s8c.txt`, `s8c/shots/64_exit_0.png`, `65_after_phase2.png`, `66_after2.png` | The arch works: touching it sets `phase = PHASE_LEVEL_CLEAR`. **And that is the end of it** — no `SECTOR CLEAR` overlay, no transition, no level 2, forever. Level 2 *cannot* load: `assets.c` hard-codes `LEVEL_MEMBER_FIRST = "LEVEL1"` and nothing else ever calls `load_level`, even though `BLACKICE.PAK` ships all eight compiled levels. |
 | 9 | Extra: the rest of DESIGN 6 | **MOSTLY PASS** | `s9.txt`, `s10.txt`, `s10/shots/87_p1.png`, `s9/shots/81_underclock.png` | `P` pauses (sim frozen, `PAUSED - P RESUME, ESC ABORT` on the HUD) and resumes. `7`/`8`/`9` switch throttle — the HUD dial moves and the render radius visibly changes. `Z`/`X` strafe. **`Shift`+arrow strafes; `Alt`+arrow does nothing at all** (§ Defects 5). |
 | — | Joystick | **BLOCKED** | see § The joystick, below | Not the game's fault and not proven to be fine either. |
+
+---
+
+## Re-test, build C
+
+Everything below was re-run with the same driver against build C. **The five scenarios that were
+PARTIAL or FAIL are now PASS.** Two of them needed the debugger to place the player, and that is
+said in the row rather than folded into the verdict.
+
+| # | Scenario | Was | Now | What changed, and the evidence |
+|---|---|---|---|---|
+| 3b | Collect the ALPHA token | PARTIAL | **PASS** | Placed on the token's cell (4.5, 18.5), `tokens` reads 1 and the `A` pip lights. The *route* to it is still lethal (defect 8 stands); what is proven now is that collection works. |
+| 4 | Shoot an enemy, it dissolves | PARTIAL/FAIL | **PASS** | **`kills` = 4 from six shots** at a Watchdog two cells north, and 3 from four shots on the final binary. **Defect 7 was aim, not the weapon**: the hitscan and the renderer share `angle_cos`/`angle_sin`, and the seam's latch does deliver INPUT_FIRE to the tick that consumes it. Firing also flashes now. |
+| 5 | The trace meter recolours the world | PARTIAL | **PASS** | Registers read out of `$ffff8240` at three bands. Band 2 (DEGRADED) moves registers 1-4 through the shade LUT; band 3 (**CORRUPT**) puts the magenta ramp into 1-5 byte for byte — `f47 ea6 d95 48b 902`, exactly registers 6-10. Registers 0 and 6-15 are untouched at every band, which is DESIGN 3's variant invariant. |
+| 7 | Integrity to 0, death, retry | FAIL | **PASS** | Integrity 100 to 0 in the kennel, `phase` 1, `deaths` 1; then a **CONNECTION TERMINATED / RECONNECTING / 00:12** overlay for two seconds, then the sector restarts at (15.5, 28.5) with integrity 100, the death carried, and **trace starting at 10.9%** — DESIGN 9's +10% a death, applied. |
+| 8 | Reach the exit, level 2 loads | FAIL | **PASS** | The arch gives **SECTOR CLEAR / INGRESS / 00:03**, then **THE LEDGER** loads: a different corridor and the HUD title updated. `assets_load_level` indexes LEVEL1..LEVEL8 by `next_sector_index`; after the last sector it is RUN COMPLETE and back to the title. |
+| 9 | Alt+arrow strafe | MOSTLY PASS | **PASS (documented)** | Alt is **dropped**, not fixed: TOS owns Alt+arrow for its keyboard mouse emulation and the scancode never reaches Bconin. Shift is the modifier the build and the README now name. DESIGN 6 still says Alt and still needs the correction. |
+
+Three defects the re-test found in the fixes themselves, all three invisible from inside the code:
+
+* **The key that starts the run also fired the first shot.** SPACE is both "start" and INPUT_FIRE,
+  and TOS's type-ahead keeps repeating a held key, so one drain was not enough — the HUD read 59
+  cycles at 00:03 on the first boot of the title screen. The drain now waits for the keyboard to go
+  quiet for 25 blanks.
+* **The death overlay came up under the damage flash.** `play()` returns on the very frame that
+  lifted the palette for a hit, so the whole screen — HUD included — was washed grey. The palette is
+  put back before any overlay.
+* **Level 2 loaded with level 1's name on the HUD.** `hud_draw` compares the sector name BY POINTER
+  and every level loads into the same static `Level`, so the pointer never changes and the field was
+  never redrawn. A level change now invalidates the whole strip.
+
+And one in the loader: the art pass shipped **nine** sprite images against a `SPRITE_ASSET_MAX` of
+eight, and that refusal is silent from outside — `assets_load` returns ASSETS_ERR_SHAPE, one line
+prints, and the program exits. From the harness it looks like a bench run that never wrote its
+ledger. The cap is 16 and the arena 256 KB now; the measured peak with the current art is 194,836
+bytes, which had 1,772 to spare at the old size.
+
+**Found after the re-test, and not by QA:** every wall was rendered **left-right mirrored** — the
+authored PNG's column 0 on the right of every face. It survived because the rule was uniform across
+all four facings, so there was no seam to see and no geometry test to fail. `README.md`'s "The
+handedness fix" has the four-facing measurement; the screenshots in this file predate it and their
+walls are mirrored relative to the shipping build.
+
+**What is still open from the ranked list:** defect 8 (the documented route is lethal — but a kill
+is now confirmed and a death is now survivable, which is most of what made it a dead end), defect 9
+(5-13 fps, the DESIGN 17.3 gate README.md reports as MISSED), defect 11 (four music tempi for five
+bands), and the joystick, which is still blocked on Hatari and not on the game.
 
 ---
 

@@ -21,11 +21,11 @@ and a verdict is real hardware.
 | `audio/` — YM2149 music + STE DMA SFX | **DONE** | Tick **2,962 cyc/frame** (demo tune) and **2,922** with the game's score at its fastest band, against a 3,000 budget = 1.9% of a 160,000-cycle frame. `AUDIOTEST.PRG` 19/19 checks PASS; `BICETEST.PRG` 20/20 PASS. Score 5 songs, 3,978 B of 8,192; bank 10 cues, 4.80 s, 60,176 B of 102,400. Tempo bands 4/4 read back off the recorded audio; pitch 18/18 within 0.68%; samples 10/10 cross-correlated |
 | `spike/` — Milestone 0 feasibility | **DONE** (superseded by the target's own numbers) | Unit rates that seeded the whole budget: c2p 33.1 / 41.6 cyc per logical px, wall texel 66.6, planar fill 2.71 cyc/B, cast 2,530 cyc/ray; band fill = 40–42% of the frame |
 | `levels/` — the eight maps | **DONE** | `validate_levels.py`: **8 checked, 8 passed, 0 failed**. Warning 9 withdrawn by D3; the compiler carries eight rules and one warning |
-| `include/` + `src/` + `test/` — portable core and gameplay layer | **DONE** for the first-playable scope | **376 pytest**. `FOCAL_ROWS` = 115, `DETAIL_DEFAULT` = `DETAIL_COLUMNS_80`. libgcc arithmetic-helper gate **clean over 19 objects** here and **25** in the target build (`hash`/`rng`/`tables` exempt with reasons, plus `bench_main` there). §18 items implemented: Watchdog / Sentry / Tracer on one BFS distance field, the Buster, door variants 16–19 with the token latch, the trace meter and its four bands, pickups, death and retry, sector clear. BFS rebuild **230,000 cycles** on level 2 every 8 sim ticks = **≈28,800 cycles/frame** amortised |
+| `include/` + `src/` + `test/` — portable core and gameplay layer | **DONE** for the first-playable scope | **442 pytest**. `FOCAL_ROWS` = 115, `DETAIL_DEFAULT` = `DETAIL_COLUMNS_80`. libgcc arithmetic-helper gate **clean over 19 objects** here and **25** in the target build (`hash`/`rng`/`tables` exempt with reasons, plus `bench_main` there). §18 items implemented: Watchdog / Sentry / Tracer on one BFS distance field, the Buster, door variants 16–19 with the token latch, the trace meter and its four bands, pickups, death and retry, sector clear. BFS rebuild **230,000 cycles** on level 2 every 8 sim ticks = **≈28,800 cycles/frame** amortised |
 | `atari/` — the STE target | **DONE** | `BLACKICE.PRG` 41,002 B on disk, `BENCH.PRG` 44,399 B, `BLACKICE.PAK` 13,394 B, `floppy/` staged as the shipping 720 KB disk. Resident `.bss` 345,636 B; program + `.bss` 385,751; **~473,000 of 1,048,576 with TOS, ~550 KB spare**. Surfaces: rendered pixels **PASS, 0 of 51,200 differ at BOTH detail levels**; silhouette **PASS, 0 of 320 columns**; teardown **PASS** (against a control boot, so it measures us and not EmuTOS); machine health **PASS**; cast self-check **PASS, 0 columns differ over 500 frames**; ledger vs `BENCH.TXT` agree within 1.6 µs; timer-C probe PASS. Pixel surface mutation-tested: a one-row-short wall run is caught (564 px, 282 columns) |
 | **Frame-rate gate** | **MISSED** | Delivered (flip-locked) **8.33 fps at 80 columns** on the golden walk — 105,650 µs, 9.46 fps of work — and **5.00 at 160**. Against the BRIEF's ≥ 14 fps at 160 / ≥ 20 at 80: **3.1–3.2× over** the 320,000-cycle budget at 80 columns and **3.7–4.1×** over 480,000 at 160. Frame split at 160 on the walk: columns 46%, cast 27%, c2p 24%, sim 2% |
 | **Real hardware** | **NOT STARTED** | Nothing in this project has ever run on an STE. `atari/floppy/` is staged and ready |
-| QA play-test | **QA report pending** | No `atari/QA.md` and no `atari/play_headless.py` in the tree as of this date. The headless play harness that exists is `build/blackice_play` (`build/blackice_play --level levels/level1.txt --frames 300 --out host/out --png 0,100,200`), which drives the game layer live and prints per-frame player state and a letter per live enemy. **Unconfirmed** whether a QA wave has run |
+| QA play-test | **PLAYED headless** (`atari/QA.md`, `atari/play_headless.py` presses keys into a live Hatari over `--cmd-fifo`, screenshots, reads `GameState` from RAM) | Boot, movement (no tearing), token refusal + gate, Esc exit PASS on the first pass; death/retry, sector clear → level 2, palette bands, fire/damage flash, title screen, kills (4 of 6 shots) FAIL then **FIXED and re-proven on build C** (QA.md's re-test table). Joystick still BLOCKED by Hatari's dummy-video keyboard emulation, not the game |
 
 ## The perf decision, and the levers measured for it
 
@@ -65,20 +65,8 @@ machine with no free `_vblqueue` slot.
   the palette, the video registers and `_vblqueue` and says so about this one. The PSG port-A floppy
   deselect is likewise unobserved, because the load goes through GEMDOS and nothing in Hatari
   depends on it. Both want a register trace or an iron run.
-- **The HUD strip renders its values but not its panel labels — open visual defect, check first.**
-  In `atari/game_hatari.png` (the playable build under Hatari) the strip shows INGRESS, `00:19`,
-  `76MS`, a 3% trace bar, a 100% integrity bar, 60 cycles, the A/B/C key slots and the weapon icon —
-  but **none** of the TRACE / INTEGRITY / CYC / KEY panel labels that `art/out/hud_strip.png` and
-  `art/out/mockup_the_ledger.png` carry. Verified by looking at the image, not inferred. Two
-  candidates: `hud.c`'s dynamic field redraw paints over the label rows, or the packed HUD backdrop
-  in `BLACKICE.PAK` is not the art pass's Revision-3 strip. Diagnose by comparing
-  `atari/game_hatari.png` against `art/out/mockup_the_ledger.png` row by row. Note this is a
-  **backdrop/label** fault only — every live field is drawn and correct — so it is invisible to the
-  pixel surface, which excludes the bottom 40 lines by design.
-- **The evidence set has no near-wall screenshot.** The in-game frame in `atari/game_hatari.png` is
-  a distant corridor (walls ≈25 rows), so every texture in it is band-3 fogged — precisely the band
-  where `art/ART_REVIEW.md` measured four textures as 85–89% identical. Nothing in the evidence set
-  shows a texture at close range, where the art's detail actually lives. Capture one.
+- **HUD panel labels — FIXED.** `hud.c`'s field redraw painted over the art's label row; each field now draws label / value / bar in three rows, pinned by 11 `_Static_assert`s (the strip is outside the pixel surface). `atari/game_hatari.png` and `atari/near_wall_hatari.png` show TRACE / INTEGRITY / CYC / KEY / CLK. Remaining gap vs the mockup: the bevelled well borders are covered, TRACE is single-height, KEY shows `ABC` glyphs.
+- **Near-wall evidence — DONE:** `atari/near_wall_hatari.png` (the sector-key panel at one cell, 148 ms = the nose-to-wall worst case). **The game now ships the REAL art**: `tools/mkassets.py --art` converts `art/out/native/*.png` through stepix into `src/assets_data.c` (10 textures, 9 sprites, 78,976 B; PAK 17,130 B), pinned by `test/test_art_assets.py` (60 cases). **Wall handedness fixed**: every face rendered mirrored (invisible with the symmetric placeholders); the rule was inverted in `src/raycast.c`, `atari/cast.S` and `test/test_raycast.py` together, checked from all four facings, goldens re-blessed (state hash unchanged).
 - **The joystick path is installed and unexercised.** Nothing headless presses a fire button; the
   bench runs from a compiled-in script. The keyboard path is exercised only in the sense that it
   compiles, and held keys are joystick-only (`Bconin` delivers makes and repeats, never a release).
@@ -158,10 +146,7 @@ pips are driven, because there is one weapon.
 3. **Decide `FOCAL_ROWS` 96 vs 115** from the frame-shape counters, and record it as a design
    decision either way — it trades D1's square cell face for ≈9%.
 4. **Set `SPR_PX_BUDGET` from the measured 46 cyc/px** and retire the provisional 6,000.
-5. **Diagnose the missing HUD panel labels** (above) — it is the one defect visible in the only
-   screenshot of the playable build, and it is cheap: compare the packed backdrop against
-   `art/out/hud_strip.png`, then check `hud.c`'s field rectangles against the art's label rows.
-   Capture a near-wall screenshot for the evidence set in the same pass.
+5. **HUD polish** — restore the bevelled well borders under the fields (8-px alignment trade), the 2x TRACE readout and key pips as in `art/out/mockup_the_ledger.png`; pack the art title screen into the PAK (the title is font-drawn today).
 6. **Fix `atari/README.md`'s stale libgcc-gate paragraph** and note the fix to `sprite_pixel_cost`.
 7. **Close the sprite pixel surface** with an input script that walks the player onto a pickup, so
    the drawer is compared over more than 14 chunky pixels.

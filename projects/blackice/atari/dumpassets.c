@@ -3,7 +3,7 @@
  *
  * WHY THIS EXISTS.  The Atari target loads its art from BLACKICE.PAK, while the
  * host reference build renders from the arrays compiled into
- * src/assets_placeholder.c and src/tables.c.  atari/verify.py compares the
+ * src/assets_data.c and src/tables.c.  atari/verify.py compares the
  * target's rendered pixels against the host's, so the two builds have to hold
  * BYTE-IDENTICAL art: any second copy of the art - hand-maintained, re-exported,
  * re-quantised - is a divergence waiting to happen, and it would surface as a
@@ -11,7 +11,7 @@
  *
  * So the PAK is GENERATED from the engine's arrays rather than authored beside
  * them.  This program is the extractor: it is built for the host, linked against
- * the same src/assets_placeholder.c and src/tables.c the host renderer uses, and
+ * the same src/assets_data.c and src/tables.c the host renderer uses, and
  * writes what those arrays actually contain.  atari/mkpak.py then packs the
  * dumps.  There is exactly one source of truth and it is the C.
  *

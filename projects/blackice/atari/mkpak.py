@@ -3,7 +3,7 @@
 
 WHY THE PAK IS GENERATED, NOT AUTHORED.  The Atari target loads its art out of
 BLACKICE.PAK; the host reference build renders from the arrays compiled into
-src/assets_placeholder.c and src/tables.c.  atari/verify.py compares the target's
+src/assets_data.c and src/tables.c.  atari/verify.py compares the target's
 rendered pixels against the host's, so the two builds must hold BYTE-IDENTICAL
 art - and the only way to guarantee that is to derive one from the other rather
 than maintain two copies that can drift.  So `atari/dumpassets` (a host program

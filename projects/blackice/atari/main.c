@@ -22,6 +22,7 @@
  */
 #include "assets.h"
 #include "hud.h"
+#include "overlay.h"
 #include "plat.h"
 #include "tos.h"
 
@@ -30,6 +31,7 @@
 #include "mem.h"
 #include "render.h"
 #include "sprite.h"
+#include "trace.h"
 
 #include "ym_music.h"
 #include "blackice_song.h"
@@ -312,6 +314,81 @@ static void set_palette(const uint16_t *words)
 
     for (i = 0; i < PALETTE_PENS; ++i) {
         pen[i] = words[i];
+    }
+}
+
+/* ---- the trace meter's palette variants (DESIGN 3, DESIGN 9) --------------------------------
+ * DESIGN 9 makes the trace meter recolour the world, and DESIGN 3's variant invariant says exactly
+ * how much of it: ONLY registers 1..5, the cyan ramp. Registers 0, 6..10 and 11..15 are identical
+ * in every variant, which is what keeps the rim gate's 31.3 Y margin and the sprite transparency
+ * key true across all four without re-running the harness.
+ *
+ * The archive ships one PALETTE member, so the variants are DERIVED here rather than shipped:
+ *   DEGRADED  registers 1..5 remapped through g_shade_lut[1] — one rung darker, and no new colour
+ *   CORRUPT   registers 1..5 take the MAGENTA ramp's values (6..10): the infrastructure itself
+ *             reads hostile, and only the white rim still separates ICE from wall
+ *   KERNEL    a blue-white wash: each cyan rung blended halfway to white
+ *
+ * KERNEL IS A STAND-IN. DESIGN 3 says the art pass authors that ramp under both gates and the
+ * document "states the constraint and does not hand-author the hexes"; nothing has authored it yet,
+ * so this blend fills the slot. It satisfies the invariant (it touches 1..5 and nothing else) and
+ * it is the one variant here that is a platform invention rather than a document's instruction.
+ */
+#define PALETTE_VARIANT_COUNT   4
+#define PALETTE_RAMP_FIRST      1       /* the cyan ramp, the only registers a variant may move */
+#define PALETTE_RAMP_LAST       5
+#define PALETTE_MAGENTA_OFFSET  5       /* register i's magenta twin is i + 5 (DESIGN 3's table) */
+
+static uint16_t g_palette_variants[PALETTE_VARIANT_COUNT][PALETTE_PENS];
+
+/* The STE keeps the ST's three bits where they were and bolted the fourth on as bit 3, where it is
+ * the LEAST significant bit of the intensity — so a nibble is a ROTATION of the value and not a
+ * widening. pipeline/README.md section 1 is canonical; hand-encoding gets it wrong in a way that
+ * looks almost right. */
+static uint8_t ste_intensity(uint8_t nibble)
+{
+    return (uint8_t)(((nibble & 7) << 1) | (nibble >> 3));
+}
+
+static uint16_t ste_nibble(uint8_t intensity)
+{
+    return (uint16_t)(((intensity >> 1) & 7) | ((intensity & 1) << 3));
+}
+
+#define STE_CHANNELS        3
+#define STE_NIBBLE_MASK     0xf
+#define STE_INTENSITY_MAX   15
+
+/* Blend a colour word halfway towards full white, channel by channel in intensity space. */
+static uint16_t ste_wash_to_white(uint16_t word)
+{
+    uint16_t out = 0;
+    int channel;
+
+    for (channel = 0; channel < STE_CHANNELS; ++channel) {
+        int shift = channel * 4;
+        uint8_t value = ste_intensity((uint8_t)((word >> shift) & STE_NIBBLE_MASK));
+
+        out |= (uint16_t)(ste_nibble((uint8_t)((value + STE_INTENSITY_MAX) / 2)) << shift);
+    }
+    return out;
+}
+
+static void build_palette_variants(void)
+{
+    int pen;
+    int variant;
+
+    for (variant = 0; variant < PALETTE_VARIANT_COUNT; ++variant) {
+        for (pen = 0; pen < PALETTE_PENS; ++pen) {
+            g_palette_variants[variant][pen] = g_ste_palette[pen];
+        }
+    }
+    for (pen = PALETTE_RAMP_FIRST; pen <= PALETTE_RAMP_LAST; ++pen) {
+        g_palette_variants[PALETTE_VARIANT_DEGRADED][pen] = g_ste_palette[g_shade_lut[1][pen]];
+        g_palette_variants[PALETTE_VARIANT_CORRUPT][pen] =
+            g_ste_palette[pen + PALETTE_MAGENTA_OFFSET];
+        g_palette_variants[PALETTE_VARIANT_KERNEL][pen] = ste_wash_to_white(g_ste_palette[pen]);
     }
 }
 
@@ -994,12 +1071,47 @@ static void apply_key(uint8_t scancode, int strafing, PlayerIntent *intent)
  * arrow key moves at the repeat rate. The joystick is the movement device (DESIGN 6 says the game
  * is completable with joystick plus Alt, and that is exactly what this supports).
  */
+/*
+ * Throw away everything TOS has buffered. The press that leaves the title screen, or that
+ * dismisses an overlay, must not also be the first tick's input: SPACE is both "start" and INPUT_FIRE,
+ * and without this the run began by spending a cycle on a shot nobody aimed (measured on the first
+ * headless boot of the title: the HUD read 59 cycles at 00:03).
+ */
+/*
+ * Vertical blanks the keyboard must stay quiet for before the game accepts input again. A single
+ * drain is not enough: the key that started the run is still HELD, and TOS's type-ahead keeps
+ * delivering repeats for as long as it is — measured, the first tick of the run spent a cycle on a
+ * shot nobody aimed and the HUD read 59 cycles at 00:03. Bconin never reports a release, so
+ * "quiet for a while" is the only release this layer can see.
+ */
+#define KEY_SETTLE_VBLS 25
+
+static void drain_keyboard(void)
+{
+    unsigned long quiet_until = g_vbl_count + KEY_SETTLE_VBLS;
+
+    while (g_vbl_count < quiet_until) {
+        if (Bconstat(BCON_DEVICE_KEYBOARD)) {
+            (void)Bconin(BCON_DEVICE_KEYBOARD);
+            quiet_until = g_vbl_count + KEY_SETTLE_VBLS;
+        }
+    }
+    g_joy_sticky = 0;
+}
+
 static PlayerIntent read_input(void)
 {
     PlayerIntent intent;
     uint8_t joy;
-    int strafing = (Kbshift(KBSHIFT_READ)
-                    & (KBSHIFT_ALTERNATE | KBSHIFT_LEFT_SHIFT | KBSHIFT_RIGHT_SHIFT)) != 0;
+    /*
+     * SHIFT, AND NOT ALT, AND THAT IS A HARDWARE FINDING. DESIGN 6 names Alt first and rests
+     * "completable with joystick plus Alt" on it — but TOS eats Alt+arrow for its own keyboard
+     * mouse emulation and never puts the arrow's scancode in the buffer, so `Bconin` never sees it
+     * and the modifier is dead. QA measured it: from a standing start Shift+Left strafed x 15.50 ->
+     * 12.66 and Alt+Left moved neither position nor angle. Shift already worked, so the modifier
+     * this build documents is Shift; DESIGN 6 needs the same correction.
+     */
+    int strafing = (Kbshift(KBSHIFT_READ) & (KBSHIFT_LEFT_SHIFT | KBSHIFT_RIGHT_SHIFT)) != 0;
 
     intent.input = 0;
     intent.quit = 0;
@@ -1134,8 +1246,9 @@ static int monitor_cannot_show_the_game(void)
 
 #ifndef BLACKICE_BENCH
 
-/* 28 glyphs, which is what the title bar's left half holds (hud.c's TITLE_NAME_GLYPHS). */
-#define PAUSE_MESSAGE   "PAUSED - P RESUME, ESC ABORT"
+/* 27 glyphs against the 28 the title bar's left half holds (hud.c's TITLE_NAME_GLYPHS), so it ends
+ * one glyph clear of the run clock. At 28 it read as "ESC ABORT00:09". */
+#define PAUSE_MESSAGE   "PAUSED - P RESUME ESC QUIT"
 /*
  * Timer units to whole milliseconds for the HUD's readout. TIMER_TICK_NS is 26,042 ns, so a tick is
  * 26.042 us and this rounds it to 26: 0.16% low on a number the player reads to three digits, in
@@ -1157,27 +1270,160 @@ static uint16_t frame_milliseconds(unsigned long ticks)
 }
 
 /*
+ * The whole ramp lifted halfway to white for ONE frame. DESIGN 7 wants a two-frame register-12
+ * muzzle flash and DESIGN 18 item 7 a damage flash; both are sprites in the document and sprites
+ * belong to the engine, so the platform's honest version of "the screen flinches" is the palette.
+ * QA.md defect 6 is that firing and being hit produced no picture of any kind.
+ */
+static void palette_flash(const uint16_t *base, uint16_t *out)
+{
+    int pen;
+
+    for (pen = 0; pen < PALETTE_PENS; ++pen) {
+        out[pen] = ste_wash_to_white(base[pen]);
+    }
+}
+
+/* ---------------------------------------------------------------- the run's flow --------------
+ * QA.md's first three defects are all the same shape: the simulation reaches a state and the
+ * platform never looks. `phase` becomes PHASE_DEAD and the player keeps walking around a frozen
+ * world; it becomes PHASE_LEVEL_CLEAR and the game stays on sector 1 forever. So the loop below is
+ * a state machine over the run and not a single `while (running)`.
+ */
+#define OUTCOME_QUIT        0
+#define OUTCOME_DEAD        1
+#define OUTCOME_CLEAR       2
+
+/* How long an overlay holds, in vertical blanks. DESIGN 15 gives death a 2 s dissolve. */
+#define OVERLAY_HOLD_VBLS   100
+/* Screen rows the overlay's three lines sit on, inside the 3D window. */
+#define OVERLAY_LINE_1      56
+#define OVERLAY_LINE_2      76
+#define OVERLAY_LINE_3      96
+
+/* What the strip shows while an overlay is up: the run's real numbers, and no message line. */
+static void overlay_hud(HudState *hud)
+{
+    hud_state_from_game(hud, 0, 0);
+}
+
+/*
+ * Put the world's own colours back. play() may return on the very frame it lifted the palette for a
+ * hit — the frame that killed the player always does — and without this the death overlay came up
+ * under the flash, washed grey. Measured on the first headless death: the whole screen, HUD
+ * included, was still half-way to white.
+ */
+/*
+ * Force the whole strip to redraw. hud_draw compares the sector name BY POINTER, and every level
+ * loads into the same static Level — so the pointer never changes and the name field would never
+ * be redrawn: level 2 came up with the corridor of THE LEDGER and the title still reading INGRESS.
+ * A new sector invalidates every field, which is what hud_reset is for.
+ */
+static void hud_invalidate(void)
+{
+    hud_reset(&g_hud_shown[0]);
+    hud_reset(&g_hud_shown[1]);
+}
+
+static void restore_palette(void)
+{
+    uint8_t variant = g_state.palette_variant < PALETTE_VARIANT_COUNT
+                    ? g_state.palette_variant : PALETTE_VARIANT_CLEAN;
+
+    set_palette(g_palette_variants[variant]);
+}
+
+/*
+ * Put an overlay on the screen and hold it. Both buffers are drawn so the page flip cannot show a
+ * half-built one, and the loop keeps flipping so the shifter has something stable to display.
+ */
+static void show_overlay(const char *line1, const char *line2, const char *line3, uint8_t pen)
+{
+    HudState hud;
+    unsigned long until = g_vbl_count + OVERLAY_HOLD_VBLS;
+    int buffer;
+
+    restore_palette();
+    overlay_hud(&hud);
+    for (buffer = 0; buffer < 2; ++buffer) {
+        overlay_clear(g_screen_back);
+        overlay_centre(g_screen_back, OVERLAY_LINE_1, line1, pen);
+        if (line2) {
+            overlay_centre(g_screen_back, OVERLAY_LINE_2, line2, OVERLAY_PEN_DIM);
+        }
+        if (line3) {
+            overlay_centre(g_screen_back, OVERLAY_LINE_3, line3, OVERLAY_PEN_DIM);
+        }
+        hud_draw(g_screen_back, &hud, hud_record_for(g_screen_back));
+        flip();
+    }
+    while (g_vbl_count < until) {
+        PlayerIntent intent = read_input();
+
+        if (intent.quit) {
+            return;                     /* Escape gets out of an overlay as well as out of a game */
+        }
+    }
+    drain_keyboard();
+}
+
+/* The title. DESIGN 15 wants the art pass's planar logotype here; TODO: blit a TITLE member once
+ * mkpak.py packs art/out/native/title_screen.png, which is being wired as this lands. Until then
+ * the font says it, which is enough to prove the flow. Returns 0 if the player quit instead. */
+static int title_screen(void)
+{
+    HudState hud;
+    int buffer;
+
+    set_palette(g_palette_variants[PALETTE_VARIANT_CLEAN]);
+    overlay_hud(&hud);
+    for (buffer = 0; buffer < 2; ++buffer) {
+        overlay_clear(g_screen_back);
+        overlay_centre(g_screen_back, OVERLAY_LINE_1, "BLACK ICE", OVERLAY_PEN_TEXT);
+        overlay_centre(g_screen_back, OVERLAY_LINE_2, "SPACE TO START", OVERLAY_PEN_DIM);
+        overlay_centre(g_screen_back, OVERLAY_LINE_3, "ESC TO QUIT", OVERLAY_PEN_DIM);
+        hud_draw(g_screen_back, &hud, hud_record_for(g_screen_back));
+        flip();
+    }
+    for (;;) {
+        PlayerIntent intent = read_input();
+
+        if (intent.quit) {
+            return 0;
+        }
+        if (intent.input & INPUT_FIRE) {
+            drain_keyboard();
+            return 1;
+        }
+    }
+}
+
+/*
  * DESIGN 4.1's catch-up loop, and it is a catch-up loop and not a VBL-driven simulation: the
  * renderer takes two to four blanks, so the tick must be able to run twice between frames rather
  * than the world slowing down when the frame does. One latched input word feeds every tick of a
  * frame, which is DESIGN 4.2's rule.
+ *
+ * Returns why it stopped, which is the thing the version QA played never asked.
  */
-static void play(void)
+static int play(void)
 {
     unsigned long last_tick_vbl = g_vbl_count;
     uint16_t frame_ms = 0;
+    uint8_t shown_variant = PALETTE_VARIANT_COUNT;      /* nothing shown yet: force the first write */
+    int16_t last_integrity = g_state.integrity;
     int paused = 0;
-    int running = 1;
 
-    while (running) {
+    for (;;) {
         PlayerIntent intent = read_input();
         HudState hud;
         FrameCost cost;
         unsigned long sim_start = bi_ticks();
         unsigned long sim_end;
+        int flashing;
 
         if (intent.quit) {
-            running = 0;
+            return OUTCOME_QUIT;
         }
         if (intent.pause_toggle) {
             paused = !paused;
@@ -1186,8 +1432,33 @@ static void play(void)
         while (!paused && g_vbl_count - last_tick_vbl >= VBLS_PER_TICK) {
             game_step(&g_state, intent.input);
             last_tick_vbl += VBLS_PER_TICK;
+            if (g_state.phase != PHASE_PLAYING) {
+                break;              /* the run ended mid-catch-up; do not tick past it */
+            }
         }
         sim_end = bi_ticks();
+
+        /*
+         * The two things QA.md said the screen never did. A flash is one frame of the whole ramp
+         * lifted towards white — the muzzle when weapons.c sets muzzle_flash, and a hit when
+         * integrity fell since the last frame. The palette is the platform's stand-in for DESIGN
+         * 7's flash sprite, which belongs to the engine and does not exist.
+         */
+        flashing = g_state.muzzle_flash != 0 || g_state.integrity < last_integrity;
+        last_integrity = g_state.integrity;
+        if (flashing) {
+            uint16_t lifted[PALETTE_PENS];
+
+            palette_flash(g_palette_variants[shown_variant < PALETTE_VARIANT_COUNT
+                                             ? shown_variant : PALETTE_VARIANT_CLEAN], lifted);
+            set_palette(lifted);
+            shown_variant = PALETTE_VARIANT_COUNT;      /* the next frame puts the variant back */
+        } else if (g_state.palette_variant != shown_variant) {
+            shown_variant = g_state.palette_variant < PALETTE_VARIANT_COUNT
+                          ? g_state.palette_variant : PALETTE_VARIANT_CLEAN;
+            set_palette(g_palette_variants[shown_variant]);
+        }
+
         hud_state_from_game(&hud, paused ? PAUSE_MESSAGE : drain_events(), frame_ms);
         render_frame_into_back(&hud, &cost);
         cost.stage[STAGE_SIM] = sim_end - sim_start;
@@ -1196,6 +1467,71 @@ static void play(void)
          * after it has been drawn, and a number that lags one frame is better than none. */
         frame_ms = frame_milliseconds(cost.total);
         flip();
+
+        if (g_state.phase == PHASE_DEAD) {
+            return OUTCOME_DEAD;
+        }
+        if (g_state.phase == PHASE_LEVEL_CLEAR) {
+            return OUTCOME_CLEAR;
+        }
+    }
+}
+
+/*
+ * One run: the title, then sectors until the player dies out of the will to continue, quits, or
+ * finishes the last one. DESIGN 15's retry rule is unlimited and restarts the CURRENT sector, and
+ * DESIGN 9's start rule turns the death count into the trace it starts at — which is why the
+ * RunProgress the sector was started from is kept and reused rather than rebuilt from the corpse.
+ */
+static void run_the_game(void)
+{
+    for (;;) {
+        RunProgress sector_start;
+        uint8_t sector = 0;
+
+        if (!title_screen()) {
+            return;
+        }
+        run_progress_reset(&sector_start);
+        for (;;) {
+            char clock[8];
+            int outcome;
+
+            if (assets_load_level(sector, &g_level) != ASSETS_OK) {
+                show_overlay("SECTOR NOT ON DISK", 0, 0, OVERLAY_PEN_ALERT);
+                break;
+            }
+            memcpy(g_level_entities_pristine, g_level.entities, sizeof(g_level.entities));
+            game_start_level(&g_state, &g_level, g_level.rng_seed, &sector_start);
+            hud_invalidate();
+            outcome = play();
+            if (outcome == OUTCOME_QUIT) {
+                return;
+            }
+            overlay_format_clock(clock, g_state.route_ticks);
+            if (outcome == OUTCOME_DEAD) {
+                /* DESIGN 15: retries are unlimited and each death costs starting trace, which
+                 * trace_init applies from the count sim.c has already incremented. */
+                sector_start.deaths_this_sector = g_state.deaths_this_sector;
+                show_overlay("CONNECTION TERMINATED", "RECONNECTING", clock, OVERLAY_PEN_ALERT);
+                continue;
+            }
+            show_overlay("SECTOR CLEAR", g_level.name, clock, OVERLAY_PEN_TEXT);
+            /* DESIGN 4: integrity and cycles carry, tokens do not; DESIGN 9: a sector finished
+             * over par costs the next one's starting trace. */
+            sector_start.deaths_this_sector = 0;
+            sector_start.integrity = g_state.integrity;
+            sector_start.cycles = g_state.cycles;
+            if (g_state.route_ticks > g_level.par_ticks
+                && sector_start.sectors_over_par < 0xff) {
+                ++sector_start.sectors_over_par;
+            }
+            sector = g_state.next_sector_index;
+            if (sector >= ASSETS_LEVEL_COUNT) {
+                show_overlay("RUN COMPLETE", clock, 0, OVERLAY_PEN_TEXT);
+                break;
+            }
+        }
     }
 }
 
@@ -1769,6 +2105,8 @@ int blackice_main(void)
         Cconws("\r\n");
         return 1;
     }
+    /* The authored entity list as the archive delivered sector 0, for the bench fixtures; the game
+     * re-takes it after every level load in run_the_game. */
     memcpy(g_level_entities_pristine, g_level.entities, sizeof(g_level.entities));
     tables_init();
     {
@@ -1802,7 +2140,8 @@ int blackice_main(void)
      * supervisor mode since the archive closed. */
     bi_floppy_deselect();
     save_palette(g_saved_palette);
-    set_palette(g_ste_palette);
+    build_palette_variants();
+    set_palette(g_palette_variants[PALETTE_VARIANT_CLEAN]);
     g_music_ready = ym_music_init(blackice_score, BLACKICE_SCORE_BYTES);
     if (g_music_ready) {
         ym_music_start();
@@ -1812,7 +2151,7 @@ int blackice_main(void)
 #ifdef BLACKICE_BENCH
     bench();
 #else
-    play();
+    run_the_game();
 #endif
 
     remove_vectors();

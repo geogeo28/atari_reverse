@@ -28,7 +28,9 @@ M68K_CFLAGS := -O2 -std=c99 -m68000 -ffreestanding -nostdlib -fomit-frame-pointe
 HEADERS     := $(wildcard include/*.h) $(wildcard host/*.h)
 # Generated, and named explicitly: the wildcard below cannot see a file that
 # does not exist yet, so a clean tree would otherwise build without them.
-GENERATED_SRC := src/tables.c src/assets_placeholder.c
+GENERATED_SRC := src/tables.c src/assets_data.c
+# Where art/build_art.py writes the native-resolution indexed PNGs mkassets reads.
+ART_NATIVE  := art/out/native
 # Every portable source, not a hand-listed subset: a new src/*.c joins the host
 # build, the shared library and the m68k gate by existing.
 CORE_SRC    := $(sort $(wildcard src/*.c) $(GENERATED_SRC))
@@ -61,7 +63,14 @@ endef
 src/tables.c: tools/mktables.py
 	$(generate_source)
 
-src/assets_placeholder.c: tools/mkassets.py
+# mkassets reads the shipped art out of art/out/native/.  That tree is GENERATED
+# and not committed (.gitignore), so the wildcard is empty on a clean checkout
+# and the guard below builds it before the generator needs it; where it is
+# already present, editing a PNG rebuilds this source.
+ART_PNG := $(wildcard $(ART_NATIVE)/*.png)
+
+src/assets_data.c: tools/mkassets.py $(ART_PNG)
+	@[ -d $(ART_NATIVE) ] || $(MAKE) -C art PYTHON=$(PYTHON)
 	$(generate_source)
 
 $(HOST_BIN): $(CORE_SRC) $(HOST_SRC) $(HEADERS) | $(BUILD)

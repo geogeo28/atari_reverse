@@ -22,6 +22,38 @@ make verify     # the rendered-pixels surface: target vs the portable C referenc
 
 ---
 
+## The run
+
+QA played the game headless and found that the platform never looked at what the simulation was
+telling it (`QA.md`, defects 1-3): integrity reached zero and the player kept walking through a
+frozen world, the exit arch set PHASE_LEVEL_CLEAR and nothing consumed it, and the eight `LEVEL*`
+members in the archive were dead weight after the first. The loop is a state machine over the run
+now, not a single `while (running)`:
+
+```
+title  -> SPACE starts, ESC quits                         overlay.c, drawn with the HUD font
+sector -> assets_load_level(n) -> game_start_level -> play()
+   DEAD   -> CONNECTION TERMINATED, 2 s, retry the SAME sector, the death carried into
+             DESIGN 9's start rule (+10% trace a death, measured: a retry starts at 10.9%)
+   CLEAR  -> SECTOR CLEAR + the route time, 2 s, then next_sector_index -> LEVEL1..LEVEL8
+             integrity and cycles carry, tokens do not, over-par counts (DESIGN 4, DESIGN 9)
+   last   -> RUN COMPLETE, back to the title
+```
+
+**The title is text, and that is temporary.** DESIGN 15 wants the art pass's planar logotype;
+`art/out/native/title_screen.png` exists and `mkpak.py` does not pack it yet, so `overlay.c` says
+it with the font. The TODO is in that file, and it is a blit when the member arrives.
+
+**The trace meter recolours the world** (DESIGN 9, and QA defect 4). The archive ships one palette,
+so the variants are derived at boot: DEGRADED remaps registers 1-5 through the shade LUT, CORRUPT
+gives them the magenta ramp's own values, and KERNEL washes them halfway to white. Only registers
+1-5 move — DESIGN 3's variant invariant, measured out of `$ffff8240` at three bands. **KERNEL is a
+platform invention**: DESIGN 3 says the art pass authors that ramp and nothing has.
+
+**Firing and being hit flash the screen** (QA defect 6). DESIGN 7's muzzle flash and DESIGN 18's
+damage flash are sprites in the document, and sprites belong to the engine; the platform's honest
+version is one frame of the whole palette lifted towards white.
+
 ## The frame
 
 ```
@@ -54,11 +86,11 @@ in.
 ```
 pass       cols     sim     cast  columns  sprites    fill      c2p    hud       total    work   locked
 --------------------------------------------------------------------------------------------------------
-WCA160      160      31  39478.0 120510.0     92.0   109.0  53986.0 1339.0   215549   4.64     4.55
-WCA80        80      30  20699.0  60390.0     91.0   112.0  34118.0  138.0   115582   8.65     8.33
-WCS160      160      33  48606.0  75686.0  36491.0  1811.0  43664.0  133.0   206429   4.84     4.55
-WALK80       80    4215  26584.0  43712.0    251.0  1487.0  28785.0  609.0   105650   9.46     8.33
-WALK160     160    4208  50907.0  87265.0    391.0  1481.0  45677.0  755.0   190691   5.24     5.00
+WCA160      160      33  39481.0 120505.0     93.0   113.0  53988.0 1340.0   215558   4.64     4.55
+WCA80        80      31  20699.0  60393.0     92.0   113.0  34109.0  135.0   115577   8.65     8.33
+WCS160      160      34  48609.0  75678.0  70222.0  1810.0  43671.0  133.0   240161   4.16     3.85
+WALK80       80    4198  26588.0  43721.0    263.0  1497.0  28766.0  618.0   105658   9.46     8.33
+WALK160     160    4202  50917.0  87276.0    418.0  1483.0  45670.0  768.0   190739   5.24     5.00
 ```
 
 **Two frame rates, and the second is the one a player sees.** `work` is 1e6 / the mean frame; the
@@ -120,10 +152,12 @@ levers left, in the order the measurement supports them:
    the trig reads, the two `mulu` seeds, `project_slice` and `band_of`.
 3. **The c2p is 5,398 cycles a view row** (431,878 for WC-A's 80), against the spike's 5,300 at the
    same column count — it is content-independent and already at its measured floor.
-4. **The sprite stage is pixel-bound, not per-column-bound**, and the measurement says so: WCS160
-   spends 36,491 us on 6,336 sprite pixels, which is 46 cycles a pixel against the 102 an opaque one
-   is counted at — most of them are transparent or z-rejected. Replacing the per-column `muls` for
-   the destination row with a table moved it 257 us. The per-column block is not where its time is.
+4. **The sprite stage is pixel-bound, not per-column-bound**, and the art pass sharpened the
+   measurement: WCS160 spends 70,222 us on 6,336 sprite pixels, which is **88.7 cycles a pixel**
+   against the 102 an opaque one is counted at. With the placeholder art the same fixture measured
+   46 — most of those pixels were transparent or z-rejected, and the shipped sprites are nearly
+   solid. Replacing the per-column `muls` for the destination row with a table moved it 257 us. The
+   per-column block is not where the time is; the read-modify-write store is.
 
 ### The stages that used to be the problem
 
@@ -193,11 +227,11 @@ Measured with `m68k-elf-size` and `m68k-elf-nm`, and against the running machine
 
 | | bytes |
 |---|--:|
-| `BLACKICE.PRG` on disk (text 40,112 + data 3 + the relocation table) | 41,002 |
-| `BENCH.PRG` (the extra .bss is the cast self-check's shadow scratch) | 44,399 |
+| `BLACKICE.PRG` on disk (text 43,078 + data 3 + the relocation table) | 44,254 |
+| `BENCH.PRG` (the extra .bss is the cast self-check's shadow scratch) | 44,663 |
 | `BLACKICE.PAK` | 13,394 |
-| **resident `.bss`, game build** | **345,636** |
-| — resource arena (105,728 in use: 10 textures at 8,192, 2 sprites at 8,320, HUD 6,400, font 768) | 196,608 |
+| **resident `.bss`, game build** | **411,360** |
+| — resource arena (163,968 in use: 10 textures at 8,192, 9 sprites at 8,320, HUD 6,400, font 768) | 262,144 |
 | — two 320x200 screens, 256-aligned, plus a page of alignment slack | 64,256 |
 | — `GameState` (the game layer's entity table, occupancy and nav field) | 16,786 |
 | — the engine's two reciprocal tables (`g_slice_height`, `g_tex_step`) | 32,768 |
@@ -206,11 +240,11 @@ Measured with `m68k-elf-size` and `m68k-elf-nm`, and against the running machine
 | — resident `Level` | 4,454 |
 | — `RenderScratch` (the column list, the wall distances, the sprite list) | 3,074 |
 | — PAK directory, `BiTables`, the pristine entity list, the cell-texture map | 1,792 |
-| **program + `.bss`** | **385,751** |
+| **program + `.bss`** | **454,441** |
 | TOS/GEMDOS and its buffers, measured as the TPA's offset from 0 | ~89,000 |
-| **total against 1,048,576** | **~473,000** |
+| **total against 1,048,576** | **~543,000** |
 
-Roughly **550 KB spare**, which is the honest consequence of one texture set resident (DESIGN 17.4's
+Roughly **480 KB spare**, which is the honest consequence of one texture set resident (DESIGN 17.4's
 rule) and of the shading remap: the ledger's 269,312-byte baked wall set is 81,920 bytes here.
 
 **The arena is one block with two ends.** Resident assets grow up from the bottom; a member's packed
@@ -365,6 +399,42 @@ against the engine it consumes.
 
 ---
 
+## The handedness fix
+
+**Every wall in the game was rendered left-right mirrored** until 2026-08-28, and nothing caught it
+for the reason that makes this class of bug hard: the mirror rule was applied UNIFORMLY to north,
+south, east and west faces, so walls still met cleanly, corners still lined up, and 440 host tests
+still passed. What was wrong was the global handedness — the authored PNG's column 0 landed on the
+RIGHT of every face.
+
+The rule lives in three coupled copies and all three were inverted together: `src/raycast.c`'s
+`tex_col` mirror, `atari/cast.S`'s `bgt`/`bge` pair, and `test/test_raycast.py`'s restatement.
+
+**Measured, head-on from all four facings**, standing at the centre of a room walled with
+`tex_firewall_chevron` and reading `tex_col` straight off the RenderColumn list:
+
+```
+             before            after
+east      63 -> 0 (mirrored)   0 -> 63
+south     63 -> 0              0 -> 63
+west      63 -> 0              0 -> 63
+north     63 -> 0              0 -> 63
+```
+
+`test/test_art_assets.py` now carries that as an assertion, in two halves: the chevron and the key
+panel are asserted to differ from their own mirror in more than an eighth of their texels (without
+which the check could pass on a mirrored renderer and mean nothing), and then all four facings are
+required to walk `tex_col` upward across the middle of the view. It reads the column list rather
+than pixels, so there is no shading, scaling or palette to see through.
+
+**The goldens moved and the simulation did not.** `make bless` changed `walk_png_sha256.txt` and the
+screen half of `walk_hashes.txt`; the state hash `30191574` is byte-identical either side, which is
+what a render-only change has to look like. `frame0060` and `frame0099` were compared old against
+new before blessing and are mirror images of each other.
+
+**The C and the asm agree on the new rule**: `verify.py` is 0 of 51,200 pixels at both detail
+levels and the per-frame cast self-check reports 0 differing columns over 500 frames.
+
 ## What is NOT verified
 
 * **Real hardware.** Every number here is Hatari's 68000 model. The bus and prefetch behaviour that
@@ -390,6 +460,11 @@ against the engine it consumes.
   IKBD is put in `$12`/`$14` at boot exactly as `BRIEF.md` requires, but the bench runs from a
   compiled-in script and nothing headless presses a fire button. The keyboard path *is* exercised
   only in the sense that it compiles.
+* **The strafe modifier is SHIFT, not Alt, and DESIGN 6 is wrong about it.** TOS consumes Alt+arrow
+  for its own keyboard mouse emulation and never puts the arrow's scancode in the buffer, so the
+  modifier the document names first has never worked. QA measured it from a standing start: Shift +
+  Left strafed, Alt + Left moved neither position nor angle. DESIGN 6 rests "completable with
+  joystick plus Alt" on it and needs the correction at the document, not here.
 * **Held keys are joystick-only.** `Bconin` delivers makes and repeats, never a release, so an arrow
   or Z/X held on the keyboard moves at the repeat rate. The joystick is the movement device, which
   is what DESIGN 6 claims ("completable with joystick plus Alt"), and Alt/Shift comes from `Kbshift`.
@@ -436,7 +511,12 @@ dumpassets.c    HOST: dumps the engine's own asset arrays, so the PAK cannot dri
 mkpak.py        HOST: packs those dumps plus the HUD, the font and the compiled levels
 mkscript.py     HOST: compiles ../test/scripts/walk.txt into the bench's input array
 bench.py        two headless Hatari runs -> the screenshot, the ledger, the table above
+overlay.c/.h    the title screen and the between-sector overlays: planar text, no shifting.
+                It duplicates hud.c's glyph writer and should not — see its header for why
 verify.py       the rendered-pixels surface, the silhouette, teardown and machine health
+QA.md           the game played headless, scenario by scenario, with the verdicts
+play_headless.py  the driver QA.md is written from: keys into a live Hatari, screenshots,
+                GameState read out of RAM
 test_plat_pins.py  a pytest that parses plat.h and asserts every constant bench.py and verify.py
                 re-typed still equals the C's — it caught the ledger header changing under them
 tos.ld          copied from ../spike/, itself from projects/wonderboy/recreate/atari/

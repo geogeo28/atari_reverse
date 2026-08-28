@@ -36,10 +36,11 @@ long bi_leave_supervisor(void *ssp);
 
 #define BCON_DEVICE_KEYBOARD    2
 #define KBSHIFT_READ            (-1)
-/* Kbshift's bitmap: the two the controls need (DESIGN 6 makes Alt or Shift the strafe modifier). */
+/* Kbshift's bitmap. Only the two Shift bits are read: TOS consumes Alt+arrow for its own keyboard
+ * mouse emulation, so an Alt-modified arrow never reaches Bconin at all (main.c, and QA.md's
+ * defect 5 measured it). */
 #define KBSHIFT_RIGHT_SHIFT     0x01
 #define KBSHIFT_LEFT_SHIFT      0x02
-#define KBSHIFT_ALTERNATE       0x08
 
 long Bconstat(short device);
 long Bconin(short device);

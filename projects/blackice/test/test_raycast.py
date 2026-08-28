@@ -165,7 +165,9 @@ def test_dda_matches_a_brute_force_marcher(lib, seed, throttle):
 
             surface = hit_y if side == SIDE_EW else hit_x
             texel = int(surface) % CELL >> 2
-            if (side == SIDE_EW and cosine > 0) or (side == SIDE_NS and sine < 0):
+            # The mirror rule, restated: src/raycast.c owns it and atari/cast.S carries a third
+            # copy.  All three were inverted together on 2026-08-28 - see that file's comment.
+            if (side == SIDE_EW and cosine <= 0) or (side == SIDE_NS and sine >= 0):
                 texel = (blackice.TEX_DIM - 1) - texel
             delta = (got.tex_col - texel) % blackice.TEX_DIM
             assert min(delta, blackice.TEX_DIM - delta) <= TEXEL_TOLERANCE

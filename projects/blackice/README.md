@@ -81,7 +81,7 @@ instead of baked bands.
 | `audio/` | YM2149 3-voice VBL replayer, STE DMA one-shot sample voice, the score (`songs/blackice.py`) and the ten cues | `make verify` (19 checks) and `make verify-blackice` (20 checks) — both run the `.PRG` headless in Hatari and analyse the **recorded audio**, not just the register trace |
 | `spike/` | Milestone 0: the standalone feasibility raycaster that produced the first cycle figures | `make bench` (the timing table) and `make verify` (geometry + drawing vs a float DDA reference) |
 | `include/` | The engine's contracts: `render.h` (chunky layout, `RenderColumn`), `sprite.h` (`RenderSprite`), `game.h` (all mutable sim state in one struct), `game_consts.h` | frozen record layouts, asserted by `test_abi.py` and `host/abi_m68k.c` under the *target* compiler |
-| `src/` | The portable C simulation core — engine (raycast, draw, sprite, map, doors) plus the gameplay layer (`ai.c`, `weapons.c`, `pickups.c`, `trace.c`, `entities.c`, `sim.c`). No hardware access, no libc, no floats, no malloc | `make test` (host build + **376 pytest**), `make m68k`, and the **libgcc gate** (clean over 19 objects here, 25 in the target build) |
+| `src/` | The portable C simulation core — engine (raycast, draw, sprite, map, doors) plus the gameplay layer (`ai.c`, `weapons.c`, `pickups.c`, `trace.c`, `entities.c`, `sim.c`). No hardware access, no libc, no floats, no malloc | `make test` (host build + **442 pytest**), `make m68k`, and the **libgcc gate** (clean over 19 objects here, 25 in the target build) |
 | `test/` | ctypes-driven pytest over the shared library, plus the pinned replay goldens and the golden walk | part of `make test`; `make goldens` diffs the rendered walk and writes nothing |
 | `host/` | The host harness: `main_host` replays and hashes, `play_host` runs the game layer live and prints what it did, `c2p.c` + `render_png.c` turn a frame into a PNG | built by `make`, exercised by `make frames` / `make goldens` |
 | `levels/` | The eight authored maps (`*.txt`) and their compiled `*.bil` | `python validate_levels.py` — the eight §11 compiler rules and the one remaining warning; **8/8 pass** |
@@ -260,6 +260,6 @@ Two screenshots of the real thing sit beside the target:
   against the host reference.
 
 Frames from the running game are also in `atari/out/` and `host/out/` — and they agree pixel for
-pixel. Two things to know when reading `game_hatari.png`: the HUD's **panel labels are missing**
-(an open defect, `STATUS.md`), and the view is a distant corridor, so its walls are band-3 fogged
-and are not representative of the textures at close range.
+pixel. `atari/near_wall_hatari.png` shows the real art at one cell (the sector-key panel, the nose-to-wall
+worst case at 148 ms); `game_hatari.png` is a distant corridor, band-3 fogged. The HUD labels
+are drawn (fixed 2026-08-28); the strip still covers the mockup's bevelled well borders.

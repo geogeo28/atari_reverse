@@ -2,7 +2,7 @@
  *
  * WHY THE PAK IS GENERATED FROM THE ENGINE'S OWN ARRAYS. atari/verify.py compares this build's
  * rendered pixels against the host reference (host/main_host.c), which draws from the arrays in
- * src/assets_placeholder.c. If the target's art came from anywhere else the comparison would be
+ * src/assets_data.c. If the target's art came from anywhere else the comparison would be
  * measuring the art pipeline rather than the drawers, so atari/dumpassets.c dumps those very
  * arrays and atari/mkpak.py packs them. The palette, the HUD strip, the font and the compiled
  * levels ride along in the same archive.
@@ -58,9 +58,16 @@ typedef enum {
     ASSETS_ERR_LEVEL        = 9     /* level_load_blob refused the .bil */
 } AssetsResult;
 
+/* Sectors the archive carries, as LEVEL1..LEVEL8; a Level's own sector_index is its number - 1. */
+#define ASSETS_LEVEL_COUNT  8
+
 /* Load the archive, expand every asset into the arena, and fill g_tables, g_ste_palette,
- * g_hud_backdrop, g_font, g_entity_sprites and `level`. Call once, before rendering. */
+ * g_hud_backdrop, g_font, g_entity_sprites and `level` (sector 0). Call once, before rendering. */
 AssetsResult assets_load(const char *pak_path, Level *level);
+
+/* Reload `level` from the archive member for `sector_index`. The art is already resident and is not
+ * touched: DESIGN 17.4 keeps one texture set in RAM and the first playable's sectors share it. */
+AssetsResult assets_load_level(uint8_t sector_index, Level *level);
 
 /* Bytes of the arena in use, for the memory map in README.md and the boot report. */
 unsigned long assets_arena_used(void);

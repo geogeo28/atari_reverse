@@ -43,7 +43,7 @@ PLATFORM_CFLAGS := $(CFLAGS) -Werror
 LDFLAGS   := -m68000 -nostdlib -T tos.ld -Wl,--emit-relocs -Wl,--gc-sections
 LDLIBS    := -lgcc
 
-# The portable engine core, minus src/draw.c and src/assets_placeholder.c: the target draws with
+# The portable engine core, minus src/draw.c and src/assets_data.c: the target draws with
 # render.S and binds its assets from the .PAK (atari/assets.c), so linking either would only add a
 # second, unreachable copy of the same job.
 ENGINE_SRC := $(ENGINE)/src/tables.c $(ENGINE)/src/rng.c $(ENGINE)/src/hash.c $(ENGINE)/src/map.c \
@@ -54,7 +54,7 @@ ENGINE_SRC := $(ENGINE)/src/tables.c $(ENGINE)/src/rng.c $(ENGINE)/src/hash.c $(
               $(ENGINE)/src/events.c
 # DESIGN 16: the first playable is YM-only, so the DMA sample path is not linked.
 AUDIO_SRC  := $(ENGINE)/audio/ym_music.c $(ENGINE)/audio/blackice_song.c
-PLATFORM_SRC := main.c hud.c assets.c
+PLATFORM_SRC := main.c hud.c assets.c overlay.c
 SHARED_SRC := $(ENGINE)/pipeline/depack.c
 
 ENGINE_OBJ   := $(patsubst $(ENGINE)/src/%.c,$(BUILD)/eng_%.o,$(ENGINE_SRC))
@@ -189,7 +189,7 @@ all: $(FLOPPY)/AUTO/BLACKICE.PRG $(FLOPPY)/BLACKICE.PAK
 # what makes atari/verify.py's pixel comparison a test of the drawers rather than of the pipeline.
 # src/map.c is here because src/tables.c calls map_cell_texture; the set is "whatever the asset
 # arrays drag in", not a curated list.
-DUMPASSETS_SRC := dumpassets.c $(ENGINE)/src/assets_placeholder.c $(ENGINE)/src/tables.c \
+DUMPASSETS_SRC := dumpassets.c $(ENGINE)/src/assets_data.c $(ENGINE)/src/tables.c \
                   $(ENGINE)/src/map.c
 
 $(BUILD)/dumpassets: $(DUMPASSETS_SRC) | $(BUILD)

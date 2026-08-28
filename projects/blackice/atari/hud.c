@@ -163,37 +163,87 @@ static void format_number(char *out, uint16_t value, int digits, char pad)
 #define HUD_TITLE_HEIGHT        7
 #define HUD_PANEL_TOP           (HUD_TOP_LINE + 10)     /* art/hud.py PANEL_TOP */
 #define HUD_PANEL_BOTTOM        (HUD_TOP_LINE + SCREEN_HUD_LINES - 2)
+/*
+ * THREE ROWS PER PANEL, and the field OWNS ALL THREE. art/hud.py puts a label on the first and the
+ * value on the second; the fields below cover the art (see HUD_FIELD_INSET), so a field that drew
+ * only its value left the panel with no label at all - which is what atari/game_hatari.png shows.
+ * Each field therefore draws its own label, and the value and the bar move down a row each.
+ */
 #define HUD_LABEL_Y             (HUD_PANEL_TOP + 1)
 #define HUD_VALUE_Y             (HUD_LABEL_Y + FONT_GLYPH_BYTES + 1)
-#define HUD_BAR_HEIGHT          12
+#define HUD_BAR_Y               (HUD_VALUE_Y + FONT_GLYPH_BYTES + 1)
+/* What is left between HUD_BAR_Y and the panel's last row; the bar was 12 when it sat on the
+ * value's row. A bar taller than this would run out of the strip and into nothing. */
+#define HUD_BAR_HEIGHT          (HUD_PANEL_BOTTOM - HUD_BAR_Y)
 
 /*
  * The five fields TILE the strip: together they cover all 320 pixels of rows HUD_LABEL_Y upward,
  * with no art showing between them.
  *
  * That is not the same as art/hud.py's panels, and the difference is the price of shift-free
- * drawing. Its Panel(x0, x1) pairs start at 2, 130, 204, 258 and 286 — none of them on an 8-pixel
+ * drawing. Its Panel(x0, x1) pairs start at 2, 140, 222, 258 and 290 — none of them on an 8-pixel
  * boundary — so a field snapped out to the nearest boundary either leaves a sliver of the panel
  * underneath showing (which read as stray glyphs from the art's demo values: a lone "T" beside the
  * cycles readout, "KAB" beside the tokens) or covers it. Covering it is the honest one: the strip
  * loses the recessed well borders in these rows and gains a readout that means what it says.
  * Restoring the wells needs either a redraw of the art on 8-pixel boundaries or a shifting
- * blitter, and both belong to whoever owns the art next.
+ * blitter, and both belong to whoever owns the art next. What the fields CAN carry themselves is
+ * the label, and they now do - see HUD_LABEL_Y.
  */
 #define HUD_FIELD_INSET         8       /* text and bars sit this far inside their field */
-#define HUD_TRACE_X             0       /* art TRACE_PANEL     (2, 127)   */
+#define HUD_TRACE_X             0       /* art TRACE_PANEL     (2, 137)   */
 #define HUD_TRACE_W             112
-/* Wider than art/hud.py's 72-pixel panel, and it has to be: a ten-segment bar of one byte each is
- * 80 pixels, and with the inset that needs 96. Drawn in a 72-pixel field the last two segments
+/* Wider than art/hud.py's 80-pixel panel, and it has to be: a ten-segment bar of one byte each is
+ * 80 pixels, and with the inset that needs 96. Drawn in an 80-pixel field the last two segments
  * landed inside the CYCLES well and stayed there until the cycle count next changed. */
-#define HUD_INTEGRITY_X         112     /* art INTEGRITY_PANEL (130, 201) */
+#define HUD_INTEGRITY_X         112     /* art INTEGRITY_PANEL (140, 219) */
 #define HUD_INTEGRITY_W         96
-#define HUD_CYCLES_X            208     /* art CYCLES_PANEL    (204, 255) */
+#define HUD_CYCLES_X            208     /* art CYCLES_PANEL    (222, 255) */
 #define HUD_CYCLES_W            48
-#define HUD_TOKEN_X             256     /* art TOKEN_PANEL     (258, 283) */
+#define HUD_TOKEN_X             256     /* art TOKEN_PANEL     (258, 287) */
 #define HUD_TOKEN_W             32
-#define HUD_CLOCK_X             288     /* art WEAPON_PANEL    (286, 317) */
+#define HUD_CLOCK_X             288     /* art WEAPON_PANEL    (290, 317) */
 #define HUD_CLOCK_W             32
+
+/* The panel names art/hud.py prints on the backdrop. Restated here rather than read off the art
+ * because the fields cover it: these are the words the strip loses when a field redraws, and this
+ * is where they come back. Each must fit its field at FONT_GLYPH_WIDTH per character.
+ *
+ * CLK is the exception - it is DESIGN 15.1's name for the CLOCK dial, not a word on the backdrop,
+ * whose last panel carries a weapon icon this build has no weapon selection to draw. */
+#define HUD_TRACE_LABEL         "TRACE"
+#define HUD_INTEGRITY_LABEL     "INTEGRITY"
+#define HUD_CYCLES_LABEL        "CYC"
+#define HUD_TOKEN_LABEL         "KEY"
+#define HUD_CLOCK_LABEL         "CLK"
+
+/*
+ * THE STRIP IS THE ONE SURFACE NOTHING MEASURES. atari/verify.py compares only the top
+ * SCREEN_WINDOW_LINES and the portable suite never links this file, so a field that grew past its
+ * panel or a label that ran into its neighbour's well would build clean, pass every gate, and show
+ * up only in a screenshot someone happened to look at. These assertions are that missing surface:
+ * every claim the prose above makes about the layout, stated where the compiler can check it.
+ *
+ * `sizeof(s) - 1` is the character count of a string literal, and draw_text advances one whole
+ * FONT_GLYPH_WIDTH per character, so this is the exact pixel span a label occupies.
+ */
+#define HUD_LABEL_FITS(label, width) \
+    ((int)(sizeof(label) - 1) * FONT_GLYPH_WIDTH + HUD_FIELD_INSET <= (width))
+
+_Static_assert(HUD_LABEL_Y + FONT_GLYPH_BYTES <= HUD_VALUE_Y, "the label row runs into the value");
+_Static_assert(HUD_VALUE_Y + FONT_GLYPH_BYTES <= HUD_BAR_Y, "the value row runs into the bar");
+_Static_assert(HUD_BAR_HEIGHT >= 1, "the bar has no rows left");
+_Static_assert(HUD_BAR_Y + HUD_BAR_HEIGHT <= HUD_TOP_LINE + SCREEN_HUD_LINES,
+               "the bar runs off the bottom of the strip");
+_Static_assert(HUD_TRACE_W + HUD_INTEGRITY_W + HUD_CYCLES_W + HUD_TOKEN_W + HUD_CLOCK_W == SCREEN_W,
+               "the five fields no longer tile the strip");
+_Static_assert(HUD_LABEL_FITS(HUD_TRACE_LABEL, HUD_TRACE_W), "TRACE does not fit its field");
+_Static_assert(HUD_LABEL_FITS(HUD_INTEGRITY_LABEL, HUD_INTEGRITY_W), "INTEGRITY does not fit");
+_Static_assert(HUD_LABEL_FITS(HUD_CYCLES_LABEL, HUD_CYCLES_W), "CYC does not fit its field");
+_Static_assert(HUD_LABEL_FITS(HUD_TOKEN_LABEL, HUD_TOKEN_W), "KEY does not fit its field");
+_Static_assert(HUD_LABEL_FITS(HUD_CLOCK_LABEL, HUD_CLOCK_W), "CLK does not fit its field");
+_Static_assert(HUD_FIELD_INSET + HUD_TOKEN_COUNT * FONT_GLYPH_WIDTH <= HUD_TOKEN_W,
+               "the token glyphs run past the KEY field");
 
 /* DESIGN 3's colour contract, which art/palette.py owns and src/tables.c's g_palette_rgb is
  * generated from. Indices 12 (white) and 13 (orange) are the two RESERVED accents a wall may not
@@ -249,39 +299,48 @@ static void draw_bar(uint8_t *screen, int x, int y, int width, uint8_t percent, 
     }
 }
 
-static void draw_percent_field(uint8_t *screen, int x, int width, uint8_t percent, uint8_t pen)
+/* Clear a field to its well pen and put the art's own label back on the top row. */
+static void draw_field_well(uint8_t *screen, int x, int width, const char *label)
+{
+    fill_rect(screen, x, HUD_LABEL_Y, width, HUD_PANEL_BOTTOM - HUD_LABEL_Y, HUD_PEN_WELL);
+    draw_text(screen, x + HUD_FIELD_INSET, HUD_LABEL_Y, x + width, label, HUD_PEN_LABEL);
+}
+
+static void draw_percent_field(uint8_t *screen, int x, int width, const char *label,
+                               uint8_t percent, uint8_t pen)
 {
     char text[NUMBER_MAX_DIGITS];
-    int label_x;
+    int after_number;
 
-    fill_rect(screen, x, HUD_LABEL_Y, width, HUD_PANEL_BOTTOM - HUD_LABEL_Y, HUD_PEN_WELL);
+    draw_field_well(screen, x, width, label);
     format_number(text, percent, PERCENT_DIGITS, PAD_BLANK);
-    label_x = draw_text(screen, x + HUD_FIELD_INSET, HUD_LABEL_Y, x + width, text, pen);
-    draw_text(screen, label_x, HUD_LABEL_Y, x + width, "%", HUD_PEN_LABEL);
-    draw_bar(screen, x + HUD_FIELD_INSET, HUD_VALUE_Y, width - 2 * HUD_FIELD_INSET, percent, pen);
+    after_number = draw_text(screen, x + HUD_FIELD_INSET, HUD_VALUE_Y, x + width, text, pen);
+    draw_text(screen, after_number, HUD_VALUE_Y, x + width, "%", HUD_PEN_LABEL);
+    draw_bar(screen, x + HUD_FIELD_INSET, HUD_BAR_Y, width - 2 * HUD_FIELD_INSET, percent, pen);
 }
 
-static void draw_count_field(uint8_t *screen, int x, int width, uint16_t value, uint8_t pen)
+static void draw_count_field(uint8_t *screen, int x, int width, const char *label,
+                             uint16_t value, uint8_t pen)
 {
     char text[NUMBER_MAX_DIGITS];
 
-    fill_rect(screen, x, HUD_LABEL_Y, width, HUD_PANEL_BOTTOM - HUD_LABEL_Y, HUD_PEN_WELL);
+    draw_field_well(screen, x, width, label);
     format_number(text, value, COUNT_DIGITS, PAD_BLANK);
-    draw_text(screen, x + HUD_FIELD_INSET, HUD_LABEL_Y, x + width, text, pen);
+    draw_text(screen, x + HUD_FIELD_INSET, HUD_VALUE_Y, x + width, text, pen);
 }
 
+/* The three token slots side by side under the label, as art/hud.py's KEY panel has them: a lit
+ * glyph is a token held, a trim one a token still out there. */
 static void draw_tokens(uint8_t *screen, uint8_t held)
 {
     int token;
 
-    fill_rect(screen, HUD_TOKEN_X, HUD_LABEL_Y, HUD_TOKEN_W,
-              HUD_PANEL_BOTTOM - HUD_LABEL_Y, HUD_PEN_WELL);
+    draw_field_well(screen, HUD_TOKEN_X, HUD_TOKEN_W, HUD_TOKEN_LABEL);
     for (token = 0; token < HUD_TOKEN_COUNT; ++token) {
-        int x = HUD_TOKEN_X + HUD_FIELD_INSET + (token & 1) * PIXELS_PER_BYTE;
-        int y = HUD_LABEL_Y + (token / 2) * (FONT_GLYPH_BYTES + 2);
+        int x = HUD_TOKEN_X + HUD_FIELD_INSET + token * FONT_GLYPH_WIDTH;
         uint8_t pen = ((held >> token) & 1) ? HUD_PEN_DATA : HUD_PEN_TRIM;
 
-        draw_glyph(screen, x, y, (char)('A' + token), pen);
+        draw_glyph(screen, x, HUD_VALUE_Y, (char)('A' + token), pen);
     }
 }
 
@@ -290,12 +349,11 @@ static void draw_clock_dial(uint8_t *screen, uint8_t throttle)
 {
     int segment;
 
-    fill_rect(screen, HUD_CLOCK_X, HUD_LABEL_Y, HUD_CLOCK_W,
-              HUD_PANEL_BOTTOM - HUD_LABEL_Y, HUD_PEN_WELL);
+    draw_field_well(screen, HUD_CLOCK_X, HUD_CLOCK_W, HUD_CLOCK_LABEL);
     for (segment = 0; segment < THROTTLE_MODE_COUNT; ++segment) {
         uint8_t pen = (segment == throttle) ? HUD_PEN_TEXT : HUD_PEN_TRIM;
 
-        fill_rect(screen, HUD_CLOCK_X + HUD_FIELD_INSET + segment * PIXELS_PER_BYTE, HUD_VALUE_Y,
+        fill_rect(screen, HUD_CLOCK_X + HUD_FIELD_INSET + segment * PIXELS_PER_BYTE, HUD_BAR_Y,
                   PIXELS_PER_BYTE, HUD_BAR_HEIGHT, pen);
     }
 }
@@ -389,15 +447,18 @@ void hud_draw(uint8_t *screen, const HudState *state, HudState *shown)
     if (state->trace_percent != shown->trace_percent) {
         uint8_t pen = (state->trace_percent >= TRACE_ALERT_PERCENT) ? HUD_PEN_ALERT : HUD_PEN_DATA;
 
-        draw_percent_field(screen, HUD_TRACE_X, HUD_TRACE_W, state->trace_percent, pen);
+        draw_percent_field(screen, HUD_TRACE_X, HUD_TRACE_W, HUD_TRACE_LABEL,
+                           state->trace_percent, pen);
     }
     if (state->integrity != shown->integrity) {
         uint8_t pen = (state->integrity < INTEGRITY_CRITICAL) ? HUD_PEN_ALERT : HUD_PEN_GOOD;
 
-        draw_percent_field(screen, HUD_INTEGRITY_X, HUD_INTEGRITY_W, state->integrity, pen);
+        draw_percent_field(screen, HUD_INTEGRITY_X, HUD_INTEGRITY_W, HUD_INTEGRITY_LABEL,
+                           state->integrity, pen);
     }
     if (state->cycles != shown->cycles) {
-        draw_count_field(screen, HUD_CYCLES_X, HUD_CYCLES_W, state->cycles, HUD_PEN_DATA);
+        draw_count_field(screen, HUD_CYCLES_X, HUD_CYCLES_W, HUD_CYCLES_LABEL,
+                         state->cycles, HUD_PEN_DATA);
     }
     if (state->tokens != shown->tokens) {
         draw_tokens(screen, state->tokens);

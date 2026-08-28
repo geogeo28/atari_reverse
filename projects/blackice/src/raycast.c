@@ -269,9 +269,19 @@ void render_cast(const GameState *state, RenderScratch *scratch)
                                              (int16_t)set->cosine[c]) >> TRIG_SHIFT);
             uint16_t tex_col = (uint16_t)(hit_u_units >> TEXEL_SHIFT_FROM_UNITS);
 
-            /* Mirror the u on the two faces whose winding runs the other way,
-             * or adjacent walls meet with the texture flipped. */
-            if ((side == SIDE_EW && cosine > 0) || (side == SIDE_NS && sine < 0)) {
+            /*
+             * Mirror the u on the two faces whose winding runs the other way, or adjacent walls
+             * meet with the texture flipped.
+             *
+             * WHICH TWO FACES was inverted until 2026-08-28, and the symptom was not a seam: the
+             * rule was uniform, so every face of every wall was mirrored the same way and the whole
+             * world was left-right flipped. What that looks like is nothing at all - walls meet
+             * cleanly, corners line up - until you stand square to an ASYMMETRIC texture and the
+             * authored PNG's column 0 is on your right. Measured with the firewall chevron head-on
+             * from all four facings: tex_col ran 63 -> 0 across the screen where it must run 0 -> 63.
+             * atari/cast.S and test/test_raycast.py carry the same rule and were inverted with it.
+             */
+            if ((side == SIDE_EW && cosine <= 0) || (side == SIDE_NS && sine >= 0)) {
                 tex_col = (uint16_t)(TEX_INDEX_MASK - tex_col);
             }
 

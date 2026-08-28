@@ -311,15 +311,18 @@ bi_render_cast:
     move.w  C_HIT_U(%sp),%d3
     lsr.w   #PLAT_TEXEL_SHIFT,%d3       | tex_col
     | The two faces whose winding runs the other way get the texture mirrored, or adjacent walls
-    | meet with it flipped.
+    | meet with it flipped. WHICH TWO was inverted until 2026-08-28 and the whole world was
+    | left-right flipped with no seam to show for it; src/raycast.c's comment has the measurement,
+    | and this is the same rule with the same senses: mirror when EW and cosine <= 0, or NS and
+    | sine >= 0.
     cmp.w   #PLAT_SIDE_EW,C_SIDE(%sp)
     bne.s   1601f
     tst.w   C_COSINE(%sp)
-    bgt.s   1602f
+    ble.s   1602f
     bra.s   1603f
 1601:
     tst.w   C_SINE(%sp)
-    bge.s   1603f
+    blt.s   1603f
 1602:
     move.w  #PLAT_TEX_INDEX_MASK,%d6
     sub.w   %d3,%d6
