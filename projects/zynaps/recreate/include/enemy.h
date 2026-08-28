@@ -33,7 +33,6 @@
 #define A_enemy_sprite_ptrs_b    0x192ccu
 #define A_puff_frame_ptrs_b      0x192ecu
 #define A_anim_frames_type15     0x1930cu  /* the diver's cycle */
-#define A_shot_variant_table     0x18f7cu  /* heading -> sprite variant, for enemy_set_sprite_b */
 #define A_anim_phase_b           0x198acu  /* flipped once per frame by enemies_animate_all */
 #define A_free_wave_slot_count   0x198b7u  /* names.txt # ctx — what count_free_wave_slots publishes */
 #define A_squadron_kill_counters 0x198bbu  /* names.txt # ctx — six bytes; a squadron at 0 drops a pod */
@@ -62,9 +61,6 @@
                                           * anim_freeze too, so the ROLE is a proposal even though
                                           * the address is certain. sprite (../out/globals.tsv):
                                           * the half-frame gate the actor animations share */
-#define A_entity_table         0x17a8eu  /* names.txt # ctx. player (../out/globals.tsv). Slot 0 of
-                                          * the one record array; the six scenery actors are its
-                                          * first records, and anim_ground_objects WRITES them */
 /* NOT in ../out/globals.tsv at all — ../../names.txt's `var 0x17d7a player_record` is its only
  * source, and globals.tsv's `player` array is the different 0x19f02. Whoever ports the player
  * subsystem owns it; until then the attribution here is names.txt's, not globals.tsv's. */

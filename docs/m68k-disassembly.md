@@ -163,6 +163,29 @@ length and the sweep are right; what is lost is the whole difference between `0(
 `0(a0,d0.l)`, which is exactly the class that bit Wonder Boy's spawn pass below. Read the bytes
 whenever a listing shows `idx(An)` and the index's width matters.
 
+## A relocated listing does not relocate every operand
+
+`prg_dis.py` prints operands at their **runtime** address once a load base is given, and tags the
+ones the relocation table covers `<RELOC ptr>`. It does that for the addressing modes — but **not
+for a longword IMMEDIATE**, even though the tag is printed there too. The two look identical in the
+listing and only one of them has had the base added:
+
+```
+013d58: 4df9 000091ac    lea $191ac.l,a6        <RELOC ptr>   <- base added, 0x91ac -> 0x191ac
+0155ee: 257c 0005791e    move.l #$5791e,10(a2)  <RELOC ptr>   <- base NOT added, real value 0x6791e
+```
+
+So a global's address read off a `move.l #imm,<ea>` line is **one load base too low**. That is a
+quiet failure: the wrong constant still points inside the image, so nothing faults — it simply
+reads or writes the wrong place, and only a differential case that actually drives that store will
+notice. Zynaps' `shot_to_puff` shipped with `0x5791e` for its hit-flash sprite and was caught by the
+first differential run; three neighbouring `fire_*` routines carry the same shape, and so do the
+`cmt` lines a naming pass wrote from the same listing.
+
+**Check an immediate against a second source before naming it.** Ghidra's decompiler applies the
+relocation (`&DAT_0006791e`), and so does the loaded image the harness hands a test — two agreeing
+sources, or a differential case that stores the value, are what settle it.
+
 ## Semantics that silently change a reconstruction
 
 Six 68000 behaviours a C reconstruction has to model explicitly. None of them shows in the

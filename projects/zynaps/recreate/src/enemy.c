@@ -13,12 +13,13 @@
 #include "machine.h"
 #include "entity.h"
 #include "enemy.h"
+#include "player.h"
+#include "weapon.h"
 
 #define ENEMY_SLOT_COUNT 8      /* `move.w #$7,d7` + `dbf` over the records at A_enemy_slots */
 #define GROUND_ACTOR_COUNT 6    /* `move.w #$5,d0` — the type-0x34 scenery at A_entity_table */
 #define ASTEROID_GROUPS 6       /* `move.w #$5,d7` — the outer loop */
 #define ASTEROID_COLUMNS 3      /* `move.w #$2,d6` — three records per group */
-#define SPRITE_PTR_BYTES 4      /* every frame table here is an array of 32-bit sprite pointers */
 #define SPRITE_PTR_SHIFT 2      /* ...and `lsl #2` is how each one turns a frame into a byte offset */
 
 

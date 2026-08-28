@@ -95,3 +95,45 @@ def flag_call_pokes(routine, condition):
             + _SCC_TO_A0[condition].to_bytes(2, "big")
             + b"\x4e\x75")                                      # rts
     return {STUB: code}
+
+
+# --- APPENDED: recording the CONDITION CODES, for a routine whose whole answer is a flag ---
+#
+# The four type-class tests (0x12dc6, 0x13d3e, 0x13d6e, 0x140f6) and `collision_chain_walk`
+# (0x12d44) answer their callers in the 68000's Z flag: every call site's next instruction is a
+# `beq`. `register_call_pokes` above cannot record that. Storing a data register instead would be
+# recording scratch, and — worse — would pass whenever the scratch happened to agree, which is
+# exactly the coincidental green the poison pass exists to catch. `Scc` is the instruction that
+# turns a condition into data, so the stub below stores the flag FIRST and the registers after,
+# since `move.l` sets the flags itself.
+_SEQ_TO_A0_POSTINC = 0x57d8   # `seq (a0)+`: 0101 cond=0111 11, dest mode 011 reg 000
+_ADDQ_L_1_A0 = 0x5288         # `addq.l #1,a0` — the pad that re-aligns A0 for the longword stores
+_MOVEA_L_IMM_TO_A0 = 0x207c   # `movea.l #imm32,a0` — and `movea` is the move that leaves CCR alone
+
+
+def register_call_eq_flag_pokes(routine, result, stores=()):
+    """Pokes that call `routine` and store its Z flag, then `stores`, at `result`.
+
+        jsr     routine
+        movea.l #result,a0      ; AFTER the call, and `movea` does not touch the flags
+        seq     (a0)+           ; 0xff if Z was set at the rts, 0x00 if it was clear
+        addq.l  #1,a0           ; the byte above leaves A0 odd, and `move.l` needs it even
+        move.l  <stores[0]>,(a0)+
+        ...
+        rts
+
+    So `result`+0 is the flag, `result`+1 is touched by neither side — which is what makes it a
+    usable canary — and the listed registers follow as longwords from `result`+2.
+
+    THE STUB LOADS A0 ITSELF rather than taking it through the run's registers, unlike
+    `register_call_pokes` above. Two of the routines this serves take their own argument in A0
+    (`object_type_is_collidable`) or use it as scratch (`collision_chain_walk`), so a caller-set A0
+    would either be overwritten before the call or point at the record when the stores land.
+    """
+    code = (b"\x4e\xb9" + routine.to_bytes(4, "big")            # jsr imm.l
+            + _MOVEA_L_IMM_TO_A0.to_bytes(2, "big") + result.to_bytes(4, "big")
+            + _SEQ_TO_A0_POSTINC.to_bytes(2, "big")
+            + _ADDQ_L_1_A0.to_bytes(2, "big")
+            + b"".join(_store_through_a0(r) for r in stores)
+            + b"\x4e\x75")                                      # rts
+    return {STUB: code}
