@@ -439,7 +439,6 @@ var 0x1991b current_player_index   # ctx (also read as: current_player)
 var 0x1991c game_initialised
 var 0x1991d player_count
 var 0x1991e msg_prepare_for_combat   # ctx (also read as: text_prepare_for_combat)
-var 0x19933 msg_player
 var 0x19933 text_player
 var 0x1993d msg_converted_by_microwish   # ctx (also read as: text_credit_converted)
 var 0x19956 msg_coding_howie   # ctx (also read as: text_credit_coding)
@@ -450,7 +449,6 @@ var 0x199c8 msg_role_of_honour   # ctx (also read as: text_role_of_honour)
 var 0x199d9 msg_game_over_player   # ctx (also read as: text_game_over_player)
 var 0x199ed attract_page_toggle
 var 0x199ee msg_new_high_score   # ctx (also read as: text_new_high_score)
-var 0x19a0b msg_please_enter_your_name
 var 0x19a0b text_please_enter_name
 var 0x19a24 msg_you_are_not_rated   # ctx (also read as: text_not_rated)
 var 0x19a39 scancode_to_char_table
