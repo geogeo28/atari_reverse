@@ -11,20 +11,33 @@ suspicious cluster chain or directory entry is reported instead of being silentl
 truncated or skipped. A suspicious entry never aborts the run — the rest of the tree
 is still listed/extracted, and the exit status reports that the result is not clean.
 
+An EMPTY RESULT is a warning, never a silent success. A BPB whose fields point the root
+directory at the wrong sector decodes into "0 files" and used to exit 0 — which reads as
+"this disk is empty" rather than "this disk was not understood". A root holding no live
+entries therefore warns, and the warning carries a diagnosis: the early sectors are
+scanned for one shaped like a directory (32-byte 8.3 records), and each candidate is
+reported together with the BPB value that would place the root there, e.g.
+"sector 7 => nfats=2". `--nfats N` then applies that value without editing the image, so
+a disk whose BPB under-counts its FATs (real dumps do) is readable and reproducibly so.
+
 Usage:
-  python3 st_extract.py IMAGE.ST            # list the whole tree
-  python3 st_extract.py IMAGE.ST -o OUTDIR  # extract the tree into OUTDIR
+  python3 st_extract.py IMAGE.ST              # list the whole tree
+  python3 st_extract.py IMAGE.ST -o OUTDIR    # extract the tree into OUTDIR
+  python3 st_extract.py IMAGE.ST --nfats 2    # read it with the BPB's FAT count overridden
 
 Exit status:
   0  clean run
-  1  unusable image, or the run completed but emitted warnings (dirty extraction)
+  1  unusable image, or the run completed but emitted warnings — a dirty extraction, or a
+     root directory with no live entries (nothing was listed/extracted)
   2  bad command line
 """
 import os
 import struct
 import sys
 
-USAGE = "usage: st_extract.py IMAGE.ST [-o OUTDIR]"
+USAGE = "usage: st_extract.py IMAGE.ST [-o OUTDIR] [--nfats N]"
+OUTDIR_FLAG = "-o"
+NFATS_FLAG = "--nfats"
 
 # --- boot-sector BPB field offsets (DOS layout; TOS uses the same ones) ---------
 BPB_BYTES_PER_SECTOR = 11
@@ -38,6 +51,7 @@ BPB_SECTORS_PER_FAT = 22
 BPB_SECTORS_PER_TRACK = 24
 BPB_HEADS = 26
 BOOT_SECTOR_SIZE = 512
+BPB_FAT_COUNT_MAX = 4        # real volumes carry 1 or 2 FATs; 4 is the generous upper bound
 
 # BPB fields that may never be zero, with the reason each one matters.
 BPB_NONZERO_FIELDS = (
@@ -61,6 +75,10 @@ ATTR_VOLUME_LABEL = 0x08
 ATTR_DIRECTORY = 0x10
 ATTR_LFN = 0x0F             # VFAT long-name fragment: attr bits 0..3 all set
 
+DIR_NAME_BYTES = DIR_NAME_LEN + DIR_EXT_LEN   # the 11 raw 8.3 name bytes, stem and ext unseparated
+ATTR_UNUSED_BITS = 0xC0     # bits 6-7 carry no meaning in a FAT attribute byte; set = not a directory
+NAME_BYTE_MIN, NAME_BYTE_MAX = 0x20, 0x7E     # a live 8.3 name is printable ASCII, space-padded
+
 DOT_ENTRIES = (".", "..")   # the self/parent links every subdirectory carries
 # None of these may appear in an 8.3 name; a raw name holding one is corrupt, and
 # letting it through would turn one entry into a path that escapes its directory.
@@ -76,14 +94,19 @@ FREE_CLUSTER = 0             # also what an empty file stores as its start clust
 
 MAGIC_BYTES = 4              # bytes of each file shown as its "magic" in the listing
 PATH_COLUMN = 28             # width of the path column in the listing/extract output
+DIAGNOSTIC_MAX_CANDIDATES = 3   # candidate root sectors the empty-root diagnosis reports
 
 
 def le16(data, off):
     return struct.unpack_from("<H", data, off)[0]
 
 
-def parse_bpb(boot, image_size):
-    """Decode + sanity-check the BPB. Raises ValueError with a reason if implausible."""
+def parse_bpb(boot, image_size, fat_count=None):
+    """Decode + sanity-check the BPB. Raises ValueError with a reason if implausible.
+
+    `fat_count` overrides the BPB's own FAT count, which is the one field a real dump is
+    routinely wrong about and the one that silently moves the root directory.
+    """
     if len(boot) < BOOT_SECTOR_SIZE:
         raise ValueError("image is shorter than one boot sector (%d bytes)" % len(boot))
     bpb = dict(
@@ -98,6 +121,8 @@ def parse_bpb(boot, image_size):
         sectors_per_track=le16(boot, BPB_SECTORS_PER_TRACK),
         heads=le16(boot, BPB_HEADS),
     )
+    if fat_count is not None:
+        bpb["fat_count"] = fat_count
     _check_bpb(bpb, image_size)
     _add_derived_layout(bpb)
     if bpb["cluster_count"] >= FAT12_MAX_CLUSTERS:
@@ -113,7 +138,7 @@ def _check_bpb(bpb, image_size):
     spc = bpb["sectors_per_cluster"]
     if spc == 0 or spc > 64 or spc & (spc - 1):
         raise ValueError("sectors/cluster=%d is not a power of two in 1..64" % spc)
-    if not 1 <= bpb["fat_count"] <= 4:
+    if not 1 <= bpb["fat_count"] <= BPB_FAT_COUNT_MAX:
         raise ValueError("FAT count=%d is out of range" % bpb["fat_count"])
     for field, message in BPB_NONZERO_FIELDS:
         if bpb[field] == 0:
@@ -157,13 +182,19 @@ def _check_fat_fits(bpb):
 class Fat12Image:
     """Read-only view of a FAT12 volume: sectors, cluster chains, directories."""
 
-    def __init__(self, data):
+    def __init__(self, data, fat_count=None):
         self.data = data
-        self.bpb = parse_bpb(data[:BOOT_SECTOR_SIZE], len(data))
+        self.bpb = parse_bpb(data[:BOOT_SECTOR_SIZE], len(data), fat_count)
         self.warnings = []
         fat_off = self.bpb["fat_start"] * self.bpb["bytes_per_sector"]
         fat_len = self.bpb["sectors_per_fat"] * self.bpb["bytes_per_sector"]
         self.fat = data[fat_off:fat_off + fat_len]
+        # Parsed once, here, so the empty-root diagnosis is emitted once however often the
+        # tree is walked — `read_file` walks it per call.
+        root = self.sectors(self.bpb["root_start"], self.bpb["root_sectors"])
+        self.root_dir = _parse_dir_entries(root, "", self.warnings)
+        if not self.root_dir:
+            self.warnings += _diagnose_empty_root(self)
 
     def sectors(self, start, count):
         sector = self.bpb["bytes_per_sector"]
@@ -294,10 +325,87 @@ def _parse_dir_entries(block, parent_path, warnings):
     return entries
 
 
+def _live_entry_count(block):
+    """How many live 8.3 entries a sector holds — 0 unless the whole sector is shaped like one.
+
+    Shape, not meaning: 32-byte records whose names are printable and whose attribute byte has
+    no unused bit set, ending (if at all) in an all-zero tail. That is enough to tell a
+    directory sector from a FAT sector, boot code or file data without knowing the volume.
+    """
+    live = 0
+    for off in range(0, len(block), DIR_ENTRY_SIZE):
+        raw = block[off:off + DIR_ENTRY_SIZE]
+        if raw[DIR_NAME_OFF] == DIR_ENTRY_FREE:
+            return live if not any(block[off:]) else 0   # past end-of-directory all is zero
+        if raw[DIR_NAME_OFF] == DIR_ENTRY_DELETED:
+            continue
+        if raw[DIR_ATTR_OFF] & ATTR_UNUSED_BITS:
+            return 0
+        name = raw[DIR_NAME_OFF:DIR_NAME_OFF + DIR_NAME_BYTES]
+        if any(not NAME_BYTE_MIN <= byte <= NAME_BYTE_MAX for byte in name):
+            return 0
+        live += 1
+    return live
+
+
+def _directory_like_sectors(image):
+    """(sector, live entry count) for each RUN of directory-shaped sectors in the early volume.
+
+    Only a run's first sector is offered: a directory occupies consecutive sectors, so the
+    sectors after the first are its continuation, not another candidate root.
+    """
+    bpb = image.bpb
+    # The root cannot begin later than the reserved area plus the most FATs a BPB may claim,
+    # and one root's worth of slack covers a sectors/FAT that is itself understated.
+    limit = min(bpb["total_sectors"],
+                bpb["reserved_sectors"] + BPB_FAT_COUNT_MAX * bpb["sectors_per_fat"]
+                + bpb["root_sectors"])
+    previous_was_directory = False
+    for sector in range(bpb["reserved_sectors"], limit):
+        live = _live_entry_count(image.sectors(sector, 1))
+        if live and not previous_was_directory:
+            yield sector, live
+        previous_was_directory = bool(live)
+
+
+def _implied_bpb(bpb, root_sector):
+    """The BPB value that would put the root directory at `root_sector`, as ' => field=value'.
+
+    root_start = reserved_sectors + fat_count * sectors_per_fat, so a candidate sector pins one
+    of those two fields once the others are taken as read. Empty if neither solves to a legal value.
+    """
+    fat_span = root_sector - bpb["reserved_sectors"]
+    if fat_span > 0 and fat_span % bpb["sectors_per_fat"] == 0:
+        fat_count = fat_span // bpb["sectors_per_fat"]
+        if 1 <= fat_count <= BPB_FAT_COUNT_MAX:
+            return " => nfats=%d (%d reserved + %d FATs x %d sectors)" % (
+                fat_count, bpb["reserved_sectors"], fat_count, bpb["sectors_per_fat"])
+    reserved = root_sector - bpb["fat_count"] * bpb["sectors_per_fat"]
+    if reserved > 0:
+        return " => reserved sectors=%d (keeping the BPB's %d FATs x %d sectors)" % (
+            reserved, bpb["fat_count"], bpb["sectors_per_fat"])
+    return ""
+
+
+def _diagnose_empty_root(image):
+    """Warnings for a root directory with no live entries: say so, and say where it might be."""
+    found = ["<root>: no live directory entries at sector %d — nothing to list or extract;"
+             " the BPB may be placing the root on the wrong sector"
+             % image.bpb["root_start"]]
+    for sector, live in _directory_like_sectors(image):
+        if len(found) > DIAGNOSTIC_MAX_CANDIDATES:
+            break
+        found.append("<root>: DIAGNOSTIC sector %d looks like a directory (%d live entries)%s"
+                     % (sector, live, _implied_bpb(image.bpb, sector)))
+    if len(found) == 1:
+        found.append("<root>: DIAGNOSTIC no early sector looks like a directory either —"
+                     " the volume may genuinely be empty")
+    return found
+
+
 def walk(image):
     """Every file and directory in the volume, depth-first, parents before children."""
-    root = image.sectors(image.bpb["root_start"], image.bpb["root_sectors"])
-    return _walk_entries(image, _parse_dir_entries(root, "", image.warnings), set())
+    return _walk_entries(image, image.root_dir, set())
 
 
 def _walk_entries(image, entries, visited_dirs):
@@ -409,18 +517,35 @@ def extract(image, outdir):
 
 
 def _parse_args(args):
-    """(image path, outdir or None) — or (None, None) after printing why it is unusable."""
-    if args[0].startswith("-"):
-        sys.stderr.write("%s\n" % USAGE)
-        return None, None
-    outdir = None
-    if "-o" in args:
-        flag = args.index("-o")
-        if flag + 1 >= len(args):
-            sys.stderr.write("-o needs an output directory\n%s\n" % USAGE)
-            return None, None
-        outdir = args[flag + 1]
-    return args[0], outdir
+    """(image path, outdir or None, FAT count or None) — path None after printing what is wrong.
+
+    Flags may come before or after the image path; a value-taking flag consumes the token after it.
+    """
+    unusable = (None, None, None)
+    values = {OUTDIR_FLAG: None, NFATS_FLAG: None}
+    paths = []
+    pending = list(args)
+    while pending:
+        token = pending.pop(0)
+        if token in values:
+            if not pending:
+                sys.stderr.write("%s needs a value\n%s\n" % (token, USAGE))
+                return unusable
+            values[token] = pending.pop(0)
+        elif token.startswith("-"):
+            sys.stderr.write("unexpected argument %r\n%s\n" % (token, USAGE))
+            return unusable
+        else:
+            paths.append(token)
+    if len(paths) != 1:
+        sys.stderr.write("expected exactly one image path\n%s\n" % USAGE)
+        return unusable
+    nfats = values[NFATS_FLAG]
+    if nfats is not None and not (nfats.isdigit() and 1 <= int(nfats) <= BPB_FAT_COUNT_MAX):
+        sys.stderr.write("%s needs a FAT count in 1..%d\n%s\n"
+                         % (NFATS_FLAG, BPB_FAT_COUNT_MAX, USAGE))
+        return unusable
+    return paths[0], values[OUTDIR_FLAG], None if nfats is None else int(nfats)
 
 
 def main():
@@ -428,7 +553,7 @@ def main():
     if not args or args[0] in ("-h", "--help"):
         print(__doc__.strip())
         return 0
-    path, outdir = _parse_args(args)
+    path, outdir, fat_count = _parse_args(args)
     if path is None:
         return 2
     try:
@@ -438,11 +563,13 @@ def main():
         sys.stderr.write("cannot read %s: %s\n" % (path, err))
         return 1
     try:
-        image = Fat12Image(data)
+        image = Fat12Image(data, fat_count)
     except ValueError as err:
         sys.stderr.write("%s: not a usable FAT12 image: %s\n" % (path, err))
         return 1
     print("IMAGE %s (%d bytes)" % (path, len(data)))
+    if fat_count is not None:
+        print("      %s %d overriding the BPB's own FAT count" % (NFATS_FLAG, fat_count))
     if outdir:
         extract(image, outdir)
     else:

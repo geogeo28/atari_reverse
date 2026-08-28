@@ -614,6 +614,26 @@ host differential can miss it. Then, separately: list every wait your harness sa
 and write down what that injection *skips*. That list is the part of the machine your suite has never
 run.
 
+**How the poke gets in, and why it must be fired ON the read.** Two mechanical facts, both
+measured on Hatari 2.6.1, decide the shape of every headless input injection. First, **`--cmd-fifo`
+has no joystick event at all**: `hatari-event` accepts mouse buttons and keys and nothing else, and a
+key bound to the keyboard-as-joystick emulation (`--joy1 keys`) is *swallowed* headless — it stops
+reaching the ST keyboard and the emulated stick never moves either. So the stick cannot be pressed
+from outside the emulator at all, and poking the byte the game's own handler files is not laziness;
+it is the only door, which is precisely why the class above exists. Second, **poke on the gate's own
+read, not on a timer.** Zynaps' PREPARE-FOR-COMBAT loop re-sends IKBD `$16` (interrogate joystick)
+every pass, and the real replies clear the same byte a few thousand cycles later: a timed write
+opened the gate in *one run out of three* and left the other two sitting on the gate. A breakpoint on
+the `tst.b` that reads the byte, with an action file that writes it and continues, removes the race
+entirely — and it must not be `:once` when the same gate guards every respawn. Third, and it costs
+one more line in that same action file: **make the breakpoint report that it fired**, with a
+`savebin` of one byte to a host path. The gate crossing then becomes an *observable moment* the
+driver can wait on, instead of a delay it has to guess — which matters because the screen either
+side of such a gate is often the same picture (Zynaps' "PREPARE FOR COMBAT" and the level behind it
+are both the status panel in 32 colours), so no check on the capture can tell you whether the wait
+was long enough. Measured: with fixed delays the same capture was the level on one medium and the
+gate screen on another, ten seconds apart.
+
 **The pin shape, and its honest limit.** Two surfaces, because neither is sufficient. A **record
 field** carrying the send's own verdict (did the transmitter go ready, or did the bounded wait spin
 out) says what the program believed; a **trace row** over the emulator's I/O-write log says the byte
@@ -701,6 +721,23 @@ hardware" into a localised answer. All are cheap and were decisive in the BuggyB
   a loop over several of them: `$ffff8260`, four registers past the end of the palette, is the
   resolution register, and taxonomy class 6 is what a loop that runs one register long does to
   the machine. A probe is throwaway code, which is exactly why it gets written without thinking.
+
+- **A capture is not a surface.** Hatari writes a PNG whether or not the machine is doing anything,
+  and exits 0 after a bus error it only mentioned in its log, so "all the screenshots exist" is not a
+  result — it is the same vacuous check as the half-blind exit detector above, wearing a picture.
+  A headless capture run passes only when four things hold: the emulator's **return code** is clean,
+  its **log** carries none of `Bus error` / `Address error` / `CPU halted` / `Failed to load` (never
+  a generic `/error/i` — Hatari prints `ERROR: symbol table missing from the program!` for every
+  stripped `.PRG`), every capture holds **more than one distinct colour** (one colour is a photograph
+  of a blank screen), and the late captures are **not the same picture** as the first (equal frames
+  mean the run never left where it started). A blank frame is worth RETAKING before it is worth
+  failing on — programs blank the screen between pages, and where that gap falls moves with the TOS
+  version (measured: the same capture caught a page on 1.04 and black on 1.02) — but a screen still
+  blank after every retry is the fault, so the check stays. And anchor the timeline on things the MACHINE did
+  rather than on a stopwatch: the program's own arrival in RAM (poll a dump for its
+  relocation-free signature) to start it, and a breakpoint's own report to date anything after a
+  gate. A fixed delay lands wherever the host's speed and the medium put it, and the picture cannot
+  tell you it landed wrong. `tools/hatari_headless.py` is where this workspace keeps all of it.
 
 - **Byte-compare against the original by dumping its RAM.** The strongest side-by-side there is,
   and it costs one Hatari debugger script. Run the ORIGINAL binary to the screen you want, dump the

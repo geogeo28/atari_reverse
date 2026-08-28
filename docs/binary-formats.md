@@ -160,6 +160,33 @@ or a packed blob). It exits nonzero and prints a `WARNING` line per suspicious c
 or directory entry instead of silently truncating — treat a dirty exit as "this image is
 damaged", not as noise.
 
+**"0 files" usually means a wrong BPB field, not an empty disk.** The lister derives the root
+directory's position arithmetically — `reserved + nfats × fat_sectors` — so a single wrong byte
+there points it at the middle of a FAT and it finds no directory entries at all. The field that
+gets this wrong in practice is **`nfats` at offset 16**: Zynaps' 1988 disk declares `1` and really
+carries `2` FATs of 3 sectors, so its root directory starts at sector 7 and the lister was reading
+sector 4.
+
+**Why TOS does not care, and it is not because it "reads the directory some other way".** The Atari
+BPB — the structure `Getbpb` returns and the whole BIOS works from — *has no FAT-count field at
+all*. It carries `recsiz, clsiz, clsizb, rdlen, fsiz, fatrec, datrec, numcl, bflags`, and `fatrec`
+is defined as **the sector number of the SECOND FAT**, with the data area at `fatrec + fsiz +
+rdlen`. Two FATs are baked into the layout TOS computes, whatever the DOS byte says — which on this
+disk is exactly right, so the volume is perfectly coherent to a real ST and only a host tool that
+believes `nfats` is misled. (The root-entry count at offset 17 fixes the directory's SIZE, not its
+address, so it is not the field that saves anything here.) A disk can therefore ship like this and
+work for its whole commercial life.
+
+Diagnose it by looking for the directory rather than trusting the field, which is what
+`st_extract.py` now does: a root that yields zero live entries is a WARNING and a non-zero exit, and
+it scans the early sectors for 32-byte records that have the shape of 8.3 directory entries and
+reports which BPB field would place the root there ("sector 7 ⇒ nfats=2"). Read the volume with
+`st_extract.py --nfats 2 IMAGE.ST`, which touches no bytes. Write the corrected byte into a **copy**
+only when something else has to mount the image too (an emulator, a mounter) — never into the dump —
+and *script* that copy so the derived tree is reproducible rather than a one-off hand edit:
+`projects/zynaps/tools/make_bin.sh` is the worked example, one byte, refusing to patch unless the
+byte still reads what the master is known to hold.
+
 ### `.stx` / Pasti images (when the disk is copy-protected)
 
 A `.ST` can only hold what a normal FDC read returns: 512-byte sectors, numbered 1..N,
@@ -297,6 +324,38 @@ still *placed*, so its bytes are present but unproven; a sector nothing could be
 gone. Reporting both as "missing" makes a clean run impossible on any protected disk, and
 reporting both as "fine" hides the real loss — so the harness's `--patch` ledger counts them
 apart, and only the second is an error.
+
+### Protection pattern: the address field claims another track
+
+The cheapest protection to format and the easiest to misread as a bad dump. A track is written
+with the **wrong track number in every sector's address field**, so a controller that seeks there
+and asks for that track gets record-not-found, while a flux-level image records all ten sectors
+perfectly. Zynaps (1988) is the worked example: cylinder 77's sectors claim track 76, cylinder
+78's claim 73 and cylinder 79's claim 72 — thirty findings, one per sector, and `read.log` fills
+with `Ignoring unexpected sector C:73 H:0 R:3 N:2`. `stx_extract.py` reports the class directly:
+`cyl N side 0 sector M: address field claims track K, physically on cylinder N`.
+
+Three things to establish before drawing any conclusion from it:
+
+- **It is a format, not damage.** Every sector of the track is affected, the claimed track is
+  *consistent* across the track, and the flux read is clean. One bad sector on one track with a CRC
+  error is the other thing entirely.
+- **Whether any file lives there.** Compare the highest cluster the FAT allocates against the
+  affected cylinders. On Zynaps the last used cluster maps to cylinder 73 and cylinders 74–79 are
+  free, so the 30-sector hole in the converted `.ST` costs nothing. If the protected track *is*
+  allocated, the `.ST` has an interior hole and everything in "The damage is silent downstream"
+  above applies.
+- **Whether the program actually reads it.** Protection on the disk does not imply a check in the
+  binary — the format may exist only to defeat a whole-disk copier. Settle it both ways: scan the
+  whole image for `$ff8604`/`$ff8606`/`$ff860x` at *any* alignment (not just at instruction
+  boundaries a desyncing linear sweep found) and for `Floprd`/`Flopver`/`Flopfmt`/`Rwabs` trap
+  sites, **and** boot the stripped `.ST` — or a GEMDOS folder with no floppy at all — and see how
+  far it gets. Zynaps has zero FDC references and four GEMDOS traps in the whole binary, and plays
+  to level 1 from a plain folder. Where the two disagree, the boot wins and the scan was
+  incomplete.
+
+Whatever the verdict, the `.ST` is not a faithful copy of the disk; say so in the project's README
+and keep the `.stx` as the one that is.
 
 **Expect packed files — but check *whose* packing.** A cracked disk rarely holds plain
 `.PRG`s: on the Wonderboy **crack** release only the `VAPOUR2` loader starts with `601a`,

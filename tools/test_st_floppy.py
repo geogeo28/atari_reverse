@@ -7,7 +7,7 @@ Deliberately NOT wired into any project's `make test`, which builds an oracle `.
 
     pytest tools/test_st_floppy.py
 
-FOUR CASES, and the failure each exists to catch:
+FIVE CASES, and the failure each exists to catch:
 
   * the ROUND TRIP — every file the builder placed comes back out through the reader, byte for byte.
     The two halves are never verified against each other in a project's own checks (a real TOS reads
@@ -18,6 +18,10 @@ FOUR CASES, and the failure each exists to catch:
     the handed-back-disk case the hardware runbook depends on.
   * the BOOT SECTOR IS NOT EXECUTABLE — TOS runs sector 0 when its words sum to $1234, and a volume
     that carries no boot code must never hit it. Including the re-draw that makes it so.
+  * a ROOT DIRECTORY THAT DECODES EMPTY — the BPB of a real dump (gw/dumps/zynaps/zynaps.st)
+    under-counts its FATs, which puts the root on an empty sector: the reader listed nothing and
+    exited 0, reporting "this disk is empty" for a disk holding 63 files. Zero live entries must
+    warn, name the sector the root is really on, and be readable through the FAT-count override.
   * DETERMINISM — the same file list twice is the same bytes, and two different lists are two
     different serials. The first is what makes the published sha256 mean anything; the second is what
     stops TOS reading a swapped disk through the previous one's cached directory.
@@ -133,6 +137,30 @@ def test_a_subdirectory_that_outgrew_one_cluster(tmp_path):
     assert st_extract.read_file(volume, "AUTO/LATE.PRG") == payload.read_bytes()
     assert st_extract.read_file(volume, "AUTO/A00.PRG") is not None     # the first cluster still reads
     assert volume.warnings == []
+
+
+def test_a_root_that_decodes_empty_warns_and_says_where_it_really_is(tmp_path):
+    """An under-counted FAT count moves the root onto an empty sector — "0 files" must not be clean.
+
+    The image is built honestly and then only its BPB FAT count is understated, which is exactly
+    what gw/dumps/zynaps/zynaps.st carries. The diagnosis has to name the sector the root is really
+    on and the FAT count that puts it there, and that count has to make the volume readable."""
+    files = _sample_files(tmp_path, count=2)
+    image, _layout = _build(tmp_path, files)
+    data = bytearray(image.read_bytes())
+    true_root = st_build.RESERVED_SECTORS + st_build.FAT_COPIES * st_build.SECTORS_PER_FAT
+    data[st_extract.BPB_FAT_COUNT] = st_build.FAT_COPIES - 1
+
+    misread = st_extract.Fat12Image(bytes(data))
+    assert st_extract.walk(misread) == []
+    assert any("no live directory entries" in warning for warning in misread.warnings)
+    assert any(f"sector {true_root} looks like a directory" in warning
+               and f"nfats={st_build.FAT_COPIES}" in warning for warning in misread.warnings)
+
+    corrected = st_extract.Fat12Image(bytes(data), st_build.FAT_COPIES)
+    for name, host in files:
+        assert st_extract.read_file(corrected, name) == pathlib.Path(host).read_bytes()
+    assert corrected.warnings == []
 
 
 def test_the_boot_sector_is_never_the_one_tos_executes(tmp_path):

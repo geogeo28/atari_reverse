@@ -111,6 +111,18 @@ SDL_VIDEODRIVER=dummy hatari --sound off --fast-forward on --tos-res low \
   --tos <tos.img> --run-vbls 4000 --harddrive <dir> --auto 'C:\PROBE.TOS'
 ```
 
+**This recipe needs TOS 1.04 or later.** Hatari refuses GEMDOS directory emulation on older ROMs,
+says so once, and then boots normally with no C: at all:
+
+```
+Please use at least TOS v1.04 for the HD directory emulation (all required GEMDOS functionality
+isn't completely emulated for this TOS version).
+```
+
+The `--auto` program therefore never runs and the probe's output file is *missing* rather than wrong
+— a symptom that reads like a broken probe. Check for that line before believing an empty result, and
+to exercise TOS 1.00/1.02 put the program on a floppy image instead of in a directory.
+
 Gotchas: a freshly-run program owns the whole TPA, so **`Mshrink` first** or `Malloc` returns
 nothing; `--monitor rgb` (not mono) keeps `Getrez` in low-res. Machine-dependent results (Malloc
 base, Physbase) won't equal a fixed model — assert the *invariant* (even-aligned, non-overlapping,

@@ -18,7 +18,9 @@ OUT_DIR defaults to `projects/wonderboy/out/gfx`. Reads only the game's own file
 
 EVERY PIXEL FORMAT HERE IS THE ST's LOW-RES ONE: four bitplanes, a pixel's 4-bit colour index
 gathered one bit per plane (plane 0 = bit 0), and colours as $0RGB words with 3 bits per channel.
-What differs between assets is only how the planes are INTERLEAVED, and there are two shapes:
+That model — the decoder, the palette scaling and the image builders — lives in `tools/st_pixels.py`
+and is shared with the other projects' extractors; what is Wonder Boy's own is only which shape each
+asset has. There are two shapes:
 
   word-planar  a row is groups of four big-endian 16-bit plane words, 16 pixels per group. Screens,
                tiles and every HUD bitmap are this.
@@ -48,29 +50,13 @@ REPO_ROOT = os.path.dirname(os.path.dirname(PROJECT_DIR))
 sys.path.insert(0, os.path.join(REPO_ROOT, "tools"))
 
 import depack_rad  # noqa: E402  (needs the path above)
+from st_pixels import (  # noqa: E402  (needs the path above)
+    BYTES_PER_WORD, PALETTE_ENTRIES, PIXELS_PER_BYTE, PIXELS_PER_WORD, TRANSPARENT, decode_planar,
+    image_bytes, read_palette_words, palette_rgb, row_bytes, scaled, st_word_to_rgb, to_rgb_image,
+    to_rgba_image)
 
 BIN_DIR = os.path.join(PROJECT_DIR, "bin")
 DEFAULT_OUT_DIR = os.path.join(PROJECT_DIR, "out", "gfx")
-
-# ---- the ST's pixel and colour model ----------------------------------------------------------
-
-PLANES = 4
-PIXELS_PER_PLANE_WORD = 16
-PIXELS_PER_PLANE_BYTE = 8
-BYTES_PER_WORD = 2                        # every plane word and palette entry is one be16
-PALETTE_ENTRIES = 16
-ST_CHANNEL_BITS = 3                       # $0RGB: three bits per channel...
-ST_CHANNEL_MAX = (1 << ST_CHANNEL_BITS) - 1   # ...so 7 is full brightness
-EIGHT_BIT_MAX = 255
-
-
-def word_planar_bytes(width_px, rows=1):
-    """The bytes a word-planar bitmap of this shape occupies — the one source for every stride.
-
-    Defined here rather than beside decode_word_planar because the constants below are built
-    from it at import time.
-    """
-    return rows * (width_px // PIXELS_PER_PLANE_WORD) * PLANES * BYTES_PER_WORD
 
 # ---- SPRITES.CRU ------------------------------------------------------------------------------
 
@@ -87,9 +73,7 @@ SPRITE_DESC_WIDTH_CLASS = 4               # u8: width = (class + 1) * 16 px
 SPRITE_DESC_HEIGHT_MINUS_1 = 5            # u8
 SPRITE_DESC_ANCHOR_X = 8                  # be16 pair; recorded in the manifest, never applied
 SPRITE_DESC_ANCHOR_Y = 10
-SPRITE_WIDTH_UNIT = 16
-SPRITE_WORDS_PER_GROUP = 1 + PLANES       # mask, plane0, plane1, plane2, plane3
-SPRITE_GROUP_BYTES = SPRITE_WORDS_PER_GROUP * BYTES_PER_WORD
+SPRITE_WIDTH_UNIT = PIXELS_PER_WORD       # a sprite's width class counts 16-pixel groups
 SPRITE_SHEET_COLUMNS = 16
 SPRITE_NON_EMPTY_FLOOR = 0.90             # the share of descriptors that must hold visible pixels
 
@@ -98,7 +82,7 @@ SPRITE_NON_EMPTY_FLOOR = 0.90             # the share of descriptors that must h
 TILES_FILE = os.path.join(BIN_DIR, "disk2", "TILEDATA.RAD")
 TILE_WIDTH = 16
 TILE_ROWS = 16
-TILE_BYTES = word_planar_bytes(TILE_WIDTH, TILE_ROWS)
+TILE_BYTES = image_bytes(TILE_WIDTH, TILE_ROWS)
 TILE_SHEET_COLUMNS = 32
 
 # ---- the full-screen .RAD files ---------------------------------------------------------------
@@ -112,7 +96,7 @@ SCREEN_HEADER_BYTES = 128
 SCREEN_PALETTE_OFFSET = 4                 # 16 be16 words inside that header
 SCREEN_WIDTH = 320
 SCREEN_HEIGHT = 200
-SCREEN_LINE_BYTES = word_planar_bytes(SCREEN_WIDTH)   # 160
+SCREEN_LINE_BYTES = image_bytes(SCREEN_WIDTH, 1)   # 160
 SCREEN_UNPACKED_BYTES = SCREEN_HEADER_BYTES + SCREEN_LINE_BYTES * SCREEN_HEIGHT
 
 # ---- AUTO/SWB.PRG -----------------------------------------------------------------------------
@@ -131,7 +115,7 @@ PALETTE_SWATCH_PX = 24
 
 # Byte-planar cells: 8 rows of four plane bytes, so 32 bytes and 8 px wide (WB_DIGIT_GLYPH_LEN).
 GLYPH_ROWS = 8
-GLYPH_BYTES = GLYPH_ROWS * PLANES
+GLYPH_BYTES = image_bytes(PIXELS_PER_BYTE, GLYPH_ROWS, PIXELS_PER_BYTE)
 GLYPH_SHEET_SCALE = 3                     # these cells are 8x8; nearest-neighbour up for eyeballing
 
 GlyphGroup = namedtuple("GlyphGroup", "name runtime count columns")
@@ -145,7 +129,7 @@ TEXT_GLYPH_GROUPS = (
 METER_CELL_GROUP = GlyphGroup("meter cells $146fc (full, 3/4, 2/4, 1/4, empty)", 0x146FC, 5, 5)
 
 # The HUD sheet, in the order its groups are stacked. The word-planar ones' entry stride is
-# word_planar_bytes(width_px, rows) — which is WB_RECORD_BITMAP_LEN, WB_HUD_CELL_BYTES * ROWS and
+# image_bytes(width_px, rows) — which is WB_RECORD_BITMAP_LEN, WB_HUD_CELL_BYTES * ROWS and
 # WB_PANEL_FRAME_LEN respectively. Every count comes from names.txt / wonderboy.h. METER_CELL_GROUP
 # sits in this list because it belongs on the sheet, not because it shares their layout: it is the
 # one byte-planar group here, so the renderer below dispatches on the group's type.
@@ -175,93 +159,20 @@ def be32(data, offset):
     return int.from_bytes(data[offset:offset + 4], "big")
 
 
-def st_word_to_rgb(word):
-    """One $0RGB palette word to 8-bit RGB."""
-    channels = ((word >> 8) & ST_CHANNEL_MAX, (word >> 4) & ST_CHANNEL_MAX, word & ST_CHANNEL_MAX)
-    return tuple(channel * EIGHT_BIT_MAX // ST_CHANNEL_MAX for channel in channels)
-
-
 def read_palette(data, offset):
-    words = [be16(data, offset + i * BYTES_PER_WORD) for i in range(PALETTE_ENTRIES)]
-    return words, [st_word_to_rgb(word) for word in words]
-
-
-def gather_planes(plane_values, bit_count):
-    """Four same-width plane fields to `bit_count` colour indices, leftmost pixel first."""
-    pixels = []
-    for bit in reversed(range(bit_count)):
-        index = 0
-        for plane, value in enumerate(plane_values):
-            index |= ((value >> bit) & 1) << plane
-        pixels.append(index)
-    return pixels
-
-
-def plane_group_offsets(offset, width_px, rows, group_bytes):
-    """One list of 16-pixel group offsets per row — the walk screens, tiles and sprites share."""
-    groups = width_px // PIXELS_PER_PLANE_WORD
-    return [[offset + (row * groups + group) * group_bytes for group in range(groups)]
-            for row in range(rows)]
-
-
-def decode_word_planar(data, offset, width_px, rows,
-                       group_bytes=PLANES * BYTES_PER_WORD, plane_word_at=0):
-    """Rows of colour indices from the interleaved-plane-word layout (screens, tiles, HUD).
-
-    Sprites walk the same rows through a wider group: `group_bytes` is the stride from one group
-    to the next, `plane_word_at` where plane 0 sits inside it (past the mask word).
-    """
-    out = []
-    for row_offsets in plane_group_offsets(offset, width_px, rows, group_bytes):
-        pixels = []
-        for at in row_offsets:
-            planes = [be16(data, at + plane_word_at + plane * BYTES_PER_WORD)
-                      for plane in range(PLANES)]
-            pixels += gather_planes(planes, PIXELS_PER_PLANE_WORD)
-        out.append(pixels)
-    return out
+    """The 16 colour words at `offset`, and the same palette as 8-bit RGB tuples."""
+    words = read_palette_words(data, offset)
+    return words, palette_rgb(words)
 
 
 def decode_byte_planar(data, offset, rows):
     """Rows of colour indices from the four-consecutive-plane-bytes layout (font, digits, meter)."""
-    out = []
-    for row in range(rows):
-        at = offset + row * PLANES
-        plane_bytes = data[at:at + PLANES]
-        # A short slice would silently gather zeros, i.e. a blank glyph, from a wrong address or a
-        # truncated file — the one failure this decoder cannot show you in the PNG.
-        if len(plane_bytes) != PLANES:
-            raise SystemExit("byte-planar row at %#x holds %d of the %d plane bytes: the address is "
-                             "wrong or the file is truncated" % (at, len(plane_bytes), PLANES))
-        out.append(gather_planes(plane_bytes, PIXELS_PER_PLANE_BYTE))
-    return out
+    return decode_planar(data, PIXELS_PER_BYTE, rows, offset, unit_bits=PIXELS_PER_BYTE)
 
 
 def decode_sprite(data, offset, width_px, rows):
-    """Rows of (index, opaque) pairs. A SET mask bit keeps the background, so it means transparent."""
-    index_rows = decode_word_planar(data, offset, width_px, rows,
-                                    group_bytes=SPRITE_GROUP_BYTES, plane_word_at=BYTES_PER_WORD)
-    mask_offsets = plane_group_offsets(offset, width_px, rows, SPRITE_GROUP_BYTES)
-    out = []
-    for indices, row_offsets in zip(index_rows, mask_offsets):
-        opaque = []
-        for at in row_offsets:
-            opaque += [not bit for bit in gather_planes([be16(data, at)], PIXELS_PER_PLANE_WORD)]
-        out.append(list(zip(indices, opaque)))
-    return out
-
-
-def image_from_indices(rows, palette):
-    image = Image.new("RGB", (len(rows[0]), len(rows)))
-    image.putdata([palette[index] for row in rows for index in row])
-    return image
-
-
-def image_from_masked_indices(rows, palette):
-    image = Image.new("RGBA", (len(rows[0]), len(rows)))
-    image.putdata([palette[index] + (EIGHT_BIT_MAX,) if opaque else (0, 0, 0, 0)
-                   for row in rows for index, opaque in row])
-    return image
+    """Rows of colour indices, TRANSPARENT where the mask keeps the background."""
+    return decode_planar(data, width_px, rows, offset, masked=True)
 
 
 def grid_sheet(images, columns):
@@ -289,10 +200,6 @@ def stack_sheets(sheets):
         stacked.paste(sheet, (0, y))
         y += sheet.height + GROUP_GAP
     return stacked
-
-
-def scaled(image, factor):
-    return image.resize((image.width * factor, image.height * factor), Image.NEAREST)
 
 
 def read_file(path):
@@ -325,7 +232,7 @@ def read_sprite_descriptors(cru):
         at = CRU_BODY_BASE + index * SPRITE_DESC_BYTES
         width = (cru[at + SPRITE_DESC_WIDTH_CLASS] + 1) * SPRITE_WIDTH_UNIT
         rows = cru[at + SPRITE_DESC_HEIGHT_MINUS_1] + 1
-        stride = width // SPRITE_WIDTH_UNIT * SPRITE_GROUP_BYTES
+        stride = row_bytes(width, masked=True)
         entries.append(SpriteEntry(
             index=index,
             data_offset=CRU_BODY_BASE + be32(cru, at + SPRITE_DESC_DATA_PTR),
@@ -391,10 +298,10 @@ def extract_sprites(out_dir, report):
     images, manifest, non_empty, fully_opaque = [], [], 0, 0
     for entry in entries:
         rows = decode_sprite(cru, entry.data_offset, entry.width, entry.rows)
-        image = image_from_masked_indices(rows, palette)
+        image = to_rgba_image(rows, palette)
         image.save(os.path.join(sprite_dir, "sprite_%03d.png" % entry.index))
         images.append(image)
-        opacity = [opaque for row in rows for _, opaque in row]
+        opacity = [index != TRANSPARENT for row in rows for index in row]
         non_empty += any(opacity)
         fully_opaque += all(opacity)
         manifest.append("%3d  offset %#08x  %2dx%-3d  anchor %5d,%-5d"
@@ -421,8 +328,7 @@ def extract_tiles(out_dir, palette, report):
         raise SystemExit("TILEDATA.RAD unpacks to %d bytes, not a multiple of the %d-byte tile"
                          % (len(tiles), TILE_BYTES))
     count = len(tiles) // TILE_BYTES
-    images = [image_from_indices(decode_word_planar(tiles, index * TILE_BYTES, TILE_WIDTH, TILE_ROWS),
-                                 palette)
+    images = [to_rgb_image(decode_planar(tiles, TILE_WIDTH, TILE_ROWS, index * TILE_BYTES), palette)
               for index in range(count)]
     grid_sheet(images, TILE_SHEET_COLUMNS).save(os.path.join(out_dir, "tiles_sheet.png"))
     report.append("tiles: %d tiles of %dx%d from %d unpacked bytes -> tiles_sheet.png"
@@ -439,8 +345,8 @@ def extract_screens(out_dir, report):
             raise SystemExit("%s unpacks to %d bytes, not the %d of a header plus one ST screen"
                              % (name, len(screen), SCREEN_UNPACKED_BYTES))
         _, palette = read_palette(screen, SCREEN_PALETTE_OFFSET)
-        rows = decode_word_planar(screen, SCREEN_HEADER_BYTES, SCREEN_WIDTH, SCREEN_HEIGHT)
-        image = image_from_indices(rows, palette)
+        rows = decode_planar(screen, SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_HEADER_BYTES)
+        image = to_rgb_image(rows, palette)
         image.save(os.path.join(screen_dir, "%s.png" % name))
         report.append("screen: %-9s %dx%d" % (name, image.width, image.height))
     return len(SCREEN_FILES)
@@ -465,16 +371,16 @@ def extract_palettes(prg, out_dir, report):
 
 
 def glyph_group_sheet(prg, group, palette):
-    images = [image_from_indices(decode_byte_planar(prg, prg_offset(group.runtime) + i * GLYPH_BYTES,
-                                                    GLYPH_ROWS), palette)
+    images = [to_rgb_image(decode_byte_planar(prg, prg_offset(group.runtime) + i * GLYPH_BYTES,
+                                              GLYPH_ROWS), palette)
               for i in range(group.count)]
     return grid_sheet(images, group.columns)
 
 
 def bitmap_group_sheet(prg, group, palette):
-    stride = word_planar_bytes(group.width_px, group.rows)
-    images = [image_from_indices(decode_word_planar(prg, prg_offset(group.runtime) + i * stride,
-                                                    group.width_px, group.rows), palette)
+    stride = image_bytes(group.width_px, group.rows)
+    images = [to_rgb_image(decode_planar(prg, group.width_px, group.rows,
+                                         prg_offset(group.runtime) + i * stride), palette)
               for i in range(group.count)]
     return grid_sheet(images, group.columns)
 
@@ -484,7 +390,7 @@ def extract_fonts(prg, out_dir, palette, report):
     scaled(stack_sheets(sheets), GLYPH_SHEET_SCALE).save(os.path.join(out_dir, "font_sheet.png"))
     for group in TEXT_GLYPH_GROUPS:
         report.append("font:  %-3d glyphs of %dx%d  %s"
-                      % (group.count, PIXELS_PER_PLANE_BYTE, GLYPH_ROWS, group.name))
+                      % (group.count, PIXELS_PER_BYTE, GLYPH_ROWS, group.name))
     return sum(group.count for group in TEXT_GLYPH_GROUPS)
 
 
@@ -496,7 +402,7 @@ def hud_group_sheet(prg, group, palette):
     """
     if isinstance(group, GlyphGroup):
         return (scaled(glyph_group_sheet(prg, group, palette), GLYPH_SHEET_SCALE),
-                PIXELS_PER_PLANE_BYTE, GLYPH_ROWS)
+                PIXELS_PER_BYTE, GLYPH_ROWS)
     return bitmap_group_sheet(prg, group, palette), group.width_px, group.rows
 
 
