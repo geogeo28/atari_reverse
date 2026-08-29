@@ -27,21 +27,36 @@
  * blank cell the expanders write is 0xffff and four zero planes), which is also why a right shift
  * feeds 1s into the mask and 0s into the planes.
  * ============================================================================================= */
+/* `lea 1600(a1),a2` in `ship_sprite_deinterleave` — where the SECOND ship frame starts, which is
+ * also the stride between the ship's two sprite banks (../../names.txt's comment on 0x111f4 reads
+ * it as "frame stride 0x640"). In include/ rather than in src/sprite.c because src/init.c's
+ * `section_restart_prologue` points the ship's shadow record one frame past the live record's
+ * sprite, and 0x640 must not be spelt twice. */
+#define SHIP_SPRITE_GAP 1600u
+
 #define SPRITE_MASKED_ROW_WORDS  5u      /* `move.w / move.l / move.l` per cell per row */
 #define SPRITE_MASKED_ROW_BYTES 10u
 #define SPRITE_MASK_WORD         0u      /* the mask's word index within a row */
 #define SPRITE_MASK_TRANSPARENT 0xffffu  /* `move.w #$ffff,(a5)+` — a wholly see-through cell */
 
 /* ================================================================================================
- * The asteroid banks. `_start` @ 0x1571a preshifts six of them, 0x1e00 bytes apart from 0x1a8ae —
- * the same store `clear_backdrop_page0` uses for the front end (video.h says so). A bank is
+ * The asteroid banks. `asteroids_load_and_build` @ 0x156ac builds six of them out of BIGAST.DAT and
+ * then preshifts each (its `bsr`s at 0x1571a..0x15752), 0x1e00 bytes apart from 0x1a8ae — the same
+ * store `clear_backdrop_page0` uses for the front end (video.h says so). A bank is
  * SPRITE_PRESHIFT_SLOTS frames of one 48x32 masked sprite: two cells of real pixels and a blank
  * third, which is the room a 14-pixel shift needs.
  * ============================================================================================= */
 #define ASTEROID_FRAME_ROWS 32u   /* `move.w #$1f,d0` + dbf */
 #define ASTEROID_FRAME_CELLS 3u   /* the `roxr` chain's three links: (a0), 320(a0), 640(a0) */
+#define ASTEROID_SOURCE_CELLS 2u  /* the file's own 32x32 sprite; the third cell is synthesised */
 #define ASTEROID_CELL_BYTES (ASTEROID_FRAME_ROWS * SPRITE_MASKED_ROW_BYTES)   /* the 320 above */
 #define ASTEROID_FRAME_BYTES (ASTEROID_FRAME_CELLS * ASTEROID_CELL_BYTES)     /* `lea 960(a0),a0` */
+/* `lea 640(a0),a0` between sprites: one 32x32 masked sprite as the file stores it. */
+#define ASTEROID_SOURCE_BYTES (ASTEROID_FRAME_ROWS * ASTEROID_SOURCE_CELLS * SPRITE_MASKED_ROW_BYTES)
+/* One whole bank: the eight preshift slots the expander fills, which is also the stride between the
+ * six `asteroid_preshift_bank` calls. */
+#define ASTEROID_BANK_BYTES (SPRITE_PRESHIFT_SLOTS * ASTEROID_FRAME_BYTES)
+#define ASTEROID_SPRITES 6u       /* `move.w #$5,d2` + dbf — the six sprites BIGAST.DAT holds */
 
 /* ================================================================================================
  * The boss sprite, as `mothership_sprite_expand` @ 0x157ca lays it out. The disk file is a 64x40
@@ -130,6 +145,12 @@ uint32_t sprite_preshift8_2px(uint8_t *image, uint32_t src, uint32_t dst, uint16
 uint32_t sprite_preshift4_4px(uint8_t *image, uint32_t src, uint32_t dst, uint16_t frame_bytes);
 void asteroid_preshift_bank(uint8_t *image, uint32_t bank);
 void mothership_sprite_expand(uint8_t *image);
+/* The asteroid half of `asteroids_load_and_build` @ 0x156e2..0x15718: one 32x32 masked sprite laid
+ * out as SPRITE_PRESHIFT_SLOTS identical three-cell frames. IT HAS NO `fn` LINE IN ../../names.txt
+ * and no entry of its own — it is a loop nest inside that routine — so the name is this
+ * reconstruction's and it lives HERE rather than in src/fileio.c because it is the same transform
+ * `mothership_sprite_expand` is, one geometry narrower; STATUS.md's fileio row says so. */
+void asteroid_sprite_expand(uint8_t *image, uint32_t src, uint32_t bank);
 void draw_sprite_masked(uint8_t *image, uint32_t entity, uint16_t preshift_bytes_per_pixel);
 void sprite_bank_build_preshift8(uint8_t *image, uint32_t src, uint32_t dst, uint32_t frame_bytes,
                                  uint16_t frame_count_minus_one);

@@ -1,10 +1,14 @@
-/* weapon.c — the player's shots: what a spent one becomes, how the live ones are animated, and the
- * two type-class tests the targeting code asks.
+/* weapon.c — the player's armament: what a spent shot becomes, how the live ones are animated, the
+ * two type-class tests the targeting code asks, the power-up bar that chooses the weapon, and the
+ * pass that resolves what the ship itself has just touched.
  *
  * Entity slots 0..5 hold the player's shots (include/entity.h). A shot leaves play by being
  * rewritten in place as the four-frame hit flash — `shot_to_puff` — which is why every "retire"
  * here is a conversion rather than a kill, and why the three kind-specific retires differ only in
  * which live-shot count they decrement and what they release first.
+ *
+ * The bar and the hit pass are one chain: `ship_resolve_entity_hits` is the only caller of
+ * `powerup_capsule_collected`, which is the only caller of the five arms below it.
  */
 #include "machine.h"
 #include "entity.h"
@@ -12,6 +16,7 @@
 #include "collision.h"
 #include "player.h"
 #include "enemy.h"
+#include "hud.h"
 #include "sound.h"
 #include "util.h"
 
@@ -63,6 +68,234 @@ void powerup_downgrade_on_death(uint8_t *image) {
     image[A_weapon_power_level] = (uint8_t)power;
     if (power < WEAPON_POWER_LEVEL_MIN)
         image[A_weapon_power_level] = WEAPON_POWER_LEVEL_MIN;
+}
+
+/* ================================================================================================
+ * The power-up bar: the cursor, the commit, and the five arms the two jump tables reach.
+ *
+ * NONE OF THE FIVE ARMS HAS AN `fn` LINE IN ../names.txt — every one is a `jmp (a0)` target reached
+ * only through a table, so the names below are THIS RECONSTRUCTION'S, proposed back in
+ * ../out/names_wave3_misc.txt. `powerup_slot1_activate` above is the exception: the map names it,
+ * and the commit's cursor-1 diversion is why nothing reaches it.
+ * ============================================================================================= */
+
+/* The addresses the two shipped tables hold. Entry addresses rather than globals, so they are spelt
+ * `FN_` and not `A_` — src/enemy.c's animation dispatcher says why. */
+#define FN_powerup_arm_none 0x148c8u   /* the bare `rts`; entry 0 of BOTH tables */
+#define FN_powerup_select_missile 0x13e8au
+#define FN_powerup_select_bomb 0x13eb4u
+#define FN_powerup_slot1_activate 0x13edeu
+#define FN_powerup_select_seeker 0x13ee8u
+#define FN_powerup_upgrade_weapon_power 0x13f0eu
+#define FN_powerup_upgrade_shield 0x13f3au
+
+/* `lsl.w #2` on the slot before it indexes either table. Spelt here rather than shared with
+ * src/enemy.c's `JUMP_TABLE_ENTRY_BYTES`, which is that translation unit's own file-scope name:
+ * neither is in a header, and test_constants.py refuses one name defined in two files. */
+#define POWERUP_TABLE_ENTRY_BYTES 4u
+
+/* The three arms that SELECT a weapon kind share five stores — clear the shield level and the HUD
+ * byte that mirrors it, ask for the gauge repaint, refill the shield timer, take the kind — and
+ * differ only in the kind and in whether the shots already in flight are retired. */
+static void powerup_select_weapon(uint8_t *image, uint8_t kind) {
+    image[A_power_gauge_display] = 0;
+    image[A_shield_level] = 0;
+    panel_request_repaint(image, PANEL_REDRAW_GAUGE_BIT);
+    wr16(image + A_shield_decay_timer, POWERUP_DECAY_TICKS);
+    image[A_selected_weapon] = kind;
+}
+
+/* powerup_select_missile @ 0x13e8a — entry 4 of the activate table. */
+static void powerup_select_missile(uint8_t *image) {
+    powerup_select_weapon(image, WEAPON_KIND_MISSILE);
+    player_shots_clear(image);
+}
+
+/* powerup_select_bomb @ 0x13eb4 — entry 2. */
+static void powerup_select_bomb(uint8_t *image) {
+    powerup_select_weapon(image, WEAPON_KIND_BOMB);
+    player_shots_clear(image);
+}
+
+/* powerup_select_seeker @ 0x13ee8 — entry 3, and the one of the three that does NOT retire the
+ * shots in flight: a seeker selection leaves the drone and the live seekers where they are. */
+static void powerup_select_seeker(uint8_t *image) {
+    powerup_select_weapon(image, WEAPON_KIND_SEEKER);
+}
+
+/* powerup_upgrade_weapon_power @ 0x13f0e — entry 1 of the UPGRADE table, and also where the commit
+ * diverts a cursor of 1 before the activate table is read. It is the only arm that puts the cursor
+ * back itself and the only one that asks for no repaint. */
+static void powerup_upgrade_weapon_power(uint8_t *image) {
+    wr16(image + A_weapon_decay_timer, POWERUP_DECAY_TICKS);
+    image[A_weapon_power_level]++;
+    if ((int8_t)image[A_weapon_power_level] > (int8_t)WEAPON_POWER_LEVEL_MAX)
+        image[A_weapon_power_level] = WEAPON_POWER_LEVEL_MAX;
+    image[A_powerup_cursor] = 0;
+}
+
+/* powerup_upgrade_shield @ 0x13f3a — entries 2, 3 and 4 of the upgrade table are all this one arm,
+ * so re-committing any of the three weapon slots buys a shield level rather than a second copy of
+ * the weapon. Unlike the select arms it MIRRORS the level to the HUD byte instead of clearing it. */
+static void powerup_upgrade_shield(uint8_t *image) {
+    wr16(image + A_shield_decay_timer, POWERUP_DECAY_TICKS);
+    image[A_shield_level]++;
+    if ((int8_t)image[A_shield_level] > (int8_t)SHIELD_LEVEL_MAX)
+        image[A_shield_level] = SHIELD_LEVEL_MAX;
+    image[A_power_gauge_display] = image[A_shield_level];
+    panel_request_repaint(image, PANEL_REDRAW_GAUGE_BIT);
+}
+
+typedef void (*powerup_arm)(uint8_t *image);
+
+struct powerup_arm_entry {
+    uint32_t address;
+    powerup_arm run;        /* NULL where the original's entry is the bare `rts` */
+};
+
+static const struct powerup_arm_entry POWERUP_ARMS[] = {
+    {FN_powerup_arm_none, 0},
+    {FN_powerup_select_missile, powerup_select_missile},
+    {FN_powerup_select_bomb, powerup_select_bomb},
+    {FN_powerup_slot1_activate, powerup_slot1_activate},
+    {FN_powerup_select_seeker, powerup_select_seeker},
+    {FN_powerup_upgrade_weapon_power, powerup_upgrade_weapon_power},
+    {FN_powerup_upgrade_shield, powerup_upgrade_shield},
+};
+
+#define POWERUP_ARM_COUNT (sizeof POWERUP_ARMS / sizeof POWERUP_ARMS[0])
+
+/* `move.b $19906,d0 / ext.w d0 / lsl.w #2 / lea <table>,a0 / movea.l 0(a0,d0.w),a0 / jmp (a0)`.
+ *
+ * The index is SIGN-EXTENDED to a word and the scaled result is added to the base AS A WORD, so a
+ * slot of 0x80 or more reads BELOW the table rather than 0x200 bytes above it. The game writes only
+ * 0..4 there, but that is the instruction and this transcribes it.
+ *
+ * THE TARGET IS READ OUT OF THE IMAGE and mapped back to the C arm that IS it, the way
+ * `enemies_animate_all` does; an address the map does not hold is left uncalled. */
+static void run_powerup_arm(uint8_t *image, uint32_t table, uint8_t slot) {
+    uint32_t offset = sign_ext16((uint16_t)(sign_ext8(slot) * POWERUP_TABLE_ENTRY_BYTES));
+    uint32_t address = be32(image + addr_add(table, offset));
+
+    for (unsigned arm = 0; arm < POWERUP_ARM_COUNT; arm++) {
+        if (POWERUP_ARMS[arm].address != address)
+            continue;
+        if (POWERUP_ARMS[arm].run != 0)
+            POWERUP_ARMS[arm].run(image);
+        return;
+    }
+}
+
+/* The uncharged arm @ 0x13e66: step the cursor round the five icons and ask for the repaint. */
+static void powerup_cursor_advance(uint8_t *image) {
+    image[A_powerup_cursor]++;
+    if (image[A_powerup_cursor] == POWERUP_CURSOR_SLOTS)
+        image[A_powerup_cursor] = 0;
+    panel_request_repaint(image, PANEL_REDRAW_POWERUP_BIT);
+}
+
+/* Cursor 0's commit @ 0x13db4, taken before either table is consulted: one more speed level, an
+ * EQUALITY test at the ceiling — so a level already past 2 walks on rather than being pulled back —
+ * and then the same "cursor home, repaint the bar" tail the advance above has. */
+static void powerup_speed_up(uint8_t *image) {
+    image[A_ship_speed_level]++;
+    if (image[A_ship_speed_level] == SHIP_SPEED_LEVEL_OVERFLOW)
+        image[A_ship_speed_level] = SHIP_SPEED_LEVEL_MAX;
+    wr16(image + A_speed_decay_timer, POWERUP_DECAY_TICKS);
+    image[A_powerup_cursor] = 0;
+    panel_request_repaint(image, PANEL_REDRAW_POWERUP_BIT);
+}
+
+/* The tail both table arms share @ 0x13e28 / 0x13e54: the cursor goes home and the bar is asked
+ * for, and only THEN is the arm entered — so an arm that writes the cursor itself (the weapon-power
+ * one does) wins over this clear. */
+static void powerup_commit_through(uint8_t *image, uint32_t table, uint8_t slot) {
+    image[A_powerup_cursor] = 0;
+    panel_request_repaint(image, PANEL_REDRAW_POWERUP_BIT);
+    run_powerup_arm(image, table, slot);
+}
+
+/* powerup_capsule_collected @ 0x13d9e — one call per frame while a capsule is in the ship's box.
+ *
+ * With the fire button not charged this only steps the bar's cursor. Charged, it COMMITS: cursor 0
+ * is the speed slot and never reaches a table; a cursor equal to the slot already active goes
+ * through the upgrade table; anything else records the new slot and goes through the activate
+ * table — except cursor 1, which is diverted straight into the weapon-power arm AFTER the sound and
+ * BEFORE the activate table is indexed, so entry 1 of that table can never run.
+ *
+ * BOTH `sound_start` CALLS TAKE THE CURSOR AS THEIR CHANNEL, because D0 still holds the byte the
+ * commit loaded and `sound_start` reads D0 as its fallback voice. */
+void powerup_capsule_collected(uint8_t *image) {
+    uint8_t cursor;
+    uint8_t active_slot;
+
+    if (image[A_fire_charged] == 0) {
+        powerup_cursor_advance(image);
+        return;
+    }
+    cursor = image[A_powerup_cursor];
+    if (cursor == POWERUP_CURSOR_SPEED) {
+        powerup_speed_up(image);
+        return;
+    }
+    /* `cmp.b $19906,d0` comes BEFORE the sound (0x13dee) and both arms then RE-READ the byte after
+     * it (0x13e14 / 0x13e40). The two reads agree only because `sound_start` writes nothing at
+     * 0x19906 — so the compare takes its operand from where the original takes it, and the arms
+     * take the index from the image, rather than one local standing for both. */
+    active_slot = image[A_powerup_active_slot];
+    sound_start(image, SFX_POWERUP_COMMIT, cursor);
+    if (cursor == active_slot) {
+        powerup_commit_through(image, A_powerup_upgrade_jumptable, image[A_powerup_active_slot]);
+        return;
+    }
+    if (cursor == POWERUP_CURSOR_WEAPON_POWER) {
+        powerup_upgrade_weapon_power(image);
+        return;
+    }
+    image[A_powerup_active_slot] = cursor;
+    panel_request_repaint(image, PANEL_REDRAW_WEAPON_BIT);
+    powerup_commit_through(image, A_powerup_activate_jumptable, image[A_powerup_active_slot]);
+}
+
+/* ================================================================================================
+ * The ship's own collision pass.
+ * ============================================================================================= */
+/* ship_resolve_entity_hits @ 0x13cd4 — A3 = the ship's row of the all-pairs overlap mask built by
+ * `object_pair_overlap_mark`. Bit j of that longword says entity j's box met the ship's this frame;
+ * this walks the twelve entities the ship can meet and resolves each set bit.
+ *
+ * THE LETHAL ARM IS A `bra.w` TAIL CALL out of the MIDDLE of the loop, so the first lethal touch
+ * ends the routine inside `explosion_spawn` and the entities after it are never examined. The
+ * capsule arm returns to the loop instead, which is why two capsules in one frame both count.
+ *
+ * `ship` IS A2, AND THE ROUTINE NEVER WRITES IT — it is threaded straight through to
+ * `explosion_spawn` as the record to blow apart (include/weapon.h says which record the two call
+ * sites pass). The entity the ship touched is A4's, and it is NOT what explodes.
+ *
+ * The mask longword is RE-READ on every pass — `move.l (a3),d1` is the loop head and not a
+ * preamble — so a capsule arm that rewrote the row would be seen by the passes after it.
+ *
+ * The sound's channel is the SCAN's own bit index (6..17), which D0 is holding; none of the twelve
+ * is 1, 2 or 4, so `sound_start` resolves them all to voice 3 unless the stream names its own. */
+void ship_resolve_entity_hits(uint8_t *image, uint32_t ship, uint32_t hit_mask_row) {
+    for (unsigned slot = 0; slot < SHIP_HIT_SCAN_SLOTS; slot++) {
+        uint32_t entity = addr_add(A_enemy_shot_slots, slot * ENTITY_STRIDE);
+        unsigned bit = SHIP_HIT_SCAN_FIRST + slot;
+
+        if ((be32(image + hit_mask_row) & (1u << bit)) == 0)
+            continue;
+        if (image[entity + ENTITY_TYPE] == TYPE_POWERUP_CAPSULE) {
+            powerup_capsule_collected(image);
+            image[entity + ENTITY_ALIVE] = 0;
+            sound_start(image, SFX_POWERUP_CAPSULE, (uint8_t)bit);
+            continue;
+        }
+        if (image[A_ship_invulnerable] != 0 || !entity_type_is_lethal(image, entity))
+            continue;
+        image[A_death_event_flags] |= (uint8_t)(1u << DEATH_EVENT_BIT_SHIP);
+        explosion_spawn(image, ship, SHIP_DEATH_EXPLOSION_GROUP);
+        return;
+    }
 }
 
 /* ================================================================================================
@@ -552,6 +785,19 @@ void g_powerup_slot1_activate(uint8_t *image) {
 /* No register arguments. */
 void g_powerup_downgrade_on_death(uint8_t *image) {
     powerup_downgrade_on_death(image);
+}
+
+/* No register arguments: the cursor, the charge flag and the active slot are all globals. D0 holds
+ * the cursor across the commit's `sound_start` and is not an input. */
+void g_powerup_capsule_collected(uint8_t *image) {
+    powerup_capsule_collected(image);
+}
+
+/* Register map: A2 = the record the death explosion blows apart (pass-through), A3 = the ship's row
+ * of the collision mask. A4 walks the records and D0 doubles as the bit index and the sound
+ * channel; neither is an output. */
+void g_ship_resolve_entity_hits(uint8_t *image, uint32_t ship, uint32_t hit_mask_row) {
+    ship_resolve_entity_hits(image, ship, hit_mask_row);
 }
 
 /* Register map: A2 = the record, for all six of these. */

@@ -43,13 +43,88 @@
 /* One counter per weapon kind, decremented on every launch. All three are `# ctx` NAMES in
  * ../names.txt (`missile_launch_counter` / `bomb_launch_counter` / `seeker_launch_counter`) and
  * none is in ../out/globals.tsv, so the role is read off the three launchers and nothing else pins
- * it. They are named HERE, unlike the panel bytes of the same block (`selected_weapon` 0x198b4 and
- * `power_gauge_display` 0x198c3, which STATUS.md defers): those two ../out/globals.tsv assigns to
- * `hud`, and a global goes in its OWNER's header. These three have no assigned owner, and the
- * house rule for that case is that whoever reads it names it. */
+ * it. They are named HERE because ../out/globals.tsv gives them no owner and the house rule for
+ * that case is that whoever reads it names it — the same rule that puts `selected_weapon` (0x198b4)
+ * below. `power_gauge_display` (0x198c3) is the neighbouring byte that is NOT here: globals.tsv
+ * assigns it to `hud`, so this file includes include/hud.h to write it. */
 #define A_missile_launch_counter 0x198b5u
 #define A_bomb_launch_counter 0x198b6u
 #define A_seeker_launch_counter 0x198b8u
+/* Which of the four launchers the fire button runs, 1..4 (`cmpi.b #$4/#$2/#$1/#$3,$198b4` in the
+ * fire dispatcher at 0x113d0..0x115f4). `../out/globals.tsv` gives it NO owner, so the house rule
+ * that applies is the three counters' above: whoever reads it names it, and the three arms of the
+ * activate table that write it are this file's. */
+#define A_selected_weapon 0x198b4u
+/* `bset #0,$198c4` when the ship is destroyed. `../out/globals.tsv` files it under `dead` — written
+ * and never read — which is not a subsystem and owns no header, so it is named here beside its one
+ * writer. The section-restart prologue (src/init.c) clears it and includes this header for it. */
+#define A_death_event_flags 0x198c4u
+
+/* ---- BORROWED: four player globals with no home yet -------------------------------------------
+ *
+ * ../out/globals.tsv puts all four in the **player** subsystem and `include/player.h` spells none
+ * of them (its comment on `A_weapon_decay_timer` says so explicitly for the first of the three
+ * timers). They are named here so `powerup_capsule_collected` and `ship_resolve_entity_hits` can
+ * read them; STATUS.md's "## Borrowed globals" carries the debt, and deleting these four lines and
+ * repointing the includes is the whole of the migration. */
+#define A_shield_level 0x1990au        /* .b — the 0..3 gauge `A_power_gauge_display` mirrors */
+#define A_speed_decay_timer 0x19dc8u   /* .w — the twin of player.h's A_weapon_decay_timer */
+#define A_shield_decay_timer 0x19dcau  /* .w — ...and the third of the three */
+#define A_ship_invulnerable 0x19912u   /* .b — non-zero suppresses every ship-death path */
+
+/* ================================================================================================
+ * The power-up bar.
+ *
+ * `powerup_capsule_collected` steps a cursor over five icons while the fire button is NOT charged,
+ * and commits the icon under it when it is. The commit dispatches through one of two jump tables —
+ * a NEW selection through the activate table, the SAME selection again through the upgrade table —
+ * and both are read out of the image, so the reconstruction resolves the longword and maps it back
+ * to the C arm (src/weapon.c, POWERUP_ARMS), exactly as `enemies_animate_all` does.
+ * ============================================================================================= */
+#define A_powerup_activate_jumptable 0x19348u  /* names.txt # ctx — the committed slot is NEW */
+#define A_powerup_upgrade_jumptable 0x1935cu   /* names.txt # ctx — it is the one already active */
+#define POWERUP_CURSOR_SLOTS 5u        /* `cmpi.b #$5,$19905` + wrap to 0 */
+/* Cursor 0 never reaches a table at all: `tst.b d0` / `bne` takes it to the speed arm first. */
+#define POWERUP_CURSOR_SPEED 0u
+/* ...and cursor 1 is diverted to the WEAPON-POWER arm after the sound and before the activate
+ * table is indexed (`cmp.b #$1,d0` / `beq`), which is what makes `powerup_slot1_activate` — the
+ * table's own entry 1 — unreachable from the game. */
+#define POWERUP_CURSOR_WEAPON_POWER 1u
+#define SFX_POWERUP_COMMIT 0x0fu       /* `moveq #$f,d1` before both `sound_start` calls */
+
+/* The ceilings the three level arms clamp at, each spelt as the instruction that tests it. The
+ * speed one is an EQUALITY test on the incremented byte and the other two are signed `ble`s, so a
+ * level already above its ceiling behaves differently in the three: speed walks on past 2, while
+ * the other two are pulled back. */
+#define SHIP_SPEED_LEVEL_OVERFLOW 2u   /* `cmpi.b #$2` + `bne` past the write-back */
+#define SHIP_SPEED_LEVEL_MAX 1u        /* `move.b #$1,$19907` */
+#define WEAPON_POWER_LEVEL_MAX 4u      /* `cmpi.b #$4` + `ble` */
+#define SHIELD_LEVEL_MAX 3u            /* `cmpi.b #$3` + `ble` */
+
+/* The four values `A_selected_weapon` can hold, as the fire dispatcher reads them. Kind 3 — the
+ * plain bullet — is the per-life default and no power-up arm selects it. */
+#define WEAPON_KIND_BOMB 1u
+#define WEAPON_KIND_MISSILE 2u
+#define WEAPON_KIND_SEEKER 4u
+
+/* ================================================================================================
+ * The ship's own collision pass.
+ * ============================================================================================= */
+/* Entity slots 6..17, the twelve `ship_resolve_entity_hits` scans: THREE enemy-shot slots (6..8,
+ * `A_enemy_shot_slots` in include/enemy.h), the EIGHT wave enemies (9..16), and the ship's own LIVE
+ * record (17, `A_player_record`). It stops one short of the SHADOW record at slot 18 and two short
+ * of the gunsight at 19 — a scan of thirteen would resolve the ship against its own shadow every
+ * frame. ../names.txt's comment on 0x11906 is the provenance for the 3 + 8 split. */
+#define SHIP_HIT_SCAN_FIRST 6u
+#define SHIP_HIT_SCAN_SLOTS 12u        /* `move.w #$b,d7` + `dbf` */
+#define TYPE_POWERUP_CAPSULE 0x11u     /* `cmpi.b #$11,17(a4)` */
+#define SFX_POWERUP_CAPSULE 0x16u      /* `moveq #$16,d1` once the capsule is taken */
+#define SHIP_DEATH_EXPLOSION_GROUP 1u  /* `move.w #$1,d2` into `explosion_spawn` */
+#define DEATH_EVENT_BIT_SHIP 0u        /* `bset #0,$198c4` */
+/* A2 IS AN INPUT THE ROUTINE NEVER TOUCHES: it walks A4 and hands A2 straight to `explosion_spawn`
+ * as the record to blow apart. Both call sites (0x11e84 and 0x11ed0) load `A_player_record` there,
+ * so the ship explodes at its own position however far up the scan the lethal record sits — and
+ * that is why the C takes it as a parameter rather than reading the global. */
 
 /* ================================================================================================
  * Record fields and geometry.
@@ -162,6 +237,8 @@ int entity_type_is_missile_target(const uint8_t *image, uint32_t entity);
 void entity_pos_from_ship(uint8_t *image, uint32_t entity);
 void powerup_slot1_activate(uint8_t *image);
 void powerup_downgrade_on_death(uint8_t *image);
+void powerup_capsule_collected(uint8_t *image);
+void ship_resolve_entity_hits(uint8_t *image, uint32_t ship, uint32_t hit_mask_row);
 void shot_to_puff(uint8_t *image, uint32_t shot);
 void shot_retire_kind32(uint8_t *image, uint32_t shot);
 void shot_retire_kind33(uint8_t *image, uint32_t shot);

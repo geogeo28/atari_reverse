@@ -47,9 +47,20 @@
 #define A_power_gauge_display 0x198c3u  /* .b # ctx — the HUD's mirror of the shield level;
                                          * names.txt's second reading is `power_gauge_level` */
 #define A_panel_redraw_mask 0x19904u    /* .b — one bit per panel element that wants a repaint */
-/* The only bit any ported routine names: `bset #4` when a life is awarded (src/score.c) and
- * `bclr #4` once the icons have been redrawn (`draw_lives_icons`). */
+/* One bit per panel element, each named for what asks for the repaint. `bset #4` when a life is
+ * awarded (src/score.c) and `bclr #4` once the icons have been redrawn (`draw_lives_icons`); the
+ * three low ones are `powerup_capsule_collected`'s and its arms' (src/weapon.c) — bit 0 on every
+ * cursor step or commit, bit 1 when the committed slot differs from the active one, bit 2 when an
+ * arm rewrites the shield gauge. */
+#define PANEL_REDRAW_POWERUP_BIT 0u
+#define PANEL_REDRAW_WEAPON_BIT 1u
+#define PANEL_REDRAW_GAUGE_BIT 2u
 #define PANEL_REDRAW_LIVES_BIT 4u
+/* `bset #<bit>,$19904` — every writer asks for its element through this rather than retyping the
+ * shift, so "one bit per element" has one place that spells it. `draw_lives_icons` is the only
+ * CLEAR (`bclr #4`) and does it in line, because it is the only reader that has satisfied a
+ * request. src/score.c still writes bit 4 in line; folding it in is that subsystem's edit. */
+void panel_request_repaint(uint8_t *image, unsigned bit);
 #define A_show_prepare_for_combat 0x19aacu  /* .b — nonzero adds the second line to the intro */
 /* The sixteen-pen row the front-end screens install into irq.h's A_menu_palette. names.txt calls it
  * `palette_frontend`; ../out/globals.tsv assigns it to no subsystem, and this is its first use. */

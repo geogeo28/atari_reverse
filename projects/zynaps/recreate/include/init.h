@@ -101,6 +101,9 @@
 #define A_section_ground_target_flag 0x19897u  /* names.txt */
 #define A_palette_next         0x19f66u  /* names.txt — the 32-byte row the next section fades to */
 #define A_palette_per_section_table 0x18fe4u   /* names.txt — 16 rows of 32 bytes */
+/* The ONE 32-byte row an asteroid-field section takes, instead of a row of the table above:
+ * `movem.l $19638,#$00ff` straight into `A_palette_next`. names.txt names it. */
+#define A_palette_asteroid 0x19638u
 
 #define SECTION_COUNT 0x10u              /* `cmpi.b #$10,$19895` + wrap to 0 */
 #define SECTION_TYPE_ASTEROID 0x71u      /* `cmp.b #$71,d0` — 'q' in the section-type table */
@@ -131,6 +134,51 @@
 #define MOTHERSHIP_VARIANT_DIGIT_BASE 0x31u
 
 /* ================================================================================================
+ * The section restart prologue's own resets.
+ *
+ * Most of what the 0xd0 bytes at 0x10b6e touch belongs to other subsystems and is included from
+ * their headers — the entity table and the ship records (player), the asteroid records and the
+ * squadron counters (enemy), the two launch counters and the death flags (weapon), the panel and
+ * the PREPARE FOR COMBAT banner (hud), the boss-ready flag (mothership). Only the three below have
+ * no home anywhere, and `../out/globals.tsv` gives none of them an owner, so the house rule that
+ * whoever reads it names it puts them here. The first two are BORROWED BY SUBJECT rather than by
+ * the file — a keyboard byte and a boss byte in the boot header — and STATUS.md's "## Borrowed
+ * globals" carries both debts. The third item below is not a global at all and needs no home.
+ * ============================================================================================= */
+#define A_key_scancode 0x19685u        /* names.txt — the ACIA ISR's last scancode (irq by subject) */
+#define A_mothership_pending 0x198afu  /* names.txt — mothership by subject */
+/* NOT A GLOBAL AT ALL, and that is the finding: `clr.b $17de0` is `A_entity_gunsight` (weapon.h,
+ * 0x17dd2 = entity slot 19) plus `ENTITY_ALIVE`. The sweep before it clears slots 0..17, so the
+ * stray clear skips slot 18 and takes slot 19 — which leaves the ship's SHADOW record, slot 18, as
+ * the one entity the prologue does not kill. */
+
+/* The two positions the prologue parks the ship's pair at. The SPRITE it points them back to is
+ * `BOOT_SHIP_SOURCE` (src/init.c) and the stride to the shadow's is `include/sprite.h`'s
+ * SHIP_SPRITE_GAP — the same 0x640 the boot's de-interleaver uses, and names.txt's own "frame
+ * stride 0x640" on 0x111f4 — so neither is a constant of this file. */
+#define SECTION_RESTART_SHIP_X 0x40u
+#define SECTION_RESTART_SHADOW_X 0x50u
+#define SECTION_RESTART_SHIP_Y 0x64u
+#define SECTION_RESTART_SHIP_ROWS 0x14u
+/* TWO `move.w #$11,d0` + dbf sweeps, and their eighteens are UNRELATED facts that happen to agree:
+ * the first is entity slots 0..17, which is one short of the 20-slot table (slot 18 survives, 19 is
+ * cleared separately); the second is the WHOLE of `include/enemy.h`'s 6x3 `A_asteroid_records`
+ * array. Two names, so a later change to either bound cannot move the other. The asteroid one is
+ * named here only because that header belongs to another agent this wave — like SQUADRON_MARKS
+ * below, it is a COUNT rather than an address, so STATUS.md's borrowed-globals table does not
+ * cover it, and moving it beside the array it measures is the migration. */
+#define SECTION_RESTART_KILL_SLOTS 18u
+#define SECTION_RESTART_ASTEROID_RECORDS 18u
+/* The FIRST `move.w #$5,d0` + dbf clears six TYPE bytes, and six is `include/weapon.h`'s
+ * PLAYER_SHOT_SLOTS — the same six records, so it is read from there rather than named again. */
+/* ...and the second is the length of `include/enemy.h`'s `A_squadron_kill_counters` array, named
+ * here for the reason given above. */
+#define SQUADRON_MARKS 6u
+/* `move.b #$2` into EACH of the two launch counters — the number of launches they are restocked
+ * with, NOT how many counters there are. The two figures are both 2 by coincidence. */
+#define SECTION_RESTART_LAUNCH_STOCK 2u
+
+/* ================================================================================================
  * The section restart search, and the page pre-fill that follows it.
  * ============================================================================================= */
 #define A_section_restart_table 0x19e84u  /* names.txt — 4 words per section, scanned BACKWARDS */
@@ -157,9 +205,18 @@ void boot_save_vbl_vector(uint8_t *image);
 void boot_load_title_assets(uint8_t *image);
 void section_advance(uint8_t *image);
 unsigned section_reload_needed(uint8_t *image);
-/* 1 when the whole map-section path ran; 0 when the section's type byte sent the original into
- * `asteroids_load_and_build` (0x156ac), the arm this reconstruction stops at. */
+/* 1 when the whole map-section path ran, 0 when the section's type byte took the ASTEROID arm at
+ * 0x109e2. Both arms are reconstructed now, so the answer names which one ran rather than which one
+ * the reconstruction could follow — a case still checks it, because the two disagree about
+ * `A_asteroid_section_flag` and `section_start_prefill` reads that byte. */
 unsigned section_load_assets(uint8_t *image);
+/* The two front-end calls at 0x1085a..0x10862, between the reload gate and the asset load. Named
+ * for what it does rather than for where it sits; STATUS.md's row called it "the section-advance
+ * tail", which is its position in the chain and not its job. */
+void section_reload_intro_screens(uint8_t *image);
+/* 0x10b6e..0x10c4e — the per-life reset every section start runs through, whether it reloaded
+ * assets or not. */
+void section_restart_prologue(uint8_t *image);
 void section_start_prefill(uint8_t *image);
 
 /* The boot's off-image publish ledger (see above): what the last `boot_load_title_assets` asked the

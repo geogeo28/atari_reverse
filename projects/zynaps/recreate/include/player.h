@@ -26,8 +26,8 @@
 #define A_ship_speed_level 0x19907u
 #define A_weapon_power_level 0x19908u
 /* The 1000-frame timer that steps the weapon level back down. Its sibling for the speed level lives
- * at 0x19dc8 and is not named here, because no routine ported so far reads it — an address nothing
- * pins is one nothing has checked. */
+ * at 0x19dc8, and it is named where it is read: powerup_capsule_collected refills it, so
+ * include/weapon.h carries it (see STATUS.md's borrowed-globals rows). */
 #define A_weapon_decay_timer 0x19dccu
 
 /* ================================================================================================

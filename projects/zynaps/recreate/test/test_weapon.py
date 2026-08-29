@@ -13,7 +13,9 @@ import abi
 import harness
 from harness import differential, report
 
+ENTRY_SHIP_RESOLVE_ENTITY_HITS = 0x13cd4
 ENTRY_ENTITY_TYPE_IS_LOCKABLE = 0x13d3e
+ENTRY_POWERUP_CAPSULE_COLLECTED = 0x13d9e
 ENTRY_POWERUP_SLOT1_ACTIVATE = 0x13ede
 ENTRY_POWERUP_DOWNGRADE_ON_DEATH = 0x13f72
 ENTRY_ENTITY_POS_FROM_SHIP = 0x14092
@@ -52,6 +54,46 @@ A_SEEKER_LOCK_TARGET_INDEX = 0x19917
 A_MISSILE_LAUNCH_COUNTER = 0x198b5
 A_BOMB_LAUNCH_COUNTER = 0x198b6
 A_SEEKER_LAUNCH_COUNTER = 0x198b8
+A_SELECTED_WEAPON = 0x198b4
+A_DEATH_EVENT_FLAGS = 0x198c4
+A_SHIELD_LEVEL = 0x1990a
+A_SPEED_DECAY_TIMER = 0x19dc8
+A_SHIELD_DECAY_TIMER = 0x19dca
+A_SHIP_INVULNERABLE = 0x19912
+A_POWERUP_ACTIVATE_JUMPTABLE = 0x19348
+A_POWERUP_UPGRADE_JUMPTABLE = 0x1935c
+POWERUP_CURSOR_SLOTS = 5
+POWERUP_CURSOR_SPEED = 0
+POWERUP_CURSOR_WEAPON_POWER = 1
+SFX_POWERUP_COMMIT = 0x0f
+SHIP_SPEED_LEVEL_OVERFLOW = 2
+SHIP_SPEED_LEVEL_MAX = 1
+WEAPON_POWER_LEVEL_MAX = 4
+SHIELD_LEVEL_MAX = 3
+WEAPON_KIND_BOMB = 1
+WEAPON_KIND_MISSILE = 2
+WEAPON_KIND_SEEKER = 4
+SHIP_HIT_SCAN_FIRST = 6
+SHIP_HIT_SCAN_SLOTS = 12
+TYPE_POWERUP_CAPSULE = 0x11
+SFX_POWERUP_CAPSULE = 0x16
+SHIP_DEATH_EXPLOSION_GROUP = 1
+DEATH_EVENT_BIT_SHIP = 0
+# --- mirrors of include/hud.h: the panel bytes the bar writes ---
+A_POWER_GAUGE_DISPLAY = 0x198c3
+A_PANEL_REDRAW_MASK = 0x19904
+A_POWERUP_CURSOR = 0x19905
+A_POWERUP_ACTIVE_SLOT = 0x19906
+PANEL_REDRAW_POWERUP_BIT = 0
+PANEL_REDRAW_WEAPON_BIT = 1
+PANEL_REDRAW_GAUGE_BIT = 2
+# --- mirrors of include/enemy.h ---
+A_FIRE_CHARGED = 0x19902
+A_ENEMY_SHOT_SLOTS = 0x17b96
+# --- mirrors of include/collision.h: what the lethal-class test reads ---
+A_TYPE_LETHAL_TO_SHIP_BITS = 0x191a4
+# ...and the record both `ship_resolve_entity_hits` call sites hand it in A2.
+A_PLAYER_RECORD = 0x17d7a
 SHOT_TARGET_INDEX = 0x1a
 SHOT_BOUNCES_LEFT = 0x1a
 SHOT_TURN_COUNTDOWN = 0x1b
@@ -140,7 +182,9 @@ for _name, _args in (
         ("g_fire_bomb", [ctypes.c_uint32] * 2),
         ("g_seeker_update", [ctypes.c_uint32]),
         ("g_homing_missile_update", [ctypes.c_uint32]),
-        ("g_bomb_update", [ctypes.c_uint32] * 2)):
+        ("g_bomb_update", [ctypes.c_uint32] * 2),
+        ("g_powerup_capsule_collected", []),
+        ("g_ship_resolve_entity_hits", [ctypes.c_uint32] * 2)):
     getattr(harness._lib, _name).argtypes = [_UINT8P] + _args
     getattr(harness._lib, _name).restype = None
 
@@ -1225,6 +1269,399 @@ def test_bomb_update_attribution():
     _bomb_case(_bomb_slots(latched=1), poison=True)
 
 
+
+# ================================================================================================
+# powerup_capsule_collected @ 0x13d9e, its five jump-table arms, and ship_resolve_entity_hits
+# @ 0x13cd4 — the one caller that reaches them.
+# ================================================================================================
+
+# The addresses the two shipped tables hold, mirrored from src/weapon.c's POWERUP_ARMS. The map's
+# job is to say which C arm each table entry IS; `test_powerup_tables_are_fully_reconstructed`
+# checks that against the .PRG's own longwords, so a table edit fails here rather than leaving the
+# dispatcher quietly calling nothing.
+FN_POWERUP_ARM_NONE = 0x148c8
+FN_POWERUP_SELECT_MISSILE = 0x13e8a
+FN_POWERUP_SELECT_BOMB = 0x13eb4
+FN_POWERUP_SLOT1_ACTIVATE = 0x13ede
+FN_POWERUP_SELECT_SEEKER = 0x13ee8
+FN_POWERUP_UPGRADE_WEAPON_POWER = 0x13f0e
+FN_POWERUP_UPGRADE_SHIELD = 0x13f3a
+POWERUP_ARM_ADDRESSES = (FN_POWERUP_ARM_NONE, FN_POWERUP_SELECT_MISSILE, FN_POWERUP_SELECT_BOMB,
+                         FN_POWERUP_SLOT1_ACTIVATE, FN_POWERUP_SELECT_SEEKER,
+                         FN_POWERUP_UPGRADE_WEAPON_POWER, FN_POWERUP_UPGRADE_SHIELD)
+POWERUP_TABLE_ENTRY_BYTES = 4
+
+# Values no arm can produce, so a store that should have happened and did not is a diff rather than
+# a coincidence. The three timers are seeded as one block with a trailing guard word, which is what
+# catches an arm writing a longword where the original writes a word.
+PANEL_MASK_SEED = 0x48          # none of bits 0..2, so every `bset` this battery drives is visible
+TIMER_SEED = bytes.fromhex("5a5a a5a5 3c3c 7e7e".replace(" ", ""))
+LEVEL_SEED = 0x5a
+VOICE_TOGGLE_SEED = 2           # the byte the .PRG ships; sound_start's "alternate" code reads it
+
+
+# The entity table every power-up case runs over, built ONCE: it does not vary with any of the bar's
+# inputs. It matters because two of the three select arms end in `player_shots_clear`, which walks
+# slots 0..5 and the gunsight — seeded live seekers there are what makes that call attributable
+# rather than a no-op, and slots 6..19 must come back untouched.
+_POWERUP_SHOT_SLOTS = {slot: {"b0e": 1, "b11": SHOT_TYPE_SEEKER}
+                       for slot in range(PLAYER_SHOT_SLOTS)}
+_POWERUP_SHOT_SLOTS[19] = {"b0e": 1}
+POWERUP_TABLE_POKES = _table_pokes(_POWERUP_SHOT_SLOTS)
+
+
+def _powerup_pokes(charged, cursor, active_slot, speed=LEVEL_SEED, weapon_power=LEVEL_SEED,
+                   shield=LEVEL_SEED, extra=None):
+    """The power-up bar's whole input set, over the shared entity table above."""
+    pokes = dict(POWERUP_TABLE_POKES)
+    pokes.update({
+        A_FIRE_CHARGED: bytes([charged]),
+        A_PANEL_REDRAW_MASK: bytes([PANEL_MASK_SEED]),
+        A_POWERUP_CURSOR: bytes([cursor]),
+        A_POWERUP_ACTIVE_SLOT: bytes([active_slot]),
+        A_SHIP_SPEED_LEVEL: bytes([speed]),
+        A_WEAPON_POWER_LEVEL: bytes([weapon_power]),
+        A_SHIELD_LEVEL: bytes([shield]),
+        A_POWER_GAUGE_DISPLAY: bytes([LEVEL_SEED]),
+        A_SELECTED_WEAPON: bytes([LEVEL_SEED]),
+        A_SPEED_DECAY_TIMER: TIMER_SEED,
+        A_SFX_VOICE_TOGGLE: bytes([VOICE_TOGGLE_SEED]),
+    })
+    pokes.update(extra or {})
+    return pokes
+
+
+def _powerup_case(charged, cursor, active_slot, poison=False, **levels):
+    pokes = _powerup_pokes(charged, cursor, active_slot, **levels)
+    diffs, _ = differential(ENTRY_POWERUP_CAPSULE_COLLECTED, {"_pokes": pokes},
+                            lambda lib, buf: lib.g_powerup_capsule_collected(buf), poison=poison)
+    assert not diffs, (f"charged={charged} cursor={cursor:#04x} active={active_slot:#04x} "
+                       f"{levels}\n{report(diffs)}")
+
+
+def _table_entry(table, slot):
+    """The longword the shipped table holds for `slot`, read the routine's own way."""
+    at = table + slot * POWERUP_TABLE_ENTRY_BYTES
+    return int.from_bytes(bytes(harness.BASE_IMAGE[at:at + 4]), "big")
+
+
+def test_powerup_tables_are_fully_reconstructed():
+    """Every entry of both shipped tables maps to a C arm.
+
+    The dispatcher resolves its target OUT OF THE IMAGE and leaves an unmapped address uncalled, so
+    a table entry this reconstruction has no arm for would be silently skipped on the candidate side
+    and executed on the oracle's. This is what says the map is complete — and it also records the
+    shape the tables actually have: entry 0 of both is the bare `rts`, the activate table's entry 1
+    is the unreachable `powerup_slot1_activate`, and the upgrade table's entries 2..4 are all one
+    arm, so re-committing any weapon slot buys a shield level.
+    """
+    for table in (A_POWERUP_ACTIVATE_JUMPTABLE, A_POWERUP_UPGRADE_JUMPTABLE):
+        for slot in range(POWERUP_CURSOR_SLOTS):
+            assert _table_entry(table, slot) in POWERUP_ARM_ADDRESSES, (
+                f"{table:#x}[{slot}] = {_table_entry(table, slot):#x} has no C arm")
+    assert _table_entry(A_POWERUP_ACTIVATE_JUMPTABLE, POWERUP_CURSOR_WEAPON_POWER) == \
+        FN_POWERUP_SLOT1_ACTIVATE
+    assert {_table_entry(A_POWERUP_UPGRADE_JUMPTABLE, slot) for slot in (2, 3, 4)} == \
+        {FN_POWERUP_UPGRADE_SHIELD}
+
+
+@pytest.mark.parametrize("cursor", tuple(range(POWERUP_CURSOR_SLOTS + 1)) + (0x7f, 0x80, 0xff))
+def test_uncharged_only_steps_the_cursor(cursor):
+    """With the fire button not charged the routine walks the bar and does nothing else.
+
+    The wrap is an EQUALITY test on the INCREMENTED byte, so 4 wraps to 0 while 5 steps to 6 and
+    0xff steps to 0 and stays there — a `>=` bound would differ at all three. Every level, timer and
+    weapon byte is seeded to a value no arm produces, so an accidental commit is a diff.
+    """
+    _powerup_case(charged=0, cursor=cursor, active_slot=3)
+
+
+@pytest.mark.parametrize("charged", (0x01, 0x7f, 0x80, 0xff))
+def test_any_non_zero_charge_byte_commits(charged):
+    """`tst.b` is a test against zero, not against 1 — so 0x80 and 0xff commit as surely as 1."""
+    _powerup_case(charged=charged, cursor=POWERUP_CURSOR_SPEED, active_slot=0)
+
+
+@pytest.mark.parametrize("speed", (0, 1, SHIP_SPEED_LEVEL_OVERFLOW, 3, 0x7f, 0x80, 0xfe, 0xff))
+def test_the_speed_slot_clamps_by_equality(speed):
+    """Cursor 0 never reaches a table: it is diverted by `tst.b d0` / `bne` before either `lea`.
+
+    The ceiling is `cmpi.b #$2` + `bne`, an EQUALITY test on the stepped byte — so a level of 2
+    steps to 3 and is LEFT there, and 0xff wraps to 0. A `>=` clamp would pull both back to 1, which
+    is the mutation this parametrisation kills.
+    """
+    _powerup_case(charged=1, cursor=POWERUP_CURSOR_SPEED, active_slot=4, speed=speed)
+
+
+@pytest.mark.parametrize("slot", tuple(range(1, POWERUP_CURSOR_SLOTS)))
+@pytest.mark.parametrize("level", (0, 1, 2, 3, 4, 5, 0x7f, 0x80, 0xff))
+def test_committing_the_active_slot_again_upgrades_it(slot, level):
+    """Cursor == active slot goes through the UPGRADE table, and both its arms are level clamps.
+
+    Slot 1 reaches the weapon-power arm and slots 2..4 all reach the shield arm, so one
+    parametrisation drives both — and the level sweep pins each `ble` as a SIGNED compare: 0x80
+    steps to 0x81 and is left alone by a signed test where an unsigned one would clamp it.
+    """
+    _powerup_case(charged=1, cursor=slot, active_slot=slot, weapon_power=level, shield=level)
+
+
+@pytest.mark.parametrize("cursor", tuple(range(1, POWERUP_CURSOR_SLOTS)))
+@pytest.mark.parametrize("active_slot", (0, 1, 2, 3, 4))
+def test_committing_a_new_slot_runs_the_activate_table(cursor, active_slot):
+    """Cursor != active slot: the new slot is recorded, bit 1 of the panel mask is asked for, and
+    the ACTIVATE table is indexed by the slot just written.
+
+    Every (cursor, active) pair that differs is driven, which is what separates "index by the cursor"
+    from "index by the slot the routine has just stored" — the two agree everywhere here because the
+    store happens first, and a candidate that indexed by the OLD active slot differs on all of them.
+    Pairs where the two are equal are the case above and are skipped.
+    """
+    if cursor == active_slot:
+        pytest.skip("that is the upgrade path, covered above")
+    _powerup_case(charged=1, cursor=cursor, active_slot=active_slot)
+
+
+@pytest.mark.parametrize("active_slot", (0, 2, 3, 4, 0x80, 0xff))
+def test_cursor_one_is_diverted_before_the_activate_table(active_slot):
+    """The `cmp.b #$1,d0` / `beq` at 0x13e02 jumps into the weapon-power arm directly.
+
+    That is what makes `powerup_slot1_activate` — entry 1 of the activate table — unreachable, and
+    it is observable: the diverted arm writes NEITHER the active slot NOR panel bit 1, where every
+    other new-slot commit writes both. An active slot of 0x80 or 0xff is included because the byte
+    is only ever compared here, never used as an index on this path.
+    """
+    _powerup_case(charged=1, cursor=POWERUP_CURSOR_WEAPON_POWER, active_slot=active_slot)
+
+
+def _arm_entry_address(table, slot):
+    """Where the dispatcher resolves its longword for `slot`, spelt as the original spells it:
+    `ext.w d0` / `lsl.w #2` / `movea.l 0(a0,d0.w),a0` — the byte is SIGN-extended to a word, scaled,
+    and added to the base as a word."""
+    signed = slot - 0x100 if slot & 0x80 else slot
+    return table + signed * POWERUP_TABLE_ENTRY_BYTES
+
+
+def test_a_slot_past_the_table_resolves_below_it_and_cannot_be_driven():
+    """The index's SIGN EXTENSION is read-verified and NOT pinned, and this says why in one place.
+
+    What IS asserted here is the arithmetic: a slot of 0x80 resolves 0x200 bytes BELOW the table
+    rather than above it, and 0xff resolves four bytes below, while 0x7f is the last one that
+    resolves above. That is the whole content of "sign-extended" for this index, and it is the half
+    a Python assertion can hold — it is deliberately NOT a re-run of
+    `test_powerup_tables_are_fully_reconstructed`, which pins the five entries themselves.
+
+    The half it cannot hold is the EFFECT: whatever longword lies at those addresses, the original
+    `jmp`s to it. For every out-of-range slot this battery tried the oracle ran away into data and
+    never reached an `rts` (measured on slot 5 — 200,000 instructions, no return), so no
+    differential case exists for them and `test_powerup_fuzz` keeps a charged cursor inside the
+    tables. STATUS.md's "## Coverage limits" carries the bound beside the four already there.
+    """
+    assert _arm_entry_address(A_POWERUP_ACTIVATE_JUMPTABLE, 0x80) == \
+        A_POWERUP_ACTIVATE_JUMPTABLE - 0x80 * POWERUP_TABLE_ENTRY_BYTES
+    assert _arm_entry_address(A_POWERUP_UPGRADE_JUMPTABLE, 0xff) == \
+        A_POWERUP_UPGRADE_JUMPTABLE - POWERUP_TABLE_ENTRY_BYTES
+    assert _arm_entry_address(A_POWERUP_ACTIVATE_JUMPTABLE, 0x7f) == \
+        A_POWERUP_ACTIVATE_JUMPTABLE + 0x7f * POWERUP_TABLE_ENTRY_BYTES
+
+
+POWERUP_FUZZ_CHUNKS = 4
+POWERUP_FUZZ_CASES = 240
+
+
+@pytest.mark.parametrize("chunk", range(POWERUP_FUZZ_CHUNKS))
+def test_powerup_fuzz(chunk):
+    """Random charge, cursor, active slot and all three levels, clustered on the bar's own range."""
+    rng = random.Random(0x13d9e + chunk)
+    for _ in range(POWERUP_FUZZ_CASES // POWERUP_FUZZ_CHUNKS):
+        charged = rng.choice((0, 0, 1, 0x80, 0xff))
+        # A CHARGED commit must keep the cursor inside the tables: an out-of-range one makes the
+        # ORIGINAL `jmp` to whatever longword lies past the table, which no case can run (see
+        # `test_a_slot_past_the_table_resolves_below_it_and_cannot_be_driven`). Uncharged, the cursor is only ever stepped,
+        # so the whole byte range is fair game there — and the active slot is fair game either way,
+        # because it is compared and then overwritten rather than used as an index.
+        cursor = rng.randrange(POWERUP_CURSOR_SLOTS) if charged else rng.randrange(0x100)
+        _powerup_case(charged=charged, cursor=cursor,
+                      active_slot=rng.choice(list(range(POWERUP_CURSOR_SLOTS))
+                                             + [rng.randrange(0x100)]),
+                      speed=rng.randrange(0x100), weapon_power=rng.randrange(0x100),
+                      shield=rng.randrange(0x100))
+
+
+@pytest.mark.parametrize("cursor", (0, 2, POWERUP_CURSOR_SLOTS - 1))
+def test_powerup_attribution(cursor):
+    """Poison the cursor step — and ONLY the cursor step, which is measured rather than assumed.
+
+    A poison pass over any COMMIT case is refused for the reason test_hud.py's three are: the pass
+    re-runs both cores on an image whose oracle-written bytes are inverted, and the commit writes
+    `A_powerup_cursor` and `A_powerup_active_slot`. Inverted, a cursor of 0 becomes 0xff, the re-run
+    takes the new-slot arm and indexes the activate table with 0xff — and the ORACLE then `jmp`s to
+    the longword four bytes below the table. Measured: 200,000 instructions and no `rts`.
+
+    What the pass would have bought is bought elsewhere: the arms' own stores are seeded to values
+    no arm produces (`LEVEL_SEED`, `TIMER_SEED`, `PANEL_MASK_SEED`), so a candidate that skipped one
+    diverges without needing a canary.
+    """
+    _powerup_case(charged=0, cursor=cursor, active_slot=3, poison=True)
+
+
+# ------------------------------------------------------------------------------------------------
+# ship_resolve_entity_hits @ 0x13cd4
+# ------------------------------------------------------------------------------------------------
+
+# Read off the shipped 0x191a4 bit table rather than transcribed: 0x0a is a member and 0x20 is not,
+# which is what makes "lethal" and "harmless" two different arms rather than two names.
+TYPE_LETHAL = 0x0a
+TYPE_HARMLESS = 0x20
+HIT_MASK_ROW = abi.SCRATCH
+
+
+def _hit_pokes(mask, types, invulnerable=0, extra=None):
+    """`types` is {scan position 0..11: entity type}; everything else in the table is noise.
+
+    The mask longword sits at abi.SCRATCH under a guard longword, so a candidate that WROTE the row
+    it was handed differs — the original only ever reads it.
+    """
+    slots = {SHIP_HIT_SCAN_FIRST + position: {"b0e": 1, "b11": type_byte}
+             for position, type_byte in types.items()}
+    pokes = _table_pokes(slots)
+    pokes.update({
+        HIT_MASK_ROW: mask.to_bytes(4, "big") + b"\xa5\x5a\xa5\x5a",
+        A_SHIP_INVULNERABLE: bytes([invulnerable]),
+        A_DEATH_EVENT_FLAGS: bytes([PANEL_MASK_SEED]),
+        A_FIRE_CHARGED: b"\x00",
+        A_PANEL_REDRAW_MASK: bytes([PANEL_MASK_SEED]),
+        A_POWERUP_CURSOR: b"\x02",
+        A_POWERUP_ACTIVE_SLOT: b"\x02",
+        A_SFX_VOICE_TOGGLE: bytes([VOICE_TOGGLE_SEED]),
+    })
+    pokes.update(extra or {})
+    return pokes
+
+
+def _hit_case(mask, types, invulnerable=0, poison=False, extra=None):
+    """A2 is the record the death explosion blows apart; both call sites pass the ship's own.
+
+    It is threaded rather than dropped because the routine never writes it — a reconstruction that
+    exploded the record it FOUND instead would agree on every harmless case and differ only here.
+    """
+    pokes = _hit_pokes(mask, types, invulnerable, extra)
+    diffs, _ = differential(ENTRY_SHIP_RESOLVE_ENTITY_HITS,
+                            {"a2": A_PLAYER_RECORD, "a3": HIT_MASK_ROW, "_pokes": pokes},
+                            lambda lib, buf: lib.g_ship_resolve_entity_hits(buf, A_PLAYER_RECORD,
+                                                                           HIT_MASK_ROW),
+                            poison=poison)
+    assert not diffs, f"mask={mask:#010x} types={types} invuln={invulnerable}\n{report(diffs)}"
+
+
+def _class_bit_lethal(type_byte):
+    return _class_bit(A_TYPE_LETHAL_TO_SHIP_BITS, type_byte)
+
+
+def test_the_two_types_this_battery_leans_on_are_in_the_shipped_class_table():
+    """`TYPE_LETHAL` must be a member of 0x191a4 and `TYPE_HARMLESS` must not be.
+
+    Both are read off the .PRG's own bit table, so an edit to it fails here instead of quietly
+    turning the lethal cases below into harmless ones that pass for the wrong reason.
+    """
+    assert _class_bit_lethal(TYPE_LETHAL)
+    assert not _class_bit_lethal(TYPE_HARMLESS)
+
+
+def test_an_empty_mask_touches_nothing():
+    """Twelve live records under a zero mask: the routine reads the row twelve times and returns."""
+    _hit_case(0, {position: TYPE_LETHAL for position in range(SHIP_HIT_SCAN_SLOTS)})
+
+
+@pytest.mark.parametrize("bit", (0, 1, 5, 18, 19, 31))
+def test_bits_outside_the_scan_are_ignored(bit):
+    """The scan runs bits 6..17 only.
+
+    Slots 0..5 are the player's own shots; 18 is the ship's SHADOW record and 19 the gunsight (the
+    LIVE ship record is slot 17, inside the scan). A mask bit for any of them must leave every
+    record alone, which is what pins the starting bit index against the starting record."""
+    _hit_case(1 << bit, {position: TYPE_LETHAL for position in range(SHIP_HIT_SCAN_SLOTS)})
+
+
+@pytest.mark.parametrize("position", tuple(range(SHIP_HIT_SCAN_SLOTS)))
+def test_a_capsule_at_every_scan_position(position):
+    """One capsule, at each of the twelve positions in turn, with every other record harmless.
+
+    The bit index and the record cursor step together, so a candidate that started one record early
+    or used the wrong stride resolves a harmless record at the position the mask names and does
+    nothing. The capsule arm is three effects — the power-up bar runs, the record is killed, and the
+    pickup sound is armed on a voice named by the SCAN POSITION — and all three are in the diff.
+    """
+    types = {index: TYPE_HARMLESS for index in range(SHIP_HIT_SCAN_SLOTS)}
+    types[position] = TYPE_POWERUP_CAPSULE
+    _hit_case(1 << (SHIP_HIT_SCAN_FIRST + position), types)
+
+
+def test_two_capsules_in_one_frame_are_both_taken():
+    """The capsule arm returns to the loop, so a second capsule further up is resolved too — which
+    is what separates it from the lethal arm's tail call below."""
+    types = {index: TYPE_HARMLESS for index in range(SHIP_HIT_SCAN_SLOTS)}
+    types[1] = TYPE_POWERUP_CAPSULE
+    types[7] = TYPE_POWERUP_CAPSULE
+    _hit_case((1 << (SHIP_HIT_SCAN_FIRST + 1)) | (1 << (SHIP_HIT_SCAN_FIRST + 7)), types)
+
+
+@pytest.mark.parametrize("position", (0, 3, 11))
+@pytest.mark.parametrize("invulnerable", (0, 1, 0x80, 0xff))
+def test_a_lethal_touch_at_a_scan_position(position, invulnerable):
+    """The lethal arm: the death bit, and the explosion the routine TAIL-CALLS into.
+
+    `tst.b $19912` is a test against zero, so any non-zero invulnerability byte blocks the whole arm
+    — and with it blocked the scan runs on to the end instead of leaving through `explosion_spawn`.
+    """
+    types = {index: TYPE_HARMLESS for index in range(SHIP_HIT_SCAN_SLOTS)}
+    types[position] = TYPE_LETHAL
+    _hit_case(1 << (SHIP_HIT_SCAN_FIRST + position), types, invulnerable=invulnerable)
+
+
+def test_the_lethal_tail_call_abandons_the_rest_of_the_scan():
+    """A lethal record at position 2 and a capsule at position 9, both flagged in one mask.
+
+    The lethal arm is a `bra.w` out of the middle of the loop, so the capsule is NEVER resolved: its
+    record stays alive and the bar does not move. A reconstruction that carried on round the loop
+    would kill it, which is the mutation this case exists to catch.
+    """
+    types = {index: TYPE_HARMLESS for index in range(SHIP_HIT_SCAN_SLOTS)}
+    types[2] = TYPE_LETHAL
+    types[9] = TYPE_POWERUP_CAPSULE
+    _hit_case((1 << (SHIP_HIT_SCAN_FIRST + 2)) | (1 << (SHIP_HIT_SCAN_FIRST + 9)), types)
+
+
+def test_a_capsule_before_a_lethal_touch_is_still_taken():
+    """The mirror of the case above: the capsule is at the LOWER position, so both arms run."""
+    types = {index: TYPE_HARMLESS for index in range(SHIP_HIT_SCAN_SLOTS)}
+    types[1] = TYPE_POWERUP_CAPSULE
+    types[6] = TYPE_LETHAL
+    _hit_case((1 << (SHIP_HIT_SCAN_FIRST + 1)) | (1 << (SHIP_HIT_SCAN_FIRST + 6)), types)
+
+
+HIT_FUZZ_CHUNKS = 4
+HIT_FUZZ_CASES = 120
+HIT_TYPE_POOL = (TYPE_LETHAL, TYPE_HARMLESS, TYPE_POWERUP_CAPSULE, 0x00, 0x32, 0x80, 0xff)
+
+
+@pytest.mark.parametrize("chunk", range(HIT_FUZZ_CHUNKS))
+def test_ship_hits_fuzz(chunk):
+    """Random masks over a random twelve-type row, including types either side of the class test's
+    own signed bound (0x32) and the negative ones that take its early return."""
+    rng = random.Random(0x13cd4 + chunk)
+    for _ in range(HIT_FUZZ_CASES // HIT_FUZZ_CHUNKS):
+        types = {position: rng.choice(HIT_TYPE_POOL) for position in range(SHIP_HIT_SCAN_SLOTS)}
+        _hit_case(rng.getrandbits(32), types, invulnerable=rng.choice((0, 0, 0, 1)))
+
+
+@pytest.mark.parametrize("kind", (TYPE_POWERUP_CAPSULE, TYPE_LETHAL))
+def test_ship_hits_attribution(kind):
+    """Poison both arms: the capsule's kill byte and bar, and the death flag plus the explosion."""
+    types = {index: TYPE_HARMLESS for index in range(SHIP_HIT_SCAN_SLOTS)}
+    types[4] = kind
+    _hit_case(1 << (SHIP_HIT_SCAN_FIRST + 4), types, poison=True)
+
+
 # --- test_constants.py collects these; see README.md, "Adding a function" ---
 MIRRORS = (
     ("A_ENTITY_GUNSIGHT", "include/weapon.h", "A_entity_gunsight"),
@@ -1300,6 +1737,42 @@ MIRRORS = (
     ("PUFF_DEATH_FRAME", "include/weapon.h", "PUFF_DEATH_FRAME"),
     ("PUFF_FRAME_INDEX_MASK", "include/weapon.h", "PUFF_FRAME_INDEX_MASK"),
     ("SPRITE_PTR_BYTES", "include/weapon.h", "SPRITE_PTR_BYTES"),
+    ("A_SELECTED_WEAPON", "include/weapon.h", "A_selected_weapon"),
+    ("A_DEATH_EVENT_FLAGS", "include/weapon.h", "A_death_event_flags"),
+    ("A_SHIELD_LEVEL", "include/weapon.h", "A_shield_level"),
+    ("A_SPEED_DECAY_TIMER", "include/weapon.h", "A_speed_decay_timer"),
+    ("A_SHIELD_DECAY_TIMER", "include/weapon.h", "A_shield_decay_timer"),
+    ("A_SHIP_INVULNERABLE", "include/weapon.h", "A_ship_invulnerable"),
+    ("A_POWERUP_ACTIVATE_JUMPTABLE", "include/weapon.h", "A_powerup_activate_jumptable"),
+    ("A_POWERUP_UPGRADE_JUMPTABLE", "include/weapon.h", "A_powerup_upgrade_jumptable"),
+    ("POWERUP_CURSOR_SLOTS", "include/weapon.h", "POWERUP_CURSOR_SLOTS"),
+    ("POWERUP_CURSOR_SPEED", "include/weapon.h", "POWERUP_CURSOR_SPEED"),
+    ("POWERUP_CURSOR_WEAPON_POWER", "include/weapon.h", "POWERUP_CURSOR_WEAPON_POWER"),
+    ("SFX_POWERUP_COMMIT", "include/weapon.h", "SFX_POWERUP_COMMIT"),
+    ("SHIP_SPEED_LEVEL_OVERFLOW", "include/weapon.h", "SHIP_SPEED_LEVEL_OVERFLOW"),
+    ("SHIP_SPEED_LEVEL_MAX", "include/weapon.h", "SHIP_SPEED_LEVEL_MAX"),
+    ("WEAPON_POWER_LEVEL_MAX", "include/weapon.h", "WEAPON_POWER_LEVEL_MAX"),
+    ("SHIELD_LEVEL_MAX", "include/weapon.h", "SHIELD_LEVEL_MAX"),
+    ("WEAPON_KIND_BOMB", "include/weapon.h", "WEAPON_KIND_BOMB"),
+    ("WEAPON_KIND_MISSILE", "include/weapon.h", "WEAPON_KIND_MISSILE"),
+    ("WEAPON_KIND_SEEKER", "include/weapon.h", "WEAPON_KIND_SEEKER"),
+    ("SHIP_HIT_SCAN_FIRST", "include/weapon.h", "SHIP_HIT_SCAN_FIRST"),
+    ("SHIP_HIT_SCAN_SLOTS", "include/weapon.h", "SHIP_HIT_SCAN_SLOTS"),
+    ("TYPE_POWERUP_CAPSULE", "include/weapon.h", "TYPE_POWERUP_CAPSULE"),
+    ("SFX_POWERUP_CAPSULE", "include/weapon.h", "SFX_POWERUP_CAPSULE"),
+    ("SHIP_DEATH_EXPLOSION_GROUP", "include/weapon.h", "SHIP_DEATH_EXPLOSION_GROUP"),
+    ("DEATH_EVENT_BIT_SHIP", "include/weapon.h", "DEATH_EVENT_BIT_SHIP"),
+    ("A_POWER_GAUGE_DISPLAY", "include/hud.h", "A_power_gauge_display"),
+    ("A_PANEL_REDRAW_MASK", "include/hud.h", "A_panel_redraw_mask"),
+    ("A_POWERUP_CURSOR", "include/hud.h", "A_powerup_cursor"),
+    ("A_POWERUP_ACTIVE_SLOT", "include/hud.h", "A_powerup_active_slot"),
+    ("PANEL_REDRAW_POWERUP_BIT", "include/hud.h", "PANEL_REDRAW_POWERUP_BIT"),
+    ("PANEL_REDRAW_WEAPON_BIT", "include/hud.h", "PANEL_REDRAW_WEAPON_BIT"),
+    ("PANEL_REDRAW_GAUGE_BIT", "include/hud.h", "PANEL_REDRAW_GAUGE_BIT"),
+    ("A_FIRE_CHARGED", "include/enemy.h", "A_fire_charged"),
+    ("A_ENEMY_SHOT_SLOTS", "include/enemy.h", "A_enemy_shot_slots"),
+    ("A_TYPE_LETHAL_TO_SHIP_BITS", "include/collision.h", "A_type_lethal_to_ship_bits"),
+    ("A_PLAYER_RECORD", "include/enemy.h", "A_player_record"),
     ("A_ENTITY_TABLE", "include/player.h", "A_entity_table"),
     ("A_SHIP_RECORD_SHADOW", "include/player.h", "A_ship_record_shadow"),
     ("A_SHIP_SPEED_LEVEL", "include/player.h", "A_ship_speed_level"),
@@ -1319,7 +1792,9 @@ MIRRORS = (
     ("ENTITY_ANIM_FRAME", "include/entity.h", "ENTITY_ANIM_FRAME"),
 )
 ENTRY_PROLOGUES = {
+    "ENTRY_SHIP_RESOLVE_ENTITY_HITS": "49f900017b96303c0006",
     "ENTRY_ENTITY_TYPE_IS_LOCKABLE": "102a0011b03c00326d00",
+    "ENTRY_POWERUP_CAPSULE_COLLECTED": "4a3900019902670000c0",
     "ENTRY_POWERUP_SLOT1_ACTIVATE": "33fc03e800019dcc4e75",
     "ENTRY_POWERUP_DOWNGRADE_ON_DEATH": "5339000199076a000008",
     "ENTRY_ENTITY_POS_FROM_SHIP": "41f900017da635680000",

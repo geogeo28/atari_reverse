@@ -52,7 +52,6 @@
  * ============================================================================================= */
 #define SHIP_SPRITE_ROWS       20u    /* `move.w #$13,d1` + `dbf`: a fixed count, not an argument */
 #define SHIP_SPRITE_HALF_BYTES 10u    /* `move.l / move.l / move.w` — one half of one source row */
-#define SHIP_SPRITE_GAP      1600u    /* `lea 1600(a1),a2` — where the second frame starts */
 
 /* One `move.l (a0)+,(a1)+ / move.l (a0)+,(a1)+ / move.w (a0)+,(a1)+` run, spelt out in the
  * original's read-then-store order. That order is observable whenever the source overlaps EITHER
@@ -278,35 +277,60 @@ void asteroid_preshift_bank(uint8_t *image, uint32_t bank) {
  * The original walks five destination cursors in parallel (a1..a5, one per cell) with the source
  * running straight on, so the copy is row-major across the cells while the STORAGE is cell-major.
  * ============================================================================================= */
-void mothership_sprite_expand(uint8_t *image) {
-    uint32_t frame = A_mothership_sprite_bank;
+/* THE BOSS EXPANDER AND THE ASTEROID SPLITTER ARE ONE TRANSFORM at two geometries, so they share
+ * this body: `SPRITE_PRESHIFT_SLOTS` identical frames of one masked sprite, `source_cells` copied
+ * straight across and the rest of `frame_cells` synthesised wholly transparent.
+ *
+ * The original walks one destination cursor per cell (a1..a5 for the boss, a1..a3 for an asteroid)
+ * and one source, all by postincrement, and restores only the SOURCE between frames. Stepping them
+ * the same way keeps the transcription an instruction sequence rather than a re-derivation of one,
+ * and keeps the multiplies out of a 1,280-iteration loop. */
+static void expand_masked_sprite_frames(uint8_t *image, uint32_t source_sprite, uint32_t bank,
+                                        unsigned rows, unsigned source_cells, unsigned frame_cells) {
+    uint32_t cell_bytes = rows * SPRITE_MASKED_ROW_BYTES;
+    uint32_t frame = bank;
 
     for (unsigned index = 0; index < SPRITE_PRESHIFT_SLOTS; index++) {
-        /* The original walks five destination cursors (a1..a5, one per cell) and one source, all by
-         * postincrement, and restores only the SOURCE between frames. Stepping them the same way
-         * keeps the transcription an instruction sequence rather than a re-derivation of one, and
-         * keeps the multiplies out of a 1,280-iteration loop. */
-        uint32_t src = A_mothership_sprite_source;
+        uint32_t src = source_sprite;
         uint32_t row_at = frame;
 
-        for (unsigned row = 0; row < BOSS_SPRITE_ROWS; row++) {
+        for (unsigned row = 0; row < rows; row++) {
             uint32_t dst = row_at;
 
-            for (unsigned cell = 0; cell < BOSS_SPRITE_SOURCE_CELLS; cell++) {
+            for (unsigned cell = 0; cell < source_cells; cell++) {
                 for (unsigned word = 0; word < SPRITE_MASKED_ROW_WORDS; word++)
                     wr16(image + addr_add(dst, 2u * word), be16(image + addr_add(src, 2u * word)));
                 src = addr_add(src, SPRITE_MASKED_ROW_BYTES);
-                dst = addr_add(dst, BOSS_SPRITE_CELL_BYTES);
+                dst = addr_add(dst, cell_bytes);
             }
-            /* `move.w #$ffff,(a5)+ / clr.l (a5)+ / clr.l (a5)+` — the synthesised fifth cell. */
-            wr16(image + dst, SPRITE_MASK_TRANSPARENT);
-            for (unsigned word = 1; word < SPRITE_MASKED_ROW_WORDS; word++)
-                wr16(image + addr_add(dst, 2u * word), 0);
-
+            /* `move.w #$ffff,(aN)+ / clr.l (aN)+ / clr.l (aN)+` per synthesised cell. */
+            for (unsigned cell = source_cells; cell < frame_cells; cell++) {
+                wr16(image + dst, SPRITE_MASK_TRANSPARENT);
+                for (unsigned word = 1; word < SPRITE_MASKED_ROW_WORDS; word++)
+                    wr16(image + addr_add(dst, 2u * word), 0);
+                dst = addr_add(dst, cell_bytes);
+            }
             row_at = addr_add(row_at, SPRITE_MASKED_ROW_BYTES);
         }
-        frame = addr_add(frame, BOSS_SPRITE_FRAME_BYTES);
+        frame = addr_add(frame, frame_cells * cell_bytes);
     }
+}
+
+void mothership_sprite_expand(uint8_t *image) {
+    expand_masked_sprite_frames(image, A_mothership_sprite_source, A_mothership_sprite_bank,
+                                BOSS_SPRITE_ROWS, BOSS_SPRITE_SOURCE_CELLS,
+                                BOSS_SPRITE_FRAME_CELLS);
+}
+
+/* asteroid_sprite_expand — the loop nest at 0x156e2..0x15718 inside `asteroids_load_and_build`.
+ *
+ * The same transform two cells narrower: a 32x32 sprite becomes eight identical 48x32 frames whose
+ * third cell is blank, which is the room `asteroid_preshift_bank` shifts each frame into. Unlike
+ * the boss expander it takes both ends as arguments, because its caller runs it six times over six
+ * sprites and six banks. */
+void asteroid_sprite_expand(uint8_t *image, uint32_t src, uint32_t bank) {
+    expand_masked_sprite_frames(image, src, bank, ASTEROID_FRAME_ROWS, ASTEROID_SOURCE_CELLS,
+                                ASTEROID_FRAME_CELLS);
 }
 
 /* ================================================================================================
@@ -600,6 +624,13 @@ uint32_t g_sprite_preshift4_4px(uint8_t *image, uint32_t src, uint32_t dst, uint
 
 void g_asteroid_preshift_bank(uint8_t *image, uint32_t bank) {
     asteroid_preshift_bank(image, bank);
+}
+
+/* Register map: A0 = the source sprite, A1..A3 = the three destination cell cursors, D2/D5 the two
+ * loop counters. The three cursors are one bank in this reconstruction, because the original's
+ * second and third are the first plus one and two cell blocks. */
+void g_asteroid_sprite_expand(uint8_t *image, uint32_t src, uint32_t bank) {
+    asteroid_sprite_expand(image, src, bank);
 }
 
 void g_mothership_sprite_expand(uint8_t *image) {

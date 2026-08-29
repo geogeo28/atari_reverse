@@ -32,22 +32,28 @@
 
 #define ENTITY_X           0x00u  /* .w signed — playfield x (entity_apply_velocity @ 0x14306 adds a LONGWORD
                                    * at +0, so the .w is the game's view, not the field's width).
-                                   * pinned by test_entity.py, test_util.py */
+                                   * pinned by test_entity.py, test_util.py,
+                                   * test_init.py::test_the_restart_prologue_rewrites_the_ship_pair_last */
 #define ENTITY_Y           0x04u  /* .w signed — playfield y (same longword add at +4).
-                                   * pinned by test_entity.py, test_util.py */
+                                   * pinned by test_entity.py, test_util.py,
+                                   * test_init.py::test_the_restart_prologue_rewrites_the_ship_pair_last */
 /* .w — sprite rows in bits 0..14; bit 15 is a FLAG the weapon code owns (include/weapon.h's
  * SHOT_LOCK_SLOT_B), which is why every reader of the count masks with collision.h's
  * ENTITY_HEIGHT_MASK — every reader except draw_sprite_masked (0x15ace), which feeds the raw word
  * to its dbf (an unreachable arm, see STATUS.md). Offset pinned by
- * test_mothership.py::test_place_tail_attribution and test_sprite.py (both blitters); the mask
+ * test_mothership.py::test_place_tail_attribution, test_sprite.py (both blitters) and
+ * test_init.py::test_the_restart_prologue_rewrites_the_ship_pair_last; the mask
  * by test_collision.py::test_height_is_masked_and_wraps, test_weapon.py::test_shot_retire_kind32
  * and test_sprite.py::test_collide_masks_the_height_flag, which drives 32 and 0x8020 through the
  * SIBLING blitter at 0x15b7c and requires the same 32 rows of both */
 #define ENTITY_HEIGHT      0x08u
 #define ENTITY_SPRITE      0x0au  /* .l — pointer to the sprite bank. pinned by
                                    * test_enemy.py::test_anim_cycle_frames, test_weapon.py::test_shot_to_puff,
-                                   * test_sprite.py (draw_sprite_masked) */
-/* .b — alive / animation state, bit 7 = exploding. PINNED BY test_entity.py, and its NEIGHBOUR
+                                   * test_sprite.py (draw_sprite_masked),
+                                   * test_init.py::test_the_restart_prologue_rewrites_the_ship_pair_last */
+/* .b — alive / animation state, bit 7 = exploding. PINNED BY test_entity.py,
+ * test_init.py::test_section_restart_prologue (its 18- and 6-slot kill sweeps) and
+ * test_weapon.py::test_a_capsule_at_every_scan_position, and its NEIGHBOUR
  * matters: entity_kill_if_offscreen reads the two as one word (`tst.w 14(a2)`) and clears only this
  * byte (`clr.b 14(a2)`). See src/entity.c. */
 #define ENTITY_ALIVE       0x0eu
@@ -65,7 +71,10 @@
 #define ENTITY_PIXEL_HIT   0x0fu
 #define ENTITY_TYPE        0x11u  /* .b — class id; entity_type_in_mask (0x13bc2) indexes it into the
                                    * 14-byte class bitmaps at 0x19164 / 0x19172 / 0x19180 (src/enemy.c) —
-                                   * no caller bounds the type. Past +0x1a the record is a UNION:
+                                   * no caller bounds the type. Pinned by
+                                   * test_init.py::test_section_restart_prologue (the six shot slots'
+                                   * type bytes) and test_weapon.py::test_a_capsule_at_every_scan_position.
+                                   * Past +0x1a the record is a UNION:
                                    * +0x1b is also the script VM's fire countdown and +0x21 an
                                    * asteroid speed flag (second roles named in enemy.h / src/enemy.c).
                                    * pinned by test_enemy.py::test_ground_skips_dead_and_wrong_type and

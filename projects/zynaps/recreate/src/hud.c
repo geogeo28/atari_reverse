@@ -430,13 +430,21 @@ void g_status_panel_redraw_all(uint8_t *image) {
     status_panel_redraw_all(image);
 }
 
+void panel_request_repaint(uint8_t *image, unsigned bit) {
+    image[A_panel_redraw_mask] |= (uint8_t)(1u << bit);
+}
+
 /* ================================================================================================
  * The front-end screens
  * ============================================================================================= */
 
 /* `movem.l $195f8,#$00ff` then `movem.l #$00ff,$19f46`: the front end's sixteen pens copied into
  * the shadow the menu VBL uploads, eight longwords at a time. Every screen that ends by showing
- * itself does this — the intro here, and both high-score screens. */
+ * itself does this — the intro here, and both high-score screens.
+ *
+ * STILL STATIC. `game_over_screen` makes the same copy, but on the arm AFTER the `bsr` into
+ * `highscore_check_and_insert` — past the end of src/highscore.c's slice — so nothing outside this
+ * file calls it yet and exporting it would advertise a relationship that does not exist. */
 static void install_frontend_palette(uint8_t *image) {
     copy_longwords(image, A_palette_frontend, A_menu_palette, SHIFTER_PALETTE_PAIRS);
 }

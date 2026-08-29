@@ -5,6 +5,7 @@ filename comes out of the game's own table and the bytes come out of ../bin/disk
 `_start` loads. The image diff then covers both the copied bytes and the handle word.
 """
 import ctypes
+import random
 from pathlib import Path
 
 import pytest
@@ -14,8 +15,25 @@ import harness
 from harness import differential, report, stage_files
 
 ENTRY_LOAD_FILE = 0x144e8
+ENTRY_ASTEROIDS_LOAD_AND_BUILD = 0x156ac
 
-A_FILE_HANDLE = 0x18246          # mirror of include/fileio.h
+# --- mirrors of include/fileio.h ---
+A_FILE_HANDLE = 0x18246
+A_FILENAME_BIGAST_DAT = 0x1974d
+ASTEROID_FILE_BYTES = 0xf00
+# --- mirrors of include/sprite.h: the geometry the asteroid build lays out ---
+ASTEROID_FRAME_ROWS = 32
+ASTEROID_FRAME_CELLS = 3
+ASTEROID_SOURCE_CELLS = 2
+ASTEROID_SPRITES = 6
+SPRITE_MASKED_ROW_BYTES = 10
+SPRITE_PRESHIFT_SLOTS = 8
+ASTEROID_SOURCE_BYTES = ASTEROID_FRAME_ROWS * ASTEROID_SOURCE_CELLS * SPRITE_MASKED_ROW_BYTES
+ASTEROID_FRAME_BYTES = ASTEROID_FRAME_CELLS * ASTEROID_FRAME_ROWS * SPRITE_MASKED_ROW_BYTES
+ASTEROID_BANK_BYTES = SPRITE_PRESHIFT_SLOTS * ASTEROID_FRAME_BYTES
+# --- mirrors of include/scroll.h and include/video.h: where the build reads and writes ---
+A_TILE_SET_BASE = 0x4b3be
+A_BACKDROP_PAGE0 = 0x1a8ae
 
 DISK = Path(__file__).resolve().parents[2] / "bin" / "disk"
 
@@ -32,6 +50,8 @@ SHIPPED_FILES = (
 
 harness._lib.g_load_file.argtypes = [ctypes.POINTER(ctypes.c_uint8)] + [ctypes.c_uint32] * 3
 harness._lib.g_load_file.restype = None
+harness._lib.g_asteroids_load_and_build.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
+harness._lib.g_asteroids_load_and_build.restype = None
 
 
 def _image_name(address):
@@ -111,10 +131,120 @@ def test_load_attribution():
     _load_case(*SHIPPED_FILES[0], 0x200, poison=True)
 
 
+
+# ================================================================================================
+# asteroids_load_and_build @ 0x156ac
+# ================================================================================================
+
+BIGAST = "BIGAST.DAT"
+BIGAST_BYTES = (DISK / BIGAST).read_bytes()
+# The whole destination the six banks occupy, plus a guard bank past them — 0x1e00 bytes a candidate
+# with one sprite too many would spill into.
+ASTEROID_BANKS_BYTES = ASTEROID_SPRITES * ASTEROID_BANK_BYTES
+NOISE_GUARD_BANKS = 1
+
+
+def test_the_read_count_is_exactly_the_six_sprites():
+    """`move.l #$f00,d1` is a LENGTH here, not a cap — and BIGAST.DAT is exactly that long.
+
+    include/fileio.h says the two agree by arithmetic rather than by one being written as the other,
+    and this is where that claim is held: six 32x32 masked sprites at ten bytes a cell-row is the
+    read count, and the shipped file is neither longer nor shorter. include/init.h's two LEVEL reads
+    are the contrasting case — those really are caps, and their files vary.
+    """
+    assert ASTEROID_FILE_BYTES == ASTEROID_SPRITES * ASTEROID_SOURCE_BYTES
+    assert len(BIGAST_BYTES) == ASTEROID_FILE_BYTES
+
+
+def _asteroid_case(payload, seed=0, poison=False, note=""):
+    """Stage `payload` as BIGAST.DAT and run the whole load-expand-preshift chain.
+
+    Both ends are seeded with noise: the staging buffer, so a read short of the count leaves some of
+    it standing, and the six banks plus a seventh, so a build that ran one sprite too far — or wrote
+    a frame at the wrong stride — lands on bytes that are not zero.
+    """
+    pokes, _handles = stage_files([(_image_name(A_FILENAME_BIGAST_DAT), payload)])
+    rng = random.Random(seed)
+    pokes[A_TILE_SET_BASE] = rng.randbytes(ASTEROID_FILE_BYTES * 2)
+    pokes[A_BACKDROP_PAGE0] = rng.randbytes(ASTEROID_BANKS_BYTES
+                                            + NOISE_GUARD_BANKS * ASTEROID_BANK_BYTES)
+    diffs, _ = differential(ENTRY_ASTEROIDS_LOAD_AND_BUILD, {"_pokes": pokes},
+                            lambda lib, buf: lib.g_asteroids_load_and_build(buf),
+                            poison=poison, max_insns=ASTEROID_MAX_INSNS)
+    assert not diffs, f"{note}\n{report(diffs)}"
+
+
+# The build copies 6 x 8 x 32 rows of five words and then shifts six banks a total of 42 one-pixel
+# passes, so it is well past the default cap.
+ASTEROID_MAX_INSNS = 20_000_000
+
+
+def test_asteroids_load_and_build_from_the_shipped_file():
+    """The game's own call, over the real BIGAST.DAT.
+
+    One run covers all three stages: the file lands in the tile-set staging buffer, six sprites
+    become six banks of eight identical three-cell frames in `A_backdrop_page0`, and each bank is
+    then preshifted in place. The bank stride, the source stride and the blank third cell are all in
+    the diff.
+
+    WHAT NO CASE HERE HOLDS is that the two passes are SEPARATE. Each bank's expansion and its
+    preshift touch only that bank (and the expansion also reads the staging buffer, which the
+    preshift never writes), so interleaving them into one loop is byte-identical on every input —
+    src/fileio.c says so and STATUS.md records it as an unpinned residual rather than a covered one.
+    """
+    _asteroid_case(BIGAST_BYTES, seed=1, note="shipped BIGAST.DAT")
+
+
+ASTEROID_FUZZ_CHUNKS = 4
+ASTEROID_FUZZ_CASES = 8
+
+
+@pytest.mark.parametrize("chunk", range(ASTEROID_FUZZ_CHUNKS))
+def test_asteroids_load_and_build_over_synthetic_sprites(chunk):
+    """The same chain over pseudorandom sprite bytes staged under BIGAST.DAT's own name.
+
+    The staged-file model serves whatever bytes a case gives it, so this drives mask words and plane
+    words the artwork never produces — every bit of every mask set and clear across the six sprites,
+    which is what the `roxr` carry chain inside `asteroid_preshift_bank` is sensitive to. The real
+    file exercises one point of that space.
+    """
+    for case in range(ASTEROID_FUZZ_CASES // ASTEROID_FUZZ_CHUNKS):
+        seed = 0x156ac + chunk * ASTEROID_FUZZ_CASES + case
+        _asteroid_case(random.Random(seed).randbytes(ASTEROID_FILE_BYTES), seed=seed,
+                       note=f"synthetic seed={seed}")
+
+
+def test_asteroids_load_and_build_over_a_short_file():
+    """A file shorter than the read count: Fread serves what is there and the build runs anyway.
+
+    The bytes past the file's end are whatever the staging buffer already held, so the last sprites
+    are built out of the case's own noise — which is exactly what the original does and what makes
+    "the read count is not clamped by the caller" observable here as well as in `load_file`'s own
+    battery.
+    """
+    _asteroid_case(BIGAST_BYTES[:ASTEROID_SOURCE_BYTES + 1], seed=5, note="short BIGAST.DAT")
+
+
+def test_asteroids_load_and_build_attribution():
+    """Poison the whole output: the staged bytes, the six banks and the handle word."""
+    _asteroid_case(BIGAST_BYTES, seed=2, poison=True, note="poison")
+
+
 # --- test_constants.py collects these; see README.md, "Adding a function" ---
 MIRRORS = (
     ("A_FILE_HANDLE", "include/fileio.h", "A_file_handle"),
+    ("A_FILENAME_BIGAST_DAT", "include/fileio.h", "A_filename_bigast_dat"),
+    ("ASTEROID_FILE_BYTES", "include/fileio.h", "ASTEROID_FILE_BYTES"),
+    ("ASTEROID_FRAME_ROWS", "include/sprite.h", "ASTEROID_FRAME_ROWS"),
+    ("ASTEROID_FRAME_CELLS", "include/sprite.h", "ASTEROID_FRAME_CELLS"),
+    ("ASTEROID_SOURCE_CELLS", "include/sprite.h", "ASTEROID_SOURCE_CELLS"),
+    ("ASTEROID_SPRITES", "include/sprite.h", "ASTEROID_SPRITES"),
+    ("SPRITE_MASKED_ROW_BYTES", "include/sprite.h", "SPRITE_MASKED_ROW_BYTES"),
+    ("SPRITE_PRESHIFT_SLOTS", "include/sprite.h", "SPRITE_PRESHIFT_SLOTS"),
+    ("A_TILE_SET_BASE", "include/scroll.h", "A_tile_set_base"),
+    ("A_BACKDROP_PAGE0", "include/video.h", "A_backdrop_page0"),
 )
 ENTRY_PROLOGUES = {
     "ENTRY_LOAD_FILE": "48e7404042672f083f3c",
+    "ENTRY_ASTEROIDS_LOAD_AND_BUILD": "41f90001974d43f90004b3be",
 }

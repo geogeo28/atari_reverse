@@ -27,8 +27,10 @@
 
 /* names.txt has no name for it; `clear_backdrop_page0` @ 0x12fc2 is the routine that establishes
  * what it is — the front end's compose buffer, one playfield's worth of bytes. The asteroid banks
- * are laid over the same store once the game proper starts (`_start` @ 0x1571a passes it to
- * `asteroid_preshift_bank` as bank 0), so the address is one buffer under two uses, not two. */
+ * are laid over the same store once the game proper starts (`asteroids_load_and_build` @ 0x156ac
+ * builds six 0x1e00-byte banks here, 0xb400 bytes = two playfields, reaching into scroll page 1,
+ * and passes bank 0 to `asteroid_preshift_bank` at 0x1571a), so the address is one buffer under
+ * two uses, not two. */
 #define A_backdrop_page0 0x1a8aeu
 
 /* names.txt calls it `palette_boot` and records `palette_title` as the other reading; the routine

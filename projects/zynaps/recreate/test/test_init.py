@@ -14,6 +14,7 @@ and the open would be refused rather than quietly passing.
 """
 import ctypes
 import functools
+import random
 
 import pytest
 
@@ -33,14 +34,14 @@ ENTRY_SECTION_ADVANCE = 0x10814
 ENTRY_SECTION_RELOAD_NEEDED = 0x1083a
 STOP_SECTION_RELOAD = 0x1085a                 # the reload arm, at its first unported `bsr`
 STOP_SECTION_NO_RELOAD = 0x10b6e              # the other arm's `beq` target
+ENTRY_SECTION_RELOAD_INTRO_SCREENS = 0x1085a
 ENTRY_SECTION_LOAD_ASSETS = 0x10862
 STOP_SECTION_LOAD_ASSETS = 0x10b6e
-# The `cmp.b #$71,d0` at 0x109de has set the flags and the `beq` at 0x109e2 has not run yet, so
-# BOTH arms reach here — which is what lets the four asteroid sections verify the shared prefix
-# even though the arm beyond it is unported.
-STOP_SECTION_LOAD_ASSETS_PREFIX = 0x109e2
+ENTRY_SECTION_RESTART_PROLOGUE = 0x10b6e
 ENTRY_SECTION_START_PREFILL = 0x10c4e
 STOP_SECTION_START_PREFILL = 0x10d96
+# The prologue runs straight on into the prefill, so its stop IS that slice's entry.
+STOP_SECTION_RESTART_PROLOGUE = ENTRY_SECTION_START_PREFILL
 # Not a slice of this subsystem — src/scroll.c's, and pinned there. This battery enters it to
 # produce the unpacked map its prefill cases run on, exactly as test_scroll.py does.
 ENTRY_MAP_RLE_DECOMPRESS = 0x15920
@@ -58,6 +59,37 @@ A_SHOW_PREPARE_FOR_COMBAT = 0x19aac
 A_ASTEROID_SECTION_FLAG = 0x198fd
 A_MOTHERSHIP_INDEX = 0x1987c
 A_SECTION_GROUND_TARGET_FLAG = 0x19897
+A_PALETTE_ASTEROID = 0x19638
+A_KEY_SCANCODE = 0x19685
+A_MOTHERSHIP_PENDING = 0x198af
+SECTION_RESTART_SHIP_X = 0x40
+SECTION_RESTART_SHADOW_X = 0x50
+SECTION_RESTART_SHIP_Y = 0x64
+SECTION_RESTART_SHIP_ROWS = 0x14
+SECTION_RESTART_KILL_SLOTS = 18
+SECTION_RESTART_ASTEROID_RECORDS = 18
+SQUADRON_MARKS = 6
+SECTION_RESTART_LAUNCH_STOCK = 2
+# --- mirrors of include/sprite.h and include/weapon.h, which own the other two figures ---
+SHIP_SPRITE_GAP = 1600
+PLAYER_SHOT_SLOTS = 6
+# --- mirrors of the headers the prologue borrows its resets from ---
+A_ENTITY_GUNSIGHT = 0x17dd2          # include/weapon.h
+A_DEATH_EVENT_FLAGS = 0x198c4        # include/weapon.h
+A_MISSILE_LAUNCH_COUNTER = 0x198b5   # include/weapon.h
+A_BOMB_LAUNCH_COUNTER = 0x198b6      # include/weapon.h
+A_ASTEROID_RECORDS = 0x17e2a         # include/enemy.h
+A_SQUADRON_KILL_COUNTERS = 0x198bb   # include/enemy.h
+A_EXPLOSION_GROUP_ACTIVE_BITS = 0x19670  # include/enemy.h
+A_SCROLL_FROZEN = 0x198b1            # include/enemy.h
+A_PLAYER_RECORD = 0x17d7a            # include/enemy.h
+A_MOTHERSHIP_READY = 0x198b0         # include/mothership.h
+A_ENTITY_TABLE = 0x17a8e             # include/player.h
+A_SHIP_RECORD_SHADOW = 0x17da6       # include/player.h
+ENTITY_STRIDE = 0x2c                 # include/entity.h
+ENTITY_X, ENTITY_Y, ENTITY_HEIGHT = 0x00, 0x04, 0x08
+ENTITY_SPRITE, ENTITY_ALIVE, ENTITY_TYPE = 0x0a, 0x0e, 0x11
+ENTITY_SLOTS = 20
 A_PALETTE_NEXT = 0x19f66
 A_PALETTE_PER_SECTION_TABLE = 0x18fe4
 SECTION_COUNT = 0x10
@@ -135,6 +167,7 @@ harness._lib.init_palette_uploads.restype = ctypes.c_uint32
 harness._lib.g_section_load_assets.argtypes = [_u8p]
 harness._lib.g_section_load_assets.restype = ctypes.c_uint32
 for _sym in ("g_boot_save_vbl_vector", "g_boot_load_title_assets", "g_section_advance",
+             "g_section_reload_intro_screens", "g_section_restart_prologue",
              "g_section_start_prefill"):
     getattr(harness._lib, _sym).argtypes = [_u8p]
     getattr(harness._lib, _sym).restype = None
@@ -354,22 +387,68 @@ def test_section_load_assets(section):
 
 
 @pytest.mark.parametrize("section", ASTEROID_SECTIONS)
-def test_section_load_assets_prefix_of_an_asteroid_section(section):
-    """The four asteroid sections' SHARED PREFIX, up to the branch that leaves this reconstruction.
+def test_section_load_assets_of_an_asteroid_section(section):
+    """Each of the four asteroid sections in full, over BIGAST.DAT and its own four other files.
 
-    Everything before 0x109e2 is common to both arms — the two alien banks, the boss sprite, the
-    missile frames — and it is driven by the same nine tables, so leaving it untested would leave a
-    quarter of the sections' table lookups unexercised. The case stops at the `beq` itself, which
-    both arms reach, and asserts that the reconstruction reports the arm it cannot follow rather
-    than falling into the map path (which would clear `asteroid_section_flag` where the original
-    sets it, and mislead `section_start_prefill` into rendering a backdrop that does not exist).
+    This case covers the prefix as well as the arm. An earlier revision stopped the oracle at the
+    `beq` itself (0x109e2) so the shared prefix could be verified while the arm was unported; that
+    checkpoint is gone with the arm's landing, because the candidate has no prefix to stop at.
+
+    The arm is short and every one of its effects is in the diff: the six sprite banks built and
+    preshifted into `A_backdrop_page0` (46 KB of them), the flag the map arm CLEARS and this one
+    SETS, and the fixed 32-byte palette row it takes instead of a per-section one. It also proves
+    the arm SKIPS the map: the tile-set buffer holds BIGAST.DAT's bytes and nothing else, where the
+    map arm would have overwritten them with a level file twice over.
     """
     pokes = _stage(_section_files(section))
     pokes[A_LEVEL_SECTION] = bytes([section])
-    info = _slice_case(ENTRY_SECTION_LOAD_ASSETS, STOP_SECTION_LOAD_ASSETS_PREFIX, pokes,
+    pokes[A_ASTEROID_SECTION_FLAG] = b"\x5a"      # neither arm's answer, so the store is visible
+    # ...and a palette row unlike anything in the per-section table, which is what makes the SOURCE
+    # ADDRESS observable — see test_the_asteroid_palette_row_is_only_pinned_by_a_poke below.
+    pokes[A_PALETTE_ASTEROID] = ASTEROID_PALETTE_PROBE
+    info = _slice_case(ENTRY_SECTION_LOAD_ASSETS, STOP_SECTION_LOAD_ASSETS, pokes,
                        lambda lib, buf: lib.g_section_load_assets(buf), f"asteroid section={section}",
                        max_insns=SECTION_LOAD_MAX_INSNS)
     assert info["ret"] == 0, f"section {section} is an asteroid section but the map arm ran"
+
+
+# A colour row no shipped table holds. The shifter ignores the top nibble of each pen and the game
+# never writes one, so the probe stays inside the 0x0777 range a real palette uses — it is a palette
+# the level designer did not choose, not a nonsense value.
+ASTEROID_PALETTE_PROBE = bytes.fromhex(
+    "0111022203330444055506660777011302240335044604570560067107120123")
+
+
+def test_the_asteroid_palette_row_is_only_pinned_by_a_poke():
+    """THE SHIPPED 0x19638 ROW IS BYTE-IDENTICAL TO ROW 0 OF THE TABLE AT 0x18fe4. Measured.
+
+    So on the shipped image a candidate that took the asteroid palette from the per-section table's
+    first row would copy exactly the same 32 bytes, and no case over the game's own data could tell
+    the two sources apart — a mutation swapping them survived the whole suite until the case above
+    started poking `ASTEROID_PALETTE_PROBE` over 0x19638. The poke is real program data given to
+    BOTH sides, not a fabricated record; this assertion is what stops it looking arbitrary, and it
+    fails loudly if a future image ever makes the two rows differ on their own.
+    """
+    shipped = bytes(harness.BASE_IMAGE[A_PALETTE_ASTEROID:
+                                       A_PALETTE_ASTEROID + SECTION_PALETTE_BYTES])
+    row_zero = bytes(harness.BASE_IMAGE[A_PALETTE_PER_SECTION_TABLE:
+                                        A_PALETTE_PER_SECTION_TABLE + SECTION_PALETTE_BYTES])
+    assert shipped == row_zero, (
+        "0x19638 and the per-section table's row 0 no longer agree — the poke in "
+        "test_section_load_assets_of_an_asteroid_section is no longer the only thing pinning the "
+        "asteroid arm's palette source, and this note can be simplified")
+    assert ASTEROID_PALETTE_PROBE != shipped
+    assert len(ASTEROID_PALETTE_PROBE) == SECTION_PALETTE_BYTES
+
+
+def test_the_asteroid_palette_row_is_not_one_of_the_per_section_rows():
+    """The asteroid arm's `movem.l $19638` reads a row OUTSIDE the sixteen-row table at 0x18fe4.
+
+    Without this the two arms' palette work would look like one lookup with a different index, and a
+    candidate that reached the asteroid row by indexing the table would pass every case above.
+    """
+    assert not (A_PALETTE_PER_SECTION_TABLE <= A_PALETTE_ASTEROID
+                < A_PALETTE_PER_SECTION_TABLE + SECTION_COUNT * SECTION_PALETTE_BYTES)
 
 
 def test_section_load_assets_covers_both_ground_targets():
@@ -386,15 +465,157 @@ def test_section_load_assets_covers_both_ground_targets():
 ASTEROID_SECTION_COUNT = 4       # measured: the section-type table's four 'q' entries
 
 
-def test_asteroid_sections_are_the_unported_arm():
-    """Four of the sixteen sections branch at 0x109e2 into `asteroids_load_and_build` (0x156ac).
+def test_both_arms_are_driven_and_every_section_is_one_or_the_other():
+    """Four of the sixteen sections branch at 0x109e2, and BOTH arms now have cases above.
 
-    That routine is not reconstructed, so the arm is read-verified and no case above drives it.
-    Pinned here so the count cannot drift silently: if a table changed and every section became a
-    map section, MAP_SECTIONS would silently claim coverage it never had.
+    This used to say the asteroid arm was unported. It is not: `test_section_load_assets_of_an_
+    asteroid_section` drives all four. What the count still buys is that neither list can quietly
+    empty — if a table changed and every section became a map section, MAP_SECTIONS would claim
+    coverage of an arm nothing exercised.
     """
     assert len(ASTEROID_SECTIONS) == ASTEROID_SECTION_COUNT
     assert len(MAP_SECTIONS) == SECTION_COUNT - ASTEROID_SECTION_COUNT
+    assert ASTEROID_SECTIONS and MAP_SECTIONS
+
+
+# ================================================ section_reload_intro_screens @ 0x1085a
+# ...and section_restart_prologue @ 0x10b6e.
+#
+# BOTH SLICES CALL TWO WHOLE FRONT-END SCREENS (`player_intro_screen` @ 0x13426 and
+# `status_panel_redraw_all` @ 0x135bc), so they need every graphic those two read staged at the
+# address `_start` loads it to. test_hud.py already derives that set from the .PRG and the disk —
+# the eight .DAT files and the three panel strips CUT OUT OF STATUS.PI1 rather than staged from
+# anywhere else — and rebuilding it here would be a second source of truth for panel graphics.
+# It is imported instead, which is also what test_constants.py does to every battery.
+#
+# NEITHER SLICE TAKES A POISON PASS, for test_hud.py's own two reasons: `player_intro_screen` ends
+# in `screen_flip_buffers`, which writes the very longwords it read its draw buffer from, and
+# `draw_power_gauge` inside the panel repaint writes a clamped level back and then indexes a frame
+# table with it. Both are recorded there; nothing is added here.
+import test_hud                                                          # noqa: E402
+
+# The four names this battery borrows from it, checked at import so a rename over there fails HERE
+# with a sentence instead of an AttributeError inside an unrelated case. Three are underscore-
+# private, which is exactly why nothing in test_hud would otherwise signal the dependency.
+for _borrowed in ("_panel_pokes", "_buffer_pokes", "A_SCREEN_BACK_BUFFER", "A_SCREEN_FRONT_BUFFER"):
+    assert hasattr(test_hud, _borrowed), (
+        f"test_init.py's two front-end slices reuse test_hud.{_borrowed} for its panel staging; "
+        f"that name is gone, so either restore it or give this battery its own staging")
+
+RESET_SEED = 0x5a               # neither arm's answer for any byte the prologue clears or sets
+
+
+def _front_end_pokes(seed, extra=None):
+    """test_hud.py's panel staging plus the two buffer pointers, which its cases pass separately."""
+    return test_hud._panel_pokes(seed, {
+        **test_hud._buffer_pokes(test_hud.A_SCREEN_BACK_BUFFER, test_hud.A_SCREEN_FRONT_BUFFER),
+        **(extra or {})})
+
+
+def test_section_reload_intro_screens():
+    """Two `bsr`s: the PLAYER n screen, then the whole status panel.
+
+    THE ORDER IS *NOT* THE ASSERTION, and saying so is the point of this docstring. Swapping the two
+    calls was mutation-tested and SURVIVED: `status_panel_redraw_all` writes every panel piece to
+    BOTH framebuffers, and `player_intro_screen`'s `playfield_clear` touches only rows 0..143 while
+    the panel starts at row 147 — so the `screen_flip_buffers` between them exchanges two pointers
+    whose buffers end up holding the same bytes either way. STATUS.md's mutation ledger carries the
+    argument and names the surface that WOULD catch it (a rendered-pixel or on-target one).
+
+    What this case does assert is that both calls happen, over the real graphics, at the addresses
+    `_start` gives them — a slice that dropped one of them differs on tens of thousands of bytes.
+    """
+    _slice_case(ENTRY_SECTION_RELOAD_INTRO_SCREENS, ENTRY_SECTION_LOAD_ASSETS,
+                _front_end_pokes(seed=0x1085a & 0xff),
+                lambda lib, buf: lib.g_section_reload_intro_screens(buf), "reload intro")
+
+
+def _restart_pokes(seed, alive, extra=None):
+    """The prologue's whole input set: a live-or-dead entity table, live asteroid records, and every
+    byte it clears or sets seeded to a value it does not produce.
+
+    `alive` seeds BOTH record arrays' alive bytes and the six shot slots' type bytes, so a sweep one
+    record short leaves a set byte standing where the original cleared it. The banner byte is seeded
+    to neither 0 nor 1 for the same reason.
+    """
+    table = bytearray()
+    for index in range(ENTITY_SLOTS):
+        record = bytearray(random.Random(0x10b6e + seed + index).randbytes(ENTITY_STRIDE))
+        record[ENTITY_ALIVE] = alive
+        record[ENTITY_TYPE] = alive
+        table += record
+    asteroids = bytearray()
+    for index in range(SECTION_RESTART_ASTEROID_RECORDS):
+        record = bytearray(random.Random(0x17e2a + seed + index).randbytes(ENTITY_STRIDE))
+        record[ENTITY_ALIVE] = alive
+        asteroids += record
+    # ...and one record past the ASTEROID array, at 0x18142, which nothing else in this poke set
+    # touches: that is what pins its count of eighteen. The entity array gets NO such guard, because
+    # the record after its twentieth IS `A_asteroid_records` — its own count is pinned instead by
+    # the ship's shadow at slot 18 (`test_the_restart_prologue_leaves_the_ship_shadow_alive`), which
+    # is the only slot an overrun of one could touch observably.
+    asteroids += random.Random(0x2001 + seed).randbytes(ENTITY_STRIDE)
+
+    pokes = {
+        A_ENTITY_TABLE: bytes(table),
+        A_ASTEROID_RECORDS: bytes(asteroids),
+        A_SHOW_PREPARE_FOR_COMBAT: bytes([RESET_SEED]),
+        A_DEATH_EVENT_FLAGS: bytes([RESET_SEED]),
+        A_MISSILE_LAUNCH_COUNTER: bytes([RESET_SEED, RESET_SEED]),   # ...and the bomb counter beside it
+        A_SQUADRON_KILL_COUNTERS: bytes([RESET_SEED] * (SQUADRON_MARKS + 1)),  # +1: a guard byte
+        A_KEY_SCANCODE: bytes([RESET_SEED]),
+        A_EXPLOSION_GROUP_ACTIVE_BITS: bytes([RESET_SEED]),
+        A_SCROLL_FROZEN: bytes([RESET_SEED]),
+        A_MOTHERSHIP_READY: bytes([RESET_SEED]),
+        A_MOTHERSHIP_PENDING: bytes([RESET_SEED]),
+    }
+    pokes.update(extra or {})
+    return _front_end_pokes(seed, pokes)
+
+
+@pytest.mark.parametrize("alive", (0x00, 0x01, 0x80, 0xff))
+def test_section_restart_prologue(alive):
+    """0xd0 bytes of resets reaching five subsystems, plus the two front-end screens.
+
+    The alive byte is swept because every clear is a `clr.b` on a byte whose entry value the sweeps
+    must not depend on — and 0x00 going in is the case that would hide a missing clear, which is why
+    it is driven beside three non-zero ones rather than instead of them.
+    """
+    _slice_case(ENTRY_SECTION_RESTART_PROLOGUE, STOP_SECTION_RESTART_PROLOGUE,
+                _restart_pokes(seed=alive, alive=alive),
+                lambda lib, buf: lib.g_section_restart_prologue(buf), f"alive={alive:#04x}")
+
+
+def test_the_restart_prologue_leaves_the_ship_shadow_alive():
+    """The one record the sweep does NOT kill, and it is not the last one.
+
+    `move.w #$11,d0` + dbf covers slots 0..17; the `clr.b $17de0` after it is the GUNSIGHT's alive
+    byte at slot 19, so slot 18 — the ship's shadow — keeps whatever it had. A candidate that read
+    the count as nineteen, or the stray clear as "one more slot", agrees with the original on every
+    other byte and differs on exactly this one. The arithmetic is asserted here as well as driven,
+    because the address 0x17de0 appears in the original as a bare literal.
+    """
+    assert A_ENTITY_GUNSIGHT + ENTITY_ALIVE == 0x17de0
+    assert A_SHIP_RECORD_SHADOW == A_ENTITY_TABLE + 18 * ENTITY_STRIDE
+    assert A_ENTITY_GUNSIGHT == A_ENTITY_TABLE + 19 * ENTITY_STRIDE
+    _slice_case(ENTRY_SECTION_RESTART_PROLOGUE, STOP_SECTION_RESTART_PROLOGUE,
+                _restart_pokes(seed=7, alive=0xff),
+                lambda lib, buf: lib.g_section_restart_prologue(buf), "shadow survives")
+
+
+def test_the_restart_prologue_rewrites_the_ship_pair_last():
+    """The pair's positions, sprites and heights, over records seeded to none of them.
+
+    The two sprite longwords are ONE FRAME APART (names.txt's 0x640 stride on 0x111f4), which is
+    what this holds against them being two unrelated literals — and the height pair is written from
+    a SECOND `lea` of the same record after the position pair, so a candidate that folded the two
+    blocks into one still has to put the same bytes at the same four offsets.
+    """
+    seeded = bytes([RESET_SEED]) * ENTITY_STRIDE
+    _slice_case(ENTRY_SECTION_RESTART_PROLOGUE, STOP_SECTION_RESTART_PROLOGUE,
+                _restart_pokes(seed=9, alive=1,
+                               extra={A_PLAYER_RECORD: seeded + seeded}),
+                lambda lib, buf: lib.g_section_restart_prologue(buf), "ship pair")
 
 
 # ========================================================= section_start_prefill @ 0x10c4e
@@ -622,6 +843,39 @@ MIRRORS = (
     ("A_ASTEROID_SECTION_FLAG", "include/init.h", "A_asteroid_section_flag"),
     ("A_MOTHERSHIP_INDEX", "include/init.h", "A_mothership_index"),
     ("A_SECTION_GROUND_TARGET_FLAG", "include/init.h", "A_section_ground_target_flag"),
+    ("A_PALETTE_ASTEROID", "include/init.h", "A_palette_asteroid"),
+    ("A_KEY_SCANCODE", "include/init.h", "A_key_scancode"),
+    ("A_MOTHERSHIP_PENDING", "include/init.h", "A_mothership_pending"),
+    ("SECTION_RESTART_SHIP_X", "include/init.h", "SECTION_RESTART_SHIP_X"),
+    ("SECTION_RESTART_SHADOW_X", "include/init.h", "SECTION_RESTART_SHADOW_X"),
+    ("SECTION_RESTART_SHIP_Y", "include/init.h", "SECTION_RESTART_SHIP_Y"),
+    ("SECTION_RESTART_SHIP_ROWS", "include/init.h", "SECTION_RESTART_SHIP_ROWS"),
+    ("SECTION_RESTART_KILL_SLOTS", "include/init.h", "SECTION_RESTART_KILL_SLOTS"),
+    ("SECTION_RESTART_ASTEROID_RECORDS", "include/init.h",
+     "SECTION_RESTART_ASTEROID_RECORDS"),
+    ("SQUADRON_MARKS", "include/init.h", "SQUADRON_MARKS"),
+    ("SECTION_RESTART_LAUNCH_STOCK", "include/init.h", "SECTION_RESTART_LAUNCH_STOCK"),
+    ("SHIP_SPRITE_GAP", "include/sprite.h", "SHIP_SPRITE_GAP"),
+    ("PLAYER_SHOT_SLOTS", "include/weapon.h", "PLAYER_SHOT_SLOTS"),
+    ("A_ENTITY_GUNSIGHT", "include/weapon.h", "A_entity_gunsight"),
+    ("A_DEATH_EVENT_FLAGS", "include/weapon.h", "A_death_event_flags"),
+    ("A_MISSILE_LAUNCH_COUNTER", "include/weapon.h", "A_missile_launch_counter"),
+    ("A_BOMB_LAUNCH_COUNTER", "include/weapon.h", "A_bomb_launch_counter"),
+    ("A_ASTEROID_RECORDS", "include/enemy.h", "A_asteroid_records"),
+    ("A_SQUADRON_KILL_COUNTERS", "include/enemy.h", "A_squadron_kill_counters"),
+    ("A_EXPLOSION_GROUP_ACTIVE_BITS", "include/enemy.h", "A_explosion_group_active_bits"),
+    ("A_SCROLL_FROZEN", "include/enemy.h", "A_scroll_frozen"),
+    ("A_PLAYER_RECORD", "include/enemy.h", "A_player_record"),
+    ("A_MOTHERSHIP_READY", "include/mothership.h", "A_mothership_ready"),
+    ("A_ENTITY_TABLE", "include/player.h", "A_entity_table"),
+    ("A_SHIP_RECORD_SHADOW", "include/player.h", "A_ship_record_shadow"),
+    ("ENTITY_STRIDE", "include/entity.h", "ENTITY_STRIDE"),
+    ("ENTITY_X", "include/entity.h", "ENTITY_X"),
+    ("ENTITY_Y", "include/entity.h", "ENTITY_Y"),
+    ("ENTITY_HEIGHT", "include/entity.h", "ENTITY_HEIGHT"),
+    ("ENTITY_SPRITE", "include/entity.h", "ENTITY_SPRITE"),
+    ("ENTITY_ALIVE", "include/entity.h", "ENTITY_ALIVE"),
+    ("ENTITY_TYPE", "include/entity.h", "ENTITY_TYPE"),
     ("A_PALETTE_NEXT", "include/init.h", "A_palette_next"),
     ("A_PALETTE_PER_SECTION_TABLE", "include/init.h", "A_palette_per_section_table"),
     ("SECTION_COUNT", "include/init.h", "SECTION_COUNT"),
@@ -687,5 +941,7 @@ ENTRY_PROLOGUES = {
     "ENTRY_SECTION_ADVANCE": "23fc000478ae00018242",
     "ENTRY_SECTION_RELOAD_NEEDED": "103900019913b0390001",
     "ENTRY_SECTION_LOAD_ASSETS": "103900019895488041f9",
+    "ENTRY_SECTION_RELOAD_INTRO_SCREENS": "61002bca61002d5c103900019895",
+    "ENTRY_SECTION_RESTART_PROLOGUE": "13fc000100019aac610028ae",
     "ENTRY_SECTION_START_PREFILL": "2a3900018242babc0004",
 }

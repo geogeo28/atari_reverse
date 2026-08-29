@@ -13,15 +13,19 @@
 #include "machine.h"
 #include "os.h"
 
+#include "entity.h"
 #include "fileio.h"
 #include "init.h"
+#include "enemy.h"
 #include "hud.h"
 #include "mothership.h"
 #include "scroll.h"
 #include "sound.h"
 #include "sprite.h"
+#include "player.h"
 #include "util.h"
 #include "video.h"
+#include "weapon.h"
 
 /* How many rows one of this file's constant address tables holds. Six loops here walk such a
  * table, and `sizeof x / sizeof x[0]` spelt out six times pushed four `for` headers onto two
@@ -244,14 +248,13 @@ unsigned section_reload_needed(uint8_t *image) {
  * load then opens whatever the string now says. So the text segment is program state here, the
  * differential covers it, and a case that got a table index wrong would open a different file.
  *
- * IT STARTS AT 0x10862, after the `bsr`s at 0x1085a and 0x1085e — `player_intro_screen` (0x13426)
- * and `status_panel_redraw_all` (0x135bc), both the front end's and neither ported.
+ * IT STARTS AT 0x10862, after the `bsr`s at 0x1085a and 0x1085e — those two are their own slice,
+ * `section_reload_intro_screens` below.
  *
- * THE ASTEROID ARM IS NOT COVERED. A section whose type byte is 'q' branches at 0x109e2 to 0x10a3e,
- * which calls `asteroids_load_and_build` (0x156ac) — not ported — and skips the map entirely. FOUR
- * of the sixteen sections take it (the section-type table's four 'q' entries, measured and pinned
- * by test_init.py's ASTEROID_SECTION_COUNT). It is reconstructed here as far as the branch and no
- * further; the arm is READ-VERIFIED and STATUS.md says so rather than the row claiming green.
+ * BOTH ARMS ARE COVERED. A section whose type byte is 'q' branches at 0x109e2 to 0x10a3e, and FOUR
+ * of the sixteen take it (the section-type table's four 'q' entries, pinned by test_init.py's
+ * ASTEROID_SECTION_COUNT). The two arms share this routine's whole first half and then diverge
+ * completely, so the answer names which one ran.
  * ============================================================================================= */
 /* The two alien banks. Both are four 0xa0-byte frames built into an eight-slot preshift bank, and
  * both are read through THE SAME filename — the variant letter is patched between the two loads. */
@@ -326,6 +329,14 @@ static void section_patch_alien_variant(uint8_t *image, uint32_t variant_table) 
         section_table_byte(image, variant_table);
 }
 
+/* `movem.l (a0),#$00ff` then `movem.l #$00ff,$19f66` — eight longwords, one whole colour row. Both
+ * arms of the asset load end with it; only the row they take differs. */
+static void publish_section_palette(uint8_t *image, uint32_t row) {
+    for (unsigned pair = 0; pair < SECTION_PALETTE_BYTES / PALETTE_LONG_BYTES; pair++)
+        wr32(image + A_palette_next + PALETTE_LONG_BYTES * pair,
+             be32(image + addr_add(row, PALETTE_LONG_BYTES * pair)));
+}
+
 static void section_build_alien_bank(uint8_t *image, uint32_t bank) {
     load_file(image, A_filename_alien_dat, bank, SECTION_ALIEN_BYTES);
     sprite_bank_build_preshift8(image, bank, bank, SECTION_ALIEN_FRAME_BYTES,
@@ -365,13 +376,17 @@ unsigned section_load_assets(uint8_t *image) {
         sprite_preshift4_4px(image, SECTION_MISSILE_PRESHIFT[frame],
                              SECTION_MISSILE_PRESHIFT[frame], SECTION_MISSILE_FRAME_BYTES);
 
-    /* 0x109de's `cmp.b #$71,d0` and 0x109e2's `beq`. The taken arm is NOT reconstructed, and this
-     * returns rather than falling into the map path: the two arms disagree about `$198fd` — the
-     * asteroid one SETS it and the map one clears it — and `section_start_prefill` reads that byte
-     * to decide whether to render 160 columns, so quietly taking the wrong arm would produce a
-     * plausible and wrong result instead of a visible stop. The caller checks the answer. */
-    if (section_table_byte(image, A_section_type_table) == SECTION_TYPE_ASTEROID)
+    /* 0x109de's `cmp.b #$71,d0` and 0x109e2's `beq`. THE ASTEROID ARM SKIPS THE MAP ENTIRELY: no
+     * level file, no tile set, no ground target — one sprite file, the flag the map arm clears, and
+     * a fixed palette row instead of a per-section one. It reaches the same 0x10b6e the map arm
+     * falls through to, and the answer says which of the two ran because they disagree about
+     * `$198fd`, which `section_start_prefill` reads. */
+    if (section_table_byte(image, A_section_type_table) == SECTION_TYPE_ASTEROID) {
+        asteroids_load_and_build(image);
+        image[A_asteroid_section_flag] = 1;
+        publish_section_palette(image, A_palette_asteroid);
         return 0;
+    }
 
     image[A_asteroid_section_flag] = 0;
     image[A_filename_lev_map + FILENAME_LEV_VARIANT] =
@@ -388,15 +403,8 @@ unsigned section_load_assets(uint8_t *image) {
     palette_index = section_table_byte(image, A_section_palette_index_table);
     image[A_section_ground_target_flag] =
         image[addr_add(A_ground_target_by_palette_table, sign_ext8(palette_index))];
-    /* `movem.l (a0),#$00ff` then `movem.l #$00ff,$19f66` — eight longwords, one whole colour row. */
-    {
-        uint32_t row = addr_add(A_palette_per_section_table,
-                                sign_ext8(palette_index) * SECTION_PALETTE_BYTES);
-
-        for (unsigned pair = 0; pair < SECTION_PALETTE_BYTES / PALETTE_LONG_BYTES; pair++)
-            wr32(image + A_palette_next + PALETTE_LONG_BYTES * pair,
-                 be32(image + addr_add(row, PALETTE_LONG_BYTES * pair)));
-    }
+    publish_section_palette(image, addr_add(A_palette_per_section_table,
+                                            sign_ext8(palette_index) * SECTION_PALETTE_BYTES));
 
     load_file(image, image[A_section_ground_target_flag] ? A_filename_gndtarg1_dat
                                                          : A_filename_rocket_dat,
@@ -411,6 +419,69 @@ unsigned section_load_assets(uint8_t *image) {
     for (unsigned pair = 0; pair < SECTION_BLANK_TILE_BYTES / PALETTE_LONG_BYTES; pair++)
         wr32(image + A_tile_set_base + PALETTE_LONG_BYTES * pair, 0);
     return 1;
+}
+
+/* ================================================================================================
+ * section_reload_intro_screens — 0x1085a..0x10862.
+ *
+ * Two `bsr`s and nothing else, between the reload gate and the asset load: put the PLAYER n screen
+ * up and repaint the whole status panel. Both are `hud`'s and both are verified, so this slice is
+ * pure composition — what it proves is the ORDER, which is observable because the intro screen ends
+ * in `screen_flip_buffers` and the panel repaint then draws into the buffer that flip chose.
+ * ============================================================================================= */
+void section_reload_intro_screens(uint8_t *image) {
+    player_intro_screen(image);
+    status_panel_redraw_all(image);
+}
+
+/* ================================================================================================
+ * section_restart_prologue — 0x10b6e..0x10c4e.
+ *
+ * The per-life reset every section start runs through, reached either by falling out of the asset
+ * load or by the reload gate's `beq` when the assets were already in RAM. It sets the PREPARE FOR
+ * COMBAT banner, shows the same two front-end screens the slice above does, and then clears 0xd0
+ * bytes' worth of state belonging to five other subsystems — which is why this file includes their
+ * headers rather than restating any address.
+ *
+ * WHAT SURVIVES IS AS DELIBERATE AS WHAT DOES NOT. The alive-byte sweep runs slots 0..17 and the
+ * `clr.b $17de0` after it is the GUNSIGHT's alive byte (slot 19), so slot 18 — the ship's shadow
+ * record — is the one entity left alive. The type-byte sweep is six slots, not eighteen: only the
+ * player's own shot slots are retyped.
+ * ============================================================================================= */
+void section_restart_prologue(uint8_t *image) {
+    image[A_show_prepare_for_combat] = 1;
+    section_reload_intro_screens(image);
+
+    for (unsigned slot = 0; slot < SECTION_RESTART_KILL_SLOTS; slot++)
+        image[addr_add(A_entity_table, slot * ENTITY_STRIDE) + ENTITY_ALIVE] = 0;
+    image[A_entity_gunsight + ENTITY_ALIVE] = 0;
+    for (unsigned slot = 0; slot < PLAYER_SHOT_SLOTS; slot++)
+        image[addr_add(A_entity_table, slot * ENTITY_STRIDE) + ENTITY_TYPE] = 0;
+    for (unsigned slot = 0; slot < SECTION_RESTART_ASTEROID_RECORDS; slot++)
+        image[addr_add(A_asteroid_records, slot * ENTITY_STRIDE) + ENTITY_ALIVE] = 0;
+
+    wr16(image + A_player_record + ENTITY_X, SECTION_RESTART_SHIP_X);
+    wr16(image + A_player_record + ENTITY_Y, SECTION_RESTART_SHIP_Y);
+    wr16(image + A_ship_record_shadow + ENTITY_X, SECTION_RESTART_SHADOW_X);
+    wr16(image + A_ship_record_shadow + ENTITY_Y, SECTION_RESTART_SHIP_Y);
+
+    image[A_death_event_flags] = 0;
+    image[A_missile_launch_counter] = SECTION_RESTART_LAUNCH_STOCK;
+    image[A_bomb_launch_counter] = SECTION_RESTART_LAUNCH_STOCK;
+    for (unsigned mark = 0; mark < SQUADRON_MARKS; mark++)
+        image[A_squadron_kill_counters + mark] = 0;
+    image[A_key_scancode] = 0;
+    image[A_explosion_group_active_bits] = 0;
+    image[A_scroll_frozen] = 0;
+    image[A_mothership_ready] = 0;
+    image[A_mothership_pending] = 0;
+
+    /* The pair's sprites and heights, written LAST and from a second `lea` of the same record. */
+    wr32(image + A_player_record + ENTITY_SPRITE, BOOT_SHIP_SOURCE);
+    wr32(image + A_ship_record_shadow + ENTITY_SPRITE,
+         addr_add(BOOT_SHIP_SOURCE, SHIP_SPRITE_GAP));
+    wr16(image + A_player_record + ENTITY_HEIGHT, SECTION_RESTART_SHIP_ROWS);
+    wr16(image + A_ship_record_shadow + ENTITY_HEIGHT, SECTION_RESTART_SHIP_ROWS);
 }
 
 /* ================================================================================================
@@ -543,6 +614,14 @@ uint32_t g_section_reload_needed(uint8_t *image) {
  * into `asteroids_load_and_build` — the arm this reconstruction stops at. */
 uint32_t g_section_load_assets(uint8_t *image) {
     return section_load_assets(image);
+}
+
+void g_section_reload_intro_screens(uint8_t *image) {
+    section_reload_intro_screens(image);
+}
+
+void g_section_restart_prologue(uint8_t *image) {
+    section_restart_prologue(image);
 }
 
 void g_section_start_prefill(uint8_t *image) {

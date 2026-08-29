@@ -1153,7 +1153,7 @@ def test_the_borrowed_boss_flag_has_not_been_claimed_by_its_owner():
 MIRRORS = (
     ("SHIP_SPRITE_ROWS", "src/sprite.c", "SHIP_SPRITE_ROWS"),
     ("SHIP_SPRITE_HALF_BYTES", "src/sprite.c", "SHIP_SPRITE_HALF_BYTES"),
-    ("SHIP_SPRITE_GAP", "src/sprite.c", "SHIP_SPRITE_GAP"),
+    ("SHIP_SPRITE_GAP", "include/sprite.h", "SHIP_SPRITE_GAP"),
     ("PRESHIFT_SLOTS", "include/sprite.h", "SPRITE_PRESHIFT_SLOTS"),
     ("PRESHIFT_SLOT_SHIFT", "include/sprite.h", "SPRITE_PRESHIFT_SLOT_SHIFT"),
     ("SPRITE_MASKED_ROW_WORDS", "include/sprite.h", "SPRITE_MASKED_ROW_WORDS"),
