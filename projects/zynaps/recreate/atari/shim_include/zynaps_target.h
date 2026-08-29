@@ -12,7 +12,7 @@
 
 #include <stdint.h>
 
-#include "irq.h"     /* HW_PALETTE_BASE — the shifter's colour registers, in the SHORT form */
+#include "video.h"   /* HW_PALETTE_BASE — the shifter's colour registers, in the SHORT form */
 
 /* ---- the machine's addresses, in the form a C pointer needs ------------------------------------
  *
@@ -63,24 +63,23 @@ extern volatile uint32_t zy_timer_b_ticks;
 
 /* What the seam's target half actually did, so a run that touched no hardware is separable from one
  * whose writes went somewhere unexpected. `zy_psg_refused` counts a register outside 0..15 — the
- * kit's `psg_port_write` refuses rather than masking, and so does this. All three are in the
+ * kit's `psg_port_write` refuses rather than masking, and so does this. All of them are in the
  * record. */
 extern volatile uint32_t zy_psg_writes;
 extern volatile uint32_t zy_psg_refused;
 extern volatile uint32_t zy_hw_writes;
 
-/* ---- ../src/video.c's glue, which has no header of its own ------------------------------------ */
-
-/* `g_set_palette_title` clears video.c's shifter sink, calls the verified `set_palette_title`, and
- * writes the eight longwords the CORE's own loop produced to the image at `result`. The shim reads
- * them back from there and pushes them to $ff8240, so a mutation inside the core reaches the screen
- * instead of being mirrored by a shim that recomputed the same answer.
+/* THE THREE CORE EFFECTS THE MACHINE CANNOT BE ASKED ABOUT AFTERWARDS, counted as they go past the
+ * hardware doors; zynaps_backend.c says what keys each one and why the shim's own traffic cannot
+ * forge it. Off target the kit's ordered write ledger holds all three and `harness.differential`
+ * compares it entry for entry, so these exist only on this side of the seam.
  *
- * WHY IT IS DECLARED HERE. The `g_*` glue exists to be dlsym'd by the differential harness and has
- * no header by design — ../README.md gives headers to the cores only. One declaration in the shim's
- * own header, with this paragraph beside it, beats a new header in ../include that nobody else
- * would include and that the layout rules say belongs to a subsystem owner. If the signature ever
- * moves, the link fails rather than the machine. */
-void g_set_palette_title(uint8_t *image, uint32_t result);
+ *   zy_shifter_mode_writes  `andi.b #$fc,$ff8260` at 0x10056 — 1 for the boot
+ *   zy_palette_long_writes  `movem.l #$00ff,$ff8240.l` at the end of `set_palette_title` — 8 longs
+ *   zy_acia_bytes_sent      `move.b d0,$fffc02` in `ikbd_send_cmd` — 2, one per boot command
+ */
+extern volatile uint32_t zy_shifter_mode_writes;
+extern volatile uint32_t zy_palette_long_writes;
+extern volatile uint32_t zy_acia_bytes_sent;
 
 #endif /* ZYNAPS_TARGET_H */

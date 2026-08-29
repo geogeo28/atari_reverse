@@ -751,6 +751,36 @@ hardware" into a localised answer. All are cheap and were decisive in the BuggyB
   gate. A fixed delay lands wherever the host's speed and the medium put it, and the picture cannot
   tell you it landed wrong. `tools/hatari_headless.py` is where this workspace keeps all of it.
 
+- **Booting from a FLOPPY image instead of a GEMDOS drive — three things that bite.** A GEMDOS
+  drive (`--harddrive DIR --auto C:\X.PRG`) is a host directory: no FAT12, no FDC, no TOS floppy
+  driver, and no desktop AUTO scan. Moving to `--disk-a IMAGE.ST` puts all four under the program,
+  which is what the machine on the desk actually runs — and changes the harness in ways that read
+  like crashes if you have not met them.
+  1. **`--run-vbls` expiring does NOT write the image back; quitting does.** Hatari holds the volume
+     in memory and flushes it when the emulator shuts down properly. Measured both ways in Zynaps: a
+     run left to hit its vblank budget leaves the host file byte-identical (the program's output
+     files simply are not there), and the same run closed through the command FIFO has them. So a
+     driver must WAIT for the machine to finish and then CLOSE, and the thing it waits on has to be
+     visible during the run — the `--trace gemdos` ledger showing the file created, written **and
+     closed** (the close is where GEMDOS flushes the last sectors and the directory entry).
+  2. **The program's own files are unreadable while it runs**, for the same reason — which kills the
+     "the shim writes its load address to a host file and the driver breakpoints on it" trick. Two
+     replacements, in order of preference: the **vector the program installs** (`$70` does not move
+     with the TPA, so its contents minus that handler's ELF symbol offset is the load base — one
+     4-byte dump per poll), or a **RAM signature search**. The search has a precondition worth
+     checking first: it cuts its needle from the bytes BEFORE the program's first relocation, so a
+     `.PRG` whose first fixup is at text offset `0xa` cannot be found that way at all.
+  3. **Hatari refuses `--machine ste` on TOS <= 1.4 and silently switches back to `st`.** The log
+     says so once (`TOS versions <= 1.4 work only in ST mode`) and the run then reports on a machine
+     nobody asked about, or hangs waiting for a debugger that never answers. Refuse the combination
+     up front from the ROM's own version word (a big-endian word at file offset 2, `$0104` for 1.04)
+     rather than letting three minutes of emulation say it obliquely.
+
+  What the medium buys is worth the trouble: it is the only configuration in which class 11's
+  question about a displaced TOS vertical blank is real, because the displaced handler owns the
+  drive's motor timeout and media poll. Zynaps' floppy run is where "no GEMDOS call is ever made
+  while our vectors are installed" stopped being an argument and became a ledger.
+
 - **Byte-compare against the original by dumping its RAM.** The strongest side-by-side there is,
   and it costs one Hatari debugger script. Run the ORIGINAL binary to the screen you want, dump the
   whole machine (`b VBL > N :once :file act.ini` with `savebin dump.bin 0 0x400000` and `cont` in

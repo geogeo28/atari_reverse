@@ -32,6 +32,7 @@
 #include "psg.h"
 
 #include "init.h"
+#include "input.h"
 #include "irq.h"
 #include "sound.h"
 #include "tos.h"
@@ -81,6 +82,14 @@
  * maximally far from the true one and is still a legal ST colour whatever the true one was — a
  * fault that happened to land on the pen's own value would be a control that cannot fail. */
 #define ZY_FAULT_XOR 0x777u
+/* AND IT IS A COLOUR REGISTER INDEX, so it is bounded at COMPILE TIME. build.sh's FAULT_PEN is a
+ * plain shell variable; set it to 16 and `shifter_pen_register` returns $ffff8260, the RESOLUTION
+ * register, and the control's one word store changes the screen mode and hangs the machine
+ * (docs/on-target-execution.md class 6). smoke.py refuses such a pen too — but only out of a record
+ * a machine in that state can no longer write, so the operator would get a black screen and a
+ * timeout. -1 is the shipped build's "no fault" and is the one value below the range. */
+_Static_assert(ZY_FAULT_PEN < (int)PALETTE_PENS,
+               "ZY_FAULT_PEN is a colour register index; $ff8260 is four registers past the last");
 
 /* ================================================================================================
  * The machine's fixed addresses. `HW_BUS`, `SHIFTER_PEN_BYTES` and `shifter_pen_register` are
@@ -112,12 +121,12 @@ static void write_vector(uint32_t vector, uint32_t handler) {
 
 #pragma GCC diagnostic pop
 
-/* The shifter. include/irq.h owns HW_PALETTE_BASE; the resolution byte deliberately has no name in
- * include/init.h ("there is no address here for anything to reach, and a name would read as one"),
- * so this is where it gets one — the address exists on this side of the seam. */
-#define HW_SHIFTER_RESOLUTION HW_BUS(0xff8260u)
-#define HW_SHIFTER_BASE_HIGH  HW_BUS(0xff8201u)  /* address bits 23-16 */
-#define HW_SHIFTER_BASE_MID   HW_BUS(0xff8203u)  /* ...and 15-8. There is no low byte on an STF. */
+/* The shifter, in the bus form a C pointer needs. Every address here is a CORE header's constant
+ * put through `HW_BUS` — include/video.h owns the colour block and the two video-base bytes,
+ * include/init.h owns the resolution byte — so this file spells no hardware address of its own. */
+#define HW_SHIFTER_RESOLUTION HW_BUS(HW_SHIFTER_MODE)
+#define HW_SHIFTER_BASE_HIGH  HW_BUS(HW_SCREEN_BASE_HIGH)  /* address bits 23-16 */
+#define HW_SHIFTER_BASE_MID   HW_BUS(HW_SCREEN_BASE_MID)   /* ...and 15-8; an STF has no low byte */
 #define SHIFTER_PEN_MASK 0x777u   /* three bits a gun; a CPU read returns the unused fourth as noise */
 #define SHIFTER_RESOLUTION_MASK 0x03u  /* $ff8260 bits 0-1; the rest read back as noise too */
 
@@ -202,8 +211,8 @@ void zy_timer_b_tick(void) {
 enum {
     REC_MAGIC, REC_FIELDS,
     REC_IMAGE_BASE, REC_PROGRAM_STAGED_BYTES, REC_SUPER_TOKEN,
-    REC_IKBD_MOUSE_OFF, REC_IKBD_JOYSTICK_MODE,
-    REC_SHIFTER_MODE_WRITES, REC_SHIFTER_MODE_MASK, REC_PALETTE_UPLOADS,
+    REC_ACIA_BYTES_AFTER_MOUSE_OFF, REC_ACIA_BYTES_AFTER_JOYSTICK_MODE,
+    REC_SHIFTER_MODE_WRITES, REC_SHIFTER_MODE_MASK, REC_PALETTE_LONG_WRITES,
     REC_IMAGE_SAVED_VBL_VECTOR, REC_TOS_VBL_VECTOR, REC_TOS_TIMER_B_VECTOR,
     REC_IMAGE_SCREEN_BACK, REC_IMAGE_SCREEN_FRONT, REC_PUBLISHED_SCREEN_BASE,
     REC_PHYSBASE_AT_ANCHOR, REC_RAW_VIDEO_BASE_AT_ANCHOR, REC_REZ_AT_ANCHOR,
@@ -323,43 +332,45 @@ static uint32_t read_resolution(void) {
 }
 
 /* ================================================================================================
- * The three shifter effects the cores can only RECORD.
+ * THE TWO SHIFTER EFFECTS THE SHIM STILL OWNS — and there used to be three.
  *
- * ../src/video.c's sink and ../src/init.c's ledger are static arrays inside those translation
- * units: off target they are what the differential compares, and they have no target seam of their
- * own, because both files are cores this build compiles unchanged. So the shim performs the three
- * writes itself, and each one below says what makes the CORE's half observable rather than assumed.
- * README.md's seam table carries the same three rows with the same caveat.
+ * The cores make their own hardware stores now: `set_palette_title` ends in eight `hw_write32`s
+ * over the colour block and `shifter_select_low_resolution` in one `hw_write8` to $ff8260, and
+ * zynaps_backend.c turns each into the real store. So the two publishes that used to REPLAY those
+ * writes on the cores' behalf are gone, and what is left below is what the cores genuinely cannot
+ * do from inside a relocated image.
+ *
+ * $ff8260 NEEDED NO REPLAY AND NEEDS NO APOLOGY EITHER. ../include/init.h calls the core's
+ * `hw_write8(HW_SHIFTER_MODE, 0 & mask)` an on-target defect, because off target the read half of
+ * `andi.b #$fc,$ff8260` answers a fabricated 0 and the mask's other six bits are lost. On this
+ * register they are lost to nothing: $ff8260 decodes TWO bits, and both `andi.b #$fc,<anything>`
+ * and a plain 0 leave them clear, which is ST low resolution either way. The rule the kit states —
+ * a read-modify-write must not be shipped as a store — is real and stands for $fffa0f (README.md's
+ * unpinned list carries that one); this particular instance is measured harmless and the record
+ * says so through `rez_at_anchor`.
  * ============================================================================================= */
-
-/* `andi.b #$fc,$ff8260` at 0x10056 — select low resolution.
- *
- * The MASK and the write COUNT are the core's own record (init.h's `init_shifter_mode_*`), so this
- * refuses to write anything the slice did not ask for: a slice that made no such write, or asked
- * for a different mask, leaves the machine alone and the record says so. What the core cannot
- * record is the byte the read-modify-write took IN, because the oracle has no shifter to read from
- * — which is exactly the half that only exists here. */
-static void publish_resolution(void) {
-    if (init_shifter_mode_writes() != 1u)
-        return;
-    *(volatile uint8_t *)HW_SHIFTER_RESOLUTION &= init_shifter_mode_mask_written();
-    zy_hw_writes++;
-}
 
 /* `move.b d0,$ff8203` then `move.b d0,$ff8201` at the tail of `screen_flip_buffers` (0x1297a) —
  * publish the buffer just drawn into.
  *
- * THE ADDRESS HAS TO BE TRANSLATED AND THE CORE'S RECORD CANNOT CARRY IT. `screen_flip_buffers`
- * publishes two bytes of an IMAGE OFFSET (0x70300); the shifter needs the RUNTIME address
- * (`image + 0x70300`). The core's own record is reachable only through `g_screen_flip_buffers`,
- * which would FLIP THE BUFFERS A SECOND TIME to hand it over — so this reads the swapped pointer
- * out of the image instead. That pointer IS the core's output: the swap is ordinary diffable memory
- * that ../STATUS.md's video row holds, and smoke.py compares BOTH framebuffer words in the record
- * against the two addresses `boot_load_title_assets` hard-codes, swapped — which is what the flip
- * is. The one thing added here is `+ image base`, and Physbase reads that back.
+ * THE CORE ALREADY MADE THIS STORE AND IT WAS THE WRONG ADDRESS, which is the one seam a relocated
+ * image cannot close from inside. `screen_flip_buffers` publishes two bytes of an IMAGE OFFSET
+ * (0x70300) — right in the differential's world, where the image IS the machine's memory and starts
+ * at 0, and right on the original, which runs at the base its framebuffers are absolute against.
+ * This build's image is a .bss array at `g_image`, so the shifter needs `image + 0x70300`, and the
+ * core has no way to know that. It stores the offset; this re-stores the machine address after the
+ * slice, and `raw_video_base_at_anchor` reads the register back to say which one won.
  *
- * The palette below is NOT written this way, and the difference is worth reading: there the core's
- * record can be had without a side effect, so it is. */
+ * WHAT IT COSTS is one transient: between the core's store inside the slice and this one after it,
+ * the shifter is pointed at $0703xx and displays whatever is there while the remaining seven files
+ * load. Nothing this smoke photographs can see it (every shot is at the anchor, seconds later) and
+ * README.md's unpinned list carries it as the residual it is — with the note that M2's frame loop,
+ * which flips every frame, needs a real answer rather than a republish.
+ *
+ * The pointer read back is the CORE's output: the swap is ordinary diffable memory that
+ * ../STATUS.md's video row holds, and smoke.py compares both framebuffer words in the record
+ * against the two addresses `boot_load_title_assets` hard-codes, swapped. The one thing added here
+ * is `+ image base`, and Physbase reads that back. */
 static uint32_t publish_screen_base(void) {
     uint32_t front = be32(g_image + A_screen_front);
     uint32_t base = (uint32_t)(uintptr_t)g_image + front;
@@ -369,32 +380,24 @@ static uint32_t publish_screen_base(void) {
     return base;
 }
 
-/* Where `g_set_palette_title` is asked to leave the eight longwords the core's loop produced.
- * Above the game's own last byte (the program ends at 0x6e96e) AND above its two hard-coded
- * framebuffers (which run to 0x7fd00 — the 63 KB hole ../README.md warns is not free space), so
- * nothing the cores read or the shifter displays overlaps it. It is a shim write the original never
- * makes, which is why it goes where no surface this smoke compares can see it: SCREEN.BIN is
- * [screen_front, +32000) and the pens are read off the chip. */
-#define ZY_SHIM_SCRATCH 0x80000u
-
-/* `bsr set_palette_title` at 0x10084 — sixteen colour registers from the row at 0x19618.
+/* THE NEGATIVE CONTROL, and it is now literally what the mode's name claims: ONE PEN corrupted on
+ * its way to the shifter and nothing else. The core has already uploaded the true row, so this
+ * reads that pen back off the chip and stores it inverted — one word-wide store, which is also why
+ * it cannot disturb `zy_palette_long_writes` (zynaps_backend.c keys that on the LONGWORD width the
+ * core's `movem` upload uses).
  *
- * THE PAYLOAD IS THE CORE'S OWN LOOP OUTPUT; zynaps_target.h's declaration of the glue says why
- * that is worth a scratch address. What the slice's own call to `set_palette_title` does on target
- * is nothing: it writes video.c's static sink and no hardware, exactly as it does off target. What
- * says it ran is init.h's upload COUNT, which exists for precisely this — ../STATUS.md records that
- * deleting the call once left the whole differential green until that count was added. Both halves
- * are in the record. */
-static void publish_title_palette(void) {
-    uint32_t row[PALETTE_PENS];
+ * It compiles to nothing at all in the shipped build: ZY_FAULT_PEN is -1 there and the `if` is a
+ * compile-time constant. The pen number still reaches smoke.py through the record rather than
+ * through a scrape of build.sh — the per-mode .PRGs outlive an edit to that script. */
+static void inject_pen_fault(void) {
+    if (ZY_FAULT_PEN < 0)
+        return;
+    {
+        uint32_t register_address = shifter_pen_register((unsigned)ZY_FAULT_PEN);
+        uint16_t truth = *(volatile uint16_t *)register_address;
 
-    g_set_palette_title(g_image, ZY_SHIM_SCRATCH);
-    for (unsigned pen = 0; pen < PALETTE_PENS; pen++) {
-        row[pen] = be16(g_image + ZY_SHIM_SCRATCH + pen * SHIFTER_PEN_BYTES);
-        if ((int)pen == ZY_FAULT_PEN)
-            row[pen] ^= ZY_FAULT_XOR;
+        hw_write16(register_address, (uint16_t)(truth ^ ZY_FAULT_XOR));
     }
-    write_pens(row);
 }
 
 /* ================================================================================================
@@ -498,8 +501,8 @@ void zynaps_main(void) {
      *   0x10000  boot_enter_supervisor        ../src/init.c
      *   0x10010  the Line-A opcode            zynaps_os.s (MODELLED as a no-op off target)
      *   0x10012  boot_save_vbl_vector         ../src/init.c
-     *   0x1001c  ikbd_send_cmd($12)           zynaps_os.s (unported: the ACIA wall)
-     *   0x10024  ikbd_send_cmd($15)           zynaps_os.s
+     *   0x1001c  ikbd_send_cmd($12)           ../src/input.c
+     *   0x10024  ikbd_send_cmd($15)           ../src/input.c
      *   0x1002c  boot_load_title_assets       ../src/init.c — through 0x101b9
      * and 0x101ba, where the reconstruction stops, is where this stops.
      * --------------------------------------------------------------------------------------- */
@@ -508,22 +511,31 @@ void zynaps_main(void) {
     g_record[REC_SUPER_TOKEN] = boot_enter_supervisor();
     zy_line_a_hide_mouse();
     boot_save_vbl_vector(g_image);
-    g_record[REC_IKBD_MOUSE_OFF] = (uint32_t)zy_ikbd_send_cmd(IKBD_CMD_DISABLE_MOUSE);
-    g_record[REC_IKBD_JOYSTICK_MODE] =
-        (uint32_t)zy_ikbd_send_cmd(IKBD_CMD_JOYSTICK_INTERROGATION_MODE);
+    /* Each command is recorded by the RUNNING TOTAL of bytes that reached $fffc02, so the two
+     * fields are 1 and 2 rather than a verdict apiece: the core's spin is unbounded now
+     * (shim_include/tos.h), so a transmitter that never empties never returns and there is no
+     * verdict to publish — the missing STATE.BIN is that finding. What these two say is the thing a
+     * returning call could still get wrong, which is whether the byte was actually stored. */
+    ikbd_send_cmd(IKBD_CMD_DISABLE_MOUSE);
+    g_record[REC_ACIA_BYTES_AFTER_MOUSE_OFF] = zy_acia_bytes_sent;
+    ikbd_send_cmd(IKBD_CMD_JOYSTICK_INTERROGATION_MODE);
+    g_record[REC_ACIA_BYTES_AFTER_JOYSTICK_MODE] = zy_acia_bytes_sent;
     boot_load_title_assets(g_image);
 
     g_record[REC_IMAGE_SAVED_VBL_VECTOR] = be32(g_image + A_saved_tos_vbl_vector);
     g_record[REC_IMAGE_SCREEN_BACK] = be32(g_image + A_screen_back);
     g_record[REC_IMAGE_SCREEN_FRONT] = be32(g_image + A_screen_front);
-    g_record[REC_SHIFTER_MODE_WRITES] = init_shifter_mode_writes();
+    g_record[REC_SHIFTER_MODE_WRITES] = zy_shifter_mode_writes;
     g_record[REC_SHIFTER_MODE_MASK] = init_shifter_mode_mask_written();
-    g_record[REC_PALETTE_UPLOADS] = init_palette_uploads();
+    g_record[REC_PALETTE_LONG_WRITES] = zy_palette_long_writes;
 
     /* ------------------------------------------------------------------------------------------
-     * The machine changes hands here, in the boot's own order: resolution (0x10056), the two
+     * The machine changes hands here. The boot's own order is resolution (0x10056), the two
      * exception vectors (0x10062/0x1006c, bracketed by the original's own `move.w #$27xx,sr`), the
-     * screen base (0x10080) and the palette (0x10084).
+     * screen base (0x10080) and the palette (0x10084) — and three of those four are now made by the
+     * CORES, inside the slice above, through the real stores zynaps_backend.c supplies. What is left
+     * here is the vector install, the screen base the cores can only publish as an image offset,
+     * and (in the control build only) the injected pen fault.
      *
      * THE VECTORS GO IN AFTER THE SLICE AND THE ORIGINAL PUTS THEM IN DURING IT, and that is a
      * deliberate deviation with a cost worth stating. The original is ticking its sound driver from
@@ -537,30 +549,27 @@ void zynaps_main(void) {
      * precisely why smoke.py's timeline arm compares the register stream's SHAPE, cut on the
      * driver's own descending 10..0 flush, and not vblank numbers.
      * --------------------------------------------------------------------------------------- */
-    publish_resolution();
-
-    /* THE INSTALL AND THE TWO PUBLISHES ARE ONE CRITICAL SECTION, which is one instruction more than
-     * the original's own bracket and buys two things. The original masks around the vector stores
-     * (`move.w #$2700,sr` at 0x1005e, `#$2300` at 0x10076) for the obvious reason: a vertical blank
-     * between them would enter a handler through a vector whose other half still points at TOS.
+    /* THE INSTALL AND THE PUBLISHES ARE ONE CRITICAL SECTION, which is one instruction more than
+     * the original's own bracket. The original masks around the vector stores (`move.w #$2700,sr`
+     * at 0x1005e, `#$2300` at 0x10076) for the obvious reason: a vertical blank between them would
+     * enter a handler through a vector whose other half still points at TOS.
      *
-     * Extending it over the publishes is this build's, because this build spells with SIXTEEN
-     * STORES what the original spells with one: `set_palette_title` ends in
-     * `movem.l #$00ff,$ff8240.l`, a single uninterruptible instruction, and sixteen `move.w`s are
-     * not. Unmasked, a vertical blank inside the run leaves one frame on a half-changed palette —
-     * and it makes `hw_writes` depend on whether GCC keeps compiling `zy_hw_writes++` to one
-     * `addq.l` (it does today, checked in the disassembly) rather than to a load/add/store the
-     * interrupt could split. smoke.py asserts that count exactly, so an intermittent red caused by
-     * codegen rather than by a change is precisely what must not be possible.
+     * Extending it over the stores below is this build's, and what it protects is the COUNT. Once
+     * the vertical-blank vector is ours, `sound_tick` runs between any two instructions here and
+     * every one of its chip writes goes through the same `zy_hw_writes++` — so an unmasked publish
+     * makes the count depend on whether GCC keeps compiling that increment to one `addq.l` (it does
+     * today, checked in the disassembly) rather than to a load/add/store the interrupt could split.
+     * smoke.py asserts the count exactly, so an intermittent red caused by codegen rather than by a
+     * change is precisely what must not be possible.
      *
-     * It costs about twenty microseconds of masked time, once, during the boot. */
+     * It costs about three microseconds of masked time, once, during the boot. */
     {
         uint16_t sr = zy_irq_disable();
 
         write_vector(A_vector_vbl, (uint32_t)(uintptr_t)&zy_vbl_entry);
         write_vector(A_vector_timer_b, (uint32_t)(uintptr_t)&zy_timer_b_entry);
         g_record[REC_PUBLISHED_SCREEN_BASE] = publish_screen_base();
-        publish_title_palette();
+        inject_pen_fault();
         zy_irq_restore(sr);
     }
 
@@ -578,9 +587,29 @@ void zynaps_main(void) {
     g_record[REC_REZ_AT_ANCHOR] = read_resolution();
     g_record[REC_VBL_TICKS_AT_ANCHOR] = zy_vbl_ticks;
     g_record[REC_TIMER_B_TICKS_AT_ANCHOR] = zy_timer_b_ticks;
-    g_record[REC_PSG_WRITES] = zy_psg_writes;
-    g_record[REC_PSG_REFUSED] = zy_psg_refused;
-    g_record[REC_HW_WRITES] = zy_hw_writes;
+
+    /* THE INTERRUPT'S OWN COUNTERS ARE LATCHED TOGETHER, UNDER THE MASK, and the reason is that
+     * smoke.py compares them by an EXACT equality: `hw_writes` must be `2 x psg_writes` plus a
+     * fixed number of stores the cores and the shim make. Both operands are ticked by the same
+     * interrupt — `zy_vbl_tick` runs `sound_tick`, whose per-frame flush pushes eleven PSG
+     * registers through `psg_port_write`, which is twenty-two `hw_write8`s and eleven
+     * `zy_psg_writes++` — so a vertical blank landing BETWEEN two of these reads latches one
+     * operand from before the flush and the other from after, and the equality fails by exactly
+     * twenty-two. That is an intermittent red caused by interrupt timing rather than by a change,
+     * which is the thing this build's one other critical section exists to make impossible.
+     *
+     * It costs a handful of microseconds, once, at the anchor. The file counters below are not in
+     * here because nothing ticks them from an interrupt — `load_file` runs on the main line and the
+     * boot slice has long since returned. */
+    {
+        uint16_t sr = zy_irq_disable();
+
+        g_record[REC_PSG_WRITES] = zy_psg_writes;
+        g_record[REC_PSG_REFUSED] = zy_psg_refused;
+        g_record[REC_HW_WRITES] = zy_hw_writes;
+        zy_irq_restore(sr);
+    }
+
     g_record[REC_FILE_OPENS] = zy_file_opens;
     g_record[REC_FILE_OPEN_FAILURES] = zy_file_open_failures;
     g_record[REC_FILE_REFUSALS] = zy_file_refusals;

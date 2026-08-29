@@ -250,46 +250,6 @@ zy_line_a_hide_mouse:
     movem.l (%sp)+,%d2/%a2
     rts
 
-| int zy_ikbd_send_cmd(unsigned char command) — `ikbd_send_cmd` @ 0x14444, BOUNDED.
-|
-| The original is four instructions: `btst #1,$fffc00 / beq.s self / move.b d0,$fffc02 / rts`. It is
-| unported (../STATUS.md, "Not reconstructed") because the kit models no read for the ACIA status
-| byte, so the oracle spins there for ever — which is exactly why it is here and not in ../src.
-|
-| THE BOUND IS THE ONE DEVIATION, and it buys the verdict. The original cannot fail; a headless
-| check that hangs decides nothing, and a hang looks identical to a broken machine. So the wait is
-| capped and the answer says which happened: 1 = the transmitter went ready and the byte was
-| stored, 0 = the wait spun out and NOTHING was stored. zynaps_main.c publishes both calls' verdicts
-| in STATE.BIN and smoke.py asserts them. The kit's own `sched_wait8` makes the identical trade for
-| the identical reason.
-|
-| THE CAP IS A SPIN COUNT, NOT A TIME. At 8 MHz this loop is ~20 cycles, so the cap is ~0.2 s —
-| four orders of magnitude above the ACIA's ~64 us character time and far below any watchdog. It is
-| local to this routine, which is why it is defined here.
-|
-| The byte is read out of the low END of the 4-byte C slot, matching every wrapper above: the SysV
-| ABI passes an `unsigned char` in a full slot and on a big-endian stack the value is at +7. Read as
-| the longword and used as its low byte, which is the shape that does not depend on the argument's
-| declared width.
-
-    IKBD_ACIA_STATUS   = 0xfffffc00
-    IKBD_ACIA_DATA     = 0xfffffc02
-    IKBD_TX_READY_BIT  = 1          | `btst #1,$fffc00` — the transmitter-data-register-empty bit
-    IKBD_SPIN_MAX      = 100000
-
-    .globl  zy_ikbd_send_cmd
-zy_ikbd_send_cmd:
-    move.l  4(%sp),%d1              | the command byte, in the low byte of its slot
-    move.l  #IKBD_SPIN_MAX,%d0
-1:  btst    #IKBD_TX_READY_BIT,IKBD_ACIA_STATUS
-    bne.s   2f
-    subq.l  #1,%d0
-    bne.s   1b
-    rts                             | spun out: %d0 is 0, and nothing was stored
-2:  move.b  %d1,IKBD_ACIA_DATA
-    moveq   #1,%d0
-    rts
-
 | ------------------------------------------------------- the two INTERRUPT entries -------------
 |
 | The reconstruction's own handlers — `vbl_isr` @ 0x10776 and `timer_b_isr` @ 0x10782, both verified

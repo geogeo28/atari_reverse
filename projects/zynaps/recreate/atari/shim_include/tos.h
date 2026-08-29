@@ -48,16 +48,19 @@ void     zy_irq_restore(uint16_t sr);
  * exception and ../src/init.c therefore models as a no-op. Here it is the real thing. */
 void zy_line_a_hide_mouse(void);
 
-/* `ikbd_send_cmd` @ 0x14444, which is unported (../STATUS.md, "Not reconstructed": the kit models
- * no read for the ACIA status at $fffc00, so the oracle spins there for ever). Spin on bit 1 of
- * $fffc00 and store the byte to $fffc02, exactly as the original does — but BOUNDED, and the
- * bound's verdict is the return value: 1 = the transmitter went ready and the byte was stored,
- * 0 = the wait spun out and NOTHING was stored. The original has no bound and would hang; a
- * headless check that hangs decides nothing (the kit's own `sched_wait8` makes the same trade).
+/* THERE IS NO `zy_ikbd_send_cmd` HERE ANY MORE, and its absence is the point. `ikbd_send_cmd`
+ * @ 0x14444 was the shim's own bounded copy while the kit modelled no read for the ACIA status at
+ * $fffc00 and the oracle spun there for ever. $fffc00 is a seeded READ slot now
+ * (kit os.h, `OS_HW_ACIA_STATUS`), the routine is VERIFIED in ../src/input.c, and this build calls
+ * that one — through the kit's `hw_read8`/`hw_write8`, which zynaps_backend.c answers with the real
+ * 6850.
  *
- * A 0 here is a record field, not an exception: zynaps_main.c publishes it and smoke.py asserts
- * it. Supervisor-only — $fffc00 is I/O space. */
-int zy_ikbd_send_cmd(uint8_t command);
+ * SO THE SPIN IS UNBOUNDED HERE, exactly as the original's is. `IKBD_TX_POLL_MAX`, the core's own
+ * give-up arm, is inside `#ifndef OS_NO_REFUSAL_TALLY` and build.sh defines that macro — so a
+ * target build compiles the original's four instructions and no cap. What a dead transmitter costs
+ * is a boot that never reaches the record: STATE.BIN is missing and smoke.py reports the run as a
+ * crash, which is a louder finding than the 0 the bounded copy used to publish.
+ */
 
 /* The two exception entries. Each is the `movem` pair the C cannot write plus an `rte`; the body
  * is the verified handler in ../src/irq.c, reached through zy_vbl_tick / zy_timer_b_tick in
