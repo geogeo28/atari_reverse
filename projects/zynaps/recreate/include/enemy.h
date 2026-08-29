@@ -56,10 +56,58 @@
  * the first of them, and ../out/globals.tsv assigns the address to this subsystem. */
 #define A_enemy_shot_slots        0x17b96u
 
-/* The per-TYPE jump table the animation pass dispatches through, 23 longwords. Its twin, the move
- * table at 0x19380 (names.txt `actor_move_table` # ctx), is not named here yet: no routine ported
- * so far reads it, and an address nothing pins is one nothing has checked. */
+/* The per-TYPE jump tables the two per-frame passes dispatch through. They SHARE STORAGE: the
+ * animation table is the move table's 24th longword onward (0x19380 + 0x17 * 4 == 0x193dc), which
+ * names.txt records on 0x193dc — so the move table's slots 0x17.. and the animation table's slots
+ * 0.. are the same memory read two ways, and each pass bounds its type with its own
+ * `cmpi.b #$32`. */
+#define A_actor_move_table        0x19380u  /* names.txt `actor_move_table` # ctx */
 #define A_actor_anim_table        0x193dcu
+
+/* The actor script VM's own data (src/enemy.c, `actor_script_run`): the byte stream, the 8-entry
+ * opcode-class table, the 16-entry extended table, and the per-formation script pointers the
+ * spawner turns into a starting pc. */
+#define A_actor_script_data       0x19ac2u  /* names.txt `actor_script_data` */
+#define A_script_op_table         0x19438u  /* names.txt `script_op_table` — 8 longwords */
+#define A_script_op_ext_table     0x19458u  /* names.txt `script_op_ext_table` — 16 longwords */
+#define A_actor_script_table      0x194bcu  /* names.txt `actor_script_table` */
+
+/* The formation spawner's tables (src/enemy.c, `spawn_formation`). */
+#define A_formation_table         0x19504u  /* names.txt — one longword per formation */
+#define A_formation_gfx_attrs     0x19c33u  /* names.txt — 8-byte records, indexed by the kind */
+#define A_formation_base_y        0x19498u  /* names.txt — one word per formation */
+#define A_actor_spawn_template    0x17a62u  /* names.txt — the 0x2c-byte record it builds and copies */
+
+/* The two level-event script cursors and the spawn gates the wave/ground/squadron tickers read.
+ * names.txt's comment on 0x10db2 has the script format: 4-byte records (word map-x, byte type,
+ * byte param) sorted by x, with these two longwords as the cursors. */
+#define A_wave_script_cursor      0x1824eu  /* names.txt `enemy_spawn_script_ptr` # ctx */
+#define A_ground_script_cursor    0x1824au  /* names.txt `map_event_script_ptr` # ctx */
+#define A_squadron_spawn_enabled  0x19aaeu  /* names.txt — set/cleared by script types 0x0c/0x0d */
+#define A_squadron_spawn_countdown 0x198feu /* names.txt — frames until the next asteroid trio */
+#define A_ground_spawn_rnd_param  0x198c1u  /* names.txt # ctx — a fresh 1..0x1f after each spawn */
+
+/* Which actor types may fire, and how often. The three 14-byte class maps are entity_type_in_mask's
+ * (see its note); the chance table is indexed by the level section. */
+#define A_enemy_types_fire_homing 0x19164u  /* names.txt */
+#define A_enemy_types_can_fire    0x19172u  /* names.txt */
+#define A_enemy_types_fire_seeker 0x19180u  /* names.txt */
+#define A_enemy_fire_chance_table 0x19aafu  /* names.txt — one byte per section */
+
+/* The hit points of the two-slot type-0x02 enemies, one byte per PAIR — ../out/globals.tsv calls it
+ * this subsystem's, and src/mothership.c reads it through this header (its segments are such
+ * pairs). */
+#define A_enemy_pair_hitpoints    0x19884u  /* names.txt # ctx */
+
+/* The sprites the enemy shots and the ground puff are given. Every one is a RELOCATED address —
+ * `move.l #$6115e,10(a2)` over the bytes `257c 0005115e` — so the number here is the loaded one,
+ * as ../../names.txt's own CORRECTION notes on the weapon launchers describe. */
+#define A_shot_sprite_aimed       0x6115eu  /* type 0x0c, the plain aimed shot */
+#define A_shot_sprite_homing      0x6e6eeu  /* type 0x0a */
+#define A_shot_sprite_seeker      0x65d9eu  /* type 0x0b */
+#define A_ground_puff_sprite      0x68d1eu  /* type 0x06, what an expiring seeker becomes */
+#define A_wave_trio_sprite        0x60bbeu  /* the type-0x0e sine patrollers */
+#define A_ground_actor_sprite     0x62e1eu  /* the type-0x0f / 0x10 ground actors */
 
 /* ================================================================================================
  * Globals another subsystem owns, BORROWED because no owner's header DEFINES them yet.
@@ -102,6 +150,11 @@
 #define A_explosion_small_frame_ptrs  0x191fcu  /* names.txt # ctx — 12 sprite pointers */
 #define A_explosion_frame_toggle      0x198aeu
 #define A_fire_charged                0x19902u  /* names.txt # ctx — cleared by the group-1 pass */
+/* ../out/globals.tsv gives this one to `player` ("counts down after a section (re)start"), and
+ * include/player.h does not name it. `spawn_enemy_shot` both READS and WRITES it as the seeker
+ * launcher's own reload gate, so it is borrowed on the same terms as the five above: one edit to
+ * move when player.h names it. */
+#define A_enemy_seeker_cooldown       0x19abfu  /* names.txt # ctx */
 
 /* ================================================================================================
  * Actor-record roles this subsystem adds to entity.h's frozen block. Offsets are from ../names.txt.
@@ -130,6 +183,37 @@
  * non-zero adds to y, which on an ST screen moves the column DOWN. `tst.b 30(a2)` @ 0x15a08. */
 #define ASTEROID_Y_DESCENDING   0x1eu
 #define ASTEROID_SLOW           0x21u  /* .b — the SAME byte as ENTITY_SQUADRON: 2 px/frame not 4 */
+/* .b — the script VM's per-actor frame countdown: `subq.b #1,38(a2)` at the head of
+ * `actor_script_run`, reaching zero is what fetches the next opcode, and a script byte with bit 7
+ * set reloads it with the low seven bits. */
+#define ACTOR_SCRIPT_DELAY      0x26u
+/* .b — the opcode byte currently in force; the VM re-dispatches it every frame the delay above has
+ * not expired, and `spawn_formation` seeds it with ACTOR_SCRIPT_OPCODE_INITIAL. */
+#define ACTOR_SCRIPT_OPCODE     0x28u
+/* .b — what an actor may fire, read by `enemy_fire_and_update_shots`: zero means it never fires,
+ * bit 1 admits the homing/missile classes and bit 2 halves that chance again. `spawn_formation`
+ * writes it from its own argument, which the wave script derives from the opcode's bits 4 and 5. */
+#define ACTOR_FIRE_FLAGS        0x2au
+/* .b — a spawn-time tag the wave and ground spawners write (2 for the type-0x0e trio, 1 for the two
+ * ground types) and which NO ported routine reads. The only reader of the offset anywhere is
+ * explosion_animate_all, under EXPLOSION_PART_FRAME above — a different role in a record that is
+ * never both, exactly like the unions this header's opening note describes. */
+#define ACTOR_SPAWN_TAG         0x10u
+
+/* THE PLAYFIELD'S RIGHT-HAND EDGE, as `cmpi.w #$1b8,0(a2)` + `bge` — a SIGNED word compare. In the
+ * header rather than beside `enemy_move_scripted` because src/mothership.c retires the boss and its
+ * segments on the same number, and one edge spelt in two files is two things to keep right. Its
+ * left-hand partners are NOT shared: the scripted mover uses src/enemy.c's ACTOR_KILL_X and the
+ * boss its own, lower bounds. */
+#define ACTOR_KEEP_X_MAX 0x1b8
+
+/* WHAT AN EXPLODING RECORD LOOKS LIKE, shared because two subsystems write it. `explosion_spawn`
+ * (src/enemy.c) gives each of its six particles this type and this 4-pixel x alignment, and
+ * `mothership_segment_hit` (src/mothership.c) rewrites both halves of a killed boss pair the same
+ * way — so the pair lives here rather than as two file-private copies under two names, which is
+ * the one duplicate `test_constants.py` cannot see. */
+#define EXPLOSION_PART_TYPE 0x64      /* `move.b #$64,17(a2)` / `move.b #$64,17(a6)` */
+#define EXPLOSION_X_ALIGN 0xfffcu     /* `and.w #$fffc,d0` / `andi.w #$fffc,0(a6)` */
 
 /* ================================================================================================
  * THE CARRY/ZERO ANSWER, and the two bytes that carry it across the differential.
@@ -206,5 +290,41 @@ unsigned actor_script_op_thrust_to_centre(uint8_t *image, uint32_t actor);
 unsigned actor_script_op_random_speed_nudge(uint8_t *image, uint32_t actor);
 unsigned actor_script_continue(void);
 unsigned actor_script_op_end_frame(void);
+
+/* 0x141c2 — `entity_ptr_from_index`'s SECOND ENTRY POINT — has no core of its own, and that is the
+ * transcription rather than an omission: the two entries share one body, differing only in which
+ * register the index arrives in (`move.b d0,d6` is all 0x141c0 adds), and both reach the same
+ * `and.l #$ff,d6`. So the C is `entity_ptr_from_index` above and the second entry is one more glue,
+ * `g_entity_ptr_from_index_d6` in src/enemy.c. A second core would be a copy, not a routine. */
+
+void enemy_morph_to_type6(uint8_t *image, uint32_t entity);
+unsigned actor_script_op_fire(uint8_t *image, uint32_t actor, uint8_t opcode);
+unsigned actor_script_op_ext(uint8_t *image, uint32_t actor, uint8_t opcode);
+
+void spawn_enemy_shot(uint8_t *image, uint32_t player, uint32_t firing_enemy, uint32_t shot,
+                      unsigned want_seeker);
+void enemy_shot_tick_type0a(uint8_t *image, uint32_t shot);
+void enemy_shot_tick_type0b(uint8_t *image, uint32_t shot);
+/* The argument is the CALLER'S OWN D1, not a value this routine computes: the level section is
+ * loaded into that register with `move.b` and indexed with `d1.w` on the next instruction, so the
+ * chance table's word offset keeps whatever the caller left in the high byte. */
+void enemy_fire_and_update_shots(uint8_t *image, uint32_t chance_index_register);
+
+void wavescript_spawn_trio_type0e(uint8_t *image, uint32_t cursor);
+void groundscript_spawn_type10(uint8_t *image, uint32_t cursor, uint32_t y_register);
+void groundscript_spawn_type0f(uint8_t *image, uint32_t cursor, uint32_t y_register);
+void squadron_spawn_tick(uint8_t *image);
+
+void spawn_formation(uint8_t *image, uint16_t formation, uint8_t actor_type, uint16_t base_x,
+                     uint16_t base_y, uint8_t fire_flags, uint32_t sprite);
+void wavescript_spawn_wave(uint8_t *image, uint32_t cursor, uint16_t opcode, uint16_t base_y,
+                           uint8_t actor_type, uint32_t sprite);
+
+/* `void`, though every opcode handler answers in the carry: the VM's own loop consumes that flag
+ * (`bcs` back to its head) and its `rts` is reached only where the flag was CLEAR, so the routine
+ * always returns carry clear and has no answer of its own to hand back. */
+void actor_script_run(uint8_t *image, uint32_t actor);
+void enemy_move_scripted(uint8_t *image, uint32_t actor);
+void enemies_move_all(uint8_t *image);
 
 #endif /* ZYNAPS_ENEMY_H */

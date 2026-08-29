@@ -31,6 +31,42 @@
 #define A_mothership_sprite_bank   0x310aeu  /* bank 0; bank 1 is a MOTHERSHIP_BANK_BYTES further on */
 #define A_mothership_sprite_source 0x5ed7eu  /* the two unshifted frames the build copies in */
 
+/* Set whenever a boss record's x leaves the playfield; names.txt's `mothership_escaped` reading
+ * says it is what ends the section. Cleared at the top of every `mothership_move_and_place`. */
+#define A_mothership_offscreen     0x19916u  /* names.txt # ctx */
+
+/* Which formation the boss spawns as, and the ACTOR_FIRE_FLAGS byte its actors get — one byte of
+ * each per level section, both read with the same SIGN-EXTENDED section index. */
+#define A_mothership_formation_by_section   0x19cc3u  /* names.txt */
+#define A_mothership_spawn_param_by_section 0x19cd3u  /* names.txt */
+
+/* One energy byte per segment PAIR, refreshed by `mothership_segments_respawn`. It is the same
+ * array `include/enemy.h` calls A_enemy_pair_hitpoints, entered nine bytes in: the boss's parents
+ * are entity slots 9, 11, 13 and 15, and that routine indexes by the ENTITY index while this one
+ * walks the four bytes those indexes name. Both names are in ../../names.txt.
+ *
+ * THE NINE IS NOT SPELT AS ARITHMETIC because both numbers are names.txt's own `var` lines and
+ * `test_constants.py` scrapes plain literals out of these headers; what holds the relation instead
+ * is `test_mothership.py::test_segments_respawn_energy_bytes_are_the_pairs_own`, which derives the
+ * four bytes twice — once from `mothership_segment_hit`'s FOLD over the eight boss slots and once
+ * from this base and its stride — and requires the two sets to be equal. That is CLAUDE.md §5's
+ * "pick one canonical definition and pin the other equal with a test", and the same remedy holds
+ * A_mothership_segment_sprite and A_score_value_segment below. */
+#define A_mothership_segment_energy 0x1988du  /* names.txt # ctx */
+
+/* The sprites and the score award the encounter uses. Every one is a RELOCATED address — the
+ * `move.l #$315ae,10(a2)` over `2d7c 000215ae` — as names.txt's CORRECTION notes describe.
+ *
+ * TWO OF THEM ARE DERIVED ADDRESSES the original spells as literals, and each is pinned equal to
+ * its derivation by a test rather than restated as arithmetic here (see the note above):
+ * A_mothership_segment_sprite is bank 1, i.e. A_mothership_sprite_bank one whole preshift bank on,
+ * and A_score_value_segment is one past the third entry of `include/score.h`'s
+ * A_score_award_table_bcd, which is the shape `score_add_bcd` takes its argument in. */
+#define A_mothership_head_sprite      0x19e2eu  /* names.txt */
+#define A_mothership_segment_sprite   0x315aeu
+#define A_mothership_explosion_sprite 0x5cf7eu
+#define A_score_value_segment         0x195f0u  /* names.txt — the BCD award for a killed pair */
+
 /* ================================================================================================
  * Geometry.
  * ============================================================================================= */
@@ -49,11 +85,48 @@
 #define MOTHERSHIP_START_Y 0
 
 /* ================================================================================================
+ * THE BOSS'S OWN SLOTS, and why they are a PAIR array over the wave records.
+ *
+ * The encounter borrows `include/enemy.h`'s eight wave slots at A_enemy_slots rather than having
+ * records of its own. Its head lives in the first two; its four tail segments live one per PAIR,
+ * the EVEN slot carrying the segment the script moves and the ODD one a shadow record placed
+ * MOTHERSHIP_SHADOW_X_LEAD to its right. That is why every boss loop strides
+ * MOTHERSHIP_PAIR_BYTES and why the respawn marks the odd slots alive before it spawns: the
+ * spawner then fills only the even ones.
+ * ============================================================================================= */
+#define MOTHERSHIP_PAIR_BYTES 0x58u    /* `lea 88(a2),a2` — two 0x2c-byte records */
+#define MOTHERSHIP_SEGMENT_PAIRS 4     /* `move.w #$3,d7` + `dbf` */
+#define MOTHERSHIP_HEAD_RECORDS 2      /* `move.w #$1,d7` + `dbf` over the first two slots */
+#define MOTHERSHIP_SHADOW_X_LEAD 0x10  /* `add.w #$10,d0` before the shadow's x is stored */
+#define MOTHERSHIP_SEGMENT_TYPE 2      /* `cmpi.b #$2,17(a2)` — what the segments are typed */
+#define MOTHERSHIP_HEAD_TYPE 1         /* `move.b #$1,d1` into spawn_formation */
+#define MOTHERSHIP_HEAD_ROWS 1         /* `move.w #$1,8(a2)` */
+#define MOTHERSHIP_SEGMENT_ROWS 0x10u  /* `move.w #$10,8(a2)` */
+#define MOTHERSHIP_SPAWN_X 0x180       /* `move.w #$180,d3` into spawn_formation */
+
+/* The anchor the tail is laid out from trails the head record by this much. */
+#define MOTHERSHIP_ANCHOR_X_LEAD 0x40  /* `sub.w #$40,d0` */
+#define MOTHERSHIP_ANCHOR_Y_LEAD 0x14  /* `sub.w #$14,d0` */
+
+/* Where a segment stops being alive. The right-hand edge is `include/enemy.h`'s ACTOR_KEEP_X_MAX,
+ * shared with the scripted movers; the left-hand ones are the boss's own and differ between the two
+ * loops — the head is retired only once its x goes NEGATIVE (`tst.w` + `bmi`). */
+#define MOTHERSHIP_SEGMENT_KEEP_X_MIN 0x10   /* `cmpi.w #$10,0(a2)` + `ble` */
+
+/* ================================================================================================
  * Prototypes.
  * ============================================================================================= */
 void mothership_begin(uint8_t *image);
 void mothership_place_tail(uint8_t *image);
 void mothership_sprite_build_step(uint8_t *image);
 void mothership_draw(uint8_t *image);
+
+void mothership_spawn_head(uint8_t *image);
+void mothership_move_and_place(uint8_t *image);
+void mothership_segments_update(uint8_t *image);
+void mothership_segments_respawn(uint8_t *image);
+/* ../../names.txt tags this name `# ctx` (offered there as `enemy_pair_take_hit` too), so it is
+ * a proposal a later body read may overturn — README.md asks for this note at the declaration. */
+void mothership_segment_hit(uint8_t *image, uint32_t segment);
 
 #endif /* ZYNAPS_MOTHERSHIP_H */

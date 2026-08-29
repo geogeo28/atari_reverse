@@ -379,6 +379,440 @@ def test_draw_phase_step_is_half_a_frame():
 def test_draw_attribution():
     _draw_case(lambda i: 1, seed=5, poison=True)
 
+
+# ================================================= WAVE 3 — the encounter's own five routines
+#
+# All five work over the WAVE slots at A_enemy_slots rather than over records of their own
+# (include/mothership.h, "THE BOSS'S OWN SLOTS"), and four of the five reach the actor script VM or
+# the formation spawner in `enemy`. So the staging below is the same shape `test_enemy.py`'s is —
+# the twenty entity records, the player's, the generator and the level section — plus the boss's
+# own tables.
+
+ENTRY_MOTHERSHIP_SPAWN_HEAD = 0x14f64
+ENTRY_MOTHERSHIP_MOVE_AND_PLACE = 0x14fc8
+ENTRY_MOTHERSHIP_SEGMENTS_RESPAWN = 0x1504a
+ENTRY_MOTHERSHIP_SEGMENTS_UPDATE = 0x151ba
+ENTRY_MOTHERSHIP_SEGMENT_HIT = 0x15222
+
+# ---- the globals these five address themselves ----
+A_ENTITY_TABLE = 0x17a8e
+A_PLAYER_RECORD = 0x17d7a
+A_ACTOR_SPAWN_TEMPLATE = 0x17a62
+A_ENTITY_COLLISION_MASKS = 0x18252
+A_PLAYER_SCORE_BCD = 0x195e0
+A_SCORE_VALUE_SEGMENT = 0x195f0
+A_RNG_LFSR_STATE = 0x195f4
+A_SQUADRON_KILL_COUNTERS = 0x198bb
+A_ENEMY_PAIR_HITPOINTS = 0x19884
+A_MOTHERSHIP_SEGMENT_ENERGY = 0x1988d
+A_MOTHERSHIP_OFFSCREEN = 0x19916
+A_EXPLOSION_GROUP_ACTIVE_BITS = 0x19670
+A_MOTHERSHIP_FORMATION_BY_SECTION = 0x19cc3
+A_MOTHERSHIP_SPAWN_PARAM_BY_SECTION = 0x19cd3
+A_FORMATION_TABLE = 0x19504
+A_SCORE_AWARD_TABLE_BCD = 0x195e4
+A_MOTHERSHIP_HEAD_SPRITE = 0x19e2e
+A_MOTHERSHIP_SEGMENT_SPRITE = 0x315ae
+A_MOTHERSHIP_EXPLOSION_SPRITE = 0x5cf7e
+A_SCROLL_FROZEN = 0x198b1
+
+# ---- record roles (mirrors of include/entity.h and include/enemy.h) ----
+ENTITY_TYPE = 0x11
+ACTOR_SCRIPT_DELAY, ACTOR_SCRIPT_OPCODE = 0x26, 0x28
+ACTOR_SCRIPT_LOOP_PC, ACTOR_SCRIPT_LOOP_COUNT = 0x24, 0x27
+
+# ---- shapes (mirrors of include/mothership.h) ----
+MOTHERSHIP_PAIR_BYTES = 0x58
+MOTHERSHIP_SEGMENT_PAIRS = 4
+MOTHERSHIP_HEAD_RECORDS = 2
+MOTHERSHIP_SHADOW_X_LEAD = 0x10
+MOTHERSHIP_SEGMENT_TYPE = 2
+MOTHERSHIP_HEAD_TYPE = 1
+MOTHERSHIP_HEAD_ROWS = 1
+MOTHERSHIP_SEGMENT_ROWS = 0x10
+MOTHERSHIP_SPAWN_X = 0x180
+MOTHERSHIP_ANCHOR_X_LEAD = 0x40
+MOTHERSHIP_ANCHOR_Y_LEAD = 0x14
+MOTHERSHIP_SEGMENT_KEEP_X_MIN = 0x10
+ACTOR_KEEP_X_MAX = 0x1b8
+ENTITY_COUNT = 20
+COLLISION_ROW_BYTES = 4
+PREP_STAGE_COPY = 1
+EXPLOSION_PART_TYPE = 0x64
+EXPLOSION_X_ALIGN = 0xfffc
+ENTITY_ALIVE_EXPLODING = 0x80
+FORMATION_COUNT = 2                 # byte 2 of a formation record: how many actors it places
+SCORE_BCD_BYTES = 4
+MOTHERSHIP_SEGMENT_ENERGY_STRIDE = 2
+PAIR_INDEX_ALIGN = 0xfffe
+SEGMENT_HIT_COUNTER_BYTES = 0x20   # wider than the eight the fold can reach, so a stray one shows
+
+# The three encounter flags `mothership_sprite_preshift` arms on its way out of
+# `mothership_spawn_head`. TWO OF THEM ARE CLEARED, and all of them live in bss — so leaving them at
+# their loaded zeroes would make the clears write zeroes over zeroes and differ nowhere.
+SPAWN_HEAD_FLAG_SEEDS = ((A_MOTHERSHIP_READY, b"\xa5"), (A_MOTHERSHIP_PREP_STAGE, b"\x3c"),
+                         (A_MOTHERSHIP_PHASE_TIMER, b"\xde\xad\xbe\xef"))
+
+# The script every case gives a boss record: a delay of 3 so the VM ticks without fetching, and an
+# opcode whose class-7 / operand-15 arm is `actor_script_op_end_frame` — one dispatch and out.
+BOSS_SCRIPT_DELAY = 3
+BOSS_SCRIPT_END_FRAME = 0x7f
+
+for _sym in ("g_mothership_spawn_head", "g_mothership_move_and_place",
+             "g_mothership_segments_update", "g_mothership_segments_respawn"):
+    getattr(harness._lib, _sym).argtypes = [_u8p]
+    getattr(harness._lib, _sym).restype = None
+harness._lib.g_mothership_segment_hit.argtypes = [_u8p, ctypes.c_uint32]
+harness._lib.g_mothership_segment_hit.restype = None
+
+
+class _Record:
+    """One 0x2c-byte record: noise everywhere, then the fields a case states."""
+
+    def __init__(self, seed):
+        self.data = bytearray(random.Random(seed).randbytes(ENTITY_STRIDE))
+
+    def byte(self, offset, value):
+        self.data[offset] = value & 0xff
+        return self
+
+    def word(self, offset, value):
+        self.data[offset:offset + 2] = (value & 0xffff).to_bytes(2, "big")
+        return self
+
+    def bytes(self):
+        return bytes(self.data)
+
+
+def _records(items):
+    return b"".join(record.bytes() for record in items)
+
+
+def _boss_record(seed, alive=1, type_id=MOTHERSHIP_SEGMENT_TYPE, x=0x100, y=0x50):
+    """A record the script VM can be run on, whatever else the case is about."""
+    return (_Record(seed).byte(ENTITY_ALIVE, alive).byte(ENTITY_TYPE, type_id)
+            .word(ENTITY_X, x).word(ENTITY_Y, y)
+            .byte(ACTOR_SCRIPT_DELAY, BOSS_SCRIPT_DELAY)
+            .byte(ACTOR_SCRIPT_OPCODE, BOSS_SCRIPT_END_FRAME)
+            .byte(ACTOR_SCRIPT_LOOP_COUNT, 1).word(ACTOR_SCRIPT_LOOP_PC, 0))
+
+
+BOSS_RNG_STATE = 0x1234abcd
+
+
+def _boss_environment(seed):
+    """The entity table, the ship's record, the collision rows, the generator and the two flags the
+    script handlers read. A_PLAYER_RECORD is inside the table poke and deliberately wins."""
+    return {A_ENTITY_TABLE: _records([_Record(seed + i) for i in range(ENTITY_COUNT)]),
+            A_ENTITY_COLLISION_MASKS: bytes(ENTITY_COUNT * COLLISION_ROW_BYTES),
+            A_PLAYER_RECORD: _Record(seed + 0x40).word(ENTITY_X, 0x90).word(ENTITY_Y, 0x40).bytes(),
+            A_SCROLL_FROZEN: bytes([0]),
+            A_RNG_LFSR_STATE: BOSS_RNG_STATE.to_bytes(4, "big")}
+
+
+# ============================================================ mothership_spawn_head @ 0x14f64
+
+def _spawn_head_case(section, seed=0, poison=False):
+    pokes = abi.seed_spans(0x14f64 + seed,
+                           ((A_MOTHERSHIP_SPRITE_BANK, A_MOTHERSHIP_SPRITE_BANK + BOSS_SPRITE_EXPANDED_BYTES),),
+                           guard=abi.GUARD_BYTES)
+    pokes.update(_boss_environment(0x20000 + seed))
+    pokes[A_ENEMY_SLOTS] = _records([_Record(0x20100 + seed + i).byte(ENTITY_ALIVE, 0)
+                                     for i in range(ENEMY_SLOT_COUNT + 1)])
+    pokes[A_SQUADRON_KILL_COUNTERS] = bytes(6) + random.Random(seed).randbytes(0x40)
+    pokes[A_ACTOR_SPAWN_TEMPLATE] = _noise(0x20200 + seed, ENTITY_STRIDE)
+    pokes[A_LEVEL_SECTION] = bytes([section])
+    pokes.update(SPAWN_HEAD_FLAG_SEEDS)
+    diffs, _ = differential(ENTRY_MOTHERSHIP_SPAWN_HEAD, {"_pokes": pokes},
+                            lambda lib, buf: lib.g_mothership_spawn_head(buf), poison=poison)
+    assert not diffs, f"section={section}\n{report(diffs)}"
+
+
+@pytest.mark.parametrize("section", range(0x10))
+def test_spawn_head_every_section(section):
+    """Each section names its own formation and its own fire-flags byte, and the formation then
+    names the base y — so a candidate that read either table with the wrong index, or that skipped
+    the doubling on the base-y one, spawns the boss somewhere else."""
+    _spawn_head_case(section, seed=section)
+
+
+def test_spawn_head_overwrites_the_formations_own_sprite():
+    """The spawner leaves the formation's graphics on both head records and this routine then
+    replaces them — so the two records end with the head's sprite and a row count of one, not with
+    whatever the formation's attributes said. Poison is what makes both stores attributable."""
+    _spawn_head_case(0, seed=0x20, poison=True)
+
+
+def test_spawn_head_fixes_up_exactly_two_records():
+    """The third record must come back as the noise it went in as.
+
+    THE PREMISE IS READ OFF THE IMAGE, not assumed: every section's formation places exactly
+    MOTHERSHIP_HEAD_RECORDS actors, so the spawner never writes a third slot either and the only
+    thing that could touch it is a head fixup loop one pass too long. The assertion below is what
+    keeps that true — the day a section's formation asks for three, this case stops meaning what it
+    says and fails here rather than silently.
+    """
+    for section in range(MOTHERSHIP_ENERGY_SECTIONS):
+        formation = harness.BASE_IMAGE[A_MOTHERSHIP_FORMATION_BY_SECTION + section]
+        record = int.from_bytes(
+            bytes(harness.BASE_IMAGE[A_FORMATION_TABLE + 4 * formation:][:4]), "big")
+        assert harness.BASE_IMAGE[record + FORMATION_COUNT] == MOTHERSHIP_HEAD_RECORDS, (
+            f"section {section} spawns {harness.BASE_IMAGE[record + FORMATION_COUNT]} head actors")
+    _spawn_head_case(3, seed=0x21)
+
+
+# ======================================================= mothership_move_and_place @ 0x14fc8
+
+def _move_and_place_case(head_x, explosion_bits=0, offscreen=0xa5, seed=0, poison=False):
+    pokes = _boss_environment(0x21000 + seed)
+    pokes[A_ENEMY_SLOTS] = _records(
+        [_boss_record(0x21100 + seed + i, x=head_x[i] if i < len(head_x) else 0x100)
+         for i in range(MOTHERSHIP_HEAD_RECORDS + 1)])
+    pokes[A_ENTITY_BOSS_PARTS] = random.Random(0x21200 + seed).randbytes(
+        (MOTHERSHIP_TAIL_SEGMENTS + 1) * ENTITY_STRIDE)
+    pokes[A_EXPLOSION_GROUP_ACTIVE_BITS] = bytes([explosion_bits])
+    pokes[A_MOTHERSHIP_OFFSCREEN] = bytes([offscreen])
+    pokes[A_MOTHERSHIP_PREP_STAGE] = bytes([0x3c])
+    pokes[A_MOTHERSHIP_X] = bytes([0x5a, 0x5a])
+    pokes[A_MOTHERSHIP_Y] = bytes([0xa5, 0xa5])
+    diffs, _ = differential(ENTRY_MOTHERSHIP_MOVE_AND_PLACE, {"_pokes": pokes},
+                            lambda lib, buf: lib.g_mothership_move_and_place(buf), poison=poison)
+    assert not diffs, f"head_x={[hex(x) for x in head_x]} bits={explosion_bits:#x}\n{report(diffs)}"
+
+
+@pytest.mark.parametrize("bits", (0, 1, 2, 3, 0xff))
+def test_move_and_place_stands_down_while_the_section_blast_runs(bits):
+    """`btst #0,$19670` — only bit 0 stops it, so bit 1 (the ship's own explosion) must not."""
+    _move_and_place_case((0x100, 0x100), explosion_bits=bits, seed=bits)
+
+
+@pytest.mark.parametrize("x", (0, 1, 0x100, 0x1b7, 0x1b8, 0x1b9, 0x7fff, 0x8000, 0xffff))
+def test_move_and_place_marks_the_boss_offscreen(x):
+    """`tst.w` + `bmi` on the left and `cmpi.w #$1b8` + `bge` on the right, BOTH signed — so
+    0x8000 and 0xffff are off the left edge and 0 is not. Driven on the first record and then on
+    the second, since either one can raise the flag."""
+    _move_and_place_case((x, 0x100), seed=0x10 + (x & 0xff))
+    _move_and_place_case((0x100, x), seed=0x30 + (x & 0xff))
+
+
+def test_move_and_place_clears_the_flag_first():
+    """The flag is cleared at the top and set only by a record that is outside, so a call with both
+    records inside must leave it clear whatever it held going in."""
+    for offscreen in (0, 1, 0xff):
+        _move_and_place_case((0x100, 0x100), offscreen=offscreen, seed=0x50 + offscreen)
+
+
+def test_move_and_place_anchors_the_tail_on_the_first_record():
+    """The anchor is the FIRST record's position less the two leads, whatever the second record is
+    doing — driven with the two records far apart so a candidate reading the wrong one differs."""
+    for first, second in ((0x100, 0x40), (0x40, 0x100), (0x1b7, 0x1b7)):
+        _move_and_place_case((first, second), seed=0x60 + (first & 0xff))
+
+
+def test_move_and_place_attribution():
+    _move_and_place_case((0x100, 0x100), seed=0x70, poison=True)
+
+
+# ====================================================== mothership_segments_update @ 0x151ba
+
+def _segments_update_case(pairs, seed=0, poison=False):
+    """`pairs` is one (alive, type, x) per segment pair; each pair is two records, stride 0x58."""
+    records = []
+    for pair, (alive, type_id, x) in enumerate(pairs):
+        records.append(_boss_record(0x22000 + seed + pair, alive=alive, type_id=type_id, x=x))
+        records.append(_Record(0x22100 + seed + pair))
+    records.append(_Record(0x22200 + seed))          # the ninth record, which is the ship's own
+    pokes = _boss_environment(0x22300 + seed)
+    pokes[A_ENEMY_SLOTS] = _records(records)
+    diffs, _ = differential(ENTRY_MOTHERSHIP_SEGMENTS_UPDATE, {"_pokes": pokes},
+                            lambda lib, buf: lib.g_mothership_segments_update(buf), poison=poison)
+    assert not diffs, f"pairs={pairs}\n{report(diffs)}"
+
+
+ALL_SEGMENTS = ((1, MOTHERSHIP_SEGMENT_TYPE, 0x100),) * MOTHERSHIP_SEGMENT_PAIRS
+
+
+@pytest.mark.parametrize("pair", range(MOTHERSHIP_SEGMENT_PAIRS))
+def test_segments_update_runs_every_pair(pair):
+    """One live segment at each of the four pair positions, which pins the 0x58 stride against the
+    0x2c one — a candidate striding by a record would run the SHADOWS as segments."""
+    pairs = tuple((1 if i == pair else 0, MOTHERSHIP_SEGMENT_TYPE, 0x100)
+                  for i in range(MOTHERSHIP_SEGMENT_PAIRS))
+    _segments_update_case(pairs, seed=pair)
+
+
+@pytest.mark.parametrize("type_id", (0, 1, MOTHERSHIP_SEGMENT_TYPE, 3, 0x80, 0xff))
+def test_segments_update_only_type_two(type_id):
+    """The type guard is an EQUALITY on 2, which is what keeps this pass off the head records the
+    same array holds — driven over the whole byte."""
+    _segments_update_case(((1, type_id, 0x100),) * MOTHERSHIP_SEGMENT_PAIRS, seed=0x10 + type_id)
+
+
+@pytest.mark.parametrize("alive", (0, 1, 0x80, 0xff))
+def test_segments_update_skips_dead_pairs(alive):
+    _segments_update_case(((alive, MOTHERSHIP_SEGMENT_TYPE, 0x100),) * MOTHERSHIP_SEGMENT_PAIRS,
+                          seed=0x20 + alive)
+
+
+@pytest.mark.parametrize("x", (0, 0x0f, 0x10, 0x11, 0x100, 0x1b7, 0x1b8, 0x1b9, 0x8000, 0xffff))
+def test_segments_update_keep_band(x):
+    """`cmpi.w #$10` + `ble` and `cmpi.w #$1b8` + `bge`, both SIGNED and one step either side.
+
+    A segment outside the band takes BOTH records' alive bytes with it, and the shadow's position
+    has already been written by then — so the case also says the mirror happens before the kill.
+    """
+    _segments_update_case(((1, MOTHERSHIP_SEGMENT_TYPE, x),) * MOTHERSHIP_SEGMENT_PAIRS,
+                          seed=0x30 + (x & 0xff))
+
+
+def test_segments_update_attribution():
+    _segments_update_case(ALL_SEGMENTS, seed=0x40, poison=True)
+
+
+# ===================================================== mothership_segments_respawn @ 0x1504a
+
+def _segments_respawn_case(section, free=ENEMY_SLOT_COUNT, energy=0x20, seed=0, poison=False):
+    pokes = _boss_environment(0x23000 + seed)
+    pokes[A_ENEMY_SLOTS] = _records(
+        [_Record(0x23100 + seed + i).byte(ENTITY_ALIVE, 0 if i < free else 1)
+         for i in range(ENEMY_SLOT_COUNT + 1)])
+    pokes[A_SQUADRON_KILL_COUNTERS] = bytes(6) + random.Random(seed).randbytes(0x40)
+    pokes[A_ACTOR_SPAWN_TEMPLATE] = _noise(0x23300 + seed, ENTITY_STRIDE)
+    # ORDER IS LOAD-BEARING: the counter band overlaps both the energy table and the section byte,
+    # and `make_image` applies pokes in insertion order — so the wide noise goes down FIRST and the
+    # two stated values are written over it. Seeded the other way round the section byte is noise,
+    # the formation index it names is out of range, and the case tests nothing it claims to.
+    pokes[A_ENEMY_PAIR_HITPOINTS] = random.Random(0x23200 + seed).randbytes(SEGMENT_HIT_COUNTER_BYTES)
+    # NOISE over the whole energy table and the stated byte only at the section being driven. A
+    # table filled with one value would make the INDEX untestable — every in-range section would
+    # read the same byte, and a candidate that hard-coded section 0 would be green on all sixteen.
+    pokes[A_MOTHERSHIP_ENERGY_BY_SECTION] = _noise(0x23400 + seed, MOTHERSHIP_ENERGY_SECTIONS)
+    pokes[A_MOTHERSHIP_ENERGY_BY_SECTION + section] = bytes([energy])
+    pokes[A_LEVEL_SECTION] = bytes([section])
+    pokes[A_MOTHERSHIP_PREP_STAGE] = bytes([0x3c])
+    diffs, _ = differential(ENTRY_MOTHERSHIP_SEGMENTS_RESPAWN, {"_pokes": pokes},
+                            lambda lib, buf: lib.g_mothership_segments_respawn(buf), poison=poison)
+    assert not diffs, f"section={section} free={free}\n{report(diffs)}"
+
+
+@pytest.mark.parametrize("free", range(ENEMY_SLOT_COUNT + 1))
+def test_segments_respawn_needs_every_slot_free(free):
+    """`cmp.b #$8,d0` + `beq` — an EQUALITY on the count, so seven free slots is not enough and a
+    candidate testing `>= 8` or `!= 0` agrees on some of these and not others."""
+    _segments_respawn_case(0, free=free, seed=free)
+
+
+@pytest.mark.parametrize("section", range(0x10))
+def test_segments_respawn_every_section(section):
+    """Each section's formation, fire-flags byte and energy byte, all read with the same
+    sign-extended index — and the energy reaches four bytes of A_mothership_segment_energy, which
+    is A_enemy_pair_hitpoints entered nine bytes in."""
+    _segments_respawn_case(section, seed=0x10 + section)
+
+
+def test_segments_respawn_energy_bytes_are_the_pairs_own():
+    """The four bytes the respawn refills are exactly the ones `mothership_segment_hit` decrements,
+    which is what makes the two routines one encounter rather than two.
+
+    Derived TWICE and required to agree, which is the whole content: the left side runs the hit
+    routine's own fold — `((entity index - 1) & ~1) + 1` off A_enemy_pair_hitpoints — over all eight
+    boss slots, and the right side walks the respawn's base and stride. Neither restates the other,
+    so moving either address, changing the stride, or changing the fold breaks it. That is the test
+    `include/mothership.h` names as what holds its two derived addresses (CLAUDE.md §5).
+    """
+    first_wave_slot = (A_ENEMY_SLOTS - A_ENTITY_TABLE) // ENTITY_STRIDE
+    hit_reaches = {A_ENEMY_PAIR_HITPOINTS + (((index - 1) & PAIR_INDEX_ALIGN) + 1)
+                   for index in range(first_wave_slot,
+                                      first_wave_slot + 2 * MOTHERSHIP_SEGMENT_PAIRS)}
+    respawn_writes = {A_MOTHERSHIP_SEGMENT_ENERGY + MOTHERSHIP_SEGMENT_ENERGY_STRIDE * pair
+                      for pair in range(MOTHERSHIP_SEGMENT_PAIRS)}
+    assert hit_reaches == respawn_writes
+
+
+def test_the_two_derived_addresses_this_subsystem_spells_as_literals():
+    """`include/mothership.h` says both are derivations the original writes out as immediates, and
+    this is where that claim is held rather than left in prose.
+
+    The segment sprite is bank 1 of the boss preshift store — one whole bank past the base — and the
+    score award is one past the third entry of `include/score.h`'s award table, which is the shape
+    `score_add_bcd` takes its argument in. Move either base and this fails instead of the boss
+    quietly pointing at an unbuilt bank or awarding another entry's digits.
+    """
+    assert A_MOTHERSHIP_SEGMENT_SPRITE == A_MOTHERSHIP_SPRITE_BANK + BANK_BYTES
+    assert A_SCORE_VALUE_SEGMENT == A_SCORE_AWARD_TABLE_BCD + 3 * SCORE_BCD_BYTES
+
+
+@pytest.mark.parametrize("energy", (0, 1, 0x20, 0x80, 0xff))
+def test_segments_respawn_carries_the_sections_energy(energy):
+    _segments_respawn_case(4, energy=energy, seed=0x30 + energy)
+
+
+def test_segments_respawn_attribution():
+    _segments_respawn_case(0, seed=0x40, poison=True)
+
+
+# ========================================================== mothership_segment_hit @ 0x15222
+
+SEGMENT_HIT_INDEXES = tuple(range(9, 17))       # both halves of all four boss pairs
+
+
+SEGMENT_HIT_SCORE_SEEDS = (0x12345678, 0x99999999)   # ...and one that makes the BCD add CARRY
+
+
+def _segment_hit_case(index, energy, score=SEGMENT_HIT_SCORE_SEEDS[0], seed=0, poison=False):
+    pokes = _boss_environment(0x24000 + seed)
+    pokes[A_ENEMY_SLOTS] = _records([_Record(0x24100 + seed + i)
+                                     for i in range(ENEMY_SLOT_COUNT + 1)])
+    pokes[A_PLAYER_SCORE_BCD] = score.to_bytes(4, "big")
+    pokes[A_ENEMY_PAIR_HITPOINTS] = bytes([energy]) * SEGMENT_HIT_COUNTER_BYTES
+    record = A_ENTITY_TABLE + index * ENTITY_STRIDE
+    diffs, _ = differential(ENTRY_MOTHERSHIP_SEGMENT_HIT, {"a1": record, "_pokes": pokes},
+                            lambda lib, buf: lib.g_mothership_segment_hit(buf, record),
+                            poison=poison)
+    assert not diffs, f"index={index} energy={energy:#x}\n{report(diffs)}"
+
+
+@pytest.mark.parametrize("index", SEGMENT_HIT_INDEXES)
+@pytest.mark.parametrize("energy", (1, 2, 0x80))
+def test_segment_hit_folds_either_half_onto_the_pair(index, energy):
+    """`((i - 1) & ~1) + 1` over the entity index, so 9 and 10 both cost pair 9 its energy.
+
+    Driven at every one of the eight boss slots against an energy of 1 (which explodes), 2 (which
+    only counts down) and 0x80 (the other side of the byte's sign) — the whole 0x20-byte counter
+    array is seeded with the same value, so what tells the pairs apart is which byte MOVED.
+    """
+    _segment_hit_case(index, energy, seed=index * 4 + energy)
+
+
+@pytest.mark.parametrize("energy", (1, 2, 0))
+def test_segment_hit_explodes_at_zero_only(energy):
+    """`subi.b #$1` + `bne`: only the transition to zero explodes, and an energy of 0 WRAPS to 0xff
+    and survives — which is what separates the test from a `<= 0` bound."""
+    _segment_hit_case(9, energy, seed=0x60 + energy)
+
+
+def test_segment_hit_x_is_aligned_and_both_halves_explode():
+    """The explosion rewrite covers BOTH records of the pair and aligns each x to four pixels, so a
+    candidate that rewrote only the record it was given — or that aligned only one — differs.
+    Poison is what makes each of the eight stores attributable."""
+    for index in (9, 10, 15, 16):
+        _segment_hit_case(index, energy=1, seed=0x70 + index, poison=True)
+
+
+@pytest.mark.parametrize("score", SEGMENT_HIT_SCORE_SEEDS)
+def test_segment_hit_awards_the_segment_score(score):
+    """The kill runs `score_add_bcd` over the segment's own award, so the player's packed-BCD score
+    moves — driven over a score that makes every digit of the add carry as well as one that does
+    not, since `abcd` is the instruction and a binary add would agree on neither."""
+    _segment_hit_case(9, energy=1, score=score, seed=0x80 + (score & 0xff))
+
+
+def test_segment_hit_the_fold_this_battery_leans_on():
+    """The parent index each of the eight slots folds onto, computed the way the routine does."""
+    folds = {index: (((index - 1) & PAIR_INDEX_ALIGN) + 1) for index in SEGMENT_HIT_INDEXES}
+    assert folds == {9: 9, 10: 9, 11: 11, 12: 11, 13: 13, 14: 13, 15: 15, 16: 15}
+
+
 # --- test_constants.py collects these; see README.md, "Adding a function" ---
 MIRRORS = (
     ("ENTITY_STRIDE", "include/entity.h", "ENTITY_STRIDE"),
@@ -418,10 +852,66 @@ MIRRORS = (
     ("BOSS_SPRITE_SOURCE_CELLS", "include/sprite.h", "BOSS_SPRITE_SOURCE_CELLS"),
     ("BOSS_SPRITE_FRAME_CELLS", "include/sprite.h", "BOSS_SPRITE_FRAME_CELLS"),
     ("SPRITE_MASKED_ROW_BYTES", "include/sprite.h", "SPRITE_MASKED_ROW_BYTES"),
+    # ---- wave 3: the encounter's own five routines ----
+    ("A_ENTITY_TABLE", "include/player.h", "A_entity_table"),
+    ("A_PLAYER_RECORD", "include/enemy.h", "A_player_record"),
+    ("A_ACTOR_SPAWN_TEMPLATE", "include/enemy.h", "A_actor_spawn_template"),
+    ("A_ENTITY_COLLISION_MASKS", "include/collision.h", "A_entity_collision_masks"),
+    ("A_PLAYER_SCORE_BCD", "include/score.h", "A_player_score_bcd"),
+    ("A_SCORE_VALUE_SEGMENT", "include/mothership.h", "A_score_value_segment"),
+    ("A_RNG_LFSR_STATE", "include/rng.h", "A_rng_lfsr_state"),
+    ("A_SQUADRON_KILL_COUNTERS", "include/enemy.h", "A_squadron_kill_counters"),
+    ("A_ENEMY_PAIR_HITPOINTS", "include/enemy.h", "A_enemy_pair_hitpoints"),
+    ("A_MOTHERSHIP_SEGMENT_ENERGY", "include/mothership.h", "A_mothership_segment_energy"),
+    ("A_MOTHERSHIP_OFFSCREEN", "include/mothership.h", "A_mothership_offscreen"),
+    ("A_EXPLOSION_GROUP_ACTIVE_BITS", "include/enemy.h", "A_explosion_group_active_bits"),
+    ("A_MOTHERSHIP_FORMATION_BY_SECTION", "include/mothership.h",
+     "A_mothership_formation_by_section"),
+    ("A_MOTHERSHIP_SPAWN_PARAM_BY_SECTION", "include/mothership.h",
+     "A_mothership_spawn_param_by_section"),
+    ("A_MOTHERSHIP_HEAD_SPRITE", "include/mothership.h", "A_mothership_head_sprite"),
+    ("A_MOTHERSHIP_SEGMENT_SPRITE", "include/mothership.h", "A_mothership_segment_sprite"),
+    ("A_MOTHERSHIP_EXPLOSION_SPRITE", "include/mothership.h", "A_mothership_explosion_sprite"),
+    ("A_SCROLL_FROZEN", "include/enemy.h", "A_scroll_frozen"),
+    ("ENTITY_TYPE", "include/entity.h", "ENTITY_TYPE"),
+    ("ACTOR_SCRIPT_DELAY", "include/enemy.h", "ACTOR_SCRIPT_DELAY"),
+    ("ACTOR_SCRIPT_OPCODE", "include/enemy.h", "ACTOR_SCRIPT_OPCODE"),
+    ("ACTOR_SCRIPT_LOOP_PC", "include/enemy.h", "ACTOR_SCRIPT_LOOP_PC"),
+    ("ACTOR_SCRIPT_LOOP_COUNT", "include/enemy.h", "ACTOR_SCRIPT_LOOP_COUNT"),
+    ("ACTOR_KEEP_X_MAX", "include/enemy.h", "ACTOR_KEEP_X_MAX"),
+    ("COLLISION_ROW_BYTES", "include/collision.h", "COLLISION_ROW_BYTES"),
+    ("MOTHERSHIP_PAIR_BYTES", "include/mothership.h", "MOTHERSHIP_PAIR_BYTES"),
+    ("MOTHERSHIP_SEGMENT_PAIRS", "include/mothership.h", "MOTHERSHIP_SEGMENT_PAIRS"),
+    ("MOTHERSHIP_HEAD_RECORDS", "include/mothership.h", "MOTHERSHIP_HEAD_RECORDS"),
+    ("MOTHERSHIP_SHADOW_X_LEAD", "include/mothership.h", "MOTHERSHIP_SHADOW_X_LEAD"),
+    ("MOTHERSHIP_SEGMENT_TYPE", "include/mothership.h", "MOTHERSHIP_SEGMENT_TYPE"),
+    ("MOTHERSHIP_HEAD_TYPE", "include/mothership.h", "MOTHERSHIP_HEAD_TYPE"),
+    ("MOTHERSHIP_HEAD_ROWS", "include/mothership.h", "MOTHERSHIP_HEAD_ROWS"),
+    ("MOTHERSHIP_SEGMENT_ROWS", "include/mothership.h", "MOTHERSHIP_SEGMENT_ROWS"),
+    ("MOTHERSHIP_SPAWN_X", "include/mothership.h", "MOTHERSHIP_SPAWN_X"),
+    ("MOTHERSHIP_ANCHOR_X_LEAD", "include/mothership.h", "MOTHERSHIP_ANCHOR_X_LEAD"),
+    ("MOTHERSHIP_ANCHOR_Y_LEAD", "include/mothership.h", "MOTHERSHIP_ANCHOR_Y_LEAD"),
+    ("MOTHERSHIP_SEGMENT_KEEP_X_MIN", "include/mothership.h", "MOTHERSHIP_SEGMENT_KEEP_X_MIN"),
+    ("PREP_STAGE_COPY", "src/mothership.c", "PREP_STAGE_COPY"),
+    ("EXPLOSION_PART_TYPE", "include/enemy.h", "EXPLOSION_PART_TYPE"),
+    ("EXPLOSION_X_ALIGN", "include/enemy.h", "EXPLOSION_X_ALIGN"),
+    ("A_FORMATION_TABLE", "include/enemy.h", "A_formation_table"),
+    ("A_SCORE_AWARD_TABLE_BCD", "include/score.h", "A_score_award_table_bcd"),
+    ("SCORE_BCD_BYTES", "include/score.h", "SCORE_BCD_BYTES"),
+    ("FORMATION_COUNT", "src/enemy.c", "FORMATION_COUNT"),
+    ("MOTHERSHIP_SEGMENT_ENERGY_STRIDE", "src/mothership.c",
+     "MOTHERSHIP_SEGMENT_ENERGY_STRIDE"),
+    ("ENTITY_ALIVE_EXPLODING", "src/mothership.c", "ENTITY_ALIVE_EXPLODING"),
+    ("PAIR_INDEX_ALIGN", "src/mothership.c", "PAIR_INDEX_ALIGN"),
 )
 ENTRY_PROLOGUES = {
     "ENTRY_MOTHERSHIP_PLACE_TAIL": "45f90001814249f90003",
     "ENTRY_MOTHERSHIP_SPRITE_BUILD_STEP": "0c390001000199116600",
     "ENTRY_MOTHERSHIP_BEGIN": "6100e94cb03c00086700",
     "ENTRY_MOTHERSHIP_DRAW": "45f9000181423c3c0004",
+    "ENTRY_MOTHERSHIP_SPAWN_HEAD": "610008d2123c00011039",
+    "ENTRY_MOTHERSHIP_MOVE_AND_PLACE": "08390000000196706700",
+    "ENTRY_MOTHERSHIP_SEGMENTS_RESPAWN": "6100e7dcb03c00086700",
+    "ENTRY_MOTHERSHIP_SEGMENTS_UPDATE": "45f900017c1a3e3c0003",
+    "ENTRY_MOTHERSHIP_SEGMENT_HIT": "2a099abc00017a8e8afc",
 }

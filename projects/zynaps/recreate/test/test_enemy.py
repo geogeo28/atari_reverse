@@ -1273,7 +1273,7 @@ def test_the_types_past_the_table_are_this_batchs_boundary():
     The slots between the table's end and the guard's bound are not junk: they are the two script-VM
     jump tables, holding real entry points (index 23 is `entity_apply_accel`, 26 is
     `actor_script_op_bounce_fall`, and so on). The original would call a SCRIPT handler from the
-    ANIMATION pass; `run_actor_anim_handler` finds none of those addresses in its map and returns.
+    ANIMATION pass; `run_actor_handler` finds none of those addresses in the animation pass's map and returns.
     STATUS.md, "`enemies_animate_all`'s unreconstructed edge", is the one home for why that is
     stated rather than modelled — and this assertion is what keeps the boundary where it says: it
     fails the day a slot past the table becomes one the map holds, i.e. the day the gap narrows and
@@ -1626,11 +1626,15 @@ def test_op_end_frame_and_continue_answer_opposite_carries(entry, glue_name):
 
 # ---- actor_script_op_random_speed_nudge @ 0x14e8c ----
 
-def _draw_from(state):
-    """A local mirror of rand16 @ 0x13bf8, used ONLY to CHOOSE the generator state a case starts
-    from — never to assert an answer, which is the oracle's job. Without it the draw would be
-    whatever the shipped state happens to produce, and neither the carry split below nor the
-    unreachable arm could be addressed at all."""
+def _rand16_step(state):
+    """A local mirror of rand16 @ 0x13bf8: one draw, and the state it leaves.
+
+    Used ONLY to CHOOSE the generator state a case starts from — never to assert an answer, which is
+    the oracle's job. Without it the draw would be whatever the shipped state happens to produce,
+    and neither the carry split below, nor the unreachable arm, nor the three-draw sequence
+    `enemy_fire_and_update_shots` puts in front of its compare could be addressed at all. Returning
+    the state as well is what lets a case name a SEQUENCE of draws rather than only the first.
+    """
     result = 0
     for _ in range(RNG_STEP_BITS):
         bit = state >> 31
@@ -1638,7 +1642,25 @@ def _draw_from(state):
         if bit:
             state ^= RNG_TAP_MASK
         result = ((result << 1) | bit) & 0xffff
-    return result & 0xff
+    return result, state
+
+
+def _draw_from(state):
+    """...and that draw's low byte, which is what the nudge's three compares read."""
+    return _rand16_step(state)[0] & 0xff
+
+
+# The two searches below both want "a state whose draws satisfy P". THE SPACE IS WALKED RANDOMLY,
+# and that is load-bearing: the generator hands back the sixteen bits that leave the TOP of the
+# state, so every state below 0x8000 draws zero and a sequential scan would only ever find the
+# smallest few values.
+def _state_matching(predicate, tries=1 << 18, seed=0xd7a4):
+    rng = random.Random(seed)
+    for _ in range(tries):
+        state = rng.randrange(1, 1 << 32)
+        if predicate(state):
+            return state
+    raise AssertionError(f"no generator state in {tries} tries satisfies {predicate}")
 
 
 # The generator hands back the sixteen bits that leave the TOP of the state, so the draw's low byte
@@ -2128,6 +2150,1556 @@ def test_a0_clobbering_entries_is_exactly_the_ones_that_do(entry):
         f"{'not ' if clobbered else ''}in A0_CLOBBERING_ENTRIES")
 
 
+
+# ================================================================ WAVE 3 — the enemy AI tree
+#
+# Seventeen routines land here at once, and they share one staging problem: the script VM, the two
+# per-frame passes and every spawner reach for the SAME globals. So the environment is built once,
+# by `_ai_environment` below, and each battery adds only what it is actually about.
+
+ENTRY_ENEMY_FIRE_AND_UPDATE_SHOTS = 0x11906
+ENTRY_SPAWN_ENEMY_SHOT = 0x11a2c
+ENTRY_ENEMY_SHOT_TICK_TYPE0B = 0x11bbc
+ENTRY_ENEMY_SHOT_TICK_TYPE0A = 0x11bde
+ENTRY_WAVESCRIPT_SPAWN_WAVE = 0x13868
+ENTRY_WAVESCRIPT_SPAWN_TRIO_TYPE0E = 0x13898
+ENTRY_GROUNDSCRIPT_SPAWN_TYPE10 = 0x13958
+ENTRY_GROUNDSCRIPT_SPAWN_TYPE0F = 0x13a12
+ENTRY_ENEMY_MORPH_TO_TYPE6 = 0x13ad0
+ENTRY_SQUADRON_SPAWN_TICK = 0x13af2
+ENTRY_ENEMIES_MOVE_ALL = 0x1487c
+ENTRY_SPAWN_FORMATION = 0x14a7c
+ENTRY_ENEMY_MOVE_SCRIPTED = 0x14c16
+ENTRY_ACTOR_SCRIPT_RUN = 0x14c66
+ENTRY_ACTOR_SCRIPT_OP_EXT = 0x14cce
+ENTRY_ACTOR_SCRIPT_OP_FIRE = 0x14d88
+
+# ---- the globals this wave's routines address themselves ----
+A_ACTOR_MOVE_TABLE = 0x19380
+A_SCRIPT_OP_TABLE = 0x19438
+A_SCRIPT_OP_EXT_TABLE = 0x19458
+A_ACTOR_SCRIPT_TABLE = 0x194bc
+A_ACTOR_SCRIPT_DATA = 0x19ac2
+A_FORMATION_TABLE = 0x19504
+A_FORMATION_GFX_ATTRS = 0x19c33
+A_FORMATION_BASE_Y = 0x19498
+A_ACTOR_SPAWN_TEMPLATE = 0x17a62
+A_WAVE_SCRIPT_CURSOR = 0x1824e
+A_GROUND_SCRIPT_CURSOR = 0x1824a
+A_SQUADRON_SPAWN_ENABLED = 0x19aae
+A_SQUADRON_SPAWN_COUNTDOWN = 0x198fe
+A_GROUND_SPAWN_RND_PARAM = 0x198c1
+A_ENEMY_TYPES_FIRE_HOMING = 0x19164
+A_ENEMY_TYPES_CAN_FIRE = 0x19172
+A_ENEMY_TYPES_FIRE_SEEKER = 0x19180
+A_ENEMY_FIRE_CHANCE_TABLE = 0x19aaf
+A_ENEMY_SEEKER_COOLDOWN = 0x19abf
+A_LEVEL_SECTION = 0x19895
+A_BOSS_SEQUENCE_ACTIVE = 0x19aad
+A_MOTHERSHIP_READY = 0x198b0
+A_SHOT_SPRITE_AIMED = 0x6115e
+A_SHOT_SPRITE_HOMING = 0x6e6ee
+A_SHOT_SPRITE_SEEKER = 0x65d9e
+A_GROUND_PUFF_SPRITE = 0x68d1e
+A_WAVE_TRIO_SPRITE = 0x60bbe
+A_GROUND_ACTOR_SPRITE = 0x62e1e
+
+# ---- record roles this wave adds (mirrors of include/enemy.h, entity.h and weapon.h) ----
+ACTOR_SCRIPT_DELAY = 0x26
+ACTOR_SCRIPT_OPCODE = 0x28
+ACTOR_FIRE_FLAGS = 0x2a
+ACTOR_SPAWN_TAG = 0x10
+ENTITY_HP = 0x1a
+SHOT_TARGET_INDEX = 0x1a
+SHOT_TURN_COUNTDOWN = 0x1b
+SHOT_TURN_PERIOD = 0x1c
+SHOT_HEADING = 0x1d
+SHOT_SPEED = 0x1e
+SHOT_MAX_TURN = 0x1f
+
+# ---- shapes (mirrors of src/enemy.c) ----
+SQUADRON_COUNT = 6
+ENEMY_SHOT_SLOTS = 3
+GROUND_PUFF_TYPE = 6
+GROUND_PUFF_ROWS = 0x10
+GROUND_PUFF_RISE = 2
+PLAYER_ENTITY_INDEX = 0x11
+SCRIPT_CLASS_MASK = 0x7
+ACTOR_KEEP_X_MAX = 0x1b8
+ENEMY_SHOT_MIN_X = 0x50
+ENEMY_HOMING_CHANCE = 0x32
+ENEMY_SEEKER_COOLDOWN = 6
+ENEMY_FIRE_ROLL_MASK = 3
+ENEMY_FIRE_CHANCE_SHIFT = 4
+ENEMY_FIRE_CHANCE_MASK = 0x1f
+TRIO_MIN_FREE_SLOTS = 4
+TRIO_ACTORS = 3
+GROUND_SPAWN_Y_BIAS = 0x20
+SPAWN_RANDOM_Y = 0xff
+FORMATION_KIND_IN_BYTE3 = 0x80
+# The formation pointer table's own extent: 18 longwords, after which the bytes are data. Both
+# `spawn_formation` and the script pointer table beside it are indexed over this range, and
+# `test_the_formation_tables_shipped_extent` is what holds the number.
+SHIPPED_FORMATION_KINDS = 18
+
+for _sym, _argc in (("g_entity_ptr_from_index_d6", 2), ("g_enemy_morph_to_type6", 1),
+                    ("g_actor_script_op_fire", 3), ("g_actor_script_op_ext", 3),
+                    ("g_actor_script_run", 1), ("g_enemy_move_scripted", 1),
+                    ("g_enemies_move_all", 0),
+                    ("g_spawn_enemy_shot", 4), ("g_enemy_shot_tick_type0a", 1),
+                    ("g_enemy_shot_tick_type0b", 1), ("g_enemy_fire_and_update_shots", 1),
+                    ("g_wavescript_spawn_trio_type0e", 1),
+                    ("g_groundscript_spawn_type10", 2), ("g_groundscript_spawn_type0f", 2),
+                    ("g_squadron_spawn_tick", 0), ("g_spawn_formation", 6),
+                    ("g_wavescript_spawn_wave", 5)):
+    _bind(_sym, _argc)
+
+
+# The staging every script-VM and per-frame-pass case needs. Everything is noise or a stated value,
+# so a candidate reading the wrong field of the wrong record differs rather than reading a zero.
+#
+# A_PLAYER_RECORD IS INSIDE A_ENTITY_TABLE (it is slot 17), and the later poke deliberately wins:
+# `harness.make_image` applies the dict in insertion order, so the ship's own record is the stated
+# one and the other nineteen stay noise.
+AI_RNG_STATE = 0x1234abcd
+AI_PLAYER_X, AI_PLAYER_Y = 0x90, 0x40
+
+
+def _ai_environment(seed, player_x=AI_PLAYER_X, player_y=AI_PLAYER_Y):
+    return {A_ENTITY_TABLE: _array([Record(seed + i) for i in range(ENTITY_COUNT)]),
+            A_ENTITY_COLLISION_MASKS: bytes(ENTITY_COUNT * COLLISION_ROW_BYTES),
+            A_PLAYER_RECORD: (Record(seed + 0x40).word(ENTITY_X, player_x)
+                              .word(ENTITY_Y, player_y).bytes()),
+            A_SCROLL_FROZEN: bytes([0]),
+            A_BOSS_SEQUENCE_ACTIVE: bytes([0]),
+            A_RNG_LFSR_STATE: AI_RNG_STATE.to_bytes(4, "big")}
+
+
+# ==================================== entity_ptr_from_index's second entry @ 0x141c2
+
+def _ptr_d6_case(index_reg, other_reg=0, poison=False):
+    """The D6 entry through ITS OWN glue, which is what `g_entity_ptr_from_index_d6` exists for.
+
+    `_ptr_case` above already drives this address through the D0 entry's glue — the two entries are
+    one body — so what this adds is that the second glue really is the same answer, and that D0's
+    contents never reach it.
+    """
+    pokes = abi.register_call_pokes(ENTRY_ENTITY_PTR_FROM_INDEX_D6, ("d6", "a1"))
+    pokes[abi.RESULT] = random.Random(0xd6 ^ index_reg).randbytes(PTR_RESULT_BYTES)
+    regs = {"a0": abi.RESULT, "d0": other_reg, "d6": index_reg, "_pokes": pokes}
+    diffs, _ = differential(abi.STUB, regs,
+                            lambda lib, buf: lib.g_entity_ptr_from_index_d6(buf, index_reg,
+                                                                           abi.RESULT),
+                            poison=poison)
+    assert not diffs, f"index={index_reg:#x}\n{report(diffs)}"
+
+
+@pytest.mark.parametrize("chunk", range(FUZZ_CHUNKS))
+def test_entity_ptr_d6_entry_every_index(chunk):
+    """All 256 indices the mask admits, sharded, with junk in the D0 the entry does not read."""
+    rng = random.Random(0x141c2 + chunk)
+    for index in range(chunk, 0x100, FUZZ_CHUNKS):
+        _ptr_d6_case(index, other_reg=hi_garbage(rng, rng.randint(0, 0xffff)))
+
+
+@pytest.mark.parametrize("index", (0, 1, 0x13, 0xff))
+def test_entity_ptr_d6_entry_ignores_the_high_three_bytes(index):
+    """`and.l #$ff,d6` is the whole of this entry, so a full 32-bit register must answer as its
+    low byte does — and the poison pass says the two longwords were really stored."""
+    rng = random.Random(index)
+    _ptr_d6_case((rng.randint(0, 0xffffff) << 8) | index, poison=True)
+
+
+# =============================================================== enemy_morph_to_type6 @ 0x13ad0
+
+def _morph_case(y, seed=0, poison=False):
+    pokes = {ACTOR: Record(seed).word(ENTITY_Y, y).bytes()}
+    diffs, _ = differential(ENTRY_ENEMY_MORPH_TO_TYPE6, {"a2": ACTOR, "_pokes": pokes},
+                            lambda lib, buf: lib.g_enemy_morph_to_type6(buf, ACTOR), poison=poison)
+    assert not diffs, f"y={y:#x}\n{report(diffs)}"
+
+
+@pytest.mark.parametrize("y", (0, 1, 2, 3, 0x60, 0x7fff, 0x8000, 0x8001, 0xffff))
+def test_morph_to_type6_rises_two_pixels(y):
+    """The y step is `subi.w #$2` on a WORD, so 0 and 1 wrap round the bottom rather than clamping,
+    and 0x8000 wraps the sign the other way. Everything else the routine writes is a literal, and
+    the noise record is what makes a store it should not have made a difference."""
+    _morph_case(y, seed=y & 0xff)
+
+
+def test_morph_to_type6_writes_every_field():
+    """Poison: each of the five stores has to be attributable, not merely agree with the noise."""
+    _morph_case(0x40, seed=0x11, poison=True)
+
+
+def test_morph_to_type6_sprite_is_the_relocated_address():
+    """The sprite is an immediate longword the loader RELOCATED, so the number in include/enemy.h is
+    the loaded one — read back off the routine's own instruction rather than trusted."""
+    at = ENTRY_ENEMY_MORPH_TO_TYPE6 + 0x14          # past the `move.l #imm32,10(a2)` opcode word
+    assert int.from_bytes(bytes(harness.BASE_IMAGE[at:at + 4]), "big") == A_GROUND_PUFF_SPRITE
+
+
+# ============================================================== actor_script_op_fire @ 0x14d88
+#
+# It clobbers A0 (through `entity_set_velocity_from_angle`'s walk over the cosine table), so every
+# case here uses the self-addressed flag stub — see `_flag_pokes`' note. It is NOT added to
+# SCRIPT_FLAG_ENTRIES: that roster and its A0 test are the earlier wave's sweep over the handlers
+# that answer a flag AND take no argument beyond the record, and this one is driven on its own terms.
+
+# The record the script ops are called with, placed at a REAL entity slot rather than at SCRATCH:
+# `entity_steer_toward_target` resolves its target through `entity_ptr_from_index`, so the case only
+# means anything if the table it indexes is the one this record lives in.
+SCRIPT_ACTOR_INDEX = 9
+SCRIPT_ACTOR = A_ENTITY_TABLE + SCRIPT_ACTOR_INDEX * ENTITY_STRIDE
+
+
+def _script_actor(seed, countdown):
+    """A record a script handler can be run on: a stated turn countdown, a loop count that cannot
+    make the VM wander, and noise everywhere else."""
+    return (Record(seed).byte(SHOT_TURN_COUNTDOWN, countdown)
+            .byte(ACTOR_SCRIPT_LOOP_COUNT, 1).word(ACTOR_SCRIPT_LOOP_PC, 0))
+
+
+def _op_fire_case(opcode, countdown, seed=0, poison=False):
+    pokes = _ai_environment(0x4000 + seed)
+    pokes[SCRIPT_ACTOR] = _script_actor(0x4100 + seed, countdown).bytes()
+    pokes.update(abi.flag_call_self_addressed_pokes(ENTRY_ACTOR_SCRIPT_OP_FIRE, "cs", FLAG))
+    pokes[FLAG] = bytes([FLAG_CANARY, FLAG_CANARY ^ 0xff])
+    diffs, _ = differential(abi.STUB, {"a2": SCRIPT_ACTOR, "d1": opcode, "_pokes": pokes},
+                            lambda lib, buf: lib.g_actor_script_op_fire(buf, SCRIPT_ACTOR, opcode,
+                                                                       FLAG),
+                            poison=poison)
+    assert not diffs, f"opcode={opcode:#x} countdown={countdown}\n{report(diffs)}"
+
+
+@pytest.mark.parametrize("chunk", range(SCRIPT_CHUNKS))
+def test_op_fire_every_opcode(chunk):
+    """All 256 opcode bytes, sharded — the operand is `(opcode & 0x78) >> 3`, and only a sweep
+    separates that from the `>> 1` its sibling class uses or from the whole byte.
+
+    The countdown is 1 on every case, so the steer really runs and the operand it just wrote into
+    SHOT_MAX_TURN is the limit that turn is taken against.
+    """
+    for opcode in range(chunk, 0x100, SCRIPT_CHUNKS):
+        _op_fire_case(opcode, countdown=1, seed=opcode)
+
+
+@pytest.mark.parametrize("countdown", (0, 1, 2, 0x80, 0xff))
+def test_op_fire_stores_before_it_steers(countdown):
+    """Its two stores happen whatever the steer then does with them.
+
+    A countdown of 1 expires and turns; 2 and 0x80 and 0xff only tick; 0 wraps to 0xff and also only
+    ticks. Both stores are compared on every one of them, so a candidate that made them inside the
+    steering arm differs on four of the five.
+    """
+    _op_fire_case(0x38, countdown, seed=countdown)
+
+
+# `157c 0011 001a` — `move.b #$11,26(a2)`, the routine's first instruction; the immediate is its
+# third byte.
+OP_FIRE_TARGET_IMMEDIATE = ENTRY_ACTOR_SCRIPT_OP_FIRE + 3
+
+
+def test_op_fire_target_is_the_player_slot():
+    """The literal it writes into SHOT_TARGET_INDEX is an ENTITY INDEX, and this is which one.
+
+    Read off the ROUTINE'S OWN BYTES rather than off this file's constants — comparing
+    `A_ENTITY_TABLE + PLAYER_ENTITY_INDEX * ENTITY_STRIDE` to `A_PLAYER_RECORD` alone would be three
+    of this file's own literals arranged to agree, and could not fail on a change to the game's.
+    """
+    assert harness.BASE_IMAGE[OP_FIRE_TARGET_IMMEDIATE] == PLAYER_ENTITY_INDEX
+    assert A_ENTITY_TABLE + PLAYER_ENTITY_INDEX * ENTITY_STRIDE == A_PLAYER_RECORD
+
+
+def test_op_fire_attribution():
+    _op_fire_case(0x20, countdown=1, seed=0x99, poison=True)
+
+
+# =============================================================== actor_script_op_ext @ 0x14cce
+#
+# The extended dispatch. Twelve of the sixteen table entries are routines; 10 and 12..14 are NULL
+# longwords, and a case that drove one would make the ORACLE `jsr` address 0 — so the sweep below
+# covers the twelve and `test_ext_table_nulls_are_the_operands_no_case_drives` is what states the
+# other four rather than leaving them looking untested.
+EXT_LIVE_OPERANDS = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 15)
+EXT_NULL_OPERANDS = (10, 12, 13, 14)
+EXT_TABLE_ENTRIES = 16
+# The twelve addresses src/enemy.c's SCRIPT_EXT_ARMS maps, in table order.
+EXT_ARM_ADDRESSES = (ENTRY_ACTOR_SCRIPT_OP_DRIFT_LEFT, ENTRY_ACTOR_SCRIPT_OP_HALT,
+                     ENTRY_ACTOR_SCRIPT_OP_RANDOM_HEADING, ENTRY_ACTOR_SCRIPT_OP_LOOP_END,
+                     ENTRY_ACTOR_SCRIPT_OP_THRUST_TO_CENTRE_Y,
+                     ENTRY_ACTOR_SCRIPT_OP_AIM_AT_PLAYER, ENTRY_ACTOR_SCRIPT_OP_STEP_LEFT,
+                     0x14306, 0x141d6, ENTRY_ACTOR_SCRIPT_OP_THRUST_TO_CENTRE,
+                     ENTRY_ACTOR_SCRIPT_OP_RANDOM_SPEED_NUDGE, ENTRY_ACTOR_SCRIPT_OP_END_FRAME)
+# The eight addresses SCRIPT_CLASS_ARMS maps; entry 6 is the NULL longword.
+CLASS_TABLE_ENTRIES = 8
+CLASS_ARM_ADDRESSES = (0x143f8, ENTRY_ACTOR_SCRIPT_OP_LOOP_BEGIN,
+                       ENTRY_ACTOR_SCRIPT_OP_SET_FIRE_RATE, ENTRY_ACTOR_SCRIPT_OP_BOUNCE_FALL,
+                       ENTRY_ACTOR_SCRIPT_OP_FIRE, ENTRY_ACTOR_SCRIPT_OP_SET_HEADING,
+                       ENTRY_ACTOR_SCRIPT_OP_EXT)
+CLASS_NULL_ARM = 6
+
+
+def _op_ext_case(opcode, seed=0, extra=None, poison=False):
+    pokes = _ai_environment(0x5000 + seed)
+    pokes[SCRIPT_ACTOR] = _script_actor(0x5100 + seed, countdown=1).bytes()
+    pokes.update(extra or {})
+    pokes.update(abi.flag_call_self_addressed_pokes(ENTRY_ACTOR_SCRIPT_OP_EXT, "cs", FLAG))
+    pokes[FLAG] = bytes([FLAG_CANARY, FLAG_CANARY ^ 0xff])
+    diffs, _ = differential(abi.STUB, {"a2": SCRIPT_ACTOR, "d1": opcode, "_pokes": pokes},
+                            lambda lib, buf: lib.g_actor_script_op_ext(buf, SCRIPT_ACTOR, opcode,
+                                                                       FLAG),
+                            poison=poison)
+    assert not diffs, f"opcode={opcode:#x}\n{report(diffs)}"
+
+
+def test_ext_table_is_fully_reconstructed():
+    """Every non-NULL longword of the shipped table must be a routine src/enemy.c can run.
+
+    The dispatcher reads its target out of the image, so an entry the map does not hold would be
+    left uncalled while the original jumped to it.
+    """
+    entries = {_table_entry(A_SCRIPT_OP_EXT_TABLE + 4 * i) for i in range(EXT_TABLE_ENTRIES)} - {0}
+    unmapped = sorted(hex(e) for e in entries - set(EXT_ARM_ADDRESSES))
+    assert not unmapped, f"ext entries with no C handler: {unmapped}"
+
+
+def test_class_table_is_fully_reconstructed():
+    """...and the same for the eight-entry class table `actor_script_run` dispatches through."""
+    entries = {_table_entry(A_SCRIPT_OP_TABLE + 4 * i) for i in range(CLASS_TABLE_ENTRIES)} - {0}
+    unmapped = sorted(hex(e) for e in entries - set(CLASS_ARM_ADDRESSES))
+    assert not unmapped, f"class entries with no C handler: {unmapped}"
+
+
+def test_ext_table_nulls_are_the_operands_no_case_drives():
+    """The four operands the sweep skips are exactly the NULL longwords, and the class table's one
+    NULL is entry 6.
+
+    THE ARM IS UNDRIVABLE, not untested: the original's `movea.l` would load 0 and `jsr (a0)` would
+    enter the 68000 vector page, so no differential can compare the two sides there. The
+    reconstruction leaves an address its map does not hold uncalled and answers carry clear;
+    STATUS.md is where that model is stated. This assertion is what keeps the list of skipped
+    operands equal to the list of NULLs, so a table revision cannot silently widen the gap.
+    """
+    nulls = tuple(i for i in range(EXT_TABLE_ENTRIES)
+                  if _table_entry(A_SCRIPT_OP_EXT_TABLE + 4 * i) == 0)
+    assert nulls == EXT_NULL_OPERANDS
+    assert tuple(sorted(EXT_LIVE_OPERANDS + EXT_NULL_OPERANDS)) == tuple(range(EXT_TABLE_ENTRIES))
+    class_nulls = tuple(i for i in range(CLASS_TABLE_ENTRIES)
+                        if _table_entry(A_SCRIPT_OP_TABLE + 4 * i) == 0)
+    assert class_nulls == (CLASS_NULL_ARM,)
+
+
+@pytest.mark.parametrize("chunk", range(SCRIPT_CHUNKS))
+def test_ext_dispatches_every_live_operand(chunk):
+    """Every opcode byte whose operand names a real handler, sharded four ways.
+
+    All sixteen bytes per operand are driven — the three CLASS bits and bit 7 must not reach the
+    dispatch, which `(opcode & 0x78) >> 3` is the only spelling of that satisfies. The record's turn
+    countdown is 1, so operand 8's steer really runs.
+    """
+    opcodes = [(operand << 3) | low | top
+               for operand in EXT_LIVE_OPERANDS for low in range(8) for top in (0, 0x80)]
+    for index, opcode in enumerate(opcodes):
+        if _in_chunk(index, chunk):
+            _op_ext_case(opcode, seed=index)
+
+
+def test_ext_reads_its_handler_out_of_the_table():
+    """Poke a REAL handler into a slot the shipped table leaves NULL, and require both sides to run
+    it.
+
+    This is what separates "reads the table" from "switches on the operand": operand 10 dispatches
+    to nothing at all in the shipped image, and with `actor_script_op_halt` poked into its slot both
+    sides must clear the velocity pair.
+    """
+    poked = {A_SCRIPT_OP_EXT_TABLE + 4 * EXT_NULL_OPERANDS[0]:
+             ENTRY_ACTOR_SCRIPT_OP_HALT.to_bytes(4, "big")}
+    _op_ext_case((EXT_NULL_OPERANDS[0] << 3) | 7, seed=0x71, extra=poked)
+
+
+def test_ext_entry_8_answers_carry_clear():
+    """The residual STATUS.md's weapon section recorded, driven at last.
+
+    `entity_steer_toward_target` is `void` in C and its own glue stores no flag, so nothing in that
+    subsystem's battery could say what carry it leaves. Here it is ext entry 8, this dispatcher
+    returns whatever the handler left, and the `Scc` stub compares that byte — so the claim
+    "CARRY CLEAR = this actor is done" is now a differential case rather than a reading. Driven on
+    both sides of the steer's own countdown, since the two exits are different instructions.
+    """
+    for countdown in (1, 2):
+        pokes = _ai_environment(0x5200 + countdown)
+        pokes[SCRIPT_ACTOR] = _script_actor(0x5300 + countdown, countdown).bytes()
+        pokes.update(abi.flag_call_self_addressed_pokes(ENTRY_ACTOR_SCRIPT_OP_EXT, "cs", FLAG))
+        pokes[FLAG] = bytes([FLAG_CANARY, FLAG_CANARY ^ 0xff])
+        opcode = (8 << 3) | 7
+        diffs, info = differential(abi.STUB, {"a2": SCRIPT_ACTOR, "d1": opcode, "_pokes": pokes},
+                                   lambda lib, buf: lib.g_actor_script_op_ext(buf, SCRIPT_ACTOR,
+                                                                              opcode, FLAG))
+        assert not diffs, report(diffs)
+        assert info["writes"], "the case ran nothing"
+
+
+def test_ext_attribution():
+    _op_ext_case((1 << 3) | 7, seed=0x88, poison=True)      # operand 1 = halt, which writes two words
+
+
+# ================================================================== actor_script_run @ 0x14c66
+#
+# The VM's own loop. Its script is a byte stream at A_ACTOR_SCRIPT_DATA; a byte with bit 7 set
+# reloads the frame delay and one without it is the opcode. Every case below ends its script with
+# SCRIPT_END_FRAME, because a script that never answers "frame over" is an infinite loop in the
+# ORIGINAL too — the oracle would hit its instruction cap and the case would report nothing.
+SCRIPT_END_FRAME = 0x7f     # class 7, ext operand 15 = actor_script_op_end_frame
+SCRIPT_CONTINUE_OP = 0x39   # class 1 = actor_script_op_loop_begin, which answers "run the next"
+SCRIPT_ACCEL_OP = 0x18      # class 0 = entity_apply_accel, which answers "frame over"
+SCRIPT_TEST_PC = 0x20       # where a case's own script is poked, as a word offset from the base
+
+
+def _script_address(pc):
+    """The byte the pc names — a SIGNED word offset from the script base, as `ext.l d0` reads it."""
+    return A_ACTOR_SCRIPT_DATA + (pc - 0x10000 if pc >= 0x8000 else pc)
+
+
+def _script_run_case(delay, opcode, script=(SCRIPT_END_FRAME,), pc=SCRIPT_TEST_PC, seed=0,
+                     bounced=0xa5, poison=False):
+    pokes = _ai_environment(0x6000 + seed)
+    pokes[SCRIPT_ACTOR] = (Record(0x6100 + seed).byte(ACTOR_SCRIPT_DELAY, delay)
+                           .byte(ACTOR_SCRIPT_OPCODE, opcode).word(ACTOR_SCRIPT_PC, pc)
+                           .byte(ACTOR_BOUNCED, bounced)
+                           .byte(ACTOR_SCRIPT_LOOP_COUNT, 1).word(ACTOR_SCRIPT_LOOP_PC, 0)
+                           .byte(SHOT_TURN_COUNTDOWN, 2).bytes())
+    pokes[_script_address(pc)] = bytes(script)
+    diffs, _ = differential(ENTRY_ACTOR_SCRIPT_RUN, {"a2": SCRIPT_ACTOR, "_pokes": pokes},
+                            lambda lib, buf: lib.g_actor_script_run(buf, SCRIPT_ACTOR),
+                            poison=poison)
+    assert not diffs, f"delay={delay:#x} opcode={opcode:#x} script={script}\n{report(diffs)}"
+
+
+@pytest.mark.parametrize("delay", (0, 1, 2, 3, 0x7f, 0x80, 0x81, 0xff))
+def test_script_run_ticks_the_delay(delay):
+    """The three arms of `subq.b #1` + `beq` + `bpl` + `addq.b #1`.
+
+    A delay of 1 reaches zero and FETCHES; 2, 3, 0x7f and 0xff only tick; 0 wraps to 0xff, fails the
+    `bpl`, and is PUT BACK — so it re-runs the opcode already in force for ever rather than counting
+    down through the whole byte. 0x80 and 0x81 are the other side of the sign, which is what
+    separates `bpl` from a test against zero.
+    """
+    _script_run_case(delay, SCRIPT_END_FRAME, seed=delay)
+
+
+def test_script_run_fetches_past_the_delay_bytes():
+    """A run of delay bytes before the opcode, and the LAST one is the delay that survives.
+
+    The fetch sets the delay to 1 first and then each delay byte overwrites it, so a candidate that
+    stopped at the first byte, or kept the 1, differs. The masks are pinned by the two bytes' low
+    seven bits being different values.
+    """
+    _script_run_case(1, SCRIPT_END_FRAME, script=(0x81, 0x83, SCRIPT_END_FRAME), seed=1)
+    _script_run_case(1, SCRIPT_END_FRAME, script=(0xff, SCRIPT_END_FRAME), seed=2)
+    _script_run_case(1, SCRIPT_END_FRAME, script=(0x80, SCRIPT_END_FRAME), seed=3)
+
+
+def test_script_run_clears_the_bounce_latch_on_a_fetch_only():
+    """`clr.b 41(a2)` sits on the FETCH path, so a tick that runs the old opcode must leave it."""
+    _script_run_case(1, SCRIPT_END_FRAME, seed=4, bounced=0xff)      # fetches: cleared
+    _script_run_case(3, SCRIPT_END_FRAME, seed=5, bounced=0xff)      # ticks: left alone
+
+
+def test_script_run_loops_while_a_handler_answers_continue():
+    """`bcs` goes back to the ROUTINE'S HEAD, not to the dispatch — so a continuing handler makes
+    the delay tick AGAIN before the next opcode is fetched.
+
+    The script is [continue, end]: the first fetch takes the continue opcode and sets the delay to
+    1, the handler answers "run the next", the second pass decrements that 1 to zero and fetches the
+    end opcode. A candidate that looped over the dispatch alone would never re-tick and would leave
+    a different delay behind.
+    """
+    _script_run_case(1, SCRIPT_END_FRAME, script=(SCRIPT_CONTINUE_OP, SCRIPT_END_FRAME), seed=6)
+    _script_run_case(1, SCRIPT_END_FRAME,
+                     script=(SCRIPT_CONTINUE_OP, SCRIPT_CONTINUE_OP, SCRIPT_END_FRAME), seed=7)
+
+
+def test_script_run_pc_is_a_signed_word_offset():
+    """`move.w 34(a2),d0 / ext.l d0` — a pc of 0xfff0 is SIXTEEN BYTES BELOW the script base, not
+    64 KB above it, and the pc written back is the new offset as a word."""
+    _script_run_case(1, SCRIPT_END_FRAME, pc=0xfff0, seed=8)
+    _script_run_case(1, SCRIPT_END_FRAME, script=(0x82, SCRIPT_END_FRAME), pc=0xfff0, seed=9)
+
+
+@pytest.mark.parametrize("opcode", (SCRIPT_END_FRAME, SCRIPT_ACCEL_OP, 0x00, 0x07))
+def test_script_run_dispatches_the_stored_opcode(opcode):
+    """A tick (delay 3) runs the opcode ALREADY in the record, without touching the pc."""
+    _script_run_case(3, opcode, seed=0x10 + opcode)
+
+
+# Every opcode class the shipped table gives a handler to, with the SAME operand (1) in each, so
+# the only thing that varies is which arm the low three bits pick. Class 6 is the NULL longword and
+# is left out; `test_ext_table_nulls_are_the_operands_no_case_drives` states why.
+SCRIPT_LIVE_CLASSES = (0, 1, 2, 3, 4, 5, 7)
+SCRIPT_CLASS_PROBE_OPERAND = 1 << 3
+
+
+@pytest.mark.parametrize("script_class", SCRIPT_LIVE_CLASSES)
+def test_script_run_dispatches_every_class(script_class):
+    """THE CLASS TABLE'S ORDER, which `test_class_table_is_fully_reconstructed` cannot see.
+
+    That assertion compares a SET of shipped addresses against a SET of mapped ones, so a
+    permutation of `SCRIPT_CLASS_ARMS` passes it — and the shipped scripts' own opcodes only ever
+    reach classes 0, 5 and 7, so classes 2, 3 and 4 would otherwise be dispatched by no case at all.
+    Each class here writes a different part of the record (a velocity, a loop count, a fire reload,
+    the bounce arm, a heading, the ext table's own answer), so a transposition differs.
+
+    A delay of 3 makes the first pass a TICK rather than a fetch, so the opcode dispatched is the
+    one the case names; the classes that answer "run the next" then fall through to the poked
+    end-of-frame byte, which is what stops the loop.
+    """
+    _script_run_case(3, SCRIPT_CLASS_PROBE_OPERAND | script_class, seed=0x40 + script_class)
+
+
+def test_script_run_over_the_shipped_scripts():
+    """The game's own data: every one of the eighteen scripts A_ACTOR_SCRIPT_TABLE points at, run
+    from its first byte.
+
+    Seeded rather than fabricated — this is the branch coverage that says the VM handles the opcodes
+    Zynaps actually ships, and the pc offsets come out of the shipped pointer table.
+    """
+    for kind in range(SHIPPED_FORMATION_KINDS):
+        pc = _table_entry(A_ACTOR_SCRIPT_TABLE + 4 * kind) - A_ACTOR_SCRIPT_DATA
+        pokes = _ai_environment(0x6400 + kind)
+        pokes[SCRIPT_ACTOR] = (Record(0x6500 + kind).byte(ACTOR_SCRIPT_DELAY, 1)
+                               .byte(ACTOR_SCRIPT_OPCODE, SCRIPT_END_FRAME).word(ACTOR_SCRIPT_PC, pc)
+                               .byte(ACTOR_SCRIPT_LOOP_COUNT, 1).word(ACTOR_SCRIPT_LOOP_PC, 0)
+                               .byte(SHOT_TURN_COUNTDOWN, 2).bytes())
+        diffs, _ = differential(ENTRY_ACTOR_SCRIPT_RUN, {"a2": SCRIPT_ACTOR, "_pokes": pokes},
+                                lambda lib, buf: lib.g_actor_script_run(buf, SCRIPT_ACTOR))
+        assert not diffs, f"script kind {kind} at pc {pc:#x}\n{report(diffs)}"
+
+
+def test_script_run_attribution():
+    _script_run_case(1, SCRIPT_END_FRAME, seed=0x30, poison=True)
+
+
+# ============================================================== enemy_move_scripted @ 0x14c16
+
+SCRIPTED_X_VALUES = (0, 0x2f, 0x30, 0x31, 0x100, 0x1b7, 0x1b8, 0x1b9, 0x7fff, 0x8000, 0xffff)
+
+
+def _move_scripted_case(x, boss_active, seed=0, poison=False):
+    pokes = _ai_environment(0x7000 + seed)
+    pokes[SCRIPT_ACTOR] = (Record(0x7100 + seed).word(ENTITY_X, x).word(ENTITY_Y, 0x50)
+                           .byte(ACTOR_SCRIPT_DELAY, 3)
+                           .byte(ACTOR_SCRIPT_OPCODE, SCRIPT_END_FRAME)
+                           .byte(ENTITY_SQUADRON, seed % SQUADRON_COUNT).bytes())
+    pokes[A_BOSS_SEQUENCE_ACTIVE] = bytes([boss_active])
+    pokes[A_SQUADRON_KILL_COUNTERS] = random.Random(seed).randbytes(0x40)
+    diffs, _ = differential(ENTRY_ENEMY_MOVE_SCRIPTED, {"a2": SCRIPT_ACTOR, "_pokes": pokes},
+                            lambda lib, buf: lib.g_enemy_move_scripted(buf, SCRIPT_ACTOR),
+                            poison=poison)
+    assert not diffs, f"x={x:#x} boss={boss_active}\n{report(diffs)}"
+
+
+@pytest.mark.parametrize("x", SCRIPTED_X_VALUES)
+@pytest.mark.parametrize("boss_active", (0, 1))
+def test_move_scripted_keep_band(x, boss_active):
+    """Both bounds one step either side, and the whole grid against the boss flag.
+
+    The compares are SIGNED (`ble` and `bge`), so 0x8000 and 0xffff are BELOW the floor and despawn;
+    an unsigned reading would keep them. With the boss flag set the script runs at every x, which is
+    what separates "the flag skips the band test" from "the flag is one more term of it".
+    """
+    _move_scripted_case(x, boss_active, seed=(x & 0xff) ^ boss_active)
+
+
+@pytest.mark.parametrize("squadron", range(SQUADRON_COUNT))
+def test_move_scripted_despawn_credits_the_squadron(squadron):
+    """The despawn arm goes through `actor_despawn`, so the counter the record names must move —
+    driven at every squadron over a seeded band, so a wrong index differs."""
+    pokes = _ai_environment(0x7200 + squadron)
+    pokes[SCRIPT_ACTOR] = (Record(0x7300 + squadron).word(ENTITY_X, 0)
+                           .byte(ENTITY_SQUADRON, squadron).bytes())
+    pokes[A_BOSS_SEQUENCE_ACTIVE] = bytes([0])
+    pokes[A_SQUADRON_KILL_COUNTERS] = random.Random(squadron).randbytes(0x40)
+    diffs, _ = differential(ENTRY_ENEMY_MOVE_SCRIPTED, {"a2": SCRIPT_ACTOR, "_pokes": pokes},
+                            lambda lib, buf: lib.g_enemy_move_scripted(buf, SCRIPT_ACTOR),
+                            poison=True)
+    assert not diffs, report(diffs)
+
+
+def test_move_scripted_clamps_y_after_the_script():
+    """The kept arm is `actor_script_run` then `actor_clamp_y`, and only a y outside the band shows
+    the second of them ran at all."""
+    for y in (0, KEEP_Y_MIN - 1, KEEP_Y_MAX, KEEP_Y_MAX + 1, 0xffff):
+        pokes = _ai_environment(0x7400 + (y & 0xff))
+        pokes[SCRIPT_ACTOR] = (Record(0x7500 + (y & 0xff)).word(ENTITY_X, 0x100).word(ENTITY_Y, y)
+                               .byte(ACTOR_SCRIPT_DELAY, 3)
+                               .byte(ACTOR_SCRIPT_OPCODE, SCRIPT_END_FRAME).bytes())
+        diffs, _ = differential(ENTRY_ENEMY_MOVE_SCRIPTED, {"a2": SCRIPT_ACTOR, "_pokes": pokes},
+                                lambda lib, buf: lib.g_enemy_move_scripted(buf, SCRIPT_ACTOR))
+        assert not diffs, f"y={y:#x}\n{report(diffs)}"
+
+
+# ================================================================== enemies_move_all @ 0x1487c
+
+# The types the shipped MOVE table gives a handler to. Read off the image by the assertion below
+# rather than remembered.
+MOVED_TYPES = (0x0e, 0x0f, 0x10, 0x11, 0x14, 0x16)
+# The six addresses src/enemy.c's ACTOR_MOVE_HANDLERS maps, in its order.
+MOVE_HANDLER_ADDRESSES = (FN_ACTOR_HANDLER_NONE, ENTRY_ENEMY_MOVE_TYPE14_SINE,
+                          ENTRY_ENEMY_MOVE_TYPE15_DIVE, ENTRY_ENEMY_MOVE_TYPE16_LEFT,
+                          ENTRY_ENEMY_MOVE_TYPE17_LEFT, ENTRY_ENEMY_MOVE_SCRIPTED)
+# A_actor_move_table's own extent: it runs to the animation table, which IS its 24th longword.
+ACTOR_MOVE_TABLE_ENTRIES = 23
+# ...so a type of 0x17..0x2d takes its handler from the animation table instead. These three are the
+# ones that reach a live animation handler rather than the shared bare `rts`.
+TYPES_PAST_THE_MOVE_TABLE = (0x17 + 0x06, 0x17 + 0x0b, 0x17 + 0x0e)
+
+
+def _move_record(seed, alive, type_id):
+    """A record every one of the six move handlers can be run on.
+
+    The script fields matter for types 0x14/0x16, the dive flag for 0x0f, the sine pair for 0x0e —
+    and the rest of the record is noise, so a handler reading a field it should not have differs.
+    """
+    return (Record(seed).byte(ENTITY_ALIVE, alive).byte(ENTITY_TYPE, type_id)
+            .word(ENTITY_X, 0x100).word(ENTITY_Y, 0x50)
+            .byte(ACTOR_SCRIPT_DELAY, 3).byte(ACTOR_SCRIPT_OPCODE, SCRIPT_END_FRAME)
+            .byte(ACTOR_SCRIPT_LOOP_COUNT, 1).word(ACTOR_SCRIPT_LOOP_PC, 0)
+            .byte(ENTITY_ANIM_FRAME, ANIM_IN_RANGE_FRAME).byte(ACTOR_DIVING, 0)
+            .byte(ENTITY_SQUADRON, seed % SQUADRON_COUNT))
+
+
+def _move_all_case(records, extra=None, seed=0, poison=False):
+    pokes = abi.seed_spans(ENTRY_ENEMIES_MOVE_ALL + seed, ANIM_TABLE_SPANS)
+    pokes.update(_ai_environment(0x8000 + seed))
+    pokes[A_ENEMY_SHOT_SLOTS] = _array(records)
+    pokes[A_SQUADRON_KILL_COUNTERS] = random.Random(0x8000 + seed).randbytes(0x40)
+    pokes[A_ANIM_PHASE_B] = bytes([0])
+    pokes[A_EXPLOSION_PHASE_ODD] = bytes([0])
+    pokes[A_SECTION_PARAM_A] = bytes([5])
+    pokes[A_SECTION_PARAM_B] = bytes([5])
+    pokes.update(extra or {})
+    diffs, _ = differential(ENTRY_ENEMIES_MOVE_ALL, {"_pokes": pokes},
+                            lambda lib, buf: lib.g_enemies_move_all(buf), poison=poison)
+    assert not diffs, report(diffs)
+
+
+def test_move_table_is_fully_reconstructed():
+    """Every longword of the shipped move table must be a routine src/enemy.c can run."""
+    entries = {_table_entry(A_ACTOR_MOVE_TABLE + 4 * t) for t in range(ACTOR_MOVE_TABLE_ENTRIES)}
+    unmapped = sorted(hex(e) for e in entries - set(MOVE_HANDLER_ADDRESSES))
+    assert not unmapped, f"move table entries with no C handler: {unmapped}"
+
+
+def test_moved_types_are_the_ones_the_table_serves():
+    """...and the mirror: the types this battery drives are exactly the non-default entries."""
+    served = tuple(t for t in range(ACTOR_MOVE_TABLE_ENTRIES)
+                   if _table_entry(A_ACTOR_MOVE_TABLE + 4 * t) != FN_ACTOR_HANDLER_NONE)
+    assert served == MOVED_TYPES
+
+
+def test_the_two_tables_share_storage():
+    """A_actor_anim_table IS A_actor_move_table's 24th longword, which is the whole reason the move
+    pass consults the animation map as well — the pass's own guard admits types that read there."""
+    assert A_ACTOR_ANIM_TABLE == A_ACTOR_MOVE_TABLE + 4 * ACTOR_MOVE_TABLE_ENTRIES
+    for type_id in TYPES_PAST_THE_MOVE_TABLE:
+        entry = _table_entry(A_ACTOR_MOVE_TABLE + 4 * type_id)
+        assert entry in ANIM_HANDLER_ADDRESSES and entry != FN_ACTOR_HANDLER_NONE, (
+            f"type {type_id:#x} no longer reaches a live animation handler")
+
+
+def test_the_types_past_both_tables_are_this_batchs_boundary():
+    """Where the move pass stops being reconstructed: the SCRIPT class table.
+
+    Types 0x2e..0x31 pass the signed `cmpi.b #$32` guard and read their target from 0x19438, whose
+    handlers answer in the carry and two of which read the opcode in D1 — a shape a move handler
+    cannot be called with. The reconstruction finds none of those addresses in either map and
+    returns; STATUS.md is the home for why that is stated rather than modelled, and this assertion
+    fails the day one of those slots becomes an address the maps hold.
+    """
+    beyond = {_table_entry(A_ACTOR_MOVE_TABLE + 4 * t)
+              for t in range(ACTOR_MOVE_TABLE_ENTRIES + ACTOR_ANIM_TABLE_ENTRIES,
+                             ACTOR_HANDLER_TYPE_MAX)}
+    mapped = beyond & (set(MOVE_HANDLER_ADDRESSES) | set(ANIM_HANDLER_ADDRESSES))
+    assert not mapped, (
+        f"slots past both tables now reach handler(s) a map holds: "
+        f"{sorted(hex(a) for a in mapped)} — the reconstruction's boundary moved")
+
+
+def test_move_all_dispatches_every_type():
+    """One record of each moved type in a single pass, and the same set rotated one slot on — which
+    is what separates "dispatched by type" from "dispatched by position"."""
+    types = MOVED_TYPES + INERT_TYPES
+    for rotation in (0, 1):
+        records = [_move_record(i, 1, types[(i + rotation) % len(types)])
+                   for i in range(ACTOR_UPDATE_SLOTS)]
+        _move_all_case(records, seed=rotation)
+
+
+@pytest.mark.parametrize("type_id", MOVED_TYPES + INERT_TYPES)
+def test_move_all_same_type_in_every_slot(type_id):
+    """Eleven records of one type: a walk that stopped early, or stepped by the wrong stride, leaves
+    some of them unmoved."""
+    _move_all_case([_move_record(0x100 + i, 1, type_id) for i in range(ACTOR_UPDATE_SLOTS)],
+                   seed=type_id)
+
+
+def test_move_all_skips_dead_records():
+    _move_all_case([_move_record(0x200 + i, i % 2, MOVED_TYPES[i % len(MOVED_TYPES)])
+                    for i in range(ACTOR_UPDATE_SLOTS)], seed=0x20)
+
+
+@pytest.mark.parametrize("type_id", TYPES_PAST_THE_MOVE_TABLE)
+def test_move_all_runs_the_animation_handler_past_its_own_table(type_id):
+    """A type past the move table takes an ANIMATION handler, and both sides must run it.
+
+    This is the arm the second map exists for; without it the reconstruction would return having
+    done nothing while the original animated the record.
+    """
+    _move_all_case([_move_record(0x300 + i, 1, type_id) for i in range(ACTOR_UPDATE_SLOTS)],
+                   seed=type_id)
+
+
+def test_move_all_attribution():
+    _move_all_case([_move_record(0x400 + i, 1, MOVED_TYPES[i % len(MOVED_TYPES)])
+                    for i in range(ACTOR_UPDATE_SLOTS)], seed=0x40, poison=True)
+
+
+
+# ============================================================== the generator, driven on purpose
+#
+# Four routines below branch on a DRAW rather than on an argument, so a case that wants a particular
+# arm has to name the generator state that produces it. The mirror of src/rng.c's Galois step and
+# the search over states are the file's own, above (`_rand16_step` / `_state_matching`) — one
+# mirror per file, because a second copy that drifted would leave a battery vacuous rather than
+# red.
+
+
+def _state_whose_draw_is(predicate):
+    """A generator state whose next draw's LOW BYTE satisfies `predicate`."""
+    return _state_matching(lambda state: predicate(_draw_from(state)))
+
+
+# ============================================================== spawn_enemy_shot @ 0x11a2c
+
+# Where each of the three actors in a launch lives. All three are real entity slots, so the record
+# arithmetic every callee makes lands where the game's would.
+FIRING_ENEMY = A_ENEMY_SLOTS                 # entity slot 9
+SHOT_SLOT = A_ENEMY_SHOT_SLOTS               # entity slot 6
+
+# Types the shipped class maps do and do not list; `test_the_fire_class_maps_this_battery_uses`
+# asserts both against the image rather than leaving them as remembered numbers.
+HOMING_CLASS_TYPE = 0x02
+NOT_HOMING_CLASS_TYPE = 0x0e
+CAN_FIRE_TYPE = 0x14
+SEEKER_CLASS_TYPE = 0x10
+
+STATE_DRAW_BELOW_HOMING_CHANCE = _state_whose_draw_is(lambda d: d < ENEMY_HOMING_CHANCE)
+STATE_DRAW_AT_HOMING_CHANCE = _state_whose_draw_is(lambda d: d == ENEMY_HOMING_CHANCE)
+STATE_DRAW_ABOVE_HOMING_CHANCE = _state_whose_draw_is(lambda d: d > ENEMY_HOMING_CHANCE)
+
+
+def test_the_fire_class_maps_this_battery_uses():
+    """The four types above, against the shipped 14-byte maps — read off the image every run, so a
+    map that changed would fail here instead of quietly turning the branch cases vacuous."""
+    def listed(base, type_id):
+        word = int.from_bytes(bytes(harness.BASE_IMAGE[base + ((type_id >> 3) & 0xfffe):][:2]), "big")
+        return (word >> (15 - (type_id & 0xf))) & 1
+
+    assert listed(A_ENEMY_TYPES_FIRE_HOMING, HOMING_CLASS_TYPE)
+    assert not listed(A_ENEMY_TYPES_FIRE_HOMING, NOT_HOMING_CLASS_TYPE)
+    assert listed(A_ENEMY_TYPES_CAN_FIRE, CAN_FIRE_TYPE)
+    assert not listed(A_ENEMY_TYPES_CAN_FIRE, NOT_HOMING_CLASS_TYPE)
+    assert listed(A_ENEMY_TYPES_FIRE_SEEKER, SEEKER_CLASS_TYPE)
+
+
+def _spawn_shot_case(kind, enemy_type=HOMING_CLASS_TYPE, fire_flags=0, enemy_x=0x100, enemy_y=0x60,
+                     player_x=AI_PLAYER_X, player_y=AI_PLAYER_Y, cooldown=0, state=AI_RNG_STATE,
+                     seed=0, poison=False):
+    pokes = _ai_environment(0x9000 + seed, player_x, player_y)
+    pokes[FIRING_ENEMY] = (Record(0x9100 + seed).byte(ENTITY_TYPE, enemy_type)
+                           .byte(ACTOR_FIRE_FLAGS, fire_flags)
+                           .word(ENTITY_X, enemy_x).word(ENTITY_Y, enemy_y).bytes())
+    pokes[SHOT_SLOT] = Record(0x9200 + seed).bytes()
+    pokes[A_ENEMY_SEEKER_COOLDOWN] = bytes([cooldown])
+    pokes[A_RNG_LFSR_STATE] = state.to_bytes(4, "big")
+    diffs, _ = differential(ENTRY_SPAWN_ENEMY_SHOT,
+                            {"a0": A_PLAYER_RECORD, "a1": FIRING_ENEMY, "a2": SHOT_SLOT,
+                             "d3": kind, "_pokes": pokes},
+                            lambda lib, buf: lib.g_spawn_enemy_shot(buf, A_PLAYER_RECORD,
+                                                                    FIRING_ENEMY, SHOT_SLOT, kind),
+                            poison=poison)
+    assert not diffs, (f"kind={kind} type={enemy_type:#x} flags={fire_flags:#x} "
+                       f"enemy_x={enemy_x:#x}\n{report(diffs)}")
+
+
+@pytest.mark.parametrize("enemy_x", (0, 0x4f, 0x50, 0x51, 0x100, 0x7fff, 0x8000, 0xffff))
+def test_spawn_shot_needs_room_to_the_left(enemy_x):
+    """`cmpi.w #$50` + `blt` — a SIGNED compare, so 0x8000 and 0xffff are BELOW the bound and fire
+    nothing, where an unsigned reading would launch. One step either side of 0x50 pins it."""
+    _spawn_shot_case(0, enemy_x=enemy_x, seed=enemy_x & 0xff)
+
+
+@pytest.mark.parametrize("kind", (0, 1, 0x80, 0xff))
+def test_spawn_shot_kind_is_a_whole_byte(kind):
+    """`tst.b d3` picks the seeker arm, so every non-zero byte does — not just 1."""
+    _spawn_shot_case(kind, seed=kind)
+
+
+def test_spawn_shot_plain_aimed_launch():
+    """Flags bit 1 clear: the aimed shot, whatever the type's class.
+
+    The player's y is temporarily raised by ENEMY_AIM_LEAD across the measurement and put back, so
+    a candidate that forgot either half aims somewhere else AND leaves the ship's record moved.
+    """
+    for player_y in (0, 0x0d, 0x0e, 0x40, 0xb0, 0x8000, 0xffff):
+        _spawn_shot_case(0, fire_flags=0, player_y=player_y, seed=0x10 + (player_y & 0xff))
+
+
+@pytest.mark.parametrize("enemy_type", (HOMING_CLASS_TYPE, NOT_HOMING_CLASS_TYPE))
+def test_spawn_shot_homing_needs_the_class_and_the_flag(enemy_type):
+    """Bit 1 set admits the steered launch, and the type must ALSO be in the homing map — driven
+    independently, so neither can stand in for the other."""
+    for fire_flags in (0, 1 << 1, (1 << 1) | 1):
+        _spawn_shot_case(0, enemy_type=enemy_type, fire_flags=fire_flags,
+                         seed=0x20 + enemy_type + fire_flags)
+
+
+@pytest.mark.parametrize("state", (STATE_DRAW_BELOW_HOMING_CHANCE, STATE_DRAW_AT_HOMING_CHANCE,
+                                   STATE_DRAW_ABOVE_HOMING_CHANCE))
+def test_spawn_shot_the_second_flag_bit_halves_the_chance(state):
+    """Bit 2 puts a draw in front of the class test, and the draw is compared `bge` against 0x32 —
+    so 0x31 launches the missile, 0x32 and above fall through to the aimed shot.
+
+    Driven at the boundary itself and one step either side, with the generator state SEARCHED for
+    rather than sampled, and against the same case with bit 2 CLEAR so the draw's absence shows.
+    """
+    for fire_flags in ((1 << 1) | (1 << 2), 1 << 1):
+        _spawn_shot_case(0, fire_flags=fire_flags, state=state, seed=state & 0xff)
+
+
+def test_spawn_shot_seeker_cooldown_gates_the_launch():
+    """A non-zero cooldown returns before anything at all; a zero one reloads it and then decides.
+
+    The reload happens BEFORE the position test, so a seeker refused for being on the wrong side of
+    the ship still spends the cooldown — which is what the middle case says.
+    """
+    for cooldown in (0, 1, 0x80, 0xff):
+        _spawn_shot_case(1, cooldown=cooldown, player_x=0x40, enemy_x=0x100,
+                         seed=0x30 + cooldown)
+
+
+@pytest.mark.parametrize("player_x,enemy_x", ((0x100, 0x100), (0x101, 0x100), (0xff, 0x100),
+                                              (0x8000, 0x100), (0x100, 0x8000), (0, 0)))
+def test_spawn_shot_seeker_only_fires_at_a_ship_behind_it(player_x, enemy_x):
+    """`cmp.w 0(a1),d1` + `ble` — SIGNED, and inclusive: a ship exactly level with the enemy is
+    still shot at. 0x8000 on either side is what separates that from an unsigned reading."""
+    _spawn_shot_case(1, player_x=player_x, enemy_x=enemy_x, seed=0x40 + (player_x & 0xff))
+
+
+def test_spawn_shot_seeker_launch_writes_every_field():
+    _spawn_shot_case(1, player_x=0x40, enemy_x=0x100, seed=0x50, poison=True)
+
+
+def test_spawn_shot_aimed_launch_writes_every_field():
+    _spawn_shot_case(0, fire_flags=0, seed=0x51, poison=True)
+
+
+def test_spawn_shot_homing_launch_writes_every_field():
+    _spawn_shot_case(0, fire_flags=1 << 1, seed=0x52, poison=True)
+
+
+@pytest.mark.parametrize("chunk", range(FUZZ_CHUNKS))
+def test_spawn_shot_fuzz(chunk):
+    """Random positions, flags, types and generator states across all three arms."""
+    rng = random.Random(0x11a2c)
+    for index in range(160):
+        case = (rng.randrange(2), rng.choice((HOMING_CLASS_TYPE, NOT_HOMING_CLASS_TYPE,
+                                              CAN_FIRE_TYPE, SEEKER_CLASS_TYPE)),
+                rng.randrange(0x100), rng.randrange(0x10000), rng.randrange(0x10000),
+                rng.randrange(0x10000), rng.randrange(0x10000), rng.randrange(0x100),
+                rng.randrange(1, 1 << 32))
+        if not _in_chunk(index, chunk):
+            continue
+        kind, enemy_type, flags, ex, ey, px, py, cooldown, state = case
+        _spawn_shot_case(kind, enemy_type, flags, ex, ey, px, py, cooldown, state, seed=index)
+
+
+# ================================ enemy_shot_tick_type0a @ 0x11bde / type0b @ 0x11bbc
+
+SHOT_TICK_ENTRIES = {ENTRY_ENEMY_SHOT_TICK_TYPE0A: "g_enemy_shot_tick_type0a",
+                     ENTRY_ENEMY_SHOT_TICK_TYPE0B: "g_enemy_shot_tick_type0b"}
+
+
+def _shot_tick_case(entry, ttl, target_index=PLAYER_ENTITY_INDEX, countdown=1, seed=0,
+                    poison=False):
+    pokes = _ai_environment(0xa000 + seed)
+    pokes[SHOT_SLOT] = (Record(0xa100 + seed).byte(ENTITY_ANIM_FRAME, ttl)
+                        .byte(SHOT_TARGET_INDEX, target_index)
+                        .byte(SHOT_TURN_COUNTDOWN, countdown)
+                        .word(ENTITY_X, 0x100).word(ENTITY_Y, 0x60).bytes())
+    glue = getattr(harness._lib, SHOT_TICK_ENTRIES[entry])
+    diffs, _ = differential(entry, {"a2": SHOT_SLOT, "_pokes": pokes},
+                            lambda lib, buf: glue(buf, SHOT_SLOT), poison=poison)
+    assert not diffs, f"entry={entry:#x} ttl={ttl:#x}\n{report(diffs)}"
+
+
+@pytest.mark.parametrize("entry", tuple(SHOT_TICK_ENTRIES))
+@pytest.mark.parametrize("ttl", (0, 1, 2, 3, 0x7f, 0x80, 0xff))
+def test_shot_tick_time_to_live(entry, ttl):
+    """`subi.b #$1` then `bne`: only 1 expires. 0 WRAPS to 0xff and flies on, which is what
+    separates the expiry from a `<= 0` test, and 0x80 is the other side of the sign."""
+    _shot_tick_case(entry, ttl, seed=(entry & 0xff) + ttl)
+
+
+@pytest.mark.parametrize("entry", tuple(SHOT_TICK_ENTRIES))
+@pytest.mark.parametrize("countdown", (1, 2))
+def test_shot_tick_steers_then_moves(entry, countdown):
+    """The live arm is `entity_steer_toward_target` then `entity_kill_if_offscreen`, and the steer's
+    own countdown decides whether it re-derives the heading — so both of its exits are driven."""
+    _shot_tick_case(entry, ttl=5, countdown=countdown, seed=0x20 + countdown)
+
+
+@pytest.mark.parametrize("target_index", (0, 6, 9, PLAYER_ENTITY_INDEX, 0x13, 0xff))
+def test_shot_tick_steers_at_the_index_it_holds(target_index):
+    """The target is an entity INDEX resolved through the shared record arithmetic, so a wrong
+    stride lands on a different record — driven from one end of the byte to the other."""
+    _shot_tick_case(ENTRY_ENEMY_SHOT_TICK_TYPE0A, ttl=5, target_index=target_index,
+                    seed=0x30 + target_index)
+
+
+def test_shot_tick_type0b_expires_into_a_ground_puff():
+    """The one difference between the twins: the seeker MORPHS on expiry where the homing shot just
+    stops being alive. Both are driven with the same record, so the difference is the routine's."""
+    _shot_tick_case(ENTRY_ENEMY_SHOT_TICK_TYPE0B, ttl=1, seed=0x40, poison=True)
+    _shot_tick_case(ENTRY_ENEMY_SHOT_TICK_TYPE0A, ttl=1, seed=0x41, poison=True)
+
+
+# ================================================== enemy_fire_and_update_shots @ 0x11906
+#
+# THE CHANCE TABLE'S INDEX KEEPS THE CALLER'S HIGH BYTE (src/enemy.c), so the band either side of
+# the table is seeded with noise and the register is driven with three different high bytes: a wrong
+# index then reads a different chance and the launch decision differs.
+FIRE_CHANCE_BAND = ((A_ENEMY_FIRE_CHANCE_TABLE - 0x110, A_ENEMY_FIRE_CHANCE_TABLE + 0x120),)
+FIRE_CHANCE_HIGH_BYTES = (0x0000, 0x0100, 0xff00, 0x1200)
+FIRE_SECTIONS = (0, 1, 7, 0x0f)
+
+
+def _fire_case(chance_index_register=0, section=0, mothership=0, state=AI_RNG_STATE,
+               shot_alive=(0, 0, 0), shot_types=(0x0c, 0x0a, 0x0b), enemy_alive=1,
+               enemy_type=CAN_FIRE_TYPE, fire_flags=3, chance=None, seed=0, poison=False):
+    pokes = abi.seed_spans(0xb000 + seed, FIRE_CHANCE_BAND)
+    pokes.update(_ai_environment(0xb100 + seed))
+    pokes[A_ENEMY_SHOT_SLOTS] = _array([
+        Record(0xb200 + seed + i).byte(ENTITY_ALIVE, shot_alive[i]).byte(ENTITY_TYPE, shot_types[i])
+        .byte(ENTITY_ANIM_FRAME, 5).byte(SHOT_TARGET_INDEX, PLAYER_ENTITY_INDEX)
+        .byte(SHOT_TURN_COUNTDOWN, 2).word(ENTITY_X, 0x100).word(ENTITY_Y, 0x60)
+        for i in range(ENEMY_SHOT_SLOTS)])
+    pokes[A_ENEMY_SLOTS] = _array([
+        Record(0xb300 + seed + i).byte(ENTITY_ALIVE, enemy_alive).byte(ENTITY_TYPE, enemy_type)
+        .byte(ACTOR_FIRE_FLAGS, fire_flags).word(ENTITY_X, 0x100).word(ENTITY_Y, 0x60)
+        for i in range(ENEMY_SLOT_COUNT)])
+    pokes[A_LEVEL_SECTION] = bytes([section])
+    pokes[A_MOTHERSHIP_READY] = bytes([mothership])
+    pokes[A_ENEMY_SEEKER_COOLDOWN] = bytes([0])
+    pokes[A_RNG_LFSR_STATE] = state.to_bytes(4, "big")
+    if chance is not None:      # ...over the noise band, so the case names the byte it compares
+        pokes[A_ENEMY_FIRE_CHANCE_TABLE + section] = bytes([chance])
+    diffs, _ = differential(ENTRY_ENEMY_FIRE_AND_UPDATE_SHOTS,
+                            {"d1": chance_index_register, "_pokes": pokes},
+                            lambda lib, buf: lib.g_enemy_fire_and_update_shots(
+                                buf, chance_index_register),
+                            poison=poison)
+    assert not diffs, (f"d1={chance_index_register:#x} section={section:#x} "
+                       f"mothership={mothership}\n{report(diffs)}")
+
+
+@pytest.mark.parametrize("high", FIRE_CHANCE_HIGH_BYTES)
+@pytest.mark.parametrize("section", FIRE_SECTIONS)
+def test_fire_chance_index_keeps_the_callers_high_byte(high, section):
+    """The section is loaded with `move.b` and indexed with `d1.w` on the next instruction, so the
+    chance really is read at (caller's D1 & 0xff00) | section.
+
+    The band either side of the table is noise, so each high byte names a DIFFERENT chance and a
+    candidate that spelt the index as an `ext.w` — or as the bare section — reads another byte and
+    launches, or refuses to launch, where the original did the opposite. 0xff00 is what makes it
+    reach BELOW the table.
+    """
+    _fire_case(chance_index_register=high | section, section=section, seed=high + section)
+
+
+@pytest.mark.parametrize("mothership", (0, 1))
+@pytest.mark.parametrize("fire_flags", (0, 1, 2, 3))
+def test_fire_the_boss_encounter_bypasses_the_flags_and_the_chance(mothership, fire_flags):
+    """While A_mothership_ready is set the routine jumps straight to the class tests, so an actor
+    whose ACTOR_FIRE_FLAGS is zero — which normally never fires — does."""
+    _fire_case(mothership=mothership, fire_flags=fire_flags, seed=0x20 + mothership * 4 + fire_flags)
+
+
+@pytest.mark.parametrize("enemy_type", (HOMING_CLASS_TYPE, NOT_HOMING_CLASS_TYPE, CAN_FIRE_TYPE,
+                                        SEEKER_CLASS_TYPE))
+def test_fire_the_two_class_maps_choose_the_kind(enemy_type):
+    """The seeker map is consulted FIRST and the "can fire" map only if it says no; a type in
+    neither fires nothing at all. Run with the boss flag set so the draw cannot mask the answer."""
+    _fire_case(mothership=1, enemy_type=enemy_type, seed=0x30 + enemy_type)
+
+
+@pytest.mark.parametrize("alive", (0, 1, 0x7f, 0x80, 0xff))
+def test_fire_needs_a_live_unexploding_enemy(alive):
+    """`tst.b` then `btst #7`: a dead record fires nothing, and so does one already exploding —
+    which is what the 0x80 and 0xff cases separate from "any non-zero byte"."""
+    _fire_case(mothership=1, enemy_alive=alive, seed=0x40 + alive)
+
+
+@pytest.mark.parametrize("shot_alive", ((0, 0, 0), (1, 0, 0), (1, 1, 0), (1, 1, 1)))
+def test_fire_launches_into_the_first_free_slot(shot_alive):
+    """The launch scan takes the first slot whose alive byte is zero, and with all three taken it
+    launches nothing — while the tick pass below still runs on every one of them."""
+    _fire_case(mothership=1, shot_alive=shot_alive, seed=0x50 + sum(shot_alive))
+
+
+def test_fire_ticks_every_kind_of_shot():
+    """The second pass: a seeker, a homing shot and one of neither kind in a single call, so the
+    two tickers and the plain drift arm are all driven — and the same set rotated, which is what
+    separates "ticked by type" from "ticked by position"."""
+    for rotation in range(3):
+        types = tuple((0x0c, 0x0a, 0x0b)[(i + rotation) % 3] for i in range(ENEMY_SHOT_SLOTS))
+        _fire_case(mothership=1, shot_alive=(1, 1, 1), shot_types=types, seed=0x60 + rotation)
+
+
+def _state_whose_fire_draw_is(chance_draw):
+    """A generator state that carries `enemy_fire_and_update_shots` all the way to its comparison.
+
+    Three draws stand between the entry and that compare — the slot pick, the one-frame-in-four roll
+    and the chance draw itself — so a state has to satisfy the middle one as well as the last. That
+    is why this is a search rather than a seed: without it no case reaches the compare with a KNOWN
+    draw, and the difference between `>=` and `>` is only visible when the two are equal.
+    """
+    def reaches_the_compare(state):
+        _pick, after_pick = _rand16_step(state)
+        roll, after_roll = _rand16_step(after_pick)
+        if roll & ENEMY_FIRE_ROLL_MASK:
+            return False
+        draw, _after = _rand16_step(after_roll)
+        return (draw >> ENEMY_FIRE_CHANCE_SHIFT) & ENEMY_FIRE_CHANCE_MASK == chance_draw
+
+    return _state_matching(reaches_the_compare, seed=0xf1e2)
+
+
+FIRE_CHANCE_EQUALITY_DRAW = 0x0c
+STATE_REACHING_THE_CHANCE_COMPARE = _state_whose_fire_draw_is(FIRE_CHANCE_EQUALITY_DRAW)
+
+
+@pytest.mark.parametrize("delta", (-1, 0, 1))
+def test_fire_chance_compare_is_inclusive(delta):
+    """`cmp.w d0,d1` + `blt` — the section's chance FIRES when it EQUALS the draw.
+
+    Only an equality case separates that from `>`: the two neighbours agree under either reading and
+    the middle one does not. The state is searched for so the draw is known, and the chance byte is
+    poked over the seeded band so the comparison's other operand is the case's own.
+    """
+    _fire_case(chance=FIRE_CHANCE_EQUALITY_DRAW + delta, state=STATE_REACHING_THE_CHANCE_COMPARE,
+               seed=0x80 + delta)
+
+
+def test_fire_attribution():
+    _fire_case(mothership=1, seed=0x70, poison=True)
+
+
+@pytest.mark.parametrize("chunk", range(FUZZ_CHUNKS))
+def test_fire_fuzz(chunk):
+    """Random generator states, sections, registers and slot vectors — which is what walks the
+    random slot pick over all eight wave records and the roll over all four of its outcomes."""
+    rng = random.Random(0x11906)
+    for index in range(120):
+        case = (rng.randrange(1, 1 << 32), rng.randrange(0x10), rng.randrange(0x10000),
+                rng.randrange(2), tuple(rng.randrange(2) for _ in range(ENEMY_SHOT_SLOTS)))
+        if not _in_chunk(index, chunk):
+            continue
+        state, section, register, mothership, shot_alive = case
+        _fire_case(chance_index_register=register, section=section, mothership=mothership,
+                   state=state, shot_alive=shot_alive, seed=index)
+
+
+# ===================================================== the four spawners' shared staging
+#
+# Every spawner claims a SQUADRON — one of the six counters — and fills free wave records. The
+# counter band is seeded 0x40 bytes wide so a wrong index differs, and the eight records get a
+# ninth behind them that must come back untouched.
+SPAWN_GUARD_RECORDS = ENEMY_SLOT_COUNT + 1
+
+
+# ...and the ninth record IS the ship's own (A_enemy_slots + 8 * 0x2c == A_player_record), which
+# makes the guard mean something rather than merely being spare memory: a spawner that ran one pass
+# too far would overwrite the player.
+def _spawn_environment(seed, alive, counters):
+    pokes = _ai_environment(0xc000 + seed)
+    pokes[A_ENEMY_SLOTS] = _array([Record(0xc100 + seed + i)
+                                   .byte(ENTITY_ALIVE, alive[i] if i < len(alive) else 1)
+                                   for i in range(SPAWN_GUARD_RECORDS)])
+    pokes[A_SQUADRON_KILL_COUNTERS] = bytes(counters) + random.Random(seed).randbytes(0x40)
+    pokes[A_FREE_WAVE_SLOT_COUNT] = bytes([0xa5])
+    return pokes
+
+
+ALL_SQUADRONS_FREE = (0,) * SQUADRON_COUNT
+ALL_SQUADRONS_TAKEN = (1,) * SQUADRON_COUNT
+
+
+# ================================================= wavescript_spawn_trio_type0e @ 0x13898
+
+TRIO_CURSOR = abi.SCRATCH
+
+
+def _trio_case(alive, counters=ALL_SQUADRONS_FREE, state=AI_RNG_STATE, seed=0, poison=False):
+    pokes = _spawn_environment(0xd000 + seed, alive, counters)
+    pokes[A_RNG_LFSR_STATE] = state.to_bytes(4, "big")
+    pokes[A_WAVE_SCRIPT_CURSOR] = bytes(4)
+    diffs, _ = differential(ENTRY_WAVESCRIPT_SPAWN_TRIO_TYPE0E,
+                            {"a4": TRIO_CURSOR, "_pokes": pokes},
+                            lambda lib, buf: lib.g_wavescript_spawn_trio_type0e(buf, TRIO_CURSOR),
+                            poison=poison)
+    assert not diffs, f"alive={alive} counters={counters}\n{report(diffs)}"
+
+
+@pytest.mark.parametrize("free", range(ENEMY_SLOT_COUNT + 1))
+def test_trio_needs_four_free_slots(free):
+    """`cmpi.b #$4,$198b7` + `blt` — the gate is on the count the routine JUST PUBLISHED, not on a
+    register, and it is a SIGNED byte compare. Driven at every count from 0 to 8, so a candidate
+    testing `> 4` or `!= 0` agrees on some and not others."""
+    _trio_case((0,) * free + (1,) * (ENEMY_SLOT_COUNT - free), seed=free)
+
+
+def test_trio_needs_a_free_squadron():
+    """Every counter taken and the routine returns having published only the free count — and one
+    free counter at each of the six positions, which pins the scan's direction."""
+    _trio_case((0,) * ENEMY_SLOT_COUNT, counters=ALL_SQUADRONS_TAKEN, seed=0x10)
+    for squadron in range(SQUADRON_COUNT):
+        counters = tuple(0 if i == squadron else 1 for i in range(SQUADRON_COUNT))
+        _trio_case((0,) * ENEMY_SLOT_COUNT, counters=counters, seed=0x11 + squadron)
+
+
+def test_trio_fills_the_free_slots_wherever_they_are():
+    """Exactly four free, at the front, at the back and interleaved: only three are filled, and the
+    fourth free record must come back untouched — which is what says the count is 3 and not "every
+    free slot"."""
+    for alive in ((0, 0, 0, 0, 1, 1, 1, 1), (1, 1, 1, 1, 0, 0, 0, 0), (0, 1, 0, 1, 0, 1, 0, 1)):
+        _trio_case(alive, seed=0x20 + alive[0])
+
+
+@pytest.mark.parametrize("state", (1, 0x1234abcd, 0x7fffffff, 0xffffffff, 0x83e4f2b3))
+def test_trio_random_spacing(state):
+    """The centre lines step by `(draw & 0x1f) + 0x19` and the first is `0x68 - step`, so the whole
+    y layout comes out of one draw — driven from several states including the one the binary ships
+    with."""
+    _trio_case((0,) * ENEMY_SLOT_COUNT, state=state, seed=state & 0xff)
+
+
+def test_trio_attribution():
+    _trio_case((0,) * ENEMY_SLOT_COUNT, seed=0x30, poison=True)
+
+
+# ============================ groundscript_spawn_type10 @ 0x13958 / type0f @ 0x13a12
+
+GROUND_CURSOR = abi.SCRATCH
+GROUND_ENTRIES = {ENTRY_GROUNDSCRIPT_SPAWN_TYPE10: "g_groundscript_spawn_type10",
+                  ENTRY_GROUNDSCRIPT_SPAWN_TYPE0F: "g_groundscript_spawn_type0f"}
+
+
+def _ground_spawn_case(entry, scripted_y, y_register=0, alive=(0,) * ENEMY_SLOT_COUNT,
+                 counters=ALL_SQUADRONS_FREE, state=AI_RNG_STATE, seed=0, poison=False):
+    pokes = _spawn_environment(0xe000 + seed, alive, counters)
+    pokes[GROUND_CURSOR] = random.Random(seed).randbytes(2) + (scripted_y & 0xffff).to_bytes(2, "big")
+    pokes[A_RNG_LFSR_STATE] = state.to_bytes(4, "big")
+    pokes[A_GROUND_SCRIPT_CURSOR] = bytes(4)
+    pokes[A_GROUND_SPAWN_RND_PARAM] = bytes([0xa5])
+    glue = getattr(harness._lib, GROUND_ENTRIES[entry])
+    diffs, _ = differential(entry, {"a4": GROUND_CURSOR, "d7": y_register, "_pokes": pokes},
+                            lambda lib, buf: glue(buf, GROUND_CURSOR, y_register), poison=poison)
+    assert not diffs, (f"entry={entry:#x} y={scripted_y:#x} d7={y_register:#x}\n{report(diffs)}")
+
+
+@pytest.mark.parametrize("entry", tuple(GROUND_ENTRIES))
+def test_ground_spawn_guard_is_the_y_register_not_the_free_count(entry):
+    """THE `beq` AFTER `count_free_wave_slots` TESTS D7, NOT THE COUNT.
+
+    That routine ends `movea.l (a7)+,a0 / move.l (a7)+,d7 / rts`, and it is the last MOVE that sets
+    the flags — so the branch reads the register this routine has just loaded with the scripted y
+    plus 0x20, over the caller's own high word. The three cases are: the only y that makes the whole
+    longword zero (0xffe0, with a clean high word), the SAME y with a non-zero high word (which
+    spawns), and an ordinary y with no free slot at all (which spawns too, because the count the
+    branch appears to read is not what it reads).
+    """
+    _ground_spawn_case(entry, scripted_y=0x10000 - GROUND_SPAWN_Y_BIAS, y_register=0, seed=1)
+    _ground_spawn_case(entry, scripted_y=0x10000 - GROUND_SPAWN_Y_BIAS, y_register=1 << 16, seed=2)
+    _ground_spawn_case(entry, scripted_y=0x40, alive=(1,) * ENEMY_SLOT_COUNT, seed=3)
+
+
+@pytest.mark.parametrize("entry", tuple(GROUND_ENTRIES))
+@pytest.mark.parametrize("scripted_y", (0, 1, 0x40, 0x7fff, 0x8000, 0xffdf, 0xffff))
+def test_ground_spawn_y_is_the_scripted_word_plus_the_bias(entry, scripted_y):
+    """`move.w (a4)+,d7 / add.w #$20,d7` — a WORD add, so the two ends of the range wrap rather than
+    saturating, and the cursor republished afterwards is four bytes on whatever the y was."""
+    _ground_spawn_case(entry, scripted_y, y_register=0x5a5a0000, seed=0x10 + (scripted_y & 0xff))
+
+
+@pytest.mark.parametrize("entry", tuple(GROUND_ENTRIES))
+def test_ground_spawn_takes_the_first_free_slot_only(entry):
+    """One actor, whatever how many slots are free — a candidate that filled every free record
+    differs on the second one."""
+    for alive in ((0,) * ENEMY_SLOT_COUNT, (1, 1, 0, 0, 0, 0, 0, 0), (1,) * 7 + (0,)):
+        _ground_spawn_case(entry, scripted_y=0x40, alive=alive, seed=0x20 + alive[0])
+
+
+@pytest.mark.parametrize("entry", tuple(GROUND_ENTRIES))
+def test_ground_spawn_needs_a_free_squadron(entry):
+    _ground_spawn_case(entry, scripted_y=0x40, counters=ALL_SQUADRONS_TAKEN, seed=0x30)
+    for squadron in range(SQUADRON_COUNT):
+        counters = tuple(0 if i == squadron else 1 for i in range(SQUADRON_COUNT))
+        _ground_spawn_case(entry, scripted_y=0x40, counters=counters, seed=0x31 + squadron)
+
+
+@pytest.mark.parametrize("entry", tuple(GROUND_ENTRIES))
+@pytest.mark.parametrize("state", (1, 0x1234abcd, 0x83e4f2b3, 0xffffffff))
+def test_ground_spawn_redraws_the_parameter_until_it_is_not_zero(entry, state):
+    """The tail is `do { draw = rand16() & 0x1f } while (draw == 0)`, so a state whose first draw
+    masks to zero must make a SECOND one — and the generator state left behind says how many."""
+    _ground_spawn_case(entry, scripted_y=0x40, state=state, seed=0x40 + (state & 0xff))
+
+
+@pytest.mark.parametrize("entry", tuple(GROUND_ENTRIES))
+def test_ground_spawn_attribution(entry):
+    _ground_spawn_case(entry, scripted_y=0x40, seed=0x50, poison=True)
+
+
+# ================================================================ squadron_spawn_tick @ 0x13af2
+
+def _squadron_case(enabled, countdown, group_alive, state=AI_RNG_STATE, seed=0, poison=False):
+    """`group_alive` is one alive vector per asteroid group, three columns each."""
+    records = []
+    for group in range(ASTEROID_GROUPS):
+        for column in range(ASTEROID_COLUMNS):
+            records.append(Record(0xf000 + seed + len(records))
+                           .byte(ENTITY_ALIVE, group_alive[group][column]))
+    records.append(Record(0xf100 + seed).byte(ENTITY_ALIVE, 1))     # the guard past the eighteen
+    pokes = {A_ASTEROID_RECORDS: _array(records),
+             A_SQUADRON_SPAWN_ENABLED: bytes([enabled]),
+             A_SQUADRON_SPAWN_COUNTDOWN: bytes([countdown]),
+             A_RNG_LFSR_STATE: state.to_bytes(4, "big")}
+    diffs, _ = differential(ENTRY_SQUADRON_SPAWN_TICK, {"_pokes": pokes},
+                            lambda lib, buf: lib.g_squadron_spawn_tick(buf), poison=poison)
+    assert not diffs, (f"enabled={enabled} countdown={countdown} alive={group_alive}\n"
+                       f"{report(diffs)}")
+
+
+ALL_GROUPS_ALIVE = ((1, 1, 1),) * ASTEROID_GROUPS
+
+
+def _one_dead_group(index):
+    return tuple((0, 0, 0) if g == index else (1, 1, 1) for g in range(ASTEROID_GROUPS))
+
+
+@pytest.mark.parametrize("enabled", (0, 1, 0x80, 0xff))
+@pytest.mark.parametrize("countdown", (1, 2, 0, 0xff))
+def test_squadron_tick_gate_and_countdown(enabled, countdown):
+    """`tst.b` on the enable byte, then `subi.b #$1` + `beq` on the countdown — which is STORED
+    before it is tested, so a disabled tick must leave the countdown alone and an enabled one must
+    step it whether or not it reaches zero. A countdown of 0 wraps to 0xff and does NOT fire."""
+    _squadron_case(enabled, countdown, _one_dead_group(0), seed=enabled + countdown)
+
+
+@pytest.mark.parametrize("group", range(ASTEROID_GROUPS))
+def test_squadron_tick_fills_the_first_all_dead_group(group):
+    """One free group at each of the six positions, which pins the 0x84-byte group stride and the
+    `or.b` over all three columns — a candidate testing only the first column of each group fills
+    the wrong one."""
+    _squadron_case(1, 1, _one_dead_group(group), seed=0x10 + group)
+
+
+@pytest.mark.parametrize("partial", ((1, 0, 0), (0, 1, 0), (0, 0, 1)))
+def test_squadron_tick_needs_every_column_dead(partial):
+    """A group with one column still alive is not free, so the routine must walk past it — driven
+    with that partial group first and a fully dead one behind it."""
+    groups = (partial, (0, 0, 0)) + ((1, 1, 1),) * (ASTEROID_GROUPS - 2)
+    _squadron_case(1, 1, groups, seed=0x20 + partial.index(1))
+
+
+def test_squadron_tick_reloads_even_with_no_free_group():
+    """The reload is on BOTH paths: the `bra` that gives up on the scan lands on it too."""
+    _squadron_case(1, 1, ALL_GROUPS_ALIVE, seed=0x30)
+
+
+@pytest.mark.parametrize("state", (1, 0x1234abcd, 0x7fffffff, 0xffffffff, 0x83e4f2b3))
+def test_squadron_tick_random_flags_and_position(state):
+    """Three draws decide the layout: the descend flag (`(draw >> 2) & 7 < 4`), the slow flag
+    (`(draw >> 1) & 7 >= 4` — the OPPOSITE sense) and the y. Driven from several states so both
+    values of each flag are reached, which is what a swapped pair of senses fails on."""
+    _squadron_case(1, 1, _one_dead_group(2), state=state, seed=state & 0xff)
+
+
+def test_squadron_tick_attribution():
+    _squadron_case(1, 1, _one_dead_group(0), seed=0x40, poison=True)
+
+
+
+# ==================================================================== spawn_formation @ 0x14a7c
+#
+# The spawner every attack script and the boss go through. Its formation record and graphics
+# attributes are SHIPPED DATA, so most cases drive the game's own eighteen formations; the three
+# arms that data never reaches (the kind in byte 3, a random y, and a count of zero) are driven by
+# poking a record over formation 0's, which is the only index those cases use.
+FORMATION_FLAGS, FORMATION_COUNT, FORMATION_KIND = 1, 2, 3
+FORMATION_BODY_SHORT, FORMATION_BODY_LONG = 3, 5
+FORMATION_ATTRS_BYTES = 8
+SPAWN_TEMPLATE_ROWS = 0x10
+ACTOR_SCRIPT_OPCODE_INITIAL = 0x7f
+SPAWN_STAGGER_FIRST = 1
+SPAWN_RANDOM_Y_MASK, SPAWN_RANDOM_Y_BASE = 0x7f, 0x28
+
+SPAWN_TYPE = 5
+SPAWN_SPRITE = A_WAVE_TRIO_SPRITE
+
+
+def test_the_formation_tables_shipped_extent():
+    """SHIPPED_FORMATION_KINDS is a claim about the image, so it is read back off it.
+
+    The pointer table's entries must all address the formation-data block that follows it, and the
+    entry one past the end must NOT — which is what says 18 is the extent rather than a guess. The
+    script pointer table beside it is checked the same way, against the script byte stream.
+    """
+    formation_data = _table_entry(A_FORMATION_TABLE)
+    for kind in range(SHIPPED_FORMATION_KINDS):
+        assert formation_data <= _table_entry(A_FORMATION_TABLE + 4 * kind) < A_FORMATION_GFX_ATTRS
+        assert A_ACTOR_SCRIPT_DATA <= _table_entry(A_ACTOR_SCRIPT_TABLE + 4 * kind) < formation_data
+    beyond = _table_entry(A_FORMATION_TABLE + 4 * SHIPPED_FORMATION_KINDS)
+    assert not formation_data <= beyond < A_FORMATION_GFX_ATTRS, (
+        f"formation {SHIPPED_FORMATION_KINDS} now points into the data block — the extent moved")
+
+
+def _formation_case(formation, actor_type=SPAWN_TYPE, base_x=0x180, base_y=0x40, fire_flags=1,
+                    sprite=SPAWN_SPRITE, alive=(0,) * ENEMY_SLOT_COUNT,
+                    counters=ALL_SQUADRONS_FREE, state=AI_RNG_STATE, extra=None, seed=0,
+                    poison=False):
+    pokes = _spawn_environment(0x12000 + seed, alive, counters)
+    pokes[A_ACTOR_SPAWN_TEMPLATE] = random.Random(0x12100 + seed).randbytes(ENTITY_STRIDE)
+    pokes[A_RNG_LFSR_STATE] = state.to_bytes(4, "big")
+    pokes.update(extra or {})
+    regs = {"d7": formation, "d1": actor_type, "d3": base_x, "d4": base_y, "d5": fire_flags,
+            "a5": sprite, "_pokes": pokes}
+    diffs, _ = differential(ENTRY_SPAWN_FORMATION, regs,
+                            lambda lib, buf: lib.g_spawn_formation(buf, formation, actor_type,
+                                                                    base_x, base_y, fire_flags,
+                                                                    sprite),
+                            poison=poison)
+    assert not diffs, (f"formation={formation} type={actor_type:#x} base=({base_x:#x},{base_y:#x})"
+                       f"\n{report(diffs)}")
+
+
+@pytest.mark.parametrize("formation", range(SHIPPED_FORMATION_KINDS))
+def test_formation_spawns_every_shipped_formation(formation):
+    """The game's own eighteen records, each with every slot free.
+
+    They differ in count (1..5), in stagger step, in per-actor offsets and in the graphics-attribute
+    record their kind resolves to, so a candidate that read the wrong field of the header, or strode
+    the attributes by the wrong width, differs on most of them.
+    """
+    _formation_case(formation, seed=formation)
+
+
+@pytest.mark.parametrize("free", range(ENEMY_SLOT_COUNT + 1))
+def test_formation_stops_when_the_slots_run_out(free):
+    """`bcs` out of the placement loop the first time the allocator refuses — driven at every free
+    count, so a formation asking for five actors places min(five, free) of them and no more."""
+    _formation_case(3, alive=(0,) * free + (1,) * (ENEMY_SLOT_COUNT - free), seed=0x10 + free)
+
+
+def test_formation_needs_a_slot_and_a_squadron():
+    """Two early returns, and neither writes anything but the published free count."""
+    _formation_case(0, alive=(1,) * ENEMY_SLOT_COUNT, seed=0x20)
+    _formation_case(0, counters=ALL_SQUADRONS_TAKEN, seed=0x21)
+
+
+@pytest.mark.parametrize("squadron", range(SQUADRON_COUNT))
+def test_formation_claims_the_first_free_squadron(squadron):
+    """The claimed counter is stepped once per actor placed, and the id goes into every record —
+    driven at each of the six, over a seeded band, so a wrong index differs twice over."""
+    counters = tuple(0 if i == squadron else 1 for i in range(SQUADRON_COUNT))
+    _formation_case(1, counters=counters, seed=0x30 + squadron)
+
+
+@pytest.mark.parametrize("base_x", (0, 0x180, 0x7fff, 0x8000, 0xffff))
+@pytest.mark.parametrize("base_y", (0, 0x40, 0xff, 0x8000, 0xffff))
+def test_formation_offsets_are_relative_to_the_base(base_x, base_y):
+    """Both bases are WORDS and both adds wrap in 16 bits. Formation 3's own offsets are non-zero on
+    both axes, so a candidate that dropped either base — or that sign-extended the y byte the way it
+    must sign-extend the x one — differs."""
+    _formation_case(3, base_x=base_x, base_y=base_y, seed=0x40 + (base_x & 0xff) + (base_y & 0xff))
+
+
+def test_formation_x_offset_is_signed_and_y_is_not():
+    """A poked record whose four actors carry 0x7f/0x80/0xff/0x01 on BOTH axes.
+
+    The x byte goes through `ext.w` and the y byte through `and.w #$ff`, so the same byte means
+    -1 on one axis and +255 on the other — the one case that separates the two readings.
+    """
+    record = bytes([0, 0, 4, 0x08, 0x7f, 0x7f, 0x80, 0x80, 0xfe, 0xfe, 0x01, 0x01])
+    _formation_case(0, extra={_table_entry(A_FORMATION_TABLE): record}, seed=0x50)
+
+
+def test_formation_y_marker_draws_a_random_row():
+    """A y offset of 0xff is replaced by `(draw & 0x7f) + 0x28` instead of being added to the base.
+
+    NO SHIPPED FORMATION CARRIES ONE — `test_no_shipped_formation_asks_for_a_random_row` says so —
+    so the record is poked, and the marker is driven beside an ordinary 0xfe on the next actor to
+    show the test is an equality and not a bound.
+    """
+    record = bytes([0, 0, 3, 0x08, 0x00, 0xff, 0x10, 0xfe, 0x20, 0xff])
+    for state in (AI_RNG_STATE, 0x83e4f2b3, 1):
+        _formation_case(0, extra={_table_entry(A_FORMATION_TABLE): record}, state=state,
+                        seed=0x60 + (state & 0xff))
+
+
+def test_no_shipped_formation_asks_for_a_random_row():
+    """...and this is the assertion that keeps the case above honest about being poked.
+
+    It walks each shipped record's per-actor bytes and asserts none of the y offsets is the marker,
+    so the day the game's data does reach that arm, the note above stops being true and fails here.
+    """
+    for kind in range(SHIPPED_FORMATION_KINDS):
+        record = _table_entry(A_FORMATION_TABLE + 4 * kind)
+        flags = harness.BASE_IMAGE[record + FORMATION_FLAGS]
+        count = harness.BASE_IMAGE[record + FORMATION_COUNT]
+        body = record + (FORMATION_BODY_LONG if flags & FORMATION_KIND_IN_BYTE3
+                         else FORMATION_BODY_SHORT)
+        ys = [harness.BASE_IMAGE[body + 1 + 2 * actor + 1] for actor in range(count)]
+        assert SPAWN_RANDOM_Y not in ys, f"formation {kind} does reach the random-row arm"
+        assert not flags & FORMATION_KIND_IN_BYTE3, f"formation {kind} does carry the kind in byte 3"
+
+
+def test_formation_kind_may_live_in_byte_three():
+    """The header's other shape: byte 1's bit 7 moves the kind to byte 3 and skips byte 4.
+
+    Unreachable from the shipped data (asserted just above), so the record is poked — and the kind
+    it names is what picks BOTH the graphics attributes and the script the actors start on, so the
+    two shapes differ in every field a spawned record carries.
+    """
+    for kind in (0, 1, 5, 0x11):
+        record = bytes([0, FORMATION_KIND_IN_BYTE3, 2, kind, 0, 0x08, 0x00, 0x00, 0x10, 0x10])
+        _formation_case(0, extra={_table_entry(A_FORMATION_TABLE): record}, seed=0x70 + kind)
+
+
+def test_formation_count_of_zero_walks_the_whole_word():
+    """`subq.l #1,d7` + `dbf` — a count of 0 means 0x10000 passes, not none.
+
+    What stops it is the ALLOCATOR: the ninth request fails and the loop leaves. So this case says
+    the count is a `dbf` register and not a plain loop bound, and it says the failure arm is what
+    terminates the routine.
+    """
+    record = bytes([0, 0, 0, 0x01]) + bytes(0x20)
+    _formation_case(0, extra={_table_entry(A_FORMATION_TABLE): record}, seed=0x80)
+
+
+@pytest.mark.parametrize("actor_type", (0, 1, 0x0e, 0x7f, 0x80, 0xff))
+def test_formation_template_carries_the_callers_arguments(actor_type):
+    """The type, the fire flags and the sprite pointer are the caller's and reach every record
+    through the template — driven with a sprite the shipped data never uses, so a candidate reading
+    one out of the formation instead differs."""
+    for fire_flags in (0, 1, 3, 0xff):
+        _formation_case(1, actor_type=actor_type, fire_flags=fire_flags, sprite=A_SHOT_SPRITE_SEEKER,
+                        seed=0x90 + actor_type + fire_flags)
+
+
+def test_the_initial_opcode_a_spawned_actor_carries():
+    """ACTOR_SCRIPT_OPCODE_INITIAL is not an arbitrary marker: it decodes to class 7, extended
+    operand 15, which is `actor_script_op_end_frame` — so a freshly spawned actor does nothing on
+    its first frame and starts its script on the next one. Asserted here rather than asserted in
+    prose, so the day the template's literal changes this says what it stopped meaning."""
+    assert ACTOR_SCRIPT_OPCODE_INITIAL & SCRIPT_CLASS_MASK == 7
+    assert (ACTOR_SCRIPT_OPCODE_INITIAL & 0x78) >> 3 == EXT_LIVE_OPERANDS[-1]
+    assert _table_entry(A_SCRIPT_OP_EXT_TABLE + 4 * EXT_LIVE_OPERANDS[-1]) == (
+        ENTRY_ACTOR_SCRIPT_OP_END_FRAME)
+
+
+def test_formation_attribution():
+    """Poison over a five-actor formation: every field of the template, and every field the loop
+    then writes over it, has to be attributable."""
+    _formation_case(1, seed=0xa0, poison=True)
+    _formation_case(3, seed=0xa1, poison=True)
+
+
+@pytest.mark.parametrize("chunk", range(FUZZ_CHUNKS))
+def test_formation_fuzz(chunk):
+    """Every shipped formation against random bases, types, flags, slot vectors and generator
+    states."""
+    rng = random.Random(ENTRY_SPAWN_FORMATION)
+    for index in range(120):
+        case = (rng.randrange(SHIPPED_FORMATION_KINDS), rng.randrange(0x100),
+                rng.randrange(0x10000), rng.randrange(0x10000), rng.randrange(0x100),
+                tuple(rng.randrange(2) for _ in range(ENEMY_SLOT_COUNT)),
+                rng.randrange(1, 1 << 32))
+        if not _in_chunk(index, chunk):
+            continue
+        formation, actor_type, base_x, base_y, flags, alive, state = case
+        _formation_case(formation, actor_type, base_x, base_y, flags, alive=alive, state=state,
+                        seed=index)
+
+
+# =========================================================== wavescript_spawn_wave @ 0x13868
+
+WAVE_OPCODE_FIRE_BIT, WAVE_OPCODE_HOMING_BIT = 4, 5
+WAVE_FIRE_FLAGS_AIMED, WAVE_FIRE_FLAGS_STEERED = 1, 3
+WAVE_SPAWN_X = 0x180
+WAVE_CURSOR = abi.SCRATCH
+
+
+def _wave_case(opcode, base_y=0x40, actor_type=SPAWN_TYPE, sprite=SPAWN_SPRITE,
+               alive=(0,) * ENEMY_SLOT_COUNT, seed=0, poison=False):
+    pokes = _spawn_environment(0x13000 + seed, alive, ALL_SQUADRONS_FREE)
+    pokes[A_ACTOR_SPAWN_TEMPLATE] = random.Random(0x13100 + seed).randbytes(ENTITY_STRIDE)
+    pokes[A_WAVE_SCRIPT_CURSOR] = bytes(4)
+    regs = {"a4": WAVE_CURSOR, "d7": opcode, "d6": base_y, "d1": actor_type, "a5": sprite,
+            "_pokes": pokes}
+    diffs, _ = differential(ENTRY_WAVESCRIPT_SPAWN_WAVE, regs,
+                            lambda lib, buf: lib.g_wavescript_spawn_wave(buf, WAVE_CURSOR, opcode,
+                                                                         base_y, actor_type,
+                                                                         sprite),
+                            poison=poison)
+    assert not diffs, f"opcode={opcode:#x} base_y={base_y:#x}\n{report(diffs)}"
+
+
+@pytest.mark.parametrize("formation", range(0x10))
+def test_wave_opcode_low_nibble_is_the_formation(formation):
+    """`and.w #$f,d7` — sixteen of the eighteen shipped formations are reachable from an opcode, and
+    each spawns a different shape."""
+    _wave_case(formation, seed=formation)
+
+
+@pytest.mark.parametrize("bits", (0, 1 << WAVE_OPCODE_FIRE_BIT, 1 << WAVE_OPCODE_HOMING_BIT,
+                                  (1 << WAVE_OPCODE_FIRE_BIT) | (1 << WAVE_OPCODE_HOMING_BIT)))
+def test_wave_opcode_bits_four_and_five_are_the_fire_flags(bits):
+    """Bit 5 is tested only INSIDE bit 4's arm, so bit 5 alone leaves the flags at zero — which is
+    what separates the nested test from two independent ones. The flag byte reaches every spawned
+    record's ACTOR_FIRE_FLAGS, so the three outcomes are three different records."""
+    _wave_case(bits | 1, seed=0x10 + bits)
+
+
+@pytest.mark.parametrize("base_y", (0, 0x40, 0xff, 0x100, 0x1ff, 0x8040, 0xffff))
+def test_wave_base_y_is_masked_to_a_byte(base_y):
+    """`and.w #$ff,d6` before it becomes spawn_formation's base y, so 0x140 and 0x40 spawn at the
+    same row — which is what a candidate passing the whole word gets wrong."""
+    _wave_case(3, base_y=base_y, seed=0x20 + (base_y & 0xff))
+
+
+def test_wave_republishes_the_cursor_before_it_spawns():
+    """The cursor is advanced by four and stored whatever the spawn then does — driven with every
+    slot taken, so nothing else happens at all."""
+    _wave_case(1, alive=(1,) * ENEMY_SLOT_COUNT, seed=0x30, poison=True)
+
+
+def test_wave_attribution():
+    _wave_case((1 << WAVE_OPCODE_FIRE_BIT) | 3, seed=0x40, poison=True)
+
+
 # --- test_constants.py collects these; see README.md, "Adding a function" ---
 MIRRORS = (
     ("ENTITY_STRIDE", "include/entity.h", "ENTITY_STRIDE"),
@@ -2241,6 +3813,81 @@ MIRRORS = (
     ("EXPLOSION_PARTS", "src/enemy.c", "EXPLOSION_PARTS"),
     ("EXPLOSION_END_FRAME", "src/enemy.c", "EXPLOSION_END_FRAME"),
     ("EXPLOSION_OFFSET_WORDS", "src/enemy.c", "EXPLOSION_OFFSET_WORDS"),
+    # ---- wave 3: the enemy AI tree ----
+    ("A_ACTOR_MOVE_TABLE", "include/enemy.h", "A_actor_move_table"),
+    ("A_SCRIPT_OP_TABLE", "include/enemy.h", "A_script_op_table"),
+    ("A_SCRIPT_OP_EXT_TABLE", "include/enemy.h", "A_script_op_ext_table"),
+    ("A_ACTOR_SCRIPT_TABLE", "include/enemy.h", "A_actor_script_table"),
+    ("A_ACTOR_SCRIPT_DATA", "include/enemy.h", "A_actor_script_data"),
+    ("A_FORMATION_TABLE", "include/enemy.h", "A_formation_table"),
+    ("A_FORMATION_GFX_ATTRS", "include/enemy.h", "A_formation_gfx_attrs"),
+    ("A_FORMATION_BASE_Y", "include/enemy.h", "A_formation_base_y"),
+    ("A_ACTOR_SPAWN_TEMPLATE", "include/enemy.h", "A_actor_spawn_template"),
+    ("A_WAVE_SCRIPT_CURSOR", "include/enemy.h", "A_wave_script_cursor"),
+    ("A_GROUND_SCRIPT_CURSOR", "include/enemy.h", "A_ground_script_cursor"),
+    ("A_SQUADRON_SPAWN_ENABLED", "include/enemy.h", "A_squadron_spawn_enabled"),
+    ("A_SQUADRON_SPAWN_COUNTDOWN", "include/enemy.h", "A_squadron_spawn_countdown"),
+    ("A_GROUND_SPAWN_RND_PARAM", "include/enemy.h", "A_ground_spawn_rnd_param"),
+    ("A_ENEMY_TYPES_FIRE_HOMING", "include/enemy.h", "A_enemy_types_fire_homing"),
+    ("A_ENEMY_TYPES_CAN_FIRE", "include/enemy.h", "A_enemy_types_can_fire"),
+    ("A_ENEMY_TYPES_FIRE_SEEKER", "include/enemy.h", "A_enemy_types_fire_seeker"),
+    ("A_ENEMY_FIRE_CHANCE_TABLE", "include/enemy.h", "A_enemy_fire_chance_table"),
+    ("A_ENEMY_SEEKER_COOLDOWN", "include/enemy.h", "A_enemy_seeker_cooldown"),
+    ("A_LEVEL_SECTION", "include/init.h", "A_level_section"),
+    ("A_BOSS_SEQUENCE_ACTIVE", "include/sprite.h", "A_boss_sequence_active"),
+    ("A_MOTHERSHIP_READY", "include/mothership.h", "A_mothership_ready"),
+    ("A_SHOT_SPRITE_AIMED", "include/enemy.h", "A_shot_sprite_aimed"),
+    ("A_SHOT_SPRITE_HOMING", "include/enemy.h", "A_shot_sprite_homing"),
+    ("A_SHOT_SPRITE_SEEKER", "include/enemy.h", "A_shot_sprite_seeker"),
+    ("A_GROUND_PUFF_SPRITE", "include/enemy.h", "A_ground_puff_sprite"),
+    ("A_WAVE_TRIO_SPRITE", "include/enemy.h", "A_wave_trio_sprite"),
+    ("A_GROUND_ACTOR_SPRITE", "include/enemy.h", "A_ground_actor_sprite"),
+    ("ACTOR_SCRIPT_DELAY", "include/enemy.h", "ACTOR_SCRIPT_DELAY"),
+    ("ACTOR_SCRIPT_OPCODE", "include/enemy.h", "ACTOR_SCRIPT_OPCODE"),
+    ("ACTOR_FIRE_FLAGS", "include/enemy.h", "ACTOR_FIRE_FLAGS"),
+    ("ACTOR_SPAWN_TAG", "include/enemy.h", "ACTOR_SPAWN_TAG"),
+    ("ACTOR_KEEP_X_MAX", "include/enemy.h", "ACTOR_KEEP_X_MAX"),
+    ("ENTITY_HP", "include/entity.h", "ENTITY_HP"),
+    ("SHOT_TARGET_INDEX", "include/weapon.h", "SHOT_TARGET_INDEX"),
+    ("SHOT_TURN_COUNTDOWN", "include/weapon.h", "SHOT_TURN_COUNTDOWN"),
+    ("SHOT_TURN_PERIOD", "include/weapon.h", "SHOT_TURN_PERIOD"),
+    ("SHOT_HEADING", "include/weapon.h", "SHOT_HEADING"),
+    ("SHOT_SPEED", "include/weapon.h", "SHOT_SPEED"),
+    ("SHOT_MAX_TURN", "include/weapon.h", "SHOT_MAX_TURN"),
+    ("SQUADRON_COUNT", "src/enemy.c", "SQUADRON_COUNT"),
+    ("ENEMY_SHOT_SLOTS", "src/enemy.c", "ENEMY_SHOT_SLOTS"),
+    ("GROUND_PUFF_TYPE", "src/enemy.c", "GROUND_PUFF_TYPE"),
+    ("GROUND_PUFF_ROWS", "src/enemy.c", "GROUND_PUFF_ROWS"),
+    ("GROUND_PUFF_RISE", "src/enemy.c", "GROUND_PUFF_RISE"),
+    ("PLAYER_ENTITY_INDEX", "src/enemy.c", "PLAYER_ENTITY_INDEX"),
+    ("SCRIPT_CLASS_MASK", "src/enemy.c", "SCRIPT_CLASS_MASK"),
+    ("ENEMY_SHOT_MIN_X", "src/enemy.c", "ENEMY_SHOT_MIN_X"),
+    ("ENEMY_HOMING_CHANCE", "src/enemy.c", "ENEMY_HOMING_CHANCE"),
+    ("ENEMY_SEEKER_COOLDOWN", "src/enemy.c", "ENEMY_SEEKER_COOLDOWN"),
+    ("ENEMY_FIRE_ROLL_MASK", "src/enemy.c", "ENEMY_FIRE_ROLL_MASK"),
+    ("ENEMY_FIRE_CHANCE_SHIFT", "src/enemy.c", "ENEMY_FIRE_CHANCE_SHIFT"),
+    ("ENEMY_FIRE_CHANCE_MASK", "src/enemy.c", "ENEMY_FIRE_CHANCE_MASK"),
+    ("TRIO_MIN_FREE_SLOTS", "src/enemy.c", "TRIO_MIN_FREE_SLOTS"),
+    ("TRIO_ACTORS", "src/enemy.c", "TRIO_ACTORS"),
+    ("GROUND_SPAWN_Y_BIAS", "src/enemy.c", "GROUND_SPAWN_Y_BIAS"),
+    ("SPAWN_RANDOM_Y", "src/enemy.c", "SPAWN_RANDOM_Y"),
+    ("FORMATION_KIND_IN_BYTE3", "src/enemy.c", "FORMATION_KIND_IN_BYTE3"),
+    ("FORMATION_FLAGS", "src/enemy.c", "FORMATION_FLAGS"),
+    ("FORMATION_COUNT", "src/enemy.c", "FORMATION_COUNT"),
+    ("FORMATION_KIND", "src/enemy.c", "FORMATION_KIND"),
+    ("FORMATION_BODY_SHORT", "src/enemy.c", "FORMATION_BODY_SHORT"),
+    ("FORMATION_BODY_LONG", "src/enemy.c", "FORMATION_BODY_LONG"),
+    ("FORMATION_ATTRS_BYTES", "src/enemy.c", "FORMATION_ATTRS_BYTES"),
+    ("SPAWN_TEMPLATE_ROWS", "src/enemy.c", "SPAWN_TEMPLATE_ROWS"),
+    ("ACTOR_SCRIPT_OPCODE_INITIAL", "src/enemy.c", "ACTOR_SCRIPT_OPCODE_INITIAL"),
+    ("SPAWN_STAGGER_FIRST", "src/enemy.c", "SPAWN_STAGGER_FIRST"),
+    ("SPAWN_RANDOM_Y_MASK", "src/enemy.c", "SPAWN_RANDOM_Y_MASK"),
+    ("SPAWN_RANDOM_Y_BASE", "src/enemy.c", "SPAWN_RANDOM_Y_BASE"),
+    ("WAVE_OPCODE_FIRE_BIT", "src/enemy.c", "WAVE_OPCODE_FIRE_BIT"),
+    ("WAVE_OPCODE_HOMING_BIT", "src/enemy.c", "WAVE_OPCODE_HOMING_BIT"),
+    ("WAVE_FIRE_FLAGS_AIMED", "src/enemy.c", "WAVE_FIRE_FLAGS_AIMED"),
+    ("WAVE_FIRE_FLAGS_STEERED", "src/enemy.c", "WAVE_FIRE_FLAGS_STEERED"),
+    ("WAVE_SPAWN_X", "src/enemy.c", "WAVE_SPAWN_X"),
 )
 
 # The first bytes of each routine, read off the loaded image — ten of them where ten is enough, and
@@ -2299,4 +3946,20 @@ ENTRY_PROLOGUES = {
     "ENTRY_EXPLOSION_ANIMATE_ALL": "4a3900019670670000b8",
     "ENTRY_EXPLOSION_SPAWN": "302a0000322a000405f9",
     "ENTRY_ASTEROIDS_DRAW": "45f900017e2a3e3c00053c3c00024a2a000e67000012",
+    "ENTRY_ENEMY_FIRE_AND_UPDATE_SHOTS": "45f900017b9641f90001",
+    "ENTRY_SPAWN_ENEMY_SHOT": "4a036600010a0c690050",
+    "ENTRY_ENEMY_SHOT_TICK_TYPE0B": "042a000100206600000861001f08",
+    "ENTRY_ENEMY_SHOT_TICK_TYPE0A": "042a0001002066000008422a000e",
+    "ENTRY_WAVESCRIPT_SPAWN_WAVE": "49ec000423cc0001824e4205",
+    "ENTRY_WAVESCRIPT_SPAWN_TRIO_TYPE0E": "49ec000423cc0001824e6184",
+    "ENTRY_GROUNDSCRIPT_SPAWN_TYPE10": "49ec00023e1cde7c002023cc0001824a6100febe670000a2",
+    "ENTRY_GROUNDSCRIPT_SPAWN_TYPE0F": "49ec00023e1cde7c002023cc0001824a6100fe04670000a6",
+    "ENTRY_ENEMY_MORPH_TO_TYPE6": "157c00060011357c0010",
+    "ENTRY_SQUADRON_SPAWN_TICK": "4a3900019aae6700000e",
+    "ENTRY_ENEMIES_MOVE_ALL": "45f900017b963e3c000a",
+    "ENTRY_SPAWN_FORMATION": "2f042f036100eda64a00",
+    "ENTRY_ENEMY_MOVE_SCRIPTED": "4a3900019aad66000016",
+    "ENTRY_ACTOR_SCRIPT_RUN": "532a0026670000286a00",
+    "ENTRY_ACTOR_SCRIPT_OP_EXT": "1001c03c0078e6084880",
+    "ENTRY_ACTOR_SCRIPT_OP_FIRE": "157c0011001ac23c0078",
 }

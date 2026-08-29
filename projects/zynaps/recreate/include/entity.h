@@ -53,7 +53,9 @@
                                    * test_init.py::test_the_restart_prologue_rewrites_the_ship_pair_last */
 /* .b — alive / animation state, bit 7 = exploding. PINNED BY test_entity.py,
  * test_init.py::test_section_restart_prologue (its 18- and 6-slot kill sweeps) and
- * test_weapon.py::test_a_capsule_at_every_scan_position, and its NEIGHBOUR
+ * test_weapon.py::test_a_capsule_at_every_scan_position; the EXPLODING bit from both sides by
+ * test_enemy.py::test_fire_needs_a_live_unexploding_enemy (0x80 fires nothing where 0x7f does) and
+ * test_mothership.py::test_segment_hit_x_is_aligned_and_both_halves_explode (which writes it); and its NEIGHBOUR
  * matters: entity_kill_if_offscreen reads the two as one word (`tst.w 14(a2)`) and clears only this
  * byte (`clr.b 14(a2)`). See src/entity.c. */
 #define ENTITY_ALIVE       0x0eu
@@ -76,7 +78,10 @@
                                    * type bytes) and test_weapon.py::test_a_capsule_at_every_scan_position.
                                    * Past +0x1a the record is a UNION:
                                    * +0x1b is also the script VM's fire countdown and +0x21 an
-                                   * asteroid speed flag (second roles named in enemy.h / src/enemy.c).
+                                   * asteroid speed flag; +0x10 (the spawners' tag byte), +0x26
+                                   * (ACTOR_SCRIPT_DELAY), +0x28 (ACTOR_SCRIPT_OPCODE) and +0x2a
+                                   * (ACTOR_FIRE_FLAGS) are the script VM's per-kind bytes (second roles
+                                   * named in enemy.h / src/enemy.c).
                                    * pinned by test_enemy.py::test_ground_skips_dead_and_wrong_type and
                                    * test_collision.py::test_class_range_bounds */
 #define ENTITY_DX          0x12u  /* .w — cos64[angle]*speed (0x142d4). pinned by
@@ -97,7 +102,9 @@
  * it is test_weapon.py's `MIRRORS`, which pins THIS constant equal to those, plus
  * test_steer_resolves_the_target_index_as_a_byte, which drives ten indices from 0 to 0xff through
  * the record arithmetic and so lands on a different record for each. A wrong offset here now fails
- * the suite by name; the hit-points role remains names.txt's and unexercised. The enemy side pins
+ * the suite by name. The hit-points role is WRITTEN under this name by src/enemy.c's ground
+ * spawners (test_enemy.py::test_ground_spawn_takes_the_first_free_slot_only); nothing ported reads
+ * it back yet. The enemy side pins
  * the offset too: the type-14 sine patroller uses this byte's WORD as its centre line (enemy.h's
  * ACTOR_SINE_BASE_Y) and test_enemy.py::test_sine_height_is_added_to_the_base fails if it moves. */
 #define ENTITY_HP          0x1au
@@ -107,15 +114,17 @@
  *
  * The OFFSET and the LATCH role are pinned by test_weapon.py::test_bomb_latch_and_bounce_count,
  * whose 4x6 grid separates the latch from the bounce COUNT in the byte beside it, and by that
- * battery's `MIRRORS` pin against SHOT_TURN_COUNTDOWN. The fire-countdown role is names.txt's and
- * unexercised — script class 2 (0x14d00) is not ported. */
+ * battery's `MIRRORS` pin against SHOT_TURN_COUNTDOWN. The fire-countdown role is driven through
+ * script class 2 (0x14d00, verified) and its dispatch in actor_script_run —
+ * test_enemy.py::test_script_run_dispatches_every_class. */
 #define ENTITY_BOUNCE      0x1bu
 /* .b — the animation frame (enemies), the hit flash's frame counter, and ALSO the seeker's and the
  * missile's time-to-live (0x4b and 0x64, counted down by 0x140a6 / 0x14126). The roles never share
  * a record: a shot only becomes a flash once it is spent.
  * pinned by test_enemy.py::test_anim_cycle_frames, test_weapon.py::test_every_puff_frame, and — for
- * the time-to-live role — test_weapon.py::test_seeker_time_to_live and
- * test_weapon.py::test_missile_time_to_live_releases_its_own_lock */
+ * the time-to-live role — test_weapon.py::test_seeker_time_to_live,
+ * test_weapon.py::test_missile_time_to_live_releases_its_own_lock and
+ * test_enemy.py::test_shot_tick_time_to_live (both enemy-shot tickers count it down) */
 #define ENTITY_ANIM_FRAME  0x20u
 #define ENTITY_SQUADRON    0x21u  /* .b — squadron id. pinned by
                                    * test_enemy.py::test_despawn_credits_the_squadron */

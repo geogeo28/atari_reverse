@@ -529,7 +529,8 @@ void fire_bomb(uint8_t *image, uint32_t shot, uint8_t sound_channel) {
  * transcribes the one instruction that is its own — `and.l #$ff,d6`, the mask, which is exact
  * because the index comes out of a record BYTE at both call sites here. The rest (`mulu.w #$2c` +
  * `adda.l` onto the table base) IS `collision_table_row`'s neighbour `entity_record`, so it is
- * called rather than copied. When util lands 0x141c0 and 0x141c2, this is the one site to swap. */
+ * called rather than copied. Both entries (0x141c0, 0x141c2) are now verified in src/enemy.c as
+ * `entity_ptr_from_index`; this is the one site to swap (STATUS.md, enemy section, tables the debt). */
 static uint32_t entity_from_index(uint8_t index) {
     return entity_record(index);
 }
