@@ -67,7 +67,8 @@ WHERE EACH CAPTURE STOPS. Four rules, and the manifest says which one ended each
 WHAT THE RENDERER MODELS. `write_wav` renders through BuggyBoy's
 `projects/buggyboy/recreate/sound/ym2149.py`, imported rather than reimplemented: three square
 tones from the 12-bit periods, the chip's 17-bit noise LFSR, the mixer's active-low gates, the
-4-bit ~3 dB/step volume DAC and the eight envelope shapes. Two Zynaps facts it must be handed
+4-bit ~3 dB/step volume DAC and the eight envelope shapes, band-limited by oversampling and
+AC-coupled the way the machine's output is. Two Zynaps facts it must be handed
 correctly:
 
   * `sound_tick` writes registers 10..0 and STOPS — registers 11..13 are the envelope period and
@@ -79,9 +80,15 @@ correctly:
     hardware those channel-frames are silent, because the envelope finished before frame 1; the
     renderer models exactly that, and `audible_frames` counts them as silent for the same reason.
 
-It renders each file peak-NORMALISED (that is `ym2149.render`'s contract), so a .wav's loudness is
-not comparable with another's. Every "is this silent?" claim here is therefore made on the REGISTER
-STREAM instead, where it is a fact about the chip rather than about a gain stage.
+It renders on the CHIP's scale (`ym2149.render(normalise=False)`): 0 dBFS is three channels at
+volume 15, so nothing can clip and the .wav levels ARE comparable between numbers — the manifest's
+`peak_dbfs` column is that number. Every "is this silent?" claim is still made on the REGISTER
+STREAM, where it is a fact about the chip rather than about a gain stage.
+
+AND IT DOES NOT WRITE A .wav FOR EVERY NUMBER. A stream that does not open with its own `fa <chan>`
+is a CONTINUATION: the game reaches it only through another stream's jump or spawn, so played cold
+it has no volume or pitch table of its own and what comes out is not a sound the game has. Those
+are classified `part`, get their .ym and no .wav, and `classify` is where the rule lives.
 
 Addresses come from two sources of truth and are spelt as a literal in neither: entry points are
 looked up by name in `../names.txt` (`entry_of`), and every table address and record offset is
@@ -90,6 +97,7 @@ so a rename or a move fails here loudly instead of dumping from a stale address.
 register numbers and bit fields are the chip's, not the game's, and are named here.
 """
 
+import math
 import os
 import struct
 import sys
@@ -272,6 +280,8 @@ LOOPED_ENDS = (END_LOOP, END_MUSICAL_LOOP)             # the two that give the .
 KIND_MUSIC = "music"                                   # it did not end: a loop, or the cap
 KIND_SFX = "sfx"                                       # it stopped itself (command 0xe1)
 KIND_SILENT = "silent"                                 # not one audible frame — see classify()
+KIND_PART = "part"                                     # a continuation stream — see classify()
+KINDS = (KIND_MUSIC, KIND_SFX, KIND_SILENT, KIND_PART)
 
 Capture = namedtuple("Capture", "number frames end loop_start loop_period voices psg_regs")
 # One number's whole result: what came off the chip, what it was called, and how loud it rendered.
@@ -591,8 +601,17 @@ def audible_frames(frames):
                if any(channel_sounds(frame, channel) for channel in range(CHANNELS)))
 
 
-def classify(result, audible):
-    """music / sfx / silent, on what the capture DID rather than on where the number sits.
+def classify(result, audible, standalone):
+    """part / music / sfx / silent — on what the STREAM is first, then on what the capture did.
+
+    `standalone` is asked first because it is the stronger fact. A stream that does not open with
+    its own `fa <chan>` is a CONTINUATION: the game only ever reaches it through another stream's
+    jump or spawn, by which point the parent has chosen the voice's volume and pitch tables. Started
+    cold from a silenced chip it has none, so whatever it then makes — silence, or one voice of a
+    piece at whatever level the modulator walks to — is not a sound the game has. Ten of this set's
+    eighteen continuations are silent and eight are audible, and both are equally misleading as a
+    file to listen to, which is why the audible ones are not filed as music or as effects and why
+    neither gets a .wav.
 
     The discriminator is whether the sound ends, not how many voices it uses. A voice count would
     misfile the several multi-voice one-shots this driver has — the ship explosion (0x14) arms two
@@ -604,6 +623,8 @@ def classify(result, audible):
     A number with no audible frame at all is SILENT whatever else it did: calling one "music"
     because three voices ticked would report the engine's activity rather than the chip's output.
     """
+    if not standalone:
+        return KIND_PART
     if not audible:
         return KIND_SILENT
     return KIND_SFX if result.end == END_SELF else KIND_MUSIC
@@ -645,11 +666,34 @@ def write_ym6(path, frames, loop_frame, title, comment):
         handle.write(header + interleaved + YM6_END)
 
 
+def _render(frames):
+    """`frames` through BuggyBoy's YM2149 synth, on the chip's scale. See `write_wav`."""
+    return ym2149.render(frames, normalise=False)
+
+
+def render_peak(frames):
+    """What `write_wav` would peak at, without writing anything.
+
+    Only `check_silence_agrees_with_the_render` wants this: a continuation gets no .wav, and ten of
+    the eleven numbers that are silent on the chip are continuations, so without rendering them the
+    check would only ever see the audible direction of its own claim.
+    """
+    track = _render(frames)
+    return float(max(track.max(), -track.min()))
+
+
 def write_wav(path, frames):
     """Render `frames` through BuggyBoy's YM2149 synth and write 44100 Hz 16-bit mono.
 
-    Returns the render's peak, in the track's own units — what `check_silence_agrees_with_render`
-    compares against the register-level audibility count.
+    Returns the render's peak as a fraction of full scale — what `check_silence_agrees_with_render`
+    compares against the register-level audibility count, and what the manifest reports in dBFS.
+
+    Rendered on the CHIP's scale (`normalise=False`) and not on each track's own peak. Normalising
+    every file separately makes a one-voice effect as loud as the three-voice title music and pulls
+    a track that is nearly silent up to full scale, which is a gain stage inventing a fact about the
+    machine. On the chip's scale the loudest a mix can be is three channels at volume 15, so nothing
+    clips by construction, and the .wav levels are the levels the game plays at, relative to
+    one another.
 
     `retriggers` is left None because no Zynaps tick writes register 13
     (`check_envelope_is_never_retriggered`), so the envelope generator never restarts. The frames
@@ -658,7 +702,7 @@ def write_wav(path, frames):
     past a full cycle, so every shape resolves to the completed (silent) level either way. So the
     .wav is a render of exactly the bytes the .ym holds.
     """
-    track = ym2149.render(frames)
+    track = _render(frames)
     with wave.open(path, "wb") as handle:
         handle.setnchannels(1)
         handle.setsampwidth(SAMPLE_BYTES)
@@ -687,18 +731,34 @@ def loop_frame(result):
 
 
 def write_asset(out_dir, sound):
-    """One number's .ym and .wav. Returns the render's peak level."""
+    """One number's .ym, and its .wav unless it is a continuation. Returns the render's peak.
+
+    A continuation gets no .wav and returns None: its register stream is a fact and is written, but
+    a rendering of it played cold is not a sound the game makes (see `classify`). An old one is
+    DELETED rather than left, so a directory cannot keep a misleading file across a rule change.
+    """
     result = sound.capture
     stem = os.path.join(out_dir, "snd_%02d" % result.number)
     title = TITLE_PREFIX + "sound %d (%s)" % (result.number, sound.kind)
     comment = COMMENT_PREFIX + "%s, voices %s" % (sound.kind, sorted(result.voices) or "none")
     comment += "; capture ended: " + end_description(result)
     write_ym6(stem + ".ym", result.frames, loop_frame(result), title, comment)
+    if sound.kind == KIND_PART:
+        if os.path.exists(stem + ".wav"):
+            os.remove(stem + ".wav")
+        return None
     return write_wav(stem + ".wav", result.frames)
 
 
+def peak_dbfs(level):
+    """A render's peak in dBFS, or "-" where there is no render or it came out silent."""
+    if not level:
+        return "-"
+    return "%.1f" % (20.0 * math.log10(level))
+
+
 MANIFEST_STREAM_BYTES = 10                             # enough rows to see a header and a command
-MANIFEST_COLUMNS = ("number", "kind", "voices", "frames", "seconds", "audible_frames",
+MANIFEST_COLUMNS = ("number", "kind", "voices", "frames", "seconds", "audible_frames", "peak_dbfs",
                     "loops", "loop_start", "loop_period", "ended", "stream", "header", "used_by")
 
 MANIFEST_HEADER = """\
@@ -708,17 +768,22 @@ MANIFEST_HEADER = """\
 #
 # kind      music  = the capture proved a loop, or reached the cap: it does not end
 #           sfx    = it stopped itself — command 0xe1 ran on every voice it had armed
-#           silent = not one frame in which a gate was open over a non-envelope volume. Every
-#                    silent number in this set is a CONTINUATION stream (header=no): it carries no
-#                    0xe8 volume-table command, so `sound_voice_modulate` steps its volume byte
-#                    from 0 with whatever record the voice already had. In the game they are
-#                    reached by another stream's 0xe5 jump or 0xfc/0xfd/0xfe spawn, after the
-#                    parent has chosen the tables; started cold there is nothing to select one.
+#           part   = a CONTINUATION stream (header=no): it opens with no `fa <chan>` of its own, so
+#                    the game only reaches it through another stream's 0xe5 jump or 0xfc/0xfd/0xfe
+#                    spawn, after the parent has chosen the voice's volume and pitch tables. Started
+#                    cold there is nothing to select one, and what comes out — silence for ten of
+#                    them, one bare voice of a piece for the other eight — is not a sound the game
+#                    has. So a part gets its .ym and NO .wav; listen to it inside its parent
+#                    (11 spawns 12 and 13, 30 spawns 32 and 33, 39 spawns 40 and 41).
+#           silent = a stream that DOES pick its own voice and still never opened a gate over a
+#                    non-envelope volume. Nothing in this set is currently filed here.
 #           A one-shot may still arm several voices — 0x14 (the ship exploding) arms two — so the
 #           voices column and the kind are separate facts.
 # voices    which of the driver's three voice records were armed during the capture. A stream with
 #           no `fa` header of its own is dumped on voice 3, the driver's fall-through for a channel
 #           byte that is neither 1 nor 2 — in the game the parent stream picks the voice instead.
+# peak_dbfs the .wav's peak, on the CHIP's scale (0 dBFS = three channels at volume 15), so the
+#           numbers are comparable between files. "-" = no .wav, or a render that is silent.
 # ended     self-ended / exact-loop / musical-loop / capped — see the tool's docstring
 # stream    where sound_lookup_tune resolves the number to, and the first bytes of the row stream
 # header    yes = the stream opens with its own `fa <chan>` and picks its voice; no = continuation
@@ -733,6 +798,7 @@ def manifest_row(sound, call_sites):
         str(result.number), sound.kind,
         ",".join(str(voice) for voice in sorted(result.voices)),
         str(len(result.frames)), "%.2f" % (len(result.frames) / FRAME_RATE), str(sound.audible),
+        peak_dbfs(sound.level),
         "yes" if result.end in LOOPED_ENDS else "no",
         str(result.loop_start) if result.loop_start is not None else "-",
         str(result.loop_period) if result.loop_period is not None else "-",
@@ -867,6 +933,33 @@ def check_boot_tune_is_not_trivial(result):
     return periods
 
 
+# Bit 3 of register 13 is the envelope's CONTINUE bit: with it clear the generator runs one ramp
+# and stops at a level it then holds for ever.
+ENVELOPE_CONTINUE_BIT = 0x08
+
+
+def check_reset_envelope_shape_completes():
+    """The one envelope shape this game ever selects must be a ONE-SHOT, or the dumps are wrong.
+
+    Everything said here about envelope-mode volumes rests on it. `sound_tick` pushes registers
+    10..0, so register 13 — the shape — is written only by `sound_reset_psg`, out of the shadow the
+    binary ships; and a shape with the CONTINUE bit set would buzz for ever, turning every
+    `volume & 0x10` channel-frame from the silence this renders into a sound. The value is read out
+    of the image rather than asserted, so a different build fails here instead of dumping quietly.
+
+    A recording of the real game agrees, and on the number as well as on the reasoning: in a
+    two-minute Hatari boot, registers 11, 12 and 13 are written by nothing but that same
+    14-register flush, and always as 0 (`tools/ref_capture.py`).
+    """
+    shape = harness.BASE_IMAGE[A_PSG_REG_SHADOW + ENVELOPE_SHAPE_REG]
+    if shape & ENVELOPE_CONTINUE_BIT:
+        raise SystemExit("the register shadow at %#x carries envelope shape %#x, whose CONTINUE bit "
+                         "is set: the envelope generator would run for ever, and every volume byte "
+                         "with bit 4 set would be a sound rather than the silence this dump renders"
+                         % (A_PSG_REG_SHADOW + ENVELOPE_SHAPE_REG, shape))
+    return shape
+
+
 def check_envelope_is_never_retriggered(captures):
     """No frame may claim a register-13 write. `sound_tick` pushes registers 10..0 and stops
     (names.txt, 0x16b94), which is what lets the renderer skip the envelope generator: the only
@@ -900,24 +993,33 @@ def check_silence_agrees_with_the_render(sounds):
 
     The two claims are made by different machinery — one counts open gates over non-envelope
     volumes in the register stream, the other is the peak of BuggyBoy's synth's output — so this is
-    the one place they are made to agree. It is also the only check the peak-normalised render can
-    carry: `ym2149.render` divides by its own peak, so no level here is comparable with another's,
-    but a track that was zero everywhere stays zero.
+    the one place they are made to agree. A continuation has no .wav, so the SILENT direction of the
+    claim would have gone with it — ten of the eleven numbers that are silent on the chip are
+    continuations. They are therefore still rendered, in memory and to no file, purely to be checked
+    here (`render_peak`); it costs about 5,000 frames of the sweep's 47,000.
 
     The threshold is one 16-bit quantisation step rather than exact zero, because a channel with
     both mixer gates closed holds the DAC at a constant the renderer emits as samples: `render`
-    subtracts the track mean, so a steady level cancels to floating-point residue rather than to
-    literal 0.0, and a level that STEPS would leave a sub-audio staircase that is inaudible and
-    still not zero. Anything under one step writes an all-zero .wav, which is the claim being made.
+    high-passes it away the way the machine's own AC coupling does, which leaves floating-point
+    residue rather than literal 0.0. Anything under one step writes an all-zero .wav, which is the
+    claim being made. A continuation is skipped: it has no .wav at all.
     """
     for sound in sounds:
-        silent_here = sound.kind == KIND_SILENT
-        if silent_here != (sound.level < RENDER_SILENCE_PEAK):
+        # A continuation has no .wav, so its peak is rendered here or not at all. Only the SILENT
+        # ones are: rendering the audible ones would cost the sweep its two 211 s parts to check a
+        # direction the 27 written files already cover many times over.
+        level = sound.level
+        if level is None:
+            if sound.audible:
+                continue
+            level = render_peak(sound.capture.frames)
+        silent_here = not sound.audible
+        if silent_here != (level < RENDER_SILENCE_PEAK):
             raise SystemExit("sound %d is %s by its register stream but its render peaks at %g "
                              "(silence threshold %g): the audibility rule and the synth disagree "
                              "about the same %d frames"
                              % (sound.capture.number, "silent" if silent_here else "audible",
-                                sound.level, RENDER_SILENCE_PEAK, len(sound.capture.frames)))
+                                level, RENDER_SILENCE_PEAK, len(sound.capture.frames)))
 
 
 def check_call_sites_are_readable(call_sites):
@@ -945,8 +1047,7 @@ def kind_tally(sounds):
     """How the sweep classified the set, COUNTED — reported rather than asserted, so a number that
     stops being audible is visible instead of merely failing."""
     kinds = [sound.kind for sound in sounds]
-    return ", ".join("%d %s" % (kinds.count(wanted), wanted)
-                     for wanted in (KIND_MUSIC, KIND_SFX, KIND_SILENT))
+    return ", ".join("%d %s" % (kinds.count(wanted), wanted) for wanted in KINDS)
 
 
 def end_tally(sounds):
@@ -955,10 +1056,11 @@ def end_tally(sounds):
                      for reason in END_REASONS if reason in ends)
 
 
-def report(sounds, ledger, periods, out_dir):
+def report(sounds, ledger, periods, envelope_shape, out_dir):
     total_frames = sum(len(sound.capture.frames) for sound in sounds)
     longest = max(sounds, key=lambda sound: len(sound.capture.frames)).capture
-    silent = [sound.capture.number for sound in sounds if sound.kind == KIND_SILENT]
+    parts = [sound.capture.number for sound in sounds if sound.kind == KIND_PART]
+    loudest = max(sounds, key=lambda sound: sound.level or 0.0)
     boot = sounds[BOOT_SOUND_NUMBER].capture
     return "\n".join((
         "sounds: %d captured — %s" % (len(sounds), kind_tally(sounds)),
@@ -966,17 +1068,22 @@ def report(sounds, ledger, periods, out_dir):
         "length: %d frames = %.1f s at %d Hz; longest is sound %d at %.1f s"
         % (total_frames, total_frames / FRAME_RATE, FRAME_RATE, longest.number,
            len(longest.frames) / FRAME_RATE),
-        "silent: %s (continuation streams — see manifest.tsv)"
-        % (", ".join(str(number) for number in silent) or "none"),
+        "parts:  %s — continuation streams: .ym only, no .wav (see manifest.tsv)"
+        % (", ".join(str(number) for number in parts) or "none"),
+        "levels: rendered on the chip's scale (0 dBFS = 3 channels at volume 15), so no file "
+        "clips and the .wav levels are comparable; loudest is sound %d at %s dBFS"
+        % (loudest.capture.number, peak_dbfs(loudest.level)),
         "title:  sound %#x is the boot tune AND the title music (names.txt, 0x1007a): %d frames "
         "over %d distinct tone periods on all three voices"
         % (BOOT_SOUND_NUMBER, len(boot.frames), len(periods)),
         "checks: index length derived from include/sound.h and its sign-extension boundary agree; "
         "%d chip accesses of test_sound.py's own %d-tick case identical tick-by-tick and chained; "
-        "every tick flushes registers %d..0; register %d never written; no chip read served; "
-        "silence agrees with the render on all %d; sound %d reproducible after the sweep"
+        "every tick flushes registers %d..0; register %d never written and the shape the reset "
+        "leaves (%#04x) is a one-shot; no chip read served; silence agrees with the render on all "
+        "%d written and every silent continuation; sound %d reproducible after the sweep"
         % (len(ledger), LEDGER_CHECK_FRAMES, PSG_TICK_FLUSH_REGS - 1, ENVELOPE_SHAPE_REG,
-           len(sounds), REPRODUCIBILITY_SOUND_NUMBER),
+           envelope_shape, sum(1 for sound in sounds if sound.level is not None),
+           REPRODUCIBILITY_SOUND_NUMBER),
         "",
         "wrote to %s" % out_dir,
     ))
@@ -996,12 +1103,14 @@ def main(argv):
         # so a failing run does not leave a directory of files that look like a finished dump.
         periods = check_boot_tune_is_not_trivial(captures[BOOT_SOUND_NUMBER])
         check_envelope_is_never_retriggered(captures)
+        envelope_shape = check_reset_envelope_shape_completes()
         check_capture_is_reproducible(captures[REPRODUCIBILITY_SOUND_NUMBER])
 
         sounds = []
         for result in captures:
             audible = audible_frames(result.frames)
-            sound = Sound(result, classify(result, audible), audible, level=0.0)
+            sound = Sound(result, classify(result, audible, has_channel_header(result.number)),
+                          audible, level=None)
             sounds.append(sound._replace(level=write_asset(out_dir, sound)))
         check_silence_agrees_with_the_render(sounds)
 
@@ -1009,7 +1118,7 @@ def main(argv):
     with open(os.path.join(out_dir, "manifest.tsv"), "w") as handle:
         handle.write(MANIFEST_HEADER + "\t".join(MANIFEST_COLUMNS) + "\n"
                      + "\n".join(manifest_row(sound, call_sites) for sound in sounds) + "\n")
-    print(report(sounds, ledger, periods, out_dir))
+    print(report(sounds, ledger, periods, envelope_shape, out_dir))
     return 0
 
 

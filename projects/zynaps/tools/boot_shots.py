@@ -212,10 +212,15 @@ def media_arguments(mode):
     raise SystemExit(f"unknown mode {mode!r}")
 
 
-def hatari_arguments(mode, rom, gui):
-    """The whole Hatari command line for a mode, GUI or headless. `--cmd-fifo` is the session's."""
+def hatari_arguments(mode, rom, gui, sound_hz=None):
+    """The whole Hatari command line for a mode, GUI or headless. `--cmd-fifo` is the session's.
+
+    A headless run is silent unless `sound_hz` asks for a rate: nothing in a screenshot timeline
+    needs the mixer, and turning it off is the fastest setting. `tools/ref_capture.py` passes one,
+    because a recording of the real game is the only surface that can judge the dumps' renderer.
+    """
     display = ["--sound", str(GUI_SOUND_HZ), "--joy1", "keys", "--zoom", "2"] if gui else \
-              ["--sound", "off", "--run-vbls", str(RUN_VBLS)]
+              ["--sound", str(sound_hz) if sound_hz else "off", "--run-vbls", str(RUN_VBLS)]
     return ([HATARI, "--tos", str(rom), "--machine", "st", "--memsize", str(MEMSIZE_MB),
              "--monitor", "rgb", "--confirm-quit", "off", "--statusbar", "off",
              "--drive-led", "off", "--frameskips", "0"]

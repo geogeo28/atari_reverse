@@ -28,6 +28,11 @@ of emulated time.
 exits 0 after a bus error it printed to its log. `log_faults()`, `distinct_colours()` and the return
 code from `close()` are what turn a run into a pass or a fail; see docs/on-target-execution.md.
 
+*Sound recording is a config value plus a shortcut, not an option.* There is no `--wav-record`:
+`szYMCaptureFileName` in a `[Sound]` section says where, and `hatari-shortcut recsound` toggles the
+recorder. `sound_capture_arguments()` and `HeadlessSession.record_sound()` are those two halves, and
+they work under SDL's dummy audio device — headless records what speakers would have played.
+
 *`hatari-event keydown` takes an ST SCANCODE when it is spelled "0x..", and an ASCII character when
 it is one character long*, so `key()` always spells hex. A break code is the make code with bit 7
 set. A key bound to Hatari's keyboard-as-joystick emulation is SWALLOWED headless (measured in
@@ -54,6 +59,22 @@ POKE_SETTLE_SECONDS = 0.3
 # --- ST keyboard -----------------------------------------------------------------------------
 BREAK_BIT = 0x80
 KEY_HOLD_SECONDS = 0.4
+
+# --- sound recording ---------------------------------------------------------------------------
+# Hatari has NO command-line option for where a sound recording goes: the destination is a config
+# value and the recorder is a runtime shortcut. So a caller that wants a WAV has to hand Hatari a
+# config file naming the path, and then toggle `recsound` around the span it wants.
+SOUND_CONFIG_TEMPLATE = "[Sound]\n%s = %s\n"
+SOUND_CAPTURE_KEY = "szYMCaptureFileName"
+SOUND_RECORD_SHORTCUT = "hatari-shortcut recsound"
+# What Hatari writes: 16-bit STEREO at the --sound frequency, both channels carrying the same mono
+# YM signal (the ST has one PSG and no panning). A reader that assumes mono reads it at half speed.
+RECORDED_CHANNELS = 2
+RECORDED_SAMPLE_BYTES = 2
+# Hatari drops samples rather than stalling when its mixer buffer overruns, and says so in the log.
+# A recording that carries these has holes in it, so it is a fault marker for an audio run — but
+# only for one, which is why it is not in LOG_FAULT_MARKERS.
+SOUND_UNDERRUN_MARKER = "some sound samples were not correctly emulated"
 
 # --- the log ---------------------------------------------------------------------------------
 # Hatari polls its command FIFO non-blockingly and logs a line every time the read finds nothing,
@@ -88,6 +109,18 @@ MIN_SIGNATURE_BYTES = 12
 def headless_environment():
     """The environment that keeps SDL from wanting a window or a sound card."""
     return dict(os.environ, SDL_VIDEODRIVER="dummy", SDL_AUDIODRIVER="dummy")
+
+
+def sound_capture_arguments(config_path, wav_path):
+    """The Hatari arguments that point WAV recording at `wav_path`, via a config file it writes.
+
+    SDL's dummy audio device is still a device: Hatari mixes into it and the recorder taps the same
+    buffer, so a headless run records exactly what a run with speakers would play.
+    """
+    config_path = Path(config_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(SOUND_CONFIG_TEMPLATE % (SOUND_CAPTURE_KEY, Path(wav_path).resolve()))
+    return ["-c", str(config_path)]
 
 
 # --- finding a loaded program in RAM -----------------------------------------------------------
@@ -316,6 +349,21 @@ class HeadlessSession:
         self.send(f"hatari-event keydown {scancode:#04x}")
         self.wait(hold_seconds)
         self.send(f"hatari-event keyup {scancode | BREAK_BIT:#04x}")
+
+    def record_sound(self, seconds, during=None):
+        """Record `seconds` of emulated audio to the WAV `sound_capture_arguments` named.
+
+        `recsound` is a TOGGLE, so the span is bundled here rather than exposed as two sends: an
+        unpaired one leaves the recorder running into whatever the caller does next, and Hatari
+        reports that only as a longer file. A second span in the same run REPLACES the first, since
+        the config names one path — copy the finished WAV aside before starting another.
+
+        `during(seconds)` fills the span in place of a plain wait, for a caller that has to keep
+        driving the machine while it records.
+        """
+        self.send(SOUND_RECORD_SHORTCUT)
+        (during or self.wait)(seconds)
+        self.send(SOUND_RECORD_SHORTCUT)
 
     # ---- output ---------------------------------------------------------------------------------
     def screenshot(self, path):

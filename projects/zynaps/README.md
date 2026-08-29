@@ -313,12 +313,17 @@ sites are spelled in Ghidra addresses and `dat2png.py` reads the file.
 Every sound the game has — 45 numbered streams — dumped by
 [`projects/zynaps/tools/extract_audio.py`](tools/extract_audio.py) into
 [`out/audio/`](out/audio): a `snd_NN.ym` (one YM2149 register file per 50 Hz frame, uncompressed
-YM6) and a `snd_NN.wav` (44100 Hz mono) for each, plus a `manifest.tsv`. It needs numpy, so run it
-with the workspace's python or `recreate/.venv/bin/python`:
+YM6) for each, a `snd_NN.wav` (44100 Hz mono) for each that is a sound the game can play on its own,
+plus a `manifest.tsv`. It needs numpy, so run it with the workspace's python or
+`recreate/.venv/bin/python`:
 
 ```bash
-projects/zynaps/recreate/.venv/bin/python projects/zynaps/tools/extract_audio.py
+projects/zynaps/recreate/.venv/bin/python projects/zynaps/tools/extract_audio.py   # ~30 s
 ```
+
+Beside them, `ref_title.wav` / `ref_level1.wav` and their `.regs` files are a recording of the
+**real game** running in Hatari, which is what the dumps are judged against — see
+[Judged against the real game](#judged-against-the-real-game) below.
 
 **It plays the original code, it does not re-implement it.** The tool loads `ZYNAPS17.PRG` through
 the kit's PRG loader and runs the game's own 68000 replayer under the Musashi oracle
@@ -330,11 +335,11 @@ format, but nothing here reads it — the frames are what the original wrote.
 **The numbers.** `sound_start` `$16ac8` takes `d1` = 0..44, an index into the little-endian offset
 table `tune_index` `$17058` over `tune_data` `$171e8`. Three groups come out of the sweep:
 
-| | count | what they are |
-|---|---|---|
-| music | 11 | the capture proved a loop (or hit the cap): they never end |
-| sfx | 24 | they stopped themselves — command `0xe1` ran on every voice they armed |
-| silent | 10 | numbers 0–9: **continuation streams**, silent when started cold (below) |
+| | count | what they are | `.wav`? |
+|---|---|---|---|
+| music | 5 | the capture proved a loop (or hit the cap): they never end | yes |
+| sfx | 22 | they stopped themselves — command `0xe1` ran on every voice they armed | yes |
+| part | 18 | **continuation streams**: no sound of their own (below) | no |
 
 Total 47,013 frames = 940 s of audio. A one-shot may still use several voices — `0x14`, the ship
 exploding, arms two — so "sfx" means *it ends*, not *it is one voice*; the manifest's `voices`
@@ -345,16 +350,22 @@ three-voice piece that spawns `0x0c` and `0x0d` on voices 2 and 3 with `fd`/`fe`
 and then a 206 s exact loop. The other music the game starts directly is `0x0e` (24 s),
 `0x1e` (12.8 s) and `0x27`. The busiest effect is `0x2c`, fired from six sites.
 
-**A stream with no `fa <chan>` header is a fragment, and a fragment is silent on its own.** Numbers
-0–10, 12, 13, 31–33 and 40–41 carry no header: they are reached by another stream's `0xe5` jump or
-`0xfc`/`0xfd`/`0xfe` spawn, mid-piece. Started here they run on **voice 3** — the driver's
-fall-through for a channel byte that is neither 1 nor 2 — where the game's parent stream would have
-picked the voice (`fd 0c` puts 12 on voice 2). 0–9 additionally carry no `0xe8` volume-table
-command, so
-`sound_voice_modulate` steps their volume byte up from 0 with whatever record the voice was already
-holding — which, from a freshly loaded image, is nothing. They dump as genuine silence, and the
-manifest shows each one's first stream bytes so the claim can be read off the data. This is a fact
-about the driver, not a failed capture.
+**A stream with no `fa <chan>` header is a PART, and a part gets no `.wav`.** Numbers 0–10, 12, 13,
+31–33 and 40–41 carry no header: the game reaches them only through another stream's `0xe5` jump or
+`0xfc`/`0xfd`/`0xfe` spawn, mid-piece, by which point the parent has chosen the voice and its volume
+and pitch tables. Started here they run on **voice 3** — the driver's fall-through for a channel
+byte that is neither 1 nor 2 — where the parent would have picked the voice (`fd 0c` puts 12 on
+voice 2). Numbers 0–9 additionally carry no `0xe8` volume-table command, so `sound_voice_modulate`
+steps their volume byte up from 0 against whatever record the voice was already holding — which,
+from a freshly loaded image, is nothing, and they come out **silent at the register level**. The
+other nine make a noise, but it is one bare voice of a piece at whatever level the modulator walks
+to, which is not the sound the game has either.
+
+So the rule is: **a `.wav` is written only for a stream that opens with its own `fa <chan>`.** Both
+kinds of part would otherwise be a misleading file to double-click — ten of them silent, eight of
+them half a tune — and the `.ym` beside them still carries the register stream, which is the fact.
+To hear a part, play its parent: **11 spawns 12 and 13**, **30 spawns 32 and 33**, **39 spawns 40
+and 41**, and `manifest.tsv` shows each one's opening bytes so the claim can be read off the data.
 
 **Where a capture stops.** A sound that ends itself ends the file. One that does not is run to a
 15,000-frame cap while a detector watches the driver's whole mutable state (`$16e82`..`$16f40` —
@@ -388,30 +399,107 @@ of all, so its presence is what marks `out/audio/` a finished dump:
   flush, the one `test_reset_psg` verifies, is asserted where it happens instead);
 - every tick flushes registers **10..0 in that order** — not merely eleven of them; a flush the
   other way round leaves an identical register file and only the ledger can see it;
-- register 13 (the envelope shape) is never written, and **not one chip read is served** — so
-  nothing in these dumps rests on the capture mode's fabricated answers;
-- the register-stream silence verdict and the rendered `.wav`'s peak agree on all 45;
+- register 13 (the envelope shape) is never written, and the shape the reset leaves — read out of
+  the shipped register shadow, not typed — is a **one-shot** (`0x00`), so an envelope-mode volume
+  really is silence rather than a buzz;
+- **not one chip read is served** — so nothing in these dumps rests on the capture mode's
+  fabricated answers;
+- the register-stream silence verdict and the rendered `.wav`'s peak agree on all 27 rendered;
 - the boot tune arms all three voices, loops, and plays a melody rather than a held note — it uses
   571 distinct tone periods against a bar of 32;
 - one number is re-captured after the whole sweep and must be byte-identical, which is what would
   catch driver state leaking between numbers.
 
 **The renderer is BuggyBoy's** ([`recreate/sound/ym2149.py`](../buggyboy/recreate/sound/ym2149.py)),
-imported rather than copied. It peak-normalises each file, so `.wav` loudness is not comparable
-between numbers — every "silent" claim here is made on the register stream instead. Two Zynaps
-quirks it is handed: the driver never rewrites register 13, so the envelope generator reads as long
-completed; and it adds a biased delta to its volume byte **without masking**, so a volume register
-really does reach values with bit 4 set — "use the envelope" — which on hardware is silence, and is
-counted as such.
+imported rather than copied. Three things about it matter here, and all three were settled by the
+recording below rather than by argument:
+
+- **it renders on the chip's scale, not each file's own peak.** 0 dBFS is three channels at volume
+  15, so nothing clips by construction and the `.wav` levels are comparable *between* numbers —
+  the title tune peaks at −1.6 dBFS and the 2.3 s piece `0x24` at −34.7, which is how far apart
+  they really are (one voice at volume 8 against three at 15). `manifest.tsv` carries the column.
+- **it is band-limited** (8× oversampled, then each output sample is the mean of its interval, the
+  way the machine's analog stage integrates). Zynaps writes tone periods of 0 and 1 often — 2,268
+  channel-frames of the title tune's 13,121 — and the chip reads those as a 125 kHz square, which is
+  inaudible on the machine and folds back into the audio band at full amplitude in a renderer that
+  samples straight at 44100 Hz. Effects `0x25` and `0x26` are period 0 for every one of their 55
+  frames.
+- **it is AC-coupled** (a moving-mean high-pass, corner ~20 Hz), because the machine's audio output
+  is. Subtracting one mean for the whole track is not the same thing: the DC a unipolar square
+  carries *moves with the volume register*, so a tremolo left a full-depth sub-audio staircase —
+  measured at 20% of the title tune's whole energy below 50 Hz, against 8% in the recording.
+
+Two Zynaps quirks it is handed: the driver never rewrites register 13, so the envelope generator
+reads as long completed; and it adds a biased delta to its volume byte **without masking**, so a
+volume register really does reach values with bit 4 set — "use the envelope" — which on hardware is
+silence, and is counted as such. That second claim now rests on a number rather than on reasoning:
+the register shadow the binary ships carries envelope shape `0x00`, a one-shot, and a Hatari trace
+of a real boot shows registers 11–13 written by nothing but `sound_reset_psg` and always as 0.
+
+### Judged against the real game
+
+`extract_audio.py` cannot judge itself: it drives the original replayer under our oracle and renders
+the result with our synth, so a fault in either half comes out as a plausible `.wav`.
+[`tools/ref_capture.py`](tools/ref_capture.py) boots the actual game in Hatari — plain ST, RGB
+monitor, so 50 Hz, which is the machine's own PAL VBL since the game never writes `$ffff820a` — and
+records two spans, the title screen and a level-1 game with the fire button poked so the ship
+shoots. [`tools/compare_audio.py`](tools/compare_audio.py) reads them back:
+
+```bash
+projects/zynaps/recreate/.venv/bin/python projects/zynaps/tools/ref_capture.py    # ~2 min
+projects/zynaps/recreate/.venv/bin/python projects/zynaps/tools/compare_audio.py
+```
+
+Two surfaces, because they fail differently. **`ref_<span>.regs`** is the register file the game's
+own tick flushed each frame, read out of Hatari's `psg_write` trace — it can see a *capture* fault
+and nothing else. **`ref_<span>.wav`** is Hatari's audio — it can see a *renderer* fault and nothing
+else.
+
+- **The capture is exact.** All 1,000 compared frames of the title recording replay `snd_11.ym`
+  register for register (from its frame 1818), on every one of the eleven registers the tick
+  flushes. The mixer's top two bits are masked on both sides: `note_on` ORs the I/O-port *direction*
+  bits into register 7, the chip takes them, and the `.ym` drops them because YM5/YM6 read that
+  register's spare bits as special-effect codes. Ten sounds were located the same way in the
+  level-1 recording, matched on their own voice's registers — four of them music, two of them parts
+  with no `.wav` to listen to.
+- **The renderer, before and after.** Judged by an *alignment-free* agreement between the two
+  average spectra (0..1), which is the honest metric here — a dominant-pitch track is too unstable
+  on three simultaneous square waves to align, and scored against the recording's own registers the
+  loudest partial is the sounding fundamental in only 41% of frames, so that is the ceiling of any
+  per-frame pitch figure:
+
+  | | before | after |
+  |---|---:|---:|
+  | title tune (`0x0b`, 20 s of the title screen) | 0.906 | **0.978** |
+  | `0x0b` again, under level-1 play | 0.912 | **0.953** |
+  | `0x27` (3.6 s, three voices) | 0.182 | **0.594** |
+  | `0x14` (3.8 s, two voices) | 0.330 | **0.669** |
+  | `0x0e` (24 s, one voice) | 0.535 | **0.563** |
+  | `0x12` (2.3 s) | 0.696 | 0.689 |
+  | `0x22` (2.3 s) | 0.731 | 0.718 |
+  | `0x2c` (0.9 s) | 0.597 | 0.584 |
+
+  Only the title figure is a clean score. The level-1 ones are a **floor**: Zynaps plays music under
+  the level, so the recording carries the other two voices while an effect sounds and a one-voice
+  dump is being compared against a mix — which is why the three-voice `0x27` moves most and the
+  short one-voice effects barely move at all. The per-frame pitch column moved from 17% to 16% on
+  the title tune, i.e. not at all, which is the metric's ceiling showing rather than the render's.
+
+**What this does not prove.** Hatari's YM2149 is a model too — better and far more scrutinised than
+ours, but a model. An agreement number is "two independent implementations agree", not "this is the
+chip". The register surface is the stronger of the two: those bytes are the game's, and Hatari only
+carried them.
 
 ## Layout and next steps
 
 - [`bin/`](bin) — `ZYNAPS17.PRG`, the patched `zynaps.st`, and `disk/` (the extracted tree).
 - [`out/`](out) — `prg_dis.txt` (linear sweep), `boot/` (boot screenshots), `assets/` (rendered
-  art), `audio/` (every tune and effect as `.ym` + `.wav`).
+  art), `audio/` (every stream as `.ym`, every playable one also as `.wav`, plus the `ref_*`
+  recordings of the real game).
 - [`tools/`](tools) — `boot_shots.py` (headless Hatari driver), `dat2png.py` (asset decoder),
-  `extract_audio.py` (the sound dump above), `make_bin.sh` (regenerate `bin/` from the gold
-  master). The game-agnostic halves live in
+  `extract_audio.py` (the sound dump above), `ref_capture.py` (record the real game's audio and
+  register stream), `compare_audio.py` (judge the dumps against that recording), `make_bin.sh`
+  (regenerate `bin/` from the gold master). The game-agnostic halves live in
   [`tools/hatari_headless.py`](../../tools/hatari_headless.py),
   [`tools/st_pixels.py`](../../tools/st_pixels.py), [`tools/st_extract.py`](../../tools/st_extract.py)
   and [`tools/stx_extract.py`](../../tools/stx_extract.py).

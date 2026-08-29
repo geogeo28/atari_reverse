@@ -116,8 +116,10 @@ lives in `projects/buggyboy/recreate/sound/`:
 - `sound_player.py` seeds a track with `INITTUNE` (music) or `INITFX` (effects), then calls
   `REFRESH` once per 50 Hz VBL — feeding the image forward so driver state persists — and
   captures the per-frame register stream.
-- `ym2149.py` renders that stream (3 tones + noise + envelope, mixer, ~3 dB/step volume DAC)
-  to a WAV in `out/sound/`. Run `python sound/sound_player.py` (needs numpy).
+- `ym2149.py` renders that stream (3 tones + noise + envelope, mixer, ~3 dB/step volume DAC,
+  band-limited by 8x oversampling and AC-coupled like the machine's output) to a WAV in
+  `out/sound/`. Run `python sound/sound_player.py` (needs numpy). `render(normalise=False)` gives
+  the chip's own scale instead of each track's peak, which is what makes two renders comparable.
 
 Timing is authentic (real driver, real 2 MHz clock, exact 50 Hz frames); only the YM DAC
 curve and envelope edge-cases are approximated. Cross-check against Hatari's audio if in doubt.
@@ -193,5 +195,95 @@ retrigger the envelope every frame), so the last write to 13 is the reset's, the
 since finished, and every such channel-frame is **silence** on real hardware. A renderer that
 masked the level to four bits instead would play a note there, and no image diff or ledger would
 see it — the difference exists only on the chip.
+
+## Checking a dump against the real machine (Hatari as the second opinion)
+
+A capture-and-render pipeline cannot judge itself: it runs the original replayer under *our* oracle
+and renders the register stream with *our* synth, so a fault in either half comes out as a plausible
+`.wav`. Hatari is an independent implementation of both halves, and it will hand you both of them
+off one headless boot. `projects/zynaps/tools/ref_capture.py` is the worked example.
+
+**The audio.** There is no `--wav-record` option: the destination is a *config* value and the
+recorder is a *runtime shortcut*, so you need both.
+
+```ini
+[Sound]
+szYMCaptureFileName = /abs/path/ref.wav
+```
+
+```
+hatari -c that.cfg --sound 44100 ...        # NOT --sound off
+hatari-shortcut recsound                    # ...over --cmd-fifo: a TOGGLE, so pair the two sends
+```
+
+It works under `SDL_AUDIODRIVER=dummy`: the dummy device is still a device, Hatari mixes into it and
+the recorder taps the same buffer. The file is 16-bit **stereo** at the `--sound` rate, both channels
+carrying the same mono PSG signal — read it as mono and you read it at half speed. A second span in
+one run *replaces* the first, since the config names one path, so copy the finished WAV aside before
+starting another. Hatari drops samples rather than stalling if its mixer buffer overruns (it says so
+in the log); the honest gate is the recorded LENGTH, because dropped samples make the file short.
+
+**The register stream.** `--trace psg_write --trace-file <path>` prints two lines per write — the
+raw `$ff8802` store and the decoded register — of which only `ym write data reg=0x.. val=0x..`
+carries both numbers. To cut per-frame register files out of it, look for the driver's own flush as
+a **run of writes in the order it makes them** (Zynaps: registers 10..0 descending). That needs no
+load address, where a `pc=` filter would have to know where GEMDOS put the program, and it steps
+over TOS's own register-14 traffic for the floppy and the keyboard. Watch for a *wider* flush with
+the same tail — Zynaps' `sound_reset_psg` pushes 13..0 — and skip it whole, or you file the silenced
+chip as a frame of music.
+
+*Read the trace incrementally* if you read it while the run is going. A boot plus a game is tens of
+megabytes, re-parsing it costs seconds, and those seconds are **skew** between the register frame
+counter and the recorder: measured at ~220 frames (4.4 s) parsing the whole file at the mark.
+
+**Comparing them.** The register surface is the strong one — an exact per-frame comparison, so it is
+a yes/no about the bytes, and it settles "did the capture record the right stream?" outright (Zynaps:
+1000/1000 frames of the real title screen replay the dump register for register). Two cautions:
+compare only the registers the tick actually flushes, since a `.ym` carries `0xff` in register 13 for
+"not written this frame" where the chip carries its own value; and mask register 7's top two bits,
+which are the I/O-port *direction* bits a driver may OR in and which the YM5/YM6 format reuses as
+special-effect codes.
+
+The audio surface is the weak one, and the weakness is **alignment**. A recording does not start on
+a driver frame, and a dominant-pitch track is far too unstable to correlate on three simultaneous
+square waves — measured against the recording's own registers, the loudest partial is the sounding
+fundamental in only 41% of frames, which is the ceiling of any "pitch agrees within a semitone"
+figure on this material. Prefer an **alignment-free** measure: the cosine of the two average power
+spectra over a span. It cannot see a timing fault at all (that is the register surface's job) but it
+sees every difference of timbre, gain stage and filtering, which is what a renderer gets wrong.
+
+## Three things a YM renderer gets wrong, and how the recording shows them
+
+All three were found this way on `ym2149.py`, and all three are properties of the chip rather than
+of any one game.
+
+**A tone period of 0 is not silence and is not slow — it is 125 kHz.** The chip reloads the same
+counter for 0 as for 1, so both run the tone divider at `CLOCK/16`. Drivers reach it constantly
+(Zynaps: 2,268 channel-frames of one tune, and two effects that are period 0 for *every* frame they
+have). On the machine that is an inaudible ultrasonic the analog stage averages away. Point-sampled
+at 44100 Hz it folds back into the audio band **at full amplitude** and becomes the loudest thing in
+the file. The fix is to band-limit: evaluate the channels oversampled (8× puts 125 kHz below the
+oversampled Nyquist) and make each output sample the *mean* of its interval, which is the same
+integration the analog stage does. It takes the square waves' own aliased harmonics with it.
+
+**The output is AC-coupled, and subtracting the track's mean is not the same thing.** Each channel is
+a *unipolar* square, so it carries a DC of amplitude × duty — and that DC **moves with the volume
+register**. A tremolo therefore leaves a full-depth sub-audio staircase that one mean for the whole
+track cannot touch: measured at 20% of a tune's entire energy below 50 Hz, against 8% in a recording
+of the real machine. A moving-mean high-pass with a corner near 20 Hz is the coupling capacitor, and
+it moved that tune's alignment-free spectrum agreement from 0.906 to 0.978.
+
+**Per-file peak normalisation is a gain stage inventing a fact.** It makes a one-voice effect as loud
+as a three-voice tune and pulls a nearly-silent track up to full scale. Render on the *chip's* scale
+instead — 0 dBFS = every channel at volume 15 — which cannot clip by construction and leaves the
+files comparable with each other. Zynaps' set then spans −1.6 dBFS (the title music) to −34.7 (a
+one-voice jingle), which is how far apart they really are.
+
+**And one it gets right, once you check.** An envelope-mode volume (bit 4 of registers 8–10) is
+silence *only if* the envelope has finished, which depends on a register the driver may never touch.
+Do not reason about it — read it. Zynaps' shipped register shadow carries shape `0x00`, a one-shot,
+and the Hatari trace shows registers 11, 12 and 13 written by nothing but the driver's own 14-register
+reset, always as 0. Both halves are checkable, so check both: the value in the image, and the fact
+that nothing else on a real boot writes it.
 
 → Naming everything else: [`methodology.md`](methodology.md).
