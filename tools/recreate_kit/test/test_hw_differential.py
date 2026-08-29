@@ -37,6 +37,7 @@ import pytest
 # DEFAULT (os.h's os_hw_model_defaults) is exercised by the projects that send an IKBD command.
 VCOUNT_MID = 0xFF8207
 ACIA_STATUS = 0xFFFC00
+ACIA_DATA = 0xFFFC02
 
 from kit_smoke_project import (HW_READ_ENTRY, MFP_GPIP, RMW_ENTRY, SHIFTER_SYNC,
                                SHIFTER_VCOUNT_LOW, STATIC_TWICE_ENTRY, SYNC_ONLY_ENTRY,
@@ -73,9 +74,11 @@ def test_the_smoke_prg_reads_the_addresses_the_model_actually_names():
     """
     # THE WHOLE TABLE, spelled once here and equal: a prefix pin would let an address be inserted
     # ahead of these two — which renumbers every slot the ledger reports — and still pass.
-    assert (MFP_GPIP, SHIFTER_SYNC, VCOUNT_MID, SHIFTER_VCOUNT_LOW, ACIA_STATUS) == emu.HW_ADDRS, (
-        f"the smoke project plants reads of {MFP_GPIP:#x}/{SHIFTER_SYNC:#x}/"
-        f"{SHIFTER_VCOUNT_LOW:#x} but the model names "
+    assert (MFP_GPIP, SHIFTER_SYNC, VCOUNT_MID, SHIFTER_VCOUNT_LOW, ACIA_STATUS,
+            ACIA_DATA) == emu.HW_ADDRS, (
+        f"the smoke project plants reads of "
+        f"{MFP_GPIP:#x}/{SHIFTER_SYNC:#x}/{VCOUNT_MID:#x}/{SHIFTER_VCOUNT_LOW:#x}/"
+        f"{ACIA_STATUS:#x}/{ACIA_DATA:#x} but the model names "
         f"{', '.join(f'{a:#x}' for a in emu.HW_ADDRS)}")
 
 

@@ -56,8 +56,22 @@
  * are include/video.h's, because that is where the other two routines writing those registers live
  * and one register block has one home. Only the MFP's is this subsystem's.
  */
-#define HW_MFP_ISRB     0xfffa0fu  /* MFP interrupt-in-service B; bit 0 is Timer B */
-#define MFP_ISRB_TIMER_B_BIT 0u
+/* THE TWO BIT NAMES BELOW HAVE NO OFF-TARGET READER, and that is the residual rather than dead
+ * code: both acknowledges are `bclr` read-modify-writes whose read half answers a fabricated 0 here,
+ * so what the reconstruction stores is a plain 0 and the bit number never reaches an expression.
+ * ON TARGET they do have one — `atari/zynaps_backend.c` reads `MFP_ISRB_TIMER_B_BIT` to build the
+ * real read-modify-write — which is exactly why both are named. */
+#define HW_MFP_ISRA     0xfffa0fu  /* MFP interrupt-in-service A; bit 0 is Timer B */
+#define MFP_ISRA_TIMER_B_BIT 0u
+#define HW_MFP_ISRB     0xfffa11u  /* ...and in-service B; bit 6 is the keyboard/MIDI ACIA */
+/* MFP CHANNEL 6 IS THE KEYBOARD ACIA, and that one number is bit 6 of every B register — the
+ * in-service one this handler acknowledges AND the enable/mask pair `_start` opens it up in
+ * (src/init.c's `boot_enable_interrupts`, through `$fffa09`/`$fffa15`). One channel, one name. */
+#define MFP_ACIA_CHANNEL_BIT 6u
+/* `btst #4,$fffffa01` — GPIP bit 4 is the ACIA interrupt line, and it is ACTIVE LOW: the bit reads
+ * CLEAR while the keyboard controller still has a byte waiting, which is what sends the handler
+ * round again. The address is `OS_HW_MFP_GPIP`, the kit's, because both models must spell it. */
+#define MFP_GPIP_ACIA_IDLE 0x10u
 
 /* THE HARDWARE STORES ARE PINNED, through the kit's hardware WRITE ledger.
  *
@@ -83,9 +97,69 @@
  * EMPTY bodies for exactly that split; with a ledger to write through there is nothing empty left.)
  */
 void mfp_ack_timer_b(void);
+/* `bclr #6,$fffa11` — the same shape one register over, and it needs its own function for
+ * `mfp_ack_timer_b`'s reason and not for tidiness: a build for the real Atari overrides these two
+ * with the genuine read-modify-write, and an acknowledge INLINED into its handler has no seam to
+ * override. Off target both store a plain 0, which is the residual this header states above. */
+void mfp_ack_acia(void);
+
+/* ================================================================================================
+ * The IKBD ACIA handler's own state — ikbd_acia_isr @ 0x14456.
+ *
+ * The keyboard controller sends TWO kinds of byte down one wire, and these four addresses are how
+ * the handler tells them apart. A joystick report arrives as a three-byte packet — a `0xfd` header
+ * and then one state byte per stick — so the header arms a countdown and the two bytes after it are
+ * written through a cursor; anything else is a key scancode, stored on the press and cleared again
+ * by its matching release.
+ *
+ * `A_key_scancode` USED TO LIVE IN include/init.h, borrowed by subject while nothing here wrote it.
+ * This handler is what writes it, so the definition moved to its owner and init.c borrows it back
+ * (STATUS.md, "## Borrowed globals").
+ * ============================================================================================= */
+#define A_ikbd_packet_ptr       0x195d4u  /* .l — names.txt; where the next packet byte goes */
+#define A_ikbd_packet_remaining 0x19671u  /* .b — names.txt; bytes still to come in this packet */
+#define A_ikbd_joystick_state   0x19680u  /* .b x2 — where a report's two state bytes land */
+/* The SECOND of that pair — joystick 1, the stick the game actually reads, with the fire button in
+ * bit 7. names.txt names it separately (`joystick_state`) and so does this header, because three
+ * waits in src/init.c spin on THIS byte rather than on the packet's base. */
+#define A_joystick_state        0x19681u
+#define A_key_scancode          0x19685u  /* .b — names.txt; the key currently held down */
+
+/* The header byte the controller prefixes a joystick report with, and how many bytes follow it.
+ * `move.b #$2,$19671` is the count, and it is the ONE reload site — the cursor rewinds to
+ * `A_ikbd_joystick_state` when the countdown reaches zero, so the two bytes always land at 0x19680
+ * and 0x19681 however many reports arrive. */
+#define IKBD_JOYSTICK_HEADER 0xfdu
+#define IKBD_JOYSTICK_PACKET_BYTES 2u
+
+/* The ACIA status bits the handler tests on entry, one after the other: `btst #7` (the 6850 is the
+ * reason we are here at all) and then `btst #0` (…and it has a byte). `OS_ACIA_TX_RDY`, the third
+ * bit of this register anyone in this project names, is the kit's, in os.h beside the address. */
+#define ACIA_STATUS_IRQ 0x80u
+#define ACIA_STATUS_RX_FULL 0x01u
+
+/* `bclr #7,d1` — a scancode with bit 7 set is a RELEASE, and the release's own code is the press
+ * code with that bit taken back off. */
+#define KEY_RELEASE_BIT 0x80u
+
+/* WHY THE RE-ENTRY LOOP HAS A CAP, WHEN THE ORIGINAL HAS NONE — src/input.c's argument for
+ * `IKBD_TX_POLL_MAX`, one register over, and the same split. The GPIP is STATIC in the kit's seeded
+ * read model, so a run declaring bit 4 CLEAR ("another byte is waiting") would send both sides round
+ * for ever: the machine would have raised the line when the controller ran dry and the model has no
+ * way to say so. The oracle's instruction cap ends its spin and the run is thrown away; the
+ * candidate has no such cap, and a hung suite is worse evidence than a red one. So the loop gives up
+ * and tallies a refusal, which `harness.differential` turns into a named failure.
+ *
+ * The number is small on purpose: under any declaration the model can serve, the loop leaves on its
+ * FIRST test of the GPIP, so anything above one is already unreachable. AND IT MUST NOT BIND ON
+ * TARGET — a real 6301 sending a three-byte packet raises the line three times, and a build that
+ * kept a cap here would drop the tail of every report. The split is the kit's own
+ * `OS_NO_REFUSAL_TALLY`, exactly as src/input.c does it. */
+#define IKBD_ISR_REENTRY_MAX 4u
 
 /* ---- the handlers ---------------------------------------------------------------------------- */
 void vbl_isr(uint8_t *image);
+void ikbd_acia_isr(uint8_t *image);
 void timer_b_isr(uint8_t *image);
 void vbl_isr_title(uint8_t *image);
 void timer_b_raster_isr(uint8_t *image);

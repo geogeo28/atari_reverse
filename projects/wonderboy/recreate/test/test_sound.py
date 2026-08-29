@@ -5482,8 +5482,22 @@ def test_the_two_declared_addresses_are_the_ones_the_model_serves():
     """leaf.py spells the pair as literals — a fact about the GAME's `btst` operands, checkable
     against the disassembly — and the kit owns the set the model actually serves. Pin them equal
     here, the way the kit's own smoke project does, so a slot renumbered in os.h fails as a drift
-    rather than as "the tick did not read the tempo pair"."""
-    assert leaf.MODELED_HW_ADDRS == emu.HW_ADDRS
+    rather than as "the tick did not read the tempo pair".
+
+    A PREFIX AND NOT THE WHOLE TABLE, and the distinction is the one thing this change is careful
+    about. The kit's set is shared by every game in the workspace and grows when one of them needs an
+    address this one never reads (Zynaps's ACIA data port, `$fffc02`, was the first), so a
+    whole-tuple equality would red here for a change that cannot affect a single case in this file.
+    A SUBSET would be too weak the other way: `harness.py` turns ledger slots back into addresses by
+    indexing `emu.HW_ADDRS`, so slot ORDER is load-bearing, and a set comparison cannot see a
+    renumbering — which is the very drift this test's first paragraph exists for. Comparing position
+    by position keeps both properties.
+    """
+    prefix = emu.HW_ADDRS[:len(leaf.MODELED_HW_ADDRS)]
+    assert leaf.MODELED_HW_ADDRS == prefix, (
+        f"leaf.py names {', '.join(f'{a:#x}' for a in leaf.MODELED_HW_ADDRS)} but the model's first "
+        f"{len(prefix)} slots are {', '.join(f'{a:#x}' for a in prefix)} — an address was inserted, "
+        f"renamed or reordered, and every ledger slot this battery reads is renumbered with it")
 
 
 # --- the tier's own geometry ------------------------------------------------------------------------

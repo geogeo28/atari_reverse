@@ -7,8 +7,8 @@
  * defect BuggyBoy shipped, green all the way to real hardware.
  *
  * WHAT IS MODELED is a small named set, os.h's OS_HW_MFP_GPIP, OS_HW_SHIFTER_SYNC, the two
- * video-counter bytes OS_HW_SHIFTER_VCOUNT_MID/_LOW and the IKBD ACIA's status byte
- * OS_HW_ACIA_STATUS, and nothing
+ * video-counter bytes OS_HW_SHIFTER_VCOUNT_MID/_LOW and the IKBD ACIA's two ports —
+ * OS_HW_ACIA_STATUS and OS_HW_ACIA_DATA — and nothing
  * else. An address outside it is a REFUSAL, not a zero: the point of the model is that the byte is a
  * DECLARED input of the case, and quietly answering for an address nobody declared would be the
  * fabrication over again under a new name. (Adding one is a change to os.h's table, on both sides at

@@ -74,7 +74,7 @@ PSG_SELECT = leaf.PSG_SELECT
 # The shifter's sync-mode byte, half of the tempo pair. leaf.py's, for PSG_SELECT's reason — and it
 # is no longer shim.c's `#define SHIFTER_SYNC` (deleted when Phase 7 folded the mode into the seeded
 # model): the address the model serves is os.h's OS_HW_SHIFTER_SYNC, and test_sound.py pins leaf's
-# pair equal to `emu.HW_ADDRS` so the two cannot drift.
+# tuple against the model's first slots, in order, so the two cannot drift.
 SHIFTER_SYNC = leaf.SHIFTER_SYNC
 
 # The data register every snippet below reads a port into; `emu.run` reports it back by name.

@@ -248,8 +248,8 @@ def test_one_more_modeled_hardware_address_fails(kit_copy):
     silent-zero T4 — under-counting what a differential verifies, exactly as the pre-§0g rule
     under-counted the PSG. Pinning the slot COUNT is what makes that loud. (It has fired for real
     once: kit Phase 10 added the ACIA status and this module's table had to grow with it.)"""
-    rewrite(kit_copy / "include" / "os.h", "#define OS_HW_NSLOTS                 5",
-            "#define OS_HW_NSLOTS                 6")
+    rewrite(kit_copy / "include" / "os.h", "#define OS_HW_NSLOTS                 6",
+            "#define OS_HW_NSLOTS                 7")
     with pytest.raises(SystemExit) as exit_info:
         hp.check_shim_agreement()
     assert "OS_HW_NSLOTS" in str(exit_info.value)

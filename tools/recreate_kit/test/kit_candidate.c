@@ -205,3 +205,34 @@ void g_hw_acia_send(uint8_t *image) {
         ;
     hw_write8(OS_HW_ACIA_DATA, IKBD_COMMAND);
 }
+
+/* ...and the other end of the same device, which is what the ACIA DATA slot is for: an interrupt
+ * handler's entry shape. It reads the status byte to see why it was called and then POPS the data
+ * port once. One read of the port per entry is exactly what one per-run constant describes, and a
+ * body that read it twice would be refused rather than served the same byte twice — see
+ * `g_hw_acia_receives_twice` below. */
+void g_hw_acia_receive(uint8_t *image) {
+    (void)image;
+    (void)hw_read8(OS_HW_ACIA_STATUS);
+    (void)hw_read8(OS_HW_ACIA_DATA);
+}
+
+/* The shape a per-run constant cannot describe: each read of the data port pops a different byte
+ * off the keyboard controller, so serving one declaration twice would verify the run against a
+ * value the port cannot have held twice. The candidate is FAITHFUL here — the refusal is the
+ * model's, on the oracle's stream, and this glue exists so that the case has both sides. */
+void g_hw_acia_receives_twice(uint8_t *image) {
+    (void)image;
+    (void)hw_read8(OS_HW_ACIA_DATA);
+    (void)hw_read8(OS_HW_ACIA_DATA);
+}
+
+/* Send a command and then service the reply, both through `$fffc02` — the shape every real IKBD
+ * routine has, and the one os.h's `os_hw_split_slots()` exists for: the write goes to the 6850's
+ * transmit register and the read pops its receive register, so the store cannot make the case's
+ * declaration about the read stale the way a store to any one-register address would. */
+void g_hw_acia_send_then_receive(uint8_t *image) {
+    (void)image;
+    hw_write8(OS_HW_ACIA_DATA, IKBD_COMMAND);
+    (void)hw_read8(OS_HW_ACIA_DATA);
+}

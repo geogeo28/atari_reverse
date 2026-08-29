@@ -38,7 +38,8 @@ SYNC = 1            # $ff820a, the shifter's sync mode: bit 1 = 50 Hz
 VMID = 2            # $ff8207, the shifter's video address counter, mid byte
 VLOW = 3            # $ff8209, ...and its low byte
 ACIA = 4            # $fffc00, the IKBD ACIA's status: bit 1 = the transmit register is empty
-NSLOTS = 5
+ACIA_DATA = 5       # $fffc02, ...and its receive/transmit data port, which every read POPS
+NSLOTS = 6
 
 # The bytes the probe's cases use. DECLARED is what a case declares (deliberately not the capture
 # profile's, so a case served the profile where it asked for its own declaration is visible); OTHER
@@ -313,11 +314,13 @@ def test_the_slots_are_the_addresses_os_h_names():
     assert int(defines["OS_HW_SLOT_SHIFTER_SYNC"], 0) == SYNC
     assert int(defines["OS_HW_SLOT_SHIFTER_VCOUNT_MID"], 0) == VMID
     assert int(defines["OS_HW_SLOT_SHIFTER_VCOUNT_LOW"], 0) == VLOW
+    assert int(defines["OS_HW_SLOT_ACIA_DATA"], 0) == ACIA_DATA
     assert int(defines["OS_HW_NSLOTS"], 0) == NSLOTS
     assert int(defines["OS_HW_MFP_GPIP"], 0) == 0xFFFA01
     assert int(defines["OS_HW_SHIFTER_SYNC"], 0) == 0xFF820A
     assert int(defines["OS_HW_SHIFTER_VCOUNT_MID"], 0) == 0xFF8207
     assert int(defines["OS_HW_SHIFTER_VCOUNT_LOW"], 0) == 0xFF8209
+    assert int(defines["OS_HW_ACIA_DATA"], 0) == 0xFFFC02
 
 
 def test_the_capture_profile_declares_exactly_the_slots_it_has_bytes_for():

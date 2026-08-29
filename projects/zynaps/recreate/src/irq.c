@@ -11,7 +11,8 @@
  * ledger — see include/irq.h, which also names the one residual that leaves.
  */
 #include "machine.h"
-#include "hw.h"        /* the kit's hardware write ledger — include/irq.h says what it pins */
+#include "hw.h"        /* the kit's hardware read and write ledgers — include/irq.h says what each pins */
+#include "os.h"        /* OS_HW_ACIA_STATUS / OS_HW_ACIA_DATA / OS_HW_MFP_GPIP, and os_refused */
 #include "irq.h"
 #include "sound.h"
 #include "util.h"      /* REGISTER_SWAP_BITS — the count machine.h's rotate needs to be a `swap` */
@@ -25,6 +26,13 @@
  * says a target build must not ship this expression. The shifter's stores live in src/video.c, with
  * the registers they name. */
 void mfp_ack_timer_b(void) {
+    hw_write8(HW_MFP_ISRA, 0);
+}
+
+/* `bclr #6,$fffa11.l` — the keyboard ACIA's own acknowledge, in the OTHER in-service register.
+ * Same residual, same reason, and a separate function so a target build has the same seam to
+ * override that `mfp_ack_timer_b` gives it. */
+void mfp_ack_acia(void) {
     hw_write8(HW_MFP_ISRB, 0);
 }
 
@@ -165,10 +173,94 @@ void vbl_menu(uint8_t *image) {
     sound_tick(image);
 }
 
+/* ================================================================================================
+ * The IKBD ACIA handler — ikbd_acia_isr @ 0x14456
+ *
+ * The one handler that is not a VBL or a Timer B: it is entered when the keyboard controller has a
+ * byte for the machine, and its job is to decide what that byte was. include/irq.h describes the
+ * two kinds and the four globals that tell them apart.
+ *
+ * WHAT IS HARDWARE HERE, and where each half is compared. The status byte and the data byte are
+ * READS, through the kit's seeded read model (`OS_HW_ACIA_STATUS` carries a model default, the data
+ * port is the case's to declare and is VOLATILE — one read per run, kit TRAP_MODEL.md Phase 7). The
+ * acknowledge is a WRITE, through the write ledger. The GPIP test that decides whether to go round
+ * again is a read too, and include/irq.h says why its loop is capped off target and must not be on.
+ * ============================================================================================= */
+
+/* One pass over the byte the controller is offering, which is everything between 0x1445a and
+ * 0x144a2 and the three `bra`s that rejoin there.
+ *
+ * IT READS THE DATA PORT AT MOST ONCE, and that is what makes the whole handler runnable under a
+ * per-run declaration: whichever arm it takes, the port is popped a single time (or not at all, when
+ * the status says there is nothing to pop). */
+static void ikbd_acia_service_one_byte(uint8_t *image) {
+    uint8_t status = hw_read8(OS_HW_ACIA_STATUS);
+    uint8_t byte;
+
+    if (!(status & ACIA_STATUS_IRQ) || !(status & ACIA_STATUS_RX_FULL))
+        return;
+
+    /* Mid-packet: the byte belongs to a joystick report, so it goes through the cursor rather than
+     * being read as a scancode. The cursor rewinds on the LAST byte, not on the header, so a report
+     * always lands at `A_ikbd_joystick_state` and the one beside it. */
+    if (image[A_ikbd_packet_remaining] != 0) {
+        uint32_t cursor = be32(image + A_ikbd_packet_ptr);
+
+        image[cursor] = hw_read8(OS_HW_ACIA_DATA);
+        wr32(image + A_ikbd_packet_ptr, addr_add(cursor, 1));
+        image[A_ikbd_packet_remaining]--;
+        if (image[A_ikbd_packet_remaining] == 0)
+            wr32(image + A_ikbd_packet_ptr, A_ikbd_joystick_state);
+        return;
+    }
+
+    byte = hw_read8(OS_HW_ACIA_DATA);
+    if (byte == IKBD_JOYSTICK_HEADER) {
+        image[A_ikbd_packet_remaining] = IKBD_JOYSTICK_PACKET_BYTES;
+        return;
+    }
+    /* `cmp.b #$fd,d1 / bmi` — the release arm is chosen by the SIGN OF THE DIFFERENCE and not by
+     * bit 7 of the byte, and the two disagree at both ends of the range: 0x7d..0x7f are press codes
+     * that take the release arm, and 0xfe/0xff are release codes that are stored as presses. That is
+     * the instruction, so it is transcribed as the instruction; the keyboard sends none of the five. */
+    if ((int8_t)(uint8_t)(byte - IKBD_JOYSTICK_HEADER) < 0) {
+        uint8_t released = (uint8_t)(byte & (uint8_t)~KEY_RELEASE_BIT);
+
+        if (released == image[A_key_scancode])
+            image[A_key_scancode] = 0;
+        return;
+    }
+    image[A_key_scancode] = byte;
+}
+
+/* ikbd_acia_isr @ 0x14456 — service bytes until the controller lowers its interrupt line, then
+ * acknowledge it in the MFP.
+ *
+ * `bclr #6,$fffa11` has `mfp_ack_timer_b`'s residual, one register over and for the same reason:
+ * the read half of the read-modify-write answers a fabricated 0 off target, so this stores 0 and the
+ * ledger holds the address and the width while the BIT stays unpinned — and on the machine that
+ * store acknowledges every in-service bit rather than the ACIA's. include/irq.h states the rule. */
+void ikbd_acia_isr(uint8_t *image) {
+    for (unsigned pass = 0; ; pass++) {
+        ikbd_acia_service_one_byte(image);
+        if (hw_read8(OS_HW_MFP_GPIP) & MFP_GPIP_ACIA_IDLE)
+            break;
+#ifndef OS_NO_REFUSAL_TALLY
+        /* OFF TARGET ONLY — include/irq.h says why the bound must not survive into a target build. */
+        if (pass + 1 >= IKBD_ISR_REENTRY_MAX) {
+            os_refused(0);
+            break;
+        }
+#endif
+    }
+    mfp_ack_acia();
+}
+
 /* Register map: none. Every handler is entered on an interrupt, so nothing is passed in and the
  * three that touch registers save and restore them (`movem.l` at both ends of the attract pair,
  * a `move.l d7,-(a7)` around each cycle in the raster split). */
 void g_vbl_isr(uint8_t *image) { vbl_isr(image); }
+void g_ikbd_acia_isr(uint8_t *image) { ikbd_acia_isr(image); }
 void g_timer_b_isr(uint8_t *image) { timer_b_isr(image); }
 void g_vbl_isr_title(uint8_t *image) { vbl_isr_title(image); }
 void g_timer_b_raster_isr(uint8_t *image) { timer_b_raster_isr(image); }

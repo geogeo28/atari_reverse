@@ -15,7 +15,9 @@ import contextlib
 
 import pytest
 
-from kit_smoke_project import (ACIA_DATA, ACIA_SEND_ENTRY, ACIA_STATUS, ACIA_TX_RDY,
+from kit_smoke_project import (ACIA_DATA, ACIA_RECEIVE_ENTRY, ACIA_RECEIVE_TWICE_ENTRY,
+                               ACIA_SEND_ENTRY, ACIA_SEND_THEN_RECEIVE_ENTRY, ACIA_STATUS,
+                               ACIA_TX_RDY,
                                HW_WRITE_ENTRY, IKBD_COMMAND, PEN0_COLOUR, PEN_PAIR_COLOURS,
                                SHIFTER_PEN0, SHIFTER_PEN1, bind)
 
@@ -242,6 +244,85 @@ def test_a_status_with_TDRE_clear_is_a_run_the_model_cannot_serve():
     """
     with pytest.raises(Exception, match="instruction"):
         _run("g_hw_acia_send", entry=ACIA_SEND_ENTRY, hw_seed={ACIA_STATUS: 0}, max_insns=200)
+
+
+# ---------------------------------------------------------------- the ACIA data slot
+
+# Two bytes an IKBD really puts on the port, used as the declarations below: the joystick packet's
+# own header, and a key-release scancode (bit 7 set over the press code for '1').
+IKBD_JOYSTICK_HEADER = 0xFD
+IKBD_RELEASE_SCANCODE = 0x82
+
+
+@pytest.mark.parametrize("declared", (IKBD_JOYSTICK_HEADER, IKBD_RELEASE_SCANCODE))
+def test_the_acia_data_port_serves_the_byte_the_case_declares(declared):
+    """An ACIA interrupt handler's entry read, which is the whole reason `$fffc02` is a slot.
+
+    Before it, a read of the data port was an ordinary off-image `0` — unledgered, undeclared and
+    identical on both sides, so a handler that branched on the byte took the same wrong arm twice
+    and the differential agreed with itself. That is Phase 7's founding defect at the one address
+    Phase 7 had left out.
+
+    TWO DECLARATIONS, because the byte is the CASE's and not the model's: unlike the status port next
+    door the data port carries no default, so what a run is served has to follow what it declared
+    rather than one fixed answer that would pass either way.
+    """
+    diffs, info = _run("g_hw_acia_receive", entry=ACIA_RECEIVE_ENTRY,
+                       hw_seed={ACIA_DATA: declared})
+    assert diffs == []
+    assert info["regs"]["hw_events"] == [(ACIA_STATUS, ACIA_TX_RDY), (ACIA_DATA, declared)]
+
+
+def test_an_undeclared_acia_data_read_is_refused():
+    """...and NOTHING fills in under it. The status port has a model default because a quiescent
+    6850 always settles at TDRE-set; what the data port holds is whatever the controller last sent,
+    which no default can stand in for. So an undeclared read is the ordinary Phase 7 refusal."""
+    with pytest.raises(AssertionError, match="does not declare") as raised:
+        _run("g_hw_acia_receive", entry=ACIA_RECEIVE_ENTRY)
+    assert hex(ACIA_DATA) in str(raised.value)
+
+
+def test_two_acia_data_reads_in_one_run_are_refused():
+    """VOLATILE, and this is the case that makes it a rule rather than a comment.
+
+    Each read POPS the receive register, so two reads in one run take two different bytes off the
+    controller and one declaration cannot describe both. The candidate is faithful — it makes the
+    same two `hw_read8` calls — so without the refusal the two streams would match entry for entry
+    and the run would come back green about a port that never moved.
+
+    The remedy is the case's SHAPE and not a bigger declaration, which is why the message must not
+    offer one: a handler that reads the port twice is two runs, each declaring the byte the machine
+    held then.
+    """
+    with pytest.raises(AssertionError, match="MORE THAN ONCE in one run") as raised:
+        _run("g_hw_acia_receives_twice", entry=ACIA_RECEIVE_TWICE_ENTRY,
+             hw_seed={ACIA_DATA: IKBD_JOYSTICK_HEADER})
+    message = str(raised.value)
+    assert hex(ACIA_DATA) in message
+    assert "hw_seed={" not in message, (
+        "the refusal offers a declaration as the remedy, which cannot work — one declaration is one "
+        "byte, and a handler that reads the port twice needs two runs")
+
+
+def test_sending_on_the_acia_does_not_make_a_later_receive_stale():
+    """THE SPLIT-REGISTER EXEMPTION, and the case it exists for.
+
+    Every other modeled address is one register, so "the run wrote it and then read it back" means
+    the seed no longer describes what a read yields, and the model refuses. `$fffc02` is not one
+    register: a write lands in the 6850's TRANSMIT register and a read pops its RECEIVE register.
+    So the send-then-service shape every real IKBD routine has — and every Zynaps slice that composes
+    `ikbd_send_cmd` with ACIA servicing will have — is a legitimate run, and refusing it would be a
+    diagnosis that does not hold with a remedy (end the case before the write) that throws the case
+    away.
+
+    The control is `test_a_write_then_a_read_of_one_modeled_byte_is_refused` above, which is the same
+    shape at a one-register address and must still red.
+    """
+    diffs, info = _run("g_hw_acia_send_then_receive", entry=ACIA_SEND_THEN_RECEIVE_ENTRY,
+                       hw_seed={ACIA_DATA: IKBD_JOYSTICK_HEADER})
+    assert diffs == []
+    assert info["regs"]["hw_writes"] == [(ACIA_DATA, BYTE, IKBD_COMMAND)]
+    assert info["regs"]["hw_events"] == [(ACIA_DATA, IKBD_JOYSTICK_HEADER)]
 
 
 # ---------------------------------------------------------------- the widened staged-file table

@@ -1040,10 +1040,11 @@ def _vet_hw_reads_are_declared(entry, hw_seed, o_regs):
             f"{', '.join(f'{addr:#x}' for addr in repeated)} MORE THAN ONCE in one run. A seed is "
             f"a per-run CONSTANT, so the second read was served the first read's byte — and the "
             f"machine changes these on its own (the shifter's video counter advances every few "
-            f"scanlines), so the case would be verified against a value the address cannot have "
+            f"scanlines; each read of the ACIA's data port pops the next byte off the keyboard "
+            f"controller), so the case would be verified against a value the address cannot have "
             f"held twice. A volatile byte cannot be served twice from one declaration: end the "
             f"case before the second read, or split it into two runs each declaring what the "
-            f"counter held then (TRAP_MODEL.md, Phase 7). os.h's os_hw_volatile_slots() names "
+            f"address held then (TRAP_MODEL.md, Phase 7). os.h's os_hw_volatile_slots() names "
             f"which slots these are.")
     if o_regs["hw_unseeded"]:
         undeclared = o_regs["hw_unseeded"]

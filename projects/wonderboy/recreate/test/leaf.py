@@ -43,19 +43,24 @@ RUNNER_SENTINEL_INSN = 1
 PSG_SELECT = 0xff8800
 PSG_DATA = PSG_SELECT + 2
 
-# The FIVE hardware bytes the kit's SEEDED READ model serves (TRAP_MODEL.md, "Phase 7"), as the
-# 24-bit bus addresses the game's own operands carry — $17c7e reads the first and $17c90 the second
-# (`btst`s in the tempo head), $51ae and $51b6 the video counter's mid and low bytes, and $68d0 that
-# low byte again in the PRNG. Spelt here rather than unpacked from `emu.HW_ADDRS` because they are a
-# fact about the GAME's operands, which the disassembly can be checked against, and because
-# unpacking would silently assume which slot is which; test_sound.py pins the whole tuple equal to
-# the model's own table, so a slot renumbered in os.h cannot leave a battery declaring an address
-# the model no longer names. test_audio_capture.py reads them from here for PSG_SELECT's reason.
+# The first five hardware bytes the kit's SEEDED READ model serves (TRAP_MODEL.md, "Phase 7"), as
+# the 24-bit bus addresses the game's own operands carry — $17c7e reads the first and $17c90 the
+# second (`btst`s in the tempo head), $51ae and $51b6 the video counter's mid and low bytes, and
+# $68d0 that low byte again in the PRNG. Spelt here rather than unpacked from `emu.HW_ADDRS` because
+# they are a fact about the GAME's operands, which the disassembly can be checked against, and
+# because unpacking would silently assume which slot is which. test_audio_capture.py reads them from
+# here for PSG_SELECT's reason.
 #
-# NO ROUTINE IN THIS GAME READS THE FIFTH. The IKBD ACIA's status byte is the kit's own addition for
-# the games that send it a command; it is here so the tuple is an EQUALITY against the model's table
-# rather than a prefix of it, which is what would let an address be inserted ahead of the four this
-# game does read and renumber every slot the ledger reports.
+# NO ROUTINE IN THIS GAME READS THE FIFTH, and it is here for the ORDER rather than for itself. The
+# IKBD ACIA's status byte is the kit's own addition for the games that send it a command; carrying it
+# makes this tuple a PREFIX of the model's table, which `test_sound.py` pins position by position —
+# so an address inserted ahead of the four this game does read, or two slots swapped, still fails
+# even though the SET is unchanged. That matters because `harness.py` turns ledger slots back into
+# addresses by indexing `emu.HW_ADDRS`, so slot order is load-bearing.
+#
+# THE TUPLE IS NO LONGER THE WHOLE TABLE. The kit's set is shared by every game in the workspace and
+# grows when one of them needs an address this one never reads (Zynaps's ACIA data port, `$fffc02`,
+# was the first); what this file is owed is that its own five come first and in this order.
 MFP_GPIP = 0xfffa01
 SHIFTER_SYNC = 0xff820a
 VIDEO_COUNTER_MID = 0xff8207

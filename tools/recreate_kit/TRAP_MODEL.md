@@ -1213,11 +1213,44 @@ never terminates rather than a case that lies; `emu.run` spends its instruction 
 away. What the constant cannot describe is how many polls the machine would really have taken; the
 loop body is empty and stores nothing, so that count has no image effect.
 
-**The ACIA's DATA port `$fffc02` is deliberately NOT a read slot.** A send loop only ever writes it
-(Phase 10 compares that), and what a READ of it would answer is a byte the keyboard controller put
-there asynchronously — the shape a per-run constant cannot describe at all. An ACIA interrupt handler
-that reads it (Zynaps's `ikbd_acia_isr` @ `0x14456` is the worked example) needs a model this phase
-does not have; see "Still unmodeled".
+### The ACIA's DATA port `$fffc02`: a VOLATILE slot, and what that does and does not buy
+
+A send loop only ever WRITES the data port, which Phase 10 compares. An ACIA **interrupt handler**
+READS it — Zynaps's `ikbd_acia_isr` @ `0x14456` is the worked example — and until that read had a
+slot it was an ordinary off-image `0`: unledgered, undeclared, and identical on both sides, so a
+handler branching on the byte took the same wrong arm twice and the differential agreed with itself.
+That is this phase's founding defect at the one address the phase had left out, so the address is a
+slot now.
+
+**It is VOLATILE, and the reason is the protocol rather than a counter ticking.** Every read POPS the
+6850's receive register: the byte the keyboard controller put there is consumed, and the next read
+answers whatever arrived after it. So one per-run constant describes exactly ONE read of it —
+
+* **a handler that reads the port once per entry is fully served.** One case declares one byte, and a
+  packet or a keystroke is driven as one case per byte, each entered from the state the previous
+  entry left. That is the shape Zynaps's ISR has, and it needs nothing more than this;
+* **a run that reads it twice is REFUSED** by the volatile re-read rule — the same rule the video
+  counter's second read meets, though for a different reason: there the machine advances the byte on
+  its own, here the read itself consumes it. Either way one number cannot be two, and the remedy is
+  the case's shape rather than a bigger declaration.
+
+**It carries no MODEL DEFAULT, unlike the status byte next door.** A quiescent 6850 always settles at
+TDRE-set, so a default there is a fact about the machine; what the data port holds is whatever the
+controller last sent, and there is no value that stands in for "whatever". An undeclared read is the
+ordinary Phase 7 refusal.
+
+**IT IS EXEMPT FROM THE STALENESS RULE, and it is the only slot that is.** A store to any other
+modeled address means the case's seed no longer describes what a read yields, and the combination is
+refused. `$fffc02` is two registers behind one bus address — a write lands in the transmit register,
+a read pops the receive register — so a send cannot invalidate a declaration about a receive.
+`os.h`'s `os_hw_split_slots()` is that exemption and states the criterion; without it the first case
+to compose an IKBD send with ACIA servicing in one run would be refused on a diagnosis that does not
+hold. `test_sending_on_the_acia_does_not_make_a_later_receive_stale` is the case, and
+`test_a_write_then_a_read_of_one_modeled_byte_is_refused` is its control.
+
+**What this is still NOT is a sequence model.** A handler that drains a whole packet inside ONE entry
+— reading the port until the controller stops asserting — needs a declared LIST of bytes, one per
+read, and nothing here has one. See "Still unmodeled".
 
 ## Phase 8 — the SCHEDULED WRITE MODEL (what an external agent stores mid-run)
 
@@ -1683,11 +1716,32 @@ phase is what its wave-3 batch used to close the hole.
 
 ## Still unmodeled (an honest raise is the right answer)
 
-**The IKBD ACIA's data port `$fffc02`, on the READ side.** Phase 10 compares a WRITE of it; a read
-answers a byte the keyboard controller put there asynchronously, which is neither a per-run constant
-(Phase 7's shape) nor a store an external agent makes into the image (Phase 8's). An ACIA interrupt
-handler needs a third thing — a declared SEQUENCE of bytes the port yields, one per read — and
-nothing in the kit has one. Zynaps's `ikbd_acia_isr` @ `0x14456` is the routine waiting on it.
+**A SEQUENCE of bytes one address yields, one per read.** `$fffc02` is a Phase 7 slot now, which
+serves a handler that reads the port ONCE per entry (Phase 7, "The ACIA's DATA port") — and a
+declaration is one byte, so a routine that drains a multi-byte packet inside a single entry, or a
+poll loop whose two successive reads must DIFFER for it to terminate (the FDC status register Phase 7
+names as its non-goal), still has no model. The third shape would be a declared LIST, one entry per
+read, and nothing in the kit has one.
+
+**Zynaps's `ikbd_acia_isr` @ `0x14456` IS the routine waiting on it, and the slot above serves only
+part of it.** The handler reads the port once per PASS, and its last two instructions are
+`btst #4,$fffffa01 / beq.s $14456` — a branch back to its own entry with no `rte` between, so one
+interrupt can pop the port several times. Each pass is servable on its own; the LOOP is not, and it
+needs a sequence on TWO addresses: the data port's successive bytes, and a GPIP whose bit 4 must
+change from asserted to idle for the loop to end (a STATIC slot cannot say that, which is the same
+non-goal the FDC poll is excluded under). `projects/zynaps/recreate/STATUS.md` records the surviving
+mutant that leaves — a candidate that drops the loop and services exactly one byte passes every
+drivable case.
+
+**A REGISTER THAT READS BACK WHAT THE RUN JUST WROTE.** Zynaps's boot programs the MFP's Timer B data
+register and then spins until it reads the value back (`move.b #$ac,$fffa21` / `cmpi.b #$ac,$fffa21`
+/ `bne`, at `0x10626` and `0x10664`, and twice more in `title_attract_loop`). Neither half of the
+model fits: unmodeled, the read answers `0` and the spin never ends; declared as a Phase 7 slot, the
+run's own store makes the seed STALE and the case is refused — correctly, because the seed describes
+the byte the chip held on ENTRY. The shape it wants is Phase 6's YM2149 register FILE one address
+over: a slot whose write updates what a later read is served, which is not a fabrication because the
+value is one the run itself produced, identically on both sides. Zynaps slices around the four spins
+rather than model them; `projects/zynaps/recreate/STATUS.md` records the twenty bytes that costs.
 
 `Pterm` (0x4c) and `Dgetdrv` (0x19) both appear in Joust and are **not** modeled. `Pterm` ends the
 process and never returns, so there is no post-state to diff; `Dgetdrv`'s answer is a property of

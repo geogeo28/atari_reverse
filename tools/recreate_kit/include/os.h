@@ -201,12 +201,20 @@ uint32_t g_os_refusal_count(void);      /* ...and raises on what it reads back *
  * DOES make against the oracle's rather than claiming a number of them. */
 #define OS_HW_ACIA_STATUS  0xfffc00u
 #define OS_ACIA_TX_RDY     0x02u   /* bit 1 of the byte above: the transmit register is empty */
-/* The ACIA's DATA port, one word up. It carries no read slot and is not part of the seeded READ
- * model: a send loop only ever WRITES it, and what a read of it would answer is a byte the keyboard
- * controller put there asynchronously — the shape a per-run constant cannot describe at all. It is
- * named here because the WRITE model needs one definition both sides can spell (a reconstruction
- * passes it to hw_write8; test/hw_write_probe.c plants 68000 code that must reach the same
- * address). An ACIA interrupt handler that reads it needs a model this phase does not have. */
+/* The ACIA's DATA port, one word up. A send loop only ever WRITES it, which the write ledger
+ * compares; an ACIA INTERRUPT HANDLER reads it, and that read is what this slot is for.
+ *
+ * VOLATILE, and it is the one modeled address whose volatility is a property of the PROTOCOL rather
+ * than of a counter ticking. Each read POPS the receive register: the byte the keyboard controller
+ * put there is consumed, and the next read answers whatever arrived after it. So one per-run
+ * constant describes exactly ONE read of it — which is enough for a handler that reads the byte
+ * once per entry, and is refused (os.h's volatile re-read rule) for anything that reads it twice.
+ * That refusal is the honest answer rather than a limitation worked around: a run needing two
+ * different bytes out of this port is two runs, each declaring the byte the machine held then.
+ *
+ * WHAT IT IS STILL NOT is a SEQUENCE model. A handler that drains a whole IKBD packet inside one
+ * entry — reading the port until the controller stops asserting — needs a declared LIST of bytes,
+ * one per read, and nothing here has one. TRAP_MODEL.md, "Still unmodeled", says so. */
 #define OS_HW_ACIA_DATA    0xfffc02u
 
 /* Both sides index the modeled set by SLOT rather than by address — the seed is an array, the
@@ -218,7 +226,8 @@ uint32_t g_os_refusal_count(void);      /* ...and raises on what it reads back *
 #define OS_HW_SLOT_SHIFTER_VCOUNT_MID 2
 #define OS_HW_SLOT_SHIFTER_VCOUNT_LOW 3
 #define OS_HW_SLOT_ACIA_STATUS       4
-#define OS_HW_NSLOTS                 5
+#define OS_HW_SLOT_ACIA_DATA         5
+#define OS_HW_NSLOTS                 6
 #if OS_HW_NSLOTS > 32
 #error "the seeded-hardware known/seed masks are uint32_t: OS_HW_NSLOTS slots no longer fit"
 #endif
@@ -336,6 +345,7 @@ static inline const uint32_t *os_hw_addrs(void) {
         [OS_HW_SLOT_SHIFTER_VCOUNT_MID] = OS_HW_SHIFTER_VCOUNT_MID,
         [OS_HW_SLOT_SHIFTER_VCOUNT_LOW] = OS_HW_SHIFTER_VCOUNT_LOW,
         [OS_HW_SLOT_ACIA_STATUS]        = OS_HW_ACIA_STATUS,
+        [OS_HW_SLOT_ACIA_DATA]          = OS_HW_ACIA_DATA,
     };
     return addrs;
 }
@@ -398,8 +408,26 @@ static inline uint32_t os_hw_install_seed(uint8_t *file, const uint8_t *seed, ui
  * derived from the same one table so that a slot added above is STATIC unless it says otherwise:
  * the conservative direction, since a static slot read twice is served twice and a volatile one is
  * refused, and a new slot wrongly called volatile would refuse runs that are fine. */
+/* Which slots are TWO REGISTERS BEHIND ONE ADDRESS — a write lands in one and a read pops the
+ * other — so a store to them does NOT make a later read's declaration stale.
+ *
+ * The ACIA's data port is the whole set and the reason the mask exists. `$fffc02` written is the
+ * 6850's TRANSMIT register and `$fffc02` read is its RECEIVE register; they are different silicon
+ * behind one bus address, so "the run wrote this byte, so the seed no longer describes it" — true
+ * of every other modeled address — is simply false here. Without this, the first case to compose an
+ * IKBD SEND with ACIA servicing in one run would be refused with a diagnosis that does not hold and
+ * a remedy (end the case before the write) that throws the case away.
+ *
+ * It is deliberately NOT a general escape hatch. A slot belongs here only when the datasheet says
+ * the two directions are different registers; a slot wrongly listed would serve a seed the run's own
+ * store really had invalidated, which is the fabrication the staleness rule exists to refuse. */
+static inline uint32_t os_hw_split_slots(void) {
+    return 1u << OS_HW_SLOT_ACIA_DATA;
+}
+
 static inline uint32_t os_hw_volatile_slots(void) {
-    return (1u << OS_HW_SLOT_SHIFTER_VCOUNT_MID) | (1u << OS_HW_SLOT_SHIFTER_VCOUNT_LOW);
+    return (1u << OS_HW_SLOT_SHIFTER_VCOUNT_MID) | (1u << OS_HW_SLOT_SHIFTER_VCOUNT_LOW)
+         | (1u << OS_HW_SLOT_ACIA_DATA);
 }
 
 /* Which slot `addr` is, or -1 for an address the model does not name. Takes a 24-bit bus address:

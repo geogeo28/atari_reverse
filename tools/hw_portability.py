@@ -160,8 +160,13 @@ HW_SHIFTER_VCOUNT_MID, HW_SHIFTER_VCOUNT_LOW = 0xFF8207, 0xFF8209
 # os_hw_model_defaults) and LEDGERED, so it prices T2 like the four above rather than T4. A reader
 # who still believes "$fffc00 is a hard-coded exception in shim.c" will mis-explain that loop.
 HW_ACIA_STATUS = 0xFFFC00
+# ...and its DATA port beside it, a slot since the ACIA-interrupt wave. Unlike the status byte it
+# carries no model default and is VOLATILE — one declaration describes ONE read, because each read
+# pops the receive register — but for THIS module's purposes it prices the same: a byte read of it
+# is a T2 SEEDED_READ that a differential compares, not a T4 silent zero.
+HW_ACIA_DATA = 0xFFFC02
 HW_SEEDED_ADDRS = (HW_MFP_GPIP, HW_SHIFTER_SYNC,
-                   HW_SHIFTER_VCOUNT_MID, HW_SHIFTER_VCOUNT_LOW, HW_ACIA_STATUS)
+                   HW_SHIFTER_VCOUNT_MID, HW_SHIFTER_VCOUNT_LOW, HW_ACIA_STATUS, HW_ACIA_DATA)
 HW_SEEDED_SIZE = 1
 
 # The kit is the authority for every constant above. CLAUDE.md §5: a value that must agree
@@ -188,6 +193,7 @@ PINNED_CONSTANTS = (
             # status used to be shim.c's own `IKBD_STATUS` literal and is a modeled slot both sides
             # read from os.h now.
             "OS_HW_ACIA_STATUS": HW_ACIA_STATUS,
+            "OS_HW_ACIA_DATA": HW_ACIA_DATA,
             # The set's SIZE, not just its members: pinning only the two addresses would let the
             # kit add a third modeled byte while this module went on pricing it T4 HW_READ —
             # under-counting what a differential verifies, and silently, since every pinned name

@@ -163,11 +163,9 @@
 #define SCANCODE_RETURN 0x1cu
 #define SCANCODE_ENTER 0x72u
 
-/* BORROWED BY SUBJECT, the way include/init.h borrows `A_key_scancode`: this is the IKBD joystick
- * byte the ACIA handler (0x14456, unported) assembles, so it belongs beside that handler's other
- * bytes the day `input` claims it. Bits 0..3 are the four directions and bit 7 is fire, which is
- * why the original tests the first four with `btst` and the last with `tst.b` + `bmi`. */
-#define A_joystick_state 0x19681u
+/* `A_joystick_state` (0x19681) is include/irq.h's — `ikbd_acia_isr` @ 0x14456 writes it, and that is
+ * verified now. Bits 0..3 are the four directions and bit 7 is fire, which is why the original
+ * tests the first four with `btst` and the last with `tst.b` + `bmi`. */
 #define JOYSTICK_UP 0x01u
 #define JOYSTICK_DOWN 0x02u
 #define JOYSTICK_LEFT 0x04u

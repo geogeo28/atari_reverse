@@ -590,7 +590,10 @@ static void hw_log_write(uint32_t a, uint32_t width, uint32_t value) {
 }
 
 static void hw_note_write(uint32_t a, uint32_t n) {
-    g_hw_written |= os_hw_slots_touched(a & BUS_ADDR_MASK, n);
+    /* A SPLIT-REGISTER SLOT IS EXEMPT — os.h's os_hw_split_slots() has the argument: the ACIA's data
+     * port answers a READ from different silicon than a WRITE lands in, so storing to it cannot make
+     * a declaration about what a read yields stale. Every other modeled address is one register. */
+    g_hw_written |= os_hw_slots_touched(a & BUS_ADDR_MASK, n) & ~os_hw_split_slots();
 }
 
 /* Append one read to the ordered ledger. Overflow is counted, never silent: two ledgers that

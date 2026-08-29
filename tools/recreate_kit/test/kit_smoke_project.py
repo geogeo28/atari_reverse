@@ -141,9 +141,31 @@ _ACIA_SEND_CODE = (struct.pack(">HHI", 0x0839, 1, ACIA_STATUS)               # b
                    + struct.pack(">HHI", 0x13FC, IKBD_COMMAND, ACIA_DATA)    # move.b #$16,$fffc02
                    + struct.pack(">H", 0x4E75))                              # rts
 
+# ...and the OTHER end of the same device: an ACIA INTERRUPT HANDLER's entry shape, which reads the
+# status byte and then POPS the data port once. This is the read the ACIA data slot exists for, and
+# one per-run constant describes it exactly because there is one read of it.
+_ACIA_RECEIVE_CODE = (struct.pack(">HI", 0x1039, ACIA_STATUS)                # move.b $fffc00.l,d0
+                      + struct.pack(">HI", 0x1239, ACIA_DATA)                # move.b $fffc02.l,d1
+                      + struct.pack(">H", 0x4E75))                           # rts
+
+# ...and the shape one constant CANNOT describe, which is why the data port is VOLATILE: two reads
+# of it in one run pop two different bytes off the keyboard controller, and a single declaration
+# would serve the first one twice.
+_ACIA_RECEIVE_TWICE_CODE = (struct.pack(">HI", 0x1239, ACIA_DATA)            # move.b $fffc02.l,d1
+                            + struct.pack(">HI", 0x1439, ACIA_DATA)          # move.b $fffc02.l,d2
+                            + struct.pack(">H", 0x4E75))                     # rts
+
+# ...and the composite the SPLIT-REGISTER exemption exists for: send a command and then service
+# the reply, both through `$fffc02`. Every other modeled address would be stale after that write;
+# this one is not, because the write went to the transmit register and the read pops the receive one.
+_ACIA_SEND_THEN_RECEIVE_CODE = (struct.pack(">HHI", 0x13FC, IKBD_COMMAND, ACIA_DATA)  # move.b #,..
+                                + struct.pack(">HI", 0x1239, ACIA_DATA)   # move.b $fffc02.l,d1
+                                + struct.pack(">H", 0x4E75))              # rts
+
 _ROUTINES = (_RMW_CODE, _GIACCESS_CODE, _HW_READ_CODE, _SYNC_ONLY_CODE, _WRITE_THEN_READ_CODE,
              _WIDE_READ_CODE, _VOLATILE_TWICE_CODE, _STATIC_TWICE_CODE,
-             _HW_WRITE_CODE, _ACIA_SEND_CODE)
+             _HW_WRITE_CODE, _ACIA_SEND_CODE, _ACIA_RECEIVE_CODE, _ACIA_RECEIVE_TWICE_CODE,
+             _ACIA_SEND_THEN_RECEIVE_CODE)
 
 
 def _entries():
@@ -157,7 +179,8 @@ def _entries():
 
 (RMW_ENTRY, GIACCESS_ENTRY, HW_READ_ENTRY, SYNC_ONLY_ENTRY, WRITE_THEN_READ_ENTRY,
  WIDE_READ_ENTRY, VOLATILE_TWICE_ENTRY, STATIC_TWICE_ENTRY,
- HW_WRITE_ENTRY, ACIA_SEND_ENTRY) = _entries()
+ HW_WRITE_ENTRY, ACIA_SEND_ENTRY, ACIA_RECEIVE_ENTRY, ACIA_RECEIVE_TWICE_ENTRY,
+ ACIA_SEND_THEN_RECEIVE_ENTRY) = _entries()
 
 PRG_MAGIC = 0x601A
 
