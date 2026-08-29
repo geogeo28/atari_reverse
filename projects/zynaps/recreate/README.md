@@ -32,8 +32,8 @@ that belongs to the game. `test/abi.py` parks its stub and scratch buffers clear
 
 ## Names
 
-`../names.txt` is the source of truth, and it names all 188 functions. **It is not uniformly
-certain**: 19 of the 188 `fn` lines and 83 of the 267 `var` lines carry a trailing `# ctx`, meaning
+`../names.txt` is the source of truth, and it names all 195 functions. **It is not uniformly
+certain**: 19 of the 195 `fn` lines and 86 of the 280 `var` lines carry a trailing `# ctx`, meaning
 the name was inferred from call context rather than confirmed from a body read end to end. Never
 invent a name here and never rename one there.
 

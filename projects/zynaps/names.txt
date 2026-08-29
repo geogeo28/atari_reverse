@@ -228,6 +228,10 @@ fn 0x16e4a sound_modtable_step
 fn 0x14e8c actor_script_op_random_speed_nudge
 fn 0x14eb8 actor_script_continue
 fn 0x14ebe actor_script_op_end_frame
+fn 0x1467e anim_enemy_type20
+fn 0x146ba anim_enemy_type22
+fn 0x146f6 anim_enemy_type16
+fn 0x14e1c actor_script_op_thrust_to_centre_y
 
 # ==== globals and tables ====
 var 0x16e82 psg_reg_shadow
@@ -508,6 +512,8 @@ var 0x6c8ae life_icons
 var 0x6c8ee zynaps_logo
 var 0x6e0ee hewson_logo
 var 0x41eae panel_master
+var 0x1990f section_param_a   # ctx (also read as: anim_frame_limit_type20 — the type-20 anim cycle length, loaded per section from 0x1982c)
+var 0x19910 section_param_b   # ctx (also read as: anim_frame_limit_type22 — the type-22 anim cycle length, loaded per section from 0x1983c)
 
 # ==== comments ====
 cmt 0x10000 Entry. GEMDOS Super(0) then movea.l d0,a7 (SP := old SSP) - this is why Ghidra shows in_D0 as the stack pointer for the whole function. | Slice `boot_enter_supervisor`, [0x10000, 0x10010), verified by recreate/. Super(0) then movea.l d0,a7. It writes no image byte at all: the token in D0 is its whole observable effect, and that A7 becomes that token is a residual no image differential can reach.
@@ -851,7 +857,7 @@ cmt 0x19380 actor_move_table, 0x2e longs; entries read off the image: 0x0e=0x149
 cmt 0x193dc actor_anim_table, entries read off the image: 0x06=0x15332 0x0b=0x1530e 0x0c=0x14730 0x0e=0x1476e 0x0f=0x147ac 0x10=0x146f6 0x11=0x1483e 0x14=0x1467e 0x16=0x146ba, every other slot 0x148c8. NOTE the two tables share storage: 0x193dc = 0x19380 + 0x17 longs, so the comments on 0x1530e and 0x15332 that call them "entry 0x22 / 0x1d of the 0x19380 table" name the SAME addresses (0x19408, 0x193f4) as anim entries 0x0b and 0x06 - one slot, two readings, and the anim one is what the caller 0x147f2 uses
 cmt 0x19438 script_op_table, 8 longs: 0=0x143f8 1=0x14ce8 2=0x14d00 3=0x14d14 4=0x14d88 5=0x14da2 6=NULL 7=0x14cce. Entry 6 is a zero longword, so the shipped script data at 0x19ac2 can never carry an opcode with (op&7)==6
 cmt 0x19458 script_op_ext_table, 16 longs: 0=0x14dc0 1=0x14dd8 2=0x14de2 3=0x14e00 4=0x14e1c 5=0x14e38 6=0x14e50 7=0x14306 8=0x141d6 9=0x14e5c 10=NULL 11=0x14e8c 12=NULL 13=NULL 14=NULL 15=0x14ebe
-cmt 0x14e1c Ext sub-op 4 (a2=record), reached only through 0x19458[4]; no fn line in names.txt. d1 = 0x20 above y 0x60 and 0x40 below it, then falls into 0x143f8 as an accel mask; carry clear (frame ends) | PROPOSED NAME actor_script_op_thrust_to_centre_y (recreate/src/enemy.c): ext sub-op 4, reached only through 0x19458[4]. d1 = bit 5 (add ay) below y 0x60 and bit 6 (subtract it) above, then 0x143f8; carry clear. Its two-axis sibling is 0x14e5c
+cmt 0x14e1c Ext sub-op 4 (a2=record), reached only through 0x19458[4]. d1 = 0x20 above y 0x60 and 0x40 below it, then falls into 0x143f8 as an accel mask; carry clear (frame ends) | PROPOSED NAME actor_script_op_thrust_to_centre_y (recreate/src/enemy.c): ext sub-op 4, reached only through 0x19458[4]. d1 = bit 5 (add ay) below y 0x60 and bit 6 (subtract it) above, then 0x143f8; carry clear. Its two-axis sibling is 0x14e5c
 cmt 0x310ae Mothership rotate preshift banks: two banks of 8 slots x 0xa0 bytes (0x500 each), so bank 1 starts at 0x315ae. 0x14f18 hands each of the 5 tail segments a 400-byte slice of bank 0; 0x15128 builds them. Proposed var name: mothership_sprite_bank
 cmt 0x5ed7e The two unshifted 0xa0-byte mothership frames 0x15128 copies into 0x310ae and 0x315ae on its first pass. Proposed var name: mothership_sprite_source
 cmt 0x19911 A 1..4 build clock, not a free counter: 0x14f18 and 0x1504a set it to 1; 0x15128 runs one step per call (1 = copy both raw frames in, 2 and 3 = pre-shift one bank each) and at 4 sets 0x198b0, clears the long at 0x19efe and clears itself. Stage 0 is unreachable - the only caller (0x1117e) guards on tst.b/beq - and would be catastrophic: sub.b #$2 / ext.w / mulu.w #$500 reads 0 as 0xfffe and addresses ~0x5030000
