@@ -73,7 +73,8 @@ path plus two omitted sets of translation units** — no core is edited, and `bu
 | `psg_port_write` | an ordered write ledger + a register file (`kit/src/psg.c`) | `move.b reg,$ffff8800` then `move.b val,$ffff8802`, from inside the vertical-blank interrupt | kit `src/` excluded → `zynaps_backend.c` |
 | `hw_read8` | seeded reads of four declared addresses (`kit/src/hw.c`) | **not defined.** No Zynaps core calls it (measured), and a stub would be a fabricated machine byte | kit `src/` excluded |
 | `hw_write8/16/32` | **does not exist** — `hw.h` deliberately exports no write | a real `volatile` store, counted | `shim_include/hw.h` → `zynaps_backend.c` |
-| `sched_poll8` / `sched_wait8` / `sched_poll16` | polls counted per wait site, with declared stores (`kit/src/sched.c`) | **not defined.** No Zynaps core calls one (measured) | kit `src/` excluded |
+| `sched_poll8` / `sched_wait8` | polls counted per wait site, with declared stores (`kit/src/sched.c`) | `shim_include/sched.h` — the same spin with NO cap, and `volatile` so the loop keeps reading. `src/highscore.c`'s game-over chain is what calls them | kit `src/` excluded; this shim REPLACES rather than `#include_next`s |
+| `sched_poll16` | the word form of the above | **not defined.** No Zynaps core calls it, and an unexercised word read in the one build with no oracle behind it is worse than absent — `shim_include/sched.h` says what to watch for when the first caller arrives | kit `src/` excluded |
 | `g_dosound`, `disk_*` | the Dosound ledger, the staged disk | **not defined.** No Zynaps core calls one | kit `src/` excluded |
 | `shifter_write_palette` | an empty body (`../src/irq_hw_offtarget.c`) | sixteen (or one) real `move.w` to `$ffff8240`, one store per pen through `hw_write16` | that file excluded → `zynaps_backend.c` |
 | `shifter_clear_pen0` | an empty body | `clr.w $ffff8240` | the same |

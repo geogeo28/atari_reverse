@@ -12,21 +12,35 @@ heading carries its own count, so the only number an agent touches is its own se
 with no `src/<name>.c`.
 
 **Not every verified row is a function, and the difference is worth stating before the counts are
-quoted.** Eleven rows are SLICES — named address RANGES rather than functions — and each one's
-Verification column opens with the `[start, end)` the differential actually runs. Nine of them are
-`## Verified — init`'s, because the boot chain never returns and so offers no `rts` to stop at; the
-other two are `## Verified — highscore`'s, the pure halves of two routines whose other halves are the
-keyboard-driven loops. Every other row is a whole function. So today's sum is
-**196 rows = 185 functions + 11 slices**. Every one of the 185 has an
+quoted.** Nine rows are SLICES — named address RANGES rather than functions — and each one's
+Verification column opens with the `[start, end)` the differential actually runs. All nine are
+`## Verified — init`'s, because the boot chain never returns and so offers no `rts` to stop at.
+Every other row is a whole function. So today's sum is
+**197 rows = 188 functions + 9 slices**. Every one of the 188 has an
 `fn` line in `../names.txt` (four handlers the name map first reached only by `cmt` —
 `anim_enemy_type16` 0x146f6, `anim_enemy_type20` 0x1467e, `anim_enemy_type22` 0x146ba,
 `actor_script_op_thrust_to_centre_y` 0x14e1c — were named there once this reconstruction pinned
-them). The eleven slices sit inside three more `fn` lines: `_start` @ 0x10000,
-`game_over_screen` @ 0x12e66 and `highscore_check_and_insert` @ 0x12eae.
-**195 − 185 = 10 named functions are not ported whole.** `_start` is one of them and appears in
+them). The nine slices sit inside one more `fn` line: `_start` @ 0x10000.
+**195 − 188 = 7 named functions are not ported whole.** `_start` is one of them and appears in
 `## Not reconstructed, and why` as the RANGES its slices do not join up over rather than as a row;
-the other 9 each have exactly one row there, and two of those rows — 0x12e66 and 0x12eae — now say
-which HALF is verified above rather than claiming nothing is.
+the other 6 each have exactly one row there.
+
+**AND THE RECONSTRUCTION'S OWN `fn` LINES ARE NOT FUNCTIONS OF THE PROGRAM.** Four addresses in
+`../names.txt` carry an `fn` line this reconstruction added so that a differential could enter the
+original where a paragraph begins — `game_over_screen_prologue` 0x12e66, `highscore_rank_and_shift`
+0x12eb2, `name_entry_redraw` 0x13196 and `name_entry_edit_step` 0x13058. They are PARAGRAPHS OF
+VERIFIED FUNCTIONS, not unported ones, so they are neither rows above nor rows in
+`## Not reconstructed, and why`, and the "every `fn` line with no ✅ row appears there" rule below is
+about the program's own 195. (0x12e66 currently carries TWO `fn` lines, the second added when only
+its prologue was verified; `../out/names_highscore.txt` proposes deleting it.)
+
+**The two high-score slices are gone because their hosts are whole now.** `game_over_screen` and
+`highscore_check_and_insert` used to contribute the halves that did not touch the keyboard; the
+kit's scheduled-write model (`TRAP_MODEL.md`, Phase 8) closed the other halves, so both are
+whole-function rows in `## Verified — highscore` and `highscore_enter_name` has joined them. The two
+slice NAMES survive as routines inside `src/highscore.c` — their mid-entry checkpoints are still the
+only cases that can drive the ranking's boundaries and the game-over digit without a whole
+composed screen on top of them — but they are no longer rows of their own.
 
 **The memory map is README's, not this file's.** Where the stubs, the scratch buffers and the staged
 files sit relative to the program and to the game's two hard-coded framebuffers is decided in
@@ -563,6 +577,8 @@ Recorded rather than fixed, because each one reaches outside this slice's files 
   a third time.** Collapsed to ONE definition inside this file (it had been written twice), but the
   repo-wide count is now three `static`s of one loop. The shared home is `tools/recreate_kit/include/
   machine.h`, beside `loop_passes` — a kit change, which is not this slice's to make.
+  **The game-over chain made it a fourth** (`src/highscore.c`, for the two palette installs and the
+  name commit), under the same argument and with the same remedy.
 
 ### `src/text.c` and `include/text.h` were edited from this slice
 
@@ -593,18 +609,48 @@ for a merge to discover:
   SHIPPED_RECORDS still carries all twelve as bare literals — the four the high-score screens use
   join this block when those land.
 
-## Verified — highscore (3)
+## Verified — highscore (4)
 
-**Two of these three rows are SLICES**, and both hosts are KIT-blocked whole: `game_over_screen` and
-`highscore_check_and_insert` each reach `ikbd_send_cmd` @ 0x14444 on one arm. The slice names are
-this reconstruction's, proposed in `../out/names_wave3_misc.txt`, and each row opens with the
-`[start, end)` the differential runs.
+**THE WHOLE GAME-OVER CHAIN IS HERE NOW, and none of these four rows is a slice any more.** The two
+slice rows this section used to carry — `game_over_screen_prologue` @ [0x12e66, 0x12e94) and
+`highscore_rank_and_shift` @ [0x12eb2, 0x12f0e)/[.., 0x12f5a) — are folded into the whole-function
+rows for their hosts; both names survive as routines in `src/highscore.c` and both slices are still
+DRIVEN, as mid-entry checkpoint cases inside the rows below, because a whole composed screen cannot
+isolate what one paragraph does. The names are this reconstruction's, proposed in
+`../out/names_wave3_misc.txt` and `../out/names_highscore.txt`.
+
+**ONE DUPLICATION THIS SECTION OWES ANOTHER FILE.** `src/hud.c` keeps a `static void
+install_frontend_palette` for the intro screen, and its comment there says out loud that nothing
+outside that file makes the copy — "`game_over_screen` makes the same copy, but on the arm AFTER the
+`bsr` … so nothing outside this file calls it yet". That stopped being true here: `src/highscore.c`
+now holds a byte-identical body under the same name, returning the D0 byte its two call sites hand
+to `sound_start`. Merging them means exporting hud.c's and widening its return type, in a file the
+ownership table (`README.md`) gives to another subsystem — so the debt is booked here rather than
+paid, and hud.c's comment wants correcting in the same pass. Neither copy is tested by the other's
+suite, which is exactly the cost.
+
+**What unblocked them is the kit's SCHEDULED WRITE model** (`TRAP_MODEL.md`, Phase 8), not
+`ikbd_send_cmd`: sending the interrogate command was never the wall it looked like once that routine
+was verified. The wall was the four bytes this chain busy-waits on that nothing in it writes — the
+VBL flag at 0x198a7, the scancode at 0x19685, and the joystick byte at 0x19681 for a press and again
+for a release. Every case below declares what the interrupt handlers store and when, and the kit
+compares the oracle's arrivals at each wait against the candidate's polls SITE BY SITE, so a port
+whose loop turned a different number of times fails even where the bytes agree. This is the
+project's first use of that model; `## Coverage limits` carries the one bound it imposes.
 
 | Addr (Ghidra) | Name | Bytes | Status | Verification |
 |---------------|------|-------|--------|--------------|
 | `0x13338` | `role_of_honour_screen` | 238 | ✅ verified | the shipped table over three seeds, both buffer orders and a buffer that is neither, five distinguishable scores (a candidate walking the table with the wrong stride differs on four rows of five), five record columns including both ends of the byte's SIGN, and the logo's three strips poked to three patterns — which is what shows they walk ONE advancing source. The load-bearing case is `test_the_score_rows_are_the_routines_own`: each SCORE is drawn at a `lea` displacement of the routine's own (17600 and four steps of 1920) while each NAME is drawn at the row byte inside its record, and the shipped table makes those the same five rows. A table where they differ is the only thing that separates them, and a reconstruction that read the row from the record passes every other case here. NO POISON PASS — see "Three routines that cannot take a poison pass" in the `hud` section above. Mutation killed: the score rows one screen row apart |
-| `0x12e66` | `game_over_screen_prologue` | 46 | ✅ verified | `[0x12e66, 0x12e94)`, stopping at the `bsr` into `highscore_check_and_insert`. Four player indices — the digit is `player + 0x31` added as a BYTE before `ext.w`, so the sweep runs past the two the game produces — over a noise-seeded playfield, both buffer orders and a buffer that is neither. THE DIGIT'S COLUMN IS `draw_text_record`'s LEFTOVER (nothing reloads D1), the same idiom `player_intro_screen` uses at a different row; and unlike the two front-end screens this one does NOT flip, because the high-score screens after it compose into the same back buffer. Mutations killed: the digit's row taken from hud.h's, the column named instead of inherited |
-| `0x12eb2` | `highscore_rank_and_shift` | 92 | ✅ verified | `[0x12eb2, 0x12f0e)` for the rated arm and `[0x12eb2, 0x12f5a)` for the other — TWO EXITS, so two checkpoints. A MID-ENTRY slice: 0x12eae opens with a `bsr` into a screen clear, so the ranking half has no entry of its own. All five table rows driven, which pins the BACKWARDS walk; the not-rated arm, which writes nothing at all; equality at two rows, holding `ble` against `blt` — an EQUAL score ranks BELOW the entry it matched; a negative table entry, which holds `cmp.l` as SIGNED; a table with a different column, row and terminator per row, which is what says the shift carries the score and the fifteen name characters and NOT the record's own coordinates; a guard entry past the five; 60-case sharded fuzz over UNSORTED tables (nothing here re-sorts). The rank is checked against the ORACLE'S OWN D6 as well as against the byte diff. Mutations killed: the compare's strictness and signedness, the shift's row count, the shift carrying the coordinates |
+| `0x12e66` | `game_over_screen` | 72 | ✅ verified | GAME OVER PLAYER n and then the whole high-score chain, to `rts`, on BOTH arms — and this is the only entry that reaches an `rts` on the not-rated one, for the stack reason below. Its own paragraph is still driven separately as `game_over_screen_prologue` @ `[0x12e66, 0x12e94)`: four player indices (the digit is `player + 0x31` added as a BYTE before `ext.w`, so the sweep runs past the two the game produces) over a noise-seeded playfield, both buffer orders and a buffer that is neither. THE DIGIT'S COLUMN IS `draw_text_record`'s LEFTOVER (nothing reloads D1), the same idiom `player_intro_screen` uses at a different row; and unlike the two front-end screens this one does NOT flip, because the high-score screens after it compose into the same back buffer. **THE FOUR INSTRUCTIONS AFTER THE CALL ARE DEAD**, which is a finding rather than a simplification: 0x12fba is a `movea.l (a7)+,a0` copied from the rated arm without that arm's matching push at 0x12f20, so the NOT RATED path's `rts` returns to THIS routine's caller and never to the `bne` at 0x12e98 — while the rated path does come back, with D0 = 1, and branches over the palette restore. Both arms therefore skip it, and `test_the_not_rated_arm_pops_its_own_return_address` plus the A0 assertion in the end-to-end case are what say so: the oracle's A0 comes back holding the return address the pop took. The stack still balances from the caller's side, which is why this is an ordinary C function. Mutations killed: the digit's row taken from hud.h's, the column named instead of inherited, the prologue skipped |
+| `0x12eae` | `highscore_check_and_insert` | 276 | ✅ verified | Rank the score, then run whichever screen the answer calls for — the rated arm to its own `rts`, the not-rated arm to a checkpoint at that `rts` (0x12fc0), because the extra pop above means it never returns to its caller. Both answers are compared as D0 as well as as bytes. **THE TWO SCREENS USE DIFFERENT BUFFERS**: NEW HIGH SCORE goes into the compose page the name-entry loop blits, YOU ARE NOT RATED goes straight into `screen_back` on top of the GAME OVER already there — a case drives each, and a reconstruction using one buffer for both fails on one of them. The ranking half is still driven separately as `highscore_rank_and_shift` @ `[0x12eb2, 0x12f0e)` / `[0x12eb2, 0x12f5a)`, TWO EXITS and two checkpoints, entered MID-ROUTINE because 0x12eae opens with a `bsr` into a screen clear: all five table rows, which pins the BACKWARDS walk; the not-rated arm, which writes nothing at all; equality at two rows, holding `ble` against `blt` — an EQUAL score ranks BELOW the entry it matched; a negative table entry, which holds `cmp.l` as SIGNED; a table with a different column, row and terminator per row, which says the shift carries the score and the fifteen name characters and NOT the record's own coordinates; a guard entry past the five; 60-case sharded fuzz over UNSORTED TABLES, because nothing in this half
+re-sorts and the scan stops at the first entry it does not beat; and an ATTRIBUTION PASS over the
+shift, which is what holds all fifteen name characters rather than the handful two adjacent rows
+happen to differ at (the review measured the alternative: with one shared padding byte, a copy of
+seven bytes was green). The rank is checked against the ORACLE'S OWN D6 as well as against the byte
+diff, so a candidate that shifted the right bytes for the wrong reason is still caught. (An earlier
+row gave the slice's stop as 0x12f0c; **0x12f0c is not an instruction boundary** — the `dbf` at
+0x12f0a runs to 0x12f0e, which is also where both arms of the shift converge.) The two halves are joined by `test_the_name_goes_into_the_row_the_ranking_chose`, which drives all five ranks off the shipped table's own scores through to the name landing in that row. The NOT RATED wait is two spins on ONE byte at two PCs — a press then a release — driven at four arrival pairs, which is exactly the shape the kit keys a wait by its PC for. Mutations killed: the compare's strictness and signedness, the shift's row count, the shift carrying the coordinates, the screen clear on entry dropped, NOT RATED drawn into the compose page, the two jingles swapped, the press and release waits swapped, the joystick byte not cleared before the press wait |
+| `0x12fd4` | `highscore_enter_name` | 666 | ✅ verified | PLEASE ENTER YOUR NAME: the on-screen keyboard, end to end. **TWO OF ITS BLOCKS ARE ALSO THEIR OWN ENTRIES**, and both exist because the loop's own guards hide something a whole run cannot reach. `name_entry_edit_step` @ `[0x13058, 0x13196)` / `[.., 0x131c4)` / `[.., 0x1324a)` — one address per arm the dispatch takes — makes the fifteen-character cap and the eight dispatch arms reachable at all, since a whole run cannot spell fifteen characters (`## Coverage limits`). `name_entry_redraw` @ `[0x13196, 0x131c4)` makes the block cursor's `cmp.w #$11` + `bge` reachable AS A SIGNED COMPARE: inside the loop D4 never leaves [2, 0x11], where signed and unsigned agree, and the review measured that an unsigned reading passed everything else in the battery. Driven at the step: every scancode a byte can hold except 0, sharded, each paired with one of four cursors drawn once so the pairing does not move with the worker count — exhaustive because the dispatch forks EIGHT ways over one byte and three boundaries are single values; a letter at every one of the fifteen record slots; both sides of the cap; four cursors OUTSIDE the loop's own bounds (0, 1, 0x12 and 0xffff), which is what holds `(0,a5,d4.w)`'s sign extension and `add.w`'s wrap; Esc and Undo over a full name, with an attribution pass; Backspace and Delete both erasing and both refusing at an empty name; Return and Enter; 0x73 and 0x7f, above the `bgt` bound even though their table bytes are printable; 0x80, which is NOT above it because the compare is signed and so types the space 128 bytes BELOW the table; the four joystick directions one at a time and all four at once; a frame that starts with the joystick flag already set, which is the only way the unconditional `sf` is observable; D4's high word, handed to BOTH sides; and one to three idle frames, each flipping and waiting at the loop's SECOND VBL site. Driven at the redraw: all sixteen cursors from the first slot to the cap, and seven more across the signed boundary (0x12..0x7fff draw nothing, 0x8000 and 0xffff draw). THE JOYSTICK PICK IS DRIVEN WITH NO SCANCODE SCHEDULED — the packet brings FIRE and the routine produces the key itself out of `onscreen_keyboard_hit_test` — so the whole chain from a screen coordinate to a character in the record is held. Whole-function cases at 0x12fd4 spell a name and commit it, over three slots, checking the sixteen committed bytes and the score written into the slot BEFORE a character is typed. Mutations killed: the cap one too high, the record indexed from its first character instead of its base, the record index zero-extended, the block cursor's compare made unsigned, the scancode zero-extended, the table bound compared unsigned, left and right swapped, the four directions made exclusive arms, the `sf` deleted, the commit copying from the record's base, the gunsight drawn before the page is blitted over it, the block cursor drawn as a cleared cell, the blank writing three longwords instead of four, the blank's terminator left as a character |
 
 ## Verified — score (1)
 
@@ -744,6 +790,12 @@ one address stand at once, so this is the list that makes the debt findable from
 | `0x19685` | `A_key_scancode` | NOT IN `globals.tsv`; `../names.txt` names it and the ACIA ISR writes it, so `irq` by subject | `include/init.h` | one of `section_restart_prologue`'s clears, and the ISR that owns it is KIT-blocked |
 | `0x198af` | `A_mothership_pending` | NOT IN `globals.tsv`; `mothership` by subject | `include/init.h` | the same clear. `include/mothership.h` belongs to another agent this wave, which is why it is not there |
 | `0x199d9` | `A_msg_game_over_player` | text | `include/highscore.h` | `game_over_screen_prologue` prints it; `include/text.h` spells its eight siblings and not this one |
+| `0x199ee` | `A_msg_new_high_score` | text | `include/highscore.h` | the same debt one message on. `include/text.h`'s header comment already NAMES these three as records "no ported routine reaches yet"; that day has come, so the migration is three lines there and three deletions here |
+| `0x19a0b` | `A_text_please_enter_name` | text | `include/highscore.h` | as above |
+| `0x19a24` | `A_msg_you_are_not_rated` | text | `include/highscore.h` | as above |
+| `0x19ce6`, `0x19d05`, `0x19d24` | `A_text_osk_row1` / `_row2` / `_row3` | NOT IN `globals.tsv`; `input` by subject — they are the on-screen keyboard's three DRAWN rows | `include/highscore.h` | `highscore_enter_name` is the only routine anywhere that draws them. NOT the same thing as `include/input.h`'s `A_osk_row_top`/`_middle`/`_bottom`, which are the SCANCODE tables at 0x132e2 the hit test indexes — two facts about one keyboard |
+| `0x19a39` | `A_scancode_to_char_table` | NOT IN `globals.tsv`; `input` by subject | `include/highscore.h` | the name-entry dispatch is its only reader; the day `include/input.h` claims it, this row and its `#define` go |
+| `0x19681` | `A_joystick_state` | NOT IN `globals.tsv`; `irq`/`input` by subject — `ikbd_acia_isr` @ 0x14456 is what WRITES it | `include/highscore.h` | **THE ONE ROW HERE THAT IS LIKELY TO CLASH SOON.** Three of this chain's waits read it and the NOT RATED screen clears it, so it had to be named; but the routine that fills it in is the unported ACIA handler, and whoever ports that will want the same name in `include/input.h`. `test_constants.py`'s duplicate check is what will say so, in the OTHER agent's diff — this row is how they find the deletion to make. The five bit masks beside it (`JOYSTICK_UP`..`JOYSTICK_FIRE`) and `IKBD_CMD_JOYSTICK_INTERROGATE` carry the same risk and move with it |
 
 `A_palette_hw_shadow` (0x18fc4) is the one the explosion pass clears that is NOT borrowed: it
 already has a home in `include/irq.h`, which `src/enemy.c` includes.
@@ -783,10 +835,34 @@ The game itself writes 0..4 to the power-up cursor, 0..5 to the weapon slot, 0..
 index, 0..4 to the gauge level and 0..0x11 to the formation index, so every value it can
 produce is inside all six sets.
 
+**A SEVENTH BOUND, and it is the SCHEDULE's rather than an input range's.** `highscore_enter_name`
+spells fifteen characters, and no single differential run of it can spell more than two. The kit's
+scheduled-write model allows `OS_SCHED_MAX` = 8 stores and `OS_SCHED_SITE_MAX` = 4 wait sites per
+run (`tools/recreate_kit/include/os.h`), and one pass of the edit loop costs three of those stores
+once it is going — the VBL handler's clear, the previous key's release, and this key's scancode —
+across four sites: the redraw's VBL wait (0x131d0), the key-release wait (0x131fa), the edit loop's
+own poll (0x13104) and the commit's (0x13264). Two characters and a RETURN is exactly eight stores
+and exactly four sites, and the loop's FIFTH site — the idle-frame VBL wait at 0x13118 — is over the
+bound for such a run, which is why it is driven at the loop body instead. **What covers the rest is the loop's BLOCKS as
+entries of their own** — `name_entry_edit_step` @ 0x13058 and `name_entry_redraw` @ 0x13196 — where
+a case starts the cursor wherever it likes: that is how both sides of the fifteen-character cap,
+every one of the fifteen record slots, all 255 non-zero scancodes and the block cursor's SIGNED
+compare are driven. So the composition is verified over three passes and the blocks over their whole
+input range, and what no case here holds is a run of fifteen passes — for which the surface would be
+an on-target one (`docs/on-target-execution.md`), not a longer schedule.
+
+**An eighth bound, one block in.** `name_entry_edit_step` is driven at cursors 0, 1, 0x12 and 0xffff
+as well as inside the loop's own [2, 0x11] — enough to hold `(0,a5,d4.w)`'s sign extension and
+`add.w`'s wrap — but not at a large POSITIVE cursor such as 0x4000. Not for want of trying: the
+insert's `draw_char` takes the column `cursor + 9`, and a column that large addresses a cell far
+outside the compose page. `name_entry_redraw` drives 0x8000 and 0x7fff instead, where the same
+arithmetic wraps back inside the image, which is what makes the signed compare's two arms
+separable — the one thing the large positive cursors would have added.
+
 ## Mutation ledger
 
-Thirteen sweeps, one per slice that landed, kept as separate sub-tables so that no two agents' counts
-ever have to be merged into one number. **Across all thirteen: 458 mutations run, 438 killed, 20
+Fourteen sweeps, one per slice that landed, kept as separate sub-tables so that no two agents' counts
+ever have to be merged into one number. **Across all fourteen: 481 mutations run, 459 killed, 22
 survivors** — every survivor argued below its own sub-table, and every one of them unobservable by
 construction or unreachable from data the game can produce, rather than a missing case.
 
@@ -1451,6 +1527,71 @@ and the review rather than quoting the last one:
   the wrong handler survived. `test_script_run_dispatches_every_class` drives all seven live classes
   with one operand, and the three MIS-PAIRING mutants now die.
 
+### the game-over chain — game_over_screen, highscore_check_and_insert, highscore_enter_name
+
+Twenty-three mutations, each rebuilt with `rm -f build/*.so` first, each scored only on a printed
+pytest summary line, from a baseline re-checked green before and after — **21 killed, 2 survivors**.
+The last six were added by the pre-commit review, which found three holes the first seventeen did not
+reach: the shift-down's fifteen-byte name copy (every table this file builds padded its names with
+one shared filler, so neighbouring rows agreed from the fifth character on and a copy of only SEVEN
+bytes was green), the `sf` that clears the joystick flag (every case started with that byte already
+0, so the clear wrote zero over zero), and the two SIGNED word compares on the cursor. Each is
+closed by a case, not by an argument — per-row padding, a frame that starts with the flag set, and
+an entry at the REDRAW block where the cursor can be anything.
+
+| mutation | result |
+|---|---|
+| `NAME_ENTRY_LAST_CHAR` 0x11 -> 0x12 (the fifteen-character cap one too high) | killed |
+| the name record indexed from its first CHARACTER instead of from its base | killed |
+| the scancode ZERO-extended into the character table | killed |
+| the table bound (`cmp.b #$72` + `bgt`) compared UNSIGNED | killed |
+| the joystick's left and right swapped | killed |
+| the commit copying from the record's BASE, coordinates and all | killed |
+| the gunsight drawn BEFORE the compose page is blitted over it | killed |
+| the block cursor drawn as `CHAR_CLEAR_CELL` instead of `CHAR_FILL_CELL` | killed |
+| `NAME_ENTRY_BLANK_TAIL` -> `..FILL` (the blank's terminator left as a character) | killed |
+| YOU ARE NOT RATED drawn into the compose page instead of `screen_back` | killed |
+| the two jingles swapped | killed |
+| the press and release joystick waits swapped | killed |
+| the joystick byte not cleared before the press wait | killed |
+| the compose page not cleared on entry | killed |
+| `game_over_screen`'s prologue skipped | killed |
+| `HIGHSCORE_SHIFT_NAME_BYTES` 15 -> 7 (the shift-down's name copy) | killed |
+| the record index ZERO-extended — an `unsigned` cursor where the original has `d4.w` | killed |
+| the block cursor's `cmp.w #$11` + `bge` made UNSIGNED | killed |
+| the `sf` that clears `A_name_entry_from_joystick` deleted | killed |
+| the four joystick directions made EXCLUSIVE arms (`else if`) | killed |
+| the blank writing three longwords instead of four | killed |
+| `sound_start`'s channel named 0 instead of the byte the palette `movem` left in D0 | **survived** |
+| `game_over_screen`'s DEAD palette restore put back | **survived** |
+
+**ONE MORE EQUIVALENT RECONSTRUCTION is recorded rather than counted**, because no memory surface
+can separate it: netting each joystick AXIS into a single signed step instead of applying the four
+`btst`s in turn. Up-and-down together write the cursor word twice and end where they started, so a
+netted form differs only in how many stores it made to one address with one final value — and the
+attribution pass cannot see it either, since the oracle writes the poisoned value straight back.
+What the case above DOES kill is the exclusive form (`else if`), which moves the cursor once.
+
+Both survivors are unobservable BY CONSTRUCTION, and each has a case pinning the argument rather
+than a prose claim:
+
+* **The jingle's channel.** Both calls hand `sound_start` whatever D0 held, which is the front-end
+  palette's first longword two instructions earlier. `sound_start` uses that only when the effect's
+  stream carries no `0xfa` channel header — and both streams open with `fa 01`, read off the image
+  by `test_both_jingles_name_their_own_voice`, which fails the day either stream changes. Passing 0
+  instead is therefore behaviourally identical for these two callers, and no memory or ledger
+  surface can separate them. The reconstruction still passes the real byte, because the ORIGINAL
+  does and a later caller of `sound_start` may not have a header.
+* **The dead palette restore.** `game_over_screen`'s tail copies `A_palette_frontend` into
+  `A_menu_palette` — the same thirty-two bytes `highscore_check_and_insert` has already copied on
+  both of its arms, from the same source, with nothing in between writing either. A second identical
+  copy changes no byte and adds no ledger entry, so putting it back cannot redden anything. **What
+  IS pinned is that the branch is unreachable**, positively rather than by absence:
+  `test_the_not_rated_arm_pops_its_own_return_address` reads the oracle's A0 back holding the return
+  address 0x12fba popped, and `test_game_over_screen_not_rated_end_to_end` reads it back holding
+  0x12e98 — the address of the `bne` the arm was meant to return to. The rated arm does return there
+  and branches over the restore. So the mutation is equivalent, not uncaught.
+
 TWO EQUIVALENT MUTANTS were met and are recorded rather than counted: permuting the ROWS of
 `SCRIPT_CLASS_ARMS`, and swapping the order of `run_script_arm`'s two `if`s. The first is equivalent
 because that array is a map KEYED BY ADDRESS with distinct keys, so its row order carries no meaning
@@ -1470,10 +1611,8 @@ two function pointers.
 
 ONE table for the whole project, sorted by address, one row per unported function or per gap
 between the init slices. Every `fn` line in `../names.txt` that has no ✅ row above appears here
-exactly once — 9 of them — plus the five ranges the nine init slices do not join up over and one
-address the name map reaches only by `cmt`. Two of the 9 are PARTLY verified above: `game_over_screen`
-and `highscore_check_and_insert` each contribute a slice to `## Verified — highscore`, and their rows
-say what is left rather than claiming nothing is. Each blocker is re-derived against the verified set
+exactly once — 6 of them — plus the five ranges the nine init slices do not join up over and one
+address the name map reaches only by `cmt`. Each blocker is re-derived against the verified set
 above (call targets read out of `../out/prg_dis.txt`, dispatch tables out of `../names.txt`'s own
 table accounting), not inherited from the wave that wrote the row. The categories:
 
@@ -1499,11 +1638,8 @@ table accounting), not inherited from the wave that wrote the row. The categorie
 | `0x10f4e`.. | the frame loop | **BLOCKED-ON `0x113c0`, `0x11c00`, `0x11d30`** — the three frame stages below are the loop's whole body |
 | `0x113c0` | `frame_weapons_and_spawn_stage` | **BLOCKED-ON `0x11c00`** alone now — the other eight callees this row used to name (`0x11906`, `0x13868`, `0x13898`, `0x13958`, `0x13a12`, `0x13af2`, `0x1487c`, `0x14fc8`) are all verified above. Frame stage one: trail drone, fire/charge, weapon dispatch, bullet motion, spawn scripts, ending in a `bra` into 0x11c00. It is an orchestrator, deferred to world-staging, per the playbook's order of attack |
 | `0x11c00` | `frame_draw_objects_and_collide` | **BLOCKED-ON `0x11d30`** (its own `bra` tail) alone; `0x151ba` landed. Everything it does itself is verified — `draw_sprite_masked_collide` 0x15b7c over the 20-entry object table, `asteroids_draw` 0x159be, and `object_pair_overlap_mark` 0x11cce building the all-pairs mask at 0x18252 |
-| `0x11d30` | `frame_resolve_hits_and_game_state` | **BLOCKED-ON `0x12e66`** (partly verified, below) alone — `0x13ad0`, `0x13cd4`, `0x15222` and its `ikbd_send_cmd` @ 0x14444 poll are all verified now, so the KIT half of this row is gone. Frame stage four: resolve the collision matrix, run the game-state machine, starfield, decay timers, scroll step, buffer flip — and it leaves through five different addresses (0x10f4e / 0x10b6e / 0x1083a / 0x10814 / 0x10500), so it is world-staging work whatever its callees do |
-| `0x12ac2` | `title_attract_loop` | **UNBLOCKED.** It waits for key '1'/'2' or joystick fire through `ikbd_send_cmd` @ 0x14444, now verified — sending the interrogate command is no longer a wall. Everything else it needs is verified too: `title_screen_draw` 0x12a28, `role_of_honour_screen` 0x13338, `rand16` 0x13bf8, and its own two ISRs 0x12c9e / 0x12cc0. **What it will need instead is a case shape, not a kit surface**: the loop spins on a byte only `ikbd_acia_isr` writes, which is Phase 8's scheduled-write model (`schedule=` / `wait_sites=`) rather than anything about the ACIA |
-| `0x12e66` | `game_over_screen` | **PARTLY VERIFIED, and blocked past that.** `[0x12e66, 0x12e94)` — the playfield clear, the GAME OVER PLAYER record and the player digit — is `game_over_screen_prologue` in `## Verified — highscore`. What is left is the `bsr` into `highscore_check_and_insert` (below) and the eight-longword palette restore on ITS not-rated arm, which is four instructions this reconstruction cannot reach without running the routine it follows |
-| `0x12eae` | `highscore_check_and_insert` | **PARTLY VERIFIED, and BLOCKED-ON `0x12fd4`** for the rest — the KIT half is gone, `ikbd_send_cmd` @ 0x14444 (its NOT RATED arm) being verified. The ranking and shift-down half is `highscore_rank_and_shift` in `## Verified — highscore`, entered MID-ROUTINE at 0x12eb2 and stopped at whichever of 0x12f0e / 0x12f5a the ranking chose. (An earlier row here gave the range as 0x12eb2..0x12f0c; 0x12f0c is not an instruction boundary — the `dbf` at 0x12f0a runs to 0x12f0e, which is also where both arms of the shift converge.) What is left is the screen clear at 0x12fc2 that the entry `bsr`s into, the NEW HIGH SCORE screen, and the two keyboard loops |
-| `0x12fd4` | `highscore_enter_name` | **UNBLOCKED at the kit level.** The name-entry loop drives the keyboard through `ikbd_send_cmd` @ 0x14444, now verified. Its two busy-waits — for a scancode only `ikbd_acia_isr` stores, and on the VBL flag at 0x198a7 — are Phase 8's scheduled-write model, which the kit already has and this project has not used yet. Its drawing half is clear now: `draw_sprite_masked_collide` (0x15b7c) is verified, as are `onscreen_keyboard_hit_test` (0x1326e), `draw_char`, `draw_text_record`, `screen_flip_buffers` and `blit_page0_to_playfield` |
+| `0x11d30` | `frame_resolve_hits_and_game_state` | **UNBLOCKED — its last named callee landed.** `0x13ad0`, `0x13cd4`, `0x15222`, its `ikbd_send_cmd` @ 0x14444 poll and now `game_over_screen` @ 0x12e66 are all verified above. Frame stage four: resolve the collision matrix, run the game-state machine, starfield, decay timers, scroll step, buffer flip — and it leaves through five different addresses (0x10f4e / 0x10b6e / 0x1083a / 0x10814 / 0x10500), so it is world-staging work whatever its callees do |
+| `0x12ac2` | `title_attract_loop` | **UNBLOCKED, and the case shape it needs now has a worked example.** It waits for key '1'/'2' or joystick fire through `ikbd_send_cmd` @ 0x14444, and everything else it needs is verified: `title_screen_draw` 0x12a28, `role_of_honour_screen` 0x13338, `rand16` 0x13bf8, and its own two ISRs 0x12c9e / 0x12cc0. The loop spins on bytes only `ikbd_acia_isr` writes, which is Phase 8's scheduled-write model (`schedule=` / `wait_sites=`) — the same model `## Verified — highscore`'s three rows are held by, so `test_highscore.py`'s `_store` / `_typed_name_schedule` are the pattern to copy |
 | `0x14456` | `ikbd_acia_isr` | **KIT, and the row is re-derived: two of the three gaps it inherited are closed.** It is an interrupt handler entered around a frame rather than a called routine, which `abi.interrupt_frame_pokes` already handles for the seven `irq` handlers. Of its four hardware accesses: `btst #4,$fffffa01` is the MFP GPIP, ALREADY a seeded READ slot (`hw_seed={0xfffa01: …}`); `bclr #6,$fffffa11` is a store to the MFP's in-service register B, ALREADY held by the hardware WRITE ledger, at the same fidelity as `mfp_ack_timer_b`'s (address and width, not the bit — its read half is a fabricated 0). **What is still missing is exactly one thing: a READ of the ACIA's data port.** The handler does `lea $fffffc00.l,a0` and then reads `(a0)` for the status and `2(a0)` for the byte, so it reads `$fffc02` once per entry and again per packet byte — and that port answers whatever the keyboard controller last put there, which is neither a per-run constant (Phase 7's shape, and the reason `$fffc02` is deliberately not a slot) nor a store into the image (Phase 8's). It needs a THIRD kit shape: a declared SEQUENCE of bytes one address yields, one per read. Note for whoever builds it: the 68000's 24-bit bus folds the handler's `$fffffc00` onto `$fffc00`, which the oracle masks and `hw.h` does not — a reconstruction spells the 24-bit form |
 | `0x148ca` | — (no `fn` line; `../names.txt` reaches it by `cmt` only) | **DEAD CODE, and that is a finding rather than a block:** nothing anywhere references it, and it is a near-copy of `enemy_move_type14_sine` using D6 as a slot index into 0x19673. Left unported deliberately |
 | `0x16aa6` | `sound_install_timer_a_dead` | **DEAD CODE** — unreferenced, per `../names.txt`. It would reset the PSG and then `Xbtimer` (Timer A, ctrl 7, data 0xf4, vector 0x16b94) to run the sound tick off Timer A instead of the VBL. Its one callee, `sound_reset_psg`, is verified |
@@ -1531,7 +1667,7 @@ than a device, which no ledger reaches. Both want an on-target surface
 
 ## Suite
 
-`make test` — **3410 passed**, 4 skipped. `make guarded` — same count, 20614
+`make test` — **3491 passed**, 4 skipped. `make guarded` — same count, 20968
 candidate runs guarded across 10 workers, no fault.
 
 THIS LINE IS SHARED, and several agents add batteries to this project at once — the count is
@@ -1575,3 +1711,36 @@ while the other twelve stay green.
 The verified counts above are untouched by any of this: `atari/` compiles the cores unchanged, and
 `atari/build.sh` measures that (no core includes a shim header, and no core reads a target-only
 `-D`). `make test` is still **2700 passed** with `atari/` present.
+
+**THE BUSY-WAIT SEAM, added with the game-over chain.** `src/highscore.c` is the first core to call
+the kit's `sched_poll8` / `sched_wait8`, and `build.sh` excludes the kit's whole `src/` from a target
+build — so those symbols would not exist on the real machine. `atari/shim_include/sched.h` is what
+supplies them, by the same include-path seam `os.h` and `hw.h` use and following the kit header's
+own instruction ("a build for the real machine ... supplies its own `sched_wait8`/`sched_poll16`
+that loop without a cap"). Off target the cap turns a wait the case never released into a named
+refusal; on target the VBL and the ACIA really do write those bytes, so the spin is the original's,
+unbounded, and `volatile` is what keeps the read in the loop. **THE CAP IS BEHIND THE SAME SEAM**, and the review is what found that it was not: the two waits
+this file rolls by hand (`joystick_wait_for_fire` and the edit loop's frame counter) cannot use
+`sched_wait8` — one interrogates the IKBD before each look and tests a BIT, the other draws a whole
+frame — so they carried `OS_SCHED_POLL_MAX` in the CORE, which `build.sh` compiles into the PRG.
+On iron that would have dismissed YOU ARE NOT RATED after 4096 interrogations with nobody touching
+the stick, and abandoned a player at PLEASE ENTER YOUR NAME after 4096 frames without committing
+the name. Both now go through one `wait_should_give_up`, whose body is compiled away by
+`OS_NO_REFUSAL_TALLY` — `src/input.c`'s split, one register over, and include/input.h's argument.
+**Measured, not assumed:**
+`src/highscore.c` compiles clean under `build.sh`'s own flags and its object file has no undefined
+`sched_*` or `os_refused`.
+
+**Two on-target residuals this chain carries, neither of which any off-target surface can hold.**
+The NOT RATED wait's `dbf` of 1001 passes between one `ikbd_send_cmd` and the next is not
+reproduced — a delay counted in 68000 cycles has no meaning in C — so on iron the interrogations go
+out back to back with nothing pacing them, and the 6301 dropping or reordering a packet is exactly
+the class `../../../docs/on-target-execution.md` says wants a timeline. And the two hand-rolled
+waits tally their give-up through `os_refused` rather than the kit's `sched_give_up`, which is
+static to `src/sched.c`: the case is still thrown away by name, but `g_sched_exhausted()` does not
+count them, so the harness's "a wait ran out of polls" hint reads generic. Closing that is an
+exported give-up in `sched.h` — a kit change, not this project's. **What is NOT measured is a link or a run**, for a reason that predates
+this change: `bash atari/build.sh title` stops at its own guard — it requires
+`src/irq_hw_offtarget.c` to exist, and that file was deleted when the hardware-write ledger landed
+(see the note under "## Not reconstructed"). Repairing that guard is the next target build's first
+job, and this seam is unexercised until it is.
