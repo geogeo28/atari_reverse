@@ -120,3 +120,24 @@ static void hw_log_write(uint32_t addr, uint32_t width, uint32_t value) {
 void hw_write8(uint32_t addr, uint32_t value)  { hw_log_write(addr, OS_HW_WRITE_WIDTH_8, value); }
 void hw_write16(uint32_t addr, uint32_t value) { hw_log_write(addr, OS_HW_WRITE_WIDTH_16, value); }
 void hw_write32(uint32_t addr, uint32_t value) { hw_log_write(addr, OS_HW_WRITE_WIDTH_32, value); }
+
+/* The three READ-MODIFY-WRITE operations, off target. ../include/hw.h has the whole contract; the
+ * one line that matters here is that the read half these stand for is of an address the seeded READ
+ * model does not name, and the ORACLE'S read of such an address answers a fabricated 0 — so the
+ * byte the oracle's own `bset`/`bclr`/`andi.b` computes and ledgers is `0 | bit`, `0 & ~bit` and
+ * `0 & mask`. These reproduce exactly that, which is why introducing them changed no ledger
+ * comparison. A build for the real Atari does not compile this file and supplies each as the
+ * genuine instruction on the register, where the read half is the byte the chip really holds. */
+#define HW_RMW_FABRICATED_READ 0u   /* the byte the oracle serves for an unmodeled register */
+
+void hw_bset8(uint32_t addr, uint32_t bit) {
+    hw_log_write(addr, OS_HW_WRITE_WIDTH_8, HW_RMW_FABRICATED_READ | (1u << bit));
+}
+
+void hw_bclr8(uint32_t addr, uint32_t bit) {
+    hw_log_write(addr, OS_HW_WRITE_WIDTH_8, HW_RMW_FABRICATED_READ & ~(1u << bit));
+}
+
+void hw_and8(uint32_t addr, uint32_t mask) {
+    hw_log_write(addr, OS_HW_WRITE_WIDTH_8, HW_RMW_FABRICATED_READ & mask);
+}

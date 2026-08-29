@@ -171,9 +171,15 @@ void sound_start(uint8_t *image, uint16_t number, uint8_t channel) {
 
 /* Register map: D1 = the sound number, D0.b = the channel when the stream carries no 0xfa header.
  * `movem.l #$fffe,-(a7)` / `movem.l (a7)+,#$7fff` save and restore EVERY register, so the routine's
- * whole effect is memory and the glue returns nothing. */
+ * whole MEMORY effect is the image — but the CONDITION CODES are not registers and the `movem` does
+ * not restore them, which is why the glue also answers `sound_start_leaves_extend` (include/sound.h)
+ * for the case that compares that flag against the oracle's. */
 void g_sound_start(uint8_t *image, uint32_t number_reg, uint32_t channel_reg) {
     sound_start(image, (uint16_t)number_reg, (uint8_t)channel_reg);
+}
+
+uint32_t g_sound_start_leaves_extend(uint32_t number_reg) {
+    return sound_start_leaves_extend((uint16_t)number_reg);
 }
 
 /* ================================================================================================

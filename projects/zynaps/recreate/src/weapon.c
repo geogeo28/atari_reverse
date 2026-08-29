@@ -301,6 +301,17 @@ void ship_resolve_entity_hits(uint8_t *image, uint32_t ship, uint32_t hit_mask_r
 /* ================================================================================================
  * Retiring a shot.
  * ============================================================================================= */
+/* `subi.b #$1,<counter>` — decrement a live-shot counter and answer its BORROW, which is the
+ * 68000's X. One helper because the three retire routines below end on the same instruction over
+ * three different counters; the flag itself is machine.h's `byte_sub_extend`, which is the kit's one
+ * model of what a byte subtract leaves in X. */
+static unsigned count_down_reporting_borrow(uint8_t *image, uint32_t counter) {
+    unsigned borrowed = byte_sub_extend(image[counter], 1);
+
+    image[counter] -= 1;
+    return borrowed;
+}
+
 /* shot_to_puff @ 0x155e2 — a2 = the record. Rewrites a spent shot as the hit flash IN PLACE: the
  * slot stays alive and keeps animating, and `shot_anim_puff` is what finally clears it. */
 void shot_to_puff(uint8_t *image, uint32_t shot) {
@@ -311,34 +322,39 @@ void shot_to_puff(uint8_t *image, uint32_t shot) {
     wr16(image + shot + ENTITY_HEIGHT, PUFF_ROWS);
 }
 
+/* THE THREE RETIRE ROUTINES REPORT THE 68000's X, and include/weapon.h says why a caller needs it:
+ * each ends on a `subi.b #$1` of its own live-shot counter, whose BORROW is the flag the frame
+ * loop's next `score_add_bcd` adds. An arm that returns EARLY makes no such decrement and leaves the
+ * caller's own X, which is what `extend_in` is for — the value is passed straight back out. */
+
 /* shot_retire_kind32 @ 0x15582 — a2 = the record. A homing missile also holds one of the two lock
  * slots; releasing it is what lets the next missile acquire that target. */
-void shot_retire_kind32(uint8_t *image, uint32_t shot) {
+unsigned shot_retire_kind32(uint8_t *image, uint32_t shot, unsigned extend_in) {
     if (image[shot + ENTITY_ALIVE] == 0 || image[shot + ENTITY_TYPE] != SHOT_TYPE_MISSILE)
-        return;
+        return extend_in;   /* `tst.b`/`cmpi.b` and the `rts` leave X where the caller had it */
 
     uint32_t lock = (be16(image + shot + ENTITY_HEIGHT) & SHOT_LOCK_SLOT_B) ? A_missile_lock_b
                                                                            : A_missile_lock_a;
 
     image[lock] = 0;
     shot_to_puff(image, shot);
-    image[A_active_count_type32] -= 1;
+    return count_down_reporting_borrow(image, A_active_count_type32);
 }
 
 /* shot_retire_kind36 @ 0x155b4 — a2 = the record. NO kind check, unlike its two neighbours: every
  * caller has already established the slot holds a live seeker. */
-void shot_retire_kind36(uint8_t *image, uint32_t shot) {
+unsigned shot_retire_kind36(uint8_t *image, uint32_t shot) {
     shot_to_puff(image, shot);
-    image[A_active_count_seekers] -= 1;
+    return count_down_reporting_borrow(image, A_active_count_seekers);
 }
 
 /* shot_retire_kind33 @ 0x155c2 — a2 = the record. */
-void shot_retire_kind33(uint8_t *image, uint32_t shot) {
+unsigned shot_retire_kind33(uint8_t *image, uint32_t shot, unsigned extend_in) {
     if (image[shot + ENTITY_ALIVE] == 0 || image[shot + ENTITY_TYPE] != SHOT_TYPE_BOMB)
-        return;
+        return extend_in;
 
     shot_to_puff(image, shot);
-    image[A_active_count_bombs] -= 1;
+    return count_down_reporting_borrow(image, A_active_count_bombs);
 }
 
 /* player_shots_clear @ 0x15604 — end of a life or a level: put the drone away and retire every
@@ -354,7 +370,7 @@ void player_shots_clear(uint8_t *image) {
         if (image[shot + ENTITY_ALIVE] == 0 || image[shot + ENTITY_TYPE] != SHOT_TYPE_SEEKER)
             continue;
         image[shot + ENTITY_TYPE] = SHOT_TYPE_MISSILE;
-        shot_retire_kind36(image, shot);
+        (void)shot_retire_kind36(image, shot);
     }
 }
 
@@ -630,7 +646,10 @@ void seeker_update(uint8_t *image, uint32_t shot) {
 
     image[shot + ENTITY_ANIM_FRAME] -= 1;
     if (image[shot + ENTITY_ANIM_FRAME] == 0) {
-        shot_retire_kind36(image, shot);      /* the original's `bra.w $155b4` tail call */
+        /* The original's `bra.w $155b4` tail call, so the retire's X is this routine's own
+         * — and unread, because `seeker_update`'s callers are outside the two passes that
+         * carry the flag. */
+        (void)shot_retire_kind36(image, shot);
         return;
     }
     entity_steer_toward_target(image, shot);
@@ -688,7 +707,9 @@ void homing_missile_update(uint8_t *image, uint32_t missile) {
 
     image[missile + ENTITY_ANIM_FRAME] -= 1;
     if (image[missile + ENTITY_ANIM_FRAME] == 0) {
-        shot_retire_kind32(image, missile);   /* the original's `bra.w $15582` tail call */
+        /* The original's `bra.w $15582` tail call, so the retire's X is this routine's own — and
+         * unread, because `frame_player_shots_maintain` is outside the two passes that carry it. */
+        (void)shot_retire_kind32(image, missile, EXTEND_UNREAD);
         return;
     }
     entity_steer_toward_target(image, missile);
@@ -744,7 +765,7 @@ void bomb_update(uint8_t *image, uint32_t bomb, uint8_t sound_channel) {
         wr16(image + bomb + ENTITY_DY, bounce_velocity(be16(image + bomb + ENTITY_DY)));
         image[bomb + SHOT_BOUNCES_LEFT] -= 1;
         if (was_on_terrain_last_frame) {
-            shot_retire_kind33(image, bomb);
+            (void)shot_retire_kind33(image, bomb, EXTEND_UNREAD);
             return;
         }
         image[bomb + ENTITY_BOUNCE] = 1;
@@ -755,7 +776,7 @@ void bomb_update(uint8_t *image, uint32_t bomb, uint8_t sound_channel) {
     entity_apply_accel(image, bomb, 1u << ACCEL_BIT_Y_ADD);   /* `move.b #$20,d1` */
     if ((int16_t)be16(image + bomb + ENTITY_Y) >= BOMB_FLOOR_Y
         || image[bomb + SHOT_BOUNCES_LEFT] == 0)
-        shot_retire_kind33(image, bomb);
+        (void)shot_retire_kind33(image, bomb, EXTEND_UNREAD);
 }
 
 /* ================================================================================================
@@ -806,16 +827,19 @@ void g_shot_to_puff(uint8_t *image, uint32_t shot) {
     shot_to_puff(image, shot);
 }
 
-void g_shot_retire_kind32(uint8_t *image, uint32_t shot) {
-    shot_retire_kind32(image, shot);
+/* The three retire routines answer in the 68000's X as well as in memory (include/weapon.h), so
+ * their glue takes the flag in and hands it back: `test/abi.py`'s `extend_call_pokes` drives the
+ * input and reads the oracle's output, and neither reaches the image diff. */
+uint32_t g_shot_retire_kind32(uint8_t *image, uint32_t shot, uint32_t extend_in) {
+    return shot_retire_kind32(image, shot, extend_in);
 }
 
-void g_shot_retire_kind33(uint8_t *image, uint32_t shot) {
-    shot_retire_kind33(image, shot);
+uint32_t g_shot_retire_kind33(uint8_t *image, uint32_t shot, uint32_t extend_in) {
+    return shot_retire_kind33(image, shot, extend_in);
 }
 
-void g_shot_retire_kind36(uint8_t *image, uint32_t shot) {
-    shot_retire_kind36(image, shot);
+uint32_t g_shot_retire_kind36(uint8_t *image, uint32_t shot) {
+    return shot_retire_kind36(image, shot);
 }
 
 void g_shot_set_sprite_a(uint8_t *image, uint32_t shot) {

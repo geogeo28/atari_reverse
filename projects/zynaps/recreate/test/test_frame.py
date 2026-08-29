@@ -222,6 +222,10 @@ A_SCREEN_BACK = 0x1797e              # include/video.h
 A_ENTITY_COLLISION_MASKS = 0x18252   # include/collision.h
 A_EXTRA_LIFE_THRESHOLD_BCD = 0x195d8  # include/score.h
 A_PLAYER_SCORE_BCD = 0x195e0         # include/score.h
+SCORE_BCD_BYTES = 4                  # include/score.h
+A_ENEMY_PAIR_HITPOINTS = 0x19884     # include/enemy.h — one energy byte per boss PAIR
+ENEMY_TYPE_BOSS_SEGMENT = 0x02       # include/frame.h
+ENEMY_TYPE_BIG = 0x0e                # include/frame.h — explodes and pays SCORE_AWARD_ENEMY_BIG
 A_SHIELD_DECAY_TIMER = 0x19dca       # include/weapon.h
 A_SPEED_DECAY_TIMER = 0x19dc8        # include/weapon.h
 A_WEAPON_DECAY_TIMER = 0x19dcc       # include/player.h
@@ -1504,11 +1508,11 @@ def test_the_mothership_turns_in_one_of_two_shapes(index):
 # every worker build all four.
 FUZZ_SECTIONS = (0, 3, 7, 12)
 FUZZ_CASES = 96
-# Every enemy type the two pairwise dispatches name, LESS the boss segment. 0x02 is driven by
-# `test_an_enemy_that_rams_the_ship_takes_its_own_arm` and by the shoot-pass case beside it, one
-# hit at a time; what it must not do here is share a pass with a KILL, and
-# `test_the_score_carry_into_abcd_is_src_score_c_s_residual` is why.
-FUZZ_ENEMY_TYPES = (0x01, 0x0e, 0x0f, 0x10, 0x11, 0x14, 0x16, 0x64, 0x65)
+# Every enemy type the two pairwise dispatches name, the boss segment INCLUDED. It was kept out
+# while `src/score.c` fabricated a 0 carry into `abcd`: a segment hit sharing a pass with a kill
+# scored one BCD unit high, which the fuzz would have found. The flag is threaded now
+# (`test_a_boss_segment_hit_carries_its_borrow_into_the_next_award`), so the type is back.
+FUZZ_ENEMY_TYPES = (0x01, 0x02, 0x0e, 0x0f, 0x10, 0x11, 0x14, 0x16, 0x64, 0x65)
 
 
 def _fuzz_pokes(rng, image):
@@ -1653,36 +1657,72 @@ def test_no_shipped_ground_script_can_make_the_spawner_read_its_carried_register
     assert checked > SECTION_COUNT, "the ground scripts were not walked at all"
 
 
-def test_the_score_carry_into_abcd_is_src_score_c_s_residual():
-    """A MEASURED CROSS-SUBSYSTEM DEFECT, and this is where the frame loop records it.
+# include/enemy.h — one byte of energy per boss PAIR, indexed by the pair's own entity index.
+# The two enemy slots the case below puts under shot 0, and the score it starts from. The pair the
+# segment folds onto is `((index - 1) & ~1) + 1` over its ENTITY index, so slot 2 (entity 11) folds
+# onto entity 11 — one byte of A_ENEMY_PAIR_HITPOINTS, and the case seeds the whole array anyway.
+SEGMENT_SLOT, KILL_SLOT = 2, 3
+CARRY_CASE_SCORE = 0x00000100
+SEGMENT_ENERGY_THAT_BORROWS = 0x00
+# The whole energy array is seeded, not one byte: the fold reaches four of them and a stray
+# decrement elsewhere would otherwise hide. Same width test_mothership.py drives it at.
+ENEMY_PAIR_HITPOINT_BYTES = 0x20
 
-    `score_add_bcd` (0x12df6) starts with `abcd -(a1),-(a0)`, which adds the 68000's X flag — and
-    `src/score.c` starts its chain with a carry of 0, arguing that no caller sets X because every
-    call site reaches the `bsr` through `movem.l` and `lea`. That is true of the two instructions
-    before each `bsr` and false of the register: X survives both of them, and this stage has
-    instructions that leave it SET a few calls earlier.
 
-    THE ONE MEASURED PATH: `mothership_segment_hit` ends its non-fatal arm on `subi.b #$1,(a5)`
-    (0x15254), whose BORROW sets X; the ram pass then explodes the next enemy and awards a score,
-    and the oracle's total comes out ONE BCD UNIT above the reconstruction's. Measured on the fuzz
-    generator's own case 1 — a segment hit at enemy slot 2 followed by a kill at slot 3 — as 0x151
-    against 0x150, entering the stage at 0x11d30 and again at 0x121b2, so the flag is set INSIDE the
-    pass rather than carried into it.
+def test_a_boss_segment_hit_carries_its_borrow_into_the_next_award():
+    """THE MEASURED CROSS-SUBSYSTEM DEFECT THIS STAGE ONCE CARRIED, now a case that holds the fix.
 
-    THE FIX IS ONE PARAMETER IN `src/score.c`, which this subsystem does not own: `score_add_bcd`
-    takes the incoming X the way `frame_spawn_and_move_stage` takes its two carried registers.
-    Compensating for it here would mean re-implementing that file's BCD add in this one, which is
-    worse than the residual. Until it lands, `FUZZ_ENEMY_TYPES` keeps the boss segment out of the
-    generator so the suite is not red on somebody else's arithmetic; the assertions below pin the
-    two instructions the argument rests on, so a change to either fails here with a sentence.
+    `score_add_bcd` (0x12df6) opens with four `abcd -(a1),-(a0)`, and `abcd` ADDS the 68000's X. The
+    two instructions before every one of its `bsr`s are a `movem.l` and a `lea`, neither of which
+    touches the condition codes — but X SURVIVES them, so the flag reaching the first `abcd` is
+    whatever arithmetic ran earlier in the pass. `src/score.c` used to start its chain at 0 on the
+    argument that no caller sets it; that was true of the two instructions and false of the register.
+
+    THE SHAPE THIS CASE LANDS ON. `mothership_segment_hit` (0x15222) ends its non-fatal arm on
+    `subi.b #$1,(a5)` at 0x15254, which BORROWS when the pair's energy byte was already 0 — and the
+    shoot sweep then explodes the next enemy and awards its score. Measured on the fuzz generator's
+    own case 1 as 0x151 against 0x150: one BCD unit, on every kill that follows a segment hit.
+
+    So the case is built to be exactly that: shot 0 alive as a PUFF (the one kind the pass neither
+    retires nor breaks the walk on), enemy slot 2 a boss segment whose energy is 0, enemy slot 3 a
+    big enemy, both under shot 0's collision bit. The award is compared by the ordinary whole-image
+    diff — the score is four image bytes — so a reconstruction that fabricates the carry differs
+    here and nowhere else.
+    """
+    image = _world(0, WORLD_START)
+    shot = A_ENTITY_TABLE
+    segment = A_ENEMY_SLOTS + ENTITY_STRIDE * SEGMENT_SLOT
+    kill = A_ENEMY_SLOTS + ENTITY_STRIDE * KILL_SLOT
+    shot_bit = (1 << 0).to_bytes(COLLISION_ROW_BYTES, "big")
+    extra = {
+        A_PLAYER_SCORE_BCD: CARRY_CASE_SCORE.to_bytes(SCORE_BCD_BYTES, "big"),
+        A_ENEMY_PAIR_HITPOINTS: bytes([SEGMENT_ENERGY_THAT_BORROWS]) * ENEMY_PAIR_HITPOINT_BYTES,
+        shot + ENTITY_ALIVE: b"\x01",
+        shot + ENTITY_TYPE: bytes([SHOT_TYPE_PUFF]),
+        segment + ENTITY_ALIVE: b"\x01",
+        segment + ENTITY_TYPE: bytes([ENEMY_TYPE_BOSS_SEGMENT]),
+        kill + ENTITY_ALIVE: b"\x01",
+        kill + ENTITY_TYPE: bytes([ENEMY_TYPE_BIG]),
+        _collision_row(ENEMY_SLOT_FIRST + SEGMENT_SLOT): shot_bit,
+        _collision_row(ENEMY_SLOT_FIRST + KILL_SLOT): shot_bit,
+    }
+    _check_resolve(image, extra=extra)
+
+
+def test_the_two_instructions_the_score_carry_rests_on():
+    """The carry model above is read off two instruction encodings; pin both, so a change to either
+    fails HERE with a sentence rather than as a puzzling score diff.
+
+    `score_add_bcd` must still open with four `abcd -(a1),-(a0)` (the carry chain), and
+    `mothership_segment_hit` must still end its non-fatal arm on `subi.b #$1,(a5)` (the borrow).
     """
     assert bytes(harness.BASE_IMAGE[0x12dfc:0x12e04]) == bytes.fromhex("c109c109c109c109"), (
         "score_add_bcd no longer opens with four `abcd -(a1),-(a0)`")
     assert bytes(harness.BASE_IMAGE[0x15254:0x15258]) == bytes.fromhex("04150001"), (
         "mothership_segment_hit no longer ends its non-fatal arm on `subi.b #$1,(a5)`")
-    assert 0x02 not in FUZZ_ENEMY_TYPES, (
-        "the fuzz generator has taken the boss segment back; either src/score.c now carries the X "
-        "flag in, in which case delete this case and the exclusion, or the suite is about to go red")
+    assert ENEMY_TYPE_BOSS_SEGMENT in FUZZ_ENEMY_TYPES, (
+        "the boss segment belongs in the fuzz now that the X flag is threaded; if it had to come "
+        "back out, say why here rather than dropping the type silently")
 
 
 # ============================================================ what the world staging rests on
@@ -1925,6 +1965,10 @@ MIRRORS = (
     ("A_ENTITY_COLLISION_MASKS", "include/collision.h", "A_entity_collision_masks"),
     ("A_EXTRA_LIFE_THRESHOLD_BCD", "include/score.h", "A_extra_life_threshold_bcd"),
     ("A_PLAYER_SCORE_BCD", "include/score.h", "A_player_score_bcd"),
+    ("SCORE_BCD_BYTES", "include/score.h", "SCORE_BCD_BYTES"),
+    ("A_ENEMY_PAIR_HITPOINTS", "include/enemy.h", "A_enemy_pair_hitpoints"),
+    ("ENEMY_TYPE_BOSS_SEGMENT", "include/frame.h", "ENEMY_TYPE_BOSS_SEGMENT"),
+    ("ENEMY_TYPE_BIG", "include/frame.h", "ENEMY_TYPE_BIG"),
     ("A_SHIELD_DECAY_TIMER", "include/weapon.h", "A_shield_decay_timer"),
     ("A_SPEED_DECAY_TIMER", "include/weapon.h", "A_speed_decay_timer"),
     ("A_WEAPON_DECAY_TIMER", "include/player.h", "A_weapon_decay_timer"),

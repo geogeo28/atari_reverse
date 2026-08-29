@@ -127,6 +127,11 @@ void mothership_segments_update(uint8_t *image);
 void mothership_segments_respawn(uint8_t *image);
 /* ../../names.txt tags this name `# ctx` (offered there as `enemy_pair_take_hit` too), so it is
  * a proposal a later body read may overturn — README.md asks for this note at the declaration. */
-void mothership_segment_hit(uint8_t *image, uint32_t segment);
+/* Answers the 68000's X flag it leaves: `subi.b #$1,(a5)` at 0x15254 borrows when the pair's energy
+ * byte was already 0, and the frame loop's shoot sweep calls `score_add_bcd` a few instructions
+ * later — where that bit is the first `abcd`'s carry-in and one BCD unit of score. On the arm where
+ * the pair dies the flag is the award's own instead; src/mothership.c says why that arm's carry-in
+ * is 0 by construction. */
+unsigned mothership_segment_hit(uint8_t *image, uint32_t segment);
 
 #endif /* ZYNAPS_MOTHERSHIP_H */

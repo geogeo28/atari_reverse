@@ -169,8 +169,8 @@ for _name, _args in (
         ("g_powerup_slot1_activate", []),
         ("g_powerup_downgrade_on_death", []),
         ("g_shot_to_puff", [ctypes.c_uint32]),
-        ("g_shot_retire_kind32", [ctypes.c_uint32]),
-        ("g_shot_retire_kind33", [ctypes.c_uint32]),
+        ("g_shot_retire_kind32", [ctypes.c_uint32] * 2),
+        ("g_shot_retire_kind33", [ctypes.c_uint32] * 2),
         ("g_shot_retire_kind36", [ctypes.c_uint32]),
         ("g_shot_set_sprite_a", [ctypes.c_uint32]),
         ("g_shot_anim_puff", [ctypes.c_uint32]),
@@ -187,6 +187,16 @@ for _name, _args in (
         ("g_ship_resolve_entity_hits", [ctypes.c_uint32] * 2)):
     getattr(harness._lib, _name).argtypes = [_UINT8P] + _args
     getattr(harness._lib, _name).restype = None
+
+# ...except the three retire routines, which answer in the 68000's X as well as in memory
+# (include/weapon.h) — the two with a guard also take the caller's X in, for the arm that makes no
+# decrement and so leaves the flag where it was.
+RETIRE_GLUE_TAKING_EXTEND = ("g_shot_retire_kind32", "g_shot_retire_kind33")
+# include/weapon.h's constant, mirrored (and pinned to it through MIRRORS below): what a case passes
+# for the incoming X when it is not the thing under test, and what the guarded arm hands back.
+EXTEND_UNREAD = 0
+for _name in ("g_shot_retire_kind32", "g_shot_retire_kind33", "g_shot_retire_kind36"):
+    getattr(harness._lib, _name).restype = ctypes.c_uint32
 
 
 def test_the_record_field_layouts_this_battery_leans_on():
@@ -224,14 +234,21 @@ def _record(noise_seed, **fields):
     return bytes(raw)
 
 
-def _shot_case(entry, glue_name, record, extra_pokes=None, poison=False, note=""):
+def _shot_glue_args(glue_name, extend_in):
+    """The trailing arguments `glue_name` takes after the image pointer and the record."""
+    return (extend_in,) if glue_name in RETIRE_GLUE_TAKING_EXTEND else ()
+
+
+def _shot_case(entry, glue_name, record, extra_pokes=None, poison=False, note="",
+               extend_in=EXTEND_UNREAD):
     """Run one A2-taking routine on a record parked at abi.SCRATCH."""
     pokes = {abi.SCRATCH: record}
     pokes.update(extra_pokes or {})
     regs = {"a2": abi.SCRATCH, "_pokes": pokes}
+    args = _shot_glue_args(glue_name, extend_in)
     diffs, _ = differential(
         entry, regs,
-        lambda lib, buf: getattr(lib, glue_name)(buf, abi.SCRATCH), poison=poison)
+        lambda lib, buf: getattr(lib, glue_name)(buf, abi.SCRATCH, *args), poison=poison)
     assert not diffs, f"{note}\n{report(diffs)}"
 
 
@@ -462,6 +479,57 @@ def test_retire_counts_wrap_as_bytes(count):
         _shot_case(entry, glue, _record(count, b0e=1, b11=type_byte, w08=PUFF_ROWS),
                    {A_ACTIVE_COUNT_TYPE32: counts, A_MISSILE_LOCK_A: b"\x77\x88\x99"},
                    note=f"count={count:#04x} entry={entry:#x}")
+
+
+# One row per (routine, arm) the X flag can differ on — spelt out rather than crossed, because a
+# cross-product would spend two thirds of its runs on combinations that cannot separate anything.
+# `count` only matters on the arm that DECREMENTS (0 borrows, 1 does not), and `extend_in` only on
+# the arm that does NOT (where the routine must hand the caller's own flag back); `_kind36` has no
+# guard, so it has no second arm and no incoming flag at all.
+# (glue, entry, the type byte the record carries, the counter's value, the X handed in)
+RETIRE_EXTEND_ROWS = (
+    ("g_shot_retire_kind32", ENTRY_SHOT_RETIRE_KIND32, SHOT_TYPE_MISSILE, 0x00, 0),
+    ("g_shot_retire_kind32", ENTRY_SHOT_RETIRE_KIND32, SHOT_TYPE_MISSILE, 0x01, 0),
+    ("g_shot_retire_kind32", ENTRY_SHOT_RETIRE_KIND32, 0x00, 0x00, 0),
+    ("g_shot_retire_kind32", ENTRY_SHOT_RETIRE_KIND32, 0x00, 0x00, 1),
+    ("g_shot_retire_kind33", ENTRY_SHOT_RETIRE_KIND33, SHOT_TYPE_BOMB, 0x00, 0),
+    ("g_shot_retire_kind33", ENTRY_SHOT_RETIRE_KIND33, SHOT_TYPE_BOMB, 0x01, 0),
+    ("g_shot_retire_kind33", ENTRY_SHOT_RETIRE_KIND33, 0x00, 0x00, 0),
+    ("g_shot_retire_kind33", ENTRY_SHOT_RETIRE_KIND33, 0x00, 0x00, 1),
+    ("g_shot_retire_kind36", ENTRY_SHOT_RETIRE_KIND36, SHOT_TYPE_SEEKER, 0x00, 0),
+    ("g_shot_retire_kind36", ENTRY_SHOT_RETIRE_KIND36, SHOT_TYPE_SEEKER, 0x01, 0),
+)
+
+
+@pytest.mark.parametrize("glue,entry,type_byte,count,extend_in", RETIRE_EXTEND_ROWS)
+def test_the_retires_report_the_68000s_x_flag(glue, entry, type_byte, count, extend_in):
+    """THE FLAG EACH RETIRE LEAVES, over both of its arms and both incoming values.
+
+    Each ends on `subi.b #$1` of its own live-shot counter, whose BORROW is the 68000's X at the
+    `rts` — and the frame loop's hit passes call `score_add_bcd` after one of these, where `abcd`
+    ADDS that bit (include/weapon.h and src/score.c carry the argument). A count of 0 borrows and a
+    count of 1 does not. The GUARD-REJECTING rows (`type_byte` 0x00) make no decrement at all and
+    must hand the caller's own X straight back, which is what the `extend_in` = 1 row separates from
+    a hard-coded 0.
+
+    The oracle's flag arrives through `abi.extend_call_pokes`, which turns X into D1 with `addx.b`
+    and stores nothing — D1 is a reported register. Nothing in memory records it, so this case is
+    the only thing between a correct report and a plausible one.
+    """
+    pokes = {abi.SCRATCH: _record(count, b0e=1, b11=type_byte, w08=PUFF_ROWS),
+             A_ACTIVE_COUNT_TYPE32: bytes([count] * 3),
+             A_MISSILE_LOCK_A: b"\x77\x88\x99"}
+    pokes.update(abi.extend_call_pokes(entry, extend_in=extend_in))
+    args = _shot_glue_args(glue, extend_in)
+    reported = {}
+    diffs, info = differential(
+        abi.STUB, {"a2": abi.SCRATCH, "_pokes": pokes},
+        lambda lib, buf: reported.setdefault("x", getattr(lib, glue)(buf, abi.SCRATCH, *args)))
+    note = f"{glue} count={count:#04x} type={type_byte:#04x} X_in={extend_in}"
+    assert not diffs, f"{note}\n{report(diffs)}"
+    oracle_x = abi.oracle_extend(info)
+    assert reported["x"] == oracle_x, (
+        f"{note}: the reconstruction reported X={reported['x']} where the 68000 left X={oracle_x}")
 
 
 def test_retire_attribution():
@@ -1730,6 +1798,7 @@ MIRRORS = (
     ("SHOT_TYPE_BOMB", "include/weapon.h", "SHOT_TYPE_BOMB"),
     ("SHOT_TYPE_SEEKER", "include/weapon.h", "SHOT_TYPE_SEEKER"),
     ("SHOT_TYPE_PUFF", "include/weapon.h", "SHOT_TYPE_PUFF"),
+    ("EXTEND_UNREAD", "include/weapon.h", "EXTEND_UNREAD"),
     ("A_PUFF_SPRITE", "include/weapon.h", "A_puff_sprite"),
     ("PUFF_Y_LIFT", "include/weapon.h", "PUFF_Y_LIFT"),
     ("PUFF_ROWS", "include/weapon.h", "PUFF_ROWS"),

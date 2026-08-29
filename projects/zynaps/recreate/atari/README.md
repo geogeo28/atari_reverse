@@ -90,13 +90,14 @@ line, saying nothing about which side is meant to own the name.
 | `psg_port_write` | an ordered write ledger + a register file (`kit/src/psg.c`) | `move.b reg,$ffff8800` then `move.b val,$ffff8802`, from inside the vertical-blank interrupt | kit `src/` excluded → `zynaps_backend.c` |
 | `hw_read8` | seeded reads of five declared addresses (`kit/src/hw.c`) | a real `volatile` load. ONE core caller: `ikbd_send_cmd` spinning on the 6850's transmitter-empty bit at `$fffffc00` | kit `src/` excluded → `zynaps_backend.c` |
 | `hw_write8/16/32` | an ordered (address, width, value) ledger `harness.differential` compares entry for entry (`kit/src/hw.c`) | a real `volatile` store **of its own width**, counted — and counted again by address for the three core effects the machine cannot be asked about afterwards | kit `src/` excluded → `zynaps_backend.c` |
+| `hw_bset8` / `hw_bclr8` / `hw_and8` | the same ledger, holding the byte the ORACLE's own `bset`/`bclr`/`andi.b` produced from its fabricated read (`kit/src/hw.c`) | **NOT YET DEFINED — the build does not link without them.** A real `volatile` read-modify-write of its own BYTE width on the register, counted like `hw_write8`. Six core call sites; see Unpinned 2 for the table | kit `src/` excluded → `zynaps_backend.c` |
 | `sched_poll8` / `sched_wait8` | polls counted per wait site, with declared stores (`kit/src/sched.c`) | `shim_include/sched.h` — the same spin with NO cap, and `volatile` so the loop keeps reading. `src/highscore.c`'s game-over chain is what calls them | kit `src/` excluded; this shim REPLACES rather than `#include_next`s |
 | `sched_poll16` | the word form of the above | **not defined.** No Zynaps core calls it, and an unexercised word read in the one build with no oracle behind it is worse than absent — `shim_include/sched.h` says what to watch for when the first caller arrives | kit `src/` excluded |
 | `g_dosound`, `disk_*` | the Dosound ledger, the staged disk | **not defined.** No Zynaps core calls one | kit `src/` excluded |
 | `shifter_upload_palette_longs` / `shifter_write_pen` / `shifter_clear_pen0` | **ordinary core code** in `../src/video.c`, writing the ledger through `hw_write32`/`hw_write16` | the same core code, its `hw_write*` now the real store — eight `move.l` over `$ffff8240`, or one `move.w` | nothing: the seam is `hw_write*` |
-| `mfp_ack_timer_b` | core code in `../src/irq.c`: `hw_write8($fffa0f, 0)` | the same, as a real byte store — and that is **not** the original's `bclr #0`. See Unpinned 2 | nothing: the seam is `hw_write*` |
+| `mfp_ack_timer_b` | core code in `../src/irq.c`: `hw_bclr8($fffa0f, 0)`, ledgered as the `0 & ~bit` the oracle's own `bclr` produced | the same core code, its `hw_bclr8` now the real `bclr` — Timer B's channel alone. See Unpinned 2 | `zynaps_backend.c` must define `hw_bset8`/`hw_bclr8`/`hw_and8` |
 | `screen_flip_buffers`' publish half | `hw_write8($ff8203/$ff8201, image offset >> 8/16)`, ledgered and compared | the same store — of an IMAGE OFFSET, which is right where the image is the machine's memory and wrong here. The shim re-publishes the machine address after the slice | `zynaps_main.c`, see below |
-| `init_shifter_mode_mask_written` | the one byte the write ledger cannot hold: the MASK the `andi.b` applied | **still a counter** — read into the record. The STORE it describes is the core's own, through `hw_write8` | `zynaps_main.c` |
+| `init_shifter_mode_mask_written` | the one byte the write ledger cannot hold: the MASK the `andi.b` applied | **still a counter** — read into the record. The ACCESS it describes is the core's own, through `hw_and8` | `zynaps_main.c` |
 | `ikbd_send_cmd` @ `0x14444` | ✅ verified in `../src/input.c` — `$fffc00` is a seeded READ slot (`OS_HW_ACIA_STATUS`) and `$fffc02` is ledgered | the same core code: an UNBOUNDED spin on bit 1 of `$fffffc00`, then a store to `$fffffc02`, exactly the original's four instructions. `-DOS_NO_REFUSAL_TALLY` compiles the off-target give-up arm away, and `build.sh` measures that it did | nothing: the seam is `hw_read8`/`hw_write8` |
 | the Line-A opcode @ `0x10010` | modelled as a no-op (the oracle takes it as an exception) | the real `dc.w $a00a` | `zynaps_os.s` |
 | `image[0x70]`, `image[0x120]`, `image[0x195d0]` | ordinary diffable image bytes | **not vectors.** The shim seeds `image[0x70]` from the real `$70` so the slice's copy means something, and installs the REAL vectors itself, masked | `zynaps_main.c` |
@@ -449,20 +450,40 @@ surface *is* the finding.
    belong to the front end, which is unported. So `shifter_upload_palette_longs`' handler callers,
    `shifter_write_pen`, `shifter_clear_pen0` and the palette cycling are compiled and never run.
    **M2's surface.**
-2. **`mfp_ack_timer_b` would acknowledge the WRONG THING if it ever ran — an on-target defect, not
-   merely an unpinned byte.** `../src/irq.c` spells it `hw_write8($fffa0f, 0)`, because off target
-   the read half of the original's `bclr #0,$fffa0f` answers a fabricated 0 and both sides then
-   store 0 and agree. On the machine that store clears EVERY in-service bit in the register, not
-   Timer B's. `../include/irq.h` and the kit's `hw.h` both say a target build must not ship the
-   expression, and this one does — it is harmless today only because **Timer B is installed and
-   never fires** (nothing in M1 programs an MFP timer, and `timer_b_ticks_at_anchor` is 0 in every
-   run, which is a measured claim rather than a belief). It becomes live the moment M2 starts a
-   timer. Fixing it is a change to a CORE and to the kit's read model, not to this directory: the
-   address needs a seeded READ slot so the mask is pinned on both sides.
+2. **THE READ-MODIFY-WRITE DEFECT IS CLOSED IN THE CORES, AND `zynaps_backend.c` MUST NOW DEFINE
+   THREE NEW NAMES.** The cores used to spell the original's `bset`/`bclr`/`andi.b` on a register as
+   a plain `hw_write8` of the byte a fabricated read produced — green off target and wrong on the
+   machine, where the store clobbers every bit it should have preserved. They now spell the
+   OPERATION, through three kit names added beside `hw_write8/16/32` in
+   `tools/recreate_kit/include/hw.h`:
 
-   Its sibling, `andi.b #$fc,$ff8260` in `../src/init.c`, has the same shape and is **measured
-   harmless**: `$ff8260` decodes two bits, and both the mask and a plain 0 leave them clear, which
-   is ST low resolution either way. `rez_at_anchor` and `rez_after` read the register back.
+   | name | what a target build must compile it to | the cores' six call sites |
+   |---|---|---|
+   | `void hw_bset8(uint32_t addr, uint32_t bit)` | `*(volatile uint8_t *)addr \|= (uint8_t)(1u << bit);` | `../src/init.c`'s `boot_enable_interrupts` (`$fffa09` and `$fffa15`, bit 6) and `../src/frame.c`'s `frame_end_and_flip` (`$fffa09`, bit 6) |
+   | `void hw_bclr8(uint32_t addr, uint32_t bit)` | `*(volatile uint8_t *)addr &= (uint8_t)~(1u << bit);` | `../src/irq.c`'s `mfp_ack_timer_b` (`$fffa0f`, bit 0) and `mfp_ack_acia` (`$fffa11`, bit 6) |
+   | `void hw_and8(uint32_t addr, uint32_t mask)` | `*(volatile uint8_t *)addr &= (uint8_t)mask;` | `../src/init.c`'s `shifter_select_low_resolution` (`$ff8260`, mask `$fc`) |
+
+   **A BYTE ACCESS, exactly as `hw_write8` is a byte store, and for the same reason** — `$fffa10` is
+   the MFP's timer-A data register and a widened access would clobber it. Each is ONE store, so
+   `andi.b` must stay one call and not two `hw_bclr8`s (the kit's
+   `test_splitting_a_mask_into_two_bit_clears_reds` is what says so).
+
+   **AND EACH MUST CALL `note_store()`, like the three stores above them.** That is not tidiness:
+   `note_store` is what feeds `zy_hw_writes` and the per-address counters the record exposes, so a
+   definition that omits it leaves `zy_shifter_mode_writes` at 0 and `smoke.py`'s
+   `record["shifter_mode_writes"]` check fails for a reason that has nothing to do with the
+   register — the surface goes dark exactly where this change needs it most.
+
+   **Until the backend defines them the target build does not link**, which is the intended shape:
+   the cores can no longer express the defect, so the machine's read half has to be supplied here.
+   The off-target ledger is unchanged — `src/hw.c` records the byte the oracle's own instruction
+   produced from its fabricated 0 — so every existing case stayed green through the change.
+
+   What is still unpinned is the same as before and no more: off target a `bclr`'s ledgered value is
+   0 for every bit and an `andi.b`'s is 0 for every mask, so the ledger holds the address, the width
+   and the fact of the access, not the channel or the mask. (A `bset`'s IS pinned — `0 | (1 << bit)`
+   is a different byte per bit.) `../include/init.h`'s one-byte sink still holds the resolution mask;
+   the four MFP bits are held only by the source spelling and by this table.
 3. **`screen_flip_buffers` publishes an IMAGE OFFSET to the shifter, and the shim re-publishes the
    machine address after the slice.** See "the one address a relocated image cannot publish for
    itself". The core's store is now real and ledgered off target — that half is pinned, which it was

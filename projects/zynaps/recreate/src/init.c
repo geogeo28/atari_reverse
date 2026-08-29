@@ -62,11 +62,11 @@ uint8_t init_shifter_mode_mask_written(void) { return g_shifter_mode_mask; }
 /* `andi.b #$fc,$ff8260` — select low resolution. */
 static void shifter_select_low_resolution(void) {
     g_shifter_mode_mask = SHIFTER_MODE_RESOLUTION_MASK;
-    /* The value is `0 & mask`, i.e. 0, because SHIFTER_MODE_UNMODELED_READ is what the oracle's read
-     * of this register answers. That is the RIGHT store off target and the WRONG one on the machine,
-     * where the `andi.b` preserves six bits it here clears — include/init.h states the residual and
-     * says a Zynaps build for the real Atari must not ship this expression. */
-    hw_write8(HW_SHIFTER_MODE, SHIFTER_MODE_UNMODELED_READ & SHIFTER_MODE_RESOLUTION_MASK);
+    /* The OPERATION, not the byte it produces off target: `hw_and8` ledgers `0 & mask` here and
+     * compiles to a real `andi.b` on the register in a build for the machine, where the six bits the
+     * mask preserves are the register's own. include/init.h says what the ledger can and cannot see
+     * of it — hence the sink above, which is the only holder of the mask itself. */
+    hw_and8(HW_SHIFTER_MODE, SHIFTER_MODE_RESOLUTION_MASK);
 }
 
 /* ================================================================================================
@@ -542,8 +542,8 @@ void boot_enable_interrupts(void) {
     hw_write8(HW_MFP_TIMER_B_CONTROL, MFP_TIMER_B_EVENT_COUNT);
     hw_write8(HW_MFP_IERA, MFP_IER_TIMER_B);
     hw_write8(HW_MFP_IMRA, MFP_IER_TIMER_B);
-    hw_write8(HW_MFP_IERB, 1u << MFP_ACIA_CHANNEL_BIT);
-    hw_write8(HW_MFP_IMRB, 1u << MFP_ACIA_CHANNEL_BIT);
+    hw_bset8(HW_MFP_IERB, MFP_ACIA_CHANNEL_BIT);
+    hw_bset8(HW_MFP_IMRB, MFP_ACIA_CHANNEL_BIT);
 }
 
 /* ================================================================================================

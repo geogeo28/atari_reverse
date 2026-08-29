@@ -1479,7 +1479,7 @@ case; it read "five rows" while there were six.)
 | reads of the modeled hardware bytes `$fffa01`, `$ff820a`, `$ff8207`, `$ff8209` | `shim.c`'s `g_hw_log_slot`/`g_hw_log_val` ledger + `g_hw_file` | emit the same ordered `(slot, val)` stream — call `hw_read8()` from `hw.h` with an `OS_HW_*` constant; the case declares both sides' bytes with `hw_seed=` (Phase 7). A VOLATILE one (`$ff8207`/`$ff8209`) may be read at most ONCE per run: a second read is refused, and the remedy is the case's shape — end it before the second read, or split it into two runs |
 | a memory byte an EXTERNAL AGENT writes while the run is in flight (an interrupt storing a scancode) | `shim.c`'s `g_sched` list, applied by arrival count per declared WAIT SITE | poll the byte through `sched_poll8()`/`sched_poll16()` from `sched.h`, once per wait iteration, NAMING the site (the original compare's PC); the case declares the store with `schedule=` and the sites with `wait_sites=` (Phase 8), and `harness.differential` compares the candidate's polls against the oracle's arrivals SITE BY SITE |
 | the FILE-LOAD SEAM (Phase 9) | nothing — the substitution is in the image | define `disk_read_file` (`disk.h`). Off target `src/disk.c` supplies it; an ON-TARGET build must define its own, and the project's build should require the symbol so a core calling it cannot silently link the model |
-| every STORE to a memory-mapped I/O register — the shifter's colour row and screen base, the MFP's in-service registers, the ACIA's data port | `shim.c`'s `g_hw_write_addr`/`_width`/`_val` ledger | emit the same ordered `(address, width, value)` stream — call `hw_write8()`/`hw_write16()`/`hw_write32()` from `hw.h` with the 24-bit address (Phase 10). Compared for EVERY case by default; a case whose candidate models a routine's hardware half as a no-op declares those addresses in `hw_waiver={address: reason}` |
+| every STORE to a memory-mapped I/O register — the shifter's colour row and screen base, the MFP's in-service registers, the ACIA's data port | `shim.c`'s `g_hw_write_addr`/`_width`/`_val` ledger | emit the same ordered `(address, width, value)` stream — call `hw_write8()`/`hw_write16()`/`hw_write32()` from `hw.h` with the 24-bit address, or `hw_bset8()`/`hw_bclr8()`/`hw_and8()` where the original's instruction is a read-modify-write (Phase 10). Compared for EVERY case by default; a case whose candidate models a routine's hardware half as a no-op declares those addresses in `hw_waiver={address: reason}` |
 
 `OS_SUPER_TOKEN` is not off-image state but it is still a shared value: a reconstruction of a
 function that calls `Super` must return the same constant, since the program can store it into the
@@ -1660,20 +1660,47 @@ model is against.
 ### What it pins, and the one residual
 
 For a **plain store** it pins the whole of it. For a **read-modify-write of an address the READ model
-does not name** — `bclr #0,$fffa0f`, `andi.b #$fc,$ff8260` — the oracle's read answers a fabricated
-`0`, so both sides compute their value from that same `0`: the ledger holds the address, the width
-and the fact that the store happened, while the MASK the instruction applied stays unpinned. That is
-still a large gain (deleting the store is now a red) and an honest residual. A routine that needs the
-mask held wants its address in the READ model too — or a project-local sink for that one byte, which
-is what Zynaps's `init_shifter_mode_mask_written` is and all it now is.
+does not name** — `bset #6,$fffa09`, `bclr #0,$fffa0f`, `andi.b #$fc,$ff8260` — the oracle's read
+answers a fabricated `0`, so both sides compute their value from that same `0`: the ledger holds the
+address, the width and the fact that the store happened, while the BIT or the MASK the instruction
+applied may not be. (`bset`'s bit IS held, because `0 | (1 << bit)` is a different byte per bit;
+`bclr`'s and `andi.b`'s are not, because `0 & ~bit` and `0 & mask` are `0` whatever the operand.)
+That is still a large gain (deleting the store is now a red) and an honest residual. A routine that
+needs the mask held wants its address in the READ model too — or a project-local sink for that one
+byte, which is what Zynaps's `init_shifter_mode_mask_written` is and all it now is.
 
-**AND IT IS AN ON-TARGET DEFECT, not merely an unpinned byte — say so where the expression is
-written.** Off target `0 & 0xfc` is the RIGHT store, because that is what the oracle does. On the
-machine it clears six bits the `andi.b` preserves, and `hw_write8($fffa0f, 0)` acknowledges every
-MFP in-service bit rather than Timer B's. A reconstruction that will run on target must not ship
-either expression: give the address a read slot, or keep the read-modify-write in the target build's
-own code. **This model has no read-modify-write shape**, and that is the gap — `hw.h` states it at
-the door and Zynaps's `include/init.h` and `include/irq.h` carry the two live instances.
+### The read-modify-write shape: `hw_bset8` / `hw_bclr8` / `hw_and8`
+
+**A read-modify-write spelt as a plain store was an ON-TARGET DEFECT and not merely an unpinned
+byte**, and it is what these three names close. Off target `hw_write8($fffa09, 0x40)` is the RIGHT
+store, because that is the byte the oracle's own `bset` computed from its fabricated `0`. On the
+machine the same expression writes `0x40` over everything TOS had set in the MFP's interrupt-enable
+B; `hw_write8($fffa0f, 0)` acknowledges every in-service channel rather than Timer B's; and
+`hw_write8($ff8260, 0)` clears six bits the `andi.b` preserves. Green off target, wrong on the
+machine, and **no off-target surface can tell the two apart** — the kit's own
+`test_the_operations_are_indistinguishable_off_target_from_the_defect_they_retire` measures exactly
+that, as a green case.
+
+So the reconstruction spells the OPERATION and each shore supplies its own read half:
+
+| the instruction | the call | off target (`src/hw.c`) | on target (the build's own definition) |
+|---|---|---|---|
+| `bset #b,addr` | `hw_bset8(addr, b)` | ledgers `0 \| (1 << b)` | `*(volatile uint8_t *)addr \|= 1u << b` |
+| `bclr #b,addr` | `hw_bclr8(addr, b)` | ledgers `0 & ~(1 << b)` | `*(volatile uint8_t *)addr &= ~(1u << b)` |
+| `andi.b #m,addr` | `hw_and8(addr, m)` | ledgers `0 & m` | `*(volatile uint8_t *)addr &= m` |
+
+The off-target column is byte for byte what `shim.c` already logged for those instructions, so
+introducing the operations changed **no ledger comparison** and every existing case stayed green.
+The address rules are `hw_write8`'s, through the same check — an image address, an undecoded one and
+the untranslated `$ffff8260` form are all refusals — and the width is BYTE for all three, because
+that is the width of every instruction they stand for.
+
+**`hw_and8` is its own operation and not two `hw_bclr8` calls**: one instruction makes one store, and
+the ledger compares the ordered stream, so a pair diverges it for a reason that is not about the
+register (`test_splitting_a_mask_into_two_bit_clears_reds`). **A target build that does not define
+all three does not link** — which is the intended shape, since the cores can no longer express the
+defect. `hw.h` states the contract at the door; Zynaps's `include/init.h`, `include/irq.h` and
+`include/frame.h` carry the six call sites and `recreate/atari/README.md` the backend's half.
 
 ### Why it is ON by default, and what the opt-out costs
 

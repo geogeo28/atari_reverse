@@ -92,11 +92,11 @@ uint32_t        g_hw_file_known(void);  /* bit S = slot S's contents were declar
  *
  * WHAT THE LEDGER PINS, AND WHAT IT DOES NOT. For a plain store it pins the whole of it. For a
  * READ-MODIFY-WRITE of an address the read model does not name — `bclr #0,$fffa0f`, `andi.b
- * #$fc,$ff8260` — the oracle's read answers a fabricated 0, so both sides compute their value from
- * that same 0 and the ledger holds the address, the width and the fact that the store happened
- * while the MASK the instruction applied stays unpinned. That is a real gain (deleting the store is
- * now a red) and an honest residual, and a routine that needs the mask held wants the address in
- * the READ model too.
+ * #$fc,$ff8260`, which go through hw_bclr8/hw_and8 below — the oracle's read answers a fabricated
+ * 0, so both sides compute their value from that same 0 and the ledger holds the address, the width
+ * and the fact that the store happened while the BIT or the MASK the instruction applied stays
+ * unpinned. That is a real gain (deleting the store is now a red) and an honest residual, and a
+ * routine that needs the mask held wants a sink of its own or the address in the READ model.
  *
  * ON TARGET these three names are supplied by the build itself, exactly as psg.h's ports and
  * sched.h's poll are: an Atari build does not compile src/hw.c and defines each as the real store
@@ -105,17 +105,60 @@ uint32_t        g_hw_file_known(void);  /* bit S = slot S's contents were declar
  * the register next door (the MFP's timer-A data byte sits beside its in-service register B), and
  * the ledger compares the width a reconstruction DECLARED, not what a target build does with it.
  *
- * WHAT THIS SEAM DOES NOT GIVE YOU IS A READ-MODIFY-WRITE. `bclr #0,$fffa0f` and
- * `andi.b #$fc,$ff8260` read a register the seeded READ model does not name, and off target that
- * read has no answer — so a port writes the value its fabricated 0 produces, which is the RIGHT
- * store off target and the WRONG one on the machine (it clears every bit rather than one). A
- * reconstruction that will run on target must not ship that expression: give the address a read
- * slot, or keep the RMW in the target build's own code. TRAP_MODEL.md, "Phase 10", states the
- * residual and the projects carrying it.
+ * A READ-MODIFY-WRITE IS NOT A STORE, AND MUST NOT BE SPELT AS ONE — see hw_bset8/hw_bclr8/hw_and8
+ * below, which are what a reconstruction of `bset`/`bclr`/`andi.b` on a register calls instead.
  */
 void hw_write8(uint32_t addr, uint32_t value);
 void hw_write16(uint32_t addr, uint32_t value);
 void hw_write32(uint32_t addr, uint32_t value);
+
+/* ---- THE READ-MODIFY-WRITE OPERATIONS: `bset` / `bclr` / `andi.b` on an I/O register -----------
+ *
+ * `bset #6,$fffa09`, `bclr #0,$fffa0f`, `andi.b #$fc,$ff8260` do not STORE a value — they store a
+ * FUNCTION of the byte the register already held. The read half is of an address the seeded READ
+ * model does not name, so off target it has no answer and the oracle serves a fabricated 0.
+ *
+ * A reconstruction that computed the value FROM THAT 0 and called hw_write8 passed the ledger — both
+ * sides compute from the same 0 — and was a DEFECT the moment it was cross-compiled, because the
+ * target has no fabricated 0 and the store lands for real: `bset` becomes "write 0x40 and clear
+ * every other bit TOS set in the MFP's IERB", `bclr` becomes "acknowledge every in-service channel
+ * at once", `andi.b #$fc` becomes "write 0 to the resolution register". Green off target, wrong on
+ * the machine, and invisible to every surface the differential has.
+ *
+ * These three names close that by SPELLING THE OPERATION rather than its off-target value. The
+ * reconstruction says WHICH bit it sets, WHICH it clears, WHICH mask it applies; each shore then
+ * supplies the read half it actually has:
+ *
+ *   OFF TARGET (src/hw.c) each ledgers the byte the ORACLE'S OWN read-modify-write produces from
+ *   its fabricated 0 — `0 | bit`, `0 & ~bit`, `0 & mask` — which is exactly what shim.c logs for
+ *   the same instruction, so the ledger comparison is unchanged and every existing case stays
+ *   green. What the ledger holds is unchanged too: the address, the byte width, the fact of the
+ *   store, and a value that both sides derive from the same 0. The BIT and the MASK remain
+ *   unpinned by it — a routine that needs them held wants a sink of its own, or the address in the
+ *   READ model.
+ *
+ *   ON TARGET the build supplies each as the REAL instruction on the real register —
+ *   `*(volatile uint8_t *)addr |= 1u << bit`, `&= ~(1u << bit)`, `&= mask` — exactly as it supplies
+ *   psg.h's ports, sched.h's poll and hw_write8/16/32 above. It does not compile src/hw.c, so there
+ *   is no fabricated 0 anywhere in the chain and the five bits the original preserves are preserved.
+ *
+ * `hw_and8` IS ITS OWN OPERATION AND NOT TWO hw_bclr8 CALLS. `andi.b #$fc` clears two bits with ONE
+ * store, and the ledger compares the ordered store STREAM: two calls would log two entries where
+ * the oracle logs one, so the case would fail for a reason that is not about the register. One
+ * instruction, one call, one entry.
+ *
+ * Width is BYTE for all three, because that is the width of every RMW instruction they stand for
+ * (`bset`/`bclr` on memory are byte operations on the 68000, and `andi.b` says so). A wider RMW
+ * wants a name of its own rather than one of these; none of the games in this workspace has one.
+ *
+ * The address rules are hw_write8's, unchanged and enforced through the same check: the 24-bit bus
+ * form of a decoded I/O register, and everything else — an image address, an address above the
+ * image but outside the blocks, the untranslated `$ffff8240` form — is a REFUSAL rather than a
+ * ledger entry.
+ */
+void hw_bset8(uint32_t addr, uint32_t bit);    /* `bset #bit,addr`  — set bit `bit` (0..7) */
+void hw_bclr8(uint32_t addr, uint32_t bit);    /* `bclr #bit,addr`  — clear it */
+void hw_and8(uint32_t addr, uint32_t mask);    /* `andi.b #mask,addr` — keep the bits `mask` names */
 
 /* ---- what the harness drives for the write model (see README.md); g_hw_reset clears it ---- */
 uint32_t        g_hw_write_count(void);      /* stores logged this run */

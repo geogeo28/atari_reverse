@@ -44,26 +44,21 @@
  * write ledger (`hw_write8`, tools/recreate_kit/include/hw.h), which compares the address, the
  * width and the value against the oracle's.
  *
- * WHAT THAT LEAVES, AND WHY THE MASK KEEPS A SINK OF ITS OWN. The oracle's READ of $ff8260 answers
- * a fabricated 0 — the address is not in the kit's seeded READ set — so both sides store `0 & mask`
- * and the stored value is 0 whatever the mask is. The ledger therefore holds that the store
- * happened, at that register, one byte wide; it cannot hold the mask. The one-byte sink declared at
- * the bottom of this header is what does, and that is the whole of what it is now for.
+ * IT IS SPELT AS THE OPERATION AND NOT AS A STORE. `src/init.c` calls the kit's `hw_and8(address,
+ * mask)`, which off target ledgers the byte the oracle's own `andi.b` produced from its fabricated
+ * 0 and ON TARGET compiles to the real `andi.b` on the real register — so the six bits the mask
+ * preserves are preserved, which a plain store of that 0 would have cleared. The target supplies the
+ * read half; nothing here fabricates one.
  *
- * IT IS ALSO AN ON-TARGET DEFECT, not merely an unpinned byte, and this is the place that says so.
- * `andi.b #$fc,$ff8260` preserves six bits of a register a Zynaps build for the real Atari would be
- * writing for real; storing `0 & mask` clears them. A target build must give the address a read —
- * the kit's seeded READ set, or its own code — rather than compile src/init.c's expression. The kit
- * states the general rule once, in tools/recreate_kit/include/hw.h ("WHAT THIS SEAM DOES NOT GIVE
- * YOU IS A READ-MODIFY-WRITE"); STATUS.md carries this instance.
+ * WHAT THAT LEAVES, AND WHY THE MASK KEEPS A SINK OF ITS OWN. The oracle's READ of $ff8260 answers
+ * a fabricated 0 — the address is not in the kit's seeded READ set — so both sides ledger `0 & mask`
+ * and the value is 0 whatever the mask is. The ledger therefore holds that the store happened, at
+ * that register, one byte wide; it cannot hold the mask, and swapping $fc for $ff would still be
+ * green. The one-byte sink declared at the bottom of this header is what holds the mask off target,
+ * and that is the whole of what it is now for.
  * ============================================================================================= */
 #define HW_SHIFTER_MODE 0xff8260u            /* the resolution byte; a REGISTER, not an image address */
 #define SHIFTER_MODE_RESOLUTION_MASK 0xfcu   /* `andi.b #$fc` — clears the two resolution bits */
-/* What the oracle's read of an UNMODELED hardware register answers, which is the other operand of
- * the `andi.b` above. Named rather than written as a bare 0 because it is a fact about the harness
- * and not about the game: were $ff8260 ever added to the kit's seeded READ set, this is the line
- * that would become a `hw_read8` call. */
-#define SHIFTER_MODE_UNMODELED_READ 0u
 
 /* ================================================================================================
  * The boot sequence's own data. `_start` reads every graphic through `load_file` (src/fileio.c)

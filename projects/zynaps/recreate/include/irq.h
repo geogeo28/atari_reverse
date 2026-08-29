@@ -56,11 +56,11 @@
  * are include/video.h's, because that is where the other two routines writing those registers live
  * and one register block has one home. Only the MFP's is this subsystem's.
  */
-/* THE TWO BIT NAMES BELOW HAVE NO OFF-TARGET READER, and that is the residual rather than dead
- * code: both acknowledges are `bclr` read-modify-writes whose read half answers a fabricated 0 here,
- * so what the reconstruction stores is a plain 0 and the bit number never reaches an expression.
- * ON TARGET they do have one — `atari/zynaps_backend.c` reads `MFP_ISRB_TIMER_B_BIT` to build the
- * real read-modify-write — which is exactly why both are named. */
+/* THE TWO BIT NAMES BELOW ARE THE OPERANDS OF THE TWO ACKNOWLEDGES. `src/irq.c` passes each to the
+ * kit's `hw_bclr8(address, bit)`, which off target ledgers the `0 & ~bit` the oracle's own `bclr`
+ * produced from its fabricated read and ON TARGET compiles to the real `bclr` on the real register.
+ * Off target that value is 0 for every bit, so the channel is unpinned by the ledger — but it is
+ * SPELT, which is what a target build needs and what a store of a bare 0 could never carry. */
 #define HW_MFP_ISRA     0xfffa0fu  /* MFP interrupt-in-service A; bit 0 is Timer B */
 #define MFP_ISRA_TIMER_B_BIT 0u
 #define HW_MFP_ISRB     0xfffa11u  /* ...and in-service B; bit 6 is the keyboard/MIDI ACIA */
@@ -83,16 +83,17 @@
  * had for the YM2149's two ports (kit TRAP_MODEL.md, "Phase 10"). Deleting one of these calls,
  * aiming it at the wrong register, or storing a word where the original stores a longword is a red.
  *
- * THE ONE RESIDUAL IS THIS ONE'S VALUE, and it is an ON-TARGET DEFECT and not merely an unpinned
- * byte. `bclr #0,$fffa0f` is a read-modify-write; off target the oracle's read of an address the
- * seeded READ model does not name answers a fabricated 0, so both sides store 0 and agree — but on
- * the machine that store acknowledges EVERY in-service bit rather than Timer B's. A Zynaps build
- * for the real Atari must not ship this expression; hw.h's "WHAT THIS SEAM DOES NOT GIVE YOU IS A
- * READ-MODIFY-WRITE" states the rule once, for every game, and STATUS.md carries the residual.
+ * THE ONE RESIDUAL IS THIS ONE'S VALUE, and it is an honest unpinned byte rather than a defect.
+ * `bclr #0,$fffa0f` is a read-modify-write spelt as `hw_bclr8`; off target the oracle's read of an
+ * address the seeded READ model does not name answers a fabricated 0, so both sides ledger `0 & ~bit`
+ * — which is 0 for every bit, so the ledger holds the address and the width and not the channel. ON
+ * TARGET the channel is what the operation carries and the acknowledge is Timer B's alone, where a
+ * plain store of that 0 would have acknowledged every in-service channel at once. hw.h's
+ * "THE READ-MODIFY-WRITE OPERATIONS" states the contract once, for every game.
  *
- * `mfp_ack_timer_b` is an ordinary function in src/irq.c now: `hw_write*` is the seam, and a build
- * for the real Atari supplies it as the real `*(volatile uint8_t *)addr = value` store — a BYTE
- * store, because $fffa10 is the MFP's timer-A data register and a widened one would clobber it —
+ * `mfp_ack_timer_b` is an ordinary function in src/irq.c now: `hw_bclr8` is the seam, and a build
+ * for the real Atari supplies it as the real `*(volatile uint8_t *)addr &= ~(1u << bit)` — a BYTE
+ * access, because $fffa10 is the MFP's timer-A data register and a widened one would clobber it —
  * instead of compiling the kit's src/hw.c. (There used to be a src/irq_hw_offtarget.c holding three
  * EMPTY bodies for exactly that split; with a ledger to write through there is nothing empty left.)
  */

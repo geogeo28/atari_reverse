@@ -99,6 +99,76 @@ def flag_call_pokes(routine, condition):
     return {STUB: code}
 
 
+# --- a third stub shape: the 68000's X flag, which no `Scc` condition can name ---------------------
+#
+# X is the only condition bit with no `Scc` suffix — `flag_call_pokes` above can ask for C and Z and
+# cannot ask for this one. It matters because `abcd` READS it: `score_add_bcd` @ 0x12df6 opens with
+# four `abcd -(a1),-(a0)`, so the X its caller leaves is an INPUT of the routine, and a caller that
+# left it set scores one BCD unit high. The two stubs below are how a case drives that input and
+# reads the answer, and neither can be spelt with the shapes above.
+#
+# READING the flag: `addx.b` adds it. `moveq #0,d1` leaves X alone (it sets only N/Z/V/C), so
+# `addx.b d1,d1` on a cleared register is exactly X — and D1 is a REPORTED register, so the flag
+# reaches the case through `differential`'s `info["regs"]` without any store into the image.
+_MOVEQ_0_D1 = 0x7200
+_ADDX_B_D1_D1 = 0xd301
+# SETTING it: `subq.b #1,d0` on a zero register borrows, which is the one instruction shape that
+# sets X without touching an address register or memory. D0 is the scratch because no routine this
+# stub drives reads it — `score_add_bcd` overwrites D0 with the extra-life threshold before anything
+# looks at it, which its own header comment records.
+_MOVEQ_0_D0 = 0x7000
+_SUBQ_B_1_D0 = 0x5300
+
+
+# The register the stub below leaves the flag in, and the mask that reads it back out of a full
+# longword. Private, because `oracle_extend` is how a case asks — four batteries wanted the same
+# two-line extraction and a fifth would have copied it again.
+_EXTEND_ANSWER_REGISTER = "d1"
+_EXTEND_ANSWER_MASK = 0xff
+
+
+def oracle_extend(info):
+    """The X flag the ORACLE left, out of a `differential` run entered through `extend_call_pokes`.
+
+    The stub's `addx.b d1,d1` puts the flag in a REPORTED register, so this is where a case reads
+    it: `assert reported == abi.oracle_extend(info)` against whatever the reconstruction answered.
+    """
+    return info["regs"][_EXTEND_ANSWER_REGISTER] & _EXTEND_ANSWER_MASK
+
+
+def extend_call_pokes(routine, extend_in=0):
+    r"""Pokes that drive the X FLAG INTO `routine` and leave the X IT LEAVES in D1, as 0 or 1.
+
+        moveq   #0,d0       ;  \  only when extend_in
+        subq.b  #1,d0       ;  /   borrows, so X := 1
+        jsr     routine
+        moveq   #0,d1       ; sets N/Z/V/C and leaves X alone
+        addx.b  d1,d1       ; 0 + 0 + X
+        rts
+
+    BOTH HALVES ARE HERE because X is the only condition bit with neither an `Scc` suffix to read it
+    nor an entry register to set it: `flag_call_pokes` above can ask for C and Z, and the oracle
+    enters every routine at SR = 0x2700 (oracle/shim.c's ENTRY_SR), so X = 0. A routine whose X is an
+    INPUT (`score_add_bcd`, whose four `abcd`s add it) needs the first half; one whose X is an OUTPUT
+    (`mothership_segment_hit`, whose `subi.b #$1,(a5)` borrow is the next award's carry-in) needs the
+    second; one with a PASS-THROUGH arm needs both at once, which is the case that separates a report
+    of the caller's own flag from a hard-coded 0.
+
+    It stores NOTHING, unlike `flag_call_pokes` above, because D1 is a reported register: the case
+    reads the oracle's through `differential`'s `info["regs"]` and compares it against what the
+    candidate's glue returned. A store would also have to be mirrored by the candidate, which is a
+    second thing to get wrong for no gain. D0 is the setter's scratch because no routine driven this
+    way reads it — `score_add_bcd` overwrites D0 with the extra-life threshold before anything looks.
+    """
+    setter = (_MOVEQ_0_D0.to_bytes(2, "big") + _SUBQ_B_1_D0.to_bytes(2, "big")) if extend_in else b""
+    code = (setter
+            + b"\x4e\xb9" + routine.to_bytes(4, "big")          # jsr imm.l
+            + _MOVEQ_0_D1.to_bytes(2, "big")
+            + _ADDX_B_D1_D1.to_bytes(2, "big")
+            + b"\x4e\x75")                                      # rts
+    return {STUB: code}
+
+
 # --- a second stub shape: routines that CLOBBER A0, so it cannot be the result cursor ------------
 #
 # `register_call_pokes` above stores through A0, which only works while the routine leaves A0 alone.

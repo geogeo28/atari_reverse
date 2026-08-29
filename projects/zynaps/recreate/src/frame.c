@@ -707,7 +707,7 @@ static void frame_player_shots_maintain(uint8_t *image) {
         x = (int16_t)be16(image + shot + ENTITY_X);
         y = (int16_t)be16(image + shot + ENTITY_Y);
         if (x < SHOT_X_MIN || x > SHOT_X_MAX || y < SHOT_Y_MIN || y > SHOT_Y_MAX)
-            shot_retire_kind32(image, shot);
+            (void)shot_retire_kind32(image, shot, EXTEND_UNREAD);
     }
 }
 
@@ -915,19 +915,21 @@ static void frame_ship_collision(uint8_t *image) {
  * called where the next instruction reloads it. `bomb_update` is the ONE that is not modelled, and
  * STATUS.md's "## Coverage limits" says what that costs and what would close it.
  * ============================================================================================= */
-static uint32_t frame_award_score(uint8_t *image, unsigned award) {
+static uint32_t frame_award_score(uint8_t *image, unsigned award, unsigned *extend) {
     uint32_t threshold_before = be32(image + A_extra_life_threshold_bcd);
 
-    score_add_bcd(image, A_score_award_table_bcd + SCORE_BCD_BYTES * (award + 1u));
+    *extend = score_add_bcd(image, A_score_award_table_bcd + SCORE_BCD_BYTES * (award + 1u),
+                            *extend);
     return threshold_before;
 }
 
 /* `bsr mothership_segment_hit` plus the D0 it may leak. `segment` is one of the pair's two records
  * and the routine rewrites BOTH, so this record's own type is what says the pair died. */
-static uint32_t frame_segment_hit(uint8_t *image, uint32_t segment, uint32_t sound_channel) {
+static uint32_t frame_segment_hit(uint8_t *image, uint32_t segment, uint32_t sound_channel,
+                                  unsigned *extend) {
     uint32_t threshold_before = be32(image + A_extra_life_threshold_bcd);
 
-    mothership_segment_hit(image, segment);
+    *extend = mothership_segment_hit(image, segment);
     return image[segment + ENTITY_TYPE] == EXPLOSION_PART_TYPE ? threshold_before : sound_channel;
 }
 
@@ -938,13 +940,18 @@ static uint32_t frame_segment_hit(uint8_t *image, uint32_t segment, uint32_t sou
  * 0x11f92 push and pop D0 around the whole arm. */
 static void frame_boss_destroyed(uint8_t *image) {
     uint32_t part = A_entity_boss_parts;
+    /* `add.w #$6,d1` at 0x11f50 is the last instruction before the award's `bsr` that touches the
+     * 68000's X — the `move.w`s, the `movem.l` and the `lea` between do not — so this add's CARRY
+     * OUT is the first `abcd`'s carry-in, and a boss whose explosion Y wraps past a word scores one
+     * BCD unit more. */
+    uint16_t explosion_y = (uint16_t)(be16(image + A_mothership_y) + BOSS_DEATH_EXPLOSION_DY);
+    unsigned extend = word_add_extend(be16(image + A_mothership_y), BOSS_DEATH_EXPLOSION_DY);
     unsigned index;
 
     wr16(image + A_enemy_slots + ENTITY_X,
          (uint16_t)(be16(image + A_mothership_x) + BOSS_DEATH_EXPLOSION_DX));
-    wr16(image + A_enemy_slots + ENTITY_Y,
-         (uint16_t)(be16(image + A_mothership_y) + BOSS_DEATH_EXPLOSION_DY));
-    (void)frame_award_score(image, SCORE_AWARD_BOSS);
+    wr16(image + A_enemy_slots + ENTITY_Y, explosion_y);
+    (void)frame_award_score(image, SCORE_AWARD_BOSS, &extend);
     image[A_death_event_flags] |= (uint8_t)(1u << DEATH_EVENT_BOSS_BIT);
     explosion_spawn(image, A_enemy_slots, BOSS_EXPLOSION_GROUP);
     for (index = 0; index < MOTHERSHIP_TAIL_SEGMENTS; index++, part = next_record(part))
@@ -969,16 +976,16 @@ static void frame_player_shots_resolve(uint8_t *image) {
 
         if (image[A_boss_sequence_active]) {
             if (image[shot + ENTITY_TYPE] == SHOT_TYPE_BOMB)
-                shot_retire_kind33(image, shot);
+                (void)shot_retire_kind33(image, shot, EXTEND_UNREAD);
             sound_start(image, BOSS_HIT_SOUND, (uint8_t)slot);
             wr16(image + A_boss_hitpoints, (uint16_t)(be16(image + A_boss_hitpoints) - 1u));
             if (be16(image + A_boss_hitpoints) == 0)
                 frame_boss_destroyed(image);
         }
         if (image[shot + ENTITY_TYPE] == SHOT_TYPE_MISSILE) {
-            shot_retire_kind32(image, shot);
+            (void)shot_retire_kind32(image, shot, EXTEND_UNREAD);
         } else if (image[shot + ENTITY_TYPE] == SHOT_TYPE_SEEKER) {
-            shot_retire_kind36(image, shot);
+            (void)shot_retire_kind36(image, shot);
         } else if (image[shot + ENTITY_TYPE] == BULLET_TYPE) {
             image[shot + ENTITY_ALIVE] = 0;
             image[A_active_bullets] -= 1;
@@ -1032,12 +1039,22 @@ static uint32_t frame_explosion_animate(uint8_t *image, uint8_t type, uint32_t f
                 image[enemy + ENTITY_TYPE] = TYPE_POWERUP_CAPSULE;
                 image[enemy + ENTITY_ANIM_FRAME] = POWERUP_CAPSULE_SPAWN_TAG;
                 wr16(image + enemy + ENTITY_HEIGHT, POWERUP_CAPSULE_ROWS);
-                if (leaves_rising_capsule)
+                /* THE AWARD'S CARRY-IN IS THIS SUBTRACT'S BORROW on the rising variant, and 0 on
+                 * the other. `subi.w #$3,4(a2)` at 0x1213a is the last instruction before that
+                 * `bsr` that touches the 68000's X; the plain variant (0x1206e) has no such
+                 * instruction, and its own X is 0 BY CONSTRUCTION — reaching here means the
+                 * `subi.b #$1,(a0)` above produced zero, so the counter was 1 and did not borrow. */
+                unsigned extend = 0;
+
+                if (leaves_rising_capsule) {
+                    extend = word_sub_extend(be16(image + enemy + ENTITY_Y),
+                                             POWERUP_CAPSULE_LARGE_RISE);
                     wr16(image + enemy + ENTITY_Y,
                          (uint16_t)(be16(image + enemy + ENTITY_Y) - POWERUP_CAPSULE_LARGE_RISE));
+                }
                 image[enemy + ENTITY_ALIVE] = 1;
                 wr32(image + enemy + ENTITY_SPRITE, A_powerup_capsule_sprite);
-                sound_channel = frame_award_score(image, SCORE_AWARD_CAPSULE);
+                sound_channel = frame_award_score(image, SCORE_AWARD_CAPSULE, &extend);
                 /* `bne 0x12092` — a capsule that lands ON THE TERRAIN is killed on the spot
                  * instead of announcing itself, and only the other answer plays the tune. Both
                  * arms end the pass for this record. */
@@ -1059,19 +1076,22 @@ static uint32_t frame_explosion_animate(uint8_t *image, uint8_t type, uint32_t f
  * THE RAM PASS PLAYS A TUNE HERE AND THE SHOOT PASS DOES NOT — 0x1222e loads one, 0x1239c does not
  * — and that is the only difference between the two spellings of this arm. */
 static unsigned frame_enemy_absorbs_a_hit(uint8_t *image, uint32_t enemy, unsigned plays_sound,
-                                          uint32_t sound_channel) {
+                                          uint32_t sound_channel, unsigned *extend) {
     if (image[enemy + ENTITY_TYPE] != ENEMY_TYPE_ARMOURED_A
         && image[enemy + ENTITY_TYPE] != ENEMY_TYPE_ARMOURED_B)
-        return 0;
+        return 0;   /* two `cmpi.b`s and a branch: the caller's X is untouched */
     if (plays_sound)
         sound_start(image, ENEMY_HIT_SOUND, (uint8_t)sound_channel);
+    /* `subq.b #1,26(a1)` at 0x1239c (and its twin at 0x12234) BORROWS when the hit-point byte was
+     * already 0, and that borrow is the X the next `abcd` in the sweep adds. */
+    *extend = byte_sub_extend(image[enemy + ENTITY_HP], 1);
     image[enemy + ENTITY_HP] -= 1;
     return image[enemy + ENTITY_HP] != 0;
 }
 
 /* ...and what an enemy becomes once its last hit point is gone: one of the two explosion kinds,
  * aligned to four pixels, worth one of the two awards. Returns the D0 the award left. */
-static uint32_t frame_enemy_explodes(uint8_t *image, uint32_t enemy) {
+static uint32_t frame_enemy_explodes(uint8_t *image, uint32_t enemy, unsigned *extend) {
     unsigned big = image[enemy + ENTITY_TYPE] == ENEMY_TYPE_BIG;
 
     image[enemy + ENTITY_ALIVE] = ENEMY_EXPLODING_ALIVE;
@@ -1089,7 +1109,7 @@ static uint32_t frame_enemy_explodes(uint8_t *image, uint32_t enemy) {
     }
     wr16(image + enemy + ENTITY_X,
          (uint16_t)(be16(image + enemy + ENTITY_X) & EXPLOSION_X_ALIGN));
-    return frame_award_score(image, big ? SCORE_AWARD_ENEMY_BIG : SCORE_AWARD_ENEMY_SMALL);
+    return frame_award_score(image, big ? SCORE_AWARD_ENEMY_BIG : SCORE_AWARD_ENEMY_SMALL, extend);
 }
 
 /* The five types the second gate at 0x12284 admits — an armoured enemy whose hit points have just
@@ -1099,8 +1119,31 @@ static unsigned enemy_type_explodes_on_contact(uint8_t type) {
            || type == ENEMY_TYPE_ARMOURED_A || type == ENEMY_TYPE_ARMOURED_B;
 }
 
-/* An enemy that has rammed one of the ship's two records. */
-static uint32_t frame_enemy_rams_ship(uint8_t *image, uint32_t sound_channel) {
+/* `moveq #$2c,d1` / `bsr sound_start` — the tune every hit in the two passes plays, and the X it
+ * leaves. Four sites play it, so the pair is one helper rather than four copies of a call and the
+ * line that follows it. The flag OVERWRITES whatever the hit itself left — an award's `abcd`
+ * carry-out, a retire's borrow — because that is the instruction order: the tune is the last thing
+ * an arm does.
+ *
+ * ONLY THE RAM PASS'S SITE CARRIES THE RESULT ANYWHERE. The shoot sweep's three each end their
+ * inner walk, and `lsl.l #1,d0` at 0x12474 rewrites X before the next `abcd` can read it — so those
+ * three updates, and the `shot_retire_kind*` reports feeding them, are UNOBSERVABLE off target and
+ * a mutation of any of them is green. They are modelled anyway because they are the instructions,
+ * and because the register is not always the mask: an award replaces D0 with the extra-life
+ * threshold, and the day a score reaches 0x80000000 the shift stops erasing the flag.
+ * STATUS.md's "## Mutation ledger" carries that as a measured survivor rather than a claim. */
+static void play_enemy_hit_tune(uint8_t *image, uint32_t channel, unsigned *extend) {
+    sound_start(image, ENEMY_HIT_SOUND, (uint8_t)channel);
+    *extend = sound_start_leaves_extend(ENEMY_HIT_SOUND);
+}
+
+/* An enemy that has rammed one of the ship's two records.
+ *
+ * `*extend` IS THE 68000's X, IN AND OUT, and this pass is one of the two that has to carry it: a
+ * boss segment's `subi.b #$1,(a5)` borrow and an armoured enemy's `subq.b #1,26(a1)` borrow both
+ * survive to the NEXT kill's `score_add_bcd`, where `abcd` adds them. src/score.c states the whole
+ * argument; the pass's own entry value is derived at its one call site. */
+static uint32_t frame_enemy_rams_ship(uint8_t *image, uint32_t sound_channel, unsigned *extend) {
     uint32_t enemy = A_enemy_slots;
     unsigned slot;
 
@@ -1116,42 +1159,57 @@ static uint32_t frame_enemy_rams_ship(uint8_t *image, uint32_t sound_channel) {
             continue;
 
         if (type == ENEMY_TYPE_BOSS_SEGMENT) {
-            sound_channel = frame_segment_hit(image, enemy, sound_channel);
+            sound_channel = frame_segment_hit(image, enemy, sound_channel, extend);
             continue;
         }
         if (type == ENEMY_TYPE_INVULNERABLE)
             continue;
-        if (frame_enemy_absorbs_a_hit(image, enemy, 1, sound_channel))
+        if (frame_enemy_absorbs_a_hit(image, enemy, 1, sound_channel, extend))
             continue;
         if (!enemy_type_explodes_on_contact(image[enemy + ENTITY_TYPE]))
             continue;
-        sound_channel = frame_enemy_explodes(image, enemy);
-        sound_start(image, ENEMY_HIT_SOUND, (uint8_t)sound_channel);
+        sound_channel = frame_enemy_explodes(image, enemy, extend);
+        play_enemy_hit_tune(image, sound_channel, extend);
     }
     return sound_channel;
 }
 
 /* What the shoot pass does to the SHOT once its hit has been dealt with (0x12414 onwards). Returns
- * 1 when the shot's retire path ends the inner walk over the eight enemies. */
-static unsigned frame_shot_retires_on_hit(uint8_t *image, uint32_t shot, uint32_t shot_bit) {
+ * 1 when the shot's retire path ends the inner walk over the eight enemies, and updates `*extend`
+ * with the 68000's X the arm it took leaves — the missile arm alone touches nothing. */
+static unsigned frame_shot_retires_on_hit(uint8_t *image, uint32_t shot, uint32_t shot_bit,
+                                          unsigned *extend) {
     uint8_t type = image[shot + ENTITY_TYPE];
 
     if (type == SHOT_TYPE_MISSILE)
         return 1;
     if (type == SHOT_TYPE_BOMB) {
-        shot_retire_kind33(image, shot);
+        *extend = shot_retire_kind33(image, shot, *extend);
         return 1;
     }
     if (type == SHOT_TYPE_SEEKER) {
-        shot_retire_kind36(image, shot);
+        *extend = shot_retire_kind36(image, shot);
         return 1;
     }
     if (type != BULLET_TYPE)
         return 0;
+    /* `subi.b #$1,$19909` at 0x1244c sets X too, but the tune two instructions later overwrites it
+     * before anything reads it — so this arm's outgoing X is the tune's alone. */
     image[A_active_bullets] -= 1;
     image[shot + ENTITY_ALIVE] = 0;
-    sound_start(image, ENEMY_HIT_SOUND, (uint8_t)shot_bit);
+    play_enemy_hit_tune(image, shot_bit, extend);
     return 0;
+}
+
+/* `lsl.l #1,d0` at 0x12474 — the instruction that closes every outer pass of the sweep, including
+ * the ones a gate skipped straight to it. It SETS the 68000's X to the bit shifted off the top, so
+ * the mask's bit 31 is the next pass's first `abcd` carry-in. That bit is 0 for every mask the
+ * sweep BUILDS (six shots, so it reaches 0x20) and is modelled anyway, because the mask is not
+ * always the mask: an award replaces D0 with the extra-life threshold, whose top bit a BCD score of
+ * 80,000,000 would set. */
+static uint32_t shift_shot_mask_reporting_carry(uint32_t overlap_mask, unsigned *extend) {
+    *extend = (overlap_mask >> SHOT_MASK_TOP_BIT) & 1u;
+    return overlap_mask << 1;
 }
 
 /* The 6 x 8 pairwise sweep of the player's shots against the eight enemy slots.
@@ -1168,13 +1226,14 @@ static unsigned frame_shot_retires_on_hit(uint8_t *image, uint32_t shot, uint32_
  * rows do not put under a shot can still be hit, and a reconstruction that kept a tidy `1 << slot`
  * differs on the first frame two enemies die in (measured — that is the case that caught it).
  * ============================================================================================= */
-static void frame_player_shots_hit_enemies(uint8_t *image) {
+static void frame_player_shots_hit_enemies(uint8_t *image, unsigned *extend) {
     uint32_t shot = A_entity_table;
     uint32_t overlap_mask = 1;              /* D0 — see the note above */
     unsigned shot_slot;
 
     for (shot_slot = 0; shot_slot < PLAYER_SHOT_SLOTS;
-         shot_slot++, shot = next_record(shot), overlap_mask <<= 1) {
+         shot_slot++, shot = next_record(shot),
+         overlap_mask = shift_shot_mask_reporting_carry(overlap_mask, extend)) {
         uint32_t enemy = A_enemy_slots;
         unsigned enemy_slot;
 
@@ -1198,21 +1257,21 @@ static void frame_player_shots_hit_enemies(uint8_t *image) {
                 continue;
 
             if (enemy_type == ENEMY_TYPE_BOSS_SEGMENT) {
-                overlap_mask = frame_segment_hit(image, enemy, overlap_mask);
+                overlap_mask = frame_segment_hit(image, enemy, overlap_mask, extend);
                 if (image[shot + ENTITY_TYPE] == SHOT_TYPE_MISSILE) {
-                    shot_retire_kind32(image, shot);
-                    sound_start(image, ENEMY_HIT_SOUND, (uint8_t)overlap_mask);
+                    *extend = shot_retire_kind32(image, shot, *extend);
+                    play_enemy_hit_tune(image, overlap_mask, extend);
                     break;
                 }
                 /* `bne 0x1241e` skips the missile test below, which this arm has just made. */
             } else if (enemy_type != ENEMY_TYPE_INVULNERABLE
-                       && !frame_enemy_absorbs_a_hit(image, enemy, 0, overlap_mask)) {
-                overlap_mask = frame_enemy_explodes(image, enemy);
+                       && !frame_enemy_absorbs_a_hit(image, enemy, 0, overlap_mask, extend)) {
+                overlap_mask = frame_enemy_explodes(image, enemy, extend);
             }
             /* 0x12414: a missile is the one kind that neither retires nor goes on to the next
              * enemy — it plays the hit and leaves the walk. */
-            if (frame_shot_retires_on_hit(image, shot, overlap_mask)) {
-                sound_start(image, ENEMY_HIT_SOUND, (uint8_t)overlap_mask);
+            if (frame_shot_retires_on_hit(image, shot, overlap_mask, extend)) {
+                play_enemy_hit_tune(image, overlap_mask, extend);
                 break;
             }
         }
@@ -1341,11 +1400,10 @@ static void frame_end_and_flip(uint8_t *image) {
     image[A_vbl_wait_flag] = FRAME_VBL_WAIT_ARMED;
     if (!sched_wait8(image, A_vbl_wait_flag, FRAME_VBL_WAIT_DONE, FRAME_VBL_WAIT_PC))
         return;
-    /* `bset #6,$fffa09` — a read-modify-write whose READ half has no modelled answer, so the value
-     * stored is the bit ALONE rather than the bit OR'd into what the register held. Off target that
-     * is the right store and an unpinned five bits; ON TARGET it is a DEFECT, and include/frame.h
-     * says so beside MFP_IERB_UNMODELED_READ in the same words include/init.h uses for `andi.b #$fc,$ff8260`. */
-    hw_write8(HW_MFP_IERB, MFP_IERB_UNMODELED_READ | (1u << MFP_ACIA_CHANNEL_BIT));
+    /* `bset #6,$fffa09` — the OPERATION through the kit's `hw_bset8`, so a build for the machine
+     * ORs the channel bit into whatever the MFP's interrupt-enable B holds rather than storing the
+     * bit alone over it. include/frame.h says what the ledger holds of it. */
+    hw_bset8(HW_MFP_IERB, MFP_ACIA_CHANNEL_BIT);
 }
 
 /* Which explosion groups have finished: a group is done when all six of the entity slots its member
@@ -1511,10 +1569,27 @@ frame_exit frame_resolve_hits_and_game_state(uint8_t *image, uint32_t sound_chan
         sound_channel = frame_explosion_animate(image, EXPLOSION_TYPE_LARGE,
                                                 A_explosion_large_frame_ptrs, 1, sound_channel);
 
-    /* The shoot pass below does not read this register: it makes its own (see its
-     * comment), which is why the stage's carried channel ends here. */
-    (void)frame_enemy_rams_ship(image, sound_channel);
-    frame_player_shots_hit_enemies(image);
+    /* THE TWO HIT PASSES CARRY THE 68000's X BETWEEN THEM, and its value HERE is derived rather
+     * than assumed — over all THREE ways the ram pass is reached, because two of them skip the
+     * instruction the other one ends on:
+     *
+     *   both animations ran      -> `addq.l #1,d6`  at 0x121ac (the large pass's loop tail)
+     *   the large one skipped    -> `addq.l #1,d6`  at 0x120c2 (the small pass's), then `bne` 0x120ce
+     *   both skipped             -> `addq.l #1,d0`  at 0x11fd6 (frame_player_shots_resolve's tail),
+     *                               then `not.b $198ad` / `bne` 0x11fe6, neither of which touches X
+     *
+     * All three are `addq.l #1` on a small counter — an entity index or a shot slot — and adding one
+     * to a number that small cannot carry out of a LONGWORD, so X is CLEAR whichever path arrived.
+     * The `btst` that skips the ram pass when the boss owns the playfield does not touch it either.
+     * src/score.c says what the flag then does: `abcd` adds it, so a borrow inside either pass is
+     * one BCD unit on the next kill's award.
+     *
+     * The shoot pass below does not read the sound channel: it makes its own (see its comment),
+     * which is why the stage's carried channel ends here. */
+    unsigned extend = 0;
+
+    (void)frame_enemy_rams_ship(image, sound_channel, &extend);
+    frame_player_shots_hit_enemies(image, &extend);
     frame_enemy_shots_ground(image);
     frame_starfield(image);
 

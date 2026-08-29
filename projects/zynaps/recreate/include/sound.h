@@ -136,9 +136,29 @@
  * so it runs voice 3, voice 2, voice 3, ..., not the voice 1 / voice 3 pair names.txt assumes. */
 #define SOUND_CHANNEL_ALTERNATE  4u
 
+/* `andi.w #$ff,d1` then `lsl.w #1,d1` at 0x16b36/0x16b3a put bit 7 of the tune number into bit 8 of
+ * the word that `lsl.w #8,d1` then shifts out into X — see `sound_start_leaves_extend` below. */
+#define SOUND_TUNE_NUMBER_EXTEND_BIT 0x80u
+
 uint32_t sound_lookup_tune(const uint8_t *image, uint16_t number);
 uint32_t sound_lookup_modtable(const uint8_t *image, uint16_t number);
 void sound_start(uint8_t *image, uint16_t number, uint8_t channel);
+
+/* WHAT `sound_start` LEAVES IN THE 68000's X FLAG, as a pure function of the tune number.
+ *
+ * X is not decoration here: `score_add_bcd` (src/score.c) opens each of its two BCD chains with
+ * `abcd`, which ADDS X, so the flag a preceding call left is an INPUT of the next award. Nothing in
+ * `sound_start`'s own tail touches X — its last store is a `move.b` and its `movem.l (a7)+` restores
+ * registers, not the CCR — so the flag comes from `sound_lookup_tune`'s `lsl.w #8,d1` at 0x16b42.
+ * That word's bit 8 is what falls out last, and the word at that point is `(number & 0xff) << 1`
+ * with a fresh low byte moved over it, so bit 8 is bit 7 of the tune number.
+ *
+ * Spelt as a predicate rather than as a return value because `sound_start` has thirty-odd call
+ * sites and only the few inside the frame loop's scoring paths read the flag; a signature change
+ * would put an unread `unsigned` on every one of them. */
+static inline unsigned sound_start_leaves_extend(uint16_t number) {
+    return (number & SOUND_TUNE_NUMBER_EXTEND_BIT) != 0;
+}
 void sound_set_note_period(uint8_t *image, uint16_t note, uint32_t period_shadow);
 uint8_t sound_modtable_step(uint8_t *image, uint32_t counters, uint32_t record);
 uint8_t sound_modtable_step_a4(uint8_t *image, uint32_t record);

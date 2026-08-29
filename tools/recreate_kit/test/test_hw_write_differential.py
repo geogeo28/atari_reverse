@@ -18,8 +18,10 @@ import pytest
 from kit_smoke_project import (ACIA_DATA, ACIA_RECEIVE_ENTRY, ACIA_RECEIVE_TWICE_ENTRY,
                                ACIA_SEND_ENTRY, ACIA_SEND_THEN_RECEIVE_ENTRY, ACIA_STATUS,
                                ACIA_TX_RDY,
-                               HW_WRITE_ENTRY, IKBD_COMMAND, PEN0_COLOUR, PEN_PAIR_COLOURS,
-                               SHIFTER_PEN0, SHIFTER_PEN1, bind)
+                               HW_RMW_ENTRY, HW_WRITE_ENTRY, IKBD_COMMAND,
+                               MFP_ACIA_CHANNEL_BIT, MFP_IERB, MFP_ISRA,
+                               PEN0_COLOUR, PEN_PAIR_COLOURS,
+                               SHIFTER_MODE, SHIFTER_PEN0, SHIFTER_PEN1, bind)
 
 harness = bind()
 emu = harness.emu
@@ -348,3 +350,98 @@ def test_one_file_past_the_table_is_refused():
     files = [(f"f{slot}.dat", b"x") for slot in range(harness.OS_FS_SLOTS + 1)]
     with pytest.raises(AssertionError, match="slot table"):
         harness.stage_files(files)
+
+
+# ------------------------------------------- the READ-MODIFY-WRITE operations (hw.h's bset/bclr/and)
+
+# What the .PRG's `bset #6,$fffa09` / `bclr #0,$fffa0f` / `andi.b #$fc,$ff8260` leave in the ledger.
+# Every read half is of an address the seeded READ model does not name, so the oracle serves a
+# fabricated 0 and stores what that 0 produces: the bit alone, a zero, and a zero.
+FABRICATED_READ = 0
+THE_THREE_READ_MODIFY_WRITES = [
+    (MFP_IERB, BYTE, FABRICATED_READ | (1 << MFP_ACIA_CHANNEL_BIT)),
+    (MFP_ISRA, BYTE, FABRICATED_READ),
+    (SHIFTER_MODE, BYTE, FABRICATED_READ),
+]
+
+
+def _rmw(glue_name, **kwargs):
+    """Run the .PRG's read-modify-write trio against a `kit_candidate.c` glue function."""
+    return _run(glue_name, entry=HW_RMW_ENTRY, **kwargs)
+
+
+def test_the_smoke_prg_read_modify_writes_the_registers_the_candidate_does():
+    """`kit_candidate.c` spells the three registers and the bit as literals of its own, exactly as
+    `test_the_smoke_prg_stores_to_the_addresses_the_candidate_does` says of the plain stores. Pin the
+    ORACLE's stream equal to what this module names, so an address corrected on one side fails as a
+    drift rather than as a mutant that quietly stopped being caught.
+
+    It is also the measurement behind `hw.h`'s claim about what src/hw.c must produce: these three
+    values ARE the bytes the oracle's own `bset`/`bclr`/`andi.b` computed from its fabricated 0.
+    """
+    _, info = _rmw("g_hw_rmw_the_three")
+    assert info["regs"]["hw_writes"] == THE_THREE_READ_MODIFY_WRITES
+
+
+def test_a_correct_reconstruction_of_three_read_modify_writes_is_green():
+    """The trio spelt as the OPERATIONS it is — `hw_bset8`, `hw_bclr8`, `hw_and8` — against the same
+    three instructions as 68000 code. Nothing here writes an image byte, so a green result is
+    entirely the write stream's word."""
+    diffs, _ = _rmw("g_hw_rmw_the_three")
+    assert diffs == []
+
+
+def test_the_operations_are_indistinguishable_off_target_from_the_defect_they_retire():
+    """THE MEASUREMENT THAT SAYS WHY THE OPERATIONS EXIST, and it is a GREEN one.
+
+    `g_hw_rmw_spelt_as_plain_stores` is the shape every project shipped before these names: compute
+    the value from the fabricated 0 and call `hw_write8`. It passes — the ledger holds the byte, and
+    off target the byte is the same. What differs is what a TARGET build compiles: the operations
+    become the real `bset`/`bclr`/`andi.b` on the register and preserve the bits the original
+    preserves, while the plain stores clobber them (0x40 over TOS's whole IERB, every in-service
+    channel acknowledged at once, 0 into the resolution register).
+
+    So no off-target surface can separate the two, and that is the finding rather than a gap to
+    close: the operation has to be SPELT, because nothing downstream can infer it.
+    """
+    diffs, info = _rmw("g_hw_rmw_spelt_as_plain_stores")
+    assert diffs == []
+    assert info["regs"]["hw_writes"] == THE_THREE_READ_MODIFY_WRITES
+
+
+def test_a_bset_of_the_wrong_bit_reds():
+    """Half of what the ledger CAN see. A `bset`'s ledgered value is `0 | (1 << bit)`, a different
+    byte for every bit, so the channel it opens is pinned as tightly as any plain store's value."""
+    with pytest.raises(AssertionError, match=MISMATCH):
+        _rmw("g_hw_rmw_sets_the_wrong_bit")
+
+
+def test_a_bclr_of_the_wrong_bit_is_green_and_that_is_the_residual():
+    """...and the other half, which is GREEN and stays honestly so. A `bclr` stores `0 & ~bit`, which
+    is 0 for every bit, so the ledger holds the address and the width and NOT the channel. On target
+    the two are different instructions; off target no surface here separates them. A routine that
+    needs the channel held wants a sink of its own or the address in the seeded READ model."""
+    diffs, _ = _rmw("g_hw_rmw_clears_the_wrong_bit")
+    assert diffs == []
+
+
+def test_splitting_a_mask_into_two_bit_clears_reds():
+    """WHY `hw_and8` IS ITS OWN OPERATION rather than a pair of `hw_bclr8` calls.
+
+    `andi.b #$fc` clears two bits with ONE store, and on target two `bclr`s would leave the same
+    register contents — so the temptation to spell it as a pair is real. The ledger compares the
+    ordered store STREAM, so the pair diverges it: four entries against three, and a reader sent
+    hunting a register bug that is really a spelling one. One instruction, one call, one entry."""
+    with pytest.raises(AssertionError, match=MISMATCH):
+        _rmw("g_hw_rmw_splits_the_mask_into_two_bit_clears")
+
+
+@pytest.mark.parametrize("glue,why", (
+    ("g_hw_rmw_into_the_image", "an operation aimed at image memory, where the byte diff should see it"),
+    ("g_hw_rmw_the_untranslated_form", "the untranslated `$ffff8260` spelling of a real register"),
+))
+def test_the_operations_refuse_the_addresses_a_store_refuses(glue, why):
+    """The new door is the same address check as `hw_write8`'s — it goes through one `hw_log_write`
+    — so neither refusal can be reached by writing `hw_bset8` where `hw_write8` was refused."""
+    with pytest.raises(AssertionError, match=REFUSED), _named(why):
+        _rmw(glue)

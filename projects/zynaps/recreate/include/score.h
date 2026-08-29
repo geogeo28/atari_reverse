@@ -36,6 +36,11 @@
  * which is the one duplicate `test_constants.py` does catch, suite-wide. */
 #define EXTRA_LIFE_SOUND 0x10u
 
-void score_add_bcd(uint8_t *image, uint32_t award_end);
+/* `extend_in` is the 68000's X flag at the `bsr`, which the first `abcd` ADDS; the return value is
+ * the X this routine leaves, which its caller's next `abcd` will add in turn. Neither is a register,
+ * so neither reaches the image diff — `test/abi.py`'s `extend_call_pokes` drives the input
+ * (`extend_in=1`) and reads the output, and src/score.c has the measured defect that made the flag
+ * an input rather than a fabricated 0. */
+unsigned score_add_bcd(uint8_t *image, uint32_t award_end, unsigned extend_in);
 
 #endif /* ZYNAPS_SCORE_H */

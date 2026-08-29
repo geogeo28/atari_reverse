@@ -126,27 +126,22 @@
 /* The trail drone the level-4 weapon flies (type 0x35). */
 
 /* ================================================================================================
- * The MFP register the frame's tail re-enables the keyboard interrupt in.
+ * The MFP register the frame's tail re-enables the keyboard interrupt in — and why this file names
+ * no constant for it.
  *
- * `bset #6,$fffa09` is a READ-MODIFY-WRITE of a register outside the image, and the kit's ledger
- * holds its address, its width and its value — but the oracle's read of an unmodeled register
- * answers a fabricated 0, so both sides store `0 | bit` and the five bits the original preserves
- * are unpinned. That is the same residual `mfp_ack_timer_b` (src/irq.c) carries, for the same
- * reason, and `docs/on-target-execution.md`'s hardware-state vector is its surface.
+ * `bset #6,$fffa09` is a READ-MODIFY-WRITE, and `frame_end_and_flip` spells it as the kit's
+ * `hw_bset8(address, bit)` rather than as a store of the byte that operation produces off target.
+ * So the register and the channel are the two names it needs, and both already exist: the register
+ * is include/init.h's `HW_MFP_IERB` ($fffa09 — interrupt enable B) and the channel is
+ * include/irq.h's `MFP_ACIA_CHANNEL_BIT`, the same 6 the boot's twin `bset` at 0x1068e sets.
  *
- * IT IS ALSO AN ON-TARGET DEFECT, exactly as include/init.h's `andi.b #$fc,$ff8260` is, and this is
- * the place that says so. A target build compiles `hw_write8` as a plain volatile store
- * (tools/recreate_kit/include/hw.h), so it writes 0x40 into the MFP's interrupt-enable B and CLEARS
- * every other bit TOS had set there — where the original ORs bit 6 into them. Zynaps writes IERB
- * only through this `bset` and its twin in `_start`, so nothing puts them back. A Zynaps build for
- * the real Atari must give the address a read — the kit's seeded READ set, or its own code — rather
- * than compile the expression below. STATUS.md carries the instance.
- *
- * The register is include/init.h's HW_MFP_IERB ($fffa09 — interrupt enable B, whose bit 6 is the
- * keyboard ACIA: include/irq.h's MFP_ACIA_CHANNEL_BIT); the boot's twin `bset` at 0x1068e writes it
- * through the same names. Only the fabricated read-half is spelt here.
+ * WHAT THE LEDGER HOLDS OF IT. The address, the byte width, and a value of `0 | bit` — the oracle's
+ * read of an unmodeled register answers a fabricated 0, so the CHANNEL is pinned (a different bit is
+ * a different byte) while the five bits the original preserves are not, because off target there are
+ * none to preserve. ON TARGET the operation compiles to the real `bset` and does preserve them;
+ * `docs/on-target-execution.md`'s hardware-state vector is the surface that would catch a build
+ * whose backend defined it wrong.
  * ============================================================================================= */
-#define MFP_IERB_UNMODELED_READ 0u
 
 /* ================================================================================================
  * WHAT THIS FILE DELIBERATELY DOES NOT NAME.
@@ -311,6 +306,11 @@
  * by nothing at all is the landscape. */
 #define SHIP_HIT_ENTITY_MASK 0xffffffc0u
 #define SHIP_HIT_OWN_SHOT_MASK 0x3fu
+/* `lsl.l #1,d0` at 0x12474 shifts the shoot sweep's overlap mask left one place per outer pass, and
+ * the bit that leaves the LONGWORD's top becomes the 68000's X — which `score_add_bcd`'s first
+ * `abcd` then adds (src/score.c). Named because "31" in that expression is the register's width and
+ * not the six shots the mask actually walks. */
+#define SHOT_MASK_TOP_BIT 31u
 #define BOSS_EXPLOSION_GROUP 0u
 /* `btst #1,$19670` — group 1 is the ship's death explosion; group 0 the end-of-section one. */
 #define EXPLOSION_BIT_SHIP_DEATH 1

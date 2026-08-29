@@ -240,9 +240,26 @@ void powerup_downgrade_on_death(uint8_t *image);
 void powerup_capsule_collected(uint8_t *image);
 void ship_resolve_entity_hits(uint8_t *image, uint32_t ship, uint32_t hit_mask_row);
 void shot_to_puff(uint8_t *image, uint32_t shot);
-void shot_retire_kind32(uint8_t *image, uint32_t shot);
-void shot_retire_kind33(uint8_t *image, uint32_t shot);
-void shot_retire_kind36(uint8_t *image, uint32_t shot);
+/* WHAT A CALL SITE PASSES WHEN NOTHING DOWNSTREAM READS THE FLAG BACK.
+ *
+ * `extend_in` below only ever decides the value the EARLY arm RETURNS — the arm that makes no
+ * decrement and so leaves the caller's X where it was. A call site that discards the return value
+ * therefore cannot observe the argument at all, and this name says so out loud rather than leaving
+ * a bare 0 that reads like a claim about the machine. The sites are `src/weapon.c`'s two bomb
+ * retires and `src/frame.c`'s three outside the two hit passes; the passes themselves thread a real
+ * flag, because there the return IS read.
+ */
+#define EXTEND_UNREAD 0u
+
+/* THE THREE RETIRE ROUTINES ANSWER IN THE 68000's X FLAG as well as in memory, and the frame loop's
+ * scoring paths read it: each ends on `subi.b #$1` of its own live-shot counter, whose BORROW is the
+ * carry-in of the next `abcd` in `score_add_bcd` (src/score.c states the whole argument). The two
+ * with a guard take `extend_in` so that their EARLY arm — which makes no decrement and therefore
+ * leaves the flag alone — can hand the caller's own X straight back; `_kind36` has no guard and so
+ * needs none. */
+unsigned shot_retire_kind32(uint8_t *image, uint32_t shot, unsigned extend_in);
+unsigned shot_retire_kind33(uint8_t *image, uint32_t shot, unsigned extend_in);
+unsigned shot_retire_kind36(uint8_t *image, uint32_t shot);
 void shot_set_sprite_a(uint8_t *image, uint32_t shot);
 void shot_anim_puff(uint8_t *image, uint32_t shot);
 void player_shot_update_all(uint8_t *image);

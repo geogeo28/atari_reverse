@@ -425,28 +425,37 @@ static void segment_to_explosion(uint8_t *image, uint32_t record) {
     image[record + ENTITY_ALIVE] = ENTITY_ALIVE_EXPLODING;
 }
 
-void mothership_segment_hit(uint8_t *image, uint32_t segment) {
+unsigned mothership_segment_hit(uint8_t *image, uint32_t segment) {
     uint16_t index = (uint16_t)((segment - A_entity_table) / ENTITY_STRIDE);
     uint16_t pair = (uint16_t)(((uint16_t)(index - 1) & PAIR_INDEX_ALIGN) + 1);
     uint16_t parent_index = (uint16_t)sign_ext8((uint8_t)pair);
     uint32_t energy_at = addr_add(A_enemy_pair_hitpoints, sign_ext16(parent_index));
     uint32_t parent = entity_record(parent_index);   /* include/collision.h — one home for the
                                                       * index -> record multiply */
+    /* `subi.b #$1,(a5)` at 0x15254 BORROWS when the byte was already 0, and the borrow is the X
+     * this routine leaves — include/mothership.h says why the caller has to have it. The flag is
+     * machine.h's, not this file's: `byte_sub_extend` is the kit's one model of it. */
+    unsigned borrowed = byte_sub_extend(image[energy_at], 1);
 
     image[energy_at]--;
     if (image[energy_at] != 0)
-        return;
+        return borrowed;
 
     /* The two halves are rewritten field by field in the original, interleaved; the order does not
      * reach the diff because no field is written twice. */
     segment_to_explosion(image, parent);
     segment_to_explosion(image, addr_add(parent, ENTITY_STRIDE));
-    score_add_bcd(image, A_score_value_segment);
+    /* THE FATAL ARM'S CARRY-IN IS ALWAYS 0, and that is a consequence of the branch rather than an
+     * assumption: reaching here means the `subi.b` produced ZERO, so the byte was 1 and it did not
+     * borrow. Everything between (eight `move`s and two `andi`s) leaves X alone, so this arm's own
+     * outgoing X is whatever the award leaves. */
+    return score_add_bcd(image, A_score_value_segment, 0);
 }
 
 /* Register map: A1 = the hit record, either half of the pair. D5 carries the folded index and A5/A6
- * the two addresses it resolves to; A0 and A1 are saved across the score call. No outputs but
- * memory. */
-void g_mothership_segment_hit(uint8_t *image, uint32_t segment) {
-    mothership_segment_hit(image, segment);
+ * the two addresses it resolves to; A0 and A1 are saved across the score call. Its one non-memory
+ * output is the 68000's X flag, which the return value carries and which `test/abi.py`'s
+ * `extend_call_pokes` stub is how a case compares it against the oracle's. */
+uint32_t g_mothership_segment_hit(uint8_t *image, uint32_t segment) {
+    return mothership_segment_hit(image, segment);
 }

@@ -20,20 +20,20 @@
 
 /* `bclr #0,$fffa0f.l` — acknowledge Timer B in the MFP's in-service register B.
  *
- * A read-modify-write of a register the kit's seeded READ model does not name: off target the read
- * answers a fabricated 0, so this stores 0 and both sides agree, while on the machine that
- * acknowledges every in-service bit rather than Timer B's. include/irq.h states that residual and
- * says a target build must not ship this expression. The shifter's stores live in src/video.c, with
- * the registers they name. */
+ * The kit's `hw_bclr8` is the OPERATION, so the channel number is what this spells and not the 0
+ * that clearing it produces off target: a build for the machine compiles the real `bclr` and
+ * acknowledges Timer B alone, where a plain store of that 0 would acknowledge every in-service
+ * channel at once. include/irq.h says what the ledger can and cannot see of it. The shifter's stores
+ * live in src/video.c, with the registers they name. */
 void mfp_ack_timer_b(void) {
-    hw_write8(HW_MFP_ISRA, 0);
+    hw_bclr8(HW_MFP_ISRA, MFP_ISRA_TIMER_B_BIT);
 }
 
 /* `bclr #6,$fffa11.l` — the keyboard ACIA's own acknowledge, in the OTHER in-service register.
- * Same residual, same reason, and a separate function so a target build has the same seam to
+ * Same operation one register over, and a separate function so a target build has the same seam to
  * override that `mfp_ack_timer_b` gives it. */
 void mfp_ack_acia(void) {
-    hw_write8(HW_MFP_ISRB, 0);
+    hw_bclr8(HW_MFP_ISRB, MFP_ACIA_CHANNEL_BIT);
 }
 
 

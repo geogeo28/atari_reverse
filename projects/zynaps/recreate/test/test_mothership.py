@@ -463,7 +463,7 @@ for _sym in ("g_mothership_spawn_head", "g_mothership_move_and_place",
     getattr(harness._lib, _sym).argtypes = [_u8p]
     getattr(harness._lib, _sym).restype = None
 harness._lib.g_mothership_segment_hit.argtypes = [_u8p, ctypes.c_uint32]
-harness._lib.g_mothership_segment_hit.restype = None
+harness._lib.g_mothership_segment_hit.restype = ctypes.c_uint32
 
 
 class _Record:
@@ -770,6 +770,42 @@ def _segment_hit_case(index, energy, score=SEGMENT_HIT_SCORE_SEEDS[0], seed=0, p
                             lambda lib, buf: lib.g_mothership_segment_hit(buf, record),
                             poison=poison)
     assert not diffs, f"index={index} energy={energy:#x}\n{report(diffs)}"
+
+
+@pytest.mark.parametrize("energy", (0, 1, 2, 0x80))
+def test_segment_hit_reports_the_68000s_x_flag(energy):
+    """THE ROUTINE'S ONE NON-MEMORY OUTPUT, and the reason it has to have one.
+
+    `subi.b #$1,(a5)` at 0x15254 BORROWS when the pair's energy byte was already 0, and the borrow is
+    the 68000's X at the `rts`. The frame loop's two hit passes call `score_add_bcd` a few
+    instructions later, where `abcd` ADDS that bit — one BCD unit of score on the next kill
+    (src/score.c and test_frame.py carry the measurement). X leaves no trace in memory, so nothing
+    else in this battery can see a reconstruction that reported the wrong bit.
+
+    The stub is `abi.extend_call_pokes`, which turns the flag into D1 with `addx.b`; D1 is a reported
+    register, so the ORACLE's own answer arrives in `info["regs"]` and the candidate's is what its
+    glue returned. Energy 0 is the borrowing case, 1 the arm where the pair dies (and the flag is
+    then the AWARD's, not the decrement's), 2 and 0x80 the ordinary survivals.
+    """
+    index = SEGMENT_HIT_INDEXES[0]
+    pokes = _boss_environment(0x24000 + energy)
+    pokes[A_ENEMY_SLOTS] = _records([_Record(0x24100 + energy + i)
+                                     for i in range(ENEMY_SLOT_COUNT + 1)])
+    pokes[A_PLAYER_SCORE_BCD] = SEGMENT_HIT_SCORE_SEEDS[0].to_bytes(4, "big")
+    pokes[A_ENEMY_PAIR_HITPOINTS] = bytes([energy]) * SEGMENT_HIT_COUNTER_BYTES
+    pokes.update(abi.extend_call_pokes(ENTRY_MOTHERSHIP_SEGMENT_HIT))
+    record = A_ENTITY_TABLE + index * ENTITY_STRIDE
+    reported = {}
+    diffs, info = differential(
+        abi.STUB, {"a1": record, "_pokes": pokes},
+        lambda lib, buf: reported.setdefault("x", lib.g_mothership_segment_hit(buf, record)))
+    assert not diffs, f"energy={energy:#x}\n{report(diffs)}"
+    oracle_x = abi.oracle_extend(info)
+    assert reported["x"] == oracle_x, (
+        f"energy={energy:#x}: the reconstruction reported X={reported['x']} where the 68000 left "
+        f"X={oracle_x}")
+    assert oracle_x == (1 if energy == 0 else 0), (
+        "the borrow is supposed to be exactly 'the energy byte was already 0'")
 
 
 @pytest.mark.parametrize("index", SEGMENT_HIT_INDEXES)

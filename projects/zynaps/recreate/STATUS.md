@@ -819,13 +819,18 @@ busy-waits need.
 | `0x11c00` | `frame_draw_objects_and_collide` | 304 | ✅ verified | `[0x11c00, 0x11d30)`. Twenty records blitted and their pixel-hit bytes cleared first, then the all-pairs sweep. The mask table is cleared TWENTY-ONE longwords over a twenty-entry table and the guard row is seeded to prove it; the ordered walk is held against including the diagonal; the boss-segment update is driven at both sides of its `cmp.w #$5`. Sixteen sections × twelve frames of real play compose it over the whole 512 KB the game owns |
 | `0x11d30` | `frame_resolve_hits_and_game_state` | 3134 | ✅ verified | `[0x11d30, 0x1296a)` for the ordinary exit and `[0x11d30, 0x10814)` / `[0x11d30, 0x1083a)` / `[0x11d30, 0x10b6e)` for three of the four others — **FOUR OF THE FIVE EXITS DRIVEN**, each as its own checkpoint, with the stage's own answer compared against which address the oracle stopped at. Enemy-shot absorb walked downwards; the bouncing-bomb pass; the seeker lock over five overlap rows and its boss-forced arm; the ship's two records against both sides of `and.l #$ffffffc0` and the asymmetry that hands the resolver record SEVENTEEN either way; both explosion animations at five frames each including the 0xff that wraps; the squadron credit's three counter values and its no-credit tag; ten enemy types × two hit-point counts through the ram dispatch and 8 × 4 (enemy, shot) pairs through the shoot dispatch; the enemy-shot ground pass; the starfield's three layers, their two dividers and the negative-x respawn; the three decay timers at four levels each; both scroll wraps; the two busy-waits at arrival counts the first poll does not satisfy; and the state machine's ship-death, section-end, mothership-turn and wave-clear arms. 96 sharded fuzz cases. **THE FIFTH EXIT (0x10500) IS UNREACHABLE** while `game_over_screen` is unported — `test_the_title_exit_is_unreachable_while_game_over_screen_is_unported` gives the argument from the instruction stream |
 
-**What this subsystem's composition still cannot derive, and what it found on the way.** Three
-things, each with its own home: the two scratch REGISTERS the loop carries across a verified
-callee's `rts` are in "## Coverage limits"; the X flag `score_add_bcd` needs and does not take is
-`test_the_score_carry_into_abcd_is_src_score_c_s_residual` and the same table; and the ONE
-`sound_start` channel a mutation could change without the suite noticing is
-`test_every_tune_the_frame_starts_names_its_own_voice`, which measures WHY (every tune the frame
-starts opens with its own `fa nn` voice command, so D0 is overwritten before it is used).
+**What this subsystem's composition still cannot derive, and what it found on the way.** Two things
+now, each with its own home: the two scratch REGISTERS the loop carries across a verified callee's
+`rts` are in "## Coverage limits", and the ONE `sound_start` channel a mutation could change without
+the suite noticing is `test_every_tune_the_frame_starts_names_its_own_voice`, which measures WHY
+(every tune the frame starts opens with its own `fa nn` voice command, so D0 is overwritten before it
+is used).
+
+**THE THIRD — the 68000's X flag into `score_add_bcd` — IS DERIVED NOW rather than fabricated.** The
+stage's two hit passes thread it from one kill to the next and their own entry value comes off
+`addq.l #1,d6` at 0x121ac; `test_a_boss_segment_hit_carries_its_borrow_into_the_next_award` is the
+case that lands on the shape it used to get wrong, and `FUZZ_ENEMY_TYPES` has the boss segment back.
+"## Coverage limits" has the whole argument.
 
 ## Verified — fileio (2)
 
@@ -1001,16 +1006,102 @@ outside the compose page. `name_entry_redraw` drives 0x8000 and 0x7fff instead, 
 arithmetic wraps back inside the image, which is what makes the signed compare's two arms
 separable — the one thing the large positive cursors would have added.
 
-**THE FRAME LOOP ADDS THREE LIMITS OF A DIFFERENT KIND — registers and a flag, not input ranges.**
-Each is a value the ORIGINAL carries across a verified callee's `rts` and the reconstruction cannot
-derive, because a differential of a leaf compares memory and not the registers the leaf never
-promised:
+**THE FRAME LOOP ADDS TWO LIMITS OF A DIFFERENT KIND — registers, not input ranges.** Each is a
+value the ORIGINAL carries across a verified callee's `rts` and the reconstruction cannot derive,
+because a differential of a leaf compares memory and not the registers the leaf never promised.
+**The third, the 68000's X flag into `score_add_bcd`, IS CLOSED** — see below the table.
 
 | what | where | what it costs, and what closes it |
 |---|---|---|
 | D1 at the `bsr` into `enemy_fire_and_update_shots` (0x118cc) | `frame_spawn_and_move_stage`'s `chance_index_register` | its HIGH BYTE indexes the per-section fire-chance table, so it decides whether enemies fire this frame. Between the last instruction of the frame loop that writes D1 and the call sit `explosion_animate_all`, `anim_ground_objects`, the two spawn scripts, `enemies_animate_all`, `enemies_move_all`, the per-slot shot pass and `player_shot_update_all`, any of which may leave its own D1. Measured over the shipped worlds it takes at least four different values (0x0e, 4, 8, 0x2580 — the last is `ship_tilt * 0xc80` surviving from the head slice, so the high byte is NOT always 0). `test_frame.py` takes it FROM THE ORACLE at that PC and hands it to the candidate; everything else in the slice is still pinned by the whole-image diff. Closing it means the callees reporting their outgoing D1 |
 | D7 at the `bsr` into `groundscript_spawn_type10` / `_type0f` (0x11818 / 0x11820) | the same slice's `ground_spawn_y_register`, **on three paths only** | the spawner's guard tests the WHOLE longword (`## Verified — enemy`'s row for 0x13958 says why), so its high word decides whether a ground actor spawns at all — and the wave-script block a few instructions earlier WRITES that register on every path but one, which `frame_wave_script` now returns rather than the parameter. What is left for the parameter is three paths: the block skipped because a mothership is pending, and the two that call a spawner and inherit ITS D7. **The derivation is not pinned and cannot be**: the high word only reaches the guard when the scripted y is exactly 0xffe0, and `test_no_shipped_ground_script_can_make_the_spawner_read_its_carried_register` walks all thirteen shipped scripts and finds no such record. It matters on target, where nothing supplies the parameter at all |
-| the 68000's X flag at the `bsr` into `score_add_bcd` (0x12df6) | `src/score.c`, which this subsystem does not own | `abcd` adds X, and `src/score.c` starts its chain at 0 on the argument that no caller sets it. TRUE of the two instructions before each `bsr` and FALSE of the register: `mothership_segment_hit` ends its non-fatal arm on `subi.b #$1,(a5)` (0x15254), whose BORROW sets X, and the very next kill in the same pass then scores one BCD unit high. Measured on the frame fuzz's own case 1 as 0x151 against 0x150. **The fix is one parameter in `src/score.c`**; compensating for it in `src/frame.c` would mean re-implementing that file's BCD add in this one. Until it lands, `test_frame.py`'s `FUZZ_ENEMY_TYPES` keeps the boss segment out of the generator and `test_the_score_carry_into_abcd_is_src_score_c_s_residual` states the whole argument and pins the two instructions it rests on |
+
+**WHAT DERIVING THE TWO REGISTERS REALLY COSTS, walked instruction by instruction rather than
+estimated.** The rows above say "the callees reporting their outgoing D1"; this is the whole list,
+so the next wave can execute it instead of re-deriving it.
+
+*D1 at 0x118cc.* Only bits 8..15 reach anything — `enemy_fire_and_update_shots` does
+`move.b $19895,d1` (low byte) and then indexes with `d1.w`, and bits 16..31 are never read. Twelve
+routines run between 0x1167c and that `bsr`, and **every one of them has a path that leaves the
+register untouched**, so the value can be the caller's own from before the slice:
+
+| routine | reconstructing C | leaves bits 8..15 |
+|---|---|---|
+| `0x1544e explosion_animate_all` | `src/enemy.c` | 0 (`and.l #$7f` then `lsl.w #2` on ≤ 0x0c) |
+| `0x14626 anim_ground_objects` | `src/enemy.c` | 0 (`ext.w` on 0..3, then `lsl.w #2`) |
+| `0x13868 wavescript_spawn_wave` → `0x14a7c spawn_formation` | `src/enemy.c` | **no D1 write at all** |
+| `0x13898 wavescript_spawn_trio_type0e` | `src/enemy.c` | 0 (`move.w #$68` less a 0x19..0x38 draw) |
+| `0x13958` / `0x13a12 groundscript_spawn_type10/0f` | `src/enemy.c` | **1** (`move.w #$180,d1`) |
+| `0x147f2 enemies_animate_all` | `src/enemy.c` | 0 — and its `movem` saves A2/D7 only, so the animate callback's D1 survives; all seven callbacks leave 0 |
+| `0x1487c enemies_move_all` | `src/enemy.c` | 0 on the simple handlers; **arbitrary** through `enemy_move_scripted` → `actor_script_run`, whose `sub.l #$19ac2,d1` (script offset) and `bsr collision_chain_walk` (a longword out of `A_lower_index_masks`) both reach it |
+| `0x140a6 seeker_update` | `src/weapon.c` | 0x00 or 0xFF (`ext.w d1` on the signed speed byte, via `entity_set_velocity_from_angle`) |
+| `0x14126 homing_missile_update` | `src/weapon.c` | 0x00 / 0xFF / **the high byte of a `$1918e` bitmask word** — its `bsr.s $140f6` at 0x14150 is NOT inside the `movem` that protects the one at 0x14194 |
+| `0x15582 shot_retire_kind32` | `src/weapon.c` | **no D1 write at all** |
+| `0x152a4 player_shot_update_all` | `src/weapon.c` | 0 (`and.l #$f` then `lsl.l #2` in `shot_anim_puff`) |
+
+So the deliverable's premise — that D1 at 0x118cc is `player_shot_update_all`'s outgoing D1 — holds
+only on the frames a type-0x37 puff animates. On every other frame the register is an older callee's,
+and on the common frame it is the SCROLL BLIT's (below). Closing the row means all eleven of the
+above reporting, plus an incoming D1 for each pass-through arm.
+
+*D7 at 0x11818 on the three unresolved paths.* Two of them are answered: `0x13898` writes no D7
+anywhere and both its callees save it (`count_free_wave_slots` pushes it, `rand16`'s `movem` covers
+D4–D7), so `frame_wave_script`'s `return carried_y_register` is exactly right there; and `0x13868`
+derives D7's LOW word (`and.w #$f` / `lsl.w #2` / `move.b (a1)+` / a `move.l` push-pop pair) while
+passing its HIGH word through — and only the high word is read, because `0x1396c`'s `beq` tests the
+whole longword that `count_free_wave_slots`' `move.l (a7)+,d7` set. The third path — the wave block
+skipped on `tst.b $198af` / `bne` at 0x11718 — reaches 0x11818 with nothing between having touched
+D7's high word (`explosion_animate_all` writes only `move.w #$5,d7`, `anim_ground_objects` writes no
+D7, and the slice's two `movem`s over D7 are both AFTER 0x11818).
+
+**THE PRODUCER, FOR BOTH REGISTERS, IS THE SCROLL BLIT.** The path that reaches 0x11818 needs
+`$198fd == 0`, which is also what sends the frame head to `jsr (a1)` at 0x111c2 — one of
+`src/scroll.c`'s twenty `scroll_page_to_screen_pNN`, whose `movem.l (a5)+,#$1ffe` loads **D1 and D7
+out of the map/screen data**. That is the last writer of both before 0x1167c on an ordinary frame.
+Deriving either therefore means modelling the twenty bodies' hand-unrolled CHUNKING — which register
+list each `movem` pair carries and at what offset — and `src/scroll.c` deliberately does not:
+"the reconstruction copies the window in order and STATUS.md records the chunking as unmodelled"
+(and `## Verified — scroll` carries that). **So the two rows are not closable without that
+transcription**, and the cheap-looking fix named in the deliverable (one callee returning its D1)
+would close neither.
+
+**A NINTH BOUND, and this wave measured it rather than inheriting it: `frame_boss_destroyed`
+(0x11f38) is not reached by any case.** Deleting its `A_death_event_flags` store is green, which is
+the direct measurement rather than an inference from coverage. Reaching it needs
+`collision_chain_walk` to answer TRUE for a player shot while `A_boss_sequence_active` is set and
+`A_boss_hitpoints` steps to 0 — a combination the world sweep never produces and the fuzz does not
+poke. It costs one derived value in particular: the boss award's `abcd` carry-in, which is the carry
+out of `add.w #$6,d1` at 0x11f50 (the explosion's Y), so a boss whose Y is at or above 0xfffa scores
+one BCD unit more. The routine's whole body is in the same position and was before this wave; what
+is new is only that the wave added a value inside it worth pinning.
+
+**THE X-FLAG ROW IS CLOSED, and this is what closed it.** `abcd` adds the 68000's X, and
+`src/score.c` used to start its chain at 0 on the argument that no caller sets it — true of the two
+instructions before each `bsr` (a `movem.l` and a `lea`, neither of which touches the condition
+codes) and false of the register, which survives both. `mothership_segment_hit` ends its non-fatal
+arm on `subi.b #$1,(a5)` (0x15254), whose BORROW sets X, and the shoot sweep awards the next kill's
+score a few instructions later: measured 0x151 against 0x150.
+
+`score_add_bcd` now TAKES the carry-in and RETURNS the X it leaves; `mothership_segment_hit` and the
+three `shot_retire_kind*` routines report theirs; `sound_start`'s is a pure function of the tune
+number (`include/sound.h`'s `sound_start_leaves_extend`, derived from `lsl.w #8,d1` at 0x16b42); and
+`src/frame.c`'s two hit passes thread the flag from one kill to the next. **The passes' own entry X
+is DERIVED, not assumed**: `addq.l #1,d6` at 0x121ac is the last instruction before the ram pass, D6
+is the explosion loop's entity index (`moveq #$9,d6` at 0x120d8 plus eight increments), and adding
+one to a number that small cannot carry out of a longword — so X is clear there, and the `btst` that
+skips the ram pass when the boss owns the playfield does not touch it either. The other six
+`score_add_bcd` call sites are each derived from the instruction that really precedes them: the
+boss award's from `add.w #$6,d1` (0x11f50), the rising capsule's from `subi.w #$3,4(a2)` (0x1213a),
+the plain capsule's from the `bne` that proves the counter did not borrow, and
+`mothership_segment_hit`'s own from the same proof.
+
+`test_frame.py::test_a_boss_segment_hit_carries_its_borrow_into_the_next_award` lands on the 0x151
+shape, `FUZZ_ENEMY_TYPES` has the boss segment back (0x02), and X is compared against the machine
+rather than argued: `test/abi.py`'s `extend_call_pokes` drives the flag in with `subq.b #1,d0` and
+reads it out with `addx.b d1,d1` into a REPORTED register, so every routine that reports an X is
+pinned by a case. What no surface here holds is the flag's own arithmetic in the rest of
+`frame_resolve_hits_and_game_state` — the stage has about twenty other X-setting instructions and
+eleven other callees, none of which reach an `abcd`, and none of which is modelled.
 
 **And one thing a mutation can change without the suite noticing.** Every `sound_start` in the frame
 loop is armed on whatever D0 holds, and `src/frame.c` transcribes which register that is at each of
@@ -1022,10 +1113,37 @@ very observable indeed. `test_every_tune_the_frame_starts_names_its_own_voice` i
 
 ## Mutation ledger
 
-Sixteen sweeps, one per slice that landed, kept as separate sub-tables so that no two agents' counts
-ever have to be merged into one number. **Across all sixteen: 553 mutations run, 526 killed, 27
-survivors** — every survivor argued below its own sub-table, and every one of them unobservable by
-construction or unreachable from data the game can produce, rather than a missing case.
+Seventeen sweeps, one per slice that landed, kept as separate sub-tables so that no two agents'
+counts ever have to be merged into one number. **Across all seventeen: 571 mutations run, 539
+killed, 32 survivors** — every survivor argued below its own sub-table, and every one of them
+unobservable by construction or unreachable from data the game can produce, rather than a missing
+case.
+
+### The read-modify-write operations and the `abcd` carry (18 mutations, 13 killed, 5 survivors)
+
+Two changes in one sweep, both about a value that leaves no trace in memory. Baseline green before
+each mutation, and the `.so` deleted before every rebuild (the workspace's own rebuild trap).
+
+| # | mutation | result |
+|---|---|---|
+| 1 | kit `hw_bset8` sets `bit + 1` | RED — 4 kit cases, including the correct-reconstruction one |
+| 2 | kit `hw_bclr8` computes `0 \| bit` instead of `0 & ~bit` | RED — 3 kit cases |
+| 3 | kit `hw_and8` ledgers a WORD width | RED — 3 kit cases |
+| 4 | `frame_end_and_flip`'s `bset` opens channel 5, not 6 | RED — 199 Zynaps cases |
+| 5 | `mfp_ack_timer_b` acknowledges in ISR**B**, not ISRA | RED — 27 Zynaps cases |
+| 6 | `shifter_select_low_resolution` split into two `hw_bclr8`s | RED — `test_boot_load_title_assets` |
+| 7 | `score_add_bcd` ignores `extend_in` (the old fabricated 0) | RED — 22 cases, including the boss-segment carry case AND 2 fuzz shards |
+| 8 | `mothership_segment_hit` always reports X = 0 | RED — 6 cases, including 3 fuzz shards |
+| 9 | the retire routines' borrow reads `counter == 1`, not `== 0` | RED — 16 cases |
+| 10 | `sound_start_leaves_extend` returns 1 always | RED — 45 cases |
+| 11 | `sound_start_leaves_extend` returns 0 always | RED — 4 cases, **and it SURVIVED until the case that closes it was written**: every tune number the game starts is below 0x80 (max 0x2c, `BOSS_HIT_SOUND`), so the predicate's other half is unreachable from the game's own data. `test_sound.py`'s `_start_case` compares the flag on EVERY `sound_start` case now, so `test_sound_start_every_number`'s existing 256-number sweep pins it against the machine at no extra oracle run — which is what a data-unreachable branch is supposed to get |
+| 13 | `count_down_reporting_borrow` decrements by 2 | RED — 3 cases |
+| 14 | the retires' pass-through arm returns a hard-coded 0 instead of `extend_in` | RED — the one guard-rejecting row that hands X = 1 in, which is why that row exists |
+| 15 | the capsule award's carry-in forced to 1 | RED — 2 cases (`test_a_capsule_that_lands_on_the_terrain_is_killed_instead_of_announced`) |
+| 16 | the BOSS award's carry-in (`word_add_extend` on the explosion Y) forced to 1 | **SURVIVED, and the reason is a PRE-EXISTING coverage hole this wave did not create.** `frame_boss_destroyed` is not reached by any case in the suite at all — measured directly, by deleting its `A_death_event_flags` store, which is also green. Reaching it needs `collision_chain_walk` to answer TRUE for a player shot while the boss owns the playfield and `A_boss_hitpoints` steps to 0, and no case drives that combination. Recorded in "## Coverage limits" rather than papered over |
+| 17 | `mfp_ack_acia` clears channel 5 instead of 6 | **SURVIVED, and it is the residual `hw_bclr8` is honest about.** A `bclr`'s ledgered value is `0 & ~bit`, which is 0 for every bit, so no off-target surface holds the channel — the kit's own `test_a_bclr_of_the_wrong_bit_is_green_and_that_is_the_residual` is a green case saying exactly this. `src/init.c`'s one-byte sink does the same job for the resolution MASK; the two MFP channels have no equivalent, and the surface that would catch them is `docs/on-target-execution.md`'s hardware-state vector once `atari/zynaps_backend.c` defines the three operations |
+| 18 | the shoot sweep's `sound_start`/retire `*extend` updates flipped | **SURVIVED, and `src/frame.c` says so at the helper.** All three of the sweep's tune sites and the `shot_retire_kind*` reports feeding them are followed by `lsl.l #1,d0` (0x12474) before any `abcd` can read the flag, so they are unobservable off target. Modelled anyway because they are the instructions, and because an award replaces D0 with the extra-life threshold — the day a score reaches 0x80000000 the shift stops erasing them |
+| 12 | the shoot sweep's `lsl.l #1,d0` carry reads bit 5, not bit 31 | **SURVIVED, and unobservable by construction.** The sweep's mask takes the values 1, 2, 4, 8, 0x10, 0x20, so bit 5 is set only on the SIXTH pass — after whose shift the loop exits and nothing reads X again. Bit 31 is 0 for every one of them. The bit only ever differs from 0 when an award has replaced D0 with the extra-life threshold and that threshold has bit 31 set, which needs a BCD score of 80,000,000 — `test_score.py::test_threshold_compare_is_signed` records that eight digits of Zynaps score never get there. Modelled anyway, because the register is not always the mask |
 
 Three lies a sweep can tell are recorded here once, because each was met in this project and each
 would otherwise be re-learned per slice:
@@ -1930,46 +2048,56 @@ those stores through `hw_write8`/`hw_write16`/`hw_write32`. Six of the seven `ir
 this project ran against them were all killed, and `src/irq_hw_offtarget.c` — the file of empty
 bodies that stood in for the ledger — is deleted.
 
-**Two residuals survive it, both stated where they arise.** A READ-MODIFY-WRITE at an address the
-seeded READ model does not name (`bclr #0,$fffa0f`, `bclr #6,$fffa11`, `andi.b #$fc,$ff8260`,
-`bset #6,$fffa09` — in `_start` and in the frame loop — and `bset #6,$fffa15`) computes its value from
-a fabricated 0 on both sides, so the ledger holds the address, the width and the fact of the store
-while the MASK or the BIT stays unpinned — `src/init.c`'s one-byte sink holds the resolution mask,
-and the four MFP bits are unheld.
-**THE FRAME LOOP'S IS AN ON-TARGET DEFECT and not merely an unpinned byte**, exactly as the
-resolution mask is: a target build compiles `hw_write8` as a plain volatile store, so
-`frame_end_and_flip` writes 0x40 into the MFP's interrupt-enable B and CLEARS every other bit TOS
-had set, where the original ORs bit 6 into them — and Zynaps writes that register only through this
-`bset` and its twin in `_start`, so nothing puts them back. `include/frame.h` states it beside
-`MFP_IERB_UNMODELED_READ` (the register is init.h's `HW_MFP_IERB`) and a Zynaps build for the real Atari must give the address a read rather than compile
-the expression. The surface that would catch it is `docs/on-target-execution.md`'s hardware-state
-vector. And the two `move.w #$27xx,sr` interrupt masks are a CPU register rather
-than a device, which no ledger reaches. Both want an on-target surface
+**THE SIX READ-MODIFY-WRITES ARE SPELT AS THE OPERATION NOW, AND THE TARGET SUPPLIES THE READ
+HALF.** `bset #6,$fffa09` (0x1068e and 0x12714), `bset #6,$fffa15` (0x10696), `bclr #0,$fffa0f`
+(0x1076c), `bclr #6,$fffa11` (0x144b0) and `andi.b #$fc,$ff8260` (0x10056) do not store a value —
+they store a FUNCTION of the byte the register already held, at addresses the seeded READ model does
+not name. Computing that function from the oracle's fabricated 0 and calling `hw_write8` passed the
+ledger and was a DEFECT the moment it was cross-compiled: on the machine the store lands for real
+and `bset` becomes "write 0x40 over everything TOS set in the MFP's IERB" (the keyboard ACIA is
+bit 6; TOS's FDC on bit 7 goes dead), `bclr` becomes "acknowledge every in-service channel at once",
+and `andi.b #$fc` becomes "write 0 to the resolution register".
+
+The kit grew three operations for it — `hw_bset8(addr, bit)`, `hw_bclr8(addr, bit)` and
+`hw_and8(addr, mask)` (`tools/recreate_kit/include/hw.h`, `TRAP_MODEL.md` Phase 10). Off target each
+ledgers the byte the ORACLE'S OWN instruction produced from its fabricated 0 — `0 | bit`,
+`0 & ~bit`, `0 & mask` — so introducing them changed **no ledger comparison and no case**; on target
+the build compiles each as the real instruction on the real register. `hw_and8` is its own operation
+rather than two `hw_bclr8` calls because one instruction makes ONE store and the ledger compares the
+ordered stream (`test_splitting_a_mask_into_two_bit_clears_reds`). **The Zynaps target build does not
+link until `atari/zynaps_backend.c` defines all three**, which is the intended shape: the cores can
+no longer express the defect. `atari/README.md`'s "Unpinned 2" carries the backend's half.
+
+**What the ledger still cannot hold is an operand it cannot see.** A `bset`'s IS held — its value is
+`0 | (1 << bit)`, a different byte per bit — but a `bclr` stores `0 & ~bit` and an `andi.b` stores
+`0 & mask`, which are 0 whatever the operand, so the two MFP acknowledge channels and the resolution
+mask are held only by the source spelling. `src/init.c`'s one-byte sink still holds the mask off
+target (`test_init.py::test_boot_load_title_assets`), and the kit measures the residual directly:
+`test_a_bclr_of_the_wrong_bit_is_green_and_that_is_the_residual` is a GREEN case that says so.
+
+**One residual survives.** The two `move.w #$27xx,sr` interrupt masks are a CPU register rather than
+a device, which no ledger reaches; they want an on-target surface
 (`docs/on-target-execution.md`, the hardware-state vector).
 
 ## Suite
 
-`make test` — **3943 passed**, 4 skipped. `make guarded` — same count, 23690
+`make test` — **3979 passed**, 4 skipped. `make guarded` — same count, 23726
 candidate runs guarded across 10 workers, no fault.
 
-**THIS WAVE TOUCHED THE KIT**, so everything bound to it was re-measured rather than assumed, with
-each project's own inputs symlinked: `tools/recreate_kit` **431 passed** (426 before, plus this
-wave's ACIA-data and split-register cases), `tools/test_hw_portability.py` **50 passed** / 6 skipped,
+**THIS WAVE TOUCHED THE KIT** (three new read-modify-write operations in `hw.h`/`src/hw.c`), so
+everything bound to it was re-measured rather than assumed, with each project's own inputs
+symlinked: `tools/recreate_kit` **439 passed** (431 before, plus this wave's eight cases for the new
+operations), `tools/test_hw_portability.py` **50 passed** / 6 skipped,
 `projects/buggyboy/recreate` **292**, `projects/buggyboy/remaster` **732**,
-`projects/joust/recreate` **4369**, `projects/wonderboy/recreate` **6465**.
+`projects/joust/recreate` **4369**, `projects/wonderboy/recreate` **6465** — every one of them the
+same count as before, because the new operations ledger byte for byte what `hw_write8` ledgered.
 
-**TWO THINGS OUTSIDE THIS PROJECT HAD TO MOVE WITH IT, and both are worth naming in a commit body.**
-
-* `tools/hw_portability.py` pins `OS_HW_NSLOTS` against its own copy of the modeled address set, so
-  the new slot took its whole suite to **12 red** — including the control case and the very tripwire
-  written for "the kit added a modeled byte", whose fixture rewrote the old count. Both are repaired
-  (the address added, the fixture re-pointed), and the census now prices a `$fffc02` byte read as the
-  T2 SEEDED_READ it has become rather than a T4 silent zero.
-* Wonder Boy's `test_the_two_declared_addresses_are_the_ones_the_model_serves` pinned the addresses
-  ITS game reads EQUAL to the kit's whole modeled set, which cannot survive another game needing an
-  address. It compares a PREFIX now, position by position: a set-subset would have been the easy fix
-  and the wrong one, because `harness.py` turns ledger slots back into addresses by indexing
-  `emu.HW_ADDRS`, so slot ORDER is exactly what that test was written to hold.
+**AN OUT-OF-SCOPE FINDING WORTH NAMING, in `tools/`.** `tools/test_hw_portability.py` skips its six
+scan-reproduction cases when `projects/wonderboy/out/hw_scan.tsv` is absent, which is the state a
+bare checkout is in. Given the file, three of them RED: the committed figures say the at-risk set is
+(23 functions, 3,888 bytes) and the scan on disk produces (22, 3,658). Nothing in this wave reads
+that suite's inputs, and the drift is older than it; it is recorded here rather than repaired,
+because repairing it means deciding which of the two numbers is the truth.
 
 THIS LINE IS SHARED, and several agents add batteries to this project at once — the count is
 whatever the last one to run the suite measured, so treat a mismatch against your own run as a

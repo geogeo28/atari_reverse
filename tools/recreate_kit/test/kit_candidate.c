@@ -236,3 +236,84 @@ void g_hw_acia_send_then_receive(uint8_t *image) {
     hw_write8(OS_HW_ACIA_DATA, IKBD_COMMAND);
     (void)hw_read8(OS_HW_ACIA_DATA);
 }
+
+/* ---- the READ-MODIFY-WRITE trio: `bset` / `bclr` / `andi.b` on a register (hw.h) ---------------
+ * The smoke .PRG plants the same three instructions as 68000 code, so these are a real differential
+ * of the operations rather than of a value chosen to match. The constants are the .PRG's own, for
+ * `g_hw_writes_the_three`'s reason, and `test_the_smoke_prg_read_modify_writes_the_registers_the_
+ * candidate_does` is what pins the two spellings equal. */
+#define MFP_IERB                     0xfffa09u   /* interrupt enable B; bit 6 is the keyboard ACIA */
+#define MFP_ISRA                     0xfffa0fu   /* ...and in-service A, whose bit 0 is Timer B */
+#define SHIFTER_MODE                 0xff8260u   /* the resolution byte */
+#define MFP_ACIA_CHANNEL_BIT         6u
+#define MFP_ISRA_TIMER_B_BIT         0u
+#define SHIFTER_MODE_RESOLUTION_MASK 0xfcu
+/* The two bits that mask clears, named for the mutant below that tries to clear them one at a time. */
+#define SHIFTER_MODE_RESOLUTION_BIT_LOW  0u
+#define SHIFTER_MODE_RESOLUTION_BIT_HIGH 1u
+
+/* The faithful reconstruction: each instruction as the OPERATION it is. */
+void g_hw_rmw_the_three(uint8_t *image) {
+    (void)image;
+    hw_bset8(MFP_IERB, MFP_ACIA_CHANNEL_BIT);
+    hw_bclr8(MFP_ISRA, MFP_ISRA_TIMER_B_BIT);
+    hw_and8(SHIFTER_MODE, SHIFTER_MODE_RESOLUTION_MASK);
+}
+
+/* THE DEFECT THE OPERATIONS EXIST TO RETIRE, and it is GREEN — which is the measurement rather than
+ * a mutant. Each store is the value the fabricated 0 produces, spelt as a plain store, so off target
+ * the ledger cannot tell it from the reconstruction above. On the machine the two are nothing alike:
+ * this one writes 0x40 over whatever TOS left in IERB, acknowledges every in-service channel, and
+ * writes 0 to the resolution register. No off-target surface separates them, which is exactly why
+ * the OPERATION is what a reconstruction spells. */
+void g_hw_rmw_spelt_as_plain_stores(uint8_t *image) {
+    (void)image;
+    hw_write8(MFP_IERB, 1u << MFP_ACIA_CHANNEL_BIT);
+    hw_write8(MFP_ISRA, 0);
+    hw_write8(SHIFTER_MODE, 0);
+}
+
+/* MUTANT: the `bset` sets the wrong channel. The ledger DOES hold a bset's bit — its value is
+ * `0 | (1 << bit)`, which is a different byte for a different bit — so this reds off target. Its
+ * `bclr` twin below does not, and the pair is what says which half of the trio the ledger can see. */
+void g_hw_rmw_sets_the_wrong_bit(uint8_t *image) {
+    (void)image;
+    hw_bset8(MFP_IERB, MFP_ACIA_CHANNEL_BIT - 1u);
+    hw_bclr8(MFP_ISRA, MFP_ISRA_TIMER_B_BIT);
+    hw_and8(SHIFTER_MODE, SHIFTER_MODE_RESOLUTION_MASK);
+}
+
+/* MUTANT that is GREEN, and the honest residual it measures: a `bclr` of any bit stores `0 & ~bit`,
+ * which is 0 for every bit, so the ledger holds the address and the width and not the channel. A
+ * routine needing the channel held wants a sink of its own or the address in the READ model. */
+void g_hw_rmw_clears_the_wrong_bit(uint8_t *image) {
+    (void)image;
+    hw_bset8(MFP_IERB, MFP_ACIA_CHANNEL_BIT);
+    hw_bclr8(MFP_ISRA, MFP_ISRA_TIMER_B_BIT + 1u);
+    hw_and8(SHIFTER_MODE, SHIFTER_MODE_RESOLUTION_MASK);
+}
+
+/* MUTANT: `andi.b #$fc` spelt as the two `bclr`s that would have the same effect ON TARGET. It is a
+ * RED, and that is why hw_and8 is its own operation: one instruction makes ONE store, and the ledger
+ * compares the ordered stream, so two calls diverge it for a reason that is not about the register.
+ */
+void g_hw_rmw_splits_the_mask_into_two_bit_clears(uint8_t *image) {
+    (void)image;
+    hw_bset8(MFP_IERB, MFP_ACIA_CHANNEL_BIT);
+    hw_bclr8(MFP_ISRA, MFP_ISRA_TIMER_B_BIT);
+    hw_bclr8(SHIFTER_MODE, SHIFTER_MODE_RESOLUTION_BIT_LOW);
+    hw_bclr8(SHIFTER_MODE, SHIFTER_MODE_RESOLUTION_BIT_HIGH);
+}
+
+/* The two refusals hw_write8 has, restated for the new door: it is the same address check, so a
+ * reconstruction cannot reach image memory or ledger the untranslated `$ffff8260` form through an
+ * operation any more than through a store. */
+void g_hw_rmw_into_the_image(uint8_t *image) {
+    (void)image;
+    hw_bset8(OS_SCREEN_BASE, MFP_ACIA_CHANNEL_BIT);
+}
+
+void g_hw_rmw_the_untranslated_form(uint8_t *image) {
+    (void)image;
+    hw_and8(0xffff8260u, SHIFTER_MODE_RESOLUTION_MASK);
+}

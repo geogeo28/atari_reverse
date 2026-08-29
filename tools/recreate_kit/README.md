@@ -156,6 +156,7 @@ witness):
 | `g_hw_log_count` / `g_hw_log_slots` / `g_hw_log_vals` | | the ordered read stream: one `(slot, value)` per read |
 | `g_hw_file` / `g_hw_file_known` | | the declared bytes those reads are served from, and which are declared |
 | `hw_write8` / `hw_write16` / `hw_write32` | `void(uint32_t, uint32_t)` | what a reconstruction calls where the original STORES to an I/O register |
+| `hw_bset8` / `hw_bclr8` / `hw_and8` | `void(uint32_t, uint32_t)` | ...and where it READ-MODIFY-WRITES one — `bset #b,addr`, `bclr #b,addr`, `andi.b #m,addr`. Spelling one of these as a plain store of the byte the oracle's fabricated read produces is green off target and a DEFECT on the machine; `hw.h` and `TRAP_MODEL.md` Phase 10 have the contract |
 | `g_hw_write_count` / `g_hw_write_addrs` / `g_hw_write_widths` / `g_hw_write_vals` | | the ordered store stream: one `(address, width, value)` per store (`g_hw_reset` clears it — one reset for both ledgers, so a path cannot refresh one and leave the other) |
 
 The modeled READ set is exactly `$fffa01` (MFP GPIP), `$ff820a` (shifter sync), `$ff8207`/`$ff8209`

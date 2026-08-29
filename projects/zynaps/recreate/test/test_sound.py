@@ -101,6 +101,11 @@ for _name, _extra in (("g_sound_lookup_tune", 2), ("g_sound_lookup_modtable", 2)
                                              + [ctypes.c_uint32] * _extra)
     getattr(harness._lib, _name).restype = None
 
+# ...and the one glue that takes no image at all: `sound_start_leaves_extend` is a pure function of
+# the tune number (include/sound.h), exposed so a case can compare it against the machine's X.
+harness._lib.g_sound_start_leaves_extend.argtypes = [ctypes.c_uint32]
+harness._lib.g_sound_start_leaves_extend.restype = ctypes.c_uint32
+
 
 def _image_bytes(addr, length):
     return bytes(harness.BASE_IMAGE[addr:addr + length])
@@ -202,11 +207,39 @@ def test_lookup_attribution(number):
 # =================================================================================================
 
 def _start_case(number, channel, pokes=None, poison=False):
-    regs = {"d1": number, "d0": channel, "_pokes": dict(pokes or {})}
-    diffs, _ = differential(ENTRY_SOUND_START, regs,
-                            lambda lib, buf: lib.g_sound_start(buf, number, channel),
-                            poison=poison)
-    assert not diffs, f"number={number:#x} channel={channel:#x}\n{report(diffs)}"
+    """One `sound_start`, with its MEMORY effect and the 68000's X it leaves both compared.
+
+    THE FLAG COMES FREE HERE, which is why it is checked in the shared helper rather than in a sweep
+    of its own. Every case below already runs the routine under the oracle; entering through
+    `abi.extend_call_pokes` costs one extra instruction and hands the flag back in D1 — a reported
+    register — so `include/sound.h`'s `sound_start_leaves_extend` is pinned over exactly the inputs
+    the battery already drives (all 256 numbers, every channel arm, the alternating toggle).
+
+    It has to be pinned somewhere: `score_add_bcd` ADDS X, so the flag this routine leaves is the
+    carry-in of the next award (src/score.c). Every tune number the GAME starts is below 0x80, so
+    the predicate's other half is unreachable from the game's own data and only a sweep against the
+    machine holds it.
+    """
+    pokes = dict(pokes or {})
+    pokes.update(abi.extend_call_pokes(ENTRY_SOUND_START))
+    regs = {"d1": number, "d0": channel, "_pokes": pokes}
+    reported = {}
+    diffs, info = differential(
+        abi.STUB, regs,
+        lambda lib, buf: _start_and_report_extend(lib, buf, number, channel, reported),
+        poison=poison)
+    note = f"number={number:#x} channel={channel:#x}"
+    assert not diffs, f"{note}\n{report(diffs)}"
+    oracle_x = abi.oracle_extend(info)
+    assert reported["x"] == oracle_x, (
+        f"{note}: sound_start_leaves_extend answered {reported['x']} where the 68000 left "
+        f"X={oracle_x}")
+
+
+def _start_and_report_extend(lib, buf, number, channel, reported):
+    """Run the routine and record what the reconstruction says its outgoing X is."""
+    lib.g_sound_start(buf, number, channel)
+    reported["x"] = lib.g_sound_start_leaves_extend(number)
 
 
 @pytest.mark.parametrize("chunk", range(FUZZ_CHUNKS))
@@ -217,6 +250,11 @@ def test_sound_start_every_number(chunk):
     word has bit 15 set, below the tables entirely) — the routine reads a byte there and arms a
     voice with it either way, which is what this drives. The channel is 3 so that a stream WITHOUT a
     0xfa header falls to voice 3 and one with a header overrides it, making the two visible apart.
+
+    IT ALSO PINS THE 68000's X over the whole byte, because `_start_case` compares that flag on
+    every case — see its docstring for why the routine has one worth comparing. This is the sweep
+    that reaches numbers at or above 0x80, which is the half of `sound_start_leaves_extend` the
+    game's own tunes never produce.
     """
     for number in range(chunk, 0x100, FUZZ_CHUNKS):
         _start_case(number, 3)

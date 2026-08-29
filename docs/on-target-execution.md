@@ -678,10 +678,25 @@ ledger a reconstruction that made none of a routine's hardware stores was byte-f
 one that made every one, and only an on-target run could tell them apart. `harness.differential`
 compares both sides' ordered `(address, width, value)` store stream for every case now
 (`tools/recreate_kit/TRAP_MODEL.md`, "Phase 10"), so a missing, extra, reordered, mis-addressed or
-wrong-width store is an ordinary red off target. What it still cannot hold is the READ half of a
-read-modify-write at an address the seeded read model does not name (`bclr #0,$fffa0f`,
-`andi.b #$fc,$ff8260`): both sides compute from a fabricated `0`, so the mask stays this page's
-business — the **hardware-state vector** is its surface.
+wrong-width store is an ordinary red off target.
+
+**AND A READ-MODIFY-WRITE MUST NOT BE SPELT AS A STORE**, which was a whole defect class and is now
+a kit contract. `bset #6,$fffa09`, `bclr #0,$fffa0f` and `andi.b #$fc,$ff8260` store a FUNCTION of
+the byte the register already held, at addresses the seeded read model does not name — so off target
+the read answers a fabricated `0`. A reconstruction that computed the value from that `0` and called
+`hw_write8` passed the ledger (both sides compute from the same `0`) and was wrong the moment it was
+cross-compiled: on the machine the store lands for real and clears every bit the instruction should
+have preserved. The kit's `hw_bset8`/`hw_bclr8`/`hw_and8` (`include/hw.h`) are what a reconstruction
+calls instead — off target they ledger exactly the byte the oracle's own instruction produced, so
+nothing about the differential changes, and on target the build supplies the real instruction. **No
+off-target surface separates the two spellings** — the kit's own
+`test_the_operations_are_indistinguishable_off_target_from_the_defect_they_retire` is a GREEN case
+that measures precisely that, which is why the operation has to be spelt rather than inferred.
+
+What the ledger still cannot hold is the OPERAND of the two that produce `0` from `0`: a `bclr`'s
+`0 & ~bit` and an `andi.b`'s `0 & mask` are `0` whatever the bit or the mask, so those stay this
+page's business — the **hardware-state vector** is their surface. (A `bset`'s bit IS held: its value
+is `0 | (1 << bit)`.)
 
 **The rule: every on-target change names the surface that would catch its failure. If it names none,
 that is the finding** — not a reason to proceed carefully. Add the surface, or record in `STATUS.md`

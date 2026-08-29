@@ -162,10 +162,28 @@ _ACIA_SEND_THEN_RECEIVE_CODE = (struct.pack(">HHI", 0x13FC, IKBD_COMMAND, ACIA_D
                                 + struct.pack(">HI", 0x1239, ACIA_DATA)   # move.b $fffc02.l,d1
                                 + struct.pack(">H", 0x4E75))              # rts
 
+# ...and Phase 10's READ-MODIFY-WRITE trio, the shape `hw_bset8`/`hw_bclr8`/`hw_and8` exist for.
+# All three are Zynaps's own instructions (`_start` @ 0x1068e and 0x10056, `mfp_ack_timer_b` @
+# 0x1076c), and all three read a register the seeded READ model does not name — so the oracle serves
+# a fabricated 0 for the read half and stores what that 0 produces. That is the byte the candidate
+# side must ledger, and the reason a reconstruction may not spell these as a plain store: on the
+# machine the read half is the byte the chip really holds.
+MFP_IERB = 0xFFFA09                   # interrupt enable B; bit 6 is the keyboard ACIA
+MFP_ISRA = 0xFFFA0F                   # ...and in-service A, whose bit 0 is Timer B
+SHIFTER_MODE = 0xFF8260               # the resolution byte
+MFP_ACIA_CHANNEL_BIT = 6
+MFP_ISRA_TIMER_B_BIT = 0
+SHIFTER_MODE_RESOLUTION_MASK = 0xFC   # `andi.b #$fc` — clears the two resolution bits
+
+_HW_RMW_CODE = (struct.pack(">HHI", 0x08F9, MFP_ACIA_CHANNEL_BIT, MFP_IERB)    # bset #6,$fffa09.l
+                + struct.pack(">HHI", 0x08B9, MFP_ISRA_TIMER_B_BIT, MFP_ISRA)  # bclr #0,$fffa0f.l
+                + struct.pack(">HHI", 0x0239, SHIFTER_MODE_RESOLUTION_MASK, SHIFTER_MODE)
+                + struct.pack(">H", 0x4E75))                                   # rts
+
 _ROUTINES = (_RMW_CODE, _GIACCESS_CODE, _HW_READ_CODE, _SYNC_ONLY_CODE, _WRITE_THEN_READ_CODE,
              _WIDE_READ_CODE, _VOLATILE_TWICE_CODE, _STATIC_TWICE_CODE,
              _HW_WRITE_CODE, _ACIA_SEND_CODE, _ACIA_RECEIVE_CODE, _ACIA_RECEIVE_TWICE_CODE,
-             _ACIA_SEND_THEN_RECEIVE_CODE)
+             _ACIA_SEND_THEN_RECEIVE_CODE, _HW_RMW_CODE)
 
 
 def _entries():
@@ -180,7 +198,7 @@ def _entries():
 (RMW_ENTRY, GIACCESS_ENTRY, HW_READ_ENTRY, SYNC_ONLY_ENTRY, WRITE_THEN_READ_ENTRY,
  WIDE_READ_ENTRY, VOLATILE_TWICE_ENTRY, STATIC_TWICE_ENTRY,
  HW_WRITE_ENTRY, ACIA_SEND_ENTRY, ACIA_RECEIVE_ENTRY, ACIA_RECEIVE_TWICE_ENTRY,
- ACIA_SEND_THEN_RECEIVE_ENTRY) = _entries()
+ ACIA_SEND_THEN_RECEIVE_ENTRY, HW_RMW_ENTRY) = _entries()
 
 PRG_MAGIC = 0x601A
 
