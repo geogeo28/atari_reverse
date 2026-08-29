@@ -147,4 +147,51 @@ would flag a true loop. What this surfaces for BuggyBoy:
   produces nothing. An envelope-mode channel whose reg 13 is never written must read as a
   *completed* (silent) envelope, not a fresh one — the synth models this.
 
+## Dumping a whole sound set (Zynaps)
+
+`projects/zynaps/tools/extract_audio.py` does the same job one game over — original replayer under
+the oracle, register stream out, YM6 + WAV in `out/audio/` — and its 45-number sweep surfaced three
+things that are properties of *this kind of driver* rather than of Zynaps, and that a first attempt
+will read as bugs.
+
+**One counter free-runs, and it is what stops an exact loop being found.** A "the whole mutable
+state repeated" detector is the strongest loop proof there is, and it fails on most tunes for a
+reason that has nothing to do with the music: some counter is stepped **unconditionally, every
+tick**, at a period of its own. Wonder Boy's is the song-speed accumulator; Zynaps' is the noise
+sweep's counter pair at `sound_noise_block`, which `sound_noise_modulate` advances whether or not
+any voice wants noise. Against the record the binary ships its cursor is 0, so both limit bytes are
+read out of the zeroed vector page: the first counter fires only when it wraps (256 ticks) and the
+second only when *it* wraps, 65,536 ticks — well past any cap worth running, and monotone until
+then. The exact state cannot recur before that, so the detector finds nothing.
+
+Note what does *not* follow: the sweep is not driving the loop, it is only witnessing time. The
+same driver rewinds that pair whenever a note-on consumes a pending `0xe4`, which is precisely why
+Zynaps' `0xe4`-using tunes reach a genuine exact loop and the rest cannot. So the rule is: run the
+exact detector to the cap first, and only then re-hash the state with that one field cut out. The
+ordering is what keeps the weaker rule from pre-empting a real loop. Be honest about what the
+weaker one then proves, though — if the field you cut is not an input to the output (Zynaps' is
+not: the register shadow the frames come from is still inside the hash), a "how much of the second
+period replays the first" figure is 100% by construction and is a check on your frame/state
+alignment, not evidence about the music. Wonder Boy's cut field *was* the row clock, and there the
+same figure measures something real.
+
+**A third of the index is fragments, and a fragment started cold is silent.** A stream table is a
+table of *streams*, not of sounds: entries reached only by another stream's jump or spawn command sit in it
+beside the real ones. Zynaps' numbers 0–9 are melody continuations — they carry no `0xfa` channel
+header and, decisively, no `0xe8` volume-table command, so the voice's volume envelope is whatever
+the parent stream already selected. Play one from a freshly loaded image and the volume byte steps
+up from zero against an unset record: perfectly valid frames, valid periods, and not a sound. That
+is data about the format, so dump it and say so (with the stream's own opening bytes on the page)
+rather than "fixing" the capture until it makes a noise.
+
+**A volume byte can carry bit 4 by accident, and bit 4 is not part of the level.** These drivers
+build a volume by adding a biased delta to a running byte and writing it straight at the chip
+without masking, so the register genuinely reaches values above `0x0f` — and bit 4 of registers
+8–10 selects the *envelope generator* rather than the fixed level. Whether that is audible depends
+on a register the driver may never touch: Zynaps' tick pushes 10..0 and stops (writing 13 would
+retrigger the envelope every frame), so the last write to 13 is the reset's, the envelope has long
+since finished, and every such channel-frame is **silence** on real hardware. A renderer that
+masked the level to four bits instead would play a note there, and no image diff or ledger would
+see it — the difference exists only on the chip.
+
 → Naming everything else: [`methodology.md`](methodology.md).

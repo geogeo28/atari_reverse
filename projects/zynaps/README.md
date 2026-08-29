@@ -308,12 +308,110 @@ sites are spelled in Ghidra addresses and `dat2png.py` reads the file.
 | `0x9634` | `palette_boot` `$19618` | the boot/title palette (also `palette_title`) | `# ctx` in `names.txt` — inferred from call context, not a body read |
 | `0x9654` | `palette_asteroid` `$19638` | the **asteroid-field** palette | taken at `$109cc`, on the branch where the section letter is `'q'` |
 
+## Music and sound effects
+
+Every sound the game has — 45 numbered streams — dumped by
+[`projects/zynaps/tools/extract_audio.py`](tools/extract_audio.py) into
+[`out/audio/`](out/audio): a `snd_NN.ym` (one YM2149 register file per 50 Hz frame, uncompressed
+YM6) and a `snd_NN.wav` (44100 Hz mono) for each, plus a `manifest.tsv`. It needs numpy, so run it
+with the workspace's python or `recreate/.venv/bin/python`:
+
+```bash
+projects/zynaps/recreate/.venv/bin/python projects/zynaps/tools/extract_audio.py
+```
+
+**It plays the original code, it does not re-implement it.** The tool loads `ZYNAPS17.PRG` through
+the kit's PRG loader and runs the game's own 68000 replayer under the Musashi oracle
+([`tools/recreate_kit`](../../tools/recreate_kit)) inside `emu.audio_capturing()`: `sound_reset_psg`
+once, `sound_start` once with `d1` = the number, then `sound_tick` once per emulated VBL, tapping
+the `$ff8800`/`$ff8802` write stream after every tick. `recreate/src/sound.c` decodes the whole
+format, but nothing here reads it — the frames are what the original wrote.
+
+**The numbers.** `sound_start` `$16ac8` takes `d1` = 0..44, an index into the little-endian offset
+table `tune_index` `$17058` over `tune_data` `$171e8`. Three groups come out of the sweep:
+
+| | count | what they are |
+|---|---|---|
+| music | 11 | the capture proved a loop (or hit the cap): they never end |
+| sfx | 24 | they stopped themselves — command `0xe1` ran on every voice they armed |
+| silent | 10 | numbers 0–9: **continuation streams**, silent when started cold (below) |
+
+Total 47,013 frames = 940 s of audio. A one-shot may still use several voices — `0x14`, the ship
+exploding, arms two — so "sfx" means *it ends*, not *it is one voice*; the manifest's `voices`
+column is the separate fact.
+
+`0x0b` is the boot tune *and* the title music (`_start` at `$1007a`, `moveq #$b,d1`) — a 262 s
+three-voice piece that spawns `0x0c` and `0x0d` on voices 2 and 3 with `fd`/`fe`, 56 s of lead-in
+and then a 206 s exact loop. The other music the game starts directly is `0x0e` (24 s),
+`0x1e` (12.8 s) and `0x27`. The busiest effect is `0x2c`, fired from six sites.
+
+**A stream with no `fa <chan>` header is a fragment, and a fragment is silent on its own.** Numbers
+0–10, 12, 13, 31–33 and 40–41 carry no header: they are reached by another stream's `0xe5` jump or
+`0xfc`/`0xfd`/`0xfe` spawn, mid-piece. Started here they run on **voice 3** — the driver's
+fall-through for a channel byte that is neither 1 nor 2 — where the game's parent stream would have
+picked the voice (`fd 0c` puts 12 on voice 2). 0–9 additionally carry no `0xe8` volume-table
+command, so
+`sound_voice_modulate` steps their volume byte up from 0 with whatever record the voice was already
+holding — which, from a freshly loaded image, is nothing. They dump as genuine silence, and the
+manifest shows each one's first stream bytes so the claim can be read off the data. This is a fact
+about the driver, not a failed capture.
+
+**Where a capture stops.** A sound that ends itself ends the file. One that does not is run to a
+15,000-frame cap while a detector watches the driver's whole mutable state (`$16e82`..`$16f40` —
+shadow, toggle, noise block, three voice records): a repeat there proves the output loops forever.
+Eight numbers close that way. Thirteen cannot, because `sound_noise_modulate` steps the noise
+block's counter pair on *every* tick, and against the record the binary ships (cursor 0, so both
+limit bytes read 0 out of the zeroed vector page) the first byte only fires when it wraps — 256
+ticks — and the second only when *it* wraps, 65,536 ticks. The one thing that rewinds the pair is
+`note_on` consuming a pending `0xe4`, which is exactly why the tunes using `0xe4` reach an exact
+loop and the rest cannot. For the rest the fallback rule ignores that counter pair only, takes the
+repeat it finds, and writes the lead-in plus the loop played through twice.
+
+That fallback's `second period replays N%` column is a *consistency* check, not evidence: a frame
+is the register shadow, and the shadow is inside the state the rule hashed, so a musical repeat
+implies a frame repeat. It is there to catch the frame/state alignment being off by one, and reads
+100% for all thirteen.
+
+**What is checked, every run** — the tool exits non-zero on any of these, and every check that
+can be made off the register stream runs *before* a byte is written. `manifest.tsv` is written last
+of all, so its presence is what marks `out/audio/` a finished dump:
+
+- the index's length is *derived*, not typed: `tune_index` `$17058` runs up to `mod_table_data`
+  `$170b2`, so 45 is arithmetic on two `include/sound.h` addresses — cross-checked against the
+  sign-extension boundary `test_sound.py` pins (entry 45's word is the first with bit 15 set);
+- **the exact case `test_sound.py::test_music_frames` verifies** — `sound_start` then 32 ticks, no
+  reset — captured tick by tick produces a PSG ledger identical to the one that battery gets from a
+  single chained oracle run, all 352 accesses in order. That is the tie between this dump and the
+  differential-verified player: the capture's own driving does not change what the driver writes.
+  (The reset a capture does first is deliberately outside that sequence — the original ends
+  `moveq #$d,d0` / `dbf d0`, so chaining it would hand `sound_start` a D0 of `$ffff`. Its 14-access
+  flush, the one `test_reset_psg` verifies, is asserted where it happens instead);
+- every tick flushes registers **10..0 in that order** — not merely eleven of them; a flush the
+  other way round leaves an identical register file and only the ledger can see it;
+- register 13 (the envelope shape) is never written, and **not one chip read is served** — so
+  nothing in these dumps rests on the capture mode's fabricated answers;
+- the register-stream silence verdict and the rendered `.wav`'s peak agree on all 45;
+- the boot tune arms all three voices, loops, and plays a melody rather than a held note — it uses
+  571 distinct tone periods against a bar of 32;
+- one number is re-captured after the whole sweep and must be byte-identical, which is what would
+  catch driver state leaking between numbers.
+
+**The renderer is BuggyBoy's** ([`recreate/sound/ym2149.py`](../buggyboy/recreate/sound/ym2149.py)),
+imported rather than copied. It peak-normalises each file, so `.wav` loudness is not comparable
+between numbers — every "silent" claim here is made on the register stream instead. Two Zynaps
+quirks it is handed: the driver never rewrites register 13, so the envelope generator reads as long
+completed; and it adds a biased delta to its volume byte **without masking**, so a volume register
+really does reach values with bit 4 set — "use the envelope" — which on hardware is silence, and is
+counted as such.
+
 ## Layout and next steps
 
 - [`bin/`](bin) — `ZYNAPS17.PRG`, the patched `zynaps.st`, and `disk/` (the extracted tree).
-- [`out/`](out) — `prg_dis.txt` (linear sweep), `boot/` (boot screenshots), `assets/` (rendered art).
+- [`out/`](out) — `prg_dis.txt` (linear sweep), `boot/` (boot screenshots), `assets/` (rendered
+  art), `audio/` (every tune and effect as `.ym` + `.wav`).
 - [`tools/`](tools) — `boot_shots.py` (headless Hatari driver), `dat2png.py` (asset decoder),
-  `make_bin.sh` (regenerate `bin/` from the gold master). The game-agnostic halves live in
+  `extract_audio.py` (the sound dump above), `make_bin.sh` (regenerate `bin/` from the gold
+  master). The game-agnostic halves live in
   [`tools/hatari_headless.py`](../../tools/hatari_headless.py),
   [`tools/st_pixels.py`](../../tools/st_pixels.py), [`tools/st_extract.py`](../../tools/st_extract.py)
   and [`tools/stx_extract.py`](../../tools/stx_extract.py).
