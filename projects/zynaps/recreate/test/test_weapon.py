@@ -26,6 +26,13 @@ ENTRY_SHOT_RETIRE_KIND36 = 0x155b4
 ENTRY_SHOT_RETIRE_KIND33 = 0x155c2
 ENTRY_SHOT_TO_PUFF = 0x155e2
 ENTRY_PLAYER_SHOTS_CLEAR = 0x15604
+ENTRY_FIRE_SEEKER = 0x13f9e
+ENTRY_FIRE_HOMING_MISSILE = 0x1401a
+ENTRY_SEEKER_UPDATE = 0x140a6
+ENTRY_HOMING_MISSILE_UPDATE = 0x14126
+ENTRY_ENTITY_STEER_TOWARD_TARGET = 0x141d6
+ENTRY_FIRE_BOMB = 0x14324
+ENTRY_BOMB_UPDATE = 0x14376
 
 # --- mirrors of include/weapon.h ---
 A_ENTITY_GUNSIGHT = 0x17dd2
@@ -41,10 +48,45 @@ A_ACTIVE_COUNT_SEEKERS = 0x1990d
 A_MISSILE_LOCK_A = 0x19918
 A_MISSILE_LOCK_B = 0x19919
 A_EXPLOSION_PHASE_ODD = 0x198c5
+A_SEEKER_LOCK_TARGET_INDEX = 0x19917
+A_MISSILE_LAUNCH_COUNTER = 0x198b5
+A_BOMB_LAUNCH_COUNTER = 0x198b6
+A_SEEKER_LAUNCH_COUNTER = 0x198b8
+SHOT_TARGET_INDEX = 0x1a
+SHOT_BOUNCES_LEFT = 0x1a
+SHOT_TURN_COUNTDOWN = 0x1b
+SHOT_TURN_PERIOD = 0x1c
 SHOT_HEADING = 0x1d
+SHOT_SPEED = 0x1e
+SHOT_MAX_TURN = 0x1f
 SHOT_LOCK_SLOT_B = 0x8000
+SHOT_ARM_ROWS = 0x0b
+SHOT_ARM_MAX_TURN = 2
+MISSILE_SPEED = 5
+BOMB_ROWS = 8
+BOMB_LAUNCH_DX = 0x200
+BOMB_GRAVITY_AY = 0x40
+BOMB_BOUNCES = 3
+BOMB_FLOOR_Y = 0xac
+SFX_BOMB_BOUNCE = 0x11
+SFX_BOMB_LAUNCH = 0x18
+SFX_SEEKER_LAUNCH = 0x1a
+ENTITY_INDEX_SHIP = 0x11
+ENTITY_INDEX_TRAIL_DRONE = 0x13
+TYPE_TRAIL_DRONE = 0x35
+MISSILE_NO_TARGET = 0x14
+MISSILE_SCAN_FIRST = 0x08
+MISSILE_SCAN_END = 0x11
+# --- mirrors of include/sound.h: what `sound_start` reads to pick a voice ---
+A_TUNE_INDEX = 0x17058
+A_TUNE_DATA = 0x171e8
+A_SFX_VOICE_TOGGLE = 0x16e90
+SOUND_STREAM_CHANNEL_TAG = 0xfa
 # --- mirrors of include/collision.h: the other half of the same record field ---
 ENTITY_HEIGHT_MASK = 0x7fff
+# ...and the overlap table `bomb_update` resolves its own row in.
+A_ENTITY_COLLISION_MASKS = 0x18252
+COLLISION_ROW_BYTES = 4
 PLAYER_SHOT_SLOTS = 6
 SHOT_TYPE_MISSILE, SHOT_TYPE_BOMB, SHOT_TYPE_SEEKER, SHOT_TYPE_PUFF = 0x32, 0x33, 0x36, 0x37
 A_PUFF_SPRITE = 0x6791e
@@ -68,6 +110,8 @@ TYPE_TARGETABLE_MAX = 0x31
 ENTITY_STRIDE = 0x2c
 ENTITY_X, ENTITY_Y, ENTITY_HEIGHT = 0x00, 0x04, 0x08
 ENTITY_SPRITE, ENTITY_ALIVE, ENTITY_TYPE, ENTITY_ANIM_FRAME = 0x0a, 0x0e, 0x11, 0x20
+ENTITY_PIXEL_HIT, ENTITY_BOUNCE = 0x0f, 0x1b
+ENTITY_DX, ENTITY_DY, ENTITY_AX, ENTITY_AY = 0x12, 0x14, 0x16, 0x18
 
 RESULT_CANARY = 0x5a
 ENTITY_SLOTS = 20               # the whole table, so a stray write past slot 5 is visible
@@ -89,7 +133,14 @@ for _name, _args in (
         ("g_shot_set_sprite_a", [ctypes.c_uint32]),
         ("g_shot_anim_puff", [ctypes.c_uint32]),
         ("g_player_shot_update_all", []),
-        ("g_player_shots_clear", [])):
+        ("g_player_shots_clear", []),
+        ("g_entity_steer_toward_target", [ctypes.c_uint32]),
+        ("g_fire_seeker", [ctypes.c_uint32] * 3),
+        ("g_fire_homing_missile", [ctypes.c_uint32]),
+        ("g_fire_bomb", [ctypes.c_uint32] * 2),
+        ("g_seeker_update", [ctypes.c_uint32]),
+        ("g_homing_missile_update", [ctypes.c_uint32]),
+        ("g_bomb_update", [ctypes.c_uint32] * 2)):
     getattr(harness._lib, _name).argtypes = [_UINT8P] + _args
     getattr(harness._lib, _name).restype = None
 
@@ -536,6 +587,644 @@ def test_player_shots_clear_attribution():
     _table_case(ENTRY_PLAYER_SHOTS_CLEAR, "g_player_shots_clear", slots, poison=True)
 
 
+# ================================================================================================
+# Steering, launching and the three per-frame projectile updates.
+#
+# All seven take their record through a register and write only the image, so they are driven at
+# their own entries over the WHOLE poked entity table — which is what makes a wrong record stride,
+# a wrong slot or a stray write outside the record visible. The weapon state they share (the launch
+# counters, the two lock bytes, the gunsight's lock) is poked as one block per case, with a guard
+# byte in the gap so an off-by-one store shows up as a diff rather than as a coincidence.
+# ================================================================================================
+STEER_SLOT = 0                  # the shot under test, unless a case says otherwise
+DEFAULT_TARGET_SLOT = 9         # the first wave-enemy slot — what a missile's scan finds first
+GUARD = 0xa5
+
+
+def _slot_addr(index):
+    return A_ENTITY_TABLE + index * ENTITY_STRIDE
+
+
+def _at_slot(slots, slot):
+    """The same slot map with the shot under test moved from STEER_SLOT to `slot`.
+
+    For the per-slot sweeps: these routines take their record as a POINTER, so a case at one slot
+    says nothing about the others, and a wrong stride or a wrong table base lands on a neighbour.
+    """
+    moved = dict(slots)
+    moved[slot] = moved.pop(STEER_SLOT)
+    return moved
+
+
+def _weapon_pokes(lock_target=0, lock_a=0, lock_b=0, toggle=None):
+    """The weapon-wide bytes a launch or an update reads and writes.
+
+    The two pokes are laid out to catch a neighbour: `A_MISSILE_LAUNCH_COUNTER` covers the bomb and
+    seeker counters either side of `free_wave_slot_count` (0x198b7, the enemy subsystem's — a guard
+    here, never a target), and the lock poke covers `lives_remaining` (0x1991a) one past the pair.
+    """
+    pokes = {A_MISSILE_LAUNCH_COUNTER: bytes([0x51, 0x52, GUARD, 0x53]),
+             A_SEEKER_LOCK_TARGET_INDEX: bytes([lock_target, lock_a, lock_b, GUARD])}
+    if toggle is not None:
+        pokes[A_SFX_VOICE_TOGGLE] = bytes([toggle])
+    return pokes
+
+
+def test_the_weapon_state_block_this_battery_pokes():
+    """`_weapon_pokes` writes each block as ONE run of bytes, so its layout is a claim about the
+    addresses — a claim no compiler can check and that silently weakens every launch case if it
+    drifts. The gap byte between the bomb and seeker counters is `free_wave_slot_count` (the enemy
+    subsystem's) and the byte past the lock pair is `lives_remaining`; both are guards here.
+    """
+    assert A_BOMB_LAUNCH_COUNTER == A_MISSILE_LAUNCH_COUNTER + 1
+    assert A_SEEKER_LAUNCH_COUNTER == A_MISSILE_LAUNCH_COUNTER + 3
+    assert A_MISSILE_LOCK_A == A_SEEKER_LOCK_TARGET_INDEX + 1
+    assert A_MISSILE_LOCK_B == A_SEEKER_LOCK_TARGET_INDEX + 2
+
+
+def _projectile_case(entry, glue_name, register, slots, slot=STEER_SLOT, args=(), regs=None,
+                     extra=None, poison=False, note=""):
+    """Run one routine that takes an entity record in `register`, over the seeded table."""
+    record = _slot_addr(slot)
+    pokes = _table_pokes(slots)
+    pokes.update(_weapon_pokes())
+    pokes.update(extra or {})
+    run_regs = {register: record, "_pokes": pokes}
+    run_regs.update(regs or {})
+    diffs, _ = differential(
+        entry, run_regs,
+        lambda lib, buf: getattr(lib, glue_name)(buf, record, *args), poison=poison)
+    assert not diffs, f"{note}\n{report(diffs)}"
+
+
+# ------------------------------------------------------------------------------------------------
+# entity_steer_toward_target @ 0x141d6
+# ------------------------------------------------------------------------------------------------
+SHOT_POSITION = {"l00": 0x00800000, "l04": 0x00400000}   # x/y as the 8-bit-fraction fixed point
+
+
+def _merge_slot(slots, index, fields):
+    """Add `fields` under `index` WITHOUT discarding what is already there; existing keys win.
+
+    `slots[index] = fields` was the bug: a case that aimed the shot at its OWN slot replaced the
+    whole steering block with three position keys, so the countdown reverted to `_record` noise, the
+    turn never came due, and every such case silently became a duplicate of the countdown-only arm.
+    Existing keys win because the caller that named a field meant it — a shot aimed at itself keeps
+    its own position and its own alive byte, which is exactly what that state is.
+    """
+    merged = dict(fields)
+    merged.update(slots.get(index, {}))
+    slots[index] = merged
+
+
+def _steer_slots(heading, countdown=1, period=3, speed=4, max_turn=2, target=DEFAULT_TARGET_SLOT,
+                 target_x=0x00c00000, target_y=0x00400000, target_alive=1, shot=None):
+    """The shot under test plus the record it is aimed at, as a `_table_pokes` slot map."""
+    fields = dict(SHOT_POSITION, b1a=target, b1b=countdown, b1c=period, b1d=heading, b1e=speed,
+                  b1f=max_turn, b0e=1, b11=SHOT_TYPE_SEEKER)
+    fields.update(shot or {})
+    slots = {STEER_SLOT: fields}
+    if target < ENTITY_SLOTS:
+        _merge_slot(slots, target, {"l00": target_x, "l04": target_y, "b0e": target_alive})
+    return slots
+
+
+def _steer_case(slots, poison=False, note=""):
+    _projectile_case(ENTRY_ENTITY_STEER_TOWARD_TARGET, "g_entity_steer_toward_target", "a2",
+                     slots, poison=poison, note=note)
+
+
+@pytest.mark.parametrize("countdown", (2, 3, 0x80, 0xff, 0x00))
+def test_steer_only_moves_while_the_turn_countdown_runs(countdown):
+    """A countdown that does not reach zero skips the whole steering block and only integrates.
+
+    Driven with a heading and a target that WOULD turn, so a reconstruction that steered anyway
+    diverges — and with 0, which `subi.b` wraps to 0xff rather than treating as expired.
+    """
+    _steer_case(_steer_slots(heading=0x10, countdown=countdown), note=f"countdown={countdown:#04x}")
+
+
+@pytest.mark.parametrize("period", (0, 1, 4, 0x80, 0xff))
+def test_steer_reloads_the_countdown_from_its_period(period):
+    """On the frame it expires the countdown is reloaded from SHOT_TURN_PERIOD, whatever that is —
+    including 0, which arms a wrap on the next call rather than a permanent stall."""
+    _steer_case(_steer_slots(heading=0, period=period), note=f"period={period:#04x}")
+
+
+STEER_CHUNKS = 4
+
+
+@pytest.mark.parametrize("chunk", range(STEER_CHUNKS))
+def test_steer_from_every_heading_byte(chunk):
+    """All 256 heading bytes against one fixed target, sharded four ways.
+
+    The game only ever holds 0..0x3f there, but every step of the turn is a BYTE operation — the
+    difference is a signed byte, its magnitude a `neg.b`, and the two turn arms wrap with `and.b
+    #$3f` — so the full range is what pins the signedness. A heading of 0x80 makes the difference
+    read negative for targets a masked reading would call positive, and the two spellings part.
+    """
+    for heading in range(chunk, 0x100, STEER_CHUNKS):
+        _steer_case(_steer_slots(heading=heading), note=f"heading={heading:#04x}")
+
+
+@pytest.mark.parametrize("max_turn", (0, 1, 2, 0x1f, 0x20, 0x7f, 0x80, 0xff))
+@pytest.mark.parametrize("heading", (0, 0x08, 0x20, 0x30))
+def test_steer_turn_limit_is_a_signed_byte(max_turn, heading):
+    """`cmp.b d2,d0` + `bge` is SIGNED, so a max-turn of 0x80 or 0xff is NEGATIVE and every
+    difference clears it — the shot then always steps by that byte instead of snapping to the
+    target. A max-turn of 0 has the same shape from the other side: nothing is ever within it."""
+    _steer_case(_steer_slots(heading=heading, max_turn=max_turn),
+                note=f"max_turn={max_turn:#04x} heading={heading:#04x}")
+
+
+@pytest.mark.parametrize("target_x,target_y", ((0x00800000, 0x00400000),   # exactly on top
+                                               (0x00c00000, 0x00400000),   # due east
+                                               (0x00400000, 0x00400000),   # due west
+                                               (0x00800000, 0x00800000),   # due south
+                                               (0x00800000, 0x00100000),   # due north
+                                               (0x00c00000, 0x00800000),   # each diagonal
+                                               (0x00400000, 0x00800000),
+                                               (0x00c00000, 0x00100000),
+                                               (0x00400000, 0x00100000)))
+def test_steer_towards_a_target_in_every_octant(target_x, target_y):
+    """One target per compass point, each from four headings — which is what pins WHICH WAY the
+    turn goes. `(-difference) & 0x3f >= 0x20` is the only thing choosing between +max and -max, and
+    a target on the far side of the circle is exactly where the two answers separate."""
+    for heading in (0, 0x0f, 0x20, 0x3a):
+        _steer_case(_steer_slots(heading=heading, target_x=target_x, target_y=target_y),
+                    note=f"heading={heading:#04x} target=({target_x:#x},{target_y:#x})")
+
+
+def test_steer_leaves_the_velocity_alone_when_already_on_heading():
+    """A difference of zero branches straight to the position step — the velocity pair keeps
+    whatever the last turn left in it rather than being re-derived from the same angle.
+
+    The shot's velocity words are noise, so a reconstruction that recomputed them would overwrite
+    that noise with the table's own answer and diverge.
+
+    HEADING 0 IS THE ONE THAT REACHES THIS ARM, in both shapes below: `angle_to_target` answers 0
+    for a target on the same cell as the asker (every octant flag clear, the slope search exhausted)
+    and 0 for one due east of it, so a shot already holding heading 0 has a difference of zero.
+    Before this was written explicitly the arm was reached only incidentally, by the one heading in
+    256 that happened to match in `test_steer_from_every_heading_byte`.
+    """
+    shot_x, shot_y = SHOT_POSITION["l00"], SHOT_POSITION["l04"]
+
+    _steer_case(_steer_slots(heading=0, target=STEER_SLOT), note="aimed at its own slot")
+    _steer_case(_steer_slots(heading=0, target_x=shot_x + 0x00400000, target_y=shot_y),
+                note="aimed due east")
+
+
+@pytest.mark.parametrize("heading", (0x01, 0x10, 0x20, 0x30, 0x3f))
+def test_steer_at_its_own_slot_from_a_heading_that_must_turn(heading):
+    """The same self-target with a heading that is NOT the answer, so the turn runs on a degenerate
+    angle — the case the clobbered slot map used to swallow (see `_merge_slot`)."""
+    _steer_case(_steer_slots(heading=heading, target=STEER_SLOT),
+                note=f"aimed at its own slot, heading={heading:#04x}")
+
+
+@pytest.mark.parametrize("target", (0, 1, 9, 0x13, ENTITY_SLOTS - 1, ENTITY_SLOTS, 0x50, 0x7f,
+                                    0x80, 0xff))
+def test_steer_resolves_the_target_index_as_a_byte(target):
+    """The target record is `entity_table + (index & 0xff) * 0x2c`, so every one of the 256 indices
+    resolves — the ones past the table onto ordinary bss, which reads as a record of zeroes.
+
+    Indices 0x14..0xff are what pin the stride: a wrong multiplier lands on a different record for
+    every one of them, and the angle it computes from that record's position differs.
+    """
+    _steer_case(_steer_slots(heading=5, target=target), note=f"target={target:#04x}")
+
+
+@pytest.mark.parametrize("speed", (0, 1, 4, 0x7f, 0x80, 0xff))
+def test_steer_speed_is_sign_extended(speed):
+    """SHOT_SPEED reaches `entity_set_velocity_from_angle` through `ext.w d1`, so 0x80..0xff are
+    NEGATIVE speeds and the shot flies backwards along its heading."""
+    _steer_case(_steer_slots(heading=0x11, speed=speed), note=f"speed={speed:#04x}")
+
+
+def test_steer_attribution():
+    """Poison the turning arm, the already-on-heading arm and the countdown-only arm."""
+    shot_x, shot_y = SHOT_POSITION["l00"], SHOT_POSITION["l04"]
+
+    _steer_case(_steer_slots(heading=0x30), poison=True)
+    _steer_case(_steer_slots(heading=0, target_x=shot_x + 0x00400000, target_y=shot_y),
+                poison=True)
+    _steer_case(_steer_slots(heading=0x30, countdown=4), poison=True)
+
+
+# ------------------------------------------------------------------------------------------------
+# The three launchers.
+# ------------------------------------------------------------------------------------------------
+def test_every_launch_sound_names_its_own_channel():
+    """D0 reaches `sound_start` as the channel a stream without a header would be armed on — and
+    all three shipped streams DO carry one, so D0 cannot pick the voice.
+
+    Asserted off the image rather than assumed, because it is the whole reason the batteries below
+    can drive one D0 and call the launch verified: `sound_start` overwrites the channel from the
+    stream's 0xfa header before it selects a voice record (src/sound.c).
+    """
+    for number in (SFX_SEEKER_LAUNCH, SFX_BOMB_LAUNCH, SFX_BOMB_BOUNCE):
+        offset = int.from_bytes(bytes(harness.BASE_IMAGE[A_TUNE_INDEX + number * 2:][:2]), "little")
+        stream = (A_TUNE_DATA + (offset - 0x10000 if offset & 0x8000 else offset)) & 0xffffffff
+        assert harness.BASE_IMAGE[stream] == SOUND_STREAM_CHANNEL_TAG, (
+            f"sfx {number:#x} no longer opens with the 0xfa channel header — D0 now reaches the "
+            f"voice selection and every launch case has to drive it")
+
+
+LAUNCH_SLOT_NOISE = {"b0e": 0, "b11": 0x77, "w08": 0x1234, "l0a": 0xdeadbeef, "b1a": 0x99,
+                     "b1b": 0x88, "b1c": 0x66, "b1d": 0x55, "b1e": 0x44, "b1f": 0x33, "b20": 0x22}
+SHIP_SHADOW_POSITION = {"w00": 0x0140, "w04": 0x0060}
+
+
+def _launch_slots(shot_fields=None):
+    """A free slot pre-loaded with values every launch store must overwrite, plus the ship shadow
+    the spawn position is copied from (slot 18 — see the record-layout test at the top)."""
+    fields = dict(LAUNCH_SLOT_NOISE)
+    fields.update(shot_fields or {})
+    return {STEER_SLOT: fields, 18: dict(SHIP_SHADOW_POSITION)}
+
+
+def _launch_case(entry, glue_name, slots, args=(), regs=None, lock=None, toggle=None,
+                 poison=False, note=""):
+    """One launcher, at the shot slot, with the weapon-state block a case names.
+
+    A thin wrapper over `_projectile_case` rather than a second copy of it: `extra` replaces the
+    default `_weapon_pokes()` under the same two keys, so any hardening added to the shared runner
+    reaches the launch cases too.
+    """
+    _projectile_case(entry, glue_name, "a3", slots, args=args, regs=regs,
+                     extra=_weapon_pokes(**(lock or {}), toggle=toggle),
+                     poison=poison, note=note)
+
+
+@pytest.mark.parametrize("lock_target", (0, 1, 9, 0x13, 0x7f, 0x80, 0xff))
+@pytest.mark.parametrize("fallback", (0, 0x0d, 0xff))
+def test_fire_seeker_target_and_sound_follow_the_gunsight_lock(lock_target, fallback):
+    """The lock decides BOTH the seeker's target and whether the launch makes a sound.
+
+    With `A_seeker_lock_target_index` clear the routine keeps D6 — its caller's own byte — and never
+    reaches `sound_start`, so nothing in the voice records moves. With it set, the lock byte becomes
+    the target and sfx 0x1a is armed. Both bytes are driven independently, which is what separates
+    "copies the lock" from "copies D6" on the case where they happen to agree.
+    """
+    _launch_case(ENTRY_FIRE_SEEKER, "g_fire_seeker", _launch_slots(),
+                 args=(fallback, 0), regs={"d6": fallback, "d0": 0},
+                 lock={"lock_target": lock_target},
+                 note=f"lock={lock_target:#04x} d6={fallback:#04x}")
+
+
+@pytest.mark.parametrize("fallback_reg", (0x00000000, 0xffffff00, 0x000000ff, 0x123456ff,
+                                          0x12345678))
+def test_fire_seeker_keeps_only_d6s_low_byte(fallback_reg):
+    """`move.b d6,26(a2)` stores a byte: the register's high three are never read.
+
+    Two PAIRS share a low byte (0x00 and 0xff) with different upper halves, which is what makes
+    "only the low byte survives" observable rather than assumed. The WHOLE register goes to the glue
+    as well as to the oracle, so `g_fire_seeker`'s own `(uint8_t)` narrowing is exercised — handing
+    it a pre-masked byte would have left that cast untested on both sides.
+    """
+    _launch_case(ENTRY_FIRE_SEEKER, "g_fire_seeker", _launch_slots(),
+                 args=(fallback_reg, 0), regs={"d6": fallback_reg, "d0": 0},
+                 note=f"d6={fallback_reg:#010x}")
+
+
+@pytest.mark.parametrize("channel", (1, 0xff))
+@pytest.mark.parametrize("toggle", (0, 1, 2, 3))
+def test_fire_seeker_sound_ignores_d0_and_alternates_on_the_toggle(channel, toggle):
+    """Which voice sfx 0x1a lands on comes from the stream's own header (code 4 = "alternate") and
+    the toggle byte it flips — never from D0.
+
+    The toggle axis is swept and the channel axis is not, deliberately: the header claim above
+    (`test_every_launch_sound_names_its_own_channel`) is what says D0 cannot reach the selection, so
+    a wider channel grid would repeat the toggle axis rather than add a case. Two values, one a
+    voice code the driver names and one it does not, are what a reader needs to see it driven.
+    """
+    _launch_case(ENTRY_FIRE_SEEKER, "g_fire_seeker", _launch_slots(),
+                 args=(7, channel), regs={"d6": 7, "d0": channel},
+                 lock={"lock_target": 9}, toggle=toggle,
+                 note=f"d0={channel:#04x} toggle={toggle}")
+
+
+@pytest.mark.parametrize("alive", (0, 1, 0x80, 0xff))
+def test_fire_seeker_has_no_alive_guard(alive):
+    """Unlike the missile and the bomb, the seeker overwrites a slot whoever it belongs to — the
+    caller has already chosen a free one. Stated by driving the same grid its neighbours refuse."""
+    _launch_case(ENTRY_FIRE_SEEKER, "g_fire_seeker", _launch_slots({"b0e": alive}),
+                 args=(9, 0), regs={"d6": 9, "d0": 0}, lock={"lock_target": 9},
+                 note=f"alive={alive:#04x}")
+
+
+@pytest.mark.parametrize("alive", (0, 1, 0x80, 0xff))
+@pytest.mark.parametrize("lock_a", (0, 1, 0xff))
+def test_fire_homing_missile(alive, lock_a):
+    """The alive guard, and which of the two lock slots the new missile claims.
+
+    A non-zero `A_missile_lock_a` means the other missile already owns slot A, so this one sets
+    ENTITY_HEIGHT's bit 15 — over a row count the same instruction has just stored, which is why
+    the height is checked as a whole word rather than as a flag.
+    """
+    _launch_case(ENTRY_FIRE_HOMING_MISSILE, "g_fire_homing_missile",
+                 _launch_slots({"b0e": alive}), lock={"lock_a": lock_a},
+                 note=f"alive={alive:#04x} lock_a={lock_a:#04x}")
+
+
+@pytest.mark.parametrize("alive", (0, 1, 0x80, 0xff))
+@pytest.mark.parametrize("channel", (0, 3))
+def test_fire_bomb(alive, channel):
+    """The alive guard, and the eight fields a launch writes over the slot's previous contents."""
+    _launch_case(ENTRY_FIRE_BOMB, "g_fire_bomb", _launch_slots({"b0e": alive}),
+                 args=(channel,), regs={"d0": channel},
+                 note=f"alive={alive:#04x} d0={channel}")
+
+
+@pytest.mark.parametrize("shadow_x,shadow_y", ((0, 0), (0xffff, 0xffff), (0x8000, 0x7fff)))
+def test_every_launch_spawns_at_the_ship_shadow(shadow_x, shadow_y):
+    """All three launches copy the shadow record's x/y in — and the bomb does it LAST, as a tail
+    call, after it has already written its velocity pair."""
+    slots = _launch_slots()
+    slots[18] = {"w00": shadow_x, "w04": shadow_y}
+    note = f"shadow=({shadow_x:#06x},{shadow_y:#06x})"
+    _launch_case(ENTRY_FIRE_SEEKER, "g_fire_seeker", slots, args=(9, 0),
+                 regs={"d6": 9, "d0": 0}, note=note)
+    _launch_case(ENTRY_FIRE_HOMING_MISSILE, "g_fire_homing_missile", slots, note=note)
+    _launch_case(ENTRY_FIRE_BOMB, "g_fire_bomb", slots, args=(0,), note=note)
+
+
+def test_launch_attribution():
+    """Poison each launcher's whole write set, on an arm that actually launches."""
+    _launch_case(ENTRY_FIRE_SEEKER, "g_fire_seeker", _launch_slots(), args=(9, 0),
+                 regs={"d6": 9, "d0": 0}, lock={"lock_target": 9}, poison=True)
+    _launch_case(ENTRY_FIRE_HOMING_MISSILE, "g_fire_homing_missile", _launch_slots(),
+                 lock={"lock_a": 1}, poison=True)
+    _launch_case(ENTRY_FIRE_BOMB, "g_fire_bomb", _launch_slots(), args=(0,), poison=True)
+
+
+# ------------------------------------------------------------------------------------------------
+# seeker_update @ 0x140a6
+# ------------------------------------------------------------------------------------------------
+def _seeker_slots(target=DEFAULT_TARGET_SLOT, target_alive=1, time_to_live=0x20,
+                  gunsight_alive=1, gunsight_type=TYPE_TRAIL_DRONE):
+    slots = _steer_slots(heading=0x08, target=target, target_alive=target_alive,
+                         shot={"b20": time_to_live})
+    # Merged, not assigned: when a case aims the seeker AT the drone's own slot, `_steer_slots` has
+    # already written that slot's alive byte from `target_alive`, and that is the value the case
+    # asked for — the gunsight arguments describe the slot only when it is not also the target.
+    _merge_slot(slots, ENTITY_INDEX_TRAIL_DRONE,
+                {"b0e": gunsight_alive, "b11": gunsight_type,
+                 "l00": 0x00300000, "l04": 0x00700000})
+    return slots
+
+
+@pytest.mark.parametrize("gunsight_alive", (0, 1, 0xff))
+@pytest.mark.parametrize("gunsight_type", (TYPE_TRAIL_DRONE, SHOT_TYPE_SEEKER, 0x00))
+def test_seeker_retargets_at_the_drone_or_the_ship(gunsight_alive, gunsight_type):
+    """A dead target sends the seeker at the drone when slot 19 holds a LIVE one of type 0x35, and
+    at the ship otherwise — the two conditions driven independently, so "alive" and "is a drone"
+    cannot stand in for each other."""
+    _projectile_case(ENTRY_SEEKER_UPDATE, "g_seeker_update", "a3",
+                     _seeker_slots(target_alive=0, gunsight_alive=gunsight_alive,
+                                   gunsight_type=gunsight_type),
+                     note=f"gunsight alive={gunsight_alive:#04x} type={gunsight_type:#04x}")
+
+
+@pytest.mark.parametrize("target", (0, 9, 0x13, ENTITY_SLOTS, 0xff))
+def test_seeker_keeps_a_live_target(target):
+    """A target that is still alive is left alone — including the drone's own slot and an index
+    past the table, whose zeroed record always reads as dead and so always retargets."""
+    _projectile_case(ENTRY_SEEKER_UPDATE, "g_seeker_update", "a3",
+                     _seeker_slots(target=target), note=f"target={target:#04x}")
+
+
+@pytest.mark.parametrize("time_to_live", (0, 1, 2, 6, 0x80, 0xff))
+def test_seeker_time_to_live(time_to_live):
+    """`subi.b #$1,32(a2)` + `beq`: only the frame it reaches EXACTLY zero retires the seeker, so a
+    TTL of 0 wraps to 0xff and flies on. Retiring goes through the already-verified
+    `shot_retire_kind36`, which turns the record into a puff and steps the seeker count down."""
+    _projectile_case(ENTRY_SEEKER_UPDATE, "g_seeker_update", "a3",
+                     _seeker_slots(time_to_live=time_to_live),
+                     note=f"ttl={time_to_live:#04x}")
+
+
+@pytest.mark.parametrize("slot", range(PLAYER_SHOT_SLOTS))
+def test_seeker_update_at_every_shot_slot(slot):
+    """The routine takes its record as a pointer, so a case at one slot says nothing about the
+    others; every slot is driven, and the rest of the table must come back untouched."""
+    _projectile_case(ENTRY_SEEKER_UPDATE, "g_seeker_update", "a3", _at_slot(_seeker_slots(), slot),
+                     slot=slot, note=f"slot={slot}")
+
+
+def test_seeker_update_attribution():
+    _projectile_case(ENTRY_SEEKER_UPDATE, "g_seeker_update", "a3",
+                     _seeker_slots(target_alive=0), poison=True)
+    _projectile_case(ENTRY_SEEKER_UPDATE, "g_seeker_update", "a3",
+                     _seeker_slots(time_to_live=1), poison=True)
+
+
+# ------------------------------------------------------------------------------------------------
+# homing_missile_update @ 0x14126
+# ------------------------------------------------------------------------------------------------
+# The two types the shipped 0x1918e table lists that a wave-enemy slot can plausibly hold, and one
+# it does not — read back through `_class_bit` so the case ages with the data.
+MISSILE_TARGET_TYPE = 0x01
+MISSILE_INERT_TYPE = 0x20
+
+
+def _missile_slots(target=MISSILE_NO_TARGET, time_to_live=0x20, lock_slot_b=False,
+                   enemies=None):
+    """The missile plus whichever wave-enemy slots (9..16) a case wants populated."""
+    height = SHOT_ARM_ROWS | (SHOT_LOCK_SLOT_B if lock_slot_b else 0)
+    slots = {STEER_SLOT: dict(SHOT_POSITION, b0e=1, b11=SHOT_TYPE_MISSILE, w08=height,
+                              b1a=target, b1b=1, b1c=3, b1d=0x08, b1e=MISSILE_SPEED,
+                              b1f=SHOT_ARM_MAX_TURN, b20=time_to_live)}
+    for index, (alive, type_byte) in (enemies or {}).items():
+        slots[index] = {"b0e": alive, "b11": type_byte, "l00": 0x00a00000 + index * 0x10000,
+                        "l04": 0x00300000}
+    return slots
+
+
+def _missile_case(slots, lock=None, poison=False, note=""):
+    _projectile_case(ENTRY_HOMING_MISSILE_UPDATE, "g_homing_missile_update", "a3", slots,
+                     extra=_weapon_pokes(**(lock or {})), poison=poison, note=note)
+
+
+def test_the_missile_target_types_this_battery_uses():
+    """One type the shipped 0x1918e table lists and one it does not — asserted, because every
+    acquire case below turns on the answer and the table is the game's, not the case's."""
+    assert _class_bit(A_TYPE_MASK_MISSILE_TARGET, MISSILE_TARGET_TYPE)
+    assert not _class_bit(A_TYPE_MASK_MISSILE_TARGET, MISSILE_INERT_TYPE)
+
+
+@pytest.mark.parametrize("lock_slot_b", (False, True))
+def test_missile_acquires_the_first_lockable_enemy(lock_slot_b):
+    """The scan runs slots 9..16 and takes the first live, listed one — writing its index into the
+    lock slot ENTITY_HEIGHT's bit 15 names, which is the only difference the two arms have."""
+    slots = _missile_slots(lock_slot_b=lock_slot_b,
+                           enemies={9: (0, MISSILE_TARGET_TYPE),
+                                    10: (1, MISSILE_INERT_TYPE),
+                                    11: (1, MISSILE_TARGET_TYPE),
+                                    12: (1, MISSILE_TARGET_TYPE)})
+    _missile_case(slots, note=f"lock_slot_b={lock_slot_b}")
+
+
+@pytest.mark.parametrize("held", (9, 10, 11, 0x10))
+def test_missile_refuses_a_target_the_other_missile_holds(held):
+    """The claim test compares the two lock BYTES, so a candidate whose index is already in the
+    other slot leaves the pair equal and the scan walks past it — after storing it, which is what
+    makes the arm observable at all: the lock byte moves even on the candidate that is refused."""
+    slots = _missile_slots(enemies={index: (1, MISSILE_TARGET_TYPE) for index in range(9, 0x11)})
+    _missile_case(slots, lock={"lock_b": held}, note=f"other missile holds {held:#04x}")
+
+
+def test_missile_gives_up_when_nothing_is_lockable():
+    """A scan that reaches the ship's own slot parks MISSILE_NO_TARGET in the record AND the lock."""
+    for enemies in ({}, {index: (1, MISSILE_INERT_TYPE) for index in range(9, 0x11)},
+                    {index: (0, MISSILE_TARGET_TYPE) for index in range(9, 0x11)}):
+        _missile_case(_missile_slots(enemies=enemies), lock={"lock_a": 0x0c},
+                      note=f"{len(enemies)} enemy slots seeded")
+
+
+@pytest.mark.parametrize("target", (0, 8, 9, 0x10, MISSILE_NO_TARGET, 0x15, 0x7f, 0x80, 0xff))
+def test_missile_scan_resumes_from_its_current_target(target):
+    """The scan starts at the CURRENT target index, not at the first slot — except from
+    MISSILE_NO_TARGET, which restarts it at MISSILE_SCAN_FIRST.
+
+    The counter is a byte, so an index above the enemy slots walks up through 0xff, wraps, and only
+    then reaches MISSILE_SCAN_END — a long walk with the same answer, and the case that says the
+    loop terminates rather than spinning.
+    """
+    slots = _missile_slots(target=target,
+                           enemies={index: (1, MISSILE_TARGET_TYPE) for index in range(9, 0x11)})
+    slots[STEER_SLOT]["b0e"] = 1
+    _missile_case(slots, note=f"target={target:#04x}")
+
+
+@pytest.mark.parametrize("alive", (0, 1))
+@pytest.mark.parametrize("type_byte", (MISSILE_TARGET_TYPE, MISSILE_INERT_TYPE))
+def test_missile_keeps_a_valid_target_and_re_acquires_otherwise(alive, type_byte):
+    """A target is kept only while it is BOTH alive and listed; either failing runs the scan."""
+    slots = _missile_slots(target=11, enemies={11: (alive, type_byte),
+                                               12: (1, MISSILE_TARGET_TYPE)})
+    _missile_case(slots, note=f"target 11 alive={alive} type={type_byte:#04x}")
+
+
+@pytest.mark.parametrize("time_to_live", (0, 1, 2, 0x80, 0xff))
+@pytest.mark.parametrize("lock_slot_b", (False, True))
+def test_missile_time_to_live_releases_its_own_lock(time_to_live, lock_slot_b):
+    """Retiring goes through `shot_retire_kind32`, which frees the lock slot the height's bit 15
+    names — so both lock bytes are poked to distinct markers and the wrong one shows."""
+    slots = _missile_slots(target=11, time_to_live=time_to_live, lock_slot_b=lock_slot_b,
+                           enemies={11: (1, MISSILE_TARGET_TYPE)})
+    _missile_case(slots, lock={"lock_a": 0x77, "lock_b": 0x88},
+                  note=f"ttl={time_to_live:#04x} lock_slot_b={lock_slot_b}")
+
+
+def test_missile_update_attribution():
+    _missile_case(_missile_slots(enemies={11: (1, MISSILE_TARGET_TYPE)}), poison=True)
+    _missile_case(_missile_slots(target=11, time_to_live=1,
+                                 enemies={11: (1, MISSILE_TARGET_TYPE)}), poison=True)
+
+
+# ------------------------------------------------------------------------------------------------
+# bomb_update @ 0x14376
+# ------------------------------------------------------------------------------------------------
+COLLISION_ROWS = 21             # the table's full height, so a wrong row index lands in it
+
+
+def _collision_rows(marked=()):
+    """The whole overlap table, all rows clear except the ones a case names.
+
+    Built by `abi.indexed_table`, which is shared with `test_collision.py` because the slice
+    assignment this needs has been written wrong twice in this project — see its docstring.
+    """
+    return {A_ENTITY_COLLISION_MASKS: abi.indexed_table(COLLISION_ROWS, COLLISION_ROW_BYTES,
+                                                        dict(marked))}
+
+
+# ENTITY_AX IS SEEDED NON-ZERO, and it is the one field here a launched bomb never holds — fire_bomb
+# clears it. Without it the accel mask is half untested: `entity_apply_accel` on the X axis with a
+# zero ENTITY_AX stores ENTITY_DX back unchanged, so widening the mask from bit 5 alone to bits 3+5
+# or 4+5 (claiming the bomb also accelerates horizontally, which `move.b #$20,d1` does not) writes a
+# byte-identical image and the differential cannot see it. `bomb_update` takes the record as given,
+# so a record with a live AX is a legitimate input to its contract even though the launcher's is 0.
+BOMB_SEEDED_AX = 0x0180
+
+
+def _bomb_slots(alive=1, pixel_hit=1, bounces=BOMB_BOUNCES, latched=0, dy=0x0100, y=0x00300000):
+    return {STEER_SLOT: {"l00": 0x00800000, "l04": y, "b0e": alive, "b11": SHOT_TYPE_BOMB,
+                         "b0f": pixel_hit, "b1a": bounces, "b1b": latched,
+                         "w12": BOMB_LAUNCH_DX, "w14": dy, "w16": BOMB_SEEDED_AX,
+                         "w18": BOMB_GRAVITY_AY, "w08": BOMB_ROWS}}
+
+
+def _bomb_case(slots, marked=(), slot=STEER_SLOT, channel=0, poison=False, note=""):
+    _projectile_case(ENTRY_BOMB_UPDATE, "g_bomb_update", "a3", slots, slot=slot,
+                     args=(channel,), regs={"d0": channel}, extra=_collision_rows(marked),
+                     poison=poison, note=note)
+
+
+@pytest.mark.parametrize("alive", (0, 1, 0x80, 0xff))
+def test_bomb_alive_guard(alive):
+    """A dead slot returns before anything — including before the row pointer it has already
+    computed is used, which is what makes the guard observable rather than harmless."""
+    _bomb_case(_bomb_slots(alive=alive), note=f"alive={alive:#04x}")
+
+
+@pytest.mark.parametrize("pixel_hit", (0, 1, 0x80, 0xff))
+@pytest.mark.parametrize("row_bits", (0, 1, 0x80000000, 0xffffffff))
+def test_bomb_bounces_only_off_the_landscape(pixel_hit, row_bits):
+    """A pixel hit is the landscape only when the bomb's own overlap row is EMPTY: any other entity
+    under it explains the hit instead, and the bomb falls through untouched with its latch cleared.
+
+    Both halves are driven together, so neither can stand in for the other.
+    """
+    _bomb_case(_bomb_slots(pixel_hit=pixel_hit), marked=((STEER_SLOT, row_bits),),
+               note=f"pixel_hit={pixel_hit:#04x} row={row_bits:#010x}")
+
+
+@pytest.mark.parametrize("slot", range(PLAYER_SHOT_SLOTS))
+def test_bomb_resolves_its_own_collision_row(slot):
+    """The bomb divides its record ADDRESS back into an index to find its row, so every slot is
+    driven with ONLY that slot's row marked — a wrong stride or a wrong shift then reads a clear
+    row where the case set one, and the bomb bounces when it should not."""
+    slots = _at_slot(_bomb_slots(), slot)
+    for marked_row in (slot, (slot + 1) % PLAYER_SHOT_SLOTS):
+        _bomb_case(slots, marked=((marked_row, 0xffffffff),), slot=slot,
+                   note=f"slot={slot} marked row={marked_row}")
+
+
+@pytest.mark.parametrize("dy", (0, 1, 2, 3, 0x0100, 0x7fff, 0x8000, 0x8001, 0xfffe, 0xffff))
+def test_bomb_bounce_halves_and_reverses_the_fall(dy):
+    """`neg.w` then `asr.w #1`. The shift is ARITHMETIC, so an upward (negative) result halves
+    towards zero and not towards 0xffff; 0x8000 is the value where `neg.w` overflows back onto
+    itself and the two readings of the shift part."""
+    _bomb_case(_bomb_slots(dy=dy), note=f"dy={dy:#06x}")
+
+
+@pytest.mark.parametrize("latched", (0, 1, 0x80, 0xff))
+@pytest.mark.parametrize("bounces", (0, 1, 2, BOMB_BOUNCES, 0x80, 0xff))
+def test_bomb_latch_and_bounce_count(latched, bounces):
+    """ENTITY_BOUNCE is a one-frame latch: a bomb ALREADY on the terrain last frame is retired
+    instead of bouncing. The count is stepped first either way, so a retiring bomb still spends
+    one — and a count of 0 wraps to 0xff rather than retiring on the wrap."""
+    _bomb_case(_bomb_slots(latched=latched, bounces=bounces),
+               note=f"latched={latched:#04x} bounces={bounces:#04x}")
+
+
+@pytest.mark.parametrize("y", (0x00000000, (BOMB_FLOOR_Y - 1) << 16, BOMB_FLOOR_Y << 16,
+                               (BOMB_FLOOR_Y + 1) << 16, 0x7fff0000, 0x80000000, 0xffff0000))
+def test_bomb_floor_is_a_signed_word_compare(y):
+    """`cmpi.w #$ac,4(a2)` + `bge` reads the position's HIGH word — after gravity has moved it, so
+    the case that retires is decided on the post-step y — and reads it SIGNED, which is why a y past
+    the word's sign edge is BELOW the floor rather than far under it."""
+    _bomb_case(_bomb_slots(pixel_hit=0, y=y), note=f"y={y:#010x}")
+
+
+def test_bomb_update_attribution():
+    _bomb_case(_bomb_slots(pixel_hit=0), poison=True)
+    _bomb_case(_bomb_slots(), poison=True)
+    _bomb_case(_bomb_slots(latched=1), poison=True)
+
+
 # --- test_constants.py collects these; see README.md, "Adding a function" ---
 MIRRORS = (
     ("A_ENTITY_GUNSIGHT", "include/weapon.h", "A_entity_gunsight"),
@@ -551,6 +1240,52 @@ MIRRORS = (
     ("A_MISSILE_LOCK_A", "include/weapon.h", "A_missile_lock_a"),
     ("A_MISSILE_LOCK_B", "include/weapon.h", "A_missile_lock_b"),
     ("A_EXPLOSION_PHASE_ODD", "include/enemy.h", "A_explosion_phase_odd"),
+    ("A_SEEKER_LOCK_TARGET_INDEX", "include/weapon.h", "A_seeker_lock_target_index"),
+    ("A_MISSILE_LAUNCH_COUNTER", "include/weapon.h", "A_missile_launch_counter"),
+    ("A_BOMB_LAUNCH_COUNTER", "include/weapon.h", "A_bomb_launch_counter"),
+    ("A_SEEKER_LAUNCH_COUNTER", "include/weapon.h", "A_seeker_launch_counter"),
+    ("SHOT_TARGET_INDEX", "include/weapon.h", "SHOT_TARGET_INDEX"),
+    # ...and the SAME python name against entity.h's name for that byte. Two triples on one name is
+    # how this file pins two C constants EQUAL — nothing else does: `test_no_constant_is_defined_in_
+    # two_files` keys on names, and `test_no_address_has_two_spellings` deliberately exempts record
+    # offsets, so without these pairs entity.h's frozen block and weapon.h's union names could drift
+    # apart silently and each header's provenance tag would keep claiming the other's coverage.
+    ("SHOT_TARGET_INDEX", "include/entity.h", "ENTITY_HP"),
+    ("SHOT_BOUNCES_LEFT", "include/weapon.h", "SHOT_BOUNCES_LEFT"),
+    ("SHOT_TURN_COUNTDOWN", "include/weapon.h", "SHOT_TURN_COUNTDOWN"),
+    ("SHOT_TURN_COUNTDOWN", "include/entity.h", "ENTITY_BOUNCE"),
+    ("SHOT_TURN_PERIOD", "include/weapon.h", "SHOT_TURN_PERIOD"),
+    ("SHOT_SPEED", "include/weapon.h", "SHOT_SPEED"),
+    ("SHOT_MAX_TURN", "include/weapon.h", "SHOT_MAX_TURN"),
+    ("SHOT_ARM_ROWS", "include/weapon.h", "SHOT_ARM_ROWS"),
+    ("SHOT_ARM_MAX_TURN", "include/weapon.h", "SHOT_ARM_MAX_TURN"),
+    ("MISSILE_SPEED", "include/weapon.h", "MISSILE_SPEED"),
+    ("BOMB_ROWS", "include/weapon.h", "BOMB_ROWS"),
+    ("BOMB_LAUNCH_DX", "include/weapon.h", "BOMB_LAUNCH_DX"),
+    ("BOMB_GRAVITY_AY", "include/weapon.h", "BOMB_GRAVITY_AY"),
+    ("BOMB_BOUNCES", "include/weapon.h", "BOMB_BOUNCES"),
+    ("BOMB_FLOOR_Y", "include/weapon.h", "BOMB_FLOOR_Y"),
+    ("SFX_BOMB_BOUNCE", "include/weapon.h", "SFX_BOMB_BOUNCE"),
+    ("SFX_BOMB_LAUNCH", "include/weapon.h", "SFX_BOMB_LAUNCH"),
+    ("SFX_SEEKER_LAUNCH", "include/weapon.h", "SFX_SEEKER_LAUNCH"),
+    ("ENTITY_INDEX_SHIP", "include/weapon.h", "ENTITY_INDEX_SHIP"),
+    ("ENTITY_INDEX_TRAIL_DRONE", "include/weapon.h", "ENTITY_INDEX_TRAIL_DRONE"),
+    ("TYPE_TRAIL_DRONE", "include/weapon.h", "TYPE_TRAIL_DRONE"),
+    ("MISSILE_NO_TARGET", "include/weapon.h", "MISSILE_NO_TARGET"),
+    ("MISSILE_SCAN_FIRST", "include/weapon.h", "MISSILE_SCAN_FIRST"),
+    ("MISSILE_SCAN_END", "include/weapon.h", "MISSILE_SCAN_END"),
+    ("A_ENTITY_COLLISION_MASKS", "include/collision.h", "A_entity_collision_masks"),
+    ("COLLISION_ROW_BYTES", "include/collision.h", "COLLISION_ROW_BYTES"),
+    ("A_TUNE_INDEX", "include/sound.h", "A_tune_index"),
+    ("A_TUNE_DATA", "include/sound.h", "A_tune_data"),
+    ("A_SFX_VOICE_TOGGLE", "include/sound.h", "A_sfx_voice_toggle"),
+    ("SOUND_STREAM_CHANNEL_TAG", "include/sound.h", "SOUND_STREAM_CHANNEL_TAG"),
+    ("ENTITY_PIXEL_HIT", "include/entity.h", "ENTITY_PIXEL_HIT"),
+    ("ENTITY_BOUNCE", "include/entity.h", "ENTITY_BOUNCE"),
+    ("ENTITY_DX", "include/entity.h", "ENTITY_DX"),
+    ("ENTITY_DY", "include/entity.h", "ENTITY_DY"),
+    ("ENTITY_AX", "include/entity.h", "ENTITY_AX"),
+    ("ENTITY_AY", "include/entity.h", "ENTITY_AY"),
     ("SHOT_HEADING", "include/weapon.h", "SHOT_HEADING"),
     ("SHOT_LOCK_SLOT_B", "include/weapon.h", "SHOT_LOCK_SLOT_B"),
     ("PLAYER_SHOT_SLOTS", "include/weapon.h", "PLAYER_SHOT_SLOTS"),
@@ -597,4 +1332,14 @@ ENTRY_PROLOGUES = {
     "ENTRY_SHOT_RETIRE_KIND33": "4a2a000e670000180c2a",
     "ENTRY_SHOT_TO_PUFF": "046a00030004157c0037",
     "ENTRY_PLAYER_SHOTS_CLEAR": "45f900017dd2422a000e",
+    "ENTRY_ENTITY_STEER_TOWARD_TARGET": "042a0001001b66000064",
+    "ENTRY_FIRE_SEEKER": "4a390001991767000014",
+    "ENTRY_SEEKER_UPDATE": "244b102a001a61000112",
+    "ENTRY_HOMING_MISSILE_UPDATE": "244b49f9000199184a6a",
+    "ENTRY_BOMB_UPDATE": "244b220b92bc00017a8e",
+    # `fire_homing_missile` and `fire_bomb` open with the SAME ten bytes (`movea.l a3,a2` + the
+    # alive guard), so these two are pinned sixteen deep — far enough to reach the first store
+    # either routine makes, which is where they part.
+    "ENTRY_FIRE_HOMING_MISSILE": "244b4a2a000e670000044e756100006a",
+    "ENTRY_FIRE_BOMB": "244b4a2a000e670000044e75426a0016",
 }

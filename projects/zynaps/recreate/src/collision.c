@@ -52,6 +52,22 @@ int entity_type_is_lethal(const uint8_t *image, uint32_t entity) {
 }
 
 /* ================================================================================================
+ * Turning an entity INDEX into an address — the two computations every consumer of the collision
+ * tables makes. Both are exported (include/collision.h) rather than file-static, because
+ * `bomb_update` in src/weapon.c makes exactly the same two and a second spelling of either would be
+ * a copy that can silently diverge from the instruction each one transcribes.
+ * ============================================================================================= */
+uint32_t entity_record(uint16_t index) {
+    /* `mulu.w #$2c,d0` + `adda.l d0,a0`: a 16x16 unsigned multiply, so a big index stays in range. */
+    return addr_add(A_entity_table, (uint32_t)index * ENTITY_STRIDE);
+}
+
+/* Both row pointers are built as `lea table,an` + `adda.w`, which SIGN-EXTENDS the word offset. */
+uint32_t collision_table_row(uint32_t table, uint16_t index) {
+    return addr_add(table, sign_ext16((uint16_t)(index * COLLISION_ROW_BYTES)));
+}
+
+/* ================================================================================================
  * collision_chain_walk @ 0x12d44 — d0 = an entity index, d7 = the answer (1 = it hit the terrain).
  *
  * The blitter flags a pixel hit whenever a sprite landed on non-background pixels, and it cannot
@@ -60,17 +76,6 @@ int entity_type_is_lethal(const uint8_t *image, uint32_t entity) {
  * its pixel-hit flag set, the overlaps explain themselves and the answer is 1; if any link is clear
  * — or the entity's own type is not terrain-sensitive — the answer is 0.
  * ============================================================================================= */
-#define COLLISION_ROW_BYTES 4u  /* `lsl.w #2` — one long per entity index, in both tables */
-
-static uint32_t entity_record(uint16_t index) {
-    /* `mulu.w #$2c,d0` + `adda.l d0,a0`: a 16x16 unsigned multiply, so a big index stays in range. */
-    return addr_add(A_entity_table, (uint32_t)index * ENTITY_STRIDE);
-}
-
-/* Both row pointers are built as `lea table,an` + `adda.w`, which SIGN-EXTENDS the word offset. */
-static uint32_t table_row(uint32_t table, uint16_t index) {
-    return addr_add(table, sign_ext16((uint16_t)(index * COLLISION_ROW_BYTES)));
-}
 
 /* `clr.w d4` then `btst d4,d0` / `addq.w #1,d4` until a bit answers. `bits` is never 0 here — the
  * caller returns first — which matters, because `btst` on a data register counts modulo 32 and an
@@ -92,8 +97,8 @@ int collision_chain_walk(const uint8_t *image, uint16_t index) {
     for (;;) {
         /* The entity's overlaps, restricted to indices below its own — 0x12d9a, the loop head the
          * original re-enters at 0x12d78, which repeats the pixel-hit test but not the type test. */
-        uint32_t overlaps = be32(image + table_row(A_entity_collision_masks, index))
-                          & be32(image + table_row(A_lower_index_masks, index));
+        uint32_t overlaps = be32(image + collision_table_row(A_entity_collision_masks, index))
+                          & be32(image + collision_table_row(A_lower_index_masks, index));
 
         if (overlaps == 0)
             return 1;

@@ -329,11 +329,10 @@ def _chain_pokes(records, mask_rows):
     for index, (pixel_hit, type_byte) in records.items():
         table[index * ENTITY_STRIDE + ENTITY_PIXEL_HIT] = pixel_hit
         table[index * ENTITY_STRIDE + ENTITY_TYPE] = type_byte
-    rows = bytearray(b"\x00" * (COLLISION_ROWS * COLLISION_ROW_BYTES))
-    for index, mask in mask_rows.items():
-        start = index * COLLISION_ROW_BYTES
-        rows[start:start + COLLISION_ROW_BYTES] = mask.to_bytes(COLLISION_ROW_BYTES, "big")
-    return {A_ENTITY_TABLE: bytes(table), A_ENTITY_COLLISION_MASKS: bytes(rows)}
+    # Through the shared builder, which is where the "slice of a copy" hazard that once made every
+    # chain case run on an all-zero table is now refused once for both batteries (abi.indexed_table).
+    rows = abi.indexed_table(COLLISION_ROWS, COLLISION_ROW_BYTES, mask_rows)
+    return {A_ENTITY_TABLE: bytes(table), A_ENTITY_COLLISION_MASKS: rows}
 
 
 def _chain_case(index, records, mask_rows, poison=False):
@@ -465,7 +464,7 @@ MIRRORS = (
     ("TYPE_TERRAIN_SENSITIVE_MAX", "include/collision.h", "TYPE_TERRAIN_SENSITIVE_MAX"),
     ("CHAIN_WALK_D7_OFFSET", "include/collision.h", "CHAIN_WALK_D7_OFFSET"),
     ("OBJECT_BOX_WIDTH", "src/collision.c", "OBJECT_BOX_WIDTH"),
-    ("COLLISION_ROW_BYTES", "src/collision.c", "COLLISION_ROW_BYTES"),
+    ("COLLISION_ROW_BYTES", "include/collision.h", "COLLISION_ROW_BYTES"),
     ("A_ENTITY_TABLE", "include/player.h", "A_entity_table"),
     ("ENTITY_STRIDE", "include/entity.h", "ENTITY_STRIDE"),
     ("ENTITY_X", "include/entity.h", "ENTITY_X"),

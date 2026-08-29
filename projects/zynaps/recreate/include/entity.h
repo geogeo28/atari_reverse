@@ -54,7 +54,9 @@
  * it AS ITS OWN BYTE: collision_chain_walk branches on `tst.b 15(a0)`, that case is the one that
  * SETS the flag (every other byte of the record staying 0), and it drives all twenty indexes — so a
  * wrong offset reads a zero and answers "no hit". The offset no longer rides on ENTITY_ALIVE's word
- * read the way it did when this said "unpinned". */
+ * read the way it did when this said "unpinned". Also pinned by
+ * test_weapon.py::test_bomb_bounces_only_off_the_landscape, which drives the flag against the
+ * bomb's own overlap row — the pair that decides whether a hit was the LANDSCAPE. */
 #define ENTITY_PIXEL_HIT   0x0fu
 #define ENTITY_TYPE        0x11u  /* .b — class id; entity_type_in_mask (0x13bc2) indexes it into the
                                    * 14-byte class bitmaps at 0x19164 / 0x19172 / 0x19180 (src/enemy.c) —
@@ -67,14 +69,37 @@
                                    * test_enemy.py::test_op_halt_zeroes_both_velocity_words */
 #define ENTITY_DY          0x14u  /* .w — sin64[angle]*speed (0x142d4). pinned by the same test */
 #define ENTITY_AX          0x16u  /* .w — acceleration, added to / subtracted from ENTITY_DX by
-                                   * entity_apply_accel (0x143f8). pinned by test_util.py */
-#define ENTITY_AY          0x18u  /* .w — the same for ENTITY_DY. pinned by test_util.py */
-#define ENTITY_HP          0x1au  /* .b — hit points, or a seeker's target.  names.txt, unpinned */
-#define ENTITY_BOUNCE      0x1bu  /* .b                                      names.txt, unpinned */
+                                   * entity_apply_accel (0x143f8). pinned by test_util.py and by
+                                   * test_weapon.py::test_fire_bomb, which is the launch that
+                                   * CLEARS it while setting ENTITY_AY to the bomb's gravity */
+#define ENTITY_AY          0x18u  /* .w — the same for ENTITY_DY. pinned by test_util.py and
+                                   * test_weapon.py::test_fire_bomb */
+/* .b — hit points to an enemy; to a seeker or a homing missile the ENTITY INDEX it is chasing, and
+ * to a bomb its remaining bounce count (both named in include/weapon.h, which is where this union's
+ * weapon-side roles live).
+ *
+ * THE OFFSET is pinned, the "hit points" READING is not. No C reads this name yet — the routines
+ * that use the byte read it under weapon.h's SHOT_TARGET_INDEX / SHOT_BOUNCES_LEFT — so what holds
+ * it is test_weapon.py's `MIRRORS`, which pins THIS constant equal to those, plus
+ * test_steer_resolves_the_target_index_as_a_byte, which drives ten indices from 0 to 0xff through
+ * the record arithmetic and so lands on a different record for each. A wrong offset here now fails
+ * the suite by name; the hit-points role remains names.txt's and unexercised. */
+#define ENTITY_HP          0x1au
+/* .b — a bomb's one-frame "was on the terrain last frame" latch (read under THIS name by
+ * `bomb_update`), the steered shot's turn countdown (weapon.h's SHOT_TURN_COUNTDOWN, same byte),
+ * and the script VM's fire countdown (enemy.h's ACTOR_FIRE_COUNTDOWN). See ENTITY_TYPE's union note.
+ *
+ * The OFFSET and the LATCH role are pinned by test_weapon.py::test_bomb_latch_and_bounce_count,
+ * whose 4x6 grid separates the latch from the bounce COUNT in the byte beside it, and by that
+ * battery's `MIRRORS` pin against SHOT_TURN_COUNTDOWN. The fire-countdown role is names.txt's and
+ * unexercised — script class 2 (0x14d00) is not ported. */
+#define ENTITY_BOUNCE      0x1bu
 /* .b — the animation frame (enemies), the hit flash's frame counter, and ALSO the seeker's and the
  * missile's time-to-live (0x4b and 0x64, counted down by 0x140a6 / 0x14126). The roles never share
  * a record: a shot only becomes a flash once it is spent.
- * pinned by test_enemy.py::test_anim_cycle_frames, test_weapon.py::test_every_puff_frame */
+ * pinned by test_enemy.py::test_anim_cycle_frames, test_weapon.py::test_every_puff_frame, and — for
+ * the time-to-live role — test_weapon.py::test_seeker_time_to_live and
+ * test_weapon.py::test_missile_time_to_live_releases_its_own_lock */
 #define ENTITY_ANIM_FRAME  0x20u
 #define ENTITY_SQUADRON    0x21u  /* .b — squadron id. pinned by
                                    * test_enemy.py::test_despawn_credits_the_squadron */

@@ -30,6 +30,12 @@
  * code owns (see include/weapon.h). Every reader of the row count masks it off. */
 #define ENTITY_HEIGHT_MASK 0x7fffu
 
+/* `lsl.w #2` — one long per entity index, in BOTH tables above. It left src/collision.c for this
+ * header when `bomb_update` (src/weapon.c) became the second reader: a bomb resolves its own
+ * collision row from its record address, and a private second copy of the stride is exactly the
+ * duplicate test_constants.py refuses. */
+#define COLLISION_ROW_BYTES 4u
+
 /* The last type the three TARGETING tables describe. Spelt as 0x31 because that is what the shared
  * bound below compares against; the instruction is `cmp.b #$32,dn` + `blt`, and 0x32 is where the
  * PLAYER's own entities start — 0x32 missile, 0x33 bomb, 0x35 drone, 0x36 seeker, 0x37 hit flash —
@@ -50,6 +56,14 @@
  * weapon-owned tests reach it by including this header, which README.md's "Adding a function"
  * allows. If entity.h ever opens, this belongs there. */
 int entity_type_in_class(const uint8_t *image, uint32_t entity, uint32_t table, int8_t last_type);
+
+/* The two address computations every reader of the tables above makes, shared for the same reason
+ * `entity_type_in_class` is: `bomb_update` (src/weapon.c) resolves its own overlap row and its own
+ * record exactly this way, and a second spelling of either could silently stop matching the
+ * instruction it transcribes — `mulu.w #$2c` for the record, `lea`+`adda.w` (SIGN-extending) for
+ * the row. Neither reads the image, so both take an index rather than a pointer to one. */
+uint32_t entity_record(uint16_t index);
+uint32_t collision_table_row(uint32_t table, uint16_t index);
 
 /* Glue-side, and shared with src/weapon.c: record a routine's Z-flag answer where the image diff
  * can see it, in the encoding test/abi.py's `seq` stub uses. `seq` stores 0xff when Z was SET at

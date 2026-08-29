@@ -208,6 +208,31 @@ def seed_spans(seed, spans, guard=0):
     return {lo: rng.randbytes(hi - lo) for lo, hi in merged}
 
 
+def indexed_table(entries, entry_bytes, values):
+    """A table of `entries` big-endian fields of `entry_bytes` each, zero but for `values`.
+
+    `values` is {index: value}. Two batteries seed the collision subsystem's 21-long tables this way
+    — `test_collision.py`'s chain cases and `test_weapon.py`'s `bomb_update` cases — and this is
+    shared for the same reason `seed_spans` above is: the loop has ALREADY been written wrong twice
+    in this project, by two different authors, both times as `rows[start:][:n] = …`. That assigns
+    into a COPY of the slice, so the mark is silently dropped and every case runs against an
+    all-zero table — a whole battery going vacuous while staying green. STATUS.md records both
+    occurrences; this is the one place that cannot make the mistake again.
+
+    Two refusals, because a caller that trips either has already lost the coverage it thinks it has:
+    an index outside the table (which would otherwise APPEND, growing the poke past the table into
+    whatever follows it), and a value too wide for one entry.
+    """
+    table = bytearray(entries * entry_bytes)
+    for index, value in values.items():
+        assert 0 <= index < entries, f"index {index} is outside the {entries}-entry table"
+        assert value >> (8 * entry_bytes) == 0, (
+            f"{value:#x} does not fit one {entry_bytes}-byte entry")
+        start = index * entry_bytes
+        table[start:start + entry_bytes] = value.to_bytes(entry_bytes, "big")
+    return bytes(table)
+
+
 def call_sequence_pokes(routines):
     """Pokes that `jsr` each routine in `routines`, in order, and then `rts`.
 
