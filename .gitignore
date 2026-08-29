@@ -28,3 +28,4 @@ tools/recreate_kit/oracle/build
 tools/hatari/*.img
 **/TOS*.img
 .claude/worktrees/
+tools/recreate_kit/oracle/musashi
