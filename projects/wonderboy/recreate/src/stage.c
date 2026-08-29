@@ -396,12 +396,15 @@ void game_restart_reset(uint8_t *image) {
 /* THE SIXTEEN COLOUR REGISTERS, and the one thing in this file a differential cannot see.
  *
  * WB_SHIFTER_PALETTE is off the 68000's 24-bit bus as far as the loaded image goes, so the oracle
- * DROPS the original's eight `move.l`s exactly as it drops every other hardware write (the kit's
- * hw.h says so: there is no `hw_write8` to mirror them with). Nothing on either side records that
- * the colours went anywhere, so a reconstruction that wrote the wrong sixteen words — or none —
- * differs from this one by nothing the harness compares. ../STATUS.md registers the kit-side remedy
- * — a dropped-hardware-write LEDGER, which would make this pinnable the way psg.h made the chip
- * writes pinnable — as an idea, not as work any batch has done.
+ * DROPS the original's eight `move.l`s exactly as it drops every other hardware write. Nothing on
+ * THIS side records that the colours went anywhere, so a reconstruction that wrote the wrong sixteen
+ * words — or none — differs from this one by nothing the harness compares.
+ *
+ * THE KIT-SIDE REMEDY ../STATUS.md registered as an idea IS BUILT: a dropped-hardware-write LEDGER,
+ * `hw.h`'s `hw_write8/16/32`, which makes these pinnable the way `psg.h` made the chip writes
+ * pinnable (kit TRAP_MODEL.md, "Phase 10"). This port has not taken it — routing the sink below
+ * through `hw_write32` is what would — so the cases that reach these registers declare them in
+ * `hw_waiver=` instead, and test/harness.py's `SHIFTER_UNPINNED` is the list of them.
  *
  * THE WRITE ITSELF IS `shifter_palette_write`, THE PORT'S ONE SHIFTER SINK (../include/shifter.h,
  * with the on-target stores in src/shifter.c), and it is there rather than here because three files

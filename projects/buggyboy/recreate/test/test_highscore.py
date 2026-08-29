@@ -158,7 +158,8 @@ def test_miss_tail_jingle():
         pokes = {A_SCORE: _digits("100000") + name, A_TABLE + leg * LEG_STRIDE: bytes(rows),
                  A_LEG_INDEX: leg.to_bytes(2, "big"), **_guard_open(), **_results_screen_pokes(leg, leg)}
         glue = lambda l, b: (l.g_update_highscore(b), l.g_hiscore_gameover(b))
-        diffs, _ = differential(ENTRY, {"_pokes": pokes}, glue, stop_pc=MISS_STOP, max_insns=3_000_000)
+        diffs, _ = differential(ENTRY, {"_pokes": pokes}, glue, stop_pc=MISS_STOP,
+                                max_insns=3_000_000, hw_waiver=harness.HW_STUBBED_BY_OS_C)
         assert not diffs, f"miss leg={leg}\n{report(diffs[:16])}"
 
 

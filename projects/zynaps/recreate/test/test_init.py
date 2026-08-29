@@ -160,10 +160,6 @@ harness._lib.g_section_reload_needed.argtypes = [_u8p]
 harness._lib.g_section_reload_needed.restype = ctypes.c_uint32
 harness._lib.init_shifter_mode_mask_written.argtypes = []
 harness._lib.init_shifter_mode_mask_written.restype = ctypes.c_uint8
-harness._lib.init_shifter_mode_writes.argtypes = []
-harness._lib.init_shifter_mode_writes.restype = ctypes.c_uint32
-harness._lib.init_palette_uploads.argtypes = []
-harness._lib.init_palette_uploads.restype = ctypes.c_uint32
 harness._lib.g_section_load_assets.argtypes = [_u8p]
 harness._lib.g_section_load_assets.restype = ctypes.c_uint32
 for _sym in ("g_boot_save_vbl_vector", "g_boot_load_title_assets", "g_section_advance",
@@ -297,25 +293,23 @@ def test_boot_load_title_assets():
     another battery already verified; what THIS case proves is the composition — the order and the
     addresses — over the whole image at once.
 
-    THE LEDGER ASSERTIONS BELOW RIDE ON THE SAME RUN, deliberately: they read the candidate sink the
-    differential has just filled, so they need no second 4-million-instruction run and no second seam
-    into the candidate's image. They cover the two effects the image cannot —
+    THE SLICE'S OFF-IMAGE HALF IS THE KIT'S NOW. Every hardware store this stretch makes — the
+    resolution byte at $ff8260, the screen base the flip publishes, the sixteen colour registers
+    `set_palette_title` uploads — is compared by `harness.differential` itself, address, width, value
+    and order (tools/recreate_kit/TRAP_MODEL.md, "Phase 10"). Deleting the palette upload from the
+    slice, or aiming the resolution store at another register, is a red without anything here.
 
-      * `andi.b #$fc,$ff8260` selects low resolution at an address far above the image. RESIDUAL, and
-        a bigger one than the palette's and the screen base's: it is a read-modify-write and the READ
-        half has no modelled answer on either side, so what the sink holds is the mask and the fact
-        that the write happened, never the byte that came back. On target that byte decides the other
-        six bits of the mode register (`docs/on-target-execution.md`).
-      * `set_palette_title` writes NO image byte at all — its whole effect is sixteen colour
-        registers, recorded in src/video.c's own sink, which nothing here can read. Without the
-        upload count, deleting that call from the slice would leave this case green.
+    ONE RESIDUAL SURVIVES THAT, and the assertion below is what holds it. `andi.b #$fc,$ff8260` is a
+    read-modify-write, and the oracle's read of a register the seeded READ model does not name
+    answers a fabricated 0 — so `0 & mask` is 0 for every mask and the ledger cannot tell $fc from
+    $ff. The sink records the mask itself; it rides on the run the differential has just made, so it
+    needs no second 4-million-instruction pass. On target that read decides the other six bits of the
+    mode register (`docs/on-target-execution.md`).
     """
     _slice_case(ENTRY_BOOT_LOAD_TITLE_ASSETS, STOP_BOOT_LOAD_TITLE_ASSETS, _stage(BOOT_FILES),
                 lambda lib, buf: lib.g_boot_load_title_assets(buf), "boot assets",
                 max_insns=BOOT_MAX_INSNS)
     assert harness._lib.init_shifter_mode_mask_written() == SHIFTER_MODE_RESOLUTION_MASK
-    assert harness._lib.init_shifter_mode_writes() == 1
-    assert harness._lib.init_palette_uploads() == 1
 
 
 # ================================================================ section_advance @ 0x10814

@@ -31,10 +31,12 @@ cases below, because a "fix" in either direction is the kind that looks like tid
 """
 import pytest
 
-# The one the .PRG does NOT plant, spelled once here so the table pin below is an EQUALITY and not
+# The two the .PRG does NOT plant, spelled once here so the table pin below is an EQUALITY and not
 # a prefix: the counter's MID byte has no routine, since one volatile address is enough to measure
-# the flag and Wonder Boy is where the pair is really read.
+# the flag and Wonder Boy is where the pair is really read; and the ACIA's status byte, whose model
+# DEFAULT (os.h's os_hw_model_defaults) is exercised by the projects that send an IKBD command.
 VCOUNT_MID = 0xFF8207
+ACIA_STATUS = 0xFFFC00
 
 from kit_smoke_project import (HW_READ_ENTRY, MFP_GPIP, RMW_ENTRY, SHIFTER_SYNC,
                                SHIFTER_VCOUNT_LOW, STATIC_TWICE_ENTRY, SYNC_ONLY_ENTRY,
@@ -71,7 +73,7 @@ def test_the_smoke_prg_reads_the_addresses_the_model_actually_names():
     """
     # THE WHOLE TABLE, spelled once here and equal: a prefix pin would let an address be inserted
     # ahead of these two — which renumbers every slot the ledger reports — and still pass.
-    assert (MFP_GPIP, SHIFTER_SYNC, VCOUNT_MID, SHIFTER_VCOUNT_LOW) == emu.HW_ADDRS, (
+    assert (MFP_GPIP, SHIFTER_SYNC, VCOUNT_MID, SHIFTER_VCOUNT_LOW, ACIA_STATUS) == emu.HW_ADDRS, (
         f"the smoke project plants reads of {MFP_GPIP:#x}/{SHIFTER_SYNC:#x}/"
         f"{SHIFTER_VCOUNT_LOW:#x} but the model names "
         f"{', '.join(f'{a:#x}' for a in emu.HW_ADDRS)}")
@@ -145,7 +147,7 @@ def test_the_mutant_that_only_the_read_stream_comparison_can_catch(monkeypatch):
     (untouched) image are a correct run's exactly. With the comparison stubbed out the differential
     comes back GREEN. Restore it and the same run reds. That gap IS the check's value.
     """
-    monkeypatch.setattr(harness, "_vet_hw_state", lambda entry, o_regs: None)
+    monkeypatch.setattr(harness, "_vet_hw_state", lambda entry, o_regs, waived=None: None)
     diffs, _ = _tempo_pair("g_hw_reads_the_pair_backwards", hw_seed=BOTH_THE_SAME)
     assert diffs == [], (
         "the mutant changed an image byte, so this case is not measuring the off-image comparison")

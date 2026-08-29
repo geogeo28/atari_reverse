@@ -23,10 +23,8 @@
 #include "sprite.h"
 #include "sound.h"
 /* ...and irq.h for ONE address: A_palette_hw_shadow, which explosion_animate_all clears
- * (`clr.w $18fc4` @ 0x15476). It is the owner's header, so including it is what the
- * conventions ask for — but it also declares the three off-image hardware stores whose
- * definition depends on which TU the build links (src/irq.c vs src/irq_hw_offtarget.c). This
- * translation unit calls none of them and has no stake in that split. */
+ * (`clr.w $18fc4` @ 0x15476). It is the owner's header, so including it is what the conventions
+ * ask for; nothing else in that header is used here. */
 #include "irq.h"
 
 #define GROUND_ACTOR_COUNT 6    /* `move.w #$5,d0` — the type-0x34 scenery at A_entity_table */

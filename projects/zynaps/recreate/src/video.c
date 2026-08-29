@@ -1,49 +1,37 @@
-/* video.c — the screen buffers, the shifter sink, and the block clears/copies around them.
+/* video.c — the screen buffers, the shifter stores, and the block clears/copies around them.
  *
  * Five of the six routines here are plain image-to-image work: three clears sized in whole
  * buffers (`screen_clear`, `clear_backdrop_page0`, `playfield_clear`) and one strip copy
  * (`blit_graphic_block`) that the front-end screens are assembled out of. The other two —
  * `screen_flip_buffers` and `set_palette_title` — end at the video shifter, which is not an image
- * byte; include/video.h's header comment says what that costs and what the sink recovers.
+ * byte; include/video.h's header comment says which surface holds those stores instead.
  */
-#include <string.h>
-
 #include "machine.h"
+#include "hw.h"        /* the kit's hardware write ledger — include/video.h says what it pins */
 #include "video.h"
 
 /* ================================================================================================
- * THE SHIFTER SINK. Off target a write to $ff8201/$ff8203/$ff8240 goes nowhere — there is no such
- * address in the differential's image, and dereferencing one from the .so would be a wild pointer —
- * so the sink records the payload instead and the glue hands that record to the diff. What the
- * record buys over recomputing the payload in the glue is that the CORE's own loop is what fills it:
- * a candidate uploading seven colour longs instead of eight leaves the eighth slot at zero, which no
- * upload the original makes produces.
- *
- * Cleared by the glue before each call rather than accumulated, so one case's writes can never stand
- * in for the next one's.
+ * THE SHIFTER'S STORES. include/video.h says why they live here rather than beside the handlers
+ * that make most of them, and what the kit's write ledger holds them by.
  * ============================================================================================= */
-static uint32_t g_palette_written[SHIFTER_PALETTE_PAIRS];
-static uint8_t g_screen_base_written[2];       /* the $ff8203 byte, then the $ff8201 byte */
 
-/* Indexed by the colour register pair rather than appended, because the index IS the destination on
- * the hardware: a core that uploaded the row short leaves the later slots at zero, which is not any
- * colour the original wrote. */
-void shifter_palette_write(unsigned pair, uint32_t colours) {
-    if (pair < SHIFTER_PALETTE_PAIRS)
-        g_palette_written[pair] = colours;
+/* One `movem.l`-shaped upload: eight longwords over the sixteen colour registers. */
+void shifter_upload_palette_longs(const uint8_t *image, uint32_t shadow) {
+    for (unsigned slot = 0; slot < SHIFTER_PALETTE_PAIRS; slot++)
+        hw_write32(HW_PALETTE_BASE + PALETTE_LONG_BYTES * slot,
+                   be32(image + addr_add(shadow, PALETTE_LONG_BYTES * slot)));
 }
 
-void shifter_screen_base_write(uint8_t mid, uint8_t high) {
-    g_screen_base_written[0] = mid;
-    g_screen_base_written[1] = high;
+/* `move.w (a0)+,$ff8240.l` — the attract bars write pen 0 and nothing else, but the pen is a
+ * parameter because the register the word lands in is the destination and not a constant of the
+ * routine. */
+void shifter_write_pen(unsigned pen, uint16_t colour) {
+    hw_write16(HW_PALETTE_BASE + PALETTE_PEN_BYTES * pen, colour);
 }
 
-/* The sink's one reset, so the "cleared before the call" discipline is a function a new shifter
- * routine's glue calls rather than a `memset` each glue has to remember. A glue that forgot it
- * would compare the PREVIOUS case's record and report green over an upload it never made. */
-static void shifter_sink_reset(void) {
-    memset(g_palette_written, 0, sizeof g_palette_written);
-    memset(g_screen_base_written, 0, sizeof g_screen_base_written);
+/* `clr.w $ff8240.l` — force pen 0 to black. */
+void shifter_clear_pen0(void) {
+    hw_write16(HW_PALETTE_BASE, 0);
 }
 
 /* One `clr.l (a0)+` run. Three routines here zero a whole buffer and differ only in where and how
@@ -137,8 +125,10 @@ void screen_flip_buffers(uint8_t *image) {
     wr32(image + A_screen_back, was_front);
     wr32(image + A_screen_front, was_back);
     /* `move.l $17982.l,d0` re-reads screen_front AFTER the swap, so the address published is the
-     * buffer just drawn into. `lsr.l #8` then `move.b d0,$ff8203`, `lsr.l #8` then `$ff8201`. */
-    shifter_screen_base_write((uint8_t)(was_back >> 8), (uint8_t)(was_back >> 16));
+     * buffer just drawn into. `lsr.l #8` then `move.b d0,$ff8203`, `lsr.l #8` then `$ff8201` —
+     * two byte stores, in that order, which is the order the ledger compares them in. */
+    hw_write8(HW_SCREEN_BASE_MID, was_back >> 8);
+    hw_write8(HW_SCREEN_BASE_HIGH, was_back >> 16);
 }
 
 /* ================================================================================================
@@ -150,8 +140,7 @@ void screen_flip_buffers(uint8_t *image) {
  * movem each.
  * ============================================================================================= */
 void set_palette_title(uint8_t *image) {
-    for (unsigned pair = 0; pair < SHIFTER_PALETTE_PAIRS; pair++)
-        shifter_palette_write(pair, be32(image + A_palette_boot + 4u * pair));
+    shifter_upload_palette_longs(image, A_palette_boot);
 }
 
 /* ================================================================================================
@@ -160,10 +149,9 @@ void set_palette_title(uint8_t *image) {
  * Register map: `screen_clear` A0 = buffer; `blit_graphic_block` A6 = source, A0 = destination,
  * D0 = last row index. The other four take no arguments — their addresses are all absolute.
  *
- * The two shifter routines' glue publishes the sink's record at `result`, where the oracle's stub
- * has stored the same registers the original hands the hardware (test/abi.py). Both call the core
- * and copy what IT wrote rather than recomputing the payload, so a mutation inside the core — a
- * short upload, the wrong base, the two base bytes swapped — is caught rather than mirrored.
+ * The two shifter routines need no glue of their own beyond the call: their whole off-image effect
+ * is the kit's hardware write ledger, which harness.differential compares without either side
+ * publishing anything into the image (include/video.h).
  * ============================================================================================= */
 void g_screen_clear(uint8_t *image, uint32_t buffer) {
     screen_clear(image, buffer);
@@ -181,25 +169,10 @@ void g_blit_graphic_block(uint8_t *image, uint32_t src, uint32_t dst, uint32_t l
     blit_graphic_block(image, src, dst, (uint16_t)last_row);
 }
 
-/* The two published bytes as one word, high byte first, for the test to compare against the
- * ORACLE'S OWN registers: `screen_flip_buffers` leaves A0 holding the buffer it published and D0
- * holding that address shifted down 16, so both halves of the pair have an oracle-side witness even
- * though neither write lands in the image. A candidate that never called the sink returns 0, which
- * no real buffer address produces. Returned rather than stored: it is two bytes of answer, and an
- * image write would need a scratch address the routine itself has nothing to do with. */
-uint32_t g_screen_flip_buffers(uint8_t *image) {
-    shifter_sink_reset();
+void g_screen_flip_buffers(uint8_t *image) {
     screen_flip_buffers(image);
-
-    return (uint32_t)((g_screen_base_written[1] << 8) | g_screen_base_written[0]);
 }
 
-/* `result` is where test/abi.py's stub stored the oracle's d0-d7 — the eight longwords the original
- * hands $ff8240 — so publishing the sink's record there puts both sides' upload in the image diff. */
-void g_set_palette_title(uint8_t *image, uint32_t result) {
-    shifter_sink_reset();
+void g_set_palette_title(uint8_t *image) {
     set_palette_title(image);
-
-    for (unsigned pair = 0; pair < SHIFTER_PALETTE_PAIRS; pair++)
-        wr32(image + result + 4u * pair, g_palette_written[pair]);
 }

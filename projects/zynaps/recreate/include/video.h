@@ -2,15 +2,15 @@
  *
  * Names and addresses are ../../names.txt's; see README.md, "Adding a function".
  *
- * THE SHIFTER IS NOT AN IMAGE BYTE. Zynaps publishes its display buffer at $ff8201/$ff8203 and its
- * colours at $ff8240, both far above the 1 MiB image the differential compares, so the kit's oracle
- * DROPS every write to them (tools/recreate_kit/include/hw.h models hardware READS and has no
- * `hw_write8` to mirror a write with). Two reconstructed routines here make those writes because the
- * original makes them — `screen_flip_buffers` and `set_palette_title` — and both go through the sink
- * below rather than storing to an address of their own. Off target the sink only RECORDS what was
- * written, which is what lets the differential compare the payload and the write count against the
- * registers the original hands the hardware (test/test_video.py's stubs); the writes themselves
- * remain unobservable, and STATUS.md carries that residual.
+ * THE SHIFTER IS NOT AN IMAGE BYTE, AND IS PINNED ANYWAY. Zynaps publishes its display buffer at
+ * $ff8201/$ff8203 and its colours at $ff8240, both far above the 1 MiB image the differential
+ * compares, so the oracle DROPS every store to them and no byte diff can see one. Two reconstructed
+ * routines here make those stores because the original makes them — `screen_flip_buffers` and
+ * `set_palette_title` — and both go through the kit's `hw_write8`/`hw_write32`
+ * (tools/recreate_kit/include/hw.h), whose ordered (address, width, value) ledger
+ * `harness.differential` compares against the oracle's entry for entry. A short upload, the wrong
+ * register, the two base bytes swapped and a missing store are all reds; there is no residual left
+ * for STATUS.md to carry here.
  */
 #ifndef ZYNAPS_VIDEO_H
 #define ZYNAPS_VIDEO_H
@@ -57,20 +57,45 @@
 #define GRAPHIC_BLOCK_ROW_BYTES 32u
 
 /* ================================================================================================
- * The shifter sink (see the header comment). `pair` counts LONGWORDS of the colour row, because
- * that is the width the original writes it in: `movem.l #$00ff,$ff8240.l` stores eight longs over
- * the sixteen 16-bit colour registers.
+ * THE SHIFTER'S OWN GEOMETRY, and this header is its one home — `include/irq.h`'s handlers write
+ * the same registers and take these from here. The colour row is counted in LONGWORDS because that
+ * is the width the original writes it in (`movem.l #$00ff,$ff8240.l` stores eight longs over the
+ * sixteen 16-bit registers), and the width is part of what the write ledger compares rather than an
+ * implementation choice.
  * ============================================================================================= */
+#define HW_PALETTE_BASE 0xff8240u   /* the sixteen colour registers, one word each */
+#define PALETTE_PENS      16u       /* ...how many of them there are... */
+#define PALETTE_PEN_BYTES  2u       /* ...so one pen is a word... */
+#define PALETTE_LONG_BYTES 4u       /* ...and the upload's own unit is two of them */
+/* The eight longwords one whole row goes up as. Kept as the original's own count rather than
+ * as the product above, for PLAYFIELD_BYTES's reason — test_constants.py's scraper reads
+ * literals, not expressions — and test_video.py pins the two equal. */
 #define SHIFTER_PALETTE_PAIRS 8u
-
-void shifter_palette_write(unsigned pair, uint32_t colours);
-/* The screen base as the TWO BYTES the hardware has (bits 15-8 and 23-16 of the address; an STF's
- * base register has no low byte), in the order the original writes them: $ff8203 then $ff8201. */
-void shifter_screen_base_write(uint8_t mid, uint8_t high);
+/* The screen base's TWO BYTES (bits 15-8 and 23-16 of the address; an STF's base register has no
+ * low byte), in the order the original writes them: $ff8203 then $ff8201. */
+#define HW_SCREEN_BASE_MID  0xff8203u
+#define HW_SCREEN_BASE_HIGH 0xff8201u
 
 /* ================================================================================================
  * Prototypes.
  * ============================================================================================= */
+/* ---- the shifter stores, which src/irq.c's handlers make as well as this file's two routines ----
+ *
+ * They live here because the shifter's registers do (see the header comment): five routines across
+ * two subsystems write the same colour block, and one register block has one set of stores. Each is
+ * one instruction of the original and the WIDTH is part of it — the row goes up as eight `move.l`s,
+ * a single bar colour as one `move.w` — which is what the kit's write ledger compares.
+ *
+ * ON TARGET, `hw_write*` becomes the real store of its own width and these compile unchanged; the
+ * kit's src/hw.c is what a target build leaves out (tools/recreate_kit/include/hw.h).
+ */
+/* Eight longwords over the sixteen colour registers, from the shadow at `shadow`. */
+void shifter_upload_palette_longs(const uint8_t *image, uint32_t shadow);
+/* `move.w <colour>,$ff8240 + 2*pen` — one pen, the attract bars' own shape. */
+void shifter_write_pen(unsigned pen, uint16_t colour);
+/* `clr.w $ff8240` — force pen 0 to black. */
+void shifter_clear_pen0(void);
+
 void screen_clear(uint8_t *image, uint32_t buffer);
 void screen_flip_buffers(uint8_t *image);
 void clear_backdrop_page0(uint8_t *image);

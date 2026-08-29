@@ -11,6 +11,7 @@
  * ORDER, the addresses, and the per-section table lookups that pick which file gets loaded where.
  */
 #include "machine.h"
+#include "hw.h"        /* the kit's hardware write ledger — include/init.h says what it pins */
 #include "os.h"
 
 #include "entity.h"
@@ -32,44 +33,32 @@
  * lines apiece, with the bound on a different line from the body it guards. */
 #define TABLE_ENTRIES(table) (sizeof (table) / sizeof (table)[0])
 
-/* One `movem.l` slot of a colour row: the width the palette is copied at, not a pixel or a colour. */
-#define PALETTE_LONG_BYTES 4u
-
 /* ================================================================================================
- * THE BOOT'S OFF-IMAGE PUBLISH LEDGER. include/init.h says what it is for. It is the same shape as
- * src/video.c's palette sink and exists for the same reason — there is no $ff8260 in the image to
- * store to — but it covers a second thing that sink cannot: the boot's ONE call whose whole effect
- * is off-image. `set_palette_title` writes no image byte at all (its record goes into video.c's own
- * sink, which nothing here can read), so without a count of its own, DELETING the call from this
- * slice would leave the differential green. The count is what makes that a red.
+ * THE ONE THING THE KIT'S WRITE LEDGER CANNOT HOLD. include/init.h states the argument: the store
+ * to $ff8260 is compared like every other hardware store, but its VALUE is `0 & mask` on both sides
+ * because the oracle's read of that register answers a fabricated 0 — so the mask itself would
+ * survive any mutation. This one byte is the sink that catches that, and it is all the sink is.
  *
- * What it records for $ff8260 is the MASK and the fact that the write happened; what it cannot
- * record is the byte that came back from the read, because the oracle has no shifter to read from.
+ * `set_palette_title` used to need a count here too, since it wrote no image byte and deleting the
+ * call left the differential green. It writes eight ledgered longwords now, so the ledger is what
+ * makes that a red and the count is gone.
  * ============================================================================================= */
 static uint8_t g_shifter_mode_mask;
-static uint32_t g_shifter_mode_writes;
-static uint32_t g_palette_uploads;
 
 void init_shifter_sink_reset(void) {
     g_shifter_mode_mask = 0;
-    g_shifter_mode_writes = 0;
-    g_palette_uploads = 0;
 }
 
 uint8_t init_shifter_mode_mask_written(void) { return g_shifter_mode_mask; }
-uint32_t init_shifter_mode_writes(void) { return g_shifter_mode_writes; }
-uint32_t init_palette_uploads(void) { return g_palette_uploads; }
 
 /* `andi.b #$fc,$ff8260` — select low resolution. */
 static void shifter_select_low_resolution(void) {
     g_shifter_mode_mask = SHIFTER_MODE_RESOLUTION_MASK;
-    g_shifter_mode_writes++;
-}
-
-/* `bsr set_palette_title` — sixteen colour registers at $ff8240, and not one image byte. */
-static void boot_upload_title_palette(uint8_t *image) {
-    set_palette_title(image);
-    g_palette_uploads++;
+    /* The value is `0 & mask`, i.e. 0, because SHIFTER_MODE_UNMODELED_READ is what the oracle's read
+     * of this register answers. That is the RIGHT store off target and the WRONG one on the machine,
+     * where the `andi.b` preserves six bits it here clears — include/init.h states the residual and
+     * says a Zynaps build for the real Atari must not ship this expression. */
+    hw_write8(HW_SHIFTER_MODE, SHIFTER_MODE_UNMODELED_READ & SHIFTER_MODE_RESOLUTION_MASK);
 }
 
 /* ================================================================================================
@@ -116,13 +105,15 @@ void boot_save_vbl_vector(uint8_t *image) {
  * Timer B handlers, start the title tune, show the picture, upload its palette, and then read and
  * reshape seven more graphics.
  *
- * IT STARTS AT 0x1002c, after the two `ikbd_send_cmd` calls at 0x1001c and 0x10024. Those busy-wait
- * on the ACIA status at $fffc00, which the kit models no read for, so the oracle spins there
- * forever; STATUS.md carries them as the residual they are.
+ * IT STARTS AT 0x1002c, after the two `ikbd_send_cmd` calls at 0x1001c and 0x10024, AND BOTH OF THE
+ * REASONS THE CUTS WERE HERE ARE GONE. Those calls busy-wait on the ACIA status at $fffc00, which
+ * the kit had no read for; it is a seeded read slot now, so the spin leaves on its first poll on
+ * both sides and `ikbd_send_cmd` itself is verified (src/input.c). The slice ENDS at 0x101ba
+ * because that is where the ninth file would be opened and the staged-file table held eight; it
+ * holds `harness.OS_FS_SLOTS` now, which is thirty-two — more than this whole boot opens.
  *
- * THE SLICE ENDS AT 0x101ba because that is where the NINTH file would be opened, and the model's
- * staged-file table holds eight (`harness.OS_FS_SLOTS`). It is a limit of the harness rather than a
- * seam in the program, and the rest of `_start`'s loading is unported for that reason.
+ * So the two cuts are where a wave stopped, not where the harness does. STATUS.md's rows for
+ * 0x1001c and 0x101ba say what each range needs; neither is blocked.
  * ============================================================================================= */
 /* The two framebuffers, hard-coded rather than allocated — names.txt's comment on 0x1002c: this is
  * what makes Zynaps need a 512 KB machine and what makes test/abi.py's scratch map avoid the hole. */
@@ -185,7 +176,7 @@ void boot_load_title_assets(uint8_t *image) {
 
     sound_start(image, BOOT_TITLE_TUNE, BOOT_SOUND_CHANNEL_FROM_FCLOSE);
     screen_flip_buffers(image);
-    boot_upload_title_palette(image);
+    set_palette_title(image);        /* `bsr set_palette_title` — sixteen ledgered colour registers */
 
     load_file(image, A_filename_power_dat, BOOT_POWER_GAUGE_DST, BOOT_POWER_GAUGE_BYTES);
     /* 0x1009e sets up a lev1.map load into A_map_unpacked and then overwrites all three registers
@@ -594,8 +585,8 @@ void g_boot_save_vbl_vector(uint8_t *image) {
     boot_save_vbl_vector(image);
 }
 
-/* The shifter sink is cleared before the call rather than accumulated, exactly as src/video.c's is,
- * so one case's write can never stand in for the next one's. */
+/* The mask sink is cleared before the call rather than accumulated, so one case's mask can never
+ * stand in for the next one's. */
 void g_boot_load_title_assets(uint8_t *image) {
     init_shifter_sink_reset();
     boot_load_title_assets(image);

@@ -400,9 +400,12 @@ def _run_slice(entry, name, stop_pc, transfer, pokes, allowed, what, max_insns, 
     according to which sequence row it drives is a worse thing than one inert declaration.
     """
     with leaf.pc_coverage():
+        # Every slice ends in a screen the player sees, so every one reaches `set_palette` and
+        # `flip_screen` — the shifter half neither reconstruction writes (harness.SHIFTER_UNPINNED).
         diffs, info = harness.differential(entry, {"_pokes": pokes}, _slice_glue(name),
                                            stop_pc=stop_pc, max_insns=max_insns, poison=False,
-                                           psg_seed={PSG_REG_MIXER: PLAY_SONG_MIXER})
+                                           psg_seed={PSG_REG_MIXER: PLAY_SONG_MIXER},
+                                           hw_waiver=harness.SHIFTER_UNPINNED)
         assert not diffs, f"{what}\n{harness.report(diffs)}"
         reached = emu.cov_visited(transfer)
         seen = {at: emu.cov_visited(at) for at, _ in witnesses}

@@ -39,6 +39,13 @@ PINNED = ("OS_IMAGE_SIZE", "OS_HEAP_BASE", "OS_FS_TABLE", "OS_FS_STAGING", "OS_F
           # ADDRESSES need no entry here: emu.py reads them from the .so (osh_hw_addr_table), so
           # there is no second copy in Python that could drift from os.h's table.
           "OS_HW_LOG_MAX",
+          # ...and the hardware WRITE ledger's (Phase 10), which truncates on both sides identically
+          # for the same reason: two write streams that diverge past the cap would compare equal.
+          "OS_HW_WRITE_LOG_MAX",
+          # ...and that ledger's WIDTH tags. The C records them and the Python compares them, so a
+          # tag changed on one side alone (a byte count swapped for an opcode size code, say) would
+          # make every word store compare as a byte, silently.
+          "OS_HW_WRITE_WIDTH_8", "OS_HW_WRITE_WIDTH_16", "OS_HW_WRITE_WIDTH_32",
           # ...and that ledger's event kinds. The C tags each entry and the Python compares them, so
           # a value changed on one side alone would make every read compare as a write, silently.
           "OS_PSG_EVENT_WRITE", "OS_PSG_EVENT_READ",
@@ -135,6 +142,10 @@ def test_every_low_model_address_is_guarded_or_declared_unvetted():
         # because these addresses are POLLED (an FDC wait loop reads $fffa01 once per iteration), so
         # a modest cap would truncate an ordinary run. Not a place in the image either.
         "OS_HW_LOG_MAX",
+        # 4096 entries — the hardware WRITE ledger's cap on both sides. One palette upload is eight
+        # stores and a frame can hold several, so it is sized like the read ledger's rather than like
+        # Dosound's. Not a place in the image either.
+        "OS_HW_WRITE_LOG_MAX",
         # 4096 POLLS — the candidate's runaway guard on one busy-wait (src/sched.c's sched_wait8),
         # not a place in the image. It is a count of iterations, and it is this large so that only a
         # wait which was never going to end can reach it; the oracle's own instruction cap bites
@@ -186,8 +197,10 @@ def test_every_modeled_hardware_address_is_above_the_image():
     c = _c_defines(OS_H.read_text())
     modeled = {name: value for name, value in c.items()
                if name in ("OS_PSG_PORT_SELECT", "OS_PSG_PORT_DATA",
-                           "OS_HW_MFP_GPIP", "OS_HW_SHIFTER_SYNC")}
-    assert len(modeled) == 4, f"os.h is missing/unparsable for one of the modeled addresses: {modeled}"
+                           "OS_HW_MFP_GPIP", "OS_HW_SHIFTER_SYNC",
+                           "OS_HW_SHIFTER_VCOUNT_MID", "OS_HW_SHIFTER_VCOUNT_LOW",
+                           "OS_HW_ACIA_STATUS")}
+    assert len(modeled) == 7, f"os.h is missing/unparsable for one of the modeled addresses: {modeled}"
     swallowed = {name: value for name, value in modeled.items() if value < c["OS_IMAGE_SIZE"]}
     assert not swallowed, (
         f"OS_IMAGE_SIZE ({c['OS_IMAGE_SIZE']:#x}) covers {swallowed} — those addresses are decoded "

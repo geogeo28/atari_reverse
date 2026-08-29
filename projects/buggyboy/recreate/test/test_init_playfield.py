@@ -115,7 +115,8 @@ def test_run():
     """Full run-to-rts: prologue + one per-frame iteration + fire-start + palette-flash animation."""
     for i, leg in enumerate((0, 2, 4)):
         regs = {"_pokes": _world(seed=i, leg=leg)}
-        diffs, _ = differential(ENTRY, regs, lambda l, b: l.g_init_playfield(b), max_insns=8_000_000)
+        diffs, _ = differential(ENTRY, regs, lambda l, b: l.g_init_playfield(b),
+                                max_insns=8_000_000, hw_waiver=harness.HW_STUBBED_BY_OS_C)
         assert not diffs, f"leg={leg}\n{report(diffs[:16])}"
 
 
@@ -145,7 +146,7 @@ def test_nav():
                         pokes = _nav_pokes(leg, dec_delay, inc_delay, dirs, prev)
                         diffs, _ = differential(NAV_ENTRY, {"_pokes": pokes},
                                                 lambda l, b: l.g_init_playfield_nav(b),
-                                                stop_pc=NAV_STOP)
+                                                stop_pc=NAV_STOP, hw_waiver=harness.HW_STUBBED_BY_OS_C)
                         assert not diffs, (f"leg={leg} dec={dec_delay} inc={inc_delay} "
                                            f"dirs={dirs:#x} prev={prev:#x}\n{report(diffs[:12])}")
 

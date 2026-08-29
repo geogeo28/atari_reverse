@@ -1,11 +1,12 @@
-"""Differential tests for the screen buffers, the shifter sink and the block clears (src/video.c):
+"""Differential tests for the screen buffers, the shifter stores and the block clears (src/video.c):
 screen_clear @ 0x1296e, screen_flip_buffers @ 0x1297a, clear_backdrop_page0 @ 0x12fc2,
 blit_graphic_block @ 0x134b8, playfield_clear @ 0x1597c, set_palette_title @ 0x153ae.
 
-TWO OF THE SIX END AT THE VIDEO SHIFTER, which is not an image byte, so the memory diff alone would
-report a green for a candidate that published nothing at all. Both are given a second witness taken
-from the ORACLE'S OWN registers rather than from a Python model of the routine — see
-`test_screen_flip_publishes_the_new_front_buffer` and `test_set_palette_title_uploads_the_row`.
+TWO OF THE SIX END AT THE VIDEO SHIFTER, which is not an image byte. The kit's hardware write ledger
+is what holds those stores now (tools/recreate_kit/TRAP_MODEL.md, "Phase 10"): `harness.differential`
+compares both sides' ordered (address, width, value) stream, so a candidate that published nothing
+reds without either side writing anything into the image. Each of the two cases then names the
+stores the ORACLE made, so this file also says WHICH registers the routine is supposed to reach.
 """
 import ctypes
 import random
@@ -34,6 +35,17 @@ PLAYFIELD_ROWS = 144
 PLAYFIELD_BYTES = 0x5a00
 GRAPHIC_BLOCK_ROW_BYTES = 32
 SHIFTER_PALETTE_PAIRS = 8
+PALETTE_PENS = 16
+PALETTE_PEN_BYTES = 2
+PALETTE_LONG_BYTES = 4
+HW_PALETTE_BASE = 0xff8240
+HW_SCREEN_BASE_MID = 0xff8203
+HW_SCREEN_BASE_HIGH = 0xff8201
+
+# The two store widths this file names. Taken from the harness's mirror of os.h rather than spelt
+# as 1 and 4, because the width is COMPARED entry for entry between two implementations and a battery
+# asserting an expected stream must not hold a third copy of the tag.
+BYTE, LONG = harness.OS_HW_WRITE_WIDTH_8, harness.OS_HW_WRITE_WIDTH_32
 
 # The two rows `_start`'s screen builders pass in D0 (`move.w #$3f,d0` at 0x12a40 and friends,
 # `move.w #$17,d0` at 0x12a6a) — a `dbf` count, so 64 and 24 rows.
@@ -49,8 +61,8 @@ harness._lib.g_playfield_clear.restype = None
 harness._lib.g_blit_graphic_block.argtypes = [_u8p] + [ctypes.c_uint32] * 3
 harness._lib.g_blit_graphic_block.restype = None
 harness._lib.g_screen_flip_buffers.argtypes = [_u8p]
-harness._lib.g_screen_flip_buffers.restype = ctypes.c_uint32
-harness._lib.g_set_palette_title.argtypes = [_u8p, ctypes.c_uint32]
+harness._lib.g_screen_flip_buffers.restype = None
+harness._lib.g_set_palette_title.argtypes = [_u8p]
 harness._lib.g_set_palette_title.restype = None
 
 
@@ -200,6 +212,14 @@ def test_the_two_framebuffer_pointers_are_adjacent():
     assert A_SCREEN_FRONT == A_SCREEN_BACK + 4
 
 
+def test_the_palette_upload_is_the_whole_row():
+    """`SHIFTER_PALETTE_PAIRS` is kept as the original's own count of `move.l`s so that
+    test_constants.py can pin it across the language boundary — its scraper reads literals, not
+    expressions — which leaves the geometry it stands for unpinned in the C. Held here: eight
+    longwords ARE the sixteen colour registers, so a short upload is a short ROW."""
+    assert SHIFTER_PALETTE_PAIRS * PALETTE_LONG_BYTES == PALETTE_PENS * PALETTE_PEN_BYTES
+
+
 def test_playfield_geometry_agrees_with_its_derivation():
     """`PLAYFIELD_BYTES` is kept as the original's own immediate (`adda.l #$5a00,a6`) so that
     test_constants.py can pin it across the language boundary — its scraper reads literals, not
@@ -209,14 +229,13 @@ def test_playfield_geometry_agrees_with_its_derivation():
 
 @pytest.mark.parametrize("back,front", FLIP_BUFFER_PAIRS)
 def test_screen_flip_publishes_the_new_front_buffer(back, front):
-    """The pointer swap is an ordinary image write; the $ff8203/$ff8201 pair is not.
+    """The pointer swap is an ordinary image write; the $ff8203/$ff8201 pair is the kit's ledger.
 
-    The publish is held against the ORACLE'S OWN registers rather than against a Python copy of the
-    arithmetic: `screen_flip_buffers` leaves A0 holding the buffer it published (`movea.l
-    $1797e.l,a0` on entry, never written again) and D0 holding that address shifted down 16 by the
-    two `lsr.l #8`s, so each of the two bytes has a witness the oracle produced. What stays unpinned
-    is that the bytes reach $ff8203/$ff8201 at all — no image differential can see that, and
-    STATUS.md carries the residual.
+    The differential compares the two byte stores itself — address, width, value and ORDER, on both
+    sides (tools/recreate_kit/TRAP_MODEL.md, "Phase 10") — so a green result already holds the
+    publish. What this case adds is the claim in the other direction: it names the two stores the
+    ORACLE made, so the test says which registers this routine is supposed to touch instead of
+    leaving that to whatever the reconstruction happens to do.
     """
     pokes = {A_SCREEN_BACK: back.to_bytes(4, "big") + front.to_bytes(4, "big")}
     diffs, info = differential(ENTRY_SCREEN_FLIP_BUFFERS, {"_pokes": pokes},
@@ -224,33 +243,35 @@ def test_screen_flip_publishes_the_new_front_buffer(back, front):
     assert not diffs, f"back={back:#x} front={front:#x}\n{report(diffs)}"
 
     published = info["regs"]["a0"]           # the buffer that was the BACK one on entry
-    expected = (((published >> 16) & 0xff) << 8) | ((published >> 8) & 0xff)
-    assert info["ret"] == expected, (
-        f"back={back:#x}: candidate published {info['ret']:#06x}, oracle's A0 {published:#x} "
-        f"makes it {expected:#06x} (high byte $ff8201, low byte $ff8203)")
-    assert (info["ret"] >> 8) == (info["regs"]["d0"] & 0xff), (
-        f"back={back:#x}: the $ff8201 byte {info['ret'] >> 8:#04x} is not the oracle's own "
-        f"D0 = {info['regs']['d0']:#x} after its two `lsr.l #8`s")
+    assert info["regs"]["hw_writes"] == [(HW_SCREEN_BASE_MID, BYTE, (published >> 8) & 0xff),
+                                         (HW_SCREEN_BASE_HIGH, BYTE, (published >> 16) & 0xff)], (
+        f"back={back:#x}: the oracle stored {info['regs']['hw_writes']}, not the mid byte of "
+        f"A0={published:#x} to {HW_SCREEN_BASE_MID:#x} and then its high byte to "
+        f"{HW_SCREEN_BASE_HIGH:#x}")
 
 
 # ================================================================ set_palette_title @ 0x153ae
 
-# The routine writes NO memory — its whole effect is sixteen colour registers at $ff8240 — so the
-# oracle enters at a stub that stores the eight longwords it loaded (d0-d7) where the image diff can
-# see them, exactly as test_sound.py does for a register-only answer. The candidate's glue publishes
-# what its SINK recorded at the same address, so the two uploads are compared byte for byte.
-_PALETTE_STORES = tuple(f"d{n}" for n in range(SHIFTER_PALETTE_PAIRS))
-PALETTE_BYTES = 4 * SHIFTER_PALETTE_PAIRS
+# The routine writes NO memory — its whole effect is the sixteen colour registers at $ff8240, as
+# eight longwords — so the ENTIRE verification is the kit's hardware write ledger, which compares
+# each store's address, width, value and position in the stream (TRAP_MODEL.md, "Phase 10"). The case
+# needs no stub and no result slot: it enters the routine at its own address and runs to its `rts`.
+PALETTE_BYTES = PALETTE_LONG_BYTES * SHIFTER_PALETTE_PAIRS
 
 
-def _palette_case(palette, poison=False):
-    pokes = abi.register_call_pokes(ENTRY_SET_PALETTE_TITLE, _PALETTE_STORES)
-    pokes[abi.RESULT] = bytes(range(0x41, 0x41 + PALETTE_BYTES))   # neither answer, so silence shows
-    pokes[A_PALETTE_BOOT] = palette
-    regs = {"a0": abi.RESULT, "_pokes": pokes}
-    diffs, _ = differential(abi.STUB, regs,
-                            lambda lib, buf: lib.g_set_palette_title(buf, abi.RESULT), poison=poison)
+def _palette_case(palette):
+    pokes = {A_PALETTE_BOOT: palette}
+    diffs, info = differential(ENTRY_SET_PALETTE_TITLE, {"_pokes": pokes},
+                               lambda lib, buf: lib.g_set_palette_title(buf))
     assert not diffs, f"palette={palette.hex()}\n{report(diffs)}"
+    # ...and the claim in the other direction: the eight longwords the ORACLE stored are the row,
+    # in order, into the eight registers starting at $ff8240. Without this the case would say only
+    # "both sides did the same thing", which a pair that both did nothing also satisfies.
+    expected = [(HW_PALETTE_BASE + PALETTE_LONG_BYTES * pair, LONG,
+                 int.from_bytes(palette[4 * pair:4 * pair + 4], "big"))
+                for pair in range(SHIFTER_PALETTE_PAIRS)]
+    assert info["regs"]["hw_writes"] == expected, (
+        f"palette={palette.hex()}: the oracle stored {info['regs']['hw_writes']}")
 
 
 def test_set_palette_title_uploads_the_row():
@@ -265,10 +286,15 @@ def test_set_palette_title_reads_the_whole_row(seed):
     _palette_case(random.Random(seed).randbytes(PALETTE_BYTES))
 
 
-def test_set_palette_title_attribution():
-    """Poison the stub's result slots: a candidate that publishes nothing stays canary in all
-    eight, which is the only thing standing between an unwritten sink and a green."""
-    _palette_case(bytes(range(0x80, 0x80 + PALETTE_BYTES)), poison=True)
+def test_set_palette_title_uploads_an_all_black_row_rather_than_uploading_nothing():
+    """The one row where "stored zeros" and "stored nothing" have the same VALUES.
+
+    Every other case here separates a candidate that skipped the upload by the bytes it did not
+    store. On an all-zero row they agree byte for byte, and what is left is the ledger's LENGTH and
+    the addresses in it — which is the half of the write model a value comparison alone would not
+    reach.
+    """
+    _palette_case(bytes(PALETTE_BYTES))
 
 
 # --- test_constants.py collects these; see README.md, "Adding a function" ---
@@ -277,6 +303,10 @@ MIRRORS = (
     ("A_SCREEN_FRONT", "include/video.h", "A_screen_front"),
     ("A_BACKDROP_PAGE0", "include/video.h", "A_backdrop_page0"),
     ("A_PALETTE_BOOT", "include/video.h", "A_palette_boot"),
+    ("PALETTE_PENS", "include/video.h", "PALETTE_PENS"),
+    ("PALETTE_PEN_BYTES", "include/video.h", "PALETTE_PEN_BYTES"),
+    ("PALETTE_LONG_BYTES", "include/video.h", "PALETTE_LONG_BYTES"),
+    ("SHIFTER_PALETTE_PAIRS", "include/video.h", "SHIFTER_PALETTE_PAIRS"),
     ("SCREEN_ROW_BYTES", "include/video.h", "SCREEN_ROW_BYTES"),
     ("SCREEN_BYTES", "include/video.h", "SCREEN_BYTES"),
     ("PLAYFIELD_ROWS", "include/video.h", "PLAYFIELD_ROWS"),

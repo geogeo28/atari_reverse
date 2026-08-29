@@ -5,21 +5,29 @@
  * cycling), and attract mode's (0x12c9e / 0x12cc0, which paints a band of colour bars a scanline at
  * a time). Every one of them returns with `rte`.
  *
- * WHAT THE DIFFERENTIAL HOLDS HERE, AND WHAT IT DOES NOT. The flags, the counters, the shadow
- * palette and the colour-bar list are all in the image and fully compared; `sound_tick`'s chip
- * traffic is compared through the kit's PSG ledger. The shifter and MFP stores are neither — see
- * include/irq.h's note on `shifter_write_palette` — so each handler's row in STATUS.md says which
- * half of it is verified.
+ * WHAT THE DIFFERENTIAL HOLDS HERE. The flags, the counters, the shadow palette and the colour-bar
+ * list are all in the image and fully compared; `sound_tick`'s chip traffic is compared through the
+ * kit's PSG ledger; and the shifter and MFP stores are compared through the kit's hardware WRITE
+ * ledger — see include/irq.h, which also names the one residual that leaves.
  */
 #include "machine.h"
+#include "hw.h"        /* the kit's hardware write ledger — include/irq.h says what it pins */
 #include "irq.h"
 #include "sound.h"
 #include "util.h"      /* REGISTER_SWAP_BITS — the count machine.h's rotate needs to be a `swap` */
+#include "video.h"     /* the shifter's own stores and its geometry — see include/irq.h */
 
-/* The shifter and MFP stores every handler below makes live in their own translation unit,
- * src/irq_hw_offtarget.c, which a build for the real Atari does not compile. Read its header
- * comment for the argument; include/irq.h declares the three functions.
- * ============================================================================================= */
+/* `bclr #0,$fffa0f.l` — acknowledge Timer B in the MFP's in-service register B.
+ *
+ * A read-modify-write of a register the kit's seeded READ model does not name: off target the read
+ * answers a fabricated 0, so this stores 0 and both sides agree, while on the machine that
+ * acknowledges every in-service bit rather than Timer B's. include/irq.h states that residual and
+ * says a target build must not ship this expression. The shifter's stores live in src/video.c, with
+ * the registers they name. */
+void mfp_ack_timer_b(void) {
+    hw_write8(HW_MFP_ISRB, 0);
+}
+
 
 /* ================================================================================================
  * The in-game pair — vbl_isr @ 0x10776, timer_b_isr @ 0x10782
@@ -80,7 +88,7 @@ static int countdown_elapsed(uint8_t *image, uint32_t counter, uint8_t period) {
  * state — the same one-frame lag the sound driver's flush has, and for the same reason: the split
  * has to happen at a fixed point in the raster, not after a variable amount of work. */
 void timer_b_raster_isr(uint8_t *image) {
-    shifter_write_palette(image, 0, PALETTE_PENS, A_palette_hw_shadow);
+    shifter_upload_palette_longs(image, A_palette_hw_shadow);
 
     if (countdown_elapsed(image, A_palette_swap_countdown, PALETTE_SWAP_PERIOD))
         wr32(image + A_palette_swap_long,                                 /* `swap d7` */
@@ -129,7 +137,7 @@ void attract_rasterbar_isr(uint8_t *image) {
     wr16(image + cursor, (uint16_t)(be16(image + cursor) - 1));
     if (be16(image + cursor) == 0) {
         /* The colour word sits after the count; the cursor steps past both. */
-        shifter_write_palette(image, 0, 1, addr_add(cursor, 2));
+        shifter_write_pen(0, be16(image + addr_add(cursor, 2)));
         wr32(image + A_attract_raster_list_ptr, addr_add(cursor, 4));
     }
     mfp_ack_timer_b();
@@ -147,7 +155,7 @@ void attract_rasterbar_isr(uint8_t *image) {
  * frames. Written as a count-up-and-compare rather than a toggle because that is the instruction
  * pair (`addq.b` then `cmpi.b #$2`), and the two differ on any phase byte that starts above 1. */
 void vbl_menu(uint8_t *image) {
-    shifter_write_palette(image, 0, PALETTE_PENS, A_menu_palette);
+    shifter_upload_palette_longs(image, A_menu_palette);
 
     image[A_raster_phase] = (uint8_t)(image[A_raster_phase] + 1);
     if (image[A_raster_phase] == RASTER_PHASE_PERIOD) {

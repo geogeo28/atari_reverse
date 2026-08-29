@@ -115,8 +115,35 @@ _STATIC_TWICE_CODE = (struct.pack(">HI", 0x1239, MFP_GPIP)           # move.b $f
                       + struct.pack(">HI", 0x1439, MFP_GPIP)         # move.b $fffa01.l,d2
                       + struct.pack(">H", 0x4E75))                   # rts
 
+# ---- Phase 10's routines: stores to memory-mapped I/O registers ----
+# Three stores of three different WIDTHS to three different registers, which is what the write
+# ledger compares — a shape every game in this workspace has (a shifter colour word, a palette
+# longword, an ACIA command byte) and which no memory diff can see, because the oracle drops all
+# three.
+SHIFTER_PEN0 = 0xFF8240
+SHIFTER_PEN1 = 0xFF8244
+ACIA_DATA = 0xFFFC02
+ACIA_STATUS = 0xFFFC00
+ACIA_TX_RDY = 0x02                    # bit 1 of the status byte: the transmit register is empty
+PEN0_COLOUR = 0x0777                  # white, as the shifter's three 3-bit fields
+PEN_PAIR_COLOURS = 0x01230456         # a longword over pens 2 and 3, distinct in all four bytes
+IKBD_COMMAND = 0x16                   # "interrogate the joysticks", the byte three games send
+
+_HW_WRITE_CODE = (struct.pack(">HHI", 0x33FC, PEN0_COLOUR, SHIFTER_PEN0)     # move.w #$777,$ff8240
+                  + struct.pack(">HII", 0x23FC, PEN_PAIR_COLOURS, SHIFTER_PEN1)  # move.l #..,$ff8244
+                  + struct.pack(">HHI", 0x13FC, IKBD_COMMAND, ACIA_DATA)     # move.b #$16,$fffc02
+                  + struct.pack(">H", 0x4E75))                               # rts
+
+# ...and the IKBD send loop itself, `ikbd_send_cmd`'s four instructions: it is the routine the ACIA
+# status slot's MODEL DEFAULT exists for, and it terminates only because that default has TDRE set.
+_ACIA_SEND_CODE = (struct.pack(">HHI", 0x0839, 1, ACIA_STATUS)               # btst #1,$fffc00.l
+                   + struct.pack(">BB", 0x67, 0xF6)                          # beq.s back to the btst
+                   + struct.pack(">HHI", 0x13FC, IKBD_COMMAND, ACIA_DATA)    # move.b #$16,$fffc02
+                   + struct.pack(">H", 0x4E75))                              # rts
+
 _ROUTINES = (_RMW_CODE, _GIACCESS_CODE, _HW_READ_CODE, _SYNC_ONLY_CODE, _WRITE_THEN_READ_CODE,
-             _WIDE_READ_CODE, _VOLATILE_TWICE_CODE, _STATIC_TWICE_CODE)
+             _WIDE_READ_CODE, _VOLATILE_TWICE_CODE, _STATIC_TWICE_CODE,
+             _HW_WRITE_CODE, _ACIA_SEND_CODE)
 
 
 def _entries():
@@ -129,7 +156,8 @@ def _entries():
 
 
 (RMW_ENTRY, GIACCESS_ENTRY, HW_READ_ENTRY, SYNC_ONLY_ENTRY, WRITE_THEN_READ_ENTRY,
- WIDE_READ_ENTRY, VOLATILE_TWICE_ENTRY, STATIC_TWICE_ENTRY) = _entries()
+ WIDE_READ_ENTRY, VOLATILE_TWICE_ENTRY, STATIC_TWICE_ENTRY,
+ HW_WRITE_ENTRY, ACIA_SEND_ENTRY) = _entries()
 
 PRG_MAGIC = 0x601A
 

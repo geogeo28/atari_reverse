@@ -60,10 +60,10 @@ several 2–4 byte "functions" are fall-through entry aliases (e.g. `fill_words`
 | `0x11f4c` | `build_road_geometry` | 356 | ✅ verified | 300-seed fuzz (whole-image) |
 | `0x120b0` | `read_input` | 70 | ✅ verified | fuzz input_state x last_key (joystick keep vs keyboard-scancode map) |
 | `0x120f8` | `set_rez` | 24 | ✅ verified | trap layer (Ikbdws); D0.b -> config byte |
-| `0x12110` | `read_joystick` | 20 | ✅ verified | run-to-rts (IKBD status modeled TDRE-ready; no image effect) |
+| `0x12110` | `read_joystick` | 20 | ✅ verified | run-to-rts (IKBD status modeled TDRE-ready; no image effect). **HARDWARE HALF UNPINNED, and now declared per case rather than invisible**: the original polls `$fffc00` and sends `$16` to `$fffc02`, and `g_read_joystick` (`src/os.c`) is a no-op — so both addresses are named in `test/harness.py`'s `HW_STUBBED_BY_OS_C` and the cases that reach them pass it as `hw_waiver=`. The kit compares every off-image hardware access by default now (`tools/recreate_kit/TRAP_MODEL.md`, "Phase 10"); giving the stub a body through `hw_read8`/`hw_write8` is what would close it, and the waiver retires itself the day one does |
 | `0x12124` | `install_handlers` | 50 | ✅ verified | run-to-rts; Kbdvbase modeled, saves + patches mousevec/joyvec vectors |
 | `0x12166` | `load_graphics` | 146 | ✅ verified | checkpoint @0x121f2 (both Freads; before unpack) |
-| `0x121f8` | `flip_screen` | 46 | ✅ verified | flip_idx fuzz past {0,4}; video base + Vsync hardware-only, toggle observable |
+| `0x121f8` | `flip_screen` | 46 | ✅ verified | flip_idx fuzz past {0,4}; video base + Vsync hardware-only, toggle observable. **HARDWARE HALF UNPINNED, declared per case**: the original's longword store to the shifter's screen base at `$ff8200` has no counterpart in the reconstruction, so that address is in `test/harness.py`'s `HW_STUBBED_BY_OS_C` and this case waives it — see the `read_joystick` row for what closing it means |
 | `0x12226` | `xbios_setscreen` | 26 | ✅ verified | trap layer; no image effect |
 | `0x1225a` | `draw_results_screen` | 308 | ✅ verified | orchestrator; mode/pos/leg x flip (A3 + A0/fill chaining) |
 | `0x1238e` | `update_highscore` | 612 | ✅ verified | checkpoints 0x12450 (made) / 0x123e6 (miss): EGOFF + rank + shift + insert. Miss-tail (`g_hiscore_gameover`: game-over jingle tune 2) and made-tail (`g_hiscore_name_entry`: name-entry jingle tune 4/3 + initials screen) reconstructed; the per-frame countdown (`g_hiscore_countdown`) and char-select (`g_hiscore_charstep`) are diffed as slices, the draws/waits read-only. On-target psg-traced (both jingles drive the PSG). The two tail jingle ids are now **diff-verified**: `test_highscore.py::test_{made,miss}_tail_jingle` enters the full function and stops just after each `play_event_tune` bsr (made 0x12454, miss 0x12406), pairing `g_update_highscore` with the tail jingle (made) / `g_hiscore_gameover` (miss, its post-jingle waits are harness no-ops) so INITTUNE's id lands in the diff |
@@ -166,6 +166,31 @@ is verified at `0x121f2` (before `bsr unpack_graphics`), diffing both file reads
 decompressor. `exclude` drops a function's relocated-stack band from the diff (`_start` moves A7
 to `0x1b044`; the reconstruction is pure C with no machine stack). Data-heavy functions raise
 `differential(..., max_insns=)` (the unpacker needs a few million).
+
+## Deferred: the hardware half of three routines (kit Phase 10)
+
+**The kit compares every off-image hardware access by default now** — the seeded READ stream and an
+ordered `(address, width, value)` WRITE stream, both sides, every case
+(`tools/recreate_kit/TRAP_MODEL.md`, "Phase 10"). Three addresses in this game have no counterpart in
+the reconstruction, because `src/os.c` models the routines that reach them as no-ops:
+
+| address | the original's access | the stub |
+|---|---|---|
+| `$fffc00` | `read_joystick` polls the ACIA's TDRE bit | `g_read_joystick`, a no-op |
+| `$fffc02` | ...then sends the `$16` interrogate byte | the same |
+| `$ff8200` | `flip_screen` publishes the buffer to the shifter's screen base | `g_flip_screen`'s hardware half |
+
+They are enumerated in `test/harness.py`'s `HW_STUBBED_BY_OS_C`, with a reason each, and the eleven
+cases that reach one pass it as `hw_waiver=`. **The hole is unchanged in size; what changed is that
+it is declared per case rather than invisible** — and the waiver retires itself, so the day a stub
+gains a body through `hw_read8`/`hw_write8` the cases fail until the waiver is dropped. Closing it is
+reconstruction work: `src/os.c`'s two stubs are the whole of it.
+
+**One address is NOT in the list and is a live risk to name**: `poke_color_reg` (`0x1183e`, the mode-6
+tunnel palette swap) stores a word to `$ffff824c + reg_sel`, which masks into the shifter's colour
+block and would be ledgered. No case in this suite reaches it with a selector that lands there —
+`make test` is green at 292 — but a future case that does will red, and the remedy is a waiver row
+for the span rather than a surprise.
 
 ## Deferred: interactive (input/hardware-driven) functions
 

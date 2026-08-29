@@ -15,17 +15,17 @@ with no `src/<name>.c`.
 quoted.** Eleven rows are SLICES — named address RANGES rather than functions — and each one's
 Verification column opens with the `[start, end)` the differential actually runs. Nine of them are
 `## Verified — init`'s, because the boot chain never returns and so offers no `rts` to stop at; the
-other two are `## Verified — highscore`'s, the pure halves of two routines whose other halves reach
-the KIT-blocked `ikbd_send_cmd`. Every other row is a whole function. So today's sum is
-**195 rows = 184 functions + 11 slices**. Every one of the 184 has an
+other two are `## Verified — highscore`'s, the pure halves of two routines whose other halves are the
+keyboard-driven loops. Every other row is a whole function. So today's sum is
+**196 rows = 185 functions + 11 slices**. Every one of the 185 has an
 `fn` line in `../names.txt` (four handlers the name map first reached only by `cmt` —
 `anim_enemy_type16` 0x146f6, `anim_enemy_type20` 0x1467e, `anim_enemy_type22` 0x146ba,
 `actor_script_op_thrust_to_centre_y` 0x14e1c — were named there once this reconstruction pinned
 them). The eleven slices sit inside three more `fn` lines: `_start` @ 0x10000,
 `game_over_screen` @ 0x12e66 and `highscore_check_and_insert` @ 0x12eae.
-**195 − 184 = 11 named functions are not ported whole.** `_start` is one of them and appears in
+**195 − 185 = 10 named functions are not ported whole.** `_start` is one of them and appears in
 `## Not reconstructed, and why` as the RANGES its slices do not join up over rather than as a row;
-the other 10 each have exactly one row there, and two of those rows — 0x12e66 and 0x12eae — now say
+the other 9 each have exactly one row there, and two of those rows — 0x12e66 and 0x12eae — now say
 which HALF is verified above rather than claiming nothing is.
 
 **The memory map is README's, not this file's.** Where the stubs, the scratch buffers and the staged
@@ -45,7 +45,7 @@ Where an argument is load-bearing it has ONE home, cited from the others:
 | where each shipped preshift width comes from | `src/sprite.c`, "SHIPPED WIDTHS" |
 | why the fuzz caps the frame width | `test/test_sprite.py`, `FUZZ_MAX_FRAME_BYTES` |
 | what the entity record's fields are, and which are held by a test | `include/entity.h` |
-| why a shifter write cannot be seen, and what the sink recovers instead | `include/video.h`, header comment |
+| why a shifter store cannot be seen by the byte diff, and which surface holds it | `include/video.h`, header comment |
 | what the masked sprite format is (mask word, four planes, 16-pixel cells) | `include/sprite.h`, "THE MASKED SPRITE FORMAT" |
 | how the scroller's pieces fit together | `include/scroll.h`, header comment |
 | how the differential method works | [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) |
@@ -378,11 +378,11 @@ whose two strips CAN overlap and where the same question was a real defect.)
 | Addr (Ghidra) | Name | Bytes | Status | Verification |
 |---------------|------|-------|--------|--------------|
 | `0x1296e` | `screen_clear` | 12 | ✅ verified | a whole 32000-byte frame at both of the game's hard-coded framebuffers and at a buffer that is neither (the destination is A0 and the routine cares about nothing else); noise with a 16-byte guard band either side, which is what makes an overrun visible at all — the buffers are bss and a candidate clearing too far would write zeroes over zeroes; poison. Mutation killed: the cleared span 4 bytes short |
-| `0x1297a` | `screen_flip_buffers` | 48 | ✅ verified | the pointer swap is diffed byte for byte over four buffer pairs, two of them arbitrary longwords (the routine never dereferences either pointer, so any word is a legal input and that is what pins the byte extraction over the whole range). The $ff8203/$ff8201 publish is OFF-IMAGE and is held instead against the ORACLE'S OWN registers — A0 keeps the buffer that was published and D0 keeps it shifted down 16 — so both bytes have an oracle-side witness. **RESIDUAL: that the bytes reach the shifter at all is unpinned**, and no image differential can pin it; the surface that would is an on-target one (`docs/on-target-execution.md` — a hardware-state vector or the rendered pixels). Mutation killed: the two base bytes swapped |
+| `0x1297a` | `screen_flip_buffers` | 48 | ✅ verified | the pointer swap is diffed byte for byte over four buffer pairs, two of them arbitrary longwords (the routine never dereferences either pointer, so any word is a legal input and that is what pins the byte extraction over the whole range). The $ff8203/$ff8201 publish is OFF-IMAGE and is held by the kit's hardware write ledger, which compares the two byte stores' addresses, widths, values and ORDER against the oracle's (`tools/recreate_kit/TRAP_MODEL.md`, "Phase 10"); the case also names the two stores the oracle made, so the test says which registers the routine reaches rather than only that both sides agreed. **NO RESIDUAL LEFT HERE** — the earlier row's "that the bytes reach the shifter at all is unpinned" is retracted. Mutation killed: the two base bytes stored in the wrong order |
 | `0x12fc2` | `clear_backdrop_page0` | 18 | ✅ verified | one playfield's worth at the fixed page, noise + guard bands, poison. The address is an immediate in the routine, so the only thing a case can vary is what was there before. Mutation killed: the page address moved 4 bytes |
 | `0x134b8` | `blit_graphic_block` | 18 | ✅ verified | both shipped heights (D0 = 0x3f and 0x17), the one-row minimum — the count is a `dbf` register, so 0 must copy ONE row — hi-garbage above the word, six source/destination overlaps at row and word granularity, and poison. **The overlaps are what caught a real defect**: a `movem` pair reads a whole row before storing any of it, and an interleaved reconstruction read back its own stores from the third longword on at dst = src + 2. Mutation killed: the 32-byte row width |
 | `0x1597c` | `playfield_clear` | 66 | ✅ verified | the top 144 rows of whichever buffer `screen_back` names — both framebuffers and a third — noise + guard bands, poison. Mutation killed: the start moved one longword |
-| `0x153ae` | `set_palette_title` | 18 | ✅ verified | the routine writes NO image byte — its whole effect is sixteen colour registers at $ff8240 — so the oracle enters at a stub that stores the eight longwords it loaded (d0-d7) where the diff can see them, as `sound_lookup_tune` does for a register-only answer, and the candidate's glue publishes what its SINK recorded at the same address. Driven on the palette the binary ships with and on three noise rows, so each of the eight longwords must come from its own slot; poison, which is what stands between an unwritten sink and a green. **RESIDUAL: as with the flip above, that the row reaches $ff8240 is unpinned** and needs an on-target surface. Mutation killed: the upload one longword short |
+| `0x153ae` | `set_palette_title` | 18 | ✅ verified | the routine writes NO image byte — its whole effect is sixteen colour registers at $ff8240 — so the ENTIRE verification is the kit's hardware write ledger, which compares each store's address, width, value and position in the stream. The case needs no stub and no result slot: it enters at 0x153ae and runs to its `rts`. Driven on the palette the binary ships with, on three noise rows so each longword must come from its own slot, and on an ALL-BLACK row — the one input where "stored zeros" and "stored nothing" have the same values, so the ledger's length and addresses are what separate them. **NO RESIDUAL LEFT HERE**; the earlier row's on-target prescription is retracted. Mutations killed: the upload one longword short, and the stride long → word |
 
 ## Verified — weapon (22)
 
@@ -459,10 +459,11 @@ wave 3, so `entity_from_index` is now the one site to swap — the debt is table
 | `0x11318` | `ship_move_up` | 66 | ✅ verified | nine y values across the clamp and both ends of the word, against both speed levels — which pins `cmpi.w #$20` + `ble` as SIGNED and INCLUSIVE (at exactly the minimum the ship is re-set, not stepped) — five mirror-y values that have drifted away from the live record, which is what makes "both records step, only one is compared" observable; a 6x6 countdown/tilt grid pinning the roll as one frame in four with the countdown decremented on every call; five caller-supplied speed entries whose +4 and +6 words DIFFER, which is the only input that says which word each mover reads — both entries the game can select hold the same value at both offsets, so swapping them survives everything else (found by the review, now killed); 320-case sharded fuzz shared with its twin; poison on the stepping arm, the clamping arm and a call that does not roll. The shipped speed table's two entries are asserted as whole words, not low bytes |
 | `0x1135a` | `ship_move_down` | 68 | ✅ verified | the mirror battery of the above. The tilt grid is what separates the two arms: `ship_move_up` guards with `tst.b` (stop at 0) while this one guards with `cmpi.b #$6` + `beq`, so a bank already PAST the maximum keeps climbing instead of being held there |
 
-## Verified — input (1)
+## Verified — input (2)
 
 | Addr (Ghidra) | Name | Bytes | Status | Verification |
 |---------------|------|-------|--------|--------------|
+| `0x14444` | `ikbd_send_cmd` | 16 | ✅ verified | THE PROJECT'S OLDEST KIT WALL, and it is gone. Four instructions, none of which touches an image byte: `btst #1,$fffc00` spins on the IKBD ACIA's TDRE bit and `move.b d0,$fffc02` sends the command. Both halves are now kit surfaces — the status byte is a SEEDED READ slot whose model default has TDRE set, so the loop leaves on its first poll on BOTH sides, and the send goes through the hardware WRITE ledger (`tools/recreate_kit/TRAP_MODEL.md`, Phases 7 and 10). Verified over the nine command bytes the game's own call sites pass plus both ends of the byte and both sides of the sign bit; all 256 bytes as sharded fuzz, each under its own random TDRE-set status and its own junk in D0's high half; four status declarations that share only bit 1, which is what holds `btst #1` against a whole-byte compare; three high halves of D0, which hold `move.b` against a word store. Each case also names the ORACLE's own read stream and write stream, so the row says WHICH registers the routine reaches. Mutations killed: the status bit 1 → 0, the send byte → word, the poll skipped and readiness hardcoded, the send aimed at the status port, the send deleted, the command masked to seven bits |
 | `0x1326e` | `onscreen_keyboard_hit_test` | 116 | ✅ verified | all thirty keys addressed by their own screen position; one step either side of all four row-band edges (the bands SHARE their boundaries — a biased y of exactly 0x70 belongs to the TOP row — and the neighbouring rows hold different scancodes there); both column bounds including 0x110, which after the shift indexes byte 28 of a 28-byte row and so reads the NEXT row's first key; one key's whole 24-pixel span, pinning `lsr.w #3`; five incoming D0 values, because D0 IS AN INPUT — a hit overwrites only its low byte, so the caller's high word comes back, while a miss clears the whole register; 400-case sharded fuzz with junk in D0's high half; poison on a hit and a miss. The three row tables are transcribed off the image (the bottom row's last four keys are TWO columns wide, which a description would have got wrong). The routine writes no memory, so D0 reaches the diff through the `jsr`+store stub. `make guarded` covers the computed column index |
 
 ## Verified — text (3)
@@ -645,7 +646,7 @@ pre-fill, are the two newest rows.
 |---------------|------|-------|--------|--------------|
 | `0x10000` | `boot_enter_supervisor` | 16 | ✅ verified | `[0x10000, 0x10010)`. GEMDOS Super(0) and then `movea.l d0,a7` — the program adopts the old supervisor stack. IT WRITES NO IMAGE BYTE, so the empty diff is not the assertion: the token in D0 is, compared against the ORACLE'S OWN D0 and against `harness.OS_SUPER_TOKEN`. **RESIDUAL: that A7 becomes that token is unpinned** — `emu.REPORTED_REGS` does not carry A7 and the reconstruction has no machine stack of its own |
 | `0x10012` | `boot_save_vbl_vector` | 10 | ✅ verified | `[0x10012, 0x1001c)`. `move.l $70.l,$195d0.l`, over three vectors TOS might have left there (a plausible ROM address, 0 and all-ones), with the destination seeded to a value that is neither — both addresses are otherwise zero in the loaded image, so without the seed a candidate that copied nothing would differ nowhere. Poison. Mutation killed: the destination zeroed instead of copied |
-| `0x1002c` | `boot_load_title_assets` | 398 | ✅ verified | `[0x1002c, 0x101ba)`, the longest stretch of `_start` the harness can run end to end. Eight files read off the disk to the addresses the game gives them, the two framebuffer pointers fixed at their hard-coded values, the game's own VBL and Timer B vectors installed over TOS's, the title tune started, the picture published, its palette uploaded, seven ship frames de-interleaved and one four-frame preshift bank built. Every one of those is a leaf another battery verified; what this row proves is the COMPOSITION — the order and the addresses — over the whole image. The same case reads back the slice's OFF-IMAGE PUBLISH LEDGER, which covers the two effects the diff cannot: the `andi.b #$fc,$ff8260` resolution select (mask and count only — it is a read-modify-write whose read half has no modelled answer on either side) and the title-palette upload, whose whole effect is sixteen colour registers. Without that upload count, deleting `set_palette_title` from the slice left the suite green — measured, and now a killed mutation. Mutations killed: the two framebuffer constants swapped, the two vectors swapped, the palette upload deleted |
+| `0x1002c` | `boot_load_title_assets` | 398 | ✅ verified | `[0x1002c, 0x101ba)`, the longest stretch of `_start` the harness can run end to end. Eight files read off the disk to the addresses the game gives them, the two framebuffer pointers fixed at their hard-coded values, the game's own VBL and Timer B vectors installed over TOS's, the title tune started, the picture published, its palette uploaded, seven ship frames de-interleaved and one four-frame preshift bank built. Every one of those is a leaf another battery verified; what this row proves is the COMPOSITION — the order and the addresses — over the whole image. Its OFF-IMAGE half is the kit's now: every hardware store the slice makes — the `andi.b #$fc,$ff8260` resolution select, the screen base the flip publishes, the sixteen colour registers `set_palette_title` uploads — is compared by `harness.differential` itself, address, width, value and order (`tools/recreate_kit/TRAP_MODEL.md`, "Phase 10"). ONE RESIDUAL survives that and `src/init.c`'s one-byte sink holds it: `andi.b` is a read-modify-write whose READ half has no modelled answer, so `0 & mask` is 0 for every mask and the ledger cannot tell `$fc` from `$ff`. Mutations killed: the two framebuffer constants swapped, the two vectors swapped, the palette upload deleted, the resolution store deleted, the resolution mask `$fc` → `$ff` (which only the sink can see) |
 | `0x10814` | `section_advance` | 38 | ✅ verified | `[0x10814, 0x1083a)`. All sixteen section numbers plus 0xff: the wrap is a `cmpi.b #$10` on the INCREMENTED byte, so 15 wraps to 0 and 0xff increments to 0 and stays there. The map cursor is reset to the level's first column either way and is seeded elsewhere, so a candidate that skipped the reset differs. Poison. Mutation killed: the wrap never firing |
 | `0x1083a` | `section_reload_needed` | 32 | ✅ verified | `[0x1083a, 0x1085a)` for the reload arm and `[0x1083a, 0x10b6e)` for the other — **TWO ARMS WITH TWO DIFFERENT EXIT ADDRESSES**, so they are two cases with two checkpoints rather than one case with a branch. Six pairs of (loaded, current) section bytes across both arms; both destination bytes seeded to values neither arm produces, which is what makes the no-write arm a real assertion. The answer is also the slice's return value, so a case checks WHICH exit as well as the bytes. Mutation killed: the comparison inverted |
 | `0x1085a` | `section_reload_intro_screens` | 8 | ✅ verified | `[0x1085a, 0x10862)`. Two `bsr`s and nothing else, between the reload gate and the asset load: `player_intro_screen` @ 0x13426 then `status_panel_redraw_all` @ 0x135bc, both verified in `hud`. Driven over `test_hud.py`'s own panel staging — the eight .DAT files at the addresses `_start` gives them plus the three strips CUT OUT OF STATUS.PI1 — which is imported rather than rebuilt so panel graphics keep one source of truth. NO POISON PASS, for `hud`'s own two reasons. **ONE SURVIVOR: the ORDER of the two calls.** Swapping them leaves the image identical, because `status_panel_redraw_all` writes every panel piece to BOTH buffers and `playfield_clear` touches only rows 0..143 — so the flip between them moves nothing. It is observable on a rendered-pixel or on-target surface (what the player sees mid-repaint) and not to any memory differential; see `## Mutation ledger` |
@@ -653,12 +654,14 @@ pre-fill, are the two newest rows.
 | `0x10b6e` | `section_restart_prologue` | 224 | ✅ verified | `[0x10b6e, 0x10c4e)`. The per-life reset every section start runs through, reached both by falling out of the asset load and by the reload gate's `beq`: the PREPARE FOR COMBAT banner, the two front-end screens above, and then 0xd0 bytes of clears reaching five subsystems — every address included from its owner's header rather than restated. Driven over four alive-byte values (0x00 included, because a table that is already dead is what would hide a missing clear) with a record seeded PAST each of the two eighteen-record arrays. **WHAT SURVIVES IS AS DELIBERATE AS WHAT DOES NOT**: the sweep kills slots 0..17 and the stray `clr.b $17de0` is the GUNSIGHT's alive byte at slot 19, so the ship's SHADOW record (slot 18) is the one entity left alive — and the type-byte sweep is six slots, not eighteen. The ship pair's sprites are ONE FRAME apart (0x640), which is what says they are not two unrelated literals. NO POISON PASS, for `hud`'s reasons. Mutations killed: the sweep length, the gunsight's own kill dropped, the type sweep run over the whole table, the shadow's x, the shadow's sprite |
 | `0x10c4e` | `section_start_prefill` | 328 | ✅ verified | `[0x10c4e, 0x10d96)`. Two steps: the restart search (the word table at 0x19e84 scanned BACKWARDS from the section's eight-byte slot for the last offset at or below the map cursor, publishing `map_ptr` / `map_offset` / `scroll_pos`) and then 160 columns of backdrop pre-rendered into the eight off-screen pages with the display hidden. Four sections, five map cursors around the rewind edge, four (page, column) starting positions including both ring wraps, and the asteroid arm that renders nothing. **This is the composition test for the whole scroller**: every one of the eight pages is seeded over a full playfield, so a candidate that filled the wrong page or stopped a column short differs. NO POISON PASS — see `## Mutation ledger`, "init". Mutations killed: the page ring wrapping early, the restart scan walking forwards, the asteroid guard inverted |
 
-**A residual the whole subsystem carries.** The boot writes three things the image cannot see: the
-resolution byte at `$ff8260` (`andi.b #$fc`, a read-modify-write whose READ half has no modelled
-answer on either side, so `src/init.c`'s sink records the mask and the write count and nothing more),
-the two `move.w #$27xx,sr` interrupt masks, and — through `screen_flip_buffers` and
-`set_palette_title` — the shifter writes `include/video.h` already records. The surface that would
-pin any of them is an on-target one (`docs/on-target-execution.md`).
+**What the whole subsystem still cannot see.** The boot writes three things off the image, and two of
+the three are pinned now. The shifter stores it makes through `screen_flip_buffers` and
+`set_palette_title`, and the store half of the `$ff8260` resolution select, all go through the kit's
+hardware write ledger. What is left is the READ half of that read-modify-write — the six bits of the
+mode register the `andi.b` preserves, which neither side has an answer for, held only as a mask by
+`src/init.c`'s sink — and the two `move.w #$27xx,sr` interrupt masks, which are a CPU register and
+not a device at all. The surface that would pin either is an on-target one
+(`docs/on-target-execution.md`).
 
 ## Verified — fileio (2)
 
@@ -673,29 +676,33 @@ Every handler returns with `rte`, so each case enters through `abi.interrupt_fra
 that pushes the 68000 exception frame the handler pops and lands its `rte` on an ordinary `rts`. The
 frame is inside the stack-guard band the differential already drops.
 
-**WHAT THESE ROWS DO NOT CLAIM.** `$ff8240..` (the shifter's colour registers) and `$fffa0f` (the
-MFP's in-service register B) are outside the 1 MiB image: the oracle DROPS an off-image write and
-the candidate makes none, so **no case here can fail on a palette upload or an interrupt
-acknowledge**. Six of the seven handlers make one or both. `src/irq.c` routes them through
-`shifter_write_palette` / `shifter_clear_pen0` / `mfp_ack_timer_b`, and those three live in
-`src/irq_hw_offtarget.c` — a translation unit a build for the real Atari does NOT compile, which is
-the split `tools/recreate_kit/src/psg.c` uses for the one hardware surface the kit does model. So
-the omission is one named file rather than a silence spread through six routines, and a target
-build cannot inherit the no-ops by accident. **The surface that would catch it** is a kit-level
-hardware-write ledger
-mirroring `psg.h`'s — one write feeding an ordered ledger both sides compare — or, on target, a
-Hatari register snapshot (`docs/on-target-execution.md`). Until one exists these are the same class
-as `ikbd_send_cmd` below, and the rows say which half of each handler is held.
+**THE OFF-IMAGE HALF IS PINNED NOW, and the rows below say what that leaves.** `$ff8240..` (the
+shifter's colour registers) and `$fffa0f` (the MFP's in-service register B) are outside the 1 MiB
+image, so no BYTE DIFF can hold them — but `harness.differential` compares both sides' ordered
+`(address, width, value)` store stream on every case (`tools/recreate_kit/TRAP_MODEL.md`, "Phase
+10"), and `src/irq.c` makes those stores through the kit's `hw_write8`/`hw_write16`/`hw_write32`.
+Deleting a palette upload or an interrupt acknowledge, aiming one at the wrong register, or storing
+a word where the original stores a longword is a red; all six were measured killed in the sweep
+below. (The three sinks used to be EMPTY bodies in a `src/irq_hw_offtarget.c` of their own, so that a
+target build could not inherit them by accident; with a ledger to write through there is nothing
+empty left, they are ordinary functions in `src/irq.c`, and a target build supplies `hw_write*`
+instead of compiling the kit's `src/hw.c`.)
+
+**ONE RESIDUAL, and it is `mfp_ack_timer_b`'s VALUE.** `bclr #0,$fffa0f` is a read-modify-write, and
+the oracle's read of a register the kit's seeded READ model does not name answers a fabricated 0 — so
+both sides store 0 and the ledger holds the address, the width and the fact of the store while the
+bit the instruction cleared stays unpinned. `docs/on-target-execution.md`'s hardware-state vector is
+that byte's surface.
 
 | Addr (Ghidra) | Name | Bytes | Status | Verification |
 |---------------|------|-------|--------|--------------|
-| `0x106a2` | `vbl_isr_title` | 12 | ✅ verified | IN-IMAGE HALF ONLY — the sound tick, over an armed voice, compared in memory and through the PSG ledger. Its `clr.w $ff8240` is off-image and unpinned (see above) |
-| `0x106ae` | `timer_b_raster_isr` | 200 | ✅ verified | IN-IMAGE HALF ONLY — both colour cycles at, and either side of, the frame they fire on, over a shadow seeded with DISTINCT random words — over equal words (or the zeroes the `.PRG` ships for most pens) both machines would be invisible. The countdown of 0 is the case that matters: `subq.b`+`bne` wraps it to 0xff and does NOT fire, which is what an `if (--n <= 0)` reconstruction gets wrong. The two periods differ (8 and 4), so a candidate reloading both from one constant differs on one; poison. Its eight-longword palette upload is off-image and unpinned |
+| `0x106a2` | `vbl_isr_title` | 12 | ✅ verified | the sound tick, over an armed voice, compared in memory and through the PSG ledger; its `clr.w $ff8240` through the hardware write ledger, which holds the register AND the word width. Mutation killed: the clear deleted, and the clear narrowed to a byte |
+| `0x106ae` | `timer_b_raster_isr` | 200 | ✅ verified | both colour cycles at, and either side of, the frame they fire on, over a shadow seeded with DISTINCT random words — over equal words (or the zeroes the `.PRG` ships for most pens) both machines would be invisible. The countdown of 0 is the case that matters: `subq.b`+`bne` wraps it to 0xff and does NOT fire, which is what an `if (--n <= 0)` reconstruction gets wrong. The two periods differ (8 and 4), so a candidate reloading both from one constant differs on one; poison. Its eight-longword palette upload is held by the hardware write ledger — mutation killed: the upload one longword short |
 | `0x10776` | `vbl_isr` | 12 | ✅ verified | THE ONE HANDLER WITH NO HARDWARE STORE AT ALL, and so the only one held end to end: the sync flag over three values, and the sound tick with a voice armed, compared in memory and through the PSG ledger |
-| `0x10782` | `timer_b_isr` | 16 | ✅ verified | IN-IMAGE HALF ONLY — the sync flag over three values, which is the whole of its in-image effect. Its `bclr #0,$fffa0f` is off-image and, unlike the palette, has no shadow at all — nothing about it is visible in the image |
-| `0x12c9e` | `attract_vbl_isr` | 34 | ✅ verified | IN-IMAGE HALF ONLY — the line word, the sync flag and the list cursor, each seeded with a value the handler cannot produce (0x1234, 0x01, 0xdeadbeef) so a missing write shows up on the plain pass, plus the sound tick. Its `clr.w $ff8240` is off-image and unpinned |
-| `0x12cc0` | `attract_rasterbar_isr` | 130 | ✅ verified | IN-IMAGE HALF ONLY — both band edges either side of each — the line is incremented FIRST, so entering on 0x26 puts the handler on 0x27, the first line outside — and the signed arm (a line of 0xffff increments to 0 and is BELOW the band, not far above it); three cursor positions walking the list; and a count of 0, which `subi.w` wraps to 0xffff so the pair is NOT retired. The count word is decremented IN PLACE, so the list is consumed as the band is painted; poison. Its colour store and its acknowledge are off-image and unpinned. The two out-of-band arms differ only in a delay loop with no memory effect, which is not reconstructed |
-| `0x13c26` | `vbl_menu` | 120 | ✅ verified | IN-IMAGE HALF ONLY — every phase byte the counter can hold, including the three that never occur in play (2, 3, 0xff): the original counts UP and compares against 2, so a phase starting above 1 runs all the way round rather than wrapping next frame — which is what separates the instruction pair from the `^ 1` toggle a paraphrase would write (mutation measured killed). Its own eight-longword palette upload is off-image and unpinned |
+| `0x10782` | `timer_b_isr` | 16 | ✅ verified | the sync flag over three values, which is the whole of its in-image effect, and its `bclr #0,$fffa0f` through the hardware write ledger — the acknowledge has no image shadow at all, so before the ledger nothing about it was visible. Mutation killed: the acknowledge deleted. RESIDUAL: the ledger holds the register and the byte width, not the BIT (see the note above) |
+| `0x12c9e` | `attract_vbl_isr` | 34 | ✅ verified | the line word, the sync flag and the list cursor, each seeded with a value the handler cannot produce (0x1234, 0x01, 0xdeadbeef) so a missing write shows up on the plain pass, plus the sound tick. Its `clr.w $ff8240` is held by the hardware write ledger |
+| `0x12cc0` | `attract_rasterbar_isr` | 130 | ✅ verified | both band edges either side of each — the line is incremented FIRST, so entering on 0x26 puts the handler on 0x27, the first line outside — and the signed arm (a line of 0xffff increments to 0 and is BELOW the band, not far above it); three cursor positions walking the list; and a count of 0, which `subi.w` wraps to 0xffff so the pair is NOT retired. The count word is decremented IN PLACE, so the list is consumed as the band is painted; poison. Its colour store (one WORD, unlike the raster split's longwords) and its acknowledge are held by the hardware write ledger. The two out-of-band arms differ only in a delay loop with no memory effect, which is not reconstructed |
+| `0x13c26` | `vbl_menu` | 120 | ✅ verified | every phase byte the counter can hold, including the three that never occur in play (2, 3, 0xff): the original counts UP and compares against 2, so a phase starting above 1 runs all the way round rather than wrapping next frame — which is what separates the instruction pair from the `^ 1` toggle a paraphrase would write (mutation measured killed). Its own eight-longword palette upload, from the OTHER shadow, is held by the hardware write ledger |
 
 **NO POISON PASS ON THE FOUR HANDLERS THAT TICK THE SOUND DRIVER.** Measured, not assumed: with
 `poison=True` both `vbl_isr` and `attract_vbl_isr` fail inside the driver at `psg_reg_shadow+1`,
@@ -1310,6 +1317,20 @@ the `swap`) were RE-RUN after that reshaping rather than carried over.
 | the attract bar's count test replaced by "always retire" | killed |
 | the attract band's upper edge `>=` -> `>` | killed |
 | `vbl_menu`'s phase wrap `==` -> `>=` | killed |
+| `mfp_ack_timer_b` stores nothing | killed |
+| `shifter_clear_pen0` stores nothing | killed |
+| `shifter_clear_pen0`'s width word -> byte | killed |
+| the raster split's palette upload one longword short | killed |
+| `screen_flip_buffers` stores its two base bytes in the wrong ORDER (same addresses, same values) | killed |
+| `set_palette_title`'s stride long -> word | killed |
+| `_start`'s `$ff8260` resolution store deleted | killed |
+| `SHIFTER_MODE_RESOLUTION_MASK` 0xfc -> 0xff (the ledger cannot see it; `init_shifter_mode_mask_written` is what does) | killed |
+| `ikbd_send_cmd` tests status bit 0 instead of bit 1 | killed |
+| `ikbd_send_cmd`'s send width byte -> word | killed |
+| `ikbd_send_cmd` skips the poll and hardcodes readiness | killed |
+| `ikbd_send_cmd` sends to the STATUS port instead of the data port | killed |
+| `ikbd_send_cmd`'s send deleted | killed |
+| `ikbd_send_cmd`'s command masked to seven bits in the glue | killed |
 | `angle_to_target`'s octant-swap compare read UNSIGNED | **SURVIVED** |
 | `sin_scaled`'s first fold boundary `<=` -> `<` | **SURVIVED** |
 | `load_file` closes from the REGISTER instead of re-reading `A_file_handle` | **SURVIVED** |
@@ -1449,8 +1470,8 @@ two function pointers.
 
 ONE table for the whole project, sorted by address, one row per unported function or per gap
 between the init slices. Every `fn` line in `../names.txt` that has no ✅ row above appears here
-exactly once — 10 of them — plus the five ranges the nine init slices do not join up over and one
-address the name map reaches only by `cmt`. Two of the 10 are PARTLY verified above: `game_over_screen`
+exactly once — 9 of them — plus the five ranges the nine init slices do not join up over and one
+address the name map reaches only by `cmt`. Two of the 9 are PARTLY verified above: `game_over_screen`
 and `highscore_check_and_insert` each contribute a slice to `## Verified — highscore`, and their rows
 say what is left rather than claiming nothing is. Each blocker is re-derived against the verified set
 above (call targets read out of `../out/prg_dis.txt`, dispatch tables out of `../names.txt`'s own
@@ -1460,45 +1481,57 @@ table accounting), not inherited from the wave that wrote the row. The categorie
   composes.
 * **BLOCKED-ON `0xaddr`** — one or more named callees are themselves unported; the row gives their
   addresses so the chain can be walked.
-* **KIT** — the harness cannot run it at all. Three walls: `ikbd_send_cmd`'s `$fffc00` ACIA spin and
-  its unledgered `$fffc02` write; the TOS model's eight staged-file slots against the boot's ~30
-  opens; and the off-image palette / shifter stores, which no memory differential can see.
+* **KIT** — the harness cannot run it at all. **All three of the walls this table used to name are
+  gone**, closed in the kit rather than worked around here: `ikbd_send_cmd`'s `$fffc00` ACIA spin is
+  a seeded READ slot and its `$fffc02` write is ledgered (kit `TRAP_MODEL.md`, Phases 7 and 10); the
+  staged-file table holds 32 files, not 8; and every off-image palette / shifter / MFP store is
+  compared as an ordered `(address, width, value)` stream. What is left under this label is ONE
+  address and it is named where it is used: a READ of the ACIA's data port `$fffc02`, which
+  `ikbd_acia_isr` makes and no phase models.
 * **DEAD CODE** — nothing references it, and that is a finding rather than a block.
 
 | Addr | Name | Status |
 |---|---|---|
 | `0x10010` | `_start`'s Line-A opcode | **MODELLED, not verified.** `$a00a` (hide the mouse pointer) is an unimplemented instruction the oracle takes as an exception, so no case can run through it. It is modelled as a NO-OP — there is no mouse pointer on any surface this project compares — and that is a model, not a verification |
-| `0x1001c`..`0x1002c` | `_start`'s two `ikbd_send_cmd` calls | **KIT.** Both reach `ikbd_send_cmd` @ 0x14444, which busy-waits on `btst #1,$fffc00`, the IKBD ACIA's status register. The kit models four hardware addresses and that is not one of them (`emu.HW_ADDRS`), so the oracle spins there for ever. See the 0x14444 row |
-| `0x101ba`..`0x10814` | the rest of `_start` | **KIT**, and a harness limit rather than a seam in the program: the TOS model's staged-file table holds eight files (`harness.OS_FS_SLOTS`) and the boot opens about thirty. 0x101ba is where the ninth would be opened. Reaching further needs either a bigger table or a slice per eight files, and the second is a shape no batch has needed yet |
-| `0x10d96`..`0x10f4e` | the section start's tail | **KIT.** It polls the joystick through an `ikbd_send_cmd` at 0x10f26 — the same ACIA wall as 0x1001c |
+| `0x1001c`..`0x1002c` | `_start`'s two `ikbd_send_cmd` calls | **UNBLOCKED — the wall is gone.** Both reach `ikbd_send_cmd` @ 0x14444, which is **verified** above: `$fffc00` is a seeded READ slot whose model default has TDRE set, so the spin leaves on its first poll on both sides, and the `$fffc02` send is ledgered. What is left is sixteen bytes of composition — two `move.b`+`bsr` pairs — waiting for a checkpoint slice that joins them to `boot_save_vbl_vector` above and `boot_load_title_assets` below |
+| `0x101ba`..`0x10814` | the rest of `_start` | **UNBLOCKED — the wall is gone.** The staged-file table held eight files and the boot opens about thirty; 0x101ba was where the ninth would have been. `OS_FS_SLOTS` is 32 now, sized on this boot's own count (22 `load_file` calls before 0x10814, and five more per level section), and the staging area is nowhere near full — 66,818 bytes of file against 258,048 between `OS_FS_STAGING` and the stack guard, measured off the `move.l #len,d1` before each call. What the range needs now is ordinary slice work: a checkpoint at 0x10814, the thirty filenames and destinations read off the listing, and the sprite/preshift leaves it composes (all verified). Its one non-file hazard is the Line-A opcode at 0x10010, which is behind this range's entry rather than inside it |
+| `0x10d96`..`0x10f4e` | the section start's tail | **UNBLOCKED — the ACIA wall is gone.** It polls the joystick through an `ikbd_send_cmd` at 0x10f26, and that routine is verified above; the poll now terminates on both sides and both its hardware accesses are compared. What remains is a checkpoint slice over the range |
 | `0x10f4e`.. | the frame loop | **BLOCKED-ON `0x113c0`, `0x11c00`, `0x11d30`** — the three frame stages below are the loop's whole body |
 | `0x113c0` | `frame_weapons_and_spawn_stage` | **BLOCKED-ON `0x11c00`** alone now — the other eight callees this row used to name (`0x11906`, `0x13868`, `0x13898`, `0x13958`, `0x13a12`, `0x13af2`, `0x1487c`, `0x14fc8`) are all verified above. Frame stage one: trail drone, fire/charge, weapon dispatch, bullet motion, spawn scripts, ending in a `bra` into 0x11c00. It is an orchestrator, deferred to world-staging, per the playbook's order of attack |
 | `0x11c00` | `frame_draw_objects_and_collide` | **BLOCKED-ON `0x11d30`** (its own `bra` tail) alone; `0x151ba` landed. Everything it does itself is verified — `draw_sprite_masked_collide` 0x15b7c over the 20-entry object table, `asteroids_draw` 0x159be, and `object_pair_overlap_mark` 0x11cce building the all-pairs mask at 0x18252 |
-| `0x11d30` | `frame_resolve_hits_and_game_state` | **BLOCKED-ON `0x12e66`** (partly verified, below) plus **KIT** through `ikbd_send_cmd` @ 0x14444 (`0x13ad0`, `0x13cd4` and `0x15222` all landed). Frame stage four: resolve the collision matrix, run the game-state machine, starfield, decay timers, scroll step, buffer flip — and it leaves through five different addresses (0x10f4e / 0x10b6e / 0x1083a / 0x10814 / 0x10500), so it is world-staging work whatever its callees do |
-| `0x12ac2` | `title_attract_loop` | **KIT.** It waits for key '1'/'2' or joystick fire through `ikbd_send_cmd` @ 0x14444. Everything else it needs is verified: `title_screen_draw` 0x12a28, `role_of_honour_screen` 0x13338, `rand16` 0x13bf8, and its own two ISRs 0x12c9e / 0x12cc0 |
-| `0x12e66` | `game_over_screen` | **PARTLY VERIFIED, and blocked past that.** `[0x12e66, 0x12e94)` — the playfield clear, the GAME OVER PLAYER record and the player digit — is `game_over_screen_prologue` in `## Verified — highscore`. What is left is the `bsr` into `highscore_check_and_insert` (KIT, below) and the eight-longword palette restore on ITS not-rated arm, which is four instructions this reconstruction cannot reach without running the routine it follows |
-| `0x12eae` | `highscore_check_and_insert` | **PARTLY VERIFIED. KIT** (`ikbd_send_cmd` @ 0x14444, on the NOT RATED arm) **and BLOCKED-ON `0x12fd4`** for the rest. The ranking and shift-down half is `highscore_rank_and_shift` in `## Verified — highscore`, entered MID-ROUTINE at 0x12eb2 and stopped at whichever of 0x12f0e / 0x12f5a the ranking chose. (An earlier row here gave the range as 0x12eb2..0x12f0c; 0x12f0c is not an instruction boundary — the `dbf` at 0x12f0a runs to 0x12f0e, which is also where both arms of the shift converge.) What is left is the screen clear at 0x12fc2 that the entry `bsr`s into, the NEW HIGH SCORE screen, and the two keyboard loops |
-| `0x12fd4` | `highscore_enter_name` | **KIT.** The name-entry loop drives the keyboard through `ikbd_send_cmd` @ 0x14444 and additionally busy-waits on the VBL flag at 0x198a7. Its drawing half is clear now: `draw_sprite_masked_collide` (0x15b7c) is verified, as are `onscreen_keyboard_hit_test` (0x1326e), `draw_char`, `draw_text_record`, `screen_flip_buffers` and `blit_page0_to_playfield` |
-| `0x14444` | `ikbd_send_cmd` | **KIT, and the earliest row on this page prescribed the wrong fix.** The routine spins on bit 1 of the IKBD ACIA status at `$fffc00` and then writes `$fffc02`. Adding `$fffc00` to `os.h`'s `OS_HW_*` set as a VOLATILE address does NOT work: VOLATILE means one declaration describes exactly one read and a SECOND read in the same run is refused — but a spin loop's whole nature is re-reading. Nor does a STATIC declaration, whose contract is that the machine's answer never changes; a status byte that must read "not ready" and then "ready" is precisely what the Phase 7 model excludes. And the write half has no ledger at all: `hw.h` exports `hw_read8` and no `hw_write8`, so a reconstruction's `$fffc02` store would be invisible on both sides. The correct fix is a shim-level ACIA model (a status byte that becomes ready after a declared number of polls, the way `sched.c` counts polls per wait site) plus an IKBD write ledger mirroring `psg.c` — playbook §5's "model the input hardware registers so busy-waits terminate". That is kit work, not this project's, and the surface that would catch it is on-target rather than the differential |
-| `0x14456` | `ikbd_acia_isr` | **KIT.** The same `$fffc00` / `$fffc02` gap as the row above, and it is an interrupt handler entered around a frame rather than a called routine |
+| `0x11d30` | `frame_resolve_hits_and_game_state` | **BLOCKED-ON `0x12e66`** (partly verified, below) alone — `0x13ad0`, `0x13cd4`, `0x15222` and its `ikbd_send_cmd` @ 0x14444 poll are all verified now, so the KIT half of this row is gone. Frame stage four: resolve the collision matrix, run the game-state machine, starfield, decay timers, scroll step, buffer flip — and it leaves through five different addresses (0x10f4e / 0x10b6e / 0x1083a / 0x10814 / 0x10500), so it is world-staging work whatever its callees do |
+| `0x12ac2` | `title_attract_loop` | **UNBLOCKED.** It waits for key '1'/'2' or joystick fire through `ikbd_send_cmd` @ 0x14444, now verified — sending the interrogate command is no longer a wall. Everything else it needs is verified too: `title_screen_draw` 0x12a28, `role_of_honour_screen` 0x13338, `rand16` 0x13bf8, and its own two ISRs 0x12c9e / 0x12cc0. **What it will need instead is a case shape, not a kit surface**: the loop spins on a byte only `ikbd_acia_isr` writes, which is Phase 8's scheduled-write model (`schedule=` / `wait_sites=`) rather than anything about the ACIA |
+| `0x12e66` | `game_over_screen` | **PARTLY VERIFIED, and blocked past that.** `[0x12e66, 0x12e94)` — the playfield clear, the GAME OVER PLAYER record and the player digit — is `game_over_screen_prologue` in `## Verified — highscore`. What is left is the `bsr` into `highscore_check_and_insert` (below) and the eight-longword palette restore on ITS not-rated arm, which is four instructions this reconstruction cannot reach without running the routine it follows |
+| `0x12eae` | `highscore_check_and_insert` | **PARTLY VERIFIED, and BLOCKED-ON `0x12fd4`** for the rest — the KIT half is gone, `ikbd_send_cmd` @ 0x14444 (its NOT RATED arm) being verified. The ranking and shift-down half is `highscore_rank_and_shift` in `## Verified — highscore`, entered MID-ROUTINE at 0x12eb2 and stopped at whichever of 0x12f0e / 0x12f5a the ranking chose. (An earlier row here gave the range as 0x12eb2..0x12f0c; 0x12f0c is not an instruction boundary — the `dbf` at 0x12f0a runs to 0x12f0e, which is also where both arms of the shift converge.) What is left is the screen clear at 0x12fc2 that the entry `bsr`s into, the NEW HIGH SCORE screen, and the two keyboard loops |
+| `0x12fd4` | `highscore_enter_name` | **UNBLOCKED at the kit level.** The name-entry loop drives the keyboard through `ikbd_send_cmd` @ 0x14444, now verified. Its two busy-waits — for a scancode only `ikbd_acia_isr` stores, and on the VBL flag at 0x198a7 — are Phase 8's scheduled-write model, which the kit already has and this project has not used yet. Its drawing half is clear now: `draw_sprite_masked_collide` (0x15b7c) is verified, as are `onscreen_keyboard_hit_test` (0x1326e), `draw_char`, `draw_text_record`, `screen_flip_buffers` and `blit_page0_to_playfield` |
+| `0x14456` | `ikbd_acia_isr` | **KIT, and the row is re-derived: two of the three gaps it inherited are closed.** It is an interrupt handler entered around a frame rather than a called routine, which `abi.interrupt_frame_pokes` already handles for the seven `irq` handlers. Of its four hardware accesses: `btst #4,$fffffa01` is the MFP GPIP, ALREADY a seeded READ slot (`hw_seed={0xfffa01: …}`); `bclr #6,$fffffa11` is a store to the MFP's in-service register B, ALREADY held by the hardware WRITE ledger, at the same fidelity as `mfp_ack_timer_b`'s (address and width, not the bit — its read half is a fabricated 0). **What is still missing is exactly one thing: a READ of the ACIA's data port.** The handler does `lea $fffffc00.l,a0` and then reads `(a0)` for the status and `2(a0)` for the byte, so it reads `$fffc02` once per entry and again per packet byte — and that port answers whatever the keyboard controller last put there, which is neither a per-run constant (Phase 7's shape, and the reason `$fffc02` is deliberately not a slot) nor a store into the image (Phase 8's). It needs a THIRD kit shape: a declared SEQUENCE of bytes one address yields, one per read. Note for whoever builds it: the 68000's 24-bit bus folds the handler's `$fffffc00` onto `$fffc00`, which the oracle masks and `hw.h` does not — a reconstruction spells the 24-bit form |
 | `0x148ca` | — (no `fn` line; `../names.txt` reaches it by `cmt` only) | **DEAD CODE, and that is a finding rather than a block:** nothing anywhere references it, and it is a near-copy of `enemy_move_type14_sine` using D6 as a slot index into 0x19673. Left unported deliberately |
 | `0x16aa6` | `sound_install_timer_a_dead` | **DEAD CODE** — unreferenced, per `../names.txt`. It would reset the PSG and then `Xbtimer` (Timer A, ctrl 7, data 0xf4, vector 0x16b94) to run the sound tick off Timer A instead of the VBL. Its one callee, `sound_reset_psg`, is verified |
 
 **The three name-map corrections `../out/names_sound.txt` once carried are IN `../names.txt` now** (the
 `var` lines at 0x19933 / 0x19a0b and the SFX-toggle comment at 0x16e90 — commit d383ae0); nothing is outstanding there.
 
-**The off-image class is a KIT gap that no row above can close.** `$ff8240..` (the shifter's colour
-registers), `$ff8260` (the resolution byte) and `$fffa0f` (the MFP's in-service register B) are
-outside the 1 MiB image, so an oracle write there is DROPPED and the candidate makes none. Six of
-the seven `irq` handlers, `screen_flip_buffers`, `set_palette_title` and the boot slices all carry
-one of these unpinned — each row above says which half of itself is held, and `src/irq.c` routes
-the stores through `src/irq_hw_offtarget.c` so the omission is one named file rather than a silence
-spread through six routines. The surface that would catch them is a kit-level hardware-write ledger
-mirroring `psg.h`'s, or an on-target run (`docs/on-target-execution.md`).
+**The off-image class was a KIT gap and it is closed.** `$ff8240..` (the shifter's colour
+registers), `$ff8201`/`$ff8203` (the screen base), `$ff8260` (the resolution byte) and `$fffa0f`
+(the MFP's in-service register B) are outside the 1 MiB image, so an oracle store there is dropped —
+but `harness.differential` now compares both sides' ordered `(address, width, value)` store stream
+on every case (kit `TRAP_MODEL.md`, "Phase 10"), and `src/irq.c`, `src/video.c` and `src/init.c` make
+those stores through `hw_write8`/`hw_write16`/`hw_write32`. Six of the seven `irq` handlers,
+`screen_flip_buffers`, `set_palette_title` and the boot slices are all held now; the eight mutations
+this project ran against them were all killed, and `src/irq_hw_offtarget.c` — the file of empty
+bodies that stood in for the ledger — is deleted.
+
+**Two residuals survive it, both stated where they arise.** A READ-MODIFY-WRITE at an address the
+seeded READ model does not name (`bclr #0,$fffa0f`, `andi.b #$fc,$ff8260`) computes its value from a
+fabricated 0 on both sides, so the ledger holds the address, the width and the fact of the store
+while the MASK or the BIT stays unpinned — `src/init.c`'s one-byte sink holds the resolution mask,
+and the MFP bit is unheld. And the two `move.w #$27xx,sr` interrupt masks are a CPU register rather
+than a device, which no ledger reaches. Both want an on-target surface
+(`docs/on-target-execution.md`, the hardware-state vector).
 
 ## Suite
 
-`make test` — **3389 passed**, 4 skipped. `make guarded` — same count, 20342
+`make test` — **3410 passed**, 4 skipped. `make guarded` — same count, 20614
 candidate runs guarded across 10 workers, no fault.
 
 THIS LINE IS SHARED, and several agents add batteries to this project at once — the count is

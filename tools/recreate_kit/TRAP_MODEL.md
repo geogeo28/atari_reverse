@@ -859,9 +859,10 @@ section.
 
 Phase 6 established the distinction this phase extends: **a seed is a declared case input, not a
 fabrication.** There it was the YM2149's register contents. Here it is a small named set of hardware
-BYTES outside the chip — `$fffa01` (the MFP GPIP), `$ff820a` (the shifter's sync mode) and the two
-video-address-counter bytes `$ff8207`/`$ff8209` — served from a file the case declares, recorded in
-an ordered ledger both sides keep, and refused when nothing declared them.
+BYTES outside the chip — `$fffa01` (the MFP GPIP), `$ff820a` (the shifter's sync mode), the two
+video-address-counter bytes `$ff8207`/`$ff8209` and `$fffc00` (the IKBD ACIA's status register) —
+served from a file the case declares, recorded in an ordered ledger both sides keep, and refused
+when nothing declared them.
 
 The first two **steer a branch**, which is the shape the phase was built for. The counter pair is the
 same false green with a **wider blast radius**: those bytes are summed into an arithmetic result
@@ -1182,6 +1183,42 @@ modeled set as `T2 SEEDED_READ`**, not as the `T4 HW_READ` it priced them at whe
 capture answered them; the census pins `HW_SEEDED_ADDRS` and `OS_HW_NSLOTS` against `os.h`, so a
 fifth modeled byte cannot be added while the classifier goes on under-counting it.
 
+### The ONE slot the model declares for itself: `$fffc00`, the IKBD ACIA status
+
+Every other modeled address answers a fact about the machine the case is describing — which monitor,
+which sync rate, where the beam is — and a default for one of those is the fabricated-`0` class this
+whole phase exists to close. The ACIA's status byte is not that. It is a **transient that always
+resolves the same way**: the 6850's transmitter goes empty microseconds after the last byte leaves
+it, so "TDRE set" is the state a quiescent ACIA is in on entry to any send, and serving `0` instead
+is the one answer the machine never settles at — it hangs the send loop for ever.
+
+`shim.c` therefore answered this address `0x02` from a hard-coded `return` **from before this phase
+existed**, so that BuggyBoy's `read_joystick` could run to its `rts` at all. What Phase 10 changed is
+where that byte comes from: `os_hw_model_defaults()` in `os.h`, installed by the SAME code path a
+case's `hw_seed` takes, on BOTH sides. Three consequences, and each is the point:
+
+* the read is now **LEDGERED**, so "the reconstruction polled the status register" is a compared
+  fact rather than an assumption — deleting the poll is a red;
+* a case may **override** it (`hw_seed={0xfffc00: …}`), because the default fills in UNDER a
+  declaration and never over one; and
+* the two implementations read the byte from one table, so they cannot drift.
+
+**STATIC, not VOLATILE, and the distinction is worth spelling out** because a status register looks
+like the FDC poll this phase excludes. The excluded shape is a byte whose two successive reads must
+DIFFER for the run to proceed — a busy flag that has to go from set to clear. TDRE is not that: a
+send loop exits on the FIRST read that finds it set, so a per-run constant with the bit set describes
+every read the loop makes (there is exactly one), and both sides leave the loop at the same poll.
+Declared the other way — the bit clear — a constant hangs both sides equally, which is a case that
+never terminates rather than a case that lies; `emu.run` spends its instruction cap and throws it
+away. What the constant cannot describe is how many polls the machine would really have taken; the
+loop body is empty and stores nothing, so that count has no image effect.
+
+**The ACIA's DATA port `$fffc02` is deliberately NOT a read slot.** A send loop only ever writes it
+(Phase 10 compares that), and what a READ of it would answer is a byte the keyboard controller put
+there asynchronously — the shape a per-run constant cannot describe at all. An ACIA interrupt handler
+that reads it (Zynaps's `ikbd_acia_isr` @ `0x14456` is the worked example) needs a model this phase
+does not have; see "Still unmodeled".
+
 ## Phase 8 — the SCHEDULED WRITE MODEL (what an external agent stores mid-run)
 
 The first seven phases are all about a value a run **reads**. This one is about a value something
@@ -1395,11 +1432,11 @@ closed for itself and it is recorded here as one.
 Everything the model reads or writes in the image is shared by construction — a reconstruction that
 calls `os_bconstat`/`os_bconin`/`os_crawio`/`os_giaccess`/`os_random`/`os_fopen`/`os_fcreate`/
 `os_fread`/`os_fwrite`/`os_fclose` from `include/os.h` agrees with the oracle byte for byte and has
-nothing to mirror by hand. The table below is what is left: five rows of state the model keeps
+nothing to mirror by hand. The table below is what is left: six rows of state the model keeps
 OUTSIDE the image, which a candidate must mirror explicitly, and one — the file-load seam — that is
 not off-image state at all but a symbol the candidate has to supply. (This sentence read "two
 things" while the table had four such rows, which is how long a count in prose survives without a
-case.)
+case; it read "five rows" while there were six.)
 
 | what | where the oracle keeps it | what the candidate must do |
 | --- | --- | --- |
@@ -1409,6 +1446,7 @@ case.)
 | reads of the modeled hardware bytes `$fffa01`, `$ff820a`, `$ff8207`, `$ff8209` | `shim.c`'s `g_hw_log_slot`/`g_hw_log_val` ledger + `g_hw_file` | emit the same ordered `(slot, val)` stream — call `hw_read8()` from `hw.h` with an `OS_HW_*` constant; the case declares both sides' bytes with `hw_seed=` (Phase 7). A VOLATILE one (`$ff8207`/`$ff8209`) may be read at most ONCE per run: a second read is refused, and the remedy is the case's shape — end it before the second read, or split it into two runs |
 | a memory byte an EXTERNAL AGENT writes while the run is in flight (an interrupt storing a scancode) | `shim.c`'s `g_sched` list, applied by arrival count per declared WAIT SITE | poll the byte through `sched_poll8()`/`sched_poll16()` from `sched.h`, once per wait iteration, NAMING the site (the original compare's PC); the case declares the store with `schedule=` and the sites with `wait_sites=` (Phase 8), and `harness.differential` compares the candidate's polls against the oracle's arrivals SITE BY SITE |
 | the FILE-LOAD SEAM (Phase 9) | nothing — the substitution is in the image | define `disk_read_file` (`disk.h`). Off target `src/disk.c` supplies it; an ON-TARGET build must define its own, and the project's build should require the symbol so a core calling it cannot silently link the model |
+| every STORE to a memory-mapped I/O register — the shifter's colour row and screen base, the MFP's in-service registers, the ACIA's data port | `shim.c`'s `g_hw_write_addr`/`_width`/`_val` ledger | emit the same ordered `(address, width, value)` stream — call `hw_write8()`/`hw_write16()`/`hw_write32()` from `hw.h` with the 24-bit address (Phase 10). Compared for EVERY case by default; a case whose candidate models a routine's hardware half as a no-op declares those addresses in `hw_waiver={address: reason}` |
 
 `OS_SUPER_TOKEN` is not off-image state but it is still a shared value: a reconstruction of a
 function that calls `Super` must return the same constant, since the program can store it into the
@@ -1511,7 +1549,145 @@ unstaged file from being falsely verified — but it means a caller's ERROR arm 
 available to it and must be driven candidate-only. The remedy, unbuilt: a staged name declared
 PRESENT BUT UNREADABLE, which is the third answer the two-valued model lacks.
 
+## Phase 10 — the HARDWARE WRITE LEDGER (every store to a memory-mapped I/O register)
+
+Phase 7 closed half of the off-image surface: what a hardware register ANSWERS. This closes the other
+half — what a program STORES to one.
+
+**The defect.** A store above the image is DROPPED by `shim.c`'s memory callbacks, and a
+reconstruction cannot make it at all (computing `image + 0xff8240` would index past the buffer). So
+a candidate that makes **none** of a routine's hardware stores is byte-for-byte identical to one that
+makes every one of them, and the differential calls both verified. That is Phase 6's argument for the
+YM2149's two ports applied to the rest of the I/O map, and it is not hypothetical: before this phase,
+Zynaps carried it in six interrupt handlers, `screen_flip_buffers`, `set_palette_title` and its boot
+slices; Wonder Boy's `set_palette` has carried it since batch 12 (its own name map says so, at
+`cmt 0xe562`); BuggyBoy's `flip_screen` and `poke_color_reg` are two more.
+
+### Modeled
+
+**An ordered ledger of `(address, width, value)` on both sides.** `shim.c` records every dropped
+store; `src/hw.c` records every `hw_write8()`/`hw_write16()`/`hw_write32()` a reconstruction makes.
+`harness.differential` compares them **exactly** — a missing, extra, reordered, mis-addressed,
+wrong-width or wrong-value store fails the case — and does so for **every case, by default**.
+
+The **width** is compared because it is part of the instruction: `clr.w $ff8240` and `clr.l $ff8240`
+reach different registers on the machine and neither reaches the image, so nothing else could tell
+them apart. The **order** is compared because the ledger is a stream and not a set: Zynaps's screen
+publish stores the same two bytes to two registers, and swapping them is a real defect with an
+identical address set.
+
+### What "a hardware register" means here, and what is deliberately outside it
+
+The ledger covers the three blocks the ST **decodes**, and not the whole address space above the
+image (`os.h`'s `OS_HW_IO_INTERNAL_LO/_HI`, `OS_HW_IO_MFP_LO/_HI`, `OS_HW_IO_ACIA_LO/_HI`):
+
+| block | what is in it |
+| --- | --- |
+| `$ff8000..$ff8fff` | memory configuration, the shifter's video base and its sixteen colour words, the resolution byte, the DMA/FDC pair, the YM2149's mirrored block, the STE's DMA sound and blitter |
+| `$fffa00..$fffaff` | the MFP 68901 — its enable/pending/in-service/mask registers, the four timers, the GPIP Phase 7 already names |
+| `$fffc00..$fffcff` | the two 6850 ACIAs, keyboard/IKBD and MIDI |
+
+**A store above the image but OUTSIDE those blocks is a RUNAWAY POINTER, not a device**, and is
+dropped unledgered exactly as it always was — below the first block, and in the gaps between them
+(`$ff9000..$fff9ff`, `$fffb00..$fffbff`) as much as below. Both examples are measured rather than imagined: Joust's
+`update_pterodactyl` driven with a y of `0x8000` computes a screen address around `$570000` and
+stores a sprite there, and BuggyBoy's `poke_color_reg` with a wild register selector reaches
+`$ff95ea`. Ledgering those would make a reconstruction answer for arithmetic the byte diff cannot see
+either, on inputs the game never produces — and the surface that *does* hold a runaway store is
+`guarded_image.py`'s, not this one. **The residual, stated rather than hidden:** a runaway that lands
+INSIDE one of the three blocks is indistinguishable here from a deliberate register store, and is
+ledgered. That is the right way round — a store into the decoded I/O space is a store the machine
+acts on, whatever the reconstruction meant by it.
+
+**Anything the candidate hands `hw_write*` that is not one of those blocks is a REFUSAL**, not an
+entry, and there are three shapes of it (`hw.h` lists them beside the door): an address the IMAGE
+covers — a reconstruction reaching image memory through this door has stored where the byte diff
+should have seen it, and the oracle logs no entry for it either; a runaway, which the oracle also
+drops unledgered, so an entry here would diverge the streams for a reason that is not about a
+device; and **the UNTRANSLATED form**, `$ffff8240` for `$ff8240`. That last one is Phase 7's rule
+restated: the ORACLE folds an access the way the 68000's bus does before it decodes, because that is
+what the bus does to an instruction's operand, while a RECONSTRUCTION spells the address itself.
+Masking on the candidate side would let the two sides ledger two spellings of one register — a red
+that reads as a wrong-register bug — and would defeat an address-keyed `hw_waiver`, which could then
+match one side only.
+
+**The two canonical PSG ports are Phase 6's, not this phase's.** `m68k_write_memory_8` returns on
+`$ff8800`/`$ff8802` before it reaches this ledger, so a register write lands in exactly one stream.
+
+### How it interacts with Phase 7's "wrote then read back" refusal
+
+**They are orthogonal and both still apply.** A store to a modeled READ address does not change what
+a later read is served — the seed describes the byte the chip held ON ENTRY, and after the run's own
+store it describes nothing — so `g_hw_stale` fires and `harness.differential` refuses the case,
+exactly as before. The store is *also* in the write ledger now. Being comparable does not make it
+honest to read the seed back: the two facts answer different questions, and a phase that folded them
+would have to invent what the register reads after a write, which is the fabrication this whole
+model is against.
+
+### What it pins, and the one residual
+
+For a **plain store** it pins the whole of it. For a **read-modify-write of an address the READ model
+does not name** — `bclr #0,$fffa0f`, `andi.b #$fc,$ff8260` — the oracle's read answers a fabricated
+`0`, so both sides compute their value from that same `0`: the ledger holds the address, the width
+and the fact that the store happened, while the MASK the instruction applied stays unpinned. That is
+still a large gain (deleting the store is now a red) and an honest residual. A routine that needs the
+mask held wants its address in the READ model too — or a project-local sink for that one byte, which
+is what Zynaps's `init_shifter_mode_mask_written` is and all it now is.
+
+**AND IT IS AN ON-TARGET DEFECT, not merely an unpinned byte — say so where the expression is
+written.** Off target `0 & 0xfc` is the RIGHT store, because that is what the oracle does. On the
+machine it clears six bits the `andi.b` preserves, and `hw_write8($fffa0f, 0)` acknowledges every
+MFP in-service bit rather than Timer B's. A reconstruction that will run on target must not ship
+either expression: give the address a read slot, or keep the read-modify-write in the target build's
+own code. **This model has no read-modify-write shape**, and that is the gap — `hw.h` states it at
+the door and Zynaps's `include/init.h` and `include/irq.h` carry the two live instances.
+
+### Why it is ON by default, and what the opt-out costs
+
+The failure this closes is **a candidate that does nothing**, and the cases that need the comparison
+are exactly the ones nobody would think to opt IN. An opt-in ledger would be enforced only where
+somebody remembered it, which is the same shape as a guard that is only present where it was not
+needed. So it is compared for every case, and the only way off it is per case and per ADDRESS:
+
+```python
+differential(..., hw_waiver={0xff8240: "set_palette's reconstruction writes no hardware (src/…)"} )
+```
+
+Both hardware streams — the Phase 7 read stream and this write stream — drop their entries at those
+addresses, on BOTH sides, before they are compared; every other address in the run still is. **The
+reason is required** (a blank one raises) and **so is an integer address** (a string key would match
+nothing and waive nothing, while the case reds naming the very address the author believes is
+excused). Each distinct waiver is recorded once in `harness.HW_WAIVERS` as `(entry, address,
+reason)`, so a run can be asked which addresses it stopped looking at.
+
+**IT RETIRES ITSELF.** A waiver states that the reconstruction makes no access at that address; the
+day somebody gives it a body, that is false, and without a check the waiver would go on dropping
+BOTH sides' entries — a green suite over stores nobody compares, with a `STATUS.md` row claiming
+they are pinned. So a candidate that ACCESSES a waived address fails the case, naming it. (Keyed on
+the candidate's accesses and not the oracle's: a waived address the oracle never touches is merely
+unused, because a project waiver lists every address its stubs cover and a given case reaches a
+subset.) Waiving is a standing note that a reconstruction has a hardware half nobody has written
+yet — not a way of declaring the half unnecessary.
+
+**WHAT IT DOES NOT COVER, deliberately: Phase 7's four REFUSALS.** An undeclared read, a stale
+read-back, a wide read and a second read of a VOLATILE address still fire at a waived address, and
+must — each of them says the ORACLE was served a byte the model invented, which corrupts that run
+whatever the candidate did, so excusing it would verify a reconstruction against a fabrication. A
+case that meets one declares a `hw_seed` or changes its shape; there is no waiver for it.
+
+Three projects needed one when the phase landed, all for the same reason and all listed in their own
+`test/harness.py`: BuggyBoy (`$fffc00`/`$fffc02`, `read_joystick` is a no-op in `src/os.c`; `$ff8200`,
+`flip_screen`'s hardware half), and Wonder Boy (`$ff8240..$ff825e` and `$ff8201`/`$ff8203`, from
+`set_palette`/`clear_palette`/`flip_screen`). Joust and Zynaps needed none — Zynaps because this
+phase is what its wave-3 batch used to close the hole.
+
 ## Still unmodeled (an honest raise is the right answer)
+
+**The IKBD ACIA's data port `$fffc02`, on the READ side.** Phase 10 compares a WRITE of it; a read
+answers a byte the keyboard controller put there asynchronously, which is neither a per-run constant
+(Phase 7's shape) nor a store an external agent makes into the image (Phase 8's). An ACIA interrupt
+handler needs a third thing — a declared SEQUENCE of bytes the port yields, one per read — and
+nothing in the kit has one. Zynaps's `ikbd_acia_isr` @ `0x14456` is the routine waiting on it.
 
 `Pterm` (0x4c) and `Dgetdrv` (0x19) both appear in Joust and are **not** modeled. `Pterm` ends the
 process and never returns, so there is no post-state to diff; `Dgetdrv`'s answer is a property of

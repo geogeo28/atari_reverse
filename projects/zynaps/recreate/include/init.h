@@ -37,14 +37,31 @@
 
 /* ================================================================================================
  * THE SHIFTER MODE BYTE IS NOT AN IMAGE BYTE, exactly as include/video.h's palette and screen-base
- * writes are not. `_start` selects low resolution with `andi.b #$fc,$ff8260` — a read-modify-write
- * of a register at an address far above the 1 MiB image — so off target there is nothing to store
- * to and the sink below records the request instead. What it can record is the MASK and the fact
- * that the write happened; what it cannot record is the byte that came back from the read, because
- * the oracle has no shifter to read from either. $ff8260 gets no `A_*` name for that reason: there
- * is no address here for anything to reach, and a name would read as one.
+ * stores are not. `_start` selects low resolution with `andi.b #$fc,$ff8260` — a read-modify-write
+ * of a register far above the 1 MiB image — and the store half now goes through the kit's hardware
+ * write ledger (`hw_write8`, tools/recreate_kit/include/hw.h), which compares the address, the
+ * width and the value against the oracle's.
+ *
+ * WHAT THAT LEAVES, AND WHY THE MASK KEEPS A SINK OF ITS OWN. The oracle's READ of $ff8260 answers
+ * a fabricated 0 — the address is not in the kit's seeded READ set — so both sides store `0 & mask`
+ * and the stored value is 0 whatever the mask is. The ledger therefore holds that the store
+ * happened, at that register, one byte wide; it cannot hold the mask. The one-byte sink declared at
+ * the bottom of this header is what does, and that is the whole of what it is now for.
+ *
+ * IT IS ALSO AN ON-TARGET DEFECT, not merely an unpinned byte, and this is the place that says so.
+ * `andi.b #$fc,$ff8260` preserves six bits of a register a Zynaps build for the real Atari would be
+ * writing for real; storing `0 & mask` clears them. A target build must give the address a read —
+ * the kit's seeded READ set, or its own code — rather than compile src/init.c's expression. The kit
+ * states the general rule once, in tools/recreate_kit/include/hw.h ("WHAT THIS SEAM DOES NOT GIVE
+ * YOU IS A READ-MODIFY-WRITE"); STATUS.md carries this instance.
  * ============================================================================================= */
+#define HW_SHIFTER_MODE 0xff8260u            /* the resolution byte; a REGISTER, not an image address */
 #define SHIFTER_MODE_RESOLUTION_MASK 0xfcu   /* `andi.b #$fc` — clears the two resolution bits */
+/* What the oracle's read of an UNMODELED hardware register answers, which is the other operand of
+ * the `andi.b` above. Named rather than written as a bare 0 because it is a fact about the harness
+ * and not about the game: were $ff8260 ever added to the kit's seeded READ set, this is the line
+ * that would become a `hw_read8` call. */
+#define SHIFTER_MODE_UNMODELED_READ 0u
 
 /* ================================================================================================
  * The boot sequence's own data. `_start` reads every graphic through `load_file` (src/fileio.c)
@@ -219,12 +236,11 @@ void section_reload_intro_screens(uint8_t *image);
 void section_restart_prologue(uint8_t *image);
 void section_start_prefill(uint8_t *image);
 
-/* The boot's off-image publish ledger (see above): what the last `boot_load_title_assets` asked the
- * shifter for, how often, and how many title-palette uploads it made — the last of those being the
- * only call in the slice that writes no image byte, so a count is the only thing that can hold it. */
+/* The one thing about the boot's hardware traffic the kit's write ledger cannot hold: the MASK the
+ * `andi.b` applied (see the note above). Everything else the slice does off-image — that the store
+ * happened, that the title palette went up, which register each landed in and how wide it was — is
+ * ledgered and compared, so nothing else needs a sink. */
 void init_shifter_sink_reset(void);
 uint8_t init_shifter_mode_mask_written(void);
-uint32_t init_shifter_mode_writes(void);
-uint32_t init_palette_uploads(void);
 
 #endif /* ZYNAPS_INIT_H */

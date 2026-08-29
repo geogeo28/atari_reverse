@@ -20,7 +20,8 @@
 #define A_palette_hw_shadow    0x18fc4u
 #define A_palette_cycle_words  0x18fd0u
 #define A_palette_swap_long    0x18fdau
-#define PALETTE_PENS           16u   /* the shifter's 16 colour registers, uploaded as 8 longs */
+/* PALETTE_PENS is include/video.h's, with the rest of the shifter's geometry — one register block,
+ * one home. It is named here only because this subsystem's shadows are sixteen pens wide. */
 #define PALETTE_CYCLE_WORDS    5u    /* 0x18fd0..0x18fd8 rotate by one every countdown */
 
 #define A_palette_swap_countdown   0x19683u  /* .b — frames until the swap long flips its halves */
@@ -50,26 +51,37 @@
 #define ATTRACT_BAR_FIRST_LINE 1u     /* `cmpi.w #$1` + `blt` — before this, colour 0 is forced */
 #define ATTRACT_BAR_LAST_LINE  0x27u  /* `cmpi.w #$27` + `bge` — and at or after it, likewise */
 
-/* ---- the hardware these handlers touch, which the memory image cannot hold -------------------- */
-#define HW_PALETTE_BASE 0xff8240u  /* the shifter's colour registers, one word each */
+/* ---- the hardware these handlers touch, which the memory image cannot hold --------------------
+ * The shifter's own constants — its colour-register base and the two widths the row goes up in —
+ * are include/video.h's, because that is where the other two routines writing those registers live
+ * and one register block has one home. Only the MFP's is this subsystem's.
+ */
 #define HW_MFP_ISRB     0xfffa0fu  /* MFP interrupt-in-service B; bit 0 is Timer B */
 #define MFP_ISRB_TIMER_B_BIT 0u
 
-/* THE HARDWARE STORES, IN A TRANSLATION UNIT OF THEIR OWN.
+/* THE HARDWARE STORES ARE PINNED, through the kit's hardware WRITE ledger.
  *
- * `$ff8240..` and `$fffa0f` are outside the 1 MiB memory image, so no differential can hold them:
- * the oracle DROPS an off-image write (`shim.c`'s memory callbacks) and a reconstruction storing
- * through `image + addr` would index past the buffer. The kit has an ordered ledger for the
- * YM2149's two ports (`psg.h`) and none for any other hardware address, so this half of every
- * handler below is UNPINNED — recorded per row in STATUS.md, with the surface that would catch it.
+ * `$fffa0f` (here) and `$ff8240..` (include/video.h, which owns the shifter) are outside the 1 MiB
+ * memory image, so no BYTE DIFF can hold them: the oracle drops such a store and a reconstruction
+ * storing through `image + addr` would index past the buffer. What holds them is
+ * `tools/recreate_kit/include/hw.h`'s `hw_write8/16/32` — an ordered (address, width, value) ledger
+ * both sides keep and `harness.differential` compares entry for entry, the shape `psg.h` has always
+ * had for the YM2149's two ports (kit TRAP_MODEL.md, "Phase 10"). Deleting one of these calls,
+ * aiming it at the wrong register, or storing a word where the original stores a longword is a red.
  *
- * `src/irq_hw_offtarget.c` defines all three, empty, and is the file a build for the real Atari
- * does NOT compile — the same split `tools/recreate_kit/src/psg.c` uses for the one hardware
- * surface the kit does model. Read that file's header for the whole argument.
+ * THE ONE RESIDUAL IS THIS ONE'S VALUE, and it is an ON-TARGET DEFECT and not merely an unpinned
+ * byte. `bclr #0,$fffa0f` is a read-modify-write; off target the oracle's read of an address the
+ * seeded READ model does not name answers a fabricated 0, so both sides store 0 and agree — but on
+ * the machine that store acknowledges EVERY in-service bit rather than Timer B's. A Zynaps build
+ * for the real Atari must not ship this expression; hw.h's "WHAT THIS SEAM DOES NOT GIVE YOU IS A
+ * READ-MODIFY-WRITE" states the rule once, for every game, and STATUS.md carries the residual.
+ *
+ * `mfp_ack_timer_b` is an ordinary function in src/irq.c now: `hw_write*` is the seam, and a build
+ * for the real Atari supplies it as the real `*(volatile uint8_t *)addr = value` store — a BYTE
+ * store, because $fffa10 is the MFP's timer-A data register and a widened one would clobber it —
+ * instead of compiling the kit's src/hw.c. (There used to be a src/irq_hw_offtarget.c holding three
+ * EMPTY bodies for exactly that split; with a ledger to write through there is nothing empty left.)
  */
-void shifter_write_palette(const uint8_t *image, unsigned first_pen, unsigned pens,
-                           uint32_t shadow);
-void shifter_clear_pen0(void);
 void mfp_ack_timer_b(void);
 
 /* ---- the handlers ---------------------------------------------------------------------------- */

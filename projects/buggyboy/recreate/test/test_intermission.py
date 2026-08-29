@@ -204,7 +204,8 @@ def test_intermission_prologue_and_phaseA():
         pokes = _int_world(seed, flip)
         pokes.update(ABORT_POKES)
         diffs, _ = differential(INT_ENTRY, {"_pokes": pokes},
-                                lambda l, b: l.g_intermission(b), max_insns=3_000_000)
+                                lambda l, b: l.g_intermission(b), max_insns=3_000_000,
+                                hw_waiver=harness.HW_STUBBED_BY_OS_C)
         assert not diffs, f"seed={seed} flip={flip}\n{report(diffs[:16])}"
 
 
@@ -229,7 +230,8 @@ def test_phaseA_branches():
     )
     for timer, scroll, frame in cases:
         diffs, info = differential(INT_PHASEA, {"_pokes": _phaseA_pokes(timer, scroll, frame)},
-                                   lambda l, b: l.g_int_stepA(b), max_insns=2_000_000)
+                                   lambda l, b: l.g_int_stepA(b), max_insns=2_000_000,
+                                   hw_waiver=harness.HW_STUBBED_BY_OS_C)
         assert not diffs, f"timer={timer:#x} scroll={scroll:#x} frame={frame}\n{report(diffs[:16])}"
         assert info["ret"] == INT_A_ABORT, f"timer={timer:#x}: ret={info['ret']} (expected abort)"
 

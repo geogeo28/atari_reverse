@@ -57,7 +57,7 @@ def _check(label, **st):
     st.setdefault("leg_flags_c90", 0x00500002)      # cap=0x50, add=2
     regs = {"_pokes": _pokes(st)}
     diffs, info = differential(ENTRY, regs, lambda lib, buf: lib.g_game_update(buf),
-                               max_insns=1_000_000)
+                               max_insns=1_000_000, hw_waiver=harness.HW_STUBBED_BY_OS_C)
     return diffs, info
 
 
@@ -207,7 +207,7 @@ def _check_course(label, seed, **st):
         p[rec + 6] = _w(st.get("marker_w", 0))
     regs = {"_pokes": p}
     diffs, info = differential(ENTRY, regs, lambda lib, buf: lib.g_game_update(buf),
-                               max_insns=2_000_000)
+                               max_insns=2_000_000, hw_waiver=harness.HW_STUBBED_BY_OS_C)
     return diffs, info
 
 
@@ -282,7 +282,7 @@ def test_course_collision_probe():
             if k in AC:
                 p[AC[k]] = _w(v)
         diffs, _ = differential(ENTRY, {"_pokes": p}, lambda lib, buf: lib.g_game_update(buf),
-                                max_insns=2_000_000)
+                                max_insns=2_000_000, hw_waiver=harness.HW_STUBBED_BY_OS_C)
         assert not diffs, f"collision-probe seed={seed}\n{report(diffs[:24])}"
 
 

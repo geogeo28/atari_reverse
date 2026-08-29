@@ -902,7 +902,7 @@ MIRRORS = (
     ("A_HIGHSCORE_TABLE", "include/highscore.h", "A_highscore_table"),
     ("A_PALETTE_HW_SHADOW", "include/irq.h", "A_palette_hw_shadow"),
     ("A_MENU_PALETTE", "include/irq.h", "A_menu_palette"),
-    ("PALETTE_PENS", "include/irq.h", "PALETTE_PENS"),
+    ("PALETTE_PENS", "include/video.h", "PALETTE_PENS"),
     ("A_ZYNAPS_LOGO", "include/hud.h", "A_zynaps_logo"),
     ("A_HEWSON_LOGO", "include/hud.h", "A_hewson_logo"),
     ("A_SHOW_PREPARE_FOR_COMBAT", "include/hud.h", "A_show_prepare_for_combat"),

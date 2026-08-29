@@ -155,14 +155,20 @@ witness):
 | `g_hw_reset` | `void(const uint8_t *, uint32_t)` | install the declared bytes + clear the ledger, before each candidate run |
 | `g_hw_log_count` / `g_hw_log_slots` / `g_hw_log_vals` | | the ordered read stream: one `(slot, value)` per read |
 | `g_hw_file` / `g_hw_file_known` | | the declared bytes those reads are served from, and which are declared |
+| `hw_write8` / `hw_write16` / `hw_write32` | `void(uint32_t, uint32_t)` | what a reconstruction calls where the original STORES to an I/O register |
+| `g_hw_write_count` / `g_hw_write_addrs` / `g_hw_write_widths` / `g_hw_write_vals` | | the ordered store stream: one `(address, width, value)` per store (`g_hw_reset` clears it — one reset for both ledgers, so a path cannot refresh one and leave the other) |
 
-The modeled set is exactly `$fffa01` (MFP GPIP), `$ff820a` (shifter sync) and `$ff8207`/`$ff8209`
-(the shifter's video-address counter, mid and low) — `os.h`'s `OS_HW_*` constants, which is what
-`hw_read8` takes. The first two **steer a branch**; the counter pair is an **arithmetic input** (a
-routine hashes it for entropy). Either way the `0` every other off-image read answers is not merely
-incomplete: it makes the reconstruction and the original take the same wrong path, or hash the same
-fabricated constant, and the diff agrees with itself. That is the `$ffff820a` defect BuggyBoy
-shipped green.
+The modeled READ set is exactly `$fffa01` (MFP GPIP), `$ff820a` (shifter sync), `$ff8207`/`$ff8209`
+(the shifter's video-address counter, mid and low) and `$fffc00` (the IKBD ACIA's status) — `os.h`'s
+`OS_HW_*` constants, which is what `hw_read8` takes. Three of them **steer a branch**; the counter
+pair is an **arithmetic input** (a routine hashes it for entropy). Either way the `0` every other
+off-image read answers is not merely incomplete: it makes the reconstruction and the original take
+the same wrong path, or hash the same fabricated constant, and the diff agrees with itself. That is
+the `$ffff820a` defect BuggyBoy shipped green.
+
+The ACIA status is the ONE slot the model declares for itself, with TDRE set — a send loop leaves on
+its first poll and serving `0` would hang both sides for ever. A case may override it like any other
+(`hw_seed=`), and `TRAP_MODEL.md`, "Phase 7", argues why nothing else may have a default.
 
 Each address is STATIC or **VOLATILE**: a volatile one (the counter pair) is a byte the machine
 changes on its own, so one declaration describes exactly one read and a **second read of it in the
@@ -175,6 +181,18 @@ naming the addresses — but a bare `emu.run` is served the `0` unchanged, becau
 nothing and is how relocator/Copylock/bootstrap code is driven. The whole contract, including that
 divergence, the audio-capture fold and the FDC non-goal, is
 [`TRAP_MODEL.md`](TRAP_MODEL.md), "Phase 7".
+
+**The WRITE half is compared for every case, by default**, and it covers the three blocks the ST
+decodes (`$ff8000..$ff8fff`, `$fffa00..$fffaff`, `$fffc00..$fffcff`) rather than everything above the
+image: a store past the image but below those is a runaway pointer, not a device, and stays dropped.
+A missing, extra, reordered, mis-addressed, wrong-width or wrong-value store fails the case. An address that is
+not one of those blocks — inside the image, a runaway, or the untranslated `$ffff8240` form — is a
+REFUSAL rather than an entry. A case whose candidate models a routine's hardware half as a no-op
+names those addresses in `hw_waiver={address: reason}`: the reason is required, the waiver covers
+only the addresses it names (on both streams and both sides), it RETIRES ITSELF the day the
+candidate starts accessing one of them, and each distinct waiver is recorded in
+`harness.HW_WAIVERS`. The whole contract, including the read-modify-write residual and why the
+default is ON, is [`TRAP_MODEL.md`](TRAP_MODEL.md), "Phase 10".
 
 The fifth group is the **scheduled writes**, from `src/sched.c` + `include/sched.h` (likewise linked
 into every candidate by `kit.mk`, and optional in the same way, with the case's own `schedule=` as
@@ -262,7 +280,8 @@ hardware whose real value is time-varying still reaches both cores identically:
 ### The shared TOS memory map
 
 `include/os.h` fixes the modeled Malloc heap (`OS_HEAP_BASE`), the staged-file table
-(`OS_FS_TABLE` / `OS_FS_STAGING`) and the poked-input block above at kit-wide addresses, mirrored
+(`OS_FS_TABLE` / `OS_FS_STAGING`, `OS_FS_SLOTS` entries — 32 of them, sized by the longest boot the
+workspace has met, Zynaps's ~30 opens) and the poked-input block above at kit-wide addresses, mirrored
 in Python by `harness.py` — except `OS_HEAP_BASE`, which sits in `oracle/emu.py` where the per-run
 Malloc guard below needs it, and the poked-input block, which sits in `os_map.py` because
 `harness.py` and `emu.py` both guard it. Both are re-exported (`harness.OS_HEAP_BASE`,

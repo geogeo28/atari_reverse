@@ -263,7 +263,7 @@ MIRRORS = (
     ("A_ATTRACT_RASTER_LINE", "include/irq.h", "A_attract_raster_line"),
     ("A_ATTRACT_RASTER_LIST_PTR", "include/irq.h", "A_attract_raster_list_ptr"),
     ("A_ATTRACT_RASTER_LIST", "include/irq.h", "A_attract_raster_list"),
-    ("PALETTE_PENS", "include/irq.h", "PALETTE_PENS"),
+    ("PALETTE_PENS", "include/video.h", "PALETTE_PENS"),
     ("PALETTE_CYCLE_WORDS", "include/irq.h", "PALETTE_CYCLE_WORDS"),
     ("PALETTE_SWAP_PERIOD", "include/irq.h", "PALETTE_SWAP_PERIOD"),
     ("PALETTE_ROTATE_PERIOD", "include/irq.h", "PALETTE_ROTATE_PERIOD"),

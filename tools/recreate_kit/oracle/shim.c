@@ -177,11 +177,13 @@ uint32_t osh_sched_site_arrivals(uint32_t i) {
 /* --- IKBD 6850 ACIA (keyboard/joystick), $fffffc00/02 -> 24-bit bus alias $fffc00/02 -----
  * read_joystick busy-waits on the status TDRE bit then sends a command; the joystick reply
  * arrives via an interrupt we don't run (input state is instead scripted as an image global —
- * see HARNESS.md). We model only what the traced code touches: the status reads back as "ready
- * to send" so the wait loop terminates. The command byte written to IKBD_DATA lands above the
- * image and is dropped by the bounds check like any other hardware write. */
-#define IKBD_STATUS 0xfffc00
-#define IKBD_TX_RDY 0x02        /* TDRE: transmit register empty */
+ * see HARNESS.md). The status byte used to be answered by a hard-coded `return 0x02` right here;
+ * since Phase 10 it is os.h's OS_HW_ACIA_STATUS — a SEEDED-READ slot whose MODEL DEFAULT is that
+ * same byte, so the wait loop still terminates, a case may declare another status, and the read is
+ * LEDGERED like every other modeled one instead of being invisible. os_hw_model_defaults() carries
+ * the argument for why this is the one address the model may answer on its own.
+ * The command byte written to the data port next door lands above the image; it is dropped from
+ * memory exactly as before, and recorded in the hardware WRITE ledger below. */
 
 /* --- PSG (YM2149) capture -----------------------------------------------------------
  * The sound driver talks to the PSG by writing a register number to $ff8800 (select
@@ -316,8 +318,9 @@ static uint32_t g_psg_unmodeled;
 static int     g_audio_capture;
 
 /* --- the SEEDED HARDWARE READ model (TRAP_MODEL.md, "Phase 7") -------------------------------
- * os.h names the modeled set (OS_HW_MFP_GPIP, OS_HW_SHIFTER_SYNC and the two video-counter
- * bytes OS_HW_SHIFTER_VCOUNT_MID/_LOW) and says why those four and not the rest of the I/O map.
+ * os.h names the modeled set (OS_HW_MFP_GPIP, OS_HW_SHIFTER_SYNC, the two video-counter bytes
+ * OS_HW_SHIFTER_VCOUNT_MID/_LOW and the IKBD ACIA's status byte OS_HW_ACIA_STATUS) and says why
+ * those five and not the rest of the I/O map.
  * This is the state behind it, and it is Phase 6's shape exactly: a file
  * of bytes, a mask saying which of them the CASE DECLARED, a per-run reinstall from the declared
  * seed, and an ordered ledger of every read the run made — because the byte a `btst #7,$fffa01`
@@ -353,11 +356,34 @@ static uint32_t g_hw_seen;                 /* slots read at least once this run,
  * must do something about, and "you read one of these N wide" is a refusal a reader has to bisect. */
 static uint32_t g_hw_wide;
 /* The ordered READ stream, slot + value per entry, compared against the candidate's (src/hw.c).
- * Reads only: a WRITE to one of these addresses is dropped, not modeled — see hw_note_write. */
+ * Reads only: a WRITE to one of these addresses does not change what a later read is served — it
+ * makes the seed STALE and the run refused (hw_note_write) — and is recorded, comparably, in the
+ * separate hardware WRITE ledger below. */
 static uint8_t  g_hw_log_slot[OS_HW_LOG_MAX];
 static uint8_t  g_hw_log_val[OS_HW_LOG_MAX];
 static uint32_t g_hw_log_n;
 static uint32_t g_hw_dropped;              /* reads past the cap: never silently truncated */
+
+/* --- the HARDWARE WRITE ledger (TRAP_MODEL.md, "Phase 10") -------------------------------------
+ * Every store the memory callbacks drop AT A DECODED I/O REGISTER (os.h's three OS_HW_IO_* blocks)
+ * — the shifter's colour row, the MFP's in-service registers, the IKBD ACIA's data port — in the
+ * order the run made them, as (24-bit address, width in bytes, value). A store anywhere else above
+ * the image is a runaway pointer rather than a device, and os.h says why it is left alone. Without it a reconstruction that made none of
+ * those stores is byte-for-byte identical to one that made them all, which is Phase 6's argument
+ * for the YM2149 applied to the rest of the I/O map.
+ *
+ * NOT the two canonical PSG ports: m68k_write_memory_8 returns on those before it reaches here, so
+ * they land in the PSG ledger and this one exactly once each. Every OTHER off-image write is
+ * recorded, the odd $ff8801/$ff8803 aliases included — those already make the run unmodeled
+ * (psg_note_unmodeled), so nothing is verified against them either way.
+ *
+ * Three parallel arrays rather than an array of structs, for the read ledger's reason: the harness
+ * casts each one straight through ctypes. */
+static uint32_t g_hw_write_addr[OS_HW_WRITE_LOG_MAX];
+static uint8_t  g_hw_write_width[OS_HW_WRITE_LOG_MAX];
+static uint32_t g_hw_write_val[OS_HW_WRITE_LOG_MAX];
+static uint32_t g_hw_write_n;
+static uint32_t g_hw_write_dropped;        /* writes past the cap: never silently truncated */
 
 /* The machine profile the AUDIO-CAPTURE mode declares, and the ONLY bits of it that are modeled: a
  * 50 Hz colour ST, the machine these games were written for. Mono would be GPIP bit 7 clear and
@@ -449,6 +475,13 @@ uint32_t        osh_hw_count(void)     { return g_hw_log_n; }
 const uint8_t  *osh_hw_log_slots(void) { return g_hw_log_slot; }
 const uint8_t  *osh_hw_log_vals(void)  { return g_hw_log_val; }
 uint32_t        osh_hw_dropped(void)   { return g_hw_dropped; }
+/* The hardware WRITE ledger (Phase 10), in the order the run stored. harness.differential compares
+ * all three arrays against the candidate's (src/hw.c) entry by entry. */
+uint32_t        osh_hw_write_count(void)   { return g_hw_write_n; }
+const uint32_t *osh_hw_write_addrs(void)   { return g_hw_write_addr; }
+const uint8_t  *osh_hw_write_widths(void)  { return g_hw_write_width; }
+const uint32_t *osh_hw_write_vals(void)    { return g_hw_write_val; }
+uint32_t        osh_hw_write_dropped(void) { return g_hw_write_dropped; }
 /* The modeled set itself, so Python names the addresses from the .so it actually loaded rather than
  * from a second copy of os.h's table (osh_psg_nregs's argument). */
 uint32_t        osh_hw_nslots(void)    { return OS_HW_NSLOTS; }
@@ -529,6 +562,33 @@ static void hw_note_wide_read(uint32_t a, uint32_t n) {
  * byte the chip held on ENTRY — while an instruction of this very run has replaced it. That
  * combination is refused rather than served (g_hw_stale); a write nothing reads back is the
  * ordinary invisible hardware write it has always been. */
+/* Record one dropped hardware store. `width` is the byte count the 68000 would have stored, and the
+ * value is masked to it so that a candidate handing hw_write8() a full longword cannot pass where
+ * the original stored only its low byte.
+ *
+ * IT DOES NOT REPLACE hw_note_write BELOW, it runs beside it. The ledger makes the write COMPARABLE;
+ * the staleness mask is about a different question — whether the seed still describes a modeled
+ * READ address after the run stored to it — and a comparable write does not make a stale seed
+ * honest. A run that writes $ff820a and then reads it back is refused exactly as before, and the
+ * write is now in the ledger as well. */
+static void hw_log_write(uint32_t a, uint32_t width, uint32_t value) {
+    uint32_t bus = a & BUS_ADDR_MASK;      /* the 68000 aliases $ffff8240 onto $ff8240 */
+
+    /* Only one of the three decoded I/O blocks (os.h's OS_HW_IO_* bounds). A store anywhere else
+     * above the image — past its end, or in the unmapped gaps between the blocks — is a runaway
+     * pointer rather than a device, and is dropped as it always was. */
+    if (!os_hw_is_io(bus))
+        return;
+    if (g_hw_write_n >= OS_HW_WRITE_LOG_MAX) {
+        g_hw_write_dropped++;
+        return;
+    }
+    g_hw_write_addr[g_hw_write_n] = bus;
+    g_hw_write_width[g_hw_write_n] = (uint8_t)width;
+    g_hw_write_val[g_hw_write_n] = value & os_hw_write_mask(width);
+    g_hw_write_n++;
+}
+
 static void hw_note_write(uint32_t a, uint32_t n) {
     g_hw_written |= os_hw_slots_touched(a & BUS_ADDR_MASK, n);
 }
@@ -616,7 +676,6 @@ static unsigned int psg_read_back(void) {
 unsigned int m68k_read_memory_8(unsigned int a) {
     if (a < g_size) return g_mem[a];
     uint32_t lo = a & BUS_ADDR_MASK;               /* the 68000 aliases $ffff88xx to $ff88xx */
-    if (lo == IKBD_STATUS) return IKBD_TX_RDY;
     if (lo == OS_PSG_PORT_SELECT) return psg_read_back();
     /* The seeded-hardware model (Phase 7). Ahead of the audio-capture mode, which no longer has a
      * switch of its own here: it arms this same model with a seed (see hw_enter_run). */
@@ -674,14 +733,21 @@ void m68k_write_memory_8(unsigned int a, unsigned int v) {
     if (a < g_size) { g_mem[a] = (uint8_t)v; logw(a); return; }
     psg_note_unmodeled(a, 1);   /* the odd aliases $ff8801/$ff8803, whose decoding is not modeled */
     hw_note_write(a, 1);        /* dropped like any hardware write, but it makes a seed stale */
+    hw_log_write(a, OS_HW_WRITE_WIDTH_8, v);       /* ...and it is comparable (Phase 10) */
 }
 void m68k_write_memory_16(unsigned int a, unsigned int v) {
     if (a + 1 < g_size) { g_mem[a] = (uint8_t)(v >> 8); g_mem[a + 1] = (uint8_t)v; logw(a); logw(a + 1); return; }
     psg_note_unmodeled(a, 2);                      /* only the byte PSG protocol is modeled */
     hw_note_write(a, 2);
+    hw_log_write(a, OS_HW_WRITE_WIDTH_16, v);
 }
 void m68k_write_memory_32(unsigned int a, unsigned int v) {
-    if (a + 3 >= g_size) { psg_note_unmodeled(a, 4); hw_note_write(a, 4); return; }
+    if (a + 3 >= g_size) {
+        psg_note_unmodeled(a, 4);
+        hw_note_write(a, 4);
+        hw_log_write(a, OS_HW_WRITE_WIDTH_32, v);
+        return;
+    }
     g_mem[a] = (uint8_t)(v >> 24); g_mem[a + 1] = (uint8_t)(v >> 16);
     g_mem[a + 2] = (uint8_t)(v >> 8); g_mem[a + 3] = (uint8_t)v;
     logw(a); logw(a + 1); logw(a + 2); logw(a + 3);
@@ -774,9 +840,9 @@ static void psg_enter_run(void) {
 static void hw_enter_run(void) {
     const uint8_t *seed = g_audio_capture ? g_hw_capture_profile : g_hw_seed;
     uint32_t known = g_audio_capture ? HW_CAPTURE_PROFILE_KNOWN : g_hw_seed_known;
-    for (int slot = 0; slot < OS_HW_NSLOTS; slot++)
-        g_hw_file[slot] = (known & (1u << slot)) ? seed[slot] : 0;
-    g_hw_known = known;
+    /* The install is os.h's, shared verbatim with src/hw.c's g_hw_reset: the model's own answers
+     * fill in UNDER the case's, never over them. */
+    g_hw_known = os_hw_install_seed(g_hw_file, seed, known);
     g_hw_unseeded = 0;
     g_hw_written = 0;
     g_hw_stale = 0;
@@ -785,6 +851,8 @@ static void hw_enter_run(void) {
     g_hw_wide = 0;
     g_hw_log_n = 0;
     g_hw_dropped = 0;
+    g_hw_write_n = 0;
+    g_hw_write_dropped = 0;
 }
 
 static void enter_from_reset(void) {

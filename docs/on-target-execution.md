@@ -671,6 +671,18 @@ changes. The corollary bites the other way too — **a debugger quit will flush 
 mean to modify**, so a pass that claims a volume was left alone should assert its digest rather than
 trust the trap ledger. (`projects/wonderboy/recreate/atari/smoke.py`, `floppy_flush_script`.)
 
+**One class these six used to be the ONLY answer for is now the differential's.** A store to a
+memory-mapped I/O register — the shifter's colour row and screen base, the MFP's in-service
+registers, the ACIA's data port — lands outside the 1 MiB image, so before the kit's hardware WRITE
+ledger a reconstruction that made none of a routine's hardware stores was byte-for-byte identical to
+one that made every one, and only an on-target run could tell them apart. `harness.differential`
+compares both sides' ordered `(address, width, value)` store stream for every case now
+(`tools/recreate_kit/TRAP_MODEL.md`, "Phase 10"), so a missing, extra, reordered, mis-addressed or
+wrong-width store is an ordinary red off target. What it still cannot hold is the READ half of a
+read-modify-write at an address the seeded read model does not name (`bclr #0,$fffa0f`,
+`andi.b #$fc,$ff8260`): both sides compute from a fabricated `0`, so the mask stays this page's
+business — the **hardware-state vector** is its surface.
+
 **The rule: every on-target change names the surface that would catch its failure. If it names none,
 that is the finding** — not a reason to proceed carefully. Add the surface, or record in `STATUS.md`
 that the change is unpinned and why.

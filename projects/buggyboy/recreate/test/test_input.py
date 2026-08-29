@@ -35,7 +35,8 @@ KBDV_MOUSEVEC, KBDV_JOYVEC = 0x10, 0x18
 def test_read_joystick():
     # Run to rts (only possible now that the shim models IKBD_STATUS as TDRE-ready) and confirm
     # read_joystick writes nothing to the image, matching the no-op glue.
-    diffs, _ = differential(0x12110, {}, lambda l, b: l.g_read_joystick(b))
+    diffs, _ = differential(0x12110, {}, lambda l, b: l.g_read_joystick(b),
+                            hw_waiver=harness.HW_STUBBED_BY_OS_C)
     assert not diffs, report(diffs[:12])
 
 
@@ -65,7 +66,8 @@ def test_read_input():
         last_key = rng.choice(_KEYS) if i % 2 else rng.randint(0, 0xffff)
         pokes = {A_INPUT_STATE: input_state.to_bytes(2, "big"), A_LAST_KEY: last_key.to_bytes(2, "big")}
         diffs, _ = differential(0x120b0, {"_pokes": pokes},
-                                lambda l, b: l.g_read_input(b), poison=True)
+                                lambda l, b: l.g_read_input(b), poison=True,
+                                hw_waiver=harness.HW_STUBBED_BY_OS_C)
         assert not diffs, f"input_state={input_state:#06x} last_key={last_key:#06x}\n{report(diffs[:12])}"
 
 
@@ -79,7 +81,8 @@ def test_check_abort():
         input_state = (rng.randint(0, 0xff) << 8) | live
         input_prev = (rng.randint(0, 0xff) << 8) | baseline
         pokes = {A_INPUT_STATE: input_state.to_bytes(2, "big"), A_INPUT_PREV: input_prev.to_bytes(2, "big")}
-        diffs, info = differential(0x128ea, {"_pokes": pokes}, lambda l, b: l.g_check_abort(b))
+        diffs, info = differential(0x128ea, {"_pokes": pokes},
+                                   lambda l, b: l.g_check_abort(b), hw_waiver=harness.HW_STUBBED_BY_OS_C)
         assert not diffs, f"live={live:#04x} baseline={baseline:#04x}\n{report(diffs[:12])}"
         assert info["ret"] == info["regs"]["d0"], (
             f"live={live:#04x} baseline={baseline:#04x}: "

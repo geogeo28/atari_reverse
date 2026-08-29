@@ -140,11 +140,12 @@ uint32_t g_os_refusal_count(void);      /* ...and raises on what it reads back *
 
 /* ---- the SEEDED HARDWARE READ model (TRAP_MODEL.md, "Phase 7") -------------------------------
  * A small NAMED SET of hardware bytes outside the PSG whose contents a case may DECLARE, exactly as
- * Phase 6 lets it declare the YM2149's registers. Everything else off-image still reads 0 and is
+ * Phase 6 lets it declare the YM2149's registers (one of the five, the ACIA status, carries a MODEL
+ * DEFAULT instead — os_hw_model_defaults() below says why it is the only one that may). Everything else off-image still reads 0 and is
  * still invisible; these are singled out because the VALUE STEERS THE RUN, which is the one shape
  * where a fabricated 0 produces a green run whose behaviour is wrong on the machine (the
  * `$ffff820a` defect that survived BuggyBoy's entire differential and only appeared on real
- * hardware — see PORTABILITY.md's "the BuggyBoy defect, demonstrated concretely"). Two of the four
+ * hardware — see PORTABILITY.md's "the BuggyBoy defect, demonstrated concretely"). Three of the five
  * steer a BRANCH; the other two are summed into an arithmetic result, which is the same defect with
  * a wider blast radius — Wonder Boy's $51ac hashes the video counter into a 1..4 draw, so under a
  * fabricated 0 the whole draw collapses to a constant and the differential agrees on it.
@@ -156,7 +157,8 @@ uint32_t g_os_refusal_count(void);      /* ...and raises on what it reads back *
  * one address is exactly what a declared constant describes.
  *
  * AND THE CRITERION IS ENFORCED, not merely argued. Each slot carries a VOLATILE flag below: a
- * static byte (the monitor detect, the sync mode) may be read as often as a run likes, because the
+ * static byte (the monitor detect, the sync mode, the ACIA's TDRE) may be read as often as a run
+ * likes, because the
  * machine's answer really is the same every time: ONE declaration describes every read of it, and
  * how many there were is no part of what the case claimed. (The tempo head reads $fffa01 once and
  * $ff820a once; what really re-reads $fffa01 is an FDC poll, and that is the shape below this model
@@ -183,6 +185,29 @@ uint32_t g_os_refusal_count(void);      /* ...and raises on what it reads back *
  * change every few scanlines, which is what makes them the pair a routine hashes for entropy. */
 #define OS_HW_SHIFTER_VCOUNT_MID 0xff8207u
 #define OS_HW_SHIFTER_VCOUNT_LOW 0xff8209u
+/* The IKBD 6850 ACIA's STATUS register. Bit 1 (TDRE) is "the transmit register is empty", which is
+ * what every IKBD send loop spins on before it stores the command byte to the data port next door;
+ * bit 7 (IRQ) and bit 0 (RDRF) are what an ACIA interrupt handler tests once on entry.
+ *
+ * STATIC, NOT VOLATILE, and the distinction is worth spelling out because a status register looks
+ * like the FDC poll this model excludes. The excluded shape is a byte whose two successive reads
+ * must DIFFER for the run to proceed — a busy flag that has to go from set to clear. TDRE is not
+ * that: a send loop exits on the FIRST read that finds it set, so a per-run constant with the bit
+ * set describes every read the loop makes (there is exactly one) and both sides leave the loop at
+ * the same poll. Declared the other way — the bit clear — a constant would hang both sides equally,
+ * which is a case that never terminates rather than a case that lies. What the constant cannot
+ * describe is how many polls the machine would really have taken; the loop body is empty and writes
+ * nothing, so that count has no image effect, and the read ledger pins the poll the reconstruction
+ * DOES make against the oracle's rather than claiming a number of them. */
+#define OS_HW_ACIA_STATUS  0xfffc00u
+#define OS_ACIA_TX_RDY     0x02u   /* bit 1 of the byte above: the transmit register is empty */
+/* The ACIA's DATA port, one word up. It carries no read slot and is not part of the seeded READ
+ * model: a send loop only ever WRITES it, and what a read of it would answer is a byte the keyboard
+ * controller put there asynchronously — the shape a per-run constant cannot describe at all. It is
+ * named here because the WRITE model needs one definition both sides can spell (a reconstruction
+ * passes it to hw_write8; test/hw_write_probe.c plants 68000 code that must reach the same
+ * address). An ACIA interrupt handler that reads it needs a model this phase does not have. */
+#define OS_HW_ACIA_DATA    0xfffc02u
 
 /* Both sides index the modeled set by SLOT rather than by address — the seed is an array, the
  * known-mask is a bit per slot, and the ledger records a slot per entry — so the slot numbers are
@@ -192,7 +217,8 @@ uint32_t g_os_refusal_count(void);      /* ...and raises on what it reads back *
 #define OS_HW_SLOT_SHIFTER_SYNC      1
 #define OS_HW_SLOT_SHIFTER_VCOUNT_MID 2
 #define OS_HW_SLOT_SHIFTER_VCOUNT_LOW 3
-#define OS_HW_NSLOTS                 4
+#define OS_HW_SLOT_ACIA_STATUS       4
+#define OS_HW_NSLOTS                 5
 #if OS_HW_NSLOTS > 32
 #error "the seeded-hardware known/seed masks are uint32_t: OS_HW_NSLOTS slots no longer fit"
 #endif
@@ -204,6 +230,102 @@ uint32_t g_os_refusal_count(void);      /* ...and raises on what it reads back *
  * reads $fffa01 once per iteration — so a modest cap would truncate an ordinary run. */
 #define OS_HW_LOG_MAX 4096
 
+/* ---- the HARDWARE WRITE ledger (TRAP_MODEL.md, "Phase 10") ------------------------------------
+ * The read model above is only half of the off-image surface. A STORE to a hardware register — the
+ * shifter's colour row, the MFP's in-service register, the ACIA's data port — lands outside the
+ * image too, so the oracle DROPS it and a reconstruction that made no store at all is byte-for-byte
+ * identical to one that made every store the original makes. Phase 10 closes that half the way
+ * Phase 6 closed the YM2149's: both sides keep an ORDERED ledger of (address, width, value) and
+ * harness.differential compares them exactly.
+ *
+ * ONE CAP FOR BOTH SIDES (shim.c's g_hww_* and src/hw.c's), for OS_PSG_LOG_MAX's reason: were they
+ * to differ, a long run would drop entries on one side only and the streams would diverge for a
+ * reason that has nothing to do with the reconstruction. Sized like the read ledger's rather than
+ * like Dosound's because a palette upload is eight stores and a frame can hold several. */
+#define OS_HW_WRITE_LOG_MAX 4096
+
+/* WHERE A HARDWARE REGISTER IS, and the whole of what this ledger covers: the three blocks the ST
+ * DECODES, and not the whole of the address space above them.
+ *
+ *   $ff8000..$ff8fff  the internal registers — memory configuration, the shifter's video base and
+ *                     its sixteen colour words, the resolution byte, the DMA/FDC pair, the YM2149's
+ *                     mirrored block, the STE's DMA sound and blitter.
+ *   $fffa00..$fffaff  the MFP 68901 — its interrupt-enable, pending, in-service and mask registers,
+ *                     the four timers, and the GPIP the read model already names.
+ *   $fffc00..$fffcff  the two 6850 ACIAs, keyboard/IKBD and MIDI.
+ *
+ * THE LEDGER IS NOT "EVERY OFF-IMAGE WRITE", and the distinction is load-bearing twice over. A
+ * store past the end of the 1 MiB image is usually a RUNAWAY POINTER rather than a device: Joust's
+ * `update_pterodactyl` driven with a y of 0x8000 computes a screen address around $570000 and
+ * stores a sprite there, and BuggyBoy's `poke_color_reg` with a wild register selector reaches
+ * $ff95ea — unmapped on the machine in both cases, dropped by both sides as they always were.
+ * Ledgering those would make a reconstruction answer for arithmetic the byte diff cannot see
+ * either, on inputs the game never produces; the surface that holds a runaway store is
+ * guarded_image.py's, not this one.
+ *
+ * THE RESIDUAL, stated rather than hidden: a runaway that lands INSIDE one of these three blocks is
+ * indistinguishable here from a deliberate register store, and is ledgered. That is the right way
+ * round — a store into the decoded I/O space is a store the machine acts on, whatever the
+ * reconstruction meant by it. */
+#define OS_HW_IO_INTERNAL_LO 0xff8000u   /* shifter / DMA / YM2149 / blitter */
+#define OS_HW_IO_INTERNAL_HI 0xff8fffu
+#define OS_HW_IO_MFP_LO      0xfffa00u   /* MFP 68901 */
+#define OS_HW_IO_MFP_HI      0xfffaffu
+#define OS_HW_IO_ACIA_LO     0xfffc00u   /* IKBD + MIDI 6850s */
+#define OS_HW_IO_ACIA_HI     0xfffcffu
+/* The page all three blocks live in. Not a fourth block: it is the ONE comparison that rejects the
+ * runaway class before the table is walked at all, which matters because a runaway store happens
+ * inside a per-pixel loop (Joust's $570000 sprite) and reaches this predicate thousands of times a
+ * frame, while a real register store is a handful per frame. */
+#define OS_HW_IO_PAGE      0xff0000u
+#define OS_HW_IO_PAGE_MASK 0xff0000u
+
+/* Is `addr` inside one of those blocks?
+ *
+ * IT TAKES THE 24-BIT BUS FORM AND DOES NOT MASK, which is hw.h's contract for `hw_read8` stated
+ * once more for the write door: the oracle folds an access with `BUS_ADDR_MASK` before it decodes,
+ * because that is what the 68000's bus does to an instruction's operand; a RECONSTRUCTION spells
+ * the address itself, and `$ffff8240` there is a mistake worth a refusal rather than a silent
+ * equivalence. Masking here would make the candidate ledger `$ffff8240` where the oracle ledgers
+ * `$ff8240` and red as a wrong-register bug — and it would defeat an address-keyed `hw_waiver`,
+ * which could then match one side only.
+ *
+ * Written over a table rather than as three ORed comparisons so the blocks are a LIST both sides
+ * read, the way the modeled read addresses are — a fourth block is then one row. */
+static inline int os_hw_is_io(uint32_t bus_addr) {
+    static const uint32_t blocks[][2] = {
+        {OS_HW_IO_INTERNAL_LO, OS_HW_IO_INTERNAL_HI},
+        {OS_HW_IO_MFP_LO,      OS_HW_IO_MFP_HI},
+        {OS_HW_IO_ACIA_LO,     OS_HW_IO_ACIA_HI},
+    };
+    if ((bus_addr & OS_HW_IO_PAGE_MASK) != OS_HW_IO_PAGE)
+        return 0;
+    for (unsigned block = 0; block < sizeof blocks / sizeof blocks[0]; block++)
+        if (bus_addr >= blocks[block][0] && bus_addr <= blocks[block][1])
+            return 1;
+    return 0;
+}
+
+/* What one write-ledger entry's WIDTH field is. The 68000's three store widths, recorded as the
+ * byte count rather than as an opcode size code, so an entry reads as the number of image bytes the
+ * store would have covered had the address been in the image. */
+#define OS_HW_WRITE_WIDTH_8  1
+#define OS_HW_WRITE_WIDTH_16 2
+#define OS_HW_WRITE_WIDTH_32 4
+
+/* THE WIDTH OF A LEDGERED STORE, AS THE MASK ITS VALUE IS RECORDED UNDER. Both sides mask, so that
+ * a caller handing a longword to an 8-bit store records the byte the 68000 would have put on the
+ * bus rather than a value no store made — and they mask from ONE table, or the two ledgers would
+ * disagree about the same instruction for a reason that is not the reconstruction's. */
+static inline uint32_t os_hw_write_mask(uint32_t width) {
+    static const uint32_t masks[] = {
+        [OS_HW_WRITE_WIDTH_8]  = 0xffu,
+        [OS_HW_WRITE_WIDTH_16] = 0xffffu,
+        [OS_HW_WRITE_WIDTH_32] = 0xffffffffu,
+    };
+    return masks[width];
+}
+
 /* The modeled addresses, by slot. A function-local table rather than a file-scope one so that a
  * translation unit which includes this header without using the model draws no unused-variable
  * warning, and so that both directions of the mapping are derived from ONE list. */
@@ -213,8 +335,62 @@ static inline const uint32_t *os_hw_addrs(void) {
         [OS_HW_SLOT_SHIFTER_SYNC]      = OS_HW_SHIFTER_SYNC,
         [OS_HW_SLOT_SHIFTER_VCOUNT_MID] = OS_HW_SHIFTER_VCOUNT_MID,
         [OS_HW_SLOT_SHIFTER_VCOUNT_LOW] = OS_HW_SHIFTER_VCOUNT_LOW,
+        [OS_HW_SLOT_ACIA_STATUS]        = OS_HW_ACIA_STATUS,
     };
     return addrs;
+}
+
+/* ---- the ONE slot the MODEL declares, rather than the case (TRAP_MODEL.md, "Phase 7") --------
+ * The ACIA status byte is the single modeled address whose answer is not a machine CONFIGURATION a
+ * case has to know, but a TRANSIENT that always resolves the same way: the 6850's transmitter goes
+ * empty microseconds after the last byte leaves it, so "TDRE set" is the state a quiescent ACIA is
+ * in on entry to any send, and serving 0 instead is the one answer the machine never settles at —
+ * it hangs the send loop for ever, which is why shim.c answered this address 0x02 unconditionally
+ * from before Phase 7 existed.
+ *
+ * So it is the model's DEFAULT rather than a switch beside the model: an undeclared read is served
+ * this byte, is NOT recorded as unseeded, and IS ledgered like any other — while a case that wants
+ * another status (the transmitter busy, a receive byte pending) declares one with hw_seed and
+ * overrides it. Both sides install it from this one table, on the same code path a case's seed
+ * takes, exactly as shim.c's audio-capture profile does; without that the two implementations would
+ * hold two copies of the same byte.
+ *
+ * NOTHING ELSE BELONGS HERE. Every other modeled address answers a fact about the machine the case
+ * is describing — which monitor, which sync rate, where the beam is — and a default for one of
+ * those is the fabricated-0 class this whole model exists to close. */
+static inline const uint8_t *os_hw_model_defaults(void) {
+    static const uint8_t defaults[OS_HW_NSLOTS] = {
+        [OS_HW_SLOT_ACIA_STATUS] = OS_ACIA_TX_RDY,
+    };
+    return defaults;
+}
+
+/* Which slots os_hw_model_defaults() actually declares — named one by one rather than derived from
+ * the array, for shim.c's HW_CAPTURE_PROFILE_KNOWN reason: the array is a designated initializer,
+ * so a slot added above gets a silent 0 there, and declaring it here would publish that 0 as a real
+ * answer. Spelled this way a new slot has NO default and stays the case's to declare. */
+static inline uint32_t os_hw_default_slots(void) { return 1u << OS_HW_SLOT_ACIA_STATUS; }
+
+/* INSTALL A RUN'S DECLARED BYTES INTO `file`, and return the mask of slots that end up KNOWN.
+ *
+ * The case's declaration wins; the model's own defaults fill in under it; everything else is 0. It
+ * lives here, shared verbatim by shim.c's hw_enter_run and src/hw.c's g_hw_reset, for os_gem_trap's
+ * reason: two copies of this are two places a precedence rule can be changed in one, and the
+ * failure that produces is the oracle serving a byte the candidate does not — which surfaces as a
+ * read-stream mismatch blamed on the reconstruction rather than on the model.
+ *
+ * `seed` is read only where `known` declares a slot, so a caller with nothing to declare may pass
+ * NULL. */
+static inline uint32_t os_hw_install_seed(uint8_t *file, const uint8_t *seed, uint32_t known) {
+    const uint8_t *defaults = os_hw_model_defaults();
+    uint32_t defaulted = os_hw_default_slots() & ~known;
+
+    for (int slot = 0; slot < OS_HW_NSLOTS; slot++) {
+        if (known & (1u << slot))          file[slot] = seed[slot];
+        else if (defaulted & (1u << slot)) file[slot] = defaults[slot];
+        else                               file[slot] = 0;
+    }
+    return known | defaulted;
 }
 
 /* Which slots are VOLATILE — a value the machine changes on its own, which a per-run constant can
@@ -451,7 +627,13 @@ static inline uint32_t os_random(const uint8_t *mem) {
                                       * Kit-wide (see the memory-map note above): it must sit above
                                       * every game's program and below emu.STACK_GUARD_LO */
 #define OS_FS_STAGING      0xc0000u  /* raw file bytes, laid out below the stack by the harness */
-#define OS_FS_SLOTS        8
+/* WHY 32 AND NOT 8. The table held eight entries while the games that used it opened one or two
+ * files; Zynaps's boot opens about thirty in one straight line (`_start` @ 0x10000 makes 22
+ * `load_file` calls before 0x10814, and each level section loads five more), and 0x101ba is where
+ * the ninth would have been — a wall in that project's STATUS.md rather than a seam in the program.
+ * Thirty-two is the next power of two above what the longest known boot needs, and the two regions
+ * it has to fit between are checked below rather than left to arithmetic in a reader's head. */
+#define OS_FS_SLOTS        32
 #define OS_FS_NAME         16        /* name field width; filenames must be < 16 chars */
 #define OS_FS_OFF_STAGING  16        /* u32: where this file's bytes live in the staging area */
 #define OS_FS_OFF_SIZE     20        /* u32: current length in bytes */
@@ -460,6 +642,15 @@ static inline uint32_t os_random(const uint8_t *mem) {
 #define OS_FS_OFF_CAPACITY 32        /* u32: staging bytes reserved; os_fwrite refuses to exceed it */
 #define OS_FS_ENTRY        36
 #define OS_FS_FIRST_HANDLE 6         /* GEMDOS handles 0..5 are reserved; files start here */
+
+/* THE TABLE MUST END BELOW THE STAGING AREA. It grew from 8 slots to 32 and could grow again, and
+ * the failure it would then have is silent: entry N's bytes would be written over the first staged
+ * file's, which os_fread would go on serving as if they were the file. A compile-time check rather
+ * than a runtime one because both numbers are constants here — the harness's Python mirror is
+ * pinned equal to them by test/test_os_memory_map.py, so this covers that side too. */
+#if OS_FS_TABLE + OS_FS_SLOTS * OS_FS_ENTRY > OS_FS_STAGING
+#error "the staged-file table overruns OS_FS_STAGING: fewer OS_FS_SLOTS, or move the staging area up"
+#endif
 
 /* Does the byte range [addr, addr + count) lie inside the image? Every m68k_*_memory_* callback
  * bounds-checks its access against the image length, and the two helpers below must too: `buf` and

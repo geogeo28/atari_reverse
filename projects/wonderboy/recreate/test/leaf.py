@@ -43,7 +43,7 @@ RUNNER_SENTINEL_INSN = 1
 PSG_SELECT = 0xff8800
 PSG_DATA = PSG_SELECT + 2
 
-# The FOUR hardware bytes the kit's SEEDED READ model serves (TRAP_MODEL.md, "Phase 7"), as the
+# The FIVE hardware bytes the kit's SEEDED READ model serves (TRAP_MODEL.md, "Phase 7"), as the
 # 24-bit bus addresses the game's own operands carry — $17c7e reads the first and $17c90 the second
 # (`btst`s in the tempo head), $51ae and $51b6 the video counter's mid and low bytes, and $68d0 that
 # low byte again in the PRNG. Spelt here rather than unpacked from `emu.HW_ADDRS` because they are a
@@ -51,11 +51,17 @@ PSG_DATA = PSG_SELECT + 2
 # unpacking would silently assume which slot is which; test_sound.py pins the whole tuple equal to
 # the model's own table, so a slot renumbered in os.h cannot leave a battery declaring an address
 # the model no longer names. test_audio_capture.py reads them from here for PSG_SELECT's reason.
+#
+# NO ROUTINE IN THIS GAME READS THE FIFTH. The IKBD ACIA's status byte is the kit's own addition for
+# the games that send it a command; it is here so the tuple is an EQUALITY against the model's table
+# rather than a prefix of it, which is what would let an address be inserted ahead of the four this
+# game does read and renumber every slot the ledger reports.
 MFP_GPIP = 0xfffa01
 SHIFTER_SYNC = 0xff820a
 VIDEO_COUNTER_MID = 0xff8207
 VIDEO_COUNTER_LOW = 0xff8209
-MODELED_HW_ADDRS = (MFP_GPIP, SHIFTER_SYNC, VIDEO_COUNTER_MID, VIDEO_COUNTER_LOW)
+ACIA_STATUS = 0xfffc00
+MODELED_HW_ADDRS = (MFP_GPIP, SHIFTER_SYNC, VIDEO_COUNTER_MID, VIDEO_COUNTER_LOW, ACIA_STATUS)
 
 
 def hw_declared(video=0x00):
@@ -233,6 +239,29 @@ def merge_bands(addresses):
     return bands
 
 
+# The routines whose SHIFTER half this reconstruction does not write, so that every case reaching
+# one declares it rather than each battery remembering to. One row per entry point, and the list is
+# the enumeration: `harness.SHIFTER_UNPINNED` says what the addresses are and why they are unpinned,
+# and `harness.HW_WAIVERS` records each application. Three of these write the registers themselves;
+# the rest are COMPOSITIONS that call one of the three, so removing the hole from `set_palette`,
+# `clear_palette` and `flip_screen` empties this list from the bottom up.
+HW_UNPINNED_ROUTINES = frozenset((
+    "set_palette",                   # the eight movem.l over the sixteen colour registers
+    "clear_palette",                 # the single pen it leaves behind
+    "flip_screen",                   # the two screen-base bytes
+    # ...and the compositions that reach one of the three:
+    "game_main_loop",
+    "player_pending_event_gate",
+    "scene_run_frame",
+    "scene_exit_and_reload",
+    "scene_spawn_from_script",
+    "round_bonus_setup",
+    "round_bonus_run_frame",
+    "show_data_disk_prompt",
+    "stage_load_window",
+))
+
+
 def run(name, glue, allowed, what, regs=None, poison=True, max_insns=LEAF_INSN_CAP, stop_pc=0,
         psg_seed=None, hw_seed=None, schedule=None, wait_sites=None):
     """Run ``name``'s original under the oracle and the reconstruction on the same image.
@@ -306,7 +335,9 @@ def run(name, glue, allowed, what, regs=None, poison=True, max_insns=LEAF_INSN_C
     diffs, info = differential(entry_of(name), dict(regs or {}), glue,
                                max_insns=max_insns, poison=poison, stop_pc=stop_pc,
                                psg_seed=psg_seed, hw_seed=hw_seed, schedule=schedule,
-                               wait_sites=wait_sites)
+                               wait_sites=wait_sites,
+                               hw_waiver=(harness.SHIFTER_UNPINNED
+                                          if name in HW_UNPINNED_ROUTINES else None))
     assert not diffs, f"{what}\n{report(diffs)}"
     stray = stray_writes(info["writes"], allowed)
     assert not stray, (

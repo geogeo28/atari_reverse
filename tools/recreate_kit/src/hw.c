@@ -30,6 +30,13 @@ static uint32_t g_hw_bytes_known;           /* bit S = slot S's contents were de
 static uint8_t  g_hw_slot[OS_HW_LOG_MAX];
 static uint8_t  g_hw_val[OS_HW_LOG_MAX];
 static uint32_t g_hw_n;
+/* ...and the WRITE ledger's, whose surfaces are at the bottom of this file. Its LENGTH is declared
+ * here because `g_hw_reset` clears it: one reset per candidate run, not two, so a run cannot be
+ * given a fresh read stream and the previous run's stores. */
+static uint32_t g_hw_write_addr[OS_HW_WRITE_LOG_MAX];
+static uint8_t  g_hw_write_width[OS_HW_WRITE_LOG_MAX];
+static uint32_t g_hw_write_val[OS_HW_WRITE_LOG_MAX];
+static uint32_t g_hw_write_n;
 
 /* Clear the ledger and install the run's seed — the bytes the case declares the machine held on
  * entry. The harness calls this before EACH candidate run, the poison re-run included, so a run
@@ -38,9 +45,10 @@ static uint32_t g_hw_n;
  * nothing to declare may pass NULL. */
 void g_hw_reset(const uint8_t *seed, uint32_t known) {
     g_hw_n = 0;
-    g_hw_bytes_known = known;
-    for (int slot = 0; slot < OS_HW_NSLOTS; slot++)
-        g_hw_bytes[slot] = (known & (1u << slot)) ? seed[slot] : 0;
+    g_hw_write_n = 0;      /* the WRITE ledger is this run's stores only; see hw_log_write below */
+    /* The install is os.h's, shared verbatim with shim.c's hw_enter_run, so the two implementations
+     * cannot hold two different ideas of what an undeclared ACIA status reads. */
+    g_hw_bytes_known = os_hw_install_seed(g_hw_bytes, seed, known);
 }
 
 uint32_t        g_hw_log_count(void)  { return g_hw_n; }
@@ -75,3 +83,40 @@ uint8_t hw_read8(uint32_t addr) {
     hw_log(slot, served);
     return served;
 }
+
+
+/* ================================================================================================
+ * THE HARDWARE WRITE MODEL (TRAP_MODEL.md, "Phase 10"). What it is for and what it pins are in
+ * ../include/hw.h; this is the ledger behind it, and it mirrors shim.c's g_hw_write_* exactly.
+ * Its arrays are declared at the top of this file, with g_hw_reset, which is the ONE reset both
+ * ledgers get.
+ * ============================================================================================= */
+uint32_t        g_hw_write_count(void)   { return g_hw_write_n; }
+const uint32_t *g_hw_write_addrs(void)   { return g_hw_write_addr; }
+const uint8_t  *g_hw_write_widths(void)  { return g_hw_write_width; }
+const uint32_t *g_hw_write_vals(void)    { return g_hw_write_val; }
+
+static void hw_log_write(uint32_t addr, uint32_t width, uint32_t value) {
+    /* Only one of the three DECODED I/O blocks belongs here, and anything else is a REFUSAL rather
+     * than an entry — hw.h lists both shapes this rejects and why neither can be a ledger entry.
+     * The test is deliberately unmasked, so the untranslated `$ffff8240` is refused too rather than
+     * silently equated with `$ff8240`: os_hw_is_io's own header has that argument. Note this covers
+     * an IMAGE address by construction, since every block starts far above OS_IMAGE_SIZE. */
+    if (!os_hw_is_io(addr)) {
+        os_refused(0);
+        return;
+    }
+    /* Entries past the cap are dropped exactly as the oracle's are, so a run longer than the cap
+     * still compares like for like; the harness refuses a comparison at the cap rather than trust a
+     * truncated one. */
+    if (g_hw_write_n >= OS_HW_WRITE_LOG_MAX)
+        return;
+    g_hw_write_addr[g_hw_write_n] = addr;
+    g_hw_write_width[g_hw_write_n] = (uint8_t)width;
+    g_hw_write_val[g_hw_write_n] = value & os_hw_write_mask(width);
+    g_hw_write_n++;
+}
+
+void hw_write8(uint32_t addr, uint32_t value)  { hw_log_write(addr, OS_HW_WRITE_WIDTH_8, value); }
+void hw_write16(uint32_t addr, uint32_t value) { hw_log_write(addr, OS_HW_WRITE_WIDTH_16, value); }
+void hw_write32(uint32_t addr, uint32_t value) { hw_log_write(addr, OS_HW_WRITE_WIDTH_32, value); }

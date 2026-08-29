@@ -370,10 +370,14 @@ void vbl_handler(uint8_t *image) {
  *
  * THREE HARDWARE REGISTERS OVER FOUR WRITES ARE A SINK, exactly as src/stage.c's set_palette is and
  * for exactly the same reason: they are off the 68000's 24-bit bus as far as the loaded image goes,
- * the oracle DROPS them, and the kit's hw.h has no `hw_write8` to mirror them with. So what this
- * routine puts on the screen — which buffer is displayed, and the full-screen colour-0 flash — is
- * pinned by nothing here, and ../STATUS.md says so in as many words. On target the three become
- * ordinary `volatile` stores and the sinks compile out.
+ * and the oracle DROPS them. So what this routine puts on the screen — which buffer is displayed,
+ * and the full-screen colour-0 flash — is pinned by nothing here, and ../STATUS.md says so in as
+ * many words. On target the three become ordinary `volatile` stores and the sinks compile out.
+ *
+ * THE KIT'S REMEDY EXISTS NOW and this port has not taken it: `hw.h` exports `hw_write8/16/32` over
+ * an ordered ledger `harness.differential` compares on both sides (kit TRAP_MODEL.md, "Phase 10").
+ * Until the sink routes through it, the cases that reach these registers declare them in
+ * `hw_waiver=` — test/harness.py's `SHIFTER_UNPINNED` lists them and says so.
  */
 
 /* The two writes this file makes to a shifter register the differential cannot see — the screen

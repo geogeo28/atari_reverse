@@ -166,7 +166,12 @@ _PsgFileP = ctypes.POINTER(ctypes.c_uint8 * PSG_NREGS)
 _HW_MODEL_ABI = ("osh_hw_seed", "osh_hw_file", "osh_hw_known", "osh_hw_unseeded", "osh_hw_stale",
                  "osh_hw_reread", "osh_hw_volatile", "osh_hw_capture_profile_known",
                  "osh_hw_wide", "osh_hw_count", "osh_hw_log_slots", "osh_hw_log_vals",
-                 "osh_hw_dropped", "osh_hw_nslots", "osh_hw_addr_table", "osh_hw_capture_profile")
+                 "osh_hw_dropped", "osh_hw_nslots", "osh_hw_addr_table", "osh_hw_capture_profile",
+                 # ...and the hardware WRITE ledger (Phase 10), which shares the group because it
+                 # shares shim.c's per-run reset: a .so with one half and not the other is a
+                 # half-updated build, and naming them together says so at import.
+                 "osh_hw_write_count", "osh_hw_write_addrs", "osh_hw_write_widths",
+                 "osh_hw_write_vals", "osh_hw_write_dropped")
 _missing_hw_model = [sym for sym in _HW_MODEL_ABI if not hasattr(_LIB, sym)]
 if _missing_hw_model:
     # Named together rather than one at a time, for _PSG_MODEL_ABI's reason: they ship in one
@@ -192,6 +197,11 @@ _LIB.osh_hw_capture_profile.restype = _u8p
 _LIB.osh_hw_capture_profile_known.restype = ctypes.c_uint32
 _LIB.osh_hw_reread.restype = ctypes.c_uint32
 _LIB.osh_hw_volatile.restype = ctypes.c_uint32
+_LIB.osh_hw_write_count.restype = ctypes.c_uint32
+_LIB.osh_hw_write_addrs.restype = _u32p
+_LIB.osh_hw_write_widths.restype = _u8p
+_LIB.osh_hw_write_vals.restype = _u32p
+_LIB.osh_hw_write_dropped.restype = ctypes.c_uint32
 # The modeled set, read from the .so rather than kept as a second copy of os.h's table here — so a
 # shim.c that adds an address cannot leave this file naming the old set (PSG_NREGS's argument).
 HW_NSLOTS = _LIB.osh_hw_nslots()
@@ -652,6 +662,22 @@ def hw_events():
     return [(HW_ADDRS[slots[i]], vals[i]) for i in range(n)]
 
 
+def hw_writes():
+    """Every off-image STORE the most recent ``run()`` made, in order: ``(address, width, value)``.
+
+    ``address`` is the 24-bit bus form, ``width`` the store's byte count (1, 2 or 4) and ``value``
+    what it stored, masked to that width. These stores reach no image byte — the memory callbacks
+    drop them — so this list is their whole observable effect, and ``harness.differential`` compares
+    it against the candidate's (``src/hw.c``'s ``hw_write8/16/32``).
+    """
+    n = _LIB.osh_hw_write_count()
+    if not n:
+        return []                # the ordinary case: three FFI calls bought an empty list
+    addrs, widths, vals = (_LIB.osh_hw_write_addrs(), _LIB.osh_hw_write_widths(),
+                           _LIB.osh_hw_write_vals())
+    return [(addrs[i], widths[i], vals[i]) for i in range(n)]
+
+
 def _hw_addrs_of(mask):
     """The modeled addresses a slot mask names — the shape every hardware refusal reports in."""
     return [addr for slot, addr in enumerate(HW_ADDRS) if mask & (1 << slot)]
@@ -967,6 +993,13 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
         causes.append(f"its modeled hardware reads overflowed the ledger — {dropped_hw_reads} "
                       f"read(s) past os.h's OS_HW_LOG_MAX cap were DROPPED, so hw_events() is a "
                       f"truncated read stream, not this run's whole one")
+    # The WRITE ledger's truncation, on the same footing and for the same reason: a truncated store
+    # stream reported as a complete one is a comparison that silently stops looking.
+    dropped_hw_writes = _LIB.osh_hw_write_dropped()
+    if dropped_hw_writes:
+        causes.append(f"its hardware writes overflowed the ledger — {dropped_hw_writes} store(s) "
+                      f"past os.h's OS_HW_WRITE_LOG_MAX cap were DROPPED, so hw_writes() is a "
+                      f"truncated store stream, not this run's whole one")
     # The addresses come from the mask, never from a restated pair: the modeled set grows (os.h owns
     # it), and a message naming two of four would send the reader looking at the wrong register.
     if audio_capture_on() and _LIB.osh_hw_wide():
@@ -1043,6 +1076,7 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     out_regs["hw_wide"] = _hw_addrs_of(_LIB.osh_hw_wide())       # ...taken in by a 16/32-bit read
     out_regs["hw_reread"] = _hw_addrs_of(_LIB.osh_hw_reread())   # ...VOLATILE and read twice
     out_regs["hw_events"] = hw_events()             # the ordered (address, value) read stream
+    out_regs["hw_writes"] = hw_writes()             # ...and the (address, width, value) store stream
     out_regs["hw_file"] = hw_file()
     out_regs["hw_known"] = _LIB.osh_hw_known()
     # The external agent's surfaces. `sched_site_arrivals` is the comparable one: entry i counts the

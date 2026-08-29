@@ -59,7 +59,11 @@ if _has_psg_ledger:
 # own read stream is the witness that says when the group was needed — _vet_hw_state raises the
 # moment the oracle reads one against a candidate that cannot answer for it.
 _HW_LEDGER_ABI = ("g_hw_reset", "g_hw_log_count", "g_hw_log_slots", "g_hw_log_vals", "g_hw_file",
-                  "g_hw_file_known")
+                  "g_hw_file_known",
+                  # ...and the hardware WRITE ledger (Phase 10). One group, not two, because it is
+                  # one source file: a candidate exporting the read half and not the write half is a
+                  # half-updated build or a stale .so, and probing them together says which.
+                  "g_hw_write_count", "g_hw_write_addrs", "g_hw_write_widths", "g_hw_write_vals")
 _missing_hw_ledger = [sym for sym in _HW_LEDGER_ABI if not hasattr(_lib, sym)]
 _has_hw_ledger = not _missing_hw_ledger
 if _has_hw_ledger:
@@ -69,6 +73,10 @@ if _has_hw_ledger:
     _lib.g_hw_log_vals.restype = ctypes.POINTER(ctypes.c_uint8)
     _lib.g_hw_file.restype = ctypes.POINTER(ctypes.c_uint8)
     _lib.g_hw_file_known.restype = ctypes.c_uint32
+    _lib.g_hw_write_count.restype = ctypes.c_uint32
+    _lib.g_hw_write_addrs.restype = ctypes.POINTER(ctypes.c_uint32)
+    _lib.g_hw_write_widths.restype = ctypes.POINTER(ctypes.c_uint8)
+    _lib.g_hw_write_vals.restype = ctypes.POINTER(ctypes.c_uint32)
 
 # The scheduled-write surfaces (src/sched.c) are optional in exactly the same way and for the same
 # reason: a game with no busy-wait to model schedules nothing, and the ORACLE's own schedule is the
@@ -139,7 +147,7 @@ OS_HEAP_BASE = emu.OS_HEAP_BASE   # modeled Malloc bump-allocates upward from he
 OS_FS_TABLE = 0xBF000        # staged-file table base
 OS_FS_STAGING = 0xC0000      # raw file bytes grow upward from here
 OS_FS_ENTRY = 36             # name[16] | staging u32 | size u32 | cursor u32 | open u32 | cap u32
-OS_FS_SLOTS = 8              # entries in the table; staging a ninth file would overrun it
+OS_FS_SLOTS = 32             # entries in the table; a 33rd file would be written past its end
 OS_FS_NAME = 16
 # Field offsets within one entry. stage_files() writes each field by name rather than concatenating
 # them in order, so that reordering a field in os.h fails test_os_memory_map.py's pin loudly
@@ -153,6 +161,13 @@ OS_FS_FIRST_HANDLE = 6
 OS_DOSOUND_LOG_MAX = 256     # ledger cap, on BOTH sides (shim.c's mirror and src/dosound_log.c)
 OS_PSG_LOG_MAX = 4096        # ...and the direct-PSG ledger's, likewise on both (shim.c, src/psg.c)
 OS_HW_LOG_MAX = 4096         # ...and the seeded-hardware read ledger's (shim.c, src/hw.c)
+OS_HW_WRITE_LOG_MAX = 4096   # ...and the hardware WRITE ledger's, likewise on both
+# The widths that ledger records, as the byte counts os.h tags an entry with. Mirrored (and pinned
+# equal by test_os_memory_map.py) because the field is COMPARED entry for entry between two
+# implementations, and every battery that asserts an expected stream spells these numbers.
+OS_HW_WRITE_WIDTH_8 = 1
+OS_HW_WRITE_WIDTH_16 = 2
+OS_HW_WRITE_WIDTH_32 = 4
 
 OS_SUPER_TOKEN = 0x00535550  # the cookie GEMDOS Super(0) returns; Super(cookie) restores
 
@@ -1043,7 +1058,7 @@ def _vet_hw_reads_are_declared(entry, hw_seed, o_regs):
             f"(TRAP_MODEL.md, Phase 7).")
 
 
-def _vet_hw_state(entry, o_regs):
+def _vet_hw_state(entry, o_regs, waived=frozenset()):
     """Compare the seeded hardware model's ordered READ stream — and its declared bytes — against
     the candidate's (``src/hw.c``).
 
@@ -1058,11 +1073,15 @@ def _vet_hw_state(entry, o_regs):
     differential. It is compared with the known-mask, since "declared 0" and "never declared" are
     different machines.
 
+    ``waived`` is the set of addresses the case's ``hw_waiver`` excused, dropped from BOTH sides
+    before the compare (``differential``'s docstring says why that door exists at all).
+
     Optional ABI (``_has_hw_ledger``) with the oracle's own read stream as the witness, exactly as
     for the PSG ledger: a candidate without it is served only while the oracle reads no modeled
     address at all.
     """
-    o_hw = o_regs["hw_events"]
+    o_hw = ([event for event in o_regs["hw_events"] if event[0] not in waived] if waived
+            else o_regs["hw_events"])
     if not _has_hw_ledger:
         if o_hw:
             raise AssertionError(
@@ -1076,7 +1095,11 @@ def _vet_hw_state(entry, o_regs):
     count = _lib.g_hw_log_count()
     slots, vals = _lib.g_hw_log_slots(), _lib.g_hw_log_vals()
     c_hw = [(emu.HW_ADDRS[slots[i]], vals[i]) for i in range(count)]
-    _vet_ledger_below_cap("seeded-hardware read", len(o_hw), count, OS_HW_LOG_MAX, "OS_HW_LOG_MAX")
+    _vet_ledger_below_cap("seeded-hardware read", len(o_regs["hw_events"]), count, OS_HW_LOG_MAX,
+                          "OS_HW_LOG_MAX")
+    if waived:
+        _vet_waiver_is_still_needed(entry, waived, {event[0] for event in c_hw})
+        c_hw = [event for event in c_hw if event[0] not in waived]
     if o_hw != c_hw:
         raise AssertionError(
             f"function @ {entry:#x}: modeled hardware read stream mismatch — "
@@ -1089,6 +1112,135 @@ def _vet_hw_state(entry, o_regs):
         _candidate_bytes(_lib.g_hw_file, len(o_regs["hw_file"])), _lib.g_hw_file_known(),
         "The two sides were handed the same hw_seed, so this is the two model implementations "
         "disagreeing, not the reconstruction")
+
+
+# ---- the off-image hardware waiver (see differential's ``hw_waiver``) ----
+# Every address a case opted out of, as (entry, address, reason), each recorded ONCE. A module-level
+# list rather than a bare counter so that a run can be asked WHICH cases are not comparing their
+# hardware traffic and WHY — the flag's whole cost is that it removes a comparison, and a removal
+# nobody can enumerate is indistinguishable from a comparison that was never written.
+#
+# UNIQUE rather than one entry per application, for two reasons: a fuzz battery drives the same
+# waived entry thousands of times, so a log would grow without bound in a worker that never restarts;
+# and the question this answers is "which addresses does this suite stop looking at", which a repeat
+# does not change. `_HW_WAIVERS_SEEN` is the membership half, kept beside it so the ORDER of first
+# appearance survives (a set alone would not reproduce between runs).
+HW_WAIVERS = []
+_HW_WAIVERS_SEEN = set()
+
+
+def _vet_hw_waiver(entry, hw_waiver):
+    """Validate a case's ``hw_waiver``, record it in ``HW_WAIVERS``, and return the addresses it
+    covers as a frozenset.
+
+    The reason is REQUIRED and must be a non-empty string. A waiver whose reason is blank is the
+    shape this parameter exists to prevent: an opt-out nobody has to justify becomes the default way
+    past a red, and the ledger it disables is then only enforced where it happens to be easy.
+    """
+    if not hw_waiver:
+        return frozenset()
+    if not isinstance(hw_waiver, dict):
+        raise TypeError(
+            f"function @ {entry:#x}: hw_waiver must be {{address: reason}} — one entry per hardware "
+            f"address this case does not compare, each with the reason it does not")
+    for addr, reason in hw_waiver.items():
+        # THE KEY IS CHECKED FIRST, and it is checked at all because a mistyped one is SILENT: the
+        # ledgers hold integer addresses, so a string key matches nothing, waives nothing, and the
+        # case reds naming the very address the author believes is excused.
+        if not isinstance(addr, int) or isinstance(addr, bool) or addr < 0:
+            raise AssertionError(
+                f"function @ {entry:#x}: hw_waiver key {addr!r} is not an address. The ledgers hold "
+                f"integers, so a key of any other type waives nothing and the case reds naming the "
+                f"address it was supposed to excuse")
+        if not isinstance(reason, str) or not reason.strip():
+            raise AssertionError(
+                f"function @ {entry:#x}: hw_waiver[{addr:#x}] has no reason. Waiving a hardware "
+                f"address removes the only surface that can see the traffic there, so the case has "
+                f"to say why — e.g. 'the candidate models this routine as a no-op (src/os.c)'")
+        waiver = (entry, addr, reason)
+        if waiver not in _HW_WAIVERS_SEEN:
+            _HW_WAIVERS_SEEN.add(waiver)
+            HW_WAIVERS.append(waiver)
+    return frozenset(hw_waiver)
+
+
+def _vet_waiver_is_still_needed(entry, waived, candidate_addresses):
+    """Refuse a case whose CANDIDATE reaches an address its waiver excused.
+
+    A waiver's premise is that the reconstruction does not model the hardware at that address. The
+    day somebody gives it a body, the premise is false — and without this the waiver would go on
+    dropping BOTH sides' entries, the case would stay green, and the newly written stores would be
+    invisible again with a STATUS row claiming they were pinned. So the waiver retires itself: it is
+    only ever a statement about a candidate that makes no access there.
+
+    Keyed on the CANDIDATE's accesses and not the oracle's, deliberately. A waived address the
+    oracle never touches is merely unused — a project waiver lists every address its stubs cover and
+    a given case reaches a subset — and refusing that would make the list impossible to write.
+    """
+    reached = sorted(addr for addr in candidate_addresses if addr in waived)
+    if not reached:
+        return
+    raise AssertionError(
+        f"function @ {entry:#x}: this case waives "
+        f"{', '.join(f'{addr:#x}' for addr in reached)}, but the candidate ACCESSED "
+        f"{'that address' if len(reached) == 1 else 'those addresses'} — the waiver's premise (that "
+        f"the reconstruction models the hardware there as a no-op) is no longer true, and leaving it "
+        f"in would hide the accesses it now makes on both sides. Drop them from the waiver")
+
+
+def _hw_write_event_text(events):
+    """One write ledger's entries as readable text: ``0xff8240.w=0x0000``."""
+    suffix = {1: "b", 2: "w", 4: "l"}
+    return [f"{addr:#x}.{suffix.get(width, f'?{width}')}={value:#0{2 * width + 2}x}"
+            for addr, width, value in events]
+
+
+def _vet_hw_write_state(entry, o_regs, waived):
+    """Compare the ordered off-image WRITE stream against the candidate's (``src/hw.c``).
+
+    Nothing here is in the image — the oracle's memory callbacks DROP a store above it — so nothing
+    else could catch a divergence. A reconstruction that made no hardware store at all is
+    byte-for-byte identical to one that made every store the original makes; the ordered stream is
+    the only witness, and it is compared for EVERY case rather than opted into, because the failure
+    it closes is a candidate that does nothing, and the cases that need it are exactly the ones
+    nobody thought to mark.
+
+    ``waived`` is the set of addresses ``hw_waiver`` excused, dropped from BOTH sides before the
+    compare, so a waiver hides one address's traffic and not the rest of the run's.
+
+    Optional ABI (``_has_hw_ledger``) with the oracle's own store stream as the witness, exactly as
+    for the read ledger: a candidate without it is served only while the oracle stores nowhere.
+    """
+    o_writes = ([event for event in o_regs["hw_writes"] if event[0] not in waived] if waived
+                else o_regs["hw_writes"])
+    if not _has_hw_ledger:
+        if o_writes:
+            raise AssertionError(
+                f"the oracle made {len(o_writes)} off-image hardware store(s) but {_CFG.name}'s "
+                f"candidate exports no {'/'.join(_missing_hw_ledger)} — the store stream cannot be "
+                f"compared, so a reconstruction making none of them would pass unnoticed. That is "
+                f"tools/recreate_kit/src/hw.c's ABI: build the candidate through kit.mk, whose SRC "
+                f"sweeps $(KIT)/src/*.c")
+        return
+
+    count = _lib.g_hw_write_count()
+    _vet_ledger_below_cap("hardware write", len(o_regs["hw_writes"]), count, OS_HW_WRITE_LOG_MAX,
+                          "OS_HW_WRITE_LOG_MAX")
+    # Pulled out of ctypes ONCE, already filtered: the cap check above reads the count rather than
+    # the list, so there is nothing to build before it.
+    addrs, widths, vals = (_lib.g_hw_write_addrs(), _lib.g_hw_write_widths(), _lib.g_hw_write_vals())
+    c_writes = [(addrs[i], widths[i], vals[i]) for i in range(count)]
+    if waived:
+        _vet_waiver_is_still_needed(entry, waived, {event[0] for event in c_writes})
+        c_writes = [event for event in c_writes if event[0] not in waived]
+    if o_writes == c_writes:
+        return
+    raise AssertionError(
+        f"function @ {entry:#x}: hardware write stream mismatch — "
+        f"oracle={_hw_write_event_text(o_writes)} cand={_hw_write_event_text(c_writes)} "
+        f"(`0xff8240.w=0x0000` stored the word 0 to 0xff8240). These addresses are outside the "
+        f"image, so this divergence is invisible to the byte diff; the candidate makes such a store "
+        f"through hw_write8/16/32 (tools/recreate_kit/include/hw.h)")
 
 
 def _vet_poison_is_attributable(entry, scheduled, o_writes):
@@ -1119,7 +1271,7 @@ def _vet_poison_is_attributable(entry, scheduled, o_writes):
 
 
 def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excluded,
-                       stop_pc, max_insns, psg_seed, hw_seed, schedule, wait_sites):
+                       stop_pc, max_insns, psg_seed, hw_seed, schedule, wait_sites, waived):
     """Guard against a *coincidental* pass: the candidate may match the oracle's final image while
     never actually writing some byte the oracle wrote — because that byte already held the oracle's
     value (an output landing in a zeroed/base region). Re-run both cores on a copy of the input in
@@ -1153,7 +1305,8 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excl
     # oracle surfaces. Poisoning can steer either core into different register traffic, and that
     # traffic is invisible to the byte compare below — which is the whole reason this pass exists.
     _vet_psg_state(entry, po_regs)
-    _vet_hw_state(entry, po_regs)
+    _vet_hw_state(entry, po_regs, waived)
+    _vet_hw_write_state(entry, po_regs, waived)
     _vet_schedule_ran_the_same_wait(entry, po_regs)
     pc_final = bytes(buf)
     # Same fast path as the plain compare in differential(): the byte-by-byte walk below is ~200x
@@ -1174,7 +1327,7 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excl
 
 
 def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, poison=False,
-                 psg_seed=None, hw_seed=None, schedule=None, wait_sites=None):
+                 psg_seed=None, hw_seed=None, schedule=None, wait_sites=None, hw_waiver=None):
     """Run oracle + candidate on the same image. Return (diffs, info).
 
     ``diffs`` is the list of (addr, oracle, cand) byte differences (stack-guard excluded).
@@ -1221,6 +1374,22 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     compared against the candidate's ``sched_poll8`` calls afterwards
     (``_vet_schedule_ran_the_same_wait``) — without that the agent would make both sides' memory
     agree whatever the reconstruction's loop did.
+    ``hw_waiver`` is ``{address: reason}``: the off-image hardware addresses this case does NOT
+    compare, and why. Both hardware streams — the ordered READ stream and the ordered WRITE stream —
+    drop their entries at those addresses, on BOTH sides, before they are compared; every other
+    address in the run still is. The comparison is on by DEFAULT, and this is the only way off it,
+    because the failure it closes is a candidate that models a hardware routine as a no-op: those
+    are exactly the cases nobody would think to opt IN, and an opt-in ledger would be enforced only
+    where somebody remembered it. The reason is required and every waiver is recorded in
+    ``harness.HW_WAIVERS``, so a run can be asked which addresses it stopped looking at. It RETIRES
+    ITSELF: a candidate that accesses a waived address fails the case, because the premise the
+    waiver states has stopped being true.
+    **It covers the two COMPARISONS and nothing else.** ``_vet_hw_reads_are_declared``'s four
+    refusals — an undeclared read, a stale read-back, a wide read, a second read of a VOLATILE
+    address — still fire at a waived address, and must: each of them says the ORACLE was served a
+    byte the model invented, which corrupts that run whatever the candidate did, and excusing it
+    would verify the reconstruction against a fabrication. A case that meets one declares a
+    ``hw_seed`` or changes its shape; there is no waiver for it.
     ``wait_sites`` names every PC this run busy-waits at, and defaults to the trigger PCs the
     schedule carries — which is right whenever the run holds ONE wait. Both counts above are kept
     per site, so a run with two waits is compared wait by wait instead of as two totals that can
@@ -1228,6 +1397,7 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     it here: the candidate's poll at an undeclared site is refused rather than uncounted.
     """
     _vet_audio_capture_off(entry)
+    waived = _vet_hw_waiver(entry, hw_waiver)
     _vet_schedule_is_runnable(entry, schedule, wait_sites)
     pokes = regs.pop("_pokes", None)
     img = make_image(pokes)
@@ -1247,7 +1417,7 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
         _lib.g_dosound_log_reset()       # fresh Dosound ledger for this candidate run (see below)
     _lib.g_os_refusal_reset()            # ...and a fresh refused-os_*-call tally (see below)
     _seed_candidate_psg(psg_seed)        # ...and the same PSG entry state the oracle just ran on
-    _seed_candidate_hw(hw_seed)          # ...and the same declared hardware bytes
+    _seed_candidate_hw(hw_seed)          # ...and the same declared hardware bytes, both ledgers clear
     # ...and the same external-agent stores, on the same declared wait sites
     _seed_candidate_sched(o_regs["sched"], o_regs["sched_sites"])
     cand_ret = glue(_lib, buf)
@@ -1311,13 +1481,14 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
             f"lists cannot be compared, so a divergence here would pass unnoticed")
 
     _vet_psg_state(entry, o_regs)
-    _vet_hw_state(entry, o_regs)
+    _vet_hw_state(entry, o_regs, waived)
+    _vet_hw_write_state(entry, o_regs, waived)
     _vet_schedule_ran_the_same_wait(entry, o_regs)
 
     if poison and not diffs:
         _vet_poison_is_attributable(entry, o_regs["sched"], o_writes)
         _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excluded,
-                           stop_pc, max_insns, psg_seed, hw_seed, schedule, wait_sites)
+                           stop_pc, max_insns, psg_seed, hw_seed, schedule, wait_sites, waived)
 
     return diffs, {"writes": o_writes, "regs": o_regs, "ret": cand_ret}
 

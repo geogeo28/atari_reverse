@@ -2171,7 +2171,17 @@ Reading it:
   transaction model nobody has built, and the whole `−18` was never available from one phase.)*
 * **A hardware-write ledger buys nothing on these two axes** (writes never block a run and never
   steer a branch) but it is what turns the 14 direct-T2 functions / 1,290 bytes from "runs, proves
-  nothing about the hardware" into genuinely verified. Those 14 are **not** all video: 6 are FDC/DMA
+  nothing about the hardware" into genuinely verified.
+  *(Marked in place — §0l: the ledger is BUILT, in the kit, as the write-side twin of Phase 7 it was
+  priced as: an ordered `(address, width, value)` stream both sides keep and `harness.differential`
+  compares for every case (kit `TRAP_MODEL.md`, "Phase 10"). This port has NOT taken it — its shifter
+  sink still writes nothing — so the 1,290 bytes are unrealised and the cases that reach those
+  registers declare them in `hw_waiver=` (`test/harness.py`'s `SHIFTER_UNPINNED`). Routing
+  `src/shifter.h`'s sink through `hw_write8/16/32` is the whole of the remaining work. One thing the
+  ledger does NOT reach, discovered in building it: a read-modify-write of an address the READ model
+  does not name — `video_set_lowres_50hz`'s own `$ff8260` is one — computes its value from a
+  fabricated 0 on both sides, so the mask stays unpinned and shipping that expression to target is a
+  defect. The remedy is a read slot, not a wider ledger.)* Those 14 are **not** all video: 6 are FDC/DMA
   register writers, 3 are boot (`show_data_disk_prompt` alone is 632 of the 1,290 bytes), 1 is the
   resource loader, and only 4 — `flip_screen`, `clear_palette`, `video_set_lowres_50hz`,
   `set_palette`, 198 bytes — are the video group. §4 measured that video group producing **zero
@@ -2697,8 +2707,10 @@ were takeable — plus `clear_palette` (`$e7f4`), which is pure shifter.
 **`clear_palette` JOINS `set_palette` ON §5's LIST, and it is the same entry twice.** Sixteen writes
 to `$ffff8240`, all dropped by the oracle because the address is off the loaded image, so the
 routine's whole differential surface is "it touched no image byte". WHICH registers were cleared is
-unpinned and unpinnable until the dropped-hardware-write ledger §6 prices gets built. The count of
-routines in this project whose OUTPUT is a dropped hardware write is now **two**, not one.
+unpinned — no longer UNPINNABLE: the dropped-hardware-write ledger §6 prices is built (kit
+`TRAP_MODEL.md`, "Phase 10"), and what is left is for this port to route its shifter sink through
+`hw_write8/16/32`. Until it does, both routines' cases declare the sixteen registers in `hw_waiver=`.
+The count of routines in this project whose OUTPUT is a dropped hardware write is **two**, not one.
 
 **AND ONE BLIND SPOT §8 DID NOT HAVE.** Every count in this file comes from a scan of a LISTING or of
 Ghidra's reference model, and this phase found `tools/prg_dis.py` reporting the wrong LENGTH for

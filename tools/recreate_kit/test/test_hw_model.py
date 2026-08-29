@@ -37,7 +37,8 @@ GPIP = 0            # $fffa01, the MFP GPIP: bit 7 = monitor detect
 SYNC = 1            # $ff820a, the shifter's sync mode: bit 1 = 50 Hz
 VMID = 2            # $ff8207, the shifter's video address counter, mid byte
 VLOW = 3            # $ff8209, ...and its low byte
-NSLOTS = 4
+ACIA = 4            # $fffc00, the IKBD ACIA's status: bit 1 = the transmit register is empty
+NSLOTS = 5
 
 # The bytes the probe's cases use. DECLARED is what a case declares (deliberately not the capture
 # profile's, so a case served the profile where it asked for its own declaration is visible); OTHER
@@ -54,17 +55,31 @@ GPIP_BIT = 1 << GPIP
 SYNC_BIT = 1 << SYNC
 VMID_BIT = 1 << VMID
 VLOW_BIT = 1 << VLOW
-# What the probe declares when it declares EVERY slot (its own ALL_SLOTS_DECLARED), which is what
-# the `known` claims below are about...
-ALL_KNOWN = GPIP_BIT | SYNC_BIT | VMID_BIT | VLOW_BIT
+ACIA_BIT = 1 << ACIA
+# What the probe declares when it declares EVERY slot — its own ALL_SLOTS_DECLARED, spelled the same
+# way so that a slot added to os.h's table lands on both sides at once rather than in the C alone.
+ALL_KNOWN = (1 << NSLOTS) - 1
 # ...and the two the audio-capture profile has bytes for, which is a different set and stays one
 # even as the table grows. The video-counter slots are deliberately outside it (shim.c).
 PROFILE_PAIR = GPIP_BIT | SYNC_BIT
 
+# What the MODEL declares when the case does not (os.h's os_hw_model_defaults). Exactly one slot has
+# a default — the ACIA status, whose byte a send loop's exit depends on and which no case should have
+# to spell — so `_file` and `_known` below fold it in and every row states what a run really leaves
+# rather than what the case alone declared.
+ACIA_TX_RDY = 0x02
+MODEL_DEFAULTS = {ACIA: ACIA_TX_RDY}
+DEFAULTED = ACIA_BIT
+
 
 def _file(**slots):
-    """The expected declared-byte file: every slot 0 but the ones named."""
-    return {slot: slots.get(f"s{slot}", 0) for slot in range(NSLOTS)}
+    """The expected declared-byte file: the model's own defaults, then every slot the case names."""
+    return {slot: slots.get(f"s{slot}", MODEL_DEFAULTS.get(slot, 0)) for slot in range(NSLOTS)}
+
+
+def _known(declared=0):
+    """...and the expected known-mask: what the case declared, plus what the model declares for it."""
+    return declared | DEFAULTED
 
 
 def _file_all(value):
@@ -94,10 +109,10 @@ ORACLE_CASES = {
     # `pytest -n auto` which case that is would not be stable — the defect ENTRY_SR closed for the
     # condition codes.
     "declared_read": dict(scalars={"d1": DECLARED, "unseeded": 0, "stale": 0, "wide": 0,
-                                   "known": GPIP_BIT, "nlog": 1},
+                                   "known": _known(GPIP_BIT), "nlog": 1},
                           ledger=[(GPIP, DECLARED)], file=_file(s0=DECLARED)),
     "declared_read_again": dict(scalars={"d1": DECLARED, "unseeded": 0, "stale": 0, "wide": 0,
-                                         "known": GPIP_BIT, "nlog": 1},
+                                         "known": _known(GPIP_BIT), "nlog": 1},
                                 ledger=[(GPIP, DECLARED)], file=_file(s0=DECLARED)),
     # ...and withdrawing it restores the fabrication. THIS ROW IS PHASE 7'S ONE DIVERGENCE FROM
     # PHASE 6, and a "fix" in either direction is the tidy-looking change to watch for: an undeclared
@@ -110,21 +125,21 @@ ORACLE_CASES = {
     # test_hw_differential.py::test_a_bare_emu_run_of_the_same_routine_is_served_rather_than_refused,
     # which asserts it against a real run rather than against this table.)
     "undeclared_read": dict(scalars={"d1": FABRICATED, "unseeded": GPIP_BIT, "stale": 0, "wide": 0,
-                                     "known": 0, "nlog": 1},
+                                     "known": _known(), "nlog": 1},
                             ledger=[(GPIP, FABRICATED)], file=_file()),
     # Declaring ONE address declares one address. The mask is per-slot, so a case that seeds the
     # GPIP and reads the sync byte is as undeclared as one that seeds nothing.
     # THE VIDEO COUNTER, the pair the model grew for Wonder Boy's $51ac. Declared, both bytes are
     # served and both land in the ordered ledger under their own slots.
     "vcount_pair_declared": dict(scalars={"d1": DECLARED, "unseeded": 0, "stale": 0, "wide": 0,
-                                          "known": VMID_BIT | VLOW_BIT, "nlog": 2},
+                                          "known": _known(VMID_BIT | VLOW_BIT), "nlog": 2},
                                  ledger=[(VMID, DECLARED), (VLOW, DECLARED)],
                                  file=_file(s2=DECLARED, s3=DECLARED)),
     # ...and a declaration of the OLD pair is not theirs: both reads are the fabricated 0 the model
     # answered before they were named, now TALLIED under their own bits where before this change
     # they were an unmodeled off-image read that nothing recorded at all.
     "vcount_pair_undeclared": dict(scalars={"d1": FABRICATED, "unseeded": VMID_BIT | VLOW_BIT,
-                                            "stale": 0, "wide": 0, "known": GPIP_BIT, "nlog": 2},
+                                            "stale": 0, "wide": 0, "known": _known(GPIP_BIT), "nlog": 2},
                                    ledger=[(VMID, FABRICATED), (VLOW, FABRICATED)],
                                    file=_file(s0=DECLARED)),
     # A WRITE to a counter byte and then a read of it: the seed no longer describes the slot, which
@@ -146,7 +161,7 @@ ORACLE_CASES = {
                               ledger=[(GPIP, DECLARED), (GPIP, DECLARED)],
                               file=_file_all(DECLARED)),
     "other_address_undeclared": dict(scalars={"d1": FABRICATED, "unseeded": SYNC_BIT, "stale": 0,
-                                              "wide": 0, "known": GPIP_BIT, "nlog": 1},
+                                              "wide": 0, "known": _known(GPIP_BIT), "nlog": 1},
                                      ledger=[(SYNC, FABRICATED)], file=_file(s0=DECLARED)),
     # Two reads of two addresses, both declared to the SAME byte: only their ORDER separates this
     # stream from the reverse one, which is what the ledger comparison adds over a set of reads.
@@ -165,10 +180,10 @@ ORACLE_CASES = {
     # builds Musashi with M68K_EMULATE_ADDRESS_ERROR off, so a case planted at an odd address would
     # quietly stop measuring the refusal the day that flag moved.
     "word_read": dict(scalars={"d1": 0, "unseeded": 0, "stale": 0, "wide": GPIP_BIT,
-                               "known": GPIP_BIT, "nlog": 0},
+                               "known": _known(GPIP_BIT), "nlog": 0},
                       ledger=[], file=_file(s0=DECLARED)),
     "long_read": dict(scalars={"d1": 0, "unseeded": 0, "stale": 0, "wide": SYNC_BIT,
-                               "known": GPIP_BIT, "nlog": 0},
+                               "known": _known(GPIP_BIT), "nlog": 0},
                       ledger=[], file=_file(s0=DECLARED)),
     # ...including one that straddles INTO the byte from below, the case a start-address equality
     # test misses (hw_portability.py's lattice has the same case for the PSG block).
@@ -177,7 +192,7 @@ ORACLE_CASES = {
     # keep reporting rather than collapsing to the first one it meets.
     "long_read_straddling_in": dict(scalars={"d1": 0, "unseeded": 0, "stale": 0,
                                              "wide": SYNC_BIT | VLOW_BIT,
-                                             "known": GPIP_BIT, "nlog": 0},
+                                             "known": _known(GPIP_BIT), "nlog": 0},
                                     ledger=[], file=_file(s0=DECLARED)),
     # The run WROTE the address and then read it back — Wonder Boy's own shape, `move.b #2,$ff820a`
     # at $f91c and `btst #1,$ff820a` at $17c90, so any whole-frame run covers both. The write is
@@ -196,18 +211,19 @@ ORACLE_CASES = {
     # The audio-capture fold. Off the mode, nothing declared: both reads are the silent 0 that made
     # a replayer pick the MONOCHROME tempo, which is why the mode exists at all.
     "profile_pair_undeclared": dict(scalars={"d1": FABRICATED, "unseeded": PROFILE_PAIR, "stale": 0,
-                                             "wide": 0, "known": 0, "nlog": 2},
+                                             "wide": 0, "known": _known(), "nlog": 2},
                                     ledger=[(GPIP, FABRICATED), (SYNC, FABRICATED)], file=_file()),
     # Under the mode the same run is served the profile — because the mode INSTALLS A SEED over this
     # model rather than keeping a switch of its own. The bytes are claimed against
     # `osh_hw_capture_profile()` rather than restated, in the case below.
     "profile_pair_under_capture": dict(scalars={"unseeded": 0, "stale": 0, "wide": 0,
-                                                "known": PROFILE_PAIR, "nlog": 2}),
+                                                "known": _known(PROFILE_PAIR), "nlog": 2}),
     # ...and the mode's declaration WINS over a case's, which is why emu.run refuses to take one.
     # ...and it declares the PROFILE PAIR and no more, even with every slot in the case's own seed:
-    # the mode has bytes for two of the four and says so (shim.c's HW_CAPTURE_PROFILE_KNOWN).
+    # the mode has bytes for two of the modeled set and says so (shim.c's HW_CAPTURE_PROFILE_KNOWN);
+    # the ACIA's default is the model's, not the mode's, and is folded in by `_known` either way.
     "capture_overrides_a_seed": dict(scalars={"unseeded": 0, "stale": 0, "wide": 0,
-                                              "known": PROFILE_PAIR, "nlog": 2}),
+                                              "known": _known(PROFILE_PAIR), "nlog": 2}),
     # ...but does not survive the mode. No reset call in between: the next run reinstalls the case's
     # own declaration, which is what stops the profile leaking into a differential.
     "after_capture_the_case_seed_returns": dict(scalars={"d1": OTHER, "unseeded": 0, "stale": 0,
@@ -248,7 +264,7 @@ CANDIDATE_CASES = {
                                 ledger=[], file=_file_all(DECLARED)),
     # The read the ORACLE serves 0, made against no declaration: the candidate must TALLY rather
     # than answer — refusing on one side only is the false green — and log it anyway.
-    "cand_undeclared_read": dict(scalars={"d1": 0, "refusals": 1, "known": 0, "nlog": 1},
+    "cand_undeclared_read": dict(scalars={"d1": 0, "refusals": 1, "known": _known(), "nlog": 1},
                                  ledger=[(GPIP, FABRICATED)], file=_file()),
     # An address outside the modeled set: refused AND unlogged, since the oracle records nothing for
     # it either and an entry here would diverge the streams for a reason that is not about a read.
@@ -262,7 +278,7 @@ CANDIDATE_CASES = {
     # It runs before EVERY candidate run, the poison re-run included — the state is process-global,
     # so without the clear a candidate reads a byte this case never declared and stays green on it,
     # and under `pytest -n auto` which case it inherited is not even stable.
-    "cand_seed_does_not_leak": dict(scalars={"d1": 0, "refusals": 1, "known": 0, "nlog": 1},
+    "cand_seed_does_not_leak": dict(scalars={"d1": 0, "refusals": 1, "known": _known(), "nlog": 1},
                                     ledger=[(GPIP, FABRICATED)], file=_file()),
 }
 

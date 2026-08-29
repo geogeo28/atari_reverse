@@ -111,8 +111,10 @@ LATTICE_CASES = [
     (0xFF8609, 1, "READ", "T_HW_READ",
      "the FDC DMA counter, Phase 7's explicit NON-GOAL — it answers a per-access sequence a per-run "
      "seed cannot express, so it stays outside the set and stays a silent 0"),
-    (0xFFFC00, 1, "READ", "T_HW_READ",
-     "the IKBD status is the one non-zero answer, but a fabricated constant is still a read"),
+    (0xFFFC00, 1, "READ", "T_SEEDED_READ",
+     "the IKBD status was the one non-zero answer shim.c hard-coded, and kit Phase 10 made it a "
+     "modeled slot instead — served from the model's own default and LEDGERED, so a send loop's "
+     "poll is now a read the differential compares rather than a fabricated constant"),
     (0xFF8240, 2, "WRITE", "T_HW_WRITE", "a palette write: dropped, so the run completes blind"),
     # The one edge the tool does NOT close, pinned in both models so their treatment cannot diverge:
     # an unsized operand counts as ONE byte, so one sitting just below a modeled address is judged
@@ -240,13 +242,14 @@ def test_a_renamed_seeded_hardware_address_fails(kit_copy):
     assert "OS_HW_MFP_GPIP" in str(exit_info.value)
 
 
-def test_a_third_modeled_hardware_address_fails(kit_copy):
-    """The drift the two address pins do NOT catch, and the expensive direction: the kit ADDS a
-    modeled byte, every pinned name still matches, and this module goes on pricing the new address
-    as a silent-zero T4 — under-counting what a differential verifies, exactly as the pre-§0g rule
-    under-counted the PSG. Pinning the slot COUNT is what makes that loud."""
-    rewrite(kit_copy / "include" / "os.h", "#define OS_HW_NSLOTS                 4",
-            "#define OS_HW_NSLOTS                 5")
+def test_one_more_modeled_hardware_address_fails(kit_copy):
+    """The drift the address pins do NOT catch, and the expensive direction: the kit ADDS a modeled
+    byte, every pinned name still matches, and this module goes on pricing the new address as a
+    silent-zero T4 — under-counting what a differential verifies, exactly as the pre-§0g rule
+    under-counted the PSG. Pinning the slot COUNT is what makes that loud. (It has fired for real
+    once: kit Phase 10 added the ACIA status and this module's table had to grow with it.)"""
+    rewrite(kit_copy / "include" / "os.h", "#define OS_HW_NSLOTS                 5",
+            "#define OS_HW_NSLOTS                 6")
     with pytest.raises(SystemExit) as exit_info:
         hp.check_shim_agreement()
     assert "OS_HW_NSLOTS" in str(exit_info.value)
@@ -374,7 +377,7 @@ def test_the_committed_scan_reproduces_its_published_figures():
     otherwise shift a published figure with no diff to show for it.
 
     The figures themselves track the WORKING scan and move with any re-scan, in the same commit as
-    the § record that accounts for the move. §0k is the current one: 407 functions / 44,262 B, after
+    the § record that accounts for the move. §0k is the current SCAN: 407 functions / 44,262 B, after
     ../names.txt gained the 125 `fn` lines of the coverage-wall scout — the per-actor behaviour
     dispatch (`actor_behavior_table`'s 61 handlers and their subtree) plus four smaller indirect
     tables, reached through a PC-relative INDEXED `lea` that Ghidra does not follow.
@@ -392,7 +395,13 @@ def test_the_committed_scan_reproduces_its_published_figures():
     # (`actor_behavior_type01_player`, `player_pending_event_gate`, `player_run_map_cell`,
     # `actor_behavior_type61`) all reach `show_data_disk_prompt` -> `load_resource_by_index`, and so
     # inherit both the Copylock (T6) and the FDC status poll's steer. +4 functions / +1,686 B.
-    assert (len(at_risk), sum(scan.funcs[a].size for a in at_risk)) == (24, 3910)
+    # §0l: kit Phase 10 made the IKBD ACIA status ($fffc00) a MODELED slot rather than a hard-coded
+    # answer in shim.c, which is the second time a byte has left the false-green set by being
+    # modeled (§0i was the first, for the tempo pair). ONE function moved: `ikbd_disable_mouse`
+    # @ $f8f0, 22 bytes, whose only STEER is the `move.b (A1),D2b` poll of $fffffc00 at $f8f8 (its
+    # $fffc02 send is a write, which never steered). −1 function / −22 B, and runnable is unchanged
+    # for §0i's reason — a seeded read was already runnable.
+    assert (len(at_risk), sum(scan.funcs[a].size for a in at_risk)) == (23, 3888)
     # No function hard-rejects on its own access any more: Phase 6 removed the last PSG read wall.
     assert not [a for a in scan.funcs if direct_tier[a] == hp.T_HARD_REJECT]
 

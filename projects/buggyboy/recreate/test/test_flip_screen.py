@@ -30,5 +30,6 @@ def _pokes(flip_idx):
 def test_flip_screen():
     for flip_idx in (0, 4, 2, 6, 0x1234, 0xfffc, 0x8000):
         regs = {"_pokes": _pokes(flip_idx)}
-        diffs, _ = differential(ENTRY, regs, lambda l, b: l.g_flip_screen(b), poison=True)
+        diffs, _ = differential(ENTRY, regs, lambda l, b: l.g_flip_screen(b), poison=True,
+                                hw_waiver=harness.HW_STUBBED_BY_OS_C)
         assert not diffs, f"flip_idx={flip_idx:#x}\n{report(diffs[:12])}"
