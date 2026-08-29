@@ -930,9 +930,5 @@ reached by seeding real data:
 
 ## Suite
 
-<<<<<<< HEAD
-`make test` — ** passed**. `make guarded` — same count, 
-=======
-`make test` — **2103 passed**. `make guarded` — same count, 15190
->>>>>>> a10fc8e (zynaps: enemy VM ops, explosions, mothership begin/draw — 20 functions (2103 tests))
+`make test` — **2372 passed**. `make guarded` — same count, 15771
 candidate runs guarded across 10 workers, no fault.

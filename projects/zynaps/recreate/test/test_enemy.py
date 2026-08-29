@@ -2200,7 +2200,7 @@ MIRRORS = (
     ("A_ANIM_FRAME_LIMIT_TYPE22", "include/enemy.h", "A_anim_frame_limit_type22"),
     ("A_RNG_LFSR_STATE", "include/rng.h", "A_rng_lfsr_state"),
     ("A_ENTITY_COLLISION_MASKS", "include/collision.h", "A_entity_collision_masks"),
-    ("COLLISION_ROW_BYTES", "src/collision.c", "COLLISION_ROW_BYTES"),
+    ("COLLISION_ROW_BYTES", "include/collision.h", "COLLISION_ROW_BYTES"),
     ("SIN_DEGREES_FULL", "include/util.h", "SIN_DEGREES_FULL"),
     ("RNG_TAP_MASK", "src/rng.c", "RNG_TAP_MASK"),
     ("RNG_STEP_BITS", "src/rng.c", "RNG_STEP_BITS"),

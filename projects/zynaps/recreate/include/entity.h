@@ -69,7 +69,6 @@
                                    * test_enemy.py::test_op_halt_zeroes_both_velocity_words */
 #define ENTITY_DY          0x14u  /* .w — sin64[angle]*speed (0x142d4). pinned by the same test */
 #define ENTITY_AX          0x16u  /* .w — acceleration, added to / subtracted from ENTITY_DX by
-<<<<<<< HEAD
                                    * entity_apply_accel (0x143f8). pinned by test_util.py and by
                                    * test_weapon.py::test_fire_bomb, which is the launch that
                                    * CLEARS it while setting ENTITY_AY to the bomb's gravity */
@@ -84,7 +83,9 @@
  * it is test_weapon.py's `MIRRORS`, which pins THIS constant equal to those, plus
  * test_steer_resolves_the_target_index_as_a_byte, which drives ten indices from 0 to 0xff through
  * the record arithmetic and so lands on a different record for each. A wrong offset here now fails
- * the suite by name; the hit-points role remains names.txt's and unexercised. */
+ * the suite by name; the hit-points role remains names.txt's and unexercised. The enemy side pins
+ * the offset too: the type-14 sine patroller uses this byte's WORD as its centre line (enemy.h's
+ * ACTOR_SINE_BASE_Y) and test_enemy.py::test_sine_height_is_added_to_the_base fails if it moves. */
 #define ENTITY_HP          0x1au
 /* .b — a bomb's one-frame "was on the terrain last frame" latch (read under THIS name by
  * `bomb_update`), the steered shot's turn countdown (weapon.h's SHOT_TURN_COUNTDOWN, same byte),
@@ -95,16 +96,6 @@
  * battery's `MIRRORS` pin against SHOT_TURN_COUNTDOWN. The fire-countdown role is names.txt's and
  * unexercised — script class 2 (0x14d00) is not ported. */
 #define ENTITY_BOUNCE      0x1bu
-=======
-                                   * entity_apply_accel (0x143f8). pinned by test_util.py */
-#define ENTITY_AY          0x18u  /* .w — the same for ENTITY_DY. pinned by test_util.py */
-/* .b — hit points, or a seeker's target (names.txt). THE OFFSET is pinned now, though not under
- * this reading: the type-14 sine patroller uses the same field as its centre line (a WORD,
- * enemy.h's ACTOR_SINE_BASE_Y), and test_enemy.py::test_sine_height_is_added_to_the_base fails
- * if it moves. The tag is upgraded rather than the name changed — the union is real. */
-#define ENTITY_HP          0x1au
-#define ENTITY_BOUNCE      0x1bu  /* .b                                      names.txt, unpinned */
->>>>>>> a10fc8e (zynaps: enemy VM ops, explosions, mothership begin/draw — 20 functions (2103 tests))
 /* .b — the animation frame (enemies), the hit flash's frame counter, and ALSO the seeker's and the
  * missile's time-to-live (0x4b and 0x64, counted down by 0x140a6 / 0x14126). The roles never share
  * a record: a shot only becomes a flash once it is spent.
