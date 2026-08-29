@@ -72,6 +72,11 @@ BIN="$REC/../bin"                                         # projects/zynaps/bin
 BUILD="$HERE/build"; DISK="$HERE/disk"
 PRG="ZYNAPS.PRG"
 mkdir -p "$BUILD" "$DISK"
+# A FAILED BUILD MUST LEAVE NO PRG BEHIND FOR smoke.py TO RUN. Every gate below exits non-zero, but
+# the per-mode artifact from the previous successful build would still be on disk, and smoke.py reads
+# `build/ZYNAPS-<mode>.PRG` by name — so a green smoke after a red build is the stale binary passing,
+# not this tree (measured 2026-08-29: the os_in_image gate reddened and the old title PRG smoked OK).
+rm -f "$BUILD/ZYNAPS-$MODE.PRG" "$BUILD/$PRG"
 
 CC=m68k-elf-gcc
 
@@ -395,7 +400,11 @@ LEAKS=$(grep -rlE "\b($TARGET_MACROS)\b" "$REC/src" "$REC/include" || true)
 # shim_include/os.h but by the KIT's own `-DOS_NO_REFUSAL_TALLY` arm, which compiles it to an inline
 # identity (tools/recreate_kit/include/os.h). Its one core caller is `ikbd_send_cmd`'s give-up arm,
 # which that same macro compiles away — see shim_include/tos.h on why the spin is unbounded here.
-REPLACED_OS_HELPERS='os_fopen|os_fread|os_fclose|os_super|os_refused'
+# `os_in_image` is on the list because the MODEL IS RIGHT ON TARGET: it is arithmetic on OS_IMAGE_SIZE
+# — `addr <= size && count <= size - addr` — and the target's image is that same 1 MiB array, so the
+# bound a core checks off target is the bound it must check here (shim_include/os.h's own os_fread
+# relies on it). Its core callers are init.c's slice guards (the attract bar list, the section table).
+REPLACED_OS_HELPERS='os_fopen|os_fread|os_fclose|os_super|os_refused|os_in_image'
 OS_USED=$(grep -rhoE '\bos_[a-z_0-9]+' "$REC/src" "$REC/include" | sort -u || true)
 OS_MODELLED=$(echo "$OS_USED" | grep -vE "^($REPLACED_OS_HELPERS)$" || true)
 [ -z "$OS_MODELLED" ] || {
