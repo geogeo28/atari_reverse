@@ -12,6 +12,7 @@
 #include "entity.h"
 #include "mothership.h"
 #include "sprite.h"
+#include "enemy.h"
 
 /* Eight phase slots of MOTHERSHIP_FRAME_BYTES each — the shape sprite_preshift8_2px builds, so the
  * relation is expressed rather than restated as a second literal. */
@@ -113,4 +114,66 @@ void mothership_sprite_build_step(uint8_t *image) {
  * width, D7 counts the banks. No outputs but memory. */
 void g_mothership_sprite_build_step(uint8_t *image) {
     mothership_sprite_build_step(image);
+}
+
+/* ================================================================================================
+ * mothership_begin @ 0x14eda — arm the encounter, once the playfield is clear.
+ *
+ * The gate is `count_free_wave_slots() == ENEMY_SLOT_COUNT`: every wave slot free. It
+ * then unpacks the boss sprite, loads the section's energy, parks the anchor at the right-hand edge
+ * and FALLS THROUGH into mothership_place_tail — the two are one routine with two entry points, and
+ * the call below is that fall-through spelt out.
+ *
+ * The energy byte is read UNSIGNED into a word while the SECTION indexing it is read SIGNED
+ * (`ext.w`), so a section of 0x80 or more reads a byte below the table. Transcribed; the game's
+ * sections are small. The original needs an `and.w #$ff,d0` for the unsigned half because
+ * `move.b (a2,d0.w),d0` leaves D0's high byte from the `ext.w`; C's `uint8_t` read has no high
+ * byte to clear, so there is no mask here to write — and none to mutate, which is why the
+ * sweep in STATUS.md does not claim one.
+ * ============================================================================================= */
+
+void mothership_begin(uint8_t *image) {
+    uint32_t energy_at;
+
+    /* `cmp.b #$8,d0` — the immediate IS the slot count, i.e. "nothing else alive". */
+    if (count_free_wave_slots(image) != ENEMY_SLOT_COUNT)
+        return;
+
+    mothership_sprite_expand(image);
+    energy_at = addr_add(A_mothership_energy_by_section, sign_ext8(image[A_level_section]));
+    wr16(image + A_boss_hitpoints, image[energy_at]);
+    wr16(image + A_mothership_y, MOTHERSHIP_START_Y);
+    wr16(image + A_mothership_x, MOTHERSHIP_START_X);
+    mothership_place_tail(image);
+}
+
+/* Register map: no register inputs. D0 and A2 are scratch, and A2 is re-loaded by the tail. */
+void g_mothership_begin(uint8_t *image) {
+    mothership_begin(image);
+}
+
+/* ================================================================================================
+ * mothership_draw @ 0x158f4 — blit the five live boss segments.
+ *
+ * Its only argument to the draw is D2, the bank's HALF-frame stride, which for the boss is the
+ * five-cell expander frame halved (include/sprite.h, "how it indexes a preshift bank"). The
+ * segments' own sprite pointers are MOTHERSHIP_SEGMENT_SPRITE_BYTES apart, set by
+ * mothership_place_tail; this routine reads them and does not compute them.
+ * ============================================================================================= */
+#define MOTHERSHIP_DRAW_PHASE_STEP (BOSS_SPRITE_FRAME_BYTES / 2u)   /* `move.w #$3e8,d2` */
+
+void mothership_draw(uint8_t *image) {
+    uint32_t segment = A_entity_boss_parts;
+
+    for (unsigned i = 0; i < MOTHERSHIP_TAIL_SEGMENTS; i++) {
+        if (image[segment + ENTITY_ALIVE] != 0)
+            draw_sprite_masked(image, segment, MOTHERSHIP_DRAW_PHASE_STEP);
+        segment = addr_add(segment, ENTITY_STRIDE);
+    }
+}
+
+/* Register map: no register inputs. A2 walks the segments and D6 counts them; both are saved across
+ * the `bsr` and restored. */
+void g_mothership_draw(uint8_t *image) {
+    mothership_draw(image);
 }

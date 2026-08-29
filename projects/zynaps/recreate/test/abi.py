@@ -292,3 +292,41 @@ def interrupt_frame_pokes(handler):
             + b"\x4e\x75")                                      # rts, at `resume`
     assert len(code) == _INTERRUPT_STUB_RESUME + 2, "the resume offset no longer names the rts"
     return {STUB: code}
+
+
+# --- APPENDED: the FLAG stub for a routine that CLOBBERS A0 --------------------------------------
+#
+# `flag_call_pokes` above stores through the caller's A0, which only works while the routine leaves
+# it alone. Several script-VM handlers do not: every one that reaches `entity_set_velocity_from_angle`
+# (0x142d4) walks A0 over the cosine table, and `actor_script_op_bounce_fall` reaches
+# `collision_chain_walk` (0x12d44), which walks it over the entity table. With the caller's stub the
+# `Scc` then lands wherever the callee left A0 — the oracle writes one byte into the TEXT segment and
+# never touches the flag at all, which reads as a candidate bug rather than as a stub that no longer
+# fits (measured: `sine_table` came back one byte different and the flag byte came back as its
+# canary). This shape loads A0 itself, after the call and through the `movea` that leaves CCR alone,
+# exactly as `register_call_eq_flag_pokes` above does and for the same reason.
+def flag_call_self_addressed_pokes(routine, condition, result):
+    """Pokes that call `routine` and store the FLAG it answers in, at `result`.
+
+        jsr     routine
+        movea.l #result,a0      ; AFTER the call, and `movea` does not touch the flags
+        s<cond> (a0)
+        rts
+
+    Unlike `flag_call_pokes`, the run's own A0 is free — so a case using this one is NOT also
+    asserting that the routine preserved it. Prefer `flag_call_pokes` wherever the routine does;
+    `test_enemy.py`'s `A0_CLOBBERING_ENTRIES` is the roster of the ones that cannot, and the test
+    beside it proves that roster both minimal and complete.
+
+    ITS SKELETON IS `register_call_eq_flag_pokes`' ABOVE with the condition parameterised and no
+    stores — three encoders in this file now share `jsr / movea.l #result,a0 / Scc / rts`. The merge
+    is a `condition` parameter on that function, and it is NOT done here because this file is
+    append-only while several agents hold it at once (README.md, "Adding a function"): changing an
+    existing body would turn every other agent's append into a conflict. Recorded in
+    projects/zynaps/recreate/STATUS.md so it is merged deliberately rather than forgotten.
+    """
+    code = (b"\x4e\xb9" + routine.to_bytes(4, "big")            # jsr imm.l
+            + _MOVEA_L_IMM_TO_A0.to_bytes(2, "big") + result.to_bytes(4, "big")
+            + _SCC_TO_A0[condition].to_bytes(2, "big")
+            + b"\x4e\x75")                                      # rts
+    return {STUB: code}

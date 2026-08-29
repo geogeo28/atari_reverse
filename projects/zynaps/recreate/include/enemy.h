@@ -22,6 +22,11 @@
 /* ================================================================================================
  * Globals this subsystem OWNS (../out/globals.tsv).
  * ============================================================================================= */
+/* `move.w #$7,d7` + `dbf` over the records at A_enemy_slots. In the header rather than beside
+ * its loop because src/mothership.c's arming gate is "every one of them free" and reaches for
+ * it — the count and the gate are one fact. */
+#define ENEMY_SLOT_COUNT 8
+
 #define A_enemy_slots            0x17c1au  /* names.txt # ctx — the 8 wave-enemy records,
                                            * entity slots 9..16 */
 #define A_asteroid_records       0x17e2au  /* names.txt `object_array_2` # ctx — 6 x 3 columns */
@@ -37,6 +42,26 @@
 #define A_free_wave_slot_count   0x198b7u  /* names.txt # ctx — what count_free_wave_slots publishes */
 #define A_squadron_kill_counters 0x198bbu  /* names.txt # ctx — six bytes; a squadron at 0 drops a pod */
 #define A_asteroid_anim_toggle   0x198fcu  /* `not.b` every call: the columns animate every other one */
+
+/* The three actor-animation cycles the naming pass left with `cmt` lines but no name of their own:
+ * names.txt calls their sprite tables `anim_frames_type16/20/22`, and does not name the two
+ * per-section frame LIMITS at all. Both limit bytes are loaded once per level section by the
+ * section loader at 0x1087e / 0x1088c, out of the tables at 0x1982c / 0x1983c. */
+#define A_anim_frames_type16      0x1929cu
+#define A_anim_frames_type20      0x191b4u
+#define A_anim_frames_type22      0x191ccu
+#define A_anim_frame_limit_type20 0x1990fu
+#define A_anim_frame_limit_type22 0x19910u
+
+/* The 11 records the per-frame actor passes walk: entity slots 6..16, i.e. the three enemy shot
+ * slots followed by the eight wave slots at A_enemy_slots. names.txt `enemy_shot_slots` # ctx names
+ * the first of them, and ../out/globals.tsv assigns the address to this subsystem. */
+#define A_enemy_shot_slots        0x17b96u
+
+/* The per-TYPE jump table the animation pass dispatches through, 23 longwords. Its twin, the move
+ * table at 0x19380 (names.txt `actor_move_table` # ctx), is not named here yet: no routine ported
+ * so far reads it, and an address nothing pins is one nothing has checked. */
+#define A_actor_anim_table        0x193dcu
 
 /* ================================================================================================
  * Globals another subsystem owns, BORROWED because no owner's header DEFINES them yet.
@@ -66,6 +91,20 @@
  * subsystem owns it; until then the attribution here is names.txt's, not globals.tsv's. */
 #define A_player_record        0x17d7au
 
+/* The explosion group's data, borrowed on the same terms as the two above — one edit to move, and
+ * STATUS.md's "The globals this subsystem borrows" table lists each with its owner so the merge is
+ * expected rather than discovered. Per ../out/globals.tsv: 0x19670 is `player`'s, and 0x19664 /
+ * 0x195a8 / 0x191fc are `sprite`'s. THE LAST TWO HAVE NO OWNER AT ALL — neither 0x198ae nor 0x19902
+ * appears in globals.tsv, and ../../names.txt's `var` lines are their only source, so "another
+ * subsystem owns them" is a guess about them rather than a reading. */
+#define A_explosion_group_active_bits 0x19670u  /* names.txt `control_lock_flags` # ctx; bit 0 =
+                                                 * the end-of-section blast, bit 1 = the ship's */
+#define A_explosion_group_members     0x19664u  /* names.txt # ctx — 6 entity indices per group */
+#define A_explosion_particle_offsets  0x195a8u  /* names.txt # ctx — dx/dy/delay per particle */
+#define A_explosion_small_frame_ptrs  0x191fcu  /* names.txt # ctx — 12 sprite pointers */
+#define A_explosion_frame_toggle      0x198aeu
+#define A_fire_charged                0x19902u  /* names.txt # ctx — cleared by the group-1 pass */
+
 /* ================================================================================================
  * Actor-record roles this subsystem adds to entity.h's frozen block. Offsets are from ../names.txt.
  * ============================================================================================= */
@@ -76,6 +115,19 @@
 #define ACTOR_SCRIPT_PC         0x22u  /* .w — byte offset into the script data at 0x19ac2 */
 #define ACTOR_SCRIPT_LOOP_PC    0x24u  /* .w — the pc a loop rewinds to */
 #define ACTOR_SCRIPT_LOOP_COUNT 0x27u  /* .b — passes left in that loop */
+#define ACTOR_BOUNCED           0x29u  /* .b — this actor has already bounced off the landscape;
+                                       * the script VM clears it on every opcode fetch (0x14cb8) */
+#define ACTOR_SPEED             0x1eu  /* .b — the scalar the heading ops multiply the direction by;
+                                       * names.txt's record note calls it "speed". The SAME byte as
+                                       * ASTEROID_Y_DESCENDING below */
+#define ACTOR_SINE_BASE_Y       0x1au  /* .w — the type-14 patroller's centre line, the field
+                                       * entity.h names ENTITY_HP for the kinds that fight */
+/* .b — an explosion particle's own frame counter, counted up to EXPLOSION_END_FRAME by
+ * explosion_animate_all and seeded per particle by explosion_spawn. include/entity.h does not name
+ * +0x10 AT ALL — a gap in its frozen block rather than a union role, reported to its owner. */
+#define EXPLOSION_PART_FRAME    0x10u
+#define ACTOR_SINE_PHASE        0x1cu  /* .w — ...and its angle in degrees; the same word whose low
+                                       * byte is ACTOR_FIRE_RELOAD / ACTOR_DIVING above */
 /* .b — the column's DIRECTION, and the flag is named for the y axis rather than the picture:
  * non-zero adds to y, which on an ST screen moves the column DOWN. `tst.b 30(a2)` @ 0x15a08. */
 #define ASTEROID_Y_DESCENDING   0x1eu
@@ -129,5 +181,32 @@ void anim_ground_objects(uint8_t *image);
 
 void asteroids_move(uint8_t *image);
 void asteroids_animate(uint8_t *image);
+void asteroids_draw(uint8_t *image);
+
+/* Both names carry a trailing `# ctx` in ../../names.txt (offered there as `explosion_group_spawn`
+ * and `explosion_groups_animate`), so they are proposals a later body read may overturn — README.md
+ * asks for this note next to the declaration. What the bodies confirm is the ROLE, not the wording:
+ * one seeds six records from a source and the other steps them. */
+void explosion_spawn(uint8_t *image, uint32_t source, uint16_t group);
+void explosion_animate_all(uint8_t *image);
+
+uint32_t entity_ptr_from_index(uint32_t index);
+
+void anim_enemy_type16(uint8_t *image, uint32_t actor);
+void anim_enemy_type20(uint8_t *image, uint32_t actor);
+void anim_enemy_type22(uint8_t *image, uint32_t actor);
+void enemies_animate_all(uint8_t *image);
+
+void enemy_move_type14_sine(uint8_t *image, uint32_t actor);
+
+unsigned actor_script_op_bounce_fall(uint8_t *image, uint32_t actor);
+unsigned actor_script_op_set_heading(uint8_t *image, uint32_t actor, uint8_t opcode);
+unsigned actor_script_op_random_heading(uint8_t *image, uint32_t actor);
+unsigned actor_script_op_thrust_to_centre_y(uint8_t *image, uint32_t actor);
+unsigned actor_script_op_aim_at_player(uint8_t *image, uint32_t actor);
+unsigned actor_script_op_thrust_to_centre(uint8_t *image, uint32_t actor);
+unsigned actor_script_op_random_speed_nudge(uint8_t *image, uint32_t actor);
+unsigned actor_script_continue(void);
+unsigned actor_script_op_end_frame(void);
 
 #endif /* ZYNAPS_ENEMY_H */

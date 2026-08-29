@@ -18,6 +18,13 @@
 #define A_mothership_x            0x19dd0u  /* names.txt # ctx — the anchor the tail is placed from */
 #define A_mothership_y            0x19dd2u  /* names.txt # ctx */
 #define A_mothership_phase_timer  0x19efeu  /* names.txt # ctx — .l, zeroed when the build finishes */
+#define A_boss_hitpoints          0x19f44u  /* names.txt # ctx — .w, the encounter's energy */
+#define A_mothership_energy_by_section 0x1987du /* names.txt # ctx — one energy byte per section */
+
+/* The level section the game is playing, named in ../../names.txt but assigned to no subsystem by
+ * ../out/globals.tsv. It is read here only as the index into the energy table above; whoever ends
+ * up owning the level machinery should take it and this header should include theirs. */
+#define A_level_section           0x19895u
 
 /* The two rotate preshift banks the boss sprite is built into, and the raw frames they are built
  * from. Neither is named in ../../names.txt — both are bare `lea` operands — so the names are this
@@ -38,10 +45,16 @@
 #define MOTHERSHIP_FRAME_BYTES 0xa0u   /* one unshifted frame; also the preshift's D2 */
 #define MOTHERSHIP_BANKS 2             /* `move.w #$1,d7` + `dbf`: two banks are built */
 
+/* Where the encounter starts the boss: `move.w #$140,$19dd0` / `move.w #$0,$19dd2`. */
+#define MOTHERSHIP_START_X 0x140
+#define MOTHERSHIP_START_Y 0
+
 /* ================================================================================================
  * Prototypes.
  * ============================================================================================= */
+void mothership_begin(uint8_t *image);
 void mothership_place_tail(uint8_t *image);
 void mothership_sprite_build_step(uint8_t *image);
+void mothership_draw(uint8_t *image);
 
 #endif /* ZYNAPS_MOTHERSHIP_H */

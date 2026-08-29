@@ -15,8 +15,18 @@
 #include "enemy.h"
 #include "player.h"
 #include "weapon.h"
+#include "collision.h"
+#include "util.h"
+#include "rng.h"
+#include "sprite.h"
+#include "sound.h"
+/* ...and irq.h for ONE address: A_palette_hw_shadow, which explosion_animate_all clears
+ * (`clr.w $18fc4` @ 0x15476). It is the owner's header, so including it is what the
+ * conventions ask for — but it also declares the three off-image hardware stores whose
+ * definition depends on which TU the build links (src/irq.c vs src/irq_hw_offtarget.c). This
+ * translation unit calls none of them and has no stake in that split. */
+#include "irq.h"
 
-#define ENEMY_SLOT_COUNT 8      /* `move.w #$7,d7` + `dbf` over the records at A_enemy_slots */
 #define GROUND_ACTOR_COUNT 6    /* `move.w #$5,d0` — the type-0x34 scenery at A_entity_table */
 #define ASTEROID_GROUPS 6       /* `move.w #$5,d7` — the outer loop */
 #define ASTEROID_COLUMNS 3      /* `move.w #$2,d6` — three records per group */
@@ -605,4 +615,620 @@ void asteroids_animate(uint8_t *image) {
  * and D3 carries the column offset. */
 void g_asteroids_animate(uint8_t *image) {
     asteroids_animate(image);
+}
+
+/* ================================================================================================
+ * entity_ptr_from_index @ 0x141c0 — the entity index -> record address the whole game shares.
+ *
+ * Two entry points for one body: 0x141c0 takes the index in D0's low byte (`move.b d0,d6`) and
+ * 0x141c2 takes it already in D6. The `and.l #$ff,d6` that follows is what makes them the same
+ * function — it discards whatever the caller left above the byte either way — and it is also the
+ * whole of the bounds checking: an index of 20 or more addresses past the 20-record table, and one
+ * of 0xff lands 0x1c68 bytes past its base. The multiply is `mulu.w`, so the product is the full
+ * 32-bit one and never wraps at 16 bits.
+ *
+ * It belongs to `util` by subject and NOTHING PORTED SO FAR CALLS IT: its callers are weapon's
+ * `entity_steer_toward_target` (0x141d6), `seeker_update` (0x140a6) and `homing_missile_update`
+ * (0x14126), none of them reconstructed yet. It is here because it is the leaf those three all
+ * wait on, and because ../out/globals.tsv puts its base, A_entity_table, in include/player.h —
+ * whoever ports them should call this rather than write the multiply a fourth time.
+ * ============================================================================================= */
+#define ENTITY_INDEX_MASK 0xffu   /* `and.l #$ff,d6` */
+
+uint32_t entity_ptr_from_index(uint32_t index) {
+    return addr_add(A_entity_table, (index & ENTITY_INDEX_MASK) * ENTITY_STRIDE);
+}
+
+/* Register map: D0.b in at 0x141c0 / D6 in at 0x141c2, A1 out = the record. D6 comes back as the
+ * BYTE OFFSET rather than as the index — `mulu.w` overwrote it — so the stub dumps D6 and A1 and
+ * the glue mirrors both, which is what separates the multiply from a shift-and-add that left the
+ * index behind. */
+#define ENTITY_PTR_RESULT_D6 0u     /* the stub's two `move.l <reg>,(a0)+` slots, in that order */
+#define ENTITY_PTR_RESULT_A1 4u
+
+void g_entity_ptr_from_index(uint8_t *image, uint32_t index_reg, uint32_t result) {
+    uint32_t record = entity_ptr_from_index(index_reg);
+
+    wr32(image + addr_add(result, ENTITY_PTR_RESULT_D6), record - A_entity_table);
+    wr32(image + addr_add(result, ENTITY_PTR_RESULT_A1), record);
+}
+
+/* ================================================================================================
+ * The OTHER actor animation cycle — types 16, 20 and 22 of the table at A_actor_anim_table.
+ *
+ * Three differences from the four `actor_cycle_four_frames` handlers above, and the third is the
+ * one that bites: they are gated on A_anim_phase_b rather than on A_explosion_phase_odd; two of
+ * them take their frame count from a per-section GLOBAL rather than from a literal; and their table
+ * index is NOT masked (`lsl.w #2` straight off the frame byte, where the four above `andi.l #$f`
+ * first), so a frame byte out of range reaches up to 0x3fc bytes past the table it indexes.
+ * ============================================================================================= */
+
+/* Count the frame up, restart at ANIM_CYCLE_FIRST on reaching `limit`, and point the record's
+ * sprite at frame - 1 of `table`.
+ *
+ * THE WRAP IS AN EQUALITY TEST (`cmp.b <limit>,d1 / bne`), not a bound: a frame byte that is
+ * already past the limit counts on through 0xff and wraps to 0 rather than being pulled back. The
+ * index is built through `clr.l d1` and byte arithmetic, so the `lsl.w #2` that follows sees a
+ * value of 0..0xff and the word it produces is always positive — the `d1.w` index's sign extension
+ * cannot reach here, unlike sprite_ptr_offset's above. */
+static void actor_cycle_frames_to_limit(uint8_t *image, uint32_t actor, uint8_t limit,
+                                        uint32_t table) {
+    uint8_t frame = (uint8_t)(image[actor + ENTITY_ANIM_FRAME] + 1);
+
+    if (frame == limit)
+        frame = ANIM_CYCLE_FIRST;
+    image[actor + ENTITY_ANIM_FRAME] = frame;
+
+    uint32_t slot = (uint32_t)(uint8_t)(frame - 1) * SPRITE_PTR_BYTES;
+
+    wr32(image + actor + ENTITY_SPRITE, be32(image + addr_add(table, slot)));
+}
+
+/* anim_enemy_type16 @ 0x146f6 — the only one of the three whose frame count is a literal, and it is
+ * the same 5 the four-frame cycle stops at. */
+void anim_enemy_type16(uint8_t *image, uint32_t actor) {
+    if (image[A_anim_phase_b] != 0)
+        return;
+    actor_cycle_frames_to_limit(image, actor, ANIM_CYCLE_END, A_anim_frames_type16);
+}
+
+/* anim_enemy_type20 @ 0x1467e — its cycle length is whatever the level section loaded. */
+void anim_enemy_type20(uint8_t *image, uint32_t actor) {
+    if (image[A_anim_phase_b] != 0)
+        return;
+    actor_cycle_frames_to_limit(image, actor, image[A_anim_frame_limit_type20],
+                                A_anim_frames_type20);
+}
+
+/* anim_enemy_type22 @ 0x146ba — the same, from the other limit byte and the other table. */
+void anim_enemy_type22(uint8_t *image, uint32_t actor) {
+    if (image[A_anim_phase_b] != 0)
+        return;
+    actor_cycle_frames_to_limit(image, actor, image[A_anim_frame_limit_type22],
+                                A_anim_frames_type22);
+}
+
+/* Register map for all three: A2 = the actor record; D1 and A0 are scratch. */
+void g_anim_enemy_type16(uint8_t *image, uint32_t actor) { anim_enemy_type16(image, actor); }
+void g_anim_enemy_type20(uint8_t *image, uint32_t actor) { anim_enemy_type20(image, actor); }
+void g_anim_enemy_type22(uint8_t *image, uint32_t actor) { anim_enemy_type22(image, actor); }
+
+/* ================================================================================================
+ * enemies_animate_all @ 0x147f2 — the frame's animation pass over the eleven actor records.
+ *
+ * It flips A_anim_phase_b, then walks entity slots 6..16 calling A_actor_anim_table[type] with the
+ * record in A2. THE TABLE IS READ OUT OF THE IMAGE, so the reconstruction reads the same longword
+ * and maps it back to the C function that IS that routine; ACTOR_ANIM_HANDLERS below is that map,
+ * and test_enemy.py::test_anim_table_is_fully_reconstructed asserts the shipped table holds nothing
+ * else. A pointer outside the map is left uncalled — a real limit rather than a default arm, and
+ * one the routine's own guard makes reachable: `cmpi.b #$32,17(a2)` + `bge` is a SIGNED compare, so
+ * a type of 0x17..0x31, or any negative one, passes it and indexes past the 23-entry table into the
+ * script tables that follow it. STATUS.md records that as this routine's unreconstructed edge.
+ * ============================================================================================= */
+#define ACTOR_UPDATE_SLOTS 11        /* `move.w #$a,d7` + `dbf`, from A_enemy_shot_slots */
+#define ACTOR_HANDLER_TYPE_MAX 0x32  /* `cmpi.b #$32,17(a2)` + `bge` — a SIGNED byte compare */
+
+/* The addresses the shipped animation table holds. Entry addresses rather than data, so they are
+ * spelt `FN_` and not `A_`: test_constants.py's "one address, one name" rule is about the globals a
+ * subsystem could end up owning twice, and a routine's entry point is neither. */
+#define FN_actor_handler_none    0x148c8u  /* a bare `rts` — the default entry of BOTH tables */
+#define FN_anim_enemy_type20     0x1467eu
+#define FN_anim_enemy_type22     0x146bau
+#define FN_anim_enemy_type16     0x146f6u
+#define FN_anim_enemy_type12     0x14730u
+#define FN_anim_enemy_type14     0x1476eu
+#define FN_anim_enemy_type15     0x147acu
+#define FN_anim_enemy_type17     0x1483eu
+#define FN_enemy_set_sprite_b    0x1530eu
+#define FN_enemy_anim_puff_b     0x15332u
+
+typedef void (*actor_handler)(uint8_t *image, uint32_t actor);
+
+struct actor_handler_entry {
+    uint32_t address;
+    actor_handler run;      /* NULL where the original's entry is the bare `rts` */
+};
+
+static const struct actor_handler_entry ACTOR_ANIM_HANDLERS[] = {
+    {FN_actor_handler_none, 0},
+    {FN_anim_enemy_type20, anim_enemy_type20},
+    {FN_anim_enemy_type22, anim_enemy_type22},
+    {FN_anim_enemy_type16, anim_enemy_type16},
+    {FN_anim_enemy_type12, anim_enemy_type12},
+    {FN_anim_enemy_type14, anim_enemy_type14},
+    {FN_anim_enemy_type15, anim_enemy_type15_diving},
+    {FN_anim_enemy_type17, anim_enemy_type17},
+    {FN_enemy_set_sprite_b, enemy_set_sprite_b},
+    {FN_enemy_anim_puff_b, enemy_anim_puff_b},
+};
+
+#define ACTOR_ANIM_HANDLER_COUNT (sizeof ACTOR_ANIM_HANDLERS / sizeof ACTOR_ANIM_HANDLERS[0])
+
+/* `lsl.l #2` — a jump table's entry is a longword, the same width as a sprite pointer and a
+ * different thing; SPRITE_PTR_BYTES says which table it is striding and this table is not one. */
+#define JUMP_TABLE_ENTRY_BYTES 4u
+
+/* `move.b 17(a2),d1 / and.l #$ff,d1 / lsl.l #2,d1 / movea.l 0(a0,d1.l),a0` — a LONG index, so the
+ * byte-masked type reaches 0x3fc bytes into (and past) the table. */
+static uint32_t actor_anim_handler_address(const uint8_t *image, uint8_t type) {
+    return be32(image + addr_add(A_actor_anim_table, (uint32_t)type * JUMP_TABLE_ENTRY_BYTES));
+}
+
+static void run_actor_anim_handler(uint8_t *image, uint32_t actor) {
+    if (image[actor + ENTITY_ALIVE] == 0)
+        return;
+    if ((int8_t)image[actor + ENTITY_TYPE] >= ACTOR_HANDLER_TYPE_MAX)
+        return;
+
+    uint32_t address = actor_anim_handler_address(image, image[actor + ENTITY_TYPE]);
+
+    for (unsigned i = 0; i < ACTOR_ANIM_HANDLER_COUNT; i++) {
+        if (ACTOR_ANIM_HANDLERS[i].address != address)
+            continue;
+        if (ACTOR_ANIM_HANDLERS[i].run != 0)
+            ACTOR_ANIM_HANDLERS[i].run(image, actor);
+        return;
+    }
+}
+
+void enemies_animate_all(uint8_t *image) {
+    uint32_t record = A_enemy_shot_slots;
+
+    image[A_anim_phase_b] = (uint8_t)~image[A_anim_phase_b];
+    for (unsigned slot = 0; slot < ACTOR_UPDATE_SLOTS; slot++) {
+        run_actor_anim_handler(image, record);
+        record = next_record(record);
+    }
+}
+
+/* Register map: no register inputs. A2 walks the records and D7 counts them; both are saved across
+ * the `jsr` and restored, so a handler that clobbers either cannot derail the walk. */
+void g_enemies_animate_all(uint8_t *image) {
+    enemies_animate_all(image);
+}
+
+/* ================================================================================================
+ * enemy_move_type14_sine @ 0x1494a — the patroller that marches left along a sine wave.
+ *
+ * Its y is not integrated: every frame it is recomputed as centre + sin(phase), so the record's
+ * velocity words are never read. The phase is in degrees and wraps at a full turn, which is the
+ * range sin_scaled's fold expects.
+ * ============================================================================================= */
+#define SINE_ENEMY_STEP_LEFT 4       /* `sub.w #$4,d0` — twice ENEMY_STEP_LEFT */
+#define SINE_ENEMY_AMPLITUDE 6       /* `moveq #$6,d2` */
+#define SINE_ENEMY_PHASE_STEP 0x14   /* `add.w #$14,d0` — 20 degrees a frame */
+
+void enemy_move_type14_sine(uint8_t *image, uint32_t actor) {
+    int16_t x = (int16_t)(be16(image + actor + ENTITY_X) - SINE_ENEMY_STEP_LEFT);
+
+    if (x < 0) {
+        /* The original open-codes actor_despawn here rather than calling it; the two are the same
+         * five instructions, sign-extended squadron index included. */
+        actor_despawn(image, actor);
+        return;
+    }
+    wr16(image + actor + ENTITY_X, (uint16_t)x);
+
+    uint16_t phase = be16(image + actor + ACTOR_SINE_PHASE);
+    uint16_t offset = (uint16_t)sin_scaled(image, phase, SINE_ENEMY_AMPLITUDE);
+
+    wr16(image + actor + ENTITY_Y,
+         (uint16_t)(be16(image + actor + ACTOR_SINE_BASE_Y) + offset));
+
+    phase = (uint16_t)(phase + SINE_ENEMY_PHASE_STEP);
+    if ((int16_t)phase >= SIN_DEGREES_FULL)
+        phase = (uint16_t)(phase - SIN_DEGREES_FULL);
+    wr16(image + actor + ACTOR_SINE_PHASE, phase);
+}
+
+/* Register map: A2 = the actor record; D0 and D2 are the sine's arguments and scratch. */
+void g_enemy_move_type14_sine(uint8_t *image, uint32_t actor) {
+    enemy_move_type14_sine(image, actor);
+}
+
+/* ================================================================================================
+ * The script VM's remaining opcode handlers — the arms that call out to util, collision and the
+ * generator. Their answer is the carry described at the top of this file.
+ * ============================================================================================= */
+#define ACTOR_HEADING_MASK 0x3fu    /* `and.b #$3f` — 64 directions round the circle */
+/* `move.w <velocity>,d0 / ext.l d0 / lsl.l #8,d0 / add.l d0,<position>`: entity_apply_velocity's
+ * fixed-point step, open-coded on ONE axis by the two arms of the bounce below.
+ *
+ * THE SAME IDIOM IS OPEN-CODED TWICE MORE, in util.c's `entity_apply_velocity` (once per axis, with
+ * the shift as a bare 8). Three copies is two too many and this is the only one that names the
+ * fraction width — but util.c is another subsystem's file, so the merge belongs to its owner:
+ * hoist this helper into util.h and let entity_apply_velocity call it twice. Recorded in
+ * STATUS.md rather than done here. */
+#define POSITION_FRACTION_BITS 8
+
+static void step_position_by_velocity(uint8_t *image, uint32_t position_field, uint16_t velocity) {
+    uint32_t step = (uint32_t)((int32_t)(int16_t)velocity) << POSITION_FRACTION_BITS;
+
+    wr32(image + position_field, be32(image + position_field) + step);
+}
+
+static void negate_word(uint8_t *image, uint32_t field) {
+    wr16(image + field, (uint16_t)-be16(image + field));
+}
+
+/* The scalar the heading ops multiply their direction by, read SIGNED — `move.b 30(a2),d1` feeding
+ * the `ext.w d1` inside entity_set_velocity_from_angle. */
+static int16_t actor_speed(const uint8_t *image, uint32_t actor) {
+    return (int16_t)(int8_t)image[actor + ACTOR_SPEED];
+}
+
+/* Class 3 @ 0x14d14 — fall under gravity and bounce off the landscape.
+ *
+ * The terrain test is collision_chain_walk on THIS record's entity index, which the original
+ * recovers by dividing the record pointer's distance from the table by the stride — an UNSIGNED
+ * `divu.w`. A record below A_entity_table would therefore make the dividend enormous and overflow
+ * the instruction, which leaves D0 alone and sets V, where the C below truncates a quotient
+ * instead. No caller can produce one: the script VM only ever passes an entity_table record or a
+ * boss segment at 0x18142, whose index is 39..43 and whose quotient fits a word.
+ *
+ * The vertical step is applied TWICE per call, and that is the instructions rather than a slip:
+ * 0x143f8 ends by falling into entity_apply_velocity, which already adds both velocity words to the
+ * position, and the tail here adds the y one again. The floor clamp sits between the two, so it is
+ * the bounce's reversed velocity that the second add carries.
+ */
+#define ACTOR_FLOOR_Y 0xa0      /* `cmpi.w #$a0,4(a2)` — where the landscape stops the fall */
+
+unsigned actor_script_op_bounce_fall(uint8_t *image, uint32_t actor) {
+    uint16_t index = (uint16_t)((actor - A_entity_table) / ENTITY_STRIDE);
+
+    if (collision_chain_walk(image, index)) {
+        if (image[actor + ACTOR_BOUNCED] != 0) {
+            step_position_by_velocity(image, actor + ENTITY_X, be16(image + actor + ENTITY_DX));
+            return CARRY_CLEAR;
+        }
+        image[actor + ACTOR_BOUNCED] = 1;
+        negate_word(image, actor + ENTITY_DY);
+    }
+
+    entity_apply_accel(image, actor, 1u << ACCEL_BIT_Y_ADD);
+    if ((int16_t)be16(image + actor + ENTITY_Y) >= ACTOR_FLOOR_Y) {
+        negate_word(image, actor + ENTITY_DY);
+        image[actor + ACTOR_BOUNCED] = 1;
+        wr16(image + actor + ENTITY_Y, ACTOR_FLOOR_Y);
+    }
+    step_position_by_velocity(image, actor + ENTITY_Y, be16(image + actor + ENTITY_DY));
+    return CARRY_CLEAR;
+}
+
+/* Class 5 @ 0x14da2 — steer onto one of sixteen headings named by the opcode's operand.
+ *
+ * The shift is `lsr.b #1`, not the `lsr.b #3` every other operand class uses, so the operand's four
+ * bits land at heading granularity 4 — sixteen of the sixty-four directions. */
+#define SCRIPT_HEADING_SHIFT 1
+
+/* What classes 5 and ext 2 both do once they have a heading from somewhere: remember it, turn it
+ * into a velocity at the record's own speed, and integrate that velocity in the same call. Ext 5
+ * two functions down deliberately does NEITHER the remembering nor the integrating, which is why
+ * the three are not one body with a flag. */
+static unsigned actor_steer_onto_heading(uint8_t *image, uint32_t actor, uint8_t heading) {
+    image[actor + ACTOR_HEADING] = heading;
+    entity_set_velocity_from_angle(image, actor, heading, actor_speed(image, actor));
+    entity_apply_velocity(image, actor);
+    return CARRY_CLEAR;
+}
+
+unsigned actor_script_op_set_heading(uint8_t *image, uint32_t actor, uint8_t opcode) {
+    return actor_steer_onto_heading(
+        image, actor, (uint8_t)((opcode & SCRIPT_OPERAND_MASK) >> SCRIPT_HEADING_SHIFT));
+}
+
+/* Ext 2 @ 0x14de2 — the same, onto a heading drawn from the generator. */
+unsigned actor_script_op_random_heading(uint8_t *image, uint32_t actor) {
+    return actor_steer_onto_heading(image, actor,
+                                    (uint8_t)(rand16(image) & ACTOR_HEADING_MASK));
+}
+
+/* Ext 5 @ 0x14e38 — aim at the ship. Unlike its two neighbours it neither STORES the heading it
+ * computed nor integrates the velocity it set, and it answers carry SET, so the script runs on. */
+unsigned actor_script_op_aim_at_player(uint8_t *image, uint32_t actor) {
+    uint16_t heading = angle_to_target(image, actor, A_player_record);
+
+    entity_set_velocity_from_angle(image, actor, heading, actor_speed(image, actor));
+    return CARRY_SET;
+}
+
+/* Ext 4 @ 0x14e1c and ext 9 @ 0x14e5c — accelerate towards the middle of the playfield.
+ *
+ * Both build a direction mask for entity_apply_accel out of a comparison against a centre line: ext
+ * 4 on the vertical axis alone, ext 9 on both. Ext 9's name is ../names.txt's own
+ * (`fn 0x14e5c actor_script_op_thrust_to_centre`); EXT 4 HAS NO `fn` LINE THERE, so
+ * `actor_script_op_thrust_to_centre_y` is this reconstruction's coinage and STATUS.md says so. */
+#define ACTOR_CENTRE_X 0xd8   /* `cmpi.w #$d8,0(a2)` */
+#define ACTOR_CENTRE_Y 0x60   /* `cmpi.w #$60,4(a2)` */
+
+static uint8_t thrust_bits_towards_centre_y(const uint8_t *image, uint32_t actor) {
+    return (int16_t)be16(image + actor + ENTITY_Y) < ACTOR_CENTRE_Y
+               ? (uint8_t)(1u << ACCEL_BIT_Y_ADD) : (uint8_t)(1u << ACCEL_BIT_Y_SUB);
+}
+
+unsigned actor_script_op_thrust_to_centre_y(uint8_t *image, uint32_t actor) {
+    entity_apply_accel(image, actor, thrust_bits_towards_centre_y(image, actor));
+    return CARRY_CLEAR;
+}
+
+unsigned actor_script_op_thrust_to_centre(uint8_t *image, uint32_t actor) {
+    uint8_t bits = (int16_t)be16(image + actor + ENTITY_X) < ACTOR_CENTRE_X
+                       ? (uint8_t)(1u << ACCEL_BIT_X_ADD) : (uint8_t)(1u << ACCEL_BIT_X_SUB);
+
+    entity_apply_accel(image, actor, (uint8_t)(bits | thrust_bits_towards_centre_y(image, actor)));
+    return CARRY_CLEAR;
+}
+
+/* actor_script_continue @ 0x14eb8 — `ori.b #$1,ccr / rts`, the six bytes a handler branches to in
+ * order to say "run the next opcode in this frame". It is also ext 11's tail. */
+unsigned actor_script_continue(void) {
+    return CARRY_SET;
+}
+
+/* actor_script_op_end_frame @ 0x14ebe — its mirror, `andi.b #$fe,ccr / rts`, and ext 15 of the
+ * table: an opcode that does nothing but end the actor's frame. */
+unsigned actor_script_op_end_frame(void) {
+    return CARRY_CLEAR;
+}
+
+/* Ext 11 @ 0x14e8c — nudge the speed up or down by one, at random, keeping it in 1..7.
+ *
+ * BOTH COMPARISONS ARE SIGNED (`cmp.b` + `bge` / `blt`) where the draw they read is a random BYTE,
+ * and that has two consequences a paraphrase loses:
+ *
+ *  * the "+1" arm is UNREACHABLE. Only a draw of 0x55..0x7f gets past the first test — 0x80..0xff
+ *    read as negative and take the early return — and every one of those is above 0xaa read as
+ *    -86, so the second test always falls through to the negation. The nudge is always -1.
+ *  * the early return's CARRY IS THE FIRST COMPARE'S OWN, and `cmp.b` sets it UNSIGNED. So a draw
+ *    below 0x55 leaves carry set and the script runs on, while a draw of 0x80 or more leaves it
+ *    clear and ends the actor's frame — two different answers out of the one `rts`.
+ *
+ * Transcribed as written. STATUS.md records the arm as UNREACHABLE rather than as a mutation
+ * survivor, and deliberately: swapping the ternary's two values changes the arm that IS
+ * reached, so such a mutant dies for the wrong reason. The assertion that stands in for it is
+ * test_enemy.py::test_op_random_speed_nudge_never_draws_the_increment.
+ */
+#define SPEED_NUDGE_MIN_DRAW 0x55   /* `cmp.b #$55,d0` + `bge` */
+#define SPEED_NUDGE_UP_DRAW 0xaa    /* `cmp.b #$aa,d0` + `blt` — the arm no draw reaches */
+#define ACTOR_SPEED_MASK 0x7u       /* `and.b #$7,d1`, and a result of 0 leaves the speed alone */
+
+unsigned actor_script_op_random_speed_nudge(uint8_t *image, uint32_t actor) {
+    uint8_t draw = (uint8_t)rand16(image);
+
+    if ((int8_t)draw < (int8_t)SPEED_NUDGE_MIN_DRAW)
+        return draw < SPEED_NUDGE_MIN_DRAW ? CARRY_SET : CARRY_CLEAR;
+
+    int nudge = (int8_t)draw < (int8_t)SPEED_NUDGE_UP_DRAW ? 1 : -1;
+    uint8_t speed = (uint8_t)((image[actor + ACTOR_SPEED] + nudge) & ACTOR_SPEED_MASK);
+
+    if (speed != 0)
+        image[actor + ACTOR_SPEED] = speed;
+    return actor_script_continue();
+}
+
+/* Register map for the handlers above: A2 = the record and D1.b = the whole opcode byte (only
+ * actor_script_op_set_heading reads it), CARRY out = "run the next opcode in this frame". */
+void g_actor_script_op_bounce_fall(uint8_t *image, uint32_t actor, uint32_t carry_out) {
+    store_flag(image, carry_out, actor_script_op_bounce_fall(image, actor));
+}
+
+void g_actor_script_op_set_heading(uint8_t *image, uint32_t actor, uint32_t opcode_reg,
+                                   uint32_t carry_out) {
+    store_flag(image, carry_out, actor_script_op_set_heading(image, actor, (uint8_t)opcode_reg));
+}
+
+void g_actor_script_op_random_heading(uint8_t *image, uint32_t actor, uint32_t carry_out) {
+    store_flag(image, carry_out, actor_script_op_random_heading(image, actor));
+}
+
+void g_actor_script_op_aim_at_player(uint8_t *image, uint32_t actor, uint32_t carry_out) {
+    store_flag(image, carry_out, actor_script_op_aim_at_player(image, actor));
+}
+
+void g_actor_script_op_thrust_to_centre_y(uint8_t *image, uint32_t actor, uint32_t carry_out) {
+    store_flag(image, carry_out, actor_script_op_thrust_to_centre_y(image, actor));
+}
+
+void g_actor_script_op_thrust_to_centre(uint8_t *image, uint32_t actor, uint32_t carry_out) {
+    store_flag(image, carry_out, actor_script_op_thrust_to_centre(image, actor));
+}
+
+void g_actor_script_op_random_speed_nudge(uint8_t *image, uint32_t actor, uint32_t carry_out) {
+    store_flag(image, carry_out, actor_script_op_random_speed_nudge(image, actor));
+}
+
+void g_actor_script_continue(uint8_t *image, uint32_t carry_out) {
+    store_flag(image, carry_out, actor_script_continue());
+}
+
+void g_actor_script_op_end_frame(uint8_t *image, uint32_t carry_out) {
+    store_flag(image, carry_out, actor_script_op_end_frame());
+}
+
+/* ================================================================================================
+ * The explosion groups — explosion_spawn @ 0x15510 and explosion_animate_all @ 0x1544e.
+ *
+ * A group is SIX entity records named by a byte list at A_explosion_group_members, and there are
+ * two of them: bit 0 of A_explosion_group_active_bits is the end-of-section blast and bit 1 the
+ * ship's death. The spawn seeds all six from one source record; the per-frame pass steps each
+ * particle's own EXPLOSION_PART_FRAME counter and re-points its sprite until the counter reaches
+ * EXPLOSION_END_FRAME, which kills the record.
+ * ============================================================================================= */
+#define EXPLOSION_GROUPS 2            /* `move.w #$1,d6` + `dbf` */
+#define EXPLOSION_PARTS 6             /* `move.w #$5,d7` + `dbf`, and `mulu.w #$6` on the group */
+#define EXPLOSION_END_FRAME 0x0d      /* `cmpi.b #$d` — the frame that retires a particle */
+#define EXPLOSION_PART_TYPE 0x64      /* `move.b #$64,17(a2)` */
+#define EXPLOSION_PART_ROWS 0x10      /* `move.w #$10,8(a2)` */
+#define EXPLOSION_X_ALIGN 0xfffcu     /* `and.w #$fffc,d0` — every particle's x is 4-pixel aligned */
+#define EXPLOSION_SOUND 0x14          /* `moveq #$14,d1` + `bsr sound_start` */
+/* One particle's entry in the offsets table: three words, in this order. */
+#define EXPLOSION_OFFSET_DX 0u
+#define EXPLOSION_OFFSET_DY 2u
+#define EXPLOSION_OFFSET_FRAME 4u
+#define EXPLOSION_OFFSET_WORDS 3
+/* Group 1 is the SHIP's death (bit 1 of A_explosion_group_active_bits; names.txt on 0x19670),
+ * and it is the pass that also clears the charge flag and the palette shadow. */
+#define EXPLOSION_GROUP_SHIP 1u
+#define EXPLOSION_FRAME_INDEX_MASK 0x7fu   /* `and.l #$7f,d1` before the table index */
+
+/* `move.b (a4)+,d2 / ext.w d2 / mulu.w #$2c,d2` — a group's member list is entity INDICES, and the
+ * byte is sign-extended to a WORD and then multiplied UNSIGNED. So a member of 0x80 or more becomes
+ * a huge POSITIVE offset (0xff80 * 0x2c) rather than a negative one, and lands outside the image
+ * entirely; nothing here bounds it. The shipped lists hold 9..14 and {0,1,2,3,17,18}. */
+static uint32_t explosion_part_record(const uint8_t *image, uint32_t group, unsigned part) {
+    uint32_t member = addr_add(A_explosion_group_members, group * EXPLOSION_PARTS + part);
+    uint32_t index = (uint16_t)sign_ext8(image[member]);
+
+    return addr_add(A_entity_table, index * ENTITY_STRIDE);
+}
+
+/* explosion_spawn @ 0x15510 — blow `source` apart into `group`'s six particles.
+ *
+ * The offsets at A_explosion_particle_offsets are CUMULATIVE, not absolute: each particle adds its
+ * dx to the running x and its dy to the running y, so the six land in a chain from the source
+ * rather than in a fixed rosette around it. Only x is re-aligned after each step. */
+void explosion_spawn(uint8_t *image, uint32_t source, uint16_t group) {
+    uint16_t x = be16(image + source + ENTITY_X);
+    uint16_t y = be16(image + source + ENTITY_Y);
+    uint32_t offset = A_explosion_particle_offsets;
+
+    image[A_explosion_group_active_bits] |= (uint8_t)(1u << (group % 8u));
+
+    for (unsigned part = 0; part < EXPLOSION_PARTS; part++) {
+        uint32_t record = explosion_part_record(image, group, part);
+        uint8_t frame;
+
+        x = (uint16_t)((x + be16(image + addr_add(offset, EXPLOSION_OFFSET_DX)))
+                       & EXPLOSION_X_ALIGN);
+        y = (uint16_t)(y + be16(image + addr_add(offset, EXPLOSION_OFFSET_DY)));
+        frame = (uint8_t)be16(image + addr_add(offset, EXPLOSION_OFFSET_FRAME));
+        offset = addr_add(offset, EXPLOSION_OFFSET_WORDS * 2u);
+
+        image[record + ENTITY_ALIVE] = 0;
+        image[record + EXPLOSION_PART_FRAME] = frame;
+        wr16(image + record + ENTITY_X, x);
+        wr16(image + record + ENTITY_Y, y);
+        wr16(image + record + ENTITY_HEIGHT, EXPLOSION_PART_ROWS);
+        image[record + ENTITY_TYPE] = EXPLOSION_PART_TYPE;
+    }
+    image[A_scroll_frozen] = 1;
+    /* D0 still holds the last particle's x, and that is what reaches sound_start's channel
+     * argument — which only matters for a tune with no 0xfa header (src/sound.c). */
+    sound_start(image, EXPLOSION_SOUND, (uint8_t)x);
+}
+
+/* Register map: A2 = the record to explode at, D2 = the group. D0/D1 carry the running position and
+ * A3/A4/A7 walk the tables; none is an output. */
+void g_explosion_spawn(uint8_t *image, uint32_t source, uint32_t group_reg) {
+    explosion_spawn(image, source, (uint16_t)group_reg);
+}
+
+/* One particle's step: count its frame up, retire it at EXPLOSION_END_FRAME, otherwise mark it
+ * alive and point its sprite at frame - 1 of the shared table.
+ *
+ * THE TWO SKIPS ARE NOT ONE TEST. A counter that reaches 0 (from 0xff) or turns negative (from
+ * 0x7f) leaves the record alive-byte and sprite alone but STILL stores the stepped counter, where
+ * the retiring arm stores EXPLOSION_END_FRAME and clears the alive byte. */
+static void explosion_part_step(uint8_t *image, uint32_t record) {
+    uint8_t frame;
+    uint32_t slot;
+
+    if (image[record + EXPLOSION_PART_FRAME] == EXPLOSION_END_FRAME)
+        return;
+
+    frame = (uint8_t)(image[record + EXPLOSION_PART_FRAME] + 1);
+    if (frame == EXPLOSION_END_FRAME) {
+        image[record + EXPLOSION_PART_FRAME] = EXPLOSION_END_FRAME;
+        image[record + ENTITY_ALIVE] = 0;
+        return;
+    }
+
+    image[record + EXPLOSION_PART_FRAME] = frame;
+    if (frame == 0 || (int8_t)frame < 0)
+        return;
+
+    image[record + ENTITY_ALIVE] = 1;
+    /* `and.l #$7f,d1 / sub.b #$1,d1 / lsl.w #2,d1` — the mask comes BEFORE the decrement, and the
+     * decrement is a byte op on a register whose high bits the `clr.w` left at zero. */
+    slot = (uint32_t)(uint8_t)((frame & EXPLOSION_FRAME_INDEX_MASK) - 1u) * SPRITE_PTR_BYTES;
+    wr32(image + record + ENTITY_SPRITE,
+         be32(image + addr_add(A_explosion_small_frame_ptrs, slot)));
+}
+
+/* explosion_animate_all @ 0x1544e — one frame of both groups, at half rate.
+ *
+ * The two clears on group 1's pass happen BEFORE its active bit is tested, so they run on every
+ * ticking frame whether or not the ship is exploding — which is why they are outside the `btst`
+ * arm here too. `not.b` both flips the toggle and tests it, and the branch is the OPPOSITE WAY
+ * ROUND from asteroids_animate's: `beq` returns, so this pass runs on the call that leaves the
+ * toggle NON-zero. */
+void explosion_animate_all(uint8_t *image) {
+    if (image[A_explosion_group_active_bits] == 0)
+        return;
+    image[A_explosion_frame_toggle] = (uint8_t)~image[A_explosion_frame_toggle];
+    if (image[A_explosion_frame_toggle] == 0)
+        return;
+
+    for (uint32_t group = 0; group < EXPLOSION_GROUPS; group++) {
+        if (group == EXPLOSION_GROUP_SHIP) {
+            image[A_fire_charged] = 0;
+            wr16(image + A_palette_hw_shadow, 0);
+        }
+        if (!((image[A_explosion_group_active_bits] >> (group % 8u)) & 1u))
+            continue;
+        for (unsigned part = 0; part < EXPLOSION_PARTS; part++)
+            explosion_part_step(image, explosion_part_record(image, group, part));
+    }
+}
+
+/* Register map: no register inputs. D4 counts the groups, D6/D7 the loops, A0/A2/A4 are scratch. */
+void g_explosion_animate_all(uint8_t *image) {
+    explosion_animate_all(image);
+}
+
+/* ================================================================================================
+ * asteroids_draw @ 0x159be — blit the eighteen live column records.
+ *
+ * The only argument the draw takes is D2, the bank's HALF-frame stride: draw_sprite_masked scales
+ * the sub-cell phase by it, so it is the asteroid frame's own size halved rather than a number of
+ * its own (include/sprite.h, "how it indexes a preshift bank").
+ * ============================================================================================= */
+#define ASTEROID_DRAW_PHASE_STEP (ASTEROID_FRAME_BYTES / 2u)   /* `move.w #$1e0,d2` */
+
+void asteroids_draw(uint8_t *image) {
+    uint32_t record = A_asteroid_records;
+
+    for (unsigned group = 0; group < ASTEROID_GROUPS; group++) {
+        for (unsigned column = 0; column < ASTEROID_COLUMNS; column++) {
+            if (image[record + ENTITY_ALIVE] != 0)
+                draw_sprite_masked(image, record, ASTEROID_DRAW_PHASE_STEP);
+            record = next_record(record);
+        }
+    }
+}
+
+/* Register map: no register inputs. A2 walks the records, D7 counts the groups and D6 the columns;
+ * both counters are saved across the `bsr` and restored. */
+void g_asteroids_draw(uint8_t *image) {
+    asteroids_draw(image);
 }
