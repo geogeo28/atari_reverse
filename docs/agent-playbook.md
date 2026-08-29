@@ -88,6 +88,28 @@ Most functions run to `rts` on a staged image. The rest need one of these (all p
 | OS-bound (GEMDOS/BIOS/XBIOS/GEM) | **Deterministic trap model** — service each trap in the oracle shim with a fixed result (Malloc bump-allocates, Fread serves staged file bytes, palette/sound calls are no-ops). Anything *not* modeled must **raise**, so a function can't be falsely "verified" while hitting an unmodeled call. |
 | Orchestrator calling many verified leaves | **World-staging** — stage the *union* of what every callee reads (screen buffers, sprite arenas, per-item records), then run to `rts`. The whole-image diff proves the composition. |
 
+**World-staging's own trap: the SCRATCH REGISTERS an orchestrator carries across a verified leaf's
+`rts`.** A leaf's differential compares memory, so its C is typically `void` and promises nothing
+about the registers it leaves behind — but hand-written assembly reuses them freely, and a caller
+three `bsr`s later may read one as a table index, a bitmask or a sound channel. The composition then
+cannot derive it. Three shapes, in increasing order of how much they cost:
+
+* **Derivable.** The value comes from the orchestrator's own instructions (a loop counter the pass
+  always runs to its bound). Transcribe it and say where it came from.
+* **A parameter.** The value is a callee's leftover. Make it an explicit argument of the slice, with
+  the register and the consuming PC named in the comment, and have the case take it FROM THE ORACLE
+  at that PC. Everything else stays pinned by the whole-image diff; record the parameter as a
+  residual, and name the change that would close it (the callee reporting the register).
+* **A flag.** `abcd`/`addx`/`subx` read the X flag, which survives the `movem`/`lea` most call sites
+  reach the `bsr` through — so "no caller sets it" is a claim about two instructions and not about
+  the register. A leaf that consumes X needs it as a parameter exactly as a register does. Zynaps's
+  `score_add_bcd` is the worked case: its own battery entered with X clear and was green, and the
+  frame loop then scored one BCD unit high whenever a `subi.b` borrow preceded an award.
+
+The tell for all three is a composition that diverges on a *data-dependent* subset of frames while
+every leaf's own battery stays green. Bisect by running the oracle to each block boundary and
+diffing the one record that moved.
+
 **Read-verified honesty.** When a path is genuinely unreachable under the model (a debug menu behind
 a keyboard read that the model reports as "no key"; the terminal exit after an infinite loop),
 reconstruct it faithfully from the disassembly and **document it as read-verified** — don't fake a

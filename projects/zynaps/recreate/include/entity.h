@@ -86,7 +86,10 @@
                                    * test_collision.py::test_class_range_bounds */
 #define ENTITY_DX          0x12u  /* .w — cos64[angle]*speed (0x142d4). pinned by
                                    * test_enemy.py::test_op_halt_zeroes_both_velocity_words */
-#define ENTITY_DY          0x14u  /* .w — sin64[angle]*speed (0x142d4). pinned by the same test */
+#define ENTITY_DY          0x14u  /* .w — sin64[angle]*speed (0x142d4). pinned by the same test.
+                                   * THIRD ROLE: an explosion particle's spawn-credit tag, `cmpi.b
+                                   * #$aa,20(a2)` at 0x12020 / 0x12108 (frame.h's
+                                   * EXPLOSION_CREDIT_TAG_OFFSET; pinned by test_frame.py) */
 #define ENTITY_AX          0x16u  /* .w — acceleration, added to / subtracted from ENTITY_DX by
                                    * entity_apply_accel (0x143f8). pinned by test_util.py and by
                                    * test_weapon.py::test_fire_bomb, which is the launch that

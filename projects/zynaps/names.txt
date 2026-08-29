@@ -560,7 +560,7 @@ cmt 0x111f4 Vertical tilt: every 4 frames step ship_tilt (0..3) toward the joyst
 cmt 0x112a0 Joystick decode: bit 0 up -> 0x11318, bit 1 down -> 0x1135a, bit 3 right -> 0x1139e, bit 2 left -> decelerate x toward the 0x40/0x50 home column. Speed comes from the 8-byte entries of ship_speed_table (0 = dx, 4 = dy up, 6 = dy down) indexed by ship_speed_level.
 cmt 0x11318 a2=player rec, a6=0x19370 speed entry: y(+4)/mirror y(+0x30) -= a6[4], clamp >=0x20; bank 0x198b3 rolls down (0..6) every 4 frames (0x198b2) | The clamp is `cmpi.w #$20` + `ble` - SIGNED and INCLUSIVE, so at exactly y=0x20 the ship is re-set to it rather than stepped, and both records (a2 and a2+0x2c, the double-buffer pair) are written. The tilt arm stops with `tst.b` at 0, unlike its twin.
 cmt 0x1135a a2=player rec, a6=0x19370 speed entry: y(+4)/mirror y(+0x30) += a6[6], clamp <=0x9c; bank 0x198b3 rolls up (0..6) every 4 frames (0x198b2) | The tilt arm stops with `cmpi.b #$6` + `beq`, NOT with a comparison - so a tilt byte already past 6 keeps climbing rather than being held. Measured against ship_move_up's `tst.b` stop; pinned by test_player.py::test_the_tilt_bank_rolls_one_frame_in_four.
-cmt 0x113c0 Frame stage, entry d0=joystick byte, a2=player rec: trail drone, fire/charge, weapon dispatch, bullet motion, spawn scripts; ends bra 0x11c00
+cmt 0x113c0 Frame stage, entry d0=joystick byte, a2=player rec: trail drone, fire/charge, weapon dispatch, bullet motion, spawn scripts; ends bra 0x11c00 | SPLIT BY THE RECONSTRUCTION INTO TWO SLICES, because the stage before it can branch PAST this address to 0x1167c: [0x113c0, 0x1167c) is the trail drone and the fire/charge state machine (recreate/src/frame.c's frame_drone_and_fire_stage) and [0x1167c, 0x11c00) is everything after the join (frame_spawn_and_move_stage). The fn name here still covers the whole range.
 cmt 0x11906 Picks a random one of the 8 enemy slots at 0x17c1a, rolls the per-section fire chance 0x19aaf, spawns into the 3 shot slots at 0x17b96, ticks them | DEAD CODE at 0x119ba..0x119d8 (eleven instructions): they sit past the unconditional `bra.w $119e4` at 0x119b6 and nothing anywhere branches to them. They would have written a second shape of shot record - a word at +0x10, the position pair from A1, alive = 1, and D2 masked with 0x7ff into +0x1a. Not reconstructed; recreate/STATUS.md records it beside the 0x148ca row.
 cmt 0x11a2c a1=firing enemy, a0=player rec, a2=free shot slot, d3=0 -> aimed shot (type 0x0c or homing 0x0a) / d3=1 -> slow seeker 0x0b (cooldown 0x19abf)
 cmt 0x11bbc a2=shot rec. Type 0x0b seeker: life 0x20(a2)--; on expiry turns into an explosion (0x13ad0), else steer (0x141d6) + move/draw (0x13c9e)
@@ -588,7 +588,7 @@ cmt 0x120c8 odd frames (flag 0x198c5): the same for the larger type-0x65 explosi
 cmt 0x121b2 enemy rams the ship: enemy slots 9..16 whose collision mask has bit 17 or 18 set (0x60000); skipped while the ship is exploding.
 cmt 0x121f6 ram dispatch by type: 0x02 -> 0x15222, 0x10/0x0f lose a hit point (field 0x1a), 0x0e -> large explosion, 0x14/0x16 -> small explosion.
 cmt 0x122c2 ORIGINAL BUG: 33fc = move.w #$10,$00000008 (bus-error vector); almost certainly meant 337c = move.w #$10,8(a1). Same typo again at 0x123f4. | DEFECT in the original: encoded 33fc 0010 00000008 = move.w #$10,$00000008 - it writes the high word of the 68000 bus-error vector. Almost certainly a typo for 357c (move.w #$10,8(a2)), the form used at 0x12134. Same bug at 0x123f4.
-cmt 0x122f4 player shot vs enemy: 6x8 pairwise sweep of slots 0..5 against 9..16 through the 0x18276 mask rows, same type dispatch plus the shot's retire path.
+cmt 0x122f4 player shot vs enemy: 6x8 pairwise sweep of slots 0..5 against 9..16 through the 0x18276 mask rows, same type dispatch plus the shot's retire path. | D0 IS THE SHOT'S BIT, THE SOUND CHANNEL AND score_add_bcd's SCRATCH, all at once: the | 6x8 sweep starts it at 1 and shifts it left per shot, masks each collision row with it, | arms every tune on it - and score_add_bcd (0x12df6) overwrites it with the extra-life | threshold under a movem that saves only A0/A1. So the FIRST kill of the sweep replaces | the shot mask for every pair after it. Measured: a reconstruction keeping a tidy | 1<<slot differs on the first frame two enemies die in.
 cmt 0x123f4 DEFECT in the original: same move.w #$10,$00000008 into the bus-error vector as at 0x122c2.
 cmt 0x1247e enemy shots 6..8 that pixel-hit the landscape with no entity overlap: type 0x0b leaves a ground puff (0x13ad0), type 0x0c just vanishes.
 cmt 0x124da parallax starfield layer 1: 6 stars from 0x179fa, 1 px/frame, plane 0 only, drawn only where all four planes read 0 so stars never sit on the playfield.
@@ -977,3 +977,24 @@ cmt 0x12b52 BUILD THE COLOUR BARS: interrupts opened up, then the raster list bu
 cmt 0x12bb4 THE ATTRACT LOOP: one frame, the bar column scrolled every second frame, the list copied to 0x1a976 for the Timer B to walk, the page swapped when its timer expires, and then key '1' (scancode 2), key '2' (scancode 3) or joystick fire. | Slice `attract_wait_for_start`, [0x12bb4, 0x12c74], verified by recreate/. player_count is set to 2 on EVERY pass and cut to 1 by the key-'1' and fire exits; the page toggle is flipped BEFORE it is branched on, so a toggle of 0 draws the ROLE OF HONOUR.
 var 0x19dd4 powerup_flash_cursor   # ctx
 cmt 0x19dd4 .b, cleared by the section-start tail beside the three gauge decay timers; no other ported routine reads it
+fn 0x10f4e frame_panel_scroll_and_ship_stage
+fn 0x1167c frame_spawn_and_move_stage
+var 0x198c7 bullet_fire_toggle
+cmt 0x198c7 `eori.b #$1,$198c7` at 0x11662 and NOWHERE else in
+var 0x54ffe wave_alien_sprite_a
+cmt 0x54ffe `lea $54ffe,a5` at 0x11788, the bank the attack
+var 0x563fe wave_alien_sprite_b
+cmt 0x563fe `lea $563fe,a5` at 0x11796, with actor type 0x16 —
+var 0x5f3be powerup_capsule_sprite
+cmt 0x5f3be `move.l #$5f3be,10(a2)` at 0x1205c and 0x12146:
+var 0x61b5e explosion_large_sprite
+cmt 0x61b5e `move.l #$61b5e,10(a1)` at 0x12254 and 0x123bc,
+var 0x62a5e player_bullet_sprite
+cmt 0x62a5e `move.l #$62a5e,10(a3)` at 0x11640, type 0x34
+cmt 0x6a61e ALSO the trail drone's sprite: `move.l #$6a61e,10(a3)` at 0x113f2 (actor type 0x35) — the same bank the name-entry gunsight cursor uses, which is the name the map keeps.
+var 0x577fe ship_sprite_bank
+cmt 0x577fe `lea $577fe,a5` at 0x112ce; the seven tilt frames
+cmt 0x18256 collision_mask_table[1]; likewise 0x1826a (row 6), 0x18276 (row 9), 0x18296 (row 17) | and 0x1829e (row 19), all reached by the frame loop as bare `lea` constants.
+cmt 0x17aba entity_table + 1 * 0x2c, a bare `lea` constant of frame_draw_objects_and_collide.
+cmt 0x17db5 ship_record_shadow + 0x0f (its pixel-hit byte), a bare `tst.b` operand at 0x11e90.
+cmt 0x113b4 DEAD CODE: the two stores that would park the ship pair at 0x150/0x160 are unreachable - | the `bge.s` at 0x113a4 targets 0x113c0, past them, and the arm above ends in a `bra.s` | to the same place. The LEFT arm's twin clamp at 0x11308 is reached.
