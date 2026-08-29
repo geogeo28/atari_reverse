@@ -57,6 +57,7 @@ recreate/
 │   ├── test_status.py      STATUS.md's counts against its rows
 │   ├── test_heap_guard.py  the run-time half of the `tos_malloc_unused` waiver
 │   └── test_<subsystem>.py one differential battery per subsystem
+├── atari/           THE CORES ON A REAL 68000 — see atari/README.md
 └── STATUS.md        the per-function ledger, in per-subsystem sections
 ```
 
@@ -127,6 +128,23 @@ make guarded                     # the same suite over a PROT_NONE-bounded image
 interpreter, exactly as Joust's was, so pytest and pytest-xdist resolve out of that environment
 rather than being installed twice. `make venv` produces a working venv either way — the flag is a
 disk-space convenience, not a requirement.
+
+## Running it on a 68000
+
+```bash
+bash atari/build.sh title && python3 atari/smoke.py title
+```
+
+`atari/` cross-compiles the **verified cores, unmodified** into a GEMDOS `ZYNAPS.PRG` and boots it
+under Hatari to the game's title picture with its music playing, then judges it against the shipped
+binary on the six surfaces of [`docs/on-target-execution.md`](../../../docs/on-target-execution.md).
+The seam is the include path (`atari/shim_include/` shadows the kit's `os.h` and `hw.h`) plus two
+omitted sets of translation units, so the differential `.so` is untouched and `make test` is
+unchanged — which `atari/build.sh` measures rather than asserts.
+
+[`atari/README.md`](atari/README.md) is canonical: the seam inventory, what each surface measured,
+the negative control, and the ledger of what is still unpinned. `STATUS.md`'s "## On target" is the
+pointer from the per-function tables.
 
 `make guarded` matters here: the preshift builders in `src/sprite.c` index the image with a cursor
 they compute themselves, so a step-back one slot too far would read host heap rather than fail. It

@@ -1370,3 +1370,41 @@ candidate runs guarded across 10 workers, no fault.
 THIS LINE IS SHARED, and several agents add batteries to this project at once — the count is
 whatever the last one to run the suite measured, so treat a mismatch against your own run as a
 concurrent landing rather than a regression until you have checked which sections moved.
+
+## On target
+
+**`atari/README.md` is canonical for everything below; this section is a pointer and a count.**
+
+`atari/` cross-compiles the VERIFIED cores above into `ZYNAPS.PRG` and runs them on a 68000
+(Hatari, TOS 1.04, `--machine st --memsize 4`). **Milestone M1, 2026-08-29: the title picture and
+its music.** It composes `_start`'s verified slices in the original's order and stops at `0x101ba`,
+where the "Not reconstructed" table above stops the boot — so nothing on target runs a slice this
+file does not carry a ✅ row for.
+
+`python3 atari/smoke.py title` judges it against the shipped binary on the six surfaces of
+`docs/on-target-execution.md`, and all twelve checks are green: the 32000-byte framebuffer is
+**byte-identical**, the rendered picture is **byte-identical**, the sixteen pens / `$ff8260` /
+`Physbase` agree, the GEMDOS ledger is 24 parsed calls matching the original's first 24 (the same
+eight lowercase names, in order, on the same handle, with the same byte counts), and the first 64 of
+the sound driver's tick frames are the same register stream. `smoke.py titlefault` is the negative
+control — one pen corrupted on its way to the shifter — and reddens exactly the two colour surfaces
+while the other twelve stay green.
+
+**Two things this section is here to say to a reader of the tables above:**
+
+* **The off-image class is still unpinned OFF target, and is now pinned ON it for the slices M1
+  runs.** The rows above record that `$ff8240`, `$ff8260` and `$fffa0f` are outside the 1 MiB image
+  and that no case here can fail on a palette upload or an interrupt acknowledge. That is unchanged.
+  What M1 adds is the other surface those rows name — a Hatari register snapshot — for
+  `boot_load_title_assets`, `set_palette_title`, `screen_flip_buffers` and `vbl_isr`.
+  Six of the seven `irq` handlers, and `timer_b_isr`'s acknowledge, are still unexercised: they
+  belong to the front end and to an MFP timer M1 never starts. `atari/README.md`'s "Unpinned" list
+  is the full ledger, with a reason each.
+* **`ikbd_send_cmd` @ `0x14444` and the Line-A opcode at `0x10010` are executed for real on target**,
+  from `atari/zynaps_os.s`, which is where the "KIT" rows above said the answer would have to come
+  from. The ACIA send is BOUNDED there (the original's is not) and its verdict is a record field.
+  What is still unpinned is the 6301's *response* — M1 reads no input at all.
+
+The verified counts above are untouched by any of this: `atari/` compiles the cores unchanged, and
+`atari/build.sh` measures that (no core includes a shim header, and no core reads a target-only
+`-D`). `make test` is still **2700 passed** with `atari/` present.
