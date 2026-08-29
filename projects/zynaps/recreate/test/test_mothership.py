@@ -402,7 +402,7 @@ MIRRORS = (
     ("A_BOSS_HITPOINTS", "include/mothership.h", "A_boss_hitpoints"),
     ("A_MOTHERSHIP_ENERGY_BY_SECTION", "include/mothership.h",
      "A_mothership_energy_by_section"),
-    ("A_LEVEL_SECTION", "include/mothership.h", "A_level_section"),
+    ("A_LEVEL_SECTION", "include/init.h", "A_level_section"),
     ("A_SCREEN_BACK", "include/video.h", "A_screen_back"),
     ("SCREEN_BYTES", "include/video.h", "SCREEN_BYTES"),
     ("PLAYFIELD_TOP_Y", "include/video.h", "PLAYFIELD_TOP_Y"),

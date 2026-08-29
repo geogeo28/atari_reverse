@@ -109,8 +109,8 @@ A_ACTOR_ANIM_TABLE = 0x193dc
 A_ANIM_FRAMES_TYPE16 = 0x1929c
 A_ANIM_FRAMES_TYPE20 = 0x191b4
 A_ANIM_FRAMES_TYPE22 = 0x191cc
-A_ANIM_FRAME_LIMIT_TYPE20 = 0x1990f
-A_ANIM_FRAME_LIMIT_TYPE22 = 0x19910
+A_SECTION_PARAM_A = 0x1990f
+A_SECTION_PARAM_B = 0x19910
 A_RNG_LFSR_STATE = 0x195f4
 A_ENTITY_COLLISION_MASKS = 0x18252
 A_EXPLOSION_GROUP_ACTIVE_BITS = 0x19670
@@ -1134,9 +1134,9 @@ LIMIT_ANIM_HANDLERS = (
     LimitAnimHandler("type16", ENTRY_ANIM_ENEMY_TYPE16, "g_anim_enemy_type16",
                      A_ANIM_FRAMES_TYPE16, None, ANIM_CYCLE_END),
     LimitAnimHandler("type20", ENTRY_ANIM_ENEMY_TYPE20, "g_anim_enemy_type20",
-                     A_ANIM_FRAMES_TYPE20, A_ANIM_FRAME_LIMIT_TYPE20, 5),
+                     A_ANIM_FRAMES_TYPE20, A_SECTION_PARAM_A, 5),
     LimitAnimHandler("type22", ENTRY_ANIM_ENEMY_TYPE22, "g_anim_enemy_type22",
-                     A_ANIM_FRAMES_TYPE22, A_ANIM_FRAME_LIMIT_TYPE22, 5),
+                     A_ANIM_FRAMES_TYPE22, A_SECTION_PARAM_B, 5),
 )
 
 # How far past its own base an unmasked frame byte reaches: 0xff frames of four bytes each. The span
@@ -1245,8 +1245,8 @@ def _animate_case(records, phase=0, explosion_phase=0, limits=(5, 5), extra=None
     pokes[A_ENEMY_SHOT_SLOTS] = _array(records)
     pokes[A_ANIM_PHASE_B] = bytes([phase])
     pokes[A_EXPLOSION_PHASE_ODD] = bytes([explosion_phase])
-    pokes[A_ANIM_FRAME_LIMIT_TYPE20] = bytes([limits[0]])
-    pokes[A_ANIM_FRAME_LIMIT_TYPE22] = bytes([limits[1]])
+    pokes[A_SECTION_PARAM_A] = bytes([limits[0]])
+    pokes[A_SECTION_PARAM_B] = bytes([limits[1]])
     pokes.update(extra or {})
     diffs, _ = differential(ENTRY_ENEMIES_ANIMATE_ALL, {"_pokes": pokes},
                             lambda lib, buf: lib.g_enemies_animate_all(buf), poison=poison)
@@ -2196,8 +2196,8 @@ MIRRORS = (
     ("A_ANIM_FRAMES_TYPE16", "include/enemy.h", "A_anim_frames_type16"),
     ("A_ANIM_FRAMES_TYPE20", "include/enemy.h", "A_anim_frames_type20"),
     ("A_ANIM_FRAMES_TYPE22", "include/enemy.h", "A_anim_frames_type22"),
-    ("A_ANIM_FRAME_LIMIT_TYPE20", "include/enemy.h", "A_anim_frame_limit_type20"),
-    ("A_ANIM_FRAME_LIMIT_TYPE22", "include/enemy.h", "A_anim_frame_limit_type22"),
+    ("A_SECTION_PARAM_A", "include/init.h", "A_section_param_a"),
+    ("A_SECTION_PARAM_B", "include/init.h", "A_section_param_b"),
     ("A_RNG_LFSR_STATE", "include/rng.h", "A_rng_lfsr_state"),
     ("A_ENTITY_COLLISION_MASKS", "include/collision.h", "A_entity_collision_masks"),
     ("COLLISION_ROW_BYTES", "include/collision.h", "COLLISION_ROW_BYTES"),

@@ -50,8 +50,6 @@
 #define A_anim_frames_type16      0x1929cu
 #define A_anim_frames_type20      0x191b4u
 #define A_anim_frames_type22      0x191ccu
-#define A_anim_frame_limit_type20 0x1990fu
-#define A_anim_frame_limit_type22 0x19910u
 
 /* The 11 records the per-frame actor passes walk: entity slots 6..16, i.e. the three enemy shot
  * slots followed by the eight wave slots at A_enemy_slots. names.txt `enemy_shot_slots` # ctx names

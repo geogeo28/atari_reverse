@@ -13,6 +13,7 @@
 #include "machine.h"
 #include "entity.h"
 #include "enemy.h"
+#include "init.h"
 #include "player.h"
 #include "weapon.h"
 #include "collision.h"
@@ -696,7 +697,7 @@ void anim_enemy_type16(uint8_t *image, uint32_t actor) {
 void anim_enemy_type20(uint8_t *image, uint32_t actor) {
     if (image[A_anim_phase_b] != 0)
         return;
-    actor_cycle_frames_to_limit(image, actor, image[A_anim_frame_limit_type20],
+    actor_cycle_frames_to_limit(image, actor, image[A_section_param_a],
                                 A_anim_frames_type20);
 }
 
@@ -704,7 +705,7 @@ void anim_enemy_type20(uint8_t *image, uint32_t actor) {
 void anim_enemy_type22(uint8_t *image, uint32_t actor) {
     if (image[A_anim_phase_b] != 0)
         return;
-    actor_cycle_frames_to_limit(image, actor, image[A_anim_frame_limit_type22],
+    actor_cycle_frames_to_limit(image, actor, image[A_section_param_b],
                                 A_anim_frames_type22);
 }
 

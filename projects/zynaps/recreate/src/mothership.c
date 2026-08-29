@@ -11,6 +11,7 @@
 #include "machine.h"
 #include "entity.h"
 #include "mothership.h"
+#include "init.h"
 #include "sprite.h"
 #include "enemy.h"
 

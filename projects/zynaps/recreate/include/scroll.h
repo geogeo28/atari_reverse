@@ -7,9 +7,10 @@
  *
  *   * the level arrives as an RLE stream and is unpacked COLUMN-MAJOR — 400 columns of 18 tile
  *     words — by `map_rle_decompress`;
- *   * `scroll_emit_tile_column` (not ported) decodes one map column into a 32-pixel workspace, and
- *     `scroll_emit_column_shift2` / `_shift0` walk that workspace two pixels at a time, emitting the
- *     visible half into one of eight off-screen PAGES and into the screen's right-edge column;
+ *   * `scroll_emit_tile_column` decodes one map column — and the same column of the next map column
+ *     along — into a 32-pixel workspace, and `scroll_emit_column_shift2` / `_shift0` walk that
+ *     workspace two pixels at a time, emitting the visible half into one of eight off-screen PAGES
+ *     and into the screen's right-edge column;
  *   * a page is a full playfield (144 rows of 160 bytes) holding the background at one 16-pixel
  *     bank, and `scroll_page_to_screen_p00..p19` copy a 152-byte RING WINDOW out of it onto the
  *     screen — twenty entry points, one per 8-byte column phase, reached only through the jump
@@ -62,8 +63,32 @@
 
 #define SCROLL_COLUMN_PASSES     72u  /* `moveq #$47,d0` + dbf — two screen rows a pass */
 #define SCROLL_COLUMN_CELL_LONGS  8u  /* `movem.l (a0),#$00ff`: two rows x four planes */
-#define SCROLL_COLUMN_ROW_LONGS   4u  /* ...of which one row is four, one per plane */
+/* ...of which one row is four, one per plane. THE PLANE COUNT IS WHAT THIS NUMBER IS, which is why
+ * `scroll_emit_tile_column` counts a tile row's four plane WORDS with it as well: the workspace's
+ * longs and the tile's words are the same four planes seen at two widths. One fact, one name. */
+#define SCROLL_COLUMN_ROW_LONGS   4u
 #define SCROLL_COLUMN_SHIFT_BITS  2u  /* `lsl.l #2,dN` — the 2-pixel step the scroll advances by */
+
+/* ================================================================================================
+ * The tile decoder, `scroll_emit_tile_column` @ 0x162c2 — the step ahead of the two emitters above.
+ * It reads ONE map column (MAP_ROWS words at MAP_COLUMN_BYTES stride) and the same column of the
+ * NEXT map column along, decodes both through the tile set at `A_tile_set_base`, and lays 144 rows
+ * down in three places at once: the screen's right-edge column, the page's own column, and the
+ * workspace, where each longword is `this column's word : the next column's word` — 32 pixels of
+ * which the emitters shift the visible 16 out, two pixels a frame.
+ * ============================================================================================= */
+#define SCROLL_TILE_BYTES      64u  /* `lsl.l #6,d0` — a tile index scaled to its own bytes */
+#define SCROLL_TILE_PIXEL_ROWS  8u  /* the eight unrolled row decodes inside each arm */
+#define SCROLL_TILE_ROW_BYTES (2u * SCROLL_COLUMN_ROW_LONGS)   /* four plane words */
+#define SCROLL_TILE_LAST_ROW (SCROLL_TILE_BYTES - SCROLL_TILE_ROW_BYTES)   /* `lea 56(aN),aN` */
+/* `move.w 34(a6),d1`, and the 34 is 36 minus the 2 the `(a6)+` beside it has already stepped: the
+ * peek is at the SAME row of the next map column. */
+#define SCROLL_MAP_PEEK_NEXT (MAP_COLUMN_BYTES - 2u)
+/* Bit 15 of an UNPACKED map word flips its tile vertically. It is the same bit as MAP_RUN_FLAG
+ * above and a different fact — that one marks an RLE token in the compressed stream, this one a
+ * flipped tile in the map the stream unpacks to — so it gets its own name rather than sharing one. */
+#define SCROLL_TILE_FLIP_FLAG  0x8000u  /* `bmi` on the map word */
+#define SCROLL_TILE_INDEX_MASK 0x7fffu  /* `and.w #$7fff,dN`, on a flipped word only */
 
 /* ================================================================================================
  * Prototypes. The twenty blits are separate entry points because the original's jump table has
@@ -95,5 +120,9 @@ void scroll_page_to_screen_p19(uint8_t *image, uint32_t page, uint32_t screen);
 
 void scroll_emit_column_shift2(uint8_t *image, uint32_t workspace, uint32_t page, uint32_t edge);
 void scroll_emit_column_shift0(uint8_t *image, uint32_t workspace, uint32_t page, uint32_t edge);
+
+/* Returns the map cursor one column on, which its caller stores back into `map_ptr` (0x18242). */
+uint32_t scroll_emit_tile_column(uint8_t *image, uint32_t screen_edge, uint32_t page,
+                                 uint32_t map_column);
 
 #endif /* ZYNAPS_SCROLL_H */

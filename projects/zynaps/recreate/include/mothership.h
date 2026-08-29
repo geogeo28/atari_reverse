@@ -24,7 +24,6 @@
 /* The level section the game is playing, named in ../../names.txt but assigned to no subsystem by
  * ../out/globals.tsv. It is read here only as the index into the energy table above; whoever ends
  * up owning the level machinery should take it and this header should include theirs. */
-#define A_level_section           0x19895u
 
 /* The two rotate preshift banks the boss sprite is built into, and the raw frames they are built
  * from. Neither is named in ../../names.txt — both are bare `lea` operands — so the names are this

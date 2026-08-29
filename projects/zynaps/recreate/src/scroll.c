@@ -208,6 +208,114 @@ void scroll_emit_column_shift0(uint8_t *image, uint32_t workspace, uint32_t page
 }
 
 /* ================================================================================================
+ * scroll_emit_tile_column @ 0x162c2 — 2 call sites (0x10d28 in the section's page pre-fill, and
+ * 0x110b8 in the frame loop's scroll advance). A6 = the map cursor, A5 = the page's own column,
+ * A0 = the screen's right-edge column (`screen_back + 152`).
+ *
+ * This is the step ahead of the two emitters above: it fills the workspace they drain. Eighteen
+ * tile rows, eight pixel rows each, 144 rows in all — one whole playfield-height column — and each
+ * of those rows is written THREE times over:
+ *
+ *   * to the screen's right-edge column and to the page's column, both as the NEAR tile's four
+ *     plane words, one 16-pixel cell;
+ *   * to the workspace as four LONGWORDS, each one `near word : far word` — 32 pixels of which the
+ *     left 16 are what the screen and the page just received. That pairing is the whole point: the
+ *     emitters shift the workspace left two pixels a frame, so the far tile's pixels walk into the
+ *     visible half one step at a time and the scroll is smooth between two whole tiles.
+ *
+ * THE FAR TILE IS THE NEXT MAP COLUMN'S, at the same row (`move.w 34(a6),d1` after the `(a6)+`).
+ * So a call reads two adjacent columns and advances the cursor by one, which is what the caller
+ * stores back into `map_ptr`.
+ *
+ * FOUR ARMS, ONE BODY. Bit 15 of a map word flips its tile VERTICALLY, and the original writes the
+ * eight-row body out four times over — near flipped or not, crossed with far flipped or not — so
+ * that each cursor is a straight `(aN)+` or a `lea 56` start and a `lea -8` step with no test in the
+ * inner loop. 1,840 bytes of code for one loop that reads its direction out of a struct here. The
+ * arms also differ in whether they mask the index with `and.w #$7fff`: they mask only the side whose
+ * bit 15 they have just branched on, because the other side's is known clear. Masking both
+ * unconditionally is therefore the same arithmetic, and it is what makes one body serve four.
+ *
+ * `scroll_prefill_hide_screen` redirects the SCREEN destination onto the page, exactly as it does
+ * for the two emitters: while the pages are being pre-filled with the display hidden, the column is
+ * written into the page twice and never onto the screen.
+ * ============================================================================================= */
+
+/* One side of the pair: where the tile's next row is, and which way the cursor walks it. */
+typedef struct {
+    uint32_t at;
+    uint32_t row_step;   /* forward, or backward for a vertically flipped tile */
+} tile_cursor;
+
+static tile_cursor tile_cursor_for(uint16_t map_word) {
+    /* `moveq #$0,dN` before `move.w (a6)+,dN`, so the index is the unsigned 16-bit value, and
+     * `lsl.l #6,dN` scales it as a longword. */
+    uint32_t base = addr_add(A_tile_set_base,
+                             (uint32_t)(map_word & SCROLL_TILE_INDEX_MASK) * SCROLL_TILE_BYTES);
+    tile_cursor cursor;
+
+    if ((map_word & SCROLL_TILE_FLIP_FLAG) != 0) {
+        cursor.at = addr_add(base, SCROLL_TILE_LAST_ROW);
+        cursor.row_step = (uint32_t)(-(int32_t)SCROLL_TILE_ROW_BYTES);
+    } else {
+        cursor.at = base;
+        cursor.row_step = SCROLL_TILE_ROW_BYTES;
+    }
+    return cursor;
+}
+
+/* `movem.w (aN)+,#$000f` (or `movem.w (aN),#$000f` + `lea -8(aN),aN`): one tile row's four plane
+ * words, and the cursor steps to the row this tile's direction calls next. */
+static void take_tile_row(const uint8_t *image, tile_cursor *cursor, uint16_t *planes) {
+    for (unsigned plane = 0; plane < SCROLL_COLUMN_ROW_LONGS; plane++)
+        planes[plane] = be16(image + addr_add(cursor->at, 2u * plane));
+    cursor->at = addr_add(cursor->at, cursor->row_step);
+}
+
+/* `movem.w #$000f,(aN)` + `lea 160(aN),aN`: the four plane words as one 16-pixel cell, then down a
+ * screen row. */
+static void put_column_row(uint8_t *image, uint32_t *at, const uint16_t *planes) {
+    for (unsigned plane = 0; plane < SCROLL_COLUMN_ROW_LONGS; plane++)
+        wr16(image + addr_add(*at, 2u * plane), planes[plane]);
+    *at = addr_add(*at, SCREEN_ROW_BYTES);
+}
+
+uint32_t scroll_emit_tile_column(uint8_t *image, uint32_t screen_edge, uint32_t page,
+                                 uint32_t map_column) {
+    uint32_t workspace = A_scroll_col_workspace;
+
+    if (image[A_scroll_prefill_hide_screen] != 0)
+        screen_edge = page;
+
+    for (unsigned tile_row = 0; tile_row < MAP_ROWS; tile_row++) {
+        tile_cursor near_tile = tile_cursor_for(be16(image + map_column));
+        tile_cursor far_tile;
+
+        map_column = addr_add(map_column, 2);      /* `move.w (a6)+,d0` */
+        far_tile = tile_cursor_for(be16(image + addr_add(map_column, SCROLL_MAP_PEEK_NEXT)));
+
+        for (unsigned pixel_row = 0; pixel_row < SCROLL_TILE_PIXEL_ROWS; pixel_row++) {
+            uint16_t near_planes[SCROLL_COLUMN_ROW_LONGS];
+            uint16_t far_planes[SCROLL_COLUMN_ROW_LONGS];
+
+            /* The original's order, and it is an order: the near row is read and BOTH its
+             * destinations written before the far row is read at all. */
+            take_tile_row(image, &near_tile, near_planes);
+            put_column_row(image, &screen_edge, near_planes);
+            put_column_row(image, &page, near_planes);
+            take_tile_row(image, &far_tile, far_planes);
+
+            /* `swap dN` then `move.w d(N+4),dN` — the near word into the high half, the far word
+             * into the low. */
+            for (unsigned plane = 0; plane < SCROLL_COLUMN_ROW_LONGS; plane++)
+                wr32(image + addr_add(workspace, 4u * plane),
+                     ((uint32_t)near_planes[plane] << 16) | far_planes[plane]);
+            workspace = addr_add(workspace, 4u * SCROLL_COLUMN_ROW_LONGS);
+        }
+    }
+    return map_column;
+}
+
+/* ================================================================================================
  * Glue.
  *
  * Register maps: the twenty blits take A5 = page, A6 = screen; the two emitters take A0 = the
@@ -245,4 +353,12 @@ void g_scroll_emit_column_shift2(uint8_t *image, uint32_t workspace, uint32_t pa
 
 void g_scroll_emit_column_shift0(uint8_t *image, uint32_t workspace, uint32_t page, uint32_t edge) {
     scroll_emit_column_shift0(image, workspace, page, edge);
+}
+
+/* A0 = the screen's right-edge column, A5 = the page's column, A6 = the map cursor — and A6 comes
+ * back one column on, which is the routine's only register output its caller uses (0x10d2c and
+ * 0x110bc both store it into `map_ptr`). */
+uint32_t g_scroll_emit_tile_column(uint8_t *image, uint32_t screen_edge, uint32_t page,
+                                   uint32_t map_column) {
+    return scroll_emit_tile_column(image, screen_edge, page, map_column);
 }

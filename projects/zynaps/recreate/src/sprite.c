@@ -1,4 +1,4 @@
-/* sprite.c — the sprite banks, and the blitter that reads them.
+/* sprite.c — the sprite banks, and the two blitters that read them.
  *
  * Two groups. The BUILDERS run once, at boot or when a boss spawns: `_start` loads each graphic
  * straight off the disk and then reshapes it into the form the draw loop wants —
@@ -8,25 +8,36 @@
  *   * sprite_preshift8_2px @ 0x153f6 / sprite_preshift4_4px @ 0x15420 fan one frame of bitmap words
  *     out into a bank of pre-rotated copies, so the draw loop can pick a sub-cell phase by indexing
  *     instead of by shifting;
+ *   * sprite_bank_build_preshift8 @ 0x153c0 composes the two of them: it spreads a run of frames
+ *     out one bank apart with `copy_block_words` and then preshifts each in place;
  *   * asteroid_preshift_bank @ 0x15758 does the same to a MASKED sprite, by repeated one-pixel
  *     shifts rather than by rotation, and mothership_sprite_expand @ 0x157ca lays the boss sprite
- *     out with the blank margin that shifting needs.
+ *     out with the blank margin that shifting needs — which mothership_sprite_preshift @ 0x15838
+ *     then shifts it into.
  *
- * ...and the DRAW side is draw_sprite_masked @ 0x15ace, which runs every frame per live entity.
+ * ...and the DRAW side is draw_sprite_masked @ 0x15ace and draw_sprite_masked_collide @ 0x15b7c,
+ * which run every frame per live entity.
  *
- * Every builder but `mothership_sprite_expand` is a pure image-to-image transform over
- * caller-supplied pointers; that one and the blitter reach absolute addresses and globals instead
- * (`screen_back`, the entity record), which is why this file includes two other subsystems'
- * headers — entity.h and video.h for the blitter's record and framebuffer, mothership.h for the two
- * boss-sprite addresses that subsystem owns. None of them traps.
+ * Every builder but the two mothership ones is a pure image-to-image transform over
+ * caller-supplied pointers; those two and the blitters reach absolute addresses and globals
+ * instead (`screen_back`, the entity record, the boss's encounter flags). That is why this file
+ * includes five other subsystems' headers: entity.h and video.h for the blitters' record and
+ * framebuffer, mothership.h for the boss-sprite addresses and encounter flags that subsystem owns,
+ * and collision.h and enemy.h for one value each — plus util.h, whose `copy_block_words` the
+ * whole-file bank builder composes. None of them traps.
  */
 #include "machine.h"
-/* `draw_sprite_masked` reads an entity record and the framebuffer pointer; both globals live in the
- * header of the subsystem that OWNS them (README.md, "Adding a function"), so they are included
- * here to be read rather than restated. */
+/* The blitters read an entity record and the framebuffer pointer, and the boss preshifter writes
+ * the mothership's encounter flags; every one of those globals lives in the header of the subsystem
+ * that OWNS it (README.md, "Adding a function"), so they are included here to be read rather than
+ * restated. collision.h and enemy.h come in for one value each: the height field's mask and the
+ * byte an `Scc`/`st` stores. */
+#include "collision.h"
+#include "enemy.h"
 #include "entity.h"
 #include "mothership.h"
 #include "sprite.h"
+#include "util.h"
 #include "video.h"
 
 /* ================================================================================================
@@ -150,6 +161,49 @@ uint32_t sprite_preshift4_4px(uint8_t *image, uint32_t src, uint32_t dst, uint16
 }
 
 /* ================================================================================================
+ * sprite_bank_build_preshift8 @ 0x153c0 — 8 call sites, all in `_start` (0x101b6, 0x10324, 0x1033a,
+ * 0x10350, 0x10366, 0x1048c, 0x108d6, 0x10918).
+ *
+ * A whole graphic file in one call: the disk ships N frames packed end to end, and each of them has
+ * to become a SPRITE_PRESHIFT_SLOTS-slot bank of its own. So the routine runs two passes over the
+ * same frames. The first SPREADS them — frame i is copied from `src + i*frame_bytes` to
+ * `dst + i*frame_bytes*SPRITE_PRESHIFT_SLOTS`, which is where its bank starts — and the second fans
+ * each spread frame out into the seven rotations behind it, by tail-calling the 2-px preshifter at
+ * its own slot 0.
+ *
+ * IN PLACE IS THE ONLY SHAPE THE GAME USES: all eight call sites pass `src == dst`, so the first
+ * pass rewrites the file where it lies. That is safe in one direction only and it is the direction
+ * the passes run: frame 0 copies onto itself, and frame i > 0 is written eight times further out
+ * than any frame the pass has still to read. A backwards pass over the same buffers would eat its
+ * own source.
+ *
+ * THE TWO PASSES DISAGREE ON THE WIDTH OF `frame_bytes`, and both readings are the original's.
+ * `copy_block_words` takes it as a LONGWORD (`lsr.l #1,d2`), while the preshifter reads only its
+ * low word (`move.w d2,d5`). Nothing the game passes comes near the difference — the widest is
+ * 0xa0 — but the argument is a longword here because the first pass makes it one.
+ * ============================================================================================= */
+void sprite_bank_build_preshift8(uint8_t *image, uint32_t src, uint32_t dst, uint32_t frame_bytes,
+                                 uint16_t frame_count_minus_one) {
+    uint32_t bank_bytes = frame_bytes << SPRITE_PRESHIFT_SLOT_SHIFT;   /* `lsl.l #3,d3` */
+    unsigned frames = loop_passes((uint16_t)(frame_count_minus_one + 1u), COUNT_MASK_WORD);
+    uint32_t source = src;
+    uint32_t bank = dst;
+
+    for (unsigned frame = 0; frame < frames; frame++) {
+        copy_block_words(image, source, bank, frame_bytes);
+        source = addr_add(source, frame_bytes);
+        bank = addr_add(bank, bank_bytes);
+    }
+    /* The `movem.l (a7)+` at 0x153dc restores A1 and D7 together, so the second pass starts over
+     * from the bank base with the same frame count. */
+    bank = dst;
+    for (unsigned frame = 0; frame < frames; frame++) {
+        sprite_preshift8_2px(image, bank, bank, (uint16_t)frame_bytes);
+        bank = addr_add(bank, bank_bytes);
+    }
+}
+
+/* ================================================================================================
  * asteroid_preshift_bank @ 0x15758 — 6 call sites (0x15720..0x15752), one per asteroid size.
  *
  * The bank arrives holding eight IDENTICAL copies of one 48x32 masked frame (the builder above it
@@ -256,6 +310,40 @@ void mothership_sprite_expand(uint8_t *image) {
 }
 
 /* ================================================================================================
+ * mothership_sprite_preshift @ 0x15838 — 1 call site (0x14f64, when the boss encounter opens).
+ *
+ * `asteroid_preshift_bank` one geometry wider, over the bank the expander above just laid out: five
+ * cells 400 bytes apart, 40 rows, 2000 bytes between frames, and the same `lsr`/`roxr` carry chain
+ * shifting frame k right by k*2 pixels in 2k one-pixel passes. So the two routines share
+ * `shift_masked_frame_right_1px` and differ only in the four numbers they hand it and in where the
+ * bank is (this one's is an immediate, so it takes no argument at all).
+ *
+ * IT ALSO ARMS THE ENCOUNTER on its way out, which the asteroid builder has no analogue for: four
+ * bytes that belong to the mothership subsystem, three of them named in include/mothership.h and
+ * the fourth borrowed into sprite.h (see the BORROWED note there). Every one of them is written
+ * unconditionally after the last shift, so they double as the "the bank is ready" signal.
+ * ============================================================================================= */
+void mothership_sprite_preshift(uint8_t *image) {
+    /* `lea 2000(a0),a0` before the loop: frame 0 is the phase-0 copy and is left alone. */
+    uint32_t frame = addr_add(A_mothership_sprite_bank, BOSS_SPRITE_FRAME_BYTES);
+    uint16_t passes_reg = PRESHIFT_1PX_PASSES_FIRST;
+
+    for (unsigned index = 1; index < SPRITE_PRESHIFT_SLOTS; index++) {
+        unsigned passes = loop_passes((uint16_t)(passes_reg + 1u), COUNT_MASK_WORD);
+
+        for (unsigned pass = 0; pass < passes; pass++)
+            shift_masked_frame_right_1px(image, frame, BOSS_SPRITE_ROWS, BOSS_SPRITE_FRAME_CELLS,
+                                         BOSS_SPRITE_CELL_BYTES);
+        passes_reg = (uint16_t)(passes_reg + PRESHIFT_1PX_PASSES_STEP);
+        frame = addr_add(frame, BOSS_SPRITE_FRAME_BYTES);
+    }
+    image[A_boss_sequence_active] = 1;      /* the boss is painted into the playfield from now on */
+    image[A_mothership_ready] = 1;
+    wr32(image + A_mothership_phase_timer, 0);
+    image[A_mothership_prep_stage] = 0;
+}
+
+/* ================================================================================================
  * draw_sprite_masked @ 0x15ace — 2 call sites: 0x1590e over the five `entity_boss_parts` records
  * (0x18142) with D2 = 0x3e8, and 0x159dc over the eighteen asteroid records (0x17e2a) with
  * D2 = 0x1e0.
@@ -295,7 +383,7 @@ void mothership_sprite_expand(uint8_t *image) {
  * `move.l d3,(a0)+` / `move.l d4,(a0)`. */
 #define SPRITE_PLANES_01 (2u * (SPRITE_MASK_WORD + 1u))   /* just past the mask word */
 #define SPRITE_PLANES_23 (SPRITE_PLANES_01 + 4u)
-#define SCREEN_CELL_HALF 4u
+#define SPRITE_CELL_HALF (SPRITE_CELL_BYTES / SPRITE_CELL_LONGS)  /* one plane PAIR */
 
 void draw_sprite_masked(uint8_t *image, uint32_t entity, uint16_t preshift_bytes_per_pixel) {
     uint32_t screen = be32(image + A_screen_back);
@@ -337,14 +425,159 @@ void draw_sprite_masked(uint8_t *image, uint32_t entity, uint16_t preshift_bytes
         uint32_t planes01 = be32(image + addr_add(sprite, SPRITE_PLANES_01));
         uint32_t planes23 = be32(image + addr_add(sprite, SPRITE_PLANES_23));
         uint32_t under01 = be32(image + screen);
-        uint32_t under23 = be32(image + addr_add(screen, SCREEN_CELL_HALF));
+        uint32_t under23 = be32(image + addr_add(screen, SPRITE_CELL_HALF));
 
         wr32(image + screen, (under01 & keep_background) | planes01);
-        wr32(image + addr_add(screen, SCREEN_CELL_HALF),
+        wr32(image + addr_add(screen, SPRITE_CELL_HALF),
              (under23 & keep_background) | planes23);
         sprite = addr_add(sprite, SPRITE_MASKED_ROW_BYTES);
         screen = addr_add(screen, SCREEN_ROW_BYTES);
     }
+}
+
+/* ================================================================================================
+ * draw_sprite_masked_collide @ 0x15b7c — 2 call sites: 0x11c48, which walks all twenty
+ * `entity_table` records with A5 pointed at each record's own ENTITY_PIXEL_HIT byte, and 0x13096,
+ * which draws record 0 of the front-end demo with A5 = 0x19ce3.
+ *
+ * The blitter above's sibling, and three things separate them. sprite.h's header block says why the
+ * first two are what they are; the third is this routine's whole reason to exist.
+ *
+ *   * IT SPANS TWO CELLS. The sprite word is rotated, not shifted, so the pixels that fall off its
+ *     right edge are sitting in its top bits waiting to be dropped into the next cell along. The
+ *     keep-mask at `shift_mask_table` splits them, and every band below is one of the three answers
+ *     to "how much of that pair is on screen".
+ *   * ITS COORDINATES ARE THE WORLD'S. x 0x40 is screen column 0, so the x rejections are at 0x30
+ *     and 0x180 rather than at 0 and 320, and the two partial bands either side of the playfield
+ *     are real drawing rather than a reject.
+ *   * IT REPORTS A PIXEL HIT. For each row it asks whether any BACKGROUND pixel with plane 2 or
+ *     plane 3 set lies under an opaque sprite pixel, and if so stores 0xff (an `st`) at the address
+ *     the caller passed in A5. Planes 0 and 1 are not consulted: the terrain the scroller draws is
+ *     what those two high planes hold, so this is "did the sprite touch the landscape" and not "did
+ *     it touch anything". The flag is a byte with two values and no counter, so a row that hits
+ *     after another row already did rewrites the same 0xff.
+ *
+ * THE MIDDLE BAND RE-READS THE SCREEN ROW between the flag store and the composite (`movem.l (a0)`
+ * runs twice there and once in each edge band). That is only observable if A5 pointed INTO the row
+ * being drawn, which neither call site does — but it is the instruction sequence, so it is
+ * transcribed rather than tidied away.
+ * ============================================================================================= */
+#define COLLIDE_SPAN_CELLS 2u   /* `movem.l (a0),#$003c` — the widest band reads two whole cells */
+
+/* One 16-pixel screen cell of one row. `keep` is the half of the rotated sprite word that belongs
+ * in THIS cell — `shift_mask_table`'s entry for the sub-cell shift, or its complement — so the
+ * background survives both where the sprite is transparent (a mask bit of 1) and where the sprite's
+ * pixels belong to the other cell. */
+static uint32_t compose_cell(uint32_t under, uint32_t mask_pair, uint32_t planes, uint32_t keep) {
+    return (under & ((mask_pair & keep) | ~keep)) | (planes & keep);
+}
+
+/* `movem.l (a0),#$003c` / `#$000c` — one screen row as `cells` cells of two longwords: planes 0+1
+ * then planes 2+3. */
+static void read_screen_row(const uint8_t *image, uint32_t screen, unsigned cells, uint32_t *under) {
+    for (unsigned index = 0; index < cells * SPRITE_CELL_LONGS; index++)
+        under[index] = be32(image + addr_add(screen, SPRITE_CELL_HALF * index));
+}
+
+static void blit_masked_collide_rows(uint8_t *image, uint32_t screen, uint32_t sprite,
+                                     unsigned passes, uint32_t keep_near, unsigned cells,
+                                     uint32_t hit_flag) {
+    const uint32_t keep[COLLIDE_SPAN_CELLS] = { keep_near, ~keep_near };
+
+    for (unsigned row = 0; row < passes; row++) {
+        uint32_t under[COLLIDE_SPAN_CELLS * SPRITE_CELL_LONGS];
+        uint16_t mask = be16(image + sprite);
+        uint32_t mask_pair = ((uint32_t)mask << 16) | mask;
+        uint32_t planes01, planes23;
+
+        read_screen_row(image, screen, cells, under);
+        /* Index 1 of a cell is its planes 2 and 3, and `~mask_pair` is the sprite's opaque pixels. */
+        for (unsigned cell = 0; cell < cells; cell++) {
+            if (under[cell * SPRITE_CELL_LONGS + 1] & ~mask_pair & keep[cell]) {
+                image[hit_flag] = SCC_BYTE_TRUE;
+                break;                       /* the far cell's `bra` past its own test */
+            }
+        }
+        if (cells == COLLIDE_SPAN_CELLS)
+            read_screen_row(image, screen, cells, under);   /* the second `movem.l (a0),#$003c` */
+
+        planes01 = be32(image + addr_add(sprite, SPRITE_PLANES_01));
+        planes23 = be32(image + addr_add(sprite, SPRITE_PLANES_23));
+        for (unsigned cell = 0; cell < cells; cell++) {
+            uint32_t at = addr_add(screen, cell * SPRITE_CELL_BYTES);
+            const uint32_t *cell_under = &under[cell * SPRITE_CELL_LONGS];
+
+            wr32(image + at, compose_cell(cell_under[0], mask_pair, planes01, keep[cell]));
+            wr32(image + addr_add(at, SPRITE_CELL_HALF),
+                 compose_cell(cell_under[1], mask_pair, planes23, keep[cell]));
+        }
+        sprite = addr_add(sprite, SPRITE_MASKED_ROW_BYTES);
+        screen = addr_add(screen, SCREEN_ROW_BYTES);
+    }
+}
+
+void draw_sprite_masked_collide(uint8_t *image, uint32_t entity, uint32_t hit_flag) {
+    uint32_t screen = be32(image + A_screen_back);
+    /* `bclr #0,d0` rather than 0x15ace's `and.w #$fffe`, which is the same forcing-to-even. */
+    int16_t x = (int16_t)(be16(image + addr_add(entity, ENTITY_X)) & SPRITE_X_EVEN_MASK);
+    int16_t rows = (int16_t)(be16(image + addr_add(entity, ENTITY_HEIGHT)) & ENTITY_HEIGHT_MASK);
+    /* `mulu.w #$5,d2` and then `mulu.w d2,d0`: the second multiply sees only the LOW WORD of the
+     * first's product, so a height past 0x3333 wraps the step. Faithful and out of reach — the
+     * tallest record any spawner writes is the boss's 40 rows. */
+    uint16_t phase_step = (uint16_t)((uint16_t)rows * SPRITE_COLLIDE_ROW_HALF_WORDS);
+    uint32_t sprite = addr_add(be32(image + addr_add(entity, ENTITY_SPRITE)),
+                               (uint32_t)(x & SPRITE_X_PHASE_MASK) * phase_step);
+    int16_t y = (int16_t)be16(image + addr_add(entity, ENTITY_Y));
+    int16_t bottom;
+    uint32_t keep_near;
+    unsigned cells;
+
+    if (y >= (int16_t)PLAYFIELD_BOTTOM_Y)
+        return;
+    bottom = (int16_t)(y + rows);
+    if (bottom <= (int16_t)PLAYFIELD_TOP_Y)
+        return;
+
+    /* The same two exclusive clip arms as 0x15ace, and the same consequence: a sprite that starts
+     * above the playfield's top is NOT also clipped at its bottom. */
+    if (y < (int16_t)PLAYFIELD_TOP_Y) {
+        int16_t hidden = (int16_t)(PLAYFIELD_TOP_Y - y);
+
+        sprite = addr_add(sprite, (uint32_t)(uint16_t)hidden * SPRITE_MASKED_ROW_BYTES);
+        rows = (int16_t)(rows - hidden);
+    } else {
+        if (bottom > (int16_t)PLAYFIELD_BOTTOM_Y)
+            rows = (int16_t)(PLAYFIELD_BOTTOM_Y - y);
+        screen = addr_add(screen, (uint32_t)(uint16_t)(y - PLAYFIELD_TOP_Y) * SCREEN_ROW_BYTES);
+    }
+    /* The original re-reads x from the record here, and forces it even a second time, before
+     * indexing the keep-mask table — the same value, read twice. */
+    keep_near = be32(image + addr_add(A_shift_mask_table,
+                                      (uint32_t)(x & SPRITE_X_PHASE_MASK) * SPRITE_SHIFT_MASK_STRIDE));
+    cells = COLLIDE_SPAN_CELLS;
+
+    if (x < (int16_t)SPRITE_COLLIDE_ORIGIN_X) {
+        if (x <= (int16_t)SPRITE_COLLIDE_LEFT_EDGE)
+            return;
+        /* Straddling the left edge: only the half that rotated OUT of the sprite's own cell is on
+         * screen, and it lands in column 0 — so the row is left where the y clip put it. */
+        keep_near = ~keep_near;
+        cells = 1;
+    } else if (x <= (int16_t)SPRITE_COLLIDE_RIGHT_EDGE) {
+        /* `and.w #$fff0` then `lsr.w #1` — the cell index times the eight bytes a cell occupies. */
+        screen = addr_add(screen,
+                          sign_ext16((uint16_t)(((uint16_t)(x - SPRITE_COLLIDE_ORIGIN_X)
+                                                 & SPRITE_X_CELL_MASK) >> 1)));
+    } else if (x >= (int16_t)SPRITE_COLLIDE_RIGHT_OFF) {
+        return;
+    } else {
+        /* Straddling the right edge: only the sprite's own half fits, in the row's last cell. */
+        screen = addr_add(screen, SCREEN_ROW_BYTES - SPRITE_CELL_BYTES);
+        cells = 1;
+    }
+    blit_masked_collide_rows(image, screen, sprite,
+                             loop_passes((uint16_t)rows, COUNT_MASK_WORD),   /* `subq.w #1` + `dbf` */
+                             keep_near, cells, hit_flag);
 }
 
 /* ================================================================================================
@@ -376,4 +609,21 @@ void g_mothership_sprite_expand(uint8_t *image) {
 /* A2 = the entity record, D2 = half a preshift frame. */
 void g_draw_sprite_masked(uint8_t *image, uint32_t entity, uint32_t preshift_bytes_per_pixel) {
     draw_sprite_masked(image, entity, (uint16_t)preshift_bytes_per_pixel);
+}
+
+/* A0 = the packed frames, A1 = the bank base, D2 = one frame's length in bytes (a LONGWORD — the
+ * copy pass reads all 32 bits of it, the preshift pass only the low word), D7 = frames - 1. */
+void g_sprite_bank_build_preshift8(uint8_t *image, uint32_t src, uint32_t dst, uint32_t frame_bytes,
+                                   uint32_t frame_count_minus_one) {
+    sprite_bank_build_preshift8(image, src, dst, frame_bytes, (uint16_t)frame_count_minus_one);
+}
+
+/* No arguments: the bank is an immediate and so are the four flags it arms. */
+void g_mothership_sprite_preshift(uint8_t *image) {
+    mothership_sprite_preshift(image);
+}
+
+/* A2 = the entity record, A5 = the address of the byte a pixel hit sets. */
+void g_draw_sprite_masked_collide(uint8_t *image, uint32_t entity, uint32_t hit_flag) {
+    draw_sprite_masked_collide(image, entity, hit_flag);
 }
