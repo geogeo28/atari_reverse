@@ -18,7 +18,7 @@
  * (`and.w #$fffe,d1 / lsl.w #2,d1`), so a column at or above 0x2000 shifts its own high bit out and
  * lands somewhere else entirely, and one whose product has bit 15 set addresses BACKWARDS from the
  * row base. Faithful; the game's columns are 0..39. */
-static uint32_t cell_address(uint32_t row_base, uint16_t column) {
+uint32_t text_cell_address(uint32_t row_base, uint16_t column) {
     uint16_t pair = (uint16_t)((column & COLUMN_PAIR_MASK) << COLUMN_PAIR_SHIFT);
     uint32_t cell = addr_add(row_base, sign_ext16(pair));
 
@@ -86,7 +86,7 @@ void draw_char(uint8_t *image, uint32_t row_base, uint16_t column, uint16_t char
 
     if ((uint8_t)character == CHAR_SPACE)
         return;
-    cell = cell_address(row_base, column);
+    cell = text_cell_address(row_base, column);
     if ((uint8_t)character == CHAR_CLEAR_CELL)
         fill_cell(image, cell, CELL_CLEAR_BYTE);
     else if ((uint8_t)character == CHAR_FILL_CELL)
@@ -133,9 +133,14 @@ void g_draw_bcd_number(uint8_t *image, uint32_t row_base, uint32_t column_reg, u
  * left of the base. Each character is sign-extended too, so a byte at or above 0x80 reaches
  * draw_char as a negative word — no shipped string has one.
  *
- * Returns the cursor ONE PAST the terminator, which is A6's value on return: the record's own
- * length is never stated, so a caller walking a list of records depends on it. */
-uint32_t draw_text_record(uint8_t *image, uint32_t row_base, uint32_t record) {
+ * IT HAS TWO OUTPUTS, and both are live. The return value is the cursor ONE PAST the terminator,
+ * which is A6's value on return: the record's own length is never stated, so a caller walking a
+ * list of records depends on it. `end_column` is D1, the column one past the last character drawn,
+ * and nothing reloads D1 — `player_intro_screen` and `game_over_screen` both print the player's
+ * digit at exactly that column, so "PLAYER" and its number stay one string. Pass NULL for it when
+ * only the cursor is wanted. */
+uint32_t draw_text_record(uint8_t *image, uint32_t row_base, uint32_t record,
+                          uint16_t *end_column) {
     uint16_t column = (uint16_t)sign_ext8(image[record]);
     uint32_t row = image[record + 1];
     uint32_t base = addr_add(row_base, row * SCREEN_ROW_BYTES);
@@ -145,15 +150,20 @@ uint32_t draw_text_record(uint8_t *image, uint32_t row_base, uint32_t record) {
         uint8_t character = image[cursor];
 
         cursor = addr_add(cursor, 1);
-        if (character == TEXT_RECORD_TERMINATOR)
+        if (character == TEXT_RECORD_TERMINATOR) {
+            if (end_column)
+                *end_column = column;
             return cursor;
+        }
         draw_char(image, base, column, (uint16_t)sign_ext8(character));
         column = (uint16_t)(column + 1);
     }
 }
 
 /* Register map: A0 = the screen buffer's base, A6 = the record. A0 is saved and restored; A6 is
- * BOTH an input and an output, so the stub dumps it at `result` — see test/abi.py. */
+ * BOTH an input and an output, so the stub dumps it at `result` — see test/abi.py. D1's leftover is
+ * this routine's other output and is dumped by the CALLERS that use it, not here: no case enters at
+ * 0x12e40 to read it, so the stub would be storing a register nothing in this battery asks about. */
 void g_draw_text_record(uint8_t *image, uint32_t row_base, uint32_t record, uint32_t result) {
-    wr32(image + result, draw_text_record(image, row_base, record));
+    wr32(image + result, draw_text_record(image, row_base, record, NULL));
 }

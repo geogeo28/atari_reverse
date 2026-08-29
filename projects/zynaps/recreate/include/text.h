@@ -5,6 +5,7 @@
 #ifndef ZYNAPS_TEXT_H
 #define ZYNAPS_TEXT_H
 
+#include <stddef.h>   /* NULL — draw_text_record's second output is optional */
 #include <stdint.h>
 
 /* ---- the screen the glyphs land on -----------------------------------------------------------
@@ -59,8 +60,36 @@
 #define CHAR_DIGIT_ZERO  0x30u
 #define TEXT_RECORD_TERMINATOR 0u
 
+/* ---- the shipped records ---------------------------------------------------------------------
+ *
+ * The eight the front-end screens print, in `../out/globals.tsv`'s `text` subsystem where they
+ * belong. All eight names are `# ctx` in `../names.txt` — read off the call site rather than off
+ * anything that produces them, so a later reading may rename them; `A_msg_player` is the map's
+ * `text_player` spelt like its seven `msg_*` siblings.
+ *
+ * `test_text.py`'s own SHIPPED_RECORDS still carries these as bare literals, and its twelve include
+ * four more (`msg_game_over_player`, `msg_new_high_score`, `msg_please_enter_your_name`,
+ * `msg_you_are_not_rated`) that no ported routine reaches yet. The day the high-score screens land,
+ * those four join this block and that battery's list becomes a MIRRORS-pinned one.
+ */
+#define A_msg_prepare_for_combat      0x1991eu
+#define A_msg_player                  0x19933u  /* names.txt has the corrected address already */
+#define A_msg_converted_by_microwish  0x1993du
+#define A_msg_coding_howie            0x19956u
+#define A_msg_graphics_pete_lyon      0x19967u
+#define A_msg_music_and_sound_fx      0x1997eu
+#define A_msg_menu_one_or_two_players 0x199a3u
+#define A_msg_role_of_honour          0x199c8u
+
+/* Where a character cell starts, relative to a row's base — the two `adda.w`s above, spelt once.
+ * Shared rather than private to draw_char because `draw_lives_icons` (src/hud.c) computes a cell
+ * address with the SAME four instructions over two destination pointers at once. */
+uint32_t text_cell_address(uint32_t row_base, uint16_t column);
+
 void draw_char(uint8_t *image, uint32_t row_base, uint16_t column, uint16_t character);
 void draw_bcd_number(uint8_t *image, uint32_t row_base, uint16_t rightmost_column, uint32_t digits);
-uint32_t draw_text_record(uint8_t *image, uint32_t row_base, uint32_t record);
+/* `end_column` receives D1 — the column one past the last character drawn — or is NULL. */
+uint32_t draw_text_record(uint8_t *image, uint32_t row_base, uint32_t record,
+                          uint16_t *end_column);
 
 #endif /* ZYNAPS_TEXT_H */

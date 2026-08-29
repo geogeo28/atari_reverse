@@ -680,7 +680,7 @@ ported it — its own row at the end of this file is now stale, and corrected th
 
 | Addr | Name | Status |
 |---|---|---|
-| `0x12df6` | `score_add_bcd` | **UNBLOCKED — `sound_start` (0x16ac8) has landed and is verified.** The four `abcd -(a1),-(a0)` are a leaf and the extra-life arm's call with D1 = 0x10 is now an ordinary composed callee, exactly as the three `fire_*` routines above compose it. It is the `score` agent's row, not this one's: no `src/score.c` exists yet, and a `## Verified — score` section without one fails `test_status.py` |
+| `0x12df6` | `score_add_bcd` | **Done, and the block it named is gone.** `sound_start` (0x16ac8) landed in the sound slice, so the extra-life arm is drivable; the routine is verified in `## Verified — score (1)` above and `src/score.c` exists. The row's other claim — that an empty `src/score.c` is why there was no score section — no longer applies either. |
 | `0x13d9e` | `powerup_capsule_collected` | **The `sound_start` block is gone; a DIFFERENT one replaced it, and it is about file ownership.** The routine and five of its six jump-table arms write `power_gauge_display` (0x198c3), which `../out/globals.tsv` assigns to the **hud** subsystem — so its address belongs in `include/hud.h`, which this agent may not create, and spelling it in `include/weapon.h` would plant exactly the duplicate `test_constants.py` refuses the moment that header lands. (This is the test that separates it from the three launch counters, which ARE named in `include/weapon.h`: those have no owner in `globals.tsv` at all, and the house rule for an unowned address is that whoever reads it names it. `panel_redraw_mask` 0x19904 and `selected_weapon` 0x198b4 are likewise unowned and would come with the port.) Second, the arms at 0x13e8a / 0x13eb4 / 0x13ee8 / 0x13f0e / 0x13f3a are **unnamed in `../names.txt`** — porting them would mean inventing five names in a file this agent does not edit. The body is read and waiting: the cursor advance when `0x19902` is clear; otherwise a commit that plays sfx **0x0f** and dispatches through **two** tables — 0x19348 at 0x13e1e for a NEW selection (with cursor 1 diverted to 0x13f0e before the table is consulted, which is what makes `powerup_slot1_activate` unreachable) and 0x1935c at 0x13e4a when the selection is unchanged. Port it in the change that lands `include/hud.h`, alongside the naming pass for the five arms. `powerup_slot1_activate` (0x13ede), the one arm that is named and whose only store is a `player` global, is verified above |
 | `0x13cd4` | `ship_resolve_entity_hits` | Blocked on BOTH its callees, and neither is this agent's to write: `powerup_capsule_collected` above, and `explosion_spawn` (0x15510, the enemy subsystem's) — which the routine reaches by a `bra.w` TAIL CALL out of the middle of its own twelve-slot loop, so there is no prefix worth verifying without it. The loop itself is read: a4 walks entity slots 6..17 from 0x17b96 while d0 counts the bit it tests in the ship's overlap row (a3), a type-0x11 capsule is collected and killed with sfx 0x16, and anything `entity_type_is_lethal` (verified) accepts sets bit 0 of `death_event_flags` and leaves through the explosion |
 | `0x14d14`, `0x14d88` | `actor_script_op_bounce_fall`, `actor_script_op_fire` | The `enemy` agent's this session, per that subsystem's ownership of the script VM. Both are now unblocked — the first calls `entity_apply_accel` (`util`, verified), the second `entity_steer_toward_target` (verified above) |
@@ -699,6 +699,195 @@ mistake at all.
 | `0x12e40` | `draw_text_record` | 38 | ✅ verified | every one of the twelve `{column, row, text, 0}` records the game ships, drawn from the image's own bytes at its own column and row — which is what holds the column's SIGN extension against the row's ZERO extension, since the shipped rows run to 168 and a signed reading would put the credit lines above the screen. Plus synthetic edges: an empty string, both ends of the column byte's sign, a row byte of 0xff, and a run through the table arm. The cursor comes back ONE PAST the terminator and is dumped by the `movem.l` stub, so a caller walking a list of records is covered; poison over one record |
 | `0x136f6` | `draw_bcd_number` | 26 | ✅ verified | six longwords including 0 (which draws eight zeroes, not one), 0x99999999 and two with nibbles above 9 — the digit is turned into a character by adding 0x30 with no range check, so those draw ':' through '?'. A rightmost column of 7 walks the run off the left of the row into the previous one, which a forward-stepping candidate would not do (mutation measured killed); hi-garbage in the column; poison over all eight cells |
 | `0x13710` | `draw_char` | 186 | ✅ verified | all 256 character codes, sharded four ways — exhaustive because the routine forks FIVE ways and two of the boundaries are single values (0x40 goes through the table, 0x41 does not); above 0x7f the arithmetic arm indexes past the 48-glyph font and below 0x20 the table arm indexes before the table, both in-image and both driven. Then columns 0..40 for each of the five arms, which is what holds the odd/even cell address — a `column * 4` reconstruction agrees on every even column and is wrong on every odd one. Every case draws over a NOISY frame, which is what makes the AND mask visible at all; the space's no-op is an empty diff over that noise; poison on four arms |
+
+## Verified — hud (11)
+
+**The graphics are all bss**, loaded from POWER.DAT / SMLOGOS.DAT / SWEAP.DAT / SSWEAP.DAT /
+LIFEGRA.DAT / ZYNLOGO.DAT / HEWLOGO.DAT / EXTCHARS.DAT, so every case stages the real file bytes at
+the address `_start` loads it to — the same argument the text battery makes about the font. The
+three PANEL STRIPS are not a file at all: `_start` stamps STATUS.PI1 into the screen at row 147 and
+carves three rectangles back out of it, so `test_hud.py` derives them from STATUS.PI1 at the very
+offsets each strip is later stamped to, and `test_the_strips_are_cut_from_the_panel_image` pins
+that. The DESTINATIONS are bss too, so each case seeds BOTH framebuffers whole with noise and guard
+bands; over zeroes a blit of zeroes is invisible.
+
+`title_screen_draw` is filed here rather than under `text`: `../out/subsystems.tsv` assigns it to
+`text` (it is mostly `draw_text_record` calls), but it lives in `src/hud.c` beside the two other
+front-end screen composers it is a near-copy of, and `test_status.py` requires a section to name a
+`src/<name>.c`.
+
+| Addr (Ghidra) | Name | Bytes | Status | Verification |
+|---------------|------|-------|--------|--------------|
+| `0x1452c` | `hud_draw_logo_anim` | 112 | ✅ verified | eight frame bytes including 0/1 (the game's own), 0x7f/0x80 and 0xff — the byte is EOR'd with 1 and read back, so the frame drawn is the NEW one, and it is re-masked afterwards, which is the only thing bounding a byte nothing else clamps. The source is five 8-byte COLUMNS 0x100 apart, not one 40-byte run, so the poison pass leaves four fifths of each row canary for a candidate that read the row straight through. Mutation killed: the column stride 8 bytes wide |
+| `0x1459c` | `hud_draw_powerup_icon` | 62 | ✅ verified | 204 of the 256 cursor bytes, sharded four ways — every one whose pointer lands in the loaded program. That is far more than the five icons the bar shows: past the fifth entry the table runs straight into the weapon table beside it and a negative cursor indexes back into the .PRG's text, both of which `ext.w` + `lsl.w #2` reach. `test_icon_tables_point_into_the_staged_banks` pins the SWEAP.DAT staging address against the game's own pointers, which no differential can do; poison on two icons. Mutation killed: 25 rows instead of 26 |
+| `0x145da` | `hud_draw_weapon_icon` | 76 | ✅ verified | both cells over 209 reachable slot bytes each, plus hi-garbage above D0's low byte and a D0 of 0xffffff00 — the cell is a `tst.b`, so only the low byte may move the glyph. The two cells are 16 bytes apart and the glyph is 8 wide, so a wrong right-hand offset leaves the left cell intact and still differs; poison on both cells. Mutation killed: the right cell 8 bytes along instead of 16 |
+| `0x137ca` | `draw_power_gauge` | 94 | ✅ verified | levels 0..0x7f sharded four ways — the whole half of the byte whose frame is in the image. The clamp is a SIGNED compare against 4 that WRITES THE LEVEL BACK, so every value from 4 up is both drawn as frame 3 and stored as 3, and that store is diffed. It is also the one panel routine that reads 0x1797e/0x17982 rather than carrying the buffers as literals, so a case swaps them and a third gets a buffer that is neither. Mutation killed: the clamp at `> 4` instead of `>= 4` |
+| `0x134ca` | `draw_lives_icons` | 158 | ✅ verified | all 256 lives bytes, sharded four ways — exhaustive because the full/empty choice is a SIGNED BYTE compare of `lives - 1` against each slot's 1-based number and every fork is a single value: 0 underflows to -1 (all empty), 1 is still all empty, 7 fills all six, 0x80..0xff are negative and empty again. Five panel-mask values hold the `bclr #4` against a candidate storing zero; poison on four counts. Mutation killed: the slot test at `<=` instead of `<` |
+| `0x13568` | `draw_player_digit_shifted` | 84 | ✅ verified | 128 of the 256 player indices — every one whose glyph stays in the image (see the coverage note below) — into the panel's cell in each buffer and one that is neither. The mask word STARTS AT 0xffff and takes the glyph's AND byte in its low half, so the rotate carries four ones into the top nibble and the background under them survives; over a noisy cell a `clr.w` start differs. Poison on both shipped indices. Mutation killed: the mask word started from 0 instead of 0xff00 |
+| `0x136c8` | `draw_score_panel` | 46 | ✅ verified | both framebuffers and one that is neither (A6 is the whole of the destination), over five scores including 0 (which draws eight zeroes), 0x99999999 and 0xffffffff. IT HAS NO `rts` OF ITS OWN — it runs off its end into `draw_bcd_number` at 0x136f6 — so the eight digits are part of this routine's diff rather than a callee's; poison over the strip and all eight cells. Mutation killed: the rightmost digit one column left |
+| `0x129aa` | `status_panel_build_master` | 126 | ✅ verified | three strips stamped into the front buffer and then 53 rows of it copied to the 8480-byte master, over three noise seeds. THE SNAPSHOT MUST SEE THE STAMPS: all three land inside the band it copies, so a candidate that snapshotted first differs in the master as well as on screen. The master's own bytes are seeded with noise and a guard band, because it is bss and a short copy would leave zeroes over zeroes; poison over all 8480. Mutation killed: the copy one longword short |
+| `0x135bc` | `status_panel_redraw_all` | 268 | ✅ verified | the whole panel from the shipped state and from four states that move every piece at once (gauge level including a clamping one, lives including 0 and a negative byte, player index, logo frame, power-up cursor), plus three score/hi-score pairs — the score comes from `player_score_bcd` and the hi-score from the FIRST ENTRY of the high-score table, at different columns and rows in both buffers. Four entry values for the weapon slot byte, which the routine OVERWRITES itself (0 before the right glyph, 1 before the left) so nothing it held on entry can reach either blit. The buffer pair is also swapped, which moves the half of the panel that reads the pointers and not the half that carries literals. NO POISON PASS — see the mutation note below. Mutation killed: the right-hand weapon glyph drawn in the left cell |
+| `0x13426` | `player_intro_screen` | 146 | ✅ verified | all 256 player indices sharded four ways — the digit's column is `draw_text_record`'s LEFTOVER D1 and nothing reloads it, and the character is `index + 0x31` added as a BYTE, so 0xcf and up wrap into the three control characters `draw_char` forks on. All three arms of the PREPARE FOR COMBAT flag (0, 1, 0xff), both buffer orders and a third buffer, the 32-byte front-end palette copied into `A_menu_palette` over poked noise (the destination is the first byte of bss and is otherwise zero on both sides), and `clr.w $18fc4` over a noisy shadow, which is what shows it clears ONE word and not sixteen. NO POISON PASS — see below. Mutation killed: the digit's character one higher |
+| `0x12a28` | `title_screen_draw` | 154 | ✅ verified | the shipped screen over two seeds, both buffer orders and a third buffer, and — the case that matters — ONE SOURCE POINTER DRAWING BOTH LOGOS: `blit_graphic_block` advances A6, the routine loads it once, three 64-row strips exhaust ZYNLOGO.DAT exactly, and the two 24-row strips after them read HEWLOGO.DAT, which `_start` loads at the next address up. Poking the two files to distinguishable patterns is what separates that from a second `lea`. NO POISON PASS — see below. Mutation killed: the Hewson strips read from the ZYNAPS logo |
+
+## Verified — highscore (1)
+
+| Addr (Ghidra) | Name | Bytes | Status | Verification |
+|---------------|------|-------|--------|--------------|
+| `0x13338` | `role_of_honour_screen` | 238 | ✅ verified | the shipped table over three seeds, both buffer orders and a buffer that is neither, five distinguishable scores (a candidate walking the table with the wrong stride differs on four rows of five), five record columns including both ends of the byte's SIGN, and the logo's three strips poked to three patterns — which is what shows they walk ONE advancing source. The load-bearing case is `test_the_score_rows_are_the_routines_own`: each SCORE is drawn at a `lea` displacement of the routine's own (17600 and four steps of 1920) while each NAME is drawn at the row byte inside its record, and the shipped table makes those the same five rows. A table where they differ is the only thing that separates them, and a reconstruction that read the row from the record passes every other case here. NO POISON PASS — see below. Mutation killed: the score rows one screen row apart |
+
+## Verified — score (1)
+
+| Addr (Ghidra) | Name | Bytes | Status | Verification |
+|---------------|------|-------|--------|--------------|
+| `0x12df6` | `score_add_bcd` | 74 | ✅ verified | all four shipped awards added to the shipped score with A1 one past the entry, as every call site passes it; eight carry cases that walk a carry from the low nibble to the top byte (a candidate adding the bytes in ADDRESS order agrees on 1234 + 5678 and fails at 99 + 01); the threshold's edges, where `bgt` means equality AWARDS and 9999 + 1 is the value that lands on it; the SIGNED longword compare, driven with a score of 0x89999999 that reads as negative; the awarding arm's four outputs at once — the jingle `sound_start` arms, the threshold stepped by its own BCD chain, the lives byte at 0xff where `addi.b` wraps, and `bset #4` over a mask with other bits set; and a 256-case sharded fuzz over random longwords in both operands, INCLUDING nibbles above 9. Poison on both arms. Mutation killed: the low-nibble correction at `> 10` instead of `> 9` |
+
+### Mutation check — hud / highscore / score
+
+Thirteen mutations, one per verified function above, each with the .so deleted before the rebuild
+(make's ~1 s mtime granularity has re-run an unmutated oracle in this workspace before) and each run
+from the green 1733-test baseline with its own pytest summary line recorded — **13 killed, 0
+survivors**. Every mutation edits a `src/*.c` BODY and never a header constant a battery mirrors: a
+mutated mirror fails `test_constants.py` by itself and would report a kill nothing else made. The
+per-function rows above name each one.
+
+**THE CODE REVIEW FOUND A REAL DEFECT THIS SWEEP DID NOT**, and the gap is worth recording because
+it was a missing CASE and not a missing mutation. `redraw_player_strip` was reading the buffer
+POINTERS where the original carries literals — the two strip blits are `lea $7f238.l,a0` @ 0x135ca
+and `lea $77538.l,a0` @ 0x135f2, and so are the two `lea`s into the digit that follow them, while
+the hi-score strip four instructions later genuinely does read `movea.l $17982.l,a3` @ 0x13620. The
+only case that moved the pointers SWAPPED them, which is symmetric across the two literals: the
+wrong code wrote the same two addresses in the other order and the diff stayed empty.
+`test_redraw_all_moves_only_the_half_that_reads_the_pointers` now points a pointer at a THIRD
+buffer, which is what separates the two halves; measured, it fails on the old code and passes on the
+new. Every other composer in this slice already had a third-buffer case — this was the one that did
+not, and it was the one where the code conflated them.
+
+**One survivor is known and was not counted, because it cannot be reached at all.** `score_add_bcd`
+hands `sound_start` a channel taken from D0, which at that point still holds the threshold longword
+the compare was made with — nothing sets it deliberately. It is DEAD in the shipped binary: tune
+0x10 opens with its own `fa 04` header, so `sound_start` overwrites the channel before using it. A
+mutation that passed 0 there would survive the whole suite, and no data the game holds could kill
+it. The argument is passed on because that is what the instruction stream does.
+
+### Three routines that cannot take a poison pass, and why
+
+Each refusal is MEASURED — the pass crashes the candidate or leaves it reading outside the image —
+rather than assumed, and `make guarded` is what found the second and third:
+
+* `player_intro_screen`, `title_screen_draw` and `role_of_honour_screen` all end in
+  `screen_flip_buffers`, which WRITES the two buffer pointers. The pass poisons every oracle-written
+  byte, so it poisons the very longword the routine reads its draw buffer from, and the re-run draws
+  at a canary address (measured: a bus error in the candidate).
+* `status_panel_redraw_all` does not flip, but `draw_power_gauge` inside it writes the clamped level
+  back to `power_gauge_display` and then indexes the frame table with it. The canary is the final
+  value inverted and that byte can only end on 0..3, so the canary is always 0xfc..0xff — negative,
+  which puts the frame 0xff00xx bytes outside the image.
+* `draw_power_gauge`'s OWN poison cases are therefore restricted to levels 0..3, which are not
+  written back and so are not poisoned. **`make test` passed the clamping level green** before
+  `make guarded` caught it: there was no image there to differ.
+
+What the pass would have bought for the composers is bought instead by the routines they are made
+of, every one of which has poison cases of its own (`draw_char`, `draw_bcd_number`,
+`draw_text_record`, `screen_clear`, `blit_graphic_block`, `playfield_clear`, and all eight `hud`
+leaves above), plus the ordering and source-walking cases named in the rows.
+
+**THIS IS A KIT GAP, NOT A PROPERTY OF THESE FOUR ROUTINES, and it wants naming as one.**
+`_attribution_check` (`tools/recreate_kit/harness.py`) poisons the oracle's ENTIRE write set, so any
+routine that READS A BYTE IT ALSO WRITES gets a canary where its own input was — every
+read-modify-write, every write-back clamp, every pointer swap. `differential`'s existing `exclude=`
+does not help: it is applied when the images are compared, never to the poisoning loop. The fix is a
+`poison_exclude=` (or, better, poisoning `writes − reads`), and the kit already has the half-measure
+precedent — `_vet_poison_is_attributable` REFUSES one such combination rather than fixing it. Until
+then, attribution for a composer rests entirely on each case hand-seeding noise over every
+destination, which is a thing an author can forget: `A_menu_palette` is bss and zero on both sides,
+and `test_intro_installs_the_frontend_palette` only works because it pokes noise into the SOURCE.
+
+### Coverage the game's own data cannot reach, and what bounds it
+
+Four input sets are driven short of their whole byte range, and in every case the bound is the
+HARNESS's rather than the game's — a source outside the loaded image is not a case, because the
+oracle would read unmapped memory or a synthesised vector while the candidate reads host heap:
+
+| routine | driven | bound |
+|---|---|---|
+| `hud_draw_powerup_icon` | 204 of 256 cursor bytes | the pointer must be at or above `loader.LOAD_BASE` and its 416-byte read inside the image. Cursor 0x5c fetches a pointer of **0**, and the oracle then serves the 68000 vector page it models while the candidate reads the image's own zeroes — a differential the routine has nothing to do with |
+| `hud_draw_weapon_icon` | 209 of 256 slot bytes | the same bound over a 144-byte read |
+| `draw_player_digit_shifted` | 128 of 256 player indices | `ext.w` then `mulu.w #$28` is an UNSIGNED multiply, so a glyph number with bit 7 set scales 0xff80..0xffff and lands ~2.6 MB past the font. The reachable set is `(player + 1) & 0xff <= 0x7f`: 0..0x7e plus 0xff. `make test` passed the other 128 (0x7f..0xfe) green, and `make guarded` is what said they were reading nothing |
+| `draw_power_gauge` | 128 of 256 level bytes | the same UNSIGNED-multiply bound one table over: `ext.w` + `mulu.w #$100` on a byte at or above 0x80 puts the frame 0xff00xx bytes past POWER.DAT. 0..0x7f is complete — 0..3 select a frame and 4..0x7f all clamp — and 0x80..0xff leave the image |
+
+The game itself writes 0..4 to the power-up cursor, 0..5 to the weapon slot, 0..1 to the player
+index and 0..4 to the gauge level, so every value it can produce is inside all four sets.
+
+### Three findings the review raised and this change deliberately did NOT fold in
+
+Recorded rather than fixed, because each one reaches outside this slice's files or its subject:
+
+* **`blit_rows_from_stream` copies BYTES where the original copies longwords.** Every `row_bytes`
+  it sees is a multiple of 4 and every offset is even, so a `uint32_t buffered[10]` staged through
+  `be32`/`wr32` is byte-identical for every input — and MORE faithful on target, where `be32` is an
+  aligned load that address-errors on exactly the odd addresses the original's `movem.l` does. It is
+  also ~4x cheaper: one panel repaint moves ~5,400 loop passes where ~1,400 would do, which at 8 MHz
+  is on the order of half a frame. Zynaps has no on-target build and no perf gate yet, so this is a
+  perf change with nothing to measure it against; it belongs to whichever change lands the first.
+* **`blit_rows_from_stream` (here) and `blit_graphic_block` (`src/video.c`) are the same row blit**,
+  the second being the first with one destination and a fixed 32-byte row. Two transcriptions means
+  the read-whole-row-before-storing invariant has to be re-argued per copy — and this slice proved
+  that risk real: `hud_draw_logo_anim`'s first draft dropped it, and only the review caught that the
+  comment claiming otherwise was false. Unifying them means editing `src/video.c`, which no routine
+  here needs; the natural home is a kit-level blit beside `machine.h`'s primitives.
+* **`copy_longwords` here is `src/scroll.c`'s `static copy_longs` and `src/video.c`'s `zero_longs`
+  a third time.** Collapsed to ONE definition inside this file (it had been written twice), but the
+  repo-wide count is now three `static`s of one loop. The shared home is `tools/recreate_kit/include/
+  machine.h`, beside `loop_passes` — a kit change, which is not this slice's to make.
+
+## Not reconstructed in the hud / highscore / score slice, and why
+
+| Addr | Name | Status |
+|---|---|---|
+| `0x12e66`, `0x12eae`, `0x12fd4` | `game_over_screen`, `highscore_check_and_insert`, `highscore_enter_name` | **Blocked at the KIT level, all three on the same gap.** The name-entry loop and the NOT RATED arm both drive the keyboard through `ikbd_send_cmd` @ 0x14444, which spins on the IKBD ACIA status at `$fffc00` and writes `$fffc02`; the last row of "Not reconstructed, and why" at the end of this file has the whole argument and the fix it needs (a shim-level ACIA model plus an IKBD write ledger). `game_over_screen` reaches it through `highscore_check_and_insert`, so all three go together. `highscore_enter_name` additionally busy-waits on the VBL flag at 0x198a7 and calls `draw_sprite_masked_collide` (0x15b7c), which is not reconstructed either. **The ranking and shift-down half of `highscore_check_and_insert` (0x12eb2..0x12f0c) is pure and would port on its own**, but it has no entry of its own and no `rts` — it is reachable only by entering the whole routine |
+| `0x13d9e` | `powerup_capsule_collected` | **Not blocked — `sound_start` landed — but it belongs in `src/weapon.c`, not here.** It ends in `jmp (a0)` through the 0x19348 / 0x1935c jump tables, so its arms at 0x13e8a / 0x13eb4 / 0x13ee8 / 0x13f0e / 0x13f3a are its tail and would be ported with it; those arms write `ship_speed_level` and the weapon decay timers (`include/player.h`) and call 0x15604, and one of them — `powerup_slot1_activate` @ 0x13ede — is ALREADY verified in `src/weapon.c`. Porting the parent into `src/hud.c` would put one arm in one translation unit and its five siblings in another, and would risk a duplicate symbol against the agent that owns `weapon`. It is the natural next weapon row |
+
+### Globals BORROWED with no home yet
+
+`include/hud.h` spells three sets of addresses that belong to other subsystems, each under a comment
+saying so and naming the edits that move it. They are on loan because no ported routine of the
+owning subsystem needs them yet, and `test_constants.py`'s duplicate-address check is what will say
+so if two spellings of one address ever stand at once:
+
+| borrowed | owner | note |
+|---|---|---|
+| `A_lives` 0x1991a, `A_current_player_index` 0x1991b | **player** (`../out/globals.tsv`) | `include/player.h` spells neither. **`A_lives` is WRITTEN from here** — `src/score.c`'s extra-life award does `image[A_lives]++`, from a different translation unit than any player routine, while globals.tsv classifies it `read`. The move is four edits, not one (delete the two lines, repoint two MIRRORS rows, swap `src/score.c`'s include) |
+| `A_screen_back_buffer` 0x70300, `A_screen_front_buffer` 0x78000 | **video** | the framebuffers as ABSOLUTE addresses, which is not what `include/video.h`'s `A_screen_back`/`A_screen_front` are — those are the pointer WORDS at 0x1797e/0x17982. `test/abi.py` already holds the same two numbers for the scratch map |
+
+### `src/text.c` and `include/text.h` were edited from this slice
+
+Three changes, all to files the ownership table (`README.md`) assigns to the `text` subsystem rather
+than to this one, and all because a routine here needs what the original already shares. **This is
+the one convention this slice knowingly steps outside**, and it is recorded here rather than left
+for a merge to discover:
+
+* `cell_address` became the exported `text_cell_address`. `draw_lives_icons` @ 0x13506 executes the
+  IDENTICAL four instructions `draw_char` @ 0x1371a does (`and.w #$fffe,d1 / lsl.w #2,d1 / adda.w`,
+  then `and.w #$1,d1 / adda.w`, both `adda.w` sign-extending), so this is one shared mechanism and
+  not two that look alike. A private copy in `src/hud.c` would have been the duplication.
+* `draw_text_record` gained a `uint16_t *end_column` out-parameter. That is D1, its SECOND output:
+  the original leaves the column one past the last character drawn, nothing reloads it, and
+  `player_intro_screen` prints the player's digit at exactly that column. `g_draw_text_record`'s
+  glue signature is unchanged, so `test_text.py` needed no edit — which is also why the output has
+  no pin in its OWN battery: the stub there dumps A6 alone.
+  `test_hud.py::test_intro_digit_follows_the_records_leftover_column` is the pin instead, seven
+  record shapes over the length (0, 1, 6, 18 characters), both ends of the start column's sign, and
+  a row change that must NOT move the digit. Measured: a `*end_column = column + 1` mutation is
+  killed there and survives the whole of `test_text.py`.
+* The eight shipped text records the front-end screens print (`A_msg_prepare_for_combat`,
+  `A_msg_player`, the four credits, the menu line and `A_msg_role_of_honour`) are DEFINED in
+  `include/text.h`, which is where `../out/globals.tsv` puts them and what owns the record format.
+  They were briefly in `include/hud.h` under a "borrowed" note; that would have detonated
+  `test_constants.py`'s duplicate-NAME check suite-wide the day the text agent spelt any of them,
+  and since this change already edits text.h the borrowing bought nothing. `test_text.py`'s own
+  SHIPPED_RECORDS still carries all twelve as bare literals — the four the high-score screens use
+  join this block when those land.
 
 ## Verified — util (8)
 
@@ -918,9 +1107,9 @@ reached by seeding real data:
 |---|---|---|
 | `0x153c0` | `sprite_bank_build_preshift8` | Not blocked either: it composes the now-verified 0x13858 (`copy_block_words`) with the already-verified `sprite_preshift8_2px`, and is the natural next sprite row |
 | `0x141c0` | `entity_ptr_from_index` (and `0x141c2`, its D6 entry) | **THE BLOCKER THIS ROW USED TO NAME IS GONE:** it said "there is no `include/player.h` yet", and there is — it defines `A_entity_table`, and `src/weapon.c` and `src/collision.c` both include it to read that address. A four-instruction leaf, still unported, and now the only thing standing between the tree and one home for the entity-record address: `entity_record` in `include/collision.h` is its arithmetic and `entity_from_index` in `src/weapon.c` is its `and.l #$ff,d6` mask, both waiting to be replaced by a call. Port the two entries together |
-| `0x12a28` | `title_screen_draw` | The last `text` routine. It composes `draw_text_record` (verified) with the ZYNAPS logo blit and a buffer flip, both of which belong to subsystems this agent does not own — the logo blit is `sprite`'s and the flip is `video`'s |
+| `0x12a28` | `title_screen_draw` | **Done** — verified in the `hud` section above, where it sits beside the two other front-end screen composers it is a near-copy of. `../out/subsystems.tsv` still files it under `text`; `test_status.py` requires a section to name a `src/<name>.c`, and its code is in `src/hud.c` |
 | `0x156ac` | `asteroids_load_and_build` | The second `fileio` routine. Its `load_file` half is verified now; the rest expands bigast.dat's six masked sprites into 8-frame 3-cell banks, which is sprite work and reads as the natural pair to `sprite_bank_build_preshift8` above |
-| — | the whole `hud` and `highscore` subsystems | Untouched this session, and neither is blocked: the HUD's ten routines are blits into the status panel that compose `draw_char`/`draw_bcd_number` (verified) with the panel graphics from status.pi1 and power.dat, and the four high-score routines compose those with the table and — for `highscore_enter_name` — the input model. They are the next natural rows once the panel's own staging exists |
+| — | the whole `hud` and `highscore` subsystems | **Superseded.** All ten of the `hud` subsystem's own routines are verified above — the section carries eleven rows because `title_screen_draw` is filed there too — and one of the four `highscore` ones; the other three are blocked on `ikbd_send_cmd` and have their own row in "Not reconstructed in the hud / highscore / score slice, and why" |
 | `0x16e90`, `0x19932`, `0x19a0a` | three name-map corrections | Not code: `../out/names_sound.txt` carries them for the orchestrator. Two `var` lines point one byte early at the previous record's terminator (the code loads 0x19933 and 0x19a0b), and the comment on the SFX toggle assumes a 0/1 byte where the `.PRG` ships 2 |
 | `0x14444` | `ikbd_send_cmd` | **Blocked at the KIT level, and the earlier row prescribed the wrong fix.** The routine spins on bit 1 of the IKBD ACIA status at `$fffc00` and then writes `$fffc02`. Adding `$fffc00` to `os.h`'s `OS_HW_*` set as a VOLATILE address does NOT work: VOLATILE means one declaration describes exactly one read and a SECOND read in the same run is refused — but a spin loop's whole nature is re-reading. Nor does a STATIC declaration, whose contract is that the machine's answer never changes; a status byte that must read "not ready" and then "ready" is precisely what the Phase 7 model excludes. And the write half has no ledger at all: `hw.h` exports `hw_read8` and no `hw_write8`, so a reconstruction's `$fffc02` store would be invisible on both sides. The correct fix is a shim-level ACIA model (a status byte that becomes ready after a declared number of polls, the way `sched.c` counts polls per wait site) plus an IKBD write ledger mirroring `psg.c` — playbook §5's "model the input hardware registers so busy-waits terminate". That is kit work, not this project's, and the surface that would catch it is on-target rather than the differential |
 | `0x14456` | `ikbd_acia_isr` | Same `$fffc00`/`$fffc02` gap as above, and it is an interrupt handler entered around a frame rather than a called routine |
@@ -930,5 +1119,9 @@ reached by seeding real data:
 
 ## Suite
 
-`make test` — **2372 passed**. `make guarded` — same count, 15771
+`make test` — **2516 passed**. `make guarded` — same count, 17565
 candidate runs guarded across 10 workers, no fault.
+
+THIS LINE IS SHARED, and several agents add batteries to this project at once — the count is
+whatever the last one to run the suite measured, so treat a mismatch against your own run as a
+concurrent landing rather than a regression until you have checked which sections moved.
