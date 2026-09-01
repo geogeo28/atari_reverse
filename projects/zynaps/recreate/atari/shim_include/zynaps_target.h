@@ -28,6 +28,17 @@
 /* One shifter colour register is a word. */
 #define SHIFTER_PEN_BYTES 2u
 
+/* Where the shifter's base register takes its two bytes from, as shifts of the address, and the
+ * span of the address each covers. An STF has NO LOW BYTE — $ff8201 and $ff8203 hold bits 23-16 and
+ * 15-8 and there is no third register — so an address that is not 256-byte aligned is truncated and
+ * the shifter displays from up to 255 bytes below where the program drew
+ * (docs/on-target-execution.md class 8). Both shim translation units need these: the backend
+ * assembles the published offset out of them and zynaps_main.c reads the register back. */
+#define VIDEO_BASE_HIGH_SHIFT 16
+#define VIDEO_BASE_MID_SHIFT   8
+#define VIDEO_BASE_HIGH_MASK 0x00ff0000u
+#define VIDEO_BASE_MID_MASK  0x0000ff00u
+
 /* ...and where pen `n` lives. FOUR loops walk the sixteen colour registers — two in zynaps_main.c
  * (reading them back and putting TOS's back) and two in zynaps_backend.c (the handlers' upload and
  * pen 0's blank) — and this is the address arithmetic all of them share. It is one definition
@@ -37,6 +48,27 @@
 static inline uint32_t shifter_pen_register(unsigned pen) {
     return HW_BUS(HW_PALETTE_BASE) + pen * SHIFTER_PEN_BYTES;
 }
+
+/* ---- the image, and the ONE address a relocated image cannot publish for itself ----------------
+ *
+ * The cores index a flat image at Ghidra addresses; on target that is a 1 MiB `.bss` array whose
+ * base is rounded up to 256 at run time. `zynaps_main.c` owns the array and this pointer; the
+ * BACKEND reads it, and that is the whole of why the pointer is shared.
+ *
+ * `screen_flip_buffers` (../src/video.c) publishes two bytes of an IMAGE OFFSET to the shifter's
+ * base register — exactly right in the differential's world, where the image IS the machine's
+ * memory and starts at 0, and exactly right on the original, whose framebuffers are absolute
+ * against the base it runs at. Here the shifter needs `zy_image_base + offset`, and the core has no
+ * way to know that: it is handed a `uint8_t *` and writes what the original writes.
+ *
+ * SO THE TRANSLATION LIVES IN THE HARDWARE DOOR, which is where every other image-to-machine
+ * question already lives and the one place the CORE ITSELF REACHES. M1 re-published the machine
+ * address from the shim after the boot slice, which worked only because the boot flips once;
+ * the frame loop flips every frame, so a re-publish after the fact stops being an arrangement at
+ * all. `zynaps_backend.c`'s `hw_write8` recognises the shifter's two base bytes, keeps the offset
+ * the cores have published so far, and stores the translated address — so a flip from inside the
+ * frame loop lands on the right memory with no shim in the path. */
+extern uint8_t *zy_image_base;
 
 /* ---- zynaps_main.c, for zynaps_os.s ----------------------------------------------------------- */
 
@@ -81,5 +113,27 @@ extern volatile uint32_t zy_hw_writes;
 extern volatile uint32_t zy_shifter_mode_writes;
 extern volatile uint32_t zy_palette_long_writes;
 extern volatile uint32_t zy_acia_bytes_sent;
+
+/* Read-modify-writes the cores made through the three doors. It says the seam is real: a build in
+ * which the kit's own off-target `src/hw.c` had been linked instead would show 0. */
+extern volatile uint32_t zy_rmw_stores;
+
+/* The video-base door's own account: the IMAGE offset the cores last published, the MACHINE address
+ * it was translated to, and how many times the pair was stored. `zy_video_base_published` is what
+ * the register read-back at the anchor must equal, which is the surface for a translation that
+ * silently stopped happening. */
+extern volatile uint32_t zy_video_base_offset;
+extern volatile uint32_t zy_video_base_published;
+extern volatile uint32_t zy_video_base_publishes;
+
+/* THE THREE READ-MODIFY-WRITE DOORS ARE NOT DECLARED HERE, and that is deliberate:
+ * `tools/recreate_kit/include/hw.h` declares `hw_bset8`/`hw_bclr8`/`hw_and8` beside `hw_write8`
+ * now (kit commit 2db68f6), the cores call them, and zynaps_backend.c defines them for the machine.
+ * A second declaration in this header would be a second contract for one name.
+ */
+
+/* ---- zynaps_main.c, for zynaps_os.s: the third interrupt entry's C half ----------------------- */
+void zy_acia_tick(void);
+extern volatile uint32_t zy_acia_ticks;
 
 #endif /* ZYNAPS_TARGET_H */

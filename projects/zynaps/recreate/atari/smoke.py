@@ -69,7 +69,7 @@ import ref_capture                                                     # noqa: E
 
 # --- the modes -----------------------------------------------------------------------------
 FLOPPY_MODE = "floppy"
-MODES = ("title", "titlefault", FLOPPY_MODE)
+MODES = ("title", "titlefault", FLOPPY_MODE, "game", "gamefault")
 
 # --- the machine -----------------------------------------------------------------------------
 TOS_ROM = REPO / "tools" / "hatari" / "TOS104US.img"
@@ -136,18 +136,31 @@ SHIFTER_PALETTE_PAIRS = 8
 # interrogation), one `move.b d0,$fffc02` each. They are `ikbd_send_cmd`'s whole store side, and the
 # per-command running totals asserted further down are the same two bytes counted at the same door.
 IKBD_BOOT_COMMANDS = 2
+# A CALL AT THE VIDEO-BASE DOOR IS TWO STORES, and that is M2's change to this arithmetic. The
+# shifter's base is a 24-bit address published as two bytes, `offset >> 8` and `offset >> 16`, and
+# the door has to translate the WHOLE offset to a machine address — a byte of a sum is not the sum of
+# a byte, because `image base + offset` carries out of bits 8-15 into 16-23. So each of the core's
+# two calls updates its half of the remembered offset and stores BOTH translated bytes.
+VIDEO_BASE_STORES_PER_CALL = 2
 # EVERY OTHER STORE THE CORES MAKE, and all of them are inside `boot_load_title_assets`:
-# `andi.b #$fc,$ff8260` (0x10056), the two video-base bytes at the tail of `screen_flip_buffers`
+# `andi.b #$fc,$ff8260` (0x10056), the two video-base calls at the tail of `screen_flip_buffers`
 # (0x1297a) and the eight palette longwords of `set_palette_title` (0x153ae). They used to be sinks
 # the shim replayed; the kit's write ledger made them real stores, and on target zynaps_backend.c is
 # what they land through.
-CORE_HW_WRITES = IKBD_BOOT_COMMANDS + 1 + 2 + SHIFTER_PALETTE_PAIRS
-# The SHIM's own, and there is now exactly one of them: the video base RE-published as a machine
-# address, two byte stores, because the core can only publish an image offset (zynaps_main.c's
-# `publish_screen_base` says why). The teardown's sixteen pens and four PSG registers are NOT here —
-# the record is written at the anchor, before the hand-back, so nothing the teardown stores is in
-# any of these counts.
-SHIM_HW_WRITES = 2
+CORE_VIDEO_BASE_CALLS = 2
+CORE_HW_WRITES = (IKBD_BOOT_COMMANDS + 1
+                  + CORE_VIDEO_BASE_CALLS * VIDEO_BASE_STORES_PER_CALL + SHIFTER_PALETTE_PAIRS)
+# The SHIM's own, and there is now exactly one of them: `publish_screen_base`'s two calls at the same
+# door, which re-publish the FRONT buffer so that `published_screen_base` has something the register
+# read-back can be compared against. The teardown's sixteen pens, its four PSG registers and its
+# three MFP restores are NOT here — the record is written at the anchor, before the hand-back, so
+# nothing the teardown stores is in any of these counts.
+# ...and it is its OWN count, not the cores' reused: `publish_screen_base` makes two calls because
+# the shifter's base is two bytes, and `screen_flip_buffers` makes two for the same reason — the two
+# 2s are the same fact about the register but they are counted at different call sites, and tying
+# them together would move both when only one had changed.
+SHIM_VIDEO_BASE_CALLS = 2
+SHIM_HW_WRITES = SHIM_VIDEO_BASE_CALLS * VIDEO_BASE_STORES_PER_CALL
 # ...and the control's injected pen, which is one word-wide store and nothing else.
 FAULT_HW_WRITES = 1
 # Each PSG register write is two port stores, the select latch then the data port.
@@ -201,6 +214,10 @@ VECTOR_DUMP = "vector.bin"
 # zynaps_main.c's four FILE_* constants by `assert_the_shim_owns_these_names`, below.
 SHIM_FILES = ("ZYNAPS.IMG", "BASE.BIN", "SCREEN.BIN", "STATE.BIN")
 SHIM_MAIN = HERE / "zynaps_main.c"
+# ...and the reconstruction itself, which is where every Ghidra address and record geometry the
+# frame differential uses is DEFINED. `assert_the_game_constants_are_the_headers` reads them rather
+# than this file retyping the numbers (CLAUDE.md §5).
+RECREATE = HERE.parent                         # projects/zynaps/recreate
 # ...and TOS's own, which is on BOTH drives and lands at a different point in the two boots: ours is
 # auto-run after the desktop has read its preferences, the shipped disk runs the game out of C:\AUTO
 # before the desktop exists at all. It is the operating system's I/O, not either program's.
@@ -219,6 +236,15 @@ BOOT_FILE_OPENS = 8
 # both numbers printed rather than shifting every value after it by one.
 RECORD_MAGIC = 0x5A594D31           # 'ZYM1'
 RECORD_TAIL = 0x444F4E45            # 'DONE'
+
+# The five addresses `frame_resolve_hits_and_game_state` leaves through, in ../include/frame.h's own
+# order, and the seven handlers the three interrupt entries dispatch to, in zynaps_main.c's. Named
+# here so the record reads as prose — `vbl_dispatch_attract` rather than field 96 — and because a
+# table that grew a handler on one side of the language boundary and not the other is caught by the
+# field count rather than by a wrong number under the right name.
+FRAME_EXIT_NAMES = ("title", "reload_section", "restart_section", "advance_section", "next_frame")
+VBL_HANDLER_NAMES = ("in_game", "title", "menu", "attract")
+TIMER_B_HANDLER_NAMES = ("in_game", "raster", "attract")
 RECORD_FIELDS = (
     ["magic", "fields",
      "image_base", "program_staged_bytes", "super_token",
@@ -235,7 +261,21 @@ RECORD_FIELDS = (
     + [f"pen_at_anchor_{pen}" for pen in range(PALETTE_PENS)]
     + ["vbl_vector_after", "timer_b_vector_after", "physbase_after", "rez_after"]
     + [f"pen_after_{pen}" for pen in range(PALETTE_PENS)]
-    + ["tail"])
+    # ---- M2's own fields. ZERO IN A TITLE BUILD, and `check_the_game_fork_was_not_taken` asserts
+    # exactly that rather than skipping them: a title binary that had somehow run the game path
+    # would otherwise pass every M1 surface while being a different program.
+    + ["phase_reached", "attract_passes", "section_starts", "frames_run"]
+    + [f"frame_exit_{name}" for name in FRAME_EXIT_NAMES]
+    + [f"vbl_dispatch_{name}" for name in VBL_HANDLER_NAMES]
+    + [f"timer_b_dispatch_{name}" for name in TIMER_B_HANDLER_NAMES]
+    + ["acia_ticks", "acia_dispatches",
+       "unknown_vector_halts", "unknown_vector", "unknown_vector_handler",
+       "mfp_settle_restores", "rmw_stores",
+       "tos_acia_vector", "acia_vector_after",
+       "player_count", "level_section", "lives", "score_bcd", "frame_dump_bytes", "game_fault",
+       "first_life_ended_at",
+       "video_base_offset", "video_base_published", "video_base_publishes",
+       "tail"])
 
 # STATE.BIN's length, which is the record's own — one big-endian longword a field. The floppy
 # mode's "the machine finished" test compares the trace's Fwrite byte count against it, so the
@@ -361,7 +401,7 @@ def floppy_medium(image):
     return ["--disk-a", str(image)]
 
 
-def hatari_arguments(medium, trace_file, machine, tos_rom):
+def hatari_arguments(medium, trace_file, machine, tos_rom, run_vbls=RUN_VBLS):
     """The whole Hatari command line for one side. Both sides get exactly this, bar the medium.
 
     --frameskips 0, --statusbar off and --drive-led off are the three settings that decide whether a
@@ -374,7 +414,7 @@ def hatari_arguments(medium, trace_file, machine, tos_rom):
     return [HATARI, "--tos", str(tos_rom), "--machine", machine, "--memsize", str(MEMSIZE_MB),
             "--monitor", "rgb", "--confirm-quit", "off", "--statusbar", "off",
             "--drive-led", "off", "--frameskips", "0", "--sound", "off",
-            "--run-vbls", str(RUN_VBLS), "--trace", TRACE_FLAGS,
+            "--run-vbls", str(run_vbls), "--trace", TRACE_FLAGS,
             "--trace-file", str(trace_file)] + list(medium)
 
 
@@ -623,7 +663,7 @@ def await_condition(session, predicate, doing, deadline_seconds=ANCHOR_DEADLINE_
     raise SystemExit(f"{doing()} — nothing in {deadline_seconds:.0f} s")
 
 
-def run_ours_from_floppy(mode, out_dir, work, machine, tos_rom):
+def run_ours_from_floppy(mode, build, out_dir, work, machine, tos_rom):
     r"""Boot our .PRG the way the machine on the desk does: TOS's desktop, off AUTO\ on a FAT12 disk.
 
     FOUR THINGS DIFFER FROM `run_ours`, and all four are consequences of the medium.
@@ -653,8 +693,11 @@ def run_ours_from_floppy(mode, out_dir, work, machine, tos_rom):
     session = HeadlessSession(hatari_arguments(floppy_medium(image), trace, machine, tos_rom),
                               log_path=log, fifo_path=out_dir / f"{mode}.fifo", work_dir=work)
     try:
-        vbl_entry, anchor = symbol_offsets(mode, VBL_ENTRY_SYMBOL, ANCHOR_SYMBOL)
-        base = poll_for_our_load_base(session, vbl_entry, built_prg(mode))
+        # THE MODE NAMES THE ARTIFACTS AND THE BUILD NAMES THE BINARY. `floppy` is a mode of this
+        # file and not of build.sh any more (the medium is a flag there), so the ELF whose symbols
+        # this reads is the one that was written onto the volume — `--floppy-build`'s.
+        vbl_entry, anchor = symbol_offsets(build, VBL_ENTRY_SYMBOL, ANCHOR_SYMBOL)
+        base = poll_for_our_load_base(session, vbl_entry, built_prg(build))
         done = arm_anchor(session, f"pc = ${base + anchor:x}")
         await_file(session, done, "waiting for our anchor's next-vblank capture")
         await_condition(session, lambda: state_record_is_written(trace),
@@ -953,9 +996,6 @@ def check_the_program_finished(ours):
         problems.append(f"{record['psg_refused']} PSG writes named a register outside 0..15")
     if not record["psg_writes"]:
         problems.append("the sound driver never wrote the chip — no music")
-    if record["timer_b_ticks_at_anchor"]:
-        problems.append(f"Timer B fired {record['timer_b_ticks_at_anchor']} times, and nothing in "
-                        f"M1 starts it")
     if record["screen_bytes_written"] != SCREEN_BYTES:
         problems.append(f"the framebuffer dump was {record['screen_bytes_written']} bytes")
     # The cross-language pin: `zy_anchor` must still be standing when the shot is taken, or the
@@ -1315,23 +1355,731 @@ def stage_our_build(mode):
         (OUR_DISK / name).unlink(missing_ok=True)
 
 
-def stage_our_floppy():
-    """Refuse a floppy image that is not the build sitting next to it.
+def stage_our_floppy(build):
+    r"""Refuse a floppy image that is not the build sitting next to it.
 
     mkfloppy.py verifies the volume against the files it wrote; this verifies it against the files
     that exist NOW. The two are different questions, and the one that bites is this one: an image
-    left over from an earlier `build.sh floppy` boots and passes every surface, having tested a
-    binary that is no longer on disk.
+    left over from an earlier floppy build boots and passes every surface, having tested a binary
+    that is no longer on disk.
+
+    `build` IS A PARAMETER because build.sh's medium is a flag rather than a mode (README.md's
+    Unpinned 14): any mode can be written onto a floppy, so the volume's `AUTO\ZYNAPS17.PRG` has to
+    be checked against the one that was, not against a name this file assumes.
     """
     if not OUR_FLOPPY.is_file():
-        raise SystemExit(f"no {OUR_FLOPPY} — run `bash {HERE / 'build.sh'} floppy` first")
+        raise SystemExit(f"no {OUR_FLOPPY} — run `bash {HERE / 'build.sh'} {build} floppy` first")
     on_volume = floppy_file(OUR_FLOPPY, f"{mkfloppy.AUTO_DIR}/{mkfloppy.AUTO_PRG}")
-    if on_volume != built_prg(FLOPPY_MODE).read_bytes():
+    if on_volume != built_prg(build).read_bytes():
         raise SystemExit(f"{OUR_FLOPPY.name}'s {mkfloppy.AUTO_PRG} is not "
-                         f"build/ZYNAPS-{FLOPPY_MODE}.PRG — the image is stale, rebuild it")
+                         f"build/ZYNAPS-{build}.PRG — the image is stale, rebuild it")
 
 
 # =================================================================================================
+# =================================================================================================
+# M2 — THE WHOLE GAME, AND THE FRAME DIFFERENTIAL THAT JUDGES IT
+#
+# `title` compares two programs that have only booted. This compares two programs that are PLAYING:
+# the shipped 1988 binary and the reconstruction, both driven from the same anchor with the same
+# input and the same random seed, at the same numbered frames of the same section.
+#
+# WHAT MAKES THE TWO COMPARABLE, and every one of these is a pin rather than a hope:
+#
+#  * THE FRAME NUMBER IS THE LOOP HEAD'S OWN PASS COUNT. One `frame_loop_once` here is one arrival
+#    at 0x10f4e there, so "frame 60" means the same thing to the program's own counter and to a
+#    Hatari breakpoint's hit count. Sample N is the state AFTER N passes, i.e. the original's
+#    (N + 1)th arrival.
+#  * THE INPUT IS THE SAME. Both sides are given the fire button — poked into the byte the ACIA
+#    handler writes, because Hatari swallows a key bound to its own joystick emulation and the stick
+#    cannot be pressed from outside at all (tools/hatari_headless.py's docstring records that
+#    measurement; `atari/run.sh` is the discharge). Both are then RELEASED at the first arrival at
+#    the loop head, before the frame's own read of the byte, so frame 1 sees a neutral stick on both.
+#  * THE RANDOM STREAM IS THE SAME. `rand16` is called in the attract loop and in the fire wait, so
+#    the two sides arrive at the game with different LFSR states — a different enemy on frame 1. The
+#    same breakpoint parks both at the seed the .PRG ships with.
+#
+# WHAT IS COMPARED at each sample: the 32000-byte framebuffer the shifter is displaying, the
+# sixteen colour registers read off the chip, and the twenty entity records. The entity table's
+# SPRITE POINTERS are rebased before the compare — they are absolute on both sides and the two
+# programs load at different addresses — and `entity_problems` says exactly which bytes it excused.
+# =================================================================================================
+GAME_MODE = "game"
+GAME_FAULT_MODE = "gamefault"
+
+# ../include/frame.h's loop head: `bra.w $10f4e` at 0x1296a comes back here once a frame.
+GHIDRA_FRAME_LOOP_HEAD = 0x10F4E
+# ../include/irq.h's `A_joystick_state` — joystick 1, fire in bit 7, written by `ikbd_acia_isr`.
+GHIDRA_JOYSTICK_STATE = 0x19681
+JOYSTICK_FIRE = 0x80
+JOYSTICK_NEUTRAL = 0
+# The two polls the ORIGINAL reads the joystick byte at, and nowhere else: `tst.b $19681` in
+# `section_start_tail`'s PREPARE FOR COMBAT wait and in `title_attract_loop`'s menu
+# (../src/init.c's SECTION_TAIL_FIRE_WAIT_SITE and ATTRACT_FIRE_WAIT_SITE, which the reconstruction
+# already names because the off-target model counts polls per site).
+GHIDRA_SECTION_TAIL_FIRE_POLL = 0x10F2A
+GHIDRA_ATTRACT_FIRE_POLL = 0x12C5E
+# How many arrivals at one of those polls between presses. Each pass of the wait sends an IKBD
+# command, so the loop is thousands of cycles and this is a press every few milliseconds — often
+# enough that the wait leaves promptly, rare enough that the debugger is not entered in a spin.
+FIRE_POLLS_PER_PRESS = 20
+# ../include/rng.h: the 32-bit LFSR and the seed the shipped .PRG carries.
+GHIDRA_RNG_STATE = 0x195F4
+RNG_SHIPPED_SEED = 0x83E4F2B3
+# ../include/player.h / ../include/entity.h / ../include/frame.h — the twenty records the loop drives.
+GHIDRA_ENTITY_TABLE = 0x17A8E
+ENTITY_SLOTS = 20
+ENTITY_STRIDE = 0x2C
+ENTITY_SPRITE_OFFSET = 0x0A
+ENTITY_SPRITE_BYTES = 4
+ENTITY_TABLE_BYTES = ENTITY_SLOTS * ENTITY_STRIDE
+# How many differing bytes the message spells before it starts counting instead. Enough
+# for a whole record's worth of fields; past that the list is noise and the number is the
+# finding.
+ENTITY_DIFF_REPORTED = 12
+# ../include/video.h's screen pointer pair, as one range: which buffer the original was displaying.
+GHIDRA_SCREEN_POINTERS = 0x1797E
+SCREEN_POINTER_BYTES = 8
+# `zynaps_main.c`'s own phases, in its enum's order. The record carries the number.
+PHASE_PLAYING = 6
+PHASE_BUDGET_SPENT = 7
+PHASE_NAMES = ("staging", "title assets", "gameplay assets", "attract", "front-end screens",
+               "section start", "playing", "budget spent", "halted")
+# How long to hold the fire button before giving up on the game ever starting.
+FIRE_DEADLINE_SECONDS = 300.0
+FIRE_POKE_SECONDS = 0.2
+# A WHOLE GAME NEEDS A BIGGER BUDGET THAN A TITLE SCREEN, and the number is a measurement rather
+# than a guess: at 12000 the run reached frame 120 of 240 and Hatari quit under it, having spent
+# most of its vertical blanks in the attract loop and the PREPARE FOR COMBAT wait while the driver
+# poked the fire button. This is that with room for the original's slower start.
+GAME_RUN_VBLS = 80000
+
+
+def c_define(source, name):
+    """One `#define <name> <value>` from a C source, as an int.
+
+    CLAUDE.md §5: "when the same value must agree in two places that can't import each other, pick
+    one canonical definition and pin the other equal with a test". The canonical definition of every
+    address below is the reconstruction's own header; this is the import, so a header that moves one
+    breaks the run at the parse with both spellings named instead of comparing the wrong bytes.
+    """
+    marker = f"#define {name} "
+    if marker not in source:
+        raise SystemExit(f"no `{marker.strip()}` to read — smoke.py names a constant its header "
+                         f"no longer defines")
+    value = source[source.index(marker) + len(marker):].split()[0]
+    return int(value.rstrip("uU").rstrip(","), 0)
+
+
+def assert_the_game_constants_are_the_headers(headers=None):
+    """Every Ghidra address and record geometry this mode uses, checked against its owning header.
+
+    The frame differential reads the ORIGINAL's RAM at addresses computed from these, so one that
+    had drifted would compare two unrelated ranges and could still come out green on a quiet slot.
+    """
+    read = headers or (lambda name: (RECREATE / name).read_text())
+    # THE TWO POLL SITES ARE IN THE .c AND NOT THE .h, and that is the reconstruction's own choice:
+    # they are `sched_poll8`'s site identifiers, which only the routine that polls has a use for.
+    for constant, owner, define in (
+            (GHIDRA_JOYSTICK_STATE, "include/irq.h", "A_joystick_state"),
+            (GHIDRA_RNG_STATE, "include/rng.h", "A_rng_lfsr_state"),
+            (GHIDRA_ENTITY_TABLE, "include/player.h", "A_entity_table"),
+            (ENTITY_STRIDE, "include/entity.h", "ENTITY_STRIDE"),
+            (ENTITY_SPRITE_OFFSET, "include/entity.h", "ENTITY_SPRITE"),
+            (ENTITY_SLOTS, "include/frame.h", "ENTITY_SLOTS"),
+            (GHIDRA_SCREEN_POINTERS, "include/video.h", "A_screen_back"),
+            (GHIDRA_SECTION_TAIL_FIRE_POLL, "src/init.c", "SECTION_TAIL_FIRE_WAIT_SITE"),
+            (GHIDRA_ATTRACT_FIRE_POLL, "src/init.c", "ATTRACT_FIRE_WAIT_SITE")):
+        theirs = c_define(read(owner), define)
+        if constant != theirs:
+            raise SystemExit(f"smoke.py has {define} = {constant:#x}, ../{owner} has "
+                             f"{theirs:#x} — the frame differential would read the wrong range")
+
+
+def assert_the_phase_names_are_the_shims():
+    """...and the same for `zynaps_main.c`'s phase enum, which the record carries as a NUMBER.
+
+    `phase_reached` is an ordinal, so a phase inserted in the middle of that enum renames every one
+    after it and this file would report the run stopping somewhere it did not.
+    """
+    source = SHIM_MAIN.read_text()
+    marker = "enum zy_phase_reached {"
+    body = source[source.index(marker) + len(marker):source.index("};", source.index(marker))]
+    declared = [line.split("/*")[0].split("=")[0].strip().rstrip(",")
+                for line in body.splitlines()
+                if line.strip().startswith("PHASE_")]
+    ours = [f"PHASE_{name.upper().replace(' ', '_').replace('-', '_')}" for name in PHASE_NAMES]
+    if declared != ours:
+        raise SystemExit(f"zynaps_main.c's phases are {declared} and smoke.py's are {ours} — "
+                         f"`phase_reached` is an ordinal and would name the wrong one")
+    if PHASE_NAMES[PHASE_PLAYING] != "playing" or PHASE_NAMES[PHASE_BUDGET_SPENT] != "budget spent":
+        raise SystemExit("smoke.py's PHASE_PLAYING / PHASE_BUDGET_SPENT do not index their own "
+                         "names — the two constants and the list have drifted apart")
+
+
+def frame_samples():
+    """The sample frames, read out of zynaps_main.c's own `ZY_FRAME_SAMPLES`.
+
+    PINNED ACROSS THE LANGUAGE BOUNDARY rather than agreed with it (CLAUDE.md §5): the binary dumps
+    FRAME<i>.BIN for the i-th entry of that list and this side arms the original's breakpoints from
+    the same list, so a frame added there and not here would compare two different frames under the
+    same name.
+    """
+    source = SHIM_MAIN.read_text()
+    marker = "#define ZY_FRAME_SAMPLES "
+    line = source[source.index(marker) + len(marker):].splitlines()[0]
+    samples = [int(part.strip().rstrip("uU"), 0) for part in line.split(",")]
+    if not samples or sorted(samples) != samples:
+        raise SystemExit(f"zynaps_main.c's ZY_FRAME_SAMPLES is {samples} — the smoke needs an "
+                         f"ascending, non-empty list to arm one breakpoint per sample")
+    return samples
+
+
+def runtime(base, ghidra):
+    """A Ghidra address at the address the ORIGINAL was relocated to."""
+    return base + ghidra - LOAD_BASE
+
+
+def press_fire_only_in_a_wait(session, finished, doing, press=None):
+    """Let the run proceed, pressing fire ONLY while the program is waiting for it.
+
+    The byte is poked rather than pressed because Hatari swallows a key bound to its keyboard-as-
+    joystick emulation — measured, and recorded in tools/hatari_headless.py. So this is
+    docs/on-target-execution.md class 12 by construction on BOTH sides: the gate is crossed by a
+    poke, and the input path behind it (a 6301 report parsed by `ikbd_acia_isr`) is exercised by the
+    run but is not what opens the gate.
+
+    THE PRESS MUST NEVER REACH A FRAME, and a first draft that poked on a wall-clock timer did:
+    the frame loop interrogates the controller once a frame, so a poke landing between the loop
+    head's release and the stage's own read gave one side a shot the other did not fire — measured
+    as a framebuffer that differed by 12 bytes at frame 30 in one run and 24 in the next, which is a
+    NON-DETERMINISTIC comparison and worth nothing. So each side presses from somewhere that only
+    exists inside a wait: the original from a repeating breakpoint on the poll at 0x10f2a, ours from
+    a driver that reads the program's own phase and presses only when it is not PLAYING.
+
+    IT KEEPS PRESSING AFTER THE GAME HAS STARTED, which is not laziness: the ship dies (measured at
+    frame 176 of a neutral-stick life with the front end's leftovers in the entity table), the
+    frame loop takes its RESTART exit, and
+    `section_start_tail` asks for the fire button again. A driver that let go after the first start
+    parked the run in that wait for ever with four of its five samples taken.
+    """
+    deadline = time.monotonic() + FIRE_DEADLINE_SECONDS
+    while time.monotonic() < deadline:
+        if finished():
+            return
+        session.require_alive(doing)
+        if press is not None:
+            press()
+        session.wait(FIRE_POKE_SECONDS)
+    raise SystemExit(f"the run did not finish in {FIRE_DEADLINE_SECONDS:.0f} s — {doing}")
+
+
+def start_of_play_action(work, name, rng_address, entity_address, marker):
+    """The action file both sides run at their FIRST arrival at the frame loop's head.
+
+    TWO PINS, and both exist because the two sides reach the loop head through DIFFERENT front ends.
+
+    * The RANDOM STREAM. `rand16` is called once a pass in the attract loop and once a pass in the
+      fire wait, and the two sides make different numbers of both, so they would arrive with
+      different LFSR states — a different enemy on frame 1.
+    * The ENTITY TABLE, which is the front end's scratch as well as the frame loop's. MEASURED: with
+      the RNG pinned and this not, entity record 0 differed at five bytes from frame 30 onwards and
+      then never moved again — `A_entity_table`'s first record is what the front end draws its
+      GUNSIGHT through (`../include/highscore.h`), and our attract loop leaves it in a different
+      state because it exits after one pass where the original's runs until the driver presses fire
+      (README.md's M2 unpinned 19). The frame loop's own `section_restart_prologue` clears each
+      record's ALIVE byte and nothing else, so the rest of that scratch survives into the game.
+    * Neither pin is applied PER FRAME. The state has to EVOLVE identically from the loop head, and
+      re-applying either every frame would hide exactly the divergence this comparison is for.
+
+    ZEROING IS NOT FABRICATION HERE, and the distinction matters: it makes the two sides' STARTING
+    state equal without inventing a value either program could not have — an all-zero table is what
+    a machine that had just booted holds, and it is a superset of the clearing the game's own
+    section start does. What it does NOT do is fix unpinned 19; it stops the front end's difference
+    being reported as a frame-loop one.
+
+    The marker is how the driver sees the game start.
+    """
+    return action_file(work, name,
+                       f"w l ${rng_address:x} ${RNG_SHIPPED_SEED:x}",
+                       f"loadbin {zero_blob(work, ENTITY_TABLE_BYTES)} ${entity_address:x}",
+                       f"savebin {marker} ${A_VECTOR_VBL:x} ${VECTOR_BYTES:x}")
+
+
+def zero_blob(work, length):
+    """A file of `length` zero bytes for the debugger's `loadbin` — one per length, reused."""
+    path = Path(work) / f"zero{length}.bin"
+    if not path.is_file():
+        path.write_bytes(bytes(length))
+    return path
+
+
+def release_action(work, name, joystick_address):
+    """...and the one that runs at EVERY arrival, on a breakpoint with no `:once`.
+
+    The frame loop reads `A_joystick_state` inside its first stage, after the loop head, so clearing
+    the byte here means every frame of both runs sees a neutral stick whatever the driver is doing
+    with the fire button. That is what makes the input identical rather than merely similar.
+    """
+    return action_file(work, name, f"w b ${joystick_address:x} ${JOYSTICK_NEUTRAL:x}")
+
+
+def run_ours_game(mode, out_dir, work, machine, tos_rom):
+    """Boot our .PRG, start a game, and let it run its declared budget of frames."""
+    trace = out_dir / f"{mode}.trace"
+    log = out_dir / f"{mode}.log"
+    loop_once, anchor, image_pointer, phase_field = symbol_offsets(
+        mode, "frame_loop_once", ANCHOR_SYMBOL, "zy_image_base", "g_phase")
+    session = HeadlessSession(hatari_arguments(gemdos_medium(OUR_DISK, OUR_AUTO), trace,
+                                               machine, tos_rom, GAME_RUN_VBLS),
+                              log_path=log, fifo_path=out_dir / f"{mode}.fifo", work_dir=work)
+    try:
+        session.wait(BASE_POLL_START_SECONDS)
+        base_file = await_file(session, OUR_DISK / BASE_FILE, "waiting for the program to start",
+                               deadline_seconds=ANCHOR_DEADLINE_SECONDS)
+        base = struct.unpack(">I", base_file.read_bytes()[:VECTOR_BYTES])[0] - anchor
+        # The image is a .bss array whose base is a run-time fact; the shim publishes the pointer and
+        # this reads it, so nothing here has to predict where GEMDOS put us.
+        image = struct.unpack(">I", session.savebin("image.bin", base + image_pointer,
+                                                    VECTOR_BYTES))[0]
+        started = work / "OURSTART.bin"
+        session.arm(f"b pc = ${base + loop_once:x} :once :quiet "
+                    + start_of_play_action(work, "OURSTART.INI", image + GHIDRA_RNG_STATE,
+                                           image + GHIDRA_ENTITY_TABLE, started))
+        session.arm(f"b pc = ${base + loop_once:x} :quiet "
+                    + release_action(work, "OURFRAME.INI", image + GHIDRA_JOYSTICK_STATE))
+        record_file = OUR_DISK / STATE_FILE
+
+        def press_if_waiting():
+            """Our side's press: gated on the program's OWN phase, which is exact — `g_phase` is
+            PLAYING for the whole of the frame loop and nothing else, so a poke made under this
+            guard cannot land in a frame."""
+            phase = struct.unpack(">I", session.savebin("phase.bin", base + phase_field,
+                                                        VECTOR_BYTES))[0]
+            if phase != PHASE_PLAYING:
+                session.poke(image + GHIDRA_JOYSTICK_STATE, JOYSTICK_FIRE)
+
+        press_fire_only_in_a_wait(session,
+                                  lambda: record_file.is_file() and record_file.stat().st_size,
+                                  "waiting for our side to play out its frame budget",
+                                  press_if_waiting)
+        session.wait(POST_EXIT_SECONDS)
+    finally:
+        status = session.close()
+    samples = frame_samples()
+    return {"status": status, "log": log, "trace": trace, "work": work, "base": base,
+            "image": image,
+            "record": read_record(OUR_DISK / STATE_FILE),
+            "screen": (OUR_DISK / SCREEN_FILE).read_bytes(),
+            "frames": sample_dumps(OUR_DISK, "FRAME", samples),
+            "pens": sample_dumps(OUR_DISK, "PAL", samples),
+            "entities": sample_dumps(OUR_DISK, "ENT", samples)}
+
+
+def sample_dumps(directory, stem, samples):
+    """One side's per-sample dumps, with a MISSING one read as empty rather than as a traceback.
+
+    A run that spends its budget in a wait reaches only some of its samples, and the check written
+    for exactly that — `check_the_game_ran`'s "only N frames ran" — cannot run if collecting the
+    files raises first. An empty blob fails the length guards next door and names the frame.
+    """
+    return {frame: (directory / f"{stem}{index}.BIN").read_bytes()
+                   if (directory / f"{stem}{index}.BIN").is_file() else b""
+            for index, frame in enumerate(samples, 1)}
+
+
+def run_original_game(out_dir, work, machine, tos_rom, samples):
+    """Boot the shipped binary, start the same game, and dump the same three things per frame.
+
+    ONE BREAKPOINT PER SAMPLE, on the loop head, with Hatari's own hit count doing the arithmetic:
+    `:N` breaks on the Nth hit and `:once` retires it. Sample N is the state after N passes, so the
+    breakpoint is armed for hit N + 1 — and a count of 1 is refused by Hatari, which is why the
+    first arrival is a plain `:once` and carries the two pins instead.
+    """
+    trace = out_dir / "original.trace"
+    log = out_dir / "original.log"
+    session = HeadlessSession(hatari_arguments(gemdos_medium(ORIGINAL_DISK, ORIGINAL_AUTO), trace,
+                                               machine, tos_rom, GAME_RUN_VBLS),
+                              log_path=log, fifo_path=out_dir / "original.fifo", work_dir=work)
+    try:
+        base = poll_for_program(session, ORIGINAL_PRG, "waiting for the original to be loaded")
+        joystick, rng = runtime(base, GHIDRA_JOYSTICK_STATE), runtime(base, GHIDRA_RNG_STATE)
+        head = runtime(base, GHIDRA_FRAME_LOOP_HEAD)
+        started = work / "THEIRSTART.bin"
+        session.arm(f"b pc = ${head:x} :once :quiet "
+                    + start_of_play_action(work, "THEIRSTART.INI", rng,
+                                           runtime(base, GHIDRA_ENTITY_TABLE), started))
+        session.arm(f"b pc = ${head:x} :quiet "
+                    + release_action(work, "THEIRFRAME.INI", joystick))
+        for index, frame in enumerate(samples, 1):
+            session.arm(f"b pc = ${head:x} :{frame + 1} :once :quiet "
+                        + action_file(work, f"THEIR{index}.INI",
+                                      *original_sample_dumps(work, base, index)))
+        # THE ORIGINAL PRESSES FIRE FROM INSIDE ITS OWN WAITS, on repeating breakpoints at the two
+        # polls that read the byte: `tst.b $19681` at 0x10f2a (PREPARE FOR COMBAT, re-entered after
+        # every death) and at 0x12c5e (the attract menu). The PC reaches neither during a frame, so
+        # the press cannot perturb one. `:N` fires on every Nth arrival, which is often enough for a
+        # loop that sends an IKBD command on each pass and cheap enough not to crawl.
+        for site, name in ((GHIDRA_SECTION_TAIL_FIRE_POLL, "THEIRFIRE1.INI"),
+                           (GHIDRA_ATTRACT_FIRE_POLL, "THEIRFIRE2.INI")):
+            session.arm(f"b pc = ${runtime(base, site):x} :{FIRE_POLLS_PER_PRESS} :quiet "
+                        + action_file(work, name,
+                                      f"w b ${joystick:x} ${JOYSTICK_FIRE:x}"))
+        last = work / f"OENT{len(samples)}.bin"
+        press_fire_only_in_a_wait(session, lambda: last.is_file() and last.stat().st_size,
+                                  "waiting for the original's last sampled frame")
+        # The original never terminates — it runs on into its next life — so this side is closed by
+        # the driver rather than by the program.
+    finally:
+        status = session.close()
+    return {"status": status, "log": log, "trace": trace, "work": work, "base": base,
+            "frames": {frame: original_front_buffer(work, index)
+                       for index, frame in enumerate(samples, 1)},
+            "pens": {frame: read_or_empty(work / f"OPAL{index}.bin")
+                     for index, frame in enumerate(samples, 1)},
+            "entities": {frame: read_or_empty(work / f"OENT{index}.bin")
+                         for index, frame in enumerate(samples, 1)}}
+
+
+def read_or_empty(path):
+    """...and the original's side of the same rule — a breakpoint that never fired is an empty
+    dump the length guards name, not an exception before the report is printed."""
+    return path.read_bytes() if path.is_file() else b""
+
+
+def original_sample_dumps(work, base, index):
+    """What the original's breakpoint dumps at one sample: both buffers, which one is showing,
+    the colour registers and the entity table.
+
+    BOTH FRAMEBUFFERS, because the debugger cannot dereference: the game's two buffers are at the
+    absolute addresses it hard-codes and the pointer pair says which of them is front, so the choice
+    is made on the host afterwards (`original_front_buffer`).
+    """
+    return [f"savebin {work / ('OPTR%d.bin' % index)} "
+            f"${runtime(base, GHIDRA_SCREEN_POINTERS):x} ${SCREEN_POINTER_BYTES:x}",
+            f"savebin {work / ('OFBA%d.bin' % index)} ${GAME_SCREEN_BACK:x} ${SCREEN_BYTES:x}",
+            f"savebin {work / ('OFBB%d.bin' % index)} ${GAME_SCREEN_FRONT:x} ${SCREEN_BYTES:x}",
+            f"savebin {work / ('OPAL%d.bin' % index)} ${HW_PALETTE_BASE:x} "
+            f"${PALETTE_PENS * PEN_BYTES:x}",
+            f"savebin {work / ('OENT%d.bin' % index)} ${runtime(base, GHIDRA_ENTITY_TABLE):x} "
+            f"${ENTITY_TABLE_BYTES:x}"]
+
+
+def original_front_buffer(work, index):
+    """Whichever of the two dumps the original's own `screen_front` pointer named."""
+    pointers = work / f"OPTR{index}.bin"
+    if not pointers.is_file() or pointers.stat().st_size < SCREEN_POINTER_BYTES:
+        return b""                     # the breakpoint never fired; the length guard names it
+    _, front = struct.unpack(">II", pointers.read_bytes()[:SCREEN_POINTER_BYTES])
+    if front == GAME_SCREEN_BACK:
+        return read_or_empty(work / f"OFBA{index}.bin")
+    if front == GAME_SCREEN_FRONT:
+        return read_or_empty(work / f"OFBB{index}.bin")
+    raise SystemExit(f"the original's screen_front held {front:#x} at sample {index}, which is "
+                     f"neither of the two buffers it hard-codes")
+
+
+def entity_rebase_spans():
+    """The byte ranges of the entity table that hold a POINTER and cannot be compared raw.
+
+    Each record's ENTITY_SPRITE is an absolute address of the loaded program, so the two sides
+    differ there by exactly the difference of their load bases. The comparison excludes those twenty
+    longwords from the byte diff and checks them REBASED instead, which is stricter than skipping
+    them: a sprite pointing at the wrong bank is still caught.
+    """
+    return [(slot * ENTITY_STRIDE + ENTITY_SPRITE_OFFSET, ENTITY_SPRITE_BYTES)
+            for slot in range(ENTITY_SLOTS)]
+
+
+def in_the_loaded_program(address, base, size):
+    """Is this longword an address of the program that was loaded at `base`?
+
+    A sprite field that holds neither side's program address is not a pointer at all — it is what a
+    slot the game has never armed happens to contain, and on the two machines that is a different
+    piece of leftover (measured: `$fc0000` here against `$fc55aa` there, both inside TOS's ROM). Such
+    a field is reported as UNSET rather than as a difference, because the record it belongs to is
+    dead on both sides and the byte diff over the rest of the record is what says so.
+    """
+    return base <= address < base + size
+
+
+def entity_problems(frame, ours, theirs, their_base, our_base, program_bytes):
+    """One sample's entity table, compared with the sprite pointers rebased."""
+    if len(ours) != ENTITY_TABLE_BYTES or len(theirs) != ENTITY_TABLE_BYTES:
+        return [f"frame {frame}: entity dumps are {len(ours)} and {len(theirs)} bytes, "
+                f"not {ENTITY_TABLE_BYTES}"]
+    excused = set()
+    problems = []
+    for start, width in entity_rebase_spans():
+        excused.update(range(start, start + width))
+        mine = int.from_bytes(ours[start:start + width], "big")
+        yours = int.from_bytes(theirs[start:start + width], "big")
+        # OURS is an image offset (a Ghidra address, because the image is staged at LOAD_BASE) and
+        # THEIRS is an absolute address of the program TOS relocated, so the two are compared in
+        # Ghidra addresses. A field that is a pointer on neither side is a dead slot's leftover.
+        mine_pointer = in_the_loaded_program(mine, our_base, program_bytes)
+        their_pointer = in_the_loaded_program(yours, their_base, program_bytes)
+        if not mine_pointer and not their_pointer:
+            continue
+        rebased = yours - their_base + LOAD_BASE if their_pointer else yours
+        if mine != rebased:
+            problems.append(f"frame {frame}: entity {start // ENTITY_STRIDE}'s sprite is "
+                            f"{mine:#x}, the original's rebases to {rebased:#x}")
+    differing = [index for index in range(ENTITY_TABLE_BYTES)
+                 if index not in excused and ours[index] != theirs[index]]
+    if differing:
+        # NAMED AS (record, field offset) PAIRS, because "record 0 differs" is not a finding anybody
+        # can act on and "record 0 at +0x14" is: the offsets are include/entity.h's field map, so
+        # the message says WHICH field of which actor and the header says what that field is.
+        where = ", ".join(f"{index // ENTITY_STRIDE}+{index % ENTITY_STRIDE:#04x} "
+                          f"({ours[index]:#04x} vs {theirs[index]:#04x})"
+                          for index in differing[:ENTITY_DIFF_REPORTED])
+        unlisted = len(differing) - ENTITY_DIFF_REPORTED
+        more = f", +{unlisted} more" if unlisted > 0 else ""
+        problems.append(f"frame {frame}: {len(differing)} entity bytes differ at {where}{more}")
+    return problems
+
+
+def check_frame_differential(ours, original, program_bytes):
+    """SURFACE: memory — the framebuffer and the entity table, frame for frame.
+
+    BOTH LENGTHS ARE CHECKED, and the second one is the important one: `zip` stops at the shorter
+    sequence, so a short or empty `savebin` on the ORIGINAL's side would make `differing` come out 0
+    and report the milestone's headline surface green for a frame that was never captured. The
+    entity compare next door has always checked both; this one did not.
+    """
+    problems = []
+    for frame, mine in sorted(ours["frames"].items()):
+        yours = original["frames"][frame]
+        if len(mine) != SCREEN_BYTES or len(yours) != SCREEN_BYTES:
+            problems.append(f"frame {frame}: the framebuffer dumps are {len(mine)} and "
+                            f"{len(yours)} bytes, not {SCREEN_BYTES} — one side was not captured")
+            continue
+        differing = sum(1 for left, right in zip(mine, yours) if left != right)
+        if differing:
+            problems.append(f"frame {frame}: {differing} of {SCREEN_BYTES} framebuffer bytes differ")
+        problems += entity_problems(frame, ours["entities"][frame], original["entities"][frame],
+                                    original["base"], LOAD_BASE, program_bytes)
+    return problems
+
+
+def check_frame_pens(ours, original):
+    """SURFACE: the hardware-state vector — the sixteen colour registers at each sampled frame."""
+    problems = []
+    for frame, mine in sorted(ours["pens"].items()):
+        yours = original["pens"][frame]
+        mine_masked = [pen & PEN_MASK for pen in struct.unpack(f">{PALETTE_PENS}H", mine)]
+        yours_masked = [pen & PEN_MASK for pen in struct.unpack(f">{PALETTE_PENS}H", yours)]
+        if mine_masked != yours_masked:
+            differing = [index for index, pair in enumerate(zip(mine_masked, yours_masked))
+                         if pair[0] != pair[1]]
+            problems.append(f"frame {frame}: pens differ at {differing}: "
+                            f"ours {[hex(mine_masked[i]) for i in differing]}, "
+                            f"the original's {[hex(yours_masked[i]) for i in differing]}")
+    return problems
+
+
+def check_timer_b_never_fired(ours):
+    """SURFACE: the hardware-state vector — an M1 build must not have started an MFP timer.
+
+    IT MOVED OUT OF `check_the_program_finished` AND THE GAME MODE IS WHY. That check is shared by
+    every mode, and this assertion is M1's alone: nothing in the title composition programs a timer
+    and TOS leaves Timer B stopped on an ST, so a non-zero count there means something started one.
+    M2 starts it deliberately, twice, at two periods — the raster split and the attract bars both
+    run off it — so leaving the arm in the shared check made the game modes red for doing their job.
+    """
+    record = ours["record"]
+    if record["timer_b_ticks_at_anchor"]:
+        return [f"Timer B fired {record['timer_b_ticks_at_anchor']} times, and nothing in the title "
+                f"composition starts it"]
+    return []
+
+
+def check_the_game_fork_was_not_taken(ours):
+    """SURFACE: memory — an M1 build must not have run M2's composition.
+
+    zynaps_main.c forks on ONE `#if`, and the four fields below are written only on the game side of
+    it. A title binary that had somehow taken that fork would pass every M1 surface — the boot is
+    the same code and the anchor is the same picture — while being a different program running for
+    a different length of time. These are the four that say it did not.
+    """
+    record = ours["record"]
+    return [f"{name} is {record[name]}, not 0 — this build ran the game composition"
+            for name in ("phase_reached", "attract_passes", "section_starts", "frames_run")
+            if record[name]]
+
+
+def check_the_game_ran(ours, samples=None):
+    """SURFACE: exit status and the log — the program's own account of the whole run."""
+    record = ours["record"]
+    samples = samples or frame_samples()
+    problems = []
+    if record["phase_reached"] != PHASE_BUDGET_SPENT:
+        reached = (PHASE_NAMES[record["phase_reached"]]
+                   if record["phase_reached"] < len(PHASE_NAMES) else record["phase_reached"])
+        problems.append(f"the run stopped at phase '{reached}', not at its frame budget")
+    if record["unknown_vector_halts"]:
+        problems.append(f"an interrupt named handler {record['unknown_vector_handler']:#x} on "
+                        f"vector {record['unknown_vector']:#x}, which the dispatch table does not "
+                        f"know — see zynaps_main.c's isr_binding tables")
+    if record["frames_run"] < max(samples):
+        problems.append(f"only {record['frames_run']} frames ran, fewer than the last sample "
+                        f"({max(samples)})")
+    if record["attract_passes"] < 1:
+        problems.append("the attract loop never ran")
+    if record["section_starts"] < 1:
+        problems.append("no section was ever started")
+    # Every interrupt entry must have dispatched to at least one handler, or the vector it is on was
+    # never taken and the phase behind it never ran.
+    for name in ("vbl_dispatch_in_game", "vbl_dispatch_attract", "timer_b_dispatch_attract",
+                 "acia_dispatches"):
+        if not record[name]:
+            problems.append(f"{name} is 0 — that handler was never entered")
+    # `vbl_isr_title` @ 0x106a2 is in the table and NO STORE IN THE PROGRAM NAMES IT (measured over
+    # every `move.l #$x,$70/$118/$120` in the shipped disassembly). A non-zero count would mean the
+    # image's vector page held an address this reconstruction does not expect.
+    if record["vbl_dispatch_title"]:
+        problems.append(f"vbl_isr_title was entered {record['vbl_dispatch_title']} times, and no "
+                        f"store in the shipped program installs it")
+    if record["rmw_stores"] < 1:
+        problems.append("no read-modify-write reached the machine — the cores' hw_bclr8/hw_bset8/"
+                        "hw_and8 went somewhere other than zynaps_backend.c, and the MFP enables "
+                        "and acknowledges would be plain stores that clear bits TOS owns")
+    # ONE PUBLISH PER FRAME AT LEAST: `screen_flip_buffers` runs once a frame, and the door
+    # republishes on each of its two byte stores, so a run that flipped every frame cannot be under
+    # the frame count. A shim that had stopped translating would sit far below it.
+    if record["video_base_publishes"] < record["frames_run"]:
+        problems.append(f"the video base was published {record['video_base_publishes']} times over "
+                        f"{record['frames_run']} frames — the frame loop flips every frame")
+    # ...AND THE ADDRESS IT PUBLISHED IS THE ONE THE TRANSLATION OWES. The core names an image
+    # OFFSET and the door adds the image base; if that addition ever stopped happening the shifter
+    # would fetch from $0703xx and the picture would be garbage, which no other field here can see.
+    translated = record["image_base"] + record["video_base_offset"]
+    if record["video_base_published"] != translated:
+        problems.append(f"the video base published {record['video_base_published']:#x}, but image "
+                        f"base {record['image_base']:#x} + offset "
+                        f"{record['video_base_offset']:#x} is {translated:#x} — the door's "
+                        f"image-to-machine translation is not what reached the shifter")
+    # EVERY SAMPLE MUST BE INSIDE THE FIRST LIFE. Past the first non-NEXT_FRAME exit the ship has
+    # died, `section_start_tail` has asked for the fire button again, and that wait calls `rand16`
+    # a driver-dependent number of times — so the two sides' random streams part company and
+    # nothing after it is comparable. The program reports the frame it happened on; this is the
+    # relation, checked rather than the sample list being trusted to stay inside it.
+    ended = record["first_life_ended_at"]
+    if ended and ended <= max(samples):
+        problems.append(f"the first life ended at frame {ended}, at or before the last sample "
+                        f"({max(samples)}) — every frame after it is compared over two random "
+                        f"streams that have parted, see README.md's M2 unpinned 17")
+    return problems
+
+
+def check_the_acia_vector_went_back(ours):
+    """SURFACE: exit status and the log — the third vector M2 displaces, put back."""
+    record = ours["record"]
+    if record["acia_vector_after"] != record["tos_acia_vector"]:
+        return [f"$118 was left at {record['acia_vector_after']:#x}, TOS had "
+                f"{record['tos_acia_vector']:#x} — a keyboard handler in freed memory"]
+    return []
+
+
+def mode_game(mode, out_dir, machine, tos_rom, keep):
+    """The whole game, judged against the shipped binary at five numbered frames."""
+    assert_the_game_constants_are_the_headers()
+    assert_the_phase_names_are_the_shims()
+    stage_our_build(mode)
+    for stale in OUR_DISK.glob("FRAME*.BIN"):
+        stale.unlink()
+    for stale in list(OUR_DISK.glob("PAL*.BIN")) + list(OUR_DISK.glob("ENT*.BIN")):
+        stale.unlink()
+    samples = frame_samples()
+    with tempfile.TemporaryDirectory() as our_work, tempfile.TemporaryDirectory() as their_work:
+        ours = run_ours_game(mode, out_dir, Path(our_work), machine, tos_rom)
+        original = run_original_game(out_dir, Path(their_work), machine, tos_rom, samples)
+
+        # THE SENSITIVE CHECKS AND THE INSENSITIVE ONES ARE SEPARATED HERE, because that separation
+        # IS the control: `gamefault` drops ONE STEP of the section chain and nothing else, so what
+        # the game DRAWS must move while its colours, its exit path and its own record must not.
+        fault_sensitive = {
+            "memory (the framebuffer and the entity table, frame by frame)":
+                check_frame_differential(ours, original, len(gen_image_bytes())),
+        }
+        fault_blind = {
+            "exit status + log (ours)": check_exit_and_log("ours", ours),
+            "exit status + log (the original)": check_exit_and_log("the original", original),
+            "exit status + log (the fault scan can fail)": check_the_fault_scan_can_fail(),
+            # THE BOOT'S OWN READ-BACKS TOO, and not only M2's counters: `check_the_program_finished`
+            # asserts the staged byte count, the supervisor token, the two IKBD command totals and
+            # the teardown's own numbers, every one of which the game build makes exactly as the
+            # title build does. Dropping them here would have left the M2 modes asserting less
+            # about the boot than the M1 modes do over the same code.
+            "exit status + log (the program's own record)":
+                check_the_program_finished(ours) + check_the_game_ran(ours),
+            "exit status + log (the machine was handed back)":
+                check_the_machine_was_handed_back(ours) + check_the_acia_vector_went_back(ours),
+            "hardware-state vector (the pens, frame by frame)": check_frame_pens(ours, original),
+        }
+        # THERE IS NO TIMELINE ARM HERE, AND IT WAS TRIED. M1's `check_timeline` cuts the PSG trace
+        # into the sound driver's own descending 10..0 tick frames and compares the first 64 as a
+        # SHAPE, which works there because both runs are still on the title screen for all of them.
+        # In a game run those 64 frames reach past the boot: the section-start effect and the
+        # in-game tune fall inside the window, and they fall at different absolute times on the two
+        # sides because the two boots take different lengths of time. Measured: green on `game`, but
+        # RED at tick frame 51 on `gamefault`, whose fault touches no sound at all — a check that
+        # moves for a reason it cannot name is not one to ship. README.md's M2 unpinned 20 carries
+        # what would replace it: a cut anchored on the first IN-GAME tune start rather than on the
+        # trace's beginning.
+        if keep:
+            for frame, pixels in sorted(ours["frames"].items()):
+                (out_dir / f"{mode}_frame{frame}.bin").write_bytes(pixels)
+                (out_dir / f"original_frame{frame}.bin").write_bytes(original["frames"][frame])
+
+        return report_game(mode, fault_sensitive, fault_blind, ours, original,
+                           f"{machine} / {tos_rom.name}", samples)
+
+
+def report_game(mode, fault_sensitive, fault_blind, ours, original, machine, samples):
+    """Print every check that RAN, with its verdict, and return the process's exit status."""
+    control = mode == GAME_FAULT_MODE
+    record = ours["record"]
+    print(f"-- {mode} on {machine}: image base {record['image_base']:#x}, the original at "
+          f"{original['base']:#x}")
+    print(f"   {record['frames_run']} frames over {record['section_starts']} section start(s), "
+          f"{record['attract_passes']} attract pass(es), player(s) {record['player_count']}, "
+          f"section {record['level_section']}, {record['lives']} lives, "
+          f"score {record['score_bcd']:08x}")
+    print(f"   dispatched: {record['vbl_dispatch_in_game']} in-game / "
+          f"{record['vbl_dispatch_menu']} menu / {record['vbl_dispatch_attract']} attract VBLs, "
+          f"{record['timer_b_dispatch_raster']} raster + "
+          f"{record['timer_b_dispatch_attract']} bar Timer Bs, "
+          f"{record['acia_dispatches']} IKBD; "
+          f"{record['unknown_vector_halts']} unknown-vector halt(s)")
+    print(f"   samples {samples}; {record['rmw_stores']} read-modify-writes made, "
+          f"{record['mfp_settle_restores']} Timer B data restore(s) in the four read-back spins")
+    for group, checks in (("must PASS", fault_blind),
+                          ("must FAIL" if control else "must PASS", fault_sensitive)):
+        for name, problems in sorted(checks.items()):
+            print(f"   [{'red ' if problems else 'green'}] {name}   ({group})")
+            for problem in problems:
+                print(f"           {problem}")
+
+    failures = [name for name, problems in fault_blind.items() if problems]
+    if control:
+        if record["game_fault"] != 1:
+            print("   CONTROL FAILED: the binary reports no injected fault")
+            failures.append("the control's own soundness")
+        for name in [name for name, problems in fault_sensitive.items() if not problems]:
+            print(f"   CONTROL FAILED: {name} stayed green with a step of the section chain "
+                  f"dropped")
+            failures.append(name)
+    else:
+        if record["game_fault"]:
+            print("   FAILED: the shipped build reports an injected fault")
+            failures.append("the build is the control's")
+        failures += [name for name, problems in fault_sensitive.items() if problems]
+
+    print("-- OK" if not failures else f"-- FAILED: {len(failures)} check(s)")
+    return 0 if not failures else 1
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1343,6 +2091,11 @@ def main():
     # ROM is what says the build does not depend on the one it was developed against.
     parser.add_argument("--machine", default=DEFAULT_MACHINE, help="Hatari --machine (st, ste, ...)")
     parser.add_argument("--tos-rom", type=Path, default=TOS_ROM, help="the ROM both sides boot")
+    # WHICH BUILD IS ON THE VOLUME, because build.sh's medium is a flag and not a mode: `build.sh
+    # title floppy` and `build.sh game floppy` both write disk/ZYNAPS.ST, and only the caller knows
+    # which. The floppy mode's own checks are M1's, so its default is the M1 build.
+    parser.add_argument("--floppy-build", default="title",
+                        help="the build.sh mode whose .PRG is in AUTO\\ on disk/ZYNAPS.ST")
     options = parser.parse_args()
 
     assert_the_shim_owns_these_names()
@@ -1351,18 +2104,29 @@ def main():
     if not options.tos_rom.is_file():
         raise SystemExit(f"no ROM at {options.tos_rom}")
     assert_machine_and_rom_agree(options.machine, options.tos_rom)
+    # M2'S MODES HAVE THEIR OWN RUNNER AND THEIR OWN REPORT, exactly as Joust's framediff does:
+    # they compare two programs that are PLAYING, so nothing below them applies — the anchor is a
+    # frame count rather than a palette state, and both sides are driven with the same input.
+    if options.mode in (GAME_MODE, GAME_FAULT_MODE):
+        return mode_game(options.mode, out_dir, options.machine, options.tos_rom, options.keep)
+
     floppy = options.mode == FLOPPY_MODE
     if floppy:
-        stage_our_floppy()
+        stage_our_floppy(options.floppy_build)
     else:
         stage_our_build(options.mode)
 
     with tempfile.TemporaryDirectory() as our_work, tempfile.TemporaryDirectory() as their_work:
-        run_our_side = run_ours_from_floppy if floppy else run_ours
         original_medium = (floppy_medium(booted_copy(ORIGINAL_FLOPPY, Path(their_work)))
                            if floppy else gemdos_medium(ORIGINAL_DISK, ORIGINAL_AUTO))
-        ours = run_our_side(options.mode, out_dir, Path(our_work),
-                            options.machine, options.tos_rom)
+        # THE ARTIFACT NAMES ARE THE MODE'S AND THE ELF IS THE BUILD'S, which are two different
+        # things now that the medium is a flag: `smoke.py floppy --floppy-build title` must not
+        # write `out/title.log` over the log `smoke.py title` just produced, or a failure in either
+        # run is diagnosed against the other's evidence.
+        ours = (run_ours_from_floppy(options.mode, options.floppy_build, out_dir, Path(our_work),
+                                     options.machine, options.tos_rom)
+                if floppy else
+                run_ours(options.mode, out_dir, Path(our_work), options.machine, options.tos_rom))
         original = run_original(out_dir, Path(their_work), original_medium,
                                 options.machine, options.tos_rom,
                                 len(gemdos_calls(ours["trace"], drop_names=NON_GAME_FILES)))
@@ -1387,6 +2151,8 @@ def main():
                 check_the_original_was_anchored_on_its_boot(original),
             "memory (the boot slice's own output and ledgers)":
                 check_the_boot_slice_did_its_work(ours),
+            "memory (the game fork was not taken)": check_the_game_fork_was_not_taken(ours),
+            "hardware-state vector (Timer B never fired)": check_timer_b_never_fired(ours),
             "trap ledger": check_trap_ledger(ours, original),
             "memory (the framebuffer)": check_memory(ours, original),
             "timelines (the PSG tick frames)": check_timeline(ours, original),

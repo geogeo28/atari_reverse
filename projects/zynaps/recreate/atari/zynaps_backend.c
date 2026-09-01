@@ -33,6 +33,7 @@
 #include "psg.h"
 
 #include "init.h"          /* HW_SHIFTER_MODE — the resolution byte the boot's one store names */
+#include "irq.h"           /* HW_MFP_ISRA / HW_MFP_ISRB and the two bit numbers they acknowledge */
 #include "video.h"         /* the colour block: HW_PALETTE_BASE, PALETTE_PENS, the two widths */
 #include "zynaps_target.h"
 
@@ -84,6 +85,30 @@ volatile uint32_t zy_acia_bytes_sent;
 #define HW_PALETTE_LAST_LONG \
     (HW_PALETTE_BASE + PALETTE_LONG_BYTES * (SHIFTER_PALETTE_PAIRS - 1))
 
+/* ================================================================================================
+ * THE ADDRESS-KEYED LEDGER THAT IS NOT HERE, and the measurement that took it out.
+ *
+ * README.md's Unpinned 15 asked for one: the three tallies above are keyed on arguments about
+ * today's call sites (a width, an address nothing else writes), and the depth-correct replacement is
+ * a small on-target ledger of stores PER ADDRESS, which would subsume all three. It was written,
+ * twice, and both drafts had to be deleted for a reason that is a finding in its own right.
+ *
+ * ATTRACT MODE'S TIMER B FIRES EVERY TWO SCANLINES — about 1024 CPU cycles at 8 MHz — and its
+ * handler makes two hardware stores (pen 0 and the MFP acknowledge). MEASURED on `build.sh game`
+ * under Hatari, by dividing the program's own `timer_b_ticks` by its `vbl_ticks` over a five-second
+ * window: WITH the ledger the handler took about 2000 cycles and only 79 of the frame's 156
+ * interrupts arrived at all, which is 100% of the CPU inside the handler — the main line advanced a
+ * couple of instructions a frame, spent twenty seconds inside an eight-iteration palette upload, and
+ * never drew the title page. WITHOUT it the same build runs the attract loop, starts a game and
+ * reaches the section start. The second draft replaced the linear scan with a direct-mapped hash and
+ * was still over the cliff: what costs is the extra CALL and its argument, not the search.
+ *
+ * So the shape a target build can afford is a fixed set of NAMED counters — the three above, which
+ * compile to one compare and one `addq` each — and not a table. `docs/on-target-execution.md` has no
+ * class for "the reconstruction is too slow for its own interrupt"; this is one, and README.md's M2
+ * section carries it with the numbers.
+ * ============================================================================================= */
+
 static void note_store(uint32_t bus_addr, unsigned width) {
     zy_hw_writes++;
     if (bus_addr == HW_BUS(HW_SHIFTER_MODE))
@@ -96,7 +121,145 @@ static void note_store(uint32_t bus_addr, unsigned width) {
         zy_acia_bytes_sent++;
 }
 
+/* ================================================================================================
+ * THE READ-MODIFY-WRITES, WHICH A PLAIN STORE IS NOT.
+ *
+ * `tools/recreate_kit/include/hw.h` states the rule once for every game: "WHAT THIS SEAM DOES NOT
+ * GIVE YOU IS A READ-MODIFY-WRITE". Six sites in this reconstruction are one — `andi.b #$fc,$ff8260`
+ * (src/init.c), `bclr #0,$fffa0f` and `bclr #6,$fffa11` (src/irq.c's two acknowledges), and
+ * `bset #6,$fffa09` / `$fffa15` (src/init.c's `boot_enable_interrupts`, and once more in
+ * src/frame.c). Off target the READ half has no modelled answer, so the oracle serves a fabricated 0
+ * and both sides store the bare mask or the bare bit; the ledger holds that the store happened, at
+ * that register, one byte wide, and cannot hold what it was on top of.
+ *
+ * ON THE MACHINE THE DIFFERENCE IS THE RUN. `move.b #$40,$fffa09` does not enable MFP channel 6, it
+ * DISABLES every other channel of interrupt-enable B — Timer C among them, which is TOS's 200 Hz
+ * clock and the floppy driver's motor timeout, so a game that shipped the plain store would lose its
+ * disk the moment it enabled its keyboard. `move.b #$0,$fffa0f` acknowledges every in-service
+ * channel rather than Timer B's, and `move.b #$0,$fffa11` every one rather than the ACIA's.
+ *
+ * The three doors below are the target half of the kit's own read-modify-write names, and each is
+ * the instruction its name says: the operand is a constant bit or mask and the destination is one
+ * `volatile` byte, which is what makes GCC emit `bset`/`bclr`/`andi.b` on the address rather than a
+ * load, an arithmetic op and a store. Their signatures are the kit's, `uint32_t` and all.
+ *
+ * THE READ IS OF A DEVICE REGISTER AND THE WRITE IS BACK TO IT, which on an interrupt-driven MFP is
+ * not atomic the way the original's single instruction is: a handler landing between the two halves
+ * would have its own change overwritten. Every caller here is already inside an interrupt or inside
+ * the boot's masked window, so nothing in this build can take that window — but it is a real
+ * difference from the original and README.md's M2 unpinned list carries it rather than this comment
+ * quietly absorbing it.
+ * ============================================================================================= */
+
+/* Read-modify-writes made through the three doors. It is a surface and not bookkeeping: the whole
+ * argument for this file is that the cores' `bclr` really becomes a `bclr` on the machine, and a
+ * build that had somehow linked the kit's own off-target `src/hw.c` instead would show 0 here. */
+volatile uint32_t zy_rmw_stores;
+
+void hw_bset8(uint32_t addr, uint32_t bit) {
+    volatile uint8_t *port = (volatile uint8_t *)HW_BUS(addr);
+
+    *port = (uint8_t)(*port | (uint8_t)(1u << bit));
+    note_store(HW_BUS(addr), sizeof (uint8_t));
+    zy_rmw_stores++;
+}
+
+void hw_bclr8(uint32_t addr, uint32_t bit) {
+    volatile uint8_t *port = (volatile uint8_t *)HW_BUS(addr);
+
+    *port = (uint8_t)(*port & (uint8_t)~(1u << bit));
+    note_store(HW_BUS(addr), sizeof (uint8_t));
+    zy_rmw_stores++;
+}
+
+void hw_and8(uint32_t addr, uint32_t mask) {
+    volatile uint8_t *port = (volatile uint8_t *)HW_BUS(addr);
+
+    *port = (uint8_t)(*port & (uint8_t)mask);
+    note_store(HW_BUS(addr), sizeof (uint8_t));
+    zy_rmw_stores++;
+}
+
+/* ================================================================================================
+ * THE VIDEO BASE, WHICH IS THE ONE STORE WHOSE VALUE MEANS SOMETHING ELSE HERE.
+ *
+ * `screen_flip_buffers` publishes `offset >> 8` and `offset >> 16` of the buffer it has just drawn
+ * into — an IMAGE offset, because in the differential's world the image is the machine's memory and
+ * starts at 0, and because the original's framebuffers are absolute against the base it runs at.
+ * This build stages the image in a `.bss` array, so the shifter needs `zy_image_base + offset`.
+ *
+ * IT IS DONE HERE AND NOT IN THE SHIM'S MAIN LINE, and that is M2's change: the frame loop flips
+ * every frame, so re-publishing the machine address after the fact — M1's arrangement, workable
+ * while the boot flipped once — would leave the shifter pointed at $0703xx for most of every frame.
+ * The door is the one place the CORE ITSELF REACHES.
+ *
+ * THE OFFSET IS ASSEMBLED ACROSS THE TWO STORES because a byte of a sum is not the sum of a byte:
+ * `zy_image_base + offset` carries out of bits 8-15 into 16-23, so neither store can be translated
+ * on its own. Each store updates its own half of the remembered offset and then publishes the WHOLE
+ * translated address, so after the pair the register is right whichever order the two arrive in.
+ * What that costs is the same transient the original has: between the two stores the register holds
+ * an address one byte of which is a frame old — and the shifter latches its base at the next
+ * vertical blank, not at the store, so no frame is ever fetched from the intermediate value unless
+ * a vertical blank falls exactly between two instructions. The original's own pair has that window
+ * too, and this build does not widen it. */
+static volatile uint32_t g_video_base_offset;
+
+/* What the cores have published, for the record: the offset they last named and the machine address
+ * this file translated it to. `smoke.py game` asserts that the second is the first plus the image
+ * base, which is the surface for a translation that silently stopped happening. */
+volatile uint32_t zy_video_base_offset;
+volatile uint32_t zy_video_base_published;
+volatile uint32_t zy_video_base_publishes;
+
+static void publish_translated_video_base(void) {
+    uint32_t machine = (uint32_t)(uintptr_t)zy_image_base + g_video_base_offset;
+
+    *(volatile uint8_t *)HW_BUS(HW_SCREEN_BASE_MID) = (uint8_t)(machine >> VIDEO_BASE_MID_SHIFT);
+    *(volatile uint8_t *)HW_BUS(HW_SCREEN_BASE_HIGH) = (uint8_t)(machine >> VIDEO_BASE_HIGH_SHIFT);
+    note_store(HW_BUS(HW_SCREEN_BASE_MID), sizeof (uint8_t));
+    note_store(HW_BUS(HW_SCREEN_BASE_HIGH), sizeof (uint8_t));
+    zy_video_base_offset = g_video_base_offset;
+    zy_video_base_published = machine;
+    zy_video_base_publishes++;
+}
+
+/* ================================================================================================
+ * THE TEMPORARY BRIDGE THAT USED TO BE HERE IS GONE, and its absence is worth a paragraph.
+ *
+ * Until kit commit `2db68f6` the cores spelt all six read-modify-write sites as
+ * `hw_write8(<register>, <the byte a fabricated 0 read produces>)`, and this file recognised those
+ * five registers by ADDRESS and made the real operation anyway — because shipping the plain store
+ * would have disabled Timer C, TOS's 200 Hz clock and the floppy's motor timeout, the first time
+ * the game enabled its keyboard. The cores call `hw_bclr8`, `hw_bset8` and `hw_and8` themselves
+ * now, so the bridge would be a second implementation of an operation its callers already spell,
+ * and the only honest thing to do with it was delete it. `zy_rmw_stores` above is what is left:
+ * the count that says the operation really happens on the machine.
+ * ============================================================================================= */
+
+/* 1 when the byte store was the shifter's VIDEO BASE and has been translated and made; 0 when it is
+ * an ordinary store. A `switch` rather than two `if`s so that the MISS — which is every other byte
+ * store the program makes, inside an interrupt with about a thousand cycles to live — costs one
+ * compare chain against immediates and no call. */
+static int video_base_store(uint32_t addr, uint32_t value) {
+    switch (HW_BUS(addr)) {
+    case HW_BUS(HW_SCREEN_BASE_MID):
+        g_video_base_offset = (g_video_base_offset & ~(uint32_t)VIDEO_BASE_MID_MASK)
+                              | ((value & 0xffu) << VIDEO_BASE_MID_SHIFT);
+        publish_translated_video_base();
+        return 1;
+    case HW_BUS(HW_SCREEN_BASE_HIGH):
+        g_video_base_offset = (g_video_base_offset & ~(uint32_t)VIDEO_BASE_HIGH_MASK)
+                              | ((value & 0xffu) << VIDEO_BASE_HIGH_SHIFT);
+        publish_translated_video_base();
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 void hw_write8(uint32_t addr, uint32_t value) {
+    if (video_base_store(addr, value))
+        return;
     *(volatile uint8_t *)HW_BUS(addr) = (uint8_t)value;
     note_store(HW_BUS(addr), sizeof (uint8_t));
 }

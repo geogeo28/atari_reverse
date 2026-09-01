@@ -9,15 +9,27 @@
 #                          the shifter and nothing else. The pens and the rendered picture must go
 #                          red while the framebuffer, the trap ledger and the PSG timeline stay
 #                          green — and `smoke.py titlefault` inverts its verdict.
-#   build.sh floppy     -> the M1 build again, plus disk/ZYNAPS.ST: a BOOTABLE FAT12 floppy laid
-#                          out like the original's, with our .PRG where the game's used to be
+#   build.sh game       -> M2: THE WHOLE PROGRAM — the rest of the boot, the attract loop, the
+#                          section chain, the frame loop and the endings, out of verified slices in
+#                          the original's own order. Headless: it stops at a declared frame count
+#                          and dumps its framebuffer, pens and entity table at declared frames, so
+#                          `smoke.py game` can compare them against the shipped binary frame for
+#                          frame.
+#   build.sh gamefault  -> M2's NEGATIVE CONTROL: the same build with ONE STEP of the section chain
+#                          dropped and nothing else. What the game DRAWS must go red at every frame
+#                          while the pens, the exit path and the record stay green.
+#   build.sh play       -> the game with both budgets out of reach, so it runs until the window is
+#                          closed. `run.sh` gives it a screen, sound and a joystick — the one input
+#                          path no headless check can exercise.
+#   build.sh playtitle  -> the M1 title build with its anchor out of reach, kept for bisecting.
+#
+# ...and a SECOND argument picks the MEDIUM, `gemdos` (the default) or `floppy`:
+#
+#   build.sh play floppy -> ...plus disk/ZYNAPS.ST: a BOOTABLE FAT12 floppy laid out like the
+#                          original's, with our .PRG where the game's used to be
 #                          (AUTO\ZYNAPS17.PRG, the name TOS's desktop looks for). That is the form
-#                          that goes onto the real STE. `smoke.py floppy` boots it.
-#   build.sh play       -> the same boot with the anchor and the teardown lifted, so the title
-#                          screen runs until the window is closed. M1 HAS NO INPUT PATH: nothing
-#                          reads the joystick or the keyboard, because the routine that would
-#                          (`title_attract_loop` @ 0x12ac2) is unported. It is a thing to look at
-#                          and listen to.
+#                          that goes onto the real STE.
+#   build.sh floppy     -> the legacy spelling of `title floppy`; `smoke.py floppy` names it.
 #
 # Writes disk/{ZYNAPS.PRG,ZYNAPS.IMG} plus the game's own data files, and keeps
 # build/ZYNAPS-<mode>.PRG so a check needing two builds in sequence does not have to rebuild.
@@ -48,20 +60,54 @@ set -euo pipefail
 # ZYNPIC.PIC and refuse a fault pen that is not on screen, so this line cannot go stale silently.
 FAULT_PEN=3
 
+# THE MEDIUM IS A FLAG, NOT A MODE, and that is README.md's Unpinned 14 discharged. It used to be a
+# fourth entry in the enum below, which meant `build.sh floppy` produced a SECOND COPY of the title
+# binary under another name and the medium that actually goes on the STE was the one medium whose
+# checks had never been shown able to go red. Now any mode can be built onto a floppy:
+#
+#   build.sh game            -> build/ZYNAPS-game.PRG on the GEMDOS drive
+#   build.sh game floppy     -> ...the same binary, plus disk/ZYNAPS.ST with it in AUTO\
+#   build.sh floppy          -> LEGACY SPELLING of `title floppy`, kept because README.md and
+#                               `smoke.py floppy` both name it and M1's evidence is filed under it.
 MODE="${1:-title}"
+MEDIUM="${2:-gemdos}"
+if [ "$MODE" = "floppy" ]; then MODE=title; MEDIUM=floppy; fi
+case "$MEDIUM" in
+  gemdos|floppy) ;;
+  *) echo "usage: build.sh <mode> [gemdos | floppy]"; exit 2 ;;
+esac
+
 case "$MODE" in
   title)      DEF="" ;;
   titlefault) DEF="-DZY_FAULT_PEN=$FAULT_PEN" ;;
-  # THE FLOPPY IS THE TITLE BINARY ON DIFFERENT MEDIA, and that is the whole difference: no `-D`,
-  # so the .PRG this writes is byte-for-byte the one `smoke.py title` judged. What it adds is
-  # mkfloppy.py at the end.
-  floppy)     DEF="" ;;
-  # THE PLAY BUILD IS THE TITLE BUILD WITH ITS ANCHOR MOVED OUT OF REACH, and that is the whole
-  # difference — no `#ifdef` in the C, so the code a person watches is the code the smoke asserted.
-  # zynaps_main.c waits for `zy_vbl_ticks` to reach this number before it anchors, dumps and hands
-  # the machine back; at 50 Hz, 2^32 vblanks is about 2.7 years, so it never does.
-  play)       DEF="-DZY_SMOKE_VBLS=0xffffffffu" ;;
-  *) echo "usage: build.sh [title | titlefault | floppy | play]"; exit 2 ;;
+  # ---- M2 --------------------------------------------------------------------------------------
+  # THE WHOLE PROGRAM: the rest of the boot, the attract loop, the section chain, the frame loop
+  # and the endings, composed out of verified slices in the original's own order. `game` is the
+  # HEADLESS form — it stops at a declared `frame_loop_once` count and dumps its framebuffer, pens
+  # and entity table at declared frames so `smoke.py game` can compare them against the shipped
+  # binary at the same frames.
+  game)       DEF="-DZY_PHASE=1" ;;
+  # M2's NEGATIVE CONTROL: the game build with ONE STEP of the section chain dropped and nothing
+  # else — the two `bsr`s at 0x1085a, the player intro screen and the whole-panel repaint. A dropped
+  # composition step is the defect this milestone is most exposed to, since the whole of M2 is calls
+  # to verified slices and what can be wrong is the order and the set. The framebuffer and the
+  # entity table must go red at every sampled frame while the pens, the exit path and the program's
+  # own record stay green; `smoke.py gamefault` inverts its verdict for that split.
+  # zynaps_main.c's `play_one_game` says why this fault and not the one that was tried first.
+  gamefault)  DEF="-DZY_PHASE=1 -DZY_GAME_FAULT=1" ;;
+  # ...AND THE ONE A PERSON PLAYS, which is the same code with both budgets moved out of reach: no
+  # frame limit, no anchor, no dumps, so the game runs until the window is closed. At 50 Hz 2^32
+  # vertical blanks is about 2.7 years and 2^32 frames rather longer.
+  #
+  # `play` USED TO BE THE TITLE BUILD and is now the game build, which is the milestone in one line.
+  play)       DEF="-DZY_PHASE=1 -DZY_SMOKE_VBLS=0xffffffffu -DZY_GAME_FRAMES=0xffffffffu \
+                   -DZY_FRAME_SAMPLES=0u" ;;
+  # The M1 title build with its anchor moved out of reach — kept because it is the one build whose
+  # every surface `smoke.py title` has certified, and the thing to look at when the game build is
+  # being bisected.
+  playtitle)  DEF="-DZY_SMOKE_VBLS=0xffffffffu" ;;
+  *) echo "usage: build.sh [title | titlefault | game | gamefault | play | playtitle]" \
+          "[gemdos | floppy]"; exit 2 ;;
 esac
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -88,6 +134,11 @@ CC=m68k-elf-gcc
 # directory — which is the root either way.
 echo ">> stage drive"
 PY="$REC/.venv/bin/python"; [ -x "$PY" ] || PY=python3
+# A PREVIOUS RUN'S OUTPUTS ARE NOT DATA FILES, and on a floppy build they are not harmless: every
+# `.BIN` the shim wrote last time is still sitting on the staged drive, and `mkfloppy.py` puts the
+# whole drive on the volume — measured at 79 files and 588 KB, most of it last run's frame dumps.
+# The game's own data files are .PIC/.DAT/.MAP and are never `.BIN`, so the pattern is exact.
+rm -f "$DISK"/*.BIN
 find "$BIN/disk" -maxdepth 1 -type f -exec cp {} "$DISK/" \;
 DATA_FILES=$(find "$DISK" -maxdepth 1 -type f ! -name 'ZYNAPS.*' ! -name '*.BIN' | wc -l | tr -d ' ')
 echo "   $DATA_FILES data files from $BIN/disk (bin/disk/AUTO is the ORIGINAL's launcher, not ours)"
@@ -383,7 +434,9 @@ LEAKS=$(grep -rlE "^[[:space:]]*#[[:space:]]*include[[:space:]]*\"($SHIM_HEADERS
 
 # ...and the build's own `-D` names, which exist nowhere but here. A core reading one would compile
 # differently in the two builds while looking identical in both.
-TARGET_MACROS='PROGRAM_BYTES|ZY_LOAD_BASE|ZY_FAULT_PEN|ZY_SMOKE_VBLS'
+TARGET_MACROS='PROGRAM_BYTES|ZY_LOAD_BASE|ZY_FAULT_PEN|ZY_SMOKE_VBLS|ZY_PHASE|ZY_GAME_FRAMES'
+TARGET_MACROS="$TARGET_MACROS|ZY_FRAME_SAMPLES|ZY_GAME_FAULT"
+TARGET_MACROS="$TARGET_MACROS|ZY_CHANCE_INDEX_REGISTER|ZY_GROUND_SPAWN_Y_REGISTER"
 LEAKS=$(grep -rlE "\b($TARGET_MACROS)\b" "$REC/src" "$REC/include" || true)
 [ -z "$LEAKS" ] || { echo "ERROR: a core reads a target-only macro:"; echo "$LEAKS"; exit 1; }
 
@@ -435,7 +488,7 @@ ls -l "$DISK/$PRG" "$DISK/ZYNAPS.IMG"
 # root above (the 62 data files plus ZYNAPS.IMG) and puts THIS .PRG in AUTO\ under the original's
 # own name. It verifies the finished volume with tools/st_extract.py's reader and refuses an image
 # whose files do not match what went in, so a bad write is a red here and not a black screen later.
-if [ "$MODE" = "floppy" ]; then
+if [ "$MEDIUM" = "floppy" ]; then
   echo ">> bootable floppy"
   "$PY" "$HERE/mkfloppy.py" --prg "$BUILD/ZYNAPS-$MODE.PRG" --root "$DISK" \
         --out "$DISK/ZYNAPS.ST"

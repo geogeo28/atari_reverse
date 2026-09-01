@@ -31,9 +31,14 @@
 #include "os.h"
 #include "psg.h"
 
+#include "entity.h"
+#include "frame.h"
+#include "hud.h"
 #include "init.h"
 #include "input.h"
 #include "irq.h"
+#include "player.h"
+#include "score.h"
 #include "sound.h"
 #include "tos.h"
 #include "video.h"
@@ -54,6 +59,42 @@
 #ifndef ZY_SMOKE_VBLS
 #define ZY_SMOKE_VBLS 250u
 #endif
+
+/* ================================================================================================
+ * HOW FAR THIS BUILD RUNS — the one `#if` in this file, and the whole difference between M1 and M2.
+ *
+ * M1 (`build.sh title`, `titlefault`, `floppy`) composes `_start`'s first five slices, shows the
+ * title picture with its music and hands the machine back. M2 (`build.sh game`, `play`) composes
+ * the WHOLE PROGRAM: the rest of the boot, the attract loop, the section chain, the frame loop and
+ * the endings, in the original's own order and out of nothing but verified slices.
+ *
+ * IT IS ONE `#if` AND NOT TWO BUILDS because everything before the fork — staging the image, the
+ * boot's first five slices, the vector install, the record, the hand-back — is the same code in
+ * both, and a second `main` would be a second copy of it drifting quietly out of step with the one
+ * `smoke.py title` certifies.
+ * ============================================================================================= */
+#define ZY_PHASE_TITLE 0
+#define ZY_PHASE_GAME  1
+#ifndef ZY_PHASE
+#define ZY_PHASE ZY_PHASE_TITLE
+#endif
+
+/* ...and how far the M2 build runs before it stops and hands the machine back. A `frame_loop_once`
+ * count, because that is the unit both sides of the frame differential agree on: the original's own
+ * loop head at 0x10f4e passes once per frame and the debugger counts its hits, so "frame 240" means
+ * the same thing to a breakpoint as it does to this counter. `build.sh play` sets it out of reach,
+ * exactly as it sets ZY_SMOKE_VBLS out of reach for the title build. */
+#ifndef ZY_GAME_FRAMES
+#define ZY_GAME_FRAMES 300u
+#endif
+
+/* THE FRONT END HAS NO SUCH BUDGET AND CANNOT HAVE ONE, which is worth saying rather than leaving a
+ * reader to wonder. `attract_wait_for_start` and `section_start_tail`'s fire wait are VERIFIED
+ * SLICES that spin inside themselves on a byte the ACIA handler writes; the shim is not in the loop
+ * and has nothing to count. So an input that never arrives is an unbounded spin, exactly as it is
+ * on the original — the emulator's `--run-vbls` is the bound, and the finding is a missing
+ * STATE.BIN plus a `phase_reached` that never advanced. That is M1's own argument for its title
+ * wait, one phase further on. */
 
 /* ...and how long `zy_anchor` holds after the smoke's breakpoint fires on it. The capture is
  * STOP-THEN-SHOOT (docs/on-target-execution.md class 8): the breakpoint here stops the machine, its
@@ -130,10 +171,6 @@ static void write_vector(uint32_t vector, uint32_t handler) {
 #define SHIFTER_PEN_MASK 0x777u   /* three bits a gun; a CPU read returns the unused fourth as noise */
 #define SHIFTER_RESOLUTION_MASK 0x03u  /* $ff8260 bits 0-1; the rest read back as noise too */
 
-/* Where the shifter's base register takes its two bytes from, as shifts of the address. */
-#define VIDEO_BASE_HIGH_SHIFT 16
-#define VIDEO_BASE_MID_SHIFT   8
-
 /* The IKBD commands `_start` sends at 0x1001c and 0x10024 (`move.b #$12,d0` / `#$15` ahead of each
  * `bsr ikbd_send_cmd`). $12 disables the mouse — without it the 6301 reports joystick 1's fire line
  * as a MOUSE packet, which is the defect docs/on-target-execution.md class 12 is named for — and
@@ -159,40 +196,145 @@ static void write_vector(uint32_t vector, uint32_t handler) {
 
 static uint8_t g_image_store[OS_IMAGE_SIZE + IMAGE_ALIGN];
 
-/* The aligned base. Read by the interrupt entries as well as the main line, hence not a local. */
-static uint8_t *g_image;
+/* The aligned base. Read by the interrupt entries as well as the main line, hence not a local — and
+ * NOT static any more, because zynaps_backend.c reads it too: the video-base door is where an image
+ * offset becomes a machine address (see shim_include/zynaps_target.h). */
+uint8_t *zy_image_base;
 
 /* Written from zynaps_os.s (see zynaps_target.h), read by the hand-back. */
 void *zy_saved_ssp;
 
 volatile uint32_t zy_vbl_ticks;
 volatile uint32_t zy_timer_b_ticks;
+volatile uint32_t zy_acia_ticks;
 
 /* ================================================================================================
- * The interrupt entries' C halves. zynaps_os.s supplies the `movem` pair and the `rte`.
+ * The interrupt entries' C halves, and the DISPATCH they are built around.
+ *
+ * zynaps_os.s supplies each entry's `movem` pair and its `rte`; there are three entries and SEVEN
+ * handlers, because the program re-points its vectors per phase. `boot_load_title_assets` puts the
+ * in-game pair on $70/$120, `boot_program_timer_b` swaps the VBL for the menu's, the raster timer
+ * swaps Timer B for the split, and `title_attract_loop` swaps both for attract mode's and back
+ * again — twelve stores in the whole program, of seven distinct handler addresses (the shipped
+ * disassembly's own count).
+ *
+ * THE CORES MAKE THOSE STORES INTO THE IMAGE'S VECTOR PAGE, which on the real machine IS low memory
+ * but here is a longword inside a 1 MiB array. So the store is ordinary diffable memory that the
+ * differential already holds, and the shim's job is to READ IT BACK: each entry looks at the
+ * longword the cores wrote and calls the handler it names. That is what makes a phase change take
+ * effect without the shim knowing which phase the program thinks it is in.
+ *
+ * AN ADDRESS THE TABLE DOES NOT KNOW IS A HALT, never a silent skip. A skipped interrupt is the
+ * worst possible failure here: the frame loop's sync waits would simply never end and the run would
+ * look like a hang with nothing in it. So the value is latched, the halt is counted, and
+ * `g_fatal` stops the game at its next frame boundary so that the record — which is the only thing
+ * that can say what happened — is still written.
  * ============================================================================================= */
 
-/* `vbl_isr` @ 0x10776 — the ONE handler in ../src/irq.c with no hardware store at all, and so the
- * only one the differential holds end to end (../STATUS.md's irq section). It clears the frame's
- * sync flag and runs `sound_tick`, whose `flush_shadow` reaches the YM2149 through
- * `psg_port_write`. That call is what makes the title music audible here.
+/* Set from inside an interrupt and read on the main line, hence `volatile`. `g_fatal_vector` and
+ * `g_fatal_handler` say WHICH vector held WHAT, because "an unknown handler" without those two
+ * numbers is not a finding anybody can act on. */
+static volatile uint32_t g_fatal;
+static volatile uint32_t g_fatal_vector;
+static volatile uint32_t g_fatal_handler;
+
+/* One binding per handler the program can install, with the count of times it was entered. The
+ * counts are the surface: `smoke.py` reads them to say which phases actually ran, and a phase whose
+ * handler was installed but never entered is exactly the shape M1's Unpinned 1 recorded. */
+struct isr_binding {
+    uint32_t address;                    /* the Ghidra address the cores store into the image */
+    void (*handler)(uint8_t *image);     /* ...and the verified routine in ../src/irq.c */
+    volatile uint32_t entries;
+};
+
+/* The one handler address no core header names, because no core reads it: ../../names.txt's
+ * `vbl_isr_title`, verified in ../src/irq.c but never installed by the shipped binary (see below).
+ * Spelt here rather than in ../include/irq.h so that no core acquires a constant it has no use for. */
+#define A_vbl_isr_title 0x106a2u
+
+/* `vbl_isr_title` @ 0x106a2 IS IN THE TABLE AND NO STORE IN THE PROGRAM NAMES IT — measured, by
+ * grepping every `move.l #$x,$70/$118/$120` in the shipped disassembly: twelve stores, seven
+ * addresses, and this is not one of them. ../../names.txt names it and it ends in `rte`, so it is a
+ * handler that the shipped binary never installs. It is listed because an entry that costs eight
+ * bytes and turns a halt into a dispatch is cheaper than the alternative, and its count staying 0
+ * is the measurement rather than a belief. */
+static struct isr_binding VBL_HANDLERS[] = {
+    {A_vbl_isr, vbl_isr, 0},                    /* 0x10776 — in-game and title */
+    {A_vbl_isr_title, vbl_isr_title, 0},        /* 0x106a2 — never installed; see above */
+    {A_vbl_menu, vbl_menu, 0},                  /* 0x13c26 — the front end's, at half rate */
+    {A_attract_vbl_isr, attract_vbl_isr, 0},    /* 0x12c9e — attract mode's colour bars */
+};
+
+/* THE M2 NEGATIVE CONTROL LIVES IN `play_one_game`, not here — see the note beside its call to
+ * `section_reload_intro_screens`. The first draft put it in this table, binding the RASTER split's
+ * vector (0x106ae) to the plain in-game Timer B, and it was MEASURED NOT TO ISOLATE ANYTHING: every
+ * surface stayed green, because the pens are sampled at the loop head and whatever the split's
+ * mid-screen upload had done to them has been undone by the time the frame ends. A control that
+ * cannot go red says nothing about the checks it exists for, so it was replaced by one that does.
  *
- * The count is bumped BEFORE the handler runs, so a spin that sees N has had N handler entries.
- * Nothing in M1 samples this count and an image word TOGETHER, so the sibling project's skew
- * problem — which needed a masked critical section around the pair — does not arise here; a later
- * milestone that compares the reconstruction's own vblank counter against this one will meet it. */
-void zy_vbl_tick(void) {
-    zy_vbl_ticks++;
-    vbl_isr(g_image);
+ * The mode still reaches smoke.py through the RECORD rather than through a scrape of build.sh —
+ * the per-mode .PRGs outlive an edit to that script. */
+#ifndef ZY_GAME_FAULT
+#define ZY_GAME_FAULT 0
+#endif
+
+static struct isr_binding TIMER_B_HANDLERS[] = {
+    {A_timer_b_isr, timer_b_isr, 0},                    /* 0x10782 */
+    {A_timer_b_raster_isr, timer_b_raster_isr, 0},      /* 0x106ae — the in-game raster split */
+    {A_attract_rasterbar_isr, attract_rasterbar_isr, 0},/* 0x12cc0 — one bar per scanline */
+};
+
+static struct isr_binding ACIA_HANDLERS[] = {
+    {A_ikbd_acia_isr, ikbd_acia_isr, 0},                /* 0x14456 — the only one */
+};
+
+#define VBL_HANDLER_SLOTS     (sizeof VBL_HANDLERS / sizeof VBL_HANDLERS[0])
+#define TIMER_B_HANDLER_SLOTS (sizeof TIMER_B_HANDLERS / sizeof TIMER_B_HANDLERS[0])
+/* ../include/frame.h's enum is the five addresses the last stage leaves through; this is how many,
+ * so the record can carry one tally per exit and `smoke.py` can name which one ended the run. */
+#define FRAME_EXIT_COUNT (FRAME_EXIT_NEXT_FRAME + 1)
+/* `acknowledge` IS THE MFP'S, AND IT IS WHY THIS TAKES A FOURTH ARGUMENT. Every handler in the two
+ * MFP tables ends by clearing its own in-service bit, and the MFP blocks every LOWER-priority
+ * channel until that happens — so the halt path below, which by definition calls no handler, has to
+ * make that store itself or the machine is wedged for good and cannot even write the record. The
+ * vertical blank is an autovector and has none, so it passes 0. */
+static void dispatch_image_vector(uint32_t image_vector, struct isr_binding *table, unsigned slots,
+                                  void (*acknowledge)(void)) {
+    uint32_t handler = be32(zy_image_base + image_vector);
+
+    for (unsigned slot = 0; slot < slots; slot++)
+        if (table[slot].address == handler) {
+            table[slot].entries++;
+            table[slot].handler(zy_image_base);
+            return;
+        }
+    g_fatal_vector = image_vector;
+    g_fatal_handler = handler;
+    g_fatal = 1;
+    if (acknowledge != 0)
+        acknowledge();
 }
 
-/* `timer_b_isr` @ 0x10782. Installed because the boot installs it (0x1006c), and NOT EXPECTED TO
- * FIRE: nothing in M1 programs an MFP timer and TOS leaves Timer B stopped on an ST. The count is
- * in the record so that "it never fired" is a number rather than a belief — and if it ever does,
- * `timer_b_isr`'s own `mfp_ack_timer_b` is there to acknowledge it. */
+#define DISPATCH(vector, table, acknowledge) \
+    dispatch_image_vector((vector), (table), sizeof (table) / sizeof (table)[0], (acknowledge))
+
+/* The count is bumped BEFORE the handler runs, so a spin that sees N has had N handler entries.
+ * Nothing here samples a count and an image word TOGETHER, so the sibling project's skew problem —
+ * which needed a masked critical section around the pair — does not arise; the one place two of
+ * these counters ARE read together is the anchor, and that read is masked. */
+void zy_vbl_tick(void) {
+    zy_vbl_ticks++;
+    DISPATCH(A_vector_vbl, VBL_HANDLERS, 0);
+}
+
 void zy_timer_b_tick(void) {
     zy_timer_b_ticks++;
-    timer_b_isr(g_image);
+    DISPATCH(A_vector_timer_b, TIMER_B_HANDLERS, mfp_ack_timer_b);
+}
+
+void zy_acia_tick(void) {
+    zy_acia_ticks++;
+    DISPATCH(A_vector_acia, ACIA_HANDLERS, mfp_ack_acia);
 }
 
 /* ================================================================================================
@@ -224,6 +366,32 @@ enum {
     REC_PENS_AT_ANCHOR, REC_PENS_AT_ANCHOR_END = REC_PENS_AT_ANCHOR + PALETTE_PENS - 1,
     REC_VBL_VECTOR_AFTER, REC_TIMER_B_VECTOR_AFTER, REC_PHYSBASE_AFTER, REC_REZ_AFTER,
     REC_PENS_AFTER,     REC_PENS_AFTER_END     = REC_PENS_AFTER     + PALETTE_PENS - 1,
+
+    /* ---- M2's own fields: the program's own account of the run — how far it got, what it
+     * dispatched, what it wrote and where it stopped. Every one is a number the machine cannot be
+     * asked for afterwards.
+     *
+     * THE ONES UNDER THE `#if` ARE 0 IN A TITLE BUILD and the ones outside it are not, which is a
+     * distinction worth drawing because `smoke.py title`'s `check_the_game_fork_was_not_taken`
+     * rests on it: `phase_reached`, `attract_passes`, `section_starts` and `frames_run` are written
+     * only by the game path, while `acia_ticks`, the dispatch counts, the two ACIA vectors and the
+     * video-base trio are written by both (a title build publishes a screen base and substitutes
+     * the `$ff8260` read-modify-write like any other). */
+    REC_PHASE_REACHED, REC_ATTRACT_PASSES, REC_SECTION_STARTS, REC_FRAMES_RUN,
+    REC_FRAME_EXITS,   REC_FRAME_EXITS_END   = REC_FRAME_EXITS + FRAME_EXIT_COUNT - 1,
+    REC_VBL_DISPATCHES, REC_VBL_DISPATCHES_END = REC_VBL_DISPATCHES + VBL_HANDLER_SLOTS - 1,
+    REC_TIMER_B_DISPATCHES,
+    REC_TIMER_B_DISPATCHES_END = REC_TIMER_B_DISPATCHES + TIMER_B_HANDLER_SLOTS - 1,
+    REC_ACIA_TICKS, REC_ACIA_DISPATCHES,
+    REC_UNKNOWN_VECTOR_HALTS, REC_UNKNOWN_VECTOR, REC_UNKNOWN_VECTOR_HANDLER,
+    REC_MFP_SETTLE_RESTORES, REC_RMW_STORES,
+    REC_TOS_ACIA_VECTOR, REC_ACIA_VECTOR_AFTER,
+    REC_PLAYER_COUNT, REC_LEVEL_SECTION, REC_LIVES, REC_SCORE_BCD, REC_FRAME_DUMP_BYTES,
+    REC_GAME_FAULT, REC_FIRST_LIFE_ENDED_AT,
+    /* The video-base door's own account — the offset the cores last published, the machine address
+     * it was translated to, and how many pairs went up. */
+    REC_VIDEO_BASE_OFFSET, REC_VIDEO_BASE_PUBLISHED, REC_VIDEO_BASE_PUBLISHES,
+
     REC_TAIL,
     REC_FIELD_COUNT
 };
@@ -236,6 +404,23 @@ static uint32_t g_record[REC_FIELD_COUNT];
 struct tos_state {
     uint32_t vbl_vector;
     uint32_t timer_b_vector;
+    /* MFP channel 6's vector, $118, where TOS's own keyboard handler lives. Saved and restored like
+     * the other two because the game displaces it (0x104e2) and a handler left there keeps being
+     * entered out of memory GEMDOS has taken back — with a keyboard behind it, which means every
+     * keypress after the exit. */
+    uint32_t acia_vector;
+    /* Interrupt-enable A and its mask. The program stores them WHOLE — `clr.b $fffa07` at 0x12ac2
+     * and `move.b #$1,$fffa07`/`$fffa13` in `boot_enable_interrupts` — so every channel of A that
+     * TOS had open is closed by the time this build hands back, and unlike the B pair (which the
+     * cores read-modify-write) nothing preserved them. Saved as bytes and put back. */
+    uint8_t mfp_iera;
+    uint8_t mfp_imra;
+    /* ...and the B pair, which the game only ever SETS a bit in — so TOS's other bits survive the
+     * run today. They are saved anyway because what makes that true is a TEMPORARY bridge in
+     * zynaps_backend.c, and the hand-back must not depend on a block whose own header says to
+     * delete it. See `hand_the_machine_back`. */
+    uint8_t mfp_ierb;
+    uint8_t mfp_imrb;
     uint32_t logbase;
     uint32_t physbase;
     short rez;
@@ -271,7 +456,7 @@ static long write_file(const char *name, const void *data, long bytes) {
 }
 
 /* THE STAGED READ MUST FIT THE IMAGE, and this is the one place both numbers are in scope. GEMDOS
- * would happily write PROGRAM_BYTES at `g_image + ZY_LOAD_BASE` past the end of a too-small array,
+ * would happily write PROGRAM_BYTES at `zy_image_base + ZY_LOAD_BASE` past the end of a too-small array,
  * over `g_record` and `zy_saved_ssp`; build.sh measures PROGRAM_BYTES off the staged file, so a
  * bigger game binary is exactly how that would arrive. A compile-time refusal costs nothing. */
 _Static_assert((uint32_t)ZY_LOAD_BASE + (uint32_t)PROGRAM_BYTES <= OS_IMAGE_SIZE,
@@ -286,7 +471,7 @@ static long stage_program_image(void) {
 
     if (handle < 0)
         return handle;
-    read = Fread((short)handle, PROGRAM_BYTES, g_image + ZY_LOAD_BASE);
+    read = Fread((short)handle, PROGRAM_BYTES, zy_image_base + ZY_LOAD_BASE);
     Fclose((short)handle);
     return read;
 }
@@ -351,33 +536,24 @@ static uint32_t read_resolution(void) {
  * ============================================================================================= */
 
 /* `move.b d0,$ff8203` then `move.b d0,$ff8201` at the tail of `screen_flip_buffers` (0x1297a) —
- * publish the buffer just drawn into.
+ * publish the buffer just drawn into, as the CORE spells it: an image offset, which the hardware
+ * door translates (shim_include/zynaps_target.h, and zynaps_backend.c's `video_base_store`).
  *
- * THE CORE ALREADY MADE THIS STORE AND IT WAS THE WRONG ADDRESS, which is the one seam a relocated
- * image cannot close from inside. `screen_flip_buffers` publishes two bytes of an IMAGE OFFSET
- * (0x70300) — right in the differential's world, where the image IS the machine's memory and starts
- * at 0, and right on the original, which runs at the base its framebuffers are absolute against.
- * This build's image is a .bss array at `g_image`, so the shifter needs `image + 0x70300`, and the
- * core has no way to know that. It stores the offset; this re-stores the machine address after the
- * slice, and `raw_video_base_at_anchor` reads the register back to say which one won.
+ * WHY THIS STILL EXISTS NOW THE DOOR TRANSLATES. The core has already published the buffer it drew
+ * into, and this re-publishes the FRONT buffer — the same bytes, and normally the same value. What
+ * it is for is the record: `published_screen_base` is the address the shim believes the shifter is
+ * pointed at, and `raw_video_base_at_anchor` reads the register back, so the pair is the surface
+ * for a translation that silently stopped happening. Deleting it would leave that assertion with
+ * nothing on one side of it.
  *
- * WHAT IT COSTS is one transient: between the core's store inside the slice and this one after it,
- * the shifter is pointed at $0703xx and displays whatever is there while the remaining seven files
- * load. Nothing this smoke photographs can see it (every shot is at the anchor, seconds later) and
- * README.md's unpinned list carries it as the residual it is — with the note that M2's frame loop,
- * which flips every frame, needs a real answer rather than a republish.
- *
- * The pointer read back is the CORE's output: the swap is ordinary diffable memory that
- * ../STATUS.md's video row holds, and smoke.py compares both framebuffer words in the record
- * against the two addresses `boot_load_title_assets` hard-codes, swapped. The one thing added here
- * is `+ image base`, and Physbase reads that back. */
+ * IT PUBLISHES THE OFFSET AND NOT THE MACHINE ADDRESS, which is the M1 shape inverted: pre-adding
+ * the base here and then letting the door add it again would translate twice. */
 static uint32_t publish_screen_base(void) {
-    uint32_t front = be32(g_image + A_screen_front);
-    uint32_t base = (uint32_t)(uintptr_t)g_image + front;
+    uint32_t front = be32(zy_image_base + A_screen_front);
 
-    hw_write8(HW_SHIFTER_BASE_MID, (uint8_t)(base >> VIDEO_BASE_MID_SHIFT));
-    hw_write8(HW_SHIFTER_BASE_HIGH, (uint8_t)(base >> VIDEO_BASE_HIGH_SHIFT));
-    return base;
+    hw_write8(HW_SHIFTER_BASE_MID, (uint8_t)(front >> VIDEO_BASE_MID_SHIFT));
+    hw_write8(HW_SHIFTER_BASE_HIGH, (uint8_t)(front >> VIDEO_BASE_HIGH_SHIFT));
+    return (uint32_t)(uintptr_t)zy_image_base + front;
 }
 
 /* THE NEGATIVE CONTROL, and it is now literally what the mode's name claims: ONE PEN corrupted on
@@ -415,6 +591,351 @@ __attribute__((noinline)) static void zy_anchor(void) {
         ;
 }
 
+#if ZY_PHASE == ZY_PHASE_GAME
+/* ================================================================================================
+ * M2: THE WHOLE PROGRAM.
+ *
+ * Everything below composes VERIFIED SLICES in the original's own order and adds exactly two things
+ * the reconstruction cannot hold: the four MFP read-back spins, and a `frame_loop_once` budget so a
+ * headless run stops somewhere a check can name. Both are argued where they stand.
+ * ============================================================================================= */
+
+/* How far the run got, in the order the phases happen. In the record, so a run that hung has still
+ * said where — which is the only evidence an unbounded wait can leave. */
+enum zy_phase_reached {
+    PHASE_STAGING = 0,
+    PHASE_TITLE_ASSETS,          /* 0x1002c..0x101ba done */
+    PHASE_GAMEPLAY_ASSETS,       /* 0x101ba..0x10500 done */
+    PHASE_ATTRACT,               /* inside title_attract_loop @ 0x12ac2 */
+    PHASE_FRONT_END_SCREENS,     /* 0x10524..0x10792, the panel and the two MFP programmings */
+    PHASE_SECTION_START,         /* 0x10814..0x10f4e, the section chain */
+    PHASE_PLAYING,               /* inside the frame loop @ 0x10f4e */
+    PHASE_BUDGET_SPENT,          /* the frame budget ran out — the ordinary headless ending */
+    PHASE_HALTED                 /* an interrupt named a handler the dispatch table does not know */
+};
+
+static volatile uint32_t g_phase;
+static uint32_t g_attract_passes;
+static uint32_t g_section_starts;
+static uint32_t g_frames_run;
+static uint32_t g_frame_exits[FRAME_EXIT_COUNT];
+static uint32_t g_mfp_settle_restores;
+/* THE FRAME THE FIRST LIFE ENDED ON, and it is what pins the sample list to one life. Every sample
+ * frame must be below it: past it the ship has died, `section_start_tail` has asked for the fire
+ * button again, and that wait calls `rand16` a driver-dependent number of times — so the random
+ * stream the next life runs on is not the same on the two sides and nothing after it is comparable.
+ * 0 means the loop never left. `smoke.py game` asserts the relation rather than trusting the list. */
+static uint32_t g_first_life_ended_at;
+
+/* ------------------------------------------------------------------------------------------------
+ * TEMPORARY — `frame_loop_once`'s two register parameters.
+ *
+ * The frame loop carries two 68000 registers across a verified callee's `rts`: D1 at the `bsr` into
+ * `enemy_fire_and_update_shots` (0x118cc) and D7 at the two ground-spawn calls. Neither is derivable
+ * from outside `src/frame.c` — a differential of a leaf compares memory and not the registers the
+ * leaf never promised — so `../include/frame.h` makes them PARAMETERS and `../STATUS.md`'s
+ * "## Coverage limits" carries the residual. Off target `test_frame.py` takes them FROM THE ORACLE
+ * at that PC; on target there is no oracle, and this build must pass something.
+ *
+ * WHAT EACH ZERO COSTS, MEASURED RATHER THAN ASSUMED:
+ *
+ *   * `ground_spawn_y_register` costs NOTHING that the shipped data can reach.
+ *     `frame_wave_script` returns the value the loop's own instructions write on every path but
+ *     three, and the parameter is only those three's fallback. Its high word reaches the spawner's
+ *     guard only when the scripted y is exactly 0xffe0, and
+ *     `test_no_shipped_ground_script_can_make_the_spawner_read_its_carried_register` walks all
+ *     thirteen shipped scripts and finds no such record. So 0 is as right as any other value.
+ *
+ *   * `chance_index_register` IS A REAL RESIDUAL and this build's chief one. Its high byte indexes
+ *     the per-section fire-chance table, so it decides whether enemies fire this frame; measured
+ *     over the shipped worlds it takes at least four different values. Zero is a DECLARED input,
+ *     not a derivation, and the frame differential is exactly the surface that measures what it
+ *     costs — a divergence in enemy fire is a finding with a frame number on it, not a threshold.
+ *
+ * THE ORCHESTRATOR DELETES THIS BLOCK when the core-fidelity agent's change lands: `frame_loop_once`
+ * becomes `frame_loop_once(image)` and derives both for itself, and the call below loses its two
+ * arguments with it.
+ * --------------------------------------------------------------------------------------------- */
+#ifndef ZY_CHANCE_INDEX_REGISTER
+#define ZY_CHANCE_INDEX_REGISTER    0u
+#endif
+#ifndef ZY_GROUND_SPAWN_Y_REGISTER
+#define ZY_GROUND_SPAWN_Y_REGISTER  0u
+#endif
+
+/* ------------------------------------------------------------------------------------------------
+ * The frame differential's own dumps.
+ *
+ * At each declared frame the program writes what the SHIPPED binary can be asked for by the
+ * debugger at the same frame — its front framebuffer, the shifter's sixteen colour registers and
+ * the twenty entity records — so the two sides are compared on ranges rather than on anything this
+ * build invented. `smoke.py game` breaks the original on its own loop head at 0x10f4e with a hit
+ * count and `savebin`s the same three.
+ *
+ * THE FRAME NUMBER IS THE LOOP HEAD'S OWN PASS COUNT, which is what makes the two comparable: one
+ * `frame_loop_once` here is one arrival at 0x10f4e there.
+ *
+ * THE WRITES HAPPEN WITH TOS'S VERTICAL BLANK DISPLACED, which M1 deliberately never did
+ * (docs/on-target-execution.md class 11). It is safe for the same reason the original's own
+ * fourteen file LOADS are — they are made in exactly that state and the game works — and it is
+ * measured rather than argued: `file_opens` counts them and the run's own GEMDOS ledger shows every
+ * one completing. It is also confined to this harness build; `build.sh play`, the one a person
+ * watches and the one that goes on a floppy, declares no samples and writes none.
+ * --------------------------------------------------------------------------------------------- */
+/* EVERY SAMPLE IS INSIDE THE FIRST LIFE, and that bound is the harness's rather than a choice.
+ * With a neutral stick and the front end's leftovers still in the entity table the ship died at
+ * frame 176 (measured; 184 before the cores' `abcd` carry threading landed) — the frame loop takes
+ * its RESTART exit
+ * and `section_start_tail` asks for the fire button again — and that wait calls `rand16` once a
+ * pass, so the number of passes DECIDES the random state the second life starts from. The two sides
+ * are held in that wait by two different drivers (a phase-gated poke here, a breakpoint on the poll
+ * there), so they leave it after different numbers of passes and the second life's stream is not
+ * pinned. Measured: a sample at frame 240 came out byte-identical once and 42 framebuffer bytes
+ * apart twice. README.md's M2 unpinned list carries it, and what would close it is a pin on the
+ * random state at each SECTION START rather than only at the first.
+ *
+ * SO THE LIST STOPS WELL SHORT OF THE DEATH RATHER THAN JUST SHORT OF IT. The frame the ship dies
+ * on is EMERGENT — it moved from 184 to 176 when the cores' `abcd` carry threading landed, which is
+ * a change to the score and not to the ship — so a last sample chosen to sit a few frames under it
+ * would be a list that goes stale on somebody else's commit. `smoke.py`'s
+ * `check_the_game_ran` reads the frame the program reports the first life ending on and refuses a
+ * sample at or past it, so the margin is checked rather than assumed. */
+#ifndef ZY_FRAME_SAMPLES
+#define ZY_FRAME_SAMPLES 1u, 30u, 60u, 120u, 240u
+#endif
+
+static const uint32_t FRAME_SAMPLES[] = {ZY_FRAME_SAMPLES};
+#define FRAME_SAMPLE_COUNT (sizeof FRAME_SAMPLES / sizeof FRAME_SAMPLES[0])
+
+/* The twenty entity records the frame loop drives, as one range: `smoke.py` compares it against the
+ * same range of the original's RAM, with the sprite pointers rebased (they are absolute on both
+ * sides and the two sides load at different addresses). */
+#define ENTITY_TABLE_BYTES (ENTITY_SLOTS * ENTITY_STRIDE)
+
+static uint32_t g_frame_dump_bytes;
+
+/* "FRAME12.BIN" is the longest name this makes: 8.3, uppercase, so a GEMDOS drive cannot rename it.
+ * The index is 1-based and formatted by hand — there is no printf in a freestanding build — and it
+ * handles TWO digits, which the assertion below is what keeps true. */
+#define SAMPLE_NAME_BYTES 12u          /* "FRAME" + two digits + ".BIN" + the terminator */
+#define SAMPLE_NAME_MAX_INDEX 99u      /* ...and what two digits can spell */
+
+static void sample_file_name(char *out, const char *stem, unsigned index) {
+    while (*stem)
+        *out++ = *stem++;
+    if (index >= 10u)
+        *out++ = (char)('0' + index / 10u);
+    *out++ = (char)('0' + index % 10u);
+    *out++ = '.';
+    *out++ = 'B';
+    *out++ = 'I';
+    *out++ = 'N';
+    *out = '\0';
+}
+
+/* A hundredth sample would write a third digit past the end of `name` and spell a wrong one on the
+ * way — the buffer has no slack at all, by design, since it is an 8.3 name. */
+_Static_assert(FRAME_SAMPLE_COUNT <= SAMPLE_NAME_MAX_INDEX,
+               "sample_file_name spells two digits into an 8.3 name");
+
+static void capture_frame_sample(uint32_t frame) {
+    char name[SAMPLE_NAME_BYTES];
+
+    for (unsigned sample = 0; sample < FRAME_SAMPLE_COUNT; sample++) {
+        /* THE PENS GO OUT AS SIXTEEN WORDS, not as the record's sixteen longwords: the other side of
+         * this comparison is `savebin $ff8240 32`, the colour block as the shifter holds it, and a
+         * dump that widened each pen would be comparing two different things. */
+        uint16_t pens[PALETTE_PENS];
+        long written;
+
+        if (FRAME_SAMPLES[sample] != frame)
+            continue;
+        sample_file_name(name, "FRAME", sample + 1u);
+        written = write_file(name, zy_image_base + be32(zy_image_base + A_screen_front),
+                             (long)SCREEN_BYTES);
+        if (written > 0)
+            g_frame_dump_bytes += (uint32_t)written;
+        for (unsigned pen = 0; pen < PALETTE_PENS; pen++)
+            pens[pen] = *(volatile uint16_t *)shifter_pen_register(pen);
+        sample_file_name(name, "PAL", sample + 1u);
+        written = write_file(name, pens, (long)sizeof pens);
+        if (written > 0)
+            g_frame_dump_bytes += (uint32_t)written;
+        sample_file_name(name, "ENT", sample + 1u);
+        written = write_file(name, zy_image_base + A_entity_table, (long)ENTITY_TABLE_BYTES);
+        if (written > 0)
+            g_frame_dump_bytes += (uint32_t)written;
+    }
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * The four `$fffa21` read-back spins, which are the ONE place this shim carries instructions of the
+ * program rather than composing them.
+ *
+ * `../STATUS.md`'s "Not reconstructed" table has them as its only remaining KIT row. Each is ten
+ * bytes — `move.b #n,$fffa21` / `cmpi.b #n,$fffa21` / `bne` back to the store — and the differential
+ * cannot run them: the read is of a register the run itself wrote two instructions earlier, which
+ * the kit's seeded READ model declares as what the chip held on ENTRY and therefore refuses as
+ * stale. So each slice STOPS on the store and the next begins after the spin, and this is the ten
+ * bytes in between, done for real on the real register.
+ *
+ * THE SLICE HAS ALREADY MADE THE FIRST STORE, which is why this reads before it writes: control
+ * arrives at the `cmpi`, not at the `move`. The loop is the original's exactly — read, and on a
+ * mismatch store again.
+ *
+ * WHY THE SPIN IS NOT ONE READ, MEASURED: `mfp_settle_restores` comes back at 244 over a run, not
+ * at 0. Two of the four spins run with Timer B ALREADY STARTED (`move.b #$8,$fffa1b` at 0x10638 and
+ * 0x12b14 precede the 0xc8 and 0x02 spins), and on the MC68901 a running timer's data register
+ * reads the live DOWN-COUNTER while a write to it updates only the reload value — so the compare
+ * succeeds on the pass that happens to catch the counter at its reload point, and re-stores until
+ * then. That is the original's own behaviour and the reason it spins at all; the number is a fact
+ * about the MFP and about how many passes the catch took, not a fault count.
+ *
+ * IT IS UNBOUNDED, exactly as the original's is, and the bound is the emulator's `--run-vbls`. A
+ * Timer B whose data register never reads back the period at all hangs here with no record written,
+ * which is the same shape — and the same evidence — as every other wait in this build.
+ *
+ * THE SURFACE IS THE HARDWARE-STATE VECTOR: `$fffa21` is Timer B's data register, the count of
+ * scanlines between raster interrupts, and this is the one place in the build that writes it from
+ * outside a verified slice.
+ * --------------------------------------------------------------------------------------------- */
+static void mfp_settle_timer_b_data(uint8_t period) {
+    while (hw_read8(HW_MFP_TIMER_B_DATA) != period) {
+        hw_write8(HW_MFP_TIMER_B_DATA, period);
+        g_mfp_settle_restores++;
+    }
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * `title_attract_loop` @ 0x12ac2..0x12c74 — the `bsr` at 0x10520, in four slices and two spins.
+ *
+ * It returns when the player has chosen: key '1', key '2' or the fire button, with `A_player_count`
+ * left holding what they chose. Every one of those three is a byte only `ikbd_acia_isr` writes, so
+ * this is where a real keyboard and a real joystick first matter.
+ * --------------------------------------------------------------------------------------------- */
+static void title_attract_loop(void) {
+    g_phase = PHASE_ATTRACT;
+    g_attract_passes++;
+    attract_program_timer_b(zy_image_base);                          /* 0x12ac2 */
+    mfp_settle_timer_b_data(MFP_TIMER_B_PERIOD_ATTRACT_SETUP);       /* 0x12b0a */
+    attract_program_rasterbar_timer(zy_image_base);                  /* 0x12b14 */
+    mfp_settle_timer_b_data(MFP_TIMER_B_PERIOD_ATTRACT_BARS);        /* 0x12b48 */
+    attract_build_colour_bars(zy_image_base);                        /* 0x12b52 */
+    attract_wait_for_start(zy_image_base);                           /* 0x12bb4..0x12c74 */
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * The section chain and the frame loop — 0x10814 through 0x1296e, and the four addresses the frame
+ * loop's last stage branches back to.
+ *
+ * THE THREE STEPS ARE THE ORIGINAL'S THREE `bra` TARGETS, and nothing else about the shape is this
+ * file's: 0x10814 falls into 0x1083a, whose gate either falls into the asset load or branches to
+ * 0x10b6e, which runs on into 0x10c4e, 0x10d96 and the loop head. `FRAME_EXIT_*` names which of the
+ * five the last stage left through, and the switch below is that `bra` written out.
+ * --------------------------------------------------------------------------------------------- */
+enum section_step {
+    SECTION_STEP_ADVANCE = 0,   /* 0x10814 — the section is over, take the next one */
+    SECTION_STEP_RELOAD,        /* 0x1083a — re-ask whether this section's assets are in RAM */
+    SECTION_STEP_RESTART        /* 0x10b6e — the per-life reset, assets untouched */
+};
+
+/* Returns 1 when the game ended at the title (FRAME_EXIT_TITLE, 0x10500) and the outer loop should
+ * go round again; 0 when the run is over — the headless build's frame budget spent, or an interrupt
+ * named a handler the dispatch table does not know. */
+static int play_one_game(void) {
+    enum section_step step = SECTION_STEP_ADVANCE;
+
+    for (;;) {
+        frame_exit exit;
+
+        g_phase = PHASE_SECTION_START;
+        g_section_starts++;
+        if (step == SECTION_STEP_ADVANCE) {
+            section_advance(zy_image_base);                          /* 0x10814 */
+            step = SECTION_STEP_RELOAD;
+        }
+        if (step == SECTION_STEP_RELOAD && section_reload_needed(zy_image_base)) {  /* 0x1083a */
+            /* THE M2 NEGATIVE CONTROL IS THIS ONE STEP DROPPED, and nothing else: `build.sh
+             * gamefault` leaves out the two `bsr`s at 0x1085a — the player intro screen and the
+             * whole-panel repaint — so the game plays into a screen the front end never prepared.
+             * Every sampled framebuffer moves and the entity table moves with it; the PENS do not,
+             * because no palette is touched, and neither does the exit path nor the program's own
+             * record. `smoke.py gamefault` requires exactly that split.
+             *
+             * A DROPPED COMPOSITION STEP is the defect this milestone is most exposed to: the whole
+             * of M2 is calls to verified slices in the original's order, so what can be wrong is
+             * the order and the set. It compiles to nothing in the shipped build. */
+            if (!ZY_GAME_FAULT)
+                section_reload_intro_screens(zy_image_base);         /* 0x1085a */
+            section_load_assets(zy_image_base);                      /* 0x10862 */
+        }
+        section_restart_prologue(zy_image_base);                     /* 0x10b6e */
+        section_start_prefill(zy_image_base);                        /* 0x10c4e */
+        section_start_tail(zy_image_base);                           /* 0x10d96 — waits for FIRE */
+
+        g_phase = PHASE_PLAYING;
+        do {
+            exit = frame_loop_once(zy_image_base, ZY_CHANCE_INDEX_REGISTER,
+                                   ZY_GROUND_SPAWN_Y_REGISTER);
+            g_frames_run++;
+            if (exit < FRAME_EXIT_COUNT)
+                g_frame_exits[exit]++;
+            if (exit != FRAME_EXIT_NEXT_FRAME && g_first_life_ended_at == 0)
+                g_first_life_ended_at = g_frames_run;
+            capture_frame_sample(g_frames_run);
+            /* AN UNKNOWN VECTOR STOPS THE RUN, it does not restart it. Returning 1 here would
+             * mean "the game ended at the title" to the caller, which would send control back
+             * round the outer loop into `title_attract_loop` — overwriting `phase_reached` with
+             * ATTRACT and spinning for ever in a wait, so the one record that could say what
+             * happened would never be written. */
+            if (g_fatal) {
+                g_phase = PHASE_HALTED;
+                return 0;
+            }
+            if (g_frames_run >= ZY_GAME_FRAMES) {
+                g_phase = PHASE_BUDGET_SPENT;
+                return 0;
+            }
+        } while (exit == FRAME_EXIT_NEXT_FRAME);
+
+        switch (exit) {
+        case FRAME_EXIT_ADVANCE_SECTION: step = SECTION_STEP_ADVANCE; break;
+        case FRAME_EXIT_RELOAD_SECTION:  step = SECTION_STEP_RELOAD;  break;
+        case FRAME_EXIT_RESTART_SECTION: step = SECTION_STEP_RESTART; break;
+        case FRAME_EXIT_TITLE:           return 1;
+        case FRAME_EXIT_NEXT_FRAME:      break;   /* unreachable: the `do` above loops on it */
+        }
+    }
+}
+
+/* The outer loop of loops — the original's own, entered at 0x10500 and left only by dying.
+ *
+ * `boot_front_end_prologue` is what the frame loop's TITLE exit comes back to, which is why the
+ * attract call sits inside this loop and not before it: the second and every later pass finds
+ * `game_initialised` set, rebuilds the panel master and restarts the title tune, and the one after
+ * that finds the same. GAME OVER AND THE HIGH SCORES ARE NOT HERE — they happen INSIDE the frame
+ * loop's last stage, which calls `game_over_screen` on the last life and comes back with the exit
+ * that sends control to 0x10500. */
+static void run_the_whole_program(void) {
+    for (;;) {
+        boot_front_end_prologue(zy_image_base);                      /* 0x10500 */
+        title_attract_loop();                                        /* 0x10520 -> 0x12ac2 */
+
+        g_phase = PHASE_FRONT_END_SCREENS;
+        boot_stage_frontend_screens(zy_image_base);                  /* 0x10524 */
+        boot_program_timer_b(zy_image_base);                         /* 0x105c6 */
+        mfp_settle_timer_b_data(MFP_TIMER_B_PERIOD_PLAIN);           /* 0x1062e */
+        boot_program_raster_timer(zy_image_base);                    /* 0x10638 */
+        mfp_settle_timer_b_data(MFP_TIMER_B_PERIOD_RASTER);          /* 0x1066c */
+        boot_enable_interrupts();                                    /* 0x10676 -> bra 0x10792 */
+        boot_new_game_records(zy_image_base);                        /* 0x10792 */
+
+        if (!play_one_game())
+            return;
+    }
+}
+#endif /* ZY_PHASE == ZY_PHASE_GAME */
+
 /* ================================================================================================
  * The boot, and the hand-back.
  * ============================================================================================= */
@@ -447,6 +968,23 @@ static void hand_the_machine_back(const struct tos_state *tos) {
 
     write_vector(A_vector_vbl, tos->vbl_vector);
     write_vector(A_vector_timer_b, tos->timer_b_vector);
+    write_vector(A_vector_acia, tos->acia_vector);
+    /* AND THE MFP BACK THE WAY IT WAS FOUND, which the three vectors alone do not do. The game
+     * stops and restarts Timer B and rewrites both interrupt-enable registers, and leaving a
+     * started Timer B behind means TOS taking a raster interrupt through a handler that no longer
+     * exists.
+     *
+     * ALL FOUR REGISTERS GO BACK, INCLUDING THE B PAIR, and the reason is that the thing which
+     * preserves TOS's bits in them today is zynaps_backend.c's TEMPORARY bridge — not the cores,
+     * which still spell `hw_write8(HW_MFP_IERB, 1u << 6)`. The bridge's own header tells the
+     * orchestrator to delete it when the cores learn `hw_bset8`, and a hand-back that relied on it
+     * would quietly stop restoring Timer C, TOS's 200 Hz clock and the floppy's motor timeout, on
+     * the commit that removed it. Restoring what was read at entry depends on nothing. */
+    hw_write8(HW_MFP_TIMER_B_CONTROL, MFP_TIMER_B_STOPPED);
+    hw_write8(HW_MFP_IERA, tos->mfp_iera);
+    hw_write8(HW_MFP_IMRA, tos->mfp_imra);
+    hw_write8(HW_MFP_IERB, tos->mfp_ierb);
+    hw_write8(HW_MFP_IMRB, tos->mfp_imrb);
     zy_irq_restore(sr);
 
     /* Only Setscreen puts `_v_bas_ad` and `sshiftmd` back, which the direct pokes never touched;
@@ -456,13 +994,53 @@ static void hand_the_machine_back(const struct tos_state *tos) {
     write_pens(tos->pens);
 }
 
+/* THE PROGRAM'S OWN ACCOUNT OF THE RUN, and it is the only surface a headless game has for most of
+ * what it did. Everything here is a number the machine cannot be asked for afterwards: which phase
+ * was reached, which handler each interrupt entry dispatched to and how often, what the frame loop
+ * did and where it left, how many hardware stores landed on each register, and what the player's
+ * state was when the budget ran out.
+ *
+ * In a title build every M2 field below is 0 and stays 0, which is what says the fork was not
+ * taken — `smoke.py title` asserts exactly that rather than skipping the fields. */
+static void record_the_run(void) {
+    g_record[REC_ACIA_TICKS] = zy_acia_ticks;
+    for (unsigned slot = 0; slot < VBL_HANDLER_SLOTS; slot++)
+        g_record[REC_VBL_DISPATCHES + slot] = VBL_HANDLERS[slot].entries;
+    for (unsigned slot = 0; slot < TIMER_B_HANDLER_SLOTS; slot++)
+        g_record[REC_TIMER_B_DISPATCHES + slot] = TIMER_B_HANDLERS[slot].entries;
+    g_record[REC_ACIA_DISPATCHES] = ACIA_HANDLERS[0].entries;
+    g_record[REC_UNKNOWN_VECTOR_HALTS] = g_fatal;
+    g_record[REC_UNKNOWN_VECTOR] = g_fatal_vector;
+    g_record[REC_UNKNOWN_VECTOR_HANDLER] = g_fatal_handler;
+    g_record[REC_RMW_STORES] = zy_rmw_stores;
+    g_record[REC_VIDEO_BASE_OFFSET] = zy_video_base_offset;
+    g_record[REC_VIDEO_BASE_PUBLISHED] = zy_video_base_published;
+    g_record[REC_VIDEO_BASE_PUBLISHES] = zy_video_base_publishes;
+#if ZY_PHASE == ZY_PHASE_GAME
+    g_record[REC_PHASE_REACHED] = g_phase;
+    g_record[REC_ATTRACT_PASSES] = g_attract_passes;
+    g_record[REC_SECTION_STARTS] = g_section_starts;
+    g_record[REC_FRAMES_RUN] = g_frames_run;
+    for (unsigned exit = 0; exit < FRAME_EXIT_COUNT; exit++)
+        g_record[REC_FRAME_EXITS + exit] = g_frame_exits[exit];
+    g_record[REC_MFP_SETTLE_RESTORES] = g_mfp_settle_restores;
+    g_record[REC_FIRST_LIFE_ENDED_AT] = g_first_life_ended_at;
+    g_record[REC_PLAYER_COUNT] = zy_image_base[A_player_count];
+    g_record[REC_LEVEL_SECTION] = zy_image_base[A_level_section];
+    g_record[REC_LIVES] = zy_image_base[A_lives];
+    g_record[REC_SCORE_BCD] = be32(zy_image_base + A_player_score_bcd);
+    g_record[REC_FRAME_DUMP_BYTES] = g_frame_dump_bytes;
+    g_record[REC_GAME_FAULT] = ZY_GAME_FAULT;
+#endif
+}
+
 void zynaps_main(void) {
     struct tos_state tos;
     uint32_t anchor_address;
 
     /* The image's runtime base, rounded up — see the header comment. */
-    g_image = (uint8_t *)(((uintptr_t)g_image_store + (IMAGE_ALIGN - 1))
-                          & ~(uintptr_t)(IMAGE_ALIGN - 1));
+    zy_image_base = (uint8_t *)(((uintptr_t)g_image_store + (IMAGE_ALIGN - 1))
+                                & ~(uintptr_t)(IMAGE_ALIGN - 1));
 
     /* BEFORE ANYTHING ELSE, and before the eight file loads that take real time: tell the smoke
      * where to put its breakpoint. GEMDOS relocated us to wherever the TPA fell, so `zy_anchor`'s
@@ -472,6 +1050,11 @@ void zynaps_main(void) {
 
     tos.vbl_vector = read_vector(A_vector_vbl);
     tos.timer_b_vector = read_vector(A_vector_timer_b);
+    tos.acia_vector = read_vector(A_vector_acia);
+    tos.mfp_iera = hw_read8(HW_MFP_IERA);
+    tos.mfp_imra = hw_read8(HW_MFP_IMRA);
+    tos.mfp_ierb = hw_read8(HW_MFP_IERB);
+    tos.mfp_imrb = hw_read8(HW_MFP_IMRB);
     tos.physbase = (uint32_t)Physbase();
     tos.logbase = (uint32_t)Logbase();
     tos.rez = Getrez();
@@ -479,9 +1062,10 @@ void zynaps_main(void) {
 
     g_record[REC_MAGIC] = ZY_RECORD_MAGIC;
     g_record[REC_FIELDS] = REC_FIELD_COUNT;
-    g_record[REC_IMAGE_BASE] = (uint32_t)(uintptr_t)g_image;
+    g_record[REC_IMAGE_BASE] = (uint32_t)(uintptr_t)zy_image_base;
     g_record[REC_TOS_VBL_VECTOR] = tos.vbl_vector;
     g_record[REC_TOS_TIMER_B_VECTOR] = tos.timer_b_vector;
+    g_record[REC_TOS_ACIA_VECTOR] = tos.acia_vector;
     g_record[REC_FAULT_PEN] = (uint32_t)ZY_FAULT_PEN;
     g_record[REC_SMOKE_VBLS] = ZY_SMOKE_VBLS;
     g_record[REC_ANCHOR_HOLD_VBLS] = ZY_ANCHOR_HOLD_VBLS;
@@ -494,7 +1078,7 @@ void zynaps_main(void) {
      * — so seeding the image's copy is what makes the slice's output mean anything here. Reading
      * `image[0x195d0]` back after the slice is then a memory-surface check that the slice ran, on a
      * value nothing else in the image holds. */
-    wr32(g_image + A_vector_vbl, tos.vbl_vector);
+    wr32(zy_image_base + A_vector_vbl, tos.vbl_vector);
 
     /* ------------------------------------------------------------------------------------------
      * `_start`, in the original's order, out of the verified slices and nothing else.
@@ -510,7 +1094,7 @@ void zynaps_main(void) {
 
     g_record[REC_SUPER_TOKEN] = boot_enter_supervisor();
     zy_line_a_hide_mouse();
-    boot_save_vbl_vector(g_image);
+    boot_save_vbl_vector(zy_image_base);
     /* Each command is recorded by the RUNNING TOTAL of bytes that reached $fffc02, so the two
      * fields are 1 and 2 rather than a verdict apiece: the core's spin is unbounded now
      * (shim_include/tos.h), so a transmitter that never empties never returns and there is no
@@ -520,11 +1104,11 @@ void zynaps_main(void) {
     g_record[REC_ACIA_BYTES_AFTER_MOUSE_OFF] = zy_acia_bytes_sent;
     ikbd_send_cmd(IKBD_CMD_JOYSTICK_INTERROGATION_MODE);
     g_record[REC_ACIA_BYTES_AFTER_JOYSTICK_MODE] = zy_acia_bytes_sent;
-    boot_load_title_assets(g_image);
+    boot_load_title_assets(zy_image_base);
 
-    g_record[REC_IMAGE_SAVED_VBL_VECTOR] = be32(g_image + A_saved_tos_vbl_vector);
-    g_record[REC_IMAGE_SCREEN_BACK] = be32(g_image + A_screen_back);
-    g_record[REC_IMAGE_SCREEN_FRONT] = be32(g_image + A_screen_front);
+    g_record[REC_IMAGE_SAVED_VBL_VECTOR] = be32(zy_image_base + A_saved_tos_vbl_vector);
+    g_record[REC_IMAGE_SCREEN_BACK] = be32(zy_image_base + A_screen_back);
+    g_record[REC_IMAGE_SCREEN_FRONT] = be32(zy_image_base + A_screen_front);
     g_record[REC_SHIFTER_MODE_WRITES] = zy_shifter_mode_writes;
     g_record[REC_SHIFTER_MODE_MASK] = init_shifter_mode_mask_written();
     g_record[REC_PALETTE_LONG_WRITES] = zy_palette_long_writes;
@@ -543,8 +1127,15 @@ void zynaps_main(void) {
      * loads are done. Two reasons: the slice is one C call and has no seam in the middle, and
      * (the load-bearing one) every GEMDOS trap this build makes would otherwise run with TOS's
      * vertical-blank handler displaced, which is the shape of docs/on-target-execution.md class 11.
-     * As it stands NO file is opened after the install, so that risk is zero rather than argued
-     * about. What it costs is the tune's PHASE: at the anchor this build's driver has ticked
+     *
+     * THAT SECOND REASON IS M1'S AND M2 SPENDS IT, which is worth saying here rather than only in
+     * the README: the game build opens fourteen more files in `boot_load_gameplay_assets`, every
+     * section's assets after that, and three dumps per sampled frame — all with TOS's vertical
+     * blank displaced. The exposure is taken deliberately, because the ORIGINAL takes it (its own
+     * vector goes in at 0x10062 and it opens fourteen more files afterwards) and the original
+     * works; what makes it a measurement rather than a hope is the GEMDOS ledger, which shows every
+     * one of those opens completing. What the deviation still buys is the M1 build, where the risk
+     * really is zero. What it costs is the tune's PHASE: at the anchor this build's driver has ticked
      * ZY_SMOKE_VBLS times and the original's has ticked however long its loads took. That is
      * precisely why smoke.py's timeline arm compares the register stream's SHAPE, cut on the
      * driver's own descending 10..0 flush, and not vblank numbers.
@@ -573,7 +1164,30 @@ void zynaps_main(void) {
         zy_irq_restore(sr);
     }
 
-    /* ---- the title screen runs, with its music -----------------------------------------------
+#if ZY_PHASE == ZY_PHASE_GAME
+    /* ---- M2: the rest of the boot, and then the whole program -------------------------------
+     *   0x101ba  boot_load_gameplay_assets   ../src/init.c — fourteen files and the banks
+     *   0x104c8  boot_install_ikbd_isr       ../src/init.c — image[$118] = 0x14456
+     *   0x10500  the loop of loops           run_the_whole_program above
+     *
+     * THE REAL ACIA VECTOR GOES IN WHERE THE PROGRAM'S DOES, immediately after the slice that
+     * stores the image's — the same rule as the pair above, so the window in which TOS still owns
+     * the keyboard is the original's window (0x10062 to 0x104e2) and not a shorter or longer one. */
+    g_phase = PHASE_TITLE_ASSETS;
+    boot_load_gameplay_assets(zy_image_base);
+    boot_install_ikbd_isr(zy_image_base);
+    {
+        uint16_t sr = zy_irq_disable();
+
+        write_vector(A_vector_acia, (uint32_t)(uintptr_t)&zy_acia_entry);
+        zy_irq_restore(sr);
+    }
+    g_phase = PHASE_GAMEPLAY_ASSETS;
+
+    run_the_whole_program();
+    zy_anchor();
+#else
+    /* ---- M1: the title screen runs, with its music -------------------------------------------
      * UNBOUNDED ON PURPOSE, and the bound is the emulator's. If the vertical blank never arrives
      * this spins for ever; `smoke.py` runs Hatari under `--run-vbls`, so the machine stops anyway
      * and the missing STATE.BIN is the finding. A counter here could not tell "no interrupt" from
@@ -581,6 +1195,7 @@ void zynaps_main(void) {
     while (zy_vbl_ticks < ZY_SMOKE_VBLS)
         ;
     zy_anchor();
+#endif
 
     g_record[REC_PHYSBASE_AT_ANCHOR] = (uint32_t)Physbase();
     g_record[REC_RAW_VIDEO_BASE_AT_ANCHOR] = read_raw_video_base();
@@ -619,12 +1234,14 @@ void zynaps_main(void) {
         read_pens(pens);
         record_pens(REC_PENS_AT_ANCHOR, pens);
     }
+    record_the_run();
 
     /* ---- and hands the machine back ---------------------------------------------------------- */
     hand_the_machine_back(&tos);
 
     g_record[REC_VBL_VECTOR_AFTER] = read_vector(A_vector_vbl);
     g_record[REC_TIMER_B_VECTOR_AFTER] = read_vector(A_vector_timer_b);
+    g_record[REC_ACIA_VECTOR_AFTER] = read_vector(A_vector_acia);
     g_record[REC_PHYSBASE_AFTER] = (uint32_t)Physbase();
     g_record[REC_REZ_AFTER] = read_resolution();
     {
@@ -639,7 +1256,7 @@ void zynaps_main(void) {
      * nothing TOS did to the display touched it, so the bytes are the same — and no GEMDOS call has
      * then run while TOS's vertical-blank handler was displaced. */
     g_record[REC_SCREEN_BYTES_WRITTEN] =
-        (uint32_t)write_file(FILE_SCREEN_DUMP, g_image + be32(g_image + A_screen_front),
+        (uint32_t)write_file(FILE_SCREEN_DUMP, zy_image_base + be32(zy_image_base + A_screen_front),
                              (long)SCREEN_BYTES);
 
     g_record[REC_TAIL] = ZY_RECORD_TAIL;

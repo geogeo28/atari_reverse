@@ -2108,68 +2108,82 @@ concurrent landing rather than a regression until you have checked which section
 **`atari/README.md` is canonical for everything below; this section is a pointer and a count.**
 
 `atari/` cross-compiles the VERIFIED cores above into `ZYNAPS.PRG` and runs them on a 68000
-(Hatari, TOS 1.04, `--machine st --memsize 4`). **Milestone M1, 2026-08-29: the title picture and
-its music.** It composes `_start`'s verified slices in the original's order and stops at `0x101ba`,
-where the "Not reconstructed" table above stops the boot — so nothing on target runs a slice this
-file does not carry a ✅ row for.
+(Hatari, TOS 1.04, `--machine st --memsize 4`). **Milestone M2, 2026-08-29: the whole game.** It
+composes every slice of `_start`, of `title_attract_loop` and of the section chain in the original's
+own order, and then calls `frame_loop_once` until it leaves — so the program boots, shows its
+attract screen, starts a game, plays a section, dies, restarts and can reach its own endings, and
+**nothing on target runs a body this file does not carry a ✅ row for.** M1 (the title picture and
+its music, stopping at `0x101ba`) is still a mode of the same build and still green.
 
-`python3 atari/smoke.py title` judges it against the shipped binary on the six surfaces of
-`docs/on-target-execution.md`, and all twelve checks are green: the 32000-byte framebuffer is
-**byte-identical**, the rendered picture is **byte-identical**, the sixteen pens / `$ff8260` /
-`Physbase` agree, the GEMDOS ledger is 24 parsed calls matching the original's first 24 (the same
-eight lowercase names, in order, on the same handle, with the same byte counts), and the first 64 of
-the sound driver's tick frames are the same register stream. `smoke.py titlefault` is the negative
-control — one pen corrupted on its way to the shifter — and reddens exactly the two colour surfaces
-while the other twelve stay green.
+`python3 atari/smoke.py game` judges it against the shipped binary with a FRAME DIFFERENTIAL: both
+sides are booted, given the same input, parked on the same random seed and the same entity table,
+and sampled at the same numbered frames of the same section, by the loop head's own pass count (one
+`frame_loop_once` here is one arrival at `0x10f4e` there). **At frames 1, 30, 60, 120 and 240 the
+32000-byte framebuffer is byte-identical, the twenty entity records are byte-identical, and the
+sixteen colour registers agree.** `smoke.py gamefault` is the negative control — one step of the section chain dropped,
+`section_reload_intro_screens` — and reddens the drawing at every frame while the pens, the exit
+path and the program's own record stay green.
 
-**Two things this section is here to say to a reader of the tables above:**
+**Four things this section is here to say to a reader of the tables above:**
 
-* **The off-image class is still unpinned OFF target, and is now pinned ON it for the slices M1
-  runs.** The rows above record that `$ff8240`, `$ff8260` and `$fffa0f` are outside the 1 MiB image
-  and that no case here can fail on a palette upload or an interrupt acknowledge. That is unchanged.
-  What M1 adds is the other surface those rows name — a Hatari register snapshot — for
-  `boot_load_title_assets`, `set_palette_title`, `screen_flip_buffers` and `vbl_isr`.
-  Six of the seven `irq` handlers, and `timer_b_isr`'s acknowledge, are still unexercised: they
-  belong to the front end and to an MFP timer M1 never starts. `atari/README.md`'s "Unpinned" list
-  is the full ledger, with a reason each.
-* **`ikbd_send_cmd` @ `0x14444` and the Line-A opcode at `0x10010` are executed for real on target**,
-  from `atari/zynaps_os.s`, which is where the "KIT" rows above said the answer would have to come
-  from. The ACIA send is BOUNDED there (the original's is not) and its verdict is a record field.
-  What is still unpinned is the 6301's *response* — M1 reads no input at all.
+* **The four `$fffa21` read-back spins — this file's last KIT row — are executed for real.** The
+  shim does the ten bytes between each pair of slices on the real Timer B data register, and counts
+  how many times the read did not answer what had just been written (244 in a 300-frame run). What
+  is still unmodelled is the OFF-target half: the kit's seeded read model cannot serve a read of a
+  byte the run itself wrote, and the raise in its `TRAP_MODEL.md` stands.
+* **All seven `irq` handlers now execute**, which closes M1's first unpinned item. The program
+  re-points its vectors per phase into the IMAGE's own vector page, and the shim's three interrupt
+  entries dispatch on those bytes; the record carries one entry count per handler, and an address
+  the table does not know is a HALT with the value in it rather than a silent skip. `vbl_isr_title`
+  @ `0x106a2` is the exception and it is a FINDING: no `move.l` in the shipped program installs it
+  (measured over every store to `$70`/`$118`/`$120`), so its count staying 0 is asserted.
+* **The three read-modify-write doors the kit added are supplied, so the target build links.**
+  `hw_bset8`, `hw_bclr8` and `hw_and8` are real byte-wide read-modify-writes in
+  `zynaps_backend.c`, each calling `note_store()` as `atari/README.md`'s Unpinned 2 requires, and
+  `rmw_stores` in the record says how many the run made (about 25,000 in a 300-frame game, almost
+  all of them `mfp_ack_timer_b`). It is not cosmetic: `move.b #$40,$fffa09` disables Timer C, which
+  is TOS's 200 Hz clock and the floppy's motor timeout. **The rows above are unchanged** — off
+  target the read half still answers a fabricated 0 and the ledger records what the oracle's own
+  instruction produced from it.
+* **THE RECONSTRUCTION IS TOO SLOW FOR ONE OF ITS OWN INTERRUPTS, and no off-target surface can see
+  it.** Attract mode's Timer B fires every two scanlines, about 1024 cycles, and the C handler does
+  not fit: measured at 79 of the frame's 156 interrupts arriving. It cost this milestone an
+  address-keyed hardware ledger (written twice, deleted twice) and a fifteen-register `movem` in the
+  interrupt entries, and what remains is a fidelity residual — the attract bars are drawn at half
+  the original's density. `atari/README.md`'s M2 section has the numbers and the unpinned list.
 
 The verified counts above are untouched by any of this: `atari/` compiles the cores unchanged, and
 `atari/build.sh` measures that (no core includes a shim header, and no core reads a target-only
-`-D`). `make test` is still **2700 passed** with `atari/` present.
+`-D`). `make test` is still **3979 passed** with `atari/` present.
 
-**THE BUSY-WAIT SEAM, added with the game-over chain.** `src/highscore.c` is the first core to call
-the kit's `sched_poll8` / `sched_wait8`, and `build.sh` excludes the kit's whole `src/` from a target
-build — so those symbols would not exist on the real machine. `atari/shim_include/sched.h` is what
-supplies them, by the same include-path seam `os.h` and `hw.h` use and following the kit header's
-own instruction ("a build for the real machine ... supplies its own `sched_wait8`/`sched_poll16`
-that loop without a cap"). Off target the cap turns a wait the case never released into a named
-refusal; on target the VBL and the ACIA really do write those bytes, so the spin is the original's,
-unbounded, and `volatile` is what keeps the read in the loop. **THE CAP IS BEHIND THE SAME SEAM**, and the review is what found that it was not: the two waits
-this file rolls by hand (`joystick_wait_for_fire` and the edit loop's frame counter) cannot use
+**THE BUSY-WAIT SEAM, added with the game-over chain, is now exercised.** `src/highscore.c` was the
+first core to call the kit's `sched_poll8` / `sched_wait8`, and `build.sh` excludes the kit's whole
+`src/` from a target build — so those symbols would not exist on the real machine.
+`atari/shim_include/sched.h` supplies them, by the same include-path seam `os.h` uses and following
+the kit header's own instruction ("a build for the real machine ... supplies its own
+`sched_wait8`/`sched_poll16` that loop without a cap"). Off target the cap turns a wait the case
+never released into a named refusal; on target the VBL and the ACIA really do write those bytes, so
+the spin is the original's, unbounded, and `volatile` is what keeps the read in the loop.
+**THE CAP IS BEHIND THE SAME SEAM**, and the review is what found that it was not: the two waits
+that file rolls by hand (`joystick_wait_for_fire` and the edit loop's frame counter) cannot use
 `sched_wait8` — one interrogates the IKBD before each look and tests a BIT, the other draws a whole
-frame — so they carried `OS_SCHED_POLL_MAX` in the CORE, which `build.sh` compiles into the PRG.
-On iron that would have dismissed YOU ARE NOT RATED after 4096 interrogations with nobody touching
-the stick, and abandoned a player at PLEASE ENTER YOUR NAME after 4096 frames without committing
-the name. Both now go through one `wait_should_give_up`, whose body is compiled away by
-`OS_NO_REFUSAL_TALLY` — `src/input.c`'s split, one register over, and include/input.h's argument.
-**Measured, not assumed:**
-`src/highscore.c` compiles clean under `build.sh`'s own flags and its object file has no undefined
-`sched_*` or `os_refused`.
+frame — so they carried `OS_SCHED_POLL_MAX` in the CORE, which `build.sh` compiles into the PRG. On
+iron that would have dismissed YOU ARE NOT RATED after 4096 interrogations with nobody touching the
+stick, and abandoned a player at PLEASE ENTER YOUR NAME after 4096 frames without committing the
+name. Both now go through one `wait_should_give_up`, whose body is compiled away by
+`OS_NO_REFUSAL_TALLY`. **M2 runs those waits**: the attract loop's, the section start's PREPARE FOR
+COMBAT wait and the frame loop's two sync waits all spin on bytes the real interrupts write, and the
+run reaches the frame loop through them.
 
-**Two on-target residuals this chain carries, neither of which any off-target surface can hold.**
-The NOT RATED wait's `dbf` of 1001 passes between one `ikbd_send_cmd` and the next is not
-reproduced — a delay counted in 68000 cycles has no meaning in C — so on iron the interrogations go
-out back to back with nothing pacing them, and the 6301 dropping or reordering a packet is exactly
-the class `../../../docs/on-target-execution.md` says wants a timeline. And the two hand-rolled
-waits tally their give-up through `os_refused` rather than the kit's `sched_give_up`, which is
-static to `src/sched.c`: the case is still thrown away by name, but `g_sched_exhausted()` does not
-count them, so the harness's "a wait ran out of polls" hint reads generic. Closing that is an
-exported give-up in `sched.h` — a kit change, not this project's. **What is NOT measured is a link or a run**, for a reason that predates
-this change: `bash atari/build.sh title` stops at its own guard — it requires
-`src/irq_hw_offtarget.c` to exist, and that file was deleted when the hardware-write ledger landed
-(see the note under "## Not reconstructed"). Repairing that guard is the next target build's first
-job, and this seam is unexercised until it is.
+**Two on-target residuals this chain still carries, neither of which any off-target surface can
+hold.** The NOT RATED wait's `dbf` of 1001 passes between one `ikbd_send_cmd` and the next is not
+reproduced — a delay counted in 68000 cycles has no meaning in C — so the interrogations go out back
+to back with nothing pacing them, and the 6301 dropping or reordering a packet is exactly the class
+`../../../docs/on-target-execution.md` says wants a timeline. **It has now been SEEN**: the attract
+loop's own interrogation, which has the same unreproduced delay, lands `$fd $fd` in the two joystick
+bytes rather than a header and two states, and the front end starts a one-player game nobody asked
+for (`atari/README.md`'s M2 unpinned 19). And the two hand-rolled waits tally their give-up through
+`os_refused` rather than the kit's `sched_give_up`, which is static to `src/sched.c`: the case is
+still thrown away by name, but `g_sched_exhausted()` does not count them, so the harness's "a wait
+ran out of polls" hint reads generic. Closing that is an exported give-up in `sched.h` — a kit
+change, not this project's.

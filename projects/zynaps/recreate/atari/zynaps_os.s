@@ -250,34 +250,65 @@ zy_line_a_hide_mouse:
     movem.l (%sp)+,%d2/%a2
     rts
 
-| ------------------------------------------------------- the two INTERRUPT entries -------------
+| ------------------------------------------------------- the three INTERRUPT entries -----------
 |
-| The reconstruction's own handlers — `vbl_isr` @ 0x10776 and `timer_b_isr` @ 0x10782, both verified
-| in ../src/irq.c and both ending in `rte` there only in the sense that the ORIGINAL does; the C
-| bodies return normally. Both are installed at the REAL exception vectors $70 and $120, which is
-| where the boot puts them (0x10062 and 0x1006c), rather than at a TOS hook — the original owns the
-| machine and so, for the length of its run, does this.
+| The reconstruction's own handlers, all verified in ../src/irq.c and all ending in `rte` there only
+| in the sense that the ORIGINAL does; the C bodies return normally. Each entry is installed at the
+| REAL exception vector the boot's own `move.l` names — $70, $120 and $118 — rather than at a TOS
+| hook, because the original owns the machine and so, for the length of its run, does this.
 |
-| EACH ENTRY IS THE `movem` PAIR THE C CANNOT WRITE, AND NOTHING ELSE. The original's handlers save
-| every register (`movem.l #$fffe,-(a7)` in the sound tick's own prologue); a C function's own
-| registers are its compiler's business, but the INTERRUPTED code's registers are this file's.
+| THERE ARE SEVEN HANDLERS AND THREE ENTRIES, and that is M2's whole shape: the program re-points
+| its vectors per phase (menu / title / attract / game) by storing a Ghidra address into the IMAGE's
+| own vector page, and the C halves below DISPATCH on those bytes. zynaps_main.c's
+| `dispatch_image_vector` is the table; an address it does not know is a halt with the value in the
+| record, never a silent skip.
+|
+| EACH ENTRY IS THE `movem` PAIR THE C CANNOT WRITE, AND NOTHING ELSE. The interrupted code's
+| registers are this file's business; a C function's own are its compiler's.
+|
+| SO IT SAVES FOUR REGISTERS AND NOT FIFTEEN, and that is a measurement rather than a preference.
+| The original's handlers save every register (`movem.l #$fffe,-(a7)`), because they are hand asm and
+| use whichever they like. A C handler cannot: the m68k SysV ABI makes %d0/%d1/%a0/%a1 SCRATCH and
+| %d2-%d7/%a2-%a6 CALLEE-SAVED, so everything reached from the `jsr` below has already put back every
+| register but those four. Saving the other eleven is 176 cycles of `movem` there and back, twice —
+| and attract mode's Timer B fires every TWO SCANLINES, about 1024 cycles. MEASURED: with the
+| fifteen-register pair the handler ran longer than its own period, the main line advanced two
+| instructions a frame, and the attract screen never drew (the same starvation the hardware ledger's
+| first draft caused; zynaps_backend.c carries the other half of that finding).
+|
+| The exception frame carries the SR, so the condition codes need no saving here.
 
     .globl  zy_vbl_entry
 zy_vbl_entry:
-    movem.l %d0-%d7/%a0-%a6,-(%sp)
-    jsr     zy_vbl_tick             | zynaps_main.c: bumps the tick count, calls vbl_isr(image)
-    movem.l (%sp)+,%d0-%d7/%a0-%a6
+    movem.l %d0-%d1/%a0-%a1,-(%sp)
+    jsr     zy_vbl_tick             | zynaps_main.c: bumps the tick count, dispatches on image[$70]
+    movem.l (%sp)+,%d0-%d1/%a0-%a1
     rte
 
-| MFP Timer B. The original installs this vector at 0x1006c and this build does the same, but
-| NOTHING IN M1 STARTS TIMER B: the boot slice programs no MFP timer, and TOS leaves Timer B stopped
-| on an ST. So this entry is installed and never entered, which is a claim STATE.BIN carries as a
-| number (`timer_b_ticks`, expected 0) rather than a sentence. The acknowledge the handler needs is
-| `mfp_ack_timer_b` in zynaps_backend.c, not here, because the C body is where the original's
-| `bclr #0,$fffa0f` sits.
+| MFP Timer B, vector $120. NOTHING IN THE M1 `title` BUILD STARTS TIMER B — the boot slice it runs
+| programs no MFP timer and TOS leaves Timer B stopped on an ST — so under that build this entry is
+| installed and never entered, which STATE.BIN carries as a number (`timer_b_ticks`, expected 0)
+| rather than as a sentence. The M2 game build DOES start it, twice at two periods, and the raster
+| split runs off it. The acknowledge the handler needs is `mfp_ack_timer_b` (../src/irq.c) reaching
+| zynaps_backend.c's real read-modify-write, not anything here.
     .globl  zy_timer_b_entry
 zy_timer_b_entry:
-    movem.l %d0-%d7/%a0-%a6,-(%sp)
-    jsr     zy_timer_b_tick         | zynaps_main.c: bumps its count, calls timer_b_isr(image)
-    movem.l (%sp)+,%d0-%d7/%a0-%a6
+    movem.l %d0-%d1/%a0-%a1,-(%sp)
+    jsr     zy_timer_b_tick         | zynaps_main.c: bumps its count, dispatches on image[$120]
+    movem.l (%sp)+,%d0-%d1/%a0-%a1
+    rte
+
+| The keyboard ACIA, vector $118 — MFP channel 6, whose vector number is the MFP's base (0x40) plus
+| the channel, i.e. 70, i.e. $118. The boot installs `ikbd_acia_isr` there at 0x104e2, displacing
+| TOS's own keyboard handler for the length of the run; this build installs this entry at the same
+| point in the boot, so the window in which TOS still owns the keyboard is the original's window.
+|
+| THIS IS THE ENTRY THAT MAKES THE GAME PLAYABLE. Every wait the front end and the section start
+| spell — the menu's key byte, the PREPARE FOR COMBAT fire button, the frame loop's joystick — reads
+| a byte only this handler writes.
+    .globl  zy_acia_entry
+zy_acia_entry:
+    movem.l %d0-%d1/%a0-%a1,-(%sp)
+    jsr     zy_acia_tick            | zynaps_main.c: bumps its count, dispatches on image[$118]
+    movem.l (%sp)+,%d0-%d1/%a0-%a1
     rte

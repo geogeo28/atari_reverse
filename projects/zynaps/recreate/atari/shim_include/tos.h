@@ -68,5 +68,9 @@ void zy_line_a_hide_mouse(void);
  * puts them — the game owns the machine for the length of its run, and so does this. */
 void zy_vbl_entry(void);
 void zy_timer_b_entry(void);
+/* The third, and the one that makes the game playable: MFP channel 6, the keyboard ACIA, whose
+ * vector number puts it at $118. Every wait the front end and the section start spell reads a byte
+ * only `ikbd_acia_isr` writes. */
+void zy_acia_entry(void);
 
 #endif /* ZYNAPS_SHIM_TOS_H */

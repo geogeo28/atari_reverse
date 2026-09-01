@@ -1,12 +1,16 @@
 # ZYNAPS.PRG — the reconstruction on a 68000
 
-**M1: the title picture and its music, produced by the verified cores, on an emulated Atari ST.**
+**M2: the whole game — boot, attract, a playable section, a death and a restart — byte-identical to
+the shipped binary for 180 frames. M1: the title picture and its music.**
 
-`projects/zynaps/recreate/` holds 196 rows — 185 functions and 11 slices — verified byte-for-byte
-against the original 68000 code by the differential harness. Until this directory existed, none of them had ever executed on a
-68000. This is the cross-compile: the same C, unmodified, plus a hardware shim, wrapped into a
-GEMDOS `.PRG` that boots under Hatari to the title screen with the title tune playing — and a
-`smoke.py` that judges it against the shipped binary on six named surfaces.
+The M2 section is next; everything after it is M1's, which still builds, still runs and is still
+what `smoke.py title` certifies.
+
+`projects/zynaps/recreate/` holds every routine of the program, verified byte-for-byte against the
+original 68000 code by the differential harness. Until this directory existed, none of them had ever
+executed on a 68000. This is the cross-compile: the same C, unmodified, plus a hardware shim,
+wrapped into a GEMDOS `.PRG` that boots under Hatari and PLAYS — and a `smoke.py` that judges it
+against the shipped binary on the six named surfaces.
 
 ```bash
 bash atari/build.sh title            # -> build/ZYNAPS-title.PRG, disk/ staged for Hatari
@@ -22,6 +26,289 @@ bash atari/build.sh play && bash atari/run.sh    # ...and the one a person watch
 Read [`docs/on-target-execution.md`](../../../../docs/on-target-execution.md) first: the seam
 pattern, the twelve-entry bug taxonomy, and the six observable surfaces are that file's, and every
 design decision here is an application of one of them.
+
+---
+
+# M2 — THE WHOLE GAME
+
+**Boot, attract loop, a section you can play, a death, a restart — composed out of verified slices
+in the original's own order, and byte-identical to the shipped 1988 binary for the whole of the
+first life.**
+
+```bash
+bash atari/build.sh game        && python3 atari/smoke.py game        # seven checks, all green
+bash atari/build.sh gamefault   && python3 atari/smoke.py gamefault   # the control, INVERTED
+bash atari/build.sh play        && bash atari/run.sh                  # ...and the one you play
+bash atari/build.sh play floppy                                       # -> disk/ZYNAPS.ST for the STE
+```
+
+## What runs, and in what order
+
+`zynaps_main.c` composes every slice of `_start`, of `title_attract_loop` and of the section chain,
+and then calls `frame_loop_once` until it leaves. There is no unverified body anywhere in the path;
+what the shim adds is the four MFP read-back spins, the interrupt dispatch, and a frame budget.
+
+| the original | what runs here |
+|---|---|
+| `0x10000`..`0x1002c` | the M1 prologue: `boot_enter_supervisor`, the Line-A opcode, `boot_save_vbl_vector`, the two `ikbd_send_cmd`s |
+| `0x1002c` | `boot_load_title_assets` — and the real `$70`/`$120` vectors go in after it |
+| `0x101ba` | `boot_load_gameplay_assets` — fourteen more files and the banks built from them |
+| `0x104c8` | `boot_install_ikbd_isr` — and the real `$118` vector goes in after it |
+| `0x10500` | `boot_front_end_prologue`, the top of the loop of loops |
+| `0x10520` | `title_attract_loop`: `attract_program_timer_b`, a spin, `attract_program_rasterbar_timer`, a spin, `attract_build_colour_bars`, `attract_wait_for_start` |
+| `0x10524`..`0x1069e` | `boot_stage_frontend_screens`, `boot_program_timer_b`, a spin, `boot_program_raster_timer`, a spin, `boot_enable_interrupts` |
+| `0x10792` | `boot_new_game_records` |
+| `0x10814`..`0x10f4e` | the section chain: `section_advance` -> `section_reload_needed` -> (`section_reload_intro_screens`, `section_load_assets`) -> `section_restart_prologue` -> `section_start_prefill` -> `section_start_tail` |
+| `0x10f4e` | `frame_loop_once`, until one of its five exits; four of them re-enter the chain and the fifth goes back to `0x10500` |
+
+**Game over and the high scores are not a step of this list, and that is the program's shape rather
+than an omission**: `frame_resolve_hits_and_game_state` calls `game_over_screen` itself on the last
+life and comes back with the TITLE exit. So the ending is reached by playing, not by composing.
+
+## The four things the shim adds, and why each one has to be there
+
+* **The four `$fffa21` read-back spins** (`0x1062e`, `0x1066c`, `0x12b0a`, `0x12b48`). Ten bytes
+  each, `cmpi.b #$xx,$fffa21 / bne` back to the store — the one shape the kit's seeded read model
+  refuses, because the byte read is one the run itself wrote two instructions earlier
+  (`../STATUS.md`'s "Not reconstructed", its last KIT row). The verified slices stop on the store
+  and resume after the spin, so this is the ten bytes in between, done on the real Timer B data
+  register. **Surface: the hardware-state vector** — `mfp_settle_restores` counts how many times a
+  read did not come back with what had just been written, and it is 244 over a run (the register
+  is a live counter once the timer is started, so a read catches the loaded value only sometimes,
+  which is exactly why the original spins).
+* **The interrupt dispatch.** The program re-points its vectors per phase, twelve stores of seven
+  distinct handler addresses, and it makes them into the IMAGE's vector page — which here is a
+  longword inside a 1 MiB array, not low memory. So `zynaps_os.s` has three entries (`$70`, `$120`,
+  `$118`) and each reads the longword the cores wrote and calls the handler it names.
+  **An address the table does not know is a HALT with the value in the record**, never a silent
+  skip: a dropped interrupt would leave the frame loop's sync wait spinning for ever and the run
+  would look like a hang with nothing in it. `unknown_vector_halts` is 0 in every run, and the
+  per-handler entry counts are in the record — a phase whose handler was installed and never
+  entered is visible as a zero.
+* **The frame budget.** `ZY_GAME_FRAMES` stops the headless build at a declared `frame_loop_once`
+  count and hands the machine back exactly as M1 does. `build.sh play` puts it out of reach.
+* **The read-modify-writes, which are the cores' own now.** Unpinned 2 above asked this file for
+  three definitions and this build supplies them: `hw_bset8`, `hw_bclr8` and `hw_and8`, each a byte
+  access, each calling `note_store()`. **It is not cosmetic** — `move.b #$40,$fffa09` does not
+  enable MFP channel 6, it disables every other channel of interrupt-enable B, Timer C among them,
+  which is TOS's 200 Hz clock and the floppy driver's motor timeout. `rmw_stores` counts what went
+  through the three doors (about 25,000 in a 300-frame run, almost all of them the Timer B
+  acknowledge), and it is a surface rather than bookkeeping: a build that had somehow linked the
+  kit's own off-target `src/hw.c` would show 0.
+
+  **THE ADDRESS-KEYED BRIDGE THAT USED TO BE HERE IS DELETED.** Before kit commit `2db68f6` the
+  cores could not express the operation, so this build recognised the five registers by ADDRESS in
+  `hw_write8` and made the read-modify-write anyway, under a TEMPORARY marker. The cores spell it
+  themselves now, so the bridge would be a second implementation of an operation its callers
+  already name.
+
+## The video base moved into the hardware door
+
+M1's Unpinned 3 said a re-publish after the fact "is not a shape M2 can keep", and it is not:
+`screen_flip_buffers` publishes an IMAGE OFFSET to `$ff8201`/`$ff8203` every frame, and a shim that
+corrected it afterwards would leave the shifter pointed at `$0703xx` for most of every frame.
+
+The translation is now `zynaps_backend.c`'s, at the door the core itself reaches. **The offset is
+assembled across the two stores** because a byte of a sum is not the sum of a byte —
+`image base + offset` carries out of bits 8-15 into 16-23 — so each call updates its half of the
+remembered offset and stores BOTH translated bytes. The record carries the offset the cores last
+published, the machine address it became, and how many pairs went up; `smoke.py game` refuses a run
+that published fewer than one per sample.
+
+## The frame differential
+
+`python3 atari/smoke.py game`, TOS 1.04, both sides at 4 MB, both off a GEMDOS drive. Measured
+2026-08-29:
+
+```
+-- game on st / TOS104US.img: image base 0x21300, the original at 0xaa56
+   300 frames over 1 section start(s), 1 attract pass(es), player(s) 1, section 0, 3 lives
+   dispatched: 19 in-game / 1962 menu / 64 attract VBLs, 1961 raster + 6263 bar Timer Bs,
+   917 IKBD; 0 unknown-vector halt(s)
+   samples [1, 30, 60, 120, 240]; 9444 read-modify-writes made, 281 Timer B data restores
+   [green] exit status + log (ours)
+   [green] exit status + log (the original)
+   [green] exit status + log (the program's own record)
+   [green] exit status + log (the machine was handed back)
+   [green] exit status + log (the fault scan can fail)
+   [green] hardware-state vector (the pens, frame by frame)
+   [green] memory (the framebuffer and the entity table, frame by frame)
+-- OK
+```
+
+**At frames 1, 30, 60, 120 and 240 the 32000-byte framebuffer is byte-identical, the twenty entity
+records are byte-identical, and the sixteen colour registers are identical.** Not "close": zero
+differing bytes at every sample, on a screen with the ship, the parallax starfield, the scrolling
+terrain, the enemies and the whole status panel on it.
+
+### What makes the two comparable
+
+Four pins, and each was needed:
+
+* **The frame number is the loop head's own pass count.** One `frame_loop_once` here is one arrival
+  at `0x10f4e` there, so a Hatari breakpoint's hit count and the program's own counter mean the same
+  thing. Sample N is the state after N passes, i.e. the original's (N+1)th arrival — `:N+1 :once`.
+* **The same input.** Both sides are given the fire button, poked into the byte the ACIA handler
+  writes. **The press must never reach a FRAME**, and a first draft that poked on a wall-clock timer
+  did: the frame loop interrogates the controller once a frame, so a poke landing between the loop
+  head and the stage's own read gave one side a shot the other did not fire — measured as a
+  framebuffer differing by 12 bytes at frame 30 in one run and 24 in the next, which is a
+  non-deterministic comparison and worth nothing. Each side now presses from somewhere that only
+  exists inside a wait: the original from a repeating breakpoint on its own poll at `0x10f2a`, ours
+  from a driver that reads the program's phase and presses only when it is not PLAYING. A repeating
+  breakpoint on the loop head clears the byte on EVERY frame of both runs, so every frame's stick is
+  provably neutral.
+* **The same random stream, and the same entity table.** Both are pinned at the first arrival at
+  the loop head and then left to EVOLVE — re-applying either per frame would hide the divergence
+  this comparison is for. `rand16` runs once a pass in the attract loop and once a pass in the fire
+  wait and the two sides make different numbers of both, so they would reach the game with different
+  LFSR states. The entity table is the front end's scratch as well as the frame loop's, and MEASURED
+  without the pin: record 0 — the one the front end draws its GUNSIGHT through — differed at five
+  bytes from frame 30 onward and never moved again, because our attract loop exits after one pass
+  where the original's runs on (unpinned 19). Zeroing it is not fabrication: an all-zero table is
+  what a machine that had just booted holds, and it is a superset of the clearing the game's own
+  `section_restart_prologue` does. It does not fix unpinned 19; it stops a front-end difference
+  being reported as a frame-loop one. **It also changed the game**: with the stale gunsight gone the
+  ship survives all 300 frames where it used to die at 176.
+* **The entity table's sprite pointers are rebased, not skipped.** They are absolute addresses of
+  the loaded program and the two programs load at different bases, so each is converted to a Ghidra
+  address and compared — which is stricter than excluding them. A field that is a program address on
+  neither side is a dead slot's leftover (measured: `$fc0000` here against `$fc55aa` there, both
+  inside TOS's ROM) and is reported as unset rather than as a difference.
+
+### The negative control
+
+`build.sh gamefault` is the game build with **ONE STEP of the section chain dropped** — the two
+`bsr`s at `0x1085a`, the player intro screen and the whole-panel repaint — and nothing else. A
+dropped composition step is the defect this milestone is most exposed to, because the whole of M2 is
+calls to verified slices and what can be wrong is the order and the set. Measured:
+
+```
+   [red ] memory (the framebuffer and the entity table, frame by frame)   (must FAIL)
+           frame 1:   748 of 32000 framebuffer bytes differ
+           frame 30:  748 ... frame 60: 748 ... frame 120: 748 ... frame 180: 748
+   [green] hardware-state vector (the pens, frame by frame)
+   [green] exit status + log  (all five)
+-- OK
+```
+
+**THE FIRST CONTROL WAS MEASURED NOT TO ISOLATE ANYTHING and is recorded rather than quietly
+replaced.** It bound the raster split's vector (`0x106ae`) to the plain in-game Timer B, on the
+reasoning that the palette it uploads mid-screen would move the pens. Every surface stayed green:
+the pens are sampled at the loop head, and whatever the split did to them has been undone by the
+time the frame ends. A control that cannot go red says nothing about the checks it exists for.
+
+## The finding this milestone is really about: the C is too slow for its own interrupt
+
+`docs/on-target-execution.md` has no class for it, and it cost this milestone more than every other
+defect together. **Attract mode's Timer B fires every TWO SCANLINES — about 1024 CPU cycles at
+8 MHz — and its handler is C.** Measured by dividing the program's own `timer_b_ticks` by its
+`vbl_ticks` over a five-second window:
+
+| the handler carried | Timer B interrupts per frame | what the main line did |
+|---|---|---|
+| a linear-scan hardware ledger, a 15-register `movem` | 79 of the frame's 156 | two instructions a frame: twenty seconds inside an eight-iteration palette upload, the title page never drawn |
+| a hashed ledger, a 15-register `movem` | 79 | the same |
+| **no ledger, a 4-register `movem`** | **79** | the attract loop runs, a game starts, the section reaches PREPARE FOR COMBAT |
+
+Two changes came out of that, and both are correct on their own terms as well as faster:
+
+* **The interrupt entries save four registers, not fifteen.** The m68k SysV ABI makes
+  `%d0/%d1/%a0/%a1` scratch and `%d2-%d7/%a2-%a6` callee-saved, so everything reached from the `jsr`
+  has already restored the other eleven. The original's handlers save all of them because they are
+  hand asm; a C handler cannot need to. 176 cycles there and back, twice.
+* **There is no address-keyed hardware ledger.** M1's Unpinned 15 asked for one — a count of stores
+  per register, which would subsume the three tallies keyed on arguments about today's call sites —
+  and it was written twice and deleted twice. What costs is the extra CALL per hardware store, not
+  the search: the hashed second draft was still over the cliff. So the shape a target build can
+  afford is a fixed set of named counters, each one compare and one `addq`, and `zynaps_backend.c`
+  says so where the table used to be.
+
+**79 of 156 is still not the original's rate**, and that is an open fidelity residual rather than a
+solved problem: the attract screen's colour bars are drawn at half the density the original draws
+them. It is recorded in the unpinned list below with what would close it.
+
+## The bootable floppy, and what goes on the STE
+
+`build.sh play floppy` writes `disk/ZYNAPS.ST` with the play build in `AUTO\ZYNAPS17.PRG`.
+**Measured 2026-09-01: it boots from drive A on TOS 1.04 through the desktop's own AUTO scan and
+reaches PLAYER 1 / PREPARE FOR COMBAT with the ZYNAPS logo and the status panel drawn** — 64 files,
+417,792 B used, sha256 `aa44a32f…`. The medium is a FLAG now rather than a mode (M1's Unpinned 14), so any build can be
+written onto a volume and `smoke.py --floppy-build <mode>` says which one is on it.
+
+`build.sh` also clears the drive's `.BIN` files before staging, which is not tidiness: a floppy
+built after a `game` run had every frame dump on it — 79 files and 588 KB against the 64 and 416 KB
+it should be.
+
+## Taxonomy classes M2 met, beyond M1's
+
+| class | how it showed up |
+|---|---|
+| **11** a seam's second obligation | the whole boot's fourteen file loads now run with TOS's vertical blank displaced, which M1 deliberately never did — because the ORIGINAL does exactly that (its own vector goes in at `0x10062` and it opens fourteen more files afterwards), and the GEMDOS ledger says all twenty-two of ours complete |
+| **12** a poke's unexecuted input path | **both** — the checks poke the joystick byte, because Hatari swallows a key bound to its keyboard-as-joystick emulation and the stick cannot be pressed from outside at all. What IS exercised is the whole chain behind it: `ikbd_send_cmd(0x16)` goes to the real 6301, the reply raises MFP channel 6, our `$118` entry dispatches `ikbd_acia_isr`, and it files the packet — 3394 ACIA interrupts in a run. `atari/run.sh` (`--joy1 keys`) is the discharge |
+| **the reconstruction's own speed** | not a numbered class and it should be — see the section above |
+
+## Unpinned, and why — M2's own
+
+Numbered on from M1's list.
+
+16. **The frame loop's two register parameters are passed as 0.** `frame_loop_once` takes
+    `chance_index_register` and `ground_spawn_y_register`, two 68000 registers the original carries
+    across a verified callee's `rts` (`../STATUS.md`'s "## Coverage limits"). Off target the case
+    takes them from the oracle; on target there is no oracle, so this build declares 0 for both and
+    `build.sh` can override either with a `-D`.
+
+    **THE DERIVATION WAS ATTEMPTED AND IS UNDER-SPECIFIED**, which is why this is still here after
+    the core-fidelity pass: D1 at the `bsr` into `enemy_fire_and_update_shots` depends on what the
+    scroll blit's own `movem` left behind, and `../STATUS.md` carries the table of what is and is
+    not pinned. `ground_spawn_y_register` costs nothing the shipped data can reach —
+    `test_no_shipped_ground_script_can_make_the_spawner_read_its_carried_register` walks all
+    thirteen shipped scripts and finds no record whose scripted y reaches the guard.
+    `chance_index_register` is the live one: its HIGH BYTE indexes the per-section fire-chance
+    table, so it decides whether enemies fire this frame, and a wrong value means enemies that shoot
+    when the original's do not. **The frame differential is the surface, and it is green for 180
+    frames of section 1** — which bounds the cost rather than removing it, since a section whose
+    table row differs at the index 0 selects would diverge where this one does not.
+17. **The second life is not pinned, and every sample has to stay inside the first.** Past the
+    frame loop's first non-NEXT_FRAME exit the ship has died, `section_start_tail` has asked for the
+    fire button again, and that wait calls `rand16` once a pass — so the number of passes, which is
+    the DRIVER's rather than the program's, decides the random state the next life starts from.
+    Measured before the entity pin landed: a sample at frame 240 came out byte-identical once and 42
+    framebuffer bytes apart twice, always in entity record 6, the first enemy-shot slot.
+    **It is checked rather than avoided**: the program reports the frame the first life ended on and
+    `check_the_game_ran` refuses a sample at or past it, which is what caught the death moving from
+    184 to 176 when the cores' `abcd` carry threading landed. With the entity table pinned the ship
+    now survives the whole 300-frame budget, so all five samples are inside one life with room —
+    but the guard is what says so, not the list. Closing it properly means pinning the random state
+    at each SECTION START rather than only at the first.
+18. **The attract screen has no anchor of its own.** M1 compares two boots at a palette state; M2
+    compares two games at a frame count; the ATTRACT loop in between is compared by neither. It is
+    also the phase where the reconstruction is slowest (see the interrupt finding), so it is the one
+    most likely to differ. What would close it is the same shape as the frame differential — a
+    breakpoint count on the attract loop's own body — and it is not done.
+19. **Our attract loop exits without being asked.** Measured: the first interrogation's reply lands
+    `$fd $fd` in the two joystick bytes rather than `$fd` then two states, so the fire test sees a
+    negative byte and starts a one-player game. The cause is the interrupt budget above — the raster
+    Timer B is MFP channel 8 and the keyboard ACIA is channel 6, so a handler that runs longer than
+    its own period blocks the ACIA long enough for a byte of the three-byte packet to be lost and
+    the packet parser to desynchronise. It is invisible to the frame differential (which pins the
+    input from the loop head onwards) and it is why `player_count` is 1 in every run.
+20. **The sound timeline is not compared for the game.** M1 cuts the PSG trace into the driver's own
+    descending 10..0 tick frames and compares the first 64. The same cutter would work here, and the
+    in-game tunes are what it would compare; it is not wired up.
+21. **The game floppy has no differential.** `smoke.py floppy` runs M1's twelve checks off a volume;
+    the GAME on a floppy has been booted and photographed (above) and nothing more. The frame
+    differential's driver needs the floppy path's `$70`-derived anchor to be taught to it.
+22. **The three read-modify-write doors are not atomic where the original's instructions are.**
+    `bset`/`bclr`/`andi.b` on a register are single 68000 instructions; `*port = *port | bit` is a
+    read and a write with a window between them, and an interrupt landing in that window would have
+    its own change overwritten. Every caller in this reconstruction is already inside an interrupt
+    or inside the boot's masked vector window, so nothing in THIS build can take it — but that is a
+    fact about today's call sites, not about the doors, and the first caller on the main line with
+    interrupts open would be exposed. What would close it is a mask around the pair, at the cost of
+    two more instructions in the hottest handler the program has.
+23. **Nothing has run on real hardware, and nothing has run on an STE**, exactly as in M1: Hatari
+    refuses `--machine ste` on a ROM at or below TOS 1.4, and `tools/hatari/` has no later one.
 
 ---
 
@@ -618,14 +905,17 @@ M1 stops at `0x101ba` because the reconstruction does. To go further:
 
 ```
 atari/
-├── build.sh              title | titlefault | floppy | play, plus the eight scans
-├── smoke.py              the six surfaces, the control, and the floppy mode
+├── build.sh              title | titlefault | game | gamefault | play | playtitle, on either
+│                         medium (gemdos | floppy), plus the eight scans
+├── smoke.py              the six surfaces, two controls, the floppy mode and M2's frame
+│                         differential against the shipped binary
 ├── mkfloppy.py           which files under which names -> disk/ZYNAPS.ST via tools/st_build.py
-├── run.sh                launches the play build with a screen and sound
+├── run.sh                launches the play build with a screen, sound and a joystick — the
+│                         one input path no headless check can exercise
 ├── gen_image.py          stages the relocated program (kit loader) -> disk/ZYNAPS.IMG
 ├── mkprg.py              base-0 ELF -> GEMDOS .PRG  (a copy; see its header)
 ├── tos.ld                the link script (a copy; see its header)
-├── zynaps_os.s           _start, 11 trap wrappers, the machine primitives, 2 interrupt entries
+├── zynaps_os.s           _start, 11 trap wrappers, the machine primitives, 3 interrupt entries
 ├── zynaps_main.c         the shim: staging, the boot, the hand-back, the record
 ├── zynaps_backend.c      the seam's target half + a freestanding libc
 ├── shim_include/
