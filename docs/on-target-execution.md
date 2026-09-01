@@ -162,10 +162,11 @@ add a seam, the core/no-op side must have **no image effect** (or the oracle-mod
 differential test still holds; put the real trap/hardware poke only in the PRG override, and gate it
 on `hw_ready` if it touches supervisor-only I/O space (`$ffff8xxx`, `$fffffcxx`) before `Super(0)`.
 
-## Bug taxonomy (1-5 in BuggyBoy, 6-8 in Joust, 9-12 in Wonder Boy)
+## Bug taxonomy (1-5 in BuggyBoy, 6-8 in Joust, 9-12 in Wonder Boy, 13 in Zynaps)
 
-Entries **1-9, 11 and 12 were each HIT in a real build** and are written from the wreckage — 11 and
-12 on a real Atari, by a person who switched the machine on. **Entry 10 was not**: it is the one
+Entries **1-9 and 11-13 were each HIT in a real build** and are written from the wreckage — 11 and
+12 on a real Atari, by a person who switched the machine on, and 13 by a port that passed every
+check it had. **Entry 10 was not**: it is the one
 shape here that a review caught at the design stage, before the build that would have carried it
 shipped — which is why it reads as a method rather than as a post-mortem, and why it is worth having
 anyway. A shape that is cheap to avoid once you have seen it named is exactly what a taxonomy is
@@ -644,6 +645,54 @@ reddens the trace row. **What neither can do is exercise the input path**, becau
 only take real joystick events from its host's window. That stays a runbook step — a build, a person
 and a documented fire key — and saying so is more useful than a check that looks like coverage.
 
+### 13. The port is byte-correct and three times too slow, and no surface sees it
+
+Every other entry here is a WRONG BYTE somewhere. This one is not: the reconstruction computes
+exactly what the original computes, the frame differential is zero bytes at every sampled frame, and
+the game is unplayable anyway because it runs at a third of the speed. **Nothing in a differential
+harness can see it** — the oracle has no clock, `make test` compares memory and store streams, and
+on target a slower frame draws the same pixels because a frame-locked game reads no clock either.
+
+- **Real example (Zynaps M2, measured 2026-09-01):** the shipped binary's frame loop takes 2 vertical
+  blanks (496 of 542 frames, 25 fps) and 271,565 cycles; the reconstruction's takes 5.73 and 815,488
+  — **3.0x** — with the frame differential green throughout.
+- **Symptom:** none, on any of the six surfaces below, until somebody plays it.
+- **Diagnosis, and it is cheap.** Hatari prints `CPU=$pc, VBL=n, FrameCycles=m` on every debugger
+  ENTRY, and a breakpoint whose action file is nothing but `cont` costs the emulated machine no
+  cycles. So two repeating `:quiet` breakpoints — the frame loop's head and the buffer flip — turn
+  either binary into a timeline of (work, wait) pairs on the emulated clock, with no profiler and no
+  sampling. Point them at the SAME two places on both sides and the ratio is a finding.
+  (`projects/zynaps/recreate/atari/profile.py`, modes `frames` / `original-frames`.)
+- **THE NUMBER TO WATCH IS VBLANKS PER FRAME, NOT A FRAME RATE, and it is usually quantised.** A
+  game that waits on a vblank-driven flag is released only when that handler clears it — every
+  second vertical blank, in Zynaps' case — so a frame that overruns by one cycle costs a whole
+  release slot and the cadence goes 2, 4, 6 with nothing in between. **A mean is a mixture, and a
+  10% speedup usually buys nothing at all.** Judge a histogram; and before taking any lever, work
+  out how many cycles the next bucket actually needs. Zynaps' was 175,000 of 815,000, which ruled
+  out every compiler flag and the whole shim overhead at a stroke.
+- **Where the cycles are is not where a C programmer expects.** Hatari's own CPU profiler over a
+  fixed window, with symbols from the linked ELF on one side and from `names.txt` on the other,
+  gives a per-routine ratio. Zynaps': the page-to-screen blit 2.19x, the masked sprite blitter
+  2.59x, the column emitter 5.34x, the enemy mover 6.75x — and the whole cross-compilation shim,
+  interrupt entries and hardware ledger included, **5.2%**. Bulk copies land near 2x because
+  `move.l (a0)+,(a1)+ / cmp / bne` is 9 cycles a byte where a 12-register `movem.l` pair is 4.4; the
+  4x-plus rows are per-entity loops where the original keeps state in registers and the
+  reconstruction spells every read and write through the image accessors.
+- **Two profiler gotchas that make the report lie.** Symbols must be loaded (with `symbols autoload
+  off` first) BEFORE `profile on`, which sizes the callsite buffer. And **profiling stops on every
+  debugger entry** — so the window cannot count its own frames, and any breakpoint that drives the
+  run (a fire-button poke, a state poll) will cut the window short without saying so. Count the
+  window's frames from a call the report itself carries — one the program makes exactly once a frame
+  — or a cycles-per-frame figure divided by the window's VBLANKS will be off by however much of the
+  window the profiler was actually off for. Measured: 72 real frames in a window whose vblanks
+  implied 500.
+- **Fix:** there may not be a cheap one, and saying so with the arithmetic is the deliverable. What
+  there IS is a surface: put the histogram in the program's own record and check it, so the gap
+  stops being an impression and a REGRESSION reddens a run. Set the ceiling from what the tree
+  measures today (not from the original, or the check is red on every run and nobody reads it), and
+  prove it can go red with a deliberate busy-wait — **gated to the phase the check measures**, or an
+  ungated one slows the boot so much the run never reaches a frame and the wrong check fails.
+
 ## The observable surfaces
 
 An on-target run can be watched on exactly six surfaces, and no more. They are listed here because
@@ -656,7 +705,7 @@ have shown me if it were wrong?"**
 | **the trap ledger** | which OS calls were made, with what arguments (Hatari `--trace xbios,gemdos`) | what the *device* did with them |
 | **the hardware-state vector** | the registers themselves, read back at a frame anchor — shifter pens, resolution, YM file, video base | the ORDER things reached them, and anything between two anchors. **And any register whose value is a PHASE rather than a state**: if the game has music playing at the anchor, the PSG's sound registers depend on which vblank the boot finished on, and two boots of the *same binary* disagree about them. Measure that before comparing them (boot the original twice and diff the vectors); what moves is not evidence, and the surface that can compare it is the timeline below |
 | **rendered pixels** | Hatari `screenshot`, i.e. the emulator's real video path | nothing about *why*; and it is only as reproducible as the emulator's frame rendering |
-| **timelines** | the ordered stream of hardware writes (`--trace video_color,psg_write`), reduced to a per-phase shape | values it does not sample; it is a shape, not a state |
+| **timelines** | the ordered stream of hardware writes (`--trace video_color,psg_write`), reduced to a per-phase shape — **and the run's own PACING**: vertical blanks per frame, interrupt service rates, taken from the program's record or from a repeating `:quiet` breakpoint's `VBL=`/`FrameCycles=` lines (taxonomy 13) | values it does not sample; it is a shape, not a state. Pacing measured on the host's clock rather than the machine's is worth nothing at all |
 | **exit status and the log** | the emulator's own return code plus its bus/address-error and halt lines | anything the machine survives *and* does not log |
 
 **A gotcha that makes one of these surfaces lie, and it is the emulator's rather than the machine's.**

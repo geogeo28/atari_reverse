@@ -207,9 +207,14 @@ defect together. **Attract mode's Timer B fires every TWO SCANLINES — about 10
 
 | the handler carried | Timer B interrupts per frame | what the main line did |
 |---|---|---|
-| a linear-scan hardware ledger, a 15-register `movem` | 79 of the frame's 156 | two instructions a frame: twenty seconds inside an eight-iteration palette upload, the title page never drawn |
-| a hashed ledger, a 15-register `movem` | 79 | the same |
-| **no ledger, a 4-register `movem`** | **79** | the attract loop runs, a game starts, the section reaches PREPARE FOR COMBAT |
+| a linear-scan hardware ledger, a 15-register `movem` | far under the offered rate | two instructions a frame: twenty seconds inside an eight-iteration palette upload, the title page never drawn |
+| a hashed ledger, a 15-register `movem` | the same | the same |
+| **no ledger, a 4-register `movem`** | **98 of the 100 offered** | the attract loop runs, a game starts, the section reaches PREPARE FOR COMBAT |
+
+**THE NUMBERS THAT USED TO BE IN THAT COLUMN — "79 of the frame's 156", ON EVERY ROW — ARE
+RETRACTED**, and the paragraph below says why. What survives is the shape: the handler was longer
+than its own period and the fixes made it shorter. The first two rows have not been re-measured
+since, which is why they are described rather than numbered.
 
 Two changes came out of that, and both are correct on their own terms as well as faster:
 
@@ -224,9 +229,241 @@ Two changes came out of that, and both are correct on their own terms as well as
   afford is a fixed set of named counters, each one compare and one `addq`, and `zynaps_backend.c`
   says so where the table used to be.
 
-**79 of 156 is still not the original's rate**, and that is an open fidelity residual rather than a
-solved problem: the attract screen's colour bars are drawn at half the density the original draws
-them. It is recorded in the unpinned list below with what would close it.
+**"79 OF 156" WAS WRONG IN BOTH HALVES, and re-measuring it is where the Performance section below
+started.** The denominator is not 156: Timer B is in EVENT-COUNT mode, and the event it counts is
+the shifter's display-enable pulse — one per DISPLAYED scanline, of which ST low resolution has 200,
+not one per HBL of a 313-line PAL frame. At a period of 2 the chip therefore offers **100**
+interrupts a vertical blank. And the numerator is not 79: the record now carries the bars' handler
+entry count and the attract VBL's beside it, and a `game` run serves **6,263 over 64 attract
+vertical blanks — 97.9 of the 100 offered, 98%.** The four-register `movem` and the deleted ledger
+closed this; the figure quoted above was taken before them and never redone, and the reading that
+"the bars are drawn at half density" followed from the arithmetic rather than from a screen. What
+keeps it closed is `smoke.py`'s `check_the_pacing`, whose floor is 95% of the offered rate.
+
+# PERFORMANCE — the frame cadence, measured against the shipped binary's own
+
+**The port computes the right bytes and takes three times as long to do it.** The frame differential
+above is byte-identical; this section is the other question, asked with the same discipline: both
+binaries, on one machine, through one instrument, over a window of the same length.
+
+```bash
+python3 atari/profile.py frames             # OUR cadence: vblanks per frame, work, wait
+python3 atari/profile.py original-frames    # ...the shipped binary's, the same way
+python3 atari/profile.py ours               # OUR per-symbol cycles over 1000 vblanks
+python3 atari/profile.py original           # ...the shipped binary's, from names.txt's symbols
+python3 atari/profile.py compare            # both profiles read back and ratioed
+```
+
+## Why the number that matters is VBLANKS PER FRAME and not a frame rate
+
+`frame_end_and_flip` (`../src/frame.c`) ends by waiting on `A_vbl_wait_flag`, and the handler that
+clears it is `vbl_menu` (`../src/irq.c` @ 0x13c26), whose raster phase counts up and **wraps at 2**.
+So the frame loop is released on every SECOND vertical blank and nothing releases it in between: a
+frame that fits its budget takes exactly 2 vblanks, and one that overruns by a single cycle takes 4.
+**The cadence is quantised**, a mean is a mixture rather than a rate, and the DISTRIBUTION is the
+finding. That is also why `smoke.py` carries a histogram and not an average.
+
+## The measurement, original against ours
+
+Both sides clocked by two repeating `:quiet` breakpoints — the frame loop's head and
+`screen_flip_buffers` — which print `VBL=` and `FrameCycles=` on every arrival and cost the emulated
+machine nothing. `st` / `TOS104US.img` / 4 MB / section 1, measured 2026-09-01:
+
+| | the original | ours (`play`) | ratio |
+|---|---|---|---|
+| frames clocked | 542 | 534 | |
+| vblanks per frame, mean | **2.32** | **7.38** | 3.2x |
+| the distribution | 2 x496, 3 x2, 4 x42, 45 x2 | 4 x10, 6 x505, 7 x2, 8 x15, 247 x1, 489 x1 | |
+| the mode, and its frame rate | **2 = 25 fps** | **6 = 8.3 fps** | 3.0x |
+| frames on budget (2 vblanks) | 496 of 542 (91.5%) | 0 of 534 | |
+| loop head to flip, mean cycles | **271,565** | **815,488** | **3.00x** |
+| ...min / max | 215,220 / 484,820 | 562,768 / 1,496,000 | |
+
+The two long entries on each side (45 vblanks there, 247 and 489 here) are a death and the fire wait
+after it, which is not a frame; everything else is.
+
+The `game` build's own record agrees with the log to two decimals — **5.73 vblanks a frame over its
+300 pinned frames, 41 at 4, 258 at 6 and one over** — which is what makes the histogram a surface
+`smoke.py` can judge rather than a reading somebody has to take by hand.
+
+## Where the cycles go, routine by routine, on both sides
+
+`atari/profile.py ours` and `... original`, Hatari's own CPU profiler over a 1000-vblank window
+opened at the twentieth frame — ours with symbols out of the linked ELF, the shipped binary's out of
+`../../names.txt` relocated to where GEMDOS put it. **The frames in a window are counted from the
+scroll blit** (`frame_panel_scroll_and_ship_stage` calls exactly one of the twenty
+`scroll_page_to_screen_p*` entries per pass, on both sides), because a per-frame breakpoint inside
+the window would be a debugger entry and a debugger entry stops the profiler. Ours held 155 frames,
+the shipped binary's 72.
+
+| | ours/frame | the original/frame | ours/call | orig/call | ratio |
+|---|---|---|---|---|---|
+| **the whole frame** | **861,899** | **268,714** | | | **3.21x** |
+| `scroll_page_to_screen_p*` | 244,702 (28%) | 111,961 | 244,702 | 111,961 | 2.19x |
+| `draw_sprite_masked_collide` | 140,948 (16%) | 24,580 | 18,206 | 7,023 | **2.59x** |
+| `scroll_emit_column_shift2` | 133,876 (16%) | 27,431 | 167,345 | 31,350 | **5.34x** |
+| `scroll_emit_tile_column` | 59,489 (7%) | 4,014 | 144,074 | 32,112 | **4.49x** |
+| `zy_vbl_tick` — the whole VBL | 56,860 (7%) | (`sound_tick` 4,644) | 8,822 | | |
+| `draw_score_panel` | 45,563 (5%) | 16,463 | 45,563 | 16,463 | 2.77x |
+| `shifter_upload_palette_longs` | 33,153 (4%) | | 2,573 | | |
+| `frame_spawn_and_move_stage` | 25,502 (3%) | | 25,502 | | |
+| `zy_timer_b_tick` — the raster split | 21,577 (3%) | | 3,344 | | |
+| `hw_write32` | 21,181 (2%) | | **205** | | |
+| `enemies_move_all` | 14,179 (2%) | 2,100 | 14,179 | 2,100 | **6.75x** |
+| `psg_port_write` | 12,774 (1%) | | 180 | | |
+
+**The per-CALL column is the one to read where the two windows saw different game states.** The
+shipped side's window was profiled with the fire button held, so it drew fewer sprites a frame than
+ours did (3.5 against 7.7) and `draw_sprite_masked_collide`'s per-frame figures are not comparable
+where its per-call figures are. `python3 atari/profile.py compare` prints the per-call ratio table
+and refuses a row either side called fewer than twenty times.
+
+**Three quarters of the frame is four blitters**, and every one of them is a C loop over longwords
+where the original is a `movem.l` run: `copy_longs` compiles to `move.l (a0)+,(a1)+ / cmp.l / bne`,
+which is 36 cycles per 4 bytes, where a 12-register `movem.l` pair moves 48 bytes in 212 — 9 cycles
+a byte against 4.4, and 2.19x is exactly what the scroll blit measures. That difference is
+`docs/on-target-execution.md`'s taxonomy 4 exactly, and **no compiler flag reaches it**: `-O3`
+generates the byte-identical loop (measured, on `scroll.c`), and `-funroll-loops` gets 9 cycles a
+byte down to about 7.4 — worth ~5% of the frame and not a release slot.
+
+The ratios above 4x are a different finding and a more hopeful one: `scroll_emit_column_shift2` at
+5.34x and `enemies_move_all` at 6.75x are not bulk copies, so a `movem` is not what they are missing
+— they are per-entity work where the original keeps its state in registers across a loop the
+reconstruction spells as image reads and writes, which is the shape `machine.h`'s accessors force.
+
+## What the 3x is, and what it is not
+
+* **It is not the shim, and that was measured before anything was optimised.** Everything this build
+  adds around the verified cores is **42,291 of the 815,488 cycles, 5.2%** — and the hardware stores
+  inside that are work the original does too:
+
+  | | cycles/frame |
+  |---|---|
+  | the three interrupt entries and their dispatch | 4,426 |
+  | the four hardware doors and the store ledger | 37,865 |
+
+  The dispatch is cheap because GCC already inlines `dispatch_image_vector` into each entry and
+  unrolls the table into three compares against immediates — read `build/zynaps.dis`. The largest
+  single piece is `hw_write32` at **205 cycles a call** for a 24-cycle `move.l` to `$ff8240`, 103
+  times a frame: the cross-unit call and the three-way store ledger around it, 18,600 cycles a
+  frame, **2.3%** of it.
+* **It is not one routine.** The scroll blit is the largest single item at 28%; a `movem` twin of it
+  alone (245,000 down to ~112,000, which is what the original measures) leaves 680,000 — still over
+  the 640,000 that four vblanks buys, so on its own it would not move one frame's bucket.
+* **It is the render path being C.** Reaching the original's 2 vblanks means ~272,000 cycles a
+  frame. Getting there from 815,000 means hand-writing the scroll blit, both column emitters, the
+  masked sprite blitter and the panel — each asm twin diffed against the verified C over the same
+  image, BuggyBoy-style (`projects/buggyboy/recreate/src/asm/` and its README's C-vs-asm
+  differential). That is a campaign with its own STATUS rows, not a lever.
+
+**SO NOTHING WAS OPTIMISED, AND THE ARITHMETIC IS WHY.** The cadence is quantised, so the only
+change a player can see is a frame moving from 6 vblanks to 4, and that needs **175,000 cycles**
+off (815,488 down under the 640,000 that four vblanks buys). The shim's entire overhead is 42,291
+and the compiler's best offer is about 40,000 (`-funroll-loops` on the copy loops); together they
+are less than half of it and would leave every frame in the bucket it is in now. Taking them would
+have bought a harder binary to read and no frame anybody could see.
+
+**The reachable next step is 4 vblanks, and it is one campaign rather than a lever — a frame moving
+from the 6-vblank release slot to the 4, i.e. 8.3 fps to 12.5 at the MODE** (the `play` build's mean
+is 6.78 fps and the `game` build's 8.7; a mode is what a mixture of buckets is compared against, and
+this whole paragraph is mode-to-mode). `scroll_page_to_screen_p*` at 2.19x plus
+`scroll_emit_column_shift2` at 5.34x are 378,578 cycles a frame between them where the original
+spends 139,392; asm twins at the original's own cost take **239,000** off, which is past the 175,000
+the bucket needs on its own. That is the work this section exists to scope, and `atari/profile.py`
+plus `smoke.py`'s pacing check are what would judge it frame by frame.
+
+## Interrupt service, and input latency
+
+| | the original | ours | how it was measured |
+|---|---|---|---|
+| attract Timer B served | 100 per vblank offered | **6,263 over 64 vblanks = 97.9 (98%)** | the record's own dispatch counts |
+| in-game raster Timer B | once a frame | 1,961 over 1,962 menu vblanks | the same |
+| keyboard ACIA served | one 3-byte report a frame | 917 over 2,045 vblanks = 0.45 | the same |
+| input to ship movement | **1 frame** | **1 frame** | `frame_loop_once` passes `image[A_joystick_state]` to `frame_drone_and_fire_stage` once a pass and nothing else reads it, on either side |
+
+**Input latency is one frame on both sides by construction, and that is the whole point of the
+cadence table**: the FRAME COUNT is identical and the MILLISECONDS are not — 40 ms there against
+115 ms here, because a frame is 2 vblanks there and 5.73 here.
+
+The four `$fffa21` read-back spins cost **281 iterations in a whole run** (about 4,200 cycles across
+the four sites), and the number is large only because the register is a live counter: the spin
+re-stores until a read comes back with what was written, which is the original's own loop and is why
+it exists. It is not a pacing cost.
+
+**The boot is 2.8x the original's**, and it is the one row this section does not explain: ours
+reaches the frame loop's head at vertical blank ~2,230, the shipped binary at ~795, over the same
+twenty-two file loads on the same GEMDOS drive. It is measured and unexplained; the frame loop is
+where the effort went.
+
+## The pacing surface, and the control that reddens it
+
+`smoke.py game` gained an eighth check, `check_the_pacing`, on the **timelines** surface. It reads
+the program's own histogram out of STATE.BIN and judges four things, each with its tolerance argued
+in the source:
+
+* **the run is the one the tolerances were measured on** — the numbers below are absolute, not
+  shares, so a run of a different length is REPORTED rather than judged. The `play` build's longer
+  run reaches a second life and averages 7.38, which is not a regression and would be read as one.
+* **no frame costs zero vertical blanks** — 0 tolerance, and it is a real invariant:
+  `frame_end_and_flip` arms `A_vbl_wait_flag` and spins until a handler clears it, with no cap, so a
+  vblank always elapses inside the wait. **ONE vblank is NOT an error and an earlier draft of this
+  arm said it was.** `A_raster_phase` is free-running, so a frame arriving with it already at READY
+  skips the first wait and is released a single vblank later — the same parity effect that puts two
+  3-vblank frames in the shipped binary's own 542 and two 7s in our 534. A zero-tolerance floor at
+  two would have reddened a correct run.
+* **the mean under 5.85 vblanks** — today's 5.73 is reproducible to the second decimal across three
+  runs (two `game`, one `gamefault`), so this is not a noise band. 300 frames at 5.73 is 1,719
+  vblanks and the ceiling is 1,755, a slack of 36 — eighteen frames slipping one release slot. A
+  first draft used 6.0 and was measured to be forty times looser than its own justification claimed:
+  the whole 41-frame fast bucket could vanish and the mean would still pass at 5.99.
+* **attract Timer B at or above 95% of the 100 the chip offers**, and **the ACIA at or above 0.25
+  interrupts a vertical blank** — a handler running past its own period lands near half service, so
+  the two states are far apart and the floors do not have to be precise to separate them.
+
+**IT IS FAULT-BLIND, AND THAT IS MEASURED RATHER THAN ARGUED.** The check sits in `mode_game`'s
+fault-blind set, so `gamefault` has to keep it green: measured, the control gives **5.73 and
+[4x41 6x258 7+x1], the same histogram to the frame** as `game`. The dropped section-chain step is a
+one-off panel repaint, not per-frame work, so it moves what is DRAWN and not what a frame costs.
+
+**IT WAS PROVED ABLE TO GO RED** rather than assumed to be. The control is a busy-wait in
+`zy_vbl_tick` — 400 iterations of a `volatile` store, about 36,000 cycles, a fifth of a vertical
+blank — which is enough to push a frame past the 6-vblank release it just fits into and on to the
+next one at 8. That is deliberately far past the ceiling: a control that only just crossed it would
+be testing the tolerance rather than the surface. Measured 2026-09-01:
+
+```
+   pacing: 7.54 vblanks/frame [6x75 7+x225] = 6.6 fps (the original's 2 = 25); attract Timer B 6263/6400 served over 64 vblanks
+   [red ] timelines (the frame cadence and the interrupt service rates)   (must PASS)
+           the frame loop averaged 7.54 vblanks a frame over 300 frames, past the 5.85 ceiling
+           225 of 300 frames took 7 vblanks or more, past the 2% allowance
+   [green] memory (the framebuffer and the entity table, frame by frame)
+   [green] hardware-state vector (the pens, frame by frame)
+   [green] exit status + log  (all five)
+-- FAILED: 1 check(s)
+```
+
+5.73 to **7.54**, two of the check's three arms red, and **every other surface still green — the
+frame differential included**. That last part is the point rather than a footnote: a slower frame
+computes the same bytes, because the game is frame-locked and nothing in it reads a clock, so a
+pacing regression is invisible to every check this directory had before. The control was then
+removed.
+
+**THE CONTROL MUST BE GATED ON THE FRAME LOOP, and the first draft was not.** An ungated busy-wait
+in `zy_vbl_tick` also slows the BOOT and the ATTRACT loop — 22 GEMDOS file loads and a wait for the
+fire button, all of them running with 20-45% of the CPU taken — and the run then never reached its
+first frame inside `smoke.py`'s fire deadline at all. That is a red, but on `check_the_game_ran` and
+for the wrong reason: it says the machine got slower, not that the CADENCE check can see it. So the
+control arms itself when `play_one_game` enters the frame loop and disarms on the way out, which
+leaves every other phase at full speed and isolates the one span the histogram measures.
+
+To re-run it, put this at the top of `zy_vbl_tick` with a `volatile uint32_t` flag set beside
+`g_phase = PHASE_PLAYING` and cleared after the `do`/`while`:
+
+```c
+if (zy_pacing_control_armed)
+    for (volatile uint32_t spin = 0; spin < 400u; spin++)
+        zy_pacing_control_sink = spin;
+```
 
 ## The bootable floppy, and what goes on the STE
 
@@ -309,6 +546,27 @@ Numbered on from M1's list.
     two more instructions in the hottest handler the program has.
 23. **Nothing has run on real hardware, and nothing has run on an STE**, exactly as in M1: Hatari
     refuses `--machine ste` on a ROM at or below TOS 1.4, and `tools/hatari/` has no later one.
+24. **The game runs at a third of the original's speed, and the gap is now a number rather than an
+    impression.** 5.73 vertical blanks a frame against 2, 815,488 cycles against 271,565 — the
+    Performance section above has the whole table, the per-routine ratios and the arithmetic for
+    what would close it. It is unpinned in the sense that MATTERS here: `check_the_pacing` refuses a
+    REGRESSION from today's number and cannot demand the original's, so nothing in the suite goes
+    red while the gap stands. The first step is scoped and costed in that section (`movem` twins for
+    `scroll_page_to_screen_p*` and `scroll_emit_column_shift2`, which together buy the 4-vblank
+    bucket); nothing of it is started, deliberately, because a half-finished asm campaign is a
+    second implementation of a verified core with no differential over it.
+25. **The boot takes 2.8x the original's vertical blanks** — the frame loop's head is first reached
+    at vblank ~2,230 here and ~795 there, over the same twenty-two GEMDOS file loads. Measured and
+    not explained: the effort went into the frame, which is what a player feels. What would close it
+    is the same instrument one phase earlier — a breakpoint clock over `boot_load_title_assets` and
+    `boot_load_gameplay_assets` on both sides, which `atari/profile.py` could grow a mode for.
+26. **The pacing surface judges OUR side alone.** `check_the_pacing`'s floors and ceiling are
+    numbers this tree measured, checked into `smoke.py`; the original's own cadence is measured by
+    `atari/profile.py original-frames` and lives in that file's comments and this README, not in the
+    run. A `smoke.py game` therefore cannot notice the ORIGINAL getting slower — which cannot
+    happen — but also cannot notice its own reference numbers going stale against a Hatari upgrade
+    or another ROM. What would close it is running the shipped side's timeline inside `mode_game`,
+    at the cost of a second boot in every run.
 
 ---
 

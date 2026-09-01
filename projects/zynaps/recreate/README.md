@@ -146,6 +146,21 @@ unchanged — which `atari/build.sh` measures rather than asserts.
 the negative control, and the ledger of what is still unpinned. `STATUS.md`'s "## On target" is the
 pointer from the per-function tables.
 
+**How fast it runs is a separate question from whether it is right, and it has its own instrument.**
+`atari/profile.py` clocks both binaries on one machine — the frame cadence off two repeating
+debugger breakpoints, the per-routine cycles off Hatari's CPU profiler — and `atari/README.md`'s
+PERFORMANCE section carries the table. The short version: the frame differential is byte-identical
+and the frame takes **three times as long**, 5.73 vertical blanks against the original's 2. The
+regression guard is `smoke.py game`'s `check_the_pacing`, on the timelines surface.
+
+```bash
+python3 atari/profile.py frames             # our cadence: vblanks per frame, work, wait
+python3 atari/profile.py original-frames    # ...the shipped binary's, the same way
+python3 atari/profile.py ours               # per-symbol cycles over a fixed window
+python3 atari/profile.py original           # ...and the shipped binary's, from names.txt
+python3 atari/profile.py compare            # both read back and ratioed, per call
+```
+
 `make guarded` matters here: the preshift builders in `src/sprite.c` index the image with a cursor
 they compute themselves, so a step-back one slot too far would read host heap rather than fail. It
 is a census, not a gate — see the kit README. It only guards inputs a case actually drives, which is

@@ -390,7 +390,21 @@ class HeadlessSession:
             except subprocess.TimeoutExpired:
                 self.process.kill()
                 self.process.wait()
-        self.pipe.close()
+        try:
+            self.pipe.close()
+        except BrokenPipeError:
+            # A RUN THAT QUIT ITSELF has already taken the FIFO's read end away, and the buffered
+            # write this flushes then fails — after the emulator is gone and its log is complete.
+            # A driver whose script ends in `q` (a profile window closing itself) hits this on every
+            # successful run, so raising here would turn every such run into a traceback with the
+            # measurement already safely on disk.
+            #
+            # ONLY `BrokenPipeError`, WHICH IS THE ONE CONDITION THAT MEANS "THE READER IS GONE".
+            # The fd is still O_NONBLOCK from `_open_fifo`, so a full FIFO raises `BlockingIOError`
+            # instead — commands buffered and never delivered to a machine that is still running,
+            # which is exactly the failure this driver has to make loud rather than swallow. Both
+            # are `OSError`s, so catching that would hide the second along with the first.
+            pass
         self.log.close()
         self.fifo.unlink(missing_ok=True)
         strip_log_noise(self.log_path)

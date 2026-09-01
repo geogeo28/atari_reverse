@@ -2145,12 +2145,23 @@ path and the program's own record stay green.
   is TOS's 200 Hz clock and the floppy's motor timeout. **The rows above are unchanged** — off
   target the read half still answers a fabricated 0 and the ledger records what the oracle's own
   instruction produced from it.
-* **THE RECONSTRUCTION IS TOO SLOW FOR ONE OF ITS OWN INTERRUPTS, and no off-target surface can see
-  it.** Attract mode's Timer B fires every two scanlines, about 1024 cycles, and the C handler does
-  not fit: measured at 79 of the frame's 156 interrupts arriving. It cost this milestone an
-  address-keyed hardware ledger (written twice, deleted twice) and a fifteen-register `movem` in the
-  interrupt entries, and what remains is a fidelity residual — the attract bars are drawn at half
-  the original's density. `atari/README.md`'s M2 section has the numbers and the unpinned list.
+* **THE RECONSTRUCTION IS THREE TIMES SLOWER THAN THE ORIGINAL, and no off-target surface can see
+  it.** Measured 2026-09-01 with `atari/profile.py`, both binaries on one machine through one
+  instrument: the shipped binary's frame loop takes **2 vertical blanks** (496 of 542 frames, 25
+  fps) and 271,565 cycles; ours takes **5.73** (300 pinned frames: 41 at 4, 258 at 6, 8.7 fps) and
+  815,488. The cause is the render path being C where the original is `movem.l` — the scroll blit
+  alone is 28% of our frame at 2.19x, `scroll_emit_column_shift2` is 5.34x — and **the shim is not
+  it**: everything this build adds around the verified cores is 5.2% of the frame.
+  `atari/README.md`'s PERFORMANCE section has the whole table, the per-routine ratios and the
+  arithmetic for what would close it; `smoke.py game`'s `check_the_pacing` refuses a regression from
+  today's number and its numbers are argued in that file.
+
+  **The attract-Timer-B half of this finding was WRONG and is retracted.** "79 of the frame's 156"
+  had both halves wrong: Timer B is in event-count mode, so the chip offers 100 interrupts a
+  vertical blank (200 displayed lines at a period of 2), not 156 — and the handler serves **6,263
+  over 64 attract vertical blanks, 98% of them**. The four-register `movem` and the deleted ledger
+  closed it; the figure was taken before both and never redone, and the reading that "the bars are
+  drawn at half density" followed from the arithmetic rather than from a screen.
 
 The verified counts above are untouched by any of this: `atari/` compiles the cores unchanged, and
 `atari/build.sh` measures that (no core includes a shim header, and no core reads a target-only

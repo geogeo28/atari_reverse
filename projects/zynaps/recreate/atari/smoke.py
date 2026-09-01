@@ -243,6 +243,9 @@ RECORD_TAIL = 0x444F4E45            # 'DONE'
 # table that grew a handler on one side of the language boundary and not the other is caught by the
 # field count rather than by a wrong number under the right name.
 FRAME_EXIT_NAMES = ("title", "reload_section", "restart_section", "advance_section", "next_frame")
+# zynaps_main.c's PACING_SLOTS — the pacing histogram's width, pinned against the C by
+# `assert_the_phase_names_are_the_shims`.
+PACING_SLOTS = 8
 VBL_HANDLER_NAMES = ("in_game", "title", "menu", "attract")
 TIMER_B_HANDLER_NAMES = ("in_game", "raster", "attract")
 RECORD_FIELDS = (
@@ -274,7 +277,13 @@ RECORD_FIELDS = (
        "tos_acia_vector", "acia_vector_after",
        "player_count", "level_section", "lives", "score_bcd", "frame_dump_bytes", "game_fault",
        "first_life_ended_at",
-       "video_base_offset", "video_base_published", "video_base_publishes",
+       "video_base_offset", "video_base_published", "video_base_publishes"]
+    # THE PACING SURFACE: one field per vblank count a `frame_loop_once` took, plus the vblanks the
+    # frame loop spent in total — which is what gives the exact mean, since the histogram's last
+    # slot is "seven or more". zynaps_main.c's PACING_SLOTS argues the shape and `check_the_pacing`
+    # is what reads them.
+    + [f"frame_vbls_{count}" for count in range(PACING_SLOTS - 1)] + ["frame_vbls_over"]
+    + ["playing_vbls",
        "tail"])
 
 # STATE.BIN's length, which is the record's own — one big-endian longword a field. The floppy
@@ -401,7 +410,8 @@ def floppy_medium(image):
     return ["--disk-a", str(image)]
 
 
-def hatari_arguments(medium, trace_file, machine, tos_rom, run_vbls=RUN_VBLS):
+def hatari_arguments(medium, trace_file, machine, tos_rom, run_vbls=RUN_VBLS,
+                     trace_flags=TRACE_FLAGS):
     """The whole Hatari command line for one side. Both sides get exactly this, bar the medium.
 
     --frameskips 0, --statusbar off and --drive-led off are the three settings that decide whether a
@@ -410,12 +420,18 @@ def hatari_arguments(medium, trace_file, machine, tos_rom, run_vbls=RUN_VBLS):
     an activity LED IN THE TOP-RIGHT BORDER, i.e. inside the photographed area, and the extra
     colours push its PNG writer from a palette image to a truecolour one so the two files can never
     match whatever the pixels do. All three are docs/on-target-execution.md class 8's measurements.
+
+    `trace_flags=None` LEAVES `--trace` OFF ENTIRELY, for a caller that reads no trace. It is not
+    the same as pointing `--trace-file` at the null device: `psg_write` fires on every write to the
+    sound chip, thousands an emulated second with music playing, and Hatari FORMATS every one of
+    those lines before the kernel throws them away. `atari/profile.py` is the caller — its runs are
+    raced against a host-time deadline, so that formatting is work taken off a measurement.
     """
+    trace = ["--trace", trace_flags, "--trace-file", str(trace_file)] if trace_flags else []
     return [HATARI, "--tos", str(tos_rom), "--machine", machine, "--memsize", str(MEMSIZE_MB),
             "--monitor", "rgb", "--confirm-quit", "off", "--statusbar", "off",
             "--drive-led", "off", "--frameskips", "0", "--sound", "off",
-            "--run-vbls", str(run_vbls), "--trace", TRACE_FLAGS,
-            "--trace-file", str(trace_file)] + list(medium)
+            "--run-vbls", str(run_vbls)] + trace + list(medium)
 
 
 def shoot_commands(work):
@@ -1488,11 +1504,14 @@ def assert_the_game_constants_are_the_headers(headers=None):
             (ENTITY_SLOTS, "include/frame.h", "ENTITY_SLOTS"),
             (GHIDRA_SCREEN_POINTERS, "include/video.h", "A_screen_back"),
             (GHIDRA_SECTION_TAIL_FIRE_POLL, "src/init.c", "SECTION_TAIL_FIRE_WAIT_SITE"),
-            (GHIDRA_ATTRACT_FIRE_POLL, "src/init.c", "ATTRACT_FIRE_WAIT_SITE")):
+            (GHIDRA_ATTRACT_FIRE_POLL, "src/init.c", "ATTRACT_FIRE_WAIT_SITE"),
+            (ATTRACT_TIMER_B_PERIOD, "include/init.h", "MFP_TIMER_B_PERIOD_ATTRACT_BARS"),
+            (PACING_RELEASE_PERIOD_VBLS, "include/irq.h", "RASTER_PHASE_PERIOD")):
         theirs = c_define(read(owner), define)
         if constant != theirs:
-            raise SystemExit(f"smoke.py has {define} = {constant:#x}, ../{owner} has "
-                             f"{theirs:#x} — the frame differential would read the wrong range")
+            raise SystemExit(f"smoke.py has {define} = {constant:#x}, ../{owner} has {theirs:#x} — "
+                             f"the checks built on it would read the wrong range or divide by the "
+                             f"wrong denominator")
 
 
 def assert_the_phase_names_are_the_shims():
@@ -1514,6 +1533,14 @@ def assert_the_phase_names_are_the_shims():
     if PHASE_NAMES[PHASE_PLAYING] != "playing" or PHASE_NAMES[PHASE_BUDGET_SPENT] != "budget spent":
         raise SystemExit("smoke.py's PHASE_PLAYING / PHASE_BUDGET_SPENT do not index their own "
                          "names — the two constants and the list have drifted apart")
+    # ...and the pacing histogram's width, for the same reason one field further on: the record is
+    # positional, so a slot added there and not here shifts every field after it. The length guard
+    # in `read_record` would catch that, but it would report "the field count moved" rather than
+    # naming the constant that moved it.
+    theirs = c_define(source, "PACING_SLOTS")
+    if PACING_SLOTS != theirs:
+        raise SystemExit(f"smoke.py has PACING_SLOTS = {PACING_SLOTS} and zynaps_main.c has "
+                         f"{theirs} — the pacing histogram's fields would be misread")
 
 
 def frame_samples():
@@ -1897,15 +1924,17 @@ def check_timer_b_never_fired(ours):
 def check_the_game_fork_was_not_taken(ours):
     """SURFACE: memory — an M1 build must not have run M2's composition.
 
-    zynaps_main.c forks on ONE `#if`, and the four fields below are written only on the game side of
-    it. A title binary that had somehow taken that fork would pass every M1 surface — the boot is
-    the same code and the anchor is the same picture — while being a different program running for
-    a different length of time. These are the four that say it did not.
+    zynaps_main.c forks on ONE `#if`, and the fields below are written only on the game side of it.
+    A title binary that had somehow taken that fork would pass every M1 surface — the boot is the
+    same code and the anchor is the same picture — while being a different program running for a
+    different length of time. These are the ones that say it did not, the pacing histogram among
+    them: it is written by `note_frame_pacing`, which only the frame loop reaches.
     """
     record = ours["record"]
+    game_only = ("phase_reached", "attract_passes", "section_starts", "frames_run", "playing_vbls",
+                 *(f"frame_vbls_{count}" for count in range(PACING_SLOTS - 1)), "frame_vbls_over")
     return [f"{name} is {record[name]}, not 0 — this build ran the game composition"
-            for name in ("phase_reached", "attract_passes", "section_starts", "frames_run")
-            if record[name]]
+            for name in game_only if record[name]]
 
 
 def check_the_game_ran(ours, samples=None):
@@ -1972,6 +2001,220 @@ def check_the_game_ran(ours, samples=None):
     return problems
 
 
+# =================================================================================================
+# THE PACING SURFACE — the frame cadence, the interrupt service rates, and what each is measured
+# against.
+#
+# EVERY OTHER CHECK IN THIS FILE ASKS WHETHER THE PORT COMPUTES THE RIGHT BYTES. This one asks
+# whether it computes them IN TIME, which for this program is one number: how many vertical blanks
+# one `frame_loop_once` takes. `frame_end_and_flip` (../src/frame.c) waits on `A_vbl_wait_flag`, and
+# the handler that clears it is `vbl_menu`, whose raster phase counts up and wraps at 2 — so the
+# cadence is QUANTISED. A frame that fits its budget is released on the second vertical blank; one
+# that overruns waits for the next release, not for a few more scanlines.
+#
+# THE BAR IS THE SHIPPED BINARY'S OWN, MEASURED: `atari/profile.py original-frames` clocks the
+# original's loop head over 542 frames of section 1 on this machine and gets 496 frames at 2
+# vblanks, 2 at 3, 42 at 4 and 2 at 45 (a death and its respawn). So 2 is the bar, the 4-vblank tail
+# is the original's own and not a threshold this file chose, and 25 fps is what "on par" means.
+#
+# THIS RECONSTRUCTION DOES NOT MEET THAT BAR AND THE CHECK SAYS SO IN NUMBERS RATHER THAN PASSING
+# QUIETLY. A frame costs 815,488 cycles against the original's 271,565 — 3.0x, and a fact about C
+# against hand-written 68000 assembly rather than about any one routine (atari/README.md's
+# PERFORMANCE section carries the per-routine table). So the ceiling below is a REGRESSION GUARD set
+# from what this tree measures, and the gap to the original is carried as an unpinned residual. A
+# check that demanded the original's 2 would be red on every run and would therefore be read by
+# nobody; one that demanded nothing would let a slowdown through.
+# =================================================================================================
+# The vertical blanks a frame takes when its work fits, on both sides — `vbl_menu`'s
+# RASTER_PHASE_PERIOD, pinned against ../include/irq.h by
+# `assert_the_game_constants_are_the_headers`. It is the release PERIOD and therefore the step the
+# cadence moves in; it is NOT a floor a frame can never be under, because `A_raster_phase` is
+# free-running and a frame can arrive with it already at READY (see `check_the_pacing`).
+PACING_RELEASE_PERIOD_VBLS = 2
+# The PAL machine both sides are measured on, so a vblank count can be printed as a frame rate.
+VBL_HZ = 50
+# THE RUN THE TOLERANCES BELOW WERE MEASURED ON, and the reason this is a constant rather than a
+# sentence: they are absolute numbers, not shares, so they mean nothing over a different number of
+# frames. `check_the_pacing` refuses a run whose frame count is not this one instead of applying
+# them anyway — a longer run reaches a second life, whose 4-vblank frames are a different mixture.
+PACING_BASELINE_FRAMES = 300
+# What this tree measures, and the ceiling a run must stay under. MEASURED at 5.73 mean vblanks a
+# frame over those 300 frames — 41 at 4, 258 at 6, one over — and measured TWICE to the second
+# decimal, because the tolerance rests on that: the 300 frames are pinned (the same random state,
+# the same entity table, a neutral stick every frame), so the cadence is REPRODUCIBLE and this is
+# not a noise band.
+#
+# THE CEILING IS 5.85, AND THE ARITHMETIC IS WHY — a first draft said 6.0 ("every frame at today's
+# worst ordinary bucket") and that was measured to be forty times looser than its own justification
+# claimed. 300 frames at 5.73 is 1,719 vertical blanks; a 6.0 ceiling is 1,800, so the slack is 81
+# vblanks — FORTY of the 41 four-vblank frames slipping to 6, i.e. the whole fast bucket
+# disappearing, and the mean would still pass at 5.99. 5.85 is 1,755, a slack of 36 vblanks or
+# EIGHTEEN frames slipping one release slot: enough that no single frame reddens a run, tight enough
+# that a systematic slowdown cannot hide under it.
+#
+# It is a tight number and it is meant to be. The run is deterministic — 5.73 to the second decimal
+# on the `game` build twice and on `gamefault` once — so the margin is for a real change, not for
+# noise. It is also why the frame count is pinned above: the `play` build's longer run reaches a
+# second life and measures 7.38, which is not a regression and would be read as one.
+#
+# THE `gamefault` CONTROL WAS MEASURED AGAINST THE SAME CEILING rather than exempted from it,
+# because this check sits in `mode_game`'s FAULT-BLIND set and a tolerance that had only ever seen
+# one mode would be one the control could redden by accident. Measured: `gamefault` gives 5.73 and
+# [4x41 6x258 7+x1], the same histogram to the frame — the dropped section-chain step is a one-off
+# panel repaint, not per-frame work, so it moves what is DRAWN and not what a frame costs.
+PACING_MEAN_CEILING_VBLS = 5.85
+# ...and the share of frames that may reach the histogram's last slot (seven vblanks or more).
+# MEASURED at 1 of 300 — the section's first pass, which draws the whole playfield — so the
+# allowance is what keeps that one frame from reddening a run while a systematic slip cannot hide
+# under it.
+PACING_OVERFLOW_SHARE = 0.02
+
+# ATTRACT MODE'S TIMER B IS THE INTERRUPT THIS PORT IS MOST EXPOSED TO, and its expected rate is
+# arithmetic rather than a measurement: `attract_program_rasterbar_timer` puts Timer B in
+# event-count mode with a period of 2 (MFP_TIMER_B_PERIOD_ATTRACT_BARS), and the event it counts is
+# the shifter's display-enable pulse — one per DISPLAYED scanline, of which ST low resolution has
+# 200. So the chip offers 100 interrupts per vertical blank, and every one the handler does not
+# reach is a colour bar the attract screen does not draw.
+#
+# THE DENOMINATOR IS `vbl_dispatch_attract` AND NOT A SPAN THE SHIM TIMES, because the two are not
+# the same window and the shim's was the wrong one: `title_attract_loop` returns while attract
+# mode's VBL and Timer B are both STILL INSTALLED — `boot_program_timer_b` is what swaps them, four
+# calls later — so a span measured around the loop was 34 vertical blanks where the handler ran for
+# 64, and the ratio came out at 184% of a rate nothing can exceed. The handler's own entry count
+# over the entry count of the VBL handler installed beside it is the same window by construction.
+ATTRACT_DISPLAYED_LINES = 200
+# ../include/init.h's MFP_TIMER_B_PERIOD_ATTRACT_BARS, pinned against it by
+# `assert_the_game_constants_are_the_headers` — a period that moved there and not here would make
+# this check compare the served count against the wrong denominator and pass on half service.
+ATTRACT_TIMER_B_PERIOD = 2
+ATTRACT_TIMER_B_PER_VBL = ATTRACT_DISPLAYED_LINES // ATTRACT_TIMER_B_PERIOD
+# The share of them the handler must serve. MEASURED at 0.98 of the arithmetic rate; the floor is
+# 0.95, which is the point below which the bars are visibly thinned — a handler over its own 1024-
+# cycle period drops every other interrupt and lands near 0.5, so the two states are far apart and
+# the floor does not have to be precise to separate them.
+ATTRACT_TIMER_B_SERVED_FLOOR = 0.95
+# The keyboard controller's own traffic, as interrupts per vertical blank of the whole run. The
+# frame loop asks for a joystick packet once a frame (`ikbd_send_cmd(IKBD_CMD_INTERROGATE_JOYSTICK)`
+# in `frame_end_and_flip`) and the 6301 answers with a three-byte report, so a served run cannot be
+# far below one interrupt per frame. MEASURED at 0.45 per vblank over the whole run; the floor is
+# 0.25, which a run whose ACIA was being starved by a longer-running handler would fall under.
+ACIA_SERVED_PER_VBL_FLOOR = 0.25
+
+
+def pacing_figures(record):
+    """The two ratios the report and the verdict both need — derived ONCE so they cannot disagree.
+
+    A run that reached no frame gives a mean of 0 rather than dividing by its own zero: the report
+    is printed BEFORE the verdicts, so it has to survive the run `check_the_game_ran` reddens.
+    """
+    mean = record["playing_vbls"] / record["frames_run"] if record["frames_run"] else 0
+    attract_offered = record["vbl_dispatch_attract"] * ATTRACT_TIMER_B_PER_VBL
+    return mean, attract_offered
+
+
+def pacing_line(record):
+    """The pacing numbers as one line of the report, whatever the check made of them.
+
+    THE WHOLE DISTRIBUTION AND NOT JUST THE MEAN, because the release mechanism quantises the
+    cadence: "5.7 vblanks a frame" is not a rate anything runs at, it is a mixture of 4s and 6s, and
+    which mixture is what moves when a lever lands.
+    """
+    buckets = [f"{count}x{record[f'frame_vbls_{count}']}"
+               for count in range(PACING_SLOTS - 1) if record[f"frame_vbls_{count}"]]
+    if record["frame_vbls_over"]:
+        buckets.append(f"{PACING_SLOTS - 1}+x{record['frame_vbls_over']}")
+    mean, attract_offered = pacing_figures(record)
+    cadence = (f"{mean:.2f} vblanks/frame [{' '.join(buckets)}] = {VBL_HZ / mean:.1f} fps" if mean
+               else "no frame ran")
+    return (f"pacing: {cadence} (the original's {PACING_RELEASE_PERIOD_VBLS} = "
+            f"{VBL_HZ // PACING_RELEASE_PERIOD_VBLS}); attract Timer B "
+            f"{record['timer_b_dispatch_attract']}/{attract_offered} served over "
+            f"{record['vbl_dispatch_attract']} vblanks")
+
+
+def check_the_pacing(ours):
+    """SURFACE: timelines — the frame cadence and the two interrupt service rates.
+
+    Every figure is the PROGRAM's own, out of STATE.BIN: the shim latches `zy_vbl_ticks` either side
+    of each `frame_loop_once` (zynaps_main.c's `note_frame_pacing`), and the two service rates come
+    out of the per-handler dispatch counts the record already carried. So what is judged is what the
+    machine did rather than what a host stopwatch saw.
+    """
+    record = ours["record"]
+    frames = record["frames_run"]
+    problems = []
+    if not frames:
+        return ["no frame ran, so there is no cadence to judge"]
+    # THE TOLERANCES BELOW ARE ABSOLUTE NUMBERS, NOT SHARES, so they mean nothing over a different
+    # run. Refusing here is not pedantry: a longer run reaches a second life, whose mixture of 4-
+    # and 6-vblank frames is a different one, and applying this ceiling to it would report a
+    # different GAME as a regression (measured: the `play` build's 534 frames average 7.38).
+    if frames != PACING_BASELINE_FRAMES:
+        problems.append(f"this run played {frames} frames and the tolerances below were measured "
+                        f"over {PACING_BASELINE_FRAMES} — they do not describe it, so the cadence "
+                        f"is reported rather than judged")
+        return problems
+
+    # NO FRAME MAY COST ZERO VERTICAL BLANKS, and the tolerance is 0 because that one IS an
+    # invariant: `frame_end_and_flip` arms `A_vbl_wait_flag` and then spins until a VBL handler
+    # clears it, and `shim_include/sched.h`'s `sched_wait8` has no cap, so at least one vertical
+    # blank always elapses inside the wait. A frame recorded at 0 did not go through it at all.
+    #
+    # ONE VBLANK IS NOT AN ERROR AND THIS ARM MUST NOT SAY IT IS. `A_raster_phase` is FREE-RUNNING —
+    # `vbl_menu` ticks it every vertical blank and nothing resets it at a frame boundary — so a
+    # frame whose head arrives with the phase already at FRAME_RASTER_PHASE_READY returns from
+    # `frame_end_and_flip`'s first wait immediately and is released by the very next wrap, one
+    # vblank later. Measured in this tree: the shipped binary's own timeline carries two 3-vblank
+    # frames in 542 and ours two 7-vblank frames in 534, which is the same parity effect one slot
+    # up. The mean and the overflow share below are what judge those, not a floor.
+    if record["frame_vbls_0"]:
+        problems.append(f"{record['frame_vbls_0']} frame(s) cost no vertical blank at all — the "
+                        f"frame loop's wait on A_vbl_wait_flag was not the thing that released "
+                        f"them")
+    mean, attract_offered = pacing_figures(record)
+    if mean > PACING_MEAN_CEILING_VBLS:
+        problems.append(f"the frame loop averaged {mean:.2f} vblanks a frame over {frames} frames, "
+                        f"past the {PACING_MEAN_CEILING_VBLS} ceiling — the game got slower (the "
+                        f"original's own is {PACING_RELEASE_PERIOD_VBLS}; see README.md's "
+                        f"PERFORMANCE section)")
+    overflowed = record["frame_vbls_over"]
+    if overflowed > PACING_OVERFLOW_SHARE * frames:
+        problems.append(f"{overflowed} of {frames} frames took {PACING_SLOTS - 1} vblanks or more, "
+                        f"past the {PACING_OVERFLOW_SHARE:.0%} allowance")
+
+    # THE ATTRACT SCREEN'S TIMER B, as a share of what the chip offered over the same vblanks.
+    attract_vbls = record["vbl_dispatch_attract"]
+    if not attract_vbls:
+        problems.append("attract mode's VBL handler was never entered — its Timer B rate has no "
+                        "denominator, and `check_the_game_ran` should already have failed")
+    else:
+        served = record["timer_b_dispatch_attract"] / attract_offered
+        if served < ATTRACT_TIMER_B_SERVED_FLOOR:
+            problems.append(f"attract mode served {record['timer_b_dispatch_attract']} of the "
+                            f"{attract_offered} Timer B interrupts the chip offered over "
+                            f"{attract_vbls} vblanks "
+                            f"({served:.0%}, floor {ATTRACT_TIMER_B_SERVED_FLOOR:.0%}) — "
+                            f"the handler is running past its own two-scanline period and the "
+                            f"colour bars are drawn at reduced density")
+
+    # ...AND THE KEYBOARD'S, over the whole run. A handler that overruns blocks the ACIA (MFP
+    # channel 6 is below Timer B's channel 8), which loses a byte of the 6301's three-byte report
+    # and desynchronises the packet parser — README.md's M2 unpinned 19.
+    # SUMMED OVER THE HANDLER LIST rather than over three names typed here: `VBL_HANDLER_NAMES` has
+    # four entries, and a denominator that named three would come out SHORT — a served rate too
+    # high, and a genuinely starved keyboard passing the floor — the day `vbl_isr_title` is
+    # installed. The dispatch table exists so that installing it is a dispatch and not a halt.
+    total_vbls = sum(record[f"vbl_dispatch_{name}"] for name in VBL_HANDLER_NAMES)
+    if total_vbls:
+        served = record["acia_dispatches"] / total_vbls
+        if served < ACIA_SERVED_PER_VBL_FLOOR:
+            problems.append(f"the keyboard ACIA was served {record['acia_dispatches']} times over "
+                            f"{total_vbls} vertical blanks ({served:.2f} per vblank, floor "
+                            f"{ACIA_SERVED_PER_VBL_FLOOR}) — a handler that runs past its own "
+                            f"period blocks MFP channel 6 and the joystick packet is lost")
+    return problems
+
+
 def check_the_acia_vector_went_back(ours):
     """SURFACE: exit status and the log — the third vector M2 displaces, put back."""
     record = ours["record"]
@@ -2016,6 +2259,11 @@ def mode_game(mode, out_dir, machine, tos_rom, keep):
             "exit status + log (the machine was handed back)":
                 check_the_machine_was_handed_back(ours) + check_the_acia_vector_went_back(ours),
             "hardware-state vector (the pens, frame by frame)": check_frame_pens(ours, original),
+            # THE PACING SURFACE IS FAULT-BLIND BY CONSTRUCTION and that is worth a line: the
+            # control drops a section-chain step, which changes what is DRAWN and not how long a
+            # frame takes, so a pacing check that moved under it would be measuring the wrong
+            # thing. Its own control is the busy-wait one README.md's Performance section describes.
+            "timelines (the frame cadence and the interrupt service rates)": check_the_pacing(ours),
         }
         # THERE IS NO TIMELINE ARM HERE, AND IT WAS TRIED. M1's `check_timeline` cuts the PSG trace
         # into the sound driver's own descending 10..0 tick frames and compares the first 64 as a
@@ -2054,6 +2302,7 @@ def report_game(mode, fault_sensitive, fault_blind, ours, original, machine, sam
           f"{record['unknown_vector_halts']} unknown-vector halt(s)")
     print(f"   samples {samples}; {record['rmw_stores']} read-modify-writes made, "
           f"{record['mfp_settle_restores']} Timer B data restore(s) in the four read-back spins")
+    print("   " + pacing_line(record))
     for group, checks in (("must PASS", fault_blind),
                           ("must FAIL" if control else "must PASS", fault_sensitive)):
         for name, problems in sorted(checks.items()):

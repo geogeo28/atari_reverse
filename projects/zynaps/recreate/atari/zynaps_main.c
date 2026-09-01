@@ -96,6 +96,48 @@
  * STATE.BIN plus a `phase_reached` that never advanced. That is M1's own argument for its title
  * wait, one phase further on. */
 
+/* ------------------------------------------------------------------------------------------------
+ * THE PACING SURFACE — how many vertical blanks one `frame_loop_once` took, as a DISTRIBUTION.
+ *
+ * THE GAME'S FRAME RATE IS NOT A HOST STOPWATCH, it is this histogram. `frame_end_and_flip`
+ * (../src/frame.c) ends by waiting for `A_vbl_wait_flag`, and the handler that clears it is
+ * `vbl_menu`, whose raster phase counts up and wraps at RASTER_PHASE_PERIOD — so a frame that fits
+ * its budget is released on the SECOND vertical blank and takes exactly 2, and one that overruns
+ * misses that release and waits for the next. The cadence is therefore QUANTISED in steps of two,
+ * and a MEAN ALONE WOULD HIDE A 2/2/2/4 STUTTER the shipped binary does not have.
+ *
+ * "STEPS OF TWO" IS THE MECHANISM AND NOT AN INVARIANT, which is worth the extra sentence because
+ * the measurements below contain the exceptions. `A_raster_phase` is FREE-RUNNING — nothing resets
+ * it at a frame boundary — so a frame whose head arrives with the phase already at
+ * FRAME_RASTER_PHASE_READY skips its first wait and lands one vblank short of the step. The shipped
+ * binary's own timeline, measured with `atari/profile.py original-frames` over 542 frames of
+ * section 1, is 496 frames at 2 vblanks, 2 at 3, 42 at 4 and 2 at 45 (a death and its respawn);
+ * ours over 534 of the `play` build is 10 at 4, 505 at 6, 2 at 7, 15 at 8 and two long entries of
+ * the same kind. `smoke.py`'s `check_the_pacing` judges the mean and the tail rather than asserting
+ * a parity the machine does not keep.
+ *
+ * IT IS MEASURED ACROSS `frame_loop_once` ALONE and not across the whole loop body, so what it
+ * reports is the GAME's pacing rather than the harness's: `capture_frame_sample` writes 64 KB
+ * through GEMDOS at five of a 300-frame run's frames, and a span that included it would charge the
+ * program for the harness's own file I/O. The play build makes no captures at all, which is what
+ * makes the two builds' histograms comparable.
+ *
+ * ITS COST IS ABOUT 70 CYCLES A FRAME, COUNTED OFF THE GENERATED CODE rather than guessed: twelve
+ * instructions inlined into `play_one_game` — two absolute loads of `zy_vbl_ticks`, the subtraction,
+ * the clamp's compare and its two `add`s of the longword index scale, the indexed `addq`, and the
+ * absolute read-modify-write of `g_playing_vbls`. Against a frame that costs 815,000 that is
+ * 0.009%, so unlike the address-keyed hardware ledger zynaps_backend.c describes, this is nowhere
+ * near the cliff — and it is compiled into every build rather than into the smoke ones alone,
+ * because a pacing surface the build a person plays did not carry would be a surface for a
+ * different program. It runs on the MAIN LINE and not in an interrupt, which is the other half of
+ * why it is affordable.
+ *
+ * Slots 0..PACING_OVERFLOW_SLOT-1 hold that exact vblank count; the LAST slot is "that many or
+ * more", so a pathologically slow frame is still counted rather than indexing off the end. Seven is
+ * three and a half times the budget and one past the worst frame measured on this build. */
+#define PACING_SLOTS          8u
+#define PACING_OVERFLOW_SLOT  (PACING_SLOTS - 1u)
+
 /* ...and how long `zy_anchor` holds after the smoke's breakpoint fires on it. The capture is
  * STOP-THEN-SHOOT (docs/on-target-execution.md class 8): the breakpoint here stops the machine, its
  * action file arms a SECOND breakpoint some vertical blanks later, and that one photographs. So the
@@ -391,6 +433,12 @@ enum {
     /* The video-base door's own account — the offset the cores last published, the machine address
      * it was translated to, and how many pairs went up. */
     REC_VIDEO_BASE_OFFSET, REC_VIDEO_BASE_PUBLISHED, REC_VIDEO_BASE_PUBLISHES,
+    /* THE PACING SURFACE: one slot per vertical-blank count a frame took (see `note_frame_pacing`),
+     * plus the vblanks the frame loop spent in total, which is what gives the exact mean. The two
+     * interrupt SERVICE RATES are computed from the dispatch counts already above: a handler's
+     * entry count over the vertical blanks its own phase's VBL handler was the installed one. */
+    REC_FRAME_VBLS,    REC_FRAME_VBLS_END    = REC_FRAME_VBLS + PACING_SLOTS - 1,
+    REC_PLAYING_VBLS,
 
     REC_TAIL,
     REC_FIELD_COUNT
@@ -620,6 +668,18 @@ static uint32_t g_section_starts;
 static uint32_t g_frames_run;
 static uint32_t g_frame_exits[FRAME_EXIT_COUNT];
 static uint32_t g_mfp_settle_restores;
+
+/* The pacing histogram and the vblanks the frame loop spent — the surface argued for beside
+ * PACING_SLOTS at the top of this file. The histogram alone cannot give the exact mean, because its
+ * last slot is "seven or more" and has thrown the exact count away; this is the sum before that. */
+static uint32_t g_frame_vbls[PACING_SLOTS];
+static uint32_t g_playing_vbls;
+
+static void note_frame_pacing(uint32_t vbls) {
+    g_frame_vbls[vbls < PACING_OVERFLOW_SLOT ? vbls : PACING_OVERFLOW_SLOT]++;
+    g_playing_vbls += vbls;
+}
+
 /* THE FRAME THE FIRST LIFE ENDED ON, and it is what pins the sample list to one life. Every sample
  * frame must be below it: past it the ship has died, `section_start_tail` has asked for the fire
  * button again, and that wait calls `rand16` a driver-dependent number of times — so the random
@@ -875,8 +935,11 @@ static int play_one_game(void) {
 
         g_phase = PHASE_PLAYING;
         do {
+            uint32_t vbls_at_frame_start = zy_vbl_ticks;
+
             exit = frame_loop_once(zy_image_base, ZY_CHANCE_INDEX_REGISTER,
                                    ZY_GROUND_SPAWN_Y_REGISTER);
+            note_frame_pacing(zy_vbl_ticks - vbls_at_frame_start);
             g_frames_run++;
             if (exit < FRAME_EXIT_COUNT)
                 g_frame_exits[exit]++;
@@ -1025,6 +1088,9 @@ static void record_the_run(void) {
         g_record[REC_FRAME_EXITS + exit] = g_frame_exits[exit];
     g_record[REC_MFP_SETTLE_RESTORES] = g_mfp_settle_restores;
     g_record[REC_FIRST_LIFE_ENDED_AT] = g_first_life_ended_at;
+    for (unsigned slot = 0; slot < PACING_SLOTS; slot++)
+        g_record[REC_FRAME_VBLS + slot] = g_frame_vbls[slot];
+    g_record[REC_PLAYING_VBLS] = g_playing_vbls;
     g_record[REC_PLAYER_COUNT] = zy_image_base[A_player_count];
     g_record[REC_LEVEL_SECTION] = zy_image_base[A_level_section];
     g_record[REC_LIVES] = zy_image_base[A_lives];

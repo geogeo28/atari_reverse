@@ -95,18 +95,26 @@ volatile uint32_t zy_acia_bytes_sent;
  *
  * ATTRACT MODE'S TIMER B FIRES EVERY TWO SCANLINES — about 1024 CPU cycles at 8 MHz — and its
  * handler makes two hardware stores (pen 0 and the MFP acknowledge). MEASURED on `build.sh game`
- * under Hatari, by dividing the program's own `timer_b_ticks` by its `vbl_ticks` over a five-second
- * window: WITH the ledger the handler took about 2000 cycles and only 79 of the frame's 156
- * interrupts arrived at all, which is 100% of the CPU inside the handler — the main line advanced a
- * couple of instructions a frame, spent twenty seconds inside an eight-iteration palette upload, and
- * never drew the title page. WITHOUT it the same build runs the attract loop, starts a game and
- * reaches the section start. The second draft replaced the linear scan with a direct-mapped hash and
- * was still over the cliff: what costs is the extra CALL and its argument, not the search.
+ * under Hatari: WITH the ledger the handler took about 2000 cycles, i.e. longer than its own
+ * period, and the main line advanced a couple of instructions a frame — twenty seconds inside an
+ * eight-iteration palette upload, and the title page never drawn. WITHOUT it the same build runs the
+ * attract loop, starts a game and reaches the section start. The second draft replaced the linear
+ * scan with a direct-mapped hash and was still over the cliff: what costs is the extra CALL and its
+ * argument, not the search.
+ *
+ * THE RATE THIS PARAGRAPH USED TO QUOTE — "only 79 of the frame's 156 interrupts arrived" — WAS
+ * WRONG IN BOTH HALVES AND IS RETRACTED. Timer B is in EVENT-COUNT mode, so the event it counts is
+ * the shifter's display-enable pulse, one per DISPLAYED scanline: ST low resolution has 200 of
+ * those, not 313, and at a period of 2 the chip offers 100 interrupts a vertical blank rather than
+ * 156. And the build this file describes serves 6,263 of them over 64 attract vertical blanks —
+ * 98% — which `smoke.py`'s `check_the_pacing` now holds to a floor. What is quoted above is the
+ * measurement that stands: the ledger made the handler longer than its period, and deleting it is
+ * what fixed that.
  *
  * So the shape a target build can afford is a fixed set of NAMED counters — the three above, which
- * compile to one compare and one `addq` each — and not a table. `docs/on-target-execution.md` has no
- * class for "the reconstruction is too slow for its own interrupt"; this is one, and README.md's M2
- * section carries it with the numbers.
+ * compile to one compare and one `addq` each — and not a table. `docs/on-target-execution.md`'s
+ * taxonomy 13 is the class this belongs to, and atari/README.md's PERFORMANCE section carries the
+ * whole table.
  * ============================================================================================= */
 
 static void note_store(uint32_t bus_addr, unsigned width) {
