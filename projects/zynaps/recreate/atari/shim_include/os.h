@@ -8,12 +8,14 @@
  * differential build never sees this directory, so the .so is byte-identical and `make test` stays
  * at its 2700.
  *
- * FOUR HELPERS ARE REPLACED, AND THE CORES CALL EXACTLY FOUR (measured, not assumed: a grep of
- * the cores for `os_[a-z_]*` yields os_fopen, os_fread, os_fclose and os_super and nothing else).
- * So there is no fifth kit helper silently keeping its modelled behaviour on target.
+ * FIVE HELPERS ARE REPLACED, AND NO SIXTH IS LEFT MODELLED — measured every build rather than
+ * asserted here: build.sh's REPLACED_OS_HELPERS gate greps the cores for `os_[a-z_0-9]*` and
+ * refuses any name this file does not shadow (`os_refused` is the kit's own -DOS_NO_REFUSAL_TALLY
+ * arm, and counts as shadowed there).
  *
  *   os_fopen / os_fread / os_fclose   the disk is a real GEMDOS drive here, not a staged table
  *   os_super                          a NO-OP: zynaps_os.s owns the privilege switch (see below)
+ *   os_in_image                       the target image is HALF the model's — see the block below
  *
  * WHY THE FILE MODEL GOES AND JOUST'S STAYS. Joust keeps the staged-file model on target because
  * it opens its high-score file from inside a routine the original runs in supervisor mode, and
@@ -48,18 +50,59 @@
 
 #include "tos.h"
 
-/* Move the kit's modelled versions of the four replaced helpers aside, then pull in the kit's
- * header for EVERYTHING else: the constants (OS_IMAGE_SIZE, OS_SUPER_TOKEN), os_in_image, and the
- * inline `os_refused` that -DOS_NO_REFUSAL_TALLY selects. */
-#define os_fopen  os_model_fopen
-#define os_fread  os_model_fread
-#define os_fclose os_model_fclose
-#define os_super  os_model_super
+/* Move the kit's modelled versions of the FIVE replaced helpers aside, then pull in the kit's
+ * header for EVERYTHING else: the constants (OS_IMAGE_SIZE, OS_SUPER_TOKEN) and the inline
+ * `os_refused` that -DOS_NO_REFUSAL_TALLY selects. */
+#define os_fopen     os_model_fopen
+#define os_fread     os_model_fread
+#define os_fclose    os_model_fclose
+#define os_super     os_model_super
+#define os_in_image  os_model_in_image
 #include_next "os.h"
 #undef os_fopen
 #undef os_fread
 #undef os_fclose
 #undef os_super
+#undef os_in_image
+
+/* ================================================================================================
+ * THE TARGET'S IMAGE IS HALF THE MODEL'S, AND THIS IS THE ONE PLACE THAT SAYS SO.
+ *
+ * `OS_IMAGE_SIZE` is 1 MiB and does not move: it is BOTH SIDES of the differential (the Musashi
+ * oracle's buffer and the candidate's bound), and ../project.toml's `image_size` is pinned equal to
+ * it by harness._vet_os_memory_map(). Off target that megabyte costs nothing — it is a host
+ * `calloc`. On target it is a `.bss` array inside a GEMDOS TPA, and a 1 MiB one needs a 2 MB Atari
+ * for a game that shipped on a 512 KB one.
+ *
+ * WHAT THE UPPER HALF HELD IS HARNESS-ONLY. The kit's fixed map puts the staged-file table at
+ * 0xbf000 and its staging area at 0xc0000, and the oracle's stack at the top — none of the three
+ * exists here: this build's file I/O is real GEMDOS (see the header comment above), it runs on the
+ * stack GEMDOS gave it, and no kit source file is linked into the .PRG at all. So the target image
+ * only has to cover THE GAME'S OWN WORLD, and that world ends at 0x7fd00 — README.md's "Memory"
+ * section is the census, and build.sh's `A_*` gate is the census re-run every build.
+ *
+ * SHRINKING IT MOVES `os_in_image`, WHICH IS THE POINT. The bound below is what `os_fread` checks
+ * before handing GEMDOS a destination, so it MUST be the real array's length: bounding a 512 KiB
+ * array against 1 MiB would let one oversized Fread write over `zy_saved_ssp` and the record, which
+ * is the failure that survives a clean teardown with every read-back green. The cores' own two
+ * guards (../src/init.c's attract-bar and section-table walks) move with it, and that is argued
+ * rather than tolerated: neither walk can produce an address in [0x80000, 0x100000), because both
+ * start from an `A_*` below 0x7fd00 and step by 2 or 4 until they pass a cursor.
+ *
+ * `os_in_image_fixed` IS DELIBERATELY LEFT ON THE MODEL'S BOUND. No core calls it, and one that
+ * started to would be REFUSED BY build.sh's REPLACED_OS_HELPERS gate — that grep lists the exact
+ * names this file shadows, and `os_in_image_fixed` is not one of them, so the build stops rather
+ * than compiling a core against the wrong image length.
+ * ============================================================================================= */
+#define ZY_TARGET_IMAGE_BYTES 0x80000u
+
+_Static_assert(ZY_TARGET_IMAGE_BYTES <= OS_IMAGE_SIZE,
+               "the target image must be a PREFIX of the modelled one, or an address the "
+               "differential never verified would be legal on target");
+
+static inline int os_in_image(uint32_t addr, uint32_t count) {
+    return addr <= ZY_TARGET_IMAGE_BYTES && count <= ZY_TARGET_IMAGE_BYTES - addr;
+}
 
 /* `clr.w -(a7)` ahead of the filename at 0x144ec — GEMDOS Fopen mode 0, read-only. The kit's model
  * takes no mode at all, so this constant exists only on this side of the seam. */

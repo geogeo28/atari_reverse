@@ -26,7 +26,7 @@
 #
 #
 # The machine matches `smoke.py`'s exactly, bar the display and the sound: the numbers a person
-# hears have to come from the configuration the checks were made on. See README.md's "The machine".
+# hears have to come from the configuration the checks were made on. See README.md's "Memory".
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -39,10 +39,17 @@ PRG="$HERE/build/ZYNAPS-play.PRG"
 cp "$PRG" "$HERE/disk/ZYNAPS.PRG"
 
 # THE MEMORY SIZE IS SCRAPED FROM smoke.py, not retyped. It is the one machine setting this build
-# cannot get wrong quietly: too little and the 1 MiB image has no room, and a person playing on a
-# different machine from the one the checks were made on is comparing nothing. One canonical
-# definition, read across the language boundary (CLAUDE.md §5) — everything else on the line below
-# is display and sound, which smoke.py deliberately does not have.
+# cannot get wrong quietly: too little and the 512 KiB image has no room, and a person playing on a
+# different machine from the one the checks were made on is comparing nothing. It is 1 MB since the
+# diet — the machine Zynaps shipped on the generation of, and the size the whole smoke matrix is
+# judged at (atari/README.md's "Memory"). One definition, read across the language boundary
+# (CLAUDE.md §5) — everything else on the line below is display and sound, which smoke.py
+# deliberately does not have.
+#
+# WHAT IS SCRAPED IS THE DEFAULT, and `smoke.py --memsize N` can be run against another size. That
+# is deliberate — the matrix runs at 1 MB and 4 MB precisely to show the cadence does not depend on
+# it — but it means this line tracks the size the checks are judged at, not every size they have
+# been run at.
 MEMSIZE_MB=$(sed -n 's/^MEMSIZE_MB *= *\([0-9][0-9]*\).*/\1/p' "$HERE/smoke.py")
 [ -n "$MEMSIZE_MB" ] || { echo "no MEMSIZE_MB in $HERE/smoke.py — the two would disagree"; exit 1; }
 

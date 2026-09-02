@@ -27,7 +27,7 @@ WHAT IS NOT THE ORIGINAL'S: the geometry. The original disk is 80x1x10x512 = 400
 `gw/README.md` prescribes for an unprotected disk, and the 10- and 11-sector formats hold more but
 are the ones a drive that is not the one they were written on can fail to read). 400 KB could not
 have held this build in any case: 423 clusters of payload against a single-sided volume's 393.
-The cost is that a single-sided drive cannot read this disk; the machine it is for is a 4 MB STE.
+The cost is that a single-sided drive cannot read this disk; the machine it is for is an STE.
 
 VERIFIED BY A DIFFERENT READER FROM THE ONE THAT WROTE IT. `st_build` writes the volume; the check
 below reads it back with `st_extract.py`'s parser and compares every file's bytes against the source

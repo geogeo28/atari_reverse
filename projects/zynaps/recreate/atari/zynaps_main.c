@@ -9,7 +9,8 @@
  * front end and the rest of the boot chain are M2's, after the next port wave.
  *
  * THE IMAGE MODEL SURVIVES ONTO THE MACHINE. The cores index a flat `uint8_t *image` at Ghidra
- * addresses; here that is a 1 MiB .bss array whose base is rounded up to 256 at RUN TIME, and the
+ * addresses; here that is a `.bss` array (`ZY_TARGET_IMAGE_BYTES`, half the differential's — see
+ * the array's own header) whose base is rounded up to 256 at RUN TIME, and the
  * game's two hard-coded framebuffers become `image + 0x70300` and `image + 0x78000` — real
  * addresses handed to a real shifter. Everything the cores route through a modelled sink (a file
  * read, a palette upload, a screen base, a resolution byte, a chip register) becomes a real store
@@ -40,6 +41,7 @@
 #include "player.h"
 #include "score.h"
 #include "sound.h"
+#include "string.h"   /* memset, from zynaps_backend.c: the guard band's fill */
 #include "tos.h"
 #include "video.h"
 #include "zynaps_target.h"
@@ -182,7 +184,7 @@ _Static_assert(ZY_FAULT_PEN < (int)PALETTE_PENS,
 
 /* The 68000 exception vectors the boot replaces. include/init.h names the IMAGE offsets the cores
  * store into (`A_vector_vbl`, `A_vector_timer_b`); these are the REAL vectors, and the two are not
- * the same thing — the cores write a vector page inside a 1 MiB array, which is diffable memory and
+ * the same thing — the cores write a vector page inside the image array, which is diffable memory and
  * not the machine's. Derived from init.h's constants rather than retyping 0x70, which is what says
  * they are the same two vectors. */
 /* Read and write one, and they exist as FUNCTIONS for a reason that is not style. Dereferencing an
@@ -241,15 +243,52 @@ static uint32_t read_hz_200(void) {
 #define PSG_VOLUME_REGISTERS 3u
 
 /* ================================================================================================
- * The image. OS_IMAGE_SIZE is the kit's, and ../project.toml's `image_size` must equal it — so this
- * array is the same 1 MiB the differential runs on, by construction rather than by agreement.
+ * The image, and the TWO WATCHED BANDS above the game's world.
  *
- * A 1 MiB .bss is why this build needs `--memsize 4`: TOS 1.04's TPA on a 1 MB machine leaves a
- * megabyte of program plus its stack no room at all. README.md says so where a reader will meet it.
+ * `ZY_TARGET_IMAGE_BYTES` is shim_include/os.h's, which is also what `os_in_image` bounds against —
+ * one definition, so the array and the check that keeps GEMDOS inside it cannot drift apart. That
+ * file argues why the target's half-megabyte covers the game's whole world where the differential's
+ * megabyte covers the harness's too; README.md's "Memory" section is the census.
+ *
+ * THE BANDS ARE THE SURFACE FOR THE CENSUS BEING WRONG. Every address the census enumerates is one
+ * the code NAMES; what it cannot enumerate is an address the code COMPUTES — a blit that runs one
+ * row past the front buffer, a scroll span one word too generous. Off target such a write lands in
+ * the oracle's own megabyte and the differential compares it happily on both sides; here it lands
+ * in memory nothing owns.
+ *
+ * THERE ARE TWO BANDS BECAUSE THE GAME'S WORLD DOES NOT END WHERE THE ARRAY DOES, and a single band
+ * at the top of the array would have missed the very overrun this comment names. The front
+ * framebuffer ends at `IMAGE_WORLD_BYTES` = 0x7fd00 and the array runs to 0x80000, so ONE low-res
+ * row past the front buffer (160 bytes) lands in 768 bytes of in-image slack that a band above the
+ * array cannot see. So:
+ *
+ *   [IMAGE_WORLD_BYTES, ZY_TARGET_IMAGE_BYTES)   768 B — INSIDE the image, above everything the
+ *                                                census names. Checked for ZERO rather than filled:
+ *                                                TOS zeroes .bss and the harness calloc()s, so zero
+ *                                                is what both shores hold there, and writing a
+ *                                                pattern into a region the cores can legally read
+ *                                                would make this build differ from the differential.
+ *   [ZY_TARGET_IMAGE_BYTES, +IMAGE_GUARD_BYTES)  4 KiB — OUTSIDE the image, where a write would
+ *                                                reach `zy_saved_ssp` or `g_record` and the run
+ *                                                would tear down clean with every read-back green.
+ *                                                Filled with a pattern, because a zero there would
+ *                                                also be the value a memset overrun leaves.
+ *
+ * A wild store further up than the guard band is beyond any band; README.md says so rather than
+ * implying this covers it.
  * ============================================================================================= */
 #define IMAGE_ALIGN 256u
 
-static uint8_t g_image_store[OS_IMAGE_SIZE + IMAGE_ALIGN];
+/* The top of the game's world, from the two constants the census rests on: the front framebuffer is
+ * the highest address the program names, and this is where it ends. Not a literal, so that a header
+ * that moved either one moves this with it. */
+#define IMAGE_WORLD_BYTES (A_screen_front_buffer + SCREEN_BYTES)
+
+/* Wide enough for a whole screen row's worth of overrun and then some, at 0.8% of the image. */
+#define IMAGE_GUARD_BYTES 4096u
+#define IMAGE_GUARD_FILL  0xa5u
+
+static uint8_t g_image_store[ZY_TARGET_IMAGE_BYTES + IMAGE_ALIGN + IMAGE_GUARD_BYTES];
 
 /* The aligned base. Read by the interrupt entries as well as the main line, hence not a local — and
  * NOT static any more, because zynaps_backend.c reads it too: the video-base door is where an image
@@ -258,6 +297,12 @@ uint8_t *zy_image_base;
 
 /* Written from zynaps_os.s (see zynaps_target.h), read by the hand-back. */
 void *zy_saved_ssp;
+
+/* ...and so are these two: the basepage GEMDOS handed `_start`, and the stack pointer it was
+ * entered with, both latched before the Super(0) push moves the stack. They are the only place the
+ * TPA's extent is stated by the machine rather than assumed. */
+uint8_t *zy_basepage;
+uint8_t *zy_initial_sp;
 
 volatile uint32_t zy_vbl_ticks;
 volatile uint32_t zy_timer_b_ticks;
@@ -274,7 +319,7 @@ volatile uint32_t zy_acia_ticks;
  * disassembly's own count).
  *
  * THE CORES MAKE THOSE STORES INTO THE IMAGE'S VECTOR PAGE, which on the real machine IS low memory
- * but here is a longword inside a 1 MiB array. So the store is ordinary diffable memory that the
+ * but here is a longword inside the image array. So the store is ordinary diffable memory that the
  * differential already holds, and the shim's job is to READ IT BACK: each entry looks at the
  * longword the cores wrote and calls the handler it names. That is what makes a phase change take
  * effect without the shim knowing which phase the program thinks it is in.
@@ -408,6 +453,13 @@ void zy_acia_tick(void) {
 enum {
     REC_MAGIC, REC_FIELDS,
     REC_IMAGE_BASE, REC_PROGRAM_STAGED_BYTES, REC_SUPER_TOKEN,
+    /* The 1 MB budget, MEASURED. The first two are GEMDOS's own basepage words — the transient
+     * program area this .PRG was given — and the third is what is left between the top of this
+     * program's .bss and the lowest ceiling the stack can have. The last two are the two watched
+     * bands' counts; anything but 0 in either says something wrote where nothing is named.
+     * README.md's "Memory" section is the budget table these fill in. */
+    REC_TPA_LOW, REC_TPA_HIGH, REC_IMAGE_HEADROOM,
+    REC_IMAGE_TAIL_DIRTY, REC_IMAGE_GUARD_CHANGED,
     REC_ACIA_BYTES_AFTER_MOUSE_OFF, REC_ACIA_BYTES_AFTER_JOYSTICK_MODE,
     REC_SHIFTER_MODE_WRITES, REC_SHIFTER_MODE_MASK, REC_PALETTE_LONG_WRITES,
     REC_IMAGE_SAVED_VBL_VECTOR, REC_TOS_VBL_VECTOR, REC_TOS_TIMER_B_VECTOR,
@@ -522,8 +574,17 @@ static long write_file(const char *name, const void *data, long bytes) {
  * would happily write PROGRAM_BYTES at `zy_image_base + ZY_LOAD_BASE` past the end of a too-small array,
  * over `g_record` and `zy_saved_ssp`; build.sh measures PROGRAM_BYTES off the staged file, so a
  * bigger game binary is exactly how that would arrive. A compile-time refusal costs nothing. */
-_Static_assert((uint32_t)ZY_LOAD_BASE + (uint32_t)PROGRAM_BYTES <= OS_IMAGE_SIZE,
+_Static_assert((uint32_t)ZY_LOAD_BASE + (uint32_t)PROGRAM_BYTES <= ZY_TARGET_IMAGE_BYTES,
                "the staged program does not fit the image at ZY_LOAD_BASE");
+
+/* AND SO MUST THE TWO FRAMEBUFFERS, which is the census's load-bearing claim as a compile-time
+ * check. They are hard-coded absolutes in the shipped binary — the addresses a 512 KB Atari ST put
+ * them at, which is why 0x80000 is enough — and `screen_flip_buffers` publishes the front one to
+ * the shifter, so the DISPLAYED bytes run to `IMAGE_WORLD_BYTES`. The back buffer is checked too:
+ * it is the lower of the two today and would be silently unchecked otherwise. */
+_Static_assert((uint32_t)IMAGE_WORLD_BYTES <= ZY_TARGET_IMAGE_BYTES
+               && (uint32_t)A_screen_back_buffer + SCREEN_BYTES <= ZY_TARGET_IMAGE_BYTES,
+               "a framebuffer runs past the end of the target image");
 
 /* The relocated program into the image. Everything above ZY_LOAD_BASE + PROGRAM_BYTES is the game's
  * own BSS, which is zero at boot on both shores — TOS zeroes this array and gen_image.py's header
@@ -1115,6 +1176,79 @@ static void record_the_run(void) {
 #endif
 }
 
+/* ================================================================================================
+ * THE 1 MB BUDGET, AS CODE.
+ *
+ * `p_lowtpa` and `p_hitpa` are the first two longwords of the basepage: the transient program area
+ * GEMDOS gave this .PRG, which is text + data + bss + the stack, and nothing else. `_start` keeps
+ * all of it (no Mshrink), so the stack starts at the top and grows down towards the image's guard
+ * band. HEADROOM is the gap between the two, and it is the number the size gate in build.sh does
+ * its arithmetic against — build.sh can only weigh the binary, and only the machine can say how
+ * much room the binary was given.
+ * ============================================================================================= */
+/* The GEMDOS basepage, by the fields this shim reads. `p_bbase + p_blen` is the top of everything
+ * GEMDOS loaded for us — the honest floor for the headroom below, and not the same as the top of
+ * the image: a `.bss` object linked after `g_image_store` sits above it. */
+#define BASEPAGE_P_LOWTPA 0x00u
+#define BASEPAGE_P_HITPA  0x04u
+#define BASEPAGE_P_BBASE  0x18u
+#define BASEPAGE_P_BLEN   0x1cu
+
+/* Not `be32` on the image: this is the HOST's own memory, big-endian because the 68000 is. */
+static uint32_t basepage_long(unsigned offset) {
+    return *(const uint32_t *)(const void *)(zy_basepage + offset);
+}
+
+/* The two watched bands, as one address each so no caller respells the arithmetic. */
+static uint8_t *image_tail(void)  { return zy_image_base + IMAGE_WORLD_BYTES; }
+static uint8_t *image_guard(void) { return zy_image_base + ZY_TARGET_IMAGE_BYTES; }
+
+#define IMAGE_TAIL_BYTES ((uint32_t)ZY_TARGET_IMAGE_BYTES - (uint32_t)IMAGE_WORLD_BYTES)
+
+/* Only the guard band is filled — the tail keeps the zeros TOS put there, which is what the
+ * differential's own image holds at the same addresses. See the header comment above the array. */
+static void fill_image_guard(void) {
+    memset(image_guard(), IMAGE_GUARD_FILL, IMAGE_GUARD_BYTES);
+}
+
+/* How many of `span` bytes at `from` are not `expected`. One helper for both bands, because the
+ * question is the same one twice and only the address and the value differ. */
+static uint32_t bytes_not(const uint8_t *from, uint32_t span, uint8_t expected) {
+    uint32_t changed = 0;
+    uint32_t byte;
+
+    for (byte = 0; byte < span; byte++)
+        if (from[byte] != expected)
+            changed++;
+    return changed;
+}
+
+/* The lowest ceiling the stack can have. `p_hitpa` is the top of the TPA and TOS starts a child's
+ * stack there — but that is TOS's convention rather than a guarantee, so the SP `_start` was
+ * actually entered with is taken as well and the LOWER of the two wins. Copied from
+ * projects/buggyboy/remaster/render/atari/os.s, whose own note says it "keeps the check honest if a
+ * TOS ever parks SP elsewhere"; without it, a launcher that pushed an environment onto the child's
+ * stack would make the headroom below over-report by the difference. */
+static uint32_t stack_ceiling(void) {
+    uint32_t hitpa = basepage_long(BASEPAGE_P_HITPA);
+    uint32_t entry_sp = (uint32_t)(uintptr_t)zy_initial_sp;
+
+    return entry_sp < hitpa ? entry_sp : hitpa;
+}
+
+static void record_memory_budget(void) {
+    /* Everything GEMDOS loaded, which is what the stack must stay above — not the top of the image,
+     * which a `.bss` object linked after it would sit above unwatched. */
+    uint32_t loaded_top = basepage_long(BASEPAGE_P_BBASE) + basepage_long(BASEPAGE_P_BLEN);
+    uint32_t ceiling = stack_ceiling();
+
+    g_record[REC_TPA_LOW] = basepage_long(BASEPAGE_P_LOWTPA);
+    g_record[REC_TPA_HIGH] = basepage_long(BASEPAGE_P_HITPA);
+    /* Saturating rather than wrapping: a NEGATIVE headroom is the interesting case — the program
+     * already overlaps the stack — and a huge unsigned number would read as the opposite. */
+    g_record[REC_IMAGE_HEADROOM] = ceiling > loaded_top ? ceiling - loaded_top : 0;
+}
+
 void zynaps_main(void) {
     struct tos_state tos;
     uint32_t anchor_address;
@@ -1122,6 +1256,9 @@ void zynaps_main(void) {
     /* The image's runtime base, rounded up — see the header comment. */
     zy_image_base = (uint8_t *)(((uintptr_t)g_image_store + (IMAGE_ALIGN - 1))
                                 & ~(uintptr_t)(IMAGE_ALIGN - 1));
+
+    fill_image_guard();
+    record_memory_budget();
 
     /* BEFORE ANYTHING ELSE, and before the eight file loads that take real time: tell the smoke
      * where to put its breakpoint. GEMDOS relocated us to wherever the TPA fell, so `zy_anchor`'s
@@ -1373,6 +1510,11 @@ void zynaps_main(void) {
      * This is the surface that can: if the boot clobbered Timer C, `$4ba` stops advancing and this
      * mark comes back equal to the boot's. `smoke.py` compares the two. */
     g_record[REC_TICKS_AT_TEARDOWN] = read_hz_200();
+
+    /* LAST, so they cover everything the run did — including the frame dumps written above. */
+    g_record[REC_IMAGE_TAIL_DIRTY] = bytes_not(image_tail(), IMAGE_TAIL_BYTES, 0);
+    g_record[REC_IMAGE_GUARD_CHANGED] =
+        bytes_not(image_guard(), IMAGE_GUARD_BYTES, IMAGE_GUARD_FILL);
 
     g_record[REC_TAIL] = ZY_RECORD_TAIL;
     write_file(FILE_STATE_RECORD, g_record, (long)sizeof g_record);

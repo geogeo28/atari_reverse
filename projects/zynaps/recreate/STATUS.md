@@ -2569,7 +2569,7 @@ concurrent landing rather than a regression until you have checked which section
 **`atari/README.md` is canonical for everything below; this section is a pointer and a count.**
 
 `atari/` cross-compiles the VERIFIED cores above into `ZYNAPS.PRG` and runs them on a 68000
-(Hatari, TOS 1.04, `--machine st --memsize 4`). **Milestone M2, 2026-08-29: the whole game.** It
+(Hatari, TOS 1.04, `--machine st --memsize 1`). **Milestone M2, 2026-08-29: the whole game.** It
 composes every slice of `_start`, of `title_attract_loop` and of the section chain in the original's
 own order, and then calls `frame_loop_once` until it leaves — so the program boots, shows its
 attract screen, starts a game, plays a section, dies, restarts and can reach its own endings, and
@@ -2585,7 +2585,28 @@ sixteen colour registers agree.** `smoke.py gamefault` is the negative control �
 `section_reload_intro_screens` — and reddens the drawing at every frame while the pens, the exit
 path and the program's own record stay green.
 
-**Four things this section is here to say to a reader of the tables above:**
+**Five things this section is here to say to a reader of the tables above:**
+
+* **IT RUNS ON A 1 MB ST.** The target build's image is `ZY_TARGET_IMAGE_BYTES` = 512 KiB
+  (`atari/shim_include/os.h`) rather than the differential's 1 MiB, so the .PRG loads in 597,470 B
+  of a measured 940,906 B TPA. **`OS_IMAGE_SIZE` and `project.toml`'s `image_size` are untouched at
+  1 MiB** — they are both sides of the differential and every row above is measured against them —
+  and nothing in `src/`, `include/` or `test/` moved for the diet. The full smoke matrix (`title`,
+  `titlefault`, `game`, `gamefault`, `floppy`) is green at **1 MB and at 4 MB**, the frame
+  differential included. `atari/README.md`'s **Memory** section carries the budget table, the
+  address census that says why 512 KiB covers the game's whole world, and why 512 KB of RAM is out
+  of reach for a program that has to fit its image inside its own TPA.
+
+  **THE DIET LEAVES ONE THING HONESTLY UNPINNED, and it is a shore-to-shore difference in verified
+  code.** `os_in_image` bounds at 1 MiB in the differential build and at 512 KiB on target, so
+  `src/init.c`'s two slice guards — `script_entry_is_behind` @ the section-table walk and the
+  attract-bar emitter — **stop at different addresses on the two shores**. Both fail by NOT writing
+  (one returns 0, the other `break`s), so no surface can see the difference: the guard band watches
+  for a write, and `make test` links the kit header and therefore only ever exercises the 1 MiB arm.
+  What holds it today is the census — both walks start from an `A_*` below `0x7fd00` and step by 2
+  or 4 until they pass a cursor, so neither can reach `[0x80000, 0x100000)` on the shipped data. A
+  refusal counter on those two guards would pin it, and that is a change to `src/`, which the diet
+  deliberately did not make.
 
 * **The four `$fffa21` read-back spins — this file's last KIT row — are executed for real.** The
   shim does the ten bytes between each pair of slices on the real Timer B data register, and counts

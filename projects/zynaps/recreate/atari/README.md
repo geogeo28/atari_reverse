@@ -78,7 +78,7 @@ life and comes back with the TITLE exit. So the ending is reached by playing, no
   which is exactly why the original spins).
 * **The interrupt dispatch.** The program re-points its vectors per phase, twelve stores of seven
   distinct handler addresses, and it makes them into the IMAGE's vector page — which here is a
-  longword inside a 1 MiB array, not low memory. So `zynaps_os.s` has three entries (`$70`, `$120`,
+  longword inside the image array, not low memory. So `zynaps_os.s` has three entries (`$70`, `$120`,
   `$118`) and each reads the longword the cores wrote and calls the handler it names.
   **An address the table does not know is a HALT with the value in the record**, never a silent
   skip: a dropped interrupt would leave the frame loop's sync wait spinning for ever and the run
@@ -117,21 +117,29 @@ that published fewer than one per sample.
 
 ## The frame differential
 
-`python3 atari/smoke.py game`, TOS 1.04, both sides at 4 MB, both off a GEMDOS drive. Measured
-2026-08-29:
+`python3 atari/smoke.py game`, TOS 1.04, both sides at the same memory size, both off a GEMDOS
+drive. Re-measured 2026-09-02 at **1 MB**, after the diet (see **Memory**), and green at 4 MB in the
+same sweep:
 
 ```
--- game on st / TOS104US.img: image base 0x21300, the original at 0xaa56
-   300 frames over 1 section start(s), 1 attract pass(es), player(s) 1, section 0, 3 lives
-   dispatched: 19 in-game / 1962 menu / 64 attract VBLs, 1961 raster + 6263 bar Timer Bs,
-   917 IKBD; 0 unknown-vector halt(s)
-   samples [1, 30, 60, 120, 240]; 9444 read-modify-writes made, 281 Timer B data restores
+-- game on st / TOS104US.img at 1 MB: image base 0x23200, the original at 0xaa56
+   memory: TPA [0x12496, 0xf8000) = 940906 B, image 512 KiB at 0x23200, 343428 B headroom
+   to the stack, 0 tail + 0 guard byte(s) dirty
+   300 frames over 1 section start(s), 1 attract pass(es), player(s) 1, section 0, 3 lives,
+   score 00000000
+   dispatched: 19 in-game / 904 menu / 26 attract VBLs, 903 raster + 2560 bar Timer Bs,
+   1686 IKBD; 0 unknown-vector halt(s)
+   samples [1, 30, 60, 120, 240]; 5152 read-modify-writes made, 1104 Timer B data restore(s)
+   pacing: 2.69 vblanks/frame [2x197 4x103] = 18.6 fps (the original's 2 = 25)
    [green] exit status + log (ours)
+   [green] exit status + log (the fault scan can fail)
+   [green] exit status + log (the machine was handed back)
    [green] exit status + log (the original)
    [green] exit status + log (the program's own record)
-   [green] exit status + log (the machine was handed back)
-   [green] exit status + log (the fault scan can fail)
+   [green] hardware-state vector (TOS's 200 Hz clock survived the boot)
    [green] hardware-state vector (the pens, frame by frame)
+   [green] memory (the image fitted the machine, and stayed inside itself)
+   [green] timelines (the frame cadence and the interrupt service rates)
    [green] memory (the framebuffer and the entity table, frame by frame)
 -- OK
 ```
@@ -281,7 +289,9 @@ finding. That is also why `smoke.py` carries a histogram and not an average.
 
 Both sides by `atari/profile.py frames` and `... original-frames`: the same `play` binary pair, the
 same session, the same tree, each clocked from the frame loop's head to `screen_flip_buffers` by two
-repeating `:quiet` breakpoints that cost the emulated machine nothing. `st` / `TOS104US.img` / 4 MB.
+repeating `:quiet` breakpoints that cost the emulated machine nothing. `st` / `TOS104US.img`.
+The table's figures were clocked at 4 MB; `profile.py` runs at whatever `smoke.MEMSIZE_MB` says,
+which is 1 MB since the diet — **Memory** measures that the cadence does not move with it.
 
 | | the original | ours | ratio |
 |---|---|---|---|
@@ -882,18 +892,175 @@ picture read into the back buffer, low resolution selected, the game's own VBL a
 installed, tune `0x0b` started, the picture published, its palette uploaded, and seven more graphics
 loaded and reshaped.
 
-## The machine, and one number that is not the original's
+## Memory — the 1 MB diet
 
-`--machine st --memsize 4`, TOS 1.04. **The 4 MB is this build's, not the game's.** The cores index
-a flat 1 MiB image (`OS_IMAGE_SIZE`, and `../project.toml`'s `image_size` must equal it), which on
-target is a 1 MiB `.bss` array; TOS 1.04's TPA on a 1 MB machine has no room for that plus a stack.
-The original ships for a 512 KB machine.
+`--machine st --memsize 1`, TOS 1.04. **This build runs on a 1 MB Atari ST**, and every mode of the
+smoke matrix is judged there. It used to need 4 MB: the shim hosted the differential harness's full
+1 MiB image as `.bss`, which is a megabyte of program for a game that shipped on a 512 KB machine.
 
-`smoke.py` runs **both sides at 4 MB**, so every comparison it makes is about the two programs
-rather than about two different machines. That is sound because the game hard-codes its framebuffers
-at absolute RAM and TOS's TPA base does not move with the memory size — and it is *checked* rather
-than argued: the original's own capture must hold more than one colour and its sixteen pens must be
-the shipped boot palette, or the run says so and stops.
+### What shrank, and what did not
+
+`OS_IMAGE_SIZE` is **unchanged at 1 MiB** and must stay so: it is *both sides* of the differential —
+the Musashi oracle's buffer and the candidate's bound — and `harness._vet_os_memory_map()` pins it
+equal to `../project.toml`'s `image_size`. Off target that megabyte is a host `calloc` and costs
+nothing.
+
+The TARGET build gets its own length, `ZY_TARGET_IMAGE_BYTES = 0x80000` in
+`shim_include/os.h`, and that one definition drives all of it: the `.bss` array, the two
+`_Static_assert`s that the staged program and both framebuffers fit inside it, and — the one that
+matters — the bound `os_in_image` checks. That last is not cosmetic. `os_fread` hands GEMDOS a
+destination *inside this array*; a 512 KiB array bounded against 1 MiB would let one oversized read
+write over `zy_saved_ssp` and `g_record`, which is the failure that tears down cleanly with every
+read-back green.
+
+**What the upper half held is harness-only.** The kit's fixed map puts the staged-file table at
+`0xbf000` and its staging area at `0xc0000`, and the oracle's stack above that. None of the three
+exists here: this build's file I/O is real GEMDOS (`shim_include/os.h`), it runs on the stack GEMDOS
+gave it, and **no kit `src/*.c` is linked into the .PRG at all** — `build.sh` compiles
+`../src/*.c` plus the three shim files and nothing else.
+
+### The budget, measured
+
+`_start` latches the basepage GEMDOS hands it — and the stack pointer it was entered with — before
+the `Super(0)` push moves the stack, and `record_memory_budget` publishes them in `STATE.BIN`. So
+these are the machine's numbers, not an estimate; `smoke.py` prints them on every run:
+
+| | bytes | where it goes |
+|---|---:|---|
+| ST RAM at `--memsize 1` | 1,048,576 | |
+| − TOS's physical screen | 32,768 | TOS puts it at the **top** of RAM → `p_hitpa` = `0xf8000` |
+| − TOS low RAM + GEMDOS | 74,902 | → `p_lowtpa` = `0x12496`, booting a Hatari GEMDOS drive |
+| **= TPA** | **940,906** | basepage + text + data + bss + the stack, and nothing else |
+| − stack reserve | 32,768 | `STACK_RESERVE_BYTES`, `smoke.py` |
+| **= budget** | **908,138** | what `build.sh`'s size gate weighs a build against |
+| the `title` build | 595,594 | basepage 256 + text 66,048 + bss 529,290 → **312,544 B spare** |
+| the `game` / `play` build | 597,470 | basepage 256 + text 67,840 + bss 529,374 → **310,668 B spare** |
+
+**The 256-byte basepage is on the bill**, because GEMDOS carves it out of the same TPA immediately
+below the text — a gate that weighed only `text + data + bss` would pass a binary that overran by
+its length.
+
+Three measured facts sit behind the table. **The floppy boot is cheaper, not dearer**: booting
+`disk/ZYNAPS.ST` gives `p_lowtpa` = `0xa956` and a TPA of 972,458, about 31 KB more than the GEMDOS
+drive, so the number written down is the worse of the two media and covers both. **`p_lowtpa` does
+not move with the memory size** — at `--memsize 4` it is the same `0x12496`; only `p_hitpa` follows
+the screen up. And the run-time headroom between the top of everything GEMDOS loaded and the
+stack's ceiling is **345,304 B** at 1 MB.
+
+Two things that measurement is careful about, both because getting either wrong makes the number
+flatter itself:
+
+* **The floor is `p_bbase + p_blen`, not the top of the image.** A `.bss` object linked *after*
+  `g_image_store` sits above it — there are a couple of hundred bytes of door counters up there —
+  and measuring from the image would leave them outside the check that is supposed to cover them.
+* **The ceiling is the LOWER of `p_hitpa` and the SP `_start` was entered with.** TOS starts a
+  child's stack at the top of its TPA, but that is a convention, not a guarantee; a launcher that
+  pushed an environment would make a `p_hitpa`-only measurement over-report by the difference. The
+  floor is copied from `projects/buggyboy/remaster/render/atari/os.s`, which carries the same pair
+  for the same reason.
+
+**And the TPA itself is pinned, not trusted.** `TPA_1MB_BYTES` is a measurement, and a measurement
+nobody re-takes is a belief: `check_the_memory` compares it against the TPA the machine in front of
+it reported on every 1 MB run, so a TOS build or an AUTO-folder resident that ate 200 KB more low
+memory reds there instead of leaving `build.sh`'s gate quietly 200 KB too generous. Measured able to
+fail: raising the constant to 999,999 gives *"this machine's TPA is 940906 B, under the 999999
+build.sh's size gate weighs every build against"*.
+
+### The census: why 0x80000 is enough
+
+The claim is that no address the game can produce lands in `[0x80000, 0x100000)`. The evidence, in
+the order it was gathered:
+
+1. **The game shipped for a 512 KB ST.** Its framebuffers are `0x70300` and `0x78000` — hard-coded
+   absolutes in the shipped binary, not relocated — and `0x78000 + 32000 = 0x7fd00` is the top of a
+   512 KB machine's RAM with 768 bytes to spare. That is not a coincidence; it is the machine the
+   addresses were chosen for.
+2. **Program text + bss ends at `0x6e96e`.** `../project.toml`'s byte scan: text `0x9f46`, no data,
+   bss `0x54a28`, at `load_base` `0x10000`.
+3. **No `Malloc` and no `Mshrink` anywhere in the text**, at any alignment — the same byte scan. So
+   nothing can be handed out above the program at run time.
+4. **Every `A_*` the cores name is below `0x80000`**, the highest being `A_screen_front_buffer` at
+   `0x78000`. `A_*` is this project's spelling for a Ghidra address and the only way a core reaches
+   absolute memory, so this is the census proper — and `build.sh` re-runs it every build rather than
+   leaving it a number somebody checked once. **472 addresses in two spellings**: the 315 `#define`s
+   in the headers *and* the 157 `.equ`s the asm twins in `../src/asm` restate, whose objects are
+   linked into this .PRG and are a second route to absolute memory the header grep would have
+   missed. The gate **fails closed**: it counts what it parsed against a loose count of every `A_*`
+   declaration, and refuses a mismatch, so a define written any other legal way (`(0x90000u)`, a
+   decimal) is a refusal rather than an address quietly outside the census.
+5. **No hex literal in `src/`, `include/` or the shim falls in the gap.** The only values at or
+   above `0x80000` are the hardware registers, `0xff8201` upwards, which go through the hardware
+   doors and never touch the image.
+6. **The two framebuffers are asserted at compile time** against `ZY_TARGET_IMAGE_BYTES`, in
+   `zynaps_main.c`, so the load-bearing half of (1) cannot rot silently.
+
+**What the census cannot cover, said plainly**: an address the code *computes* rather than names — a
+blit one row past the front buffer, a scroll span one word too generous — and the *extent* of a
+named one, since (4) compares bases and only the framebuffers have an extent check. Off target such
+a write lands inside the oracle's own megabyte and the differential compares it on both sides,
+green. So there are **two watched bands** above everything the census names, and there are two
+because **the game's world does not end where the array does**:
+
+| band | span | held at | why it is separate |
+|---|---|---|---|
+| the **tail** | `[0x7fd00, 0x80000)`, 768 B | **zero** | Inside the image. The front buffer ends at `0x7fd00` and the array at `0x80000`, so *one low-res row* past the front buffer — 160 B, the exact overrun this paragraph names — lands here and a band above the array would never see it. Checked for zero rather than filled with a pattern: TOS zeroes `.bss` and the harness `calloc`s, so zero is what *both shores* hold there, and writing a pattern into a region a core can legally read would make this build differ from the differential. |
+| the **guard** | `[0x80000, 0x81000)`, 4 KiB | `0xa5` | Outside the image, where a write reaches `zy_saved_ssp` and `g_record` — the failure that tears down clean with every read-back green. Filled with a pattern rather than checked for zero, because zero is also what a `memset` overrun leaves. |
+
+`check_the_memory` reds on a single dirty byte in either, and **both arms are mutation-tested**: one
+deliberate store at `IMAGE_WORLD_BYTES` reddens the tail, one at `ZY_TARGET_IMAGE_BYTES` reddens the
+guard. Both bands come back **0 after a 300-frame `game` run**, which is the measurement — not an
+assumption — that nothing in the frame loop walks off the top of the front buffer. A wild store
+*further* up than the guard band is beyond any band, and nothing here claims otherwise.
+
+The cores' own two `os_in_image` guards — `../src/init.c`'s attract-bar list and section-table walk
+— move to the smaller bound with everything else. Neither can produce an address in the gap: both
+start from an `A_*` below `0x7fd00` and step by 2 or 4 until they pass a cursor. **That is an
+argument and not a surface, and `../STATUS.md`'s "On target" records it as unpinned**: the two
+guards now stop at different addresses on the two shores, both fail by *not writing*, and pinning it
+would mean a refusal counter in `src/` — a change to verified code that this work deliberately did
+not make.
+
+### Why 512 KB is out of reach
+
+The obvious next step is not available. The game's framebuffers span `[0x70300, 0x7fd00)` — the top
+of a 512 KB space — but on the real machine so does the *original*, which loads at `0xaa56` and runs
+in the space below them. This reconstruction does not: it is a GEMDOS program that must fit its
+whole image *inside its own TPA*. On a 512 KB machine that TPA is about **416,618 B (407 KB)** —
+derived from two measurements rather than looked up: `p_hitpa` is RAM's top less TOS's 32 KB screen
+(`0x80000 - 32768 = 0x78000`), and `p_lowtpa` is the same `0x12496` at every memory size, which is
+itself measured (identical at `--memsize 1` and `--memsize 4`). A 512 KiB image plus 66 KB of text
+does not fit in 407 KB, and it cannot be made to without moving the framebuffers — which are the
+game's own absolute addresses and therefore not ours to move.
+
+It was run rather than only computed: `smoke.py title --memsize 0` never reaches the program at all
+(`BASE.BIN never appeared in 180 s`). **1 MB is the floor for this build**, and the original's own
+512 KB is a property of a program that *is* the machine's memory rather than a guest inside it.
+
+### Both sides, same machine
+
+`smoke.py` runs **both sides at whatever `--memsize` says**, so every comparison it makes is about
+the two programs rather than about two different machines. That is sound because the game hard-codes
+its framebuffers at absolute RAM and TOS's TPA base does not move with the memory size — and it is
+*checked* rather than argued: the original's own capture must hold more than one colour and its
+sixteen pens must be the shipped boot palette, or the run says so and stops.
+
+**The cadence does not depend on the memory size, measured rather than assumed.** The full matrix
+runs at 1 MB and at 4 MB, and the four paced runs give:
+
+| | `game` | `gamefault` |
+|---|---:|---:|
+| `--memsize 1` | 2.69, 2.69 | 2.67, 2.69 |
+| `--memsize 4` | 2.68, 2.67 | 2.70, 2.67 |
+
+(Two sweeps of the whole matrix at each size; both runs of each cell are listed.) The two sizes'
+ranges overlap completely and neither is systematically higher — the spread is the
+release-slot jitter the PERFORMANCE section describes, not the machine. All four are under the 2.81
+ceiling, which is why `check_the_pacing` is left judging both sizes against the one number it was
+calibrated at. ST RAM has no wait states that vary with how much of it is fitted, and these are the
+numbers that say so. (The 2.70 is one hundredth above the worst of the eight runs the ceiling was
+derived from; it is a ninth sample, 0.11 under the ceiling, and the derivation is not re-taken for
+it — the PERFORMANCE section's own rule is that a wider baseline, never a raised ceiling, is the
+response to a run that sits high.)
 
 ## The seam inventory
 
@@ -914,6 +1081,7 @@ line, saying nothing about which side is meant to own the name.
 | `os_fopen` / `os_fread` / `os_fclose` | a staged-file table in the image (8 slots at `0xbf000`), pure image copies — **bounds-checked** against the image, and a bad name **refused** | real GEMDOS `trap #1` `$3d`/`$3f`/`$3e` against Hatari's GEMDOS drive, with the model's **image bound and its refusal tally restored** — see below | `shim_include/os.h` shadow → `zynaps_os.s` |
 | `os_super` | returns the cookie `$00535550`, no privilege change | **a no-op returning the same cookie.** `_start` takes supervisor once, before any C, and hands it back once through `zy_leave_supervisor` | `shim_include/os.h` shadow |
 | `os_refused` | a refusal tally the harness reads back | an inline identity — the kit's own `os.h` anticipates this build | `-DOS_NO_REFUSAL_TALLY` |
+| `os_in_image` | `addr <= OS_IMAGE_SIZE && count <= OS_IMAGE_SIZE - addr`, the differential's 1 MiB | the same arithmetic against `ZY_TARGET_IMAGE_BYTES` — the 512 KiB array that actually exists here. See **Memory** | `shim_include/os.h` shadow |
 | `psg_port_write` | an ordered write ledger + a register file (`kit/src/psg.c`) | `move.b reg,$ffff8800` then `move.b val,$ffff8802`, from inside the vertical-blank interrupt | kit `src/` excluded; `shim_include/psg.h` shadows the header and defines it `static inline` |
 | `hw_read8` | seeded reads of five declared addresses (`kit/src/hw.c`) | a real `volatile` load. One core caller — `ikbd_send_cmd` spinning on the 6850's transmitter-empty bit at `$fffffc00` — and one shim caller, `zynaps_main.c` reading TOS's four MFP registers back at the hand-back | kit `src/` excluded; `shim_include/hw.h` shadows the header and defines it `static inline` |
 | `hw_write8/16/32` | an ordered (address, width, value) ledger `harness.differential` compares entry for entry (`kit/src/hw.c`) | a real `volatile` store **of its own width**, counted — and counted again by address for the three core effects the machine cannot be asked about afterwards. `hw_write8` also recognises the shifter's two video-base bytes and hands them to `zynaps_backend.c`, the one door that is a protocol rather than a store | kit `src/` excluded; `shim_include/hw.h`, `static inline`; the counters stay in `zynaps_backend.c` |
@@ -945,6 +1113,10 @@ guard with no surface is a guard nobody can watch fire.
   writes those bytes into whatever follows the image in `.bss` — `zy_saved_ssp` among them, which is
   the shape that dies at `zy_leave_supervisor` *after* a clean teardown with every read-back green.
   A `_Static_assert` covers the staging read the same way, at compile time.
+  **`os_in_image` is itself shadowed here since the diet**, so that the bound is
+  `ZY_TARGET_IMAGE_BYTES` — the length of the array that actually exists — and not the model's
+  1 MiB. That is the fifth replaced helper, and bounding against the wrong one of the two is exactly
+  the defect this bullet describes.
 * **The refusal tally.** `-DOS_NO_REFUSAL_TALLY` is right for the cores' own sentinel path but
   leaves nothing counting a FAILED OPEN — and `load_file` (`../src/fileio.c`) has no error handling
   at all, faithfully: it hands Fopen's `-33` straight to Fread as a handle. Under the harness an
@@ -962,7 +1134,7 @@ slice. One is left, and it is the only one that is not a fidelity question but a
 `screen_flip_buffers` publishes two bytes of `0x70300` — an IMAGE OFFSET. That is exactly right in
 the differential's world, where the image IS the machine's memory and starts at 0, and exactly right
 on the original, which runs at the base its hard-coded framebuffers are absolute against. This build
-stages the image in a 1 MiB `.bss` array, so the shifter needs `image + 0x70300`, and the core has
+stages the image in a `.bss` array, so the shifter needs `image + 0x70300`, and the core has
 no way to know that: it is handed a `uint8_t *` and writes what the original writes.
 
 So the core's two stores land first with the untranslated value, and `publish_screen_base()`
@@ -978,22 +1150,29 @@ translation has to move somewhere the core itself can reach. Recorded under **Un
 
 ## The six surfaces, and what each one measured
 
-`python3 atari/smoke.py title`, TOS 1.04, both sides at 4 MB. Re-measured 2026-08-29, after the
-kit's write ledger moved the seam:
+`python3 atari/smoke.py title`, TOS 1.04, both sides at the same memory size. Re-measured
+2026-09-02 at **1 MB**, after the diet, and green at 4 MB in the same sweep:
 
 ```
--- title on st / TOS104US.img: image base 0x1c900, the original at 0xaa56, 266 vblanks and 2926 PSG
-   pens read off the chip, unmasked: 0033 0021 0202 0044 0055 0066 0665 0777 0550 0303 0413 0746 ...
+-- title on st / TOS104US.img at 1 MB: image base 0x22a00, the original at 0xaa56,
+   266 vblanks and 2926 PSG writes at the anchor
+   memory: TPA [0x12496, 0xf8000) = 940906 B, image 512 KiB at 0x22a00, 345304 B headroom
+   to the stack, 0 tail + 0 guard byte(s) dirty
+   pens read off the chip, unmasked: 0033 0021 0202 0044 0055 0066 0665 0777 0550 0303 ...
    [green] exit status + log (ours)
+   [green] exit status + log (the fault scan can fail)
+   [green] exit status + log (the machine was handed back)
    [green] exit status + log (the original)
    [green] exit status + log (the program's own record)
-   [green] exit status + log (the machine was handed back)
-   [green] exit status + log (the fault scan can fail)
-   [green] the original was anchored on its own boot
-   [green] trap ledger
-   [green] memory (the framebuffer)
+   [green] hardware-state vector (TOS's 200 Hz clock survived the boot)
+   [green] hardware-state vector (Timer B never fired)
    [green] memory (the boot slice's own output and ledgers)
+   [green] memory (the framebuffer)
+   [green] memory (the game fork was not taken)
+   [green] memory (the image fitted the machine, and stayed inside itself)
+   [green] the original was anchored on its own boot
    [green] timelines (the PSG tick frames)
+   [green] trap ledger
    [green] hardware-state vector (the pens, $ff8260, the video base)
    [green] rendered pixels
 -- OK
@@ -1001,8 +1180,8 @@ kit's write ledger moved the seam:
 
 | surface | what it compared | result |
 |---|---|---|
-| **exit status + log** | Hatari's return code and its own `Bus Error`/`Address Error`/`CPU halted` lines, on both sides, read from **stderr**; the emulator kept running three seconds past `Pterm`; and the program's own `STATE.BIN` complete to its `'DONE'` tail | clean. The only fault line either side logs is TOS's own `Bus Error writing at $41fffe, PC=$fc0174` — the ROM sizing memory at the 4 MB boundary — which the scan drops **by its ROM PC**, not by failing to see it. The scan's own control proves that distinction on every run |
-| **trap ledger** | `--trace gemdos`: our `Fopen`/`Fread`/`Fclose` sequence, minus the shim's four files and TOS's own `DESKTOP.INF`, against the original's first slice | **24 calls parsed on our side, identical to the original's first 24** — the same eight lowercase names in the same order, on the same handle, with the same byte counts. The buffer address is deliberately not compared: ours is inside a 1 MiB array and the original's is absolute RAM |
+| **exit status + log** | Hatari's return code and its own `Bus Error`/`Address Error`/`CPU halted` lines, on both sides, read from **stderr**; the emulator kept running three seconds past `Pterm`; and the program's own `STATE.BIN` complete to its `'DONE'` tail | clean. At 4 MB the only fault line either side logs is TOS's own `Bus Error writing at $41fffe, PC=$fc0174` — the ROM sizing memory at the 4 MB boundary — which the scan drops **by its ROM PC**, not by failing to see it. **At 1 MB that line does not appear at all**: the ROM never probes past the RAM it has, so the drop-by-PC arm has no input there and is exercised only by the matrix's 4 MB half, which is one reason both halves are run. The scan's own control proves it can still go red on every run |
+| **trap ledger** | `--trace gemdos`: our `Fopen`/`Fread`/`Fclose` sequence, minus the shim's four files and TOS's own `DESKTOP.INF`, against the original's first slice | **24 calls parsed on our side, identical to the original's first 24** — the same eight lowercase names in the same order, on the same handle, with the same byte counts. The buffer address is deliberately not compared: ours is inside the image array and the original's is absolute RAM |
 | **memory** | the 32000-byte displayed framebuffer, written by the program from `image + screen_front`, against a `savebin` of the original's `0x70300` | **byte-identical** |
 | **hardware-state vector** | the sixteen colour registers, `$ff8260` and the two video-base bytes, read at the anchor by the DEBUGGER and independently by the PROGRAM, both sides | pens identical and equal to the shipped boot palette; `$ff8260` = 0 (low res) on both; `Physbase` reads back exactly what was published (`0x8cc00` = image base `0x1c900` + `0x70300`), so the address was 256-aligned and nothing was truncated. The report also prints the pens UNMASKED, which is the only place an STE's fourth bit a gun could show — on an ST every high nibble reads back 0 |
 | **rendered pixels** | a Hatari screenshot of each side, byte for byte, with `--frameskips 0 --statusbar off --drive-led off` and stop-then-shoot | **byte-identical** |
@@ -1118,7 +1297,7 @@ drive that is not the one they were written on can fail to read. 400 KB could no
 build in any case: the 62 data files are 307 clusters, our `.PRG` is 42, `ZYNAPS.IMG` — the relocated
 game image the shim stages into its own array, which the original does not need because it *is* the
 game — is 40, and the three files the run writes back are 34, against a single-sided volume's 393.
-The cost is that a single-sided drive cannot read this disk; the machine it is for is a 4 MB STE.
+The cost is that a single-sided drive cannot read this disk; the machine it is for is an STE.
 
 The BPB says two FATs and the volume has two. The original's says **one** and carries two (a
 duplication artifact TOS never notices, because the Atari BPB has no FAT-count field —
@@ -1138,18 +1317,27 @@ and passes every surface while testing a binary that is no longer on disk.
 ### What the run measured
 
 `python3 atari/smoke.py floppy` — **ours off `disk/ZYNAPS.ST`, the original off its own
-`../../bin/zynaps.st`**, both sides on the same ROM and machine. Twelve checks, all green:
+`../../bin/zynaps.st`**, both sides on the same ROM and machine. Sixteen checks, all green
+(re-measured 2026-09-02 at 1 MB, and green at 4 MB in the same sweep):
 
 ```
--- floppy on st / TOS104US.img: image base 0x14e00, the original at 0xaa56, 266 vblanks and 2926 PSG
-   [green] x12, including memory (the framebuffer), rendered pixels, trap ledger, timelines
+-- floppy on st / TOS104US.img at 1 MB: image base 0x1af00, the original at 0xaa56,
+   266 vblanks and 2926 PSG writes at the anchor
+   memory: TPA [0xa956, 0xf8000) = 972458 B, image 512 KiB at 0x1af00, 376856 B headroom
+   to the stack, 0 tail + 0 guard byte(s) dirty
+   [green] x16, including memory (the framebuffer), rendered pixels, trap ledger, timelines
 -- OK
 ```
 
+That `TPA [0xa956, ...)` is the second measurement the **Memory** budget rests on: booting the
+FAT12 volume leaves `p_lowtpa` about 31 KB *lower* than the GEMDOS drive does, so the GEMDOS
+figure is the worse of the two and is the one the size gate is set from.
+
 Re-run on **TOS 1.02** — a second ROM, which Unpinned 7 asked for and the GEMDOS modes cannot have
-(Hatari refuses directory emulation below 1.04) — also twelve green, at a different load address:
-`image base 0x17000`. Between the three runs the program has been relocated to three different
-places and published a correct 256-aligned video base from each.
+(Hatari refuses directory emulation below 1.04) — also sixteen green, at a different load address:
+`image base 0x1d100`, out of a TPA of 963,836 B (`p_lowtpa` `0xcb04`, a third figure again). Between
+the three runs the program has been relocated to three different places and published a correct
+256-aligned video base from each — and the 1 MB budget held on all three.
 
 **The class-11 question the floppy makes real, answered.** TOS's vertical-blank handler is displaced
 for the whole title screen, and on a floppy that handler owns the drive's motor timeout and media
@@ -1176,7 +1364,7 @@ through TOS's floppy driver, succeed. There is no GEMDOS call in the window at a
 
 ## What `build.sh` refuses
 
-Eight scans, and each names the defect it exists for:
+Ten scans, and each names the defect it exists for:
 
 * **The duplicate-symbol gate.** The shim may not define a name a core defines. It exists because
   the seam MOVES: three names this directory owned became live core code when the kit's write ledger
@@ -1249,12 +1437,42 @@ Eight scans, and each names the defect it exists for:
   instruction. That was a one-off human read of one object while the doors lived in one file; they
   are emitted at every inlined call site now, so it became a scan. 98 increments today, none split.
 * **The `os_*` census — the shadow's own central claim, measured.** `shim_include/os.h` replaces
-  FOUR kit helpers and pulls the rest in through `#include_next`, so every other `os_*` is still the
+  FIVE kit helpers and pulls the rest in through `#include_next`, so every other `os_*` is still the
   deterministic MODEL, compiled into the `.PRG` and answering out of an in-image register file. The
-  header says that is safe because a grep found only those four; this is that grep, run every build.
+  header says that is safe because a grep found only those five; this is that grep, run every build.
   A core reaching `os_bconin` would link cleanly and read a real keypress out of a fabricated model,
   with `-DOS_NO_REFUSAL_TALLY` having compiled away the tally that would have counted it: no link
   error, no record field, no surface. M2's own plan ports the routines that would do it.
+  **The scan is in two halves since the diet, and the second half is what the diet made necessary.**
+  The first covers `../src` and `../include`; the second covers the shim's *own* three C files and
+  its headers, which were exempt while a modelled helper here was merely useless. It is worse than
+  useless now: the model's fixed map puts its staged-file table at `0xbf000` and its staging area at
+  `0xc0000`, both of which were inside the 1 MiB array and are a quarter of a megabyte *past the
+  end* of the 512 KiB one. A shim helper calling `os_fwrite` — or `os_in_image_fixed`, whose bound
+  is baked into a macro over `OS_IMAGE_SIZE` and cannot be shadowed — would link cleanly, pass every
+  other scan, and write into `.bss`. Comments are stripped (`-fpreprocessed -dD -E`) before the
+  grep, because these files argue at length about the helpers they deliberately do *not* call and a
+  raw grep reports the reasoning as the defect.
+* **The memory census** — every `A_<name>` this build can link, against `ZY_TARGET_IMAGE_BYTES`. The
+  target image is half the differential's, and the claim that pays for it is that no address the
+  game names lands in the missing upper half (**Memory**, above). A new `A_*` above the image would
+  otherwise compile, run against the `.bss` beyond the array, and be caught by nothing until a
+  crash. Today: **472 addresses, all below `0x80000`** — the headers' 315 `#define`s *and* the 157
+  `.equ`s the asm twins restate, because those objects are linked and are a second route to absolute
+  memory. It **fails closed**: the parsed count is checked against a loose count of every `A_*`
+  declaration, so a shape the grep cannot read is a refusal rather than a silent gap. Both arms
+  measured able to fail — a probe `#define A_x 0x90000` gives `ERROR: an address a core names is at
+  or above the target image's 0x80000`; a probe `#define A_x (0x90000u)` gives `ERROR: the census
+  parsed 472 addresses out of 473 A_* declarations`, printing the one it could not read.
+* **The 1 MB size gate.** `basepage + text + data + bss` against the TPA a 1 MB TOS 1.04 machine
+  leaves, scraped from `smoke.py`'s measured budget. `_start` takes no `Mshrink`, so a binary that
+  eats the whole TPA does not fail to load — it loads and then writes its own stack, in the middle
+  of a boot, with no message. Today, for the `play` build a person actually runs: **597,470 B
+  loaded against a 908,138 B budget, 310,668 B spare** (the `title` build is 595,594). Measured able
+  to fail — dropping the budget to 500,000 gives `ERROR: ZYNAPS.PRG needs 595594 B of TPA`. The run-time half of it is `smoke.py`'s `check_the_memory`, which weighs the
+  program against the stack ceiling the machine in front of it actually reported, checks the two
+  watched bands, and re-takes the TPA measurement the gate's own budget rests on; every arm of it is
+  mutation-tested.
 
 Two things `build.sh` deliberately does NOT do:
 

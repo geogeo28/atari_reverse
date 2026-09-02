@@ -28,13 +28,20 @@ which failed, and the negative control is what says the sensitive ones can go re
                            anchor by the debugger AND read back by the program itself
   rendered pixels          a Hatari screenshot of ours against one of the original, byte for byte
   timelines                --trace psg_write, cut into the sound driver's own tick frames
-  memory                   the 32000-byte framebuffer, ours against the original's
+  memory                   the 32000-byte framebuffer, ours against the original's, plus the
+                           image's own guard band and the TPA the machine reported
 
-BOTH SIDES ARE RUN THE SAME WAY, on the same TOS, the same machine and the same memory size. That is
-not free: this build needs `--memsize 4` for its 1 MiB image, and the original ships for a 512 KB
-machine. Running the original at 4 MB too is what makes every comparison below about the PROGRAMS
-rather than about two different machines — the game hard-codes its framebuffers at absolute RAM
-(0x70300/0x78000) and TOS's TPA base does not move with the memory size, so the original behaves
+BOTH SIDES ARE RUN THE SAME WAY, on the same TOS, the same machine and the same memory size — and
+since the diet that size is `--memsize 1`. The target image is 512 KiB (`ZY_TARGET_IMAGE_BYTES`,
+atari/shim_include/os.h) rather than the differential's megabyte, so the whole .PRG fits the TPA
+TOS 1.04 leaves on a 1 MB machine: 597,470 B for the `play` build out of a measured 940,906.
+`--memsize 4` still works and the matrix is run at both, which is what says the cadence does not
+depend on the machine size (measured: 2.67-2.70 vblanks a frame at either, and the two sizes'
+ranges overlap completely — atari/README.md's "Memory" has the table).
+
+Running the ORIGINAL at whatever this file is given is what makes every comparison below about the
+PROGRAMS rather than about two different machines — the game hard-codes its framebuffers at
+absolute RAM (0x70300/0x78000) and TOS's TPA base does not move with the memory size, so it behaves
 identically; that is measured by this file's own `blank capture` and `same picture` guards rather
 than assumed.
 """
@@ -85,16 +92,31 @@ DEFAULT_MACHINE = "st"
 TOS_VERSION_OFFSET = 2
 TOS_VERSION_BYTES = 2
 LAST_ST_ONLY_TOS = 0x0104
-# 4 MB, and both sides get it — see the module docstring. The reconstruction's image is a 1 MiB .bss
-# array, which leaves a TOS 1.04 TPA on a 1 MB machine no room for the program plus its stack.
-MEMSIZE_MB = 4
+# 1 MB, and both sides get it — see the module docstring. This is the DIET's claim: the target
+# image is `ZY_TARGET_IMAGE_BYTES` (512 KiB, atari/shim_include/os.h) and not the differential's
+# megabyte, so the whole program fits the TPA TOS 1.04 leaves on the machine Zynaps shipped for.
+# `--memsize` overrides it; README.md's "Memory" section is the budget table, and `run.sh` scrapes
+# this assignment so a person playing gets the machine the checks were made on.
+MEMSIZE_MB = 1
 # Hatari quits by itself at this count, so a hung run cannot sit there for ever — and, as the docs
 # put it, letting the emulator run PAST the program's exit is what catches a handler left hooked
 # into memory GEMDOS has taken back. 50 Hz => ~240 s.
 RUN_VBLS = 12000
 
-ST_RAM_BYTES = 0x400000
+BYTES_PER_MB = 0x100000
 RAM_DUMP_NAME = "ram.bin"
+
+
+def st_ram_bytes():
+    """How much RAM the machine this run is on actually has.
+
+    A FUNCTION and not a constant, because `MEMSIZE_MB` is set from `--memsize` in `main()` and a
+    module-level product would freeze the value this file was written with. Both callers want the
+    live one: `savebin` is asked for the whole of RAM, and `is_a_dumpable_base` refuses a candidate
+    that would make that dump run off the end of it — a bound of 4 MB on a 1 MB machine is not a
+    bound at all.
+    """
+    return MEMSIZE_MB * BYTES_PER_MB
 
 # --- what is compared ---------------------------------------------------------------------------
 SCREEN_BYTES = 32000                # a 320x200 four-plane ST frame — ../include/video.h's constant
@@ -218,6 +240,61 @@ SHIM_MAIN = HERE / "zynaps_main.c"
 # frame differential uses is DEFINED. `assert_the_game_constants_are_the_headers` reads them rather
 # than this file retyping the numbers (CLAUDE.md §5).
 RECREATE = HERE.parent                         # projects/zynaps/recreate
+
+def c_define(source, name):
+    """One `#define <name> <value>` from a C source, as an int.
+
+    CLAUDE.md §5: "when the same value must agree in two places that can't import each other, pick
+    one canonical definition and pin the other equal with a test". The canonical definition of every
+    address below is the reconstruction's own header; this is the import, so a header that moves one
+    breaks the run at the parse with both spellings named instead of comparing the wrong bytes.
+    """
+    marker = f"#define {name} "
+    if marker not in source:
+        raise SystemExit(f"no `{marker.strip()}` to read — smoke.py names a constant its header "
+                         f"no longer defines")
+    value = source[source.index(marker) + len(marker):].split()[0]
+    return int(value.rstrip("uU").rstrip(","), 0)
+
+
+# ---- THE 1 MB BUDGET ----------------------------------------------------------------------------
+# Every number here is either SCRAPED FROM THE C (so it cannot drift from the binary) or MEASURED on
+# the machine by a run of this file. atari/README.md's "Memory" section is the table they fill in.
+# The scrape is `c_define`, above — the same one the eleven game constants go through, rather than a
+# second parser with its own idea of what a `#define` may look like.
+
+# The target image, and the guard band above it. Both are the C's own, for the reason above.
+TARGET_IMAGE_BYTES = c_define((HERE / "shim_include" / "os.h").read_text(), "ZY_TARGET_IMAGE_BYTES")
+IMAGE_GUARD_BYTES = c_define(SHIM_MAIN.read_text(), "IMAGE_GUARD_BYTES")
+
+# THE TRANSIENT PROGRAM AREA A 1 MB TOS 1.04 MACHINE LEAVES, MEASURED, NOT DERIVED. GEMDOS's own
+# basepage words, read by the shim and published in the record (`tpa_low`/`tpa_high`):
+#
+#   1,048,576  ST RAM at --memsize 1
+#   -  32,768  TOS's physical screen, which it puts at the TOP of RAM  -> p_hitpa = 0xf8000
+#   -  74,902  TOS low RAM + GEMDOS + the launcher's basepage          -> p_lowtpa = 0x12496
+#   = 940,906  the TPA: text + data + bss + the stack, and nothing else
+#
+# THE 74,902 IS THE WORSE OF THE TWO MEDIA, which is why it is the one written down: booting from a
+# Hatari GEMDOS drive (the `title`/`game` modes) costs more low memory than booting the FAT12 floppy
+# (`floppy`), whose p_lowtpa sits about 30 KB lower. Taking the worst is what makes build.sh's gate
+# valid for both.
+#
+# AND IT IS PINNED RATHER THAN TRUSTED: `check_the_memory` compares it against the TPA the machine
+# in front of it reported, on every 1 MB run, so a TOS or a launcher that took 200 KB more low
+# memory reds here instead of leaving the build-time gate quietly 200 KB too generous.
+TPA_1MB_BYTES = 940906
+# ...and the memory size that measurement was taken at, so the check above knows when it applies.
+TPA_MEASURED_AT_MB = 1
+
+# What the .PRG's basepage + text + data + bss may NOT eat into. `_start` takes no Mshrink, so the
+# stack starts at the top of the TPA and grows down towards the program; this is the gap kept
+# between them. It is a RESERVE and not a measurement — nothing here paints the stack — so it is set
+# an order of magnitude above anything a non-recursive C program with no large automatics needs, and
+# the run-time headroom it is checked against (345,304 B for the `title` build at 1 MB when this was
+# written) says how much slack the reserve itself has.
+STACK_RESERVE_BYTES = 32768
+
 # ...and TOS's own, which is on BOTH drives and lands at a different point in the two boots: ours is
 # auto-run after the desktop has read its preferences, the shipped disk runs the game out of C:\AUTO
 # before the desktop exists at all. It is the operating system's I/O, not either program's.
@@ -251,6 +328,10 @@ TIMER_B_HANDLER_NAMES = ("in_game", "raster", "attract")
 RECORD_FIELDS = (
     ["magic", "fields",
      "image_base", "program_staged_bytes", "super_token",
+     # The 1 MB budget, measured on the machine rather than assumed: GEMDOS's own p_lowtpa/p_hitpa
+     # for this .PRG, the gap left between the top of everything GEMDOS loaded and the lowest
+     # ceiling the stack can have, then the two watched bands' counts.
+     "tpa_low", "tpa_high", "image_headroom", "image_tail_dirty", "image_guard_changed",
      "acia_bytes_after_mouse_off", "acia_bytes_after_joystick_mode",
      "shifter_mode_writes", "shifter_mode_mask", "palette_long_writes",
      "image_saved_vbl_vector", "tos_vbl_vector", "tos_timer_b_vector",
@@ -603,7 +684,7 @@ def poll_for_our_load_base(session, vbl_entry, prg):
     # to a range that can be dumped before it is dumped.
     def is_a_dumpable_base(candidate):
         return (candidate > 0 and not candidate % 2
-                and candidate + fixup + VECTOR_BYTES <= ST_RAM_BYTES)
+                and candidate + fixup + VECTOR_BYTES <= st_ram_bytes())
 
     deadline = time.monotonic() + ANCHOR_DEADLINE_SECONDS
     while time.monotonic() < deadline:
@@ -811,7 +892,7 @@ def poll_for_program(session, prg, doing):
     """
     deadline = time.monotonic() + ANCHOR_DEADLINE_SECONDS
     while time.monotonic() < deadline:
-        found = locate_by_signature(session.savebin(RAM_DUMP_NAME, 0, ST_RAM_BYTES), prg)
+        found = locate_by_signature(session.savebin(RAM_DUMP_NAME, 0, st_ram_bytes()), prg)
         if found is not None:
             return found
         session.require_alive(doing)
@@ -889,7 +970,7 @@ def gemdos_calls(trace_path, drop_names=()):
 
     WHAT IS COMPARED AND WHAT IS DELIBERATELY NOT. An open is compared by FILENAME, a read or write
     by (handle, byte count), a close by handle. The BUFFER ADDRESS is dropped on purpose: ours is
-    inside a 1 MiB array GEMDOS placed and the original's is absolute RAM, so it is the one argument
+    inside the image array GEMDOS placed and the original's is absolute RAM, so it is the one argument
     the two programs cannot agree on by construction. The handle is kept because a `Fread` on handle
     0 is exactly the GEMDOS-HD defect `zynaps_os.s`'s wrapper order exists to avoid.
 
@@ -1087,7 +1168,8 @@ def check_the_boot_slice_did_its_work(ours):
                         f"missing from the drive and the buffer it feeds is zeroed")
     if record["file_refusals"]:
         problems.append(f"the seam refused {record['file_refusals']} transfer(s) for leaving the "
-                        f"1 MiB image — a destination address or a length is wrong")
+                        f"{TARGET_IMAGE_BYTES // 1024} KiB image — a destination address or a "
+                        f"length is wrong")
 
     # Two more that only say the run did what it says: the machine was actually written to, and
     # every chip write the driver made went through the counted path.
@@ -1212,7 +1294,7 @@ def check_hardware_state(ours, original):
 
     # THE VIDEO BASE IS THE ONE THING THAT CANNOT BE EQUAL, and the check is a RELATION rather than
     # an equality: the original displays its framebuffer at the absolute address it hard-codes, and
-    # ours displays the same offset inside a 1 MiB array GEMDOS placed. What must hold is that each
+    # ours displays the same offset inside the image array GEMDOS placed. What must hold is that each
     # side displays its own `screen_back`, and — the part class 8 is about — that no low byte was
     # lost on the way to a register that has none.
     our_base = video_base(ours["work"])
@@ -1475,22 +1557,6 @@ FIRE_POKE_SECONDS = 0.2
 # most of its vertical blanks in the attract loop and the PREPARE FOR COMBAT wait while the driver
 # poked the fire button. This is that with room for the original's slower start.
 GAME_RUN_VBLS = 80000
-
-
-def c_define(source, name):
-    """One `#define <name> <value>` from a C source, as an int.
-
-    CLAUDE.md §5: "when the same value must agree in two places that can't import each other, pick
-    one canonical definition and pin the other equal with a test". The canonical definition of every
-    address below is the reconstruction's own header; this is the import, so a header that moves one
-    breaks the run at the parse with both spellings named instead of comparing the wrong bytes.
-    """
-    marker = f"#define {name} "
-    if marker not in source:
-        raise SystemExit(f"no `{marker.strip()}` to read — smoke.py names a constant its header "
-                         f"no longer defines")
-    value = source[source.index(marker) + len(marker):].split()[0]
-    return int(value.rstrip("uU").rstrip(","), 0)
 
 
 def assert_the_game_constants_are_the_headers(headers=None):
@@ -2362,6 +2428,8 @@ def mode_game(mode, out_dir, machine, tos_rom, keep):
             "timelines (the frame cadence and the interrupt service rates)": check_the_pacing(ours),
             "hardware-state vector (TOS's 200 Hz clock survived the boot)":
                 check_the_boot_clock(ours["record"]),
+            "memory (the image fitted the machine, and stayed inside itself)":
+                check_the_memory(ours["record"]),
         }
         # THERE IS NO TIMELINE ARM HERE, AND IT WAS TRIED. M1's `check_timeline` cuts the PSG trace
         # into the sound driver's own descending 10..0 tick frames and compares the first 64 as a
@@ -2386,8 +2454,9 @@ def report_game(mode, fault_sensitive, fault_blind, ours, original, machine, sam
     """Print every check that RAN, with its verdict, and return the process's exit status."""
     control = mode == GAME_FAULT_MODE
     record = ours["record"]
-    print(f"-- {mode} on {machine}: image base {record['image_base']:#x}, the original at "
-          f"{original['base']:#x}")
+    print(f"-- {mode} on {machine} at {MEMSIZE_MB} MB: image base {record['image_base']:#x}, "
+          f"the original at {original['base']:#x}")
+    print_the_memory_budget(record)
     print(f"   {record['frames_run']} frames over {record['section_starts']} section start(s), "
           f"{record['attract_passes']} attract pass(es), player(s) {record['player_count']}, "
           f"section {record['level_section']}, {record['lives']} lives, "
@@ -2484,6 +2553,60 @@ def check_the_boot_clock(record):
     return problems
 
 
+def check_the_memory(record):
+    """MEMORY — nothing wrote above the game's world, and the machine had room for the program.
+
+    THE THREE ARMS ANSWER DIFFERENT QUESTIONS.
+
+    THE TWO BANDS answer "did anything write above everything the census names?", which is the one
+    thing README.md's memory census cannot enumerate: it lists every address the code NAMES, and a
+    blit that runs one row past the front buffer names none of them. Off target that write lands in
+    the oracle's own megabyte and the differential compares it on both sides, green. They are two
+    bands because the world ends at 0x7fd00 and the array at 0x80000 — see zynaps_main.c's own
+    header — so the TAIL catches the one-row overrun and the GUARD catches the write that leaves the
+    array altogether, which is the one that reaches `zy_saved_ssp` and this record.
+
+    THE HEADROOM answers "was the memory the machine gave us actually enough?", which is the diet's
+    whole claim — and it is GEMDOS's own p_hitpa floored by the SP `_start` was entered with, not an
+    estimate, so a build that outgrew the TPA reds here instead of overwriting its own stack
+    somewhere in the middle of a boot.
+
+    THE TPA PIN answers "is the number build.sh weighs every build against still true of this
+    machine?". `TPA_1MB_BYTES` is a measurement, and a measurement nobody re-takes is a belief: a
+    TOS build or an AUTO-folder resident that took 200 KB more low memory would leave the build-time
+    gate quietly 200 KB too generous, with nothing red until a binary that does not fit ships.
+    """
+    problems = []
+    if record["image_tail_dirty"]:
+        problems.append(f"{record['image_tail_dirty']} byte(s) between the top of the game's world "
+                        f"and {TARGET_IMAGE_BYTES:#x} are no longer zero - something wrote above "
+                        f"every address the census enumerates, inside the image")
+    if record["image_guard_changed"]:
+        problems.append(f"{record['image_guard_changed']} of the {IMAGE_GUARD_BYTES} guard bytes "
+                        f"above the image came back changed - something wrote past "
+                        f"{TARGET_IMAGE_BYTES:#x}, out of the array altogether")
+    if record["image_headroom"] < STACK_RESERVE_BYTES:
+        problems.append(f"the program's top leaves {record['image_headroom']} bytes below the "
+                        f"stack's ceiling (p_hitpa {record['tpa_high']:#x}), under the "
+                        f"{STACK_RESERVE_BYTES} this build reserves for its stack")
+    # Only at the size the constant was measured at — a 4 MB run has a bigger TPA and says nothing
+    # about the 1 MB one, so comparing there would pass vacuously.
+    tpa = record["tpa_high"] - record["tpa_low"]
+    if MEMSIZE_MB == TPA_MEASURED_AT_MB and tpa < TPA_1MB_BYTES:
+        problems.append(f"this machine's TPA is {tpa} B, under the {TPA_1MB_BYTES} build.sh's size "
+                        f"gate weighs every build against - re-measure it, do not raise it")
+    return problems
+
+
+def print_the_memory_budget(record):
+    """The 1 MB budget as the machine reported it, so README.md's table has a source."""
+    tpa = record["tpa_high"] - record["tpa_low"]
+    print(f"   memory: TPA [{record['tpa_low']:#x}, {record['tpa_high']:#x}) = {tpa} B, image "
+          f"{TARGET_IMAGE_BYTES // 1024} KiB at {record['image_base']:#x}, "
+          f"{record['image_headroom']} B headroom to the stack, "
+          f"{record['image_tail_dirty']} tail + {record['image_guard_changed']} guard byte(s) dirty")
+
+
 def print_the_boot_clock(record):
     """Where the boot's milliseconds went, out of the program's own marks at $4ba.
 
@@ -2500,6 +2623,12 @@ def print_the_boot_clock(record):
 
 
 def main():
+    # A module global rather than a threaded parameter: `hatari_arguments` is the ONE place the flag
+    # is spelt, every runner goes through it, and a run has exactly one machine size by design. The
+    # cost is that `profile.py`, which calls `hatari_arguments` directly and never reaches this
+    # function, always gets the module default — atari/README.md's PERFORMANCE section says so.
+    global MEMSIZE_MB
+
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("mode", choices=MODES)
@@ -2510,12 +2639,20 @@ def main():
     # ROM is what says the build does not depend on the one it was developed against.
     parser.add_argument("--machine", default=DEFAULT_MACHINE, help="Hatari --machine (st, ste, ...)")
     parser.add_argument("--tos-rom", type=Path, default=TOS_ROM, help="the ROM both sides boot")
+    # ...and the MACHINE SIZE, for the same reason: it is one number for the whole run and both
+    # sides get it. The default is the diet's 1 MB; 4 is what the pacing ceiling was first
+    # calibrated on, and the matrix runs at both so a cadence that turned out to depend on the
+    # memory size would show up as the two disagreeing rather than as a silent re-baseline.
+    parser.add_argument("--memsize", type=int, default=MEMSIZE_MB,
+                        help=f"Hatari --memsize, in MB (default {MEMSIZE_MB})")
     # WHICH BUILD IS ON THE VOLUME, because build.sh's medium is a flag and not a mode: `build.sh
     # title floppy` and `build.sh game floppy` both write disk/ZYNAPS.ST, and only the caller knows
     # which. The floppy mode's own checks are M1's, so its default is the M1 build.
     parser.add_argument("--floppy-build", default="title",
                         help="the build.sh mode whose .PRG is in AUTO\\ on disk/ZYNAPS.ST")
     options = parser.parse_args()
+
+    MEMSIZE_MB = options.memsize
 
     assert_the_shim_owns_these_names()
     out_dir = options.out.resolve()
@@ -2577,6 +2714,8 @@ def main():
             "timelines (the PSG tick frames)": check_timeline(ours, original),
             "hardware-state vector (TOS's 200 Hz clock survived the boot)":
                 check_the_boot_clock(ours["record"]),
+            "memory (the image fitted the machine, and stayed inside itself)":
+                check_the_memory(ours["record"]),
         }
 
         if options.keep:
@@ -2597,9 +2736,11 @@ def report(mode, colour_sensitive, colour_blind, ours, original, machine):
         colour_blind["the control moved exactly one pen"] = \
             check_only_the_faulted_pen_moved(ours, original)
 
-    print(f"-- {mode} on {machine}: image base {ours['record']['image_base']:#x}, the original at "
-          f"{original['base']:#x}, {ours['record']['vbl_ticks_at_anchor']} vblanks and "
+    print(f"-- {mode} on {machine} at {MEMSIZE_MB} MB: image base "
+          f"{ours['record']['image_base']:#x}, the original at {original['base']:#x}, "
+          f"{ours['record']['vbl_ticks_at_anchor']} vblanks and "
           f"{ours['record']['psg_writes']} PSG writes at the anchor")
+    print_the_memory_budget(ours["record"])
     print_the_boot_clock(ours["record"])
     # THE RAW PENS, unmasked, because PEN_MASK is three bits a gun and an STE implements FOUR
     # (docs/on-target-execution.md class 8). Every comparison in this file masks — it has to, or an

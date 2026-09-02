@@ -20,6 +20,9 @@ see, is written up once in [`../../buggyboy/recreate/README.md`](../../buggyboy/
 | `image_size` | `0x100000` | must equal `os.h`'s `OS_IMAGE_SIZE`; the program ends at `0x6e96e` |
 | `tos_malloc_unused` | `true` | the bss covers the model's Malloc heap at `0x20000`, and the game issues no `Malloc` |
 
+The **target** build does not use `image_size`: it has its own, smaller `ZY_TARGET_IMAGE_BYTES` —
+see `atari/README.md`'s "Memory".
+
 The waiver's evidence lives in `project.toml` and its run-time half is exercised by
 `test/test_heap_guard.py`. The two other fixed regions need no waiver: the staged-file table
 (`0xbf000`) sits above the program, and the harness-poked input block (`0x600`) below `load_base`.
@@ -155,7 +158,9 @@ under Hatari to the game's title picture with its music playing, then judges it 
 binary on the six surfaces of [`docs/on-target-execution.md`](../../../docs/on-target-execution.md).
 The seam is the include path (`atari/shim_include/` shadows the kit's `os.h`, `hw.h`, `psg.h` and
 `sched.h`) plus two omitted sets of translation units, so the differential `.so` is untouched and `make test` is
-unchanged — which `atari/build.sh` measures rather than asserts.
+unchanged — which `atari/build.sh` measures rather than asserts. **It runs on a 1 MB ST**: the
+target image is 512 KiB where the differential's is 1 MiB, and `atari/README.md`'s "Memory" section
+carries the budget, the address census behind it and the gates that keep it true.
 
 [`atari/README.md`](atari/README.md) is canonical: the seam inventory, what each surface measured,
 the negative control, and the ledger of what is still unpinned. `STATUS.md`'s "## On target" is the

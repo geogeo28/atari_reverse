@@ -24,7 +24,7 @@
     .globl  _start
 _start:
     | Keep the whole TPA (no Mshrink): GEMDOS leaves %a7 at the top of our memory, well above the
-    | 1 MiB BSS image, so the stack has room. Mshrinking to a tight size would strand it. It is also
+    | 512 KiB BSS image, so the stack has room. Mshrinking to a tight size would strand it. It is also
     | what the original does — ../STATUS.md's project.toml byte scan found no Malloc/Mshrink in the
     | whole text, and `_start` simply keeps what the AUTO-folder loader gave it.
     |
@@ -32,6 +32,15 @@ _start:
     | zynaps_main through `zy_leave_supervisor`. The original takes it as its own first instruction
     | (0x10000) and never gives it back; this build has to, because GEMDOS gets the machine after.
     | shim_include/os.h says why the cores' own `os_super` is a no-op rather than a second trap.
+    | THE BASEPAGE AND THE ENTRY STACK, LATCHED FIRST. GEMDOS leaves the basepage's address at
+    | 4(%sp) on entry and the Super(0) push below moves %sp, so this is the only instant either can
+    | be read. p_lowtpa/p_hitpa/p_bbase/p_blen are the memory this program was given, which is how
+    | zynaps_main.c MEASURES the 1 MB budget instead of assuming it (`record_memory_budget`), and
+    | %sp is the stack GEMDOS actually started us on — the LOWER of it and p_hitpa is the ceiling
+    | that measurement uses, so a TOS that parks SP below the top of the TPA cannot make the
+    | headroom over-report. Both copied from projects/buggyboy/remaster/render/atari/os.s.
+    move.l  4(%sp),zy_basepage
+    move.l  %sp,zy_initial_sp
     clr.l   -(%sp)                  | Super(0)
     jsr     Super
     addq.l  #4,%sp

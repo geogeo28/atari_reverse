@@ -831,6 +831,12 @@ echo "   $REACHED"
 # ...and the build's own `-D` names, which exist nowhere but here. A core reading one would compile
 # differently in the two builds while looking identical in both.
 TARGET_MACROS='PROGRAM_BYTES|ZY_LOAD_BASE|ZY_FAULT_PEN|ZY_SMOKE_VBLS|ZY_PHASE|ZY_GAME_FRAMES'
+# ZY_TARGET_IMAGE_BYTES is on the list even though shim_include/os.h — a header the cores DO
+# reach — is where it lives. That is deliberate: the cores get its effect through os_in_image
+# and must never spell it, because off target the name does not exist at all, so a core's
+# `#ifdef ZY_TARGET_IMAGE_BYTES` arm would be live on the machine and silently false in the
+# differential — the same defect the five macros above are listed for.
+TARGET_MACROS="$TARGET_MACROS|ZY_TARGET_IMAGE_BYTES"
 TARGET_MACROS="$TARGET_MACROS|ZY_FRAME_SAMPLES|ZY_GAME_FAULT"
 TARGET_MACROS="$TARGET_MACROS|ZY_CHANCE_INDEX_REGISTER|ZY_GROUND_SPAWN_Y_REGISTER"
 LEAKS=$(grep -rlE "\b($TARGET_MACROS)\b" "$REC/src" "$REC/include" || true)
@@ -849,10 +855,12 @@ LEAKS=$(grep -rlE "\b($TARGET_MACROS)\b" "$REC/src" "$REC/include" || true)
 # shim_include/os.h but by the KIT's own `-DOS_NO_REFUSAL_TALLY` arm, which compiles it to an inline
 # identity (tools/recreate_kit/include/os.h). Its one core caller is `ikbd_send_cmd`'s give-up arm,
 # which that same macro compiles away — see shim_include/tos.h on why the spin is unbounded here.
-# `os_in_image` is on the list because the MODEL IS RIGHT ON TARGET: it is arithmetic on OS_IMAGE_SIZE
-# — `addr <= size && count <= size - addr` — and the target's image is that same 1 MiB array, so the
-# bound a core checks off target is the bound it must check here (shim_include/os.h's own os_fread
-# relies on it). Its core callers are init.c's slice guards (the attract bar list, the section table).
+# `os_in_image` is on the list because the target's image is HALF the model's: shim_include/os.h
+# shadows it to bound against ZY_TARGET_IMAGE_BYTES instead of OS_IMAGE_SIZE, which is what its own
+# os_fread relies on to keep GEMDOS inside the .bss array. Its core callers are init.c's slice guards
+# (the attract bar list, the section table), and README.md's "Memory" section argues why neither can
+# produce an address in the half that went. `os_in_image_fixed` is deliberately NOT shadowed, and
+# this list is why that is safe: no core calls it today, and one that started to would fail here.
 REPLACED_OS_HELPERS='os_fopen|os_fread|os_fclose|os_super|os_refused|os_in_image'
 OS_USED=$(grep -rhoE '\bos_[a-z_0-9]+' "$REC/src" "$REC/include" | sort -u || true)
 OS_MODELLED=$(echo "$OS_USED" | grep -vE "^($REPLACED_OS_HELPERS)$" || true)
@@ -863,12 +871,193 @@ OS_MODELLED=$(echo "$OS_USED" | grep -vE "^($REPLACED_OS_HELPERS)$" || true)
   echo "$OS_MODELLED"; exit 1; }
 echo "   the cores call $(echo "$OS_USED" | wc -l | tr -d ' ') os_* helper(s), all of them replaced"
 
+# ...AND THE SHIM'S OWN C IS ON THE SAME HOOK, WHICH THE DIET IS WHAT MADE TRUE. The scan above
+# covers the cores; the three files in THIS directory were left out because a modelled helper here
+# was merely useless. It is worse than useless now: the model's fixed map puts its staged-file table
+# at OS_FS_TABLE (0xbf000) and its staging area at OS_FS_STAGING (0xc0000), which were inside the
+# 1 MiB array and are a quarter of a megabyte PAST the end of the 512 KiB one. So a shim helper that
+# called os_fwrite would link cleanly, pass every scan above, and write over whatever `.bss` follows
+# the image — the failure shim_include/os.h's own header describes as tearing down clean with every
+# read-back green. `os_in_image_fixed` is on the list for the same reason: its bound is baked into a
+# macro over OS_IMAGE_SIZE and cannot be shadowed, so it would answer yes for a quarter-megabyte of
+# addresses this build does not own.
+#
+# THE SHADOW FILE ITSELF NAMES THE MODEL SPELLINGS, and must: `#define os_fopen os_model_fopen` is
+# how it moves the kit's versions aside. Those five are what SHIM_OWN_OS_NAMES adds, and nothing
+# else — a shim file that CALLED an `os_model_*` helper would still be caught, because the call
+# would have to name one of the four the shadow does not define.
+#
+# COMMENTS ARE STRIPPED FIRST, and that is not tidiness — it is what makes this scan usable at all.
+# These files argue at length about the helpers they do NOT call (`os_fs_copy_in_image` and
+# `os_in_image_fixed` are both named in shim_include/os.h's own prose, explaining why neither is
+# reached), so a raw grep reports the explanation as the defect and the only way to keep the gate
+# green would be to delete the reasoning. `-fpreprocessed -dD -E` removes comments without expanding
+# a macro or following an include, so what is scanned is the code and nothing else.
+SHIM_OWN_OS_NAMES='os_model_fopen|os_model_fread|os_model_fclose|os_model_super|os_model_in_image'
+# Its status is checked rather than discarded: with several inputs, a file the strip could not read
+# would simply contribute no names while the others still did, and the scan would pass having seen
+# less than it claims. It emits nothing on stderr today, so nothing is silenced either.
+SHIM_STRIPPED=$(m68k-elf-gcc -fpreprocessed -dD -E "$HERE"/*.c "$HERE"/shim_include/*.h) || {
+  echo "ERROR: the shim os_* scan could not strip comments from this directory, so it saw less"
+  echo "       than it would report — fix the strip rather than skipping the scan"; exit 1; }
+SHIM_OS_USED=$(echo "$SHIM_STRIPPED" | grep -ohE '\bos_[a-z_0-9]+' | sort -u || true)
+[ -n "$SHIM_OS_USED" ] || {
+  echo "ERROR: the shim os_* scan read no names at all — its comment strip or its grep is broken,"
+  echo "       and a scan that matches nothing passes everything"; exit 1; }
+SHIM_OS_MODELLED=$(echo "$SHIM_OS_USED" \
+                   | grep -vE "^($REPLACED_OS_HELPERS|$SHIM_OWN_OS_NAMES)$" || true)
+[ -z "$SHIM_OS_MODELLED" ] || {
+  echo "ERROR: the shim itself names a kit os_* helper this build does NOT replace. On the model's"
+  echo "       fixed map that would read or write a quarter of a megabyte past the end of the"
+  echo "       target image, into .bss:"
+  echo "$SHIM_OS_MODELLED"; exit 1; }
+echo "   ...and the shim names $(echo "$SHIM_OS_USED" | wc -l | tr -d ' '), none of them modelled"
+
+# ---- THE MEMORY CENSUS, RE-RUN EVERY BUILD -----------------------------------------------------
+# The target image is HALF the differential's (shim_include/os.h's ZY_TARGET_IMAGE_BYTES), and the
+# claim that pays for it is that no address the game names lands in the missing upper half. Every
+# such address is an `A_<name>` — this project's spelling for a Ghidra address — so the census is a
+# grep, and it runs here rather than sitting in README.md as a number somebody checked once: a new
+# `A_*` above the image would otherwise compile, run against the `.bss` beyond the array, and be
+# caught by nothing until the guard band or a crash.
+#
+# BOTH SPELLINGS, because there are two kinds of object in this .PRG. The cores say `#define A_x
+# 0x…` in a header; the ASM TWINS in ../src/asm restate the same addresses as `.equ A_x, 0x…`, and
+# those objects are linked (`build.sh` assembles them above). A census that read only the headers
+# would miss a twin that named an address the C never does — which scroll_tile.S's own comment says
+# is the normal case for an inline address in the original.
+#
+# AND IT FAILS CLOSED. A gate that greps a strict shape reports coverage of what it MATCHED, so a
+# define written any other legal way (`(0x90000u)`, a decimal, a leading space) drops out of the set
+# and the gate still prints "all below". So the strict matches are counted against a LOOSE count of
+# every `A_*` declaration in either syntax, and a mismatch is a refusal — the same technique the
+# trap-register scan's `--expect` uses, and for the same reason.
+#
+# WHAT IT DOES NOT COVER, said plainly: an address the code COMPUTES rather than names, and the
+# EXTENT of a named one (this compares bases; only the two framebuffers have a compile-time extent
+# check, in zynaps_main.c). Both are the watched bands' job — zynaps_main.c's IMAGE_WORLD_BYTES tail
+# and IMAGE_GUARD_BYTES guard, checked by smoke.py — and README.md's "Memory" keeps them apart.
+echo ">> memory census (every A_* the cores name is inside the target image)"
+IMAGE_BYTES=$(sed -n 's/^#define ZY_TARGET_IMAGE_BYTES *\(0[xX][0-9a-fA-F]*\).*/\1/p' \
+              "$HERE/shim_include/os.h")
+[ -n "$IMAGE_BYTES" ] || {
+  echo "ERROR: no ZY_TARGET_IMAGE_BYTES in $HERE/shim_include/os.h — the census has no bound"
+  exit 1; }
+
+# THE SOURCES AND ONLY THE SOURCES. `$HERE` is not passed whole: it holds `build/`, `disk/` and
+# `out/`, and a grep that recursed into them would read a `.PRG`, a `.ST` or a memory dump — whose
+# "Binary file … matches" line would land in the declaration count and turn the parse check below
+# into a refusal whose message is about the wrong thing. Which build outputs happen to be on disk
+# must not change what a gate concludes. Each path is quoted rather than word-split out of one
+# string, so a path with a space or a glob character cannot silently select a different file set.
+# `|| true` because this script is `set -euo pipefail` and grep exits 1 on no match — which would
+# kill the build at the assignment, before the diagnostics below could say what was wrong.
+CENSUS_DECL_RE='^[[:space:]]*(#define|\.equ)[[:space:]]+A_[A-Za-z0-9_]+'
+CENSUS_DECLS=$(grep -rhE "$CENSUS_DECL_RE" \
+               "$REC/include" "$REC/src" "$HERE"/*.c "$HERE/shim_include" || true)
+# ONE NAME AND VALUE PER DECLARATION LINE, which is what makes the two counts comparable: `sed`'s
+# `s///` substitutes once a line, where `grep -o` would emit a second match for a line that happens
+# to mention another `A_name 0x…` in a trailing comment — and the shortfall below would then be
+# NEGATIVE with an empty list under it. The `,?` is `.equ`'s separator; both spellings come out of
+# here as `NAME VALUE`, so the loop that follows needs to know about only one shape.
+CENSUS_ADDR_SED='s/^[[:space:]]*(#define|\.equ)[[:space:]]+(A_[A-Za-z0-9_]+),?[[:space:]]+'
+CENSUS_ADDR_SED="$CENSUS_ADDR_SED"'(0[xX][0-9a-fA-F]+).*/\2 \3/p'
+CENSUS_ADDRS=$(echo "$CENSUS_DECLS" | sed -nE "$CENSUS_ADDR_SED")
+DECL_COUNT=$(echo "$CENSUS_DECLS" | grep -c . || true)
+ADDR_COUNT=$(echo "$CENSUS_ADDRS" | grep -c . || true)
+[ "$DECL_COUNT" -gt 0 ] || {
+  echo "ERROR: the census found no A_* declarations at all — its grep is broken, and a census that"
+  echo "       matches nothing passes everything"; exit 1; }
+[ "$DECL_COUNT" = "$ADDR_COUNT" ] || {
+  echo "ERROR: the census parsed $ADDR_COUNT addresses out of $DECL_COUNT A_* declarations, so"
+  echo "       $((DECL_COUNT - ADDR_COUNT)) are UNCHECKED — and an address it cannot parse is"
+  echo "       exactly the one that would be above the image. Give them a plain hex literal, or"
+  echo "       teach this grep the shape they use:"
+  echo "$CENSUS_DECLS" \
+    | grep -vE 'A_[A-Za-z0-9_]+,?[[:space:]]+0[xX][0-9a-fA-F]+' | sed 's/^/     /'
+  exit 1; }
+
+OUTSIDE=""
+while read -r NAME VALUE; do
+  [ -n "$NAME" ] || continue
+  # bash reads `0x…` natively, so there is no hand-rolled hex parser to get wrong.
+  [ $((VALUE)) -lt $((IMAGE_BYTES)) ] || OUTSIDE="$OUTSIDE     $NAME = $VALUE"$'\n'
+# A heredoc and not a pipe: a `while read` on the right of a pipe runs in a SUBSHELL, and $OUTSIDE
+# would be discarded at the loop's end with every address reported clean.
+done <<EOF
+$CENSUS_ADDRS
+EOF
+[ -z "$OUTSIDE" ] || {
+  echo "ERROR: an address a core names is at or above the target image's $IMAGE_BYTES:"
+  printf '%s' "$OUTSIDE"
+  echo "       Either the census in README.md is out of date, or this build cannot be shrunk"
+  echo "       to $IMAGE_BYTES. Do not raise the bound without re-running the census."
+  exit 1; }
+echo "   $ADDR_COUNT A_* addresses (#define and .equ), all below $IMAGE_BYTES"
+
 echo ">> objcopy -> flat binary"
 m68k-elf-strip --strip-debug "$BUILD/zynaps.elf"
 m68k-elf-objcopy -O binary "$BUILD/zynaps.elf" "$BUILD/zynaps.bin"
 
 echo ">> wrap -> GEMDOS .PRG"
-"$PY" "$HERE/mkprg.py" "$BUILD/zynaps.elf" "$BUILD/zynaps.bin" "$BUILD/$PRG"
+# Its own report line is kept, because the size gate below weighs the three numbers in it and a
+# gate that printed different numbers from the wrapper would be two accounts of one file.
+PRG_REPORT=$("$PY" "$HERE/mkprg.py" "$BUILD/zynaps.elf" "$BUILD/zynaps.bin" "$BUILD/$PRG")
+echo "$PRG_REPORT"
+
+# ---- THE 1 MB SIZE GATE ------------------------------------------------------------------------
+# WHAT IS BEING WEIGHED: text + data + bss, which is exactly what GEMDOS carves out of the transient
+# program area when it loads this .PRG. The stack is what is left above it, and `_start` takes no
+# Mshrink, so a binary that eats the whole TPA does not fail to load — it loads, and then writes its
+# own stack. That failure arrives in the middle of a boot with no message, which is why the refusal
+# is here.
+#
+# THE BUDGET IS smoke.py's, SCRAPED. That file MEASURED the TPA a 1 MB TOS 1.04 machine leaves — it
+# reads GEMDOS's own p_lowtpa/p_hitpa out of the record — and names the stack reserve; its "THE 1 MB
+# BUDGET" block carries the arithmetic and the provenance. Scraped rather than respelt for the
+# reason run.sh scrapes MEMSIZE_MB out of the same file: two numbers that must agree, one definition
+# (CLAUDE.md §5).
+#
+# THE BUILD-TIME GATE IS THE COARSE ONE AND IT IS NOT THE ONLY ONE. It weighs the binary against a
+# budget measured on ONE machine configuration; the RUN-TIME check is smoke.py's `check_the_memory`,
+# which weighs the image against the p_hitpa the machine in front of it actually reported, plus the
+# guard band above the image. This gate stops a too-big .PRG before anybody boots it; that one says
+# the boot it did was inside its means.
+scrape_int() {  # scrape_int <NAME> <file> -> the integer of `NAME = <digits>`
+  sed -n "s/^$1 *= *\([0-9][0-9]*\).*/\1/p" "$2"
+}
+TPA_BYTES=$(scrape_int TPA_1MB_BYTES "$HERE/smoke.py")
+RESERVE_BYTES=$(scrape_int STACK_RESERVE_BYTES "$HERE/smoke.py")
+[ -n "$TPA_BYTES" ] && [ -n "$RESERVE_BYTES" ] || {
+  echo "ERROR: no TPA_1MB_BYTES / STACK_RESERVE_BYTES in $HERE/smoke.py — the size gate has no"
+  echo "       budget to weigh against, and a gate with no number passes everything"; exit 1; }
+BUDGET_BYTES=$((TPA_BYTES - RESERVE_BYTES))
+
+# The leading `[^a-z]` is what keeps `text=` from also matching inside a longer word, and the
+# trailing `.*` is what lets the three fields share one line: mkprg.py prints them together with the
+# .PRG's path in front, and that path is not this script's to control.
+prg_field() {  # prg_field <name> -> mkprg.py's own count for it
+  echo "$PRG_REPORT" | sed -n "s/.*[^a-z]$1=\([0-9][0-9]*\).*/\1/p"
+}
+TEXT_BYTES=$(prg_field text); DATA_BYTES=$(prg_field data); BSS_BYTES=$(prg_field bss)
+[ -n "$TEXT_BYTES" ] && [ -n "$DATA_BYTES" ] && [ -n "$BSS_BYTES" ] || {
+  echo "ERROR: mkprg.py's report line is not the text=/data=/bss= shape the size gate reads:"
+  echo "       $PRG_REPORT"; exit 1; }
+# THE BASEPAGE IS PART OF THE BILL. GEMDOS carves it out of the same TPA, immediately below the
+# text, so a gate that weighed only text+data+bss would pass a binary that overruns by its length.
+BASEPAGE_BYTES=256
+LOAD_BYTES=$((BASEPAGE_BYTES + TEXT_BYTES + DATA_BYTES + BSS_BYTES))
+
+echo ">> size gate (a 1 MB machine's TPA, measured)"
+echo "   basepage=$BASEPAGE_BYTES text=$TEXT_BYTES data=$DATA_BYTES bss=$BSS_BYTES" \
+     "-> $LOAD_BYTES B loaded"
+echo "   budget $BUDGET_BYTES B = TPA $TPA_BYTES - stack reserve $RESERVE_BYTES"
+echo "   $((BUDGET_BYTES - LOAD_BYTES)) B spare"
+[ "$LOAD_BYTES" -le "$BUDGET_BYTES" ] || {
+  echo "ERROR: $PRG needs $LOAD_BYTES B of TPA and a 1 MB machine has $BUDGET_BYTES B for it."
+  echo "       Shrink ZY_TARGET_IMAGE_BYTES (shim_include/os.h) or the binary — do NOT raise the"
+  echo "       budget, which is a measurement (smoke.py's 1 MB budget block) and not a policy."
+  exit 1; }
 
 cp "$BUILD/$PRG" "$DISK/$PRG"
 cp "$BUILD/$PRG" "$BUILD/ZYNAPS-$MODE.PRG"

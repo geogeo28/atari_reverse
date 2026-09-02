@@ -82,6 +82,12 @@ void zynaps_main(void);
  * class 9 is why the way out is `zy_leave_supervisor` and not a second `Super`. */
 extern void *zy_saved_ssp;
 
+/* The basepage GEMDOS handed `_start` and the stack pointer it was entered with, both latched there
+ * before the Super(0) push moves the stack. They are the measured 1 MB budget — zynaps_main.c's
+ * `record_memory_budget`, which floors the TPA's ceiling at the LOWER of p_hitpa and this SP. */
+extern uint8_t *zy_basepage;
+extern uint8_t *zy_initial_sp;
+
 /* The C halves of the two exception entries in zynaps_os.s. Each bumps its count and calls the
  * verified handler in ../src/irq.c. */
 void zy_vbl_tick(void);
