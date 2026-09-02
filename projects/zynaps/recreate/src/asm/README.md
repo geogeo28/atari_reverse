@@ -7,9 +7,14 @@ sees it.
 
 This directory holds Zynaps' twins: the scroll path (wave A — `scroll_blit.S`, `scroll_emit.S`,
 `scroll_tile.S`), the sprite and text paths (wave B — `sprite.S`, `text.S`), and the frame loop's
-last slice (wave C — `frame.S`). Wave B followed this recipe unchanged and taught it four things;
-wave C was the first twin that CALLS, and taught it four more — both are folded in below under
-**What wave B added** and **What wave C added**. The recipe is the point of this file.
+four slices (wave C — `frame.S`; wave D — `frame_head.S`, `frame_fire.S`, `frame_spawn.S`). Wave B
+followed this recipe unchanged and taught it four things; wave C was the first twin that CALLS, and
+taught it four more; **wave D followed it faithfully and bought nothing**, which taught it the most
+useful thing in the file. All three are folded in below under **What wave B added**, **What wave C
+added** and **What wave D added**. The recipe is the point of this file.
+
+**READ "What wave D added" BEFORE SCOPING A NEW TWIN.** It is the one section that says when NOT to
+write one, and it is where both of this project's mis-scoped waves are reduced to a single rule.
 
 ## Why transcription and not optimisation
 
@@ -111,14 +116,22 @@ prologue needs a temporary for the image base, use one the body loads before it 
 
 If you add a stack frame, `%sp` must not move after the prologue or every displacement goes wrong.
 
-**KNOW WHICH SURFACE CATCHES A CLOBBERED CALLEE-SAVED REGISTER, because it is not the differential.**
-`test_asm_scroll.py` compares the IMAGE, and a twin that returns with `%a2` corrupted leaves the
-image perfect and breaks its C CALLER instead — every case would pass. What catches it is the
-on-target run: `bash atari/build.sh game && python3 atari/smoke.py game`, whose frame differential
-against the shipped binary is computed by C that holds live values in exactly those registers across
-the call. **So a new twin is not done until the game smoke is green**, and a twin that passes
-`make test` and reddens `smoke.py game` should have its prologue/epilogue register lists read first.
-**The blind spot is the callee-saved registers only — the STACK FRAME is covered off target.** An
+**A CLOBBERED CALLEE-SAVED REGISTER IS CAUGHT OFF TARGET NOW, AND THIS PARAGRAPH USED TO SAY THE
+OPPOSITE.** It was true when it was written: a differential compares the IMAGE, and a twin that
+returns with `%a2` corrupted leaves the image perfect and breaks its C CALLER instead, so every case
+passed. `asm_twin.py` closed it — `AsmTwins.call` seeds all eleven of `%d2-%d7`/`%a2-%a6` with
+`CALLEE_SAVED_SEEDS` and asserts each one back, naming the register and telling you to read both
+`movem` lists. Wave D re-measured it rather than trusting either version of the sentence.
+
+**WHAT STILL HAS NO OFF-TARGET SURFACE IS THE `#ifdef`-ED ARM**, and that is the reason a twin is
+still not done until `bash atari/build.sh game && python3 atari/smoke.py game` is green. Wave C's
+five target-only instructions and wave D's six (`frame_head.S`'s pause spins) are assembled ONLY in
+the target build: the transcription-order pin reads the file's text and so sees them, but it pins
+their PRESENCE AND ORDER, not their operands. A wrong polled byte, a wrong scancode, a wrong
+`HW_MFP_IERB` or a wrong bit number passes every off-target check in the workspace and shows up on
+iron as a hang or a dead keyboard, which names nothing. `STATUS.md` records both sets as rows.
+
+**The STACK FRAME is covered off target.** An
 epilogue that unwinds by the wrong amount returns to the wrong address, and the differential fails on
 that before it ever compares an image: `asm_twin.py` calls a twin through the kit's `run_bench`
 (`tools/recreate_kit/oracle/emu.py`), which plants a sentinel return address on the stack and raises
@@ -226,7 +239,9 @@ does not exist** — the same `jsr` names the real core — so a twin's body is 
 **Two consequences worth knowing before the next non-leaf twin.** The door charges the emulated
 machine NOTHING for the C body, so **an off-target cost reading over a span containing a call is not
 comparable to the original's**; pin cost over call-free spans, or say "the twin's own instructions".
-And the door deliberately DESTROYS the caller-saved file (`%d0-%d1/%a0-%a1` and every condition code)
+And the door deliberately DESTROYS the caller-saved file (`%d0-%d1/%a0-%a1`, N/Z/V/C set and X on
+an alternating schedule — `TRAP_MODEL.md`, and wave D's section below for what that did and did not
+buy)
 after each callback, exactly as a real core does — a courtesy version of it hid a stub that had
 forgotten to save them.
 
@@ -281,6 +296,102 @@ vblanks a frame (17.9 -> 18.7 fps). Real, and seven times smaller than the row s
 busy-wait measures the wait.** Before sizing a twin from one, either put the wait outside the span
 or measure the span on the oracle, where a schedule releases it.
 
+## What wave D added — and the one it added is a NEGATIVE RESULT
+
+Wave D twinned the frame loop's other three slices — `frame_head.S` `[0x10f4e, 0x113c0)` (240
+instructions, 17 doors), `frame_fire.S` `[0x113c0, 0x1167c)` (148, 4) and `frame_spawn.S`
+`[0x1167c, 0x11c00)` (311, 25 doors over 44 sites) — 699 instructions, 43 external doors, on this
+file's recipe unchanged. Every twin is byte-identical to its C over the staged worlds, every cost bar
+is measured-then-set, every mutation reddens. **And it bought nothing: +13 cycles a frame, measured
+A/B on one tree.** That is the finding, and it is worth more than the twins are.
+
+**THE A/B IS THE EVIDENCE, and it is the measurement anyone scoping the next wave should copy.** Not
+a before-and-after across two sessions, where the window and the mixture both move: the same tree,
+built twice, the three `ZY_FRAME()` wrappers at `src/frame.c`'s call sites the only difference.
+`atari/profile.py frames` gave **403,947** cycles a frame with the twins off and **403,960** with
+them on. Thirteen cycles on four hundred thousand is not a win and not a regression; it is a
+NO-OP, and no distribution moved (`2x196 4x366 5x1` against `2x188 4x350 5x1`, the counts differing
+because the two runs stopped playing at different frames).
+
+**WHY, IN ARITHMETIC.** `STATUS.md` scoped the wave at ~44,000 cycles a frame, from "the slices' own
+C, about 70,300". Both twins and C were then measured directly:
+
+| slice | the twin's OWN instructions, door-discounted | from |
+|---|---|---|
+| `frame_head.S` | ~1,400 | its boss/asteroid bands, where `playfield_clear` is a door |
+| `frame_fire.S` | ~600 | its two call-free bands |
+| `frame_spawn.S` | ~2,700 | its ordinary band |
+| | **~4,700 a frame** | |
+
+The C they replaced costs the same to within those 13 cycles. **The 70,300 was never there.** It came
+from an inclusive Hatari row minus a partial list of its children, and the children left off the list
+— the twenty `scroll_page_to_screen_p*` blits (~110,000 cycles a frame), `draw_score_panel` (17,217),
+`scroll_emit_column_shift2` (20,941) — are essentially the whole row.
+`frame_panel_scroll_and_ship_stage_asm`'s inclusive 166,715 is ~165,000 of already-twinned children
+and ~1,400 of its own.
+
+**THIS IS WAVE C'S MISTAKE IN ITS SECOND FORM, so the rule needs restating more strongly than "a
+profiler row containing a busy-wait measures the wait".** The general rule is:
+
+> **An INCLUSIVE profiler row is not a prize. Subtract the children — ALL of them, by measurement,
+> not by the ones you happen to have rows for — before you scope a twin from it.** Wave C's row was
+> 95% spin and was scoped at 7x its truth. Wave D's row was 97% already-twinned children and was
+> scoped at 15x its truth. Both times the arithmetic was done on the row rather than on the
+> remainder.
+
+The cheap way to get the remainder, and what wave D should have done first: **twin one slice, measure
+the A/B, and only then scope the other two.** `frame_fire.S` is 148 instructions and four doors — a
+day's work that would have answered the whole wave.
+
+**SO WAVE D'S THREE TWINS ARE VERIFICATION-ONLY: BUILT, VERIFIED, NOT SHIPPED.** The target build
+calls the C for those three slices; `include/frame.h` marks them `ZY_TWIN_VERIFICATION_ONLY` and
+`atari/build.sh`'s gate carries that as a DECLARED CATEGORY — a marked twin must be DEFINED by an
+asm object and must NOT be referenced by a core object, which is the ordinary gate inverted, and its
+object is kept off the link line so the `.PRG` is byte-for-byte its pre-wave size. The reasons are
++13 cycles, six unpinnable pause instructions, and 699 instructions of maintenance; wave C's
+`frame.S` still ships because its ~19,500 cycles are real. **A twin you do not ship is still worth
+writing when the measurement is the point** — these are what put the three slices' own cost at
+~4,700 cycles a frame, and their suites keep that number re-takeable rather than re-arguable.
+
+**AND THE COST BARS OF A NON-LEAF TWIN READ BELOW 1.00x, which is not a win either.** Wave D's bands
+sit at 0.019x-1.41x, and none of them is a fidelity claim: the door charges the emulated machine
+NOTHING for a C body while the original executes every one of its `bsr` targets in full. The two
+readings that mean something are (1) the CALL-FREE bands — `frame_fire.S`'s +170 and +146 cycles,
+which is almost exactly the C-ABI frame a 7-register `movem` pair costs (132 cycles) — and (2) the
+bands whose heavy children ARE doors, like `frame_head.S`'s boss/asteroid pair at 1,320/1,546 cycles,
+which is essentially the twin's own instructions and where a 16-cycle change is 1.2% of the reading.
+**Set the bar on the band whose children are doors; a band dominated by twinned children barely moves
+when the twin does.**
+
+**Three smaller things wave D learned:**
+
+* **A twin whose slice writes the reserved registers must permute, and say so per site.** `frame.S`'s
+  header says the stage it transcribes "uses only %a0-%a4"; `frame_spawn.S`'s writes A5 and A6 — the
+  two reserved — so the original's A5 became `%a3` and its A6 `%a4`, each live range checked dead
+  across the substitution and each renamed line carrying the original's own text in its comment.
+  `frame_head.S` did the same for its own A5/A6.
+* **`gas` folds a zero displacement**, on top of wave B's ANDI/CMPI re-spelling: `ENTITY_X(%a1)` with
+  `ENTITY_X = 0` assembles to the 2-byte `(%a1)` where the original wrote the 6-byte `d16` form, 4-8
+  cycles CHEAPER at each site (six in `frame_head.S`, eleven in `frame_spawn.S`). Being cheaper, it
+  cannot hide a regression behind a cost bar — but it is a divergence and it is named in both headers.
+* **One mutation class is not expressible, because the assembler enforces it.** `sub.l %a6,%a0` is
+  not a defect gas can emit: SUB has no `An,An` form, so it silently assembles `suba.l`. The
+  X-transparency rule for `PUSH_OFFSET` is still right and still documented; on that operand shape
+  the toolchain holds it for you, and a mutation sweep should not go looking for a red there.
+* **gas does NOT silently truncate an out-of-window `d16(An)` — it refuses.** Three of this
+  directory's headers and the shared window pin all said it would, and wave D measured it: moving
+  `frame_fire.S`'s `.equ FGB` out of range gives `Error: displacement too large for this
+  architecture; needs 68020 or higher`, once per offending line, and the build fails. **The
+  assembler is the gate.** The `%a5`-window pin is still worth having — it names the WINDOW rather
+  than the architecture, before the build, over every global at once — but it is a better error,
+  not the only surface, and it now says so.
+* **A PYTHON MUTATION SWEEP LIES THE SAME WAY A `make` ONE DOES.** The workspace already knows that
+  a mutation sweep is worthless unless the relink is forced; the same trap has a `__pycache__` form.
+  Restoring a mutated constant in a test module within the same mtime second left pytest running the
+  CACHED bytecode, and two unrelated cases stayed red after the file on disk was already correct —
+  which reads as "my fix broke something else". `find . -name __pycache__ -exec rm -rf {} +` before
+  trusting the green, exactly as `rm build/*.so` comes before trusting a build's.
+
 ## Where the pieces live
 
 | | |
@@ -291,7 +402,9 @@ or measure the span on the oracle, where a schedule releases it.
 | the Musashi runner | `tools/recreate_kit/asm_twin.py` — `AsmTwins.call(image, symbol, *args)` |
 | the callback door | `tools/recreate_kit/asm_twin.py`'s `DoorCallback` + `TRAP_MODEL.md` — how a twin calls a C core, OFF TARGET ONLY |
 | the four checks, shared | `test/asm_twins.py` — `matches_the_c`, `assert_transcribes_the_original`, `cost_case`, `assert_within_the_bar` |
-| the differentials | `test/test_asm_scroll.py`, `test/test_asm_sprite.py`, `test/test_asm_text.py`, `test/test_asm_frame.py` |
+| the FRAME family's shared half | `test/asm_frame_common.py` — the one door table, the candidate arming, the differential, and the `.equ`/window/transcription scrapers the four frame suites share |
+| the frame family's slot namespace | `test/test_asm_frame_doors.py` — the cross-file pin no single suite can make: two twins claiming one slot for different cores |
+| the differentials | `test/test_asm_scroll.py`, `test/test_asm_sprite.py`, `test/test_asm_text.py`, and the frame family's `test_asm_frame{,_head,_fire,_spawn}.py` |
 | the constant pin | `test/test_constants.py::test_asm_twin_equates_match_the_headers` |
 | the seams | `include/scroll.h`'s `ZY_SCROLL()`, `include/sprite.h`'s `ZY_SPRITE()`, `include/text.h`'s `ZY_TEXT()`, `include/frame.h`'s `ZY_FRAME()` |
 | the call sites | `src/frame.c`, `src/init.c`, `src/enemy.c`, `src/mothership.c`, `src/highscore.c`, `src/hud.c` |

@@ -1180,8 +1180,31 @@ uint32_t osh_bench_door_sp(void) { return m68k_get_reg(0, M68K_REG_A7); }
  * which the candidate's own differential is what catches. */
 #define OSH_DOOR_SCRATCH_POISON 0xDEADD00Du
 #define SR_ALL_CONDITION_CODES 0x1Fu    /* X N Z V C — the flags a call leaves undefined */
+#define SR_EXTEND_FLAG 0x10u            /* ...and the one of the five that ALTERNATES; see below */
 
 uint32_t osh_bench_door_poison(void) { return OSH_DOOR_SCRATCH_POISON; }
+
+/* WHY THE X BIT ALTERNATES INSTEAD OF BEING SET LIKE THE OTHER FOUR — a coverage hole, measured.
+ *
+ * A stub whose call site carries X across the call reads the 68000's X in, hands it to its core as
+ * an `extend` argument, and writes the core's answer back out. With every flag SET, X came back from
+ * every callback as a deterministic 1 — so a stub that DROPPED that write-back handed the next
+ * `abcd` the same 1 the poison would have left anyway, and the whole thing was green. Measured on
+ * Zynaps' wave-C twin: deleting the X write-back from all four of its X-carrying trampolines left
+ * its 146-case suite passing.
+ *
+ * Alternating X per callback removes the coincidence: a dropped write-back now agrees with the core
+ * on at most half the callbacks, and any case making two of them differs. The other four bits stay
+ * set, because nothing reads them across a call and a second alternating bit would only add noise.
+ *
+ * PER RUN AND NOT GLOBAL, so a case is reproducible whatever ran before it: the counter is reset
+ * where the cycle and instruction tallies are. The first callback of a run therefore always leaves
+ * X SET, which is what the door has always done. */
+static uint32_t g_door_calls;           /* callbacks serviced in this run — the X bit's parity */
+
+/* Which X the Nth callback of a run leaves, EXPORTED so a caller can pin the schedule rather than
+ * mirror it. Reset by osh_run_bench, so N counts from 0 within one run. */
+uint32_t osh_bench_door_extend(uint32_t nth) { return (nth & 1u) ? 0u : 1u; }
 
 /* The three statuses osh_run_bench and osh_bench_resume answer with, EXPORTED rather than left for a
  * caller to mirror. emu.py cannot include this file, so the alternative is the same three numbers
@@ -1203,7 +1226,9 @@ void osh_bench_door_return(uint32_t d0, int returns, uint32_t pc, uint32_t sp) {
     m68k_set_reg(M68K_REG_D1, OSH_DOOR_SCRATCH_POISON + 1);
     m68k_set_reg(M68K_REG_A0, OSH_DOOR_SCRATCH_POISON + 2);
     m68k_set_reg(M68K_REG_A1, OSH_DOOR_SCRATCH_POISON + 3);
-    m68k_set_reg(M68K_REG_SR, m68k_get_reg(0, M68K_REG_SR) | SR_ALL_CONDITION_CODES);
+    uint32_t sr = m68k_get_reg(0, M68K_REG_SR) | SR_ALL_CONDITION_CODES;
+    if (!osh_bench_door_extend(g_door_calls++)) sr &= ~SR_EXTEND_FLAG;
+    m68k_set_reg(M68K_REG_SR, sr);
     m68k_set_reg(M68K_REG_PC, pc);
     m68k_set_reg(M68K_REG_A7, sp);
 }
@@ -1286,6 +1311,7 @@ int osh_run_bench(uint8_t *mem, uint32_t size, uint32_t entry, uint32_t arg0,
 
     g_ninsns = 0;
     g_ncycles = 0;
+    g_door_calls = 0;
     int status = bench_loop(sentinel, max_insns);
     report_regs(out_regs);
     return status;

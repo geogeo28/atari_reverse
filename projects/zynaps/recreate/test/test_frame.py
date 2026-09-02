@@ -409,12 +409,14 @@ def _register_at(image, entry, pc, name):
     return regs[name]
 
 
-def _ground_script_fires(image):
+def ground_script_fires(image):
     """Whether the ground script's `bsr` at 0x11818 / 0x11820 is reached this frame.
 
     Read out of the image rather than probed, because a probe of a PC the run never reaches costs a
     full 40-million-instruction refusal. The gate is the original's own: not an asteroid section,
     not frozen, page 0, and the map cursor's next column equal to the script's trigger word.
+
+    PUBLIC because `test_asm_frame_spawn.py` is a second driver — see `advance_one_frame`.
     """
     if image[A_ASTEROID_SECTION_FLAG] or image[A_SCROLL_FROZEN] or image[A_MAP_PAGE]:
         return False
@@ -422,8 +424,12 @@ def _ground_script_fires(image):
     return ((_u32(image, A_MAP_OFFSET) & 0xffff) + SCRIPT_TRIGGER_LOOKAHEAD) & 0xffff == _u16(image, cursor)
 
 
-def _carried_registers(image, entry):
+def carried_registers(image, entry):
     """(chance_index, ground_spawn_y) as the oracle holds them when this frame consumes them.
+
+    PUBLIC because `test_asm_frame_spawn.py` is a SECOND DRIVER of this staging: the spawn twin
+    takes both registers as C arguments, and its differential has to hand the twin and the C core
+    the same pair this battery hands the glue — see `advance_one_frame`.
 
     NO PROBE NEEDS A SCHEDULE, and that is a property of where the two PCs sit rather than an
     omission: both are inside `frame_spawn_and_move_stage`, and the frame's own two busy-waits are
@@ -433,7 +439,7 @@ def _carried_registers(image, entry):
     """
     chance_index = _register_at(image, entry, PROBE_CHANCE_INDEX_PC, "d1")
     ground_y = (_register_at(image, entry, PROBE_GROUND_SPAWN_PC, "d7")
-                if _ground_script_fires(image) else 0)
+                if ground_script_fires(image) else 0)
     return chance_index, ground_y
 
 
@@ -477,7 +483,7 @@ def _check_drone_and_fire(image, extra=None):
 
 
 def _check_spawn_and_move(image, extra=None):
-    chance, ground_y = _carried_registers(_poked(image, extra), ENTRY_SPAWN_AND_MOVE)
+    chance, ground_y = carried_registers(_poked(image, extra), ENTRY_SPAWN_AND_MOVE)
     _case(image, ENTRY_SPAWN_AND_MOVE, ENTRY_DRAW_AND_COLLIDE,
           lambda lib, buf: lib.g_frame_spawn_and_move_stage(buf, chance, ground_y),
           "spawn/move", extra=extra)
@@ -506,7 +512,7 @@ def _check_resolve(image, extra=None, expect=STOP_FRAME):
 def _check_loop_once(image, extra=None, schedule=FRAME_SCHED, wait_sites=WAIT_SITES,
                      expect=STOP_FRAME):
     poked = _poked(image, extra)
-    chance, ground_y = _carried_registers(poked, ENTRY_FRAME_HEAD)
+    chance, ground_y = carried_registers(poked, ENTRY_FRAME_HEAD)
     info = _case(image, ENTRY_FRAME_HEAD, expect,
                  lambda lib, buf: lib.g_frame_loop_once(buf, chance, ground_y), "loop once",
                  extra=extra, schedule=schedule, wait_sites=wait_sites)
@@ -895,12 +901,14 @@ def test_a_steered_shot_is_forced_to_an_even_column(x):
     _check_spawn_and_move(image, extra)
 
 
-def _script_trigger_offset(image, cursor_global, round_to_column):
+def script_trigger_offset(image, cursor_global, round_to_column):
     """A map offset that makes the script at `cursor_global` fire on this frame.
 
     The trigger is the script record's own word, read out of the world rather than typed; the wave
     script rounds it DOWN to a whole column first and the ground script does not, which is the one
     difference between the two gates. Returns None when the arithmetic cannot be met.
+
+    PUBLIC because `test_asm_frame_spawn.py` is a second driver — see `advance_one_frame`.
     """
     trigger = _u16(image, _u32(image, cursor_global))
     wanted = ((trigger // SCRIPT_TRIGGER_LOOKAHEAD) * SCRIPT_TRIGGER_LOOKAHEAD
@@ -917,7 +925,7 @@ def test_the_wave_script_fires_when_the_map_cursor_reaches_its_column():
     staged world, so a wrong look-ahead lands on a different column and the spawn does not happen.
     """
     image = bytearray(world(0, WORLD_START))
-    extra = {A_MAP_OFFSET: _script_trigger_offset(image, A_WAVE_SCRIPT_CURSOR, True)
+    extra = {A_MAP_OFFSET: script_trigger_offset(image, A_WAVE_SCRIPT_CURSOR, True)
                            .to_bytes(4, "big"),
              A_MOTHERSHIP_PENDING: b"\x00"}
     _check_spawn_and_move(image, extra)
@@ -929,14 +937,14 @@ def test_the_ground_script_fires_on_an_exact_column_and_passes_its_carried_regis
 
     THIS IS ALSO THE ONE CASE THAT DRIVES `ground_spawn_y_register`: the spawner's free-slot guard
     tests the whole longword D7, whose high word is the caller's, so a frame that never reaches the
-    `bsr` never reads it. `_ground_script_fires` is what tells the battery to probe for it, and this
+    `bsr` never reads it. `ground_script_fires` is what tells the battery to probe for it, and this
     case is what makes that predicate answer yes.
     """
     image = bytearray(world(0, WORLD_START))
-    extra = {A_MAP_OFFSET: _script_trigger_offset(image, A_GROUND_SCRIPT_CURSOR, False)
+    extra = {A_MAP_OFFSET: script_trigger_offset(image, A_GROUND_SCRIPT_CURSOR, False)
                            .to_bytes(4, "big"),
              A_ASTEROID_SECTION_FLAG: b"\x00", A_SCROLL_FROZEN: b"\x00", A_MAP_PAGE: b"\x00"}
-    assert _ground_script_fires(_poked(image, extra)), (
+    assert ground_script_fires(_poked(image, extra)), (
         "the ground script's gate is not met, so this case would not drive the spawner at all")
     _check_spawn_and_move(image, extra)
 

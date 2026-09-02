@@ -1994,7 +1994,7 @@ because that array is a map KEYED BY ADDRESS with distinct keys, so its row orde
 the three above are. The second is equivalent because every shipped arm carries exactly one of the
 two function pointers.
 
-## The asm twins — the hot paths in the original's own instructions (29)
+## The asm twins — the hot paths in the original's own instructions (32)
 
 **These are not new functions and they add no row above.** A twin is a hand-written m68k
 transcription of the ORIGINAL binary's instruction sequence for a routine this file already carries a
@@ -2014,6 +2014,9 @@ The C stays compiled and stays the reference; nothing about what the program com
 | `draw_bcd_number_asm` | `0x136f6` | `src/text.c` | **1.0184x** |
 | `draw_char_asm` | `0x13710` | `src/text.c` | **1.1141x** from C — but the panel reaches it by the original's own `bsr`, 18 cycles and no prologue, which is 1,400 of the 1,425 calls in a profiled window |
 | `frame_resolve_hits_and_game_state_asm` | `0x11d30`..`0x1296e` | `src/frame.c` | **1.0369x** ordinary / **1.0223x** either swap / **1.0303x** section end (Musashi) — and the ratio is NOT the like-for-like one the other rows carry: the door charges nothing for a C body, so the twin's number is its own instructions and the original's includes everything its `bsr`s reach |
+| `frame_panel_scroll_and_ship_stage_asm` | `0x10f4e`..`0x113c0` | `src/frame.c` | **0.7015x** ordinary / **0.70087x** gated / **0.0195x** boss / **0.0227x** asteroid (Musashi). The two small bands are the reading that means anything — `playfield_clear` is a door there, so 1,320/1,546 cycles is the twin's own 240 instructions and 16 cycles is 1.2% of it. The ordinary band is ~107k of already-twinned page blits and barely moves when the twin does |
+| `frame_drone_and_fire_stage_asm` | `0x113c0`..`0x1167c` | `src/frame.c` | **1.4135x** / **1.1861x** on the two CALL-FREE bands — the honest fidelity reading of the wave, and its +170/+146 cycles is almost exactly the C-ABI frame (a 7-register `movem` pair is 132). The two launcher bands read **0.8093x** / **0.7703x** only because the door runs no C body |
+| `frame_spawn_and_move_stage_asm` | `0x1167c`..`0x11c00` | `src/frame.c` | **0.56156x** ordinary / **0.54056x** asteroid / **0.11694x** boss (Musashi) — door-discounted throughout; the boss band's original 25,594 is mostly `mothership_move_and_place` + `mothership_draw`, which the door does not run |
 
 **WAVE B IS THE SPRITE AND TEXT PATHS**, and its five twins took the judged cadence from 3.75-3.77
 vblanks a frame to **2.80** (17.9 fps; the original's own is 2.08). The two waves' shapes differ in
@@ -2093,20 +2096,40 @@ almost every award site in the stage is followed by `door_sound_start`, which se
 erases the question, and the small-explosion pass's silent arm was meant to be the exception. The
 case is still a real differential over a two-capsule pass; only its name promises more.
 
-**AND THE REVIEW FOUND WHY, WHICH IS ALSO THE CHEAPEST CLOSURE.** `osh_bench_door_return` poisons
-the condition codes with `SR |= 0x1F` — every bit SET — so off target X comes back from EVERY
-callback as a deterministic **1**. A stub that drops its `X_OUT` therefore hands the next `abcd`
-the same 1 the poison would have left anyway, on any case whose modelled `extend_in` is 1; and the
-ten stubs documented as "X-transparent" are transparent only on the machine, where X is whatever the
-real core left. **Alternating the poison's X bit per callback** — or asserting both polarities in one
-case — turns the hole into a red at once, and pins every X-carrying trampoline together rather than
-one game arm at a time. Left for the next kit pass because flipping it re-judges all 146 cases and
-this wave is landing.
+**WAVE C PROPOSED A CLOSURE, WAVE D BUILT IT, AND THE MEASUREMENT SAYS THE DIAGNOSIS WAS WRONG.**
+The proposal was: `osh_bench_door_return` poisons the condition codes with `SR |= 0x1F` — every bit
+SET — so off target X comes back from EVERY callback as a deterministic **1**, and a stub that drops
+its `X_OUT` hands the next `abcd` the same 1 the poison would have left anyway. Alternating the
+poison's X bit per callback should therefore "turn the hole into a red at once".
 
-The other two closures, for the record: a staged world PROVEN to reach two `abcd` chains in a row
-(the arm exists — 0x12084's `bne 0x12092` clears a capsule without a tune — so it is a staging
-problem, not an unreachable branch); or `run_bench` reporting the CCR the way it now reports the
-register file.
+It was built (`tools/recreate_kit/oracle/shim.c`, `g_door_calls`; the X bit alternates per callback
+and the other four stay set, reset per run, exported as `emu.door_extend(nth)` and pinned by
+`test_callback_door.py::test_the_doors_extend_alternates_so_a_dropped_write_back_reddens`). **It
+closes one of five, not four of four**, and the per-stub sweep was run BOTH WAYS on one tree to say
+so rather than inferring it:
+
+| `X_OUT` deleted from | with `SR |= 0x1F` | with X alternating |
+|---|---|---|
+| `door_shot_retire_kind32` | green | green |
+| `door_shot_retire_kind33` | green | green |
+| `door_shot_retire_kind36` | green | green |
+| `door_score_add_bcd` | green | green |
+| `door_mothership_segment_hit` | green | **3 failed** |
+
+Two things follow. **The sweep found a FIFTH X-carrying trampoline wave C never recorded** — the
+`X_OUT %d1` in `door_mothership_segment_hit` — which was unpinned and is now pinned. And **the
+remaining four are blocked by STAGING, not by the poison's determinism**: what stands between every
+award and the next `X_IN` in every staged world is a flag-destroying door call. `door_sound_start`
+sets X deliberately from the tune number; and on the one arm wave C nominated as the way in —
+0x12084's `bne 0x12092`, a capsule cleared without a tune — `door_collision_chain_walk` sits at
+0x1207c, between the award at 0x1206e and anything that could read the flag. A door destroys the CCR
+on purpose, so it erases the question whichever way the poison is set.
+
+**So the honest state of this residual is unchanged for those four, and the closure that would work
+is the OTHER one wave C listed**: `run_bench` reporting the CCR the way it now reports the register
+file, so a case can assert the flag the trampoline left instead of hoping an `abcd` downstream
+observes it. The staging closure is now known NOT to be available — the arm exists, but a door call
+inside it destroys X before any reader — which is worth more than the guess it replaces.
 
 **AND ONE SPAN OF THE TWIN WHOSE ONLY SURFACE IS THE ON-TARGET RUN — named here because the gate
 asks for the surface, not for the absence of one.** Five of `frame.S`'s instructions live in the
@@ -2117,12 +2140,27 @@ anything in the suite; the transcription-order pin reads the FILE'S TEXT and the
 it pins their PRESENCE AND ORDER, not their operands. A wrong bit number, a wrong `HW_MFP_IERB` or
 the wrong polled byte passes every off-target check.
 
+**WAVE D ADDS SIX MORE OF EXACTLY THIS KIND, and they are the pause's.** `frame_head.S`'s build
+split covers the three spins on `A_key_scancode` at 0x10fe6, 0x10fec, 0x10ffe, 0x11006, 0x11008 and
+0x1100e — the original's own instructions on target, the kit's `sched_wait8`/`sched_poll8` off it.
+Same standing, same surface, same reason: a wrong scancode, a wrong polled byte or a wrong branch
+target there assembles only in the target build and shows up on iron as a pause that never ends.
+**Eleven target-only instructions across the two waves, and `python3 atari/smoke.py game` is the
+whole of their coverage.**
+
 **THE SURFACE IS `python3 atari/smoke.py game`**, whose hardware-state vector and timelines both
 depend on that `bset` landing on MFP interrupt-enable B bit 6 and on both spins releasing — measured
 green for this wave, over the whole matrix (title, titlefault, game, gamefault, floppy). It is
 recorded as a row rather than left as prose in `src/asm/README.md` because it is the one class of
 defect in this twin with no off-target surface at all, and because the failure signature on iron is a
 hang or a dead keyboard, which names nothing.
+
+**AND ONE WAVE-D DEFERRAL, noted rather than folded in.** `_cost_case` is written four times, once
+per frame suite, and the four differ only in the entry registers and the stop PC. Collapsing it onto
+`asm_frame_common` is the same move the window pin took during wave D's review; it was left because
+the four copies were written by three different agents and the collapse touches every frame suite at
+once, which is churn a landing wave should not carry. The window pin, the differential, the door
+table, the arming, the `.equ`/window/transcription scrapers and `door_traffic` all DID collapse.
 
 **TWO REVIEW FINDINGS DEFERRED WITH THEIR ARITHMETIC, rather than folded into this wave:**
 
@@ -2143,33 +2181,129 @@ hang or a dead keyboard, which names nothing.
   builds share one control-flow graph and shrink the seam to the spin substitution alone. Recorded
   because it is the shape a second non-leaf twin will hit immediately.
 
-**WHAT WOULD COME NEXT, WITH ITS ARITHMETIC, so the next wave is scoped from measurement rather than
-from a row.** The three remaining frame-loop slices — `[0x10f4e, 0x113c0)`, `[0x113c0, 0x1167c)` and
-`[0x1167c, 0x11c00)` — are **699 instructions**, almost exactly wave C's 703. The transcription is
-therefore the same size; **the trampolines are not**. They hold **64 call sites to 49 distinct
-callees**, six of which are inside the loop's own range and so stay ordinary labels — **43 external
-doors against wave C's 16**, and each door needs its register-to-C-argument contract read out of the
-disassembly and checked against the core. That, and not the transcription, is where wave C's time
-went, so wave D is roughly **2.7x wave C's effort for the same instruction count**.
+**WAVE D IS THE FRAME LOOP'S OTHER THREE SLICES, AND IT BOUGHT NOTHING — +13 CYCLES A FRAME.**
+`frame_head.S` `[0x10f4e, 0x113c0)` (240 instructions, 17 doors), `frame_fire.S` `[0x113c0, 0x1167c)`
+(148, 4) and `frame_spawn.S` `[0x1167c, 0x11c00)` (311, 25 doors over 44 sites) — 699 instructions
+and 43 external doors, exactly as this file scoped them. Every twin is byte-identical to its C over
+the staged worlds, every cost bar is measured-then-set with a handful of cycles' slack, every
+mutation reddens, the whole on-target matrix is green. **And the frame is not faster.** That is the
+result, and it is recorded as the result rather than buried under the twins that produced it.
 
-The prize, measured the same way: the three slices cost **189,985 cycles a frame** between them
-(Hatari, inclusive, over 165 in-game frames), but their twinned children are already at 1.03-1.05x —
-the addressable part is the slices' OWN C, about **70,300 cycles a frame**. At the 2.7x wave C
-actually measured, that twins to ~26,000 and saves **~44,000 cycles a frame**.
+**THE A/B, WHICH IS THE EVIDENCE.** One tree, built twice, the three `ZY_FRAME()` wrappers at
+`src/frame.c`'s call sites the only difference — not a before-and-after across two sessions, where
+the profiling window and the frame mixture both move:
 
-**Whether that reaches the release slot is NOT claimed here**, and the reason is a limit of the
-instrument rather than modesty: `atari/profile.py`'s "work" is clocked from the loop head to the
-buffer flip, and the raster-phase spin sits INSIDE that span — so any frame that missed its slot has
-its measured work inflated by the wait for the next one. The distribution is the honest reading:
-`[2x199 4x100]` says two thirds of the frames already fit and the rest sit just over the boundary,
-where a few thousand cycles moves one. 44,000 should move a large share of the remaining hundred; it
-is not a number that can be turned into a predicted mean.
+| `atari/profile.py frames` | work cycles/frame | cadence | distribution |
+|---|---|---|---|
+| wave D twins OFF | 403,947 | 3.306 | `2x196 4x366 5x1` (563 frames) |
+| wave D twins ON | 403,960 | 3.304 | `2x188 4x350 5x1` (539 frames) |
 
-The un-twinned enemy/actor tier is the other candidate and is SMALLER than it looks: `enemies_move_all`
-is 4.20x the original per call, `actor_script_run` 3.18x, `enemy_move_scripted` 2.73x,
-`enemies_animate_all` 2.44x — but summed over their once-a-frame call counts the whole tier is worth
-about **14,400 cycles a frame**, and `screen_flip_buffers` (6.69x) about 1,100.
+Thirteen cycles on four hundred thousand. No distribution moved; the frame counts differ only
+because the two runs stopped playing at different frames.
 
+**WHY, IN ARITHMETIC — AND THIS FILE'S OWN SCOPING IS WHAT WAS WRONG.** The paragraph this one
+replaces put the prize at ~44,000 cycles a frame, from "the slices' OWN C, about 70,300". Both sides
+were then measured directly. The twins' own instruction cost, read off the cost bands whose heavy
+children are DOORS (so the door's zero charge removes the children rather than the twin):
+
+| slice | the twin's OWN instructions | from |
+|---|---|---|
+| `frame_head.S` | ~1,400 | its boss/asteroid bands, where `playfield_clear` is a door |
+| `frame_fire.S` | ~600 | its two call-free bands |
+| `frame_spawn.S` | ~2,700 | its ordinary band |
+| | **~4,700 a frame** | |
+
+The C they replaced costs the same to within those 13 cycles. **The 70,300 was never there.** It was
+an inclusive Hatari row minus a PARTIAL list of its children, and the children left off the list are
+essentially the whole row: `frame_panel_scroll_and_ship_stage_asm`'s inclusive 166,715 cycles a frame
+is ~110,000 of already-twinned `scroll_page_to_screen_p*` blits, 17,217 of `draw_score_panel`, 20,941
+of `scroll_emit_column_shift2` — and ~1,400 of its own.
+
+**THIS IS WAVE C'S MISTAKE IN A SECOND FORM, so the rule is restated more generally than wave C left
+it.** Wave C's row was 95% busy-wait and was scoped at 7x its truth. Wave D's row was 97%
+already-twinned children and was scoped at 15x its truth. Both times the arithmetic was done on the
+row instead of on the remainder:
+
+> **AN INCLUSIVE PROFILER ROW IS NOT A PRIZE. Subtract the children — all of them, by measurement,
+> not by the ones you happen to have rows for — before scoping a twin from it. And when the
+> remainder is what you are betting on, twin the SMALLEST slice first and take the A/B before
+> committing the rest.** `frame_fire.S` is 148 instructions and four doors; it would have answered
+> the whole wave for a fraction of it.
+
+**SO THE THREE TWINS ARE VERIFICATION-ONLY: BUILT, VERIFIED, AND NOT SHIPPED.** The decision, and
+its reasons, in one place:
+
+* the substitution buys **+13 cycles a frame**, which is nothing;
+* shipping it would put **six pause instructions** on the machine that NO off-target surface can
+  check (`frame_head.S`'s build split — a wrong scancode there hangs the STE and `make test` cannot
+  see it), on top of wave C's five;
+* and it would add **699 instructions** to the target's maintenance surface for that trade.
+
+So `src/frame.c`'s `frame_loop_once` calls the C for those three slices, exactly as it did before
+the wave, and `atari/build.sh`'s asm-twin gate carries a DECLARED CATEGORY for them —
+`ZY_TWIN_VERIFICATION_ONLY` in `include/frame.h`, which moves a twin from the gate's "must be
+called" arm to a "must NOT be called" one and keeps it off the link line entirely. The shipped
+`.PRG` is **68,724 bytes, byte-for-byte the size it was before wave D**. Wave C's `frame.S` still
+ships: its ~19,500 cycles a frame are real.
+
+**WHAT THE WAVE IS WORTH, since the twins are kept rather than deleted.** They are what MEASURED the
+three slices' own cost at ~4,700 cycles a frame — the number that closed the campaign — and
+`test/test_asm_frame_{head,fire,spawn}.py` keeps them pinned to the C over every staged world, so
+the measurement can be re-taken rather than re-argued. **A reader deciding where to spend the next
+wave should read the +13, not the 699.**
+
+**AND THE COST BARS OF A NON-LEAF TWIN READ BELOW 1.00x, which is not a win.** Wave D's bands sit at
+0.019x-1.41x and none is a fidelity claim: the door charges the emulated machine NOTHING for a C body
+while the original executes every `bsr` target in full. The two readings that mean something are the
+CALL-FREE bands (`frame_fire.S`'s +170 and +146 cycles, almost exactly the C-ABI frame a 7-register
+`movem` pair costs) and the bands whose heavy children are doors (`frame_head.S`'s 1,320/1,546, where
+16 cycles is 1.2% of the reading). A band dominated by twinned children barely moves when the twin
+does, and a bar set on one is not a gate.
+
+**WHAT IS ACTUALLY LEFT, MEASURED THE SAME WAY (`profile.py frames`, one tree, this session).** Ours
+403,960 cycles a frame against the shipped binary's **261,383** — a gap of **142,577**, 1.545x. Three
+things are in it, and only the first is a lever anyone has sized:
+
+* **The un-twinned enemy/actor tier, ~14,400 cycles a frame** (10% of the gap): `enemies_move_all`
+  4.57x, `actor_script_run` 3.25x, `enemy_move_scripted` 2.78x, `enemies_animate_all` 2.83x. Each
+  needs its own transcription, battery and bar; the dispatcher shells alone are worth ~1,800.
+* **The already-twinned tier's Hatari residual.** The twins are 1.00x-1.01x on Musashi but 1.03x-1.08x
+  under Hatari's timing, over a base that is most of the frame — `scroll_page_to_screen_p*` at 1.06x
+  is +6,843 a frame by itself. There is no lever here at all: the transcription is the original's own
+  instructions, and the residual is the emulator's model, not the code's.
+* **`ikbd_send_cmd` — MEASURED PER PHASE, AND IN-GAME IT IS EXACT PARITY.** The 4,999-calls-to-105
+  reading that looked like the largest discrepancy in the program (4,981 on the binary that ships,
+  the same artefact) was **window mixing for the third time in this campaign**, and this is the
+  measurement that says so. A third `:quiet` breakpoint on
+  the send site, over the same 300 frames asked of both sides, split by whether a loop-head span
+  holds exactly one buffer flip:
+
+  | | spans | vblanks | sends | per span | per vblank |
+  |---|---|---|---|---|---|
+  | ours, in-game | 315 | 1,002 | 315 | **1.000** | 0.314 |
+  | the original, in-game | 336 | 689 | 336 | **1.000** | 0.488 |
+  | ours, wait/restart | 1 | 76 | 60,467 | 60,467 | 795.6 |
+  | the original, wait/restart | 1 | 45 | 3,757 | 3,757 | 83.5 |
+
+  **One send per frame on both sides, exactly**, which is what the disassembly says by construction:
+  the frame loop has exactly ONE call site (the original's 0x12700; ours the same instruction inside
+  `frame.S`). So `ikbd_send_cmd` contributes NOTHING to the in-game frame gap and is not a lever.
+  The 7,899-vs-84 cycles a call was the same artefact from the other end — 84 is the original's
+  IN-GAME rate, where TDRE has had two vblanks to drain, and 7,899 is our window's WAIT-phase rate.
+  Different phases, so the ratio was never a divergence.
+
+  **WHAT IS LEFT IS A WAIT-PHASE CADENCE DIFFERENCE, and it is not a frame-rate question.** Both
+  sides re-send on every pass of the section-start fire wait — the original's own 0x10f1e is
+  `bsr rand16 / move.b #$16,d0 / bsr ikbd_send_cmd / tst.b / bpl`, with no reply wait and no pacing
+  delay, and `src/init.c`'s `section_tail_wait_for_fire` is that sequence — but ours issues ~795 a
+  vblank where the original issues ~83. **No instruction-level difference was found**:
+  `ikbd_send_cmd` matches 0x14444 (`btst #1,$fffc00` = `hw_read8(OS_HW_ACIA_STATUS) &
+  OS_ACIA_TX_RDY`, 0x02, bit 1) and the wait loop matches 0x10f1e. The two "wait" buckets are also
+  not the same phase mixture (76 vblanks against 45, and the two harnesses press fire by different
+  mechanisms), so the ratio is not yet attributable. It happens while the game is waiting for the
+  player, every observable surface is green, and it is the SAME residual `attract_wait_for_start`
+  already carries: **the per-phase interrogate counter is what would pin it, and this is the
+  in-game half of it.** Recorded there, not scoped as a lever here.
 
 **The count is not kept by hand.** `atari/build.sh`'s asm-twin gate scrapes the `*_asm` names
 `include/*.h` declares — GLOBBED, not prefixed, which is why the sprite and text waves were covered

@@ -267,7 +267,8 @@ _LIB.osh_run_bench.restype = ctypes.c_int
 # them predates all of them, and a bare ctypes `undefined symbol` would name neither the file nor the
 # rebuild — which is exactly what _stale_oracle exists to stop.
 for _symbol in ("osh_bench_door", "osh_bench_door_pc", "osh_bench_door_sp", "osh_bench_door_poison",
-                "osh_bench_door_return", "osh_bench_resume", "osh_bench_seed",
+                "osh_bench_door_return", "osh_bench_door_extend", "osh_bench_resume",
+                "osh_bench_seed",
                 "osh_bench_status_insns_exhausted", "osh_bench_status_sentinel",
                 "osh_bench_status_door"):
     if not hasattr(_LIB, _symbol):
@@ -288,6 +289,18 @@ _LIB.osh_bench_seed.argtypes = [_u32p]
 # What a serviced callback leaves in the CALLER-SAVED file (D1, A0, A1 — and D0 when the core
 # returns nothing), asked of the .so rather than mirrored, so the two cannot disagree about it.
 DOOR_SCRATCH_POISON = _LIB.osh_bench_door_poison()
+
+# ...and the one condition-code bit the door does NOT leave the same way every time. shim.c says why
+# (a stub that dropped its X write-back was invisible while X came back a constant 1); this is that
+# schedule, asked of the .so so a caller pins the alternation rather than assuming its phase.
+_LIB.osh_bench_door_extend.argtypes = [ctypes.c_uint32]
+_LIB.osh_bench_door_extend.restype = ctypes.c_uint32
+
+
+def door_extend(nth):
+    """The X flag the `nth` callback of a bench run (counting from 0) leaves behind."""
+    return _LIB.osh_bench_door_extend(nth)
+
 
 # shim.c's OSH_BENCH_* statuses, ASKED OF THE .so for DOOR_SCRATCH_POISON's reason rather than
 # mirrored here. 1 is what it has always been — "returned to the sentinel" — so a caller that reads

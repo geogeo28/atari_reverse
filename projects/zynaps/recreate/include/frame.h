@@ -541,22 +541,65 @@ frame_exit frame_loop_once(uint8_t *image, uint32_t chance_index_register,
 /* ================================================================================================
  * THE ASM-TWIN SEAM, exactly as include/scroll.h's, include/sprite.h's and include/text.h's.
  *
- * `src/asm/frame.S` transcribes the original's own instruction sequence for the LAST slice — the
- * one the profiler gives no row to, and the one carrying the whole of the frame's remaining excess
- * over the shipped binary. The C above stays compiled and stays the reference; `ZY_FRAME(fn)` names
+ * `src/asm/frame*.S` transcribe the original's own instruction sequence for FOUR of the five
+ * slices — wave C's `frame.S` for the last one, and wave D's `frame_head.S`, `frame_fire.S` and
+ * `frame_spawn.S` for the three before it.
+ *
+ * ONLY WAVE C'S SHIPS, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT. Wave C's twin is worth
+ * ~19,500 cycles a frame and is called by `frame_loop_once` below. Wave D's three are worth
+ * **+13 cycles a frame** — measured A/B on one tree, `STATUS.md`'s wave-D section — so the target
+ * build calls the C for those three slices and the twins are VERIFICATION-ONLY: assembled, run by
+ * `test/test_asm_frame_{head,fire,spawn}.py` against the C over every staged world, and never
+ * linked into the game. What that buys is the transcription itself (the slices' own cost, pinned at
+ * ~4,700 cycles a frame, which is the measurement that closed the campaign); what shipping them
+ * would cost is 699 instructions of maintenance and six pause instructions inside `frame_head.S`'s
+ * build split that NO off-target surface can check — a wrong scancode there hangs the machine and
+ * `make test` cannot see it. `ZY_TWIN_VERIFICATION_ONLY` below is how the build gate knows.
+ *
+ * "NEVER LINKED" IS ENFORCED, NOT MERELY TRUE TODAY: `build.sh` drops an object whose twins are all
+ * verification-only, and REFUSES a `.S` that mixes the two categories — because such a file would
+ * have to be kept for its shipped twin, carrying the other into the .PRG as dead code while this
+ * paragraph went on promising the opposite.
+ *
+ * The C above stays compiled and stays the reference; `ZY_FRAME(fn)` names
  * the one to call, so a reader greping ../../names.txt for `frame_resolve_hits_and_game_state`
  * still lands on every place it is reached from. atari/build.sh scrapes the `#ifdef` below into its
  * seam defines, links src/asm/, and GATES that the twin really arrived. The host differential build
  * never defines it.
  *
- * THIS SLICE HAS EXACTLY ONE ON-TARGET CALL SITE (`frame_loop_once`, in src/frame.c), which is why
- * the build gate covers it completely: an unwrapped call site would leave the twin UNREFERENCED and
- * redden the gate. The blind spot wave B found — an intra-file call to the bare C core, which is not
- * an undefined reference and so is invisible to the gate — needs a SECOND call site to bite, and
- * this slice has none. `g_frame_resolve_hits_and_game_state` names the bare core, but that is the
- * C's own file naming its own definition, which is the case build.sh's comment explicitly allows.
+ * THE SHIPPED SLICE HAS EXACTLY ONE ON-TARGET CALL SITE (`frame_loop_once`, in src/frame.c), which
+ * is why the build gate covers it completely: an unwrapped call site would leave that twin
+ * UNREFERENCED and redden the gate. The blind spot wave B found — an intra-file call to the bare C
+ * core, which is not an undefined reference and so is invisible to the gate — needs a SECOND call
+ * site to bite, and this slice has none. The `g_frame_*` glues name the bare cores, but that is the
+ * C's own file naming its own definitions, which is the case build.sh's comment explicitly allows.
+ *
+ * FOR THE THREE VERIFICATION-ONLY TWINS THE GATE ASKS THE OPPOSITE QUESTION and is just as strict:
+ * each must be DEFINED by an asm object and must NOT be referenced by any core object. A wrapper
+ * left on one of their call sites therefore reddens the build rather than quietly shipping a twin
+ * this file says is not shipped.
  * ============================================================================================= */
+/* `ZY_TWIN_VERIFICATION_ONLY` — a twin that is verified and deliberately NOT shipped. The macro and
+ * the whole argument for the category live in asm_twin.h, because `atari/build.sh` globs every
+ * header for the marker and a definition owned by one subsystem is unreachable from the others.
+ *
+ * THE THREE MARKED PROTOTYPES BELOW ARE NOT READ BY THE COMPILER — say it plainly, because a reader
+ * who greps one of these names finds a declaration and no call site anywhere, which is exactly what
+ * a LOST seam wrapper looks like. Nothing in `src/` calls them; their objects are dropped from the
+ * link. They are here so that `build.sh`'s gate can see the marker beside the name and hold the
+ * "defined, and deliberately not called" contract, and so that
+ * `test_constants.py::test_every_verification_only_twin_is_named_by_a_test_suite` can require the
+ * suite that verifies each one to still exist. Delete them and the category goes empty: the gate
+ * stops distinguishing "not shipped on purpose" from "the wrapper fell off", and nothing asks
+ * whether `test/test_asm_frame_{head,fire,spawn}.py` are still there. */
+#include "asm_twin.h"
+
 #ifdef ZY_ASM_FRAME
+ZY_TWIN_VERIFICATION_ONLY unsigned frame_panel_scroll_and_ship_stage_asm(uint8_t *image);
+ZY_TWIN_VERIFICATION_ONLY void frame_drone_and_fire_stage_asm(uint8_t *image, uint32_t ship,
+                                                              uint8_t joystick);
+ZY_TWIN_VERIFICATION_ONLY void frame_spawn_and_move_stage_asm(uint8_t *image, uint32_t chance_index,
+                                                              uint32_t ground_spawn_y);
 frame_exit frame_resolve_hits_and_game_state_asm(uint8_t *image, uint32_t sound_channel);
 #define ZY_FRAME(fn) fn##_asm
 #else

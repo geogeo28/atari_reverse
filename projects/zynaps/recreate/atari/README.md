@@ -277,43 +277,109 @@ frame that fits its budget takes exactly 2 vblanks, and one that overruns by a s
 **The cadence is quantised**, a mean is a mixture rather than a rate, and the DISTRIBUTION is the
 finding. That is also why `smoke.py` carries a histogram and not an average.
 
-## The measurement, original against ours
+## The measurement, original against ours — THE CAMPAIGN'S CLOSING TABLE
 
-Both sides clocked by two repeating `:quiet` breakpoints — the frame loop's head and
-`screen_flip_buffers` — which print `VBL=` and `FrameCycles=` on every arrival and cost the emulated
-machine nothing. `st` / `TOS104US.img` / 4 MB / section 1. **Every column below was re-taken on one
-tree for wave B**, so the two sides and the two "before" columns are one measurement session:
+Both sides by `atari/profile.py frames` and `... original-frames`: the same `play` binary pair, the
+same session, the same tree, each clocked from the frame loop's head to `screen_flip_buffers` by two
+repeating `:quiet` breakpoints that cost the emulated machine nothing. `st` / `TOS104US.img` / 4 MB.
 
-| | the original | ours (`play`) | ratio | before wave B | before any twin |
-|---|---|---|---|---|---|
-| frames clocked | 532 | 563 | | 555 | 534 |
-| vblanks per frame, mean | **2.08** | **3.41** | 1.6x | 4.07 | 7.38 |
-| the distribution | 2 x509, 3 x2, 4 x21 | 2 x165, 3 x2, 4 x396 | | 4 x536, 5 x1, 6 x18 | 4 x10, 6 x505, 7 x2, 8 x15 |
-| the mode, and its frame rate | **2 = 25 fps** | **4** (2 on the judged run) | | 4 = 12.5 fps | 6 = 8.3 fps |
-| frames on budget (2 vblanks) | 509 of 532 (95.7%) | **165 of 563 (29.3%)** | | 0 of 555 | 0 of 534 |
-| loop head to flip, mean cycles | **262,244** | **417,049** | **1.59x** | 500,284 | 815,488 |
-| ...min / max | 206,484 / 481,084 | 252,324 / 485,728 | | 475,576 / 799,956 | 562,768 / 1,496,000 |
+| | the original | ours | ratio |
+|---|---|---|---|
+| frames clocked | 531 | 524 | |
+| vblanks per frame, mean | **2.075** | **3.294** | 1.59x |
+| the distribution | `2x510 3x2 4x19` | `2x185 4x339` | |
+| the mode, and its frame rate | **2 = 25 fps** | **4 = 12.5 fps** | |
+| frames on budget (2 vblanks) | 510 of 531 (**96.0%**) | 185 of 524 (**35.3%**) | |
+| work cycles a frame, mean | **261,383** | **400,058** | **1.531x** |
+| ...min / max | 205,488 / 480,688 | 235,280 / 485,988 | |
 
-The `play` build's mode is 4 where the `game` build's is 2, and the difference is the window rather
-than the code: `play` runs on past 300 frames into a stretch with more on screen. The judged run is
-the `game` one below.
+**READ "work" WITH ITS CAVEAT, because it is the same one that mis-scoped two waves.** `work` is
+clocked from the loop head to the buffer flip, and the frame's RASTER-PHASE SPIN sits inside that
+span — so any frame that missed its release slot has its measured work inflated by the wait for the
+next one. The number is an upper bound on real compute, not a compute figure, and the excess over
+the original is smaller than 138,675 by however much of that spin our slower frames sit through.
+That is why the DISTRIBUTION, not the mean, is what this table is really about.
 
-The long entries the original's side used to show (45 vblanks x2 in the previous edition's window)
-are a death and the fire wait after it, which is not a frame; this wave's original window has none.
+**The judged figure is the `game` build's own 300-frame record**, a different and kinder window
+(`play` runs on into a busier stretch): **2.68 vblanks a frame, `[2x199 4x100 5x1]`, 18.7 fps**, from
+a sample of six `game` and two `gamefault` runs spanning 2.67-2.69. Two thirds of the judged run is
+on the original's own budget. `PACING_MEAN_CEILING_VBLS` is set from the worst of those eight plus
+the usual 36 vblanks: 807 + 36 = 843, **2.81** (was 2.82).
 
-The `game` build's own record is the judged figure — **2.67 vblanks a frame over its 300 pinned
-frames, about 199 at 2 and 100 at 4, at most one at 5** (2.80 / [2x180 4x119] after wave B, 3.75 /
-[2x38 4x262] after wave A, 5.73 / one over before any twin) — which is what makes the histogram a surface `smoke.py` can judge rather than a
-reading somebody has to take by hand.
+**THE CAMPAIGN, WAVE BY WAVE:**
 
-**THAT FIGURE IS NO LONGER DETERMINISTIC TO THE SECOND DECIMAL, and the win is why.** Six `game` runs
-of one binary gave 2.67, 2.67, 2.69, 2.69, 2.66, 2.70 and two `gamefault` runs gave 2.67 and 2.66 — a
-12-vblank spread over 300 frames, because ~65% of the frames now finish NEAR the release boundary
-where a handful of cycles moves a frame between 2 slots and 4. While every frame overran, nothing sat
-on the boundary and the histogram repeated to the frame. `PACING_MEAN_CEILING_VBLS` is therefore set
-from the WORST of the eight runs plus the same 36-vblank slack every ceiling in this file's history
-has used: 852 + 36 = 888 vblanks, **2.96** (was 3.87, was 5.85). `atari/smoke.py` carries the
-arithmetic beside the constant.
+| wave | what it twinned | judged cadence | fps |
+|---|---|---|---|
+| before any twin | — | 5.73 | 8.7 |
+| A | the scroll path | 3.75 | 13.3 |
+| B | the sprite and text paths | 2.80 | 17.9 |
+| C | the frame loop's last slice | 2.67 | 18.7 |
+| **D** | **the other three slices — NOT SHIPPED** | **2.68** | **18.7** |
+
+Wave D's three twins are **verification-only**: measured at **+13 cycles a frame** by an A/B on one
+tree (403,947 with them off, 403,960 on), so the game keeps the C and the twins stay as the
+measurement. `include/frame.h`'s seam block and `STATUS.md`'s wave-D section carry the decision; the
+shipped `.PRG` is 68,724 bytes, byte-for-byte its pre-wave-D size.
+
+## The per-tier attribution of what is left
+
+`atari/profile.py compare`, ours over a 1000-vblank window against the shipped binary's.
+
+Every row re-taken on the binary that SHIPS (the verification-only build), so the table has one
+provenance throughout.
+
+| tier | ours/call | original/call | ratio | standing |
+|---|---|---|---|---|
+| `scroll_page_to_screen_p*` (wave A) | 118,495 | 111,761 | **1.06x** | twinned |
+| `scroll_emit_column_shift2` (wave A) | 32,992 | 31,599 | **1.04x** | twinned |
+| `draw_score_panel` (wave B) | 17,088 | 16,495 | **1.04x** | twinned |
+| `draw_char` (wave B) | 1,959 | 1,772 | **1.11x** | twinned |
+| the frame loop's last slice (wave C) | — | — | 1.02-1.04x | twinned, shipped |
+| the other three slices (wave D) | — | — | — | twinned, **not shipped**: +13 cyc |
+| `enemies_move_all` | 12,982 | 2,848 | **4.56x** | un-twinned |
+| `actor_script_run` | 1,989 | 611 | **3.26x** | un-twinned |
+| `enemy_move_scripted` | 2,293 | 823 | **2.79x** | un-twinned |
+| `enemies_animate_all` | 3,231 | 1,171 | **2.76x** | un-twinned |
+| `screen_flip_buffers` | 1,291 | 196 | **6.59x** | un-twinned, ~1,100 a frame |
+| `ikbd_send_cmd` | 7,887 | 84 | 94.2x **in this window** | **1.000 send/frame both sides in-game** |
+
+**`ikbd_send_cmd` is resolved and is not a lever — and its row above is left in to show the trap.**
+It reads as 4,981 calls to the original's 105 at 7,887 cycles a call against 84, which is the largest
+discrepancy anywhere in the profile and is an ARTEFACT OF THE WINDOW, not a fact about the code. Measured per
+PHASE, with a third breakpoint on the send site over the same 300 frames, it is **exactly one send
+per frame on both sides** (315/315 and 336/336): the frame loop has one call site each, and the
+whole apparent gap was a profiling window that was nearly all attract on our side and nearly all
+gameplay on the original's. Window mixing, a third time. What remains is a wait-phase cadence
+difference (795 sends a vblank against 83, while the game waits for the player to press fire) with
+no instruction-level difference found and no observable consequence; `STATUS.md` records it against
+the `attract_wait_for_start` residual that already scopes the per-phase counter.
+
+## The verdict, and where the campaign closes
+
+The two distributions differ by **138,675 cycles a frame** (400,058 against 261,383), read with the
+raster-spin caveat above. Three things are in it, and none is a lever big enough to reopen:
+
+* **The un-twinned enemy/actor tier: ~14,400 cycles a frame**, about 10% of the gap. Real, and the
+  only part anyone has sized — but it is ~15 separate transcriptions with ~15 batteries and ~15 cost
+  bars, and the dispatcher shells alone are worth only ~1,800 (`enemies_move_all`'s own body is
+  2,914 against 1,121). A campaign, not a lever.
+* **The already-twinned tier's emulator-model residual, where there is no lever at all.** The twins
+  are 1.00x-1.01x on Musashi and 1.03x-1.08x under Hatari over a base that is most of the frame —
+  `scroll_page_to_screen_p*` alone is +6,843 a frame at 1.06x. The transcription IS the original's
+  own instruction sequence; the residual is the emulator's timing model of it, not something in the
+  code to remove.
+* **`ikbd_send_cmd`: nothing**, per the measurement above.
+
+**THE FLOOR FOR "worth writing asm for" IS NOW MEASURED, and it closes the recipe.** A trampoline
+costs ~150 cycles a site, and wave D's whole 699-instruction transcription moved 13 cycles. So a
+candidate has to clear several thousand cycles a frame **as a remainder** — subtract every child by
+measurement, never read a prize off an inclusive row — and after waves A through D nothing in the
+twin recipe does. The enemy/actor tier clears it only as a multi-wave campaign.
+
+**So the campaign closes here: 2.68 vblanks a frame against the original's 2.075, two thirds of the
+judged run on budget, every named hot routine within 1.03x-1.08x of the original's own instructions,
+and the remaining distance accounted for as enemy tier (~14,400) + emulator-model residual + nothing
+from ikbd.** What would move the mode again is not another twin.
 
 ## Where the cycles go, routine by routine, on both sides
 
@@ -425,7 +491,7 @@ is untouched and, re-measured with the whole tree twinned, is NOT the next lever
 but only 2,914 cycles a frame of its own body against the original's 1,121 — the bullet under "What
 the remaining 1.6x is" has the arithmetic.
 
-## The asm twins — how the scroll, sprite and text paths got to 1.02x-1.08x
+## The asm twins — how the scroll, sprite, text and frame paths were transcribed
 
 A **twin** is a hand-written m68k transcription of the original binary's own instruction sequence for
 one routine, carrying the C signature of the verified core it replaces. `../src/asm/README.md` is the
@@ -480,16 +546,15 @@ recipe in full; the shape of the argument is short:
   left 680,000 — still over the 640,000 that four vblanks buys, so on its own it would not have moved
   one frame's bucket. The three routines together took 438,000 down to about 143,000, which is
   295,000 off, and THAT crossed the line: the mode moved from 6 vblanks to 4.
-* **What is left is ONE routine, and the arithmetic says so unambiguously.** Reaching the original's
-  cadence means ~262,000 cycles a frame and we are at **417,049** — a gap of ~155,000. Every named
-  routine in the frame is now within **1.03x** of the original (the twins at 1.02x-1.03x on Hatari,
-  the rest of the C small enough not to matter), which accounts for about 4,000 of it. The remainder
-  is **`frame_resolve_hits_and_game_state`** (0x11d30..0x1296e), which `frame_loop_once` reaches by a
-  TAIL CALL — Hatari attributes a `jmp` no arrival, so it has no row of its own and appears only as
-  `frame_loop_once`'s **211,784 cycles a frame of "self"**, of which its named children account for
-  ~12,000. It is ~3,100 bytes of the original across a dozen inlined static helpers, with an X-flag
-  protocol carried between two of its passes, so it is **wave C**: the recipe holds, but the
-  transcription has to be sliced rather than written out in one file.
+* **IT WAS NEVER "ONE ROUTINE", AND THIS BULLET USED TO SAY IT WAS.** It named
+  `frame_resolve_hits_and_game_state`'s 211,784 cycles a frame of `frame_loop_once` "self" as the
+  whole remainder. That row was ~95% busy-wait; wave C twinned it and collected ~19,500, not 140,000.
+  The bullet was then rewritten to name the loop's other three slices at ~70,300; that figure was an
+  inclusive row minus a partial child list, and wave D twinned all three for **+13 cycles a frame**.
+  **Twice the remainder was read off a row instead of measured as a remainder, and twice it was an
+  order of magnitude out.** What is actually left, measured as a remainder on one tree, is in "The
+  per-tier ratio table, and what is left" above; `src/asm/README.md`'s "What wave D added" carries the
+  rule that would have caught both.
 * **`enemies_move_all` is NOT the next lever, and this is the measurement that says so.** Its
   inclusive cost is 12,976 cycles a frame against the original's 3,387, which reads like a
   9,589-cycle prize — but its own body is 2,914 against the original's 1,121, so a twin of the
@@ -599,16 +664,17 @@ in the source:
   skips the first wait and is released a single vblank later — the same parity effect that puts two
   3-vblank frames in the shipped binary's own 542. A zero-tolerance floor at two would have reddened
   a correct run.
-* **the mean under 2.96 vblanks** — the derivation is eighteen frames each slipping one release slot,
+* **the mean under 2.81 vblanks** — the derivation is eighteen frames each slipping one release slot,
   and a slot is two vertical blanks: 36 vblanks over 300 frames is 0.12 on the mean. It is applied to
-  the WORST of eight runs (2.84, 852 vblanks) rather than to their mean, because after wave B the
-  cadence is **no longer reproducible to the second decimal**: one binary measured 2.80, 2.82, 2.84,
-  2.80, 2.84, 2.80 on `game` and 2.80 twice on `gamefault`. That is a consequence of the win, not of
-  anything getting flakier — ~60% of the frames now finish NEAR the release boundary, where a handful
-  of cycles moves a frame between 2 slots and 4, whereas while every frame overran nothing sat on the
-  boundary and the histogram repeated to the frame. 852 + 36 = 888, and 888 / 300 = **2.96 exactly**,
-  so unlike the 3.87 it replaces this ceiling carries no rounding slop. Measuring from the worst run
-  is also what pays for the jitter: a regression still gets the full 36 vblanks. The 0.12 is
+  the WORST of eight runs rather than to their mean, because since wave B the cadence is **no longer
+  reproducible to the second decimal**: ~65% of the frames now finish NEAR the release boundary,
+  where a handful of cycles moves a frame between 2 slots and 4, whereas while every frame overran
+  nothing sat on the boundary and the histogram repeated to the frame. That is a consequence of the
+  win, not of anything getting flakier. Wave D's sample, on the binary that ships, is six `game` runs
+  at 2.68, 2.68, 2.68, 2.67, 2.67, 2.68 and two `gamefault` at 2.68 and 2.69 — worst 2.69, 807
+  vblanks. 807 + 36 = 843, and 843 / 300 = **2.81 exactly**, so like the 2.96 and 2.82 it replaces
+  this ceiling carries no rounding slop. Measuring from the worst run is also what pays for the
+  jitter: a regression still gets the full 36 vblanks. The 0.12 is
   deliberately NOT re-derived as a share of the new mean, which would shrink the slack with every win
   and make the check tighter than the evidence for it. (An earlier draft of the pre-twin ceiling used
   6.0 and was measured to be forty times looser than its own justification claimed.)

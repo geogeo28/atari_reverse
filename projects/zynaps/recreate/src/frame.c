@@ -1628,6 +1628,10 @@ frame_exit frame_resolve_hits_and_game_state(uint8_t *image, uint32_t sound_chan
  * ============================================================================================= */
 frame_exit frame_loop_once(uint8_t *image, uint32_t chance_index_register,
                            uint32_t ground_spawn_y_register) {
+    /* THE FIRST THREE SLICES RUN THE C ON TARGET, ON PURPOSE — `include/frame.h`'s seam block says
+     * why at length. Their twins exist, are verified, and are NOT called here: wave D measured them
+     * at +13 cycles a frame, so the substitution buys nothing and would cost six pause instructions
+     * that no off-target surface can check. Only the last slice's twin ships. */
     if (frame_panel_scroll_and_ship_stage(image))
         frame_drone_and_fire_stage(image, A_player_record, image[A_joystick_state]);
     frame_spawn_and_move_stage(image, chance_index_register, ground_spawn_y_register);

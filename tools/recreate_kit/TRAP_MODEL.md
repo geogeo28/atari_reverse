@@ -1845,6 +1845,28 @@ scratch file across the call, or that branched on a flag its callee happened to 
 here and broken on the STE, and nothing off target could say so. So the door destroys them on purpose,
 with a distinctive value (`osh_bench_door_poison()`), and `test_callback_door.py` requires the wreckage.
 
+**AND ONE OF THE FIVE CONDITION CODES IS A SCHEDULE RATHER THAN RUBBLE — read this before writing a
+stub that carries X.** N, Z, V and C come back set on every callback. **X ALTERNATES**: set on the
+first callback of a run, clear on the second, and so on, per `osh_bench_door_extend(nth)`, which is
+exported so a caller pins the schedule instead of mirroring its phase (`emu.door_extend`). The
+counter resets in `osh_run_bench` and is deliberately NOT reset by `osh_bench_resume`, so the phase
+is a property of the run and is reproducible per case.
+
+**Why it is not simply "rubble".** X is the one flag a stub carries ACROSS a call — it reads the
+68000's X in, hands its core an `extend` argument and writes the answer back, because the next
+`abcd` adds it. While X came back a constant 1, a stub that DROPPED that write-back handed the next
+chain the same 1 the poison would have left anyway, and the whole omission was invisible: measured
+on Zynaps' wave-C twin, deleting the write-back from all four of its X-carrying trampolines left its
+146-case suite green. Alternating removes the coincidence.
+
+**What it does NOT buy, stated because the measurement said so.** Re-running that sweep with the
+alternation in place turned ONE of five stubs red, not four of four. The other four are blocked by
+STAGING rather than by the poison — a flag-destroying door call sits between every award and the
+next reader — so a green run is not evidence that a stub's X marshalling is pinned. And the schedule
+is a bare parity, so an X-carrying callback at a fixed EVEN distance from the previous one still sees
+a constant X. `test_callback_door.py::test_the_doors_extend_alternates_so_a_dropped_write_back_reddens`
+pins the schedule itself.
+
 A core declared `returns=False` — `void` — gets that poison in D0 as well. Its D0 on the machine is
 whatever the callee happened to leave, and reading the host's arbitrary return register would turn a
 value that is undefined on target into a definite number here.

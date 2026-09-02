@@ -456,7 +456,8 @@ Two more things the runner does, both because a twin has no other surface for th
   nargs)}, lib=harness._lib)` — and the kit half names no game. It is a **plain C call**, including
   what a C call wrecks: the declared arguments off the emulated stack, a host pointer substituted for
   the image base, the result in D0, the caller-saved file and the condition codes destroyed as the
-  real core destroys them, and the stub's `rts`. An unregistered slot **refuses**. See
+  real core destroys them (**bar X, which ALTERNATES per callback** — `TRAP_MODEL.md` says why), and
+  the stub's `rts`. An unregistered slot **refuses**. See
   `TRAP_MODEL.md`, "The callback door", for the band, the stub shape and why the door charges no
   cycles;
 * **the callee-saved file is seeded and required back.** `%d2`-`%d7`/`%a2`-`%a6` enter with a

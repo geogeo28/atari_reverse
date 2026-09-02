@@ -2045,9 +2045,11 @@ VBL_HZ = 50
 # frames. `check_the_pacing` refuses a run whose frame count is not this one instead of applying
 # them anyway — a longer run reaches a second life, whose 4-vblank frames are a different mixture.
 PACING_BASELINE_FRAMES = 300
-# What this tree measures, and the ceiling a run must stay under. MEASURED at 2.66-2.70 mean vblanks
-# a frame over those 300 frames — about 196-201 at 2, the rest at 4, at most one at 5 — across six
-# `game` runs and two `gamefault` runs of the same binaries.
+# What this tree measures, and the ceiling a run must stay under. MEASURED at 2.67-2.69 mean vblanks
+# a frame over those 300 frames — about 197-199 at 2, the rest at 4, at most one at 5 — across six
+# `game` runs and two `gamefault` runs of the same binaries. THAT IS THE ONE LIVE SAMPLE in this
+# comment block: every figure below is from it, and where an older sample is quoted it is labelled
+# as history.
 #
 # THE ASM TWINS ARE WHAT MOVED IT, in three waves. The scroll path (the twenty page blits, the two
 # column emitters and the tile emitter) took it from 5.73 to 3.75; the SPRITE and TEXT paths — the
@@ -2064,16 +2066,33 @@ PACING_BASELINE_FRAMES = 300
 # a frame, which is the 2.80 -> 2.67 above. STATUS.md's wave C note carries the arithmetic.
 #
 # THE CADENCE IS NO LONGER REPRODUCIBLE TO THE SECOND DECIMAL, and that is a consequence of the win
-# rather than of anything getting flakier. The same binary measured 2.67, 2.67, 2.69, 2.69, 2.66 and
-# 2.70 — a 12-vblank spread over 300 frames — because ~65% of the frames now finish NEAR the release
-# boundary, where a handful of cycles either way moves a frame between 2 slots and 4. While every
-# frame overran (the 5.73 and 3.75 eras), nothing sat on the boundary and the histogram repeated to
-# the frame; the old comment's claim of exact reproducibility was true then and is not true now.
+# rather than of anything getting flakier. ~65% of the frames now finish NEAR the release boundary,
+# where a handful of cycles either way moves a frame between 2 slots and 4; while every frame
+# overran (the 5.73 and 3.75 eras) nothing sat on the boundary and the histogram repeated to the
+# frame, so the old comment's claim of exact reproducibility was true then and is not true now.
 #
-# SO THE CEILING IS SET FROM THE WORST OF THE EIGHT RUNS, NOT FROM THEIR MEAN: 2.70 (810 vblanks)
+# THE SPREAD IS SMALLER THAN IT WAS, AND THE ARGUMENT STILL HOLDS. Wave C's sample of one binary was
+# 2.66-2.70, a 12-vblank spread; wave D's, on the binary that ships, is 2.67-2.69 — 801 to 807
+# vblanks, a 6-vblank spread. Six vblanks is still two frames' worth of release slot, and it is
+# still enough that the MEAN of a sample would understate what an honest run can produce, which is
+# why the ceiling is set from the WORST run below and not from the mean. A narrower spread tightens
+# the ceiling (2.82 -> 2.81) precisely because the worst run improved; it does not change the
+# method.
+#
+# WAVE D RE-TOOK THE SAMPLE ON THE BINARY IT ACTUALLY SHIPS, and the ceiling tightens by one
+# hundredth. Wave D's three twins are VERIFICATION-ONLY (include/frame.h's seam block says why), so
+# the game runs the same C for those three slices it ran before the wave — and this is the tightest
+# sample this file has seen: six `game` runs at 2.68, 2.68, 2.68, 2.67, 2.67, 2.68 and two
+# `gamefault` at 2.68 and 2.69, worst run 2.69, no frame past 5 vblanks.
+#
+# TIGHTENED RATHER THAN LEFT, because the rule this file has always used is "the worst run plus 36
+# vblanks", and that arithmetic now gives 2.81. The 36 is NOT re-derived as a share of the new mean
+# — see the paragraph after next, which is the reason it never is.
+#
+# SO THE CEILING IS SET FROM THE WORST OF THE EIGHT RUNS, NOT FROM THEIR MEAN: 2.69 (807 vblanks)
 # plus the same slack every ceiling in this file's history has used — EIGHTEEN frames slipping one
 # release slot, a slot being 2 vertical blanks, so 36 vblanks over 300 frames is 0.12 on the mean.
-# 810 + 36 = 846 vblanks, and 846 / 300 = 2.82 exactly, so there is no rounding slop in this one
+# 807 + 36 = 843 vblanks, and 843 / 300 = 2.81 exactly, so there is no rounding slop in this one
 # (3.87 carried a spare vblank from rounding; this does not).
 #
 # The 0.12 is deliberately NOT re-derived as a share of the new mean, which would shrink the slack
@@ -2081,19 +2100,21 @@ PACING_BASELINE_FRAMES = 300
 #
 # MEASURING AGAINST THE WORST RUN IS WHAT PAYS FOR THE JITTER, and it is worth being exact about
 # what that leaves: a regression gets the full 36 vblanks of slack above the worst run this tree
-# produced, and 48 above its best (798). The spread is absorbed by the choice of baseline, not
-# subtracted from the tolerance. What it does cost is the OTHER direction — the eight samples are
-# from one host and one tree, so a ninth run somewhere else could sit above 2.70 for no reason of
-# the code's, and the honest response to that would be a wider baseline, never a raised ceiling.
+# produced (2.69, 807 vblanks), and 42 above its best (2.67, 801). The spread is absorbed by the
+# choice of baseline, not subtracted from the tolerance. What it does cost is the OTHER direction —
+# the eight samples are from one host and one tree, so a ninth run somewhere else could sit above
+# 2.69 for no reason of the code's, and the honest response to that would be a wider baseline,
+# never a raised ceiling.
 # The frame count is pinned above for the reason it always was — the `play` build's longer run
 # reaches a second life whose mixture is a different one.
 #
 # THE `gamefault` CONTROL WAS MEASURED AGAINST THE SAME CEILING rather than exempted from it,
 # because this check sits in `mode_game`'s FAULT-BLIND set and a tolerance that had only ever seen
-# one mode would be one the control could redden by accident. Measured: `gamefault` gives 2.67 and 2.66
+# one mode would be one the control could redden by accident. Measured: `gamefault` gives 2.68 and 2.69
+# — and the 2.69 is the WORST of all eight runs, i.e. the one the ceiling is derived from
 # — the dropped section-chain step is a one-off panel repaint, not per-frame work, so it moves what
 # is DRAWN and not what a frame costs.
-PACING_MEAN_CEILING_VBLS = 2.82
+PACING_MEAN_CEILING_VBLS = 2.81
 # ...and how many frames may reach the histogram's last slot (PACING_SLOTS - 1 = seven vblanks
 # or more) — an ABSOLUTE COUNT (the share form was measured 40x looser than its comment claimed,
 # see the git history). IT IS ZERO, AND THAT IS WHAT WAS MEASURED: 0 of 300 on all eight runs the

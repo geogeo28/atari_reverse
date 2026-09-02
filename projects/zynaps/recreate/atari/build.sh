@@ -386,8 +386,43 @@ echo "   $SHIM_COUNT shim symbols vs $CORE_COUNT core symbols, no name in both"
 # a declaration is a name followed by an open paren, and no comment writes one.
 #
 # `nm -u` lists an object's undefined symbols, i.e. exactly what it calls out to.
-declared_twins() { grep -ohE '\b[a-z0-9_]+_asm\(' "$REC"/include/*.h | tr -d '(' | sort -u; }
+# COMMENT LINES ARE DROPPED FIRST, and the older comment above ("no comment writes one") is why this
+# is here: it was true until a comment cited a prototype. `include/asm_twin.h`'s usage example does
+# exactly that, and before this filter `my_core_asm` was scraped as a declared twin and the gate
+# demanded a `.S` define it (measured). A declaration in these headers never opens with `*` or `/`.
+# `-h` IS LOAD-BEARING: given several files, grep prefixes every line with `filename:`, and the
+# `^ZY_TWIN_VERIFICATION_ONLY` anchor below then matches nothing at all — the whole category goes
+# quietly empty and every marked twin is demanded as shipped (measured).
+strip_comments() { grep -vhE '^[[:space:]]*(\*|/)' "$@"; }
+declared_twins() {
+  strip_comments "$REC"/include/*.h | grep -ohE '\b[a-z0-9_]+_asm\(' | tr -d '(' | sort -u
+}
 undefined_in() { m68k-elf-nm -u $1 | awk 'NF == 2 {print $2}' | sort -u; }
+
+# A TWIN THAT IS VERIFIED BUT DELIBERATELY NOT SHIPPED, declared as such in the header with
+# `ZY_TWIN_VERIFICATION_ONLY` (include/frame.h defines the marker and says why the category exists).
+# Wave D's three frame twins are the case: transcribed, differentially verified against the C over
+# every staged world, and measured at +13 cycles a frame — so the game runs the C and the twins stay
+# as the measurement. The marker sits on the SAME LINE as the name, which is what lets one grep pair
+# them; a multi-line prototype puts the marker and the name on its first line for that reason.
+# NO MATCHES IS A LEGAL ANSWER — the `|| true` is on the GREP and it is load-bearing. This script
+# runs under `set -euo pipefail`, so a grep that finds nothing exits 1, the pipeline inherits it and
+# the assignment below aborts the build with no message at all. MEASURED: removing the last marker
+# from the headers killed `build.sh` silently at the gate's first line, which is the worst possible
+# behaviour for the one check whose entire purpose is to be loud.
+# THE MARKER MUST OPEN THE LINE, and both halves of this are measured rather than assumed.
+# `^ZY_TWIN_VERIFICATION_ONLY[[:space:]]` excludes the `#define` itself and any PROSE that cites the
+# macro — build.sh's older scraper leans on "no comment writes a `(`", and that stops being true the
+# moment a comment quotes a prototype (measured: a comment naming the macro and `draw_char_asm(`
+# was scraped as a twin). And `[^(]*` after the marker takes the FIRST `_asm(` on the line rather
+# than the last: with a greedy `.*`, `ZY_TWIN_VERIFICATION_ONLY void a_asm(int); void b_asm(int);`
+# returned `b_asm` — classing the marked twin as shipped and the unmarked one as verification-only,
+# an exact inversion (measured on a synthetic header).
+verification_only_twins() {
+  { strip_comments "$REC"/include/*.h \
+    | grep -ohE '^ZY_TWIN_VERIFICATION_ONLY[[:space:]].*[a-z0-9_]+_asm\(' || true; } \
+    | sed -E 's/^ZY_TWIN_VERIFICATION_ONLY[^(]*[^a-z0-9_]([a-z0-9_]+_asm)\(.*/\1/' | sort -u
+}
 
 echo ">> asm-twin gate (the call sites must reach the twins, not the C)"
 TWINS=$(declared_twins)
@@ -396,14 +431,23 @@ TWIN_COUNT=$(echo "$TWINS" | grep -c . || true)
   echo "ERROR: no *_asm twin is declared in $REC/include/*.h, so this gate would pass over any"
   echo "       build at all. Its scrape has stopped matching the headers."
   exit 1; }
+VERIFY_ONLY=$(verification_only_twins)
+VERIFY_ONLY_COUNT=$(echo "$VERIFY_ONLY" | grep -c . || true)
+# NO SEPARATE "the marker names something that is not a twin" ARM, because it cannot fire: both
+# scrapers read the same `_asm(` pattern out of the same headers, so a marked name is a declared one
+# by construction. A MISSPELT one is caught by MISSING below instead - measured, by misspelling
+# `frame_panel_scroll_and_ship_stage_asm` in the header and watching MISSING name it.
+SHIPPED=$(comm -23 <(echo "$TWINS") <(echo "$VERIFY_ONLY" | grep . || true))
 ASM_DEFINED=$(defined_globals "$ASM_OBJECTS")
 CORE_WANTED=$(undefined_in "$CORE_OBJECTS")
+# BOTH categories must be DEFINED by an asm object: a verification-only twin that stopped assembling
+# is not a decision, it is a twin that vanished.
 MISSING=$(comm -23 <(echo "$TWINS") <(echo "$ASM_DEFINED"))
 [ -z "$MISSING" ] || {
   echo "ERROR: ../include/*.h declares these twins but no .S in $REC/src/asm defines them:"
   echo "$MISSING" | sed 's/^/         /'
   exit 1; }
-UNCALLED=$(comm -23 <(echo "$TWINS") <(echo "$CORE_WANTED"))
+UNCALLED=$(comm -23 <(echo "$SHIPPED") <(echo "$CORE_WANTED"))
 [ -z "$UNCALLED" ] || {
   echo "ERROR: these twins are assembled and linked but NOTHING CALLS THEM, so the C cores are what"
   echo "       this build runs — the game would be correct and several times too slow. Either their"
@@ -412,8 +456,20 @@ UNCALLED=$(comm -23 <(echo "$TWINS") <(echo "$CORE_WANTED"))
   echo "       from a call site in $REC/src:"
   echo "$UNCALLED" | sed 's/^/         /'
   exit 1; }
+# ...and the INVERSE arm, which is what makes "verification only" a gate rather than a comment: a
+# twin declared not-shipped must NOT be referenced by any core object. A seam wrapper left on one of
+# their call sites would otherwise ship a twin the header says is not shipped - the same silent
+# substitution this gate exists for, in the other direction.
+SHIPPED_BY_MISTAKE=$(comm -12 <(echo "$VERIFY_ONLY" | grep . || true) <(echo "$CORE_WANTED"))
+[ -z "$SHIPPED_BY_MISTAKE" ] || {
+  echo "ERROR: these twins are declared ZY_TWIN_VERIFICATION_ONLY, but a core object CALLS them -"
+  echo "       so this build ships a twin ../include/frame.h says it does not. Either drop the seam"
+  echo "       wrapper from the call site in $REC/src, or drop the marker and mean it:"
+  echo "$SHIPPED_BY_MISTAKE" | sed 's/^/         /'
+  exit 1; }
 # ...and the per-CALL-SITE half: a bare core name UNDEFINED in a core object is an unwrapped call.
-TWIN_CORES=$(echo "$TWINS" | sed 's/_asm$//' | sort -u)
+# Over the SHIPPED twins only - a verification-only twin's C core is exactly what should be called.
+TWIN_CORES=$(echo "$SHIPPED" | sed 's/_asm$//' | sort -u)
 UNWRAPPED=$(comm -12 <(echo "$TWIN_CORES") <(echo "$CORE_WANTED"))
 [ -z "$UNWRAPPED" ] || {
   echo "ERROR: a core object calls out to these C cores by name, but they have twins — so a call"
@@ -425,7 +481,39 @@ UNWRAPPED=$(comm -12 <(echo "$TWIN_CORES") <(echo "$CORE_WANTED"))
   echo "       draw_char) is not an undefined reference, so it never lands here:"
   echo "$UNWRAPPED" | sed 's/^/         /'
   exit 1; }
-echo "   $TWIN_COUNT twins from $(echo $ASM_CORES | wc -w | tr -d ' ') asm objects, all called, no C core called"
+# WHAT ACTUALLY GOES ON THE LINK LINE. A verification-only twin is assembled (the gate above asks
+# its object for the symbol) but must not be LINKED: nothing calls it, there is no --gc-sections on
+# this build, and three of them are ~4.4 KB of dead code in a .PRG that ships on a floppy. An object
+# is dropped when every twin it defines is verification-only; one holding a shipped twin as well
+# stays, whole.
+ASM_LINK_OBJECTS=""
+for object in $ASM_OBJECTS; do
+  defines_shipped=$(comm -12 <(defined_globals "$object") <(echo "$SHIPPED"))
+  defines_verify=$(comm -12 <(defined_globals "$object") <(echo "$VERIFY_ONLY" | grep . || true))
+  # A .S MAY NOT MIX THE TWO CATEGORIES, and refusing it is what makes include/frame.h's "never
+  # linked into the game" TRUE rather than merely true today. Were mixing allowed, the object would
+  # have to be kept for its shipped twin and the verification-only one would ride into the .PRG as
+  # dead code — silently, with the header still promising the opposite and no "not linked" line to
+  # contradict it. The fix is to split the file, which costs nothing: a `.S` is a file of twins.
+  if [ -n "$defines_verify" ] && [ -n "$defines_shipped" ]; then
+    echo "ERROR: $(basename $object) defines BOTH a shipped and a verification-only twin, so this"
+    echo "       build cannot honour either promise — keeping it links dead code into the .PRG,"
+    echo "       dropping it removes a twin the game calls. Split the .S:"
+    echo "         shipped:            $(echo $defines_shipped)"
+    echo "         verification-only:  $(echo $defines_verify)"
+    exit 1; fi
+  if [ -n "$defines_verify" ]; then
+    echo "   not linked (verification-only): $(basename $object)"
+  else
+    ASM_LINK_OBJECTS="$ASM_LINK_OBJECTS $object"
+  fi
+done
+
+SHIPPED_COUNT=$(echo "$SHIPPED" | grep -c . || true)
+LINKED_COUNT=$(echo $ASM_LINK_OBJECTS | wc -w | tr -d ' ')
+echo "   $SHIPPED_COUNT twins from $LINKED_COUNT linked asm objects, all called, no C core called"
+[ "$VERIFY_ONLY_COUNT" -eq 0 ] || \
+  echo "   ...and $VERIFY_ONLY_COUNT verification-only from $(($(echo $ASM_CORES | wc -w) - LINKED_COUNT)) unlinked object(s): $(echo $VERIFY_ONLY)"
 
 # --no-warn-rwx-segments: tos.ld deliberately puts text, data and bss in ONE loadable image, because
 # that is what a GEMDOS .PRG is — the loader has no notion of segment permissions and neither does a
@@ -433,7 +521,7 @@ echo "   $TWIN_COUNT twins from $(echo $ASM_CORES | wc -w | tr -d ' ') asm objec
 # silenced rather than tolerated so that a build's output stays worth reading.
 echo ">> link"
 $CC $CFLAGS -T "$HERE/tos.ld" -Wl,--emit-relocs -Wl,--no-warn-rwx-segments \
-    $SHIM_OBJECTS $CORE_OBJECTS $ASM_OBJECTS -lgcc -o "$BUILD/zynaps.elf"
+    $SHIM_OBJECTS $CORE_OBJECTS $ASM_LINK_OBJECTS -lgcc -o "$BUILD/zynaps.elf"
 
 # _start must sit at the very first byte of text (GEMDOS enters there).
 ENTRY=$(m68k-elf-nm "$BUILD/zynaps.elf" | awk '$3=="_start"{print $1}')

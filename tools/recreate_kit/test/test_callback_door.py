@@ -77,7 +77,13 @@ A0_AT_EXIT = 0x14
 D1_AT_EXIT = 0x18
 
 A1_WITNESS = 0x0123ABCD      # a caller-saved register the door is EXPECTED to destroy
-CONDITION_CODE_BITS = 0x1F   # X N Z V C — cleared before the door, and required set after
+CONDITION_CODE_BITS = 0x1F   # X N Z V C — cleared before the door, and wrecked after
+EXTEND_BIT = 0x10            # ...and the one of the five that ALTERNATES per callback
+
+# Where probe_extend_pair records the two condition-code registers it collects. Past probe_state's
+# last slot (D1_AT_EXIT + 4) and below the host cores' MARK_AT, so neither probe disturbs the other.
+EXTEND_FIRST_AT = 0x1C       # word
+EXTEND_SECOND_AT = 0x1E      # word
 
 # What door_probe_no_image_host makes of its two arguments, and what probe_no_image pushes.
 NO_IMAGE_A, NO_IMAGE_B = 0x00BEEF00, 0x0000CAFE
@@ -147,6 +153,28 @@ probe_state:
     move.l  %a7,{SP_EXIT_AT}(%a2)
     movea.l {SP_ENTRY_AT}(%a2),%a7    | a no-op after a correct door; after a mutated one it is what
     movea.l (%sp)+,%a2                | keeps the damage RECORDED above rather than fatal below
+    rts
+
+| long probe_extend_pair(uint8_t *image) — TWO door calls, and the CCR each one leaves.
+|
+| The X bit is the one flag a real stub carries ACROSS a call (it reads the 68000's X in, hands its
+| core an `extend` argument and writes the answer back), so it is the one the door must not leave the
+| same way every time — shim.c's g_door_calls says why at length. `move.w %sr,<ea>` is MOVE FROM SR,
+| which does not disturb the flags it reads, and neither does the `lea` before it: what lands in the
+| image is exactly what the door left.
+    .globl probe_extend_pair
+probe_extend_pair:
+    move.l  %a2,-(%sp)                | a2 is callee-saved: the caller's is kept, and it is the only
+    movea.l 8(%sp),%a2                | base that survives a call
+    move.l  %a2,-(%sp)
+    bsr.w   door_probe_mark
+    lea     4(%sp),%sp
+    move.w  %sr,{EXTEND_FIRST_AT}(%a2)
+    move.l  %a2,-(%sp)
+    bsr.w   door_probe_mark
+    lea     4(%sp),%sp
+    move.w  %sr,{EXTEND_SECOND_AT}(%a2)
+    movea.l (%sp)+,%a2
     rts
 
 | long probe_undeclared(uint8_t *image) — a stub whose slot no callback table declares.
@@ -393,13 +421,57 @@ def test_the_door_destroys_what_a_real_core_destroys(twins, image):
     out = twins.call(image, "probe_state")
     assert _u16(out.image, SR_BEFORE_AT) & CONDITION_CODE_BITS == 0, (
         "the twin did not hand the door the cleared flags this case is about")
-    assert _u16(out.image, SR_AFTER_AT) & CONDITION_CODE_BITS == CONDITION_CODE_BITS, (
+    # X IS ASKED OF THE .so RATHER THAN ASSUMED SET. This is the first callback of the run, so
+    # today's schedule leaves X set and a bare CONDITION_CODE_BITS would pass — but hard-coding that
+    # couples this case to the schedule's PHASE, and the failure it would then produce reads "the
+    # door preserved the condition codes", which blames the wrong mechanism entirely. The case below
+    # pins the schedule; this one pins that nothing is PRESERVED.
+    expected = CONDITION_CODE_BITS if emu.door_extend(0) else CONDITION_CODE_BITS & ~EXTEND_BIT
+    assert _u16(out.image, SR_AFTER_AT) & CONDITION_CODE_BITS == expected, (
         "the door preserved the condition codes, which a real core does not")
     assert _u32(out.image, A1_AT_EXIT) != A1_WITNESS, (
         "the door preserved a caller-saved register, which a real core does not")
     assert _u32(out.image, D1_AT_EXIT) == emu.DOOR_SCRATCH_POISON + 1
     assert _u32(out.image, A0_AT_EXIT) == emu.DOOR_SCRATCH_POISON + 2
     assert _u32(out.image, A1_AT_EXIT) == emu.DOOR_SCRATCH_POISON + 3
+
+
+def test_the_doors_extend_alternates_so_a_dropped_write_back_reddens(twins, image):
+    """THE ONE FLAG THE DOOR MUST NOT LEAVE THE SAME WAY TWICE, and the coverage hole that says why.
+
+    Four of Zynaps' wave-C trampolines read the 68000's X in, hand it to their core as an `extend`
+    argument and write the core's answer back out, because the next `abcd` adds it. While the door
+    set every condition code, X came back from every callback as a deterministic 1 — so a stub that
+    DROPPED the write-back handed the next `abcd` the same 1 the poison would have left anyway.
+    Deleting it from all four left that twin's 146-case suite green (measured, 2026-09).
+
+    So X alternates per callback and the other four stay set: a dropped write-back now agrees with
+    its core on at most half the callbacks, and any case making two of them differs. `emu.door_extend`
+    is the schedule asked of the `.so`, so this pins the alternation rather than restating its phase.
+    """
+    out = twins.call(image, "probe_extend_pair")
+    flags = (_u16(out.image, EXTEND_FIRST_AT), _u16(out.image, EXTEND_SECOND_AT))
+    for nth, seen in enumerate(flags):
+        assert seen & CONDITION_CODE_BITS & ~EXTEND_BIT == CONDITION_CODE_BITS & ~EXTEND_BIT, (
+            f"callback {nth} left N/Z/V/C at {seen & CONDITION_CODE_BITS:#04x} — only X alternates")
+        assert bool(seen & EXTEND_BIT) == bool(emu.door_extend(nth)), (
+            f"callback {nth} left X = {bool(seen & EXTEND_BIT)}, and the .so's own schedule says "
+            f"{bool(emu.door_extend(nth))}")
+    assert (flags[0] ^ flags[1]) & EXTEND_BIT, (
+        "both callbacks left the same X, so a stub that dropped its X write-back would still agree "
+        "with its core on every one of them — which is the hole this case exists to close")
+
+    # AND THE COUNTER IS RESET PER RUN, which nothing else here can see. `emu.door_extend` is a pure
+    # function of `nth`, so every assertion above would still hold if `osh_run_bench` stopped
+    # zeroing `g_door_calls` — the phase would simply accumulate across every `twins.call()` in the
+    # worker, and each case would inherit whatever parity the cases before it left. That is
+    # order-dependence in every twin differential in the workspace, arriving as a flake under
+    # `-n auto`. A SECOND run must start the schedule again from callback 0.
+    again = twins.call(image, "probe_extend_pair")
+    assert _u16(again.image, EXTEND_FIRST_AT) & EXTEND_BIT == flags[0] & EXTEND_BIT, (
+        "a fresh bench run did not restart the door's X schedule — `osh_run_bench` is not resetting "
+        "its callback counter, so the flag a stub is handed now depends on how many callbacks the "
+        "cases before it happened to make")
 
 
 def test_a_core_that_takes_no_image_gets_its_own_arguments(twins, image):

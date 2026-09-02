@@ -22,7 +22,10 @@ this module discovers them. See README.md, "Adding a function".
 """
 import importlib
 import re
+import subprocess
 from pathlib import Path
+
+import pytest
 
 import abi
 import harness
@@ -284,3 +287,82 @@ def test_asm_twin_equates_match_the_headers():
             assert equates[name] == expected, (
                 f"src/asm/{source.name}'s {name} assembles to {equates[name]:#x}, but "
                 f"include/{header} defines it as {expected:#x}")
+
+
+# ==================================================== a verification-only twin's only surface
+
+# WHY THIS EXISTS, and why it is scoped to the VERIFICATION-ONLY twins rather than to all of them.
+#
+# `atari/build.sh`'s asm-twin gate asks the OBJECTS two questions: is every declared twin defined,
+# and is it called — or, for one marked `ZY_TWIN_VERIFICATION_ONLY` (include/asm_twin.h), NOT
+# called. Neither question reaches the differential.
+#
+# A SHIPPED twin does not need this check: the game runs its instructions, so `atari/smoke.py`'s
+# frame differential against the original is a surface it cannot lose. A twin that is verified and
+# deliberately NOT shipped has no such thing — its object is dropped from the link, so delete
+# `test/test_asm_frame_spawn.py` and `make test`, `build.sh game` and the whole smoke matrix stay
+# green, because the last thing reading `frame_spawn.S` is an `as` invocation whose output is thrown
+# away. The twin then rots silently against every later change to the C it stands for, which is the
+# same "a check that stopped checking looks exactly like a clean build" failure the asm-twin gate
+# itself exists to prevent.
+#
+# TWO BROADER DRAFTS OF THIS WERE WRONG, and both are worth recording because the obvious
+# generalisation of this check does not work:
+#   * over `.S` FILES, it reddened on `scroll_blit.S` and `scroll_emit.S`, which are thoroughly
+#     tested — `test_asm_scroll.py` reaches their twins by SYMBOL and never writes a file name;
+#   * over every twin SYMBOL, it reddened on the twenty `scroll_page_to_screen_p*_asm`, whose suite
+#     builds their names with an f-string (`f"scroll_page_to_screen_p{phase:02d}_asm"`), so no
+#     literal search can find them.
+# A text search cannot answer "is this tested" in general. It CAN answer "does the file that is this
+# twin's only reader still mention it", which is the whole of what the unshipped ones are missing.
+_SUITE_GLOB = "test_asm_*.py"
+_BUILD_SH = REC / "atari" / "build.sh"
+
+
+def _gate_verification_only_twins():
+    """`atari/build.sh`'s OWN scraper, extracted from the script and run over `include/*.h`.
+
+    RUN RATHER THAN RE-SPELT. A Python mirror of the marker rule would be a second spelling with
+    nothing holding it equal, and the set it would silently disagree about is exactly the twins that
+    have no other surface. Extracting the shell function and invoking it means this file cannot
+    check a different set than the gate does.
+    """
+    text = _BUILD_SH.read_text()
+    helper_at = text.index("strip_comments() {")
+    helper = text[helper_at:text.index("\n", helper_at) + 1]
+    body_at = text.index("verification_only_twins() {")
+    body = text[body_at:text.index("\n}\n", body_at) + 3]
+    script = f"set -euo pipefail\nREC={REC}\n{helper}{body}\nverification_only_twins\n"
+    done = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
+    return sorted(done.stdout.split())
+
+
+@pytest.mark.parametrize("symbol", _gate_verification_only_twins() or [None])
+def test_every_verification_only_twin_is_named_by_a_test_suite(symbol):
+    """A twin the game does not call must still be named by the suite that verifies it."""
+    if symbol is None:
+        pytest.skip("no twin is declared ZY_TWIN_VERIFICATION_ONLY, so there is nothing to check")
+    suites = sorted((REC / "test").glob(_SUITE_GLOB))
+    assert suites, f"no {_SUITE_GLOB} in {REC / 'test'} — this check would pass over anything"
+    naming = [suite.name for suite in suites if symbol in suite.read_text()]
+    assert naming, (
+        f"{symbol} is declared ZY_TWIN_VERIFICATION_ONLY, so the game never calls it and its object "
+        f"is dropped from the link — and now no test suite names it either, which leaves the "
+        f"assembler as its only reader. Give it a differential in test/{_SUITE_GLOB}, or delete the "
+        f"twin and its declaration.")
+
+
+def test_the_verification_only_twins_are_the_ones_this_wave_declared():
+    """The scan's positive control: three, by name.
+
+    Every case above is vacuous over an empty list, and the marker rule lives in a shell script this
+    file cannot import — so a scraper that quietly stopped matching (a renamed macro, a moved
+    anchor, grep's filename prefix) would take the whole section with it and look like a pass.
+    """
+    assert _gate_verification_only_twins() == [
+        "frame_drone_and_fire_stage_asm",
+        "frame_panel_scroll_and_ship_stage_asm",
+        "frame_spawn_and_move_stage_asm",
+    ], ("the set of verification-only twins moved. If that was deliberate, move this list; if the "
+        "scan came back empty or wrong, atari/build.sh's marker scraper has stopped matching and "
+        "every check in this section is passing over nothing")

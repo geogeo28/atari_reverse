@@ -91,7 +91,9 @@ IMAGE_GUARD_BYTES = 0x10000
 # the declared arguments off the emulated stack, the host function, the result in D0, the stub's
 # `rts` — plus exactly what a REAL C call destroys on the way past: the caller-saved file
 # (D0/D1/A0/A1) and every condition code, poisoned on purpose so a stub that forgot to save them
-# fails here rather than on the machine. What the door does NOT do is model anything the two
+# fails here rather than on the machine. N/Z/V/C come back SET; X ALTERNATES per callback
+# (`osh_bench_door_extend`, `emu.door_extend`), because X is the one flag a stub carries across a
+# call and a constant one hid a dropped write-back — TRAP_MODEL.md, "The callback door". What the door does NOT do is model anything the two
 # builds would then disagree about. Anything a call site needs beyond the call itself — the X
 # flag in or out, a `tst.l` for a `beq` under it — belongs in the STUB,
 # which exists in both builds; a door that did it would be doing it off target only, and the machine

@@ -18,11 +18,10 @@ WHAT IS DIFFERENT ABOUT THIS TWIN, and why this file carries more machinery than
 **1. It CALLS SIXTEEN VERIFIED C CORES**, through the kit's callback door (`asm_twin.py`'s DOOR_BASE
 and TRAP_MODEL.md, "The callback door"). A door needs a TABLE, and `asm_twins.py`'s module-level
 singleton is built without one — a frame case run through it would jump into the band, execute the
-zeros there and die as a sentinel timeout naming neither the door nor the callee. So this suite
-builds its own `AsmTwins` with DOOR_TABLE below, and — because `asm_twins.matches_the_c` reaches for
-that singleton rather than taking a blob — carries its own differential in `leaves_the_image_where_
-the_c_does`. That function is `matches_the_c` plus the two things a frame case needs and a leaf case
-does not: its own blob, and the candidate arming below. `asm_twins.py` itself is left alone.
+zeros there and die as a sentinel timeout naming neither the door nor the callee. So the frame
+family has its own blob-with-a-table and its own differential, both in `asm_frame_common.py`; that
+module's header says why they are the FAMILY's rather than this file's, and what
+`test_asm_frame_doors.py` pins about the slot namespace they share. `asm_twins.py` is left alone.
 
 **2. BOTH SIDES NEED THE CANDIDATE ARMED.** The stage ends on two busy-waits and a `bset` of the
 MFP, which off target go through the kit's scheduled-write and hardware models — and those models
@@ -49,7 +48,6 @@ tests rather than skipping them: a silent skip is how a broken twin ships.
 import functools
 import random
 import re
-from pathlib import Path
 
 import pytest
 
@@ -58,16 +56,13 @@ import pytest
 import harness
 
 import emu
-import loader
 import asm_twins
+import asm_frame_common as common
 import test_frame as frame
-from recreate_kit import harness as kit_harness
-from recreate_kit.asm_twin import AsmTwins, DoorCallback, elf_symbols
 
-REC = Path(__file__).resolve().parents[1]
-FRAME_S = REC / "src" / "asm" / "frame.S"
-FRAME_OBJ = REC / "build" / "asm" / "frame.o"
-PRG_DIS = REC.parent / "out" / "prg_dis.txt"
+REC = common.REC
+FRAME_S = common.ASM_DIR / "frame.S"
+FRAME_OBJ = common.BUILD_ASM / "frame.o"
 
 TWIN = "frame_resolve_hits_and_game_state_asm"
 # The span of the original this twin transcribes, and the register the frame loop enters it with.
@@ -78,89 +73,22 @@ SOUND_CHANNEL = frame.ENTITY_SLOTS                    # D0 on entry — src/fram
 
 # ============================================================ the callback door
 
-# THE SIXTEEN C CORES THE TWIN CALLS, plus the two kit seams that can only ever be host code.
+# THE TABLE IS THE FAMILY'S, and lives in `asm_frame_common.py`. Four frame twins assemble into ONE
+# blob and jump into ONE band, so a slot number names a host C function for all of them and four
+# private tables would be four places to drift. `test_asm_frame_doors.py` pins this file's
+# `.equ ZY_DOOR_*` against it, and pins that no sibling twin claims one of its slots for another
+# core — the cross-file defect no single suite can see.
 #
-# `nargs` INCLUDES the image pointer wherever `takes_image` is true, and every row here is the
-# core's own C prototype in ../include or in tools/recreate_kit/include — `sched_wait8(image, addr,
-# until, site_pc)` and `hw_bset8(addr, bit)`. The SLOT NUMBERS are `frame.S`'s `.equ ZY_DOOR_*` and
-# are pinned against it by `test_the_door_slots_are_the_ones_the_twin_jumps_to`, so this table and
-# the assembly cannot drift apart in silence: a table that renumbered would send every case to the
-# wrong host function with nothing but a diff to say so.
+# The arming and the schedule are the family's for the same reason: the models a frame case consumes
+# are global state in the candidate `.so`, and every frame suite has to re-arm them between its two
+# runs. `asm_frame_common.arm_the_candidate` says why at length.
 #
-# `returns=False` is a core declared `void`. The door then POISONS D0 rather than publishing the
-# host's arbitrary return register, so a stub that branched on a value the machine leaves undefined
-# fails here instead of flaking on target.
-#
-# `takes_image=False` is the two that touch HARDWARE rather than the image: their argument 0 is a
-# register address, and substituting a host pointer over it would corrupt exactly the value they
-# need.
-DOOR_TABLE = {
-    0: DoorCallback("collision_chain_walk", 2),
-    1: DoorCallback("score_add_bcd", 3),
-    2: DoorCallback("enemy_morph_to_type6", 2, returns=False),
-    3: DoorCallback("ship_resolve_entity_hits", 3, returns=False),
-    4: DoorCallback("entity_type_is_lockable", 2),
-    5: DoorCallback("powerup_downgrade_on_death", 1, returns=False),
-    6: DoorCallback("bomb_update", 3, returns=False),
-    7: DoorCallback("ikbd_send_cmd", 1, takes_image=False, returns=False),
-    8: DoorCallback("mothership_segment_hit", 2),
-    9: DoorCallback("explosion_spawn", 3, returns=False),
-    10: DoorCallback("shot_retire_kind32", 3),
-    11: DoorCallback("shot_retire_kind36", 2),
-    12: DoorCallback("shot_retire_kind33", 3),
-    13: DoorCallback("sound_start", 3, returns=False),
-    14: DoorCallback("screen_flip_buffers", 1, returns=False),
-    15: DoorCallback("game_over_screen", 1, returns=False),
-    16: DoorCallback("sched_wait8", 4),
-    17: DoorCallback("hw_bset8", 2, takes_image=False, returns=False),
-}
-
-_TWINS = None
-
-
-def twins():
-    """The assembled blob with THIS project's door table, loaded once per worker.
-
-    Its own instance rather than `asm_twins.twins()`: that one is shared by the leaf suites and is
-    built with no table at all (this file's header says what happens to a frame case run through
-    it). `AsmTwins.require()` raises with the build command if the twins were never assembled —
-    LOUD rather than skipped, since a skip would look like coverage.
-    """
-    global _TWINS
-    if _TWINS is None:
-        _TWINS = AsmTwins(REC / "build" / "asm", loader.IMAGE_SIZE,
-                          callbacks=DOOR_TABLE, lib=harness._lib)
-    return _TWINS
-
-
-# The stage's two busy-waits, flattened once into the pair of arrays both models take. Spelt from
-# `test_frame.py`'s own FRAME_SCHED/WAIT_SITES so the twin's waits are released exactly where the C
-# battery releases them.
-SCHEDULE = emu.schedule_entries(list(frame.FRAME_SCHED))
-WAIT_SITES = emu.wait_site_pcs(list(frame.FRAME_SCHED), list(frame.WAIT_SITES))
-
-
-def arm_the_candidate():
-    """Everything `harness.differential` installs before a candidate run, done here for BOTH runs.
-
-    The four models the stage reaches are GLOBAL STATE in the candidate `.so`, and each is left
-    consumed by the run that used it — the schedule's entries fired, the wait sites' poll counts
-    spent, the ledgers full. Re-arming between the C run and the twin's is therefore not hygiene but
-    the comparison itself: an unarmed second run would poll to `OS_SCHED_POLL_MAX`, skip the flip
-    and differ from the first for a reason that has nothing to do with the transcription.
-
-    `_seed_candidate_hw(None)` is the one that looks like a no-op and is not: `g_hw_reset` is what
-    installs `os.h`'s model DEFAULTS, and the ACIA's "transmitter empty" is one of them. Never
-    called, the byte reads undeclared, `ikbd_send_cmd` spins to `IKBD_TX_POLL_MAX` and tallies
-    seventeen refusals — measured.
-
-    `kit_harness.arm_candidate` IS `differential`'s own block, made public for this caller — so the
-    day the kit grows a fifth model to arm, this suite gets it. A hand copy here would stay green
-    without it: both shores of THIS comparison would be armed by the same stale block, symmetric and
-    wrong, and the byte diff would prove nothing while reporting success.
-    """
-    kit_harness.arm_candidate(scheduled=SCHEDULE, sites=WAIT_SITES)
-
+# NOTHING IS RE-EXPORTED HERE ON PURPOSE. An earlier revision bound `twins`, `arm_the_candidate`,
+# `SCHEDULE` and `WAIT_SITES` into this module as aliases, and none was ever used. Two of them were
+# worse than clutter: `SCHEDULE`/`WAIT_SITES` would have been an IMPORT-TIME SNAPSHOT, so a case
+# that patched the family's schedule (`test_asm_frame_head.py`'s pause cases do exactly that, and
+# rely on `arm_the_candidate` re-reading the module global at call time) would have been silently
+# ignored by anyone reaching for the local name. Reach through `common.` and the patch is seen.
 
 # ============================================================ the differential
 
@@ -175,59 +103,20 @@ FRAME_EXIT_NEXT_FRAME = 4
 
 def leaves_the_image_where_the_c_does(world, extra=None, expect=FRAME_EXIT_NEXT_FRAME,
                                       refusal_free=True):
-    """The whole differential: the twin and its C core over one staged world, compared whole.
+    """This stage's arguments to the family's differential (`asm_frame_common`, which says what the
+    three assertions are and what each one closes).
 
-    Three assertions, and each closes a hole the other two leave:
-
-      the IMAGE      all 1 MiB of it, so a byte the twin computes differently anywhere fails here.
-                     The C is asserted to have CHANGED the image first — this stage always writes
-                     (the starfield alone repaints eighteen stars), so a case in which it wrote
-                     nothing is a staging fault, and two untouched images would compare equal.
-      the EXIT       `%d0` against the C's return. This stage is the one twin in the project whose
-                     answer is control flow: the original `bra`s to one of five addresses and the
-                     twin answers with `include/frame.h`'s enum for it, so an arm that returned the
-                     wrong value would leave a perfect image (`frame.S`, "THE EXITS").
-      the REFUSALS   both sides made the SAME number of refused `os_*` calls. A refused call means
-                     the TOS model declined to serve the candidate and the run tested nothing —
-                     `harness._vet_no_os_refusal`'s argument, one shore over. `refusal_free=False`
-                     is for a case whose refusals are a shared C CORE's rather than the twin's; the
-                     equality still holds and the count is then the control.
-
-    `expect` is DECLARED rather than read back, so a case that staged the wrong world fails saying
-    which arm it wanted instead of quietly agreeing with itself.
+    What is this suite's own is the pair of shores: the C glue for `[0x11d30, 0x1296e)`, entered with
+    D0 = the sound channel, and the twin entered with the same. And the ANSWER, which for this stage
+    is control flow — the original `bra`s to one of five addresses and the twin returns
+    `include/frame.h`'s enum for it, so an arm that returned the wrong value would leave a perfect
+    image (`frame.S`, "THE EXITS"). `expect` is DECLARED rather than read back, so a case that staged
+    the wrong world fails saying which arm it wanted instead of quietly agreeing with itself.
     """
-    image = harness.make_image(frame.world_pokes(world, extra))
-
-    arm_the_candidate()
-    buf = harness.candidate_image(image)
-    c_exit = harness._lib.g_frame_resolve_hits_and_game_state(buf, SOUND_CHANNEL)
-    c_image, c_refusals = bytes(buf), harness._lib.g_os_refusal_count()
-    assert c_image != bytes(image), (
-        "the C core wrote nothing, so comparing the twin against it tests nothing — the case is "
-        "staged wrong or the glue was not called")
-    assert c_exit == expect, (
-        f"the C core left through {c_exit}, not the {expect} this case says it stages")
-
-    arm_the_candidate()
-    run = twins().call(image, TWIN, SOUND_CHANNEL)
-    twin_refusals = harness._lib.g_os_refusal_count()
-
-    if run.image != c_image:
-        diffs = [(at, c_image[at], run.image[at])
-                 for at in range(len(c_image)) if c_image[at] != run.image[at]]
-        pytest.fail(f"{TWIN} diverges from the C core in {len(diffs)} bytes (C, then asm)\n"
-                    f"{harness.report(diffs)}")
-    assert run.d0 == c_exit, (
-        f"{TWIN} answered frame_exit {run.d0}, the C core {c_exit} — the image is identical, so "
-        f"this is an exit arm returning the wrong enum and nothing else here can see it")
-    assert twin_refusals == c_refusals, (
-        f"the twin made {twin_refusals} refused os_* call(s) and the C core {c_refusals} — the two "
-        f"shores did not run the same models, so the byte comparison above proves nothing")
-    if refusal_free:
-        assert c_refusals == 0, (
-            f"{c_refusals} refused os_* call(s) — the TOS model declined to serve the candidate, so "
-            f"neither side was tested. {kit_harness.refusal_hints()}")
-    return run
+    return common.leaves_the_image_where_the_c_does(
+        TWIN, world, extra,
+        c_call=lambda lib, buf: lib.g_frame_resolve_hits_and_game_state(buf, SOUND_CHANNEL),
+        twin_args=(SOUND_CHANNEL,), expect_ret=expect, refusal_free=refusal_free)
 
 
 # ============================================================ the game, played
@@ -392,16 +281,21 @@ def test_the_twin_wraps_both_scroll_counters(page, column):
 #
 # `score_add_bcd` opens with four `abcd -(a1),-(a0)` and `abcd` ADDS the 68000's X, so the flag
 # reaching one award is whatever the previous award LEFT. The C carries it as the core's
-# `extend_in` argument and its return value; the STUB is what turns those back into a real CCR bit,
-# and off target the door makes the omission worse than "unmarshalled" — the harness resumes a
-# serviced callback with every condition code SET (`osh_bench_door_return`), so a stub that dropped
-# its `X_OUT` hands the next chain a carry of 1 rather than the 0 the core answered.
+# `extend_in` argument and its return value; the STUB is what turns those back into a real CCR bit.
+#
+# WHAT THE DOOR LEAVES IN X IS A SCHEDULE, NOT A CONSTANT — this comment used to say "every
+# condition code SET" and that stopped being true. N/Z/V/C come back set; X ALTERNATES per callback
+# (`osh_bench_door_extend`, `emu.door_extend`, and TRAP_MODEL.md's "The callback door"). The change
+# was made precisely so that a stub which dropped its `X_OUT` could not go on agreeing with its core
+# by coincidence.
 #
 # ONE award cannot show it, because the flag is only read by the NEXT chain — and almost every award
 # site in this stage is followed by `door_sound_start`, which sets X deliberately and erases the
-# question. The small-explosion pass is the exception: a capsule the chain walk explains as a
+# question. The small-explosion pass looks like the exception: a capsule the chain walk explains as a
 # LANDING is cleared without a tune (0x12084's `bne 0x12092`), so two such records one slot apart
-# award twice with nothing between them that touches X.
+# award twice. **IT IS NOT ONE, AND THE ALTERNATION IS WHAT PROVED IT.** `door_collision_chain_walk`
+# sits at 0x1207c, between the award at 0x1206e and anything that could read the flag, and a door
+# destroys the CCR on purpose — so X never survives from one award to the next on this arm either.
 CAPSULE_SLOTS = (0, 1)             # two of the eight wave slots, walked in this order
 CAPSULE_SQUADRONS = (2, 3)         # ...each the last member of its own squadron
 SQUADRON_COUNTER_COUNT = 6
@@ -421,18 +315,21 @@ def test_the_twin_carries_one_awards_flag_into_the_next():
     collision row — which is `test_frame.py`'s own recipe for making `collision_chain_walk` answer
     "the landscape" and so take the silent arm.
 
-    **AND IT DOES NOT YET PIN THE CARRY — MEASURED, so read this before trusting the name.** Deleting
-    `X_OUT` from `door_score_add_bcd` (and from the three `shot_retire_*` stubs) leaves this case, and
-    all 146 in this file, GREEN. So the staging above does not in fact reach two awards with nothing
-    between them that touches X: either only one capsule takes the silent arm, or something on the
-    path rewrites the flag before the second chain reads it. What the case DOES hold is everything
-    else about a two-capsule pass — the twin's image against the C's, byte for byte.
+    **AND IT DOES NOT PIN THE CARRY — MEASURED TWICE, so read this before trusting the name.**
+    Deleting `X_OUT` from `door_score_add_bcd` (or from the three `shot_retire_*` stubs) leaves this
+    case, and every case in this file, GREEN — both before the door's X alternation and after it.
+    Wave D re-ran the per-stub sweep both ways to find out which, and the answer is that the staging
+    cannot reach two `abcd` chains with nothing between them: `door_collision_chain_walk` at 0x1207c
+    destroys the CCR on the silent-capsule arm, exactly as `door_sound_start` does on every other
+    award site. What the case DOES hold is everything else about a two-capsule pass — the twin's
+    image against the C's, byte for byte.
 
-    THE HOLE IS THE X WRITE-BACK ITSELF, and STATUS.md carries it as an unpinned residual with what
-    would close it: a staged world proven to reach two `abcd` chains in a row, or a direct assertion
-    on the flag the trampoline leaves, which needs the bench runner to report the CCR the twin
-    returned with. Do not delete this case to "fix" the hole — it is a real differential; it is only
-    its NAME that promises more than it delivers.
+    THE HOLE IS THE X WRITE-BACK ITSELF, and STATUS.md carries it as an unpinned residual. The
+    closure wave C proposed (a staged world reaching two chains in a row) is now known NOT to be
+    available; what is left is `run_bench` reporting the CCR the way it reports the register file, so
+    a case can assert the flag the trampoline left instead of hoping a downstream `abcd` observes it.
+    Do not delete this case to "fix" the hole — it is a real differential; it is only its NAME that
+    promises more than it delivers.
     """
     counters = bytearray([0x5a] * SQUADRON_COUNTER_COUNT)
     extra = {frame.A_PLAYER_SCORE_BCD: CARRY_START_SCORE.to_bytes(frame.SCORE_BCD_BYTES, "big"),
@@ -470,79 +367,36 @@ def test_the_twin_turns_the_mothership_in_both_shapes(index):
 
 # ============================================================ reading frame.S back
 
-def _frame_source():
-    """`frame.S` with its `|` comments stripped, for the operand scans below."""
-    return "\n".join(line.split("|", 1)[0] for line in FRAME_S.read_text().splitlines())
-
-
-@functools.lru_cache(maxsize=None)
+# The scrapers are the family's (`asm_frame_common`): four twins ask the same three questions of
+# their own `.S` and `.o`, and four copies of the parsing would be four ways to disagree about what
+# an `.equ` or an `| 0xxxxx` comment is. What stays here is what is THIS file's: which object, which
+# span of the original, and the counts below.
 def _frame_equates():
-    """{name: value} for every `.equ` in frame.S, as the ASSEMBLER computed it.
-
-    Read out of the object rather than parsed out of the source: an `.equ` is an absolute symbol
-    ('a' in `nm`), so this is the value the displacements below were really assembled with, and a
-    scraper that misread one cannot make the window pin agree with itself. Which value each name
-    OUGHT to hold is `test_constants.py::test_asm_twin_equates_match_the_headers`'s question.
-    """
-    assert FRAME_OBJ.exists(), (
-        f"{FRAME_OBJ} is missing — build the twins with `make asm` (which `make test` runs first)")
-    return {name: value for name, (value, kind) in elf_symbols(FRAME_OBJ).items() if kind == "a"}
+    return common.equates(FRAME_OBJ)
 
 
-# One `NAME-FGB(%a5)` operand, with the whitespace around `+` and `*` closed up first so the
-# expression is one token and the mnemonic before it is not part of it.
-_WINDOWED = re.compile(r"([^\s,]+)-FGB\(%a5\)")
-
-
-@functools.lru_cache(maxsize=None)
-def _windowed_operands():
-    """Every distinct expression frame.S addresses through the %a5 window, as written."""
-    tightened = re.sub(r"\s*([+*])\s*", r"\1", _frame_source())
-    return sorted({match.group(1).split(",")[-1] for match in _WINDOWED.finditer(tightened)})
-
-
-def _windowed_value(expression, equates):
-    """One such expression's image address.
-
-    `eval` over a table with no builtins, which is the whole grammar frame.S uses in these operands:
-    `.equ` names joined by `+` and `*` (`A_score_award_table_bcd+2*SCORE_BCD_BYTES`). A parser of our
-    own would be four more lines that could be wrong, over text this file also asserts the shape of.
-    """
-    return eval(expression, {"__builtins__": {}}, equates)      # noqa: S307
-
-
-# frame.S's own count, from its header: "the sixty-six globals this stage names". Asserted so a
-# parse that matched nothing — a renamed macro, a changed operand shape — cannot pass this whole
-# section vacuously.
+# THE %a5 GLOBAL WINDOW. Both checks are `asm_frame_common`'s — one phrasing, because all four
+# frame suites ask the same question of their own `.S`, and the four hand-copies this replaced had
+# already started to drift in their failure text. What stays here is what is THIS twin's: which
+# file, and how many globals it reaches.
 WINDOWED_OPERAND_COUNT = 66
-DISPLACEMENT_MIN, DISPLACEMENT_MAX = -0x8000, 0x7fff
 
 
-def test_every_windowed_global_was_found():
-    assert len(_windowed_operands()) == WINDOWED_OPERAND_COUNT, (
-        f"frame.S addresses {len(_windowed_operands())} distinct expressions through the %a5 "
-        f"window, not the {WINDOWED_OPERAND_COUNT} its header names. If a global was legitimately "
-        f"added or dropped, move this number; if the scan found nothing like the right count, the "
-        f"operand shape changed and the window pin below is testing an empty list")
+def test_the_window_scan_reads_every_global_this_twin_names():
+    """The scan's positive control. `window_pin_failures` is vacuous over an empty operand list, so
+    a twin whose operand shape stopped matching — a different window register, a differently named
+    origin — would pass the pin below by reaching no globals at all."""
+    failure = common.window_scan_failure(FRAME_S, WINDOWED_OPERAND_COUNT)
+    assert failure is None, failure
 
 
-@pytest.mark.parametrize("expression", _windowed_operands())
-def test_every_windowed_global_is_inside_the_signed_displacement(expression):
-    """THE WHOLE OF WHAT MAKES `%a5 = image + FGB` LEGAL.
-
-    frame.S reserves one address register for the stage's sixty-six globals and reaches every one of
-    them as `NAME-FGB(%a5)`, which is a 68000 `d16(An)` — a SIGNED 16-BIT displacement. The globals
-    that exist today span 0x1797e..0x19f44, comfortably inside it, and nothing in the file says so:
-    gas would assemble a global outside the window into a truncated displacement and the twin would
-    read or write a wild address, which the differential would report as a pixel diff a long way
-    from its cause. frame.S's header asks for this test by name.
-    """
-    equates = _frame_equates()
-    displacement = _windowed_value(expression, equates) - equates["FGB"]
-    assert DISPLACEMENT_MIN <= displacement <= DISPLACEMENT_MAX, (
-        f"{expression} is at {_windowed_value(expression, equates):#x}, which is {displacement:#x} "
-        f"from FGB ({equates['FGB']:#x}) — outside the signed 16-bit window a `d16(An)` carries. "
-        f"gas will truncate it silently. Give it its own base register, or move FGB")
+def test_every_windowed_global_is_inside_the_signed_displacement():
+    """THE WHOLE OF WHAT MAKES `%a5 = image + FGB` LEGAL for this twin: gas assembles a global
+    outside the signed 16-bit window into a TRUNCATED displacement with no diagnostic, and the twin
+    then reads or writes a wild address that the differential reports as a pixel diff a long way
+    from its cause."""
+    failures = common.window_pin_failures(FRAME_S)
+    assert not failures, "\n".join(failures)
 
 
 # ---- the exit enum, which is a C enum and so is spelt twice ---------------------------------
@@ -577,74 +431,7 @@ def test_the_exit_enum_is_the_headers(name):
         f"this suite's mirror of {name} is {globals()[name]}, the header's {expected}")
 
 
-# ---- the door slots -------------------------------------------------------------------------
-
-@pytest.mark.parametrize("slot", sorted(DOOR_TABLE))
-def test_the_door_slots_are_the_ones_the_twin_jumps_to(slot):
-    """DOOR_TABLE's numbering against frame.S's `.equ ZY_DOOR_*`.
-
-    The two are the two halves of one address: the stub jumps to `DOOR_BASE + slot * STRIDE` and
-    `AsmTwins._service_door` looks that slot up in the table. Renumber one and every case would call
-    the WRONG HOST FUNCTION with the arguments meant for another — which off target is a diff, and
-    on target is a real `jsr` to a real core with nothing here to say the table drifted.
-    """
-    name = f"ZY_DOOR_{DOOR_TABLE[slot].name}"
-    equates = _frame_equates()
-    assert name in equates, (
-        f"frame.S declares no `.equ {name}`, so slot {slot} of DOOR_TABLE names a callee the twin "
-        f"does not reach through the door")
-    assert equates[name] == slot, (
-        f"frame.S puts {name} in slot {equates[name]} and DOOR_TABLE in slot {slot} — the table and "
-        f"the assembly disagree about which host function that door address means")
-
-
-def test_the_door_table_declares_every_slot_the_twin_uses():
-    """...and the other direction: no `.equ ZY_DOOR_*` may be missing from DOOR_TABLE. A stub added
-    to frame.S with no table row would jump into the band, find nothing declared and fail as a
-    refusal — loud, but naming the slot rather than the omission."""
-    declared = {name for name in _frame_equates() if name.startswith("ZY_DOOR_")}
-    tabled = {f"ZY_DOOR_{callback.name}" for callback in DOOR_TABLE.values()}
-    assert declared == tabled, (
-        f"frame.S and DOOR_TABLE name different door callees: only in frame.S "
-        f"{sorted(declared - tabled)}, only in the table {sorted(tabled - declared)}")
-
-
 # ---- the transcription pin, which here is about ORDER rather than about bytes ----------------
-
-_DIS_LINE = re.compile(r"^([0-9a-f]{6}): ")
-# The address comment frame.S puts on every transcribed instruction: `| 011d30 ...`. Six hex digits
-# at the head of the comment, which no other comment in the file starts with — the prose ones spell
-# an address `0x11d30` or `$19aad`, and neither matches.
-_ASM_ADDRESS = re.compile(r"\s+(0[0-9a-f]{5})\b")
-
-
-def _original_instruction_addresses():
-    """Every instruction address of the original in [ORIGINAL_ENTRY, ORIGINAL_END), from the
-    disassembly the transcription was made from."""
-    assert PRG_DIS.exists(), f"{PRG_DIS} is missing — it is what the twin was transcribed from"
-    found = [int(match.group(1), 16)
-             for match in map(_DIS_LINE.match, PRG_DIS.read_text().splitlines()) if match]
-    return [address for address in found if ORIGINAL_ENTRY <= address < ORIGINAL_END]
-
-
-def _transcribed_addresses():
-    """The same list as frame.S claims it: the `| 0xxxxx` comment on each transcribed instruction.
-
-    Read from the FILE'S TEXT and not from a build, on purpose. FIVE of the stage's instructions are
-    inside `#ifdef`s — the two spin COMPARES at 0x126ee and 0x1270c, their back-branches at 0x126f6
-    and 0x12712, and the `bset` at 0x12714 — and the off-target assembly the differential runs
-    contains only one arm. Scanning the text sees BOTH, which is the only way this pin can ask for
-    all 703.
-
-    AND IT PINS THEIR PRESENCE AND ORDER, NOT THEIR OPERANDS. Those five are the one span in this
-    twin with no off-target surface at all: a wrong bit in the `bset`, a wrong `HW_MFP_IERB`, or the
-    wrong polled byte assembles only in the target build and passes everything here. The surface is
-    `atari/smoke.py game`, and STATUS.md records it as such rather than leaving it implied.
-    """
-    comments = (line.split("|", 1)[1] for line in FRAME_S.read_text().splitlines() if "|" in line)
-    return [int(match.group(1), 16)
-            for match in map(_ASM_ADDRESS.match, comments) if match]
-
 
 def test_the_twin_transcribes_the_original_instruction_for_instruction():
     """EVERY INSTRUCTION OF THE ORIGINAL, ONCE, IN ORDER — and this stands where the byte pin stands
@@ -660,15 +447,8 @@ def test_the_twin_transcribes_the_original_instruction_for_instruction():
     address the line no longer transcribes. A twin that stopped being the original's instruction
     sequence is a twin whose cost bars and whose fidelity claim have nothing behind them.
     """
-    original = _original_instruction_addresses()
-    transcribed = _transcribed_addresses()
-    assert transcribed == original, (
-        f"frame.S is no longer the original's instruction sequence over "
-        f"[{ORIGINAL_ENTRY:#x}, {ORIGINAL_END:#x}): it claims {len(transcribed)} instructions and "
-        f"the original has {len(original)}. Missing "
-        f"{[hex(a) for a in sorted(set(original) - set(transcribed))][:10]}, extra "
-        f"{[hex(a) for a in sorted(set(transcribed) - set(original))][:10]}, out of order at "
-        f"{next((hex(a) for a, b in zip(transcribed, original) if a != b), 'nowhere')}")
+    failure = common.transcription_failure(FRAME_S, ORIGINAL_ENTRY, ORIGINAL_END)
+    assert failure is None, failure
 
 
 # ============================================================ what the twin COSTS
