@@ -209,6 +209,22 @@ CFLAGS="-m68000 -O2 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-
 CORES="$(ls "$REC"/src/*.c)"
 [ -n "$CORES" ] || { echo "ERROR: no cores found in $REC/src"; exit 1; }
 
+# ---- THE ASM TWINS ------------------------------------------------------------------------------
+# ../src/asm/*.S are hand-written m68k TRANSCRIPTIONS of the original binary's own instruction
+# sequences for the hottest cores, carrying those cores' C signatures. They are substituted for the
+# C at the CALL SITE, through ../include/scroll.h's `ZY_SCROLL()`, which -DZY_ASM_SCROLL below
+# switches over. The C stays compiled and stays the reference — ../test/test_scroll.py proves it
+# equal to the original and ../test/test_asm_scroll.py proves each twin equal to it, byte for byte
+# over the whole image, so this substitution changes the program's SPEED and nothing else.
+# See ../src/asm/README.md for the recipe and for what to do when adding the next one.
+# `2>/dev/null || true` is what makes the message below REACHABLE: this script runs under
+# `set -euo pipefail`, so a bare `ls` over an empty or missing src/asm/ aborts the shell on the
+# assignment itself and the reader gets ls' "No such file or directory" instead of the diagnosis.
+# (The CORES= line above has the same shape; it predates the twins and is left as it is.)
+ASM_CORES="$(ls "$REC"/src/asm/*.S 2>/dev/null || true)"
+[ -n "$ASM_CORES" ] || { echo "ERROR: no asm twins found in $REC/src/asm"; exit 1; }
+DEF="$DEF -DZY_ASM_SCROLL"
+
 # COMPILED TO OBJECTS FIRST, so the two halves of the seam can be ASKED WHAT THEY DEFINE before
 # they are linked together. The gate below is the whole reason this is not one `gcc` invocation.
 # ---- THE ONE PER-FILE OPTIMISATION FLAG, AND WHY IT IS A LIST OF ONE ---------------------------
@@ -266,6 +282,13 @@ for source in $CORES; do
   $CC $CFLAGS $DEF $(core_extra_flags "$source") -c "$source" -o "$object"
   CORE_OBJECTS="$CORE_OBJECTS $object"
 done
+# The twins are `.S` (capital S) so cpp runs first, exactly as for the C above.
+ASM_OBJECTS=""
+for source in $ASM_CORES; do
+  object="$OBJ/asm_$(basename "${source%.S}").o"
+  $CC $CFLAGS $DEF -c "$source" -o "$object"
+  ASM_OBJECTS="$ASM_OBJECTS $object"
+done
 
 # ---- THE DUPLICATE-SYMBOL GATE ------------------------------------------------------------------
 # THE SHIM MAY NOT DEFINE A NAME A CORE DEFINES, and this is the check that says so in those words.
@@ -320,13 +343,78 @@ COLLISIONS=$(comm -12 <(echo "$SHIM_SYMBOLS") <(echo "$CORE_SYMBOLS"))
   exit 1; }
 echo "   $SHIM_COUNT shim symbols vs $CORE_COUNT core symbols, no name in both"
 
+# ---- THE ASM-TWIN GATE --------------------------------------------------------------------------
+# WHICH SYMBOLS CAME FROM ASM, ASKED OF THE OBJECTS — because the way this substitution fails is
+# SILENT. Drop `-DZY_ASM_SCROLL` and every `ZY_SCROLL(fn)` resolves to the C again: the twins still
+# assemble, still link, still export their names, and the game still computes exactly the right
+# pixels — three times slower, with nothing but the frame rate to say so. Nothing else in this build
+# or in `make test` would notice, because the C is not wrong; it is only slow.
+#
+# So the gate asks THREE things of the objects, over the twins ../include/ DECLARES (the headers are
+# the source of truth for which cores have twins; a `.S` that defines a name no header declares is
+# not part of the seam and is not counted):
+#   * every declared twin is DEFINED by an asm object — a twin declared but never written, or a `.S`
+#     left out of $ASM_CORES, names itself here rather than at the link;
+#   * every declared twin is REFERENCED by a core object — which catches the whole seam collapsing,
+#     since an unreferenced twin means every call site bound to the C;
+#   * NO core object references the C CORE a twin replaces — which is the half the first two miss.
+#     A twin with two call sites (`scroll_emit_tile_column` has one in frame.c and one in init.c)
+#     stays "referenced" when only ONE of them loses its ZY_SCROLL() wrapper, so the second check
+#     passes while the prefill silently runs the 4.5x C. This one cannot: an unwrapped call site is
+#     exactly an UNDEFINED reference to the bare name. `src/scroll.c` names all of them too — in its
+#     own jump table and `g_` glue — but it DEFINES them, so they are not undefined in its object
+#     and it does not trip this. That is the point: the C's own file may call the C.
+#
+# THE HEADERS ARE GLOBBED, NOT NAMED. This gate was written for the scroll wave and a `scroll_`
+# prefix would have gone on passing, quietly, over a sprite wave's twins in sprite.h — a coverage
+# hole in the one check whose whole job is to notice a silent one. The `(` is what keeps prose out:
+# a declaration is a name followed by an open paren, and no comment writes one.
+#
+# `nm -u` lists an object's undefined symbols, i.e. exactly what it calls out to.
+declared_twins() { grep -ohE '\b[a-z0-9_]+_asm\(' "$REC"/include/*.h | tr -d '(' | sort -u; }
+undefined_in() { m68k-elf-nm -u $1 | awk 'NF == 2 {print $2}' | sort -u; }
+
+echo ">> asm-twin gate (the call sites must reach the twins, not the C)"
+TWINS=$(declared_twins)
+TWIN_COUNT=$(echo "$TWINS" | grep -c . || true)
+[ "$TWIN_COUNT" -gt 0 ] || {
+  echo "ERROR: no *_asm twin is declared in $REC/include/*.h, so this gate would pass over any"
+  echo "       build at all. Its scrape has stopped matching the headers."
+  exit 1; }
+ASM_DEFINED=$(defined_globals "$ASM_OBJECTS")
+CORE_WANTED=$(undefined_in "$CORE_OBJECTS")
+MISSING=$(comm -23 <(echo "$TWINS") <(echo "$ASM_DEFINED"))
+[ -z "$MISSING" ] || {
+  echo "ERROR: ../include/*.h declares these twins but no .S in $REC/src/asm defines them:"
+  echo "$MISSING" | sed 's/^/         /'
+  exit 1; }
+UNCALLED=$(comm -23 <(echo "$TWINS") <(echo "$CORE_WANTED"))
+[ -z "$UNCALLED" ] || {
+  echo "ERROR: these twins are assembled and linked but NOTHING CALLS THEM, so the C cores are what"
+  echo "       this build runs — the game would be correct and three times too slow. Either"
+  echo "       -DZY_ASM_SCROLL was dropped, or a ZY_SCROLL() wrapper was lost from a call site in"
+  echo "       $REC/src (frame.c's dispatch table and init.c's prefill are the two):"
+  echo "$UNCALLED" | sed 's/^/         /'
+  exit 1; }
+# ...and the per-CALL-SITE half: a bare core name UNDEFINED in a core object is an unwrapped call.
+TWIN_CORES=$(echo "$TWINS" | sed 's/_asm$//' | sort -u)
+UNWRAPPED=$(comm -12 <(echo "$TWIN_CORES") <(echo "$CORE_WANTED"))
+[ -z "$UNWRAPPED" ] || {
+  echo "ERROR: a core object calls out to these C cores by name, but they have twins — so a call"
+  echo "       site lost its ZY_SCROLL() wrapper and runs the slow C while the rest of the seam"
+  echo "       looks intact. Wrap it (frame.c's dispatch table and its three direct calls, and"
+  echo "       init.c's prefill, are the call sites):"
+  echo "$UNWRAPPED" | sed 's/^/         /'
+  exit 1; }
+echo "   $TWIN_COUNT twins from $(echo $ASM_CORES | wc -w | tr -d ' ') asm objects, all called, no C core called"
+
 # --no-warn-rwx-segments: tos.ld deliberately puts text, data and bss in ONE loadable image, because
 # that is what a GEMDOS .PRG is — the loader has no notion of segment permissions and neither does a
 # 68000 without an MMU. The warning is about ELF hygiene on a hosted target and says nothing here;
 # silenced rather than tolerated so that a build's output stays worth reading.
 echo ">> link"
 $CC $CFLAGS -T "$HERE/tos.ld" -Wl,--emit-relocs -Wl,--no-warn-rwx-segments \
-    $SHIM_OBJECTS $CORE_OBJECTS -lgcc -o "$BUILD/zynaps.elf"
+    $SHIM_OBJECTS $CORE_OBJECTS $ASM_OBJECTS -lgcc -o "$BUILD/zynaps.elf"
 
 # _start must sit at the very first byte of text (GEMDOS enters there).
 ENTRY=$(m68k-elf-nm "$BUILD/zynaps.elf" | awk '$3=="_start"{print $1}')

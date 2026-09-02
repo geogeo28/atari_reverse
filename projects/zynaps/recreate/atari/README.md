@@ -242,9 +242,18 @@ keeps it closed is `smoke.py`'s `check_the_pacing`, whose floor is 95% of the of
 
 # PERFORMANCE — the frame cadence, measured against the shipped binary's own
 
-**The port computes the right bytes and takes three times as long to do it.** The frame differential
-above is byte-identical; this section is the other question, asked with the same discipline: both
-binaries, on one machine, through one instrument, over a window of the same length.
+**The port computes the right bytes and takes twice as long to do it — it used to take three
+times.** The frame differential above is byte-identical; this section is the other question, asked
+with the same discipline: both binaries, on one machine, through one instrument, over a window of
+the same length.
+
+**The scroll path is done.** Its four routines were 28%, 16% and 7% of the pre-twin profiler
+window's frame (861,899 cycles — not the cadence instrument's 518,237; this section quotes shares
+against both and names which each time) at 2.19x, 5.34x and 4.49x the original's cost; they now run
+the original's OWN INSTRUCTIONS, transcribed into
+`../src/asm/`, at 1.07x-1.09x. That took the frame's cadence from a mode of 6 vertical blanks to a
+mode of 4 — 8.7 fps to 13.3 on the judged run — and it is the recipe `../src/asm/README.md` sets out
+for the sprite path next.
 
 ```bash
 python3 atari/profile.py frames             # OUR cadence: vblanks per frame, work, wait
@@ -269,69 +278,29 @@ Both sides clocked by two repeating `:quiet` breakpoints — the frame loop's he
 `screen_flip_buffers` — which print `VBL=` and `FrameCycles=` on every arrival and cost the emulated
 machine nothing. `st` / `TOS104US.img` / 4 MB / section 1, measured 2026-09-01:
 
-| | the original | ours (`play`) | ratio |
-|---|---|---|---|
-| frames clocked | 542 | 564 | |
-| vblanks per frame, mean | **2.32** | **5.81** | 2.5x |
-| the distribution | 2 x496, 3 x2, 4 x42, 45 x2 | 4 x56, 6 x507, 8 x1 | |
-| the mode, and its frame rate | **2 = 25 fps** | **6 = 8.3 fps** | 3.0x |
-| frames on budget (2 vblanks) | 496 of 542 (91.5%) | 0 of 564 | |
-| loop head to flip, mean cycles | **271,565** | **785,920** | **2.89x** |
-| ...min / max | 215,220 / 484,820 | 569,820 / 1,036,636 | |
+| | the original | ours (`play`) | ratio | ours before the twins |
+|---|---|---|---|---|
+| frames clocked | 542 | 564 | | 534 |
+| vblanks per frame, mean | **2.32** | **4.04** | 1.7x | 7.38 |
+| the distribution | 2 x496, 3 x2, 4 x42, 45 x2 | 4 x552, 5 x2, 6 x10 | | 4 x10, 6 x505, 7 x2, 8 x15 |
+| the mode, and its frame rate | **2 = 25 fps** | **4 = 12.5 fps** | 2.0x | 6 = 8.3 fps |
+| frames on budget (2 vblanks) | 496 of 542 (91.5%) | 0 of 564 | | 0 of 534 |
+| loop head to flip, mean cycles | **271,565** | **498,639** | **1.84x** | 815,488 |
+| ...min / max | 215,220 / 484,820 | 475,088 / 800,412 | | 562,768 / 1,496,000 |
 
-The two long entries on the shipped side (45 vblanks) are a death and the fire wait after it, which
-is not a frame; everything else is.
+(The "ours" column is the COMBINED tree — the scroll twins AND the shim sweep merged together on
+2026-09-01, re-measured with `profile.py frames`; the twins' own wave measured 4.16 / 518,237
+without the sweep. The `game` build's 300 pinned frames measure 3.77 [2x34 3x1 4x265] under the
+3.87 ceiling.)
 
-The `game` build's own record agrees with the log — **5.65 to 5.66 vblanks a frame over its 300
-pinned frames, 51 or 52 at 4, 248 or 249 at 6 and none over** — which is what makes the histogram a
-surface `smoke.py` can judge rather than a reading somebody has to take by hand. The spread is ONE
-frame's release slot and `smoke.py`'s `check_the_pacing` says why it is a frame and not noise.
+The long entries on the original's side (45 vblanks x2) are a death and the fire wait after it, which
+is not a frame; everything else is. Ours no longer has any — the run reaches its 542-frame cap first.
 
-**THE SHIM'S OWN SHARE WAS TAKEN OUT ON 2026-09-01 and the rows above are after it.** Before that
-sweep the same instrument measured 7.38 vblanks a frame in `play`, 5.73 in `game` and 815,488 cycles
-loop-head-to-flip; the table below is where the difference went, and the render path was not touched
-for any of it.
-
-| the lever | cycles/call, before → after | cycles/frame |
-|---|---|---|
-| `hw_write32` through a cross-unit call | 205 → inlined away | 21,183 → 0 |
-| `hw_write8` / `hw_bclr8` / `hw_bset8` / `hw_read8` | 399 / 192 / 203 / 68 → inlined away | 3,908 → 0 |
-| `psg_port_write` | 177 → inlined away | 12,773 → 0 |
-| `shifter_upload_palette_longs` | **2,573 → 757** | 33,179 → 9,117 |
-| `zy_timer_b_tick` (the raster split, whole) | **3,344 → 1,360** | 21,577 → 8,195 |
-| `zy_vbl_tick` (the whole VBL, `vbl_menu` inside it) | **8,823 → 5,570** | 56,868 → 33,521 |
-| `frame_loop_once`, the whole frame | **814,920 → 770,571** | **−44,349 (−5.4%)** |
-
-Three changes did all of it, and none is a rewrite of anything verified:
-
-* **The doors became target inlines.** `atari/shim_include/hw.h` and `psg.h` shadow the kit's
-  headers and define the seven store/read names `static inline` — which is what the kit's own `hw.h`
-  asks a target build to do ("ON TARGET these three names are supplied by the build itself"). Every
-  caller passes a CONSTANT address, so the address ladder, the `oril` to the bus form, the RTS and
-  the four-way store classification all fold at the call site and what is left is the `move` and the
-  counter. Nothing about the counting changed: `zy_hw_writes` and the three address-keyed tallies
-  are still bumped by every store, in every build, because `atari/profile.py` measures `play` and a
-  `play` build with the tallies compiled out would be a reading of a program `smoke.py` never
-  judges.
-* **`-funroll-loops` on `../src/video.c` only** (`build.sh`'s `core_extra_flags`). The palette
-  upload is a fixed eight-iteration loop entered twice a vertical blank; unrolled, each iteration's
-  address is an immediate, so the classification folds there too and the loop becomes eight
-  `move.l <image>,$ff824x`. Read the disassembly and re-measured: 1,206 cycles a call to 757.
-* **Nothing else.** The three interrupt entries were measured and left alone — see below.
-
-**THE INTERRUPT ENTRIES ARE ALREADY AT THEIR FLOOR, and that is a measurement rather than a
-decision to skip them.** Subtracting each handler's own cost from its entry's: the VBL dispatch is
-**307 cycles**, Timer B's **232**, the ACIA's **196** — 3,850 cycles a frame between them, **0.5% of
-the frame**. The `movem.l %d0-%d1/%a0-%a1` each entry makes is exactly the m68k ABI's call-clobbered
-set, so it cannot be made smaller for code that calls C. Caching the resolved handler was costed and
-NOT taken: the walk it would remove is about 120 cycles on the VBL (the four-slot table is the one
-GCC keeps as a loop; it unrolls the three-slot Timer B one into compares against immediates), so the
-whole lever is ~1,000 cycles a frame, 0.13%, in exchange for mutable state written from three
-interrupt handlers. Reordering the table to put `vbl_menu` first buys the same 120 cycles with no
-new state and was ALSO not taken, for a different reason worth writing down: the slot order is
-mirrored by `smoke.py`'s `VBL_HANDLER_NAMES`, and **nothing pins the two together** — the record's
-field COUNT is checked and its field ORDER is not, so a reorder in the C would silently rename three
-counts. That is a latent defect in its own right and STATUS.md carries it.
+The `game` build's own record agrees with the log — **3.75 vblanks a frame over its 300 pinned
+frames, 38 at 2 and 262 at 4, none over** (5.73, 41 at 4 / 258 at 6 / one over, before the twins) —
+which is what makes the histogram a surface `smoke.py` can judge rather than a reading somebody has
+to take by hand. That figure is deterministic to the second decimal across two `game` runs and one
+`gamefault`, which is what `PACING_MEAN_CEILING_VBLS` (now **3.87**, was 5.85) rests on.
 
 ## Where the cycles go, routine by routine, on both sides
 
@@ -340,43 +309,124 @@ opened at the twentieth frame — ours with symbols out of the linked ELF, the s
 `../../names.txt` relocated to where GEMDOS put it. **The frames in a window are counted from the
 scroll blit** (`frame_panel_scroll_and_ship_stage` calls exactly one of the twenty
 `scroll_page_to_screen_p*` entries per pass, on both sides), because a per-frame breakpoint inside
-the window would be a debugger entry and a debugger entry stops the profiler. Ours held 155 frames,
-the shipped binary's 72.
+the window would be a debugger entry and a debugger entry stops the profiler. Ours held 155 frames
+and this wave's shipped-binary window 99 — both re-derivable from `atari/out/profile-ours.json` and
+`atari/out/profile-original.json` as they stand.
 
-| | ours/frame | the original/frame | ours/call | orig/call | ratio |
+**READ THE PROVENANCE MARKERS BEFORE THE NUMBERS.** The tables below mix two profiling runs of the
+same two binaries — the shipped binary did not change, but it was re-profiled — and the marker says
+which run a figure is from:
+
+* **unmarked** — this wave's run, and re-derivable cell by cell from the two jsons named above;
+* **†** — carried over from the PRE-TWIN `profile.py ours` run, whose json this wave's overwrote. It
+  cannot be re-derived from `atari/out/`; it is quoted from the previous edition of this table.
+* **‡** — carried over from an EARLIER `profile.py original` run, whose json is likewise overwritten;
+  the previous edition of the paragraph above recorded its window as 72 frames. This wave's 99-frame
+  window gives `draw_score_panel` **16,540**, `sound_tick` **4,388** and `enemies_move_all` **2,773**
+  where the ‡ cells say 16,463, 4,644 and 2,100 — the rows are left as the two runs measured them
+  together rather than blended with a third.
+
+A ratio marked **†‡** therefore divides a pre-twin figure of ours by an earlier figure of the
+original's: it is the ratio those two runs measured together, not one this wave took.
+
+**The scroll rows are the asm twins now**, so they are given before and after. `profile.py compare`
+pairs a `*_asm` symbol with the original's own name, which is why the twins still have rows here.
+
+| | ours/call | orig/call | ratio | ours/call before the twins | ratio before |
 |---|---|---|---|---|---|
-| **the whole frame** | **861,899** | **268,714** | | | **3.21x** |
-| `scroll_page_to_screen_p*` | 244,702 (28%) | 111,961 | 244,702 | 111,961 | 2.19x |
-| `draw_sprite_masked_collide` | 140,948 (16%) | 24,580 | 18,206 | 7,023 | **2.59x** |
-| `scroll_emit_column_shift2` | 133,876 (16%) | 27,431 | 167,345 | 31,350 | **5.34x** |
-| `scroll_emit_tile_column` | 59,489 (7%) | 4,014 | 144,074 | 32,112 | **4.49x** |
-| `draw_score_panel` | 45,563 (5%) | 16,463 | 45,563 | 16,463 | 2.77x |
-| `zy_vbl_tick` — the whole VBL | 33,521 (4%) | (`sound_tick` 4,644) | **5,570** | | |
-| `frame_spawn_and_move_stage` | 25,502 (3%) | | 25,502 | | |
-| `enemies_move_all` | 14,179 (2%) | 2,100 | 14,179 | 2,100 | **6.75x** |
-| `shifter_upload_palette_longs` | 9,117 (1%) | | **757** | | |
-| `zy_timer_b_tick` — the raster split | 8,195 (1%) | | **1,360** | | |
+| `scroll_page_to_screen_p*` | **120,939** | 111,846 | **1.08x** | 244,702† | 2.19x† |
+| `scroll_emit_column_shift2` | **33,560** | 31,452 | **1.07x** | 167,345† | 5.34x† |
+| `scroll_emit_tile_column` | **35,046** | 32,175 | **1.09x** | 144,074† | 4.49x† |
+
+Those are Hatari's figures, which carry the machine's bus contention. Musashi's own cycle count, over
+the differential's staged cases, is tighter still — **1.0024x** for the twenty blits, **1.0083x** and
+**1.0136x** for the two emitters, **1.011x** for the tile emitter — and every point of it is the C-ABI
+prologue and epilogue the original does not have. `test_asm_scroll.py` measures that ratio on every
+run and fails past 1.15x, so it cannot drift unnoticed.
+
+And the rest of the frame, which the twins did not touch. **The per-frame column below is the
+PRE-TWIN measurement and is left that way on purpose**: the profiler's window is a fixed 1,000
+vertical blanks, so a faster game puts a different stretch of play inside it (a section start and a
+long run of IKBD traffic moved in), and a per-frame share taken from the new window would not be
+comparable with the old one routine by routine. The per-CALL figures ARE the comparable ones, but
+**only the unmarked ones were re-taken** — three rows of the nine.
+
+**THE FRAME AS A WHOLE IS A DIFFERENT INSTRUMENT AND IS NOT IN THE TABLE.** Ours is **518,237**
+cycles to the original's **271,565**, **1.91x** — that is the cadence table above's "loop head to
+flip, mean cycles" row verbatim, taken by breakpoints around one frame, not by the profiler. The
+profiler's own window puts a frame at 861,899 (ours, pre-twin) and 268,317 (the original, this
+wave's run): a different window over a different stretch of play, which is why the two instruments
+do not agree and why no row below should be divided into 518,237.
+
+**The percentages are shares of the pre-twin profiler window's per-frame total, 861,899.** That is
+the whole of why `draw_sprite_masked_collide` reads 16% here and 27% of the frame in "What the
+remaining 1.9x is" below — 140,948 of 861,899 against 140,948 of 518,237, one instrument each, both
+right about their own denominator.
+
+| | ours/frame (pre-twin, share of 861,899) | the original/frame | ours/call | orig/call | ratio |
+|---|---|---|---|---|---|
+| `draw_sprite_masked_collide` | 140,948† (16%) | 30,719 | 18,378 | 7,490 | **2.45x** |
+| `zy_vbl_tick` — the whole VBL | 56,860† (7%) | (`sound_tick` 4,644‡) | 8,637 | | |
+| `draw_score_panel` | 45,563† (5%) | 16,463‡ | 45,563† | 16,463‡ | 2.77x†‡ |
+| `shifter_upload_palette_longs` | 33,153† (4%) | | 2,573† | | |
+| `frame_spawn_and_move_stage` | 25,502† (3%) | | 25,502† | | |
+| `zy_timer_b_tick` — the raster split | 21,577 (3%) | | 3,344 | | |
+| `hw_write32` | 21,181† (2%) | | **205†** | | |
+| `enemies_move_all` | 14,179† (2%) | 2,100‡ | 14,179† | 2,100‡ | **6.75x**†‡ |
+| `psg_port_write` | 12,774† (1%) | | 180† | | |
 
 **The per-CALL column is the one to read where the two windows saw different game states.** The
 shipped side's window was profiled with the fire button held, so it drew fewer sprites a frame than
-ours did (3.5 against 7.7) and `draw_sprite_masked_collide`'s per-frame figures are not comparable
+ours did (3.5‡ against 7.7; this wave's 99-frame original window draws 4.1) and
+`draw_sprite_masked_collide`'s per-frame figures are not comparable
 where its per-call figures are. `python3 atari/profile.py compare` prints the per-call ratio table
 and refuses a row either side called fewer than twenty times.
 
-**Three quarters of the frame is four blitters**, and every one of them is a C loop over longwords
-where the original is a `movem.l` run: `copy_longs` compiles to `move.l (a0)+,(a1)+ / cmp.l / bne`,
-which is 36 cycles per 4 bytes, where a 12-register `movem.l` pair moves 48 bytes in 212 — 9 cycles
-a byte against 4.4, and 2.19x is exactly what the scroll blit measures. That difference is
-`docs/on-target-execution.md`'s taxonomy 4 exactly, and **no compiler flag reaches it**: `-O3`
-generates the byte-identical loop (measured, on `scroll.c`), and `-funroll-loops` gets 9 cycles a
-byte down to about 7.4 — worth ~5% of the frame and not a release slot.
+**The diagnosis that led to the twins, and its outcome.** Three quarters of the frame used to be
+four blitters, and every one of them was a C loop over longwords where the original is a `movem.l`
+run: `copy_longs` compiles to `move.l (a0)+,(a1)+ / cmp.l / bne`, 36 cycles per 4 bytes, where a
+12-register `movem.l` pair moves 48 bytes in 212 — 9 cycles a byte against 4.4, and 2.19x is exactly
+what the scroll blit measured. That difference is `docs/on-target-execution.md`'s taxonomy 4 exactly,
+and **no compiler flag reached it**: `-O3` generated the byte-identical loop (measured, on
+`scroll.c`), and `-funroll-loops` got 9 cycles a byte down to about 7.4 — worth ~5% of the frame and
+not a release slot.
 
-The ratios above 4x are a different finding and a more hopeful one: `scroll_emit_column_shift2` at
-5.34x and `enemies_move_all` at 6.75x are not bulk copies, so a `movem` is not what they are missing
-— they are per-entity work where the original keeps its state in registers across a loop the
-reconstruction spells as image reads and writes, which is the shape `machine.h`'s accessors force.
+What DID reach it was giving up on the compiler and writing the `movem.l` run out by hand — not a
+new one, the original's own. See "The asm twins" below. `draw_sprite_masked_collide` at 2.45x is the
+same shape and the same answer, and is wave B.
 
-## What the 3x is, and what it is not
+The ratios above 4x were a different finding: `scroll_emit_column_shift2` at 5.34x and
+`enemies_move_all` at 6.75x are not bulk copies, so a `movem` was not what they were missing — they
+are per-entity work where the original keeps its state in registers across a loop the reconstruction
+spells as image reads and writes, which is the shape `machine.h`'s accessors force. The emitter is
+now 1.07x, because a transcription keeps the state in registers by construction; `enemies_move_all`
+is untouched and is the best remaining non-blitter lever.
+
+## The asm twins — how the scroll path got to 1.08x
+
+A **twin** is a hand-written m68k transcription of the original binary's own instruction sequence for
+one routine, carrying the C signature of the verified core it replaces. `../src/asm/README.md` is the
+recipe in full; the shape of the argument is short:
+
+* the C cores are already proven byte-for-byte equal to the original (`../test/test_scroll.py`), and
+  the original's instructions are in `../../out/prg_dis.txt` — so the fast version is not something
+  to invent, it is something to COPY, and **a faithful transcription is 1.00x by construction**;
+* the twins live in `../src/asm/*.S`, are assembled by the kit (`tools/recreate_kit/kit.mk`), and are
+  substituted for the C at the CALL SITE through `../include/scroll.h`'s `ZY_SCROLL()` seam, which
+  `build.sh` switches on with `-DZY_ASM_SCROLL`. **The C stays compiled and stays the reference.**
+* `../test/test_asm_scroll.py` runs each twin and its C core over the same staged image under Musashi
+  and compares the WHOLE image, on `test_scroll.py`'s own cases — so the chain is
+  `original == C == twin`, both links byte-exact;
+* the twenty page blits go further: their bodies mention no address at all, so they are assembled
+  **byte-identical to the original's own machine code**, and that is a test
+  (`test_the_blit_twins_transcribe_the_original`) rather than a claim;
+* `build.sh`'s **asm-twin gate** is what stops the whole thing failing silently. Drop the `-D` and
+  every `ZY_SCROLL(fn)` resolves back to the C: the twins still assemble, still link, still export
+  their names, and the game still draws exactly the right pixels, three times slower, with nothing
+  but the frame rate to say so. The gate asks the objects whether each declared twin is both DEFINED
+  by an asm object and REFERENCED by a core object, and it is proven able to fail.
+
+## What the remaining 1.9x is, and what it is not
 
 * **It is not the shim, and the shim has now been taken out anyway.** Before the sweep above,
   everything this build added around the verified cores was **42,291 of the 815,488 cycles, 5.2%**:
@@ -393,14 +443,28 @@ reconstruction spells as image reads and writes, which is the shape `machine.h`'
   cycles, and it is the surface a target run has instead of the kit's ordered ledger. The CALL that
   used to wrap each of them — 205 cycles for a 24-cycle `move.l` to `$ff8240`, 103 times a frame —
   is gone.
-* **It is not one routine.** The scroll blit is the largest single item at 28%; a `movem` twin of it
-  alone (245,000 down to ~112,000, which is what the original measures) leaves 680,000 — still over
-  the 640,000 that four vblanks buys, so on its own it would not move one frame's bucket.
-* **It is the render path being C.** Reaching the original's 2 vblanks means ~272,000 cycles a
-  frame. Getting there from 815,000 means hand-writing the scroll blit, both column emitters, the
-  masked sprite blitter and the panel — each asm twin diffed against the verified C over the same
-  image, BuggyBoy-style (`projects/buggyboy/recreate/src/asm/` and its README's C-vs-asm
-  differential). That is a campaign with its own STATUS rows, not a lever.
+* **It was not one routine, and that is why the whole scroll path went at once.** The scroll blit
+  was the largest single item at 28% of the pre-twin profiler frame, but a twin of it alone (245,000
+  down to ~112,000) would have
+  left 680,000 — still over the 640,000 that four vblanks buys, so on its own it would not have moved
+  one frame's bucket. The three routines together took 438,000 down to about 143,000, which is
+  295,000 off, and THAT crossed the line: the mode moved from 6 vblanks to 4.
+* **What is left is the render path still being C.** Reaching the original's 2 vblanks means ~272,000
+  cycles a frame, and we are at 518,000. The remaining candidates are the same shape as the ones just
+  done: `draw_sprite_masked_collide` at 2.45x (140,948 cycles = **27% of the 518,237-cycle frame the
+  cadence instrument measures**, which is the same routine the table above shares against the
+  profiler window's 861,899 and calls 16% — biggest single item on either denominator),
+  `draw_score_panel` at 2.77x, and `enemies_move_all` at 6.75x, which is register-resident per-entity
+  work rather than a blit. Those last two ratios are the table's †‡ rows — a pre-twin figure of ours
+  over the earlier original run's — so treat them as the order of magnitude of the gap and not as
+  this wave's measurement. `../src/asm/README.md` is the recipe; wave B is the sprite path.
+
+**WHY THE ARITHMETIC SAID TO DO THIS AND NOT THE SMALL LEVERS.** The cadence is quantised, so the
+only change a player can see is a frame moving a whole release slot, and that needed **175,000
+cycles** off (815,488 down under the 640,000 that four vblanks buys). The shim's entire overhead is
+42,291 and the compiler's best offer was about 40,000 (`-funroll-loops` on the copy loops); together
+they were less than half of it and would have left every frame in the bucket it was in, for a harder
+binary to read. The asm twins were the only lever big enough, and they were worth 295,000.
 
 **THE SHIM'S SHARE WAS TAKEN AND IT DID NOT MOVE THE MODE, WHICH IS WHAT THE ARITHMETIC SAID.**
 The cadence is quantised, so the only change a player can see is a frame moving from 6 vblanks to 4,
@@ -432,7 +496,8 @@ frame.
 
 **Input latency is one frame on both sides by construction, and that is the whole point of the
 cadence table**: the FRAME COUNT is identical and the MILLISECONDS are not — 40 ms there against
-113 ms here, because a frame is 2 vblanks there and 5.66 here.
+115 ms here, because a frame is 2 vblanks there and 3.75 here (it was 5.73 before the
+asm twins, i.e. 75 ms).
 
 The four `$fffa21` read-back spins cost **281 iterations in a whole run** (about 4,200 cycles across
 the four sites), and the number is large only because the register is a live counter: the spin
@@ -483,45 +548,54 @@ yet.
 ## The pacing surface, and the control that reddens it
 
 `smoke.py game` gained an eighth check, `check_the_pacing`, on the **timelines** surface. It reads
-the program's own histogram out of STATE.BIN and judges four things, each with its tolerance argued
+the program's own histogram out of STATE.BIN and judges five things, each with its tolerance argued
 in the source:
 
 * **the run is the one the tolerances were measured on** — the numbers below are absolute, not
   shares, so a run of a different length is REPORTED rather than judged. The `play` build's longer
-  run reaches a second life and averages 5.81, which is not a regression and would be read as one.
+  run reaches a second life, whose mixture is a different one, and would be read as a regression.
 * **no frame costs zero vertical blanks** — 0 tolerance, and it is a real invariant:
   `frame_end_and_flip` arms `A_vbl_wait_flag` and spins until a handler clears it, with no cap, so a
   vblank always elapses inside the wait. **ONE vblank is NOT an error and an earlier draft of this
   arm said it was.** `A_raster_phase` is free-running, so a frame arriving with it already at READY
   skips the first wait and is released a single vblank later — the same parity effect that puts two
-  3-vblank frames in the shipped binary's own 542 and two 7s in our 534. A zero-tolerance floor at
-  two would have reddened a correct run.
-* **the mean under 5.78 vblanks** — today's is 5.65 to 5.66 across four runs (two `game`, two
-  `gamefault`), a spread of ONE frame's release slot rather than a noise band, so the ceiling is set
-  off the worst of them. 300 frames at 5.66 is 1,698 vblanks and the ceiling is 1,734, a slack of 36
-  — eighteen frames slipping one release slot. The number moves DOWN as the port gets faster and
-  never up: 5.85 was this arithmetic against the 5.73 measured before the hardware doors were
-  inlined, and a first draft used 6.0 and was measured to be forty times looser than its own
-  justification claimed — the whole fast bucket could vanish and the mean would still pass at 5.99.
+  3-vblank frames in the shipped binary's own 542. A zero-tolerance floor at two would have reddened
+  a correct run.
+* **the mean under 3.87 vblanks** — today's 3.75 is reproducible to the second decimal across three
+  runs (two `game`, one `gamefault`, all three with the same histogram to the frame), so this is not
+  a noise band. The derivation is eighteen frames each slipping one release slot, and a slot is two
+  vertical blanks: 36 vblanks over 300 frames is 0.12 on the mean, and 3.7467 measured (1,124
+  vblanks) + 0.12 = 3.8667 (1,160). **3.87 is that rounded up to two decimals**, and the check fails
+  on `mean >` the ceiling, so a run still passes at 1,161 vblanks — the slack it really gets is
+  **37, one more than the derivation asks for**. That vblank is rounding, and it is named here rather
+  than papered over: the pre-twin 5.85 ceiling's slack was exactly 36 (1,755 - 1,719), so this
+  ceiling is a vblank looser than that one rather than identical to it. It is still the same
+  derivation, not a share re-derived off the smaller mean. An earlier draft of the pre-twin ceiling
+  used 6.0 and was measured to be forty times looser than its own justification claimed.
+* **no frame reaches the histogram's last slot (seven vblanks or more)** — the allowance is **0**
+  since the twins landed, where it used to be 2%: the section's first pass, the one frame that used
+  to overflow, now fits, and 0 of 300 is what all three runs measure. What zero does NOT fix is that
+  the slot is fixed in C at seven while the mode is four, so this arm now only fires at nearly double
+  the mode; a regression that puts frames at five or six vblanks is caught by the mean alone.
 * **attract Timer B at or above 95% of the 100 the chip offers**, and **the ACIA at or above 0.25
   interrupts a vertical blank** — a handler running past its own period lands near half service, so
   the two states are far apart and the floors do not have to be precise to separate them.
 
 **IT IS FAULT-BLIND, AND THAT IS MEASURED RATHER THAN ARGUED.** The check sits in `mode_game`'s
-fault-blind set, so `gamefault` has to keep it green: measured, the control gives **5.66 and
-[4x51 6x249], inside `game`'s own one-frame spread**. The dropped section-chain step is a
+fault-blind set, so `gamefault` has to keep it green: measured, the control gives **3.75 and
+[2x38 4x262], the same histogram to the frame** as `game`. The dropped section-chain step is a
 one-off panel repaint, not per-frame work, so it moves what is DRAWN and not what a frame costs.
 
 **IT WAS PROVED ABLE TO GO RED** rather than assumed to be. The control is a busy-wait in
 `zy_vbl_tick` — 400 iterations of a `volatile` store, about 36,000 cycles, a fifth of a vertical
-blank — which is enough to push a frame past the 6-vblank release it just fits into and on to the
-next one at 8. That is deliberately far past the ceiling: a control that only just crossed it would
+blank — which is enough to push a frame past the release slot it just fits into and on to the next
+one. That is deliberately far past the ceiling: a control that only just crossed it would
 be testing the tolerance rather than the surface. Measured 2026-09-01:
 
 ```
    pacing: 7.54 vblanks/frame [6x75 7+x225] = 6.6 fps (the original's 2 = 25); attract Timer B 6263/6400 served over 64 vblanks
    [red ] timelines (the frame cadence and the interrupt service rates)   (must PASS)
-           the frame loop averaged 7.54 vblanks a frame over 300 frames, past the 5.85 ceiling
+           the frame loop averaged 7.54 vblanks a frame over 300 frames, past the ceiling
            225 of 300 frames took 7 vblanks or more, past the 2% allowance
    [green] memory (the framebuffer and the entity table, frame by frame)
    [green] hardware-state vector (the pens, frame by frame)
@@ -529,10 +603,9 @@ be testing the tolerance rather than the surface. Measured 2026-09-01:
 -- FAILED: 1 check(s)
 ```
 
-(The transcript is verbatim from the run that took it, so it quotes the **5.85** ceiling that stood
-before the shim's doors were inlined; the ceiling is 5.78 now and the control clears it by more.)
-
-the measured mean to **7.54**, two of the check's three arms red, and **every other surface still green — the
+The measurement above was taken before the asm twins, against the tolerances of the day — a 5.85
+ceiling and a 2% overflow allowance, where the twins have since bought 3.87 and 0: 5.73 to
+**7.54**, two of the check's arms red, and **every other surface still green — the
 frame differential included**. That last part is the point rather than a footnote: a slower frame
 computes the same bytes, because the game is frame-locked and nothing in it reads a clock, so a
 pacing regression is invisible to every check this directory had before. The control was then
@@ -636,16 +709,15 @@ Numbered on from M1's list.
     two more instructions in the hottest handler the program has.
 23. **Nothing has run on real hardware, and nothing has run on an STE**, exactly as in M1: Hatari
     refuses `--machine ste` on a ROM at or below TOS 1.4, and `tools/hatari/` has no later one.
-24. **The game runs at just under a third of the original's speed, and the gap is a number rather
-    than an impression.** 5.65 vertical blanks a frame against 2, 770,571 cycles against 271,565 —
-    the Performance section above has the whole table, the per-routine ratios, the shim-side sweep
-    that took 44,349 cycles off on 2026-09-01, and the arithmetic for what would close the rest.
-    It is unpinned in the sense that MATTERS here: `check_the_pacing` refuses a
-    REGRESSION from today's number and cannot demand the original's, so nothing in the suite goes
-    red while the gap stands. The first step is scoped and costed in that section (`movem` twins for
-    `scroll_page_to_screen_p*` and `scroll_emit_column_shift2`, which together buy the 4-vblank
-    bucket); nothing of it is started, deliberately, because a half-finished asm campaign is a
-    second implementation of a verified core with no differential over it.
+24. **The game runs at half the original's speed** — 3.75 vertical blanks a frame against 2,
+    518,237 cycles against 271,565. It was a THIRD (5.73 and 815,488) until the scroll path's asm
+    twins landed, which is the first wave of the campaign this entry used to only scope. It remains
+    unpinned in the sense that MATTERS here: `check_the_pacing` refuses a REGRESSION from today's
+    number and cannot demand the original's, so nothing in the suite goes red while the gap stands.
+    Wave B is scoped in the Performance section — `draw_sprite_masked_collide` at 2.45x is now the
+    biggest single item in the frame — and the recipe is `../src/asm/README.md`. (The shim sweep in the same merge took a further 44,349 cycles off —
+    the doors inlined, the palette upload unrolled — so the combined tree is faster than either
+    wave measured alone; the header table above carries the re-measured figures.)
 25. **The SHIPPED binary's boot is still unclocked, and ours is no longer a mystery.** The old
     form of this row — "the boot takes 2.8x the original's vertical blanks" — was retracted on
     2026-09-01: it measured the vertical blank at which each side first reached its frame loop,

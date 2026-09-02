@@ -60,9 +60,58 @@ $(ORACLE): $(KIT)/oracle/shim.c $(KIT)/include/os.h $(MUSASHI)/m68kcpu.c $(GENDI
 	  $(MUSASHI)/m68kcpu.c $(GENDIR)/m68kops.c $(MUSASHI)/softfloat/softfloat.c $(KIT)/oracle/shim.c \
 	  -o $(ORACLE)
 
-.PHONY: test clean venv oracle guarded
+# ---- the ASM TWINS (optional; a project has them once it writes a src/asm/*.S) -----------------
+# A twin is a hand-written m68k transcription of the ORIGINAL binary's own instruction sequence for
+# one routine, carrying the C signature of the verified core it substitutes for on the target build.
+# It is assembled here into ONE blob so `test` can run it under Musashi and diff it against that core
+# — see $(KIT)/asm_twin.py, which loads what this produces, and the project's own src/asm/README.md.
+#
+# A project with no src/asm/ sets nothing and gets nothing: ASM_SRC is empty, ASM_BIN is empty, and
+# `test` above gains no prerequisite. Projects that HAVE twins get them built before every `make
+# test`, so a suite can never run against a stale blob (or fail to run for want of a build step
+# nobody remembered).
+ASM_SRC := $(wildcard src/asm/*.S)
+ifneq ($(ASM_SRC),)
+ASM_DIR := build/asm
+ASM_ELF := $(ASM_DIR)/twins.elf
+ASM_BIN := $(ASM_DIR)/twins.bin
+# ...and one object PER SOURCE, kept rather than assembled straight to the blob. A test that asks
+# what a `.S` defines has to ask its own object: the linked blob is one flat symbol table, so two
+# files that both `.equ SCREEN_ROW_BYTES` collapse into whichever the linker emitted last, and a pin
+# over the blob would check one file's value and silently vouch for the other's (measured — a wrong
+# value in one `.S` was covered by its neighbour's correct one).
+ASM_OBJ := $(patsubst src/asm/%.S,$(ASM_DIR)/%.o,$(ASM_SRC))
+# The link base is asm_twin.py's, ASKED OF IT rather than spelt again here: the loader places the
+# blob at that address and a second spelling could drift from it silently (the blob would load at
+# one base and run with its absolute references resolved against another).
+ASM_LINK_BASE := $(shell $(PY) -c 'import sys; sys.path.insert(0, "$(KIT)/.."); \
+                                   from recreate_kit import asm_twin; print(asm_twin.asm_link_base())')
+# -Wl,--build-id=none: a build-id note would be laid down as an allocated section and objcopy would
+# carry it into the flat blob, moving every symbol after it.
+# -nostdlib: the twins call nothing and must not drag in a C runtime that would need one.
+# -Wl,-e0: the blob has no `_start` and needs none — every twin is entered by SYMBOL, from Python or
+# from the C that links it. Setting the ELF entry explicitly is what stops ld warning about that.
+ASM_CFLAGS := -m68000 -nostdlib -Iinclude -I$(KIT)/include
+
+$(ASM_DIR)/%.o: src/asm/%.S
+	@mkdir -p $(ASM_DIR)
+	m68k-elf-gcc $(ASM_CFLAGS) -c $< -o $@
+
+$(ASM_ELF): $(ASM_OBJ) $(KIT)/asm_twin.py
+	@[ -n "$(ASM_LINK_BASE)" ] || { echo "ERROR: asm_twin.asm_link_base() gave nothing"; exit 1; }
+	m68k-elf-gcc $(ASM_CFLAGS) -Wl,--build-id=none -Wl,-e0 \
+	  -Wl,-Ttext=$(ASM_LINK_BASE) $(ASM_OBJ) -o $(ASM_ELF)
+
+$(ASM_BIN): $(ASM_ELF)
+	m68k-elf-objcopy -O binary $(ASM_ELF) $(ASM_BIN)
+endif
+
+.PHONY: test clean venv oracle guarded asm
 # (Re)build just the shared Musashi oracle.
 oracle: $(ORACLE)
+
+# (Re)build just the project's asm twins. No-op for a project that has none.
+asm: $(ASM_BIN)
 
 # Create the project venv and install the pinned Python deps (numpy, pyresidfp, pytest).
 venv:
@@ -72,7 +121,7 @@ venv:
 # Run the differential suite in parallel across cores (pytest-xdist). Override with
 # e.g. `make test PYTEST_ARGS=-n0` for a serial run, or `PYTEST_ARGS='-n4 -k fuzz'`.
 PYTEST_ARGS ?= -n auto
-test: $(CAND) $(ORACLE)
+test: $(CAND) $(ORACLE) $(ASM_BIN)
 	$(PY) -m pytest -q $(PYTEST_ARGS) test
 
 # The same suite over an image whose surroundings are PROT_NONE, so a candidate that indexes its
@@ -88,7 +137,7 @@ test: $(CAND) $(ORACLE)
 # PYTHONPATH reaches `tools/`, which is $(KIT)'s parent, because the plugin is imported as
 # `recreate_kit.guarded_image`; everything else is the `test` target with that plugin loaded.
 GUARDED_PYTEST_ARGS ?= -n auto
-guarded: $(CAND) $(ORACLE)
+guarded: $(CAND) $(ORACLE) $(ASM_BIN)
 	PYTHONPATH=$(KIT)/.. $(PY) -m pytest -q $(GUARDED_PYTEST_ARGS) -p recreate_kit.guarded_image test
 
 # Project artifacts only. The oracle + generated opcode tables in $(GENDIR) are SHARED by every

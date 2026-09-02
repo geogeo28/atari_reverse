@@ -125,4 +125,52 @@ void scroll_emit_column_shift0(uint8_t *image, uint32_t workspace, uint32_t page
 uint32_t scroll_emit_tile_column(uint8_t *image, uint32_t screen_edge, uint32_t page,
                                  uint32_t map_column);
 
+/* ================================================================================================
+ * THE ASM TWINS — the .S files in src/asm/, substituted for the cores above on the TARGET build.
+ *
+ * A twin is a transcription of the ORIGINAL binary's own instruction sequence for one routine,
+ * carrying that routine's C signature. The C above stays the reference and stays compiled: it is
+ * what the host differential proves equal to the original (test/test_scroll.py) and what the twin
+ * is in turn proved equal to (test/test_asm_scroll.py). Nothing here changes what the program
+ * computes — only which of two byte-identical implementations of it runs on the Atari.
+ *
+ * THE SEAM IS AT THE CALL SITE, and deliberately: a twin cannot simply define the core's own name,
+ * because src/frame.c's dispatch table and src/scroll.c's own would then bind to whichever the
+ * linker saw first. `ZY_SCROLL(fn)` names the one to call, so a reader greping ../names.txt for
+ * `scroll_page_to_screen_p07` still lands on every place it is reached from.
+ *
+ * atari/build.sh defines ZY_ASM_SCROLL and links src/asm/; it also GATES that the twins really
+ * arrived, since a twin dropped from the link would otherwise leave the C running and nothing but
+ * the frame rate to say so. The host differential build never defines it.
+ * ============================================================================================= */
+#ifdef ZY_ASM_SCROLL
+void scroll_page_to_screen_p00_asm(uint8_t *image, uint32_t page, uint32_t screen);
+void scroll_page_to_screen_p01_asm(uint8_t *image, uint32_t page, uint32_t screen);
+void scroll_page_to_screen_p02_asm(uint8_t *image, uint32_t page, uint32_t screen);
+void scroll_page_to_screen_p03_asm(uint8_t *image, uint32_t page, uint32_t screen);
+void scroll_page_to_screen_p04_asm(uint8_t *image, uint32_t page, uint32_t screen);
+void scroll_page_to_screen_p05_asm(uint8_t *image, uint32_t page, uint32_t screen);
+void scroll_page_to_screen_p06_asm(uint8_t *image, uint32_t page, uint32_t screen);
+void scroll_page_to_screen_p07_asm(uint8_t *image, uint32_t page, uint32_t screen);
+void scroll_page_to_screen_p08_asm(uint8_t *image, uint32_t page, uint32_t screen);
+void scroll_page_to_screen_p09_asm(uint8_t *image, uint32_t page, uint32_t screen);
+void scroll_page_to_screen_p10_asm(uint8_t *image, uint32_t page, uint32_t screen);
+void scroll_page_to_screen_p11_asm(uint8_t *image, uint32_t page, uint32_t screen);
+void scroll_page_to_screen_p12_asm(uint8_t *image, uint32_t page, uint32_t screen);
+void scroll_page_to_screen_p13_asm(uint8_t *image, uint32_t page, uint32_t screen);
+void scroll_page_to_screen_p14_asm(uint8_t *image, uint32_t page, uint32_t screen);
+void scroll_page_to_screen_p15_asm(uint8_t *image, uint32_t page, uint32_t screen);
+void scroll_page_to_screen_p16_asm(uint8_t *image, uint32_t page, uint32_t screen);
+void scroll_page_to_screen_p17_asm(uint8_t *image, uint32_t page, uint32_t screen);
+void scroll_page_to_screen_p18_asm(uint8_t *image, uint32_t page, uint32_t screen);
+void scroll_page_to_screen_p19_asm(uint8_t *image, uint32_t page, uint32_t screen);
+void scroll_emit_column_shift2_asm(uint8_t *image, uint32_t workspace, uint32_t page, uint32_t edge);
+void scroll_emit_column_shift0_asm(uint8_t *image, uint32_t workspace, uint32_t page, uint32_t edge);
+uint32_t scroll_emit_tile_column_asm(uint8_t *image, uint32_t screen_edge, uint32_t page,
+                                     uint32_t map_column);
+#define ZY_SCROLL(fn) fn##_asm
+#else
+#define ZY_SCROLL(fn) fn
+#endif
+
 #endif /* ZYNAPS_SCROLL_H */

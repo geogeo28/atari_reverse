@@ -28,6 +28,7 @@ import abi
 import harness
 
 import loader
+from recreate_kit import asm_twin
 
 REC = Path(__file__).resolve().parents[1]
 
@@ -177,3 +178,106 @@ def test_scratch_map_is_clear_of_the_program_and_the_framebuffers():
     assert top <= harness.OS_FS_TABLE, (
         f"the scratch map reaches {top:#x}, at or past the TOS model's staged-file table "
         f"{harness.OS_FS_TABLE:#x}")
+
+
+# ---- the asm twins' own constants ---------------------------------------------------------------
+# `src/asm/` cannot include `include/*.h`: those headers spell their values with C's `u` suffix,
+# which the assembler will not parse. So each twin restates the handful it needs as `.equ`, and
+# CLAUDE.md's rule for two spellings that cannot import each other applies — pin the copy equal with
+# a test. This is that test, and it reads the values out of the ASSEMBLED OBJECT rather than out of
+# the `.S` text: what it compares is then the number the assembler actually used, arithmetic and all,
+# rather than a second parse of the source that could read `SCROLL_PHASE_STEP * 2` as anything.
+#
+# PER OBJECT, NOT PER BLOB, and that is the difference between a pin and a decoration. Three `.S`
+# files declare `SCREEN_ROW_BYTES` and two declare `A_scroll_prefill_hide_screen`; in the LINKED blob
+# those collapse to one symbol, so a wrong value in one file was covered by its neighbour's correct
+# one and this test passed (measured: `.equ SCREEN_ROW_BYTES, 168` in scroll_blit.S alone went
+# green). kit.mk keeps `build/asm/<stem>.o` per source for exactly this.
+_EQU_RE = re.compile(r'^\s*\.equ\s+(\w+)\s*,', re.M)
+# Any `#define NAME`, whatever its value looks like — the set of names a header OWNS, as opposed to
+# `_iter_defines`'s narrower set of names whose value it can also read. The gap between the two is
+# where an unpinned constant used to hide.
+_DEFINE_NAME_RE = re.compile(r'^#define\s+(\w+)', re.M)
+
+# The header constants whose value `_DEFINE_RE` cannot read, because they are expressions over other
+# constants rather than literals. A twin that restates one restates its RESULT, so the pin has to
+# recompute the derivation here — spelt as the header spells it, over values the scraper CAN read.
+# WITHOUT THIS THEY WERE SKIPPED IN SILENCE: `name in headers` was false, so the three most
+# drift-prone values in `scroll_tile.S` (they move when MAP_COLUMN_BYTES or SCROLL_COLUMN_ROW_LONGS
+# does, not when a literal is edited) were vouched for by a test that never looked at them.
+ASM_DERIVED_PINS = {
+    "SCROLL_TILE_ROW_BYTES": lambda d: 2 * d["SCROLL_COLUMN_ROW_LONGS"],
+    "SCROLL_TILE_LAST_ROW": lambda d: d["SCROLL_TILE_BYTES"] - 2 * d["SCROLL_COLUMN_ROW_LONGS"],
+    "SCROLL_MAP_PEEK_NEXT": lambda d: d["MAP_COLUMN_BYTES"] - 2,
+}
+
+
+def _asm_objects():
+    """[(source, object)] for every twin, or a failure naming the build step that makes them."""
+    sources = sorted((REC / "src" / "asm").glob("*.S"))
+    assert sources, "no twins in src/asm — this test would pass over any build at all"
+    pairs = []
+    for source in sources:
+        obj = REC / "build" / "asm" / f"{source.stem}.o"
+        assert obj.exists(), (
+            f"{obj} is missing — the asm twins were never assembled. `make test` builds them "
+            f"first; `make asm` builds them alone.")
+        pairs.append((source, obj))
+    return pairs
+
+
+def _absolute_symbols(obj):
+    """{name: value} for every absolute symbol in one object — which is what `.equ` produces."""
+    return {name: addr for name, (addr, kind) in asm_twin.elf_symbols(obj).items() if kind == "a"}
+
+
+def _header_defines():
+    """{name: (value, header)} over every include/*.h — the side that owns these values."""
+    out = {}
+    for path in sorted((REC / "include").glob("*.h")):
+        for name, value in _iter_defines(path.relative_to(REC)):
+            out.setdefault(name, (value, path.name))
+    return out
+
+
+def _header_define_names():
+    """Every name any include/*.h defines, readable value or not."""
+    names = set()
+    for path in sorted((REC / "include").glob("*.h")):
+        names.update(_DEFINE_NAME_RE.findall(path.read_text()))
+    return names
+
+
+def test_asm_twin_equates_match_the_headers():
+    """Every `.equ` in a twin whose name a header also defines must hold the header's value.
+
+    NON-VACUOUS PER FILE, not per suite: each `.S` must contribute at least one pinned name, and is
+    read from its OWN object so a neighbour's correct copy cannot vouch for it.
+    """
+    headers = _header_defines()
+    header_names = _header_define_names()
+    for source, obj in _asm_objects():
+        equates = _absolute_symbols(obj)
+        pinned = [name for name in _EQU_RE.findall(source.read_text()) if name in header_names]
+        assert pinned, (
+            f"src/asm/{source.name} declares no `.equ` that any include/*.h also defines, so nothing "
+            f"in it is pinned. Name its constants as the headers name them (see src/asm/README.md).")
+        for name in pinned:
+            assert name in equates, (
+                f"src/asm/{source.name} declares `.equ {name}` but its object has no such absolute "
+                f"symbol — the scrape and the assembler disagree about what a `.equ` is")
+            if name in headers:
+                expected, header = headers[name]
+            else:
+                # A header expression rather than a literal. It still has to be pinned, so the
+                # derivation is recomputed here rather than the name being skipped.
+                assert name in ASM_DERIVED_PINS, (
+                    f"src/asm/{source.name} restates {name}, which include/ defines as an expression "
+                    f"this file's scraper cannot read. Add its derivation to ASM_DERIVED_PINS so the "
+                    f"value is pinned — a name that is neither readable nor derived is UNPINNED, and "
+                    f"silence there is what this test exists to prevent.")
+                expected = ASM_DERIVED_PINS[name]({k: v for k, (v, _) in headers.items()})
+                header = "a derived define, recomputed by ASM_DERIVED_PINS"
+            assert equates[name] == expected, (
+                f"src/asm/{source.name}'s {name} assembles to {equates[name]:#x}, but "
+                f"include/{header} defines it as {expected:#x}")

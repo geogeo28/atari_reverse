@@ -410,6 +410,47 @@ in particular "The observable surfaces", which enumerates the six things an on-t
 watched on and states the rule this workspace's pre-commit gate now carries: every on-target change
 names the surface that would catch its failure, and a change that names none has found something.
 
+## Asm twins: the original's own instructions, diffed against the C
+
+A project whose port is correct but too slow has one lever nothing else reaches. Its C cores are
+already proven equal to the original, and the original's instructions are in its `out/prg_dis.txt` —
+so the fast version of a hot core is not something to invent, it is something to COPY, and **a
+faithful transcription is 1.00x by construction**.
+
+The kit carries the game-agnostic half of that:
+
+| | |
+|---|---|
+| `asm_twin.py` | loads a project's assembled twins and runs one under Musashi over the same image its C cores use, with the C ABI: `AsmTwins.call(image, symbol, *args)`. Also `elf_symbols()`, the one parse of `nm`'s output |
+| `kit.mk`'s `$(ASM_OBJ)` / `$(ASM_ELF)` / `$(ASM_BIN)` | assembles `src/asm/*.S` — one object per source, then one blob — and makes `test` and `guarded` depend on the blob, so a suite can never run against a stale one |
+
+The per-source objects are kept rather than assembled straight to the blob, and that is not tidiness:
+a test that asks what one `.S` defines has to ask **its own object**. The linked blob is one flat
+symbol table, so two files that both `.equ SCREEN_ROW_BYTES` collapse into whichever the linker
+emitted last — measured, with a wrong value in one file vouched for by its neighbour's correct one.
+
+A project acquires the whole machinery by creating a `src/asm/` and writing a `.S` in it; `ASM_SRC`
+is a wildcard, so a project without one gets no rule and no prerequisite. Neither file names a game.
+
+The comparison is **twin against C core over the whole image**, not against a second oracle run: the
+C is already known equal to the original on those cases, so the chain is `original == C == twin` with
+both links byte-exact. Two things the runner does that a plain image compare would not:
+
+* **the image is staged at a NON-ZERO base.** A twin that ignored its image-base argument and
+  addressed the game's globals absolutely — which is the shape the original itself uses, since the
+  original IS the image — would pass at base 0 and fault the moment the target handed it a pointer;
+* **zeroed bands on BOTH sides of the image are checked after every call.** The comparison against
+  the C stops at the image's last byte, so a span one row too generous — forwards or backwards —
+  writes where there is nothing to differ. This is the twin-side stand-in for the guarded sweep
+  below, which reaches only the C; it is two-sided for the same reason that one is, and everything
+  from the call frame to the sentinel is covered bar the image itself, so an overrun wider than a
+  band does not sail past it either.
+
+`projects/zynaps/recreate/src/asm/` is the worked example, and its `README.md` is the recipe: where
+the seam goes (a `ZY_SCROLL()`-style macro at the CALL SITE, so the C reference stays compiled), how
+the build gate proves the twins are what the game actually calls, and the four checks a new twin
+needs. Zynaps' scroll path came out at 1.002x-1.014x of the original's per-call cycles.
+
 ## The guarded-image sweep, and the seam it hangs on
 
 The oracle puts every address on the 68000's 24-bit bus and then bounds it against the image: an

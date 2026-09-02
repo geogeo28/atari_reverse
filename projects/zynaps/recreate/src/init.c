@@ -950,9 +950,9 @@ void section_start_prefill(uint8_t *image) {
 
             wr32(image + A_map_offset, cursor_now - A_map_unpacked);
             wr32(image + A_map_ptr,
-                 scroll_emit_tile_column(image, edge, page_column, cursor_now));
+                 ZY_SCROLL(scroll_emit_tile_column)(image, edge, page_column, cursor_now));
         } else {
-            scroll_emit_column_shift2(image, A_scroll_col_workspace, page_column, edge);
+            ZY_SCROLL(scroll_emit_column_shift2)(image, A_scroll_col_workspace, page_column, edge);
         }
         image[A_map_page]++;
         if (image[A_map_page] == MAP_PAGES) {

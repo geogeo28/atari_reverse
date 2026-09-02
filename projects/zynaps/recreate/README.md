@@ -50,12 +50,15 @@ recreate/
 ├── Makefile         two lines: KIT + GAME, then `include $(KIT)/kit.mk`
 ├── include/<subsystem>.h   one per subsystem: its prototypes, addresses and record layout
 ├── src/<subsystem>.c       each core plus its `g_<name>` glue
+├── src/asm/*.S             ASM TWINS: the original's own instructions for the hottest cores,
+│                           linked instead of the C on the target build — src/asm/README.md
 ├── test/
 │   ├── harness.py   16-line shim: binds the kit and star-re-exports it
 │   ├── abi.py       the 68000 stub that stores register-only answers into diffed memory
 │   ├── test_constants.py   the CLAUDE.md §5 pin and the duplicate checks — a collector
 │   ├── test_status.py      STATUS.md's counts against its rows
 │   ├── test_heap_guard.py  the run-time half of the `tos_malloc_unused` waiver
+│   ├── test_asm_scroll.py  the asm twins against the C cores they replace, byte-exact
 │   └── test_<subsystem>.py one differential battery per subsystem
 ├── atari/           THE CORES ON A REAL 68000 — see atari/README.md
 └── STATUS.md        the per-function ledger, in per-subsystem sections
@@ -68,6 +71,12 @@ accessors) all live in the kit's `machine.h`; a project-local copy of any of the
 `src/sound.c` is the only core whose answers are registers rather than memory (A1 and D1), so its
 test enters the oracle at a poked stub — `test/abi.py` — which `jsr`s the routine and stores those
 registers where the image diff can see them.
+
+**`src/asm/` is a target-side substitution, not a second reconstruction.** Each `.S` transcribes the
+ORIGINAL binary's instruction sequence for one core and carries that core's C signature; the C stays
+compiled and stays the reference, and `test/test_asm_scroll.py` proves each twin byte-equal to it
+over the whole image. `make test` builds them first (the kit's `$(ASM_BIN)` rule) and runs both
+directions. [`src/asm/README.md`](src/asm/README.md) is the recipe for adding one.
 
 ## Adding a function
 
@@ -120,7 +129,8 @@ The steps:
 ```bash
 cd projects/zynaps/recreate
 make venv                        # the kit's rule: python -m venv .venv + requirements.txt
-rm -f build/*.so && make test    # rebuild both libs and run the differential suite (-n auto)
+rm -f build/*.so && make test    # rebuild both libs, assemble src/asm/*.S, run the suite (-n auto)
+make asm                         # (re)assemble just the asm twins -> build/asm/twins.{elf,bin}
 make guarded                     # the same suite over a PROT_NONE-bounded image (Darwin/BSD only)
 ```
 

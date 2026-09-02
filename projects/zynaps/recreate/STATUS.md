@@ -1994,6 +1994,71 @@ because that array is a map KEYED BY ADDRESS with distinct keys, so its row orde
 the three above are. The second is equivalent because every shipped arm carries exactly one of the
 two function pointers.
 
+## The asm twins — the scroll path in the original's own instructions (23)
+
+**These are not new functions and they add no row above.** A twin is a hand-written m68k
+transcription of the ORIGINAL binary's instruction sequence for a routine this file already carries a
+✅ row for, carrying that routine's C signature, linked INSTEAD of the C on the target build only.
+The C stays compiled and stays the reference; nothing about what the program computes changes.
+`src/asm/README.md` is the recipe, `atari/README.md`'s PERFORMANCE section the measurement.
+
+| twin | the original | the C it replaces | measured cost vs the original |
+|---|---|---|---|
+| `scroll_page_to_screen_p00_asm` .. `_p19_asm` (20) | `0x15d56` .. `0x16284` | `src/scroll.c` | **1.0024x** (Musashi), 1.08x (Hatari) |
+| `scroll_emit_column_shift2_asm` | `0x169f2` | `src/scroll.c` | **1.0083x**, 1.07x (Hatari) |
+| `scroll_emit_column_shift0_asm` | `0x16a56` | `src/scroll.c` | **1.0136x** |
+| `scroll_emit_tile_column_asm` | `0x162c2` | `src/scroll.c` | **1.011x**, 1.09x (Hatari) |
+
+**The count is not kept by hand.** `atari/build.sh`'s asm-twin gate scrapes the `*_asm` names
+`include/scroll.h` declares and requires every one to be both DEFINED by an asm object and
+REFERENCED by a core object; it prints the number it found, and a declared twin that was never
+written, or a call site that lost its `ZY_SCROLL()` wrapper, reddens the build. (`test_status.py`
+does not pin this heading — its sections are named after a `src/*.c`, and there is no `src/asm.c`.)
+
+**What judges them** — five things, and each is proven able to fail. **Three of the five were
+TIGHTENED after the code-review gate proved them survivable**, and the mutations that survived are
+kept in the table because a pin's history is what says how much to trust it:
+
+| | where | mutation result |
+|---|---|---|
+| the image differential, twin vs C over the WHOLE 1 MiB image, on `test_scroll.py`'s own cases | `test/test_asm_scroll.py` | a `movem.w %d0-%d3` cut to `%d0-%d2` in the tile twin reddened **37**; the blit prologue's argument binding swapped reddened **43**; a dropped register in `scroll_emit.S`'s shift0 row reddened **4** |
+| out-of-image writes, ON BOTH SIDES: zeroed bands below and above the image, checked after every call | `tools/recreate_kit/asm_twin.py` | a destination past the image end and one below its start each raise, by name |
+| the blit AND emitter bodies are assembled BYTE-IDENTICAL to the original's own machine code | `test_the_twins_transcribe_the_original` | a register dropped from one blit chunk reddens it; the emitters were **not covered until the review** — their span was free to pin and was not, so an emitter edit was caught behaviourally where the same edit to a blit was caught structurally |
+| per-call cost against the original's, on the same case under Musashi | `test_the_*_twin_costs_what_the_original_costs` | **the 1.15x shared bar was useless and is gone.** Moving the tile twin's frame slot off displacement 0 — the one substitution in the wave that is not free, +76 cycles, 1.011x → **1.0137x** — passed 1.15 and all 112 tests. The bars are now per twin (1.005 / 1.011 / 1.016 / **1.0125**), and that mutation reddens 12 |
+| the twins are what the game actually calls | `atari/build.sh` asm-twin gate | dropping `-DZY_ASM_SCROLL` names all 23 and exits 1; **and, since the review, unwrapping ONE of `scroll_emit_tile_column`'s two call sites** — which the first gate could not see, because its sibling reference kept the symbol "called" while `section_start_prefill` ran the 4.5x C |
+
+**Two coverage notes, honestly.**
+
+* The two prefill cases of `test_tile_twin_prefill_redirects_the_screen` survive the dropped-plane
+  mutation, and that is correct rather than a hole: with the prefill flag set the screen-edge and
+  page destinations are the same address, so the page write immediately after repairs the dropped
+  plane. The flag-clear case reddens.
+* The guard band's LOWER side has never fired on a real case and cannot: every destination these
+  twins walk advances, so only a synthetic negative offset reaches it (which is how it was proved
+  able to fire at all). It is there for wave B, whose sprite blitter clips to negative columns.
+
+**AND ONE THING NOTHING OFF-TARGET CATCHES.** A twin that returns with a callee-saved register
+clobbered leaves the image perfect, returns the right value, balances its stack and passes every row
+above — and corrupts its C caller. The surface is the on-target run (`smoke.py game`, whose frame
+differential is computed by C holding live values in exactly those registers across the call), which
+is why `src/asm/README.md` says a twin is not done until that is green. The stack frame itself IS
+covered off-target: `run_bench` checks the twin returned to its sentinel, and an epilogue that
+unwinds by the wrong amount fails `make test` loudly.
+
+**The C cores stay in the linked `.PRG` as dead code** — `src/scroll.c`'s own jump table and `g_`
+glue keep all 23 reachable, and the link has no `--gc-sections`. Measured at 2,366 bytes of bodies
+plus an 80-byte table. Nothing in this build asserts a size budget, so it is recorded rather than
+priced; the sibling Wonder Boy project's floppy free-space gate is the shape that would price it.
+
+**What the tile twin's transcription cost.** Its body needs three of the game's global addresses and
+all seven address registers are in use, so each is formed once in the prologue and the per-tile-row
+`lea $4b3be.l,a1` becomes `movea.l (%sp),%a1` — **cycle-neutral** (both 12 cycles), with the frame
+slot at displacement 0 on purpose so the addressing mode stays `(An)`. Measured: moving that slot to
+displacement 4 costs 76 cycles a call. The twenty blit bodies needed no substitution at all, which is
+why they are byte-identical. `gas` spells `and.w #imm,Dn` as ANDI where the original's assembler used
+AND-immediate: same four bytes, same flags, and Musashi charges the original's encoding two cycles
+more, so the twin measures marginally UNDER the original on the masked arms.
+
 ## Suite-wide checks (not functions, so not counted above)
 
 | file | what it holds |
@@ -2081,8 +2146,16 @@ a device, which no ledger reaches; they want an on-target surface
 
 ## Suite
 
-`make test` — **3979 passed**, 4 skipped. `make guarded` — same count, 23726
-candidate runs guarded across 10 workers, no fault.
+`make test` — **4094 passed**, 4 skipped (3979 before this wave; the 115 new ones are
+`test/test_asm_scroll.py`'s asm-twin differential, its transcription and cost pins, and
+`test_constants.py`'s `test_asm_twin_equates_match_the_headers`). `make guarded` — same count,
+23818 candidate runs guarded across 10 workers, no fault. The kit's own suite was re-run because
+this wave touched `kit.mk` and added `asm_twin.py`: **439 passed**, the same count as before.
+
+**`make test` NOW REQUIRES THE m68k CROSS TOOLCHAIN** (`m68k-elf-gcc`, `m68k-elf-objcopy`,
+`m68k-elf-nm`), where the host differential previously needed only a C compiler and Python. The twins
+are assembled before the suite runs, so a contributor without the toolchain can run none of the
+4,094 tests rather than just the twin ones. `atari/` already required it; the differential did not.
 
 **THIS WAVE TOUCHED THE KIT** (three new read-modify-write operations in `hw.h`/`src/hw.c`), so
 everything bound to it was re-measured rather than assumed, with each project's own inputs

@@ -161,9 +161,9 @@ static void frame_scroll_emit_column(uint8_t *image) {
         uint32_t edge = addr_add(be32(image + A_screen_back), SCROLL_WINDOW_BYTES);
 
         if (image[A_scroll_frozen])
-            scroll_emit_column_shift0(image, A_scroll_col_workspace, addr_add(page, phase), edge);
+            ZY_SCROLL(scroll_emit_column_shift0)(image, A_scroll_col_workspace, addr_add(page, phase), edge);
         else
-            scroll_emit_column_shift2(image, A_scroll_col_workspace, addr_add(page, phase), edge);
+            ZY_SCROLL(scroll_emit_column_shift2)(image, A_scroll_col_workspace, addr_add(page, phase), edge);
         return;
     }
     {
@@ -177,7 +177,7 @@ static void frame_scroll_emit_column(uint8_t *image) {
             wr32(image + A_map_offset, addr_add(cursor, (uint32_t)-(int32_t)A_map_unpacked));
             cursor = be32(image + A_map_ptr);
         }
-        cursor = scroll_emit_tile_column(image,
+        cursor = ZY_SCROLL(scroll_emit_tile_column)(image,
                                          addr_add(be32(image + A_screen_back), SCROLL_WINDOW_BYTES),
                                          addr_add(page, phase), cursor);
         wr32(image + A_map_ptr, cursor);
@@ -212,13 +212,13 @@ static void frame_mothership_gates(uint8_t *image) {
  * reason: that array is static, this subsystem does not own the file, and the migration is dropping
  * its `static` and declaring it in `include/scroll.h`. STATUS.md carries the debt. */
 static void (*const FRAME_SCROLL_BLITS[SCROLL_PHASES])(uint8_t *, uint32_t, uint32_t) = {
-    scroll_page_to_screen_p00, scroll_page_to_screen_p01, scroll_page_to_screen_p02,
-    scroll_page_to_screen_p03, scroll_page_to_screen_p04, scroll_page_to_screen_p05,
-    scroll_page_to_screen_p06, scroll_page_to_screen_p07, scroll_page_to_screen_p08,
-    scroll_page_to_screen_p09, scroll_page_to_screen_p10, scroll_page_to_screen_p11,
-    scroll_page_to_screen_p12, scroll_page_to_screen_p13, scroll_page_to_screen_p14,
-    scroll_page_to_screen_p15, scroll_page_to_screen_p16, scroll_page_to_screen_p17,
-    scroll_page_to_screen_p18, scroll_page_to_screen_p19,
+    ZY_SCROLL(scroll_page_to_screen_p00), ZY_SCROLL(scroll_page_to_screen_p01), ZY_SCROLL(scroll_page_to_screen_p02),
+    ZY_SCROLL(scroll_page_to_screen_p03), ZY_SCROLL(scroll_page_to_screen_p04), ZY_SCROLL(scroll_page_to_screen_p05),
+    ZY_SCROLL(scroll_page_to_screen_p06), ZY_SCROLL(scroll_page_to_screen_p07), ZY_SCROLL(scroll_page_to_screen_p08),
+    ZY_SCROLL(scroll_page_to_screen_p09), ZY_SCROLL(scroll_page_to_screen_p10), ZY_SCROLL(scroll_page_to_screen_p11),
+    ZY_SCROLL(scroll_page_to_screen_p12), ZY_SCROLL(scroll_page_to_screen_p13), ZY_SCROLL(scroll_page_to_screen_p14),
+    ZY_SCROLL(scroll_page_to_screen_p15), ZY_SCROLL(scroll_page_to_screen_p16), ZY_SCROLL(scroll_page_to_screen_p17),
+    ZY_SCROLL(scroll_page_to_screen_p18), ZY_SCROLL(scroll_page_to_screen_p19),
 };
 
 /* A boss encounter and an asteroid field both have no backdrop, so the playfield is cleared rather

@@ -724,6 +724,30 @@ def load_json(name):
     return json.loads(path.read_text())
 
 
+# The suffix an asm twin's symbol carries (../src/asm/*.S; ../include/scroll.h's ZY_SCROLL seam).
+# A twin IS the routine — the same work, transcribed from the original's own instructions — so it
+# has to be ratioed against the original's row for that routine. Without this the twins simply drop
+# out of the comparison, and the table would quietly stop covering the very functions this wave
+# rewrote: `scroll_emit_column_shift2_asm` finds no `scroll_emit_column_shift2` on the shipped side.
+ASM_TWIN_SUFFIX = "_asm"
+
+
+def with_asm_twins_renamed(functions):
+    """Our side's rows under the ORIGINAL's names, so a twin ratios against what it replaced.
+
+    A name is summed rather than overwritten because both spellings can be present: the C reference
+    is still compiled and linked (it is what the differential pins the twin against), so it has a
+    symbol — with, in a correct build, no samples at all against it.
+    """
+    renamed = {}
+    for name, row in functions.items():
+        key = name[:-len(ASM_TWIN_SUFFIX)] if name.endswith(ASM_TWIN_SUFFIX) else name
+        into = renamed.setdefault(key, {"calls": 0, "cycles": 0})
+        into["calls"] += row["calls"]
+        into["cycles"] += row["cycles"]
+    return renamed
+
+
 def with_scroll_blit_folded(functions):
     """The twenty scroll phases as ONE row, so the biggest item in the frame gets a ratio.
 
@@ -759,7 +783,7 @@ def compare():
           f"{ours_per_frame / theirs_per_frame:.2f}x")
     theirs_folded = with_scroll_blit_folded(theirs["functions"])
     shared = []
-    for name, row in with_scroll_blit_folded(ours["functions"]).items():
+    for name, row in with_scroll_blit_folded(with_asm_twins_renamed(ours["functions"])).items():
         other = theirs_folded.get(name)
         if other is None or row["calls"] < MIN_RATIO_CALLS or other["calls"] < MIN_RATIO_CALLS:
             continue
