@@ -253,8 +253,12 @@ window's frame at 2.19x, 5.34x and 4.49x the original's cost — into `../src/as
 which took the cadence from a mode of 6 vertical blanks to a mode of 4. **Wave B did the same for
 `draw_sprite_masked_collide` (0x15b7c) at 2.45x, `draw_score_panel` (0x136c8) at 2.77x and the
 character blitter it ends in**, and the mode moved again, 4 to **2**: most of the judged run is now on
-budget, at 17.9 fps against the original's 25. `../src/asm/README.md` is the recipe both waves
-followed and carries what wave B added to it.
+budget. **Wave C twinned the frame loop's LAST SLICE** (0x11d30..0x1296e, `../src/asm/frame.S`, the
+first twin in this project that CALLS — sixteen C cores through the kit's callback door), which took
+the judged cadence from 2.80 to **2.67**, 18.7 fps against the original's 25.
+`../src/asm/README.md` is the recipe all three waves followed and carries what each added to it —
+including wave C's warning that the profiler row which commissioned it was ~95% busy-wait, so its
+real prize was ~19,500 cycles a frame and not the ~140,000 the row implied.
 
 ```bash
 python3 atari/profile.py frames             # OUR cadence: vblanks per frame, work, wait
@@ -297,14 +301,14 @@ the `game` one below.
 The long entries the original's side used to show (45 vblanks x2 in the previous edition's window)
 are a death and the fire wait after it, which is not a frame; this wave's original window has none.
 
-The `game` build's own record is the judged figure — **2.80 vblanks a frame over its 300 pinned
-frames, 180 at 2 and 120 at 4, none over 5** (3.75 / [2x38 4x262] after wave A, 5.73 / one over
-before any twin) — which is what makes the histogram a surface `smoke.py` can judge rather than a
+The `game` build's own record is the judged figure — **2.67 vblanks a frame over its 300 pinned
+frames, about 199 at 2 and 100 at 4, at most one at 5** (2.80 / [2x180 4x119] after wave B, 3.75 /
+[2x38 4x262] after wave A, 5.73 / one over before any twin) — which is what makes the histogram a surface `smoke.py` can judge rather than a
 reading somebody has to take by hand.
 
 **THAT FIGURE IS NO LONGER DETERMINISTIC TO THE SECOND DECIMAL, and the win is why.** Six `game` runs
-of one binary gave 2.80, 2.82, 2.84, 2.80, 2.84, 2.80 and two `gamefault` runs gave 2.80 twice — a
-12-vblank spread over 300 frames, because ~60% of the frames now finish NEAR the release boundary
+of one binary gave 2.67, 2.67, 2.69, 2.69, 2.66, 2.70 and two `gamefault` runs gave 2.67 and 2.66 — a
+12-vblank spread over 300 frames, because ~65% of the frames now finish NEAR the release boundary
 where a handful of cycles moves a frame between 2 slots and 4. While every frame overran, nothing sat
 on the boundary and the histogram repeated to the frame. `PACING_MEAN_CEILING_VBLS` is therefore set
 from the WORST of the eight runs plus the same 36-vblank slack every ceiling in this file's history

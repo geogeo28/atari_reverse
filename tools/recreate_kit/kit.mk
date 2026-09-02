@@ -91,14 +91,36 @@ ASM_LINK_BASE := $(shell $(PY) -c 'import sys; sys.path.insert(0, "$(KIT)/.."); 
 # -nostdlib: the twins call nothing and must not drag in a C runtime that would need one.
 # -Wl,-e0: the blob has no `_start` and needs none — every twin is entered by SYMBOL, from Python or
 # from the C that links it. Setting the ELF entry explicitly is what stops ld warning about that.
-ASM_CFLAGS := -m68000 -nostdlib -Iinclude -I$(KIT)/include
+#
+# -DRECREATE_HOST_DIFFERENTIAL marks this as the OFF-TARGET assembly of the twins, exactly as it
+# marks the candidate .so above, and it is what a `.S` selects its CALLBACK DOOR stubs on: off target
+# a door stub jumps into asm_twin.py's band, on target it reaches the real C core (asm_twin.py, "THE
+# CALLBACK DOOR"). The twin BODY must be byte-identical either way — it always `bsr`s the stub — so
+# what hangs off this flag is the one instruction that stands in for a link, and nothing else. A
+# project's own target build (its atari/build.sh, its own flags) never defines it.
+#
+# ...and the door's BAND is asked of asm_twin.py for the same reason ASM_LINK_BASE is: a `.S` that
+# spelt the base itself would keep jumping to the old address the day it moved, and would execute
+# the zeros there rather than stopping at a door.
+ASM_DOOR_FLAGS := $(shell $(PY) -c 'import sys; sys.path.insert(0, "$(KIT)/.."); \
+                                    from recreate_kit import asm_twin; print(asm_twin.asm_door_flags())')
+ASM_CFLAGS := -m68000 -nostdlib -DRECREATE_HOST_DIFFERENTIAL $(ASM_DOOR_FLAGS) \
+              -Iinclude -I$(KIT)/include
 
-$(ASM_DIR)/%.o: src/asm/%.S
+# $(KIT)/kit.mk is a prerequisite of BOTH rules for the $(ORACLE) rule's reason: ASM_CFLAGS above
+# configures the assembly, and without it a flag change leaves every already-built object reporting
+# "up to date". A blob half-assembled under one flag set and half under another is the worst shape
+# this could take — one twin's door stub taking the on-target arm inside an off-target blob — and
+# make would say nothing.
+$(ASM_DIR)/%.o: src/asm/%.S $(KIT)/kit.mk $(KIT)/asm_twin.py
 	@mkdir -p $(ASM_DIR)
 	m68k-elf-gcc $(ASM_CFLAGS) -c $< -o $@
 
-$(ASM_ELF): $(ASM_OBJ) $(KIT)/asm_twin.py
+$(ASM_ELF): $(ASM_OBJ) $(KIT)/asm_twin.py $(KIT)/kit.mk
 	@[ -n "$(ASM_LINK_BASE)" ] || { echo "ERROR: asm_twin.asm_link_base() gave nothing"; exit 1; }
+	@[ -n "$(ASM_DOOR_FLAGS)" ] || { echo "ERROR: asm_twin.asm_door_flags() gave nothing, so the"; \
+	  echo "       twins would assemble with no door band and fail at LINK naming the macro"; \
+	  echo "       rather than the shell-out that did not run"; exit 1; }
 	m68k-elf-gcc $(ASM_CFLAGS) -Wl,--build-id=none -Wl,-e0 \
 	  -Wl,-Ttext=$(ASM_LINK_BASE) $(ASM_OBJ) -o $(ASM_ELF)
 

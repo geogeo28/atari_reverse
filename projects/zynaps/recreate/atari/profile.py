@@ -743,6 +743,32 @@ def load_json(name):
 ASM_TWIN_SUFFIX = "_asm"
 
 
+# A twin that CALLS reaches each of its cores through one `door_*` trampoline (src/asm/frame.S), and
+# every one is a `.globl`, so Hatari gives each its own row. THOSE CYCLES ARE THE TWIN'S: the stub
+# exists in both builds and stands where the original has a bare `bsr`, so leaving them in nineteen
+# orphan rows ratios our slice against the original's WITHOUT the overhead our slice actually pays —
+# the suite's own cost table puts it at 240-360 cycles a band.
+DOOR_STUB_PREFIX = "door_"
+# The twin those stubs belong to, spelled as the ORIGINAL names it (this runs before the rename
+# below). One entry today; a second `.S` with doors adds its own.
+DOOR_STUB_OWNER = "frame_resolve_hits_and_game_state"
+
+
+def with_door_stubs_folded(functions):
+    """The `door_*` trampolines' cycles moved into the twin that calls them.
+
+    ONLY THE CYCLES. A stub's call count is the twin's CALL SITES, not entries to the twin — summing
+    them would report a slice entered forty-three times a frame that is entered once.
+    """
+    folded = {}
+    for name, row in functions.items():
+        stub = name.startswith(DOOR_STUB_PREFIX)
+        into = folded.setdefault(DOOR_STUB_OWNER if stub else name, {"calls": 0, "cycles": 0})
+        into["calls"] += 0 if stub else row["calls"]
+        into["cycles"] += row["cycles"]
+    return folded
+
+
 def with_asm_twins_renamed(functions):
     """Our side's rows under the ORIGINAL's names, so a twin ratios against what it replaced.
 
@@ -794,7 +820,7 @@ def compare():
           f"{ours_per_frame / theirs_per_frame:.2f}x")
     theirs_folded = with_scroll_blit_folded(theirs["functions"])
     shared = []
-    for name, row in with_scroll_blit_folded(with_asm_twins_renamed(ours["functions"])).items():
+    for name, row in with_scroll_blit_folded(with_asm_twins_renamed(with_door_stubs_folded(ours["functions"]))).items():
         other = theirs_folded.get(name)
         if other is None or row["calls"] < MIN_RATIO_CALLS or other["calls"] < MIN_RATIO_CALLS:
             continue

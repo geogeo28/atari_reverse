@@ -11,8 +11,11 @@ instead of hiding behind an up-to-date-looking artifact (the mtime relink trap).
 opcode table and the Musashi clone are gitignored build products; without them there is nothing to
 compile, so a suite skips rather than fails.
 """
+import ctypes
 import re
+import shutil
 import subprocess
+import sys
 
 from pathlib import Path
 
@@ -68,6 +71,84 @@ def compile_probe(probe_src, tmpdir, extra_src=()):
 _SCALAR_LINE = re.compile(r"^K (\S+) (\S+) (\d+)$", re.M)
 _LEDGER_LINE = re.compile(r"^L (\S+) (\d+)((?: \d+)+)$", re.M)
 _FILE_LINE = re.compile(r"^F (\S+) (\d+) (\d+)$", re.M)
+
+
+# How kit.mk assembles a project's twins ($(ASM_OBJ)/$(ASM_ELF)/$(ASM_BIN)), spelt once. A suite
+# that assembles its OWN probe twins must build them the way a project's are built, or it pins a
+# build nobody ships — and the flags have already proved able to drift: -DRECREATE_HOST_DIFFERENTIAL
+# is what selects a door stub's off-target arm, and a probe assembled without it takes the on-target
+# arm and does not link. That is this module's whole reason for existing, applied to the twins.
+ASM_TOOLS = ("m68k-elf-gcc", "m68k-elf-objcopy", "m68k-elf-nm")
+
+
+def asm_flags(host_differential=True):
+    """kit.mk's ASM_CFLAGS for the twins, minus the project include paths a probe has none of.
+
+    `host_differential=False` drops the OFF-TARGET marker, giving the flag set a project's own
+    target build assembles with. Only a case that pins the two builds against each other has any use
+    for it; everything else wants the default, which is what `make test` really runs.
+    """
+    flags = ["-m68000", "-nostdlib", *_asm_twin().asm_door_flags().split()]
+    if host_differential:
+        flags.append("-DRECREATE_HOST_DIFFERENTIAL")
+    return tuple(flags)
+
+
+def assemble_twins(source, out_dir, name="twins", flags=None):
+    """Assemble one `.S` source string into `<out_dir>/<name>.{elf,bin}`, as kit.mk does.
+
+    Returns `out_dir`, which is what `AsmTwins` takes — so a suite writes its probe assembly, calls
+    this, and hands the result straight over.
+
+    Skips the calling suite when the cross toolchain is absent, this directory's convention for a
+    build product that may simply not be installed.
+    """
+    asm_twin = _asm_twin()
+    for tool in ASM_TOOLS:
+        if shutil.which(tool) is None:
+            pytest.skip(f"{tool} is not installed, so the probe twins cannot be assembled",
+                        allow_module_level=True)
+    out_dir = Path(out_dir)
+    asm = out_dir / f"{name}.S"
+    obj, elf, binary = out_dir / f"{name}.o", out_dir / f"{name}.elf", out_dir / f"{name}.bin"
+    asm.write_text(source)
+    flags = list(asm_flags() if flags is None else flags)
+    _run(["m68k-elf-gcc", *flags, "-c", str(asm), "-o", str(obj)])
+    # -Wl,-e0 and --build-id=none for kit.mk's reasons: the blob has no `_start`, and a build-id note
+    # would be carried into the flat binary and move every symbol after it.
+    _run(["m68k-elf-gcc", *flags, "-Wl,--build-id=none", "-Wl,-e0",
+          f"-Wl,-Ttext={asm_twin.asm_link_base()}", str(obj), "-o", str(elf)])
+    _run(["m68k-elf-objcopy", "-O", "binary", str(elf), str(binary)])
+    return out_dir
+
+
+def build_host_lib(source, out_dir, name):
+    """Compile one C source into a shared library and return the loaded ctypes handle.
+
+    A stand-in for a project's candidate `.so`, for a suite whose subject is something the harness
+    does WITH that library rather than the library itself (test_callback_door.py's host "cores").
+    """
+    if shutil.which("cc") is None:
+        pytest.skip("no C compiler, so the host stand-in cannot be built", allow_module_level=True)
+    lib = Path(out_dir) / name
+    _run(["cc", "-std=c11", "-O0", "-fPIC", "-shared", str(source), "-o", str(lib)])
+    return ctypes.CDLL(str(lib))
+
+
+def _run(argv):
+    subprocess.run(argv, check=True, capture_output=True, text=True)
+
+
+def _asm_twin():
+    """`recreate_kit.asm_twin`, imported on demand.
+
+    Not at module scope: this file is imported by suites that bind no project and never touch the
+    twins, and `tools/` is only on `sys.path` once something has put it there. The one caller that
+    needs it is the one that also needs the toolchain.
+    """
+    sys.path.insert(0, str(KIT.parent))
+    from recreate_kit import asm_twin        # noqa: E402  (importable only after the path insert)
+    return asm_twin
 
 
 def run_probe(binary):

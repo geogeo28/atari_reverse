@@ -263,23 +263,168 @@ _LIB.osh_run_bench.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint32, 
                                _u32p]
 _LIB.osh_run_bench.restype = ctypes.c_int
 
+# Every symbol the door and the seeded entry state need, probed as ONE set: an .so predating any of
+# them predates all of them, and a bare ctypes `undefined symbol` would name neither the file nor the
+# rebuild — which is exactly what _stale_oracle exists to stop.
+for _symbol in ("osh_bench_door", "osh_bench_door_pc", "osh_bench_door_sp", "osh_bench_door_poison",
+                "osh_bench_door_return", "osh_bench_resume", "osh_bench_seed",
+                "osh_bench_status_insns_exhausted", "osh_bench_status_sentinel",
+                "osh_bench_status_door"):
+    if not hasattr(_LIB, _symbol):
+        raise _stale_oracle(
+            _symbol,
+            "so a bench run cannot be stopped at the CALLBACK DOOR and continued, and an asm twin "
+            "that calls a host C core has no way to reach it.")
+_LIB.osh_bench_door.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+_LIB.osh_bench_door_pc.restype = ctypes.c_uint32
+_LIB.osh_bench_door_sp.restype = ctypes.c_uint32
+_LIB.osh_bench_door_poison.restype = ctypes.c_uint32
+_LIB.osh_bench_door_return.argtypes = [ctypes.c_uint32, ctypes.c_int,
+                                       ctypes.c_uint32, ctypes.c_uint32]
+_LIB.osh_bench_resume.argtypes = [ctypes.c_uint32, _u32p]
+_LIB.osh_bench_resume.restype = ctypes.c_int
+_LIB.osh_bench_seed.argtypes = [_u32p]
 
-def run_bench(mem, entry, arg0, sp, sentinel, max_insns=16_000_000):
+# What a serviced callback leaves in the CALLER-SAVED file (D1, A0, A1 — and D0 when the core
+# returns nothing), asked of the .so rather than mirrored, so the two cannot disagree about it.
+DOOR_SCRATCH_POISON = _LIB.osh_bench_door_poison()
+
+# shim.c's OSH_BENCH_* statuses, ASKED OF THE .so for DOOR_SCRATCH_POISON's reason rather than
+# mirrored here. 1 is what it has always been — "returned to the sentinel" — so a caller that reads
+# a bench result as a boolean still reads it correctly.
+for _getter in ("osh_bench_status_insns_exhausted", "osh_bench_status_sentinel",
+                "osh_bench_status_door"):
+    getattr(_LIB, _getter).restype = ctypes.c_uint32
+BENCH_INSNS_EXHAUSTED = _LIB.osh_bench_status_insns_exhausted()
+BENCH_SENTINEL = _LIB.osh_bench_status_sentinel()
+BENCH_DOOR = _LIB.osh_bench_status_door()
+
+BENCH_MAX_INSNS = 16_000_000
+
+# The buffer export of the run in progress — see run_bench.
+_bench_buf = None
+
+
+def _bench_result(status, out, entry, max_insns):
+    """The reported shape of one bench segment, or the raise for a run that stopped at neither the
+    sentinel nor the door. ``entry`` names the function in that message."""
+    if status == BENCH_INSNS_EXHAUSTED:
+        raise RuntimeError(f"recon fn @ {entry:#x} did not return to the sentinel within "
+                           f"{max_insns} instructions")
+    return {"status": status, "reached": status == BENCH_SENTINEL, "d0": out[0],
+            "regs": dict(zip(REPORTED_REGS, out)),
+            "ninsns": _LIB.osh_num_insns(), "cycles": _LIB.osh_num_cycles()}
+
+
+def _bench_seed(seed_regs):
+    """Install the register file the next run enters with, or clear it when ``seed_regs`` is None.
+
+    Installed on EVERY run rather than only when there is something to install, so one caller's seed
+    cannot still be armed for the next caller's run."""
+    if seed_regs is None:
+        _LIB.osh_bench_seed(None)
+        return
+    if len(seed_regs) != len(REPORTED_REGS):
+        raise ValueError(f"a bench seed is one value per reported register "
+                         f"({', '.join(REPORTED_REGS)}), not {len(seed_regs)}")
+    buf = (ctypes.c_uint32 * len(REPORTED_REGS))(*(value & 0xFFFFFFFF for value in seed_regs))
+    _LIB.osh_bench_seed(buf)
+
+
+def run_bench(mem, entry, arg0, sp, sentinel, max_insns=None, door=None,
+              seed_regs=None):
     """Run a cross-compiled reconstruction function (our C built to m68k, loaded into ``mem`` at its
     link addresses) at ``entry`` with one 32-bit stack argument ``arg0`` (the image pointer). No OS
     traps are installed (see osh_run_bench). ``mem`` is a mutable bytearray already holding the loaded
-    recon code + data + the game-image state. Returns {reached, d0, ninsns, cycles}. For measuring the
-    reconstruction's own on-target cost, alongside the original's (emu.run)."""
+    recon code + data + the game-image state. Returns {status, reached, d0, regs, ninsns, cycles},
+    where ``regs`` is the whole ``REPORTED_REGS`` file the run left. For measuring the
+    reconstruction's own on-target cost, alongside the original's (emu.run).
+
+    ``door`` is the CALLBACK DOOR's ``(base, span)`` band, or None for no door — which is what every
+    caller but ``asm_twin.AsmTwins.call`` passes, and behaves exactly as this always has: a run that
+    does not reach the sentinel RAISES. With a band, a PC inside it stops the run and comes back as
+    ``BENCH_DOOR``; the caller services the callback and continues with ``bench_resume``. The band is
+    installed on EVERY call, disarmed included, so one run's door cannot still be armed for the next.
+
+    ``seed_regs`` is the entry register file, one value per ``REPORTED_REGS`` name, or None to enter
+    exactly as this always has. Seeding is what lets a caller pin the callee-saved file (see
+    ``asm_twin.AsmTwins.call``).
+    """
+    # RESOLVED HERE AND NOT AS A DEFAULT ARGUMENT: a default is bound once at def time, so a
+    # caller that shrinks `emu.BENCH_MAX_INSNS` (the door tests do, to turn a would-be hang
+    # into a fast red) would shrink every segment EXCEPT the first — which is the one segment
+    # a twin that never reaches its door spends entirely.
+    if max_insns is None:
+        max_insns = BENCH_MAX_INSNS
     size = len(mem)
-    buf = (ctypes.c_uint8 * size).from_buffer(mem)
-    out = (ctypes.c_uint32 * 4)()
-    reached = _LIB.osh_run_bench(buf, size, entry & 0xFFFFFFFF, arg0 & 0xFFFFFFFF,
-                                 sp & 0xFFFFFFFF, sentinel & 0xFFFFFFFF, max_insns, out)
-    if not reached:
-        raise RuntimeError(f"recon fn @ {entry:#x} did not return to the sentinel within "
-                           f"{max_insns} instructions")
-    return {"reached": True, "d0": out[0],
-            "ninsns": _LIB.osh_num_insns(), "cycles": _LIB.osh_num_cycles()}
+    # Kept in a module slot for the LIFE OF THE RUN, not just this call: shim.c holds `mem` as a raw
+    # `g_mem` pointer, and `bench_resume` executes m68k code straight over it after this function has
+    # returned. A local export would drop the only reference keeping the bytearray alive, and a
+    # caller whose `mem` then went out of scope would resume into freed heap.
+    global _bench_buf
+    _bench_buf = buf = (ctypes.c_uint8 * size).from_buffer(mem)
+    out = (ctypes.c_uint32 * len(REPORTED_REGS))()
+    base, span = door if door else (0, 0)
+    _LIB.osh_bench_door(base & 0xFFFFFFFF, span & 0xFFFFFFFF)
+    _bench_seed(seed_regs)
+    status = _LIB.osh_run_bench(buf, size, entry & 0xFFFFFFFF, arg0 & 0xFFFFFFFF,
+                                sp & 0xFFFFFFFF, sentinel & 0xFFFFFFFF, max_insns, out)
+    _release_unless_resumable(status)
+    return _bench_result(status, out, entry, max_insns)
+
+
+def _release_unless_resumable(status):
+    """Drop the run's buffer export once nothing can resume into it.
+
+    A live export makes the caller's bytearray un-resizable and keeps it alive, so holding one past
+    the run would be a leak charged to whoever passed the memory in. An exception escaping a door
+    loop cannot leave one held: `bench_abort` below is what the door driver calls in its `finally`,
+    because pytest keeps a failed case's frame locals alive through the traceback and one pinned
+    megabyte per door failure per worker is not a bounded residue."""
+    global _bench_buf
+    if status != BENCH_DOOR:
+        _bench_buf = None
+
+
+def bench_abort():
+    """Drop the run's buffer export unconditionally — the door driver's `finally`.
+
+    `_release_unless_resumable` keeps the export alive across a BENCH_DOOR stop on purpose, because a
+    resume needs it. When the driver leaves that loop by RAISING instead of resuming, nothing else
+    will ever release it, so the caller's image stays exported and un-resizable for the life of the
+    worker. Idempotent, so a `finally` can call it on the success path too.
+    """
+    global _bench_buf
+    _bench_buf = None
+
+
+def bench_door_pc():
+    """The PC inside the door band the last ``run_bench``/``bench_resume`` stopped at."""
+    return _LIB.osh_bench_door_pc()
+
+
+def bench_door_sp():
+    """A7 at that door: the twin's return address is AT it, its C arguments at +4, +8, ..."""
+    return _LIB.osh_bench_door_sp()
+
+
+def bench_door_return(d0, pc, sp, returns=True):
+    """Apply a serviced callback — ``d0`` into D0 — and resume the twin at ``pc`` with A7 = ``sp``,
+    which is the stub's ``rts``. The rest of the caller-saved file and every condition-code bit are
+    DESTROYED, as a real C core destroys them. ``returns=False`` for a core declared ``void``, whose
+    D0 is as undefined as the rest."""
+    _LIB.osh_bench_door_return(d0 & 0xFFFFFFFF, 1 if returns else 0,
+                               pc & 0xFFFFFFFF, sp & 0xFFFFFFFF)
+
+
+def bench_resume(entry=0, max_insns=BENCH_MAX_INSNS):
+    """Continue the run ``run_bench`` started, after a door callback was serviced. The CPU is not
+    reset — Musashi's state IS the twin's — and the reported ninsns/cycles are the run's running
+    totals. ``entry`` only names the function in the exhaustion message."""
+    out = (ctypes.c_uint32 * len(REPORTED_REGS))()
+    status = _LIB.osh_bench_resume(max_insns, out)
+    _release_unless_resumable(status)
+    return _bench_result(status, out, entry, max_insns)
 
 
 def cov_enable(on=True):

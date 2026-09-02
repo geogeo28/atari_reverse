@@ -1741,6 +1741,190 @@ Three projects needed one when the phase landed, all for the same reason and all
 `set_palette`/`clear_palette`/`flip_screen`). Joust and Zynaps needed none — Zynaps because this
 phase is what its wave-3 batch used to close the hole.
 
+## The callback door — how an asm twin calls a verified C core
+
+Everything above this point models the MACHINE for a reconstruction. This models nothing: it is the
+off-target stand-in for a **link**, and it exists only because one side of the differential is host
+code.
+
+An asm twin (`asm_twin.py`, and the kit README's "Asm twins") is a transcription of the original's
+own instructions for one routine. So it calls what the original calls — and a twin big enough to be
+worth writing calls the project's verified C cores. Off target those cores are **host** code, in the
+candidate `.so` the harness dlopens; the blob is m68k, linked alone at base 0, and a `bsr` to one of
+them does not link:
+
+```
+m68k-elf-ld: undefined reference to `collision_chain_walk'
+```
+
+Cross-compiling the cores into the blob does not fix it either, and that is the load-bearing half of
+the argument: two of the seams those cores sit on are modelled **host-side** — `sched_wait8` is the
+candidate's clock (Phase 8) and `hw_bset8` is a ledger entry (Phase 10) — so an m68k build of them
+would model nothing, spin forever on a byte no interrupt writes, and store to an address the blob's
+own memory does not decode.
+
+**On the target build there is no problem to solve.** The twin links against the real cores and its
+stub jumps straight to one. So the door is off-target-only, and being off-target-only is exactly what
+makes it dangerous: anything the door does that the target build does not do is a difference that
+ships, with no surface here able to see it.
+
+### The band, and the stub
+
+A fixed range inside the emulated memory image, in the dead gap between the twin's stack top and the
+image (`asm_twin.py` owns the constants):
+
+| | |
+|---|---|
+| `DOOR_BASE` | `0x000F0000` |
+| `DOOR_STRIDE` | `8` |
+| `DOOR_SLOTS` | `64` — the band is `[0xF0000, 0xF0200)` |
+
+Slot `id` is at `DOOR_BASE + id * DOOR_STRIDE`. `AsmTwins.__init__` **asserts** the band lies
+strictly above `stack_top` and strictly below `image_at`, naming both numbers: a bigger blob or a
+lower image would make a door address alias real memory — a twin would write where a callback is
+meant to be caught, or a callback would fire on an ordinary access — and neither leaves a trace
+anything else here could read.
+
+**A twin never spells a door address in its body.** Each callee gets a stub, chosen by `#ifdef` on
+`RECREATE_HOST_DIFFERENTIAL` — which `kit.mk`'s `ASM_CFLAGS` defines for the off-target assembly and
+a project's own target build does not:
+
+```gas
+door_collision_chain_walk:
+    jmp     (0xf0000 + 0 * 8).l        | off target: into the band
+    jmp     collision_chain_walk       | on target: the real core
+```
+
+so the body's `bsr.w door_collision_chain_walk` is **byte-identical in both builds**. In this
+simplest form the `jmp` is a TAIL jump, so on target the core's own `rts` returns straight to the
+twin's call site.
+
+**The door does not require that form**, and Zynaps's `frame.S` ships a fatter one. Its stubs save
+the ABI's scratch file, push the arguments, `jsr` (not `jmp`) the callee, and then regain control to
+unwind the arguments, restore the scratch file, and set the Z or X flag the original's callee answers
+in. The stub is where that belongs precisely because the stub exists in BOTH builds — see "the
+marshalling contract" below. All the door asks is the ordinary m68k SysV frame at the moment it is
+reached: **the return address at `A7`, the C arguments at `A7+4`, `A7+8`, …**, which both shapes give
+it.
+
+### The marshalling contract
+
+`osh_run_bench` stops **before** executing anything in the band and reports `OSH_BENCH_DOOR`;
+`AsmTwins.call` services the callback and continues the same run through `osh_bench_resume` (the CPU
+is not reset — Musashi's state IS the twin's). One service is:
+
+* the slot is `(door_pc - DOOR_BASE) / DOOR_STRIDE`, and a PC that is not exactly on a slot boundary
+  is refused with the rest;
+* the slot is looked up in the **project's** callback table,
+  `{id: DoorCallback(name, nargs, takes_image=True, returns=True)}`, passed to
+  `AsmTwins(asm_dir, image_size, callbacks=…, lib=harness._lib)`. The kit half names no game,
+  exactly as `asm_twin.py` and `kit.mk` already name none. **The band is armed either way**: a
+  project with no table can still have a blob full of door stubs, and a stub reaching an unarmed
+  band would execute the zeros there for sixteen million instructions and time out naming nothing;
+* the stub was reached by `bsr`, so the twin's return address is AT `A7` and the C arguments are
+  above it — `A7+4`, `A7+8`, … — one 32-bit stack word each, `nargs` of them;
+* **argument 0 is the image base**, and the door substitutes a HOST pointer into the emulated memory
+  buffer for it, because a core's `uint8_t *image` has to be a real pointer. The emulated value is
+  checked against the image base rather than discarded: a twin passing anything else has computed
+  the wrong base, and substituting over it would hide exactly that. A core that touches HARDWARE
+  rather than the image has none to be handed — `hw_bset8(addr, bit)`, `ikbd_send_cmd(cmd)` — and
+  declares `takes_image=False`; substituting a pointer over ITS first argument would corrupt the
+  value it needs, which is the same mistake from the other side;
+* the host function is called through ctypes, and its result goes to **D0** — read as a longword and
+  put there whole. The one residual: a core whose C return type is NARROWER than 32 bits would land
+  whatever the host left in the upper bits in D0 alongside its answer. No core any twin calls has
+  such a type (checked across Zynaps's sixteen: all `int`, `unsigned`, `uint32_t` or `void`), so the
+  table carries no declared return width; the day one does, that is the field to add;
+* then the stub's `rts` is simulated: the return address is popped into PC and `A7` moves on by 4.
+
+**And that is the whole of it. It is a plain C call — including what a C call WRECKS.** D0 carries
+the result; D1, A0, A1 and every condition-code bit come back as rubble, because on the machine this
+call site reaches the real core and the m68k SysV ABI lets it destroy exactly those. A door that
+politely preserved them would be preserving them **off target only**: a stub that forgot to save its
+scratch file across the call, or that branched on a flag its callee happened to leave, would be green
+here and broken on the STE, and nothing off target could say so. So the door destroys them on purpose,
+with a distinctive value (`osh_bench_door_poison()`), and `test_callback_door.py` requires the wreckage.
+
+A core declared `returns=False` — `void` — gets that poison in D0 as well. Its D0 on the machine is
+whatever the callee happened to leave, and reading the host's arbitrary return register would turn a
+value that is undefined on target into a definite number here.
+
+Anything a call site needs beyond the result — the X flag in or out, a `tst.l` so a `beq` below the
+call has something to branch on, the scratch registers saved across it — belongs in the **stub**,
+which exists in both builds.
+
+### An unregistered slot is a REFUSAL
+
+A twin reaching a slot the table does not declare **raises**, naming the slot and everything that IS
+declared. It never answers 0 — that is the governing rule at the top of this file applied to the
+door: a fabricated result is one both sides then agree with, and a door nobody registered has no
+host core behind it, so there is no answer to give. Supplying a table at all is what arms the band,
+an empty table included, so a project with door stubs cannot get the zeros in the band instead of
+the refusal.
+
+### The door charges the emulated machine nothing
+
+The twin's `bsr` and the stub's `jmp` really execute and are charged normally. The C body does not
+exist on this side, so it costs nothing — and that is not tidiness. An off-target cost pin over a
+twin that calls cores measures **the twin's own instructions**; the callee's cost is measured on
+target, against the original's own call to the same routine. A door that charged for the service
+would corrupt both halves of that.
+
+**Which is a real limit on what such a pin may claim, and not only on what the door may do.** An
+off-target cost over a span that CONTAINS a door call is not comparable to the original's cost for
+the same span: the original really executed its callee and this side did not. So a twin that calls
+cores takes its cost pins over **call-free spans**, or states the number as *the twin's own
+instructions only*. A pin that quietly compared a door-crossing span against the original's would be
+measuring the door's absence and reporting it as a speed-up.
+
+### What a caller sees
+
+`emu.run_bench` gained named statuses — `BENCH_INSNS_EXHAUSTED` (0), `BENCH_SENTINEL` (1),
+`BENCH_DOOR` (2) — and `1` still means exactly what it always meant, so a caller reading the result
+as a boolean is unaffected. With no `door=` band it behaves as it always has, raising when the run
+does not reach the sentinel; a door-aware caller drives the loop. `bench_door_pc` / `bench_door_sp` /
+`bench_door_return` / `bench_resume` are the rest of the seam.
+
+**The budget the loop spends is the RUN's, not the segment's**, and a segment that executed NOTHING
+is a refusal. `bench_resume` takes a fresh cap each time, so without both a twin that keeps
+re-entering the door — a loop around a core call, or a stub whose frame is wrong enough to return
+INTO the band — would never end. A hung suite decides nothing and looks like a broken machine; these
+two make it the ordinary raise.
+
+**Neither side spells the band twice.** `kit.mk` passes `-DRECREATE_DOOR_BASE` / `-DRECREATE_DOOR_STRIDE`
+to the assembler, asked of `asm_twin.asm_door_flags()` exactly as `ASM_LINK_BASE` is asked of
+`asm_link_base()`. A `.S` with its own copy of the address would keep jumping to it the day the band
+moved, and would execute the zeros there rather than stopping at a door.
+
+## The callee-saved file, and the twin defect nothing else could see
+
+`osh_run_bench` used to report `D0` alone, so **nothing off target checked that a twin restores its
+callee-saved registers**. Measured on Zynaps's `draw_sprite_masked_asm`: drop `%d7` from both `movem`
+lists, correct the frame size to match, and the whole suite stays green — the image is identical, the
+return value is identical, and the cost pin gets **cheaper** — while on the machine the twin returns
+with its caller's `%d7` holding a sprite's planes. The only surface left was a play-test, whose
+failure signature would not point at a `movem` list.
+
+**Closed.** `osh_run_bench` and `osh_bench_resume` now report the whole `OSH_OUT_REGS` file (D0..D7
+then A0..A6) exactly as `osh_run` does — a caller must size its buffer to `osh_out_regs()`, which it
+already had to for `osh_run` — and `osh_bench_seed(regs)` installs the register file a run ENTERS
+with (`NULL` = the entry state this always had, which is what every non-twin caller passes).
+`AsmTwins.call` seeds `%d2`-`%d7`/`%a2`-`%a6` with a distinctive constant plus the register's index
+and requires each back, failing with the register's NAME. `%a5` and `%a6` are in the list like the
+rest: a twin may reserve them as base registers, but reserving one does not exempt it — it is still
+callee-saved, so the epilogue still has to put the caller's value back.
+
+The mutation above now reddens 35 Zynaps cases with
+`draw_sprite_masked_asm returned with d7 = 0x94d7f0be, not the 0xca11ed05 it was entered with`.
+
+**One residual, recorded rather than claimed.** A store through an address register the twin forgot
+to load now lands at `0xCA11ED0x`, outside the emulated memory, where `shim.c` drops it. It was never
+reliably caught before either — Musashi's reset does not clear `D0`-`D7`/`A0`-`A6`, so such a register
+held the PREVIOUS run's leftovers and the runner's "stored into its own code" check saw it only when
+those happened to be `0`. The trade is a deterministic entry state for an accident; what still
+catches an unloaded base register is the image comparison against the C core, which names a pixel
+diff rather than a register.
+
 ## Still unmodeled (an honest raise is the right answer)
 
 **A SEQUENCE of bytes one address yields, one per read.** `$fffc02` is a Phase 7 slot now, which

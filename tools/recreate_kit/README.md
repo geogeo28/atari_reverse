@@ -421,7 +421,7 @@ The kit carries the game-agnostic half of that:
 
 | | |
 |---|---|
-| `asm_twin.py` | loads a project's assembled twins and runs one under Musashi over the same image its C cores use, with the C ABI: `AsmTwins.call(image, symbol, *args)`. Also `elf_symbols()`, the one parse of `nm`'s output |
+| `asm_twin.py` | loads a project's assembled twins and runs one under Musashi over the same image its C cores use, with the C ABI: `AsmTwins.call(image, symbol, *args)`. Also the CALLBACK DOOR (below), the callee-saved check, and `elf_symbols()`, the one parse of `nm`'s output |
 | `kit.mk`'s `$(ASM_OBJ)` / `$(ASM_ELF)` / `$(ASM_BIN)` | assembles `src/asm/*.S` — one object per source, then one blob — and makes `test` and `guarded` depend on the blob, so a suite can never run against a stale one |
 
 The per-source objects are kept rather than assembled straight to the blob, and that is not tidiness:
@@ -445,6 +445,24 @@ both links byte-exact. Two things the runner does that a plain image compare wou
   below, which reaches only the C; it is two-sided for the same reason that one is, and everything
   from the call frame to the sentinel is covered bar the image itself, so an overrun wider than a
   band does not sail past it either.
+
+Two more things the runner does, both because a twin has no other surface for them:
+
+* **a twin that CALLS a verified C core reaches it through the CALLBACK DOOR.** Off target those
+  cores are host code in the candidate `.so`, and two of the seams they sit on are modelled
+  host-side, so linking them into the m68k blob cannot work either. So a call site traps out of the
+  emulator at a fixed address band and the harness services it by calling the host function. The
+  project supplies the table — `AsmTwins(asm_dir, image_size, callbacks={id: DoorCallback(name,
+  nargs)}, lib=harness._lib)` — and the kit half names no game. It is a **plain C call**, including
+  what a C call wrecks: the declared arguments off the emulated stack, a host pointer substituted for
+  the image base, the result in D0, the caller-saved file and the condition codes destroyed as the
+  real core destroys them, and the stub's `rts`. An unregistered slot **refuses**. See
+  `TRAP_MODEL.md`, "The callback door", for the band, the stub shape and why the door charges no
+  cycles;
+* **the callee-saved file is seeded and required back.** `%d2`-`%d7`/`%a2`-`%a6` enter with a
+  distinctive value per register and a twin that loses one fails by NAME. Nothing else off target
+  could see it — the image, the return value and the cost are all a correct twin's — and on the
+  machine the caller's register is simply gone (`TRAP_MODEL.md`, "The callee-saved file").
 
 `projects/zynaps/recreate/src/asm/` is the worked example, and its `README.md` is the recipe: where
 the seam goes (a `ZY_SCROLL()`-style macro at the CALL SITE, so the C reference stays compiled), how

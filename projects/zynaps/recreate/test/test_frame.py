@@ -115,6 +115,7 @@ SHOT_Y_MAX = 0xb0
 ENTITY_SLOTS = 0x14
 COLLISION_ROW_BYTES = 4                # include/collision.h
 EXPLOSION_GROUP_MEMBERS = 6
+SHIP_DEATH_EXPLOSION_GROUP = 1         # include/weapon.h
 ENEMY_SLOT_COUNT = 8                   # include/enemy.h
 SCRIPT_TRIGGER_LOOKAHEAD = 0x24
 MOTHERSHIP_TURN_SPEED_OFF = 0x22
@@ -320,8 +321,13 @@ for _borrowed in ("_section_files", "_front_end_pokes"):
         f"own staging")
 
 
-def _advance_one_frame(image):
-    """One whole frame, run by the ORACLE, so the next case starts from a state the game produced."""
+def advance_one_frame(image):
+    """One whole frame, run by the ORACLE, so the next case starts from a state the game produced.
+
+    PUBLIC because `test_asm_frame.py` is a SECOND DRIVER of this battery's staging: the asm twin's
+    differential compares the twin against the same C core, over the same worlds, and restating the
+    staging there would be a second thing to keep true (src/asm/README.md, step 5).
+    """
     final, _writes, _regs = emu.run(bytearray(image), ENTRY_FRAME_HEAD, {}, stop_pc=STOP_FRAME,
                                     max_insns=FRAME_MAX_INSNS, schedule=list(FRAME_SCHED),
                                     wait_sites=list(WAIT_SITES))
@@ -329,18 +335,20 @@ def _advance_one_frame(image):
 
 
 @functools.lru_cache(maxsize=None)
-def _world(section, frames, joystick_seed=0):
+def world(section, frames, joystick_seed=0):
     """The section's world after `frames` frames of the ORACLE playing it.
 
     `joystick_seed` picks a repeatable stream of joystick bytes, poked before each frame exactly as
     the IKBD interrupt would publish them — which is what makes the ship move, fire and tilt over
     the run rather than sitting still.
+
+    PUBLIC because `test_asm_frame.py` is a second driver — see `advance_one_frame`.
     """
     image = _stage_section(section)
     rng = random.Random(0x27a3e + joystick_seed)
     for _frame in range(frames):
         image[A_JOYSTICK_STATE] = rng.choice(JOYSTICK_BYTES)
-        image = _advance_one_frame(image)
+        image = advance_one_frame(image)
     return bytes(image)
 
 
@@ -348,8 +356,11 @@ def _world(section, frames, joystick_seed=0):
 JOYSTICK_BYTES = (0x00, 0x01, 0x02, 0x04, 0x08, 0x80, 0x81, 0x82, 0x84, 0x88)
 
 
-def _world_pokes(image, extra=None):
-    """The staged world as one poke, plus whatever a case wants written over it."""
+def world_pokes(image, extra=None):
+    """The staged world as one poke, plus whatever a case wants written over it.
+
+    PUBLIC because `test_asm_frame.py` is a second driver — see `advance_one_frame`.
+    """
     pokes = {0: bytes(image[:WORLD_BYTES])}
     pokes.update(extra or {})
     return pokes
@@ -363,11 +374,13 @@ def _poked(image, extra):
     return poked
 
 
-def _collision_row(slot):
+def collision_row(slot):
     """One entity's row of the all-pairs table, as `include/collision.h`'s two constants build it.
 
     Spelt once because ten cases seed a row, and `A_ENTITY_COLLISION_MASKS + 4 * slot` written ten
     times is ten places for the stride to drift away from the header that owns it.
+
+    PUBLIC because `test_asm_frame.py` is a second driver — see `advance_one_frame`.
     """
     return A_ENTITY_COLLISION_MASKS + COLLISION_ROW_BYTES * slot
 
@@ -428,7 +441,7 @@ def _carried_registers(image, entry):
 
 def _case(image, entry, stop, glue, label, regs=None, extra=None, schedule=None, wait_sites=None):
     """One slice of one frame, over `image` with `extra` poked on top."""
-    inputs = {"_pokes": _world_pokes(image, extra)}
+    inputs = {"_pokes": world_pokes(image, extra)}
     inputs.update(regs or {})
     diffs, info = differential(entry, inputs, glue, stop_pc=stop, max_insns=FRAME_MAX_INSNS,
                                schedule=list(schedule) if schedule else None,
@@ -533,12 +546,12 @@ def test_every_slice_over_the_real_game(section):
     which ground-target and which alien bank a section loads is the level designer's choice, so
     sweeping all sixteen is what reaches those arms with the game's own data.
     """
-    image = bytearray(_world(section, WORLD_START))
+    image = bytearray(world(section, WORLD_START))
     rng = random.Random(0xf4a3e + section)
     for _frame in range(WORLD_FRAMES):
         image[A_JOYSTICK_STATE] = rng.choice(JOYSTICK_BYTES)
         _check_every_slice(image)
-        image = _advance_one_frame(image)
+        image = advance_one_frame(image)
 
 
 @pytest.mark.parametrize("gate,extra", (
@@ -559,7 +572,7 @@ def test_the_head_slice_takes_both_of_its_exits(gate, extra):
     frames a section is played for there, which is why the diverting arm is poked here instead
     (measured — an earlier revision asserted the sweep drove both and it does not).
     """
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     expected = ENTRY_DRONE_AND_FIRE if gate.endswith("flying") else ENTRY_SPAWN_AND_MOVE
     assert _check_head(image, extra) == expected, gate
     if expected == ENTRY_SPAWN_AND_MOVE:
@@ -577,7 +590,7 @@ def test_the_frame_waits_for_the_raster_and_then_for_the_vertical_blank():
     oracle's arrival count SITE BY SITE — so a port that spun on the wrong byte, or polled twice per
     pass, fails here rather than passing quietly.
     """
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     schedule = ({"pc": FRAME_RASTER_WAIT_PC, "nth": 5, "addr": A_RASTER_PHASE, "width": 1,
                  "value": FRAME_RASTER_PHASE_READY},
                 {"pc": FRAME_VBL_WAIT_PC, "nth": 3, "addr": A_VBL_WAIT_FLAG, "width": 1,
@@ -595,7 +608,7 @@ def test_the_frame_tail_sends_the_joystick_interrogate_and_re_enables_the_acia()
     ordered read and write streams on every case; this one reads them back and says WHAT they are,
     so a reconstruction that aimed a store at another register fails with a sentence.
     """
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     info = _case(image, ENTRY_RESOLVE, STOP_FRAME,
                  lambda lib, buf: lib.g_frame_resolve_hits_and_game_state(buf, ENTITY_SLOTS),
                  "tail", regs={"d0": ENTITY_SLOTS}, schedule=FRAME_SCHED, wait_sites=WAIT_SITES)
@@ -624,7 +637,7 @@ def test_the_pause_key_holds_the_frame_and_restarts_the_palette_counters(release
     `os.h`'s OS_SCHED_SITE_MAX is four. The pause is entirely inside this slice, so nothing of it is
     left out.
     """
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_KEY_SCANCODE: bytes([KEY_SCANCODE_SPACE]),
              A_PALETTE_SWAP_COUNTDOWN: b"\x5a", A_PALETTE_ROTATE_COUNTDOWN: b"\x5a"}
     schedule = ({"pc": PAUSE_RELEASE_WAIT_PC, "nth": release_nth, "addr": A_KEY_SCANCODE,
@@ -652,7 +665,7 @@ def test_every_weapon_launches_from_a_fresh_press(weapon, shield):
     The button is presented as a FRESH PRESS — held clear, fire set — which is the one shape that
     reaches a launcher at all; the held and released shapes are the two cases below.
     """
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_SELECTED_WEAPON: bytes([weapon]), A_SHIELD_LEVEL: bytes([shield]),
              A_FIRE_BUTTON_HELD: b"\x00", A_JOYSTICK_STATE: bytes([JOYSTICK_FIRE])}
     _check_every_slice(image, extra)
@@ -667,7 +680,7 @@ def test_a_weapon_at_its_limit_falls_through_to_the_plain_bullet(weapon):
     should have launched is six stores and a tune. The counters are poked to the limit the shield
     level allows, which is game state the launcher itself writes.
     """
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_SELECTED_WEAPON: bytes([weapon]), A_SHIELD_LEVEL: b"\x00",
              A_ACTIVE_COUNT_BOMBS: b"\x05", A_ACTIVE_COUNT_TYPE32: b"\x05",
              A_ACTIVE_COUNT_SEEKERS: b"\x05", A_ACTIVE_COUNT_TYPE34: b"\x00",
@@ -688,7 +701,7 @@ def test_an_unknown_selected_weapon_fires_nothing():
     weapon byte that is none of the four leaves the press having launched nothing at all. It is the
     one arm of the dispatch that is not a fall-through, and a `switch` with a wrong default would
     fire a bullet here."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_SELECTED_WEAPON: b"\x07", A_FIRE_BUTTON_HELD: b"\x00",
              A_JOYSTICK_STATE: bytes([JOYSTICK_FIRE])}
     _check_every_slice(image, extra)
@@ -699,7 +712,7 @@ def test_the_fire_charge_counter_arms_at_eight(charge):
     """`addi.b #$1,$19901` + `cmpi.b #$8` — an EQUALITY test on the stepped byte, so 7 arms the
     charged weapon and 0xff wraps to 0 and keeps counting rather than arming. The button is HELD
     (held byte already set), which is the arm that runs the counter at all."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_FIRE_BUTTON_HELD: b"\x01", A_FIRE_CHARGED: b"\x00",
              A_FIRE_CHARGE_COUNTER: bytes([charge]),
              A_JOYSTICK_STATE: bytes([JOYSTICK_FIRE])}
@@ -717,7 +730,7 @@ def test_the_charged_flash_turns_round_at_both_ends(shadow, direction):
 
     The animation phase must be clear for the flash to run at all, which halves its rate.
     """
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_FIRE_CHARGED: b"\x01", A_EXPLOSION_PHASE_ODD: b"\x00",
              A_CHARGE_FLASH_DIR: bytes([direction]),
              A_PALETTE_HW_SHADOW: shadow.to_bytes(2, "big")}
@@ -731,7 +744,7 @@ def test_the_trail_drone_is_launched_and_then_follows_the_ship():
     A reconstruction that read the history before priming it would fly the drone to wherever the
     slot's previous occupant left, which the seeded history below makes a diff of tens of bytes.
     """
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     history = bytes(random.Random(0x113c0).randbytes(
         SHIP_POS_HISTORY_ENTRIES * SHIP_POS_HISTORY_ENTRY_BYTES))
     extra = {A_SELECTED_WEAPON: bytes([WEAPON_KIND_SEEKER]),
@@ -746,7 +759,7 @@ def test_the_trail_drone_history_cursor_wraps_at_ten(index):
     """`addi.b #$1,$198ff` + `cmpi.b #$a` — an EQUALITY test again, so an index already AT ten steps
     to eleven and is left there. The drone is alive, so the launch above is skipped and this is the
     per-frame half on its own."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_ENTITY_GUNSIGHT + ENTITY_ALIVE: b"\x01",
              A_SHIP_POS_HISTORY_INDEX: bytes([index]),
              A_SHIP_POS_HISTORY: bytes(random.Random(0x19f86 + index).randbytes(
@@ -761,7 +774,7 @@ def test_the_trail_drone_offset_is_one_longword_add():
     longword add apart from two word adds — and the pair is real program data (the ship's own
     position, as the drone stores it) rather than a fabricated record.
     """
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     carry_pair = (0x0040).to_bytes(2, "big") + (0x10000 - (TRAIL_DRONE_OFFSET_PACKED & 0xffff) + 1) \
         .to_bytes(2, "big")
     extra = {A_ENTITY_GUNSIGHT + ENTITY_ALIVE: b"\x01",
@@ -776,7 +789,7 @@ def test_the_ship_tilt_recentres_from_every_frame(tilt):
     way it rolls is a SIGNED compare against 3 — so the two arms move the ship in opposite
     directions and clamp against opposite bounds. The countdown is set to 1 so the roll is due on
     this very frame."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_JOYSTICK_STATE: b"\x00", A_SHIP_TILT: bytes([tilt]),
              A_SHIP_TILT_COUNTDOWN: b"\x01"}
     _check_every_slice(image, extra)
@@ -786,7 +799,7 @@ def test_the_ship_tilt_recentres_from_every_frame(tilt):
 def test_every_joystick_direction_moves_the_ship(joystick):
     """All ten stick shapes over one world frame, which is what drives the four movement arms, the
     two clamps and the sprite-bank selection together."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     _check_every_slice(image, {A_JOYSTICK_STATE: bytes([joystick])})
 
 
@@ -796,7 +809,7 @@ def test_the_horizontal_arms_clamp_at_their_own_edges(x):
     `cmpi.w #$150` + `bge` simply stops stepping, because the two stores that would clamp it are
     UNREACHABLE — `bge` jumps past them to the end of the slice. Both edges are driven one step
     either side, on both arms, over the ship's real record."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     for joystick in (1 << 2, 1 << 3):
         extra = {A_JOYSTICK_STATE: bytes([joystick]),
                  A_PLAYER_RECORD + ENTITY_X: x.to_bytes(2, "big")}
@@ -823,7 +836,7 @@ def test_the_panel_logo_animation_runs_only_on_an_idle_panel(countdown):
     the arm; clearing the mask is what does. Both sides of the `bne` are driven, and the reload's
     own value is what the mutation sweep asked for.
     """
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_PANEL_REDRAW_MASK: b"\x00",
              A_PANEL_LOGO_COUNTDOWN: countdown.to_bytes(2, "big")}
     _check_head(image, extra)
@@ -858,7 +871,7 @@ def test_a_steered_shot_is_retired_outside_its_box(x, y, shot_type):
     because the steering update runs first and moves the shot — so a candidate testing the box
     against the position it had BEFORE the update differs at the edge.
     """
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_ENTITY_TABLE + ENTITY_TYPE: bytes([shot_type]),
              A_ENTITY_TABLE + ENTITY_ALIVE: b"\x01",
              # ...with time left to live, or the steering update turns it into an impact puff before
@@ -874,7 +887,7 @@ def test_a_steered_shot_is_forced_to_an_even_column(x):
     """`bclr #0,1(a3)` — the LOW BYTE of ENTITY_X, so every player shot is aligned to two pixels
     after its steering update and before its box test. An odd x well inside the box is the only
     input that separates the clear from a no-op."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_ENTITY_TABLE + ENTITY_TYPE: bytes([SHOT_TYPE_SEEKER]),
              A_ENTITY_TABLE + ENTITY_ALIVE: b"\x01",
              A_ENTITY_TABLE + ENTITY_X: (x & 0xffff).to_bytes(2, "big"),
@@ -903,7 +916,7 @@ def test_the_wave_script_fires_when_the_map_cursor_reaches_its_column():
     the map offset is set to the value the script's own word asks for. That word is read out of the
     staged world, so a wrong look-ahead lands on a different column and the spawn does not happen.
     """
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_MAP_OFFSET: _script_trigger_offset(image, A_WAVE_SCRIPT_CURSOR, True)
                            .to_bytes(4, "big"),
              A_MOTHERSHIP_PENDING: b"\x00"}
@@ -919,7 +932,7 @@ def test_the_ground_script_fires_on_an_exact_column_and_passes_its_carried_regis
     `bsr` never reads it. `_ground_script_fires` is what tells the battery to probe for it, and this
     case is what makes that predicate answer yes.
     """
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_MAP_OFFSET: _script_trigger_offset(image, A_GROUND_SCRIPT_CURSOR, False)
                            .to_bytes(4, "big"),
              A_ASTEROID_SECTION_FLAG: b"\x00", A_SCROLL_FROZEN: b"\x00", A_MAP_PAGE: b"\x00"}
@@ -935,7 +948,7 @@ def test_the_scroller_emits_from_every_page_of_the_ring(page):
     """Page 0 decodes a fresh tile column and advances the map cursor; pages 1..7 re-emit the
     workspace two pixels further along. The page counter is game state the frame's own tail steps,
     and this drives all eight from one world."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     _check_head(image, {A_MAP_PAGE: bytes([page])})
 
 
@@ -944,7 +957,7 @@ def test_the_playfield_blit_runs_from_every_column_phase(column):
     """The jump table at 0x179aa has one specialised page-to-screen copy per 16-pixel phase, and the
     reconstruction spells it as an array of the twenty verified routines. A wrong index copies the
     playfield at the wrong offset, which is 23 KB of diff."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     _check_head(image, {A_MAP_COLUMN: bytes([column])})
 
 
@@ -957,7 +970,7 @@ def test_the_asteroid_cursor_multiply_is_sixteen_bits(scroll_pos):
     the byte is one the frame's own tail increments, and this pokes it forward. Below the fold the
     two readings agree, which is why the sweep is on both sides of it.
     """
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_SCROLL_POS: scroll_pos.to_bytes(4, "big"), A_ASTEROID_SECTION_FLAG: b"\x01",
              A_BOSS_SEQUENCE_ACTIVE: b"\x00",
              A_MAP_OFFSET: b"\x5a\xa5\x5a\xa5", A_MAP_PTR: b"\x5a\xa5\x5a\xa5"}
@@ -968,7 +981,7 @@ def test_the_frozen_scroller_takes_the_other_emitter():
     """`tst.b $198b1` picks `scroll_emit_column_shift0` over `_shift2` on pages 1..7, and steps the
     map cursor BACK a column instead of republishing the offset on page 0. Both arms of both halves
     are driven, and the freeze byte is what the mothership trigger sets."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     for page in (0, 3):
         _check_head(image, {A_SCROLL_FROZEN: b"\x01", A_MAP_PAGE: bytes([page])})
 
@@ -987,7 +1000,7 @@ def test_the_mothership_trigger_fires_at_its_own_scroll_position(scroll_pos, ind
     sign-extended WORD (`ext.w` then `cmp.w`), so 0x80 reads as -128 and takes the low arm, where an
     unsigned reading would take the other one.
     """
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_SCROLL_POS: scroll_pos.to_bytes(4, "big"), A_MOTHERSHIP_INDEX: bytes([index]),
              A_MOTHERSHIP_READY: b"\x00", A_BOSS_SEQUENCE_ACTIVE: b"\x00"}
     _check_head(image, extra)
@@ -998,7 +1011,7 @@ def test_the_mothership_build_step_reads_its_index_as_a_byte(index):
     """The build gate at 0x1116e is `cmp.b #$5` on a byte the instruction before SIGN-EXTENDED into a
     word — a byte compare of a sign-extended byte, which is not the word compare the trigger above
     makes of the same global. Driving 0x80 and 0xff is what separates the two."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_MOTHERSHIP_PREP_STAGE: b"\x01", A_MOTHERSHIP_INDEX: bytes([index])}
     _check_head(image, extra)
 
@@ -1007,7 +1020,7 @@ def test_a_boss_encounter_paints_and_moves_instead_of_scrolling():
     """With the boss flag set the head slice skips the scroller entirely and CLEARS the playfield,
     and the spawn stage runs the mothership's own move/place/draw chain and steps its phase timer.
     Two whole passes appear and one disappears, which is what makes this arm worth its own case."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_BOSS_SEQUENCE_ACTIVE: b"\x01"}
     _check_head(image, extra)
     _check_spawn_and_move(image, extra)
@@ -1018,7 +1031,7 @@ def test_a_boss_encounter_paints_and_moves_instead_of_scrolling():
 def test_the_draw_stage_updates_the_boss_segments_only_above_the_index(index):
     """`cmp.w #$5` + `bge` again, and this one has a `bra` PAST its own arm on the other side — so a
     reconstruction reading it as `>` differs on the timer as well as on the segments."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_MOTHERSHIP_READY: b"\x01", A_MOTHERSHIP_INDEX: bytes([index])}
     _check_draw_and_collide(image, extra)
 
@@ -1029,8 +1042,8 @@ def test_the_collision_table_is_cleared_one_longword_past_its_last_row():
     """`move.w #$14,d0` + `clr.l (a0)+` + `dbf` is TWENTY-ONE longwords over a twenty-entry table,
     and the extra one is real: the guard row above it is seeded here to a value the clear must
     reach. A reconstruction that cleared twenty leaves it standing."""
-    image = bytearray(_world(0, WORLD_START))
-    guard = _collision_row(ENTITY_SLOTS)
+    image = bytearray(world(0, WORLD_START))
+    guard = collision_row(ENTITY_SLOTS)
     _check_draw_and_collide(image, {guard: b"\x5a\xa5\x5a\xa5"})
 
 
@@ -1040,9 +1053,9 @@ def test_the_ship_flying_into_the_landscape_explodes_unless_it_is_invulnerable(i
     ship-collision arm the shipped sections do not reach in a dozen frames of level flight. The row
     is cleared and the record's own hit byte set, both of which the blitter and the pairwise sweep
     write for real one stage earlier."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_PLAYER_RECORD + ENTITY_PIXEL_HIT: b"\x01",
-             _collision_row(ENTITY_INDEX_SHIP): b"\x00\x00\x00\x00",
+             collision_row(ENTITY_INDEX_SHIP): b"\x00\x00\x00\x00",
              A_SHIP_INVULNERABLE: bytes([invulnerable]),
              A_DEATH_EVENT_FLAGS: b"\x00",
              A_EXPLOSION_GROUP_ACTIVE_BITS: b"\x00"}
@@ -1053,10 +1066,10 @@ def test_the_second_ship_record_is_tested_when_the_first_explains_nothing():
     """`lea 4(a3),a3` advances only the ROW pointer, so the second pass reads record 18's hit byte
     against record 18's row and then hands record SEVENTEEN to the resolver. That asymmetry is the
     original's, and a reconstruction that advanced both pointers passes a different record."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_PLAYER_RECORD + ENTITY_PIXEL_HIT: b"\x00",
              A_SHIP_RECORD_SHADOW + ENTITY_PIXEL_HIT: b"\x01",
-             _collision_row(SHIP_SHADOW_SLOT): (1 << 9).to_bytes(4, "big"),
+             collision_row(SHIP_SHADOW_SLOT): (1 << 9).to_bytes(4, "big"),
              A_EXPLOSION_GROUP_ACTIVE_BITS: b"\x00"}
     _check_resolve(image, extra)
 
@@ -1067,9 +1080,9 @@ def test_the_ship_hit_mask_splits_at_entity_six(row):
     a real collision, one explained only by the player's own six shot slots is harmless, and the
     boundary between them is entity 6 exactly. Bit 5 and bit 6 are the two sides of it, and the pair
     together is what says the high test is made FIRST."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_PLAYER_RECORD + ENTITY_PIXEL_HIT: b"\x01",
-             _collision_row(ENTITY_INDEX_SHIP): row.to_bytes(4, "big"),
+             collision_row(ENTITY_INDEX_SHIP): row.to_bytes(4, "big"),
              A_ENEMY_SHOT_SLOTS + ENTITY_TYPE: b"\x0c",
              A_ENEMY_SHOT_SLOTS + ENTITY_ALIVE: b"\x01",
              A_SHIP_INVULNERABLE: b"\x00", A_DEATH_EVENT_FLAGS: b"\x00",
@@ -1083,10 +1096,10 @@ def test_the_second_ship_record_hands_the_resolver_the_FIRST():
     reads the record's own position. The two records sit at different x (0x40 and 0x50 from the
     section restart), so the explosion lands in a different place under a candidate that passed the
     shadow. That is what the mutation sweep asked for, and the case above cannot see it."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_PLAYER_RECORD + ENTITY_PIXEL_HIT: b"\x00",
              A_SHIP_RECORD_SHADOW + ENTITY_PIXEL_HIT: b"\x01",
-             _collision_row(SHIP_SHADOW_SLOT): (1 << 6).to_bytes(4, "big"),
+             collision_row(SHIP_SHADOW_SLOT): (1 << 6).to_bytes(4, "big"),
              A_ENEMY_SHOT_SLOTS + ENTITY_TYPE: b"\x0c",
              A_ENEMY_SHOT_SLOTS + ENTITY_ALIVE: b"\x01",
              A_PLAYER_RECORD + ENTITY_X: (0x40).to_bytes(2, "big"),
@@ -1101,9 +1114,9 @@ def test_the_seeker_lock_scans_the_eight_enemy_slots(row):
     """`and.l #$1fe00` — only bits 9..16 arm the search at all, so a row holding nothing but the
     player's own shots answers "no lock" without walking anything. Each case seeds the gunsight's
     own row, which the pairwise sweep fills for real one stage earlier."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_ENTITY_GUNSIGHT + ENTITY_ALIVE: b"\x01",
-             _collision_row(ENTITY_INDEX_TRAIL_DRONE): row.to_bytes(4, "big"),
+             collision_row(ENTITY_INDEX_TRAIL_DRONE): row.to_bytes(4, "big"),
              A_SEEKER_LOCK_TARGET_INDEX: b"\x5a"}
     _check_resolve(image, extra)
 
@@ -1112,7 +1125,7 @@ def test_the_seeker_lock_is_forced_to_slot_nine_while_the_boss_is_up():
     """`moveq #$13,d0` + `bsr collision_chain_walk` + `move.b #$9`: with the boss in the playfield
     the gunsight's answer is not searched for at all. The other arm of that same `beq` is the
     ordinary scan, which the case above drives."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_BOSS_SEQUENCE_ACTIVE: b"\x01", A_ENTITY_GUNSIGHT + ENTITY_ALIVE: b"\x01",
              A_ENTITY_GUNSIGHT + ENTITY_PIXEL_HIT: b"\x01",
              A_SEEKER_LOCK_TARGET_INDEX: b"\x5a"}
@@ -1129,7 +1142,7 @@ def test_both_explosion_animations_step_and_retire(frame, kind):
     0xff is the case that separates the step from a counter: `(alive & 0x7f) + 1` wraps 0x7f to 0,
     which is neither the last frame nor a table index the mask lets through unchanged.
     """
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_ENEMY_SLOTS + ENTITY_TYPE: bytes([kind]),
              A_ENEMY_SLOTS + ENTITY_ALIVE: bytes([frame]),
              A_EXPLOSION_PHASE_EVEN: b"\x01" if kind == EXPLOSION_PART_TYPE else b"\x00",
@@ -1148,7 +1161,7 @@ def test_the_last_explosion_frame_credits_a_squadron_and_may_leave_a_capsule(mar
     one; 0 WRAPS to 0xff and leaves the squadron alive, which is what holds `subi.b` + `bne` against
     a `<= 0` test.
     """
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_ENEMY_SLOTS + ENTITY_TYPE: bytes([EXPLOSION_PART_TYPE]),
              A_ENEMY_SLOTS + ENTITY_ALIVE: bytes([0x80 | (EXPLOSION_LAST_FRAME - 1)]),
              A_ENEMY_SLOTS + EXPLOSION_CREDIT_TAG_OFFSET: bytes([tag]),
@@ -1175,13 +1188,13 @@ def test_a_capsule_that_lands_on_the_terrain_is_killed_instead_of_announced(kind
     the capsule still alive, and every other case in this battery stayed green because none of them
     let the walk answer yes (measured — that is the mutation this case now kills).
     """
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_ENEMY_SLOTS + ENTITY_TYPE: bytes([kind]),
              A_ENEMY_SLOTS + ENTITY_ALIVE: bytes([0x80 | (EXPLOSION_LAST_FRAME - 1)]),
              A_ENEMY_SLOTS + EXPLOSION_CREDIT_TAG_OFFSET: b"\x00",
              A_ENEMY_SLOTS + ENTITY_SQUADRON: b"\x02",
              A_ENEMY_SLOTS + ENTITY_PIXEL_HIT: bytes([on_terrain]),
-             _collision_row(ENEMY_SLOT_FIRST): b"\x00\x00\x00\x00",
+             collision_row(ENEMY_SLOT_FIRST): b"\x00\x00\x00\x00",
              A_SQUADRON_KILL_COUNTERS: bytes([0x5a, 0x5a, 1, 0x5a, 0x5a, 0x5a]),
              A_EXPLOSION_PHASE_EVEN: b"\x01" if kind == EXPLOSION_PART_TYPE else b"\x00",
              A_EXPLOSION_PHASE_ODD: b"\x00" if kind == EXPLOSION_TYPE_LARGE else b"\x01"}
@@ -1200,11 +1213,11 @@ def test_an_enemy_that_rams_the_ship_takes_its_own_arm(enemy_type, hit_points):
     The overlap is seeded into the enemy's own collision row with the ship's two record bits, which
     is exactly the pattern `object_pair_overlap_mark` writes one stage earlier.
     """
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_ENEMY_SLOTS + ENTITY_TYPE: bytes([enemy_type]),
              A_ENEMY_SLOTS + ENTITY_ALIVE: b"\x01",
              A_ENEMY_SLOTS + ENTITY_HP: bytes([hit_points]),
-             _collision_row(ENEMY_SLOT_FIRST):
+             collision_row(ENEMY_SLOT_FIRST):
                  SHIP_RECORD_MASK.to_bytes(4, "big"),
              A_EXPLOSION_GROUP_ACTIVE_BITS: b"\x00",
              BUS_ERROR_VECTOR: b"\x5a\xa5"}
@@ -1221,13 +1234,13 @@ def test_a_player_shot_that_hits_an_enemy_takes_both_dispatches(enemy_type, shot
     path through the same block. The shot is put in slot 0, whose bit is the one `move.l #$1,d0`
     starts the sweep with.
     """
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_ENTITY_TABLE + ENTITY_TYPE: bytes([shot_type]),
              A_ENTITY_TABLE + ENTITY_ALIVE: b"\x01",
              A_ENEMY_SLOTS + ENTITY_TYPE: bytes([enemy_type]),
              A_ENEMY_SLOTS + ENTITY_ALIVE: b"\x01",
              A_ENEMY_SLOTS + ENTITY_HP: b"\x01",
-             _collision_row(ENEMY_SLOT_FIRST): (1).to_bytes(4, "big"),
+             collision_row(ENEMY_SLOT_FIRST): (1).to_bytes(4, "big"),
              A_ACTIVE_COUNT_TYPE34: b"\x05",
              BUS_ERROR_VECTOR: b"\x5a\xa5"}
     _check_resolve(image, extra)
@@ -1246,12 +1259,12 @@ def test_the_shoot_pass_arms_a_voice_per_shot_slot():
     case whose enemy explodes has already lost the shot bit by the time the retire's own tune is
     armed. Type 1 is the one arm that reaches the retire with the bit still in the register.
     """
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     for slot in (0, 1, 2):
         shot = A_ENTITY_TABLE + ENTITY_STRIDE * slot
         extra = {shot + ENTITY_TYPE: bytes([BULLET_TYPE]), shot + ENTITY_ALIVE: b"\x01",
                  A_ENEMY_SLOTS + ENTITY_TYPE: b"\x14", A_ENEMY_SLOTS + ENTITY_ALIVE: b"\x01",
-                 _collision_row(ENEMY_SLOT_FIRST): (1 << slot).to_bytes(4, "big"),
+                 collision_row(ENEMY_SLOT_FIRST): (1 << slot).to_bytes(4, "big"),
                  A_ACTIVE_COUNT_TYPE34: b"\x05", BUS_ERROR_VECTOR: b"\x5a\xa5"}
         _check_resolve(image, extra)
         for retiring in (SHOT_TYPE_BOMB, SHOT_TYPE_SEEKER):
@@ -1280,11 +1293,11 @@ def test_an_enemy_shot_that_hits_the_landscape_morphs_or_vanishes(shot_type, row
     """Slots 6..8 with a pixel hit and an EMPTY row: a seeker leaves a ground puff, an aimed shot
     just vanishes, and a homing missile is neither. A non-empty row means something else explains
     the hit, and the arm is skipped — which is the same `tst.l` the ship's own test makes."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_ENEMY_SHOT_SLOTS + ENTITY_TYPE: bytes([shot_type]),
              A_ENEMY_SHOT_SLOTS + ENTITY_ALIVE: b"\x01",
              A_ENEMY_SHOT_SLOTS + ENTITY_PIXEL_HIT: b"\x01",
-             _collision_row(ENEMY_SHOT_SLOT_FIRST): row.to_bytes(4, "big"),
+             collision_row(ENEMY_SHOT_SLOT_FIRST): row.to_bytes(4, "big"),
              A_BOSS_SEQUENCE_ACTIVE: b"\x00"}
     _check_resolve(image, extra)
 
@@ -1295,17 +1308,22 @@ def test_an_enemy_shot_that_hits_the_landscape_morphs_or_vanishes(shot_type, row
 def test_the_starfield_layers_move_at_their_own_rates(layer2, layer3):
     """Layer 1 steps every frame, layer 2 only while its phase byte is clear and layer 3 only while
     its countdown is — so all four combinations are four different sets of stars moved."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_STARFIELD_LAYER2_PHASE: bytes([layer2]),
              A_STARFIELD_LAYER3_COUNTDOWN: bytes([layer3])}
     _check_resolve(image, extra)
 
 
-def test_a_star_whose_x_went_negative_respawns_at_the_right_edge():
-    """`bmi` on the x word, then `move.w #$13f,(a1)+` — and the respawn does NOT consult the layer's
-    speed divider, so it happens on a frozen layer too. One star of each layer is put at -1 and one
-    at 0, which is the boundary the sign test is."""
-    image = bytearray(_world(0, WORLD_START))
+def starfield_respawn_pokes():
+    """One star of each layer at x = -1 and one at x = 0 — the boundary the `bmi` sign test is.
+
+    The table is the binary's own, read out of `harness.BASE_IMAGE` and edited, so every star this
+    case does not move keeps the value the game shipped.
+
+    PUBLIC because `test_asm_frame.py` is a second driver — see `advance_one_frame`. No world sweep
+    can reach this arm: layer 1 steps one pixel a frame from x = 0x13f, so a star takes three
+    hundred frames to go negative and a case walks a dozen.
+    """
     stars = bytearray(harness.BASE_IMAGE[A_STARFIELD_TABLE:
                                          A_STARFIELD_TABLE
                                          + STARFIELD_LAYERS * STARFIELD_STARS
@@ -1315,9 +1333,16 @@ def test_a_star_whose_x_went_negative_respawns_at_the_right_edge():
         stars[at + 2:at + 4] = (0xffff).to_bytes(2, "big")
         stars[at + STARFIELD_ENTRY_BYTES + 2:at + STARFIELD_ENTRY_BYTES + 4] = \
             (0).to_bytes(2, "big")
-    extra = {A_STARFIELD_TABLE: bytes(stars), A_STARFIELD_LAYER2_PHASE: b"\x00",
-             A_STARFIELD_LAYER3_COUNTDOWN: b"\x01"}
-    _check_resolve(image, extra)
+    return {A_STARFIELD_TABLE: bytes(stars), A_STARFIELD_LAYER2_PHASE: b"\x00",
+            A_STARFIELD_LAYER3_COUNTDOWN: b"\x01"}
+
+
+def test_a_star_whose_x_went_negative_respawns_at_the_right_edge():
+    """`bmi` on the x word, then `move.w #$13f,(a1)+` — and the respawn does NOT consult the layer's
+    speed divider, so it happens on a frozen layer too. One star of each layer is put at -1 and one
+    at 0, which is the boundary the sign test is."""
+    image = bytearray(world(0, WORLD_START))
+    _check_resolve(image, starfield_respawn_pokes())
 
 
 @pytest.mark.parametrize("countdown", (0, 1, 2, 0x80))
@@ -1325,7 +1350,7 @@ def test_the_far_starfield_divider_reloads_when_it_goes_negative(countdown):
     """`subq.b #1` + `bpl` — the reload happens on the step that makes the byte NEGATIVE, so 0 goes
     to -1 and reloads while 1 goes to 0 and does not. 0x80 steps to 0x7f and stays positive, which
     is what says the test is on the sign and not on zero."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     _check_resolve(image, {A_STARFIELD_LAYER3_COUNTDOWN: bytes([countdown])})
 
 
@@ -1342,7 +1367,7 @@ def test_each_power_up_decays_to_its_own_floor(timer, level, floor, level_value)
     The timer is set to 1 so the step is due on this frame; the level is swept across and below its
     floor, because a level ALREADY under an equality floor keeps decaying.
     """
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {timer: (1).to_bytes(2, "big"), level: bytes([level_value]),
              A_POWER_GAUGE_DISPLAY: b"\x5a", A_PANEL_REDRAW_MASK: b"\x00"}
     _check_resolve(image, extra)
@@ -1353,7 +1378,7 @@ def test_each_power_up_decays_to_its_own_floor(timer, level, floor, level_value)
 def test_the_scroll_step_wraps_both_counters(page, column):
     """`addq.b #1` + `cmpi.b #$8` on the page and `#$14` on the column phase, the second only
     reached when the first wraps. Both wraps are driven from the step that reaches them."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_MAP_PAGE: bytes([page]), A_MAP_COLUMN: bytes([column]),
              A_SCROLL_FROZEN: b"\x00"}
     _check_resolve(image, extra)
@@ -1363,17 +1388,19 @@ def test_the_scroll_step_wraps_both_counters(page, column):
 def test_the_post_restart_grace_counter_stops_at_zero(cooldown):
     """`subi.b #$1` + `bpl` + `clr.b` — the counter is clamped at 0 rather than wrapping, and 0x80
     steps to 0x7f and is left alone, which is what says the test is on the sign."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     _check_resolve(image, {A_ENEMY_SEEKER_COOLDOWN: bytes([cooldown])})
 
 
 # ============================================================ the five exits
 
-def _explosion_group_done(image, group):
+def explosion_group_done(image, group):
     """Poke every member of one explosion group to its finished frame, over the real member list.
 
     The list is the binary's own (`A_explosion_group_members`), read out of the image rather than
     typed, so a wrong index would mark a record the state machine does not look at.
+
+    PUBLIC because `test_asm_frame.py` is a second driver — see `advance_one_frame`.
     """
     extra = {}
     members = A_EXPLOSION_GROUP_MEMBERS + EXPLOSION_GROUP_MEMBERS * group
@@ -1381,6 +1408,29 @@ def _explosion_group_done(image, group):
         record = A_ENTITY_TABLE + ENTITY_STRIDE * harness.BASE_IMAGE[members + member]
         extra[record + EXPLOSION_PART_FRAME] = bytes([EXPLOSION_DONE_FRAME])
     extra[A_EXPLOSION_GROUP_ACTIVE_BITS] = bytes([1 << group])
+    return extra
+
+
+def ship_death_pokes(image, lives, other_lives, other_section):
+    """The ship-death swap's world, as one poke set: explosion group 1 finished, this player down to
+    `lives`, and the OTHER player's saved record seeded and resumable in `other_section`.
+
+    Both fourteen-byte records are seeded from a fixed generator, so the swap's two copies are
+    diffed rather than assumed. The dying player's section index is seeded to a value the swap must
+    overwrite.
+
+    PUBLIC because `test_asm_frame.py` is a second driver — see `advance_one_frame`. It reaches all
+    THREE of the arms this shape can take, the title exit included: `lives=1` decrements to zero,
+    which is the one entry state under which the third swap can find nobody alive.
+    """
+    other = bytearray(random.Random(0x19f02 + other_section).randbytes(PLAYER_RECORD_BYTES))
+    other[PLAYER_SAVE_LIVES] = other_lives
+    other[PLAYER_SAVE_SECTION] = other_section
+    extra = explosion_group_done(image, SHIP_DEATH_EXPLOSION_GROUP)
+    extra.update({A_LIVES: bytes([lives]), A_CURRENT_PLAYER_INDEX: b"\x00",
+                  A_LEVEL_SECTION: b"\x00", A_DYING_PLAYER_SECTION_INDEX: b"\x5a",
+                  A_PLAYER_RECORDS: bytes(random.Random(0x11).randbytes(PLAYER_RECORD_BYTES))
+                                    + bytes(other)})
     return extra
 
 
@@ -1404,15 +1454,8 @@ def test_the_ship_death_state_machine_leaves_through_its_two_reachable_addresses
     argument. The `game_over_screen` call on the last life is likewise out of reach here: every case
     above leaves at least one life, which is what `subi.b #$1,$1991a` + `bne` needs.
     """
-    image = bytearray(_world(0, WORLD_START))
-    other = bytearray(random.Random(0x19f02 + other_section).randbytes(PLAYER_RECORD_BYTES))
-    other[PLAYER_SAVE_LIVES] = other_lives
-    other[PLAYER_SAVE_SECTION] = other_section
-    extra = _explosion_group_done(image, 1)
-    extra.update({A_LIVES: bytes([lives]), A_CURRENT_PLAYER_INDEX: b"\x00",
-                  A_LEVEL_SECTION: b"\x00", A_DYING_PLAYER_SECTION_INDEX: b"\x5a",
-                  A_PLAYER_RECORDS: bytes(random.Random(0x11).randbytes(PLAYER_RECORD_BYTES))
-                                    + bytes(other)})
+    image = bytearray(world(0, WORLD_START))
+    extra = ship_death_pokes(image, lives, other_lives, other_section)
     assert _check_resolve(image, extra, exit_pc) == exit_pc
 
 
@@ -1440,9 +1483,9 @@ def test_the_end_of_section_explosion_advances_when_its_delay_runs_out():
     """Group 0 finished, and then `subi.b #$1,$19ac0` + `beq 0x10814`: the section advances only on
     the frame the delay reaches zero, and every other frame goes on to the loop head. Both are
     driven from the two counter values either side of the edge."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     for counter, expected in ((1, EXIT_ADVANCE_SECTION), (2, STOP_FRAME)):
-        extra = _explosion_group_done(image, 0)
+        extra = explosion_group_done(image, 0)
         extra[A_SECTION_END_DELAY_COUNTER] = bytes([counter])
         assert _check_resolve(image, extra, expected) == expected
 
@@ -1456,7 +1499,7 @@ def test_the_hard_section_end_advances_on_the_timer_or_on_the_escape(timer, offs
     ends neither way. `st`/`sf` on 0x19ce5 bracket the pair and the byte is never read anywhere in
     the image, so the two stores are transcribed for the diff and for nothing else — which is why
     the middle case leaves it SET and the last leaves it clear."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_MOTHERSHIP_PHASE_TIMER: timer.to_bytes(4, "big"),
              A_MOTHERSHIP_OFFSCREEN: bytes([offscreen]),
              A_MOTHERSHIP_READY: b"\x00", A_UNUSED_SECTION_END_FLAG: b"\x5a",
@@ -1471,7 +1514,7 @@ def test_clearing_the_enemy_slots_twice_ends_a_late_section(clears, exit_pc):
     """The eight enemy slots all empty, twice over, ends a section whose mothership index is 5 or
     more. Every slot is killed here — the sweep's own worlds always have something alive — and the
     counter is driven one step below its bound as well as at it."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_MOTHERSHIP_READY: b"\x01", A_MOTHERSHIP_INDEX: b"\x05",
              A_MOTHERSHIP_WAVE_CLEAR_COUNT: bytes([clears]),
              A_MOTHERSHIP_PHASE_TIMER: b"\x00\x00\x00\x00",
@@ -1487,7 +1530,7 @@ def test_the_mothership_turns_in_one_of_two_shapes(index):
     ADJACENT enemy records and are turned unconditionally; the rest own four records two apart, and
     only the live ones are turned. Every record's four turn bytes are seeded, so a shape that
     touched the wrong ones differs."""
-    image = bytearray(_world(0, WORLD_START))
+    image = bytearray(world(0, WORLD_START))
     extra = {A_MOTHERSHIP_READY: b"\x01", A_MOTHERSHIP_INDEX: bytes([index]),
              A_MOTHERSHIP_PHASE_TIMER: MOTHERSHIP_TURN_FRAME.to_bytes(4, "big"),
              A_EXPLOSION_GROUP_ACTIVE_BITS: b"\x00"}
@@ -1504,7 +1547,7 @@ def test_the_mothership_turns_in_one_of_two_shapes(index):
 
 # SHARDED BY SECTION rather than by case index, which is `test_scroll.py`'s stated house rule for
 # the same reason: a case's cost is dominated by BUILDING ITS WORLD (three staging oracle runs and
-# four whole frames), which `_world` caches per worker — so splitting by `case % chunks` would have
+# four whole frames), which `world` caches per worker — so splitting by `case % chunks` would have
 # every worker build all four.
 FUZZ_SECTIONS = (0, 3, 7, 12)
 FUZZ_CASES = 96
@@ -1515,13 +1558,15 @@ FUZZ_CASES = 96
 FUZZ_ENEMY_TYPES = (0x01, 0x02, 0x0e, 0x0f, 0x10, 0x11, 0x14, 0x16, 0x64, 0x65)
 
 
-def _fuzz_pokes(rng, image):
+def fuzz_pokes(rng, image):
     """One pseudorandom set of GAME-STATE bytes, poked over a world the oracle produced.
 
     Every address here is a byte the game itself writes, and the values are inside the ranges its
     own code produces: an alive byte, a type from the dispatch's own list, a collision row of real
     entity bits. What is random is the COMBINATION, which is what a dozen frames of one section
     cannot reach on its own.
+
+    PUBLIC because `test_asm_frame.py` is a second driver — see `advance_one_frame`.
     """
     extra = {A_JOYSTICK_STATE: bytes([rng.choice(JOYSTICK_BYTES)]),
              A_SELECTED_WEAPON: bytes([rng.randrange(1, 5)]),
@@ -1548,14 +1593,17 @@ def _fuzz_pokes(rng, image):
         extra[enemy + ENTITY_ALIVE] = bytes([rng.choice((0, 1, 0x80, 0x8c))])
         extra[enemy + ENTITY_TYPE] = bytes([rng.choice(FUZZ_ENEMY_TYPES)])
         extra[enemy + ENTITY_HP] = bytes([rng.randrange(1, 3)])
-        extra[_collision_row(ENEMY_SLOT_FIRST + slot)] = \
+        extra[collision_row(ENEMY_SLOT_FIRST + slot)] = \
             rng.randrange(1 << 20).to_bytes(4, "big")
     extra[BUS_ERROR_VECTOR] = b"\x5a\xa5"
     return extra
 
 
-def _fuzz_cases_for(section):
-    """The case indexes this section's shard owns — the same 96 cases, split four ways."""
+def fuzz_cases_for(section):
+    """The case indexes this section's shard owns — the same 96 cases, split four ways.
+
+    PUBLIC because `test_asm_frame.py` is a second driver — see `advance_one_frame`.
+    """
     return range(FUZZ_SECTIONS.index(section), FUZZ_CASES, len(FUZZ_SECTIONS))
 
 
@@ -1566,18 +1614,18 @@ def test_frame_fuzz(section):
     Sharded by section so `-n auto` spreads it one world at a time; the generator is seeded per
     case, so a failure names the case that produced it.
     """
-    image = bytearray(_world(section, WORLD_START))
-    for case in _fuzz_cases_for(section):
-        _check_resolve(image, _fuzz_pokes(random.Random(0x11d30 + case), image))
+    image = bytearray(world(section, WORLD_START))
+    for case in fuzz_cases_for(section):
+        _check_resolve(image, fuzz_pokes(random.Random(0x11d30 + case), image))
 
 
 @pytest.mark.parametrize("section", FUZZ_SECTIONS)
 def test_frame_head_and_spawn_fuzz(section):
     """The same generator against the loop's first two stages, which read a different half of the
     state — the scroller's counters, the ship's tilt and the weapon dispatch."""
-    image = bytearray(_world(section, WORLD_START))
-    for case in _fuzz_cases_for(section):
-        extra = _fuzz_pokes(random.Random(0x10f4e + case), image)
+    image = bytearray(world(section, WORLD_START))
+    for case in fuzz_cases_for(section):
+        extra = fuzz_pokes(random.Random(0x10f4e + case), image)
         if _check_head(image, extra) == ENTRY_DRONE_AND_FIRE:
             _check_drone_and_fire(image, extra)
         _check_spawn_and_move(image, extra)
@@ -1669,6 +1717,32 @@ SEGMENT_ENERGY_THAT_BORROWS = 0x00
 ENEMY_PAIR_HITPOINT_BYTES = 0x20
 
 
+def segment_borrow_pokes():
+    """Shot 0 alive as a PUFF, enemy slot 2 a boss segment whose pair energy is 0, enemy slot 3 a big
+    enemy — both under shot 0's collision bit.
+
+    The shape the carry defect below lands on, spelt once. PUBLIC because `test_asm_frame.py` is a
+    second driver — see `advance_one_frame`; the twin's stub for `mothership_segment_hit` marshals
+    that same borrow by hand, so this is the case that judges it.
+    """
+    shot = A_ENTITY_TABLE
+    segment = A_ENEMY_SLOTS + ENTITY_STRIDE * SEGMENT_SLOT
+    kill = A_ENEMY_SLOTS + ENTITY_STRIDE * KILL_SLOT
+    shot_bit = (1 << 0).to_bytes(COLLISION_ROW_BYTES, "big")
+    return {
+        A_PLAYER_SCORE_BCD: CARRY_CASE_SCORE.to_bytes(SCORE_BCD_BYTES, "big"),
+        A_ENEMY_PAIR_HITPOINTS: bytes([SEGMENT_ENERGY_THAT_BORROWS]) * ENEMY_PAIR_HITPOINT_BYTES,
+        shot + ENTITY_ALIVE: b"\x01",
+        shot + ENTITY_TYPE: bytes([SHOT_TYPE_PUFF]),
+        segment + ENTITY_ALIVE: b"\x01",
+        segment + ENTITY_TYPE: bytes([ENEMY_TYPE_BOSS_SEGMENT]),
+        kill + ENTITY_ALIVE: b"\x01",
+        kill + ENTITY_TYPE: bytes([ENEMY_TYPE_BIG]),
+        collision_row(ENEMY_SLOT_FIRST + SEGMENT_SLOT): shot_bit,
+        collision_row(ENEMY_SLOT_FIRST + KILL_SLOT): shot_bit,
+    }
+
+
 def test_a_boss_segment_hit_carries_its_borrow_into_the_next_award():
     """THE MEASURED CROSS-SUBSYSTEM DEFECT THIS STAGE ONCE CARRIED, now a case that holds the fix.
 
@@ -1689,24 +1763,7 @@ def test_a_boss_segment_hit_carries_its_borrow_into_the_next_award():
     diff — the score is four image bytes — so a reconstruction that fabricates the carry differs
     here and nowhere else.
     """
-    image = _world(0, WORLD_START)
-    shot = A_ENTITY_TABLE
-    segment = A_ENEMY_SLOTS + ENTITY_STRIDE * SEGMENT_SLOT
-    kill = A_ENEMY_SLOTS + ENTITY_STRIDE * KILL_SLOT
-    shot_bit = (1 << 0).to_bytes(COLLISION_ROW_BYTES, "big")
-    extra = {
-        A_PLAYER_SCORE_BCD: CARRY_CASE_SCORE.to_bytes(SCORE_BCD_BYTES, "big"),
-        A_ENEMY_PAIR_HITPOINTS: bytes([SEGMENT_ENERGY_THAT_BORROWS]) * ENEMY_PAIR_HITPOINT_BYTES,
-        shot + ENTITY_ALIVE: b"\x01",
-        shot + ENTITY_TYPE: bytes([SHOT_TYPE_PUFF]),
-        segment + ENTITY_ALIVE: b"\x01",
-        segment + ENTITY_TYPE: bytes([ENEMY_TYPE_BOSS_SEGMENT]),
-        kill + ENTITY_ALIVE: b"\x01",
-        kill + ENTITY_TYPE: bytes([ENEMY_TYPE_BIG]),
-        _collision_row(ENEMY_SLOT_FIRST + SEGMENT_SLOT): shot_bit,
-        _collision_row(ENEMY_SLOT_FIRST + KILL_SLOT): shot_bit,
-    }
-    _check_resolve(image, extra=extra)
+    _check_resolve(world(0, WORLD_START), extra=segment_borrow_pokes())
 
 
 def test_the_two_instructions_the_score_carry_rests_on():
@@ -1735,7 +1792,7 @@ def test_the_staged_world_is_the_game_and_not_a_seed():
     one of the two hard-coded addresses, and a tile set that is not all zero. If a future change
     broke the staging into an empty image every case above would still pass — on nothing.
     """
-    image = _world(0, WORLD_START)
+    image = world(0, WORLD_START)
     cursor = _u32(image, A_MAP_PTR)
     assert test_init.A_MAP_UNPACKED <= cursor < test_init.A_MAP_UNPACKED + 0x3840, (
         f"the staged map cursor {cursor:#x} is not inside the unpacked map")
@@ -1863,6 +1920,7 @@ MIRRORS = (
     ("COLLISION_ROW_BYTES", "include/collision.h", "COLLISION_ROW_BYTES"),
     ("EXPLOSION_GROUP_MEMBERS", "include/frame.h", "EXPLOSION_GROUP_MEMBERS"),
     ("ENEMY_SLOT_COUNT", "include/enemy.h", "ENEMY_SLOT_COUNT"),
+    ("SHIP_DEATH_EXPLOSION_GROUP", "include/weapon.h", "SHIP_DEATH_EXPLOSION_GROUP"),
     ("SCRIPT_TRIGGER_LOOKAHEAD", "include/frame.h", "SCRIPT_TRIGGER_LOOKAHEAD"),
     ("GROUND_SCRIPT_Y_OFFSET", "src/enemy.c", "GROUND_SCRIPT_Y_OFFSET"),
     ("GROUND_SPAWN_Y_BIAS", "src/enemy.c", "GROUND_SPAWN_Y_BIAS"),

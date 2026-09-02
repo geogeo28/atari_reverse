@@ -1023,6 +1023,15 @@ static void handle_trap(int vec) {
 #define OSH_OUT_AREGS 7                              /* A0..A6 — A7 excluded, see above */
 #define OSH_OUT_REGS  (OSH_OUT_DREGS + OSH_OUT_AREGS)
 
+/* Fill that buffer from the CPU as it stands. One spelling, because osh_run and osh_run_bench both
+ * report the same set and a second copy of the loop could report it in a different order. */
+static void report_regs(uint32_t *out_regs) {
+    for (int i = 0; i < OSH_OUT_DREGS; i++)
+        out_regs[i] = m68k_get_reg(0, (m68k_register_t)(M68K_REG_D0 + i));
+    for (int i = 0; i < OSH_OUT_AREGS; i++)
+        out_regs[OSH_OUT_DREGS + i] = m68k_get_reg(0, (m68k_register_t)(M68K_REG_A0 + i));
+}
+
 /* Run `entry` until it returns to the sentinel (its rts) or reaches `stop_pc` — a checkpoint
  * PC that lets a never-returning function (e.g. _start, whose call to the game loop never
  * comes back) be diffed at a chosen point instead of at rts. Pass stop_pc = 0 to disable.
@@ -1096,10 +1105,7 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
      * that applies, so a run that both mixes the PSG paths and makes an unmodeled OS call reports
      * both rather than sending the reader after one of them twice. They also have four different
      * remedies. */
-    for (int i = 0; i < OSH_OUT_DREGS; i++)
-        out_regs[i] = m68k_get_reg(0, (m68k_register_t)(M68K_REG_D0 + i));
-    for (int i = 0; i < OSH_OUT_AREGS; i++)
-        out_regs[OSH_OUT_DREGS + i] = m68k_get_reg(0, (m68k_register_t)(M68K_REG_A0 + i));
+    report_regs(out_regs);
 
     uint32_t wn = g_wn;                              /* keep the restore writes out of the write-set */
     m68k_write_memory_32(TRAP_VEC_GEMDOS, save_g);   /* restore vectors */
@@ -1111,37 +1117,188 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
     return final_pc == sentinel || (stop_pc && final_pc == stop_pc);
 }
 
-/* Benchmark a cross-compiled C function (our reconstruction, built to m68k and loaded into `mem` at
- * its link addresses) — for comparing the reconstruction's on-target cycle cost against the original
- * (osh_run). Unlike osh_run this installs NO OS-trap vectors: the target is pure computation over the
- * image pointer, and those vectors sit inside the reconstruction's own .text (linked at base 0), so
- * writing them would corrupt code. `arg0` is the single 32-bit C argument, placed at 4(sp) per the
- * m68k SysV ABI; `sentinel` is the return address (an even PC outside the loaded code). Reports cycles
- * + instructions via the shared osh_num_* getters. Returns 1 if it returned to the sentinel. */
-int osh_run_bench(uint8_t *mem, uint32_t size, uint32_t entry, uint32_t arg0,
-                  uint32_t sp, uint32_t sentinel, uint32_t max_insns, uint32_t *out_regs) {
-    g_mem = mem; g_size = size;
-    enter_from_reset();
-    m68k_set_reg(M68K_REG_A7, sp);
-    m68k_set_reg(M68K_REG_PC, entry);
-    m68k_write_memory_32(sp, sentinel);       /* return address: rts -> sentinel */
-    m68k_write_memory_32(sp + 4, arg0);       /* first C argument (the image pointer) */
-    g_min_a7 = sp;
+/* --- THE CALLBACK DOOR: how a bench-run asm twin calls a HOST C function --------------------
+ *
+ * OFF TARGET ONLY, and it does not exist on the machine. A twin is a transcription of the
+ * original's instructions for one routine, so it calls what the original calls — and some of those
+ * callees are verified C cores that this side cannot link into the blob: they are HOST code (the
+ * candidate `.so`), and two of the seams they sit on (`sched_wait8`, `hw_bset8`) are modelled
+ * host-side as well, so an m68k build of them would model nothing. The target build has neither
+ * problem — it links the twin against the real cores and the stub below jumps straight to one — so
+ * the door is the off-target stand-in for a link, and nothing else.
+ *
+ * A twin never spells a door address in its body. Each callee gets a stub — at its simplest
+ * `jmp (base + id*8).l` off target and `jmp <name>` on it — so the body's `bsr.w door_<name>` is
+ * byte-identical in both builds. Landing in the band STOPS the run before the (non-existent)
+ * instruction there executes and reports OSH_BENCH_DOOR; the harness reads the arguments off the
+ * emulated stack, calls the host function, applies the result through osh_bench_door_return() and
+ * resumes the SAME run. asm_twin.py owns that half and TRAP_MODEL.md ("The callback door") has the
+ * whole contract, the refusal an unregistered id gets, and why the door charges no cycles.
+ *
+ * IT IS A PLAIN C CALL AND NOTHING MORE — including what a C call WRECKS: the result lands in D0
+ * and the rest of the caller-saved file (D1, A0, A1) and every condition-code bit are destroyed, as
+ * they are on the machine. Anything a call site needs beyond that — the X flag in or out, a `tst.l`
+ * so a `beq` below the call has something to branch on, the scratch registers saved across it —
+ * belongs in the STUB, which exists in BOTH builds. A door that did it, or that politely preserved
+ * what a real core does not, would be doing so OFF TARGET ONLY, and the machine that ships would
+ * disagree with the harness with nothing here able to see it.
+ *
+ * The band is asm_twin.py's constant, PASSED IN rather than spelt here — the placement argument
+ * (strictly between the twin's stack top and the image) is about the memory layout that module
+ * owns. A span of 0 disables the door, which is the default and what every pre-door caller gets. */
+#define OSH_BENCH_INSNS_EXHAUSTED 0    /* ran out of instructions without stopping */
+#define OSH_BENCH_SENTINEL        1    /* returned to the sentinel — the run is over */
+#define OSH_BENCH_DOOR            2    /* reached the callback band — service it and resume */
 
+static uint32_t g_door_base, g_door_span;   /* the band; span 0 = no door, the default */
+static uint32_t g_door_pc;                  /* the PC inside it the run stopped at */
+static uint32_t g_bench_sentinel;           /* remembered so a resume watches the same address */
+
+/* Arm the door over [base, base + span), or disarm it with span 0. Also clears the reported door
+ * PC, so a stale one from an earlier run cannot be read back as this run's. */
+void osh_bench_door(uint32_t base, uint32_t span) {
+    g_door_base = base;
+    g_door_span = span;
+    g_door_pc = 0;
+}
+
+uint32_t osh_bench_door_pc(void) { return g_door_pc; }
+/* A7 at the door: the stub was reached by `bsr`, so the twin's return address is AT it and the C
+ * arguments are above it, at +4, +8, ... — the ordinary m68k SysV frame the callee would have. */
+uint32_t osh_bench_door_sp(void) { return m68k_get_reg(0, M68K_REG_A7); }
+
+/* WHAT A REAL C CALL DESTROYS, modelled rather than left alone. The m68k SysV ABI makes D0, D1, A0
+ * and A1 CALLER-saved and says nothing about the condition codes, so on the target build — where
+ * this call site reaches the actual core — all of them come back as rubble. Off target the door
+ * touches almost nothing, so a stub that forgot to save its scratch file, or that branched on a
+ * flag its callee happened to leave, would be green here and broken on the machine. That is the
+ * exact class the door exists inside, so the door destroys them on purpose.
+ *
+ * The value is arbitrary because what it stands for is undefined; it is DISTINCTIVE so a stub that
+ * carried it into an address or a count says so when the image diff lands. D2-D7 and A2-A6 are NOT
+ * touched: those are callee-saved, and a core that did not restore one is a defect in the CORE,
+ * which the candidate's own differential is what catches. */
+#define OSH_DOOR_SCRATCH_POISON 0xDEADD00Du
+#define SR_ALL_CONDITION_CODES 0x1Fu    /* X N Z V C — the flags a call leaves undefined */
+
+uint32_t osh_bench_door_poison(void) { return OSH_DOOR_SCRATCH_POISON; }
+
+/* The three statuses osh_run_bench and osh_bench_resume answer with, EXPORTED rather than left for a
+ * caller to mirror. emu.py cannot include this file, so the alternative is the same three numbers
+ * typed twice with nothing holding them equal — and the way that fails is silent: renumber
+ * OSH_BENCH_DOOR and `AsmTwins.call`'s door loop simply never fires, so every twin case compares a
+ * run that stopped at its first callback against a fully-run C core and reports a pixel divergence
+ * rather than a renumbered enum. Asked of the .so, they cannot disagree. */
+uint32_t osh_bench_status_insns_exhausted(void) { return OSH_BENCH_INSNS_EXHAUSTED; }
+uint32_t osh_bench_status_sentinel(void)        { return OSH_BENCH_SENTINEL; }
+uint32_t osh_bench_status_door(void)            { return OSH_BENCH_DOOR; }
+
+/* Apply one serviced callback: the host function's result into D0 — or the poison, when the core
+ * returns nothing and D0 is as undefined as the rest of the scratch file — then the caller-saved
+ * wreckage above, then resume the twin at `pc` with A7 = `sp`. That last part is the stub's `rts`,
+ * ARITHMETIC AND ALL SPELT BY THE CALLER, because the frame it pops is the C ABI and asm_twin.py is
+ * what owns that. */
+void osh_bench_door_return(uint32_t d0, int returns, uint32_t pc, uint32_t sp) {
+    m68k_set_reg(M68K_REG_D0, returns ? d0 : OSH_DOOR_SCRATCH_POISON);
+    m68k_set_reg(M68K_REG_D1, OSH_DOOR_SCRATCH_POISON + 1);
+    m68k_set_reg(M68K_REG_A0, OSH_DOOR_SCRATCH_POISON + 2);
+    m68k_set_reg(M68K_REG_A1, OSH_DOOR_SCRATCH_POISON + 3);
+    m68k_set_reg(M68K_REG_SR, m68k_get_reg(0, M68K_REG_SR) | SR_ALL_CONDITION_CODES);
+    m68k_set_reg(M68K_REG_PC, pc);
+    m68k_set_reg(M68K_REG_A7, sp);
+}
+
+/* The bench run's instruction loop, shared by osh_run_bench and osh_bench_resume so a resumed
+ * segment cannot execute under different rules than the first one. The sentinel is a PARAMETER, not
+ * read from the global, so the compiler can keep it in a register across a call m68k_execute() makes
+ * opaque; g_bench_sentinel exists only to carry it from the run into its resumes. Returns an OSH_BENCH_* status
+ * and ACCUMULATES its instruction count into g_ninsns — a run split by callbacks reports the same
+ * totals as the unsplit one, and the door itself adds nothing to them (the stub's `bsr` and `jmp`
+ * really execute and are charged; the host C body does not exist here and costs nothing). */
+static int bench_loop(uint32_t sentinel, uint32_t max_insns) {
     uint32_t n = 0;
-    g_ncycles = 0;
     for (; n < max_insns; n++) {
         uint32_t pc = m68k_get_reg(0, M68K_REG_PC);
         if (pc == sentinel) break;
+        /* ONE unsigned compare, and a disabled door (span 0) is false for free: this runs per
+         * emulated instruction, in the loop every pinned perf number in this workspace is taken
+         * with, so the door costs a subtract and a compare whether or not a project has one. */
+        if ((uint32_t)(pc - g_door_base) < g_door_span) {
+            g_door_pc = pc;
+            g_ninsns += n;
+            return OSH_BENCH_DOOR;
+        }
         uint32_t cur_a7 = m68k_get_reg(0, M68K_REG_A7);
         if (cur_a7 < g_min_a7) g_min_a7 = cur_a7;
         uint32_t cyc = (uint32_t)m68k_execute(1);
         g_ncycles += cyc;
         if (g_prof_on && pc < PROF_SIZE) g_prof[pc >> 1] += cyc;
     }
-    g_ninsns = n;
-    out_regs[0] = m68k_get_reg(0, M68K_REG_D0);
-    return m68k_get_reg(0, M68K_REG_PC) == sentinel;
+    g_ninsns += n;
+    return (m68k_get_reg(0, M68K_REG_PC) == sentinel) ? OSH_BENCH_SENTINEL
+                                                      : OSH_BENCH_INSNS_EXHAUSTED;
+}
+
+/* The register file the next osh_run_bench ENTERS with, in the OSH_OUT_REGS order (D0..D7, A0..A6;
+ * A7 is `sp`). Set through osh_bench_seed, which a caller with nothing to seed passes NULL to —
+ * that is the default and leaves the entry state exactly as it always was.
+ *
+ * It exists so a caller can pin the m68k SysV ABI's CALLEE-SAVED FILE, D2-D7 and A2-A6: seed each
+ * with a distinctive value, and a routine that forgot one in its `movem` list comes back with the
+ * seed missing from it. Nothing else off target can see that — the image is identical, the return
+ * value is identical, and the cost pin gets CHEAPER — while on the machine the caller's register is
+ * gone (measured on Zynaps's draw_sprite_masked_asm; see asm_twin.AsmTwins.call). */
+static uint32_t g_bench_seed[OSH_OUT_REGS];
+static int      g_bench_seed_on;
+
+void osh_bench_seed(const uint32_t *regs) {
+    g_bench_seed_on = regs != 0;
+    if (regs)
+        for (int i = 0; i < OSH_OUT_REGS; i++) g_bench_seed[i] = regs[i];
+}
+
+/* Benchmark a cross-compiled C function (our reconstruction, built to m68k and loaded into `mem` at
+ * its link addresses) — for comparing the reconstruction's on-target cycle cost against the original
+ * (osh_run). Unlike osh_run this installs NO OS-trap vectors: the target is pure computation over the
+ * image pointer, and those vectors sit inside the reconstruction's own .text (linked at base 0), so
+ * writing them would corrupt code. `arg0` is the single 32-bit C argument, placed at 4(sp) per the
+ * m68k SysV ABI; `sentinel` is the return address (an even PC outside the loaded code). Reports cycles
+ * + instructions via the shared osh_num_* getters, and the whole OSH_OUT_REGS register file through
+ * `out_regs` — a caller must size that buffer to OSH_OUT_REGS, as osh_run's already must. Returns an
+ * OSH_BENCH_* status — 1 (SENTINEL) still means exactly what it always did, so a caller that tests
+ * it as a boolean is unaffected. */
+int osh_run_bench(uint8_t *mem, uint32_t size, uint32_t entry, uint32_t arg0,
+                  uint32_t sp, uint32_t sentinel, uint32_t max_insns, uint32_t *out_regs) {
+    g_mem = mem; g_size = size;
+    enter_from_reset();
+    if (g_bench_seed_on) {
+        for (int i = 0; i < OSH_OUT_DREGS; i++)
+            m68k_set_reg((m68k_register_t)(M68K_REG_D0 + i), g_bench_seed[i]);
+        for (int i = 0; i < OSH_OUT_AREGS; i++)
+            m68k_set_reg((m68k_register_t)(M68K_REG_A0 + i), g_bench_seed[OSH_OUT_DREGS + i]);
+    }
+    m68k_set_reg(M68K_REG_A7, sp);
+    m68k_set_reg(M68K_REG_PC, entry);
+    m68k_write_memory_32(sp, sentinel);       /* return address: rts -> sentinel */
+    m68k_write_memory_32(sp + 4, arg0);       /* first C argument (the image pointer) */
+    g_min_a7 = sp;
+    g_bench_sentinel = sentinel;
+
+    g_ninsns = 0;
+    g_ncycles = 0;
+    int status = bench_loop(sentinel, max_insns);
+    report_regs(out_regs);
+    return status;
+}
+
+/* Continue the run osh_run_bench started — after a callback was serviced, and only then. The CPU is
+ * NOT reset and no register is touched: Musashi's state IS the twin's state, which is the whole
+ * point of resuming rather than re-entering. Same loop, same statuses, and the totals keep
+ * accumulating, so `max_insns` bounds this segment rather than the run. */
+int osh_bench_resume(uint32_t max_insns, uint32_t *out_regs) {
+    int status = bench_loop(g_bench_sentinel, max_insns);
+    report_regs(out_regs);
+    return status;
 }
 
 /* How many values osh_run writes into its out_regs buffer. A caller allocates that buffer, so a

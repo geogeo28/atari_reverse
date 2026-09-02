@@ -606,6 +606,16 @@ def _vet_no_os_refusal(entry):
         + _hw_refusal_hint() + _sched_refusal_hint())
 
 
+def refusal_hints():
+    """The model-refusal hints a "both sides refused" diagnostic should carry, as one string.
+
+    PUBLIC for `arm_candidate`'s reason: a caller outside this module that arms the candidate itself
+    also has to DIAGNOSE a run where both sides refused, and the two hints belong together — a caller
+    that reached for one private name would print half the causes.
+    """
+    return _hw_refusal_hint() + _sched_refusal_hint()
+
+
 def _vet_audio_capture_off(entry):
     """Reject a differential run made while the oracle's AUDIO-CAPTURE mode is armed — a FALSE GREEN.
 
@@ -885,6 +895,30 @@ def _vet_schedule_is_runnable(entry, schedule, wait_sites):
     # list is what both shores key their counters by. Run it here so the case is refused before
     # either core does, with the encoder's own wording.
     emu.wait_site_pcs(schedule, wait_sites)
+
+
+def arm_candidate(psg_seed=None, hw_seed=None, scheduled=(), sites=()):
+    """PUT THE CANDIDATE'S MODELS IN THE STATE A RUN IS ENTITLED TO ASSUME, as `differential` does.
+
+    Every per-run model the kit carries has to be reset and re-seeded before a candidate runs, or it
+    inherits the previous case's — a stale Dosound ledger, a refusal tally nobody reset, PSG
+    registers from another tune, hardware bytes another case declared. `differential` does this at
+    two points of its own; this is the same block, PUBLIC, because a caller outside this module now
+    needs it too: an ASM TWIN's differential runs the twin and the C core as two separate candidate
+    runs and must arm both identically, or the byte comparison between them proves nothing.
+
+    IT IS PUBLIC SO THAT IT CANNOT DRIFT. The alternative — and what the first twin suite to need it
+    actually did — is a hand copy reaching four underscore-private names across a module boundary.
+    That copy stays green when the kit grows a FIFTH model to arm, because both shores of ITS
+    comparison are armed by the same stale block: symmetric, wrong, and invisible. Adding the model
+    here reaches every caller.
+    """
+    if _has_dosound_ledger:
+        _lib.g_dosound_log_reset()
+    _lib.g_os_refusal_reset()
+    _seed_candidate_psg(psg_seed)
+    _seed_candidate_hw(hw_seed)
+    _seed_candidate_sched(scheduled, sites)
 
 
 def _seed_candidate_sched(scheduled, sites):
@@ -1414,13 +1448,10 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     _vet_hw_reads_are_declared(entry, hw_seed, o_regs)
 
     buf = candidate_image(img)
-    if _has_dosound_ledger:
-        _lib.g_dosound_log_reset()       # fresh Dosound ledger for this candidate run (see below)
-    _lib.g_os_refusal_reset()            # ...and a fresh refused-os_*-call tally (see below)
-    _seed_candidate_psg(psg_seed)        # ...and the same PSG entry state the oracle just ran on
-    _seed_candidate_hw(hw_seed)          # ...and the same declared hardware bytes, both ledgers clear
-    # ...and the same external-agent stores, on the same declared wait sites
-    _seed_candidate_sched(o_regs["sched"], o_regs["sched_sites"])
+    # A fresh Dosound ledger and refusal tally, the PSG entry state the oracle just ran on, the same
+    # declared hardware bytes with both ledgers clear, and the same external-agent stores on the same
+    # declared wait sites — see `arm_candidate`, which is also what the asm-twin suites call.
+    arm_candidate(psg_seed, hw_seed, o_regs["sched"], o_regs["sched_sites"])
     cand_ret = glue(_lib, buf)
     c_final = bytes(buf)
 

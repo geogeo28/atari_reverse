@@ -1634,7 +1634,7 @@ frame_exit frame_loop_once(uint8_t *image, uint32_t chance_index_register,
     frame_draw_objects_and_collide(image);
     /* D0 comes out of the stage above as ENTITY_SLOTS: its outer sweep runs `d0` from 1 up to that
      * bound and leaves it there (`cmp.l #$14,d0` + `bne`). */
-    return frame_resolve_hits_and_game_state(image, ENTITY_SLOTS);
+    return ZY_FRAME(frame_resolve_hits_and_game_state)(image, ENTITY_SLOTS);
 }
 
 /* ================================================================================================

@@ -151,7 +151,7 @@ static void run_and_report(const char *name) {
  * uses and which installs no OS traps. Its routine here is a bare `rts`: what the case is about is
  * the state the bench STARTS from, since both entry points share enter_from_reset() and therefore
  * the model's per-run reset. A bench issued after a seeded run must see the SEED, not that run's
- * leftovers. osh_run_bench writes only out[0], so the read-back is reported as 0. */
+ * leftovers. The bench's routine reads nothing, so the read-back is reported as 0. */
 static void bench_and_report(const char *name) {
     uint32_t out[OUT_REGS] = {0};
     plant_rts(PROBE_ENTRY);

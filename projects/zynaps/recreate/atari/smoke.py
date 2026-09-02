@@ -2045,27 +2045,35 @@ VBL_HZ = 50
 # frames. `check_the_pacing` refuses a run whose frame count is not this one instead of applying
 # them anyway — a longer run reaches a second life, whose 4-vblank frames are a different mixture.
 PACING_BASELINE_FRAMES = 300
-# What this tree measures, and the ceiling a run must stay under. MEASURED at 2.80-2.84 mean vblanks
-# a frame over those 300 frames — about 175-180 at 2, the rest at 4, none over 5 — across six `game`
-# runs and two `gamefault` runs of the same binaries.
+# What this tree measures, and the ceiling a run must stay under. MEASURED at 2.66-2.70 mean vblanks
+# a frame over those 300 frames — about 196-201 at 2, the rest at 4, at most one at 5 — across six
+# `game` runs and two `gamefault` runs of the same binaries.
 #
-# THE ASM TWINS ARE WHAT MOVED IT, in two waves. The scroll path (the twenty page blits, the two
+# THE ASM TWINS ARE WHAT MOVED IT, in three waves. The scroll path (the twenty page blits, the two
 # column emitters and the tile emitter) took it from 5.73 to 3.75; the SPRITE and TEXT paths — the
 # collide blitter at 0x15b7c and the score panel at 0x136c8 with the character blitter it ends in —
-# took it from 3.75 to 2.80. 8.7 fps, then 13.3, now 17.9, and the MODE has moved from six release
-# slots to four to TWO: most of the run is now on budget.
+# took it from 3.75 to 2.80; and the frame loop's LAST SLICE (wave C, `src/asm/frame.S`, the first
+# twin that calls) took it from 2.80 to 2.67. 8.7 fps, then 13.3, then 17.9, now 18.7, and the MODE
+# has moved from six release slots to four to TWO: two thirds of the run is now on budget.
+#
+# WAVE C'S OWN PRIZE WAS SEVEN TIMES SMALLER THAN THE ROW THAT COMMISSIONED IT, and the reason
+# belongs here because it is a hazard of this very measurement. The profiler attributed 211,784
+# cycles/frame of SELF to that slice; the slice CONTAINS the frame's two synchronisation spins, and a
+# spin is charged to the function it happens in, so ~95% of that was waiting. Measured on the oracle
+# with the waits released, the original's slice is 9,788-12,378 cycles — so the real gain was ~19,500
+# a frame, which is the 2.80 -> 2.67 above. STATUS.md's wave C note carries the arithmetic.
 #
 # THE CADENCE IS NO LONGER REPRODUCIBLE TO THE SECOND DECIMAL, and that is a consequence of the win
-# rather than of anything getting flakier. The same binary measured 2.80, 2.82, 2.84, 2.80, 2.84 and
-# 2.80 — a 12-vblank spread over 300 frames — because ~60% of the frames now finish NEAR the release
+# rather than of anything getting flakier. The same binary measured 2.67, 2.67, 2.69, 2.69, 2.66 and
+# 2.70 — a 12-vblank spread over 300 frames — because ~65% of the frames now finish NEAR the release
 # boundary, where a handful of cycles either way moves a frame between 2 slots and 4. While every
 # frame overran (the 5.73 and 3.75 eras), nothing sat on the boundary and the histogram repeated to
 # the frame; the old comment's claim of exact reproducibility was true then and is not true now.
 #
-# SO THE CEILING IS SET FROM THE WORST OF THE EIGHT RUNS, NOT FROM THEIR MEAN: 2.84 (852 vblanks)
+# SO THE CEILING IS SET FROM THE WORST OF THE EIGHT RUNS, NOT FROM THEIR MEAN: 2.70 (810 vblanks)
 # plus the same slack every ceiling in this file's history has used — EIGHTEEN frames slipping one
 # release slot, a slot being 2 vertical blanks, so 36 vblanks over 300 frames is 0.12 on the mean.
-# 852 + 36 = 888 vblanks, and 888 / 300 = 2.96 exactly, so there is no rounding slop in this one
+# 810 + 36 = 846 vblanks, and 846 / 300 = 2.82 exactly, so there is no rounding slop in this one
 # (3.87 carried a spare vblank from rounding; this does not).
 #
 # The 0.12 is deliberately NOT re-derived as a share of the new mean, which would shrink the slack
@@ -2073,19 +2081,19 @@ PACING_BASELINE_FRAMES = 300
 #
 # MEASURING AGAINST THE WORST RUN IS WHAT PAYS FOR THE JITTER, and it is worth being exact about
 # what that leaves: a regression gets the full 36 vblanks of slack above the worst run this tree
-# produced, and 48 above its best (840). The spread is absorbed by the choice of baseline, not
+# produced, and 48 above its best (798). The spread is absorbed by the choice of baseline, not
 # subtracted from the tolerance. What it does cost is the OTHER direction — the eight samples are
-# from one host and one tree, so a ninth run somewhere else could sit above 2.84 for no reason of
+# from one host and one tree, so a ninth run somewhere else could sit above 2.70 for no reason of
 # the code's, and the honest response to that would be a wider baseline, never a raised ceiling.
 # The frame count is pinned above for the reason it always was — the `play` build's longer run
 # reaches a second life whose mixture is a different one.
 #
 # THE `gamefault` CONTROL WAS MEASURED AGAINST THE SAME CEILING rather than exempted from it,
 # because this check sits in `mode_game`'s FAULT-BLIND set and a tolerance that had only ever seen
-# one mode would be one the control could redden by accident. Measured: `gamefault` gives 2.80 twice
+# one mode would be one the control could redden by accident. Measured: `gamefault` gives 2.67 and 2.66
 # — the dropped section-chain step is a one-off panel repaint, not per-frame work, so it moves what
 # is DRAWN and not what a frame costs.
-PACING_MEAN_CEILING_VBLS = 2.96
+PACING_MEAN_CEILING_VBLS = 2.82
 # ...and how many frames may reach the histogram's last slot (PACING_SLOTS - 1 = seven vblanks
 # or more) — an ABSOLUTE COUNT (the share form was measured 40x looser than its comment claimed,
 # see the git history). IT IS ZERO, AND THAT IS WHAT WAS MEASURED: 0 of 300 on all eight runs the
@@ -2130,9 +2138,42 @@ ATTRACT_TIMER_B_SERVED_FLOOR = 0.95
 # The keyboard controller's own traffic, as interrupts per vertical blank of the whole run. The
 # frame loop asks for a joystick packet once a frame (`ikbd_send_cmd(IKBD_CMD_INTERROGATE_JOYSTICK)`
 # in `frame_end_and_flip`) and the 6301 answers with a three-byte report, so a served run cannot be
-# far below one interrupt per frame. MEASURED at 0.45 per vblank over the whole run; the floor is
-# 0.25, which a run whose ACIA was being starved by a longer-running handler would fall under.
+# far below one interrupt per frame. MEASURED at 1.76-2.50 per vblank over the whole run (the 0.45
+# this comment used to quote predates the twin waves and the run it was taken from); the floor is
+# 0.25, which a run whose ACIA was being starved by a longer-running handler would fall under. It is
+# left where it is rather than raised to match: the spread below is the point of the paragraph after
+# this one, and a floor set near today's mean would redden on the same drift.
 ACIA_SERVED_PER_VBL_FLOOR = 0.25
+# NO CEILING TO GO WITH IT, AND THE MEASUREMENT IS WHY — recorded because the obvious check was
+# written, measured, and found to be a worse instrument than the thing it was checking.
+#
+# `attract_wait_for_start` originally omitted the original's own pacing delay (`move.w #$64,d7 /
+# dbf d7,*` at 0x12c56, 101 passes between the joystick interrogate and the poll of the byte the
+# reply lands in), so the attract loop asked the controller as fast as the CPU could issue the
+# command: 5,107 interrogates over a 1000-vblank profiler window where the shipped binary sent 105.
+# `src/init.c` now reconstructs the delay. Nothing OFF target can see it — it touches no memory and
+# does not change the poll count per pass — so an on-target rate was the only candidate surface.
+#
+# It does not work. MEASURED, dispatches per vertical blank over the whole run:
+#
+#     game        1.977 paced               2.412 unpaced   (2,412 = the delay absent entirely)
+#     gamefault   2.133, 2.495 paced        2.207 unpaced
+#
+# (the two `gamefault` paced readings and the `game` 1.759/1.851 pair were taken with an earlier,
+# slower spelling of the delay — a `volatile` counter rather than COUNT_BARRIER's `subq`/`bne`. The
+# SPREAD is what the paragraph rests on and it is a property of the metric, not of the delay's cost:
+# two paced runs of one binary 17% apart, with the unpaced reading between them.)
+#
+# `gamefault`'s two PACED readings of the same binary are 17% apart — wider than the paced/unpaced
+# difference the bar would exist to catch, and its unpaced reading falls BETWEEN them. Any ceiling
+# separating those states would redden honest runs; any ceiling that did not would pass the
+# regression. The rate is dominated by how much of a run each phase happens to occupy, which is not
+# stable between runs, and the delay only acts in one of those phases.
+#
+# SO THE DIVERGENCE IS FIXED AND UNPINNED, and STATUS.md's `attract_wait_for_start` row says so.
+# WHAT WOULD PIN IT is a per-phase count — interrogates issued DURING the attract wait, rather than
+# ACIA interrupts serviced across a whole run — which the shim does not record today and which is
+# scoped in that row.
 
 
 def pacing_figures(record):

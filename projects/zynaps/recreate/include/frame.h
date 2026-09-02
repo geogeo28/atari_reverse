@@ -538,4 +538,29 @@ frame_exit frame_resolve_hits_and_game_state(uint8_t *image, uint32_t sound_chan
 frame_exit frame_loop_once(uint8_t *image, uint32_t chance_index_register,
                            uint32_t ground_spawn_y_register);
 
+/* ================================================================================================
+ * THE ASM-TWIN SEAM, exactly as include/scroll.h's, include/sprite.h's and include/text.h's.
+ *
+ * `src/asm/frame.S` transcribes the original's own instruction sequence for the LAST slice — the
+ * one the profiler gives no row to, and the one carrying the whole of the frame's remaining excess
+ * over the shipped binary. The C above stays compiled and stays the reference; `ZY_FRAME(fn)` names
+ * the one to call, so a reader greping ../../names.txt for `frame_resolve_hits_and_game_state`
+ * still lands on every place it is reached from. atari/build.sh scrapes the `#ifdef` below into its
+ * seam defines, links src/asm/, and GATES that the twin really arrived. The host differential build
+ * never defines it.
+ *
+ * THIS SLICE HAS EXACTLY ONE ON-TARGET CALL SITE (`frame_loop_once`, in src/frame.c), which is why
+ * the build gate covers it completely: an unwrapped call site would leave the twin UNREFERENCED and
+ * redden the gate. The blind spot wave B found — an intra-file call to the bare C core, which is not
+ * an undefined reference and so is invisible to the gate — needs a SECOND call site to bite, and
+ * this slice has none. `g_frame_resolve_hits_and_game_state` names the bare core, but that is the
+ * C's own file naming its own definition, which is the case build.sh's comment explicitly allows.
+ * ============================================================================================= */
+#ifdef ZY_ASM_FRAME
+frame_exit frame_resolve_hits_and_game_state_asm(uint8_t *image, uint32_t sound_channel);
+#define ZY_FRAME(fn) fn##_asm
+#else
+#define ZY_FRAME(fn) fn
+#endif
+
 #endif /* ZYNAPS_FRAME_H */

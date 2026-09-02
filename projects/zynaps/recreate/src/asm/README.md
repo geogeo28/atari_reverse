@@ -6,9 +6,10 @@ target build (`atari/build.sh`) links the twin instead of the C; the host differ
 sees it.
 
 This directory holds Zynaps' twins: the scroll path (wave A — `scroll_blit.S`, `scroll_emit.S`,
-`scroll_tile.S`) and the sprite and text paths (wave B — `sprite.S`, `text.S`). Wave B followed this
-recipe unchanged and taught it four things, which are folded in below under **What wave B added**.
-The recipe is the point of this file.
+`scroll_tile.S`), the sprite and text paths (wave B — `sprite.S`, `text.S`), and the frame loop's
+last slice (wave C — `frame.S`). Wave B followed this recipe unchanged and taught it four things;
+wave C was the first twin that CALLS, and taught it four more — both are folded in below under
+**What wave B added** and **What wave C added**. The recipe is the point of this file.
 
 ## Why transcription and not optimisation
 
@@ -207,6 +208,79 @@ margin in CYCLES, not in percent**: wave B's margins are 3-9 cycles, which is wh
 register in a `movem` (16 cycles round trip) redden them. A bar quoted as "about 1.05" would have
 been forty times looser than the effect it exists to catch.
 
+## What wave C added
+
+Wave C is one twin — `frame.S`, the frame loop's last slice (`[0x11d30, 0x1296e)`, 703
+instructions) — and it broke four of this file's assumptions at once, because it is the first twin
+that is not a leaf.
+
+**1. A TWIN THAT CALLS. The kit grew a door for it.** Waves A and B twinned routines that call
+nothing, or that call each other inside the same blob. This one calls **sixteen verified C cores**,
+and the twin blob is linked ALONE (`kit.mk`'s `$(ASM_ELF)`), so `jsr collision_chain_walk` did not
+link at all. Two more of its seams — the raster and vblank spins, and the MFP `bset` — are modelled
+HOST-SIDE by the kit and can never be m68k code. So `tools/recreate_kit` gained a **callback door**:
+off target, a stub `jsr`s into a reserved address band, `asm_twin.py` services the callback by
+calling the host C and resumes the blob. `TRAP_MODEL.md` carries the contract. **On target the door
+does not exist** — the same `jsr` names the real core — so a twin's body is identical either way.
+
+**Two consequences worth knowing before the next non-leaf twin.** The door charges the emulated
+machine NOTHING for the C body, so **an off-target cost reading over a span containing a call is not
+comparable to the original's**; pin cost over call-free spans, or say "the twin's own instructions".
+And the door deliberately DESTROYS the caller-saved file (`%d0-%d1/%a0-%a1` and every condition code)
+after each callback, exactly as a real core does — a courtesy version of it hid a stub that had
+forgotten to save them.
+
+**2. THE BYTE PIN IS MOSTLY UNAVAILABLE HERE, and that is the price of position-independence.** The
+original IS the image, so it reads its sixty-six globals absolutely (`tst.b $19aad.l`). The
+reconstruction gets the image as a pointer, so every one of those becomes base-relative — two
+reserved registers, `%a6 = image` and `%a5 = image + 0x18000`, the second putting all sixty-six
+inside one signed 16-bit displacement window. Almost every instruction in the slice mentions a
+global, so almost nothing in it can be byte-equal to the original.
+
+**Say what stands in its place rather than quietly dropping a check.** For `frame.S` that is: the
+differential over staged worlds per exit arm, the cost bars, and a **transcription-order pin** —
+every one of the original's 703 instruction addresses appears in the file's `| 0xxxxx` comments
+exactly once, in ascending order, with no gaps and no extras. That is weaker than bytes and it is
+not pretending otherwise; it is what catches a band spliced out of order, an instruction dropped, or
+a line duplicated.
+
+**TWO SUBSTITUTIONS PULL IN OPPOSITE DIRECTIONS, and only the measurement settles it.** The
+base-relative globals are CHEAPER than the original's absolute-long forms — `tst.b d16(An)` is 12
+where `tst.b abs.l` is 14, `move.b #imm,d16(An)` 16 against 20, `lea d16(An),An` 8 against 12 — and
+gas relaxes some `.w` branches to short. That was predicted here first, and it predicted bars below
+1.00x. **It was wrong.** The stage makes nine or ten door calls a frame, and a trampoline — a
+four-register `movem` pair, the `suba.l` pointer-to-offset conversions, the argument pushes and the
+`lea` unwind — costs far more than the single `bsr` the original has in its place. The trampolines
+win: measured, the twin is 240-360 cycles OVER the original on every band, so the bars sit at
+**1.022x-1.037x**. `test/test_asm_frame.py`'s cost section carries the four-row table.
+
+**The general form of that mistake is worth keeping: a cost prediction assembled from instruction
+timings is an argument, not a reading.** Take the reading.
+
+**3. A SEAM MAY SPLIT BY BUILD.** Three of `frame.S`'s instructions are not the original's: the two
+busy-waits and the `bset #6,$fffa09`. ON TARGET they are the original's own instructions, because the
+interrupt really does write the byte and the register really is at $fffa09 — which is what
+`tools/recreate_kit/include/sched.h` says a real-machine build should do, and the target's own
+`sched.h`/`hw.h` supply `static inline` versions with no linkable symbol at all. OFF TARGET they go
+through the kit so the poll ledger and the hardware-write ledger still see them. The `#ifdef` is in
+the body, not hidden in a stub, and the transcription-order pin reads BOTH arms.
+
+**4. AND THE MEASUREMENT THAT SENT US HERE WAS WRONG — read this before trusting a profiler row.**
+Wave C was commissioned on the profiler attributing **211,784 cycles/frame** of SELF to this slice,
+against an estimated ~71,600 for the original's same span: a 140,000-cycle prize. Both numbers were
+wrong, in the same way. **The slice contains the frame's two synchronisation spins**, and Hatari
+charges spin cycles to the function they occur in, so that SELF was ~95% *waiting*.
+
+Measured properly — on the oracle, with the waits released on their first poll, so what is counted is
+work — the original's slice costs **9,788 to 12,378 cycles a frame**. The C was ~2.7x that, which is
+about the ratio the brief guessed; the ABSOLUTE prize was **~19,500 cycles a frame, not 140,000**.
+The twin collected it: `frame_loop_once` inclusive 477,268 -> 457,803, the game smoke 2.80 -> 2.68
+vblanks a frame (17.9 -> 18.7 fps). Real, and seven times smaller than the row said.
+
+**The lesson is general enough to belong in this file: a profiler row for a routine that contains a
+busy-wait measures the wait.** Before sizing a twin from one, either put the wait outside the span
+or measure the span on the oracle, where a schedule releases it.
+
 ## Where the pieces live
 
 | | |
@@ -215,10 +289,11 @@ been forty times looser than the effect it exists to catch.
 | assembled to one blob | `build/asm/twins.{elf,bin}` — `make asm`, and `make test` first |
 | the assemble rule | `tools/recreate_kit/kit.mk`, `$(ASM_ELF)` — generic, driven by `src/asm/*.S` existing |
 | the Musashi runner | `tools/recreate_kit/asm_twin.py` — `AsmTwins.call(image, symbol, *args)` |
+| the callback door | `tools/recreate_kit/asm_twin.py`'s `DoorCallback` + `TRAP_MODEL.md` — how a twin calls a C core, OFF TARGET ONLY |
 | the four checks, shared | `test/asm_twins.py` — `matches_the_c`, `assert_transcribes_the_original`, `cost_case`, `assert_within_the_bar` |
-| the differentials | `test/test_asm_scroll.py`, `test/test_asm_sprite.py`, `test/test_asm_text.py` |
+| the differentials | `test/test_asm_scroll.py`, `test/test_asm_sprite.py`, `test/test_asm_text.py`, `test/test_asm_frame.py` |
 | the constant pin | `test/test_constants.py::test_asm_twin_equates_match_the_headers` |
-| the seams | `include/scroll.h`'s `ZY_SCROLL()`, `include/sprite.h`'s `ZY_SPRITE()`, `include/text.h`'s `ZY_TEXT()` |
+| the seams | `include/scroll.h`'s `ZY_SCROLL()`, `include/sprite.h`'s `ZY_SPRITE()`, `include/text.h`'s `ZY_TEXT()`, `include/frame.h`'s `ZY_FRAME()` |
 | the call sites | `src/frame.c`, `src/init.c`, `src/enemy.c`, `src/mothership.c`, `src/highscore.c`, `src/hud.c` |
 | the build gate | `atari/build.sh`, "THE ASM-TWIN GATE" and `ASM_SEAM_DEFINES` |
 

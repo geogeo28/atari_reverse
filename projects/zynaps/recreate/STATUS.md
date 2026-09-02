@@ -760,7 +760,7 @@ a fabrication because the value is one the run itself produced.
 | `0x12ac2` | `attract_program_timer_b` | 72 | ✅ verified | `[0x12ac2, 0x12b0a)`. `title_attract_loop`'s own entry, and the same shape as the boot's two MFP slices for the same reason: it stops on `move.b #$0,$fffa21` because the read-back spin below cannot be run. The in-game handler pair back on their vectors, Timer B stopped, pen 0 blanked, one frame waited for at its own site (three `nth` values). Its period of 0 is what separates it from the 0x02 the next slice writes |
 | `0x12b14` | `attract_program_rasterbar_timer` | 52 | ✅ verified | `[0x12b14, 0x12b48)`. Timer B started, a second frame waited for, and then ATTRACT MODE'S OWN pair (0x12c9e / 0x12cc0, both verified in `irq`) installed over the in-game one with the period the colour bars run at. Both vectors seeded to values neither pair holds |
 | `0x12b52` | `attract_build_colour_bars` | 98 | ✅ verified | `[0x12b52, 0x12bb4)`. The interrupts opened up, and then the bar list built out of the seven-group pattern the .PRG ships — each group emits its own count of identical-height bars, each a step further round a hue ramp of +0x89 masked to 0x777. **THE RAMP CARRIES ACROSS THE GROUPS**: the register is cleared once, before the outer loop, so a candidate restarting it per group differs on every bar after the first and parks the wrong hue for the scroll to continue from. The list is built in `A_backdrop_page0` — one buffer under two uses in sequence, like the asteroid banks — and both it and the handler's own list are seeded with noise. `test_the_bar_pattern_emits_more_pairs_than_the_scroll_moves` reads the pattern back out of the image and pins it between the sixteen pairs the scroll walks and the 0x29 longwords the copy carries. NO POISON PASS, and NOT for the schedule's reason — this slice makes no wait at all; it is `title_screen_draw`'s, which reads the draw-buffer pointer an attribution pass would invert (measured here as a bus error). Mutation killed: the hue ramp started at 1 |
-| `0x12bb4` | `attract_wait_for_start` | 194 | ✅ verified | `[0x12bb4, 0x12c74]`, entered mid-routine and run to the `rts` — the loop, over its three exits and three lengths. **FOUR WAIT SITES, WHICH IS THE KIT'S WHOLE ALLOWANCE** (`OS_SCHED_SITE_MAX`), and the loop has exactly four: the frame flag, the key byte at BOTH of its compares (two reads at two addresses, so two sites) and the joystick. Every one is a byte only an interrupt writes, so each is a declared store and the harness compares polls against arrivals SITE BY SITE rather than as two totals that could cancel. The three exits differ in what they leave in `player_count`, and the count is written INSIDE the loop on every pass — so a candidate that only wrote it on the way out would still agree, which is why key '2' (the arm that keeps the two) is driven beside the two that cut it to one. Also driven: the page swap at both toggle values, which flips BEFORE it branches so entering at 0 draws the role of honour; and the bar scroll's own countdown at four values, where 0xff steps down like any other and does NOT scroll. NO POISON PASS — refused over four scheduled bytes. Mutations killed: the bar scroll one pair short, the page toggle read before it is flipped, the per-pass player-count write dropped, key '2' choosing one player |
+| `0x12bb4` | `attract_wait_for_start` | 194 | ✅ verified | `[0x12bb4, 0x12c74]`, entered mid-routine and run to the `rts` — the loop, over its three exits and three lengths. **FOUR WAIT SITES, WHICH IS THE KIT'S WHOLE ALLOWANCE** (`OS_SCHED_SITE_MAX`), and the loop has exactly four: the frame flag, the key byte at BOTH of its compares (two reads at two addresses, so two sites) and the joystick. Every one is a byte only an interrupt writes, so each is a declared store and the harness compares polls against arrivals SITE BY SITE rather than as two totals that could cancel. The three exits differ in what they leave in `player_count`, and the count is written INSIDE the loop on every pass — so a candidate that only wrote it on the way out would still agree, which is why key '2' (the arm that keeps the two) is driven beside the two that cut it to one. Also driven: the page swap at both toggle values, which flips BEFORE it branches so entering at 0 draws the role of honour; and the bar scroll's own countdown at four values, where 0xff steps down like any other and does NOT scroll. NO POISON PASS — refused over four scheduled bytes. Mutations killed: the bar scroll one pair short, the page toggle read before it is flipped, the per-pass player-count write dropped, key '2' choosing one player. **THE PACING DELAY IS NOW RECONSTRUCTED, and this row used to say it was not.** `move.w #$64,d7 / dbf d7,*` at 0x12c56 is 101 passes of an empty loop between the joystick interrogate and the poll of the byte the reply lands in. It touches no memory, so nothing off target can see it — and because it sits BETWEEN the send and the poll rather than around them, the poll count per pass is unchanged too, which is what the harness compares against the oracle's arrivals. The differential is blind to it BY CONSTRUCTION and stayed green either way; its warrant is the ON-TARGET surface alone. Without it the attract and section-start waits sent **5,107** joystick interrogates over a 1000-vblank profiler window where the shipped binary sent **105**, and the smoke's keyboard-ACIA rate ran at **2.412 per vblank against 1.851 paced**; **IT IS FIXED AND UNPINNED, and the measurement is why.** A ceiling on the smoke's ACIA-dispatch rate was written and then withdrawn: `gamefault` gives **2.133 and 2.495 per vblank on two PACED runs of the same binary** — 17% apart, wider than the paced/unpaced difference a bar would exist to catch, with its unpaced reading (2.207) falling BETWEEN them. The rate is dominated by how much of a run each phase happens to occupy, and the delay acts in only one phase. `game` alone separates cleanly (1.977 paced against 2.412 with the delay absent), but a check that only works in one mode and reddens honestly-drifting runs in another is a worse instrument than the divergence it watches. **What WOULD pin it** is a per-phase count — interrogates issued during the attract wait, rather than ACIA interrupts serviced across a whole run — which the shim does not record today. `atari/smoke.py` carries the same measurement beside the ACIA floor. The C spells it `attract_wait_for_controller_reply` with a `volatile` counter, so the PASS COUNT is the original's while the per-pass cost is not `dbf`'s: a faithful cadence rather than a faithful cycle count. **`section_tail_wait_for_fire` DOES NOT GET ONE** — the original's loop at 0x10f1e runs `rand16`, the interrogate and the poll with no delay between them at all, and the two waits are not the same shape |
 | `0x10c4e` | `section_start_prefill` | 328 | ✅ verified | `[0x10c4e, 0x10d96)`. Two steps: the restart search (the word table at 0x19e84 scanned BACKWARDS from the section's eight-byte slot for the last offset at or below the map cursor, publishing `map_ptr` / `map_offset` / `scroll_pos`) and then 160 columns of backdrop pre-rendered into the eight off-screen pages with the display hidden. Four sections, five map cursors around the rewind edge, four (page, column) starting positions including both ring wraps, and the asteroid arm that renders nothing. **This is the composition test for the whole scroller**: every one of the eight pages is seeded over a full playfield, so a candidate that filled the wrong page or stopped a column short differs. NO POISON PASS — see `## Mutation ledger`, "init". Mutations killed: the page ring wrapping early, the restart scan walking forwards, the asteroid guard inverted |
 
 **What the whole subsystem still cannot see.** Every hardware STORE the boot and the front end make
@@ -1994,7 +1994,7 @@ because that array is a map KEYED BY ADDRESS with distinct keys, so its row orde
 the three above are. The second is equivalent because every shipped arm carries exactly one of the
 two function pointers.
 
-## The asm twins — the hot paths in the original's own instructions (28)
+## The asm twins — the hot paths in the original's own instructions (29)
 
 **These are not new functions and they add no row above.** A twin is a hand-written m68k
 transcription of the ORIGINAL binary's instruction sequence for a routine this file already carries a
@@ -2013,6 +2013,7 @@ The C stays compiled and stays the reference; nothing about what the program com
 | `draw_score_panel_asm` | `0x136c8` | `src/hud.c` | **1.0210x** (Musashi), **1.019x** (Hatari) |
 | `draw_bcd_number_asm` | `0x136f6` | `src/text.c` | **1.0184x** |
 | `draw_char_asm` | `0x13710` | `src/text.c` | **1.1141x** from C — but the panel reaches it by the original's own `bsr`, 18 cycles and no prologue, which is 1,400 of the 1,425 calls in a profiled window |
+| `frame_resolve_hits_and_game_state_asm` | `0x11d30`..`0x1296e` | `src/frame.c` | **1.0369x** ordinary / **1.0223x** either swap / **1.0303x** section end (Musashi) — and the ratio is NOT the like-for-like one the other rows carry: the door charges nothing for a C body, so the twin's number is its own instructions and the original's includes everything its `bsr`s reach |
 
 **WAVE B IS THE SPRITE AND TEXT PATHS**, and its five twins took the judged cadence from 3.75-3.77
 vblanks a frame to **2.80** (17.9 fps; the original's own is 2.08). The two waves' shapes differ in
@@ -2034,12 +2035,148 @@ three ways worth carrying:
   `sprite.S` and `text.S` therefore ends AT its loop's `rts` rather than past it. The pre-existing
   `__mulsi3`/`_bss_start` aliases in the linked ELF are libgcc's and the linker's, not ours.
 
+**WAVE C IS THE FRAME LOOP'S LAST SLICE**, one twin of 703 instructions (`[0x11d30, 0x1296e)`), and
+it is the first twin in this project that CALLS: sixteen verified C cores, plus two `sched_wait8`
+seams and one `hw_bset8`. It took the judged cadence from **2.80 to 2.67** vblanks a frame (17.9 ->
+18.7 fps). Four things about it are new, and `src/asm/README.md`'s "What wave C added" carries them
+in full:
+
+* **The kit grew a CALLBACK DOOR for it.** The twin blob is linked alone, so `jsr
+  collision_chain_walk` did not link; and two of the slice's seams are modelled host-side by the kit
+  and can never be m68k code. Off target a stub jumps into a reserved band and `asm_twin.py` calls
+  the host C; **on target the door does not exist** and the same `jsr` names the real core.
+  `tools/recreate_kit/TRAP_MODEL.md` has the contract.
+* **The byte pin is mostly UNAVAILABLE here**, and that is the price of position-independence rather
+  than a corner cut. The slice names sixty-six globals absolutely; the reconstruction addresses all
+  of them through two reserved base registers (`%a6 = image`, `%a5 = image + 0x18000`), so almost no
+  instruction can be byte-equal to the original's. What stands in its place is named in
+  `test/test_asm_frame.py`: the differential per exit arm, the cost bars, and a
+  **transcription-order pin** — all 703 of the original's instruction addresses present exactly once,
+  in ascending order, no gaps and no extras.
+* **Two substitutions pull opposite ways, and the measurement settled it against the prediction.**
+  The base-relative globals ARE cheaper (`tst.b d16(An)` 12 against `tst.b abs.l` 14,
+  `move.b #imm,d16(An)` 16 against 20, `lea d16(An),An` 8 against 12), and this file first predicted
+  bars below 1.00x on that basis. Wrong: the stage makes nine or ten door calls a frame and a
+  trampoline costs far more than the `bsr` it replaces, so the twin is 240-360 cycles OVER on every
+  band and the bars are **1.022x-1.037x**. A cost prediction built from instruction timings is an
+  argument; the reading is the evidence.
+* **Three instructions split by build.** The two busy-waits and the `bset #6,$fffa09` are the
+  original's own instructions ON TARGET (the interrupt really does write the byte) and go through
+  the kit OFF TARGET (nothing else can move it). The `#ifdef` is in the body, and the
+  transcription-order pin reads both arms.
+
+**AND THE MEASUREMENT THAT COMMISSIONED WAVE C WAS WRONG BY SEVEN TIMES — this is the part worth
+carrying forward.** The wave was scoped from the Hatari profiler attributing **211,784 cycles/frame**
+of SELF to this slice against an estimated ~71,600 for the original's same span: a ~140,000-cycle
+prize, and "the whole of the remaining gap". Both numbers were wrong in the same way. **The slice
+contains the frame's two synchronisation spins** (the raster phase at 0x126ee, the vblank flag at
+0x1270c), and Hatari charges a spin to the function it happens in — so that SELF was ~95% *waiting*.
+
+Measured on the oracle instead, with the waits released on their first poll so that what is counted
+is work, the ORIGINAL's slice costs **9,788 to 12,378 cycles a frame** over four staged worlds. Our C
+was ~2.7x that — about the ratio the brief guessed — so the real prize was **~19,500 cycles a frame,
+not ~140,000**. The twin collected it (`frame_loop_once` inclusive 477,268 -> 457,803 cyc/frame;
+`profile.py frames` work 417,257 -> 402,777), and the frame did NOT reach the release slot, because
+the gap it was meant to close was never there.
+
+**The general lesson, recorded because it will happen again: a profiler row for a routine containing
+a busy-wait measures the wait.** Before sizing a twin from one, either put the wait outside the span
+or measure the span on the oracle, where a schedule releases it.
+
+**AND ONE RESIDUAL WAVE C LEAVES OPEN, found by its own mutation sweep.** Four of the twin's
+trampolines end by writing the core's returned `extend` back into the 68000's X flag (`X_OUT` in
+`door_score_add_bcd` and the three `door_shot_retire_kind*`), because the next kill's `abcd` ADDS it.
+**Deleting all four leaves the whole 146-case suite GREEN.** `test_asm_frame.py`'s
+`test_the_twin_carries_one_awards_flag_into_the_next` was written for exactly this and does not reach
+it: the staging does not in fact produce two BCD chains with nothing between them that touches X —
+almost every award site in the stage is followed by `door_sound_start`, which sets X deliberately and
+erases the question, and the small-explosion pass's silent arm was meant to be the exception. The
+case is still a real differential over a two-capsule pass; only its name promises more.
+
+**AND THE REVIEW FOUND WHY, WHICH IS ALSO THE CHEAPEST CLOSURE.** `osh_bench_door_return` poisons
+the condition codes with `SR |= 0x1F` — every bit SET — so off target X comes back from EVERY
+callback as a deterministic **1**. A stub that drops its `X_OUT` therefore hands the next `abcd`
+the same 1 the poison would have left anyway, on any case whose modelled `extend_in` is 1; and the
+ten stubs documented as "X-transparent" are transparent only on the machine, where X is whatever the
+real core left. **Alternating the poison's X bit per callback** — or asserting both polarities in one
+case — turns the hole into a red at once, and pins every X-carrying trampoline together rather than
+one game arm at a time. Left for the next kit pass because flipping it re-judges all 146 cases and
+this wave is landing.
+
+The other two closures, for the record: a staged world PROVEN to reach two `abcd` chains in a row
+(the arm exists — 0x12084's `bne 0x12092` clears a capsule without a tune — so it is a staging
+problem, not an unreachable branch); or `run_bench` reporting the CCR the way it now reports the
+register file.
+
+**AND ONE SPAN OF THE TWIN WHOSE ONLY SURFACE IS THE ON-TARGET RUN — named here because the gate
+asks for the surface, not for the absence of one.** Five of `frame.S`'s instructions live in the
+`#else` arm of its build split: the two spin compares at 0x126ee and 0x1270c, their back-branches at
+0x126f6 and 0x12712, and `bset #MFP_ACIA_CHANNEL_BIT,(HW_MFP_IERB).l` at 0x12714. `make test`
+assembles only the off-target arm, so those five are never assembled, executed or byte-compared by
+anything in the suite; the transcription-order pin reads the FILE'S TEXT and therefore sees them, but
+it pins their PRESENCE AND ORDER, not their operands. A wrong bit number, a wrong `HW_MFP_IERB` or
+the wrong polled byte passes every off-target check.
+
+**THE SURFACE IS `python3 atari/smoke.py game`**, whose hardware-state vector and timelines both
+depend on that `bset` landing on MFP interrupt-enable B bit 6 and on both spins releasing — measured
+green for this wave, over the whole matrix (title, titlefault, game, gamefault, floppy). It is
+recorded as a row rather than left as prose in `src/asm/README.md` because it is the one class of
+defect in this twin with no off-target surface at all, and because the failure signature on iron is a
+hang or a dead keyboard, which names nothing.
+
+**TWO REVIEW FINDINGS DEFERRED WITH THEIR ARITHMETIC, rather than folded into this wave:**
+
+* **`SCRATCH_SAVE` is dead at three of the twin's call sites.** 0x11efc, 0x1207c and 0x12166 wrap
+  their `bsr` in the original's own `movem.l #$fffe,-(a7)` / `movem.l (a7)+,#$7fff`, which already
+  saves and restores everything `door_collision_chain_walk`'s own `SCRATCH_SAVE` does. A four-register
+  `movem` pair is 40 down + 44 up = **84 cycles per site**, so three sites are ~252 of the ordinary
+  band's measured 360-cycle excess. Closing it means a second entry label that skips the save and a
+  `bsr`-into-body for the two sites that still need it (+34 each), so the net is ~180 cycles a frame —
+  real, but it puts two entry points into the most delicate part of the twin for a wave whose release
+  slot is out of reach anyway (see the arithmetic below). Left, measured, for whoever twins the next
+  slice and needs the trampolines to earn their keep.
+* **The cap's early-exit edge exists only off target**, so band 5's two builds have different control
+  flow: `sched_wait8` answers 0 on an exhausted poll cap and the twin must branch on it, where the
+  target arm has no cap, no test and no branch. The transcription-order pin reads the file's TEXT and
+  so sees both arms, but nothing assembles-and-runs the target arm off target. The deeper fix is a kit
+  capability — a `sched_wait8` that refuses at the cap rather than returning 0 — which would let both
+  builds share one control-flow graph and shrink the seam to the spin substitution alone. Recorded
+  because it is the shape a second non-leaf twin will hit immediately.
+
+**WHAT WOULD COME NEXT, WITH ITS ARITHMETIC, so the next wave is scoped from measurement rather than
+from a row.** The three remaining frame-loop slices — `[0x10f4e, 0x113c0)`, `[0x113c0, 0x1167c)` and
+`[0x1167c, 0x11c00)` — are **699 instructions**, almost exactly wave C's 703. The transcription is
+therefore the same size; **the trampolines are not**. They hold **64 call sites to 49 distinct
+callees**, six of which are inside the loop's own range and so stay ordinary labels — **43 external
+doors against wave C's 16**, and each door needs its register-to-C-argument contract read out of the
+disassembly and checked against the core. That, and not the transcription, is where wave C's time
+went, so wave D is roughly **2.7x wave C's effort for the same instruction count**.
+
+The prize, measured the same way: the three slices cost **189,985 cycles a frame** between them
+(Hatari, inclusive, over 165 in-game frames), but their twinned children are already at 1.03-1.05x —
+the addressable part is the slices' OWN C, about **70,300 cycles a frame**. At the 2.7x wave C
+actually measured, that twins to ~26,000 and saves **~44,000 cycles a frame**.
+
+**Whether that reaches the release slot is NOT claimed here**, and the reason is a limit of the
+instrument rather than modesty: `atari/profile.py`'s "work" is clocked from the loop head to the
+buffer flip, and the raster-phase spin sits INSIDE that span — so any frame that missed its slot has
+its measured work inflated by the wait for the next one. The distribution is the honest reading:
+`[2x199 4x100]` says two thirds of the frames already fit and the rest sit just over the boundary,
+where a few thousand cycles moves one. 44,000 should move a large share of the remaining hundred; it
+is not a number that can be turned into a predicted mean.
+
+The un-twinned enemy/actor tier is the other candidate and is SMALLER than it looks: `enemies_move_all`
+is 4.20x the original per call, `actor_script_run` 3.18x, `enemy_move_scripted` 2.73x,
+`enemies_animate_all` 2.44x — but summed over their once-a-frame call counts the whole tier is worth
+about **14,400 cycles a frame**, and `screen_flip_buffers` (6.69x) about 1,100.
+
+
 **The count is not kept by hand.** `atari/build.sh`'s asm-twin gate scrapes the `*_asm` names
 `include/*.h` declares — GLOBBED, not prefixed, which is why the sprite and text waves were covered
 by it the moment they existed — and requires every one to be both DEFINED by an asm object and
 REFERENCED by a core object, with no core object naming the bare C core. It prints the number it
 found, and a declared twin that was never written, or a call site that lost its `ZY_SCROLL()` /
-`ZY_SPRITE()` / `ZY_TEXT()` wrapper, reddens the build. (`test_status.py` does not pin this heading —
+`ZY_SPRITE()` / `ZY_TEXT()` / `ZY_FRAME()` wrapper, reddens the build. (`test_status.py` does not pin this heading —
 its sections are named after a `src/*.c`, and there is no `src/asm.c`.)
 
 **What judges them** — five things, and each is proven able to fail. **Three of the five were
@@ -2101,15 +2238,18 @@ sides and the sweep pass having compared nothing; each chunk now counts what it 
 
 **DEFERRED, WITH THE ARGUMENT, rather than folded into this wave:**
 
-* **Nothing off target checks that a twin restores its callee-saved registers.** `run_bench` returns
-  `d0` and the cycle count; the register file is never inspected. Delete `%d7` from both `movem`
-  lists of `draw_sprite_masked_asm`, correct `MASKED_SAVED` to match, and `make test` is green — the
-  image is identical, both byte pins pass, the cost pin gets CHEAPER — while on target the twin
-  returns with `%d7` holding a sprite's planes. The surface is `smoke.py game` alone, whose failure
-  signature would not point at the `movem`. Closing it means `osh_run_bench` dumping d2-d7/a2-a6 and
-  `AsmTwins.call` comparing them against seeded values: a KIT change, affecting Joust and BuggyBoy
-  too, so it belongs to whoever opens the kit next.
-* **One `ZY_TWIN()` seam instead of three.** `ZY_SCROLL`/`ZY_SPRITE`/`ZY_TEXT` expand identically and
+* ~~**Nothing off target checks that a twin restores its callee-saved registers.**~~ **CLOSED in the
+  kit**, by exactly the change this entry described. `osh_run_bench` and the new `osh_bench_resume`
+  now report the whole `OSH_OUT_REGS` file (D0..D7, A0..A6) as `osh_run` already did, `osh_bench_seed`
+  installs the register file a run ENTERS with, and `AsmTwins.call` seeds `%d2`-`%d7`/`%a2`-`%a6` with
+  a distinctive constant per register and requires each back, failing with the register's NAME.
+  `%a5`/`%a6` are seeded like the rest: reserving one as a base register does not exempt it from
+  being restored. The deferral's own experiment was run — `%d7` dropped from both `movem` lists of
+  `draw_sprite_masked_asm` with `MASKED_SAVED` corrected to `(6 * 4)` — and now reddens **35 cases**
+  with `draw_sprite_masked_asm returned with d7 = 0x94d7f0be, not the 0xca11ed05 it was entered
+  with`; `sprite.S` was reverted whole afterwards. See `tools/recreate_kit/TRAP_MODEL.md`, "The
+  callee-saved file, and the twin defect nothing else could see".
+* **One `ZY_TWIN()` seam instead of FOUR.** `ZY_SCROLL`/`ZY_SPRITE`/`ZY_TEXT`/`ZY_FRAME` expand identically and
   the gate switches them all-or-nothing, so the per-subsystem split buys nothing exercisable — and it
   already costs something visible: `draw_score_panel`'s C core lives in `hud.h` while its twin is
   declared in `text.h`, because in the original the three text routines are one routine. Merging them
@@ -2121,13 +2261,14 @@ sides and the sweep pass having compared nothing; each chunk now counts what it 
   diagram. Left here because moving it is a cross-project change — the same standing candidate
   `mkprg.py` and `tos.ld` are registered as.
 
-**AND ONE THING NOTHING OFF-TARGET CATCHES.** A twin that returns with a callee-saved register
-clobbered leaves the image perfect, returns the right value, balances its stack and passes every row
-above — and corrupts its C caller. The surface is the on-target run (`smoke.py game`, whose frame
-differential is computed by C holding live values in exactly those registers across the call), which
-is why `src/asm/README.md` says a twin is not done until that is green. The stack frame itself IS
-covered off-target: `run_bench` checks the twin returned to its sentinel, and an epilogue that
-unwinds by the wrong amount fails `make test` loudly.
+**AND ONE THING NOTHING OFF-TARGET CAUGHT — now it does.** A twin that returns with a callee-saved
+register clobbered leaves the image perfect, returns the right value, balances its stack and passes
+every row above — and corrupts its C caller. The surface WAS the on-target run alone (`smoke.py
+game`, whose frame differential is computed by C holding live values in exactly those registers
+across the call), which is why `src/asm/README.md` says a twin is not done until that is green. It is
+now caught off target too, by the seeded callee-saved check in `AsmTwins.call` (the closed deferral
+above). The stack frame was always covered off-target: `run_bench` checks the twin returned to its
+sentinel, and an epilogue that unwinds by the wrong amount fails `make test` loudly.
 
 **The C cores stay in the linked `.PRG` as dead code** — `src/scroll.c`'s own jump table and `g_`
 glue keep all 23 reachable, and the link has no `--gc-sections`. Measured at 2,366 bytes of bodies

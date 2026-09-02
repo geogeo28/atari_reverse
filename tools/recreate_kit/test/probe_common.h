@@ -5,6 +5,7 @@
  * copy of this each — the same geometry, the same extern block, the same `plant_word`. Four copies
  * of a buffer size and a register count is four places for one of them to be wrong, and the register
  * count in particular is a hand-kept mirror of `shim.c`'s `OSH_OUT_REGS`: too small and `osh_run`
+ * — OR `osh_run_bench`, which reports the whole file too since the callee-saved check was added —
  * writes past the caller's buffer.
  *
  * (test/os_refusal_probe.c is deliberately NOT a fifth copy. It calls `include/os.h`'s helpers
@@ -40,7 +41,7 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
  * reset lives in the shared `enter_from_reset` rather than in `osh_run` alone. */
 int osh_run_bench(uint8_t *mem, uint32_t size, uint32_t entry, uint32_t arg0,
                   uint32_t sp, uint32_t sentinel, uint32_t max_insns, uint32_t *out_regs);
-/* How many registers `osh_run` writes into `out_regs` — shim.c's OSH_OUT_REGS. */
+/* How many registers `osh_run` and `osh_run_bench` write into `out_regs` — shim.c's OSH_OUT_REGS. */
 uint32_t osh_out_regs(void);
 
 /* ---- the scratch image's geometry, identical in every probe that plants code ----
@@ -57,7 +58,7 @@ uint32_t osh_out_regs(void);
  * them, retiring that claim everywhere. */
 
 #define NREGS    8                 /* D0..D7 / A0..A7, as osh_run takes them */
-#define OUT_REGS 15                /* osh_run reports D0..D7 then A0..A6 (shim.c's OSH_OUT_REGS) */
+#define OUT_REGS 15                /* both runners report D0..D7 then A0..A6 (shim.c's OSH_OUT_REGS) */
 
 #define OPCODE_RTS 0x4e75u
 /* `move.b (xxx).l,Dn` — the byte read three probes plant to get a modeled value into a register the

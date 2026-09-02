@@ -125,7 +125,7 @@ static void run_and_report(const char *name) {
 /* The same, through osh_run_bench — the OTHER entry point into the oracle, which a perf measurement
  * uses and which installs no OS traps. Its routine here is a bare `rts`: what the case is about is
  * the state the bench STARTS from, since both entry points share enter_from_reset() and therefore
- * the model's per-run reinstall. osh_run_bench writes only out[0], so the read is reported as 0. */
+ * the model's per-run reinstall. The bench's routine reads nothing, so the read is reported as 0. */
 static void bench_and_report(const char *name) {
     uint32_t out[OUT_REGS] = {0};
     plant_rts(PROBE_ENTRY);

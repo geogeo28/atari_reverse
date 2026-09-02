@@ -1242,6 +1242,42 @@ static void attract_next_page(uint8_t *image) {
  * THE PLAYER COUNT IS SET TO TWO ON EVERY PASS and cut to one by two of the three exits, which is
  * why a candidate that only wrote it on the exits would still agree: the write is inside the loop.
  */
+/* `move.w #$64,d7 / dbf d7,*` at 0x12c56 — the 101 passes of an empty loop the original puts between
+ * the joystick interrogate and the poll of the byte the reply lands in. It is PACING, and it is the
+ * only thing that makes the attract loop ask the controller once per reply rather than as fast as
+ * the CPU can issue the command.
+ *
+ * IT TOUCHES NO MEMORY, so nothing off target can see it: the image is unchanged, and — because the
+ * delay sits BETWEEN the send and the poll rather than around it — the poll count per pass is
+ * unchanged too, which is what the harness compares against the oracle's arrivals. So the
+ * differential is blind to it BY CONSTRUCTION, and this loop's warrant is the ON-TARGET surface
+ * alone: atari/smoke.py's IKBD dispatch count. Measured without it, the attract and section-start
+ * waits sent 5,107 interrogates over a 1000-vblank window where the original sent 105.
+ *
+ * `section_tail_wait_for_fire` DOES NOT GET ONE, and that is the original too: its loop at 0x10f1e
+ * runs rand16, the interrogate and the poll with no delay between them at all. The two waits are
+ * not the same shape and the reconstruction must not make them so.
+ *
+ * COUNT_BARRIER AND NOT A `volatile` COUNTER, and the difference is the whole point of the routine.
+ * A `volatile` pass counter is a stack load, add, store and compare every pass — roughly 35-40
+ * cycles where the original's `dbf` is 10 — so a loop written that way reproduces the original's
+ * pass COUNT while running three or four times its DURATION, and duration is the only thing this
+ * routine exists to reproduce. `machine.h`'s COUNT_BARRIER is the kit's own answer to exactly this
+ * ("a count GCC can read off the source is not a counter to it at all"): the empty `asm` keeps the
+ * counter in a register and opaque, so the compiler can neither fold the trip count nor delete the
+ * loop, and it closes with the `dbf` the original closes with. Both macros emit no instructions. */
+#define ATTRACT_REPLY_DELAY_PASSES 101u
+
+static void attract_wait_for_controller_reply(void) {
+    unsigned pass;
+
+    /* Counting DOWN TO ONE, not `while (pass--)`: the latter reads as 101 passes and compiles to
+     * `moveq #100` plus a decrement-and-test, which is 100 — the `dbf` the original uses runs its
+     * body once more than its immediate says, and an off-by-one here is a pass of the delay. */
+    for (pass = ATTRACT_REPLY_DELAY_PASSES; pass != 0; pass--)
+        COUNT_BARRIER(pass);
+}
+
 void attract_wait_for_start(uint8_t *image) {
     /* THE CAP IS NOT OPTIONAL HERE, and it is not the original's: every exit below is a
      * `sched_poll8`, so a candidate whose compare is wrong — or a mutant of one — would spin for
@@ -1275,8 +1311,7 @@ void attract_wait_for_start(uint8_t *image) {
             return;   /* ...and the count stays at the two the pass above just wrote */
 
         ikbd_send_cmd(IKBD_CMD_INTERROGATE_JOYSTICKS);
-        /* `move.w #$64,d7 / dbf d7,*` sits here: 101 passes of an empty loop, waiting for the
-         * controller's reply to arrive. It touches no memory and is not reconstructed. */
+        attract_wait_for_controller_reply();
         if ((int8_t)sched_poll8(image, A_joystick_state, ATTRACT_FIRE_WAIT_SITE) < 0) {
             image[A_player_count] = ATTRACT_PLAYERS_ONE;
             return;

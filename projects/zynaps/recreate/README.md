@@ -77,7 +77,9 @@ registers where the image diff can see them.
 ORIGINAL binary's instruction sequence for one core and carries that core's C signature; the C stays
 compiled and stays the reference, and `test/test_asm_<path>.py` proves each twin byte-equal to it
 over the whole image. The scroll path, the two sprite blitters and the score panel with its character
-blitter are transcribed — 28 twins over five `.S` files. `make test` builds them first (the kit's
+blitter are transcribed, and so is the frame loop's LAST SLICE (`frame.S`, the first twin here that
+CALLS — it reaches sixteen verified C cores through the kit's callback door off target, and the real
+cores on target) — 29 twins over six `.S` files. `make test` builds them first (the kit's
 `$(ASM_BIN)` rule) and runs both directions.
 [`src/asm/README.md`](src/asm/README.md) is the recipe for adding one.
 

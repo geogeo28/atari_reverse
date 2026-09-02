@@ -417,7 +417,8 @@ TWIN_CORES=$(echo "$TWINS" | sed 's/_asm$//' | sort -u)
 UNWRAPPED=$(comm -12 <(echo "$TWIN_CORES") <(echo "$CORE_WANTED"))
 [ -z "$UNWRAPPED" ] || {
   echo "ERROR: a core object calls out to these C cores by name, but they have twins — so a call"
-  echo "       site lost its ZY_SCROLL() / ZY_SPRITE() / ZY_TEXT() wrapper and runs the slow C while"
+  echo "       site lost its ZY_SCROLL() / ZY_SPRITE() / ZY_TEXT() / ZY_FRAME() wrapper and runs the"
+  echo "       slow C while"
   echo "       the rest of the seam looks intact. Grep $REC/src for the name below and wrap it in the"
   echo "       macro its subsystem header declares. NOTE the one shape this arm CANNOT see: a call"
   echo "       from inside the file that DEFINES the core (src/text.c's draw_text_record reaching"
