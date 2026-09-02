@@ -645,6 +645,26 @@ reddens the trace row. **What neither can do is exercise the input path**, becau
 only take real joystick events from its host's window. That stays a runbook step — a build, a person
 and a documented fire key — and saying so is more useful than a check that looks like coverage.
 
+### 12b. `#include_next` from inside the shadow directory finds the shadow again
+
+A partial shadow — a header that replaces some of a kit header's names and pulls the rest in with
+`#include_next` — works for every file OUTSIDE the shadow directory and breaks for files inside it.
+
+`#include_next "x.h"` resumes the search AFTER the directory the current file was found in. A
+QUOTED include from a file that itself lives in `shim_include/` finds its sibling by the includer's
+own directory rather than through the `-I` path, so the preprocessor has no search position to
+resume from: it restarts at the head of the path, finds the shadow again, the guard suppresses it,
+and the kit's header is never read at all. Every constant it defines is then undeclared.
+
+- **Symptom:** a shadow that has worked for months breaks the moment a second file in the same
+  directory includes it — dozens of "undeclared identifier" errors inside the shadow itself, naming
+  constants the kit header owns.
+- **Fix:** use the ANGLE form, `#include <x.h>`, from inside the shadow directory. That makes the
+  shadow be found through `-I shim_include`, which is the position `#include_next` steps past.
+- It is a hard compile error rather than a silent one, and it only bites files inside the shadow
+  directory — but the error text points at the shadow's own body, which is the last place anyone
+  looks for an include-path problem.
+
 ### 13. The port is byte-correct and three times too slow, and no surface sees it
 
 Every other entry here is a WRONG BYTE somewhere. This one is not: the reconstruction computes
@@ -654,8 +674,9 @@ harness can see it** — the oracle has no clock, `make test` compares memory an
 on target a slower frame draws the same pixels because a frame-locked game reads no clock either.
 
 - **Real example (Zynaps M2, measured 2026-09-01):** the shipped binary's frame loop takes 2 vertical
-  blanks (496 of 542 frames, 25 fps) and 271,565 cycles; the reconstruction's takes 5.73 and 815,488
-  — **3.0x** — with the frame differential green throughout.
+  blanks (496 of 542 frames, 25 fps) and 271,565 cycles; the reconstruction's took 5.73 and 815,488
+  — **3.0x** — with the frame differential green throughout. After the shim-side sweep below it
+  takes 5.66 and 768,961, which is 2.83x and the same release slot.
 - **Symptom:** none, on any of the six surfaces below, until somebody plays it.
 - **Diagnosis, and it is cheap.** Hatari prints `CPU=$pc, VBL=n, FrameCycles=m` on every debugger
   ENTRY, and a breakpoint whose action file is nothing but `cont` costs the emulated machine no
@@ -668,8 +689,17 @@ on target a slower frame draws the same pixels because a frame-locked game reads
   second vertical blank, in Zynaps' case — so a frame that overruns by one cycle costs a whole
   release slot and the cadence goes 2, 4, 6 with nothing in between. **A mean is a mixture, and a
   10% speedup usually buys nothing at all.** Judge a histogram; and before taking any lever, work
-  out how many cycles the next bucket actually needs. Zynaps' was 175,000 of 815,000, which ruled
-  out every compiler flag and the whole shim overhead at a stroke.
+  out how many cycles the next bucket actually needs. Zynaps' was 175,000 of 815,000 — more than the
+  shim's whole overhead and the compiler's best offer put together, so neither could move the MODE.
+- **THAT ARITHMETIC IS A REASON NOT TO EXPECT A BUCKET, NOT A REASON NOT TO LOOK.** An earlier draft
+  of this entry read it as ruling the shim and every compiler flag out at a stroke, and that was
+  wrong twice over. Zynaps' shim share was taken later anyway — 45,959 cycles a frame, 5.6%, of
+  which one compiler flag was 24,000 — and the two findings under it are the transferable part: a
+  seam door was costing **205 cycles for a 24-cycle store**, and a fixed eight-iteration loop over a
+  hardware register block was paying its address arithmetic eight times. Neither moved the mode; both
+  moved the MIXTURE (the fast bucket went from 10 frames of 534 to 47 of 555), both made the binary
+  smaller, and the second was 30 seconds of work. Measure the shim before you assume it is 5%, and
+  measure it again after: "it is not the shim" is a conclusion with a date on it.
 - **Where the cycles are is not where a C programmer expects.** Hatari's own CPU profiler over a
   fixed window, with symbols from the linked ELF on one side and from `names.txt` on the other,
   gives a per-routine ratio. Zynaps': the page-to-screen blit 2.19x, the masked sprite blitter
@@ -678,6 +708,35 @@ on target a slower frame draws the same pixels because a frame-locked game reads
   `move.l (a0)+,(a1)+ / cmp / bne` is 9 cycles a byte where a 12-register `movem.l` pair is 4.4; the
   4x-plus rows are per-entity loops where the original keeps state in registers and the
   reconstruction spells every read and write through the image accessors.
+- **A CROSS-UNIT SEAM DOOR IS THE SHIM'S OWN 4x ROW, and it is invisible until you profile by
+  symbol.** The kit's `hw_write8/16/32`, `hw_bset8/bclr8/and8`, `hw_read8` and `psg_port_write` are
+  declared in kit headers and defined in the project's target file, so every call from a core is a
+  cross-translation-unit call: the argument pushes, the address widened to its 24-bit bus form at run
+  time, a chain of compares classifying the store for the on-target counters, and an `rts` — 205
+  cycles measured, around a `move.l` that costs 24. Every call site passes a CONSTANT address, so
+  ALL of that folds if the body is visible: define the kit's own names `static inline` in a header
+  that SHADOWS the kit's (the seam pattern below), and what is left is the store and its counter.
+  Three notes from doing it:
+  - the shadow cannot `#include_next` the kit's header — those names are declared `extern` and C
+    forbids a `static inline` definition of one — so the shadow REPLACES it, and the two halves then
+    have nothing tying them together. Add a build gate that the shadow defines exactly the set the
+    kit declares; the kit is shared, and a door added there for another project would otherwise
+    leave this one compiling against a stale copy.
+  - whatever the shadow includes lands in every core, because every core includes the kit header it
+    shadows. Keep the project's own cross-unit header OUT of it, and check that with `gcc -MM` over
+    the cores rather than by grepping their `#include` lines — a text grep cannot see a shim header
+    arriving through a shadow, and will print green while it does.
+  - if the shim counts its hardware stores (the on-target replacement for the kit's write ledger),
+    those `counter++`s were in one file and are now at every call site. They are only interrupt-safe
+    while each is a single read-modify-write instruction, so scan the linked disassembly for a plain
+    `move` whose destination is a counter rather than trusting one reading of one object.
+- **A FIXED-TRIP LOOP OVER A HARDWARE REGISTER BLOCK IS WORTH `-funroll-loops`, per file.** Zynaps'
+  palette upload is eight longwords into `$ff8240`, entered twice a vertical blank; at `-O2` GCC
+  keeps the loop, so each store re-derives its bus address and pays the compare and branch. Unrolled
+  it becomes eight `move.l <image>,$ff824x` with the addresses as immediates — 2,573 cycles a call
+  to 756, and closer to the `movem.l` the original uses. Apply it to the ONE file whose generated
+  code you read, assert the file is still one the build compiles, and re-run the class-6 addressing
+  scan: unrolling changes addressing modes, which is exactly what that scan is for.
 - **Two profiler gotchas that make the report lie.** Symbols must be loaded (with `symbols autoload
   off` first) BEFORE `profile on`, which sizes the callsite buffer. And **profiling stops on every
   debugger entry** — so the window cannot count its own frames, and any breakpoint that drives the

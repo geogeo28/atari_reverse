@@ -2148,13 +2148,110 @@ path and the program's own record stay green.
 * **THE RECONSTRUCTION IS THREE TIMES SLOWER THAN THE ORIGINAL, and no off-target surface can see
   it.** Measured 2026-09-01 with `atari/profile.py`, both binaries on one machine through one
   instrument: the shipped binary's frame loop takes **2 vertical blanks** (496 of 542 frames, 25
-  fps) and 271,565 cycles; ours takes **5.73** (300 pinned frames: 41 at 4, 258 at 6, 8.7 fps) and
-  815,488. The cause is the render path being C where the original is `movem.l` — the scroll blit
-  alone is 28% of our frame at 2.19x, `scroll_emit_column_shift2` is 5.34x — and **the shim is not
-  it**: everything this build adds around the verified cores is 5.2% of the frame.
+  fps) and 271,565 cycles; ours takes **5.66** (300 pinned frames: 51 at 4, 249 at 6, 8.8 fps) and
+  770,571. The cause is the render path being C where the original is `movem.l` — the scroll blit
+  alone is 28% of our frame at 2.19x, `scroll_emit_column_shift2` is 5.34x.
   `atari/README.md`'s PERFORMANCE section has the whole table, the per-routine ratios and the
   arithmetic for what would close it; `smoke.py game`'s `check_the_pacing` refuses a regression from
   today's number and its numbers are argued in that file.
+
+  **THE SHIM'S OWN SHARE WAS THEN TAKEN OUT — 44,349 cycles a frame, 5.4%, with no core touched.**
+  The figures above are after it; before it the same instrument read 5.73 and 815,488. Three
+  changes: `atari/shim_include/hw.h` and `psg.h` shadow the kit's headers and define its seven
+  store/read names `static inline` (the kit's own header asks a target build to supply them, and
+  every caller passes a CONSTANT address, so the address ladder and the four-way store
+  classification fold at the call site — `hw_write32` was **205 cycles a call** for a 24-cycle
+  `move.l`); `build.sh` gained one per-file `-funroll-loops`, on `../src/video.c`, which unrolls the
+  eight-iteration palette upload into eight `move.l <image>,$ff824x` (**2,573 → 757** cycles a call,
+  and it is entered twice a vertical blank); and nothing else. The counting did NOT move — every
+  build still bumps `zy_hw_writes` and the three address-keyed tallies on every store, because
+  `atari/profile.py` measures the `play` build and a `play` build with them compiled out would be a
+  reading of a program `smoke.py` never judges. `check_the_pacing`'s ceiling is tightened 5.85 →
+  5.78 by its own slack arithmetic.
+
+  **The three interrupt entries were measured and LEFT ALONE**, which is the other half of the
+  finding. Netting each handler's own cost out of its entry's: the VBL dispatch is 307 cycles,
+  Timer B's 232, the ACIA's 196 — **3,850 cycles a frame, 0.5%**. The `movem.l %d0-%d1/%a0-%a1` each
+  entry makes is exactly the m68k ABI's call-clobbered set and cannot be smaller for code that calls
+  C. A cached resolved handler, or reordering `VBL_HANDLERS` so `vbl_menu` is first, each buys about
+  120 cycles an interrupt — ~1,000 a frame, 0.13% — and neither was taken.
+
+* **WHAT THE DOOR-INLINING COST IN COVERAGE, AND WHAT WAS PUT BACK.** Moving the eight doors from
+  `zynaps_backend.c` to `static inline` in the shadowing headers took them out of the
+  DUPLICATE-SYMBOL gate's view: it compares `nm -g --defined-only`, and a `static inline` emits no
+  global, so the shim's defined-global count dropped from 51 to 43 and those eight names are now
+  invisible to it. The failure it used to catch is narrow but real — a core that does NOT include
+  `hw.h` (19 of the 24 do not) defining its own `hw_write8`, which would now link clean with two
+  bodies for one door. Three new gates were added rather than that being left as a bare loss, each
+  MUTATION-PROVEN to redden (5 of 5, one mutation invalid on the first try and redone):
+  - **the shadows define exactly the doors the kit declares** (`psg_port_read` excepted by name, so
+    a core that acquired a PSG read fails to COMPILE rather than reading a real chip). This is the
+    one that matters most: the kit is shared by four projects and nothing else ties the shadow to
+    the header it replaces, because a shadow cannot `#include_next` names declared `extern`.
+  - **every door counter is incremented by a single read-modify-write instruction** — 98 today,
+    none split. The counters are read on the main line and bumped inside interrupts, so an increment
+    that GCC split into load/add/store would lose counts to an interrupt landing between the halves.
+    That was a one-off human read of one object while the doors lived in one file.
+  - **`core_extra_flags` names a unit the build actually compiles**, so `-funroll-loops` cannot
+    silently stop applying when a file is renamed (the sibling project's `assert_names_a_real_unit`,
+    same argument).
+  The containment gate was also rewritten from a grep of the cores' `#include` LINES to their whole
+  preprocessed closure via `gcc -MM`, because a text grep cannot see a shim header arriving THROUGH
+  a shadow — and a first draft of `shim_include/hw.h` did exactly that, pulling `zynaps_target.h`
+  and every `zy_*` global into six verified translation units with the old gate printing green.
+  `HW_BUS` and the doors' counters now live in `hw.h` itself, so the cores' closure is the six
+  headers the seam declares and nothing more.
+
+* **UNPINNED: the IKBD-uncapped scan's metric is no longer specific to the thing it names.**
+  `build.sh` counts conditional branches in `ikbd_send_cmd` and requires exactly 1, the poll's own.
+  With `hw_read8` and `hw_write8` inlined into it, that routine now also contains their video-base
+  test and four-way tally chain — five more branches that FOLD because the ACIA's address is a
+  compile-time constant. Measured today: still exactly 1, and the capped control still scores 2. But
+  anything that makes that address non-constant reds the scan with a message about
+  `IKBD_TX_POLL_MAX`, which would be the wrong diagnosis. It fails safe and it fails vague. What
+  would close it is counting only branches whose target is inside the poll.
+
+* **UNPINNED: the record's field ORDER is a cross-language contract and only its COUNT is pinned.**
+  `smoke.py` refuses a record whose field count differs from its name list, which catches an append
+  on one side only — and this change was the first MID-LIST insertion (five `$4ba` marks), which the
+  count check cannot distinguish from a correct one if the two sides insert at different offsets.
+  The same shape lets `VBL_HANDLERS`' slot order drift, below. What would close both is the record
+  carrying a name or address key beside each value rather than smoke.py matching on position.
+
+* **UNPINNED, found while costing that reorder: `VBL_HANDLERS`' SLOT ORDER IS A CROSS-LANGUAGE
+  CONTRACT AND NOTHING PINS IT.** `zynaps_main.c` writes `VBL_HANDLERS[slot].entries` into
+  `REC_VBL_DISPATCHES + slot` and `smoke.py`'s `VBL_HANDLER_NAMES` names those four fields in table
+  order; the record's field COUNT is checked at the parse and its field ORDER is not. So reordering
+  the C table — a change with no behavioural meaning, since `dispatch_image_vector` matches on the
+  stored ADDRESS — would silently rename three counts, and `check_the_game_fork_was_not_taken`
+  would be asserting about the wrong handler. `TIMER_B_HANDLER_NAMES` and `FRAME_EXIT_NAMES` have
+  the same shape. What would close it is the record carrying each binding's ADDRESS beside its
+  count, with `smoke.py` matching on that instead of on position.
+
+* **THE BOOT'S "2.8x" WAS NOT A MEASUREMENT OF THE BOOT, and is retracted.** It read the vertical
+  blank at which each side first reached its frame loop, which is mostly the attract wait and so
+  mostly the host driver's own press cadence. The boot is clocked by the program now — marks on
+  TOS's 200 Hz counter at `$4ba`, one pair BRACKETING EACH LOADER so neither span bills the other's
+  work, printed by every `smoke.py` run. Measured: **15 ms and 250 ms** off
+  Hatari's GEMDOS drive, **12,315 ms** for the first eight files off a floppy image. The boot is the
+  MEDIUM, not the port: the same files and the same preshift banks cost 15 ms where host file I/O is
+  free and twelve seconds where it is emulated. `zy_vbl_ticks` cannot take this measurement (the
+  loaders run before the program installs its own VBL handler, so it is still 0 afterwards) and
+  neither can a breakpoint (the driver learns where GEMDOS put the program by polling for a file the
+  program writes, and by then both loaders have run — measured, the earliest arm landed at vertical
+  blank 1,936). **Still unpinned: the SHIPPED binary's own two spans**, which have neither a record
+  nor an armable breakpoint.
+
+  **A FIFTH MARK MADE IT A CHECK AND NOT ONLY A COST.** The spans themselves stay reported and
+  unjudged — a boot time is host-dependent and `atari/profile.py` is where cost is judged — but the
+  clock is read once more at the hand-back, and `smoke.py` requires it to have ADVANCED. That is the
+  first surface in this project for the defect the read-modify-write doors exist to prevent: Timer C
+  drives `$4ba` and sits in MFP interrupt-enable B beside the channel `boot_enable_interrupts` turns
+  on, so a plain `move.b #$40,$fffa09` there would enable that channel and disable TOS's 200 Hz
+  clock and the floppy's motor timeout with it. The kit's own `hw.h` admits the write ledger holds
+  that the store happened and cannot hold which bits it preserved; until this arm, nothing could —
+  the game runs, the frames are byte-identical, and the clock is simply dead. MUTATION-PROVEN:
+  `read_hz_200` returning a constant reddens it with the right message.
 
   **The attract-Timer-B half of this finding was WRONG and is retracted.** "79 of the frame's 156"
   had both halves wrong: Timer B is in event-count mode, so the chip offers 100 interrupts a

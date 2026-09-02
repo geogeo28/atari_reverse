@@ -271,20 +271,67 @@ machine nothing. `st` / `TOS104US.img` / 4 MB / section 1, measured 2026-09-01:
 
 | | the original | ours (`play`) | ratio |
 |---|---|---|---|
-| frames clocked | 542 | 534 | |
-| vblanks per frame, mean | **2.32** | **7.38** | 3.2x |
-| the distribution | 2 x496, 3 x2, 4 x42, 45 x2 | 4 x10, 6 x505, 7 x2, 8 x15, 247 x1, 489 x1 | |
+| frames clocked | 542 | 564 | |
+| vblanks per frame, mean | **2.32** | **5.81** | 2.5x |
+| the distribution | 2 x496, 3 x2, 4 x42, 45 x2 | 4 x56, 6 x507, 8 x1 | |
 | the mode, and its frame rate | **2 = 25 fps** | **6 = 8.3 fps** | 3.0x |
-| frames on budget (2 vblanks) | 496 of 542 (91.5%) | 0 of 534 | |
-| loop head to flip, mean cycles | **271,565** | **815,488** | **3.00x** |
-| ...min / max | 215,220 / 484,820 | 562,768 / 1,496,000 | |
+| frames on budget (2 vblanks) | 496 of 542 (91.5%) | 0 of 564 | |
+| loop head to flip, mean cycles | **271,565** | **785,920** | **2.89x** |
+| ...min / max | 215,220 / 484,820 | 569,820 / 1,036,636 | |
 
-The two long entries on each side (45 vblanks there, 247 and 489 here) are a death and the fire wait
-after it, which is not a frame; everything else is.
+The two long entries on the shipped side (45 vblanks) are a death and the fire wait after it, which
+is not a frame; everything else is.
 
-The `game` build's own record agrees with the log to two decimals — **5.73 vblanks a frame over its
-300 pinned frames, 41 at 4, 258 at 6 and one over** — which is what makes the histogram a surface
-`smoke.py` can judge rather than a reading somebody has to take by hand.
+The `game` build's own record agrees with the log — **5.65 to 5.66 vblanks a frame over its 300
+pinned frames, 51 or 52 at 4, 248 or 249 at 6 and none over** — which is what makes the histogram a
+surface `smoke.py` can judge rather than a reading somebody has to take by hand. The spread is ONE
+frame's release slot and `smoke.py`'s `check_the_pacing` says why it is a frame and not noise.
+
+**THE SHIM'S OWN SHARE WAS TAKEN OUT ON 2026-09-01 and the rows above are after it.** Before that
+sweep the same instrument measured 7.38 vblanks a frame in `play`, 5.73 in `game` and 815,488 cycles
+loop-head-to-flip; the table below is where the difference went, and the render path was not touched
+for any of it.
+
+| the lever | cycles/call, before → after | cycles/frame |
+|---|---|---|
+| `hw_write32` through a cross-unit call | 205 → inlined away | 21,183 → 0 |
+| `hw_write8` / `hw_bclr8` / `hw_bset8` / `hw_read8` | 399 / 192 / 203 / 68 → inlined away | 3,908 → 0 |
+| `psg_port_write` | 177 → inlined away | 12,773 → 0 |
+| `shifter_upload_palette_longs` | **2,573 → 757** | 33,179 → 9,117 |
+| `zy_timer_b_tick` (the raster split, whole) | **3,344 → 1,360** | 21,577 → 8,195 |
+| `zy_vbl_tick` (the whole VBL, `vbl_menu` inside it) | **8,823 → 5,570** | 56,868 → 33,521 |
+| `frame_loop_once`, the whole frame | **814,920 → 770,571** | **−44,349 (−5.4%)** |
+
+Three changes did all of it, and none is a rewrite of anything verified:
+
+* **The doors became target inlines.** `atari/shim_include/hw.h` and `psg.h` shadow the kit's
+  headers and define the seven store/read names `static inline` — which is what the kit's own `hw.h`
+  asks a target build to do ("ON TARGET these three names are supplied by the build itself"). Every
+  caller passes a CONSTANT address, so the address ladder, the `oril` to the bus form, the RTS and
+  the four-way store classification all fold at the call site and what is left is the `move` and the
+  counter. Nothing about the counting changed: `zy_hw_writes` and the three address-keyed tallies
+  are still bumped by every store, in every build, because `atari/profile.py` measures `play` and a
+  `play` build with the tallies compiled out would be a reading of a program `smoke.py` never
+  judges.
+* **`-funroll-loops` on `../src/video.c` only** (`build.sh`'s `core_extra_flags`). The palette
+  upload is a fixed eight-iteration loop entered twice a vertical blank; unrolled, each iteration's
+  address is an immediate, so the classification folds there too and the loop becomes eight
+  `move.l <image>,$ff824x`. Read the disassembly and re-measured: 1,206 cycles a call to 757.
+* **Nothing else.** The three interrupt entries were measured and left alone — see below.
+
+**THE INTERRUPT ENTRIES ARE ALREADY AT THEIR FLOOR, and that is a measurement rather than a
+decision to skip them.** Subtracting each handler's own cost from its entry's: the VBL dispatch is
+**307 cycles**, Timer B's **232**, the ACIA's **196** — 3,850 cycles a frame between them, **0.5% of
+the frame**. The `movem.l %d0-%d1/%a0-%a1` each entry makes is exactly the m68k ABI's call-clobbered
+set, so it cannot be made smaller for code that calls C. Caching the resolved handler was costed and
+NOT taken: the walk it would remove is about 120 cycles on the VBL (the four-slot table is the one
+GCC keeps as a loop; it unrolls the three-slot Timer B one into compares against immediates), so the
+whole lever is ~1,000 cycles a frame, 0.13%, in exchange for mutable state written from three
+interrupt handlers. Reordering the table to put `vbl_menu` first buys the same 120 cycles with no
+new state and was ALSO not taken, for a different reason worth writing down: the slot order is
+mirrored by `smoke.py`'s `VBL_HANDLER_NAMES`, and **nothing pins the two together** — the record's
+field COUNT is checked and its field ORDER is not, so a reorder in the C would silently rename three
+counts. That is a latent defect in its own right and STATUS.md carries it.
 
 ## Where the cycles go, routine by routine, on both sides
 
@@ -303,14 +350,12 @@ the shipped binary's 72.
 | `draw_sprite_masked_collide` | 140,948 (16%) | 24,580 | 18,206 | 7,023 | **2.59x** |
 | `scroll_emit_column_shift2` | 133,876 (16%) | 27,431 | 167,345 | 31,350 | **5.34x** |
 | `scroll_emit_tile_column` | 59,489 (7%) | 4,014 | 144,074 | 32,112 | **4.49x** |
-| `zy_vbl_tick` — the whole VBL | 56,860 (7%) | (`sound_tick` 4,644) | 8,822 | | |
 | `draw_score_panel` | 45,563 (5%) | 16,463 | 45,563 | 16,463 | 2.77x |
-| `shifter_upload_palette_longs` | 33,153 (4%) | | 2,573 | | |
+| `zy_vbl_tick` — the whole VBL | 33,521 (4%) | (`sound_tick` 4,644) | **5,570** | | |
 | `frame_spawn_and_move_stage` | 25,502 (3%) | | 25,502 | | |
-| `zy_timer_b_tick` — the raster split | 21,577 (3%) | | 3,344 | | |
-| `hw_write32` | 21,181 (2%) | | **205** | | |
 | `enemies_move_all` | 14,179 (2%) | 2,100 | 14,179 | 2,100 | **6.75x** |
-| `psg_port_write` | 12,774 (1%) | | 180 | | |
+| `shifter_upload_palette_longs` | 9,117 (1%) | | **757** | | |
+| `zy_timer_b_tick` — the raster split | 8,195 (1%) | | **1,360** | | |
 
 **The per-CALL column is the one to read where the two windows saw different game states.** The
 shipped side's window was profiled with the fire button held, so it drew fewer sprites a frame than
@@ -333,20 +378,21 @@ reconstruction spells as image reads and writes, which is the shape `machine.h`'
 
 ## What the 3x is, and what it is not
 
-* **It is not the shim, and that was measured before anything was optimised.** Everything this build
-  adds around the verified cores is **42,291 of the 815,488 cycles, 5.2%** — and the hardware stores
-  inside that are work the original does too:
+* **It is not the shim, and the shim has now been taken out anyway.** Before the sweep above,
+  everything this build added around the verified cores was **42,291 of the 815,488 cycles, 5.2%**:
 
-  | | cycles/frame |
+  | | cycles/frame, before → after |
   |---|---|
-  | the three interrupt entries and their dispatch | 4,426 |
-  | the four hardware doors and the store ledger | 37,865 |
+  | the three interrupt entries and their dispatch | 4,426 → 3,850 |
+  | the four hardware doors and their store counters | 37,865 → ~12,000 |
 
-  The dispatch is cheap because GCC already inlines `dispatch_image_vector` into each entry and
-  unrolls the table into three compares against immediates — read `build/zynaps.dis`. The largest
-  single piece is `hw_write32` at **205 cycles a call** for a 24-cycle `move.l` to `$ff8240`, 103
-  times a frame: the cross-unit call and the three-way store ledger around it, 18,600 cycles a
-  frame, **2.3%** of it.
+  What is left of the doors is the counting, and it cannot go lower while it is honest: every
+  hardware store bumps `zy_hw_writes` and about two thirds of them bump an address-keyed tally too,
+  each a `volatile` read-modify-write of about 24 cycles that must stay ONE instruction to be safe
+  against an interrupt counting through the same door. At roughly 260 stores a frame that is ~12,000
+  cycles, and it is the surface a target run has instead of the kit's ordered ledger. The CALL that
+  used to wrap each of them — 205 cycles for a 24-cycle `move.l` to `$ff8240`, 103 times a frame —
+  is gone.
 * **It is not one routine.** The scroll blit is the largest single item at 28%; a `movem` twin of it
   alone (245,000 down to ~112,000, which is what the original measures) leaves 680,000 — still over
   the 640,000 that four vblanks buys, so on its own it would not move one frame's bucket.
@@ -356,21 +402,24 @@ reconstruction spells as image reads and writes, which is the shape `machine.h`'
   image, BuggyBoy-style (`projects/buggyboy/recreate/src/asm/` and its README's C-vs-asm
   differential). That is a campaign with its own STATUS rows, not a lever.
 
-**SO NOTHING WAS OPTIMISED, AND THE ARITHMETIC IS WHY.** The cadence is quantised, so the only
-change a player can see is a frame moving from 6 vblanks to 4, and that needs **175,000 cycles**
-off (815,488 down under the 640,000 that four vblanks buys). The shim's entire overhead is 42,291
-and the compiler's best offer is about 40,000 (`-funroll-loops` on the copy loops); together they
-are less than half of it and would leave every frame in the bucket it is in now. Taking them would
-have bought a harder binary to read and no frame anybody could see.
+**THE SHIM'S SHARE WAS TAKEN AND IT DID NOT MOVE THE MODE, WHICH IS WHAT THE ARITHMETIC SAID.**
+The cadence is quantised, so the only change a player can see is a frame moving from 6 vblanks to 4,
+and that needs the frame under the **640,000 cycles** four vblanks buys. The sweep above took 44,349
+off — every one of them real and measured, and the binary is *easier* to read for it, because the
+doors are now one header instead of eight cross-unit functions — and 770,571 is still 131,000 over
+that line. What it DID move is the mixture: the fast bucket went from **10 frames of 534 to 47 of
+564** in `play` and from **41 of 300 to 52 of 300** in `game`, so the mean fell from 7.38 to 5.81
+and from 5.73 to 5.65. The MODE is still 6.
 
 **The reachable next step is 4 vblanks, and it is one campaign rather than a lever — a frame moving
 from the 6-vblank release slot to the 4, i.e. 8.3 fps to 12.5 at the MODE** (the `play` build's mean
-is 6.78 fps and the `game` build's 8.7; a mode is what a mixture of buckets is compared against, and
-this whole paragraph is mode-to-mode). `scroll_page_to_screen_p*` at 2.19x plus
+is now 8.57 fps and the `game` build's 8.8; a mode is what a mixture of buckets is compared against,
+and this whole paragraph is mode-to-mode). `scroll_page_to_screen_p*` at 2.19x plus
 `scroll_emit_column_shift2` at 5.34x are 378,578 cycles a frame between them where the original
-spends 139,392; asm twins at the original's own cost take **239,000** off, which is past the 175,000
-the bucket needs on its own. That is the work this section exists to scope, and `atari/profile.py`
-plus `smoke.py`'s pacing check are what would judge it frame by frame.
+spends 139,392; asm twins at the original's own cost take **239,000** off, which is past the 131,000
+the bucket now needs and was past the 175,000 it needed before. That is the work this section exists
+to scope, and `atari/profile.py` plus `smoke.py`'s pacing check are what would judge it frame by
+frame.
 
 ## Interrupt service, and input latency
 
@@ -383,17 +432,53 @@ plus `smoke.py`'s pacing check are what would judge it frame by frame.
 
 **Input latency is one frame on both sides by construction, and that is the whole point of the
 cadence table**: the FRAME COUNT is identical and the MILLISECONDS are not — 40 ms there against
-115 ms here, because a frame is 2 vblanks there and 5.73 here.
+113 ms here, because a frame is 2 vblanks there and 5.66 here.
 
 The four `$fffa21` read-back spins cost **281 iterations in a whole run** (about 4,200 cycles across
 the four sites), and the number is large only because the register is a live counter: the spin
 re-stores until a read comes back with what was written, which is the original's own loop and is why
 it exists. It is not a pacing cost.
 
-**The boot is 2.8x the original's**, and it is the one row this section does not explain: ours
-reaches the frame loop's head at vertical blank ~2,230, the shipped binary at ~795, over the same
-twenty-two file loads on the same GEMDOS drive. It is measured and unexplained; the frame loop is
-where the effort went.
+**THE "BOOT IS 2.8x" ROW WAS NOT MEASURING THE BOOT, AND IS RETRACTED.** It read the vertical
+blank at which each side first reached its frame loop — ~2,230 here, ~795 there — and that number
+is mostly the ATTRACT WAIT, whose length is set by how often the host-side driver gets round to
+pressing fire, not by how fast either program boots.
+
+The boot is now clocked by the program itself, and `smoke.py` prints it on every run. Marks on TOS's
+own 200 Hz counter at `$4ba`, ONE PAIR AROUND EACH LOADER so that neither span bills the other's
+work — a draft that reused the title loader's exit as the gameplay span's entry charged six record
+reads, a masked vector-install window and the control's own fault injection to
+`boot_load_gameplay_assets` — because the alternative instrument cannot be armed: a host driver
+learns where GEMDOS put the program by reading a file the program writes, and by the time a poll
+notices that file both loaders have run (measured — the earliest breakpoint anything outside could
+arm landed at vertical blank 1,936, after the whole boot). `zy_vbl_ticks` cannot do it either: the
+boot loads its files BEFORE it installs its own vertical-blank handler, so that counter is still 0
+when both loaders are done — which is what the first draft of this clock printed.
+
+| | title assets (8 files) | gameplay assets (14 files) |
+|---|---|---|
+| GEMDOS hard drive (`smoke.py game`) | **15 ms** | **250 ms** |
+| floppy image (`smoke.py floppy`) | **12,315 ms** | — |
+
+A FIFTH MARK AT THE HAND-BACK MAKES IT A CHECK AND NOT ONLY A COST. The spans stay reported and
+unjudged — a boot time is host-dependent, and `atari/profile.py` is where cost is judged — but the
+clock must have ADVANCED between the first mark and the last, and `smoke.py` reddens if it has not.
+That is the first surface here for the defect the read-modify-write doors exist to prevent: Timer C
+drives `$4ba` from MFP interrupt-enable B, beside the channel `boot_enable_interrupts` turns on, so
+the plain `move.b #$40,$fffa09` that `hw_bset8` exists to avoid would take TOS's 200 Hz clock and
+the floppy's motor timeout with it — and the kit's `hw.h` says in its own words that the write
+ledger holds that the store happened and cannot hold which bits it preserved. The game would run,
+the frames would be byte-identical, and the clock would be dead. Proven able to redden by making
+`read_hz_200` return a constant.
+
+**So the boot is the MEDIUM and not the port.** The same eight files and the same preshift banks
+take 15 ms off Hatari's GEMDOS drive, where host file I/O costs the emulated machine nothing, and
+12.3 SECONDS off an emulated floppy. 265 ms of emulated time for the whole hard-drive boot is about
+thirteen vertical blanks — there is no 2.8x in it to explain, and the C preshift builders are inside
+that 265 ms rather than beside it. What is still unmeasured is the SHIPPED binary's own two spans:
+it has no record to write them to, and the same host-poll problem blocks a breakpoint. Closing that
+needs the instrument to stop the machine at a PC it can know in advance, which nothing here does
+yet.
 
 ## The pacing surface, and the control that reddens it
 
@@ -403,7 +488,7 @@ in the source:
 
 * **the run is the one the tolerances were measured on** — the numbers below are absolute, not
   shares, so a run of a different length is REPORTED rather than judged. The `play` build's longer
-  run reaches a second life and averages 7.38, which is not a regression and would be read as one.
+  run reaches a second life and averages 5.81, which is not a regression and would be read as one.
 * **no frame costs zero vertical blanks** — 0 tolerance, and it is a real invariant:
   `frame_end_and_flip` arms `A_vbl_wait_flag` and spins until a handler clears it, with no cap, so a
   vblank always elapses inside the wait. **ONE vblank is NOT an error and an earlier draft of this
@@ -411,18 +496,20 @@ in the source:
   skips the first wait and is released a single vblank later — the same parity effect that puts two
   3-vblank frames in the shipped binary's own 542 and two 7s in our 534. A zero-tolerance floor at
   two would have reddened a correct run.
-* **the mean under 5.85 vblanks** — today's 5.73 is reproducible to the second decimal across three
-  runs (two `game`, one `gamefault`), so this is not a noise band. 300 frames at 5.73 is 1,719
-  vblanks and the ceiling is 1,755, a slack of 36 — eighteen frames slipping one release slot. A
-  first draft used 6.0 and was measured to be forty times looser than its own justification claimed:
-  the whole 41-frame fast bucket could vanish and the mean would still pass at 5.99.
+* **the mean under 5.78 vblanks** — today's is 5.65 to 5.66 across four runs (two `game`, two
+  `gamefault`), a spread of ONE frame's release slot rather than a noise band, so the ceiling is set
+  off the worst of them. 300 frames at 5.66 is 1,698 vblanks and the ceiling is 1,734, a slack of 36
+  — eighteen frames slipping one release slot. The number moves DOWN as the port gets faster and
+  never up: 5.85 was this arithmetic against the 5.73 measured before the hardware doors were
+  inlined, and a first draft used 6.0 and was measured to be forty times looser than its own
+  justification claimed — the whole fast bucket could vanish and the mean would still pass at 5.99.
 * **attract Timer B at or above 95% of the 100 the chip offers**, and **the ACIA at or above 0.25
   interrupts a vertical blank** — a handler running past its own period lands near half service, so
   the two states are far apart and the floors do not have to be precise to separate them.
 
 **IT IS FAULT-BLIND, AND THAT IS MEASURED RATHER THAN ARGUED.** The check sits in `mode_game`'s
-fault-blind set, so `gamefault` has to keep it green: measured, the control gives **5.73 and
-[4x41 6x258 7+x1], the same histogram to the frame** as `game`. The dropped section-chain step is a
+fault-blind set, so `gamefault` has to keep it green: measured, the control gives **5.66 and
+[4x51 6x249], inside `game`'s own one-frame spread**. The dropped section-chain step is a
 one-off panel repaint, not per-frame work, so it moves what is DRAWN and not what a frame costs.
 
 **IT WAS PROVED ABLE TO GO RED** rather than assumed to be. The control is a busy-wait in
@@ -442,7 +529,10 @@ be testing the tolerance rather than the surface. Measured 2026-09-01:
 -- FAILED: 1 check(s)
 ```
 
-5.73 to **7.54**, two of the check's three arms red, and **every other surface still green — the
+(The transcript is verbatim from the run that took it, so it quotes the **5.85** ceiling that stood
+before the shim's doors were inlined; the ceiling is 5.78 now and the control clears it by more.)
+
+the measured mean to **7.54**, two of the check's three arms red, and **every other surface still green — the
 frame differential included**. That last part is the point rather than a footnote: a slower frame
 computes the same bytes, because the game is frame-locked and nothing in it reads a clock, so a
 pacing regression is invisible to every check this directory had before. The control was then
@@ -546,20 +636,25 @@ Numbered on from M1's list.
     two more instructions in the hottest handler the program has.
 23. **Nothing has run on real hardware, and nothing has run on an STE**, exactly as in M1: Hatari
     refuses `--machine ste` on a ROM at or below TOS 1.4, and `tools/hatari/` has no later one.
-24. **The game runs at a third of the original's speed, and the gap is now a number rather than an
-    impression.** 5.73 vertical blanks a frame against 2, 815,488 cycles against 271,565 — the
-    Performance section above has the whole table, the per-routine ratios and the arithmetic for
-    what would close it. It is unpinned in the sense that MATTERS here: `check_the_pacing` refuses a
+24. **The game runs at just under a third of the original's speed, and the gap is a number rather
+    than an impression.** 5.65 vertical blanks a frame against 2, 770,571 cycles against 271,565 —
+    the Performance section above has the whole table, the per-routine ratios, the shim-side sweep
+    that took 44,349 cycles off on 2026-09-01, and the arithmetic for what would close the rest.
+    It is unpinned in the sense that MATTERS here: `check_the_pacing` refuses a
     REGRESSION from today's number and cannot demand the original's, so nothing in the suite goes
     red while the gap stands. The first step is scoped and costed in that section (`movem` twins for
     `scroll_page_to_screen_p*` and `scroll_emit_column_shift2`, which together buy the 4-vblank
     bucket); nothing of it is started, deliberately, because a half-finished asm campaign is a
     second implementation of a verified core with no differential over it.
-25. **The boot takes 2.8x the original's vertical blanks** — the frame loop's head is first reached
-    at vblank ~2,230 here and ~795 there, over the same twenty-two GEMDOS file loads. Measured and
-    not explained: the effort went into the frame, which is what a player feels. What would close it
-    is the same instrument one phase earlier — a breakpoint clock over `boot_load_title_assets` and
-    `boot_load_gameplay_assets` on both sides, which `atari/profile.py` could grow a mode for.
+25. **The SHIPPED binary's boot is still unclocked, and ours is no longer a mystery.** The old
+    form of this row — "the boot takes 2.8x the original's vertical blanks" — was retracted on
+    2026-09-01: it measured the vertical blank at which each side first reached its frame loop,
+    which is mostly the attract wait and therefore mostly the host driver's own press cadence. Our
+    two loaders are clocked by the program now, on TOS's `$4ba`, and `smoke.py` prints the pair:
+    15 ms and 250 ms off the GEMDOS drive, 12,315 ms for the first off a floppy. What remains is the
+    original's own two spans, which cannot be taken the same way — it has no record to write them
+    into, and a breakpoint cannot be armed before its loaders run because the driver only learns
+    where GEMDOS put it by polling for a file. See the PERFORMANCE section's boot table.
 26. **The pacing surface judges OUR side alone.** `check_the_pacing`'s floors and ceiling are
     numbers this tree measured, checked into `smoke.py`; the original's own cadence is measured by
     `atari/profile.py original-frames` and lives in that file's comments and this README, not in the
@@ -571,10 +666,17 @@ Numbered on from M1's list.
 ---
 
 > **Realigned 2026-08-29** for kit commit `f5a2f71`, which moved the cores' hardware sinks onto a
-> real write ledger. The shim's `hw.h` shadow and its three per-routine overrides are gone, the
+> real write ledger. The shim's old `hw.h` shadow and its three per-routine overrides are gone, the
 > cores' own `hw_write*` stores are what reach the chip, `ikbd_send_cmd` is a verified core rather
 > than shim assembly, and `build.sh` grew a gate for the class of breakage that caused. Same twelve
 > checks, same control — plus a **floppy** mode and a bootable `disk/ZYNAPS.ST`.
+>
+> **Swept 2026-09-01** for the shim's own cost on target. `shim_include/hw.h` and `psg.h` are back
+> as SHADOWS OF THE KIT'S OWN NAMES — the seven doors as `static inline`, so a constant-address call
+> site folds the address ladder and the store classification away — `build.sh` gained one per-file
+> `-funroll-loops` for the palette upload, and the boot grew a clock of its own on TOS's `$4ba`.
+> 44,349 cycles a frame, the pacing ceiling tightened 5.85 → 5.78, and two new build gates
+> plus one new smoke check hold what the inlining put at risk.
 
 ## What M1 runs, and where it stops
 
@@ -632,15 +734,15 @@ line, saying nothing about which side is meant to own the name.
 | `os_fopen` / `os_fread` / `os_fclose` | a staged-file table in the image (8 slots at `0xbf000`), pure image copies — **bounds-checked** against the image, and a bad name **refused** | real GEMDOS `trap #1` `$3d`/`$3f`/`$3e` against Hatari's GEMDOS drive, with the model's **image bound and its refusal tally restored** — see below | `shim_include/os.h` shadow → `zynaps_os.s` |
 | `os_super` | returns the cookie `$00535550`, no privilege change | **a no-op returning the same cookie.** `_start` takes supervisor once, before any C, and hands it back once through `zy_leave_supervisor` | `shim_include/os.h` shadow |
 | `os_refused` | a refusal tally the harness reads back | an inline identity — the kit's own `os.h` anticipates this build | `-DOS_NO_REFUSAL_TALLY` |
-| `psg_port_write` | an ordered write ledger + a register file (`kit/src/psg.c`) | `move.b reg,$ffff8800` then `move.b val,$ffff8802`, from inside the vertical-blank interrupt | kit `src/` excluded → `zynaps_backend.c` |
-| `hw_read8` | seeded reads of five declared addresses (`kit/src/hw.c`) | a real `volatile` load. ONE core caller: `ikbd_send_cmd` spinning on the 6850's transmitter-empty bit at `$fffffc00` | kit `src/` excluded → `zynaps_backend.c` |
-| `hw_write8/16/32` | an ordered (address, width, value) ledger `harness.differential` compares entry for entry (`kit/src/hw.c`) | a real `volatile` store **of its own width**, counted — and counted again by address for the three core effects the machine cannot be asked about afterwards | kit `src/` excluded → `zynaps_backend.c` |
-| `hw_bset8` / `hw_bclr8` / `hw_and8` | the same ledger, holding the byte the ORACLE's own `bset`/`bclr`/`andi.b` produced from its fabricated read (`kit/src/hw.c`) | **NOT YET DEFINED — the build does not link without them.** A real `volatile` read-modify-write of its own BYTE width on the register, counted like `hw_write8`. Six core call sites; see Unpinned 2 for the table | kit `src/` excluded → `zynaps_backend.c` |
+| `psg_port_write` | an ordered write ledger + a register file (`kit/src/psg.c`) | `move.b reg,$ffff8800` then `move.b val,$ffff8802`, from inside the vertical-blank interrupt | kit `src/` excluded; `shim_include/psg.h` shadows the header and defines it `static inline` |
+| `hw_read8` | seeded reads of five declared addresses (`kit/src/hw.c`) | a real `volatile` load. One core caller — `ikbd_send_cmd` spinning on the 6850's transmitter-empty bit at `$fffffc00` — and one shim caller, `zynaps_main.c` reading TOS's four MFP registers back at the hand-back | kit `src/` excluded; `shim_include/hw.h` shadows the header and defines it `static inline` |
+| `hw_write8/16/32` | an ordered (address, width, value) ledger `harness.differential` compares entry for entry (`kit/src/hw.c`) | a real `volatile` store **of its own width**, counted — and counted again by address for the three core effects the machine cannot be asked about afterwards. `hw_write8` also recognises the shifter's two video-base bytes and hands them to `zynaps_backend.c`, the one door that is a protocol rather than a store | kit `src/` excluded; `shim_include/hw.h`, `static inline`; the counters stay in `zynaps_backend.c` |
+| `hw_bset8` / `hw_bclr8` / `hw_and8` | the same ledger, holding the byte the ORACLE's own `bset`/`bclr`/`andi.b` produced from its fabricated read (`kit/src/hw.c`) | a real `volatile` read-modify-write of its own BYTE width on the register, counted like `hw_write8` and again through `zy_rmw_stores`. Six core call sites; see Unpinned 2 for the table | kit `src/` excluded; `shim_include/hw.h`, `static inline` |
 | `sched_poll8` / `sched_wait8` | polls counted per wait site, with declared stores (`kit/src/sched.c`) | `shim_include/sched.h` — the same spin with NO cap, and `volatile` so the loop keeps reading. `src/highscore.c`'s game-over chain is what calls them | kit `src/` excluded; this shim REPLACES rather than `#include_next`s |
 | `sched_poll16` | the word form of the above | **not defined.** No Zynaps core calls it, and an unexercised word read in the one build with no oracle behind it is worse than absent — `shim_include/sched.h` says what to watch for when the first caller arrives | kit `src/` excluded |
 | `g_dosound`, `disk_*` | the Dosound ledger, the staged disk | **not defined.** No Zynaps core calls one | kit `src/` excluded |
 | `shifter_upload_palette_longs` / `shifter_write_pen` / `shifter_clear_pen0` | **ordinary core code** in `../src/video.c`, writing the ledger through `hw_write32`/`hw_write16` | the same core code, its `hw_write*` now the real store — eight `move.l` over `$ffff8240`, or one `move.w` | nothing: the seam is `hw_write*` |
-| `mfp_ack_timer_b` | core code in `../src/irq.c`: `hw_bclr8($fffa0f, 0)`, ledgered as the `0 & ~bit` the oracle's own `bclr` produced | the same core code, its `hw_bclr8` now the real `bclr` — Timer B's channel alone. See Unpinned 2 | `zynaps_backend.c` must define `hw_bset8`/`hw_bclr8`/`hw_and8` |
+| `mfp_ack_timer_b` | core code in `../src/irq.c`: `hw_bclr8($fffa0f, 0)`, ledgered as the `0 & ~bit` the oracle's own `bclr` produced | the same core code, its `hw_bclr8` now the real `bclr` — Timer B's channel alone. See Unpinned 2 | `shim_include/hw.h` must define `hw_bset8`/`hw_bclr8`/`hw_and8` |
 | `screen_flip_buffers`' publish half | `hw_write8($ff8203/$ff8201, image offset >> 8/16)`, ledgered and compared | the same store — of an IMAGE OFFSET, which is right where the image is the machine's memory and wrong here. The shim re-publishes the machine address after the slice | `zynaps_main.c`, see below |
 | `init_shifter_mode_mask_written` | the one byte the write ledger cannot hold: the MASK the `andi.b` applied | **still a counter** — read into the record. The ACCESS it describes is the core's own, through `hw_and8` | `zynaps_main.c` |
 | `ikbd_send_cmd` @ `0x14444` | ✅ verified in `../src/input.c` — `$fffc00` is a seeded READ slot (`OS_HW_ACIA_STATUS`) and `$fffc02` is ledgered | the same core code: an UNBOUNDED spin on bit 1 of `$fffffc00`, then a store to `$fffffc02`, exactly the original's four instructions. `-DOS_NO_REFUSAL_TALLY` compiles the off-target give-up arm away, and `build.sh` measures that it did | nothing: the seam is `hw_read8`/`hw_write8` |
@@ -937,7 +1039,7 @@ Eight scans, and each names the defect it exists for:
 * **The EA-ordering scan.** A postincrement source and an indexed destination on the SAME address
   register — the instruction GCC folded a sibling project's palette loop into, which put every pen
   one register high and drove the sixteenth write into `$ff8260`, the resolution register.
-  `zynaps_backend.c` is written so the shape cannot be emitted; "cannot" is a claim about a
+  the hardware stores are emitted inside core loops now; "cannot be emitted" was a claim about a
   compiler, so it is measured — and the scan proves it can fail on every run, against two synthetic
   known-bad lines, because a pattern that quietly stopped matching would look exactly like a clean
   binary.
@@ -945,10 +1047,27 @@ Eight scans, and each names the defect it exists for:
   target; if that guard failed to fire, every field access in every core would be an `lsl #8`
   shuffle chain (a uniform ~4x slowdown and a 40% larger `.PRG`). The count is reported, not gated —
   30 today, where hundreds would be the tell — and `__ORDER_BIG_ENDIAN__` is asserted at the source.
-* **The containment checks.** No file under `../src` or `../include` may include a shim header or
-  read a target-only `-D`. Asked of includes and macro names rather than of identifiers, because
-  those files' own comments discuss `hw_write8` and the target build at length — that is the seam
-  documented where it lives, and a grep for identifiers would red on prose.
+* **The containment checks.** The cores' whole PREPROCESSED include closure must be exactly the six
+  shim headers the seam declares — the four shadows of kit headers the cores already include
+  (`os.h`, `hw.h`, `psg.h`, `sched.h`), plus `tos.h` because the `os.h` shadow needs the trap
+  primitives and `string.h` because m68k-elf ships no libc — and no core may read a target-only
+  `-D`. It used to grep for a DIRECT `#include "zynaps_target.h"`, which was sound while `os.h` was
+  the only shadow and went blind the moment `hw.h` became one: a shim header could then reach a core
+  THROUGH the shadow, and a first draft of `shim_include/hw.h` did exactly that, putting
+  `zy_image_base` and every `zy_*` global into six verified translation units with the gate printing
+  green. `gcc -MM` answers what the compiler opened, which is the question the gate was always
+  asking. Still asked of includes and macro names rather than of identifiers, because those files'
+  own comments discuss `hw_write8` and the target build at length — that is the seam documented
+  where it lives, and a grep for identifiers would red on prose.
+* **The doors' own two checks**, both added with the inlining. The shim's shadows must define
+  EXACTLY the doors the kit declares (`psg_port_read` excepted, and deliberately: a core that
+  acquired a PSG read then fails to compile rather than reading a real chip with no surface behind
+  it) — the kit is shared by four projects, and a door added or renamed there would otherwise leave
+  this build compiling against a stale shadow. And every counter those doors keep must be
+  incremented by a SINGLE read-modify-write instruction: the counters are read on the main line and
+  bumped inside interrupts, which is safe only while `addq.l #1,<abs>` is one uninterruptible
+  instruction. That was a one-off human read of one object while the doors lived in one file; they
+  are emitted at every inlined call site now, so it became a scan. 98 increments today, none split.
 * **The `os_*` census — the shadow's own central claim, measured.** `shim_include/os.h` replaces
   FOUR kit helpers and pulls the rest in through `#include_next`, so every other `os_*` is still the
   deterministic MODEL, compiled into the `.PRG` and answering out of an in-image register file. The
@@ -1156,8 +1275,11 @@ M1 stops at `0x101ba` because the reconstruction does. To go further:
   workable arrangement the moment there is more than one flip. This is the one item on this list
   that is a DESIGN question rather than a porting one.
 * ~~**A kit-level hardware-write ledger.**~~ Landed at `f5a2f71`, and it is what this revision of
-  the shim is realigned to: `shim_include/hw.h` is deleted, `../src/irq_hw_offtarget.c` is deleted,
-  and `zynaps_backend.c` is the target half of the kit's own four `hw_*` names.
+  the shim is realigned to: the OLD `shim_include/hw.h` is deleted, `../src/irq_hw_offtarget.c` is
+  deleted, and the target half of the kit's own `hw_*` names is this build's. Since 2026-09-01 that
+  target half is a new `shim_include/hw.h` rather than `zynaps_backend.c` — the same names and
+  signatures, `static inline` so a call site can fold them; the backend keeps the counters and the
+  one door that is a protocol. The Layout section says why the two files are not the same thing.
 
 ## Layout
 
@@ -1178,6 +1300,9 @@ atari/
 ├── zynaps_backend.c      the seam's target half + a freestanding libc
 ├── shim_include/
 │   ├── os.h              shadows the kit's: real GEMDOS, no-op Super
+│   ├── hw.h              shadows the kit's: the seven doors, as target inlines
+│   ├── psg.h             shadows the kit's: the YM2149's two ports, likewise
+│   ├── sched.h           shadows the kit's: the busy waits, uncapped
 │   ├── tos.h             what zynaps_os.s provides
 │   ├── zynaps_target.h   what the two C files hand each other
 │   └── string.h          the three libc names
@@ -1185,10 +1310,15 @@ atari/
 └── disk/                 gitignored — the GEMDOS drive Hatari boots, and ZYNAPS.ST
 ```
 
-There is no `shim_include/hw.h` any more, and its absence is load-bearing: it shadowed the kit's
-header to add a write half the kit did not export. The kit exports `hw_read8` and `hw_write8/16/32`
-itself now, with `uint32_t` values where the shadow declared narrow ones, so keeping the file would
-have been a silent signature conflict on top of a redundant one.
+`shim_include/hw.h` CAME BACK on 2026-09-01 and it is a different file from the one that was
+deleted. The old shadow existed because the kit exported no write half at all and the shadow added
+one, with narrow value types the kit later contradicted — that file was redundant and then wrong,
+and deleting it was right. This one adds no name the kit does not declare and changes no signature:
+it defines the kit's OWN seven names `static inline` so a call site can see them, which is what the
+kit's header asks a target build to do, and the whole reason is measured — 205 cycles for a 24-cycle
+store, in the PERFORMANCE section's lever table. `psg.h` is the same seam for the same reason. It
+cannot `#include_next` the kit's headers: those seven are declared `extern`, and C forbids a
+`static inline` definition of a name already declared without `static`.
 
 `mkprg.py` and `tos.ld` are **copies**, as they are in `projects/joust/recreate/atari/` and
 `projects/wonderboy/recreate/atari/`; each copy's header names the others and says what differs.

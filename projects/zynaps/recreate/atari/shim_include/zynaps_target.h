@@ -2,7 +2,9 @@
  *
  * Three files make up the shim — `zynaps_os.s`, `zynaps_main.c`, `zynaps_backend.c` — and this is
  * everything they hand each other. Nothing here exists off target: the differential build never
- * sees this directory, and no core includes this file.
+ * sees this directory, and no core reaches this file by any path — not directly, and not through
+ * the two shadowing headers beside it, which is why `HW_BUS` and the doors' counters are in
+ * `hw.h`.
  *
  * `tos.h` is the neighbouring header and the split is by WHO IMPLEMENTS: tos.h is what zynaps_os.s
  * provides (traps and machine primitives), this is what the two C files provide.
@@ -14,16 +16,15 @@
 
 #include "video.h"   /* HW_PALETTE_BASE — the shifter's colour registers, in the SHORT form */
 
-/* ---- the machine's addresses, in the form a C pointer needs ------------------------------------
- *
- * The 68000 ignores address bits 31-24, so `$ff8240` and `$ffff8240` are one address — but a C
- * pointer has to name the one the CPU puts on the bus. The kit's and the project's headers spell
- * the SHORT form, because that is what a reconstruction's own constant says; this is the arithmetic
- * that turns one into the other, and it is HERE rather than in each .c because both shim
- * translation units need it and CLAUDE.md §5 says a value used across files gets one definition.
- * ============================================================================================= */
-#define HW_BUS_HIGH_BITS 0xff000000u
-#define HW_BUS(addr) ((uint32_t)((addr) | HW_BUS_HIGH_BITS))
+/* `HW_BUS` AND THE DOORS' COUNTERS MOVED TO shim_include/hw.h, which is where the doors are. They
+ * were here while the doors lived in zynaps_backend.c and only the two shim translation units
+ * needed them; the doors are `static inline` now, so every core that says `#include "hw.h"` gets
+ * whatever that header includes — and pulling THIS file in through it would put `zy_image_base`,
+ * `zynaps_main()` and the whole shim surface into six verified translation units, with build.sh's
+ * "the cores take nothing from this directory" gate green because it greps for a DIRECT include.
+ * So the dependency runs this way round now, and no core reaches this file by any path. */
+#include "hw.h"      /* HW_BUS, and the four counters the hardware doors keep */
+#include "psg.h"     /* ...and the two the YM2149's door keeps */
 
 /* One shifter colour register is a word. */
 #define SHIFTER_PEN_BYTES 2u
@@ -65,9 +66,10 @@ static inline uint32_t shifter_pen_register(unsigned pen) {
  * question already lives and the one place the CORE ITSELF REACHES. M1 re-published the machine
  * address from the shim after the boot slice, which worked only because the boot flips once;
  * the frame loop flips every frame, so a re-publish after the fact stops being an arrangement at
- * all. `zynaps_backend.c`'s `hw_write8` recognises the shifter's two base bytes, keeps the offset
- * the cores have published so far, and stores the translated address — so a flip from inside the
- * frame loop lands on the right memory with no shim in the path. */
+ * all. `shim_include/hw.h`'s `hw_write8` recognises the shifter's two base bytes at the call site and
+ * hands them to `zy_store_video_base_byte` in `zynaps_backend.c`, which keeps the offset the cores
+ * have published so far and stores the translated address — so a flip from inside the frame loop
+ * lands on the right memory with no shim in the path. */
 extern uint8_t *zy_image_base;
 
 /* ---- zynaps_main.c, for zynaps_os.s ----------------------------------------------------------- */
@@ -93,31 +95,6 @@ extern volatile uint32_t zy_timer_b_ticks;
 
 /* ---- zynaps_backend.c, for zynaps_main.c ------------------------------------------------------ */
 
-/* What the seam's target half actually did, so a run that touched no hardware is separable from one
- * whose writes went somewhere unexpected. `zy_psg_refused` counts a register outside 0..15 — the
- * kit's `psg_port_write` refuses rather than masking, and so does this. All of them are in the
- * record. */
-extern volatile uint32_t zy_psg_writes;
-extern volatile uint32_t zy_psg_refused;
-extern volatile uint32_t zy_hw_writes;
-
-/* THE THREE CORE EFFECTS THE MACHINE CANNOT BE ASKED ABOUT AFTERWARDS, counted as they go past the
- * hardware doors; zynaps_backend.c says what keys each one and why the shim's own traffic cannot
- * forge it. Off target the kit's ordered write ledger holds all three and `harness.differential`
- * compares it entry for entry, so these exist only on this side of the seam.
- *
- *   zy_shifter_mode_writes  `andi.b #$fc,$ff8260` at 0x10056 — 1 for the boot
- *   zy_palette_long_writes  `movem.l #$00ff,$ff8240.l` at the end of `set_palette_title` — 8 longs
- *   zy_acia_bytes_sent      `move.b d0,$fffc02` in `ikbd_send_cmd` — 2, one per boot command
- */
-extern volatile uint32_t zy_shifter_mode_writes;
-extern volatile uint32_t zy_palette_long_writes;
-extern volatile uint32_t zy_acia_bytes_sent;
-
-/* Read-modify-writes the cores made through the three doors. It says the seam is real: a build in
- * which the kit's own off-target `src/hw.c` had been linked instead would show 0. */
-extern volatile uint32_t zy_rmw_stores;
-
 /* The video-base door's own account: the IMAGE offset the cores last published, the MACHINE address
  * it was translated to, and how many times the pair was stored. `zy_video_base_published` is what
  * the register read-back at the anchor must equal, which is the surface for a translation that
@@ -126,11 +103,9 @@ extern volatile uint32_t zy_video_base_offset;
 extern volatile uint32_t zy_video_base_published;
 extern volatile uint32_t zy_video_base_publishes;
 
-/* THE THREE READ-MODIFY-WRITE DOORS ARE NOT DECLARED HERE, and that is deliberate:
- * `tools/recreate_kit/include/hw.h` declares `hw_bset8`/`hw_bclr8`/`hw_and8` beside `hw_write8`
- * now (kit commit 2db68f6), the cores call them, and zynaps_backend.c defines them for the machine.
- * A second declaration in this header would be a second contract for one name.
- */
+/* NO DOOR AND NO DOOR-COUNTER IS DECLARED HERE, and that is deliberate: `shim_include/hw.h` and
+ * `psg.h` shadow the kit's own headers, define all eight doors as `static inline` and declare the
+ * counters they keep. A second declaration here would be a second contract for one name. */
 
 /* ---- zynaps_main.c, for zynaps_os.s: the third interrupt entry's C half ----------------------- */
 void zy_acia_tick(void);

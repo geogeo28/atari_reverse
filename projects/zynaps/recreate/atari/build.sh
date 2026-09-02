@@ -39,9 +39,24 @@
 # THE CORES ARE COMPILED UNCHANGED — no `-D` reaches ../src or ../include, and the checks below
 # measure that rather than asserting it in prose. The seam is now the INCLUDE PATH plus ONE omitted
 # directory:
-#   * shim_include/ shadows the kit's `os.h` (real GEMDOS, no-op Super) and `#include_next`s the
-#     rest. It no longer shadows `hw.h`: the kit exports `hw_read8` and `hw_write8/16/32` itself and
-#     zynaps_backend.c is the target half of exactly those four names.
+#   * shim_include/ shadows FOUR of the kit's headers, and in two different ways:
+#       - `os.h` (real GEMDOS, no-op Super) and `sched.h` (uncapped busy waits) shadow PARTIALLY,
+#         replacing what they must and `#include_next`ing the rest;
+#       - `hw.h` and `psg.h` shadow OUTRIGHT. The kit's own hw.h asks a target build to supply
+#         `hw_read8`, `hw_write8/16/32` and the three read-modify-writes itself, and psg.h says the
+#         same of `psg_port_write`; supplying all eight as `static inline` is what lets a caller's
+#         CONSTANT address fold the address ladder and the store-classification chain away (205
+#         cycles a call for a 24-cycle store, before). They cannot `#include_next`: the kit declares
+#         those eight `extern`, and C forbids redeclaring one `static`. The "shadows define exactly
+#         the doors the kit declares" gate below is what ties the two halves together instead, and
+#         `psg_port_read` is the one name deliberately left out — a core that acquired a PSG read
+#         then fails to COMPILE rather than reading a real chip with no surface behind it.
+#     zynaps_backend.c keeps the counters those doors bump and the one door that is a protocol
+#     rather than a store (the shifter's video base).
+#     WHAT THE CORES SEE GREW WITH THIS, and it is why hw.h includes only CORE and KIT headers:
+#     every core says `#include "hw.h"`, so anything that header pulls in lands in six verified
+#     translation units — `zynaps_target.h` among them, if it were allowed to, taking `zy_image_base`
+#     and the whole shim surface with it while the census below stayed green.
 #   * ALL of the kit's src/ is left out — its own headers say so (psg.c, hw.c, sched.c: "Off-target
 #     only ... a build for the real Atari writes the ports itself"). EVERY core in ../src is built:
 #     there is no exclusion any more, because src/irq_hw_offtarget.c's three empty bodies became
@@ -179,7 +194,7 @@ echo ">> trap-register scan ($TRAP_WRAPPERS wrappers)"
 # -DOS_NO_REFUSAL_TALLY: the kit's os.h anticipates exactly this build and compiles `os_refused`
 #   down to an inline identity, so its src/os_refusal.c is not needed. It also compiles away
 #   `ikbd_send_cmd`'s give-up arm, which is the only place a core reaches the tally.
-# shim_include FIRST: that is the whole seam (it shadows the kit's os.h, and nothing else).
+# shim_include FIRST: that is the whole seam (it shadows the kit's os.h, hw.h, psg.h and sched.h).
 CFLAGS="-m68000 -O2 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \
         -fomit-frame-pointer -nostdlib -DOS_NO_REFUSAL_TALLY \
         -I$HERE/shim_include -I$REC/include -I$KIT/include -Wall -Wextra"
@@ -196,6 +211,47 @@ CORES="$(ls "$REC"/src/*.c)"
 
 # COMPILED TO OBJECTS FIRST, so the two halves of the seam can be ASKED WHAT THEY DEFINE before
 # they are linked together. The gate below is the whole reason this is not one `gcc` invocation.
+# ---- THE ONE PER-FILE OPTIMISATION FLAG, AND WHY IT IS A LIST OF ONE ---------------------------
+#
+# A flag here reaches a VERIFIED CORE, so it is added per file and only where the generated code was
+# read and the frame re-measured. `-funroll-loops` on ../src/video.c is that case:
+# `shifter_upload_palette_longs` is a fixed EIGHT-iteration loop over the shifter's colour block,
+# entered twice a vertical blank (`vbl_menu` and `timer_b_raster_isr` both call it), and at -O2 the
+# compiler keeps the loop — so every one of the eight stores re-derives the register's bus address
+# and pays the loop's own compare and branch. Unrolled it becomes eight `move.l <image>,$ff824x`
+# with the addresses as immediates, which is the shape the original's `movem.l #$00ff,$ff8240.l`
+# has. The codegen scans below are what say the unrolled form did not acquire the class-6
+# effective-address shape, and they run on the linked binary rather than on this decision.
+#
+# -O3 GENERATES THE SAME EIGHT STORES HERE and is not used, because it would also change every
+# other inlining decision in the file for no measured gain. NOTHING IS ADDED FOR ../src/scroll.c,
+# where README.md's PERFORMANCE section measured `-funroll-loops` to be worth about 5% of the
+# frame: those loops are being replaced by hand-written assembly twins, and a flag tuning code that
+# is on its way out would be measured once and then be wrong.
+CORE_UNIT_WITH_EXTRA_FLAGS=video.c
+core_extra_flags() {
+  case "$(basename "$1")" in
+  "$CORE_UNIT_WITH_EXTRA_FLAGS") echo "-funroll-loops" ;;
+  *)                             echo "" ;;
+  esac
+}
+
+# ...AND THE TABLE PROVES IT NAMED A UNIT THIS BUILD ACTUALLY COMPILES. Every other measured claim
+# in this script carries a control for the same reason: a `case` that stopped matching is
+# indistinguishable from a clean build. If `../src/video.c` is renamed, or the palette upload moves
+# to a unit of its own, the arm above silently returns nothing, `-funroll-loops` stops being applied
+# and `shifter_upload_palette_longs` goes back from 756 cycles a call to 1,206 — with nothing red:
+# `make test` measures no cycles, the EA scan checks the addressing SHAPE rather than whether the
+# loop was unrolled, and smoke.py's pacing ceiling has 36 vblanks of slack for the loss to hide in.
+# The sibling project does the same (projects/wonderboy/recreate/atari/build.sh's
+# `assert_names_a_real_unit`, "so it is doing nothing ... a decision reverting itself in silence").
+echo "$CORES" | grep -q "/$CORE_UNIT_WITH_EXTRA_FLAGS\$" || {
+  echo "ERROR: core_extra_flags names '$CORE_UNIT_WITH_EXTRA_FLAGS', which is not one of the cores"
+  echo "       this build compiles — so its -funroll-loops is being applied to nothing and the"
+  echo "       palette upload has quietly gone back to its rolled form. Point it at the unit that"
+  echo "       holds shifter_upload_palette_longs now, and re-measure with atari/profile.py."
+  exit 1; }
+
 OBJ="$BUILD/obj"
 rm -rf "$OBJ"; mkdir -p "$OBJ"
 echo ">> compile (base 0, keep relocs)"
@@ -207,7 +263,7 @@ for source in "$HERE/zynaps_os.s" "$HERE/zynaps_main.c" "$HERE/zynaps_backend.c"
 done
 for source in $CORES; do
   object="$OBJ/core_$(basename "${source%.c}").o"
-  $CC $CFLAGS $DEF -c "$source" -o "$object"
+  $CC $CFLAGS $DEF $(core_extra_flags "$source") -c "$source" -o "$object"
   CORE_OBJECTS="$CORE_OBJECTS $object"
 done
 
@@ -285,10 +341,17 @@ ENTRY=$(m68k-elf-nm "$BUILD/zynaps.elf" | awk '$3=="_start"{print $1}')
 # write hit $ff8260, the RESOLUTION register. TOS 1.04 died on the spot. Nothing in the diff was
 # wrong and the C was not wrong either (docs/on-target-execution.md class 6).
 #
-# zynaps_backend.c is written so the shape cannot be emitted — each address is computed as a value
-# and handed to a function — but "cannot" is a claim about a compiler, so it is measured. What is
-# forbidden is one instruction using the SAME address register in a postincrement source and an
-# indexed destination; it is the SHAPE that is suspect, not the target.
+# THE ARGUMENT USED TO BE ABOUT ONE FILE AND IS NOW ONLY ABOUT THIS SCAN. While the doors were
+# out-of-line functions in zynaps_backend.c, every hardware address was computed as a value and
+# handed to a call, so the shape could not be emitted by construction and the scan confirmed a
+# property the code already had. The doors are `static inline` now: the store is emitted INSIDE
+# core loops — including `../src/video.c`'s palette upload, which `-funroll-loops` turns into eight
+# absolute stores into the colour block — so the blast radius is every core loop that stores a
+# hardware address, and this scan is the only thing between it and a hung TOS. Measured on today's
+# binary: zero candidate lines, and the unrolled upload's last store begins at $ff825c, four bytes
+# clear of the $ff8260 resolution register. What is forbidden is one instruction using the SAME
+# address register in a postincrement source and an indexed destination; it is the SHAPE that is
+# suspect, not the target.
 # ORDER MATTERS AND THE SCAN HAS TO KNOW IT. What is fatal is a postincrement SOURCE with an indexed
 # DESTINATION on the same register; the mirror image — `move.l (%a0,%a1.l),(%a0)+` — is ordinary, and
 # GCC emits it here. So the pattern spans the comma rather than looking for the two halves anywhere
@@ -350,6 +413,14 @@ SHIFT_EA=$(awk "$EA_SCAN" "$DISASSEMBLY" || true)
 # zero and the gate could not fail. So the control is not a synthetic line here: it is ../src/input.c
 # compiled a second time with the macro UNDEFINED, and the scan must score it HIGHER.
 IKBD_UNCAPPED_BRANCHES=1
+# THE METRIC IS NO LONGER SPECIFIC TO THE CAP, and a reader of its red needs to know that. Since the
+# doors became `static inline`, this routine contains an inlined `hw_read8` and `hw_write8` — whose
+# video-base test and four-way tally chain are five more conditional branches that happen to FOLD,
+# because the ACIA's address is a compile-time constant at both call sites. Measured today: still
+# exactly 1. So anything that makes that address non-constant (routing it through a variable, an
+# -fno-inline experiment, a GCC that declines to inline there) reds this scan with a message about
+# IKBD_TX_POLL_MAX, which would then be the wrong diagnosis. It fails safe and it fails vague;
+# atari/README.md's unpinned list carries that rather than this comment absorbing it.
 # Cut the routine at the next SYMBOL, not at the first `rts`: if GCC ever tail-called `hw_write8`
 # out of it — plausible, the store is the last thing it does — there would be no `rts`, and the awk
 # would run to the end of a 41 KB disassembly and count every branch in the program.
@@ -382,9 +453,64 @@ IKBD_SHIPPED=$(count_ikbd_branches "$DISASSEMBLY")
   awk "$IKBD_BODY_SCAN" "$DISASSEMBLY"; exit 1; }
 echo "   $IKBD_SHIPPED conditional branch, against the capped control's $IKBD_CONTROL"
 
+# ---- THE SHADOW MUST DEFINE EXACTLY THE DOORS THE KIT DECLARES ---------------------------------
+#
+# `shim_include/hw.h` and `psg.h` SHADOW the kit's headers rather than extending them: they cannot
+# `#include_next` the originals, because C forbids a `static inline` definition of a name already
+# declared `extern`. So on target the kit's declarations are never in the same translation unit as
+# the definitions, and the only thing tying the two halves together is prose quoted into a comment.
+#
+# THAT MATTERS BECAUSE THE KIT IS SHARED. Four projects compile against `tools/recreate_kit`, and a
+# door added, renamed or removed there for one of them — an `hw_or8` for a new read-modify-write,
+# say — would leave this build compiling happily against a stale shadow while `make test`, which
+# sees the kit's own header, is the only side that notices. The two builds would stop being the
+# same program in the one way the "cores are compiled unchanged" census below cannot see, because
+# that census reads INCLUDES and MACRO NAMES rather than the doors themselves.
+#
+# So the sets are compared. The kit DECLARES `<type> hw_name(...);` at the top level; the shadow
+# DEFINES `static inline <type> hw_name(...)`. The `g_hw_*` and `g_psg_*` accessors are excluded by
+# the pattern itself — they are the off-target harness's ledger readers, and a target build has no
+# ledger for them to read.
+echo ">> the shim's shadows define exactly the doors the kit declares"
+kit_doors() { grep -hoE '^[a-z0-9_]+ +(hw|psg)_[a-z0-9_]+ *\(' "$@" | grep -oE '(hw|psg)_[a-z0-9_]+'; }
+shadow_doors() { grep -hoE '^static inline [a-z0-9_]+ +(hw|psg)_[a-z0-9_]+ *\(' "$@" \
+                 | grep -oE '(hw|psg)_[a-z0-9_]+'; }
+
+# ...AND THE COMPARISON PROVES IT CAN FAIL, on every run and in BOTH directions — `comm` over two
+# empty lists is silent, and two extractors that both stopped matching would be too.
+DOOR_CONTROL=$(comm -3 <(printf 'hw_and8\nhw_write8\n') <(printf 'hw_write8\nhw_or8\n') \
+               | tr -d '\t ' | tr '\n' ' ')
+[ "$DOOR_CONTROL" = "hw_and8 hw_or8 " ] || {
+  echo "ERROR: the door-set comparison named '$DOOR_CONTROL' on a known one-each-way difference,"
+  echo "       not 'hw_and8 hw_or8 ' — it has rotted, and a clean report would mean nothing."
+  exit 1; }
+
+KIT_DOORS=$(kit_doors "$KIT/include/hw.h" "$KIT/include/psg.h" | sort -u)
+SHADOW_DOORS=$(shadow_doors "$HERE/shim_include/hw.h" "$HERE/shim_include/psg.h" | sort -u)
+[ -n "$KIT_DOORS" ] && [ -n "$SHADOW_DOORS" ] || {
+  echo "ERROR: the door extractors found $(echo "$KIT_DOORS" | grep -c .) kit and"
+  echo "       $(echo "$SHADOW_DOORS" | grep -c .) shadow declarations — one is EMPTY, so the"
+  echo "       comparison below would be silent whatever the headers hold."
+  exit 1; }
+# `psg_port_read` is DELIBERATELY not shadowed: no core in this reconstruction reads the chip back,
+# and leaving it undeclared means one that acquired a read fails to compile here rather than reading
+# a real YM2149 with no surface to hold what came back. It is the one name allowed to differ.
+UNSHADOWED_BY_DESIGN=psg_port_read
+DOOR_DIFF=$(comm -3 <(echo "$KIT_DOORS") <(echo "$SHADOW_DOORS") | tr -d '\t' \
+            | grep -vxF "$UNSHADOWED_BY_DESIGN" || true)
+[ -z "$DOOR_DIFF" ] || {
+  echo "ERROR: the kit's doors and the shim's shadows of them have diverged. A name the kit"
+  echo "       declares and the shadow does not define is a door this build silently does not"
+  echo "       have; one the shadow defines and the kit does not declare is a door the cores"
+  echo "       cannot call. Either way the .PRG and \`make test\` stop being the same program:"
+  echo "$DOOR_DIFF" | sed 's/^/         /'
+  exit 1; }
+echo "   $(echo "$SHADOW_DOORS" | grep -c .) doors shadowed, $UNSHADOWED_BY_DESIGN left out by design"
+
 # THE CORES MAY ONLY READ A HARDWARE ADDRESS THE KIT MODELS, and this is the read half of the os_*
 # census below. `hw_read8` used to be defined nowhere in this build, so a core that acquired a
-# hardware read failed to LINK; zynaps_backend.c defines it now, for `ikbd_send_cmd`'s ACIA poll, and
+# hardware read failed to LINK; shim_include/hw.h defines it now — for `ikbd_send_cmd`'s ACIA poll
+# and for zynaps_main.c's MFP read-back at the hand-back — and
 # that link error is gone. Off target the kit REFUSES an address outside its seeded set and the
 # harness throws the case away — but a core reading, say, $ff8260 through a bare literal is green
 # there (the refusal tally is compiled out by -DOS_NO_REFUSAL_TALLY) and reads the real chip here.
@@ -399,6 +525,53 @@ UNDECLARED=$(echo "$HW_READS" | grep -v '^OS_HW_' || true)
   echo "       Off target that is a refusal; here it reads the real chip with no surface at all."
   exit 1; }
 echo "   $(echo "$HW_READS" | grep -c . || true) hw_read site(s), all naming an OS_HW_* address"
+
+# ---- THE DOORS' COUNTERS MUST STAY ONE INSTRUCTION EACH ----------------------------------------
+#
+# zynaps_main.c's boot critical-section note states the assumption every exact-count assertion in
+# smoke.py rests on: the counters are read on the main line and bumped inside interrupts, and that
+# is safe ONLY while each `zy_*++` compiles to a single read-modify-write instruction — `addq.l
+# #1,<abs>`, which the 68000 cannot interrupt. Split into `move.l <abs>,%dN / addq.l / move.l %dN,
+# <abs>` it is three, an interrupt landing between the load and the store loses an increment, and
+# `hw_writes` comes back short on a different frame each run.
+#
+# UNTIL THE DOORS WERE INLINED THAT WAS A ONE-OFF HUMAN READ OF ONE OBJECT. The seven `zy_*++` lived
+# in zynaps_backend.c and one `objdump` covered them all. They are emitted at every inlined call
+# site now — across ../src/video.c, irq.c, init.c, input.c, frame.c and sound.c — and
+# `-funroll-loops` multiplies the video.c ones eightfold, in a routine entered twice a vertical
+# blank. So the read became a scan.
+#
+# WHAT IS FORBIDDEN IS THE STORE-BACK, not the load: `g_record[REC_HW_WRITES] = zy_hw_writes` is a
+# legitimate `move.l <counter>,%dN` and there are several. A split increment is separable from it by
+# its final half — a `move` whose DESTINATION is a counter — and nothing in this program writes one
+# any other way (they are only ever incremented). One instruction, or this is red.
+COUNTERS='zy_hw_writes|zy_shifter_mode_writes|zy_palette_long_writes|zy_acia_bytes_sent'
+COUNTERS="$COUNTERS|zy_rmw_stores|zy_psg_writes|zy_psg_refused"
+COUNTER_STORE_SCAN="\bmove[bwl]?[[:space:]].*,[0-9a-f]+ <($COUNTERS)>"
+echo ">> the doors' counters are single read-modify-write instructions"
+
+# ...AND THE SCAN PROVES IT CAN FAIL, on every run, for the EA scan's reason: a pattern that
+# quietly stopped matching is indistinguishable from a clean binary. The control is the middle and
+# last lines of a split increment; the first (a load) must NOT match, or the scan would red on the
+# record dump.
+COUNTER_CONTROL_HITS=1
+COUNTER_CONTROL=$(printf '%s\n%s\n' \
+  'movel 10eea4 <zy_hw_writes>,%d1' \
+  'movel %d1,10eea4 <zy_hw_writes>' | grep -cE "$COUNTER_STORE_SCAN" || true)
+[ "$COUNTER_CONTROL" = "$COUNTER_CONTROL_HITS" ] || {
+  echo "ERROR: the counter scan named $COUNTER_CONTROL of a split increment's two halves, not"
+  echo "       $COUNTER_CONTROL_HITS — it matches the load as well as the store-back, or neither,"
+  echo "       and a clean report from it would mean nothing."; exit 1; }
+
+COUNTER_STORES=$(grep -E "$COUNTER_STORE_SCAN" "$DISASSEMBLY" || true)
+[ -z "$COUNTER_STORES" ] || {
+  echo "ERROR: a hardware-door counter is written by a plain MOVE, so its increment is no longer"
+  echo "       one instruction. An interrupt landing inside the read-modify-write loses the count,"
+  echo "       and smoke.py's exact totals go red on a different frame every run. See"
+  echo "       shim_include/hw.h and zynaps_main.c's note on the boot's one critical section."
+  echo "$COUNTER_STORES"; exit 1; }
+COUNTER_INCREMENTS=$(grep -cE "\baddq[bwl]?[[:space:]].*,[0-9a-f]+ <($COUNTERS)>" "$DISASSEMBLY" || true)
+echo "   $COUNTER_INCREMENTS increments, none split"
 
 # THE BIG-ENDIAN ACCESSORS MUST BE PLAIN LOADS. machine.h picks a native `*(uint32_t *)` on a
 # big-endian target and byte assembly on the little-endian host; if the guard ever failed to fire,
@@ -422,15 +595,43 @@ $CC $CFLAGS -E -dM -x c /dev/null | grep -q '__ORDER_BIG_ENDIAN__' || {
 # test`'s green would stop saying anything about what runs here. (Joust and Wonder Boy each carry a
 # check of this shape, for the same reason.)
 #
-# Asked of INCLUDES and MACRO NAMES rather than of any identifier, on purpose: `../src`'s own
-# comments discuss `hw_write8` and the target build at length — that is the seam being documented
-# where it lives — so a grep for identifiers would red on prose. An `#include` line and a `-D` name
-# are code either way.
+# Asked of the PREPROCESSED INCLUDE CLOSURE and of MACRO NAMES rather than of any identifier. Not of
+# identifiers, because `../src`'s own comments discuss `hw_write8` and the target build at length —
+# that is the seam being documented where it lives — so a grep for those would red on prose.
+#
+# AND NOT OF `#include` LINES ANY MORE, WHICH IS WHAT THIS CHECK USED TO READ. It grepped `../src`
+# and `../include` for a DIRECT `#include "zynaps_target.h"` or `"tos.h"`. That was sound while the
+# only shadow was `os.h`; once `hw.h` and `psg.h` became shadows too, a shim header could reach a
+# core THROUGH one of them — a first draft of `shim_include/hw.h` included `zynaps_target.h` for
+# `HW_BUS`, which put `zy_image_base`, `zynaps_main()` and every `zy_*` global into six verified
+# translation units with this gate printing green, because no core contained the line it looked for.
+# `gcc -MM` answers what the compiler actually opened, which is the question the gate was always
+# asking.
+#
+# THE LIST IS WHAT THE CORES MAY REACH, not what they may not: a fifth shadow added to
+# `shim_include/` reds here until someone says so out loud, which is the property the "and nothing
+# else" wording never actually had. `tos.h` is on it because the `os.h` shadow needs the trap
+# primitives; `string.h` because the cores need the three libc names m68k-elf does not ship.
 echo ">> the cores take nothing from this directory"
-SHIM_HEADERS='tos\.h|zynaps_target\.h'
-LEAKS=$(grep -rlE "^[[:space:]]*#[[:space:]]*include[[:space:]]*\"($SHIM_HEADERS)\"" \
-        "$REC/src" "$REC/include" || true)
-[ -z "$LEAKS" ] || { echo "ERROR: a core includes a shim header:"; echo "$LEAKS"; exit 1; }
+CORE_MAY_REACH="hw.h os.h psg.h sched.h string.h tos.h"
+shim_headers_reached() {
+  for source in $CORES; do $CC $CFLAGS $DEF -MM "$source"; done \
+    | tr ' ' '\n' | grep "shim_include/" | sed 's#.*shim_include/##' | sort -u | tr '\n' ' '
+}
+REACHED=$(shim_headers_reached)
+[ -n "$REACHED" ] || {
+  echo "ERROR: the cores reach NO header in shim_include/, which cannot be true — every one of them"
+  echo "       includes os.h. \`gcc -MM\`'s output shape has moved under this gate and a clean"
+  echo "       report from it would mean nothing."; exit 1; }
+[ "$REACHED" = "$CORE_MAY_REACH " ] || {
+  echo "ERROR: the cores' include closure reaches a different set of shim headers than the seam"
+  echo "       declares. A header here that is not a shadow of a KIT header the cores already"
+  echo "       include is the shim leaking into verified code — check what pulled it in, not just"
+  echo "       what includes it directly."
+  echo "         may reach: $CORE_MAY_REACH"
+  echo "         reaches:   $REACHED"
+  exit 1; }
+echo "   $REACHED"
 
 # ...and the build's own `-D` names, which exist nowhere but here. A core reading one would compile
 # differently in the two builds while looking identical in both.

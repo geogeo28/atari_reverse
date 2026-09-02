@@ -202,6 +202,19 @@ static void write_vector(uint32_t vector, uint32_t handler) {
     *(volatile uint32_t *)(uintptr_t)vector = handler;
 }
 
+/* TOS's own 200 Hz counter at $4ba (`_hz_200`), which is the ONE stopwatch that runs across this
+ * program's boot. `zy_vbl_ticks` cannot be it and that is a measurement, not a guess: the boot
+ * loads its files BEFORE it puts its own handler on the vertical-blank vector, so the counter is
+ * still 0 when both loaders have finished (measured — the first draft of the boot clock printed
+ * two zeroes). Timer C drives $4ba, TOS enables it before this program starts, and the boot's
+ * `bset` on the MFP's interrupt-enable B preserves it — which is exactly what the read-modify-write
+ * doors exist for — so it keeps ticking the whole way through. One tick is 5 ms. */
+#define TOS_HZ_200_COUNTER 0x4bau
+
+static uint32_t read_hz_200(void) {
+    return *(volatile uint32_t *)(uintptr_t)TOS_HZ_200_COUNTER;
+}
+
 #pragma GCC diagnostic pop
 
 /* The shifter, in the bus form a C pointer needs. Every address here is a CORE header's constant
@@ -401,6 +414,8 @@ enum {
     REC_IMAGE_SCREEN_BACK, REC_IMAGE_SCREEN_FRONT, REC_PUBLISHED_SCREEN_BASE,
     REC_PHYSBASE_AT_ANCHOR, REC_RAW_VIDEO_BASE_AT_ANCHOR, REC_REZ_AT_ANCHOR,
     REC_VBL_TICKS_AT_ANCHOR, REC_TIMER_B_TICKS_AT_ANCHOR,
+    REC_TICKS_AT_TITLE_ASSETS, REC_TICKS_AFTER_TITLE_ASSETS,
+    REC_TICKS_AT_GAMEPLAY_ASSETS, REC_TICKS_AFTER_GAMEPLAY_ASSETS, REC_TICKS_AT_TEARDOWN,
     REC_PSG_WRITES, REC_PSG_REFUSED, REC_HW_WRITES,
     REC_FILE_OPENS, REC_FILE_OPEN_FAILURES, REC_FILE_REFUSALS,
     REC_FAULT_PEN, REC_SMOKE_VBLS, REC_ANCHOR_HOLD_VBLS, REC_SCREEN_BYTES_WRITTEN,
@@ -1170,7 +1185,29 @@ void zynaps_main(void) {
     g_record[REC_ACIA_BYTES_AFTER_MOUSE_OFF] = zy_acia_bytes_sent;
     ikbd_send_cmd(IKBD_CMD_JOYSTICK_INTERROGATION_MODE);
     g_record[REC_ACIA_BYTES_AFTER_JOYSTICK_MODE] = zy_acia_bytes_sent;
+    /* THE BOOT'S OWN CLOCK, and it is here because no host-side instrument can take it. A
+     * breakpoint would do the job, but the driver that would arm one learns where GEMDOS put the
+     * program by READING A FILE the program writes — and by the time a host poll notices that file,
+     * both loaders have already run (measured: the earliest breakpoint anything outside could arm
+     * landed after the boot, at vertical blank 1,936). The program is the only thing in the room
+     * that knows when it entered its own loaders, so it says so.
+     *
+     * WHAT THE FOUR MARKS SEPARATE is the boot's two halves: the eight title files and their
+     * preshift banks, the fourteen gameplay files and theirs, and whatever came before either.
+     * That is README.md's Unpinned 25 asked as a number a run answers rather than a gap somebody
+     * has to go and measure, and it is what says whether the boot is GEMDOS reading files or this
+     * build's C building banks. The last two stay 0 in a title build, which does not load them.
+     *
+     * EACH LOADER IS BRACKETED BY ITS OWN PAIR, and the second pair does not start where the first
+     * one ended. A draft reused the title loader's end as the gameplay span's start, which billed
+     * everything between the two calls — six record reads, the masked window that installs both
+     * vectors, `publish_screen_base` and `inject_pen_fault` — to `boot_load_gameplay_assets`. It
+     * was right by luck, all of it being far under one 5 ms tick, and would have drifted silently
+     * the moment anything grew in between; an instrument for a question about WHERE the time goes
+     * is the one thing that must not do that. */
+    g_record[REC_TICKS_AT_TITLE_ASSETS] = read_hz_200();
     boot_load_title_assets(zy_image_base);
+    g_record[REC_TICKS_AFTER_TITLE_ASSETS] = read_hz_200();
 
     g_record[REC_IMAGE_SAVED_VBL_VECTOR] = be32(zy_image_base + A_saved_tos_vbl_vector);
     g_record[REC_IMAGE_SCREEN_BACK] = be32(zy_image_base + A_screen_back);
@@ -1240,7 +1277,9 @@ void zynaps_main(void) {
      * stores the image's — the same rule as the pair above, so the window in which TOS still owns
      * the keyboard is the original's window (0x10062 to 0x104e2) and not a shorter or longer one. */
     g_phase = PHASE_TITLE_ASSETS;
+    g_record[REC_TICKS_AT_GAMEPLAY_ASSETS] = read_hz_200();
     boot_load_gameplay_assets(zy_image_base);
+    g_record[REC_TICKS_AFTER_GAMEPLAY_ASSETS] = read_hz_200();
     boot_install_ikbd_isr(zy_image_base);
     {
         uint16_t sr = zy_irq_disable();
@@ -1324,6 +1363,16 @@ void zynaps_main(void) {
     g_record[REC_SCREEN_BYTES_WRITTEN] =
         (uint32_t)write_file(FILE_SCREEN_DUMP, zy_image_base + be32(zy_image_base + A_screen_front),
                              (long)SCREEN_BYTES);
+
+    /* TOS'S 200 Hz CLOCK, ONE LAST TIME, AND IT IS A CHECK RATHER THAN A COST. Timer C drives
+     * `$4ba` and lives in MFP interrupt-enable B beside the channel `boot_enable_interrupts` turns
+     * on; the whole reason the cores spell that store `hw_bset8` instead of `hw_write8` is that a
+     * plain `move.b #$40,$fffa09` would DISABLE Timer C along with every other channel — taking
+     * TOS's clock and the floppy's motor timeout with it. Off target the kit's ledger records that
+     * the store happened and, by its own header's admission, CANNOT hold which bits it preserved.
+     * This is the surface that can: if the boot clobbered Timer C, `$4ba` stops advancing and this
+     * mark comes back equal to the boot's. `smoke.py` compares the two. */
+    g_record[REC_TICKS_AT_TEARDOWN] = read_hz_200();
 
     g_record[REC_TAIL] = ZY_RECORD_TAIL;
     write_file(FILE_STATE_RECORD, g_record, (long)sizeof g_record);

@@ -7,47 +7,46 @@
  * and drives the chips itself. This is that file. `README.md`'s seam table is the inventory; this
  * is the code.
  *
- * WHAT MAKES IT SAFE TO SUBSTITUTE. Each routine below has the same signature and the same CALL
- * SITES as the modelled one, so the cores are compiled unchanged and the differential .so is
- * untouched — `make test` is still 3410 (build.sh checks that no core mentions a name from this
- * directory, and that no symbol here collides with one a core now defines). What changes is only
- * what the access lands on: an ordered ledger off target, a device register here.
+ * WHAT MAKES IT SAFE TO SUBSTITUTE. Each substitute has the same signature and the same CALL SITES
+ * as the modelled routine, so the cores are compiled unchanged and the differential .so is
+ * untouched — `make test` is still 3979 (build.sh measures the cores' whole include closure, and
+ * checks that no symbol here collides with one a core defines). What changes is only what the
+ * access lands on: an ordered ledger off target, a device register here.
  *
  * ...AND WHAT DOES NOT MAKE IT SAFE. A seam prices what the substituted code RETURNS, not what it
  * did to shared state on the way (docs/on-target-execution.md class 11). `hw_write*` is write-only
- * to a device and reads nothing back, so there is no protocol under it to drop. `hw_read8` has one
- * caller (`ikbd_send_cmd` in ../src/input.c) and answers the real 6850 rather than the model's
- * seeded byte, which is the whole point of it being here.
+ * to a device and reads nothing back, so there is no protocol under it to drop. `hw_read8` answers
+ * the real 6850 rather than the model's seeded byte, which is the whole point of it being here.
  *
- * EVERY HARDWARE ADDRESS IS IN THE 24-BIT-BUS FORM ($ffff8800, not $ff8800). The 68000 aliases the
- * two, and the kit's headers spell the SHORT form because that is what a reconstruction's constant
- * says; a C pointer has to name the address the CPU will actually put on the bus. `HW_BUS` is
- * IDEMPOTENT — it only sets the top eight bits — so the four doors below take either spelling and
- * canonicalise once, which is what lets the cores pass $ff8240 and this file's own callers pass
- * $ffff8240 without two address ladders.
+ * THE DOORS THEMSELVES ARE NO LONGER IN THIS FILE. `shim_include/hw.h` and `psg.h` shadow the kit's
+ * headers and define all eight as `static inline`, because a body a call site can see folds the
+ * address arithmetic and the store classification away at a constant address — 205 cycles a call
+ * for a 24-cycle store, before. Those headers carry that argument. What is left here is what a
+ * header cannot hold: the COUNTERS the doors keep, which are the only surface a target run has for
+ * a store, and the one door that is a PROTOCOL rather than a store — the shifter's video base,
+ * whose value is an image offset the machine cannot use as it stands.
  */
 #include <stdint.h>
 
-#include "hw.h"
-#include "os.h"
-#include "psg.h"
+#include "hw.h"            /* the doors, and `zy_note_store`, which is what they count */
+#include "os.h"            /* the file seam's three counters, beside the guards that keep them */
 
-#include "init.h"          /* HW_SHIFTER_MODE — the resolution byte the boot's one store names */
-#include "irq.h"           /* HW_MFP_ISRA / HW_MFP_ISRB and the two bit numbers they acknowledge */
-#include "video.h"         /* the colour block: HW_PALETTE_BASE, PALETTE_PENS, the two widths */
+#include "video.h"         /* HW_SCREEN_BASE_MID / _HIGH — the video base's two bytes */
 #include "zynaps_target.h"
 
 /* ================================================================================================
- * THE FOUR HARDWARE DOORS, IN ONE PLACE. `tools/recreate_kit/include/hw.h` declares all four and
- * states the contract this file is the target half of: "ON TARGET these three names are supplied by
- * the build itself ... an Atari build does not compile src/hw.c and defines each as the real store
- * OF ITS OWN WIDTH". Nothing about them is this project's own — the cores call the KIT's names, and
- * that is why there is no longer a shim header adding a third spelling.
+ * THE HARDWARE DOORS THEMSELVES ARE IN shim_include/hw.h, AND THIS IS WHAT THEY COUNT.
  *
- * WIDTH IS NOT DECORATION. hw.h: "a byte store widened to a word clobbers the register next door
- * (the MFP's timer-A data byte sits beside its in-service register B)". So each door stores through
- * a pointer of its own width and takes `uint32_t` as the kit declares it, letting the store itself
- * do the masking the ledger does off target.
+ * The seven names the kit declares — `hw_read8`, `hw_write8/16/32`, `hw_bset8`/`hw_bclr8`/`hw_and8`
+ * — used to be functions in this file. They are `static inline` in the shadowing header now, for
+ * one measured reason: their callers all pass CONSTANT addresses, and a body a call site can see
+ * folds the whole classification chain away, where a cross-unit call pays 205 cycles for a 24-cycle
+ * store. That header carries the arithmetic and the before/after numbers.
+ *
+ * What stays here is what a header cannot hold: the COUNTERS the doors keep, which are the only
+ * surface a target run has for a store (off target the kit's ordered ledger is), and the ONE door
+ * that is a protocol rather than a store — the shifter's video base, whose value is an image offset
+ * the machine cannot use as it stands.
  * ============================================================================================= */
 
 /* Every store made through these doors, so a run that touched no hardware is separable from one
@@ -74,16 +73,11 @@ volatile uint32_t zy_shifter_mode_writes;
 volatile uint32_t zy_palette_long_writes;
 volatile uint32_t zy_acia_bytes_sent;
 
-/* Where the colour row's LAST LONGWORD starts, so "a long of the palette upload" is a range and not
- * eight comparisons. ../include/video.h owns the base and the pair count.
- *
- * IT IS THE LAST LONGWORD'S ADDRESS AND NOT THE LAST PEN'S, and the difference is a register. A
- * four-byte store beginning at the last PEN ($ff825e) writes $ff825e..$ff8261 — into $ff8260, the
- * RESOLUTION register, which is the class-6 hang this whole file is written against. Admitting such
- * a store as one of the eight legitimate palette longs would leave `palette_long_writes` reading 8
- * over a write that had just changed the screen mode. */
-#define HW_PALETTE_LAST_LONG \
-    (HW_PALETTE_BASE + PALETTE_LONG_BYTES * (SHIFTER_PALETTE_PAIRS - 1))
+/* Read-modify-writes the cores made through `hw_bset8`/`hw_bclr8`/`hw_and8`. The three doors
+ * themselves are in shim_include/hw.h, where a call site can see them; this is the count they
+ * keep, and it is a surface rather than bookkeeping — a build that had somehow linked the kit's
+ * own off-target `src/hw.c` instead would show 0. */
+volatile uint32_t zy_rmw_stores;
 
 /* ================================================================================================
  * THE ADDRESS-KEYED LEDGER THAT IS NOT HERE, and the measurement that took it out.
@@ -116,77 +110,6 @@ volatile uint32_t zy_acia_bytes_sent;
  * taxonomy 13 is the class this belongs to, and atari/README.md's PERFORMANCE section carries the
  * whole table.
  * ============================================================================================= */
-
-static void note_store(uint32_t bus_addr, unsigned width) {
-    zy_hw_writes++;
-    if (bus_addr == HW_BUS(HW_SHIFTER_MODE))
-        zy_shifter_mode_writes++;
-    else if (width == PALETTE_LONG_BYTES
-             && bus_addr >= HW_BUS(HW_PALETTE_BASE)
-             && bus_addr <= HW_BUS(HW_PALETTE_LAST_LONG))
-        zy_palette_long_writes++;
-    else if (bus_addr == HW_BUS(OS_HW_ACIA_DATA))
-        zy_acia_bytes_sent++;
-}
-
-/* ================================================================================================
- * THE READ-MODIFY-WRITES, WHICH A PLAIN STORE IS NOT.
- *
- * `tools/recreate_kit/include/hw.h` states the rule once for every game: "WHAT THIS SEAM DOES NOT
- * GIVE YOU IS A READ-MODIFY-WRITE". Six sites in this reconstruction are one — `andi.b #$fc,$ff8260`
- * (src/init.c), `bclr #0,$fffa0f` and `bclr #6,$fffa11` (src/irq.c's two acknowledges), and
- * `bset #6,$fffa09` / `$fffa15` (src/init.c's `boot_enable_interrupts`, and once more in
- * src/frame.c). Off target the READ half has no modelled answer, so the oracle serves a fabricated 0
- * and both sides store the bare mask or the bare bit; the ledger holds that the store happened, at
- * that register, one byte wide, and cannot hold what it was on top of.
- *
- * ON THE MACHINE THE DIFFERENCE IS THE RUN. `move.b #$40,$fffa09` does not enable MFP channel 6, it
- * DISABLES every other channel of interrupt-enable B — Timer C among them, which is TOS's 200 Hz
- * clock and the floppy driver's motor timeout, so a game that shipped the plain store would lose its
- * disk the moment it enabled its keyboard. `move.b #$0,$fffa0f` acknowledges every in-service
- * channel rather than Timer B's, and `move.b #$0,$fffa11` every one rather than the ACIA's.
- *
- * The three doors below are the target half of the kit's own read-modify-write names, and each is
- * the instruction its name says: the operand is a constant bit or mask and the destination is one
- * `volatile` byte, which is what makes GCC emit `bset`/`bclr`/`andi.b` on the address rather than a
- * load, an arithmetic op and a store. Their signatures are the kit's, `uint32_t` and all.
- *
- * THE READ IS OF A DEVICE REGISTER AND THE WRITE IS BACK TO IT, which on an interrupt-driven MFP is
- * not atomic the way the original's single instruction is: a handler landing between the two halves
- * would have its own change overwritten. Every caller here is already inside an interrupt or inside
- * the boot's masked window, so nothing in this build can take that window — but it is a real
- * difference from the original and README.md's M2 unpinned list carries it rather than this comment
- * quietly absorbing it.
- * ============================================================================================= */
-
-/* Read-modify-writes made through the three doors. It is a surface and not bookkeeping: the whole
- * argument for this file is that the cores' `bclr` really becomes a `bclr` on the machine, and a
- * build that had somehow linked the kit's own off-target `src/hw.c` instead would show 0 here. */
-volatile uint32_t zy_rmw_stores;
-
-void hw_bset8(uint32_t addr, uint32_t bit) {
-    volatile uint8_t *port = (volatile uint8_t *)HW_BUS(addr);
-
-    *port = (uint8_t)(*port | (uint8_t)(1u << bit));
-    note_store(HW_BUS(addr), sizeof (uint8_t));
-    zy_rmw_stores++;
-}
-
-void hw_bclr8(uint32_t addr, uint32_t bit) {
-    volatile uint8_t *port = (volatile uint8_t *)HW_BUS(addr);
-
-    *port = (uint8_t)(*port & (uint8_t)~(1u << bit));
-    note_store(HW_BUS(addr), sizeof (uint8_t));
-    zy_rmw_stores++;
-}
-
-void hw_and8(uint32_t addr, uint32_t mask) {
-    volatile uint8_t *port = (volatile uint8_t *)HW_BUS(addr);
-
-    *port = (uint8_t)(*port & (uint8_t)mask);
-    note_store(HW_BUS(addr), sizeof (uint8_t));
-    zy_rmw_stores++;
-}
 
 /* ================================================================================================
  * THE VIDEO BASE, WHICH IS THE ONE STORE WHOSE VALUE MEANS SOMETHING ELSE HERE.
@@ -224,8 +147,8 @@ static void publish_translated_video_base(void) {
 
     *(volatile uint8_t *)HW_BUS(HW_SCREEN_BASE_MID) = (uint8_t)(machine >> VIDEO_BASE_MID_SHIFT);
     *(volatile uint8_t *)HW_BUS(HW_SCREEN_BASE_HIGH) = (uint8_t)(machine >> VIDEO_BASE_HIGH_SHIFT);
-    note_store(HW_BUS(HW_SCREEN_BASE_MID), sizeof (uint8_t));
-    note_store(HW_BUS(HW_SCREEN_BASE_HIGH), sizeof (uint8_t));
+    zy_note_store(HW_BUS(HW_SCREEN_BASE_MID), sizeof (uint8_t));
+    zy_note_store(HW_BUS(HW_SCREEN_BASE_HIGH), sizeof (uint8_t));
     zy_video_base_offset = g_video_base_offset;
     zy_video_base_published = machine;
     zy_video_base_publishes++;
@@ -244,72 +167,43 @@ static void publish_translated_video_base(void) {
  * the count that says the operation really happens on the machine.
  * ============================================================================================= */
 
-/* 1 when the byte store was the shifter's VIDEO BASE and has been translated and made; 0 when it is
- * an ordinary store. A `switch` rather than two `if`s so that the MISS — which is every other byte
- * store the program makes, inside an interrupt with about a thousand cycles to live — costs one
- * compare chain against immediates and no call. */
-static int video_base_store(uint32_t addr, uint32_t value) {
-    switch (HW_BUS(addr)) {
-    case HW_BUS(HW_SCREEN_BASE_MID):
+/* THE ONE BYTE STORE THAT IS A PROTOCOL AND NOT A STORE, which is why it stays here while the
+ * other six doors moved into shim_include/hw.h. `hw_write8` recognises the shifter's two base
+ * bytes at their call site — both constants, so the recognition itself folds away — and hands them
+ * here, where the accumulated offset lives.
+ *
+ * OUT OF LINE ON PURPOSE. It runs twice a frame, so nothing about its cost is worth inlining, and
+ * keeping the offset's only writer in one translation unit is what makes `g_video_base_offset`
+ * `static`.
+ *
+ * IT TESTS FOR BOTH ADDRESSES AND FALLS BACK TO AN ORDINARY STORE, which is what the `switch` this
+ * replaced did with its `default:` arm. `hw_write8`'s guard names these two registers and nothing
+ * else, so the third arm is unreachable through it today — but this is a GLOBAL now, where the
+ * `switch` was `static` in the file that owned its only caller, and an `else` that assumed HIGH
+ * would take any other address, OR it into bits 23-16 of the offset and point the shifter at
+ * `zy_image_base + garbage`. That failure is invisible to the record's own check, which compares
+ * `zy_video_base_published` against what this function computed — it would agree with the garbage. */
+void zy_store_video_base_byte(uint32_t bus_addr, uint32_t value) {
+    if (bus_addr == HW_BUS(HW_SCREEN_BASE_MID))
         g_video_base_offset = (g_video_base_offset & ~(uint32_t)VIDEO_BASE_MID_MASK)
                               | ((value & 0xffu) << VIDEO_BASE_MID_SHIFT);
-        publish_translated_video_base();
-        return 1;
-    case HW_BUS(HW_SCREEN_BASE_HIGH):
+    else if (bus_addr == HW_BUS(HW_SCREEN_BASE_HIGH))
         g_video_base_offset = (g_video_base_offset & ~(uint32_t)VIDEO_BASE_HIGH_MASK)
                               | ((value & 0xffu) << VIDEO_BASE_HIGH_SHIFT);
-        publish_translated_video_base();
-        return 1;
-    default:
-        return 0;
-    }
-}
-
-void hw_write8(uint32_t addr, uint32_t value) {
-    if (video_base_store(addr, value))
+    else {
+        *(volatile uint8_t *)bus_addr = (uint8_t)value;
+        zy_note_store(bus_addr, sizeof (uint8_t));
         return;
-    *(volatile uint8_t *)HW_BUS(addr) = (uint8_t)value;
-    note_store(HW_BUS(addr), sizeof (uint8_t));
+    }
+    publish_translated_video_base();
 }
 
-void hw_write16(uint32_t addr, uint32_t value) {
-    *(volatile uint16_t *)HW_BUS(addr) = (uint16_t)value;
-    note_store(HW_BUS(addr), sizeof (uint16_t));
-}
-
-void hw_write32(uint32_t addr, uint32_t value) {
-    *(volatile uint32_t *)HW_BUS(addr) = value;
-    note_store(HW_BUS(addr), sizeof (uint32_t));
-}
-
-/* The READ half, and it has exactly one caller: `ikbd_send_cmd` (../src/input.c) spinning on the
- * 6850's transmitter-empty bit. Off target the kit answers a byte the case DECLARED, so the spin
- * leaves on its first poll; here it answers the chip, and the spin is the original's own — see
- * shim_include/tos.h's note on why this build no longer carries a bounded copy of that routine.
- *
- * NOT COUNTED. A read leaves the machine exactly as it found it, so there is nothing for a
- * read-back surface to hold, and a poll count would be a number about the host's timing rather than
- * about the program. What says the spin ended is `zy_acia_bytes_sent`, above. */
-uint8_t hw_read8(uint32_t addr) {
-    return *(volatile uint8_t *)HW_BUS(addr);
-}
-
-/* ================================================================================================
- * The YM2149's two ports — `tools/recreate_kit/src/psg.c`'s off-target ledger, for real.
- *
- * `psg.h`: "Off-target only ... a build for the real Atari writes the ports itself and does not
- * compile src/psg.c." The one caller is `flush_shadow` in ../src/sound.c, which pushes registers
- * 10..0 every vertical blank (and 13..0 from `sound_reset_psg`) — so on target this runs from
- * inside the interrupt, in supervisor mode, which is where $ff8800 is reachable at all.
- * ============================================================================================= */
-#define HW_PSG_SELECT HW_BUS(OS_PSG_PORT_SELECT)
-#define HW_PSG_DATA   HW_BUS(OS_PSG_PORT_DATA)
-
-/* Writes this build has made, and writes it REFUSED. The kit's `psg_port_write` refuses a register
- * outside 0..15 rather than masking it down, because the ST's select latch decodes four bits and a
- * driver that put anything in the upper nibble meant something the chip does not do. Masking here
- * would leave a mutated driver silently steering a real chip; counting the refusal makes it a
- * number STATE.BIN carries. */
+/* The YM2149's two ports are shim_include/psg.h's door, for `flush_shadow` in ../src/sound.c — and
+ * these are the writes it made and the writes it REFUSED. A register outside 0..15 is refused
+ * rather than masked down, because the ST's select latch decodes four bits and a driver that put
+ * anything in the upper nibble meant something the chip does not do; masking would leave a mutated
+ * driver silently steering a real chip, and counting the refusal makes it a number STATE.BIN
+ * carries. */
 volatile uint32_t zy_psg_writes;
 volatile uint32_t zy_psg_refused;
 
@@ -319,21 +213,6 @@ volatile uint32_t zy_psg_refused;
 volatile uint32_t zy_file_opens;
 volatile uint32_t zy_file_open_failures;
 volatile uint32_t zy_file_refusals;
-
-void psg_port_write(unsigned reg, uint8_t value) {
-    if (reg >= OS_PSG_NREGS) {
-        zy_psg_refused++;
-        return;
-    }
-    /* `move.b <reg>,$ff8800` then `move.b <val>,$ff8802` — the original's own pair, in its order.
-     * NOT bracketed by an interrupt mask: the select latch and the data port are two stores with a
-     * window between them, and the original leaves that window open. Nothing else in this build
-     * writes the chip while the handler runs — the shim's only other PSG traffic is the teardown
-     * silence, made after the vertical-blank vector has already been handed back to TOS. */
-    hw_write8(HW_PSG_SELECT, (uint8_t)reg);
-    hw_write8(HW_PSG_DATA, value);
-    zy_psg_writes++;
-}
 
 /* ================================================================================================
  * The freestanding libc the cores need. m68k-elf ships none, and `-ffreestanding -nostdlib` is

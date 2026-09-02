@@ -138,8 +138,8 @@ bash atari/build.sh title && python3 atari/smoke.py title
 `atari/` cross-compiles the **verified cores, unmodified** into a GEMDOS `ZYNAPS.PRG` and boots it
 under Hatari to the game's title picture with its music playing, then judges it against the shipped
 binary on the six surfaces of [`docs/on-target-execution.md`](../../../docs/on-target-execution.md).
-The seam is the include path (`atari/shim_include/` shadows the kit's `os.h` and `hw.h`) plus two
-omitted sets of translation units, so the differential `.so` is untouched and `make test` is
+The seam is the include path (`atari/shim_include/` shadows the kit's `os.h`, `hw.h`, `psg.h` and
+`sched.h`) plus two omitted sets of translation units, so the differential `.so` is untouched and `make test` is
 unchanged — which `atari/build.sh` measures rather than asserts.
 
 [`atari/README.md`](atari/README.md) is canonical: the seam inventory, what each surface measured,
@@ -150,8 +150,10 @@ pointer from the per-function tables.
 `atari/profile.py` clocks both binaries on one machine — the frame cadence off two repeating
 debugger breakpoints, the per-routine cycles off Hatari's CPU profiler — and `atari/README.md`'s
 PERFORMANCE section carries the table. The short version: the frame differential is byte-identical
-and the frame takes **three times as long**, 5.73 vertical blanks against the original's 2. The
-regression guard is `smoke.py game`'s `check_the_pacing`, on the timelines surface.
+and the frame takes **just under three times as long**, 5.66 vertical blanks against the original's
+2, with the render path being C where the original is `movem.l` accounting for all of it — the
+shim's own share was swept out on 2026-09-01 for 44,349 cycles a frame and the mode did not move.
+The regression guard is `smoke.py game`'s `check_the_pacing`, on the timelines surface.
 
 ```bash
 python3 atari/profile.py frames             # our cadence: vblanks per frame, work, wait

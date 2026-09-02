@@ -126,7 +126,7 @@ TOS_BOOT_REZ = 0
 
 # `movem.l #$00ff,$ff8240.l` — ../include/video.h's SHIFTER_PALETTE_PAIRS: the eight LONGWORDS one
 # whole colour row goes up as, which is also the width that tells the core's upload apart from the
-# shim's word-wide pen writes (zynaps_backend.c keys `palette_long_writes` on it).
+# shim's word-wide pen writes (shim_include/hw.h's `zy_note_store` keys `palette_long_writes` on it).
 SHIFTER_PALETTE_PAIRS = 8
 
 # EVERY HARDWARE STORE OF THE RUN, PREDICTED EXACTLY rather than merely being non-zero. The three
@@ -145,7 +145,7 @@ VIDEO_BASE_STORES_PER_CALL = 2
 # EVERY OTHER STORE THE CORES MAKE, and all of them are inside `boot_load_title_assets`:
 # `andi.b #$fc,$ff8260` (0x10056), the two video-base calls at the tail of `screen_flip_buffers`
 # (0x1297a) and the eight palette longwords of `set_palette_title` (0x153ae). They used to be sinks
-# the shim replayed; the kit's write ledger made them real stores, and on target zynaps_backend.c is
+# the shim replayed; the kit's write ledger made them real stores, and on target shim_include/hw.h is
 # what they land through.
 CORE_VIDEO_BASE_CALLS = 2
 CORE_HW_WRITES = (IKBD_BOOT_COMMANDS + 1
@@ -257,6 +257,13 @@ RECORD_FIELDS = (
      "image_screen_back", "image_screen_front", "published_screen_base",
      "physbase_at_anchor", "raw_video_base_at_anchor", "rez_at_anchor",
      "vbl_ticks_at_anchor", "timer_b_ticks_at_anchor",
+     # The boot's own clock, in TOS 200 Hz ticks: each of the two asset loaders bracketed
+     # by its OWN entry and exit mark, so neither span bills the other's work (the
+     # gameplay pair is 0 in a title build, which does not load them). zynaps_main.c says
+     # why the program takes this measurement itself, and why the counter is $4ba rather
+     # than its own vblanks.
+     "ticks_at_title_assets", "ticks_after_title_assets",
+     "ticks_at_gameplay_assets", "ticks_after_gameplay_assets", "ticks_at_teardown",
      "psg_writes", "psg_refused", "hw_writes",
      "file_opens", "file_open_failures", "file_refusals",
      "fault_pen", "smoke_vbls", "anchor_hold_vbls", "screen_bytes_written"]
@@ -1000,7 +1007,7 @@ def check_the_program_finished(ours):
     # SO BE HONEST ABOUT WHAT IT PINS. `ikbd_send_cmd` has ONE return path on target, taken straight
     # after the store, so "returned without storing" is not a state these two can be in. What they
     # do hold is that the boot made exactly TWO of them, in order, and that `note_store`'s ACIA key
-    # (zynaps_backend.c) names the register the core actually wrote — the same cross-check the
+    # (shim_include/hw.h) names the register the core actually wrote — the same cross-check the
     # shifter-mode and palette tallies get from their own asserted counts.
     boot_commands = ("acia_bytes_after_mouse_off", "acia_bytes_after_joystick_mode")
     assert len(boot_commands) == IKBD_BOOT_COMMANDS
@@ -1053,7 +1060,7 @@ def check_the_boot_slice_did_its_work(ours):
                         f"should be {GAME_SCREEN_FRONT:#x} / {GAME_SCREEN_BACK:#x}")
 
     # THE TWO STORES THE CORES MAKE THAT THE MACHINE CANNOT BE ASKED ABOUT AFTERWARDS, counted at
-    # the hardware door (zynaps_backend.c). Off target the kit's ordered write ledger holds both;
+    # the hardware door (shim_include/hw.h). Off target the kit's ordered write ledger holds both;
     # here they are counts, and each is keyed on something the shim's own traffic cannot forge — the
     # resolution byte's address, and the LONGWORD width of `set_palette_title`'s `movem` upload.
     #
@@ -1971,7 +1978,7 @@ def check_the_game_ran(ours, samples=None):
                         f"store in the shipped program installs it")
     if record["rmw_stores"] < 1:
         problems.append("no read-modify-write reached the machine — the cores' hw_bclr8/hw_bset8/"
-                        "hw_and8 went somewhere other than zynaps_backend.c, and the MFP enables "
+                        "hw_and8 went somewhere other than shim_include/hw.h, and the MFP enables "
                         "and acknowledges would be plain stores that clear bits TOS owns")
     # ONE PUBLISH PER FRAME AT LEAST: `screen_flip_buffers` runs once a frame, and the door
     # republishes on each of its two byte stores, so a run that flipped every frame cannot be under
@@ -2038,36 +2045,51 @@ VBL_HZ = 50
 # frames. `check_the_pacing` refuses a run whose frame count is not this one instead of applying
 # them anyway — a longer run reaches a second life, whose 4-vblank frames are a different mixture.
 PACING_BASELINE_FRAMES = 300
-# What this tree measures, and the ceiling a run must stay under. MEASURED at 5.73 mean vblanks a
-# frame over those 300 frames — 41 at 4, 258 at 6, one over — and measured TWICE to the second
-# decimal, because the tolerance rests on that: the 300 frames are pinned (the same random state,
-# the same entity table, a neutral stick every frame), so the cadence is REPRODUCIBLE and this is
-# not a noise band.
+# What this tree measures, and the ceiling a run must stay under. MEASURED over those 300 pinned
+# frames at 5.65 and 5.66 mean vblanks a frame — [4x52 6x248] and [4x51 6x249], none over — across
+# four runs, two `game` and two `gamefault`.
 #
-# THE CEILING IS 5.85, AND THE ARITHMETIC IS WHY — a first draft said 6.0 ("every frame at today's
-# worst ordinary bucket") and that was measured to be forty times looser than its own justification
-# claimed. 300 frames at 5.73 is 1,719 vertical blanks; a 6.0 ceiling is 1,800, so the slack is 81
-# vblanks — FORTY of the 41 four-vblank frames slipping to 6, i.e. the whole fast bucket
-# disappearing, and the mean would still pass at 5.99. 5.85 is 1,755, a slack of 36 vblanks or
-# EIGHTEEN frames slipping one release slot: enough that no single frame reddens a run, tight enough
-# that a systematic slowdown cannot hide under it.
+# THE RUN IS NOT QUITE DETERMINISTIC AND AN EARLIER DRAFT OF THIS PARAGRAPH SAID IT WAS. The 300
+# frames are pinned in what the program computes (the same random state, the same entity table, a
+# neutral stick every frame) and the frame differential is byte-identical every time; what moves is
+# ONE FRAME's release slot, 4 or 6, and it moves because `A_raster_phase` is free-running and a
+# frame can arrive with it already at READY. So the spread is a frame, not a noise band, and the
+# ceiling is set off the WORST of the four rather than the mean of them.
 #
-# It is a tight number and it is meant to be. The run is deterministic — 5.73 to the second decimal
-# on the `game` build twice and on `gamefault` once — so the margin is for a real change, not for
-# noise. It is also why the frame count is pinned above: the `play` build's longer run reaches a
-# second life and measures 7.38, which is not a regression and would be read as one.
+# THE CEILING IS 5.78, AND THE ARITHMETIC IS WHY. The rule is a fixed slack of 36 vertical blanks
+# over the measured run — EIGHTEEN frames slipping one release slot — which is enough that no
+# single frame reddens a run and tight enough that a systematic slowdown cannot hide under it. 300
+# frames at the worst measured 5.66 is 1,698 vblanks, so the ceiling is 1,734 and the mean it
+# allows is 5.78. The number moves DOWN as the port gets faster and never up: the first draft said
+# 6.0 ("every frame at today's worst ordinary bucket") and was measured to be forty times looser
+# than its own justification claimed — 81 vblanks of slack, the whole fast bucket able to disappear
+# with the mean still passing at 5.99 — and 5.85 was this same arithmetic against the 5.73 the tree
+# measured before the shim's hardware doors were inlined.
+#
+# The frame count is pinned above for a related reason: the `play` build's longer run reaches a
+# second life and measures 5.84 over 555 frames, which is not a regression and would be read as one.
 #
 # THE `gamefault` CONTROL WAS MEASURED AGAINST THE SAME CEILING rather than exempted from it,
 # because this check sits in `mode_game`'s FAULT-BLIND set and a tolerance that had only ever seen
-# one mode would be one the control could redden by accident. Measured: `gamefault` gives 5.73 and
-# [4x41 6x258 7+x1], the same histogram to the frame — the dropped section-chain step is a one-off
+# one mode would be one the control could redden by accident. Measured: `gamefault` gives 5.66 and
+# [4x51 6x249], inside `game`'s own one-frame spread — the dropped section-chain step is a one-off
 # panel repaint, not per-frame work, so it moves what is DRAWN and not what a frame costs.
-PACING_MEAN_CEILING_VBLS = 5.85
-# ...and the share of frames that may reach the histogram's last slot (seven vblanks or more).
-# MEASURED at 1 of 300 — the section's first pass, which draws the whole playfield — so the
-# allowance is what keeps that one frame from reddening a run while a systematic slip cannot hide
-# under it.
-PACING_OVERFLOW_SHARE = 0.02
+PACING_MEAN_CEILING_VBLS = 5.78
+# ...and how many frames may reach the histogram's last slot (seven vblanks or more).
+#
+# IT IS AN ABSOLUTE COUNT AND IT USED TO BE A SHARE, and the share was forty times looser than the
+# sentence next to it claimed — the same defect the mean's first draft had. `PACING_OVERFLOW_SHARE
+# = 0.02` over the pinned 300 frames admits SIX such frames, a visible per-second hitch, while its
+# comment said the allowance existed to keep ONE frame from reddening a run. Six of 300 in the 7+
+# slot also passes the mean arm (six extra vblanks against 36 of slack moves 5.66 to 5.68), so
+# nothing else would have caught it.
+#
+# ONE is the measurement: the section's first pass, which draws the whole playfield, was the single
+# 7-vblank frame when this arm was written. Both game modes measure 0 of 300 now that the hardware
+# doors are inlined. It stays at one rather than going to zero because that pass is still the
+# heaviest frame in the run and is now only just inside the 6-vblank slot; a zero-tolerance floor
+# would redden a correct run the first time it crossed back.
+PACING_OVERFLOW_FRAMES = 1
 
 # ATTRACT MODE'S TIMER B IS THE INTERRUPT THIS PORT IS MOST EXPOSED TO, and its expected rate is
 # arithmetic rather than a measurement: `attract_program_rasterbar_timer` puts Timer B in
@@ -2178,9 +2200,9 @@ def check_the_pacing(ours):
                         f"original's own is {PACING_RELEASE_PERIOD_VBLS}; see README.md's "
                         f"PERFORMANCE section)")
     overflowed = record["frame_vbls_over"]
-    if overflowed > PACING_OVERFLOW_SHARE * frames:
+    if overflowed > PACING_OVERFLOW_FRAMES:
         problems.append(f"{overflowed} of {frames} frames took {PACING_SLOTS - 1} vblanks or more, "
-                        f"past the {PACING_OVERFLOW_SHARE:.0%} allowance")
+                        f"past the {PACING_OVERFLOW_FRAMES}-frame allowance")
 
     # THE ATTRACT SCREEN'S TIMER B, as a share of what the chip offered over the same vblanks.
     attract_vbls = record["vbl_dispatch_attract"]
@@ -2264,6 +2286,8 @@ def mode_game(mode, out_dir, machine, tos_rom, keep):
             # frame takes, so a pacing check that moved under it would be measuring the wrong
             # thing. Its own control is the busy-wait one README.md's Performance section describes.
             "timelines (the frame cadence and the interrupt service rates)": check_the_pacing(ours),
+            "hardware-state vector (TOS's 200 Hz clock survived the boot)":
+                check_the_boot_clock(ours["record"]),
         }
         # THERE IS NO TIMELINE ARM HERE, AND IT WAS TRIED. M1's `check_timeline` cuts the PSG trace
         # into the sound driver's own descending 10..0 tick frames and compares the first 64 as a
@@ -2302,6 +2326,7 @@ def report_game(mode, fault_sensitive, fault_blind, ours, original, machine, sam
           f"{record['unknown_vector_halts']} unknown-vector halt(s)")
     print(f"   samples {samples}; {record['rmw_stores']} read-modify-writes made, "
           f"{record['mfp_settle_restores']} Timer B data restore(s) in the four read-back spins")
+    print_the_boot_clock(record)
     print("   " + pacing_line(record))
     for group, checks in (("must PASS", fault_blind),
                           ("must FAIL" if control else "must PASS", fault_sensitive)):
@@ -2327,6 +2352,77 @@ def report_game(mode, fault_sensitive, fault_blind, ours, original, machine, sam
 
     print("-- OK" if not failures else f"-- FAILED: {len(failures)} check(s)")
     return 0 if not failures else 1
+
+
+# TOS's `_hz_200` ticks 200 times a second, so a span in ticks is that many times five milliseconds.
+HZ_200_TICK_MS = 5
+
+
+def boot_clock_marks(record):
+    """The program's five `$4ba` marks in the order it took them, as (what it bracketed, tick).
+
+    The gameplay pair is 0 in a title build, which does not load them; it is dropped rather than
+    reported as a span running backwards from the title loader's end."""
+    marks = [("entering the title loader", record["ticks_at_title_assets"]),
+             ("leaving it", record["ticks_after_title_assets"])]
+    if record["ticks_at_gameplay_assets"]:
+        marks += [("entering the gameplay loader", record["ticks_at_gameplay_assets"]),
+                  ("leaving it", record["ticks_after_gameplay_assets"])]
+    return marks + [("the hand-back", record["ticks_at_teardown"])]
+
+
+def check_the_boot_clock(record):
+    """TOS's 200 Hz clock was live when the boot started and STILL LIVE at the hand-back.
+
+    THE SPANS THEMSELVES ARE REPORTED AND NOT JUDGED, and that half is deliberate: a boot time is a
+    COST, no value of it makes the program wrong, and a threshold picked off one machine's Hatari
+    would redden on a faster host for a reason that is not about this build. `atari/profile.py` is
+    where cost is judged.
+
+    WHAT IS JUDGED IS THAT THE CLOCK RAN, and that is a behaviour rather than a cost — it is the
+    surface for the defect the read-modify-write doors exist to prevent. Timer C drives `$4ba` and
+    sits in MFP interrupt-enable B beside the channel `boot_enable_interrupts` turns on; a plain
+    `move.b #$40,$fffa09` there would enable that channel and DISABLE Timer C with it, taking TOS's
+    200 Hz clock and the floppy driver's motor timeout. The kit's own `hw.h` says the write ledger
+    holds that the store happened and CANNOT hold which bits it preserved, so until this arm the
+    project had nothing that could see the difference: the game runs, the frames are byte-identical,
+    and the clock is simply dead. A run that clobbered Timer C leaves every mark below equal.
+
+    The other two arms are about the instrument rather than the program: a first mark of 0 means
+    `$4ba` was read at the wrong address or the wrong width (TOS has been up for seconds by then,
+    so a live counter is in the thousands), and marks out of order mean the program took them in a
+    different order from the one this file prints."""
+    problems = []
+    marks = boot_clock_marks(record)
+    if not marks[0][1]:
+        problems.append(f"the boot's first $4ba mark is {marks[0][1]} — TOS's 200 Hz counter reads "
+                        f"zero seconds after a boot that takes tens of them, so the address or the "
+                        f"width of the read is wrong, not the timing")
+    for (earlier_name, earlier), (later_name, later) in zip(marks, marks[1:]):
+        if later < earlier:
+            problems.append(f"$4ba went backwards between {earlier_name} ({earlier}) and "
+                            f"{later_name} ({later})")
+    if marks[-1][1] == marks[0][1]:
+        problems.append(f"$4ba read {marks[0][1]} entering the title loader and the same at the "
+                        f"hand-back — TOS's 200 Hz clock stopped during the run, which is what a "
+                        f"`bset` on $fffa09 spelt as a plain store does to Timer C (and to the "
+                        f"floppy's motor timeout with it)")
+    return problems
+
+
+def print_the_boot_clock(record):
+    """Where the boot's milliseconds went, out of the program's own marks at $4ba.
+
+    It answers README.md's Unpinned 25 — whether the boot is GEMDOS reading files or this build's C
+    building preshift banks — on every run, rather than by a measurement somebody has to go and
+    take. Each loader is bracketed by its own pair, so neither span bills the other's work."""
+    marks = boot_clock_marks(record)
+    spans = [(f"{'title' if index == 0 else 'gameplay'} assets",
+              marks[index * 2 + 1][1] - marks[index * 2][1])
+             for index in range(len(marks) // 2)]
+    said = ", ".join(f"{name} {ticks * HZ_200_TICK_MS} ms" for name, ticks in spans)
+    print(f"   boot: {said} (TOS was {marks[0][1] * HZ_200_TICK_MS} ms in when the first loader "
+          f"ran, {marks[-1][1] * HZ_200_TICK_MS} ms at the hand-back)")
 
 
 def main():
@@ -2405,6 +2501,8 @@ def main():
             "trap ledger": check_trap_ledger(ours, original),
             "memory (the framebuffer)": check_memory(ours, original),
             "timelines (the PSG tick frames)": check_timeline(ours, original),
+            "hardware-state vector (TOS's 200 Hz clock survived the boot)":
+                check_the_boot_clock(ours["record"]),
         }
 
         if options.keep:
@@ -2428,6 +2526,7 @@ def report(mode, colour_sensitive, colour_blind, ours, original, machine):
     print(f"-- {mode} on {machine}: image base {ours['record']['image_base']:#x}, the original at "
           f"{original['base']:#x}, {ours['record']['vbl_ticks_at_anchor']} vblanks and "
           f"{ours['record']['psg_writes']} PSG writes at the anchor")
+    print_the_boot_clock(ours["record"])
     # THE RAW PENS, unmasked, because PEN_MASK is three bits a gun and an STE implements FOUR
     # (docs/on-target-execution.md class 8). Every comparison in this file masks — it has to, or an
     # STF's bus noise would fail it — so the extra bit is invisible to all of them, and printing the
