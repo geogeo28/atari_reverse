@@ -92,4 +92,28 @@ void draw_bcd_number(uint8_t *image, uint32_t row_base, uint16_t rightmost_colum
 uint32_t draw_text_record(uint8_t *image, uint32_t row_base, uint32_t record,
                           uint16_t *end_column);
 
+/* ================================================================================================
+ * THE ASM TWINS — src/asm/text.S, substituted for the three routines below on the TARGET build.
+ *
+ * The same seam include/scroll.h and include/sprite.h carry, with the same guarantees: the C stays
+ * the reference and stays compiled (test/test_text.py and test/test_hud.py prove it equal to the
+ * original, test/test_asm_text.py proves each twin equal to it, both byte for byte over the whole
+ * image), so the substitution changes the program's SPEED and nothing else.
+ *
+ * `draw_score_panel_asm` IS DECLARED HERE THOUGH ITS C CORE LIVES IN hud.h, because in the original
+ * the three are ONE routine: 0x136c8 has no `rts` and runs off its own end into draw_bcd_number at
+ * 0x136f6, which reaches draw_char at 0x13710 by a `bsr`. One `.S` transcribes all three and one
+ * seam macro switches all three, so splitting the declaration across two headers would only hide
+ * that. hud.h's own declaration of `draw_score_panel` points here.
+ * ============================================================================================= */
+#ifdef ZY_ASM_TEXT
+void draw_score_panel_asm(uint8_t *image, uint32_t buffer);
+void draw_char_asm(uint8_t *image, uint32_t row_base, uint16_t column, uint16_t character);
+void draw_bcd_number_asm(uint8_t *image, uint32_t row_base, uint16_t rightmost_column,
+                         uint32_t digits);
+#define ZY_TEXT(fn) fn##_asm
+#else
+#define ZY_TEXT(fn) fn
+#endif
+
 #endif /* ZYNAPS_TEXT_H */

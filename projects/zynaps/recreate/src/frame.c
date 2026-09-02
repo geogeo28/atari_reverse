@@ -33,6 +33,7 @@
 #include "scroll.h"
 #include "sound.h"
 #include "sprite.h"
+#include "text.h"      /* for ZY_TEXT(), the seam draw_score_panel's asm twin is switched by */
 #include "video.h"
 #include "weapon.h"
 
@@ -80,7 +81,7 @@ static void panel_redraw_weapon_icon(uint8_t *image) {
 }
 
 static void frame_panel_repaint(uint8_t *image) {
-    draw_score_panel(image, be32(image + A_screen_front));
+    ZY_TEXT(draw_score_panel)(image, be32(image + A_screen_front));
     if (image[A_panel_redraw_mask] & (1u << PANEL_REDRAW_LIVES_BIT))
         draw_lives_icons(image);
     image[A_explosion_phase_odd] = (uint8_t)~image[A_explosion_phase_odd];
@@ -762,7 +763,7 @@ void frame_draw_objects_and_collide(uint8_t *image) {
 
         image[object + ENTITY_PIXEL_HIT] = 0;
         if (image[object + ENTITY_ALIVE])
-            draw_sprite_masked_collide(image, object, object + ENTITY_PIXEL_HIT);
+            ZY_SPRITE(draw_sprite_masked_collide)(image, object, object + ENTITY_PIXEL_HIT);
     }
 
     for (index = 0; index < COLLISION_MASK_LONGS; index++)

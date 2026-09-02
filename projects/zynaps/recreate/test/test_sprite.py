@@ -477,20 +477,31 @@ def _entity_record(x, y, height, sprite):
     return bytes(record)
 
 
-def _blit_case(x, y, height, half_frame, seed, poison=False):
-    """Call draw_sprite_masked(A2 = the record, D2 = half a preshift frame) at its own entry.
+def blit_pokes(x, y, height, seed):
+    """The staging one `draw_sprite_masked` case needs: the sprite arena, the framebuffer, the
+    record and the `screen_back` pointer that sends the blit there.
 
     THE RECORD IS CONSTRUCTED, and it has to be: entity_table and entity_boss_parts are bss, so the
     binary carries no record to seed from — the game writes them at run time. What the cases do NOT
     do is invent a shape the game cannot produce: every field is one the spawner sets, `half_frame`
     is one of the two values the two call sites load, and the coordinates walk the same playfield
     box the routine clips against.
+
+    Public because `test_asm_sprite.py` drives the ASM TWIN over these same cases — a second,
+    parallel staging there would be a second thing to keep true, and the twin has to match the C on
+    the C's OWN cases rather than on cases chosen to suit it.
     """
     pokes = abi.seed_spans(seed, ((BLIT_SPRITE, BLIT_SPRITE + BLIT_SPRITE_BYTES),
                                 (abi.SCREEN_BACK, abi.SCREEN_BACK + SCREEN_BYTES)),
                            guard=abi.GUARD_BYTES)
     pokes[BLIT_ENTITY] = _entity_record(x, y, height, BLIT_SPRITE)
     pokes[A_SCREEN_BACK] = abi.SCREEN_BACK.to_bytes(4, "big")
+    return pokes
+
+
+def _blit_case(x, y, height, half_frame, seed, poison=False):
+    """Call draw_sprite_masked(A2 = the record, D2 = half a preshift frame) at its own entry."""
+    pokes = blit_pokes(x, y, height, seed)
     regs = {"a2": BLIT_ENTITY, "d2": half_frame, "_pokes": pokes}
     diffs, _ = differential(ENTRY_DRAW_SPRITE_MASKED, regs,
                             lambda lib, buf: lib.g_draw_sprite_masked(buf, BLIT_ENTITY, half_frame),
@@ -588,7 +599,7 @@ BLIT_FUZZ_CASES = 200
 BLIT_FUZZ_MIN_HEIGHT = 1
 
 
-def _blit_fuzz_cases():
+def blit_fuzz_cases():
     rng = random.Random(ENTRY_DRAW_SPRITE_MASKED)     # seeded ONCE — every chunk replays the stream
     for i in range(BLIT_FUZZ_CASES):
         yield (i,
@@ -601,7 +612,7 @@ def _blit_fuzz_cases():
 
 @pytest.mark.parametrize("chunk", range(BLIT_FUZZ_CHUNKS))
 def test_draw_sprite_masked_fuzz(chunk):
-    for i, x, y, height, half_frame, seed in _blit_fuzz_cases():
+    for i, x, y, height, half_frame, seed in blit_fuzz_cases():
         if i % BLIT_FUZZ_CHUNKS != chunk:
             continue
         _blit_case(x, y, height, half_frame, seed)
@@ -855,8 +866,10 @@ COLLIDE_FLAG_SEED = 0x5a
 COLLIDE_HEIGHT = 32              # the asteroid frame's rows; room either side of every clip edge
 
 
-def _collide_sprite(rows, mask, planes, phase_slots=PRESHIFT_SLOTS):
+def collide_sprite(rows, mask, planes, phase_slots=PRESHIFT_SLOTS):
     """A preshift bank of `phase_slots` slots, every row of every slot (mask, planes x 4).
+
+    Public because `test_asm_sprite.py` builds the same sprites for the twin.
 
     Built rather than seeded so that a case can say what the collision test should SEE: an opaque
     sprite (mask 0) over background, or a wholly transparent one (mask 0xffff, planes 0) that must
@@ -866,13 +879,13 @@ def _collide_sprite(rows, mask, planes, phase_slots=PRESHIFT_SLOTS):
     return row * (rows * phase_slots)
 
 
-def _collide_case(x, y, height, seed, sprite_bytes=None, screen_bytes=None,
-                  hit_flag=None, poison=False):
-    """Call draw_sprite_masked_collide(A2 = the record, A5 = the flag) at its own entry.
+def collide_staging(x, y, height, seed, sprite_bytes=None, screen_bytes=None, hit_flag=None):
+    """(the pokes, the flag address) for one `draw_sprite_masked_collide` case.
 
-    The record is constructed for the same reason `_blit_case`'s is — `entity_table` is bss — and
+    The record is constructed for the same reason `blit_pokes`'s is — `entity_table` is bss — and
     within the same limits: every field is one a spawner writes, and the coordinates walk the world
-    box the three x bands and the two y clips divide up.
+    box the three x bands and the two y clips divide up. Public for `test_asm_sprite.py`, which
+    drives the twin over exactly these cases.
     """
     flag = BLIT_ENTITY + ENTITY_PIXEL_HIT if hit_flag is None else hit_flag
     spans = [(BLIT_SPRITE, BLIT_SPRITE + BLIT_SPRITE_BYTES),
@@ -886,6 +899,13 @@ def _collide_case(x, y, height, seed, sprite_bytes=None, screen_bytes=None,
     pokes[A_SCREEN_BACK] = abi.SCREEN_BACK.to_bytes(4, "big")
     if hit_flag is not None:
         pokes[hit_flag] = bytes([COLLIDE_FLAG_SEED])
+    return pokes, flag
+
+
+def _collide_case(x, y, height, seed, sprite_bytes=None, screen_bytes=None,
+                  hit_flag=None, poison=False):
+    """Call draw_sprite_masked_collide(A2 = the record, A5 = the flag) at its own entry."""
+    pokes, flag = collide_staging(x, y, height, seed, sprite_bytes, screen_bytes, hit_flag)
     regs = {"a2": BLIT_ENTITY, "a5": flag, "_pokes": pokes}
     diffs, _ = differential(
         ENTRY_DRAW_SPRITE_MASKED_COLLIDE, regs,
@@ -979,18 +999,19 @@ COLLIDE_TRANSPARENT_ROW = (SPRITE_MASK_TRANSPARENT, (0, 0, 0, 0))
 COLLIDE_OPAQUE_ROW = (0x0000, (0xffff, 0xffff, 0xffff, 0xffff))
 
 
-def _cell_with_planes(plane_words):
+# Public for the same reason `collide_sprite` is: `test_asm_sprite.py` stages the same screens.
+def cell_with_planes(plane_words):
     """One 16-pixel four-plane screen cell holding `plane_words` (planes 0..3)."""
     return b"".join(word.to_bytes(2, "big") for word in plane_words)
 
 
-def _screen_with_planes(plane_words):
+def screen_with_planes(plane_words):
     """A whole framebuffer whose every 16-pixel cell holds `plane_words`.
 
     Used to say what the collision test should see: planes 2 and 3 are the terrain the scroller
     draws, and they are the only two the test consults.
     """
-    return _cell_with_planes(plane_words) * (SCREEN_BYTES // SPRITE_CELL_BYTES)
+    return cell_with_planes(plane_words) * (SCREEN_BYTES // SPRITE_CELL_BYTES)
 
 
 def test_collide_transparent_sprite_sets_no_flag():
@@ -998,7 +1019,7 @@ def test_collide_transparent_sprite_sets_no_flag():
     background is ever under an opaque one and the flag keeps its seeded value. It also writes no
     screen byte, the four zero planes being OR'd into an untouched background."""
     _collide_case(0x80, 0x40, COLLIDE_HEIGHT, seed=0xa00, hit_flag=COLLIDE_FLAG,
-                  sprite_bytes=_collide_sprite(COLLIDE_HEIGHT, *COLLIDE_TRANSPARENT_ROW))
+                  sprite_bytes=collide_sprite(COLLIDE_HEIGHT, *COLLIDE_TRANSPARENT_ROW))
 
 
 def test_collide_ignores_the_low_planes():
@@ -1009,8 +1030,8 @@ def test_collide_ignores_the_low_planes():
     screen every case hits, so nothing else in the battery could tell the two readings apart.
     """
     _collide_case(0x80, 0x40, COLLIDE_HEIGHT, seed=0xb00, hit_flag=COLLIDE_FLAG,
-                  sprite_bytes=_collide_sprite(COLLIDE_HEIGHT, *COLLIDE_OPAQUE_ROW),
-                  screen_bytes=_screen_with_planes((0xffff, 0xffff, 0, 0)))
+                  sprite_bytes=collide_sprite(COLLIDE_HEIGHT, *COLLIDE_OPAQUE_ROW),
+                  screen_bytes=screen_with_planes((0xffff, 0xffff, 0, 0)))
 
 
 def test_collide_sets_the_flag_on_terrain():
@@ -1020,8 +1041,8 @@ def test_collide_sets_the_flag_on_terrain():
     them they pin WHICH planes the `and.l` consults rather than merely that it consults something.
     """
     _collide_case(0x80, 0x40, COLLIDE_HEIGHT, seed=0xc00, hit_flag=COLLIDE_FLAG,
-                  sprite_bytes=_collide_sprite(COLLIDE_HEIGHT, *COLLIDE_OPAQUE_ROW),
-                  screen_bytes=_screen_with_planes((0, 0, 0xffff, 0)))
+                  sprite_bytes=collide_sprite(COLLIDE_HEIGHT, *COLLIDE_OPAQUE_ROW),
+                  screen_bytes=screen_with_planes((0, 0, 0xffff, 0)))
 
 
 @pytest.mark.parametrize("phase", (2, 8, 14))
@@ -1034,12 +1055,12 @@ def test_collide_second_cell_is_tested_too(phase):
     terrain and nothing else does. Phase 0 is excluded on purpose: at phase 0 the keep-mask is all
     ones, the far half is empty, and there is nothing in the second cell to find.
     """
-    clear_cell = _cell_with_planes((0xffff, 0xffff, 0, 0))
-    terrain_cell = _cell_with_planes((0, 0, 0xffff, 0xffff))
+    clear_cell = cell_with_planes((0xffff, 0xffff, 0, 0))
+    terrain_cell = cell_with_planes((0, 0, 0xffff, 0xffff))
     row = (clear_cell + terrain_cell) * (SCREEN_ROW_BYTES // (2 * SPRITE_CELL_BYTES))
     _collide_case(SPRITE_COLLIDE_ORIGIN_X + phase, 0x40, COLLIDE_HEIGHT, seed=0xd00 + phase,
                   hit_flag=COLLIDE_FLAG,
-                  sprite_bytes=_collide_sprite(COLLIDE_HEIGHT, *COLLIDE_OPAQUE_ROW),
+                  sprite_bytes=collide_sprite(COLLIDE_HEIGHT, *COLLIDE_OPAQUE_ROW),
                   screen_bytes=row * (SCREEN_BYTES // SCREEN_ROW_BYTES))
 
 
@@ -1065,7 +1086,7 @@ COLLIDE_FUZZ_CASES = 200
 COLLIDE_FUZZ_MIN_HEIGHT = 1
 
 
-def _collide_fuzz_cases():
+def collide_fuzz_cases():
     rng = random.Random(ENTRY_DRAW_SPRITE_MASKED_COLLIDE)   # seeded ONCE — every chunk replays it
     for i in range(COLLIDE_FUZZ_CASES):
         yield (i,
@@ -1078,7 +1099,7 @@ def _collide_fuzz_cases():
 
 @pytest.mark.parametrize("chunk", range(COLLIDE_FUZZ_CHUNKS))
 def test_collide_fuzz(chunk):
-    for i, x, y, height, in_record, seed in _collide_fuzz_cases():
+    for i, x, y, height, in_record, seed in collide_fuzz_cases():
         if i % COLLIDE_FUZZ_CHUNKS != chunk:
             continue
         _collide_case(x, y, height, seed, hit_flag=None if in_record else COLLIDE_FLAG)

@@ -321,11 +321,17 @@ void g_draw_player_digit_shifted(uint8_t *image, uint32_t cell) {
 
 /* IT HAS NO `rts` OF ITS OWN: the routine sets up draw_bcd_number's arguments and runs off its own
  * end into it at 0x136f6, so the digits below are drawn by a fall-through rather than by a `bsr`. */
+/* THE DIGITS ARE REACHED THROUGH THE SEAM even though this body IS the reference. On the host
+ * differential build ZY_TEXT() is the identity, so what test_hud.py measures is unchanged; on the
+ * target this body is never called at all, its own twin having replaced it. The wrapper is here
+ * because `draw_bcd_number` lives in another translation unit, so an unwrapped call would leave
+ * hud.o with an undefined reference to a C core that has a twin — which is exactly the shape
+ * atari/build.sh's asm-twin gate exists to refuse, and it cannot tell this call from a live one. */
 void draw_score_panel(uint8_t *image, uint32_t buffer) {
     stamp_panel_strip(image, buffer, A_score_panel_strip, SCORE_STRIP_OFFSET,
                       PANEL_STRIP_ROW_BYTES);
-    draw_bcd_number(image, addr_add(buffer, SCORE_DIGITS_OFFSET), SCORE_RIGHTMOST_COLUMN,
-                    be32(image + A_player_score_bcd));
+    ZY_TEXT(draw_bcd_number)(image, addr_add(buffer, SCORE_DIGITS_OFFSET), SCORE_RIGHTMOST_COLUMN,
+                             be32(image + A_player_score_bcd));
 }
 
 /* Register map: A6 = the screen buffer to draw into. */
@@ -382,8 +388,8 @@ static void redraw_player_strip(uint8_t *image, uint32_t buffer) {
 static void redraw_hiscore_strip(uint8_t *image, uint32_t buffer) {
     stamp_panel_strip(image, buffer, A_hiscore_panel_strip, HISCORE_STRIP_OFFSET,
                       PANEL_STRIP_ROW_BYTES);
-    draw_bcd_number(image, addr_add(buffer, HISCORE_DIGITS_OFFSET), HIGHSCORE_DIGITS_COLUMN,
-                    be32(image + A_highscore_table));
+    ZY_TEXT(draw_bcd_number)(image, addr_add(buffer, HISCORE_DIGITS_OFFSET), HIGHSCORE_DIGITS_COLUMN,
+                             be32(image + A_highscore_table));
 }
 
 /* Everything the panel shows, into whichever buffer each piece belongs in.
@@ -408,7 +414,7 @@ void status_panel_redraw_all(uint8_t *image) {
     uint32_t back = be32(image + A_screen_back);
 
     draw_power_gauge(image);
-    draw_score_panel(image, front);
+    ZY_TEXT(draw_score_panel)(image, front);
     redraw_player_strip(image, A_screen_front_buffer);
     redraw_player_strip(image, A_screen_back_buffer);
     redraw_hiscore_strip(image, front);
@@ -420,8 +426,8 @@ void status_panel_redraw_all(uint8_t *image) {
     draw_lives_icons(image);
     image[A_powerup_active_slot] = 1;
     hud_draw_weapon_icon(image, 0);
-    draw_score_panel(image, front);
-    draw_score_panel(image, back);
+    ZY_TEXT(draw_score_panel)(image, front);
+    ZY_TEXT(draw_score_panel)(image, back);
 }
 
 /* Register map: none in; everything is clobbered. `draw_power_gauge` re-reads the two pointers
@@ -480,9 +486,9 @@ void player_intro_screen(uint8_t *image) {
     wr16(image + A_palette_hw_shadow, 0);
     hud_blit_zynaps_logo(image, buffer, LOGO_INTRO_OFFSET);
     draw_text_record(image, buffer, A_msg_player, &column);
-    draw_char(image, addr_add(buffer, PLAYER_NAME_ROW_OFFSET), column,
-              (uint16_t)sign_ext8((uint8_t)(image[A_current_player_index]
-                                            + PLAYER_DIGIT_CHAR_ZERO)));
+    ZY_TEXT(draw_char)(image, addr_add(buffer, PLAYER_NAME_ROW_OFFSET), column,
+                       (uint16_t)sign_ext8((uint8_t)(image[A_current_player_index]
+                                                     + PLAYER_DIGIT_CHAR_ZERO)));
     if (image[A_show_prepare_for_combat])
         draw_text_record(image, buffer, A_msg_prepare_for_combat, NULL);
     screen_flip_buffers(image);

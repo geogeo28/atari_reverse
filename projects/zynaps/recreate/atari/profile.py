@@ -123,6 +123,16 @@ PROFILE_RUN_VBLS = 200000
 
 # `nm` type letters worth giving Hatari: text, data and bss, local or global.
 NM_SYMBOL_TYPES = "TtDdBb"
+# ...MINUS the asm twins' span brackets. `../src/asm/*.S` marks each transcribed span with
+# `<name>_body` / `<name>_body_end` so ../test/asm_twins.py can slice the assembled blob and compare
+# it against the .PRG. They are MARKERS, never call targets — and `_body_end` sits at the first byte
+# AFTER a span, which for a body that ends a routine is the NEXT routine's entry point. Since this
+# report resolves a profiled call by ADDRESS and aggregates it by NAME, such a marker takes that
+# entry point's row: measured, `draw_sprite_masked_collide_asm`'s 1,146 calls a window came back
+# under `draw_sprite_masked_rows_body_end` and `draw_score_panel_asm` had no row at all, with every
+# cycle counted correctly and every name wrong. Dropping them here is the fix, rather than in the
+# `.S` files — a bracket that has to dodge an address cannot cover the span it claims to.
+SPAN_MARKER_RE = re.compile(r"_body(_end)?$")
 # GCC's per-constant specialisation makes one function several symbols; a row here is the base name.
 CLONE_SUFFIX_RE = re.compile(r"\.(constprop|isra|part|lto_priv)\.\d+$")
 
@@ -217,7 +227,8 @@ def elf_symbols(mode):
     for line in subprocess.run([smoke.NM, str(elf)], check=True, capture_output=True,
                                text=True).stdout.splitlines():
         fields = line.split()
-        if len(fields) == 3 and fields[1] in NM_SYMBOL_TYPES:
+        if len(fields) == 3 and fields[1] in NM_SYMBOL_TYPES \
+                and not SPAN_MARKER_RE.search(fields[2]):
             rows.append((fields[2], int(fields[0], 16), fields[1].upper()))
     return symbol_map(rows, elf)
 

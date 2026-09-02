@@ -212,9 +212,10 @@ CORES="$(ls "$REC"/src/*.c)"
 # ---- THE ASM TWINS ------------------------------------------------------------------------------
 # ../src/asm/*.S are hand-written m68k TRANSCRIPTIONS of the original binary's own instruction
 # sequences for the hottest cores, carrying those cores' C signatures. They are substituted for the
-# C at the CALL SITE, through ../include/scroll.h's `ZY_SCROLL()`, which -DZY_ASM_SCROLL below
-# switches over. The C stays compiled and stays the reference — ../test/test_scroll.py proves it
-# equal to the original and ../test/test_asm_scroll.py proves each twin equal to it, byte for byte
+# C at the CALL SITE, through a per-subsystem seam macro in that subsystem's header — scroll.h's
+# `ZY_SCROLL()`, sprite.h's `ZY_SPRITE()` — which the ASM_SEAM_DEFINES below switch over. The C
+# stays compiled and stays the reference: ../test/test_scroll.py and ../test/test_sprite.py prove
+# it equal to the original, ../test/test_asm_*.py prove each twin equal to it, both byte for byte
 # over the whole image, so this substitution changes the program's SPEED and nothing else.
 # See ../src/asm/README.md for the recipe and for what to do when adding the next one.
 # `2>/dev/null || true` is what makes the message below REACHABLE: this script runs under
@@ -223,7 +224,21 @@ CORES="$(ls "$REC"/src/*.c)"
 # (The CORES= line above has the same shape; it predates the twins and is left as it is.)
 ASM_CORES="$(ls "$REC"/src/asm/*.S 2>/dev/null || true)"
 [ -n "$ASM_CORES" ] || { echo "ERROR: no asm twins found in $REC/src/asm"; exit 1; }
-DEF="$DEF -DZY_ASM_SCROLL"
+# ONE DEFINE PER SEAM, SCRAPED FROM THE HEADERS RATHER THAN LISTED HERE. Each subsystem header
+# guards its twin declarations with `#ifdef ZY_ASM_<SUBSYSTEM>` and defines a `ZY_<SUBSYSTEM>()`
+# macro beside them; those `#ifdef`s are the source of truth for which seams exist, exactly as the
+# `*_asm(` declarations below are the source of truth for which twins do. A hand-kept list here
+# would be the same thing said twice, and the way it fails is the way this whole substitution fails
+# — silently, with that subsystem's call sites back on the C, correct and several times too slow.
+# (The gate below still catches a missing define; this is what stops there being one to miss.)
+ASM_SEAM_DEFINES="$(grep -ohE '^#ifdef +ZY_ASM_[A-Z]+' "$REC"/include/*.h \
+                    | awk '{print "-D" $2}' | sort -u | tr '\n' ' ')"
+[ -n "$ASM_SEAM_DEFINES" ] || {
+  echo "ERROR: no '#ifdef ZY_ASM_*' block in $REC/include/*.h, so no seam would be switched on and"
+  echo "       every twin below would be linked but unreachable. The scrape has stopped matching the"
+  echo "       headers."
+  exit 1; }
+DEF="$DEF $ASM_SEAM_DEFINES"
 
 # COMPILED TO OBJECTS FIRST, so the two halves of the seam can be ASKED WHAT THEY DEFINE before
 # they are linked together. The gate below is the whole reason this is not one `gcc` invocation.
@@ -345,7 +360,7 @@ echo "   $SHIM_COUNT shim symbols vs $CORE_COUNT core symbols, no name in both"
 
 # ---- THE ASM-TWIN GATE --------------------------------------------------------------------------
 # WHICH SYMBOLS CAME FROM ASM, ASKED OF THE OBJECTS — because the way this substitution fails is
-# SILENT. Drop `-DZY_ASM_SCROLL` and every `ZY_SCROLL(fn)` resolves to the C again: the twins still
+# SILENT. Drop one of $ASM_SEAM_DEFINES and that seam's `ZY_*(fn)` resolves to the C again: the twins still
 # assemble, still link, still export their names, and the game still computes exactly the right
 # pixels — three times slower, with nothing but the frame rate to say so. Nothing else in this build
 # or in `make test` would notice, because the C is not wrong; it is only slow.
@@ -391,9 +406,10 @@ MISSING=$(comm -23 <(echo "$TWINS") <(echo "$ASM_DEFINED"))
 UNCALLED=$(comm -23 <(echo "$TWINS") <(echo "$CORE_WANTED"))
 [ -z "$UNCALLED" ] || {
   echo "ERROR: these twins are assembled and linked but NOTHING CALLS THEM, so the C cores are what"
-  echo "       this build runs — the game would be correct and three times too slow. Either"
-  echo "       -DZY_ASM_SCROLL was dropped, or a ZY_SCROLL() wrapper was lost from a call site in"
-  echo "       $REC/src (frame.c's dispatch table and init.c's prefill are the two):"
+  echo "       this build runs — the game would be correct and several times too slow. Either their"
+  echo "       subsystem's seam define is MISSING from ASM_SEAM_DEFINES (which holds"
+  echo "       '$ASM_SEAM_DEFINES'), or a seam wrapper was lost"
+  echo "       from a call site in $REC/src:"
   echo "$UNCALLED" | sed 's/^/         /'
   exit 1; }
 # ...and the per-CALL-SITE half: a bare core name UNDEFINED in a core object is an unwrapped call.
@@ -401,9 +417,11 @@ TWIN_CORES=$(echo "$TWINS" | sed 's/_asm$//' | sort -u)
 UNWRAPPED=$(comm -12 <(echo "$TWIN_CORES") <(echo "$CORE_WANTED"))
 [ -z "$UNWRAPPED" ] || {
   echo "ERROR: a core object calls out to these C cores by name, but they have twins — so a call"
-  echo "       site lost its ZY_SCROLL() wrapper and runs the slow C while the rest of the seam"
-  echo "       looks intact. Wrap it (frame.c's dispatch table and its three direct calls, and"
-  echo "       init.c's prefill, are the call sites):"
+  echo "       site lost its ZY_SCROLL() / ZY_SPRITE() / ZY_TEXT() wrapper and runs the slow C while"
+  echo "       the rest of the seam looks intact. Grep $REC/src for the name below and wrap it in the"
+  echo "       macro its subsystem header declares. NOTE the one shape this arm CANNOT see: a call"
+  echo "       from inside the file that DEFINES the core (src/text.c's draw_text_record reaching"
+  echo "       draw_char) is not an undefined reference, so it never lands here:"
   echo "$UNWRAPPED" | sed 's/^/         /'
   exit 1; }
 echo "   $TWIN_COUNT twins from $(echo $ASM_CORES | wc -w | tr -d ' ') asm objects, all called, no C core called"

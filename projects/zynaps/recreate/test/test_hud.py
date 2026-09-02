@@ -198,11 +198,14 @@ def _read_graphics():
 GRAPHICS_POKES = _read_graphics()
 
 
-def _panel_pokes(seed, extra=None, extra_spans=()):
+def panel_pokes(seed, extra=None, extra_spans=()):
     """Noise over both whole framebuffers, plus the real graphics and whatever a case adds.
 
     Guard bands either side, because most of what surrounds a framebuffer is bss: a candidate
     writing one row too far would put zeroes over zeroes and the diff would stay empty.
+
+    Public because `test_init.py`'s two front-end slices and `test_asm_text.py`'s panel twin
+    both drive it.
     """
     spans = [(A_SCREEN_BACK_BUFFER, A_SCREEN_BACK_BUFFER + SCREEN_BYTES),
              (A_SCREEN_FRONT_BUFFER, A_SCREEN_FRONT_BUFFER + SCREEN_BYTES), *extra_spans]
@@ -262,7 +265,7 @@ WEAPON_CURSORS = _icon_cursors_in_the_loaded_program(
 # =================================================================================================
 
 def _logo_case(frame_byte, seed=0, poison=False):
-    pokes = _panel_pokes(seed, {A_PANEL_LOGO_FRAME: bytes([frame_byte])})
+    pokes = panel_pokes(seed, {A_PANEL_LOGO_FRAME: bytes([frame_byte])})
     diffs, _ = differential(
         ENTRY_HUD_DRAW_LOGO_ANIM, {"_pokes": pokes},
         lambda lib, buf: lib.g_hud_draw_logo_anim(buf), poison=poison)
@@ -297,7 +300,7 @@ def test_logo_anim_attribution(frame_byte):
 # =================================================================================================
 
 def _powerup_case(cursor, seed=0, poison=False):
-    pokes = _panel_pokes(seed, {A_POWERUP_CURSOR: bytes([cursor])})
+    pokes = panel_pokes(seed, {A_POWERUP_CURSOR: bytes([cursor])})
     diffs, _ = differential(
         ENTRY_HUD_DRAW_POWERUP_ICON, {"_pokes": pokes},
         lambda lib, buf: lib.g_hud_draw_powerup_icon(buf), poison=poison)
@@ -327,7 +330,7 @@ def test_powerup_icon_attribution(cursor):
 # =================================================================================================
 
 def _weapon_case(cell, slot, seed=0, poison=False):
-    pokes = _panel_pokes(seed, {A_POWERUP_ACTIVE_SLOT: bytes([slot])})
+    pokes = panel_pokes(seed, {A_POWERUP_ACTIVE_SLOT: bytes([slot])})
     diffs, _ = differential(
         ENTRY_HUD_DRAW_WEAPON_ICON, {"d0": cell, "_pokes": pokes},
         lambda lib, buf: lib.g_hud_draw_weapon_icon(buf, cell), poison=poison)
@@ -397,9 +400,9 @@ POWER_GAUGE_MAX_LEVEL = 0x7f
 
 def _gauge_case(level, back=A_SCREEN_BACK_BUFFER, front=A_SCREEN_FRONT_BUFFER, seed=0,
                 poison=False):
-    pokes = _panel_pokes(seed, {A_POWER_GAUGE_DISPLAY: bytes([level]),
-                                A_SCREEN_BACK: back.to_bytes(4, "big"),
-                                A_SCREEN_FRONT: front.to_bytes(4, "big")})
+    pokes = panel_pokes(seed, {A_POWER_GAUGE_DISPLAY: bytes([level]),
+                               A_SCREEN_BACK: back.to_bytes(4, "big"),
+                               A_SCREEN_FRONT: front.to_bytes(4, "big")})
     diffs, _ = differential(
         ENTRY_DRAW_POWER_GAUGE, {"_pokes": pokes},
         lambda lib, buf: lib.g_draw_power_gauge(buf), poison=poison)
@@ -443,7 +446,7 @@ def test_power_gauge_attribution(level):
 # =================================================================================================
 
 def _lives_case(lives, mask=0xff, seed=0, poison=False):
-    pokes = _panel_pokes(seed, {A_LIVES: bytes([lives]), A_PANEL_REDRAW_MASK: bytes([mask])})
+    pokes = panel_pokes(seed, {A_LIVES: bytes([lives]), A_PANEL_REDRAW_MASK: bytes([mask])})
     diffs, _ = differential(
         ENTRY_DRAW_LIVES_ICONS, {"_pokes": pokes},
         lambda lib, buf: lib.g_draw_lives_icons(buf), poison=poison)
@@ -490,7 +493,7 @@ PLAYER_DIGIT_CELLS = (A_SCREEN_FRONT_BUFFER + PLAYER_STRIP_OFFSET,
 
 
 def _player_digit_case(player, cell, seed=0, poison=False):
-    pokes = _panel_pokes(seed, {A_CURRENT_PLAYER_INDEX: bytes([player])})
+    pokes = panel_pokes(seed, {A_CURRENT_PLAYER_INDEX: bytes([player])})
     diffs, _ = differential(
         ENTRY_DRAW_PLAYER_DIGIT_SHIFTED, {"a0": cell, "_pokes": pokes},
         lambda lib, buf: lib.g_draw_player_digit_shifted(buf, cell), poison=poison)
@@ -558,11 +561,17 @@ def test_player_digit_attribution(player):
 SCORE_PANEL_BUFFERS = (A_SCREEN_BACK_BUFFER, A_SCREEN_FRONT_BUFFER, abi.SCRATCH)
 
 
-def _score_panel_case(buffer, score=None, seed=0, poison=False):
+def score_panel_pokes(buffer, score=None, seed=0):
+    """One `draw_score_panel` case's staging. Public for `test_asm_text.py`, which drives the twin
+    over these same cases."""
     extra = {} if score is None else {A_PLAYER_SCORE_BCD: score.to_bytes(4, "big")}
     spans = () if buffer in (A_SCREEN_BACK_BUFFER, A_SCREEN_FRONT_BUFFER) \
         else ((buffer, buffer + SCREEN_BYTES),)
-    pokes = _panel_pokes(seed, extra, extra_spans=spans)
+    return panel_pokes(seed, extra, extra_spans=spans)
+
+
+def _score_panel_case(buffer, score=None, seed=0, poison=False):
+    pokes = score_panel_pokes(buffer, score, seed)
     diffs, _ = differential(
         ENTRY_DRAW_SCORE_PANEL, {"a6": buffer, "_pokes": pokes},
         lambda lib, buf: lib.g_draw_score_panel(buf, buffer), poison=poison)
@@ -595,8 +604,8 @@ PANEL_MASTER_BYTES = PANEL_MASTER_LONGWORDS * 4
 
 
 def _build_master_case(seed=0, poison=False):
-    pokes = _panel_pokes(seed,
-                         extra_spans=((A_PANEL_MASTER, A_PANEL_MASTER + PANEL_MASTER_BYTES),))
+    pokes = panel_pokes(seed,
+                        extra_spans=((A_PANEL_MASTER, A_PANEL_MASTER + PANEL_MASTER_BYTES),))
     diffs, _ = differential(
         ENTRY_STATUS_PANEL_BUILD_MASTER, {"_pokes": pokes},
         lambda lib, buf: lib.g_status_panel_build_master(buf), poison=poison)
@@ -671,7 +680,7 @@ def _buffer_pokes(back, front):
 def _redraw_all_case(seed=0, back=A_SCREEN_BACK_BUFFER, front=A_SCREEN_FRONT_BUFFER, extra=None):
     spans = [(buffer, buffer + SCREEN_BYTES) for buffer in (back, front)
              if buffer not in (A_SCREEN_BACK_BUFFER, A_SCREEN_FRONT_BUFFER)]
-    pokes = _panel_pokes(seed, {**_buffer_pokes(back, front), **(extra or {})}, extra_spans=spans)
+    pokes = panel_pokes(seed, {**_buffer_pokes(back, front), **(extra or {})}, extra_spans=spans)
     diffs, _ = differential(
         ENTRY_STATUS_PANEL_REDRAW_ALL, {"_pokes": pokes},
         lambda lib, buf: lib.g_status_panel_redraw_all(buf))
@@ -741,7 +750,7 @@ def test_redraw_all_overwrites_the_weapon_slot(slot):
 # =================================================================================================
 
 def _intro_case(seed=0, back=A_SCREEN_BACK_BUFFER, front=A_SCREEN_FRONT_BUFFER, extra=None):
-    pokes = _panel_pokes(seed, {**_buffer_pokes(back, front), **(extra or {})})
+    pokes = panel_pokes(seed, {**_buffer_pokes(back, front), **(extra or {})})
     diffs, _ = differential(
         ENTRY_PLAYER_INTRO_SCREEN, {"_pokes": pokes},
         lambda lib, buf: lib.g_player_intro_screen(buf))
@@ -822,7 +831,7 @@ def test_intro_blanks_the_raster_pen_zero():
 # =================================================================================================
 
 def _title_case(seed=0, back=A_SCREEN_BACK_BUFFER, front=A_SCREEN_FRONT_BUFFER, extra=None):
-    pokes = _panel_pokes(seed, {**_buffer_pokes(back, front), **(extra or {})})
+    pokes = panel_pokes(seed, {**_buffer_pokes(back, front), **(extra or {})})
     diffs, _ = differential(
         ENTRY_TITLE_SCREEN_DRAW, {"_pokes": pokes},
         lambda lib, buf: lib.g_title_screen_draw(buf))

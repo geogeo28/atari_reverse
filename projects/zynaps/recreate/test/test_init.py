@@ -671,9 +671,11 @@ def test_both_arms_are_driven_and_every_section_is_one_or_the_other():
 import test_hud                                                          # noqa: E402
 
 # The four names this battery borrows from it, checked at import so a rename over there fails HERE
-# with a sentence instead of an AttributeError inside an unrelated case. Three are underscore-
-# private, which is exactly why nothing in test_hud would otherwise signal the dependency.
-for _borrowed in ("_panel_pokes", "_buffer_pokes", "A_SCREEN_BACK_BUFFER", "A_SCREEN_FRONT_BUFFER"):
+# with a sentence instead of an AttributeError inside an unrelated case. `_buffer_pokes` is still
+# underscore-private, which is exactly why nothing in test_hud would otherwise signal the dependency;
+# `panel_pokes` was made public when the asm-twin suites started driving it too, and its docstring
+# now names both borrowers — the guard stays because a public name can be renamed as easily.
+for _borrowed in ("panel_pokes", "_buffer_pokes", "A_SCREEN_BACK_BUFFER", "A_SCREEN_FRONT_BUFFER"):
     assert hasattr(test_hud, _borrowed), (
         f"test_init.py's two front-end slices reuse test_hud.{_borrowed} for its panel staging; "
         f"that name is gone, so either restore it or give this battery its own staging")
@@ -683,7 +685,7 @@ RESET_SEED = 0x5a               # neither arm's answer for any byte the prologue
 
 def _front_end_pokes(seed, extra=None):
     """test_hud.py's panel staging plus the two buffer pointers, which its cases pass separately."""
-    return test_hud._panel_pokes(seed, {
+    return test_hud.panel_pokes(seed, {
         **test_hud._buffer_pokes(test_hud.A_SCREEN_BACK_BUFFER, test_hud.A_SCREEN_FRONT_BUFFER),
         **(extra or {})})
 

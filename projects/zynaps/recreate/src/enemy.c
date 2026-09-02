@@ -1246,7 +1246,7 @@ void asteroids_draw(uint8_t *image) {
     for (unsigned group = 0; group < ASTEROID_GROUPS; group++) {
         for (unsigned column = 0; column < ASTEROID_COLUMNS; column++) {
             if (image[record + ENTITY_ALIVE] != 0)
-                draw_sprite_masked(image, record, ASTEROID_DRAW_PHASE_STEP);
+                ZY_SPRITE(draw_sprite_masked)(image, record, ASTEROID_DRAW_PHASE_STEP);
             record = next_record(record);
         }
     }

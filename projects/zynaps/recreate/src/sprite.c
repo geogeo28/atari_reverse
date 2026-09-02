@@ -407,7 +407,6 @@ void mothership_sprite_preshift(uint8_t *image) {
  * `move.l d3,(a0)+` / `move.l d4,(a0)`. */
 #define SPRITE_PLANES_01 (2u * (SPRITE_MASK_WORD + 1u))   /* just past the mask word */
 #define SPRITE_PLANES_23 (SPRITE_PLANES_01 + 4u)
-#define SPRITE_CELL_HALF (SPRITE_CELL_BYTES / SPRITE_CELL_LONGS)  /* one plane PAIR */
 
 void draw_sprite_masked(uint8_t *image, uint32_t entity, uint16_t preshift_bytes_per_pixel) {
     uint32_t screen = be32(image + A_screen_back);
@@ -596,7 +595,7 @@ void draw_sprite_masked_collide(uint8_t *image, uint32_t entity, uint32_t hit_fl
         return;
     } else {
         /* Straddling the right edge: only the sprite's own half fits, in the row's last cell. */
-        screen = addr_add(screen, SCREEN_ROW_BYTES - SPRITE_CELL_BYTES);
+        screen = addr_add(screen, SPRITE_COLLIDE_LAST_CELL);
         cells = 1;
     }
     blit_masked_collide_rows(image, screen, sprite,

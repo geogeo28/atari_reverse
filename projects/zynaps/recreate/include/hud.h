@@ -207,6 +207,8 @@ void hud_draw_weapon_icon(uint8_t *image, uint8_t right_cell);
 void draw_power_gauge(uint8_t *image);
 void draw_lives_icons(uint8_t *image);
 void draw_player_digit_shifted(uint8_t *image, uint32_t cell);
+/* HAS AN ASM TWIN, declared in include/text.h beside draw_bcd_number's and draw_char's — in the
+ * original the three are one routine, and call sites reach it as `ZY_TEXT(draw_score_panel)`. */
 void draw_score_panel(uint8_t *image, uint32_t buffer);
 void status_panel_build_master(uint8_t *image);
 void status_panel_redraw_all(uint8_t *image);

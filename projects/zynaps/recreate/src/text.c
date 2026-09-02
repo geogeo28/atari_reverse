@@ -138,7 +138,14 @@ void g_draw_bcd_number(uint8_t *image, uint32_t row_base, uint32_t column_reg, u
  * list of records depends on it. `end_column` is D1, the column one past the last character drawn,
  * and nothing reloads D1 — `player_intro_screen` and `game_over_screen` both print the player's
  * digit at exactly that column, so "PLAYER" and its number stay one string. Pass NULL for it when
- * only the cursor is wanted. */
+ * only the cursor is wanted.
+ *
+ * ITS `draw_char` GOES THROUGH THE SEAM, and it is the one call in this file that has to. This
+ * routine has no twin, so on the target build it is LIVE — every string the game draws reaches the
+ * character blitter through here — while `draw_bcd_number` above is the reference for a routine
+ * that does have one and is never called there. atari/build.sh's asm-twin gate is structurally
+ * blind to this call (an intra-file call is not an undefined reference, so its `nm -u` scrape
+ * cannot see it), which is exactly why it is worth a sentence rather than a wrapper alone. */
 uint32_t draw_text_record(uint8_t *image, uint32_t row_base, uint32_t record,
                           uint16_t *end_column) {
     uint16_t column = (uint16_t)sign_ext8(image[record]);
@@ -155,7 +162,7 @@ uint32_t draw_text_record(uint8_t *image, uint32_t row_base, uint32_t record,
                 *end_column = column;
             return cursor;
         }
-        draw_char(image, base, column, (uint16_t)sign_ext8(character));
+        ZY_TEXT(draw_char)(image, base, column, (uint16_t)sign_ext8(character));
         column = (uint16_t)(column + 1);
     }
 }

@@ -52,17 +52,19 @@ harness._lib.g_draw_text_record.restype = None
 FUZZ_CHUNKS = 4
 
 
-def _staged_screen(seed):
+def staged_screen(seed):
     """A noisy frame plus the real font.
 
     NOISE, NOT ZEROES, and that is what makes the AND mask visible at all: over a zeroed screen the
     mask changes nothing and a candidate that dropped it entirely would still match.
+
+    Public because `test_asm_text.py` drives the ASM TWINS over these same cases.
     """
     return {SCREEN: random.Random(seed).randbytes(SCREEN_BYTES), A_FONT_GLYPHS: FONT_BYTES}
 
 
 def _char_case(character, column, seed=0, extra_pokes=None, poison=False):
-    pokes = _staged_screen(seed)
+    pokes = staged_screen(seed)
     pokes.update(extra_pokes or {})
     regs = {"a0": SCREEN, "d0": character, "d1": column, "_pokes": pokes}
     diffs, _ = differential(
@@ -151,7 +153,7 @@ def test_char_attribution(character):
 # =================================================================================================
 
 def _bcd_case(digits, column, seed=0, poison=False):
-    pokes = _staged_screen(seed)
+    pokes = staged_screen(seed)
     regs = {"a0": SCREEN, "d1": column, "d6": digits, "_pokes": pokes}
     diffs, _ = differential(
         ENTRY_DRAW_BCD_NUMBER, regs,
@@ -218,7 +220,7 @@ SHIPPED_RECORDS = {
 
 
 def _record_case(record, seed=0, extra_pokes=None, poison=False):
-    pokes = _staged_screen(seed)
+    pokes = staged_screen(seed)
     pokes[abi.RESULT] = bytes(range(0x71, 0x75))
     pokes.update(abi.register_dump_pokes(ENTRY_DRAW_TEXT_RECORD, _RECORD_STORES))
     pokes.update(extra_pokes or {})

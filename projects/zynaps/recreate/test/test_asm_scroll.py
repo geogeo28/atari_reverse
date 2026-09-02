@@ -29,62 +29,15 @@ uses — cannot pass.
 Requires the assembled twins (`make asm`, which `make test` runs first). A missing blob FAILS these
 tests rather than skipping them: a silent skip is how a broken twin ships.
 """
-from pathlib import Path
-
 import pytest
 
 import abi
+import asm_twins
 import harness
 import test_scroll as scroll
-from harness import report
 
-import loader
-from recreate_kit.asm_twin import AsmTwins
-
-# ---- the twins, loaded once per worker ---------------------------------------------------------
-_TWINS = None
-
-
-def _twins():
-    """The assembled blob, loaded once. `AsmTwins.require()` raises with the build command if the
-    twins were never assembled — LOUD rather than skipped, since a skip would look like coverage."""
-    global _TWINS
-    if _TWINS is None:
-        _TWINS = AsmTwins(Path(__file__).resolve().parents[1] / "build" / "asm", loader.IMAGE_SIZE)
-    return _TWINS
-
-
-def _c_image(image, glue):
-    """Run the C CORE over a copy of `image` and return (the image it left, whatever it returned)."""
-    buf = harness.candidate_image(image)
-    returned = glue(harness._lib, buf)
-    return bytes(buf), returned
-
-
-def _twin_matches_the_c(image, symbol, args, glue, must_write=True):
-    """The whole check: one twin and its C core over one staged image, compared whole.
-
-    `must_write` is the positive control. Both sides agreeing proves nothing if neither wrote
-    anything — a case whose destination the routine never reaches, or a glue call that silently did
-    not happen, would read as a pass. So every case asserts that the C CHANGED the image; a case
-    that legitimately writes nothing has to say so by passing False.
-    """
-    c_image, c_returned = _c_image(image, glue)
-    if must_write:
-        assert c_image != bytes(image), (
-            f"{symbol}: the C core wrote nothing, so comparing the twin against it tests nothing "
-            f"— the case is staged wrong or the glue was not called")
-
-    run = _twins().call(image, symbol, *args)
-    if run.image != c_image:
-        diffs = [(addr, c_image[addr], run.image[addr])
-                 for addr in range(len(c_image)) if c_image[addr] != run.image[addr]]
-        pytest.fail(f"{symbol}{args} diverges from the C core in {len(diffs)} bytes "
-                    f"(C, then asm)\n{report(diffs)}")
-    if c_returned is not None:
-        assert run.d0 == c_returned, (
-            f"{symbol}{args} returned {run.d0:#x}, the C core {c_returned:#x}")
-    return run
+# The four checks a twin suite runs are `asm_twins.py`'s, shared with test_asm_sprite.py; what
+# stays here is what is this path's own — the cases, the byte-pinned spans and the cost ceilings.
 
 
 # ======================================= scroll_page_to_screen_p00..p19 @ 0x15d56..0x16284
@@ -98,7 +51,7 @@ def _blit_case(phase, page, screen, seed):
     pokes = scroll._noise(seed, ((page, page + scroll.PLAYFIELD_BYTES),
                                  (screen, screen + scroll.PLAYFIELD_BYTES)))
     image = harness.make_image(pokes)
-    return _twin_matches_the_c(
+    return asm_twins.matches_the_c(
         image, _blit_twin(phase), (page, screen),
         lambda lib, buf: lib.g_scroll_page_to_screen(buf, phase, page, screen))
 
@@ -139,27 +92,8 @@ TRANSCRIBED_SPANS = {
 
 @pytest.mark.parametrize("name", sorted(TRANSCRIBED_SPANS))
 def test_the_twins_transcribe_the_original(name):
-    """THE ASSEMBLED BODY IS THE ORIGINAL'S OWN BYTES. Not "computes the same thing" — the same
-    machine code, compared against the .PRG the harness already has loaded.
-
-    This is what turns "1.00x by construction" from a claim into a measurement: a body that is
-    byte-equal to the original's cannot cost more than the original's. The differential above says
-    the twin computes the right pixels; this says it does so the original's way, so an edit that
-    happens to compute the same bytes by different instructions still fails here.
-
-    The bracket covers the transcribed span only — the C-ABI prologue and epilogue outside it are
-    ours and have no counterpart in the original.
-    """
-    twins = _twins()
-    lo, hi = twins.entry(f"{name}_body"), twins.entry(f"{name}_body_end")
-    assert hi > lo, f"{name}: empty body bracket — the labels are in the wrong order"
-    mine = twins.bin.read_bytes()[lo:hi]
-    entry = TRANSCRIBED_SPANS[name]
-    theirs = bytes(harness.BASE_IMAGE[entry:entry + len(mine)])
-    assert mine == theirs, (
-        f"{name} is not a transcription of the original @ {entry:#x}\n"
-        f"  twin     {mine.hex()}\n"
-        f"  original {theirs.hex()}")
+    """Each bracketed body against the .PRG — see `asm_twins.assert_transcribes_the_original`."""
+    asm_twins.assert_transcribes_the_original(name, TRANSCRIBED_SPANS[name])
 
 
 # ================================ scroll_emit_column_shift2 @ 0x169f2 / _shift0 @ 0x16a56
@@ -179,7 +113,7 @@ def _emit_case(variant, workspace, page, edge, hide_screen, seed):
     pokes[scroll.A_SCROLL_PREFILL_HIDE_SCREEN] = bytes([hide_screen])
     image = harness.make_image(pokes)
     twin, glue_name = _EMIT_TWINS[variant]
-    return _twin_matches_the_c(
+    return asm_twins.matches_the_c(
         image, twin, (workspace, page, edge),
         lambda lib, buf: getattr(lib, glue_name)(buf, workspace, page, edge))
 
@@ -233,7 +167,7 @@ def _tile_column_case(level, column, screen_base, page, hide_screen, seed):
     return value, which here is the map cursor one column on — the routine's only register output
     and the one thing about it that never reaches memory."""
     image, edge, map_cursor = _tile_staging(level, column, screen_base, page, hide_screen, seed)
-    return _twin_matches_the_c(
+    return asm_twins.matches_the_c(
         image, _TILE_TWIN, (edge, page, map_cursor),
         lambda lib, buf: lib.g_scroll_emit_tile_column(buf, edge, page, map_cursor))
 
@@ -335,35 +269,9 @@ TWIN_COST_CEILINGS = {
 }
 
 
-def _ceiling_for(symbol):
-    """The bar for one twin, by longest matching prefix — the twenty blits share theirs."""
-    core = symbol[:-len("_asm")] if symbol.endswith("_asm") else symbol
-    matches = [bar for prefix, bar in TWIN_COST_CEILINGS.items() if core.startswith(prefix)]
-    assert matches, (f"{symbol} has no entry in TWIN_COST_CEILINGS — a twin without a cost bar is a "
-                     f"twin nobody would notice regressing; measure it and add one")
-    return min(matches)
-
-
-def _original_cycles(image, entry, regs):
-    """What the ORIGINAL's own routine costs for this case, on the oracle."""
-    import emu
-    _, _, out_regs = emu.run(image, entry, regs)
-    return out_regs["cycles"]
-
-
-def _cost_case(image, entry, regs, symbol, args, glue):
-    """Run the original and the twin over one staged image and return (original, twin) cycles."""
-    twin = _twin_matches_the_c(image, symbol, args, glue)
-    return _original_cycles(image, entry, regs), twin.cycles
-
-
 def _assert_within_the_bar(symbol, original, twin):
-    ratio = twin / original
-    bar = _ceiling_for(symbol)
-    assert ratio <= bar, (
-        f"{symbol} costs {twin} cycles against the original's {original} ({ratio:.4f}x), over its "
-        f"{bar}x bar — find the translation that is costing it (an addressing mode the original did "
-        f"not use, an argument reloaded inside the loop, a gas encoding), do not raise the bar")
+    asm_twins.assert_within_the_bar(symbol, original, twin,
+                                    asm_twins.ceiling_for(symbol, TWIN_COST_CEILINGS))
 
 
 @pytest.mark.parametrize("phase", range(scroll.SCROLL_PHASES))
@@ -373,7 +281,7 @@ def test_the_blit_twin_costs_what_the_original_costs(phase):
     pokes = scroll._noise(0xb100 + phase, ((page, page + scroll.PLAYFIELD_BYTES),
                                            (screen, screen + scroll.PLAYFIELD_BYTES)))
     image = harness.make_image(pokes)
-    original, twin = _cost_case(
+    original, twin = asm_twins.cost_case(
         image, scroll.ENTRY_SCROLL_PAGE_TO_SCREEN[phase], {"a5": page, "a6": screen},
         _blit_twin(phase), (page, screen),
         lambda lib, buf: lib.g_scroll_page_to_screen(buf, phase, page, screen))
@@ -390,7 +298,7 @@ def test_the_emit_twin_costs_what_the_original_costs(variant):
     image = harness.make_image(pokes)
     twin, glue_name = _EMIT_TWINS[variant]
     entry = scroll._EMIT_ENTRIES[variant][0]
-    original, measured = _cost_case(
+    original, measured = asm_twins.cost_case(
         image, entry, {"a0": workspace, "a1": page, "a2": edge},
         twin, (workspace, page, edge),
         lambda lib, buf: getattr(lib, glue_name)(buf, workspace, page, edge))
@@ -414,7 +322,7 @@ def test_the_tile_twin_costs_what_the_original_costs(level):
     image, edge, map_cursor = _tile_staging(
         level, scroll._column_reaching_every_arm(level), abi.SCREEN_BACK, page, 0,
         seed=0xb300 + scroll.LEVEL_FILES.index(level))
-    original, measured = _cost_case(
+    original, measured = asm_twins.cost_case(
         image, scroll.ENTRY_SCROLL_EMIT_TILE_COLUMN,
         {"a0": edge, "a5": page, "a6": map_cursor},
         _TILE_TWIN, (edge, page, map_cursor),

@@ -177,7 +177,7 @@ void role_of_honour_screen(uint8_t *image) {
         uint32_t score = be32(image + addr_add(A_highscore_table,
                                                entry * HIGHSCORE_ENTRY_BYTES));
 
-        draw_bcd_number(image, row_base, HIGHSCORE_DIGITS_COLUMN, score);
+        ZY_TEXT(draw_bcd_number)(image, row_base, HIGHSCORE_DIGITS_COLUMN, score);
     }
     screen_flip_buffers(image);
 }
@@ -198,9 +198,9 @@ void game_over_screen_prologue(uint8_t *image) {
     playfield_clear(image);
     buffer = be32(image + A_screen_back);
     draw_text_record(image, buffer, A_msg_game_over_player, &column);
-    draw_char(image, addr_add(buffer, GAME_OVER_DIGIT_ROW_OFFSET), column,
-              (uint16_t)sign_ext8((uint8_t)(image[A_current_player_index]
-                                            + PLAYER_DIGIT_CHAR_ZERO)));
+    ZY_TEXT(draw_char)(image, addr_add(buffer, GAME_OVER_DIGIT_ROW_OFFSET), column,
+                       (uint16_t)sign_ext8((uint8_t)(image[A_current_player_index]
+                                                     + PLAYER_DIGIT_CHAR_ZERO)));
 }
 
 /* highscore_rank_and_shift — [0x12eb2, 0x12f0e) and [0x12eb2, 0x12f5a).
@@ -283,8 +283,8 @@ static uint32_t name_entry_character(uint16_t cursor) {
 void name_entry_redraw(uint8_t *image, uint16_t cursor) {
     draw_text_record(image, A_backdrop_page0, A_name_entry_record, NULL);
     if ((int16_t)cursor < (int16_t)NAME_ENTRY_LAST_CHAR)
-        draw_char(image, addr_add(A_backdrop_page0, NAME_ENTRY_ROW_OFFSET),
-                  (uint16_t)(cursor + NAME_ENTRY_CURSOR_COLUMN_BIAS), CHAR_FILL_CELL);
+        ZY_TEXT(draw_char)(image, addr_add(A_backdrop_page0, NAME_ENTRY_ROW_OFFSET),
+                           (uint16_t)(cursor + NAME_ENTRY_CURSOR_COLUMN_BIAS), CHAR_FILL_CELL);
 }
 
 /* `move.b #$1,$198a7` and then spin until the VBL handler clears it. Two sites, one per path
@@ -321,7 +321,7 @@ static void name_entry_draw_frame(uint8_t *image) {
     image[addr_add(gunsight, ENTITY_ALIVE)] = 1;
     wr32(image + addr_add(gunsight, ENTITY_SPRITE), A_gunsight_sprite);
     blit_page0_to_playfield(image);
-    draw_sprite_masked_collide(image, gunsight, A_name_entry_cursor_hit);
+    ZY_SPRITE(draw_sprite_masked_collide)(image, gunsight, A_name_entry_cursor_hit);
     ikbd_send_cmd(IKBD_CMD_JOYSTICK_INTERROGATE);
 }
 
@@ -416,8 +416,8 @@ static enum name_entry_step name_entry_apply_key(uint8_t *image, uint8_t key, ui
     /* Erase the block cursor's own cell before the redraw paints the letter into it: `draw_char`
      * ORs its planes through the glyph's mask, so a letter drawn over a filled cell would keep the
      * fill. The redraw that follows puts the cursor back one column along. */
-    draw_char(image, addr_add(A_backdrop_page0, NAME_ENTRY_ROW_OFFSET),
-              (uint16_t)(*cursor + NAME_ENTRY_CURSOR_COLUMN_BIAS), CHAR_CLEAR_CELL);
+    ZY_TEXT(draw_char)(image, addr_add(A_backdrop_page0, NAME_ENTRY_ROW_OFFSET),
+                       (uint16_t)(*cursor + NAME_ENTRY_CURSOR_COLUMN_BIAS), CHAR_CLEAR_CELL);
     (*cursor)++;
     return NAME_ENTRY_STEP_REDRAW;
 }

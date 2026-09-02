@@ -1994,7 +1994,7 @@ because that array is a map KEYED BY ADDRESS with distinct keys, so its row orde
 the three above are. The second is equivalent because every shipped arm carries exactly one of the
 two function pointers.
 
-## The asm twins — the scroll path in the original's own instructions (23)
+## The asm twins — the hot paths in the original's own instructions (28)
 
 **These are not new functions and they add no row above.** A twin is a hand-written m68k
 transcription of the ORIGINAL binary's instruction sequence for a routine this file already carries a
@@ -2008,12 +2008,39 @@ The C stays compiled and stays the reference; nothing about what the program com
 | `scroll_emit_column_shift2_asm` | `0x169f2` | `src/scroll.c` | **1.0083x**, 1.07x (Hatari) |
 | `scroll_emit_column_shift0_asm` | `0x16a56` | `src/scroll.c` | **1.0136x** |
 | `scroll_emit_tile_column_asm` | `0x162c2` | `src/scroll.c` | **1.011x**, 1.09x (Hatari) |
+| `draw_sprite_masked_collide_asm` | `0x15b7c` | `src/sprite.c` | **1.0236x** middle band / **1.0387x** edge bands (Musashi), **1.029x** (Hatari) |
+| `draw_sprite_masked_asm` | `0x15ace` | `src/sprite.c` | **1.0458x** (Musashi; cold in both profiling windows, so no Hatari reading) |
+| `draw_score_panel_asm` | `0x136c8` | `src/hud.c` | **1.0210x** (Musashi), **1.019x** (Hatari) |
+| `draw_bcd_number_asm` | `0x136f6` | `src/text.c` | **1.0184x** |
+| `draw_char_asm` | `0x13710` | `src/text.c` | **1.1141x** from C — but the panel reaches it by the original's own `bsr`, 18 cycles and no prologue, which is 1,400 of the 1,425 calls in a profiled window |
+
+**WAVE B IS THE SPRITE AND TEXT PATHS**, and its five twins took the judged cadence from 3.75-3.77
+vblanks a frame to **2.80** (17.9 fps; the original's own is 2.08). The two waves' shapes differ in
+three ways worth carrying:
+
+* **The `bsr` bracket.** Both wave-B routines return from four or five places — every clip rejection
+  is its own `rts` — so the wrapper CALLS the transcribed body rather than branching to a shared
+  epilogue. One `bsr.w` (18 cycles) buys byte-identical rejection paths and leaves every branch
+  displacement in step with the original's.
+* **The byte pin covers the LOOPS, not the whole body.** These routines' clip prologues are almost
+  nothing but immediate compares, and `gas` spells `and.w #imm,Dn` / `cmp.b #imm,Dn` / `sub.w #imm,Dn`
+  as ANDI/CMPI/SUBI where the original's assembler used the immediate-EA forms — same length, same
+  cycles, a different opcode word. The seven ROW LOOPS carry no immediate-to-Dn operation and ARE
+  byte-identical; the cost pins stand in for the prologues, as they do for `scroll_emit_tile_column`.
+* **A bracket label must not share an address with an entry point.** `atari/profile.py` resolves a
+  profiled call by ADDRESS and reports it by NAME, so an `_body_end` landing on the next routine's
+  first byte takes that routine's row: measured, the collide twin's 1,146 calls came back as
+  `draw_sprite_masked_rows_body_end` and `draw_score_panel_asm` had no row at all. Every bracket in
+  `sprite.S` and `text.S` therefore ends AT its loop's `rts` rather than past it. The pre-existing
+  `__mulsi3`/`_bss_start` aliases in the linked ELF are libgcc's and the linker's, not ours.
 
 **The count is not kept by hand.** `atari/build.sh`'s asm-twin gate scrapes the `*_asm` names
-`include/scroll.h` declares and requires every one to be both DEFINED by an asm object and
-REFERENCED by a core object; it prints the number it found, and a declared twin that was never
-written, or a call site that lost its `ZY_SCROLL()` wrapper, reddens the build. (`test_status.py`
-does not pin this heading — its sections are named after a `src/*.c`, and there is no `src/asm.c`.)
+`include/*.h` declares — GLOBBED, not prefixed, which is why the sprite and text waves were covered
+by it the moment they existed — and requires every one to be both DEFINED by an asm object and
+REFERENCED by a core object, with no core object naming the bare C core. It prints the number it
+found, and a declared twin that was never written, or a call site that lost its `ZY_SCROLL()` /
+`ZY_SPRITE()` / `ZY_TEXT()` wrapper, reddens the build. (`test_status.py` does not pin this heading —
+its sections are named after a `src/*.c`, and there is no `src/asm.c`.)
 
 **What judges them** — five things, and each is proven able to fail. **Three of the five were
 TIGHTENED after the code-review gate proved them survivable**, and the mutations that survived are
@@ -2037,6 +2064,63 @@ kept in the table because a pin's history is what says how much to trust it:
   twins walk advances, so only a synthetic negative offset reaches it (which is how it was proved
   able to fire at all). It is there for wave B, whose sprite blitter clips to negative columns.
 
+**WAVE B'S OWN MUTATIONS**, each rebuilt and re-run rather than reasoned about:
+
+| mutation | result |
+|---|---|
+| `and.l %d7,%d0` → `%d6` in the collide middle band (0x15c5e) | **18 red** — the differential, the byte pin for that band, and the middle band's cost pin |
+| `lea SPRITE_ROW_TAIL(%a0)` → `SCREEN_ROW_BYTES` in the masked row loop (0x15b72) | **34 red** |
+| `and.b %d5,2*PLANE_STRIDE(%a0)` → `3*PLANE_STRIDE` in the glyph loop (0x1377e) | **28 red** |
+| `moveq #PANEL_STRIP_ROWS-1` → `-2` in the strip loop (0x136d4) | **9 red** — differential and cost pin; the byte pin correctly does NOT fire, the `moveq` being outside the bracket |
+| ONE more register in `draw_sprite_masked`'s `movem` pair, with `MASKED_SAVED` corrected to match — behaviour-preserving, +16 cycles | **2 red, and only the cost pins.** The differential and the byte pin both pass it. This is the mutation that says the cost bars are a gate rather than a restatement of today's number |
+| the keep-mask `lea` hoisted into the collide prologue (a real defect the review found) | **the new REJECTION cost pin, and nothing else.** All three band pins, both byte pins and all 249 differential cases stayed green while every clipped sprite paid 20 cycles the original does not |
+| `-DZY_ASM_TEXT` dropped from the seam defines | the build gate names all three text twins and exits 1 |
+
+**WHAT THE REVIEW CHANGED, because the findings are part of the evidence.** Three were real:
+
+* **the collide twin formed the keep-mask table in its prologue**, where the original forms it at
+  0x15c08 — AFTER both y-clip `rts`s. Every sprite clipped off the playfield paid 20 cycles the
+  original does not, and `frame_draw_objects_and_collide` calls that routine for every alive object
+  every frame. Fixed by putting the substitution where its original stands, and pinned by a cost case
+  that CLOCKS A REJECTION: a translation moving work in front of an early `rts` is invisible to a
+  drawing case, because a drawing case reaches that work anyway.
+* **`draw_text_record` (src/text.c) still called the bare C `draw_char`** — a live target call site,
+  and the one shape `build.sh`'s gate is structurally blind to (an intra-file call is not an
+  undefined reference). Every string the game draws was running the 2.4x C. Wrapped, and the reason
+  is now a comment on the routine.
+* **`SPRITE_CELL_HALF` was defined in `src/sprite.c`**, so the twin's `.equ` of the same name looked
+  compliant and was UNPINNED — `test_asm_twin_equates_match_the_headers` only sees headers. Hoisted
+  to `include/sprite.h` with `SPRITE_COLLIDE_LAST_CELL`, both now in `ASM_DERIVED_PINS`.
+
+Two more were coverage: the twins' `_body_end` brackets had been placed to dodge a profiler defect
+(they take an entry point's row, `profile.py` resolving by address and reporting by name), which cost
+2-4 bytes of pin each — fixed in `profile.py`, which now drops `_body`/`_body_end` markers from the
+symbol table, so the brackets cover their whole span again. And the ~400 fuzz cases passed
+`must_write=False` wholesale, so a broken shared staging would have made every case reject on both
+sides and the sweep pass having compared nothing; each chunk now counts what it drew.
+
+**DEFERRED, WITH THE ARGUMENT, rather than folded into this wave:**
+
+* **Nothing off target checks that a twin restores its callee-saved registers.** `run_bench` returns
+  `d0` and the cycle count; the register file is never inspected. Delete `%d7` from both `movem`
+  lists of `draw_sprite_masked_asm`, correct `MASKED_SAVED` to match, and `make test` is green — the
+  image is identical, both byte pins pass, the cost pin gets CHEAPER — while on target the twin
+  returns with `%d7` holding a sprite's planes. The surface is `smoke.py game` alone, whose failure
+  signature would not point at the `movem`. Closing it means `osh_run_bench` dumping d2-d7/a2-a6 and
+  `AsmTwins.call` comparing them against seeded values: a KIT change, affecting Joust and BuggyBoy
+  too, so it belongs to whoever opens the kit next.
+* **One `ZY_TWIN()` seam instead of three.** `ZY_SCROLL`/`ZY_SPRITE`/`ZY_TEXT` expand identically and
+  the gate switches them all-or-nothing, so the per-subsystem split buys nothing exercisable — and it
+  already costs something visible: `draw_score_panel`'s C core lives in `hud.h` while its twin is
+  declared in `text.h`, because in the original the three text routines are one routine. Merging them
+  would touch wave A's established seam and all 24 of its call sites, which is not this wave's change
+  to make; the seam defines are now DERIVED from the headers, which removes the hand-kept list that
+  was the sharpest part of the objection.
+* **`test/asm_twins.py` belongs in the kit.** All four checks are game-agnostic and depend only on
+  kit modules; `tools/recreate_kit/asm_twin.py` is their sibling and already carries the same chain
+  diagram. Left here because moving it is a cross-project change — the same standing candidate
+  `mkprg.py` and `tos.ld` are registered as.
+
 **AND ONE THING NOTHING OFF-TARGET CATCHES.** A twin that returns with a callee-saved register
 clobbered leaves the image perfect, returns the right value, balances its stack and passes every row
 above — and corrupts its C caller. The surface is the on-target run (`smoke.py game`, whose frame
@@ -2058,6 +2142,35 @@ displacement 4 costs 76 cycles a call. The twenty blit bodies needed no substitu
 why they are byte-identical. `gas` spells `and.w #imm,Dn` as ANDI where the original's assembler used
 AND-immediate: same four bytes, same flags, and Musashi charges the original's encoding two cycles
 more, so the twin measures marginally UNDER the original on the masked arms.
+
+**WHAT WAVE B DID NOT TWIN, AND THE ARITHMETIC.** Both are measured refusals, not omissions; the
+numbers are `atari/profile.py ours` over a 1000-vblank window, inclusive and self cycles a frame.
+
+* **`enemies_move_all` (0x1487c) — NO-GO.** Inclusive 12,976 a frame against the original's 3,387,
+  which looks like a 9,589-cycle prize (2.0% of the frame). But its own body is only **2,914**
+  against the original's **1,121**, so a twin of the DISPATCHER SHELL — the table walk and the `jsr`
+  through `0x19380` — wins **1,793 cycles a frame, 0.38%**. The other 7,800 are in the ~15 movement
+  handlers it calls, each of which would need its own transcription, its own battery and its own cost
+  bar. The whole tree is a fifth of what one wave-C routine returns for many times the work, and a
+  shell twin that called back into the C handlers would pay a C-ABI prologue per entity for a shell
+  that costs 2,914 cycles in total.
+* **`draw_sprite_masked` (0x15ace) was twinned anyway, and the reason is worth recording** — it is
+  COLD in both profiling windows (no row in either callers report; `asteroids_draw` costs 1,365
+  cycles a frame inclusive with no live asteroid in section 0). Its two call sites are guarded by
+  `ENTITY_ALIVE`, so a call happens only when a sprite really draws, and a drawing call is ~4,850
+  cycles in the original against the C's 2.4x. The twin is a win whenever it runs and costs nothing
+  when it does not; what it lacks is a Hatari reading, which is stated in its row above rather than
+  filled in from the Musashi one.
+
+**WAVE C IS ONE ROUTINE, AND THE ARITHMETIC POINTS AT IT UNAMBIGUOUSLY.** After wave B the judged
+frame is **417,049 cycles** against the original's **262,244** (`atari/profile.py frames` /
+`original-frames`), a gap of ~155,000. Every named routine in the frame is now within **1.03x** of
+the original, which accounts for ~4,000 of it. The rest is `frame_resolve_hits_and_game_state`
+(0x11d30..0x1296e), which `frame_loop_once` reaches by a TAIL CALL — so Hatari attributes it no
+arrivals and it appears only as `frame_loop_once`'s own **211,784 cycles a frame**, of which its
+named children account for ~12,000. It is ~3,100 bytes of the original across a dozen inlined static
+helpers and carries an X-flag protocol between two of its passes, so it is a wave rather than a twin:
+the recipe holds, but the transcription has to be sliced.
 
 ## Suite-wide checks (not functions, so not counted above)
 

@@ -2045,58 +2045,61 @@ VBL_HZ = 50
 # frames. `check_the_pacing` refuses a run whose frame count is not this one instead of applying
 # them anyway — a longer run reaches a second life, whose 4-vblank frames are a different mixture.
 PACING_BASELINE_FRAMES = 300
-# What this tree measures, and the ceiling a run must stay under. MEASURED at 3.75 mean vblanks a
-# frame over those 300 frames — 38 at 2, 262 at 4, NONE over — and measured TWICE to the second
-# decimal, because the tolerance rests on that: the 300 frames are pinned (the same random state,
-# the same entity table, a neutral stick every frame), so the cadence is REPRODUCIBLE and this is
-# not a noise band.
+# What this tree measures, and the ceiling a run must stay under. MEASURED at 2.80-2.84 mean vblanks
+# a frame over those 300 frames — about 175-180 at 2, the rest at 4, none over 5 — across six `game`
+# runs and two `gamefault` runs of the same binaries.
 #
-# THE SCROLL PATH'S ASM TWINS ARE WHAT MOVED IT, from 5.73 (41 at 4, 258 at 6, one over) to 3.75:
-# ../src/asm/ transcribes the original binary's own instructions for the twenty page blits, the two
-# column emitters and the tile emitter, and the frame's biggest item stopped costing three times
-# what the original paid for it. 8.7 fps to 13.3, and the MODE moved a whole release slot, 6 to 4.
+# THE ASM TWINS ARE WHAT MOVED IT, in two waves. The scroll path (the twenty page blits, the two
+# column emitters and the tile emitter) took it from 5.73 to 3.75; the SPRITE and TEXT paths — the
+# collide blitter at 0x15b7c and the score panel at 0x136c8 with the character blitter it ends in —
+# took it from 3.75 to 2.80. 8.7 fps, then 13.3, now 17.9, and the MODE has moved from six release
+# slots to four to TWO: most of the run is now on budget.
 #
-# THE CEILING IS 3.87, AND THE ARITHMETIC IS THE SAME ONE THAT SET 5.85 — the slack is EIGHTEEN
-# frames slipping one release slot, and a slot is 2 vertical blanks, so 36 vblanks over 300 frames
-# is 0.12 on the mean: 3.7467 measured (1,124 vblanks) + 0.12 = 3.8667 (1,160).
+# THE CADENCE IS NO LONGER REPRODUCIBLE TO THE SECOND DECIMAL, and that is a consequence of the win
+# rather than of anything getting flakier. The same binary measured 2.80, 2.82, 2.84, 2.80, 2.84 and
+# 2.80 — a 12-vblank spread over 300 frames — because ~60% of the frames now finish NEAR the release
+# boundary, where a handful of cycles either way moves a frame between 2 slots and 4. While every
+# frame overran (the 5.73 and 3.75 eras), nothing sat on the boundary and the histogram repeated to
+# the frame; the old comment's claim of exact reproducibility was true then and is not true now.
 #
-# 3.87 IS THAT ROUNDED UP TO TWO DECIMALS, AND THE ROUNDING BUYS ONE VBLANK MORE THAN THE DERIVATION
-# ASKS FOR. `check_the_pacing` fails on `mean > ceiling`, so a run still passes at 1,161 vblanks
-# (1,161 / 300 = 3.87 exactly) where eighteen slipped frames account for 1,160: the real slack is 37,
-# not 36. The pre-twin ceiling's was exactly 36 (5.85 x 300 = 1,755 against 5.73's 1,719), so this
-# one is a vblank looser than that rather than identical to it. Kept at 3.87 rather than carried to
-# more decimals — one vblank is a thirtieth of the tolerance it sits in, and two decimals is what
-# every cadence figure in this file and in README.md is quoted to — but named here rather than
-# papered over, because "the same slack as before" would otherwise be off by one.
+# SO THE CEILING IS SET FROM THE WORST OF THE EIGHT RUNS, NOT FROM THEIR MEAN: 2.84 (852 vblanks)
+# plus the same slack every ceiling in this file's history has used — EIGHTEEN frames slipping one
+# release slot, a slot being 2 vertical blanks, so 36 vblanks over 300 frames is 0.12 on the mean.
+# 852 + 36 = 888 vblanks, and 888 / 300 = 2.96 exactly, so there is no rounding slop in this one
+# (3.87 carried a spare vblank from rounding; this does not).
 #
-# The 0.12 is deliberately NOT re-derived as a share of the new mean, which would have shrunk the
-# slack to 24 vblanks and made the check tighter than the evidence for it.
+# The 0.12 is deliberately NOT re-derived as a share of the new mean, which would shrink the slack
+# with every win and make the check tighter than the evidence for it.
 #
-# It is a tight number and it is meant to be. The run is deterministic — 3.75 to the second decimal
-# on the `game` build twice and on `gamefault` once, with the same histogram to the frame — so the
-# margin is for a real change, not for noise. It is also why the frame count is pinned above: the
-# `play` build's longer run reaches a second life, whose mixture is a different one.
+# MEASURING AGAINST THE WORST RUN IS WHAT PAYS FOR THE JITTER, and it is worth being exact about
+# what that leaves: a regression gets the full 36 vblanks of slack above the worst run this tree
+# produced, and 48 above its best (840). The spread is absorbed by the choice of baseline, not
+# subtracted from the tolerance. What it does cost is the OTHER direction — the eight samples are
+# from one host and one tree, so a ninth run somewhere else could sit above 2.84 for no reason of
+# the code's, and the honest response to that would be a wider baseline, never a raised ceiling.
+# The frame count is pinned above for the reason it always was — the `play` build's longer run
+# reaches a second life whose mixture is a different one.
 #
 # THE `gamefault` CONTROL WAS MEASURED AGAINST THE SAME CEILING rather than exempted from it,
 # because this check sits in `mode_game`'s FAULT-BLIND set and a tolerance that had only ever seen
-# one mode would be one the control could redden by accident. Measured: `gamefault` gives 3.75 and
-# [2x38 4x262], the same histogram to the frame — the dropped section-chain step is a one-off panel
-# repaint, not per-frame work, so it moves what is DRAWN and not what a frame costs.
-PACING_MEAN_CEILING_VBLS = 3.87
+# one mode would be one the control could redden by accident. Measured: `gamefault` gives 2.80 twice
+# — the dropped section-chain step is a one-off panel repaint, not per-frame work, so it moves what
+# is DRAWN and not what a frame costs.
+PACING_MEAN_CEILING_VBLS = 2.96
 # ...and how many frames may reach the histogram's last slot (PACING_SLOTS - 1 = seven vblanks
 # or more) — an ABSOLUTE COUNT (the share form was measured 40x looser than its comment claimed,
-# see the git history). IT IS ZERO, AND THAT IS WHAT WAS MEASURED: 0 of 300 since the asm twins landed,
-# on all three runs the mean above rests on — two `game` builds and one `gamefault`, the same
-# histogram to the frame. The section's first pass, which draws the whole playfield and was the one
-# frame that used to overflow, now fits. A 2% allowance is six frames over 300, and a run this
-# deterministic never spends them: an allowance nothing occupies is slack, not headroom, so zero is
-# the honest number and the first overflowing frame is the report.
+# see the git history). IT IS ZERO, AND THAT IS WHAT WAS MEASURED: 0 of 300 on all eight runs the
+# mean above rests on — six `game` and two `gamefault` — whose worst frame anywhere reached FIVE
+# vblanks. The section's first pass, which draws the whole playfield and was the one frame that used
+# to overflow, now fits with room to spare. A 2% allowance is six frames over 300 and no run spends
+# them: an allowance nothing occupies is slack, not headroom, so zero is the honest number and the
+# first overflowing frame is the report.
 #
-# THE LIMITATION ZERO DOES NOT FIX, stated rather than left implicit: the last slot is fixed in C at
-# seven vblanks (zynaps_main.c's PACING_SLOTS, pinned by `assert_the_phase_names_are_the_shims`)
-# while the cadence's mode is now four, so this arm only fires at nearly DOUBLE the mode. It was one
-# release slot above the mode when the mode was six; it no longer is. A regression that puts frames
-# at five or six vblanks — a whole release slot lost — never reaches the slot at all, and
+# THE LIMITATION ZERO DOES NOT FIX, stated rather than left implicit, and it has grown: the last slot
+# is fixed in C at seven vblanks (zynaps_main.c's PACING_SLOTS, pinned by
+# `assert_the_phase_names_are_the_shims`) while the cadence's mode is now TWO, so this arm fires only
+# at three and a half times the mode. A regression that puts every frame back at four or six vblanks
+# — one or two whole release slots lost — never reaches the slot at all, and
 # PACING_MEAN_CEILING_VBLS above is the only arm that catches it.
 PACING_OVERFLOW_FRAMES = 0
 

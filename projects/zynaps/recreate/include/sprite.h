@@ -126,6 +126,11 @@
  * two facts, two names; `test_sprite.py` holds this one against the row stride it divides. */
 #define SPRITE_CELL_BYTES 8u
 #define SPRITE_CELL_LONGS 2u          /* ...read as planes 0+1, then planes 2+3 */
+/* One plane PAIR — half a cell, which is the unit both blitters read and write with `move.l`. IN
+ * THIS HEADER RATHER THAN IN src/sprite.c, where it was: `src/asm/sprite.S` needs the same value,
+ * and `test_constants.py::test_asm_twin_equates_match_the_headers` can only pin an `.equ` whose name
+ * a HEADER also defines — a `.c`-local define leaves the twin's copy silently unpinned. */
+#define SPRITE_CELL_HALF (SPRITE_CELL_BYTES / SPRITE_CELL_LONGS)
 
 #define SPRITE_COLLIDE_ORIGIN_X    0x40u  /* `sub.w #$40,d0` — world x of screen column 0 */
 #define SPRITE_COLLIDE_LEFT_EDGE   0x30u  /* `cmp.w #$30,d0` + `bgt` — at or left of this, nothing */
@@ -136,6 +141,10 @@
  * the wrap would be removing behaviour, not fixing a bug. */
 #define SPRITE_COLLIDE_RIGHT_EDGE 0x170u
 #define SPRITE_COLLIDE_RIGHT_OFF  0x180u  /* `cmp.w #$180,d0` + `blt` — at or right of it, nothing */
+/* `lea 152(a0),a0` — where the RIGHT-edge band draws, the row's last whole cell. Named here for the
+ * same reason SPRITE_CELL_HALF is: src/asm/sprite.S restates it, and only a header's define is
+ * pinned against the twin's `.equ`. */
+#define SPRITE_COLLIDE_LAST_CELL (SCREEN_ROW_BYTES - SPRITE_CELL_BYTES)
 /* `mulu.w #$5,d2` — half a one-cell frame per row, which is this routine's own D2: it works the
  * preshift step out from the record's height instead of taking it as an argument as 0x15ace does. */
 #define SPRITE_COLLIDE_ROW_HALF_WORDS 5u
@@ -156,5 +165,24 @@ void sprite_bank_build_preshift8(uint8_t *image, uint32_t src, uint32_t dst, uin
                                  uint16_t frame_count_minus_one);
 void mothership_sprite_preshift(uint8_t *image);
 void draw_sprite_masked_collide(uint8_t *image, uint32_t entity, uint32_t hit_flag);
+
+/* ================================================================================================
+ * THE ASM TWINS — src/asm/sprite.S, substituted for the two blitters above on the TARGET build.
+ *
+ * The same seam include/scroll.h carries for the scroll path, for the same reasons and with the
+ * same guarantees: the C above stays the reference and stays compiled (test/test_sprite.py proves
+ * it equal to the original, test/test_asm_sprite.py proves each twin equal to it, both byte for
+ * byte over the whole image), so the substitution changes the program's SPEED and nothing else.
+ * `ZY_SPRITE(fn)` names the one to call, so a reader greping ../names.txt for `draw_sprite_masked`
+ * still lands on every place it is reached from; atari/build.sh defines ZY_ASM_SPRITE, links
+ * src/asm/, and GATES that the twins really arrived. The host differential build never defines it.
+ * ============================================================================================= */
+#ifdef ZY_ASM_SPRITE
+void draw_sprite_masked_asm(uint8_t *image, uint32_t entity, uint16_t preshift_bytes_per_pixel);
+void draw_sprite_masked_collide_asm(uint8_t *image, uint32_t entity, uint32_t hit_flag);
+#define ZY_SPRITE(fn) fn##_asm
+#else
+#define ZY_SPRITE(fn) fn
+#endif
 
 #endif /* ZYNAPS_SPRITE_H */

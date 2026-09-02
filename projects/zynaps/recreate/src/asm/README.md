@@ -5,8 +5,10 @@ sequence** for one routine, carrying the C signature of the verified core it sta
 target build (`atari/build.sh`) links the twin instead of the C; the host differential build never
 sees it.
 
-This directory holds Zynaps' scroll-path twins. Wave B (the sprite path) follows the same recipe,
-and the recipe is the point of this file.
+This directory holds Zynaps' twins: the scroll path (wave A — `scroll_blit.S`, `scroll_emit.S`,
+`scroll_tile.S`) and the sprite and text paths (wave B — `sprite.S`, `text.S`). Wave B followed this
+recipe unchanged and taught it four things, which are folded in below under **What wave B added**.
+The recipe is the point of this file.
 
 ## Why transcription and not optimisation
 
@@ -38,10 +40,13 @@ Four things judge a twin, and a new one needs all four:
 
 | check | where | what it catches |
 |---|---|---|
-| the differential | `test/test_asm_scroll.py` | any byte the twin computes differently, anywhere in the image |
-| the transcription pin | `test_the_blit_twins_transcribe_the_original` | a body that stopped being the original's own machine code |
-| the cost pin | `test_the_*_twin_costs_what_the_original_costs` | a translation that quietly costs cycles (bar: 1.15x) |
+| the differential | `test/test_asm_{scroll,sprite,text}.py` | any byte the twin computes differently, anywhere in the image |
+| the transcription pin | `test_the_twins_transcribe_the_original` | a body that stopped being the original's own machine code |
+| the cost pin | `test_the_*_twin_costs_what_the_original_costs` | a translation that quietly costs cycles |
 | the build gate | `atari/build.sh`, "THE ASM-TWIN GATE" | the twin not actually being what the game calls |
+
+The first three are `test/asm_twins.py`'s, shared by every suite; what a suite holds of its own is
+its CASES (borrowed from that subsystem's C battery), its byte-pinned spans and its cost ceilings.
 
 The build gate is the one worth dwelling on. This substitution fails **silently**: drop
 `-DZY_ASM_SCROLL` and every `ZY_SCROLL(fn)` resolves to the C again, the twins still assemble, still
@@ -128,19 +133,79 @@ unless the `rts` lands on it. Measured — changing `TILE_EPILOGUE`'s `lea FRAME
    headers' — `test_constants.py::test_asm_twin_equates_match_the_headers` pins each to its header
    and requires **every `.S` to contribute at least one pinned name**, so a file that named nothing
    after the headers fails rather than going unchecked.
-3. **Declare it in the subsystem header**, inside that header's `#ifdef ZY_ASM_SCROLL` block (see
-   `include/scroll.h`). That header is the build gate's source of truth for which cores have twins.
-4. **Wrap the call sites** in `ZY_SCROLL(fn)`. For the scroll path those are `src/frame.c`'s dispatch
-   table and its three direct calls, plus `src/init.c`'s prefill. The C core and its own glue are
-   left alone — they are the reference.
-5. **Add its cases to `test/test_asm_scroll.py`**, reusing the C battery's staging rather than
-   restating it. Every case asserts the C *wrote something* (`must_write`), or a pair that both did
-   nothing would read as a pass.
-6. **Add its cost case.** A twin with no cost pin is a twin nobody would notice regressing.
+3. **Declare it in the subsystem header**, inside that header's `#ifdef ZY_ASM_<SUBSYSTEM>` block
+   beside a `ZY_<SUBSYSTEM>(fn)` macro (see `include/scroll.h`, `include/sprite.h`, `include/text.h`).
+   `include/*.h` is the build gate's GLOBBED source of truth for which cores have twins, so a new
+   subsystem is covered by it the moment its header declares one — and add the new `-DZY_ASM_*` to
+   `atari/build.sh`'s `ASM_SEAM_DEFINES` or the gate will tell you nothing calls your twin.
+4. **Wrap every call site** in `ZY_<SUBSYSTEM>(fn)`. The C core and its own glue are left alone —
+   they are the reference — with ONE exception the gate forces: a reference core that calls a
+   twinned core in ANOTHER translation unit leaves an undefined reference to the bare name, which the
+   gate cannot tell from a live call site, so that call is wrapped too (`src/hud.c`'s
+   `draw_score_panel` calling `draw_bcd_number`; the wrapper is the identity on the host build, and
+   on target that body is never reached).
+5. **Add its cases to `test/test_asm_<subsystem>.py`**, on `test/asm_twins.py`'s four checks and
+   reusing the C battery's staging rather than restating it — make that battery's helper public and
+   say in its docstring who else drives it. Every case asserts the C *wrote something*
+   (`must_write`), or a pair that both did nothing would read as a pass; a case that legitimately
+   writes nothing (a clip rejection) passes `must_write=False` **and asserts the image came back
+   untouched**, which is the positive control for that arm.
+6. **Add its cost case.** A twin with no cost pin is a twin nobody would notice regressing. Measure
+   first, then set the bar a handful of CYCLES above what you measured — see "one bar that moved".
 7. **`make test`** (which assembles the twins first) and **`bash atari/build.sh game`** — the gate
-   prints how many twins came from asm.
+   prints how many twins came from asm. Then **`python3 atari/smoke.py game`**, which is the only
+   surface for a clobbered callee-saved register.
 8. **Mutation-check your own differential**: flip one instruction, rebuild, watch the suite go red,
-   revert. A differential that cannot fail is the failure.
+   revert. A differential that cannot fail is the failure. Mutate the COST pin separately with a
+   behaviour-preserving change (one more register in the `movem`, `SAVED` corrected to match) — the
+   differential and the byte pin both pass that, so it is the only mutation that judges the bar.
+
+## What wave B added
+
+Four things, each learned by getting it wrong first.
+
+**1. A routine with several `rts`s is CALLED, not branched into.** Both sprite blitters and the
+character blitter return from four or five places — every clip rejection is its own `rts`. Rewriting
+each into a branch to a shared epilogue would change the body's byte layout at nine places and put
+every branch displacement after them out of step with the original's. So the wrapper does its
+`movem`, binds the arguments and then `bsr`s the transcribed body: each of the original's own `rts`
+instructions returns to the wrapper, which unwinds the C frame. **18 cycles, and the rejection paths
+and row loops stay byte-identical.** `text.S` gets a second use out of it — the original's own
+`bsr draw_char` inside `draw_bcd_number` survives as a `bsr`, so eight score digits cost eight plain
+subroutine calls rather than eight C calls with a `movem` pair each.
+
+**2. When a routine falls off its own end into the next, the twin must too — so lay ALL the wrappers
+out first and the bodies contiguously after them.** `draw_score_panel` has no `rts`: it sets up
+`draw_bcd_number`'s arguments and runs into it. Written in the obvious order (wrapper, body, wrapper,
+body) the panel body fell into the SECOND WRAPPER, which pushed a `movem` and read arguments off a
+stack that no longer held any. `AsmTwins.call` caught it as "stored into its own code"; nothing about
+the symptom named the cause.
+
+**3. A byte pin is not always achievable, and the reason is `gas`.** The original's assembler encoded
+`and.w #imm,Dn`, `cmp.b #imm,Dn`, `add.w #imm,Dn` and `sub.w #imm,Dn` as the immediate-EA forms
+(0xc07c, 0xb03c, 0xd07c, 0x907c); gas spells all four as ANDI/CMPI/ADDI/SUBI. Same length, same cycle
+count, a different opcode word. A CLIP PROLOGUE is almost nothing but those, so it cannot be
+byte-equal however faithfully it is copied — but a ROW LOOP usually carries no immediate-to-Dn
+operation at all, and wave B's seven loops are byte-identical to the original's. **Pin the loops,
+name the limitation, and let the cost bar stand in for the rest.** (`.short` for the original's
+encoding would restore the pin at the price of a file nobody can read; that trade was rejected.)
+
+**4. A `_body_end` label MUST NOT share an address with an entry point.** It sits at the first byte
+after the span, which for a body that ends a routine is the next routine's first byte —
+`atari/profile.py` resolves a profiled call by ADDRESS and reports it by NAME, so the bracket label
+takes that entry point's row. Measured: the collide twin's 1,146 calls a window came back under
+`draw_sprite_masked_rows_body_end` and `draw_score_panel_asm` had no row at all, with every cycle
+correctly counted and every name wrong. Wave B's brackets therefore end AT their loop's `rts` rather
+than past it; the two bytes left outside are covered by the differential and by `run_bench`'s
+sentinel-return check. **Check for it with `m68k-elf-nm` over the linked game ELF** — two names at
+one address, `__mulsi3`/`_bss_start` aside, are yours.
+
+**And one bar that moved.** Wave A's ceilings were 1.005-1.0125 because a page blit is 110,000 cycles
+a call and its C-ABI prologue is a quarter of one percent of that. Wave B's routines are 1,700-16,000
+cycles a call, so the same fixed cost is 2-11%. **Set the bar from your own measurement and keep the
+margin in CYCLES, not in percent**: wave B's margins are 3-9 cycles, which is what makes one extra
+register in a `movem` (16 cycles round trip) redden them. A bar quoted as "about 1.05" would have
+been forty times looser than the effect it exists to catch.
 
 ## Where the pieces live
 
@@ -150,10 +215,12 @@ unless the `rts` lands on it. Measured — changing `TILE_EPILOGUE`'s `lea FRAME
 | assembled to one blob | `build/asm/twins.{elf,bin}` — `make asm`, and `make test` first |
 | the assemble rule | `tools/recreate_kit/kit.mk`, `$(ASM_ELF)` — generic, driven by `src/asm/*.S` existing |
 | the Musashi runner | `tools/recreate_kit/asm_twin.py` — `AsmTwins.call(image, symbol, *args)` |
-| the differential | `test/test_asm_scroll.py` |
+| the four checks, shared | `test/asm_twins.py` — `matches_the_c`, `assert_transcribes_the_original`, `cost_case`, `assert_within_the_bar` |
+| the differentials | `test/test_asm_scroll.py`, `test/test_asm_sprite.py`, `test/test_asm_text.py` |
 | the constant pin | `test/test_constants.py::test_asm_twin_equates_match_the_headers` |
-| the seam | `include/scroll.h`'s `ZY_SCROLL()`; call sites in `src/frame.c`, `src/init.c` |
-| the build gate | `atari/build.sh`, "THE ASM-TWIN GATE" |
+| the seams | `include/scroll.h`'s `ZY_SCROLL()`, `include/sprite.h`'s `ZY_SPRITE()`, `include/text.h`'s `ZY_TEXT()` |
+| the call sites | `src/frame.c`, `src/init.c`, `src/enemy.c`, `src/mothership.c`, `src/highscore.c`, `src/hud.c` |
+| the build gate | `atari/build.sh`, "THE ASM-TWIN GATE" and `ASM_SEAM_DEFINES` |
 
 The kit halves (`kit.mk`, `asm_twin.py`) are **game-agnostic**: a project acquires the whole
 machinery by creating a `src/asm/` and writing a `.S` in it. Nothing in either file names Zynaps.

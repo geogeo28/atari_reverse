@@ -178,7 +178,7 @@ void mothership_draw(uint8_t *image) {
 
     for (unsigned i = 0; i < MOTHERSHIP_TAIL_SEGMENTS; i++) {
         if (image[segment + ENTITY_ALIVE] != 0)
-            draw_sprite_masked(image, segment, MOTHERSHIP_DRAW_PHASE_STEP);
+            ZY_SPRITE(draw_sprite_masked)(image, segment, MOTHERSHIP_DRAW_PHASE_STEP);
         segment = addr_add(segment, ENTITY_STRIDE);
     }
 }

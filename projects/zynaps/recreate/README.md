@@ -58,7 +58,8 @@ recreate/
 │   ├── test_constants.py   the CLAUDE.md §5 pin and the duplicate checks — a collector
 │   ├── test_status.py      STATUS.md's counts against its rows
 │   ├── test_heap_guard.py  the run-time half of the `tos_malloc_unused` waiver
-│   ├── test_asm_scroll.py  the asm twins against the C cores they replace, byte-exact
+│   ├── asm_twins.py        the four checks every twin suite runs, shared
+│   ├── test_asm_<path>.py  the asm twins against the C cores they replace, byte-exact
 │   └── test_<subsystem>.py one differential battery per subsystem
 ├── atari/           THE CORES ON A REAL 68000 — see atari/README.md
 └── STATUS.md        the per-function ledger, in per-subsystem sections
@@ -74,9 +75,11 @@ registers where the image diff can see them.
 
 **`src/asm/` is a target-side substitution, not a second reconstruction.** Each `.S` transcribes the
 ORIGINAL binary's instruction sequence for one core and carries that core's C signature; the C stays
-compiled and stays the reference, and `test/test_asm_scroll.py` proves each twin byte-equal to it
-over the whole image. `make test` builds them first (the kit's `$(ASM_BIN)` rule) and runs both
-directions. [`src/asm/README.md`](src/asm/README.md) is the recipe for adding one.
+compiled and stays the reference, and `test/test_asm_<path>.py` proves each twin byte-equal to it
+over the whole image. The scroll path, the two sprite blitters and the score panel with its character
+blitter are transcribed — 28 twins over five `.S` files. `make test` builds them first (the kit's
+`$(ASM_BIN)` rule) and runs both directions.
+[`src/asm/README.md`](src/asm/README.md) is the recipe for adding one.
 
 ## Adding a function
 
