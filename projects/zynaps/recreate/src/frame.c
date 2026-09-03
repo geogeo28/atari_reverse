@@ -1631,11 +1631,11 @@ frame_exit frame_loop_once(uint8_t *image, uint32_t chance_index_register,
     /* THE FIRST THREE SLICES RUN THE C ON TARGET, ON PURPOSE — `include/frame.h`'s seam block says
      * why at length. Their twins exist, are verified, and are NOT called here: wave D measured them
      * at +13 cycles a frame, so the substitution buys nothing and would cost six pause instructions
-     * that no off-target surface can check. Only the last slice's twin ships. */
+     * that no off-target surface can check. The LAST TWO slices' twins ship. */
     if (frame_panel_scroll_and_ship_stage(image))
         frame_drone_and_fire_stage(image, A_player_record, image[A_joystick_state]);
     frame_spawn_and_move_stage(image, chance_index_register, ground_spawn_y_register);
-    frame_draw_objects_and_collide(image);
+    ZY_FRAME(frame_draw_objects_and_collide)(image);
     /* D0 comes out of the stage above as ENTITY_SLOTS: its outer sweep runs `d0` from 1 up to that
      * bound and leaves it there (`cmp.l #$14,d0` + `bne`). */
     return ZY_FRAME(frame_resolve_hits_and_game_state)(image, ENTITY_SLOTS);

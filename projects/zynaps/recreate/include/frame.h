@@ -541,11 +541,18 @@ frame_exit frame_loop_once(uint8_t *image, uint32_t chance_index_register,
 /* ================================================================================================
  * THE ASM-TWIN SEAM, exactly as include/scroll.h's, include/sprite.h's and include/text.h's.
  *
- * `src/asm/frame*.S` transcribe the original's own instruction sequence for FOUR of the five
- * slices — wave C's `frame.S` for the last one, and wave D's `frame_head.S`, `frame_fire.S` and
- * `frame_spawn.S` for the three before it.
+ * `src/asm/frame*.S` transcribe the original's own instruction sequence for ALL FIVE of the
+ * slices — wave C's `frame.S` for the last one, wave E's `frame_draw.S` for the one before it, and
+ * wave D's `frame_head.S`, `frame_fire.S` and `frame_spawn.S` for the three at the front.
  *
- * ONLY WAVE C'S SHIPS, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT. Wave C's twin is worth
+ * TWO OF THE FIVE SHIP: WAVE C'S AND WAVE E'S. Wave E's `frame_draw.S` (the draw/collide slice) is
+ * worth ~36,000 cycles on a BUSY frame — the entity table's eleven actor slots full — and took the
+ * judged cadence from 2.68 vblanks a frame to 2.51. It was the last slice without a twin, and it
+ * was passed over for three waves because every instrument until `atari/bench_tier.py` averaged
+ * over frames and its cost is a function of how many entities are on screen. `src/asm/README.md`'s
+ * "What wave E added" is that argument in full.
+ *
+ * WAVE D'S THREE DO NOT SHIP, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT. Wave C's twin is worth
  * ~19,500 cycles a frame and is called by `frame_loop_once` below. Wave D's three are worth
  * **+13 cycles a frame** — measured A/B on one tree, `STATUS.md`'s wave-D section — so the target
  * build calls the C for those three slices and the twins are VERIFICATION-ONLY: assembled, run by
@@ -567,8 +574,8 @@ frame_exit frame_loop_once(uint8_t *image, uint32_t chance_index_register,
  * seam defines, links src/asm/, and GATES that the twin really arrived. The host differential build
  * never defines it.
  *
- * THE SHIPPED SLICE HAS EXACTLY ONE ON-TARGET CALL SITE (`frame_loop_once`, in src/frame.c), which
- * is why the build gate covers it completely: an unwrapped call site would leave that twin
+ * EACH SHIPPED SLICE HAS EXACTLY ONE ON-TARGET CALL SITE (`frame_loop_once`, in src/frame.c), which
+ * is why the build gate covers them completely: an unwrapped call site would leave that twin
  * UNREFERENCED and redden the gate. The blind spot wave B found — an intra-file call to the bare C
  * core, which is not an undefined reference and so is invisible to the gate — needs a SECOND call
  * site to bite, and this slice has none. The `g_frame_*` glues name the bare cores, but that is the
@@ -600,6 +607,7 @@ ZY_TWIN_VERIFICATION_ONLY void frame_drone_and_fire_stage_asm(uint8_t *image, ui
                                                               uint8_t joystick);
 ZY_TWIN_VERIFICATION_ONLY void frame_spawn_and_move_stage_asm(uint8_t *image, uint32_t chance_index,
                                                               uint32_t ground_spawn_y);
+void frame_draw_objects_and_collide_asm(uint8_t *image);
 frame_exit frame_resolve_hits_and_game_state_asm(uint8_t *image, uint32_t sound_channel);
 #define ZY_FRAME(fn) fn##_asm
 #else

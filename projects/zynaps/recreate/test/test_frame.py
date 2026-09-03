@@ -334,6 +334,18 @@ def advance_one_frame(image):
     return bytearray(final)
 
 
+def world_rng(joystick_seed=0):
+    """The joystick stream `world` plays a section with, for `joystick_seed`.
+
+    PUBLIC, and the seed base lives HERE rather than at each caller, because `atari/census.py`
+    replays the same sweep to find a section's busiest frame and then names that frame number to
+    `test/test_asm_frame_draw.py`. Two spellings of the base would make "frame 141" mean two
+    different worlds, and nothing would say so — the suite would simply be staging something other
+    than the frame the bench priced.
+    """
+    return random.Random(0x27a3e + joystick_seed)
+
+
 @functools.lru_cache(maxsize=None)
 def world(section, frames, joystick_seed=0):
     """The section's world after `frames` frames of the ORACLE playing it.
@@ -345,7 +357,7 @@ def world(section, frames, joystick_seed=0):
     PUBLIC because `test_asm_frame.py` is a second driver — see `advance_one_frame`.
     """
     image = _stage_section(section)
-    rng = random.Random(0x27a3e + joystick_seed)
+    rng = world_rng(joystick_seed)
     for _frame in range(frames):
         image[A_JOYSTICK_STATE] = rng.choice(JOYSTICK_BYTES)
         image = advance_one_frame(image)

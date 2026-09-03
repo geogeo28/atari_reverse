@@ -250,10 +250,20 @@ keeps it closed is `smoke.py`'s `check_the_pacing`, whose floor is 95% of the of
 
 # PERFORMANCE — the frame cadence, measured against the shipped binary's own
 
-**The port computes the right bytes and takes about 1.6 times as long to do it — it used to take
+**The port computes the right bytes and takes about 1.5 times as long to do it — it used to take
 three.** The frame differential above is byte-identical; this section is the other question, asked
 with the same discipline: both binaries, on one machine, through one instrument, over a window of
 the same length.
+
+> **THE VERDICT AT THE FOOT OF THIS SECTION USED TO SAY THE CAMPAIGN WAS CLOSED, AND IT WAS
+> WRONG.** It closed on a mean, and the residual it could not account for was hiding in a place a
+> mean cannot look: a cost that scales with HOW MANY ENTITIES ARE ON SCREEN. The user's report was
+> never "the game is slow" — it was "**it slows down when there are a lot of sprites**", which is a
+> claim about the distribution's tail. Wave E built the instrument that can read that tail
+> (`atari/census.py` + `atari/bench_tier.py`), found **+41,056 cycles a busy frame** in the one
+> frame slice nobody had twinned, and collected ~36,000 of them. See **The heavy frame** below,
+> which is now the section's centre of gravity; the mean-based tables that follow it are kept
+> because they are still true about means.
 
 **The scroll path is done, and so are the sprite and text paths.** Wave A transcribed the twenty page
 blits, the two column emitters and the tile emitter — 28%, 16% and 7% of the pre-twin profiler
@@ -275,6 +285,120 @@ python3 atari/profile.py ours               # OUR per-symbol cycles over 1000 vb
 python3 atari/profile.py original           # ...the shipped binary's, from names.txt's symbols
 python3 atari/profile.py compare            # both profiles read back and ratioed
 ```
+
+...and the two tools wave E added, which answer the question `profile.py` structurally cannot —
+**what does one BUSY frame cost, routine by routine, on both sides?**
+
+```bash
+# stage the busiest frame the oracle plays into, and a light one for contrast
+python3 atari/census.py 0 300 0 atari/out/heavy.img atari/out/light.img
+# ...then price every stage and tier routine on those frames, ours against the original
+python3 atari/bench_tier.py atari/out/heavy.img atari/out/light.img
+```
+
+`census.py` walks the ORACLE playing a real section frame by frame, reports each frame's entity
+load, and saves the busiest image it sees (and the lightest that still draws). `bench_tier.py` runs
+both sides over that one image under Musashi — the original's own machine code through `emu.run`,
+and ours as the cross-compiled `atari/build/zynaps.elf` through `emu.run_bench`. One image, one
+instrument: no window, no mixture, and no average. It prices **what the game calls**, resolving a
+shipped twin's `<core>_asm` out of the linked ELF and marking those rows `[twin]`.
+
+**Use these, not a profiler row, to scope a twin** — `src/asm/README.md`'s "What wave E added" is
+why, and "THE HEAVY FRAME" below is what they found.
+
+## THE HEAVY FRAME — the measurement the mean could not take
+
+**The instrument.** `atari/census.py` walks the ORACLE playing the real game frame by frame and
+saves the busiest image it sees; `atari/bench_tier.py` then prices every frame stage and every
+routine of the enemy/actor/projectile tier on THAT one image, both sides, under Musashi. The
+original runs its own machine code (`emu.run`); ours is `atari/build/zynaps.elf` — the exact code
+inside `ZYNAPS.PRG`, twins and all — loaded at its link addresses and entered through
+`emu.run_bench`. One image, one instrument, no window and no mixture. (The precedent is
+`projects/buggyboy/recreate/tools/bench_frame.py`; nothing in the method is new but the game.)
+
+The staged busy frame is section 0, frame 141 of the oracle's own play: **14 live entities with all
+eleven actor slots full** — eight wave enemies, three enemy shots, three explosion particles.
+
+**The frame's spin-free stages, before and after wave E.** A release slot is 320,000 cycles (two
+vblanks at 8 MHz), and that is the budget a frame either fits or misses.
+
+| stage | the original | ours, before | ours, after | after/original |
+|---|---|---|---|---|
+| `frame_panel_scroll_and_ship_stage` (waves A/B twins inside) | 143,316 | 144,502 | 144,502 | 1.01x |
+| `frame_spawn_and_move_stage` | 19,924 | 38,574 | 38,574 | 1.94x |
+| **`frame_draw_objects_and_collide`** | **91,038** | **132,094** | **96,436** | **1.06x** |
+| **total** | **254,278** | **315,170** | **279,512** | **1.10x** |
+| the excess, as a share of a release slot | — | **+60,892 = 19.0%** | **+25,234 = 7.9%** | |
+
+`frame_drone_and_fire_stage` HAS NO ROW ON THIS FRAME, and that is the frame rather than the table:
+the head slice's own gate branches straight past it when the ship record is dead, which it is here.
+An earlier edition of this table entered the stage anyway and reported 498 cycles against 256 — a
+stage that did not happen, folded into both totals. `bench_tier.py` now skips a stage the frame's
+gates skip and says so.
+
+
+**The quiet frame moved too**, and by less, which is the check that the fix is where the diagnosis
+said: its stage went 32,720 -> 24,970 (1.42x -> 1.09x) and the whole spin-free frame +13,274 ->
+**+5,524** (1.07x -> **1.03x**). A change that had helped both frames equally would have been fixing
+something other than the per-entity term.
+
+**AND THAT IS WHY THE HEAVY FRAME MISSED ITS SLOT.** The fifth slice costs the original 9,866 cycles
+on this frame (measured on the oracle with the waits released; ours is wave C's shipped twin at
+~1.03x), so the whole frame's work is:
+
+| | work on the busy frame | share of the 320,000-cycle slot | vblanks |
+|---|---|---|---|
+| the original | ~264,100 | 83% | 2 |
+| ours, before wave E | ~325,300 | **101.7% — missed** | 4 |
+| ours, after | ~289,700 | **90.5% — fits** | 2 |
+
+**We were missing the slot by under 2%, and the untwinned slice held six times that.** Note the
+shape of it: the *mean* said we were 1.53x the original and implied a hopeless 138,000-cycle gap;
+the busy frame said we were 1.8% over a threshold. Those are the same port.
+
+**Where the busy frame's 41,056 cycles were, measured part by part rather than inferred:**
+
+| part of `frame_draw_objects_and_collide` | ours | the original | excess |
+|---|---|---|---|
+| `asteroids_draw` x1 | 1,330 | 932 | +398 |
+| `draw_sprite_masked_collide` x14 (wave B's twin) | 75,376 | 71,164 | +4,212 |
+| `object_pair_overlap_mark` x51 | 15,520 | 11,040 | +4,480 |
+| **the stage's own loops and call glue** | **39,868** | **7,902** | **+31,966 (5.05x)** |
+
+The last row is the whole finding. The original's inner pair walk is six instructions and a `bsr`,
+keeping its four cursors in address registers; the C re-derives `entity_record()` and
+`collision_row()` per iteration and makes a **seven-argument C call fifty-one times a frame**.
+`src/asm/frame_draw.S` transcribes the slice with `object_pair_overlap_mark` as an in-blob `bsr`
+target — wave B's `draw_char` shape, 18 cycles and no marshalling — and lands the whole stage at
+**1.06x**, +5,398 cycles.
+
+**TWO NUMBERS FOR THE TWIN ON THIS FRAME, AND BOTH ARE RIGHT.** The table above says **96,436**; the
+cost bar in `../test/test_asm_frame_draw.py` says **95,146**. Same frame, same original, same C —
+the 1,290-cycle difference is the CALLBACK DOOR. Off target the twin's `jsr asteroids_draw` stops
+the run and the harness calls the host C, which costs the emulated machine nothing; the bench runs
+the target ELF, where that `jsr` is a real call into real m68k. The suite's number is therefore the
+twin's own instructions and the bench's is what the machine executes. Neither is stale, and moving
+either to "reconcile" them would be wrong.
+
+
+**THE +4,108 THAT IS LEFT IS THE SPRITE SEAM, AND IT IS THE NEXT LEVER RATHER THAN A DEFECT.** It is
+~295 cycles a call over fourteen calls (and +2,544 over eight on a quieter frame, which is what says
+it is per-call): `draw_sprite_masked_collide_asm` carries a C signature, so the new twin's
+trampoline turns two pointers into image offsets and that twin's prologue turns them straight back
+into pointers. Closing it needs a second, register-ABI entry point in `sprite.S` — a change to a
+shipped and pinned twin, deliberately not made in this wave.
+
+**THE SPRITE PATH ITSELF IS DONE.** `draw_sprite_masked_collide` is **1.06x over fourteen real
+calls** on the busy frame. Whatever is left in this game, it is not in blitting.
+
+**TWO CAVEATS, AND BOTH MAKE THE REAL MACHINE WORSE THAN THE TABLE.**
+
+* **These are MUSASHI cycles.** Hatari's model carries the ST's bus contention and reads the same
+  twins 1.03x-1.08x where Musashi reads 1.00x-1.01x, so on iron the pre-wave-E heavy frame missed
+  its slot by somewhat more than 1.8%, and the post-wave-E margin is thinner than 9%. The
+  DIRECTION and the ~36,000-cycle recovery are instrument-independent; the headroom is not.
+* **Nothing here has run on the user's STE.** The evidence that the fix reaches a player is the
+  game smoke's own histogram, below — emulated, not iron.
 
 ## Why the number that matters is VBLANKS PER FRAME and not a frame rate
 
@@ -310,11 +434,32 @@ next one. The number is an upper bound on real compute, not a compute figure, an
 the original is smaller than 138,675 by however much of that spin our slower frames sit through.
 That is why the DISTRIBUTION, not the mean, is what this table is really about.
 
-**The judged figure is the `game` build's own 300-frame record**, a different and kinder window
-(`play` runs on into a busier stretch): **2.68 vblanks a frame, `[2x199 4x100 5x1]`, 18.7 fps**, from
-a sample of six `game` and two `gamefault` runs spanning 2.67-2.69. Two thirds of the judged run is
-on the original's own budget. `PACING_MEAN_CEILING_VBLS` is set from the worst of those eight plus
-the usual 36 vblanks: 807 + 36 = 843, **2.81** (was 2.82).
+**THE BUSY STRETCH, RE-TAKEN AFTER WAVE E**, both sides, same instrument, same 600-frame `play`
+window. This is the table that answers the user's report, because the `play` build runs on into the
+part of the section where the waves arrive:
+
+| | the original | ours, before wave E | ours, after wave E |
+|---|---|---|---|
+| frames clocked | 532 | 563 | 564 |
+| vblanks per frame, mean | **2.079** | **3.306** | **2.926** |
+| the distribution | `2x510 3x2 4x20` | `2x196 3x1 4x364 5x2` | `2x304 4x258 5x2` |
+| frames on budget (2 vblanks) | 510 (**95.9%**) | 196 (**34.8%**) | **304 (53.9%)** |
+| work cycles a frame, mean | 261,459 | 404,988 | 357,967 |
+
+**The share of frames that fit the release slot went from a third to over half** — 196 to 304 of
+~564, +55% — which is the same effect the busy-frame table above predicts and is the closest thing
+to the user's own experience that this workspace can measure. The mean work fell by 47,021, which is
+MORE than the ~36,000 the twin actually saves: a frame that now fits its slot also stops paying the
+raster spin the "work" span includes, so that figure flatters the change and the 36,000 is the
+honest one.
+
+**The judged figure is the `game` build's own 300-frame record**, a different and kinder window:
+**2.51-2.52 vblanks a frame, 19.8-19.9 fps** — from **2.68, `[2x199 4x101]`** — over a sample of
+three `game` and three `gamefault` runs, whose histograms run from `[2x223 4x77]` to
+`[2x222 4x78]` and one of which reached five vblanks on a single frame (`[2x223 4x76 5x1]`).
+The overrunning
+frames fell from 101 of 300 to 77, and no correctness surface moved (the frame differential is zero
+bytes on every sampled frame, as it was).
 
 **THE CAMPAIGN, WAVE BY WAVE:**
 
@@ -324,12 +469,20 @@ the usual 36 vblanks: 807 + 36 = 843, **2.81** (was 2.82).
 | A | the scroll path | 3.75 | 13.3 |
 | B | the sprite and text paths | 2.80 | 17.9 |
 | C | the frame loop's last slice | 2.67 | 18.7 |
-| **D** | **the other three slices — NOT SHIPPED** | **2.68** | **18.7** |
+| D | the three slices before it — NOT SHIPPED | 2.68 | 18.7 |
+| **E** | **the draw/collide slice — the one nobody had** | **2.51-2.52** | **19.8-19.9** |
 
 Wave D's three twins are **verification-only**: measured at **+13 cycles a frame** by an A/B on one
 tree (403,947 with them off, 403,960 on), so the game keeps the C and the twins stay as the
-measurement. `include/frame.h`'s seam block and `STATUS.md`'s wave-D section carry the decision; the
-shipped `.PRG` is 68,724 bytes, byte-for-byte its pre-wave-D size.
+measurement. `include/frame.h`'s seam block and `STATUS.md`'s wave-D section carry the decision.
+
+**Wave E's one twin SHIPS**, and the contrast with wave D is the lesson rather than the numbers:
+699 instructions bought 13 cycles, 86 instructions bought ~36,000 on a busy frame. Wave D twinned
+what an inclusive profiler row pointed at; wave E measured what a busy frame costs and twinned that.
+`src/asm/README.md`'s "What wave E added" has the method, and the rule it adds to wave D's:
+
+> An inclusive row is not a prize — **and a MEAN is not a distribution.** Ask which frame the row is
+> an average of before concluding a routine is small.
 
 ## The per-tier attribution of what is left
 
@@ -364,32 +517,72 @@ difference (795 sends a vblank against 83, while the game waits for the player t
 no instruction-level difference found and no observable consequence; `STATUS.md` records it against
 the `attract_wait_for_start` residual that already scopes the per-phase counter.
 
-## The verdict, and where the campaign closes
+## The verdict — and the one this section used to carry, which was wrong
 
-The two distributions differ by **138,675 cycles a frame** (400,058 against 261,383), read with the
-raster-spin caveat above. Three things are in it, and none is a lever big enough to reopen:
+**THIS SECTION PREVIOUSLY SAID "the campaign closes here" AND IT SHOULD NOT HAVE.** It is worth
+recording exactly how a careful, well-instrumented conclusion came out wrong, because nothing in it
+was sloppy:
 
-* **The un-twinned enemy/actor tier: ~14,400 cycles a frame**, about 10% of the gap. Real, and the
-  only part anyone has sized — but it is ~15 separate transcriptions with ~15 batteries and ~15 cost
-  bars, and the dispatcher shells alone are worth only ~1,800 (`enemies_move_all`'s own body is
-  2,914 against 1,121). A campaign, not a lever.
-* **The already-twinned tier's emulator-model residual, where there is no lever at all.** The twins
-  are 1.00x-1.01x on Musashi and 1.03x-1.08x under Hatari over a base that is most of the frame —
-  `scroll_page_to_screen_p*` alone is +6,843 a frame at 1.06x. The transcription IS the original's
-  own instruction sequence; the residual is the emulator's timing model of it, not something in the
-  code to remove.
-* **`ikbd_send_cmd`: nothing**, per the measurement above.
+* it read the gap off a **mean** — 138,675 cycles a frame, 400,058 against 261,383;
+* it accounted for that mean honestly, as enemy tier (~14,400) + emulator-model residual + nothing
+  from ikbd;
+* and it concluded that no remaining candidate cleared the "worth writing asm for" floor.
 
-**THE FLOOR FOR "worth writing asm for" IS NOW MEASURED, and it closes the recipe.** A trampoline
-costs ~150 cycles a site, and wave D's whole 699-instruction transcription moved 13 cycles. So a
-candidate has to clear several thousand cycles a frame **as a remainder** — subtract every child by
-measurement, never read a prize off an inclusive row — and after waves A through D nothing in the
-twin recipe does. The enemy/actor tier clears it only as a multi-wave campaign.
+Every number was right. The conclusion was wrong, because **a mean cannot see a cost that scales
+with what is on screen**, and the user's report was precisely about that: *it slows down when there
+are a lot of sprites*. `frame_draw_objects_and_collide` averaged small and cost **+41,056 cycles on
+a busy frame** — 12.8% of a release slot, in the one frame slice no wave had twinned. The old
+verdict's own "~14,400 a frame" for the enemy tier is the same artefact: on a busy frame that tier
+is +19,992, and the stage above it was never in the list at all.
 
-**So the campaign closes here: 2.68 vblanks a frame against the original's 2.075, two thirds of the
-judged run on budget, every named hot routine within 1.03x-1.08x of the original's own instructions,
-and the remaining distance accounted for as enemy tier (~14,400) + emulator-model residual + nothing
-from ikbd.** What would move the mode again is not another twin.
+> **The lesson, and it is the wave's real product: an average over frames is the wrong instrument
+> for a complaint about frames.** Before declaring a performance campaign closed, price the work on
+> the busiest state the game itself produces. `atari/census.py` + `atari/bench_tier.py` do that in
+> about a minute, and they did not exist when the campaign was closed.
+
+**WHERE IT STANDS NOW.** After wave E the busy frame's spin-free stages are **1.10x** the original's
+(279,512 against 254,278, +25,234 = 7.9% of a release slot, from +60,892 = 19.0%), the judged cadence
+is **2.51-2.52** against the original's 2.075, and **53.9%** of the busy stretch fits its release slot
+against 34.8% before. What is left, measured on the busy frame rather than averaged:
+
+* **The enemy/actor tier: +19,992 cycles**, of which `enemies_move_all` is +13,214 and the script VM
+  under it +10,256. It is the largest remaining item and **it CANNOT be twinned** — see below.
+* **The sprite seam: +4,108**, the C ABI between `frame_draw.S` and `sprite.S`. A register-ABI entry
+  point in the latter closes it; that is a change to a shipped, pinned twin and is scoped, not done.
+* **`frame_spawn_and_move_stage`'s own +18,650**, which is mostly the enemy tier inside it.
+* **The emulator-model residual**, unchanged and still not a lever: the twins are 1.00x-1.01x on
+  Musashi and 1.03x-1.08x under Hatari, and that difference is the emulator's timing model of the
+  original's own instruction sequence, not something in the code to remove.
+
+**WHY THE ENEMY TIER CANNOT BE TWINNED, and this is a property of the recipe rather than of effort.**
+Both actor passes and the script VM dispatch through a table of code addresses **held in the image**:
+
+```
+01489a: lea $19380.l,a0          | the per-type handler table, IN THE IMAGE
+0148ac: movea.l 0(a0,d1.l),a0    | ...one of the ORIGINAL's own code addresses
+0148b4: jsr (a0)                 | ...jumped to directly
+```
+
+Those are the 1988 binary's own addresses; our handlers are at our link addresses. Transcribing
+`jsr (a0)` faithfully would jump into the loaded image and execute the original's machine code. So
+every such dispatcher needs a lookup the original does not have — which is exactly what the C
+already spells (`run_actor_handler`, `run_script_arm`: a linear scan over an address map) — and a
+twin would be measured against the lookup's cost, not the original's `jsr`. **The 1.00x-by-
+construction warrant does not hold there, and "do not improve on the original" forbids a twin
+quietly substituting a cleverer dispatch.**
+
+That makes the tier's excess a **dispatch problem, not a transcription problem**, and it explains
+why it reads 2.4x-4.2x while every twinned routine reads 1.0x. The legitimate lever is an O(1)
+dispatch **in the C** — a change to a translation that was always ours, since the original has no
+such scan — with the same differential and no asm. It needs its own decision; `STATUS.md` carries
+it as the named next lever, unstarted.
+
+**THE FLOOR FOR "worth writing asm for" STILL STANDS, with one correction to how you apply it.** A
+trampoline costs ~150 cycles a site and wave D's 699 instructions moved 13 cycles, so a candidate
+must clear several thousand cycles **as a remainder**, every child subtracted by measurement. What
+wave E adds is *which frame you take the remainder on*: measured on a mean, wave E's slice cleared
+nothing; measured on a busy frame, it cleared 36,000 — and its 86 instructions are the cheapest twin
+in the directory.
 
 ## Where the cycles go, routine by routine, on both sides
 

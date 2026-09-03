@@ -166,14 +166,11 @@ carries the budget, the address census behind it and the gates that keep it true
 the negative control, and the ledger of what is still unpinned. `STATUS.md`'s "## On target" is the
 pointer from the per-function tables.
 
-**How fast it runs is a separate question from whether it is right, and it has its own instrument.**
-`atari/profile.py` clocks both binaries on one machine — the frame cadence off two repeating
-debugger breakpoints, the per-routine cycles off Hatari's CPU profiler — and `atari/README.md`'s
-PERFORMANCE section carries the table. The short version: the frame differential is byte-identical
-and the frame takes **just under three times as long**, 5.66 vertical blanks against the original's
-2, with the render path being C where the original is `movem.l` accounting for all of it — the
-shim's own share was swept out on 2026-09-01 for 44,349 cycles a frame and the mode did not move.
-The regression guard is `smoke.py game`'s `check_the_pacing`, on the timelines surface.
+**How fast it runs is a separate question from whether it is right, and it has TWO instruments —
+which is the point.** `atari/profile.py` clocks both binaries on one machine over a window; five
+waves of asm twins took the judged cadence from 5.73 vertical blanks a frame to **2.51-2.52** against the
+original's 2.08, and `atari/README.md`'s PERFORMANCE section carries the tables. The regression guard
+is `smoke.py game`'s `check_the_pacing`, on the timelines surface.
 
 ```bash
 python3 atari/profile.py frames             # our cadence: vblanks per frame, work, wait
@@ -182,6 +179,21 @@ python3 atari/profile.py ours               # per-symbol cycles over a fixed win
 python3 atari/profile.py original           # ...and the shipped binary's, from names.txt
 python3 atari/profile.py compare            # both read back and ratioed, per call
 ```
+
+**A WINDOW IS AN AVERAGE, AND AN AVERAGE CANNOT ANSWER "it slows down when there are a lot of
+sprites".** That is what the second instrument is for, and it is the one that found the largest
+remaining lever after the campaign had been declared closed: `atari/census.py` walks the ORACLE
+playing a real section and saves the busiest frame it produces, and `atari/bench_tier.py` prices
+every frame stage and tier routine on that one image, both sides, under Musashi.
+
+```bash
+python3 atari/census.py 0 300 0 atari/out/heavy.img atari/out/light.img
+python3 atari/bench_tier.py atari/out/heavy.img atari/out/light.img
+```
+
+**Scope a twin from these, never from a profiler row** — `src/asm/README.md`'s "What wave E added"
+is the argument, and it also carries the one shape the twin recipe cannot express (a routine that
+dispatches through an address table held in the image).
 
 `make guarded` matters here: the preshift builders in `src/sprite.c` index the image with a cursor
 they compute themselves, so a step-back one slot too far would read host heap rather than fail. It

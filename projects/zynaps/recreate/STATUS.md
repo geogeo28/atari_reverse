@@ -1113,11 +1113,40 @@ very observable indeed. `test_every_tune_the_frame_starts_names_its_own_voice` i
 
 ## Mutation ledger
 
-Seventeen sweeps, one per slice that landed, kept as separate sub-tables so that no two agents'
-counts ever have to be merged into one number. **Across all seventeen: 571 mutations run, 539
+Eighteen sweeps, one per slice that landed, kept as separate sub-tables so that no two agents'
+counts ever have to be merged into one number. **Across all eighteen: 576 mutations run, 544
 killed, 32 survivors** — every survivor argued below its own sub-table, and every one of them
 unobservable by construction or unreachable from data the game can produce, rather than a missing
 case.
+
+### `frame_draw.S` — the wave-E twin (5 mutations, 5 killed, 0 survivors)
+
+The three classes `src/asm/README.md` asks of every twin — one in the transcribed BODY, one in the
+MARSHALLING and one BEHAVIOUR-PRESERVING that only the cost bar can judge — plus two that the
+code-review gate's own findings turned into checks. Baseline green before each, `make asm` re-run,
+and `__pycache__` cleared before trusting the green (the workspace's own two rebuild traps).
+
+| # | mutation | result |
+|---|---|---|
+| 1 | body: `cmp.w %d6,%d1` -> `cmp.w %d5,%d1` in the pair test's fourth rejection (0x11d16) | RED — the BYTE PIN plus 3 of the 6 busy-stretch differential frames |
+| 2 | marshalling: the sprite trampoline pushes the record where the hit-flag offset belongs | RED — 9 differential frames and BOTH cost bands |
+| 3 | cost: one more register in the prologue's `movem` pair, `SAVED` corrected to match | RED — BOTH bands, and **nothing else**: 15 of 17 cases green, the differential and the byte pin included |
+| 4 | one global windowed through `%a5` instead of the declared `%a0` | RED — `test_the_window_scan_reads_every_global_this_twin_names` |
+| 5 | `#define OBJECT_BOX_WIDTH 0x10` -> `0x12` in `src/collision.c` | RED — `test_the_box_width_equate_is_collision_cs_own` |
+
+**EACH ONE FIRED ON A DIFFERENT SURFACE, which is what makes the set worth having.** The body
+mutation is caught by the byte pin even on frames whose data never reaches that branch — the pin's
+whole value, since only 3 of 6 staged frames produce a pair that gets as far as the fourth compare.
+The marshalling mutation is invisible to the byte pin (the trampolines are outside the pinned span)
+and is caught by the differential. **#3 is the one the recipe insists on and the only one the BARS
+judge**: behaviour is unchanged, so the differential and the byte pin both pass it, and without a
+cost bar it would have been a silent 176-cycle regression.
+
+**#4 AND #5 ARE CHECKS THE REVIEW GATE CREATED**, and both closed a hole that was real rather than
+hypothetical: the window scan was per-register and so could not see a global reached through a
+register the suite had not declared, and `OBJECT_BOX_WIDTH` — `src/collision.c`'s own `#define`,
+which `test_constants.py`'s equate pin skips in silence because no header defines it — was the one
+`.equ` in the twin with no pin at all, behind a comment claiming otherwise.
 
 ### The read-modify-write operations and the `abcd` carry (18 mutations, 13 killed, 5 survivors)
 
@@ -1994,7 +2023,7 @@ because that array is a map KEYED BY ADDRESS with distinct keys, so its row orde
 the three above are. The second is equivalent because every shipped arm carries exactly one of the
 two function pointers.
 
-## The asm twins — the hot paths in the original's own instructions (32)
+## The asm twins — the hot paths in the original's own instructions (33)
 
 **These are not new functions and they add no row above.** A twin is a hand-written m68k
 transcription of the ORIGINAL binary's instruction sequence for a routine this file already carries a
@@ -2017,6 +2046,7 @@ The C stays compiled and stays the reference; nothing about what the program com
 | `frame_panel_scroll_and_ship_stage_asm` | `0x10f4e`..`0x113c0` | `src/frame.c` | **0.7015x** ordinary / **0.70087x** gated / **0.0195x** boss / **0.0227x** asteroid (Musashi). The two small bands are the reading that means anything — `playfield_clear` is a door there, so 1,320/1,546 cycles is the twin's own 240 instructions and 16 cycles is 1.2% of it. The ordinary band is ~107k of already-twinned page blits and barely moves when the twin does |
 | `frame_drone_and_fire_stage_asm` | `0x113c0`..`0x1167c` | `src/frame.c` | **1.4135x** / **1.1861x** on the two CALL-FREE bands — the honest fidelity reading of the wave, and its +170/+146 cycles is almost exactly the C-ABI frame (a 7-register `movem` pair is 132). The two launcher bands read **0.8093x** / **0.7703x** only because the door runs no C body |
 | `frame_spawn_and_move_stage_asm` | `0x1167c`..`0x11c00` | `src/frame.c` | **0.56156x** ordinary / **0.54056x** asteroid / **0.11694x** boss (Musashi) — door-discounted throughout; the boss band's original 25,594 is mostly `mothership_move_and_place` + `mothership_draw`, which the door does not run |
+| `frame_draw_objects_and_collide_asm` (wave E, SHIPPED) | `0x11c00`..`0x11d30` | `src/frame.c` | **1.0451x** on a BUSY frame (14 live entities, 51 ordered pairs) / **1.0542x** on a quiet one (Musashi). Both bands' excess is the sprite seam and nothing else — +4,108 over 14 calls and +2,544 over 8, i.e. ~300 cycles a call. Its biggest callee `draw_sprite_masked_collide_asm` is IN the blob and really runs on both sides, so unlike wave C's and D's these are like-for-like readings |
 
 **WAVE B IS THE SPRITE AND TEXT PATHS**, and its five twins took the judged cadence from 3.75-3.77
 vblanks a frame to **2.80** (17.9 fps; the original's own is 2.08). The two waves' shapes differ in
@@ -2304,6 +2334,119 @@ things are in it, and only the first is a lever anyone has sized:
   player, every observable surface is green, and it is the SAME residual `attract_wait_for_start`
   already carries: **the per-phase interrogate counter is what would pin it, and this is the
   in-game half of it.** Recorded there, not scoped as a lever here.
+
+### WAVE E — the slice nobody twinned, and why the campaign's closing verdict was wrong
+
+**Wave D's "what is actually left" above, and `atari/README.md`'s "the campaign closes here", were
+both read off a MEAN. They were arithmetically right and substantively wrong**, and this section
+records how, because the failure mode is subtle and will recur.
+
+The user's report was never "the game is slow". It was "**major slowdown when many sprites are on
+screen**" — a claim about the tail of a distribution. Every instrument the campaign owned averaged
+that tail away: `profile.py` measures a window, `smoke.py` 300 frames, the closing table a mean. So
+wave E built the missing one first and twinned nothing until it had read it.
+
+**THE INSTRUMENT (`atari/census.py` + `atari/bench_tier.py`, both new).** The census walks the ORACLE
+playing a real section frame by frame and saves the busiest image it sees; the bench prices every
+frame stage and tier routine on THAT image, both sides, under Musashi — the original's own code
+through `emu.run`, ours as the cross-compiled `atari/build/zynaps.elf` through `emu.run_bench` (the
+precedent is `projects/buggyboy/recreate/tools/bench_frame.py`). One image, one instrument, no
+window and no mixture. The staged frame is section 0 frame 141: **14 live entities, all eleven actor
+slots full.**
+
+**THE CONTRACT TABLE IT PRODUCED, which is what commissioned the wave** (a release slot is 320,000
+cycles):
+
+| stage | ours | the original | excess | % of a slot |
+|---|---|---|---|---|
+| `frame_panel_scroll_and_ship_stage` | 144,502 | 143,316 | +1,186 | 0.4% |
+| `frame_spawn_and_move_stage` | 38,574 | 19,924 | +18,650 | 5.8% |
+| **`frame_draw_objects_and_collide`** | **132,094** | **91,038** | **+41,056** | **12.8%** |
+| total | 315,170 | 254,278 | **+60,892** | **19.0%** |
+
+(`frame_drone_and_fire_stage` has no row: the head slice's gate branches past it on this frame,
+because the ship record is dead. An earlier edition priced it anyway — 498 against 256 — and folded
+a stage that did not happen into both totals; `bench_tier.py` now skips what the frame skips.)
+
+On a QUIET frame the same total is +13,274 (4.1%) — the gap scales 4.6x with entity count, which is
+the user's complaint, measured. And with the fifth slice's 9,866 cycles added, the busy frame cost
+us ~325,800 against a 320,000-cycle slot: **we were missing the release slot by 1.8%**, where the
+mean-based table had implied a hopeless 138,675-cycle deficit. Same port, two instruments.
+
+**THE BIGGEST ITEM WAS THE ONE SLICE OF THE FRAME'S FIVE THAT NO WAVE HAD TWINNED**, and wave D's
+own rule is why it was skipped: its largest child (`draw_sprite_masked_collide`) was already a twin,
+so subtracting the children left what looked like nothing. Measured part by part it was not:
+
+| part of the stage, on the busy frame | ours | the original | excess |
+|---|---|---|---|
+| `asteroids_draw` x1 | 1,330 | 932 | +398 |
+| `draw_sprite_masked_collide` x14 (wave B's twin) | 75,376 | 71,164 | +4,212 |
+| `object_pair_overlap_mark` x51 | 15,520 | 11,040 | +4,480 |
+| **the stage's own loops and call glue** | **39,868** | **7,902** | **+31,966 (5.05x)** |
+
+The original's inner pair walk is six instructions and a `bsr` with four cursors in address
+registers; the C re-derives `entity_record()` and `collision_row()` per iteration and makes a
+**seven-argument C call fifty-one times a frame**.
+
+**THE TWIN: `src/asm/frame_draw.S`, 86 instructions, SHIPPED.** `object_pair_overlap_mark` (0x11cce)
+is transcribed as an IN-BLOB `bsr` target — wave B's `draw_char` shape, 18 cycles, no marshalling —
+and `draw_sprite_masked_collide_asm` is called directly because every `.S` assembles into one blob.
+Only two callees need doors (slots 60/61: `asteroids_draw`, `mothership_segments_update`).
+
+| | before | after |
+|---|---|---|
+| the stage, busy frame | 132,094 (1.45x) | **96,436 (1.06x)** |
+| the frame's spin-free stages | 315,170, +60,892 = 19.0% of a slot | **279,512, +25,234 = 7.9%** |
+| the busy frame's whole work | ~325,300 = **101.7% of a slot, missed** | ~289,700 = **90.5%, fits** |
+| judged cadence (`game`, 300 frames) | 2.68, `[2x199 4x101]` | **2.51-2.52, `[2x223 4x77]`..`[2x222 4x78]`, one frame at 5** |
+| the busy stretch (`play`, 600 frames) | 3.306, 34.8% on budget | **2.926, 53.9% on budget** |
+
+**IT HAS THE ONLY BYTE PIN IN THE FRAME FAMILY, and that was a layout decision.** The four earlier
+frame twins reserve `%a5` for the globals window and say a byte pin is unavailable because every
+instruction names a global. True of the stage's own code — but `object_pair_overlap_mark`'s tail
+[0x11cfe, 0x11d30) names none, carries no immediate-to-Dn operation and touches only `%a3`-`%a6`.
+The slice uses all seven address registers, so the window had to displace one; putting it in **`%a0`**
+(whose single use, the mask-table clear, leaves a live-range gap) rather than `%a5` keeps those four
+unpermuted and makes **50 bytes byte-identical to the original's machine code**. The family's
+window scrapers took a `register` parameter to allow it. *Choose the reserved register to preserve a
+pinnable span, not by convention.*
+
+**WHAT IS LEFT, AND THE FIRST ITEM CANNOT BE TWINNED.** On the busy frame, after wave E:
+
+* **The enemy/actor tier, +19,992** — `enemies_move_all` +13,214 (2.47x), the script VM under it
+  +10,256 (3.07x), `enemies_animate_all` +2,688. **It is not a transcription problem.** Both actor
+  passes and the script VM dispatch through a table of code addresses held IN THE IMAGE
+  (`lea $19380.l,a0 / movea.l 0(a0,d1.l),a0 / jsr (a0)` at 0x1489a-0x148b4; the same shape through
+  `$19438` at 0x14c84). Those are the ORIGINAL's handler addresses; ours are at our link addresses,
+  so transcribing `jsr (a0)` faithfully would jump into the loaded image and execute the 1988
+  binary's code. Every such dispatcher needs a lookup the original does not have — which is what the
+  C already spells (`run_actor_handler`, `run_script_arm`: a linear scan over an address map) — and
+  a twin would be measured against the lookup, not against `jsr (a0)`. **The 1.00x-by-construction
+  warrant does not apply, and "do not improve on the original" forbids a twin substituting a
+  cleverer dispatch.** *A routine that dispatches through an address table held in the image cannot
+  be twinned; check for the indirect `jsr` before scoping.*
+* **The sprite seam, +4,108** — ~300 cycles a call over 14 calls, and the two cost bands (busy +4,108
+  over 14, quiet +2,544 over 8) are what say it is per-call rather than fixed. `frame_draw.S`'s
+  trampoline turns two pointers into image offsets and `draw_sprite_masked_collide_asm`'s prologue
+  turns them straight back. A second, register-ABI entry point in `sprite.S` closes it.
+* **The emulator-model residual**, unchanged and still not a lever.
+
+**THE TWO NEXT LEVERS, NEITHER STARTED, both recorded here rather than half-built:**
+
+1. **An O(1) dispatch in the C for the actor passes and the script VM** (~+13,000 a busy frame). This
+   is a change to a translation that was ALWAYS ours — the original has no scan — so it is not a
+   fidelity question, but it is a divergence in implementation and wants its own decision, its own
+   differential and its own mutation sweep. Worth noting the shape: the image tables are indexed by
+   the same opcode/type bits our map is keyed by, so the scan is avoidable without changing what is
+   computed.
+2. **The register-ABI entry point in `sprite.S`** (~+4,100 a busy frame). Smaller, and it touches a
+   shipped and pinned twin, which is why wave E did not take it in passing.
+
+**AND TWO CAVEATS THAT MAKE THE REAL MACHINE WORSE THAN EVERY TABLE ABOVE.** These are MUSASHI
+cycles: Hatari's model carries the ST's bus contention and reads the same twins 1.03x-1.08x where
+Musashi reads 1.00x-1.01x, so the pre-wave-E busy frame missed its slot by more than 1.8% on iron
+and the post-wave-E 9% margin is thinner there. And **nothing in this wave has run on the user's
+STE** — the evidence that it reaches a player is the emulated smoke histogram, not hardware.
 
 **The count is not kept by hand.** `atari/build.sh`'s asm-twin gate scrapes the `*_asm` names
 `include/*.h` declares — GLOBBED, not prefixed, which is why the sprite and text waves were covered

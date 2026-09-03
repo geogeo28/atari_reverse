@@ -2,20 +2,23 @@
 and the three source-reading pins that stand where a byte pin cannot.
 
 WHY THIS MODULE EXISTS. The frame loop is one `bra` chain with no `rts` in it, cut into five slices
-(`include/frame.h`), and four of them now have twins in `../src/asm/`:
+(`include/frame.h`), and ALL FIVE now have twins in `../src/asm/`:
 
     frame_head.S    [0x10f4e, 0x113c0)  frame_panel_scroll_and_ship_stage   wave D
     frame_fire.S    [0x113c0, 0x1167c)  frame_drone_and_fire_stage          wave D
     frame_spawn.S   [0x1167c, 0x11c00)  frame_spawn_and_move_stage          wave D
+    frame_draw.S    [0x11c00, 0x11d30)  frame_draw_objects_and_collide      wave E
     frame.S         [0x11d30, 0x1296e)  frame_resolve_hits_and_game_state   wave C
 
+All five slices are now twinned, and the two that SHIP are wave C's and wave E's.
+
 They assemble into ONE blob (`kit.mk`'s `$(ASM_ELF)` globs `src/asm/*.S`), so they share one door
-slot namespace and one set of harness models — and four copies of the machinery below would be four
+slot namespace and one set of harness models — and five copies of the machinery below would be five
 places for those to drift. Each suite keeps what is its own: its cases, its byte spans, its cost
 bars, its exit contract.
 
 THE DOOR TABLE IS THE FAMILY'S, NOT ONE FILE'S, and `test_asm_frame_doors.py` is what pins it: the
-union of every `.equ ZY_DOOR_*` across the four files must be exactly this table, with no slot
+union of every `.equ ZY_DOOR_*` across the five files must be exactly this table, with no slot
 naming two callees. A per-file table would let `frame_head.S` and `frame_spawn.S` each claim slot 18
 for a different core and stay green until the day one of them called the other's stub.
 """
@@ -129,6 +132,9 @@ DOOR_TABLE = {
     57: DoorCallback("angle_to_target", 3),
     58: DoorCallback("entity_set_velocity_from_angle", 4, returns=False),
     59: DoorCallback("entity_steer_toward_target", 2, returns=False),
+    # ---- wave E: frame_draw.S, [0x11c00, 0x11d30) ----
+    60: DoorCallback("asteroids_draw", 1, returns=False),
+    61: DoorCallback("mothership_segments_update", 1, returns=False),
 }
 
 _TWINS = None
@@ -333,25 +339,53 @@ def source_without_comments(s_path):
 
 # THE FAMILY'S ONE CONVENTION FOR REACHING A GLOBAL, and this module is where it is spelt.
 #
-# Every frame twin reserves `%a5 = image + FGB` and writes each global as `NAME-FGB(%a5)`, a 68000
-# `d16(An)`. Both halves are hardcoded below, so this scraper only sees a twin that follows the
-# convention — and a twin that quietly did not (a different base register, a differently named
-# origin) would hand every suite an EMPTY operand list and a window pin that passes over nothing.
-# `test_asm_frame_doors.py`'s scan has a family-level positive control for exactly that shape;
-# `window_pin_failures` below is this scraper's, and `test_the_window_scan_reads_every_twin`
-# (each suite) is where a file that stopped matching says so.
-WINDOW_REGISTER = "%a5"
+# Every frame twin reserves a base register holding `image + FGB` and writes each global as
+# `NAME-FGB(<reg>)`, a 68000 `d16(An)`. The ORIGIN is the family's and is hardcoded; the REGISTER is
+# per file, because it has to be: four twins reserve `%a5` and `frame_draw.S` reserves `%a0`, and
+# not by preference — the slice it transcribes uses every address register the 68000 has, and the
+# only one whose live range leaves a gap is `%a0`. Keeping the original's `%a5`/`%a6` unpermuted is
+# what lets fifty bytes of that twin be byte-identical to the original's machine code, which is a
+# check no other frame twin has.
+#
+# EACH SUITE DECLARES ITS TWIN'S REGISTER, and there is no default — deliberately. A default is a
+# way for a suite to be silently wrong about the file it is checking: the scan would find no operand
+# on the register it was told about, `window_pin_failures` would iterate an empty list, and every
+# global in that twin would go displacement-unchecked with three green assertions to say so.
+#
+# THE SCAN IS REGISTER-AGNOSTIC AND THE CHECK IS THE COMPARISON, which is the second half of the
+# same hole: scanning only the declared register cannot see a line that windows through a DIFFERENT
+# one. `window_registers` reads every `-FGB(%aN)` in the file, and `window_scan_failure` refuses any
+# register the suite did not declare — on a twin whose `%a5` holds an entity index rather than
+# `image + FGB`, such a line is not a global read at all.
 WINDOW_ORIGIN = "FGB"
-_WINDOWED = re.compile(r"([^\s,]+)-" + WINDOW_ORIGIN + r"\(" + re.escape(WINDOW_REGISTER) + r"\)")
 
 DISPLACEMENT_MIN, DISPLACEMENT_MAX = -0x8000, 0x7fff
 
+# The operand shape, over ANY address register. Scanning register-agnostically is what makes
+# `window_registers` below able to answer "which registers does this file window through?" — and
+# that question is the check: a per-register scan can only ever confirm the register it was told
+# about, and is blind to a line using a different one.
+_ANY_WINDOWED = re.compile(r"([^\s,]+)-" + WINDOW_ORIGIN + r"\((%a[0-7])\)")
+
 
 @functools.lru_cache(maxsize=None)
-def windowed_operands(s_path):
-    """Every distinct expression a twin addresses through its `%a5` global window, as written."""
+def _windowed(s_path):
+    """[(expression, register)] for every windowed operand in one twin, as written."""
     tightened = re.sub(r"\s*([+*])\s*", r"\1", source_without_comments(s_path))
-    return tuple(sorted({match.group(1).split(",")[-1] for match in _WINDOWED.finditer(tightened)}))
+    return tuple((match.group(1).split(",")[-1], match.group(2))
+                 for match in _ANY_WINDOWED.finditer(tightened))
+
+
+def window_registers(s_path):
+    """Every address register this twin reaches a global through — normally exactly one."""
+    return tuple(sorted({register for _expression, register in _windowed(s_path)}))
+
+
+@functools.lru_cache(maxsize=None)
+def windowed_operands(s_path, register):
+    """Every distinct expression a twin addresses through `register`, as written."""
+    return tuple(sorted({expression for expression, through in _windowed(s_path)
+                         if through == register}))
 
 
 def windowed_value(expression, table):
@@ -364,7 +398,7 @@ def windowed_value(expression, table):
     return eval(expression, {"__builtins__": {}}, table)        # noqa: S307
 
 
-def window_pin_failures(s_path):
+def window_pin_failures(s_path, register):
     """Every global a twin reaches outside the signed 16-bit window, as messages; [] when all fit.
 
     ONE PHRASING because four suites ask it, the same reason `transcription_failure` is here.
@@ -382,7 +416,7 @@ def window_pin_failures(s_path):
     table = equates(asm_object_for(s_path))
     origin = table[WINDOW_ORIGIN]
     failures = []
-    for expression in windowed_operands(s_path):
+    for expression in windowed_operands(s_path, register):
         at = windowed_value(expression, table)
         displacement = at - origin
         if not DISPLACEMENT_MIN <= displacement <= DISPLACEMENT_MAX:
@@ -396,7 +430,7 @@ def window_pin_failures(s_path):
     return failures
 
 
-def window_scan_failure(s_path, expected):
+def window_scan_failure(s_path, expected, register):
     """The message for "this file's operand scan found the wrong number", or None.
 
     The scan's own positive control, and it is not optional: `window_pin_failures` is vacuous over an
@@ -404,14 +438,22 @@ def window_scan_failure(s_path, expected):
     by reaching no globals at all. Measured during wave D — a twin drafted with `%a4` as its window
     register produced ZERO matches here, and only this count said so.
     """
-    found = len(windowed_operands(s_path))
+    registers = window_registers(s_path)
+    if registers not in ((), (register,)):
+        others = ", ".join(r for r in registers if r != register)
+        return (f"{s_path.name} reaches a global through {others} as well as through the "
+                f"{register} its suite declares. Only the declared register is displacement-checked, "
+                f"so every global reached through {others} is UNCHECKED — and on a twin whose "
+                f"{others} holds something other than image+{WINDOW_ORIGIN} it is not a global at "
+                f"all, but a read near wherever that register points.")
+    found = len(windowed_operands(s_path, register))
     if found == expected:
         return None
     return (f"{s_path.name} addresses {found} distinct expressions through the "
-            f"{WINDOW_REGISTER} window, not the {expected} its header names. If a global was "
+            f"{register} window, not the {expected} its header names. If a global was "
             f"legitimately added or dropped, move that number; if the count is 0 or nothing like "
             f"the right size, the operand shape changed — the twin is not reaching its globals as "
-            f"`NAME-{WINDOW_ORIGIN}({WINDOW_REGISTER})` any more — and the window pin beside this "
+            f"`NAME-{WINDOW_ORIGIN}({register})` any more — and the window pin beside this "
             f"is testing an empty list")
 
 

@@ -749,21 +749,48 @@ ASM_TWIN_SUFFIX = "_asm"
 # orphan rows ratios our slice against the original's WITHOUT the overhead our slice actually pays —
 # the suite's own cost table puts it at 240-360 cycles a band.
 DOOR_STUB_PREFIX = "door_"
-# The twin those stubs belong to, spelled as the ORIGINAL names it (this runs before the rename
-# below). One entry today; a second `.S` with doors adds its own.
-DOOR_STUB_OWNER = "frame_resolve_hits_and_game_state"
+# A twin's non-door call stub — `frame_draw.S`'s `call_draw_sprite_masked_collide`, which reaches
+# the wave-B sprite twin directly because both live in the same blob. It is a `.globl` like a door
+# stub and its cycles belong to its caller for the same reason, but it is not a door and the prefix
+# above does not match it.
+CALL_STUB_PREFIX = "call_"
+
+# WHICH TWIN A STUB'S CYCLES BELONG TO, keyed by the stub's own name and spelled as the ORIGINAL
+# names the twin (this runs before the rename below).
+#
+# THIS USED TO BE ONE STRING, and its comment said "one entry today; a second `.S` with doors adds
+# its own". Wave E is that second `.S`: `frame_draw.S` SHIPS, and its two door stubs plus its sprite
+# call stub are entered every frame on target — where wave D's three twins never mattered, their
+# objects being dropped from the link. Folding all of them into wave C's slice charged the draw
+# stage's call overhead to the resolve stage and understated the very routine wave E rewrote, which
+# is the misattribution this function exists to prevent, aimed at the wrong row.
+STUB_OWNERS = {
+    "door_asteroids_draw": "frame_draw_objects_and_collide",
+    "door_mothership_segments_update": "frame_draw_objects_and_collide",
+    "call_draw_sprite_masked_collide": "frame_draw_objects_and_collide",
+}
+# ...and every other `door_*` stub is wave C's, which is the only other twin that ships and calls.
+DEFAULT_STUB_OWNER = "frame_resolve_hits_and_game_state"
+
+
+def is_stub(name):
+    return name.startswith(DOOR_STUB_PREFIX) or name.startswith(CALL_STUB_PREFIX)
 
 
 def with_door_stubs_folded(functions):
-    """The `door_*` trampolines' cycles moved into the twin that calls them.
+    """The call trampolines' cycles moved into the twin that calls them.
 
     ONLY THE CYCLES. A stub's call count is the twin's CALL SITES, not entries to the twin — summing
     them would report a slice entered forty-three times a frame that is entered once.
+
+    A stub named in STUB_OWNERS goes to that twin; any other goes to wave C's, which is the only
+    other shipped twin that calls anything.
     """
     folded = {}
     for name, row in functions.items():
-        stub = name.startswith(DOOR_STUB_PREFIX)
-        into = folded.setdefault(DOOR_STUB_OWNER if stub else name, {"calls": 0, "cycles": 0})
+        stub = is_stub(name)
+        owner = STUB_OWNERS.get(name, DEFAULT_STUB_OWNER) if stub else name
+        into = folded.setdefault(owner, {"calls": 0, "cycles": 0})
         into["calls"] += 0 if stub else row["calls"]
         into["cycles"] += row["cycles"]
     return folded

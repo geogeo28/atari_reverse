@@ -733,6 +733,12 @@ def _spawn_equates():
 # frame suites ask the same question of their own `.S`, and the four hand-copies this replaced had
 # already started to drift in their failure text. What stays here is what is THIS twin's: which
 # file, and how many globals it reaches.
+# The base register this twin reserves for `image + FGB`. DECLARED rather than defaulted:
+# `asm_frame_common` has no default, because a suite that named the wrong register would find no
+# operands and pass the window pin over an empty list.
+WINDOW_REGISTER = "%a5"
+
+
 WINDOWED_OPERAND_COUNT = 27
 
 
@@ -740,7 +746,8 @@ def test_the_window_scan_reads_every_global_this_twin_names():
     """The scan's positive control. `window_pin_failures` is vacuous over an empty operand list, so
     a twin whose operand shape stopped matching — a different window register, a differently named
     origin — would pass the pin below by reaching no globals at all."""
-    failure = common.window_scan_failure(SPAWN_S, WINDOWED_OPERAND_COUNT)
+    failure = common.window_scan_failure(SPAWN_S, WINDOWED_OPERAND_COUNT,
+                                       WINDOW_REGISTER)
     assert failure is None, failure
 
 
@@ -749,7 +756,7 @@ def test_every_windowed_global_is_inside_the_signed_displacement():
     outside the signed 16-bit window into a TRUNCATED displacement with no diagnostic, and the twin
     then reads or writes a wild address that the differential reports as a pixel diff a long way
     from its cause."""
-    failures = common.window_pin_failures(SPAWN_S)
+    failures = common.window_pin_failures(SPAWN_S, WINDOW_REGISTER)
     assert not failures, "\n".join(failures)
 
 

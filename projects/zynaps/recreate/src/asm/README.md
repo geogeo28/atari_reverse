@@ -7,14 +7,19 @@ sees it.
 
 This directory holds Zynaps' twins: the scroll path (wave A — `scroll_blit.S`, `scroll_emit.S`,
 `scroll_tile.S`), the sprite and text paths (wave B — `sprite.S`, `text.S`), and the frame loop's
-four slices (wave C — `frame.S`; wave D — `frame_head.S`, `frame_fire.S`, `frame_spawn.S`). Wave B
-followed this recipe unchanged and taught it four things; wave C was the first twin that CALLS, and
-taught it four more; **wave D followed it faithfully and bought nothing**, which taught it the most
-useful thing in the file. All three are folded in below under **What wave B added**, **What wave C
-added** and **What wave D added**. The recipe is the point of this file.
+five slices (wave C — `frame.S`; wave D — `frame_head.S`, `frame_fire.S`, `frame_spawn.S`; wave E —
+`frame_draw.S`). Wave B followed this recipe unchanged and taught it four things; wave C was the
+first twin that CALLS, and taught it four more; **wave D followed it faithfully and bought
+nothing**, which taught it the most useful thing in the file; **wave E found what wave D's
+instrument had hidden**, which taught it the second most useful. All four are folded in below under
+**What wave B added**, **What wave C added**, **What wave D added** and **What wave E added**. The
+recipe is the point of this file.
 
-**READ "What wave D added" BEFORE SCOPING A NEW TWIN.** It is the one section that says when NOT to
-write one, and it is where both of this project's mis-scoped waves are reduced to a single rule.
+**READ "What wave D added" AND "What wave E added" BEFORE SCOPING A NEW TWIN.** Between them they
+say when NOT to write one and — the harder question — how to tell that a routine nobody has scoped
+is worth one. Wave D is where both of this project's mis-scoped waves are reduced to a single rule;
+wave E is where that rule turned out to have a blind spot, and it is also where the recipe's
+governing assumption is finally stated as a PRECONDITION rather than a fact.
 
 ## Why transcription and not optimisation
 
@@ -392,6 +397,96 @@ when the twin does.**
   which reads as "my fix broke something else". `find . -name __pycache__ -exec rm -rf {} +` before
   trusting the green, exactly as `rm build/*.so` comes before trusting a build's.
 
+## What wave E added — the instrument, and the recipe's PRECONDITION
+
+Wave E is one twin — `frame_draw.S`, the frame loop's fourth slice `[0x11c00, 0x11d30)`, 86
+instructions — and it is the smallest of the five by an order of magnitude. It took the game's
+judged cadence from **2.68 to 2.51 vblanks a frame** and cut the overrunning frames from 101 of 300
+to 77. Wave D's 699 instructions bought 13 cycles; wave E's 86 bought ~36,000 on the frame that
+matters. The difference is not the code. It is the instrument.
+
+**1. AN AVERAGE CANNOT SEE A COST THAT SCALES WITH ENTITY COUNT, AND EVERY INSTRUMENT BEFORE THIS
+WAVE WAS AN AVERAGE.** `profile.py` measures a window; `smoke.py` measures 300 frames; the campaign's
+closing table measured a mean. `frame_draw_objects_and_collide` draws all twenty entity slots and
+then walks every ORDERED PAIR of them, so its cost is a function of what is on screen:
+
+| the same stage, two frames | ours (C) | the original | excess |
+|---|---|---|---|
+| a quiet frame (3 live entities) | 32,720 | 22,970 | +9,750 |
+| a busy frame (14 live, all 11 actor slots) | 132,094 | 91,038 | **+41,056** |
+
+A mean over those hides the second inside the first — and the second is the frame a player feels.
+The user's report was not "the game is slow"; it was "**it slows down when there are a lot of
+sprites**", which is a statement about the DISTRIBUTION's tail and which no mean could confirm or
+refute. `atari/bench_tier.py` and `atari/census.py` are the instrument that separates them: the
+census walks the oracle playing the real game and saves the busiest image it sees, and the bench
+prices every stage and routine on THAT image, both sides, under Musashi.
+
+> **A routine whose cost depends on how much is on screen must be priced on a busy frame that the
+> game itself produced. Add the per-entity axis to the instrument before concluding a tier is
+> small.** Wave D's rule was "subtract the children before you scope a twin from a row". Wave E's is
+> its partner: "and ask which frame the row is an average of".
+
+**2. THE ROW WAS SKIPPED BECAUSE ITS CHILDREN WERE ALREADY TWINNED, which is wave D's rule
+misfiring.** This slice's biggest child is `draw_sprite_masked_collide` — wave B's twin, at 1.06x.
+Subtract it, as wave D says to, and the remainder looks empty. It is not: measured part by part on
+the busy frame, the sprite calls are +4,212 and the stage's OWN loops and call glue are **+31,966 at
+5.05x**. The C spells the inner pair walk as a seven-argument call, fifty-one times a frame, where
+the original has a six-instruction loop and a `bsr`. Subtracting the children is right; assuming the
+remainder is small because the children were large is what wave D actually did, and it is not the
+same thing.
+
+**3. THE RECIPE HAS A PRECONDITION, AND UNTIL WAVE E NOTHING HAD FAILED IT.** "A faithful
+transcription is 1.00x by construction" assumes the original's instruction sequence CAN be
+transcribed. Wave E scoped the enemy/actor tier next — `enemies_move_all`, `enemy_move_scripted`,
+`actor_script_run`, at 2.5x-3.1x and +13,214 cycles on the busy frame — and found it cannot be:
+
+```
+01489a: lea $19380.l,a0          | the per-type handler table, IN THE IMAGE
+0148ac: movea.l 0(a0,d1.l),a0    | ...one of the ORIGINAL's own code addresses
+0148b4: jsr (a0)                 | ...jumped to directly
+```
+
+`actor_script_run` @ 0x14c84 has the identical shape through `$19438`. **Those tables hold the
+addresses of the ORIGINAL's handlers, and our handlers are not there.** The reconstruction is
+position-independent code at its own link addresses; the image is data. Transcribing `jsr (a0)`
+faithfully would jump into the loaded game image and execute the 1988 binary's machine code against
+its own absolute addressing.
+
+So every dispatcher in that tier needs a translation the original does not have — image code-address
+to our handler — and the C already spells it (`run_actor_handler`, `run_script_arm`: a linear scan
+over an address map). **A twin would have to spell the same lookup and would be measured against its
+cost, not against the original's `jsr (a0)`.** The 1.00x warrant does not apply, and "do not improve
+on the original" forbids a twin quietly substituting a cleverer dispatch.
+
+> **A routine that dispatches through an address table held in the image cannot be twinned.** Check
+> for an indirect `jsr`/`jmp` through image data BEFORE scoping — it is the one shape this recipe
+> cannot express, and it is why the enemy tier reads 2.4x-4.2x while every twinned routine reads
+> 1.0x. The tier's excess is a DISPATCH problem, not a transcription problem.
+
+That leaves the tier's ~13,000 cycles a busy frame open, and honestly open: the legitimate move is
+an O(1) dispatch **in the C** — which is a change to a translation that was always ours (the C's
+scan is nobody's transcription; the original has no such loop), not a twin, and it needs its own
+decision and its own differential. `STATUS.md` carries it as the named next lever.
+
+**Two smaller things wave E added:**
+
+* **A twin CAN have a byte pin even in the frame family, and it is worth laying the registers out to
+  get one.** The four earlier frame twins say a byte pin is unavailable because every instruction
+  names a global. True of the stage's own code — but `object_pair_overlap_mark` [0x11cfe, 0x11d30)
+  names none, carries no immediate-to-Dn operation, and touches only `%a3`-`%a6`. The slice uses all
+  seven address registers, so the reconstruction's extra base had to displace one; putting the
+  window in **`%a0`** (whose one use, the mask-table clear, has a live-range gap) rather than the
+  family's `%a5` leaves those four registers unpermuted and makes 50 bytes byte-identical to the
+  original's machine code. **Choose the reserved register to preserve a pinnable span, not by
+  convention.** The family's scrapers took a `register` parameter to allow it.
+* **The bench must price WHAT THE GAME CALLS, not the `g_*` glue.** A twinned core is substituted at
+  its CALL SITE, so the glue still names the C — and `bench_tier.py`'s first A/B after the twin
+  landed reported no change at all, because it was still pricing the C. It now resolves `<core>_asm`
+  out of the linked ELF and falls back to the glue, which is also correct for a verification-only
+  twin (its object is dropped from the link, so the symbol is absent). The table marks each row
+  `[twin]` or not, because a 1.04x twin row and a 2.47x C row mean opposite things.
+
 ## Where the pieces live
 
 | | |
@@ -402,9 +497,9 @@ when the twin does.**
 | the Musashi runner | `tools/recreate_kit/asm_twin.py` — `AsmTwins.call(image, symbol, *args)` |
 | the callback door | `tools/recreate_kit/asm_twin.py`'s `DoorCallback` + `TRAP_MODEL.md` — how a twin calls a C core, OFF TARGET ONLY |
 | the four checks, shared | `test/asm_twins.py` — `matches_the_c`, `assert_transcribes_the_original`, `cost_case`, `assert_within_the_bar` |
-| the FRAME family's shared half | `test/asm_frame_common.py` — the one door table, the candidate arming, the differential, and the `.equ`/window/transcription scrapers the four frame suites share |
+| the FRAME family's shared half | `test/asm_frame_common.py` — the one door table, the candidate arming, the differential, and the `.equ`/window/transcription scrapers the five frame suites share |
 | the frame family's slot namespace | `test/test_asm_frame_doors.py` — the cross-file pin no single suite can make: two twins claiming one slot for different cores |
-| the differentials | `test/test_asm_scroll.py`, `test/test_asm_sprite.py`, `test/test_asm_text.py`, and the frame family's `test_asm_frame{,_head,_fire,_spawn}.py` |
+| the differentials | `test/test_asm_scroll.py`, `test/test_asm_sprite.py`, `test/test_asm_text.py`, and the frame family's `test_asm_frame{,_head,_fire,_spawn,_draw}.py` |
 | the constant pin | `test/test_constants.py::test_asm_twin_equates_match_the_headers` |
 | the seams | `include/scroll.h`'s `ZY_SCROLL()`, `include/sprite.h`'s `ZY_SPRITE()`, `include/text.h`'s `ZY_TEXT()`, `include/frame.h`'s `ZY_FRAME()` |
 | the call sites | `src/frame.c`, `src/init.c`, `src/enemy.c`, `src/mothership.c`, `src/highscore.c`, `src/hud.c` |

@@ -1,4 +1,4 @@
-"""The frame family's CALLBACK-DOOR SLOT NAMESPACE, pinned across all four twins at once.
+"""The frame family's CALLBACK-DOOR SLOT NAMESPACE, pinned across all five twins at once.
 
 `src/asm/frame*.S` assemble into ONE blob and jump into ONE band, so a slot number is a
 family-wide name for a host C function. Each file spells the slots it uses as `.equ ZY_DOOR_<name>`;
@@ -20,6 +20,7 @@ import collections
 import pytest
 
 import asm_frame_common as common
+from recreate_kit import asm_twin
 
 
 def _declarations():
@@ -27,6 +28,27 @@ def _declarations():
     return [(path, name, slot)
             for path, doors in common.door_equates_by_file().items()
             for name, slot in sorted(doors.items())]
+
+
+def test_the_door_table_fits_the_band_it_jumps_into():
+    """THE BAND HAS A CEILING AND THE TABLE IS NEAR IT — 62 of the kit's 64 slots after wave E.
+
+    A slot past `DOOR_SLOTS` assembles into a `jsr` one stride beyond the address `AsmTwins` arms,
+    so the run never stops at a door at all: it executes whatever is there and dies as a sentinel
+    timeout naming neither the door nor the callee — verbatim the outcome the rest of this file's
+    pins exist to prevent. The kit's own slot-range `ValueError` is never reached, because the PC
+    never lands in the band.
+
+    Nothing checked this until wave E took the table to 61; the next wave that adds three doors
+    would have been the one to find out.
+    """
+    highest = max(common.DOOR_TABLE)
+    assert highest < asm_twin.DOOR_SLOTS, (
+        f"the family's door table reaches slot {highest}, but the kit watches only "
+        f"{asm_twin.DOOR_SLOTS} slots ({asm_twin.DOOR_BASE:#x} + {asm_twin.DOOR_SLOTS} * "
+        f"{asm_twin.DOOR_STRIDE}). A stub for slot {highest} jumps outside the band, so no callback "
+        f"is ever serviced and the case dies as a sentinel timeout. Raise DOOR_SLOTS in "
+        f"tools/recreate_kit/asm_twin.py, which owns the band.")
 
 
 def test_the_scan_found_the_familys_door_declarations():
