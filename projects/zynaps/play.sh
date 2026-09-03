@@ -16,8 +16,10 @@
 # because it is the only one that is a faithful copy of the user's disk.
 #
 # CONTROLS: the game is JOYSTICK PORT 1, emulated on the keyboard by `--joy1 keys` (F12 ->
-# Joysticks -> port 1 -> Define keys to rebind).  Its front end also takes the keyboard directly:
-#   SPACE   step to the next front-end page      1  one-player game      2  two-player game
+# Joysticks -> port 1 -> Define keys to rebind).  It also takes the keyboard directly:
+#   1  one-player game      2  two-player game      SPACE  PAUSE, in the level
+# SPACE does NOT turn the front-end page -- those turn on a 750-frame timer of their own; see
+# README.md, "Secrets and dead code".  Name entry after a high score takes the whole keyboard.
 # Ctrl-Q quits Hatari.
 #
 # TOS: the two FLOPPY media run identically on TOS 1.02 and 1.04 (both measured); `gemdos` needs

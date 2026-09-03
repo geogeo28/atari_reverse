@@ -2460,7 +2460,7 @@ the recipe holds, but the transcription has to be sliced.
 ONE table for the whole project, sorted by address, one row per unported function or per gap
 between the init slices. Every `fn` line in `../names.txt` that has no ✅ row above appears here
 exactly once — 2 of them — plus the four ranges the twenty-three init slices do not join up over and
-one address the name map reaches only by `cmt`. **The frame loop's three `fn` lines have no row: `## Verified — frame` covers them end to end, so the loop is no
+the dead patroller 0x148ca (named `enemy_move_sine_patrol_dead` by the secrets hunt; still deliberately unported). **The frame loop's three `fn` lines have no row: `## Verified — frame` covers them end to end, so the loop is no
 longer a range either.** One of the 2 is PARTLY verified above:
 `title_attract_loop` contributes four slices to `## Verified — init`, and its row says what is left
 rather than claiming nothing is. Each blocker is re-derived against the verified set
@@ -2485,7 +2485,7 @@ table accounting), not inherited from the wave that wrote the row. The categorie
 | `0x10520`..`0x10524` | the `bsr.w` into `title_attract_loop` | **FOUR BYTES, and both sides of them are verified.** `boot_front_end_prologue` stops at 0x10520 and `boot_stage_frontend_screens` starts at 0x10524; the call between them is the only instruction of `_start` no slice runs, and the routine it calls is four verified slices of its own. `test_the_attract_loop_leaves_through_the_boots_own_continuation` is what says the two chains meet there |
 | `0x1062e`, `0x1066c`, `0x12b0a`, `0x12b48` | the four `$fffa21` read-back spins | **KIT, and it is the only KIT row left.** Each is `cmpi.b #$xx,$fffa21 / bne` — ten bytes reading back a register the run itself wrote two instructions earlier. Unmodelled the read answers 0 and the spin never ends; declared as a Phase 7 slot the run's own store makes the seed STALE and the case is refused, correctly, because the seed describes the byte the chip held on ENTRY. The shape it wants is Phase 6's YM2149 register FILE one chip over — a slot whose write updates what a later read is served, which is not a fabrication because the value is one the run itself produced on both sides. The kit's `TRAP_MODEL.md`, "Still unmodeled", carries the raise; the four slices around them stop on the write, so every hardware STORE is verified and only the compare is not |
 | `0x12ac2` | `title_attract_loop` | **PARTLY VERIFIED — four slices, and what is left is twenty bytes.** `attract_program_timer_b`, `attract_program_rasterbar_timer`, `attract_build_colour_bars` and `attract_wait_for_start` cover `[0x12ac2, 0x12c74]` except the two `$fffa21` read-back spins in its prologue, which have their own row above. The loop's four wait sites are Phase 8's scheduled-write model, which this project now uses in six slices |
-| `0x148ca` | — (no `fn` line; `../names.txt` reaches it by `cmt` only) | **DEAD CODE, and that is a finding rather than a block:** nothing anywhere references it, and it is a near-copy of `enemy_move_type14_sine` using D6 as a slot index into 0x19673. Left unported deliberately |
+| `0x148ca` | `enemy_move_sine_patrol_dead` (fn line added by the 2026-09-02 secrets hunt; formerly cmt-only) | **DEAD CODE, and that is a finding rather than a block:** nothing anywhere references it, and it is a near-copy of `enemy_move_type14_sine` using D6 as a slot index into 0x19673. Left unported deliberately |
 | `0x16aa6` | `sound_install_timer_a_dead` | **DEAD CODE** — unreferenced, per `../names.txt`. It would reset the PSG and then `Xbtimer` (Timer A, ctrl 7, data 0xf4, vector 0x16b94) to run the sound tick off Timer A instead of the VBL. Its one callee, `sound_reset_psg`, is verified |
 
 **The three name-map corrections `../out/names_sound.txt` once carried are IN `../names.txt` now** (the
@@ -2531,6 +2531,17 @@ target (`test_init.py::test_boot_load_title_assets`), and the kit measures the r
 **One residual survives.** The two `move.w #$27xx,sr` interrupt masks are a CPU register rather than
 a device, which no ledger reaches; they want an on-target surface
 (`docs/on-target-execution.md`, the hardware-state vector).
+
+### Reachability notes from the secrets hunt (2026-09-02)
+
+Two facts the hunt established about VERIFIED rows, recorded here because this ledger's own
+reachability notes are where they belong (`../README.md`, "Secrets and dead code", has the walks):
+five script-VM arms with verified rows above — 0x14d00, 0x14d88, 0x14de2, 0x14e50 and 0x141d6 (as
+ext entry 8) — are UNREACHABLE from the sixteen sections' shipped scripts (their batteries drive
+them by constructed opcodes, which is why the rows exist); and BOTH power-up jump tables' entry 0
+(the bare `rts` 0x148c8) is unreachable, exactly as entry 1 of the activate table is — the cursor-0
+case is diverted to the ship-speed arm before either table is indexed, so the index is always 1..4.
+Neither fact changes a verification; both bound what shipped data can ever exercise.
 
 ## Suite
 

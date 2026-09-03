@@ -335,7 +335,7 @@ perfectly. Zynaps (1988) is the worked example: cylinder 77's sectors claim trac
 with `Ignoring unexpected sector C:73 H:0 R:3 N:2`. `stx_extract.py` reports the class directly:
 `cyl N side 0 sector M: address field claims track K, physically on cylinder N`.
 
-Three things to establish before drawing any conclusion from it:
+Four things to establish before drawing any conclusion from it:
 
 - **It is a format, not damage.** Every sector of the track is affected, the claimed track is
   *consistent* across the track, and the flux read is clean. One bad sector on one track with a CRC
@@ -354,8 +354,37 @@ Three things to establish before drawing any conclusion from it:
   to level 1 from a plain folder. Where the two disagree, the boot wins and the scan was
   incomplete.
 
+- **What the protected sectors actually hold.** Easy to skip, because the interesting question
+  looks like "does the game read them?" and the answer is usually no. Read them anyway: on Zynaps
+  each of the three cylinders turned out to be a **byte-exact whole-track clone of the track its
+  address fields name** — 0 differing bytes, three times. Two cheap tests separate a clone from a
+  coincidence and from a reader artifact:
+  - **Sector skew.** A whole-track *image* copy carries the **source** track's skew; a
+    sector-by-sector copy would carry the destination's. Zynaps skews every track by 3, so cylinder
+    77 should start at sector 10 and starts at 3 — track 76's skew.
+  - **Is the named track a neighbour?** A mis-step reproduces an *adjacent* cylinder, so distance
+    settles it — Zynaps' cylinder 79 reproduces track 72, seven away, which a monotone 0→79 read
+    never revisits. **Distance settles nothing when the named track IS the neighbour** (Zynaps'
+    cylinder 77 claims track 76), and that is the case to have another measurement ready for. Two
+    cheap ones: **angular position**, since first-sector `bitpos` trends smoothly with the physical
+    cylinder and a clone continues that trend rather than reproducing its source's value; and the
+    **independent flux transition counts**, which for two surfaces holding identical data come out
+    within a fraction of a percent and never exactly equal (223,012 against 223,024 for 76 and 77).
+
+  A clone tells you the hole in the `.ST` costs nothing *twice over* — the data is elsewhere on the
+  disk as well. It does **not** tell you why the clone is there: a deliberate anti-copy format and a
+  duplicator-buffer artifact are both consistent with all of the above, and nothing here separates
+  them. Say which you could not settle.
+
 Whatever the verdict, the `.ST` is not a faithful copy of the disk; say so in the project's README
 and keep the `.stx` as the one that is.
+
+**The boot sector is worth an account of every byte** while you are there, because a mastering tool
+leaves a fingerprint and its *absence* is a fingerprint too. Zynaps' has 19 non-zero bytes in 512:
+BRA `00 00` (no branch), OEM name six spaces, volume serial `00 00 00`, and FAT entries 0 and 1 both
+`000` where a formatter writes the media byte and `fff` — against the `NNNNNN` / `X2B` / `Loader`
+signatures the other disks in this workspace carry. That pattern says the filesystem was written
+numerically rather than formatted by TOS, which is a plausible reading and not a proven one.
 
 **Expect packed files — but check *whose* packing.** A cracked disk rarely holds plain
 `.PRG`s: on the Wonderboy **crack** release only the `VAPOUR2` loader starts with `601a`,

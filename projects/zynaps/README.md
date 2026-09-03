@@ -75,6 +75,10 @@ media damage, and the reason the `.st` has a 30-sector hole. The class, and what
 concluding anything from it, are in
 [`docs/binary-formats.md`](../../docs/binary-formats.md#protection-pattern-the-address-field-claims-another-track).
 
+**And their contents are now known: each cylinder is a byte-exact clone of the track its address
+fields name**, so the `.st`'s hole loses nothing —
+[The protected tracks hold nothing new](#the-protected-tracks-hold-nothing-new).
+
 **The verdict is that `ZYNAPS17.PRG` does not check it.** Three independent lines of evidence:
 
 1. **Static.** A byte-level scan of the whole 40,774-byte TEXT finds **zero** references to
@@ -132,7 +136,10 @@ if the level-1 capture is the same picture as the first front-end one. A blank f
 five times first — the game blanks the screen for a couple of seconds between front-end pages, and
 where that gap falls moves with the ROM (it caught a page on TOS 1.04 and black on 1.02). What it does **not** prove is
 the input path: only the fire byte is poked, so the IKBD-to-`$9681` delivery below it and in-game
-steering have never been exercised at all.
+steering are not exercised *by these runs*. The KEYBOARD half was exercised later, by the pause
+demonstration under [Secrets and dead code](#secrets-and-dead-code) — a real Hatari key event
+carried through the ACIA handler to `$9685` and back out as a frozen frame. The joystick half is
+still unproven either way.
 
 **The GEMDOS folder works because the game opens its files by bare name** — no drive letter, no
 path — so the current drive is whatever it was booted from.
@@ -152,9 +159,16 @@ ZYN_TOS_ROM=/path/to/tos.img bash projects/zynaps/play.sh
 media, ROM, machine, memory — and `play.sh` asks it for the GUI variant with `--print-command` and
 execs that. Everything after the mode is forwarded to the driver.
 
-Controls are **joystick port 1**, emulated on the keyboard by Hatari's `--joy1 keys`. The front end
-also reads the keyboard directly: `SPACE` steps to the next page, `1` starts a one-player game, `2`
-a two-player game.
+Controls are **joystick port 1**, emulated on the keyboard by Hatari's `--joy1 keys`. The game reads
+the keyboard directly in three places: the front end takes `1` for a one-player game and `2` for a
+two-player one, the level takes **`SPACE` to pause** (see
+[Secrets and dead code](#secrets-and-dead-code)), and high-score name entry takes the whole
+keyboard through its own scancode map.
+
+**`SPACE` does *not* step the front-end page**, as this file, `play.sh` and `boot_shots.py` used to
+say. `attract_wait_for_start` `$12bb4` tests scancode 2, scancode 3 and joystick fire and nothing
+else; the pages turn on their own 750-frame timer (`attract_page_timer` `$19f1e`, `$12c1e`), which is
+why pressing SPACE there looked like it worked.
 
 ### Driving it headless
 
@@ -364,8 +378,14 @@ to, which is not the sound the game has either.
 So the rule is: **a `.wav` is written only for a stream that opens with its own `fa <chan>`.** Both
 kinds of part would otherwise be a misleading file to double-click — ten of them silent, eight of
 them half a tune — and the `.ym` beside them still carries the register stream, which is the fact.
-To hear a part, play its parent: **11 spawns 12 and 13**, **30 spawns 32 and 33**, **39 spawns 40
-and 41**, and `manifest.tsv` shows each one's opening bytes so the claim can be read off the data.
+To hear a part, play its parent: **11 spawns 12 and 13**, **30 spawns 31, 32 and 33**, **39 spawns
+40 and 41**. `manifest.tsv`'s opening-bytes column shows most of those spawn commands, but not all —
+30's `fe 1f` is 46 bytes into its stream, past the ten the column carries — so the walk below, not
+the manifest, is what the claim rests on. Those parents also spawn streams that are *not* parts:
+both **14 and 39 spawn 36**, which has its own `fa` header and its own `.wav`. And a part is reached
+by another stream's `$e5` **jump** as well, which behaves like a call; the full reachability walk is
+under [Secrets and dead code](#secrets-and-dead-code) — it is what shows that **nine** of the 45
+streams can be started by nothing at all.
 
 **Where a capture stops.** A sound that ends itself ends the file. One that does not is run to a
 15,000-frame cap while a detector watches the driver's whole mutable state (`$16e82`..`$16f40` —
@@ -490,6 +510,419 @@ ours, but a model. An agreement number is "two independent implementations agree
 chip". The register surface is the stronger of the two: those bytes are the game's, and Hatari only
 carried them.
 
+## Secrets and dead code
+
+A hunt through the finished reconstruction for what the game *has* but does not use: hidden inputs,
+dormant flags, code with no caller, data with no consumer. Every positive claim below was either
+**demonstrated on the original binary** in Hatari — never on the recreate — or is a static fact with
+its address given. Negative results are reported as plainly as positive ones, because a hunt that
+only reports what it found is not evidence about what is there.
+
+The driver is [`tools/secrets_demo.py`](tools/secrets_demo.py), which boots the faithful `.stx`
+through `boot_shots.py`'s own two anchors (the PRG appearing in RAM, then the PREPARE-FOR-COMBAT
+gate being crossed), does **one** thing, and photographs and dumps the consequence into
+`out/secrets/` beside a `result_<experiment>.json`.
+[`tools/patroller_tracks.py`](tools/patroller_tracks.py) and
+[`tools/globals_census.py`](tools/globals_census.py) read those records back.
+
+**Each experiment carries the verdict it had to reach**, and the driver's **exit status** is that
+verdict and not merely "Hatari did not crash" — a pause that failed to freeze, a control run whose
+ship survived, a patroller run that never saw its actor type, each exits non-zero. That is the
+surface a future Hatari or TOS change would trip; without it the whole battery would come back green
+with the failure buried in a JSON file nobody re-reads, which is exactly how the wrong SPACE claim
+survived.
+
+**`out/` is gitignored**, so the captures and the `result_*.json` are not in the repository; the
+commands below regenerate them. **The static sweeps are not so lucky.** Ten one-off scripts wrote the
+sound, file, script-opcode and actor-type verdicts — `sound_{scan_callsites,reachability,
+orphan_profile}.py`, `files_{load_census,render_unused}.py`, `data_{walk_scripts,script_ops,
+actor_types,formations}.py` and their shared `data_zynlib.py` — and they live in `out/secrets/` with
+their output. **Those four rows are therefore reproducible only from the addresses and procedures
+written out below, not by running anything**, until someone judges a sweep worth promoting to
+`tools/`. Every claim in them names the address and the decode it rests on, which is what makes them
+checkable by hand; that is a weaker guarantee than the three demonstrations, and it is stated here
+rather than glossed.
+
+```bash
+projects/zynaps/recreate/.venv/bin/python projects/zynaps/tools/secrets_demo.py pause
+projects/zynaps/recreate/.venv/bin/python projects/zynaps/tools/secrets_demo.py all   # ~25 min
+```
+
+| lead | verdict |
+|---|---|
+| input-driven secrets | **CONFIRMED-LIVE** — an in-game pause on `SPACE`, never before run, and nothing else |
+| a dormant invulnerability flag | **CONFIRMED-LIVE** — `$19912`, read three times, written by nothing |
+| the unreachable power-up arm `$13ede` | **NOTHING** — a two-instruction stub, not a lost weapon |
+| the dead sine patroller `$148ca` | **DEAD-BUT-INTERESTING** — a cut enemy, and the game still clears its state array |
+| the actor script VM's dead arms | **DEAD-BUT-INTERESTING** — a complete homing feature no script names |
+| sound streams nothing can start | **DEAD-BUT-INTERESTING** — nine finished effects |
+| data files nothing opens | **DEAD-BUT-INTERESTING** — three of the game's, one finished sprite art |
+| unreachable enemy *types* | **NOTHING** — every type with a handler is spawned |
+| unreferenced text, author tags, build dates | **NOTHING** — every message is drawn; there is no hidden text |
+| the protected tracks 77–79 | **NOTHING NEW** — byte-exact clones of tracks 76, 73 and 72 |
+
+### The pause nobody had ever pressed — `SPACE`
+
+`$10fda`, inside the **frame-loop head** (`frame_panel_scroll_and_ship_stage` `$10f4e`):
+
+```
+010fda  cmpi.b  #$39,key_scancode      ; SPACE?
+010fe2  bne.w   $11010                 ; no -> get on with the frame
+010fe6  tst.b   key_scancode / bne.s   ; wait for the release
+010fee  move.b  #8,palette_swap_countdown
+010ff6  move.b  #8,palette_rotate_countdown
+010ffe  cmpi.b  #$39,key_scancode / bne.s $10fee    ; ...spin here until SPACE again
+011008  tst.b   key_scancode / bne.s   ; and wait for ITS release
+```
+
+Press SPACE in the level and the frame loop stops dead; press it again and it carries on. The spin's
+*body* rewrites both palette-cycle counters, so the palette animation is held as well as the frame,
+and no buffer flip happens inside it, so the screen freezes exactly as it stood.
+
+**Demonstrated.** `secrets_demo.py pause` photographs the level running, presses SPACE through
+Hatari's real keyboard event (so the byte arrives the way the game's own ACIA handler files it),
+photographs twice 2.5 s apart, presses SPACE again and photographs twice more. It was run **five
+times, two cycles each**, and all ten cycles agreed: the pair before is two different pictures, the
+pair while paused is **byte-identical** (and not blank — the capture's colour count is recorded
+beside the verdict, because two photographs of a blanked screen would be identical too), both
+countdowns read **8**, the pause loop's own constant, and the pair after differs again.
+
+Each run **overwrites** `result_pause.json` and the twelve `pause_r*_[1-6]_*.png`, so what is on disk
+is the most recent boot, not all five. The repetition is a claim about runs, not about files.
+
+**What is new here is not the mechanism.** `names.txt` has described it since the naming wave
+(`cmt 0x10fda`, "PAUSE: scancode $39 (space) pauses…"), and `frame_pause_if_space` in
+`recreate/src/frame.c` reconstructs it with the differential driving all three spins. What is new is
+that **nobody had ever pressed the key** — and that three prose surfaces, this README, `play.sh` and
+`boot_shots.py`, all said SPACE did something else.
+
+### A dormant invulnerability flag — `ship_invulnerable` `$19912`
+
+**Read by three instructions and written by none.** All three reads are the same shape:
+
+| site | what it guards |
+|---|---|
+| `$11e66` | the ship's first record flying into the landscape |
+| `$11eb2` | the ship's second (shadow) record doing the same |
+| `$13d0e` | the ship touching a lethal entity — enemy, ground target or shot |
+
+```
+011e66  tst.b   ship_invulnerable
+011e6c  bne.w   $11ed4                 ; nonzero -> skip the death entirely
+011e70  bset    #0,death_event_flags
+011e78  move.w  #1,d2
+011e7c  bsr.w   explosion_spawn
+```
+
+Those are the only player-death sites: `explosion_spawn` `$15510` has four callers and the fourth
+(`$11f74`) is the **boss** exploding, with `d2 = 0`. A life is deducted at `$1277a`, and only when a
+player explosion animation reaches its last frame. So a nonzero byte here is **complete
+invulnerability**, to terrain and to everything else.
+
+**Nothing writes it.** A read/write census of every absolute-long operand in the sweep
+([`tools/globals_census.py`](tools/globals_census.py) → `out/secrets/globals_rw_census.tsv`) finds three reads and zero
+writes, and no `lea` takes its address. Nor does anything reach it indirectly. Only two `lea` bases
+in the whole image sit below it and near enough to matter, and both are dismissed by their own
+index:
+
+- `$198d6` is the **read-only** character-to-glyph map, and its one reader indexes it by
+  `char - $20` over a `$21`-byte table.
+- `$198bb` is `squadron_kill_counters`, and it *is* written through an index —
+  `subi.b #1,idx(a6)` at `$1490c`, `$14962` and `$14a64`, from record byte `+0x21`. But every writer
+  of `+0x21` sets it from a **six-iteration** free-slot scan of that same array (`$138b0`, `$1397c`,
+  `$13a36`) or from a flag of 0 or 1 (`$13b98`), so the byte holds 0..5 and the decrement lands in
+  `$198bb`..`$198c0`. Reaching `$19912` would take an id of `$57`.
+
+Its immediate neighbours `$19911` and `$19913` are written by direct absolute moves, so nothing in
+the region is array-addressed either. It lives in bss, so GEMDOS zeroes it at load and it reads 0
+for the life of the process — which the `probe` run confirms by sampling it, 0 every time.
+
+**Demonstrated, as a single-variable experiment on the original.** An unattended ship on level 1 is
+shot down fast, so the game's own enemies are the test and the flag is the only thing touched:
+
+| run | poke | lives over 70 s | `death_event_flags` |
+|---|---|---|---|
+| `probe` | none | 3 → 2 → 1 → **0** within ~22 s | set |
+| `invuln-off`, three times | none | 3 → 2 → 1 → **0** within ~22 s, every time | set |
+| `invuln-on`, three times | `$19912 = 1` at the gate | **3, 3, 3 … 3** for all 14 samples | **never set** |
+
+The final captures say the same thing without a number: `invuln_off_2_end.png` is **GAME OVER
+PLAYER 1 / YOU ARE NOT RATED** over the status panel, while `invuln_on_2_end.png` is the ship still
+flying, deeper into the level, with thousands of points on the panel that the control never lived
+long enough to score. (These, too, are overwritten by each run; the score differs from run to run,
+the two outcomes do not.)
+
+`result_invuln-{on,off}.json`, and the recipe is one byte: `w b $<load base + $9912> $1` at the
+Hatari debugger, where the load base is where GEMDOS put the PRG. Poking it *later* than the gate is
+worth knowing about: a first attempt that waited four seconds lost one life anyway, because a death
+was already *in flight* — the life comes off when the explosion animation ends, not when the ship is
+hit.
+
+**What it is** is not established. It has the exact shape of a debug switch left in — a byte the
+developer poked from a monitor — but nothing in the image, on the disk, or in the strings names it,
+and no input path reaches it. What would establish it: a build of the game with a writer, which we
+do not have. **It is a poke cheat in the shipped binary either way**, and the recipe is one byte.
+
+### The cut enemy, and the array the game still clears for it
+
+`$148ca` is an actor move handler of the ordinary shape — `a2` = the record, `d6` = the slot index
+`enemies_move_all` counts — that **nothing anywhere references**. It reads and writes a per-slot
+direction byte at `slot_dir_flags` `$19673 + d6`: with the flag clear it steps x down by 2 until
+x ≤ `$c8`, then *sets* the flag; with it set it steps x up by 2 until x ≥ `$190`, where it despawns.
+Every frame it also writes `y = base + sin(phase, amplitude $32)`, the phase stepping 6 per frame.
+So: **sweep in from the right, turn round at x = 200, fly back out.** Against
+`enemy_move_type14_sine` `$1494a`, which is the same routine with amplitude 6, phase step `$14`, x
+stepping 4, and no turn.
+
+**What makes it more than a leftover is `$19673`.** That 13-byte array — `$19673`..`$1967f`, ending
+exactly at `ikbd_joystick_state` — has **exactly two references in the whole image**:
+`section_start_tail` clears all thirteen of it at `$10da6` on every section start, and the dead
+handler is the only code that ever reads or writes one. *The shipped game still resets a state array
+whose sole consumer was cut.* That dates the cut after the array and its reset were already wired in.
+
+**Demonstrated.** `secrets_demo.py patroller-on` points one entry of `actor_move_table` at `$148ca`
+and changes nothing else, then samples every live actor's slot, type and x twice a second. Which
+type the handler was *written* for is not recoverable — no table entry survives — so the run borrows
+the slot of type `$16`, the wave enemy `spawn_formation` puts on screen continuously in every
+section. (Type `$0e`, the opcode-`0b` trio, appeared in none of 120 samples of an earlier run.)
+Both runs also poke the invulnerability flag, which is not the variable: without it neither run
+stays in one section long enough for a wave to cross.
+
+The unit that means anything is one *actor's* flight — a maximal run of consecutive samples in which
+one slot holds a live record of the type — because a whole sample mixes actors that spawned at
+different moments. `tools/patroller_tracks.py` cuts the JSON that way and scores each track for
+a turn (x falls to a floor, then climbs more than one sample's 50 px of travel back past it):
+
+| | tracks of 4+ samples | of which turn | floor of the turning ones |
+|---|---|---|---|
+| `patroller-off` (the shipped handler) | 36 | **3** | 179 |
+| `patroller-on` (`$148ca`) | 33 | **33** | **200..216** |
+
+```
+patroller-off  slot 7:  351 312 282 255 207 153  99
+patroller-on   slot 3:  374 336 300 262 226 212 250 286 324 360 398
+```
+
+Every track turns under the dead handler and a twelfth of them do under the shipped one — and the two
+populations do not overlap. The dead handler's floors are 200..216, never below 200, which is its own
+`cmp.w #$c8` seen through the sampling rate: 25 frames pass between samples and x moves 2 px a frame,
+so a sample lands on or just after the turn rather than on it. The control's three turns all floor at
+**179**, outside that band, and they are not a counter-example: type `$16`'s shipped handler is the
+**script VM**, and the script's class-5 heading op can turn an actor round. What no shipped script
+does is turn *every* actor, at the handler's own x.
+
+Type `$14`, whose table slot was **not** touched, keeps its ordinary flight in the same run, which
+pins the effect to the dispatch rather than to anything global.
+
+There is no matching dead *art*: every `.DAT` sprite file the PRG names is consumed by a type that
+is spawned. The unused art is one the PRG does not name at all — see below.
+
+### A whole homing feature in the actor script VM that no script uses
+
+The actor script VM (`actor_script_run` `$14c66`) dispatches an opcode's low three bits through
+`script_op_table` `$19438`, and class 7 again through `script_op_ext_table` `$19458`. The shipped
+scripts — `$19ac2`..`$19b85`, `0xc3` = 195 bytes, 18 scripts, of which **119 have bit 7 clear**, and a
+linear scan is exact because a byte with bit 7 set is a delay and one without *is* the opcode — use
+classes {0,1,3,5,7} and ext ops
+{0,1,3,4,5,7,9,11,15}. Five arms are **real code no script names**:
+
+| arm | address | what its instructions do |
+|---|---|---|
+| class 2 | `$14d00` | write `(op & 0x78) >> 3` into **both** `+0x1b` and `+0x1c`, set carry, `rts` |
+| class 4 | `$14d88` | `+0x1a = $11`, `+0x1f = (op & 0x78) >> 3`, then `bsr entity_steer_toward_target` |
+| ext 2 | `$14de2` | pick a **random heading**, apply it and move |
+| ext 6 | `$14e50` | step x left by 2 *unconditionally* — ext 0 is the same step, but frozen while the scroll is |
+| ext 8 | `$141d6` | the steering tick itself: turn toward the target by at most `+0x1f` every `+0x1c` frames |
+
+**Class 4 is the one that carries the reading.** `+0x1a` is the entity index a steered shot chases,
+`$11` is 17, and entity 17 is **the player's ship record**; `+0x1f` is the maximum turn per tick; and
+it then calls the steering routine. Set a target of the player, cap the turn rate, steer — for an
+*actor*, which is what the script VM drives. Class 2 fills the countdown/period pair that steering
+then consumes, and ext 8 is the tick. Together they are a homing-enemy feature the game has and never
+asks for.
+
+**Two caveats, because the repo does not speak with one voice here.** `recreate/STATUS.md` names
+`$14d00` `actor_script_op_set_fire_rate` and `$14d88` `actor_script_op_fire`, and `names.txt` records
+`+0x1b`/`+0x1c` as *both* a fire countdown and reload (for script class 2) *and* a turn countdown and
+period (for a steered shot) — the fields are a union it already flags. So: class 2's pair is **not
+decided by its own body**, which writes one value into two bytes and returns. Class 4's is, by the
+`bsr` and the target index. Read the table above as the instructions, and the paragraph above it as
+the inference.
+
+The code is not orphaned in general — the steering tick `$141d6` has five callers, four of them live
+(`$11bd0`, `$11bf2`, `$140ec`, `$1415e`, for the enemy seeker and the player's own homing shots) and
+the fifth the dead class-4 arm at `$14d98`. What no shipped script does is *name* it: not one of the
+119 bit-7-clear script bytes has `(op & 7)` of 2 or 4, or is `$17`, `$37` or `$47` (ext 2, 6 and
+8) — a superset check that holds whatever the parse phase, since only a bit-7-clear byte can be an
+opcode at all. So the game can make a *shot* home, and its scripts never ask an *enemy* to.
+
+The reported-unused arms that turn out to be nothing: class 6 and ext 10, 12, 13 and 14 are all
+**genuine zero entries** (checked against the relocation table, so they are not unrelocated
+pointers). `jsr (a0)` with `a0 = 0` is a crash, not a feature, and no opcode reaches them.
+
+`spawn_formation` `$14a7c` has two decoded features no shipped formation uses, both confirmed by
+enumerating all 18 reachable records: a **byte-3 "kind"** field, taken when byte 1 has bit 7 set —
+every record's byte 1 is `$00`..`$11` — and a **`0xff` random-y**, which would replace `base_y + dy`
+with `(rand16 & 0x7f) + $28` per actor; no y byte in any record is `$ff`.
+
+### Nine sounds nothing can start
+
+Every one of the 23 instructions that reaches `sound_start` `$16ac8` is a `bsr.w`; 22 carry a literal
+`moveq #n,d1` immediately before (no table, no global, no inherited `d1`) and the 23rd is the
+interpreter's own spawn at `$16c6a`. Closing that seed set under the streams' own `$fc`/`$fd`/`$fe`
+spawns and `$e5` jumps — including the single `$ec` at `$17295`, which swaps `tune_index[0]` and
+`[1]` and so makes stream 0 reachable — reaches **36 of the 45**.
+
+The nine left over are **19, 23, 25, 29, 35, 37, 38, 42 and 43**, and they are not headerless parts:
+each opens with its own `fa <chan>`, each ends itself with `$e1`, and each already has a `.wav` in
+[`out/audio/`](out/audio). Two structural signatures say they are a bank only partly wired up:
+channel code **3** occurs on exactly three streams (23, 25, 35) and all three are orphans, while 29
+is 44 — the game's busiest effect — with one note changed, and 42/43 shadow 37/38 (43 differs from 38
+in its pitch and noise tables; 42 has the *same* three tables as 37 and differs only in noise period
+and note).
+`out/secrets/sound_orphans.txt` has each one's register profile.
+
+This corrects the earlier census, which was a byte-level scan for `moveq #n,d1; bsr sound_start`
+and knew nothing about the spawn graph. It also corrects the spawn list above: **30 spawns 31** as
+well as 32 and 33, and **36 is spawned by both 14 and 39**.
+
+### Files on the disk that no load site opens
+
+The filename table at `$19686` holds 31 lowercase strings, which six patch sites (the alien, mother
+and missile letter/digit tables and the map-letter table) turn into 60 names. **Four** of the disk's
+62 files are named by none of them — and one of the four is `DESKTOP.INF`, TOS's own desktop
+configuration rather than the game's, which leaves three of the game's:
+
+- **`ROTBALLS.DAT`, 360 B — finished art for something cut.** Four frames of a rotating pair of
+  chrome-blue spheres, in exactly the masked 16×9 geometry and byte count of the `MISSILE1-3.DAT`
+  the game *does* load: a drop-in fourth sprite set.
+- **`CHARS2.DAT`, 1,600 B — the superseded font.** `EXTCHARS.DAT` with four glyphs (I, J, S, T) one
+  pixel over and the eight key-caption glyphs missing.
+- **`SMSHIP.DAT`, 32 B — unidentified.** It renders as noise under both layouts 32 bytes admit, and
+  since nothing loads it, no code pins its format; "unidentified" is the honest answer.
+
+Renders are in `out/secrets/files_unused_*.png` and `data_unref_ROTBALLS.png`. No file has trailing
+data the loader does not reach — the reverse is routine: **nineteen** are deliberately over-asked and
+`Fread` returns short (all twelve `LEV*.MAP`, the three `ZYN*.DAT`, `ALIENH`, `LIFEGRA`, `MOTHER6`
+and `MOTHER7`).
+
+Beside them, a **dead load**: `$1009e` stages `lev1.map` into the map buffer `$478ae` with a 14,400-
+byte cap and never calls the loader — `$100b0` overwrites `a0`, `a1` and `d1` with `myship.dat`'s
+arguments and only that load reaches the `bsr $144e8` at `$100c2`. Not a branch that is skipped; a
+fall-through with no call in it.
+
+### The rest of the dead code, and what it is worth
+
+- **`powerup_slot1_activate` `$13ede` — not a lost weapon.** Two instructions: refill the weapon HUD
+  timer and `rts`. It is the shared prologue of the bomb, seeker and missile arms with the weapon
+  change taken out. Unreachable because `$13dfe` diverts a cursor of 1 to the upgrade arm first.
+- **Both power-up jump tables' entry 0** — also unreachable, and previously unrecorded. `$13da8`
+  sends a cursor of 0 to the ship-speed arm before either table is indexed, and the upgrade table's
+  index can only equal a cursor that is not 0. Both entry 0s are `$148c8`, the bare `rts`, so
+  nothing is lost. (The upgrade table also holds `powerup_upgrade_shield` in three of its five
+  slots, so it has three destinations, not five.)
+- **`$119ba`..`$119d8`** — eleven instructions past an unconditional `bra`: an **inline enemy-shot
+  spawn**, superseded by the `bsr spawn_enemy_shot` two instructions above it. It writes `+0x10`,
+  the position pair from A1, the alive byte, and `d2 & 0x7ff` into `+0x1a` — and no type byte.
+- **`sound_install_timer_a_dead` `$16aa6`** would `Xbtimer(Timer A, ctrl 7, data $f4, vec
+  sound_tick)`. Control 7 is ÷200 of the MFP's 2.4576 MHz and `$f4` is 244, so the tick would run at
+  12288/244 = **50.36 Hz** — the PAL VBL rate. It is not a fast mode or a slow one; it is the sound
+  tick **decoupled from the display**. It is also the image's only XBIOS trap. *Read, not
+  demonstrated*: installing it on top of the four live VBL `bsr sound_tick` sites would double-tick
+  the driver, so a demonstration has to replace those, not just add this.
+- **`$113b4`** — the ship's right-hand clamp; both branches jump past it.
+- **`game_over_screen`'s palette restore** — dead because the not-rated arm pops a return address
+  the rated arm pushed. Already in `recreate/STATUS.md`.
+
+### The protected tracks hold nothing new
+
+Cylinders 77, 78 and 79 — the ones whose sectors claim tracks 76, 73 and 72 — had never had their
+*contents* looked at. All 30 sectors read clean out of `zynaps.stx`: FDC status `$00`, valid ID and
+data CRCs, **zero fuzzy bits**, track flags identical to the 77 unprotected tracks. And each cylinder
+is a **byte-exact whole-track clone of the track its address fields name** — 0 differing bytes in all
+three cases — carrying the *source* track's sector skew rather than its own, which is what a
+whole-track image copy leaves and a sector-by-sector one does not.
+
+A stepping artifact is ruled out, but it takes two arguments, not one. For 78→73 and 79→72 the
+distance does it: a mis-step reproduces a *neighbour*, and those are five and seven cylinders lower,
+which a monotone 0→79 read (`--seek-retries 0`) never revisits. **77→76 is a neighbour**, so for that
+pair the distance argument says nothing and two measurements have to. First, **angular position**:
+first-sector `bitpos` falls smoothly with the *physical* cylinder across the whole disk (406 at 0 →
+374 at 76 → 358/361/362 at 77/78/79), and each clone continues the physical trend instead of
+reproducing its source's value — a re-read of the same track would do the opposite. Second,
+**independent flux captures**: 223,012 against 223,024 transitions for 76 and 77, 231,385 against
+231,415 for 73 and 78, 228,965 against 228,895 for 72 and 79 — within 0.03%, as identical data must
+be, and never equal, as two surfaces must not be. What the
+sectors hold is therefore already on the disk, *as a copy of it*: the filesystem still places every
+byte of every file on cylinders 0–73, and these three tracks are duplicates of three of those. Read
+as images, 12 of the 30 reproduce the live `ZYNLOGO.DAT`, 16 reproduce free-space residue of
+`ZYNPIC.PIC`, 2 the tail of an older `ZYNAPS17.PRG` — byte-identical to the shipped one — and zeros.
+The Protection section's "cylinders 74–79 are entirely free space, nothing the game loads is there"
+therefore still holds: nothing is *addressed* there, and what is *recorded* there is a second copy.
+Rendered with the game's own `palette_boot`, cylinder 77 reproduces
+scanlines 83–114 of the title screen exactly. **The `.st`'s 30-sector hole loses nothing.**
+
+*Why* the clones exist is not established: a deliberate anti-copy format and a duplicator-buffer
+artifact are both consistent with everything measured, and nothing here separates them.
+
+The boot sector accounts for all 512 bytes: 493 zero, and every non-zero byte a BPB field except
+`$0fe`..`$0ff` = `ff ff`, which is unexplained (clearing it gives checksum `$76bf`, still not
+`$1234`, so it is not a botched boot-checksum fix). There is **no format-tool signature** — the BRA
+is `00 00`, the OEM name six spaces, the serial `00 00 00` — where every other ST disk in this
+workspace carries one; and FAT entries 0 and 1 are `000`/`000` where a formatter writes the media
+byte and `fff`. The two FATs are byte-identical. Plausible but unproven: the filesystem was
+synthesised numerically by the mastering tool rather than formatted by TOS.
+
+One deleted directory entry survives, `?YNPIC.PIC` at image offset `$15e0`, stamped three minutes
+before the live copy; its data is recoverable from free space and is byte-identical to the shipped
+`ZYNPIC.PIC`. Free space also holds an older `ZYNAPS17.PRG`, byte-identical to the shipped build.
+**Nothing new is recoverable from the disk.**
+
+### The negative results
+
+These matter as much as the findings, and each is a sweep that came back empty:
+
+- **There is no cheat key and no hidden message.** The only scancode comparisons in the whole image
+  are `$39` (the pause, twice), `$02` and `$03` (the menu's 1 and 2 players) and the name-entry
+  dispatch at `$13124`. The game's text is plain ASCII — `draw_char` `$13710` maps a character ≥ `$41`
+  to glyph `char - $37` and anything below through the byte table at `$198d6` — so a plain `strings`
+  does find every message. All **21** text records are drawn, every draw site is a direct
+  `lea` or resolves to one (there is no indexed draw anywhere, so reachability is exact), and **none is
+  orphaned**. Twenty of the 21 sites are a direct `lea $addr.l,a6`; the twenty-first (`$131a0`, the
+name being typed) is `movea.l a5,a6`, and A5 traces to the literal `lea $19d48.l,a5` at `$12ff4` — so
+the enumeration is still exact, but by one extra step rather than by inspection. No build date, no
+version string, no compiler banner, no dev message. The `ZXCVBNM` run
+  at `$19a39` is not a key table in the QWERTY sense: it is a **scancode → ASCII map**, indexed by
+  the IKBD make code and read at exactly one site, the name-entry dispatch.
+- **No enemy type is implemented and unspawned.** Every one of the six live `actor_move_table` entries
+  and all nine live `actor_anim_table` entries is reached by shipped data. Types `$17`..`$31` — the
+  band where the move pass falls into the animation table and then into the script-op table — cannot
+  be produced by any shipped path at all; the highest type the data writes is `$16`. That is a
+  dispatch boundary, not a secret. (Type `$15` sits between `$14` and `$16` in four type bitmaps with
+  no handler, no art and no spawner anywhere — a vestige, and no more than that.)
+- **The default high-score table** at `$19d5a` reads HOWIE 100000, **METTY** 80000, **MARK** 50000,
+  **JOHN** 30000, PETE 10000. HOWIE and PETE are the credited coder and artist; the other three
+  appear nowhere else in the image. Plausibly the rest of Microwish — unestablished.
+
+### What the recreate says
+
+Nothing here changes a verified fact, and no reconstructed code was touched. The pause is already
+`frame_pause_if_space` in `src/frame.c`; `$13ede` and all five script-VM arms already have verified
+rows;
+`$148ca`, `$16aa6` and `$119ba` are already recorded as deliberately unported. **No cheat turned out
+to live in a kit-modelled path**, so nothing was modelled away.
+
+Two things `recreate/STATUS.md` does not yet say, and could. All five script-VM arms above
+(`$14d00`, `$14d88`, `$14de2`, `$14e50`, `$141d6`) already have **verified rows** there — what it has
+no entry for is that five of them are **unreachable from the shipped scripts**, which is the kind of
+fact its reachability notes elsewhere do record. The same for both power-up jump tables' entry 0,
+unreachable for the reason entry 1 is. Neither was written here: this hunt changed no reconstructed
+code, and a ledger row is the porting session's to add.
+
+Proposed `names.txt` lines for all of the above are in `out/names_secrets.txt` — gitignored with the
+rest of `out/`, so they are a hand-off for the next naming pass rather than a committed artifact.
+`names.txt` itself is untouched.
+
 ## Layout and next steps
 
 - [`bin/`](bin) — `ZYNAPS17.PRG`, the patched `zynaps.st`, and `disk/` (the extracted tree).
@@ -499,7 +932,9 @@ carried them.
 - [`tools/`](tools) — `boot_shots.py` (headless Hatari driver), `dat2png.py` (asset decoder),
   `extract_audio.py` (the sound dump above), `ref_capture.py` (record the real game's audio and
   register stream), `compare_audio.py` (judge the dumps against that recording), `make_bin.sh`
-  (regenerate `bin/` from the gold master). The game-agnostic halves live in
+  (regenerate `bin/` from the gold master), and the three the secrets hunt added —
+  `secrets_demo.py` (demonstrate a secret on the original in Hatari), `patroller_tracks.py` and
+  `globals_census.py` (read its records back). The game-agnostic halves live in
   [`tools/hatari_headless.py`](../../tools/hatari_headless.py),
   [`tools/st_pixels.py`](../../tools/st_pixels.py), [`tools/st_extract.py`](../../tools/st_extract.py)
   and [`tools/stx_extract.py`](../../tools/stx_extract.py).
@@ -513,5 +948,10 @@ carried them.
 
 - `POWER.DAT`'s meaning (geometry is solid, content is not identifiable), the `MOTHER6/7` frame
   split, and `SMSHIP`/`LIFEGRA` at 8 px wide — all recorded as *guessed* above.
-- In-game steering was never exercised headless: only fire is poked, and the IKBD-to-`$9681`
-  delivery below that byte stays unproven either way.
+- In-game **steering** was never exercised headless: the joystick byte `$9681` is still only poked,
+  and the IKBD-to-`$9681` delivery below it stays unproven either way. The **keyboard** half is no
+  longer unproven — the pause demonstration above drives a real Hatari key event all the way through
+  the ACIA handler to `$9685` and back out as a frozen frame.
+- Why `ship_invulnerable` `$19912` exists, and why `$0fe`..`$0ff` of the boot sector reads `ff ff`.
+- Whether cylinders 77–79 are a deliberate anti-copy format or a duplicator artifact — both remain
+  consistent with every measurement.

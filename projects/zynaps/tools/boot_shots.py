@@ -32,7 +32,8 @@ WHY THE KEYBOARD, AND WHY THE STICK IS POKED INSTEAD.  Hatari's `--cmd-fifo` has
 (`hatari-event` accepts only mouse buttons and keys), and a key bound to the keyboard-as-joystick
 emulation is swallowed headless rather than reaching either the ST keyboard or the emulated stick.
 Zynaps' front end does not need one: its ACIA handler files every make code in a "last key" byte and
-the pages test SPACE / '1' / '2' against it.  Its PREPARE-FOR-COMBAT gate DOES: that loop sends IKBD
+the menu tests '1' and '2' against it (NOT space -- see the TIMELINE comment below).  Its
+PREPARE-FOR-COMBAT gate DOES: that loop sends IKBD
 $16 (interrogate joystick) and spins until bit 7 of the joystick byte is set, and no key will do.
 So the byte the ACIA handler files the $FD reply into is poked directly.  That exercises everything
 above the byte and nothing below it: the IKBD-to-$9681 delivery stays unproven either way, and so
@@ -140,7 +141,12 @@ AWAIT_GATE = "await-gate"   # re-anchors the clock on the moment the fire gate i
 
 TIMELINE = (
     (30.0, "front1", None),
-    (34.0, None, KEY_SPACE),        # SPACE steps to the next front-end page
+    # SPACE IS A NO-OP HERE -- the front end's pages turn on a timer of their own and it tests only
+    # '1', '2' and fire. The row is kept because removing it would move every later step's timing for
+    # no gain, and it is harmless: the release code falls inside the ACIA handler's clear window, so
+    # nothing leaks into the '1' press below. NOTHING HERE OBSERVES THE KEY ARRIVING -- the run that
+    # does is `tools/secrets_demo.py pause`. See README.md, "Secrets and dead code".
+    (34.0, None, KEY_SPACE),
     (38.0, "front2", None),
     (42.0, None, KEY_ONE_PLAYER),   # '1' starts a one-player game
     (48.0, "getready", None),       # PLAYER 1 / PREPARE FOR COMBAT over the status panel
