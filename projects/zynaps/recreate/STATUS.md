@@ -2688,11 +2688,11 @@ Neither fact changes a verification; both bound what shipped data can ever exerc
 
 ## Suite
 
-`make test` — **4094 passed**, 4 skipped (3979 before this wave; the 115 new ones are
-`test/test_asm_scroll.py`'s asm-twin differential, its transcription and cost pins, and
-`test_constants.py`'s `test_asm_twin_equates_match_the_headers`). `make guarded` — same count,
-23818 candidate runs guarded across 10 workers, no fault. The kit's own suite was re-run because
-this wave touched `kit.mk` and added `asm_twin.py`: **439 passed**, the same count as before.
+`make test` — **4751 passed**, 4 skipped. `make guarded` — same count, 26318 candidate runs
+guarded across 10 workers, no fault. (The line was last re-summed after the bench-instrument
+cleanup, 2026-09-02; the growth from 3979 is the asm-twin differential batteries of waves A/B/C/D/E
+plus their transcription, cost and equate pins — each wave's own delta is in its commit message.)
+The kit's suite stands at **464 passed** since the callback door landed.
 
 **`make test` NOW REQUIRES THE m68k CROSS TOOLCHAIN** (`m68k-elf-gcc`, `m68k-elf-objcopy`,
 `m68k-elf-nm`), where the host differential previously needed only a C compiler and Python. The twins
@@ -2908,7 +2908,8 @@ mode alone before believing it, and do not run the matrix beside anything heavy.
 
 The verified counts above are untouched by any of this: `atari/` compiles the cores unchanged, and
 `atari/build.sh` measures that (no core includes a shim header, and no core reads a target-only
-`-D`). `make test` is still **3979 passed** with `atari/` present.
+`-D`). `make test` keeps its full count with `atari/` present (the Suite section above carries the
+current figure).
 
 **THE BUSY-WAIT SEAM, added with the game-over chain, is now exercised.** `src/highscore.c` was the
 first core to call the kit's `sched_poll8` / `sched_wait8`, and `build.sh` excludes the kit's whole
