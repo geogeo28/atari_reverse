@@ -30,7 +30,7 @@ is not the one they were written on can fail to read.
 WHERE THE BPB FIELDS COME FROM, honestly split between measurement and standard:
 
   * MEASURED off real Atari volumes — `projects/wonderboy/bin/wb_disk2.st` (the game's own data
-    disk) and `gw/dumps/robocop_disk1/robocop_disk1.st` both carry `spc=2 res=1 nfats=2 ndirs=112
+    disk) and `gw/dumps/robocop/disk1/robocop_disk1.st` both carry `spc=2 res=1 nfats=2 ndirs=112
     spf=5`, and those are the numbers below.
   * STANDARD for 720 KB double-sided, and NOT evidenced by either of those volumes, because both of
     them are SINGLE-SIDED: `media=0xF9`, 9 sectors a track, 2 heads. (Measured, so the distinction is

@@ -114,6 +114,14 @@ Two conventions carry that:
 
 The steps:
 
+0. **Name-map changes travel as PROPOSALS, not edits.** An agent never touches `../names.txt`:
+   new `fn`/`var`/`cmt` facts go in a `../out/names_<slice>.txt` proposals file (gitignored), each
+   line tagged ADD (no line of that kind exists at the address) or EXTEND (append after ` | ` to the
+   existing `cmt` — `ApplyNames` REPLACES a plate comment, so a blind second application destroys
+   the longer text), and the orchestrator merges them. One address, one `cmt` line, always:
+   `grep -E '^(fn|var|cmt|param|proto) 0x' ../names.txt | cut -d' ' -f1,2 | sort | uniq -d` must
+   stay empty (the grep filter matters — a bare `cut` false-positives on the file's own comment
+   lines), or the next `reapply.sh` keeps whichever duplicate comes last.
 1. Read the routine in `../out/prg_dis.txt` **from a known function start** — a `bsr`/`jsr` target
    from an anchored caller. A linear sweep desyncs on data, so a body read from the middle of the
    listing is not evidence (`docs/m68k-disassembly.md`).
