@@ -13,7 +13,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # ONE SPELLING OF THE ENTITY TABLE for the two halves of one instrument: the census decides which
 # frame is busiest and the bench prices it, and a disagreement about ENTITY_ALIVE would make the
 # second measure a frame the first did not choose.
-import bench_tier                                                   # noqa: E402
 from bench_tier import (ACTOR_FIRST_SLOT, ACTOR_LAST_SLOT, ENTITY_STRIDE, ENTITY_TYPE,  # noqa: E402
                         A_entity_table, live_slots)
 import test_frame as F                                              # noqa: E402

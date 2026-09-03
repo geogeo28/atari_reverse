@@ -2739,6 +2739,16 @@ sixteen colour registers agree.** `smoke.py gamefault` is the negative control �
 `section_reload_intro_screens` — and reddens the drawing at every frame while the pens, the exit
 path and the program's own record stay green.
 
+**A SMOKE RUN CAN DIE FOR A REASON THAT IS NOT THE CODE'S, AND IT LOOKS LIKE A REGRESSION.**
+Measured during wave E: a full matrix run concurrently with four review subagents and a Musashi
+bench produced two failures — `titlefault` and one `game` run — both reported as
+**`Hatari died (status 0)`** rather than as a red surface. Re-run serially on an idle host, both are
+green, and the same two modes were green in the sweep before and after. Two things identify the
+class: the message names the EMULATOR dying rather than a check failing, and one of the two died
+"while waiting for the original to be loaded" — the shipped 1988 binary's side, which no change to
+this reconstruction can reach. **Do not accept such a failure as a verdict either way**: re-run the
+mode alone before believing it, and do not run the matrix beside anything heavy.
+
 **Five things this section is here to say to a reader of the tables above:**
 
 * **IT RUNS ON A 1 MB ST.** The target build's image is `ZY_TARGET_IMAGE_BYTES` = 512 KiB
