@@ -550,7 +550,7 @@ projects/zynaps/recreate/.venv/bin/python projects/zynaps/tools/secrets_demo.py 
 
 | lead | verdict |
 |---|---|
-| input-driven secrets | **CONFIRMED-LIVE** — an in-game pause on `SPACE`, never before run, and nothing else |
+| input-driven secrets | **NOTHING undocumented** — the only in-game key is the manual's own pause on `SPACE`, verified live; no cheat key exists |
 | a dormant invulnerability flag | **CONFIRMED-LIVE** — `$19912`, read three times, written by nothing |
 | the unreachable power-up arm `$13ede` | **NOTHING** — a two-instruction stub, not a lost weapon |
 | the dead sine patroller `$148ca` | **DEAD-BUT-INTERESTING** — a cut enemy, and the game still clears its state array |
@@ -561,7 +561,7 @@ projects/zynaps/recreate/.venv/bin/python projects/zynaps/tools/secrets_demo.py 
 | unreferenced text, author tags, build dates | **NOTHING** — every message is drawn; there is no hidden text |
 | the protected tracks 77–79 | **NOTHING NEW** — byte-exact clones of tracks 76, 73 and 72 |
 
-### The pause nobody had ever pressed — `SPACE`
+### The manual's pause — `SPACE`, exercised at last
 
 `$10fda`, inside the **frame-loop head** (`frame_panel_scroll_and_ship_stage` `$10f4e`):
 
@@ -590,11 +590,13 @@ countdowns read **8**, the pause loop's own constant, and the pair after differs
 Each run **overwrites** `result_pause.json` and the twelve `pause_r*_[1-6]_*.png`, so what is on disk
 is the most recent boot, not all five. The repetition is a claim about runs, not about files.
 
-**What is new here is not the mechanism.** `names.txt` has described it since the naming wave
-(`cmt 0x10fda`, "PAUSE: scancode $39 (space) pauses…"), and `frame_pause_if_space` in
-`recreate/src/frame.c` reconstructs it with the differential driving all three spins. What is new is
-that **nobody had ever pressed the key** — and that three prose surfaces, this README, `play.sh` and
-`boot_shots.py`, all said SPACE did something else.
+**Nothing here is new to the game — the pause is in the manual.** `names.txt` has described the
+mechanism since the naming wave (`cmt 0x10fda`, "PAUSE: scancode $39 (space) pauses…"), and
+`frame_pause_if_space` in `recreate/src/frame.c` reconstructs it with the differential driving all
+three spins. What the hunt added is workspace-internal only: nobody in this project had exercised
+the key, and three prose surfaces — this README, `play.sh` and `boot_shots.py` — said SPACE did
+something else (all corrected). Running it is also what closes the key-reader census: with the
+documented pause accounted for, no undocumented input remains.
 
 ### A dormant invulnerability flag — `ship_invulnerable` `$19912`
 

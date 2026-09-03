@@ -590,13 +590,12 @@ positive control that arms it through Hatari's own keyboard.
 what the binary *has* and does not use, with every positive claim demonstrated **on the original
 binary in Hatari** — never on the recreate — and every negative result reported as plainly:
 
-- **a pause nobody had pressed.** `SPACE` at `$10fda`, inside the frame-loop head, stops the frame
-  loop dead — palette cycling and all, with no buffer flip inside the spin, so the screen freezes
-  exactly as it stood. The naming wave had described the mechanism; what was new is that nobody had
-  ever pressed the key, and that three prose surfaces in this workspace said `SPACE` did something
-  else. Demonstrated over five independent boots of the original, two press-pause-press cycles
-  each: the pair of captures taken 2.5 s apart while paused is byte-identical, both countdowns read
-  8, and motion resumes on the second press.
+- **no hidden key beyond the manual's own pause.** The census of every reader of the key byte is
+  exhaustive: the only in-game key is `SPACE` at `$10fda` — the pause **the manual documents**, no
+  secret at all. It was still worth the run: this workspace had never exercised it, three of its own
+  prose surfaces claimed `SPACE` turned the front-end pages instead (all corrected), and the
+  demonstration — five boots, two press-pause-press cycles each, the paused captures byte-identical
+  — is what proved the key-reader census closed with nothing undocumented behind it.
 - **a dormant invulnerability flag.** `ship_invulnerable` at `$19912` is read by three instructions
   — the ship's record and its shadow flying into the landscape, and the ship touching anything
   lethal — and **written by none**.
