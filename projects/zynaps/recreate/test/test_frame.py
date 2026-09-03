@@ -47,6 +47,13 @@ ENTRY_DRAW_AND_COLLIDE = 0x11c00
 ENTRY_RESOLVE = 0x11d30
 STOP_FRAME = 0x1296a                  # the `bra.w $10f4e` that closes the loop
 
+# Inside the draw stage: where its sprite pass ends and its all-pairs collision walk begins — the
+# `move.w #$14,d0` at 0x11c56 that starts the mask-table clear. PUBLIC and spelt once, because two
+# instruments run the original to exactly here to read the pixel-hit flags the sprite pass set
+# (`test_asm_frame_draw.py`'s positive control and `atari/bench_tier.py`'s stage breakdown), and a
+# second spelling would let one of them stop mid-pass and count a different set of pairs.
+SPRITE_PASS_END_PC = 0x11c56
+
 # The four addresses the resolve stage leaves through instead, and the enum value src/frame.c
 # answers with for each. STOP_FRAME is the fifth.
 EXIT_TITLE = 0x10500
@@ -397,6 +404,34 @@ def collision_row(slot):
     return A_ENTITY_COLLISION_MASKS + COLLISION_ROW_BYTES * slot
 
 
+def entity_record(slot):
+    """One entity's record in the table, as `include/entity.h`'s stride builds it.
+
+    PUBLIC for the same reason `collision_row` is, one driver further out: `atari/bench_tier.py`
+    and `atari/census.py` both walk these records, and `A_ENTITY_TABLE + 0x2c * slot` written in
+    each is two more places for the stride to drift away from the header that owns it.
+    """
+    return A_ENTITY_TABLE + ENTITY_STRIDE * slot
+
+
+def pixel_hit_pairs(image):
+    """The ordered pairs `frame_draw_objects_and_collide`'s walk calls `object_pair_overlap_mark`
+    for, over an image as it stands AFTER its sprite pass (which is what sets the flags below).
+
+    The inner walk runs over the slots BELOW the outer one, so each unordered pair is visited once
+    and slot 0 — whose inner range is empty — can only ever be a `right`, which is why the outer
+    walk starts at 1 rather than 0. PUBLIC because two instruments ask
+    the same question of the same image — `test_asm_frame_draw.py`'s positive control counts them
+    and `atari/bench_tier.py` prices them — and a suite that agreed the twin's arm was reached while
+    the bench priced a different set of calls would be two readings of two different frames.
+    """
+    return [(left, right)
+            for left in range(1, ENTITY_SLOTS)
+            if image[entity_record(left) + ENTITY_PIXEL_HIT]
+            for right in range(left)
+            if image[entity_record(right) + ENTITY_ALIVE]]
+
+
 def _u16(image, at):
     return (image[at] << 8) | image[at + 1]
 
@@ -541,6 +576,29 @@ def _check_every_slice(image, extra=None, expect=STOP_FRAME):
     _check_draw_and_collide(image, extra)
     _check_resolve(image, extra, expect)
     return _check_loop_once(image, extra, expect=expect)
+
+
+def test_entity_record_lands_on_the_slot_addresses_the_headers_name():
+    """THE PIN ON `entity_record`'s ARITHMETIC, which MIRRORS cannot reach.
+
+    MIRRORS pins `A_ENTITY_TABLE` and `ENTITY_STRIDE` each against its header; it says nothing
+    about the product, so a helper that multiplied by `ENTITY_STRIDE + 1` would keep both mirrors
+    green. That is not hypothetical — it was MEASURED: with that mutation the busy world's pair
+    count falls from 51 to 29, which still clears `test_asm_frame_draw.py`'s floor of 20, and the
+    whole suite stays green while `atari/bench_tier.py` prices `%a2` pointing at bytes that are not
+    a record and `atari/census.py` reads the wrong type byte for every slot.
+
+    What closes it without restating the arithmetic: `include/enemy.h` names two records by
+    ADDRESS, both already mirrored, and they are slots 6 and 9 of this same table. A stride or base
+    that drifted by one moves the product off both.
+    """
+    assert entity_record(ENEMY_SHOT_SLOT_FIRST) == A_ENEMY_SHOT_SLOTS, (
+        f"entity_record({ENEMY_SHOT_SLOT_FIRST}) is {entity_record(ENEMY_SHOT_SLOT_FIRST):#x}, but "
+        f"include/enemy.h puts A_enemy_shot_slots at {A_ENEMY_SHOT_SLOTS:#x} — the table's base or "
+        f"its stride is wrong, and every record address built from it is off by a multiple of that")
+    assert entity_record(ENEMY_SLOT_FIRST) == A_ENEMY_SLOTS, (
+        f"entity_record({ENEMY_SLOT_FIRST}) is {entity_record(ENEMY_SLOT_FIRST):#x}, but "
+        f"include/enemy.h puts A_enemy_slots at {A_ENEMY_SLOTS:#x}")
 
 
 # ============================================================ the game, played
@@ -710,7 +768,7 @@ def test_a_weapon_at_its_limit_falls_through_to_the_plain_bullet(weapon):
              A_ENTITY_GUNSIGHT + ENTITY_ALIVE: b"\x01",
              A_FIRE_BUTTON_HELD: b"\x00", A_JOYSTICK_STATE: bytes([JOYSTICK_FIRE])}
     for slot in range(PLAYER_SHOT_SLOTS):
-        extra[A_ENTITY_TABLE + ENTITY_STRIDE * slot + ENTITY_ALIVE] = b"\x00"
+        extra[entity_record(slot) + ENTITY_ALIVE] = b"\x00"
     _check_every_slice(image, extra)
 
 
@@ -1281,7 +1339,7 @@ def test_the_shoot_pass_arms_a_voice_per_shot_slot():
     """
     image = bytearray(world(0, WORLD_START))
     for slot in (0, 1, 2):
-        shot = A_ENTITY_TABLE + ENTITY_STRIDE * slot
+        shot = entity_record(slot)
         extra = {shot + ENTITY_TYPE: bytes([BULLET_TYPE]), shot + ENTITY_ALIVE: b"\x01",
                  A_ENEMY_SLOTS + ENTITY_TYPE: b"\x14", A_ENEMY_SLOTS + ENTITY_ALIVE: b"\x01",
                  collision_row(ENEMY_SLOT_FIRST): (1 << slot).to_bytes(4, "big"),
@@ -1425,7 +1483,7 @@ def explosion_group_done(image, group):
     extra = {}
     members = A_EXPLOSION_GROUP_MEMBERS + EXPLOSION_GROUP_MEMBERS * group
     for member in range(EXPLOSION_GROUP_MEMBERS):
-        record = A_ENTITY_TABLE + ENTITY_STRIDE * harness.BASE_IMAGE[members + member]
+        record = entity_record(harness.BASE_IMAGE[members + member])
         extra[record + EXPLOSION_PART_FRAME] = bytes([EXPLOSION_DONE_FRAME])
     extra[A_EXPLOSION_GROUP_ACTIVE_BITS] = bytes([1 << group])
     return extra
@@ -1605,7 +1663,7 @@ def fuzz_pokes(rng, image):
              A_SHIP_TILT_COUNTDOWN: bytes([rng.randrange(1, 5)]),
              A_SHIP_SPEED_LEVEL: bytes([rng.randrange(4)])}
     for slot in range(PLAYER_SHOT_SLOTS):
-        shot = A_ENTITY_TABLE + ENTITY_STRIDE * slot
+        shot = entity_record(slot)
         extra[shot + ENTITY_ALIVE] = bytes([rng.choice((0, 1))])
         extra[shot + ENTITY_TYPE] = bytes([rng.choice((BULLET_TYPE, 0x32, 0x33, 0x36, 0x37))])
     for slot in range(ENEMY_SLOT_COUNT):
@@ -2080,4 +2138,11 @@ ENTRY_PROLOGUES = {
     "ENTRY_SPAWN_AND_MOVE": "4a39000199026700004c",
     "ENTRY_DRAW_AND_COLLIDE": "61003dbc4a39000198b0",
     "ENTRY_RESOLVE": "4a3900019aad66000032",
+    # NOT an entry, and pinned here for exactly that reason: it is the only address in that block
+    # that two instruments STOP the original at rather than start it at, so a mistyped digit does
+    # not fail to run — it runs to `max_insns`, or it halts mid-sprite-pass and hands back an image
+    # whose pixel-hit flags are half set. `pixel_hit_pairs` then counts fewer pairs, and both
+    # readers report the smaller number as a fact. These ten bytes are `move.w #$14,d0` +
+    # `lea $18252.l,a0`, the first two instructions of the mask-table clear.
+    "SPRITE_PASS_END_PC": "303c001441f900018252",
 }

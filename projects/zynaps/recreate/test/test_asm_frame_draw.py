@@ -63,19 +63,10 @@ ORIGINAL_END = frame.ENTRY_RESOLVE                    # 0x11d30
 # This twin's base register — see the module header, point 2, and frame_draw.S's register map.
 WINDOW_REGISTER = "%a0"
 
-# The entity table, as this stage walks it — `test_frame.py`'s own constants, which its `MIRRORS`
-# already pin against include/entity.h and include/frame.h. Restating the four numbers here (an
-# earlier draft did, two lines below a working import of them) would have put a fourth, UNPINNED
-# spelling in the file: this suite is not a `test_<stem>.py` for any `src/<stem>.c`, so
-# test_constants.py's battery pins do not reach it and nothing would have said so.
-ENTITY_STRIDE = frame.ENTITY_STRIDE
-ENTITY_ALIVE = frame.ENTITY_ALIVE
-ENTITY_PIXEL_HIT = frame.ENTITY_PIXEL_HIT
-ENTITY_SLOTS = frame.ENTITY_SLOTS
-
-
-def entity_record(slot):
-    return frame.A_ENTITY_TABLE + slot * ENTITY_STRIDE
+# NOTHING OF THE ENTITY TABLE IS SPELT IN THIS FILE, and that is deliberate rather than incidental:
+# this suite is not a `test_<stem>.py` for any `src/<stem>.c`, so test_constants.py's battery pins
+# do not reach it — a number restated here would be an UNPINNED spelling and nothing would say so.
+# `test_frame.py` is where the stride, the flags and the walk over them live, pinned by its MIRRORS.
 
 
 def leaves_the_image_where_the_c_does(world, extra=None):
@@ -130,7 +121,8 @@ def test_the_twin_matches_the_c_over_a_played_frame(world):
 # differential run (C core and twin) for a second copy of one assertion.
 @pytest.mark.parametrize("frames", tuple(range(BUSY_FRAMES - 6, BUSY_FRAMES)))
 def test_the_twin_matches_the_c_over_the_busy_stretch(frames):
-    """Seven consecutive frames of the busiest stretch the oracle plays into, each its own world.
+    """The six frames before the busiest one, each its own world — the seventh of the stretch is
+    BUSY_FRAMES itself, which the case above already stages.
 
     A SWEEP RATHER THAN ONE FRAME, because the pair walk's shape changes frame to frame with which
     records the blitter marked: one staged frame exercises one set of overlaps, and the arms that
@@ -155,13 +147,9 @@ def test_the_cases_reach_the_pair_walk():
     """
     image = harness.make_image(frame.world_pokes(busy_world()))
     after_sprites, _writes, _regs = emu.run(bytearray(image), ORIGINAL_ENTRY, {},
-                                            stop_pc=SPRITE_PASS_END_PC,
+                                            stop_pc=frame.SPRITE_PASS_END_PC,
                                             max_insns=frame.FRAME_MAX_INSNS)
-    pairs = sum(1
-                for left in range(1, ENTITY_SLOTS)
-                if after_sprites[entity_record(left) + ENTITY_PIXEL_HIT]
-                for right in range(left)
-                if after_sprites[entity_record(right) + ENTITY_ALIVE])
+    pairs = len(frame.pixel_hit_pairs(after_sprites))
     assert pairs >= MIN_PAIRS_THE_BUSY_WORLD_WALKS, (
         f"the busy world walks only {pairs} ordered pair(s), so the transcribed "
         f"`object_pair_overlap_mark` body is barely reached and every differential above is passing "
@@ -169,9 +157,6 @@ def test_the_cases_reach_the_pair_walk():
         f"frame of a section")
 
 
-# Where the original's sprite pass ends and its collision walk begins — the `move.w #$14,d0` that
-# starts the mask-table clear. Read by the control above so it can see the flags the sprite pass set.
-SPRITE_PASS_END_PC = 0x11c56
 # What "the busy world really is busy" means, from the measurement rather than from a wish: the
 # frame atari/bench_tier.py prices walks 51 pairs. A floor well under that still fails loudly if the
 # staging drifts to a quiet frame, without breaking every time the oracle's play shifts by one.

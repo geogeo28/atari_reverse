@@ -361,25 +361,24 @@ frame_draw_pair_tail_body_end:
         movea.l (%sp)+,%a0
         .endm
 
-| ---- void asteroids_draw(uint8_t *image) ----
-        .globl  door_asteroids_draw
-door_asteroids_draw:
+| ---- void f(uint8_t *image) ---- the two callees this stage reaches with no register argument.
+| NAMED DRAW_* AND NOT frame_spawn.S's DOOR_IMAGE_ONLY, because it is a different stub for a
+| different register map: that one keeps the image base in %a6 and saves the whole scratch file with
+| a `movem`, this one keeps the window in %a0 and saves just that. Sharing the SHAPE is not sharing
+| the body, and a grep that returned two unrelated stubs under one name would say otherwise.
+        .macro  DRAW_DOOR_IMAGE_ONLY name, slot
+        .globl  door_\name
+door_\name:
         SAVE_WINDOW_AND_FORM_BASE
         move.l  %a0,-(%sp)
-        ZY_CALL(ZY_DOOR_asteroids_draw, asteroids_draw)
+        ZY_CALL(\slot, \name)
         addq.l  #4,%sp
         RESTORE_WINDOW
         rts
+        .endm
 
-| ---- void mothership_segments_update(uint8_t *image) ----
-        .globl  door_mothership_segments_update
-door_mothership_segments_update:
-        SAVE_WINDOW_AND_FORM_BASE
-        move.l  %a0,-(%sp)
-        ZY_CALL(ZY_DOOR_mothership_segments_update, mothership_segments_update)
-        addq.l  #4,%sp
-        RESTORE_WINDOW
-        rts
+        DRAW_DOOR_IMAGE_ONLY asteroids_draw, ZY_DOOR_asteroids_draw
+        DRAW_DOOR_IMAGE_ONLY mothership_segments_update, ZY_DOOR_mothership_segments_update
 
 | ---- void draw_sprite_masked_collide(uint8_t *image, uint32_t entity, uint32_t hit_flag) ----
 |

@@ -48,27 +48,40 @@ project.load(REC)                                       # binds the kit's loader
 
 import emu                                              # noqa: E402
 import harness                                          # noqa: E402  (loads the .so the kit binds)
-import smoke                                            # noqa: E402  (the clock and the #define reader)
+import smoke                                            # noqa: E402  (the clock and the image size)
 import test_frame as F                                  # noqa: E402
 
 # ---- the two images -----------------------------------------------------------------------------
 # The differential's image is 1 MiB and the target's `.bss` one is half that
 # (atari/shim_include/os.h's `ZY_TARGET_IMAGE_BYTES`); everything the game's world holds is below
 # the smaller of the two, which is why a staged world can be handed to the target build at all.
-# Read out of the header rather than written down, so a build that moved it moves this with it.
-TARGET_IMAGE_BYTES = smoke.c_define((HERE / "shim_include" / "os.h").read_text(),
-                                   "ZY_TARGET_IMAGE_BYTES")
+# `smoke.py` already reads it out of that header, so this takes ITS value rather than running the
+# same scrape a second time on the same file.
+TARGET_IMAGE_BYTES = smoke.TARGET_IMAGE_BYTES
 IMAGE_ALIGN = 256                                       # atari/zynaps_main.c's IMAGE_ALIGN
 RECON_STACK_BYTES = 0x40000                             # room above the image for the C call frames
 
 RECON_ELF = HERE / "build" / "zynaps.elf"
 RECON_BIN = HERE / "build" / "zynaps.bin"
 BUILD_HINT = f"{RECON_ELF} missing — build it: bash atari/build.sh game"
+# nm's letters for a symbol that HAS an address — text, data and bss, global (upper) and file-local
+# (lower) alike. `g_image_store` is a file-local 'b', so the lower half is not optional here.
+# `atari/profile.py`'s NM_SYMBOL_TYPES is the same set for the same reason; it is not imported
+# because `import profile` would seize the standard library's module name for the whole process
+# (measured: it makes `python3 -m cProfile atari/bench_tier.py` die in cProfile's own import).
+NM_ADDRESS_TYPES = "TtDdBb"
 
-# The clock and the release period are `smoke.py`'s, which pins the second against
+# The frame rate and the release period are `smoke.py`'s, which pins the second against
 # ../include/irq.h's RASTER_PHASE_PERIOD. Spelling either again here would be the same value in two
 # files that import each other, which is exactly what that pin exists to stop — `profile.py` says
 # so at its own copy of these two lines.
+#
+# CPU_HZ IS THIS FILE'S OWN AND IS DELIBERATELY NOT `profile.CYCLES_PER_VBL`. That constant is the
+# PAL VIDEO frame, 512 x 313 = 160,256 cycles, which is what a Hatari reading has to be divided by
+# because Hatari counts in it. Musashi counts the 68000's own cycles against no video clock at all,
+# so the honest denominator here is the nominal 8 MHz second — 160,000 a vblank. The two differ by
+# 0.16%, which moves no column of the table below, and calling them one value would make a Musashi
+# figure claim a precision about the ST's video clock that it does not have.
 CPU_HZ = 8_000_000                                      # stock Atari ST 68000
 VBL_HZ = smoke.VBL_HZ
 # One release slot. The frame loop is let go on every SECOND vertical blank (atari/profile.py says
@@ -76,17 +89,18 @@ VBL_HZ = smoke.VBL_HZ
 # denominator a "how much of the frame is this?" column can honestly use.
 RELEASE_SLOT_CYCLES = CPU_HZ // VBL_HZ * smoke.PACING_RELEASE_PERIOD_VBLS
 
-MAX_INSNS = 40_000_000
-
 # ---- the entity table, as the census reads it ---------------------------------------------------
-A_entity_table = 0x17a8e                                # include/player.h
-ENTITY_STRIDE = 0x2c                                    # include/entity.h
-ENTITY_SLOTS = 0x14                                     # include/frame.h
-ENTITY_ALIVE = 0x0e                                     # include/entity.h
-ENTITY_TYPE = 0x11
-# The eleven records the per-frame actor passes walk — the three enemy shot slots and the eight wave
-# slots (include/enemy.h's A_enemy_shot_slots and ENEMY_SLOT_COUNT).
-ACTOR_FIRST_SLOT, ACTOR_LAST_SLOT = 6, 16
+# EVERY RECORD CONSTANT IS `test_frame`'S, imported and not respelt. Its MIRRORS pin each one
+# against the header that owns it (include/player.h, include/entity.h, include/frame.h); a copy
+# here would be a second, unpinned spelling that `0x14` and `20` could drift apart under, and this
+# instrument and the suite that reads its frames would then disagree about which slots are live.
+#
+# The eleven records the per-frame actor passes walk: the three enemy shot slots, then the eight
+# wave slots. BUILT FROM `test_frame`'s three names rather than written down as 6 and 16, because a
+# ninth wave slot in include/enemy.h would fail ENEMY_SLOT_COUNT's mirror loudly and leave a bare
+# `16` here pricing ten actors of eleven in silence.
+ACTOR_FIRST_SLOT = F.ENEMY_SHOT_SLOT_FIRST
+ACTOR_LAST_SLOT = F.ENEMY_SLOT_FIRST + F.ENEMY_SLOT_COUNT - 1
 A_actor_move_table = 0x19380                            # include/enemy.h
 A_actor_anim_table = 0x193dc
 JUMP_TABLE_ENTRY_BYTES = 4
@@ -174,14 +188,8 @@ SCRIPT_VM = {FN_actor_script_run: "g_actor_script_run"}
 # on our side, so the stage is priced by measuring each PART on both sides and reporting the stage
 # minus the parts as the loop-and-glue remainder — which is exactly where a per-call trampoline the
 # original does not have would show up.
-ENTITY_PIXEL_HIT = 0x0f                       # `lea 15(a2),a5` / `tst.b 15(a2)` in the stage
-A_collision_masks = 0x18252                   # `lea $18252.l,a0`, cleared COLLISION_MASK_LONGS deep
-COLLISION_ROW_BYTES = 4
 FN_draw_sprite_masked_collide = 0x15b7c
 FN_object_pair_overlap_mark = 0x11cce
-# Where the original's sprite pass ends and its collision walk begins — the `move.w #$14,d0` that
-# starts the mask-table clear.
-SPRITE_PASS_END_PC = 0x11c56
 
 
 def be32(image, at):
@@ -189,8 +197,8 @@ def be32(image, at):
 
 
 def live_slots(image):
-    return [slot for slot in range(ENTITY_SLOTS)
-            if image[A_entity_table + slot * ENTITY_STRIDE + ENTITY_ALIVE]]
+    return [slot for slot in range(F.ENTITY_SLOTS)
+            if image[F.entity_record(slot) + F.ENTITY_ALIVE]]
 
 
 # The row label of the stage the head slice may branch past, and the note a skipped row carries.
@@ -226,30 +234,43 @@ def actor_dispatch(image, table):
     """
     out = []
     for slot in range(ACTOR_FIRST_SLOT, ACTOR_LAST_SLOT + 1):
-        record = A_entity_table + slot * ENTITY_STRIDE
-        if not image[record + ENTITY_ALIVE]:
+        record = F.entity_record(slot)
+        if not image[record + F.ENTITY_ALIVE]:
             continue
+        raw_type = image[record + F.ENTITY_TYPE]
         # SIGNED, as the original's `cmpi.b #$32` + `bge` is: a type with bit 7 set is NEGATIVE
         # and so is DISPATCHED, not skipped. An unsigned test here would drop exactly those from
         # the table, and the staged frames' types (0x0c/0x14/0x64) would never have said so.
-        actor_type = image[record + ENTITY_TYPE] - 0x100 if image[record + ENTITY_TYPE] >= 0x80 \
-            else image[record + ENTITY_TYPE]
-        if actor_type >= ACTOR_HANDLER_TYPE_MAX:
+        signed_type = raw_type - 0x100 if raw_type >= 0x80 else raw_type
+        if signed_type >= ACTOR_HANDLER_TYPE_MAX:
             continue
-        out.append((be32(image, table + image[record + ENTITY_TYPE] * JUMP_TABLE_ENTRY_BYTES),
-                    record))
+        out.append((be32(image, table + raw_type * JUMP_TABLE_ENTRY_BYTES), record))
     return out
 
 
 def _symbols():
-    """name -> link address, out of the cross-compiled game ELF."""
+    """name -> link address, out of the cross-compiled game ELF.
+
+    ONLY THE SYMBOLS THAT HAVE AN ADDRESS, and that filter is the whole of what this has to get
+    right. nm also prints every twin's `.equ` names as ABSOLUTES ('a') — and 24 of those repeat in
+    this ELF, because several `.S` files each export the same header constant on purpose. Those are
+    VALUES, not addresses. Letting them into a last-wins dict is the one way a lookup here can
+    silently resolve to the wrong thing: an `.equ` that happened to share a routine's name would
+    shadow it, and `shipped_symbol` below would price a routine the game does not run.
+
+    NO DUPLICATE-NAME REFUSAL on top of that, deliberately, and `atari/profile.py`'s `symbol_map`
+    is where to read what one looks like. Every name asked of this map is a `.globl`, and two of
+    those in one linked executable is a link error; the file-local `t`/`b` names that CAN legally
+    repeat (two translation units with a same-named `static`) are never looked up here, so refusing
+    them would stop the bench over a build that is perfectly good.
+    """
     if not (RECON_ELF.exists() and RECON_BIN.exists()):
         raise SystemExit(BUILD_HINT)
     syms = {}
-    for line in subprocess.check_output(["m68k-elf-nm", str(RECON_ELF)], text=True).splitlines():
-        parts = line.split()
-        if len(parts) == 3:
-            syms[parts[2]] = int(parts[0], 16)
+    for line in subprocess.check_output([smoke.NM, str(RECON_ELF)], text=True).splitlines():
+        fields = line.split()
+        if len(fields) == 3 and fields[1] in NM_ADDRESS_TYPES:
+            syms[fields[2]] = int(fields[0], 16)
     return syms
 
 
@@ -298,7 +319,7 @@ def measure_original(state, rows, carried):
         try:
             _final, _writes, r = emu.run(bytearray(state), entry,
                                          _entry_regs(regs, carried, joystick),
-                                         stop_pc=stop_pc, max_insns=MAX_INSNS)
+                                         stop_pc=stop_pc, max_insns=F.FRAME_MAX_INSNS)
         except RuntimeError as exc:
             out[label] = exc
             continue
@@ -361,7 +382,8 @@ def per_actor_rows(state, dispatch, names, syms, recon):
         name = names.get(handler)
         if name is None:
             continue
-        _final, _writes, r = emu.run(bytearray(state), handler, {"a2": record}, max_insns=MAX_INSNS)
+        _final, _writes, r = emu.run(bytearray(state), handler, {"a2": record},
+                                     max_insns=F.FRAME_MAX_INSNS)
         ours = run_ours(state, syms[name], (record,), recon)
         was = rows.setdefault(name, [0, 0, 0])
         was[0] += ours[1]
@@ -369,14 +391,6 @@ def per_actor_rows(state, dispatch, names, syms, recon):
         was[2] += 1
     return [(f"{name} x{count}", (count, ours), (count, orig))
             for name, (ours, orig, count) in sorted(rows.items())]
-
-
-def collision_row(index):
-    return A_collision_masks + index * COLLISION_ROW_BYTES
-
-
-def entity_record(slot):
-    return A_entity_table + slot * ENTITY_STRIDE
 
 
 def draw_stage_parts(state, syms, recon, already_measured):
@@ -409,7 +423,7 @@ def draw_stage_parts(state, syms, recon, already_measured):
         for call in calls:
             ours += run_ours(state, syms[our_symbol], our_args(call), recon)[1]
             _f, _w, r = emu.run(bytearray(state), original_entry, original_regs(call),
-                                max_insns=MAX_INSNS)
+                                max_insns=F.FRAME_MAX_INSNS)
             orig += r["cycles"]
         rows.append((f"{label} x{len(calls)}", (len(calls), ours), (len(calls), orig)))
         measured_ours += ours
@@ -421,22 +435,18 @@ def draw_stage_parts(state, syms, recon, already_measured):
     drawn = live_slots(state)
     part("draw_sprite_masked_collide (the twin)", "draw_sprite_masked_collide_asm",
          FN_draw_sprite_masked_collide, drawn,
-         lambda slot: (entity_record(slot), entity_record(slot) + ENTITY_PIXEL_HIT),
-         lambda slot: {"a2": entity_record(slot)})
+         lambda slot: (F.entity_record(slot), F.entity_record(slot) + F.ENTITY_PIXEL_HIT),
+         lambda slot: {"a2": F.entity_record(slot)})
 
     after_sprites, _writes, _regs = emu.run(bytearray(state), F.ENTRY_DRAW_AND_COLLIDE, {},
-                                            stop_pc=SPRITE_PASS_END_PC, max_insns=MAX_INSNS)
-    pairs = [(left, right)
-             for left in range(1, ENTITY_SLOTS)
-             if after_sprites[entity_record(left) + ENTITY_PIXEL_HIT]
-             for right in range(left)
-             if after_sprites[entity_record(right) + ENTITY_ALIVE]]
+                                            stop_pc=F.SPRITE_PASS_END_PC, max_insns=F.FRAME_MAX_INSNS)
+    pairs = F.pixel_hit_pairs(after_sprites)
     part("object_pair_overlap_mark", "object_pair_overlap_mark",
          FN_object_pair_overlap_mark, pairs,
-         lambda pair: (entity_record(pair[0]), entity_record(pair[1]),
-                       collision_row(pair[0]), collision_row(pair[1]), pair[0], pair[1]),
-         lambda pair: {"a2": entity_record(pair[0]), "a1": entity_record(pair[1]),
-                       "a3": collision_row(pair[0]), "a4": collision_row(pair[1]),
+         lambda pair: (F.entity_record(pair[0]), F.entity_record(pair[1]),
+                       F.collision_row(pair[0]), F.collision_row(pair[1]), pair[0], pair[1]),
+         lambda pair: {"a2": F.entity_record(pair[0]), "a1": F.entity_record(pair[1]),
+                       "a3": F.collision_row(pair[0]), "a4": F.collision_row(pair[1]),
                        "a5": pair[0], "a6": pair[1]})
 
     twinned = shipped_symbol("g_frame_draw_objects_and_collide", syms)[1]
@@ -505,7 +515,7 @@ def price(staged, syms, recon):
     actors = [s for s in live if ACTOR_FIRST_SLOT <= s <= ACTOR_LAST_SLOT]
     print(f"\n{'=' * 100}\nthe staged frame: {staged}")
     print(f"  {len(live)} live entities, {len(actors)} of the eleven actor slots — types "
-          f"{sorted(state[A_entity_table + s * ENTITY_STRIDE + ENTITY_TYPE] for s in live)}")
+          f"{sorted(state[F.entity_record(s) + F.ENTITY_TYPE] for s in live)}")
     print(f"  one release slot = {RELEASE_SLOT_CYCLES:,} cycles (2 vblanks at {CPU_HZ / 1e6:g} MHz)")
 
     carried = F.carried_registers(state, F.ENTRY_FRAME_HEAD)

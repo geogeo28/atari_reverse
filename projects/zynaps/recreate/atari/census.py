@@ -8,13 +8,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-# The kit binding, the entity-table constants and the staging all come from bench_tier — its own
+# The kit binding, the actor-slot range and the liveness test all come from bench_tier — its own
 # import is what puts tools/ and test/ on the path, so this must precede every name below it.
 # ONE SPELLING OF THE ENTITY TABLE for the two halves of one instrument: the census decides which
 # frame is busiest and the bench prices it, and a disagreement about ENTITY_ALIVE would make the
-# second measure a frame the first did not choose.
-from bench_tier import (ACTOR_FIRST_SLOT, ACTOR_LAST_SLOT, ENTITY_STRIDE, ENTITY_TYPE,  # noqa: E402
-                        A_entity_table, live_slots)
+# second measure a frame the first did not choose. Both read the records through `test_frame`,
+# whose MIRRORS pin every one of them against its header.
+from bench_tier import ACTOR_FIRST_SLOT, ACTOR_LAST_SLOT, live_slots  # noqa: E402
 import test_frame as F                                              # noqa: E402
 
 # The quiet frame is the heavy one's CONTROL, so it must be the same game rather than the same
@@ -25,7 +25,7 @@ LIGHT_WARMUP_FRAMES = 10
 
 def census(image):
     """[(slot, type)] for every live entity — `bench_tier.live_slots` with each slot's type."""
-    return [(slot, image[A_entity_table + slot * ENTITY_STRIDE + ENTITY_TYPE])
+    return [(slot, image[F.entity_record(slot) + F.ENTITY_TYPE])
             for slot in live_slots(image)]
 
 
