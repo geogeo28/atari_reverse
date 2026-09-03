@@ -129,13 +129,20 @@ then fix what you find (or justify leaving it) before the docs gate:
   Pin such a branch by *seeding real data* that reaches it, never by fabricating a record; if the
   data cannot reach it at all, say so in `STATUS.md` and leave it honestly unpinned. Beware
   coverage counters that infer "the branch fired" from the output — the data may produce that
-  output by itself.
+  output by itself. **Force the rebuild before trusting any of it** — `make` relinks nothing after
+  a same-second edit, a *failed* build leaves the previous artifact on disk for the smoke run to
+  pass against, and a Python sweep serves stale `__pycache__` bytecode; all three report a live
+  mutation as survived (`docs/agent-playbook.md` §10).
 
 ### Pre-commit docs gate
 Docs are part of the change, not a follow-up. Before staging, update every surface that
 applies, in the *same* commit:
 - **`names.txt`** — the name map is the source of truth; new/renamed functions or globals land here.
 - **`recreate/STATUS.md`** — per-function progress (verified count + row) when a function is ported.
+  Its **Suite line is re-summed at every merge**, not carried: each wave reports its own count, and
+  a headline nobody recomputes stays at whichever wave last wrote it (`docs/agent-playbook.md` §11).
+  Better than the habit is the surface — `test/test_status.py` re-derives each section's row count
+  from the ledger and reddens on a mismatch; extend it rather than re-reading the number by hand.
 - **`docs/<area>.md`** — when a mechanism, binary format, or gotcha is discovered.
 - **README** (`projects/<name>/README.md`, `recreate/README.md`) — when the approach or layout moves.
 
@@ -148,7 +155,19 @@ applies, in the *same* commit:
 - Never `--no-verify`, `--force`, or `--amend` a shared/merged commit — create new commits.
 - **Prefer `git add <paths>` over `git add -A`** — this workspace has concurrent work in
   other projects (`projects/joust/`, `tools/`); `-A` sweeps their changes into your commit.
-  Verify `git diff --cached --stat` before committing.
+  Verify `git diff --cached --stat` before committing — **and read `git status --short`'s `??`
+  lines**: a path-scoped add leaves an agent's *new* test file untracked, and the commit then
+  claims a test it does not contain (`docs/agent-playbook.md` §11).
+- **A `git merge --ff-only` is its own command, beginning `cd` to the repo root** — never chained
+  after a `cd` into an agent worktree under `.claude/worktrees/`. A chain that starts in the worktree
+  merges *there*, reports "Already up to date", and the push that follows ships the OLD ref. Print
+  `pwd` and `git log -1 --oneline` first and read them before pushing. (Session-level: this recurred
+  through the Zynaps agent-wave merges, and the evidence is the session record, not a commit.)
+- **A `.gitignore` pattern with a trailing slash does not match a symlink.** `dumps/` ignores a
+  directory and not a link to one; `dumps` ignores both. A worktree agent's setup symlink was swept
+  into a commit that way and the merge then **replaced the real venv in the main tree with a
+  self-referencing link** (`73d39c8`); it was re-introduced once (`957d55f`), and the same class
+  nearly landed a third time during the secrets hunt (`f07020c`).
 - Confirm before destructive ops (`reset --hard`, `checkout --`, `clean -f`).
 
 ### Edit / topic-switch hygiene

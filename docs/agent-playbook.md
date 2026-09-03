@@ -170,7 +170,63 @@ as pseudocode, every function has a meaningful name, the key globals/tables/buff
 jump tables and asset formats are documented, and every function is verified (or its residual is
 explicitly read-verified in `STATUS.md`).
 
-## 10. Porting this to a new target
+## 10. When the checker is the thing that is broken
+
+The checks whose whole job is to be loud are the ones that fail quietly, and every form below was
+measured in this workspace rather than imagined.
+
+- **The artifact you measured is not the one you built.** Three shapes of one class: `make` relinks
+  nothing and a mutation sweep reports phantom survivors unless `rm build/*.so` comes first; a build
+  that *fails* leaves the previous mode's `.PRG` on disk, and the smoke run then reports OK against a
+  stale binary (fixed by having the build delete its own artifacts before it starts —
+  `projects/zynaps/recreate/atari/build.sh`, commit `222ee2d`); and a Python sweep lies the same way
+  through `__pycache__`, where restoring a mutated constant within the same mtime second left pytest
+  running the cached bytecode and two unrelated cases stayed red after the file on disk was already
+  correct (`14da1cd`) — `find . -name __pycache__ -exec rm -rf {} +` is that case's `rm build/*.so`.
+  **Force the inputs to be rebuilt before you trust a green or a red.**
+- **A shell gate under `set -euo pipefail` dies silently on a grep that matches nothing.** grep exits
+  1, the pipeline inherits it, and the assignment aborts the script with no message at all. Measured:
+  removing the last marker from a header killed the whole build at the gate's *first line* — the worst
+  possible behaviour for the one check whose purpose is to be loud. `|| true` on the grep is
+  load-bearing wherever "no matches" is a legal answer.
+- **`grep` over several files prefixes every line with `filename:`**, so a `^anchor` pattern after it
+  matches nothing, the category comes back empty and every item in it is silently mis-classified.
+  `-h` is load-bearing (measured, same gate).
+- **A scrape that reads prose scrapes prose.** A comment quoting a prototype was scraped as a
+  declaration; a greedy `.*` took the *last* name on a line and inverted two categories. Strip
+  comments first, anchor the pattern, and prove each arm on a synthetic input.
+- **Make the gate fail closed and mutation-test it.** Count what you parsed against a loose count of
+  what is there and refuse a mismatch, so an item written some other legal way is a refusal rather
+  than something quietly outside the check. Then flip one thing and watch it redden: a gate nobody has
+  seen fail is a gate nobody has tested.
+
+## 11. Running a wave of agents
+
+Reconstruction parallelises well — independent subsystems, one agent each, merged into one ledger —
+and the failures are all in the seams rather than in the code.
+
+- **Re-sum the ledger's ONE suite line at every merge.** Each wave reports its own count; if nobody
+  adds them up the ledger's headline number stays at whichever wave last wrote it. Zynaps' sat
+  stranded at wave A's 4,094 through four waves of growth until it was re-derived at 4,751
+  (`0f18092`). Same for any "N verified" total the merge does not recompute.
+- **After merging a checker, grep for the counterpart of every name you renamed.** A rename made in
+  one branch outside the conflict hunks merges clean and fails at *runtime*: a smoke check's
+  `PACING_OVERFLOW_SHARE` became `PACING_OVERFLOW_FRAMES` in one wave (`59786c7`) and the next wave's
+  merge had to unify it by hand (`6155cc5`). Textual merge is not a type checker.
+- **List the untracked files before every commit.** A path-scoped `git add` — which this workspace
+  prefers, because `-A` sweeps up concurrent work — leaves an agent's *new* test file behind, and the
+  commit then claims a test it does not contain. `git status --short` and read the `??` lines.
+- **The same fact written on several prose surfaces drifts.** Zynaps' dead-code hunt found three of
+  the project's own surfaces describing one key wrongly (`d833f14`) and, a commit later, a fourth
+  disagreeing about how many boots had demonstrated it (`86ddb33`). When you correct one, correct the
+  set: the rule is `methodology.md`'s — the correction is landed when the **old phrase greps to
+  zero**.
+- **An agent that has stopped can be resumed rather than replaced** — a property of the harness
+  rather than a measurement here: messaging a stopped agent's id continues it with its context
+  intact, so a wave halted by a rate limit does not have to be re-scoped and re-explained. Respawn
+  only when you actually want a clean context.
+
+## 12. Porting this to a new target
 
 What transfers unchanged: the anchors→outward method, the oracle-vs-candidate loop, core+glue
 modeling, the §5 techniques, the commit/review hygiene. What you swap per target: the **loader**

@@ -162,6 +162,35 @@ add a seam, the core/no-op side must have **no image effect** (or the oracle-mod
 differential test still holds; put the real trap/hardware poke only in the PRG override, and gate it
 on `hw_ready` if it touches supervisor-only I/O space (`$ffff8xxx`, `$fffffcxx`) before `Super(0)`.
 
+### Two ways a seam leaks the harness into the shipped program
+
+A seam exists so the harness's version of a service and the machine's version can differ. The
+failure worth naming is the reverse: something that exists **only** because the harness must
+terminate, or must build twice, ending up compiled into the `.PRG`.
+
+- **An off-target cap that reaches the target.** The kit's wait helpers give up after a fixed poll
+  count, so a wait no test case released becomes a named refusal instead of a hung suite; on the
+  machine the interrupt really does write the byte and the spin has to be unbounded, which is why a
+  target build supplies its own uncapped versions behind the include-path seam. Zynaps' review found
+  two waits that could not use the kit helper at all — one interrogates the IKBD before each look, the
+  other draws a whole frame — and that had therefore **spelt the cap in the CORE**, which the target
+  build compiles into the program. On iron that would have dismissed the high-score screen after
+  4,096 interrogations with nobody touching the stick, and abandoned a player at the name prompt
+  after 4,096 frames. Both now go through one give-up helper whose body the target build compiles away
+  (`projects/zynaps/recreate/STATUS.md`, "THE BUSY-WAIT SEAM"). **A bound that exists for the harness
+  belongs behind the seam; a core that spells one is shipping it.**
+- **An `#ifdef` inside a header that every verified core includes.** A trainer's keyboard tap was
+  first written that way, which makes a *verified core compile differently between the two builds* —
+  the one thing a containment gate is there to prevent, and the one thing it cannot see: the gate asks
+  which headers reach which cores, not what the preprocessor then did with them. The fix was to make
+  the tap unconditional and let the purist build link an empty body (`3df8ebe`). The same reasoning is
+  why the containment check has to read the include *closure* rather than the `#include` lines —
+  class 13's shim bullet has that mechanism.
+
+A bound that legitimately differs across the two shores is a third shape and is not a leak, but it is
+still a residual: see "Fitting the machine" below for the image-bounds helper whose two arms stop at
+different addresses off target and on, and which is recorded as unpinned rather than argued away.
+
 ## Bug taxonomy (1-5 in BuggyBoy, 6-8 in Joust, 9-12 in Wonder Boy, 13 in Zynaps)
 
 Entries **1-9 and 11-13 were each HIT in a real build** and are written from the wreckage — 11 and
@@ -170,7 +199,10 @@ check it had. **Entry 10 was not**: it is the one
 shape here that a review caught at the design stage, before the build that would have carried it
 shipped — which is why it reads as a method rather than as a post-mortem, and why it is worth having
 anyway. A shape that is cheap to avoid once you have seen it named is exactly what a taxonomy is
-for; the honest label there is "avoided", not "survived".
+for; the honest label there is "avoided", not "survived". **Two more "avoided" shapes are written up
+outside this list** because they belong beside the mechanism they abuse — the harness cap and the
+per-build `#ifdef` in "Two ways a seam leaks the harness into the shipped program" above. Each would
+have shipped a real defect and each was caught in review; read them with these.
 
 ### 1. Endianness tax — byte-shuffle accessors on a big-endian target
 
@@ -751,6 +783,297 @@ on target a slower frame draws the same pixels because a frame-locked game reads
   measures today (not from the original, or the check is red on every run and nobody reads it), and
   prove it can go red with a deliberate busy-wait — **gated to the phase the check measures**, or an
   ungated one slows the boot so much the run never reaches a frame and the wrong check fails.
+- **And do not scope the fix off the first row you find.** Sizing this gap is its own discipline, and
+  three instruments each named a prize that was not there before it was written down: **Sizing the
+  gap in class 13** below. When the answer turns out to be "the compiled C costs three times the
+  routine it replaced", **The asm twin** after it is the method that collects it.
+
+## Sizing the gap in class 13 — the ways a cost instrument lies
+
+Class 13 is about a gap no surface reports. *Sizing* it is a second problem, and Zynaps' five asm
+waves are five readings of one port in which three different instruments each named a prize that was
+not there and a fourth turned a busy host into a verdict. None of the four readings was sloppy: each
+was a careful measurement, honestly taken, over the wrong span.
+`projects/zynaps/recreate/src/asm/README.md` records them wave by wave; the positive method at the
+foot of this section is what to run before any of them.
+
+**1. A profiler row that contains a BUSY-WAIT measures the wait.** Hatari charges spin cycles to the
+function they occur in, so the frame stage holding the frame's two synchronisation spins reported
+**211,784 cycles a frame of "self"**, and a twin was commissioned against an imagined ~140,000-cycle
+prize. Measured on the oracle instead — where the harness releases each wait on its first poll, so
+what is counted is work — the original's same span costs 9,788-12,378 a frame and the real prize was
+**~19,500, seven times smaller** (Zynaps wave C, commit `e77dbbc`). Before scoping anything from such
+a row, put the wait outside the span or take the reading somewhere a schedule releases it.
+
+**2. An INCLUSIVE row is not a prize either. Subtract the children — ALL of them, by measurement,
+not the ones you happen to have rows for.** The same campaign's next wave was scoped at ~70,300
+cycles a frame from an inclusive row minus a *partial* child list; the children left off the list
+were essentially the whole row (97% of one row was already-optimised children). The three routines
+were transcribed faithfully anyway and bought **+13 cycles a frame** — 699 instructions for a no-op
+(Zynaps wave D, `14da1cd`). **Twin the smallest candidate first and take the A/B before committing
+to the rest**: the smallest of the three was 148 instructions and would have answered the whole wave
+in a day.
+
+**And take the A/B on ONE tree, built twice.** Not a before-and-after across two sessions, where the
+window and the workload both move: the same tree with the call-site wrappers as the only difference
+gave 403,947 cycles a frame against 403,960. Thirteen cycles on four hundred thousand is a NO-OP,
+and only that shape of measurement can say so.
+
+**2b. The counter-case, and it is the one that bit hardest: a remainder is not small because the
+children were large.** Wave D's rule sent the next wave straight past the one frame stage of five
+that nobody had twinned — its biggest child was already a twin at 1.06x, so subtracting the children
+left what looked like nothing. Measured part by part it was **+31,966 cycles at 5.05x in the stage's
+own loops and call glue**, 52% of the whole gap on a busy frame: the C spelt an inner all-pairs walk
+as a seven-argument call fifty-one times a frame where the original has six instructions and a `bsr`
+(Zynaps wave E, `b4b1ebd`). Subtracting the children is right. *Assuming* the remainder is small
+because they were big is a different thing, and it is wrong. Measure the remainder.
+
+**3. Two windows with different PHASE MIXTURES invent a ratio.** The largest apparent discrepancy in
+one whole profile was an IKBD send routine at 4,981 calls against the shipped binary's 105, and
+7,899 cycles a call against 84. Re-measured per phase — a third `:quiet` breakpoint on the send
+site, over the same 300 frames asked of both sides, split by whether a loop-head span holds exactly
+one buffer flip — it is **exactly 1.000 send per frame on both sides** (315/315 and 336/336). The
+window had been nearly all attract on one side and nearly all gameplay on the other; the 84 was the
+original's *in-game* rate and the 7,899 our *wait-phase* rate. Different phases, so the ratio was
+never a divergence. This happened **three times in one campaign** before the per-phase split became
+routine (`projects/zynaps/recreate/STATUS.md`, wave D's "what is actually left"). **Say which phase
+every cross-binary number came from, and either make the two windows the same mixture or split them.**
+
+**3b. A wrapper's cost is its row MINUS its body's, and only the subtraction is a lever.** An
+interrupt entry, a trampoline or a seam stub shows up carrying everything it called, and the
+question a fix has to answer is what is left when the callee is netted out. Zynaps' three interrupt
+entries read as substantial rows and came to **307 cycles for the VBL dispatch, 232 for Timer B and
+196 for the ACIA once their handlers were netted out — 3,850 a frame, 0.5%**, and the two candidate
+optimisations under that were worth ~1,000 a frame between them, so they were measured and
+deliberately **left alone** (`59786c7`; the arithmetic is in that project's `STATUS.md`). It is the
+same subtraction as trap 2, one level down, and it is the one that says when to stop.
+
+**4. "The emulator died" beside a loaded host is not a verdict.** A smoke mode reporting
+`Hatari died (status 0)` while other emulator runs shared the machine is the emulator losing its race
+with the host, not the program failing: **re-run the mode alone before recording anything**
+(`c0c3c09`). The general form — a headless instrument shares the host with whatever else is running,
+so a reading taken under concurrent load is not a reading — applies to every timing number on this
+page, and to a suite's wall clock as much as to a frame's.
+
+### What worked: the heavy-frame contract table
+
+The complaint that opened Zynaps' last wave was not "the game is slow". It was "**it slows down when
+there are a lot of sprites**" — a claim about the tail of a distribution — and every instrument the
+campaign owned averaged that tail away: one measures a window, one 300 frames, the closing table a
+mean. **An average over frames is the wrong instrument for a complaint about frames.**
+
+What answers it is a contract table taken **before any optimisation**, and it is about a minute's
+work once the pieces exist:
+
+1. **Stage one frame the game itself produced.** Walk the *oracle* playing a real section frame by
+   frame, record each frame's entity load, and save the busiest image it sees (and a light one for
+   contrast). `projects/zynaps/recreate/atari/census.py`; the frame it kept was section 0 frame 141,
+   14 live entities with all eleven actor slots full.
+2. **Price both sides on THAT image, through one instrument** — the original's own machine code and
+   the cross-compiled port's linked ELF, both under the same CPU core, per stage and per routine.
+   `projects/zynaps/recreate/atari/bench_tier.py`. One image, one instrument: no window, no mixture
+   and no average. (The precedent is `projects/buggyboy/recreate/tools/bench_frame.py`.)
+3. **Compare against the release slot, not against a frame rate.** Class 13's quantisation rule
+   applies: what matters is how much of the slot the frame's work fills.
+
+What that read, where three mean-based readings had not: the port's excess over the original was
+**19.0% of a 320,000-cycle release slot on the busy frame and 4.1% on a quiet one** — it scales 4.6x
+with entity count, which is the complaint, measured — and the busy frame's whole work came to
+**101.7% of the slot**, so the port was missing it by under 2% where the mean-based table had implied
+a hopeless 138,675-cycle deficit. **Same port, two instruments.** After the one twin the table
+pointed at, the busy frame is 90.5% of the slot and the judged cadence 2.68 → 2.51 vblanks a frame.
+
+Four things such a table has to get right, each learned by getting it wrong first:
+
+- **Skip a stage the frame's own gates skip.** An early edition priced a stage the staged frame never
+  enters (the ship record is dead there) and folded 498 cycles against 256 into both totals.
+- **Price what the game CALLS, not the glue.** A substituted routine is swapped at its *call site*,
+  so the harness glue still names the C — and the first A/B after a twin landed reported no change at
+  all because it was still pricing the C. Resolve the shipped symbol out of the linked ELF, fall back
+  to the glue, and mark each row with which one it priced, because a 1.04x row and a 2.47x row mean
+  opposite things.
+- **Two clocks, and never unify them.** Musashi counts the 68000's own cycles against no video clock
+  — the honest denominator is the nominal 8 MHz second, 160,000 a vblank — while Hatari counts the
+  PAL video frame, 512 x 313 = **160,256**, which is what a Hatari reading has to be divided by. They
+  differ by 0.16% and move no column; calling them one constant would make a Musashi figure claim a
+  precision about the ST's video clock that it does not have (`bench_tier.py`'s `CPU_HZ` comment).
+- **State the emulator residual.** These are one core's cycles. Hatari's model carries the ST's bus
+  contention and reads the same transcribed code 1.03x-1.08x where Musashi reads 1.00x-1.01x, so
+  every margin is thinner on iron. The *direction* is instrument-independent; the headroom is not.
+
+And the coda the last wave had to write over the one before it: **a performance campaign closes on
+the instrument it owned, not on the truth.** Zynaps' closing verdict was arithmetically right and
+substantively wrong, because a mean cannot see a cost that scales with what is on screen
+(`projects/zynaps/recreate/atari/README.md`, "The verdict — and the one this section used to carry,
+which was wrong"). Before declaring one closed, price the work on the busiest state the game itself
+produces.
+
+## The asm twin — the original's own instructions inside the port
+
+When class 13's answer is "the compiled C costs three times the routine it replaced", the fast
+version is already written: the original's own instruction sequence. A **twin** is a hand-written
+transcription of it for one routine, carrying the C signature of the verified core it stands in for.
+The target build links the twin; the host differential build never sees it. The full recipe, the
+add-a-twin checklist and five waves of findings are in
+`projects/zynaps/recreate/src/asm/README.md` — read that before writing one. What belongs here is the
+shape of the method and the parts of it that generalise past one game.
+
+**Transcription, not optimisation, and that is the whole warrant.** The C core is already proven
+byte-for-byte equal to the original, so the fast version is not something to invent. A faithful
+transcription is **1.00x by construction**: Zynaps' twenty page blits measured 1.0024x of the
+original's per-call cycles and its column emitters 1.0083x/1.0136x, the excess being the C-ABI
+prologue the original does not have (`6155cc5`). The corollary matters as much — **do not improve on
+the original**, because a cleverer instruction is a divergence in a file whose entire warrant is that
+it does not diverge.
+
+**The C stays the reference, and the twin is differentially verified against it.** The chain is
+`original ==(the C's own battery)== C core ==(the twin's battery)== asm twin`, both links byte-exact
+over the whole image, so a twin is pinned to the original transitively and neither link is
+re-derived. Five checks judge one and a new twin needs all five: the image differential, a
+transcription pin (bytes where they are available, otherwise every original instruction address
+appearing exactly once in ascending order), a cost pin, a **register check**, and a **build gate**.
+
+The last two are the ones a first twin gets wrong. **The register check exists because the other
+three cannot see a clobbered callee-saved register at all** — measured: drop one register from both
+of a twin's `movem` lists and correct the frame size to match, and the image is identical, the return
+value is identical, the stack balances and the cost pin gets *cheaper*, while on the machine the twin
+returns with its caller's register holding a sprite's planes. Seed every callee-saved register with a
+distinctive constant on entry and require each one back **by name**; reserving one as an image base
+does not exempt it (`tools/recreate_kit/TRAP_MODEL.md`, "The callee-saved file, and the twin defect
+nothing else could see"). And the **build gate** exists because the substitution fails *silently*:
+drop the seam define and every call site resolves to the C again, which still computes the right
+answer, three times slower, with nothing but the frame rate to say so. Ask the objects, not the
+source — but know the gate's own blind spot, which is the **intra-file call**: a link-level gate sees
+undefined references, so a caller that reaches a twinned core *inside its own translation unit* stays
+invisible. Zynaps' text drawer kept calling the bare C character blitter from the same file, and
+every string in the game ran the 2.4x path while the gate printed green (`597e7f5`).
+
+**Set the cost bar in CYCLES, from your own measurement, per band.** A flat percentage bar pins
+nothing: Zynaps' shared 1.15x ceiling passed a +76-cycle regression and 112 tests with it. The
+per-twin bars that replaced it sit a handful of cycles over the measurement — margins of 3-9 cycles,
+which is what makes one extra register in a `movem` (16 cycles round trip) redden them. Note the
+scale dependence: a 110,000-cycle blit's fixed ABI cost is a quarter of one percent and the same
+fixed cost on a 1,700-cycle routine is 11%, so a bar quoted in percent is wrong by whichever routine
+it was not written for.
+
+**Byte identity is available only over some stretches, and it is worth laying registers out to get
+one.** Two things take it away. The assembler re-spells the immediate-to-Dn forms the original's
+assembler used (`and.w #imm,Dn` becomes ANDI, likewise CMP/ADD/SUB) — same length, same cycles, a
+different opcode word — so a clip prologue can never be byte-equal however faithfully it is copied,
+while a row loop usually carries none of those and is. And a position-independent reconstruction
+reaches its globals base-relative where the original reads them absolutely, so a routine that
+mentions a global on nearly every line can pin nearly nothing. **Pin the spans that can be pinned,
+name the limitation, and say what stands in its place** rather than dropping the check. One measured
+payoff: choosing which register to reserve for the image base *by which span it leaves pinnable*,
+rather than by the family's convention, made 50 bytes of one twin byte-identical to the original's
+machine code (`b4b1ebd`).
+
+**A twin that CALLS needs a door, and the door constrains what its cost pin may claim.** Off target
+the verified cores are host code inside the candidate library, so a `bsr` to one does not link — and
+cross-compiling them into the blob would not help, because some of them sit on seams the harness
+models host-side. The kit's answer is a **callback door** — unrelated to class 13's cross-unit seam
+door — where a stub jumps into a reserved address band, the runner services the callback by calling
+the host C with the registers marshalled, and resumes the blob. It is off-target only, so on target
+the same `jsr` names the real core and the body is
+identical in both builds. `tools/recreate_kit/TRAP_MODEL.md`, "The callback door", is the contract;
+three of its rules generalise:
+
+- **An unregistered slot is a REFUSAL, never a zero.** A fabricated result is one both sides then
+  agree with.
+- **The door destroys the caller-saved file and the condition codes on return**, exactly as a real
+  core may, so a stub that forgot to save something fails loudly instead of being carried by a
+  courtesy. **One flag has to be a SCHEDULE rather than rubble**: a stub that marshals the 68000's X
+  across the call and drops its write-back would be handed the same value a constant poison leaves,
+  so the kit alternates X per callback and exports the schedule for a case to pin
+  (`TRAP_MODEL.md`, "The marshalling contract"). Measured both ways on one tree, that **closed one of
+  five** dropped-`X_OUT` mutations — and the honest finding is why the other four still survive: in
+  every staged world a flag-destroying door call already sits between the producer and the next
+  consumer, so it is the **staging** that erases the question, not the poison's determinism
+  (`projects/zynaps/recreate/STATUS.md`, "WAVE C PROPOSED A CLOSURE, WAVE D BUILT IT"). When a
+  mutation survives a poison, check whether a case can reach the consumer at all before blaming the
+  poison.
+- **The door charges the emulated machine nothing for the C body**, so an off-target cost reading over
+  a span containing a call is not comparable to the original's. Pin cost over **call-free spans**, or
+  state the number as *the twin's own instructions only*. It is also why a non-leaf twin's bands can
+  read *below* 1.00x — which is not a win; it is the callee's absence.
+
+**A TARGET-ONLY ARM IS RUN BY NOTHING OFF TARGET, so count those instructions and say so.** Where a
+twin's seam splits by build — the target assembling the original's real spin or hardware write where
+the host build goes through the harness — the transcription pin reads the file's text and so sees the
+arm's *presence and order*, but nothing checks its **operands**. A wrong polled byte, scancode,
+register or bit number passes every off-target check in the workspace and appears on iron as a hang
+or a dead keyboard, which names nothing. Record each such instruction as a row and treat the
+on-target smoke as the twin's last check, not an optional one. The class is not hypothetical: a
+review caught `move.w %sr` sitting in one twin's on-target arm, **privileged on the 68010 and later**
+and reached on the first scoring kill, so the twin would have run on a stock ST and trapped on an
+accelerated machine (`roxl.l #1` recovers the flag unprivileged and is 10 cycles cheaper — `e77dbbc`).
+
+**Two cheaper shapes worth knowing.** A routine with several `rts`s is *called* by the wrapper rather
+than branched into: the `bsr` costs 18 cycles and every rejection path and row loop stays
+byte-identical, where rewriting each `rts` into a branch to a shared epilogue would change the body's
+byte layout at nine places and put every branch displacement after them out of step with the
+original's. And a callee that lives in the same assembled blob is
+reached by the original's own `bsr` — 18 cycles, no marshalling — instead of through a door or a C
+call.
+
+**A twin with no measured gain is still worth building — as a declared VERIFICATION-ONLY twin that
+does not ship.** Zynaps' three no-op twins are built, differentially verified and kept — they are
+what *measured* those slices at ~4,700 cycles a frame, so the number can be re-taken rather than
+re-argued — but the target build calls the C, the header marks them, and the build gate carries the
+marker as a declared category that inverts its usual arm (a marked twin must be defined by an asm
+object and must **not** be referenced by a core object). The shipped binary is byte-for-byte its
+pre-wave size (`14da1cd`). **A twin you do not ship is worth writing when the measurement is the
+point** — and declaring it in the gate is what stops the next reader assuming it ships.
+
+**The hard wall: a routine that dispatches through a table of the ORIGINAL's code addresses held in
+the image cannot be twinned.** The shape is `lea <table>.l,a0 / movea.l 0(a0,d1.l),a0 / jsr (a0)`,
+and what that table holds is the original binary's own handler addresses. A reconstruction is
+position-independent code at its own link addresses and the image is data, so transcribing `jsr (a0)`
+faithfully would jump into the loaded original and execute its machine code against its own absolute
+addressing. Every such dispatcher therefore needs a lookup the original does not have — which the C
+already spells — and a twin is measured against the lookup's cost, not against `jsr (a0)`. **Check for
+an indirect `jsr`/`jmp` through image data BEFORE scoping a twin.** It is why Zynaps' enemy tier reads
+2.4x-4.2x while every twinned routine reads 1.0x, and it makes that tier's excess a **dispatch
+problem, not a transcription problem**: the legitimate fix is a faster dispatch in the C — a change to
+a translation that was always ours, since the original has no such lookup — which is a decision with
+its own differential and its own mutation sweep, not a transcription (`b4b1ebd`).
+
+## Fitting the machine — measuring a memory budget instead of assuming one
+
+A reconstruction is a GEMDOS program *inside* a TPA where the original often *was* the machine's
+memory, so "it ran on a 512 KB ST in 1988" says nothing about what the port needs. Zynaps' port
+carried the harness's full 1 MiB image as `.bss` and needed 4 MB until the budget was measured; the
+diet took it to 597,470 B against a measured 908,138 and it runs on a 1 MB ST (`5d4836d`,
+`projects/zynaps/recreate/atari/README.md`, "Memory — the 1 MB diet"). The method transfers:
+
+- **Take the budget from the basepage GEMDOS handed you, not from a spec sheet.** Latch the basepage
+  and the entry stack pointer in `_start` *before* any `Super(0)` moves the stack, and publish them
+  in the program's own record. The **floor** is `p_bbase + p_blen`, not the top of your image — a
+  `.bss` object linked after it sits above it — and the **ceiling** is the *lower* of `p_hitpa` and
+  the SP you were entered with, because a launcher that pushed an environment breaks the convention
+  that they are equal. Charge the 256-byte basepage to the bill: GEMDOS carves it out of the same TPA.
+- **Measure the worse medium and pin the measurement.** A floppy boot gave ~31 KB *more* TPA than a
+  GEMDOS drive, so the GEMDOS figure is the conservative one; and the pinned constant is re-taken on
+  every run against the machine in front of it, so a TOS build or an AUTO-folder resident that ate
+  200 KB of low memory reds there instead of leaving the size gate quietly too generous.
+- **An address census, and it must fail closed** in the sense of `agent-playbook.md` §10. If you
+  shrink the target's image bound, the claim is that no address the game can produce lands in the gap.
+  Enumerate every absolute the cores can name — in **every spelling**: the headers' `#define`s *and*
+  the `.equ`s any linked asm restates, which a header grep would miss — and have the build re-run the
+  census rather than trusting a number somebody checked once.
+- **Watch the bands a census cannot cover, and there are two of them.** A census names bases; it
+  cannot cover an address the code *computes* (a blit one row past the buffer) or the extent of a
+  named one. So: a **tail** band inside the image above everything named, checked for **zero** —
+  because zero is what both shores hold there and a pattern would make the target build differ from
+  the differential — and a **guard** band outside it, filled with a **pattern**, because zero is also
+  what a `memset` overrun leaves. Mutation-test both arms; Zynaps' first attempt had a single band
+  sitting 768 B above the world's top and would have missed exactly the one-row overrun it existed
+  for.
+- **Say what the shrink left unpinned.** The kit's image-bounds helper (`os_in_image`,
+  `tools/recreate_kit/include/os.h`) now stops at a different address on each shore, so two guards in
+  verified code fail at different points off target and on. Both fail by *not writing*, the census
+  argument holds them, and pinning it would mean adding a refusal counter to verified code — so it is
+  recorded as unpinned rather than argued away.
 
 ## The observable surfaces
 

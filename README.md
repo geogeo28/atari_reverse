@@ -374,7 +374,7 @@ and the mouse's right button are the same wire, so the 6301 was reporting every 
 packet the game does not read. The machine's own record showed 35 IKBD bytes delivered and not one
 of them a joystick report. Both fixed, and the third run played: title, fire, credits, fire, stage
 1's overlay, tiles and sprites, and the frame loop — on the machine. The two shapes are entries
-**11** and **12** of [`docs/on-target-execution.md`](docs/on-target-execution.md)'s twelve-entry
+**11** and **12** of [`docs/on-target-execution.md`](docs/on-target-execution.md)'s thirteen-entry
 taxonomy — *a live interrupt handler reading state whose protocol lives below a declared seam*, and
 *a gate crossed by a poke is a gate whose input path never ran* — and they are Wonder Boy's own two
 contributions to it from the machine. It is not the first: entry 3's register half is Buggy Boy's

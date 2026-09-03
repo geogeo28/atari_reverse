@@ -259,6 +259,8 @@ stays the source of truth.
 `main` and the frame loop read as pseudocode; every function has a meaningful name; the
 key globals (state, buffers, tables) are labelled; jump tables and asset formats are
 documented. See `projects/buggyboy/README.md` for a finished example (91/91 functions).
+Once it is done, one more pass becomes available that the naming loop cannot do — asking what the
+program carries and never runs: **The dead-code hunt** at the foot of this file.
 
 ## "Verified" ≠ "complete": the checkpoint trap (this bit us on sound)
 
@@ -404,3 +406,68 @@ stops "the seam is substituted" decaying into "the loader is ported" three phase
 false green). So the caller's ERROR arm has no differential available to it and must be driven
 candidate-only. Recognise that as a property of the *model* rather than a gap in your cases, and
 register the fix: a staged name declared present but unreadable.
+
+## The dead-code hunt — what the binary HAS and never runs
+
+Once a binary is fully named, a pass is available that the naming loop itself cannot do: asking what
+the program *carries* and never executes. Zynaps' is the worked instance
+(`projects/zynaps/README.md`, "Secrets and dead code", commit `d833f14`), and it turned up a dormant
+invulnerability flag read by three death sites and written by nothing, a cut enemy whose 13-byte state
+array the shipped game still clears every section, nine finished sound effects nothing can start, and
+finished sprite art for an enemy no load site opens.
+
+**Drive it from censuses, not from curiosity.** Each lead is an enumeration over the finished name
+map, and each has a shape that makes it exhaustive rather than suggestive:
+
+- **Globals** — which are *read and never written* (a flag nothing sets is either an input the
+  harness supplies or a dormant switch), and which are cleared every phase with no consumer left.
+- **Jump and dispatch tables** — which entries no shipped data can index. Both of Zynaps' power-up
+  tables have an unreachable entry 0 for a reason in the *caller*, not in the table.
+- **Named routines** — which have no caller under a recursive-descent walk from the entry point.
+  Resolve every pointer table before believing that list, or the walk reports the one class it is
+  structurally blind to as dead (see "Idiom density has a blind spot shaped exactly like a jump
+  table" above: leaf code entered only through a table is reached by no `bsr` anywhere).
+- **Assets** — every file on the disk against every load site; every text record against every draw
+  site. Note whether any draw is *indexed*: if every site is a direct `lea`, reachability is exact
+  rather than an estimate, and saying which of the two you have is the difference between a census
+  and a guess.
+- **Input comparisons** — every scancode/key compare in the image at once. That census is what closes
+  "is there a cheat key" as a question rather than leaving it an impression.
+
+**A call-site census is not reachability for an interpreter.** A sound or script VM's streams start
+each other: the closure has to walk the *data* the way the interpreter walks it, following the
+spawn and jump opcodes, not just the C-level call sites. Zynaps' closure reaches 36 of its 45
+streams — and the nine it does not reach are the finding.
+
+**Demonstrate on the ORIGINAL binary, never on the reconstruction.** A poke into the recreate proves
+something about the recreate. Every positive claim in that hunt was either shown in an emulator
+against the shipped 1988 binary or is a static fact with its address given.
+
+**Make the driver's EXIT STATUS the verdict, not "the emulator did not crash".** Each experiment
+carries the result it had to reach — a pause that failed to freeze, a control run whose ship
+survived, a run that never saw the actor type it staged — and exits non-zero when it does not. Zynaps
+records that this is exactly how a wrong claim had survived: without it the battery comes back green
+with the failure buried in a JSON file nobody re-reads.
+
+**Run a control.** "The flag makes the ship invulnerable" is three control runs losing all lives in
+~22 s against three flagged runs holding three lives for 70 s with the death flags never set. One
+flagged run says nothing about the flag.
+
+**Report the negative results as plainly as the positive ones** — a hunt that reports only what it
+found is not evidence about what is there. Zynaps' verdict table has as many NOTHING rows as
+findings, and they are the rows that make the others mean something.
+
+**A documented feature is not a discovery.** That project's in-game pause turned out to be in the
+game's own manual, so presenting it as a confirmed-live *secret* was wrong framing and was corrected
+(`0a9709c`). What the hunt had legitimately contributed was workspace-internal and stayed stated as
+such: nobody in the project had ever pressed the key, three of its own prose surfaces described it
+wrongly, and exercising it is what closed the key census with nothing undocumented behind it. Say
+which of the two you have.
+
+**Two housekeeping rules the hunt earns.** A claim whose only record is a one-off script in an
+ignored output directory is a claim, not a result — either promote the driver into `tools/` or write
+the address and the decode into the prose so a reader can check it by hand, and say plainly which
+rows rest on which. And the *reachability* facts a hunt establishes about already-verified functions
+belong in the reconstruction ledger's own notes, not only in the hunt's write-up: a hunt that changes
+no reconstructed code still moves what `STATUS.md` can claim about which branches shipped data can
+ever reach.
