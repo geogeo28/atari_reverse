@@ -940,6 +940,14 @@ rest of `out/`, so they are a hand-off for the next naming pass rather than a co
   and [`tools/stx_extract.py`](../../tools/stx_extract.py).
 - [`play.sh`](play.sh) — boot the game. `run.sh`/`reapply.sh` are the Ghidra bootstrap and
   re-apply, and `names.txt` is the name map (see the workspace [`CLAUDE.md`](../../CLAUDE.md)).
+- [`gen_readme_assets.py`](gen_readme_assets.py) — the eleven pictures in the workspace
+  [`README.md`](../../README.md)'s Zynaps gallery, rendered **by the reconstruction** rather than
+  screenshotted from the original: it drives the boot chain, the attract loop, the section chain and
+  `frame_loop_once` through the same ctypes entry points `recreate/test/` drives, reads the sixteen
+  pens back out of the kit's hardware-write ledger, and writes the tracked
+  [`assets/zynaps/`](../../assets/zynaps). It renders the set twice and refuses a picture whose two
+  renderings differ. Needs `bin/` and a `make test` build (the harness dlopens `liboracle.so` at
+  import); nothing here RUNS the oracle, and no Hatari or TOS ROM is involved.
 - [`recreate/`](recreate) — the differential reconstruction against the Musashi oracle;
   [`recreate/README.md`](recreate/README.md) is the binding and
   [`recreate/STATUS.md`](recreate/STATUS.md) the per-function ledger.

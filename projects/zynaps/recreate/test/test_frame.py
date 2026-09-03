@@ -307,7 +307,8 @@ def _stage_section(section):
                                     max_insns=test_init.PREFILL_MAX_INSNS)
     image, _writes, _regs = emu.run(bytearray(image), test_init.STOP_SECTION_START_PREFILL, {},
                                     stop_pc=ENTRY_FRAME_HEAD, max_insns=FRAME_MAX_INSNS,
-                                    schedule=[{"pc": SECTION_TAIL_FIRE_WAIT_PC, "nth": 2,
+                                    schedule=[{"pc": SECTION_TAIL_FIRE_WAIT_PC,
+                                               "nth": SECTION_TAIL_FIRE_NTH,
                                                "addr": A_JOYSTICK_STATE, "width": 1,
                                                "value": JOYSTICK_FIRE}],
                                     wait_sites=[SECTION_TAIL_FIRE_WAIT_PC])
@@ -315,6 +316,12 @@ def _stage_section(section):
 
 
 SECTION_TAIL_FIRE_WAIT_PC = 0x10f2a   # `tst.b $19681` + `bpl` at the end of the section start
+# WHICH read of the joystick byte the press arrives on. The tail sends an IKBD interrogate and then
+# polls, so the store lands on the SECOND read; on the first, the wait would end before the
+# interrogate the run is meant to make. NAMED because `../../gen_readme_assets.py` stages the same
+# gate to reach a playable frame, and two spellings of this number would mean the pictures and this
+# battery were playing different worlds with nothing to say so.
+SECTION_TAIL_FIRE_NTH = 2
 JOYSTICK_FIRE = 0x80
 
 # The two names this battery borrows from test_init.py, checked at import so a rename over there
