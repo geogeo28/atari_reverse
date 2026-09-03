@@ -2150,15 +2150,24 @@ PACING_BASELINE_FRAMES = 300
 # FRAME rather than on a mean (atari/README.md's "THE HEAVY FRAME"), and this constant is the arm
 # that would catch it regressing.
 #
-# THE SAMPLE: six runs on the binary that ships — three `game` at 2.52 (755 vblanks), 2.52 (756) and
-# 2.52 (755), and three `gamefault` at 2.52 (756), 2.52 (756) and 2.51 (754). Worst run 756 vblanks;
-# one frame in one run reached five vblanks and none went past it.
+# THE SAMPLE: TWENTY completed runs on the binary that ships — `game` and `gamefault` across three
+# full matrix sweeps plus three standalone runs — spanning 754 to 757 vblanks over 300 frames, i.e.
+# 2.51 to 2.52. Worst run 757. One frame in some runs reaches five vblanks and none goes past it.
 #
-# SO THE CEILING IS SET FROM THE WORST OF THE SIX RUNS, NOT FROM THEIR MEAN: 756 vblanks plus the
-# same slack every ceiling in this file's history has used — EIGHTEEN frames slipping one release
-# slot, a slot being 2 vertical blanks, so 36 vblanks over 300 frames is 0.12 on the mean.
-# 756 + 36 = 792 vblanks, and 792 / 300 = 2.64 exactly, so there is no rounding slop in this one
-# (3.87 carried a spare vblank from rounding; this does not).
+# (Two runs of a fourth sweep DIED rather than reporting — `Hatari died (status 0)`, one of them on
+# the ORIGINAL binary's side — because the matrix was running beside four subagents and a Musashi
+# bench. Those are not readings and are not in the sample; STATUS.md's "On target" records the class
+# so a later reader does not take one for a regression. Emulated vblanks are deterministic under
+# host load, so the runs that COMPLETED under contention are ordinary readings and are counted.)
+#
+# SO THE CEILING IS SET FROM THE WORST OF THE TWENTY, NOT FROM THEIR MEAN: 757 vblanks plus the same
+# slack every ceiling in this file's history has used — EIGHTEEN frames slipping one release slot, a
+# slot being 2 vertical blanks, so 36 vblanks over 300 frames is 0.12 on the mean.
+#
+# 757 + 36 = 793 vblanks, and 793 / 300 is 2.6433..., which does NOT land on a round hundredth the
+# way 843 / 300 = 2.81 did. The value below is that ROUNDED DOWN to 2.64 — 35 vblanks of slack
+# rather than 36, a hundredth TIGHTER than the rule rather than looser. Rounding the other way would
+# buy tolerance the measurement did not pay for, which is the one direction this file never goes.
 #
 # The 0.12 is deliberately NOT re-derived as a share of the new mean, which would shrink the slack
 # with every win and make the check tighter than the evidence for it. It is worth saying plainly
@@ -2166,12 +2175,11 @@ PACING_BASELINE_FRAMES = 300
 # where it was 4.5%, so this tightening does not quietly buy tolerance back.
 #
 # MEASURING AGAINST THE WORST RUN IS WHAT PAYS FOR THE JITTER, and it is worth being exact about
-# what that leaves: a regression gets the full 36 vblanks of slack above the worst run this tree
-# produced (2.52, 756 vblanks), and 38 above its best (2.51, 754). The spread is absorbed by the
-# choice of baseline, not subtracted from the tolerance. What it does cost is the OTHER direction —
-# the six samples are from one host and one tree, so a seventh run somewhere else could sit above
-# 2.52 for no reason of the code's, and the honest response to that would be a wider baseline,
-# never a raised ceiling.
+# what that leaves: a regression gets 35 vblanks of slack above the worst run this tree produced
+# (757) and 38 above its best (754). The spread is absorbed by the choice of baseline, not
+# subtracted from the tolerance. What it does cost is the OTHER direction — the twenty samples are
+# from one host and one tree, so a twenty-first run somewhere else could sit above 757 for no reason
+# of the code's, and the honest response to that would be a wider baseline, never a raised ceiling.
 # The frame count is pinned above for the reason it always was — the `play` build's longer run
 # reaches a second life whose mixture is a different one.
 #
@@ -2183,9 +2191,8 @@ PACING_BASELINE_FRAMES = 300
 PACING_MEAN_CEILING_VBLS = 2.64
 # ...and how many frames may reach the histogram's last slot (PACING_SLOTS - 1 = seven vblanks
 # or more) — an ABSOLUTE COUNT (the share form was measured 40x looser than its comment claimed,
-# see the git history). IT IS ZERO, AND THAT IS WHAT WAS MEASURED: 0 of 300 on all six runs the
-# ceiling above rests on — three `game` and three `gamefault` — whose worst frame anywhere reached
-# FIVE vblanks, once. The section's first pass, which draws the whole playfield and was the one frame that used
+# see the git history). IT IS ZERO, AND THAT IS WHAT WAS MEASURED: 0 of 300 on all twenty runs the
+# ceiling above rests on, whose worst frame anywhere reached FIVE vblanks. The section's first pass, which draws the whole playfield and was the one frame that used
 # to overflow, now fits with room to spare. A 2% allowance is six frames over 300 and no run spends
 # them: an allowance nothing occupies is slack, not headroom, so zero is the honest number and the
 # first overflowing frame is the report.

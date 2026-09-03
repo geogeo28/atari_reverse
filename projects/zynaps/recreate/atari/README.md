@@ -454,12 +454,14 @@ raster spin the "work" span includes, so that figure flatters the change and the
 honest one.
 
 **The judged figure is the `game` build's own 300-frame record**, a different and kinder window:
-**2.51-2.52 vblanks a frame, 19.8-19.9 fps** — from **2.68, `[2x199 4x101]`** — over a sample of
-three `game` and three `gamefault` runs, whose histograms run from `[2x223 4x77]` to
-`[2x222 4x78]` and one of which reached five vblanks on a single frame (`[2x223 4x76 5x1]`).
-The overrunning
-frames fell from 101 of 300 to 77, and no correctness surface moved (the frame differential is zero
-bytes on every sampled frame, as it was).
+**2.51-2.52 vblanks a frame, 19.8-19.9 fps** — from **2.68, `[2x199 4x101]`**. That is TWENTY
+completed `game` and `gamefault` runs across three full matrix sweeps and three standalone ones,
+spanning 754 to 757 vblanks over 300 frames; the histograms run from `[2x223 4x77]` through
+`[2x222 3x1 4x77]` to `[2x222 4x78]`, and the worst frame any run produced was five vblanks. **The
+overrunning frames fell from 101 of 300 to 76-78**, and no correctness surface moved — the frame
+differential is zero bytes on every sampled frame, as it was. `smoke.py`'s
+`PACING_MEAN_CEILING_VBLS` tightens from 2.81 to **2.64** on that sample (the worst run's 757
+vblanks plus the file's standing 36, rounded DOWN).
 
 **THE CAMPAIGN, WAVE BY WAVE:**
 
