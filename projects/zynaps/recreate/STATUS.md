@@ -2749,6 +2749,18 @@ class: the message names the EMULATOR dying rather than a check failing, and one
 this reconstruction can reach. **Do not accept such a failure as a verdict either way**: re-run the
 mode alone before believing it, and do not run the matrix beside anything heavy.
 
+**THE TRAINER IS THE ONE DELIBERATE DIVERGENCE, and it is entirely in the shim.** `Z`+`Y`+`N` held
+at the title arms `F1` invulnerability / `F2` lives / `F3` maxed power-ups, all of it in
+`atari/zynaps_cheats.c` plus a tap in `shim_include/hw.h`'s `hw_read8` — no core, no `include/`, no
+`test/` moved, `make test` is unchanged and the frame differential is still byte-identical. It is
+inert until armed; `smoke.py cheats` is the positive control that arms it through Hatari's own
+keyboard, and every judged mode asserts `check_the_trainer_stayed_dormant` — a MEASUREMENT in `game`
+/ `gamefault`, where the window really opens, and a regression net in the three M1 modes, where the
+`ZY_PHASE` fork compiles the window setters and the game's ACIA vector out. Two things are honestly
+unpinned on target: the three power-up decay timers (no reader, inside or out, can tell the refill
+from the section start's) and a poke landing inside the main line's read-modify-write.
+`atari/README.md`'s **THE TRAINER** section is canonical.
+
 **Five things this section is here to say to a reader of the tables above:**
 
 * **IT RUNS ON A 1 MB ST.** The target build's image is `ZY_TARGET_IMAGE_BYTES` = 512 KiB

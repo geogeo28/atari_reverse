@@ -216,6 +216,36 @@ static inline void hw_and8(uint32_t addr, uint32_t mask) {
     zy_rmw_stores++;
 }
 
+/* THE TRAINER'S ONE TAP ON THE MACHINE, and it is here for the same reason the video base is:
+ * reading the 6850's data port POPS it, so the byte the keyboard sent exists for exactly one read
+ * and `ikbd_acia_isr` makes it. A watcher that wanted to see keys could not read the port again
+ * afterwards, and it could not read them out of the image either — the program keeps ONE byte,
+ * `A_key_scancode`, holding the key currently down, so three keys held together are not
+ * representable there and a release of anything but the newest is invisible. So the door hands
+ * every popped byte on, and atari/zynaps_cheats.c decides what it was.
+ *
+ * DECLARED HERE RATHER THAN INCLUDED, exactly as `zy_store_video_base_byte` below it is: this
+ * header is reached by every verified core, and pulling atari/zynaps_cheats.h in would put the
+ * shim's own names into six verified translation units — the defect this file's opening note
+ * records having already been made once.
+ *
+ * IT IS UNCONDITIONAL, AND THAT IS THE WHOLE POINT — `zy_store_video_base_byte`'s precedent again,
+ * and a defect this file carried for one draft. Wrapping the call in `#ifdef ZY_CHEATS` would make
+ * `../src/irq.c`'s `ikbd_acia_service_one_byte` — a DIFFERENTIAL-PINNED CORE — compile to different
+ * machine code in the default build and in the purist one, from a `-D` build.sh passes to the core
+ * compile. `make test` never compiles this header, so it could not see the difference; and the gate
+ * written for exactly that risk greps `../src` and `../include` for the macro name, which a shim
+ * header is not. So the tap is always emitted, the purist build links the empty
+ * `zy_cheat_note_ikbd_byte` in atari/zynaps_cheats.c's `#else` arm, and `ZY_CHEATS` reaches no core
+ * translation unit at all. What it costs there is one `bsr`+`rts` per IKBD byte — about 3 bytes a
+ * frame — in the build nothing measures.
+ *
+ * IT COSTS NOTHING AT ANY OTHER CALL SITE. Every caller of `hw_read8` in this program passes a
+ * CONSTANT address, so the comparison below folds at compile time: `ikbd_send_cmd`'s status poll,
+ * the handler's GPIP test and zynaps_main.c's four MFP read-backs emit the bare `move.b` they
+ * always did, and only the one site that reads $fffffc02 keeps the call. */
+void zy_cheat_note_ikbd_byte(uint8_t byte);
+
 /* The READ half. Two callers: `ikbd_send_cmd` (../src/input.c) spinning on the 6850's
  * transmitter-empty bit, and zynaps_main.c reading TOS's MFP registers back at the hand-back. Off
  * target the kit answers a byte the case DECLARED, so the spin leaves on its first poll; here it
@@ -225,7 +255,12 @@ static inline void hw_and8(uint32_t addr, uint32_t mask) {
  * read-back surface to hold, and a poll count would be a number about the host's timing rather than
  * about the program. What says the spin ended is `zy_acia_bytes_sent`. */
 static inline uint8_t hw_read8(uint32_t addr) {
-    return *(volatile uint8_t *)HW_BUS(addr);
+    uint32_t bus_addr = HW_BUS(addr);
+    uint8_t value = *(volatile uint8_t *)bus_addr;
+
+    if (bus_addr == HW_BUS(OS_HW_ACIA_DATA))
+        zy_cheat_note_ikbd_byte(value);
+    return value;
 }
 
 #endif /* ZYNAPS_SHIM_HW_H */

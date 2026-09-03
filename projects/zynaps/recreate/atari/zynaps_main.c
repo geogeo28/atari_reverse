@@ -44,6 +44,7 @@
 #include "string.h"   /* memset, from zynaps_backend.c: the guard band's fill */
 #include "tos.h"
 #include "video.h"
+#include "zynaps_cheats.h"
 #include "zynaps_target.h"
 
 /* ================================================================================================
@@ -425,6 +426,12 @@ static void dispatch_image_vector(uint32_t image_vector, struct isr_binding *tab
 void zy_vbl_tick(void) {
     zy_vbl_ticks++;
     DISPATCH(A_vector_vbl, VBL_HANDLERS, 0);
+    /* THE TRAINER'S CLOCK, AND IT RUNS AFTER THE PROGRAM'S OWN HANDLER, not before it. The watcher
+     * may call `sound_start`, which rewrites a voice record that `sound_tick` — inside the handler
+     * just dispatched — walks; running it here means the rewrite lands between two ticks of the
+     * driver rather than in the middle of one. atari/zynaps_cheats.c carries the rest of that
+     * argument, and in a build without -DZY_CHEATS this is an `rts`. */
+    zy_cheats_tick();
 }
 
 void zy_timer_b_tick(void) {
@@ -506,6 +513,23 @@ enum {
      * entry count over the vertical blanks its own phase's VBL handler was the installed one. */
     REC_FRAME_VBLS,    REC_FRAME_VBLS_END    = REC_FRAME_VBLS + PACING_SLOTS - 1,
     REC_PLAYING_VBLS,
+
+    /* ---- THE TRAINER, and these fields exist so that "it stayed dormant" is a MEASUREMENT.
+     *
+     * The trainer (atari/zynaps_cheats.c) is this build's one deliberate divergence from the 1988
+     * binary. The frame differential already proves the gameplay bytes, but it proves them over a
+     * run nobody pressed a key in — so it cannot tell a watcher that never fired from one that has
+     * no effect anybody sampled. These do: `smoke.py`'s `check_the_trainer_stayed_dormant` asserts
+     * every count below is 0 in EVERY judged mode, and `smoke.py cheats` is the positive control
+     * that they can be anything else.
+     *
+     * `cheats_built` separates a purist binary's zeros from a dormant trainer's. The three
+     * scancodes are the layout evidence: what the GAME'S OWN table spelt `Z`, `Y` and `N` as. */
+    REC_CHEATS_BUILT, REC_CHEATS_ARMED, REC_CHEAT_ARM_JINGLES,
+    REC_CHEAT_INVULNERABLE_FIRES, REC_CHEAT_LIVES_FIRES, REC_CHEAT_POWER_FIRES,
+    REC_CHEAT_PANEL_REQUESTS, REC_CHEAT_JINGLE_STREAM,
+    REC_CHEAT_SCANCODES,
+    REC_CHEAT_SCANCODES_END = REC_CHEAT_SCANCODES + CHEAT_COMBO_KEYS - 1,
 
     REC_TAIL,
     REC_FIELD_COUNT
@@ -957,7 +981,13 @@ static void title_attract_loop(void) {
     attract_program_rasterbar_timer(zy_image_base);                  /* 0x12b14 */
     mfp_settle_timer_b_data(MFP_TIMER_B_PERIOD_ATTRACT_BARS);        /* 0x12b48 */
     attract_build_colour_bars(zy_image_base);                        /* 0x12b52 */
+    /* THE TRAINER MAY BE ARMED HERE AND NOWHERE ELSE — this wait IS the title/attract screen, and
+     * `attract_wait_for_start` blocks until the player picks one player, two, or fire. Z, Y and N
+     * are none of those three, so holding the combo cannot start a game by accident. The window is
+     * closed again on the way out, so a combo half-held when play begins is not carried in. */
+    zy_cheats_arming_window(1);
     attract_wait_for_start(zy_image_base);                           /* 0x12bb4..0x12c74 */
+    zy_cheats_arming_window(0);
 }
 
 /* ------------------------------------------------------------------------------------------------
@@ -1010,6 +1040,10 @@ static int play_one_game(void) {
         section_start_tail(zy_image_base);                           /* 0x10d96 — waits for FIRE */
 
         g_phase = PHASE_PLAYING;
+        /* ...AND A CHEAT KEY IS ACTED ON HERE AND NOWHERE ELSE. The three pokes write bytes the
+         * frame loop reads, so they are only meaningful while it is running; outside this window
+         * `zy_cheats_tick` drops a pending press rather than banking it for later. */
+        zy_cheats_play_window(1);
         do {
             uint32_t vbls_at_frame_start = zy_vbl_ticks;
 
@@ -1036,6 +1070,7 @@ static int play_one_game(void) {
                 return 0;
             }
         } while (exit == FRAME_EXIT_NEXT_FRAME);
+        zy_cheats_play_window(0);
 
         switch (exit) {
         case FRAME_EXIT_ADVANCE_SECTION: step = SECTION_STEP_ADVANCE; break;
@@ -1142,6 +1177,20 @@ static void hand_the_machine_back(const struct tos_state *tos) {
  * In a title build every M2 field below is 0 and stays 0, which is what says the fork was not
  * taken — `smoke.py title` asserts exactly that rather than skipping the fields. */
 static void record_the_run(void) {
+    struct zy_cheat_counts cheats;
+
+    zy_cheats_report(&cheats);
+    g_record[REC_CHEATS_BUILT] = ZY_CHEATS_BUILT;
+    g_record[REC_CHEATS_ARMED] = cheats.armed;
+    g_record[REC_CHEAT_ARM_JINGLES] = cheats.arm_jingles;
+    g_record[REC_CHEAT_INVULNERABLE_FIRES] = cheats.invulnerable_fires;
+    g_record[REC_CHEAT_LIVES_FIRES] = cheats.lives_fires;
+    g_record[REC_CHEAT_POWER_FIRES] = cheats.power_fires;
+    g_record[REC_CHEAT_PANEL_REQUESTS] = cheats.panel_requests;
+    g_record[REC_CHEAT_JINGLE_STREAM] = cheats.jingle_stream;
+    for (unsigned key = 0; key < CHEAT_COMBO_KEYS; key++)
+        g_record[REC_CHEAT_SCANCODES + key] = cheats.scancode[key];
+
     g_record[REC_ACIA_TICKS] = zy_acia_ticks;
     for (unsigned slot = 0; slot < VBL_HANDLER_SLOTS; slot++)
         g_record[REC_VBL_DISPATCHES + slot] = VBL_HANDLERS[slot].entries;
@@ -1291,6 +1340,11 @@ void zynaps_main(void) {
 
     g_record[REC_PROGRAM_STAGED_BYTES] = (uint32_t)stage_program_image();
 
+    /* THE TRAINER'S COMBO IS RESOLVED OUT OF THE PROGRAM'S OWN SCANCODE TABLE, so it has to be read
+     * after the image is staged and before any interrupt can reach the watcher — which is here, one
+     * statement after the file and long before the keyboard vector is ours. */
+    zy_cheats_resolve_scancodes(zy_image_base);
+
     /* THE CORES' VECTOR PAGE IS SEEDED FROM THE REAL ONE. `boot_save_vbl_vector` (0x10012) copies
      * `image[0x70]` to `image[0x195d0]`, and on the real machine that low memory IS the vector page
      * — so seeding the image's copy is what makes the slice's output mean anything here. Reading
@@ -1427,6 +1481,12 @@ void zynaps_main(void) {
     g_phase = PHASE_GAMEPLAY_ASSETS;
 
     run_the_whole_program();
+    /* THE OTHER HALF OF THE PAIR INSIDE `play_one_game`, and the two mean different things: that one
+     * closes the window when a SECTION's frame loop ends, this one when the PROGRAM does. The frame
+     * loop's two early returns — an unknown vector, and the headless budget — leave through here
+     * rather than through the loop's own exit, and the vertical blank keeps ticking all through
+     * `zy_anchor` below, so without this a key pressed after the game was over would still poke. */
+    zy_cheats_play_window(0);
     zy_anchor();
 #else
     /* ---- M1: the title screen runs, with its music -------------------------------------------

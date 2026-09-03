@@ -46,6 +46,7 @@ identically; that is measured by this file's own `blank capture` and `same pictu
 than assumed.
 """
 import argparse
+import functools
 import re
 import shutil
 import struct
@@ -66,8 +67,8 @@ import st_pixels                                                       # noqa: E
 sys.path.insert(0, str(HERE))
 import mkfloppy                                                        # noqa: E402
 from hatari_headless import (                                          # noqa: E402
-    HATARI, POLL_SECONDS, PRG_HEADER_BYTES, HeadlessSession, action_file, distinct_colours,
-    first_fixup_offset, locate_by_signature, log_faults, same_picture)
+    BREAK_BIT, HATARI, POLL_SECONDS, PRG_HEADER_BYTES, HeadlessSession, action_file,
+    distinct_colours, first_fixup_offset, locate_by_signature, log_faults, same_picture)
 # The tick-frame cutter, borrowed rather than re-derived: `ref_capture.py` already parses Hatari's
 # psg_write trace into the sound driver's own 10..0 flush frames, and re-spelling that here would be
 # a second definition of what a frame IS (CLAUDE.md §5). Its TraceReader is incremental, which this
@@ -76,7 +77,12 @@ import ref_capture                                                     # noqa: E
 
 # --- the modes -----------------------------------------------------------------------------
 FLOPPY_MODE = "floppy"
-MODES = ("title", "titlefault", FLOPPY_MODE, "game", "gamefault")
+# THE TRAINER'S POSITIVE CONTROL. Every other mode in the matrix asserts the cheats stayed dormant,
+# which says nothing unless one run can show them going off — this is that run. It is its own mode
+# rather than an arm of `game` because it has no differential at all: the keys it presses change the
+# gameplay bytes ON PURPOSE, so there is nothing to compare the original against.
+CHEATS_MODE = "cheats"
+MODES = ("title", "titlefault", FLOPPY_MODE, "game", "gamefault", CHEATS_MODE)
 
 # --- the machine -----------------------------------------------------------------------------
 TOS_ROM = REPO / "tools" / "hatari" / "TOS104US.img"
@@ -325,6 +331,84 @@ FRAME_EXIT_NAMES = ("title", "reload_section", "restart_section", "advance_secti
 PACING_SLOTS = 8
 VBL_HANDLER_NAMES = ("in_game", "title", "menu", "attract")
 TIMER_B_HANDLER_NAMES = ("in_game", "raster", "attract")
+# =================================================================================================
+# THE TRAINER — the build's one deliberate divergence from the 1988 binary, and how it is judged.
+#
+# atari/zynaps_cheats.c watches the keyboard for Z+Y+N held at the title screen and then for F1/F2/
+# F3 in the game. Two things have to be true and neither is provable from the frame differential,
+# which runs over a game nobody pressed a key in:
+#
+#   * IT STAYS DORMANT. `check_the_trainer_stayed_dormant` asserts the record's five trainer counts
+#     came back 0, and it runs in EVERY judged mode — title, titlefault, floppy, game, gamefault.
+#     The differential proves the gameplay bytes; this proves the watcher never touched them.
+#   * IT WORKS. `smoke.py cheats` arms the combo through Hatari's own keyboard, presses the three
+#     keys and reads the poked bytes back out of the machine. Without it the five assertions above
+#     would be a check on code that could not fire at all.
+#
+# EVERY NUMBER BELOW IS SCRAPED, not agreed. The shim's own `#define`s for the keys and the sound
+# ids, the reconstruction's headers for the addresses the pokes land on — so a constant that moved
+# on either side stops this file at the parse instead of asserting the wrong byte.
+# =================================================================================================
+SHIM_CHEATS = HERE / "zynaps_cheats.c"
+
+
+@functools.lru_cache(maxsize=None)
+def header(name):
+    """One of the reconstruction's headers, read once. `c_define` is what reads a value out of it.
+
+    CACHED because the trainer's constants are scraped at a dozen call sites and a file re-read per
+    lookup is both wasted I/O and — worse — a chance for two lookups in one run to disagree if the
+    file moved under them.
+    """
+    return (RECREATE / "include" / name).read_text()
+
+# The one symbol that exists in `zynaps_cheats.c`'s trainer arm and not in its purist one: the
+# table of combo letters. `trainer_is_compiled_in` asks the ELF for it.
+TRAINER_ELF_SYMBOL = "g_combo"
+
+# The combo, as the LETTERS it is spelt in. Which scancode each one is depends on the keyboard, and
+# `cheat_combo_scancodes` resolves them out of the game's own table exactly as the shim does.
+CHEAT_COMBO_LETTERS = ("Z", "Y", "N")
+
+
+@functools.lru_cache(maxsize=None)
+def cheat_constant(name):
+    """One of the shim's own trainer `#define`s — the keys, the hold time, the sound ids."""
+    return c_define(SHIM_CHEATS.read_text(), name)
+
+
+def staged(ghidra):
+    """A Ghidra address as an offset into `gen_image_bytes()`.
+
+    ZYNAPS.IMG is the program AS LOADED, so its byte 0 is Ghidra address LOAD_BASE — the same
+    arithmetic `runtime` does for the original, one base over.
+    """
+    return ghidra - LOAD_BASE
+
+
+def cheat_combo_scancodes(image):
+    """The three combo letters' scancodes, read out of the GAME'S OWN scancode->ASCII table.
+
+    THIS IS THE SHIM'S LOOKUP DONE INDEPENDENTLY, over the same 115 bytes, so the record's
+    `cheat_scancode_*` fields are compared against a second reading rather than trusted. It is also
+    what this file PRESSES: Hatari takes an ST scancode when a key is spelt `0x..`, so sending the
+    codes the table resolves is sending the keys the game itself would call Z, Y and N.
+    """
+    highscore = header("highscore.h")
+    table = c_define(highscore, "A_scancode_to_char_table")
+    highest = c_define(highscore, "NAME_ENTRY_SCANCODE_MAX")
+    found = []
+    for letter in CHEAT_COMBO_LETTERS:
+        # Scancode 0 is not a key, and the shim skips it for the same reason.
+        codes = [code for code in range(1, highest + 1)
+                 if image[staged(table) + code] == ord(letter)]
+        if len(codes) != 1:
+            raise SystemExit(f"the game's scancode table spells {letter!r} at {len(codes)} "
+                             f"scancodes, not one — the combo cannot be resolved or pressed")
+        found.append(codes[0])
+    return found
+
+
 RECORD_FIELDS = (
     ["magic", "fields",
      "image_base", "program_staged_bytes", "super_token",
@@ -371,8 +455,17 @@ RECORD_FIELDS = (
     # slot is "seven or more". zynaps_main.c's PACING_SLOTS argues the shape and `check_the_pacing`
     # is what reads them.
     + [f"frame_vbls_{count}" for count in range(PACING_SLOTS - 1)] + ["frame_vbls_over"]
-    + ["playing_vbls",
-       "tail"])
+    + ["playing_vbls"]
+    # ---- THE TRAINER. `cheats_built` says which of atari/zynaps_cheats.c's two arms was compiled,
+    # so a PURIST binary's zeros (no watcher in it at all) are distinguishable from a dormant
+    # trainer's identical zeros. The five counts after it are what `check_the_trainer_stayed_dormant`
+    # asserts are 0 in every judged mode, and what `smoke.py cheats` asserts are not. The three
+    # scancodes are the layout evidence: what the GAME'S OWN table spelt Z, Y and N as.
+    + ["cheats_built", "cheats_armed", "cheat_arm_jingles",
+       "cheat_invulnerable_fires", "cheat_lives_fires", "cheat_power_fires",
+       "cheat_panel_requests", "cheat_jingle_stream"]
+    + [f"cheat_scancode_{letter.lower()}" for letter in CHEAT_COMBO_LETTERS]
+    + ["tail"])
 
 # STATE.BIN's length, which is the record's own — one big-endian longword a field. The floppy
 # mode's "the machine finished" test compares the trace's Fwrite byte count against it, so the
@@ -1545,6 +1638,7 @@ ENTITY_DIFF_REPORTED = 12
 GHIDRA_SCREEN_POINTERS = 0x1797E
 SCREEN_POINTER_BYTES = 8
 # `zynaps_main.c`'s own phases, in its enum's order. The record carries the number.
+PHASE_ATTRACT = 3
 PHASE_PLAYING = 6
 PHASE_BUDGET_SPENT = 7
 PHASE_NAMES = ("staging", "title assets", "gameplay assets", "attract", "front-end screens",
@@ -1603,9 +1697,12 @@ def assert_the_phase_names_are_the_shims():
     if declared != ours:
         raise SystemExit(f"zynaps_main.c's phases are {declared} and smoke.py's are {ours} — "
                          f"`phase_reached` is an ordinal and would name the wrong one")
-    if PHASE_NAMES[PHASE_PLAYING] != "playing" or PHASE_NAMES[PHASE_BUDGET_SPENT] != "budget spent":
-        raise SystemExit("smoke.py's PHASE_PLAYING / PHASE_BUDGET_SPENT do not index their own "
-                         "names — the two constants and the list have drifted apart")
+    for constant, name in ((PHASE_ATTRACT, "attract"), (PHASE_PLAYING, "playing"),
+                           (PHASE_BUDGET_SPENT, "budget spent")):
+        if PHASE_NAMES[constant] != name:
+            raise SystemExit(f"smoke.py's phase ordinal {constant} is {PHASE_NAMES[constant]!r} and "
+                             f"the constant is named for {name!r} — a constant and the list have "
+                             f"drifted apart, and a wait would park on the wrong phase")
     # ...and the pacing histogram's width, for the same reason one field further on: the record is
     # positional, so a slot added there and not here shifts every field after it. The length guard
     # in `read_record` would catch that, but it would report "the field count moved" rather than
@@ -1637,6 +1734,24 @@ def frame_samples():
 def runtime(base, ghidra):
     """A Ghidra address at the address the ORIGINAL was relocated to."""
     return base + ghidra - LOAD_BASE
+
+
+def phase_gated_fire(session, phase_address, joystick_address):
+    """A press that is gated on the program's OWN phase, which is exact.
+
+    `g_phase` is PLAYING for the whole of the frame loop and for nothing else, so a poke made under
+    this guard cannot land inside a frame — and a press that DID land in one gave the two sides a
+    shot the other never fired, measured as a framebuffer differing by 12 bytes at frame 30 in one
+    run and 24 in the next (`press_fire_only_in_a_wait` below carries that measurement).
+
+    ONE DEFINITION FOR BOTH DRIVERS. `run_ours_game` and `run_ours_cheats` both need it, and the
+    whole point of the guard is that the two must not differ.
+    """
+    def press():
+        phase, = struct.unpack(">I", session.savebin("phase.bin", phase_address, VECTOR_BYTES))
+        if phase != PHASE_PLAYING:
+            session.poke(joystick_address, JOYSTICK_FIRE)
+    return press
 
 
 def press_fire_only_in_a_wait(session, finished, doing, press=None):
@@ -1749,15 +1864,8 @@ def run_ours_game(mode, out_dir, work, machine, tos_rom):
                     + release_action(work, "OURFRAME.INI", image + GHIDRA_JOYSTICK_STATE))
         record_file = OUR_DISK / STATE_FILE
 
-        def press_if_waiting():
-            """Our side's press: gated on the program's OWN phase, which is exact — `g_phase` is
-            PLAYING for the whole of the frame loop and nothing else, so a poke made under this
-            guard cannot land in a frame."""
-            phase = struct.unpack(">I", session.savebin("phase.bin", base + phase_field,
-                                                        VECTOR_BYTES))[0]
-            if phase != PHASE_PLAYING:
-                session.poke(image + GHIDRA_JOYSTICK_STATE, JOYSTICK_FIRE)
-
+        press_if_waiting = phase_gated_fire(session, base + phase_field,
+                                            image + GHIDRA_JOYSTICK_STATE)
         press_fire_only_in_a_wait(session,
                                   lambda: record_file.is_file() and record_file.stat().st_size,
                                   "waiting for our side to play out its frame budget",
@@ -2008,6 +2116,74 @@ def check_the_game_fork_was_not_taken(ours):
                  *(f"frame_vbls_{count}" for count in range(PACING_SLOTS - 1)), "frame_vbls_over")
     return [f"{name} is {record[name]}, not 0 — this build ran the game composition"
             for name in game_only if record[name]]
+
+
+def trainer_is_compiled_in(build):
+    """Whether the .PRG being judged carries the watcher — asked of the ELF, not of the record.
+
+    `zynaps_cheats.c`'s two arms differ by more than a flag: the trainer arm defines the combo table
+    `g_combo`, the purist one defines nothing but six empty functions. So the binary itself answers
+    "was the trainer compiled in", and `check_the_trainer_stayed_dormant` compares that against the
+    program's OWN claim (`cheats_built`). Two independent readings of one fact — and it is what
+    makes `ZY_NOCHEATS=1` a build the matrix can judge rather than one that reds by construction.
+    """
+    elf = HERE / "build" / f"zynaps-{build}.elf"
+    if not elf.is_file():
+        raise SystemExit(f"no {elf} — run `bash {HERE / 'build.sh'} {build}` first")
+    return any(line.split()[-1] == TRAINER_ELF_SYMBOL
+               for line in subprocess.run([NM, str(elf)], check=True, capture_output=True,
+                                          text=True).stdout.splitlines()
+               if line.split())
+
+
+def check_the_trainer_stayed_dormant(ours, build):
+    """SURFACE: the program's own record — the cheats were in this binary and never fired.
+
+    RUNS IN EVERY JUDGED MODE, and it is the other half of what the frame differential proves. The
+    differential compares two programs PLAYING and finds them byte-identical, which says the cheats
+    changed nothing over a run in which nobody pressed a key; it cannot say the watcher was quiet,
+    because a watcher that had armed itself and then poked would move both sides' bytes only if it
+    poked, and a run that armed without poking would look exactly like one that did not. These five
+    counts are what the shim itself saw happen, and every one of them must be 0 here.
+
+    `cheats_built` is CROSS-CHECKED rather than required: five zeros out of a binary with no
+    trainer in it would be the absence of code and not the dormancy of any, so the ELF is asked
+    whether the watcher is there and the record's own claim must agree. That also makes
+    `ZY_NOCHEATS=1` a build this matrix can judge instead of one that reds by construction.
+
+    HOW MUCH THIS PROVES DEPENDS ON THE MODE, and it is worth being exact. In an M2 build (`game`,
+    `gamefault`) the attract loop really does open the arming window and the ACIA vector really is
+    the program's, so the watcher runs and these zeros are a measurement. In an M1 build (`title`,
+    `titlefault`, `floppy --floppy-build title`) the whole `#if ZY_PHASE == ZY_PHASE_GAME` block is
+    compiled out — with it both window setters AND the store that installs the game's ACIA vector —
+    so the watcher cannot fire whatever the keyboard sends. There the check is a REGRESSION NET (a
+    trainer that had started poking from the boot, or from a title-build code path, would show), not
+    a dormancy proof. README.md's Trainer section says the same in the same words.
+    """
+    record = ours["record"]
+    problems = []
+    compiled_in = trainer_is_compiled_in(build)
+    if bool(record["cheats_built"]) != compiled_in:
+        problems.append(f"the record says cheats_built={record['cheats_built']} and "
+                        f"zynaps-{build}.elf {'has' if compiled_in else 'has no'} "
+                        f"{TRAINER_ELF_SYMBOL} — the binary and its own account of itself disagree "
+                        f"about whether the trainer is in it")
+    for name in ("cheats_armed", "cheat_arm_jingles", "cheat_invulnerable_fires",
+                 "cheat_lives_fires", "cheat_power_fires"):
+        if record[name]:
+            problems.append(f"{name} is {record[name]}, not 0 — the trainer fired in a run that "
+                            f"pressed none of its keys, see atari/zynaps_cheats.c")
+    # ...AND ONLY A BUILD THAT HAS THE TRAINER HAS A COMBO TO RESOLVE. The purist arm's
+    # `zy_cheats_resolve_scancodes` is an empty function, so its three scancodes are 0 — which is
+    # the right answer there and would be a red here if this ran unconditionally. (It did, for one
+    # run: `ZY_NOCHEATS=1 smoke.py title` reported the shim resolving 0x0/0x0/0x0 against this
+    # file's 0x2c/0x15/0x31.)
+    if compiled_in:
+        problems += check_the_combo_was_resolved(ours)
+    elif any(record[f"cheat_scancode_{letter.lower()}"] for letter in CHEAT_COMBO_LETTERS):
+        problems.append("a build with no trainer in it resolved a combo scancode — the purist arm "
+                        "of atari/zynaps_cheats.c is not the one that was compiled")
+    return problems
 
 
 def check_the_game_ran(ours, samples=None):
@@ -2428,6 +2604,7 @@ def mode_game(mode, out_dir, machine, tos_rom, keep):
             "exit status + log (the machine was handed back)":
                 check_the_machine_was_handed_back(ours) + check_the_acia_vector_went_back(ours),
             "hardware-state vector (the pens, frame by frame)": check_frame_pens(ours, original),
+            "memory (the trainer stayed dormant)": check_the_trainer_stayed_dormant(ours, mode),
             # THE PACING SURFACE IS FAULT-BLIND BY CONSTRUCTION and that is worth a line: the
             # control drops a section-chain step, which changes what is DRAWN and not how long a
             # frame takes, so a pacing check that moved under it would be measuring the wrong
@@ -2629,6 +2806,402 @@ def print_the_boot_clock(record):
           f"ran, {marks[-1][1] * HZ_200_TICK_MS} ms at the hand-back)")
 
 
+# =================================================================================================
+# `smoke.py cheats` — THE TRAINER'S POSITIVE CONTROL
+#
+# Every other mode asserts the five trainer counts came back 0. That is worth nothing on its own —
+# a watcher that COULD NOT fire would pass all five — so this mode is the run that makes them move,
+# and it is the only place in this file where the two programs are deliberately not comparable.
+#
+# WHAT IT DRIVES, AND HOW. The combo and the three cheat keys go in through HATARI'S OWN KEYBOARD
+# (`hatari-event keydown`/`keyup`, one make code and one break code), which is the real path: the
+# 6301 sends the byte, the ACIA raises MFP channel 6, `ikbd_acia_isr` pops the data port and the
+# shim's tap sees it there. Nothing about the trainer is poked into place. The FIRE button still is
+# — Hatari swallows a key bound to its joystick emulation, which is `press_fire_only_in_a_wait`'s
+# own measurement — but fire is not what this mode is judging.
+#
+# WHAT IT ASSERTS, in the order the run produces it:
+#
+#   1. THE WRONG-KEY NEGATIVE. Z and Y alone, held well past the arming time at the title: the
+#      trainer must not arm. Read live out of the shim's own `g_armed`.
+#   2. THE POSITIVE. Z, Y and N together: it arms, and the arming fanfare is one of the game's nine
+#      UNREACHABLE sound streams, armed on the driver's own voice record.
+#   3. THE IN-GAME REFUSAL. `g_arming_window_open` is 1 at the title and 0 once the frame loop is
+#      running, so the combo cannot arm the trainer from inside a game.
+#   4. THE THREE KEYS, each read back off the machine at the byte it was supposed to write.
+#   5. INVULNERABILITY AS A BEHAVIOUR AND NOT A BYTE. A neutral-stick life ends at about frame 176
+#      (`press_fire_only_in_a_wait`'s measurement). The run holds F1 on well past that and the ship
+#      must still be on its first life; then F1 is pressed AGAIN, turning it off, and the same ship
+#      in the same run must die. That second half is what makes the first half mean anything.
+# =================================================================================================
+
+# Longer than CHEAT_ARM_HOLD_VBLS at 50 Hz, with slack: Hatari emulates in real time, but the host
+# schedules the FIFO writes and a hold measured exactly would be a race.
+CHEAT_HOLD_SECONDS = 3.5
+# Long enough for the vertical blank after a press to have acted on it, and for the savebin that
+# reads the result to be reading the state AFTER the poke rather than during it.
+CHEAT_KEY_SETTLE_SECONDS = 1.0
+# Where the run looks to see whether the ship is still alive. Comfortably past the frame a
+# neutral-stick life ends on without the trainer, and well inside the mode's own frame budget.
+CHEAT_SURVIVE_PAST_FRAME = 400
+# ../src/sound.c's `table_offset`: one 16-bit entry per tune number, and `adda.w` sign-extends what
+# it reads — so the offset is signed and the sum is taken on the 68000's 24-bit address bus.
+TUNE_ENTRY_BYTES = 2
+SIGN_BIT_16 = 0x8000
+ADDRESS_MASK_24 = 0xffffff
+# The menu key this run starts its game with — one player. ../include/init.h names it, and it goes
+# in as a real keypress like the combo does.
+CHEAT_START_GAME_KEY = "KEY_SCANCODE_1"
+
+
+@functools.lru_cache(maxsize=None)
+def cheat_pokes():
+    """Every byte the trainer writes, as {name: (ghidra address, expected value)}. All are BYTES.
+
+    SCRAPED FROM BOTH SIDES AND NOT TYPED HERE. The address and the ceiling come from the
+    reconstruction's own headers — the same files ../src/weapon.c's five commit arms read them from
+    — and the one value that is the trainer's own choice, the life count, comes from the shim. So a
+    ceiling that moved in a header, or a poke that changed in the shim, stops this at the parse
+    instead of asserting a stale number (CLAUDE.md §5).
+
+    THE THREE DECAY TIMERS ARE NOT HERE, and leaving them out is a measurement rather than an
+    omission. They tick down once a frame AND the section start has just set them to the same
+    ceiling F3 writes, so a value read from outside a few frames after the press is a few short of
+    full whether the trainer wrote it or not — measured at 967/966/964 against 1000, from a run in
+    which all three writes had landed. There is no moment at which an outside reader can tell a
+    refill from the section's own; a counter the SHIM kept could not either, because it would read
+    the words back through the very expressions that wrote them (a draft of this did, and returned
+    3 for every possible defect). So they are honestly unpinned, and README.md says so.
+    """
+    weapon, player, hud = header("weapon.h"), header("player.h"), header("hud.h")
+    shield_max = c_define(weapon, "SHIELD_LEVEL_MAX")
+    return {
+        "lives": (c_define(hud, "A_lives"), cheat_constant("CHEAT_LIVES")),
+        "weapon power level": (c_define(player, "A_weapon_power_level"),
+                               c_define(weapon, "WEAPON_POWER_LEVEL_MAX")),
+        "shield level": (c_define(weapon, "A_shield_level"), shield_max),
+        "power gauge display": (c_define(hud, "A_power_gauge_display"), shield_max),
+        "selected weapon": (c_define(weapon, "A_selected_weapon"),
+                            c_define(weapon, "WEAPON_KIND_SEEKER")),
+        "ship speed level": (c_define(player, "A_ship_speed_level"),
+                             c_define(weapon, "SHIP_SPEED_LEVEL_MAX")),
+    }
+
+
+
+
+def cheat_expected_jingle_stream(image):
+    """`sound_lookup_tune` for the arming fanfare, done here so the shim's read-back is PREDICTED.
+
+    ../src/sound.c: the tune index is a table of little-endian words over `A_tune_data`, added with
+    `adda.w` and therefore SIGN-EXTENDED. `sound_start` then steps the cursor past the stream's own
+    two-byte `fa <channel>` header, which every one of the nine orphans carries — so what ends up in
+    the voice record is the head of the stream PLUS one row.
+    """
+    sound = (RECREATE / "include/sound.h").read_text()
+    entry = c_define(sound, "A_tune_index") + cheat_constant("CHEAT_SFX_ARMED") * TUNE_ENTRY_BYTES
+    offset, = struct.unpack_from("<H", image, staged(entry))
+    if offset & SIGN_BIT_16:
+        offset -= 1 << 16
+    head = (c_define(sound, "A_tune_data") + offset) & ADDRESS_MASK_24
+    return head + c_define(sound, "SOUND_ROW_BYTES")
+
+
+def hold_the_keys(session, scancodes, seconds):
+    """Hold a set of ST keys down together, then let them all go.
+
+    THE RELEASES ARE THE POINT, which is why this is not three `session.key()` calls: the trainer's
+    combo is a HELD SET, and the program keeps only one key byte — `A_key_scancode`, cleared by its
+    own release — so the shim watches the raw make and break codes at the ACIA instead. A driver
+    that sent three press/release pairs in sequence would never have all three down at once.
+
+    The make/break spelling itself is `HeadlessSession`'s (`session.key` is the single-key form);
+    this reaches for `send` only because holding a SET is the one shape that API has no word for.
+    """
+    for scancode in scancodes:
+        session.send(f"hatari-event keydown {scancode:#04x}")
+    session.wait(seconds)
+    for scancode in scancodes:
+        session.send(f"hatari-event keyup {scancode | BREAK_BIT:#04x}")
+    session.wait(CHEAT_KEY_SETTLE_SECONDS)
+
+
+def press_one_key(session, scancode):
+    """One make/break pair, then long enough for the vertical blank to have acted on it."""
+    session.key(scancode)
+    session.wait(CHEAT_KEY_SETTLE_SECONDS)
+
+
+def machine_byte(session, address, width=1):
+    """`width` bytes of emulated memory as one big-endian number."""
+    blob = session.savebin("cheatprobe.bin", address, width)
+    return int.from_bytes(blob[:width], "big")
+
+
+def await_machine_value(session, address, width, reached, doing, press=None):
+    """Let the run proceed until `width` bytes of its memory satisfy `reached`.
+
+    A PREDICATE AND NOT A VALUE, because one of the things waited on is a FRAME COUNTER: each poll
+    costs a debugger round trip and the counter moves several times between two of them, so a test
+    for equality would sail past the number and hang the run.
+
+    IT IS ALSO HOW THE SHORT-LIVED STATES ARE ASSERTED. `g_arming_window_open` is set four slices
+    into `title_attract_loop` and cleared when the wait ends, and a first draft that sampled it once
+    on reaching PHASE_ATTRACT read it BEFORE the window opened and reported the trainer refusing to
+    arm at the title — in a run that then armed. Waiting for the state IS the assertion.
+
+    The loop itself is `press_fire_only_in_a_wait`'s, so the deadline, the liveness check and the
+    poll throttle have one definition — a throttle this waiter lacked in a first draft, which then
+    entered the debugger hundreds of times inside the very window whose pacing it was asserting on.
+    """
+    press_fire_only_in_a_wait(session, lambda: reached(machine_byte(session, address, width)),
+                              doing, press)
+
+
+def run_ours_cheats(out_dir, work, machine, tos_rom):
+    """Arm the trainer through the keyboard, fire all three cheats, and watch what each one did."""
+    mode = CHEATS_MODE
+    anchor, image_pointer, phase, frames, armed, window = symbol_offsets(
+        mode, ANCHOR_SYMBOL, "zy_image_base", "g_phase", "g_frames_run",
+        "g_armed", "g_arming_window_open")
+    trace = out_dir / f"{mode}.trace"
+    log = out_dir / f"{mode}.log"
+    # NO `--trace`, and `hatari_arguments`' own docstring is the reason: `psg_write` fires thousands
+    # of times an emulated second with music playing and Hatari FORMATS every line. No check in this
+    # mode opens a trace — the jingle is judged on the voice record, not on the register stream (see
+    # `check_the_trainer_armed`) — and this run races host-time waits the formatting would slow.
+    session = HeadlessSession(hatari_arguments(gemdos_medium(OUR_DISK, OUR_AUTO), trace,
+                                               machine, tos_rom, GAME_RUN_VBLS, trace_flags=None),
+                              log_path=log, fifo_path=out_dir / f"{mode}.fifo", work_dir=work)
+    watched = {}
+    try:
+        session.wait(BASE_POLL_START_SECONDS)
+        base_file = await_file(session, OUR_DISK / BASE_FILE, "waiting for the program to start",
+                               deadline_seconds=ANCHOR_DEADLINE_SECONDS)
+        base = struct.unpack(">I", base_file.read_bytes()[:VECTOR_BYTES])[0] - anchor
+        image = machine_byte(session, base + image_pointer, VECTOR_BYTES)
+        # THE KEYS THIS PRESSES ARE THE GAME'S OWN IDEA OF Z, Y AND N, resolved out of the staged
+        # image's scancode table by this file's own reading of it. The shim resolves the same three
+        # from the same bytes on the machine, and `check_the_combo_was_resolved` compares the two.
+        combo = cheat_combo_scancodes(gen_image_bytes())
+
+        # ---- 1. the wrong-key negative, and the window that allows the right one ----------------
+        await_machine_value(session, base + phase, VECTOR_BYTES,
+                            lambda seen: seen == PHASE_ATTRACT, "waiting for the title screen")
+        # THE WINDOW IS WAITED FOR, not sampled: it opens four slices into `title_attract_loop`,
+        # a good deal after `g_phase` says ATTRACT. Reaching this line IS "the window opened at the
+        # title"; failing to reach it raises with that message.
+        await_machine_value(session, base + window, 1, lambda seen: seen == 1,
+                            "waiting for the trainer's arming window to open at the title")
+        hold_the_keys(session, combo[:-1], CHEAT_HOLD_SECONDS)
+        watched["armed by two of the three"] = machine_byte(session, base + armed)
+
+        # ---- 2. the positive --------------------------------------------------------------------
+        hold_the_keys(session, combo, CHEAT_HOLD_SECONDS)
+        watched["armed by all three"] = machine_byte(session, base + armed)
+
+        # ---- 3. into the game, and the window must have shut ------------------------------------
+        press_one_key(session, c_define(header("init.h"), CHEAT_START_GAME_KEY))
+        press_fire_if_waiting = phase_gated_fire(session, base + phase,
+                                                 image + GHIDRA_JOYSTICK_STATE)
+        await_machine_value(session, base + phase, VECTOR_BYTES,
+                            lambda seen: seen == PHASE_PLAYING, "waiting for the frame loop",
+                            press=press_fire_if_waiting)
+        watched["window in the game"] = machine_byte(session, base + window)
+
+        # ---- 4. the three keys, each read back where it was supposed to land --------------------
+        invulnerable = image + c_define(header("weapon.h"), "A_ship_invulnerable")
+        for key in ("CHEAT_KEY_INVULNERABLE", "CHEAT_KEY_LIVES", "CHEAT_KEY_POWER"):
+            press_one_key(session, cheat_constant(key))
+        watched["invulnerable byte"] = machine_byte(session, invulnerable)
+        watched["pokes"] = {name: machine_byte(session, image + address)
+                            for name, (address, _) in cheat_pokes().items()}
+
+        # ---- 5. invulnerability as a behaviour --------------------------------------------------
+        await_machine_value(session, base + frames, VECTOR_BYTES,
+                            lambda seen: seen >= CHEAT_SURVIVE_PAST_FRAME,
+                            "waiting for the ship to outlive a neutral-stick life",
+                            press=press_fire_if_waiting)
+        watched["phase while surviving"] = machine_byte(session, base + phase, VECTOR_BYTES)
+        # ...and now the same ship, in the same run, WITHOUT it. F1 toggles, so this is the control:
+        # if the run does not die from here, the survival above was not the trainer's doing.
+        press_one_key(session, cheat_constant("CHEAT_KEY_INVULNERABLE"))
+        watched["invulnerable byte after the second press"] = machine_byte(session, invulnerable)
+
+        record_file = OUR_DISK / STATE_FILE
+        press_fire_only_in_a_wait(session,
+                                  lambda: record_file.is_file() and record_file.stat().st_size,
+                                  "waiting for the run to play out its frame budget",
+                                  press_fire_if_waiting)
+        session.wait(POST_EXIT_SECONDS)
+    finally:
+        status = session.close()
+    # ONLY WHAT THE CHECKS READ. `run_ours_game`'s richer return shape carries frame dumps and a
+    # screen this mode neither takes nor judges, and reading a `SCREEN.BIN` no assertion opens would
+    # be a way for a three-minute run to die on its last line for nothing.
+    return {"status": status, "log": log, "work": work, "watched": watched,
+            "record": read_record(OUR_DISK / STATE_FILE)}
+
+
+def check_the_combo_was_resolved(ours):
+    """SURFACE: the program's own record — the shim read the game's table the way this file does.
+
+    RUNS IN EVERY MODE, folded into `check_the_trainer_stayed_dormant`, because the resolve happens
+    in every build: `zy_cheats_resolve_scancodes` is called one statement after the image is staged,
+    before the `ZY_PHASE` fork. A table that had moved in `include/highscore.h` would make the
+    trainer unarmable on the shipped floppy while every dormancy zero stayed green — MORE green, not
+    less — so this is the one trainer field a run that presses nothing can still judge.
+    """
+    record = ours["record"]
+    theirs = [record[f"cheat_scancode_{letter.lower()}"] for letter in CHEAT_COMBO_LETTERS]
+    ours_read = cheat_combo_scancodes(gen_image_bytes())
+    if theirs == ours_read:
+        return []
+    return [f"the shim resolved {[hex(code) for code in theirs]} for {CHEAT_COMBO_LETTERS} and "
+            f"this file reads {[hex(code) for code in ours_read]} out of the same table — one of "
+            f"the two readings of scancode_to_char_table is wrong, and a combo nobody can type "
+            f"arms nothing"]
+
+
+def check_the_trainer_armed(ours):
+    """SURFACE: memory + the program's own record — the combo, its negative, and the fanfare."""
+    record, watched = ours["record"], ours["watched"]
+    problems = []
+    if watched["armed by two of the three"]:
+        problems.append("holding two of the three combo keys armed the trainer — the watcher is "
+                        "not asking for the whole set")
+    if not watched["armed by all three"]:
+        problems.append("holding all three combo keys did NOT arm the trainer, so nothing below "
+                        "this line was tested (see out/cheats.log)")
+    if watched["window in the game"]:
+        problems.append("the arming window was still open inside the frame loop — the combo could "
+                        "be entered mid-game, which zynaps_main.c's `title_attract_loop` bracket "
+                        "exists to prevent")
+    if record["cheats_armed"] != 1 or record["cheat_arm_jingles"] != 1:
+        problems.append(f"the record says armed={record['cheats_armed']}, "
+                        f"jingles={record['cheat_arm_jingles']} — one arming, once, was asked for")
+    # THE FANFARE, PREDICTED RATHER THAN OBSERVED. `sound_start` is what plays it and its whole
+    # effect is the voice record, so the surface is the pointer the shim read back out of voice 3
+    # against this file's own `sound_lookup_tune`. The PSG trace cannot serve here: the title tune
+    # is driving all three voices at the same moment and no register write is the jingle's alone.
+    expected = cheat_expected_jingle_stream(gen_image_bytes())
+    if record["cheat_jingle_stream"] != expected:
+        problems.append(f"the arming fanfare left {record['cheat_jingle_stream']:#x} in voice 3's "
+                        f"restart pointer, and sound {cheat_constant('CHEAT_SFX_ARMED')} resolves "
+                        f"to {expected:#x} — the orphan stream is not what the driver was armed "
+                        f"with")
+    return problems
+
+
+def check_the_cheats_landed(ours):
+    """SURFACE: memory — every byte the three keys wrote, read back off the running machine."""
+    record, watched = ours["record"], ours["watched"]
+    problems = []
+    for name, count in (("invulnerable", "cheat_invulnerable_fires"),
+                        ("lives", "cheat_lives_fires"), ("power", "cheat_power_fires")):
+        # F1 is pressed TWICE — once to switch invulnerability on and once, at the end, to switch it
+        # off again for the control — so its count is the one that is not 1.
+        wanted = 2 if name == "invulnerable" else 1
+        if record[count] != wanted:
+            problems.append(f"{count} is {record[count]}, and {wanted} key press(es) reached the "
+                            f"machine")
+    if watched["invulnerable byte"] != 1:
+        problems.append(f"A_ship_invulnerable read back {watched['invulnerable byte']} after F1, "
+                        f"not 1")
+    if watched["invulnerable byte after the second press"] != 0:
+        problems.append(f"A_ship_invulnerable read back "
+                        f"{watched['invulnerable byte after the second press']} after the second "
+                        f"F1, not 0 — the toggle does not toggle")
+    for name, (_, wanted) in cheat_pokes().items():
+        got = watched["pokes"][name]
+        if got != wanted:
+            problems.append(f"{name} read back {got}, not the {wanted} the game's own commit arm "
+                            f"writes")
+    # THE PANEL BITS, out of the shim's read-back rather than off the machine: the frame loop clears
+    # each one as it repaints, within a frame, so nothing sampled from outside could ever see them.
+    hud = header("hud.h")
+    for bit in ("PANEL_REDRAW_LIVES_BIT", "PANEL_REDRAW_POWERUP_BIT", "PANEL_REDRAW_WEAPON_BIT",
+                "PANEL_REDRAW_GAUGE_BIT"):
+        if not record["cheat_panel_requests"] & (1 << c_define(hud, bit)):
+            problems.append(f"{bit} was never in A_panel_redraw_mask after a poke — the panel was "
+                            f"not asked to repaint and the HUD would go on showing the old values")
+    return problems
+
+
+def check_invulnerability_is_a_behaviour(ours):
+    """SURFACE: the program's own record — the ship outlived a life it otherwise does not.
+
+    THE CONTROL IS IN THE SAME RUN. A neutral-stick life ends at about frame 176
+    (`press_fire_only_in_a_wait`'s measurement, made before any of this existed). With F1 on, the
+    run reaches CHEAT_SURVIVE_PAST_FRAME still on its first life; F1 is then pressed again, which
+    switches it off, and the SAME ship in the SAME run must die before the budget is spent. Without
+    that second half the first would be satisfied by a run that simply never met anything lethal.
+    """
+    record, watched = ours["record"], ours["watched"]
+    problems = []
+    if watched["phase while surviving"] != PHASE_PLAYING:
+        problems.append("the run left the frame loop before it reached "
+                        f"frame {CHEAT_SURVIVE_PAST_FRAME}, so nothing was survived")
+    if record["first_life_ended_at"] and record["first_life_ended_at"] < CHEAT_SURVIVE_PAST_FRAME:
+        problems.append(f"the first life ended at frame {record['first_life_ended_at']}, before "
+                        f"{CHEAT_SURVIVE_PAST_FRAME} — the ship died while A_ship_invulnerable "
+                        f"was 1, so the flag did not do what its three read sites say it does")
+    if not record["first_life_ended_at"]:
+        problems.append("the ship never died AT ALL, including after invulnerability was switched "
+                        "back off — so surviving the first half of this run says nothing. Raise "
+                        "the frame budget, or the run met nothing lethal")
+    return problems
+
+
+def mode_cheats(out_dir, machine, tos_rom):
+    """The trainer's positive control: arm it, fire it, and read back everything it touched."""
+    assert_the_game_constants_are_the_headers()
+    assert_the_phase_names_are_the_shims()
+    stage_our_build(CHEATS_MODE)
+    with tempfile.TemporaryDirectory() as work:
+        ours = run_ours_cheats(out_dir, Path(work), machine, tos_rom)
+        checks = {
+            "exit status + log (ours)": check_exit_and_log("ours", ours),
+            "exit status + log (the fault scan can fail)": check_the_fault_scan_can_fail(),
+            "exit status + log (the machine was handed back)":
+                check_the_machine_was_handed_back(ours) + check_the_acia_vector_went_back(ours),
+            "memory (the combo resolved out of the game's own table)":
+                check_the_combo_was_resolved(ours),
+            "memory (the trainer armed, and refused to)": check_the_trainer_armed(ours),
+            "memory (the trainer is the one the binary carries)":
+                [] if trainer_is_compiled_in(CHEATS_MODE) == bool(ours["record"]["cheats_built"])
+                else ["zynaps-cheats.elf and the record disagree about whether the trainer is in "
+                      "this binary"],
+            "memory (every cheat landed on the byte it names)": check_the_cheats_landed(ours),
+            "memory (invulnerability outlived a life the control does not)":
+                check_invulnerability_is_a_behaviour(ours),
+            "memory (the image fitted the machine, and stayed inside itself)":
+                check_the_memory(ours["record"]),
+            "hardware-state vector (TOS's 200 Hz clock survived the boot)":
+                check_the_boot_clock(ours["record"]),
+        }
+        print(f"-- {CHEATS_MODE} on {machine} / {tos_rom.name} at {MEMSIZE_MB} MB: image base "
+              f"{ours['record']['image_base']:#x}")
+        print("   combo resolved to "
+              + ", ".join(f"{letter}={ours['record'][f'cheat_scancode_{letter.lower()}']:#04x}"
+                          for letter in CHEAT_COMBO_LETTERS)
+              + f"; armed after {ours['record']['cheat_arm_jingles']} fanfare(s) on stream "
+                f"{ours['record']['cheat_jingle_stream']:#x}")
+        print(f"   {ours['record']['frames_run']} frames, first life ended at "
+              f"{ours['record']['first_life_ended_at']}, "
+              f"{ours['record']['lives']} lives, panel bits "
+              f"{ours['record']['cheat_panel_requests']:#04x}")
+        failures = []
+        for name, problems in sorted(checks.items()):
+            print(f"   [{'red ' if problems else 'green'}] {name}   (must PASS)")
+            for problem in problems:
+                print(f"           {problem}")
+            if problems:
+                failures.append(name)
+        print("-- OK" if not failures else f"-- FAILED: {len(failures)} check(s)")
+        return 0 if not failures else 1
+
+
 def main():
     # A module global rather than a threaded parameter: `hatari_arguments` is the ONE place the flag
     # is spelt, every runner goes through it, and a run has exactly one machine size by design. The
@@ -2672,6 +3245,8 @@ def main():
     # frame count rather than a palette state, and both sides are driven with the same input.
     if options.mode in (GAME_MODE, GAME_FAULT_MODE):
         return mode_game(options.mode, out_dir, options.machine, options.tos_rom, options.keep)
+    if options.mode == CHEATS_MODE:
+        return mode_cheats(out_dir, options.machine, options.tos_rom)
 
     floppy = options.mode == FLOPPY_MODE
     if floppy:
@@ -2715,6 +3290,9 @@ def main():
             "memory (the boot slice's own output and ledgers)":
                 check_the_boot_slice_did_its_work(ours),
             "memory (the game fork was not taken)": check_the_game_fork_was_not_taken(ours),
+            "memory (the trainer stayed dormant)":
+                check_the_trainer_stayed_dormant(ours, options.floppy_build if floppy
+                                                 else options.mode),
             "hardware-state vector (Timer B never fired)": check_timer_b_never_fired(ours),
             "trap ledger": check_trap_ledger(ours, original),
             "memory (the framebuffer)": check_memory(ours, original),

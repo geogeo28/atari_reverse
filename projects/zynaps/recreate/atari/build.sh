@@ -121,9 +121,41 @@ case "$MODE" in
   # every surface `smoke.py title` has certified, and the thing to look at when the game build is
   # being bisected.
   playtitle)  DEF="-DZY_SMOKE_VBLS=0xffffffffu" ;;
-  *) echo "usage: build.sh [title | titlefault | game | gamefault | play | playtitle]" \
+  # THE TRAINER'S POSITIVE CONTROL — the one mode that is meant to arm the cheats and fire them.
+  # Everything else in the matrix asserts they stayed dormant, which says nothing at all unless one
+  # run can show them going off; `smoke.py cheats` is that run, and it drives the combo and the
+  # three keys through Hatari's own keyboard rather than by poking the bytes it is judging.
+  #
+  # No frame dumps (there is no differential here — the keys change the gameplay bytes ON PURPOSE)
+  # and a budget four times the game mode's, because the run has to reach the attract screen, hold
+  # a wrong combo past the arming time, hold the right one, start a game and then press three keys.
+  cheats)     DEF="-DZY_PHASE=1 -DZY_FRAME_SAMPLES=0u -DZY_GAME_FRAMES=1200u" ;;
+  *) echo "usage: build.sh [title | titlefault | game | gamefault | play | playtitle | cheats]" \
           "[gemdos | floppy]"; exit 2 ;;
 esac
+
+# ---- THE TRAINER ------------------------------------------------------------------------------
+# ON BY DEFAULT IN EVERY MODE, and that is what makes the dormancy checks worth anything: the
+# binary `smoke.py title`, `game`, `gamefault`, `titlefault` and `floppy` judge is the SAME binary a
+# player gets, watcher and all, and each of those modes asserts the trainer's counts came back 0.
+# A build that carried the cheats only in the mode that exercises them would be proving dormancy of
+# code that was not there.
+#
+# ZY_NOCHEATS=1 IS THE PURIST PATH, and it is an ENVIRONMENT VARIABLE rather than a mode: it
+# compiles atari/zynaps_cheats.c's empty arm, so the watcher, the key table and the pokes are ABSENT
+# from the binary rather than disarmed. What it does NOT remove is the tap's CALL in
+# `shim_include/hw.h` — that stays unconditional so the VERIFIED CORES compile to the same machine
+# code either way and `ZY_CHEATS` reaches no core translation unit at all (that header carries the
+# argument; the purist build simply calls the empty body). `smoke.py` tells this build's zeros from
+# a dormant trainer's by asking the ELF for the watcher's own data and comparing that against the
+# record's `cheats_built`, so the purist binary is judgeable by the same matrix. It is a define path
+# and not a second disk: README.md's Trainer section says why one floppy carries the dormant
+# watcher.
+if [ -n "${ZY_NOCHEATS:-}" ]; then
+  echo ">> trainer: OFF (ZY_NOCHEATS) — atari/zynaps_cheats.c compiles to six empty functions"
+else
+  DEF="$DEF -DZY_CHEATS"
+fi
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REC="$(cd "$HERE/.." && pwd)"                             # recreate/
@@ -287,7 +319,8 @@ OBJ="$BUILD/obj"
 rm -rf "$OBJ"; mkdir -p "$OBJ"
 echo ">> compile (base 0, keep relocs)"
 SHIM_OBJECTS=""; CORE_OBJECTS=""
-for source in "$HERE/zynaps_os.s" "$HERE/zynaps_main.c" "$HERE/zynaps_backend.c"; do
+for source in "$HERE/zynaps_os.s" "$HERE/zynaps_main.c" "$HERE/zynaps_backend.c" \
+              "$HERE/zynaps_cheats.c"; do
   object="$OBJ/shim_$(basename "${source%.*}").o"
   $CC $CFLAGS $DEF -c "$source" -o "$object"
   SHIM_OBJECTS="$SHIM_OBJECTS $object"
@@ -839,6 +872,11 @@ TARGET_MACROS='PROGRAM_BYTES|ZY_LOAD_BASE|ZY_FAULT_PEN|ZY_SMOKE_VBLS|ZY_PHASE|ZY
 TARGET_MACROS="$TARGET_MACROS|ZY_TARGET_IMAGE_BYTES"
 TARGET_MACROS="$TARGET_MACROS|ZY_FRAME_SAMPLES|ZY_GAME_FAULT"
 TARGET_MACROS="$TARGET_MACROS|ZY_CHANCE_INDEX_REGISTER|ZY_GROUND_SPAWN_Y_REGISTER"
+# ZY_CHEATS is on the list for the same reason as the rest, and it matters more than most: the
+# trainer is this build's one DELIBERATE divergence from the original, and a core that compiled
+# differently under it would put that divergence inside verified code — where `make test`, which
+# never sees the macro, could not see it either.
+TARGET_MACROS="$TARGET_MACROS|ZY_CHEATS"
 LEAKS=$(grep -rlE "\b($TARGET_MACROS)\b" "$REC/src" "$REC/include" || true)
 [ -z "$LEAKS" ] || { echo "ERROR: a core reads a target-only macro:"; echo "$LEAKS"; exit 1; }
 

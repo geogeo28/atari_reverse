@@ -40,7 +40,12 @@ bash atari/build.sh game        && python3 atari/smoke.py game        # seven ch
 bash atari/build.sh gamefault   && python3 atari/smoke.py gamefault   # the control, INVERTED
 bash atari/build.sh play        && bash atari/run.sh                  # ...and the one you play
 bash atari/build.sh play floppy                                       # -> disk/ZYNAPS.ST for the STE
+bash atari/build.sh cheats      && python3 atari/smoke.py cheats      # the TRAINER's positive control
 ```
+
+Every one of those binaries carries the **trainer** — `Z`+`Y`+`N` at the title, then `F1`/`F2`/`F3`
+— which is the one thing in this directory that is deliberately not the 1988 program. It is inert
+until a player arms it and every mode above asserts it stayed that way; see **THE TRAINER** below.
 
 ## What runs, and in what order
 
@@ -247,6 +252,301 @@ vertical blanks — 97.9 of the 100 offered, 98%.** The four-register `movem` an
 closed this; the figure quoted above was taken before them and never redone, and the reading that
 "the bars are drawn at half density" followed from the arithmetic rather than from a screen. What
 keeps it closed is `smoke.py`'s `check_the_pacing`, whose floor is 95% of the offered rate.
+
+# THE TRAINER — the one thing here that is NOT the original
+
+**Hold `Z`+`Y`+`N` for two seconds at the title screen and the game answers with a sound no player
+of the 1988 disk could ever have heard. After that, `F1` makes the ship invulnerable, `F2` puts the
+lives back and `F3` maxes every power-up.**
+
+Everything else in this directory exists to be byte-identical to a 1988 binary. This section is the
+exception, asked for deliberately, and it is written so that the exception stays exactly where it
+was put:
+
+* **No core is edited.** The trainer is one new shim file, `atari/zynaps_cheats.c`, plus eleven
+  lines spread over `zynaps_main.c`, `shim_include/hw.h` and `build.sh`. `make test` is unchanged at
+  **4751**, and `build.sh`'s three core-containment gates — no core includes a shim header, no core
+  reads a target-only `-D` (`ZY_CHEATS` is now on that list), no shim symbol collides with a core's
+  — all stay green.
+* **The frame differential is untouched.** `smoke.py game` still compares 32000 framebuffer bytes,
+  sixteen pens and twenty entity records against the shipped binary at five frames, and still finds
+  them identical.
+* **It is inert until a player arms it,** and that is a MEASUREMENT rather than a claim — see "How
+  dormancy is proved" below.
+
+## The combo, and the French keyboard
+
+| | | |
+|---|---|---|
+| **arm** | `Z` + `Y` + `N` held together for ~2 s | **at the title/attract screen only** |
+| `F1` | toggle invulnerability | in game |
+| `F2` | lives back to 9 | in game |
+| `F3` | every power-up to its ceiling, seeker selected | in game |
+
+Releasing any of the three resets the hold timer, and the combo is refused anywhere but the title —
+`zynaps_main.c`'s `title_attract_loop` opens the window around `attract_wait_for_start` and closes
+it on the way out. Z, Y and N are none of the three keys that wait exits on (`1`, `2`, fire), so
+holding the combo cannot start a game by accident.
+
+**THE SCANCODES ARE RESOLVED AT RUNTIME OUT OF THE GAME'S OWN TABLE.** An ST keyboard sends POSITION
+codes, and this build is played on a French AZERTY STE where the key labelled `Z` is not the key a
+UK machine calls `Z`. The game ships exactly one table that turns a scancode into a character —
+`scancode_to_char_table` @ `0x19a39`, 115 bytes, `0x00`..`0x72`, read by the high-score name entry
+at `0x13164` and by nothing else — so the trainer's combo is spelt as the three CHARACTERS `'Z'`,
+`'Y'`, `'N'` and `zy_cheats_resolve_scancodes` looks them up in that table once, at boot, straight
+after the image is staged. The combo is therefore the letters the game itself would print for those
+keys, and a localised build shipping a different table would move it without an edit here.
+
+**...and the shipped table is a pure QWERTY map, so the lookup alone is not enough.** Measured over
+all 115 bytes: `0x2c`→`Z`, `0x15`→`Y`, `0x31`→`N`, `0x1e`→`A`, `0x11`→`W` — UK/US positions, with no
+layout switch anywhere in the image and no second table. On AZERTY the `Z` key sends `0x11` and
+nothing in this program says so. So each combo letter accepts TWO scancodes: **the one the table
+resolves, and the one the letter sits at on AZERTY** (`Z`=`0x11`, `Y`=`0x15`, `N`=`0x31`). `Y` and
+`N` do not move between the layouts, so for those two the pair collapses to a single code; only `Z`
+really has two, and **the cost of the fallback is that `W`+`Y`+`N` also arms the trainer on a QWERTY
+keyboard.** That is a cheat combo and not a game control; being armable on both machines is worth
+more than being unique on one.
+
+`F1`–`F3` need no layout argument at all: the function-key block sends the same scancodes on every
+ST keyboard. Nothing in the game reads them — the table holds `0xff` for all three, and the only
+scancode comparisons in the whole program are SPACE (the pause, `0x10fda`/`0x10ffe`) and `1`/`2`
+(the menu) — so a press cannot collide with a control.
+
+## Four sounds nobody has heard since 1988
+
+The secrets hunt (`../../README.md`, "Secrets and dead code") proved nine of the forty-five sound
+streams unreachable: every one of the 23 instructions that reaches `sound_start` was followed
+through the spawn, jump and swap graph, and ids **19, 23, 25, 29, 35, 37, 38, 42, 43** are in no
+closure. Each is a complete stream — its own `fa <channel>` header, its own `$e1` terminator — so
+each still plays as its author left it. The trainer's feedback is four of them:
+
+| event | orphan | what it is |
+|---|---|---|
+| **armed** | **35** (`0x23`) | 2.0 s, `fa 03`. Channel code 3 occurs on exactly three streams and all three are orphans, which makes it the fanfare |
+| `F1` invulnerability | **19** (`0x13`) | the only orphan armed on **voice 1**, so the toggle is heard over whatever the other two voices are doing |
+| `F2` lives | **37** (`0x25`) | one of the pair 42/43 shadow |
+| `F3` power-ups | **38** (`0x26`) | ...and the other |
+
+They are started through the game's own verified `sound_start` @ `0x16ac8`, whose whole effect is
+the image (no hardware, no trap), from the vertical blank AFTER the program's own handler has run —
+so the voice rewrite lands between two ticks of the driver rather than in the middle of one. All
+four carry `fa` headers, so `sound_start`'s `channel` argument is overwritten and the `0` this
+build passes means "nothing was chosen".
+
+## What each key writes, and why those bytes
+
+Every address below is a core header's and every ceiling is the game's own — `zynaps_cheats.c`
+chooses no number except the life count.
+
+**`F1` — invulnerability.** `A_ship_invulnerable` @ `0x19912`, toggled 0/1. It is a **dormant flag
+the author left wired up and never set**: three sites read it — the two landscape collisions at
+`0x11e66`/`0x11eb2` and the lethal entity touch at `0x13d0e` — and *nothing in the shipped image
+writes it* (`names.txt` carries the exhaustive walk). Non-zero suppresses all three.
+
+**`F2` — lives.** `A_lives` @ `0x1991a` = 9, plus `bset #4,$19904` through the game's own
+`panel_request_repaint`. Bit 4 is the odd one of the five panel bits: the frame head has no `bclr`
+for it because `draw_lives_icons` clears it itself once it has drawn, so asking here is exactly what
+the extra-life award at `0x12e36` does. **The icon row is six wide,** so nine lives draw six full
+icons and the other three are real but off the panel. Nothing above `0x7f` may ever go in this byte:
+`life_icon_for_slot` reads it SIGNED, so `0x80` and up draw six EMPTY icons over a full stock.
+
+**`F3` — power-ups.** The five commit arms of `../src/weapon.c`, at their ceilings, in one go:
+
+| byte | value | where the ceiling comes from |
+|---|---|---|
+| `A_weapon_power_level` `0x19908` | `WEAPON_POWER_LEVEL_MAX` = 4 | `cmpi.b #$4` + `ble` @ `0x13f1e` |
+| `A_shield_level` `0x1990a` | `SHIELD_LEVEL_MAX` = 3 | `cmpi.b #$3` + `ble` @ `0x13f4a` |
+| `A_power_gauge_display` `0x198c3` | = the shield level | `powerup_upgrade_shield` writes the pair together @ `0x13f5e` |
+| `A_selected_weapon` `0x198b4` | `WEAPON_KIND_SEEKER` = 4 | the fire dispatcher's `cmpi.b #$4` @ `0x113d0` |
+| `A_ship_speed_level` `0x19907` | `SHIP_SPEED_LEVEL_MAX` = **1** | see below |
+| `A_weapon_decay_timer` `0x19dcc` | `POWERUP_DECAY_TICKS` = `0x3e8` | `move.w #$3e8` @ `0x13ede` |
+| `A_shield_decay_timer` `0x19dca` | `0x3e8` | @ `0x13e9e` |
+| `A_speed_decay_timer` `0x19dc8` | `0x3e8` | @ `0x13dd0` |
+
+...plus panel bits 0, 1 and 2.
+
+**THE THREE DECAY TIMERS ARE UNPINNED ON TARGET, and that is a measurement rather than an
+oversight.** Nothing outside the program can tell their refill from the section start's: they tick
+down once a frame AND `section_restart_prologue` has just set them to the same ceiling, so a value
+read a few frames after the press is a few short of full either way — measured at 967/966/964
+against 1000, from a run in which all three writes had landed. A counter the SHIM kept is no better,
+and a draft of this carried one: it read the three words back through the same `A_*_decay_timer`
+expressions that had just written them, so it returned 3 for every possible defect *including the
+wrong-address one its own failure message named*. It was deleted rather than reworded. What stands
+behind these three is the header scrape (the addresses are the ones `../src/weapon.c`'s commit arms
+use) and `make test`'s verification of those arms — not an on-target surface.
+
+**THE SPEED LEVEL'S REAL CEILING IS 1, NOT 8, and the "eight levels" in `STATUS.md` is eight
+differential TEST CASES rather than eight game levels.** `A_ship_speed_table` @ `0x19370` holds
+exactly two eight-byte entries (dx 4 / dx 8) and what follows the second is a relocated pointer, so
+a level of 2 indexes out of the table and flies the ship at a garbage delta. The capsule's own arm
+cannot be borrowed as a bound either: unlike the other two its clamp is an EQUALITY (`cmpi.b #$2` +
+`bne`), so a byte already past 2 walks straight on, unclamped, for ever. `SHIP_SPEED_LEVEL_MAX` is
+the value that arm writes back and it is the highest this may ever be.
+
+**THE THREE LAUNCH-STOCK COUNTERS ARE DELIBERATELY NOT POKED.**
+`A_missile_launch_counter`/`A_bomb_launch_counter`/`A_seeker_launch_counter` (`0x198b5`/`6`/`8`) are
+written by the section restart and decremented by the three launchers, and **nothing in the image
+reads one** — no branch anywhere tests them, and `0x198b8` is never even initialised. What actually
+bounds firing is the in-flight count, which the two levels above already max. Poking them would look
+like an effect and be none.
+
+**The levels decay.** All three step down when their timer reaches zero (`frame_decay_timer`, about
+a thousand frames), and a death takes one off each. `F3` again is the answer; the trainer does not
+freeze a timer the game means to run.
+
+## Where the code is, and why it is split in two
+
+| | |
+|---|---|
+| `atari/zynaps_cheats.c` / `.h` | the whole trainer: the watcher, the state machine, the three pokes |
+| `shim_include/hw.h` | four lines in `hw_read8` — the ACIA-data tap, UNCONDITIONAL (see below) |
+| `zynaps_main.c` | the include, the record fields, `zy_cheats_tick()` in the VBL, the two windows, the boot-time scancode resolve |
+| `build.sh` | the new object, `-DZY_CHEATS`, `ZY_CHEATS` on the target-macro list, the `cheats` mode |
+| `smoke.py` | the dormancy check in every mode, and the `cheats` mode that arms it |
+
+**THE BYTE CAN ONLY BE SEEN AT THE ACIA.** Reading the 6850's data port POPS it, so the byte the
+keyboard sent exists for exactly one read and `ikbd_acia_isr` makes it. A watcher could not read the
+port again afterwards, and it could not read the keys out of the image either: the program keeps ONE
+byte, `A_key_scancode` @ `0x19685`, holding the key currently down and cleared only by its own
+release — so three keys held together are not representable there and a release of anything but the
+newest is invisible. Hence the tap in `hw_read8`, declared in `hw.h` rather than included, exactly as
+`zy_store_video_base_byte` is, so that no shim header reaches a verified core.
+
+**THE TAP IS UNCONDITIONAL, and that is what keeps the divergence out of the cores.** A first
+draft wrapped it in `#ifdef ZY_CHEATS`, and `build.sh` passes its `-D`s to the CORE compile — so
+`../src/irq.c`'s `ikbd_acia_service_one_byte`, a differential-pinned core, would have compiled to
+different machine code in the default build and in the purist one. `make test` never compiles this
+header, so it could not have seen the difference; and the gate written for exactly that risk greps
+`../src` and `../include` for the macro name, which a *shim header* is not — the gate would have
+printed green over the one case its own comment cites. So the call is always emitted, the purist
+build links the empty body in `zynaps_cheats.c`'s `#else` arm, and `ZY_CHEATS` reaches no verified
+translation unit at all. What that costs the purist build is one `bsr`+`rts` per IKBD byte, about
+three bytes a frame, in the build nothing measures.
+
+**It costs nothing anywhere else.** Every caller of `hw_read8` passes a CONSTANT address, so the
+comparison folds at compile time: `ikbd_send_cmd`'s status poll, the handler's GPIP test and
+`zynaps_main.c`'s four MFP read-backs emit the bare `move.b` they always did, and only the one site
+that reads `$fffffc02` keeps the call.
+
+**WHAT IT COSTS, COUNTED OFF THE BINARY** (`build/zynaps-game.elf`, 68000 cycles):
+
+| path | when | cycles |
+|---|---|---|
+| `zy_cheats_tick`, disarmed | every vertical blank | ~130 — `tst.b g_armed`, `tst.b g_arming_window_open`, clear the pending byte, return |
+| `zy_cheat_note_ikbd_byte`, joystick payload | 2 bytes a frame | ~150 each — `tst.b A_ikbd_packet_remaining` and out |
+| ...the packet's `0xfd` header | 1 byte a frame | ~165 — two compares and out |
+
+That is about **800 cycles a frame** against the ~400,000 a 2.5-vblank frame has, or **0.2 %**.
+
+**Measured on the pacing surface: 2.52 vblanks/frame before the trainer; 2.53 and 2.54 over three
+runs with it, against a ceiling of 2.64.** The whole movement is one or two frames of 300 changing
+bucket (`2x222 4x78` → `2x221 4x78 5x1` → `2x220 4x79 5x1`), which is the run-to-run spread the
+ceiling was set with — the same binary produced 2.53 and 2.54 on consecutive runs.
+
+**THE WORK IS SPLIT ACROSS TWO INTERRUPTS.** The ACIA door does the least possible — a three-byte
+held-set and one latched bit per cheat key — because it is entered once per byte from inside the
+keyboard interrupt. The state machine (hold timer, arming, jingle, pokes) runs from `zy_cheats_tick`
+in the vertical blank, after the program's own handler. MFP channel 6 is level 6 and the vertical
+blank is level 4, so the keyboard can interrupt the tick but never the reverse; every store either
+one makes into the trainer's OWN state is a single 68000 instruction, and the pending-key byte is a
+`bset`/`bclr` pair rather than a read-modify-write so that a key pressed between the tick's read and
+its clear is not lost (measured in `build/zynaps.dis`: `or.b #imm,<abs>` and `and.b #imm,<abs>`).
+
+**THAT ARGUMENT IS ABOUT THE TRAINER'S BYTES AND NOT ABOUT THE IMAGE'S, and the difference is a
+residual worth stating.** The pokes write bytes the MAIN LINE read-modify-writes over several
+instructions — `frame_decay_timer` does `wr16(t, be16(t) - 1)` and then steps a level — and the
+vertical blank preempts the main line. `F3` pressed on the one frame the shield timer is being
+stepped can be partly undone: the shield lands at 2 rather than 3 until the next press. It cannot be
+fixed from the trainer's side (it *is* the interrupt, not the thing being interrupted), and the
+window is a few instructions out of the ~400,000 cycles a frame takes, so it is recorded here rather
+than papered over. Pressing the key again is the whole of the workaround.
+
+## How dormancy is proved
+
+The frame differential compares two programs PLAYING and finds them identical, which says the
+cheats changed nothing over a run in which nobody pressed a key. It cannot say the watcher was
+quiet. So the record carries the trainer's own account of itself, and:
+
+* **`smoke.py title`, `titlefault`, `floppy`, `game` and `gamefault` each assert
+  `check_the_trainer_stayed_dormant`** — `cheats_armed`, `cheat_arm_jingles` and the three fire
+  counts all 0, plus the combo's resolved scancodes against smoke.py's own reading of the same 115
+  table bytes. `cheats_built` is CROSS-CHECKED rather than required: the ELF is asked whether the
+  watcher's data is in it and the program's own claim must agree, which is what makes `ZY_NOCHEATS=1`
+  a build this matrix can judge instead of one that reds by construction.
+* **HOW MUCH THAT PROVES DEPENDS ON THE MODE, and it is worth being exact.** In `game` and
+  `gamefault` the attract loop really does open the arming window and the ACIA vector really is the
+  program's, so the watcher runs and the zeros are a measurement. In `title`, `titlefault` and
+  `floppy --floppy-build title` the whole `#if ZY_PHASE == ZY_PHASE_GAME` block is compiled out —
+  with it BOTH window setters and the store that installs the game's ACIA vector — so the watcher
+  cannot fire whatever the keyboard sends. There the check is a **regression net** (a trainer that
+  had started poking from the boot, or from an M1 code path, would show) rather than a dormancy
+  proof, and the scancode comparison is the part of it that measures something in every mode.
+* **`smoke.py cheats` is the positive control**, and without it those five assertions would be a
+  check on code that could not fire at all. It drives the combo and the three keys through
+  **Hatari's own keyboard** (`hatari-event keydown`/`keyup`, one make code and one break code each)
+  — the real path: 6301 → ACIA → MFP channel 6 → `ikbd_acia_isr` → the tap. Nothing about the
+  trainer is poked into place; only the FIRE button still is, because Hatari swallows a key bound to
+  its joystick emulation, and fire is not what that mode judges.
+
+What `smoke.py cheats` asserts, in the order the run produces it:
+
+1. **the wrong-key negative** — `Z`+`Y` alone, held well past the arming time: `g_armed` read live
+   off the machine is still 0;
+2. **the positive** — all three: it arms, once, and the fanfare's stream pointer read back out of
+   voice 3's record equals what smoke.py's own port of `sound_lookup_tune` predicts for orphan 35;
+3. **the in-game refusal** — `g_arming_window_open` is 1 at the title and 0 inside the frame loop;
+4. **the six bytes the three keys write**, each read back off the running machine at the address
+   its header names — plus the panel bits, which nothing outside could sample (the frame loop clears
+   each one as it repaints, within a frame) so the shim reads the mask back through the game's own
+   `panel_request_repaint` and keeps only the bit it asked for. The three decay timers are **not**
+   checked and the paragraph above says why;
+5. **invulnerability as a BEHAVIOUR** — a neutral-stick life ends at about frame 176; with `F1` on
+   the run passes frame 400 still on its first life, and then `F1` is pressed AGAIN and the same
+   ship in the same run dies. The second half is what makes the first half mean anything.
+
+**The gate's own coverage, mutation-tested** (each applied alone, built, and the named mode run):
+
+| mutation | mode | verdict |
+|---|---|---|
+| the held-set accepts ANY one of the three, not all three | `cheats` | KILLED — "holding two of the three combo keys armed the trainer" |
+| `zy_cheats_arming_window(0)` deleted, so the window never shuts | `cheats` | KILLED — "the arming window was still open inside the frame loop" |
+| `F2` acts but its fire count is not incremented | `cheats` | KILLED — "cheat_lives_fires is 0, and 1 key press(es) reached the machine" |
+| the trainer arms on the first attract vblank with no keys held | `game` | KILLED — "the trainer fired in a run that pressed none of its keys" |
+
+The fourth is the one that matters most: it is the DORMANCY check going red, which is what says the
+five zeros every other mode prints are a measurement rather than a shape that cannot fail. (It arms
+on the first vblank rather than after the full hold because a `game` run spends only 26 vblanks in
+the attract loop — a mutation that still waited the two seconds would have survived for want of
+time rather than for want of a check.)
+
+**THE PSG TRACE IS NOT THE JINGLE'S SURFACE, and it cannot be.** `smoke.py` traces `psg_write` and
+cuts it into the sound driver's own tick frames, but the title tune is driving all three voices at
+the moment the fanfare starts and no register write in that window is the jingle's alone. What IS
+exact is the voice record: `sound_start`'s whole effect is those eight image stores, the shim reads
+the restart pointer back immediately (the cursor moves every tick, so nothing outside could sample
+it) and the record carries it. That is a stronger surface than a trace scrape, not a weaker one.
+
+## Building it, and the purist path
+
+`-DZY_CHEATS` is **on by default in every mode**, and that is what makes the dormancy checks worth
+anything: the binary `smoke.py title`/`game`/`floppy` judges is the same binary a player gets,
+watcher and all. A build carrying the cheats only in the mode that exercises them would be proving
+dormancy of code that was not there. **One floppy**, and it carries the dormant watcher.
+
+```bash
+bash atari/build.sh cheats && python3 atari/smoke.py cheats   # the positive control
+ZY_NOCHEATS=1 bash atari/build.sh play                        # the purist binary
+```
+
+`ZY_NOCHEATS=1` is an environment variable, not a mode — `build.sh`'s `case` would reject one. It
+compiles `zynaps_cheats.c`'s empty arm, so the watcher, the key table and the pokes are **absent**
+from the binary rather than disarmed. The tap's *call* in `hw_read8` stays (see above): that is what
+keeps the verified cores compiling identically in both builds. `smoke.py` tells this build's zeros
+from a dormant trainer's by asking the ELF for the watcher's own data, so the purist binary is
+judgeable by the same matrix rather than red by construction. It is a define path and not a second
+disk.
+
 
 # PERFORMANCE — the frame cadence, measured against the shipped binary's own
 
