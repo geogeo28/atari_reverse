@@ -200,7 +200,109 @@ measured in this workspace rather than imagined.
   than something quietly outside the check. Then flip one thing and watch it redden: a gate nobody has
   seen fail is a gate nobody has tested.
 
-## 11. Running a wave of agents
+## 11. Before a wave launches — the setup contract
+
+§12 is about running and merging a wave. This one is about what has to be TRUE first, because every
+seam failure below was cheap to prevent an hour before the agents started and expensive to unpick at
+the merge. Zynaps' successive agent waves are the worked example, and
+`projects/zynaps/recreate/README.md`'s "Adding a function" section is the contract itself — written
+for the agents to read, not about them.
+
+- **Ownership is by FILE, and the list has three tiers, not two.** Zynaps' table reads: `src/<yours>.c`,
+  `include/<yours>.h`, `test/test_<yours>.py` — **you alone**; `include/<someone else's>.h` — **nobody
+  but its owner**, include it to READ a global and never edit it; `test_constants.py`,
+  `test_status.py`, `Makefile`, `project.toml`, `test/harness.py` — **nobody, in normal work**; and
+  `test/abi.py` — shared, append-only, only for a new stub shape. The middle tier is the one a
+  two-tier list loses: a file you may *depend on* and may not *touch* needs saying out loud, or the
+  first agent that wants a neighbour's constant edits the neighbour's header.
+- **Own the ledger by SECTION, not by file.** `STATUS.md` is one file every agent must write to, which
+  makes it the worst conflict surface in the tree unless each agent owns a heading — Zynaps gives each
+  its own `## Verified — <yours> (N)` section and its count. (The ONE suite-total line is the
+  orchestrator's, and §12's first bullet is why.)
+- **Decide where a global lives before anyone needs one, and make it a rule with no protocol.**
+  Zynaps': *a global lives in the header of the subsystem that owns the data*, any subsystem may
+  `#include` another's header to read it, and there is deliberately **no promotion protocol and no
+  shared address file** — because either would make a routine edit somebody else's file, which is the
+  thing the ownership table exists to prevent.
+- **FREEZE the shared record layout, and give every field its provenance.** A record several agents
+  port routines against cannot grow field by field during a wave. Zynaps writes the whole 0x2c-byte
+  entity record out once, in `projects/zynaps/recreate/include/entity.h`, as a block nobody adds to: *"Freezing it is
+  what lets several agents port entity routines at the same time: nobody has to add a field, so nobody
+  edits this block, and the field a routine needs is already named."* Each field carries one of two
+  tags — `pinned by <test>`, meaning a differential case would fail if the offset were wrong, or
+  `names.txt, unpinned`, meaning a read that is believed and unexercised — and **the only permitted
+  edit is upgrading a tag in the same change that ports the routine which pins it.** That is stronger
+  than orchestrator gatekeeping *and* delegable: `ENTITY_STRIDE` went from `names.txt, unpinned (no
+  ported routine steps by it yet)` at the bootstrap (`ab1f18e`) to a tag naming three tests and the
+  instruction in each that pins it (`lea 44(a2),a2`, `mulu.w #$2c,d0`).
+  **"Append-only in offset order" is the rule that looks right and is not**, because inserting at an
+  offset is not appending — two agents appending in offset order write the same file at different
+  lines and both are correct. (Zynaps' README records this as the rule it replaced before its first
+  commit; that is the project's own account, with no diff behind it, and worth taking as reasoning
+  rather than as measurement.)
+- **Install the duplicate-definition pin BEFORE the wave, because the compiler cannot be it.** With
+  per-subsystem headers **no translation unit includes every header**, so two spellings of one address
+  never meet the compiler and nothing diagnoses them. `projects/zynaps/recreate/test/test_constants.py`
+  is that diagnosis, in two tests: `test_no_constant_is_defined_in_two_files` — *"One NAME, one
+  home"* — and `test_no_address_has_two_spellings`, which checks the `A_*` family only, on the
+  reasoning that a shared *offset* carries no information (`ENTITY_X` and a future `SHOT_X` are both 0
+  and both right) while a shared *address* is one variable under two names, *"which is how a subsystem
+  ends up editing state it does not own."* Both descend from Joust's pair
+  (`projects/joust/recreate/test/test_constants.py`), whose second is `test_no_value_has_two_spellings`
+  and is **broader**: it compares by a `_comparable_group`, so it also caught one flag bit spelt
+  `OBJ_FLAG_TYPE_LO`/`_HI` in one header and `_BIT0`/`_BIT1` in another. Four instances had
+  accumulated in Joust before anyone wrote it — which is the argument for having it before the wave,
+  not after.
+- **Predict the collisions IN WRITING, and say whose diff will go red.** The tripwire tells you a
+  clash happened; the ledger row tells the agent who trips it what to do, without reading anyone
+  else's subsystem. Zynaps' borrowed-globals table (`projects/zynaps/recreate/STATUS.md`, "## Borrowed
+  globals") carried, in `0f38af1`, a row that said so in advance: `A_joystick_state` (`0x19681`) defined in `include/highscore.h` because the routine that
+  fills it in was unported, tagged **"THE ONE ROW HERE THAT IS LIKELY TO CLASH SOON"** and naming the
+  outcome — *"test_constants.py's duplicate check is what will say so, in the OTHER agent's diff — this
+  row is how they find the deletion to make"*, with the five joystick bit masks flagged as moving with
+  it. It happened exactly that way: the integrating commit `1d930e7` ported the ACIA handler, the
+  definition moved to `include/irq.h`, `highscore.h` kept only a pointer comment, and the row was
+  rewritten in place to record it. A prediction that names the failing test, the other agent's diff
+  and the edit to make is worth more than any amount of care at the merge.
+- **Borrowed-global rows are a LOAN LEDGER, and a closed loan loses its row.** The contract is three
+  parts: the **row** (address, name as spelt, owner per the globals census, where it is defined today,
+  and why it is on loan), the **`#define` under a BORROWED note** in the borrowing header, and the
+  **duplicate pin** as the automatic call-in notice. Zynaps states the payoff in one line — *"Deleting a
+  row here and the `#define` it names is the whole of the migration"* — and a finished migration
+  normally has its row **deleted rather than annotated**, so the table's length reads as outstanding
+  debt rather than as history (two of Zynaps' are gone that way). Its `A_joystick_state` row is the
+  deliberate exception, kept and rewritten in place *because* it had predicted its own clash in
+  writing: the prediction is only worth anything if the record of it surviving is findable.
+- **Declare the cross-file pins PER BATTERY, with a collector that discovers rather than lists.** A
+  central registry of "constants the tests restate" is the one file every agent has to edit, so each
+  Zynaps battery declares its own `MIRRORS` (a `(python name, C path, C name)` triple) and
+  `ENTRY_PROLOGUES` (an entry address against the first bytes of the routine, read off the loaded
+  image) at the bottom of its own file, and `test_constants.py` **discovers batteries by the existence
+  of `src/<stem>.c`** — so a subsystem another agent adds is required to declare its pins from the
+  moment its first function lands, with nobody editing a list. **It fails by NAME**: the message
+  carries the battery filename, the Python symbol, the C path and the C symbol, so a red suite tells
+  each agent which file *they* own to fix. And note what it replaced, which is §10's lesson in this
+  setting: a suite-global "something was checked" assertion *"could never fail for the reason that
+  mattered: it stayed green while any ONE battery still declared a pin."*
+- **Agents PROPOSE names; they do not edit `names.txt`.** The name map is one file with no ownership
+  seam in it at all, and the merge hazard is not a conflict — it is silent deletion. `ApplyNames`
+  **sets** a plate comment rather than appending one, reading the file top to bottom with no dedup, so
+  a second `cmt` for an address destroys the first, and a wave that appends its findings to the map
+  can delete the prose an earlier wave wrote there ([`ghidra-pipeline.md`](ghidra-pipeline.md),
+  "Gotchas", has the
+  mechanism and the `uniq -d` check; it is live in this workspace — three addresses in
+  `projects/zynaps/names.txt` carry two `cmt` lines today). So a wave's naming output goes to a
+  **proposals file** the orchestrator merges by hand.
+  The shape Zynaps' high-score wave used, which is worth copying: open with *"NOTHING HERE IS IN
+  ../names.txt YET. Merge deliberately"*; section it into CORRECTIONS / NEW NAMES / COMMENT
+  REFINEMENTS; cite the target line numbers a correction replaces or **deletes**; and record the
+  addresses considered and deliberately **not** changed, so the merger knows they were looked at.
+  Two honest limits on that example: the file is an untracked working artifact under the gitignored
+  `out/`, so the convention is currently written nowhere a reader can chase — putting it in the
+  project's own "Adding a function" contract is the fix — and not every pass used one, the later
+  dead-code hunt having edited `names.txt` directly (`d833f14`).
+
+## 12. Running a wave of agents
 
 Reconstruction parallelises well — independent subsystems, one agent each, merged into one ledger —
 and the failures are all in the seams rather than in the code.
@@ -226,7 +328,7 @@ and the failures are all in the seams rather than in the code.
   intact, so a wave halted by a rate limit does not have to be re-scoped and re-explained. Respawn
   only when you actually want a clean context.
 
-## 12. Porting this to a new target
+## 13. Porting this to a new target
 
 What transfers unchanged: the anchors→outward method, the oracle-vs-candidate loop, core+glue
 modeling, the §5 techniques, the commit/review hygiene. What you swap per target: the **loader**

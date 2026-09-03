@@ -145,6 +145,16 @@ analysis can reach. Chase those by hand in the GUI, not by seeding from a linear
 - `run.sh` **re-imports and wipes names** — only for the first bootstrap; iterate with `reapply.sh`.
 - If `ApplyNames` reports fewer applied than expected, an `fn` address may be data or an
   unreached jump target; it disassembles+creates then, but verify it landed.
+- **`ApplyNames` REPLACES, so a second `cmt` for one address DELETES the first.** The file is read
+  strictly top to bottom and the `cmt` arm is `setPlateComment(addr, …)` — a set, with no dedup and
+  no address index — so for any address carrying two `cmt` lines the **last one in the file wins**
+  and the earlier prose is gone from the DB. `fn` and `var` are last-wins too, but a name overwrite
+  is visible where a plate-comment overwrite silently deletes text that exists nowhere else. Check
+  before and after every naming pass, and especially after merging a wave's proposals:
+
+  ```bash
+  awk '/^cmt /{print $2}' projects/<name>/names.txt | sort | uniq -d   # must print nothing
+  ```
 - One program per project keeps `-process <PROG.PRG>` unambiguous.
 - "Unable to resolve constructor" has two causes: a Line-A `$aXXX` word (above), or a
   68010/020/030 instruction — for the latter, re-bootstrap with the `MC68030` processor.

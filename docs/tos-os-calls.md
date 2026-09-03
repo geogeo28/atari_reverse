@@ -92,6 +92,59 @@ block's control array, so trace the `contrl` setup to name it precisely.
   `Pexec` — so it can show a title screen first. Recognize it by the filename string +
   a hand-rolled DRI relocation loop (`add.l base,(ptr)`, `+254` on byte `1`).
 
+## Which machine is this? The cookie jar
+
+An STE has hardware an ST does not (DMA sound, the LMC1992 mixer, a hardware scroll), and a program
+that wants it has to ask rather than assume. The answer is the **cookie jar**: `_p_cookies` at
+**`$5a0`** points at a list of `(id, value)` longword pairs terminated by a zero id, and the
+`'_MCH'` cookie (`0x5F4D4348`) carries the machine in the **high word** of its value — `0` plain ST,
+`1` STE, `2` Mega STE, `3` TT, `4` Falcon. Reading `$5a0` is **supervisor-only**, so the walk goes
+inside `Supexec` or after `Super`.
+
+The walk itself is a short loop; the **hardening around it is the part worth copying**, because the
+machines the test exists for are exactly the ones that break it (BLACK ICE's is
+`projects/blackice/audio/dma_sfx.c`):
+
+- **"No jar" means "not an STE", and that is the whole test.** The jar arrived with TOS 1.06, which
+  is the oldest ROM any STE shipped with (and EmuTOS always builds one), so a machine without a jar
+  cannot be an STE. That reasoning is what lets you skip a bus-error probe entirely.
+- **TOS 1.00–1.04 never defined `$5a0`**, so on precisely those machines it holds whatever the last
+  program left there. Following an odd or wild pointer is a bus error *during boot on a plain ST* —
+  a crash caused by the code whose job was to notice the machine has no DMA sound. Validate every
+  entry before dereferencing it: the pointer even, at or above `$600` (the system variables end
+  there), the whole entry inside `_phystop` (`$42e`), and the scan **capped** (64 entries) so an
+  unterminated or circular list — which is what junk at `$5a0` usually decodes to — cannot spin the
+  boot for ever.
+- A host-compiler note that comes with reading page zero at all: dereferencing a literal address is
+  an array subscript far outside any object GCC knows about, so `-Warray-bounds` has to be suppressed
+  **scoped to those two reads** rather than switched off for the file.
+
+*(Hatari 2.6.1 + EmuTOS and TOS 1.04; the "no jar ⇒ not an STE" arm has only been exercised on
+1.04, where `$5a0` happened to be readable — `projects/blackice/audio/REPORT.md`, "What is
+unverified".)*
+
+## `Setscreen` does three things, and two of them surprise people
+
+XBIOS `Setscreen(log, phys, rez)` is the call a game uses to point the shifter at its own buffers,
+and each of its side effects has been a bug in this workspace:
+
+- **It CLEARS the screen it is given** when handed a real resolution. Switch the mode *first* and
+  draw *after*: BLACK ICE blitted its HUD backdrop and then switched, and TOS wiped the strip on the
+  way — which the pixel surface reported as "the HUD's rules are not at lines 160 and 168", i.e. as
+  a geometry bug (`projects/blackice/atari/main.c`, `enter_game_video`).
+- **It sets `_v_bas_ad`**, which is what you want: TOS's own vertical blank then keeps writing *your*
+  base every frame instead of restoring the desktop's.
+- **SET the resolution; do not merely save it.** Saving the old rez and passing "keep" is the shape
+  of a bug that only appears when the program is launched from a medium-res desktop: 320×200
+  four-plane data read 640 pixels wide in two planes is nonsense, and it looks like a renderer fault.
+  The matching refusal is a **mono monitor** — the shifter has exactly one resolution there, so a
+  program that needs low-res has nothing to draw on and should say so in text rather than switch
+  anyway and leave the user at a black screen with no way back.
+
+Restore all three on the way out (`Setscreen(saved_log, saved_phys, saved_rez)`), and prove it —
+[`on-target-execution.md`](on-target-execution.md), "The observable surfaces", has the control-boot
+rule that makes such a check measure your program rather than the OS.
+
 ## Naming the wrappers
 
 Games wrap common calls in helpers: `move.w #sel,-(sp); trap #1; addq; rts`. Name these

@@ -13,6 +13,19 @@ differs in ways worth reading both for — its OS seam is the **include path** r
 kit's staged-file model on target instead of using real GEMDOS, and it stays in user mode. Read
 either README for the concrete wiring. This doc generalises the lessons.
 
+**It is a long file, so here is what is in it.** *Getting there:* the harness's blindness and
+[measuring it before you choose what to port](#measure-the-blindness-before-you-choose-what-to-reconstruct);
+[the seam pattern](#the-seam-pattern) and the two ways a seam leaks. *What goes wrong:* the
+[thirteen-class bug taxonomy](#bug-taxonomy-1-5-in-buggyboy-6-8-in-joust-9-12-in-wonder-boy-13-in-zynaps),
+each written from a build that hit it. *Going faster:* [sizing the gap](#sizing-the-gap-in-class-13--the-ways-a-cost-instrument-lies),
+[the asm twin](#the-asm-twin--the-originals-own-instructions-inside-the-port),
+[fitting the machine](#fitting-the-machine--measuring-a-memory-budget-instead-of-assuming-one).
+*Proving it:* [the six observable surfaces](#the-observable-surfaces), the
+[diagnostic toolkit](#diagnostic-toolkit), and
+[making two runs of two binaries comparable](#making-two-runs-of-two-binaries-comparable).
+*Changing it:* [verifying a fix without breaking verification](#verifying-an-on-target-fix-without-breaking-verification)
+and [adding behaviour on purpose](#adding-behaviour-on-purpose--the-deliberate-divergence).
+
 ## The core insight: the harness is blind to everything the oracle models as a no-op
 
 The oracle services hardware and OS the game touches with *fixed, image-only semantics* (see
@@ -347,7 +360,14 @@ reads correctly, in the one place the harness can never look: a loop over hardwa
 - **Fix:** don't write hardware registers through a walked pointer at all. Where TOS has a
   variable for the job, use it: one longword into `_colorptr` (`0x45a`) *is* a palette load, done by
   TOS's own VBL — which is all XBIOS `Setpalette` does, and it is legal from an interrupt where the
-  trap is not.
+  trap is not. Where there is no such variable, **hide the pointer from the optimiser**: passing it
+  through an empty `asm` constraint (`static void *opaque(void *p) { __asm__("" : "+a"(p)); return p; }`)
+  stops the fold. **`volatile` does NOT** — the fold is a choice of *addressing mode*, and GCC still
+  emits exactly the one store the source asked for.
+- **It is a rule, not an anecdote:** three independent sightings in this workspace — Joust's palette
+  loop, a ledger publish measured in `projects/blackice/spike/REPORT.md`, and BLACK ICE meeting it again on a
+  different palette copy (`projects/blackice/atari/README.md`, "Faults found on the way"). Assume any
+  compiler-visible copy between two fixed addresses can become this instruction.
 - **Working rule:** **run the smoke tests on more than one TOS ROM.** It costs one environment
   variable and it is what turned this from "works here" into a located bug. EmuTOS is forgiving in
   ways real TOS is not; the two disagreeing is a finding, and the two agreeing byte-for-byte (as the
@@ -1152,6 +1172,14 @@ Four escapes in this workspace are the evidence, and each one names a surface th
   emulator's *return code* still worked, which is why the blindness went unnoticed. → **exit status
   and the log**, and the lesson that a surface can be present and vacuous.
 
+**A "we left the machine as we found it" check must subtract a CONTROL boot.** Comparing the video
+registers, `_v_bas_ad`, `nvbls`, `conterm` and the `_vblqueue` slots before and after your program
+measures *the operating system* unless the same comparison is run over a boot with **no program at
+all**: EmuTOS by itself moves palette pen 7 from `0555` to `0ddd` and installs its own routine in
+`_vblqueue` slot 0 on the way to the desktop, so a teardown check without the control has a built-in
+red it will be tempted to whitelist (`projects/blackice/atari/README.md`, "The surfaces" — teardown).
+The same subtraction is what makes any before/after machine-state surface mean your change.
+
 The practical form of the rule for the writes a shim makes: **read every one of them back.** A write
 to RAM (TOS variables, KBDVBASE, a VBL queue) reads back exactly; a write to a write-only device (the
 IKBD) gets the strongest available proxy — the next reply arriving, the transmitter draining — and
@@ -1170,6 +1198,16 @@ hardware" into a localised answer. All are cheap and were decisive in the BuggyB
   inherent?" debate into "this is a regression, find it." "Original's screen isn't shifted" localised
   a rendering bug. TOS boot-time bus errors at `PC=$e000xx` are the ROM probing hardware — harmless,
   ignore them; a panic from *your* text segment is real.
+
+- **On EmuTOS, an `AUTO` folder on the GEMDOS drive hijacks `--auto`.** EmuTOS scans it before
+  `--auto` can run anything, so staging a game and a benchmark in one host directory means every
+  `--auto C:\BENCH.PRG` silently runs the *game* — which never terminates. Measured in BLACK ICE: the
+  bench produced no ledger while looking, from outside, exactly like a hang in the renderer
+  (`projects/blackice/atari/README.md`, "Faults found on the way"). Keep the emulator's GEMDOS drive
+  free of `AUTO` and stage the bootable-floppy layout in a directory of its own. **Note this contradicts the
+  floppy bullet below**, which says a GEMDOS drive gets "no desktop AUTO scan": that holds for the
+  TOS ROMs, and EmuTOS is the measured exception — so a staging layout that works under one ROM is
+  not evidence about the other, and the check to run is which binary actually started.
 
 - **Border/background-colour probe.** Write palette reg 0 (`$ffff8240`) to a distinct colour at
   points of interest; the screen colour tells you which branch ran with no debugger. Used to prove
@@ -1239,7 +1277,9 @@ hardware" into a localised answer. All are cheap and were decisive in the BuggyB
 - **Run the original as a DIFFERENTIAL, not just as a benchmark.** The RAM-dump comparison above is
   a single screen; the same debugger turns it into a frame-by-frame equality test against the
   shipped binary, which is the strongest on-target statement a reconstruction can make. Four
-  techniques make it work, and each was a dead end first:
+  techniques make it work, and each was a dead end first — and the invariants they serve are stated
+  as one procedure in [Making two runs of two binaries comparable](#making-two-runs-of-two-binaries-comparable)
+  below, which is worth reading first if you are building the comparison rather than repairing one:
   * **Discover the load base, never assume it.** Search a RAM dump for a signature taken from a
     *relocation-free* part of the `.PRG`; the hit's address minus its file offset is the base. It
     varies with the ROM and with what TOS put below the TPA (measured for one game: `0x12596` under
@@ -1374,6 +1414,107 @@ hardware" into a localised answer. All are cheap and were decisive in the BuggyB
   systematic answer to "the diff is green but a sound is wrong": it would have flagged the leg-start /
   checkpoint / collision jingles up front instead of via play-testing.
 
+## Making two runs of two binaries comparable
+
+The toolkit's "Run the original as a DIFFERENTIAL" bullet is the *mechanics*, written from Joust.
+This is the **contract underneath** — the six things that must hold before a comparison between the
+shipped binary and your `.PRG` means anything, because every one of them, violated, produces a
+comparison of two different moments that still prints a number. The worked examples are both modes
+inside a project's own driver rather than separate tools: Joust's `framediff` (with `framediff-fault`
+/ `-skew` / `-rearm`) and Zynaps' `game` / `gamefault`, in each project's
+`recreate/atari/smoke.py`. The payoff is worth the discipline: Zynaps' reaches **zero differing
+bytes** across five sampled frames.
+
+**1. Anchor each side on ITS OWN address — and be ready for one side that cannot have a PC anchor at
+all.** Discovering the load base per run is the toolkit's bullet; two hardenings are not.
+*Verify the signature hit by RELOCATION*, because during a floppy boot the program's bytes are also
+sitting in a disk buffer and a bare search finds two — only the loaded copy satisfies `longword ==
+file's longword + base`, which is an exact test rather than a heuristic, and two surviving matches
+must be a refusal (`tools/hatari_headless.py`, `locate_by_signature`). Where the needle cannot be cut
+at all, fall back to the installed-vector trick the floppy bullet above describes — and confirm *its*
+answer by relocation too, which that bullet does not say. On your own side, take the anchor from
+**the binary's own report of itself**, never from a build artifact: Joust's per-mode `.PRG`s persist
+while `build/joust.elf` is overwritten by every build, and a stale ELF once supplied an anchor four
+bytes out and the mode *went green on the wrong breakpoint*.
+
+And a PC anchor can simply lose a race. Zynaps' original runs `_start` in a few milliseconds of
+emulated time, so by the time a RAM poll has seen the program and computed its base the anchor is
+already behind it and the breakpoint never fires. The fix is to anchor the shipped side on a **state**
+rather than a PC — the last colour register holding the boot palette's last pen, a condition that
+fires whether it was armed before or after — with the pen value read off *the shipped binary's own
+staged image*, so nothing about the comparison is circular. A state is a window rather than an
+instant, so it needs its own validation: requiring all sixteen pens to equal the boot palette is what
+only the boot produces (the title handlers blank pen 0 and cycle pens 6–12), and it is how a first
+draft's mis-anchor into the front end announced itself — **22,948 of 32,000 framebuffer bytes apart**.
+
+**2. Define a frame as the loop head's own ARRIVAL COUNT, and write the equation on both sides.**
+Not wall clock, not vblanks: *one pass of your frame function here is one arrival at the original's
+loop head there*, so "frame 60" means the same thing to your counter and to a Hatari breakpoint's hit
+count. Sample N is the state AFTER N passes, so the breakpoint is armed for hit N+1 (which is where
+the toolkit's rejected-`:1` gotcha bites). The sample list must have exactly one home across the
+language boundary or the two sides compare different frames under the same name:
+Zynaps parses `ZY_FRAME_SAMPLES` out of its own `.c`, Joust reads its list out of `build.sh`. And
+**one breakpoint per (PC, hit count)** — Joust's memory-dump set and capture set were both anchored at
+frame 240, disturbed each other's counters, and the captures fired at shallower frames than the dumps
+beside them, so the pictures and the framebuffers came from different moments: wrong quietly rather
+than loudly, which is why that file now has a guard that refuses the collision.
+
+**3. Inject the input at the WAIT, on both sides, and release it every frame.** Poke the byte the
+interrupt handler would have written, at the poll both programs make — Zynaps writes the joystick
+state byte at the original's two fire polls and at its own phase gate, then **releases it at every
+loop-head arrival on both sides**, so every compared frame sees a neutral stick whatever the driver is
+doing with the button. That release is what makes the input *identical* rather than merely similar.
+Two rules come with it. **Never poke on a wall clock**: a first draft that did produced a framebuffer
+differing by 12 bytes at frame 30 in one run and 24 in the next, which is a non-deterministic
+comparison and worth nothing. And **say what the poke skips** — this is
+[taxonomy class 12](#12-a-gate-crossed-by-a-poke-is-a-gate-whose-input-path-never-ran) by construction
+on *both* sides, and here it is not a choice: a key bound to Hatari's keyboard-as-joystick emulation
+is swallowed headless, so the stick cannot be pressed from outside at all and the real path (a 6301
+report decoded by the ACIA handler) runs during the comparison without being what opens the gate.
+Where the input is a TOS console read rather than a joystick, use the toolkit's *"Inject a keystroke
+ON the trap, not after it"* form instead.
+
+**4. Separate the phases, pin ONCE at the boundary, then let the state evolve.** The two binaries
+reach the frame loop through different front ends of different lengths, so anything compared across
+that boundary is sheared by construction. Run both to their first arrival at the loop head, apply the
+pins *there*, and stop: Zynaps seeds the LFSR and zeroes the twenty-record entity table at that one
+arrival, with the note that matters most — **neither pin is applied per frame, because the state has
+to evolve identically from the loop head and re-applying either every frame would hide exactly the
+divergence the comparison is for.** Defend a pin rather than assuming it: zeroing that table is not
+fabrication because an all-zero table is what a just-booted machine holds and is a superset of the
+clearing the game's own section start does. Police the far end too — Zynaps refuses any sample at or
+past the frame its first life ended, because after it the two random streams have parted, and that
+frame is **emergent** (it moved from 184 to 176 when the cores' `abcd` carry threading landed), so it
+is measured per build rather than written down.
+
+**5. The control is a fault you INJECT, and its classification must be TOTAL.** Mis-anchoring by one
+frame and requiring failure is the toolkit's; the shape that scales is a *fault build* per surface —
+Joust ships three (a corrupted pen, a mis-aligned screen, a per-vblank palette re-arm) and Zynaps one
+(`gamefault`, one step of the section chain dropped and nothing else, measured at 748 of 32,000
+framebuffer bytes differing at frame 1 with pens and exit status still green). Two disciplines make
+them real. **Each fault names EVERY check** as one it must trip or one it must leave alone, because a
+lookup defaulting to "pass" would leave a sixth surface added later silently unasserted and would read
+a typo'd check name as a pass; and the verdicts stay **per surface, never OR'd**, or a fault build
+passes on the boot-time failure it caused while the surface it exists to exercise is blind. Then
+**record the controls that did not work**: Zynaps' first attempt bound the raster split's vector to
+the plain in-game timer and left every surface green, because the pens are sampled at the loop head
+and whatever the split did had been undone by the end of the frame. *A control that cannot go red says
+nothing about the checks it exists for.*
+
+**6. Know what the comparison covers, and name what it cannot.** It covers the framebuffer, the
+program's own records (Zynaps compares twenty entity records beside the 32,000 screen bytes) and the
+hardware pens, **at the sampled frames**. It does not cover the ORDER of anything between two anchors:
+that is the `timelines` row of ["The observable surfaces"](#the-observable-surfaces), and a snapshot
+cannot see a wrong route to a right state — which is precisely what Joust's per-vblank palette re-arm
+fault exists to demonstrate. Two riders. **Rebase pointer fields, do not skip them**: a record holding
+absolute addresses differs between the two loads for a reason that is not a bug, and converting the
+shipped side's pointers into your address space is *stricter* than excluding them, because a sprite
+pointing at the wrong bank is still caught. And **a timeline arm is not always available, which is a
+result rather than a gap to paper over**: Zynaps tried one over its game window and withdrew it — the
+window reaches past the boot, the section-start effect and the in-game tune fall at different absolute
+times on the two sides, and it went red on a fault build whose fault touches no sound at all. *A check
+that moves for a reason it cannot name is not one to ship.*
+
 ## Verifying an on-target fix without breaking verification
 
 Every fix above touches PRG-only code or a host/target-conditional, so the invariant is: **the
@@ -1389,6 +1530,105 @@ differential suite must stay green and byte-identical.** The workflow:
 
 If a change makes the differential suite diverge, it wasn't a pure on-target fix — it altered image
 output, and you've changed verified behaviour. Back up and re-scope.
+
+## Adding behaviour ON PURPOSE — the deliberate divergence
+
+The section above is about a change that must not alter behaviour. The opposite case is a feature the
+original never had — a trainer, a debug overlay, a level select — and it looks like an attack on the
+whole project: every byte of the reconstruction is verified equal to the original's, and you are
+about to make it unequal deliberately. The pattern that survives it is Zynaps' trainer (`3df8ebe`),
+and the first thing to look at is its diffstat: eight files, **none of them under `src/`, `include/`
+or `test/`**. The divergence is entirely in the shim, so not one verified core changed and the
+differential suite has nothing to say about it — which is exactly the property you are buying.
+
+**Poke only bytes the original already reads, at the original's own ceilings, found in the original's
+own tables.** A feature written as "and then the ship stops dying" is new code in the game; written
+as a store to a byte the game already consults, it is the game's own machinery running with a
+different input. Zynaps' three keys write a dormant invulnerability flag (`A_ship_invulnerable`
+`0x19912`, `include/weapon.h` — read in three places and written by nothing, which is how the secrets
+hunt catalogued it), the lives byte (`A_lives` `0x1991a`, `include/hud.h`) plus the panel's own
+repaint-request bit, and the power-up arms' own commit stores, each clamped to the constant the game
+clamps to (`WEAPON_POWER_LEVEL_MAX`, `SHIELD_LEVEL_MAX`, `SHIP_SPEED_LEVEL_MAX`). The trainer
+(`projects/zynaps/recreate/atari/zynaps_cheats.c`) states the rule in its own header — *"every byte
+it writes is a byte the game already reads, at an address a verified core names in one of
+`../include`'s headers"* — and the discipline shows in what it refuses
+to write: three launch-stock counters were left alone because **nothing in the image reads one**, so
+poking them would have been a change with no mechanism behind it.
+
+**Inert by default, and every judged mode asserts the inertness.** The trainer ships in the ordinary
+build and arms only on a key combination, so every *other* mode's run is evidence: `smoke.py`'s
+`check_the_trainer_stayed_dormant` requires five counters (armed, jingles, and one per key) to read
+zero in every judged mode, and cross-checks that against the binary. That is what keeps a
+deliberate divergence from quietly becoming an undeclared one.
+
+**Say where the inertness assertion is VACUOUS.** Not every mode can run the watcher: Zynaps' title
+builds compile out the arming windows *and* the store that installs the program's own keyboard
+vector, so in those modes the five zeros cannot be anything else. Its docstring and its README say so
+in the same words — there the check is *"a regression net, not a dormancy proof"* — which is the
+[observable-surfaces](#the-observable-surfaces) rule applied to a check rather than to a run: a
+surface can be present and vacuous, and the honest move is to name which modes measure and which
+merely fail to contradict.
+
+**A positive control, or the inertness assertions prove nothing.** Five counters that read zero
+because the feature is broken look exactly like five that read zero because it is dormant. One mode
+(`cheats`) therefore drives the whole feature end to end and judges it, and the ordering matters as
+much as the coverage:
+
+1. an **arming negative** first — two of the three keys, held past the arming window, must arm
+   nothing;
+2. the positive — all three keys, through the emulator's real keyboard (`hatari-event keydown`, so
+   the path is the 6301, the ACIA, the interrupt and the program's own handler; nothing is poked into
+   position);
+3. a **window** control — the arming window's own flag, read live off the machine, must be open at
+   the title and shut once the frame loop is running. (Zynaps reads the flag rather than re-driving
+   the combo in-game; the stronger control, actually pressing the keys there, is not what was
+   measured, and the difference is worth keeping straight when copying this.)
+4. the poked bytes **read back off the machine** at the addresses scraped from the headers;
+5. and the feature as a **behaviour**, not as a byte: with invulnerability on, survive past a frame
+   number a neutral-stick life never reaches (400, against a life that ends around 176), then turn it
+   off and require the same ship to die. A byte that reads back correctly and changes nothing is the
+   failure this last step exists for.
+
+**Distinguish "compiled out" from "dormant" at the symbol level.** A purist build that links an empty
+body prints the same five zeros as a dormant one. Zynaps separates them by asking the ELF whether the
+trainer's own symbol is present at all (`TRAINER_ELF_SYMBOL`), so the report says which of the two
+runs it is looking at rather than assuming.
+
+**Compile it out with a link-time arm, never a preprocessor switch inside shared code.** The
+empty-body arm lives in the trainer's own translation unit, behind its own `#else`, and it zeroes its
+whole report struct so a member added on one side and forgotten on the other cannot reach the record
+as stack garbage. The first draft did it the other way, and that is the second bullet of
+[Two ways a seam leaks the harness into the shipped program](#two-ways-a-seam-leaks-the-harness-into-the-shipped-program)
+above — an `#ifdef` in a header every verified core includes compiles a verified core differently
+between builds, and the containment gate that greps `src/` and `include/` cannot see a shim header
+because a shim header is neither.
+
+**Resolve key POSITIONS from the game's own tables.** An ST keyboard sends positions, not letters, so
+a combo spelt as scancodes is a combo that moves when the machine does. Spell it as **letters** and
+resolve them at boot by reverse-lookup through a table the game already carries — Zynaps walks its
+high-score name-entry map (`A_scancode_to_char_table`, `include/highscore.h`) for `Z`, `Y` and `N`,
+one statement after the image is staged and long before the keyboard vector is its own. Two things
+make this worth copying rather than admiring. The measured residual is stated instead of hidden: the
+shipped table is a pure QWERTY map, so each letter also accepts its AZERTY position, and the stated
+cost is that `W`+`Y`+`N` arms the trainer on a QWERTY keyboard too — acceptable for a cheat combo,
+and written down. And the check reads the same table **independently** in the harness and compares
+the two answers, which is the one part of the trainer's judging that measures something in every
+mode, vacuous ones included.
+
+**Reuse the dead assets the census already found.** [`methodology.md`](methodology.md)'s dead-code
+hunt produces a catalogue of content nothing in the program can reach; a deliberate divergence is
+the one place that catalogue can be *spent*. Zynaps' trainer plays four of the nine sound streams the
+hunt proved unreachable — through the game's own verified `sound_start`, at the numbers the census
+assigned them — which makes the feedback archaeology rather than decoration: they are the only sounds
+in the program a player of the original could never have heard. **Judge it on the right surface**:
+the PSG trace is not the jingle's, because the title tune is driving all three voices while the
+fanfare starts and no register write in that window belongs to the jingle alone. The check compares
+the driver's own voice restart pointer against an independent port of the game's stream lookup — a
+state the feature owns, rather than a trace it shares.
+
+Finally, **measure what the divergence costs the frame**, because a feature that is inert by default
+still ticks: Zynaps' is about 800 cycles a frame, 0.2%, moving its pacing from 2.52 to 2.53–2.54
+vblanks a frame against a 2.64 ceiling — a number in the report, not an assurance.
 
 ## Scaffolding hygiene
 

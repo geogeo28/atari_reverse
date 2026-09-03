@@ -154,6 +154,8 @@ python3 tools/st_extract.py projects/<name>/bin/GAME.ST              # list the 
 python3 tools/st_extract.py projects/<name>/bin/GAME.ST -o extracted # extract it
 ```
 
+(Writing one is the same format in reverse — "Building a bootable `.ST`" at the end of this file.)
+
 The lister prints the geometry it derived plus the first 4 bytes of every file, which is
 usually enough to classify it (`601a` = a GEMDOS executable, see above; anything else = data
 or a packed blob). It exits nonzero and prints a `WARNING` line per suspicious cluster chain
@@ -513,5 +515,59 @@ Verify a build headlessly: run it under Hatari with a GEMDOS drive, have the shi
 framebuffer / result file to `C:`, read it back and diff against the host reconstruction
 (`render/atari/run_golden.py`, `game_smoke.py`). See [`tos-os-calls.md`](tos-os-calls.md)
 for the trap selectors and startup sequence to mirror.
+
+## Building a bootable `.ST` (reverse direction: writing the volume back)
+
+A GEMDOS drive is a host directory an emulator pretends is a disk; a real Atari needs the
+filesystem. `tools/st_build.py` is the WRITE half of `st_extract.py` — stdlib only, 720 KB
+double-sided FAT12, game-agnostic (what goes on the disk is the caller's, the filesystem is the
+tool's), and pinned by `tools/test_st_floppy.py`, which builds an image and reads it back through
+`st_extract.py`.
+
+```bash
+python3 tools/st_build.py OUT.ST --label NAME --auto build/GAME.PRG:GAME.PRG data.dat:DATA.DAT
+```
+
+Three properties it guarantees, each worth knowing whatever writes your image:
+
+- **A boot sector TOS MOUNTS rather than EXECUTES.** TOS sums sector 0's 256 words as big-endian
+  unsigned and **executes it from offset 0 when the sum is `$1234`**; anything else and the volume is
+  merely mounted — which is what an AUTO-folder disk wants, since TOS's own loader runs the program
+  and the boot sector's only remaining job is carrying the BPB. A DOS formatter knows nothing about
+  that sum, so it can only ever produce a mountable disk by accident: 65,535 times in 65,536.
+  `st_build.py` picks a serial that makes the sum come out wrong **on purpose** and then asserts it
+  (`refuse_an_executable_boot_sector`).
+- **A serial that differs per file list.** TOS detects a disk change partly from the boot sector's
+  three serial bytes, so two disks a person swaps in and out of one drive must not carry the same
+  three, or the second can be read through the first's cached directory. Deriving the serial from a
+  digest of the contents satisfies both requirements at once (and the ~1-in-65,536 file list whose
+  serial lands on the executable sum is simply rehashed).
+- **A deterministic image.** The same file list builds the same bytes, so the sha256 the builder
+  prints is comparable against the one read back off the physical floppy — **that diff is the only
+  host-side check there is that the write took.**
+
+A program that must start on its own goes in **`\AUTO\`** (`--auto`), not the root: TOS runs every
+`\AUTO\*.PRG` on the boot drive before it puts up the desktop, and a disk that has to be
+double-clicked needs a desktop, a mouse and a person. The geometry is 720 KB double-sided only — the
+10- and 11-sector extended formats hold more, and are the formats a drive that is not the one they
+were written on can fail to read. Its header keeps the BPB fields honestly split, and the split
+itself is the transferable part:
+
+- **Measured** off two real Atari volumes — `spc=2 res=1 nfats=2 ndirs=112 spf=5`, carried by both.
+- **Standard** for 720 KB double-sided, and evidenced by *neither* of them, because both are
+  single-sided: `media=0xF9`, 9 sectors a track, **2 heads**. (What they actually carry is
+  `media=0x00 spt=10 heads=1` and `media=0xF8 spt=9 heads=1` — which is why the distinction is a
+  measurement and not a hedge.)
+- **Over-provisioned but legal**: `spf=5`, where the 711 clusters need only three sectors of FAT.
+  Five is what the measured volumes and TOS's own formatter write; the spare two sectors per copy
+  cost 2 KB and buy compatibility with anything that assumes the familiar number.
+
+Keep that split rather than flattening it into "the BPB says" — it is the difference between a field
+you can defend and one you copied. The two volumes are Wonder Boy's `wb_disk2.st` and RoboCop disk 1,
+both **local dumps under gitignored paths**, so a fresh clone cannot chase them; `tools/st_build.py`'s
+header is where the numbers and their provenance are recorded.
+
+Running the image is [`on-target-execution.md`](on-target-execution.md)'s business — its "Booting
+from a FLOPPY image instead of a GEMDOS drive" bullet lists the three things that bite.
 
 → Next: [`m68k-disassembly.md`](m68k-disassembly.md) or [`ghidra-pipeline.md`](ghidra-pipeline.md).

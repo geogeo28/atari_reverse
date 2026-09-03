@@ -22,6 +22,50 @@ Two registers: write the register number to `$ffff8800`, then the value to `$fff
 Port A/B on reg 14/15 is also how the machine reads joystick fire / drive select, so the
 sound chip and input can share code.
 
+## The STE's mixer, and the one value that lets the YM through
+
+On an STE both the DMA sample voice and the YM leave the machine through a **National LMC1992**
+volume/tone/mixer chip, driven over the **MicroWire** bus: write the latch mask to `$ffff8924`, the
+word to `$ffff8922`, then spin until the mask register reads back as itself (the chip rotates it as
+it shifts out the frame) — bounded, because a machine whose MicroWire never completes must not hang
+the boot. The word is 11 bits under a `$07ff` mask: **2 device-address bits** (`%10` for the
+LMC1992), **3 command bits**, **6 data bits**. Commands are `0` mixer, `1` bass, `2` treble, `3`
+master, `4` right, `5` left; bass and treble run 0–12 with **6** flat, master 0–**40**, each side
+0–**20**.
+
+**The mixer field is where this bites.** The widely repeated reading — that the two bits mean
+`00 = −12 dB, 01 = PSG only, 10 = DMA only, 11 = PSG + DMA` — does not survive measurement, and
+getting the field wrong is silent in every register-level way: the writes look right, the trace is
+clean, the samples play, and **the music is simply gone**. BLACK ICE built its driver four times
+and recorded each run (`projects/blackice/audio/REPORT.md`, "The defect this found, which no register check could have"):
+
+| mixer value | all-silent audio frames, of 700 |
+|---|---|
+| 0 | 597 |
+| **1** | **294** |
+| 2 | 597 |
+| 3 | 597 |
+
+Only **1** lets the YM through, and EmuTOS's own boot writes 1 here — a second, independently written
+piece of software reading the field the same way. Both readings are still emulation-side, so what
+this establishes is that the folklore encoding is wrong, **not** what the silicon does. **TOS leaves
+the LMC1992 wherever the last program left it**, so a game that does not route it can ship silent on
+a machine that works. And note which surface caught it: the *audio recording*, not the register
+trace — this is the class of bug that needs sound as its surface.
+
+*(Hatari 2.6.1 + EmuTOS; `projects/blackice/audio/REPORT.md`'s "What is unverified" names the command
+encoding, the mixer value and the completion poll as unmeasured on real silicon.)*
+
+**The DMA voice itself** — its control, start, end and mode registers, and the odd-address rule they
+are laid out under — is [`hardware-map.md`](hardware-map.md)'s, under "The STE sound block". Two
+things about *driving* it belong here: the mode register's low two bits are the rate (`00` 6258 Hz,
+`01` 12517, `10` 25033, `11` 50066), and the frame registers are set with the voice **stopped**.
+
+**One tempo caveat that is not about the chip.** A driver stepped from the vertical blank is
+rate-agnostic, but its *tempo* is not: a score written against 50 Hz plays **20% fast** on a 60 Hz
+machine. If the game must sound the same on both, the tempo needs a rate divisor — a game decision,
+not a driver one (`projects/blackice/audio/REPORT.md`, "What is unverified" → "A 60 Hz machine").
+
 ## Finding & reading the driver
 
 - The driver is usually **installed as a VBL handler** (see `hardware-map.md`: `_vblqueue`

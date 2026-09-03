@@ -561,8 +561,10 @@ with no comment naming the instruction that produced it.
 ## Machine detection
 
 ST-family games often branch on machine type via `$ffff8007` (STE/MSTE bus) or the
-`_cookie` jar. BuggyBoy's `START.PRG` printed `ST/STE/Mega STE/TT/Falcon`, MHz, and TOS
-version — such strings pinpoint the detection routine.
+cookie jar (`_p_cookies` at `$5a0`, the `'_MCH'` id — [`tos-os-calls.md`](tos-os-calls.md), "Which
+machine is this?", which also has the walk to write when *you* need the answer). BuggyBoy's
+`START.PRG` printed `ST/STE/Mega STE/TT/Falcon`, MHz, and TOS version — such strings pinpoint the
+detection routine.
 
 → Next: [`ghidra-pipeline.md`](ghidra-pipeline.md) (recover real functions),
 [`tos-os-calls.md`](tos-os-calls.md) (what the traps mean).

@@ -35,7 +35,9 @@ and variables until the program reads like source.
 - **Name map format** (`names.txt`), one directive per line:
   - `fn 0x<addr> <name>` — name/define a function
   - `var 0x<addr> <name>` — label a data address (renames Ghidra `DAT_*`)
-  - `cmt 0x<addr> <text>` — plate comment
+  - `cmt 0x<addr> <text>` — plate comment. **One per address**: `ApplyNames` sets rather than
+    appends, so a second `cmt` for an address silently deletes the first (`docs/ghidra-pipeline.md`,
+    "Gotchas").
   - `param 0x<addr> <ordinal> <name>` — rename a recovered function parameter (safe; no
     storage/convention change). For register-glue functions, put the register→role map in a `cmt`.
   - `proto 0x<addr> <name@loc> …` — commit a signature with explicit storage when Ghidra
@@ -140,7 +142,7 @@ applies, in the *same* commit:
 - **`names.txt`** — the name map is the source of truth; new/renamed functions or globals land here.
 - **`recreate/STATUS.md`** — per-function progress (verified count + row) when a function is ported.
   Its **Suite line is re-summed at every merge**, not carried: each wave reports its own count, and
-  a headline nobody recomputes stays at whichever wave last wrote it (`docs/agent-playbook.md` §11).
+  a headline nobody recomputes stays at whichever wave last wrote it (`docs/agent-playbook.md` §12).
   Better than the habit is the surface — `test/test_status.py` re-derives each section's row count
   from the ledger and reddens on a mismatch; extend it rather than re-reading the number by hand.
 - **`docs/<area>.md`** — when a mechanism, binary format, or gotcha is discovered.
@@ -157,7 +159,7 @@ applies, in the *same* commit:
   other projects (`projects/joust/`, `tools/`); `-A` sweeps their changes into your commit.
   Verify `git diff --cached --stat` before committing — **and read `git status --short`'s `??`
   lines**: a path-scoped add leaves an agent's *new* test file untracked, and the commit then
-  claims a test it does not contain (`docs/agent-playbook.md` §11).
+  claims a test it does not contain (`docs/agent-playbook.md` §12).
 - **A `git merge --ff-only` is its own command, beginning `cd` to the repo root** — never chained
   after a `cd` into an agent worktree under `.claude/worktrees/`. A chain that starts in the worktree
   merges *there*, reports "Already up to date", and the push that follows ships the OLD ref. Print

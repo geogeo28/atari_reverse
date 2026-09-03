@@ -18,12 +18,40 @@ lets you extract a game's art to PNG. Reference tool: `tools/extract_graphics.py
 `extract_graphics.py` decodes a full-screen block as 4 contiguous planes → 320×200 indices
 → PNG. Feed it a palette (below) or it renders greyscale.
 
+### The shared pixel model — `tools/st_pixels.py`
+
+The layouts above vary along exactly two axes, and `tools/st_pixels.py` is the one place this
+workspace spells either of them out — import it from a project's extractor rather than re-deriving
+them (Zynaps' `projects/zynaps/tools/dat2png.py` and Wonder Boy's
+`projects/wonderboy/tools/extract_gfx.py` both do).
+
+- **Granularity.** A group of interleaved planes is either **word** granular (`unit_bits=16`: four
+  big-endian plane words, 16 pixels — screens, tiles, most bitmaps) or **byte** granular
+  (`unit_bits=8`: four consecutive plane bytes, 8 pixels — fonts, digit glyphs, other 8-px-wide
+  cells). Within a group the **leftmost pixel is the most significant bit**.
+- **Masked or not.** A sprite puts one extra **mask** field *ahead* of the four plane fields of
+  every group, so a group is five fields wide, and a **set** mask bit means transparent (the drawing
+  code ANDs the mask, then ORs the data — "Masked sprites" below). `decode_planar` returns
+  `TRANSPARENT` for those pixels, which is `-1` **on purpose and never a palette subscript**: a
+  masked pixel has no colour index at all, and `to_rgb_image` refuses a decode containing one rather
+  than let `palette[-1]` quietly paint the last entry.
+
+Two of its refusals are worth knowing about, because both failures are otherwise invisible in the
+PNG: a slice too short for the requested `width × rows` raises instead of decoding the missing bytes
+as zeros (a blank, entirely plausible-looking bitmap), and `split_rows` refuses a tall decode that
+does not divide into equal frames. Colour lives in the same module — `st_word_to_rgb` is the
+`value * 255 // 7` scaling below, and `is_st_colour_word` is the in-range test a palette scan is
+built on.
+
 ## Palettes
 
 - **ST**: 16 words, each `0x0RGB`, **3 bits/channel** (0–7). `r = (w>>8)&7` etc.,
   scale ×255/7.
 - **STE**: 4 bits/channel but bit-rotated — the LSB sits in bit 3 of each nibble:
-  intensity = `((v&7)<<1) | ((v>>3)&1)`. If ST decoding looks too dark/off, try STE.
+  intensity = `((v&7)<<1) | ((v>>3)&1)`. If ST decoding looks too dark/off, try STE. Going the other
+  way — authoring a palette for a real machine — the encode is `((i>>1)&7) | ((i&1)<<3)`, and the
+  useful predicate beside it is "does this word use bit 3 in any channel?", i.e. whether the colour
+  is reproducible on a plain ST at all (`projects/blackice/pipeline/stepix/palette.py`).
 - Find palettes in the **code** (`.PRG`), not the graphics file: scan for 16 consecutive
   words with the top nibble zero and channel nibbles in range. Confirm by finding the
   `Setpalette` call and reading the pointer it passes (`a0`). Games keep a **table** of
