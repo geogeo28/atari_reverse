@@ -246,6 +246,15 @@ static inline void hw_and8(uint32_t addr, uint32_t mask) {
  * always did, and only the one site that reads $fffffc02 keeps the call. */
 void zy_cheat_note_ikbd_byte(uint8_t byte);
 
+/* THE CONTROL-KEY DOOR, beside the trainer's and here for the same reasons: `zynaps_main.c`'s
+ * `zy_note_control_key` watches the same popped byte for ESC (back to the menu) and F10 (quit to
+ * TOS), two deliberate shim-only divergences the 1988 game reads nowhere. DECLARED not included and
+ * UNCONDITIONAL for the trainer door's exact argument — a `#ifdef` here would make ../src/irq.c's
+ * verified `ikbd_acia_service_one_byte` compile differently between builds — and it folds away at
+ * every caller but the one that reads $fffffc02, since every other address is a compile-time
+ * constant. `zynaps_main.c` links the real body in a game build and an empty one in a title build. */
+void zy_note_control_key(uint8_t byte);
+
 /* The READ half. Two callers: `ikbd_send_cmd` (../src/input.c) spinning on the 6850's
  * transmitter-empty bit, and zynaps_main.c reading TOS's MFP registers back at the hand-back. Off
  * target the kit answers a byte the case DECLARED, so the spin leaves on its first poll; here it
@@ -258,8 +267,10 @@ static inline uint8_t hw_read8(uint32_t addr) {
     uint32_t bus_addr = HW_BUS(addr);
     uint8_t value = *(volatile uint8_t *)bus_addr;
 
-    if (bus_addr == HW_BUS(OS_HW_ACIA_DATA))
+    if (bus_addr == HW_BUS(OS_HW_ACIA_DATA)) {
         zy_cheat_note_ikbd_byte(value);
+        zy_note_control_key(value);
+    }
     return value;
 }
 

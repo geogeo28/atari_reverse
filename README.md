@@ -578,12 +578,16 @@ across 699 instructions — so its three twins are built and verified and **not 
 the game keeps the C; wave E measured what a *busy* frame costs and bought ~36,000 with 86. An
 inclusive row is not a prize, and a mean is not a distribution.
 
-**One thing in the build is deliberately not the 1988 program.** Typing `Z`, `Y`, `N` in order at the
-title arms a trainer — `F1` invulnerability, `F2` lives, `F3` maxed power-ups — and all of it lives in the
-shim (`atari/zynaps_cheats.c` and one tap in the shim's `hw_read8`). No core moved, `make test` is
-unchanged, and the frame differential is still byte-identical, because the trainer is inert until a
-player arms it: every judged mode asserts that it stayed dormant, and `smoke.py cheats` is the
-positive control that arms it through Hatari's own keyboard.
+**A few things in the build are deliberately not the 1988 program, and all of them live in the shim.**
+Typing `Z`, `Y`, `N` in order at the title arms a trainer — `F1` invulnerability, `F2` lives, `F3`
+maxed power-ups (`atari/zynaps_cheats.c`). And two control keys the original reads nowhere give a
+player what a program that never returns from supervisor cannot: **ESC** sends a game back to the
+attract screen (re-using the game's own all-lives-lost path) and **F10** hands the machine back to
+TOS (re-using the shim's teardown) — `atari/zynaps_main.c`, plus one more tap in the shim's
+`hw_read8` beside the trainer's. No core moved, `make test` is unchanged, and the frame differential
+is still byte-identical, because every one is inert in the judged runs: each mode asserts the trainer
+AND the two control keys stayed dormant, and `smoke.py cheats` / `smoke.py controls` are the positive
+controls that drive them through Hatari's own keyboard.
 
 **And a finished reconstruction is a good instrument for asking what a game hides.**
 [`projects/zynaps/README.md`](projects/zynaps/README.md)'s *Secrets and dead code* is a hunt for

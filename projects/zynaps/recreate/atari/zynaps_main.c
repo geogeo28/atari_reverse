@@ -532,6 +532,12 @@ enum {
     REC_CHEAT_SCANCODES,
     REC_CHEAT_SCANCODES_END = REC_CHEAT_SCANCODES + CHEAT_COMBO_KEYS - 1,
 
+    /* ---- THE TWO ON-TARGET CONTROL KEYS, and these fields make "they stayed dormant" a
+     * MEASUREMENT the same way the trainer's do: `check_the_controls_stayed_dormant` asserts both
+     * are 0 in every judged mode, and `smoke.py controls` is the positive control that they are
+     * not. Written only by the game path (`play_one_game`), so 0 in a title build. */
+    REC_ESC_TO_MENU, REC_F10_TO_TOS,
+
     REC_TAIL,
     REC_FIELD_COUNT
 };
@@ -760,7 +766,8 @@ enum zy_phase_reached {
     PHASE_SECTION_START,         /* 0x10814..0x10f4e, the section chain */
     PHASE_PLAYING,               /* inside the frame loop @ 0x10f4e */
     PHASE_BUDGET_SPENT,          /* the frame budget ran out — the ordinary headless ending */
-    PHASE_HALTED                 /* an interrupt named a handler the dispatch table does not know */
+    PHASE_HALTED,                /* an interrupt named a handler the dispatch table does not know */
+    PHASE_QUIT_TO_TOS            /* F10 left the play loop for the hand-back — see zy_note_control_key */
 };
 
 static volatile uint32_t g_phase;
@@ -1006,11 +1013,85 @@ enum section_step {
     SECTION_STEP_RESTART        /* 0x10b6e — the per-life reset, assets untouched */
 };
 
+/* ------------------------------------------------------------------------------------------------
+ * TWO ON-TARGET CONTROL KEYS — deliberate, shim-only divergences from the 1988 binary.
+ *
+ * The original has no way back to the front end but dying and no way out to the desktop at all: it
+ * takes supervisor at 0x10000 and never returns. A person playing the reconstruction wants both, so
+ * this build adds two keys the game itself reads NOWHERE — the census in out/prg_dis.txt finds no
+ * `cmpi.b #$01` or `#$44` in the whole image, and `key_scancode` is only ever tested against $39
+ * (SPACE/pause) and $02/$03 (the attract screen's one/two-player keys):
+ *
+ *   ESC  (0x01)  while a game is running -> back to the attract screen / front end.
+ *   F10  (0x44)  from anywhere           -> hand the machine back and terminate to TOS.
+ *
+ * NEITHER TOUCHES A VERIFIED CORE. ESC re-uses the game's OWN all-lives-lost path — the frame loop
+ * returning FRAME_EXIT_TITLE (0x10500 -> boot_front_end_prologue -> the attract loop) — so the
+ * front-end prologue resets the globals and a fresh game starts exactly as it does after a real game
+ * over. F10 re-uses the shim TEARDOWN the headless builds already run at the frame-budget ending:
+ * `run_the_whole_program` returns, and `zynaps_main`'s tail restores the vectors, silences the PSG,
+ * puts the display back and `Pterm`s. This is that path's first INTERACTIVE use.
+ *
+ * THE DOOR IS THE ACIA READ, exactly like the trainer's. `shim_include/hw.h`'s `hw_read8` hands
+ * every byte popped from the 6850 data port to `zy_note_control_key` beside `zy_cheat_note_ikbd_byte`
+ * — so this runs in the KEYBOARD INTERRUPT, where the only safe act is to SET a flag. The play loop
+ * (main line) reads the flag after the current `frame_loop_once` has FINISHED and acts on it there;
+ * a `Pterm` or an unwind from inside the interrupt would tear down the machine under a frame the
+ * cores were still drawing. The counters are ticked on the main line too, for the same reason the
+ * trainer's are: `smoke.py`'s judged modes never press either key, so both stay 0 and that is a
+ * MEASUREMENT (`check_the_controls_stayed_dormant`), while `smoke.py controls` is the positive one.
+ *
+ * FEASIBILITY, HONESTLY: ESC is clean everywhere it is meant to fire (in a level) and F10 is clean
+ * IN A LEVEL. F10 pressed at the pure attract screen only takes effect once a game has started,
+ * because the attract wait is `attract_wait_for_start` — a verified core whose on-target `sched_wait8`
+ * never yields to the shim and which returns only on the game's own start keys. There is no main-line
+ * shim checkpoint at the attract screen to honour the flag, and honouring it from the interrupt is
+ * the forbidden unwind. So the flag is latched and acted on at the next main-line boundary; see
+ * README.md's "In-game controls".
+ * --------------------------------------------------------------------------------------------- */
+#define CONTROL_KEY_QUIT_TO_MENU 0x01u   /* ESC */
+#define CONTROL_KEY_QUIT_TO_TOS  0x44u   /* F10 */
+
+/* Set in the ACIA interrupt, read and cleared on the main line by `play_one_game`. */
+static volatile uint8_t g_quit_to_menu;
+static volatile uint8_t g_quit_to_tos;
+/* ...and what actually FIRED, ticked on the main line — 0 in every judged mode. */
+static uint32_t g_esc_to_menu;
+static uint32_t g_f10_to_tos;
+
+/* THE CONTROL-KEY DOOR — the second tap on `shim_include/hw.h`'s ACIA read, beside the trainer's.
+ *
+ * The packet gate is the trainer door's, and for the trainer door's reason: at the instant this runs
+ * `A_ikbd_packet_remaining` still says whether the controller is mid-way through a three-byte
+ * joystick report, so a payload byte that happens to equal $01 or $44 is not mistaken for a key. The
+ * two control scancodes are make codes; their break codes ($81/$c4) do not collide with either, so
+ * the trainer door's press/release split is not needed for an exact-match on two values. */
+void zy_note_control_key(uint8_t byte) {
+    if (zy_image_base[A_ikbd_packet_remaining] != 0)     /* a joystick report's payload, not a key */
+        return;
+    if (byte == CONTROL_KEY_QUIT_TO_TOS) {
+        g_quit_to_tos = 1;                               /* F10 leaves to TOS, from anywhere */
+        return;
+    }
+    if (byte == CONTROL_KEY_QUIT_TO_MENU && g_phase == PHASE_PLAYING)
+        g_quit_to_menu = 1;                              /* ESC goes to the menu, in a level only */
+}
+
 /* Returns 1 when the game ended at the title (FRAME_EXIT_TITLE, 0x10500) and the outer loop should
- * go round again; 0 when the run is over — the headless build's frame budget spent, or an interrupt
- * named a handler the dispatch table does not know. */
+ * go round again; 0 when the run is over — the headless build's frame budget spent, F10's quit to
+ * TOS, or an interrupt named a handler the dispatch table does not know. */
 static int play_one_game(void) {
     enum section_step step = SECTION_STEP_ADVANCE;
+
+    /* A STALE ESC IS NOT CARRIED INTO A FRESH GAME. `g_phase` still reads PHASE_PLAYING for the
+     * whole of `boot_front_end_prologue` between games — the ESC-return path AND the natural
+     * all-lives-lost path both leave the frame loop through FRAME_EXIT_TITLE without resetting it —
+     * so a second ESC edge there (IKBD key auto-repeat while ESC is held) passes the door's
+     * PHASE_PLAYING gate and latches `g_quit_to_menu`. Nothing consumes it at the attract screen, so
+     * without this it would bounce this game out after one frame. Cleared here, before the first
+     * frame, it cannot. `g_quit_to_tos` is deliberately NOT cleared: F10 latched anywhere — including
+     * at the menu — firing on the next game's first frame is the documented behaviour. */
+    g_quit_to_menu = 0;
 
     for (;;) {
         frame_exit exit;
@@ -1066,6 +1147,23 @@ static int play_one_game(void) {
                 g_phase = PHASE_HALTED;
                 return 0;
             }
+            /* F10 — leave to TOS. The frame has finished, so this is the main-line boundary the
+             * interrupt latched the flag for: end the run like the budget ending, and `zynaps_main`
+             * hands the machine back and terminates. */
+            if (g_quit_to_tos) {
+                g_quit_to_tos = 0;
+                g_f10_to_tos++;
+                g_phase = PHASE_QUIT_TO_TOS;
+                return 0;
+            }
+            /* ESC — end this game at the title. Steer through the loop's own FRAME_EXIT_TITLE arm, so
+             * re-entry is byte-for-byte the all-lives-lost path and nothing here duplicates it. */
+            if (g_quit_to_menu) {
+                g_quit_to_menu = 0;
+                g_esc_to_menu++;
+                exit = FRAME_EXIT_TITLE;
+                break;
+            }
             if (g_frames_run >= ZY_GAME_FRAMES) {
                 g_phase = PHASE_BUDGET_SPENT;
                 return 0;
@@ -1109,6 +1207,11 @@ static void run_the_whole_program(void) {
             return;
     }
 }
+#else
+/* THE TITLE BUILD HAS NO PLAY LOOP AND NO g_phase, so the control door is inert here — but the
+ * unconditional call in `shim_include/hw.h` still needs the symbol, exactly as the trainer's `#else`
+ * arm in atari/zynaps_cheats.c provides an empty `zy_cheat_note_ikbd_byte`. */
+void zy_note_control_key(uint8_t byte) { (void)byte; }
 #endif /* ZY_PHASE == ZY_PHASE_GAME */
 
 /* ================================================================================================
@@ -1224,6 +1327,8 @@ static void record_the_run(void) {
     g_record[REC_SCORE_BCD] = be32(zy_image_base + A_player_score_bcd);
     g_record[REC_FRAME_DUMP_BYTES] = g_frame_dump_bytes;
     g_record[REC_GAME_FAULT] = ZY_GAME_FAULT;
+    g_record[REC_ESC_TO_MENU] = g_esc_to_menu;
+    g_record[REC_F10_TO_TOS] = g_f10_to_tos;
 #endif
 }
 

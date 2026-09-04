@@ -82,7 +82,12 @@ FLOPPY_MODE = "floppy"
 # rather than an arm of `game` because it has no differential at all: the keys it presses change the
 # gameplay bytes ON PURPOSE, so there is nothing to compare the original against.
 CHEATS_MODE = "cheats"
-MODES = ("title", "titlefault", FLOPPY_MODE, "game", "gamefault", CHEATS_MODE)
+# THE TWO CONTROL KEYS' POSITIVE CONTROL. Like the trainer's, every other mode asserts ESC and F10
+# stayed dormant; this is the one run that presses them — the ESC round trip (game -> menu -> game)
+# and then F10 out to TOS. Its own mode for the trainer's reason: it drives control flow on purpose,
+# so there is no differential to run the original against.
+CONTROLS_MODE = "controls"
+MODES = ("title", "titlefault", FLOPPY_MODE, "game", "gamefault", CHEATS_MODE, CONTROLS_MODE)
 
 # --- the machine -----------------------------------------------------------------------------
 TOS_ROM = REPO / "tools" / "hatari" / "TOS104US.img"
@@ -377,6 +382,16 @@ def cheat_constant(name):
     return c_define(SHIM_CHEATS.read_text(), name)
 
 
+def control_constant(name):
+    """One of `zynaps_main.c`'s own control-key `#define`s — the two scancodes it watches.
+
+    Read from the shim rather than typed here so this file PRESSES exactly the scancode the door
+    compares against (CLAUDE.md §5's single source of truth): a key that moved in `zynaps_main.c`
+    stops the parse instead of pressing a stale one.
+    """
+    return c_define(SHIM_MAIN.read_text(), name)
+
+
 def staged(ghidra):
     """A Ghidra address as an offset into `gen_image_bytes()`.
 
@@ -465,6 +480,10 @@ RECORD_FIELDS = (
        "cheat_invulnerable_fires", "cheat_lives_fires", "cheat_power_fires", "cheat_key_blips",
        "cheat_panel_requests", "cheat_jingle_stream"]
     + [f"cheat_scancode_{letter.lower()}" for letter in CHEAT_COMBO_LETTERS]
+    # ---- THE TWO ON-TARGET CONTROL KEYS. `check_the_controls_stayed_dormant` asserts both are 0 in
+    # every judged mode, and `smoke.py controls` is the positive control that they are not. Written
+    # only by the game path, so 0 in a title build — the same shape as the M2 fields above.
+    + ["esc_to_menu", "f10_to_tos"]
     + ["tail"])
 
 # STATE.BIN's length, which is the record's own — one big-endian longword a field. The floppy
@@ -1641,8 +1660,9 @@ SCREEN_POINTER_BYTES = 8
 PHASE_ATTRACT = 3
 PHASE_PLAYING = 6
 PHASE_BUDGET_SPENT = 7
+PHASE_QUIT_TO_TOS = 9
 PHASE_NAMES = ("staging", "title assets", "gameplay assets", "attract", "front-end screens",
-               "section start", "playing", "budget spent", "halted")
+               "section start", "playing", "budget spent", "halted", "quit to tos")
 # How long to hold the fire button before giving up on the game ever starting.
 FIRE_DEADLINE_SECONDS = 300.0
 FIRE_POKE_SECONDS = 0.2
@@ -1698,7 +1718,8 @@ def assert_the_phase_names_are_the_shims():
         raise SystemExit(f"zynaps_main.c's phases are {declared} and smoke.py's are {ours} — "
                          f"`phase_reached` is an ordinal and would name the wrong one")
     for constant, name in ((PHASE_ATTRACT, "attract"), (PHASE_PLAYING, "playing"),
-                           (PHASE_BUDGET_SPENT, "budget spent")):
+                           (PHASE_BUDGET_SPENT, "budget spent"),
+                           (PHASE_QUIT_TO_TOS, "quit to tos")):
         if PHASE_NAMES[constant] != name:
             raise SystemExit(f"smoke.py's phase ordinal {constant} is {PHASE_NAMES[constant]!r} and "
                              f"the constant is named for {name!r} — a constant and the list have "
@@ -2186,6 +2207,27 @@ def check_the_trainer_stayed_dormant(ours, build):
     return problems
 
 
+def check_the_controls_stayed_dormant(ours):
+    """SURFACE: the program's own record — the two control keys were live and neither fired.
+
+    RUNS IN EVERY JUDGED MODE, the other half of what makes ESC and F10 safe to ship unconditionally
+    (they are compiled into every M2 build, and `shim_include/hw.h`'s door is in every build at all).
+    The frame differential proves the gameplay bytes over a run nobody pressed a key in; it cannot
+    say the two keys were quiet, because a control that acted would either end the run early or send
+    it back to attract — so these counts are what says a run that pressed NEITHER also saw neither
+    fire. Both must be 0 here; `smoke.py controls` is the positive control that they need not be.
+
+    Unlike the trainer's, this needs no ELF cross-check: the keys are not a build-time arm, they are
+    in every M2 binary. In an M1 build (`title`, `titlefault`, `floppy`) there is no play loop and
+    `zy_note_control_key` is the empty arm, so the counts are 0 by construction — a regression net
+    (a door that had started counting from a title-build path would show), not a firing proof.
+    """
+    record = ours["record"]
+    return [f"{name} is {record[name]}, not 0 — a control key fired in a run that pressed neither, "
+            f"see zynaps_main.c's zy_note_control_key"
+            for name in ("esc_to_menu", "f10_to_tos") if record[name]]
+
+
 def check_the_game_ran(ours, samples=None):
     """SURFACE: exit status and the log — the program's own account of the whole run."""
     record = ours["record"]
@@ -2605,6 +2647,7 @@ def mode_game(mode, out_dir, machine, tos_rom, keep):
                 check_the_machine_was_handed_back(ours) + check_the_acia_vector_went_back(ours),
             "hardware-state vector (the pens, frame by frame)": check_frame_pens(ours, original),
             "memory (the trainer stayed dormant)": check_the_trainer_stayed_dormant(ours, mode),
+            "memory (the control keys stayed dormant)": check_the_controls_stayed_dormant(ours),
             # THE PACING SURFACE IS FAULT-BLIND BY CONSTRUCTION and that is worth a line: the
             # control drops a section-chain step, which changes what is DRAWN and not how long a
             # frame takes, so a pacing check that moved under it would be measuring the wrong
@@ -3287,6 +3330,208 @@ def mode_cheats(out_dir, machine, tos_rom):
         return 0 if not failures else 1
 
 
+# Long enough for several frames to have run after game 2 reaches the loop, so a one-frame bounce
+# from a stale ESC latch has resolved to the attract screen, and short of the ~176-frame neutral
+# life so a healthy game is still flying.
+GAME2_SETTLE_SECONDS = 2.0
+
+
+def run_ours_controls(out_dir, work, machine, tos_rom):
+    """Drive the two on-target control keys through Hatari's own keyboard: the ESC round trip, F10.
+
+    THE KEYS GO IN AS REAL PRESSES, `hatari-event keydown/keyup`, so each one travels the path the
+    door reads it on: the 6301 sends the byte, the ACIA raises MFP channel 6, `ikbd_acia_isr` pops
+    the data port and `shim_include/hw.h`'s tap hands it to `zy_note_control_key`. The game is
+    STARTED with the '1' key the same way, and the fire button that the two fire-waits block on is
+    poked under the phase gate exactly as `run_ours_game` does — Hatari swallows a key bound to its
+    joystick emulation, so fire cannot be a keypress here.
+    """
+    mode = CONTROLS_MODE
+    # `f10_to_tos` is read from the RECORD after the run, not live, so only the offsets read live are
+    # named here: the phase, the ESC counter and the ESC flag the menu negative reads directly.
+    anchor, image_pointer, phase, esc, quit_menu = symbol_offsets(
+        mode, ANCHOR_SYMBOL, "zy_image_base", "g_phase", "g_esc_to_menu", "g_quit_to_menu")
+    trace = out_dir / f"{mode}.trace"
+    log = out_dir / f"{mode}.log"
+    # NO `--trace`, for `run_ours_cheats`' reason: music plays through this whole run and formatting
+    # every `psg_write` would slow the host-time waits for no check that reads a trace.
+    session = HeadlessSession(hatari_arguments(gemdos_medium(OUR_DISK, OUR_AUTO), trace,
+                                               machine, tos_rom, GAME_RUN_VBLS, trace_flags=None),
+                              log_path=log, fifo_path=out_dir / f"{mode}.fifo", work_dir=work)
+    start_key = c_define(header("init.h"), CHEAT_START_GAME_KEY)
+    watched = {}
+    try:
+        session.wait(BASE_POLL_START_SECONDS)
+        base_file = await_file(session, OUR_DISK / BASE_FILE, "waiting for the program to start",
+                               deadline_seconds=ANCHOR_DEADLINE_SECONDS)
+        base = struct.unpack(">I", base_file.read_bytes()[:VECTOR_BYTES])[0] - anchor
+        image = machine_byte(session, base + image_pointer, VECTOR_BYTES)
+        press_fire_if_waiting = phase_gated_fire(session, base + phase,
+                                                 image + GHIDRA_JOYSTICK_STATE)
+
+        def start_a_game(which):
+            """Press '1' at the menu and drive the fire-waits until the frame loop is running."""
+            press_one_key(session, start_key)
+            await_machine_value(session, base + phase, VECTOR_BYTES,
+                                lambda seen: seen == PHASE_PLAYING,
+                                f"waiting for game {which} to reach the frame loop",
+                                press=press_fire_if_waiting)
+
+        # ---- 1. ESC AT THE MENU DOES NOTHING (the negative): pressed at the attract screen, the run
+        #         must still be attracting and `esc_to_menu` still 0. No fire is pressed here, so the
+        #         attract wait is not released — the phase read is of a screen still attracting.
+        await_machine_value(session, base + phase, VECTOR_BYTES,
+                            lambda seen: seen == PHASE_ATTRACT, "waiting for the attract screen")
+        press_one_key(session, control_constant("CONTROL_KEY_QUIT_TO_MENU"))
+        watched["phase after ESC at the menu"] = machine_byte(session, base + phase, VECTOR_BYTES)
+        watched["esc fired at the menu"] = machine_byte(session, base + esc, VECTOR_BYTES)
+        # THE FLAG ITSELF, not just the counter: the door gates ESC on PHASE_PLAYING, so at the menu
+        # it must not even LATCH — a build that dropped the gate would leave this 1 to fire on the
+        # next game's first frame, where the counter is still 0 at this instant. This is the
+        # deterministic surface the "ESC at the menu" mutation reddens.
+        watched["quit-to-menu flag after ESC at the menu"] = machine_byte(session, base + quit_menu)
+
+        # ---- 2. THE ESC ROUND TRIP, twice. Start a game, ESC back to attract, start a second game.
+        start_a_game(1)
+        press_one_key(session, control_constant("CONTROL_KEY_QUIT_TO_MENU"))
+        # NO fire while waiting for attract — a poke here would restart a game before the read.
+        await_machine_value(session, base + phase, VECTOR_BYTES,
+                            lambda seen: seen == PHASE_ATTRACT,
+                            "waiting for ESC to return the first game to the attract screen")
+        watched["phase after ESC in game 1"] = machine_byte(session, base + phase, VECTOR_BYTES)
+        watched["esc after game 1"] = machine_byte(session, base + esc, VECTOR_BYTES)
+        # A STALE ESC LATCH MUST NOT BE CARRIED INTO A FRESH GAME. `g_phase` lingers at PHASE_PLAYING
+        # for the whole of `boot_front_end_prologue` between games, so a second ESC edge there (IKBD
+        # auto-repeat) can latch `g_quit_to_menu` at the attract screen — which would then bounce the
+        # next game out after one frame. That window is a few ms and cannot be hit reliably from
+        # host-time key presses, so it is SIMULATED deterministically: poke the flag set here, and
+        # `play_one_game`'s entry clear must discard it. Without the clear, the poked latch fires on
+        # game 2's first frame and — with no fire pressed after PLAYING is reached — the bounce parks
+        # the run at the attract screen, which the settled phase read below reddens.
+        session.poke(base + quit_menu, 1)
+        watched["quit-to-menu latch poked before game 2"] = machine_byte(session, base + quit_menu)
+        start_a_game(2)
+        watched["phase in game 2"] = machine_byte(session, base + phase, VECTOR_BYTES)
+        # Let a few frames run so a stale latch, if the entry clear is missing, has fired. The
+        # DISCRIMINATING surface is the monotonic counter, not the phase: a bounced game is
+        # auto-restarted by the fire the loop above keeps pressing, which heals the phase back to
+        # PLAYING — but `g_esc_to_menu` has already ticked to 2 and stays there. With the entry clear
+        # the poked latch is discarded and the counter is unchanged from its post-game-1 value.
+        session.wait(GAME2_SETTLE_SECONDS)
+        watched["esc after game 2"] = machine_byte(session, base + esc, VECTOR_BYTES)
+
+        # ---- 3. F10 -> TOS: pressed in the second game, the program must leave through the teardown
+        #         and write its record. Reaching the record IS "it handed the machine back".
+        press_one_key(session, control_constant("CONTROL_KEY_QUIT_TO_TOS"))
+        record_file = OUR_DISK / STATE_FILE
+        press_fire_only_in_a_wait(session,
+                                  lambda: record_file.is_file() and record_file.stat().st_size,
+                                  "waiting for F10 to hand the machine back", press_fire_if_waiting)
+        session.wait(POST_EXIT_SECONDS)
+    finally:
+        status = session.close()
+    return {"status": status, "log": log, "work": work, "watched": watched,
+            "record": read_record(OUR_DISK / STATE_FILE)}
+
+
+def check_the_esc_round_trip(ours):
+    """SURFACE: memory — ESC went to the menu from a level, and did nothing at the menu.
+
+    The final-record corroboration (esc_to_menu non-zero at the end) is `check_f10_left_to_tos`'s,
+    so this reads only the live phase/counter/flag samples the round trip took."""
+    watched = ours["watched"]
+    problems = []
+    if watched["phase after ESC at the menu"] != PHASE_ATTRACT:
+        problems.append("ESC at the attract screen left it — the door fired the menu key outside a "
+                        "level, and `zy_note_control_key` gates it on PHASE_PLAYING")
+    if watched["esc fired at the menu"]:
+        problems.append(f"esc_to_menu is {watched['esc fired at the menu']} after ESC at the menu, "
+                        f"not 0 — the key fired where it must do nothing")
+    if watched["quit-to-menu flag after ESC at the menu"]:
+        problems.append("g_quit_to_menu latched from an ESC at the menu — the door did not gate the "
+                        "key on PHASE_PLAYING, and it would fire on the next game's first frame")
+    if watched["phase after ESC in game 1"] != PHASE_ATTRACT:
+        problems.append("ESC in a game did not return to the attract screen — the FRAME_EXIT_TITLE "
+                        "re-entry `play_one_game` steers ESC through did not reach the front end")
+    if not watched["esc after game 1"]:
+        problems.append("esc_to_menu is still 0 after ESC ended a game — the play loop did not act "
+                        "on the flag the door set")
+    if watched["phase in game 2"] != PHASE_PLAYING:
+        problems.append("a second game did not start from the menu after ESC — re-entry left the "
+                        "front end unable to begin a fresh game")
+    if not watched["quit-to-menu latch poked before game 2"]:
+        problems.append("the simulated stale-latch poke did not land — the regression below cannot "
+                        "mean anything without it")
+    if watched["esc after game 2"] != watched["esc after game 1"]:
+        problems.append(f"esc_to_menu rose from {watched['esc after game 1']} to "
+                        f"{watched['esc after game 2']} across game 2's start — a stale "
+                        f"g_quit_to_menu latched between games fired on the first frame, so "
+                        f"`play_one_game` did not clear the flag on entry")
+    return problems
+
+
+def check_f10_left_to_tos(ours):
+    """SURFACE: exit status + the program's own record — F10 reached the shim teardown."""
+    record = ours["record"]
+    problems = []
+    if record["f10_to_tos"] != 1:
+        problems.append(f"f10_to_tos is {record['f10_to_tos']}, not 1 — F10 did not carry the play "
+                        f"loop out to the hand-back exactly once")
+    if record["phase_reached"] != PHASE_QUIT_TO_TOS:
+        reached = (PHASE_NAMES[record["phase_reached"]]
+                   if record["phase_reached"] < len(PHASE_NAMES) else record["phase_reached"])
+        problems.append(f"the run's last phase was {reached!r}, not 'quit to tos' — F10 did not end "
+                        f"the run through `play_one_game`'s F10 arm")
+    if not record["esc_to_menu"]:
+        problems.append("esc_to_menu is 0 in the final record — the ESC round trips before F10 left "
+                        "no trace, so the record does not corroborate the live reads")
+    return problems
+
+
+def mode_controls(out_dir, machine, tos_rom):
+    """The two control keys' positive control: the ESC round trip, then F10 out to TOS."""
+    assert_the_game_constants_are_the_headers()
+    assert_the_phase_names_are_the_shims()
+    stage_our_build(CONTROLS_MODE)
+    with tempfile.TemporaryDirectory() as work:
+        ours = run_ours_controls(out_dir, Path(work), machine, tos_rom)
+        checks = {
+            "exit status + log (ours)": check_exit_and_log("ours", ours),
+            "exit status + log (the fault scan can fail)": check_the_fault_scan_can_fail(),
+            "exit status + log (the machine was handed back)":
+                check_the_machine_was_handed_back(ours) + check_the_acia_vector_went_back(ours),
+            "memory (ESC round-tripped game -> menu -> game, and did nothing at the menu)":
+                check_the_esc_round_trip(ours),
+            "exit status + log (F10 left cleanly to TOS)": check_f10_left_to_tos(ours),
+            "memory (the trainer stayed dormant)":
+                check_the_trainer_stayed_dormant(ours, CONTROLS_MODE),
+            "memory (the image fitted the machine, and stayed inside itself)":
+                check_the_memory(ours["record"]),
+            "hardware-state vector (TOS's 200 Hz clock survived the boot)":
+                check_the_boot_clock(ours["record"]),
+        }
+        record, watched = ours["record"], ours["watched"]
+        print(f"-- {CONTROLS_MODE} on {machine} / {tos_rom.name} at {MEMSIZE_MB} MB: image base "
+              f"{record['image_base']:#x}")
+        print(f"   ESC at the menu: phase {PHASE_NAMES[watched['phase after ESC at the menu']]!r}, "
+              f"esc_to_menu {watched['esc fired at the menu']} (both must say 'nothing happened')")
+        print(f"   ESC in a game: phase -> "
+              f"{PHASE_NAMES[watched['phase after ESC in game 1']]!r}, esc_to_menu "
+              f"{watched['esc after game 1']}; second game phase "
+              f"{PHASE_NAMES[watched['phase in game 2']]!r}")
+        print(f"   final record: esc_to_menu {record['esc_to_menu']}, f10_to_tos "
+              f"{record['f10_to_tos']}, last phase {PHASE_NAMES[record['phase_reached']]!r}")
+        failures = []
+        for name, problems in sorted(checks.items()):
+            print(f"   [{'red ' if problems else 'green'}] {name}   (must PASS)")
+            for problem in problems:
+                print(f"           {problem}")
+            if problems:
+                failures.append(name)
+        print("-- OK" if not failures else f"-- FAILED: {len(failures)} check(s)")
+        return 0 if not failures else 1
+
+
 def main():
     # A module global rather than a threaded parameter: `hatari_arguments` is the ONE place the flag
     # is spelt, every runner goes through it, and a run has exactly one machine size by design. The
@@ -3332,6 +3577,8 @@ def main():
         return mode_game(options.mode, out_dir, options.machine, options.tos_rom, options.keep)
     if options.mode == CHEATS_MODE:
         return mode_cheats(out_dir, options.machine, options.tos_rom)
+    if options.mode == CONTROLS_MODE:
+        return mode_controls(out_dir, options.machine, options.tos_rom)
 
     floppy = options.mode == FLOPPY_MODE
     if floppy:
@@ -3378,6 +3625,7 @@ def main():
             "memory (the trainer stayed dormant)":
                 check_the_trainer_stayed_dormant(ours, options.floppy_build if floppy
                                                  else options.mode),
+            "memory (the control keys stayed dormant)": check_the_controls_stayed_dormant(ours),
             "hardware-state vector (Timer B never fired)": check_timer_b_never_fired(ours),
             "trap ledger": check_trap_ledger(ours, original),
             "memory (the framebuffer)": check_memory(ours, original),

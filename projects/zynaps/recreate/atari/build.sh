@@ -130,8 +130,16 @@ case "$MODE" in
   # and a budget four times the game mode's, because the run has to reach the attract screen, hold
   # a wrong combo past the arming time, hold the right one, start a game and then press three keys.
   cheats)     DEF="-DZY_PHASE=1 -DZY_FRAME_SAMPLES=0u -DZY_GAME_FRAMES=1200u" ;;
-  *) echo "usage: build.sh [title | titlefault | game | gamefault | play | playtitle | cheats]" \
-          "[gemdos | floppy]"; exit 2 ;;
+  # THE TWO CONTROL KEYS' POSITIVE CONTROL — the one mode that presses ESC and F10. Everything else
+  # in the matrix asserts they stayed dormant, which says nothing unless one run can show them
+  # firing; `smoke.py controls` is that run, driving ESC and F10 through Hatari's own keyboard. No
+  # frame dumps (the keys change control flow on purpose, not the gameplay bytes a differential
+  # judges) and a budget well out of reach of the round trip, so `frames_run` never ends the run
+  # before F10 does. zynaps_main.c's `zy_note_control_key` says why both keys are inert everywhere
+  # else the matrix looks.
+  controls)   DEF="-DZY_PHASE=1 -DZY_FRAME_SAMPLES=0u -DZY_GAME_FRAMES=6000u" ;;
+  *) echo "usage: build.sh [title | titlefault | game | gamefault | play | playtitle | cheats" \
+          "| controls] [gemdos | floppy]"; exit 2 ;;
 esac
 
 # ---- THE TRAINER ------------------------------------------------------------------------------

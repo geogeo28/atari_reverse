@@ -2763,6 +2763,23 @@ unpinned on target: the three power-up decay timers (no reader, inside or out, c
 from the section start's) and a poke landing inside the main line's read-modify-write.
 `atari/README.md`'s **THE TRAINER** section is canonical.
 
+**TWO ON-TARGET CONTROL KEYS ARE THE OTHER DELIBERATE DIVERGENCE, also entirely in the shim.** The
+1988 binary takes supervisor at `0x10000` and never gives it back — no path to the desktop, and none
+back to the front end but dying — so this build adds **ESC** (`0x01`, in a level → the attract
+screen) and **F10** (`0x44`, from a level → hand the machine back and `Pterm` to TOS). ESC re-uses
+the game's OWN `FRAME_EXIT_TITLE` all-lives-lost path and F10 re-uses the shim teardown the headless
+budget ending already runs, so neither needs new machinery. Both are in `atari/zynaps_main.c`
+(`zy_note_control_key` plus two flags the play loop reads AFTER `frame_loop_once` finishes) with a
+second tap in `shim_include/hw.h`'s `hw_read8` beside the trainer's — no core, no `include/`, no
+`test/` moved, `make test` is unchanged at **4751**, and the census in `out/prg_dis.txt` confirms the
+game reads neither `0x01` nor `0x44`. `smoke.py controls` is the positive control (the ESC round trip
+game→menu→game proven twice, then a clean F10 exit); every judged mode asserts
+`check_the_controls_stayed_dormant` (`esc_to_menu == 0`, `f10_to_tos == 0`). **Honestly caveated:**
+ESC is clean in a level and F10 is clean in a level; F10 at the *pure attract screen* only fires once
+a game has started, because `attract_wait_for_start` is a verified core whose on-target `sched_wait8`
+never yields to the shim — the flag is latched, not honoured from the interrupt. `atari/README.md`'s
+**In-game controls** section is canonical.
+
 **Five things this section is here to say to a reader of the tables above:**
 
 * **IT RUNS ON A 1 MB ST.** The target build's image is `ZY_TARGET_IMAGE_BYTES` = 512 KiB

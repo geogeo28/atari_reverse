@@ -107,6 +107,58 @@ life and comes back with the TITLE exit. So the ending is reached by playing, no
   themselves now, so the bridge would be a second implementation of an operation its callers
   already name.
 
+## In-game controls — ESC to the menu, F10 to TOS
+
+Two keys the 1988 binary reads NOWHERE. The census in `out/prg_dis.txt` finds no `cmpi.b #$01` or
+`#$44` in the whole image, and `key_scancode` (`0x19685`) is only ever compared against `$39`
+(SPACE, the manual's pause) and `$02`/`$03` (the attract screen's one/two-player keys) — so both
+scancodes are free, and these are **deliberate, shim-only divergences**, added because the original
+takes supervisor at `0x10000` and never gives it back: it has no path to the desktop at all and no
+path back to the front end but dying.
+
+* **ESC (`0x01`), in a level → back to the attract screen.** It re-uses the game's OWN
+  all-lives-lost path: `play_one_game` steers ESC through the frame loop's `FRAME_EXIT_TITLE`
+  (`0x10500` → `boot_front_end_prologue` → the attract loop), so the front-end prologue resets the
+  globals and a fresh game starts exactly as it does after a real game over. Nothing here duplicates
+  that path — the ESC arm sets the loop's own `exit` to `FRAME_EXIT_TITLE` and breaks. The door
+  gates ESC on `PHASE_PLAYING`, so at the menu ESC does nothing.
+* **F10 (`0x44`), from anywhere in a level → hand the machine back and terminate to TOS.** It
+  re-uses the shim TEARDOWN the headless builds already run at the frame-budget ending:
+  `run_the_whole_program` returns, and `zynaps_main`'s tail restores the three vectors and the MFP,
+  silences the PSG, puts resolution/palette/screen base back with read-backs, and `Pterm`s. This is
+  that teardown's first INTERACTIVE use; before it, `build.sh play` ran for ever and never reached
+  it.
+
+**THE DOOR IS THE ACIA READ, beside the trainer's.** `shim_include/hw.h`'s `hw_read8` hands every
+byte popped from the 6850 data port to `zy_note_control_key` (`zynaps_main.c`) as well as to
+`zy_cheat_note_ikbd_byte` — so a raw scancode is seen in the KEYBOARD INTERRUPT, where the only safe
+act is to SET a volatile flag. The play loop (main line) reads the flag after the current
+`frame_loop_once` has FINISHED and acts on it there; a `Pterm` or an unwind from inside the interrupt
+would tear the machine down under a frame the cores were still drawing. The tap is unconditional and
+declared-not-included for the trainer tap's exact reason (`## Where the code is`, below): a `#ifdef`
+there would compile `../src/irq.c`'s verified `ikbd_acia_service_one_byte` differently between builds.
+Both keys are compiled into every M2 build; `ZY_CHEATS` does not gate them.
+
+**Feasibility, honestly stated.** ESC is clean everywhere it is meant to fire, and F10 is clean
+**in a level**. F10 pressed at the *pure attract screen* only takes effect once a game has started,
+because the attract wait is `attract_wait_for_start` — a verified core whose on-target `sched_wait8`
+never yields to the shim and which returns only on the game's own start keys. There is no main-line
+shim checkpoint at the attract screen to honour the flag, and honouring it from the interrupt is the
+forbidden unwind. So the flag is latched and acted on at the next main-line boundary. This was the
+FEASIBILITY-FIRST finding: the in-level path is clean and proven; the attract-screen case is
+caveated rather than shipped as a flaky unwind.
+
+**How both are proved.** `smoke.py controls` (`build.sh controls`, the positive control) drives the
+whole thing through Hatari's own keyboard: it presses ESC at the menu (phase stays *attract*,
+`g_quit_to_menu` never latches, `esc_to_menu` stays 0), then starts a game, presses ESC (phase
+returns to *attract*, `esc_to_menu` → 1), starts a SECOND game from the menu (it reaches *playing* —
+the round trip proven twice), and finally presses F10 (the run terminates through the teardown with
+`f10_to_tos` = 1 and the last phase *quit to tos*, the hand-back read-backs green). Every JUDGED mode
+(`title`, `game`, `gamefault`, `titlefault`, `floppy`) never presses either key and asserts
+`esc_to_menu == 0` and `f10_to_tos == 0` — `check_the_controls_stayed_dormant`, the same measurement
+the trainer's dormancy is. The per-frame cost is two byte-flag tests after `frame_loop_once`, below
+the pacing surface's resolution (2.54 vblanks/frame, unchanged).
+
 ## The video base moved into the hardware door
 
 M1's Unpinned 3 said a re-publish after the fact "is not a shape M2 can keep", and it is not:
