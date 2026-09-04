@@ -527,6 +527,7 @@ enum {
      * scancodes are the layout evidence: what the GAME'S OWN table spelt `Z`, `Y` and `N` as. */
     REC_CHEATS_BUILT, REC_CHEATS_ARMED, REC_CHEAT_ARM_JINGLES,
     REC_CHEAT_INVULNERABLE_FIRES, REC_CHEAT_LIVES_FIRES, REC_CHEAT_POWER_FIRES,
+    REC_CHEAT_KEY_BLIPS,
     REC_CHEAT_PANEL_REQUESTS, REC_CHEAT_JINGLE_STREAM,
     REC_CHEAT_SCANCODES,
     REC_CHEAT_SCANCODES_END = REC_CHEAT_SCANCODES + CHEAT_COMBO_KEYS - 1,
@@ -1186,6 +1187,7 @@ static void record_the_run(void) {
     g_record[REC_CHEAT_INVULNERABLE_FIRES] = cheats.invulnerable_fires;
     g_record[REC_CHEAT_LIVES_FIRES] = cheats.lives_fires;
     g_record[REC_CHEAT_POWER_FIRES] = cheats.power_fires;
+    g_record[REC_CHEAT_KEY_BLIPS] = cheats.key_blips;
     g_record[REC_CHEAT_PANEL_REQUESTS] = cheats.panel_requests;
     g_record[REC_CHEAT_JINGLE_STREAM] = cheats.jingle_stream;
     for (unsigned key = 0; key < CHEAT_COMBO_KEYS; key++)

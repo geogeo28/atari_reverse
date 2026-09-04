@@ -37,6 +37,7 @@ struct zy_cheat_counts {
     uint32_t invulnerable_fires;    /* F1 presses acted on */
     uint32_t lives_fires;           /* F2 */
     uint32_t power_fires;           /* F3 */
+    uint32_t key_blips;             /* short per-key feedback blips played while arming (see below) */
     /* THE TWO READ-BACKS, and they are read-backs rather than mirrors of what the code asked for:
      * each is the GAME'S OWN byte re-read straight after the trainer wrote it, so a poke that
      * landed somewhere else shows up as the wrong number here. `smoke.py cheats` is racing the

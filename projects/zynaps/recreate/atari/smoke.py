@@ -338,7 +338,7 @@ TIMER_B_HANDLER_NAMES = ("in_game", "raster", "attract")
 # for F1/F2/F3 in the game. Two things have to be true and neither is provable from the frame diff,
 # which runs over a game nobody pressed a key in:
 #
-#   * IT STAYS DORMANT. `check_the_trainer_stayed_dormant` asserts the record's five trainer counts
+#   * IT STAYS DORMANT. `check_the_trainer_stayed_dormant` asserts the record's six trainer counts
 #     came back 0, and it runs in EVERY judged mode — title, titlefault, floppy, game, gamefault.
 #     The differential proves the gameplay bytes; this proves the watcher never touched them.
 #   * IT WORKS. `smoke.py cheats` arms the combo through Hatari's own keyboard, presses the three
@@ -458,11 +458,11 @@ RECORD_FIELDS = (
     + ["playing_vbls"]
     # ---- THE TRAINER. `cheats_built` says which of atari/zynaps_cheats.c's two arms was compiled,
     # so a PURIST binary's zeros (no watcher in it at all) are distinguishable from a dormant
-    # trainer's identical zeros. The five counts after it are what `check_the_trainer_stayed_dormant`
+    # trainer's identical zeros. The six counts after it are what `check_the_trainer_stayed_dormant`
     # asserts are 0 in every judged mode, and what `smoke.py cheats` asserts are not. The three
     # scancodes are the layout evidence: what the GAME'S OWN table spelt Z, Y and N as.
     + ["cheats_built", "cheats_armed", "cheat_arm_jingles",
-       "cheat_invulnerable_fires", "cheat_lives_fires", "cheat_power_fires",
+       "cheat_invulnerable_fires", "cheat_lives_fires", "cheat_power_fires", "cheat_key_blips",
        "cheat_panel_requests", "cheat_jingle_stream"]
     + [f"cheat_scancode_{letter.lower()}" for letter in CHEAT_COMBO_LETTERS]
     + ["tail"])
@@ -2143,7 +2143,7 @@ def check_the_trainer_stayed_dormant(ours, build):
     differential compares two programs PLAYING and finds them byte-identical, which says the cheats
     changed nothing over a run in which nobody pressed a key; it cannot say the watcher was quiet,
     because a watcher that had armed itself and then poked would move both sides' bytes only if it
-    poked, and a run that armed without poking would look exactly like one that did not. These five
+    poked, and a run that armed without poking would look exactly like one that did not. These six
     counts are what the shim itself saw happen, and every one of them must be 0 here.
 
     `cheats_built` is CROSS-CHECKED rather than required: five zeros out of a binary with no
@@ -2169,7 +2169,7 @@ def check_the_trainer_stayed_dormant(ours, build):
                         f"{TRAINER_ELF_SYMBOL} — the binary and its own account of itself disagree "
                         f"about whether the trainer is in it")
     for name in ("cheats_armed", "cheat_arm_jingles", "cheat_invulnerable_fires",
-                 "cheat_lives_fires", "cheat_power_fires"):
+                 "cheat_lives_fires", "cheat_power_fires", "cheat_key_blips"):
         if record[name]:
             problems.append(f"{name} is {record[name]}, not 0 — the trainer fired in a run that "
                             f"pressed none of its keys, see atari/zynaps_cheats.c")
@@ -2809,7 +2809,7 @@ def print_the_boot_clock(record):
 # =================================================================================================
 # `smoke.py cheats` — THE TRAINER'S POSITIVE CONTROL
 #
-# Every other mode asserts the five trainer counts came back 0. That is worth nothing on its own —
+# Every other mode asserts the six trainer counts came back 0. That is worth nothing on its own —
 # a watcher that COULD NOT fire would pass all five — so this mode is the run that makes them move,
 # and it is the only place in this file where the two programs are deliberately not comparable.
 #
@@ -2828,9 +2828,15 @@ def print_the_boot_clock(record):
 #      strict one does not. (b) an incomplete sequence — Z, Y and stop — must not arm either. Both
 #      read live out of the shim's own `g_armed`.
 #   2. THE POSITIVE. Z, then Y, then N, typed in order one key at a time: it arms, and the arming
-#      fanfare is one of the game's nine UNREACHABLE sound streams, armed on the driver's own voice
-#      record. A TYPED SEQUENCE, not a simultaneous hold — three keys held together can ghost on the
-#      real IKBD matrix and never all reach the controller; one key down at a time cannot.
+#      fanfare is one of the game's nine UNREACHABLE sound streams (stream 23, audible — not the
+#      near-ultrasonic stream 35 the first cut used), armed on the driver's own voice record. A
+#      TYPED SEQUENCE, not a simultaneous hold — three keys held together can ghost on the real IKBD
+#      matrix and never all reach the controller; one key down at a time cannot.
+#   2b. THE PER-KEY BLIP. Every ACCEPTED, non-completing combo letter — of all three sequences,
+#      negatives included — plays a short blip (orphan stream 29); the completing letter arms and
+#      the fanfare is its sound instead. `cheat_key_blips` is checked against `expected_key_blips`,
+#      an independent replay of the matcher, so a blip that also fires on the completing letter (a
+#      voice collision with the fanfare) or one dropped by a broken latch reddens.
 #   3. THE IN-GAME REFUSAL. `g_arming_window_open` is 1 at the title and 0 once the frame loop is
 #      running, so the sequence cannot arm the trainer from inside a game.
 #   4. THE THREE KEYS, each read back off the machine at the byte it was supposed to write.
@@ -2852,6 +2858,14 @@ CHEAT_SURVIVE_PAST_FRAME = 400
 TUNE_ENTRY_BYTES = 2
 SIGN_BIT_16 = 0x8000
 ADDRESS_MASK_24 = 0xffffff
+# The two orphan streams the trainer's feedback resurrects, PINNED BY NUMBER here. The fanfare
+# read-back check below predicts its stream from the shim's OWN `CHEAT_SFX_ARMED`, so it cannot
+# catch that id reverting to stream 35 — the near-ultrasonic whistle the first cut armed with
+# (tools/extract_audio.py's out/audio/manifest.tsv: 35 opens `fa 03 e8 01`, all three tone periods
+# 1, and meters loud but is inaudible; 23 opens `fa 03 e8 11`, an audible mid pitch; 29 opens
+# `fa 04 e8 0b`, a 0.90 s blip). zynaps_cheats.c is canonical; these pin its choice (CLAUDE.md §5).
+CHEAT_ARM_STREAM = 23
+CHEAT_BLIP_STREAM = 29
 # The menu key this run starts its game with — one player. ../include/init.h names it, and it goes
 # in as a real keypress like the combo does.
 CHEAT_START_GAME_KEY = "KEY_SCANCODE_1"
@@ -2908,6 +2922,39 @@ def cheat_expected_jingle_stream(image):
         offset -= 1 << 16
     head = (c_define(sound, "A_tune_data") + offset) & ADDRESS_MASK_24
     return head + c_define(sound, "SOUND_ROW_BYTES")
+
+
+def expected_key_blips(sequences, combo):
+    """How many per-key feedback blips the trainer should play over these typed arming sequences.
+
+    AN INDEPENDENT REPLAY of atari/zynaps_cheats.c's `advance_arming_sequence`, at the spec level
+    and not off the shim's own logic: an accepted advance to a NON-completing cursor blips (the
+    right next letter that is not the last, and a fresh Z that restarts the sequence on that Z); the
+    COMPLETING letter arms and its sound is the fanfare, not a blip; a wrong letter that only resets
+    the cursor is silent. Pinning the shim's `cheat_key_blips` against this — rather than trusting
+    it — is what makes the mutation that also blips on the completing letter (a blip/fanfare voice
+    collision) or that never raises the latch redden this file (CLAUDE.md §5). `combo` is the three
+    resolved scancodes in Z, Y, N order; each pressed scancode is mapped back to its letter index.
+    """
+    index_of = {scancode: index for index, scancode in enumerate(combo)}
+    cursor, blips = 0, 0
+    for sequence in sequences:
+        for scancode in sequence:
+            key = index_of.get(scancode)
+            if key is None:
+                continue
+            if key == cursor:
+                cursor += 1
+                if cursor >= len(combo):
+                    cursor = 0            # completes and arms — the fanfare is its sound, no blip
+                else:
+                    blips += 1
+            elif key == 0:
+                cursor = 1                # a fresh Z restarts on that Z — an accepted first letter
+                blips += 1
+            else:
+                cursor = 0
+    return blips
 
 
 def type_the_sequence(session, scancodes):
@@ -2991,18 +3038,26 @@ def run_ours_cheats(out_dir, work, machine, tos_rom):
         await_machine_value(session, base + window, 1, lambda seen: seen == 1,
                             "waiting for the trainer's arming window to open at the title")
         z, y, n = combo
+        # The three sequences this run types, in order, kept in ONE place so the blip count the
+        # trainer should have played over them is computed from exactly what was pressed (see
+        # `expected_key_blips`), not a number typed twice: (a) a wrong/fumbled attempt, (b) an
+        # incomplete one, (c) the real one. Every ACCEPTED letter of all three blips — including the
+        # first letters of the two that never arm, which is correct feedback.
+        wrong_sequence, incomplete_sequence, arming_sequence = [z, y, z, n], [z, y], [z, y, n]
         # (a) A WRONG/FUMBLED SEQUENCE: Z, Y, then a misplaced Z, then N. The stray Z restarts the
         # cursor (on that Z), so the trailing N lands on the wrong letter and nothing completes. A
         # matcher that advanced on a wrong letter, or that failed to reset on one, would arm here.
-        type_the_sequence(session, [z, y, z, n])
+        type_the_sequence(session, wrong_sequence)
         watched["armed by a wrong sequence"] = machine_byte(session, base + armed)
         # (b) AN INCOMPLETE SEQUENCE: Z, Y and stop. Two of the three, in order, must not arm.
-        type_the_sequence(session, [z, y])
+        type_the_sequence(session, incomplete_sequence)
         watched["armed by an incomplete sequence"] = machine_byte(session, base + armed)
 
         # ---- 2. the positive: Z, then Y, then N, in order ---------------------------------------
-        type_the_sequence(session, [z, y, n])
+        type_the_sequence(session, arming_sequence)
         watched["armed by the sequence"] = machine_byte(session, base + armed)
+        watched["expected key blips"] = expected_key_blips(
+            (wrong_sequence, incomplete_sequence, arming_sequence), combo)
 
         # ---- 3. into the game, and the window must have shut ------------------------------------
         press_one_key(session, c_define(header("init.h"), CHEAT_START_GAME_KEY))
@@ -3091,12 +3146,34 @@ def check_the_trainer_armed(ours):
     # effect is the voice record, so the surface is the pointer the shim read back out of voice 3
     # against this file's own `sound_lookup_tune`. The PSG trace cannot serve here: the title tune
     # is driving all three voices at the same moment and no register write is the jingle's alone.
+    # THE FANFARE IS THE AUDIBLE ORPHAN, PINNED. The read-back check below proves the driver armed
+    # whatever `CHEAT_SFX_ARMED` names, but not that it names an audible stream — reverting the id to
+    # the near-ultrasonic stream 35 would keep it green. This pins the id to the measured choice.
+    if cheat_constant("CHEAT_SFX_ARMED") != CHEAT_ARM_STREAM:
+        problems.append(f"the arming fanfare is sound {cheat_constant('CHEAT_SFX_ARMED')}, not the "
+                        f"audible orphan stream {CHEAT_ARM_STREAM} — stream 35's period-1 tone is "
+                        f"near-ultrasonic (out/audio/manifest.tsv), which is the bug this swap fixed")
+    if cheat_constant("CHEAT_SFX_KEY") != CHEAT_BLIP_STREAM:
+        problems.append(f"the per-key blip is sound {cheat_constant('CHEAT_SFX_KEY')}, not orphan "
+                        f"stream {CHEAT_BLIP_STREAM} the trainer's feedback uses")
     expected = cheat_expected_jingle_stream(gen_image_bytes())
     if record["cheat_jingle_stream"] != expected:
         problems.append(f"the arming fanfare left {record['cheat_jingle_stream']:#x} in voice 3's "
                         f"restart pointer, and sound {cheat_constant('CHEAT_SFX_ARMED')} resolves "
                         f"to {expected:#x} — the orphan stream is not what the driver was armed "
                         f"with")
+    # THE PER-KEY BLIP, counted rather than observed on a voice. Its stream (`fa 04`) round-robins
+    # voices 3 and 2, so unlike the fanfare no one voice record is the blip's alone to read back —
+    # but the SHARED `sound_start` path is the one the fanfare's read-back above already pins. What
+    # this pins is that a blip fired for each accepted, non-completing letter and NOT for the
+    # completing one: the shim's count against an independent replay of the matcher. A blip on the
+    # completing letter (voice collision with the fanfare) or a dropped latch moves it off `expected`.
+    expected_blips = watched["expected key blips"]
+    if record["cheat_key_blips"] != expected_blips:
+        problems.append(f"the trainer played {record['cheat_key_blips']} per-key blip(s) over the "
+                        f"arming sequences, not the {expected_blips} that one-per-accepted-but-not-"
+                        f"completing-letter comes to — a blip on the completing letter (the fanfare's"
+                        f" voice) or a dropped blip latch, see atari/zynaps_cheats.c")
     return problems
 
 
@@ -3193,7 +3270,8 @@ def mode_cheats(out_dir, machine, tos_rom):
               + ", ".join(f"{letter}={ours['record'][f'cheat_scancode_{letter.lower()}']:#04x}"
                           for letter in CHEAT_COMBO_LETTERS)
               + f"; armed after {ours['record']['cheat_arm_jingles']} fanfare(s) on stream "
-                f"{ours['record']['cheat_jingle_stream']:#x}")
+                f"{ours['record']['cheat_jingle_stream']:#x}, "
+                f"{ours['record']['cheat_key_blips']} per-key blip(s)")
         print(f"   {ours['record']['frames_run']} frames, first life ended at "
               f"{ours['record']['first_life_ended_at']}, "
               f"{ours['record']['lives']} lives, panel bits "

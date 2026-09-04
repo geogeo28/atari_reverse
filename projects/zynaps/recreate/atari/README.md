@@ -318,17 +318,18 @@ ST keyboard. Nothing in the game reads them — the table holds `0xff` for all t
 scancode comparisons in the whole program are SPACE (the pause, `0x10fda`/`0x10ffe`) and `1`/`2`
 (the menu) — so a press cannot collide with a control.
 
-## Four sounds nobody has heard since 1988
+## Five sounds nobody has heard since 1988
 
 The secrets hunt (`../../README.md`, "Secrets and dead code") proved nine of the forty-five sound
 streams unreachable: every one of the 23 instructions that reaches `sound_start` was followed
 through the spawn, jump and swap graph, and ids **19, 23, 25, 29, 35, 37, 38, 42, 43** are in no
 closure. Each is a complete stream — its own `fa <channel>` header, its own `$e1` terminator — so
-each still plays as its author left it. The trainer's feedback is four of them:
+each still plays as its author left it. The trainer's feedback is five of them:
 
 | event | orphan | what it is |
 |---|---|---|
-| **armed** | **35** (`0x23`) | 2.0 s, `fa 03`. Channel code 3 occurs on exactly three streams and all three are orphans, which makes it the fanfare |
+| **each accepted combo letter** (blip) | **29** (`0x1d`) | 0.90 s, `fa 04 e8 0b` — short feedback on `Z`, then `Y` as each lands; the completing `N` arms instead. `fa 04` is the driver's round-robin code, which the shipped toggle byte runs across voices 3 and 2 |
+| **armed** (fanfare) | **23** (`0x17`) | 2.0 s, `fa 03 e8 11` — an audible mid pitch. **Swapped in for 35** (`0x23`), whose `fa 03 e8 01` runs all three tone periods at 1: a near-ultrasonic whistle that meters loud (−10.7 dBFS) but is thin to the ear, measured in `tools/extract_audio.py`'s `out/audio/manifest.tsv`. 23 is also `fa 03` and also an orphan, so the "a channel-3 code that no reachable stream uses" argument still holds while the fanfare is now something a player can hear |
 | `F1` invulnerability | **19** (`0x13`) | the only orphan armed on **voice 1**, so the toggle is heard over whatever the other two voices are doing |
 | `F2` lives | **37** (`0x25`) | one of the pair 42/43 shadow |
 | `F3` power-ups | **38** (`0x26`) | ...and the other |
@@ -336,8 +337,13 @@ each still plays as its author left it. The trainer's feedback is four of them:
 They are started through the game's own verified `sound_start` @ `0x16ac8`, whose whole effect is
 the image (no hardware, no trap), from the vertical blank AFTER the program's own handler has run —
 so the voice rewrite lands between two ticks of the driver rather than in the middle of one. All
-four carry `fa` headers, so `sound_start`'s `channel` argument is overwritten and the `0` this
-build passes means "nothing was chosen".
+five carry `fa` headers, so `sound_start`'s `channel` argument is overwritten and the `0` this
+build passes means "nothing was chosen". The blip is **latched, not played, in the ACIA door**: an
+accepted, non-completing combo letter sets a one-byte "blip pending" flag from the keyboard
+interrupt, and `zy_cheats_tick` drains it in the vertical blank — exactly the split the arm already
+uses, because `sound_start` is the game's driver and must never be called from interrupt context.
+The completing letter arms (the fanfare is its sound) and the tick fires a blip **or** the fanfare
+in one frame, never both, so the two cannot stack on a voice.
 
 ## What each key writes, and why those bytes
 
@@ -477,8 +483,8 @@ cheats changed nothing over a run in which nobody pressed a key. It cannot say t
 quiet. So the record carries the trainer's own account of itself, and:
 
 * **`smoke.py title`, `titlefault`, `floppy`, `game` and `gamefault` each assert
-  `check_the_trainer_stayed_dormant`** — `cheats_armed`, `cheat_arm_jingles` and the three fire
-  counts all 0, plus the combo's resolved scancodes against smoke.py's own reading of the same 115
+  `check_the_trainer_stayed_dormant`** — `cheats_armed`, `cheat_arm_jingles`, the three fire counts
+  and `cheat_key_blips` all 0, plus the combo's resolved scancodes against smoke.py's own reading of the same 115
   table bytes. `cheats_built` is CROSS-CHECKED rather than required: the ELF is asked whether the
   watcher's data is in it and the program's own claim must agree, which is what makes `ZY_NOCHEATS=1`
   a build this matrix can judge instead of one that reds by construction.
@@ -490,7 +496,7 @@ quiet. So the record carries the trainer's own account of itself, and:
   cannot fire whatever the keyboard sends. There the check is a **regression net** (a trainer that
   had started poking from the boot, or from an M1 code path, would show) rather than a dormancy
   proof, and the scancode comparison is the part of it that measures something in every mode.
-* **`smoke.py cheats` is the positive control**, and without it those five assertions would be a
+* **`smoke.py cheats` is the positive control**, and without it those six assertions would be a
   check on code that could not fire at all. It drives the combo and the three keys through
   **Hatari's own keyboard** (`hatari-event keydown`/`keyup`, one make code and one break code each)
   — the real path: 6301 → ACIA → MFP channel 6 → `ikbd_acia_isr` → the tap. Nothing about the
@@ -504,7 +510,12 @@ What `smoke.py cheats` asserts, in the order the run produces it:
    after both;
 2. **the positive** — `Z`, then `Y`, then `N` typed in order: it arms, once, and the fanfare's
    stream pointer read back out of voice 3's record equals what smoke.py's own port of
-   `sound_lookup_tune` predicts for orphan 35;
+   `sound_lookup_tune` predicts for orphan **23** (and the id itself is pinned to 23, so reverting
+   it to the inaudible 35 reddens even though the self-referential read-back would not);
+2b. **the per-key blip** — every accepted, non-completing combo letter of all three sequences
+   (negatives included) blips; `cheat_key_blips` is checked against `expected_key_blips`, an
+   independent replay of the matcher, so a blip that also fires on the completing letter (a voice
+   collision with the fanfare) or one dropped by a broken latch reddens;
 3. **the in-game refusal** — `g_arming_window_open` is 1 at the title and 0 inside the frame loop;
 4. **the six bytes the three keys write**, each read back off the running machine at the address
    its header names — plus the panel bits, which nothing outside could sample (the frame loop clears
@@ -524,14 +535,18 @@ What `smoke.py cheats` asserts, in the order the run produces it:
 | the arming jingle is counted twice | `cheats` | KILLED — "the record says armed=1, jingles=2 — one arming, once, was asked for" |
 | `zy_cheats_arming_window(0)` a no-op, so the window never shuts | `cheats` | KILLED — "the arming window was still open inside the frame loop" |
 | `F2` acts but its fire count is not incremented | `cheats` | KILLED — "cheat_lives_fires is 0, and 1 key press(es) reached the machine" |
+| the arming fanfare reverted to the inaudible stream 35 | `cheats` | KILLED — "the arming fanfare is sound 35, not the audible orphan stream 23" (the self-referential read-back stayed green; the id pin is what caught it) |
+| the completing letter fires a blip too (voice collision with the fanfare) | `cheats` | KILLED — "the trainer played 8 per-key blip(s) ... not the 7" |
+| the blip-pending latch is never drained in the tick | `cheats` | KILLED — "the trainer played 691 per-key blip(s) ... not the 7" |
+| a blip fires with no keypress latch (per-key blip in a judged mode) | `game` | KILLED — "cheat_key_blips is 1, not 0 — the trainer fired in a run that pressed none of its keys" |
 | the trainer arms on the first attract vblank with no keys pressed | `game` | KILLED — "the trainer fired in a run that pressed none of its keys" |
 
-The last one — the only `game` row — is the one that matters most: it is the DORMANCY check going
-red, which is what says the five zeros every other mode prints are a measurement rather than a shape
-that cannot fail. (It arms on the first vblank with no input at all, rather than on a typed sequence,
-because a `game` run spends only 26 vblanks in the attract loop and never types the letters — a
-mutation that still required the sequence would have survived for want of input rather than for want
-of a check.)
+The two `game` rows are the ones that matter most: they are the DORMANCY check going red, which is
+what says the six zeros every other mode prints are a measurement rather than a shape that cannot
+fail. (Each fires with no input at all — one arms on the first attract vblank, the other blips on
+it — rather than on a typed sequence, because a `game` run spends only 26 vblanks in the attract
+loop and never types the letters, so a mutation that still required the sequence would have survived
+for want of input rather than for want of a check.)
 
 **THE PSG TRACE IS NOT THE JINGLE'S SURFACE, and it cannot be.** `smoke.py` traces `psg_write` and
 cuts it into the sound driver's own tick frames, but the title tune is driving all three voices at
@@ -539,6 +554,17 @@ the moment the fanfare starts and no register write in that window is the jingle
 exact is the voice record: `sound_start`'s whole effect is those eight image stores, the shim reads
 the restart pointer back immediately (the cursor moves every tick, so nothing outside could sample
 it) and the record carries it. That is a stronger surface than a trace scrape, not a weaker one.
+
+**The blip's surface is its COUNT, for the same reason and one more.** Its stream (`fa 04`)
+round-robins voices 3 and 2, so unlike the fanfare's deterministic `fa 03` → voice 3 there is no
+single voice record that is the blip's alone to read back. But the blip and the fanfare share that
+verified `sound_start` — which the fanfare's read-back already pins — so what the blip needs to
+prove is only that it fired **the right number of times and in the right places**: once per accepted,
+non-completing letter and never on the completing one. `cheat_key_blips` against `expected_key_blips`
+is exactly that. (Audibility itself is the manifest measurement, not the run: stream 29 is −10.8
+dBFS over 0.90 s. As with any sfx over the running title tune, the driver's own voice arbitration
+gives the blip and fanfare their voice for their duration and the music resumes on it after — a
+louder stream than the near-ultrasonic 35 regardless.)
 
 ## Building it, and the purist path
 

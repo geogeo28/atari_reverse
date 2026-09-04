@@ -18,9 +18,10 @@
  * fumbling then retyping works), and the third letter latches "complete". The sequence is refused
  * outside that screen. A TYPED SEQUENCE rather than a simultaneous hold on purpose: three keys held
  * together can GHOST on the real IKBD keyboard matrix and never all reach the controller, and a
- * sequence — one key down at a time — cannot. On arming, one of the game's own ORPHANED sound
- * effects plays: the secrets hunt proved nine of the forty-five streams unreachable from any call
- * site (README.md, "Secrets and dead code"), and the trainer resurrects FOUR of them — the arming
+ * sequence — one key down at a time — cannot. Each ACCEPTED combo letter plays a short blip, and
+ * completing the sequence plays a longer arming fanfare, so the player hears the trainer take: the
+ * secrets hunt proved nine of the forty-five streams unreachable from any call site (README.md,
+ * "Secrets and dead code"), and the trainer resurrects FIVE of them — the per-key blip, the arming
  * fanfare and one per cheat key.
  *
  * WHAT THE KEYS DO, once armed and inside the frame loop:
@@ -28,10 +29,13 @@
  *
  * WHERE THE WORK HAPPENS, AND WHY IT IS SPLIT IN TWO. The ACIA door (`zy_cheat_note_ikbd_byte`) is
  * entered from inside the KEYBOARD interrupt, once per byte the controller sends, so it does the
- * least possible: it advances the arming sequence's cursor by one press and latches a bit per cheat
- * key pressed. The state machine — the arming on a completed sequence, the jingle and the pokes —
- * runs from `zy_cheats_tick` in the VERTICAL BLANK, after the program's own handler has finished for
- * that frame. Both are
+ * least possible: it advances the arming sequence's cursor by one press, raises a one-byte latch
+ * when that press was an accepted (non-completing) combo letter, and latches a bit per cheat key
+ * pressed. The state machine — the arming on a completed sequence, the jingle and the pokes, and
+ * the per-key blip that latch asks for — runs from `zy_cheats_tick` in the VERTICAL BLANK, after
+ * the program's own handler has finished for that frame. NO `sound_start` IS EVER CALLED FROM THE
+ * DOOR: the driver is the game's own and must be touched from the main line, not the keyboard
+ * interrupt, so the blip is a latch the tick drains exactly as the arm already is. Both are
  * interrupts, so every store either one makes into THIS FILE'S OWN STATE is a single 68000
  * instruction and cannot be split by the other: MFP channel 6 is level 6 and the vertical blank is
  * level 4, so the keyboard can interrupt the tick but never the reverse. `take_pending_fire` and the
@@ -109,7 +113,7 @@
 #define CHEAT_LIVES 9u
 
 /* ================================================================================================
- * The sounds — four of the game's nine unreachable streams, brought back.
+ * The sounds — five of the game's nine unreachable streams, brought back.
  *
  * README.md's "Secrets and dead code" proves ids 19, 23, 25, 29, 35, 37, 38, 42 and 43 unreachable:
  * every one of the 23 instructions that reaches `sound_start` was followed through the spawn, jump
@@ -124,8 +128,21 @@
  * whatever the caller held, exactly as it is at the game's own call sites, and 0 is spelt here to
  * say that nothing was chosen.
  * ============================================================================================= */
-#define CHEAT_SFX_ARMED         0x23u  /* 35 — 2.0 s, `fa 03`; channel code 3 occurs on no
-                                        * reachable stream at all, which makes it the fanfare */
+/* The arming fanfare. STREAM 23, NOT 35 — measured: tools/extract_audio.py's manifest.tsv shows
+ * 35 opening `fa 03 e8 01 e9 01 ea 01`, all three tone periods = 1, a near-ultrasonic whistle that
+ * meters at -10.7 dBFS but is thin to the ear. Stream 23 is also `fa 03` and also one of the nine
+ * orphans, but opens `fa 03 e8 11 ...` — period 0x11, an audible mid pitch (-10.8 dBFS, 2.0 s) —
+ * so the original justification (a `fa 03` channel code on no reachable stream) still holds while
+ * the fanfare is now something a player can actually hear. `fa 03` still lands it on voice 3, which
+ * is the record `arm_the_trainer` reads its stream back out of. */
+#define CHEAT_SFX_ARMED         0x17u  /* 23 */
+/* The per-key blip: a short sound on each ACCEPTED, non-completing combo letter. Stream 29, a 0.90 s
+ * orphan opening `fa 04 e8 0b ...` (-10.8 dBFS, manifest.tsv) — long enough to hear, short enough
+ * not to run into the next keypress. `fa 04` is the driver's round-robin code, which the shipped
+ * toggle byte (0x16e90 = 2) runs across voices 3 and 2 — never voice 1 — so a blip cannot land on
+ * the same voice as the completing letter's fanfare in the SAME tick anyway; the tick's split (blip
+ * on advances 1..n-1, fanfare on the last, never both in one frame) is what actually guarantees it. */
+#define CHEAT_SFX_KEY           0x1du  /* 29 */
 #define CHEAT_SFX_INVULNERABLE  0x13u  /* 19 — the only orphan armed on VOICE 1, so the toggle is
                                         * heard over whatever the other two voices are playing */
 #define CHEAT_SFX_LIVES         0x25u  /* 37 — one of the pair 42/43 shadow */
@@ -164,6 +181,15 @@ static volatile uint8_t g_seq_cursor;
  * ms between completion and the next tick resets the cursor but must not un-complete the sequence. */
 static volatile uint8_t g_seq_complete;
 
+/* Set to 1 by the ACIA door on each ACCEPTED, non-completing combo letter; read and cleared by the
+ * tick, which plays one blip for it. A one-byte latch exactly like `g_seq_complete`, and for the
+ * same reason: `sound_start` is the game's own driver and must not be called from the keyboard
+ * interrupt. It is NOT set on the completing letter — that letter arms and the fanfare is its sound
+ * — so a blip and the fanfare cannot both be raised for one keystroke. Losing a blip to the tick's
+ * read/clear window is cosmetic (a dropped feedback sound, never a dropped cheat), so unlike the
+ * cheat-fire bits this needs no bset/bclr; the ~20 ms settle between keys makes even that moot. */
+static volatile uint8_t g_blip_pending;
+
 /* One bit per cheat key pressed and not yet acted on. `bset` from the keyboard interrupt, `bclr`
  * from the vertical blank — see this file's header on why neither may be a load/modify/store. */
 #define CHEAT_FIRE_BIT_INVULNERABLE 0u
@@ -181,6 +207,7 @@ static volatile uint8_t g_play_window_open;
 
 static uint8_t g_armed;
 static uint32_t g_arm_jingles;
+static uint32_t g_key_blips;                 /* per-key feedback blips the tick has played */
 static uint32_t g_fires[CHEAT_KEY_COUNT];    /* indexed by CHEAT_FIRE_BIT_* — F1, F2, F3 */
 
 /* The two read-backs zynaps_cheats.h describes: the panel mask after each poke that asked for a
@@ -252,13 +279,23 @@ static unsigned combo_key_for_scancode(uint8_t scancode) {
  * ============================================================================================= */
 /* Advance the arming sequence by one combo-letter PRESS. The right next letter steps the cursor and
  * latches "complete" on the third; a wrong letter restarts the sequence — on that letter if it is
- * the first (Z), so a fumble followed by a clean Z-Y-N still arms, otherwise from the start. */
+ * the first (Z), so a fumble followed by a clean Z-Y-N still arms, otherwise from the start.
+ *
+ * A blip is raised for every press that ADVANCES to a non-complete cursor — the right next letter
+ * that is not the third, and a fresh Z that restarts the sequence — because each of those is an
+ * accepted letter the player should hear land. The completing letter raises `g_seq_complete`
+ * instead (the fanfare is its sound), and a wrong letter that merely resets to 0 raises neither. */
 static void advance_arming_sequence(unsigned key) {
     if (key == g_seq_cursor) {
         if (++g_seq_cursor >= CHEAT_COMBO_KEYS)
             g_seq_complete = 1;
+        else
+            g_blip_pending = 1;
+    } else if (key == 0) {
+        g_seq_cursor = 1;
+        g_blip_pending = 1;
     } else {
-        g_seq_cursor = (key == 0) ? 1u : 0u;
+        g_seq_cursor = 0;
     }
 }
 
@@ -418,6 +455,14 @@ void zy_cheats_tick(void) {
         arm_the_trainer(image);
         g_seq_complete = 0;
         g_seq_cursor = 0;
+        g_blip_pending = 0;   /* a same-frame non-completing blip is superseded by the fanfare */
+    } else if (g_arming_window_open && g_blip_pending) {
+        /* Each accepted, non-completing combo letter gets a short blip — feedback the player hears
+         * while typing the sequence. `else if` with the arm above is what keeps a blip and the
+         * fanfare from stacking on a voice in one tick; the completing letter never sets this. */
+        sound_start(image, CHEAT_SFX_KEY, CHEAT_SOUND_CHANNEL_IGNORED);
+        g_key_blips++;
+        g_blip_pending = 0;
     }
     if (g_armed && g_play_window_open)
         serve_pending_fires(image);
@@ -433,6 +478,7 @@ void zy_cheats_arming_window(unsigned open) {
      * carry-over to a fresh Z-Y-N. */
     g_seq_cursor = 0;
     g_seq_complete = 0;
+    g_blip_pending = 0;   /* cleared on both open and close, so no latch carries across an attract pass */
     g_arming_window_open = (uint8_t)(open != 0);
 }
 
@@ -446,6 +492,7 @@ void zy_cheats_report(struct zy_cheat_counts *out) {
     out->invulnerable_fires = g_fires[CHEAT_FIRE_BIT_INVULNERABLE];
     out->lives_fires = g_fires[CHEAT_FIRE_BIT_LIVES];
     out->power_fires = g_fires[CHEAT_FIRE_BIT_POWER];
+    out->key_blips = g_key_blips;
     out->panel_requests = g_panel_requests;
     out->jingle_stream = g_jingle_stream;
     for (unsigned key = 0; key < CHEAT_COMBO_KEYS; key++)
