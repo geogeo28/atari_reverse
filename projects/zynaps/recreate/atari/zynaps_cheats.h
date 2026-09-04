@@ -15,9 +15,9 @@
 
 #include <stdint.h>
 
-/* Z, Y and N — the three letters held together to arm the trainer. The letters are the contract;
- * which SCANCODE each one is depends on the keyboard, which is what `zy_cheats_resolve_scancodes`
- * is for (zynaps_cheats.c carries the layout argument). */
+/* Z, Y and N — the three letters TYPED IN ORDER (one at a time) to arm the trainer. The letters are
+ * the contract; which SCANCODE each one is depends on the keyboard, which is what
+ * `zy_cheats_resolve_scancodes` is for (zynaps_cheats.c carries the layout argument). */
 #define CHEAT_COMBO_KEYS 3u
 
 /* Which of the two arms below was compiled, as a number the record can carry: it is what separates
@@ -32,7 +32,7 @@
 /* What the run's record publishes about the trainer, so `smoke.py` can judge it. One struct rather
  * than seven externs: `record_the_run` reads all of them at one point and nothing else reads any. */
 struct zy_cheat_counts {
-    uint32_t armed;                 /* 0 or 1 — did the combo ever complete? */
+    uint32_t armed;                 /* 0 or 1 — was the Z-Y-N sequence ever completed? */
     uint32_t arm_jingles;           /* how many times the arming fanfare was started */
     uint32_t invulnerable_fires;    /* F1 presses acted on */
     uint32_t lives_fires;           /* F2 */
@@ -63,8 +63,8 @@ void zy_cheats_resolve_scancodes(const uint8_t *image);
 void zy_cheats_arming_window(unsigned open);
 void zy_cheats_play_window(unsigned open);
 
-/* One vertical blank of the watcher: the hold timer, the arming, and the pokes a cheat key asked
- * for. Called from `zy_vbl_tick` AFTER the program's own handler has run. */
+/* One vertical blank of the watcher: the arming when the typed sequence has completed, and the pokes
+ * a cheat key asked for. Called from `zy_vbl_tick` AFTER the program's own handler has run. */
 void zy_cheats_tick(void);
 
 void zy_cheats_report(struct zy_cheat_counts *out);

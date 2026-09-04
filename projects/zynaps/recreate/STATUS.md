@@ -2749,8 +2749,10 @@ class: the message names the EMULATOR dying rather than a check failing, and one
 this reconstruction can reach. **Do not accept such a failure as a verdict either way**: re-run the
 mode alone before believing it, and do not run the matrix beside anything heavy.
 
-**THE TRAINER IS THE ONE DELIBERATE DIVERGENCE, and it is entirely in the shim.** `Z`+`Y`+`N` held
-at the title arms `F1` invulnerability / `F2` lives / `F3` maxed power-ups, all of it in
+**THE TRAINER IS THE ONE DELIBERATE DIVERGENCE, and it is entirely in the shim.** Typing `Z`, `Y`,
+`N` in order (one key at a time) at the title arms `F1` invulnerability / `F2` lives / `F3` maxed
+power-ups — a typed sequence rather than a simultaneous hold, because three keys held together can
+ghost on the real IKBD matrix and a sequence cannot. All of it in
 `atari/zynaps_cheats.c` plus a tap in `shim_include/hw.h`'s `hw_read8` — no core, no `include/`, no
 `test/` moved, `make test` is unchanged and the frame differential is still byte-identical. It is
 inert until armed; `smoke.py cheats` is the positive control that arms it through Hatari's own

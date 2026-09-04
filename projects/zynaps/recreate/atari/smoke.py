@@ -67,7 +67,7 @@ import st_pixels                                                       # noqa: E
 sys.path.insert(0, str(HERE))
 import mkfloppy                                                        # noqa: E402
 from hatari_headless import (                                          # noqa: E402
-    BREAK_BIT, HATARI, POLL_SECONDS, PRG_HEADER_BYTES, HeadlessSession, action_file,
+    HATARI, POLL_SECONDS, PRG_HEADER_BYTES, HeadlessSession, action_file,
     distinct_colours, first_fixup_offset, locate_by_signature, log_faults, same_picture)
 # The tick-frame cutter, borrowed rather than re-derived: `ref_capture.py` already parses Hatari's
 # psg_write trace into the sound driver's own 10..0 flush frames, and re-spelling that here would be
@@ -334,8 +334,8 @@ TIMER_B_HANDLER_NAMES = ("in_game", "raster", "attract")
 # =================================================================================================
 # THE TRAINER — the build's one deliberate divergence from the 1988 binary, and how it is judged.
 #
-# atari/zynaps_cheats.c watches the keyboard for Z+Y+N held at the title screen and then for F1/F2/
-# F3 in the game. Two things have to be true and neither is provable from the frame differential,
+# atari/zynaps_cheats.c watches the keyboard for Z, Y, N typed in order at the title screen and then
+# for F1/F2/F3 in the game. Two things have to be true and neither is provable from the frame diff,
 # which runs over a game nobody pressed a key in:
 #
 #   * IT STAYS DORMANT. `check_the_trainer_stayed_dormant` asserts the record's five trainer counts
@@ -2822,12 +2822,17 @@ def print_the_boot_clock(record):
 #
 # WHAT IT ASSERTS, in the order the run produces it:
 #
-#   1. THE WRONG-KEY NEGATIVE. Z and Y alone, held well past the arming time at the title: the
-#      trainer must not arm. Read live out of the shim's own `g_armed`.
-#   2. THE POSITIVE. Z, Y and N together: it arms, and the arming fanfare is one of the game's nine
-#      UNREACHABLE sound streams, armed on the driver's own voice record.
+#   1. THE TWO NEGATIVES. (a) a wrong/fumbled sequence typed at the title — Z, Y, Z, N — must not
+#      arm: the misplaced Z restarts the cursor and the trailing N then falls on the wrong letter,
+#      so a matcher that either advances on a wrong letter or fails to reset would arm here and the
+#      strict one does not. (b) an incomplete sequence — Z, Y and stop — must not arm either. Both
+#      read live out of the shim's own `g_armed`.
+#   2. THE POSITIVE. Z, then Y, then N, typed in order one key at a time: it arms, and the arming
+#      fanfare is one of the game's nine UNREACHABLE sound streams, armed on the driver's own voice
+#      record. A TYPED SEQUENCE, not a simultaneous hold — three keys held together can ghost on the
+#      real IKBD matrix and never all reach the controller; one key down at a time cannot.
 #   3. THE IN-GAME REFUSAL. `g_arming_window_open` is 1 at the title and 0 once the frame loop is
-#      running, so the combo cannot arm the trainer from inside a game.
+#      running, so the sequence cannot arm the trainer from inside a game.
 #   4. THE THREE KEYS, each read back off the machine at the byte it was supposed to write.
 #   5. INVULNERABILITY AS A BEHAVIOUR AND NOT A BYTE. A neutral-stick life ends at about frame 176
 #      (`press_fire_only_in_a_wait`'s measurement). The run holds F1 on well past that and the ship
@@ -2835,11 +2840,9 @@ def print_the_boot_clock(record):
 #      in the same run must die. That second half is what makes the first half mean anything.
 # =================================================================================================
 
-# Longer than CHEAT_ARM_HOLD_VBLS at 50 Hz, with slack: Hatari emulates in real time, but the host
-# schedules the FIFO writes and a hold measured exactly would be a race.
-CHEAT_HOLD_SECONDS = 3.5
 # Long enough for the vertical blank after a press to have acted on it, and for the savebin that
-# reads the result to be reading the state AFTER the poke rather than during it.
+# reads the result to be reading the state AFTER the poke rather than during it. Each letter of the
+# arming sequence is one press with this settle, so the whole gesture is cheaper than the old hold.
 CHEAT_KEY_SETTLE_SECONDS = 1.0
 # Where the run looks to see whether the ship is still alive. Comfortably past the frame a
 # neutral-stick life ends on without the trainer, and well inside the mode's own frame budget.
@@ -2907,23 +2910,17 @@ def cheat_expected_jingle_stream(image):
     return head + c_define(sound, "SOUND_ROW_BYTES")
 
 
-def hold_the_keys(session, scancodes, seconds):
-    """Hold a set of ST keys down together, then let them all go.
+def type_the_sequence(session, scancodes):
+    """Type a run of ST keys IN ORDER, one at a time — each a full make/break pair.
 
-    THE RELEASES ARE THE POINT, which is why this is not three `session.key()` calls: the trainer's
-    combo is a HELD SET, and the program keeps only one key byte — `A_key_scancode`, cleared by its
-    own release — so the shim watches the raw make and break codes at the ACIA instead. A driver
-    that sent three press/release pairs in sequence would never have all three down at once.
-
-    The make/break spelling itself is `HeadlessSession`'s (`session.key` is the single-key form);
-    this reaches for `send` only because holding a SET is the one shape that API has no word for.
+    THE ORDER AND THE ONE-AT-A-TIME ARE THE POINT. The trainer arms on Z, then Y, then N typed as a
+    sequence, not on a simultaneous hold: three keys held together can ghost on the real IKBD
+    keyboard matrix and never all reach the controller, and a sequence — one key down and up before
+    the next — cannot. So this is just `press_one_key` per scancode — a single-key make/break pair
+    with a settle after it, so the vertical blank has acted on each press before the next arrives.
     """
     for scancode in scancodes:
-        session.send(f"hatari-event keydown {scancode:#04x}")
-    session.wait(seconds)
-    for scancode in scancodes:
-        session.send(f"hatari-event keyup {scancode | BREAK_BIT:#04x}")
-    session.wait(CHEAT_KEY_SETTLE_SECONDS)
+        press_one_key(session, scancode)
 
 
 def press_one_key(session, scancode):
@@ -2985,7 +2982,7 @@ def run_ours_cheats(out_dir, work, machine, tos_rom):
         # from the same bytes on the machine, and `check_the_combo_was_resolved` compares the two.
         combo = cheat_combo_scancodes(gen_image_bytes())
 
-        # ---- 1. the wrong-key negative, and the window that allows the right one ----------------
+        # ---- 1. the two negatives, and the window that allows the right one ----------------------
         await_machine_value(session, base + phase, VECTOR_BYTES,
                             lambda seen: seen == PHASE_ATTRACT, "waiting for the title screen")
         # THE WINDOW IS WAITED FOR, not sampled: it opens four slices into `title_attract_loop`,
@@ -2993,12 +2990,19 @@ def run_ours_cheats(out_dir, work, machine, tos_rom):
         # title"; failing to reach it raises with that message.
         await_machine_value(session, base + window, 1, lambda seen: seen == 1,
                             "waiting for the trainer's arming window to open at the title")
-        hold_the_keys(session, combo[:-1], CHEAT_HOLD_SECONDS)
-        watched["armed by two of the three"] = machine_byte(session, base + armed)
+        z, y, n = combo
+        # (a) A WRONG/FUMBLED SEQUENCE: Z, Y, then a misplaced Z, then N. The stray Z restarts the
+        # cursor (on that Z), so the trailing N lands on the wrong letter and nothing completes. A
+        # matcher that advanced on a wrong letter, or that failed to reset on one, would arm here.
+        type_the_sequence(session, [z, y, z, n])
+        watched["armed by a wrong sequence"] = machine_byte(session, base + armed)
+        # (b) AN INCOMPLETE SEQUENCE: Z, Y and stop. Two of the three, in order, must not arm.
+        type_the_sequence(session, [z, y])
+        watched["armed by an incomplete sequence"] = machine_byte(session, base + armed)
 
-        # ---- 2. the positive --------------------------------------------------------------------
-        hold_the_keys(session, combo, CHEAT_HOLD_SECONDS)
-        watched["armed by all three"] = machine_byte(session, base + armed)
+        # ---- 2. the positive: Z, then Y, then N, in order ---------------------------------------
+        type_the_sequence(session, [z, y, n])
+        watched["armed by the sequence"] = machine_byte(session, base + armed)
 
         # ---- 3. into the game, and the window must have shut ------------------------------------
         press_one_key(session, c_define(header("init.h"), CHEAT_START_GAME_KEY))
@@ -3067,16 +3071,19 @@ def check_the_trainer_armed(ours):
     """SURFACE: memory + the program's own record — the combo, its negative, and the fanfare."""
     record, watched = ours["record"], ours["watched"]
     problems = []
-    if watched["armed by two of the three"]:
-        problems.append("holding two of the three combo keys armed the trainer — the watcher is "
-                        "not asking for the whole set")
-    if not watched["armed by all three"]:
-        problems.append("holding all three combo keys did NOT arm the trainer, so nothing below "
-                        "this line was tested (see out/cheats.log)")
+    if watched["armed by a wrong sequence"]:
+        problems.append("a wrong/fumbled sequence (Z, Y, Z, N) armed the trainer — the matcher is "
+                        "advancing on a wrong letter or not resetting on one")
+    if watched["armed by an incomplete sequence"]:
+        problems.append("an incomplete sequence (Z, Y) armed the trainer — two of the three, in "
+                        "order, must not complete it")
+    if not watched["armed by the sequence"]:
+        problems.append("typing Z, then Y, then N in order did NOT arm the trainer, so nothing "
+                        "below this line was tested (see out/cheats.log)")
     if watched["window in the game"]:
-        problems.append("the arming window was still open inside the frame loop — the combo could "
-                        "be entered mid-game, which zynaps_main.c's `title_attract_loop` bracket "
-                        "exists to prevent")
+        problems.append("the arming window was still open inside the frame loop — the sequence "
+                        "could be entered mid-game, which zynaps_main.c's `title_attract_loop` "
+                        "bracket exists to prevent")
     if record["cheats_armed"] != 1 or record["cheat_arm_jingles"] != 1:
         problems.append(f"the record says armed={record['cheats_armed']}, "
                         f"jingles={record['cheat_arm_jingles']} — one arming, once, was asked for")

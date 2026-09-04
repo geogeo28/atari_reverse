@@ -12,11 +12,15 @@
  *   * EVERY BYTE IT WRITES IS A BYTE THE GAME ALREADY READS, at an address a VERIFIED core names in
  *     one of ../include's headers. Nothing here invents a location, and nothing writes hardware.
  *
- * HOW IT IS ARMED. Hold Z, Y and N together for CHEAT_ARM_HOLD_VBLS vertical blanks — about two
- * seconds — while the TITLE/ATTRACT screen is up. Releasing any of the three resets the timer, and
- * the combo is refused outside that screen. On arming, one of the game's own ORPHANED sound effects
- * plays: the secrets hunt proved nine of the forty-five streams unreachable from any call site
- * (README.md, "Secrets and dead code"), and the trainer resurrects FOUR of them — the arming
+ * HOW IT IS ARMED. Type Z, then Y, then N — one key at a time, in that order — while the
+ * TITLE/ATTRACT screen is up. A cursor tracks how far into the sequence the player is; the right
+ * next letter advances it, a wrong letter restarts it (and a mistyped Z restarts on that Z, so
+ * fumbling then retyping works), and the third letter latches "complete". The sequence is refused
+ * outside that screen. A TYPED SEQUENCE rather than a simultaneous hold on purpose: three keys held
+ * together can GHOST on the real IKBD keyboard matrix and never all reach the controller, and a
+ * sequence — one key down at a time — cannot. On arming, one of the game's own ORPHANED sound
+ * effects plays: the secrets hunt proved nine of the forty-five streams unreachable from any call
+ * site (README.md, "Secrets and dead code"), and the trainer resurrects FOUR of them — the arming
  * fanfare and one per cheat key.
  *
  * WHAT THE KEYS DO, once armed and inside the frame loop:
@@ -24,9 +28,10 @@
  *
  * WHERE THE WORK HAPPENS, AND WHY IT IS SPLIT IN TWO. The ACIA door (`zy_cheat_note_ikbd_byte`) is
  * entered from inside the KEYBOARD interrupt, once per byte the controller sends, so it does the
- * least possible: it maintains a three-byte held-set and latches a bit per cheat key pressed. The
- * state machine — the hold timer, the arming, the jingle and the pokes — runs from `zy_cheats_tick`
- * in the VERTICAL BLANK, after the program's own handler has finished for that frame. Both are
+ * least possible: it advances the arming sequence's cursor by one press and latches a bit per cheat
+ * key pressed. The state machine — the arming on a completed sequence, the jingle and the pokes —
+ * runs from `zy_cheats_tick` in the VERTICAL BLANK, after the program's own handler has finished for
+ * that frame. Both are
  * interrupts, so every store either one makes into THIS FILE'S OWN STATE is a single 68000
  * instruction and cannot be split by the other: MFP channel 6 is level 6 and the vertical blank is
  * level 4, so the keyboard can interrupt the tick but never the reverse. `take_pending_fire` and the
@@ -97,10 +102,6 @@
 #define CHEAT_KEY_LIVES        0x3cu   /* F2 */
 #define CHEAT_KEY_POWER        0x3du   /* F3 */
 
-/* About two seconds at 50 Hz. Long enough that the three keys cannot be hit together by accident
- * while a player is thumping the keyboard at the title, short enough to be a hold and not a wait. */
-#define CHEAT_ARM_HOLD_VBLS 100u
-
 /* What F2 puts in `A_lives`. The byte is unclamped and the panel's icon row is six wide, so nine
  * lives draw six full icons and the other three are real but off the panel. Nothing above 0x7f may
  * ever go here: `life_icon_for_slot` (../src/hud.c) reads the byte SIGNED, so 0x80 and up draw six
@@ -149,9 +150,19 @@ static struct cheat_combo_key g_combo[CHEAT_COMBO_KEYS] = {
     {'N', CHEAT_AZERTY_SCANCODE_N, 0},
 };
 
-/* One byte per combo letter — set by its press, cleared by its release. A byte each rather than
- * bits of one mask so that the door's store is a `move.b` with nothing to read first. */
-static volatile uint8_t g_held[CHEAT_COMBO_KEYS];
+/* HOW FAR INTO THE SEQUENCE [Z, Y, N] the player is: 0 means "expecting Z", CHEAT_COMBO_KEYS means
+ * the whole sequence has just been typed. Advanced by one press in the ACIA door, reset there on a
+ * wrong letter, and reset from the tick when the window opens and after arming. The door's `++` is a
+ * read-modify-write, but the door runs at level 6 and nothing preempts it; the tick's and the
+ * window's resets are single `move.b` stores the door cannot split. */
+static volatile uint8_t g_seq_cursor;
+
+/* Set to 1 by the ACIA door the instant the cursor reaches CHEAT_COMBO_KEYS, read and cleared by the
+ * tick — a one-byte latch so the ARM itself (jingle, state, pokes) happens in the vertical blank and
+ * never from the keyboard interrupt. Both stores are a single `move.b`. It is a SEPARATE byte from
+ * the cursor, not derived from it, because it must be STICKY: a stray combo key arriving in the ~20
+ * ms between completion and the next tick resets the cursor but must not un-complete the sequence. */
+static volatile uint8_t g_seq_complete;
 
 /* One bit per cheat key pressed and not yet acted on. `bset` from the keyboard interrupt, `bclr`
  * from the vertical blank — see this file's header on why neither may be a load/modify/store. */
@@ -169,7 +180,6 @@ static volatile uint8_t g_arming_window_open;
 static volatile uint8_t g_play_window_open;
 
 static uint8_t g_armed;
-static uint32_t g_hold_vbls;
 static uint32_t g_arm_jingles;
 static uint32_t g_fires[CHEAT_KEY_COUNT];    /* indexed by CHEAT_FIRE_BIT_* — F1, F2, F3 */
 
@@ -225,9 +235,10 @@ static unsigned combo_key_for_scancode(uint8_t scancode) {
  *
  * It is called from `hw_read8` (shim_include/hw.h) at the one address that is the 6850's DATA port,
  * so it sees every byte the game's own handler sees, at the same moment and before that handler has
- * decided anything. That is the only place a RELEASE is visible: the program keeps one byte,
- * `A_key_scancode`, which holds the key currently down and is cleared only by its own release — so
- * three keys held together cannot be read out of the image at all.
+ * decided anything. That is the only place a PRESS is reliably visible: the program keeps one byte,
+ * `A_key_scancode`, which holds the key currently down, is overwritten by the next press and cleared
+ * only by its own release — so a watcher reading it from the VBL would miss presses that came and
+ * went between two frames, where the sequence must see each one at the instant it lands.
  *
  * WHICH BYTES ARE KEYS is decided out of the program's OWN packet state rather than by guessing.
  * `ikbd_acia_service_one_byte` (../src/irq.c) reads `A_ikbd_packet_remaining` before it pops the
@@ -239,9 +250,20 @@ static unsigned combo_key_for_scancode(uint8_t scancode) {
  * corrected here for the same reason ../src/irq.c transcribes it, and the keyboard sends none of
  * the five.
  * ============================================================================================= */
+/* Advance the arming sequence by one combo-letter PRESS. The right next letter steps the cursor and
+ * latches "complete" on the third; a wrong letter restarts the sequence — on that letter if it is
+ * the first (Z), so a fumble followed by a clean Z-Y-N still arms, otherwise from the start. */
+static void advance_arming_sequence(unsigned key) {
+    if (key == g_seq_cursor) {
+        if (++g_seq_cursor >= CHEAT_COMBO_KEYS)
+            g_seq_complete = 1;
+    } else {
+        g_seq_cursor = (key == 0) ? 1u : 0u;
+    }
+}
+
 void zy_cheat_note_ikbd_byte(uint8_t byte) {
     const uint8_t *image = zy_image_base;
-    uint8_t scancode;
     unsigned key;
 
     if (image[A_ikbd_packet_remaining] != 0)      /* a joystick report's payload */
@@ -249,17 +271,17 @@ void zy_cheat_note_ikbd_byte(uint8_t byte) {
     if (byte == IKBD_JOYSTICK_HEADER)             /* ...and the header that armed it */
         return;
 
-    if ((int8_t)(uint8_t)(byte - IKBD_JOYSTICK_HEADER) < 0) {
-        scancode = (uint8_t)(byte & (uint8_t)~KEY_RELEASE_BIT);
-        key = combo_key_for_scancode(scancode);
-        if (key < CHEAT_COMBO_KEYS)
-            g_held[key] = 0;
+    /* A RELEASE/BREAK code — the sequence is press-only, so it advances nothing. The split is the
+     * program's own (`cmp.b #$fd,d1` + `bmi`, a SIGNED compare, so 0x7d..0x7f and 0xfe/0xff take
+     * this arm); the cheat keys below are latched on their make code, never their break. */
+    if ((int8_t)(uint8_t)(byte - IKBD_JOYSTICK_HEADER) < 0)
         return;
-    }
 
     key = combo_key_for_scancode(byte);
     if (key < CHEAT_COMBO_KEYS) {
-        g_held[key] = 1;
+        /* Only while the title/attract window is open — the sequence cannot be entered elsewhere. */
+        if (g_arming_window_open)
+            advance_arming_sequence(key);
         return;
     }
     /* The three cheat keys are latched rather than acted on: this is inside the keyboard interrupt,
@@ -356,13 +378,6 @@ static unsigned take_pending_fire(unsigned bit) {
     return 1;
 }
 
-static unsigned the_whole_combo_is_held(void) {
-    for (unsigned key = 0; key < CHEAT_COMBO_KEYS; key++)
-        if (!g_held[key])
-            return 0;
-    return 1;
-}
-
 static void arm_the_trainer(uint8_t *image) {
     g_armed = 1;
     g_arm_jingles++;
@@ -396,14 +411,13 @@ static void serve_pending_fires(uint8_t *image) {
 void zy_cheats_tick(void) {
     uint8_t *image = zy_image_base;
 
-    if (!g_armed) {
-        /* A key released — or the wrong screen — puts the timer back to nothing. */
-        if (g_arming_window_open && the_whole_combo_is_held()) {
-            if (++g_hold_vbls >= CHEAT_ARM_HOLD_VBLS)
-                arm_the_trainer(image);
-        } else {
-            g_hold_vbls = 0;
-        }
+    /* The ACIA door latched a completed sequence; the ARM happens here, in the vertical blank, and
+     * only while the window is still open. Clearing the latch and the cursor after arming means a
+     * completion the door raised just as the window shut cannot arm a later pass. */
+    if (!g_armed && g_arming_window_open && g_seq_complete) {
+        arm_the_trainer(image);
+        g_seq_complete = 0;
+        g_seq_cursor = 0;
     }
     if (g_armed && g_play_window_open)
         serve_pending_fires(image);
@@ -412,17 +426,13 @@ void zy_cheats_tick(void) {
 }
 
 void zy_cheats_arming_window(unsigned open) {
-    /* THE HELD-SET STARTS EMPTY EVERY TIME THE WINDOW OPENS, and that is a recovery rather than
-     * tidiness: a letter is cleared only by its own BREAK code arriving at the ACIA, so one lost
-     * break — an overrun while interrupts are masked through a floppy read, say — would latch that
-     * letter for the rest of the run and leave the combo armable by the other two alone. Clearing
-     * here bounds the damage to one pass of the attract loop and costs a fresh press.
-     *
-     * `g_hold_vbls` is NOT cleared here: `zy_cheats_tick`'s own `else` zeroes it on every vertical
-     * blank the window is shut or the set incomplete, and one writer for one piece of state is the
-     * whole of why that reset lives there. */
-    for (unsigned key = 0; key < CHEAT_COMBO_KEYS; key++)
-        g_held[key] = 0;
+    /* THE SEQUENCE STARTS OVER EVERY TIME THE WINDOW OPENS, and that is a recovery rather than
+     * tidiness: a half-typed sequence left from a previous attract pass must not carry across, and a
+     * stale "complete" latch — raised by the door just as the window last shut — must not arm this
+     * pass without a keystroke. Both are cleared here (and again after arming), which bounds any
+     * carry-over to a fresh Z-Y-N. */
+    g_seq_cursor = 0;
+    g_seq_complete = 0;
     g_arming_window_open = (uint8_t)(open != 0);
 }
 

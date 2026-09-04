@@ -1574,11 +1574,12 @@ because the feature is broken look exactly like five that read zero because it i
 (`cheats`) therefore drives the whole feature end to end and judges it, and the ordering matters as
 much as the coverage:
 
-1. an **arming negative** first — two of the three keys, held past the arming window, must arm
-   nothing;
-2. the positive — all three keys, through the emulator's real keyboard (`hatari-event keydown`, so
-   the path is the 6301, the ACIA, the interrupt and the program's own handler; nothing is poked into
-   position);
+1. two **arming negatives** first — a wrong/fumbled key sequence, and an incomplete one (two of the
+   three, in order), each typed at the title, must arm nothing;
+2. the positive — the three keys typed IN ORDER, one at a time, through the emulator's real keyboard
+   (`hatari-event keydown`/`keyup` per key, so the path is the 6301, the ACIA, the interrupt and the
+   program's own handler; nothing is poked into position). A typed sequence rather than a
+   simultaneous hold, because three keys held together can ghost on the real IKBD matrix;
 3. a **window** control — the arming window's own flag, read live off the machine, must be open at
    the title and shut once the frame loop is running. (Zynaps reads the flag rather than re-driving
    the combo in-game; the stronger control, actually pressing the keys there, is not what was

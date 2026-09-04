@@ -43,8 +43,8 @@ bash atari/build.sh play floppy                                       # -> disk/
 bash atari/build.sh cheats      && python3 atari/smoke.py cheats      # the TRAINER's positive control
 ```
 
-Every one of those binaries carries the **trainer** — `Z`+`Y`+`N` at the title, then `F1`/`F2`/`F3`
-— which is the one thing in this directory that is deliberately not the 1988 program. It is inert
+Every one of those binaries carries the **trainer** — type `Z`, `Y`, `N` in order at the title, then
+`F1`/`F2`/`F3` — which is the one thing in this directory that is deliberately not the 1988 program. It is inert
 until a player arms it and every mode above asserts it stayed that way; see **THE TRAINER** below.
 
 ## What runs, and in what order
@@ -255,9 +255,9 @@ keeps it closed is `smoke.py`'s `check_the_pacing`, whose floor is 95% of the of
 
 # THE TRAINER — the one thing here that is NOT the original
 
-**Hold `Z`+`Y`+`N` for two seconds at the title screen and the game answers with a sound no player
-of the 1988 disk could ever have heard. After that, `F1` makes the ship invulnerable, `F2` puts the
-lives back and `F3` maxes every power-up.**
+**Type `Z`, then `Y`, then `N` — one key at a time, in that order — at the title screen and the game
+answers with a sound no player of the 1988 disk could ever have heard. After that, `F1` makes the
+ship invulnerable, `F2` puts the lives back and `F3` maxes every power-up.**
 
 Everything else in this directory exists to be byte-identical to a 1988 binary. This section is the
 exception, asked for deliberately, and it is written so that the exception stays exactly where it
@@ -278,15 +278,21 @@ was put:
 
 | | | |
 |---|---|---|
-| **arm** | `Z` + `Y` + `N` held together for ~2 s | **at the title/attract screen only** |
+| **arm** | type `Z`, then `Y`, then `N` in order (one key at a time) | **at the title/attract screen only** |
 | `F1` | toggle invulnerability | in game |
 | `F2` | lives back to 9 | in game |
 | `F3` | every power-up to its ceiling, seeker selected | in game |
 
-Releasing any of the three resets the hold timer, and the combo is refused anywhere but the title —
+**A TYPED SEQUENCE, not a simultaneous hold — and that is a real-hardware fix, not a preference.**
+Three keys held down together can GHOST on the IKBD's keyboard matrix: the controller scans a grid,
+and certain key triads share rows and columns such that a third press is never reported. On the
+user's STE the simultaneous hold armed nothing. A sequence — one key down and up before the next —
+touches one matrix cell at a time and cannot ghost, and it does not depend on hold timing. A wrong
+or out-of-order key restarts the sequence (a misplaced `Z` restarts on that `Z`, so a fumble
+followed by a clean `Z`-`Y`-`N` still arms). The sequence is refused anywhere but the title —
 `zynaps_main.c`'s `title_attract_loop` opens the window around `attract_wait_for_start` and closes
 it on the way out. Z, Y and N are none of the three keys that wait exits on (`1`, `2`, fire), so
-holding the combo cannot start a game by accident.
+typing them cannot start a game by accident.
 
 **THE SCANCODES ARE RESOLVED AT RUNTIME OUT OF THE GAME'S OWN TABLE.** An ST keyboard sends POSITION
 codes, and this build is played on a French AZERTY STE where the key labelled `Z` is not the key a
@@ -408,9 +414,10 @@ freeze a timer the game means to run.
 **THE BYTE CAN ONLY BE SEEN AT THE ACIA.** Reading the 6850's data port POPS it, so the byte the
 keyboard sent exists for exactly one read and `ikbd_acia_isr` makes it. A watcher could not read the
 port again afterwards, and it could not read the keys out of the image either: the program keeps ONE
-byte, `A_key_scancode` @ `0x19685`, holding the key currently down and cleared only by its own
-release — so three keys held together are not representable there and a release of anything but the
-newest is invisible. Hence the tap in `hw_read8`, declared in `hw.h` rather than included, exactly as
+byte, `A_key_scancode` @ `0x19685`, holding the key currently down and overwritten by the next press
+and cleared by its own release — so a watcher reading it from the VBL would miss presses that came
+and went between two frames, and the sequence needs to see every press at the instant it lands.
+Hence the tap in `hw_read8`, declared in `hw.h` rather than included, exactly as
 `zy_store_video_base_byte` is, so that no shim header reaches a verified core.
 
 **THE TAP IS UNCONDITIONAL, and that is what keeps the divergence out of the cores.** A first
@@ -444,9 +451,10 @@ runs with it, against a ceiling of 2.64.** The whole movement is one or two fram
 bucket (`2x222 4x78` → `2x221 4x78 5x1` → `2x220 4x79 5x1`), which is the run-to-run spread the
 ceiling was set with — the same binary produced 2.53 and 2.54 on consecutive runs.
 
-**THE WORK IS SPLIT ACROSS TWO INTERRUPTS.** The ACIA door does the least possible — a three-byte
-held-set and one latched bit per cheat key — because it is entered once per byte from inside the
-keyboard interrupt. The state machine (hold timer, arming, jingle, pokes) runs from `zy_cheats_tick`
+**THE WORK IS SPLIT ACROSS TWO INTERRUPTS.** The ACIA door does the least possible — advance the
+arming sequence's cursor by one press, and latch one bit per cheat key — because it is entered once
+per byte from inside the keyboard interrupt. The state machine (arming on a completed sequence,
+jingle, pokes) runs from `zy_cheats_tick`
 in the vertical blank, after the program's own handler. MFP channel 6 is level 6 and the vertical
 blank is level 4, so the keyboard can interrupt the tick but never the reverse; every store either
 one makes into the trainer's OWN state is a single 68000 instruction, and the pending-key byte is a
@@ -491,10 +499,12 @@ quiet. So the record carries the trainer's own account of itself, and:
 
 What `smoke.py cheats` asserts, in the order the run produces it:
 
-1. **the wrong-key negative** — `Z`+`Y` alone, held well past the arming time: `g_armed` read live
-   off the machine is still 0;
-2. **the positive** — all three: it arms, once, and the fanfare's stream pointer read back out of
-   voice 3's record equals what smoke.py's own port of `sound_lookup_tune` predicts for orphan 35;
+1. **two arming negatives** — a wrong/fumbled sequence (`Z`, `Y`, `Z`, `N`) and an incomplete one
+   (`Z`, `Y` and stop), each typed at the title: `g_armed` read live off the machine is still 0
+   after both;
+2. **the positive** — `Z`, then `Y`, then `N` typed in order: it arms, once, and the fanfare's
+   stream pointer read back out of voice 3's record equals what smoke.py's own port of
+   `sound_lookup_tune` predicts for orphan 35;
 3. **the in-game refusal** — `g_arming_window_open` is 1 at the title and 0 inside the frame loop;
 4. **the six bytes the three keys write**, each read back off the running machine at the address
    its header names — plus the panel bits, which nothing outside could sample (the frame loop clears
@@ -509,16 +519,19 @@ What `smoke.py cheats` asserts, in the order the run produces it:
 
 | mutation | mode | verdict |
 |---|---|---|
-| the held-set accepts ANY one of the three, not all three | `cheats` | KILLED — "holding two of the three combo keys armed the trainer" |
-| `zy_cheats_arming_window(0)` deleted, so the window never shuts | `cheats` | KILLED — "the arming window was still open inside the frame loop" |
+| the cursor advances on a WRONG letter, not only the expected one | `cheats` | KILLED — "a wrong/fumbled sequence (Z, Y, Z, N) armed the trainer" |
+| a wrong letter does NOT reset the cursor (so a fumbled order still arms) | `cheats` | KILLED — "a wrong/fumbled sequence (Z, Y, Z, N) armed the trainer" |
+| the arming jingle is counted twice | `cheats` | KILLED — "the record says armed=1, jingles=2 — one arming, once, was asked for" |
+| `zy_cheats_arming_window(0)` a no-op, so the window never shuts | `cheats` | KILLED — "the arming window was still open inside the frame loop" |
 | `F2` acts but its fire count is not incremented | `cheats` | KILLED — "cheat_lives_fires is 0, and 1 key press(es) reached the machine" |
-| the trainer arms on the first attract vblank with no keys held | `game` | KILLED — "the trainer fired in a run that pressed none of its keys" |
+| the trainer arms on the first attract vblank with no keys pressed | `game` | KILLED — "the trainer fired in a run that pressed none of its keys" |
 
-The fourth is the one that matters most: it is the DORMANCY check going red, which is what says the
-five zeros every other mode prints are a measurement rather than a shape that cannot fail. (It arms
-on the first vblank rather than after the full hold because a `game` run spends only 26 vblanks in
-the attract loop — a mutation that still waited the two seconds would have survived for want of
-time rather than for want of a check.)
+The last one — the only `game` row — is the one that matters most: it is the DORMANCY check going
+red, which is what says the five zeros every other mode prints are a measurement rather than a shape
+that cannot fail. (It arms on the first vblank with no input at all, rather than on a typed sequence,
+because a `game` run spends only 26 vblanks in the attract loop and never types the letters — a
+mutation that still required the sequence would have survived for want of input rather than for want
+of a check.)
 
 **THE PSG TRACE IS NOT THE JINGLE'S SURFACE, and it cannot be.** `smoke.py` traces `psg_write` and
 cuts it into the sound driver's own tick frames, but the title tune is driving all three voices at

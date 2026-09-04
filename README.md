@@ -578,8 +578,8 @@ across 699 instructions — so its three twins are built and verified and **not 
 the game keeps the C; wave E measured what a *busy* frame costs and bought ~36,000 with 86. An
 inclusive row is not a prize, and a mean is not a distribution.
 
-**One thing in the build is deliberately not the 1988 program.** Holding `Z`+`Y`+`N` at the title
-arms a trainer — `F1` invulnerability, `F2` lives, `F3` maxed power-ups — and all of it lives in the
+**One thing in the build is deliberately not the 1988 program.** Typing `Z`, `Y`, `N` in order at the
+title arms a trainer — `F1` invulnerability, `F2` lives, `F3` maxed power-ups — and all of it lives in the
 shim (`atari/zynaps_cheats.c` and one tap in the shim's `hw_read8`). No core moved, `make test` is
 unchanged, and the frame differential is still byte-identical, because the trainer is inert until a
 player arms it: every judged mode asserts that it stayed dormant, and `smoke.py cheats` is the
