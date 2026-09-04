@@ -338,8 +338,9 @@ was put:
 **A TYPED SEQUENCE, not a simultaneous hold — and that is a real-hardware fix, not a preference.**
 Three keys held down together can GHOST on the IKBD's keyboard matrix: the controller scans a grid,
 and certain key triads share rows and columns such that a third press is never reported. On the
-user's STE the simultaneous hold armed nothing. A sequence — one key down and up before the next —
-touches one matrix cell at a time and cannot ghost, and it does not depend on hold timing. A wrong
+user's STE the simultaneous hold armed nothing, and the typed sequence armed — both confirmed on
+that iron. A sequence — one key down and up before the next — touches one matrix cell at a time and
+cannot ghost, and it does not depend on hold timing. A wrong
 or out-of-order key restarts the sequence (a misplaced `Z` restarts on that `Z`, so a fumble
 followed by a clean `Z`-`Y`-`N` still arms). The sequence is refused anywhere but the title —
 `zynaps_main.c`'s `title_attract_loop` opens the window around `attract_wait_for_start` and closes
@@ -788,8 +789,12 @@ calls** on the busy frame. Whatever is left in this game, it is not in blitting.
   twins 1.03x-1.08x where Musashi reads 1.00x-1.01x, so on iron the pre-wave-E heavy frame missed
   its slot by somewhat more than 1.8%, and the post-wave-E margin is thinner than 9%. The
   DIRECTION and the ~36,000-cycle recovery are instrument-independent; the headroom is not.
-* **Nothing here has run on the user's STE.** The evidence that the fix reaches a player is the
-  game smoke's own histogram, below — emulated, not iron.
+* **The GAME now runs on the user's STE — but these NUMBERS have not.** The user booted the written
+  floppy on their 4 MB STE and it plays well, with "only major slowdown when many sprites on the
+  screen" — which is exactly this table's heavy-frame tail, the frames that spill past the 2-vblank
+  slot, felt rather than counted. What stays emulated-not-iron is every FIGURE here and the wave-E
+  fix's felt margin: the game smoke's own histogram, below, is Hatari's, and real bus contention
+  makes the post-wave-E headroom thinner than the number reads.
 
 ## Why the number that matters is VBLANKS PER FRAME and not a frame rate
 
@@ -1410,8 +1415,11 @@ Numbered on from M1's list.
     fact about today's call sites, not about the doors, and the first caller on the main line with
     interrupts open would be exposed. What would close it is a mask around the pair, at the cost of
     two more instructions in the hottest handler the program has.
-23. **Nothing has run on real hardware, and nothing has run on an STE**, exactly as in M1: Hatari
-    refuses `--machine ste` on a ROM at or below TOS 1.4, and `tools/hatari/` has no later one.
+23. **The GAME now runs on the user's STE, but nothing HERE does.** The user booted the written
+    floppy on their 4 MB STE and it plays (see "The bootable floppy"); what stays true, exactly as
+    in M1, is that no EMULATED STE run is possible — Hatari refuses `--machine ste` on a ROM at or
+    below TOS 1.4, and `tools/hatari/` has no later one — so every number in this file is a
+    TOS 1.04/1.02 ST-mode measurement, not an STE one.
 24. **The game runs at 1.4x the original's cadence and 1.6x its frame cost** — 2.80 vertical blanks
     a frame against 2.08, 417,049 cycles against 262,244. It was a THIRD (5.73 and 815,488) before
     the asm twins, and a HALF (3.75) after wave A. It remains unpinned in the sense that MATTERS
@@ -2158,7 +2166,9 @@ surface *is* the finding.
    twelve green on TOS 1.04 and twelve green on TOS 1.02, at different load addresses. What is still
    missing is **EmuTOS** — Homebrew's Hatari ships no ROM for it and none is in `tools/hatari/` —
    and the ROM the target STE actually has, **TOS 1.62**, which is neither of these.
-8. **Nothing has run on real hardware.** Every number above is Hatari's.
+8. **The game runs on real hardware; these NUMBERS do not.** The user booted the written floppy on
+   their 4 MB STE and it plays — so what stays Hatari-only is every FIGURE above, not the fact that
+   the program reaches a machine at all.
 9. **The PSG select/data pair is unmasked inside the handler**, reproducing the original's race on
    purpose. Nothing else in this build writes the chip while the handler runs. The TEARDOWN's
    silence is a different matter and is now masked and made BEFORE the vector restore: handing the
@@ -2177,7 +2187,8 @@ surface *is* the finding.
     one uninterruptible `movem.l`. The critical section around the hand-over restores the atomicity;
     what stays unpinned is that nothing MEASURES a half-changed palette, because the anchor is 250
     vblanks later and no surface here samples a single frame during the boot.
-12. **Nothing has run on an STE, and on these ROMs nothing can.** An STE has a third video-base
+12. **The game now plays on a real STE — but nothing here can EMULATE one, so this comparison stays
+    unmade.** An STE has a third video-base
     byte at `$ff820d` and FOUR bits a gun where the ST has three; the pens are saved and restored RAW
     (only the record masks), so the hand-back is correct on both machines, and the base read-back
     would simply not see an STE's low byte. `smoke.py --machine ste` was attempted and **Hatari
@@ -2186,7 +2197,7 @@ surface *is* the finding.
     `assert_machine_and_rom_agree` now refuses it up front with that reason instead. Unblocking it
     needs a TOS 1.06+ ROM or EmuTOS — the same missing input as item 7. What CAN be said today is
     that the unmasked pens are printed on every run, and on an ST every high nibble reads back 0, so
-    the day an STE run happens the fourth bit has a baseline to be compared against.
+    the day an INSTRUMENTED STE run happens the fourth bit has a baseline to be compared against.
 13. **The floppy is 720 KB DOUBLE-SIDED where the original is 400 KB single-sided**, because
     400 KB cannot hold the build (see "The bootable floppy"). Nothing about the program depends on
     it — but a single-sided drive cannot read the disk, and no single-sided image has been produced

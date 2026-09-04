@@ -6,6 +6,13 @@ Musashi oracle running the real code vs. the compiled reconstruction, on the sam
 `../names.txt` is the source of truth for every name; it names all 195 functions, of which these
 are the ported ones.
 
+**On target: STE-confirmed playable.** The user booted `atari/`'s bootable `ZYNAPS.ST` on their own
+4 MB STE and it plays well (only heavy-sprite frames slow, the measured heavy-frame residual), and
+the `Z`-`Y`-`N` trainer's typed-sequence arming is STE-confirmed too. Still emulator-only, tested in
+Hatari/Musashi but not yet reported from iron: the performance NUMBERS (cycles/frame, fps, vblank
+cadence), the wave-E slowdown fix's felt margin, the trainer's per-key/fanfare sound feedback, and
+the ESC→menu / F10→TOS keys. See [`atari/README.md`](atari/README.md) for the full split.
+
 **Verified: the sum of the per-section counts below**, out of 195. Each `## Verified — <subsystem>`
 heading carries its own count, so the only number an agent touches is its own section's;
 `test/test_status.py` fails if a count and its rows disagree, and if a section names a subsystem

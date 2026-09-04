@@ -170,6 +170,16 @@ say. `attract_wait_for_start` `$12bb4` tests scancode 2, scancode 3 and joystick
 else; the pages turn on their own 750-frame timer (`attract_page_timer` `$19f1e`, `$12c1e`), which is
 why pressing SPACE there looked like it worked.
 
+**The PLAYABLE RECONSTRUCTION is a separate thing, and it runs on a real STE.** Everything above
+boots the ORIGINAL 1988 binary in Hatari. The C reconstruction in
+[`recreate/atari/`](recreate/atari/README.md) cross-compiles to its own bootable `ZYNAPS.ST`, and
+the user has booted that floppy on their 4 MB STE and played it — STE-confirmed playable. It adds
+three deliberate divergences from the original: the `Z`-`Y`-`N` trainer (arm by typing the three
+keys in order at the title, then `F1` invulnerability / `F2` lives / `F3` power-ups, with per-key
+sound feedback), `ESC` → menu, and `F10` → TOS. See
+[`recreate/atari/README.md`](recreate/atari/README.md) for the detail, the French-keyboard argument,
+and which of those features are STE-confirmed versus still emulator-only.
+
 ### Driving it headless
 
 `projects/zynaps/tools/boot_shots.py` is the headless driver; the Hatari plumbing it sits on —

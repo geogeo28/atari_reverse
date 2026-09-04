@@ -560,10 +560,11 @@ things this differential compares. `gamefault` is
 the negative control — one step of the section chain dropped — and reddens the drawing at every
 frame while the pens and the exit path stay green. `build.sh play floppy` writes a bootable 720 KB
 `ZYNAPS.ST` that TOS 1.04's own `AUTO` scan starts from drive A, and the whole build lives inside a
-**1 MB machine: 597,470 bytes, 310,668 to spare**. What has *not* happened is the rung Wonder Boy
-climbed — **none of this has run on real hardware**, because Hatari refuses `--machine ste` on a ROM
-at or below TOS 1.4 and this workspace has no later one; `atari/README.md` says so in its own list
-of what is unpinned rather than leaving it to be assumed.
+**1 MB machine: 597,470 bytes, 310,668 to spare**. And Zynaps has now climbed the rung Wonder Boy
+did — **the user booted the reconstruction's own `ZYNAPS.ST` on their 4 MB STE and it plays well**.
+What has NOT crossed with it is the MEASUREMENTS: Hatari refuses `--machine ste` on a ROM at or
+below TOS 1.4 and this workspace has no later one, so every cycle and vblank figure stays emulated;
+`atari/README.md` says so in its own list of what is unpinned rather than leaving it to be assumed.
 
 **Zynaps is also the project where speed became a correctness problem.** A faithful C
 reconstruction of a 1988 shoot-em-up is not automatically playable: the first working build ran at
