@@ -8,7 +8,8 @@ running the real code vs. the compiled reconstruction, on the same memory image)
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md) for how the differential
 method itself works.
 
-**Verified: 314/? — the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
+**Verified: 330 — 41,652 bytes** (the walk below stops at 314: batch 44 phase A took it to 324 and
+phase B to 330, see their ledger entries) **— the .RAD depacker (216 bytes), the first gameplay batch (434 bytes), the status
 panel's leaves (430 bytes), the second tier above them (710 bytes), the third tier (1412 bytes), the
 WHOLE background scroll engine (3398 bytes), the WHOLE consumer tier that reads it (2742 bytes), the
 actor tier and its two projection passes (356 bytes), the WHOLE text subsystem (678 bytes), the

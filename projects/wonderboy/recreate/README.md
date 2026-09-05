@@ -52,11 +52,12 @@ Progress, the kit change this project required, the oracle defect the panel batc
 one blocker still ahead: [`STATUS.md`](STATUS.md).
 
 **Read [`PORTABILITY.md`](PORTABILITY.md) before choosing what to port.** It measures how much of
-this game a memory-only differential can actually verify — 83.8 % of the *recovered* code runs
-end-to-end under the oracle, "recovered" is 46.8 % of the program's believed code, and 13 % of what
-is measured would come back *falsely* green — and gives the
-reconstruction order and the harness capabilities that follow from that. It also explains why
-every project's Ghidra DB needs re-bootstrapping.
+this game a memory-only differential can actually verify — 80.7 % of the program's believed code
+is recovered (407 functions, 44,262 bytes), 92.9 % of that runs end-to-end under the oracle, and
+8.8 % of it would come back *falsely* green (its §0m table; the first measurement, before any
+function was ported, recovered only 46.8 %) — and gives the reconstruction order and the harness
+capabilities that follow from that. It also explains why every project's Ghidra DB needs
+re-bootstrapping.
 
 ```
 PORTABILITY.md             HOW MUCH OF THE GAME THE DIFFERENTIAL CAN SEE — the measurement that

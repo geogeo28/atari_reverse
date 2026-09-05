@@ -165,8 +165,10 @@ region*, and always ask "could this be reached only through a pointer table?"
   claim, not a verified layout.
 * Inside the CODE regions the boundaries between routines and the
   variables sitting in the holes between them are **not** individually
-  classified. Ghidra now covers 252 functions / 25,696 bytes there — **46.8 % of
-  the 54,854 CODE bytes**. Of the 29,158 bytes it does not cover, 6,174 are
+  classified. At this note's first measurement Ghidra covered 252 functions / 25,696 bytes there —
+  **46.8 % of the 54,854 CODE bytes** (since superseded: `../recreate/PORTABILITY.md`'s §0m
+  table has 407 functions / 44,262 bytes, 80.7 %, and the rest of this bullet describes the
+  starting point). Of the 29,158 bytes it did not cover, 6,174 were
   disassembled but sit in no function and 22,984, in 65 gaps, carry no
   disassembly at all; a density screen puts roughly 16,800 of the latter
   code-like against 6,200 data-like. Separating them is Stage 2 work, and

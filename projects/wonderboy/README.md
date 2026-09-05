@@ -8,7 +8,7 @@ filesystem, a self-relocating 68000 program and a solved resource cruncher come 
 and three sessions at that machine found two defects every emulated surface here had been green on.
 
 **Status: 330 functions verified · 41,652 bytes of the original's machine code · 6465 differential
-tests** (plus 392 in the shared kit). The per-function table, every boundary and every limit that is
+tests** (plus 464 in the shared kit). The per-function table, every boundary and every limit that is
 disclosed rather than closed are in [`recreate/STATUS.md`](recreate/STATUS.md).
 
 **How much of it can the harness actually verify?** Measured rather than asserted, in
