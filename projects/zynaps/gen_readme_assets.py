@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the workspace README's Zynaps images straight from the verified C reconstruction.
+"""Render the project README's Zynaps gallery straight from the verified C reconstruction.
 
 Every picture here is *drawn by the reconstruction*, not screenshotted from the original program.
 `../../tools/recreate_kit` loads and relocates your own `bin/ZYNAPS17.PRG` into the flat image the

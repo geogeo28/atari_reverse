@@ -5,6 +5,200 @@ converted to the ST by **Microwish** — the credits page names *coding: Howie, 
 music and sound FX: J. Dave Rogers*. One 42 KB `.PRG` plus 62 data files on a single-sided floppy;
 nothing is packed and nothing is encrypted, so the whole game is readable with the normal pipeline.
 
+## The reconstruction
+
+[`recreate/`](recreate) is the same differential pipeline the rest of this workspace uses: every
+routine rewritten as readable C and proved byte-for-byte against the original 68000 code by a
+Musashi oracle running the shipped machine code on the same memory image. Zynaps binds three of the
+kit's optional models — the **scheduled-write model** (for waits on a byte only an interrupt
+stores), the **seeded-hardware read model** and the **hardware-write ledger** — because its palette
+and screen base live above the 24-bit bus, where stores are invisible to a byte diff.
+
+**Status: 217 verified ranges · 4751 tests, green under `make test`** (plus 464 in the shared kit).
+Both numbers are shapes rather than totals and [`recreate/STATUS.md`](recreate/STATUS.md) is careful
+about which: 189 of those ranges are whole functions, and 28 are named **slices** — address ranges
+rather than routines, verified from a named entry PC to a named checkpoint PC, each row stating the
+`[start, end)` it ran. They live inside five `fn` lines, and the two reasons are different: `_start`
+and the frame loop have no `rts` between their ends, while `title_attract_loop` does and still cannot
+be run whole, because it programs an MFP register and then spins reading it back — a read the kit's
+seeded model refuses as a stale seed. That file counts the program at 195 functions, records that six
+of them are not ported whole, and lists the ranges rather than rounding them away.
+
+**On target, the reconstruction is the game.** [`recreate/atari/`](recreate/atari/README.md)
+cross-compiles those verified cores to m68k and composes every slice of `_start`, of
+`title_attract_loop` and of the section chain in the original's own order, then calls
+`frame_loop_once` until it leaves — so `ZYNAPS.PRG` boots, shows its attract screen, starts a game,
+plays a section, dies and restarts, **and nothing on the path runs a body `STATUS.md` does not carry
+a verified row for**. `smoke.py game` judges it against the shipped 1988 binary with a **frame
+differential**: both are booted, given the same input, parked on the same seed, and sampled at the
+same numbered frames of the same section by the loop head's own pass count. At frames 1, 30, 60, 120
+and 240 the **32000-byte framebuffer is byte-identical, the twenty entity records are byte-identical,
+and the sixteen colour registers agree**. Every one of those samples is inside the FIRST LIFE, and
+deliberately: past a death the two sides' random streams diverge on how long the fire wait took, so
+the build reports the frame the first life ended on and the smoke refuses a sample at or past it. The
+death and the restart are things the program does, not things this differential compares. `gamefault`
+is the negative control — one step of the section chain dropped — and reddens the drawing at every
+frame while the pens and the exit path stay green. `build.sh play floppy` writes a bootable 720 KB
+`ZYNAPS.ST` that TOS 1.04's own `AUTO` scan starts from drive A, and the whole build lives inside a
+**1 MB machine: 597,470 bytes, 310,668 to spare**. The user has booted that floppy on their own 4 MB
+STE and played it — STE-confirmed playable. What has NOT crossed with it is the MEASUREMENTS: Hatari
+refuses `--machine ste` on a ROM at or below TOS 1.4 and this workspace has no later one, so every
+cycle and vblank figure stays emulated; [`recreate/atari/README.md`](recreate/atari/README.md) says so
+in its own list of what is unpinned rather than leaving it to be assumed.
+
+**Zynaps is also the project where speed became a correctness problem.** A faithful C reconstruction
+of a 1988 shoot-em-up is not automatically playable: the first working build ran at **5.73 vertical
+blanks a frame — 8.7 fps against the original's 25** — and no amount of byte-exact output makes that
+the game. Five waves of hand-written 68000 **twins** for the hot paths took it to **2.51, 19.8 fps**,
+and every twin is a substitution rather than a rewrite: each carries the C signature of the routine it
+replaces, is linked instead of that C on the target build, and is pinned against the C by the same
+differential over the same staged worlds — 33 of them, in [`src/asm/`](recreate/src/asm). The lesson
+the campaign wrote down is in its last two waves: wave D twinned what an inclusive profiler row
+pointed at and bought **13 cycles a frame** across 699 instructions — so its three twins are built and
+verified and **not shipped at all**, and the game keeps the C; wave E measured what a *busy* frame
+costs and bought ~36,000 with 86. An inclusive row is not a prize, and a mean is not a distribution.
+
+**A few things in the build are deliberately not the 1988 program, and all of them live in the shim.**
+Typing `Z`, `Y`, `N` in order at the title arms a trainer — `F1` invulnerability, `F2` lives, `F3`
+maxed power-ups (`recreate/atari/zynaps_cheats.c`), with per-key sound feedback. And two control keys
+the original reads nowhere give a player what a program that never returns from supervisor cannot:
+**ESC** sends a game back to the attract screen (re-using the game's own all-lives-lost path) and
+**F10** hands the machine back to TOS (re-using the shim's teardown) —
+`recreate/atari/zynaps_main.c`, plus one more tap in the shim's `hw_read8` beside the trainer's. No
+core moved, `make test` is unchanged, and the frame differential is still byte-identical, because
+every one is inert in the judged runs: each mode asserts the trainer AND the two control keys stayed
+dormant, and `smoke.py cheats` / `smoke.py controls` are the positive controls that drive them
+through Hatari's own keyboard.
+[`recreate/atari/README.md`](recreate/atari/README.md) has the detail, the French-keyboard argument,
+and which of the three are STE-confirmed versus still emulator-only.
+
+### Build and run it
+
+```bash
+cd projects/zynaps/recreate
+make venv && make test                       # the shared kit + the C cores, the differential suite
+                                             # (also needs m68k-elf-gcc: the asm twins are assembled
+                                             #  before the suite runs)
+./.venv/bin/python ../gen_readme_assets.py   # re-render this README's gallery, host-side
+bash atari/build.sh play && bash atari/run.sh             # ...or play it on a 68000, under Hatari
+bash atari/build.sh game && python3 atari/smoke.py game   # ...or judge it against the 1988 binary,
+                                             # frame by frame
+```
+
+## Gallery
+
+Rendered **host-side by the reconstruction**, with no emulator and no TOS ROM in the loop:
+[`gen_readme_assets.py`](gen_readme_assets.py) loads your own `ZYNAPS17.PRG` through the kit, serves
+the twenty-two files `_start` opens and each section's own five to seven across the kit's staged-file
+model, and drives the same entry points the tests drive — every slice of `_start`, of the attract
+loop and of the section chain, then `frame_loop_once` itself — before de-interleaving what they
+paint. No oracle runs: `test_frame.py` stages its worlds by stepping the *original's* machine code
+through Musashi, and this script deliberately does not, because a picture drawn by the oracle would
+be a picture of the 1988 binary.
+
+**Neither the palette nor the buffer is chosen by the script**, and for the same reason: the two
+registers that decide them — the sixteen colour words at `$ff8240` and the screen base at
+`$ff8203`/`$ff8201` — are far above the 1 MiB image, so memory holds the candidates and not which
+one is in force. Zynaps carries **four** sixteen-pen rows any of which could be a picture's palette,
+and two framebuffers one of which is a frame behind; picking wrong in either gives a plausible
+picture of the wrong thing, which is measured rather than hypothetical — the first draft of this set
+rendered a level in the title screen's colours. So both come out of the kit's **hardware-write
+ledger**, the one both sides of the differential already keep. The pens are the upload
+`attract_build_colour_bars` makes for the two front-end pages, and for the rest the one the
+reconstruction's own `vbl_menu` makes when the script runs it — the handler the `$70` vector holds
+from `boot_program_raster_timer` onward — on a *copy* of the pictured state. The buffer is whichever
+base the run last published, and the script refuses a picture whose `screen_front` pointer disagrees
+with it.
+
+Every picture of a section runs the **whole boot and section chain**, in the order
+`recreate/atari/zynaps_main.c` composes it on the machine — the two front-end pages stop where the
+game does, at the attract loop. That is not thoroughness for its own sake: the status panel along the
+bottom of every play frame is drawn by no part of the frame loop. `boot_load_title_assets` reads
+`STATUS.PI1` and carves three strips out of it, `status_panel_build_master` composes the panel, and
+`section_restart_prologue` stamps it into both framebuffers and flips, which is also what sets the
+buffer parity every later picture is taken at. The set was rebuilt once already after a review found
+three of those steps missing, and nine of the eleven pictures moved.
+
+Which frame each play picture is, is **searched for rather than typed**, with one stated exception: a
+section is played with one fixed joystick script — `test_frame.world_rng`'s own stream, so the worlds
+here are the worlds under `make test` — and the frame kept is the first that meets a stated census,
+so a caption about the *shape* of a frame cannot outlive a change that shifts the run; the run
+refuses instead. The exception is the opening frame, which is a picture of a moment and takes a
+stated number. The censuses are floors, so the exact counts quoted below are what today's run
+printed rather than guarantees. The whole set is rendered twice per invocation and a differing pair
+is refused.
+
+| Title | Role of honour | Prepare for combat |
+|:---:|:---:|:---:|
+| ![](../../assets/zynaps/title.png) | ![](../../assets/zynaps/role-of-honour.png) | ![](../../assets/zynaps/prepare-for-combat.png) |
+
+`attract_build_colour_bars` builds the raster list, uploads the front-end palette — the upload those
+first two pens come from — and calls `title_screen_draw`, which lays three 64-row strips of
+`ZYNLOGO.DAT` and then runs straight on into `HEWLOGO.DAT`, whose bytes `_start` loaded at the very
+next address and which the routine reaches without reloading its source pointer. `attract_next_page`
+swaps to `role_of_honour_screen` on its own 750-frame timer: the same three strips, the heading, and
+five rows of the table the shipped `.PRG` itself carries. Each **name** in them is drawn at the row
+byte inside its own record while each **score** is drawn at a `lea` displacement of the routine's
+own — two spellings that agree only because the shipped table happens to make them, and a table
+whose rows had been edited would put the names and the scores on different lines. One thing is
+missing from the title page and cannot be there: the colour bars behind the logo are painted by
+`attract_rasterbar_isr` one scanline at a time straight into pen 0, so they exist on a raster and in
+no buffer at all. The third picture is the screen the
+section start holds at until the player presses fire, drawn by `player_intro_screen` over the panel
+`section_reload_intro_screens` and `section_restart_prologue` have just stamped into both buffers.
+It is photographed at that instant — before the fire poll the next slice spins in, which is a wait
+only the kit's scheduled-write model can end because the byte it reads is one only the IKBD
+interrupt writes, and which every play picture below crosses.
+
+| Section 1 begins | …and is played | Section 2 — the asteroid field |
+|:---:|:---:|:---:|
+| ![](../../assets/zynaps/section1-start.png) | ![](../../assets/zynaps/section1-busy.png) | ![](../../assets/zynaps/section2-asteroids.png) |
+
+Sections are numbered here as the player meets them, 1 to 16, which is the binary's own
+`level_section` plus one. Eight frames into the first — a stated number, because "the start" is what
+that picture is of — the scroller has moved and the first ground base has come over the horizon. The
+second stops at frame 129, the first with ten live entity records, and the wave script is spawning
+into a landscape the tile emitter has been feeding a column at a time. The third is one of the four
+sections whose type byte is `'q'`: an **asteroid field with no map at all**, where
+`section_load_assets` takes its
+other arm entirely — one `BIGAST.DAT` load, six sprite banks built and preshifted over 46 KB of
+compose buffer, and a fixed palette row where a map section takes a per-section one. The run stops
+there at the first frame with twelve of the eighteen asteroid records in flight, and those are not
+entity-table records: the field has its own array, which is why the picture's census counts a
+different thing. That the arm the picture is captioned for is the arm the section actually took is
+the script's own assertion, taken from the answer `section_load_assets` returns.
+
+| Section 9 | Section 12 | Game over |
+|:---:|:---:|:---:|
+| ![](../../assets/zynaps/section9-busy.png) | ![](../../assets/zynaps/section12-busy.png) | ![](../../assets/zynaps/game-over.png) |
+
+The two later sections were picked by rendering **all sixteen** through this same script and keeping
+the two that look least like section 1's blue-grey lattice — section 9 is a magenta cloud bank over
+open space, and section 12 a jade cavern with a tiled ceiling as well as a floor, which is a
+different *tile set* and not only a different palette. Six of the sixteen cannot be shown at all
+under this joystick script, for an honest reason: a fixed stream of stick bytes flies a ship that
+dies, and the run refuses to publish a frame from a section whose census it never met. The last is
+`game_over_screen_prologue` — the back buffer cleared and `GAME OVER PLAYER 1` drawn over the panel,
+in the section's own colours because the fire gate has been crossed and that is what commits the
+palette the vertical blank uploads. The prologue and not the whole screen: `game_over_screen` runs
+straight on into a high-score arm that types a name one console key per call, and this set has no
+keyboard in it.
+
+| The missile frames the game loads | …and a file no load site opens |
+|:---:|:---:|
+| ![](../../assets/zynaps/missile-frames.png) | ![](../../assets/zynaps/cut-rotballs.png) |
+
+The two sheets are the **same run with one thing different**: which bytes the staged-file model
+hands back when `section_load_assets` asks for the section's missile file. On the right it is
+`ROTBALLS.DAT`, the cut file, and the section flow loads it, splits it into four frames and
+preshifts it without noticing — because at 360 bytes of masked 16×9 art it is a drop-in fourth
+sprite set (see [Files on the disk that no load site opens](#files-on-the-disk-that-no-load-site-opens)).
+What the sheet chooses is what a sheet must, and no more: where the frames are put. The
+bytes are the file's, each of the four banks is checked against the file's own frames before
+anything is drawn, the row count is derived from the file's length rather than typed, and the blit
+is the game's own `draw_sprite_masked` at an x on a cell boundary — the arm that reads a bank slot
+unshifted. The script fails if the two pictures come out the same.
+
 ## The disk
 
 **Provenance.** The user's own copy, dumped from the physical floppy with a GreaseWeazle V4.1 on
@@ -170,15 +364,10 @@ say. `attract_wait_for_start` `$12bb4` tests scancode 2, scancode 3 and joystick
 else; the pages turn on their own 750-frame timer (`attract_page_timer` `$19f1e`, `$12c1e`), which is
 why pressing SPACE there looked like it worked.
 
-**The PLAYABLE RECONSTRUCTION is a separate thing, and it runs on a real STE.** Everything above
-boots the ORIGINAL 1988 binary in Hatari. The C reconstruction in
-[`recreate/atari/`](recreate/atari/README.md) cross-compiles to its own bootable `ZYNAPS.ST`, and
-the user has booted that floppy on their 4 MB STE and played it — STE-confirmed playable. It adds
-three deliberate divergences from the original: the `Z`-`Y`-`N` trainer (arm by typing the three
-keys in order at the title, then `F1` invulnerability / `F2` lives / `F3` power-ups, with per-key
-sound feedback), `ESC` → menu, and `F10` → TOS. See
-[`recreate/atari/README.md`](recreate/atari/README.md) for the detail, the French-keyboard argument,
-and which of those features are STE-confirmed versus still emulator-only.
+**The PLAYABLE RECONSTRUCTION is a separate thing.** Everything in this section boots the ORIGINAL
+1988 binary in Hatari; the C reconstruction cross-compiles to its own bootable `ZYNAPS.ST`, which the
+user has played on a real STE, and it carries the `Z`-`Y`-`N` trainer and the two control keys the
+original has nowhere — see [The reconstruction](#the-reconstruction) above.
 
 ### Driving it headless
 
@@ -952,14 +1141,8 @@ rest of `out/`, so they are a hand-off for the next naming pass rather than a co
   and [`tools/stx_extract.py`](../../tools/stx_extract.py).
 - [`play.sh`](play.sh) — boot the game. `run.sh`/`reapply.sh` are the Ghidra bootstrap and
   re-apply, and `names.txt` is the name map (see the workspace [`CLAUDE.md`](../../CLAUDE.md)).
-- [`gen_readme_assets.py`](gen_readme_assets.py) — the eleven pictures in the workspace
-  [`README.md`](../../README.md)'s Zynaps gallery, rendered **by the reconstruction** rather than
-  screenshotted from the original: it drives the boot chain, the attract loop, the section chain and
-  `frame_loop_once` through the same ctypes entry points `recreate/test/` drives, reads the sixteen
-  pens back out of the kit's hardware-write ledger, and writes the tracked
-  [`assets/zynaps/`](../../assets/zynaps). It renders the set twice and refuses a picture whose two
-  renderings differ. Needs `bin/` and a `make test` build (the harness dlopens `liboracle.so` at
-  import); nothing here RUNS the oracle, and no Hatari or TOS ROM is involved.
+- [`gen_readme_assets.py`](gen_readme_assets.py) — renders the eleven pictures in [Gallery](#gallery)
+  above into the tracked [`assets/zynaps/`](../../assets/zynaps). Needs `bin/` and a `make test` build.
 - [`recreate/`](recreate) — the differential reconstruction against the Musashi oracle;
   [`recreate/README.md`](recreate/README.md) is the binding and
   [`recreate/STATUS.md`](recreate/STATUS.md) the per-function ledger.

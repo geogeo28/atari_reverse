@@ -2,19 +2,22 @@
 
 Third game through the workspace pipeline, and the first taken from **original, uncracked disks**
 rather than a release someone had already stripped. Two Pasti `.stx` images go in; a FAT12
-filesystem, a self-relocating 68000 program and a solved resource cruncher come out.
+filesystem, a self-relocating 68000 program and a solved resource cruncher come out — and then a
+`.PRG` that is the first thing in this repository to leave the emulator entirely. It boots a **real
+4 MB STE from its own 720 KB floppy**, through TOS's `AUTO` folder, with no host in the machine —
+and three sessions at that machine found two defects every emulated surface here had been green on.
 
-Status: **Stage 1 done** (the binary is mapped and named at the right base) and the **differential
-harness is bound** ([`recreate/`](recreate/)). No function is reconstructed yet — see
-[`recreate/STATUS.md`](recreate/STATUS.md).
+**Status: 330 functions verified · 41,652 bytes of the original's machine code · 6465 differential
+tests** (plus 392 in the shared kit). The per-function table, every boundary and every limit that is
+disclosed rather than closed are in [`recreate/STATUS.md`](recreate/STATUS.md).
 
-**How much of it can the harness actually verify?** Measured, in
-[`recreate/PORTABILITY.md`](recreate/PORTABILITY.md): 83.8 % of the **recovered** code runs
-end-to-end under the oracle today and the gameplay logic is portable now — but "recovered" is only
-46.8 % of the program's believed code, the gameplay logic is the least-covered subsystem that can
-be read at all (36 %, against 56-100 % for boot, sound, disk, input and video), and
-13 % of what is measured would come back *falsely* green because a branch below it depends on a
-hardware read the oracle answers `0`.
+**How much of it can the harness actually verify?** Measured rather than asserted, in
+[`recreate/PORTABILITY.md`](recreate/PORTABILITY.md): **80.7 % of the program's believed code is now
+inside the measurement**, and only **226 bytes** of it remain genuinely unknown.
+
+When the harness was first bound, before any function was reconstructed, only 46.8 % of the
+program's believed code was even recovered; the history of how that became 80.7 % is in the same
+file.
 
 > No game data is in this repository. `bin/` is gitignored; bring your own disks.
 
@@ -106,6 +109,66 @@ The game finds its files through a 40-entry index table at runtime `$2143E` (12-
 `OVALAY10.RAD` and `OVALAY11.RAD` are on disk 2 and depack cleanly, but nothing in the table reaches
 them. Whether the game loads them by some other path is **unestablished**.
 
+## Four things had to move in the tooling
+
+Three of them are now shared in [`tools/recreate_kit/`](../../tools/recreate_kit/README.md), the
+differential harness every game here binds through its `recreate/project.toml`. The kit gained a
+**file-load seam**: a game whose boot chain bottoms
+out in a sector driver cuts it at the lowest routine whose inputs are *file-shaped* — a name and a
+destination — and calls `disk_read_file` across the cut, which is the staged-file model off target
+and real GEMDOS on it ([`TRAP_MODEL.md`](../../tools/recreate_kit/TRAP_MODEL.md)'s Phase 9). The
+**boot chain is composed from slices** rather than ported as one routine, because the original cuts
+itself into four with fire waits only an IKBD interrupt can end: `boot_title_screen`,
+`boot_credits_screen`, `boot_load_stage` and `boot_prompt_screen`, each verified whole against the
+oracle across the seam. The port has **one shifter sink** (`recreate/src/shifter.c`) — the screen
+base and the sixteen colour registers are off the 68000's 24-bit bus as far as the loaded image
+goes, so every write to them meets in one file with one on-target arm, and a build gate refuses a
+second copy of it. And `recreate/atari/mkprg.py`, `../../tools/st_build.py`,
+[`recreate/atari/HARDWARE.md`](recreate/atari/HARDWARE.md) and `../../tools/assert_trap_registers.sh` are
+what turn the cross-compiled cores into a **bootable 720 KB FAT12 floppy** and keep them safe on the
+way — that last one because TOS preserves fewer registers across a trap than GCC's m68k ABI believes
+are callee-saved, which was three bombs in Buggy Boy.
+
+## On target — the ladder runs to ten rungs
+
+[`recreate/atari/`](recreate/atari/README.md) cross-compiles the same verified cores to m68k and
+climbs from "a real machine drives the reconstruction" (M1: `vbl_handler` runs on the level-4
+autovector fifty times a second, and its own word has to agree with the shim's independent tick
+count) to "the reconstruction boots itself off a floppy" (M10). In between: at four anchored frames
+of real play the **32000 framebuffer bytes**, the **sixteen hardware pens** and Hatari's own
+**rendered picture** are identical to the shipped 1989 binary's, on EmuTOS and on TOS 1.04 (M2/M5);
+the screen-base publications match flip for flip, and the shipped binary's 1,155 PSG writes over the
+window are an exact prefix of ours (M6); the boot chain then **recomputes** the post-boot RAM those
+rungs had staged from a dump of the original — **~522,500 of 523,272 bytes identical, the rest
+inside ten named bands and nothing unnamed left over** (M8); and M9 wires every one of
+`game_main_loop`'s five endings back into the boot chain, so `atari/run.sh` opens a build that boots
+its own title screen, reloads on a round end and restarts on ESC. M10 puts all forty resources and
+the 144,831-byte `WB-ownrun.PRG` on one 720 KB disk — **689,152 bytes in 673 clusters, 38,912 free
+of 728,064** — booted by TOS's own `AUTO` loader with no host directory behind it.
+
+## Then somebody switched an Atari on
+
+…and it said two things nothing here could. The disk booted a 4 MB STE (TOS 1.62) **to the
+desktop**: our own `vbl_handler` was counting down an idle fuse that expired one vblank into the
+first GEMDOS sector read, dropped the drive-select lines mid-transfer, and the ROM's retry did not
+re-select. The protocol that arms and disarms that fuse lives in two instructions *below* the
+declared seam, so the substitution had dropped it — and because the arm overwrites the disarm, a
+final-memory differential sees the same bytes either way and cannot ask the question at all. Fixed,
+and the disk came back with **the title screen up and fire doing nothing**. The boot's eight-byte
+`init_ikbd` sends the only IKBD command in the whole binary — `$12`, *disable mouse* — and the port
+had not reproduced it; on a real ST joystick 1's fire line and the mouse's right button are the same
+wire, so the 6301 was reporting every press as a mouse packet the game does not read. The machine's
+own record showed 35 IKBD bytes delivered and not one of them a joystick report. Both fixed, and the
+third run played: title, fire, credits, fire, stage 1's overlay, tiles and sprites, and the frame
+loop — on the machine.
+
+The two shapes are entries **11** and **12** of
+[`docs/on-target-execution.md`](../../docs/on-target-execution.md)'s thirteen-entry taxonomy — *a
+live interrupt handler reading state whose protocol lives below a declared seam*, and *a gate
+crossed by a poke is a gate whose input path never ran* — and they are Wonder Boy's own two
+contributions to it from the machine. It is not the first: entry 3's register half is Buggy Boy's
+three-bombs-on-the-STE crash, found the same way.
+
 ## Seeing the artwork
 
 `tools/extract_gfx.py` decodes every piece of the game's art into PNGs, reading only `bin/` and
@@ -120,12 +183,136 @@ mismatches and exits nonzero. Run it with the workspace's python — `python3
 tools/extract_gfx.py [OUT_DIR]`, output defaulting to `out/gfx` (gitignored, like the rest of the
 game's data). It needs Pillow.
 
-`gen_readme_assets.py` is the smaller, tracked cousin of that: it renders the workspace README's
-Wonder Boy gallery into `assets/wonderboy/*.png` by *running the reconstruction* rather than by
-decoding the files — the four composed boot slices and `game_main_loop` itself, host-side, with the
-game's resources served across the kit's file-load seam and no emulator or TOS ROM in the loop. Run
-it under `recreate/`'s venv (`./.venv/bin/python ../gen_readme_assets.py`); it renders the set twice
-and refuses to write a picture whose two renderings differ.
+## Gallery
+
+`gen_readme_assets.py` is the smaller, tracked cousin of that extractor: it renders the pictures
+below into `assets/wonderboy/*.png` by *running the reconstruction* rather than by decoding the
+files — **host-side, with no emulator and no TOS ROM in the loop**. It loads your own `SWB.PRG`
+through the kit, serves the game's own resource files across the file-load seam, and drives the same
+entry points the tests drive — the four composed boot slices and `game_main_loop` itself — then
+de-interleaves the framebuffer they paint with the game's own palette words. Run it under
+`recreate/`'s venv: `./.venv/bin/python ../gen_readme_assets.py`.
+
+One thing the seam cannot do: `SPRITES.CRU` is 279,034 bytes and the kit's whole staging area is
+258,048, so the file is placed at the address the boot's own load lands on and the stage's sprite
+install is redone over it whole — with every marked sprite's installed cells then checked byte for
+byte against the file, because without that check 28 of stage 1's 143 sprites quietly installed
+depacked tile data instead. The two vertical-blank waits inside `flip_screen` are answered by the
+kit's scheduled-write model and the play frames come from one fixed joystick script. The game's only
+entropy is the shifter's video address counter at `$ff8207`/`$ff8209`, which `rng_next` and
+`bcd_add_random_1_to_4` read and which the kit's seeded-hardware model answers with whatever the run
+declares: on a machine that counter is a clock, so each play frame here declares the next byte of
+**one fixed pseudo-random sequence keyed by the frame index** rather than a single constant for the
+whole run. The whole set is therefore a function of the binary, the game's own files, that joystick
+script and that sequence — which the script asserts by rendering the set twice and refusing to write
+a picture whose two renderings differ.
+
+Every play picture is drawn on a screen the **whole boot chain** built, in the boot's own order —
+the prologue's clears, then the title, credits and stage slices — because the status panel's
+artwork is drawn by no routine at all: it is part of the CREDITS picture, which
+`boot_credits_screen` copies down onto the buffer the shifter is showing, and the play window is
+then painted over the middle of it. That is checked rather than assumed: at the instant
+`boot_load_stage` returns, **both 32000-byte screen buffers are byte-identical to the original
+1989 binary's own post-boot RAM** — `recreate/atari/build/ORIGRAM.BIN`, dumped off the shipped game
+under Hatari at `$f8b4`, the same anchor the on-target rungs use — and the script fails if one byte
+of either differs.
+
+| Title | Credits | The data-disk prompt |
+|:---:|:---:|:---:|
+| ![](../../assets/wonderboy/title.png) | ![](../../assets/wonderboy/credits.png) | ![](../../assets/wonderboy/prompt.png) |
+
+`boot_title_screen` ($e512..$e550) arms the protection, asks `load_resource_by_index` for
+`TITLESCR.RAD` across the seam, inflates it with `rad_depack` straight onto the screen buffer and
+hands its palette row to `set_palette`. `boot_credits_screen` does the same for `CREDITS.RAD`,
+copies the result down onto the buffer the shifter is showing, and then runs `game_restart_reset`
+over it — a new game, which is what draws the status panel's lives over the picture. The third is
+`boot_prompt_screen` ($e494..$e4d4), the slice all three of the game's `jmp $e494.l`
+endings land in: ESC, the game-over box expiring, and the message terminator the protection's own
+failure path also reaches.
+
+| Stage 1 begins | …and is played | The cast |
+|:---:|:---:|:---:|
+| ![](../../assets/wonderboy/stage1-start.png) | ![](../../assets/wonderboy/stage1-walk.png) | ![](../../assets/wonderboy/sprites.png) |
+
+`boot_load_stage` ($e5ba..$f8b4) is the fourth slice and the longest: the level-sequence row, its
+overlay, `TILEDATA.RAD` through `bg_tile_install`, `SPRITES.CRU` through `sprites_cru_install`,
+the actor tables, and `stage_load_window`, which fills the scroll engine's **eight pre-shifted
+copies** of the visible window. Everything after that is the frame loop's own fifteen calls, run
+whole and in its order: the two keyboard ones, then the round bonus, then `panel_refresh_frame`
+over `hud_draw_lives`, `hud_draw_meter` and the rest, the scene driver, and
+`game_latch_input_and_step_actors` — which is where the joystick edge and every actor's behaviour
+happen. Then the drawing: `project_followed_actor`, `bg_scroll_run_queue`, `project_actor_list`,
+`bg_scroll_blit` — whose sixteen straight-line bodies, `bg_scroll_copy_x0` through `_x15`, differ
+only in where each splits its thirty `move.l`s about the source row's 128-byte ring seam —
+`game_snap_follow_cursor`, `sprite_draw_pass` and the twelve blitters it dispatches into
+(`blit_sprite_w2`..`w5` and their left- and right-clipping siblings), `actor_spawn_pass`,
+`text_run_message_box`, and `flip_screen` last. The middle frame is lap 157 of a fixed joystick
+script — walk held, jump on a beat, fire on another — and it is **not a lap number chosen here**:
+the run stops at the first frame that draws at least three sprites whole inside the play window,
+and fails if none does, so a caption naming what is in a picture cannot go stale under a fix that
+shifts the run. What that frame has is the hero in the air between a spinning gold coin and the
+tree stump with the shop's door in it, with a red cobra on the ledge ahead beside the arrow sign.
+The sheet beside it is the game's own bitmaps at their own addresses, drawn by `sprite_draw_pass`
+onto the screen `clear_both_screens` left behind; only the destinations are ours. Which twenty are
+shown is not a list chosen here either — it is every sprite that same run actually put into a
+screen record, so the sheet is this stage's cast rather than a selection: four green snakes, two
+red cobras, four frames of the hero's own walk, the seven-frame spin of a gold coin, and three
+boulders.
+
+| Round 4 — over the brick platforms | Round 5 — the wood | Round 5 — the vine shaft |
+|:---:|:---:|:---:|
+| ![](../../assets/wonderboy/stage4-sky.png) | ![](../../assets/wonderboy/stage5-woods.png) | ![](../../assets/wonderboy/stage5-cave.png) |
+
+The later rounds are reached through **the game's own level-skip cheat**, typed rather than poked:
+`game_key_actions`' walk at $5a8 steps a cursor along the four scancodes the binary carries at
+$608 — `$61 $30 $13 $1e`, which are UNDO, B, R and A — and raises the cheat word when the cursor
+meets its terminator. With that word up, N takes the arm at $556, which pops the frame loop's
+return address and `jmp`s to $e5ba: `boot_load_stage` again, one sequence row further on. The
+reconstruction cannot make that transfer, so it reports `WB_KEY_ACTIONS_LEVEL_SKIP` and the caller
+runs the slice — which is exactly the wiring the on-target build uses for the same ending. One
+thing here is this script's own and not the game's: the sequence cursor is put at the row before
+the one being shown, because the honest route to round eight — playing there — is not something a
+fixed joystick script can do. Everything either side of that is the boot's.
+
+Two things about **which** rounds these are came out of getting the pictures wrong first, and both
+are now checks rather than choices. The script takes the walk direction from the loaded row's own
+start record: `boot_load_stage` drops the hero at `WB_START_FOLLOW_X`, and two of these rows start
+him at 1928 and 1432 — the far end of a map he is meant to walk *back* along, with an arrow tile on
+the ground saying so. Holding right there pinned him against a wall for 1400 frames with every
+creature off the left edge, which is what the first published desert and castle pictures were. And
+`sprites_cru_install` writes an UNMARKED sentinel into every descriptor the **round's** mask does
+not mark, wholesale — rounds 2, 3, 10 and 11 do not mark the frames of a hero who has not picked up
+the armour of the rounds before him, and arriving with a round-1 hero is exactly what the cheat
+does, so in those rounds he was drawn as a band of scrambled bytes at his own position. The town of
+round 2 and the golden keep of round 11 were in this gallery until that was found; the set is now
+chosen among the rounds the skip can honestly show, and the script refuses a picture whose hero has
+no cells.
+
+| Round 6 — the spiked corridor | Round 8 — over the lava |
+|:---:|:---:|
+| ![](../../assets/wonderboy/stage6-dungeon.png) | ![](../../assets/wonderboy/stage8-lava.png) |
+
+Each is a different overlay file, and each frame was chosen the same way stage 1's was — the first
+frames 100…800 with at least a stated number of sprites whole inside the window, asserted before
+the PNG is written. So the wood really does have three monkeys in its trees with gold hanging
+between them — and a `GOLD` counter reading 16 beside a `SCORE` of 20, both earned by that run —
+the vine shaft really has a blue flier, a falling boulder and thrown blades around a helmeted hero
+with his sword out, and the lava has three creatures and two more pieces of gold. The message box
+every stage entry posts — the frame loop's fourteenth call, `text_run_message_box`, composing the
+first entry of the message table at `$a09c` — is long gone by then, so it is checked on the way
+past at frame 30 instead of photographed, and checked in both directions: three of these five rows
+hold it over frames 0…49 exactly, and two — the vine shaft and the lava — post no message at all.
+
+The panel is the same one in all seven play pictures, and reading it is the quickest way to see
+that the boot chain did its work: `LIFE`, `SCORE`, `HIGH`, `GOLD` and the slot frames are the
+credits picture's own artwork, while the hearts, the digits and the `RND:` number are what
+`game_restart_reset`, `panel_refresh_frame` and the `hud_draw_*` routines paint over it. `RND:` is
+also the quickest check on a figure this write-up once had wrong: `WB_STAGE_NUMBER` is packed BCD,
+so `$11` is round eleven and not seventeen, and the panel spells the digits out. Four of the data
+disk's overlays are damaged on the pressed original — `OVALAY4B`, `OVALAY5B`, `OVALAY6A` and
+`OVALAY9A`, the only files this project keeps two corpora of (see [The disks](#the-disks)) — and
+every picture here is rendered from the **authentic** `bin/disk2/` dump, with the script refusing
+to load one of those four, so no stage that needs them is shown.
 
 ## Hearing the music
 
@@ -186,7 +373,15 @@ the agreement is "both refuse", not "both refuse for the same reason". See
 ```bash
 bash run.sh          # bootstrap Ghidra at 0x3F8 (RE-IMPORTS AND WIPES NAMES)
 bash reapply.sh      # the naming loop: names.txt -> DB -> decomp.c
-cd recreate && make test
+
+cd recreate                                  # needs your own bin/disk1/ and bin/disk2/
+make venv && make test                       # the shared kit + the C cores, the differential suite
+./.venv/bin/python ../gen_readme_assets.py   # re-render this README's images, host-side
+bash atari/build.sh ownrun && bash atari/run.sh   # ...or play it on a 68000, under Hatari
+python3 atari/smoke.py floppy                # ...or build atari/out/WBOOT.ST — a bootable 720 KB
+                                             # FAT12 floppy carrying the build and all 40 resources.
+                                             # gw/write_disk.sh puts it on real media; see
+                                             # atari/HARDWARE.md for the STE runbook.
 ```
 
 `names.txt` is the source of truth for every name, addressed at base `0x3F8`. The map, the region

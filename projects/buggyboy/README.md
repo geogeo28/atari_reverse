@@ -1,9 +1,41 @@
-# BuggyBoy (Atari ST) — reference project
+# Buggy Boy (Atari ST) — the worked reference project
 
-The worked example for this workspace: Elite's **Buggy Boy** (pseudo-3D racer),
-**coded by Martin W. Ward** (string at `0x7e20`; the `"MARTIN"` in the score display is
-his name). Fully reverse-engineered: loader, road data, graphics (decompressed + coloured),
-and **91/91 functions named**. Use it as a template for how a solved project looks.
+Elite's **Buggy Boy** (pseudo-3D racer, Elite Systems, 1988), **coded by Martin W. Ward** (string at
+`0x7e20`; the `"MARTIN"` in the score display is his name), is this workspace's worked reference:
+solved end to end — loader, road data, graphics, sound driver, **91/91 functions named** — and then
+taken one stage further than any other project here, into a free, optimized remaster that is
+**pixel-identical** to what the original drew. **91/91 functions verified** · **~20 000 lines of
+reconstructed C** · **81 test modules** · **driveable on a 68000**. Use it as a template for how a
+solved project looks.
+
+> **No game data is distributed here.** No `.PRG`, no `COURSES.DAT`, no `GRAPHICS.GRA`. Bring your
+> own copy; see [Credits & legal](../../README.md#credits--legal).
+
+## The three stages
+
+```
+   BUGGYBOY.PRG                              ── the shipped 1988 binary (you supply it)
+        │
+        │  tools/prg_dis.py · Ghidra headless · names.txt naming loop
+        ▼
+1. DISASSEMBLE & NAME     decomp.c — 91 named functions, anchored on OS traps + hardware regs
+        │
+        │  rewrite as idiomatic C, then diff every function against a cycle-accurate 68000
+        ▼
+2. RECREATE               recreate/ — readable C, each function byte-for-byte == the original
+        │                            (oracle: Musashi running the real machine code)
+        │  rewrite freely for speed and clarity; the only rule is the frame must not change
+        ▼
+3. REMASTER               remaster/ — native structs, faster algorithms, pixel-identical output
+        │
+        ▼
+   BUGGYBOY.PRG on a 68000                    ── cross-compiled back to m68k, runs under Hatari
+```
+
+Each stage is refereed by the one above it, so nothing can go wrong quietly. Stage 2 is judged by a
+cycle-accurate emulator running the original machine code; stage 3 is judged, frame by frame,
+against stage 2's verified cores. Buggy Boy is the one project in this workspace that went through
+all three.
 
 ## Files
 
@@ -14,35 +46,157 @@ decomp.c    decompiled C for all 91 functions (regenerate: reapply.sh)
 ghidra_proj Ghidra DB (open: ghidraRun → open this dir)
 out/        gfx/ (colour sprite screens) · courses_bitmap.png · dis.txt (first-pass 68k)
 run.sh      bootstrap (re-import — wipes names) ; reapply.sh  apply names.txt + re-export
+recreate/   the proven C reconstruction + its differential harness (STATUS.md, per function)
+remaster/   the free re-implementation and the playable PRG (STATUS.md, per subsystem)
 docs/       function_graph.html — interactive d3 call-graph explorer (regenerate: gen_graph.py)
-            docs/assets/ — the 8 decoded GRAPHICS.GRA sprite sheets, per-object roadside sprites
-            (one per objsprite_* handler, sliced by driving the real blitter), rendered
-            screens/course/palette PNGs, buggy-pose GIF animations, and tune/fx WAVs — all produced
-            by the C reconstruction (regenerate: gen_assets.py); manifest.json links each to its functions
+            docs/assets/ — the media set gen_assets.py produces, manifest.json links each to its functions
 ```
 
-## How it was solved (maps to the docs)
+## Gallery
+
+Everything below was **rendered by the reconstruction**, then decoded from the Atari's 4-plane
+framebuffer with the game's own palettes. Regenerate the whole set — byte-identical every run — with
+`gen_readme_assets.py`, run under `recreate/`'s venv.
+
+### In-race frames — three courses, driven for real
+
+Staged from the real course data, driven with the throttle held through the verified `game_update`,
+then drawn by the verified render pipeline (road → scroll → objects → HUD).
+
+| `OFFROAD` | `NORTH` | `SOUTH` |
+|:---:|:---:|:---:|
+| ![](../../assets/buggyboy/race-leg0.png) | ![](../../assets/buggyboy/race-leg1.png) | ![](../../assets/buggyboy/race-leg4.png) |
+
+The course map in the top-left corner is built per leg by `init_leg_dash` out of `COURSES.DAT` and
+blitted every frame by `draw_dashboard`; the trace along it is the player's live progress.
+
+### Screens
+
+| Credits | Leg board | High scores |
+|:---:|:---:|:---:|
+| ![](../../assets/buggyboy/screen-credits.png) | ![](../../assets/buggyboy/screen-leg-select.png) | ![](../../assets/buggyboy/screen-highscore.png) |
+
+### Course data and sprites
+
+`COURSES.DAT` turned out not to be a script but road-slice **bitmap** data, streamed eight bytes at a
+time through a circular buffer. Walking it recovers each leg's shape:
+
+| `OFFROAD` | `WEST` |
+|:---:|:---:|
+| ![](../../assets/buggyboy/course-legmap-0.png) | ![](../../assets/buggyboy/course-legmap-3.png) |
+
+`GRAPHICS.GRA` is a sprite table plus an RLE stream that unpacks to eight 320×200 four-plane atlases:
+
+| Gates & score markers | Roadside scenery |
+|:---:|:---:|
+| ![](../../assets/buggyboy/sprites-page3.png) | ![](../../assets/buggyboy/sprites-page4.png) |
+
+[`docs/function_graph.html`](docs/function_graph.html) is a standalone call-graph explorer covering
+all 117 functions — open it in a browser, no server needed. With your own copy of the game you can
+go further: `gen_assets.py` regenerates the full media set (every sprite page, per-object roadside
+crops sliced by driving the real blitter, buggy animations as GIFs, and the soundtrack re-rendered
+through the reconstructed YM2149 driver), and re-running `gen_graph.py` attaches all of it to the
+functions that produce it. Generated media is not stored in this repository.
+
+## Stage 1 — Disassemble & name
+
+Load the `.PRG` at load base `0x10000`, let Ghidra analyze, then iterate a plain-text name map until
+the decompilation reads like source. `names.txt` is the source of truth — one directive per line,
+addressed as Ghidra sees them (image offset + load base):
+
+```
+fn   0x1555e draw_hud
+var  0x18c38 leg_index
+cmt  0x1110e game_update: input, integrate throttle->speed, steering->road_curve, stream course…
+```
+
+The method is **anchors outward**: start from ground truth an emulator cannot dispute — GEMDOS/BIOS
+trap numbers, DRI symbols, hardware register addresses, string literals — and propagate along the
+call graph. Then *verify by reading the body*; several confident first guesses in this project were
+wrong until someone actually read the code ([`docs/methodology.md`](../../docs/methodology.md)).
+
+**Result: 335 name directives, all 91 functions named**, plus a decoded loader, course format,
+sprite format, event jump table and sound driver:
 
 - **START.PRG** — a custom loader (not the game): sets low-res, LZ-unpacks a title
   bitmap, prints a machine/TOS/RAM banner, then `Fopen`/`Fread`s `BUGGYBOY.PRG`, applies
-  its DRI relocations by hand, fabricates a basepage, and `jmp`s in. → `tos-os-calls.md`.
-- **BUGGYBOY.PRG** — load base `0x10000`. `main` (never returns): GEM `appl_init →
-  graf_handle → v_opnvwk`, Malloc buffers, install sound `REFRESH` on the VBL, then
-  attract/gameplay loops. Frame = `game_update → draw_frame[build_road_geometry →
-  render_road → blit_road_scroll → draw_game_objects → draw_hud]`. → `methodology.md`.
+  its DRI relocations by hand, fabricates a basepage, and `jmp`s in. →
+  [`tos-os-calls.md`](../../docs/tos-os-calls.md).
+- **BUGGYBOY.PRG** — `main` (never returns): GEM `appl_init → graf_handle → v_opnvwk`, Malloc
+  buffers, install sound `REFRESH` on the VBL, then attract/gameplay loops. Frame =
+  `game_update → draw_frame[build_road_geometry → render_road → blit_road_scroll →
+  draw_game_objects → draw_hud]`. → [`methodology.md`](../../docs/methodology.md).
 - **Controls**: joystick (IKBD interrogate `$fffffc00`) then keyboard fallback (arrows +
   space) → `input_state`. Physics: input → `engine_rpm` → `speed`; steering → `road_curve`.
 - **COURSES.DAT** — *not* a script: road-slice **bitmap** data, streamed 8 bytes at a time
-  through a `0x2000` circular buffer and shifted to draw the curving road. → `graphics.md`.
+  through a `0x2000` circular buffer and shifted to draw the curving road. →
+  [`graphics.md`](../../docs/graphics.md).
 - **GRAPHICS.GRA** — a 0xd00-byte sprite table + RLE-compressed (`0x1234`/`0x5678` runs) →
   8× 320×200 4-plane sprite atlases (logo, buggies, scenery, HUD, font). Extracted to
   `out/gfx/` with palette `0x7f9e` (skip `0xd00` to clear the leading table). →
-  `graphics.md`.
+  [`graphics.md`](../../docs/graphics.md).
 - **Course-event engine** — an offset **jump table at `0x11aa2`** (129 entries) dispatches
   course-script opcodes → `evt_flag_gate` / `evt_collision` / `evt_score_msg` → `add_score`
   (BCD) + `play_event_tune`. A second table at `0x13144` dispatches roadside-object sprites.
 - **Sound** — driver at `0x1b2xx` (`snd_voice_a/b`, `snd_cmd_handler`), the DRI-symbol
-  `INITTUNE`/`EG*`/`REFRESH` family, run from the VBL. → `sound.md`.
+  `INITTUNE`/`EG*`/`REFRESH` family, run from the VBL. → [`sound.md`](../../docs/sound.md).
+
+## Stage 2 — Recreate: prove it
+
+Buggy Boy was hand-written assembly, so there is no original source to recompile and byte-match
+against. Instead we prove **behavioural equivalence**: run the real machine code and the
+reconstruction on identical memory, then diff.
+
+```
+          initial memory image + registers
+                     │
+        ┌────────────┴─────────────┐
+        ▼                          ▼
+  ORACLE (real 68k)          CANDIDATE (our C)
+  Musashi via liboracle.so   libbuggyboy.so via ctypes
+        │                          │
+        ▼                          ▼
+  final memory + write-set   final memory
+        └──────────► diff ◄────────┘   green = byte-for-byte identical
+```
+
+Both sides share one flat big-endian image whose indices are the game's real addresses. The harness
+diffs the *whole* image, so a byte the original writes that the reconstruction misses fails the test.
+Leaf functions can additionally opt into an attribution pass that poisons oracle-written bytes first,
+so a candidate that matches *coincidentally* is caught rather than passing.
+
+Functions that never return (`_start`, the interactive loops) are verified at a checkpoint PC, with
+any excluded stack band vetted against the oracle's deepest stack pointer so an exclusion cannot hide
+a divergence.
+
+**Status: 91/91 verified.** See [`recreate/STATUS.md`](recreate/STATUS.md) for the per-function table
+and how each one was pinned.
+
+## Stage 3 — Remaster: free it
+
+`recreate/` proves what the original does. `remaster/` is free to look nothing like 68000 assembly —
+native structs instead of a flat image, real types, precomputed tables, better algorithms — subject
+to exactly one rule:
+
+> For any given input, the remaster must produce a **pixel-identical framebuffer** to the verified
+> `recreate/` cores, every frame.
+
+The two use deliberately different memory layouts, so their internal state cannot be diffed. The one
+surface they share is the thing the player sees, and that is the comparison surface. An optimization
+that moves a single pixel fails.
+
+- **Phase A — render pipeline: green.** Road geometry, rasterizer, scroll blitter, ground/horizon,
+  sprites, scaled objects, the fine-x blit engines, the object-list dispatcher and all eight HUD
+  phases are ported and byte-exact over the whole framebuffer.
+- **Phase B — gameplay: complete.** Course streaming, the object ring, player physics, the
+  crash/auto-steer script, collision probing, event dispatch and the sound driver are ported and
+  frame-exact; the shipping `BUGGYBOY.PRG` plays end-to-end.
+- **On target:** `BUGGYBOY.PRG` — the playable game, with sound — cross-compiles back to m68k and
+  runs under Hatari and on a real ST/STE, loading the unmodified `COURSES.DAT` and `GRAPHICS.GRA` at
+  boot. It boots into the leg select; each leg's start frame is byte-identical to the
+  reconstruction's (`run_golden.py`, all five legs), and it is driveable.
+
+See [`remaster/STATUS.md`](remaster/STATUS.md) for the per-subsystem table.
 
 ## Play it
 
@@ -81,15 +235,27 @@ joystick rule and the two fidelity notes — is in
 
 ## Regenerate
 
+Everything below needs your own game files in `bin/`.
+
 ```bash
+# stage 1 — the naming loop
 bash reapply.sh    # names.txt -> ghidra_proj + decomp.c (fast)
 bash run.sh        # full re-import + analysis (only if starting over; wipes names)
 python3 ../../tools/extract_graphics.py bin/GRAPHICS.GRA out/gfx \
         --pal-file bin/BUGGYBOY.PRG --pal-off 0x7f9e --skip 0xd00   # colour sprites
+
+# stage 2 — the differential
+cd recreate
+make venv && make test          # builds the Musashi oracle + the C cores, runs the differential suite
+make bench                      # per-frame cost: original 68000 vs the reconstruction
+./.venv/bin/python ../gen_readme_assets.py   # re-render this README's images, host-side
+
+# stage 3 — the remaster
+cd ../remaster
+make test                       # pixel-equivalence against the verified cores
 ```
 
 ## Open threads (optional)
 
-- Per-leg palettes (`0x7f7e–0x8044`) for pixel-exact scenery colour, or capture live in Hatari.
-- A `COURSES.DAT` walker that renders each leg's road as a track map.
-- Finer names for the ~12 leaf draw/HUD helpers (named from call-context, refinable).
+- Finer names for the leaf draw/HUD helpers still carrying a `# ctx` tag in `names.txt` — named from
+  call-context, refinable by reading their bodies.

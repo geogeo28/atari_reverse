@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the workspace README's images straight from the verified C reconstruction.
+"""Render this project README's images straight from the verified C reconstruction.
 
 Every picture here is *drawn by the reconstruction*, not screenshotted from the original
 program. In-race frames reuse the staging the remaster equivalence harness trusts
