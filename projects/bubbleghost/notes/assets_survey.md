@@ -92,13 +92,18 @@ below are read off the picture, and only the first three are backed by anything 
 | ~200–~349 | ~102,400–~178,687 | more rooms, stone busts, the ivy maze, the outdoor ending scene (sky, cloud, grass, flowers), the `ERE` logo, and the message plates `HALF WAY` and `WELL DONE! THE BUBBLE THANKS YOU` |
 | 350–359 | 178,688–184,319 | the status panel: exactly **ten** tiles = 320×32, carrying the BUBBLE GHOST logo, `ERE`, `SCORE:`, `HI-SCORE:`, `HALL:`, `BUBBLE:` and a red `BONUS` bar |
 
-That last row supports a tidy reading of the whole screen — **HYPOTHESIS**: the game runs a 320×192
-display of 10×6 tiles, the top 10×5 being the room and the bottom row being the HUD. It would
-explain why the title picture is 192 rows too.
+That last row supports a tidy reading of the whole screen, and the code **CONFIRMS** it: the game
+runs a 320×192 display of 10×6 tiles — rows 0–159 are the room (5 tile rows × 10 columns), rows
+160–191 are the HUD, drawn from tiles 350–359, and scanline 189 inside it carries the `vr_recfl`
+BONUS bar. It is also why the title picture is 192 rows (`notes/gameplay.md` §1).
 
 Nothing in either file marks transparency: there is no mask field (a masked group is five words
-wide, which would not give a 512-byte tile). The ghost and bubble sit on colour 0, so the drawing
-code presumably treats index 0 as transparent or builds a mask at run time — **HYPOTHESIS**.
+wide, which would not give a 512-byte tile). **CONFIRMED from the code — there is no mask at all,
+and none is built.** The ghost and bubble tiles use only colour 0 and colour 15, and the game ORs
+them onto the background through the VDI (`vro_cpyfm`, mode 7 `S_OR_D`), which sets all four
+planes where the sprite is white and leaves the background elsewhere. The 32×32 background under
+each sprite is copied out with a mode 3 (`S_ONLY`) call before the OR and put back after it
+(`notes/gameplay.md` §7).
 
 ---
 
@@ -155,67 +160,97 @@ the waveform under its envelope, and the five bursts are the phrase's words.
 |---|---:|---:|---:|---:|---:|---:|
 | the whole phrase | 0 | 30,100 | 2.009 | −1.0 | 128 | 39.8 |
 
-**The in-game sound effects are not here.** `GHOST.VOI` holds this one speech sample and nothing
-else; the effects come from a PSG synth engine inside `GHOST.PRG` (ADSR-style voice records of
-`0x8c` bytes, runtime `0x1459a` in the depacked image) that the loader agent will name.
+**The in-game sound is not here, and there is no music anywhere in the game.** `GHOST.VOI` holds
+this one speech sample and nothing else. Everything else audible comes out of `GHOST.PRG`'s own
+**three-voice software ADSR + LFO synthesiser for the YM2149** — `0x8c`-byte voice records at
+`0x22daa`, ticked at 200 Hz by the Timer C ISR at `0x1459a` — and that engine has **no sequencer,
+no note stream and no tempo counter**. What it plays is 11 fixed effects and 36 per-level tones,
+each one a one-shot voice record triggered by game code. The end-of-level bonus tally only
+*sounds* like a melody because the frame loop re-triggers one effect at a rising note. Full
+decode: [`sound_engine.md`](sound_engine.md).
 
 
 ---
 
 ## `GHOST.DEM` — the attract-mode playback
 
-**CONFIRMED.** 6,000 bytes = **1,000 records of 6 bytes**. At 50 Hz that is 20 s of attract mode.
-The six fields, over all 1,000 records:
+**CONFIRMED.** 6,000 bytes = **1,000 records of 6 bytes**, of which the demo player at `0x11992`
+replays **980** (`0x3d4`). The record is recorded *object state*, not an input script — it is not
+the IKBD scancode stream the opening bytes suggest (`1b 1c 01 35 20 04` looks like scancodes until
+the fields are separated). The consuming code settles both the field assignment and the unit:
 
-| field | range | mean \|Δ\| per record | reading |
-|---|---|---:|---|
-| 0 | 0–92 | 0.72 | x of one object |
-| 1 | 0–62 | 0.85 | y of that object |
-| 2 | **0–44** | 1.81 | that object's sprite |
-| 3 | 6–81 | 0.38 | x of a second object |
-| 4 | 3–56 | 0.29 | y of that object |
-| 5 | **0–12** | 1.59 | that object's sprite |
+| byte | scale | global | meaning | range over the file |
+|---:|---:|---|---|---|
+| 0 | ×3 | `0x22ff2` `ghost_x` | ghost x | 0–92 |
+| 1 | ×2 | `0x22ff0` `ghost_y` | ghost y | 0–62 |
+| 2 | ×1 | `0x22fea` `ghost_tile` | ghost animation frame, a `GHOST.DAT` tile index | 0–44 |
+| 3 | ×3 | `0x22fee` `bubble_x` | bubble x | 6–81 |
+| 4 | ×2 | `0x22fec` `bubble_y` | bubble y | 3–56 |
+| 5 | ×1 | `0x22fe8` `bubble_frame` | bubble frame | 0–12 |
 
-**HYPOTHESIS: the record is `(ghost x, ghost y, ghost tile, bubble x, bubble y, bubble frame)` —
-recorded object state, not input.** It is not the input-script reading the opening bytes suggest
-(`1b 1c 01 35 20 04` looks like IKBD scancodes until the fields are separated). Three things back
-it, and they cross-check against `GHOST.DAT`:
+**The unit is 3 pixels in x and 2 pixels in y**, origin at the top-left of the play area: the player
+reads six bytes, advances the cursor by 6, and assigns `ghost_x = rec[0]*3`, `ghost_y = rec[1]*2`,
+`bubble_x = rec[3]*3`, `bubble_y = rec[4]*2`. That is what makes the ranges fit the room, and it is
+why neither pair mapped onto 320×192 at four pixels per unit: 92×3 = 276 and 81×3 = 243 against the
+room's `bubble_x ∈ [0, 288]`; 62×2 = 124 and 56×2 = 112 against `bubble_y ∈ [0, 128]`. The two
+objects' ranges differ simply because the recorded run never visited the extremes.
+
+**One record per drawn frame — and the loop calls no `Vsync`.** The demo therefore plays at
+whatever the renderer costs on the machine it runs on: there is no 50 Hz timebase and no fixed
+duration. A reconstruction that adds a frame sync there is changing behaviour, not fixing it
+(`notes/frontend.md` §2 and §3, `notes/gameplay.md` §10).
+
+The three readings the file's own statistics suggested are all borne out by the consuming code:
 
 * **Field 2 stays inside the ghost's tile bank.** It takes every value 0–44 and never more — and
-  tiles 0–46 are exactly the mono-white ghost frames found independently above. It also moves in
-  4-step cycles within a base (…5,6,7,8,5… then …25,26,27,28,25…), which is a per-direction
-  animation reading its tile index straight out of the bank.
+  tiles 0–46 are exactly the mono-white ghost frames found independently above. In play the game
+  builds it as `ghost_facing*5 + ghost_anim`, which is why it moves in 4-step cycles within a base
+  (…5,6,7,8,5… then …25,26,27,28,25…).
 * **Field 5 tracks the bubble's life, and 47 + field 5 lands on the right tiles.** It normally
-  cycles 4→12 (nine values = the nine bubble frames, tiles 51–59). Three times in the demo it
-  instead runs 0, 1, 2, 3 and then **holds at 3** for 36–40 records: 47+0/1/2 are the three sparkle
-  frames and 47+3 = tile 50, the empty one. That is a pop followed by ~0.75 s with no bubble.
+  cycles 4→12 (nine values = the nine bubble frames, tiles 51–59), and the code confirms the
+  offset: `bubble_sprite[f]` is `GHOST.DAT` tile `47 + f`. Three times in the demo it instead runs
+  0, 1, 2, 3 and then **holds at 3** for 36–40 records: 47+0/1/2 are the three sparkle frames and
+  47+3 = tile 50, the empty one. That is a pop followed by a bubble-less stretch.
 * **Fields 3–4 freeze for exactly those stretches** — the bubble's position stops updating at
   (68,28), (27,56) and (64,37) while field 5 sits at 3, and resumes when it returns to 4–12.
 
-**OPEN: the coordinate unit and origin.** Neither pair maps cleanly onto 320×192. Four pixels per
-unit would put the ghost's x at 368 and its y at 248, both off the picture; the ranges also differ
-between the two objects (0–92 / 0–62 against 6–81 / 3–56), which the demo simply not visiting the
-extremes would explain, but so would two different origins. The code settles it.
-
 ---
 
-## What the code must answer
+## What the code answered
 
-1. **`GHOST.DAT`'s room maps.** The 35 rooms are presumably lists of tile indices; find the table
-   and the drawing loop. `extract_gfx.py` is structured so a `render_room()` beside `tile_grid()`,
-   fed those indices, is the whole addition.
-2. **Transparency.** Does the blitter treat index 0 as transparent, or is a mask built at run time
-   for the ghost and bubble tiles?
-3. **Palettes.** Is the palette at the end of `GHOST.DAT` the only one, or does the PRG hold
-   per-room palettes (the title's is already a second, different one)? Look for `Setpalette`
-   (`Trap #14`, opcode 6) and the pointer it is handed.
-4. **`GHOST.DEM`'s coordinate unit and origin**, and whether the file is played at one record per
-   VBL.
-5. **Where the music and the sound effects are.** Neither is on the disk as data: Bubble Ghost's
-   YM2149 title tune and its effects both come out of `GHOST.PRG`. The effects have already been
-   located — a PSG synth engine with ADSR-style voice records of `0x8c` bytes at runtime `0x1459a`
-   in the depacked image — and the tune should be a VBL-installed refresh routine (`_vblqueue` at
-   `0x456`, see `docs/sound.md`). Once both are named, capture them the way
-   `projects/zynaps/tools/extract_audio.py` captures Zynaps': run the original code under the kit's
-   Musashi oracle, log the `$ff8800`/`$ff8802` writes per 50 Hz frame, and render them through
-   `projects/buggyboy/recreate/sound/ym2149.py`.
+The naming passes ([`frontend.md`](frontend.md), [`gameplay.md`](gameplay.md),
+[`sound_engine.md`](sound_engine.md)) settled every question this survey left open. They are
+recorded here as answers, not as questions.
+
+1. **`GHOST.DAT`'s room maps — found.** `room_table` at `0x21a4a`: 36 records of `0x78` bytes, the
+   first `0x64` of each a 5×10 row-major word map of `GHOST.DAT` tile indices, then four `(x, y)`
+   entry points in tile units and a candle-effect index. The 36 rooms are laid out boustrophedon in
+   the 6×6 `room_grid` at `0x2328e`. Tile *n* is fetched as `dat_bank[n / 60] + (n % 60) * 512`, so
+   the six 30,720-byte load buffers and the 360-tile bank are the same bytes addressed two ways.
+   Room furniture is a separate 10-slot-per-room `object_table` at `0x2069a`
+   (`notes/gameplay.md` §4, §7).
+2. **Transparency — there is no mask, and none is built.** The VDI's `vro_cpyfm` in mode 7
+   (`S_OR_D`) over sprites that use only colours 0 and 15, with a mode 3 save/restore of the
+   background around it (above).
+3. **Palettes — two, both from the data files; the PRG holds no per-room palette.**
+   `palette_title` (`0x23126`, the 32-byte tail of `GHOST.PRE`) is set before the presentation;
+   `palette_game` (`0x23122`, the tail of `GHOST.DAT`) is set at the top of the menu and covers the
+   whole game. The only other colour write is `Setcolor(15, …)` — `$777` while the ghost blows and
+   on the two end-of-room animations, `$733` when the air gauge runs out (`notes/frontend.md` §5,
+   `notes/gameplay.md` §3).
+4. **`GHOST.DEM`'s unit, origin and pacing — settled, and it is *not* one record per VBL.** The
+   record is `(ghost_x/3, ghost_y/2, ghost_tile, bubble_x/3, bubble_y/2, bubble_frame)`, played one
+   record per *drawn* frame, 980 of the 1,000 replayed, with no `Vsync` in the loop (above).
+5. **The sound — located, decoded, and there is no music to find.** A three-voice software
+   ADSR + LFO synthesiser for the YM2149 lives in `GHOST.PRG`, ticked at 200 Hz from Timer C
+   (`0x1459a`) and reached through a `trap #9` PSG gate the game installs itself. It has no
+   sequencer: 11 fixed effect definitions at `0x201ca` and 36 per-level tones at `0x1f20a`, all
+   triggered by `sound_play` (`0x142bc`). There is **no VBL-installed refresh routine** — `$70` is
+   never touched (`notes/sound_engine.md`).
+
+**What is still to capture.** The 11 effects and the 36 per-level tones have been read as field
+tables but never *rendered*. Capture them the way
+[`projects/zynaps/tools/extract_audio.py`](../../zynaps/tools/extract_audio.py) captures Zynaps':
+run the original code under the kit's Musashi oracle, drive `sound_play` over each of the 47
+definitions, log the `$ff8800`/`$ff8802` writes the 200 Hz ISR emits, and render them through
+`projects/buggyboy/recreate/sound/ym2149.py`.

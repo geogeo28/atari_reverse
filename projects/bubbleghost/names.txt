@@ -1,23 +1,60 @@
-# BUBBLE GHOST (Atari ST, ERE Informatique 1987 / Accolade 1988; code Christophe Andréani).
+# BUBBLE GHOST (Atari ST, ERE Informatique 1987 / Accolade 1988; code Christophe Andreani).
 # Binary: GHOST.PRG ships wrapped in a protection-keyed stream cipher (notes/loader.md);
-# tools/depack_bubbleghost.py produces bin/GHOST_PLAIN.PRG — an Alcyon/DRI C small-model
-# program, text 0xe8ca, data 0x2f4, bss 0x6650, 9 relocs — which is what ghidra_proj holds.
+# tools/depack_bubbleghost.py produces bin/GHOST_PLAIN.PRG -- an Alcyon/DRI C small-model
+# program, text 0xe8ca, data 0x2f4, bss 0x6650, 9 relocs. ghidra_proj holds bin/GHOST_RT.PRG:
+# the same program in its RUN-TIME layout, text 0x14f1a (= code + bss), data 0x2f4, bss 0.
 # Ghidra address = image offset + 0x10000. Run-time layout is [TEXT][BSS][DATA] with a4 on
-# the BSS/DATA boundary: a4+n = DATA (Ghidra address = n + 0xe8ca + 0x10000), a4-n = globals.
+# the BSS/DATA boundary: a4+n = DATA (Ghidra address = n + 0x14f1a + 0x10000 = n + 0x24f1a),
+# a4-n = globals.
+#
+# 132 fn, 181 var, 123 cmt. Sections below: entry/crt0, front end + GEM/VDI binding,
+# file I/O, gameplay (rooms/objects/ghost/bubble/collision), blitters, HUD/score, sound
+# engine, C library, globals by subsystem, tables, plate comments.
 #
 # A trailing '# ctx' marks a name inferred from call context rather than a confirmed body
-# read (ApplyNames strips everything from the first '#'). Evidence for the rest is in
-# notes/anchors.md.
+# read (on fn/var/param lines ApplyNames strips everything from the first '#'; cmt text
+# is taken whole). Evidence is in notes/anchors.md, notes/frontend.md, notes/gameplay.md
+# and notes/sound_engine.md.
 
-# --- startup and top level -------------------------------------------------------------------
+# ==== entry / crt0 ====
 fn 0x10036 crt0_start                # Mshrink, moves DATA above BSS, clears BSS, sets a4, calls init_globals then main
 fn 0x100dc main                      # XBIOS Getrez; wrong rez -> printf(" Please reboot in LOW REZ... "); else init + game
 fn 0x10116 crt0_setup_args           # the argv hook the startup calls with basepage+128: a bare rts
-fn 0x10118 init_video_and_heap       # Getrez, Logbase, Logbase-0x7d00 back buffer, Super in/out, clears $484 conterm
+fn 0x10118 init_gem_and_screens
 fn 0x101e6 game_top_loop             # loads every file, installs sound, then `do { ... } while (true)`
 fn 0x16d8e init_globals              # writes every non-zero BSS initialiser one move at a time; builds "GHOST.LOA"/"GHOST.VOI"
 
-# --- file loading ----------------------------------------------------------------------------
+# ==== front end: presentation, menu, hall of fame ====
+fn 0x10eb8 show_presentation
+fn 0x10efe clear_physical_screen
+fn 0x115d6 title_menu_loop
+fn 0x11d6e hiscore_submit_players
+fn 0x11f84 hiscore_insert_and_save
+fn 0x11dbc draw_hall_of_fame
+
+# --- GEM AES binding ---
+fn 0x149b6 gem_aes                   # AES entry: pblock at 4(a7) -> d1, d0 = 0xc8, trap #2; saves/restores a1/a2 like xbios_trap
+fn 0x14b2e aes_crysif
+fn 0x14b94 appl_init
+fn 0x14be8 graf_handle
+fn 0x14c1e graf_mouse
+
+# --- GEM VDI binding (trap #2, d0=0x73) ---
+fn 0x168d4 vdi_call
+fn 0x16890 vdi_set_src_mfdb
+fn 0x168b2 vdi_set_dst_mfdb
+fn 0x168fc vst_height
+fn 0x16948 vst_color
+fn 0x16974 vsf_color
+fn 0x169a0 v_opnvwk
+fn 0x16a06 v_clrwk                   # VDI opcode 3: contrl[0]=3, 0 ptsin, 0 intin -> vdi_call. Clears the workstation.
+fn 0x16a26 vq_mouse
+fn 0x16a5e vq_key_s
+fn 0x16a86 v_gtext
+fn 0x16ae2 vr_recfl
+fn 0x16b12 vro_cpyfm
+
+# ==== file I/O: the five data files ====
 fn 0x10dea load_demo                 # open "A:GHOST.DEM", malloc 0x1770, read, close  -> a4-7606
 fn 0x10e44 load_presentation         # open "A:GHOST.PRE", malloc 0x7800 + 0x20 (picture + palette)
 fn 0x1396c load_level_pictures       # open "A:GHOST.DAT", six malloc(0x7800) + one 0x20 palette
@@ -26,22 +63,61 @@ fn 0x1207a save_hiscores             # creat "A:GHOST.SCR" and write the table
 fn 0x13c6c load_voice_player         # fread GHOST.LOA (0xa8f) to a4-6010; malloc 0x7594 and fread GHOST.VOI
 fn 0x13cea play_voice                # pokes the VOI buffer into the LOA image at +0x1e, then jsr a4-5982 (LOA text)
 
-# --- sound -----------------------------------------------------------------------------------
-fn 0x14982 sound_start               # Supexec(install_sound_vectors) then 0x14576
-fn 0x1499c sound_stop                # 0x14576 then Supexec(remove_sound_vectors)
-fn 0x148ea install_sound_vectors     # saves $114/$484, installs trap#9 at $a4 and Timer C at $114, MFP VR := $40
-fn 0x1491c remove_sound_vectors      # restores $114/$484, MFP VR := $48
-fn 0x1459a timer_c_sound_isr         # 200 Hz Timer C handler; drives the PSG at $ffff8800, chains to the saved $114
-fn 0x14940 psg_access                # user-mode stub: pushes three words then trap #9
-fn 0x14950 trap9_psg_handler         # supervisor PSG gate: select d1&15 at $ffff8800, write d0, read back, rte
+# ==== gameplay: rooms / objects / ghost / bubble / collision ====
+fn 0x10f20 reset_world_state
+fn 0x12322 game_frame_update         # input -> ghost -> blow -> fan -> bubble -> drift
+fn 0x129b4 ghost_blow                # the 8-direction blow test + the candle-extinguish script
+fn 0x13004 bubble_collision_probe    # 8 rim pixel probes; any non-zero pixel pops the bubble
+fn 0x13bea get_pixel                 # (x,y) -> 4-plane colour index, read from screen_back
+fn 0x13a08 draw_room_to_stage        # 5x10 tile map -> screen_back - 0x6400
+fn 0x13b1e room_wipe_in              # slide the staged room down 4 rows x 40 steps
+fn 0x13258 stage_to_work             # the same, instantly (demo / hall of fame)
+fn 0x1376e objects_animate_and_draw  # tick + blit the room's 10 object slots
+fn 0x13ff4 save_world_p1             # live candle/map/object cells -> 0x2321a block (58 words)
+fn 0x14158 save_world_p2             # ...                          -> 0x231a6 block
+fn 0x13d2c restore_world_p1          # 0x2321a block -> live
+fn 0x13e90 restore_world_p2          # 0x231a6 block -> live
 
-# --- OS glue ---------------------------------------------------------------------------------
+# ==== blitters: sprites, tiles, screen presentation ====
+fn 0x1342e save_sprite_backgrounds   # vro_cpyfm the 32x32 under ghost and bubble
+fn 0x134f6 draw_sprites              # vro_cpyfm mode 7 (S_OR_D): ghost + bubble
+fn 0x135d2 restore_sprite_backgrounds
+fn 0x13286 present_room              # screen_back -> screen_phys, 25,600 bytes (rows 0..159)
+fn 0x13224 present_hud_row           # 5,120 bytes at +0x6400 (rows 160..191)
+fn 0x131f0 present_score_strip       # 4,096 bytes at +0x6540
+fn 0x1369a draw_tile_bank_screen     # 10x6 tiles of dat_bank[bank_index] -> screen_back
+fn 0x13712 draw_hud_row_tiles        # GHOST.DAT tiles 350..359 -> screen_back + 0x6400
+fn 0x132ec build_sprite_bank         # draw bank 0, then grab tiles 0..59 into 60 malloc'd 32x32s
+
+# ==== HUD / score ====
+fn 0x113d2 hud_draw_counters         # vst_height(4)/vst_color(5) + 4 v_gtext: score/hi/room/lives
+fn 0x114ee itoa_padded               # (value, buf, width): zero-pad then reverse
+fn 0x112c8 hud_bonus_bar_fill        # vsf_color(11) + vr_recfl per unit, x = 35..bonus, y = 189
+fn 0x11346 hud_bonus_bar_shrink      # vsf_color(0) + one vr_recfl erasing n units off the right
+
+# ==== sound engine ====
+fn 0x14982 sound_start               # Supexec(install_sound_vectors) then sound_stop_all
+fn 0x1499c sound_stop                # sound_stop_all then Supexec(remove_sound_vectors)
+fn 0x148ea install_sound_vectors     # saves $114/$484 + 2 pointers at 0x14932; trap#9 -> $a4, ISR -> $114; VR := $40 = AUTOMATIC EOI
+fn 0x1491c remove_sound_vectors      # restores $114/$484; VR := $48 = back to TOS's software EOI
+fn 0x1459a timer_c_sound_isr         # 200 Hz: drops to IPL 5, clears $484, runs 3 voice records (v=2,1,0), chains to the saved $114
+fn 0x14940 psg_gate                  # psg_gate(reg@4(a7), value@6(a7), mask@8(a7)) -> the register read back; trap #9
+fn 0x14950 trap9_psg_handler         # IPL 7; reg=d1&15; value<0 = read-only; reg 7 does value|=(cur&d2); returns the register; leaves reg $b selected
+fn 0x142bc sound_play                # sound_play(def@8:4, voice@12:2, volume@14:2, note@16:2, priority@18:2) -> voice or -1
+fn 0x144c4 sound_stop_voice          # sound_stop_voice(v): priority=0, duration=0, psg_gate(8+v, 0) — hard silence
+fn 0x14510 sound_release_voice       # sound_release_voice(v): duration=1, gate=-1 -> the ISR keys off on the next tick
+fn 0x1455e sound_voice_priority      # sound_voice_priority(v) -> voice record +0x72; 0 means the voice is free
+fn 0x14576 sound_stop_all            # for (v=0; v<3; v++) sound_stop_voice(v)
+
+# ==== C library (Alcyon/DRI runtime) ====
+# --- OS trap glue ---
 fn 0x15e3c xbios_trap                # saves a1/a2/return in a4-26080.., trap #14, restores — every XBIOS call
 fn 0x15e58 gemdos_trap               # the same for trap #1 — every GEMDOS call
 fn 0x15c82 gemdos_malloc             # GEMDOS Malloc (0x48) wrapper
 fn 0x15c98 gemdos_mfree              # GEMDOS Mfree (0x49) wrapper
+fn 0x167c8 gemdos_malloc_or_fail
 
-# --- C library (Alcyon/DRI runtime) ----------------------------------------------------------
+# --- stdio and low-level I/O ---
 fn 0x156e2 c_fopen                   # parses the mode string ('b','r','w') and calls c_open
 fn 0x15878 c_fread                   # fread(ptr, size, nmemb, FILE*)
 fn 0x14d72 c_fclose                  # flushes then closes the FILE
@@ -49,12 +125,406 @@ fn 0x15d64 c_open                    # open(path, mode) -> GEMDOS Fcreate or Fop
 fn 0x1667c c_read                    # read(fd, buf, len) -> GEMDOS Fread
 fn 0x14c3c c_close                   # close(fd) -> GEMDOS Fclose
 fn 0x14c7a c_creat                   # creat(path, mode) -> GEMDOS Fcreate
+fn 0x14d16 c_exit_pterm
+fn 0x14d2c c_exit
+fn 0x14dc4 c_fflush
+fn 0x14e80 c_filbuf
+fn 0x14fb0 c_flsbuf
+fn 0x150ee c_putc
+fn 0x16518 c_conin
+fn 0x16c04 c_write
+fn 0x16b5e c_conout_write
+fn 0x16ba8 c_auxout_write
+fn 0x16bd6 c_prtout_write
+fn 0x159dc c_lseek
+fn 0x16868 c_unlink
+fn 0x15cae c_setfdmode
+fn 0x15cfa c_clearfdmode
+fn 0x15d36 c_getfdmode
+
+# --- malloc ---
 fn 0x15b54 c_malloc                  # free-list allocator rooted at a4-25770, 6-byte granules
 fn 0x15bfe c_free                    # returns a block to that free list
-fn 0x164c2 c_printf                  # printf(fmt, ...) -> vfprintf(stdout at a4-25598, &args) at 0x16496
-fn 0x16496 c_vfprintf                # ctx  (called only by c_printf here; body not read)
+fn 0x15af2 c_morecore
 
-# --- unread but load-bearing; named ONLY from the call site, verify before committing ---------
-fn 0x10eb8 show_presentation         # ctx  (called between Setscreen and play_voice)
-fn 0x10f20 attract_and_menu          # ctx  (the last call in game_top_loop's prologue)
-fn 0x16a06 set_screen_mode           # ctx  (called with a4-7212, the value Getrez was stored into)
+# --- printf engine ---
+fn 0x164c2 c_printf                  # printf(fmt, ...) -> vfprintf(stdout at a4-25598, &args) at 0x16496
+fn 0x16496 c_vfprintf
+fn 0x1620c c_doprnt
+fn 0x15e74 c_fmt_integer
+fn 0x15fe0 c_fmt_float
+fn 0x15588 c_fcvt
+fn 0x161b8 c_fmt_getnum
+fn 0x164d8 c_sprintf
+fn 0x164ee c_fputs
+
+# --- string and 32-bit arithmetic ---
+fn 0x167fc c_strcmp
+fn 0x1683e c_strlen
+fn 0x158fe c_ldiv
+fn 0x15970 c_lmul
+
+# --- software floating point ---
+fn 0x153fe fp_dispatch
+fn 0x152fa fp_add
+fn 0x152e0 fp_sub
+fn 0x1524e fp_mul
+fn 0x151d0 fp_div
+fn 0x1518c fp_cmp
+fn 0x15394 fp_pack_double
+fn 0x15132 fp_pack_float
+fn 0x154b0 fp_acc_load_long
+fn 0x154c0 fp_acc_to_long
+fn 0x154d0 fp_float_to_double
+fn 0x1550a fp_double_to_long
+fn 0x15552 fp_long_to_double
+
+# ==== globals by subsystem ====
+# --- screens, pictures, palettes ---
+var 0x23146 screen_rez               # Getrez() result
+var 0x23148 screen_phys              # XBIOS Logbase: the visible screen, never changes
+var 0x2314c screen_back              # Logbase - 0x7d00 (32000): the off-screen buffer
+var 0x2312a dat_bank                 # long[7]: 0..5 = the six GHOST.DAT buffers, 6 = GHOST.PRE
+var 0x23142 dat_bank_pre             # = dat_bank[6]: the 30,720-byte GHOST.PRE title picture
+var 0x2311e bank_index               # which dat_bank[] draw_tile_bank_screen paints
+var 0x23122 dat_palette              # 16-word palette read from the tail of GHOST.DAT
+var 0x23126 pre_palette              # 16-word palette read from the tail of GHOST.PRE
+var 0x232ee vdi_handle               # the v_opnvwk workstation handle; first arg of every VDI binding
+var 0x2379c voice_buffer             # GHOST.VOI sample buffer; c_free'd once the speech has played
+
+# --- input ---
+var 0x23114 key_raw                  # last GEMDOS Crawio(0xff) byte: ^P pause, ^S sound, ^R abort
+var 0x23116 key_shift_state          # vq_key_s; blowing while != 0 and != 4
+var 0x23118 mouse_y                  # vq_mouse ptsout[1]
+var 0x2311a mouse_x                  # vq_mouse ptsout[0]
+var 0x2311c mouse_buttons            # vq_mouse intout[0]; == 1 (left button) aborts demo / hall of fame
+
+# --- demo playback ---
+var 0x23160 demo_base                # malloc(0x1770) holding all of A:GHOST.DEM
+var 0x23164 demo_cursor              # byte cursor into it; += 6 per replayed frame
+
+# --- menu / mode selection ---
+var 0x2316c player_count             # 0 until [1]/[2] chosen, then 1 or 2
+var 0x2315c practice_mode            # 1 after a valid [P] level number; forces 1 life and score 0
+var 0x23158 practice_grid_row
+var 0x2315a practice_grid_col
+var 0x2315e sound_enabled            # 0/1, init 1; scales every trigger's volume index. ^S (0x13) toggles it at 0x123ea, inside game_frame_update
+
+# --- room and progress ---
+var 0x23120 room_number              # 0..35, = room_grid[grid_row][grid_col]
+var 0x23154 grid_row                 # current row into room_grid
+var 0x23156 grid_col                 # current column into room_grid
+var 0x23152 entry_dir                # 0 = from left, 1 = from bottom, 2 = from right, 3 = from top
+var 0x23150 in_room                  # room loop runs while != 0
+var 0x22fbe level_complete           # set when room 35 and bubble_x > 195
+var 0x22f74 max_room_reached         # starts at 1; a higher room refills the bonus bar
+var 0x22f62 deaths_in_room           # subtracts 500 each from the 5000 room bonus
+var 0x22fc0 ambient_sfx_countdown    # frames to the next room ambience: Random()*2.977e-6 + 20, truncated = 20..69
+var 0x22fe2 seq_counter              # scratch counter: death anim, ending walk, sfx reload
+
+# --- the ghost ---
+var 0x22ff2 ghost_x                  # pixels, 0..286 = mouse_x / 1.115 (room 35: / 1.684)
+var 0x22ff0 ghost_y                  # pixels, 0..126 = mouse_y / 1.577
+var 0x22fe6 ghost_facing             # 0..7; mouse buttons step it +1 / -1
+var 0x22fe4 ghost_anim               # 0..3 idle cycle; pinned to 4 while blowing
+var 0x22fea ghost_tile               # = ghost_facing*5 + ghost_anim; tiles 40..46 are death/ending
+var 0x22fca breath                   # air gauge 0..35; +3/frame idle, -1/frame blowing
+var 0x22fc8 blow_facing_plus1        # (ghost_tile + 1) / 5 — the facing the blow test switches on
+var 0x22fc2 btn_right_ready          # BYTE: edge latch for mouse button 2
+var 0x22fc4 btn_left_ready           # BYTE: edge latch for mouse button 1
+
+# --- the bubble ---
+var 0x22fee bubble_x                 # pixels; > 288 or < 0 leaves the room
+var 0x22fec bubble_y                 # pixels; > 128 or < 0 leaves the room
+var 0x22fe8 bubble_frame             # 0..12, index into bubble_sprite; 0 = popped
+var 0x22fe0 bubble_alive             # 1 = alive; 0 runs the pop/respawn sequence
+var 0x22fde probe_phase              # 0..5, which row of probe_table this frame uses
+var 0x22fd8 drift_dir_x              # -1 / 0 / +1
+var 0x22fd6 drift_dir_y              # -1 / 0 / +1
+var 0x22fdc drift_vel_x              # applied as /100 pixels, then zeroed each frame
+var 0x22fda drift_vel_y              # ditto
+var 0x22fcc drift_speed              # 300, decaying by 50 per pulse, floored at 100
+var 0x22fce drift_pulse              # frames until the next drift pulse
+var 0x22fd0 drift_interval           # 0..200; drift_pulse reloads from interval/10
+var 0x22fc6 x_impulse                # one-frame additive x push; only the fan writes it (-2)
+var 0x22fd4 delta_x                  # scratch: target_x - reference_x in the blow/fan tests
+var 0x22fd2 delta_y                  # scratch: target_y - reference_y
+
+# --- sprite bank and blit parameters ---
+var 0x23028 ghost_sprite             # long[47]: 32x32 bitmaps for GHOST.DAT tiles 0..46
+var 0x22ff4 bubble_sprite            # long[13]: GHOST.DAT tiles 47..59 (sparkle 0-2, empty 3, bubble 4-12)
+var 0x230e4 bubble_bg                # 32x32 save patch under the bubble
+var 0x230e8 ghost_bg                 # 32x32 save patch under the ghost
+var 0x230ec mfdb_dst                 # VDI MFDB: addr,w=32,h=32,wdwidth=2,stand=0,planes=4
+var 0x23100 mfdb_src                 # VDI MFDB; addr 0 means "the screen" = screen_back
+var 0x232d6 blit_pxy                 # ptsin for vro_cpyfm: src x1,y1,x2,y2 then dst x1,y1,x2,y2
+
+# --- HUD / score ---
+var 0x22fb0 score                    # the live score, 6 digits at (230,173)
+var 0x22fac hi_score                 # LONG
+var 0x22fa8 lives                    # LONG; 5 per turn, the turn ends at -1
+var 0x22fa4 hud_room_number          # LONG; copy of room_number for the HALL: field
+var 0x22fa0 hiscore_candidate        # score handed to hiscore_insert_and_save
+var 0x22fb4 bonus_bar                # bonus bar width in pixels, 0x13e down to 0x23, drawn at y=189
+var 0x22f76 bonus_tick               # 3-frame divider for the bonus bar decay
+var 0x22fbc text_char_w              # ptsout[0]
+var 0x22fba text_char_h              # ptsout[1]
+var 0x22fb8 text_cell_w              # ptsout[2]
+var 0x22fb6 text_cell_h              # ptsout[3]
+
+# --- hall of fame ---
+var 0x22f8c hall_scores              # 5 longs, ASCENDING; [4] (0x22f9c) is the best
+var 0x22f78 hall_rooms               # 5 longs, the room reached, kept in step with hall_scores
+var 0x2317e hiscore_pending_score    # score handed to hiscore_insert_and_save via hiscore_submit_players
+var 0x23192 hiscore_pending_room     # room handed with it
+
+# --- two players (parallel P1/P2 slots) ---
+var 0x2316a p1_turn                  # mutually exclusive with p2_turn; swapped each turn
+var 0x23168 p2_turn
+var 0x2319a p1_playing               # cleared when player 1 is out
+var 0x23198 p2_playing
+var 0x23196 p1_max_room
+var 0x23194 p2_max_room
+var 0x2318e p1_lives                 # LONG
+var 0x2318a p2_lives                 # LONG
+var 0x23186 p1_score                 # LONG
+var 0x23182 p2_score                 # LONG
+var 0x2317c p1_bonus_bar
+var 0x2317a p2_bonus_bar
+var 0x23178 p1_grid_col
+var 0x23176 p2_grid_col
+var 0x23174 p1_grid_row
+var 0x23172 p2_grid_row
+var 0x2319e p1_deaths_in_room
+var 0x2319c p2_deaths_in_room
+var 0x231a4 p1_entry_dir
+var 0x231a2 p2_entry_dir
+var 0x231a0 show_player_change       # 1 = print "PLAYER ONE/TWO" before the next turn
+var 0x2321a p1_world_block           # 58 words of candle/map/object state
+var 0x231a6 p2_world_block           # 58 words
+
+# --- supervisor / conterm ---
+var 0x22f6c super_arg                # the value passed to GEMDOS Super
+var 0x22f70 super_saved_ssp          # what Super returned; passed back to leave supervisor mode
+var 0x22f6a conterm_addr_w           # 0x484 as a word
+var 0x22f66 conterm_addr_l           # 0x484 as a long; *(char*)0x484 = 0 kills key click + bell
+
+# --- sound engine state ---
+var 0x14932 snd_isr_state            # 13 bytes of ISR state written by install_sound_vectors, +1 pad = 14; NOT code (the listing shows 7 nops)
+var 0x22daa snd_voice                # 3 voice records of 0x8c bytes: voice0 0x22daa, voice1 0x22e36, voice2 0x22ec2
+var 0x22e1a snd_voice0_gate          # record 0 +0x70: holds sound_play's `note`; <0 = auto-release, >=0 = sustain
+var 0x22e1c snd_voice0_priority      # record 0 +0x72: 0 = free; a new sound with a lower priority is refused
+
+# --- the VDI parameter block ---
+var 0x1e8ca vdi_pblock               # 5 longs: contrl, intin, ptsin, intout, ptsout
+var 0x236f0 vdi_contrl               # contrl[0]=opcode, [1]=#ptsin, [3]=#intin, [6]=handle, [7..10]=MFDBs
+var 0x235f0 vdi_intin
+var 0x234f0 vdi_ptsin
+var 0x233f0 vdi_intout
+var 0x232f0 vdi_ptsout
+var 0x2377a vdi_work_in              # 11 words handed to v_opnvwk: ten 1s and a 2
+var 0x23708 vdi_work_out             # 57 words v_opnvwk fills in (never read)
+
+# --- the AES parameter block ---
+var 0x149d2 aes_control_table        # 3 bytes per AES opcode from 10 up: n_intin, n_intout, n_addrin
+var 0x1f0bc aes_ap_id                # appl_init's return
+var 0x1f0be aes_pblock               # pointer to the six pointers below
+var 0x1f0c2 aes_p_control
+var 0x1f0c6 aes_p_global
+var 0x1f0ca aes_p_int_in
+var 0x1f0ce aes_p_int_out
+var 0x1f0d2 aes_p_addr_in
+var 0x1f0d6 aes_p_addr_out
+var 0x1f0da aes_addr_out
+var 0x1f0e2 aes_addr_in
+var 0x1f0ee aes_int_out
+var 0x1f0fe aes_int_in
+var 0x1f120 aes_global
+var 0x1f140 aes_control
+
+# --- trap trampoline save slots ---
+var 0x1e932 trap_saved_ret
+var 0x1e936 trap_saved_a2
+var 0x1e93a trap_saved_a1
+
+# --- C library state ---
+var 0x1e93e fd_mode_table            # 76 (fd, mode) word pairs; mode bit 0x2000 = binary
+var 0x1ea6e c_errno                  # the last GEMDOS return code
+var 0x1ea70 c_malloc_freelist        # root of c_malloc's free list
+var 0x1e8de conin_read_idx
+var 0x1e8e0 conin_fill_count
+var 0x1e8e2 conin_buffer             # the cooked CON: line buffer
+var 0x1eb08 c_iob                    # 73 FILE records of 20 bytes, ends at 0x1f0bc
+var 0x1eb1c c_stdout                 # c_printf's FILE
+var 0x1eb30 c_stderr
+var 0x1eb06 c_bufsiz                 # 0x200, the default stdio buffer size
+var 0x1eabc c_unbuf_chars            # one-byte fallback buffer per FILE when Malloc fails
+
+# --- floating-point package state ---
+var 0x1ea7e fp_op_table              # 7 longs -> the 0x10000 jump table: add sub mul div cmp packd packf
+var 0x1ea9a fp_acc                   # the 8-byte double accumulator every fp_* call operates on
+var 0x1eaa2 fp_sub_sign_flag         # 0x8000 when fp_sub entered, 0 when fp_add did
+var 0x1eaa4 fp_ccr                   # fp_cmp's result; fp_dispatch restores it into the real CCR
+var 0x1eaa6 fp_default_precision     # 7
+var 0x1eaa8 fp_const_1em             # printf float constants copied from DATA by init_globals
+var 0x1eab0 fp_const_10f
+var 0x1eab4 fp_const_10d
+
+# --- DATA-segment constants ---
+var 0x24fbc const_random_scale       # double 2.977e-06
+var 0x24fc4 const_20                 # double 20.0
+var 0x250ec const_random_range       # double 16794009.0
+var 0x250f4 const_11                 # double 11.0
+var 0x250fc const_5                  # double 5.0
+var 0x25104 const_random_range2      # double 16794009.0 (a second copy)
+var 0x2510c const_34                 # double 34.0
+var 0x25114 const_1                  # double 1.0
+var 0x2520a const_crlf               # "\r\n" — c_write's text-mode newline expansion
+
+# ==== tables ====
+# --- rooms, objects, candles, collision probes ---
+var 0x2328e room_grid                # 6 x 6 word grid of room numbers, row stride 0xc (init_globals)
+var 0x21a4a room_table               # 36 x 0x78: tile map, entry points, candle sfx id
+var 0x21aae room_entry_points        # room_table + 0x64: 4 x (x,y) words in tile units
+var 0x21abe room_candle_sfx          # room_table + 0x74: sfx index, -1 = none
+var 0x2069a object_table             # 36 x 0x8c = 10 slots x 0xe
+var 0x2069c object_anim_countdown    # object_table + 2
+var 0x2069e object_anim_reload       # object_table + 4
+var 0x206a0 object_x                 # object_table + 6, tile units
+var 0x206a2 object_y                 # object_table + 8, tile units
+var 0x206a4 object_frame             # object_table + 0xa
+var 0x206a6 object_frame_count       # object_table + 0xc
+var 0x22b2a candle_table             # 36 x 0xc = 6 words
+var 0x1f14a probe_table              # 6 phases x 8 (dx,dy) words, stride 0x20
+
+# --- sound tables ---
+var 0x22cd0 snd_note_period          # MIDI note -> PSG tone period. VIRTUAL BASE: sound_play folds the note to [24,108] and indexes note<<1, so the live span is 0x22d00..0x22da9; the bytes below 0x22d00 belong to candle_table / snd_volume_scale
+var 0x22cda snd_volume_scale         # volume index 0..15 -> 0,18,35,...,239,256; the ISR's a2
+var 0x22cfa snd_mixer_and_mask       # per-voice AND mask for PSG reg 7: 0xf6, 0xed, 0xdb
+var 0x1f20a snd_def_level            # 36 definitions of 0x70 bytes, one per level (index = the level word at 0x23120)
+var 0x201ca snd_def_fx               # 11 definitions of 0x70 bytes: fx0..fx10, the fixed effects
+
+# ==== plate comments (ONE per address: ApplyNames SETS the plate, it never appends) ====
+cmt 0x100dc main(void): XBIOS Getrez; non-zero -> c_printf("\n\n Please reboot in LOW REZ... \n") and spin forever; else init_gem_and_screens() then game_top_loop(). Never returns.
+cmt 0x10118 init_gem_and_screens(void): appl_init(); graf_handle(4 scratch outs, discarded); work_in[0..9]=1, work_in[10]=2; v_opnvwk(vdi_work_in, &vdi_handle, vdi_work_out) -- note the handle passed IN is BSS zero, graf_handle's return is dropped; Getrez->screen_rez; Logbase-0x7d00->screen_back; Logbase->screen_phys; Super in, *(char*)0x484=0 (conterm: no key click/bell), Super out.
+cmt 0x101e6 game_top_loop(void): graf_mouse(M_OFF); load GHOST.LOA+GHOST.VOI, GHOST.PRE; v_clrwk; Bconout(dev 4, $12) IKBD mouse off; Setscreen(log=screen_back, phys=screen_phys); show_presentation + play_voice; load GHOST.DAT and GHOST.SCR; Bconout(dev 4, $08); free the voice buffer; sound_start. Then forever: reset_world_state, title_menu_loop, and an inner room loop that runs one room per pass until both players are out; ends each game with the GAME OVER card.
+cmt 0x10dea load_demo(void): retries c_open("A:GHOST.DEM") until it succeeds, c_malloc(0x1770) into demo_base, c_read the whole 6,000 bytes, c_close. demo_cursor is set from demo_base at each replay.
+cmt 0x10eb8 show_presentation(void): bank_index=6; draw the GHOST.PRE tiles into screen_back (0x1369a); clear_physical_screen; XBIOS Setpalette(pre_palette); then copy 30,720 bytes screen_back -> screen_phys.
+cmt 0x10efe clear_physical_screen(void): writes 0x1e00 longs (30,720 bytes) of zero from screen_phys. Only the visible screen -- screen_back is never cleared here. | Clear the displayed screen: 30,720 zero bytes at screen_phys (320x192, the picture area).
+cmt 0x10f20 reset_world_state(void): 174 stores, no control flow. Each triple writes one initial value to a live object field in 0x20876..0x22c56 and to the same slot of two 58-word backup arrays -- 0x231a6..0x23218 and 0x2321a..0x2328c, the per-player snapshots the two-player restore reads back. Called once per new game. | Reset the world: writes the "all candles lit" defaults into the live object/room/candle tables AND into both players' 58-word save blocks, three copies of each value, in one straight-line block. Called once per game from game_top_loop.
+cmt 0x112c8 hud_bonus_bar_fill(void): vsf_color(11); for x = 0x23 up to bonus_bar, vr_recfl a 1-pixel column at (x,189)-(x,189) and copy 160 bytes of that scanline from screen_back to screen_phys. Refills the bar after a room is cleared. | Refill the bonus bar: vsf_color(11) then one vr_recfl per x from 35 to bonus_bar-1 at y = 189, each followed by a 160-byte copy of row 189 (offset 0x7620) from screen_back to screen_phys, so the bar visibly grows.
+cmt 0x11346 hud_bonus_bar_shrink(short n): vsf_color(0); vr_recfl the n columns ending at bonus_bar on row 189, clamped so the bar never shrinks below x=0x23 (it erases 0x23..0x2d in that case); then copy 160 bytes of row 189 from screen_back to screen_phys. | Shrink the bonus bar by n: vsf_color(0) and one vr_recfl erasing x from bonus_bar down to bonus_bar-n+1 at y = 189 (clamped to 35), then copy row 189 to the screen.
+cmt 0x113d2 hud_draw_counters(void): vst_height(4); vst_color(5); hud_room_number=room_number; itoa_padded each of score (6 digits), hi_score (6), hud_room_number (2), lives (1, clamped at 0 for display while keeping the -1 sentinel) and v_gtext them at (230,173), (230,183), (307,173), (313,183). | Draw the four HUD counters. vst_height(4), vst_color(5); itoa_padded score (w 6), hi_score (w 6), hud_room_number (w 2) and lives (w 1, printing 0 when negative); v_gtext at (230,173), (230,183), (307,173), (313,183). | The four labels are NOT drawn here: they are baked into the status-panel tiles 350..359 (SCORE: = score, HI-SCORE: = hi_score, HALL: = hud_room_number, BUBBLE: = lives, and the red BONUS bar = bonus_bar), so this function only paints the digits into those fields.
+cmt 0x114ee itoa_padded(long value, char *buf, short min_digits): emit decimal digits least-significant first with c_ldiv, zero-pad up to min_digits, NUL-terminate, then reverse in place using c_strlen. Used for the HUD, the hall of fame and the GHOST.SCR records. | itoa_padded(value, buf, width): repeated /10 building digits low-first, zero-pad to width, NUL, then reverse in place.
+cmt 0x115d6 title_menu_loop(void): the whole front end. hiscore_submit_players() first, then loop: Setpalette(dat_palette), Setscreen(log=phys=screen_phys), vst_height(6), vst_color(1), draw the four "Press [G]/[P]/[D]/[H]" lines at x=0x18 y=0x48/0x58/0x68/0x78; flush the keyboard with `while (Cconis()) Crawcin()` and read one key with Cnecin; fold lowercase to upper. G -> ask [1]/[2] and set player_count, return. P -> read two digits, 1..35 valid, find that room in room_grid and set grid_row/grid_col, practice_mode=1, return. D -> replay 980 GHOST.DEM records then a random 5..15 room slideshow then the title picture, all abortable with the left mouse button. H -> draw_hall_of_fame() then idle 857 polls. Anything else redraws the menu. | Demo ranges pinned against the FP package: XBIOS Random() is 24-bit (0..0xffffff), 0xffffff/16794009 = 0.9990 is strictly < 1, and fp_acc_to_long TRUNCATES -- so the slideshow length Random()/16794009*11+5 is 5..15 and the room it picks Random()/16794009*34+1 is 1..34. The demo can never show room 35.
+cmt 0x11d6e hiscore_submit_players(void): in two-player mode set (hiscore_candidate, hiscore_pending_score, hiscore_pending_room) from p1 then p2 and call hiscore_insert_and_save each time; in one-player mode the caller has already put the score in hiscore_candidate, so it only fills the pending pair from score/max_room_reached.
+cmt 0x11dbc draw_hall_of_fame(void): vst_height(6), vst_color(13); room_number=0 and draw room 0 as the backdrop; v_gtext "SCORE 1:".."SCORE 5:" at x=0x38, y = 0x72 - {0x3c,0x2d,0x1e,0xf,0}; then for i = 4 down to 0 draw "HALL:" at x=0xc8, the 6-digit hall_scores[i] at x=0x80 in colour 5, and the 2-digit hall_rooms[i] at x=0xf8 -- so the best entry lands on the "SCORE 1:" row.
+cmt 0x11f84 hiscore_insert_and_save(void): if hiscore_candidate beats hall_scores[0] (the LOWEST), overwrite slot 0 with the pending score/room and bubble-sort the five pairs ASCENDING with five passes of four compares, then save_hiscores(). hall_scores[4] is therefore the best, and is what seeds hi_score.
+cmt 0x1207a save_hiscores(void): vst_height(6), vst_color(13), Setscreen(log=phys=screen_phys), graf_mouse(0x101); c_creat("A:GHOST.SCR"); v_gtext(0,6,"Saving  HI-SCORES"); for each of the 5 slots itoa_padded(hall_scores[i],buf,6) + c_write(fd,buf,6) then itoa_padded(hall_rooms[i],buf,2) + c_write(fd,buf,2); c_close; graf_mouse; Setscreen(log=screen_back, phys=screen_phys). File is exactly 40 ASCII bytes.
+cmt 0x121a0 load_hiscores(void): c_open("A:GHOST.SCR"); on failure every hall_scores[i]=0 and hall_rooms[i]=1. On success read 5 x (6 ASCII digits + 2 ASCII digits) and parse each with v = c_lmul(v,10) + digit - '0'.
+cmt 0x12322 One game frame. Bubble frame ++ (4..12); vq_mouse -> mouse_x/y/buttons; vq_key_s -> key_shift_state; Crawio(0xff) for ^P pause / ^S sound / ^R abort; ghost_x = mouse_x/1.115 (room 35: /1.684) and ghost_y = mouse_y/1.577 via the FP package; blowing while key_shift_state not in {0,4} (breath -1, Setcolor(15,0x777), ghost_blow) else idle (breath +3 capped 35, Setcolor(15,0x733) when it runs out); mouse buttons 1/2 step ghost_facing +-1 through edge latches; ghost_tile = facing*5 + anim; fan test on object slots 3 and 4 (tile 220); then bubble_collision_probe + position integrate, or the pop sequence; finally the drift pulse. | The Crawio(0xff) poll at 0x123ea is HERE, in the per-frame update -- it is not a menu handler. ^S (ASCII 0x13) toggles sound_enabled, which scales every sfx volume; ^P (0x10) pauses and ^R (0x12) abandons the turn.
+cmt 0x129b4 Blow, once per blowing frame. dx = bubble_x - ghost_x, dy = bubble_y - ghost_y; requires |dx| < 50 and |dy| < 50, then one of eight direction tests keyed on blow_facing_plus1 = (ghost_tile+1)/5 (the four diagonals add a |a*dy + b*dx| < 40 cone). A hit sets drift_dir_x/y, drift_vel_x/y and drift_speed to +-300 (orthogonal) or +-250 (diagonal) and resets drift_interval/drift_pulse. Second half: if candle_table[room][0] != -1 and facing is 0 (left) and the candle is 12..45 px left and 3..20 px below the ghost, extinguish it — two object tiles to -1, two replacement tiles into the slots the record names, the two room-map cells patched so it survives a re-entry, candle_table[room][0] := -1, score += 5000.
+cmt 0x13004 Bubble hazard test — the whole collision model. probe_phase cycles 0..5; the eight (dx,dy) pairs of probe_table[phase] are added to (bubble_x, bubble_y) and get_pixel()ed off screen_back, which at this point holds the room and its objects but not the two sprites. Any non-zero pixel sets bubble_frame = 0 and bubble_alive = 0. The probes are an octagon of radius ~8.5 about the sprite centre, rotated 7.5 degrees per phase. The ghost is never tested against anything.
+cmt 0x131f0 Present the score strip: 4,096 bytes at +0x6540, screen_back -> screen_phys, after a counter changes.
+cmt 0x13224 Present the HUD row: 5,120 bytes (rows 160..191) at +0x6400, screen_back -> screen_phys.
+cmt 0x13258 Snap the staged room into place: 25,600 bytes from screen_back - 0x6400 to screen_back, no transition. Used by the demo and the hall-of-fame backdrop.
+cmt 0x13286 Present the room: 25,600 bytes (rows 0..159) from screen_back to screen_phys, unrolled 32 longs per iteration x 200.
+cmt 0x132ec Build the sprite bank once at start-up: draw_tile_bank_screen(bank 0) puts GHOST.DAT tiles 0..59 on the work buffer as a 10x6 grid, then 60 vro_cpyfm mode 3 grabs copy each 32x32 cell into its own malloc'd buffer — ghost_sprite[0..46] and bubble_sprite[0..12]. Then two more mallocs for ghost_bg and bubble_bg.
+cmt 0x1342e Save the 32x32 background under the ghost and under the bubble: two vro_cpyfm mode 3 (S_ONLY) from the screen (MFDB addr 0 = screen_back) into ghost_bg and bubble_bg.
+cmt 0x134f6 Draw the two sprites: vro_cpyfm mode 7 (S_OR_D) of ghost_sprite[ghost_tile] at (ghost_x, ghost_y) and bubble_sprite[bubble_frame] at (bubble_x, bubble_y). OR is the transparency: both tile families use only colour 0 and colour 15, so no mask is needed. vro_cpyfm also does the clipping.
+cmt 0x135d2 Undo draw_sprites: vro_cpyfm mode 3 puts ghost_bg and bubble_bg back, leaving screen_back holding room + objects only — which is what bubble_collision_probe reads.
+cmt 0x1369a Paint a whole 320x192 picture from dat_bank[bank_index] as 10 across x 6 down 32x32 tiles into screen_back. Used for the title (bank 6 = GHOST.PRE) and, with bank 0, to stage the sprite grab.
+cmt 0x13712 Paint the HUD row: 10 tiles from dat_bank[5] at +0x6400 (GHOST.DAT tiles 350..359) into screen_back + 0x6400.
+cmt 0x1376e Tick and redraw the 10 object slots of the current room, straight into screen_back. Per slot with tile != -1: countdown-- ; on reaching 0 reload it from +4, advance the frame at +0xa (wrapping when it hits count-1 at +0xc), and blit tile (base + frame) from dat_bank[base/60] to (x*0x10, y*0x1400).
+cmt 0x13a08 Compose the room named by room_number into the staging area at screen_back - 0x6400: 5 rows x 10 columns, tile = room_table[room].map[y][x], source dat_bank[tile/60] + (tile%60)*512, destination + y*0x1400 + x*0x10. Polls vq_mouse once per cell so the pointer keeps tracking while the room paints.
+cmt 0x13b1e Wipe the staged room in from the top. Stops sound channels 0/1/2, starts the transition sfx, then 40 steps: each shifts the staged image DOWN by 640 bytes (4 rows) with a backwards long copy of 25,600 bytes, then copies the top (i+1)*640 bytes of screen_back to screen_phys.
+cmt 0x13bea get_pixel(x, y) over screen_back: reads the four plane words at screen_back + y*160 + (x/16)*8 and assembles the 0..15 colour index, bit (15 - x%16).
+cmt 0x13d2c Restore player 1's world block (0x2321a) into the live tables.
+cmt 0x13e90 Restore player 2's world block (0x231a6) into the live tables.
+cmt 0x13ff4 Save the live world state (58 words: candle sentinels, patched room-map cells, patched object tiles over the ten candle rooms) into player 1's block at 0x2321a.
+cmt 0x14158 Same, into player 2's block at 0x231a6.
+cmt 0x142bc TRIGGER API. sound_play(def, voice, volume, note, priority): (1) with voice outside 0..2, take the first free voice, else the lowest-priority one — DEAD CODE, all 15 shipped call sites pass a literal 0/1/2; (2) refuse with -1 if priority < the voice's own; (3) sound_stop_voice; (4) return early if def[0]==0 (so a zero duration just stops the voice); (5) copy def[1..55] into record+0x02..0x6e; (6) record gate := note, priority := priority, all six accumulators := 0; (7) tone period <0 -> mixer tone bit 1<<v and the pitch machine off, else note>=0 replaces it from snd_note_period and PSG 2v/2v+1 are written; (8) the same for noise on PSG 6 with bit 8<<v; (9) psg_gate(7, bits, snd_mixer_and_mask[v]); (10) volume>=0 overwrites record+0x06; (11) if the volume phase is 0 there is no envelope — accumulator := 0xf0000 and the raw index is written to PSG 8+v; (12) the duration is stored LAST, which is what arms the voice.
+cmt 0x14510 NOTE OFF. Sets the duration counter to 1 and the gate to -1, so the ISR's key-off path (0x14864) fires on the very next tick: it clears the priority and forces every running envelope into its release phase. This is how a sustained sound (one triggered with note >= 0) is ended — the blow at 0x11a7c, the fx2 tone at 0x13bdc.
+cmt 0x1459a TIMER C SOUND ISR, 200 Hz. Saves d0-d3/a0-a2, a1 := $ffff8800, a2 := snd_volume_scale, a0 := snd_voice[2], drops IPL 6 -> 5 (so other MFP channels can nest — the installer put the MFP in automatic-EOI mode for exactly this), clears $484 so TOS's key click cannot poke the PSG. Then for v = 2,1,0: skip if the duration counter is 0; step the volume ADSR and its triangle LFO and write PSG 8+v; step the pitch envelope and its two-rate LFO and write PSG 2v/2v+1 as base*(1+delta/4096) clamped to 0xfff; step the noise envelope and LFO and write PSG 6 as base+delta clamped to 31 (with a byte-wide compare — reproduce the quirk); then, only while the gate 0x70 is negative, count the duration down and key off. Afterwards restore $484 if all three voices are idle, restore sr and the registers, push the saved $114 and rts.
+cmt 0x14932 ISR STATE, written by install_sound_vectors and read by the ISR — DATA, not the seven nops the linear listing shows. 0x14932 l = TOS's own $114 Timer C vector (the ISR pushes it and rts's, chaining); 0x14936 l = &snd_volume_scale, loaded into a2 at 0x1459e; 0x1493a l = &snd_voice[2], loaded into a0 at 0x145a2 (the loop walks DOWN by 0x8c); 0x1493e b = TOS's own $484 conterm, restored at 0x148d8 when all three voices are idle.
+cmt 0x14940 USER-MODE PSG STUB. Three words of arguments on the stack — 4(a7) register, 6(a7) value, 8(a7) mask — loaded into d1/d0/d2 and then trap #9. Returns the register read back in d0. Every PSG access from ordinary code goes through here; the ISR is the only code that writes $ffff8800 directly.
+cmt 0x14b2e aes_crysif(short opcode): control[0]=opcode; copy the (n_intin, n_intout, n_addrin) triple for that opcode out of aes_control_table at 0x149d2 + (opcode-10)*3 into control[1..3]; gem_aes(aes_pblock); return int_out[0].
+cmt 0x14b94 appl_init(void): point aes_p_control..aes_p_addr_out at the six AES arrays, aes_pblock at that pointer block, aes_crysif(10), store int_out[0] in aes_ap_id and return it.
+cmt 0x14be8 graf_handle(short *char_w, short *char_h, short *cell_w, short *cell_h): aes_crysif(77) and copy int_out[1..4] to the four out-parameters. The one caller (init_gem_and_screens) passes the same scratch local for all four and throws the return away.
+cmt 0x14c1e graf_mouse(short mode, void *mform): int_in[0]=mode, addr_in[0]=mform, aes_crysif(78). Called with 0x100 (M_OFF) at start-up and around the hall-of-fame save, 0x101 (M_ON) while saving. Both call sites push only 4 bytes, so the addr_in long is read off the caller's return address -- harmless because the AES ignores it for these modes.
+cmt 0x14d16 c_exit_pterm(short status): GEMDOS Pterm (0x4c). Does not return.
+cmt 0x14d2c c_exit(short status): walk the 73-entry c_iob, c_fclose every FILE whose flags & 3 is set, then c_exit_pterm. crt0 calls it with 0 if main ever returns; c_conin calls it on Ctrl-C.
+cmt 0x14dc4 c_fflush(FILE *f): for a dirty write buffer, c_write it out (after c_lseek if the append bit is set) and adjust the file offset; for a read buffer, just re-seek. Resets ptr to base and cnt to 0.
+cmt 0x14e80 c_filbuf(FILE *f): allocate the buffer if there is none (GEMDOS Malloc, or a 1-byte slot in c_unbuf_chars if that fails), record the offset, c_read a bufferful (or 1 byte if unbuffered), set the EOF or error flag on a short read, and return the first byte.
+cmt 0x14fb0 c_flsbuf(short c, FILE *f): the putc overflow path -- allocate the buffer if needed, c_write what is there, store c, refill cnt.
+cmt 0x150ee c_putc(short c, FILE *f): decrement cnt; if it stays >= 0 store the byte in the buffer and return it, otherwise tail-call c_flsbuf.
+cmt 0x15132 fp_pack_float(void): the same normalise-and-round for SINGLE precision -- 8-bit exponent shifted left 7, one longword stored at (a0). Entry point 0x15136 is what fp_op_table[6] holds; 0x15132 is the link a6 stub in front of it.
+cmt 0x1518c fp_cmp(double *a, double *b): entry point 0x15190 is what fp_op_table[4] holds. Two's-complements negative operands so an integer compare works, and leaves an 8080-style condition byte in fp_ccr for fp_dispatch to load into the CCR.
+cmt 0x151d0 fp_div(double *dst, double *src): 32-step restoring division of the two 56-bit mantissas, sign XOR, then fp_pack_double.
+cmt 0x1524e fp_mul(double *dst, double *src): zero exponent on either side short-circuits to fp_pack_double; otherwise XOR the signs and pack.
+cmt 0x152e0 fp_sub(double *dst, double *src): sets fp_sub_sign_flag to 0x8000, flips the sign word of *src, and falls into fp_add's body.
+cmt 0x152fa fp_add(double *dst, double *src): clears fp_sub_sign_flag and falls into the shared add body at 0x1530a; the result is packed by fp_pack_double.
+cmt 0x15394 fp_pack_double(void): normalise the mantissa in d2:d3 with the exponent in d3, round, and store the 64-bit IEEE double at (a0)+ -- 11-bit exponent, sign taken from the destination's existing high word. The shared rts of add/sub/mul/div and the tail of fp_long_to_double.
+cmt 0x153fe fp_dispatch(short op, double *dst, void *src): the whole floating-point ABI. The high byte of op says what src is -- 0x2000 short, 0x2800 long, 0x1000 float, anything else an in-place double -- and the value is widened into a local double first. The low byte indexes fp_op_table (0 add, 1 sub, 2 mul, 3 div, 4 compare, 5 pack double, 6 pack float), whose seven longs point into the 0x10000 jump table. On the way out it pops its own 10 bytes of arguments and restores fp_ccr into the real CCR, so a float compare can be followed by a Bcc.
+cmt 0x154b0 fp_acc_load_long(void): store d0 into fp_acc and convert it in place from long to double. Every random-number computation in the front end starts here, straight off XBIOS Random.
+cmt 0x154c0 fp_acc_to_long(void): convert fp_acc in place from double to long and return it in d0.
+cmt 0x154d0 fp_float_to_double(void *p): widen the 32-bit float at *p to a 64-bit double in place (3 shifts plus an exponent bias of 0x38000000).
+cmt 0x1550a fp_double_to_long(void *p): truncate the double at *p to a signed long in place; a zero exponent gives 0.
+cmt 0x15552 fp_long_to_double(long *p): sign-magnitude the long at *p, preset the exponent to 0x41d, and tail-jump into fp_pack_double.
+cmt 0x15588 c_fcvt(int *exponent, char *digits, short *precision, double value): double -> decimal digit string plus exponent, the shared core of the e/f/g conversions.
+cmt 0x158fe c_ldiv(long divisor, long dividend): shift-subtract 32-bit divide. Both results are written BACK into the two argument slots on the stack -- the caller pops one for the quotient and one for the remainder, which is how itoa_padded gets a digit and the next value from two consecutive calls.
+cmt 0x15970 c_lmul(long a, long b): signed 32x32 multiply built from three 16x16 mulu partial products; the result is written back into the second argument slot.
+cmt 0x159dc c_lseek(short fd, long offset, short whence): GEMDOS Fseek (0x42); on a negative result it re-probes the file with two more Fseeks to clamp against the real end and retries. Returns the new offset or -1.
+cmt 0x15af2 c_morecore(short want): round want up to a multiple of 0x418, ask gemdos_malloc_or_fail for that many 6-byte granules, and link the block onto c_malloc's free list. The bottom of the c_malloc allocator.
+cmt 0x15cae c_setfdmode(long fd_and_mode): record (fd, mode) in the first free slot of the 76-entry fd_mode_table. Mode 0x2000 is the binary flag c_write later reads back.
+cmt 0x15cfa c_clearfdmode(short fd): zero every fd_mode_table entry whose fd matches. Called by c_close.
+cmt 0x15d36 c_getfdmode(short fd): linear search of fd_mode_table; returns the recorded mode word (0 = text) for the fd.
+cmt 0x15e74 c_fmt_integer(short conv, char **out, long value): radix 10 for 'd'/'u', 8 for 'o', 16 for 'x'; emits the sign for 'd' and the digits into *out, advancing it.
+cmt 0x15fe0 c_fmt_float(long conv_and_flags, char **out, double value, short precision): the e/f/g formatter; calls c_fcvt twice to get the digit string and the decimal exponent.
+cmt 0x161b8 c_fmt_getnum(char **p): read a run of ASCII digits from *p, advancing it, and return the value. Used for printf field width and precision.
+cmt 0x1620c c_doprnt(char *out, void *args): the format engine. Walks the format string, parses flags/width/precision (c_fmt_getnum), and dispatches d/u/o/x to c_fmt_integer, e/f/g to c_fmt_float, plus c and s; writes into the caller's buffer and returns the length.
+cmt 0x16496 c_vfprintf(FILE *f, void *args): c_doprnt into a 256-byte stack buffer, then c_fputs it. Returns c_doprnt's length -- so any single printf longer than 256 bytes smashes this frame.
+cmt 0x164c2 c_printf(char *fmt, ...): c_vfprintf(c_stdout, &args). Exactly one call site in the whole game: main's LOW REZ message.
+cmt 0x164d8 c_sprintf(char *buf, char *fmt, ...): c_doprnt straight into the caller's buffer.
+cmt 0x164ee c_fputs(char *s, FILE *f): c_putc every byte until the NUL.
+cmt 0x16518 c_conin(short fd): the cooked console reader. fd -32000 (CON:) buffers a whole line in conin_buffer with echo -- backspace erases, CR appends LF and echoes CR LF, Ctrl-C calls c_exit, Ctrl-Z appends and marks EOF. fd -0x7d01 (AUX:) reads one raw character. Anything else returns -1.
+cmt 0x167c8 gemdos_malloc_or_fail(short size): GEMDOS Malloc (0x48), returning -1 rather than 0 when it fails. c_morecore's only supplier -- distinct from gemdos_malloc at 0x15c82, which is stdio's.
+cmt 0x167fc c_strcmp(char *a, char *b): byte compare, returns a[i]-b[i] at the first difference or at the NUL. c_open and c_creat use it to spot the "CON:" / "AUX:" / "PRT:" pseudo-files.
+cmt 0x1683e c_strlen(char *s): byte scan to the NUL.
+cmt 0x16868 c_unlink(char *path): GEMDOS Fdelete (0x41); 0 on success, -1 otherwise. Only c_open calls it, for the O_TRUNC-ish path.
+cmt 0x16890 vdi_set_src_mfdb(void *mfdb): splits the pointer into vdi_contrl[7] and [8] -- the SOURCE MFDB slot of vro_cpyfm.
+cmt 0x168b2 vdi_set_dst_mfdb(void *mfdb): splits the pointer into vdi_contrl[9] and [10] -- the DESTINATION MFDB slot of vro_cpyfm.
+cmt 0x168d4 vdi_call(void): the whole VDI binding -- save a1/a2, vdi_pblock[0]=&vdi_contrl, d1=&vdi_pblock, d0=0x73, trap #2, restore a1/a2. Every VDI entry point below fills vdi_contrl and jsr's here.
+cmt 0x168fc vst_height(short handle, short height, short *char_w, short *char_h, short *cell_w, short *cell_h): VDI 12. ptsin[1]=height, ptsin[0]=0, 1 point, 0 intin; returns ptsout[0..3] through the four pointers. The game uses height 6 (menu, hall of fame, save) and 4 (HUD).
+cmt 0x16948 vst_color(short handle, short index): VDI 22, intin[0]=index; returns intout[0]. Text colours seen: 1 (menu / GAME OVER), 5 (HUD and hall-of-fame numbers), 13 (hall-of-fame labels, save banner).
+cmt 0x16974 vsf_color(short handle, short index): VDI 25, intin[0]=index; returns intout[0]. Only the bonus-bar routines call it -- 11 to draw the bar, 0 to erase it.
+cmt 0x169a0 v_opnvwk(short *work_in, short *handle, short *work_out): VDI 100 with 11 intin. Points intin at work_in and intout/ptsout at work_out and work_out+0x5a for the duration of the call, passes *handle in vdi_contrl[6], writes the returned handle back through the pointer, then restores the four array pointers to the library's own buffers.
+cmt 0x16a26 vq_mouse(short handle, short *buttons, short *x, short *y): VDI 124; returns intout[0] and ptsout[0..1]. The attract loops poll this every frame and abort when buttons == 1.
+cmt 0x16a5e vq_key_s(short handle, short *state): VDI 128; returns intout[0], the shift/ctrl/alt bitmap. One call site, inside the gameplay update at 0x1235a.
+cmt 0x16a86 v_gtext(short handle, short x, short y, char *s): VDI 8. ptsin[0..1] = x,y; copies the string byte-by-byte into intin as words until the NUL, sets contrl[3] to the length; 27 call sites -- every piece of text the game draws.
+cmt 0x16ae2 vr_recfl(short handle, short *pxy): VDI 114, 2 points. Points ptsin at the caller's 4-word x1,y1,x2,y2 array for the call and restores it afterwards.
+cmt 0x16b12 vro_cpyfm(short handle, short mode, short *pxy, void *src_mfdb, void *dst_mfdb): VDI 109, 4 points, 1 intin. This is how the game blits its 32x32 tiles -- seven call sites, all in the room/sprite drawing routines at 0x133ce..0x1368e.
+cmt 0x16b5e c_conout_write(char *buf, short n): n bytes to GEMDOS Cconout (2), preceded by a CR for every LF.
+cmt 0x16ba8 c_auxout_write(char *buf, short n): n bytes to GEMDOS Cauxout (4). No call site outside c_write -- the game never opens AUX:.
+cmt 0x16bd6 c_prtout_write(char *buf, short n): n bytes to GEMDOS Cprnout (5). No call site outside c_write.
+cmt 0x16c04 c_write(short fd, char *buf, short len): the pseudo-handles 0x8300 / 0x82ff / 0x82fe route to c_conout_write / c_auxout_write / c_prtout_write. A real handle in text mode (c_getfdmode) splits the buffer at every 0x0a and emits const_crlf through GEMDOS Fwrite; binary mode is one Fwrite. Returns the byte count, or -1 on a short write.
+cmt 0x1f14a probe_table: 6 phases x 8 (dx, dy) word pairs, stride 0x20. Offsets are added to the bubble's top-left; all lie in 7..24, an octagon of radius ~8.5 about the 32x32 sprite's centre, rotated 7.5 degrees per phase (48 rim positions sampled 8 at a time, a full sweep every 6 frames).
+cmt 0x1f20a PER-LEVEL SOUND DEFINITIONS, 36 entries of 0x70 bytes indexed by room_number (0x23120) -- the sound slice's "level word" IS the room number, 0..35; the table ends exactly where snd_def_fx begins (0x1f20a + 36*0x70 = 0x201ca). Same layout as snd_def_fx. Played on voice 0 at level start (0x108b6) and from the attract loop (0x11978, 0x11bb4, 0x11c66, 0x11d12). All 36 have a pitch LFO; slots 0 and 3 are byte-identical and are the only two with no volume envelope; only slots 10 and 11 use noise.
+cmt 0x201ca SFX DEFINITION TABLE, 11 entries of 0x70 bytes (fx0..fx10), bounded above by object_table at 0x2069a. A definition IS the first 0x70 bytes of a voice record: word k lands at record offset 2k, word 0 being the duration. All 11 are reachable: fx0 0x10910, fx1 0x10b40, fx2 0x13b5a, fx3 0x11a6e+0x129e2 (the blow), fx4 0x11aa4+0x1270e, fx8 0x10a68+0x10ca2 (the bonus tally), and fx5..fx10 through room_candle_sfx (0x21abe) at 0x12e1e.
+cmt 0x2069a object_table: 36 rooms x 0x8c (140) = 10 slots x 0xe (14). Slot fields: +0 base tile (-1 = empty), +2 animation countdown, +4 countdown reload (0 = every frame), +6 x in tile units 0..9, +8 y in tile units 0..4, +0xa current frame (drawn tile = base + frame), +0xc frame count (frame wraps at count-1). Tile 220 is the fan and is the only type the code special-cases — and only in slots 3 and 4.
+cmt 0x21a4a room_table: 36 records of 0x78 (120) bytes. +0x00..0x63 = the tile map, 5 rows x 10 words, map[y][x] at +y*20+x*2, each a GHOST.DAT tile index (50 = the empty tile). +0x64..0x73 = four (x,y) word pairs in TILE units, indexed by entry_dir 0..3; the bubble spawns at x*32, y*32. +0x74 = the candle sfx index (-1 = none), selecting sfx record 41+n. +0x76 = zero in all 36 records, no reader found.
+cmt 0x21abe room_candle_sfx = room_table[room] + 0x74, one word per room, -1 = no candle in this room. The gameplay and sound slices framed the same slot two ways and both are right: gameplay reads it as 'sfx record 41+n' of the flat 47-record definition space that starts at 0x1f20a; the sound engine reads it as 'snd_def_fx[5+n]', because that flat space is snd_def_level[36] at 0x1f20a (0x1f20a + 36*0x70 = 0x201ca) followed by snd_def_fx[11] at 0x201ca. Both name the same 0x70-byte definition at 0x203fa + n*0x70. Read at 0x12e1e.
+cmt 0x22b2a candle_table: 36 rooms x 0xc (12) = 6 words. [0] object slot of lit-flame part A, -1 = no candle in this room; [1] slot of part B; [2] tile to place in slot [3]; [3] destination slot; [4] tile to place in slot [5]; [5] destination slot. Ten rooms have one: 3, 4, 5, 8, 9, 13, 14, 16, 19, 25. Extinguishing also patches room_table[room].map at the cells the two flame objects occupied and sets [0] to -1.
+cmt 0x22cd0 NOTE PERIOD TABLE, word per MIDI note, read ONLY by sound_play (0x143f4) which folds the note into [24,108] by +/-12 first, so slots 0..23 are unreachable AS NOTES and hold two other tables: 0x22cda = snd_volume_scale[0..15], 0x22cfa = snd_mixer_and_mask[0..2]. Slot 24 = 0xeee -> 2MHz/16/3822 = 32.70 Hz = C1; slot 60 = 0x1de = middle C; the period halves exactly every 12 slots up to slot 108.
+cmt 0x22cda VOLUME SCALE, 16 words, index 0..15 -> 0,18,35,52,...,239,256. The ISR computes level = (snd_volume_scale[rec+0x06] * ((vol_env + vol_lfo) >> 8)) >> 16, clamped to 15 (0x1465e..0x1467c), so 256 is unity against the envelope's 0xf0000 peak. Handed to the ISR as a2 by install_sound_vectors (0x148f2). Overlaps the unreachable head of snd_note_period.
+cmt 0x22cfa PSG REGISTER 7 AND-MASKS, one word per voice: 0xf6, 0xed, 0xdb. Each clears that channel's tone bit (1<<v) and noise bit (8<<v) and preserves the other channels plus the port-direction bits 6/7 that TOS owns. sound_play passes it as psg_gate's third argument (0x14472) and the trap #9 handler does value |= (current & mask) for register 7 only (0x14966).
+cmt 0x22daa VOICE RECORD, stride 0x8c, 3 of them (voice v = 0x22daa + 0x8c*v; v is also the PSG channel). Fields: 0x00 w duration counter in 200Hz ticks (0=idle); 0x02 w base tone period (<0 = tone off); 0x04 w base noise period (<0 = noise off); 0x06 w volume index into snd_volume_scale. VOLUME: 0x08 w phase (0 idle/1 atk/2 dec/3 hold/4 rel), 0x0a l attack step (target 0xf0000), 0x0e l decay step, 0x12 l sustain level, 0x16 l release step, 0x1a l LFO limit (0=off), 0x1e l LFO step, 0x22 w LFO onset delay, acc 0x74 l env + 0x78 l LFO. PITCH: 0x24 w phase, 0x26 l step1, 0x2a l target1, 0x2e l step2, 0x32 l target2, 0x36 l release step, 0x3a l LFO +limit (0=off), 0x3e l LFO step, 0x42 l step reload on carry up, 0x46 l LFO -limit, 0x4a l step reload on carry down, 0x4e w LFO delay, acc 0x7c l env + 0x80 l LFO. NOISE: 0x50 w phase, 0x52 l step1, 0x56 l target1, 0x5a l step2, 0x5e l target2, 0x62 l release step, 0x66 l LFO limit (0=off), 0x6a l LFO step, 0x6e w LFO delay, acc 0x84 l env + 0x88 l LFO. TAIL: 0x70 w gate (=the note argument; <0 arms the duration countdown, >=0 sustains), 0x72 w priority (0 = free). Pinned by the ISR at 0x145be..0x148c0 and by sound_play at 0x14392..0x144b6.
+cmt 0x22fa8 lives: the bubbles left this turn, LONG, 5 at the start, the turn ends when it reaches -1. The HUD calls them BUBBLEs: the status-panel tiles 350..359 of GHOST.DAT carry the fixed labels SCORE:, HI-SCORE:, HALL: and BUBBLE: (notes/assets_survey.md), so this global is the BUBBLE: field. Drawn as 1 digit at (313,183), clamped to 0 for display while the -1 sentinel is kept in the global.
+cmt 0x22fb4 bonus_bar: the bar's right end in pixels, 318 on entering a new room down to a floor of 35, decremented by 1 every 3 frames (bonus_tick). Drawn as a one-pixel-high vr_recfl line at y = 189 in colour 11, erased in colour 0. Cashed at +50 per 5 units on a forward room exit, +100 per 5 units at the ending. | bonus_tick is a 3-frame divider, not 2: it is reloaded with 2 and the bar steps on the frame the pre-decrement value is already 0, so the sequence is 2, 1, 0 -> step.
+cmt 0x22fca breath: the air gauge, 0..35. +3 per idle frame, -1 per blowing frame; the frame it goes negative the ghost is recoloured Setcolor(15, 0x733) and the blow stops. ~35 frames of continuous blow, ~12 frames to refill.
+cmt 0x22fcc drift_speed: 300 at a fresh blow, minus 50 per drift pulse, floored at 100. Combined with drift_interval (0..200, drift_pulse = interval/10) the bubble steps 3, 2.5, 2, 1.5, 1 pixels with a growing gap of up to 20 frames between steps. There is no gravity term and no wall bounce anywhere in the image.
+cmt 0x22ff4 bubble_sprite[13]: long pointers to the 32x32 bitmaps for GHOST.DAT tiles 47..59. Index 0..2 = the sparkle burst, 3 = the empty tile, 4..12 = the nine bubble frames. This index IS field 5 of a GHOST.DEM record.
+cmt 0x23028 ghost_sprite[47]: long pointers to the 32x32 bitmaps grabbed from GHOST.DAT tiles 0..46 by build_sprite_bank. Indexed by ghost_tile = ghost_facing*5 + ghost_anim (0..39); 40..43 are the death frames, 45/46 the ending frames.
+cmt 0x2312a dat_bank[7]: long pointers to the picture buffers. 0..5 are the six 30,720-byte GHOST.DAT buffers (60 tiles of 512 bytes each), so tile n is at dat_bank[n/60] + (n%60)*512. Index 6 is the GHOST.PRE title picture, painted by draw_tile_bank_screen with bank_index = 6.
+cmt 0x2314c screen_back = Logbase() - 32000. The VDI LOGICAL screen (Setscreen(log = screen_back, phys = screen_phys)), so MFDB address 0 means this buffer. The room is composed here, the sprites are punched in and out here, and screen_back - 0x6400 stages the next room.
+cmt 0x2328e room_grid: 6 x 6 words, row stride 0xc, holding 0..35 each exactly once in a serpentine walk (row 5 is 5 4 3 2 1 0, row 4 is 6 7 8 9 10 11, ... row 0 is 30..35). A new game starts at grid_row=5 grid_col=4 = room 1; room 0 sits behind it at (5,5) and is the hall-of-fame backdrop. The room loop bumps grid_col/grid_row on the four exits, so the numbering IS the walk. | room_grid: 6 rows x 6 words, stride 0xc; grid[row][col] at +row*0xc+col*2. Boustrophedon: row0 = 30..35, row1 = 29..24, row2 = 18..23, row3 = 17..12, row4 = 6..11, row5 = 5..0. Start at row 5 col 4 = room 1. Exit right -> col+1 entry_dir 0; exit left -> col-1 dir 2; exit bottom -> row+1 dir 3; exit top -> row-1 dir 1.
