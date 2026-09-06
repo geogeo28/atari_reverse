@@ -138,6 +138,7 @@ Build variants (`smoke`, `legdump`), the headless proofs and the hardware-bounda
 
 ```bash
 make test           # build oracle + candidate, run the full differential suite
+make audit          # GRAPHICS.GRA read-coverage audit (see below); AUDIT_ARGS passes flags through
 make oracle         # (re)build just the shared Musashi oracle (tools/recreate_kit/oracle/build/)
 make clean          # this project's build/ only; `make -C ../../../tools/recreate_kit clean`
                     # removes the shared oracle, which every project links against
@@ -177,6 +178,23 @@ Finding (stable across legs/frames): the reconstruction is **~2.1× slower** tha
 `draw_game_objects` and `render_road` dominate the absolute cost, while `blit_road_scroll` has the
 worst efficiency gap (~2.8×, a tight `move.l (a1)+,(a0)+` copy GCC doesn't match). That ~2.1× is why
 it runs slower on a stock ST; `hatari --cpuclock 16` covers it (see `render/atari/README.md`).
+
+### Auditing GRAPHICS.GRA for artwork the game never draws
+
+`make audit` (`../tools/sprite_audit.py`) answers "what does the game ship and never put on screen?".
+It builds a **second copy of this reconstruction** with a generated `build/audit/machine.h` shadowing
+the kit's on the include path, so every `be16`/`be32`/`wr16`/`wr32`/`memcpy`/`memset` inside
+`[buf_b, buf_c + 240000)` records a read or a write — the kit's `EXTRA_CFLAGS` / `EXTRA_SRC` hooks
+mean that variant is built by *these* rules with *these* flags, not by a copy of them, and it passes
+the differential suite unchanged. It then drives every scene the game has (races, screens, HUD
+variants, buggy poses, the road-band sweep, an exhaustive roadside-object sweep), cross-checks the
+coverage against every source pointer the object records and fixed tables name, and finally
+**poison-proves** the verdict: every never-read byte is overwritten and every scene re-driven, with
+the two drives required to agree byte for byte. `make audit AUDIT_ARGS='--quick --no-poison'` shakes
+the tooling out; `AUDIT_ARGS='--out ../out/sprite_audit'` writes per-page PNGs with the never-read
+cells tinted. The findings live in [`../docs/sprite_audit.md`](../docs/sprite_audit.md), and
+`test/test_sprite_audit_constants.py` pins the addresses the script mirrors out of `include/addrs.h`
+and the cores.
 
 ### Writing a fuzz test so it parallelizes
 

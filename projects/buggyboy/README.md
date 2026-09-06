@@ -45,10 +45,13 @@ names.txt   the full name map (fn/var/cmt) — source of truth
 decomp.c    decompiled C for all 91 functions (regenerate: reapply.sh)
 ghidra_proj Ghidra DB (open: ghidraRun → open this dir)
 out/        gfx/ (colour sprite screens) · courses_bitmap.png · dis.txt (first-pass 68k)
+            sprite_audit/ — per-page PNGs + coverage.bin (sprite_audit.py --out; not committed)
 run.sh      bootstrap (re-import — wipes names) ; reapply.sh  apply names.txt + re-export
 recreate/   the proven C reconstruction + its differential harness (STATUS.md, per function)
 remaster/   the free re-implementation and the playable PRG (STATUS.md, per subsystem)
+tools/      sprite_audit.py — GRAPHICS.GRA read-coverage audit (run it with `make audit` in recreate/)
 docs/       function_graph.html — interactive d3 call-graph explorer (regenerate: gen_graph.py)
+            sprite_audit.md — what the game ships and never draws (regenerate: tools/sprite_audit.py)
             docs/assets/ — the media set gen_assets.py produces, manifest.json links each to its functions
 ```
 
@@ -232,6 +235,36 @@ aborts a leg and **Q** quits to the desktop. A joystick in port 1 has priority o
 **The full key table** — every key across the race, leg-select and name-entry screens, with the
 joystick rule and the two fidelity notes — is in
 [`remaster/README.md`](remaster/README.md#controls), next to the game it describes.
+
+### Hidden features, text and cheats — audited
+
+There are none to find: **no cheat codes and no debug mode**. Every scancode compare in the binary was
+mapped to its function, every string in the data segment was decoded with the game's own glyph font and
+cross-referenced, and every byte of the text segment between named functions was accounted for (data
+tables, blit tails, a two-entry `Setscreen` helper). The complete key surface of the original is the
+table above plus the `remaster/README.md` one — arrows, Space, F1–F5, F6, F10 + Return, G, Help, Esc —
+and no other key is ever compared. `START.PRG` reads no key at all. The only unreachable code is
+`evt_collision` @ `0x11c2c`, a dead event handler that would have cut the revs on a collision.
+
+Two things the audit did turn up:
+
+- **F10 is a disk-swap prompt, not a "reload".** `draw_panel3` prints
+  `INSERT 'TRAK-PAK' OR 'BUGGY BOY' DISK THEN PRESS RETURN`, then `load_graphics` re-reads
+  `COURSES.DAT` (a fixed 63,072 bytes) and `GRAPHICS.GRA` and the score table is rebuilt — so this
+  build was prepared for Elite's **Trak Pak** compilation release (the publisher's box-set line), whose
+  disk carries the same two files. It is not the Super Off Road "Track-Pak" expansion, and it cannot
+  add courses to this game: the leg index is clamped to 0–4 everywhere (F1–F5, the joystick nav, the
+  attract cycle) and every per-leg table has five entries.
+- **The author signed the HUD buffers.** The score string at `0x18230` ships as `/1//MARTIN` and the
+  speed-text field at `0x1823c` as `WARD`. `init_leg` copies the `/1///////0` template over the score
+  string before the first frame, and `draw_hud` rewrites `0x1823c` with the speed digits every frame
+  into a string nothing ever blits (that write is the binary's only reference to it), so neither is shown.
+  The visible credits (`PROGRAM AND GRAPHICS BY MARTIN W.WARD`, `SONICS BY JAS.C.BROOKE`,
+  `© ELITE SYSTEMS INTERNATIONAL 1988`) are drawn by `draw_intermission` and `fade_step` in the attract
+  cycle. The `=` glyph seen in `TIM=` / `NAM=` / `W=ST` is a narrow alternate `E`, not a typo.
+
+Unused artwork in `GRAPHICS.GRA`: see [`docs/sprite_audit.md`](docs/sprite_audit.md)
+(`tools/sprite_audit.py` regenerates it).
 
 ## Regenerate
 

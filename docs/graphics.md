@@ -78,8 +78,15 @@ code (it reads a stream, writes runs) and mirror its rules. BuggyBoy's `GRAPHICS
 
 That decompressed 182 KB → **8× 320×200 screens** (logo, sprites, scenery, HUD, font).
 The file opens with a **0xd00-byte (3328) raw sprite table** before the RLE stream — the
-unpacker (`unpack_graphics` @ `0x10620`) pre-copies it (416 records × 8 B) into a work
-buffer, then decompresses the stream that follows. Pass `--skip 0xd00` to line up on it.
+unpacker (`unpack_graphics` @ `0x10620`) pre-copies it into a work buffer, then decompresses
+the stream that follows. Pass `--skip 0xd00` to line up on it. The table is **208 records ×
+16 B** (four plane accumulators, stored as four high words then four low words), not 416 × 8:
+`build_sprite_shifts` consumes 16 B per record and emits 16 pre-shifted copies of 16 B, so
+record *i* owns exactly `buf_b + i*0x100` and 208 × 0x100 = 0xd000 = `buf_c − buf_b`. A read
+in that shift buffer therefore names its header record without ambiguity — the property the
+usage audit (`projects/buggyboy/tools/sprite_audit.py`) rests on. In the same file, page 1's
+planes 2 and 3 are `0xff` throughout and the unpacker's compaction drops them: 2-plane data in
+a 4-plane container, nothing lost.
 These 8 screens are **sprite/tile atlases** (dense source art the game composites and
 scales at runtime), not finished framebuffers — expect e.g. the intro "LEG"/digit text at
 several zoom sizes packed into one atlas. Tables of small `0x1234`-delimited records =

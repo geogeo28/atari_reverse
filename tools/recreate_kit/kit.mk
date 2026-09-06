@@ -21,6 +21,20 @@ CAND    := build/lib$(GAME).so
 # harness diffs off-image sound against — see "What the candidate .so must export" in README.md).
 SRC     := $(wildcard src/*.c) $(wildcard src/machine/*.c) $(wildcard $(KIT)/src/*.c)
 
+# A VARIANT build of the same candidate — a tool that compiles the cores with an extra header or an
+# extra translation unit and wants ONE set of build rules, not a copy of them. It overrides CAND on
+# the command line and adds its flags/sources here, e.g. BuggyBoy's
+# `projects/buggyboy/tools/sprite_audit.py`:
+#
+#   make CAND=build/libbuggyboy_audit.so EXTRA_CFLAGS=-Ibuild/audit EXTRA_SRC=build/audit/audit.c
+#
+# EXTRA_CFLAGS goes FIRST so a shadowing -I wins over the project's and the kit's. Both are empty for
+# a normal build, which is therefore byte-for-byte the build it was before. A variant's generated
+# headers are not prerequisites of the rule below, so the variant's own tooling must delete its .so
+# before invoking make rather than trusting a timestamp.
+CFLAGS  := $(EXTRA_CFLAGS) $(CFLAGS)
+SRC     += $(EXTRA_SRC)
+
 # Musashi + the oracle .so are shared by every project, so they live (and build) in the kit.
 MUSASHI := $(KIT)/oracle/musashi
 GENDIR  := $(KIT)/oracle/build

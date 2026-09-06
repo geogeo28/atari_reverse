@@ -197,7 +197,7 @@
 
 /* ---- font / text (draw_text @ 0x159fa) ---- */
 #define A_font_glyphs     0x176a8   /* 16-byte 1bpp glyphs, indexed char << 4 */
-#define A_num_glyph_tbl   0x17c5e   /* per-digit word byte-offset into the pre-rendered num sprites */
+#define A_num_glyph_tbl   0x17c5e   /* draw_num table base, indexed ASCII*2; real entries '/','0'-'9','A'-'Z' at +0x5e..+0xb5 -> sprite font */
 #define A_probe_deltas    0x17e7a   /* 8 neighbor probes {delta_bit, delta_x} words; drives probe_collision */
 
 /* ---- foreground / buggy sprites (draw_fg_sprite @ 0x1518a) ---- */
