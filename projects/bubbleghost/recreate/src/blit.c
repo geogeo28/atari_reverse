@@ -20,28 +20,8 @@
 #include "machine.h"
 
 #include "blit.h"
-
-#define LONG_BYTES 4u   /* one `move.l`, which is the unit every copy loop below counts in */
-
-/* `muls.w #k,Dn` FOLLOWED BY `ext.l Dn`, which is how the compiler built every screen offset here:
- * the 32-bit product is thrown away and replaced by its own low word, sign-extended. So a tile
- * column or row big enough to overflow a signed word wraps the offset rather than growing it, and
- * a reconstruction that multiplied in 32 bits would diverge exactly there. The products that are
- * NOT truncated (a room's stride, a map row's) are spelt in 32 bits at their call sites. */
-static uint32_t muls_ext_w(int32_t multiplicand, int32_t multiplier) {
-    return sign_ext16((uint32_t)(multiplicand * multiplier));
-}
-
-/* One `move.l (a3)+,(a2)+` run: `longs` longwords, ascending, reading and storing one longword at
- * a time. The order is observable whenever the two spans overlap, which is why it is transcribed
- * rather than replaced by a block move. */
-static void copy_longs_ascending(uint8_t *image, uint32_t src, uint32_t dst, uint32_t longs) {
-    for (uint32_t i = 0; i < longs; i++) {
-        wr32(image + dst, be32(image + src));
-        src = addr_add(src, LONG_BYTES);
-        dst = addr_add(dst, LONG_BYTES);
-    }
-}
+#include "common.h"     /* LONG_BYTES, muls_ext_w and the ascending copy every loop here is */
+#include "gameplay.h"   /* the object and room records these routines draw FROM */
 
 /* ...and the `move.l (a3),(a2) / subq.w #4,a3 / subq.w #4,a2` run `room_wipe_in` uses instead:
  * both cursors start at the LAST longword and walk down, which is what makes a move onto a span
@@ -68,10 +48,9 @@ static void blit_tile_32x32(uint8_t *image, uint32_t src, uint32_t dst) {
 static uint32_t screen_back(const uint8_t *image) { return be32(image + A_screen_back); }
 static uint32_t screen_phys(const uint8_t *image) { return be32(image + A_screen_phys); }
 
-/* dat_bank[index]. The index is scaled with `asl.l #2` and added with `adda.w`, so only the low
- * word of index*4 reaches the address — a bank number out of range wraps rather than reaching. */
+/* dat_bank[index] — an ordinary `longword_slot`, so a bank number out of range wraps. */
 static uint32_t dat_bank(const uint8_t *image, int16_t index) {
-    return be32(image + addr_add(A_dat_bank, sign_ext16((uint32_t)(index * (int32_t)LONG_BYTES))));
+    return be32(image + longword_slot(A_dat_bank, index));
 }
 
 /* The GHOST.DAT tile `tile` lives at bank `tile / 60`, entry `tile % 60`. Both routines that draw a
@@ -225,9 +204,12 @@ void build_sprite_bank_prepare(uint8_t *image) {
 
 /* draw_room_to_stage @ 0x13a08, one iteration of its 5 x 10 loop, [0x13a38, 0x13afa): compose one
  * tile of the current room's map into the staging area a room's worth below the work buffer. The
- * loop's other statement is a `vq_mouse` per tile — the VDI residual (STATUS.md) — which is why
- * this is a slice and not the whole routine. */
-void draw_room_tile_to_stage(uint8_t *image, int16_t tile_row, int16_t tile_col) {
+ * loop's other statement is a `vq_mouse` per tile — this file's slice stops short of it, and
+ * `src/frontend.c` composes the two into the whole routine.
+ *
+ * ANSWERS THE A2 IT LEAVES: the 32-row `move.l (a3)+,(a2)+` run ends exactly one tile band past the
+ * destination, and the next cell's `vq_mouse` parks that in the trampoline's save slot. */
+uint32_t draw_room_tile_to_stage(uint8_t *image, int16_t tile_row, int16_t tile_col) {
     int16_t room = (int16_t)be16(image + A_room_number);
     uint32_t map_row = addr_add(A_room_table,
                                 (uint32_t)((int32_t)room * (int32_t)ROOM_STRIDE));
@@ -238,7 +220,9 @@ void draw_room_tile_to_stage(uint8_t *image, int16_t tile_row, int16_t tile_col)
     uint32_t src = tile_source(image, (int16_t)be16(image + cell));
     uint32_t dst = addr_add(screen_back(image), muls_ext_w(tile_col, (int32_t)TILE_ROW_BYTES));
     dst = addr_add(dst, muls_ext_w(tile_row, (int32_t)TILE_ROW_SCREEN_BYTES));
-    blit_tile_32x32(image, src, addr_add(dst, -ROOM_BYTES));
+    dst = addr_add(dst, -(uint32_t)ROOM_BYTES);
+    blit_tile_32x32(image, src, dst);
+    return addr_add(dst, TILE_ROW_SCREEN_BYTES);
 }
 
 /* One step of room_wipe_in's slide: move the staged room down four scanlines, then present the
@@ -295,8 +279,8 @@ void g_room_wipe_in_slide(uint8_t *image) { room_wipe_in_slide(image); }
 
 /* The two slices whose entry PC is inside a loop: the loop variables the oracle is entered with are
  * the arguments here. `tile_row`/`tile_col` are the routine's -4(a6)/-2(a6); `step` is its D7. */
-void g_draw_room_tile_to_stage(uint8_t *image, uint32_t tile_row, uint32_t tile_col) {
-    draw_room_tile_to_stage(image, (int16_t)tile_row, (int16_t)tile_col);
+uint32_t g_draw_room_tile_to_stage(uint8_t *image, uint32_t tile_row, uint32_t tile_col) {
+    return draw_room_tile_to_stage(image, (int16_t)tile_row, (int16_t)tile_col);
 }
 
 void g_room_wipe_in_step(uint8_t *image, uint32_t step) {

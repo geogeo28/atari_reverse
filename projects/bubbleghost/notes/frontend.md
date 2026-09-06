@@ -437,3 +437,66 @@ The constants are DATA-segment doubles at `0x24fbc`, `0x24fc4`, `0x250ec`, `0x25
    **the blow**: the ghost blows while `key_shift_state` (`0x23116`) is neither `0` nor `4`, i.e.
    while either Shift key is held. It is the one input in the program that is neither the mouse
    nor the GEMDOS raw console.
+
+---
+
+## 9. What the PORT established that the reading pass could not
+
+This section is written after 32 of this slice's routines were reconstructed and verified
+byte-for-byte against the original (`recreate/STATUS.md`, "Verified — frontend"). Everything above
+was read; everything below was **run**, and each item is something a reading had no way to settle.
+
+### 9.1 A C-library routine's leftover A1 is filed by its caller's NEXT trap
+
+The four file loaders each `c_open`, allocate, `c_read` and `c_close`. **After a `c_read` of a real
+file handle, A1 holds `0x1ea6e` — `c_errno`'s address — and the `c_close` that follows parks THAT
+in `trap_saved_a1` rather than the loader's own A1.** It comes from `c_getfdmode` (`0x15d36`),
+whose scan loop builds its end sentinel as `lea fd_mode_table,a0 / movea.l a0,a1 /
+adda.w #$130,a1` and never writes A1 again: `fd_mode_table + 0x130` is exactly `c_errno`.
+
+It is unconditional for a real handle — the console arm of `c_read` returns before it reaches
+`c_getfdmode`, and no loader opens a console handle. This is
+[`../../../docs/agent-playbook.md`](../../../docs/agent-playbook.md) §5's "derivable" case with a
+second worked instance: the value comes from a callee's own instructions and is a constant, so a
+reconstruction transcribes it rather than taking it as an input.
+
+### 9.2 A tile draw's leftover A2 is filed by the NEXT cell's `vq_mouse`
+
+`draw_room_to_stage` (`0x13a08`) polls `vq_mouse` once per cell and then blits one 32x32 tile. The
+blit is `move.l (a3)+,(a2)+` over 32 rows and leaves A2 exactly one tile band (`0x1400`) past the
+destination it started from, so the next cell's poll files that. The routine's own
+`movem.l #$0030,-(a7)` saves A2/A3, so a **caller** sees A2 unchanged: the dirt is visible only
+inside the loop, which is why `draw_hall_of_fame` composes cleanly over it.
+
+### 9.3 The AES control table's counts are SIGNED, and the game cannot show it
+
+`aes_crysif` (`0x14b2e`) widens each of the three bytes it copies out of `aes_control_table`
+(`0x149d2`) with `ext.w`. Every row the program asks for holds 0, 1 or 5 — opcode 10 is `0,1,0`,
+19 is `0,1,0`, 77 is `0,5,0`, 78 is `1,1,1` — and the first byte at or above `0x80` in the whole
+table belongs to **opcode 126**, which no model here serves. So the sign extension is unreachable
+through the game's own data; the differential pins it by staging a row instead.
+
+### 9.4 `init_gem_and_screens` never writes `super_arg`
+
+`0x101ac` pushes the longword at `0x22f6c` and traps GEMDOS `Super` with it — but nothing in the
+routine (or anywhere before it) ever stores there. On a cold boot it is the bss zero, i.e.
+`Super(0)`, and the result is filed in `super_saved_ssp` (`0x22f70`) purely to be handed back.
+The `0x484` pointer beside it is built as a **word** (`conterm_addr_w`, `0x22f6a`) and then
+sign-extended into a **long** (`conterm_addr_l`, `0x22f66`) before it is dereferenced.
+
+### 9.5 The hall of fame's writer, and three facts about it
+
+`save_hiscores` (`0x1207a`) writes GHOST.SCR through `c_write` (`0x16c04`) and is reconstructed with
+the rest of the chain, so `hiscore_insert_and_save` (`0x11f84`) and `hiscore_submit_players`
+(`0x11d6e`) run to `rts` on both arms. Three facts the port settled:
+
+* **The candidate compare is a strict `>`.** A score EQUAL to the worst entry does not insert.
+* **The five sort passes are unconditional** — the routine counts its swaps in a stack local and
+  never reads the count, so there is no early exit — and the fifth can never swap: five entries and
+  four adjacent compares per pass means four passes always suffice. It is the original's own dead
+  pass, transcribed.
+* **`graf_mouse`'s mouse form is the routine's own loop counter.** Both call sites push only the
+  mode word and a zero word, so the `addr_in` LONG the AES reads spans that zero and the `slot`
+  local above it: `0 << 16 | slot`. The opening call therefore shows the mouse with whatever the
+  frame held on entry and the closing one with 5, and a reconstruction that kept the counter in a C
+  local instead of in the image would get both wrong.

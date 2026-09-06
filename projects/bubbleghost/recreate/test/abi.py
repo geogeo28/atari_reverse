@@ -120,6 +120,22 @@ def double(value):
     return struct.pack(">d", value)
 
 
+# ---- ...and the big-endian DECODERS, for a case that reads a result back out of a finished image.
+# Here beside the encoders for their reason: three batteries had grown a private `_long`/`_word`/
+# `_word_in`, and the third of them read its word SIGNED under a name that did not say so.
+
+
+def read_word(image, address, signed=False):
+    """One big-endian word out of a run's image. `signed` reads it as the 68000's `move.w` + `ext.l`
+    would — a game word is as often -1 as 0xffff, and a case that means one must say which."""
+    return int.from_bytes(bytes(image[address:address + 2]), "big", signed=signed)
+
+
+def read_long(image, address, signed=False):
+    """...and one big-endian longword."""
+    return int.from_bytes(bytes(image[address:address + 4]), "big", signed=signed)
+
+
 # ---- combining pokes -----------------------------------------------------------------------------
 def merge_pokes(*dicts, allow_overlap=False):
     """One poke dict from several, REFUSING an overlap unless the caller says it means one.
@@ -195,6 +211,27 @@ GUARD_BYTES = 16
 # this module's name so every battery keeps writing `abi.seed_spans(...)`. It used to be a verbatim
 # copy of Zynaps' — which is how the merge step went missing from one of three copies there — and
 # `tools/recreate_kit/test/test_stubs.py` is what now pins it.
+
+
+# ---- staging the world a case runs in --------------------------------------------------------------
+def stage_world(seed, spans, *layers):
+    """Noise over `spans`, then each of `layers` written over it, later layers winning.
+
+    THE ONE SHAPE EVERY BATTERY'S WORLD HAS, spelt once: seed the regions the routine writes into so
+    that a store one word too far has something to differ against (`GUARD_BYTES` either side), then
+    put the staging that must survive it on top — the pointers a routine reads its addresses out of,
+    then the case's own content.
+
+    The overlap is the point, which is why `allow_overlap=True` is here and not at each call site:
+    `harness.make_image` applies a poke dict in insertion order, so the LAST layer covering a byte
+    wins. A battery that does NOT mean an overlap calls `merge_pokes` directly and gets the refusal.
+
+    WHAT EACH BATTERY STILL OWNS is its LAYERS, and they really are different worlds: `test_blit.py`
+    stages two screen pointers and seven bank pointers, `test_frontend.py` two parameter blocks and
+    an open workstation on top of those, `test_gameplay.py` one screen pointer. This helper is the
+    seeding and the ordering, not the contents.
+    """
+    return merge_pokes(seed_spans(seed, spans, guard=GUARD_BYTES), *layers, allow_overlap=True)
 
 
 # ---- calling a C routine from a poked 68000 stub -------------------------------------------------

@@ -209,9 +209,10 @@ def _real_dat_poke():
             for i in range(DAT_BANKS_FROM_FILE)}
 
 
-def _run(entry, glue, pokes, regs=None, **kwargs):
-    """One differential, with the `a4` every function of this program is entered on."""
-    return abi.run_with_a4(entry, glue, pokes=pokes, regs=regs, **kwargs)
+# One differential, with the `a4` every function of this program is entered on. `abi.run_with_a4`
+# IS that, so this is its name in this file and not a second copy of it: the two batteries that used
+# to wrap it had byte-identical bodies.
+_run = abi.run_with_a4
 
 
 # ============================================================== the four whole-region screen copies
@@ -764,19 +765,19 @@ MIRRORS = (
     ("HUD_FIRST_TILE_IN_BANK", "include/blit.h", "HUD_FIRST_TILE_IN_BANK"),
     ("WIPE_STEPS", "include/blit.h", "WIPE_STEPS"),
     ("WIPE_STEP_BYTES", "include/blit.h", "WIPE_STEP_BYTES"),
-    ("OBJECT_SLOTS", "include/blit.h", "OBJECT_SLOTS"),
-    ("OBJECT_STRIDE", "include/blit.h", "OBJECT_STRIDE"),
-    ("OBJECT_ROOM_STRIDE", "include/blit.h", "OBJECT_ROOM_STRIDE"),
-    ("OBJECT_TILE", "include/blit.h", "OBJECT_TILE"),
-    ("OBJECT_COUNTDOWN", "include/blit.h", "OBJECT_COUNTDOWN"),
-    ("OBJECT_RELOAD", "include/blit.h", "OBJECT_RELOAD"),
-    ("OBJECT_X", "include/blit.h", "OBJECT_X"),
-    ("OBJECT_Y", "include/blit.h", "OBJECT_Y"),
-    ("OBJECT_FRAME", "include/blit.h", "OBJECT_FRAME"),
-    ("OBJECT_FRAME_COUNT", "include/blit.h", "OBJECT_FRAME_COUNT"),
-    ("ROOM_STRIDE", "include/blit.h", "ROOM_STRIDE"),
-    ("ROOM_MAP_ROW_BYTES", "include/blit.h", "ROOM_MAP_ROW_BYTES"),
-    ("ROOM_MAP_CELL_BYTES", "include/blit.h", "ROOM_MAP_CELL_BYTES"),
+    ("OBJECT_SLOTS", "include/gameplay.h", "OBJECT_SLOTS"),
+    ("OBJECT_STRIDE", "include/gameplay.h", "OBJECT_STRIDE"),
+    ("OBJECT_ROOM_STRIDE", "include/gameplay.h", "OBJECT_ROOM_STRIDE"),
+    ("OBJECT_TILE", "include/gameplay.h", "OBJECT_TILE"),
+    ("OBJECT_COUNTDOWN", "include/gameplay.h", "OBJECT_COUNTDOWN"),
+    ("OBJECT_RELOAD", "include/gameplay.h", "OBJECT_RELOAD"),
+    ("OBJECT_X", "include/gameplay.h", "OBJECT_X"),
+    ("OBJECT_Y", "include/gameplay.h", "OBJECT_Y"),
+    ("OBJECT_FRAME", "include/gameplay.h", "OBJECT_FRAME"),
+    ("OBJECT_FRAME_COUNT", "include/gameplay.h", "OBJECT_FRAME_COUNT"),
+    ("ROOM_STRIDE", "include/gameplay.h", "ROOM_STRIDE"),
+    ("ROOM_MAP_ROW_BYTES", "include/gameplay.h", "ROOM_MAP_ROW_BYTES"),
+    ("ROOM_MAP_CELL_BYTES", "include/gameplay.h", "ROOM_MAP_CELL_BYTES"),
     ("MFDB_PLANES", "include/blit.h", "MFDB_PLANES"),
     ("A_SCREEN_PHYS", "include/blit.h", "A_screen_phys"),
     ("A_SCREEN_BACK", "include/blit.h", "A_screen_back"),
@@ -784,9 +785,9 @@ MIRRORS = (
     ("A_BANK_INDEX", "include/blit.h", "A_bank_index"),
     ("A_MFDB_SRC", "include/blit.h", "A_mfdb_src"),
     ("A_MFDB_DST", "include/blit.h", "A_mfdb_dst"),
-    ("A_ROOM_NUMBER", "include/blit.h", "A_room_number"),
-    ("A_OBJECT_TABLE", "include/blit.h", "A_object_table"),
-    ("A_ROOM_TABLE", "include/blit.h", "A_room_table"),
+    ("A_ROOM_NUMBER", "include/gameplay.h", "A_room_number"),
+    ("A_OBJECT_TABLE", "include/gameplay.h", "A_object_table"),
+    ("A_ROOM_TABLE", "include/gameplay.h", "A_room_table"),
 )
 
 # TWENTY BYTES, not the usual eight or ten. Five of the routines here open with the identical
@@ -806,4 +807,14 @@ ENTRY_PROLOGUES = {
     "ENTRY_DRAW_ROOM_TILE_TO_STAGE": "302efffc322ce206c3fc007841eccb30d288c1fc",
     "ENTRY_ROOM_WIPE_IN_SLIDE": "4247606e202ce232d0bc000063fc323c0280c3c7",
     "ENTRY_ROOM_WIPE_IN_STEP": "202ce232d0bc000063fc323c0280c3c748c1d081",
+}
+
+# ...and the CHECKPOINTS. A `stop_pc` is as able to name the wrong instruction as an entry is — one
+# early diffs a slice before its last store and comes back clean — so `test_constants.py` requires a
+# row here for every module-level `STOP_*`. Twenty bytes, matching the entries above.
+STOP_PROLOGUES = {
+    "STOP_BUILD_SPRITE_BANK_PREPARE": "426efffc600000ce3f3c02004eba2816548f2d40",
+    "STOP_DRAW_ROOM_TILE_TO_STAGE": "526efffe0c6e000afffe6d00ff1a526efffc0c6e",
+    "STOP_ROOM_WIPE_IN_SLIDE": "42674eba0932548f4cdf0c804e5e4e754e56fff4",
+    "STOP_ROOM_WIPE_IN_STEP": "0c4700286d8c42674eba0932548f4cdf0c804e5e",
 }

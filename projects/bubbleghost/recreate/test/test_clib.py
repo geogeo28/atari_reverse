@@ -20,6 +20,7 @@ binary read (one Fread) from a text one (several) by the return address left beh
 import ctypes
 import random
 import struct
+import zlib
 
 import pytest
 
@@ -29,6 +30,7 @@ import harness
 from harness import report
 
 # ---- entry addresses (../out/prg_dis.txt, at load base 0x10000) ---------------------------------
+ENTRY_CRT0_SETUP_ARGS = 0x10116
 ENTRY_C_STRLEN = 0x1683e
 ENTRY_C_STRCMP = 0x167fc
 ENTRY_C_LDIV = 0x158fe
@@ -60,6 +62,26 @@ ENTRY_FP_ACC_TO_LONG = 0x154c0
 ENTRY_FP_FLOAT_TO_DOUBLE = 0x154d0
 ENTRY_FP_DOUBLE_TO_LONG = 0x1550a
 ENTRY_FP_LONG_TO_DOUBLE = 0x15552
+ENTRY_C_FCLOSE = 0x14d72
+ENTRY_C_FFLUSH = 0x14dc4
+ENTRY_C_FILBUF = 0x14e80
+ENTRY_C_FLSBUF = 0x14fb0
+ENTRY_C_PUTC = 0x150ee
+ENTRY_C_FCVT = 0x15588
+ENTRY_C_FOPEN = 0x156e2
+ENTRY_C_FREAD = 0x15878
+ENTRY_C_LSEEK = 0x159dc
+ENTRY_C_FMT_INTEGER = 0x15e74
+ENTRY_C_FMT_FLOAT = 0x15fe0
+ENTRY_C_FMT_GETNUM = 0x161b8
+ENTRY_C_DOPRNT = 0x1620c
+ENTRY_C_VFPRINTF = 0x16496
+ENTRY_C_PRINTF = 0x164c2
+ENTRY_C_SPRINTF = 0x164d8
+ENTRY_C_FPUTS = 0x164ee
+ENTRY_C_CONIN = 0x16518
+ENTRY_C_CONOUT_WRITE = 0x16b5e
+ENTRY_C_WRITE = 0x16c04
 
 # ---- mirrors of include/clib.h (pinned by test_constants.py) ------------------------------------
 A_C_ERRNO = 0x1ea6e
@@ -97,6 +119,57 @@ RET_C_OPEN_FOPEN = 0x15e0a
 RET_C_READ_FREAD_FIRST = 0x166fe
 RET_C_READ_FREAD_REFILL = 0x16762
 
+A_C_IOB = 0x1eb08
+A_C_STDOUT = 0x1eb1c
+A_C_UNBUF_CHARS = 0x1eabc
+A_C_BUFSIZ = 0x1eb06
+A_C_FOPEN_SLOT_HINT = 0x1ea7a
+A_C_CONIN_READ_POS = 0x1e8de
+A_C_CONIN_LENGTH = 0x1e8e0
+A_C_CONIN_BUFFER = 0x1e8e2
+A_CRLF = 0x2520a
+A_FCVT_TEN = 0x1eab4
+A_FCVT_MAX_DIGITS = 0x1eaa6
+A_FMT_FLOAT_ZERO = 0x251fe
+A_FMT_FLOAT_EXPONENT_FORMAT = 0x25206
+CLIB_SCRATCH_BASE = 0x000ffb00
+C_VFPRINTF_BUFFER_BYTES = 256
+C_FCVT_DOUBLE_BYTES = 8
+C_EXPONENT_ARGS_BYTES = 6
+C_FCVT_DIGITS_MAX = 64
+C_FCVT_DIGITS_OVERHEAD = 3
+
+C_IOB_SLOTS = 73
+C_IOB_STRIDE = 20
+C_IOB_END = 0x1f0bc
+FILE_OFF_PTR = 0
+FILE_OFF_CNT = 4
+FILE_OFF_BASE = 6
+FILE_OFF_FLAGS = 10
+FILE_OFF_FD = 12
+FILE_OFF_OFFSET = 14
+FILE_OFF_BUFSIZ = 18
+FILE_READ = 0x0001
+FILE_WRITE = 0x0002
+FILE_APPEND = 0x0004
+FILE_UNBUFFERED = 0x0008
+FILE_MYBUF = 0x0010
+FILE_EOF = 0x0020
+FILE_ERR = 0x0040
+FILE_DIRTY = 0x0080
+FILE_LINEBUF = 0x0100
+FMT_NO_PRECISION = 0x0100
+CRLF_BYTES = 2
+
+RET_C_FILBUF_FSEEK = 0x14f28
+RET_C_LSEEK_FSEEK = 0x15a06
+RET_C_WRITE_FWRITE_RUN = 0x16cc8
+RET_C_WRITE_FWRITE_CRLF = 0x16cfe
+RET_C_WRITE_FWRITE_TAIL = 0x16d60
+RET_C_CONOUT_CR = 0x16b7e
+RET_C_CONOUT_BYTE = 0x16b96
+RET_C_CONIN_CRAWCIN = 0x1654a
+
 # ---- values the harness itself decides ----------------------------------------------------------
 # A1 and A2 as the case hands them to a wrapper: two constants a wrong save slot cannot match by
 # accident, and nothing dereferences either.
@@ -125,6 +198,7 @@ GUARD = abi.GUARD_BYTES
 
 _lib = harness._lib
 for _name, _args, _ret in (
+    ("g_crt0_setup_args", [ctypes.c_void_p, ctypes.c_uint32], None),
     ("g_c_strlen", [ctypes.c_void_p, ctypes.c_uint32], ctypes.c_uint32),
     ("g_c_strcmp", [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32], ctypes.c_int32),
     ("g_c_ldiv", [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32], None),
@@ -167,6 +241,26 @@ for _name, _args, _ret in (
     ("g_fp_cmp", [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32], None),
     ("g_fp_dispatch", [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
                        ctypes.c_uint32, ctypes.c_uint32], None),
+    ("g_c_fopen", [ctypes.c_void_p] + [ctypes.c_uint32] * 4, ctypes.c_uint32),
+    ("g_c_fclose", [ctypes.c_void_p] + [ctypes.c_uint32] * 3, ctypes.c_int32),
+    ("g_c_fflush", [ctypes.c_void_p] + [ctypes.c_uint32] * 3, ctypes.c_int32),
+    ("g_c_filbuf", [ctypes.c_void_p] + [ctypes.c_uint32] * 3, ctypes.c_int32),
+    ("g_c_flsbuf", [ctypes.c_void_p] + [ctypes.c_uint32] * 4, ctypes.c_int32),
+    ("g_c_putc", [ctypes.c_void_p] + [ctypes.c_uint32] * 4, ctypes.c_int32),
+    ("g_c_fread", [ctypes.c_void_p] + [ctypes.c_uint32] * 6, ctypes.c_int32),
+    ("g_c_lseek", [ctypes.c_void_p] + [ctypes.c_uint32] * 5, ctypes.c_int32),
+    ("g_c_write", [ctypes.c_void_p] + [ctypes.c_uint32] * 5, ctypes.c_int32),
+    ("g_c_conout_write", [ctypes.c_void_p] + [ctypes.c_uint32] * 4, None),
+    ("g_c_conin", [ctypes.c_void_p] + [ctypes.c_uint32] * 3, ctypes.c_int32),
+    ("g_c_fmt_getnum", [ctypes.c_void_p, ctypes.c_uint32], ctypes.c_int32),
+    ("g_c_fmt_integer", [ctypes.c_void_p] + [ctypes.c_uint32] * 5, None),
+    ("g_c_fmt_float", [ctypes.c_void_p] + [ctypes.c_uint32] * 7, None),
+    ("g_c_fcvt", [ctypes.c_void_p] + [ctypes.c_uint32] * 5, None),
+    ("g_c_doprnt", [ctypes.c_void_p] + [ctypes.c_uint32] * 4, ctypes.c_int32),
+    ("g_c_sprintf", [ctypes.c_void_p] + [ctypes.c_uint32] * 4, ctypes.c_int32),
+    ("g_c_fputs", [ctypes.c_void_p] + [ctypes.c_uint32] * 4, None),
+    ("g_c_vfprintf", [ctypes.c_void_p] + [ctypes.c_uint32] * 6, ctypes.c_int32),
+    ("g_c_printf", [ctypes.c_void_p] + [ctypes.c_uint32] * 5, ctypes.c_int32),
 ):
     getattr(_lib, _name).argtypes = _args
     getattr(_lib, _name).restype = _ret
@@ -213,6 +307,32 @@ def noise_around(rng, addr, payload):
     otherwise write zeroes over zeroes and the diff would stay empty (abi.seed_spans says the same).
     """
     return {addr - GUARD: rng.randbytes(GUARD) + bytes(payload) + rng.randbytes(GUARD)}
+
+
+# ================================================================================================
+# crt0_setup_args @ 0x10116 — the runtime's argv hook, which is a bare `rts`
+# ================================================================================================
+
+# The command tail the crt0 pushes for it (`pea 128(a0)`), which it never reads.
+CRT0_COMMAND_TAIL = SCRATCH
+
+
+def test_crt0_setup_args_writes_nothing():
+    """A two-byte routine, and the CLAIM is that it is two bytes: it writes no memory at all.
+
+    The byte diff alone would be vacuous here — two programs that both do nothing agree — so the
+    ORACLE'S WRITE-SET is what carries the case. An `rts` writes nothing, and a version of this
+    routine that had been mis-identified (the argv parser it stubs out really does write) would show
+    as writes the reconstruction did not make.
+    """
+    rng = random.Random(ENTRY_CRT0_SETUP_ARGS)
+    pokes = abi.merge_pokes(noise_around(rng, CRT0_COMMAND_TAIL, b"GHOST.PRG\0"),
+                            abi.stack_args((4, CRT0_COMMAND_TAIL)))
+    info = check(ENTRY_CRT0_SETUP_ARGS,
+                 lambda lib, buf: lib.g_crt0_setup_args(buf, CRT0_COMMAND_TAIL),
+                 pokes=pokes, note="crt0_setup_args")
+    assert not info["writes"], (
+        f"the original wrote {len(info['writes'])} byte(s); it is supposed to be one `rts`")
 
 
 # ================================================================================================
@@ -271,6 +391,17 @@ def test_c_strcmp_matches_the_device_names_the_library_ships():
 # c_ldiv @ 0x158fe and c_lmul @ 0x15970 — answered through the caller's own argument slots
 # ================================================================================================
 
+def case_seed(note):
+    """A seed derived from a case's own note, STABLE ACROSS RUNS.
+
+    `hash()` is salted for `str` and `bytes` (PYTHONHASHSEED), so seeding a case's guard noise with
+    `hash(note)` draws different noise every run and a failure cannot be reproduced from the note the
+    report prints. `zlib.crc32` is a fixed function of the bytes, so it can. (`hash()` of an int or a
+    float IS stable, which is why the numeric seeds elsewhere in this file are left alone.)
+    """
+    return zlib.crc32(note.encode("utf-8")) & 0xffff
+
+
 def stub_case(calls, results, note, glue, poison=False, extra=None):
     """Drive `calls` from a poked stub and hand back the differential's info.
 
@@ -279,7 +410,7 @@ def stub_case(calls, results, note, glue, poison=False, extra=None):
     holding the same zeroes. `extra` is anything else the run needs staged (the zero-divide vector
     below is the only user).
     """
-    rng = random.Random(hash(note) & 0xffff)
+    rng = random.Random(case_seed(note))
     pokes = abi.merge_pokes(
         abi.c_call_pokes(calls),
         noise_around(rng, abi.RESULT, rng.randbytes(results * abi.RESULT_SLOT_BYTES)),
@@ -690,17 +821,26 @@ DEM_NAME = "A:GHOST.DEM"
 SCR_NAME = "A:GHOST.SCR"
 
 
-def staged(files, open_slots=()):
-    """`harness.stage_files`, with the named slots marked already open.
+def staged(files, open_slots=(), cursors=()):
+    """`harness.stage_files`, with the named slots marked already open and their cursors placed.
 
     `os_fread` refuses a handle whose slot is closed, and a case that enters `c_read` directly never
     ran the `c_open` that would have opened it — so the flag is part of the world the case stages.
+
+    `cursors` is (slot, position) pairs, and is what lets a case seek BACKWARDS: the model refuses a
+    seek to a negative position rather than clamping it, so a stream whose buffer holds bytes the
+    caller never took has to start from a cursor those bytes came from.
     """
     pokes, handles = harness.stage_files(files)
-    for slot in open_slots:
+    positions = dict(cursors)
+    for slot in set(open_slots) | set(positions):
         key = harness.OS_FS_TABLE + slot * harness.OS_FS_ENTRY
         entry = bytearray(pokes[key])
-        entry[harness.OS_FS_OFF_OPEN:harness.OS_FS_OFF_OPEN + 4] = (1).to_bytes(4, "big")
+        if slot in open_slots:
+            entry[harness.OS_FS_OFF_OPEN:harness.OS_FS_OFF_OPEN + 4] = (1).to_bytes(4, "big")
+        if slot in positions:
+            entry[harness.OS_FS_OFF_CURSOR:harness.OS_FS_OFF_CURSOR + 4] = (
+                positions[slot].to_bytes(4, "big"))
         pokes[key] = bytes(entry)
     return pokes, handles
 
@@ -820,6 +960,586 @@ def test_c_read_text(length, payload):
     check_d0_low_word(info, f"c_read text {length} {payload!r}")
 
 
+
+# ================================================================================================
+# The console writers, and the low-level write and seek the buffered layer sits on
+#
+# THE SURFACE HERE IS PARTLY OFF-IMAGE. `c_conout_write` moves no memory at all: what it produces is
+# the kit's ordered console-byte ledger (TRAP_MODEL.md, Phase 13), which `harness.differential`
+# compares on every run without a case asking, plus the three trampoline save slots — and those are
+# what say WHICH of its two Cconout sites ran last. Every case below therefore stages the slots with
+# noise (`trap_slot_noise`), exactly as the file layer's do.
+# ================================================================================================
+
+# The pseudo-devices c_write routes to a GEMDOS character call the kit does not model. They are
+# named so the skip reads as a gap rather than an oversight (../STATUS.md's per-routine table).
+UNMODELED_WRITE_DEVICES = (FD_DEVICE_AUX, FD_DEVICE_PRT)
+
+
+@pytest.mark.parametrize("text,length", (
+    (b"", 0),
+    (b"A", 1),
+    (b"hi\nthere\n", 9),
+    (b"\n", 1),
+    (b"partial write", 4),            # fewer bytes than the string holds
+    (bytes(range(0x20, 0x80)), 0x60),  # every printable byte, none of them a newline
+    (b"\x80\xff\x0a\x00", 4),          # high-bit bytes, and a NUL that is written like any other
+))
+def test_c_conout_write(text, length):
+    """Every byte through GEMDOS Cconout, with a CR inserted before each newline."""
+    rng = random.Random(len(text) * 31 + length)
+    pokes = abi.merge_pokes(noise_around(rng, SCRATCH, text), trap_slot_noise(rng),
+                            abi.stack_args((4, SCRATCH), (2, length)))
+    check(ENTRY_C_CONOUT_WRITE,
+          lambda lib, buf: lib.g_c_conout_write(buf, SCRATCH, length, CALLER_A1, CALLER_A2),
+          pokes=pokes, regs=caller_registers(), note=f"c_conout_write({text!r}, {length})")
+
+
+def test_c_conout_write_of_nothing_leaves_the_ledger_empty():
+    """The count is tested BEFORE it is decremented, so a length of 0 writes nothing at all.
+
+    Asserted rather than left to the diff: an empty ledger on both sides is what a routine that
+    never ran also produces, so the case says which it means — and the SAME staging with length 1
+    (above) does log, which is what makes the pair evidence.
+    """
+    rng = random.Random(0x0e)
+    pokes = abi.merge_pokes(noise_around(rng, SCRATCH, b"A"), trap_slot_noise(rng),
+                            abi.stack_args((4, SCRATCH), (2, 0)))
+    info = check(ENTRY_C_CONOUT_WRITE,
+                 lambda lib, buf: lib.g_c_conout_write(buf, SCRATCH, 0, CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note="c_conout_write(_, 0)")
+    assert len(check(ENTRY_C_CONOUT_WRITE,
+                     lambda lib, buf: lib.g_c_conout_write(buf, SCRATCH, 1, CALLER_A1, CALLER_A2),
+                     pokes=abi.merge_pokes(noise_around(rng, SCRATCH, b"A"), trap_slot_noise(rng),
+                                           abi.stack_args((4, SCRATCH), (2, 1))),
+                     regs=caller_registers(), note="c_conout_write(_, 1)")["regs"]["events"]) == 1
+    assert info["regs"]["events"] == []
+
+
+# ---- c_lseek -------------------------------------------------------------------------------
+SEEK_FROM_START = 0
+SEEK_FROM_CURRENT = 1
+SEEK_FROM_END = 2
+
+
+@pytest.mark.parametrize("offset,whence", (
+    (0, SEEK_FROM_START),
+    (5, SEEK_FROM_START),
+    (0, SEEK_FROM_CURRENT),
+    (0, SEEK_FROM_END),
+    (-4, SEEK_FROM_END),
+    (16, SEEK_FROM_START),      # into the reserved capacity, past the staged length
+))
+def test_c_lseek(offset, whence):
+    """GEMDOS Fseek over the staged-file cursor, which the FS table then shows moved."""
+    rng = random.Random(offset * 7 + whence)
+    pokes, handles = staged([(DEM_NAME, b"0123456789", 0x20)], open_slots=(0,))
+    handle = handles[DEM_NAME]
+    pokes = abi.merge_pokes(pokes, trap_slot_noise(rng), fd_table_poke(rng, ()))
+    pokes = abi.merge_pokes(pokes, abi.stack_args((2, handle), (4, offset), (2, whence)))
+    info = check(ENTRY_C_LSEEK,
+                 lambda lib, buf: lib.g_c_lseek(buf, handle, offset & 0xffffffff, whence,
+                                                CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note=f"c_lseek({offset}, {whence})")
+    check_d0_long(info, f"c_lseek({offset}, {whence})")
+
+
+@pytest.mark.parametrize("handle", (FD_DEVICE_CON, FD_DEVICE_AUX, FD_DEVICE_PRT))
+def test_c_lseek_refuses_a_pseudo_handle(handle):
+    """A negative handle is answered -1 without a trap: the save slots stay as staged."""
+    rng = random.Random(handle)
+    pokes = abi.merge_pokes(trap_slot_noise(rng),
+                            abi.stack_args((2, handle), (4, 0), (2, SEEK_FROM_START)))
+    info = check(ENTRY_C_LSEEK,
+                 lambda lib, buf: lib.g_c_lseek(buf, handle, 0, SEEK_FROM_START,
+                                                CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note=f"c_lseek on {handle:#x}")
+    check_d0_long(info, f"c_lseek on {handle:#x}")
+    assert info["ret"] == -1
+
+
+# ---- c_write -------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text,length", (
+    (b"", 0),
+    (b"one line, no newline", 20),
+    (b"a\nb\n", 4),
+    (b"\n\n\n", 3),
+    (b"trailing\n", 9),
+    (b"only the first six", 6),
+))
+def test_c_write_binary(text, length):
+    """Binary mode: one Fwrite of the whole span, and no CR/LF expansion."""
+    rng = random.Random(len(text) + length * 3)
+    pokes, handles = staged([(SCR_NAME, b"", 0x80)], open_slots=(0,))
+    handle = handles[SCR_NAME]
+    pokes = abi.merge_pokes(pokes, noise_around(rng, SCRATCH, text), trap_slot_noise(rng),
+                            fd_table_poke(rng, ((handle, FD_MODE_BINARY),)))
+    pokes = abi.merge_pokes(pokes, abi.stack_args((2, handle), (4, SCRATCH), (2, length)))
+    info = check(ENTRY_C_WRITE,
+                 lambda lib, buf: lib.g_c_write(buf, handle, SCRATCH, length,
+                                                CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note=f"c_write binary {text!r} {length}")
+    check_d0_low_word(info, f"c_write binary {text!r} {length}")
+
+
+@pytest.mark.parametrize("text,length", (
+    (b"", 0),
+    (b"no newlines here", 16),
+    (b"a\nb\n", 4),
+    (b"\nleading", 8),
+    (b"trailing\n", 9),
+    (b"\n\n\n\n", 4),
+    (b"middle\nsplit", 12),
+))
+def test_c_write_text(text, length):
+    """Text mode: a newline goes out as the two bytes of `A_crlf`, in an Fwrite of its own.
+
+    The three sites leave different RET_* in the trampoline slot, so the run of bytes before a
+    newline, the CR/LF pair and the tail are told apart by more than the file's contents.
+    """
+    rng = random.Random(len(text) * 17 + length)
+    pokes, handles = staged([(SCR_NAME, b"", 0x80)], open_slots=(0,))
+    handle = handles[SCR_NAME]
+    pokes = abi.merge_pokes(pokes, noise_around(rng, SCRATCH, text), trap_slot_noise(rng),
+                            fd_table_poke(rng, ((handle, 0),)))
+    pokes = abi.merge_pokes(pokes, abi.stack_args((2, handle), (4, SCRATCH), (2, length)))
+    info = check(ENTRY_C_WRITE,
+                 lambda lib, buf: lib.g_c_write(buf, handle, SCRATCH, length,
+                                                CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note=f"c_write text {text!r} {length}")
+    check_d0_low_word(info, f"c_write text {text!r} {length}")
+
+
+def test_the_crlf_pair_c_write_expands_a_newline_to(post_init_image):
+    """A_crlf really does hold CR then LF — the two bytes every text-mode newline costs."""
+    assert bytes(post_init_image[A_CRLF:A_CRLF + CRLF_BYTES]) == b"\r\n"
+
+
+@pytest.mark.parametrize("text,length", ((b"", 0), (b"CON:\n", 5), (b"no newline", 10)))
+def test_c_write_to_the_console(text, length):
+    """CON: is answered by c_conout_write before the fd-mode table is consulted at all."""
+    rng = random.Random(length * 5 + len(text))
+    pokes = abi.merge_pokes(noise_around(rng, SCRATCH, text), trap_slot_noise(rng),
+                            fd_table_poke(rng, ()),
+                            abi.stack_args((2, FD_DEVICE_CON), (4, SCRATCH), (2, length)))
+    info = check(ENTRY_C_WRITE,
+                 lambda lib, buf: lib.g_c_write(buf, FD_DEVICE_CON, SCRATCH, length,
+                                                CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note=f"c_write CON: {text!r}")
+    check_d0_low_word(info, f"c_write CON: {text!r}")
+    assert info["ret"] & 0xffff == length
+
+
+
+# ================================================================================================
+# The buffered FILE layer
+#
+# EVERY CASE STAGES THE WHOLE `c_iob` REGION, not just the record it means to use. The table, the
+# per-record fallback bytes below it and `A_c_bufsiz` between them are consecutive, and staging them
+# as ONE noise-filled span is what turns "wrote one record too far" into a difference — the post-init
+# image holds most of that region as zeroes, where an overrun would write zeroes over zeroes.
+# ================================================================================================
+
+FILE_SLOT = 3                              # the first record after stdin/stdout/stderr
+A_FILE = A_C_IOB + FILE_SLOT * C_IOB_STRIDE
+FILE_BUFFER = SCRATCH + 0x200              # where a case puts a stream's buffer, clear of SCRATCH
+FOPEN_MODE_STRING = SCRATCH + 0x100        # ...and the mode string it hands c_fopen
+
+
+def file_record(ptr=0, cnt=0, base=0, flags=0, fd=0, offset=0, bufsiz=0):
+    """One 20-byte FILE, in the field order include/clib.h freezes."""
+    return struct.pack(">IHIHHIH", ptr, cnt & 0xffff, base, flags, fd & 0xffff, offset,
+                       bufsiz & 0xffff)
+
+
+# The three records `init_globals` establishes, restated so a case's own table looks like the
+# program's rather than like an empty one — which is what makes `c_fopen` pick FILE_SLOT.
+STDIO_RECORDS = (
+    file_record(flags=FILE_READ | FILE_UNBUFFERED, fd=FD_DEVICE_CON),
+    file_record(flags=FILE_WRITE | FILE_LINEBUF, fd=FD_DEVICE_CON, bufsiz=0x200),
+    file_record(flags=FILE_WRITE | FILE_LINEBUF, fd=FD_DEVICE_CON, bufsiz=0x200),
+)
+
+
+def iob_poke(rng, record=None, bufsiz=0x200):
+    """`A_c_unbuf_chars`, `A_c_bufsiz` and all 73 records as one span, with `record` at FILE_SLOT.
+
+    The fallback bytes are seeded with NOISE because an unbuffered stream's whole buffer is one of
+    them: a routine that wrote to the wrong slot would otherwise write a zero over a zero. The
+    records after FILE_SLOT are left FREE (flags 0) rather than noisy, because `c_fopen` scans them
+    and a noisy flags word would make every slot look busy.
+    """
+    length = A_C_IOB - A_C_UNBUF_CHARS + C_IOB_SLOTS * C_IOB_STRIDE
+    span = bytearray(rng.randbytes(length + GUARD))
+    span[A_C_BUFSIZ - A_C_UNBUF_CHARS:A_C_BUFSIZ - A_C_UNBUF_CHARS + 2] = abi.word(bufsiz)
+    table = A_C_IOB - A_C_UNBUF_CHARS
+    records = STDIO_RECORDS + ((record,) if record is not None else ())
+    for slot in range(C_IOB_SLOTS):
+        at = table + slot * C_IOB_STRIDE
+        span[at:at + C_IOB_STRIDE] = records[slot] if slot < len(records) else file_record()
+    return {A_C_UNBUF_CHARS: bytes(span)}
+
+
+def buffered_case(rng, record, files=(), open_slots=(), buffer=b"", fd_modes=(), bufsiz=0x200,
+                  hint=None, cursors=()):
+    """The world every FILE-layer case stages: the table, the stream's buffer, the fd modes, files.
+
+    `hint` is `A_c_fopen_slot_hint`, staged only where a case means to say something about it —
+    the post-init image holds it as zero and nothing in the program ever writes it.
+    """
+    pokes, handles = staged(list(files), open_slots=open_slots, cursors=cursors)
+    pokes = abi.merge_pokes(pokes, iob_poke(rng, record, bufsiz=bufsiz),
+                            noise_around(rng, FILE_BUFFER, buffer),
+                            fd_table_poke(rng, fd_modes), trap_slot_noise(rng))
+    if hint is not None:
+        pokes = abi.merge_pokes(pokes, {A_C_FOPEN_SLOT_HINT: abi.long(hint)})
+    return pokes, handles
+
+
+# ---- c_fflush ------------------------------------------------------------------------------
+
+def test_c_fflush_refuses_a_slot_that_is_not_open():
+    rng = random.Random(0xf1)
+    pokes, _ = buffered_case(rng, file_record(flags=FILE_DIRTY))
+    pokes = abi.merge_pokes(pokes, abi.stack_args((4, A_FILE)))
+    info = check(ENTRY_C_FFLUSH,
+                 lambda lib, buf: lib.g_c_fflush(buf, A_FILE, CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note="c_fflush on a free slot")
+    check_d0_low_word(info, "c_fflush on a free slot")
+    assert info["ret"] & 0xffff == 0xffff
+
+
+@pytest.mark.parametrize("content,flags,mode", (
+    (b"", FILE_WRITE | FILE_DIRTY, FD_MODE_BINARY),
+    (b"twelve bytes", FILE_WRITE | FILE_DIRTY, FD_MODE_BINARY),
+    (b"a\nb\n", FILE_WRITE | FILE_DIRTY, 0),                       # the text expansion
+    (b"appended", FILE_WRITE | FILE_DIRTY | FILE_APPEND, FD_MODE_BINARY),
+    (b"read-write", FILE_READ | FILE_WRITE | FILE_DIRTY, FD_MODE_BINARY),
+))
+def test_c_fflush_writes_a_dirty_buffer(content, flags, mode):
+    """A DIRTY buffer goes out through c_write, and the stream's file offset advances by it."""
+    rng = random.Random(len(content) * 13 + flags)
+    record = file_record(ptr=FILE_BUFFER + len(content), base=FILE_BUFFER, flags=flags,
+                         fd=harness.OS_FS_FIRST_HANDLE, offset=0x40, bufsiz=0x20)
+    pokes, handles = buffered_case(rng, record, files=[(SCR_NAME, b"", 0x80)], open_slots=(0,),
+                                   buffer=content,
+                                   fd_modes=((harness.OS_FS_FIRST_HANDLE, mode),))
+    pokes = abi.merge_pokes(pokes, abi.stack_args((4, A_FILE)))
+    info = check(ENTRY_C_FFLUSH,
+                 lambda lib, buf: lib.g_c_fflush(buf, A_FILE, CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(),
+                 note=f"c_fflush dirty {content!r} flags={flags:#x}")
+    check_d0_low_word(info, f"c_fflush dirty {content!r}")
+    assert handles[SCR_NAME] == harness.OS_FS_FIRST_HANDLE
+
+
+@pytest.mark.parametrize("unread", (0, 1, 7))
+def test_c_fflush_rewinds_a_read_buffer(unread):
+    """A clean read buffer is dropped, and the GEMDOS cursor seeks BACK over what was never read."""
+    rng = random.Random(unread + 0x5ead)
+    record = file_record(ptr=FILE_BUFFER + 3, cnt=unread, base=FILE_BUFFER, flags=FILE_READ,
+                         fd=harness.OS_FS_FIRST_HANDLE, offset=0, bufsiz=0x20)
+    pokes, _ = buffered_case(rng, record, files=[(DEM_NAME, b"0123456789", 0x20)],
+                             open_slots=(0,), buffer=b"012", cursors=((0, 10),),
+                             fd_modes=((harness.OS_FS_FIRST_HANDLE, FD_MODE_BINARY),))
+    pokes = abi.merge_pokes(pokes, abi.stack_args((4, A_FILE)))
+    info = check(ENTRY_C_FFLUSH,
+                 lambda lib, buf: lib.g_c_fflush(buf, A_FILE, CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note=f"c_fflush read, {unread} unread")
+    check_d0_low_word(info, f"c_fflush read, {unread} unread")
+
+
+def test_c_fflush_of_a_console_stream_seeks_nothing():
+    """`fd <= 0` skips the rewind — which is every pseudo-device, since their handles are negative."""
+    rng = random.Random(0xc04)
+    record = file_record(ptr=FILE_BUFFER + 2, cnt=5, base=FILE_BUFFER, flags=FILE_READ,
+                         fd=FD_DEVICE_CON, bufsiz=0x20)
+    pokes, _ = buffered_case(rng, record, buffer=b"ab")
+    pokes = abi.merge_pokes(pokes, abi.stack_args((4, A_FILE)))
+    check(ENTRY_C_FFLUSH, lambda lib, buf: lib.g_c_fflush(buf, A_FILE, CALLER_A1, CALLER_A2),
+          pokes=pokes, regs=caller_registers(), note="c_fflush on CON:")
+
+
+# ---- c_fclose ------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("flags", (
+    FILE_READ,
+    FILE_READ | FILE_MYBUF,
+    FILE_WRITE | FILE_DIRTY | FILE_MYBUF,
+    0,                                     # a free slot: c_fflush refuses and c_close never runs
+))
+def test_c_fclose(flags):
+    """Flush, hand a GEMDOS-allocated buffer back, blank the record, close the handle."""
+    rng = random.Random(flags * 3 + 1)
+    record = file_record(ptr=FILE_BUFFER + 4, cnt=2, base=FILE_BUFFER, flags=flags,
+                         fd=harness.OS_FS_FIRST_HANDLE, bufsiz=0x20)
+    pokes, _ = buffered_case(rng, record, files=[(SCR_NAME, b"scores", 0x40)], open_slots=(0,),
+                             buffer=b"four", cursors=((0, 6),),
+                             fd_modes=((harness.OS_FS_FIRST_HANDLE, FD_MODE_BINARY),))
+    pokes = abi.merge_pokes(pokes, abi.stack_args((4, A_FILE)))
+    info = check(ENTRY_C_FCLOSE,
+                 lambda lib, buf: lib.g_c_fclose(buf, A_FILE, CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note=f"c_fclose flags={flags:#x}")
+    check_d0_low_word(info, f"c_fclose flags={flags:#x}")
+
+
+# ---- c_filbuf ------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("flags,base,bufsiz", (
+    (FILE_READ, 0, 0x10),                          # no buffer yet: GEMDOS Malloc supplies one
+    (FILE_READ, FILE_BUFFER, 0x10),                # ...and one that is already there
+    (FILE_READ | FILE_UNBUFFERED, 0, 0x10),        # the one-byte fallback slot, read one at a time
+    (FILE_READ | FILE_LINEBUF, FILE_BUFFER, 0x10),  # line buffered: also one byte at a time
+    (FILE_READ | FILE_WRITE, FILE_BUFFER, 4),
+))
+def test_c_filbuf(flags, base, bufsiz):
+    """Refill and hand back the first byte, recording where in the file the buffer starts."""
+    rng = random.Random(flags * 7 + bufsiz)
+    record = file_record(ptr=base, base=base, flags=flags, fd=harness.OS_FS_FIRST_HANDLE,
+                         offset=0x1234, bufsiz=bufsiz)
+    pokes, _ = buffered_case(rng, record, files=[(DEM_NAME, b"abcdefghij", 0x20)],
+                             open_slots=(0,), buffer=bytes(0x20),
+                             fd_modes=((harness.OS_FS_FIRST_HANDLE, FD_MODE_BINARY),))
+    pokes = abi.merge_pokes(pokes, abi.stack_args((4, A_FILE)))
+    info = check(ENTRY_C_FILBUF,
+                 lambda lib, buf: lib.g_c_filbuf(buf, A_FILE, CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(),
+                 note=f"c_filbuf flags={flags:#x} base={base:#x}")
+    check_d0_low_word(info, f"c_filbuf flags={flags:#x}")
+
+
+@pytest.mark.parametrize("flags", (FILE_READ | FILE_EOF, FILE_READ | FILE_ERR, FILE_WRITE))
+def test_c_filbuf_refuses_a_stream_it_cannot_read(flags):
+    """EOF or ERR is refused outright, and a write-only stream sets ERR and becomes one."""
+    rng = random.Random(flags + 0xf1b)
+    record = file_record(base=FILE_BUFFER, flags=flags, fd=harness.OS_FS_FIRST_HANDLE, bufsiz=0x10)
+    pokes, _ = buffered_case(rng, record, files=[(DEM_NAME, b"abc", 0x10)], open_slots=(0,),
+                             buffer=bytes(0x10),
+                             fd_modes=((harness.OS_FS_FIRST_HANDLE, FD_MODE_BINARY),))
+    pokes = abi.merge_pokes(pokes, abi.stack_args((4, A_FILE)))
+    info = check(ENTRY_C_FILBUF,
+                 lambda lib, buf: lib.g_c_filbuf(buf, A_FILE, CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note=f"c_filbuf refuses {flags:#x}")
+    check_d0_low_word(info, f"c_filbuf refuses {flags:#x}")
+    assert info["ret"] & 0xffff == 0xffff
+
+
+def test_c_filbuf_at_end_of_file():
+    """A read that returns nothing sets EOF and answers -1; a shorter one is not an error."""
+    rng = random.Random(0xe0f)
+    record = file_record(base=FILE_BUFFER, flags=FILE_READ, fd=harness.OS_FS_FIRST_HANDLE,
+                         bufsiz=0x10)
+    pokes, _ = buffered_case(rng, record, files=[(DEM_NAME, b"", 0x10)], open_slots=(0,),
+                             buffer=bytes(0x10),
+                             fd_modes=((harness.OS_FS_FIRST_HANDLE, FD_MODE_BINARY),))
+    pokes = abi.merge_pokes(pokes, abi.stack_args((4, A_FILE)))
+    info = check(ENTRY_C_FILBUF,
+                 lambda lib, buf: lib.g_c_filbuf(buf, A_FILE, CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note="c_filbuf at eof")
+    check_d0_low_word(info, "c_filbuf at eof")
+    assert info["ret"] & 0xffff == 0xffff
+
+
+def test_c_filbuf_off_stride_record_lands_the_divs_w_remainder_in_the_high_word():
+    """An UNBUFFERED stream whose record is not on the 20-byte stride, which is the only way to see
+    `divs.w`'s remainder.
+
+    `unbuffered_char_slot` divides `file - A_c_iob` by the stride with `divs.w` — quotient in the
+    low word, REMAINDER IN THE HIGH — and the `adda.l` that follows adds the whole longword, so a
+    record two bytes off the stride puts its one-byte buffer 0x20000 further up the image. No caller
+    in the program passes such a pointer, so this case fabricates one; without it the quirk is
+    transcription nobody has run (a mutation dropping the remainder survives the rest of the file).
+    """
+    rng = random.Random(0xd1f5)
+    off_stride = A_FILE + 2
+    record = file_record(base=0, flags=FILE_READ | FILE_UNBUFFERED,
+                         fd=harness.OS_FS_FIRST_HANDLE, bufsiz=1)
+    span = bytearray(iob_poke(rng)[A_C_UNBUF_CHARS])
+    at = off_stride - A_C_UNBUF_CHARS
+    span[at:at + C_IOB_STRIDE] = record
+    pokes, _ = staged([(DEM_NAME, b"abcdef", 0x20)], open_slots=(0,))
+    pokes = abi.merge_pokes(pokes, {A_C_UNBUF_CHARS: bytes(span)}, trap_slot_noise(rng),
+                            fd_table_poke(rng, ((harness.OS_FS_FIRST_HANDLE, FD_MODE_BINARY),)),
+                            abi.stack_args((4, off_stride)))
+    info = check(ENTRY_C_FILBUF,
+                 lambda lib, buf: lib.g_c_filbuf(buf, off_stride, CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note="c_filbuf on an off-stride record")
+    check_d0_low_word(info, "c_filbuf on an off-stride record")
+
+
+# ---- c_flsbuf and c_putc ---------------------------------------------------------------------
+
+@pytest.mark.parametrize("byte,flags,base,held", (
+    (ord("x"), FILE_WRITE | FILE_LINEBUF, FILE_BUFFER, 2),      # room left: no flush at all
+    (ord("\n"), FILE_WRITE | FILE_LINEBUF, FILE_BUFFER, 2),     # a newline flushes the line
+    (ord("z"), FILE_WRITE | FILE_LINEBUF, FILE_BUFFER, 0x1f),   # a full buffer flushes too
+    (ord("y"), FILE_WRITE | FILE_UNBUFFERED, FILE_BUFFER, 0),
+    (ord("w"), FILE_WRITE, FILE_BUFFER, 3),                      # fully buffered: flush, then store
+    (ord("v"), FILE_WRITE, 0, 0),                                # ...and one with no buffer yet
+    (ord("u"), FILE_READ, FILE_BUFFER, 0),                       # not a write stream: ERR, -1
+    (ord("t"), FILE_WRITE | FILE_ERR, FILE_BUFFER, 0),
+))
+def test_c_flsbuf(byte, flags, base, held):
+    rng = random.Random(byte * 11 + flags + held)
+    record = file_record(ptr=(base + held) if base else 0, base=base, flags=flags,
+                         fd=harness.OS_FS_FIRST_HANDLE, bufsiz=0x20)
+    pokes, _ = buffered_case(rng, record, files=[(SCR_NAME, b"", 0x100)], open_slots=(0,),
+                             buffer=bytes(held),
+                             fd_modes=((harness.OS_FS_FIRST_HANDLE, FD_MODE_BINARY),))
+    pokes = abi.merge_pokes(pokes, abi.stack_args((2, byte), (4, A_FILE)))
+    info = check(ENTRY_C_FLSBUF,
+                 lambda lib, buf: lib.g_c_flsbuf(buf, byte, A_FILE, CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(),
+                 note=f"c_flsbuf({byte:#x}) flags={flags:#x} held={held}")
+    check_d0_low_word(info, f"c_flsbuf({byte:#x}) flags={flags:#x}")
+
+
+@pytest.mark.parametrize("count", (5, 1, 0))
+def test_c_putc(count):
+    """`cnt` is decremented before it is tested, so a count of 0 goes straight to c_flsbuf."""
+    rng = random.Random(count + 0x9c)
+    record = file_record(ptr=FILE_BUFFER + 2, cnt=count, base=FILE_BUFFER,
+                         flags=FILE_WRITE | FILE_LINEBUF, fd=harness.OS_FS_FIRST_HANDLE,
+                         bufsiz=0x20)
+    pokes, _ = buffered_case(rng, record, files=[(SCR_NAME, b"", 0x100)], open_slots=(0,),
+                             buffer=b"ab",
+                             fd_modes=((harness.OS_FS_FIRST_HANDLE, FD_MODE_BINARY),))
+    pokes = abi.merge_pokes(pokes, abi.stack_args((2, ord("Q")), (4, A_FILE)))
+    info = check(ENTRY_C_PUTC,
+                 lambda lib, buf: lib.g_c_putc(buf, ord("Q"), A_FILE, CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note=f"c_putc cnt={count}")
+    check_d0_low_word(info, f"c_putc cnt={count}")
+
+
+# ---- c_fread -------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("size,items,held,content", (
+    (1, 4, 6, b"abcdefghij"),      # entirely out of the buffer already in hand
+    (1, 8, 2, b"abcdefghij"),      # runs out and refills through c_filbuf
+    (2, 3, 0, b"abcdefghij"),      # records wider than a byte
+    (1, 20, 0, b"abc"),            # the file ends part-way: a partial record is not reported
+    (1, 0, 4, b"abcdefghij"),      # nothing asked for
+    (4, 2, 3, b"short"),           # ends mid-record, with a remainder the divide drops
+))
+def test_c_fread(size, items, held, content):
+    rng = random.Random(size * 101 + items * 7 + held)
+    record = file_record(ptr=FILE_BUFFER, cnt=held, base=FILE_BUFFER, flags=FILE_READ,
+                         fd=harness.OS_FS_FIRST_HANDLE, bufsiz=8)
+    pokes, _ = buffered_case(rng, record, files=[(DEM_NAME, content, 0x20)], open_slots=(0,),
+                             buffer=content[:held] + bytes(8 - min(held, 8)),
+                             fd_modes=((harness.OS_FS_FIRST_HANDLE, FD_MODE_BINARY),))
+    pokes = abi.merge_pokes(pokes, noise_around(rng, SCRATCH, bytes(64)),
+                            abi.stack_args((4, SCRATCH), (2, size), (2, items), (4, A_FILE)))
+    info = check(ENTRY_C_FREAD,
+                 lambda lib, buf: lib.g_c_fread(buf, SCRATCH, size, items, A_FILE,
+                                                CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(),
+                 note=f"c_fread({size}, {items}) held={held} {content!r}")
+    check_d0_low_word(info, f"c_fread({size}, {items}) held={held}")
+
+
+# ---- c_fopen -------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("mode,name", (
+    ("br", DEM_NAME),          # the game's own two calls
+    ("r", DEM_NAME),
+    ("r+", DEM_NAME),
+    ("w", SCR_NAME),
+    ("bw", SCR_NAME),
+    ("a", SCR_NAME),
+    ("ba", SCR_NAME),
+    ("w+", SCR_NAME),
+))
+def test_c_fopen(mode, name):
+    """Parse the mode, claim FILE_SLOT, open or create, and record where the file cursor is."""
+    rng = random.Random(len(mode) * 31 + len(name))
+    pokes, _ = buffered_case(rng, None, files=[(name, b"0123456789", 0x40)],
+                             buffer=bytes(0x20), fd_modes=(), hint=0)
+    pokes = abi.merge_pokes(pokes, path_poke(rng, name),
+                            noise_around(rng, FOPEN_MODE_STRING, mode.encode("ascii") + b"\0"))
+    pokes = abi.merge_pokes(pokes, abi.stack_args((4, SCRATCH), (4, FOPEN_MODE_STRING)))
+    info = check(ENTRY_C_FOPEN,
+                 lambda lib, buf: lib.g_c_fopen(buf, SCRATCH, FOPEN_MODE_STRING,
+                                                CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note=f"c_fopen({name!r}, {mode!r})")
+    check_d0_long(info, f"c_fopen({name!r}, {mode!r})")
+    assert info["ret"] == A_FILE
+
+
+@pytest.mark.parametrize("mode", ("x", "", "b", "+r", "R"))
+def test_c_fopen_refuses_a_mode_it_does_not_know(mode):
+    """Only r/w/a open anything, and only after an optional leading 'b' — so "rb" does not parse."""
+    rng = random.Random(0xbad + len(mode))
+    pokes, _ = buffered_case(rng, None, files=[(DEM_NAME, b"data", 0x20)], hint=0)
+    pokes = abi.merge_pokes(pokes, path_poke(rng, DEM_NAME),
+                            noise_around(rng, FOPEN_MODE_STRING, mode.encode("ascii") + b"\0"))
+    pokes = abi.merge_pokes(pokes, abi.stack_args((4, SCRATCH), (4, FOPEN_MODE_STRING)))
+    info = check(ENTRY_C_FOPEN,
+                 lambda lib, buf: lib.g_c_fopen(buf, SCRATCH, FOPEN_MODE_STRING,
+                                                CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note=f"c_fopen mode {mode!r}")
+    check_d0_long(info, f"c_fopen mode {mode!r}")
+    assert info["ret"] == 0
+
+
+def test_c_fopen_takes_the_slot_hint_when_one_is_set():
+    """`A_c_fopen_slot_hint` short-circuits the scan — and is cleared on the way past.
+
+    Nothing in this program ever sets it, so this is the only thing that exercises the arm; the
+    hint names a LATER record than the scan would have picked, which is what tells the two apart.
+    """
+    rng = random.Random(0x81)
+    hinted = A_C_IOB + 9 * C_IOB_STRIDE
+    pokes, _ = buffered_case(rng, None, files=[(DEM_NAME, b"data", 0x20)], hint=hinted)
+    pokes = abi.merge_pokes(pokes, path_poke(rng, DEM_NAME),
+                            noise_around(rng, FOPEN_MODE_STRING, b"br\0"))
+    pokes = abi.merge_pokes(pokes, abi.stack_args((4, SCRATCH), (4, FOPEN_MODE_STRING)))
+    info = check(ENTRY_C_FOPEN,
+                 lambda lib, buf: lib.g_c_fopen(buf, SCRATCH, FOPEN_MODE_STRING,
+                                                CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note="c_fopen with a slot hint")
+    check_d0_long(info, "c_fopen with a slot hint")
+    assert info["ret"] == hinted
+
+
+def test_c_fopen_refuses_a_hint_past_the_end_of_the_table():
+    """The range check is applied to the hint as well as to the scan's result."""
+    rng = random.Random(0x82)
+    pokes, _ = buffered_case(rng, None, files=[(DEM_NAME, b"data", 0x20)], hint=C_IOB_END)
+    pokes = abi.merge_pokes(pokes, path_poke(rng, DEM_NAME),
+                            noise_around(rng, FOPEN_MODE_STRING, b"br\0"))
+    pokes = abi.merge_pokes(pokes, abi.stack_args((4, SCRATCH), (4, FOPEN_MODE_STRING)))
+    info = check(ENTRY_C_FOPEN,
+                 lambda lib, buf: lib.g_c_fopen(buf, SCRATCH, FOPEN_MODE_STRING,
+                                                CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note="c_fopen with an out-of-range hint")
+    check_d0_long(info, "c_fopen with an out-of-range hint")
+    assert info["ret"] == 0
+
+
+def test_the_c_iob_record_the_program_itself_establishes(post_init_image):
+    """The three records `init_globals` writes, against include/clib.h's field offsets.
+
+    This is what pins the FROZEN record layout to the image rather than to a reading of the asm: a
+    wrong stride or a wrong field offset makes at least one of the three disagree.
+    """
+    expected = (
+        (FILE_READ | FILE_UNBUFFERED, FD_DEVICE_CON, 0),
+        (FILE_WRITE | FILE_LINEBUF, FD_DEVICE_CON, 0x200),
+        (FILE_WRITE | FILE_LINEBUF, FD_DEVICE_CON, 0x200),
+    )
+    for slot, (flags, fd, bufsiz) in enumerate(expected):
+        at = A_C_IOB + slot * C_IOB_STRIDE
+        record = bytes(post_init_image[at:at + C_IOB_STRIDE])
+        assert struct.unpack(">H", record[FILE_OFF_FLAGS:FILE_OFF_FLAGS + 2])[0] == flags
+        assert struct.unpack(">H", record[FILE_OFF_FD:FILE_OFF_FD + 2])[0] == fd
+        assert struct.unpack(">H", record[FILE_OFF_BUFSIZ:FILE_OFF_BUFSIZ + 2])[0] == bufsiz
+    assert A_C_STDOUT == A_C_IOB + C_IOB_STRIDE
+    assert C_IOB_END == A_C_IOB + C_IOB_SLOTS * C_IOB_STRIDE
+    assert struct.unpack(">H", bytes(post_init_image[A_C_BUFSIZ:A_C_BUFSIZ + 2]))[0] == 0x200
+
+
 # ================================================================================================
 # The software floating-point package
 #
@@ -862,7 +1582,7 @@ def fp_operand_pokes(rng, left, right):
 
 
 def fp_binary_case(entry, glue_name, left, right, note):
-    rng = random.Random(hash(note) & 0xffff)
+    rng = random.Random(case_seed(note))
     pokes = fp_operand_pokes(rng, left, right)
     pokes = abi.merge_pokes(pokes, {A_FP_SUB_SIGN_FLAG: rng.randbytes(2)})
     pokes = abi.merge_pokes(pokes, abi.stack_args((4, FP_LEFT), (4, FP_RIGHT)))
@@ -1146,6 +1866,658 @@ def test_the_data_constants_the_demo_chain_divides_by(post_init_image):
         assert struct.unpack(">d", post_init_image[address:address + 8])[0] == value
 
 
+
+# ================================================================================================
+# The console reader
+# ================================================================================================
+
+CONIN_LINE_BYTES = 0x40         # how much of c_conin's line buffer a case stages and compares
+
+
+def conin_poke(rng, read_pos=0, length=0, line=b""):
+    """`A_c_conin_read_pos`, `A_c_conin_length` and the line buffer, as one noise-filled span.
+
+    They are consecutive, and the buffer is bss the post-init image holds as zeroes — so a routine
+    that stored one byte past where it should have would write a zero over a zero without the noise.
+    """
+    span = bytearray(rng.randbytes(4 + CONIN_LINE_BYTES))
+    span[0:2] = abi.word(read_pos)
+    span[2:4] = abi.word(length)
+    span[4:4 + len(line)] = line
+    return {A_C_CONIN_READ_POS: bytes(span)}
+
+
+@pytest.mark.parametrize("keys,note", (
+    ("a\r", "one character then RETURN"),
+    ("\r", "an empty line"),
+    ("ab\r", "two characters"),
+    ("a\x08b\r", "a character rubbed out and replaced"),
+    ("\x08\r", "BACKSPACE with nothing to rub out"),
+    ("a\x1a", "the end-of-file character, which is stored and echoed"),
+    ("\x1a", "...and one on its own, which reads back as -1"),
+    ("\n\r", "a LINE FEED typed as an ordinary character"),
+))
+def test_c_conin_gathers_a_line(keys, note):
+    """Gather a whole line through GEMDOS Crawcin, echoing through Cconout, then hand back one byte.
+
+    The echoes are the surface: every one is an entry in the console-byte ledger, and each site
+    files its own RET_* in the trampoline's return slot.
+    """
+    rng = random.Random(len(keys) * 41 + len(note))
+    pokes = abi.merge_pokes(conin_poke(rng), trap_slot_noise(rng),
+                            harness.console_keys(list(keys)),
+                            abi.stack_args((2, FD_DEVICE_CON)))
+    info = check(ENTRY_C_CONIN,
+                 lambda lib, buf: lib.g_c_conin(buf, FD_DEVICE_CON, CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note=f"c_conin: {note}")
+    check_d0_low_word(info, f"c_conin: {note}")
+
+
+@pytest.mark.parametrize("read_pos,length,line", (
+    (0, 3, b"abc"),
+    (2, 3, b"abc"),
+    (0, 2, b"a\x1a"),        # the end-of-file character in the buffer answers -1
+    (1, 2, b"a\x1a"),
+))
+def test_c_conin_hands_back_a_line_already_gathered(read_pos, length, line):
+    """With characters still unread it takes the next one and reads NOTHING from the console.
+
+    No key is staged, so a reconstruction that gathered anyway would meet the model's refusal
+    rather than fabricate a keystroke.
+    """
+    rng = random.Random(read_pos * 7 + length + len(line))
+    pokes = abi.merge_pokes(conin_poke(rng, read_pos, length, line), trap_slot_noise(rng),
+                            abi.stack_args((2, FD_DEVICE_CON)))
+    info = check(ENTRY_C_CONIN,
+                 lambda lib, buf: lib.g_c_conin(buf, FD_DEVICE_CON, CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(),
+                 note=f"c_conin buffered {line!r} at {read_pos}")
+    check_d0_low_word(info, f"c_conin buffered {line!r} at {read_pos}")
+
+
+@pytest.mark.parametrize("handle", (FD_DEVICE_PRT, 6, 0))
+def test_c_conin_refuses_every_handle_but_the_console_and_the_serial_port(handle):
+    rng = random.Random(handle + 0xc1)
+    pokes = abi.merge_pokes(conin_poke(rng), trap_slot_noise(rng), abi.stack_args((2, handle)))
+    info = check(ENTRY_C_CONIN,
+                 lambda lib, buf: lib.g_c_conin(buf, handle, CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note=f"c_conin({handle:#x})")
+    check_d0_low_word(info, f"c_conin({handle:#x})")
+    assert info["ret"] & 0xffff == 0xffff
+
+
+# ================================================================================================
+# The printf engine
+#
+# WHAT THE ENGINE ACTUALLY IMPLEMENTS, read off c_doprnt's own dispatch chain and fuzzed only over
+# that: `%[-][0][width][.precision][l]` and then one of d u o x c s e f g. There is no `%%` (a `%`
+# reaches the "unknown conversion" arm and is emitted as itself, which is the same output by a
+# different route), no `+`/space flag, no `*` width, no `h`, and no `p`/`n`/`i`. `%g` is `%e`:
+# c_fmt_float tests for 'f' and takes the exponent form for everything else.
+#
+# THE GAME ITSELF USES NONE OF THEM. Its one c_printf call (`main` @ 0x100dc) passes the
+# "Please reboot in LOW REZ" message, which has no conversions at all — so every case below except
+# that one is synthetic, and ../STATUS.md says so rather than implying play-tested coverage.
+# ================================================================================================
+
+DOPRNT_OUT = SCRATCH                 # where a case has the engine write
+DOPRNT_FORMAT = SCRATCH + 0x300      # ...the format string it walks
+DOPRNT_ARGS = SCRATCH + 0x400        # ...the argument list it reads
+DOPRNT_TEXT = SCRATCH + 0x500        # ...and a string for %s to copy
+DOPRNT_OUT_BYTES = 0x200
+
+# The one format the program itself passes to c_printf, at 0(a4) — see `main` @ 0x100dc.
+GAME_PRINTF_MESSAGE = b"\n\n Please reboot in LOW REZ... \n"
+
+# D7 as c_doprnt's caller left it: what a format ending in a BARE `%` dispatches on, and what
+# c_fmt_integer would use as a base. It is an INPUT here, given identically to both sides.
+INHERITED_CONVERSION = 0x0064        # 'd', chosen because it is a conversion the engine knows
+
+
+def printf_arguments(*values):
+    """An argument list as the Alcyon compiler would have pushed it, after the format pointer.
+
+    Each value is `(width, number)` with the width in bytes — 2 for a `short`, 4 for a `long` or a
+    pointer — or `("double", x)` for the eight bytes a float conversion consumes. The WIDTH is what
+    c_doprnt steps the list by, so it is stated rather than guessed from the value.
+    """
+    blob = b""
+    for width, value in values:
+        if width == "double":
+            blob += abi.double(value)
+        elif width == 2:
+            blob += abi.word(value)
+        else:
+            blob += abi.long(value)
+    return blob
+
+
+def doprnt_pokes(rng, fmt, values, text=b"", out_bytes=DOPRNT_OUT_BYTES):
+    """The world a c_doprnt / c_sprintf case stages: output, format, arguments and a %s string."""
+    return abi.merge_pokes(
+        noise_around(rng, DOPRNT_OUT, bytes(out_bytes)),
+        noise_around(rng, DOPRNT_FORMAT, fmt + b"\0"),
+        noise_around(rng, DOPRNT_ARGS, abi.long(DOPRNT_FORMAT) + printf_arguments(*values)),
+        noise_around(rng, DOPRNT_TEXT, text + b"\0"))
+
+
+# (format, argument list) — grouped by what each row is there to reach.
+DOPRNT_CASES = (
+    (b"", ()),
+    (b"plain text, no conversions", ()),
+    (GAME_PRINTF_MESSAGE, ()),
+    (b"%d", ((2, 0),)),
+    (b"%d", ((2, 1),)),
+    (b"%d", ((2, -1),)),
+    (b"%d", ((2, 32767),)),
+    (b"%d", ((2, -32768),)),
+    (b"%ld", ((4, 0x7fffffff),)),
+    (b"%ld", ((4, -0x80000000),)),
+    (b"%u", ((2, -1),)),                 # the sign extension is masked off again
+    (b"%lu", ((4, 0xffffffff),)),        # ...and kept, for a long
+    (b"%x", ((2, -1),)),
+    (b"%lx", ((4, 0xdeadbeef),)),
+    (b"%o", ((2, 8),)),
+    (b"%lo", ((4, 0xffffffff),)),
+    (b"%c", ((2, ord("Z")),)),
+    (b"%c%c%c", ((2, ord("a")), (2, ord("b")), (2, ord("c")))),
+    (b"%s", ((4, DOPRNT_TEXT),)),
+    (b"%.3s", ((4, DOPRNT_TEXT),)),
+    (b"%.0s", ((4, DOPRNT_TEXT),)),
+    (b"%12s|", ((4, DOPRNT_TEXT),)),
+    (b"%-12s|", ((4, DOPRNT_TEXT),)),
+    (b"%6d|", ((2, 42),)),
+    (b"%-6d|", ((2, 42),)),
+    (b"%06d|", ((2, 42),)),
+    (b"%06d|", ((2, -42),)),             # the sign is moved with the digits, not left behind
+    (b"%2d|", ((2, 12345),)),            # a field too narrow for what it holds
+    (b"score %d of %d", ((2, 7), (2, 9))),
+    (b"%%", ()),                         # not an escape: the second % is an unknown conversion
+    (b"%z", ()),                         # ...and so is anything else the chain does not name
+    (b"literal % at the end", ()),
+    (b"%f", (("double", 1.0),)),
+    (b"%f", (("double", 0.0),)),
+    (b"%f", (("double", -0.0),)),
+    (b"%f", (("double", -1.5),)),
+    (b"%.2f", (("double", 3.14159),)),
+    (b"%.0f", (("double", 2.5),)),
+    (b"%.7f", (("double", 0.001),)),
+    (b"%f", (("double", 12345.678),)),
+    (b"%e", (("double", 1.0),)),
+    (b"%e", (("double", -12345.678),)),
+    (b"%.3e", (("double", 0.000123),)),
+    (b"%g", (("double", 1024.0),)),      # %g is %e: c_fmt_float only tests for 'f'
+    (b"%10.2f|", (("double", -1.25),)),
+    (b"%-10.2f|", (("double", -1.25),)),
+)
+
+
+@pytest.mark.parametrize("fmt,values", DOPRNT_CASES)
+def test_c_doprnt(fmt, values):
+    rng = random.Random(len(fmt) * 131 + len(values))
+    pokes = abi.merge_pokes(doprnt_pokes(rng, fmt, values, text=b"a string"),
+                            abi.stack_args((4, DOPRNT_OUT), (4, DOPRNT_ARGS)))
+    info = check(ENTRY_C_DOPRNT,
+                 lambda lib, buf: lib.g_c_doprnt(buf, DOPRNT_OUT, DOPRNT_ARGS,
+                                                 INHERITED_CONVERSION, FP_CMP_STATUS_HIGH),
+                 pokes=pokes, regs={"d7": INHERITED_CONVERSION, **caller_registers()},
+                 note=f"c_doprnt({fmt!r}, {values})")
+    check_d0_long(info, f"c_doprnt({fmt!r}, {values})")
+
+
+@pytest.mark.parametrize("inherited", (0x64, 0x73, 0x66, 0x00))
+def test_c_doprnt_dispatches_a_trailing_percent_on_the_caller_s_own_register(inherited):
+    """A format ending in a bare `%` never loads a conversion character, so D7 decides what happens.
+
+    The four values are 'd', 's', 'f' and 0 — an integer, a pointer, a double and an unknown — and
+    each consumes a different number of argument bytes, which is what makes this more than a copy.
+    It is a real branch of the routine, and the only way to reach it is to declare the register.
+    """
+    rng = random.Random(inherited + 0x7c)
+    values = ((4, DOPRNT_TEXT), ("double", 1.0))
+    pokes = abi.merge_pokes(doprnt_pokes(rng, b"end%", values, text=b"tail"),
+                            abi.stack_args((4, DOPRNT_OUT), (4, DOPRNT_ARGS)))
+    info = check(ENTRY_C_DOPRNT,
+                 lambda lib, buf: lib.g_c_doprnt(buf, DOPRNT_OUT, DOPRNT_ARGS, inherited,
+                                                 FP_CMP_STATUS_HIGH),
+                 pokes=pokes, regs={"d7": inherited, **caller_registers()},
+                 note=f"c_doprnt trailing %% with D7={inherited:#x}")
+    check_d0_long(info, f"c_doprnt trailing %% with D7={inherited:#x}")
+
+
+DOPRNT_FUZZ_CHUNKS = 8
+DOPRNT_FUZZ_PER_CHUNK = 24
+# The doubles the fuzz draws from, and NOT `FP_SAMPLES`: c_fcvt scales a value by ten until its
+# binary exponent lands in [-3, 0], so 1e300 is three hundred `fp_div` passes — of the order of
+# 100,000 instructions for ONE conversion, and a three-conversion format then runs past any sane
+# cap. The extreme exponents get a case of their own below, with the cap raised and the cost said.
+PRINTF_FP_SAMPLES = (0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 11.0, 5.0, 20.0, 2.977e-06,
+                     1.0000000596046448, 3.141592653589793, -2.718281828459045, 65535.0,
+                     1.0 / 3.0, 123456789.0)
+# Only what the engine implements: a format the fuzz builds out of these cannot ask for a conversion
+# c_doprnt does not have (and `%z` above is the case that says what happens when one does).
+FUZZ_CONVERSIONS = "duoxcsefg"
+
+
+def _fuzz_format(rng):
+    """One random format the engine really supports, and the argument list it consumes."""
+    parts, values = [], []
+    for _ in range(rng.randrange(1, 4)):
+        parts.append(rng.choice(("", "-", "x", "..", " ")))
+        flags = ("-" if rng.random() < 0.3 else "") + ("0" if rng.random() < 0.3 else "")
+        width = str(rng.randrange(0, 14)) if rng.random() < 0.5 else ""
+        precision = ("." + str(rng.randrange(0, 8))) if rng.random() < 0.4 else ""
+        conversion = rng.choice(FUZZ_CONVERSIONS)
+        is_long = conversion in "duox" and rng.random() < 0.4
+        parts.append("%" + flags + width + precision + ("l" if is_long else "") + conversion)
+        if conversion in "duox":
+            values.append((4, rng.randrange(0, 1 << 32)) if is_long
+                          else (2, rng.randrange(-0x8000, 0x8000)))
+        elif conversion == "c":
+            values.append((2, rng.randrange(0x20, 0x7f)))
+        elif conversion == "s":
+            values.append((4, DOPRNT_TEXT))
+        else:
+            values.append(("double", rng.choice(PRINTF_FP_SAMPLES)))
+    return "".join(parts).encode("ascii"), tuple(values)
+
+
+@pytest.mark.parametrize("chunk", range(DOPRNT_FUZZ_CHUNKS))
+def test_c_doprnt_fuzz(chunk):
+    """CHUNK-SEEDED (abi.shard's docstring tells the two shapes apart): each chunk draws its own."""
+    rng = random.Random(0xd09 + chunk)
+    for _ in range(DOPRNT_FUZZ_PER_CHUNK):
+        fmt, values = _fuzz_format(rng)
+        pokes = abi.merge_pokes(doprnt_pokes(rng, fmt, values, text=b"fuzzed string"),
+                                abi.stack_args((4, DOPRNT_OUT), (4, DOPRNT_ARGS)))
+        info = check(ENTRY_C_DOPRNT,
+                     lambda lib, buf: lib.g_c_doprnt(buf, DOPRNT_OUT, DOPRNT_ARGS,
+                                                     INHERITED_CONVERSION, FP_CMP_STATUS_HIGH),
+                     pokes=pokes, regs={"d7": INHERITED_CONVERSION, **caller_registers()},
+                     note=f"c_doprnt fuzz {fmt!r} {values}")
+        check_d0_long(info, f"c_doprnt fuzz {fmt!r}")
+
+
+@pytest.mark.parametrize("value", (1e300, 1e-300))
+@pytest.mark.parametrize("conversion", (b"f", b"e"))
+def test_c_doprnt_scales_an_extreme_exponent(conversion, value):
+    """c_fcvt's scaling loop, run to its limit: about 300 `fp_div` or `fp_mul` passes per value.
+
+    THE CAP IS RAISED FOR THESE AND SAID OUT LOUD rather than raised for the whole battery: at
+    roughly 100,000 instructions a conversion they are the most expensive thing this file runs, and
+    the fuzz above deliberately draws from a narrower set of doubles because of it.
+    """
+    # NOT `hash((conversion, value))`: `conversion` is `bytes`, whose hash is salted with
+    # PYTHONHASHSEED — the guard noise would then differ every run and a failure could not be
+    # reproduced from the case's own seed.
+    rng = random.Random(conversion[0] * 3 + int(value != 0))
+    fmt = b"%" + conversion
+    values = (("double", value),)
+    pokes = abi.merge_pokes(doprnt_pokes(rng, fmt, values),
+                            abi.stack_args((4, DOPRNT_OUT), (4, DOPRNT_ARGS)))
+    info = check(ENTRY_C_DOPRNT,
+                 lambda lib, buf: lib.g_c_doprnt(buf, DOPRNT_OUT, DOPRNT_ARGS,
+                                                 INHERITED_CONVERSION, FP_CMP_STATUS_HIGH),
+                 pokes=pokes, regs={"d7": INHERITED_CONVERSION, **caller_registers()},
+                 note=f"c_doprnt({fmt!r}, {value!r})", max_insns=1_500_000)
+    check_d0_long(info, f"c_doprnt({fmt!r}, {value!r})")
+
+
+# ---- the pieces c_doprnt is built from -------------------------------------------------------
+
+GETNUM_CURSOR = SCRATCH + 0x600      # the `char **` c_fmt_getnum and c_fmt_integer advance
+
+
+@pytest.mark.parametrize("text", (b"", b"0", b"7x", b"123", b"99999", b"65536", b"007", b"-3",
+                                  b"\xff9", b" 5"))
+def test_c_fmt_getnum(text):
+    """The decimal number at the cursor, and the cursor left past it. Non-digits stop the scan —
+    including a byte with bit 7 set, which the SIGN-extended compare puts below '0'."""
+    rng = random.Random(len(text) * 5 + (text[0] if text else 0))
+    pokes = abi.merge_pokes(noise_around(rng, SCRATCH, text + b"\0"),
+                            {GETNUM_CURSOR: abi.long(SCRATCH)},
+                            abi.stack_args((4, GETNUM_CURSOR)))
+    info = check(ENTRY_C_FMT_GETNUM,
+                 lambda lib, buf: lib.g_c_fmt_getnum(buf, GETNUM_CURSOR),
+                 pokes=pokes, regs=caller_registers(), note=f"c_fmt_getnum({text!r})")
+    check_d0_low_word(info, f"c_fmt_getnum({text!r})")
+
+
+@pytest.mark.parametrize("conversion,is_long,value", (
+    (ord("d"), 0, 0),
+    (ord("d"), 0, 12345),
+    (ord("d"), 0, -12345),
+    (ord("d"), 1, 0x7fffffff),
+    (ord("d"), 1, -0x7fffffff),
+    (ord("u"), 0, -1),
+    (ord("u"), 1, 0xfffffffe),
+    (ord("o"), 0, 0o777),
+    (ord("o"), 1, 0xffffffff),
+    (ord("x"), 0, -1),
+    (ord("x"), 1, 0xabcdef01),
+    (ord("x"), 1, 0),
+))
+def test_c_fmt_integer(conversion, is_long, value):
+    """One integer in the base its conversion names, digits emitted in reverse off a 20-word stack.
+
+    `base_when_conversion_unknown` is the caller's D7, which from c_doprnt IS the conversion
+    character; every case here passes the same value both ways, as the original does.
+    """
+    rng = random.Random(conversion * 7 + is_long * 3 + (value & 0xff))
+    pokes = abi.merge_pokes(noise_around(rng, SCRATCH, bytes(0x40)),
+                            {GETNUM_CURSOR: abi.long(SCRATCH)},
+                            abi.stack_args((2, conversion), (2, is_long), (4, GETNUM_CURSOR),
+                                           (4, value)))
+    check(ENTRY_C_FMT_INTEGER,
+          lambda lib, buf: lib.g_c_fmt_integer(buf, conversion, is_long, GETNUM_CURSOR,
+                                               value & 0xffffffff, conversion),
+          pokes=pokes, regs={"d7": conversion, **caller_registers()},
+          note=f"c_fmt_integer({chr(conversion)}, long={is_long}, {value:#x})")
+
+
+def test_c_fmt_integer_refuses_a_base_that_would_overrun_its_digit_array():
+    """A CANDIDATE-ONLY case, for the same reason as the float precision below.
+
+    The digit array is the original's own 20 words, and base 2 of a longword needs 32 — so the
+    ORIGINAL overruns its `-40(a6)` frame here and carries on, which is not something a differential
+    can be asked (and a base of 1 never terminates at all). Only the "unknown conversion" arm can
+    produce such a base, and nothing in the program reaches it. The reconstruction refuses instead
+    of writing outside `digits`, and the refusal TALLY is what this asserts.
+    """
+    image = (ctypes.c_uint8 * len(harness.BASE_IMAGE)).from_buffer_copy(harness.BASE_IMAGE)
+    cursor = struct.pack(">I", SCRATCH)
+    image[GETNUM_CURSOR:GETNUM_CURSOR + 4] = (ctypes.c_uint8 * 4)(*cursor)
+    harness._lib.g_os_refusal_reset()
+    _lib.g_c_fmt_integer(image, ord("q"), 0, GETNUM_CURSOR, 0x12345678, 2)
+    assert harness._lib.g_os_refusal_count() != 0
+    # ...and it stopped at the bound rather than past it: exactly FMT_DIGIT_SLOTS digits were taken
+    # off the value, and none of them reached the output.
+    assert struct.unpack(">I", bytes(image[GETNUM_CURSOR:GETNUM_CURSOR + 4]))[0] == SCRATCH
+
+
+@pytest.mark.parametrize("base", (10, 8, 16, 2, 36))
+def test_c_fmt_integer_takes_its_base_from_the_caller_when_the_conversion_is_unknown(base):
+    """The `else` of the four-way chain leaves D7 alone, so the caller's register IS the base.
+
+    c_doprnt never reaches it — its dispatch only sends d/u/o/x here — so this is the only thing
+    that exercises the arm, and it is a register declaration rather than an argument the ABI has.
+    Base 2 and base 36 are not bases this library can name; they are what the arm actually does.
+    """
+    rng = random.Random(base * 11)
+    unknown = ord("q")
+    value = 1234
+    pokes = abi.merge_pokes(noise_around(rng, SCRATCH, bytes(0x40)),
+                            {GETNUM_CURSOR: abi.long(SCRATCH)},
+                            abi.stack_args((2, unknown), (2, 0), (4, GETNUM_CURSOR), (4, value)))
+    check(ENTRY_C_FMT_INTEGER,
+          lambda lib, buf: lib.g_c_fmt_integer(buf, unknown, 0, GETNUM_CURSOR, value, base),
+          pokes=pokes, regs={"d7": base, **caller_registers()},
+          note=f"c_fmt_integer with an unknown conversion and D7={base}")
+
+
+FCVT_VALUE = SCRATCH + 0x700         # the eight bytes c_fcvt reads
+FCVT_DIGITS = SCRATCH + 0x740        # ...the digits it writes
+FCVT_DECIMAL_POINT = SCRATCH + 0x7c0  # ...and the power of ten they scale by
+
+
+@pytest.mark.parametrize("value", (
+    0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 9.9999, 10.0, 0.001, 1234.5678, 1e6, 1e-6,
+    3.141592653589793, 65535.0, 0.0625, 123456789.0,
+))
+@pytest.mark.parametrize("ndigits", (1, 7, 17))
+def test_c_fcvt(value, ndigits):
+    """A double as decimal digits plus an exponent — scaled by `A_fcvt_ten`, rounded on the digits.
+
+    Compared as BYTES, like the rest of the floating-point package: it keeps 32 mantissa bits where
+    an IEEE double has 53, so "the same number to Python" is a different question from "the same
+    digits" and only the second is asked.
+    """
+    rng = random.Random(hash((value, ndigits)) & 0xffff)
+    pokes = abi.merge_pokes(noise_around(rng, FCVT_VALUE, abi.double(value)),
+                            noise_around(rng, FCVT_DIGITS, bytes(0x40)),
+                            noise_around(rng, FCVT_DECIMAL_POINT, bytes(2)),
+                            abi.stack_args((4, FCVT_VALUE), (4, FCVT_DIGITS),
+                                           (4, FCVT_DECIMAL_POINT), (2, ndigits)))
+    raw = struct.unpack(">II", abi.double(value))
+    check(ENTRY_C_FCVT,
+          lambda lib, buf: lib.g_c_fcvt(buf, raw[0], raw[1], FCVT_DIGITS, FCVT_DECIMAL_POINT,
+                                        ndigits),
+          pokes=pokes, regs=caller_registers(), note=f"c_fcvt({value!r}, {ndigits})")
+
+
+def test_c_fcvt_refuses_a_negative_digit_count():
+    """A CANDIDATE-ONLY case, and the third of this file's three out-of-bounds guards.
+
+    The original's `dbf` runs 65536 times on a negative counter and its round then steps BELOW the
+    caller's buffer — so there is nothing comparable to diff, only a write the reconstruction must
+    not make. `c_fmt_float` refuses a precision that could produce one, so this is the only thing
+    that exercises c_fcvt's own guard.
+    """
+    image = (ctypes.c_uint8 * len(harness.BASE_IMAGE)).from_buffer_copy(harness.BASE_IMAGE)
+    raw = struct.unpack(">II", abi.double(1.5))
+    harness._lib.g_os_refusal_reset()
+    _lib.g_c_fcvt(image, raw[0], raw[1], FCVT_DIGITS, FCVT_DECIMAL_POINT, 0xffff)  # -1 as a word
+    assert harness._lib.g_os_refusal_count() != 0
+    assert bytes(image[FCVT_DIGITS:FCVT_DIGITS + 4]) == bytes(harness.BASE_IMAGE[
+        FCVT_DIGITS:FCVT_DIGITS + 4]), "it wrote digits for a count it refused"
+
+
+@pytest.mark.parametrize("conversion", (ord("f"), ord("e"), ord("g")))
+@pytest.mark.parametrize("precision,value", (
+    (FMT_NO_PRECISION, 1.0),        # "no precision given" — a real 256, read as six digits
+    (0, 1.5),
+    (2, 3.14159),
+    (6, 0.0),
+    (6, -0.0),
+    (4, -2.5),
+    (3, 0.000125),
+    (7, 98765.4321),
+))
+def test_c_fmt_float(conversion, precision, value):
+    """One double as %f or %e, through c_fcvt twice for %f and through c_sprintf for %e's exponent."""
+    rng = random.Random(hash((conversion, precision, value)) & 0xffff)
+    raw = struct.unpack(">II", abi.double(value))
+    pokes = abi.merge_pokes(noise_around(rng, SCRATCH, bytes(0x80)),
+                            {GETNUM_CURSOR: abi.long(SCRATCH)},
+                            abi.stack_args((2, conversion), (2, precision), (4, GETNUM_CURSOR),
+                                           (4, raw[0]), (4, raw[1])))
+    check(ENTRY_C_FMT_FLOAT,
+          lambda lib, buf: lib.g_c_fmt_float(buf, conversion, precision, GETNUM_CURSOR,
+                                             raw[0], raw[1], INHERITED_CONVERSION,
+                                             FP_CMP_STATUS_HIGH),
+          pokes=pokes, regs={"d7": INHERITED_CONVERSION, **caller_registers()},
+          note=f"c_fmt_float({chr(conversion)}, {precision}, {value!r})")
+
+
+def test_the_scratch_the_reconstruction_uses_is_inside_the_dropped_stack_band():
+    """`CLIB_SCRATCH_BASE` is not a program address, and this is what says where it may be.
+
+    `c_fcvt`'s working double and `c_vfprintf`'s format buffer are frame locals in the original;
+    the reconstruction has no frame in the image, so it names three spans instead. They must lie
+    inside the band the differential DROPS — [STACK_GUARD_LO, IMAGE_SIZE) — or the two sides would
+    be compared over memory the original never had; they must stay clear of the arguments a case
+    pokes above STACK_TOP; and they must be at or above STACK_TOP - STACK_SCRATCH, which is where
+    the kit stops reading a write as a call frame's own (`test_blit.py` pins its slice locals the
+    same way). The derivation is pinned here rather than in MIRRORS because test_constants.py's
+    scraper reads literals, not arithmetic (its `defines` docstring says so).
+    """
+    total = C_FCVT_DOUBLE_BYTES + C_EXPONENT_ARGS_BYTES + C_VFPRINTF_BUFFER_BYTES
+    assert CLIB_SCRATCH_BASE == emu.STACK_TOP - emu.STACK_SCRATCH
+    assert emu.STACK_GUARD_LO <= CLIB_SCRATCH_BASE
+    # ...and the half a pin that only asserted the DROPPED band would miss: below
+    # STACK_TOP - STACK_SCRATCH the kit reads a write as program output rather than as a frame's
+    # own, and `harness._vet_...`'s stray-write check would call this scratch that.
+    assert CLIB_SCRATCH_BASE >= emu.STACK_TOP - emu.STACK_SCRATCH
+    assert CLIB_SCRATCH_BASE + total <= emu.STACK_TOP
+
+
+def test_the_constants_the_float_formatter_reads(post_init_image):
+    """`A_fcvt_ten`, `A_fcvt_max_digits` and the two DATA constants c_fmt_float names.
+
+    The ten is ONE ULP HIGH — 0x4024000000000001, not 0x4024000000000000 — which is a property of
+    the value init_globals writes and not a transcription slip, so it is asserted rather than
+    described.
+    """
+    assert bytes(post_init_image[A_FCVT_TEN:A_FCVT_TEN + 8]) == bytes.fromhex("4024000000000001")
+    assert struct.unpack(">h", bytes(post_init_image[A_FCVT_MAX_DIGITS:A_FCVT_MAX_DIGITS + 2]))[0] == 7
+    assert bytes(post_init_image[A_FMT_FLOAT_ZERO:A_FMT_FLOAT_ZERO + 8]) == bytes(8)
+    assert bytes(post_init_image[A_FMT_FLOAT_EXPONENT_FORMAT:
+                                 A_FMT_FLOAT_EXPONENT_FORMAT + 3]) == b"%d\0"
+
+
+# ---- the three entry points on top of c_doprnt -----------------------------------------------
+
+def test_c_sprintf():
+    """c_doprnt onto the caller's buffer, with the argument list starting at c_sprintf's SECOND
+    argument — so the format string and the values after it are one list."""
+    rng = random.Random(0x5f)
+    fmt = b"[%s=%d]"
+    pokes = abi.merge_pokes(noise_around(rng, DOPRNT_OUT, bytes(0x80)),
+                            noise_around(rng, DOPRNT_FORMAT, fmt + b"\0"),
+                            noise_around(rng, DOPRNT_TEXT, b"key\0"),
+                            abi.stack_args((4, DOPRNT_OUT), (4, DOPRNT_FORMAT),
+                                           (4, DOPRNT_TEXT), (2, 42)))
+    args = abi.FIRST_ARG + 4          # c_sprintf's `pea 12(a6)`: its own second argument slot
+    info = check(ENTRY_C_SPRINTF,
+                 lambda lib, buf: lib.g_c_sprintf(buf, DOPRNT_OUT, args, INHERITED_CONVERSION,
+                                                  FP_CMP_STATUS_HIGH),
+                 pokes=pokes, regs={"d7": INHERITED_CONVERSION, **caller_registers()},
+                 note="c_sprintf")
+    check_d0_long(info, "c_sprintf")
+
+
+@pytest.mark.parametrize("text,count", ((b"", 8), (b"hi", 8), (b"hi\n", 8), (b"overflowing", 3)))
+def test_c_fputs(text, count):
+    """Every byte through c_putc — so a full buffer flushes mid-string, through c_write."""
+    rng = random.Random(len(text) * 3 + count)
+    record = file_record(ptr=FILE_BUFFER, cnt=count, base=FILE_BUFFER,
+                         flags=FILE_WRITE | FILE_LINEBUF, fd=harness.OS_FS_FIRST_HANDLE,
+                         bufsiz=8)
+    pokes, _ = buffered_case(rng, record, files=[(SCR_NAME, b"", 0x100)], open_slots=(0,),
+                             buffer=bytes(8),
+                             fd_modes=((harness.OS_FS_FIRST_HANDLE, FD_MODE_BINARY),))
+    pokes = abi.merge_pokes(pokes, noise_around(rng, SCRATCH, text + b"\0"),
+                            abi.stack_args((4, SCRATCH), (4, A_FILE)))
+    check(ENTRY_C_FPUTS,
+          lambda lib, buf: lib.g_c_fputs(buf, SCRATCH, A_FILE, CALLER_A1, CALLER_A2),
+          pokes=pokes, regs=caller_registers(), note=f"c_fputs({text!r}, cnt={count})")
+
+
+@pytest.mark.parametrize("append", (0, FILE_APPEND))
+def test_c_fputs_across_several_flushes(append):
+    """A string long enough to flush the stream more than once — which is what makes A1 visible.
+
+    `c_write` asks `c_getfdmode`, and that leaves A1 one entry past the fd-mode table
+    (= `A_c_errno`) — so from the FIRST flush onwards every later trap in the same c_fputs files
+    that instead of the caller's A1. The append arm is the one that shows it: `c_fflush` seeks to
+    the end BEFORE writing, so the second flush's Fseek is a trap whose save slot differs. A
+    reconstruction that handed each `c_putc` the caller's register block unchanged is red here.
+    """
+    rng = random.Random(0xf0 + append)
+    text = b"0123456789A"
+    record = file_record(ptr=FILE_BUFFER, cnt=4, base=FILE_BUFFER,
+                         flags=FILE_WRITE | FILE_DIRTY | append,
+                         fd=harness.OS_FS_FIRST_HANDLE, bufsiz=4)
+    pokes, _ = buffered_case(rng, record, files=[(SCR_NAME, b"", 0x200)], open_slots=(0,),
+                             buffer=bytes(4), cursors=((0, 0),),
+                             fd_modes=((harness.OS_FS_FIRST_HANDLE, FD_MODE_BINARY),))
+    pokes = abi.merge_pokes(pokes, noise_around(rng, SCRATCH, text + b"\0"),
+                            abi.stack_args((4, SCRATCH), (4, A_FILE)))
+    check(ENTRY_C_FPUTS,
+          lambda lib, buf: lib.g_c_fputs(buf, SCRATCH, A_FILE, CALLER_A1, CALLER_A2),
+          pokes=pokes, regs=caller_registers(),
+          note=f"c_fputs({text!r}) over several flushes, append={append:#x}")
+
+
+# A precision the ORIGINAL does not survive either, so there is nothing to diff against — see the
+# case below. 60 is the largest `c_fmt_float` accepts; 70 overflows the digit array; 65534 reaches
+# `c_fmt_getnum`'s 16-bit wrap and arrives as -2.
+@pytest.mark.parametrize("fmt,refused", ((b"%.60f", False), (b"%.61f", True),
+                                         (b"%.70f", True), (b"%.65534f", True)))
+def test_c_fmt_float_refuses_a_precision_its_digit_buffer_cannot_hold(fmt, refused):
+    """A CANDIDATE-ONLY case, because the oracle cannot be asked this one.
+
+    The precision in a format string reaches `c_fcvt` as a digit count, and the original writes
+    those digits into its own 30-byte frame — so from about `%.27f` upwards the ORIGINAL smashes
+    its own stack, and `%.65534f` asks it for a NEGATIVE count. There is no comparable answer to
+    diff against. What the reconstruction must not do is write outside its own `digits` array,
+    which in the harness's process is a crashed xdist worker rather than a red case; so it refuses,
+    and the refusal TALLY is the surface this asserts.
+    """
+    image = (ctypes.c_uint8 * len(harness.BASE_IMAGE)).from_buffer_copy(harness.BASE_IMAGE)
+
+    def poke(at, data):
+        image[at:at + len(data)] = (ctypes.c_uint8 * len(data))(*data)
+
+    poke(DOPRNT_FORMAT, fmt + b"\0")
+    poke(DOPRNT_ARGS, abi.long(DOPRNT_FORMAT) + abi.double(3.14159))
+    harness._lib.g_os_refusal_reset()
+    written = _lib.g_c_doprnt(image, DOPRNT_OUT, DOPRNT_ARGS, INHERITED_CONVERSION,
+                              FP_CMP_STATUS_HIGH)
+    assert (harness._lib.g_os_refusal_count() != 0) is refused, f"{fmt!r}"
+    assert (written == 0) is refused, f"{fmt!r} wrote {written} bytes"
+
+
+@pytest.mark.parametrize("fmt,values", (
+    (GAME_PRINTF_MESSAGE, ()),
+    (b"%d/%d\n", ((2, 3), (2, 4))),
+    (b"", ()),
+))
+def test_c_vfprintf(fmt, values):
+    """Format into the 256-byte local, then push it at a stream through c_fputs.
+
+    THE BUFFER ITSELF IS NOT COMPARED on either side — the original's is a frame local and the
+    reconstruction's is `CLIB_SCRATCH_VFPRINTF_BUFFER`, both inside the band the differential drops
+    as stack. What IS compared is what comes out of it: every byte reaches the FILE through c_putc.
+    """
+    rng = random.Random(len(fmt) * 29 + len(values))
+    record = file_record(ptr=FILE_BUFFER, cnt=8, base=FILE_BUFFER,
+                         flags=FILE_WRITE | FILE_LINEBUF, fd=harness.OS_FS_FIRST_HANDLE, bufsiz=8)
+    pokes, _ = buffered_case(rng, record, files=[(SCR_NAME, b"", 0x200)], open_slots=(0,),
+                             buffer=bytes(8),
+                             fd_modes=((harness.OS_FS_FIRST_HANDLE, FD_MODE_BINARY),))
+    pokes = abi.merge_pokes(pokes, noise_around(rng, DOPRNT_FORMAT, fmt + b"\0"),
+                            noise_around(rng, DOPRNT_ARGS,
+                                         abi.long(DOPRNT_FORMAT) + printf_arguments(*values)),
+                            abi.stack_args((4, A_FILE), (4, DOPRNT_ARGS)))
+    info = check(ENTRY_C_VFPRINTF,
+                 lambda lib, buf: lib.g_c_vfprintf(buf, A_FILE, DOPRNT_ARGS, INHERITED_CONVERSION,
+                                                   FP_CMP_STATUS_HIGH, CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs={"d7": INHERITED_CONVERSION, **caller_registers()},
+                 note=f"c_vfprintf({fmt!r})")
+    check_d0_low_word(info, f"c_vfprintf({fmt!r})")
+
+
+@pytest.mark.parametrize("fmt,values", (
+    (GAME_PRINTF_MESSAGE, ()),
+    (b"%s", ((4, DOPRNT_TEXT),)),
+))
+def test_c_printf(fmt, values):
+    """c_vfprintf on `c_stdout`, which is a LINE-BUFFERED CON: stream — so what a case sees is the
+    console-byte ledger, filled a line at a time through c_flsbuf -> c_fflush -> c_write."""
+    rng = random.Random(len(fmt) + len(values) * 7)
+    stdout = file_record(ptr=FILE_BUFFER, cnt=0x20, base=FILE_BUFFER,
+                         flags=FILE_WRITE | FILE_LINEBUF, fd=FD_DEVICE_CON, bufsiz=0x20)
+    table = bytearray(iob_poke(rng)[A_C_UNBUF_CHARS])
+    at = A_C_STDOUT - A_C_UNBUF_CHARS          # c_stdout's record, inside that one staged span
+    table[at:at + C_IOB_STRIDE] = stdout
+    pokes = abi.merge_pokes({A_C_UNBUF_CHARS: bytes(table)}, trap_slot_noise(rng),
+                            fd_table_poke(rng, ((FD_DEVICE_CON, 0),)),
+                            noise_around(rng, FILE_BUFFER, bytes(0x20)),
+                            noise_around(rng, DOPRNT_FORMAT, fmt + b"\0"),
+                            noise_around(rng, DOPRNT_TEXT, b"printed\0"))
+    pokes = abi.merge_pokes(pokes, abi.stack_args(
+        *(((4, DOPRNT_FORMAT),) + tuple(
+            (4, v) if w == 4 else (2, v) for w, v in values if w != "double"))))
+    args = abi.FIRST_ARG               # c_printf's `pea 8(a6)`: its own first argument slot
+    info = check(ENTRY_C_PRINTF,
+                 lambda lib, buf: lib.g_c_printf(buf, args, INHERITED_CONVERSION,
+                                                 FP_CMP_STATUS_HIGH, CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs={"d7": INHERITED_CONVERSION, **caller_registers()},
+                 note=f"c_printf({fmt!r})")
+    check_d0_low_word(info, f"c_printf({fmt!r})")
+
+
 # ================================================================================================
 # The cross-file pins this battery carries (README.md, "Adding a function", step 4)
 # ================================================================================================
@@ -1187,6 +2559,54 @@ MIRRORS = (
     ("FP_OP_ADD_SHORT", "include/clib.h", "FP_SOURCE_SHORT"),
     ("FP_OP_ADD_LONG", "include/clib.h", "FP_SOURCE_LONG"),
     ("FP_OP_ADD_FLOAT", "include/clib.h", "FP_SOURCE_FLOAT"),
+    ("A_C_IOB", "include/clib.h", "A_c_iob"),
+    ("A_C_STDOUT", "include/clib.h", "A_c_stdout"),
+    ("A_C_UNBUF_CHARS", "include/clib.h", "A_c_unbuf_chars"),
+    ("A_C_BUFSIZ", "include/clib.h", "A_c_bufsiz"),
+    ("A_C_FOPEN_SLOT_HINT", "include/clib.h", "A_c_fopen_slot_hint"),
+    ("A_C_CONIN_READ_POS", "include/clib.h", "A_c_conin_read_pos"),
+    ("A_C_CONIN_LENGTH", "include/clib.h", "A_c_conin_length"),
+    ("A_C_CONIN_BUFFER", "include/clib.h", "A_c_conin_buffer"),
+    ("A_CRLF", "include/clib.h", "A_crlf"),
+    ("A_FCVT_TEN", "include/clib.h", "A_fcvt_ten"),
+    ("A_FCVT_MAX_DIGITS", "include/clib.h", "A_fcvt_max_digits"),
+    ("A_FMT_FLOAT_ZERO", "include/clib.h", "A_fmt_float_zero"),
+    ("A_FMT_FLOAT_EXPONENT_FORMAT", "include/clib.h", "A_fmt_float_exponent_format"),
+    ("CLIB_SCRATCH_BASE", "include/clib.h", "CLIB_SCRATCH_BASE"),
+    ("C_VFPRINTF_BUFFER_BYTES", "include/clib.h", "C_VFPRINTF_BUFFER_BYTES"),
+    ("C_FCVT_DIGITS_OVERHEAD", "include/clib.h", "C_FCVT_DIGITS_OVERHEAD"),
+    ("C_FCVT_DIGITS_MAX", "include/clib.h", "C_FCVT_DIGITS_MAX"),
+    ("C_EXPONENT_ARGS_BYTES", "include/clib.h", "C_EXPONENT_ARGS_BYTES"),
+    ("C_FCVT_DOUBLE_BYTES", "include/clib.h", "C_FCVT_DOUBLE_BYTES"),
+    ("C_IOB_SLOTS", "include/clib.h", "C_IOB_SLOTS"),
+    ("C_IOB_STRIDE", "include/clib.h", "C_IOB_STRIDE"),
+    ("C_IOB_END", "include/clib.h", "C_IOB_END"),
+    ("FILE_OFF_PTR", "include/clib.h", "FILE_OFF_PTR"),
+    ("FILE_OFF_CNT", "include/clib.h", "FILE_OFF_CNT"),
+    ("FILE_OFF_BASE", "include/clib.h", "FILE_OFF_BASE"),
+    ("FILE_OFF_FLAGS", "include/clib.h", "FILE_OFF_FLAGS"),
+    ("FILE_OFF_FD", "include/clib.h", "FILE_OFF_FD"),
+    ("FILE_OFF_OFFSET", "include/clib.h", "FILE_OFF_OFFSET"),
+    ("FILE_OFF_BUFSIZ", "include/clib.h", "FILE_OFF_BUFSIZ"),
+    ("FILE_READ", "include/clib.h", "FILE_READ"),
+    ("FILE_WRITE", "include/clib.h", "FILE_WRITE"),
+    ("FILE_APPEND", "include/clib.h", "FILE_APPEND"),
+    ("FILE_UNBUFFERED", "include/clib.h", "FILE_UNBUFFERED"),
+    ("FILE_MYBUF", "include/clib.h", "FILE_MYBUF"),
+    ("FILE_EOF", "include/clib.h", "FILE_EOF"),
+    ("FILE_ERR", "include/clib.h", "FILE_ERR"),
+    ("FILE_DIRTY", "include/clib.h", "FILE_DIRTY"),
+    ("FILE_LINEBUF", "include/clib.h", "FILE_LINEBUF"),
+    ("FMT_NO_PRECISION", "include/clib.h", "FMT_NO_PRECISION"),
+    ("CRLF_BYTES", "include/clib.h", "CRLF_BYTES"),
+    ("RET_C_FILBUF_FSEEK", "include/clib.h", "RET_C_FILBUF_FSEEK"),
+    ("RET_C_LSEEK_FSEEK", "include/clib.h", "RET_C_LSEEK_FSEEK"),
+    ("RET_C_WRITE_FWRITE_RUN", "include/clib.h", "RET_C_WRITE_FWRITE_RUN"),
+    ("RET_C_WRITE_FWRITE_CRLF", "include/clib.h", "RET_C_WRITE_FWRITE_CRLF"),
+    ("RET_C_WRITE_FWRITE_TAIL", "include/clib.h", "RET_C_WRITE_FWRITE_TAIL"),
+    ("RET_C_CONOUT_CR", "include/clib.h", "RET_C_CONOUT_CR"),
+    ("RET_C_CONOUT_BYTE", "include/clib.h", "RET_C_CONOUT_BYTE"),
+    ("RET_C_CONIN_CRAWCIN", "include/clib.h", "RET_C_CONIN_CRAWCIN"),
 )
 
 # SIXTEEN BYTES, not the usual eight. Five of the floating-point routines open with the identical
@@ -1195,6 +2615,9 @@ MIRRORS = (
 # prologue would let one stand for another and a mistyped entry would run the wrong routine and
 # still come back clean.
 ENTRY_PROLOGUES = {
+    # Only two of these bytes are the routine; the rest are `init_gem_and_screens` behind it, which
+    # is what makes a sixteen-byte pin possible for a two-byte `rts`.
+    "ENTRY_CRT0_SETUP_ARGS": "4e754e56fffa4eba4a763d40fffc426e",
     "ENTRY_C_STRLEN": "4e56000048e70030266e0008244b6000",
     "ENTRY_C_STRCMP": "4e56000048e70030266e0008246e000c",
     "ENTRY_C_LDIV": "4e56fffe48e7f000242e0008660a80fc",
@@ -1226,4 +2649,24 @@ ENTRY_PROLOGUES = {
     "ENTRY_FP_FLOAT_TO_DOUBLE": "4e56000048e7c080206e000842812010",
     "ENTRY_FP_DOUBLE_TO_LONG": "4e56000048e7e080206e00082210e181",
     "ENTRY_FP_LONG_TO_DOUBLE": "4e56000048e7ffc0206e000824106606",
+    "ENTRY_C_FCLOSE": "4e5600002f0b266e00082f0b4eba0044",
+    "ENTRY_C_FFLUSH": "4e56000048e70110266e0008302b000a",
+    "ENTRY_C_FILBUF": "4e56fffc2f0b266e0008302b000ac07c",
+    "ENTRY_C_FLSBUF": "4e56fffc2f0b266e000a426b0004302b",
+    "ENTRY_C_PUTC": "4e560000206e000a5368000430280004",
+    "ENTRY_C_FCVT": "4e56fff248e70730266e0008246e000c",
+    "ENTRY_C_FOPEN": "4e56fffc48e70130266e000c426efffc",
+    "ENTRY_C_FREAD": "4e56fffe48e70310266e00083e2e000e",
+    "ENTRY_C_LSEEK": "4e56fff20c6e000000086c0a203cffff",
+    "ENTRY_C_FMT_INTEGER": "4e56ffd648e70110266e000c426effd6",
+    "ENTRY_C_FMT_FLOAT": "4e56ffde48e70310266e000c0c6e0100",
+    "ENTRY_C_FMT_GETNUM": "4e56fffe426efffe6022302efffec1fc",
+    "ENTRY_C_DOPRNT": "4e56ffe648e70330266e000c2d6e0008",
+    "ENTRY_C_VFPRINTF": "4e56fefe2f2e000c486eff004ebafd68",
+    "ENTRY_C_PRINTF": "4e560000486e0008486c9c024ebaffc6",
+    "ENTRY_C_SPRINTF": "4e560000486e000c2f2e00084ebafd26",
+    "ENTRY_C_FPUTS": "4e56000060182f2e000c206e000852ae",
+    "ENTRY_C_CONIN": "4e56fffc0c6e830000086600013a302c",
+    "ENTRY_C_CONOUT_WRITE": "4e5600006034206e000810104880b07c",
+    "ENTRY_C_WRITE": "4e56fff248e70030266e000a244b41ec",
 }

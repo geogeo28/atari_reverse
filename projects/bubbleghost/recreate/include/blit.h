@@ -8,8 +8,9 @@
  *
  * THIS SUBSYSTEM OWNS THE SCREEN. `A_screen_phys` / `A_screen_back` / `A_dat_bank` /
  * `A_bank_index` and the geometry below live here, and another subsystem that needs one includes
- * this header to READ it (README.md, "Adding a function"). Three globals at the bottom are
- * BORROWED from subsystems that are not ported yet; STATUS.md's "Borrowed globals" carries the loan.
+ * this header to READ it (README.md, "Adding a function"). The room and object TABLES this
+ * subsystem draws from are `include/gameplay.h`'s, and `src/blit.c` includes that header to read
+ * them — they were on loan here until the gameplay subsystem landed.
  */
 #ifndef BG_BLIT_H
 #define BG_BLIT_H
@@ -62,47 +63,12 @@
 #define WIPE_STEPS              40u     /* `cmpi.w #$28,d7`: 40 x 4 rows = the room's 160 rows */
 #define WIPE_STEP_BYTES         640u    /* `move.w #$280`: four scanlines */
 
-/* ---- the object records the animator steps ----------------------------------------------------
- * 36 rooms x 10 slots x 14 bytes (../notes/gameplay.md, §4). BORROWED layout — see the note on
- * A_object_table below.
- *
- * PROVENANCE. The Alcyon compiler reaches each field through its OWN `lea -n(a4),a0`, so every
- * offset below is a displacement read off one named instruction rather than a layout inferred from
- * the record's shape — and each is DIFFERENTIAL-pinned by `test/test_blit.py`'s object cases, which
- * poke the fields by these offsets and compare the whole image (a wrong offset moves both what the
- * routine reads and what it writes). `A_object_table` is `A4_BASE - 18560`, so the displacement
- * NAMES the offset: -18560 is field 0, -18558 is field 2, and so on. */
-#define OBJECT_SLOTS            10u     /* `cmpi.w #$a` @ 0x1394c */
-#define OBJECT_STRIDE           14u     /* `muls.w #$e` @ 0x13790 */
-#define OBJECT_ROOM_STRIDE      140u    /* `muls.w #$8c` @ 0x13786 = OBJECT_SLOTS x OBJECT_STRIDE */
-/* word: base GHOST.DAT tile; negative = empty slot. `lea -18560(a4)` @ 0x1378a; pinned by
- * test_blit.py::test_objects_animate_and_draw_word_edge_branches */
-#define OBJECT_TILE             0u
-/* word: frames left; the frame steps when it is already 0. `lea -18558(a4)` @ 0x137ac; pinned by
- * test_blit.py::test_objects_animate_and_draw_countdown_reaches_zero_and_reloads */
-#define OBJECT_COUNTDOWN        2u
-/* word: what COUNTDOWN is reloaded with. `lea -18556(a4)` @ 0x137d2; pinned by the same case */
-#define OBJECT_RELOAD           4u
-/* word: tile column 0..9. `lea -18554(a4)` @ 0x12d54; pinned by
- * test_blit.py::test_objects_animate_and_draw_fuzz, which varies it over the grid */
-#define OBJECT_X                6u
-/* word: tile row 0..4. `lea -18552(a4)` @ 0x12d88; pinned by the same case */
-#define OBJECT_Y                8u
-/* word: animation frame; the tile drawn is TILE + FRAME. `lea -18550(a4)` @ 0x1380a; pinned by
- * test_blit.py::test_objects_animate_and_draw_shipped_rooms */
-#define OBJECT_FRAME            10u
-/* word: FRAME wraps to 0 when it reaches this minus one. `lea -18548(a4)` @ 0x13828; pinned by
- * test_blit.py::test_objects_animate_and_draw_countdown_reaches_zero_and_reloads, which arms the
- * wrap on the same slot that reloads */
-#define OBJECT_FRAME_COUNT      12u
-
-/* ---- the room record the stage draw reads -----------------------------------------------------
- * 36 rooms x 120 bytes, opening with a 5 x 10 word tile map. BORROWED, as above, and pinned the
- * same way: `test/test_blit.py`'s `draw_room_to_stage` cases poke a map cell computed from these
- * three and the tile that lands on the screen is what says the address was right. */
-#define ROOM_STRIDE             120u    /* `muls.w #$78` @ 0x13a40 */
-#define ROOM_MAP_ROW_BYTES      20u     /* `muls.w #$14` @ 0x13a4a = ROOM_TILE_COLS words */
-#define ROOM_MAP_CELL_BYTES     2u      /* `asl.l #1,d0` @ 0x13a58: a map cell is a word */
+/* ---- the object and room records ---------------------------------------------------------------
+ * `objects_animate_and_draw` steps the 14-byte object slots and `draw_room_to_stage` reads the
+ * room's 5 x 10 tile map, but neither record is this subsystem's: both live in
+ * `include/gameplay.h`, which `src/blit.c` includes to read them. They were defined HERE on loan
+ * while the gameplay subsystem was unported, and STATUS.md's "Borrowed globals" rows predicted
+ * exactly this move. */
 
 /* ---- the two MFDBs build_sprite_bank hands to vro_cpyfm ---------------------------------------
  * A GEM Memory Form Definition Block. Only the six fields below exist; `fd_addr` = 0 is the VDI's
@@ -123,16 +89,6 @@
 #define A_mfdb_src              0x23100u  /* the source MFDB build_sprite_bank fills in */
 #define A_mfdb_dst              0x230ecu  /* ...and the destination one */
 
-/* ---- BORROWED globals ------------------------------------------------------------------------
- * These belong to the GAMEPLAY subsystem (the rooms and their objects), which is not ported yet.
- * Each is a LOAN with a row in STATUS.md, "Borrowed globals": when `include/gameplay.h` appears,
- * `test_constants.py`'s duplicate check is what will say so — in the OTHER agent's diff — and
- * deleting the row and the three defines below is the whole of the migration. The record layouts
- * above (OBJECT_*, ROOM_*) move with them. */
-#define A_room_number           0x23120u  /* word: 0..35, = room_grid[grid_row][grid_col] */
-#define A_object_table          0x2069au  /* 36 rooms x OBJECT_ROOM_STRIDE bytes */
-#define A_room_table            0x21a4au  /* 36 rooms x ROOM_STRIDE bytes */
-
 /* ---- cores ----------------------------------------------------------------------------------- */
 void clear_physical_screen(uint8_t *image);
 void present_room(uint8_t *image);
@@ -143,7 +99,11 @@ void draw_tile_bank_screen(uint8_t *image);
 void draw_hud_row_tiles(uint8_t *image);
 void objects_animate_and_draw(uint8_t *image);
 void build_sprite_bank_prepare(uint8_t *image);
-void draw_room_tile_to_stage(uint8_t *image, int16_t tile_row, int16_t tile_col);
+/* Answers the A2 it leaves behind — one tile band past the destination it started from — because
+ * `draw_room_to_stage`'s NEXT cell traps with that in A2 and the trampoline files it. Reported by
+ * the routine that computes it rather than re-derived by the caller: `src/frontend.c` carried the
+ * derivation as a second copy of the destination arithmetic until this return type existed. */
+uint32_t draw_room_tile_to_stage(uint8_t *image, int16_t tile_row, int16_t tile_col);
 void room_wipe_in_slide(uint8_t *image);
 void room_wipe_in_step(uint8_t *image, int16_t step);
 

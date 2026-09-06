@@ -119,25 +119,63 @@ def check_mirrors(module):
             f"{c_path}'s {c_name} = {c_value:#x}")
 
 
+# The two families of address constant a battery declares, and the dict that must pin each. An
+# ENTRY_* is where a run starts; a STOP_* is the checkpoint PC it is diffed at (`stop_pc`). Both are
+# addresses in the original, and both are equally able to point at the wrong instruction.
+_ADDRESS_FAMILIES = (("ENTRY_", "ENTRY_PROLOGUES"), ("STOP_", "STOP_PROLOGUES"))
+
+
+def _declared_addresses(module, prefix):
+    """The module-level `<prefix>*` names whose value is an address inside the loaded program.
+
+    THE RANGE TEST IS THE DEFINITION, not a convenience: a `<prefix>*` name holding something that is
+    not a program address cannot be pinned against bytes at all, and this project has one —
+    `test_gameplay.py`'s `ENTRY_POINT_PIXELS`, which is the tile size a bubble entry point is scaled
+    by and mirrors `include/gameplay.h`. Everything that IS an address must be pinned, and the check
+    below names any that is not.
+    """
+    return {name: value for name, value in vars(module).items()
+            if name.startswith(prefix) and isinstance(value, int)
+            and loader.LOAD_BASE <= value < loader.PROGRAM_END}
+
+
 def check_entry_prologues(module):
-    """...and that every `ENTRY_*` in `module.ENTRY_PROLOGUES` still opens with those bytes.
+    """Every `ENTRY_*` and `STOP_*` a battery declares still points at the bytes it names.
 
     Pinned against the ORIGINAL'S OWN BYTES rather than against a name file, so the check needs
     nothing but the .PRG the harness already loaded — which matters here, where `../names.txt` is
     still being written. Eight bytes is the working length: almost every function in this program
     opens `link a6,#-n`, so a shorter prologue would tell none of them apart.
 
+    EVERY DECLARED ADDRESS MUST BE PINNED, and an unpinned one fails BY NAME. A dict of pins can only
+    ever check what is in it, so a battery that adds an entry and forgets its row gets no check at
+    all and no complaint — which is how `ENTRY_SAVE_HISCORES` and eleven `STOP_*` went unpinned here.
+    A STOP_ is pinned exactly as an ENTRY_ is, and it is worth as much: a checkpoint one instruction
+    early diffs a routine before its last store and comes back clean.
+
     `harness.BASE_IMAGE` is the .PRG AS LOADED, deliberately: an entry address is a fact about the
     binary, not about the post-init image `conftest.py` stages every case on, and the two agree over
     TEXT anyway (`init_globals` writes only the bss).
     """
-    for python_name, prologue in module.ENTRY_PROLOGUES.items():
-        entry = getattr(module, python_name)
-        expected = bytes.fromhex(prologue)
-        actual = bytes(harness.BASE_IMAGE[entry:entry + len(expected)])
-        assert actual == expected, (
-            f"{module.__name__}.py's {python_name} = {entry:#x} holds {actual.hex()}, "
-            f"not the {expected.hex()} this routine starts with")
+    for prefix, dict_name in _ADDRESS_FAMILIES:
+        declared = _declared_addresses(module, prefix)
+        pins = getattr(module, dict_name, {})
+        missing = sorted(set(declared) - set(pins))
+        assert not missing, (
+            f"{module.__name__}.py declares {', '.join(missing)} but pins "
+            f"{'them' if len(missing) > 1 else 'it'} in no {dict_name} row — an address that is "
+            f"never pinned could point at a different instruction and still come back clean")
+        unknown = sorted(set(pins) - set(declared))
+        assert not unknown, (
+            f"{module.__name__}.py's {dict_name} pins {', '.join(unknown)}, which is not a "
+            f"module-level {prefix}* address — a row that names nothing checks nothing")
+        for python_name, prologue in pins.items():
+            entry = declared[python_name]
+            expected = bytes.fromhex(prologue)
+            actual = bytes(harness.BASE_IMAGE[entry:entry + len(expected)])
+            assert actual == expected, (
+                f"{module.__name__}.py's {python_name} = {entry:#x} holds {actual.hex()}, "
+                f"not the {expected.hex()} this address holds")
 
 
 def test_every_battery_declares_its_pins():
@@ -164,7 +202,9 @@ def test_mirrored_constants_match_the_c():
 
 
 def test_entry_addresses_still_point_at_their_routines():
-    """A mistyped entry would silently run a different routine — and could still come back clean."""
+    """A mistyped entry would silently run a different routine — and could still come back clean.
+
+    Also fails, by name, on an `ENTRY_*` or `STOP_*` a battery declares and never pins."""
     for _stem, module in _batteries():
         check_entry_prologues(module)
 

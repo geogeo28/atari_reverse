@@ -44,12 +44,37 @@ static CallerAddressRegisters carrying_in_a2(CallerAddressRegisters saved, uint3
  * This is the other half of the pair: a routine that reaches a trap with a DERIVED a1/a2 (c_read's
  * top-up Fread, and every glue below, which is handed two loose longwords) builds the record here
  * rather than passing them separately, so a swapped pair cannot pass unnoticed. */
-static CallerAddressRegisters caller_registers(uint32_t a1, uint32_t a2) {
-    CallerAddressRegisters saved;
+/* AND A1 IS NOT THE CALLER'S ONCE THE fd-MODE TABLE HAS BEEN ASKED. `c_getfdmode` @ 0x15d36 opens
+ * `lea table,a1 / adda.w #$130,a1` and never restores it, so A1 comes back holding the address one
+ * entry past the table — which is `A_c_errno` — and every trap AFTER that files it, in the routine
+ * that asked and in every routine above it. (`c_setfdmode` and `c_clearfdmode` walk the same table
+ * through A0 and leave A1 alone, so only the reader does this.)
+ *
+ * THE CLOBBER TRAVELS WITH THE CALL rather than being predicted by each caller. `c_read` and
+ * `c_write` are the only two routines that ask, so they are the only two that record it — and every
+ * routine that can reach one of them takes the register record BY POINTER, so a caller three levels
+ * up files the right A1 without knowing which arm ran. Predicting it per caller was the first shape
+ * here, and it was already wrong once (`c_fputs`, whose second flush files a different A1 from its
+ * first) and overstated once (`c_fread`, which used to claim every refill had asked). */
+static void note_fd_modes_consulted(CallerAddressRegisters *saved) { saved->a1 = A_c_errno; }
 
-    saved.a1 = a1;
-    saved.a2 = a2;
-    return saved;
+/* ================================================================================================
+ * The C runtime's startup hooks
+ * ============================================================================================= */
+
+/* crt0_setup_args @ 0x10116 — the Alcyon runtime's argv hook. A BARE `rts`.
+ *
+ * The crt0 calls it with the basepage's command tail (`pea 128(a0) / jsr $10116` @ 0x100b2) so that
+ * a program which wants `argc`/`argv` can parse it; this one was linked against the stub, so the
+ * whole routine is two bytes. Reconstructed rather than left out because a routine nobody
+ * reconstructs and nobody records is indistinguishable from one nobody noticed — and because the
+ * claim "it writes nothing" is exactly what a differential can check (`test_clib.py`).
+ *
+ * It is HERE and not with the boot chain in ../STATUS.md's `init` section because it belongs to the
+ * C library rather than to the game: it is the runtime's hook, and the crt0 is its only caller. */
+void crt0_setup_args(uint8_t *image, uint32_t command_tail) {
+    (void)image;            /* it reads nothing... */
+    (void)command_tail;     /* ...not even the argument the crt0 pushes for it */
 }
 
 /* ================================================================================================
@@ -495,24 +520,27 @@ int16_t c_close(uint8_t *image, uint16_t handle, CallerAddressRegisters saved) {
  *
  * The console path — a handle at or below FD_DEVICE_CON, served by `c_conin` @ 0x16518 — is NOT
  * reconstructed: its body is GEMDOS Crawcin/Cnecin, which the kit does not model. It refuses. */
-int32_t c_read(uint8_t *image, uint16_t handle, uint32_t buffer, uint16_t length,
-               CallerAddressRegisters saved) {
+int32_t c_read_reporting(uint8_t *image, uint16_t handle, uint32_t buffer, uint16_t length,
+                         CallerAddressRegisters *saved) {
     int32_t count;
     uint32_t read_cursor;
     uint32_t write_cursor;
+    int binary;
 
     wr16(image + A_c_errno, 0);
     if ((int16_t)handle <= (int16_t)FD_DEVICE_CON)
         return os_refused(-1);          /* the cooked console reader; see the note above */
 
-    trap_save_registers(image, saved, RET_C_READ_FREAD_FIRST);
+    trap_save_registers(image, *saved, RET_C_READ_FREAD_FIRST);
     count = os_fread(image, handle, length, buffer);
     wr16(image + A_c_errno, (uint16_t)count);
     if ((int16_t)count < 0)
         return -1;
 
-    if (c_getfdmode(image, handle) != 0) {
-        wr16(image + A_c_errno, 0);     /* binary: the bytes are already where the caller wants them */
+    binary = c_getfdmode(image, handle) != 0;
+    note_fd_modes_consulted(saved);     /* ...and A1 stays there for every trap from here up */
+    if (binary) {
+        wr16(image + A_c_errno, 0);     /* the bytes are already where the caller wants them */
         return count;
     }
 
@@ -523,11 +551,9 @@ int32_t c_read(uint8_t *image, uint16_t handle, uint32_t buffer, uint16_t length
         if ((int32_t)(int16_t)(read_cursor - buffer) >= count) {
             int32_t refill;
 
-            /* NEITHER SAVED REGISTER IS THE CALLER'S HERE. A2 is the write cursor, which c_read
-             * loaded before the loop; and A1 is A_c_errno's address, because `c_getfdmode` — asked
-             * about the handle just above — ends with A1 one entry PAST the fd-mode table and
-             * nothing puts it back. Both are derived rather than taken as arguments. */
-            trap_save_registers(image, caller_registers(A_c_errno, write_cursor),
+            /* A2 is the write cursor this routine loaded before the loop; A1 is already
+             * `A_c_errno`, recorded above where `c_getfdmode` left it. */
+            trap_save_registers(image, carrying_in_a2(*saved, write_cursor),
                                 RET_C_READ_FREAD_REFILL);
             refill = os_fread(image, handle, (uint32_t)length, write_cursor);
 
@@ -551,6 +577,20 @@ int32_t c_read(uint8_t *image, uint16_t handle, uint32_t buffer, uint16_t length
     count = (int32_t)(int16_t)(write_cursor - buffer);
     wr16(image + A_c_errno, 0);
     return count;
+}
+
+/* THE BY-VALUE SPELLINGS, for a caller that makes ONE of these calls and then traps no more.
+ * Everything inside this file goes through the `_reporting` forms above, because A1 has to travel
+ * up the call chain; a caller elsewhere that makes several calls in a row needs the same and should
+ * call those directly rather than re-deriving `A_c_errno` afterwards. */
+int32_t c_read(uint8_t *image, uint16_t handle, uint32_t buffer, uint16_t length,
+               CallerAddressRegisters saved) {
+    return c_read_reporting(image, handle, buffer, length, &saved);
+}
+
+int16_t c_write(uint8_t *image, uint16_t handle, uint32_t buffer, int16_t length,
+                CallerAddressRegisters saved) {
+    return c_write_reporting(image, handle, buffer, length, &saved);
 }
 
 /* ================================================================================================
@@ -904,7 +944,7 @@ void fp_mul(uint8_t *image, uint32_t dst, uint32_t src) {
         fp_pack_double(image, dst, 0, exponent);
         return;
     }
-    exponent = (uint16_t)(exponent - FP_BIAS_MUL);
+    exponent = (uint16_t)(exponent - FP_EXPONENT_BIAS);
     exponent = (uint16_t)(exponent + src_exponent);
 
     high_product = (uint32_t)(uint16_t)(dst_mantissa >> 16) * (uint16_t)(src_mantissa >> 16);
@@ -1073,6 +1113,1061 @@ uint32_t xbios_physbase(uint8_t *image, CallerAddressRegisters saved, uint32_t r
 }
 
 /* ================================================================================================
+ * The console writers, and the low-level write and seek the buffered layer sits on
+ * ============================================================================================= */
+
+/* One byte back, the way the 68000's `-(an)` wraps — `addr_add`'s counterpart. */
+static uint32_t addr_back(uint32_t address) { return addr_add(address, (uint32_t)-1); }
+
+/* A FILE record's fields. Every routine below reaches them through these six rather than spelling
+ * `be16(image + file + 10)`, so a wrong offset is wrong in one place instead of thirty. */
+static uint32_t file_ptr(const uint8_t *image, uint32_t file) {
+    return be32(image + file + FILE_OFF_PTR);
+}
+static uint32_t file_base(const uint8_t *image, uint32_t file) {
+    return be32(image + file + FILE_OFF_BASE);
+}
+static uint16_t file_flags(const uint8_t *image, uint32_t file) {
+    return be16(image + file + FILE_OFF_FLAGS);
+}
+static int16_t file_count(const uint8_t *image, uint32_t file) {
+    return (int16_t)be16(image + file + FILE_OFF_CNT);
+}
+static int16_t file_handle(const uint8_t *image, uint32_t file) {
+    return (int16_t)be16(image + file + FILE_OFF_FD);
+}
+static int16_t file_bufsiz(const uint8_t *image, uint32_t file) {
+    return (int16_t)be16(image + file + FILE_OFF_BUFSIZ);
+}
+static void file_set_flags(uint8_t *image, uint32_t file, uint16_t flags) {
+    wr16(image + file + FILE_OFF_FLAGS, flags);
+}
+static void file_add_flags(uint8_t *image, uint32_t file, uint16_t flags) {
+    file_set_flags(image, file, (uint16_t)(file_flags(image, file) | flags));
+}
+
+/* Store one byte through the stream's cursor and step it — the `move.l (a3),a0 / addq.l #1,(a3) /
+ * move.b d0,(a0)` that c_putc and c_flsbuf both spell out. */
+static void file_put_through_cursor(uint8_t *image, uint32_t file, uint8_t byte) {
+    uint32_t cursor = file_ptr(image, file);
+
+    wr32(image + file + FILE_OFF_PTR, addr_add(cursor, 1));
+    image[cursor] = byte;
+}
+
+/* ...and the other direction, which c_filbuf and c_fread spell out the same way. */
+static uint8_t file_take_through_cursor(uint8_t *image, uint32_t file) {
+    uint32_t cursor = file_ptr(image, file);
+
+    wr32(image + file + FILE_OFF_PTR, addr_add(cursor, 1));
+    return image[cursor];
+}
+
+/* What a routine that answers with the character it just moved returns: the byte, zero-extended.
+ * The original reaches it as `ext.w d0 / and.w #$ff`, which is the same thing said twice. */
+static int16_t byte_answer(uint8_t byte) { return (int16_t)byte; }
+
+/* c_conout_write @ 0x16b5e — `length` bytes to the console through GEMDOS Cconout, one call each,
+ * with a carriage return inserted before every newline.
+ *
+ * ITS WHOLE SURFACE IS OFF-IMAGE: the ordered console-byte ledger (TRAP_MODEL.md, Phase 13) plus
+ * the three trampoline save slots, whose RET_* says which of the two Cconout sites ran last. The
+ * loop tests the count BEFORE decrementing it, so a length of 0 writes nothing and a negative one
+ * runs 0x10000 + length times. */
+void c_conout_write(uint8_t *image, uint32_t buffer, int16_t length,
+                    CallerAddressRegisters saved) {
+    while (length-- != 0) {
+        uint8_t byte = image[buffer];
+
+        if (byte == TEXT_MODE_LF) {
+            trap_save_registers(image, saved, RET_C_CONOUT_CR);
+            os_cconout(TEXT_MODE_CR);
+        }
+        trap_save_registers(image, saved, RET_C_CONOUT_BYTE);
+        os_cconout(byte);
+        buffer = addr_add(buffer, 1);
+    }
+}
+
+/* c_write @ 0x16c04 — the library's `write(2)`: a pseudo-device's own byte writer, or GEMDOS
+ * Fwrite with the text mode's newline expansion.
+ *
+ * The three pseudo-handles are answered before the fd-mode table is even consulted, and each is a
+ * different GEMDOS character call; only CON:'s is modeled, so AUX: and PRT: refuse (see the
+ * per-routine table in ../STATUS.md).
+ *
+ * IN TEXT MODE IT WRITES A RUN AT A TIME: everything up to a newline in one Fwrite, then the two
+ * bytes of `A_crlf` in another, and the tail in a third. A short write on any of them abandons the
+ * call with -1 and leaves `A_c_errno` holding the count GEMDOS did manage. The returned count
+ * charges ONE byte for each newline, not the two that went out.
+ *
+ * A2 IS NOT THE CALLER'S AT ANY OF THE THREE SITES, and A1 is not either: A2 is the walk cursor
+ * this routine carries, and A1 is where `c_getfdmode` left it — which this routine RECORDS in the
+ * caller's register block, because every trap its callers reach afterwards files it too. */
+int16_t c_write_reporting(uint8_t *image, uint16_t handle, uint32_t buffer, int16_t length,
+                          CallerAddressRegisters *saved) {
+    uint32_t cursor = buffer;       /* how far the walk has got */
+    uint32_t run_start = buffer;    /* ...and where the bytes not yet written begin */
+    int16_t written = 0;
+    int32_t run;
+    int binary;
+
+    if (handle == FD_DEVICE_CON) {
+        /* A2 ALREADY CARRIES THE BUFFER: `movea.l a3,a2` is the routine's second instruction, so
+         * even this arm — which never advances the cursor — traps with A2 holding it. */
+        c_conout_write(image, buffer, length, carrying_in_a2(*saved, cursor));
+        return length;
+    }
+    if (handle == FD_DEVICE_AUX || handle == FD_DEVICE_PRT) {
+        /* GEMDOS Cauxout (0x04) and Cprnout (0x05) — `c_auxout_write` @ 0x16ba8 and
+         * `c_prtout_write` @ 0x16bd6, neither modeled and neither reachable in play. */
+        return (int16_t)os_refused(-1);
+    }
+
+    binary = c_getfdmode(image, handle) != 0;
+    note_fd_modes_consulted(saved);     /* ...and A1 stays there for every trap from here up */
+    if (binary) {
+        cursor = addr_add(buffer, (uint32_t)(uint16_t)length);   /* nothing to translate */
+    } else {
+        while ((uint16_t)(cursor - buffer) < (uint16_t)length) {
+            if (image[cursor] != TEXT_MODE_LF) {
+                cursor = addr_add(cursor, 1);
+                continue;
+            }
+            if ((int16_t)(cursor - run_start) > 0) {
+                run = (int32_t)(int16_t)(cursor - run_start);
+                trap_save_registers(image, carrying_in_a2(*saved, cursor),
+                                    RET_C_WRITE_FWRITE_RUN);
+                wr16(image + A_c_errno, (uint16_t)os_fwrite(image, handle, (uint32_t)run,
+                                                            run_start));
+                if ((int32_t)sign_ext16(be16(image + A_c_errno)) != run)
+                    return -1;
+                written = (int16_t)(written + (int16_t)be16(image + A_c_errno));
+            }
+            trap_save_registers(image, carrying_in_a2(*saved, cursor),
+                                RET_C_WRITE_FWRITE_CRLF);
+            wr16(image + A_c_errno, (uint16_t)os_fwrite(image, handle, CRLF_BYTES, A_crlf));
+            if (be16(image + A_c_errno) != CRLF_BYTES)
+                return -1;
+            written = (int16_t)(written + 1);   /* the newline counts once, however it went out */
+            cursor = addr_add(cursor, 1);
+            run_start = cursor;
+        }
+    }
+    run = (int32_t)(int16_t)(cursor - run_start);
+    trap_save_registers(image, carrying_in_a2(*saved, cursor), RET_C_WRITE_FWRITE_TAIL);
+    wr16(image + A_c_errno, (uint16_t)os_fwrite(image, handle, (uint32_t)run, run_start));
+    if ((int32_t)sign_ext16(be16(image + A_c_errno)) != run)
+        return -1;
+    written = (int16_t)(written + (int16_t)be16(image + A_c_errno));
+    wr16(image + A_c_errno, 0);
+    return written;
+}
+
+/* c_lseek @ 0x159dc — GEMDOS Fseek, with a fallback for the seek GEMDOS refuses.
+ *
+ * The fallback is READ-VERIFIED AND UNREACHABLE HERE, and the two facts are the same fact: the trap
+ * model REFUSES a seek it cannot serve rather than answering an error code (TRAP_MODEL.md, Phase
+ * 13's "a refusal is not an error return"), so the seek below never comes back negative in a green
+ * run. What the original then does — ask GEMDOS for the current position and the file's length,
+ * re-base the offset against whichever the caller asked for, EXTEND the file by Fwriting
+ * `offset - length` bytes read off its own uninitialised stack frame, and seek again — is recorded
+ * in ../STATUS.md. It is not transcribed because its output would be those frame bytes, which no
+ * reconstruction can reproduce and no case could compare. */
+int32_t c_lseek(uint8_t *image, int16_t handle, int32_t offset, int16_t whence,
+                CallerAddressRegisters saved) {
+    int32_t position;
+
+    if (handle < 0)
+        return -1;                  /* the three pseudo-handles are all negative words */
+    trap_save_registers(image, saved, RET_C_LSEEK_FSEEK);
+    position = os_fseek(image, (uint32_t)offset, (uint16_t)handle, (uint16_t)whence);
+    if (position >= 0)
+        return position;
+    return os_refused(-1);
+}
+
+/* ================================================================================================
+ * The buffered `FILE` layer
+ * ============================================================================================= */
+
+/* Where an UNBUFFERED stream's single byte of buffer lives: `A_c_unbuf_chars` indexed by the
+ * record's own slot number.
+ *
+ * THE SLOT NUMBER IS COMPUTED WITH `divs.w`, WHOSE REMAINDER LANDS IN D0'S HIGH WORD, and the
+ * `adda.l` that follows adds the WHOLE longword — so a `file` that is not exactly on the 20-byte
+ * stride lands 65536 bytes per leftover byte away. Transcribed rather than tidied; every real
+ * caller passes a record address, where the remainder is 0. */
+static uint32_t unbuffered_char_slot(uint32_t file) {
+    int32_t distance = (int32_t)(file - A_c_iob);
+    uint32_t quotient = (uint32_t)(distance / (int32_t)C_IOB_STRIDE) & 0xffffu;
+    uint32_t remainder = (uint32_t)(distance % (int32_t)C_IOB_STRIDE) & 0xffffu;
+
+    return addr_add(A_c_unbuf_chars, quotient | (remainder << 16));
+}
+
+/* The buffer both `c_filbuf` and `c_flsbuf` acquire on first use, spelt identically in each: an
+ * unbuffered stream takes its own single byte, anything else asks GEMDOS for `bufsiz` and becomes
+ * unbuffered on the spot if that fails. It is a LOOP because the failure arm sets UNBUFFERED and
+ * falls back to the test, so the second pass takes the one-byte slot and the stream ends up with a
+ * buffer either way. */
+static void file_acquire_buffer(uint8_t *image, uint32_t file, CallerAddressRegisters saved) {
+    while (file_base(image, file) == 0) {
+        uint32_t buffer;
+        int from_gemdos = 0;
+
+        if (file_flags(image, file) & FILE_UNBUFFERED) {
+            buffer = unbuffered_char_slot(file);
+        } else {
+            buffer = gemdos_malloc(image, sign_ext16((uint32_t)file_bufsiz(image, file)), saved);
+            from_gemdos = 1;
+        }
+        wr32(image + file + FILE_OFF_PTR, buffer);
+        wr32(image + file + FILE_OFF_BASE, buffer);
+        if (from_gemdos)
+            file_add_flags(image, file, buffer == 0 ? FILE_UNBUFFERED : FILE_MYBUF);
+    }
+}
+
+/* c_fflush @ 0x14dc4 — push a write stream's buffer out, or drop a read stream's and put the file
+ * cursor back where the caller thinks it is.
+ *
+ * The two directions are told apart by DIRTY rather than by READ/WRITE: a buffer holding bytes
+ * nobody has written out goes to `c_write` (after an append stream seeks to the end), and the
+ * stream's OFFSET — the file position its buffer starts at — advances by what went out. A read
+ * stream instead seeks BACKWARDS by the count it never handed to the caller, so the GEMDOS cursor
+ * ends where the reads stopped rather than where the buffer ended. Either way `ptr` goes back to
+ * `base` and `cnt` to zero. */
+int16_t c_fflush(uint8_t *image, uint32_t file, CallerAddressRegisters *saved) {
+    int32_t buffered;
+
+    if ((file_flags(image, file) & FILE_IN_USE) == 0)
+        return -1;
+    buffered = (int32_t)(file_ptr(image, file) - file_base(image, file));
+
+    if (file_flags(image, file) & FILE_DIRTY) {
+        if ((file_flags(image, file) & FILE_WRITE) == 0)
+            return -1;
+        if (file_flags(image, file) & FILE_APPEND)
+            c_lseek(image, file_handle(image, file), 0, OS_FSEEK_FROM_END, *saved);
+        if (c_write_reporting(image, (uint16_t)file_handle(image, file), file_base(image, file),
+                              (int16_t)buffered, saved) == -1)
+            return -1;
+        file_set_flags(image, file, (uint16_t)(file_flags(image, file) & ~FILE_DIRTY));
+        wr32(image + file + FILE_OFF_OFFSET,
+             addr_add(be32(image + file + FILE_OFF_OFFSET), sign_ext16((uint32_t)buffered)));
+    } else if (file_handle(image, file) > 0) {
+        wr32(image + file + FILE_OFF_OFFSET,
+             (uint32_t)c_lseek(image, file_handle(image, file),
+                               (int32_t)sign_ext16((uint32_t)-file_count(image, file)),
+                               OS_FSEEK_FROM_CURRENT, *saved));
+    }
+    wr32(image + file + FILE_OFF_PTR, file_base(image, file));
+    wr16(image + file + FILE_OFF_CNT, 0);
+    return 0;
+}
+
+/* c_fclose @ 0x14d72 — flush, hand a GEMDOS-allocated buffer back, mark the slot free, close. */
+int16_t c_fclose(uint8_t *image, uint32_t file, CallerAddressRegisters *saved) {
+    if (c_fflush(image, file, saved) != 0)
+        return -1;
+    if (file_flags(image, file) & FILE_MYBUF)
+        gemdos_mfree(image, file_base(image, file), *saved);
+    file_set_flags(image, file, 0);
+    return c_close(image, (uint16_t)file_handle(image, file), *saved) != 0 ? -1 : 0;
+}
+
+/* c_filbuf @ 0x14e80 — refill an empty read buffer and hand back its first byte.
+ *
+ * It records where the buffer starts in the file (a GEMDOS Fseek of its own, not through
+ * `c_lseek`), flushes stdout first if it is about to read the console — so a prompt appears before
+ * the answer is typed — and asks `c_read` for ONE byte if the stream is unbuffered or line
+ * buffered and for `bufsiz` otherwise.
+ *
+ * THE STDOUT FLUSH IS READ-VERIFIED, not covered: it fires only for a stream on the CON: handle,
+ * and `c_read` refuses that handle two lines later (its console arm is `c_conin`, which the trap
+ * model cannot serve from inside a buffered read). So no green case reaches it, and ../STATUS.md
+ * records that rather than the comment above reading as tested behaviour.
+ *
+ * A short answer sets EOF, a negative one ERR, and both return -1.
+ *
+ * 0x14eac..0x14eb2 IS DEAD CODE: nothing branches there, and the two stores it holds (ptr = base,
+ * cnt = 0) are the compiler's leftovers from a path the optimiser removed. */
+int16_t c_filbuf(uint8_t *image, uint32_t file, CallerAddressRegisters *saved) {
+    int16_t wanted;
+    int16_t got;
+
+    if ((file_flags(image, file) & FILE_READ) == 0)
+        file_add_flags(image, file, FILE_ERR);
+    if (file_flags(image, file) & FILE_AT_END)
+        return -1;
+    file_acquire_buffer(image, file, *saved);
+
+    trap_save_registers(image, *saved, RET_C_FILBUF_FSEEK);
+    wr32(image + file + FILE_OFF_OFFSET,
+         (uint32_t)os_fseek(image, 0, (uint16_t)file_handle(image, file), OS_FSEEK_FROM_CURRENT));
+    wr32(image + file + FILE_OFF_PTR, file_base(image, file));
+    if ((uint16_t)file_handle(image, file) == FD_DEVICE_CON)
+        c_fflush(image, A_c_stdout, saved);
+
+    wanted = (file_flags(image, file) & FILE_BYTE_AT_A_TIME) ? 1 : file_bufsiz(image, file);
+    got = (int16_t)c_read_reporting(image, (uint16_t)file_handle(image, file),
+                                    file_ptr(image, file), (uint16_t)wanted, saved);
+    wr16(image + file + FILE_OFF_CNT, (uint16_t)(got - 1));
+    if (file_count(image, file) < 0) {
+        file_add_flags(image, file, file_count(image, file) == -1 ? FILE_EOF : FILE_ERR);
+        wr16(image + file + FILE_OFF_CNT, 0);
+        return -1;
+    }
+    return byte_answer(file_take_through_cursor(image, file));
+}
+
+/* c_flsbuf @ 0x14fb0 — take the byte `c_putc` had no room for, and get the buffer emptied.
+ *
+ * THREE STREAMS, THREE SHAPES. An unbuffered one stores the byte and flushes it straight away; a
+ * line-buffered one stores it and flushes only at a newline or a full buffer, so it can return
+ * without a flush at all; a fully buffered one flushes what is already there FIRST and stores the
+ * byte into the emptied buffer, which is why that arm is the only one that also reloads `cnt`. */
+int16_t c_flsbuf(uint8_t *image, uint16_t byte, uint32_t file, CallerAddressRegisters *saved) {
+    uint8_t stored = (uint8_t)byte;
+
+    wr16(image + file + FILE_OFF_CNT, 0);
+    if ((file_flags(image, file) & FILE_WRITE) == 0)
+        file_add_flags(image, file, FILE_ERR);
+    if (file_flags(image, file) & FILE_ERR)
+        return -1;
+    file_acquire_buffer(image, file, *saved);
+
+    if (file_flags(image, file) & FILE_UNBUFFERED) {
+        file_put_through_cursor(image, file, stored);
+        file_add_flags(image, file, FILE_DIRTY);
+    } else if (file_flags(image, file) & FILE_LINEBUF) {
+        file_add_flags(image, file, FILE_DIRTY);
+        file_put_through_cursor(image, file, stored);
+        if (stored != TEXT_MODE_LF
+            && (int16_t)(file_ptr(image, file) - file_base(image, file))
+                   < file_bufsiz(image, file))
+            return byte_answer(stored);
+    }
+
+    if (c_fflush(image, file, saved) != 0) {
+        file_add_flags(image, file, FILE_ERR);
+        return -1;
+    }
+    if (file_flags(image, file) & FILE_BYTE_AT_A_TIME) {
+        wr16(image + file + FILE_OFF_CNT, 0);   /* the byte went out with the flush above */
+        return byte_answer(stored);
+    }
+    wr16(image + file + FILE_OFF_CNT, (uint16_t)(file_bufsiz(image, file) - 1));
+    file_add_flags(image, file, FILE_DIRTY);
+    file_put_through_cursor(image, file, stored);
+    return byte_answer(stored);
+}
+
+/* c_putc @ 0x150ee — the fast path, and `c_flsbuf` when the buffer is full.
+ *
+ * `cnt` is decremented BEFORE it is tested, so a stream whose count is 0 goes to c_flsbuf with -1
+ * already stored — which is what makes the "flush then reload cnt" arm there correct. */
+int16_t c_putc(uint8_t *image, uint16_t byte, uint32_t file, CallerAddressRegisters *saved) {
+    int16_t remaining = (int16_t)(file_count(image, file) - 1);
+
+    wr16(image + file + FILE_OFF_CNT, (uint16_t)remaining);
+    if (remaining < 0)
+        return c_flsbuf(image, byte, file, saved);
+    file_put_through_cursor(image, file, (uint8_t)byte);
+    return byte_answer((uint8_t)byte);
+}
+
+/* c_fread @ 0x15878 — `items` records of `size` bytes, through the buffered getc.
+ *
+ * IT COUNTS IN BYTES AND ANSWERS IN RECORDS. The loop runs `items * size` times as a WORD product,
+ * taking one character each pass; when the stream ends part-way, the answer is the bytes actually
+ * moved divided by the record size, so a partial record is not reported. A complete read answers
+ * `items` (or 0 if the caller asked for a non-positive number of them) without looking at what the
+ * loop counted. */
+int16_t c_fread(uint8_t *image, uint32_t buffer, int16_t size, int16_t items, uint32_t file,
+                CallerAddressRegisters *saved) {
+    int16_t wanted = (int16_t)(items * size);
+    int16_t remaining = wanted;
+
+    while (remaining > 0) {
+        int16_t byte;
+        int16_t left = (int16_t)(file_count(image, file) - 1);
+
+        wr16(image + file + FILE_OFF_CNT, (uint16_t)left);
+        if (left >= 0) {
+            byte = byte_answer(file_take_through_cursor(image, file));
+        } else {
+            byte = c_filbuf(image, file, saved);
+        }
+        if (byte == -1)
+            return (int16_t)((int32_t)(int16_t)(wanted - remaining) / size);
+        image[buffer] = (uint8_t)byte;
+        buffer = addr_add(buffer, 1);
+        remaining = (int16_t)(remaining - 1);
+    }
+    return items > 0 ? items : 0;
+}
+
+/* c_fopen @ 0x156e2 — parse the mode string, claim a free `c_iob` slot, open the file.
+ *
+ * THE MODE STRING IS READ IN THIS ORDER and no other: an optional leading 'b' (binary, which is the
+ * only thing this library's 'b' means — it is a PREFIX here, so "rb" does not parse), then one of
+ * r/w/a, then an optional '+' one byte further on. The game's own two calls pass "br".
+ *
+ * `A_c_fopen_slot_hint` is a record c_fopen should reuse before scanning; nothing in this program
+ * ever sets it, so the scan is what always runs, and the hint is cleared again on the way past. */
+uint32_t c_fopen(uint8_t *image, uint32_t path, uint32_t mode, CallerAddressRegisters saved) {
+    uint32_t cursor = mode;
+    uint16_t binary = 0;
+    uint16_t update = 0;
+    uint32_t file;
+    int16_t handle;
+    CallerAddressRegisters carrying_the_record;
+
+    if (image[cursor] == FOPEN_MODE_BINARY_PREFIX) {
+        binary = FD_MODE_BINARY;
+        cursor = addr_add(cursor, 1);
+    }
+    if (image[cursor] != FOPEN_MODE_READ && image[cursor] != FOPEN_MODE_WRITE
+        && image[cursor] != FOPEN_MODE_APPEND)
+        return 0;
+
+    file = be32(image + A_c_fopen_slot_hint);
+    if (file == 0) {
+        for (file = A_c_iob; (int32_t)file < (int32_t)C_IOB_END; file += C_IOB_STRIDE)
+            if ((file_flags(image, file) & FILE_IN_USE) == 0)
+                break;
+    }
+    if ((int32_t)file >= (int32_t)C_IOB_END)
+        return 0;
+    wr32(image + A_c_fopen_slot_hint, 0);
+    file_set_flags(image, file, 0);
+    /* A2 CARRIES THE RECORD from here on, so every trap the three openers below reach files it
+     * rather than the caller's A2 (docs/agent-playbook.md §5, "derivable"). */
+    carrying_the_record = carrying_in_a2(saved, file);
+
+    if (image[addr_add(cursor, 1)] == FOPEN_MODE_UPDATE) {
+        update = OPEN_MODE_WRITE;
+        file_add_flags(image, file, FILE_IN_USE);
+    }
+    if (image[cursor] == FOPEN_MODE_WRITE) {
+        handle = c_creat(image, path, binary, carrying_the_record);
+        file_add_flags(image, file, FILE_WRITE);
+    } else if (image[cursor] == FOPEN_MODE_APPEND) {
+        handle = c_open(image, path, (uint16_t)(OPEN_MODE_WRITE | binary), carrying_the_record);
+        if (handle == -1)
+            handle = c_creat(image, path, binary, carrying_the_record);
+        c_lseek(image, handle, 0, OS_FSEEK_FROM_END, carrying_the_record);
+        file_add_flags(image, file, (uint16_t)(FILE_WRITE | FILE_APPEND));
+    } else {
+        handle = c_open(image, path, (uint16_t)(update | binary), carrying_the_record);
+        file_add_flags(image, file, FILE_READ);
+    }
+    if (handle == -1) {
+        file_set_flags(image, file, 0);
+        return 0;
+    }
+    wr16(image + file + FILE_OFF_FD, (uint16_t)handle);
+    wr16(image + file + FILE_OFF_CNT, 0);
+    wr32(image + file + FILE_OFF_PTR, 0);
+    wr32(image + file + FILE_OFF_BASE, 0);
+    wr32(image + file + FILE_OFF_OFFSET,
+         (uint32_t)c_lseek(image, handle, 0, OS_FSEEK_FROM_CURRENT, carrying_the_record));
+    wr16(image + file + FILE_OFF_BUFSIZ, be16(image + A_c_bufsiz));
+    return file;
+}
+
+/* ================================================================================================
+ * The console reader
+ * ============================================================================================= */
+
+/* One byte to the console through GEMDOS Cconout, filing the site's own return address first —
+ * `c_conin` echoes from six places and each is a distinct RET_*. */
+static void conin_echo(uint8_t *image, uint8_t byte, uint32_t return_pc,
+                       CallerAddressRegisters saved) {
+    trap_save_registers(image, saved, return_pc);
+    os_cconout(byte);
+}
+
+/* Append one byte to the line c_conin is gathering. The index is a WORD added to the buffer's
+ * address, so a line longer than 32767 would run backwards; nothing bounds it. */
+static void conin_append(uint8_t *image, uint8_t byte) {
+    uint16_t length = be16(image + A_c_conin_length);
+
+    wr16(image + A_c_conin_length, (uint16_t)(length + 1));
+    image[addr_add(A_c_conin_buffer, sign_ext16(length))] = byte;
+}
+
+/* c_conin @ 0x16518 — the COOKED console reader: gather a whole line, echoing as it goes, then
+ * hand it back one character at a time.
+ *
+ * The line is re-gathered only when the caller has taken all of the last one (read position ==
+ * length), which is why both counters are reset before the gathering loop rather than after it.
+ * RETURN stores a LINE FEED and echoes CR LF; BACKSPACE un-stores the last byte and echoes the VT52
+ * "cursor left"; the end-of-file character is stored, echoed and then answered as -1 when the
+ * caller reaches it. Everything else is stored and echoed as itself.
+ *
+ * TWO ARMS REFUSE. ^C runs `c_exit` @ 0x14d2c, whose tail is GEMDOS Pterm, and the AUX: handle is
+ * GEMDOS Cauxin — neither is modeled (../STATUS.md's per-routine table). Note that the original
+ * FALLS THROUGH from the ^C branch into the end-of-file test, so on a machine where Pterm returned
+ * it would store and echo the ^C like any other byte. */
+int16_t c_conin(uint8_t *image, uint16_t handle, CallerAddressRegisters saved) {
+    uint32_t at;
+    uint8_t byte;
+
+    if (handle != FD_DEVICE_CON) {
+        if (handle == FD_DEVICE_AUX)
+            return (int16_t)os_refused(-1);   /* GEMDOS Cauxin (0x03), unmodeled */
+        return -1;
+    }
+    if (be16(image + A_c_conin_read_pos) == be16(image + A_c_conin_length)) {
+        wr16(image + A_c_conin_read_pos, 0);
+        wr16(image + A_c_conin_length, 0);
+        for (;;) {
+            uint32_t key;
+            uint16_t typed;
+
+            trap_save_registers(image, saved, RET_C_CONIN_CRAWCIN);
+            if (!os_crawcin(image, &key))
+                return -1;              /* nothing staged: os_crawcin has refused the run already */
+            typed = (uint16_t)key;              /* the low WORD: scancode << 16 | ascii */
+
+            if (typed == CONIN_BACKSPACE) {
+                if (be16(image + A_c_conin_length) != 0) {
+                    wr16(image + A_c_conin_length,
+                         (uint16_t)(be16(image + A_c_conin_length) - 1));
+                    conin_echo(image, CONIN_ECHO_ESCAPE, RET_C_CONIN_ECHO_ESC, saved);
+                    conin_echo(image, CONIN_ECHO_LEFT, RET_C_CONIN_ECHO_LEFT, saved);
+                }
+                continue;
+            }
+            if (typed == CONIN_RETURN) {
+                conin_append(image, TEXT_MODE_LF);
+                conin_echo(image, TEXT_MODE_CR, RET_C_CONIN_ECHO_EOL_CR, saved);
+                conin_echo(image, TEXT_MODE_LF, RET_C_CONIN_ECHO_EOL_LF, saved);
+                break;
+            }
+            if (typed == CONIN_INTERRUPT)
+                return (int16_t)os_refused(-1); /* c_exit -> GEMDOS Pterm (0x4c), unmodeled */
+            if (typed == CONIN_EOF) {
+                conin_append(image, (uint8_t)typed);
+                conin_echo(image, TEXT_MODE_CR, RET_C_CONIN_ECHO_EOF_CR, saved);
+                conin_echo(image, TEXT_MODE_LF, RET_C_CONIN_ECHO_EOF_LF, saved);
+                break;
+            }
+            conin_append(image, (uint8_t)typed);
+            conin_echo(image, (uint8_t)typed, RET_C_CONIN_ECHO_CHAR, saved);
+        }
+    }
+    at = addr_add(A_c_conin_buffer, sign_ext16(be16(image + A_c_conin_read_pos)));
+    byte = image[at];
+    if (byte == CONIN_EOF)
+        return -1;
+    wr16(image + A_c_conin_read_pos, (uint16_t)(be16(image + A_c_conin_read_pos) + 1));
+    return (int16_t)(int8_t)byte;               /* SIGN-extended, unlike c_putc's answer */
+}
+
+/* ================================================================================================
+ * The printf engine
+ * ============================================================================================= */
+
+/* Emit one byte through a `char **` and step it — the `movea.l (an),a0 / addq.l #1,(an) /
+ * move.b d0,(a0)` that c_doprnt, c_fmt_integer and c_fmt_float all spell out at every one of their
+ * exits. */
+static void emit_byte(uint8_t *image, uint32_t *out, uint8_t byte) {
+    image[*out] = byte;
+    *out = addr_add(*out, 1);
+}
+
+/* c_fmt_getnum @ 0x161b8 — the decimal number in a `%` field's width or precision, or 0 for none.
+ *
+ * The digit test SIGN-EXTENDS the byte, so anything with bit 7 set ranks below '0' and stops the
+ * scan; the accumulation is 16-bit and wraps. */
+int16_t c_fmt_getnum(const uint8_t *image, uint32_t *cursor) {
+    int16_t value = 0;
+
+    while ((int16_t)(int8_t)image[*cursor] >= '0' && (int16_t)(int8_t)image[*cursor] <= '9') {
+        value = (int16_t)(value * 10 + (int16_t)(int8_t)image[*cursor] - '0');
+        *cursor = addr_add(*cursor, 1);
+    }
+    return value;
+}
+
+/* `asr.l #n` on a longword: shift right, filling from the sign bit. C's `>>` on a negative signed
+ * value is implementation-defined, so the fill is spelt out. */
+static uint32_t shift_right_arithmetic(uint32_t value, unsigned bits) {
+    uint32_t fill = (int32_t)value < 0 ? (uint32_t)(~0u << (32 - bits)) : 0u;
+
+    return (value >> bits) | fill;
+}
+
+/* c_fmt_integer @ 0x15e74 — one integer, in the base its conversion character names.
+ *
+ * OCTAL AND HEX NEVER DIVIDE: they mask and shift. The shift is `asr.l`, so a negative value comes
+ * back with its top bits set, and the mask that follows is what clears them again — which is why it
+ * is written as a sign-fill below rather than as C's implementation-defined right shift of a
+ * negative, and why the mask is load-bearing rather than decorative. Decimal goes through `c_ldiv`,
+ * twice per digit: once for the remainder, once for the quotient.
+ *
+ * A NEGATIVE VALUE IS SIGNED ONLY FOR `%d`. Every other conversion of a `short` argument masks the
+ * sign extension back off (`%x` of -1 is "FFFF", not "FFFFFFFF"), and of a `long` argument leaves
+ * it, so the digits come out of a value the base arithmetic then treats as negative.
+ *
+ * `base_when_conversion_unknown` is D7 as the caller left it — see PrintfCallerState in
+ * include/clib.h. From `c_doprnt` it is the conversion character itself, and `c_doprnt` only ever
+ * asks for the four below, so nothing in the program reaches it. */
+void c_fmt_integer(uint8_t *image, uint16_t conversion, uint16_t is_long, uint32_t *out_cursor,
+                   int32_t value, uint16_t base_when_conversion_unknown) {
+    int16_t digits[FMT_DIGIT_SLOTS];
+    uint16_t count = 0;
+    uint16_t base = base_when_conversion_unknown;
+
+    if (conversion == FMT_CONV_SIGNED || conversion == FMT_CONV_UNSIGNED)
+        base = FMT_BASE_DECIMAL;
+    else if (conversion == FMT_CONV_OCTAL)
+        base = FMT_BASE_OCTAL;
+    else if (conversion == FMT_CONV_HEX)
+        base = FMT_BASE_HEX;
+
+    if (value < 0) {
+        if (conversion == FMT_CONV_SIGNED) {
+            emit_byte(image, out_cursor, '-');
+            value = -value;
+        } else if (is_long == 0) {
+            value = (int32_t)((uint32_t)value & 0xffffu);
+        }
+    }
+    do {
+        uint32_t quotient;
+        uint32_t remainder;
+
+        if (count >= FMT_DIGIT_SLOTS) {
+            /* THE ORIGINAL OVERRUNS ITS OWN `-40(a6)` FRAME HERE and carries on; in C the same
+             * write lands outside `digits` and takes the harness's process with it, which arrives
+             * as a worker vanishing rather than as a difference. Only an unreachable base gets
+             * here — the four this library names need at most 11 slots for a longword, and it is
+             * `base_when_conversion_unknown` that can be 2 (32 digits) or 1 (never terminating) —
+             * so refusing is the honest answer rather than a behaviour to reproduce. */
+            os_refused(-1);
+            return;
+        }
+        if (base == FMT_BASE_OCTAL) {
+            digits[count++] = (int16_t)((uint32_t)value & 7u);
+            value = (int32_t)(shift_right_arithmetic((uint32_t)value, 3) & FMT_OCTAL_STEP_MASK);
+        } else if (base == FMT_BASE_HEX) {
+            digits[count++] = (int16_t)((uint32_t)value & 0xfu);
+            value = (int32_t)(shift_right_arithmetic((uint32_t)value, 4) & FMT_HEX_STEP_MASK);
+        } else {
+            c_ldiv(base, (uint32_t)value, &quotient, &remainder);
+            digits[count++] = (int16_t)remainder;
+            c_ldiv(base, (uint32_t)value, &quotient, &remainder);
+            value = (int32_t)quotient;
+        }
+    } while (value != 0);
+
+    while (count != 0) {
+        int16_t digit = digits[--count];
+
+        emit_byte(image, out_cursor,
+                  (uint8_t)(digit < 10 ? digit + '0' : digit - 10 + FMT_HEX_LETTER_BASE));
+    }
+}
+
+/* The eight bytes of the accumulator every float conversion goes through: `c_fcvt`, `c_fmt_float`
+ * and `c_doprnt` each fill it from the caller's argument before doing anything else, and it is
+ * ordinary image memory the differential compares. */
+static void fp_acc_store(uint8_t *image, uint32_t value_high, uint32_t value_low) {
+    wr32(image + A_fp_acc, value_high);
+    wr32(image + A_fp_acc + 4, value_low);
+}
+
+/* c_fcvt @ 0x15588 — a double as `ndigits` decimal digits plus the power of ten they scale by.
+ *
+ * IT SCALES BEFORE IT CONVERTS: multiply or divide the value by ten (`A_fcvt_ten`, which
+ * init_globals writes as 0x4024000000000001 — ten, one ulp high) until its binary exponent lands in
+ * [-3, 0], counting the decimal places in `*decimal_point`. The mantissa is then a plain fraction,
+ * and each digit is that fraction times ten with the integer part carried out — the original does
+ * the multiply as `asl/roxl` three times and an `addx`, which is the 64-bit product below.
+ *
+ * ROUNDING IS DONE ON THE DIGITS, not on the value: 5 is added to the digit one past the last one
+ * kept and the carry walks back down the string. A zero exponent — the package's only special case,
+ * and its only test for a zero value — skips all of it and fills the buffer with '0'.
+ *
+ * The working copy lives at `CLIB_SCRATCH_FCVT_DOUBLE` because `fp_mul`/`fp_div` take IMAGE
+ * addresses; see include/clib.h for why that address is in the band the differential drops. */
+void c_fcvt(uint8_t *image, uint32_t value_high, uint32_t value_low, uint8_t *digits,
+            int16_t *decimal_point, int16_t ndigits) {
+    const uint32_t working = CLIB_SCRATCH_FCVT_DOUBLE;
+    int16_t decimal_exponent = 0;
+    int16_t binary_exponent = 0;
+    int value_is_zero = 0;
+    uint8_t *cursor = digits;
+
+    if (ndigits < 0) {
+        /* NOT TRANSCRIBED. The original's `dbf` would run 65536 times on a negative counter and
+         * the round would then step BELOW the caller's buffer; the one caller floors its second
+         * call at 1, and `c_fmt_float` refuses a precision that could produce a negative here, so
+         * nothing in the program asks. Refusing reddens a case that finds a way rather than
+         * writing out of bounds in the harness's own process. */
+        os_refused(-1);
+        *decimal_point = 0;
+        return;
+    }
+    fp_acc_store(image, value_high, value_low);
+    wr32(image + working, value_high);
+    wr32(image + working + 4, value_low);
+
+    for (;;) {
+        binary_exponent = (int16_t)((be16(image + working) >> FP_EXPONENT_SHIFT)
+                                    & FP_EXPONENT_BITS);
+        if (binary_exponent == 0) {
+            value_is_zero = 1;
+            break;
+        }
+        binary_exponent = (int16_t)(binary_exponent - FP_EXPONENT_BIAS);
+        if (binary_exponent > 0) {
+            decimal_exponent = (int16_t)(decimal_exponent + 1);
+            fp_div(image, working, A_fcvt_ten);
+        } else if (binary_exponent < -3) {
+            decimal_exponent = (int16_t)(decimal_exponent - 1);
+            fp_mul(image, working, A_fcvt_ten);
+        } else {
+            break;
+        }
+    }
+
+    if (value_is_zero) {
+        int32_t written;
+
+        cursor = digits;
+        for (written = 0; written < (int32_t)ndigits; written++)
+            *cursor++ = '0';
+        *cursor = 0;
+    } else {
+        uint32_t fraction = (be32(image + working) << 11)
+                          | (uint32_t)(be16(image + working + 4) >> 5);
+        int16_t remaining;
+        uint8_t *round;
+
+        fraction |= 0x80000000u;                  /* the implicit leading one */
+        if (binary_exponent != 0)
+            fraction >>= (uint16_t)(-binary_exponent);
+        *cursor++ = (uint8_t)('0' + (fraction >> 31));
+        fraction <<= 1;
+        /* ndigits + 1 of them: the original's `dbf` runs one more time than its counter says.
+         * (A NEGATIVE ndigits is refused at the top: see the guard there.) */
+        for (remaining = 0; remaining <= ndigits; remaining++) {
+            uint64_t scaled = (uint64_t)fraction * 10u;
+
+            *cursor++ = (uint8_t)('0' + (uint16_t)(scaled >> 32));
+            fraction = (uint32_t)scaled;
+        }
+        *cursor = 0;
+
+        /* Round half up at the digit one past the last one kept, carrying down the string. The
+         * leading digit is 0 or 1, so the carry stops inside the buffer. */
+        round = digits + ndigits + 1;
+        if (digits[0] == '0')
+            round++;
+        round--;
+        *round = (uint8_t)(*round + 5);
+        while ((int16_t)(int8_t)*round > '9') {
+            *round = (uint8_t)(*round - 10);
+            round--;
+            *round = (uint8_t)(*round + 1);
+        }
+        if (digits[0] == '0') {                   /* shift the leading zero off, one decade down */
+            uint8_t *dst = digits;
+            uint8_t *src = digits + 1;
+
+            while ((*dst++ = *src++) != 0)
+                ;
+            decimal_exponent = (int16_t)(decimal_exponent - 1);
+        }
+        digits[ndigits] = 0;
+    }
+    *decimal_point = decimal_exponent;
+}
+
+/* `slt` after fp_dispatch's compare: LESS THAN is N differing from V, read out of the condition
+ * codes `fp_cmp` parked at A_fp_ccr and `fp_dispatch` loaded back into the real CCR. */
+static int fp_compared_less(const uint8_t *image) {
+    uint16_t condition = be16(image + A_fp_ccr);
+
+    return ((condition & CCR_N) != 0) != ((condition & CCR_V) != 0);
+}
+
+/* c_fmt_float @ 0x15fe0 — one double, as `%f` or as `%e`.
+ *
+ * `%g` IS `%e`: the routine tests for 'f' and takes the exponent form for everything else, so the
+ * three conversions c_doprnt routes here are really two.
+ *
+ * THE `%f` PATH CONVERTS TWICE. The first `c_fcvt` (precision + 1 digits) is what finds the decimal
+ * point and the sign; only then is the digit count knowable — decimal point plus precision plus
+ * one, capped at `A_fcvt_max_digits`, which is 7 — so it converts again for the digits it will
+ * actually print. Everything after that is placement: the digits before the point, zeros out to it,
+ * the point itself, leading zeros of a fraction smaller than a tenth, and then digits or zeros to
+ * the precision.
+ *
+ * THE `%e` PATH PRINTS ITS EXPONENT THROUGH `c_sprintf`, so the engine calls itself; the arguments
+ * it pushes for that call are `CLIB_SCRATCH_EXPONENT_ARGS` here (include/clib.h says why). */
+void c_fmt_float(uint8_t *image, uint16_t conversion, int16_t precision, uint32_t *out_cursor,
+                 uint32_t value_high, uint32_t value_low, PrintfCallerState caller) {
+    uint8_t digits[C_FCVT_DIGITS_MAX];
+    int16_t decimal_point;
+    int16_t remaining;              /* digits of the conversion still unprinted */
+    int16_t taken = 0;              /* ...and how many have been */
+    int negative;
+
+    if (precision == (int16_t)FMT_NO_PRECISION)
+        precision = FMT_FLOAT_DEFAULT_PRECISION;
+    if (precision < 0 || precision + 1 > (int16_t)C_FCVT_NDIGITS_MAX) {
+        /* THE PRECISION COMES FROM THE FORMAT STRING, so `%.70f` would ask c_fcvt for more digits
+         * than `digits` holds and `%.65534f` for a negative count (c_fmt_getnum's accumulation is
+         * 16-bit and wraps). The original overflows its own 30-byte frame from about 27 onwards,
+         * which ../STATUS.md records as read-verified; the reconstruction refuses instead, well
+         * above anything the original survives, rather than writing outside its array. */
+        os_refused(-1);
+        return;
+    }
+    fp_acc_store(image, value_high, value_low);
+    fp_dispatch(image, (uint16_t)(FP_SOURCE_DOUBLE | FP_OP_CMP), A_fp_acc, A_fmt_float_zero,
+                0, caller.status_high);
+    negative = fp_compared_less(image);
+    c_fcvt(image, value_high, value_low, digits, &decimal_point, (int16_t)(precision + 1));
+
+    if (negative) {
+        emit_byte(image, out_cursor, '-');
+    }
+    if (digits[0] == '0' && digits[1] == 0) {     /* the value is exactly zero: one '0' and done */
+        emit_byte(image, out_cursor, digits[0]);
+        return;
+    }
+
+    if (conversion == FMT_CONV_FIXED) {
+        remaining = (int16_t)(decimal_point + precision + 1);
+        if (remaining > (int16_t)be16(image + A_fcvt_max_digits))
+            remaining = (int16_t)be16(image + A_fcvt_max_digits);
+        c_fcvt(image, value_high, value_low, digits, &decimal_point,
+               remaining < 0 ? 1 : remaining);
+        while (remaining != 0 && decimal_point >= 0) {
+            emit_byte(image, out_cursor, digits[taken++]);
+            remaining = (int16_t)(remaining - 1);
+            decimal_point = (int16_t)(decimal_point - 1);
+        }
+        while (decimal_point >= 0) {
+            emit_byte(image, out_cursor, '0');
+            decimal_point = (int16_t)(decimal_point - 1);
+        }
+        if (precision != 0) {
+            emit_byte(image, out_cursor, FMT_PRECISION_MARK);
+        }
+        while (precision != 0 && decimal_point < -1) {
+            emit_byte(image, out_cursor, '0');
+            decimal_point = (int16_t)(decimal_point + 1);
+            precision = (int16_t)(precision - 1);
+        }
+        while (precision-- != 0) {
+            emit_byte(image, out_cursor, remaining > 0 ? digits[taken++] : (uint8_t)'0');
+            remaining = (int16_t)(remaining - 1);
+        }
+        return;
+    }
+
+    emit_byte(image, out_cursor, digits[0]);
+    if (precision != 0) {
+        emit_byte(image, out_cursor, FMT_PRECISION_MARK);
+    }
+    remaining = 1;
+    while (precision-- != 0) {
+        emit_byte(image, out_cursor, digits[remaining++]);
+    }
+    emit_byte(image, out_cursor, 'E');
+    wr32(image + CLIB_SCRATCH_EXPONENT_ARGS, A_fmt_float_exponent_format);
+    wr16(image + CLIB_SCRATCH_EXPONENT_ARGS + C_EXPONENT_ARGS_OFF_VALUE, (uint16_t)decimal_point);
+    {
+        /* D7 IS THE DIGIT INDEX AT THIS CALL, not the conversion character — c_fmt_float has been
+         * using D7 as its own counter since the loop above, and c_doprnt inherits whatever is
+         * there. "%d" never ends in a bare `%`, so nothing reads it; it is passed rather than
+         * invented because that is what the machine hands over. */
+        PrintfCallerState nested = { (uint16_t)remaining, caller.status_high };
+
+        c_sprintf(image, *out_cursor, CLIB_SCRATCH_EXPONENT_ARGS, nested);
+    }
+    *out_cursor = addr_add(*out_cursor, c_strlen(image, *out_cursor));
+}
+
+/* Lay a finished conversion out in a field `width` wide.
+ *
+ * LEFT JUSTIFICATION PADS AFTER; right justification does not pad before — it MOVES the bytes up to
+ * the end of the field, backwards so an overlap is safe, and then fills the gap it opened. Either
+ * way the cursor ends one past the field. `pad` is a space unless the format asked for '0'. */
+static void doprnt_pad_field(uint8_t *image, uint32_t *out, uint32_t field_start, int16_t width,
+                             int16_t left_justified, uint8_t pad) {
+    int16_t moved = (int16_t)(*out - field_start);
+    uint32_t last;
+    uint32_t gap;
+
+    if (moved >= width)
+        return;
+    if (left_justified) {
+        int16_t missing = (int16_t)(width - moved);
+
+        while (missing != 0) {
+            emit_byte(image, out, pad);
+            missing = (int16_t)(missing - 1);
+        }
+        return;
+    }
+    last = addr_add(field_start, sign_ext16((uint32_t)(int16_t)(width - 1)));
+    gap = last;
+    while (moved != 0) {
+        image[gap] = image[addr_add(field_start, sign_ext16((uint32_t)(int16_t)(moved - 1)))];
+        gap = addr_back(gap);
+        moved = (int16_t)(moved - 1);
+    }
+    while ((int32_t)field_start <= (int32_t)gap) {
+        image[field_start] = pad;
+        field_start = addr_add(field_start, 1);
+    }
+    *out = addr_add(last, 1);
+}
+
+/* c_doprnt @ 0x1620c — the whole of the format engine: walk the format, copy what is not a
+ * conversion, and place what is.
+ *
+ * `argp` POINTS AT THE FORMAT POINTER, not past it — this is a caller's argument list, and the
+ * format string is its first element. The list is then walked by the SIZE THE CALLER PUSHED: two
+ * bytes for a `short`, four for a `long` or a pointer, eight for a double. There is no `%%` and no
+ * `*` width; an unrecognised conversion character is emitted as itself, which is how a literal `%`
+ * is usually got out of this engine by accident.
+ *
+ * `caller.inherited_conversion` is what a format ending in a BARE `%` dispatches on: the load is
+ * skipped when the conversion character is the terminator, leaving D7 as the caller left it. */
+int32_t c_doprnt(uint8_t *image, uint32_t out, uint32_t argp, PrintfCallerState caller) {
+    uint32_t start = out;
+    uint32_t format = be32(image + argp);
+    uint16_t conversion = caller.inherited_conversion;
+
+    argp = addr_add(argp, 4);
+    while (image[format] != 0) {
+        uint32_t field_start;
+        int16_t left_justified;
+        int16_t width;
+        int16_t precision;
+        int16_t is_long;
+        uint8_t pad;
+
+        if (image[format] != FMT_ESCAPE) {
+            emit_byte(image, &out, image[format]);
+            format = addr_add(format, 1);
+            continue;
+        }
+        format = addr_add(format, 1);
+
+        left_justified = 0;
+        precision = (int16_t)FMT_NO_PRECISION;
+        is_long = 0;
+        pad = ' ';
+        if (image[format] == FMT_FLAG_LEFT) {
+            left_justified = 1;
+            format = addr_add(format, 1);
+        }
+        if (image[format] == FMT_FLAG_ZERO) {
+            pad = FMT_FLAG_ZERO;
+            format = addr_add(format, 1);
+        }
+        width = c_fmt_getnum(image, &format);
+        if (image[format] == FMT_PRECISION_MARK) {
+            format = addr_add(format, 1);
+            precision = c_fmt_getnum(image, &format);
+        }
+        if (image[format] == FMT_LONG_MARK) {
+            is_long = 1;
+            format = addr_add(format, 1);
+        }
+        if (image[format] != 0) {
+            conversion = (uint16_t)(int16_t)(int8_t)image[format];
+            format = addr_add(format, 1);
+        }
+        field_start = out;
+
+        if (conversion == FMT_CONV_SIGNED || conversion == FMT_CONV_OCTAL
+            || conversion == FMT_CONV_HEX || conversion == FMT_CONV_UNSIGNED) {
+            int32_t value = is_long ? (int32_t)be32(image + argp)
+                                    : (int32_t)(int16_t)be16(image + argp);
+
+            c_fmt_integer(image, conversion, (uint16_t)is_long, &out, value, conversion);
+            argp = addr_add(argp, is_long ? 4 : 2);
+        } else if (conversion == FMT_CONV_CHAR) {
+            emit_byte(image, &out, image[addr_add(argp, 1)]);   /* the low byte of the word */
+            argp = addr_add(argp, 2);
+        } else if (conversion == FMT_CONV_STRING) {
+            uint32_t text = be32(image + argp);
+            int16_t left_to_copy = precision;
+
+            argp = addr_add(argp, 4);
+            while (left_to_copy != 0 && image[text] != 0) {
+                emit_byte(image, &out, image[text]);
+                text = addr_add(text, 1);
+                left_to_copy = (int16_t)(left_to_copy - 1);
+            }
+        } else if (conversion == FMT_CONV_EXPONENT || conversion == FMT_CONV_FIXED
+                   || conversion == FMT_CONV_GENERAL) {
+            uint32_t value_high = be32(image + argp);
+            uint32_t value_low = be32(image + argp + 4);
+
+            fp_acc_store(image, value_high, value_low);   /* the argument goes through it first */
+            c_fmt_float(image, conversion, precision, &out, value_high, value_low, caller);
+            argp = addr_add(argp, 8);
+        } else {
+            emit_byte(image, &out, (uint8_t)conversion);
+        }
+        doprnt_pad_field(image, &out, field_start, width, left_justified, pad);
+    }
+    image[out] = 0;
+    return (int32_t)(out - start);
+}
+
+/* c_sprintf @ 0x164d8 — c_doprnt onto the caller's own buffer, and its count.
+ *
+ * `argp` is the address of c_sprintf's SECOND argument, so the format string and the values after
+ * it are one list to c_doprnt. */
+int32_t c_sprintf(uint8_t *image, uint32_t out, uint32_t argp, PrintfCallerState caller) {
+    return c_doprnt(image, out, argp, caller);
+}
+
+/* c_fputs @ 0x164ee — every byte of a string through c_putc, and no terminator. */
+void c_fputs(uint8_t *image, uint32_t text, uint32_t file, CallerAddressRegisters *saved) {
+    while (image[text] != 0) {
+        c_putc(image, (uint16_t)(int16_t)(int8_t)image[text], file, saved);
+        text = addr_add(text, 1);
+    }
+}
+
+/* c_vfprintf @ 0x16496 — format into a 256-byte buffer, then push the buffer at a stream.
+ *
+ * There is no bound on what c_doprnt writes into that buffer: a format that produces more than 256
+ * bytes runs off the end of the original's frame. The reconstruction's buffer is
+ * `CLIB_SCRATCH_VFPRINTF_BUFFER` (include/clib.h says why it is where it is); ../STATUS.md records the
+ * overflow as read-verified rather than reproduced. */
+int16_t c_vfprintf(uint8_t *image, uint32_t file, uint32_t argp, PrintfCallerState caller,
+                   CallerAddressRegisters *saved) {
+    int16_t count = (int16_t)c_doprnt(image, CLIB_SCRATCH_VFPRINTF_BUFFER, argp, caller);
+
+    c_fputs(image, CLIB_SCRATCH_VFPRINTF_BUFFER, file, saved);
+    return count;
+}
+
+/* c_printf @ 0x164c2 — c_vfprintf on `c_stdout`. The program's ONE call site passes the "Please
+ * reboot in LOW REZ" message and no conversions at all (`main` @ 0x100dc). */
+int16_t c_printf(uint8_t *image, uint32_t argp, PrintfCallerState caller,
+                 CallerAddressRegisters *saved) {
+    return c_vfprintf(image, A_c_stdout, argp, caller, saved);
+}
+
+/* ================================================================================================
  * Glue
  *
  * Every routine here is compiled C with its arguments on the stack, so a glue is a forward: the
@@ -1191,4 +2286,151 @@ void g_fp_cmp(uint8_t *image, uint32_t left, uint32_t right, uint32_t status_hig
 void g_fp_dispatch(uint8_t *image, uint32_t opcode, uint32_t dst, uint32_t src,
                    uint32_t widen_scratch, uint32_t status_high) {
     fp_dispatch(image, (uint16_t)opcode, dst, src, widen_scratch, (uint16_t)status_high);
+}
+
+/* The buffered layer and the console. Every one of these traps somewhere, so each takes the
+ * caller's A1/A2 the way the file layer's do. */
+uint32_t g_c_fopen(uint8_t *image, uint32_t path, uint32_t mode, uint32_t a1, uint32_t a2) {
+    return c_fopen(image, path, mode, caller_registers(a1, a2));
+}
+
+int32_t g_c_fclose(uint8_t *image, uint32_t file, uint32_t a1, uint32_t a2) {
+    CallerAddressRegisters saved = caller_registers(a1, a2);
+
+    return c_fclose(image, file, &saved);
+}
+
+int32_t g_c_fflush(uint8_t *image, uint32_t file, uint32_t a1, uint32_t a2) {
+    CallerAddressRegisters saved = caller_registers(a1, a2);
+
+    return c_fflush(image, file, &saved);
+}
+
+int32_t g_c_filbuf(uint8_t *image, uint32_t file, uint32_t a1, uint32_t a2) {
+    CallerAddressRegisters saved = caller_registers(a1, a2);
+
+    return c_filbuf(image, file, &saved);
+}
+
+int32_t g_c_flsbuf(uint8_t *image, uint32_t byte, uint32_t file, uint32_t a1, uint32_t a2) {
+    CallerAddressRegisters saved = caller_registers(a1, a2);
+
+    return c_flsbuf(image, (uint16_t)byte, file, &saved);
+}
+
+int32_t g_c_putc(uint8_t *image, uint32_t byte, uint32_t file, uint32_t a1, uint32_t a2) {
+    CallerAddressRegisters saved = caller_registers(a1, a2);
+
+    return c_putc(image, (uint16_t)byte, file, &saved);
+}
+
+int32_t g_c_fread(uint8_t *image, uint32_t buffer, uint32_t size, uint32_t items, uint32_t file,
+                  uint32_t a1, uint32_t a2) {
+    CallerAddressRegisters saved = caller_registers(a1, a2);
+
+    return c_fread(image, buffer, (int16_t)size, (int16_t)items, file, &saved);
+}
+
+int32_t g_c_lseek(uint8_t *image, uint32_t handle, uint32_t offset, uint32_t whence,
+                  uint32_t a1, uint32_t a2) {
+    return c_lseek(image, (int16_t)handle, (int32_t)offset, (int16_t)whence,
+                   caller_registers(a1, a2));
+}
+
+int32_t g_c_write(uint8_t *image, uint32_t handle, uint32_t buffer, uint32_t length,
+                  uint32_t a1, uint32_t a2) {
+    CallerAddressRegisters saved = caller_registers(a1, a2);
+
+    return c_write_reporting(image, (uint16_t)handle, buffer, (int16_t)length, &saved);
+}
+
+void g_c_conout_write(uint8_t *image, uint32_t buffer, uint32_t length, uint32_t a1, uint32_t a2) {
+    c_conout_write(image, buffer, (int16_t)length, caller_registers(a1, a2));
+}
+
+int32_t g_c_conin(uint8_t *image, uint32_t handle, uint32_t a1, uint32_t a2) {
+    return c_conin(image, (uint16_t)handle, caller_registers(a1, a2));
+}
+
+/* The printf engine. `cursor` is the image cell holding the `char *` the emitters advance — the
+ * original's is its caller's argument slot, which is stack the differential drops, so a case puts
+ * one in ordinary image memory and the glue does the round trip. */
+int32_t g_c_fmt_getnum(uint8_t *image, uint32_t cursor) {
+    uint32_t at = be32(image + cursor);
+    int16_t value = c_fmt_getnum(image, &at);
+
+    wr32(image + cursor, at);
+    return value;
+}
+
+void g_c_fmt_integer(uint8_t *image, uint32_t conversion, uint32_t is_long, uint32_t cursor,
+                     uint32_t value, uint32_t base_when_conversion_unknown) {
+    uint32_t at = be32(image + cursor);
+
+    c_fmt_integer(image, (uint16_t)conversion, (uint16_t)is_long, &at, (int32_t)value,
+                  (uint16_t)base_when_conversion_unknown);
+    wr32(image + cursor, at);
+}
+
+void g_c_fmt_float(uint8_t *image, uint32_t conversion, uint32_t precision, uint32_t cursor,
+                   uint32_t value_high, uint32_t value_low, uint32_t inherited_conversion,
+                   uint32_t status_high) {
+    PrintfCallerState caller = { (uint16_t)inherited_conversion, (uint16_t)status_high };
+    uint32_t at = be32(image + cursor);
+
+    c_fmt_float(image, (uint16_t)conversion, (int16_t)precision, &at, value_high, value_low,
+                caller);
+    wr32(image + cursor, at);
+}
+
+/* c_fcvt writes its digits through a `char *` and its decimal exponent through a `short *`; both
+ * are frame locals in the original, and a case gives it image cells instead. */
+void g_c_fcvt(uint8_t *image, uint32_t value_high, uint32_t value_low, uint32_t digits,
+              uint32_t decimal_point, uint32_t ndigits) {
+    int16_t exponent = 0;
+
+    c_fcvt(image, value_high, value_low, image + digits, &exponent, (int16_t)ndigits);
+    wr16(image + decimal_point, (uint16_t)exponent);
+}
+
+int32_t g_c_doprnt(uint8_t *image, uint32_t out, uint32_t argp, uint32_t inherited_conversion,
+                   uint32_t status_high) {
+    PrintfCallerState caller = { (uint16_t)inherited_conversion, (uint16_t)status_high };
+
+    return c_doprnt(image, out, argp, caller);
+}
+
+int32_t g_c_sprintf(uint8_t *image, uint32_t out, uint32_t argp, uint32_t inherited_conversion,
+                    uint32_t status_high) {
+    PrintfCallerState caller = { (uint16_t)inherited_conversion, (uint16_t)status_high };
+
+    return c_sprintf(image, out, argp, caller);
+}
+
+void g_c_fputs(uint8_t *image, uint32_t text, uint32_t file, uint32_t a1, uint32_t a2) {
+    CallerAddressRegisters saved = caller_registers(a1, a2);
+
+    c_fputs(image, text, file, &saved);
+}
+
+int32_t g_c_vfprintf(uint8_t *image, uint32_t file, uint32_t argp, uint32_t inherited_conversion,
+                     uint32_t status_high, uint32_t a1, uint32_t a2) {
+    PrintfCallerState caller = { (uint16_t)inherited_conversion, (uint16_t)status_high };
+
+    CallerAddressRegisters saved = caller_registers(a1, a2);
+
+    return c_vfprintf(image, file, argp, caller, &saved);
+}
+
+int32_t g_c_printf(uint8_t *image, uint32_t argp, uint32_t inherited_conversion,
+                   uint32_t status_high, uint32_t a1, uint32_t a2) {
+    PrintfCallerState caller = { (uint16_t)inherited_conversion, (uint16_t)status_high };
+
+    CallerAddressRegisters saved = caller_registers(a1, a2);
+
+    return c_printf(image, argp, caller, &saved);
+}
+
+void g_crt0_setup_args(uint8_t *image, uint32_t command_tail) {
+    crt0_setup_args(image, command_tail);
 }

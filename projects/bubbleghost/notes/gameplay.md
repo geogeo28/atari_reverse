@@ -107,7 +107,8 @@ at +0x7620 = row 189).
 2. `vq_mouse` → `mouse_buttons`, `mouse_x`, `mouse_y`; `vq_key_s` → `key_shift_state`.
 3. `Crawio(0xff)` — a non-blocking key poll, and the only key reader in the play loop:
    `^P` = pause (loop on `Cconis` until `^P` again), `^S` = toggle `sound_enabled` (at `0x123ea`),
-   `^R` = abort the turn (lives := −1).
+   `^R` = end the GAME (not the turn): it clears `level_complete`, sets `lives := −1` and zeroes
+   `score`, `p1_score`, `p2_score`, `p1_playing` and `p2_playing`.
 4. Ghost position from the mouse (§3).
 5. Blow / idle (§3), including `Setcolor(15, …)`.
 6. Ghost facing from the mouse buttons; `ghost_tile = facing*5 + anim_step`.
@@ -186,8 +187,12 @@ alone**; in practice, hold either Shift.
 
 `breath` (`0x22fca`) is the air gauge: `+3`/frame up to `35` while idle, `−1`/frame while
 blowing. It starts at 35, so ~35 frames of continuous blow and ~12 frames to refill.
-While blowing the ghost is recoloured `Setcolor(15, 0x777)`; the frame the gauge goes negative
-it is recoloured `Setcolor(15, 0x733)` (the ghost goes pink) and the blow stops.
+**The two `Setcolor` calls belong to the arms the other way round from how this note first read
+them**, and the reconstruction's differential is what says so (`recreate/STATUS.md`, gameplay):
+every *idle* frame issues `Setcolor(15, 0x777)` (@ `0x1254a`), and `Setcolor(15, 0x733)` — the
+ghost goes pink — is issued only on the frame the gauge goes negative (@ `0x124f2`), when the blow
+also stops. A blowing frame with air left issues no `Setcolor` at all, so the ghost simply keeps
+the white the last idle frame set.
 
 `ghost_blow` (`0x129b4`) fires once per blowing frame. With `dx = bubble_x − ghost_x`,
 `dy = bubble_y − ghost_y` it requires `|dx| < 50` **and** `|dy| < 50`, then one direction test:
@@ -206,8 +211,12 @@ it is recoloured `Setcolor(15, 0x733)` (the ghost goes pink) and the blow stops.
 The multipliers really do differ between the four diagonals (4/3/3/4) — that asymmetry is in
 the image, not a transcription slip.
 
-A hit sets `(drift_dir_x, drift_dir_y)`, `drift_vel_x`/`drift_vel_y` (± the speed above), `drift_speed`
-to the same value, and resets `drift_interval = 0`, `drift_pulse = 0`.
+A hit sets `(drift_dir_x, drift_dir_y)`, `drift_speed` to the speed above, and resets
+`drift_interval = 0`, `drift_pulse = 0` — plus the velocity on **each axis the direction moves
+on**: an orthogonal hit writes one of `drift_vel_x`/`drift_vel_y` (±300) and leaves the other
+alone, a diagonal writes both (±250). Invisible in play, because the frame's tail zeroes both
+anyway; visible to a differential, and pinned by
+`recreate/test/test_gameplay.py::test_ghost_blow_arms_every_facing`.
 
 ### Drift
 
@@ -363,11 +372,17 @@ the hard-coding as shipped. A recreate that reorders the object slots breaks the
 `bubble_collision_probe` (`0x13004`) is the whole hazard model. There is **no geometry**:
 
 ```
-probe_phase = (probe_phase + 1) % 6
+previous    = probe_phase
+probe_phase = previous + 1
+if previous == 5: probe_phase = 0                  # the test is on the value it ARRIVED with
 for i in 0..7:
-    if get_pixel(bubble_x + probe[phase][i].dx, bubble_y + probe[phase][i].dy) != 0:
-        bubble_frame = 0;  bubble_alive = 0        # POP
+    if get_pixel(bubble_x + probe[probe_phase][i].dx,
+                 bubble_y + probe[probe_phase][i].dy) != 0:
+        bubble_frame = 0;  bubble_alive = 0        # POP, and the scan stops
 ```
+
+So the phases actually probed run 1, 2, 3, 4, 5, 0 — the *stepped* value, not the one the frame
+began with — and a phase outside 0..5 keeps counting up rather than being clamped.
 
 `get_pixel` (`0x13bea`) reads the four plane words at `screen_back + y*160 + (x/16)*8` and
 assembles the 0..15 colour index. The work buffer at that moment holds the room background and

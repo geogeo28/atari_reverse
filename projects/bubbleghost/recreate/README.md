@@ -6,7 +6,9 @@ against the original 68000 code** by the shared harness in
 compiled reconstruction runs on a copy of the same flat memory image, and the two are diffed. Why
 differential rather than byte-matching, and what it can and cannot see, is written up once in
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md). **Read
-[`STATUS.md`](STATUS.md)'s "Model gaps" first**: this game reaches OS calls the kit does not model.
+[`STATUS.md`](STATUS.md)'s "Model gaps" first**: this game reaches OS calls the earlier games
+did not, and the table says which are modeled now and which still refuse — most of the
+original list is struck through, so a row that still reads as a blocker is the exception.
 
 ## Binding
 
@@ -83,22 +85,30 @@ recreate/
 ├── project.toml     the binding above
 ├── Makefile         two lines: KIT + GAME, then `include $(KIT)/kit.mk`
 ├── include/globals.h       the memory model above, and nothing else
+├── include/common.h        the 68000-shaped helpers more than one core needs; its own header
+│                        says why they are not in the kit's machine.h
 ├── include/<subsystem>.h   one per subsystem: prototypes, addresses, record layout
 ├── src/<subsystem>.c       each core plus its `g_<name>` glue
 ├── test/harness.py         16-line shim: binds the kit and star-re-exports it
 ├── test/abi.py             the scratch map, the C stack-argument builder, the two stub shapes,
 │                        and what every battery shares: `run_with_a4` (the one differential
-│                        spelling), `merge_pokes`, the big-endian encoders and `shard`
-│                        (the seeder, `abi.seed_spans`, is the kit's — re-exported here)
+│                        spelling), `merge_pokes`, `stage_world`, the big-endian encoders
+│                        and decoders, and `shard` (the seeder, `abi.seed_spans`, is the
+│                        kit's — re-exported here)
 ├── test/conftest.py        the post-init image fixture, and the autouse one that installs it
 ├── test/test_image_model.py  the relayout + crt0 pins and the free-space census
 ├── test/test_constants.py    the CLAUDE.md §5 pin and the duplicate checks — a collector
-├── test/test_status.py       STATUS.md's counts against its rows
+├── test/test_status.py       STATUS.md's counts against its rows, and its rows against
+│                        `../names.txt`: every `fn` is verified or deferred, never both
 ├── test/test_<subsystem>.py  one differential battery per subsystem
 └── STATUS.md        the per-function ledger, in per-subsystem sections
 ```
 
-There is no `addrs.h`; the 68000 primitives every core shares live in the kit's `machine.h`.
+There is no `addrs.h`. The 68000 PRIMITIVES every core shares live in the kit's `machine.h` —
+`be16`/`wr32`, `sign_ext16`, `addr_add`, `loop_passes` — and the IDIOMS this program's own compiler
+emits live in `include/common.h`: `muls_ext_w` (a `muls.w` followed by an `ext.l`),
+`copy_longs_ascending`, `longword_slot` and `LONG_BYTES`. That header's comment argues the split,
+which is worth reading before adding to either.
 
 ## Adding a function
 
@@ -112,6 +122,7 @@ a function touches only files your subsystem owns.
 | `include/<someone else's>.h` | **nobody but its owner** — include it to READ a global, never edit it |
 | `include/globals.h`, `test/test_constants.py`, `test/test_status.py`, `test/test_image_model.py`, `test/conftest.py`, `Makefile`, `project.toml`, `test/harness.py` | **nobody**, in normal work |
 | `test/abi.py` | shared, **append-only** — only if you need a new stub shape or a helper every battery would otherwise copy |
+| `include/common.h` | shared, **append-only**, and only for an idiom a SECOND core needs — a helper with one caller belongs in that caller's file |
 
 Two conventions carry that:
 
@@ -153,14 +164,20 @@ The steps:
    case that forgot cannot silently run against a bss of zeroes. Shard the fuzz by `chunk` — either
    partitioning one fixed list (`abi.shard`) or seeding per chunk; `abi.shard`'s docstring says when
    each is right, and a docstring that claims the wrong one is worse than none. Declare the
-   battery's `MIRRORS` and `ENTRY_PROLOGUES` at the bottom of that file; `test_constants.py` fails
-   by name if a battery has neither — and fails by name if `src/<yours>.c` exists with no
-   `test_<yours>.py` beside it.
+   battery's `MIRRORS`, `ENTRY_PROLOGUES` and — if any case uses `stop_pc` — `STOP_PROLOGUES` at the
+   bottom of that file. `test_constants.py` fails by name if a battery has no pins at all, if
+   `src/<yours>.c` exists with no `test_<yours>.py` beside it, and if any module-level `ENTRY_*` or
+   `STOP_*` naming an address inside the program has no row: a dict of pins can only check what is
+   in it, so the row you forget is the address nothing looks at.
 5. `rm -f build/*.so && make test` — green is the bar, not "looks right". Run `make guarded` too if
    the function indexes the image with an address it computed.
 6. Mutate a constant, rebuild, confirm the suite goes red, revert. **Only from a green baseline**: a
    suite with one unrelated failing test reports every mutant as killed.
 7. Append your STATUS.md row, update your section's count, and say what the verification covered.
+   ONE ✅ ROW PER ADDRESS across the whole ledger, and every `fn` line in `../names.txt` needs
+   either a ✅ row or a row in "Not reconstructed" — `test_status.py` fails by name on a second row,
+   on an unaccounted `fn`, and on an address that claims both. A slice of a routine that already has
+   a row is filed under the address the SLICE starts at, not under the routine's.
 
 ## Running it
 
