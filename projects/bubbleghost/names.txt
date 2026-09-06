@@ -1,0 +1,60 @@
+# BUBBLE GHOST (Atari ST, ERE Informatique 1987 / Accolade 1988; code Christophe Andréani).
+# Binary: GHOST.PRG ships wrapped in a protection-keyed stream cipher (notes/loader.md);
+# tools/depack_bubbleghost.py produces bin/GHOST_PLAIN.PRG — an Alcyon/DRI C small-model
+# program, text 0xe8ca, data 0x2f4, bss 0x6650, 9 relocs — which is what ghidra_proj holds.
+# Ghidra address = image offset + 0x10000. Run-time layout is [TEXT][BSS][DATA] with a4 on
+# the BSS/DATA boundary: a4+n = DATA (Ghidra address = n + 0xe8ca + 0x10000), a4-n = globals.
+#
+# A trailing '# ctx' marks a name inferred from call context rather than a confirmed body
+# read (ApplyNames strips everything from the first '#'). Evidence for the rest is in
+# notes/anchors.md.
+
+# --- startup and top level -------------------------------------------------------------------
+fn 0x10036 crt0_start                # Mshrink, moves DATA above BSS, clears BSS, sets a4, calls init_globals then main
+fn 0x100dc main                      # XBIOS Getrez; wrong rez -> printf(" Please reboot in LOW REZ... "); else init + game
+fn 0x10116 crt0_setup_args           # the argv hook the startup calls with basepage+128: a bare rts
+fn 0x10118 init_video_and_heap       # Getrez, Logbase, Logbase-0x7d00 back buffer, Super in/out, clears $484 conterm
+fn 0x101e6 game_top_loop             # loads every file, installs sound, then `do { ... } while (true)`
+fn 0x16d8e init_globals              # writes every non-zero BSS initialiser one move at a time; builds "GHOST.LOA"/"GHOST.VOI"
+
+# --- file loading ----------------------------------------------------------------------------
+fn 0x10dea load_demo                 # open "A:GHOST.DEM", malloc 0x1770, read, close  -> a4-7606
+fn 0x10e44 load_presentation         # open "A:GHOST.PRE", malloc 0x7800 + 0x20 (picture + palette)
+fn 0x1396c load_level_pictures       # open "A:GHOST.DAT", six malloc(0x7800) + one 0x20 palette
+fn 0x121a0 load_hiscores             # open "A:GHOST.SCR" for read; on failure zeroes the table
+fn 0x1207a save_hiscores             # creat "A:GHOST.SCR" and write the table
+fn 0x13c6c load_voice_player         # fread GHOST.LOA (0xa8f) to a4-6010; malloc 0x7594 and fread GHOST.VOI
+fn 0x13cea play_voice                # pokes the VOI buffer into the LOA image at +0x1e, then jsr a4-5982 (LOA text)
+
+# --- sound -----------------------------------------------------------------------------------
+fn 0x14982 sound_start               # Supexec(install_sound_vectors) then 0x14576
+fn 0x1499c sound_stop                # 0x14576 then Supexec(remove_sound_vectors)
+fn 0x148ea install_sound_vectors     # saves $114/$484, installs trap#9 at $a4 and Timer C at $114, MFP VR := $40
+fn 0x1491c remove_sound_vectors      # restores $114/$484, MFP VR := $48
+fn 0x1459a timer_c_sound_isr         # 200 Hz Timer C handler; drives the PSG at $ffff8800, chains to the saved $114
+fn 0x14940 psg_access                # user-mode stub: pushes three words then trap #9
+fn 0x14950 trap9_psg_handler         # supervisor PSG gate: select d1&15 at $ffff8800, write d0, read back, rte
+
+# --- OS glue ---------------------------------------------------------------------------------
+fn 0x15e3c xbios_trap                # saves a1/a2/return in a4-26080.., trap #14, restores — every XBIOS call
+fn 0x15e58 gemdos_trap               # the same for trap #1 — every GEMDOS call
+fn 0x15c82 gemdos_malloc             # GEMDOS Malloc (0x48) wrapper
+fn 0x15c98 gemdos_mfree              # GEMDOS Mfree (0x49) wrapper
+
+# --- C library (Alcyon/DRI runtime) ----------------------------------------------------------
+fn 0x156e2 c_fopen                   # parses the mode string ('b','r','w') and calls c_open
+fn 0x15878 c_fread                   # fread(ptr, size, nmemb, FILE*)
+fn 0x14d72 c_fclose                  # flushes then closes the FILE
+fn 0x15d64 c_open                    # open(path, mode) -> GEMDOS Fcreate or Fopen
+fn 0x1667c c_read                    # read(fd, buf, len) -> GEMDOS Fread
+fn 0x14c3c c_close                   # close(fd) -> GEMDOS Fclose
+fn 0x14c7a c_creat                   # creat(path, mode) -> GEMDOS Fcreate
+fn 0x15b54 c_malloc                  # free-list allocator rooted at a4-25770, 6-byte granules
+fn 0x15bfe c_free                    # returns a block to that free list
+fn 0x164c2 c_printf                  # printf(fmt, ...) -> vfprintf(stdout at a4-25598, &args) at 0x16496
+fn 0x16496 c_vfprintf                # ctx  (called only by c_printf here; body not read)
+
+# --- unread but load-bearing; named ONLY from the call site, verify before committing ---------
+fn 0x10eb8 show_presentation         # ctx  (called between Setscreen and play_voice)
+fn 0x10f20 attract_and_menu          # ctx  (the last call in game_top_loop's prologue)
+fn 0x16a06 set_screen_mode           # ctx  (called with a4-7212, the value Getrez was stored into)

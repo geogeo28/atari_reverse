@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """What every static depacker in this workspace shares: its command line and its size cap.
 
-`depack_lsd.py` and `depack_rad.py` each know exactly one container and deliberately do not
-import each other. Everything AROUND the decode is identical, though — parse the arguments,
-read the file, write the output, pick an exit status — so it lives here once instead of being
-copied per tool, where a fix would have to be made twice. Stdlib only, like the depackers.
+`depack_lsd.py`, `depack_rad.py` and `depack_bubbleghost.py` each know exactly one container and
+deliberately do not import each other. Everything AROUND the decode is identical, though — parse
+the arguments, read the file, write the output, pick an exit status — so it lives here once instead
+of being copied per tool, where a fix would have to be made twice. Stdlib only, like the depackers.
 
     import depack_common                         # tools/ is on sys.path beside this file
 

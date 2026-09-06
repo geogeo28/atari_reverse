@@ -46,6 +46,10 @@ MASK_FIELDS = 1  # a masked group carries this many fields ahead of the planes
 # negative, so never use it to subscript a palette list.
 TRANSPARENT = -1
 
+# What `tile_sheet` paints its gaps with. Palette entry 0 is the background in every ST bitmap this
+# workspace has met, so a rule drawn in it reads as a separator rather than as picture.
+SHEET_GAP_INDEX = 0
+
 # --- colour -----------------------------------------------------------------
 PALETTE_ENTRIES = 16
 PALETTE_BYTES = PALETTE_ENTRIES * BYTES_PER_WORD
@@ -125,6 +129,35 @@ def decode_planar(data, width, rows, offset=0, unit_bits=PIXELS_PER_WORD, masked
             pixels += _gather(planes, mask, unit_bits)
         out.append(pixels)
     return out
+
+
+def tile_sheet(tiles, across, gap=0):
+    """Equal-sized tiles laid out row-major, `across` per row -> one list of pixel rows.
+
+    Index space in, index space out, so the sheet is painted through the tiles' own palette rather
+    than through one this module would have to invent. `gap` pixels of SHEET_GAP_INDEX separate
+    neighbouring tiles and neighbouring bands of them - between only, so the sheet has no border -
+    and a short last band leaves that same index behind the tiles it does not have.
+    """
+    tile_rows = len(tiles[0])
+    tile_width = len(tiles[0][0])
+    bands = (len(tiles) + across - 1) // across
+    pitch = tile_width + gap
+    blank_row = [SHEET_GAP_INDEX] * (across * pitch - gap)
+    sheet = []
+    for band in range(bands):
+        pixel_rows = [list(blank_row) for _ in range(tile_rows)]
+        for column in range(across):
+            index = band * across + column
+            if index >= len(tiles):
+                break
+            at = column * pitch
+            for y, row in enumerate(tiles[index]):
+                pixel_rows[y][at:at + tile_width] = row
+        sheet += pixel_rows
+        if gap and band + 1 < bands:
+            sheet += [list(blank_row) for _ in range(gap)]
+    return sheet
 
 
 def split_rows(pixel_rows, frame_rows):

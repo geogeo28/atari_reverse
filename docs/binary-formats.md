@@ -23,6 +23,14 @@ TEXT and DATA load **contiguously** at the load address; BSS is a zero-filled re
 right after. Everything is position-independent — it can load anywhere, fixed up by the
 relocation table.
 
+**`ABSFLAG` set is legitimate, not corruption.** A non-zero word at `+0x1A` means the file carries
+**no relocation table at all** — the program is either fully position-independent or meant to be
+run only where it is loaded, and the file simply ends after TEXT+DATA (sometimes one byte into
+where a table would begin). Do not treat the missing table as a truncated file: `prg_dis.py` now
+reports it (`no reloc table (ABSFLAG=0x… set in the header)`) instead of crashing on the parse.
+Bubble Ghost's `GHOST.LOA` is the worked example — a 2,703-byte, `ABSFLAG`-set sample player that
+the game reads whole into a buffer as *data* and `jsr`s (`projects/bubbleghost/notes/loader.md`).
+
 ## DRI symbol table (14 bytes/entry)
 
 `[8 bytes name (space/nul padded)] [2 bytes type] [4 bytes value]`

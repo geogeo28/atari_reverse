@@ -20,6 +20,7 @@ interactive exploration in the GUI, see [`ghidra-gui.md`](ghidra-gui.md).
 | `SeedFunctions.java` | Create a function at the start of every run of disassembled code that belongs to none — branch-only entry points and jump-table arms Ghidra reached but never attributed, which `ExportDecompC` would otherwise skip. Never seeds from a linear sweep. |
 | `AtariOsTrapAnnotate.java` | Comment every `trap` with its call name (GEMDOS/BIOS/XBIOS from the pushed selector; GEM AES/VDI from `d0`), and rename thin single-trap wrappers. |
 | `ExportDecompC.java` | Decompile every function to a text file (arg 1), with a function index. This is your reading material. |
+| `SetRegisterValue.java` | Pin a register to a constant over every memory block, so the decompiler resolves register-relative operands to absolute addresses. Args: `<register> <hex value>`, e.g. `a4 0x24f1a`. Must run **before** auto-analysis — see "Small-model C" below. |
 | `ApplyNames.java` | Apply a `names.txt` map (`fn`/`var`/`cmt`) back into the DB; disassembles+creates functions for jump-only handler stubs. Strips a trailing `# ctx` confidence tag on `fn`/`var` lines. |
 | `DumpNames.java` | The reverse: export the DB's current non-default function names, data labels, and plate comments **back** to `names.txt` format — use it to recover names made/edited in the GUI. |
 | `HwPortabilityScan.java` | Dump function bodies, the call graph, and every hardware/off-image memory access (with direction, size, and whether the read steers a branch) to a TSV. Args: `<out.tsv> [image_size_hex]`. Drive it with `tools/hw_scan.sh`; classify with `tools/hw_portability.py` — see [`on-target-execution.md`](on-target-execution.md), "Measure the blindness". |
@@ -58,6 +59,56 @@ instructions (`movec`, `moves`, extended addressing), pass `68000:BE:32:MC68030`
 6th arg to `headless.sh` (or `new_project.sh <name> <prg> <base> 68000:BE:32:MC68030`) so
 the decompiler decodes them instead of flagging "unable to resolve constructor". Base
 68000 is right for the vast majority of ST games.
+
+**Extra pre-scripts.** Everything after the 6th argument of `headless.sh` is one more
+pre-script invocation, each passed as a single word-split string and inserted after
+`PrgLoader` and before `LineAResolve` — i.e. still ahead of auto-analysis:
+
+```bash
+bash tools/headless.sh "$PROJ" name "$PRG" 0x10000 decomp.c 68000:BE:32:default \
+  "SetRegisterValue.java a4 0x24f1a" \
+  "ApplyNames.java out/seed_functions.txt"
+```
+A project that needs none passes none, so every existing `run.sh` is unaffected. Use it for
+anything analysis itself must see: a tracked register value (below), or an `fn` seed for a
+function only reached indirectly (Bubble Ghost's global-data initialiser is called through
+`jsr 48(a5)`, so flow analysis never disassembles the 1 KB behind it).
+
+## Small-model C: when every global is `n(a4)`
+
+**Symptom.** The decompile is full of `*(short *)(a4 + -8560)` — or of `unaff_A4` where
+Ghidra gave up on the register entirely — and **no global has an address**, so there is
+nothing for a `var 0x<addr> <name>` line to attach a name to. The linear listing shows
+`n(a4)` (or `n(a5)`) on nearly every data access, and the entry code copies a segment
+around before calling `main`.
+
+**Mechanism.** Alcyon/DRI C in the small model (and Megamax-style compilers) reaches all
+static data off one base register. TOS loads the file as `[TEXT][DATA][BSS]`, but the crt0
+immediately moves DATA *above* BSS, zeroes BSS, and parks `a4` on the new BSS/DATA
+boundary — so at run time the layout is `[TEXT][BSS][DATA]`, negative offsets are
+variables and positive ones initialised data. A Ghidra image built from the **file** layout
+therefore has every global at the wrong address, and the base register is a mystery value.
+
+**The fix, two steps, both before analysis.**
+
+```bash
+python3 tools/prg_relayout.py bin/GAME.PRG -o bin/GAME_RT.PRG   # rebuild in the run-time layout
+```
+`prg_relayout.py` maps every image offset through `runtime_offset` (TEXT unchanged, DATA up
+by `blen`, BSS down by `dlen`), moving the bytes, each relocation's position, and each
+relocation's target value; the output header folds BSS into text so an ordinary loader —
+`PrgLoader.java` included — lays the whole run-time image down as one initialised block. Feed
+Ghidra *that* image, then pin the base register with the extra pre-script above:
+`SetRegisterValue.java a4 <boundary>`, where the boundary is `load base + text length of the
+rebuilt image` (read it back from the header, don't retype it as a literal). The decompiler
+reads the ProgramContext's register values at each function entry, so a value set after
+analysis is too late.
+
+**The address rule that results.** *Ghidra address == run-time address*, for TEXT, BSS and
+DATA alike, and `n(a4)` decompiles as `DAT_<boundary + n>` — signed, so negative is BSS and
+positive is DATA. No conversion in either direction, and `var` lines land on real globals. On
+Bubble Ghost this turned 10,031 `a4 + n` expressions into **zero**, and 8,166 globals into
+addressed `DAT_*` labels; see [`../projects/bubbleghost/README.md`](../projects/bubbleghost/README.md).
 
 ## The naming loop (the actual work)
 

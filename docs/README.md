@@ -12,9 +12,9 @@ but every doc is written as general procedure for any Atari ST binary.
 | [agent-playbook](agent-playbook.md) | **go fast and prove it** — the meta-practices + the differential reconstruction/verification loop that ties the rest together, plus how a gate fails quietly, **the setup contract a multi-agent wave needs before it launches**, and how to run and merge one | lead / methodology |
 | [00-overview](00-overview.md) | see the whole pipeline + "what is this file?" decision tree | lead / generalist |
 | [binary-formats](binary-formats.md) | parse a `.PRG`/`.TOS`/`.TTP`, its header, symbols, relocations; read a disk image (`st_extract.py`, `stx_extract.py`); decode a game's own resource container (`depack_rad.py`); **write one back** — a `.PRG` from the reconstruction, and a bootable FAT12 `.ST` a real machine mounts (`st_build.py`) | binary formats |
-| [packed-executables](packed-executables.md) | the entry is garbage / high-entropy — depack via Hatari, or statically with `depack_gamex.py` / `depack_lsd.py` | packing / dynamic |
+| [packed-executables](packed-executables.md) | the entry is garbage / high-entropy — depack via Hatari, or statically with `depack_gamex.py` / `depack_lsd.py` / `depack_bubbleghost.py` | packing / dynamic |
 | [m68k-disassembly](m68k-disassembly.md) | read 68000 asm, run `prg_dis.py`, avoid sweep desync, spot jump tables | assembly |
-| [ghidra-pipeline](ghidra-pipeline.md) | load into Ghidra correctly, run the headless pipeline, drive the naming loop | tooling |
+| [ghidra-pipeline](ghidra-pipeline.md) | load into Ghidra correctly, run the headless pipeline, drive the naming loop; **rebuild a small-model C program into its run-time layout** (`prg_relayout.py`) so `n(a4)` globals get real addresses | tooling |
 | [ghidra-gui](ghidra-gui.md) | explore interactively in the GUI: decompiler, xrefs, spot-renaming, syncing to names.txt | tooling |
 | [tos-os-calls](tos-os-calls.md) | identify GEMDOS/BIOS/XBIOS/GEM calls **and Line-A `$aXXX`**, basepage, loaders; **ask which machine you are on** (the cookie jar) and what `Setscreen` does besides what you called it for | OS internals |
 | [hardware-map](hardware-map.md) | decode direct hardware access (video/sound/MFP/IKBD, the STE sound block), interrupts and the VBL queue | hardware |

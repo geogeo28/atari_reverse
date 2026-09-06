@@ -17,6 +17,8 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 TOOLS = Path(__file__).resolve().parents[2]          # reverse/tools
 JAVA = TOOLS / "ghidra_scripts" / "PrgLoader.java"
 
@@ -30,6 +32,20 @@ CONST_RE = re.compile(r"private static final int (RELOC_\w+) = (\d+);")
 SKIP_BRANCH_RE = re.compile(
     r"if\s*\(\s*b\s*==\s*RELOC_SKIP\s*\)\s*\{[^}]*?cur\s*\+=\s*RELOC_SKIP_BYTES\s*;"
     r"[^}]*?continue\s*;[^}]*?\}", re.DOTALL)
+
+# The other two shapes a header can describe, which the Java and the Python must agree on as
+# firmly as they do on the skip byte: ABSFLAG set (offset +26) is a linker saying "no relocation
+# table exists", while a file that stops before the table's first fixup LONGWORD is truncated and
+# must be loud — an empty set there is a program loaded unrelocated in silence.
+ABSFLAG_HEADER_OFF = 26
+FIRST_FIXUP_BYTES = 4
+ABSFLAG_CONST_RE = re.compile(r"static final int ABSFLAG_OFF = (\d+);")
+ABSFLAG_READ_RE = re.compile(r"u16\(\s*data\s*,\s*ABSFLAG_OFF\s*\)")
+ABSFLAG_BRANCH_RE = re.compile(
+    r"if\s*\(\s*absflag\s*!=\s*0\s*\)\s*\{[^}]*?return\s+fx\s*;[^}]*?\}", re.DOTALL)
+TRUNCATED_BOUND_RE = re.compile(
+    r"if\s*\(\s*relocOff\s*\+\s*4\s*>\s*d\.length\s*\)\s*\{[^}]*?throw\s+new\s+Exception",
+    re.DOTALL)
 
 # A relocation stream exercising every byte the format defines, built here rather than read off a
 # game so the expectation is arithmetic rather than a golden number: first fixup at 0x10, then a
@@ -78,6 +94,40 @@ def test_python_skip_byte_records_no_fixup():
     assert prg_dis.parse_reloc(data, header) == EXPECTED
 
 
+def test_java_reads_absflag_and_returns_no_fixups():
+    """ABSFLAG set is the one legitimate 'no table' shape — and the Java must read the word."""
+    src = JAVA.read_text()
+    const = ABSFLAG_CONST_RE.search(src)
+    assert const and int(const.group(1)) == ABSFLAG_HEADER_OFF, (
+        f"{JAVA.name} no longer names the ABSFLAG header word at offset {ABSFLAG_HEADER_OFF}")
+    assert ABSFLAG_READ_RE.search(src), (
+        f"{JAVA.name} does not read the header's ABSFLAG word; a .PRG with no relocation table "
+        "then gets fixups invented out of whatever bytes follow the image.")
+    assert ABSFLAG_BRANCH_RE.search(src), (
+        f"{JAVA.name}'s parseRelocs no longer returns an empty list when ABSFLAG is set.")
+
+
+def test_java_refuses_a_truncated_reloc_table():
+    """The bound is `+ 4`, not `>= d.length`: 1-3 trailing bytes cannot hold the first fixup."""
+    assert TRUNCATED_BOUND_RE.search(JAVA.read_text()), (
+        f"{JAVA.name}'s parseRelocs no longer throws on relocOff + {FIRST_FIXUP_BYTES} > "
+        "d.length. Guarding only `relocOff >= d.length` reads past the array on a file with "
+        "1-3 spare bytes (projects/bubbleghost/bin/GHOST.LOA is one).")
+
+
 def test_empty_reloc_table_is_no_relocations():
     assert prg_dis.parse_reloc(b"\x00\x00\x00\x00", {"reloc_off": 0}) == set()
-    assert prg_dis.parse_reloc(b"", {"reloc_off": 0}) == set()
+
+
+def test_absflag_header_means_no_relocations():
+    """ABSFLAG wins over whatever bytes sit at the reloc offset — they are not a table."""
+    data = FIRST_FIXUP.to_bytes(4, "big") + STREAM
+    assert prg_dis.parse_reloc(data, {"reloc_off": 0, "absf": 0xffff}) == set()
+
+
+@pytest.mark.parametrize("spare", range(FIRST_FIXUP_BYTES))
+def test_truncated_reloc_table_raises(spare):
+    """0-3 bytes where a longword belongs is a truncated file, and every caller must hear it."""
+    data = b"\x00" * (10 + spare)
+    with pytest.raises(ValueError, match="truncated reloc table"):
+        prg_dis.parse_reloc(data, {"reloc_off": 10, "absf": 0})

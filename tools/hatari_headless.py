@@ -94,6 +94,14 @@ LOG_FAULT_MARKERS = (
     GEMDOS_NEEDS_TOS104,
 )
 
+# --- the TOS ROM ---------------------------------------------------------------------------------
+# A TOS ROM carries its own version as a BCD word at offset 2 ($0104 = TOS 1.04), so a run can name
+# the ROM it actually booted rather than the one it was asked for.
+TOS_VERSION_OFFSET = 2
+# The version behind GEMDOS_NEEDS_TOS104 above. Below it Hatari does not mount the drive at all, so
+# an --auto program never runs and the failure only shows up as "the program did nothing".
+GEMDOS_MIN_TOS_VERSION = 0x0104
+
 # --- GEMDOS executable header ------------------------------------------------------------------
 PRG_MAGIC = 0x601A
 # magic, text, data, bss, symbol-table lengths, reserved, program flags, absflag.
@@ -101,6 +109,13 @@ PRG_HEADER_FORMAT = ">HIIIIIIH"
 PRG_HEADER_BYTES = struct.calcsize(PRG_HEADER_FORMAT)   # 28
 RELOC_OFFSET_BYTES = 4          # the relocation table opens with the first fixup's TEXT offset...
 NO_FIXUPS = 0                   # ...or with a single zero longword when there are none at all
+FIXUP_BYTES = 4                 # every fixup relocates one longword
+# The rest of the table is one byte per step. A byte of 1 is NOT a fixup: it advances 254 bytes with
+# nothing relocated there, and reading it as one is the trap that silently corrupted every Ghidra
+# database in this workspace (docs/binary-formats.md).
+RELOC_END = 0
+RELOC_SPAN_BYTE = 1
+RELOC_SPAN_BYTES = 254
 # A signature shorter than this is not worth searching a megabyte of RAM for: the odds of a chance
 # match stop being negligible, and the uniqueness check below would start failing on noise.
 MIN_SIGNATURE_BYTES = 12
@@ -123,15 +138,44 @@ def sound_capture_arguments(config_path, wav_path):
     return ["-c", str(config_path)]
 
 
+# --- the TOS ROM ---------------------------------------------------------------------------------
+
+def tos_version(rom):
+    """The BCD version word a TOS ROM carries at offset 2 ($0104 = TOS 1.04)."""
+    with open(rom, "rb") as image:
+        image.seek(TOS_VERSION_OFFSET)
+        return struct.unpack(">H", image.read(2))[0]
+
+
+def tos_label(version):
+    """$0104 -> "1.04", for messages."""
+    return "%x.%02x" % (version >> 8, version & 0xFF)
+
+
+def require_gemdos_tos(rom):
+    """Refuse a GEMDOS-drive run on a ROM Hatari will not mount one for, and return the version.
+
+    Checked BEFORE the emulator starts, because the symptom otherwise is a full run that boots to
+    the desktop and never starts the --auto program, with the reason buried in one log line.
+    (projects/zynaps/tools/boot_shots.py still carries its own copy of this; migrating it here is a
+    later change, kept out of the one that added this.)
+    """
+    version = tos_version(rom)
+    if version < GEMDOS_MIN_TOS_VERSION:
+        raise SystemExit(f"Hatari will not emulate a GEMDOS drive on TOS {tos_label(version)} ({rom}) — it needs "
+                         f"{tos_label(GEMDOS_MIN_TOS_VERSION)} or later, so the program would never run.")
+    return version
+
+
 # --- finding a loaded program in RAM -----------------------------------------------------------
 
-def first_fixup_offset(image):
-    """The TEXT offset of a GEMDOS executable's first relocated longword, or None if it has none.
+def _relocation_table_offset(image):
+    """Where a GEMDOS executable's relocation table begins, or None if it has none at all.
 
-    Three shapes have no fixups: a header whose `absflag` is set (no relocation table is present at
-    all), a table that is a single zero longword (present but empty), and a file that simply stops
-    where the table would begin. All three used to fall through the arithmetic below — the first
-    into a `struct.error` on a slice past EOF, the others into "the first relocation is at 0".
+    Three shapes have none: a header whose `absflag` is set (no table is present), a table that is
+    a single zero longword (present but empty), and a file that simply stops where the table would
+    begin. All three used to fall through the arithmetic below — the first into a `struct.error` on
+    a slice past EOF, the others into "the first relocation is at 0".
     """
     magic, text, data, _bss, symbols, _reserved, _flags, absflag = struct.unpack_from(PRG_HEADER_FORMAT, image)
     if magic != PRG_MAGIC:
@@ -139,26 +183,58 @@ def first_fixup_offset(image):
     table = PRG_HEADER_BYTES + text + data + symbols
     if absflag or len(image) < table + RELOC_OFFSET_BYTES:
         return None
-    first = struct.unpack_from(">I", image, table)[0]
-    return None if first == NO_FIXUPS else first
+    return table
 
 
-def prg_text_signature(image):
-    """The leading TEXT bytes of a GEMDOS executable that survive loading unchanged.
+def fixup_offsets(image):
+    """Every relocated longword's TEXT offset, in file order. Empty when the file has no fixups."""
+    table = _relocation_table_offset(image)
+    if table is None:
+        return []
+    at = struct.unpack_from(">I", image, table)[0]
+    if at == NO_FIXUPS:
+        return []
+    offsets = [at]
+    for step in image[table + RELOC_OFFSET_BYTES:]:
+        if step == RELOC_END:
+            break
+        if step == RELOC_SPAN_BYTE:
+            at += RELOC_SPAN_BYTES
+            continue
+        at += step
+        offsets.append(at)
+    return offsets
 
-    GEMDOS rewrites every relocated longword in place as it loads, so past the FIRST fixup the
-    file's bytes and RAM's disagree by construction. Everything before it is verbatim, and that is
-    what can be searched for. With no fixups at all, the whole TEXT is signature-safe.
+
+def first_fixup_offset(image):
+    """The TEXT offset of a GEMDOS executable's first relocated longword, or None if it has none."""
+    offsets = fixup_offsets(image)
+    return offsets[0] if offsets else None
+
+
+def signature_window(image):
+    """(TEXT offset, bytes) of a run of TEXT that GEMDOS loading leaves byte for byte intact.
+
+    GEMDOS rewrites every relocated longword in place as it loads, so only a FIXUP-FREE run of TEXT
+    is the same in the file and in RAM, and only such a run can be searched for. The run before the
+    first fixup is the natural one — it is where a program's entry code sits — but it can be too
+    short to search a megabyte with: Bubble Ghost's decrypted GHOST.PRG opens with a nine-entry
+    relocated jump table and leaves two bytes. The fallback is the run after the LAST relocated
+    longword, fixup-free by construction and, for that program, all but the first 0x36 bytes of it.
     """
     text_length = struct.unpack_from(PRG_HEADER_FORMAT, image)[1]
-    whole_text = image[PRG_HEADER_BYTES:PRG_HEADER_BYTES + text_length]
-    first_fixup = first_fixup_offset(image)
-    if first_fixup is None:
-        return whole_text
-    if first_fixup < MIN_SIGNATURE_BYTES:
-        raise SystemExit(f"the first relocation is at text offset {first_fixup:#x} — too early to cut a "
-                         f"signature of at least {MIN_SIGNATURE_BYTES} bytes that the loaded image would match")
-    return whole_text[:first_fixup]
+    text = image[PRG_HEADER_BYTES:PRG_HEADER_BYTES + text_length]
+    offsets = fixup_offsets(image)
+    if not offsets:
+        return 0, text
+    if offsets[0] >= MIN_SIGNATURE_BYTES:
+        return 0, text[:offsets[0]]
+    after_last_fixup = offsets[-1] + FIXUP_BYTES
+    if text_length - after_last_fixup >= MIN_SIGNATURE_BYTES:
+        return after_last_fixup, text[after_last_fixup:]
+    raise SystemExit(f"neither the {offsets[0]:#x} bytes before the first relocation nor the "
+                     f"{text_length - after_last_fixup:#x} after the last is the {MIN_SIGNATURE_BYTES} bytes a "
+                     f"signature needs — nothing in this program's TEXT survives loading in a searchable run")
 
 
 def locate_by_signature(ram, prg_path):
@@ -176,15 +252,17 @@ def locate_by_signature(ram, prg_path):
     it doubles as proof that the candidate really is a loaded program.
     """
     image = Path(prg_path).read_bytes()
-    signature = prg_text_signature(image)
+    offset, signature = signature_window(image)
     fixup = first_fixup_offset(image)
     unrelocated = struct.unpack_from(">I", image, PRG_HEADER_BYTES + fixup)[0] if fixup is not None else None
 
     bases = []
     at = ram.find(signature)
     while at >= 0:
-        if fixup is None or struct.unpack_from(">I", ram, at + fixup)[0] == unrelocated + at:
-            bases.append(at)
+        base = at - offset          # the window need not start at TEXT+0; see signature_window()
+        if base >= 0 and (fixup is None
+                          or struct.unpack_from(">I", ram, base + fixup)[0] == unrelocated + base):
+            bases.append(base)
         at = ram.find(signature, at + 1)
     if not bases:
         return None

@@ -135,4 +135,61 @@ Worked on Joust: `JOUSTS.CTE` (37 KB, entropy 6.95) → `JOUST.PRG` (114 KB, ent
 (`PrgLoader`, no memory dump needed). Use Hatari when the packer is unknown/complex or
 self-modifying; use a static depacker when you can read the algorithm.
 
+## When the wrapper ENCRYPTS instead of crunching
+
+Not every wrapper is a cruncher. A protection wrapper may leave the program at its original length
+and simply **XOR it against a keystream whose key comes off the disk** — Bubble Ghost's `GHOST.PRG`
+(ERE Informatique, 1987) does exactly that, and `tools/depack_bubbleghost.py` is the worked tool.
+The difference matters before you write a line of Python: there is no literal/match stream to
+inflate, so nothing self-validates as you decode it — you get the whole image right, or you get
+noise.
+
+**Recognise it:**
+
+- **Same size in, same size out.** The header's `text`/`data` cover the whole file with no room for
+  an inflated image, and the entropy is high (7.68) with no cruncher signature anywhere. A cruncher
+  that big has to write its output *somewhere*: no `Malloc`, no destination pointer above the image
+  and no inflated-length field means nothing is being inflated.
+- **The tail looks like a keystream, not like code.** A short, periodic-looking run of words just in
+  front of the wrapper's entry, walked by a `move.w (a1)+,d0 / eor.w d0,(a2)+ / dbf` loop, is a key
+  table — a cruncher's tables index lengths and offsets and are read many times over, a key table is
+  read once, in order.
+- **`move.w sr,dn` INSIDE the loop.** That is not housekeeping: it puts the **CPU's own condition
+  codes** into the keystream, so the flags left by the previous load are part of the key and a
+  reimplementation has to model N, Z and X per iteration. Bubble Ghost's inner step is
+  `plain[i+1] = cipher[i+1] ^ plain[i] ^ SR ^ k[i]`, with `k` rotated right through X each word.
+- **The check reads the disk and then never branches on it.** A `Floprd` of a protection track
+  followed by a CRC whose *result is used as data* — rather than a `beq` to a failure path — means
+  the protection is **inside the plaintext**. There is nothing to patch out: wrong disk, wrong key,
+  rubbish program. (Bubble Ghost CRCs the fuzzy sectors of track 79, then CRCs the wrapper's own
+  last 632 bytes with that as the polynomial, so patching the loader also changes the key.)
+
+**A 16-bit key falls to an exhaustive search.** When the derived key is a word you do not need the
+disk at all: decrypt the image 65,536 times and score each result on **plaintext plausibility**.
+Useful scores, cheapest first — a `60 1a` or a legal opcode where the entry must be, byte entropy
+falling into the ~5-bit range typical of 68000 code+data, a high proportion of decodable
+instructions across the first few hundred words, printable ASCII where the strings should be, and a
+**DRI relocation stream that parses** where the header says it starts. One key stands out by orders
+of magnitude. The depacker then carries it as a constant and *re-validates* its output rather than
+re-deriving it, because re-deriving it needs the floppy. A longer key defeats this, and the dynamic
+Hatari route above is what is left.
+
+### The 68000 prefetch queue, or: the whole run decrypted against the wrong keystream
+
+The gotcha that cost the first attempt, and it generalises to any self-modifying loop:
+
+**a word the loop has already fetched takes effect one iteration late.** Bubble Ghost's self-decrypt
+loop points its destination at the `dbf`'s *own displacement word* — the first `eor` rewrites the
+branch target — but the 68000 fetched that word before the store, so **pass one branches to the
+stale target**: a fixup tail that ones-complements the key table and re-enters the loop. A static
+model that reads the patched displacement takes the new branch on pass one, never runs the fixup,
+and decrypts every following word against a keystream that is wrong from the first byte.
+
+The symptom is the worst kind — garbage output with nothing to point at, because the error is in
+iteration 1 of a loop that runs hundreds of times. So whenever a decrypt loop writes anywhere inside
+its own body (the displacement, an immediate, the next instruction), **model the stale fetch**: run
+that iteration with the word as it was *before* the store. Two words of prefetch is the rule on a
+plain 68000; if the loop is tighter than the one above, take the fetch order from
+[`m68k-disassembly.md`](m68k-disassembly.md).
+
 → Detection helper: `prg_dis.py` (entropy line). Loading clean PRGs: [`binary-formats.md`](binary-formats.md).

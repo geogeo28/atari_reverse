@@ -66,6 +66,32 @@ rate-agnostic, but its *tempo* is not: a score written against 50 Hz plays **20%
 machine. If the game must sound the same on both, the tempo needs a rate divisor — a game decision,
 not a driver one (`projects/blackice/audio/REPORT.md`, "What is unverified" → "A 60 Hz machine").
 
+## Digitised samples on a plain ST: the Timer A player
+
+Before the STE's DMA voice, a game that wanted speech drove the sample **one byte per MFP timer
+interrupt** — Bubble Ghost's `GHOST.LOA` (1987), a standalone `ABSFLAG` `.PRG` the game loads as
+data and `jsr`s, plays the whole of `GHOST.VOI` that way while the machine does nothing else:
+
+- **Rate = 2,457,600 / (prescaler × data).** The routine writes the MFP's Timer A control at
+  `$fffa19` (a prescaler code — on the MC68901's standard ladder 1–7 select ÷4, ÷10, ÷16, ÷50, ÷64,
+  ÷100, ÷200) and its data register at `$fffa1f` (the count), installs its handler on `$134`,
+  unmasks Timer A only, and spins until the sample ends. `GHOST.LOA` picks the pair out of an
+  8-word rate table with an index carried in its own header; index 3 = `$2901` = ÷4 and 41, i.e.
+  **14,985 Hz**.
+- **The output is the PSG's volume registers.** With no DAC on a plain ST, the handler biases the
+  sample byte by `$80` and uses it to index a **256-entry table of (register, value) pairs** written
+  with `movep` at `$ffff8800` — one sample byte becomes one volume triple on registers 8, 9 and 10.
+  The table runs loud-to-quiet, so byte `0x00` is the loudest: the *polarity* of a sample dumped
+  this way is decided by the table, not by the data. (In `GHOST.LOA` the second `movep` re-reads
+  displacement 0, so only two writes are emitted and channel C's volume never is — record what the
+  shipped player does rather than fixing it, or a reconstruction stops matching.)
+- **The alternative output is the cartridge port.** Some players `move.b` into `$fa0000 + 2·sample`
+  instead — the ST Replay-style digitiser where the address lines *are* the DAC. `GHOST.LOA` carries
+  both paths and an alternative setup that selects it; the game uses only the PSG one.
+
+A raw sample file's **rate and length are therefore not knowable from the audio** — they live in the
+player, which may be a separate file on the disk. Read it before exporting a `.wav`.
+
 ## Finding & reading the driver
 
 - The driver is usually **installed as a VBL handler** (see `hardware-map.md`: `_vblqueue`

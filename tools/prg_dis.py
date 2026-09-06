@@ -22,6 +22,8 @@ import struct
 import sys
 
 HEADER_LEN = 28   # GEMDOS .PRG header; a file offset is an image offset plus this
+# magic, text, data, bss, symbol-table lengths, reserved, program flags, absflag.
+PRG_HEADER_FORMAT = ">HIIIIIIH"
 
 # --- GEMDOS (trap #1) / BIOS (#13) / XBIOS (#14) function names -----------------
 GEMDOS = {
@@ -56,7 +58,8 @@ def s8(x): return x - 0x100 if x & 0x80 else x
 
 
 def parse_header(d):
-    magic, tlen, dlen, blen, slen, res, flags, absf = struct.unpack(">HIIIIIIH", d[:28])
+    magic, tlen, dlen, blen, slen, res, flags, absf = struct.unpack(
+        PRG_HEADER_FORMAT, d[:HEADER_LEN])
     return dict(magic=magic, tlen=tlen, dlen=dlen, blen=blen, slen=slen,
                 flags=flags, absf=absf, sym_off=28 + tlen + dlen,
                 reloc_off=28 + tlen + dlen + slen)
@@ -74,10 +77,22 @@ RELOC_SKIP_BYTES = 254
 
 
 def parse_reloc(d, h):
-    """Return set of image offsets (relative to text base = 0) needing relocation."""
+    """Return set of image offsets (relative to text base = 0) needing relocation.
+
+    Only ONE shape here is "no relocations": ABSFLAG set (header +26), which says the linker
+    emitted no table at all — see docs/binary-formats.md. A file that ends before the table's
+    first fixup longword is TRUNCATED, and that raises: the differential oracle's loader
+    (tools/recreate_kit/oracle/loader.py) has no note to read, so a returned empty set would make
+    it load such a .PRG unrelocated and run it wrong, silently. Interactive callers that still
+    want a listing catch the ValueError themselves (see main). `absf` is read with .get so a
+    caller may pass the minimal header the reloc-stream tests build.
+    """
     off = h["reloc_off"]
-    if off >= len(d):
+    if h.get("absf"):
         return set()
+    if off + 4 > len(d):
+        raise ValueError("truncated reloc table: %d byte(s) at offset 0x%x, 4 needed for the "
+                         "first fixup" % (max(0, len(d) - off), off))
     first = rd32(d, off)
     off += 4
     if first == 0:
@@ -497,13 +512,21 @@ def main():
     path = sys.argv[1]
     d = open(path, "rb").read()
     h = parse_header(d)
-    fixes = parse_reloc(d, h)
+    reloc_note = "no reloc table (ABSFLAG=0x%x set in the header)" % h["absf"] if h["absf"] else ""
+    try:
+        fixes = parse_reloc(d, h)
+    except ValueError as err:
+        # A truncated table is fatal for a programmatic caller, but an interactive listing is
+        # still worth printing — say so on one line and disassemble with no fixups.
+        fixes, reloc_note = set(), str(err)
     code_start, code_len = 28, h["tlen"]
     base = int(sys.argv[sys.argv.index("--base") + 1], 0) if "--base" in sys.argv else 0
     print("=" * 78)
     print("FILE %s  (%d bytes)" % (path, len(d)))
     print("text=0x%x data=0x%x bss=0x%x sym=0x%x  reloc entries=%d" %
           (h["tlen"], h["dlen"], h["blen"], h["slen"], len(fixes)))
+    if reloc_note:
+        print("RELOC: %s" % reloc_note)
     ent = _entropy(d[28:28 + h["tlen"]])
     hint = "LIKELY PACKED (analyze the loader / dump from Hatari)" if ent > 6.7 \
         else "looks like plain code+data"

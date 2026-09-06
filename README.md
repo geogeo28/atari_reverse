@@ -3,8 +3,9 @@
 Recovering lost 1980s Atari ST games from their shipped executables: disassemble one, name every
 function, rewrite it as readable C **proven byte-for-byte against the original machine code**, and
 run that C back on a 68000. The tooling and the [documentation](docs/README.md) are game-agnostic —
-point them at any GEMDOS `.PRG`. **Four games are solved with them**, and every picture below was
-**drawn by the reconstruction**, not screenshotted from the original.
+point them at any GEMDOS `.PRG`. **Four games are solved with them** and a fifth is under way.
+Every picture below was **drawn by the reconstruction**, not screenshotted from the original —
+with the one exception marked where it appears: Bubble Ghost is still at the disassembly stage.
 
 > **No game data is distributed here.** No `.PRG`, no data file, no disk image, no TOS ROM. Bring
 > your own copy; see [Credits & legal](#credits--legal).
@@ -56,6 +57,19 @@ Begins at the flux of the user's own floppy. **217 verified ranges · 4751 tests
 `ZYNAPS.PRG` that plays **byte-identical to the shipped 1988 binary** at every sampled frame, at
 **19.8 frames a second** thanks to hand-written 68000 twins, and STE-confirmed playable.
 → [`projects/zynaps/README.md`](projects/zynaps/README.md)
+
+### Bubble Ghost (ERE Informatique 1987 / Accolade 1988) — the one wrapped in a cipher
+
+| `GHOST.PRE`, decoded from the file | The game's menu, past the protection |
+|:---:|:---:|
+| ![](assets/bubbleghost/title.png) | ![](assets/bubbleghost/menu-hatari.png) |
+
+**In progress — bootstrap only, no reconstruction yet.** Its `.PRG` is not crunched but *encrypted*,
+keyed by a CRC of the disk's protection track, so the check cannot be patched out; the 16-bit key
+fell to an exhaustive search and the program now decrypts **statically**, with the protection also
+passing under Hatari from an original disk. **134 functions, 38 named** · graphics and speech decoded
+out of the data files.
+→ [`projects/bubbleghost/README.md`](projects/bubbleghost/README.md)
 
 ---
 
@@ -116,6 +130,7 @@ reverse/
 │   ├── extract_graphics.py   ST 4-plane / RLE graphics → PNG
 │   ├── depack_gamex.py       static depacker for the Gamex/"PP" LZSS cruncher
 │   ├── depack_lsd.py         static depacker for the "LSD!" backwards-LZ cruncher
+│   ├── depack_bubbleghost.py static decrypter for Bubble Ghost's protection-keyed cipher
 │   ├── ghidra_scripts/       PrgLoader · LineAResolve · SeedFunctions · AtariOsTrapAnnotate ·
 │                             ExportDecompC · ApplyNames · …
 │   ├── hw_portability.py     how much of a game a memory-only differential can verify
@@ -128,6 +143,7 @@ reverse/
 │   └── recreate_kit/         shared differential harness: PRG loader, Musashi oracle,
 │                             TOS traps — bound to a game by its recreate/project.toml
 └── projects/                 one directory per reversed game, scaffolded by new_project.sh
+    ├── bubbleghost/          names.txt · decomp.c · notes/ · tools/ (no recreate/ yet)
     ├── buggyboy/             names.txt · decomp.c · recreate/ · remaster/ (the playable PRG) · docs/
     ├── joust/                names.txt · decomp.c · recreate/ (+ atari/ — the playable PRG)
     ├── wonderboy/            names.txt · decomp.c · recreate/ (+ atari/ — the PRG and its floppy) ·
@@ -198,15 +214,22 @@ GRAPHICS : PETE LYON / MUSIC AND SOUND FX : J.DAVE ROGERS"*, under the ZYNAPS an
 game was written by Dominic Robinson and published by Hewson Consultants for the Spectrum and C64 in
 1987; this is the 1988 ST conversion. All rights in the game belong to their respective owners.
 
+**Bubble Ghost** for the Atari ST — the credit reproduced here is the game's own title picture,
+decoded from `GHOST.PRE` and shown above: the BUBBLE GHOST logo, *by C.Andreani*, and *Copyright
+1988, ACCOLADE INC. TM*. Published by ERE Informatique in 1987 and by Accolade in 1988. All rights
+in the game belong to their respective owners.
+
 This repository contains **no game code or data** — no executable, no `COURSES.DAT`, no
 `GRAPHICS.GRA`, no `JOUST.PRG`, no `JOUSTS.CTE`, no `HIGH.SCO`, no `SWB.PRG`, none of the `.RAD`
 resources (`TITLESCR`, `CREDITS`, `DATADISK`, `TILEDATA` and the thirty-seven `OVALAY*` overlays),
-no `SPRITES.CRU`, no `ZYNAPS17.PRG`, none of Zynaps' sixty-two data files, no flux or sector dump of
-any of these four games' floppies, no disk image of any of them, and no TOS ROM image. It holds
-analysis, documentation, tooling, and independently written C. The images in this repository's
-READMEs are output of that reconstruction, included to document what it produces; reproducing them
-at all requires the game files this repository does not ship. Running any of it requires a copy of
-the game you already own.
+no `SPRITES.CRU`, no `ZYNAPS17.PRG`, none of Zynaps' sixty-two data files, no `GHOST.PRG`, none of
+Bubble Ghost's six data files, no flux or sector dump of any of these five games' floppies, no disk
+image of any of them, and no TOS ROM image. It holds analysis, documentation, tooling, and
+independently written C. The images in this repository's READMEs are output of that reconstruction —
+except Bubble Ghost's two, which have no reconstruction behind them yet and are its own artwork
+decoded from a data file and a screenshot of the original binary running in an emulator. All are
+included to document what the work produces; reproducing any of them at all requires the game files
+this repository does not ship. Running any of it requires a copy of the game you already own.
 
 Reverse engineering here is for interoperability, preservation and study.
 

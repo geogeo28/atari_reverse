@@ -29,6 +29,7 @@ public class PrgLoader extends GhidraScript {
     static long BASE = 0x00010000L;         // load base for TEXT (clear of the 68k vector page)
     static final int PRG_MAGIC = 0x601a;
     static final int HEADER_LEN = 28;
+    static final int ABSFLAG_OFF = 26;      // header word: set = the linker emitted NO reloc table
     // DRI symbol type flags (section bits within the type word)
     static final int SYM_BSS = 0x0100;
     static final int SYM_TEXT = 0x0200;
@@ -54,6 +55,7 @@ public class PrgLoader extends GhidraScript {
         long dlen = u32(data, 6);
         long blen = u32(data, 10);
         long slen = u32(data, 14);
+        int absflag = u16(data, ABSFLAG_OFF);
         long symOff = HEADER_LEN + tlen + dlen;
         long relocOff = symOff + slen;
         int imageLen = (int) (tlen + dlen);          // TEXT+DATA load contiguously
@@ -75,7 +77,7 @@ public class PrgLoader extends GhidraScript {
                     "BSS", toAddr(BASE + tlen + dlen), blen, (byte) 0, monitor, false);
         }
 
-        List<Long> fixups = parseRelocs(data, relocOff);
+        List<Long> fixups = parseRelocs(data, relocOff, absflag);
         for (long off : fixups) {                    // relocate: pointer += load base
             Address a = toAddr(BASE + off);
             mem.setInt(a, mem.getInt(a) + (int) BASE);
@@ -156,10 +158,20 @@ public class PrgLoader extends GhidraScript {
     private static final int RELOC_SKIP = 1;
     private static final int RELOC_SKIP_BYTES = 254;
 
-    private List<Long> parseRelocs(byte[] d, long relocOff) {
+    // ABSFLAG set is the ONE shape that legitimately has no fixups; a file ending before the
+    // first fixup longword is truncated and must be loud, or the DB is built unrelocated in
+    // silence. Both rules mirror tools/prg_dis.py's parse_reloc, pinned by
+    // tools/recreate_kit/test/test_reloc_table.py.
+    private List<Long> parseRelocs(byte[] d, long relocOff, int absflag) throws Exception {
         List<Long> fx = new ArrayList<>();
-        if (relocOff >= d.length) {
+        if (absflag != 0) {
+            println(String.format("no reloc table (ABSFLAG=0x%04x set in the header)", absflag));
             return fx;
+        }
+        if (relocOff + 4 > d.length) {          // 4 = the first fixup's longword
+            throw new Exception(String.format(
+                    "truncated reloc table: %d byte(s) at offset 0x%x, 4 needed for the first fixup",
+                    Math.max(0, d.length - relocOff), relocOff));
         }
         long first = u32(d, (int) relocOff);
         if (first == 0) {
