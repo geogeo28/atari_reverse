@@ -24,12 +24,6 @@ import harness
 import emu
 from recreate_kit.stubs import seed_spans   # noqa: F401  (re-exported: `abi.seed_spans(...)`)
 
-# `run_with_a4` calls this on every candidate run (see its docstring), so its signature is declared
-# HERE rather than in whichever battery happens to import it first — a battery that never mentions
-# the allocator still runs it.
-harness._lib.g_clib_heap_reset.argtypes = []
-harness._lib.g_clib_heap_reset.restype = None
-
 # The value of a4 in every function of this program — the BSS/DATA boundary the crt0 establishes.
 # EVERY case passes it (`regs={"a4": abi.A4_BASE}`): a run without it reads the game's globals from
 # address `n`, which is the 68000 vector page. It lives here rather than being spelt per battery,
@@ -161,22 +155,15 @@ def run_with_a4(entry, glue, pokes=None, regs=None, **kwargs):
     (see `stack_args`); everything else — `poison`, `psg_seed`, `stop_pc`, `max_insns` — is handed
     to the differential unchanged.
 
-    IT ALSO CLEARS THE CANDIDATE'S MIRROR OF THE MODELED MALLOC BUMP POINTER, once per RUN, exactly
-    where `osh_run` clears the oracle's (see src/clib.c). Per run and not per test: a test that
-    drives several differentials would otherwise let the candidate's cursor walk on while the
-    oracle's went back to the arena base, and the two would disagree from the second allocation
-    onward. Doing it here rather than in one battery's helper is what stops a battery that allocates
-    from being written without it.
+    THE MODELED MALLOC ARENA NEEDS NOTHING HERE: `src/clib.c`'s wrappers allocate through the kit's
+    own `os_malloc`, and `harness.arm_candidate` rewinds that bump pointer before EVERY candidate run
+    — the attribution pass's re-run included — exactly where `osh_run` rewinds the oracle's. This
+    helper used to reset a private mirror of the arena that lived in clib.c; both are gone.
     """
     entry_regs = {"a4": A4_BASE}
     entry_regs.update(regs or {})
     entry_regs["_pokes"] = dict(pokes or {})
-
-    def candidate(lib, buf):
-        lib.g_clib_heap_reset()
-        return glue(lib, buf)
-
-    return harness.differential(entry, entry_regs, candidate, **kwargs)
+    return harness.differential(entry, entry_regs, glue, **kwargs)
 
 
 def shard(cases, chunk, chunks):

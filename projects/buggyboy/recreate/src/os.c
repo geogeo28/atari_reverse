@@ -163,9 +163,13 @@ void g_load_graphics(uint8_t *image) {
 /* main @ 0x10100 — the game driver. Reconstructed up to the checkpoint at 0x10144: Malloc the
  * work block, round it up to mem_base, and lay out the five buffer pointers. main never returns
  * (it enters the infinite game loop after a long init of mostly-separate functions), so this
- * verifies the Malloc + buffer-base setup. Malloc(0x5ee08) returns OS_HEAP_BASE — the first and
- * only Malloc reached before the checkpoint — and the game rounds it up to a 0x100 boundary.
+ * verifies the Malloc + buffer-base setup. The block is asked of `os_malloc` — the kit's model of
+ * the same bump arena the oracle services the trap from — rather than spelt as OS_HEAP_BASE, which
+ * is only where the FIRST block lands and leaves the candidate's bump pointer where it was
+ * (`harness._vet_heap_pointers_agree` compares the two per run). It is the first and only Malloc
+ * reached before the checkpoint, and the game rounds the result up to a 0x100 boundary.
  * The `d0 < 0` (Malloc-failed -> rts) branch is unreachable with the modeled Malloc. */
+#define MAIN_WORK_BLOCK_BYTES 0x5ee08  /* the one Malloc main makes before the checkpoint */
 #define MAIN_MEM_ALIGN  0x100      /* mem_base = (Malloc result + 0x100) & ~0xff */
 #define MEM_BUF_AUX_OFF 0x57000    /* the five work buffers, as offsets from mem_base */
 #define MEM_BUF_A_OFF   0x1900
@@ -173,7 +177,7 @@ void g_load_graphics(uint8_t *image) {
 #define MEM_BUF_C_OFF   0x1c660
 
 void g_main(uint8_t *image) {
-    uint32_t mem_base = (OS_HEAP_BASE + MAIN_MEM_ALIGN) & ~0xffu;
+    uint32_t mem_base = (os_malloc(MAIN_WORK_BLOCK_BYTES) + MAIN_MEM_ALIGN) & ~0xffu;
     wr32(image + A_buf_aux, mem_base + MEM_BUF_AUX_OFF);
     wr32(image + A_mem_base, mem_base);
     wr32(image + A_buf_a, mem_base + MEM_BUF_A_OFF);

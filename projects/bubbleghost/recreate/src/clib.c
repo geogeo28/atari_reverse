@@ -52,30 +52,6 @@ static CallerAddressRegisters caller_registers(uint32_t a1, uint32_t a2) {
     return saved;
 }
 
-/* THE MODELED GEMDOS Malloc IS A BUMP ALLOCATOR, and the kit gives the candidate no way to ask the
- * oracle where its bump pointer is: `os.h` models Fopen/Fread/… but not Malloc, which lives in
- * oracle/shim.c as `d0 = g_heap; g_heap += (size + 1) & ~1`, reset to OS_HEAP_BASE at the top of
- * every run. So the candidate carries the same two lines, and `test/abi.py`'s `run_with_a4` resets
- * the cursor through `g_clib_heap_reset` before EVERY candidate run, exactly as `osh_run` resets the
- * oracle's. A run that allocates once — which is every call site in the game — never depends on it.
- *
- * TODO(kit os_malloc): the kit is growing `os_malloc` in a concurrent change, which is the same
- * model on the candidate's side of the wall. When it lands, delete exactly these five things and
- * nothing else: `g_heap_cursor`, `g_clib_heap_reset` (here and its declaration in include/clib.h),
- * `modeled_gemdos_malloc`, and — in test/abi.py — both the `g_clib_heap_reset` signature
- * declaration and the `lib.g_clib_heap_reset()` call inside `run_with_a4`. Then call `os_malloc`
- * from `gemdos_malloc` and `gemdos_malloc_or_fail`; the wrappers' own shapes do not change. */
-static uint32_t g_heap_cursor;
-
-void g_clib_heap_reset(void) { g_heap_cursor = 0; }
-
-static uint32_t modeled_gemdos_malloc(uint32_t bytes) {
-    uint32_t block = OS_HEAP_BASE + g_heap_cursor;
-
-    g_heap_cursor += (bytes + 1u) & ~1u;
-    return block;
-}
-
 /* ================================================================================================
  * String and 32-bit arithmetic
  * ============================================================================================= */
@@ -267,10 +243,17 @@ _Static_assert(A_fd_mode_table + FD_MODE_SLOTS * FD_MODE_ENTRY == A_c_errno,
  * ============================================================================================= */
 
 /* gemdos_malloc @ 0x15c82 — GEMDOS Malloc (0x48) through the trampoline. stdio's supplier; distinct
- * from gemdos_malloc_or_fail below, which is the ALLOCATOR's and turns a 0 into -1. */
+ * from gemdos_malloc_or_fail below, which is the ALLOCATOR's and turns a 0 into -1.
+ *
+ * `os_malloc` IS THE MODEL, not a copy of it: the kit's bump arena (tools/recreate_kit/src/os_heap.c)
+ * is the same allocator `oracle/shim.c` services the trap from, over the base and ceiling
+ * project.toml's `heap_base`/`heap_limit` install into both sides. So the two bump pointers are
+ * comparable per run (`harness._vet_heap_pointers_agree`), which a private copy of the arithmetic
+ * here was not. `Malloc(-1)`'s free-size answer and the refusal past the ceiling are the model's
+ * too; both wrappers below simply forward. */
 uint32_t gemdos_malloc(uint8_t *image, uint32_t bytes, CallerAddressRegisters saved) {
     trap_save_registers(image, saved, RET_GEMDOS_MALLOC);
-    return modeled_gemdos_malloc(bytes);
+    return os_malloc(bytes);
 }
 
 /* gemdos_mfree @ 0x15c98 — GEMDOS Mfree (0x49). The model always succeeds and frees nothing, which
@@ -282,13 +265,15 @@ uint32_t gemdos_mfree(uint8_t *image, uint32_t block, CallerAddressRegisters sav
 }
 
 /* gemdos_malloc_or_fail @ 0x167c8 — Malloc with a zero-extended WORD size, reporting failure as -1
- * rather than as GEMDOS's 0. */
+ * rather than as GEMDOS's 0. A request the modeled arena cannot hold comes back from `os_malloc` as
+ * that same 0 (through `os_refused`, which also reddens the case), so the `block == 0` test below
+ * reads on the model exactly as it reads on the machine. */
 #define MALLOC_FAILED 0xffffffffu
 uint32_t gemdos_malloc_or_fail(uint8_t *image, uint16_t bytes, CallerAddressRegisters saved) {
     uint32_t block;
 
     trap_save_registers(image, saved, RET_GEMDOS_MALLOC_OR_FAIL);
-    block = modeled_gemdos_malloc(bytes);
+    block = os_malloc(bytes);
     return block == 0 ? MALLOC_FAILED : block;
 }
 

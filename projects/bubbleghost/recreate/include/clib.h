@@ -218,10 +218,6 @@ uint32_t gemdos_malloc(uint8_t *image, uint32_t bytes, CallerAddressRegisters sa
 uint32_t gemdos_mfree(uint8_t *image, uint32_t block, CallerAddressRegisters saved);
 uint32_t gemdos_malloc_or_fail(uint8_t *image, uint16_t bytes, CallerAddressRegisters saved);
 
-/* Clear the candidate's mirror of the modeled Malloc bump pointer, as `osh_run` clears the
- * oracle's. The battery calls it before every candidate run; see src/clib.c. */
-void     g_clib_heap_reset(void);
-
 /* --- the file layer --- */
 int16_t  c_open(uint8_t *image, uint32_t path, uint16_t mode, CallerAddressRegisters saved);
 int16_t  c_creat(uint8_t *image, uint32_t path, uint16_t mode, CallerAddressRegisters saved);

@@ -381,6 +381,26 @@ def test_both_sides_allocate_from_the_default_base():
         "the two arenas grew by different amounts — what _vet_heap_pointers_agree compares")
 
 
+def test_a_candidate_that_does_not_allocate_is_refused():
+    """THE HALF THE BYTE DIFF CANNOT SEE: the oracle allocates, the candidate only says where.
+
+    `g_stores_the_arena_base_without_allocating` stores OS_HEAP_BASE rather than calling `os_malloc`,
+    and the first block of an untouched arena IS the base — so it stores the same longword the trap
+    made the oracle store and the image comparison is empty. What is left is the bump pointer, which
+    the oracle moved by MALLOC_PROBE_SIZE and the candidate did not, and only
+    `_vet_heap_pointers_agree` compares that. The check was once asked of a candidate that had
+    allocated and nothing else, which is exactly this case slipping through green.
+    """
+    with pytest.raises(AssertionError) as refusal:
+        harness.differential(
+            MALLOC_ENTRY, {},
+            lambda lib, buf: lib.g_stores_the_arena_base_without_allocating(buf, HEAP_RESULT))
+    message = str(refusal.value)
+    assert "the two Malloc arenas grew differently" in message, message
+    assert f"{emu.OS_HEAP_BASE + MALLOC_PROBE_SIZE:#x}" in message, message   # the oracle's end
+    assert "os_malloc()" in message, message      # ...and what the reader is sent to go and count
+
+
 def test_both_sides_follow_the_base_to_a_new_address(moved_heap_base):
     """THE CASE THE MECHANISM EXISTS FOR: install a different base and both sides go with it.
 

@@ -471,16 +471,31 @@ def caller_registers():
     return {"a1": CALLER_A1, "a2": CALLER_A2}
 
 
-@pytest.mark.parametrize("size", (0, 1, 2, 0x1770, 0x7800, 0x40000))
+# GEMDOS's "how big is the LARGEST FREE BLOCK?" query, spelt as the caller pushes it. It is the one
+# Malloc argument whose answer is a SIZE rather than an address, and it moves neither side's bump
+# pointer (tools/recreate_kit/include/os.h, beside `os_malloc`).
+MALLOC_LARGEST_FREE = 0xffffffff
+
+
+@pytest.mark.parametrize("size", (0, 1, 2, 0x1770, 0x7800, 0x40000, MALLOC_LARGEST_FREE))
 def test_gemdos_malloc(size):
-    """The wrapper's answer is the modeled arena's base, and its trace is the three save slots."""
+    """The wrapper forwards to the model and leaves the three save slots as its trace.
+
+    A REQUEST is answered with the arena's base, the first block of a run that starts rewound. The
+    last size is the QUERY rather than a request: both sides answer the free window
+    (`heap_limit - heap_base`, project.toml's two keys) and allocate nothing, which is the one case
+    here that would survive a wrapper spelling the arena's arithmetic itself instead of forwarding
+    to the model.
+    """
     rng = random.Random(size)
     pokes = abi.merge_pokes(trap_slot_noise(rng), abi.stack_args((4, size)))
     info = check(ENTRY_GEMDOS_MALLOC,
                  lambda lib, buf: lib.g_gemdos_malloc(buf, size, CALLER_A1, CALLER_A2),
                  pokes=pokes, regs=caller_registers(), note=f"gemdos_malloc({size:#x})")
     check_d0_long(info, f"gemdos_malloc({size:#x})")
-    assert info["ret"] == harness.OS_HEAP_BASE
+    expected = (emu.HEAP_LIMIT - harness.OS_HEAP_BASE if size == MALLOC_LARGEST_FREE
+                else harness.OS_HEAP_BASE)
+    assert info["ret"] == expected
 
 
 @pytest.mark.parametrize("block", (0, harness.OS_HEAP_BASE, 0xdeadbee0))

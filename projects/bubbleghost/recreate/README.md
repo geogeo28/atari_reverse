@@ -141,8 +141,9 @@ The steps:
 3. Put addresses, record fields and the prototype in `include/<subsystem>.h`.
 4. Add edge + fuzz cases in `test/test_<subsystem>.py`. Run every case through **`abi.run_with_a4`**
    rather than `harness.differential`: it carries the `a4` this program's globals are reached
-   through and clears the candidate's Malloc mirror the way `osh_run` clears the oracle's, so a
-   battery cannot be written without either. Arguments go on the stack (`abi.stack_args`), because
+   through, so a battery cannot be written without it. (The modeled Malloc arena needs nothing from
+   a battery: `src/clib.c` allocates through the kit's own `os_malloc`, and `harness.arm_candidate`
+   rewinds that bump pointer before every candidate run.) Arguments go on the stack (`abi.stack_args`), because
    this is compiled C, and **pokes travel in `regs["_pokes"]`** — `harness.differential` has no
    `pokes=` parameter. Build a poke dict with **`abi.merge_pokes`**, which refuses an overlap: two
    pokes covering one byte read as "both regions were staged" when only the later one was, and a

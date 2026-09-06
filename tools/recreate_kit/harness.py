@@ -1121,15 +1121,16 @@ def _vet_heap_pointers_agree(entry, o_regs):
     somewhere the oracle's never was — and until that block's contents are written the byte diff
     sees nothing at all.
 
-    ASKED ONLY OF A CANDIDATE THAT ALLOCATED. A reconstruction which does not reach `os_malloc`
-    leaves the kit's arena at the base, and there is nothing to compare: it is either a run with no
-    allocation in it, or a project modelling Malloc privately, which is the case
-    projects/bubbleghost's `clib.c` is in and has a standing TODO to retire. Closing that half needs
-    the project to adopt `os_malloc`, not a check here that would redden its whole suite.
+    ASKED WHENEVER EITHER SIDE MOVED, which is the half that catches an allocation a reconstruction
+    never makes: a candidate that hands back a plausible address without calling `os_malloc` leaves
+    the arena at the base, and its FIRST block is the base — the one address at which the image diff
+    agrees with an oracle that really allocated. Nothing but this comparison can tell those apart.
+    (It used to be asked only of a candidate that had allocated, so that a project modelling Malloc
+    privately did not redden; the one project doing that now calls `os_malloc` like everyone else.)
     """
     candidate = _lib.g_os_heap_pointer()
     oracle = o_regs.get("heap")
-    if oracle is None or candidate == emu.OS_HEAP_BASE or candidate == oracle:
+    if oracle is None or candidate == oracle:
         return
     raise AssertionError(
         f"function @ {entry:#x}: the two Malloc arenas grew differently — oracle "
@@ -1795,9 +1796,10 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     Both sides' ordered OFF-IMAGE OS EVENT stream is compared too, always: console bytes, IKBD
     command bytes and the mouse/cursor-visibility calls touch no memory, so nothing else could tell a
     reconstruction that makes them from one that does not (``_vet_os_event_state``).
-    How far each side's modeled Malloc ARENA grew is compared too, whenever the candidate allocated
-    at all (``_vet_heap_pointers_agree``): the bump pointer is off-image on both sides, so a
-    reconstruction that asks for the wrong size lands its next block where the oracle's never was.
+    How far each side's modeled Malloc ARENA grew is compared too, whenever EITHER side allocated
+    (``_vet_heap_pointers_agree``): the bump pointer is off-image on both sides, so a reconstruction
+    that asks for the wrong size — or never allocates at all — lands its next block where the
+    oracle's never was.
     ``psg_seed`` is ``{register: value}``, the contents the case declares the YM2149 held on entry —
     an ordinary input, given identically to both sides, and what makes a read-modify-write of the
     chip runnable (``emu.run``; TRAP_MODEL.md, Phase 6). It is the DIRECT ``$ff8800``/``$ff8802``

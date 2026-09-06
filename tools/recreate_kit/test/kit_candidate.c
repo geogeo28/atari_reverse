@@ -339,3 +339,13 @@ void g_logs_a_byte_and_allocates(uint8_t *image, uint32_t at, uint32_t size, uin
     os_cconout((uint8_t)ch);
     wr32(image + at, os_malloc(size));
 }
+
+/* MUTANT: the block address WITHOUT the allocation — what `g_stores_a_malloc_block` used to be, and
+ * the shape a reconstruction takes when it spells the model's arena out instead of asking for it.
+ * It is a RED, and only `harness._vet_heap_pointers_agree` can say so: the first block of an
+ * untouched arena IS the base, so the longword stored here is byte-identical to the one an oracle
+ * that really allocated stored, and the difference is the bump pointer nobody moved.
+ */
+void g_stores_the_arena_base_without_allocating(uint8_t *image, uint32_t at) {
+    wr32(image + at, OS_HEAP_BASE);
+}

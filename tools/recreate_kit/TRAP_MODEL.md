@@ -2413,12 +2413,13 @@ off while the oracle starts from the base.
 `g_os_heap_pointer()` against the oracle's `heap`). The bump pointer is off-image on both sides, so a
 reconstruction that rounds a request differently, or allocates once where the original allocated
 twice, lands its NEXT block where the oracle's never was — and until that block's contents are
-written the byte diff sees nothing. **It is asked only of a candidate that ALLOCATED**: one which
-never reaches `os_malloc` leaves the arena at the base and has nothing to compare, which is either a
-run with no allocation in it or a project modelling `Malloc` privately —
-`projects/bubbleghost/recreate/src/clib.c` is in the second case and carries a standing TODO to adopt
-`os_malloc`. Closing that half needs the project to move, not a check here that would redden its
-whole suite.
+written the byte diff sees nothing. **It is asked whenever EITHER side moved** — which is what
+catches an allocation the reconstruction never makes: a candidate that hands back a plausible
+address without calling `os_malloc` leaves the arena at the base, and its first block *is* the base,
+the one address at which the image diff agrees with an oracle that really allocated
+(`test_heap_base.py`, "a candidate that does not allocate"). It was once asked only of a candidate
+that had allocated, so that a project modelling `Malloc` privately did not redden; the one project
+doing that now calls `os_malloc` like everyone else.
 
 ### What pins it
 
