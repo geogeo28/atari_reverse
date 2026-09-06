@@ -9,8 +9,9 @@ the rest of `GHOST.LOA` and `DESKTOP.INF` belong to `notes/loader.md`, not here.
 Everything is marked **CONFIRMED** (decoded and read back — a picture that reads, a waveform that
 has structure, a field that stays in range over all 1,000 records) or **HYPOTHESIS** (consistent
 with the bytes, not yet proved). The tools are
-`projects/bubbleghost/tools/extract_gfx.py` and `.../extract_audio.py`; both write to
-`projects/bubbleghost/out/assets/` (gitignored).
+`projects/bubbleghost/tools/extract_gfx.py` and `.../extract_audio.py`; the graphics and the
+VOI phrase go to `projects/bubbleghost/out/assets/`, the synth capture (`--synth`: 11 effects,
+36 room themes, the bonus glissando, as .ym + .wav) to `out/audio/` (both gitignored).
 
 ---
 
@@ -248,9 +249,25 @@ recorded here as answers, not as questions.
    triggered by `sound_play` (`0x142bc`). There is **no VBL-installed refresh routine** — `$70` is
    never touched (`notes/sound_engine.md`).
 
-**What is still to capture.** The 11 effects and the 36 per-level tones have been read as field
-tables but never *rendered*. Capture them the way
-[`projects/zynaps/tools/extract_audio.py`](../../zynaps/tools/extract_audio.py) captures Zynaps':
-run the original code under the kit's Musashi oracle, drive `sound_play` over each of the 47
-definitions, log the `$ff8800`/`$ff8802` writes the 200 Hz ISR emits, and render them through
-`projects/buggyboy/recreate/sound/ym2149.py`.
+**The synth engine is captured — see `out/audio/manifest.tsv`.** `tools/extract_audio.py --synth`
+does it the way [`projects/zynaps/tools/extract_audio.py`](../../zynaps/tools/extract_audio.py)
+captures Zynaps': it runs the ORIGINAL code under the kit's Musashi oracle — the post-init image
+`recreate/test/conftest.py` builds, since the definitions are written into BSS by `init_globals` and
+are in no file — calls `sound_play` with the arguments the game's own call site for that definition
+passes (voice, `sound_enabled * k`, note, priority — `notes/sound_engine.md` §8), and then enters
+`timer_c_sound_isr` once per 200 Hz tick, folding the `$ffff8800`/`$ffff8802` writes
+into a register shadow and snapshotting it per tick. 48 tracks: the 11 effects, the 36 per-room
+tones, and the bonus tally (`game_top_loop` retriggering `fx8` with `note = 100 - bonus_bar/4`,
+the one thing in this game that sounds like a melody). Each is a `.ym` at 200 frames/s and a `.wav`
+rendered through `projects/buggyboy/recreate/sound/ym2149.py` at 48000 Hz — 48000 rather than 44100
+because it is the rate divisible by the 200 Hz tick. 45 tracks end themselves; `fx2` and `fx3` are
+sustained, hold for ever and are cut at a 30 s cap while still sounding; the tally ends on the
+game's own `sound_stop_voice`. Registers 11-13 — the chip's envelope generator — are written by
+nothing in the whole sweep, which is `notes/sound_engine.md` §1 measured rather than read. The
+`.ym`/`.wav` writers and the "is this frame audible?" rule are
+[`tools/ym_capture.py`](../../../tools/ym_capture.py), shared with the sibling extractors.
+
+**One number in that dump is not measured from this program: the 200 Hz tick itself.** The game
+installs its handler on MFP channel 5 (Timer C) and never programs that timer's divider, so the rate
+is whatever TOS set it to at boot — 200 Hz, read out of TOS. Every `ticks`, `seconds` and frame-rate
+figure in `manifest.tsv` rests on it, and the manifest's own header says so.

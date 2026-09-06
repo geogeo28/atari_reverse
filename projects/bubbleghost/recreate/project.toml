@@ -1,0 +1,59 @@
+# Binds the shared differential harness (tools/recreate_kit) to this game.
+# Read by recreate_kit.project.load(); paths are relative to this file's directory.
+name       = "bubbleghost"
+prg        = "../bin/GHOST_RT.PRG"
+names      = "../names.txt"
+lib        = "build/libbubbleghost.so"
+load_base  = 0x10000     # matches PrgLoader / run.sh default (see CLAUDE.md); ../names.txt
+                         # addresses are Ghidra addresses at this base, so it must not move
+image_size = 0x100000    # 1 MiB, and it must equal os.h's OS_IMAGE_SIZE: the run-time program
+                         # (text 0x14f1a = code+bss, data 0x2f4 -> ends 0x2520e) + the TOS model's
+                         # staged-file table at 0xbf000 + the stack at the top
+
+# ---- why `prg` is GHOST_RT.PRG and not GHOST_PLAIN.PRG ------------------------------------------
+# Bubble Ghost is Alcyon/DRI C, small model: its crt0 MOVES the DATA segment above the BSS at
+# startup and points a4 at the boundary, so every global is `n(a4)` and the RUN-TIME layout is
+# [TEXT][BSS][DATA] rather than the file's [TEXT][DATA][BSS]. `tools/prg_relayout.py` rebuilds the
+# .PRG in that run-time layout (text' = tlen + blen, data' = dlen, bss' = 0), which is what the
+# Ghidra project was built from — so a Ghidra address IS a run-time address, and so is every
+# address in ../names.txt. The kit's loader does not run a crt0; feeding it the FILE layout would
+# put every global 0x2f4 bytes from where the code reaches it.
+#
+# The relayout is byte-exact rather than believed: test/test_image_model.py compares the two files'
+# TEXT and DATA bytes, and then runs the REAL crt0 (from 0x10036, on a file-layout image with a
+# fabricated basepage) and asserts the memory it produces equals the post-init fixture this project
+# stages every case on. See README.md, "The image model".
+
+# ---- the Malloc arena: this game's numbers ------------------------------------------------------
+# WHY the kit takes these two keys, and what they install into both sides, is written once in
+# tools/recreate_kit/README.md, "The Malloc arena is the one region a project places". Only Bubble
+# Ghost's own figures are below.
+#
+# The kit's default arena (0x20000) is in the middle of this program's BSS, and this game really
+# does allocate — so `tos_malloc_unused`, the claim that a game never allocates, would be false
+# here and the arena is MOVED instead.
+#
+# WHAT IT ASKS FOR, read off the asm one call at a time (test/test_image_model.py sums the
+# breakdown; ../notes/anchors.md, "Files", has the file sizes):
+#   * GHOST.DAT   6 x 0x7800 + ONE 0x20 palette   (load_level_pictures @ 0x1396c)
+#   * GHOST.PRE   0x7800 + 0x20                   (load_presentation @ 0x10e44)
+#   * GHOST.VOI   0x7594                          (load_voice_player @ 0x13c6c)
+#   * GHOST.DEM   0x1770                          (load_demo @ 0x10dea)
+# = ELEVEN calls, 0x3d544 bytes (251,204 = 245 KiB). The sprite bank adds 62 x 0x200 = 0x7c00 more
+# on the same boot path (build_sprite_bank @ 0x132ec), for 0x45144 in all.
+#
+# THOSE ARE `c_malloc` CALLS, NOT GEMDOS TRAPS. The game reaches TOS through its own K&R free-list
+# allocator (`c_malloc` @ 0x15b54), whose `c_morecore` @ 0x15af2 takes a POOL — rounded up to a
+# multiple of 0x418 six-byte granules — and never returns one, and stdio takes a 0x200 buffer per
+# open file. So the model's bump arena sees fewer, larger requests than the eleven above and a
+# somewhat larger total; the window below is sized with room for that rather than to the byte.
+heap_base  = 0x30000     # the first clean 64 KiB boundary above the program's 0x2520e end
+heap_limit = 0x90000     # ...and the first address the arena may NOT reach: test/abi.py's scratch
+                         # map starts here, so a run that allocated this far would hand out the
+                         # address the cases poke their stubs at. Free window = 0x60000 bytes,
+                         # comfortably the 0x45144 above
+
+# The other three fixed regions need no waiver and are clear by arithmetic (the kit refuses each at
+# import, so nothing here restates them): the staged-file table and staging area sit above the
+# program and above the arena, and the harness-poked input block sits below load_base — so
+# `tos_poked_input_unused` is not a question here either.

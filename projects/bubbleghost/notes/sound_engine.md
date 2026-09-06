@@ -27,7 +27,7 @@ file assumes it.
 | `0x1459a` | `timer_c_sound_isr` | named; algorithm recovered below |
 | `0x148ea` | `install_sound_vectors` | named; MFP EOI mode refined below |
 | `0x1491c` | `remove_sound_vectors` | named |
-| `0x14932` | `snd_isr_state` | **new** — the 15-byte block the installer fills and the ISR reads |
+| `0x14932` | `snd_isr_state` | **new** — the 13-byte block (+1 pad = 14) the installer fills and the ISR reads |
 | `0x14940` | `psg_gate` | renamed from `psg_access`; it is `psg(reg, value, mask)` — see §6 |
 | `0x14950` | `trap9_psg_handler` | named; semantics refined below |
 | `0x14982` / `0x1499c` | `sound_start` / `sound_stop` | named |
@@ -66,8 +66,8 @@ unused and every volume byte is a plain 0..15 level with bit 4 clear.
 `sound_start` (`0x14982`) = `Supexec(install_sound_vectors)` then `sound_stop_all`.
 `sound_stop` (`0x1499c`) = `sound_stop_all` then `Supexec(remove_sound_vectors)`.
 
-`install_sound_vectors` fills the 15-byte block at `0x14932` (which the linear listing shows
-as seven `nop`s — it is data):
+`install_sound_vectors` fills the 13-byte block at `0x14932` (4 + 4 + 4 + 1 bytes written,
++1 pad byte = 14; the linear listing shows it as seven `nop`s — it is data):
 
 | addr | width | contents | pinned by |
 |---|---|---|---|
