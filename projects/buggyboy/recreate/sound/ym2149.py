@@ -113,7 +113,7 @@ def _decode(reg):
     return tone_f, noise_f, env_f
 
 
-def render(frames, retriggers=None, rate=RATE, normalise=True):
+def render(frames, retriggers=None, rate=RATE, normalise=True, fps=FPS):
     """Render captured register ``frames`` (list of 16-int snapshots) to mono float PCM.
 
     ``retriggers[fi]`` true means register 13 was (re)written on frame ``fi``; on real
@@ -123,8 +123,15 @@ def render(frames, retriggers=None, rate=RATE, normalise=True):
     wants. Pass False for the chip's own scale instead (``MIXED_FULL_SCALE``): quieter, but two
     renders are then comparable, and a track that is genuinely near-silent stays near-silent rather
     than being amplified into the loudest file in the set. Neither path can clip.
+
+    ``fps`` is the rate the DRIVER steps its frames at, and the only assumption in here that is not
+    the chip's own clock. It defaults to the 50 Hz VBL every BuggyBoy caller uses; a driver ticked
+    by a timer instead passes its own (Bubble Ghost's is a 200 Hz Timer C), which is a per-call
+    argument rather than a module-scope constant precisely because two callers can share a process.
+    ``rate`` should be divisible by it — a frame is ``rate // fps`` samples, and a remainder makes
+    every frame short by it.
     """
-    spf = rate // FPS
+    spf = rate // fps
     steps = spf * OVERSAMPLE                          # evaluation points per frame
     step_rate = rate * OVERSAMPLE
     out = np.zeros(len(frames) * spf, dtype=np.float64)
