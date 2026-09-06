@@ -78,15 +78,27 @@ image_size = 0x100000
 tos_malloc_unused = true
 
 # ---- waiver 2: the harness-poked input block may sit inside this program ----------------------
-# load_base 0x3f8 is below os.h's OS_POKE_BLOCK_END (0x620), so the poked block (OS_CON_PENDING /
-# OS_CON_CHAR / OS_RANDOM_VALUE / OS_PSG_REGS at 0x600..0x61f, and OS_KBDVBASE at 0x500) lies inside
-# the program. It cannot be otherwise: the game runs at 0x400 and everything below that is the 68000
+# load_base 0x3f8 is below os.h's OS_POKE_BLOCK_END (0x660), so the poked block lies inside the
+# program. It cannot be otherwise: the game runs at 0x400 and everything below that is the 68000
 # vector page.
+#
+# THE BLOCK IS 0x600..0x65f AND HAS GROWN TWICE, which is a fact about THIS waiver and not only about
+# the kit: it used to end at 0x620 (OS_CON_PENDING / OS_CON_CHAR / OS_RANDOM_VALUE / OS_PSG_REGS),
+# and it now also covers the VDI's input state and workstation attributes (OS_MOUSE 0x620,
+# OS_KEY_SHIFT 0x626, OS_VDI_STATE 0x628..0x643 — kit Phase 12) and the console key queue
+# (OS_CON_QUEUE 0x644..0x65f — kit Phase 13). OS_KBDVBASE at 0x500 is inside the program too and is
+# outside the block, exactly as before.
+# WHAT THOSE 64 EXTRA BYTES ARE, IN THIS GAME: 0x620..0x65f is ordinary program code, and it reaches
+# into `fn 0x638 game_unpause_on_key_release` (0x638..0x66d), whose first 40 bytes now share
+# addresses with model state. Nothing changes for that routine's differential — it is reconstructed
+# and green — because the claim below is what protects it: no trap in this image reads the block, so
+# no model state is ever served out of those bytes, and no poke may write them.
 # Waived on the SAME evidence as waiver 1, and it is a stronger conclusion than "no Malloc": every
-# reader of that block is a TOS trap — Bconstat, Bconin, Crawio, Random, Giaccess, Kbdvbase — and
-# this image contains exactly one trap instruction, a Super. So nothing the game does can ever read
-# a poked input, and no test can usefully stage one. Enforced from BOTH directions rather than
-# trusted, and keyed on the overlap rather than on this flag:
+# reader of that block is a TOS trap — Bconstat, Bconin, Crawio, Cconis, Crawcin, Cnecin, Random,
+# Giaccess, Kbdvbase, and every VDI opcode of trap #2 — and this image contains exactly one trap
+# instruction, a Super. So nothing the game does can ever read a poked input, and no test can
+# usefully stage one. Enforced from BOTH directions rather than trusted, and keyed on the overlap
+# rather than on this flag:
 #   * emu._vet_no_poked_input_read() fails any oracle run in which a trap actually read the block —
 #     the half that watches the GAME, and the one that matters, since a trap that only exists after
 #     a depack is invisible to a scan of the shipped file (see waiver 1's LIMIT);

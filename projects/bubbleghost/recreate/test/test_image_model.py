@@ -110,10 +110,13 @@ BG_HEAP_BYTES_ASKED = sum(calls * size for _what, calls, size in BG_MALLOC_REQUE
 # model's Malloc never frees, so every request on the path is cumulative.
 BG_SPRITE_BANK_BYTES = 62 * 0x200
 
-# The oracle side of that census: `Malloc(-1)`, the "largest free block?" query. It is poked at
-# abi.STUB rather than found in the program because the game reaches Malloc only through its C
-# library's allocator, several frames down a path this project cannot yet run.
-MALLOC_LARGEST_FREE_STUB = stubs.gemdos_malloc_stub(stubs.MALLOC_LARGEST_FREE)
+# The oracle side of that census: one small allocation. It is poked at abi.STUB rather than found in
+# the program because the game reaches Malloc only through its C library's allocator, several frames
+# down a path this project cannot yet run. A POSITIVE size, not `Malloc(-1)`: the query answers how
+# much of the window is FREE (kit TRAP_MODEL.md, Phase 13), and what this case asks is where the
+# BLOCK lands.
+BG_MALLOC_PROBE_SIZE = 4
+MALLOC_PROBE_STUB = stubs.gemdos_malloc_stub(BG_MALLOC_PROBE_SIZE)
 
 # A stub that reads back what `abi.stack_args` pushed: `move.w 4(a7),d0 / move.l 6(a7),d1 / rts`.
 # `emu.run` forces A7 to STACK_TOP and writes the sentinel return address there, so 4(a7) is
@@ -358,16 +361,15 @@ def test_the_arena_and_the_scratch_map_do_not_overlap():
 def test_a_served_malloc_lands_at_the_configured_base_on_both_sides():
     """The key is only real if BOTH sides follow it, and only asking each of them can say so.
 
-    The ORACLE is asked with the .PRG's own idiom: `Malloc(-1)`, GEMDOS's "how big is the largest
-    free block?" query, which the model serves fully and which rounds to a zero-size bump — so it
-    reports the arena's base without moving the pointer. The CANDIDATE is asked for `OS_HEAP_BASE`
+    The ORACLE is asked for one small block, which an untouched arena hands out at its base. The
+    CANDIDATE is asked for `OS_HEAP_BASE`
     itself, which is now a variable the kit installs (`g_os_heap_base`, `src/os_heap.c`): every
     reconstruction that mirrors an allocation reads exactly this, so a `.so` left at the kit default
     while the oracle allocated from 0x30000 would be wrong by a whole arena, silently.
     """
-    _, _, out_regs = emu.run(harness.make_image({abi.STUB: MALLOC_LARGEST_FREE_STUB}), abi.STUB, {})
+    _, _, out_regs = emu.run(harness.make_image({abi.STUB: MALLOC_PROBE_STUB}), abi.STUB, {})
     assert out_regs["d0"] == BG_HEAP_BASE, "the oracle's Malloc did not come from `heap_base`"
-    assert out_regs["heap"] == BG_HEAP_BASE, "Malloc(-1) must not move the bump pointer"
+    assert out_regs["heap"] == BG_HEAP_BASE + BG_MALLOC_PROBE_SIZE
 
     candidate_base = ctypes.c_uint32.in_dll(harness._lib, "g_os_heap_base").value
     assert candidate_base == BG_HEAP_BASE, (

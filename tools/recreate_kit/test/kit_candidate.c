@@ -318,12 +318,24 @@ void g_hw_rmw_the_untranslated_form(uint8_t *image) {
     hw_and8(0xffff8260u, SHIFTER_MODE_RESOLUTION_MASK);
 }
 
-/* ---- the Malloc arena's base (see test_heap_base.py) ------------------------------------------
- * The candidate half of the .PRG's `Malloc(-1)`: a reconstruction that mirrors an allocation reads
- * OS_HEAP_BASE, exactly as projects/buggyboy/recreate/src/os.c's g_main does. The address to store
- * it at is an ARGUMENT rather than a constant here, so the one spelling of it lives in
- * kit_smoke_project.py beside the 68000 code that stores to the same place.
+/* ---- the Malloc arena (see test_heap_base.py) -------------------------------------------------
+ * The candidate half of the .PRG's `Malloc`: a reconstruction that mirrors an allocation calls
+ * `os_malloc`, which is the same bump arena the shim services the trap from. Reading OS_HEAP_BASE
+ * instead — which this used to do — answers only where the FIRST block lands and leaves the
+ * candidate's own bump pointer where it was, so `harness._vet_heap_pointers_agree` has nothing to
+ * compare. The address to store at is an ARGUMENT rather than a constant, so the one spelling of it
+ * lives in kit_smoke_project.py beside the 68000 code that stores to the same place.
  */
-void g_stores_the_heap_base(uint8_t *image, uint32_t at) {
-    wr32(image + at, OS_HEAP_BASE);
+void g_stores_a_malloc_block(uint8_t *image, uint32_t at, uint32_t size) {
+    wr32(image + at, os_malloc(size));
+}
+
+/* ...and the candidate half of the routine that does BOTH (see test_attribution_pass.py): a console
+ * byte onto the off-image ledger and a block out of the modeled arena. Both are per-run state the
+ * harness has to rewind before EVERY candidate run — the attribution pass's re-run included — so a
+ * case that runs it twice is what says whether it did.
+ */
+void g_logs_a_byte_and_allocates(uint8_t *image, uint32_t at, uint32_t size, uint32_t ch) {
+    os_cconout((uint8_t)ch);
+    wr32(image + at, os_malloc(size));
 }

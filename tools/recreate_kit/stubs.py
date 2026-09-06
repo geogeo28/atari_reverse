@@ -23,9 +23,10 @@ import struct
 # differential compares memory.
 GEMDOS_MALLOC = 0x48             # the GEMDOS function number pushed as the selector word
 GEMDOS_TRAP = 0x4E41             # trap #1
-MALLOC_LARGEST_FREE = 0xFFFFFFFF  # Malloc(-1): GEMDOS's "how big is the largest free block?" query,
-                                  # which the model serves fully and rounds to a ZERO-size bump — so
-                                  # it reports the arena's base without moving the bump pointer
+MALLOC_LARGEST_FREE = 0xFFFFFFFF  # Malloc(-1): GEMDOS's "how big is the largest free block?" query.
+                                  # The model serves it fully and answers a SIZE — the arena's
+                                  # ceiling minus its bump pointer — without moving anything. A case
+                                  # that wants a BLOCK's address asks for a positive size instead
 _MALLOC_FRAME_BYTES = 6          # the longword size + the selector word this stub pushed
 _LEA_SP = 0x4FEF                 # lea d(sp),sp — the caller-pops half of the C convention
 _MOVE_L_D0_ABS = 0x23C0          # move.l d0,<abs.l>

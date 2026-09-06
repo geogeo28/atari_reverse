@@ -152,6 +152,25 @@ Games wrap common calls in helpers: `move.w #sel,-(sp); trap #1; addq; rts`. Nam
 wrappers; multi-purpose ones you name by hand. Then callers read as `Fread(...)`,
 `Setpalette(pal)` and the data flow becomes obvious.
 
+## What the recreate kit already models for you
+
+Before writing a model of any of these by hand, check what `tools/recreate_kit` serves — both its
+oracle's `trap` dispatch and a reconstruction's `os_*` wrappers run the same code, so a call it
+models is one a differential can already compare. Its contract is
+[`tools/recreate_kit/TRAP_MODEL.md`](../tools/recreate_kit/TRAP_MODEL.md); the four groups a reader
+of this file is most likely to be surprised are covered:
+
+| what | where |
+| --- | --- |
+| **GEM `trap #2`** — seventeen VDI opcodes including `vro_cpyfm`'s sixteen logic operations, `vr_recfl` and `v_gtext`, plus four AES ones. It really DRAWS ST pixels: a GEM program's `trap #2` is its output, not a call whose effect can be a no-op | `src/gem.c` over `src/raster.c`, Phases 11-12 |
+| **the console READS** — BIOS `Bconstat`/`Bconin` and GEMDOS `Cconis`/`Crawcin`/`Cnecin`/`Crawio`, all serving ONE staged queue of keystrokes, so a program that polls with one and reads with another sees the keys a case staged, in order, once | `include/os.h`, Phase 13 |
+| **GEMDOS `Fseek`** over the staged-file cursor, bounded by the file's reserved capacity rather than its length (seeking past the end is legal and is how a program extends a file) | `include/os.h`, Phase 13 |
+| **the calls that hand a byte to a DEVICE** — `Cconout`/`Cconws`/`Crawio`'s write direction, BIOS `Bconout` to device 4 (the IKBD), AES `graf_mouse`, VDI `v_show_c`/`v_hide_c`. They touch no memory, so they go to an ordered ledger both sides keep and the harness compares | `src/os_log.c` + `oracle/shim.c`, Phase 13 |
+
+Everything the kit does not model **raises** rather than answering wrongly — `Pterm`, `Dgetdrv`,
+`Pexec`, `Ikbdws`, every other BIOS device and every GEM opcode outside that set. That is the point:
+a function cannot come back "verified" while hitting a call nobody modeled.
+
 ## Validating a trap model against real TOS (headless)
 
 If you model traps deterministically (e.g. to run code in an emulator without real TOS), you can

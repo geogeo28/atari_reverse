@@ -164,6 +164,36 @@ def _missing_heap_base_abi(symbol):
 
 
 install_heap_base(_LIB, "osh_set_heap_base", OS_HEAP_BASE, _missing_heap_base_abi)
+
+
+def install_heap_limit(lib, symbol, limit, on_missing):
+    """Install the arena's CEILING into one shared object. Returns whether it did.
+
+    ``install_heap_base``'s twin, and required on the same terms: an .so predating the entry point
+    already carries OS_HEAP_LIMIT_DEFAULT (the staged-file table), so a project that narrowed
+    nothing is served correctly by an old build, while one that DID narrow its window and was
+    silently served the kit's wider ceiling would have `Malloc(-1)` report free memory it does not
+    have — and answer a query the game branches on with a number from another project's map.
+    """
+    if limit == resolve_heap_limit(None):
+        return False
+    if not hasattr(lib, symbol):
+        raise on_missing(symbol)
+    entry = getattr(lib, symbol)
+    entry.argtypes = [ctypes.c_uint32]
+    entry(limit)
+    return True
+
+
+def _missing_heap_limit_abi(symbol):
+    """The oracle side's refusal for an .so predating ``symbol``."""
+    return _stale_oracle(
+        symbol,
+        f"so {_cfg.name}'s `heap_limit = {HEAP_LIMIT:#x}` (project.toml) cannot be installed and "
+        f"Malloc(-1) would report the free window as reaching {resolve_heap_limit(None):#x}.")
+
+
+install_heap_limit(_LIB, "osh_set_heap_limit", HEAP_LIMIT, _missing_heap_limit_abi)
 if not hasattr(_LIB, "osh_poked_input_calls"):
     raise _stale_oracle(
         "osh_poked_input_calls",
@@ -203,6 +233,24 @@ if not hasattr(_LIB, "osh_psg_dropped"):
 _LIB.osh_psg_dropped.restype = ctypes.c_uint32
 _LIB.osh_dosound_count.restype = ctypes.c_uint32
 _LIB.osh_dosound_args.restype = _u32p
+# The off-image OS EVENT ledger (TRAP_MODEL.md, Phase 13): console bytes, IKBD command bytes and the
+# two cursor-visibility calls, in order. Required, not probed like the Dosound ledger's Python side:
+# an .so without it predates the model, so every one of those calls would be REFUSED there while this
+# file reported the run as serviced — a red that names the wrong thing, on every game that prints.
+_EVENT_LEDGER_ABI = ("osh_event_count", "osh_event_kinds", "osh_event_values")
+_missing_event_ledger = [sym for sym in _EVENT_LEDGER_ABI if not hasattr(_LIB, sym)]
+if _missing_event_ledger:
+    raise _stale_oracle(
+        "/".join(_missing_event_ledger),
+        "so it predates the off-image OS event ledger: GEMDOS Cconout/Cconws, BIOS Bconout to the "
+        "IKBD, AES graf_mouse and VDI v_show_c/v_hide_c would all be refused, and no run that "
+        "prints a character could be compared at all.")
+_u16p = ctypes.POINTER(ctypes.c_uint16)
+_LIB.osh_event_count.restype = ctypes.c_uint32
+_LIB.osh_event_kinds.restype = _u16p
+# 32 bits: os.h's os_event_t carries a 32-bit value, so that the ledgers still outside this stream
+# COULD fold into it later without moving every reader at once (nothing is migrated today).
+_LIB.osh_event_values.restype = _u32p
 _LIB.osh_psg_mixed_paths.restype = ctypes.c_int
 _LIB.osh_psg_unmodeled.restype = ctypes.c_uint32
 # The seeded PSG read model (TRAP_MODEL.md, Phase 6). Required, not probed: run() installs the seed
@@ -1322,6 +1370,10 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     out_regs["cycles"] = _LIB.osh_num_cycles()  # 68000 clock cycles executed (perf profiling)
     dn, dargs = _LIB.osh_dosound_count(), _LIB.osh_dosound_args()
     out_regs["dosound"] = [dargs[i] for i in range(dn)]  # ordered XBIOS Dosound(A0) list pointers
+    # ...and the ordered (kind, value) stream of every OTHER off-image call the model serves. Same
+    # contract as the Dosound ledger: not in the image, so nothing else could catch a divergence.
+    en, ekinds, evals = _LIB.osh_event_count(), _LIB.osh_event_kinds(), _LIB.osh_event_values()
+    out_regs["events"] = [(ekinds[i], evals[i]) for i in range(en)]
     # The direct PSG path's off-image surfaces: the ordered access stream (reads included), its
     # write-only projection for the consumers that want just that, and the register file the writes
     # left behind. harness.differential compares the stream and the file against the candidate's

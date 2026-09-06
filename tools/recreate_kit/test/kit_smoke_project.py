@@ -183,15 +183,15 @@ _HW_RMW_CODE = (struct.pack(">HHI", 0x08F9, MFP_ACIA_CHANNEL_BIT, MFP_IERB)    #
                 + struct.pack(">HHI", 0x0239, SHIFTER_MODE_RESOLUTION_MASK, SHIFTER_MODE)
                 + struct.pack(">H", 0x4E75))                                   # rts
 
-# ---- the Malloc arena's base: GEMDOS Malloc(-1), and where the block landed ----
-# `Malloc(-1)` is GEMDOS's "how big is the largest free block?" query, which the model serves fully
-# and which rounds to a zero-size bump — so it reports the arena's BASE without moving the pointer,
-# which is exactly the fact test_heap_base.py compares between the two sides. The result is stored
+# ---- the Malloc arena's base: one GEMDOS Malloc, and where the block landed ----
+# A SMALL POSITIVE size, not `Malloc(-1)`: the query answers how much of the window is free, and the
+# fact test_heap_base.py compares between the two sides is WHERE THE BLOCK IS. The result is stored
 # into the image because that is the only surface a differential has: the trap's own return value is
 # off-image, and both sides must be seen to agree on it.
 HEAP_RESULT = 0x30000                 # in-image, above this program and below OS_FS_TABLE
+MALLOC_PROBE_SIZE = 4                 # even, so the block's address is the arena base either way
 
-_MALLOC_CODE = stubs.gemdos_malloc_stub(stubs.MALLOC_LARGEST_FREE, store_result=HEAP_RESULT)
+_MALLOC_CODE = stubs.gemdos_malloc_stub(MALLOC_PROBE_SIZE, store_result=HEAP_RESULT)
 
 # ...and one that really ALLOCATES, for the ceiling guard (emu._vet_heap_within_bounds): the size is
 # poked into the stub's own immediate rather than assembled per case, so the routine has one entry
@@ -199,10 +199,27 @@ _MALLOC_CODE = stubs.gemdos_malloc_stub(stubs.MALLOC_LARGEST_FREE, store_result=
 MALLOC_SIZE_OFFSET = 2                # the longword immediate inside `move.l #size,-(sp)`
 _MALLOC_SIZED_CODE = stubs.gemdos_malloc_stub(0)
 
+# ...and one routine with BOTH kinds of OFF-IMAGE effect — a console byte and an allocation — plus
+# an image write for the diff to compare: `Cconout('K') ; Malloc(4) -> HEAP_RESULT ; rts`. It exists
+# for the attribution (poison) pass, which is a SECOND candidate run and has to be armed exactly as
+# the first was: without that the ledger carries the first pass's byte into the second and the arena
+# allocates where the first left off, while the oracle starts clean both times.
+CCONOUT_CHAR = ord("K")
+GEMDOS_CCONOUT = 0x02
+_MOVE_W_IMM_PUSH = 0x3F3C
+_LEA_SP_CONST = 0x4FEF
+_CCONOUT_FRAME_BYTES = 4              # the character word plus the selector word
+_EVENT_MALLOC_CODE = (struct.pack(">HH", _MOVE_W_IMM_PUSH, CCONOUT_CHAR)
+                      + struct.pack(">HH", _MOVE_W_IMM_PUSH, GEMDOS_CCONOUT)
+                      + struct.pack(">H", stubs.GEMDOS_TRAP)
+                      + struct.pack(">HH", _LEA_SP_CONST, _CCONOUT_FRAME_BYTES)
+                      + stubs.gemdos_malloc_stub(MALLOC_PROBE_SIZE, store_result=HEAP_RESULT))
+
 _ROUTINES = (_RMW_CODE, _GIACCESS_CODE, _HW_READ_CODE, _SYNC_ONLY_CODE, _WRITE_THEN_READ_CODE,
              _WIDE_READ_CODE, _VOLATILE_TWICE_CODE, _STATIC_TWICE_CODE,
              _HW_WRITE_CODE, _ACIA_SEND_CODE, _ACIA_RECEIVE_CODE, _ACIA_RECEIVE_TWICE_CODE,
-             _ACIA_SEND_THEN_RECEIVE_CODE, _HW_RMW_CODE, _MALLOC_CODE, _MALLOC_SIZED_CODE)
+             _ACIA_SEND_THEN_RECEIVE_CODE, _HW_RMW_CODE, _MALLOC_CODE, _MALLOC_SIZED_CODE,
+             _EVENT_MALLOC_CODE)
 
 
 def _entries():
@@ -217,7 +234,8 @@ def _entries():
 (RMW_ENTRY, GIACCESS_ENTRY, HW_READ_ENTRY, SYNC_ONLY_ENTRY, WRITE_THEN_READ_ENTRY,
  WIDE_READ_ENTRY, VOLATILE_TWICE_ENTRY, STATIC_TWICE_ENTRY,
  HW_WRITE_ENTRY, ACIA_SEND_ENTRY, ACIA_RECEIVE_ENTRY, ACIA_RECEIVE_TWICE_ENTRY,
- ACIA_SEND_THEN_RECEIVE_ENTRY, HW_RMW_ENTRY, MALLOC_ENTRY, MALLOC_SIZED_ENTRY) = _entries()
+ ACIA_SEND_THEN_RECEIVE_ENTRY, HW_RMW_ENTRY, MALLOC_ENTRY, MALLOC_SIZED_ENTRY,
+ EVENT_MALLOC_ENTRY) = _entries()
 
 
 def malloc_size_poke(size):

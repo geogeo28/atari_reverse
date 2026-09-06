@@ -16,10 +16,10 @@ WHAT THIS PINS, in the three layers the value passes through:
     program, over the staged-file table, or on the harness-poked input block, and every one of those
     is SILENT — a Malloc block is a plain image write on both sides, so two corrupted runs compare
     equal.
-  * **both sides** — the oracle's `Malloc` and the candidate's `OS_HEAP_BASE` report the same base,
-    at the default and after a non-default one is installed. This is the case the whole mechanism
-    exists for: a candidate served the old base while the oracle allocates from the new one would
-    disagree by a whole arena, and only a comparison of what each side stored can say so.
+  * **both sides** — the oracle's `Malloc` trap and the candidate's `os_malloc` hand out the same
+    block, at the default base and after a non-default one is installed. This is the case the whole
+    mechanism exists for: a candidate served the old base while the oracle allocates from the new one
+    would disagree by a whole arena, and only a comparison of what each side stored can say so.
 
 The module skips whole when the shared oracle or a C compiler is absent — `oracle/build/` is
 gitignored, so a bare checkout is a normal state to be in (`test_entry_state.py`'s convention).
@@ -34,8 +34,8 @@ from pathlib import Path
 
 import pytest
 
-from kit_smoke_project import (HEAP_RESULT, LOAD_BASE, MALLOC_ENTRY, MALLOC_SIZED_ENTRY, bind,
-                               malloc_size_poke)
+from kit_smoke_project import (HEAP_RESULT, LOAD_BASE, MALLOC_ENTRY, MALLOC_PROBE_SIZE,
+                               MALLOC_SIZED_ENTRY, bind, malloc_size_poke)
 
 harness = bind()
 # All three are importable only once a project is bound, which bind() above is what does — and it
@@ -76,13 +76,17 @@ def _stored_base(image_writes):
 
 
 def _malloc_differential():
-    """Run the .PRG's `Malloc(-1)` against the candidate that reads OS_HEAP_BASE for the same fact.
+    """Run the .PRG's `Malloc` against a candidate that asks the model's own arena for the same block.
 
-    The address to store at is passed to the glue rather than compiled into it, so the one spelling
-    of HEAP_RESULT is kit_smoke_project's, beside the 68000 code that stores to the same place.
+    Both sides allocate — the oracle through the trap, the candidate through `os_malloc` — so what
+    the case compares is the block ADDRESS each stored, and `harness._vet_heap_pointers_agree` then
+    compares how far each arena grew. The address to store at is passed to the glue rather than
+    compiled into it, so the one spelling of HEAP_RESULT is kit_smoke_project's, beside the 68000
+    code that stores to the same place.
     """
-    return harness.differential(MALLOC_ENTRY, {},
-                                lambda lib, buf: lib.g_stores_the_heap_base(buf, HEAP_RESULT))
+    return harness.differential(
+        MALLOC_ENTRY, {},
+        lambda lib, buf: lib.g_stores_a_malloc_block(buf, HEAP_RESULT, MALLOC_PROBE_SIZE))
 
 
 # ==================================================== the key
@@ -365,14 +369,16 @@ def test_the_star_export_still_carries_the_served_name():
 # ==================================================== both sides
 
 def test_both_sides_allocate_from_the_default_base():
-    """`Malloc(-1)` — the "largest free block?" query — is served fully and rounds to a zero-size
-    bump, so it reports the arena's base without moving the pointer. The oracle's answer, the bytes
-    it stored and the candidate's own reading of OS_HEAP_BASE must all be that base."""
+    """The first block of an untouched arena is the base itself, on both sides — the oracle's D0, the
+    bytes it stored, and the block the candidate's own `os_malloc` handed back. The arena is left one
+    block further on, and both bump pointers must agree about that too."""
     diffs, info = _malloc_differential()
-    assert diffs == [], "the candidate read a different arena base from the one the oracle served"
+    assert diffs == [], "the candidate allocated a different block from the one the oracle served"
     assert info["regs"]["d0"] == emu.OS_HEAP_BASE_DEFAULT
     assert _stored_base(info["writes"]) == emu.OS_HEAP_BASE_DEFAULT
-    assert info["regs"]["heap"] == emu.OS_HEAP_BASE_DEFAULT, "Malloc(-1) must not move the pointer"
+    assert info["regs"]["heap"] == emu.OS_HEAP_BASE_DEFAULT + MALLOC_PROBE_SIZE
+    assert harness._lib.g_os_heap_pointer() == info["regs"]["heap"], (
+        "the two arenas grew by different amounts — what _vet_heap_pointers_agree compares")
 
 
 def test_both_sides_follow_the_base_to_a_new_address(moved_heap_base):

@@ -1,5 +1,5 @@
-"""The harness-poked input block (``include/os.h``, 0x600..0x61f) and the overlap questions the
-kit's guards ask about it.
+"""The harness-poked input block (``include/os.h``, ``OS_CON_PENDING``..``OS_POKE_BLOCK_END``) and
+the overlap questions the kit's guards ask about it.
 
 It has a module of its own — rather than sitting with the rest of the ``os.h`` mirror in
 ``harness.py`` — for two reasons:
@@ -19,13 +19,43 @@ It has a module of its own — rather than sitting with the rest of the ``os.h``
 # ---- the harness-poked model state (mirror of include/os.h, "harness-poked model state") ----
 # Hardware whose real value is time-varying is an ordinary in-image test input, so both cores read
 # the same bytes. See TRAP_MODEL.md, "The harness-poked model state".
-OS_CON_PENDING = 0x600       # u32: nonzero = a character is waiting at the console (Bconstat)
-OS_CON_CHAR = 0x604          # u32: the longword Bconin returns (scancode << 16 | ascii)
+OS_CON_PENDING = 0x600       # u32: how many keystrokes are queued, up to OS_CON_QUEUE_MAX (nonzero
+                             # = one is waiting; a larger value is the older flag spelling and is
+                             # served as a single key — see include/os.h's os_console_take_key)
+OS_CON_CHAR = 0x604          # u32: the longword the NEXT console read returns (scancode<<16 | ascii)
 OS_RANDOM_VALUE = 0x608      # u32: what XBIOS Random returns (masked to 24 bits)
 OS_PSG_REGS = 0x610          # the YM2149 register file that XBIOS Giaccess reads and writes
 OS_PSG_NREGS = 16
 OS_PSG_WRITE = 0x80          # bit 7 of Giaccess's register argument selects write over read
-OS_POKE_BLOCK_END = OS_PSG_REGS + OS_PSG_NREGS   # first address above the poked block (0x620)
+# The VDI's two input devices, and the workstation state its attribute calls keep. All three are in
+# the block for the same reason the console key is: they are read and written by os.h on BOTH sides,
+# so under a program that covers these addresses they are the GAME's bytes and every guard keyed on
+# the block has to apply to them unchanged. See include/os.h, "the VDI WORKSTATION STATE".
+OS_MOUSE = 0x620             # three words: x, y, buttons (vq_mouse)
+OS_MOUSE_OFF_X = 0
+OS_MOUSE_OFF_Y = 2
+OS_MOUSE_OFF_BUTTONS = 4
+OS_MOUSE_BYTES = 6
+OS_KEY_SHIFT = 0x626         # u16: the shift-key mask vq_key_s reports
+OS_VDI_STATE = 0x628         # the VDI workstation attributes (field offsets in harness.py)
+OS_VDI_STATE_BYTES = 28
+# The keystrokes queued BEHIND OS_CON_CHAR: `harness.console_keys` stages a walk of them and every
+# console read takes one. Up at the top of the block rather than beside OS_CON_CHAR because there is
+# no room there — OS_RANDOM_VALUE and the PSG file already follow it. See include/os.h.
+OS_CON_QUEUE = 0x644         # u32 x (OS_CON_QUEUE_MAX - 1)
+OS_CON_QUEUE_MAX = 8         # keystrokes one case may stage: OS_CON_CHAR plus this many followers
+OS_CON_QUEUE_BYTES = (OS_CON_QUEUE_MAX - 1) * 4
+OS_POKE_BLOCK_END = OS_CON_QUEUE + OS_CON_QUEUE_BYTES   # first address above the poked block (0x660)
+
+# ---- the off-image OS event ledger's kinds (mirror of include/os.h, "Phase 13") ----
+# Here rather than in harness.py for this module's SECOND reason: `test/test_os_model.py` runs in a
+# bare checkout and cannot import harness, so it spelt them as literals and a value changed in os.h
+# alone would have left every IKBD command comparing as a console byte. harness.py re-exports them.
+OS_EVENT_NONE = 0            # the out-parameter's "this call had no off-image effect"
+OS_EVENT_CONOUT = 1          # value = a character byte written to the console
+OS_EVENT_IKBD = 2            # value = a command byte sent to the IKBD (BIOS Bconout, device 4)
+OS_EVENT_GEM_MOUSE = 3       # value = AES graf_mouse's mode word
+OS_EVENT_VDI_CURSOR = 4      # value = 1 for VDI v_show_c, 0 for v_hide_c
 
 # ---- the staged-file table's base (mirror of include/os.h) ----
 # Here rather than with the rest of the file-staging map in ``harness.py`` for this module's first
@@ -65,7 +95,11 @@ def poked_input_overlaps_program(load_base, program_end):
 POKED_INPUT_FIELDS = (("OS_CON_PENDING", OS_CON_PENDING, 4),
                       ("OS_CON_CHAR", OS_CON_CHAR, 4),
                       ("OS_RANDOM_VALUE", OS_RANDOM_VALUE, 4),
-                      ("OS_PSG_REGS", OS_PSG_REGS, OS_PSG_NREGS))
+                      ("OS_PSG_REGS", OS_PSG_REGS, OS_PSG_NREGS),
+                      ("OS_MOUSE", OS_MOUSE, OS_MOUSE_BYTES),
+                      ("OS_KEY_SHIFT", OS_KEY_SHIFT, 2),
+                      ("OS_VDI_STATE", OS_VDI_STATE, OS_VDI_STATE_BYTES),
+                      ("OS_CON_QUEUE", OS_CON_QUEUE, OS_CON_QUEUE_BYTES))
 
 
 def poked_input_fields_touched(addr, length):

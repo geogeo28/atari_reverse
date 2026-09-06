@@ -712,6 +712,47 @@ static uint32_t g_dosound_n;
 uint32_t        osh_dosound_count(void) { return g_dosound_n; }
 const uint32_t *osh_dosound_args(void)  { return g_dosound_arg; }
 
+/* --- the OFF-IMAGE OS EVENT LEDGER (os.h, "Phase 13") ---------------------------------------
+ * The oracle's mirror of src/os_log.c: console bytes, IKBD command bytes, and the two cursor
+ * visibility calls, in the order the run made them. Two parallel arrays for the Python side's sake,
+ * exactly as the PSG ledger's are. Reset per run in osh_run, beside the Dosound ledger. */
+static uint16_t g_event_kind[OS_EVENT_LOG_MAX];
+static uint32_t g_event_val[OS_EVENT_LOG_MAX];
+static uint32_t g_event_n;
+
+/* Entries past the cap are dropped exactly as the candidate's ledger drops them, so a run longer
+ * than the cap still compares like for like; the harness refuses a comparison AT the cap. */
+static void event_log(uint16_t kind, uint32_t value) {
+    if (g_event_n >= OS_EVENT_LOG_MAX) return;
+    g_event_kind[g_event_n] = kind;
+    g_event_val[g_event_n] = value;
+    g_event_n++;
+}
+
+uint32_t        osh_event_count(void)  { return g_event_n; }
+const uint16_t *osh_event_kinds(void)  { return g_event_kind; }
+const uint32_t *osh_event_values(void) { return g_event_val; }
+
+/* GEMDOS Cconws(str): every byte of the NUL-terminated string is a console byte, so each becomes its
+ * own ledger entry — the same stream a program that called Cconout per character would produce, and
+ * the string's CONTENT is what a reconstruction has to get right. Returns how many were written.
+ * A string with no terminator inside the image is REFUSED rather than cut off at the edge: the model
+ * has no idea where it was meant to end, and a fabricated length is exactly what the governing rule
+ * forbids. Lives with the ledger rather than inside handle_trap so the loop reads as one thing. */
+static uint32_t cconws(uint32_t str, int *modeled) {
+    uint32_t n = 0;
+    /* MEASURE FIRST, then log. A refused call must leave no trace on either side's ledger — the
+     * rule gem_dispatch follows when it drops an event a faulted call had already reported — and a
+     * string with no terminator inside the image is refused only once the walk has run off the end,
+     * by which time a logging walk would have pushed every byte it passed. */
+    while (os_in_image_fixed(str + n, 1) && g_mem[str + n])
+        n++;
+    if (!os_in_image_fixed(str + n, 1)) { *modeled = 0; return 0; }
+    for (uint32_t i = 0; i < n; i++)
+        event_log(OS_EVENT_CONOUT, g_mem[str + i]);
+    return n;
+}
+
 void m68k_write_memory_8(unsigned int a, unsigned int v) {
     switch (a & BUS_ADDR_MASK) {                   /* mask to the 68000's 24-bit address bus */
         case OS_PSG_PORT_SELECT:
@@ -873,6 +914,11 @@ static void enter_from_reset(void) {
  * the one region a project places". This is the oracle's OWN copy — liboracle.so and the candidate
  * .so are two objects in one process, and recreate_kit.harness installs one value into each. */
 static uint32_t g_heap_base = OS_HEAP_BASE_DEFAULT;
+/* ...and the first address it may not reach, installed by osh_set_heap_limit() from the same
+ * project.toml the base comes from. Read by Malloc(-1), whose answer is the window's remaining
+ * SIZE; how far a run actually grew the arena is still refused in Python
+ * (emu._vet_heap_within_bounds), which is where the message that names the key lives. */
+static uint32_t g_heap_limit = OS_HEAP_LIMIT_DEFAULT;
 static uint32_t g_heap;         /* Malloc bump pointer */
 static uint32_t g_malloc_n;     /* GEMDOS Malloc calls serviced this run (see osh_malloc_count) */
 static uint32_t g_unmodeled;    /* count of traps whose real effect we do NOT model (fabricated D0) */
@@ -913,12 +959,18 @@ static void handle_trap(int vec) {
 
     if (vec == 1) {                                   /* GEMDOS */
         switch (fn) {
-        case 0x48:                                    /* Malloc: bump-allocate a block */
-            /* Count the CALL, not the bump: a zero/rounds-to-zero size (Malloc(-1), the "largest
-             * free block?" query) is still fully serviced — it returns the arena base — yet leaves
-             * g_heap where it was. See osh_malloc_count. */
+        case 0x48: {                                  /* Malloc: bump-allocate a block */
+            /* Count the CALL, not the bump: a zero-rounding size, and Malloc(-1) below, are fully
+             * serviced yet leave g_heap where it was. See osh_malloc_count. */
+            uint32_t size = m68k_read_memory_32(arg1);
             g_malloc_n++;
-            d0 = g_heap; g_heap += (m68k_read_memory_32(arg1) + 1u) & ~1u; break;
+            if (size == OS_MALLOC_LARGEST_FREE) {      /* "how big is the largest free block?" */
+                d0 = g_heap < g_heap_limit ? g_heap_limit - g_heap : 0;
+                break;
+            }
+            d0 = g_heap; g_heap += (size + 1u) & ~1u;
+            break;
+        }
         case 0x20:                                    /* Super(stack): supervisor-mode token model */
             modeled = os_super(m68k_read_memory_32(arg1), &d0);
             break;
@@ -949,15 +1001,41 @@ static void handle_trap(int vec) {
         case 0x3e:                                    /* Fclose(handle) */
             if (os_fclose(g_mem, (uint16_t)m68k_read_memory_16(caller + 2)) < 0) modeled = 0;
             break;
-        case 0x49: case 0x4a:                         /* Mfree / Mshrink -> success */
-        case 0x02: case 0x09: break;                  /* Cconout / Cconws -> no image effect */
+        case 0x49: case 0x4a: break;                  /* Mfree / Mshrink -> success */
+        case 0x02:                                    /* Cconout(c): one byte to the console */
+            event_log(OS_EVENT_CONOUT, (uint16_t)(m68k_read_memory_16(caller + 2) & 0xff));
+            break;
+        case 0x09:                                    /* Cconws(str) -> characters written */
+            d0 = cconws(m68k_read_memory_32(caller + 2), &modeled);
+            break;
+        case 0x0b:                                    /* Cconis -> -1 if a key is waiting */
+            g_poked_input_calls++;
+            d0 = os_cconis(g_mem);
+            break;
+        case 0x07: case 0x08:                         /* Crawcin / Cnecin: blocking console read */
+            g_poked_input_calls++;
+            modeled = os_conin_blocking(g_mem, &d0);
+            break;
+        case 0x42: {                                  /* Fseek(offset, handle, mode) -> position */
+            int32_t pos = os_fseek(g_mem, m68k_read_memory_32(caller + 2),
+                                   (uint16_t)m68k_read_memory_16(caller + 6),
+                                   (uint16_t)m68k_read_memory_16(caller + 8));
+            if (pos < 0) modeled = 0; else d0 = (uint32_t)pos;
+            break;
+        }
         case 0x06: {                                  /* Crawio(w): raw console I/O, either way */
             uint16_t w = (uint16_t)m68k_read_memory_16(caller + 2);
             /* Only the READ direction looks at the poked console state; the write direction is a
-             * character bound for the screen and touches nothing (os.h). Tallying it too would
-             * redden a legitimate run for printing a character. */
-            if (w == OS_CRAWIO_READ) g_poked_input_calls++;
-            d0 = os_crawio(g_mem, w);
+             * character bound for the screen (os.h). Tallying that too would redden a legitimate
+             * run for printing a character — but it IS console output, so it takes the same ledger
+             * entry Cconout takes. os_crawio_read, not os_crawio: the whole call would route its
+             * write through the CANDIDATE's ledger, which this side does not link. */
+            if (w != OS_CRAWIO_READ) {
+                event_log(OS_EVENT_CONOUT, (uint16_t)(w & 0xff));
+                break;                                /* d0 = 0, as os_crawio answers */
+            }
+            g_poked_input_calls++;
+            d0 = os_crawio_read(g_mem);
             break;
         }
         default: modeled = 0; break;                  /* Pterm, Dgetdrv, Pexec, unknown */
@@ -992,13 +1070,28 @@ static void handle_trap(int vec) {
     } else if (vec == 2) {                            /* GEM: AES/VDI parameter-block calls */
         uint32_t reg_d0 = m68k_get_reg(0, M68K_REG_D0);   /* subsystem: AES 0xc8 / VDI 0x73 */
         uint32_t reg_d1 = m68k_get_reg(0, M68K_REG_D1);   /* -> parameter block */
-        modeled = os_gem_trap(g_mem, reg_d0, reg_d1);     /* results land in the param block */
+        os_event_t event;
+        /* gem_dispatch, not os.h's os_gem_trap wrapper: the wrapper routes a refusal through
+         * os_refused() (which the oracle does not link) and the event through the CANDIDATE's
+         * ledger. The oracle keeps both itself, from the same shared model. */
+        modeled = gem_dispatch(g_mem, reg_d0, reg_d1, &event);
+        if (modeled && event.kind != OS_EVENT_NONE) event_log(event.kind, event.value);
+        /* Every serviced VDI call reads or writes the VDI state block, which lives inside the
+         * harness-poked region — so it is tallied exactly as Bconin is (os.h, gem_touches_poked_input). */
+        if (modeled && gem_touches_poked_input(reg_d0)) g_poked_input_calls++;
     } else if (vec == 13) {                           /* BIOS: console input only (os.h) */
         uint16_t dev = (uint16_t)m68k_read_memory_16(caller + 2);
         switch (fn) {
         case 0x01: g_poked_input_calls++; modeled = os_bconstat(g_mem, dev, &d0); break;  /* Bconstat */
         case 0x02: g_poked_input_calls++; modeled = os_bconin(g_mem, dev, &d0); break;    /* Bconin */
-        default: modeled = 0; break;                  /* Bconout, Setexc, Kbshift, unknown */
+        case 0x03:                                    /* Bconout(dev, byte) */
+            /* Only the IKBD is modeled. A byte to device 4 is a COMMAND to the 6301 — off-image by
+             * definition, so it becomes a ledger entry; every other device would need a model of
+             * what receiving it does, and is refused rather than answered wrongly (TRAP_MODEL.md). */
+            if (dev != OS_BIOS_DEV_IKBD) { modeled = 0; break; }
+            event_log(OS_EVENT_IKBD, (uint16_t)(m68k_read_memory_16(caller + 4) & 0xff));
+            break;
+        default: modeled = 0; break;                  /* Setexc, Kbshift, unknown */
         }
     } else {
         modeled = 0;
@@ -1074,6 +1167,7 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
     /* The whole PSG model's per-run state is reset by psg_enter_run(), which enter_from_reset()
      * above already called — so osh_run_bench gets it too. */
     g_dosound_n = 0;                      /* Dosound ledger = this run's XBIOS Dosound calls only */
+    g_event_n = 0;                        /* ...and the OS event ledger, for the same reason */
     g_min_a7 = sp;                        /* deepest stack pointer (for exclude-band sanity checks) */
     /* The external agent's per-run state is reset by sched_enter_run(), which enter_from_reset()
      * above already called — the same split psg_enter_run() and hw_enter_run() use. */
@@ -1350,6 +1444,9 @@ uint32_t        osh_heap(void)        { return g_heap; }
 /* Install the Malloc arena's base (project.toml's `heap_base`). emu.py calls it once, at import,
  * from the bound project's config — before any osh_run, which is what resets g_heap to it. */
 void            osh_set_heap_base(uint32_t base) { g_heap_base = base; }
+/* ...and the arena's ceiling (project.toml's `heap_limit`, clamped to OS_FS_TABLE). emu.py installs
+ * it at import beside the base; it is what Malloc(-1) measures the free window against. */
+void            osh_set_heap_limit(uint32_t limit) { g_heap_limit = limit; }
 /* How many GEMDOS Malloc calls the last osh_run serviced. This, NOT the bump pointer, is what
  * "did this run allocate?" means: a serviced Malloc whose rounded size is 0 hands back a block at
  * the arena base without moving g_heap, so a pointer comparison would miss it. emu.run() keys the

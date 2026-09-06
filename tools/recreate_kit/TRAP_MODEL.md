@@ -239,12 +239,15 @@ They sit in the free low region — clear of the 68000 vector page and above TOS
 system-variable area. `recreate_kit/os_map.py` mirrors the addresses (its own module, because
 `harness.py` and `oracle/emu.py` both guard the block and neither can import the other),
 `test/test_os_memory_map.py` pins the two sets equal, and `harness.console_key()` /
-`harness.psg_regs()` build the pokes so the fields that must move together cannot be set half-way.
+`harness.console_keys()` / `harness.psg_regs()` build the pokes so the fields that must move together
+cannot be set half-way.
 
 ### They are no longer below every program
 
 They used to be: every project loaded at `0x10000`, and `harness._vet_os_memory_map()` enforced
-`load_base >= 0x620`. `projects/wonderboy` cannot obey it — its program relocates itself to the
+`load_base >= OS_POKE_BLOCK_END` (`0x660` today; it was `0x620` before Phase 12's VDI state block and
+Phase 13's console key queue widened it — see the README's "widening the block" note, which is a
+change to every declaring project's waiver text). `projects/wonderboy` cannot obey it — its program relocates itself to the
 absolute address `0x400`, and everything below that is the 68000 vector page — so it loads at
 `0x3f8` and **the block sits inside its code**. A `project.toml` may now declare
 `tos_poked_input_unused = true`, the claim that the game reads none of this state, and get that
@@ -1975,6 +1978,472 @@ those happened to be `0`. The trade is a deterministic entry state for an accide
 catches an unloaded base register is the image comparison against the C core, which names a pixel
 diff rather than a register.
 
+## Phase 11 — the RASTER MODEL (`src/raster.c`), and why it is a shared `.c`
+
+A GEM application draws through the VDI, so `trap #2` is not a call whose effect can be a no-op: it
+is the program's **output**. Modelling it means modelling ST pixels.
+
+### Modeled
+
+> An **ST device-format raster**: planes interleaved a 16-pixel word at a time, most significant bit
+> leftmost. Pixel *(x, y)* of plane *p* is bit `15 - (x % 16)` of the word at
+> `addr + y*wdwidth*2*nplanes + (x/16)*2*nplanes + p*2`. One to eight planes; a one-plane raster is
+> the same formula with no interleave.
+>
+> ...and the **sixteen VDI logic operations** over it, bit by bit: op *n*, written `b3 b2 b1 b0`,
+> answers `b(3 - ((S << 1) | D))`. `RASTER_OP_S_ONLY` (3) is a plain copy and `RASTER_OP_S_OR_D` (7)
+> is the transparent-sprite mode; the other fourteen are implemented rather than left to a call site
+> to discover.
+
+**A pixel at a time, deliberately.** A real VDI moves words, with edge masks, a shift between
+differing source and destination alignments and a separate first/last-word path. That is perhaps
+twenty times quicker and three more places for an off-by-one — and an off-by-one *both sides would
+share*, because they run the same code, so no differential could see it. The per-pixel form is the
+operation's definition. The runs that use it move a few hundred thousand pixels at most.
+
+**One pixel's address is resolved ONCE, not once per plane.** The interleave formula is a division, a
+modulo, two multiplies and a high-byte test, and every plane of a pixel is the *same* mask one word
+further on — so `raster_locate()` returns a `raster_at_t` (plane 0's byte plus the mask) and the
+drawing loops step it by `RASTER_WORD_BYTES`. Measured 7.2x on the model's own cases. **The per-pixel
+semantics are unchanged**: this is the same address the formula gives, computed in one place instead
+of once per plane, and the single-pixel helpers are implemented over it rather than beside it, so
+there is still one addressing. Word-parallel drawing is still *not* done, for the reason above.
+
+**The COPY DIRECTION is chosen.** Source and destination may be the same raster and may overlap —
+scrolling a window is exactly that — and a copy that always ran top-left to bottom-right would
+re-read pixels it had already written and smear the source across the raster. Rows run backwards when
+the destination is BELOW the source and columns backwards when it is to the RIGHT, the ordinary blit
+rule: every source pixel is then read before the write that would have overwritten it. Chosen
+unconditionally rather than only on overlap, because for disjoint rasters the two orders write
+exactly the same bytes, and a test of "do these overlap?" is one more branch nothing would exercise.
+
+The limit that leaves, stated: direction selection is the right answer for the operations that IGNORE
+the destination bit (`RASTER_OP_S_ONLY` and friends). For one that reads it — `S_XOR_D` over an
+overlap — no ordering reproduces a read-all-then-write snapshot, and a real VDI does not produce one
+either. The reference's overlap cases therefore use the copy operations, where the two agree.
+
+### It is a SHARED `.c`, not a header of inlines, and it is STATELESS
+
+`src/raster.c` and `src/gem.c` are the only kit sources compiled into **both** shared objects:
+`kit.mk`'s `SRC` sweeps them into every candidate and its `$(ORACLE)` rule names them explicitly. So
+"the oracle's `trap #2` and a reconstruction's `os_vdi()` draw the same pixels" is true by
+construction rather than by two transcriptions agreeing — which is what every other model in this
+file has to settle for (the shim mirrors `src/psg.c`, `src/hw.c`, `src/dosound_log.c` by hand).
+
+That arrangement has one hazard and one answer. Two shared objects in one process each carry a copy
+of these symbols, and a flat-namespace loader may bind both references to whichever copy it saw
+first. **Neither file holds any state** — every byte they read or write is in the image, workstation
+attributes included (Phase 12) — so which copy runs cannot matter. That is why there is none.
+
+They also **refuse nothing themselves.** `os_refused()` is the candidate's tally and the oracle does
+not link it, so every "cannot serve this" is a `return 0` and the caller turns it into that side's
+refusal: `shim.c`'s `g_unmodeled`, or `os.h`'s `os_gem_trap` wrapper. The same split lets the
+off-image effects be *reported* through an `os_event_t` out-parameter instead of logged, because each
+side owns a different ledger (Phase 13).
+
+### What it does NOT capture
+
+* **`fd_stand = 1`, the VDI's STANDARD format** (planes consecutive rather than interleaved), is a
+  different layout and is **refused**, not misread as a device-format raster.
+* **No plane conversion.** A copy between rasters of differing `fd_nplanes` is refused.
+* **No scaling.** The extent is the SOURCE rectangle's; the destination rectangle contributes only
+  its top-left corner, which is what `vro_cpyfm` does and `vrt_cpyfm`/`vr_trnfm` (unmodeled) do not.
+* **No word-parallel timing.** The model says nothing about how long a copy takes, which matters on
+  target and is invisible here (`docs/on-target-execution.md`).
+
+### What pins it
+
+`test/test_os_model.py` carries a **second implementation** of the format and of the sixteen ops,
+written from the format's own definition rather than from `raster.c` — one explicit lambda per
+operation, not the truth-table shift the C uses, so a wrong shift has something to disagree with. It
+runs all sixteen ops plus five addressing shapes (a shift within a word, a copy crossing a word
+boundary, a negative destination, a destination past the edge, and a reversed source rectangle) —
+and three OVERLAPPING copies inside one raster, one per direction the choice has to get right
+(destination below the source, to its right, and above it). The reference models the copy as
+read-all-then-write, which for those operations is what a direction-chosen copy produces.
+Measured 2026-09-06, six mutants: reversing the truth-table index reddens 21 cases, permuting the
+plane stride reddens 31, dropping the destination extent check reddens 3 and makes 61 more
+un-runnable (the reference iterates the unclipped rectangle), and forcing either copy direction
+constant reddens exactly the one overlap case that needed it. The sixth is the direction walk's own
+hazard: it counts to an end rather than testing an ordering, so dropping the empty-range guard in
+front of it turns a fully clipped copy into a runaway and takes the whole probe down (150 cases).
+`clip_entirely_out` is the case that reaches it.
+
+---
+
+## Phase 12 — the VDI and AES OPCODES (`src/gem.c`)
+
+`trap #2` selects the subsystem in D0 (AES `0xc8`, VDI `0x73`) and points D1 at a parameter block of
+array pointers: AES `{contrl, global, intin, intout, addrin, addrout}`, VDI
+`{contrl, intin, ptsin, intout, ptsout}`. The opcode is `contrl[0]`.
+
+### Modeled
+
+| opcode | call | what the model does | reached by |
+| ---: | --- | --- | --- |
+| 100 | `v_opnvwk` | handle `1` into **`contrl[6]`** (where the DRI binding reads it), `intout[0..1] = 319/199`, `intout[13] = 16`, every other reported slot ZEROED; installs the attributes `work_in` asked for | Bubble Ghost |
+| 101 | `v_clsvwk` | clears the recorded handle | none yet |
+| 3 | `v_clrwk` | clears the whole screen (320x200x4 = 32,000 bytes) to colour 0 | Bubble Ghost |
+| 8 | `v_gtext` | the string in `intin`, in the current text colour, through the synthetic font below | Bubble Ghost |
+| 12 | `vst_height` | records the requested height; answers `ptsout[0..3] = 8, 8, 8, 8` | Bubble Ghost |
+| 22 / 25 | `vst_color` / `vsf_color` | stores the pen, **clamped to 0..15**, and echoes what it set | Bubble Ghost (25) |
+| 23 / 24 / 32 | `vsf_interior` / `vsf_style` / `vswr_mode` | stored and echoed; the INTERIOR is read by `vr_recfl` (below), the other two by nothing | none yet |
+| 109 | `vro_cpyfm` | Phase 11's raster copy between two MFDBs | Bubble Ghost |
+| 114 | `vr_recfl` | fills `ptsin[0..3]` on the screen per the fill interior (below) | Bubble Ghost |
+| 122 / 123 | `v_show_c` / `v_hide_c` | a Phase 13 ledger entry; the cursor is not in the image | none yet |
+| 124 | `vq_mouse` | the poked mouse state, **not consumed** | Bubble Ghost |
+| 128 | `vq_key_s` | the poked shift mask, likewise | Bubble Ghost |
+| 129 | `vs_clip` | stores the rectangle, normalised, and the on/off flag | none yet |
+| AES 10 / 19 / 77 / 78 | `appl_init` / `appl_exit` / `graf_handle` / `graf_mouse` | ap_id 0; success; handle 1 + four 8-pixel cell sizes; a ledger entry | Bubble Ghost (10, 77, 78) |
+
+**"Reached by" is per this workspace, and it is mostly EMPTY.** Bubble Ghost is the only GEM program
+here (`projects/bubbleghost/notes/frontend.md` §1 lists its calls: VDI 100, 3, 8, 12, 22, 25, 109,
+114, 124, 128 and AES 10, 77, 78); the rest are modeled for completeness, and "none yet" is a warning
+about how much of this table only the kit's own probe has ever run. It is also why the two-door cases
+below loop the whole table rather than sampling it.
+
+### `v_opnvwk` installs the CALLER's attributes, and writes the whole `work_out`
+
+Two facts a caller depends on and the model used not to keep.
+
+**The attributes come from `work_in`.** `intin[6..9]` are the text colour, the fill interior, the fill
+style and the fill colour a real VDI installs from the array the program passed; opening a
+workstation *is* that installation. (Bubble Ghost passes 1 in every one of `work_in[0..9]`, so its
+fills are SOLID in pen 1 — a model that installed a hollow default instead drew nothing where the
+game draws a box.) The three the array cannot express — the writing mode, the text height, the clip
+flag — take the VDI's own defaults.
+
+**Every reported `work_out` slot is written.** The call answers `contrl[2] = 6` pairs and
+`contrl[4] = 45` entries, and fills three of them; the other 48 are ZEROED rather than left, because
+a caller walking what the call says it wrote would otherwise read its own uninitialised memory back
+as workstation attributes. Zero is not a fabricated attribute table — it is the absence of one, and
+it is the same absence on both sides.
+
+### `vr_recfl` reads the FILL INTERIOR before the fill colour
+
+`vsf_interior` decides the question a fill asks: **hollow (0)** paints the background — colour 0 —
+and ignores the pen entirely; **solid (1)** paints the fill colour. **Pattern (2), hatch (3) and
+user-defined (4)** each need a pattern table this model does not have, and are **refused by name**
+rather than filled solid, which would draw pixels no real machine draws. The interior a run starts
+from is `work_in[7]`, or whatever `vsf_interior` last set.
+
+Every serviced VDI opcode also writes `contrl[2]` (ptsout PAIRS) and `contrl[4]` (intout entries),
+because a caller reads them and leaving the previous call's values standing is a wrong answer, not a
+missing one. Anything else — every other VDI and AES opcode — is **refused by opcode**.
+
+### The workstation state lives IN THE IMAGE
+
+`vsf_color` sets a fill colour a later `vr_recfl` reads. That state has to be somewhere both sides
+agree on, and the two sides are two shared objects with separate storage — so C statics would have to
+be reset and re-seeded per run, one more model for `harness.arm_candidate` to arm and one more to
+forget. In the image it is an ordinary test input **the byte diff already covers**: a reconstruction
+that sets the wrong fill colour diverges there, before it has drawn anything.
+
+It sits at `OS_VDI_STATE` (0x628, 28 bytes) **inside the harness-poked block**, with the mouse
+(0x620), the shift mask (0x626) and Phase 13's console key queue (0x644), for the reason the console
+key is there: under a program that
+covers those addresses they are the game's own bytes, and every guard keyed on the block then applies
+unchanged. `shim.c` therefore tallies every serviced VDI call in `osh_poked_input_calls`, so
+`emu._vet_no_poked_input_read` rejects such a run exactly as it rejects a `Bconin`.
+
+A fresh image is all zeroes, which is **not** a workstation's default state; `v_opnvwk` installs the
+defaults, as opening one does on a real machine. A case entering a program below its own `v_opnvwk`
+pokes them with `harness.vdi_state()`.
+
+### "The screen" is a DECLARED INPUT, because `Setscreen` is still a no-op
+
+An MFDB whose `fd_addr` is 0 means the VDI's own screen. The model's screen is
+`OS_VDI_STATE + OS_VDI_OFF_SCREEN`, and **zero there selects `OS_SCREEN_BASE`** — so a case that
+declares nothing draws where `Physbase`/`Logbase` already point.
+
+It is a declared input rather than something `Setscreen` sets, and that is a deliberate limit worth
+stating plainly: XBIOS `Setscreen` remains modeled as a **no-op** (it writes hardware, and changing
+that would alter every existing project's runs for a fact no case has ever needed). A game that moves
+its logical base — Bubble Ghost draws into `Logbase - 32000` — states the resulting address as an
+input, the same treatment every other un-modelable machine fact gets in this file. The residual is
+the standard one: **a wrong `Setscreen` is invisible to the differential**, and only shows up on
+target (`docs/on-target-execution.md`).
+
+Note also that this model draws into the base a case declares, which for a real VDI is the LOGICAL
+screen (`Logbase`). The physical base is not modeled at all: nothing displays anything here.
+
+### The font is SYNTHETIC and is NOT TOS's
+
+The kit has no ST system font and may not ship a copy of one. `v_gtext` draws through a glyph set
+defined in one line (`raster.c`): **row *r* of character *c* is *c*'s low byte rotated left by *r*.**
+Every character has a distinct 8x8 pattern (two glyphs agreeing on every row would have to agree on
+row 0, which is the character itself), it is a pure function of the character, and it resembles no
+typeface.
+
+What that buys: both sides draw the **same** pixels from the same parameter block, which is the whole
+of what a differential can pin. What it does not: text that reads as text. **Pixel fidelity to TOS is
+an on-target matter**, and this model says nothing about it.
+
+Three smaller non-captures in the same area, each stated rather than left to be discovered:
+
+* **Alignment is the VDI default** (left, baseline): `ptsin[1]` is the baseline, so the glyph's eight
+  rows occupy `[y - 7, y]`, and `vst_alignment` (39) is unmodeled and refused.
+* **Only the glyph's set bits are written**, in the text colour. The cell background is left alone and
+  the writing mode is not consulted — the model records `vswr_mode` and no drawing operation reads it.
+* **The model has ONE font.** `vst_height` records what was asked and always answers the 8x8 cell;
+  TOS would select among its 6x6 / 8x8 / 8x16 system fonts and answer differently.
+
+### The colour index is the PIXEL VALUE, not a VDI pen
+
+The model writes the colour index straight into the planes. Real TOS maps VDI **pen** numbers through
+a table (in low resolution pen 1 is not hardware index 1), so a reconstruction verified here will
+draw the right shapes in the wrong colours on a real machine. Not modeled because the table would be
+transcribed from memory rather than measured; closing it is a 16-entry table in `gem.c` plus a
+hardware check. Same class as the `Setscreen` residual above: invisible to the differential by
+construction.
+
+### The parameter block is BOUNDS-CHECKED, and the check is done in 64 BITS
+
+`pblk` and the five array pointers come straight off the emulated program's stack, so every word the
+model reads or writes through them is checked against the image and a failure **refuses the whole
+call**. Writes already made when a later access faults do not matter: a refused call throws the case
+away rather than comparing it.
+
+**The sum `base + index * 2` is taken in 64 bits and only then bounded.** A pointer near the top of
+the address space plus an array index WRAPS in 32-bit arithmetic and lands back in low memory, so a
+`contrl` of `0xfffffffe` used to address `0x00000004` — inside the image, so the bounds test passed
+and the model read and wrote the harness's own staging area while reporting the call served. The
+parameter block's own five slots are read with the same short-circuit: once one is unreachable the
+rest are being fetched through an address the model has already refused.
+
+### CLIPPING APPLIES ONLY WHERE THE DESTINATION IS THE SCREEN
+
+`vs_clip`'s rectangle is in SCREEN coordinates, so it governs a draw onto the workstation's screen —
+an MFDB whose `fd_addr` is 0 — and nothing else. A copy into a memory MFDB is not clipped, **including
+one whose `fd_addr` happens to point at screen memory**: a raster named by address is a raster, and
+the VDI clips it no more than it clips a sprite bank. That is the VDI's rule and not an omission of
+this model's; it is stated here, and in `gem.c` beside the code, because it reads as a bug to anyone
+who meets the second case first.
+
+The rectangle is read ONCE per call and narrowed into the loop bounds, rather than tested per pixel —
+five image reads per pixel for a fact that cannot change mid-call. Narrowing the loop is also what
+makes a garbage rectangle a failure instead of a hang: four signed words off the emulated stack can
+span 65,536 steps of nothing.
+
+### Handles are NOT validated
+
+`contrl[6]` is read for nothing but `v_opnvwk`'s reply. Bubble Ghost's `init_gem_and_screens` calls
+`graf_handle` four times into one scratch local and throws the result away, so the handle it passes
+to `v_opnvwk` is a BSS zero — and TOS tolerates it (`projects/bubbleghost/notes/frontend.md`). A
+model that checked handles would refuse a run the real machine serves.
+
+### What pins it
+
+`test/test_os_model.py`, through `test/os_model_probe.c`, which drives **both doors in one process**:
+`shim.c`'s `trap #2` decode and `os.h`'s `os_gem_trap()` wrapper on the same parameter block and the
+same starting state. That comparison runs **once per modeled opcode** — all seventeen VDI ones and all
+four AES ones, from a table the probe loops — and asks three things of each: that the two doors left
+the same bytes in every band the model may write, that they recorded the same LEDGER entries (the one
+thing the doors do not share: `shim.c` keeps the oracle's stream and `src/os_log.c` the candidate's),
+and that a serviced VDI call bumped `osh_poked_input_calls` while an AES one did not.
+
+Plus every opcode's outputs and `contrl` counts, the colour clamp at both ends, `v_opnvwk` under two
+different `work_in` arrays (so a swapped attribute slot shows) and with both `work_out` arrays
+pre-filled (so the zeroing shows), the fill interior in all five values, `vq_mouse` twice over (to
+show it does not consume), `vs_clip`'s normalisation, and `v_gtext`'s idempotence.
+
+Measured 2026-09-06, six mutants: drawing text from the top of the cell instead of the baseline
+reddens 1 case, filling with the text colour instead of the fill colour reddens 1, not writing
+`contrl[4]` reddens 11, dropping the `work_out` zeroing reddens 2, reading the fill colour instead of
+the fill interior reddens 7, and dropping the `trap #2` poked-input tally reddens 17. A seventh —
+taking the parameter block's `base + index * 2` in 32 bits again — does not merely redden: it
+crashes the probe outright, 148 cases, which is what writing through a wrapped pointer looks like.
+
+---
+
+## Phase 13 — the CONSOLE, `Fseek`, `Bconout`, and the OFF-IMAGE OS EVENT LEDGER
+
+Four kinds of call that hand a byte to a device rather than storing one, plus the two GEMDOS calls
+that were missing from the console model and the one accessor of the staged-file cursor the model
+never grew.
+
+### The ledger
+
+> **One ordered `(kind, value)` stream**, `OS_EVENT_LOG_MAX` = 4096 entries, kept on BOTH sides —
+> `oracle/shim.c`'s mirror and `src/os_log.c`'s — and compared by `harness.differential`
+> (`_vet_os_event_state`). Kinds: `OS_EVENT_CONOUT` (a console byte, from GEMDOS `Cconout`, one byte
+> of a `Cconws`, or `Crawio`'s write direction), `OS_EVENT_IKBD` (a command byte, from BIOS `Bconout`
+> to device 4), `OS_EVENT_GEM_MOUSE` (AES `graf_mouse`'s mode), `OS_EVENT_VDI_CURSOR` (`v_show_c` /
+> `v_hide_c`).
+
+The kinds have ONE Python home, `os_map.py`, pinned against `os.h` by `test_os_memory_map.py` the way
+the PSG ledger's are — `harness.py` re-exports them, and the kit's own `test_os_model.py` (which runs
+in a bare checkout and cannot import `harness`) imports them there instead of spelling literals.
+
+**The value is 32 bits wide although no kind needs more than 16.** That is deliberate headroom: the
+two ledgers still outside this stream — Dosound's (a command-list POINTER) and the hardware write
+ledger's (an address and a longword) — *could* fold into it the day retiring them buys something, and
+a width change afterwards would have to move every reader on both sides at once. **Nothing is
+migrated now**: Dosound and the hardware ledgers are working surfaces and stay where they are.
+
+**Why one stream and not four.** The order *between* them is a fact about the program too — an IKBD
+command issued before rather than after a screen clear is a different program — and four
+near-identical ledgers would be four places for one of them to stop being reset. It is Dosound's
+ledger generalised, with Dosound left where it is (it carries a list POINTER, not a byte, and
+retiring a working surface buys nothing).
+
+**Why it exists at all.** Modeled as no-ops these calls are unverifiable: a reconstruction that
+prints nothing, sends no IKBD command or leaves the GEM pointer on screen is byte-identical to one
+that gets them right. This is the only thing that can tell them apart. A reconstruction calls
+`os_cconout(byte)` / `os_ikbd_out(byte)`; an **on-target** build supplies its own `g_os_event` that
+issues the real trap and does not compile `src/os_log.c`, exactly as it supplies its own `g_dosound`.
+
+`src/gem.c` **reports** its events through an out-parameter rather than logging them, because it is
+one file compiled into both sides and each side owns a different ledger (Phase 11).
+
+### GEMDOS console: `Cconis` (0x0b), `Crawcin` (0x07), `Cnecin` (0x08)
+
+The **same one staged keystroke** `Bconstat`/`Bconin`/`Crawio` serve, through GEMDOS's door —
+deliberately one model and not a second, disconnected one, so a program that polls with `Cconis` and
+reads with `Cnecin` (Bubble Ghost's idiom everywhere) sees exactly the key a case staged, once.
+GEMDOS's console calls take no device argument, so there is no device to refuse.
+
+* `Cconis` only LOOKS: `-1L` if a key is staged, 0 if not, never consuming and **never refusing**, so
+  a poll loop may run it as often as it likes. Same relation to the pair below as `Bconstat` has to
+  `Bconin`.
+* `Crawcin` and `Cnecin` **consume** the key and return the whole longword (`scancode << 16 | ascii`).
+  With nothing staged they **refuse**: the real calls BLOCK, and there is nothing here to wait for,
+  so any answer would be fabricated. The model never spins — a loop would hang the oracle instead of
+  failing it.
+* **They are ONE model.** On a real machine `Cnecin` honours `^C`/`^S`/`^Q` and `Crawcin` does not,
+  and neither echoes. The model has no signal delivery, no flow control and no echo, so the two are
+  the same function; they keep separate names so a reconstruction still reads as the call the
+  original made, and so there is a place to put a difference the day one appears.
+
+### The staged key is a QUEUE, up to `OS_CON_QUEUE_MAX` deep
+
+`harness.console_keys(["a", "b", "c"])` stages a WALK: `OS_CON_CHAR` holds what the next read
+returns, `OS_CON_QUEUE` (0x644, seven longwords) holds the ones behind it, and `OS_CON_PENDING` holds
+how many are left. Every console read the model has — `Bconin`, `Crawcin`/`Cnecin`, `Crawio`'s read
+direction — takes the head and shifts the queue up, so all of them see ONE ordered stream, which is
+what makes their being one model worth anything. With the walk exhausted a blocking read refuses
+exactly as it does with nothing staged. `harness.console_key(k)` is the one-element case.
+
+**A count the queue cannot hold is ONE key.** `OS_CON_PENDING`'s contract has always been "nonzero =
+a character is waiting", and a hand-written poke dict may put any nonzero longword there
+(`projects/joust/recreate/test/test_os_traps.py` does); the queue refines the field without replacing
+it, so a count above `OS_CON_QUEUE_MAX` is read as that older spelling and served as a single
+keystroke. That is what keeps the one-key path writing exactly the one word it always wrote — which
+matters under a program whose own code covers this block.
+
+**The alternative, and when to reach for it.** A queue stages an ORDER the run drains at its own
+pace. For a key that must arrive at a particular MOMENT — inside a busy-wait the run cannot leave —
+the answer is still `differential(..., schedule=…)`, Phase 8's scheduled write.
+
+### GEMDOS `Fseek` (0x42)
+
+`Fseek(offset, handle, mode)` over the staged-file cursor: mode 0/1/2 from the start, the current
+position or the length, returning the new absolute position. The offset is **signed**.
+
+**The bound is the file's reserved CAPACITY, not its length.** Seeking past the end is legal on real
+GEMDOS and is how a program extends a file it is writing, so a position in `(size, capacity]` is
+served and `os_fread` answers 0 bytes there. (That is what widened `os_fread`'s "bytes remaining"
+from a bare subtraction to a test: the old form wrapped to ~4 GB and would have served the whole
+image as file content.) Past the capacity there is no staging space at all — the next file's bytes
+begin — and a negative position is not a position; both **refuse** rather than clamp, because a clamp
+hands the program a cursor it did not ask for and then goes on serving reads from it.
+
+**A refusal is not an error return.** Real GEMDOS answers a bad seek with a negative error code, and
+a C library's `lseek` has a fallback path for exactly that (Bubble Ghost's `c_lseek` at `0x159dc`
+does). The model cannot tell "the call failed" from "the model cannot serve this", so it refuses the
+RUN, loudly and by name, rather than inventing an error code.
+
+### BIOS `Bconout` (0x03)
+
+**Device 4 only.** A byte written there is a command to the IKBD's 6301 — off-image by definition, so
+it becomes a ledger entry. Every other device (the console, the printer, the serial line, MIDI) would
+need a model of what receiving the byte does and is **refused**.
+
+One residual, named rather than left to be found:
+
+* **XBIOS `Ikbdws` (0x19) is still a no-op**, and it sends IKBD bytes too. It was left alone because
+  changing an existing modeled call alters every project's runs for a fact no case needs today; a
+  game that uses it instead of `Bconout` gets no ledger entry and no refusal.
+
+### GEMDOS `Cconout` (0x02), `Cconws` (0x09) and `Crawio`'s write direction (0x06)
+
+The three doors onto the console, all three an `OS_EVENT_CONOUT` entry per byte.
+
+* **`Cconws` returns the CHARACTER COUNT**, which is what real GEMDOS answers and what a C library's
+  `puts` adds up; it used to return 0.
+* **It measures the string before it logs a byte of it.** A string with no terminator inside the image
+  is refused only once the walk has run off the end, and a walk that logged as it went would have
+  pushed every byte it passed onto the ledger of a call the run then threw away. A refused call
+  leaves no trace on either side's ledger — the same rule `gem_dispatch` follows when it drops an
+  event a faulted call had already reported.
+* **`Crawio`'s WRITE direction is logged too.** It is console output, so it belongs in this stream;
+  leaving it out made a reconstruction that prints through it indistinguishable from one that prints
+  nothing. It must not consume a staged key — the two directions share one trap number — and it is
+  not tallied as a poked-input call, since a program that merely prints reads nothing. Bubble Ghost's
+  own `Crawio` sites are all reads, and its C library prints through `Cconout`.
+
+### GEMDOS `Malloc` on the CANDIDATE side
+
+`os_malloc(size)` (`src/os_heap.c`) mirrors the bump allocator `shim.c` services the trap with: round
+the request up to a word, hand back the pointer from BEFORE the bump. It exists so a reconstruction's
+`Malloc` wrapper calls the model instead of carrying a private copy of the shim's arithmetic — the
+copy is what drifts the day either changes.
+
+Three facts about the arena that used to be missing, all of them true on BOTH sides:
+
+* **`Malloc(-1)` answers a SIZE.** GEMDOS's "how big is the largest free block?" query reports
+  `OS_HEAP_LIMIT` minus the bump pointer, and moves nothing. It used to fall out of the rounding as
+  the arena BASE — a plausible-looking address, and the wrong answer to the question: a program that
+  then asked for that many bytes was asking for an address's worth of memory.
+* **The arena has a CEILING, and `os_malloc` refuses past it.** `OS_HEAP_LIMIT` is installed at
+  import the way `OS_HEAP_BASE` is (`os_set_heap_limit`, from `project.toml`'s `heap_limit` clamped
+  to `OS_FS_TABLE`). A block handed out over the staged-file table is a plain image write on BOTH
+  sides, so the two corrupted runs compare equal; the oracle's half of the same guard is
+  `emu._vet_heap_within_bounds`, which reads the pointer after the run, and this is the candidate's,
+  which fires at the call.
+* **Installing a base REWINDS the pointer to it.** Until it did, a candidate whose project moved its
+  heap allocated from `OS_HEAP_BASE_DEFAULT` — the wrong arena entirely — for every `os_malloc`
+  before the first `g_os_heap_reset()`.
+
+`g_os_heap_reset()` rewinds it, and `harness.arm_candidate` calls it before **every** candidate run,
+the poison re-run included: without that the second case in a process allocates where the first left
+off while the oracle starts from the base.
+
+**How far each side's arena grew is COMPARED per run** (`harness._vet_heap_pointers_agree`,
+`g_os_heap_pointer()` against the oracle's `heap`). The bump pointer is off-image on both sides, so a
+reconstruction that rounds a request differently, or allocates once where the original allocated
+twice, lands its NEXT block where the oracle's never was — and until that block's contents are
+written the byte diff sees nothing. **It is asked only of a candidate that ALLOCATED**: one which
+never reaches `os_malloc` leaves the arena at the base and has nothing to compare, which is either a
+run with no allocation in it or a project modelling `Malloc` privately —
+`projects/bubbleghost/recreate/src/clib.c` is in the second case and carries a standing TODO to adopt
+`os_malloc`. Closing that half needs the project to move, not a check here that would redden its
+whole suite.
+
+### What pins it
+
+`test/test_os_model.py` again: the trap cases run each GEMDOS/BIOS selector through `shim.c`'s own
+stack-frame decode and assert D0, the unmodeled tally and the ledger; the ledger case drives all four
+kinds through the candidate in one order; `Crawio` is run both ways (the write logged and the staged
+key left alone; the read taken and nothing logged); the console-queue case walks three staged keys
+and then meets the refusal; and the Malloc cases compare the oracle's second block against the
+candidate's and drive the query, the ceiling and the base install. `test/test_os_refusal.py` pins
+every refusal site (`Crawcin`/`Cnecin` idle, the five `Fseek` shapes, the VDI/raster ones and the
+three patterned fill interiors) to the candidate's tally.
+
+Measured 2026-09-06, six mutants of the code this phase owns: making `Cconws` log as it walks rather
+than measure first reddens 1 case, dropping `Crawio`'s write-direction ledger entry reddens 2,
+returning the arena base from `Malloc(-1)` reddens 2, dropping `os_malloc`'s ceiling refusal reddens
+1, dropping the queue shift so every read returns the head reddens 1, and dropping the `trap #2`
+ledger entry in `shim.c` reddens 6.
+
+`Cconws` logging as it walks was the one that SURVIVED the first sweep, and the hole it named was
+real: every case staged a terminated string, so nothing ever reached the refusal the ordering is
+about. `trap_cconws_unterminated` — a string laid at the end of the image with no NUL — is the case
+that closed it, and it asserts the empty ledger rather than only the refusal.
+
+---
+
 ## Still unmodeled (an honest raise is the right answer)
 
 **A SEQUENCE of bytes one address yields, one per read.** `$fffc02` is a Phase 7 slot now, which
@@ -2006,5 +2475,6 @@ rather than model them; `projects/zynaps/recreate/STATUS.md` records the twenty 
 
 `Pterm` (0x4c) and `Dgetdrv` (0x19) both appear in Joust and are **not** modeled. `Pterm` ends the
 process and never returns, so there is no post-state to diff; `Dgetdrv`'s answer is a property of
-the machine the harness does not have. `Pexec`, `Fseek`, GEM opcodes outside the three in
-`os_gem_trap`, and every BIOS selector but the two above are in the same position. They raise.
+the machine the harness does not have. `Pexec`, `Fdelete`, `Cauxin`/`Cauxout`/`Cprnout`, GEM opcodes
+outside the set in Phase 12, and every BIOS selector but `Bconstat`/`Bconin`/`Bconout(dev 4)` are in
+the same position. They raise.

@@ -26,8 +26,11 @@ SHIM = KIT / "oracle" / "shim.c"
 
 MUSASHI = KIT / "oracle" / "musashi"
 GENDIR = KIT / "oracle" / "build"
+# ...plus the two SHARED sources kit.mk's $(ORACLE) rule links into the oracle: the GEM/VDI model
+# and the raster core it draws through. shim.c calls gem_dispatch(), so a probe built without them
+# does not link.
 ORACLE_SRC = (MUSASHI / "m68kcpu.c", GENDIR / "m68kops.c", MUSASHI / "softfloat" / "softfloat.c",
-              SHIM)
+              SHIM, KIT / "src" / "gem.c", KIT / "src" / "raster.c")
 
 
 def compile_probe(probe_src, tmpdir, extra_src=()):

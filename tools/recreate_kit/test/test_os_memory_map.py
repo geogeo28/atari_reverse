@@ -53,6 +53,11 @@ PINNED = ("OS_IMAGE_SIZE",
           # ...and the hardware WRITE ledger's (Phase 10), which truncates on both sides identically
           # for the same reason: two write streams that diverge past the cap would compare equal.
           "OS_HW_WRITE_LOG_MAX",
+          # ...and the off-image OS event ledger's (Phase 13), for the same reason again, together
+          # with its event kinds: the C tags each entry and the Python compares them, so a value
+          # changed on one side alone would make every IKBD command compare as a console byte.
+          "OS_EVENT_LOG_MAX", "OS_EVENT_NONE", "OS_EVENT_CONOUT", "OS_EVENT_IKBD",
+          "OS_EVENT_GEM_MOUSE", "OS_EVENT_VDI_CURSOR",
           # ...and that ledger's WIDTH tags. The C records them and the Python compares them, so a
           # tag changed on one side alone (a byte count swapped for an opcode size code, say) would
           # make every word store compare as a byte, silently.
@@ -67,6 +72,20 @@ PINNED = ("OS_IMAGE_SIZE",
           # the harness-poked model state (TRAP_MODEL.md): both cores must read the same bytes
           "OS_CON_PENDING", "OS_CON_CHAR", "OS_RANDOM_VALUE", "OS_PSG_REGS", "OS_PSG_NREGS",
           "OS_PSG_WRITE", "OS_SUPER_TOKEN",
+          # ...the rest of that block: the VDI's two input devices and its workstation state, which
+          # harness.py's builders poke field by field exactly as stage_files writes an FS entry — so
+          # a field REORDERED in os.h would drift silently unless both sides are pinned.
+          "OS_MOUSE", "OS_MOUSE_OFF_X", "OS_MOUSE_OFF_Y", "OS_MOUSE_OFF_BUTTONS", "OS_MOUSE_BYTES",
+          "OS_KEY_SHIFT", "OS_VDI_STATE", "OS_VDI_STATE_BYTES",
+          "OS_VDI_OFF_HANDLE", "OS_VDI_OFF_FILL_COLOR", "OS_VDI_OFF_TEXT_COLOR",
+          "OS_VDI_OFF_WRITE_MODE", "OS_VDI_OFF_TEXT_HEIGHT", "OS_VDI_OFF_FILL_INTERIOR",
+          "OS_VDI_OFF_FILL_STYLE", "OS_VDI_OFF_CLIP_ON", "OS_VDI_OFF_CLIP_X1", "OS_VDI_OFF_CLIP_Y1",
+          "OS_VDI_OFF_CLIP_X2", "OS_VDI_OFF_CLIP_Y2", "OS_VDI_OFF_SCREEN",
+          # ...and the attribute values v_opnvwk installs, which harness.vdi_state() starts from: a
+          # poked workstation must be the one an OPENED workstation would be, on both sides.
+          "OS_VDI_HANDLE", "OS_VDI_DEFAULT_FILL_COLOR", "OS_VDI_DEFAULT_TEXT_COLOR",
+          "OS_VDI_DEFAULT_WRITE_MODE", "OS_VDI_DEFAULT_TEXT_HEIGHT",
+          "OS_VDI_DEFAULT_FILL_INTERIOR", "OS_VDI_DEFAULT_FILL_STYLE",
           # ...and the scheduled-write model's two trigger kinds (Phase 8). The sizes need no entry —
           # emu.py reads OS_SCHED_MAX/OS_SCHED_FIELDS from the .so — but these two are an ENCODING
           # the cases are written against, and a value changed on one side alone would turn every
@@ -162,6 +181,10 @@ def test_every_low_model_address_is_guarded_or_declared_unvetted():
         # wait which was never going to end can reach it; the oracle's own instruction cap bites
         # first for anything a case realistically declares.
         "OS_SCHED_POLL_MAX",
+        # 4096 entries — the off-image OS event ledger's cap on both sides. Sized like the PSG's
+        # rather than like Dosound's because one Cconws of a screen of text is already hundreds of
+        # entries. Not a place in the image either.
+        "OS_EVENT_LOG_MAX",
     }
     UNVETTED = {
         # 0x500, the KBDVBASE struct XBIOS Kbdvbase returns. Its only reader is that trap, which IS

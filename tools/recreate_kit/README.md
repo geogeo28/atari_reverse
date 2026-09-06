@@ -22,8 +22,11 @@ tools/recreate_kit/
 │                     side, so a raw `image + <computed address>` that leaves the buffer FAULTS
 ├── kit.mk            shared make rules: candidate .so, Musashi oracle, `test`/`venv`/`oracle`/`clean`
 ├── include/          machine.h (big-endian image accessors)  os.h (deterministic TOS trap model)
+│                     raster.h (the ST device-format raster the VDI opcodes draw through)
 ├── src/              C linked into EVERY candidate .so: dosound_log.c (the Dosound ledger below),
-│                     os_heap.c (the Malloc arena's base, installed per project)
+│                     os_heap.c (the Malloc arena, installed per project), os_log.c (the off-image
+│                     OS event ledger), and gem.c + raster.c — the GEM/VDI model, the two files the
+│                     ORACLE links too, so both sides draw the same pixels by construction
 ├── oracle/           loader.py (load+relocate PRG)  emu.py (Musashi runner)  shim.c (callbacks)
 │                     isa_conformance.py  tos_probe.py   musashi/ + build/ (gitignored)
 ├── test/             the kit's own regression tests (`make test` here; no project needed)
@@ -46,7 +49,8 @@ tools/recreate_kit/
    # heap_limit = 0x90000               # ...and only if the free window ends below OS_FS_TABLE
    ```
 
-   `load_base` must clear the poked-input block (`0x620`) and `image_size` must equal `os.h`'s
+   `load_base` must clear the poked-input block (`OS_POKE_BLOCK_END`, `0x660`) and `image_size`
+   must equal `os.h`'s
    `OS_IMAGE_SIZE`, which `os_fread`/`os_fwrite` bound their copies against — the harness checks
    both at import and names `project.toml` when they disagree. `heap_base` and `heap_limit` are
    optional and place the modeled Malloc arena; leave them out unless the program's text+bss reaches
@@ -67,7 +71,7 @@ tools/recreate_kit/
 ### What the candidate `.so` must export
 
 `differential(entry, regs, glue, …)` only calls what the project's own `glue` callbacks name, so
-there is no required symbol — with four groups the kit supplies for you:
+there is no required symbol — with EIGHT groups the kit supplies for you, in the order below:
 
 | symbol | signature | purpose |
 | --- | --- | --- |
@@ -105,7 +109,7 @@ oracle issues no `Dosound` at all, and `differential()` fails with that diagnost
 appears. A reconstruction built for the real Atari supplies its own `g_dosound` that issues the
 real trap and does not compile this file — see `projects/buggyboy/recreate/render/atari/game_main.c`.
 
-The second group is the **refused-`os_*`-call tally**, from `src/os_refusal.c` (likewise linked into
+The SECOND group is the **refused-`os_*`-call tally**, from `src/os_refusal.c` (likewise linked into
 every candidate by `kit.mk`). Unlike the ledger above it is **required**, not optional:
 
 | symbol | signature | purpose |
@@ -126,18 +130,60 @@ Absence is a hard error there rather than a graceful degrade, because the tally 
 witness the way the Dosound ledger does: the oracle's own count is zero by construction, so a
 missing symbol would reopen the false-green class on a suite that stays entirely green.
 
-Between them sits a one-symbol group, the **Malloc arena's base**, from `src/os_heap.c`:
+The THIRD is a two-symbol group, the **Malloc arena's placement**, from `src/os_heap.c`:
 
 | symbol | signature | purpose |
 | --- | --- | --- |
 | `os_set_heap_base` | `void(uint32_t)` | install `project.toml`'s `heap_base`, so `OS_HEAP_BASE` reads the same address the oracle allocates from |
+| `os_set_heap_limit` | `void(uint32_t)` | ...and its `heap_limit`, the first address the arena may not reach |
 
-`harness` calls it once at import, and requires it **only when the project set the key**: a candidate
-predating the file already starts at `OS_HEAP_BASE_DEFAULT`, which is right for a project that
-configured nothing and wrong — silently, by a whole arena — for one that moved its heap. See "The
-Malloc arena is the one region a project places".
+`harness` calls each once at import, and requires it **only when the project set the key**: a
+candidate predating the file already starts at `OS_HEAP_BASE_DEFAULT` and stops at
+`OS_HEAP_LIMIT_DEFAULT`, which is right for a project that configured nothing and wrong — silently,
+by a whole arena — for one that moved or narrowed its heap. See "The Malloc arena is the one region
+a project places".
 
-The third group is the **direct-PSG surfaces**, from `src/psg.c` + `include/psg.h` (likewise linked
+Beside it sit two more **required** groups, from `src/os_log.c` and `src/os_heap.c`. The FOURTH is
+the **off-image OS event ledger** — Dosound's ledger generalised to every other call that hands a
+byte to a device instead of storing one:
+
+| symbol | signature | purpose |
+| --- | --- | --- |
+| `g_os_event_reset` | `void(void)` | clear the ledger before each candidate run |
+| `g_os_event_count` / `g_os_event_kinds` / `g_os_event_values` | | the ordered `(kind, value)` stream |
+| `g_os_event` | `void(uint16_t, uint32_t)` | the recording side, which `os_cconout()` / `os_ikbd_out()` call |
+
+GEMDOS `Cconout`/`Cconws`/`Crawio`'s write direction, BIOS `Bconout` to the IKBD, AES `graf_mouse`
+and VDI `v_show_c`/`v_hide_c` touch no memory, so a reconstruction that prints nothing or leaves the GEM pointer showing is
+byte-identical to one that gets them right; this is the only thing that can tell them apart. Required
+rather than probed, because every candidate links `src/os_log.c` and an absent ledger would be
+compared against an oracle stream that does exist. An on-target build supplies its own `g_os_event`
+and does not compile the file, exactly as it does for `g_dosound`.
+
+The FIFTH is the **candidate's Malloc arena** itself:
+
+| symbol | signature | purpose |
+| --- | --- | --- |
+| `os_malloc` | `uint32_t(uint32_t)` | what a reconstruction's `Malloc` wrapper calls; mirrors the shim's bump arena |
+| `g_os_heap_reset` | `void(void)` | rewind it to the base before each candidate run |
+| `g_os_heap_pointer` | `uint32_t(void)` | how far this run grew it, which `differential()` compares with the oracle's |
+
+...so a reconstruction does not carry a private copy of the shim's arithmetic, which is what drifts
+the day either changes. `Malloc(-1)` answers the free window's SIZE on both sides, and a request the
+window cannot hold is refused rather than served over the staged-file table.
+
+### The GEM/VDI model is the one thing compiled into BOTH sides
+
+`src/gem.c` and `src/raster.c` are linked into every candidate **and** into `liboracle.so`
+(`kit.mk`'s `$(ORACLE)` rule names them). A GEM application's `trap #2` is its output, not a call
+whose effect can be a no-op, so the model draws real ST pixels — and having one implementation is
+what makes "the oracle's trap and the reconstruction's `os_vdi()` draw the same thing" true by
+construction. Both files are **stateless** (the workstation attributes live in the image) and
+**refuse nothing themselves**, which is what lets one copy serve both objects safely and lets each
+side keep its own refusal tally and its own ledger. The whole contract is
+[`TRAP_MODEL.md`](TRAP_MODEL.md), Phases 11-13.
+
+The SIXTH group is the **direct-PSG surfaces**, from `src/psg.c` + `include/psg.h` (likewise linked
 into every candidate by `kit.mk`). Optional in the same way as the Dosound ledger, and for the same
 reason — a game that never touches `$ff8800`/`$ff8802` has nothing to record, and the ORACLE's own
 traffic is the witness that says when the group was needed:
@@ -164,7 +210,7 @@ A read of a register nothing declared or wrote — or of one the chip does not h
 `os_refused()` above. The whole contract, including the YM2149 edge semantics this models and those
 it refuses, is [`TRAP_MODEL.md`](TRAP_MODEL.md), "Phase 6".
 
-The fourth group is the **seeded hardware reads**, from `src/hw.c` + `include/hw.h` (likewise linked
+The SEVENTH group is the **seeded hardware reads**, from `src/hw.c` + `include/hw.h` (likewise linked
 into every candidate by `kit.mk`, and optional in the same way, with the oracle's own reads as the
 witness):
 
@@ -214,7 +260,7 @@ candidate starts accessing one of them, and each distinct waiver is recorded in
 `harness.HW_WAIVERS`. The whole contract, including the read-modify-write residual and why the
 default is ON, is [`TRAP_MODEL.md`](TRAP_MODEL.md), "Phase 10".
 
-The fifth group is the **scheduled writes**, from `src/sched.c` + `include/sched.h` (likewise linked
+The EIGHTH group is the **scheduled writes**, from `src/sched.c` + `include/sched.h` (likewise linked
 into every candidate by `kit.mk`, and optional in the same way, with the case's own `schedule=` as
 the witness — a case that declares one against a candidate lacking the group is refused by name):
 
@@ -388,11 +434,20 @@ plain writes into that region. `projects/joust/recreate/test/test_heap_guard.py`
 guard, since Joust is the only project it is armed for.
 
 A **second waiver**, `tos_poked_input_unused`, exists for the poked-input block and is built the
-same way. `load_base >= OS_POKE_BLOCK_END` (`0x620`) is impossible for a program that runs at a
+same way. `load_base >= OS_POKE_BLOCK_END` (`0x660`) is impossible for a program that runs at a
 fixed low address — `projects/wonderboy/` loads at `0x3f8`, because its `.PRG` relocates itself to
 absolute `0x400` and there is nothing below that but the 68000 vector page. A game that reads
 **none** of the poked state (no `Bconstat`/`Bconin`/`Crawio`, no `Random`, no `Giaccess`, no
-`Kbdvbase`) can declare the flag and let its program cover the block.
+`Kbdvbase`, no `trap #2`) can declare the flag and let its program cover the block.
+
+**WIDENING THE BLOCK IS A CHANGE TO EVERY DECLARING PROJECT'S WAIVER.** `OS_POKE_BLOCK_END` is the
+top of the block, and it has moved twice (the VDI state block took it to `0x644`, the console key
+queue to `0x660`) — each time swallowing more of a low-loading program. Before moving it again:
+re-read every `project.toml` whose `poked_input_overlaps_program` is true (`tos_poked_input_unused`
+names them), check the new span against the game's own map, and update the waiver's prose — it
+states which of the game's bytes the block now covers, and a stale one describes a smaller region
+than the code enforces. Wonder Boy's waiver names `fn 0x638 game_unpause_on_key_release`, which the
+block reached only when it grew past `0x620`.
 
 Like the heap waiver it buys a layout and not a green run, and for the same reason: the claim is
 about the *game*, so it is re-tested rather than trusted. Two guards, covering the two directions

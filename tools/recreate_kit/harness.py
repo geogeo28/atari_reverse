@@ -141,10 +141,57 @@ def _missing_heap_base_abi(symbol):
         f"{emu.OS_HEAP_BASE_DEFAULT:#x} while the oracle allocates from the configured base.")
 
 
-# Tell the CANDIDATE where this project's Malloc arena starts — emu.py has already told the oracle.
-# Two objects in one process, so each is told separately, from the one value project.toml
-# configured; emu.install_heap_base is the one implementation and says when the ABI is required.
+def _missing_heap_limit_abi(symbol):
+    """The candidate side's twin of ``emu._missing_heap_limit_abi``."""
+    return _missing_candidate_abi(
+        symbol,
+        f"so tools/recreate_kit/src/os_heap.c is not linked into {_CFG.name}'s candidate and its "
+        f"`heap_limit = {emu.HEAP_LIMIT:#x}` ({_CFG.dir / project.CONFIG_NAME}) cannot be "
+        f"installed — os_malloc would serve blocks past the window the project declared, and "
+        f"Malloc(-1) would report free memory it does not have.")
+
+
+# Tell the CANDIDATE where this project's Malloc arena starts and ends — emu.py has already told the
+# oracle. Two objects in one process, so each is told separately, from the one value project.toml
+# configured; emu.install_heap_base/_limit are the one implementation and say when the ABI is
+# required.
 emu.install_heap_base(_lib, "os_set_heap_base", emu.OS_HEAP_BASE, _missing_heap_base_abi)
+emu.install_heap_limit(_lib, "os_set_heap_limit", emu.HEAP_LIMIT, _missing_heap_limit_abi)
+
+# The off-image OS EVENT ledger (src/os_log.c) and the candidate's Malloc arena (src/os_heap.c) are
+# REQUIRED ABI, like the refusal tally above and unlike the Dosound ledger. The Dosound ledger can be
+# served without, because the ORACLE's own Dosound stream says when it was needed. These two cannot:
+# an event ledger the candidate does not export would be compared against an oracle stream of its
+# own, and an unreset Malloc pointer would hand the second case in a process a different block from
+# the first while every counter reported success. kit.mk sweeps $(KIT)/src/*.c into every candidate,
+# so a missing symbol means a stale .so and nothing else.
+for _sym, _why in (
+        ("g_os_event_reset", "so the off-image OS event ledger cannot be cleared between runs and "
+                             "one case's console output would be compared into the next."),
+        ("g_os_event_count", "so the candidate's off-image OS event stream cannot be read back."),
+        ("g_os_event_kinds", "so the candidate's off-image OS event stream cannot be read back."),
+        ("g_os_event_values", "so the candidate's off-image OS event stream cannot be read back."),
+        ("g_os_event", "so tools/recreate_kit/src/os_log.c is not linked and a reconstruction "
+                       "calling os_cconout()/os_ikbd_out() would not link either."),
+        ("os_malloc", "so a reconstruction cannot allocate from the modeled arena and would have to "
+                      "carry a private copy of the shim's bump arithmetic."),
+        ("g_os_heap_reset", "so the modeled Malloc arena is never rewound and the second case in a "
+                            "process allocates where the first left off, while the oracle starts "
+                            "from the base."),
+        ("g_os_heap_pointer", "so how far a candidate run grew the modeled arena cannot be read "
+                              "back and compared with the oracle's (see _vet_heap_pointers_agree).")):
+    if not hasattr(_lib, _sym):
+        raise _missing_candidate_abi(_sym, _why)
+_u16p = ctypes.POINTER(ctypes.c_uint16)
+_u32p_ = ctypes.POINTER(ctypes.c_uint32)
+_lib.g_os_event_count.restype = ctypes.c_uint32
+_lib.g_os_event_kinds.restype = _u16p
+# 32 bits, matching os.h's os_event_t — see emu.py's twin for why the value is wider than any kind
+# in the stream needs today.
+_lib.g_os_event_values.restype = _u32p_
+_lib.g_os_heap_pointer.restype = ctypes.c_uint32
+_lib.os_malloc.restype = ctypes.c_uint32
+_lib.os_malloc.argtypes = [ctypes.c_uint32]
 
 
 def _load_name_map():
@@ -203,6 +250,7 @@ OS_FS_OFF_OPEN = 28          # u32: nonzero while a handle is open on this slot
 OS_FS_OFF_CAPACITY = 32      # u32: staging bytes reserved; os_fwrite refuses to exceed it
 OS_FS_FIRST_HANDLE = 6
 OS_DOSOUND_LOG_MAX = 256     # ledger cap, on BOTH sides (shim.c's mirror and src/dosound_log.c)
+OS_EVENT_LOG_MAX = 4096      # ...and the off-image OS event ledger's (shim.c, src/os_log.c)
 OS_PSG_LOG_MAX = 4096        # ...and the direct-PSG ledger's, likewise on both (shim.c, src/psg.c)
 OS_HW_LOG_MAX = 4096         # ...and the seeded-hardware read ledger's (shim.c, src/hw.c)
 OS_HW_WRITE_LOG_MAX = 4096   # ...and the hardware WRITE ledger's, likewise on both
@@ -215,7 +263,8 @@ OS_HW_WRITE_WIDTH_32 = 4
 
 OS_SUPER_TOKEN = 0x00535550  # the cookie GEMDOS Super(0) returns; Super(cookie) restores
 
-# The harness-poked model state (os.h, 0x600..0x61f). Re-exported rather than defined here: both
+# The harness-poked model state (os.h, OS_CON_PENDING..OS_POKE_BLOCK_END). Re-exported rather
+# than defined here: both
 # this module and oracle/emu.py guard the block, and emu cannot import harness (harness imports it),
 # so recreate_kit/os_map.py is its one home — which also keeps it importable with nothing built, for
 # the kit's own suite. `harness.OS_CON_PENDING` and friends keep working through these names.
@@ -229,6 +278,52 @@ OS_POKE_BLOCK_END = os_map.OS_POKE_BLOCK_END
 # The direct-PSG ledger's event kinds, likewise re-exported from their one home (see os_map).
 OS_PSG_EVENT_WRITE = os_map.OS_PSG_EVENT_WRITE
 OS_PSG_EVENT_READ = os_map.OS_PSG_EVENT_READ
+# ...and the OFF-IMAGE OS event ledger's, from the same home and for one more reason: the kit's own
+# test/test_os_model.py runs in a bare checkout and cannot import this module, so it spelt them as
+# literals until they moved.
+OS_EVENT_NONE = os_map.OS_EVENT_NONE
+OS_EVENT_CONOUT = os_map.OS_EVENT_CONOUT
+OS_EVENT_IKBD = os_map.OS_EVENT_IKBD
+OS_EVENT_GEM_MOUSE = os_map.OS_EVENT_GEM_MOUSE
+OS_EVENT_VDI_CURSOR = os_map.OS_EVENT_VDI_CURSOR
+# ...and the VDI's share of the same block: its two input devices and its workstation state.
+OS_MOUSE = os_map.OS_MOUSE
+OS_MOUSE_OFF_X = os_map.OS_MOUSE_OFF_X
+OS_MOUSE_OFF_Y = os_map.OS_MOUSE_OFF_Y
+OS_MOUSE_OFF_BUTTONS = os_map.OS_MOUSE_OFF_BUTTONS
+OS_MOUSE_BYTES = os_map.OS_MOUSE_BYTES
+OS_KEY_SHIFT = os_map.OS_KEY_SHIFT
+OS_VDI_STATE = os_map.OS_VDI_STATE
+OS_VDI_STATE_BYTES = os_map.OS_VDI_STATE_BYTES
+# ...and the console key QUEUE at the top of the block, which console_keys() stages.
+OS_CON_QUEUE = os_map.OS_CON_QUEUE
+OS_CON_QUEUE_MAX = os_map.OS_CON_QUEUE_MAX
+OS_CON_QUEUE_BYTES = os_map.OS_CON_QUEUE_BYTES
+# The VDI state block's own field offsets. HERE rather than in os_map.py because only this file needs
+# them — os_map holds what harness.py and oracle/emu.py BOTH ask about, and emu asks nothing about
+# the workstation's attributes.
+OS_VDI_OFF_HANDLE = 0
+OS_VDI_OFF_FILL_COLOR = 2
+OS_VDI_OFF_TEXT_COLOR = 4
+OS_VDI_OFF_WRITE_MODE = 6
+OS_VDI_OFF_TEXT_HEIGHT = 8
+OS_VDI_OFF_FILL_INTERIOR = 10
+OS_VDI_OFF_FILL_STYLE = 12
+OS_VDI_OFF_CLIP_ON = 14
+OS_VDI_OFF_CLIP_X1 = 16
+OS_VDI_OFF_CLIP_Y1 = 18
+OS_VDI_OFF_CLIP_X2 = 20
+OS_VDI_OFF_CLIP_Y2 = 22
+OS_VDI_OFF_SCREEN = 24
+# ...and the attribute values v_opnvwk installs, which vdi_state() below starts from so a poked
+# workstation is the one an opened workstation would be.
+OS_VDI_HANDLE = 1
+OS_VDI_DEFAULT_FILL_COLOR = 1
+OS_VDI_DEFAULT_TEXT_COLOR = 1
+OS_VDI_DEFAULT_WRITE_MODE = 1
+OS_VDI_DEFAULT_TEXT_HEIGHT = 8
+OS_VDI_DEFAULT_FILL_INTERIOR = 0
+OS_VDI_DEFAULT_FILL_STYLE = 1
 
 
 # Did the modeled Malloc heap sit inside this project's own program AT IMPORT? A snapshot, and the
@@ -478,10 +573,104 @@ def console_key(char, scancode=0):
     the high word the way TOS returns it. Bconin consumes the key, so one call is one keypress.
     The pending flag and the character are built together because a test that set only one would
     leave the console half-armed — armed with a NUL, or holding a character nothing reports.
+
+    The one-element case of ``console_keys`` below, spelt separately because it is what almost every
+    case wants and reads as what it is.
+    """
+    return console_keys([(char, scancode)])
+
+
+def console_keys(keys):
+    """Pokes staging a WALK of console keystrokes, consumed oldest first.
+
+    ``keys`` is a sequence of characters, or of ``(char, scancode)`` pairs. Every console read the
+    model has — BIOS Bconin, GEMDOS Crawcin/Cnecin, Crawio's read direction — takes the head and
+    brings the next one up, so a routine that reads several keys in one run sees them in this order
+    and a poll between them still reports "a character is waiting" until the last is taken. With the
+    walk exhausted the model refuses a blocking read exactly as it does with nothing staged: the real
+    call would wait, and there is nothing here to wait for.
+
+    THE ALTERNATIVE, for a key that must arrive at a particular MOMENT rather than in a particular
+    order, is ``differential(..., schedule=…)`` — the kit's one way of saying "an external agent
+    changed this while the run was in flight" (TRAP_MODEL.md, Phase 8). This stages a queue the run
+    drains at its own pace; a schedule stages an arrival at a named wait site.
+
+    The head lives in OS_CON_CHAR and the rest in OS_CON_QUEUE, so at most ``OS_CON_QUEUE_MAX``
+    keys fit; a longer walk is refused rather than silently truncated to a run that stops reading
+    part-way through.
     """
     _vet_poked_input_available("a console keystroke")
-    return {OS_CON_PENDING: (1).to_bytes(4, "big"),      # nonzero = a character is waiting
-            OS_CON_CHAR: ((scancode << 16) | ord(char)).to_bytes(4, "big")}
+    staged = [(key, 0) if isinstance(key, str) else tuple(key) for key in keys]
+    assert 1 <= len(staged) <= OS_CON_QUEUE_MAX, (
+        f"console_keys() stages 1..{OS_CON_QUEUE_MAX} keystrokes, not {len(staged)} — the model's "
+        f"queue is OS_CON_CHAR plus OS_CON_QUEUE's {OS_CON_QUEUE_MAX - 1} followers (os.h). Split "
+        f"the case, or run the routine once per batch.")
+    words = [((scancode << 16) | ord(char)) for char, scancode in staged]
+    queue = bytearray(OS_CON_QUEUE_BYTES)
+    for index, word in enumerate(words[1:]):
+        queue[index * 4:index * 4 + 4] = word.to_bytes(4, "big")
+    return {OS_CON_PENDING: len(words).to_bytes(4, "big"),   # how many are still to be read
+            OS_CON_CHAR: words[0].to_bytes(4, "big"),
+            OS_CON_QUEUE: bytes(queue)}
+
+
+def mouse_state(x, y, buttons=0):
+    """Pokes staging the mouse position and button mask VDI ``vq_mouse`` reports.
+
+    NOT consumed, unlike a console keystroke: a real driver's position persists until the hardware
+    moves it, so a frame loop that polls every iteration sees the same reading each time. A case that
+    wants the pointer to MOVE mid-run schedules the store (``differential(..., schedule=…)``), which
+    is the kit's one way of saying "an external agent changed this while the run was in flight".
+    """
+    _vet_poked_input_available("the VDI mouse state")
+    block = bytearray(OS_MOUSE_BYTES)
+    for offset, value in ((OS_MOUSE_OFF_X, x), (OS_MOUSE_OFF_Y, y),
+                          (OS_MOUSE_OFF_BUTTONS, buttons)):
+        block[offset:offset + 2] = (value & 0xFFFF).to_bytes(2, "big")
+    return {OS_MOUSE: bytes(block)}
+
+
+def key_shift(state):
+    """Pokes staging the shift/control/alt mask VDI ``vq_key_s`` reports. Not consumed either."""
+    _vet_poked_input_available("the VDI shift-key state")
+    return {OS_KEY_SHIFT: (state & 0xFFFF).to_bytes(2, "big")}
+
+
+def vdi_state(screen=None, fill_color=None, text_color=None, write_mode=None, text_height=None,
+              fill_interior=None, fill_style=None, clip=None, handle=OS_VDI_HANDLE):
+    """Pokes staging the VDI workstation state a run enters with (os.h's VDI state block).
+
+    THE STARTING POINT IS AN OPEN WORKSTATION — the attributes ``v_opnvwk`` installs — so a case
+    entering a program below its own ``v_opnvwk`` gets the state that call would have left, and names
+    only what it means to change. A case that runs ``v_opnvwk`` itself needs none of this.
+
+    ``screen`` is the base address MFDB address 0 means; None leaves it 0, which the model reads as
+    OS_SCREEN_BASE. ``clip`` is None (clipping off) or ``(x1, y1, x2, y2)``.
+    """
+    _vet_poked_input_available("the VDI workstation state")
+    fields = {OS_VDI_OFF_HANDLE: handle,
+              OS_VDI_OFF_FILL_COLOR: _default(fill_color, OS_VDI_DEFAULT_FILL_COLOR),
+              OS_VDI_OFF_TEXT_COLOR: _default(text_color, OS_VDI_DEFAULT_TEXT_COLOR),
+              OS_VDI_OFF_WRITE_MODE: _default(write_mode, OS_VDI_DEFAULT_WRITE_MODE),
+              OS_VDI_OFF_TEXT_HEIGHT: _default(text_height, OS_VDI_DEFAULT_TEXT_HEIGHT),
+              OS_VDI_OFF_FILL_INTERIOR: _default(fill_interior, OS_VDI_DEFAULT_FILL_INTERIOR),
+              OS_VDI_OFF_FILL_STYLE: _default(fill_style, OS_VDI_DEFAULT_FILL_STYLE),
+              OS_VDI_OFF_CLIP_ON: 0 if clip is None else 1}
+    if clip is not None:
+        assert len(clip) == 4, f"clip must be (x1, y1, x2, y2), not {clip!r}"
+        for offset, value in zip((OS_VDI_OFF_CLIP_X1, OS_VDI_OFF_CLIP_Y1,
+                                  OS_VDI_OFF_CLIP_X2, OS_VDI_OFF_CLIP_Y2), clip):
+            fields[offset] = value
+    block = bytearray(OS_VDI_STATE_BYTES)
+    for offset, value in fields.items():
+        block[offset:offset + 2] = (value & 0xFFFF).to_bytes(2, "big")
+    block[OS_VDI_OFF_SCREEN:OS_VDI_OFF_SCREEN + 4] = (screen or 0).to_bytes(4, "big")
+    return {OS_VDI_STATE: bytes(block)}
+
+
+def _default(value, fallback):
+    """`value if value is not None else fallback` — spelt once, since 0 is a legal attribute."""
+    return fallback if value is None else value
 
 
 def psg_regs(values):
@@ -881,6 +1070,76 @@ def _vet_write_ledger_below_cap(entry, o_regs):
         f"oracle/emu.py is pinned to it by hand)")
 
 
+# The off-image OS event ledger's kinds, spelt for a human reading a failure.
+_OS_EVENT_NAMES = {OS_EVENT_CONOUT: "Cconout", OS_EVENT_IKBD: "Bconout(IKBD)",
+                   OS_EVENT_GEM_MOUSE: "graf_mouse", OS_EVENT_VDI_CURSOR: "cursor"}
+
+
+def _os_event_text(events):
+    """One readable line for an ordered OS event stream. Console bytes are shown as characters where
+    they are printable, because a diverging string is what a reader is almost always looking at."""
+    def one(kind, value):
+        name = _OS_EVENT_NAMES.get(kind, f"kind {kind}")
+        if kind == OS_EVENT_CONOUT and 0x20 <= value < 0x7F:
+            return f"{name}({chr(value)!r})"
+        return f"{name}({value:#x})"
+    return "[" + ", ".join(one(kind, value) for kind, value in events) + "]"
+
+
+def _vet_os_event_state(entry, o_regs):
+    """Compare the two sides' ordered off-image OS event streams — console bytes, IKBD command bytes
+    and the cursor-visibility calls (TRAP_MODEL.md, Phase 13).
+
+    None of those touch the image, so a reconstruction that prints nothing, sends no IKBD command or
+    leaves the pointer showing is byte-identical to one that gets them right; this is the only thing
+    that can tell them apart. Unconditional, unlike the Dosound ledger's check: every candidate links
+    src/os_log.c (the ABI is required at import), so there is no "candidate cannot answer" case to
+    branch on.
+    """
+    oracle = [tuple(event) for event in o_regs.get("events", [])]
+    n = _lib.g_os_event_count()
+    kinds, values = _lib.g_os_event_kinds(), _lib.g_os_event_values()
+    cand = [(kinds[i], values[i]) for i in range(n)]
+    _vet_ledger_below_cap("OS event", len(oracle), len(cand), OS_EVENT_LOG_MAX, "OS_EVENT_LOG_MAX")
+    if oracle == cand:
+        return
+    raise AssertionError(
+        f"function @ {entry:#x}: the off-image OS event streams differ\n"
+        f"  oracle: {_os_event_text(oracle)}\n"
+        f"  cand:   {_os_event_text(cand)}\n"
+        f"None of these calls touches the image, so the byte diff cannot see them: a console byte "
+        f"never printed, an IKBD command never sent, or a mouse-cursor call in the wrong place is "
+        f"invisible except here.")
+
+
+def _vet_heap_pointers_agree(entry, o_regs):
+    """Both sides' Malloc arenas must have grown by the same amount over one run.
+
+    The block a bump allocator hands out is only right if the pointer behind it is, and the pointer
+    is off-image on both sides: a reconstruction that rounds a request differently, allocates once
+    where the original allocated twice, or asks for a size one word out lands its NEXT block
+    somewhere the oracle's never was — and until that block's contents are written the byte diff
+    sees nothing at all.
+
+    ASKED ONLY OF A CANDIDATE THAT ALLOCATED. A reconstruction which does not reach `os_malloc`
+    leaves the kit's arena at the base, and there is nothing to compare: it is either a run with no
+    allocation in it, or a project modelling Malloc privately, which is the case
+    projects/bubbleghost's `clib.c` is in and has a standing TODO to retire. Closing that half needs
+    the project to adopt `os_malloc`, not a check here that would redden its whole suite.
+    """
+    candidate = _lib.g_os_heap_pointer()
+    oracle = o_regs.get("heap")
+    if oracle is None or candidate == emu.OS_HEAP_BASE or candidate == oracle:
+        return
+    raise AssertionError(
+        f"function @ {entry:#x}: the two Malloc arenas grew differently — oracle "
+        f"{emu.OS_HEAP_BASE:#x}..{oracle:#x} ({oracle - emu.OS_HEAP_BASE:#x} bytes), candidate "
+        f"{emu.OS_HEAP_BASE:#x}..{candidate:#x} ({candidate - emu.OS_HEAP_BASE:#x} bytes). The bump "
+        f"pointer is off-image on both sides, so this is invisible to the byte diff until a later "
+        f"block lands at the wrong address. Check the reconstruction's request sizes and how many "
+        f"os_malloc() calls it makes against the original's GEMDOS Malloc trap sites.")
+
+
 def _psg_event_text(events):
     """One ledger's events as readable text: ``r7=0xc0`` for a write, ``r7->0xc0`` for a read."""
     return [f"r{reg}{'=' if kind == OS_PSG_EVENT_WRITE else '->'}{value:#04x}"
@@ -1056,6 +1315,8 @@ def arm_candidate(psg_seed=None, hw_seed=None, scheduled=(), sites=()):
     """
     if _has_dosound_ledger:
         _lib.g_dosound_log_reset()
+    _lib.g_os_event_reset()
+    _lib.g_os_heap_reset()
     _lib.g_os_refusal_reset()
     _seed_candidate_psg(psg_seed)
     _seed_candidate_hw(hw_seed)
@@ -1468,15 +1729,17 @@ def _attribution_check(img, entry, regs, glue, o_final, o_writes, guard_lo, excl
     buf = candidate_image(poisoned)
     # This is a SECOND candidate run, so it needs the same per-run bookkeeping the first one got:
     # poisoning inverts oracle-written bytes, which can steer the candidate down a path the plain
-    # run never took — including into a refused os_* call, or into PSG traffic. Reset before, vet
-    # after, or that refusal is tallied into a count nobody reads and the pass reports a clean
-    # attribution.
-    _lib.g_os_refusal_reset()
-    _seed_candidate_psg(psg_seed)
-    _seed_candidate_hw(hw_seed)
-    _seed_candidate_sched(po_regs["sched"], po_regs["sched_sites"])
+    # run never took — including into a refused os_* call, into PSG traffic, into a console byte, or
+    # into an allocation. `arm_candidate` and nothing hand-written, for the reason that function is
+    # public: the block it opened with had drifted from it, so the event ledger and the Malloc arena
+    # were never rewound for this pass and a run that printed on the poisoned image compared its
+    # output against the FIRST pass's ledger.
+    arm_candidate(psg_seed, hw_seed, po_regs["sched"], po_regs["sched_sites"])
     glue(_lib, buf)
     _vet_no_os_refusal(entry)
+    # ...and the same off-image OS event comparison, against the POISONED run's own oracle stream.
+    _vet_os_event_state(entry, po_regs)
+    _vet_heap_pointers_agree(entry, po_regs)
     # ...and the same off-image PSG comparison the plain pass got, against the POISONED run's own
     # oracle surfaces. Poisoning can steer either core into different register traffic, and that
     # traffic is invisible to the byte compare below — which is the whole reason this pass exists.
@@ -1529,6 +1792,12 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     It is REFUSED over a byte the run's own ``schedule`` also stores: the agent's store lands on both
     sides from the same list and overwrites the canary, so a candidate that never made the
     function's store would match anyway and the pass would report an attribution it did not make.
+    Both sides' ordered OFF-IMAGE OS EVENT stream is compared too, always: console bytes, IKBD
+    command bytes and the mouse/cursor-visibility calls touch no memory, so nothing else could tell a
+    reconstruction that makes them from one that does not (``_vet_os_event_state``).
+    How far each side's modeled Malloc ARENA grew is compared too, whenever the candidate allocated
+    at all (``_vet_heap_pointers_agree``): the bump pointer is off-image on both sides, so a
+    reconstruction that asks for the wrong size lands its next block where the oracle's never was.
     ``psg_seed`` is ``{register: value}``, the contents the case declares the YM2149 held on entry —
     an ordinary input, given identically to both sides, and what makes a read-modify-write of the
     chip runnable (``emu.run``; TRAP_MODEL.md, Phase 6). It is the DIRECT ``$ff8800``/``$ff8802``
@@ -1653,6 +1922,8 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
             f"candidate exports no Dosound ledger ({'/'.join(_DOSOUND_LEDGER_ABI)}) — the command "
             f"lists cannot be compared, so a divergence here would pass unnoticed")
 
+    _vet_os_event_state(entry, o_regs)
+    _vet_heap_pointers_agree(entry, o_regs)
     _vet_psg_state(entry, o_regs)
     _vet_hw_state(entry, o_regs, waived)
     _vet_hw_write_state(entry, o_regs, waived)

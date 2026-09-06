@@ -69,9 +69,17 @@ $(GENDIR)/m68kops.c: $(MUSASHI)/m68kmake.c $(MUSASHI)/m68k_in.c
 # $(KIT)/kit.mk is a prerequisite because OCFLAGS above configures the oracle's CPU: without it,
 # changing -DM68K_EMULATE_TRACE leaves make reporting "up to date" and the STALE .so re-running —
 # which would make the behavioural pin over that flag look non-vacuous when it was never rebuilt.
-$(ORACLE): $(KIT)/oracle/shim.c $(KIT)/include/os.h $(MUSASHI)/m68kcpu.c $(GENDIR)/m68kops.c $(MUSASHI)/softfloat/softfloat.c $(KIT)/kit.mk
+# The GEM/VDI model and the raster core underneath it are SHARED SOURCES, compiled into the oracle
+# here and swept into every candidate by SRC above — that is what makes "both sides draw the same
+# pixels" true by construction rather than by two transcriptions agreeing (include/raster.h). They
+# are the only kit `src/` files the oracle links: the rest (the refusal tally, the Dosound and event
+# ledgers, the heap) are the CANDIDATE's halves of models the shim mirrors itself.
+ORACLE_SHARED_SRC := $(KIT)/src/gem.c $(KIT)/src/raster.c
+
+$(ORACLE): $(KIT)/oracle/shim.c $(KIT)/include/os.h $(KIT)/include/raster.h $(ORACLE_SHARED_SRC) $(MUSASHI)/m68kcpu.c $(GENDIR)/m68kops.c $(MUSASHI)/softfloat/softfloat.c $(KIT)/kit.mk
 	$(CC) $(OCFLAGS) -shared \
 	  $(MUSASHI)/m68kcpu.c $(GENDIR)/m68kops.c $(MUSASHI)/softfloat/softfloat.c $(KIT)/oracle/shim.c \
+	  $(ORACLE_SHARED_SRC) \
 	  -o $(ORACLE)
 
 # ---- the ASM TWINS (optional; a project has them once it writes a src/asm/*.S) -----------------

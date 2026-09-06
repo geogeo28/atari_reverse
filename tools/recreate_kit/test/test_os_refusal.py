@@ -24,11 +24,29 @@ PROBE_SRC = Path(__file__).with_name("os_refusal_probe.c")
 # case name -> tally delta the case must produce. One entry per branch in the probe: a refusal moves
 # the tally by exactly one, and every served call must leave it alone.
 EXPECTED = {
-    # os_gem_trap: an unmodeled subsystem and an unmodeled opcode in either subsystem
+    # os_gem_trap: an unmodeled subsystem, an unmodeled opcode in either subsystem, and a
+    # parameter block that is not in the image at all
     "gem_bad_subsystem": 1, "gem_bad_aes_opcode": 1, "gem_bad_vdi_opcode": 1, "gem_served": 0,
+    "gem_pblock_outside_image": 1, "aes_appl_exit_served": 0, "aes_graf_mouse_served": 0,
+    # ...and the VDI's own refusals, which are the raster model's: a logic op outside the sixteen,
+    # an MFDB in the VDI's STANDARD format (a different plane layout, not a device-format one), a
+    # raster that would address outside the image, a null MFDB pointer, and a declared screen base
+    # the screen does not fit under. Every one of them is a call the model must not half-serve.
+    "vdi_served": 0, "vdi_cpyfm_served": 0, "vdi_clrwk_served": 0,
+    "vdi_cpyfm_bad_logic_op": 1, "vdi_cpyfm_standard_format": 1,
+    "vdi_cpyfm_raster_outside_image": 1, "vdi_cpyfm_null_mfdb": 1,
+    "vdi_clrwk_screen_outside_image": 1,
+    # ...and vr_recfl's FILL INTERIOR: hollow and solid are painted, and the three that need a
+    # pattern table the model does not have are refused rather than filled solid.
+    "vdi_recfl_hollow_served": 0, "vdi_recfl_solid_served": 0,
+    "vdi_recfl_pattern_interior": 1, "vdi_recfl_hatch_interior": 1, "vdi_recfl_user_interior": 1,
     # BIOS console. Bconin refuses a blocking read the model cannot wait out...
     "bconstat_bad_device": 1, "bconstat_served": 0,
     "bconin_no_key": 1, "bconin_bad_device": 1, "bconin_served": 0,
+    # GEMDOS's door onto the same key: Cconis only LOOKS (never refuses, however often it is
+    # polled), and Crawcin/Cnecin refuse an idle console because the real calls would block.
+    "cconis_no_key": 0, "cconis_key": 0,
+    "crawcin_no_key": 1, "crawcin_served": 0, "cnecin_no_key": 1, "cnecin_served": 0,
     # ...but Crawio is non-blocking, so an idle console is a RESULT and must never tally. This is
     # the property that made os_console_take_key a separate helper.
     "crawio_read_idle": 0, "crawio_read_key": 0, "crawio_write": 0,
@@ -42,6 +60,12 @@ EXPECTED = {
     "fread_served": 0,
     "fwrite_bad_handle": 1, "fwrite_past_capacity": 1, "fwrite_buffer_outside_image": 1,
     "fwrite_served": 0,
+    # Fseek: a handle the model has no file for, a mode outside the three, and the two ends of the
+    # position it may leave the cursor at. Seeking PAST the length is served — that is how a program
+    # extends a file it is writing — so only past the reserved CAPACITY refuses.
+    "fseek_bad_handle": 1, "fseek_closed_slot": 1, "fseek_bad_mode": 1,
+    "fseek_before_start": 1, "fseek_past_capacity": 1,
+    "fseek_from_start": 0, "fseek_from_current": 0, "fseek_from_end": 0,
     "fclose_bad_handle": 1, "fclose_served": 0,
 }
 
@@ -52,7 +76,12 @@ def deltas(tmp_path_factory):
     binary = tmp_path_factory.mktemp("os_refusal") / "probe"
     subprocess.run(
         ["cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
-         f"-I{KIT / 'include'}", str(PROBE_SRC), str(KIT / "src" / "os_refusal.c"),
+         f"-I{KIT / 'include'}", str(PROBE_SRC),
+         # os.h's GEM wrappers reach the shared model in src/gem.c (which draws through
+         # src/raster.c) and report their off-image effect through src/os_log.c's ledger, so the
+         # probe links the same three files kit.mk sweeps into every candidate.
+         str(KIT / "src" / "os_refusal.c"), str(KIT / "src" / "gem.c"),
+         str(KIT / "src" / "raster.c"), str(KIT / "src" / "os_log.c"),
          "-o", str(binary)],
         check=True, capture_output=True, text=True)
     out = subprocess.run([str(binary)], check=True, capture_output=True, text=True).stdout

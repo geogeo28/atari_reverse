@@ -12,13 +12,19 @@
  * Bconstat/Bconin/Crawio, Super, Giaccess, Random — are the os_* helpers further down. XBIOS Supexec
  * runs the passed routine in place (its rts returns to the caller, its D0 becomes the result).
  *
- * GEM trap #2 (AES/VDI) is modeled by os_gem_trap() below — the same code the oracle's
- * shim and the reconstructed gem_aes/gem_vdi wrappers both run, so their image writes agree
- * by construction. Only the three opcodes BuggyBoy actually uses are modeled.
+ * GEM trap #2 (AES/VDI) is modeled by ../src/gem.c over ../src/raster.c — the one model compiled
+ * into BOTH the oracle and every candidate, reached from here through os_gem_trap()/os_vdi()/
+ * os_aes(). It DRAWS: seventeen VDI opcodes including vro_cpyfm's sixteen logic operations, vr_recfl
+ * and v_gtext, plus four AES ones (TRAP_MODEL.md, Phases 11-12).
  *
- * BIOS console I/O (Bconstat/Bconin), GEMDOS Super, GEMDOS Fcreate/Fwrite, XBIOS Giaccess and
- * XBIOS Random are modeled below; TRAP_MODEL.md records what each does and does NOT capture.
- * OS_SCREEN_BASE is a provisional low-memory arena; OS_HEAP_BASE is main's Malloc block (below).
+ * The calls that hand a byte to a DEVICE rather than storing one — Cconout/Cconws, BIOS Bconout to
+ * the IKBD, graf_mouse, v_show_c/v_hide_c — are an ordered off-image ledger compared between the two
+ * sides, like the Dosound one (Phase 13); so is nothing else here.
+ *
+ * BIOS console I/O (Bconstat/Bconin), GEMDOS's console (Cconis/Crawcin/Cnecin/Crawio), GEMDOS Super,
+ * GEMDOS Fcreate/Fwrite/Fseek, XBIOS Giaccess and XBIOS Random are modeled below; TRAP_MODEL.md
+ * records what each does and does NOT capture. OS_SCREEN_BASE is a provisional low-memory arena;
+ * OS_HEAP_BASE is main's Malloc block (below).
  */
 #ifndef BB_OS_H
 #define BB_OS_H
@@ -93,6 +99,45 @@ uint32_t g_os_refusal_count(void);      /* ...and raises on what it reads back *
 extern uint32_t g_os_heap_base;       /* the live base on the CANDIDATE side (src/os_heap.c) */
 void os_set_heap_base(uint32_t base); /* ...installed once, before any run; the shim has its own */
 #define OS_HEAP_BASE   (g_os_heap_base)
+
+/* ---- the arena's CEILING, installed the same way the base is ---------------------------------
+ * The first address the arena may NOT reach: os_map.OS_FS_TABLE, narrowed by project.toml's optional
+ * `heap_limit`. `harness` installs the resolved value into both shared objects at import, exactly as
+ * it installs the base, so `Malloc(-1)`'s answer and the ceiling check below describe the window the
+ * bound project really has. A VARIABLE READ, not a constant expression, for OS_HEAP_BASE's reason.
+ * (OS_FS_TABLE is declared with the staged-file map further down; a macro body is expanded where it
+ * is USED, so naming it here keeps one source for the table's address rather than a second copy.) */
+#define OS_HEAP_LIMIT_DEFAULT OS_FS_TABLE
+extern uint32_t g_os_heap_limit;
+void os_set_heap_limit(uint32_t limit);
+#define OS_HEAP_LIMIT  (g_os_heap_limit)
+
+/* ...and the CANDIDATE's Malloc itself, mirroring the bump allocator `oracle/shim.c` services the
+ * GEMDOS trap with: round the request up to a word and hand back the pointer before the bump. It is
+ * here so a reconstruction's Malloc wrapper calls the model rather than carrying a private copy of
+ * its arithmetic — a copy is what drifts from the oracle's the day either changes.
+ *
+ * Malloc(-1) is GEMDOS's "how big is the LARGEST FREE BLOCK?" query and answers a SIZE, not a
+ * pointer: OS_HEAP_LIMIT minus the bump pointer, without moving it, on both sides. (It used to fall
+ * out of the rounding as the arena BASE, which is a plausible-looking address and the wrong answer
+ * to the question — a program that then asked for that many bytes would be asking for an address's
+ * worth of memory.)
+ *
+ * IT REFUSES a request the window cannot hold, rather than bumping past OS_HEAP_LIMIT: blocks handed
+ * out over the staged-file table are plain image writes on both sides, so the two corrupted runs
+ * compare equal. The ORACLE's half of the same guard is `emu._vet_heap_within_bounds`, which reads
+ * the pointer after the run; this is the candidate's, and it fires at the call.
+ *
+ * `g_os_heap_reset()` puts the pointer back to the base; `harness.arm_candidate` calls it before
+ * EVERY candidate run, the poison re-run included, for the reason every other per-run model is
+ * re-armed there — otherwise the second case in a process allocates where the first left off while
+ * the oracle starts from the base, and the two sides diverge for a reason no case declared.
+ * `g_os_heap_pointer()` is what `harness.differential` compares against the oracle's.
+ * ON-TARGET builds do not compile src/os_heap.c: there the heap is real TOS's. */
+#define OS_MALLOC_LARGEST_FREE 0xffffffffu   /* Malloc(-1), spelt as the caller pushes it */
+uint32_t os_malloc(uint32_t size);
+void     g_os_heap_reset(void);
+uint32_t g_os_heap_pointer(void);
 #define OS_CRAWIO_RESULT 0u      /* GEMDOS Crawio(0xff) raw non-blocking read: what it returns when
                                   * no key is pending. os_crawio() below serves the same poked
                                   * console state as Bconstat/Bconin, so this is its answer on an
@@ -102,7 +147,7 @@ void os_set_heap_base(uint32_t base); /* ...installed once, before any run; the 
                                   * region, clear of the vector page and the program). install_handlers
                                   * patches its mousevec (+0x10) / joyvec (+0x18). Shared with the shim. */
 
-/* ---- harness-poked model state, 0x600..0x61f -------------------------------------------
+/* ---- harness-poked model state, 0x600..OS_POKE_BLOCK_END --------------------------------
  * Hardware whose real value is time-varying (a keypress arriving on an IRQ, the PSG's register
  * contents, XBIOS Random) has no analogue on the candidate side, which is pure C with no
  * interrupts. Following projects/buggyboy/recreate/HARNESS.md, it is modeled at the STATE level:
@@ -111,8 +156,12 @@ void os_set_heap_base(uint32_t base); /* ...installed once, before any run; the 
  * the free low region below every program (load_base >= 0x10000) and above TOS's documented
  * system-variable area — the same siting argument as OS_KBDVBASE.
  * Mirrored in Python by harness.py; test/test_os_memory_map.py pins the two sets equal. */
-#define OS_CON_PENDING  0x600u   /* u32: nonzero = a character is waiting at the console (Bconstat) */
-#define OS_CON_CHAR     0x604u   /* u32: the longword Bconin returns (scancode << 16 | ascii) */
+#define OS_CON_PENDING  0x600u   /* u32: how many keystrokes are queued, up to OS_CON_QUEUE_MAX
+                                  * (nonzero = one is waiting; a larger value is the older flag
+                                  * spelling and is served as a single key — see
+                                  * os_console_take_key) */
+#define OS_CON_CHAR     0x604u   /* u32: the longword the NEXT console read returns
+                                  * (scancode << 16 | ascii). The keys BEHIND it are OS_CON_QUEUE. */
 #define OS_RANDOM_VALUE 0x608u   /* u32: the value XBIOS Random returns (masked to 24 bits) */
 #define OS_PSG_REGS     0x610u   /* the YM2149 register file, OS_PSG_NREGS bytes (see os_giaccess) */
 #define OS_PSG_NREGS    16       /* the YM2149 has 16 registers, selected by 4 bits */
@@ -123,11 +172,120 @@ void os_set_heap_base(uint32_t base); /* ...installed once, before any run; the 
 #error "the direct-PSG known/seed masks are uint16_t: OS_PSG_NREGS registers no longer fit"
 #endif
 
+/* The VDI's two INPUT devices, poked exactly as the console key is: the mouse the AES tracks
+ * (vq_mouse) and the keyboard's shift/control/alt state (vq_key_s). Both are IRQ-driven on a real
+ * machine and so have no analogue on the candidate side — the governing rule at the top of
+ * TRAP_MODEL.md — and both are read by the SAME os.h code on both sides, so one poke is one
+ * declared input. Unlike the console key, neither is CONSUMED: a query reports the staged state
+ * and leaves it, which is what the real drivers do. */
+#define OS_MOUSE             0x620u  /* three words: x, y, buttons (offsets below) */
+#define OS_MOUSE_OFF_X       0
+#define OS_MOUSE_OFF_Y       2
+#define OS_MOUSE_OFF_BUTTONS 4
+#define OS_MOUSE_BYTES       6
+#define OS_KEY_SHIFT         0x626u  /* u16: the shift-key mask vq_key_s reports */
+
+/* ---- the VDI WORKSTATION STATE ---------------------------------------------------------------
+ * The attributes one VDI call sets and a later one reads: `vsf_color`'s fill colour, `vst_color`'s
+ * text colour, the clip rectangle, and the base "the screen" means. They live IN THE IMAGE, inside
+ * the harness-poked block, so both sides read the same bytes and the byte diff already covers them —
+ * a reconstruction that sets the wrong fill colour diverges here, before it has drawn anything.
+ * shim.c therefore tallies every serviced VDI call as a poked-input call.
+ *
+ * A FRESH IMAGE IS ALL ZEROES, which is not a workstation's state; `v_opnvwk` installs the caller's
+ * own work_in attributes, and a case entering a program mid-way pokes what it needs
+ * (`harness.vdi_state`). WHY the state is here rather than in C statics, and what that costs:
+ * TRAP_MODEL.md, "Phase 12". */
+#define OS_VDI_STATE              0x628u
+#define OS_VDI_OFF_HANDLE          0   /* u16: the open workstation's handle, 0 = none open */
+#define OS_VDI_OFF_FILL_COLOR      2   /* u16: vsf_color */
+#define OS_VDI_OFF_TEXT_COLOR      4   /* u16: vst_color */
+#define OS_VDI_OFF_WRITE_MODE      6   /* u16: vswr_mode (recorded; see TRAP_MODEL.md, not consulted) */
+#define OS_VDI_OFF_TEXT_HEIGHT     8   /* u16: vst_height's requested height, likewise recorded */
+#define OS_VDI_OFF_FILL_INTERIOR  10   /* u16: vsf_interior, likewise */
+#define OS_VDI_OFF_FILL_STYLE     12   /* u16: vsf_style, likewise */
+#define OS_VDI_OFF_CLIP_ON        14   /* u16: vs_clip's flag; 0 = no clip rectangle */
+#define OS_VDI_OFF_CLIP_X1        16   /* u16 x4: the clip rectangle, normalised */
+#define OS_VDI_OFF_CLIP_Y1        18
+#define OS_VDI_OFF_CLIP_X2        20
+#define OS_VDI_OFF_CLIP_Y2        22
+/* u32: the base address MFDB address 0 — "the screen" — means. ZERO SELECTS OS_SCREEN_BASE, so a
+ * case that never declares one draws where Physbase/Logbase already point. The model does NOT track
+ * XBIOS Setscreen (still a no-op, TRAP_MODEL.md): a game that moves its logical base declares the
+ * result here as an input instead, which is the same treatment every other un-modelable machine
+ * fact gets. */
+#define OS_VDI_OFF_SCREEN         24
+#define OS_VDI_STATE_BYTES        28
+
+/* ---- the CONSOLE KEY QUEUE, the rest of the one staged keystroke ------------------------------
+ * OS_CON_PENDING/OS_CON_CHAR hold how many keys are queued and what the NEXT read returns; these are
+ * the ones BEHIND it, oldest first, so a case can stage a walk of keypresses instead of one
+ * (`harness.console_keys`). Every console read — Bconin, Crawio's read direction, Crawcin/Cnecin —
+ * takes the head and shifts the queue up, so all of them see one ordered stream, which is the whole
+ * point of their being ONE model.
+ *
+ * IT SITS AT THE TOP OF THE BLOCK rather than beside OS_CON_CHAR because there is no room there:
+ * OS_RANDOM_VALUE and the PSG register file already follow it. Inside the block for the reason
+ * everything else here is — under a program that covers these addresses they are the game's own
+ * bytes, and every guard keyed on the block applies unchanged. See TRAP_MODEL.md, "Phase 13". */
+#define OS_CON_QUEUE        0x644u  /* u32 x (OS_CON_QUEUE_MAX - 1), oldest first */
+#define OS_CON_QUEUE_MAX    8       /* keystrokes one case may stage: OS_CON_CHAR plus the queue */
+#define OS_CON_QUEUE_BYTES  ((OS_CON_QUEUE_MAX - 1) * 4)
+
 /* XBIOS Dosound(A0) writes the chip, not the image, so both sides record their calls in a ledger the
  * harness compares (src/dosound_log.c on the candidate side, shim.c's g_dosound_arg on the oracle's).
  * ONE cap for both: were they to differ, a run past the smaller one would drop entries on that side
  * only and diverge the comparison for a reason that has nothing to do with the reconstruction. */
 #define OS_DOSOUND_LOG_MAX 256
+
+/* ---- the OFF-IMAGE OS EVENT LEDGER -----------------------------------------------------------
+ * ONE ordered (kind, value) stream, kept on BOTH sides — `oracle/shim.c`'s mirror and
+ * `../src/os_log.c`'s — and compared per run by `harness.differential`. It carries the calls whose
+ * whole effect is off-image, so that a reconstruction which makes them is separable from one which
+ * does not:
+ *
+ *   GEMDOS Cconout / Cconws / Crawio(write)   a character to the console
+ *   BIOS   Bconout(dev 4, b)                  a COMMAND byte to the IKBD 6301
+ *   AES    graf_mouse(mode)                   show/hide the GEM mouse pointer
+ *   VDI    v_show_c / v_hide_c                show/hide the graphics cursor
+ *
+ * ONE CAP FOR BOTH SIDES, for the Dosound ledger's reason: were they to differ, a run past the
+ * smaller one would drop entries on that side only and diverge for a reason that has nothing to do
+ * with the reconstruction. `harness` refuses a comparison AT the cap rather than trust it.
+ *
+ * WHY one stream rather than four, why Dosound is left where it is, and what an on-target build
+ * substitutes: TRAP_MODEL.md, "Phase 13". */
+#define OS_EVENT_LOG_MAX   4096
+#define OS_EVENT_NONE       0    /* the out-parameter's "this call had no off-image effect" */
+#define OS_EVENT_CONOUT     1    /* value = the character byte written to the console */
+#define OS_EVENT_IKBD       2    /* value = the command byte sent to the IKBD (BIOS Bconout, dev 4) */
+#define OS_EVENT_GEM_MOUSE  3    /* value = AES graf_mouse's mode word (M_OFF = 256, M_ON = 257) */
+#define OS_EVENT_VDI_CURSOR 4    /* value = 1 for v_show_c, 0 for v_hide_c */
+
+/* One off-image event a modeled call produced. `../src/gem.c` reports through this rather than
+ * logging, because it is compiled into both sides and each side owns a different ledger.
+ *
+ * THE VALUE IS 32 BITS although no kind above needs more than 16. That is deliberate headroom: the
+ * two ledgers still outside this stream — Dosound's (a command-list POINTER) and the hardware write
+ * ledger's (an address and a longword) — could fold into it the day retiring them buys something,
+ * and a width change afterwards would have to move every reader on both sides at once. NOTHING IS
+ * MIGRATED NOW: Dosound and the hardware ledgers are working surfaces and stay where they are. */
+typedef struct {
+    uint16_t kind;               /* OS_EVENT_*; OS_EVENT_NONE = the call had no off-image effect */
+    uint32_t value;
+} os_event_t;
+
+/* THE CANDIDATE'S recording side (`src/os_log.c`). An ON-TARGET build does not compile that file
+ * and supplies its own definition — the trap that really writes the console or the IKBD — exactly as
+ * it supplies its own `g_dosound`. Declared, never defined here, so that substitution is a link-time
+ * choice rather than a `#ifdef` inside every core. */
+void g_os_event(uint16_t kind, uint32_t value);
+
+/* The two a reconstruction calls by name, so a core reads as what it does rather than as a ledger
+ * append. `os_cconout` is GEMDOS Cconout/Cconws's byte; `os_ikbd_out` is a BIOS Bconout to the
+ * keyboard. Neither can refuse: sending a byte to a device always succeeds in this model. */
+static inline void os_cconout(uint8_t ch)   { g_os_event(OS_EVENT_CONOUT, ch); }
+static inline void os_ikbd_out(uint8_t cmd) { g_os_event(OS_EVENT_IKBD, cmd); }
 
 /* ---- the direct $ff8800/$ff8802 PSG path (TRAP_MODEL.md, "Phase 6") --------------------------
  * The two ports the YM2149 answers on. They sit outside the image, so a reconstruction that drives
@@ -472,62 +630,177 @@ static inline uint32_t os_hw_slots_touched(uint32_t addr, uint32_t n) {
 }
 
 /* ---- GEM trap #2 (AES / VDI) --------------------------------------------------------
- * A trap #2 selects the subsystem by D0 and points D1 at a parameter block of array
- * pointers. AES: apb = {contrl, global, intin, intout, addrin, addrout}; VDI:
- * vpb = {contrl, intin, ptsin, intout, ptsout}. The opcode is contrl[0]; results go into
- * intout (and ptsout for VDI). BuggyBoy issues exactly three calls, all during _start:
- * appl_init, graf_handle, v_opnvwk — anything else is left unmodeled on purpose. */
+ * A trap #2 selects the subsystem by D0 and points D1 at a parameter block of array pointers.
+ * The opcode is contrl[0]; results go into intout (and ptsout for the VDI), and the VDI reports how
+ * many of each it wrote in contrl[2]/contrl[4] — which games read, so the model sets them.
+ *
+ * THE MODEL ITSELF IS ../src/gem.c, compiled into BOTH sides (raster.h's header says why a shared
+ * .c and not a header of inlines). What is here is the two THIN WRAPPERS that turn its "did I model
+ * this?" answer into the kit's refusal convention, plus the layout constants both sides and the
+ * kit's own tests spell. `os_gem_trap` is for the oracle's trap dispatch and for a reconstruction
+ * that reproduces the original's `trap #2` glue; `os_vdi` is the one-argument door for a
+ * reconstruction that fills the block and calls the VDI directly. Both read the SAME block out of
+ * the image, so the two sides' writes agree by construction.
+ *
+ * What each opcode does, what it deliberately does NOT capture, and what pins it: TRAP_MODEL.md,
+ * "Phase 11" (the raster model) and "Phase 12" (the VDI opcodes and the AES).
+ */
 #define GEM_AES 0xc8u            /* D0 for an AES call */
 #define GEM_VDI 0x73u            /* D0 for a VDI call */
 
-#define AES_APPL_INIT   10       /* -> ap_id in intout[0] */
-#define AES_GRAF_HANDLE 77       /* -> phys handle + font cell sizes in intout[0..4] */
-#define VDI_V_OPNVWK    100      /* -> device attributes in intout[0..] (work_out) */
+/* The parameter block is an array of LONGS; these index it.
+ * AES: apb = {contrl, global, intin, intout, addrin, addrout}
+ * VDI: vpb = {contrl, intin, ptsin, intout, ptsout} */
+#define AES_PB_CONTRL  0
+#define AES_PB_GLOBAL  1
+#define AES_PB_INTIN   2
+#define AES_PB_INTOUT  3
+#define AES_PB_ADDRIN  4
+#define AES_PB_ADDROUT 5
+#define VDI_PB_CONTRL  0
+#define VDI_PB_INTIN   1
+#define VDI_PB_PTSIN   2
+#define VDI_PB_INTOUT  3
+#define VDI_PB_PTSOUT  4
 
-/* Deterministic "realistic low-res ST" results (320x200, 16 colours). None are read back by
- * the game — _start only reuses graf_handle's handle as the VDI handle — so the exact values
- * matter for faithfulness/documentation, not for downstream behaviour. */
+/* contrl[] is an array of WORDS; these index it. [2] and [4] are the VDI's OUTPUT counts — ptsout
+ * PAIRS and intout entries written — and [6] is where v_opnvwk RETURNS the workstation handle. */
+#define VDI_CONTRL_OPCODE     0
+#define VDI_CONTRL_PTSIN_N    1
+#define VDI_CONTRL_PTSOUT_N   2
+#define VDI_CONTRL_INTIN_N    3
+#define VDI_CONTRL_INTOUT_N   4
+#define VDI_CONTRL_SUBOPCODE  5
+#define VDI_CONTRL_HANDLE     6
+#define VDI_CONTRL_SRC_MFDB   7   /* ...and [8]: the source MFDB address, high word first */
+#define VDI_CONTRL_DST_MFDB   9   /* ...and [10]: the destination MFDB address */
+
+/* The AES opcodes the model serves. Everything else is refused BY NAME (gem.c). */
+#define AES_APPL_INIT   10       /* -> ap_id in intout[0] */
+#define AES_APPL_EXIT   19       /* -> intout[0] = 1; no other effect */
+#define AES_GRAF_HANDLE 77       /* -> phys handle + font cell sizes in intout[0..4] */
+#define AES_GRAF_MOUSE  78       /* intin[0] = mode; an OS_EVENT_GEM_MOUSE ledger entry */
+#define AES_M_OFF      256       /* graf_mouse's two modes, the only ones any game here uses */
+#define AES_M_ON       257
+
+/* ...and the VDI opcodes. */
+#define VDI_V_CLRWK       3
+#define VDI_V_GTEXT       8
+#define VDI_VST_HEIGHT   12
+#define VDI_VST_COLOR    22
+#define VDI_VSF_INTERIOR 23
+#define VDI_VSF_STYLE    24
+#define VDI_VSF_COLOR    25
+#define VDI_VSWR_MODE    32
+#define VDI_V_OPNVWK    100
+#define VDI_V_CLSVWK    101
+#define VDI_VRO_CPYFM   109
+#define VDI_VR_RECFL    114
+#define VDI_V_SHOW_C    122
+#define VDI_V_HIDE_C    123
+#define VDI_VQ_MOUSE    124
+#define VDI_VQ_KEY_S    128
+#define VDI_VS_CLIP     129
+
+/* v_opnvwk's work_in array (intin), which IS the workstation's opening attribute state. Only the
+ * four the model keeps are named; [0] is the device id, [1..5] the line/marker/text faces the model
+ * has no state for, and [10] the coordinate system. See gem.c's v_opnvwk. */
+#define VDI_WORK_IN_TEXT_COLOR     6
+#define VDI_WORK_IN_FILL_INTERIOR  7
+#define VDI_WORK_IN_FILL_STYLE     8
+#define VDI_WORK_IN_FILL_COLOR     9
+
+/* vsf_interior's five values. The model fills HOLLOW with the background (colour 0) and SOLID with
+ * the fill colour; the three that need a pattern table it does not have are REFUSED by name rather
+ * than filled solid, which would draw pixels no real machine draws (gem.c's vdi_fill_colour). */
+#define VDI_FILL_HOLLOW  0
+#define VDI_FILL_SOLID   1
+#define VDI_FILL_PATTERN 2
+#define VDI_FILL_HATCH   3
+#define VDI_FILL_USER    4
+
+/* An MFDB — the block `vro_cpyfm` describes a raster with. fd_addr 0 means "the screen"; fd_stand 1
+ * means the VDI's device-INDEPENDENT plane order, a different layout the model refuses rather than
+ * silently reads as the interleaved one. */
+#define MFDB_ADDR             0   /* long */
+#define MFDB_W                4   /* word: width in pixels */
+#define MFDB_H                6   /* word: height in pixels */
+#define MFDB_WDWIDTH          8   /* word: width in 16-pixel words */
+#define MFDB_STAND           10   /* word: 0 = device format, 1 = standard format */
+#define MFDB_NPLANES         12   /* word */
+#define MFDB_BYTES           20   /* ...plus fd_r1..fd_r3, three reserved words */
+#define MFDB_SCREEN_ADDR      0u  /* fd_addr == this means the VDI's own screen */
+#define MFDB_STANDARD_FORMAT  1   /* fd_stand == this: refused, see gem.c */
+
+/* Deterministic "realistic low-res ST" results. */
 #define OS_AES_AP_ID    0        /* appl_init: single-application id */
-#define OS_VDI_HANDLE   1        /* graf_handle: physical workstation handle */
+#define OS_VDI_HANDLE   1        /* graf_handle / v_opnvwk: the physical workstation handle */
 #define OS_FONT_CELL_W  8        /* low-res system font cell / box width  (px) */
 #define OS_FONT_CELL_H  8        /* low-res system font cell / box height (px) */
 #define OS_SCREEN_MAX_X 319      /* v_opnvwk work_out[0]: max addressable x (xres-1) */
 #define OS_SCREEN_MAX_Y 199      /* v_opnvwk work_out[1]: max addressable y (yres-1) */
+#define OS_SCREEN_W     (OS_SCREEN_MAX_X + 1)
+#define OS_SCREEN_H     (OS_SCREEN_MAX_Y + 1)
+#define OS_SCREEN_PLANES  4      /* ST low resolution: 16 colours, four interleaved planes */
+#define OS_SCREEN_WDWIDTH (OS_SCREEN_W / 16)
+#define OS_SCREEN_COLOURS 16     /* v_opnvwk work_out[13] */
+/* The number of entries v_opnvwk reports having written. They are what a real VDI reports; all but
+ * the three named above are left ZERO, because inventing the rest of the attribute table would be
+ * fabrication and no code here reads it (TRAP_MODEL.md, Phase 12). */
+#define OS_VDI_WORK_OUT_INTS   45
+#define OS_VDI_WORK_OUT_POINTS 6
 
-/* Service a trap #2. Reads the parameter block at `pblk` in `mem`, writes the modeled
- * outputs, and returns 1 if the opcode is modeled, 0 otherwise (an unmodeled opcode must be
- * rejected, never diffed against a fabricated result). Shared verbatim by shim.c and the
- * gem_aes/gem_vdi reconstruction so both sides produce identical image writes. */
-static inline int os_gem_trap(uint8_t *mem, uint32_t d0, uint32_t pblk) {
-    uint32_t contrl = be32(mem + pblk);              /* apb[0] / vpb[0] */
-    uint16_t opcode = be16(mem + contrl);            /* contrl[0] */
+/* The workstation attributes a freshly opened workstation carries. The last two are what v_opnvwk
+ * really installs — work_in cannot express them — while the four above them are what a CASE that
+ * pokes a workstation instead of opening one starts from (`harness.vdi_state`): the VDI's documented
+ * defaults, which a program passing them in work_in[6..9] would get from the call itself. */
+#define OS_VDI_DEFAULT_FILL_COLOR    1
+#define OS_VDI_DEFAULT_TEXT_COLOR    1
+#define OS_VDI_DEFAULT_FILL_INTERIOR 0   /* hollow; pinned equal to VDI_FILL_HOLLOW below */
+#define OS_VDI_DEFAULT_FILL_STYLE    1
+#define OS_VDI_DEFAULT_WRITE_MODE    1   /* replace */
+#define OS_VDI_DEFAULT_TEXT_HEIGHT   8   /* the model has one font; see vst_height */
+/* Spelt as a literal because test_os_memory_map.py parses these against their Python mirror and
+ * reads integer literals only — so the equality it stands for is asserted here instead. */
+#if OS_VDI_DEFAULT_FILL_INTERIOR != VDI_FILL_HOLLOW
+#error "the default fill interior is no longer VDI_FILL_HOLLOW"
+#endif
 
-    if (d0 == GEM_AES) {
-        uint32_t intout = be32(mem + pblk + 3 * 4);  /* apb[3] */
-        if (opcode == AES_APPL_INIT) {
-            wr16(mem + intout, OS_AES_AP_ID);
-            return 1;
-        }
-        if (opcode == AES_GRAF_HANDLE) {
-            wr16(mem + intout + 0, OS_VDI_HANDLE);
-            wr16(mem + intout + 2, OS_FONT_CELL_W);  /* wchar */
-            wr16(mem + intout + 4, OS_FONT_CELL_H);  /* hchar */
-            wr16(mem + intout + 6, OS_FONT_CELL_W);  /* wbox  */
-            wr16(mem + intout + 8, OS_FONT_CELL_H);  /* hbox  */
-            return 1;
-        }
-    } else if (d0 == GEM_VDI) {
-        uint32_t intout = be32(mem + pblk + 3 * 4);  /* vpb[3] */
-        if (opcode == VDI_V_OPNVWK) {
-            /* work_out: only the two determinate low-res fields; the rest of the VDI
-             * attribute table is left zero (no code reads it). */
-            wr16(mem + intout + 0, OS_SCREEN_MAX_X);
-            wr16(mem + intout + 2, OS_SCREEN_MAX_Y);
-            return 1;
-        }
-    }
-    return os_refused(0);                       /* unmodeled subsystem or opcode */
+/* Service one `trap #2`. Reads the parameter block at `pblk` in `mem`, writes the modeled outputs,
+ * and returns 1 if the call is modeled, 0 if it is not — an unmodeled opcode must be REFUSED by the
+ * caller, never diffed against a fabricated result. `event` reports the call's off-image effect (see
+ * os_event_t); it is always written, with OS_EVENT_NONE when there is none. Defined in ../src/gem.c
+ * and compiled into both sides. */
+int gem_dispatch(uint8_t *mem, uint32_t d0, uint32_t pblk, os_event_t *event);
+
+/* Does a serviced call of this shape touch the harness-poked block? True for every VDI call — they
+ * all read or write the VDI state block, which lives inside it — and false for the AES, whose four
+ * modeled opcodes touch only the caller's own arrays. shim.c tallies on this so the poked-input
+ * guard covers the VDI exactly as it covers Bconin (TRAP_MODEL.md, Phase 12). */
+static inline int gem_touches_poked_input(uint32_t d0) { return d0 == GEM_VDI; }
+
+/* Record whatever off-image effect a serviced call had. The candidate's half of the ledger; the
+ * oracle's shim keeps its own mirror and does not call this. */
+static inline void os_gem_note_event(const os_event_t *event) {
+    if (event->kind != OS_EVENT_NONE) g_os_event(event->kind, event->value);
 }
+
+/* The oracle's and a trap-glue reconstruction's door: subsystem in `d0`, parameter block in `pblk`. */
+static inline int os_gem_trap(uint8_t *mem, uint32_t d0, uint32_t pblk) {
+    os_event_t event;
+    if (!gem_dispatch(mem, d0, pblk, &event)) return os_refused(0);
+    os_gem_note_event(&event);
+    return 1;
+}
+
+/* ...and the one-argument door for a reconstruction that fills the VDI parameter block and calls the
+ * VDI directly, rather than transcribing the original's `d0 = 0x73; trap #2` glue. Same code, same
+ * block, same image writes as the oracle's trap. */
+static inline int os_vdi(uint8_t *mem, uint32_t pblk) { return os_gem_trap(mem, GEM_VDI, pblk); }
+
+/* ...and the AES's, for symmetry: a reconstruction reading as `os_aes(image, apb)` says which
+ * subsystem it means without spelling a magic 0xc8 at every call site. */
+static inline int os_aes(uint8_t *mem, uint32_t pblk) { return os_gem_trap(mem, GEM_AES, pblk); }
 
 /* ---- BIOS console input (Bconstat 0x01 / Bconin 0x02) --------------------------------
  * Only the console device is modeled: a keystroke on any other BIOS device would have to be
@@ -535,6 +808,11 @@ static inline int os_gem_trap(uint8_t *mem, uint32_t d0, uint32_t pblk) {
  * the harness-poked state above, so one poke is one keypress — Bconin CONSUMES it (clearing
  * OS_CON_PENDING), the way the real console does, so a polling loop sees exactly one key. */
 #define OS_BIOS_DEV_CON  2       /* BIOS device 2 = CON: (the screen/keyboard console) */
+/* ...and device 4 = the IKBD's serial line. A byte written there is a COMMAND to the 6301 keyboard
+ * processor (reset, mouse off, joystick reporting) — off-image by definition, so BIOS Bconout to it
+ * is a ledger entry rather than an image effect. Every other device is refused; see TRAP_MODEL.md,
+ * "Phase 13". */
+#define OS_BIOS_DEV_IKBD 4
 #define OS_BCONSTAT_READY 0xffffffffu   /* Bconstat: -1L = a character is waiting, 0 = none */
 
 /* Bconstat(dev) -> *out. Returns 1 if modeled, 0 for a device the model has no state for. */
@@ -546,11 +824,32 @@ static inline int os_bconstat(const uint8_t *mem, uint16_t dev, uint32_t *out) {
 
 /* Take the pending keystroke from the console, if there is one: 1 and *out on success, 0 when the
  * device isn't the console or nothing is staged. NOT a refusal in itself — "no key" is a legitimate
- * answer for the non-blocking os_crawio below, and only os_bconin turns it into one. */
+ * answer for the non-blocking os_crawio below, and only os_bconin turns it into one.
+ *
+ * The head of the staged WALK: OS_CON_CHAR is what this returns and OS_CON_QUEUE holds the keys
+ * behind it, so taking one shifts the queue up by an entry and decrements the count.
+ *
+ * A COUNT THE MODEL CANNOT HOLD IS ONE KEY. OS_CON_PENDING's contract has always been "nonzero = a
+ * character is waiting", and a hand-written poke dict may put any nonzero longword there (Joust's
+ * test_os_traps.py does); the queue refines it without replacing it, so a count above
+ * OS_CON_QUEUE_MAX is read as that older spelling and served as a single keystroke. That keeps the
+ * one-key path writing exactly the one word it always wrote — which matters under a program that
+ * covers this block, where every other longword in it is the game's own code. */
 static inline int os_console_take_key(uint8_t *mem, uint16_t dev, uint32_t *out) {
-    if (dev != OS_BIOS_DEV_CON || !be32(mem + OS_CON_PENDING)) return 0;
+    uint32_t queued = be32(mem + OS_CON_PENDING);
+    if (dev != OS_BIOS_DEV_CON || !queued) return 0;
     *out = be32(mem + OS_CON_CHAR);
-    wr32(mem + OS_CON_PENDING, 0);
+    if (queued < 2 || queued > OS_CON_QUEUE_MAX) {  /* the last key, or the flag spelling */
+        wr32(mem + OS_CON_PENDING, 0);
+        return 1;
+    }
+    /* Shift rather than carry a head index: the queue is seven entries at most, and one more field
+     * in the poked block is one more thing for a case to stage half of. */
+    wr32(mem + OS_CON_PENDING, queued - 1);
+    wr32(mem + OS_CON_CHAR, be32(mem + OS_CON_QUEUE));
+    for (unsigned i = 1; i < OS_CON_QUEUE_MAX - 1u; i++)
+        wr32(mem + OS_CON_QUEUE + (i - 1) * 4, be32(mem + OS_CON_QUEUE + i * 4));
+    wr32(mem + OS_CON_QUEUE + (OS_CON_QUEUE_MAX - 2u) * 4, 0);
     return 1;
 }
 
@@ -571,9 +870,11 @@ static inline int os_bconin(uint8_t *mem, uint16_t dev, uint32_t *out) {
  *
  * The write direction touches no image state (like Cconout) and must NOT consume a staged key: it
  * is the same trap number, so servicing every Crawio as a read would let a program that prints a
- * character swallow the keystroke a later Bconin is waiting for. BuggyBoy's eight sites all pass
- * OS_CRAWIO_READ (all `move.w #$ff,-(a7)`) and Joust issues no Crawio at all, so only the read path
- * is exercised today; the direction is still honoured rather than assumed.
+ * character swallow the keystroke a later Bconin is waiting for. It IS console output, so it takes
+ * the same OS_EVENT_CONOUT ledger entry Cconout takes — the one thing that can tell a reconstruction
+ * which prints from one which does not. BuggyBoy's eight sites all pass OS_CRAWIO_READ (all
+ * `move.w #$ff,-(a7)`) and Joust issues no Crawio at all, so only the read path is exercised by a
+ * game today; the direction is still honoured rather than assumed.
  *
  * BuggyBoy's candidate (src/input.c check_abort, src/os.c console_scancode) does not call this; it
  * returns OS_CRAWIO_RESULT unconditionally. That agrees with the oracle byte for byte while no test
@@ -581,13 +882,54 @@ static inline int os_bconin(uint8_t *mem, uint16_t dev, uint32_t *out) {
  * does, the two sides differ in D0, i.e. the divergence is loud rather than silently absorbed. */
 #define OS_CRAWIO_READ 0x00ffu   /* Crawio's argument for "read"; anything else is a char to write */
 
-static inline uint32_t os_crawio(uint8_t *mem, uint16_t w) {
+/* The READ direction alone, named because the ORACLE needs exactly this half: `oracle/shim.c` keeps
+ * its own ledger and does not link the candidate's, so it services the write direction itself and
+ * calls this for the read — rather than re-typing the take-a-key line, which is the model. */
+static inline uint32_t os_crawio_read(uint8_t *mem) {
     uint32_t key;
-    if (w != OS_CRAWIO_READ) return 0;              /* console output: no image effect, no key eaten */
     /* os_console_take_key, not os_bconin: an idle console is a RESULT here, not a refusal, so it
      * must not reach the tally that os_bconin's blocking-read refusal feeds. */
     return os_console_take_key(mem, OS_BIOS_DEV_CON, &key) ? key : OS_CRAWIO_RESULT;
 }
+
+static inline uint32_t os_crawio(uint8_t *mem, uint16_t w) {
+    if (w == OS_CRAWIO_READ) return os_crawio_read(mem);
+    os_cconout((uint8_t)w);                         /* console output: a ledger entry, no key eaten */
+    return 0;
+}
+
+/* ---- GEMDOS console input: Cconis (0x0b) / Crawcin (0x07) / Cnecin (0x08) -------------------
+ * The SAME one staged keystroke Bconstat/Bconin/Crawio serve, through GEMDOS's door rather than the
+ * BIOS's — deliberately one model and not a second, disconnected one, so a program that polls with
+ * `Cconis` and reads with `Cnecin` (the idiom Bubble Ghost uses everywhere) sees exactly the key a
+ * case staged, once. GEMDOS's console calls take no device argument, so unlike the BIOS pair there
+ * is no device to refuse.
+ *
+ * Cconis(): -1L if a character is waiting, 0 if not. It only LOOKS — a poll loop may run it as many
+ * times as it likes — and it is the non-refusing half of the pair, exactly as Bconstat is. */
+static inline uint32_t os_cconis(const uint8_t *mem) {
+    /* OS_BCONSTAT_READY, not a second constant: "a character is waiting, reported as -1L" is one
+     * fact, and two spellings of it could drift. */
+    return be32(mem + OS_CON_PENDING) ? OS_BCONSTAT_READY : 0;
+}
+
+/* The BLOCKING read behind both Crawcin and Cnecin. Consumes the staged key and returns 1; with
+ * nothing staged it REFUSES, for os_bconin's reason — the real call waits for a keypress and there
+ * is nothing here to wait for, so any answer would be fabricated. Never spins: a model that looped
+ * would hang the oracle instead of failing it. */
+static inline int os_conin_blocking(uint8_t *mem, uint32_t *out) {
+    if (os_console_take_key(mem, OS_BIOS_DEV_CON, out)) return 1;
+    return os_refused(0);
+}
+
+/* Crawcin (0x07) and Cnecin (0x08) are ONE model. On a real machine they differ in what they do
+ * BESIDES returning the key: Cnecin honours ^C/^S/^Q and Crawcin does not, and neither echoes. The
+ * model has no signal delivery and no flow control and does not echo either, so the two are the same
+ * function here; they keep separate names so a reconstruction still reads as the call the original
+ * made, and so the day one of them grows a difference there is a place to put it. See
+ * TRAP_MODEL.md, "Phase 13". */
+static inline int os_crawcin(uint8_t *mem, uint32_t *out) { return os_conin_blocking(mem, out); }
+static inline int os_cnecin(uint8_t *mem, uint32_t *out)  { return os_conin_blocking(mem, out); }
 
 /* ---- GEMDOS Super (0x20) -------------------------------------------------------------
  * TOKEN model, not a privilege model. The oracle runs the whole program in supervisor mode
@@ -940,7 +1282,12 @@ static inline int32_t os_fread(uint8_t *mem, uint16_t handle, uint32_t count, ui
     if (!entry || be32(entry + OS_FS_OFF_OPEN) == 0) return os_refused(-1);  /* not staged/not open */
     uint32_t staging = be32(entry + OS_FS_OFF_STAGING);
     uint32_t cursor = be32(entry + OS_FS_OFF_CURSOR);
-    uint32_t n = be32(entry + OS_FS_OFF_SIZE) - cursor;  /* remaining; cursor never exceeds size */
+    uint32_t size = be32(entry + OS_FS_OFF_SIZE);
+    /* Bytes remaining. Written as a test rather than a bare subtraction because os_fseek may leave
+     * the cursor PAST the length (a seek into the file's reserved capacity is legal, and is how a
+     * program extends a file it is writing); the subtraction alone would wrap to ~4 GB and serve
+     * the whole image as file content. */
+    uint32_t n = cursor >= size ? 0 : size - cursor;
     if (count < n) n = count;
     if (!os_fs_copy_in_image(staging, cursor, buf, n)) return os_refused(-1);
     memcpy(mem + buf, mem + staging + cursor, n);
@@ -975,6 +1322,44 @@ static inline int32_t os_fclose(uint8_t *mem, uint16_t handle) {
     if (!entry) return os_refused(-1);
     wr32(entry + OS_FS_OFF_OPEN, 0);
     return 0;
+}
+
+/* ---- GEMDOS Fseek (0x42) -------------------------------------------------------------------
+ * The one accessor of the staged-file cursor the model never grew. `offset` is SIGNED (a seek
+ * backwards from the current position or the end is ordinary), `mode` selects what it is relative
+ * to, and the result is the new absolute position.
+ *
+ * THE BOUND IS THE FILE'S RESERVED CAPACITY, NOT ITS LENGTH. Seeking past the end is legal on real
+ * GEMDOS and is how a program extends a file it is writing, so a position in (size, capacity] is
+ * served and os_fread answers 0 bytes there. Past the capacity there is no staging space at all —
+ * the next file's bytes begin — and a negative position is not a position, so both refuse rather
+ * than clamp: a clamp would hand the program a cursor it did not ask for and go on serving reads
+ * from it.
+ *
+ * A REFUSAL IS NOT AN ERROR RETURN. Real GEMDOS answers a bad seek with a negative error code, and
+ * a C library's `lseek` has a fallback path for exactly that; the model cannot tell the two apart,
+ * so it refuses the RUN (loudly, naming the call) instead of fabricating an error code whose value
+ * it would be inventing. See TRAP_MODEL.md, "Phase 13". */
+#define OS_FSEEK_FROM_START   0
+#define OS_FSEEK_FROM_CURRENT 1
+#define OS_FSEEK_FROM_END     2
+
+static inline int32_t os_fseek(uint8_t *mem, uint32_t offset, uint16_t handle, uint16_t mode) {
+    uint8_t *entry = os_fs_entry(mem, handle);
+    if (!entry || be32(entry + OS_FS_OFF_OPEN) == 0) return os_refused(-1);
+    int64_t base;
+    switch (mode) {
+    case OS_FSEEK_FROM_START:   base = 0; break;
+    case OS_FSEEK_FROM_CURRENT: base = be32(entry + OS_FS_OFF_CURSOR); break;
+    case OS_FSEEK_FROM_END:     base = be32(entry + OS_FS_OFF_SIZE); break;
+    default:                    return os_refused(-1);
+    }
+    /* 64-bit, so that neither the sum nor the signed offset can wrap before it is bounded: both
+     * come off the emulated program's stack. */
+    int64_t pos = base + (int32_t)offset;
+    if (pos < 0 || pos > (int64_t)be32(entry + OS_FS_OFF_CAPACITY)) return os_refused(-1);
+    wr32(entry + OS_FS_OFF_CURSOR, (uint32_t)pos);
+    return (int32_t)pos;
 }
 
 #endif /* BB_OS_H */
