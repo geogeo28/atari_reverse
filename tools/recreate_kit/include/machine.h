@@ -199,6 +199,18 @@ static inline unsigned byte_sub_extend(uint8_t minuend, uint8_t subtrahend) {
     return minuend < subtrahend;
 }
 
+/* ...and the LONGWORD pair. `add.l`/`sub.l` set X and C the same way, and a 32-bit accumulator is
+ * where a reconstruction most often needs the bit: a pitch LFO that swaps its step on the carry out
+ * of `add.l`, a 64-bit subtract spelt as `sub.l` + `subx.l`. Named for the same reason as the word
+ * and byte forms — `(a + b) < a` on two 32-bit values reads as a bounds check. */
+static inline unsigned long_add_extend(uint32_t augend, uint32_t addend) {
+    return (uint32_t)(augend + addend) < augend;
+}
+
+static inline unsigned long_sub_extend(uint32_t minuend, uint32_t subtrahend) {
+    return minuend < subtrahend;
+}
+
 /* WHAT KEEPS A SPELT-OUT COPY RUN A POSTINCREMENT RUN. The 68000 has no block move, so a copy is a
  * run of `move.l (a0)+,(a1)+` at 20 cycles a longword, and a reconstruction spells that run out.
  * GCC will not leave it alone: its induction-variable pass sees ONE base with constant offsets and
