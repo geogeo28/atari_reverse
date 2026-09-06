@@ -14,10 +14,12 @@ shape this whole file:
   * **One keystroke per run.** Bconstat/Bconin read harness-poked console state and Bconin CONSUMES
     it, so a run delivers at most one key. Every branch therefore gets its own fixed-input run, and
     poll_quit_key's pause — which waits for a SECOND key — can only be entered at its own head.
-  * **Two exits never return.** GEMDOS Pterm is unmodeled (it ends the process; there is no
-    post-state), and R/r jumps back into _start. Both are diffed at a checkpoint PC instead of at
-    `rts`, and each is paired with a test that the run really does NOT reach `rts` — otherwise a
-    `stop_pc` run that fell through to `rts` would stop at the sentinel and pass silently.
+  * **Two exits never return.** GEMDOS Pterm ENDS the run — the kit models it, stopping the oracle
+    at the trap as a clean "reached" (TRAP_MODEL.md, Phase 13) — and R/r jumps back into _start.
+    Both are diffed at a checkpoint PC instead of at `rts`, and each is paired with a proof that the
+    run really does not come back, since a `stop_pc` run that fell through to `rts` would stop at
+    the sentinel and pass silently. R/r's proof is `_never_returns`; the quit path's is that a PC
+    past the trap is unreachable, the run having already ended there.
   * **Off-image traps.** Setscreen, two Ikbdws command strings, Kbdvbase, Super and Setpalette
     change no memory, so the image diff cannot see them at all. Their arguments are read back out of
     the oracle's own stack instead (`_pushed_words`), which is the only thing that can catch a wrong
@@ -60,7 +62,7 @@ ENTRY_HISCORE_FLASH_TAIL = 0x14494  # check_highscore's colour-cycle tail, enter
 # ---- checkpoint PCs (harness `stop_pc`) ----
 CHECKPOINT_BEFORE_PTERM = 0x11d4c  # stop here: the quit path's last image effect has run and
                                    # what follows is the `addq.w #4,a7` and GEMDOS Pterm's push+trap
-PTERM_RETURN_PC = 0x11d56         # where the unmodeled Pterm trap would return, if it ever did
+PTERM_RETURN_PC = 0x11d56         # the instruction after the Pterm trap: a PC no run ever reaches
 RESTART_ENTRY = 0x10006            # _start+6, where R/r jumps and never returns
 CHECKPOINT_ENTRY_LOOP = 0x1448e    # the head of check_highscore's name-entry loop: its whole setup
                                    # has run and the first `bsr` has not
@@ -305,6 +307,10 @@ def _never_returns(pokes, entry, cap=SPIN_CAP):
     — osh_run stops at the sentinel or the checkpoint and reports success either way — so every
     checkpointed branch is paired with this.
 
+    NOT for a branch that ends in GEMDOS Pterm: such a run reaches a defined ending, so this message
+    never comes and the pair would fail rather than prove anything. Assert `out_regs["terminated"]`
+    there instead (TRAP_MODEL.md, Phase 13).
+
     `cap` MUST leave room for everything the checkpointed run does before it blocks, or the pair
     degenerates into "this routine is slower than `cap`" (see HISCORE_ENTRY_SPIN_CAP).
     """
@@ -499,12 +505,13 @@ def test_poll_quit_key_ctrl_c_record_really_reaches_the_staged_file():
         == _hiscore_record(7)
 
 
-def test_poll_quit_key_ctrl_c_ends_in_an_unmodeled_pterm():
-    """WHY the checkpoint above exists. Run one instruction further — past the trap — and the model
-    rejects the whole run: Pterm ends the process, so there is no post-state to diff and no result
-    to serve. The quit path has no `rts` to stop at either."""
+def test_poll_quit_key_ctrl_c_ends_the_run_at_pterm():
+    """WHY the checkpoint above exists. Ask for the state one instruction further — past the trap —
+    and the model rejects the whole run: GEMDOS Pterm ENDS it (TRAP_MODEL.md, Phase 13), so the
+    oracle stops there and no PC beyond it is ever reached. The quit path has no `rts` to stop at
+    either, which is why every case above names a checkpoint in front of the trap."""
     pokes = _quit_pokes()
-    with pytest.raises(RuntimeError, match="unmodeled OS behaviour"):
+    with pytest.raises(RuntimeError, match="ended at a GEMDOS Pterm before reaching checkpoint"):
         emu.run(harness.make_image(pokes), ENTRY_POLL_QUIT_KEY, stop_pc=PTERM_RETURN_PC)
 
 

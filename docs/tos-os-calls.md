@@ -48,8 +48,8 @@ for it), which can hide most of a program — see
 ## Selectors you'll meet most
 
 **GEMDOS (trap #1):** `0x00` Pterm0, `0x09` Cconws, `0x20` Super, `0x2F` Fgetdta,
-`0x3C` Fcreate, `0x3D` Fopen, `0x3E` Fclose, `0x3F` Fread, `0x40` Fwrite, `0x42` Fseek,
-`0x48` Malloc, `0x4A` Mshrink, `0x4B` Pexec, `0x4C` Pterm.
+`0x3C` Fcreate, `0x3D` Fopen, `0x3E` Fclose, `0x3F` Fread, `0x40` Fwrite, `0x41` Fdelete,
+`0x42` Fseek, `0x48` Malloc, `0x4A` Mshrink, `0x4B` Pexec, `0x4C` Pterm.
 
 **XBIOS (trap #14):** `0x00` Initmous, `0x02` Physbase, `0x03` Logbase, `0x04` Getrez,
 `0x05` Setscreen, `0x06` Setpalette, `0x07` Setcolor, `0x11` Random, `0x18` Bioskeys,
@@ -157,7 +157,7 @@ wrappers; multi-purpose ones you name by hand. Then callers read as `Fread(...)`
 Before writing a model of any of these by hand, check what `tools/recreate_kit` serves — both its
 oracle's `trap` dispatch and a reconstruction's `os_*` wrappers run the same code, so a call it
 models is one a differential can already compare. Its contract is
-[`tools/recreate_kit/TRAP_MODEL.md`](../tools/recreate_kit/TRAP_MODEL.md); the four groups a reader
+[`tools/recreate_kit/TRAP_MODEL.md`](../tools/recreate_kit/TRAP_MODEL.md); the groups a reader
 of this file is most likely to be surprised are covered:
 
 | what | where |
@@ -165,11 +165,22 @@ of this file is most likely to be surprised are covered:
 | **GEM `trap #2`** — seventeen VDI opcodes including `vro_cpyfm`'s sixteen logic operations, `vr_recfl` and `v_gtext`, plus four AES ones. It really DRAWS ST pixels: a GEM program's `trap #2` is its output, not a call whose effect can be a no-op | `src/gem.c` over `src/raster.c`, Phases 11-12 |
 | **the console READS** — BIOS `Bconstat`/`Bconin` and GEMDOS `Cconis`/`Crawcin`/`Cnecin`/`Crawio`, all serving ONE staged queue of keystrokes, so a program that polls with one and reads with another sees the keys a case staged, in order, once | `include/os.h`, Phase 13 |
 | **GEMDOS `Fseek`** over the staged-file cursor, bounded by the file's reserved capacity rather than its length (seeking past the end is legal and is how a program extends a file) | `include/os.h`, Phase 13 |
-| **the calls that hand a byte to a DEVICE** — `Cconout`/`Cconws`/`Crawio`'s write direction, BIOS `Bconout` to device 4 (the IKBD), AES `graf_mouse`, VDI `v_show_c`/`v_hide_c`. They touch no memory, so they go to an ordered ledger both sides keep and the harness compares | `src/os_log.c` + `oracle/shim.c`, Phase 13 |
+| **the calls that hand a byte to a DEVICE** — `Cconout`/`Cconws`/`Crawio`'s write direction, `Cauxout` (AUX:), `Cprnout` (the printer), BIOS `Bconout` to device 4 (the IKBD), AES `graf_mouse`, VDI `v_show_c`/`v_hide_c`. They touch no memory, so they go to an ordered ledger both sides keep and the harness compares | `src/os_log.c` + `oracle/shim.c`, Phase 13 |
+| **the process ENDING** — GEMDOS `Pterm` (0x4c) stops the run AT the trap, reported as a clean "reached" exactly as an `rts` is, with the exit code in that same ledger (no image can carry "this process ended with status 2"). So a routine whose tail is `Pterm` is diffed at the termination instead of being unreachable, and `emu.run` reports `out_regs["terminated"]` to say which ending it had | `oracle/shim.c` + `include/os.h`, Phase 13 |
+| **GEMDOS `Fdelete`** (0x41) over the staged-file table, with `EFILNF` for a name the harness never declared — a modeled ANSWER rather than a fabricated one | `include/os.h`, Phase 13 |
 
-Everything the kit does not model **raises** rather than answering wrongly — `Pterm`, `Dgetdrv`,
-`Pexec`, `Ikbdws`, every other BIOS device and every GEM opcode outside that set. That is the point:
-a function cannot come back "verified" while hitting a call nobody modeled.
+Everything the kit does not model **raises** rather than answering wrongly — `Dgetdrv`, `Pexec`,
+`Cauxin` (0x03), `Pterm0` (0x00), every other BIOS device and every GEM opcode outside that set.
+That is the point: a function cannot come back "verified" while hitting a call nobody modeled.
+
+`Pterm0` is the one refusal that is a **decision** rather than a gap, and real GEMDOS does answer
+it as `Pterm(0)`. The oracle enters its GEMDOS arm on a PC match rather than on a `trap #1`
+instruction, so a runaway PC walking the zero-filled vector page arrives there on its own and the
+"call frame" is read off a zero stack: selector 0, return address 0. Modelling selector 0 would
+end every such run **cleanly** — a truncated image reported as a complete one — in place of the
+refusal that is the only sign the program left the rails. Measured on Joust's `update_egg_physics`
+cases: five of them are deliberate runaways whose entire evidence is that they never end, and all
+five go green the moment `Pterm0` is served.
 
 ## Validating a trap model against real TOS (headless)
 

@@ -630,10 +630,11 @@ They refuse rather than truncate: a short count the harness has no basis for is 
 alone, never a length; `harness._vet_os_memory_map()` pins it equal to the bound project's
 `image_size`, so a project that grows its image fails loudly instead of copying past the buffer.
 
-**Not captured.** No directories, no `Fseek`/`Fdelete`/`Fattrib`, no attribute or mode handling
-(`Fopen`'s mode and `Fcreate`'s attr word are ignored), no error codes — the model has exactly two
-answers, "served" and "refused". Writes do not persist beyond the run: staging is image state, so
-it is gone with the image copy.
+**Not captured.** No directories, no `Fattrib`, no attribute or mode handling (`Fopen`'s mode and
+`Fcreate`'s attr word are ignored), and one error code only — `os_fdelete`'s `EFILNF`, which Phase 13
+argues is a modeled ANSWER rather than a fabricated one; everything else here has exactly two
+outcomes, "served" and "refused". Writes do not persist beyond the run: staging is image state, so
+it is gone with the image copy. (`Fseek` and `Fdelete` were on this list until Phase 13 grew them.)
 
 The table layout is mirrored **field by field** in `harness.py` (`OS_FS_OFF_*`) rather than
 concatenated in order, and `test/test_os_memory_map.py` pins every offset against `os.h` — a field
@@ -1541,16 +1542,32 @@ and both `< 0` tests with it. Pinned by
 Making it reachable would mean letting `Fcreate` invent staging space for a name the harness never
 declared, which is the fabrication the model exists to refuse.
 
-**3. `Pterm` does not stop the run — and misreports itself.** It is unmodeled (below), so the shim
-counts it and then *resumes* the caller with a fabricated `D0 = 0`, because the trap dispatch has
-one exit path. Execution runs on past a call that should never return, until the instruction cap.
-Worse, the run can no longer stop at the sentinel even in principle: `Pterm`'s own
-`move.w #retcode,-(a7); move.w #$4c,-(a7)` lands on the sentinel long itself (Joust's quit path
-reaches `trap #1` with A7 back at `STACK_TOP + 4`), leaving `00 4c 00 00` where `00 00 00 02` was —
-the selector in the sentinel's **high word**. And `emu.run` tests `reached` *before* it tests the
-unmodeled causes, so what comes back is `did not reach rts within 200000 instructions` rather than
-the honest `unmodeled OS behaviour`. Diff such a path at a **checkpoint `stop_pc`** placed before
-the trap; with one set, the same run reports the honest cause.
+**3. `Pterm` did not stop the run — and misreported itself. CLOSED 2026-09-06 by modeling it**
+(Phase 13). It was unmodeled, so the shim counted it and then *resumed* the caller with a fabricated
+`D0 = 0`, because the trap dispatch had one exit path: execution ran on past a call that should never
+return, until the instruction cap. Worse, the run could no longer stop at the sentinel even in
+principle — `Pterm`'s own `move.w #retcode,-(a7); move.w #$4c,-(a7)` lands on the sentinel long
+itself (Joust's quit path reaches `trap #1` with A7 back at `STACK_TOP + 4`), leaving `00 4c 00 00`
+where `00 00 00 02` was, the selector in the sentinel's **high word**. And `emu.run` tests `reached`
+*before* it tests the unmodeled causes, so what came back was `did not reach rts within 200000
+instructions` rather than the honest `unmodeled OS behaviour`.
+
+`handle_trap` now ends such a run **at the sentinel itself**, by setting the PC rather than by
+letting the caller's clobbered stack decide, so none of the above applies: the run reports REACHED
+and the exit code is in the event ledger. **The checkpoint `stop_pc` idiom this limit recommended is
+still sound** and is what every existing case uses — a run stopped one instruction short of the trap
+diffs the same bytes — but it is no longer the only way to run such a path.
+
+**What did NOT survive is the PROOF those checkpoints are paired with.** A checkpoint diff on its own
+would pass on a routine that fell through to `rts`, so each is paired with a
+`pytest.raises(match="did not reach rts")` (`projects/joust`'s `_never_returns`, and Wonder Boy's
+copy of it) — and over a path ending in `Pterm` the oracle now reaches the sentinel, so that proof
+passes by TERMINATING rather than by never returning, which is not what it claims. `emu.run` reports
+`out_regs["terminated"]` for exactly this: such a pair should assert the ending it got, and a
+checkpoint the run terminates BEFORE is refused outright.
+
+**The limit that replaces it is narrower and lives in Phase 13:** the DEFAULT arm's selector, 0, is
+what a runaway PC reads when there was no GEMDOS call at all, so `Pterm0` stays refused.
 
 **4. Model writes bypass the write-set, so `poison` never checks them.** The `os_*` helpers reach
 `g_mem` directly rather than through `m68k_write_memory_*`, so nothing calls `logw` for them:
@@ -2258,18 +2275,20 @@ crashes the probe outright, 148 cases, which is what writing through a wrapped p
 
 ## Phase 13 — the CONSOLE, `Fseek`, `Bconout`, and the OFF-IMAGE OS EVENT LEDGER
 
-Four kinds of call that hand a byte to a device rather than storing one, plus the two GEMDOS calls
-that were missing from the console model and the one accessor of the staged-file cursor the model
-never grew.
+Every kind of call that hands a byte to a device rather than storing one — the console, the serial
+line, the printer, the IKBD — plus the process ENDING, the GEMDOS calls that were missing from the
+console model, the one accessor of the staged-file cursor the model never grew, and the one file
+call that deletes rather than reads or writes.
 
 ### The ledger
 
 > **One ordered `(kind, value)` stream**, `OS_EVENT_LOG_MAX` = 4096 entries, kept on BOTH sides —
 > `oracle/shim.c`'s mirror and `src/os_log.c`'s — and compared by `harness.differential`
 > (`_vet_os_event_state`). Kinds: `OS_EVENT_CONOUT` (a console byte, from GEMDOS `Cconout`, one byte
-> of a `Cconws`, or `Crawio`'s write direction), `OS_EVENT_IKBD` (a command byte, from BIOS `Bconout`
-> to device 4), `OS_EVENT_GEM_MOUSE` (AES `graf_mouse`'s mode), `OS_EVENT_VDI_CURSOR` (`v_show_c` /
-> `v_hide_c`).
+> of a `Cconws`, or `Crawio`'s write direction), `OS_EVENT_AUXOUT` (a byte to AUX:, from `Cauxout`),
+> `OS_EVENT_PRNOUT` (a byte to the printer, from `Cprnout`), `OS_EVENT_IKBD` (a command byte, from
+> BIOS `Bconout` to device 4), `OS_EVENT_GEM_MOUSE` (AES `graf_mouse`'s mode), `OS_EVENT_VDI_CURSOR`
+> (`v_show_c` / `v_hide_c`), and `OS_EVENT_PTERM` (the process ended, value = its exit code).
 
 The kinds have ONE Python home, `os_map.py`, pinned against `os.h` by `test_os_memory_map.py` the way
 the PSG ledger's are — `harness.py` re-exports them, and the kit's own `test_os_model.py` (which runs
@@ -2382,6 +2401,127 @@ The three doors onto the console, all three an `OS_EVENT_CONOUT` entry per byte.
   not tallied as a poked-input call, since a program that merely prints reads nothing. Bubble Ghost's
   own `Crawio` sites are all reads, and its C library prints through `Cconout`.
 
+### GEMDOS `Cauxout` (0x04) and `Cprnout` (0x05) — the console's two siblings
+
+The other two character devices a GEMDOS program can write, each with **a ledger kind of its own**.
+
+**Why not one shared "a byte went out somewhere" kind.** A reconstruction that printed to the screen
+what the original sent down the serial line writes the same nothing to the image, and under one kind
+its ledger would compare equal too. The device is half of what the call did.
+
+**`Cauxout` has no result at all.** Real GEMDOS declares it `VOID Cauxout(INT16)`, so the trap
+answers the model's own `0` — the "serviced, no image effect" every no-op call here answers. There
+is no result to be faithful to, and nothing may read one.
+
+**`Cprnout` answers `OS_CPRNOUT_SENT` = `-1L`, always.** Real GEMDOS answers 0 when the character
+could *not* be sent (the printer timed out) and non-zero when it was; TOS's non-zero is `-1`. **The
+model's printer never times out** — there is no device to be busy and no clock to time it against —
+so the 0 arm is unreachable on both sides. A reconstruction's wrapper must test the result the way
+the original does (non-zero = sent) rather than compare it against `-1`: on target the real trap is
+what answers, and there the timeout is real.
+
+**`Cauxin` (0x03) stays REFUSED, and is the mirror of the pair above.** The console has a staged
+keystroke queue behind it; the serial line has nothing at all — no builder, no poked field, no way
+for a case to put a byte there — and the real call BLOCKS until one arrives. Every answer would be
+invented, so `os_cauxin()` refuses unconditionally and the oracle's dispatch leaves selector 3 on its
+`default` arm. The day a case needs to feed the line, the shape is `os_console_take_key`'s over a
+second staged stream.
+
+**Reached by:** Bubble Ghost's C library, one site each and none of them on a path the game takes —
+`c_auxout_write` @ `0x16ba8` (`c_write`'s AUX: arm) and `c_prtout_write` @ `0x16bd6` (its PRT: arm),
+both of which ignore what the trap returns; `c_conin` @ `0x16518` takes `Cauxin` on the AUX: handle.
+
+### GEMDOS `Fdelete` (0x41) — the one file call that ANSWERS a GEMDOS error
+
+`Fdelete(fname)` over the staged-file table: **0** when the name is there, **`EFILNF` (-33)** when it
+is not. Deleting **clears the entry's name**, which is the whole of what makes a slot gone —
+`os_fs_find_slot` skips a slot whose name starts with a NUL and `os_fs_entry` reports one as unused —
+so a later `Fopen` of the name **refuses exactly as it refuses a name that was never staged**, and a
+handle still open on the slot refuses on its next `Fread`/`Fwrite`/`Fseek`/`Fclose`. Real GEMDOS lets
+a program delete a file it has open and leaves the handle stale, so that is the same shape.
+
+**Why EFILNF is an ANSWER here while `Fopen`'s identical "no such name" is a REFUSAL.** They look
+like one situation and are two:
+
+* `Fopen` has to hand back a HANDLE, and a handle is the door onto CONTENT the harness never staged.
+  There is nothing to serve, and answering `EFILNF` instead would send the program down an error path
+  on what is almost always a staging mistake — so it refuses, loudly and by name.
+* `Fdelete` has nothing to serve. Its whole observable outcome is the return code and the table edit,
+  and **both are fully determined by the table, which is the model's entire filesystem**. "The
+  harness declares the filesystem" (Phase 4) means a name it did not stage is a name that does not
+  exist: a fact the harness stated, not a value this model invented. Deleting a file that is not
+  there is a legal, deterministic outcome, and it gets TOS's own code for it.
+
+That is the only GEMDOS error code the model answers with, and `OS_EFILNF` is the only one it spells.
+
+**Reached by:** Bubble Ghost's `c_unlink` @ `0x16868`, whose sole caller is `c_open`'s truncating arm
+(`mode & OPEN_MODE_TRUNCATE`) — which `c_creat` never asks for.
+
+### GEMDOS `Pterm` (0x4c) — the run ENDS, and `Pterm0` (0x00) deliberately does not
+
+**The oracle ends the run at the trap, as a clean "returned".** `handle_trap` sets the PC to the
+run's sentinel and returns, so `osh_run`'s loop stops there and reports the run as REACHED, exactly
+as one arriving at the function's `rts` does. There is nothing after a `Pterm` to execute, so
+anything else would be a truncated run reported as a failure — and the routines that end this way
+(Bubble Ghost's `c_exit`, Joust's quit tail) have no `rts` to be diffed at otherwise. No register is
+set: on the real machine `Pterm` never comes back, so whatever `D0` held at the trap is the program's
+own leftover and not an answer the model is making. A run's registers after a `Pterm` are the
+project's business, not a claim.
+
+**The exit code goes in the ledger, and that is what makes the call comparable at all.** No image can
+carry "this process ended, with status 2": a reconstruction that terminated where the original did
+and one that simply ran off the end of the function leave the identical bytes behind. So both sides
+record `OS_EVENT_PTERM`, `harness.differential` compares the streams, and a mismatch **fails by
+name** — a missing entry on one side is *who terminated*, a differing value is the exit code, and
+`_os_event_text` prints it as `Pterm(0x2)`.
+
+**The candidate's `os_pterm(code)` cannot end anything, and a caller MUST RETURN IMMEDIATELY after
+it.** It is a C function reached from the candidate's glue, and the only way back to the harness is
+to return. A reconstruction that goes on running past `os_pterm` has executed instructions the
+original never executed. This is the one call in the model whose contract is on the CALLER, so it
+gets two surfaces rather than a comment:
+
+* a continuation that **stores into the image** is caught by the ordinary byte diff. The oracle
+  stopped at the trap, so its bytes are the state at the termination and the extra store is a plain
+  divergence.
+* a continuation that **makes any further OS event** is REFUSED by `g_os_event` itself
+  (`src/os_log.c`), which latches the recorded `Pterm`. The oracle cannot produce an event after one
+  — its run is over — so a second on the candidate's side can only be a run that carried on, and
+  `harness.differential`'s refusal check names it before anything is compared. `g_os_event_reset()`
+  clears the latch, which is why that function is now declared in `os.h`: it is part of the model's
+  contract rather than harness plumbing, and a C caller running two cases in one process must call it
+  between them.
+* **what neither sees** is a continuation that stores nothing and says nothing. That is left honestly
+  unpinned.
+
+**A TERMINATED RUN IS NOT A RETURNED ONE, and `osh_run`'s boolean cannot say which it was.** Both
+report REACHED. That matters for the idiom several projects pair a checkpoint diff with — a
+`pytest.raises(match="did not reach rts")` proving the routine never comes back — because on a path
+that ends in `Pterm` the oracle now *does* stop, and the proof passes by terminating rather than by
+never returning. Two things follow, both in this kit:
+
+* `emu.run` **refuses a run that terminated before a `stop_pc` it was given**: the case named the
+  point it wanted the state at and did not get there, so comparing at the termination instead would
+  be answering a different question. A run with no `stop_pc` is left alone — terminating IS an ending
+  for a routine that has no `rts`.
+* `emu.run` reports **`out_regs["terminated"]`** (from `osh_terminated()`), which is what a
+  never-returns proof over such a path should assert instead of the `rts` message.
+
+**`Pterm0` (0x00) is refused, although real GEMDOS answers it as `Pterm(0)`** — the one place this
+phase parts company with TOS on purpose. `osh_run` enters its trap arms on a **PC match** against
+`MAGIC_GEMDOS` rather than on a `trap #1` instruction, so a runaway PC walking the zero-filled vector
+page arrives at `0x120` on its own, and the "call frame" is then read off a zero stack: selector 0,
+return address 0. Modeling selector 0 would end every such run **cleanly** — a truncated image
+reported as a complete one — in place of the refusal that is the only sign the program went off the
+rails. Measured (2026-09-06): with `Pterm0` modeled, five of `projects/joust`'s `update_egg_physics`
+cases go green, each a deliberate runaway whose entire evidence is that it never ends. A zero
+selector is what "there was no GEMDOS call here" looks like, so it stays on the `default` arm. No
+game's C library needs it: Bubble Ghost's own exit path is `Pterm`.
+
+**Reached by:** Bubble Ghost's `c_exit_pterm` @ `0x14d16` (and `c_exit` @ `0x14d2c`, whose tail it
+is, reached from `crt0` and from `c_conin`'s Ctrl-C arm); Joust's quit tail at `0x11d4c` and its
+title screen's Ctrl-C branch.
+
 ### GEMDOS `Malloc` on the CANDIDATE side
 
 `os_malloc(size)` (`src/os_heap.c`) mirrors the bump allocator `shim.c` services the trap with: round
@@ -2425,23 +2565,81 @@ doing that now calls `os_malloc` like everyone else.
 
 `test/test_os_model.py` again: the trap cases run each GEMDOS/BIOS selector through `shim.c`'s own
 stack-frame decode and assert D0, the unmodeled tally and the ledger; the ledger case drives all four
-kinds through the candidate in one order; `Crawio` is run both ways (the write logged and the staged
-key left alone; the read taken and nothing logged); the console-queue case walks three staged keys
-and then meets the refusal; and the Malloc cases compare the oracle's second block against the
-candidate's and drive the query, the ceiling and the base install. `test/test_os_refusal.py` pins
-every refusal site (`Crawcin`/`Cnecin` idle, the five `Fseek` shapes, the VDI/raster ones and the
-three patterned fill interiors) to the candidate's tally.
+of the original kinds through the candidate in one order; `Crawio` is run both ways (the write logged
+and the staged key left alone; the read taken and nothing logged); the console-queue case walks three
+staged keys and then meets the refusal; and the Malloc cases compare the oracle's second block
+against the candidate's and drive the query, the ceiling and the base install.
 
-Measured 2026-09-06, six mutants of the code this phase owns: making `Cconws` log as it walks rather
-than measure first reddens 1 case, dropping `Crawio`'s write-direction ledger entry reddens 2,
-returning the arena base from `Malloc(-1)` reddens 2, dropping `os_malloc`'s ceiling refusal reddens
-1, dropping the queue shift so every read returns the head reddens 1, and dropping the `trap #2`
-ledger entry in `shim.c` reddens 6.
+**The five calls added on 2026-09-06 are each driven through BOTH doors** — `shim.c`'s trap decode
+and the `os_*` helper a reconstruction calls — from the same starting image, since one model
+underneath means what a per-side door can break is an argument read from the wrong stack slot, a
+result the trap forgets to set, or an event one side's ledger never receives. `Fdelete` runs staged
+(0, and the slot's name gone), unstaged (`EFILNF`, and no OTHER slot removed) and then-`Fopen` (the
+refusal the delete leaves behind); `Cauxout` and `Cprnout` each assert their own kind and their own
+result; `Cauxin` asserts the refusal and an EMPTY ledger on both doors; `Pterm` asserts the clean
+`reached`, the exit code in the ledger, and — through a canary store planted immediately after the
+trap — that **nothing after it ran**; `Pterm0` asserts the refusal and that the trap RETURNED, which
+is the same canary read the other way. `test_os_refusal.py` adds `event_after_pterm`, which is the
+caller contract's own case: an event recorded after a `Pterm` moves the tally.
+
+**`test/test_pterm_run.py` pins the layer above the trap**, which needs a bound project and so runs
+on `kit_smoke_project`'s miniature one: that a terminating run comes back rather than being rejected,
+that the instruction after the trap did not execute, that `out_regs["terminated"]` tells the two
+endings apart (paired with an `rts` run, or the flag could be always-true), that a `stop_pc` the run
+terminates before is refused, and — through `kit_candidate.c`'s `g_pterm` and `g_pterm_then_speaks` —
+that a candidate terminating where the original did agrees while one that carries on is refused.
+
+**The `Pterm0` case pins the refusal and not the instruction cap**, which took a second pass to get
+right. Its planted routine has to CLEAN THE STACK before its `rts` — the terminating case does not
+need to and the refused one does — because without that the refused run pops the pushed selector as
+its return address, lands on PC 0 and walks the zero-filled vector page. Measured: at
+`PROBE_MAX_INSNS = 64` that walk halts eight instructions short of `MAGIC_GEMDOS` and the case passes
+for the wrong reason; at 256 it arrives, re-enters the trap on a zero frame, and `unmodeled` climbs
+to 4. The case now also asserts `reached == 1`, so a runaway is a failure rather than a coincidence —
+the asymmetry that hid it was `trap_pterm` asserting `reached` and `trap_pterm0` not.
+
+`test/test_os_refusal.py` pins every refusal site (`Crawcin`/`Cnecin` idle, `Cauxin`, the five
+`Fseek` shapes, the `Fopen` a delete leaves behind, the VDI/raster ones and the three patterned fill
+interiors) to the candidate's tally, and the mirror half — `Cauxout`, `Cprnout`, `os_pterm` and both
+`Fdelete` answers must move it by 0, or every case making one would fail the differential for no
+reason.
+
+Measured 2026-09-06, six mutants of the code this phase owned before the five calls: making `Cconws`
+log as it walks rather than measure first reddens 1 case, dropping `Crawio`'s write-direction ledger
+entry reddens 2, returning the arena base from `Malloc(-1)` reddens 2, dropping `os_malloc`'s ceiling
+refusal reddens 1, dropping the queue shift so every read returns the head reddens 1, and dropping
+the `trap #2` ledger entry in `shim.c` reddens 6.
+
+Measured 2026-09-06, fourteen more for the five calls, one per behaviour they own — all caught, none
+survived: `Fdelete` answering 0 for a missing name reddens 2 and leaving the slot staged reddens 4;
+dropping `Cauxout`'s ledger entry in `shim.c` reddens 1 and giving it the CONSOLE kind instead of its
+own reddens 1; `Cprnout` answering 0 rather than "sent" reddens 1; `os_cauxin` refusing without
+tallying reddens 2; `Pterm` returning from the trap instead of ending the run reddens 5, recording a
+fixed exit code reddens 4 and recording nothing reddens 4; the candidate's `os_pterm` recording
+nothing reddens 4; recording an event AFTER one instead of refusing it reddens 2; never setting
+`g_terminated` reddens 2 and serving a `stop_pc` the run terminated before reddens 1; and modeling
+`Pterm0` as `Pterm(0)` reddens 1 here — plus the five `projects/joust` cases named in its own section
+above, which is the measurement that decided it.
+
+**The `g_terminated` mutant SURVIVED the first sweep, and the hole was the sweep's.** `make` compares
+mtimes at about one-second granularity, so a script that edits `oracle/shim.c` and immediately builds
+gets the PREVIOUS `liboracle.so` — every `shim.c` mutant above was in fact being measured against a
+stale oracle by the four suites that load it, and only the ones the C probes catch (those recompile
+`shim.c` from source on every run) were reporting honestly. The three `Pterm` figures rose from
+2/2/2 to 5/4/4 once the sweep `rm`'d the artifact first. A mutation sweep over this kit must delete
+`oracle/build/liboracle.so` before each rebuild, and must count pytest's ERRORS as well as its
+failures — a mutant that makes a run overrun its instruction cap raises inside a fixture.
 
 `Cconws` logging as it walks was the one that SURVIVED the first sweep, and the hole it named was
 real: every case staged a terminated string, so nothing ever reached the refusal the ordering is
 about. `trap_cconws_unterminated` — a string laid at the end of the image with no NUL — is the case
 that closed it, and it asserts the empty ledger rather than only the refusal.
+
+A near-miss worth the same note, found while writing the `Pterm` canary: the store planted after the
+trap was first encoded `move.b #imm,(xxx).W` (`11 fc`) and not `.L` (`13 fc`), so it wrote to the top
+half of its own destination address and the canary could never change — a case that passed however
+the model behaved. **A planted-opcode probe asserting that something did NOT happen has to be shown
+happening once**, which is what the `Pterm0` case now does with the same store.
 
 ---
 
@@ -2474,8 +2672,13 @@ over: a slot whose write updates what a later read is served, which is not a fab
 value is one the run itself produced, identically on both sides. Zynaps slices around the four spins
 rather than model them; `projects/zynaps/recreate/STATUS.md` records the twenty bytes that costs.
 
-`Pterm` (0x4c) and `Dgetdrv` (0x19) both appear in Joust and are **not** modeled. `Pterm` ends the
-process and never returns, so there is no post-state to diff; `Dgetdrv`'s answer is a property of
-the machine the harness does not have. `Pexec`, `Fdelete`, `Cauxin`/`Cauxout`/`Cprnout`, GEM opcodes
-outside the set in Phase 12, and every BIOS selector but `Bconstat`/`Bconin`/`Bconout(dev 4)` are in
-the same position. They raise.
+`Dgetdrv` (0x19) appears in Joust and is **not** modeled: its answer is a property of the machine the
+harness does not have. `Pexec`, `Cauxin` (0x03), `Pterm0` (0x00), GEM opcodes outside the set in
+Phase 12, and every BIOS selector but `Bconstat`/`Bconin`/`Bconout(dev 4)` are in the same position.
+They raise. `Cauxin` and `Pterm0` have reasons of their own rather than "nobody has needed it" —
+Phase 13's `Cauxout`/`Cprnout` and `Pterm` sections say what each would take.
+
+`Pterm` (0x4c) and `Fdelete` (0x41) used to be on this list and are modeled as of 2026-09-06; the
+note that `Pterm` "ends the process and never returns, so there is no post-state to diff" was the
+right observation and the wrong conclusion — the run ends at the trap as a clean `reached`, and what
+the image cannot carry goes in the event ledger instead.

@@ -51,7 +51,18 @@ EVENT_CONOUT = os_map.OS_EVENT_CONOUT
 EVENT_IKBD = os_map.OS_EVENT_IKBD
 EVENT_GEM_MOUSE = os_map.OS_EVENT_GEM_MOUSE
 EVENT_CURSOR = os_map.OS_EVENT_VDI_CURSOR
+EVENT_AUXOUT = os_map.OS_EVENT_AUXOUT
+EVENT_PRNOUT = os_map.OS_EVENT_PRNOUT
+EVENT_PTERM = os_map.OS_EVENT_PTERM
 RASTER_OP_S_ONLY_INDEX = 3           # include/raster.h's RASTER_OP_S_ONLY: a plain copy
+
+# What the five calls this file's last section drives answer with. os.h is the definition and these
+# are the pin: a value changed there without a reason moves a case here, which is the point.
+EFILNF = 0xFFFFFFDF                  # os.h's OS_EFILNF (-33), as the trap leaves it in D0
+CPRNOUT_SENT = 0xFFFFFFFF            # os.h's OS_CPRNOUT_SENT: non-zero = the character went out
+REFUSED_HANDLE = 0xFFFFFFFF          # what os_fopen and os_cauxin hand back when they refuse
+DEVICE_CHAR = ord("A")               # the byte os_model_probe.c's AUX:/printer cases send
+PTERM_EXIT_CODE = 2                  # ...and the status its Pterm cases end with
 
 # ---- the reference implementation --------------------------------------------------------------
 # The sixteen VDI logic operations, written out one per line rather than derived from a truth-table
@@ -226,6 +237,11 @@ def test_the_probe_ran_every_case(cases):
         "wrapping_contrl", "wrapping_ptsout", "wrapping_intout",
         "recfl_off_bottom_right", "recfl_off_top_left", "recfl_hollow",
         "recfl_pattern", "recfl_hatch", "recfl_user",
+        "trap_fdelete", "trap_fdelete_unstaged", "trap_fdelete_then_fopen",
+        "direct_fdelete", "direct_fdelete_unstaged", "direct_fdelete_then_fopen",
+        "trap_cauxout", "trap_cprnout", "direct_cauxout", "direct_cprnout",
+        "trap_cauxin", "direct_cauxin",
+        "trap_pterm", "trap_pterm0", "direct_pterm",
     }
     expected |= {f"{door}_{side}" for door in DOOR_CASES for side in ("trap", "direct")}
     assert expected <= set(cases), f"the probe printed no scalars for {sorted(expected - set(cases))}"
@@ -565,6 +581,134 @@ def test_bconout_to_any_other_device_is_refused(cases):
     serial line or MIDI, so it refuses rather than answering wrongly."""
     assert cases["trap_bconout_console"]["scalars"]["unmodeled"] == 1
     assert cases["trap_bconout_console"]["ledger"] == []
+
+
+# ---- Fdelete, Cauxout/Cprnout, Cauxin and Pterm: both doors onto each -----------------------------
+# One model underneath, two per-side doors over it: shim.c's own stack-frame decode, and the `os_*`
+# helper a reconstruction calls. What a door can break is reading an argument from the wrong slot,
+# forgetting the result, or never handing the event to its side's ledger.
+# The two doors, and the scalar each reports its "the model would not serve this" tally under: the
+# oracle counts unmodeled traps, the candidate counts refusals. Both must be 0 for every Fdelete,
+# which is the whole claim that it ANSWERS rather than refuses.
+FDELETE_DOORS = (("trap", "unmodeled"), ("direct", "refusals"))
+
+
+@pytest.mark.parametrize("door, tally", FDELETE_DOORS)
+def test_fdelete_removes_the_staged_slot_on_both_doors(cases, door, tally):
+    """0, and the file is gone. Clearing the name is what makes it gone: nothing else in the model
+    asks whether a slot is 'in use'."""
+    scalars = cases[f"{door}_fdelete"]["scalars"]
+    assert scalars["d0"] == 0, "Fdelete of a staged name did not succeed"
+    assert scalars["slot_in_use"] == 0, "the slot survived the delete"
+    assert scalars[tally] == 0
+
+
+@pytest.mark.parametrize("door, tally", FDELETE_DOORS)
+def test_deleting_a_name_the_harness_never_staged_answers_efilnf(cases, door, tally):
+    """A MODELED ANSWER, not a refusal — the one file call that has one. The staged-file table is
+    the model's entire filesystem, so a name the harness did not stage is a name that does not
+    exist: that is a fact the harness declared, and deleting a file that is not there is a legal,
+    deterministic outcome with a GEMDOS error code of its own. os_fopen's identical "no such name"
+    still refuses because a handle is the door onto CONTENT nobody staged (os.h)."""
+    scalars = cases[f"{door}_fdelete_unstaged"]["scalars"]
+    assert scalars["d0"] == EFILNF, "not GEMDOS's EFILNF (-33)"
+    assert scalars["slot_in_use"] == 1, (
+        "deleting a name the table does not hold removed some OTHER slot")
+    assert scalars[tally] == 0, (
+        "EFILNF was counted as a call the model would not serve, which rejects the whole run")
+
+
+def test_opening_a_deleted_name_is_refused_like_an_unstaged_one(cases):
+    """What the delete LEAVES BEHIND, and the reason the answer above costs nothing: after it the
+    name is not in the table, so every later call about it takes the path an unstaged name always
+    took — the oracle rejects the run, the candidate tallies a refusal."""
+    assert cases["trap_fdelete_then_fopen"]["scalars"]["unmodeled"] == 1
+    assert cases["direct_fdelete_then_fopen"]["scalars"]["d0"] == REFUSED_HANDLE
+    assert cases["direct_fdelete_then_fopen"]["scalars"]["refusals"] == 1
+
+
+@pytest.mark.parametrize("door, kind", (
+    ("cauxout", EVENT_AUXOUT),
+    ("cprnout", EVENT_PRNOUT),
+))
+def test_the_other_two_character_devices_get_a_ledger_kind_of_their_own(cases, door, kind):
+    """AUX: and the printer are off-image exactly as the console is, and they are SEPARATE kinds: a
+    reconstruction that printed to the screen what the original sent to the serial line would be
+    byte-identical, and one shared kind would compare equal too."""
+    assert cases[f"trap_{door}"]["ledger"] == [(kind, DEVICE_CHAR)]
+    assert cases[f"direct_{door}"]["ledger"] == [(kind, DEVICE_CHAR)]
+    assert cases[f"trap_{door}"]["scalars"]["unmodeled"] == 0
+    assert cases[f"direct_{door}"]["scalars"]["refusals"] == 0
+
+
+def test_cauxout_answers_nothing_and_cprnout_answers_sent(cases):
+    """Real GEMDOS gives Cauxout no result at all, so the trap answers the model's own 0; Cprnout
+    answers non-zero for "the character went out", and the model's printer cannot time out, so its
+    0 arm is unreachable on both sides."""
+    assert cases["trap_cauxout"]["scalars"]["d0"] == 0
+    assert cases["trap_cprnout"]["scalars"]["d0"] == CPRNOUT_SENT
+    assert cases["direct_cprnout"]["scalars"]["d0"] == CPRNOUT_SENT, (
+        "the two doors onto Cprnout answered differently")
+
+
+def test_cauxin_is_refused_on_both_doors_and_ledgers_nothing(cases):
+    """The serial line has no staged stream behind it — nothing can put a byte there — and the real
+    call BLOCKS until one arrives, so every answer would be invented. A refused call leaves no trace
+    on either ledger."""
+    assert cases["trap_cauxin"]["scalars"]["unmodeled"] == 1
+    assert cases["trap_cauxin"]["ledger"] == []
+    assert cases["direct_cauxin"]["scalars"]["d0"] == REFUSED_HANDLE
+    assert cases["direct_cauxin"]["scalars"]["refusals"] == 1
+    assert cases["direct_cauxin"]["ledger"] == []
+
+
+def test_pterm_ends_the_run_cleanly_with_its_exit_code_in_the_ledger(cases):
+    """Pterm is the process ending, which no image can carry: a reconstruction that terminated where
+    the original did and one that ran off the end of the function leave the same bytes behind. The
+    run finishes as a clean `reached` — there is nothing after the trap to execute — and the ledger
+    entry is what says it happened, and with which status."""
+    assert cases["trap_pterm"]["scalars"]["reached"] == 1, (
+        "a terminating run must end as cleanly as one reaching its rts, or every case that makes "
+        "one fails as a truncated run instead")
+    assert cases["trap_pterm"]["scalars"]["unmodeled"] == 0
+    assert cases["trap_pterm"]["ledger"] == [(EVENT_PTERM, PTERM_EXIT_CODE)]
+
+
+def test_nothing_after_the_pterm_trap_is_executed(cases):
+    """The half a ledger entry alone would not carry. A model that serviced Pterm and then RETURNED
+    from the trap would go on running the program's next instruction — which the original never
+    reached — and its stores would land in the image on that side only."""
+    assert cases["trap_pterm"]["scalars"]["ran_past_trap"] == 0
+
+
+def test_pterm0_is_refused_rather_than_read_as_pterm_zero(cases):
+    """Real GEMDOS answers selector 0 as Pterm(0) and this model will not, which is the one place
+    Phase 13 deliberately parts company with TOS.
+
+    `osh_run` enters its trap arms on a PC MATCH against MAGIC_GEMDOS rather than on a `trap #1`
+    instruction, so a RUNAWAY pc walking the zero-filled vector page arrives there by itself and the
+    "call frame" is then read off a zero stack: selector 0, return address 0. Modeling it would end
+    every such run CLEANLY — a truncated image reported as a complete one — in place of the refusal
+    that is the only sign the program went off the rails. Measured on projects/joust: five
+    `update_egg_physics` cases, each a deliberate runaway whose whole evidence is that it never
+    ends, reach exactly that frame. So the run is refused, and the trap RETURNS (the store after it
+    runs), which is what an unmodeled selector has always done."""
+    assert cases["trap_pterm0"]["scalars"]["unmodeled"] == 1
+    assert cases["trap_pterm0"]["ledger"] == []
+    assert cases["trap_pterm0"]["scalars"]["ran_past_trap"] == 1, (
+        "a refused selector must leave the run alone — this one ended it")
+    assert cases["trap_pterm0"]["scalars"]["reached"] == 1, (
+        "the refused run did not come back to the sentinel, so `unmodeled` above counts whatever it "
+        "hit while running away rather than the one refused selector this case is about")
+
+
+def test_the_candidate_records_the_same_pterm_the_trap_does(cases):
+    """The candidate's door is `os_pterm`, which cannot END anything — it is a C call and the only
+    way back to the harness is to return, so a reconstruction must return immediately after it
+    (os.h). What it CAN do is record the same entry, which is what the differential compares."""
+    assert cases["direct_pterm"]["ledger"] == cases["trap_pterm"]["ledger"]
+    assert cases["direct_pterm"]["ledger"] == [(EVENT_PTERM, PTERM_EXIT_CODE)]
+    assert cases["direct_pterm"]["scalars"]["refusals"] == 0
 
 
 # ---- GEMDOS Malloc: two implementations of one bump allocator -----------------------------------

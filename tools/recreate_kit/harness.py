@@ -286,6 +286,9 @@ OS_EVENT_CONOUT = os_map.OS_EVENT_CONOUT
 OS_EVENT_IKBD = os_map.OS_EVENT_IKBD
 OS_EVENT_GEM_MOUSE = os_map.OS_EVENT_GEM_MOUSE
 OS_EVENT_VDI_CURSOR = os_map.OS_EVENT_VDI_CURSOR
+OS_EVENT_AUXOUT = os_map.OS_EVENT_AUXOUT
+OS_EVENT_PRNOUT = os_map.OS_EVENT_PRNOUT
+OS_EVENT_PTERM = os_map.OS_EVENT_PTERM
 # ...and the VDI's share of the same block: its two input devices and its workstation state.
 OS_MOUSE = os_map.OS_MOUSE
 OS_MOUSE_OFF_X = os_map.OS_MOUSE_OFF_X
@@ -1072,29 +1075,35 @@ def _vet_write_ledger_below_cap(entry, o_regs):
 
 # The off-image OS event ledger's kinds, spelt for a human reading a failure.
 _OS_EVENT_NAMES = {OS_EVENT_CONOUT: "Cconout", OS_EVENT_IKBD: "Bconout(IKBD)",
-                   OS_EVENT_GEM_MOUSE: "graf_mouse", OS_EVENT_VDI_CURSOR: "cursor"}
+                   OS_EVENT_GEM_MOUSE: "graf_mouse", OS_EVENT_VDI_CURSOR: "cursor",
+                   OS_EVENT_AUXOUT: "Cauxout", OS_EVENT_PRNOUT: "Cprnout",
+                   OS_EVENT_PTERM: "Pterm"}
+# The kinds whose value is a CHARACTER, so a diverging string reads as one. Pterm's is an exit code
+# and the IKBD's is a command byte — showing either as a letter would be actively misleading.
+_OS_EVENT_CHARACTER_KINDS = (OS_EVENT_CONOUT, OS_EVENT_AUXOUT, OS_EVENT_PRNOUT)
 
 
 def _os_event_text(events):
-    """One readable line for an ordered OS event stream. Console bytes are shown as characters where
+    """One readable line for an ordered OS event stream. Device bytes are shown as characters where
     they are printable, because a diverging string is what a reader is almost always looking at."""
     def one(kind, value):
         name = _OS_EVENT_NAMES.get(kind, f"kind {kind}")
-        if kind == OS_EVENT_CONOUT and 0x20 <= value < 0x7F:
+        if kind in _OS_EVENT_CHARACTER_KINDS and 0x20 <= value < 0x7F:
             return f"{name}({chr(value)!r})"
         return f"{name}({value:#x})"
     return "[" + ", ".join(one(kind, value) for kind, value in events) + "]"
 
 
 def _vet_os_event_state(entry, o_regs):
-    """Compare the two sides' ordered off-image OS event streams — console bytes, IKBD command bytes
-    and the cursor-visibility calls (TRAP_MODEL.md, Phase 13).
+    """Compare the two sides' ordered off-image OS event streams — console, AUX: and printer bytes,
+    IKBD command bytes, the cursor-visibility calls, and the process ENDING (TRAP_MODEL.md, Phase 13).
 
-    None of those touch the image, so a reconstruction that prints nothing, sends no IKBD command or
-    leaves the pointer showing is byte-identical to one that gets them right; this is the only thing
-    that can tell them apart. Unconditional, unlike the Dosound ledger's check: every candidate links
-    src/os_log.c (the ABI is required at import), so there is no "candidate cannot answer" case to
-    branch on.
+    None of those touch the image, so a reconstruction that prints nothing, sends no IKBD command,
+    leaves the pointer showing or runs on past a `Pterm` the original made is byte-identical to one
+    that gets them right; this is the only thing that can tell them apart — a `Pterm` entry the other
+    side lacks IS "who terminated", and a differing value is the exit code. Unconditional, unlike the
+    Dosound ledger's check: every candidate links src/os_log.c (the ABI is required at import), so
+    there is no "candidate cannot answer" case to branch on.
     """
     oracle = [tuple(event) for event in o_regs.get("events", [])]
     n = _lib.g_os_event_count()
@@ -1793,9 +1802,10 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     It is REFUSED over a byte the run's own ``schedule`` also stores: the agent's store lands on both
     sides from the same list and overwrites the canary, so a candidate that never made the
     function's store would match anyway and the pass would report an attribution it did not make.
-    Both sides' ordered OFF-IMAGE OS EVENT stream is compared too, always: console bytes, IKBD
-    command bytes and the mouse/cursor-visibility calls touch no memory, so nothing else could tell a
-    reconstruction that makes them from one that does not (``_vet_os_event_state``).
+    Both sides' ordered OFF-IMAGE OS EVENT stream is compared too, always: console, AUX: and printer
+    bytes, IKBD command bytes, the mouse/cursor-visibility calls and the process ENDING (GEMDOS
+    ``Pterm``) touch no memory, so nothing else could tell a reconstruction that makes them from one
+    that does not (``_vet_os_event_state``).
     How far each side's modeled Malloc ARENA grew is compared too, whenever EITHER side allocated
     (``_vet_heap_pointers_agree``): the bump pointer is off-image on both sides, so a reconstruction
     that asks for the wrong size — or never allocates at all — lands its next block where the

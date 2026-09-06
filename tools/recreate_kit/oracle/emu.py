@@ -126,6 +126,7 @@ if _LIB.osh_max_writes() != MAX_WRITES:
         f"set would be reported as a complete one. Rebuild with `make -C tools/recreate_kit oracle`.")
 _LIB.osh_write_addrs.restype = _u32p
 _LIB.osh_unmodeled.restype = ctypes.c_uint32
+_LIB.osh_terminated.restype = ctypes.c_int
 _LIB.osh_min_a7.restype = ctypes.c_uint32
 _LIB.osh_heap.restype = ctypes.c_uint32
 _LIB.osh_malloc_count.restype = ctypes.c_uint32
@@ -1232,6 +1233,18 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
 
     reached = _LIB.osh_run(buf, loader.IMAGE_SIZE, entry & 0xFFFFFFFF, dregs, aregs,
                            STACK_TOP, SENTINEL, stop_pc & 0xFFFFFFFF, max_insns, out)
+    # A TERMINATED RUN IS "REACHED", AND THAT IS NOT WHAT A CHECKPOINT CASE ASKED FOR. `osh_run`
+    # stops a GEMDOS Pterm at the sentinel, so its boolean cannot tell the two endings apart
+    # (TRAP_MODEL.md, Phase 13): a run that terminates BEFORE the `stop_pc` it was given comes back
+    # reporting success, and its memory would then be compared at the Pterm rather than at the point
+    # the case chose. Refused, loudly and by name, because the case's own claim is about that point.
+    # A run with no `stop_pc` is left alone: terminating IS an ending for a routine that has no
+    # `rts`, and `out_regs["terminated"]` below is how a caller asks which one it got.
+    if reached and stop_pc and _LIB.osh_terminated():
+        raise RuntimeError(f"function @ {entry:#x} ended at a GEMDOS Pterm before reaching "
+                           f"checkpoint {stop_pc:#x}; its final memory is the state at the "
+                           f"termination, not at the point this case asked for. Move the checkpoint "
+                           f"before the trap, or drop it and diff the terminated run")
     if not reached:
         where = f"checkpoint {stop_pc:#x}" if stop_pc else "rts"
         # A schedule that never fired is the likeliest cause of an overrun on a routine that has a
@@ -1362,6 +1375,11 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     # `_vet_hw_reads_are_declared` above: recorded for every run, refused where it could go green
     # for the wrong reason.
     out_regs["writes_truncated"] = _LIB.osh_num_writes() >= MAX_WRITES
+    # Which ENDING this run had: True when it stopped at a GEMDOS Pterm rather than at its rts or its
+    # checkpoint. `osh_run`'s boolean says only that it ended somewhere defined, so a case pairing a
+    # checkpoint diff with a "this routine never returns" proof needs this to say WHY it did not
+    # return — without it such a pair passes on a terminating path while proving nothing.
+    out_regs["terminated"] = bool(_LIB.osh_terminated())
     out_regs["min_a7"] = _LIB.osh_min_a7()   # deepest stack pointer; used to vet diff exclude bands
     out_regs["heap"] = _LIB.osh_heap()       # Malloc bump pointer at the end of the run (diagnostics)
     out_regs["malloc_calls"] = _LIB.osh_malloc_count()   # serviced GEMDOS Malloc traps this run

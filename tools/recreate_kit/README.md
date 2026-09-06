@@ -151,14 +151,21 @@ byte to a device instead of storing one:
 | --- | --- | --- |
 | `g_os_event_reset` | `void(void)` | clear the ledger before each candidate run |
 | `g_os_event_count` / `g_os_event_kinds` / `g_os_event_values` | | the ordered `(kind, value)` stream |
-| `g_os_event` | `void(uint16_t, uint32_t)` | the recording side, which `os_cconout()` / `os_ikbd_out()` call |
+| `g_os_event` | `void(uint16_t, uint32_t)` | the recording side, which `os_cconout()` / `os_cauxout()` / `os_cprnout()` / `os_ikbd_out()` / `os_pterm()` call |
 
-GEMDOS `Cconout`/`Cconws`/`Crawio`'s write direction, BIOS `Bconout` to the IKBD, AES `graf_mouse`
-and VDI `v_show_c`/`v_hide_c` touch no memory, so a reconstruction that prints nothing or leaves the GEM pointer showing is
-byte-identical to one that gets them right; this is the only thing that can tell them apart. Required
+GEMDOS `Cconout`/`Cconws`/`Crawio`'s write direction, `Cauxout`, `Cprnout`, BIOS `Bconout` to the
+IKBD, AES `graf_mouse` and VDI `v_show_c`/`v_hide_c` touch no memory, and neither does GEMDOS
+`Pterm` — so a reconstruction that prints nothing or leaves the GEM pointer showing is byte-identical
+to one that gets them right, and this is the only thing that can tell them apart. Required
 rather than probed, because every candidate links `src/os_log.c` and an absent ledger would be
 compared against an oracle stream that does exist. An on-target build supplies its own `g_os_event`
 and does not compile the file, exactly as it does for `g_dosound`.
+
+**`os_pterm()` is the one whose contract is on its CALLER**: it cannot end anything from the
+candidate side — it is a C call and the only way back to the harness is to return — so a
+reconstruction must `return` immediately after it. `g_os_event` enforces the half it can, refusing
+any further event once a `Pterm` is recorded; a continuation that stores into the image is caught by
+the byte diff; one that does neither is unpinned. See `TRAP_MODEL.md`, "Phase 13".
 
 The FIFTH is the **candidate's Malloc arena** itself:
 

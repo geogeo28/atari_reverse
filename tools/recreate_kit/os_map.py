@@ -56,6 +56,9 @@ OS_EVENT_CONOUT = 1          # value = a character byte written to the console
 OS_EVENT_IKBD = 2            # value = a command byte sent to the IKBD (BIOS Bconout, device 4)
 OS_EVENT_GEM_MOUSE = 3       # value = AES graf_mouse's mode word
 OS_EVENT_VDI_CURSOR = 4      # value = 1 for VDI v_show_c, 0 for v_hide_c
+OS_EVENT_AUXOUT = 5          # value = a character byte written to AUX: (GEMDOS Cauxout)
+OS_EVENT_PRNOUT = 6          # value = a character byte written to the printer (GEMDOS Cprnout)
+OS_EVENT_PTERM = 7           # value = the exit code the process ended with (GEMDOS Pterm)
 
 # ---- the staged-file table's base (mirror of include/os.h) ----
 # Here rather than with the rest of the file-staging map in ``harness.py`` for this module's first

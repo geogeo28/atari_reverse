@@ -38,9 +38,9 @@ const uint32_t *osh_event_values(void);
 uint32_t        osh_unmodeled(void);
 uint32_t        osh_poked_input_calls(void);
 
-/* ...and the CANDIDATE's ledger accessors (src/os_log.c). os.h declares only the recording side,
- * because the harness reads these three by ctypes and no C caller has ever needed them. */
-void            g_os_event_reset(void);
+/* ...and the CANDIDATE's ledger READ-BACK accessors (src/os_log.c). os.h declares the recording side
+ * and the reset; these three are read by the harness through ctypes, and this probe is the only C
+ * caller they have ever had. */
 uint32_t        g_os_event_count(void);
 const uint16_t *g_os_event_kinds(void);
 const uint32_t *g_os_event_values(void);
@@ -131,10 +131,31 @@ const uint32_t *g_os_event_values(void);
 #define WRAP_CANARY_BYTES  32u
 #define BIOS_DEV_CONSOLE 2           /* a device Bconout does NOT model: the refusal case */
 
-/* The staged file the Fseek case seeks in. */
-#define FS_NAME_ADDR  0x30c00u
-#define FS_FILE_BYTES 8u
-#define FS_CAPACITY   16u
+/* The staged file the Fseek and Fdelete cases work on, and a name the table never holds. */
+#define FS_NAME_ADDR   0x30c00u
+#define FS_ABSENT_NAME 0x30c20u
+#define FS_FILE_BYTES  8u
+#define FS_CAPACITY    16u
+
+/* ---- the five calls the last section of main() drives, on both doors ----
+ * `move.b #imm,(xxx).l` is what the Pterm cases plant AFTER the trap: the process ends there, so a
+ * run that executes it has run instructions the original never did, and the canary is what says so.
+ * (13 fc | imm word, the byte in its low half | the 32-bit destination. NOT 11 fc, which is the
+ * same store to a WORD absolute address and would take the destination's top half as the whole
+ * address and its bottom half as the next instruction — leaving the canary untouched however the
+ * model behaved, which is a case that passes without asking anything.) */
+#define OP_MOVE_B_IMM_ABSL 0x13fcu
+#define GEMDOS_CAUXIN   0x03
+#define GEMDOS_CAUXOUT  0x04
+#define GEMDOS_CPRNOUT  0x05
+#define GEMDOS_FDELETE  0x41
+#define GEMDOS_FOPEN    0x3d         /* what a deleted name must then refuse, on both doors */
+#define GEMDOS_PTERM    0x4c
+#define GEMDOS_PTERM0   0x00
+#define DEVICE_CHAR     'A'          /* the byte the AUX: and printer cases hand to their device */
+#define PTERM_EXIT_CODE 2            /* any status; what matters is that both sides record THIS one */
+#define TRAP_CANARY       0x30c40u   /* clear of every other region this probe uses */
+#define TRAP_CANARY_MARK  0x5a
 
 static uint32_t g_out_regs[OUT_REGS];
 
@@ -422,12 +443,20 @@ static void plant_gem_trap(uint32_t pblk, uint16_t subsystem) {
     plant_trap(pc + 4, OP_TRAP_GEM, 0);
 }
 
-/* One GEMDOS call with the given word arguments, pushed right to left as a C binding does. */
-static void gemdos_trap_case(const char *name, uint16_t selector, const uint16_t *args, int nargs) {
+/* The GEMDOS calling convention itself: word arguments pushed right to left as a C binding does,
+ * then the selector. Returns the pc past them, so each caller below only has to plant its own tail —
+ * the convention has one spelling however the call ENDS (a trap that returns, or one that does not).
+ */
+static uint32_t plant_gemdos_pushes(uint16_t selector, const uint16_t *args, int nargs) {
     uint32_t pc = PROBE_ENTRY;
     for (int i = nargs - 1; i >= 0; i--) pc = plant_push_word(pc, args[i]);
-    pc = plant_push_word(pc, selector);
-    plant_trap(pc, OP_TRAP_GEMDOS, (uint16_t)(2 + nargs * 2));
+    return plant_push_word(pc, selector);
+}
+
+/* One GEMDOS call with the given word arguments, trapping and returning. */
+static void gemdos_trap_case(const char *name, uint16_t selector, const uint16_t *args, int nargs) {
+    plant_trap(plant_gemdos_pushes(selector, args, nargs), OP_TRAP_GEMDOS,
+               (uint16_t)(2 + nargs * 2));
     run_trap_case(name);
 }
 
@@ -558,6 +587,7 @@ static const struct door_case DOOR_CASES[] = {
 
 static void stage_file(void) {
     memcpy(g_image + FS_NAME_ADDR, "STAGED.DAT", 11);
+    memcpy(g_image + FS_ABSENT_NAME, "ABSENT.DAT", 11);
     uint8_t *entry = os_fs_slot(g_image, 0);
     memcpy(entry, "STAGED.DAT", 11);
     wr32(entry + OS_FS_OFF_STAGING, OS_FS_STAGING);
@@ -565,6 +595,59 @@ static void stage_file(void) {
     wr32(entry + OS_FS_OFF_CURSOR, 0);
     wr32(entry + OS_FS_OFF_OPEN, 1);
     wr32(entry + OS_FS_OFF_CAPACITY, FS_CAPACITY);
+}
+
+/* Is slot 0 still staged? The delete's whole image effect: a cleared name is what makes the slot
+ * unused to os_fs_find_slot and os_fs_entry alike, which is why a later Fopen of the name refuses
+ * exactly as it refuses one that was never staged. */
+static uint32_t staged_slot_in_use(void) {
+    return os_fs_slot(g_image, 0)[0] != 0;
+}
+
+/* One GEMDOS call taking a single LONG argument (a filename pointer), pushed as a C binding does. */
+static void gemdos_long_arg_case(const char *name, uint16_t selector, uint32_t arg) {
+    uint32_t pc = plant_push_long(PROBE_ENTRY, arg);
+    pc = plant_push_word(pc, selector);
+    plant_trap(pc, OP_TRAP_GEMDOS, 2 + 4);
+    run_trap_case(name);
+}
+
+/* A GEMDOS call followed by a store the trap must never reach, into a canary the case reports. A
+ * Pterm ends the run at the sentinel, so `reached` is 1 and the canary is untouched; a model that
+ * returned from the trap instead would run the store and leave a byte in the image the original
+ * never wrote. The REFUSED selector goes through the same shape and reads it the other way round —
+ * an unmodeled call still returns, so its canary must change and its `rts` must still be taken.
+ *
+ * THE STACK IS CLEANED BEFORE THAT `rts`, which the terminating case does not need and the refused
+ * one does. Without it the refused run pops the pushed selector word as its return address, lands on
+ * PC 0 and walks the zero-filled vector page until the instruction cap — reaching MAGIC_GEMDOS at
+ * 0x120 and re-entering the trap on the way if the cap allows it. That is the runaway shim.c's Pterm
+ * arm is about, so the case pinning the refusal would have been resting on where PROBE_MAX_INSNS
+ * happens to stop rather than on the refusal (measured: at 64 the walk halts 8 instructions short of
+ * 0x120; at 256 it arrives and `unmodeled` climbs to 4). */
+static void terminating_trap_case(const char *name, uint16_t selector, const uint16_t *args,
+                                  int nargs) {
+    uint32_t pc = plant_gemdos_pushes(selector, args, nargs);
+    plant_word(pc, OP_TRAP_GEMDOS);
+    plant_word(pc + 2, OP_MOVE_B_IMM_ABSL);
+    plant_word(pc + 4, TRAP_CANARY_MARK);
+    pc = plant_long(pc + 6, TRAP_CANARY);
+    plant_word(pc, OP_ADDA_W_IMM_SP);
+    plant_word(pc + 2, (uint16_t)(2 + nargs * 2));
+    plant_rts(pc + 4);
+    run_trap_case(name);
+    report_scalar(name, "ran_past_trap", g_image[TRAP_CANARY] == TRAP_CANARY_MARK);
+}
+
+/* The CANDIDATE's door onto Fdelete, mirroring gemdos_long_arg_case on the oracle's: the same three
+ * scalars per case, so the two sides of the section are parametrized alike rather than one being
+ * unrolled. */
+static void direct_fdelete_case(const char *name, uint32_t name_ptr) {
+    image_reset();
+    stage_file();
+    report_scalar(name, "d0", (uint32_t)os_fdelete(g_image, name_ptr));
+    report_scalar(name, "slot_in_use", staged_slot_in_use());
+    report_scalar(name, "refusals", g_os_refusal_count());
 }
 
 int main(void) {
@@ -952,6 +1035,86 @@ int main(void) {
         plant_trap(pc, OP_TRAP_BIOS, 2 + 2 + 2);
         run_trap_case("trap_bconout_console");
     }
+
+    /* ---- Fdelete, the two device writes, Cauxin and Pterm: BOTH DOORS onto each ----
+     * The oracle's is shim.c's own stack-frame decode; the candidate's is the `os_*` helper a
+     * reconstruction calls. There is one model underneath, so what a per-side decode can break is
+     * the door: an argument read from the wrong stack slot, a result the trap forgets to set, an
+     * event one side's ledger never receives.
+     *
+     * Fdelete first: the staged name (served, and the slot goes), a name the table never held (an
+     * ANSWER, GEMDOS's EFILNF), and the refusal the delete LEAVES BEHIND — re-opening the name it
+     * removed, which the oracle rejects exactly as it rejects a name that was never staged. */
+    image_reset();
+    stage_file();
+    gemdos_long_arg_case("trap_fdelete", GEMDOS_FDELETE, FS_NAME_ADDR);
+    report_scalar("trap_fdelete", "slot_in_use", staged_slot_in_use());
+    image_reset();
+    stage_file();
+    gemdos_long_arg_case("trap_fdelete_unstaged", GEMDOS_FDELETE, FS_ABSENT_NAME);
+    report_scalar("trap_fdelete_unstaged", "slot_in_use", staged_slot_in_use());
+    image_reset();
+    stage_file();
+    {
+        uint32_t pc = plant_push_long(PROBE_ENTRY, FS_NAME_ADDR);
+        pc = plant_push_word(pc, GEMDOS_FDELETE);
+        plant_word(pc, OP_TRAP_GEMDOS);
+        pc = plant_push_long(pc + 2, FS_NAME_ADDR);
+        pc = plant_push_word(pc, GEMDOS_FOPEN);
+        plant_trap(pc, OP_TRAP_GEMDOS, 2 * (2 + 4));
+        run_trap_case("trap_fdelete_then_fopen");
+    }
+    /* ...and the candidate's door onto the same three. */
+    direct_fdelete_case("direct_fdelete", FS_NAME_ADDR);
+    direct_fdelete_case("direct_fdelete_unstaged", FS_ABSENT_NAME);
+    image_reset();
+    stage_file();
+    os_fdelete(g_image, FS_NAME_ADDR);
+    report_scalar("direct_fdelete_then_fopen", "d0", (uint32_t)os_fopen(g_image, FS_NAME_ADDR));
+    report_scalar("direct_fdelete_then_fopen", "refusals", g_os_refusal_count());
+
+    /* Cauxout and Cprnout: one ledger entry each, of their own kind. Cprnout is the one with a
+     * RESULT — non-zero means the character went out, and the model's printer cannot time out. */
+    {
+        uint16_t args[] = {DEVICE_CHAR};
+        image_reset();
+        gemdos_trap_case("trap_cauxout", GEMDOS_CAUXOUT, args, 1);
+        image_reset();
+        gemdos_trap_case("trap_cprnout", GEMDOS_CPRNOUT, args, 1);
+    }
+    image_reset();
+    os_cauxout(DEVICE_CHAR);
+    report_candidate_ledger("direct_cauxout");
+    report_scalar("direct_cauxout", "refusals", g_os_refusal_count());
+    image_reset();
+    report_scalar("direct_cprnout", "d0", (uint32_t)os_cprnout(DEVICE_CHAR));
+    report_candidate_ledger("direct_cprnout");
+    report_scalar("direct_cprnout", "refusals", g_os_refusal_count());
+
+    /* Cauxin is REFUSED on both doors: nothing can stage a byte for the serial line, and the real
+     * call would block waiting for one. A refused call leaves no trace on either ledger. */
+    image_reset();
+    gemdos_trap_case("trap_cauxin", GEMDOS_CAUXIN, NULL, 0);
+    image_reset();
+    report_scalar("direct_cauxin", "d0", (uint32_t)os_cauxin());
+    report_candidate_ledger("direct_cauxin");
+    report_scalar("direct_cauxin", "refusals", g_os_refusal_count());
+
+    /* Pterm ENDS the run — cleanly, at the sentinel, with the exit code in the ledger and the
+     * instruction after the trap never executed. Pterm0 does NOT: a zero selector is what the
+     * oracle's dispatch reads when there was no GEMDOS call at all, so it stays refused and the
+     * trap returns, which is what the canary reports (shim.c's Pterm arm has the measurement). */
+    image_reset();
+    {
+        uint16_t args[] = {PTERM_EXIT_CODE};
+        terminating_trap_case("trap_pterm", GEMDOS_PTERM, args, 1);
+    }
+    image_reset();
+    terminating_trap_case("trap_pterm0", GEMDOS_PTERM0, NULL, 0);
+    image_reset();
+    os_pterm(PTERM_EXIT_CODE);
+    report_candidate_ledger("direct_pterm");
+    report_scalar("direct_pterm", "refusals", g_os_refusal_count());
 
     /* ---- GEMDOS Malloc: the shim's arena and the candidate's must hand out the same blocks ----
      * They are two implementations of one bump allocator — os.h's declaration says why the

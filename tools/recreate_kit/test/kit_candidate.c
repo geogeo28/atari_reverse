@@ -349,3 +349,26 @@ void g_logs_a_byte_and_allocates(uint8_t *image, uint32_t at, uint32_t size, uin
 void g_stores_the_arena_base_without_allocating(uint8_t *image, uint32_t at) {
     wr32(image + at, OS_HEAP_BASE);
 }
+
+/* ---- Phase 13's terminating routine: the candidate half of the .PRG's GEMDOS Pterm ----
+ * `os_pterm` cannot END anything from this side — it is a C call, and the only way back to the
+ * harness is to return — so the whole of its contract is on the CALLER: return immediately, with no
+ * statement of your own after it (../include/os.h).
+ */
+#define PTERM_EXIT_CODE 2
+
+/* The faithful reconstruction: record the termination, and stop. */
+void g_pterm(uint8_t *image) {
+    (void)image;
+    os_pterm(PTERM_EXIT_CODE);
+}
+
+/* MUTANT: the contract broken — it carries on and prints, which is what a reconstruction that
+ * translated the call as an ordinary one does. The oracle's run ENDED at that trap and can never
+ * produce a second event, so `g_os_event` refuses this one and `harness.differential` rejects the
+ * case by name. Nothing else could: the continuation writes no image byte. */
+void g_pterm_then_speaks(uint8_t *image) {
+    (void)image;
+    os_pterm(PTERM_EXIT_CODE);
+    os_cconout('X');
+}

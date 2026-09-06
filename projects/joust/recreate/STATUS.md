@@ -35,9 +35,11 @@ row states in full.
 Leaf/pure functions first (no OS traps, simple contracts), then their callers, then the
 trap-bound ones. The seven traps that used to block the sound, input and high-score-save layers —
 `Super`, `Giaccess`, `Fcreate`, `Fwrite`, `Random`, `Bconstat`, `Bconin` — are modelled by the kit
-now (`tools/recreate_kit/TRAP_MODEL.md`, pinned by `test/test_os_traps.py`). Two GEMDOS selectors
-Joust also uses stay unmodelled on purpose and still raise: `Pterm` (0x4c) never returns, so there
-is no post-state to diff, and `Dgetdrv` (0x19) asks about a machine the harness does not have.
+now (`tools/recreate_kit/TRAP_MODEL.md`, pinned by `test/test_os_traps.py`), and so is `Pterm`
+(0x4c): the oracle ENDS the run at that trap as a clean "reached", with the exit code in the OS
+event ledger, so a routine whose tail is `Pterm` is diffed at the termination rather than being
+unreachable. One GEMDOS selector Joust also uses stays unmodelled on purpose and still raises:
+`Dgetdrv` (0x19) asks about a machine the harness does not have.
 
 ## Off the list: the raw-floppy routine at `0x152dc`
 

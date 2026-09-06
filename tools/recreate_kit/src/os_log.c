@@ -20,16 +20,32 @@
 static uint16_t g_event_kind[OS_EVENT_LOG_MAX];
 static uint32_t g_event_value[OS_EVENT_LOG_MAX];
 static uint32_t g_event_n;
+/* Has this run recorded an OS_EVENT_PTERM? See g_os_event below: it is what turns `os_pterm`'s
+ * caller contract from a comment into a surface. */
+static int g_after_pterm;
 
-void             g_os_event_reset(void)  { g_event_n = 0; }
+void             g_os_event_reset(void)  { g_event_n = 0; g_after_pterm = 0; }
 uint32_t         g_os_event_count(void)  { return g_event_n; }
 const uint16_t  *g_os_event_kinds(void)  { return g_event_kind; }
 const uint32_t  *g_os_event_values(void) { return g_event_value; }
 
 /* Append one event. Entries past the cap are dropped exactly as the oracle's mirror drops them, so a
  * run longer than the cap still compares like for like; the harness refuses a comparison AT the cap
- * rather than trust a truncated one. */
+ * rather than trust a truncated one.
+ *
+ * AN EVENT AFTER A PTERM IS REFUSED, which is `os_pterm`'s "the caller must return immediately"
+ * contract enforced rather than merely written down (os.h). The ORACLE cannot produce one — its run
+ * ends at the trap — so a second event on this side is, by construction, a reconstruction that went
+ * on running past a termination the original made. Refusing it names that; recording it would leave
+ * the two streams differing for a reason the reader has to work out. A refused call leaves no trace
+ * on the ledger, which is the rule every other refusal here follows.
+ *
+ * IT CATCHES ONLY A CONTINUATION THAT SPEAKS. Code that runs past `os_pterm` and stores into the
+ * image is already caught by the byte diff; code that neither stores nor makes an event is invisible
+ * to both, and stays honestly unpinned (TRAP_MODEL.md, Phase 13). */
 void g_os_event(uint16_t kind, uint32_t value) {
+    if (g_after_pterm) { os_refused(0); return; }
+    if (kind == OS_EVENT_PTERM) g_after_pterm = 1;
     if (g_event_n >= OS_EVENT_LOG_MAX) return;
     g_event_kind[g_event_n] = kind;
     g_event_value[g_event_n] = value;

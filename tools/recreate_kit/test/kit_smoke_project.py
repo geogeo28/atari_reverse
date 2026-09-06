@@ -215,11 +215,32 @@ _EVENT_MALLOC_CODE = (struct.pack(">HH", _MOVE_W_IMM_PUSH, CCONOUT_CHAR)
                       + struct.pack(">HH", _LEA_SP_CONST, _CCONOUT_FRAME_BYTES)
                       + stubs.gemdos_malloc_stub(MALLOC_PROBE_SIZE, store_result=HEAP_RESULT))
 
+# ---- Phase 13's terminating routine: GEMDOS Pterm, and an instruction it must never reach ----
+# `Pterm(2)` followed by a store into the image. The oracle ends the run AT the trap, so the store
+# never happens and the image keeps PTERM_CANARY_UNSET — which is what says the termination really
+# stopped the run rather than merely being logged. The store's address is also the only PC after the
+# trap, so it is the checkpoint a `stop_pc` case asks for and cannot be given.
+PTERM_EXIT_CODE = 2
+GEMDOS_PTERM = 0x4C
+PTERM_CANARY = 0x30010                # in-image, above this program and clear of HEAP_RESULT
+PTERM_CANARY_SET = 0x5A
+PTERM_CANARY_UNSET = 0                # `harness.make_image` zero-fills, so this is what it holds
+_MOVE_B_IMM_ABSL = 0x13FC
+
+_PTERM_CODE = (struct.pack(">HH", _MOVE_W_IMM_PUSH, PTERM_EXIT_CODE)
+               + struct.pack(">HH", _MOVE_W_IMM_PUSH, GEMDOS_PTERM)
+               + struct.pack(">H", stubs.GEMDOS_TRAP)
+               + struct.pack(">HHI", _MOVE_B_IMM_ABSL, PTERM_CANARY_SET, PTERM_CANARY)
+               + struct.pack(">H", 0x4E75))                            # rts
+
+# Where that store sits, relative to the routine's entry: the two pushes and the trap ahead of it.
+PTERM_AFTER_TRAP_OFFSET = 10
+
 _ROUTINES = (_RMW_CODE, _GIACCESS_CODE, _HW_READ_CODE, _SYNC_ONLY_CODE, _WRITE_THEN_READ_CODE,
              _WIDE_READ_CODE, _VOLATILE_TWICE_CODE, _STATIC_TWICE_CODE,
              _HW_WRITE_CODE, _ACIA_SEND_CODE, _ACIA_RECEIVE_CODE, _ACIA_RECEIVE_TWICE_CODE,
              _ACIA_SEND_THEN_RECEIVE_CODE, _HW_RMW_CODE, _MALLOC_CODE, _MALLOC_SIZED_CODE,
-             _EVENT_MALLOC_CODE)
+             _EVENT_MALLOC_CODE, _PTERM_CODE)
 
 
 def _entries():
@@ -235,7 +256,10 @@ def _entries():
  WIDE_READ_ENTRY, VOLATILE_TWICE_ENTRY, STATIC_TWICE_ENTRY,
  HW_WRITE_ENTRY, ACIA_SEND_ENTRY, ACIA_RECEIVE_ENTRY, ACIA_RECEIVE_TWICE_ENTRY,
  ACIA_SEND_THEN_RECEIVE_ENTRY, HW_RMW_ENTRY, MALLOC_ENTRY, MALLOC_SIZED_ENTRY,
- EVENT_MALLOC_ENTRY) = _entries()
+ EVENT_MALLOC_ENTRY, PTERM_ENTRY) = _entries()
+
+# The only PC after the Pterm trap — a checkpoint the run can never reach, because it ends first.
+PTERM_AFTER_TRAP = PTERM_ENTRY + PTERM_AFTER_TRAP_OFFSET
 
 
 def malloc_size_poke(size):

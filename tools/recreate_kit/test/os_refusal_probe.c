@@ -48,6 +48,7 @@
 #define PROBE_RASTER_WDW   1
 #define PROBE_BAD_LOGIC_OP RASTER_OP_COUNT   /* one past the last op there is */
 
+#define PROBE_EXIT_CODE    2         /* any status; os_pterm records it and never refuses */
 #define PROBE_BAD_HANDLE   0x0100u   /* far outside OS_FS_FIRST_HANDLE .. +OS_FS_SLOTS */
 #define PROBE_BAD_SUPER    0x0decadeu /* a "stack pointer" os_super never handed out */
 #define PROBE_WILD_ADDR    0xfffffff0u /* a buffer address outside the image */
@@ -124,9 +125,13 @@ static void recfl(uint16_t interior) {
     wr16(g_image + PROBE_PTSIN + 6, PROBE_RECFL_Y2);
 }
 
-/* Each case runs on a freshly reset image so one case's image effect cannot steer the next. */
+/* Each case runs on a freshly reset image so one case's image effect cannot steer the next — and on
+ * a freshly reset EVENT LEDGER, because that ledger now carries state of its own: `g_os_event`
+ * latches a recorded Pterm and refuses every later append (src/os_log.c), so a case that terminates
+ * would otherwise make every case after it refuse. */
 static void begin(void) {
     image_reset();
+    g_os_event_reset();
     g_os_refusal_reset();
     g_before = g_os_refusal_count();
 }
@@ -213,6 +218,18 @@ int main(void) {
     CASE("crawio_read_key", wr32(g_image + OS_CON_PENDING, 1); os_crawio(g_image, OS_CRAWIO_READ));
     CASE("crawio_write", os_crawio(g_image, 'A'));
 
+    /* ---- the OTHER character devices, and the process ending ----
+     * Handing a byte to a device always succeeds in this model, and so does ending; the serial line
+     * is the one that cannot be READ, because no case can stage a byte for it to return. */
+    CASE("cauxout", os_cauxout('A'));
+    CASE("cprnout", os_cprnout('A'));
+    CASE("pterm", os_pterm(PROBE_EXIT_CODE));
+    CASE("cauxin", os_cauxin());
+    /* ...and `os_pterm`'s CALLER contract, which is the one contract in os.h that the callee cannot
+     * keep for itself: the oracle's run ends at the trap, so a second event on this side can only be
+     * a reconstruction that went on running past the termination. */
+    CASE("event_after_pterm", os_pterm(PROBE_EXIT_CODE); os_cconout('A'));
+
     /* ---- os_super ---- */
     CASE("super_unknown_token", os_super(PROBE_BAD_SUPER, &out));
     CASE("super_enter", os_super(OS_SUPER_ENTER, &out));
@@ -255,6 +272,16 @@ int main(void) {
 
     CASE("fclose_bad_handle", os_fclose(g_image, PROBE_BAD_HANDLE));
     CASE("fclose_served", os_fclose(g_image, staged_handle));
+
+    /* Fdelete answers BOTH ways rather than refusing either — deleting a file the table does not
+     * hold is a legal outcome with a GEMDOS error code of its own (os.h says why this one is an
+     * answer where os_fopen's identical "no such name" is a refusal). What the delete leaves behind
+     * IS a refusal, and the third case is the one that says so: the name is gone, so re-opening it
+     * refuses exactly as an unstaged name always did. */
+    CASE("fdelete_unstaged", os_fdelete(g_image, PROBE_OTHER_NAME));
+    CASE("fdelete_served", os_fdelete(g_image, PROBE_STAGED_NAME));
+    CASE("fdelete_then_fopen", os_fdelete(g_image, PROBE_STAGED_NAME);
+                               os_fopen(g_image, PROBE_STAGED_NAME));
 
     free(g_image);
     return 0;

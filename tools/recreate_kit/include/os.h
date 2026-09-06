@@ -8,7 +8,7 @@
  * OS_SCREEN_BASE; Getrez returns 0 (low-res); Malloc bump-allocates from OS_HEAP_BASE (which
  * project.toml's `heap_base` may move; see the fixed-memory-map section);
  * Mshrink/Mfree return 0. GEMDOS file I/O is modeled by os_fopen/os_fcreate/os_fread/os_fwrite/
- * os_fclose over a staged-file table (below). The calls that DO read or write model state —
+ * os_fclose/os_fdelete over a staged-file table (below). The calls that DO read or write model state —
  * Bconstat/Bconin/Crawio, Super, Giaccess, Random — are the os_* helpers further down. XBIOS Supexec
  * runs the passed routine in place (its rts returns to the caller, its D0 becomes the result).
  *
@@ -17,12 +17,13 @@
  * os_aes(). It DRAWS: seventeen VDI opcodes including vro_cpyfm's sixteen logic operations, vr_recfl
  * and v_gtext, plus four AES ones (TRAP_MODEL.md, Phases 11-12).
  *
- * The calls that hand a byte to a DEVICE rather than storing one — Cconout/Cconws, BIOS Bconout to
- * the IKBD, graf_mouse, v_show_c/v_hide_c — are an ordered off-image ledger compared between the two
- * sides, like the Dosound one (Phase 13); so is nothing else here.
+ * The calls that hand a byte to a DEVICE rather than storing one — Cconout/Cconws, Cauxout, Cprnout,
+ * BIOS Bconout to the IKBD, graf_mouse, v_show_c/v_hide_c — are an ordered off-image ledger compared
+ * between the two sides, like the Dosound one (Phase 13), and so is the process ENDING (Pterm); so
+ * is nothing else here.
  *
  * BIOS console I/O (Bconstat/Bconin), GEMDOS's console (Cconis/Crawcin/Cnecin/Crawio), GEMDOS Super,
- * GEMDOS Fcreate/Fwrite/Fseek, XBIOS Giaccess and XBIOS Random are modeled below; TRAP_MODEL.md
+ * GEMDOS Fcreate/Fwrite/Fseek/Fdelete, XBIOS Giaccess and XBIOS Random are modeled below; TRAP_MODEL.md
  * records what each does and does NOT capture. OS_SCREEN_BASE is a provisional low-memory arena;
  * OS_HEAP_BASE is main's Malloc block (below).
  */
@@ -245,9 +246,18 @@ uint32_t g_os_heap_pointer(void);
  * does not:
  *
  *   GEMDOS Cconout / Cconws / Crawio(write)   a character to the console
+ *   GEMDOS Cauxout(c)                         a character to the AUX: (serial) device
+ *   GEMDOS Cprnout(c)                         a character to the printer
+ *   GEMDOS Pterm(code)                        the process ENDED, and with which exit code
  *   BIOS   Bconout(dev 4, b)                  a COMMAND byte to the IKBD 6301
  *   AES    graf_mouse(mode)                   show/hide the GEM mouse pointer
  *   VDI    v_show_c / v_hide_c                show/hide the graphics cursor
+ *
+ * PTERM IS IN THE SAME STREAM although it is an event rather than a byte handed to a device. It
+ * belongs for the identical reason: the process ending is off-image, so a reconstruction that
+ * terminates where the original did and one that falls out of the bottom of the function leave the
+ * same memory behind. Being IN the ordered stream is what carries the other half — that it happened
+ * after the last console byte and not before it. See TRAP_MODEL.md, "Phase 13".
  *
  * ONE CAP FOR BOTH SIDES, for the Dosound ledger's reason: were they to differ, a run past the
  * smaller one would drop entries on that side only and diverge for a reason that has nothing to do
@@ -261,6 +271,9 @@ uint32_t g_os_heap_pointer(void);
 #define OS_EVENT_IKBD       2    /* value = the command byte sent to the IKBD (BIOS Bconout, dev 4) */
 #define OS_EVENT_GEM_MOUSE  3    /* value = AES graf_mouse's mode word (M_OFF = 256, M_ON = 257) */
 #define OS_EVENT_VDI_CURSOR 4    /* value = 1 for v_show_c, 0 for v_hide_c */
+#define OS_EVENT_AUXOUT     5    /* value = the character byte written to AUX: (GEMDOS Cauxout) */
+#define OS_EVENT_PRNOUT     6    /* value = the character byte written to the printer (Cprnout) */
+#define OS_EVENT_PTERM      7    /* value = the exit code the process ended with (Pterm) */
 
 /* One off-image event a modeled call produced. `../src/gem.c` reports through this rather than
  * logging, because it is compiled into both sides and each side owns a different ledger.
@@ -278,14 +291,69 @@ typedef struct {
 /* THE CANDIDATE'S recording side (`src/os_log.c`). An ON-TARGET build does not compile that file
  * and supplies its own definition — the trap that really writes the console or the IKBD — exactly as
  * it supplies its own `g_dosound`. Declared, never defined here, so that substitution is a link-time
- * choice rather than a `#ifdef` inside every core. */
+ * choice rather than a `#ifdef` inside every core.
+ *
+ * ONE KIND IS NOT A "HAND THIS OVER AND CARRY ON": an on-target `g_os_event` reached with
+ * OS_EVENT_PTERM must issue the real GEMDOS Pterm and NEVER RETURN, because that is what the call it
+ * stands for does. Every other kind returns. A target build that records it and returns keeps
+ * running where the original terminated — and the differential is off-target only, so nothing in
+ * this kit would ever see it. */
 void g_os_event(uint16_t kind, uint32_t value);
 
-/* The two a reconstruction calls by name, so a core reads as what it does rather than as a ledger
+/* ...and the per-run reset, which is part of the contract rather than harness plumbing: the ledger
+ * carries STATE now (a recorded Pterm latches, and every later append is refused — see src/os_log.c),
+ * so a caller that runs more than one case in a process must clear it between them or the second
+ * case refuses everything. `harness.arm_candidate` does this before every candidate run; the kit's
+ * own C probes call it directly, which is why it is declared here and the three read-back accessors
+ * next to it are not — those are still read by ctypes alone. */
+void g_os_event_reset(void);
+
+/* The ones a reconstruction calls by name, so a core reads as what it does rather than as a ledger
  * append. `os_cconout` is GEMDOS Cconout/Cconws's byte; `os_ikbd_out` is a BIOS Bconout to the
- * keyboard. Neither can refuse: sending a byte to a device always succeeds in this model. */
+ * keyboard. None of them can refuse: handing a byte to a device always succeeds in this model —
+ * there is no device to be busy, out of paper or absent. */
 static inline void os_cconout(uint8_t ch)   { g_os_event(OS_EVENT_CONOUT, ch); }
 static inline void os_ikbd_out(uint8_t cmd) { g_os_event(OS_EVENT_IKBD, cmd); }
+
+/* GEMDOS Cauxout (0x04): one byte to the AUX: serial device. Real GEMDOS returns nothing at all
+ * (`VOID Cauxout(INT16)`), so this does too and the trap answers D0 = 0, the model's own "serviced,
+ * no image effect" — there is no result here to be faithful to. */
+static inline void os_cauxout(uint8_t ch)   { g_os_event(OS_EVENT_AUXOUT, ch); }
+
+/* GEMDOS Cprnout (0x05): one byte to the printer, and the one of these three with a RESULT. Real
+ * GEMDOS answers 0 when the character could not be sent (the printer timed out) and non-zero when
+ * it was; TOS returns -1L for the second. THE MODEL'S PRINTER NEVER TIMES OUT — there is no device
+ * to be busy and no clock to time out against — so it always answers OS_CPRNOUT_SENT and the 0 arm
+ * is unreachable on both sides. A reconstruction's wrapper must test the result the way the original
+ * does (non-zero = sent), not compare it against -1: on target the real trap is what answers. */
+#define OS_CPRNOUT_SENT 0xffffffffu   /* Cprnout's "the character went out": -1L, as TOS answers */
+static inline int32_t os_cprnout(uint8_t ch) {
+    g_os_event(OS_EVENT_PRNOUT, ch);
+    return (int32_t)OS_CPRNOUT_SENT;
+}
+
+/* GEMDOS Pterm (0x4c): the process ends, with `code` as its exit status. NOT Pterm0 (0x00), which
+ * this model refuses although real GEMDOS answers it as Pterm(0) — a zero selector is what the
+ * oracle's dispatch reads when there was no GEMDOS call at all, and modeling it hands a runaway run
+ * a clean termination instead of a loud refusal (oracle/shim.c's Pterm arm has the measurement).
+ *
+ * ON THE REAL MACHINE THIS DOES NOT RETURN, AND HERE IT DOES. The oracle ends the run at the trap —
+ * the same clean "returned" reaching the sentinel gives, because there is nothing after it to
+ * execute — and this side cannot do that: it is a C function called from the candidate's glue, and
+ * the only way back to the harness is to return. So THE CALLER MUST RETURN IMMEDIATELY after calling
+ * it, with no further statement of its own: a reconstruction that goes on running past `os_pterm`
+ * has executed instructions the original never executed.
+ *
+ * TWO SURFACES CATCH THAT, and between them they leave one narrow hole. A continuation that STORES
+ * into the image is caught by the ordinary byte diff — the oracle stopped, so its bytes are the
+ * state at the trap. A continuation that makes any further OS EVENT is refused by `g_os_event`
+ * itself (../src/os_log.c), which latches the Pterm: the oracle cannot produce an event after one,
+ * so a second on this side can only be a run that carried on. What neither sees is a continuation
+ * that stores nothing and says nothing, and that is left honestly unpinned (TRAP_MODEL.md, Phase 13).
+ *
+ * `code` is the retcode WORD, unsigned, exactly as it sat on the emulated stack: a status of -1
+ * records as 0xffff on both sides rather than as two different sign extensions. */
+static inline void os_pterm(uint16_t code)  { g_os_event(OS_EVENT_PTERM, code); }
 
 /* ---- the direct $ff8800/$ff8802 PSG path (TRAP_MODEL.md, "Phase 6") --------------------------
  * The two ports the YM2149 answers on. They sit outside the image, so a reconstruction that drives
@@ -931,6 +999,16 @@ static inline int os_conin_blocking(uint8_t *mem, uint32_t *out) {
 static inline int os_crawcin(uint8_t *mem, uint32_t *out) { return os_conin_blocking(mem, out); }
 static inline int os_cnecin(uint8_t *mem, uint32_t *out)  { return os_conin_blocking(mem, out); }
 
+/* Cauxin (0x03): a blocking read of the AUX: serial device, and it ALWAYS REFUSES. The console has
+ * a staged keystroke queue behind it; the serial line has nothing at all — no case can stage an
+ * incoming byte, so every answer would be invented, and the real call would BLOCK waiting for one
+ * that never comes. Named rather than left to the trap's `default` arm so that a reconstruction's
+ * AUX: branch reads as the call the original makes and the refusal has ONE site to pin.
+ *
+ * The day a case needs to feed the serial line, this is where the staged queue would go — the shape
+ * is `os_console_take_key`'s, over a second staged stream. See TRAP_MODEL.md, "Phase 13". */
+static inline int32_t os_cauxin(void) { return os_refused(-1); }
+
 /* ---- GEMDOS Super (0x20) -------------------------------------------------------------
  * TOKEN model, not a privilege model. The oracle runs the whole program in supervisor mode
  * (Musashi's reset state) and never switches, so Super(0) hands back a fixed cookie instead of a
@@ -990,7 +1068,8 @@ static inline uint32_t os_random(const uint8_t *mem) {
     return be32(mem + OS_RANDOM_VALUE) & OS_RANDOM_MASK;
 }
 
-/* ---- GEMDOS file I/O (Fcreate 0x3c / Fopen 0x3d / Fclose 0x3e / Fread 0x3f / Fwrite 0x40) ----
+/* ---- GEMDOS file I/O (Fcreate 0x3c / Fopen 0x3d / Fclose 0x3e / Fread 0x3f / Fwrite 0x40 /
+ *      Fdelete 0x41) ------------------------------------------------------------------------
  * The oracle can't touch a real filesystem, so files are *staged* into the image: the harness
  * writes each file's raw bytes into the staging area and one table entry per file. os_fopen
  * resolves a filename to a handle, os_fread/os_fwrite move bytes in and out of staging, os_fclose
@@ -1007,7 +1086,12 @@ static inline uint32_t os_random(const uint8_t *mem) {
  * Table entry (OS_FS_ENTRY bytes), field offsets below: name[16] (nul-terminated) | staging addr |
  * size | cursor | open flag | capacity. The harness mirrors this layout in Python (see
  * harness.stage_files); tools/recreate_kit/test/test_os_memory_map.py pins the two constant sets
- * equal, and the create/write/open/read round-trip test proves they agree end to end. */
+ * equal, and the create/write/open/read round-trip test proves they agree end to end.
+ *
+ * ONE GEMDOS ERROR CODE IS ANSWERED RATHER THAN REFUSED, and only one: os_fdelete's EFILNF for a
+ * name the table does not hold. See its own comment for why that is not the fabrication the
+ * governing rule forbids, and why os_fopen's identical "no such name" is still a refusal. */
+#define OS_EFILNF (-33)              /* GEMDOS "file not found" — TOS's own value for the errno */
 #define OS_FS_TABLE        0xbf000u  /* staged-file table: OS_FS_SLOTS entries of OS_FS_ENTRY bytes.
                                       * Kit-wide (see the memory-map note above): it must sit above
                                       * every game's program and below emu.STACK_GUARD_LO */
@@ -1321,6 +1405,38 @@ static inline int32_t os_fclose(uint8_t *mem, uint16_t handle) {
     uint8_t *entry = os_fs_entry(mem, handle);
     if (!entry) return os_refused(-1);
     wr32(entry + OS_FS_OFF_OPEN, 0);
+    return 0;
+}
+
+/* Fdelete(name): remove the staged file that name refers to. 0 when it was there, OS_EFILNF when it
+ * was not — and NEITHER answer is a refusal.
+ *
+ * WHY THIS ANSWERS WHERE os_fopen REFUSES, which is the question a reader arrives with. The two look
+ * like one situation ("the table has no such name") and are two:
+ *
+ *   * os_fopen has to hand back a HANDLE, and a handle is the door onto CONTENT the harness never
+ *     staged. There is nothing to serve, and answering EFILNF instead would send the program down
+ *     an error path on what is almost always a staging mistake — so it refuses, loudly and by name.
+ *   * os_fdelete has nothing to serve. Its whole observable outcome is the return code and the
+ *     table edit, and both are fully determined by the table, which is the model's ENTIRE
+ *     filesystem: "the harness declares the filesystem" (above) means a name it did not stage is a
+ *     name that does not exist — a fact the harness stated, not a value this model invented. So
+ *     deleting a missing file is a legal, deterministic outcome and gets TOS's own answer for it.
+ *
+ * DELETING CLEARS THE NAME, which is exactly what makes the slot gone: os_fs_find_slot skips an
+ * entry whose name starts with a NUL and os_fs_entry reports one as unused, so a later Fopen of the
+ * name REFUSES precisely as it refuses a name that was never staged, and a handle still open on the
+ * slot refuses on its next Fread/Fwrite/Fseek/Fclose. Real GEMDOS lets a program delete a file it
+ * has open and leaves the handle stale, so that is the same shape; nothing else in the entry is
+ * touched, because a cleared name is already the whole answer to "is this slot in use". */
+/* NOTHING HERE REFUSES, and `oracle/shim.c`'s Fdelete arm depends on that: alone among the file
+ * calls it passes the result straight to D0 with no `modeled` test, since both answers are answers.
+ * Give this helper a refusal and that arm has to grow one too, or the oracle will serve the refusal
+ * sentinel as a legitimate return while the candidate tallies it. */
+static inline int32_t os_fdelete(uint8_t *mem, uint32_t name_ptr) {
+    int slot = os_fs_find_slot(mem, name_ptr);
+    if (slot < 0) return OS_EFILNF;
+    os_fs_slot(mem, slot)[0] = 0;
     return 0;
 }
 

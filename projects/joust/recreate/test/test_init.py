@@ -375,6 +375,10 @@ def _never_returns(pokes, entry, regs=None, cap=SPIN_CAP):
     osh_run stops at the sentinel or the checkpoint and reports success either way — so every
     checkpointed branch is paired with this.
 
+    NOT for a branch that ends in GEMDOS Pterm: such a run reaches a defined ending, so this message
+    never comes and the pair would fail rather than prove anything. Assert `out_regs["terminated"]`
+    there instead — which is what the Ctrl-C case below does (TRAP_MODEL.md, Phase 13).
+
     `regs` must be the checkpointed case's own registers where the entry takes any: a run started
     with different ones is a different case, and the pair would then say nothing about the branch it
     is supposed to cover.
@@ -1026,8 +1030,8 @@ def test_cycle_palette_attribution():
 #   * '1' and '2' run to the `rts` at 0x10c44 and are diffed there, one console keystroke per run
 #     (the model delivers exactly one — TRAP_MODEL.md Phase 1).
 #   * CTRL-C leaves the routine altogether — a `beq.w` into poll_quit_key's quit tail, which ends in
-#     GEMDOS Pterm — so it is diffed at that tail's own checkpoint, PAIRED with a never-returns
-#     proof over the SAME staging.
+#     GEMDOS Pterm — so it is diffed at that tail's own checkpoint, PAIRED with a proof that the
+#     SAME staging really TERMINATES there rather than reaching an `rts`.
 #   * EVERYTHING ELSE (no key, or a key it does not act on) falls through the console poll into the
 #     IKBD wait at 0x10bb8, which never ends on either side: the reply arrives on an interrupt the
 #     oracle never runs, and the routine clears ikbd_packet on the way in so no poke survives. Those
@@ -1493,11 +1497,17 @@ def test_title_screen_ctrl_c_quits_to_the_desktop(console):
     assert _dosound(info) == [A_SND_LIST_SILENCE, A_SND_LIST_SILENCE], \
         "the title's own silence, then the quit path's"
 
+    # The pair, and why it is not a `_never_returns`: the kit models GEMDOS Pterm, so this path ENDS
+    # at the trap and the oracle reports the run as reached (TRAP_MODEL.md, Phase 13). "Did not
+    # reach rts" would therefore be false here — `terminated` is the claim that says the run left
+    # through the quit tail rather than falling through to title_screen's own `rts`.
     # The cap is argued, not picked: the checkpointed run above is the longest thing this input can
-    # do before Pterm, so a cap several times its cost says "never returns", not "slower than".
-    # Read off the run the differential already made — `info["regs"]` is that run's out-regs.
+    # do before Pterm, so a cap several times its cost is room to finish, not a spin limit. Read it
+    # off the run the differential already made — `info["regs"]` is that run's out-regs.
     assert info["regs"]["ninsns"] * 4 < SPIN_CAP, "SPIN_CAP no longer leaves room for the quit path"
-    _never_returns(pokes, ENTRY_TITLE_SCREEN)
+    _, _, out_regs = emu.run(harness.make_image(pokes), ENTRY_TITLE_SCREEN, max_insns=SPIN_CAP)
+    assert out_regs["terminated"] is True, \
+        "the Ctrl-C run must end at the quit tail's Pterm, not come back through an `rts`"
 
 
 def test_title_screen_ctrl_c_really_writes_the_high_score():
@@ -1877,8 +1887,9 @@ def test_start_glue_refuses_a_console_title_screen_would_not_return_for(console)
     pins that ordering, so the refusal is reported here instead.
 
     Ctrl-C is refused by the same predicate for a different reason: it does not hang, it ends in a
-    GEMDOS Pterm the model does not serve, so no oracle run reaches the checkpoint to be diffed
-    against anyway. title_screen's own battery covers that exit at its own entry.
+    GEMDOS Pterm, which ENDS the run at the trap (TRAP_MODEL.md, Phase 13), so no oracle run reaches
+    the checkpoint to be diffed against anyway. title_screen's own battery covers that exit at its
+    own entry.
     """
     if isinstance(console, str):
         pokes = _start_pokes(key=console)

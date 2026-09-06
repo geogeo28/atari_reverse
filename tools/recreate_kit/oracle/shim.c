@@ -713,9 +713,10 @@ uint32_t        osh_dosound_count(void) { return g_dosound_n; }
 const uint32_t *osh_dosound_args(void)  { return g_dosound_arg; }
 
 /* --- the OFF-IMAGE OS EVENT LEDGER (os.h, "Phase 13") ---------------------------------------
- * The oracle's mirror of src/os_log.c: console bytes, IKBD command bytes, and the two cursor
- * visibility calls, in the order the run made them. Two parallel arrays for the Python side's sake,
- * exactly as the PSG ledger's are. Reset per run in osh_run, beside the Dosound ledger. */
+ * The oracle's mirror of src/os_log.c: console, AUX: and printer bytes, IKBD command bytes, the two
+ * cursor visibility calls, and the process ENDING, in the order the run made them. Two parallel
+ * arrays for the Python side's sake, exactly as the PSG ledger's are. Reset per run in osh_run,
+ * beside the Dosound ledger. */
 static uint16_t g_event_kind[OS_EVENT_LOG_MAX];
 static uint32_t g_event_val[OS_EVENT_LOG_MAX];
 static uint32_t g_event_n;
@@ -739,6 +740,13 @@ const uint32_t *osh_event_values(void) { return g_event_val; }
  * A string with no terminator inside the image is REFUSED rather than cut off at the edge: the model
  * has no idea where it was meant to end, and a fabricated length is exactly what the governing rule
  * forbids. Lives with the ledger rather than inside handle_trap so the loop reads as one thing. */
+/* The character argument of a one-byte device write — Cconout, Cauxout, Cprnout — which is the low
+ * eight bits of the first word on the caller's stack. One spelling for the three of them: they are
+ * the same convention, and three copies is three places for one of them to read the wrong slot. */
+static uint32_t device_char_arg(uint32_t caller) {
+    return m68k_read_memory_16(caller + 2) & 0xff;
+}
+
 static uint32_t cconws(uint32_t str, int *modeled) {
     uint32_t n = 0;
     /* MEASURE FIRST, then log. A refused call must leave no trace on either side's ledger — the
@@ -932,6 +940,16 @@ static uint32_t g_poked_input_calls;
 static uint32_t g_min_a7;       /* lowest A7 (deepest stack pointer) reached this run */
 static uint32_t g_ninsns;       /* instructions executed in the last osh_run (perf profiling) */
 static uint64_t g_ncycles;      /* 68000 clock cycles executed in the last osh_run (perf profiling) */
+/* The PC osh_run's loop stops at, so GEMDOS Pterm can END the run instead of returning from the
+ * trap: the only way out of handle_trap is to set a PC, and that is the one a terminating process
+ * wants. osh_run installs it per run; osh_run_bench installs no trap vectors at all, so nothing on
+ * that path can reach this. */
+static uint32_t g_run_sentinel;
+/* Did THIS run end because the program called GEMDOS Pterm? `osh_run` reports "reached" either way —
+ * a terminated run's final memory is as trustworthy as a returned one's — but the two are not the
+ * same ending, and a caller that asked for a `stop_pc` did not get the point it asked for. Exported
+ * so emu.run can tell them apart rather than compare at whichever one happened. */
+static int g_terminated;
 
 /* Service the trap the CPU jumped to (vec = 1/2/13/14). Reads the exception frame at A7,
  * services the OS call, and returns control to the caller with D0 set. Calls we faithfully
@@ -954,6 +972,40 @@ static void handle_trap(int vec) {
         m68k_set_reg(M68K_REG_SR, sr);                /* restore SR first (may reselect SSP) */
         m68k_set_reg(M68K_REG_A7, caller - 4);
         m68k_set_reg(M68K_REG_PC, routine);           /* D0 (Supexec's result) is set by the routine */
+        return;
+    }
+
+    /* GEMDOS Pterm (0x4c): the process ENDS here. The other early return, and for the same reason as
+     * Supexec's — the PC this leaves behind is not the trap's return address.
+     *
+     * The run finishes exactly as one reaching the function's `rts` does, at the sentinel, because
+     * there is nothing after this to execute: `osh_run`'s loop stops at that PC and reports the run
+     * as REACHED. No register is set: on the real machine Pterm never comes back, so whatever D0
+     * held at the trap is the program's own leftover, not an answer this model is making.
+     *
+     * The exit code is what makes the run comparable at all. It goes into the off-image event
+     * ledger, where the candidate's `os_pterm` puts its own — the image cannot carry "this process
+     * ended, with status 2", and a reconstruction that simply ran off the end of the function
+     * leaves the identical bytes behind. TRAP_MODEL.md, "Phase 13".
+     *
+     * PTERM0 (0x00) IS DELIBERATELY NOT HERE and stays refused, although real GEMDOS answers it as
+     * Pterm(0). A zero selector is what this dispatch reads when there was no GEMDOS call at all:
+     * the trap arms are entered on a PC MATCH against MAGIC_GEMDOS, so a runaway PC walking the
+     * zero-filled vector page arrives at 0x120 on its own and the "call frame" is then read off a
+     * zero stack — fn 0, retpc 0. Modeling it would hand every such run a CLEAN termination in
+     * place of the loud refusal that is the only sign the program went off the rails. Measured:
+     * five of `projects/joust`'s `update_egg_physics` cases reach exactly that, and each is a
+     * deliberate runaway whose evidence is that it never ends. TRAP_MODEL.md, "Phase 13". */
+    if (vec == 1 && fn == 0x4c) {
+        event_log(OS_EVENT_PTERM, (uint16_t)m68k_read_memory_16(arg1));
+        g_terminated = 1;
+        /* The two stores below are the shared exit's, deliberately re-stated rather than shared: the
+         * third one it makes (D0 = d0) is exactly what this arm must NOT do. Anything later added to
+         * that exit therefore has to be added here too — the same standing cost the Supexec arm
+         * above carries, and the reason both are early returns and not `switch` cases. */
+        m68k_set_reg(M68K_REG_SR, sr);                /* restore SR first (may reselect SSP) */
+        m68k_set_reg(M68K_REG_A7, caller);            /* then pop the 6-byte exception frame */
+        m68k_set_reg(M68K_REG_PC, g_run_sentinel);
         return;
     }
 
@@ -1001,9 +1053,24 @@ static void handle_trap(int vec) {
         case 0x3e:                                    /* Fclose(handle) */
             if (os_fclose(g_mem, (uint16_t)m68k_read_memory_16(caller + 2)) < 0) modeled = 0;
             break;
+        case 0x41:                                    /* Fdelete(fname) -> 0 or EFILNF */
+            /* No `modeled` test: os_fdelete never refuses. A name the table does not hold is a file
+             * that does not exist, which is an ANSWER (os.h says why this one is, and Fopen's
+             * identical "no such name" is not). */
+            d0 = (uint32_t)os_fdelete(g_mem, m68k_read_memory_32(caller + 2));
+            break;
         case 0x49: case 0x4a: break;                  /* Mfree / Mshrink -> success */
         case 0x02:                                    /* Cconout(c): one byte to the console */
-            event_log(OS_EVENT_CONOUT, (uint16_t)(m68k_read_memory_16(caller + 2) & 0xff));
+            event_log(OS_EVENT_CONOUT, device_char_arg(caller));
+            break;
+        case 0x04:                                    /* Cauxout(c): one byte to AUX:, no result */
+            event_log(OS_EVENT_AUXOUT, device_char_arg(caller));
+            break;
+        case 0x05:                                    /* Cprnout(c): one byte to the printer */
+            /* ...and the one of the three device writes with a RESULT: non-zero = the character
+             * went out. The model's printer cannot time out, so the 0 arm is unreachable (os.h). */
+            event_log(OS_EVENT_PRNOUT, device_char_arg(caller));
+            d0 = OS_CPRNOUT_SENT;
             break;
         case 0x09:                                    /* Cconws(str) -> characters written */
             d0 = cconws(m68k_read_memory_32(caller + 2), &modeled);
@@ -1038,7 +1105,11 @@ static void handle_trap(int vec) {
             d0 = os_crawio_read(g_mem);
             break;
         }
-        default: modeled = 0; break;                  /* Pterm, Dgetdrv, Pexec, unknown */
+        /* Cauxin (0x03) is HERE, deliberately: a blocking read of a serial line no case can stage a
+         * byte for, so every answer would be invented (os.h's os_cauxin says it once, for both
+         * sides). So is Pterm0 (0x00), which real GEMDOS answers and this model will not — the
+         * reason is with the Pterm arm above. Dgetdrv, Pexec and everything unknown land here too. */
+        default: modeled = 0; break;                  /* Cauxin, Pterm0, Dgetdrv, Pexec, unknown */
         }
     } else if (vec == 14) {                           /* XBIOS */
         switch (fn) {
@@ -1135,7 +1206,11 @@ static void report_regs(uint32_t *out_regs) {
  * comes back) be diffed at a chosen point instead of at rts. Pass stop_pc = 0 to disable.
  * dregs/aregs are D0..D7 / A0..A7 inputs (aregs[7] overridden by sp). Returns 1 if it stopped
  * at the sentinel or the checkpoint, 0 if it hit the instruction cap first (a truncated run
- * whose memory must NOT be trusted as final). out_regs receives OSH_OUT_REGS values as above. */
+ * whose memory must NOT be trusted as final). out_regs receives OSH_OUT_REGS values as above.
+ *
+ * A GEMDOS Pterm also stops it at the sentinel — the process ends there and nothing follows it to
+ * execute — so such a run reports REACHED, and which side terminated is carried by the event ledger
+ * rather than by this result (handle_trap; TRAP_MODEL.md, "Phase 13"). */
 int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
             const uint32_t *dregs, const uint32_t *aregs,
             uint32_t sp, uint32_t sentinel, uint32_t stop_pc, uint32_t max_insns,
@@ -1150,6 +1225,8 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
     m68k_set_reg(M68K_REG_A7, sp);
     m68k_set_reg(M68K_REG_PC, entry);
     m68k_write_memory_32(sp, sentinel);   /* return address: rts -> sentinel */
+    g_run_sentinel = sentinel;            /* ...and where a GEMDOS Pterm ends the run (handle_trap) */
+    g_terminated = 0;                     /* ...which is per-run, like every other cause emu.run reads */
 
     /* Install trap vectors transiently (restored below so the final image is trap-free). */
     uint32_t save_g = m68k_read_memory_32(TRAP_VEC_GEMDOS), save_x = m68k_read_memory_32(TRAP_VEC_XBIOS);
@@ -1438,6 +1515,9 @@ uint32_t        osh_num_writes(void)  { return g_wn; }
 uint32_t        osh_max_writes(void)  { return MAX_WRITES; }
 const uint32_t *osh_write_addrs(void) { return g_waddr; }
 uint32_t        osh_unmodeled(void)   { return g_unmodeled; }
+/* Did the last osh_run end at a GEMDOS Pterm rather than at its rts or its checkpoint? See
+ * g_terminated; emu.run turns it into a refusal for a run that asked for a `stop_pc`. */
+int             osh_terminated(void)  { return g_terminated; }
 uint32_t        osh_min_a7(void)      { return g_min_a7; }
 /* The Malloc bump pointer left by the last osh_run — diagnostics only (how far the heap grew). */
 uint32_t        osh_heap(void)        { return g_heap; }

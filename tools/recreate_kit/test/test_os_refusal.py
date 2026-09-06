@@ -50,6 +50,15 @@ EXPECTED = {
     # ...but Crawio is non-blocking, so an idle console is a RESULT and must never tally. This is
     # the property that made os_console_take_key a separate helper.
     "crawio_read_idle": 0, "crawio_read_key": 0, "crawio_write": 0,
+    # The other character devices and the process ending. Handing a byte to AUX: or the printer
+    # always succeeds here (there is no device to be busy), and so does terminating; reading AUX: is
+    # the one that cannot be served at all — no case can stage a byte for the serial line, and the
+    # real call would BLOCK waiting for one, so os_cauxin refuses unconditionally.
+    "cauxout": 0, "cprnout": 0, "pterm": 0, "cauxin": 1,
+    # ...and the one contract os.h puts on a CALLER rather than on the callee: after `os_pterm` a
+    # reconstruction must return, because the oracle's run ends at that trap and can never record a
+    # later event. src/os_log.c enforces it — a second event is refused rather than logged.
+    "event_after_pterm": 1,
     # GEMDOS Super: only the three values the token model recognises are served
     "super_unknown_token": 1, "super_enter": 0, "super_inquire": 0, "super_restore": 0,
     # GEMDOS file I/O. os_fcreate refuses only THROUGH os_fopen, so its delta is 1, never 2 —
@@ -67,6 +76,11 @@ EXPECTED = {
     "fseek_before_start": 1, "fseek_past_capacity": 1,
     "fseek_from_start": 0, "fseek_from_current": 0, "fseek_from_end": 0,
     "fclose_bad_handle": 1, "fclose_served": 0,
+    # Fdelete is the one file call that ANSWERS a name the table does not hold rather than refusing
+    # it — deleting a missing file is a legal, deterministic outcome, so it gets GEMDOS's EFILNF
+    # (os.h says why Fopen's identical "no such name" is still a refusal). What the delete leaves
+    # behind is one: the name is gone, so re-opening it refuses like any unstaged name.
+    "fdelete_unstaged": 0, "fdelete_served": 0, "fdelete_then_fopen": 1,
 }
 
 

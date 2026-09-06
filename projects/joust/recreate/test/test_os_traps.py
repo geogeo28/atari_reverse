@@ -20,7 +20,7 @@ NAME_PTR = SCRATCH + 0x300  # a filename string lives here, clear of the read/wr
 
 # Trap selectors (docs/tos-os-calls.md).
 GEMDOS_SUPER, GEMDOS_FCREATE, GEMDOS_FOPEN, GEMDOS_FCLOSE = 0x20, 0x3C, 0x3D, 0x3E
-GEMDOS_FREAD, GEMDOS_FWRITE, GEMDOS_DGETDRV, GEMDOS_PTERM = 0x3F, 0x40, 0x19, 0x4C
+GEMDOS_FREAD, GEMDOS_FWRITE, GEMDOS_DGETDRV = 0x3F, 0x40, 0x19
 GEMDOS_CRAWIO, CRAWIO_RAW_READ = 0x06, 0xFF   # Crawio(0xff): raw non-blocking console read
 BIOS_BCONSTAT, BIOS_BCONIN, BIOS_BCONOUT = 0x01, 0x02, 0x03
 XBIOS_RANDOM, XBIOS_GIACCESS = 0x11, 0x1C
@@ -552,11 +552,18 @@ def test_random_repeats_within_a_run():
 
 
 # ---------------------------------------------------------------------------
-# Still unmodeled — Joust's census turns up two GEMDOS selectors outside this model's scope.
-# They must keep raising: an honest rejection beats a fabricated return value.
+# Still unmodeled — one GEMDOS selector in Joust's census is outside this model's scope, and it must
+# keep raising: an honest rejection beats a fabricated return value.
+#
+# `Pterm` (0x4c) was the second until the kit grew a model for it (TRAP_MODEL.md, Phase 13): the run
+# now ENDS at the trap, reported as a clean "reached", with the exit code in the OS event ledger.
+# There is no stub case for that here on purpose — the kit's own `test/test_pterm_run.py` pins the
+# whole termination contract (the ending, `out_regs["terminated"]`, the refusal of a checkpoint the
+# run terminates before, and the candidate's caller contract) against a bound project, and Joust's
+# own quit tail exercises it in `test_input.py` and `test_init.py`.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("fn", (GEMDOS_DGETDRV, GEMDOS_PTERM))
+@pytest.mark.parametrize("fn", (GEMDOS_DGETDRV,))
 def test_out_of_scope_gemdos_selectors_still_raise(fn):
     with pytest.raises(RuntimeError, match="unmodeled"):
         _run(_push_w(fn) + _trap(1) + _pop(2) + _rts())
