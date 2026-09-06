@@ -868,6 +868,11 @@ static void enter_from_reset(void) {
     sched_enter_run();
 }
 
+/* The Malloc arena's base and the bump pointer walking up from it. The BASE is per project and is
+ * installed by osh_set_heap_base() below; the mechanism is in ../README.md, "The Malloc arena is
+ * the one region a project places". This is the oracle's OWN copy — liboracle.so and the candidate
+ * .so are two objects in one process, and recreate_kit.harness installs one value into each. */
+static uint32_t g_heap_base = OS_HEAP_BASE_DEFAULT;
 static uint32_t g_heap;         /* Malloc bump pointer */
 static uint32_t g_malloc_n;     /* GEMDOS Malloc calls serviced this run (see osh_malloc_count) */
 static uint32_t g_unmodeled;    /* count of traps whose real effect we do NOT model (fabricated D0) */
@@ -910,7 +915,7 @@ static void handle_trap(int vec) {
         switch (fn) {
         case 0x48:                                    /* Malloc: bump-allocate a block */
             /* Count the CALL, not the bump: a zero/rounds-to-zero size (Malloc(-1), the "largest
-             * free block?" query) is still fully serviced — it returns OS_HEAP_BASE — yet leaves
+             * free block?" query) is still fully serviced — it returns the arena base — yet leaves
              * g_heap where it was. See osh_malloc_count. */
             g_malloc_n++;
             d0 = g_heap; g_heap += (m68k_read_memory_32(arg1) + 1u) & ~1u; break;
@@ -1060,7 +1065,7 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
     m68k_write_memory_32(TRAP_VEC_XBIOS, MAGIC_XBIOS);
     m68k_write_memory_32(TRAP_VEC_BIOS, MAGIC_BIOS);
     m68k_write_memory_32(TRAP_VEC_GEM, MAGIC_GEM);
-    g_heap = OS_HEAP_BASE;
+    g_heap = g_heap_base;
     g_malloc_n = 0;
     g_unmodeled = 0;
     g_poked_input_calls = 0;
@@ -1342,9 +1347,12 @@ uint32_t        osh_unmodeled(void)   { return g_unmodeled; }
 uint32_t        osh_min_a7(void)      { return g_min_a7; }
 /* The Malloc bump pointer left by the last osh_run — diagnostics only (how far the heap grew). */
 uint32_t        osh_heap(void)        { return g_heap; }
+/* Install the Malloc arena's base (project.toml's `heap_base`). emu.py calls it once, at import,
+ * from the bound project's config — before any osh_run, which is what resets g_heap to it. */
+void            osh_set_heap_base(uint32_t base) { g_heap_base = base; }
 /* How many GEMDOS Malloc calls the last osh_run serviced. This, NOT the bump pointer, is what
  * "did this run allocate?" means: a serviced Malloc whose rounded size is 0 hands back a block at
- * OS_HEAP_BASE without moving g_heap, so a pointer comparison would miss it. emu.run() keys the
+ * the arena base without moving g_heap, so a pointer comparison would miss it. emu.run() keys the
  * heap-over-program guard on this count (see emu._vet_no_malloc_over_program). */
 uint32_t        osh_malloc_count(void) { return g_malloc_n; }
 /* How many traps the last osh_run serviced that reached the harness-poked model state. emu.run() keys

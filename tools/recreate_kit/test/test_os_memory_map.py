@@ -20,9 +20,10 @@ from pathlib import Path
 KIT = Path(__file__).resolve().parents[1]
 OS_H = KIT / "include" / "os.h"
 # The Python mirror is split across three files: harness.py holds the file-staging map it pokes into
-# the image, oracle/emu.py holds OS_HEAP_BASE (which its per-run Malloc guard needs), and os_map.py
-# holds the harness-poked input block (which harness.py and emu.py BOTH guard, so neither can own
-# it). Each constant must be defined in exactly one of them (asserted below) so there is still one
+# the image, oracle/emu.py holds the Malloc arena's default base (its per-run guards need it), and
+# os_map.py holds what harness.py and emu.py BOTH ask about, so neither can own it — the
+# harness-poked input block, and OS_FS_TABLE (the arena's ceiling as well as the table's address).
+# Each constant must be defined in exactly one of them (asserted below) so there is still one
 # source; harness.py re-exports the other two files' names, and a re-export is not a definition.
 PY_MIRRORS = (KIT / "harness.py", KIT / "oracle" / "emu.py", KIT / "os_map.py")
 
@@ -30,7 +31,17 @@ sys.path.insert(0, str(KIT.parent))                   # reverse/tools, so `recre
 from recreate_kit import os_map   # noqa: E402  (importable with nothing built, unlike harness/emu)
 
 # Every constant that exists on both sides. os.h is the canonical definition.
-PINNED = ("OS_IMAGE_SIZE", "OS_HEAP_BASE", "OS_FS_TABLE", "OS_FS_STAGING", "OS_FS_ENTRY",
+PINNED = ("OS_IMAGE_SIZE",
+          # the Malloc arena's DEFAULT base — the value both sides start at before
+          # project.toml's optional `heap_base` installs anything. The live base is not a
+          # constant on either side and so has nothing to pin here; test_heap_base.py is
+          # where the two sides are checked to agree on it.
+          "OS_HEAP_BASE_DEFAULT",
+          # ...and what Physbase/Logbase return. Mirrored since harness._vet_os_memory_map checks
+          # the Malloc arena's base against the band a game draws a frame into; its LENGTH has no C
+          # counterpart to pin (the model never draws), so harness.py states that one alone.
+          "OS_SCREEN_BASE",
+          "OS_FS_TABLE", "OS_FS_STAGING", "OS_FS_ENTRY",
           "OS_FS_SLOTS", "OS_FS_NAME", "OS_FS_FIRST_HANDLE", "OS_DOSOUND_LOG_MAX",
           # the two off-image ledger caps: both sides truncate at the SAME entry, or two streams
           # that diverge past the cap would compare equal (harness.differential asserts below them)

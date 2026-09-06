@@ -47,6 +47,58 @@ def _bool_flag(raw, key, recreate_dir):
     return value
 
 
+def _heap_base(raw, recreate_dir):
+    """The optional ``heap_base`` address, or None when absent (= the kit's own default).
+
+    Where the modeled Malloc arena starts, for a project whose program covers the kit's default
+    0x20000 — see "the Malloc arena's base" in ``include/os.h``. None rather than the default itself
+    because the default is C's (``OS_HEAP_BASE_DEFAULT``, mirrored in ``oracle/emu.py``, which this
+    module cannot import: ``emu`` imports *it*). ``emu`` resolves the two.
+
+    Only the shape is checked here; whether the address is a legal PLACE — clear of the program and
+    of the model's other fixed regions — is ``harness._vet_os_memory_map``'s question, because only
+    it knows where the program ends. Odd is refused because a Malloc block base is handed straight
+    to 68000 code, which takes a word from it: an odd arena would make every allocating run an
+    address error on real hardware while the model, which emulates none, ran on regardless.
+    """
+    key = "heap_base"
+    if key not in raw:
+        return None
+    value = raw[key]
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise TypeError(f"{recreate_dir / CONFIG_NAME}: `{key}` must be an integer address "
+                        f"(e.g. 0x30000), not {type(value).__name__} {value!r}")
+    if value <= 0 or value % 2:
+        raise ValueError(f"{recreate_dir / CONFIG_NAME}: `{key}` is {value:#x}; the Malloc arena's "
+                         f"base must be a positive EVEN address — 68000 code reads words from the "
+                         f"block it is handed")
+    return value
+
+
+def _heap_limit(raw, recreate_dir):
+    """The optional ``heap_limit`` address — the first address the arena may NOT reach — or None.
+
+    ``heap_base`` says where the arena starts; this says where it must stop. Absent means the kit's
+    own ceiling, ``os_map.OS_FS_TABLE`` (``emu`` resolves the two, as it does for the base). A
+    project sets it when the free window above its program is narrower than that — because its own
+    scratch map, or a region its cases poke, sits below the table.
+
+    Only the shape is checked here: whether the value leaves the arena any room at all is
+    ``harness._vet_os_memory_map``'s question, since only it knows where the base ended up.
+    """
+    key = "heap_limit"
+    if key not in raw:
+        return None
+    value = raw[key]
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise TypeError(f"{recreate_dir / CONFIG_NAME}: `{key}` must be an integer address "
+                        f"(e.g. 0x90000), not {type(value).__name__} {value!r}")
+    if value <= 0:
+        raise ValueError(f"{recreate_dir / CONFIG_NAME}: `{key}` is {value}; the first address the "
+                         f"Malloc arena may not reach must be a positive address")
+    return value
+
+
 def _program_data_ranges(raw, recreate_dir, poked_input_unused):
     """``poked_input_program_data`` as a tuple of ``(lo, hi)`` half-open ranges; empty when absent.
 
@@ -109,8 +161,9 @@ def load(recreate_dir):
     """Read ``<recreate_dir>/project.toml`` and bind it to the kit. Idempotent.
 
     Returns the config namespace: name, dir, prg, names, lib (absolute paths) plus
-    load_base / image_size and the optional tos_malloc_unused waiver (see harness's
-    _vet_os_memory_map). Re-binding the kit to a *different* project inside one
+    load_base / image_size, the optional heap_base / heap_limit, and the optional
+    tos_malloc_unused waiver (see harness's _vet_os_memory_map). Re-binding the kit to a
+    *different* project inside one
     process is refused — the module-level constants derived here are already frozen.
     """
     global _CONFIG
@@ -132,6 +185,14 @@ def load(recreate_dir):
         lib=(recreate_dir / raw["lib"]).resolve(),
         load_base=raw["load_base"],
         image_size=raw["image_size"],
+        # Optional: where the modeled Malloc arena starts, for a project whose program covers the
+        # kit's default. None = that default; emu.OS_HEAP_BASE is the resolved value, installed into
+        # both .so files at import and vetted by harness._vet_os_memory_map.
+        heap_base=_heap_base(raw, recreate_dir),
+        # Optional: the first address the arena may not reach, for a project whose free window ends
+        # below the kit's own ceiling (os_map.OS_FS_TABLE). None = that ceiling; emu.HEAP_LIMIT is
+        # the resolved value, and emu.run() refuses any run that grew the bump pointer past it.
+        heap_limit=_heap_limit(raw, recreate_dir),
         # Optional: the game issues no GEMDOS Malloc, so the modeled heap is never allocated from
         # and may sit inside its program. The project.toml declaring it must justify it there.
         tos_malloc_unused=_bool_flag(raw, "tos_malloc_unused", recreate_dir),

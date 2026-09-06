@@ -34,6 +34,9 @@ KIT = Path(__file__).resolve().parents[1]
 ORACLE_SO = KIT / "oracle" / "build" / "liboracle.so"
 CANDIDATE_SRC = Path(__file__).with_name("kit_candidate.c")
 
+sys.path.insert(0, str(KIT.parent))          # reverse/tools, so `recreate_kit` imports
+from recreate_kit import stubs               # noqa: E402  (importable with nothing built)
+
 # The miniature project's geometry. image_size must equal os.h's OS_IMAGE_SIZE (harness vets it) and
 # load_base must clear the poked-input block and leave the modeled heap and file-staging regions
 # above the program — the ordinary layout every real project uses.
@@ -180,10 +183,26 @@ _HW_RMW_CODE = (struct.pack(">HHI", 0x08F9, MFP_ACIA_CHANNEL_BIT, MFP_IERB)    #
                 + struct.pack(">HHI", 0x0239, SHIFTER_MODE_RESOLUTION_MASK, SHIFTER_MODE)
                 + struct.pack(">H", 0x4E75))                                   # rts
 
+# ---- the Malloc arena's base: GEMDOS Malloc(-1), and where the block landed ----
+# `Malloc(-1)` is GEMDOS's "how big is the largest free block?" query, which the model serves fully
+# and which rounds to a zero-size bump — so it reports the arena's BASE without moving the pointer,
+# which is exactly the fact test_heap_base.py compares between the two sides. The result is stored
+# into the image because that is the only surface a differential has: the trap's own return value is
+# off-image, and both sides must be seen to agree on it.
+HEAP_RESULT = 0x30000                 # in-image, above this program and below OS_FS_TABLE
+
+_MALLOC_CODE = stubs.gemdos_malloc_stub(stubs.MALLOC_LARGEST_FREE, store_result=HEAP_RESULT)
+
+# ...and one that really ALLOCATES, for the ceiling guard (emu._vet_heap_within_bounds): the size is
+# poked into the stub's own immediate rather than assembled per case, so the routine has one entry
+# address in the .PRG's text like every other routine here.
+MALLOC_SIZE_OFFSET = 2                # the longword immediate inside `move.l #size,-(sp)`
+_MALLOC_SIZED_CODE = stubs.gemdos_malloc_stub(0)
+
 _ROUTINES = (_RMW_CODE, _GIACCESS_CODE, _HW_READ_CODE, _SYNC_ONLY_CODE, _WRITE_THEN_READ_CODE,
              _WIDE_READ_CODE, _VOLATILE_TWICE_CODE, _STATIC_TWICE_CODE,
              _HW_WRITE_CODE, _ACIA_SEND_CODE, _ACIA_RECEIVE_CODE, _ACIA_RECEIVE_TWICE_CODE,
-             _ACIA_SEND_THEN_RECEIVE_CODE, _HW_RMW_CODE)
+             _ACIA_SEND_THEN_RECEIVE_CODE, _HW_RMW_CODE, _MALLOC_CODE, _MALLOC_SIZED_CODE)
 
 
 def _entries():
@@ -198,7 +217,12 @@ def _entries():
 (RMW_ENTRY, GIACCESS_ENTRY, HW_READ_ENTRY, SYNC_ONLY_ENTRY, WRITE_THEN_READ_ENTRY,
  WIDE_READ_ENTRY, VOLATILE_TWICE_ENTRY, STATIC_TWICE_ENTRY,
  HW_WRITE_ENTRY, ACIA_SEND_ENTRY, ACIA_RECEIVE_ENTRY, ACIA_RECEIVE_TWICE_ENTRY,
- ACIA_SEND_THEN_RECEIVE_ENTRY, HW_RMW_ENTRY) = _entries()
+ ACIA_SEND_THEN_RECEIVE_ENTRY, HW_RMW_ENTRY, MALLOC_ENTRY, MALLOC_SIZED_ENTRY) = _entries()
+
+
+def malloc_size_poke(size):
+    """The poke that makes MALLOC_SIZED_ENTRY ask for `size` bytes, patched into its immediate."""
+    return {MALLOC_SIZED_ENTRY + MALLOC_SIZE_OFFSET: (size & 0xFFFFFFFF).to_bytes(4, "big")}
 
 PRG_MAGIC = 0x601A
 
@@ -271,8 +295,7 @@ def bind():
         pytest.skip(f"the miniature candidate did not compile: {exc.stderr}",
                     allow_module_level=True)
 
-    sys.path.insert(0, str(KIT.parent))          # reverse/tools, so `recreate_kit` imports
-    from recreate_kit import project             # noqa: E402
+    from recreate_kit import project             # noqa: E402  (reverse/tools is on sys.path above)
     project.load(root)
     # `recreate_kit.harness`, not a bare `import harness`: the kit's own module uses relative
     # imports, and each project's test/harness.py is the thin shim that re-exports it after binding

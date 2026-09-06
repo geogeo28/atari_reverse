@@ -317,3 +317,13 @@ void g_hw_rmw_the_untranslated_form(uint8_t *image) {
     (void)image;
     hw_and8(0xffff8260u, SHIFTER_MODE_RESOLUTION_MASK);
 }
+
+/* ---- the Malloc arena's base (see test_heap_base.py) ------------------------------------------
+ * The candidate half of the .PRG's `Malloc(-1)`: a reconstruction that mirrors an allocation reads
+ * OS_HEAP_BASE, exactly as projects/buggyboy/recreate/src/os.c's g_main does. The address to store
+ * it at is an ARGUMENT rather than a constant here, so the one spelling of it lives in
+ * kit_smoke_project.py beside the 68000 code that stores to the same place.
+ */
+void g_stores_the_heap_base(uint8_t *image, uint32_t at) {
+    wr32(image + at, OS_HEAP_BASE);
+}

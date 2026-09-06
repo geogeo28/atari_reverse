@@ -289,6 +289,34 @@ pending, hands back four bytes of code as the key, and **zeroes four bytes of co
 `OS_CON_PENDING` — identically on both sides, since both run the same `os.h`. The diff is clean and
 the case proves nothing.
 
+### The Malloc arena is the one part of the map a project places
+
+GEMDOS `Malloc` (0x48) bump-allocates from an in-image arena, and `Mshrink`/`Mfree` return 0. Where
+that arena starts and how far it may grow are the only two parts of the model's memory map a project
+configures — `heap_base` and `heap_limit` in its `project.toml` — and the whole mechanism, both
+entry points and all the refusals, is written once in [`README.md`](README.md), "The Malloc arena is
+the one region a project places".
+
+What belongs here is the **trap** half. `OS_HEAP_BASE` reads in C as it always did but is now a
+variable read rather than a constant expression, and two refusals key on what the traps did rather
+than on the configuration:
+
+* **`emu._vet_no_malloc_over_program()`** rejects a run that served a `Malloc` while the arena lies
+  inside the loaded program — the `tos_malloc_unused` waiver's run-time half. It counts **serviced
+  traps** (`osh_malloc_count`), not movement of the bump pointer: `Malloc(-1)`, GEMDOS's "how big is
+  the largest free block?" query, is fully served and rounds to a zero-size bump, so a pointer test
+  would wave exactly that case through.
+* **`emu._vet_heap_within_bounds()`** rejects a run whose bump pointer finished **past the
+  ceiling**. This one has to look at the pointer, because it is about growth and not about a call
+  happening. Nothing watched it before: only the arena's base was ever vetted, so a base that was
+  legal at import said nothing about the seventh allocation, and a block handed out over the
+  staged-file table (or over a project's own scratch map) was a plain image write served identically
+  to both sides — two corrupted runs comparing equal.
+
+The `tos_malloc_unused` waiver is unchanged and is a claim about the GAME (that it allocates at
+all), not about the arena's address; a game that *does* allocate moves the arena rather than waiving
+it.
+
 ### Two regions this leaves unvetted
 
 `OS_KBDVBASE` (`0x500`, whose KBDVBASE struct `install_handlers` patches) and `OS_SCREEN_BASE`

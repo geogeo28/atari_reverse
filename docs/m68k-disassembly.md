@@ -66,7 +66,9 @@ selector immediate a compiler emits directly in front of it — checking that *e
 so no selector is loaded through a register where the scan could not see it. A hit with no selector
 in front of it is the tell for an ASCII (or other data) misdecode.
 `projects/joust/recreate/project.toml` records exactly that scan as the evidence for its
-`tos_malloc_unused` waiver.
+`tos_malloc_unused` waiver — which is a claim that the game *never* allocates, and so is only worth
+scanning for when it might be true. A game that does allocate moves the arena with `heap_base`
+instead (`projects/bubbleghost/recreate/project.toml` is the worked example) and needs no scan.
 
 ## The "impossible instruction" tell
 

@@ -13,13 +13,17 @@ tools/recreate_kit/
 ├── project.py        bind one recreate/ dir to the kit (reads its project.toml)
 ├── harness.py        the differential driver (differential/report/make_image/stage_files,
 │                     plus the model-state pokes console_key/psg_regs)
-├── os_map.py         the harness-poked input block + the overlap arithmetic its guards ask for
-│                     (shared by harness.py and oracle/emu.py; importable with nothing built)
+├── os_map.py         the harness-poked input block, the staged-file table's base, and the overlap
+│                     arithmetic the guards ask for (shared by harness.py and oracle/emu.py;
+│                     importable with nothing built)
+├── stubs.py          hand-assembled 68000 stubs (the GEMDOS Malloc probe) and the span seeder,
+│                     shared by the kit's suite and the projects' — likewise needs nothing built
 ├── guarded_image.py  OPT-IN pytest plugin: run every candidate on an image with PROT_NONE either
 │                     side, so a raw `image + <computed address>` that leaves the buffer FAULTS
 ├── kit.mk            shared make rules: candidate .so, Musashi oracle, `test`/`venv`/`oracle`/`clean`
 ├── include/          machine.h (big-endian image accessors)  os.h (deterministic TOS trap model)
-├── src/              C linked into EVERY candidate .so: dosound_log.c (the Dosound ledger below)
+├── src/              C linked into EVERY candidate .so: dosound_log.c (the Dosound ledger below),
+│                     os_heap.c (the Malloc arena's base, installed per project)
 ├── oracle/           loader.py (load+relocate PRG)  emu.py (Musashi runner)  shim.c (callbacks)
 │                     isa_conformance.py  tos_probe.py   musashi/ + build/ (gitignored)
 ├── test/             the kit's own regression tests (`make test` here; no project needed)
@@ -38,11 +42,15 @@ tools/recreate_kit/
    lib        = "build/lib<game>.so"
    load_base  = 0x10000
    image_size = 0x100000
+   # heap_base  = 0x30000               # only if the program covers the default 0x20000 arena
+   # heap_limit = 0x90000               # ...and only if the free window ends below OS_FS_TABLE
    ```
 
    `load_base` must clear the poked-input block (`0x620`) and `image_size` must equal `os.h`'s
    `OS_IMAGE_SIZE`, which `os_fread`/`os_fwrite` bound their copies against — the harness checks
-   both at import and names `project.toml` when they disagree.
+   both at import and names `project.toml` when they disagree. `heap_base` and `heap_limit` are
+   optional and place the modeled Malloc arena; leave them out unless the program's text+bss reaches
+   `0x20000` (see "The Malloc arena is the one region a project places").
 
 2. `projects/<game>/recreate/Makefile`:
 
@@ -117,6 +125,17 @@ mechanism call it directly to stand in for a refusal, and `harness` probes all t
 Absence is a hard error there rather than a graceful degrade, because the tally has no oracle-side
 witness the way the Dosound ledger does: the oracle's own count is zero by construction, so a
 missing symbol would reopen the false-green class on a suite that stays entirely green.
+
+Between them sits a one-symbol group, the **Malloc arena's base**, from `src/os_heap.c`:
+
+| symbol | signature | purpose |
+| --- | --- | --- |
+| `os_set_heap_base` | `void(uint32_t)` | install `project.toml`'s `heap_base`, so `OS_HEAP_BASE` reads the same address the oracle allocates from |
+
+`harness` calls it once at import, and requires it **only when the project set the key**: a candidate
+predating the file already starts at `OS_HEAP_BASE_DEFAULT`, which is right for a project that
+configured nothing and wrong — silently, by a whole arena — for one that moved its heap. See "The
+Malloc arena is the one region a project places".
 
 The third group is the **direct-PSG surfaces**, from `src/psg.c` + `include/psg.h` (likewise linked
 into every candidate by `kit.mk`). Optional in the same way as the Dosound ledger, and for the same
@@ -283,19 +302,68 @@ hardware whose real value is time-varying still reaches both cores identically:
 `include/os.h` fixes the modeled Malloc heap (`OS_HEAP_BASE`), the staged-file table
 (`OS_FS_TABLE` / `OS_FS_STAGING`, `OS_FS_SLOTS` entries — 32 of them, sized by the longest boot the
 workspace has met, Zynaps's ~30 opens) and the poked-input block above at kit-wide addresses, mirrored
-in Python by `harness.py` — except `OS_HEAP_BASE`, which sits in `oracle/emu.py` where the per-run
+in Python by `harness.py` — except the heap base, which sits in `oracle/emu.py` where the per-run
 Malloc guard below needs it, and the poked-input block, which sits in `os_map.py` because
 `harness.py` and `emu.py` both guard it. Both are re-exported (`harness.OS_HEAP_BASE`,
 `harness.OS_CON_PENDING`, …). `test/test_os_memory_map.py` pins every constant equal to `os.h` and
 refuses a second Python copy. They are **not** derived from `project.toml`, so the
 harness checks at import that they clear the bound project's program, stay below the stack guard,
 sit below its `load_base`, and that `OS_IMAGE_SIZE` matches its `image_size` — failing with a
-diagnostic naming `project.toml` when they do not. A game whose text+bss reaches `0x20000` (heap) or
+diagnostic naming `project.toml` when they do not. A game whose text+bss reaches
 `0xbf000` (staging) needs those constants moved on both sides.
+
+#### The Malloc arena is the one region a project places
+
+**This is the one place the heap mechanism is written out.** Every other mention of it — `os.h`,
+`shim.c`, `src/os_heap.c`, `emu.py`, `harness.py`, `TRAP_MODEL.md`, and a project's own
+`project.toml` — is a pointer here plus the one fact a reader of that file needs.
+
+The heap is the exception to a kit-wide map, because a program can simply *be* where the default
+arena is — Bubble Ghost's runs to `0x2520e`, over `0x20000` — and `os.h` is compiled into two
+**shared objects** (`liboracle.so`, which every project links, and the game's candidate), so a
+`#define` cannot answer "where" per project. Both ends of the arena are therefore installed or
+resolved **at run time**:
+
+| | |
+|---|---|
+| `heap_base = 0x30000` | optional key in `project.toml`; absent = `os.h`'s `OS_HEAP_BASE_DEFAULT` (`0x20000`), so every project that does not set it is unchanged |
+| `heap_limit = 0x90000` | optional too: the first address the arena may **not** reach. Absent = `OS_FS_TABLE`, and a project may only LOWER it (`emu.resolve_heap_limit` clamps) — raising it would grant exactly what the kit-wide ceiling refuses |
+| `emu.OS_HEAP_BASE` / `emu.HEAP_LIMIT` | the resolved values every Python guard and diagnostic reads. `harness.OS_HEAP_BASE` serves the base back live, through a module `__getattr__`, so the two modules cannot disagree; it is in `harness.__all__` so a project's `from recreate_kit.harness import *` shim still carries it |
+| `osh_set_heap_base()` | the oracle's entry point (`oracle/shim.c`), called once by `emu` at import |
+| `os_set_heap_base()` | the candidate's (`src/os_heap.c`, swept into every candidate by `kit.mk`), called once by `harness` at import |
+| `emu.install_heap_base()` | the one implementation of "tell one `.so`", used by both sides — each supplies its own refusal, since they name different files and different rebuilds |
+| `OS_HEAP_BASE` | unchanged in C, but now a **variable read** rather than a constant — usable in an expression, not in a case label, an array bound or a static initialiser |
+
+Both entry points are **required ABI only when the key is set**: a `.so` predating them already
+starts its arena at the default, so a default project is served correctly by an old build, while a
+project that moved its heap and was silently served the old base would allocate over its own
+program. That is refused by name, naming the rebuild.
+
+Because the base is a project's choice, `_vet_os_memory_map()` checks it against the rest of the map
+as well as against the program. The arena grows **upward without bound**, so a base at or above
+`OS_FS_TABLE` overwrites the staged-file table; one below `OS_POKE_BLOCK_END` hands out a block
+covering the model's own console/`Random`/PSG state; one inside the framebuffer
+(`OS_SCREEN_BASE`..`+0x7d00`) hands out memory a game redraws every frame; and a ceiling at or below
+the base leaves no window at all. Every refusal names the value's source — `heap_base` in
+`project.toml`, or `OS_HEAP_BASE_DEFAULT` in `os.h` when the project set no key, since there is no
+line to go and edit in that case.
+
+**Where it starts is all placement can ask.** How far the arena GROWS is not a configuration, and a
+base that is legal at import says nothing about the seventh allocation — so `emu.run()` refuses, per
+run, a bump pointer that finished past the ceiling (`_vet_heap_within_bounds`). Until that existed
+nothing looked at the pointer: a block handed out over the staged-file table or over a project's own
+scratch map is a plain image write served identically to both sides, so the two corrupted runs
+compared equal and the case reported green.
+
+`test/test_heap_base.py` pins the keys, every refusal, both installers' missing-ABI errors, the
+ceiling in both directions, and — through the miniature project — that a served `Malloc` really
+lands at the configured base on **both** sides.
 
 One waiver exists for the heap: only a GEMDOS `Malloc` ever writes at `OS_HEAP_BASE`, so a game
 that issues none can set `tos_malloc_unused = true` in its `project.toml` (justifying it there) and
-let its program cover that region — `projects/joust/recreate/project.toml` is the worked example.
+let its program cover that region — `projects/joust/recreate/project.toml` is the worked example. A
+game that *does* allocate moves the arena with `heap_base` instead; the waiver is not a substitute
+for it.
 `OS_FS_TABLE` has no waiver: the harness stages files itself, so an overlap there is always live.
 
 The waiver is a claim about the *game*, so it is not taken on trust. `emu.run()` calls
@@ -311,7 +379,7 @@ over the identical program area. Two details make it hold:
 * it lives in `emu.run()` rather than in `differential()`, so an oracle-only run and the poison
   re-run inside `_attribution_check` are covered by the same check.
 
-It keys on the *overlap*, never on the flag, so it stays correct if `OS_HEAP_BASE` or a project's
+It keys on the *overlap*, never on the flag, so it stays correct if `heap_base` or a project's
 `load_base` moves, and setting the flag on a game that does allocate does not buy a green run. The
 flag itself must be a real TOML boolean (`project.py` rejects anything else: a quoted `"false"` is
 truthy in Python and would silently waive the check). What it does *not* cover: a program that
@@ -382,6 +450,37 @@ import emu
 ```
 
 `load()` is idempotent, and refuses to rebind to a *second* project inside one process.
+
+### The image a differential starts from
+
+`harness.make_image()` copies a base image and writes a case's pokes into it, and
+`harness.differential()` is built on that copy — so the base is what every case in a project is
+verified against. It is `harness.BASE_IMAGE`, the `.PRG` loaded and relocated, by default.
+
+**That default is wrong for a program whose own startup writes state before its functions run.**
+Bubble Ghost's crt0 ends by calling `init_globals`, which writes some 15,700 bytes of non-zero
+initialisers into a bss the loaded image holds as ZEROES — so a case staged on `BASE_IMAGE` runs
+against a program whose tables are all zero. It comes back green, about a machine that never exists
+at run time.
+
+`harness.set_base_image(image)` is the one way to change it. It validates the length against
+`OS_IMAGE_SIZE`, stores a `bytes` copy (the image is shared by every case in the session), and
+returns the previous one so a fixture can restore it:
+
+```python
+@pytest.fixture(scope="session", autouse=True)
+def _differential_base_image(post_init_image):
+    previous = harness.set_base_image(post_init_image)
+    yield
+    harness.set_base_image(previous)
+```
+
+**Autouse is the point, not a convenience.** A per-case argument is a thing a battery can forget,
+and forgetting it does not fail — it silently runs the case against zeroed state, which is exactly
+the false green the mechanism exists to close. One mechanism, so there is one place to look and no
+second route with different behaviour. `harness.BASE_IMAGE` keeps its meaning either way: the `.PRG`
+as loaded, which is what a battery reads when it wants the ORIGINAL's own bytes (an entry
+prologue, a shipped table). `test/test_base_image.py` pins it.
 
 ## Building, and what `clean` owns
 
@@ -509,7 +608,10 @@ one game: the cross-language pin between `prg_dis.py`'s and `AtariOsTrapAnnotate
 trap tables, `prg_dis`'s 68000 decoder (reference encodings + an opcode-space sweep for
 impossible instruction forms), the C-vs-Python pin on the TOS memory map above,
 `project._bool_flag`'s refusal of a non-boolean waiver flag (for **every** waiver flag, checked
-against `project.load` itself so a new one cannot ship untested), and `os_map`'s overlap geometry.
+against `project.load` itself so a new one cannot ship untested), `os_map`'s overlap geometry, and
+`stubs.py`'s shared building blocks — the GEMDOS `Malloc` probe's *encoding* (a stub with the wrong
+selector is still a serviced trap, so the run goes green having asked a different question) and the
+span seeder's merge (two pokes over one byte look like two seeded regions and are one).
 
 Four of them pin the **oracle's own behaviour** and so need its sources, which a bare checkout does
 not have (`oracle/musashi/` is a gitignored clone): `test_entry_state.py`, `test_reported_regs.py`,
@@ -524,8 +626,8 @@ differential sees through); and the two seeded read models, whose probes also li
 `src/hw.c` so they can run the **candidate** side against the oracle's — a miniature differential,
 with mutant reconstructions as its negative control.
 
-Three more, `test_psg_differential.py`, `test_hw_differential.py` and `test_write_ledger.py`, go one
-step further and run the **real harness**: `test/kit_smoke_project.py` builds a throwaway project in a temp directory — a
+Four more — `test_psg_differential.py`, `test_hw_differential.py`, `test_write_ledger.py` and
+`test_base_image.py` — go one step further and run the **real harness**: `test/kit_smoke_project.py` builds a throwaway project in a temp directory — a
 hand-assembled `.PRG`, and a candidate `.so` from `test/kit_candidate.c` plus `src/` — binds the kit
 to it, and both suites make actual `harness.differential()` calls through it. That is the only way to
 exercise the code that *compares* the two sides, since it lives in `harness`. They **skip** without

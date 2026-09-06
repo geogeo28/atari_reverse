@@ -21,6 +21,10 @@ NAMES = _CFG.names
 LIB = _CFG.lib
 
 BASE_IMAGE = load_image(PRG)             # loaded + relocated once; tests copy & poke it
+# ...and the image a DIFFERENTIAL starts from, which is BASE_IMAGE until a project says otherwise.
+# See set_base_image() for the whole argument; it is private because rebinding it is the sanctioned
+# route and a second name for the same storage would be a second way to get it wrong.
+_DIFFERENTIAL_BASE = bytes(BASE_IMAGE)
 _lib = ctypes.CDLL(str(LIB))
 
 # The Dosound side-effect ledger (see differential()) is an OPTIONAL part of a candidate's ABI: a
@@ -113,6 +117,36 @@ if _missing_refusal_abi:
 _lib.g_os_refusal_count.restype = ctypes.c_uint32
 
 
+def _missing_candidate_abi(sym, why):
+    """The error for a candidate .so that exports no ``sym``. ``why`` says what is lost without it.
+
+    The candidate's twin of ``emu._stale_oracle``: same shape, different .so and different rebuild.
+    Every required-ABI refusal above was hand-written, so the same fact was spelt several ways and a
+    reader could not tell one missing symbol from another by its diagnostic. One spelling instead,
+    so each site names the same build command.
+    """
+    return RuntimeError(
+        f"{LIB} exports no {sym}, {why} Build the candidate through kit.mk, whose SRC sweeps "
+        f"$(KIT)/src/*.c — from the project directory, `rm -f build/*.so && make test`.")
+
+
+def _missing_heap_base_abi(symbol):
+    """The candidate side's refusal for an .so predating ``symbol`` — ``on_missing`` for the
+    installer below. The oracle side's twin is ``emu._missing_heap_base_abi``."""
+    return _missing_candidate_abi(
+        symbol,
+        f"so tools/recreate_kit/src/os_heap.c is not linked into {_CFG.name}'s candidate and its "
+        f"`heap_base = {emu.OS_HEAP_BASE:#x}` ({_CFG.dir / project.CONFIG_NAME}) cannot be "
+        f"installed — the reconstruction would keep reading OS_HEAP_BASE as "
+        f"{emu.OS_HEAP_BASE_DEFAULT:#x} while the oracle allocates from the configured base.")
+
+
+# Tell the CANDIDATE where this project's Malloc arena starts — emu.py has already told the oracle.
+# Two objects in one process, so each is told separately, from the one value project.toml
+# configured; emu.install_heap_base is the one implementation and says when the ABI is required.
+emu.install_heap_base(_lib, "os_set_heap_base", emu.OS_HEAP_BASE, _missing_heap_base_abi)
+
+
 def _load_name_map():
     """addr -> name, from names.txt `var`/`fn` lines, for readable diff reports."""
     m = {}
@@ -139,12 +173,22 @@ def label(addr):
 # These addresses are KIT-WIDE (one set of C constants serves every game), while load_base /
 # image_size are per-project. tools/recreate_kit/test/test_os_memory_map.py pins this mirror equal
 # to os.h; _vet_os_memory_map() below checks the addresses actually fit the bound project's image.
-# Two pieces of the mirror live elsewhere and are re-exported here, so `harness.*` still reads as one
-# map: OS_HEAP_BASE in oracle/emu.py (its per-run Malloc guard needs it) and the poked-input block in
-# os_map.py (harness.py and emu.py both guard it, and neither can import the other).
+# Three pieces of the mirror live elsewhere and are re-exported here, so `harness.*` still reads as
+# one map: OS_HEAP_BASE in oracle/emu.py (its per-run Malloc guards need it), and both the
+# poked-input block and OS_FS_TABLE in os_map.py (harness.py and emu.py each guard those, and
+# neither can import the other).
 OS_IMAGE_SIZE = 0x100000     # image length the C model bounds its copies against (vetted below)
-OS_HEAP_BASE = emu.OS_HEAP_BASE   # modeled Malloc bump-allocates upward from here
-OS_FS_TABLE = 0xBF000        # staged-file table base
+OS_SCREEN_BASE = 0x8000      # what Physbase/Logbase return: the in-image screen region
+OS_SCREEN_BYTES = 0x7d00     # ...and its length, an ST low-res framebuffer. PYTHON-ONLY, so
+                             # test_os_memory_map.py has nothing to pin it against: the model never
+                             # draws, so no C constant states it. It is here because the arena's
+                             # placement is checked against the band a game handed Logbase writes
+# `OS_HEAP_BASE` is the one PER-PROJECT entry in this map and is served by __getattr__ at the bottom
+# of this file rather than defined here: oracle/emu.py owns it (README.md, "The Malloc arena is the
+# one region a project places"), and a copy frozen at import would disagree with the oracle's the
+# moment a test moved the base.
+OS_FS_TABLE = os_map.OS_FS_TABLE   # staged-file table base — defined in os_map.py, where emu can
+                                   # reach it too (its per-run arena-ceiling guard needs it)
 OS_FS_STAGING = 0xC0000      # raw file bytes grow upward from here
 OS_FS_ENTRY = 36             # name[16] | staging u32 | size u32 | cursor u32 | open u32 | cap u32
 OS_FS_SLOTS = 32             # entries in the table; a 33rd file would be written past its end
@@ -187,27 +231,39 @@ OS_PSG_EVENT_WRITE = os_map.OS_PSG_EVENT_WRITE
 OS_PSG_EVENT_READ = os_map.OS_PSG_EVENT_READ
 
 
-# Does the modeled Malloc heap sit inside this project's own program? If so, any block the model
-# hands out lands ON TOP of the program's code/data. _vet_os_memory_map() refuses that outright
-# unless project.toml waives it, and emu.run() re-checks the waiver's claim on every run
-# (emu._vet_no_malloc_over_program) — the waiver asserts something about the game, not about the kit.
+# Did the modeled Malloc heap sit inside this project's own program AT IMPORT? A snapshot, and the
+# one thing here that is: it is what a project's own heap-guard suite asserts to prove its waiver is
+# not vacuous (projects/joust and projects/zynaps, test_heap_guard.py's
+# test_guard_is_armed_for_this_project). _vet_os_memory_map() below does NOT read it — see the note
+# under it — so moving the base in a test cannot make this line disagree with a refusal.
+#
+# PRIVATE, AND READ FROM OUTSIDE ANYWAY: those two suites import `recreate_kit.harness` directly to
+# reach it, precisely because `from ... import *` does not carry it — a snapshot re-exported into a
+# project shim would be a THIRD copy of a value that already has two. Renaming it breaks them, so it
+# is kept under this name deliberately rather than left in place by accident.
 _HEAP_OVER_PROGRAM = emu.heap_overlaps_program()
 
-# The poked-input block's overlap is NOT cached the way the heap's is above: the three guards below
-# key on it, and _vet_os_memory_map() is re-runnable — projects/joust/recreate/test/test_os_traps.py
-# pins the import-time check by monkeypatching loader.LOAD_BASE and calling it again, which a value
-# frozen at import would silently ignore. It is emu.poked_input_overlaps_program(), read live, and
-# on make_image's hot path the cheap range test short-circuits ahead of it.
+# The CHECK below caches neither overlap question, and reads both live through emu:
+# _vet_os_memory_map() is re-runnable — projects/joust/recreate/test/test_os_traps.py pins the
+# import-time check by monkeypatching loader.LOAD_BASE and calling it again, and the kit's own
+# test/test_heap_base.py does the same with emu.OS_HEAP_BASE — which a value frozen at import would
+# silently ignore. On make_image's hot path the cheap range test short-circuits ahead of the
+# poked-input one.
 
 
-def _overlap_error(name, addr, waiver=""):
-    """The shared diagnostic for a TOS-model region that collides with the loaded program."""
+def _overlap_error(name, addr):
+    """The shared diagnostic for a kit-wide TOS-model region that collides with the loaded program.
+
+    NOT the Malloc arena's, which has refusals of its own — one per region it can collide with —
+    because its address is the PROJECT's (project.toml's ``heap_base``) rather than os.h's: every
+    clause here, the file to look in and the file to edit alike, would name the wrong one.
+    """
     return RuntimeError(
         f"{name} ({addr:#x}, tools/recreate_kit/include/os.h) lies inside {_CFG.name}'s "
         f"program, which ends at {loader.PROGRAM_END:#x} — a Malloc block or a staged file "
         f"would overwrite its own code/bss. Move that region (and its Python mirror, in harness.py, "
         f"os_map.py or oracle/emu.py) above the program, or lower load_base in "
-        f"{_CFG.dir / project.CONFIG_NAME}." + waiver)
+        f"{_CFG.dir / project.CONFIG_NAME}.")
 
 
 def _vet_os_memory_map():
@@ -216,13 +272,15 @@ def _vet_os_memory_map():
 
     NOT every kit-wide region: os.h also fixes OS_KBDVBASE (0x500, the KBDVBASE struct XBIOS
     Kbdvbase returns) and OS_SCREEN_BASE (0x8000, what Physbase/Logbase return), and neither is
-    checked here or anywhere else. Both used to be covered incidentally by the `load_base >= 0x620`
-    floor below — every project loaded at 0x10000, so both regions were necessarily below every
-    program — and the poked-input waiver removes exactly that coverage: at projects/wonderboy's
-    load_base of 0x3f8, 0x500 and 0x8000 are both inside a live program. The Kbdvbase READER is
-    caught per run by emu._vet_no_poked_input_read, but only while the poked block ALSO overlaps
-    (that guard's predicate is about the block, not about 0x500); Physbase/Logbase are caught by
-    nothing at all. See TRAP_MODEL.md, "Two regions this leaves unvetted".
+    checked HERE AGAINST THE PROGRAM. Both used to be covered incidentally by the `load_base >=
+    0x620` floor below — every project loaded at 0x10000, so both regions were necessarily below
+    every program — and the poked-input waiver removes exactly that coverage: at
+    projects/wonderboy's load_base of 0x3f8, 0x500 and 0x8000 are both inside a live program. The
+    Kbdvbase READER is caught per run by emu._vet_no_poked_input_read, but only while the poked
+    block ALSO overlaps (that guard's predicate is about the block, not about 0x500);
+    Physbase/Logbase are caught by nothing at all. See TRAP_MODEL.md, "Two regions this leaves
+    unvetted". The framebuffer IS checked against the ARENA below, which is a different question —
+    where a project puts its heap, not where its program lands.
 
     A program that reaches OS_HEAP_BASE or OS_FS_TABLE would have its own code/bss silently
     overwritten by a Malloc block or a staged file — nothing else would catch that, since both are
@@ -233,12 +291,60 @@ def _vet_os_memory_map():
     that issues none can declare ``tos_malloc_unused = true`` in its project.toml (which must
     justify it) and let its program cover that region. OS_FS_TABLE has no such waiver — the
     harness stages files itself, so an overlap there is always live.
+
+    The heap is also the one region a project PLACES, with project.toml's ``heap_base`` — so it is
+    checked against the model's other fixed regions too, which for a kit-wide constant would be
+    arithmetic that cannot change. The arena grows UP without bound, so a base at or above
+    OS_FS_TABLE allocates straight over the staged-file table; one below the poked block hands out a
+    block covering the model's own console/PSG state; and one inside the framebuffer hands out
+    memory a game redraws every frame. All three are silent: a Malloc block is a plain image write
+    on both sides, so the two corrupted runs would compare equal.
+
+    WHERE IT STARTS IS ALL THIS CAN ASK. How far the arena GROWS is not a configuration at all, and
+    a base that is legal here says nothing about the seventh allocation — emu._vet_heap_within_bounds
+    is the other half, refusing per run a bump pointer that passed the ceiling.
     """
-    if _HEAP_OVER_PROGRAM and not _CFG.tos_malloc_unused:
-        raise _overlap_error(
-            "OS_HEAP_BASE", OS_HEAP_BASE,
-            " If this game issues no GEMDOS Malloc at all, `tos_malloc_unused = true` in "
-            "project.toml waives this check (emu.run() then enforces that claim per run).")
+    heap_base = emu.OS_HEAP_BASE                 # the CONFIGURED base; live, so this is re-runnable
+    heap_source = emu.heap_base_source()         # ...and where it came from: the key, or os.h
+    if heap_base < OS_POKE_BLOCK_END:
+        # DELIBERATELY NOT SPELT "poked input block": projects/joust's test_os_traps.py and
+        # projects/wonderboy's test_poked_input_guard.py both `pytest.raises(match=...)` on that
+        # phrase to pin the OVERLAP refusal at the end of this function, and a second refusal
+        # carrying it would let those cases pass on the wrong one.
+        raise RuntimeError(
+            f"the Malloc arena starts at {heap_base:#x} ({heap_source}), at or below the "
+            f"console-key poke block (OS_POKE_BLOCK_END {OS_POKE_BLOCK_END:#x}, "
+            f"tools/recreate_kit/include/os.h) — the first block handed out would cover the model's "
+            f"own console, Random and PSG state, on both sides, so the diff would compare two "
+            f"identically corrupted runs. Raise `heap_base` above {OS_POKE_BLOCK_END:#x}.")
+    if OS_SCREEN_BASE <= heap_base < OS_SCREEN_BASE + OS_SCREEN_BYTES:
+        raise RuntimeError(
+            f"the Malloc arena starts at {heap_base:#x} ({heap_source}), inside the model's "
+            f"framebuffer ({OS_SCREEN_BASE:#x}..{OS_SCREEN_BASE + OS_SCREEN_BYTES - 1:#x} — "
+            f"OS_SCREEN_BASE, tools/recreate_kit/include/os.h, plus an ST low-res screen). A game "
+            f"handed that address by Physbase/Logbase draws a whole frame over it, so a block "
+            f"handed out here is overwritten mid-run on BOTH sides and the diff compares two "
+            f"identically trampled runs. Move `heap_base` clear of that band.")
+    if heap_base >= OS_FS_TABLE:
+        raise RuntimeError(
+            f"the Malloc arena starts at {heap_base:#x} ({heap_source}), at or above the staged-file "
+            f"table (OS_FS_TABLE {OS_FS_TABLE:#x}, tools/recreate_kit/include/os.h) — the arena "
+            f"grows upward, so the first block handed out would overwrite the table the harness "
+            f"stages files into, with no diagnostic. Lower `heap_base` below {OS_FS_TABLE:#x}.")
+    if emu.heap_overlaps_program() and not _CFG.tos_malloc_unused:
+        raise RuntimeError(
+            f"the Malloc arena starts at {heap_base:#x} ({heap_source}), inside {_CFG.name}'s "
+            f"program, which ends at {loader.PROGRAM_END:#x} — a block handed out there would "
+            f"overwrite the program's own code/bss, identically on both sides. Raise `heap_base` "
+            f"above {loader.PROGRAM_END:#x}, or lower load_base. If this game issues no GEMDOS "
+            f"Malloc at all, `tos_malloc_unused = true` in the same file waives this check "
+            f"(emu.run() then enforces that claim per run).")
+    if emu.HEAP_LIMIT <= heap_base:
+        raise RuntimeError(
+            f"the Malloc arena starts at {heap_base:#x} ({heap_source}) but may not reach "
+            f"{emu.HEAP_LIMIT:#x} ({emu.heap_limit_source()}) — the window is empty, so the first "
+            f"block handed out is already past the ceiling and every allocating run is refused. "
+            f"Lower `heap_base` or raise `heap_limit` in {_CFG.dir / project.CONFIG_NAME}.")
     if OS_FS_TABLE < loader.PROGRAM_END:
         raise _overlap_error("OS_FS_TABLE", OS_FS_TABLE)
     if OS_FS_STAGING >= emu.STACK_GUARD_LO:
@@ -433,8 +539,43 @@ def stage_files(files):
     return pokes, handles
 
 
+def set_base_image(image):
+    """Make ``image`` the memory every later differential starts from. Returns the previous one.
+
+    THE IMAGE A DIFFERENTIAL STARTS FROM is BASE_IMAGE — the .PRG loaded and relocated — for every
+    project whose functions are entered on the machine the loader leaves. Not every program is:
+    Bubble Ghost's crt0 ends by running `init_globals`, which writes some 15,700 bytes of non-zero
+    initialisers into a bss the loaded image holds as ZEROES, so a case staged on BASE_IMAGE runs
+    against a program whose tables are all zero. It goes green, and it is green about a machine that
+    never exists at run time.
+
+    Such a project builds its canonical image once (under the oracle, from BASE_IMAGE) and installs
+    it HERE, from a session-scoped AUTOUSE fixture. Autouse is the point: a per-call argument is a
+    thing a battery can forget, and forgetting it does not fail — it silently runs the case against
+    zeroed state, which is the exact false green this exists to close. One mechanism, so there is
+    one place to look and no second route with different behaviour.
+
+    The previous image comes back so a fixture can restore it on teardown, and the copy is taken as
+    ``bytes``: the installed image is shared by every case in the session, and a ``bytearray`` a
+    caller kept a reference to could be mutated under them all.
+    """
+    global _DIFFERENTIAL_BASE
+    if len(image) != OS_IMAGE_SIZE:
+        raise ValueError(
+            f"set_base_image() was given {len(image):#x} bytes, but the model's image is "
+            f"OS_IMAGE_SIZE ({OS_IMAGE_SIZE:#x}, tools/recreate_kit/include/os.h) — every address "
+            f"the map fixes is an offset into an image of exactly that length, so a short one would "
+            f"put the staged-file table past its end and a long one would silently drop its top.")
+    previous, _DIFFERENTIAL_BASE = _DIFFERENTIAL_BASE, bytes(image)
+    return previous
+
+
 def make_image(pokes=None):
-    """Fresh copy of the loaded image with {addr: bytes} written in.
+    """Fresh copy of the base image with {addr: bytes} written in.
+
+    The base is BASE_IMAGE unless the project installed another with set_base_image() — read at
+    CALL time, never captured, so an autouse fixture that runs after this module was imported still
+    reaches every case.
 
     Every poke passes _vet_no_poke_into_poked_input() — the one layer no caller can go round, since
     a poke that is never applied changes nothing. The two builders above check earlier and more
@@ -442,7 +583,7 @@ def make_image(pokes=None):
     ships two builders, so hand-writing {OS_RANDOM_VALUE: ...} into a poke dict is the ONLY way to
     stage an XBIOS Random, and that idiom is in use (projects/joust/recreate/test/test_os_traps.py).
     """
-    img = bytearray(BASE_IMAGE)
+    img = bytearray(_DIFFERENTIAL_BASE)
     for addr, data in (pokes or {}).items():
         _vet_no_poke_into_poked_input(addr, len(data))
         img[addr:addr + len(data)] = data
@@ -1527,3 +1668,26 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
 
 def report(diffs):
     return "\n".join(f"  {label(a)} (0x{a:x}): oracle={o:#04x} cand={c:#04x}" for a, o, c in diffs)
+
+# ---- the names this module SERVES rather than stores -------------------------------------------
+# `OS_HEAP_BASE` is oracle/emu.py's — the one per-project entry in the TOS memory map — and a copy
+# taken here at import would go stale the moment anything moved the base, which the kit's own
+# test/test_heap_base.py does on purpose. Served live instead, so `harness.OS_HEAP_BASE` and
+# `emu.OS_HEAP_BASE` cannot disagree.
+#
+# A PROJECT SHIM STILL HOLDS A SNAPSHOT, and that is unchanged: `test/harness.py` in each project is
+# `from recreate_kit.harness import *`, which binds every exported name into the shim's own module
+# once. No project moves its base at run time, so the snapshot equals the live value there; a test
+# that DOES move one reads `emu.OS_HEAP_BASE` (or this module directly) as the kit's own suite does.
+def __getattr__(name):
+    if name == "OS_HEAP_BASE":
+        return emu.OS_HEAP_BASE
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+# `from recreate_kit.harness import *` is how every project's test/harness.py re-exports this
+# module. Without `__all__` a star-import copies the module's __dict__, which would skip the name
+# above — so the list is DERIVED from that same dict (every public name, exactly what the star
+# import already took) plus the served one, which getattr() then reaches. It must stay LAST in the
+# file: a name defined below it would not be exported.
+__all__ = sorted([name for name in globals() if not name.startswith("_")] + ["OS_HEAP_BASE"])

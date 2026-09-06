@@ -27,6 +27,14 @@ OS_PSG_NREGS = 16
 OS_PSG_WRITE = 0x80          # bit 7 of Giaccess's register argument selects write over read
 OS_POKE_BLOCK_END = OS_PSG_REGS + OS_PSG_NREGS   # first address above the poked block (0x620)
 
+# ---- the staged-file table's base (mirror of include/os.h) ----
+# Here rather than with the rest of the file-staging map in ``harness.py`` for this module's first
+# reason: it is the ceiling the Malloc arena may not reach, and BOTH files ask about it —
+# ``harness._vet_os_memory_map`` checks where the arena is PLACED and ``emu._vet_heap_within_bounds``
+# checks how far one run grew it. ``harness.OS_FS_TABLE`` re-exports it, so the rest of the map still
+# reads as one namespace.
+OS_FS_TABLE = 0xBF000
+
 # ---- the direct-PSG ledger's event kinds (mirror of include/os.h, "Phase 6") ----
 # NOT poked-input state — they live here for this module's OTHER reason: `emu.psg_events` tags each
 # entry with one and `harness._vet_psg_state` compares them, and emu cannot import harness. The

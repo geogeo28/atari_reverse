@@ -135,6 +135,12 @@ Why it matters more than it looks:
   move them to (that is the 68000 vector page). The kit's two `project.toml` waivers —
   `tos_malloc_unused`, `tos_poked_input_unused` — exist for exactly that, and both are claims about
   the *game* that have to be evidenced, not conveniences.
+- **The Malloc arena is MOVED, not waived, for a game that allocates.** `tos_malloc_unused` is the
+  claim that the game issues no GEMDOS `Malloc` at all; for a program whose bss simply covers the
+  default arena — Bubble Ghost's runs to `0x2520e`, over `0x20000` — that claim is false, and the
+  waiver is not a substitute for the remedy. `project.toml`'s `heap_base` (and `heap_limit`, the
+  first address the arena may not reach) place the arena on both sides instead. See
+  `tools/recreate_kit/README.md`, "The Malloc arena is the one region a project places".
 - **Do not reach for the Hatari dump.** This is not a packed executable (see
   [`packed-executables.md`](packed-executables.md)); the bytes are already plain, only the base is
   wrong. Entropy tells the two apart: Wonder Boy's text is 4.96 bits/byte.

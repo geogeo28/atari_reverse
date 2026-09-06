@@ -5,7 +5,8 @@
  *
  * Modeled: calls that only touch hardware TOS never reads back (Setpalette/Setcolor/Setscreen,
  * Dosound, Cconout/Cconws, Ikbdws) have NO image effect and return 0. Physbase/Logbase return
- * OS_SCREEN_BASE; Getrez returns 0 (low-res); Malloc bump-allocates from OS_HEAP_BASE;
+ * OS_SCREEN_BASE; Getrez returns 0 (low-res); Malloc bump-allocates from OS_HEAP_BASE (which
+ * project.toml's `heap_base` may move; see the fixed-memory-map section);
  * Mshrink/Mfree return 0. GEMDOS file I/O is modeled by os_fopen/os_fcreate/os_fread/os_fwrite/
  * os_fclose over a staged-file table (below). The calls that DO read or write model state —
  * Bconstat/Bconin/Crawio, Super, Giaccess, Random — are the os_* helpers further down. XBIOS Supexec
@@ -64,9 +65,10 @@ uint32_t g_os_refusal_count(void);      /* ...and raises on what it reads back *
 /* ---- the model's fixed memory map -------------------------------------------------------
  * These addresses are kit-wide: one set of C constants serves every game, while load_base /
  * image_size are per-project (project.toml). They therefore assume a program that fits below
- * OS_HEAP_BASE and an image large enough to hold the staging area below the stack guard —
+ * OS_FS_TABLE and an image large enough to hold the staging area below the stack guard —
  * harness._vet_os_memory_map() checks both against the bound project and fails loudly if not,
- * which is the signal to move a region here (and its Python mirror in harness.py). */
+ * which is the signal to move a region here (and its Python mirror in harness.py). The Malloc
+ * arena is the exception: it is per-project too, see OS_HEAP_BASE below. */
 #define OS_IMAGE_SIZE  0x100000u /* the flat image both cores run on is this long. Kit-wide for the
                                   * same reason the addresses below are: os_fread/os_fwrite must
                                   * bound their memcpy against something, and a reconstruction that
@@ -75,9 +77,22 @@ uint32_t g_os_refusal_count(void);      /* ...and raises on what it reads back *
                                   * project's image_size, so a project that grows its image fails
                                   * loudly here instead of copying past the buffer unchecked. */
 #define OS_SCREEN_BASE 0x8000u   /* Physbase/Logbase result (in-image screen region) */
-#define OS_HEAP_BASE   0x20000u  /* Malloc bump-allocator base: an in-image region above the
-                                  * program, growing up (BuggyBoy's main takes a 0x5ee08-byte work
-                                  * block here, ending ~0x7ee08 — the largest claim so far) */
+/* ---- the Malloc arena's base: the one region of this map that MOVES ---------------------
+ * Installed at run time from project.toml's optional `heap_base`, because os.h is compiled into two
+ * SHARED objects and a #define cannot answer "where" per project. The whole mechanism is in
+ * ../README.md, "The Malloc arena is the one region a project places".
+ *
+ * WHAT A READER OF THIS FILE NEEDS: OS_HEAP_BASE is a VARIABLE READ, not a constant expression. It
+ * is spelt as it always was, so reconstructed code that reads it is unchanged — but it may not
+ * appear in a case label, an array bound or a static initialiser. A build that does not link
+ * src/os_heap.c (an on-target build, which allocates through real TOS) fails at LINK if it reads
+ * it, rather than silently using a stale default. */
+#define OS_HEAP_BASE_DEFAULT 0x20000u /* an in-image region above the program, growing up (BuggyBoy's
+                                       * main takes a 0x5ee08-byte work block here, ending ~0x7ee08
+                                       * — the largest claim so far) */
+extern uint32_t g_os_heap_base;       /* the live base on the CANDIDATE side (src/os_heap.c) */
+void os_set_heap_base(uint32_t base); /* ...installed once, before any run; the shim has its own */
+#define OS_HEAP_BASE   (g_os_heap_base)
 #define OS_CRAWIO_RESULT 0u      /* GEMDOS Crawio(0xff) raw non-blocking read: what it returns when
                                   * no key is pending. os_crawio() below serves the same poked
                                   * console state as Bconstat/Bconin, so this is its answer on an

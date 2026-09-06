@@ -26,11 +26,52 @@ STACK_SCRATCH = 0x400     # bytes below STACK_TOP a call frame may legitimately 
                           # [STACK_GUARD_LO, STACK_TOP - STACK_SCRATCH) is program output, not stack
 SENTINEL = 0x00000002     # even, mapped, never real code (code >= 0x10000): rts lands here
 
-# The modeled Malloc heap base, mirroring include/os.h (shim.c bump-allocates from it). It lives
-# here rather than with the rest of the os.h mirror in harness.py because the guard below — which
-# every emu.run() must pass through, harness or not — needs it; harness.py re-exports it, and
-# test/test_os_memory_map.py pins both Python files against os.h.
-OS_HEAP_BASE = 0x20000
+# The modeled Malloc heap base, mirroring include/os.h (shim.c bump-allocates from it). The
+# mechanism — the key, the two entry points, the guards — is in ../README.md, "The Malloc arena is
+# the one region a project places". It lives HERE rather than with the rest of the os.h mirror in
+# harness.py because the guards below, which every emu.run() passes through whether a harness is
+# involved or not, need it; harness.py serves it back under its own name.
+OS_HEAP_BASE_DEFAULT = 0x20000
+_cfg = project.current()
+OS_HEAP_BASE = OS_HEAP_BASE_DEFAULT if _cfg.heap_base is None else _cfg.heap_base
+# ...and where it must STOP. The arena grows upward without bound, and only its BASE was ever
+# vetted, so a run that allocated past the staged-file table scribbled over it on both sides and
+# compared equal. project.toml's optional `heap_limit` narrows the ceiling further, for a project
+# whose free window ends below the table (its own scratch map, or a region its cases poke); the
+# kit's own ceiling is os_map.OS_FS_TABLE and a project may only lower it, never raise it.
+def resolve_heap_limit(configured):
+    """The ceiling a project's ``heap_limit`` really buys: the kit's own, which it may only LOWER.
+
+    A function rather than an expression so the clamp has a surface — the resolution runs once at
+    import, from the bound project's config, and a project that raised the ceiling past the
+    staged-file table would be granting itself exactly what the kit-wide limit exists to refuse.
+    """
+    if configured is None:
+        return os_map.OS_FS_TABLE
+    return min(configured, os_map.OS_FS_TABLE)
+
+
+HEAP_LIMIT = resolve_heap_limit(_cfg.heap_limit)
+
+
+def heap_base_source():
+    """Where the arena's base came from, as a phrase naming the file to edit.
+
+    Two spellings, because a project that never set the key has no `heap_base` line to go and
+    change: naming project.toml for a value it does not contain sends the reader looking for a key
+    that is not there. harness.py's refusals format this rather than assuming the configured case.
+    """
+    if _cfg.heap_base is None:
+        return (f"`OS_HEAP_BASE_DEFAULT` in tools/recreate_kit/include/os.h "
+                f"(no `heap_base` in {_cfg.dir / project.CONFIG_NAME})")
+    return f"`heap_base` in {_cfg.dir / project.CONFIG_NAME}"
+
+
+def heap_limit_source():
+    """...and where the ceiling came from, in the same two spellings."""
+    if _cfg.heap_limit is None or _cfg.heap_limit >= os_map.OS_FS_TABLE:
+        return "the staged-file table (OS_FS_TABLE, tools/recreate_kit/include/os.h)"
+    return f"`heap_limit` in {_cfg.dir / project.CONFIG_NAME}"
 
 _DREG_NAMES = ("d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7")
 _AREG_NAMES = ("a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7")
@@ -88,6 +129,41 @@ _LIB.osh_unmodeled.restype = ctypes.c_uint32
 _LIB.osh_min_a7.restype = ctypes.c_uint32
 _LIB.osh_heap.restype = ctypes.c_uint32
 _LIB.osh_malloc_count.restype = ctypes.c_uint32
+def install_heap_base(lib, symbol, base, on_missing):
+    """Install the configured Malloc arena base into ONE shared object. Returns whether it did.
+
+    Both sides need this and neither can do it for the other: the oracle and the candidate are two
+    objects in one process, told separately from the one value project.toml configured (see "The
+    Malloc arena is the one region a project places" in ../README.md). The shape is the same, so it
+    is written once — what differs is the refusal, which each side supplies as ``on_missing(symbol)``
+    because they name different .so files and different rebuild commands.
+
+    Required ABI only when the base is NON-DEFAULT: an .so without the entry point already starts
+    its arena at OS_HEAP_BASE_DEFAULT, so a default project is served correctly by a build predating
+    the key — while a project that MOVED its heap and was silently served the old base would
+    allocate on top of its own program, which is the exact false green the guards below exist to
+    close. That is why the default returns False rather than raising: the absence is only a fault
+    for the project that asked for something else.
+    """
+    if base == OS_HEAP_BASE_DEFAULT:
+        return False
+    if not hasattr(lib, symbol):
+        raise on_missing(symbol)
+    entry = getattr(lib, symbol)
+    entry.argtypes = [ctypes.c_uint32]
+    entry(base)
+    return True
+
+
+def _missing_heap_base_abi(symbol):
+    """The oracle side's refusal for an .so predating ``symbol`` — install_heap_base's ``on_missing``."""
+    return _stale_oracle(
+        symbol,
+        f"so {_cfg.name}'s `heap_base = {OS_HEAP_BASE:#x}` (project.toml) cannot be installed "
+        f"and the oracle would keep allocating from {OS_HEAP_BASE_DEFAULT:#x}.")
+
+
+install_heap_base(_LIB, "osh_set_heap_base", OS_HEAP_BASE, _missing_heap_base_abi)
 if not hasattr(_LIB, "osh_poked_input_calls"):
     raise _stale_oracle(
         "osh_poked_input_calls",
@@ -955,7 +1031,7 @@ def _vet_no_malloc_over_program(malloc_calls):
 
     ``malloc_calls`` counts SERVICED Malloc traps rather than looking at the bump pointer: a
     Malloc whose rounded size is 0 — canonically ``Malloc(-1)``, GEMDOS's "how big is the largest
-    free block?" query — is fully serviced and returns a block at OS_HEAP_BASE without moving the
+    free block?" query — is fully serviced and returns a block at the arena base without moving the
     pointer, so a pointer test would let exactly that case through.
     """
     if not (malloc_calls and heap_overlaps_program()):
@@ -969,8 +1045,41 @@ def _vet_no_malloc_over_program(malloc_calls):
         f"the same bytes over the same program bytes and the diff comes back clean while proving "
         f"nothing. A green result on this run is not evidence of anything. {cfg.name}'s "
         f"`tos_malloc_unused = true` in {cfg.dir / project.CONFIG_NAME} is therefore false: drop it "
-        f"and move OS_HEAP_BASE above the program (include/os.h + its mirror in emu.py), or lower "
-        f"load_base.")
+        f"and set `heap_base` in the same file to an address above the program (the kit installs it "
+        f"into both sides), or lower load_base.")
+
+
+def _vet_heap_within_bounds(heap_end):
+    """Reject a run whose Malloc arena grew past its ceiling — the OTHER end's FALSE GREEN.
+
+    Only the arena's BASE is vetted at import (harness._vet_os_memory_map): where it starts is a
+    project's choice and is checked against the program and the model's other fixed regions. How far
+    it GROWS is not a choice at all — the bump allocator moves upward for as long as the game asks —
+    so a base that was legal at import says nothing about the seventh allocation, and until this
+    guard existed nothing looked at the pointer.
+
+    What that costs is a whole class of silent run. A block handed out over the staged-file table
+    overwrites the entries os_fopen reads, and one handed out over a project's own scratch map
+    overwrites the stub the case poked. Both are plain image writes served identically to the oracle
+    and the candidate, so the two corrupted runs compare EQUAL and the case reports green.
+
+    The ceiling is os_map.OS_FS_TABLE, narrowed by project.toml's optional ``heap_limit`` for a
+    project whose free window ends lower (HEAP_LIMIT above). ``heap_end`` is the bump pointer at the
+    END of the run — shim.c resets it to the base at every osh_run — so this measures one run's
+    demand, which is what a differential case is.
+    """
+    if heap_end <= HEAP_LIMIT:
+        return
+    raise AssertionError(
+        f"the oracle's Malloc arena grew to {heap_end:#x}, past the {HEAP_LIMIT:#x} ceiling "
+        f"({heap_limit_source()}) — the blocks it handed out reach into memory the model owns, and "
+        f"the candidate mirrors the same arena, so BOTH sides scribble the same bytes over the same "
+        f"region and the diff comes back clean while proving nothing. The arena starts at "
+        f"{OS_HEAP_BASE:#x} ({heap_base_source()}), so this run asked for "
+        f"{heap_end - OS_HEAP_BASE:#x} bytes and the window is only "
+        f"{HEAP_LIMIT - OS_HEAP_BASE:#x}. Either the case allocates more than the game does, or "
+        f"{_cfg.name}'s arena needs a wider window: lower `heap_base`, or move whatever sits above "
+        f"it and raise `heap_limit` in {_cfg.dir / project.CONFIG_NAME}.")
 
 
 def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw_seed=None,
@@ -1249,5 +1358,6 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
                                             for i in range(len(sites)))
 
     _vet_no_malloc_over_program(out_regs["malloc_calls"])
+    _vet_heap_within_bounds(out_regs["heap"])
     _vet_no_poked_input_read(out_regs["poked_input_calls"])
     return mem, writes, out_regs
