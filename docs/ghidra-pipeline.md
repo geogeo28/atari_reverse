@@ -110,6 +110,11 @@ positive is DATA. No conversion in either direction, and `var` lines land on rea
 Bubble Ghost this turned 10,031 `a4 + n` expressions into **zero**, and 8,166 globals into
 addressed `DAT_*` labels; see [`../projects/bubbleghost/README.md`](../projects/bubbleghost/README.md).
 
+**What the rest of such a program looks like — the stack-args ABI, the two trap trampolines that file
+the caller's A1/A2, and the compiler's straight-line initialiser — is
+[`agent-playbook.md`](agent-playbook.md), "When the target is COMPILED C, not hand asm".** Read it
+before porting one; the relayout above is only the first of its five facts.
+
 ## The naming loop (the actual work)
 
 ```
@@ -196,6 +201,12 @@ analysis can reach. Chase those by hand in the GUI, not by seeding from a linear
 - `run.sh` **re-imports and wipes names** — only for the first bootstrap; iterate with `reapply.sh`.
 - If `ApplyNames` reports fewer applied than expected, an `fn` address may be data or an
   unreached jump target; it disassembles+creates then, but verify it landed.
+- **An `fn` line CREATES the function, so a bespoke seed script is redundant.** Where no function
+  exists at the address, the `fn` arm clears any bogus data auto-analysis laid across the entry,
+  disassembles and creates it. So the "Extra pre-scripts" seed above needs no new Java: a
+  one-line file (`echo 'fn 0x16d8e FUN_00016d8e' > out/seed_functions.txt`) run through
+  `ApplyNames` ahead of analysis is the whole mechanism. Write the seed under Ghidra's **default
+  `FUN_` name**, so the DB carries no name `names.txt` does not.
 - **`ApplyNames` REPLACES, so a second `cmt` for one address DELETES the first.** The file is read
   strictly top to bottom and the `cmt` arm is `setPlateComment(addr, …)` — a set, with no dedup and
   no address index — so for any address carrying two `cmt` lines the **last one in the file wins**

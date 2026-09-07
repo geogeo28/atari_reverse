@@ -75,6 +75,37 @@ for the reference implementation):
   held the right value (e.g. a zero) now diverges — catching a *coincidental* pass. Opt-in, because
   poisoning an output that also steers control flow can perturb a complex function (see §5's caveat).
 
+### When the target is COMPILED C, not hand asm
+
+Everything above assumes hand-written assembly. An Alcyon/DRI **small-model C** program — Bubble
+Ghost (ERE Informatique, 1987; `projects/bubbleghost/`) is the worked case — is regular in ways that
+make it easier, and carries traps of its own.
+
+- **The ABI is a stack-args stub ABI, not register glue.** Every function opens `link a6,#-n` and
+  reads its arguments at `8(a6)`, `10(a6)`, … so the glue lays an argument list at the stack top
+  (`test/abi.py`'s `stack_args`) and both sides read it there. The "which register carries what"
+  question never gets asked.
+- **Every global is `n(a4)`.** Rebuild the image in the run-time layout and pin the base register
+  *before* analysis, or no global has an address at all — the recipe is
+  [`ghidra-pipeline.md`](ghidra-pipeline.md), "Small-model C", and what it buys is that a Ghidra
+  address, a `names.txt` address and a run-time address are one number.
+- **The OS trampolines FILE the caller's A1/A2 — so a register a leaf leaves behind is a hidden
+  parameter.** Bubble Ghost's `gemdos_trap`/`xbios_trap` park A1, A2 and their return address in
+  three fixed longwords; those three stores are the whole image effect of a call a reconstruction
+  cannot make, and the buffered file layer traps *after* a callee has moved A1. Predicting the value
+  per caller is a guess a green diff will not correct. The fix that held is §5's "callee reporting
+  the register" one level up: `c_read`/`c_write` **report** the registers they leave, in a struct the
+  buffered layer threads.
+- **The compiler's initialiser is a store STREAM, and its C is GENERATED from the disassembly.**
+  `init_globals` is 7,797 straight-line `move.w #imm,(a1)+` that build the whole initialised BSS.
+  Decode those instructions into data, refuse any shape outside the small set you decoded, and
+  self-check against an oracle run — **never** derive it from the post-init image, which is the
+  stream's own output and would verify itself.
+- **Replay the crt0 as a pin.** Fabricate a basepage, run the real startup code to the instruction
+  before `jsr main`, and assert the memory it produces equals your fixture. Bubble Ghost's pin found
+  that `init_globals` reads A5: a fixture without it is wrong in seven longwords of live state while
+  every test around it stays green.
+
 ## 5. Make hard functions tractable — the techniques that unblock
 
 Most functions run to `rts` on a staged image. The rest need one of these (all proven in BuggyBoy):
@@ -121,6 +152,26 @@ and the trap wrappers themselves. A read-verified path can be byte-perfect and s
 you compile it to a real `.PRG` (the "no-key" debug menu above actually *does* get keys on hardware).
 That whole bug class, its seam pattern, and the on-hardware diagnostic toolkit live in
 [`on-target-execution.md`](on-target-execution.md) — read it before shipping a playable build.
+
+**A GEM program needs a MODEL of the VDI/AES, not a slice around it.** When a program draws through
+the OS rather than around it, the "bypass the OS" assumption inverts: Bubble Ghost puts every string,
+bar and 32×32 tile through `trap #2` and reads keys through `Cconis`/`Crawcin`/`Cnecin`, so slicing
+around each call would leave nothing verified but the arithmetic between them. The deep fix is to
+model the calls deterministically and **identically on both sides** — the VDI/AES opcodes the program
+actually reaches, an ST raster with `vro_cpyfm`'s sixteen logic operations, a console key *queue*
+that refuses when empty rather than fabricating a key — with everything outside the set refusing by
+opcode (`../tools/recreate_kit/TRAP_MODEL.md`, phases 11–13). Two properties make it affordable: the
+workstation state lives **in the image**, so the ordinary byte diff owns it; and what a call leaves
+off-image (console bytes, IKBD bytes, cursor calls) goes into one ordered **event ledger** compared
+per run, so a call that writes no image bytes is not invisible.
+
+**Test a shared model through BOTH DOORS.** The oracle reaches it by decoding a trap; the candidate
+calls a C helper. Those are two implementations of one contract and a differential exercises only one
+of them per run, so drive both on the same parameter block from the same start state, once per
+modeled opcode, and assert three things: the same bytes in every band the model may write, the same
+ledger entries, and the same poked-input tally. On the kit's probe six mutants of the model reddened
+between 1 and 17 cases each, and a seventh — a parameter-block pointer computed in 32 bits — crashed
+the probe outright over 148 cases.
 
 **Vet every shortcut.** An `exclude` band that drops bytes from the diff must be provably stack
 scratch (not program output). A cap/sample/no-retry in a fuzz must be **logged**, not silent —
@@ -183,7 +234,26 @@ measured in this workspace rather than imagined.
   through `__pycache__`, where restoring a mutated constant within the same mtime second left pytest
   running the cached bytecode and two unrelated cases stayed red after the file on disk was already
   correct (`14da1cd`) — `find . -name __pycache__ -exec rm -rf {} +` is that case's `rm build/*.so`.
-  **Force the inputs to be rebuilt before you trust a green or a red.**
+  **And `rm -f build/*.so` is not enough when a SHARED oracle sits underneath it**: a mutation of the
+  emulator shim rebuilds `oracle/build/liboracle.so`, whose mtime the same one-second granularity
+  makes stale, so every suite that loads it measures the *previous* oracle. Measured on the kit's
+  `Pterm` sweep: three figures read 2/2/2 and became 5/4/4 once the sweep deleted that artifact first,
+  and one mutant reported as a survivor was never actually built (`TRAP_MODEL.md`, Phase 13). A sweep
+  over a shared harness deletes **both** — `rm -f build/*.so oracle/build/*.so` — and counts pytest's
+  ERRORS as well as its failures, because a mutant that makes a run overrun its instruction cap
+  raises inside a fixture rather than failing a case.
+  **Force the inputs to be rebuilt before you trust a green or a red.** This class recurred **three
+  times in one campaign** (Bubble Ghost, 2026-09-05/06): the reconstruction's first sweep, the kit's
+  `Pterm` sweep, and the final wave's — which is the argument for a sweep *script* that deletes
+  before it builds, rather than for remembering.
+- **A mutation sweep's baseline is the WHOLE suite green, not the battery you are mutating.** A
+  suite carrying one unrelated red test reports every mutant as *killed*: the run was already
+  failing, and nothing in the report says which case did it. That is the stale-artifact trap wearing
+  different clothes, and it bites hardest during a wave, where another agent's battery is red for
+  reasons that have nothing to do with your constant — Bubble Ghost measured exactly that, a survivor
+  filed as killed off a red baseline and alive when re-run from a green one. So: `rm -f build/*.so &&
+  make test` to a clean green FIRST, then mutate, and say in the record which baseline the numbers
+  were taken against.
 - **A shell gate under `set -euo pipefail` dies silently on a grep that matches nothing.** grep exits
   1, the pipeline inherits it, and the assignment aborts the script with no message at all. Measured:
   removing the last marker from a header killed the whole build at the gate's *first line* — the worst
@@ -199,6 +269,29 @@ measured in this workspace rather than imagined.
   what is there and refuse a mismatch, so an item written some other legal way is a refusal rather
   than something quietly outside the check. Then flip one thing and watch it redden: a gate nobody has
   seen fail is a gate nobody has tested.
+
+### A measured survivor is a finding about the SURFACE, not a licence
+
+A mutant the suite does not kill is telling you that some real effect of the original is not
+*observable* in what you compare. Three shapes, all measured in one campaign, with the fix each
+needed — and the fix is never "accept it", it is to give the effect a surface:
+
+* **The effect is idempotent, so only the LAST of N is observable.** Bubble Ghost's room draw polls
+  the mouse once per cell; run to `rts` over a fixed mouse state, only the fiftieth poll's bytes
+  survive, and guarding the poll to the last cell passed all 225 cases of the battery. Fix: cut the
+  loop into per-iteration `stop_pc` slices and **move the input between them**, so each poll writes a
+  different answer.
+* **The destination already holds the value you would write.** A sprite grab of cell 50 could be
+  skipped entirely: that cell is 512 zero bytes in the real asset and a fresh allocation is zero too.
+  Fix: **seed the destinations** — a randomised, non-zero arena — which is §4's poison pass promoted
+  from an opt-in re-run to a standing property of the fixture.
+* **The neighbouring word is zero on both sides.** `c_close`'s `errno` store wrote a 0 over a 0 and
+  survived the whole suite until the fd-table poke began seeding that word with noise. Fix: **seed
+  the neighbour**, not just the output.
+
+And when a survivor really cannot be caught, say so with its proof rather than leaving it in the
+table: `c_read`'s entry `errno := 0` is overwritten on every path out, so a final-memory diff cannot
+see it — that is a hole in the *comparison*, recorded as one (`projects/bubbleghost/recreate/STATUS.md`).
 
 ## 11. Before a wave launches — the setup contract
 
@@ -315,18 +408,35 @@ and the failures are all in the seams rather than in the code.
   one branch outside the conflict hunks merges clean and fails at *runtime*: a smoke check's
   `PACING_OVERFLOW_SHARE` became `PACING_OVERFLOW_FRAMES` in one wave (`59786c7`) and the next wave's
   merge had to unify it by hand (`6155cc5`). Textual merge is not a type checker.
-- **List the untracked files before every commit.** A path-scoped `git add` — which this workspace
-  prefers, because `-A` sweeps up concurrent work — leaves an agent's *new* test file behind, and the
-  commit then claims a test it does not contain. `git status --short` and read the `??` lines.
+- **§11's by-file ownership HELD, across four agents at once.** Bubble Ghost ran four concurrent
+  subsystem agents against one tree under exactly that contract — `src/<yours>.c`,
+  `include/<yours>.h`, `test/test_<yours>.py` and your own `## Verified — <yours>` section of the
+  ledger, with every shared file either nobody's or append-only — and produced no merge conflict in
+  the code at all. The seams that did cost time were the *commit* ones below, not the edits.
+- **Commit BY PATH during a live wave, so files still in flight stay out.** `git add <paths>` is the
+  workspace rule anyway; mid-wave it is also what lets you land one finished subsystem while three
+  others are mid-edit in the same tree. Stage the finished agent's files, `git diff --cached --stat`,
+  and leave the rest.
+- **List the untracked files before every commit.** A path-scoped `git add` — the same rule one
+  bullet up — leaves an agent's *new* file behind, and the commit then claims something it does not
+  contain. Twice measured: a new test file in Zynaps, and Bubble Ghost's shared `include/common.h`,
+  which a second agent's file already `#include`d. `git status --short` and read the `??` lines.
+- **A ledger gate COUPLES a subsystem to its rows, and that is the commit boundary you want.**
+  Bubble Ghost's `test/test_status.py` re-derives each section's count from its rows and refuses any
+  `fn` in `names.txt` that is neither verified nor deferred (and any address claiming both), so code
+  and ledger cannot be split across two commits without a red suite in between. The wave's unit of
+  work becomes "a subsystem and its rows", which is also the unit a reviewer can check.
 - **The same fact written on several prose surfaces drifts.** Zynaps' dead-code hunt found three of
   the project's own surfaces describing one key wrongly (`d833f14`) and, a commit later, a fourth
   disagreeing about how many boots had demonstrated it (`86ddb33`). When you correct one, correct the
   set: the rule is `methodology.md`'s — the correction is landed when the **old phrase greps to
   zero**.
-- **An agent that has stopped can be resumed rather than replaced** — a property of the harness
-  rather than a measurement here: messaging a stopped agent's id continues it with its context
-  intact, so a wave halted by a rate limit does not have to be re-scoped and re-explained. Respawn
-  only when you actually want a clean context.
+- **An agent that has stopped can be resumed rather than replaced** — messaging a stopped agent's
+  id continues it with its context intact, so a wave halted by an API stall or a rate limit does not
+  have to be re-scoped and re-explained. Bubble Ghost's wave hit both repeatedly and every agent came
+  back by message, keeping the subsystem knowledge it had built; respawn only when you actually want
+  a clean context. Budget for it: an orchestrator that treats a stall as a death re-explains the
+  contract instead of waiting a few minutes.
 
 ## 13. Porting this to a new target
 

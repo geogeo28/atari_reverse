@@ -170,6 +170,37 @@ And the reason it matters more here than in ordinary code: in this workspace the
 deliverable. A wrong comment beside right code is not cosmetic — it is the thing the next batch
 reads instead of the bytes.
 
+### When two NOTES disagree, the body is the tiebreak — and the merge is where you find out
+
+The rule above is about one surface drifting from the bytes. A project written by several agents at
+once has the other shape: two notes, each read from the image, that do not agree with each other.
+Bubble Ghost's naming wave produced three in one merge, and all three were resolved by re-reading the
+body rather than by picking the more recent note:
+
+* **A period and a reload value are not the same number.** One note said the bonus bar ticks every
+  **2** frames, another every **3**. Both were describing `bonus_tick`, which is *reloaded with 2*
+  and steps on the frame whose pre-decrement value is already 0 — so the sequence is 2, 1, 0 → step,
+  a period of 3. The merged text now carries both numbers and the mechanism, because either alone
+  reads as the other's contradiction.
+* **A claim about ranges is worth executing, not arguing.** The demo/slideshow length was quoted as a
+  range derived from a `Random()` through the software float package. The merge turned the plate's
+  reasoning into a differential case that runs the four float calls and asserts the range with both
+  boundaries pinned — after which the plate is executed on every commit rather than believed.
+* **A left/right label swap survives every reading that does not check the store.** Two per-player
+  bonus-bar slots were crossed in the map: the labels were plausible, the addresses adjacent, and
+  only the instruction that writes each one settles it.
+
+**And a name from a NOTE is not a name from a BODY.** Two `# ctx` names carried for a whole pass were
+wrong in the way §"Verify before you name" predicts: `0x10f20`, tagged from call position as the
+attract/menu, is 174 straight-line stores writing the "all candles lit" defaults — `reset_world_state`
+— and the real menu is a different routine entirely; `0x16a06`, guessed as a screen-mode setter,
+builds VDI `contrl[0] = 3` and traps, i.e. it is `v_clrwk`, and the word it is handed is a workstation
+handle rather than a `Getrez` result. The second one had a second-order cost: believing it kept an
+earlier note's "this program does no VDI drawing" alive, when in fact everything that is not a raw
+`move.l` loop goes through the VDI. When you retire a name, the grep that must come back zero is over
+`names.txt` and the port — the note that *records* the correction is allowed to name it, and is the
+one place that should.
+
 ## Classifying a region: two inferences that look like evidence and are not
 
 Before you can name anything you have to decide which bytes are code. Two habits

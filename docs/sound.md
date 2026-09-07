@@ -135,6 +135,39 @@ constants (`projects/buggyboy/remaster/include/sound.h`) are this table.
   (don't interrupt a higher-priority tune), set state, and call the tune-init routine —
   these are the hooks the game triggers on events (start, crash, checkpoint, game-over).
 
+## Software synth engines — a driver with no stream, and a game with no music
+
+Not every driver reads a note stream. Bubble Ghost's is a **three-voice software ADSR + LFO
+synthesiser** ticked at **200 Hz from MFP Timer C** — not from the VBL — and it has no sequencer at
+all: no stream pointer, no command dispatch, no tempo counter. Every sound is one **voice record**
+(three of them, `0x8c` bytes each, in BSS) filled by a single trigger call from a table of 56-word
+definitions; the ISR walks the three records doing arithmetic and writes the PSG. The tells, in the
+order you meet them:
+
+- **The install is on a timer vector, not `0x456`.** Find who writes `$114` (MFP Timer C) or `$134`
+  (Timer A) as well as the VBL queue. A 200 Hz tick is an *envelope* rate, not a music rate — and one
+  that fast is a hint the driver is generating the shape rather than replaying it.
+- **The per-voice state is a RECORD, not a cursor.** Fields for the envelope phase, the LFO step, a
+  target period — and nothing that could be "the next command".
+- **The definition table is indexed by GAME state.** Here: 36 per-room tones plus 11 fixed effects,
+  47 definitions in all, `snd_def_level[room_number]` and `snd_def_fx[n]`.
+- **So "music" can be genuinely absent.** The only thing in this game that sounds like a melody is
+  emitted by the *frame loop*: the end-of-room bonus tally re-triggers effect 8 with `note = 100 −
+  bar/4` each time it deducts five points, and the rising glissando is that loop, not a tune. Record
+  it rather than hunting for a tune table that does not exist.
+
+**Dumping such an engine is the oracle recipe below ("Hearing it") with two changes.** The definitions live in BSS,
+written one `move` at a time by the compiler's initialiser, so the capture must run on the
+**post-init image** — they are in no file. And there is no "play track N" entry point: call the
+trigger with the arguments the game's own call site passes (voice, volume, note, priority), then
+enter the ISR once per tick. All 47 definitions plus the glissando came out that way as `.ym` at 200
+frames/s and WAV at 48 kHz — 48000 rather than 44100 because it divides evenly by the 200 Hz tick.
+Registers 11–13 were written by *nothing* across the whole sweep, which measures the "no hardware
+envelope" reading rather than asserting it. See
+[`../projects/bubbleghost/notes/sound_engine.md`](../projects/bubbleghost/notes/sound_engine.md) for
+the engine, and [`../tools/ym_capture.py`](../tools/ym_capture.py) for the shared `.ym`/WAV writers
+and the "is this frame audible?" rule.
+
 ## Z80/AY heritage in an ST conversion — two gotchas that read as bugs
 
 Many ST games are conversions of a Spectrum, Amstrad or MSX original, and the sound data usually

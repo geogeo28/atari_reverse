@@ -49,6 +49,16 @@ bash projects/mygame/reapply.sh      # apply + re-export; repeat
 - Starts with **`60 1A`** but the first-pass disassembly at the entry is garbage and the
   **text entropy is > ~6.7** (`prg_dis.py` prints it) → a **packed/crunched executable**;
   depack it before analyzing. (Joust's `JOUSTS.CTE`.) → `packed-executables.md`
+- Starts with **`60 1A`**, entropy is high, but the image is the **same size in as out** — the
+  header's `text`/`data` cover the whole file, nothing allocates a destination — and a short
+  periodic run of words in front of the entry stub is walked by an `eor`/`dbf` loop → an
+  **encrypting** protection wrapper, not a cruncher; the key usually comes off a protection track
+  (Bubble Ghost's `GHOST.PRG`). → `packed-executables.md`, "When the wrapper ENCRYPTS"
+- Disassembles cleanly but every function opens **`link a6,#-n`**, every data access is **`n(a4)`**
+  (or `n(a5)`), and two six-instruction **`trap` trampolines** serve every OS call → **compiled C**
+  (Alcyon/DRI small model), not hand asm. Rebuild it in the run-time layout and pin the base register
+  before analysis → `ghidra-pipeline.md`, "Small-model C"; port it per `agent-playbook.md`,
+  "When the target is COMPILED C".
 - No `60 1A`, highly structured, lots of `0x0000`/`0xffff` runs → **compressed or
   bitmap data** (course/graphics data). → `graphics.md`
 - ST palette words (`0x0RGB`, nibbles small), 16 in a row → a **palette table**. → `graphics.md`
@@ -58,8 +68,11 @@ bash projects/mygame/reapply.sh      # apply + re-export; repeat
 1. **The relocation table is gold.** Honor it on load and every absolute pointer
    (`lea $xxxx.l`, jump tables) resolves to a real, navigable address — this is what
    makes Ghidra's auto-analysis discover functions. Never load a `.PRG` as a flat blob.
-2. **Games bypass the OS.** Expect file I/O via GEMDOS and *everything else* via
-   direct hardware / Line-A / XBIOS. GUI (GEM AES/VDI) usually appears only in init.
+2. **Games bypass the OS — usually.** Expect file I/O via GEMDOS and *everything else* via
+   direct hardware / Line-A / XBIOS, with GEM AES/VDI appearing only in init. The exception is
+   a game written as a **GEM application**: Bubble Ghost opens a virtual workstation and puts every
+   string, bar and 32×32 tile through the VDI, so "no VDI drawing" is a claim to check per program
+   rather than an assumption. A second `trap #2` inside a `vdi_call` stub is the tell.
 
 ## Effort model
 
