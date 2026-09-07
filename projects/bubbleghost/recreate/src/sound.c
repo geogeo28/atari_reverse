@@ -58,9 +58,13 @@ static uint32_t swap_halves(uint32_t value) {
  * file computes is still built in 32 bits with `addr_add`, and there are three of them: the record
  * base (`voice_record`, whose `adda.w` of a sign-extended word product is what an unchecked voice
  * index rides), the interrupt handler's own cursor as it walks DOWN one record a voice, and the
- * volume table's SIGNED word index. A pointer is formed from each only once it is final. What is
- * left for the accessors below is a field's own displacement, which is 0..0x8a off a base that is
- * already an image address and so can carry nothing round the top of the map.
+ * volume table's SIGNED word index. A pointer is formed from each only once it is final, and always
+ * as `image + <that wrapped uint32_t>`, which is the same shape `include/common.h`'s `word_at` has
+ * used all along. What is left for the accessors below is a field's own displacement, 0..0x8a, and
+ * THAT one is added to the pointer rather than to the address — so it does not wrap where the
+ * 68000's `d16(a0)` would. `timer_c_sound_isr` owns the note on which base could ever reach the
+ * window where that is visible, which surface tells the two spellings apart, and why it is left
+ * unpinned rather than closed.
  *
  * `make guarded` is the surface for a base or a stride one record out — it leaves the image and
  * faults instead of quietly reading the host heap. It is NOT the surface for an offset one FIELD
@@ -644,8 +648,26 @@ static void sound_voice_tick(uint8_t *record, unsigned voice, const uint8_t *ima
 void timer_c_sound_isr(uint8_t *image) {
     const uint32_t volume_scale = be32(image + SND_ISR_VOLUME_SCALE);
     /* The cursor is an ADDRESS, not a pointer, because `lea -140(a0),a0` runs three times and the
-     * base comes out of the image: a base below 0x1a4 walks it round the bottom of the address
-     * space, which is arithmetic C's pointers do not have. The pointer is formed per voice. */
+     * base comes out of the image: a base below 0x1a4 walks it round the BOTTOM of the address
+     * space, which is arithmetic C's pointers do not have. So the walk is `addr_add` on a
+     * `uint32_t` and the pointer is formed per voice as `image + cursor` — never by decrementing a
+     * pointer, which is what would put one below `image`. Every value that reaches the `+` is a
+     * `uint32_t`, so it lands inside what `make guarded` reserves: `GUARD_ABOVE` is exactly
+     * `1 << 32`, sized for `image` plus any 32-bit address (tools/recreate_kit/guarded_image.py).
+     *
+     * THE ONE PLACE THAT IS STILL NOT THE 68000's ARITHMETIC is the field displacement the
+     * accessors add to that pointer (the block comment above): `cursor + 0x8a` does not wrap where
+     * `d16(a0)` does. It is reachable — any SND_ISR_TOP_VOICE below 0x1a4 walks the cursor round the
+     * bottom, and 0x10 puts the second voice's base at 0xffffff84 — but nothing puts one there:
+     * `install_sound_vectors` parks `A_snd_voice + (SND_VOICES - 1) * SND_VOICE_BYTES`.
+     *
+     * `make guarded` IS the surface, and an earlier draft of this note said it was not. Its reserve
+     * runs from `image + PROGRAM_BYTES` to `image + PROGRAM_BYTES + (1 << 32)`, so the pointer form's
+     * `image + 0xffffff84 + 0x8a` = `image + 0x10000000e` lands INSIDE it and faults, where the
+     * address form would have wrapped to `image + 0x0e` and read the image. So the two spellings are
+     * TELLABLE APART by a case that seeds such a base — and no case does. Unpinned rather than
+     * unpinnable, recorded in ../STATUS.md: what is not free is the FIX, since giving the accessors
+     * an address back is the 1,483 cycles a tick wave 3a bought. */
     uint32_t cursor = be32(image + SND_ISR_TOP_VOICE);
     uint16_t still_sounding = 0;
     unsigned voice;

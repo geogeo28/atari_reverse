@@ -75,18 +75,33 @@ static uint32_t machine_address(uint32_t offset) {
  * `uint8_t *` it would not be — GCC knows a byte array's alignment is one and stores four times. */
 static uint32_t g_machine_pblock[GEM_POINTER_LONGS];
 
-static uint32_t contrl_word_address(uint32_t contrl, unsigned index) {
-    return contrl + index * WORD_SLOT_BYTES;
+/* THE `contrl` ARRAY IS REACHED THROUGH A CURSOR, NOT AN IMAGE OFFSET, and that is a measurement.
+ * `A_vdi_contrl` is 0x236f0, far past the 68000's signed word displacement, so `mem + A_vdi_contrl +
+ * index` makes GCC fold the whole constant back and spend `move.l #145136,d0` plus an indexed
+ * `(0,a2,d0.l)` access — 26 to 32 cycles — for EVERY slot, however the source is parenthesised
+ * (measured 2026-09-07: hoisting a plain local changes nothing, because GCC re-folds it; deleting
+ * the barrier again puts every slot back on the indexed form, +56 B of code). Behind
+ * `CURSOR_BARRIER` the base stays in one address register and each slot is `move.l 14(a0),d0` at 16
+ * to 20.
+ *
+ * THAT IS A SECOND USE OF THE BARRIER, and `machine.h` documents only the first — "a pointer walked
+ * by postincrement". Here it pins a base that never advances, to stop the folder rather than to keep
+ * an increment. ../STATUS.md's wave 3b registers the difference for whoever hoists the measurement
+ * into the kit beside `CURSOR_BARRIER`'s own note; it is not this file's to make.
+ *
+ * Only the WRITE side needs a mutable cursor, so the byte offset is what the two directions share. */
+static unsigned contrl_word_offset(unsigned index) {
+    return index * WORD_SLOT_BYTES;
 }
 
 /* contrl[7..8] and contrl[9..10] are each one LONGWORD written across two word slots, which is how
  * `vdi_set_src_mfdb` @ 0x16890 stores them. */
-static uint32_t contrl_long(const uint8_t *mem, uint32_t contrl, unsigned index) {
-    return be32(mem + contrl_word_address(contrl, index));
+static uint32_t contrl_long(const uint8_t *contrl, unsigned index) {
+    return be32(contrl + contrl_word_offset(index));
 }
 
-static void set_contrl_long(uint8_t *mem, uint32_t contrl, unsigned index, uint32_t value) {
-    wr32(mem + contrl_word_address(contrl, index), value);
+static void set_contrl_long(uint8_t *contrl, unsigned index, uint32_t value) {
+    wr32(contrl + contrl_word_offset(index), value);
 }
 
 /* ================================================================================================
@@ -119,30 +134,34 @@ typedef struct {
  * every later frame. No call site in this program does it (`../src/frontend.c` always passes
  * `A_mfdb_src` and `A_mfdb_dst`), so this costs one comparison a raster copy to keep an exported
  * entry point that takes both as arguments from being a landmine. */
-static void patch_mfdb(uint8_t *mem, uint32_t contrl, unsigned contrl_index, SavedMfdb *saved,
+static void patch_mfdb(uint8_t *mem, uint8_t *contrl, unsigned contrl_index, SavedMfdb *saved,
                        const SavedMfdb *already) {
-    saved->mfdb = contrl_long(mem, contrl, contrl_index);
+    /* `contrl` IS `mem + A_vdi_contrl` — two parameters that have to agree, where the offset form
+     * this replaced could not disagree. One caller derives both from the same `mem`. */
+    saved->mfdb = contrl_long(contrl, contrl_index);
     saved->raster = 0;
     saved->translated = already == 0 || already->mfdb != saved->mfdb;
     if (saved->translated) {
-        saved->raster = be32(mem + saved->mfdb + MFDB_ADDR);
-        wr32(mem + saved->mfdb + MFDB_ADDR, machine_address(saved->raster));
+        uint8_t *raster_slot = mem + saved->mfdb + MFDB_ADDR;
+
+        saved->raster = be32(raster_slot);
+        wr32(raster_slot, machine_address(saved->raster));
     }
-    set_contrl_long(mem, contrl, contrl_index, machine_address(saved->mfdb));
+    set_contrl_long(contrl, contrl_index, machine_address(saved->mfdb));
 }
 
-static void restore_mfdb(uint8_t *mem, uint32_t contrl, unsigned contrl_index,
+static void restore_mfdb(uint8_t *mem, uint8_t *contrl, unsigned contrl_index,
                          const SavedMfdb *saved) {
     if (saved->translated)
         wr32(mem + saved->mfdb + MFDB_ADDR, saved->raster);
-    set_contrl_long(mem, contrl, contrl_index, saved->mfdb);
+    set_contrl_long(contrl, contrl_index, saved->mfdb);
 }
 
 /* A raster copy's two MFDBs, patched. Answers whether it did anything, so the restore below runs
  * only for the call that needs it. */
-static int stage_raster_copy(uint8_t *mem, uint32_t contrl, SavedMfdb *source,
+static int stage_raster_copy(uint8_t *mem, uint8_t *contrl, SavedMfdb *source,
                              SavedMfdb *destination) {
-    if (be16(mem + contrl_word_address(contrl, VDI_CONTRL_OPCODE)) != VDI_VRO_CPYFM)
+    if (be16(contrl + contrl_word_offset(VDI_CONTRL_OPCODE)) != VDI_VRO_CPYFM)
         return 0;
 
     patch_mfdb(mem, contrl, VDI_CONTRL_SRC_MFDB, source, 0);
@@ -154,10 +173,13 @@ static int stage_raster_copy(uint8_t *mem, uint32_t contrl, SavedMfdb *source,
 int bg_gem_dispatch(uint8_t *mem, uint32_t selector, uint32_t pblock) {
     SavedMfdb source, destination;
     const unsigned longs = selector == GEM_VDI ? VDI_POINTER_LONGS : AES_POINTER_LONGS;
+    uint8_t *contrl = 0;                       /* ...and only a VDI call has one, so only it pays */
     int raster = 0;
 
     if (selector == GEM_VDI) {
-        raster = stage_raster_copy(mem, A_vdi_contrl, &source, &destination);
+        contrl = mem + A_vdi_contrl;
+        CURSOR_BARRIER(contrl);
+        raster = stage_raster_copy(mem, contrl, &source, &destination);
         bg_vdi_calls++;
     } else {
         bg_aes_calls++;
@@ -167,8 +189,8 @@ int bg_gem_dispatch(uint8_t *mem, uint32_t selector, uint32_t pblock) {
     (void)bg_gem_trap((long)selector, g_machine_pblock);
 
     if (raster) {
-        restore_mfdb(mem, A_vdi_contrl, VDI_CONTRL_SRC_MFDB, &source);
-        restore_mfdb(mem, A_vdi_contrl, VDI_CONTRL_DST_MFDB, &destination);
+        restore_mfdb(mem, contrl, VDI_CONTRL_SRC_MFDB, &source);
+        restore_mfdb(mem, contrl, VDI_CONTRL_DST_MFDB, &destination);
     }
     /* The kit's door answers "modeled" — 1 when it serviced the call. TOS services every opcode
      * this program makes, and a `trap #2` has no way to say otherwise, so the answer is always 1

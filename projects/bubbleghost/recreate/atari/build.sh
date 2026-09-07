@@ -183,16 +183,33 @@ done
 # the store reaches, which is the half no other surface has — the differential compiles the kit's
 # psg.c and not this header, and STATE.BIN records nothing about the chip. A rotted `sed` scrapes
 # empty, which is not the expected text either, so the check fails closed.
+# THE WHOLE STORE LINE IS PINNED, NOT ONLY ITS TARGET. A first draft scraped the destination alone
+# (`... \(.*\) = .*;`), which swallowed the value expression — so `(uint8_t)(reg & 15)` in the select
+# store passed this gate green, and psg.h's whole argument for NOT masking (the original's ISR does
+# not) would have been a comment contradicting its own code with no surface to say so.
 PSG_STORES=$(sed -n '/^static inline void psg_untrapped_write/,/^}/p' "$HERE/shim_include/psg.h" \
-             | sed -n 's/^ *\*(volatile uint8_t \*)\(.*\) = .*;$/\1/p')
-PSG_STORES_EXPECTED='BG_PSG_SELECT
-(BG_PSG_SELECT + BG_PSG_DATA_OFFSET)'
+             | sed -n 's/^ *\(\*(volatile uint8_t \*).* = .*;\)$/\1/p')
+PSG_STORES_EXPECTED='*(volatile uint8_t *)BG_PSG_SELECT = (uint8_t)reg;
+*(volatile uint8_t *)(BG_PSG_SELECT + BG_PSG_DATA_OFFSET) = value;'
 [ "$PSG_STORES" = "$PSG_STORES_EXPECTED" ] || {
   echo "ERROR: psg_untrapped_write's body is not the two volatile byte stores this gate knows."
   echo "       expected:"; echo "$PSG_STORES_EXPECTED" | sed 's/^/         /'
   echo "       scraped:";  echo "$PSG_STORES"          | sed 's/^/         /'
   echo "       The 200 Hz ISR reaches the chip through this and nothing else watches it."; exit 1; }
-echo ">> the chip's 2 ports agree between psg.h and bubble_os.s, and are what the ISR's store uses"
+
+# ...and that the TRAPPED door still MASKS, which is the other half of the asymmetry psg.h argues.
+# The two doors are meant to disagree here — the original's do, its ISR writing the ports bare and
+# only its trap handler carrying `and.b #$f,d1` @ 0x1495c — and neither half was watched by anything:
+# the differential compiles the kit's psg.c and never this pair, so deleting the `andi.l` would make
+# the doors agree silently, in the direction the header spends a page refusing.
+PSG_TRAPPED_MASKS=$(grep -c '^ *andi\.l  *#PSG_REG_MASK,%d1$' "$HERE/bubble_os.s" || true)
+[ "$PSG_TRAPPED_MASKS" = "1" ] || {
+  echo "ERROR: bg_super_gate_entry's 'andi.l #PSG_REG_MASK,%d1' was scraped $PSG_TRAPPED_MASKS times"
+  echo "       in bubble_os.s, not once. The TRAPPED door is where this build's register mask lives"
+  echo "       (shim_include/psg.h's header argues why the untrapped one has none); losing it makes"
+  echo "       the two doors agree where the original's two do not."; exit 1; }
+echo ">> the chip's 2 ports agree between psg.h and bubble_os.s, the ISR's store is those 2 stores" \
+     "and nothing else, and only the trapped door masks"
 
 # ---- the trap-register scan ---------------------------------------------------------------------
 # docs/on-target-execution.md class 3's register half: the one hardware-only bug class no

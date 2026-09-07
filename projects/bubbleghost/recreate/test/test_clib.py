@@ -1735,10 +1735,17 @@ def test_fp_pack_float_direct():
     so this battery is the only thing that ever runs it. Kept because the routine is real code in
     the shipped binary and a reconstruction that guessed at it would be unverified rather than
     absent.
+
+    THE LAST TWO PAIRS DRIVE THE SHARED NORMALISE LOOP DEEP — 23 passes and 15 — because every
+    other vector here takes it zero or one time, and the loop is where this tail's exponent
+    arithmetic lives. The deep vectors used to exist only in `test_fp_pack_double_direct`, which
+    covers the loop only while the two tails share one copy of it; the file's own note says they are
+    transcribed separately so that each says what its own instructions say.
     """
     rng = random.Random(0x9f0)
     for mantissa, exponent in ((0, 0), (0xff, 0x40), (0x80000000, 0x7f), (0x80000200, 0x7f),
-                               (0x800002ff, 0x7f), (0xffffffff, 0xfe), (0x40000000, 0x01)):
+                               (0x800002ff, 0x7f), (0xffffffff, 0xfe), (0x40000000, 0x01),
+                               (0x00000100, 0x10), (0x00010000, 0x40)):
         pokes = noise_around(rng, FP_LEFT, rng.randbytes(4))
         check(ENTRY_FP_PACK_FLOAT,
               lambda lib, buf, m=mantissa, e=exponent: lib.g_fp_pack_float(buf, FP_LEFT, m, e),

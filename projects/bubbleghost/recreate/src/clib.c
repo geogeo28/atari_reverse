@@ -663,7 +663,8 @@ static uint16_t fp_exponent(const uint8_t *image, uint32_t operand) {
 
 /* The normalise-and-round both packing tails open with: shift the mantissa up until the bit leaving
  * the top is a 1 (giving the exponent back the two counts that costs), then round, repeating if the
- * round carried all the way out.
+ * round carried all the way out. The body below spells that +2 as a +1 with the last shift's own -1
+ * already folded in; the note over the loop says why.
  *
  * THE ROUNDING TEST IS THE SAME IN BOTH TAILS AND THE INCREMENT IS NOT, which is the surprise worth
  * stating: the single-precision tail @ 0x1514c tests `and.w #$100` and `and.w #$2ff` exactly as the
@@ -682,15 +683,23 @@ static int fp_normalise_and_round(uint32_t *mantissa_out, uint16_t *exponent_out
 
     if ((mantissa & FP_ROUND_MANTISSA_ZERO) == 0)
         return 0;
-    for (;;) {
-        unsigned bit_shifted_out = (mantissa >> 31) & 1u;
-
+    /* `subq.w #1,d3 / asl.l #1,d2 / bcc.s` @ 0x153a4 — go round again while the bit that left the
+     * top was a 0. THE GUARD ABOVE IS WHAT MAKES THIS TERMINATE: `mantissa` has a set bit somewhere
+     * in 8..31 here, so the loop runs at most 23 times (24 shifts counting the peeled one, which is
+     * the deepest a long widened by `fp_long_to_double` goes).
+     *
+     * Two spellings, both measured 2026-09-07 against the original's 24 cycles a pass. Reading the
+     * outgoing bit BEFORE the shift — which is what the transcription said first — keeps two values
+     * live across the back edge and costs 40. Testing the top bit instead lets GCC close on
+     * `add.l d0,d0 / bpl`, and taking the tail's net +1 BEFORE the loop rather than after leaves it
+     * nothing to carry: `subq.w #1,d1 / add.l d0,d0 / bpl` is 22, the original's own three
+     * instructions. `exponent + 1 - n` and `exponent - n + 1` are the same 16-bit value. */
+    exponent = (uint16_t)(exponent + 1u);
+    while ((mantissa & LONG_SIGN_BIT) == 0) {
         exponent = (uint16_t)(exponent - 1u);
         mantissa <<= 1;
-        if (bit_shifted_out)
-            break;
     }
-    exponent = (uint16_t)(exponent + 2u);
+    mantissa <<= 1;
     while ((mantissa & FP_ROUND_GUARD_DOUBLE) != 0 && (mantissa & FP_ROUND_STICKY_DOUBLE) != 0) {
         unsigned carried = long_add_extend(mantissa, increment);
 
@@ -982,22 +991,46 @@ void fp_mul(uint8_t *image, uint32_t dst, uint32_t src) {
  *
  * The divisor sits in a 64-bit register pair that is shifted right one place per step while the
  * remainder stays put; each step subtracts when the divisor still fits and shifts a bit into the
- * quotient. A zero exponent on either side gives a zero result, as in fp_mul. */
+ * quotient. A zero exponent on either side gives a zero result, as in fp_mul.
+ *
+ * BOTH PAIRS ARE SPELT AS `uint64_t`, WHICH IS A CODEGEN DECISION AND NOT A WIDENING. The original's
+ * remainder IS the register pair d2:d6 and its divisor d7:d4 — the mantissa in the high longword and
+ * the bits shifted down into the low one — and every step works on them in 68000 instruction PAIRS.
+ * Written as two 32-bit halves, the halving reads `(low >> 1) | (high << 31)`, and GCC compiles that
+ * shift by 31 as the REGISTER form `moveq #31,d5 / lsl.l d5,d3`: 8 + 2 a bit = 70 cycles, once a
+ * step, 32 steps a call. As one 64-bit value it emits the original's own `lsr.l #1 / roxr.l #1`
+ * (20). Measured 2026-09-07: a step went from ~166 cycles to 80 where it does not subtract and 98
+ * where it does, against the original's ~64 and ~74.
+ *
+ * WHAT DID *NOT* CHANGE, because the objdump is the gate and not the hope: GCC still spends a
+ * SEPARATE compare — `move.l d2,d6 / move.l d3,d7 / sub.l d5,d7 / subx.l d4,d6 / bhi`, whose result
+ * it throws away — before the subtract's own `sub.l`/`subx.l`, where the original tests with
+ * `cmp.l`/`bcs`/`bne`/`cmp.l`/`bhi` for ~14. Spelling the compare as the difference
+ * (`if (remainder - divisor <= remainder)`) was tried and is WORSE: GCC recomputes it and adds two
+ * `movea.l` shuffles. The ~10 cycles a step left is not reachable from C.
+ *
+ * Nothing observable moves — `divisor <= remainder` on the pair IS
+ * `divisor_high < remainder_high || (equal && divisor_low <= remainder_low)` — and `make test` is
+ * green either way, which is why the note is here (../STATUS.md, wave 1: the differential is the
+ * correctness gate and `m68k-elf-objdump -d` is the performance one). **`fp_float_to_double` above
+ * keeps the two-half spelling on purpose**: its shift is an `asr` on the high half over three fixed
+ * passes on a path this program never takes (all four `fp_dispatch` sites pass an eight-byte
+ * source), so it is a cold ~390 cycles and a sign-semantics risk, not a lever — ../STATUS.md's
+ * wave 3b carries the number. */
 #define FP_DIV_STEPS 32u
 void fp_div(uint8_t *image, uint32_t dst, uint32_t src) {
-    uint32_t remainder_high = fp_mantissa(image, dst);
+    /* `<< 32` puts a mantissa where the pair's HIGH longword is; the low one starts empty. */
+    uint64_t remainder = (uint64_t)fp_mantissa(image, dst) << 32;
     uint16_t exponent = fp_exponent(image, dst);
-    uint32_t divisor_high;
+    uint64_t divisor;
     uint16_t src_exponent;
-    uint32_t remainder_low = 0;
-    uint32_t divisor_low = 0;
     uint32_t quotient = 0;
 
     if (exponent == 0) {
         fp_pack_double(image, dst, 0, exponent);
         return;
     }
-    divisor_high = fp_mantissa(image, src);
+    divisor = (uint64_t)fp_mantissa(image, src) << 32;
     src_exponent = fp_exponent(image, src);
     if (src_exponent == 0) {
         fp_pack_double(image, dst, 0, exponent);
@@ -1008,20 +1041,13 @@ void fp_div(uint8_t *image, uint32_t dst, uint32_t src) {
 
     for (unsigned step = 0; step < FP_DIV_STEPS; step++) {
         quotient <<= 1;
-        if (divisor_high < remainder_high ||
-            (divisor_high == remainder_high && divisor_low <= remainder_low)) {
+        if (divisor <= remainder) {
             /* `addq.w #1,d1` is a WORD add, which can never carry here: the shift above has just
              * cleared bit 0, so the low word is even. */
             quotient = set_low_word(quotient, (uint16_t)(quotient + 1u));
-            {
-                unsigned borrow = long_sub_extend(remainder_low, divisor_low);
-
-                remainder_low -= divisor_low;
-                remainder_high -= divisor_high + borrow;
-            }
+            remainder -= divisor;
         }
-        divisor_low = (divisor_low >> 1) | (divisor_high << 31);
-        divisor_high >>= 1;
+        divisor >>= 1;
     }
     wr16(image + dst, (uint16_t)(be16(image + dst) ^ be16(image + src)));
     fp_pack_double(image, dst, quotient, exponent);

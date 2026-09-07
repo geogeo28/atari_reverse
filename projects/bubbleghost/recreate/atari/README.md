@@ -466,6 +466,12 @@ The room loop has **no Vsync and no wait of any kind** (`notes/gameplay.md` §2)
 renderer's speed: the game's pace AND its mouse-to-screen latency ARE the frame cost, and the target
 is parity with the original's cycles per frame rather than a budget to come in under.
 
+**WHERE THE FOUR WAVES BELOW LEAVE IT: 489.1K cycles a frame, 16.40 fps, x1.05** of the original's
+466.9K / 17.18 — waves 3a and 3b built together and both sides profiled in one session
+(`../STATUS.md`'s merge table). Every wave below reports its OWN window against its own baseline —
+wave 2's is 809.2K, waves 3a and 3b's is 517.4K — so a figure quoted mid-section is that wave's and
+not this one, and the first measurement below is the pre-wave-1 table rather than the current cost.
+
 ```
 python3 atari/profile.py ours            # builds the play .PRG, profiles one room's window
 python3 atari/profile.py original        # boots the shipped disk, profiles the same window
@@ -564,9 +570,10 @@ elsewhere and which this change does not touch.
 `build.sh`'s committed-cores gate reads `src` and `include` and nothing else, so a change confined to
 THIS directory can be built and profiled while the cores are untouched — which is how these two were
 measured on their own, before wave 1 landed: 809.2K cycles a frame -> 776.2K, 9.91 fps -> 10.33,
-x1.73 -> x1.66, wave 1 not in it. **The two waves together, which is the number to hold the next
-change against: 809.2K -> 517.4K, 9.91 fps -> 15.50, x1.73 -> x1.11** against the original's 466.9K
-and 17.18. The table above is the pre-wave-1 window and stays as the baseline it was.
+x1.73 -> x1.66, wave 1 not in it. The two waves together came to 809.2K -> 517.4K, 9.91 fps -> 15.50,
+x1.73 -> x1.11; **waves 3a and 3b below carry it to 489.1K and 16.40 fps, x1.05, which is the number
+to hold the next change against** (3a alone 496.4K/16.16, 3b alone 509.5K/15.74; the pair was
+measured together). The table above is the pre-wave-1 window and stays as the baseline it was.
 
 | | before | after |
 |---|---|---|
@@ -581,8 +588,9 @@ does not make one** — its own `psg_gate` @ `0x14940` carries 0.7 cycles a tick
 writes the ports itself and only USER-mode callers trap. A 68000 exception handler is already
 supervisor and `bg_timer_c_entry` never lowers the interrupt's own IPL 6, so both of the things the
 gate provides are already true inside the tick: `bg_timer_c_tick` raises `bg_in_timer_c` for the
-length of the call and `shim_include/psg.h`'s door writes the ports through `bg_psg_write_super`
-(`bubble_os.s`, beside the gate and out of its own constants) instead of trapping. The whole tick's
+length of the call and `shim_include/psg.h`'s door wrote the ports through `bg_psg_write_super`
+(`bubble_os.s`, beside the gate and out of its own constants) instead of trapping — a routine wave
+3a then deleted, folding the two stores into the header itself. The whole tick's
 cost tracks how many voices happen to be sounding, which the unseeded ambience varies window to
 window (2.5 to 3.0 chip writes a tick over those four) — which is why the per-WRITE figure is the one
 to read, and it came back as **100 cycles exactly** in every one. Each side's ranges are reported in
@@ -600,8 +608,154 @@ writes a file holding only the labels and one `[...]` per row; and `profile addr
 call printed 17 rows of 3,613 active addresses and looked complete.
 
 **What is left in the tick is the CORE**: `timer_c_sound_isr` plus the two step routines GCC did not
-inline cost 2,770-2,970 cycles a tick against the original's 1,696 for its whole handler.
-`../STATUS.md`'s "Performance" names the lever and says why this wave could not take it.
+inline cost the 2,770-3,165 cycles a tick `../STATUS.md` records, against the original's 1,696 for
+its whole handler.
+`../STATUS.md`'s "Performance" names the lever and says why this wave could not take it — wave 3a
+took it.
+
+### Wave 3a (2026-09-07) — the sound tick's core, and the chip write that was still a call
+
+**Both halves measured in one before/after pair, in a throwaway worktree** so that `build.sh`'s
+committed-cores gate would build a modified `src/sound.c` at all (`../STATUS.md`, "Performance",
+wave 3a, says what each half was). The two windows are back to back on the same machine:
+
+| | before | after |
+|---|---|---|
+| **cycles/frame, whole window** | 517.4K | **496.4K** |
+| **fps** | 15.50 | **16.16** |
+| ...against the original's 465.3K / 17.24 in the same session | x1.11 | **x1.07** |
+| **the 200 Hz tick, whole** | 3,906 cyc/tick | **2,423** |
+| ...against the original's 1,693 (wave 2 read 1,696-1,699; re-measured, see `../STATUS.md`) | x2.31 | **x1.43** |
+| the tick's share of a frame | 50.4K a frame, 9.7% | **30.0K, 6.0%** |
+| one YM2149 write from the ISR | 100 cyc through `bg_psg_write_super` | **~32**, two `move.b`s inline |
+| `timer_c_sound_isr` + the two step routines | 3,154 cyc/tick over three symbols | **~1,990** in one |
+
+The core half is `../src/sound.c`'s: the record's base is resolved ONCE per voice as a host pointer
+and every field is `d16(An)` off it, which is what the original's `a0` does — 109 such accesses in
+the ISR's own code against 10 that still index a register. The step routines are `static inline` with
+it, so their offsets are constants at each of the four call sites instead of index registers, and the
+4 `jsr`s with their 3 stack arguments are gone. **Every ADDRESS the file computes is still 32-bit
+and wrapping** — the record base, the handler's own descending cursor and the volume table's signed
+word index — and a pointer is formed from each only once it is final, always as `image +` that
+wrapped `uint32_t`. What the accessors carry is a field displacement of 0..0x8a, and that one is
+added to the POINTER: it does not wrap where `d16(a0)` would. That is visible only for a base within
+0x8a of the top of the map, which only a corrupted `SND_ISR_TOP_VOICE` produces — and `make guarded`
+IS the surface that tells the two spellings apart, so it is unpinned (no case seeds such a base)
+rather than unpinnable. `timer_c_sound_isr` and `../STATUS.md`'s sound residuals carry it.
+
+The shim half is `shim_include/psg.h`'s `psg_untrapped_write`: the ISR's untrapped write was a `jsr`
+into `bubble_os.s` with two stack arguments around two `move.b`, and most of its 100 cycles was the
+plumbing (the two stores that replaced it profile at 32 a write, so the call carried about 68). It is
+two stores inline now, and `bg_psg_write_super` is deleted rather than left dead. It
+**masks nothing, because the original's ISR does not** — all five of its write pairs are bare, from
+0x14682 to 0x1487c, against the trap handler's `and.b #$f,d1` @ 0x1495c — so our two doors disagree
+about the mask exactly where the original's two do, and `reg` being 0..15 is a caller's precondition
+that the kit's own refusal holds off target. Masking here too was measured at zero (`core_sound.o`
+byte-identical) and declined anyway; `../STATUS.md` and the header carry why — including the chip
+claim the header used to argue it away with, now withdrawn as unmeasured.
+
+**Two gates came with it**, because a store inlined into a verified core is a store no counted door
+sees: `>> the chip's 2 ports agree between psg.h and bubble_os.s, the ISR's store is those 2 stores
+and nothing else, and only the trapped door masks` pins the two constants against `bubble_os.s`'s,
+pins the function's body to be those two stores in select→data order WITH their value expressions,
+and pins `bg_super_gate_entry`'s own `andi.l #PSG_REG_MASK` — the two doors are meant to disagree
+about the mask, and until this pass neither half was watched;
+`>> the sound tick's helpers are inlined` refuses an out-of-line
+`step_swept_envelope` / `step_triangle_lfo` / `psg_untrapped_write`, which is the one direction
+`profile.py`'s own range list cannot see. Each was shown to red on a mutation — a `BG_PSG_DATA_OFFSET`
+of 1, a swapped store pair, an added `& 15` and a `__attribute__((noinline))`, all four listed in
+`../STATUS.md` — and **the inlining gate's first draft did not**, for a
+`set -o pipefail` reason `../STATUS.md` records in full: a `nm | grep -q` pipeline reports 141 when
+grep matches and kills nm with SIGPIPE, so the gate was green on exactly the case it existed to
+catch.
+
+**Two levers were measured and declined**, and `../STATUS.md`'s wave 3a carries both numbers: the
+ISR's $484 mirror through `bg_write_byte` (45 cyc/tick, and a permanent `-Warray-bounds` if spelt as
+a direct store from C), and the `volatile bg_in_timer_c` test in front of every chip write (50.8
+cyc/tick, and no behaviour-preserving way to drop it without moving the core/shim seam).
+
+### Wave 3b (2026-09-07) — the per-frame game logic: the Alcyon fp package, and the GEM door again
+
+**Measured twice in a throwaway worktree off the same committed baseline wave 3a used** — once for
+the change and again after the pre-commit review moved two more loops, and the table is the second
+window, which is the code that ships. On the DISJOINT tier: this wave touched `../src/clib.c`'s floating-point package and `bubble_backend.c`,
+and nothing in the sound path. So the two "after" figures below and wave 3a's are two INDEPENDENT
+measurements of the same 517.4K frame, not a sum — the merge is measured below rather than added.
+
+| | before | after |
+|---|---|---|
+| **cycles/frame, whole window** | 517.4K | **509.5K** |
+| **fps** | 15.50 | **15.74** |
+| ...against the original's 466.9K / 17.18 | x1.11 | **x1.09** |
+| `game_frame_update`, inclusive | 46,472 cyc/frame, x1.49 | **38,638, x1.24** |
+| `frame_scale_mouse_to_ghost`, inclusive | 23,184 | **15,218** |
+| `fp_dispatch` | 8,959 cyc/call, x2.26 | **5,368, x1.36** |
+| `fp_pack_double` | 974 cyc/call | **786** |
+| `fp_acc_load_long` | 1,617 cyc/call, x1.41 | **1,295, x1.13** |
+| the whole fp package, both calls a frame | 22,647 cyc/frame | **14,595** (the original's 11,438) |
+| `bg_gem_dispatch`, exclusive | 10,552 cyc/frame over 8.65 calls | **10,353** |
+
+**AND THE MERGE IS MEASURED, not left as arithmetic.** Wave 3a landed as code (`5c7a9de`) while this
+was in review, so both waves were built together in a third worktree and BOTH sides were profiled in
+one session:
+
+| | wave 2 | 3a alone | 3b alone | **both** |
+|---|---|---|---|---|
+| cycles/frame | 517.4K | 496.4K | 509.5K | **489.1K** |
+| fps | 15.50 | 16.16 | 15.74 | **16.40** |
+| against the original's 466.9K / 17.18 | x1.11 | x1.06 | x1.09 | **x1.05** |
+| the 200 Hz tick | 3,906 cyc/tick | 2,423 | 3,889 | **2,434** |
+
+They compose: 517.4 − 21.0 − 7.9 = 488.5 predicted against 489.1 measured, which is what two disjoint
+tiers should do and is worth having rather than assuming. **The original was re-measured in the same
+session and came back at 466.9K / 17.18 — wave 2's figure exactly**, so the quoted denominator above
+is the live one after all. It is also why the 3a column reads x1.06 here and x1.07 in wave 3a's own
+table: the same 496.4K, over that session's own reading of the original (465.3K / 17.24).
+
+**AND THE PREDICTION THIS WAVE MADE CAME TRUE, which is the point of having made it.** The three
+sprite rows were x1.09-x1.10 with only wave 3b in, and the claim above was that almost none of that
+was the VDI — it was the tick nested in their inclusive totals, so halving the tick would collapse
+them with no work on the sprite path at all. With both waves in they read **x1.05, x1.05, x1.05**,
+and `present_room` went x1.08 -> x1.03 by the same mechanism. `game_frame_update` is x1.49 -> **x1.18**
+over the two waves.
+
+**The whole of it is two loops, and `m68k-elf-objdump -d` is what found both.** `../STATUS.md`'s
+"Performance" carries the instruction-level evidence; what it comes to is that `fp_div`'s 32-step
+divisor halving, written as two 32-bit halves, compiled to `moveq #31,d5 / lsl.l d5,d3` — the
+68000's register shift at **8 + 2 per bit = 70 cycles**, once a step — where the original spends
+`lsr.l #1 / roxr.l #1` (20). Spelt as one `uint64_t` GCC emits exactly that pair. `fp_pack_double`'s
+normalise loop was the same shape one size down: 40 cycles a pass, now **22**, against the original's
+24. What did NOT change is the div step's compare: GCC still spends a whole throwaway
+`sub.l`/`subx.l` in front of the real subtract, and the cheaper spelling is worse. That correction
+came out of the review, and in a repo whose performance gate IS the objdump, a codegen claim the
+objdump refutes is exactly the drift the gate exists to stop.
+
+**The GEM door's row moved 302 cycles a frame, which is inside this instrument's own ~2% noise**, and
+is carried on the objdump rather than on the profiler: `A_vdi_contrl` is 0x236f0, past the 68000's
+word displacement, so every `contrl` slot was `move.l #145136,d0` plus an indexed access (26-32
+cycles) and is now `d16(An)` off one `CURSOR_BARRIER`ed address register (16-20). **Hoisting a plain
+local changes nothing** — GCC re-folds the constant — which is the transferable half; deleting the
+barrier again puts every slot back, +56 B of code. Both live inside the `selector == GEM_VDI` arm, so
+an AES dispatch — which reads no `contrl` slot — pays nothing for them.
+
+**NEITHER LOOP NAMES A SURFACE.** Both changes are codegen, so the differential is green on the fast
+spelling and the slow one alike and nothing here reddens if a later editor simplifies either back.
+The shape of the fix is a third `build.sh` codegen scan beside the postincrement and endianness ones;
+it was not added, because `build.sh` was being edited by wave 3a in the same tree. Recorded unpinned
+in `../STATUS.md`, with two kit-shaped facts this wave registered rather than hoisted.
+
+**AND THE ROW THAT DID NOT MOVE IS THE FINDING.** `save_sprite_backgrounds` / `draw_sprites` /
+`restore_sprite_backgrounds` sit at x1.09-x1.10, +26K a frame between them, and **almost none of that
+is the VDI or our wrappers.** Split three ways: our core wrappers cost 6,824 cyc/frame against the
+original's 6,431 for the same work (`vro_cpyfm` + `vdi_set_src_mfdb` + `vdi_set_dst_mfdb` + the three
+routines' own exclusives) — parity, and no lever; the shim door adds 7,320; and the remaining ~18K is
+**the Timer C tick nested inside their inclusive totals**. The mechanism is visible in one row:
+`copy_longs_ascending` is a leaf, and its inclusive exceeds its exclusive by 14,001 cyc/frame —
+28% of our 50K tick, in a function that calls nothing. Hatari pushes `bg_timer_c_tick` on the
+callstack because the ISR `jsr`s to it, so every ancestor's INCLUSIVE carries the interrupt; on the
+shipped side nothing `jsr`s and the same cycles land in the interrupted routine's EXCLUSIVE instead.
+**A wave that halves the tick therefore collapses those three rows too**, and no work on the sprite
+path would have — which the merged window above then confirmed, at x1.05 each.
 
 ### What this instrument does not measure
 
