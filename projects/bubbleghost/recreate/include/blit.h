@@ -62,6 +62,12 @@
  * reached is presented after each step, so the room appears to slide in from the top. */
 #define WIPE_STEPS              40u     /* `cmpi.w #$28,d7`: 40 x 4 rows = the room's 160 rows */
 #define WIPE_STEP_BYTES         640u    /* `move.w #$280`: four scanlines */
+/* ...and the sound around it, which every voice is silenced for first. WHICH definition it plays is
+ * `include/sound.h`'s `SND_FX_ROOM_WIPE`, with the rest of the fx table's indices. */
+#define WIPE_SFX_VOICE          0
+#define WIPE_SFX_VOLUME         8       /* `muls.w #$8` on `sound_enabled` */
+#define WIPE_SFX_NOTE        0x3c
+#define WIPE_SFX_PRIORITY       5
 
 /* ---- the object and room records ---------------------------------------------------------------
  * `objects_animate_and_draw` steps the 14-byte object slots and `draw_room_to_stage` reads the
@@ -104,6 +110,7 @@ void build_sprite_bank_prepare(uint8_t *image);
  * the routine that computes it rather than re-derived by the caller: `src/frontend.c` carried the
  * derivation as a second copy of the destination arithmetic until this return type existed. */
 uint32_t draw_room_tile_to_stage(uint8_t *image, int16_t tile_row, int16_t tile_col);
+void room_wipe_in(uint8_t *image);
 void room_wipe_in_slide(uint8_t *image);
 void room_wipe_in_step(uint8_t *image, int16_t step);
 

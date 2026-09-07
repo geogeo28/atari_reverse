@@ -463,6 +463,30 @@
  * Cores
  * ============================================================================================= */
 
+/* WHERE ONE PLAYER'S TURN IS PARKED, and the two instances of it. The death sequence saves a turn
+ * into these slots and the front end's player-change restores one out of them, so the record is
+ * this subsystem's and both subsystems name it once. The original writes the two sets as two
+ * straight-line blocks that differ ONLY in these addresses. */
+typedef struct {
+    uint32_t max_room;          /* word */
+    uint32_t lives;             /* LONG */
+    uint32_t score;             /* LONG */
+    uint32_t bonus_bar;         /* word */
+    uint32_t grid_col;          /* word */
+    uint32_t grid_row;          /* word */
+    uint32_t deaths_in_room;    /* word */
+    uint32_t entry_dir;         /* word */
+    uint32_t world_block;       /* the WORLD_BLOCK_WORDS-word block `save_world` walks */
+} PlayerTurnSlots;
+
+extern const PlayerTurnSlots PLAYER_ONE_SLOTS;
+extern const PlayerTurnSlots PLAYER_TWO_SLOTS;
+
+/* One word of the CURRENT room's entry-point table, `field` being ROOM_ENTRY_X or ROOM_ENTRY_Y —
+ * a tile index the caller scales up by ENTRY_POINT_PIXELS. Exported because two subsystems place a
+ * sprite through it: this one's respawn and `src/frontend.c`'s room setup. */
+int16_t room_entry_coordinate(const uint8_t *image, int16_t direction, unsigned field);
+
 int16_t get_pixel(const uint8_t *image, int16_t x, int16_t y);
 void    bubble_collision_probe(uint8_t *image);
 void    reset_world_state(uint8_t *image);
@@ -485,6 +509,11 @@ void    hud_bonus_bar_shrink(uint8_t *image, uint32_t frame, int16_t units,
 /* `frame_poll_input` ANSWERS whether the key was ^P — a flag this reconstruction invented, because
  * the pause it would fall into is the one region here no case can run. `frame_poll_pause` is that
  * region, transcribed and read-verified (../STATUS.md). */
+/* `while (Cconis()) Crawcin();` — the flush every console read in this program opens with,
+ * here rather than in `src/frontend.c` too: this subsystem's poll is where it is verified,
+ * and the menu's four read sites differ from it only in the return addresses they file. */
+void    drain_console_queue(uint8_t *image, uint32_t cconis_return, uint32_t crawcin_return,
+                           CallerAddressRegisters saved);
 int16_t frame_poll_input(uint8_t *image, CallerAddressRegisters saved);
 void    frame_poll_pause(uint8_t *image, CallerAddressRegisters saved);
 void    frame_death_sequence(uint8_t *image, uint32_t hud_frame, CallerAddressRegisters saved);

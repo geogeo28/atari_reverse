@@ -22,6 +22,7 @@
 #include "blit.h"
 #include "common.h"     /* LONG_BYTES, muls_ext_w and the ascending copy every loop here is */
 #include "gameplay.h"   /* the object and room records these routines draw FROM */
+#include "sound.h"      /* the three key-offs and the trigger `room_wipe_in` is wrapped in */
 
 /* ...and the `move.l (a3),(a2) / subq.w #4,a3 / subq.w #4,a2` run `room_wipe_in` uses instead:
  * both cursors start at the LAST longword and walk down, which is what makes a move onto a span
@@ -253,12 +254,24 @@ void room_wipe_in_step(uint8_t *image, int16_t step) {
 }
 
 /* room_wipe_in @ 0x13b1e, its slide loop [0x13b62, 0x13bda): 40 steps of the above, so the room
- * arrives from the top over 160 scanlines. The routine's prologue and epilogue call the sound
- * engine (`sound_release_voice` @ 0x14510 three times, `sound_play` @ 0x142bc once) and are that
- * subsystem's to port; STATUS.md records them as the residual. */
+ * arrives from the top over 160 scanlines. */
 void room_wipe_in_slide(uint8_t *image) {
     for (int16_t step = 0; step < (int16_t)WIPE_STEPS; step++)
         room_wipe_in_step(image, step);
+}
+
+/* ...and the whole of `room_wipe_in` @ 0x13b1e around it: every voice is keyed off, the slide's own
+ * sound is triggered, and the voice it used is released again at the end. It used to be this
+ * subsystem's residual — the sound engine was unported — and what verifies the composition is
+ * `src/frontend.c`'s room-setup slice, which is the only caller. */
+void room_wipe_in(uint8_t *image) {
+    for (int16_t voice = 0; voice < (int16_t)SND_VOICES; voice++)
+        sound_release_voice(image, voice);
+    sound_play(image, sound_fx_definition(SND_FX_ROOM_WIPE), WIPE_SFX_VOICE,
+               (int16_t)(word_at(image, A_sound_enabled) * WIPE_SFX_VOLUME), WIPE_SFX_NOTE,
+               WIPE_SFX_PRIORITY);
+    room_wipe_in_slide(image);
+    sound_release_voice(image, WIPE_SFX_VOICE);
 }
 
 /* ================================================================================================

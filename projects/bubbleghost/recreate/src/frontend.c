@@ -57,15 +57,17 @@ _Static_assert(GAME_MFDB_ADDR == MFDB_ADDR && GAME_MFDB_WIDTH == MFDB_W
                    && GAME_MFDB_STANDARD == MFDB_STAND && GAME_MFDB_PLANES == MFDB_NPLANES,
                "include/blit.h's MFDB record and the kit os.h's have drifted apart");
 
-#include "common.h"     /* LONG_BYTES and `longword_slot`, the stride of every pointer table here */
-#include "gameplay.h"   /* the ghost and bubble the sprite protocol draws */
+#include "common.h"     /* LONG_BYTES, WORD_BYTES, `word_at` and `longword_slot` — the strides and
+                         * accessors every table in this file is indexed and read through */
+#include "gameplay.h"   /* the ghost and bubble the sprite protocol draws, the room
+                         * tables the menu searches, and the console flush it reads through */
+#include "sound.h"      /* the triggers the menu and the attract sequence fire */
+#include "voice.h"      /* the sample buffer the boot path frees once the voice is done */
 
 /* One word of a GEM array named by its index, which is how every `contrl`/`intin`/`ptsin` slot in
  * this file is spelt. The 68000 reaches them as `lea array,a0 / adda.w #index*2,a0`. */
-#define GEM_ARRAY_WORD_BYTES 2u
-
 static uint32_t gem_word(uint32_t array, unsigned index) {
-    return array + index * GEM_ARRAY_WORD_BYTES;
+    return array + index * WORD_BYTES;
 }
 
 static uint32_t vdi_pblock_slot(unsigned index) {
@@ -220,7 +222,7 @@ void v_gtext(uint8_t *image, int16_t handle, int16_t x, int16_t y, uint32_t text
         character = image[cursor];
         cursor = addr_add(cursor, 1);
         wr16(image + addr_add(A_vdi_intin,
-                              sign_ext16((uint32_t)(written * GEM_ARRAY_WORD_BYTES))),
+                              sign_ext16((uint32_t)(written * WORD_BYTES))),
              character);
         written++;
     } while (character != 0);
@@ -279,7 +281,7 @@ int16_t aes_crysif(uint8_t *image, int16_t opcode, CallerAddressRegisters saved)
         uint16_t count = (uint16_t)sign_ext8(image[counts]);
         counts = addr_add(counts, 1);
         wr16(image + addr_add(A_aes_control,
-                              sign_ext16((uint32_t)(slot * GEM_ARRAY_WORD_BYTES))),
+                              sign_ext16((uint32_t)(slot * WORD_BYTES))),
              count);
     }
 
@@ -354,8 +356,11 @@ static uint32_t xbios_trap_call(uint8_t *image, uint16_t selector, CallerAddress
     switch (selector) {
     case XBIOS_LOGBASE:    return OS_SCREEN_BASE;
     case XBIOS_GETREZ:     return XBIOS_GETREZ_LOW_RES;
+    case XBIOS_RANDOM:     return os_random(image);
     case XBIOS_SETSCREEN:  return 0;
     case XBIOS_SETPALETTE: return 0;
+    case XBIOS_SETCOLOR:   return 0;
+    case XBIOS_VSYNC:      return 0;
     default:               return (uint32_t)os_refused(0);
     }
 }
@@ -387,6 +392,55 @@ static void xbios_setpalette(uint8_t *image, uint32_t palette, CallerAddressRegi
     xbios_trap_call(image, XBIOS_SETPALETTE, saved, return_pc);
 }
 
+/* Setcolor(index, value) — one palette entry, which the two end-of-room animations force to white.
+ * A no-op in the model like the rest of the colour group, so the trampoline's three save slots are
+ * the whole of what a reconstruction reproduces. */
+static void xbios_setcolor(uint8_t *image, int16_t index, int16_t value,
+                           CallerAddressRegisters saved, uint32_t return_pc) {
+    (void)index;
+    (void)value;
+    xbios_trap_call(image, XBIOS_SETCOLOR, saved, return_pc);
+}
+
+/* Vsync() — takes no argument and answers nothing. It is the ONLY frame sync the front end makes,
+ * three per slideshow frame, and it is off-image by definition: what a real machine spends waiting
+ * for the raster is invisible to a differential (`docs/on-target-execution.md`). */
+static void xbios_vsync(uint8_t *image, CallerAddressRegisters saved, uint32_t return_pc) {
+    xbios_trap_call(image, XBIOS_VSYNC, saved, return_pc);
+}
+
+/* Random() — the only XBIOS call in this file whose ANSWER a routine uses. */
+static uint32_t xbios_random(uint8_t *image, CallerAddressRegisters saved, uint32_t return_pc) {
+    return xbios_trap_call(image, XBIOS_RANDOM, saved, return_pc);
+}
+
+/* One `jsr` deep: where the callee's own `link a6,#-n` puts its A6, given the caller's A7. A C
+ * reconstruction has no machine stack, so a routine that hands a callee a frame has to derive the
+ * address the callee's locals will live at (`include/frontend.h`'s `CALL_FRAME_COST`). */
+static uint32_t callee_frame(uint32_t caller_stack) {
+    return addr_add(caller_stack, -(uint32_t)CALL_FRAME_COST);
+}
+
+/* ...and the two routines that hand one out, each from its own `link`. Spelt once apiece because the
+ * derivation is load-bearing and easy to get quietly wrong: a frame eight bytes off puts a callee's
+ * locals where the original's are not, and the only thing that notices is the one case whose callee
+ * reads its own frame (../STATUS.md's residual on `CALL_FRAME_COST`). */
+static uint32_t menu_callee_frame(uint32_t frame) {
+    return callee_frame(addr_add(frame, -(uint32_t)MENU_LOCAL_BYTES));
+}
+
+static uint32_t top_callee_frame(uint32_t frame) {
+    return callee_frame(addr_add(frame, -(uint32_t)TOP_LOCAL_BYTES));
+}
+
+/* One square of the 6 x 6 serpentine path. Both index scalings are the 68000's: the row through
+ * `muls.w` + `add.l` on the table's own address, the column through `asl.l` + `adda.w`. */
+static int16_t room_grid_square(const uint8_t *image, int16_t row, int16_t col) {
+    uint32_t table_row = A_room_grid + (uint32_t)((int32_t)row * (int32_t)ROOM_GRID_ROW_BYTES);
+
+    return word_at(image, addr_add(table_row, sign_ext16((uint32_t)(col * (int32_t)WORD_BYTES))));
+}
+
 /* ...and GEMDOS `Super`, through the other trampoline. The value the model hands back for `Super(0)`
  * is a COOKIE rather than a stack pointer, and this routine never inspects it — it only passes it
  * back to leave supervisor mode, which is what makes the cookie sound (os.h). */
@@ -415,7 +469,7 @@ void init_gem_and_screens(uint8_t *image, uint32_t frame, CallerAddressRegisters
 
     for (uint16_t slot = 0; slot < WORK_IN_ONES; slot++)
         wr16(image + addr_add(A_vdi_work_in,
-                              sign_ext16((uint32_t)(slot * GEM_ARRAY_WORD_BYTES))), 1);
+                              sign_ext16((uint32_t)(slot * WORD_BYTES))), 1);
     wr16(image + gem_word(A_vdi_work_in, WORK_IN_COORD_SLOT), WORK_IN_COORD_RASTER);
 
     wr16(image + addr_add(frame, (uint32_t)INIT_FRAME_PHYS_HANDLE),
@@ -474,7 +528,7 @@ static void sprite_pxy_to_cell(uint8_t *image, int16_t x, int16_t y) {
 /* Every one of the twelve copies passes the workstation handle and the two MFDBs the sprite bank
  * set up once, so the call site names only the logic operation. */
 static void sprite_copy(uint8_t *image, int16_t mode, CallerAddressRegisters saved) {
-    vro_cpyfm(image, (int16_t)be16(image + A_vdi_handle), mode, A_blit_pxy, A_mfdb_src, A_mfdb_dst,
+    vro_cpyfm(image, vdi_handle(image), mode, A_blit_pxy, A_mfdb_src, A_mfdb_dst,
               saved);
 }
 
@@ -586,7 +640,7 @@ void restore_sprite_backgrounds(uint8_t *image, CallerAddressRegisters saved) {
  * between two cells can, and that case needs a callable body. Answers the A2 for the next cell. */
 uint32_t draw_room_to_stage_cell(uint8_t *image, int16_t tile_row, int16_t tile_col,
                                  CallerAddressRegisters live) {
-    vq_mouse(image, (int16_t)be16(image + A_vdi_handle), A_mouse_buttons, A_mouse_x, A_mouse_y,
+    vq_mouse(image, vdi_handle(image), A_mouse_buttons, A_mouse_x, A_mouse_y,
              live);
     return draw_room_tile_to_stage(image, tile_row, tile_col);
 }
@@ -603,11 +657,11 @@ void draw_room_to_stage(uint8_t *image, CallerAddressRegisters saved) {
  * every text card shares. */
 static void hall_text(uint8_t *image, int16_t x, int16_t y, uint32_t text,
                       CallerAddressRegisters saved) {
-    v_gtext(image, (int16_t)be16(image + A_vdi_handle), x, y, text, saved);
+    v_gtext(image, vdi_handle(image), x, y, text, saved);
 }
 
 static void hall_pen(uint8_t *image, int16_t pen, CallerAddressRegisters saved) {
-    vst_color(image, (int16_t)be16(image + A_vdi_handle), pen, saved);
+    vst_color(image, vdi_handle(image), pen, saved);
 }
 
 /* draw_hall_of_fame @ 0x11dbc — room 0 as the backdrop, five fixed labels, and the table drawn from
@@ -619,7 +673,7 @@ void draw_hall_of_fame(uint8_t *image, uint32_t frame, CallerAddressRegisters sa
     static const int16_t label_y_offsets[] = HALL_LABEL_Y_OFFSETS;
     uint32_t score_text = addr_add(frame, (uint32_t)HALL_FRAME_SCORE_TEXT);
     uint32_t room_text = addr_add(frame, (uint32_t)HALL_FRAME_ROOM_TEXT);
-    int16_t handle = (int16_t)be16(image + A_vdi_handle);
+    int16_t handle = vdi_handle(image);
 
     vst_height(image, handle, HALL_TEXT_HEIGHT, A_text_char_w, A_text_char_h, A_text_cell_w,
                A_text_cell_h, saved);
@@ -691,7 +745,7 @@ void draw_hall_of_fame(uint8_t *image, uint32_t frame, CallerAddressRegisters sa
  * any other value (../STATUS.md). A case enters at the routine and stops at the `clr.w -(a7)` that
  * begins `c_creat`'s argument push. */
 void save_hiscores_prologue(uint8_t *image, uint32_t frame, CallerAddressRegisters live) {
-    int16_t handle = (int16_t)be16(image + A_vdi_handle);
+    int16_t handle = vdi_handle(image);
 
     vst_height(image, handle, HALL_TEXT_HEIGHT, A_text_char_w, A_text_char_h, A_text_cell_w,
                A_text_cell_h, live);
@@ -709,7 +763,7 @@ void save_hiscores(uint8_t *image, uint32_t frame, CallerAddressRegisters *live)
 
     int16_t file = c_creat(image, A_name_ghost_scr_creat, C_CREAT_MODE_TEXT, *live);
     if (file >= 0) {
-        v_gtext(image, (int16_t)be16(image + A_vdi_handle), SAVE_BANNER_X, SAVE_BANNER_Y,
+        v_gtext(image, vdi_handle(image), SAVE_BANNER_X, SAVE_BANNER_Y,
                 A_text_saving_banner, *live);
         wr16(image + counter, 0);
         while ((int16_t)be16(image + counter) < (int16_t)HISCORE_SLOTS) {
@@ -938,6 +992,1160 @@ void load_hiscores(uint8_t *image, uint32_t frame, CallerAddressRegisters saved)
 }
 
 /* ================================================================================================
+ * The front end's state machine — `title_menu_loop` @ 0x115d6
+ *
+ * The menu, its four key arms, and the `[D]` attract sequence. `../notes/frontend.md` §2 draws the
+ * whole machine; what follows is the routine, and the two things about it worth knowing first:
+ *
+ *   * IT RETURNS, unlike everything else at this level, and only on the two arms that start a game
+ *     — `[G]` with a player count, or `[P]` with a level in 1..35. `[D]` and `[H]` fall through to
+ *     the redraw, which is why a whole run needs a key queue that ends in `G`/`1`.
+ *   * ITS LOCALS LIVE IN THE IMAGE, at `frame + MENU_FRAME_*`. The arms are verified as mid-entry
+ *     slices as well as whole runs, and a slice has to find the locals the part before it left.
+ * ============================================================================================= */
+
+/* `Cnecin` — the BLOCKING half of every key read in this program. The flush that precedes it is
+ * `src/gameplay.c`'s `drain_console_queue`, called separately at each of the four sites, because a
+ * slice has to END between the two (see this section's header comment). `cnecin_return` is where
+ * the trampoline returns to, which is all that separates one site from another. */
+static uint32_t menu_take_key(uint8_t *image, uint32_t cnecin_return,
+                              CallerAddressRegisters saved) {
+    uint32_t key = 0;
+
+    trap_save_registers(image, saved, cnecin_return);
+    os_cnecin(image, &key);
+    return key;
+}
+
+/* Setscreen(log, phys) with the two bases this program always passes, which is the only thing the
+ * front end changes about the screen: text is drawn straight onto the visible page and the game
+ * itself into the buffer below it (`../notes/frontend.md` §5). */
+static void draw_onto_visible_screen(uint8_t *image, CallerAddressRegisters saved,
+                                     uint32_t return_pc) {
+    xbios_setscreen(image, be32(image + A_screen_phys), be32(image + A_screen_phys),
+                    SETSCREEN_KEEP_RESOLUTION, saved, return_pc);
+}
+
+static void draw_into_work_buffer(uint8_t *image, CallerAddressRegisters saved,
+                                  uint32_t return_pc) {
+    xbios_setscreen(image, be32(image + A_screen_back), be32(image + A_screen_phys),
+                    SETSCREEN_KEEP_RESOLUTION, saved, return_pc);
+}
+
+/* `vst_height(handle, MENU_TEXT_HEIGHT)` answers through the same four globals everywhere in this
+ * program, so the four addresses are spelt once. */
+static void menu_text_pen(uint8_t *image, int16_t height, int16_t pen,
+                          CallerAddressRegisters saved) {
+    vst_height(image, vdi_handle(image), height, A_text_char_w, A_text_char_h, A_text_cell_w,
+               A_text_cell_h, saved);
+    vst_color(image, vdi_handle(image), pen, saved);
+}
+
+static void menu_text(uint8_t *image, int16_t x, int16_t y, uint32_t text,
+                      CallerAddressRegisters saved) {
+    v_gtext(image, vdi_handle(image), x, y, text, saved);
+}
+
+/* The volume every front-end sound is played at: the definition's own level scaled by the `[S]`
+ * toggle, so a silenced game plays every trigger at volume 0 rather than skipping it. */
+static int16_t menu_volume(const uint8_t *image, int16_t step) {
+    return (int16_t)(word_at(image, A_sound_enabled) * step);
+}
+
+/* The room's own ambience out of the 36-entry level table, reached with `muls.w` + `adda.w` — so a
+ * room outside 0..35 wraps rather than indexing past the table (`include/common.h`'s `muls_ext_w`).
+ * Its fx-table twin is `include/sound.h`'s `sound_fx_definition`, which `src/blit.c` shares. */
+static uint32_t sound_room_ambience(int16_t room) {
+    return addr_add(A_snd_def_level, muls_ext_w(room, (int32_t)SND_DEF_BYTES));
+}
+
+/* ...and the trigger that plays it, which the front end fires at five places and always the same
+ * way: the CURRENT room's definition on voice 0, one-shot, at MENU_SFX_PRIORITY. Only the volume
+ * step differs, which is why it is the one argument. */
+static void play_room_ambience(uint8_t *image, int16_t volume_step) {
+    sound_play(image, sound_room_ambience(word_at(image, A_room_number)), MENU_AMBIENCE_VOICE,
+               menu_volume(image, volume_step), MENU_SFX_NOTE_ONE_SHOT, MENU_SFX_PRIORITY);
+}
+
+static void menu_poll_mouse(uint8_t *image, CallerAddressRegisters saved) {
+    vq_mouse(image, vdi_handle(image), A_mouse_buttons, A_mouse_x, A_mouse_y, saved);
+}
+
+static int menu_aborted(const uint8_t *image) {
+    return word_at(image, A_mouse_buttons) == MOUSE_BUTTON_LEFT;
+}
+
+/* `d0 = *counter; (*counter)--; return d0 <= 0;` — the LONG countdown every attract loop is bounded
+ * by, at four sites. THE ORDER IS THE LOAD-BEARING PART: the test reads the value the counter
+ * ARRIVED with, so the loop runs one more pass than the count says and leaves the counter one below
+ * zero. Written once because four hand-copies are four chances to write it the other way round. */
+static int menu_countdown_expired(uint8_t *image, uint32_t counter) {
+    int32_t remaining = (int32_t)be32(image + counter);
+
+    wr32(image + counter, (uint32_t)(remaining - 1));
+    return remaining <= 0;
+}
+
+/* `acc = acc * scale + offset`, truncated TOWARD ZERO by `fp_acc_to_long` — the tail both of this
+ * file's `Random()` scalings share. The truncation is where every range in `../notes/frontend.md`
+ * §6 comes from: `fp_double_to_long` shifts the mantissa with a bare `lsr.l` and no rounding term.
+ *
+ * Each source is a plain double in DATA, never widened, so `fp_dispatch`'s widening scratch is
+ * unused and none is passed — as `src/gameplay.c`'s death hold does it. */
+static int16_t fp_scale_and_truncate(uint8_t *image, uint32_t scale, uint32_t offset) {
+    fp_dispatch(image, FP_OP_MULTIPLY, A_fp_acc, scale, 0, 0);
+    fp_dispatch(image, FP_OP_PLUS, A_fp_acc, offset, 0, 0);
+    return (int16_t)fp_acc_to_long(image);
+}
+
+/* `Random() / divisor * scale + offset` — the attract sequence's two ranges, each with its own
+ * three constants, which is why the same divisor sits at two DATA addresses. */
+static int16_t random_divided_and_scaled(uint8_t *image, uint32_t divisor, uint32_t scale,
+                                         uint32_t offset, CallerAddressRegisters saved,
+                                         uint32_t return_pc) {
+    fp_acc_load_long(image, xbios_random(image, saved, return_pc));
+    fp_dispatch(image, FP_OP_DIVIDE, A_fp_acc, divisor, 0, 0);
+    return fp_scale_and_truncate(image, scale, offset);
+}
+
+/* `Random() * scale + offset` — the room ambience's countdown, whose scale is small enough that no
+ * divisor is needed. */
+static int16_t random_scaled(uint8_t *image, uint32_t scale, uint32_t offset,
+                             CallerAddressRegisters saved, uint32_t return_pc) {
+    fp_acc_load_long(image, xbios_random(image, saved, return_pc));
+    return fp_scale_and_truncate(image, scale, offset);
+}
+
+/* Paint one room into the work buffer and show it, which is how all three attract phases and the
+ * hall of fame put a room on screen: the composer stages it, the instant move copies it up, and the
+ * HUD row is drawn over it. */
+static void menu_show_room(uint8_t *image, uint32_t hud_frame, CallerAddressRegisters saved) {
+    draw_hud_row_tiles(image);
+    hud_draw_counters(image, hud_frame, saved);
+    present_hud_row(image);
+    draw_room_to_stage(image, saved);
+    stage_to_work(image);
+    present_room(image);
+}
+
+/* The eight ghost cells the replay makes the puff sound on — cell GHOST_BLOW_ANIM of each of the
+ * eight facings. The original spells eight `cmpi.w` in this order; the list is derived from the two
+ * `include/gameplay.h` constants that produce it rather than written out again. */
+static int demo_record_is_blowing(int16_t tile) {
+    for (uint16_t facing = 0; facing < GHOST_FACINGS; facing++)
+        if (tile == (int16_t)(facing * GHOST_TILES_PER_FACING + GHOST_BLOW_ANIM))
+            return 1;
+    return 0;
+}
+
+/* One byte of a GHOST.DEM record, read SIGNED: a record may park a sprite off the left of the play
+ * area, and `move.b (a0),d0 / ext.w d0` is what lets it. The cursor is stepped in 32 bits. */
+static int16_t demo_field(const uint8_t *image, uint32_t cursor, unsigned field) {
+    return (int16_t)(int8_t)image[addr_add(cursor, field)];
+}
+
+/* ONE GHOST.DEM RECORD — the slice `[0x11992, 0x11acc)`.
+ *
+ * Six bytes into the six globals the renderer reads, then the frame. THERE IS NO `Vsync` HERE: the
+ * replay runs at whatever the renderer costs, which is `../notes/frontend.md` §8's one behavioural
+ * trap — a reconstruction that added a frame sync would be changing behaviour, not fixing it. */
+void demo_play_record(uint8_t *image, CallerAddressRegisters saved) {
+    uint32_t cursor = be32(image + A_demo_cursor);
+
+    set_word(image, A_ghost_x,
+             (int16_t)(demo_field(image, cursor, DEMO_FIELD_GHOST_X) * DEMO_SCALE_X));
+    set_word(image, A_ghost_y,
+             (int16_t)(demo_field(image, cursor, DEMO_FIELD_GHOST_Y) * DEMO_SCALE_Y));
+    set_word(image, A_ghost_tile, demo_field(image, cursor, DEMO_FIELD_GHOST_TILE));
+    set_word(image, A_bubble_x,
+             (int16_t)(demo_field(image, cursor, DEMO_FIELD_BUBBLE_X) * DEMO_SCALE_X));
+    set_word(image, A_bubble_y,
+             (int16_t)(demo_field(image, cursor, DEMO_FIELD_BUBBLE_Y) * DEMO_SCALE_Y));
+    set_word(image, A_bubble_frame, demo_field(image, cursor, DEMO_FIELD_BUBBLE_FRAME));
+    wr32(image + A_demo_cursor, addr_add(cursor, DEMO_RECORD_BYTES));
+
+    save_sprite_backgrounds(image, saved);
+    draw_sprites(image, saved);
+    present_room(image);
+
+    if (demo_record_is_blowing(word_at(image, A_ghost_tile)))
+        sound_play(image, sound_fx_definition(SND_FX_PUFF), PUFF_VOICE,
+                   menu_volume(image, MENU_AMBIENCE_VOLUME), DEMO_PUFF_NOTE, MENU_SFX_PRIORITY);
+    else
+        sound_release_voice(image, PUFF_VOICE);
+
+    if (word_at(image, A_bubble_frame) == (int16_t)BUBBLE_POPPED_FRAME)
+        sound_play(image, sound_fx_definition(SND_FX_BUBBLE_POP), DEMO_POP_VOICE,
+                   menu_volume(image, MENU_LOUD_VOLUME), MENU_SFX_NOTE_ONE_SHOT,
+                   MENU_SFX_PRIORITY);
+
+    restore_sprite_backgrounds(image, saved);
+    objects_animate_and_draw(image);
+    menu_poll_mouse(image, saved);
+}
+
+/* ...and the loop around it, entered AT THE TEST as the original's `bra` enters it: the mouse is
+ * polled by the record body, so the first pass runs a record whatever the button holds. */
+static void demo_replay(uint8_t *image, uint32_t frame, CallerAddressRegisters saved) {
+    uint32_t counter = addr_add(frame, (uint32_t)MENU_FRAME_COUNTER);
+
+    while (!menu_aborted(image)) {
+        if (menu_countdown_expired(image, counter))
+            return;
+        demo_play_record(image, saved);
+    }
+}
+
+/* The same loop entered AT THE BODY — the slice `[0x11992, 0x11ae6)`, which is what a case that
+ * chains several records enters and what the routine's own `bra` skips over on the first pass. */
+void demo_replay_from_record(uint8_t *image, uint32_t frame, CallerAddressRegisters saved) {
+    demo_play_record(image, saved);
+    demo_replay(image, frame, saved);
+}
+
+/* `[D]`, phase one — the slice `[0x11930, 0x11ae6)`: room 1 composed, shown and given its ambience,
+ * then the GHOST.DEM replay. Every phase of the sequence ends the moment the left mouse button is
+ * seen down, and the button is polled by the record body rather than before it, so the replay always
+ * plays at least one record. */
+void menu_attract_sequence(uint8_t *image, uint32_t frame, CallerAddressRegisters saved) {
+    uint32_t counter = addr_add(frame, (uint32_t)MENU_FRAME_COUNTER);
+
+    set_word(image, A_mouse_buttons, 0);
+    set_word(image, A_room_number, DEMO_FIRST_ROOM);
+    menu_show_room(image, menu_callee_frame(frame), saved);
+    play_room_ambience(image, MENU_AMBIENCE_VOLUME);
+
+    wr32(image + counter, DEMO_RECORDS);
+    wr32(image + A_demo_cursor, be32(image + A_demo_base));
+    demo_replay(image, frame, saved);
+}
+
+/* ONE ROOM of the slideshow — the slice `[0x11b30, 0x11c1c)`: a random room composed, shown and
+ * given its ambience, then held for DEMO_SLIDESHOW_FRAMES frames.
+ *
+ * It is a slice of its own because the loop around it is not affordable in one run: five rooms is
+ * the shortest the range allows and each is thirty 25,600-byte presents, which fills the oracle's
+ * write ledger. So the body is run once and the loop is the composition (../STATUS.md's residual). */
+void menu_attract_slideshow_room(uint8_t *image, uint32_t frame, CallerAddressRegisters saved) {
+    uint32_t counter = addr_add(frame, (uint32_t)MENU_FRAME_COUNTER);
+
+    set_word(image, A_room_number,
+             random_divided_and_scaled(image, A_const_demo_room_divisor, A_const_demo_room_scale,
+                                       A_const_demo_room_offset, saved, RET_DEMO_ROOM_RANDOM));
+    menu_show_room(image, menu_callee_frame(frame), saved);
+    play_room_ambience(image, MENU_AMBIENCE_VOLUME);
+
+    wr32(image + counter, DEMO_SLIDESHOW_FRAMES);
+    while (!menu_aborted(image)) {
+        if (menu_countdown_expired(image, counter))
+            break;
+        objects_animate_and_draw(image);
+        /* THE ONLY FRAME SYNC IN THE WHOLE ATTRACT SEQUENCE, and three of them per frame. It is an
+         * XBIOS no-op in the model, so what a reconstruction reproduces is the trampoline's three
+         * save slots (../STATUS.md's residual) — three separate calls rather than a loop, because
+         * the trampoline files a different return address for each. */
+        xbios_vsync(image, saved, RET_DEMO_VSYNC_A);
+        xbios_vsync(image, saved, RET_DEMO_VSYNC_B);
+        xbios_vsync(image, saved, RET_DEMO_VSYNC_C);
+        present_room(image);
+        menu_poll_mouse(image, saved);
+    }
+}
+
+/* `[D]`, phase two — the slice `[0x11ae6, 0x11c34)`: a slideshow of 5..15 random rooms. Both the
+ * LENGTH and each ROOM come from `Random()` through the fp package, and both truncate toward zero —
+ * which is where `../notes/frontend.md` §2's ranges come from, and why the attract mode can never
+ * show room 35. */
+void menu_attract_slideshow(uint8_t *image, uint32_t frame, CallerAddressRegisters saved) {
+    uint32_t rooms_left = addr_add(frame, (uint32_t)MENU_FRAME_SLIDESHOW);
+
+    wr16(image + rooms_left,
+         (uint16_t)random_divided_and_scaled(image, A_const_demo_length_divisor,
+                                             A_const_demo_length_scale, A_const_demo_length_offset,
+                                             saved, RET_DEMO_LENGTH_RANDOM));
+    while (!menu_aborted(image)) {
+        /* The slideshow's own count is the one that is a WORD — `move.w`/`subq.w` rather than the
+         * longwords `menu_countdown_expired` reads — and is otherwise the same countdown. */
+        int16_t rooms_remaining = (int16_t)be16(image + rooms_left);
+
+        wr16(image + rooms_left, (uint16_t)(rooms_remaining - 1));
+        if (rooms_remaining <= 0)
+            break;
+        menu_attract_slideshow_room(image, frame, saved);
+    }
+}
+
+/* `[D]`, phase three — the slice `[0x11c34, 0x11ca8)`: the title picture, and then DEMO_TITLE_POLLS
+ * mouse polls with nothing else in them at all. A run that arrives here with the button already down
+ * skips the picture and falls straight out. */
+void menu_attract_title(uint8_t *image, uint32_t frame, CallerAddressRegisters saved) {
+    uint32_t counter = addr_add(frame, (uint32_t)MENU_FRAME_COUNTER);
+
+    if (!menu_aborted(image)) {
+        show_presentation(image, saved);
+        play_room_ambience(image, MENU_LOUD_VOLUME);
+    }
+
+    wr32(image + counter, DEMO_TITLE_POLLS);
+    while (!menu_aborted(image)) {
+        if (menu_countdown_expired(image, counter))
+            break;
+        menu_poll_mouse(image, saved);
+    }
+}
+
+/* `[H]` — the slice `[0x11cba, 0x11d60)`. The table, then the room the player got furthest into as
+ * a backdrop, then an idle loop the mouse button ends. */
+void menu_hall_of_fame(uint8_t *image, uint32_t frame, CallerAddressRegisters saved) {
+    uint32_t counter = addr_add(frame, (uint32_t)MENU_FRAME_COUNTER);
+    uint32_t callee = menu_callee_frame(frame);
+
+    draw_hall_of_fame(image, callee, saved);
+    clear_physical_screen(image);
+    /* GHOST.DAT's palette, not GHOST.PRE's — the backdrop below is room 0, a GHOST.DAT picture.
+     * `move.l -7672(a4)` @ 0x11cc2, the same global the menu installs @ 0x115f2; `show_presentation`
+     * is the only reader of `A_pre_palette`. NOTHING IN THE HARNESS CAN TELL THE TWO APART:
+     * `Setpalette` is a modeled no-op and its argument push lands in the dropped frame band, so this
+     * is read-verified against the disassembly and its surface is an on-target run. */
+    xbios_setpalette(image, be32(image + A_dat_palette), saved, RET_HALL_SETPALETTE);
+    present_room(image);
+
+    set_word(image, A_room_number, word_at(image, A_max_room_reached));
+    draw_hud_row_tiles(image);
+    hud_draw_counters(image, callee, saved);
+    present_hud_row(image);
+    set_word(image, A_room_number, HALL_BACKDROP_ROOM);
+    play_room_ambience(image, MENU_LOUD_VOLUME);
+
+    set_word(image, A_mouse_buttons, 0);
+    wr32(image + counter, HALL_IDLE_POLLS);
+    while (!menu_aborted(image)) {
+        if (menu_countdown_expired(image, counter))
+            break;
+        objects_animate_and_draw(image);
+        present_room(image);
+        menu_poll_mouse(image, saved);
+    }
+}
+
+/* THE FOUR KEY READS ARE EACH A SLICE OF THEIR OWN, and the reason is the trap model rather than
+ * the routine. Every read in this program is `while (Cconis()) Crawcin(); c = Cnecin();` — a FLUSH
+ * followed by a BLOCKING read — and the model's console is one queue that the flush empties, so a
+ * run that reaches the `Cnecin` finds nothing there and the call refuses (TRAP_MODEL.md, Phase 13:
+ * "a blocking read with nothing staged REFUSES rather than fabricating a key"). On a real machine
+ * the key arrives AFTER the flush, which is a moment the staged queue cannot express.
+ *
+ * So each region ENDS at a `Cnecin` push and the next one begins there, with its own key staged.
+ * ../STATUS.md records the model gap; closing it means a second staged stream the flush does not
+ * drain, of `os_console_take_key`'s shape.
+ */
+
+/* `[G]`, the ask — the slice `[0x11708, 0x11774)`. The two lines are drawn onto the visible screen
+ * and the first flush runs; the digit itself is the next slice's. */
+void menu_ask_player_count(uint8_t *image, uint32_t frame, CallerAddressRegisters saved) {
+    wr16(image + addr_add(frame, (uint32_t)MENU_FRAME_CHOSE), 1);
+    set_word(image, A_player_count, 0);
+    draw_onto_visible_screen(image, saved, RET_MENU_G_SETSCREEN_PHYS);
+    menu_text(image, MENU_PLAYERS_X, MENU_PLAYERS_Y, A_text_one_player, saved);
+    menu_text(image, MENU_PLAYERS_X, MENU_PLAYERS_Y + MENU_TEXT_Y_PITCH, A_text_two_players, saved);
+    /* The loop's test is made before its body, and `player_count` was just cleared, so the first
+     * thing that happens is the flush. */
+    drain_console_queue(image, RET_MENU_G_CCONIS, RET_MENU_G_CRAWCIN, saved);
+}
+
+/* ...and the read — the slice `[0x11774, 0x117cc)` when a count is chosen, `[0x11774, 0x1175a)`
+ * when it is not.
+ *
+ * IT ANSWERS WHETHER A COUNT WAS CHOSEN rather than looping, for `frame_poll_input`'s reason
+ * (`src/gameplay.c`): the loop's next pass begins with a flush and a blocking read, which is where
+ * a slice has to end, so the branch is the thing to report. */
+int16_t menu_read_player_count(uint8_t *image, uint32_t frame, CallerAddressRegisters saved) {
+    uint32_t digit = addr_add(frame, (uint32_t)MENU_FRAME_DIGIT);
+
+    image[digit] = (uint8_t)menu_take_key(image, RET_MENU_G_CNECIN, saved);
+    image[digit] = (uint8_t)(image[digit] - MENU_DIGIT_ZERO);
+    if ((int16_t)(int8_t)image[digit] == 1)
+        set_word(image, A_player_count, 1);
+    else if ((int16_t)(int8_t)image[digit] == (int16_t)PLAYER_COUNT_TWO)
+        set_word(image, A_player_count, PLAYER_COUNT_TWO);
+
+    if (word_at(image, A_player_count) == 0)
+        return 0;
+    draw_into_work_buffer(image, saved, RET_MENU_G_SETSCREEN_BACK);
+    return 1;
+}
+
+/* `[P]`, the ask — the slice `[0x117de, 0x1183e)`: every score zeroed, one player, the prompt, and
+ * the first of the two digits' flushes. */
+void menu_ask_practice_level(uint8_t *image, CallerAddressRegisters saved) {
+    wr32(image + A_p2_score, 0);
+    wr32(image + A_p1_score, 0);
+    wr32(image + A_score, 0);
+    set_word(image, A_player_count, 1);
+    draw_onto_visible_screen(image, saved, RET_MENU_P_SETSCREEN_PHYS);
+    menu_text(image, MENU_LEVEL_X, MENU_LEVEL_Y, A_text_enter_level, saved);
+    drain_console_queue(image, RET_MENU_P_TENS_CCONIS, RET_MENU_P_TENS_CRAWCIN, saved);
+}
+
+/* One digit of `[P]`'s two, filed as a WORD: `move.w d0,…` keeps the low half of the console
+ * answer, which is the ASCII — the scancode is in the half thrown away. */
+static void menu_take_level_digit(uint8_t *image, uint32_t slot, uint32_t cnecin_return,
+                                  CallerAddressRegisters saved) {
+    wr16(image + slot, (uint16_t)menu_take_key(image, cnecin_return, saved));
+    wr16(image + slot, (uint16_t)(be16(image + slot) - MENU_DIGIT_ZERO));
+}
+
+/* The tens digit — the slice `[0x1183e, 0x1186c)`: the read, and then the units digit's flush. */
+void menu_read_level_tens(uint8_t *image, CallerAddressRegisters saved) {
+    menu_take_level_digit(image, A_practice_grid_row, RET_MENU_P_TENS_CNECIN, saved);
+    drain_console_queue(image, RET_MENU_P_UNITS_CCONIS, RET_MENU_P_UNITS_CRAWCIN, saved);
+}
+
+/* ...and the units digit with everything that follows it — the slice `[0x1186c, 0x1191e)`: the
+ * level assembled, the 0 < n < 36 gate, and the 6 x 6 search that turns the level into a square of
+ * the serpentine path (`../notes/frontend.md` §2).
+ *
+ * THE SEARCH REUSES THE TWO DIGIT GLOBALS AS ITS OWN LOOP COUNTERS, WITH THE ROLES REVERSED — the
+ * outer loop counts in `A_practice_grid_col` over grid ROWS — and puts them back the right way
+ * round from the frame at the end. */
+void menu_read_level_units(uint8_t *image, uint32_t frame, CallerAddressRegisters saved) {
+    uint32_t level_slot = addr_add(frame, (uint32_t)MENU_FRAME_LEVEL);
+    uint32_t found_row = addr_add(frame, (uint32_t)MENU_FRAME_FOUND_ROW);
+    uint32_t found_col = addr_add(frame, (uint32_t)MENU_FRAME_FOUND_COL);
+    int16_t level;
+
+    menu_take_level_digit(image, A_practice_grid_col, RET_MENU_P_UNITS_CNECIN, saved);
+    level = (int16_t)(MENU_LEVEL_TENS * (int16_t)be16(image + A_practice_grid_row)
+                      + (int16_t)be16(image + A_practice_grid_col));
+    wr16(image + level_slot, (uint16_t)level);
+
+    if (level > (int16_t)MENU_LEVEL_LOWEST && level < (int16_t)MENU_LEVEL_ABOVE) {
+        set_word(image, A_practice_mode, 1);
+        wr16(image + addr_add(frame, (uint32_t)MENU_FRAME_CHOSE), 1);
+
+        for (wr16(image + A_practice_grid_col, 0);
+             (int16_t)be16(image + A_practice_grid_col) < (int16_t)ROOM_GRID_ROWS;
+             wr16(image + A_practice_grid_col,
+                  (uint16_t)((int16_t)be16(image + A_practice_grid_col) + 1))) {
+            for (wr16(image + A_practice_grid_row, 0);
+                 (int16_t)be16(image + A_practice_grid_row) < (int16_t)ROOM_GRID_COLS;
+                 wr16(image + A_practice_grid_row,
+                      (uint16_t)((int16_t)be16(image + A_practice_grid_row) + 1))) {
+                int16_t row = (int16_t)be16(image + A_practice_grid_col);
+                int16_t col = (int16_t)be16(image + A_practice_grid_row);
+
+                if (room_grid_square(image, row, col) != (int16_t)be16(image + level_slot))
+                    continue;
+                /* The LAST match wins, and no value of `room_grid` repeats — so there is exactly
+                 * one and the choice never shows (`../notes/frontend.md` §2). */
+                wr16(image + found_row, (uint16_t)row);
+                wr16(image + found_col, (uint16_t)col);
+            }
+        }
+        wr16(image + A_practice_grid_col, be16(image + found_col));
+        wr16(image + A_practice_grid_row, be16(image + found_row));
+    }
+    draw_into_work_buffer(image, saved, RET_MENU_P_SETSCREEN_BACK);
+}
+
+/* The menu itself, and the flush that ends every pass of it — the slice `[0x115de, 0x116c4)` as the
+ * redraw loop re-enters it, and the tail of `[0x115d6, 0x116c4)` the routine is entered at. */
+void menu_draw(uint8_t *image, uint32_t frame, CallerAddressRegisters saved) {
+    set_word(image, A_practice_mode, 0);
+    wr16(image + addr_add(frame, (uint32_t)MENU_FRAME_CHOSE), 0);
+
+    sound_stop_all(image);
+    clear_physical_screen(image);
+    xbios_setpalette(image, be32(image + A_dat_palette), saved, RET_MENU_SETPALETTE);
+    set_word(image, A_mouse_buttons, 0);
+    draw_onto_visible_screen(image, saved, RET_MENU_SETSCREEN_PHYS);
+
+    menu_text_pen(image, MENU_TEXT_HEIGHT, MENU_PEN, saved);
+    menu_text(image, MENU_TEXT_X, MENU_TEXT_Y_GAME, A_text_menu_game, saved);
+    menu_text(image, MENU_TEXT_X, MENU_TEXT_Y_GAME + MENU_TEXT_Y_PITCH, A_text_menu_practice,
+              saved);
+    menu_text(image, MENU_TEXT_X, MENU_TEXT_Y_GAME + 2 * MENU_TEXT_Y_PITCH, A_text_menu_demo,
+              saved);
+    menu_text(image, MENU_TEXT_X, MENU_TEXT_Y_GAME + 3 * MENU_TEXT_Y_PITCH, A_text_menu_hall,
+              saved);
+    drain_console_queue(image, RET_MENU_CCONIS, RET_MENU_CRAWCIN, saved);
+}
+
+/* Where `save_hiscores`' own A6 lands when `title_menu_loop` reaches it: three `jsr`s down, through
+ * `hiscore_submit_players` (which reserves nothing) and `hiscore_insert_and_save`. */
+static uint32_t menu_hiscore_save_frame(uint32_t frame) {
+    uint32_t submit = menu_callee_frame(frame);
+    uint32_t insert = callee_frame(addr_add(submit, -(uint32_t)SUBMIT_LOCAL_BYTES));
+
+    return callee_frame(addr_add(insert, -(uint32_t)INSERT_LOCAL_BYTES));
+}
+
+/* title_menu_loop @ 0x115d6, its opening — the slice `[0x115d6, 0x116c4)`: last game's scores
+ * offered to the hall of fame, then the menu drawn and the keyboard flushed. */
+void title_menu_open(uint8_t *image, uint32_t frame, CallerAddressRegisters *live) {
+    hiscore_submit_players(image, menu_hiscore_save_frame(frame), live);
+    menu_draw(image, frame, *live);
+}
+
+/* ...and the key that ends a pass — the slice `[0x116c4, 0x11700)`: one blocking read, the logical
+ * screen back onto the work buffer, and the fold to upper case.
+ *
+ * IT ANSWERS THE FOLDED KEY, which is what the four compares after it branch on. The compares
+ * themselves write nothing, so the dispatch is read-verified and each arm's own slice is entered at
+ * its first instruction. */
+int16_t menu_read_key_and_fold(uint8_t *image, uint32_t frame, CallerAddressRegisters saved) {
+    uint32_t key_slot = addr_add(frame, (uint32_t)MENU_FRAME_KEY);
+
+    image[key_slot] = (uint8_t)menu_take_key(image, RET_MENU_CNECIN, saved);
+    draw_into_work_buffer(image, saved, RET_MENU_SETSCREEN_BACK);
+    /* The fold is a BYTE subtract guarded by a test on the SIGN-EXTENDED byte, so a key with bit 7
+     * set is negative and is never folded. */
+    if ((int16_t)(int8_t)image[key_slot] > (int16_t)MENU_KEY_LOWER_A)
+        image[key_slot] = (uint8_t)(image[key_slot] - MENU_KEY_CASE_BIT);
+    return (int16_t)(int8_t)image[key_slot];
+}
+
+/* title_menu_loop @ 0x115d6 — the composition, which is READ-VERIFIED for the reason the file's
+ * next section gives about `game_top_loop`: every pass of it ends in a blocking console read, and a
+ * run that reaches one finds the queue its own flush has just emptied. The order is
+ *
+ *     title_menu_open                         — the submitter, the menu, the flush
+ *     do {
+ *         key = menu_read_key_and_fold
+ *         'G' -> menu_ask_player_count; while (!menu_read_player_count) flush
+ *         'P' -> menu_ask_practice_level; menu_read_level_tens; menu_read_level_units
+ *         'D' -> menu_attract_sequence
+ *         'H' -> menu_hall_of_fame
+ *         if (still nothing chosen) menu_draw            — and read another key
+ *     } while (nothing chosen);
+ *
+ * ...and it returns to `game_top_loop` with `player_count` (and, for `[P]`, the practice square)
+ * set. ../STATUS.md carries the residual. */
+
+/* ================================================================================================
+ * game_top_loop @ 0x101e6 — the program
+ *
+ * `main` calls it and never gets it back: it is a `do { … } while (true)` whose body is one whole
+ * GAME, and inside that a room loop whose body is one whole ROOM. `../notes/frontend.md` §2 draws
+ * the shape; the eleven routines below are its straight-line regions, each verified as a `stop_pc`
+ * SLICE entered at its own PC (../STATUS.md carries the `[start, end)` of each).
+ *
+ * THE COMPOSITION IS READ-VERIFIED and is deliberately not written as a C function: it does not
+ * terminate, so there is nothing a case could run and a `for (;;)` here would be code no test could
+ * reach. `src/gameplay.c` says the same of `game_frame_update`, for the same reason.
+ *
+ * THE ORDER THE SLICES RUN IN, which is what that residual is about:
+ *
+ *     game_top_boot                     — once, ending at the `jsr play_voice`
+ *     game_top_boot_tail                — once, from just after it
+ *     do {
+ *         game_new_game                 — ending at the `jsr title_menu_loop`
+ *         title_menu_loop
+ *         game_turn_init
+ *         do {
+ *             game_player_change        — the two-player card and the handover
+ *             game_room_setup           — ending at the room loop's first test
+ *             do { game_frame_update; game_room_frame_tail; } while (in room, lives left)
+ *             level_complete ? game_ending_sequence : game_room_exit
+ *             game_end_of_turn
+ *         } while (either player is still playing);
+ *         game_over_card                — and back to `game_new_game`
+ *     } while (true);
+ * ============================================================================================= */
+
+/* An empty count, which is the whole of every text card's hold: no `Vsync`, no timer, just
+ * iterations. It costs the model nothing (there is no clock) and is transcribed rather than dropped
+ * because the counter is image state that outlives the loop. */
+static void top_busy_wait(uint8_t *image, uint32_t frame, uint32_t iterations) {
+    uint32_t slot = addr_add(frame, (uint32_t)TOP_FRAME_DELAY);
+
+    wr32(image + slot, 0);
+    while ((int32_t)be32(image + slot) < (int32_t)iterations)
+        wr32(image + slot, be32(image + slot) + 1);
+}
+
+/* The whole of `build_sprite_bank` @ 0x132ec: `include/blit.h`'s verified prefix, which paints bank
+ * 0 onto the work buffer, and the grab loop above that lifts sixty cells off it. */
+void build_sprite_bank(uint8_t *image, CallerAddressRegisters saved) {
+    build_sprite_bank_prepare(image);
+    build_sprite_bank_grab_cells(image, saved);
+}
+
+/* game_top_boot @ 0x101e6 — the slice `[0x101e6, 0x10232)`, which ends at the `jsr play_voice`.
+ *
+ * IT STOPS THERE BECAUSE `play_voice` RUNS A SECOND PROGRAM. GHOST.LOA is an `ABSFLAG` .PRG read
+ * into the BSS as data and entered with a `jsr`; it programs an MFP timer and busy-waits on a flag
+ * its own interrupt handler sets, and the kit fires no interrupts (../STATUS.md, "Not
+ * reconstructed"). `src/voice.c`'s `play_voice_arm` is the part of it this project has. */
+void game_top_boot(uint8_t *image, uint32_t frame, CallerAddressRegisters *live) {
+    /* `clr.w -(a7)` then the mode word: the `addr_in` LONG the AES reads spans that pushed zero and
+     * the word above it, which is this frame's own — the same shape `save_hiscores`' two calls
+     * have, and the reason the mouse form is read out of the image rather than passed as 0. */
+    graf_mouse(image, AES_M_OFF, be16(image + addr_add(frame, (uint32_t)TOP_FRAME_DELAY)), *live);
+    load_voice_player(image, live);
+    load_presentation(image, *live);
+    v_clrwk(image, vdi_handle(image), *live);
+    os_ikbd_out(IKBD_MOUSE_OFF);
+    draw_into_work_buffer(image, *live, RET_TOP_SETSCREEN_BACK);
+    show_presentation(image, *live);
+}
+
+/* game_top_boot_tail @ 0x10236 — the slice `[0x10236, 0x1024e)`, from just after `play_voice`: the
+ * two remaining loaders and the IKBD command that turns mouse reporting back on.
+ *
+ * IT STOPS SHORT OF THE `c_free` THAT FOLLOWS, which is `game_top_free_voice_buffer` below. */
+void game_top_boot_tail(uint8_t *image, uint32_t frame, CallerAddressRegisters *live) {
+    uint32_t callee = top_callee_frame(frame);
+
+    load_level_pictures(image, *live);
+    load_hiscores(image, callee, *live);
+    os_ikbd_out(IKBD_MOUSE_RELATIVE);
+}
+
+/* game_top_free_voice_buffer @ 0x1024e — the one call between the two slices, and the only
+ * allocation this program ever gives back.
+ *
+ * READ-VERIFIED, AND NO CASE RUNS IT (../STATUS.md's residual). The block being returned is the one
+ * `load_voice_player` allocated, and a slice entered fresh has no such block: `A_voi_buffer` holds
+ * the loaded image's zero, so both sides would walk a free list built out of whatever lies below
+ * address 0. It is a function of its own rather than a statement inside either neighbour because a
+ * slice's candidate runs the WHOLE core it names — a call the oracle stopped before would be made
+ * anyway, on that same absent block. `c_free` itself has nine cases in `test_clib.py`. */
+void game_top_free_voice_buffer(uint8_t *image) {
+    c_free(image, be32(image + A_voi_buffer));
+}
+
+/* game_top_boot_arm @ 0x10258 — the slice `[0x10258, 0x1027e)`: the sprite bank grabbed, the sound
+ * driver installed and silenced, and the four globals a fresh boot starts from. */
+void game_top_boot_arm(uint8_t *image, CallerAddressRegisters *live) {
+    build_sprite_bank(image, *live);
+    sound_start(image, *live);
+    sound_stop_all(image);
+
+    set_word(image, A_bonus_tick, TOP_BONUS_TICK_RELOAD);
+    /* The displayed high score is the BEST entry, which is the LAST of the ascending table. */
+    wr32(image + A_hi_score,
+         be32(image + longword_slot(A_hall_scores, (int16_t)HISCORE_SLOTS - 1)));
+    set_word(image, A_room_number, DEMO_FIRST_ROOM);
+    wr32(image + A_score, 0);
+    load_demo(image, *live);
+}
+
+/* game_new_game @ 0x1027e — the slice `[0x1027e, 0x102b0)`, which ends at the `jsr title_menu_loop`:
+ * both players back in, a fresh world, and the score offered to the hall of fame. */
+void game_new_game(uint8_t *image) {
+    set_word(image, A_p2_playing, 1);
+    set_word(image, A_p1_playing, 1);
+    set_word(image, A_level_complete, 0);
+    reset_world_state(image);
+    set_word(image, A_bonus_bar, TOP_BONUS_BAR_FULL);
+    wr32(image + A_lives, TOP_LIVES_PER_TURN);
+    /* A practice game scores nothing, so the candidate it offers is zero. */
+    if (word_at(image, A_practice_mode) != 0)
+        wr32(image + A_score, 0);
+    wr32(image + A_hiscore_candidate, be32(image + A_score));
+}
+
+/* One value into both players' copies of a field, which is how every line of `game_turn_init`
+ * reads: the live global is set and then handed to player two and player one, in that order. */
+static void top_seed_both_players(uint8_t *image, uint32_t p2_slot, uint32_t p1_slot,
+                                  int16_t value) {
+    set_word(image, p2_slot, value);
+    set_word(image, p1_slot, value);
+}
+
+static void top_seed_both_players_long(uint8_t *image, uint32_t p2_slot, uint32_t p1_slot,
+                                       uint32_t value) {
+    wr32(image + p2_slot, value);
+    wr32(image + p1_slot, value);
+}
+
+/* game_turn_init @ 0x102b4 — the slice `[0x102b4, 0x1037a)`: where the chosen game starts.
+ *
+ * A practice game starts at the square `[P]` found and shows room 0 until the room loop looks the
+ * real one up; an ordinary game starts at (5, 4), which IS room 1 — the first square of the
+ * serpentine path (`../notes/frontend.md` §2). */
+void game_turn_init(uint8_t *image) {
+    set_word(image, A_max_room_reached, 0);
+    set_word(image, A_room_number, DEMO_FIRST_ROOM);
+    wr32(image + A_score, 0);
+    set_word(image, A_entry_dir, TOP_ENTRY_DIR_RIGHT);
+
+    if (word_at(image, A_practice_mode) != 0) {
+        set_word(image, A_grid_col, word_at(image, A_practice_grid_col));
+        set_word(image, A_grid_row, word_at(image, A_practice_grid_row));
+        set_word(image, A_room_number, 0);
+    } else {
+        set_word(image, A_grid_col, TOP_START_GRID_COL);
+        set_word(image, A_grid_row, TOP_START_GRID_ROW);
+        set_word(image, A_room_number, DEMO_FIRST_ROOM);
+    }
+
+    /* Player TWO holds the turn on entry, so the swap at the top of the first room hands it to
+     * player one — which is why a two-player game opens with "PLAYER ONE". */
+    set_word(image, A_p1_turn, 0);
+    set_word(image, A_p2_turn, 1);
+
+    top_seed_both_players(image, A_p2_max_room, A_p1_max_room, word_at(image, A_max_room_reached));
+    top_seed_both_players_long(image, A_p2_lives, A_p1_lives, be32(image + A_lives));
+    top_seed_both_players_long(image, A_p2_score, A_p1_score, 0);
+    set_word(image, A_bonus_bar, TOP_BONUS_BAR_FULL);
+    top_seed_both_players(image, A_p2_bonus_bar, A_p1_bonus_bar, TOP_BONUS_BAR_FULL);
+    top_seed_both_players(image, A_p2_grid_col, A_p1_grid_col, word_at(image, A_grid_col));
+    top_seed_both_players(image, A_p2_grid_row, A_p1_grid_row, word_at(image, A_grid_row));
+    set_word(image, A_deaths_in_room, 0);
+    top_seed_both_players(image, A_p2_deaths_in_room, A_p1_deaths_in_room, 0);
+    top_seed_both_players(image, A_p2_entry_dir, A_p1_entry_dir, word_at(image, A_entry_dir));
+
+    set_word(image, A_show_player_change,
+             word_at(image, A_player_count) == (int16_t)PLAYER_COUNT_TWO ? 1 : 0);
+}
+
+/* "G A M E   O V E R" over "P L A Y E R   O N E", drawn onto the visible screen and held. */
+static void top_player_out_card(uint8_t *image, uint32_t frame, uint32_t game_over_text,
+                                uint32_t player_text, CallerAddressRegisters saved,
+                                uint32_t phys_return, uint32_t back_return) {
+    draw_onto_visible_screen(image, saved, phys_return);
+    menu_text(image, TOP_CARD_X, TOP_CARD_Y_TOP, game_over_text, saved);
+    menu_text(image, TOP_CARD_OUT_X, TOP_CARD_Y_BOTTOM, player_text, saved);
+    top_busy_wait(image, frame, TOP_CARD_DELAY);
+    draw_into_work_buffer(image, saved, back_return);
+}
+
+/* One player's turn taken off its shelf: eight globals and the 58-word world block. */
+static void top_restore_player(uint8_t *image, const PlayerTurnSlots *slots) {
+    set_word(image, A_max_room_reached, word_at(image, slots->max_room));
+    wr32(image + A_lives, be32(image + slots->lives));
+    wr32(image + A_score, be32(image + slots->score));
+    set_word(image, A_bonus_bar, word_at(image, slots->bonus_bar));
+    set_word(image, A_grid_col, word_at(image, slots->grid_col));
+    set_word(image, A_grid_row, word_at(image, slots->grid_row));
+    set_word(image, A_deaths_in_room, word_at(image, slots->deaths_in_room));
+    set_word(image, A_entry_dir, word_at(image, slots->entry_dir));
+}
+
+/* game_player_change @ 0x1037a — the slice `[0x1037a, 0x105e0)`, and the whole of two-player mode.
+ *
+ * A one-player game skips all of it. The two-player one announces each player as they run out,
+ * hands the turn to the other, puts that player's world back and says whose turn it is. */
+void game_player_change(uint8_t *image, uint32_t frame, CallerAddressRegisters saved) {
+    if (word_at(image, A_player_count) != (int16_t)PLAYER_COUNT_TWO)
+        return;
+    if (word_at(image, A_show_player_change) == 0)
+        return;
+
+    menu_text_pen(image, MENU_TEXT_HEIGHT, MENU_PEN, saved);
+
+    if (word_at(image, A_p1_turn) != 0 && (int32_t)be32(image + A_p1_lives) < 0)
+        top_player_out_card(image, frame, A_text_game_over_p1, A_text_player_one_out, saved,
+                            RET_TOP_P1_OUT_PHYS, RET_TOP_P1_OUT_BACK);
+    if (word_at(image, A_p2_turn) != 0 && (int32_t)be32(image + A_p2_lives) < 0)
+        top_player_out_card(image, frame, A_text_game_over_p2, A_text_player_two_out, saved,
+                            RET_TOP_P2_OUT_PHYS, RET_TOP_P2_OUT_BACK);
+
+    /* The handover, which runs whether or not either card was drawn: whoever is up passes the turn
+     * to the other, provided the other is still in. */
+    if (word_at(image, A_p1_turn) != 0 && word_at(image, A_p2_playing) != 0) {
+        set_word(image, A_p1_turn, 0);
+        set_word(image, A_p2_turn, 1);
+    } else if (word_at(image, A_p2_turn) != 0 && word_at(image, A_p1_playing) != 0) {
+        set_word(image, A_p1_turn, 1);
+        set_word(image, A_p2_turn, 0);
+    }
+
+    draw_onto_visible_screen(image, saved, RET_TOP_TURN_PHYS);
+    if (word_at(image, A_p1_turn) != 0 && (int32_t)be32(image + A_p1_lives) > HUD_LIVES_EXHAUSTED) {
+        top_restore_player(image, &PLAYER_ONE_SLOTS);
+        restore_world(image, PLAYER_ONE_SLOTS.world_block);
+        menu_text(image, TOP_CARD_TURN_X, TOP_CARD_TURN_Y, A_text_player_one_up, saved);
+    }
+    if (word_at(image, A_p2_turn) != 0 && (int32_t)be32(image + A_p2_lives) > HUD_LIVES_EXHAUSTED) {
+        top_restore_player(image, &PLAYER_TWO_SLOTS);
+        restore_world(image, PLAYER_TWO_SLOTS.world_block);
+        menu_text(image, TOP_CARD_TURN_X, TOP_CARD_TURN_Y, A_text_player_two_up, saved);
+    }
+    top_busy_wait(image, frame, TOP_HANDOVER_DELAY);
+    draw_into_work_buffer(image, saved, RET_TOP_TURN_BACK);
+}
+
+/* Whether a room is entered from its right-hand side, from the bottom, or from the left. It is only
+ * asked in PRACTICE mode, where there is no previous room to have come from, and it is THREE ranges
+ * and five singletons in the original — transcribed, because nothing about the numbers derives. */
+static int16_t top_practice_entry_dir(int16_t room) {
+    static const struct { int16_t first, last; } right_ranges[] = TOP_PRACTICE_RIGHT_RANGES;
+    static const int16_t bottom_rooms[] = TOP_PRACTICE_BOTTOM_ROOMS;
+
+    for (unsigned i = 0; i < sizeof right_ranges / sizeof right_ranges[0]; i++)
+        if (room >= right_ranges[i].first && room <= right_ranges[i].last)
+            return TOP_ENTRY_DIR_RIGHT;
+    for (unsigned i = 0; i < sizeof bottom_rooms / sizeof bottom_rooms[0]; i++)
+        if (room == bottom_rooms[i])
+            return TOP_ENTRY_DIR_BOTTOM;
+    return TOP_ENTRY_DIR_LEFT;
+}
+
+/* game_room_setup @ 0x105e0 — the slice `[0x105e0, 0x1078a)`: the room the grid square names, the
+ * bubble placed at the entry point it is arriving through, and the whole screen composed. */
+void game_room_setup(uint8_t *image, uint32_t frame, CallerAddressRegisters saved) {
+    uint32_t callee = top_callee_frame(frame);
+    int16_t entry_dir;
+    int16_t square;
+
+    set_word(image, A_ambient_sfx_countdown, 1);
+    set_word(image, A_room_number,
+             room_grid_square(image, word_at(image, A_grid_row), word_at(image, A_grid_col)));
+
+    set_word(image, A_drift_dir_x, 0);
+    set_word(image, A_drift_dir_y, 0);
+    set_word(image, A_drift_interval, 0);
+    set_word(image, A_drift_pulse, 0);
+    set_word(image, A_drift_speed, TOP_DRIFT_SPEED_ON_ENTRY);
+    set_word(image, A_bubble_alive, 1);
+
+    if (word_at(image, A_practice_mode) != 0)
+        set_word(image, A_entry_dir, top_practice_entry_dir(word_at(image, A_room_number)));
+
+    /* The bubble at the entry point of the side it is arriving through, which is the same read
+     * `src/gameplay.c`'s respawn makes — one tile index per axis, scaled up to pixels. */
+    entry_dir = word_at(image, A_entry_dir);
+    set_word(image, A_bubble_x,
+             (int16_t)(room_entry_coordinate(image, entry_dir, ROOM_ENTRY_X) * ENTRY_POINT_PIXELS));
+    set_word(image, A_bubble_y,
+             (int16_t)(room_entry_coordinate(image, entry_dir, ROOM_ENTRY_Y) * ENTRY_POINT_PIXELS));
+
+    draw_room_to_stage(image, saved);
+    room_wipe_in(image);
+    draw_hud_row_tiles(image);
+    hud_draw_counters(image, callee, saved);
+    present_hud_row(image);
+
+    /* A room never seen before refills the bonus bar and, if it was entered from BELOW, awards a
+     * spare life — which is the only way this game gives one. */
+    square = room_grid_square(image, word_at(image, A_grid_row), word_at(image, A_grid_col));
+    if (square > word_at(image, A_max_room_reached)) {
+        set_word(image, A_show_player_change, 0);
+        set_word(image, A_bonus_bar, TOP_BONUS_BAR_FULL);
+        hud_bonus_bar_fill(image, callee, saved);
+        set_word(image, A_max_room_reached,
+                 room_grid_square(image, word_at(image, A_grid_row), word_at(image, A_grid_col)));
+        if (word_at(image, A_entry_dir) == (int16_t)TOP_ENTRY_DIR_BOTTOM) {
+            int32_t lives = (int32_t)be32(image + A_lives) + 1;
+
+            wr32(image + A_lives, (uint32_t)lives);
+            if (lives > TOP_LIVES_MAX)
+                wr32(image + A_lives, TOP_LIVES_MAX);
+            hud_draw_counters(image, callee, saved);
+            present_score_strip(image);
+        }
+    } else if (word_at(image, A_player_count) == (int16_t)PLAYER_COUNT_TWO
+               && word_at(image, A_show_player_change) != 0) {
+        set_word(image, A_show_player_change, 0);
+        hud_bonus_bar_fill(image, callee, saved);
+    }
+
+    set_word(image, A_mouse_buttons, 0);
+    set_word(image, A_in_room, 1);
+}
+
+/* game_room_frame_tail @ 0x10792 — the slice `[0x10792, 0x108d2)`, entered where
+ * `game_frame_update` returns: the bonus bar's tick, the four ways out of a room, the win test, the
+ * room's own ambience and the five calls that put the frame on screen. */
+void game_room_frame_tail(uint8_t *image, uint32_t frame, CallerAddressRegisters saved) {
+    uint32_t callee = top_callee_frame(frame);
+    int16_t tick = word_at(image, A_bonus_tick);
+
+    set_word(image, A_bonus_tick, (int16_t)(tick - 1));
+    if (tick < 1) {
+        int16_t bar;
+
+        set_word(image, A_bonus_tick, TOP_BONUS_TICK_RELOAD);
+        bar = (int16_t)(word_at(image, A_bonus_bar) - 1);
+        set_word(image, A_bonus_bar, bar);
+        if (bar < (int16_t)TOP_BONUS_BAR_FLOOR)
+            set_word(image, A_bonus_bar, TOP_BONUS_BAR_FLOOR);
+        hud_bonus_bar_shrink(image, callee, 1, saved);
+    }
+
+    /* The four exits, each of which steps one square of the grid and says which side of the NEXT
+     * room the bubble will arrive through. All four tests are made, so a bubble that has left
+     * through two of them at once takes the last one's exit. */
+    if (word_at(image, A_bubble_x) > (int16_t)TOP_EXIT_RIGHT) {
+        set_word(image, A_in_room, 0);
+        set_word(image, A_entry_dir, TOP_ENTRY_DIR_LEFT);
+        set_word(image, A_grid_col, (int16_t)(word_at(image, A_grid_col) + 1));
+    }
+    if (word_at(image, A_bubble_x) < 0) {
+        set_word(image, A_in_room, 0);
+        set_word(image, A_entry_dir, TOP_ENTRY_DIR_RIGHT);
+        set_word(image, A_grid_col, (int16_t)(word_at(image, A_grid_col) - 1));
+    }
+    if (word_at(image, A_bubble_y) > (int16_t)TOP_EXIT_BOTTOM) {
+        set_word(image, A_in_room, 0);
+        set_word(image, A_entry_dir, TOP_ENTRY_DIR_TOP);
+        set_word(image, A_grid_row, (int16_t)(word_at(image, A_grid_row) + 1));
+    }
+    if (word_at(image, A_bubble_y) < 0) {
+        set_word(image, A_in_room, 0);
+        set_word(image, A_entry_dir, TOP_ENTRY_DIR_BOTTOM);
+        set_word(image, A_grid_row, (int16_t)(word_at(image, A_grid_row) - 1));
+    }
+
+    /* ...and the fifth way out, which is winning: the last room's own right-hand door. */
+    if (word_at(image, A_room_number) == (int16_t)TOP_ROOM_LAST
+        && word_at(image, A_bubble_x) > (int16_t)TOP_WIN_X) {
+        set_word(image, A_level_complete, 1);
+        set_word(image, A_in_room, 0);
+    } else {
+        set_word(image, A_level_complete, 0);
+    }
+
+    if (word_at(image, A_in_room) == 0)
+        return;
+    if ((int32_t)be32(image + A_lives) <= HUD_LIVES_EXHAUSTED)
+        return;
+
+    /* The room's ambience, re-rolled every 20..69 frames (`../notes/frontend.md` §6). */
+    {
+        int16_t countdown = word_at(image, A_ambient_sfx_countdown);
+
+        set_word(image, A_ambient_sfx_countdown, (int16_t)(countdown - 1));
+        if (countdown < 0) {
+            set_word(image, A_ambient_sfx_countdown,
+                     random_scaled(image, A_const_ambient_scale, A_const_ambient_offset,
+                                   saved, RET_TOP_AMBIENCE_RANDOM));
+            play_room_ambience(image, TOP_AMBIENCE_VOLUME);
+        }
+    }
+    animation_frame(image, saved);
+}
+
+/* The two ghost cells the end-of-room walks alternate between, flipped every other frame by a hold
+ * counter in the frame. Both animations use it and neither uses anything else. */
+static void top_flip_walk_cell(uint8_t *image, uint32_t frame) {
+    uint32_t hold = addr_add(frame, (uint32_t)TOP_FRAME_ANIM_HOLD);
+    int32_t remaining = (int32_t)be32(image + hold);
+
+    wr32(image + hold, (uint32_t)(remaining - 1));
+    if (remaining != 0)
+        return;
+    wr32(image + hold, TOP_ENDING_HOLD);
+    set_word(image, A_ghost_tile,
+             word_at(image, A_ghost_tile) == (int16_t)TOP_ENDING_TILE_LOW
+                 ? (int16_t)TOP_ENDING_TILE_HIGH : (int16_t)TOP_ENDING_TILE_LOW);
+}
+
+/* The bubble's sparkle, advanced once per animation frame — the same wrap `game_frame_update`'s
+ * first slice makes, spelt again here because this animation runs without it. */
+static void top_advance_bubble_cell(uint8_t *image) {
+    int16_t previous = word_at(image, A_bubble_frame);
+
+    set_word(image, A_bubble_frame, (int16_t)(previous + 1));
+    if (previous > (int16_t)TOP_ENDING_ANIM_LAST)
+        set_word(image, A_bubble_frame, TOP_ENDING_ANIM_FIRST);
+}
+
+/* One room-35 door object retired: given its "open" tile, and then the -1 the object animator
+ * skips. Two of them make the door. */
+static uint32_t top_ending_object(uint16_t slot) {
+    return A_object_table + TOP_ROOM_LAST * OBJECT_ROOM_STRIDE + slot * OBJECT_STRIDE
+           + OBJECT_TILE;
+}
+
+/* The score tally that empties the bonus bar, which both end-of-room paths run: the bar is stepped
+ * down five columns at a time and each step is worth points and one note of a rising glissando. */
+static void top_tally_step_sound(uint8_t *image) {
+    int16_t note = (int16_t)(TOP_TALLY_NOTE_BASE
+                             - word_at(image, A_bonus_bar) / TOP_TALLY_NOTE_DIVISOR);
+
+    sound_play(image, sound_fx_definition(SND_FX_BONUS_TALLY), TOP_TALLY_VOICE,
+               menu_volume(image, TOP_TALLY_VOLUME), note, TOP_TALLY_PRIORITY);
+}
+
+static void top_bank_score(uint8_t *image, uint32_t callee, CallerAddressRegisters saved) {
+    if ((int32_t)be32(image + A_score) > (int32_t)be32(image + A_hi_score))
+        wr32(image + A_hi_score, be32(image + A_score));
+    hud_draw_counters(image, callee, saved);
+    present_score_strip(image);
+}
+
+/* game_ending_sequence @ 0x108ec — the slice `[0x108ec, 0x10ce0)`: the whole of winning. The ghost
+ * walks right to the door, the door opens, the ghost falls through it, and the bar is cashed in. */
+void game_ending_sequence(uint8_t *image, uint32_t frame, CallerAddressRegisters saved) {
+    uint32_t callee = top_callee_frame(frame);
+
+    sound_release_voice(image, PUFF_VOICE);
+    sound_play(image, sound_fx_definition(SND_FX_LEVEL_CLEAR), TOP_ENDING_VOICE,
+               menu_volume(image, TOP_ENDING_VOLUME), MENU_SFX_NOTE_ONE_SHOT, TOP_ENDING_PRIORITY);
+    wr32(image + addr_add(frame, (uint32_t)TOP_FRAME_ANIM_HOLD), TOP_ENDING_HOLD);
+    xbios_setcolor(image, TOP_ENDING_PEN, TOP_ENDING_COLOUR, saved, RET_TOP_ENDING_SETCOLOR);
+
+    /* 1. Right to the door, the ghost's own cell walking down five at a time until it is inside
+     *    the two-cell walk's range and the flip-flop takes over. */
+    for (;;) {
+        /* The step is made BEFORE the test and on the value the test then uses, so the walk ends
+         * one past `TOP_ENDING_WALK_TO` rather than at it. */
+        int16_t x = word_at(image, A_bubble_x);
+
+        set_word(image, A_bubble_x, (int16_t)(x + 1));
+        if (x >= (int16_t)TOP_ENDING_WALK_TO)
+            break;
+        top_advance_bubble_cell(image);
+        if (word_at(image, A_ghost_tile) > (int16_t)TOP_ENDING_TILE_FLOOR
+            && word_at(image, A_ghost_tile) < (int16_t)TOP_ENDING_TILE_CEILING)
+            set_word(image, A_ghost_tile,
+                     (int16_t)(word_at(image, A_ghost_tile) - TOP_ENDING_TILE_STEP));
+        else
+            top_flip_walk_cell(image, frame);
+        animation_frame(image, saved);
+    }
+
+    /* 2. The door, which is two object slots given their open tiles. */
+    set_word(image, top_ending_object(TOP_ENDING_OBJECT_A), TOP_ENDING_TILE_A);
+    set_word(image, top_ending_object(TOP_ENDING_OBJECT_B), TOP_ENDING_TILE_B);
+
+    /* 3. ...and down through it. */
+    wr32(image + addr_add(frame, (uint32_t)TOP_FRAME_ANIM_HOLD), TOP_ENDING_HOLD);
+    for (;;) {
+        int16_t y = word_at(image, A_bubble_y);
+
+        set_word(image, A_bubble_y, (int16_t)(y - 1));
+        if (y <= (int16_t)TOP_ENDING_FALL_TO)
+            break;
+        top_advance_bubble_cell(image);
+        top_flip_walk_cell(image, frame);
+        animation_frame(image, saved);
+    }
+    set_word(image, top_ending_object(TOP_ENDING_OBJECT_A), (int16_t)TOP_OBJECT_RETIRED);
+    set_word(image, top_ending_object(TOP_ENDING_OBJECT_B), (int16_t)TOP_OBJECT_RETIRED);
+
+    /* 4. The bar cashed in at TOP_BONUS_PER_STEP a step. */
+    while (word_at(image, A_bonus_bar) > (int16_t)TOP_BONUS_BAR_FLOOR) {
+        hud_bonus_bar_shrink(image, callee, TOP_BONUS_STEP, saved);
+        top_tally_step_sound(image);
+        set_word(image, A_bonus_bar, (int16_t)(word_at(image, A_bonus_bar) - TOP_BONUS_STEP));
+        wr32(image + A_score, be32(image + A_score) + TOP_BONUS_PER_STEP);
+        top_bank_score(image, callee, saved);
+    }
+    sound_stop_voice(image, TOP_TALLY_VOICE);
+    hud_bonus_bar_shrink(image, callee, TOP_BONUS_STEP, saved);
+
+    /* 5. ...and the winner's turn is over. In two-player mode the turn is parked and the other
+     *    player carries on; in one-player mode the game ends. */
+    if (word_at(image, A_player_count) == (int16_t)PLAYER_COUNT_TWO) {
+        const PlayerTurnSlots *slots = word_at(image, A_p1_turn) != 0 ? &PLAYER_ONE_SLOTS
+                                                                     : &PLAYER_TWO_SLOTS;
+        uint32_t playing = word_at(image, A_p1_turn) != 0 ? A_p1_playing : A_p2_playing;
+
+        set_word(image, A_show_player_change, 1);
+        set_word(image, playing, 0);
+        set_word(image, slots->max_room, word_at(image, A_max_room_reached));
+        wr32(image + slots->score, be32(image + A_score));
+        return;
+    }
+    set_word(image, A_p1_playing, 0);
+    set_word(image, A_p2_playing, 0);
+}
+
+/* game_room_exit @ 0x10af8 — the slice `[0x10af8, 0x10ce0)`: leaving a room the ordinary way. The
+ * bubble is popped and parked, the room's own bonus is awarded the FIRST time it is left, and the
+ * bar is cashed in at half the winning rate. */
+void game_room_exit(uint8_t *image, uint32_t frame, CallerAddressRegisters saved) {
+    uint32_t callee = top_callee_frame(frame);
+
+    /* A practice game is over the moment its one room is left. */
+    if (word_at(image, A_practice_mode) != 0)
+        wr32(image + A_lives, (uint32_t)HUD_LIVES_EXHAUSTED);
+    if ((int32_t)be32(image + A_lives) <= HUD_LIVES_EXHAUSTED)
+        return;
+    if (word_at(image, A_show_player_change) != 0)
+        return;
+
+    sound_release_voice(image, PUFF_VOICE);
+    sound_play(image, sound_fx_definition(SND_FX_ROOM_EXIT), TOP_ENDING_VOICE,
+               menu_volume(image, TOP_TALLY_VOLUME), MENU_SFX_NOTE_ONE_SHOT, TOP_ENDING_PRIORITY);
+
+    set_word(image, A_bubble_frame, TOP_ENDING_POP_FRAME);
+    set_word(image, A_bubble_x, TOP_ENDING_PARK_X);
+    set_word(image, A_bubble_y, TOP_ENDING_PARK_Y);
+    while (word_at(image, A_ghost_tile) > (int16_t)TOP_ENDING_TILE_FLOOR) {
+        set_word(image, A_ghost_tile,
+                 (int16_t)(word_at(image, A_ghost_tile) - TOP_ENDING_TILE_STEP));
+        animation_frame(image, saved);
+    }
+
+    /* TOP_ROOM_BONUS for the room, less TOP_DEATH_PENALTY for every death in it — computed in a
+     * WORD and only then widened, so a room left after eleven deaths would score negative. */
+    if (room_grid_square(image, word_at(image, A_grid_row), word_at(image, A_grid_col))
+        > word_at(image, A_max_room_reached)) {
+        int16_t bonus = (int16_t)(TOP_ROOM_BONUS
+                                  - word_at(image, A_deaths_in_room) * TOP_DEATH_PENALTY);
+
+        wr32(image + A_score, be32(image + A_score) + sign_ext16((uint32_t)bonus));
+        set_word(image, A_deaths_in_room, 0);
+        top_bank_score(image, callee, saved);
+    }
+
+    xbios_setcolor(image, TOP_ENDING_PEN, TOP_ENDING_COLOUR, saved, RET_TOP_EXIT_SETCOLOR);
+    wr32(image + addr_add(frame, (uint32_t)TOP_FRAME_ANIM_HOLD), TOP_ENDING_HOLD);
+    set_word(image, A_ghost_tile, TOP_ENDING_TILE_LOW);
+    for (set_word(image, A_seq_counter, 0);
+         word_at(image, A_seq_counter) < (int16_t)TOP_ENDING_FALL_FRAMES;
+         set_word(image, A_seq_counter, (int16_t)(word_at(image, A_seq_counter) + 1))) {
+        top_flip_walk_cell(image, frame);
+        animation_frame(image, saved);
+    }
+
+    while (word_at(image, A_bonus_bar) > (int16_t)TOP_BONUS_BAR_FLOOR) {
+        hud_bonus_bar_shrink(image, callee, TOP_BONUS_STEP, saved);
+        set_word(image, A_bonus_bar, (int16_t)(word_at(image, A_bonus_bar) - TOP_BONUS_STEP));
+        /* ...and the tally pays only in a room that has not been cashed in before. */
+        if (room_grid_square(image, word_at(image, A_grid_row), word_at(image, A_grid_col))
+            > word_at(image, A_max_room_reached)) {
+            wr32(image + A_score, be32(image + A_score) + TOP_BONUS_PER_STEP_EXIT);
+            top_tally_step_sound(image);
+            top_bank_score(image, callee, saved);
+        }
+    }
+    sound_stop_voice(image, TOP_TALLY_VOICE);
+    hud_bonus_bar_shrink(image, callee, TOP_BONUS_STEP, saved);
+}
+
+/* game_end_of_turn @ 0x10ce0 — the slice `[0x10ce0, 0x10d34)`: who, if anyone, is still playing. */
+void game_end_of_turn(uint8_t *image) {
+    if (word_at(image, A_player_count) == (int16_t)PLAYER_COUNT_TWO) {
+        if ((int32_t)be32(image + A_p1_lives) < 0 && word_at(image, A_p1_turn) != 0) {
+            set_word(image, A_show_player_change, 1);
+            set_word(image, A_p1_playing, 0);
+        }
+        if ((int32_t)be32(image + A_p2_lives) < 0 && word_at(image, A_p2_turn) != 0) {
+            set_word(image, A_show_player_change, 1);
+            set_word(image, A_p2_playing, 0);
+        }
+        return;
+    }
+    if ((int32_t)be32(image + A_lives) < 0) {
+        set_word(image, A_p1_playing, 0);
+        set_word(image, A_p2_playing, 0);
+    }
+}
+
+/* game_over_card @ 0x10d44 — the slice `[0x10d44, 0x1027e)`, which ends at the branch back to the
+ * top of the game loop. ONE-PLAYER, NON-PRACTICE games only: a two-player game has already shown
+ * each player their own card, and a practice game shows none. */
+void game_over_card(uint8_t *image, uint32_t frame, CallerAddressRegisters saved) {
+    if (word_at(image, A_player_count) != 1)
+        return;
+    if (word_at(image, A_practice_mode) != 0)
+        return;
+
+    menu_text_pen(image, MENU_TEXT_HEIGHT, MENU_PEN, saved);
+    draw_onto_visible_screen(image, saved, RET_TOP_GAME_OVER_PHYS);
+    menu_text(image, TOP_CARD_X, TOP_CARD_TURN_Y, A_text_game_over, saved);
+    top_busy_wait(image, frame, TOP_CARD_DELAY);
+    draw_into_work_buffer(image, saved, RET_TOP_GAME_OVER_BACK);
+}
+
+/* ================================================================================================
  * Glue
  *
  * Alcyon/DRI C passes arguments on the stack (test/abi.py), so a case pokes them where the callee
@@ -1029,11 +2237,8 @@ void g_build_sprite_bank_grab_cells(uint8_t *image, uint32_t a1, uint32_t a2) {
     build_sprite_bank_grab_cells(image, caller_registers(a1, a2));
 }
 
-/* The whole of `build_sprite_bank` @ 0x132ec: `include/blit.h`'s verified prefix and the grab loop
- * above, composed. The composition is what one case runs to `rts` — it is not a third routine. */
 void g_build_sprite_bank(uint8_t *image, uint32_t a1, uint32_t a2) {
-    build_sprite_bank_prepare(image);
-    build_sprite_bank_grab_cells(image, caller_registers(a1, a2));
+    build_sprite_bank(image, caller_registers(a1, a2));
 }
 
 void g_save_sprite_backgrounds(uint8_t *image, uint32_t a1, uint32_t a2) {
@@ -1108,4 +2313,112 @@ void g_load_level_pictures(uint8_t *image, uint32_t a1, uint32_t a2) {
 
 void g_load_hiscores(uint8_t *image, uint32_t frame, uint32_t a1, uint32_t a2) {
     load_hiscores(image, frame, caller_registers(a1, a2));
+}
+
+void g_title_menu_open(uint8_t *image, uint32_t frame, uint32_t a1, uint32_t a2) {
+    CallerAddressRegisters live = caller_registers(a1, a2);
+
+    title_menu_open(image, frame, &live);
+}
+
+void g_menu_draw(uint8_t *image, uint32_t frame, uint32_t a1, uint32_t a2) {
+    menu_draw(image, frame, caller_registers(a1, a2));
+}
+
+int32_t g_menu_read_key_and_fold(uint8_t *image, uint32_t frame, uint32_t a1, uint32_t a2) {
+    return menu_read_key_and_fold(image, frame, caller_registers(a1, a2));
+}
+
+void g_menu_ask_player_count(uint8_t *image, uint32_t frame, uint32_t a1, uint32_t a2) {
+    menu_ask_player_count(image, frame, caller_registers(a1, a2));
+}
+
+int32_t g_menu_read_player_count(uint8_t *image, uint32_t frame, uint32_t a1, uint32_t a2) {
+    return menu_read_player_count(image, frame, caller_registers(a1, a2));
+}
+
+void g_menu_ask_practice_level(uint8_t *image, uint32_t a1, uint32_t a2) {
+    menu_ask_practice_level(image, caller_registers(a1, a2));
+}
+
+void g_menu_read_level_tens(uint8_t *image, uint32_t a1, uint32_t a2) {
+    menu_read_level_tens(image, caller_registers(a1, a2));
+}
+
+void g_menu_read_level_units(uint8_t *image, uint32_t frame, uint32_t a1, uint32_t a2) {
+    menu_read_level_units(image, frame, caller_registers(a1, a2));
+}
+
+void g_demo_play_record(uint8_t *image, uint32_t a1, uint32_t a2) {
+    demo_play_record(image, caller_registers(a1, a2));
+}
+
+void g_demo_replay_from_record(uint8_t *image, uint32_t frame, uint32_t a1, uint32_t a2) {
+    demo_replay_from_record(image, frame, caller_registers(a1, a2));
+}
+
+void g_menu_attract_sequence(uint8_t *image, uint32_t frame, uint32_t a1, uint32_t a2) {
+    menu_attract_sequence(image, frame, caller_registers(a1, a2));
+}
+
+void g_menu_attract_slideshow(uint8_t *image, uint32_t frame, uint32_t a1, uint32_t a2) {
+    menu_attract_slideshow(image, frame, caller_registers(a1, a2));
+}
+
+void g_menu_attract_slideshow_room(uint8_t *image, uint32_t frame, uint32_t a1, uint32_t a2) {
+    menu_attract_slideshow_room(image, frame, caller_registers(a1, a2));
+}
+
+void g_menu_attract_title(uint8_t *image, uint32_t frame, uint32_t a1, uint32_t a2) {
+    menu_attract_title(image, frame, caller_registers(a1, a2));
+}
+
+void g_menu_hall_of_fame(uint8_t *image, uint32_t frame, uint32_t a1, uint32_t a2) {
+    menu_hall_of_fame(image, frame, caller_registers(a1, a2));
+}
+
+void g_game_top_boot(uint8_t *image, uint32_t frame, uint32_t a1, uint32_t a2) {
+    CallerAddressRegisters live = caller_registers(a1, a2);
+
+    game_top_boot(image, frame, &live);
+}
+
+void g_game_top_boot_tail(uint8_t *image, uint32_t frame, uint32_t a1, uint32_t a2) {
+    CallerAddressRegisters live = caller_registers(a1, a2);
+
+    game_top_boot_tail(image, frame, &live);
+}
+
+void g_game_top_boot_arm(uint8_t *image, uint32_t a1, uint32_t a2) {
+    CallerAddressRegisters live = caller_registers(a1, a2);
+
+    game_top_boot_arm(image, &live);
+}
+
+void g_game_new_game(uint8_t *image) { game_new_game(image); }
+void g_game_turn_init(uint8_t *image) { game_turn_init(image); }
+void g_game_end_of_turn(uint8_t *image) { game_end_of_turn(image); }
+
+void g_game_player_change(uint8_t *image, uint32_t frame, uint32_t a1, uint32_t a2) {
+    game_player_change(image, frame, caller_registers(a1, a2));
+}
+
+void g_game_room_setup(uint8_t *image, uint32_t frame, uint32_t a1, uint32_t a2) {
+    game_room_setup(image, frame, caller_registers(a1, a2));
+}
+
+void g_game_room_frame_tail(uint8_t *image, uint32_t frame, uint32_t a1, uint32_t a2) {
+    game_room_frame_tail(image, frame, caller_registers(a1, a2));
+}
+
+void g_game_ending_sequence(uint8_t *image, uint32_t frame, uint32_t a1, uint32_t a2) {
+    game_ending_sequence(image, frame, caller_registers(a1, a2));
+}
+
+void g_game_room_exit(uint8_t *image, uint32_t frame, uint32_t a1, uint32_t a2) {
+    game_room_exit(image, frame, caller_registers(a1, a2));
+}
+
+void g_game_over_card(uint8_t *image, uint32_t frame, uint32_t a1, uint32_t a2) {
+    game_over_card(image, frame, caller_registers(a1, a2));
 }

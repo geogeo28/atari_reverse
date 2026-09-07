@@ -6,17 +6,20 @@ byte-for-byte against the original 68000 code** by the shared differential harne
 the same memory image). `../names.txt` is the source of truth for every name.
 
 **Verified: the sum of the per-section counts below.** That sum is larger than the number of
-FUNCTIONS, and deliberately: five rows are SLICES filed under the address the slice starts at rather
+FUNCTIONS, and deliberately: some rows are SLICES filed under the address the slice starts at rather
 than under a function's entry (README.md, "Adding a function", step 7), so the sum counts them too.
-Against `../names.txt` — the source of truth — the arithmetic is **130 of its 132 `fn` lines
-verified**, out of the 134 functions Ghidra found in this program (`../notes/anchors.md`, "Shape of
-the image": the 31 KB running to the end of TEXT is `init_globals`' own instruction stream, not
-undiscovered code).
+How many is arithmetic rather than a number to carry — the ✅ rows minus the `fn` lines
+`../names.txt` carries — and `test_status.py` re-derives both sides of it.
+Against `../names.txt` — the source of truth — the arithmetic is **all 132 of its `fn` lines
+verified and none deferred**, out of the 134 functions Ghidra found in this program
+(`../notes/anchors.md`, "Shape of the image": the 31 KB running to the end of TEXT is
+`init_globals`' own instruction stream, not undiscovered code).
 
 All seven sections carry rows now — `init`, `frontend`, `gameplay`, `blit`, `sound`, `voice` and
-`clib`. THE TWO `fn` LINES LEFT are `game_top_loop` @ 0x101e6 and `title_menu_loop` @ 0x115d6, and
-neither is blocked on the model; everything else in "Not reconstructed" is a SECOND program
-(`GHOST.LOA`) or a single GEMDOS call the model refuses on purpose.
+`clib`. EVERY `fn` LINE IN `../names.txt` NOW HAS A ✅ ROW, and nothing is deferred: what is left in
+"Not reconstructed" is the SECOND program (`GHOST.LOA`), which has no address in this one, and five
+small regions of the two top-level routines that no slice may include — three branch tests, one
+`jsr` into the LOA and one `c_free`.
 Each `## Verified — <subsystem>` heading carries its own count, so the only number an agent touches
 is its own section's; `test/test_status.py` fails if a count and its rows disagree, if a section that
 carries rows names a subsystem with no `src/<name>.c`, and if a literal grand total creeps back into
@@ -92,12 +95,12 @@ project uses `[0x30000, 0x90000)`, and the waiver is gone.
 
 | gap | where it bites | what closing it needs |
 |---|---|---|
-| ~~**GEMDOS `Cconis` (0x0b), 6 sites**~~ **CLOSED** | every keyboard poll — the menu's "Press [G]…[P]…[D]…[H]", the pause | TRAP_MODEL.md Phase 13 models it over the poked console state, beside `Bconstat`. No routine here uses it yet: the menu is unported |
-| ~~**GEMDOS `Crawcin` (0x07), 7 sites / `Cnecin` (0x08), 4 sites**~~ **CLOSED** | the same keyboard paths, on the blocking side | Phase 13 models both, over the same one QUEUE every console read takes from (`harness.console_keys`, up to eight deep); a blocking read with nothing staged REFUSES rather than fabricating a key |
+| ~~**GEMDOS `Cconis` (0x0b), 6 sites**~~ **CLOSED** | every keyboard poll — the menu's "Press [G]…[P]…[D]…[H]", the pause | TRAP_MODEL.md Phase 13 models it over the poked console state, beside `Bconstat`. Every one of the menu's four flush loops is run by a case now |
+| **GEMDOS `Crawcin` (0x07), 7 sites / `Cnecin` (0x08), 4 sites** — modeled, but the FLUSH IN FRONT OF EACH ONE cannot be crossed | every key this program reads | Phase 13 models both over the same one QUEUE every console read takes from, and a blocking read with nothing staged REFUSES rather than fabricating a key. **What that costs here was discovered by the port and is not what the row used to claim.** The idiom at all four sites is `while (Cconis()) Crawcin(); c = Cnecin();` — a FLUSH and then a blocking read — so the flush empties the very queue the read then needs, and no staging of `harness.console_keys` can put a key on the far side of it: on a real machine the key arrives AFTER the flush, which is a MOMENT and not an order. Every region of `title_menu_loop` therefore ends at a `Cnecin` push and the next begins there with its own key staged (`test_frontend.py`'s `test_the_menu_regions_meet_at_every_blocking_read` pins that join). Closing it means a second staged stream the flush does not drain, of `os_console_take_key`'s shape — the same shape `Cauxin`'s row below asks for |
 | ~~**GEMDOS `Fseek` (0x42), 5 sites**~~ **CLOSED** | reached only through `c_lseek` @ 0x159dc, which neither hall-of-fame routine calls: both read and write GHOST.SCR sequentially | Phase 13 models it over the staged-file cursor, with a refusal rather than an error code for a seek the model cannot serve |
 | ~~**GEMDOS `Fdelete` (0x41) / `Pterm` (0x4c) / `Cauxout` (0x04) / `Cprnout` (0x05)**~~ **CLOSED** | the C library's own wrappers (0x16868, 0x14d16, 0x16bae, 0x16bdc) | TRAP_MODEL.md Phase 13 models all four: `Fdelete` edits the staged-file table and answers TOS's EFILNF for a missing name, `Pterm` ends the run with an `OS_EVENT_PTERM` and LATCHES the ledger, and the two character writers take a ledger kind each. All five wrappers are ported and verified in `## Verified — clib` |
 | **GEMDOS `Cauxin` (0x03), 1 site** | `c_conin` @ 0x16518's AUX: handle | nothing, and deliberately: the console has a staged keystroke queue and the serial line has nothing at all, so every answer would be invented and the real call would BLOCK for one that never comes. The model refuses it by name. Closing it means a second staged input stream, of `os_console_take_key`'s shape |
-| ~~**BIOS `Bconout` (trap #13), 2 sites**~~ **CLOSED** | `game_top_loop` @ 0x101e6 only: the IKBD commands `$12` (disable the mouse) and `$08` (relative reporting back on) | Phase 13 models device 4 as an OS EVENT LEDGER entry per byte and refuses every other device. No routine here uses it yet: `game_top_loop` is unported |
+| ~~**BIOS `Bconout` (trap #13), 2 sites**~~ **CLOSED** | `game_top_loop` @ 0x101e6 only: the IKBD commands `$12` (disable the mouse) and `$08` (relative reporting back on) | Phase 13 models device 4 as an OS EVENT LEDGER entry per byte and refuses every other device. Both sites are run by a case now — `game_top_boot` and `game_top_boot_tail` — and residual 16 below says what a ledger entry does and does not pin |
 | ~~**`trap #2` (GEM), 2 trampolines**~~ **CLOSED** | the AES one @ 0x149b6 (`d0 = $c8`) and the VDI one @ 0x168d4 (`d0 = $73`) | Closed by TRAP_MODEL.md phases 11-13: the kit now models an ST raster, `vro_cpyfm`'s sixteen logic operations, and every VDI/AES opcode this game uses (VDI 3, 8, 12, 22, 25, 100, 109, 114, 124, 128; AES 10, 77, 78). Both trampolines and all sixteen entry points are verified in `## Verified — frontend` |
 | **`trap #9`, 1 site** | every PSG access from ordinary code: `psg_access` @ 0x14940 calls the game's OWN supervisor gate `trap9_psg_handler` @ 0x14950 | not a TOS trap at all, so the shim does not intercept it: the oracle dispatches through the vector at `$a4`, which is **zero unless the run has already executed `install_sound_vectors` @ 0x148ea**. A reconstruction cannot trap; it calls `psg_port_write()`/`psg_port_read()` from the kit's `psg.h` (TRAP_MODEL.md, Phase 6), and the ledger comparison is what holds the two equal |
 | **the Timer C ISR @ 0x1459a** | the music/sound player, installed at `$114` by `install_sound_vectors` | the model fires no interrupts, so the handler is entered explicitly by a stub that builds a 68000 exception frame — copy `interrupt_frame_pokes` from `projects/zynaps/recreate/test/abi.py`. It exits by pushing TOS's saved `$114` and `rts`ing, not by `rte`, so the stub's frame is not popped the usual way: read the tail before writing the case |
@@ -114,11 +117,15 @@ at all (`docs/on-target-execution.md`).
 
 ## Verified — init (5)
 
-The boot chain: `crt0_start` @ 0x10036, `init_globals` @ 0x16d8e, `main` @ 0x100dc and
-`game_top_loop` @ 0x101e6 — the last of which is the one routine here still unported ("Not
-reconstructed"). Every one of them but `init_globals` is a slice rather than a function — nothing
-here returns — so each row's Verification column opens with the `[start, end)` the differential
-actually runs.
+The boot chain: `crt0_start` @ 0x10036, `init_globals` @ 0x16d8e and `main` @ 0x100dc. Every one of
+them but `init_globals` is a slice rather than a function — nothing here returns — so each row's
+Verification column opens with the `[start, end)` the differential actually runs.
+
+**`game_top_loop` @ 0x101e6 IS NOT HERE EITHER**, though `main` is what calls it and it is the last
+routine of the boot chain. It is the front end's own state machine — the menu, the room loop, the
+two end-of-room animations and the hall-of-fame submitter — so its eleven slices are verified in
+`## Verified — frontend` beside `title_menu_loop`, which they alternate with. Same reason as
+`init_gem_and_screens` above: the section a routine sits in is the subsystem it is made of.
 
 **`crt0_setup_args` @ 0x10116 is not here either, and it IS reconstructed.** The crt0 calls it
 (`pea 128(a0) / jsr $10116`) and it is a bare `rts` — the Alcyon runtime's argv hook, stubbed out at
@@ -192,7 +199,19 @@ each **red**:
 4. **`main`'s composition is read-verified**, for the same reason as the frame loop's: no case
    enters `main` at 0x100dc and leaves, because the arm it takes calls `game_top_loop`.
 
-## Verified — frontend (33)
+## Verified — frontend (59)
+
+**THE PROGRAM'S OWN STATE MACHINE IS HERE TOO, and it is the last thing this project had left.**
+`game_top_loop` @ 0x101e6 and `title_menu_loop` @ 0x115d6 are twenty-six of the rows below — twelve
+and fourteen, one per straight-line region — and `../notes/frontend.md` §2 draws the machine they
+make between them.
+Neither is written as a C function of its own: `game_top_loop` is a `do { … } while (true)` and
+every pass of `title_menu_loop` ends at a blocking console read the model cannot cross (the gap
+table above says why), so both compositions are READ-VERIFIED and `src/frontend.c` writes the order
+its slices run in out as prose instead. Where each slice stops is not a matter of taste: it is a
+`jsr` into a second program, a `Cnecin` push, or one of the three branch tests that decide whether
+the routine goes round again — and `test_the_menu_regions_meet_at_every_blocking_read` refuses a
+menu region that ends anywhere but at a `Cnecin`.
 
 **The GEM binding, and everything the rest of this project was cut around.** Bubble Ghost is a GEM
 application: it opens a virtual workstation and draws its text, its bonus bar and its 32x32 sprites
@@ -269,8 +288,34 @@ it and never borrowed it.
 | `0x16a86` | `v_gtext` | 92 | ✅ verified | seven strings x four positions — the empty string, a high-bit one, and the game's own longest menu line — at the origin, the far corner and a negative x the model clips; 8 x 8 chunk-seeded random strings; poison |
 | `0x16ae2` | `vr_recfl` | 48 | ✅ verified | three rectangles (the bonus bar's own row among them) x three (interior, pen) pairs, the hollow one included: the model reads the fill INTERIOR before the fill colour, and a solid-only case could not tell the two reads apart |
 | `0x16b12` | `vro_cpyfm` | 76 | ✅ verified | four rectangles x two modes x three raster directions, plus 8 x 12 chunk-seeded fuzz over ALL SIXTEEN logic operations and random extents; poison |
+| `0x101e6` | `game_top_boot` **(slice** `[0x101e6, 0x10232)` **)** | 76 | ✅ verified | `stop_pc` at the `jsr play_voice` — a SECOND program the model cannot run. The mouse hidden, the voice player and the title picture read off disk, the workstation cleared, `Bconout(4, $12)` on the OS event ledger, the logical screen moved to the work buffer and the picture shown. Composes `graf_mouse`, `load_voice_player`, `load_presentation`, `v_clrwk` and `show_presentation` |
+| `0x10236` | `game_top_boot_tail` **(slice** `[0x10236, 0x1024e)` **)** | 24 | ✅ verified | `stop_pc` at the push that opens `c_free`. `load_level_pictures` over the real GHOST.DAT, `load_hiscores` over a shipped-shape GHOST.SCR, and `Bconout(4, $08)`. **Residual:** the `c_free` after it — see below |
+| `0x10258` | `game_top_boot_arm` **(slice** `[0x10258, 0x1027e)` **)** | 38 | ✅ verified | the sixty sprite cells grabbed off the real GHOST.DAT, the sound driver installed and silenced, GHOST.DEM read, and the four globals a fresh boot starts from — two tables, one of which is the displayed high score taken from the hall of fame's BEST entry (its LAST, the table being ascending) |
+| `0x1027e` | `game_new_game` **(slice** `[0x1027e, 0x102b0)` **)** | 50 | ✅ verified | `stop_pc` at the `jsr title_menu_loop`. Both players back in, `reset_world_state` composed, five lives, a full bar, and the score offered to the hall of fame — practice x score, four cases, because a practice game scores nothing and offers zero |
+| `0x102b4` | `game_turn_init` **(slice** `[0x102b4, 0x1037a)` **)** | 198 | ✅ verified | six cases: an ordinary game (which starts at grid (5, 4), i.e. room 1) and two practice squares, each in one- and two-player mode. Twenty per-player slots seeded from the live state, and the turn handed to player TWO so that the swap at the top of the first room brings player one up |
+| `0x1037a` | `game_player_change` **(slice** `[0x1037a, 0x105e0)` **)** | 614 | ✅ verified | twelve cases over six (turn, lives, still-playing) states x both player counts, plus one with no handover pending. The "G A M E   O V E R" card for a player who has run out — both players' own copies of the string, which are two DATA addresses holding the same bytes — the handover, the incoming player's twenty slots and 58-word world put back through the verified `restore_world`, and the "P L A Y E R  x" card. A one-player game writes nothing at all, which is what the `player_count = 1` rows say |
+| `0x105e0` | `game_room_setup` **(slice** `[0x105e0, 0x1078a)` **)** | 426 | ✅ verified | five worlds: a fresh room entered from the left, one entered from BELOW (the only way this game awards a spare life), a room already seen, a practice room (whose entry direction comes from the room NUMBER, since there is no previous room), and the two-player re-entry. The room the grid square names, the bubble at the entry point it arrives through, the room composed and slid in through `room_wipe_in`, the HUD drawn and the bar refilled |
+| `0x10792` | `game_room_frame_tail` **(slice** `[0x10792, 0x108d2)` **)** | 320 | ✅ verified | eight states: an ordinary frame, each of the four exits, the bar's three-frame tick and its floor, room 35's win at both sides of `TOP_WIN_X`, and a turn already out of lives. The ambient countdown underflowing and re-rolling through the fp package, and the five calls that put the frame on screen. **Entered where `game_frame_update` returns** — that call is the gameplay subsystem's nine slices, composed |
+| `0x108ec` | `game_ending_sequence` **(slice** `[0x108ec, 0x10af8)`, `stop_pc` at 0x10ce0 where the two end-of-room paths rejoin **)** | 524 | ✅ verified | four cases: the ghost walked right to room 35's door over ~100 animation frames, the door's two object slots opened and then retired to -1, the fall through it, the bonus bar cashed in at 100 a step with the fx8 glissando, and the winner's turn parked (two players, either one up) or the game ended (one player). The fourth case's bar is ALREADY at the floor, so the tally runs zero times — which is the only thing that leaves the level-clear trigger's own volume observable |
+| `0x10af8` | `game_room_exit` **(slice** `[0x10af8, 0x10ce0)` **)** | 488 | ✅ verified | seven cases: the ordinary exit from a fresh room (the room bonus and the tally), one already visited (neither), a practice game (which ends the turn), a turn already out, a pending handover, a room left after three deaths, and one left after 100 — which is STAGED and not reachable, and is what the word-sized bonus arithmetic would need |
+| `0x10ce0` | `game_end_of_turn` **(slice** `[0x10ce0, 0x10d34)` **)** | 84 | ✅ verified | six states: who, if anyone, is still in. A two-player game asks each player's own life count and only about the one whose turn it was; a one-player game asks the live count and takes both players out with it. `stop_pc` at the room loop's own `while (either player is in)`, which is the composition's and not this slice's |
+| `0x10d44` | `game_over_card` **(slice** `[0x10d44, 0x10de6)`, `stop_pc` at 0x1027e — the branch back to the top of the game loop **)** | 162 | ✅ verified | three cases, and two of them write nothing: the card is one-player, non-practice only. `stop_pc` at the branch back to the top of the game loop, which is what says the `do { … } while (true)` really closes |
+| `0x115d6` | `title_menu_open` **(slice** `[0x115d6, 0x116c4)` **)** | 238 | ✅ verified | the last game's scores offered to the hall of fame, the menu painted, and the keyboard flushed. Two cases: one whose table no candidate can beat (the submitter's early return) and one that inserts, re-sorts and writes GHOST.SCR — the second being the only thing in this section that can see a CALLEE FRAME at all, since `save_hiscores`' mouse form is read out of its own frame three `jsr`s down |
+| `0x115de` | `menu_draw` **(slice** `[0x115de, 0x116c4)` **)** | 230 | ✅ verified | the same without the submitter, which is where the redraw loop re-enters: `sound_stop_all`, the screen cleared, `Setpalette(dat_palette)`, the logical screen onto the visible page, `vst_height(6)`/`vst_color(1)` and the four "Press [x]…" lines, then the flush — run with 0, 1, 3 and 7 keys queued, so the loop eats none, one and the model's whole queue |
+| `0x116c4` | `menu_read_key_and_fold` **(slice** `[0x116c4, 0x11700)` **)** | 60 | ✅ verified | fifteen keys: the four the menu dispatches on, their lower-case forms, the fold's own boundary at '`', and two with bit 7 set — which are NEGATIVE as a sign-extended byte and so are never folded. The ANSWER is compared against the oracle's own D0 at the same PC, because the four compares after it write nothing |
+| `0x11708` | `menu_ask_player_count` **(slice** `[0x11708, 0x11774)` **)** | 108 | ✅ verified | `[G]`: the two "Press [1]/[2]" lines onto the visible screen, and the flush the loop's first pass makes before it reads a digit |
+| `0x11774` | `menu_read_player_count` **(slice** `[0x11774, 0x117cc)` / `[0x11774, 0x1175a)` **)** | 88 | ✅ verified | five keys x two checks: '1', '2', and the three ways a key is neither — a digit that is not 1 or 2, a non-digit, and '3'. The core ANSWERS which way it went (the next pass would begin with a blocking read, which is where a slice has to end) and a second case reads the count back |
+| `0x117de` | `menu_ask_practice_level` **(slice** `[0x117de, 0x1183e)` **)** | 96 | ✅ verified | `[P]`: all three scores zeroed, one player, the "Enter level number" prompt, and the first digit's flush |
+| `0x1183e` | `menu_read_level_tens` **(slice** `[0x1183e, 0x1186c)` **)** | 46 | ✅ verified | five keys including a non-digit: the read is filed as a WORD less `'0'` — `move.w d0` keeps the ASCII half of the console answer and throws the scancode away — and the second digit's flush follows it |
+| `0x1186c` | `menu_read_level_units` **(slice** `[0x1186c, 0x1191e)` **)** | 178 | ✅ verified | nine levels x two checks: both ends of the 0 < n < 36 gate, the two digits' carry, one square from each of the six grid rows, and three REFUSALS (0, 36 and 99). The 6 x 6 search that turns a level into a square, which reuses the two digit globals as its own loop counters WITH THE ROLES REVERSED and puts them back from the frame |
+| `0x11930` | `menu_attract_sequence` **(slice** `[0x11930, 0x11ae6)` **)** | 438 | ✅ verified | `[D]`, phase one, with the left button held: room 1 composed, shown and given its ambience, then ONE record of the replay — one and not none, because the button is polled by the record body rather than before it |
+| `0x11ae6` | `menu_attract_slideshow` **(slice** `[0x11ae6, 0x11c34)` **)** | 334 | ✅ verified | phase two's head at both ends of the range: `Random()` is one poked longword, and 0 and the 24-bit maximum are what `../notes/frontend.md` §6 derives 5 and 15 rooms from. Only the LENGTH is observable from here — it is drawn before the loop's first test — and the room is the row below |
+| `0x11b30` | `menu_attract_slideshow_room` **(slice** `[0x11b30, 0x11c1c)` **)** | 236 | ✅ verified | ONE room of the slideshow, with the button UP so the whole body runs: the room's own `Random()` scaling, the room composed and given its ambience, and thirty frames of three `Vsync`s and a present. **The loop around it is not affordable in one run** — five rooms is the shortest the range allows and each is thirty 25,600-byte presents, which fills the oracle's write ledger — so the body is a slice and the loop is the composition |
+| `0x11c34` | `menu_attract_title` **(slice** `[0x11c34, 0x11ca8)` **)** | 116 | ✅ verified | phase three, button up and button down: `show_presentation` and its louder trigger, which a run arriving with the button already down skips entirely, and then the 37,000-poll idle |
+| `0x11992` | `demo_play_record` **(slice** `[0x11992, 0x11acc)`, and the loop `[0x11992, 0x11ae6)` **)** | 314 | ✅ verified | seven fixed records — the origin, two blowing cells, a popped bubble, one with NEGATIVE bytes and both byte extremes — plus 8 x 8 chunk-seeded random ones, each six signed bytes into the six globals the renderer reads. Plus THREE composition cases that chain four records of the REAL GHOST.DEM in one run from three different cursors, which is what pins the loop: the cursor stepped six bytes a record, the counter read before it is decremented, and the mouse poll at the end of each pass |
+| `0x11cba` | `menu_hall_of_fame` **(slice** `[0x11cba, 0x11d60)` **)** | 166 | ✅ verified | `[H]` over four values of `max_room_reached`: `draw_hall_of_fame`, the screen cleared, `Setpalette(pre_palette)`, the room the player got furthest into drawn behind the HUD, room 0 as the picture and its ambience, then one pass of the idle loop the button ends |
 
-**276 cases.** The fuzzes are CHUNK-SEEDED rather than chunk-partitioned (`test/abi.py`'s `shard`
+**430 cases.** The fuzzes are CHUNK-SEEDED rather than chunk-partitioned (`test/abi.py`'s `shard`
 docstring tells the two apart), so each is `CHUNKS` x its own per-chunk count: `vro_cpyfm` 8 x 12
 copies, `v_gtext` 8 x 8 strings, the sprite protocol 8 x 8 placements through each of three
 routines, and `load_hiscores` 8 x 6 files. `make guarded` passes over the whole suite: this
@@ -318,6 +363,81 @@ mutation that used to be caught only by the attribution pass's refusal.
 | the tile draw reporting its A2 WITHOUT the tile band (2026-09-06) | 54 cases — the fifty per-cell slices compare the answer against the oracle's own A2, and the four whole-routine cases see the wrong register filed |
 | the sprite trio's `src fd_addr := 0` deleted (2026-09-06) | 14 cases, by BYTE DIFF. With both MFDBs staged `fd_addr = 0` it was caught by ONE case and only as the attribution pass refusing the run; the two MFDBs now enter holding distinctive junk rasters, so a deleted store makes the copy read the wrong raster |
 | the grab of sprite cell 50 skipped (2026-09-06) | `test_build_sprite_bank`. It passed all 225 cases before the Malloc arena was seeded: cell 50 (`bubble_sprite[3]`) is 512 ZERO bytes in the real GHOST.DAT, and an untouched `c_malloc` buffer is zero too |
+| the menu's case-fold boundary 0x60 -> 0x40 (state machine) | 15 cases — `test_menu_read_key_and_fold`, whose rows include '`' itself |
+| a demo record's ghost x scaled by 2 instead of 3 | 71 cases — every record case and the chained-replay compositions |
+| the demo's puff arm and its release swapped | 70 cases |
+| the demo cursor stepped by five bytes rather than six | `test_demo_replay_chains_records`, and every per-record case behind it |
+| the bonus bar's floor 0x23 -> 0x24 | the room-frame and both end-of-room batteries |
+| the ending walk stepping AFTER its test rather than before | 4 cases — the walk ends ONE PAST `TOP_ENDING_WALK_TO`, which only a whole run of the animation shows |
+| '0' accepted as a player count | 10 cases — the `[G]` read's own answer, both arms |
+| the two players' slots swapped at the end of a turn | 6 cases |
+| a spare life awarded on every exit, not only from below | 5 cases — the room-setup world that enters from BELOW exists for this |
+| the bubble's entry x taken from the y word | 5 cases |
+| the practice entry direction defaulting to the RIGHT instead of the left | 5 cases |
+| `room_wipe_in`'s own note 0x3c -> 0x3d, now that the routine is whole | 5 cases — the room-setup slice, which is what closed that residual |
+| the ambient countdown's scale and offset applied in the other order | 1 case — the room-frame row whose countdown underflows |
+| the level-clear trigger's volume 9 -> 8 | 4 cases — and only since `ENDING_STATES`' last row cashes in a bar ALREADY at the floor: every tally step rewrites the same voice record, so on any other row the trigger's own volume is overwritten before the run ends |
+| a callee frame costing 4 bytes instead of 8 | `test_title_menu_open_submits_the_last_games_scores` — and only since it stages `SAVE_COUNTER_ON_ENTRY` at the frame the derivation predicts. Every other case here stages a hall of fame no candidate can beat, so nothing reached a callee that reads its own frame, and the whole three-deep derivation was unpinned |
+| the shared animation frame drawn BEFORE the backgrounds are saved | 5 cases — the five-call sequence moved to `include/frontend.h` this wave, where `src/gameplay.c`'s death sequence runs it too |
+| the shared long countdown testing the DECREMENTED value | 3 cases — the attract loops run one pass fewer, which is what the "read the value it arrived with" comment is about |
+| the room-grid column stride taken as a longword | 5 cases |
+| the room ambience played on the blow's voice instead of voice 0 | 1 case |
+| `SND_FX_ROOM_WIPE` 2 -> 3, now that the fx indices live in `include/sound.h` | 5 cases — the room-setup slice, which is where `room_wipe_in`'s trigger is run |
+| the bubble's entry Y read from the X word of the same pair | 5 cases — through `src/gameplay.c`'s `room_entry_coordinate`, which this wave stopped re-deriving |
+| the hall of fame installing GHOST.PRE's palette | NOTHING — and it was a REAL DEFECT, written that way and found by a review pass reading `move.l -7672(a4)` @ 0x11cc2 against the C. `Setpalette` is a modeled no-op whose argument push lands in the dropped frame band, so no case here can ever see it; the surface is an on-target run. Recorded as a kill of the REVIEW rather than of the suite |
+| the room wipe's volume step 8 -> 1 | 5 cases — and only since every world stages `A_sound_enabled` (below) |
+| the menu ambience's volume step 8 -> 1 | 51 cases |
+| the front end's loud volume 0xb -> 0xc | 50 cases |
+| each of the practice entry direction's THREE ranges moved by one, at each end | 5 cases each — and only since `ROOM_SETUP_STATES` grew a practice row at BOTH ends of every range (rooms 1, 5, 13, 17, 25, 29) and one singleton |
+| the slideshow room's `Random()` scale and offset applied in the other order | 1 case — the single-room slice, which is the only thing that runs the room roll at all |
+| `DEMO_SLIDESHOW_FRAMES` 30 -> 29 | 1 case — the same |
+| the title picture's trigger played at the ambience volume | 1 case — `test_menu_attract_title`'s button-UP row, which is the only thing that runs `show_presentation` here |
+
+**FOUR MORE MUTATIONS SURVIVE AND ARE EQUIVALENT, from the state-machine wave.** Each is recorded
+with its proof so nobody re-tries it:
+
+* **The FIRST TWO of the slideshow's three per-frame `Vsync`s' return addresses.** The three calls
+  are consecutive with nothing between them, and each overwrites `A_trap_saved_ret`, so only the
+  LAST one's slot survives to the diff. `RET_DEMO_VSYNC_A` and `_B` are transcribed from the
+  disassembly and unpinned; closing it means a `stop_pc` between two `jsr`s, which nothing else
+  wants.
+* **The slideshow's length divisor read from the ROOM's copy of it.** They are two DATA addresses
+  holding the same eight bytes (16794009.0), and `fp_dispatch` reads the operand's value — so no run
+  can tell them apart. Same shape as `save_hiscores`' file name below, and pinned the same way:
+  `test_the_two_random_divisors_are_distinct_addresses_holding_one_value` pins the contents of each
+  address and asserts the two are distinct.
+* **`DEMO_TITLE_POLLS` 37,000 -> 36,999.** The counter lives in the frame band the differential
+  drops, and the loop's whole body is one `vq_mouse` over a FIXED mouse state — which is idempotent,
+  so one poll fewer writes exactly what one poll more does. The same argument
+  `draw_room_to_stage`'s per-cell poll needed a slice for; here there is no per-poll slice to make,
+  because the poll is the entire body.
+* **And the fourth, which is about the code rather than the model:** `game_room_exit`'s room bonus,
+  `5000 - deaths * 500`, computed in an `int32_t` instead of an `int16_t`. The very next line widens it
+  The very next line widens it with `sign_ext16`, which truncates to the same low word either way —
+  so the `int16_t` is documenting the `sub.w` rather than doing the work, and no value of
+  `deaths_in_room` can separate the two. A row staging 100 deaths is in `ROOM_EXIT_STATES` anyway,
+  because the arithmetic it exercises is real even where this mutation is not.
+
+**FOUR STAGING DECISIONS THIS WAVE'S OWN SWEEPS FORCED**, all the same defect as the four above — a
+case that stages the value the routine is about to write, or does not stage the one it reads:
+
+* **All three voices are FREE on entry** (`VOICES_FREE`). `sound_play` refuses a voice whose current
+  priority outranks the offer, and the seed writes NOISE over the three voice records — so over
+  random priorities every sound trigger in the state machine was a no-op, and a trigger that never
+  runs cannot tell one volume, definition or note from another.
+* **The `[S]` TOGGLE IS ON in every world** (`SOUND_ON`). Every trigger here scales its volume by
+  `A_sound_enabled`, which the loaded image holds as ZERO — so over the default every volume step
+  multiplied to 0 and one volume constant was indistinguishable from another. Measured:
+  `WIPE_SFX_VOLUME` could be changed from 8 to 1 with the whole suite green.
+* **The two file names `init_globals` builds in the BSS are put back over the seed**
+  (`VOICE_NAMES_IN_BSS`). They sit immediately above the three voice records, inside the guard band
+  the seed writes either side of every span, and noise over them makes the voice player open a name
+  nothing staged — which the model refuses, taking the whole run with it. Restoring them as a later
+  layer keeps the guard, which is what would catch a voice record written one word too far; the
+  ADJACENCY it depends on is asserted at the top of the battery rather than assumed.
+* **`ROOM_SETUP_STATES` stages a practice room at BOTH ENDS of all three entry-direction ranges.**
+  With one practice row only the table's fall-through arm ever ran, and a range moved by one at the
+  end nobody reached survived.
 
 **Three mutations SURVIVE and are EQUIVALENT, not holes.** Each is recorded with its proof so nobody
 re-tries it. A FOURTH used to be listed here and has moved to the residuals below —
@@ -428,6 +548,47 @@ from 10 to 11 writes a 1 into `work_in[10]` that the very next line overwrites w
    afterwards, but the arm itself is read-verified. Its console twin is a premise instead of a
    residual: `test_no_loader_opens_a_console_pseudo_handle` asserts that none of the five names this
    subsystem opens is "CON:", "AUX:" or "PRT:", which is what makes a pseudo-handle unreachable.
+
+12. **BOTH TOP-LEVEL COMPOSITIONS ARE READ-VERIFIED**, and each for a reason of its own.
+   `game_top_loop` is a `do { … } while (true)` that never returns, so there is nothing a case could
+   run to `rts` and a C function for it would be code no test could reach — `src/gameplay.c` says
+   the same of `game_frame_update`. `title_menu_loop` DOES return, and cannot be run whole for a
+   different reason: every pass of it ends at a blocking console read the model cannot cross (the
+   gap table above). What each composition is, in order, is written out as prose in
+   `src/frontend.c`; what is unrun between the slices is the five rows in "Not reconstructed".
+13. **THE FOUR TEXT CARDS' HOLDS ARE EMPTY COUNTS, and the model has no clock.** Each is 300,000
+   (or 100,000) iterations of `addq.l #1` and a compare, transcribed because the counter is image
+   state that outlives the loop — but what a real machine spends on them is TIME, which no
+   differential can see. Same class as residual 3 above and the same surface.
+14. **THE ATTRACT SEQUENCE'S TWO LOOPS ARE RUN ONE BODY AT A TIME, never to their length.** Each
+   phase is a slice and each has a case that runs its body — one GHOST.DEM record, one slideshow
+   room, the title picture — but nobody has run 980 records or five rooms in one go: five rooms is
+   thirty 25,600-byte presents each, which fills the oracle's write ledger. The replay's loop is
+   pinned by `demo_play_record`'s four-record composition; the slideshow's is not, and the count it
+   walks is a word in the dropped frame band. Its playback RATE is a second thing no case sees:
+   there is no `Vsync` in the replay at all (`../notes/frontend.md` §8), so on a real machine it
+   runs at whatever the renderer costs.
+15. **THE `[H]` ARM'S `Setpalette` IS READ-VERIFIED, AND THIS IS WHERE THE PORT GOT IT WRONG ONCE.**
+   It installs GHOST.DAT's palette — its backdrop is room 0, a GHOST.DAT picture — and the
+   reconstruction was written with GHOST.PRE's. `Setpalette` is a modeled no-op whose argument push
+   lands in the band the differential drops, so no case can tell the two globals apart; the defect
+   was found by a review pass reading `move.l -7672(a4)` @ 0x11cc2 against the C, and the mutation
+   that restores it still SURVIVES the whole suite. Every `Setpalette` and `Setcolor` argument in
+   this project is in that position (residual 3), and the surface for all of them is an on-target
+   run.
+16. **`game_top_boot`'S OPENING `graf_mouse` MOUSE FORM IS THE HARNESS'S OWN SENTINEL.** The call
+   pushes a zero word and the mode, so the `addr_in` LONG the AES reads spans that zero and the word
+   at `frame - 10`; a mid-entry slice's frame must sit exactly `TOP_LOCAL_BYTES` above
+   `emu.STACK_TOP` (or its callees' frames land where the oracle's do not), which puts `frame - 10`
+   ON `emu.STACK_TOP` — where `emu.run` writes the sentinel return address. Both sides therefore read
+   that word's zero high half, and a reconstruction reading a DIFFERENT offset of the same frame
+   would match. `save_hiscores`' two calls have the same shape and ARE pinned, by
+   `test_title_menu_open_submits_the_last_games_scores`; this one is not, and closing it means a
+   harness that lets a case choose where the sentinel goes.
+17. **THE TWO IKBD COMMANDS ARE LEDGER ENTRIES AND NOTHING ELSE.** `Bconout(4, $12)` and
+   `Bconout(4, $08)` touch no memory, so the ordered OS event stream is the only thing that can tell
+   a reconstruction which makes them from one which does not — and whether the 6301 really stops
+   reporting the mouse is an on-target matter (`docs/on-target-execution.md`).
 
 
 ## Verified — gameplay (15)
@@ -677,7 +838,7 @@ room tables are run BOTH as `init_globals` left them and as fuzz.
 | `0x13712` | `draw_hud_row_tiles` | 92 | ✅ verified | run to `rts`; noise + poison + the real tiles 350..359, and the arithmetic pin that its `add.l #$6400` is 50 tiles and not the room's byte size |
 | `0x1376e` | `objects_animate_and_draw` | 510 | ✅ verified | run to `rts`; all 36 shipped rooms over the real GHOST.DAT, 4 of them over noise, 96 fuzz cases in 4 shards, and the two word-edge branches (`blt` on the tile, `bne` on the countdown) the shipped tables never reach |
 | `0x132ec` | `build_sprite_bank` **(slice** `[0x132ec, 0x13330)` **)** | 68 of 322 | ✅ verified | `stop_pc` at the head of the grab loop: `bank_index = 0`, `draw_tile_bank_screen`, and the GEOMETRY fields of both MFDBs — `width`/`height`/`wdwidth`/`standard`/`planes`, offsets 4..12. `MFDB_ADDR` (offset 0) is NOT in the slice: the grab loop writes it once per cell from the `c_malloc` it has just made, so it is part of the residual. **Residual:** the 60 `c_malloc` + `vro_cpyfm` grabs, and the `fd_addr` each of them stores |
-| `0x13b1e` | `room_wipe_in` **(slice** `[0x13b62, 0x13bda)` **)** | 120 of 204 | ✅ verified | each of the 40 steps entered on its own with `D7 = step`, plus the whole loop twice — over noise, and over a staging area the ORACLE composed with 50 real tile draws first. Plus the two steps the game's own loop never reaches, which are what pin the present's WORD-sized `dbf` counter against the `mulu`'s longword product: step 409 (64 longs presented, not 65,600) and step -1 (the full 65,536, on a low staging of its own). **Residual:** the three `sound_release_voice` calls and the `sound_play` around it |
+| `0x13b1e` | `room_wipe_in` **(the slide,** `[0x13b62, 0x13bda)`**, has this battery's cases; the 84 bytes around it are run by `## Verified — frontend`'s `game_room_setup`)** | 120 of 204 here | ✅ verified | each of the 40 steps entered on its own with `D7 = step`, plus the whole loop twice — over noise, and over a staging area the ORACLE composed with 50 real tile draws first. Plus the two steps the game's own loop never reaches, which are what pin the present's WORD-sized `dbf` counter against the `mulu`'s longword product: step 409 (64 longs presented, not 65,600) and step -1 (the full 65,536, on a low staging of its own). **The residual is CLOSED but not by a case in this file:** the three `sound_release_voice` calls and the `sound_play` around the loop are `src/blit.c`'s `room_wipe_in` now, and the only thing that runs them is `## Verified — frontend`'s `game_room_setup` slice, the routine's only caller — five of whose cases redden when the trigger's note is changed. `room_wipe_in` has no glue and no case of its own here, which is why the Name column says where its other 84 bytes are verified |
 
 **Not here, and it is an OWNERSHIP boundary rather than a model gap.** `save_sprite_backgrounds` @
 0x1342e, `draw_sprites` @ 0x134f6 and `restore_sprite_backgrounds` @ 0x135d2 are three `vro_cpyfm`
@@ -696,7 +857,9 @@ and are what the frontend row rests on.
 **`build_sprite_bank`'s slice DOES still have a row**, and the difference is worth reading: its
 residual `[0x13330, 0x1342e)` is filed under an address of its own
 (`build_sprite_bank_grab_cells`), so the two rows name two disjoint spans rather than one routine
-twice. `room_wipe_in`'s residual is the sound engine's and stands.
+twice. `room_wipe_in`'s residual is CLOSED: the sound engine is ported, so the prologue and
+epilogue around its slide are `room_wipe_in` in this file now — three key-offs, one trigger and one
+key-off — verified through the front end's room-setup slice, which is the routine's only caller.
 
 **What the differential cannot see here.** Nothing in this subsystem traps, so there is no ledger to
 compare — but also nothing off-image: every byte these routines write is memory the diff covers, and
@@ -1316,5 +1479,7 @@ like a gap when it has become ordinary work is the most expensive kind of stale 
 | Routine(s) | Subsystem | Why not, and what would close it |
 |---|---|---|
 | the `GHOST.LOA` player itself — a second program, so it has no address in this one | voice | **THE TWO GAME ROUTINES ARE PORTED** — `## Verified — voice` — and what is left is the second program `play_voice` loads and calls: an `ABSFLAG` .PRG that enters supervisor mode, saves the MFP registers, installs a handler at `$134`, programs Timer A from a rate table and busy-waits on a done flag (`../notes/loader.md`). The kit fires no interrupts, so the handler would be entered directly per sample (the shape `timer_c_sound_isr` uses) and the setup/teardown run as slices around the MFP writes; the WAIT has no site the scheduled-write model can name, because the byte it spins on is written by the handler and not by an external agent. It also arms the cartridge DAC, which nothing models |
-| `game_top_loop` @ 0x101e6 | init | The last routine of the boot chain, and the only one left: the `do { … } while (true)` that loads every file, installs the sound driver and runs a turn. Not blocked on the model — the two `Bconout` IKBD commands are modeled and every call it makes is verified — what is left is a chain of `stop_pc` slices between those calls, with the world staged for each |
-| `title_menu_loop` @ 0x115d6 and the demo player at 0x11992 | frontend | Not started, and no longer blocked on the model: `harness.console_keys` stages up to eight keystrokes in order, which is exactly the menu's `while (Cconis()) Crawcin(); c = Cnecin()` idiom. The `[D]` attract path polls `vq_mouse` 37,000 times and drives the fp package for its two `Random()` ranges — both verified — so what it needs is a mid-entry slice per menu branch and an instruction cap that fits |
+| `play_voice`'s call into the LOA, at 0x10232 | frontend | ONE `jsr`, four bytes, and it is the boot chain's join to the row above: `game_top_boot` stops at it and `game_top_boot_tail` starts after it. `src/voice.c`'s `play_voice_arm` answers the address it would call, so the composition is checked rather than falling through silently |
+| `game_top_free_voice_buffer` @ 0x1024e | frontend | ONE `c_free`, ten bytes, transcribed as a function of its own and run by no case. The block it returns is the one `load_voice_player` allocated, and a slice entered fresh has none: `A_voi_buffer` holds the loaded image's zero, so both sides would walk a free list built out of whatever lies below address 0. `c_free` itself has nine cases in `test_clib.py` |
+| the menu's four dispatch compares, from 0x11700 | frontend | `cmp.w #$47,d0 / bne` and the three like it, which write nothing at all: `menu_read_key_and_fold` ANSWERS the folded key and each arm's own slice is entered at its first instruction, so what is unrun is the branches between them |
+| the two `do { … } while` conditions, at 0x10d34 and 0x11d60 | frontend | The room loop's "is either player still in" and the menu's "was anything chosen" — the composition's own tests, which no slice may include because each is what decides whether the routine goes round again or returns. Both are read-verified; the flags they read are written inside slices that are not |

@@ -78,6 +78,63 @@ ENTRY_SAVE_HISCORES = 0x1207a
 STOP_SAVE_HISCORES_PROLOGUE = 0x120ce   # the `clr.w -(a7)` that opens c_creat's push
 ENTRY_HISCORE_SUBMIT_PLAYERS = 0x11d6e
 
+# The front end's state machine. `title_menu_loop` RETURNS on its two game-starting arms, so those
+# are whole runs; every other region of it and every region of `game_top_loop` is a mid-entry slice.
+ENTRY_TITLE_MENU_OPEN = 0x115d6         # the routine, down to its first blocking read
+STOP_TITLE_MENU_OPEN = 0x116c4
+ENTRY_MENU_DRAW = 0x115de               # ...and the redraw loop's own re-entry into it
+STOP_MENU_DRAW = 0x116c4
+ENTRY_MENU_READ_KEY = 0x116c4           # the `move.w #$8,-(a7)` that opens Cnecin
+STOP_MENU_READ_KEY = 0x11700            # ...to the first of the four dispatch compares
+ENTRY_MENU_ASK_PLAYER_COUNT = 0x11708
+STOP_MENU_ASK_PLAYER_COUNT = 0x11774
+ENTRY_MENU_READ_PLAYER_COUNT = 0x11774
+STOP_MENU_PLAYER_COUNT_CHOSEN = 0x117cc # a count was chosen and the arm ends...
+STOP_MENU_PLAYER_COUNT_AGAIN = 0x1175a  # ...or it was not, and the ask goes round again
+ENTRY_MENU_ASK_PRACTICE_LEVEL = 0x117de
+STOP_MENU_ASK_PRACTICE_LEVEL = 0x1183e
+ENTRY_MENU_READ_LEVEL_TENS = 0x1183e
+STOP_MENU_READ_LEVEL_TENS = 0x1186c
+ENTRY_MENU_READ_LEVEL_UNITS = 0x1186c
+STOP_MENU_READ_LEVEL_UNITS = 0x1191e
+ENTRY_DEMO_RECORD = 0x11992             # the `movea.l demo_cursor,a0` that opens one record...
+STOP_DEMO_RECORD = 0x11acc              # ...to the `cmpi.w #$1,mouse_buttons` that ends it
+STOP_DEMO_REPLAY = 0x11ae6              # ...and the `Random()` push that follows the whole loop
+ENTRY_MENU_ATTRACT_SEQUENCE = 0x11930
+STOP_MENU_ATTRACT_SEQUENCE = 0x11ae6    # ...to the `Random()` push that opens the slideshow
+ENTRY_MENU_ATTRACT_SLIDESHOW = 0x11ae6
+STOP_MENU_ATTRACT_SLIDESHOW = 0x11c34
+ENTRY_MENU_ATTRACT_SLIDESHOW_ROOM = 0x11b30   # one room of it, which is all one run can afford
+STOP_MENU_ATTRACT_SLIDESHOW_ROOM = 0x11c1c
+ENTRY_MENU_ATTRACT_TITLE = 0x11c34
+STOP_MENU_ATTRACT_TITLE = 0x11ca8       # the `bra.w` into the redraw test
+ENTRY_MENU_HALL_OF_FAME = 0x11cba
+STOP_MENU_HALL_OF_FAME = 0x11d60        # the redraw test itself
+ENTRY_GAME_TOP_BOOT = 0x101e6
+STOP_GAME_TOP_BOOT = 0x10232            # the `jsr play_voice`, which the model cannot run
+ENTRY_GAME_TOP_BOOT_TAIL = 0x10236
+STOP_GAME_TOP_BOOT_TAIL = 0x1024e       # the push that opens `c_free(voi_buffer)`
+ENTRY_GAME_TOP_BOOT_ARM = 0x10258
+STOP_GAME_TOP_BOOT_ARM = 0x1027e
+ENTRY_GAME_NEW_GAME = 0x1027e
+STOP_GAME_NEW_GAME = 0x102b0            # the `jsr title_menu_loop`
+ENTRY_GAME_TURN_INIT = 0x102b4
+STOP_GAME_TURN_INIT = 0x1037a
+ENTRY_GAME_PLAYER_CHANGE = 0x1037a
+STOP_GAME_PLAYER_CHANGE = 0x105e0
+ENTRY_GAME_ROOM_SETUP = 0x105e0
+STOP_GAME_ROOM_SETUP = 0x1078a          # the `bra.w` into the room loop's first test
+ENTRY_GAME_ROOM_FRAME_TAIL = 0x10792    # where `game_frame_update` returns
+STOP_GAME_ROOM_FRAME_TAIL = 0x108d2
+ENTRY_GAME_ENDING_SEQUENCE = 0x108ec
+STOP_GAME_ENDING_SEQUENCE = 0x10ce0
+ENTRY_GAME_ROOM_EXIT = 0x10af8
+STOP_GAME_ROOM_EXIT = 0x10ce0           # the two end-of-room paths rejoin here
+ENTRY_GAME_END_OF_TURN = 0x10ce0
+STOP_GAME_END_OF_TURN = 0x10d34   # the room loop's own `while (either player is in)`
+ENTRY_GAME_OVER_CARD = 0x10d44
+STOP_GAME_OVER_CARD = 0x1027e           # ...and back to the top of the game loop
+
 # ---- mirrors of include/frontend.h -------------------------------------------------------------
 A_VDI_PBLOCK = 0x1e8ca
 LONGWORD_SLOT_BYTES = 4        # one parameter-block slot / one pointer-table entry
@@ -148,6 +205,53 @@ HALL_BACKDROP_ROOM = 0
 A_TEXT_SCORE_LABELS = 0x2511c
 TEXT_SCORE_LABEL_BYTES = 10
 A_TEXT_HALL = 0x2514e
+
+# ---- ...and the state machine's own (include/frontend.h) ---------------------------------------
+A_PRACTICE_MODE = 0x2315c
+A_PRACTICE_GRID_ROW = 0x23158
+A_PRACTICE_GRID_COL = 0x2315a
+A_P2_TURN = 0x23168
+A_AMBIENT_SFX_COUNTDOWN = 0x22fc0
+DEMO_RECORD_BYTES = 6
+TOP_BONUS_BAR_FULL = 0x13e
+TOP_BONUS_BAR_FLOOR = 0x23
+
+# ---- mirrors of include/gameplay.h and include/sound.h ------------------------------------------
+A_P1_TURN = 0x2316a
+A_SHOW_PLAYER_CHANGE = 0x231a0
+A_P1_PLAYING = 0x2319a
+A_P2_PLAYING = 0x23198
+A_P1_LIVES = 0x2318e
+A_P2_LIVES = 0x2318a
+A_P1_BONUS_BAR = 0x2317c
+A_P2_BONUS_BAR = 0x2317a
+A_P1_GRID_COL = 0x23178
+A_P2_GRID_COL = 0x23176
+A_P1_GRID_ROW = 0x23174
+A_P2_GRID_ROW = 0x23172
+A_P1_DEATHS_IN_ROOM = 0x2319e
+A_P2_DEATHS_IN_ROOM = 0x2319c
+A_P1_ENTRY_DIR = 0x231a4
+A_P2_ENTRY_DIR = 0x231a2
+A_GRID_ROW = 0x23154
+A_GRID_COL = 0x23156
+A_ENTRY_DIR = 0x23152
+A_IN_ROOM = 0x23150
+A_DEATHS_IN_ROOM = 0x22f62
+A_BONUS_TICK = 0x22f76
+A_BONUS_BAR = 0x22fb4
+A_LIVES = 0x22fa8
+A_HI_SCORE = 0x22fac
+A_SOUND_ENABLED = 0x2315e
+A_LOA_IMAGE = 0x237a0
+A_NAME_GHOST_LOA = 0x22f58
+A_NAME_GHOST_VOI = 0x22f4e
+A_SND_VOICE = 0x22daa
+SND_VOICE_BYTES = 0x8c
+SND_VOICES = 3
+SND_VC_PRIORITY = 0x72
+TOS_VEC_TRAP9 = 0xa4
+SND_TRAP9_HANDLER_ENTRY = 0x14950
 
 # ---- mirrors of include/blit.h and include/gameplay.h ------------------------------------------
 A_SCREEN_PHYS = 0x23148
@@ -1645,6 +1749,991 @@ def test_the_scratch_map_fits_inside_the_span_abi_reserves():
 
 # ================================================================================= the declared pins
 
+# ==================================================== the front end's state machine
+#
+# `title_menu_loop` @ 0x115d6 and `game_top_loop` @ 0x101e6 — the two routines everything else in
+# this project is called from. `../notes/frontend.md` §2 draws the machine.
+#
+# HOW THEY ARE RUN. Every region of both routines is a MID-ENTRY SLICE, entered with A6 STAGED — and
+# staged ABOVE `emu.STACK_TOP`: the harness forces A7 to STACK_TOP, and the real routine's
+# `link a6,#-n` puts A7 exactly `n` bytes below A6, so a frame at `STACK_TOP + n` reproduces that
+# relationship and the callee frames a slice derives land where the oracle really puts them (the same
+# argument as `FRAME_DRAW_ROOM_A6`'s above). `game_top_loop` is a `do { … } while (true)` and never
+# returns; `title_menu_loop` does return, but every pass of it ends at a blocking console read the
+# model cannot cross, which is the note below the menu's own section.
+
+MENU_LOCAL_BYTES = 16                  # `link a6,#$fff0` @ 0x115d6
+TOP_LOCAL_BYTES = 10                   # `link a6,#$fff6` @ 0x101e6
+MENU_FRAME_COUNTER = -6                # the only frame local a case stages; `include/frontend.h`
+                                       # spells it `(-6)`, which `test_constants.py`'s scraper reads
+                                       # as no literal at all, so it cannot be a MIRRORS row
+
+FRAME_MENU_SLICE_A6 = emu.STACK_TOP + MENU_LOCAL_BYTES
+FRAME_TOP_SLICE_A6 = emu.STACK_TOP + TOP_LOCAL_BYTES
+
+# ...and where `save_hiscores`' own A6 lands when the menu's opening reaches it, three `jsr`s down
+# through `hiscore_submit_players` (which reserves nothing) and `hiscore_insert_and_save`. It is
+# derived here exactly as `src/frontend.c` derives it, so that the two agree by construction — and
+# the case that reaches it stages `SAVE_COUNTER_ON_ENTRY` there, which is what makes the derivation
+# OBSERVABLE: the routine's first `graf_mouse` reads its mouse form out of that word.
+SUBMIT_LOCAL_BYTES = 0                 # `link a6,#$0`    @ 0x11d6e
+INSERT_LOCAL_BYTES = 10                # `link a6,#$fff6` @ 0x11f84
+CALL_FRAME_COST = 8                    # a `jsr`'s return address + the callee's own saved A6
+MENU_SUBMIT_FRAME = FRAME_MENU_SLICE_A6 - MENU_LOCAL_BYTES - CALL_FRAME_COST
+MENU_INSERT_FRAME = MENU_SUBMIT_FRAME - SUBMIT_LOCAL_BYTES - CALL_FRAME_COST
+MENU_SAVE_FRAME = MENU_INSERT_FRAME - INSERT_LOCAL_BYTES - CALL_FRAME_COST
+
+# Where the demo file is staged in the scratch map, and the sound state a trigger walks.
+DEMO_BUFFER = SCRATCH_TOP
+DEMO_BUFFER_TOP = DEMO_BUFFER + DEMO_FILE_BYTES
+assert DEMO_BUFFER_TOP < abi.SCRATCH + abi.SCRATCH_BYTES, (
+    "the demo buffer runs past the scratch map that test_image_model.py pins")
+SOUND_VOICE_SPAN = (A_SND_VOICE, A_SND_VOICE + SND_VOICES * SND_VOICE_BYTES)
+
+# ...and the two file names that sit immediately above those records, INSIDE the guard band the seed
+# writes either side of every span. `init_globals` builds them in the BSS (which is why `strings`
+# finds neither in the .PRG), and the voice player opens them by name — so noise over them makes
+# `os_fopen` refuse a name nothing staged and the whole run with it. They are put back as a later
+# layer rather than by shrinking the guard, because the guard is what would catch a voice record
+# written one word too far.
+VOICE_NAMES_IN_BSS = {A_NAME_GHOST_VOI: b"GHOST.VOI\x00", A_NAME_GHOST_LOA: b"GHOST.LOA\x00"}
+# ...and the ADJACENCY that makes the layer necessary is asserted rather than assumed: the repair is
+# position-dependent, and if the voice records ever move it would silently stop covering the bytes
+# the guard actually lands on while the guard went on eating something else.
+assert SOUND_VOICE_SPAN[1] == A_NAME_GHOST_VOI, (
+    "the voice records no longer end exactly at GHOST.VOI's name, so VOICE_NAMES_IN_BSS is repairing "
+    "the wrong bytes — re-derive which globals the seed's guard band now covers")
+assert A_NAME_GHOST_LOA < SOUND_VOICE_SPAN[1] + abi.GUARD_BYTES, (
+    "GHOST.LOA's name is no longer inside the guard band, so half of this layer is dead")
+
+# The `trap #9` vector is ZERO in the post-init image — `install_sound_vectors` @ 0x148ea writes it
+# — so any case that can reach `sound_play` stages it or the oracle jumps to address 0 (STATUS.md,
+# "Model gaps").
+TRAP9_VECTOR = {TOS_VEC_TRAP9: abi.long(SND_TRAP9_HANDLER_ENTRY)}
+
+# THE THREE VOICES ARE FREE ON ENTRY, and every case here says so rather than leaving it to the
+# noise the seed writes over their records. `sound_play` REFUSES a voice whose priority is at or
+# above the one it is offering (`include/sound.h`, SND_VC_PRIORITY), so over random priorities every
+# trigger in this section is a no-op — and a trigger that never runs cannot tell one volume, one
+# definition or one note from another. Measured: with the records left noisy, the level-clear
+# trigger's volume could be changed from 9 to 8 with the whole suite green.
+VOICES_FREE = {A_SND_VOICE + voice * SND_VOICE_BYTES + SND_VC_PRIORITY: abi.word(0)
+               for voice in range(SND_VOICES)}
+
+# ...AND THE SOUND IS ON, for the other half of the same reason. Every trigger in this section scales
+# its volume by `A_sound_enabled` (`menu_volume`), which the loaded image holds as ZERO — so over the
+# default every step multiplies to 0 and one volume constant is indistinguishable from another.
+# Measured: `WIPE_SFX_VOLUME` could be changed from 8 to 1 with the whole suite green.
+SOUND_ON = {A_SOUND_ENABLED: abi.word(1)}
+
+# ...and what the YM2149 held on ENTRY, an input of the run like any other (TRAP_MODEL.md, Phase 6):
+# `psg_gate` reads register 7 back to merge the mixer bits, and the model refuses to invent what
+# nothing wrote. The whole file is declared rather than the registers one path happens to touch.
+PSG_ON_ENTRY = {register: (0x37 + register * 0x13) & 0xff for register in range(16)}
+
+# A hall of fame whose WORST entry no candidate can beat, so `hiscore_submit_players` — the first
+# thing `title_menu_loop` does — takes its early return and no run below has to stage GHOST.SCR.
+# The one case that DOES offer a winning score stages the file and says so.
+HALL_UNBEATABLE = ((999999, 999999, 999999, 999999, 999999), (35, 35, 35, 35, 35))
+
+for _name, _args in (("g_demo_play_record", 2),
+                     ("g_demo_replay_from_record", 3), ("g_menu_attract_sequence", 3),
+                     ("g_menu_hall_of_fame", 3), ("g_game_top_boot", 3),
+                     ("g_menu_attract_slideshow", 3), ("g_menu_attract_title", 3),
+                     ("g_menu_attract_slideshow_room", 3),
+                     ("g_title_menu_open", 3), ("g_menu_draw", 3),
+                     ("g_menu_ask_player_count", 3), ("g_menu_ask_practice_level", 2),
+                     ("g_menu_read_level_tens", 2), ("g_menu_read_level_units", 3),
+                     ("g_game_top_boot_tail", 3), ("g_game_top_boot_arm", 2),
+                     ("g_game_new_game", 0), ("g_game_turn_init", 0), ("g_game_end_of_turn", 0),
+                     ("g_game_player_change", 3), ("g_game_room_setup", 3),
+                     ("g_game_room_frame_tail", 3), ("g_game_ending_sequence", 3),
+                     ("g_game_room_exit", 3), ("g_game_over_card", 3)):
+    _bind(_name, _args)
+
+
+def _state_machine_world(seed, extra=None, mouse=(120, 70, 0), spans=(), room=1,
+                         hall=HALL_UNBEATABLE):
+    """The world every case in this section runs in: the two parameter blocks, an open workstation,
+    the three screens in the machine's own relationship, the six GHOST.DAT banks, the sprite bank
+    and its two MFDBs, the sound driver's vector and voice records, a mouse and a hall of fame.
+
+    ONE WORLD FOR ALL OF THEM, because these routines COMPOSE: any of them may reach the room
+    composer, the sprite protocol, the HUD painters and the sound triggers, and a per-slice world
+    would be the same eight layers with a different one missing each time.
+    """
+    bank_pokes, bank_span = _sprite_bank_pokes()
+    return abi.stage_world(
+        seed,
+        ((STAGE, PHYS + SCREEN_BYTES), bank_span, HALL_TABLE_SPAN, SOUND_VOICE_SPAN)
+        + BANK_SPANS + SPRITE_MFDB_SPANS + tuple(spans),
+        _pblock_pokes(), _workstation_pokes(), SPRITE_POINTER_POKES, GHOST_DAT_BANK_POKES,
+        bank_pokes, SPRITE_MFDB_POKES, TRAP9_VECTOR, harness.mouse_state(*mouse),
+        VOICE_NAMES_IN_BSS, VOICES_FREE, SOUND_ON, _hall_table_pokes(*hall),
+        {A_ROOM_NUMBER: abi.word(room)},
+        extra or {})
+
+
+def _state_machine_run(entry, glue, pokes, frame_a6=None, **kwargs):
+    """One differential, entered with this program's `a4`, the caller's A1/A2, the staged frame and
+    the chip contents every `sound_play` on the way reads back."""
+    regs = {"a1": CALLER_A1, "a2": CALLER_A2}
+    if frame_a6 is not None:
+        regs["a6"] = frame_a6
+    kwargs.setdefault("psg_seed", PSG_ON_ENTRY)
+    kwargs.setdefault("max_insns", STATE_MACHINE_MAX_INSNS)
+    return abi.run_with_a4(entry, glue, pokes=pokes, regs=regs, **kwargs)
+
+
+# Every case here composes several routines over a 32,000-byte screen, and the two end-of-room
+# animations run a hundred frames of it; the four text cards each count 300,000 empty iterations.
+# MEASURED, not guessed: every case in this section passes at 1,500,000 and five of them fail at
+# 1,250,000, so the cap is a little over the worst one. It matters that it is not far more — the cap
+# is what a slice that stops reaching its `stop_pc` runs into, and at 60,000,000 one such case took
+# 17.8 s against a 2.0 s whole-file suite.
+STATE_MACHINE_MAX_INSNS = 2_000_000
+
+# --------------------------------------------------- title_menu_loop, region by region
+#
+# EVERY REGION ENDS AT A BLOCKING CONSOLE READ, and the reason is the trap model rather than the
+# routine: each of this program's four key reads is `while (Cconis()) Crawcin(); c = Cnecin();` — a
+# flush and then a blocking read — and the model's console is ONE queue that the flush empties, so a
+# run that reaches the `Cnecin` finds nothing there and the call refuses (TRAP_MODEL.md, Phase 13).
+# On a real machine the key arrives after the flush, which a staged queue cannot express. So a slice
+# stops at the `Cnecin` push and the next one starts there with its own key staged; ../STATUS.md
+# records the gap and what closing it would need.
+
+
+def test_title_menu_open():
+    """`title_menu_loop` @ 0x115d6 — the slice `[0x115d6, 0x116c4)`: the last game's scores offered
+    to the hall of fame, the menu painted, and the keyboard flushed.
+
+    THE FLUSH IS WHAT THE STAGED QUEUE IS FOR HERE: three keys are staged and the loop is expected
+    to eat all three, which is the behaviour that stops a held key running the menu once per
+    keystroke — and is why the read after it is a slice of its own.
+    """
+    pokes = _state_machine_world(0x115d6, extra=harness.console_keys(["G", "1", "2"]))
+    diffs, _ = _state_machine_run(
+        ENTRY_TITLE_MENU_OPEN,
+        lambda lib, buf: lib.g_title_menu_open(buf, FRAME_MENU_SLICE_A6, CALLER_A1, CALLER_A2),
+        pokes, frame_a6=FRAME_MENU_SLICE_A6, stop_pc=STOP_TITLE_MENU_OPEN)
+    assert not diffs, report(diffs)
+
+
+def test_title_menu_open_submits_the_last_games_scores():
+    """The one case that reaches the hall-of-fame WRITER, and the only thing in this section that
+    can see a CALLEE FRAME at all.
+
+    Every other case stages a table no candidate can beat, so `hiscore_submit_players` takes its
+    early return; here the candidate beats the worst entry, the table is re-sorted and GHOST.SCR is
+    created. `save_hiscores`' `graf_mouse` reads its mouse form out of its OWN frame — which this
+    routine derives three `jsr`s deep — so this is what pins that derivation. Measured: with only
+    the early-return cases, `CALL_FRAME_COST` could be halved with the whole suite green.
+    """
+    beatable = ((10, 20, 30, 40, 50), (1, 2, 3, 4, 5))
+    pokes = _state_machine_world(
+        0x11d6, hall=beatable,
+        extra=abi.merge_pokes(harness.console_keys(["G"]),
+                              {MENU_SAVE_FRAME + SAVE_FRAME_SLOT: abi.word(SAVE_COUNTER_ON_ENTRY)},
+                              abi.long_pokes({A_HISCORE_CANDIDATE: 12345, A_SCORE: 12345}),
+                              abi.word_pokes({A_MAX_ROOM_REACHED: 7, A_PLAYER_COUNT: 1}),
+                              _staged(("A:GHOST.SCR", b"", HISCORE_FILE_CAPACITY))))
+    diffs, _ = _state_machine_run(
+        ENTRY_TITLE_MENU_OPEN,
+        lambda lib, buf: lib.g_title_menu_open(buf, FRAME_MENU_SLICE_A6, CALLER_A1, CALLER_A2),
+        pokes, frame_a6=FRAME_MENU_SLICE_A6, stop_pc=STOP_TITLE_MENU_OPEN)
+    assert not diffs, report(diffs)
+
+
+@pytest.mark.parametrize("queued", (0, 1, 3, 7))
+def test_menu_draw(queued):
+    """...and the same without the submitter — the slice `[0x115de, 0x116c4)`, which is where the
+    redraw loop re-enters the routine after an arm that did not start a game.
+
+    `queued` is how many keys the flush has to eat, from none to the model's whole queue.
+    """
+    keys = harness.console_keys(["a"] * queued) if queued else {}
+    pokes = _state_machine_world(0x115de + queued, extra=keys)
+    diffs, _ = _state_machine_run(
+        ENTRY_MENU_DRAW,
+        lambda lib, buf: lib.g_menu_draw(buf, FRAME_MENU_SLICE_A6, CALLER_A1, CALLER_A2),
+        pokes, frame_a6=FRAME_MENU_SLICE_A6, stop_pc=STOP_MENU_DRAW)
+    assert not diffs, f"{queued} keys queued\n{report(diffs)}"
+
+
+# The keys the menu dispatches on, plus the ones that only exercise the fold: a lower-case letter is
+# folded to upper, and a key with bit 7 set is NEGATIVE as a sign-extended byte and so is not.
+MENU_KEYS = ("G", "P", "D", "H", "g", "p", "d", "h", "z", "1", "`", "a", "\x80", "\xff", "\x00")
+
+
+@pytest.mark.parametrize("key", MENU_KEYS)
+def test_menu_read_key_and_fold(key):
+    """The key that ends a pass — the slice `[0x116c4, 0x11700)`: one blocking read, the logical
+    screen back onto the work buffer, and the fold to upper case.
+
+    THE ANSWER IS COMPARED against the oracle's own D0 at the same PC, which is what the four
+    compares after it branch on: the fold is a BYTE subtract and the test above it is on the
+    SIGN-EXTENDED byte, so nothing at or above 0x80 is folded and only these rows say so.
+    """
+    pokes = _state_machine_world(0x116c4 + ord(key), extra=harness.console_key(key))
+    diffs, info = _state_machine_run(
+        ENTRY_MENU_READ_KEY,
+        lambda lib, buf: lib.g_menu_read_key_and_fold(buf, FRAME_MENU_SLICE_A6, CALLER_A1,
+                                                      CALLER_A2),
+        pokes, frame_a6=FRAME_MENU_SLICE_A6, stop_pc=STOP_MENU_READ_KEY)
+    assert not diffs, f"key {key!r}\n{report(diffs)}"
+    assert info["ret"] & 0xffff == info["regs"]["d0"] & 0xffff, (
+        f"key {key!r}: the core answers {info['ret'] & 0xffff:#x}, the original "
+        f"{info['regs']['d0'] & 0xffff:#x}")
+
+
+def test_menu_ask_player_count():
+    """`[G]`, the ask — the slice `[0x11708, 0x11774)`: the two lines onto the visible screen, and
+    the flush the loop's first pass makes before it reads a digit."""
+    pokes = _state_machine_world(0x11708, extra=harness.console_keys(["1", "2"]))
+    diffs, _ = _state_machine_run(
+        ENTRY_MENU_ASK_PLAYER_COUNT,
+        lambda lib, buf: lib.g_menu_ask_player_count(buf, FRAME_MENU_SLICE_A6, CALLER_A1,
+                                                     CALLER_A2),
+        pokes, frame_a6=FRAME_MENU_SLICE_A6, stop_pc=STOP_MENU_ASK_PLAYER_COUNT)
+    assert not diffs, report(diffs)
+
+
+# (key, the player count it chooses, whether the arm ends). '0' and 'x' are the two ways a key is
+# neither 1 nor 2 — one is a digit and one is not — and both send the ask round again.
+PLAYER_COUNT_KEYS = (("1", 1, True), ("2", 2, True), ("0", 0, False), ("x", 0, False),
+                     ("3", 0, False))
+
+
+@pytest.mark.parametrize("key,count,chosen", PLAYER_COUNT_KEYS)
+def test_menu_read_player_count(key, count, chosen):
+    """`[G]`, the read — the slice `[0x11774, 0x117cc)` when a count is chosen and
+    `[0x11774, 0x1175a)` when it is not.
+
+    THE BRANCH IS THE ANSWER, not a loop: the next pass would begin with a flush and another
+    blocking read, which is where a slice has to end. The core reports which way it went and the
+    case checks both the flag and the count that came out of it.
+    """
+    stop = STOP_MENU_PLAYER_COUNT_CHOSEN if chosen else STOP_MENU_PLAYER_COUNT_AGAIN
+    pokes = _state_machine_world(0x11774 + ord(key), extra=harness.console_key(key))
+    diffs, info = _state_machine_run(
+        ENTRY_MENU_READ_PLAYER_COUNT,
+        lambda lib, buf: lib.g_menu_read_player_count(buf, FRAME_MENU_SLICE_A6, CALLER_A1,
+                                                      CALLER_A2),
+        pokes, frame_a6=FRAME_MENU_SLICE_A6, stop_pc=stop)
+    assert not diffs, f"key {key!r}\n{report(diffs)}"
+    assert (info["ret"] & 0xffff != 0) == chosen, f"key {key!r}: the wrong arm was reported"
+
+
+@pytest.mark.parametrize("key,count,chosen", PLAYER_COUNT_KEYS)
+def test_menu_read_player_count_files_the_count(key, count, chosen):
+    """...and the count the run leaves, which the diff proves equal but does not name."""
+    pokes = _state_machine_world(0x11774 + ord(key), extra=harness.console_key(key))
+    stop = STOP_MENU_PLAYER_COUNT_CHOSEN if chosen else STOP_MENU_PLAYER_COUNT_AGAIN
+    image, _writes, _regs = emu.run(harness.make_image(pokes), ENTRY_MENU_READ_PLAYER_COUNT,
+                                    regs={"a4": abi.A4_BASE, "a1": CALLER_A1, "a2": CALLER_A2,
+                                          "a6": FRAME_MENU_SLICE_A6},
+                                    stop_pc=stop, psg_seed=PSG_ON_ENTRY,
+                                    max_insns=STATE_MACHINE_MAX_INSNS)
+    assert _word(image, A_PLAYER_COUNT) == count, f"key {key!r}"
+
+
+def test_menu_ask_practice_level():
+    """`[P]`, the ask — the slice `[0x117de, 0x1183e)`: every score zeroed, one player, the prompt,
+    and the first digit's flush."""
+    pokes = _state_machine_world(
+        0x117de, extra=abi.merge_pokes(harness.console_keys(["0", "5"]),
+                                       abi.long_pokes({A_SCORE: 4321, A_P1_SCORE: 111,
+                                                    A_P2_SCORE: 222}),
+                                       abi.word_pokes({A_PLAYER_COUNT: 2})))
+    diffs, _ = _state_machine_run(
+        ENTRY_MENU_ASK_PRACTICE_LEVEL,
+        lambda lib, buf: lib.g_menu_ask_practice_level(buf, CALLER_A1, CALLER_A2),
+        pokes, frame_a6=FRAME_MENU_SLICE_A6, stop_pc=STOP_MENU_ASK_PRACTICE_LEVEL)
+    assert not diffs, report(diffs)
+
+
+@pytest.mark.parametrize("key", ("0", "1", "3", "9", "x"))
+def test_menu_read_level_tens(key):
+    """`[P]`'s first digit — the slice `[0x1183e, 0x1186c)`: the read, filed as a WORD less '0', and
+    then the second digit's flush. A non-digit is kept as whatever it is: the gate below is what
+    rejects it."""
+    pokes = _state_machine_world(0x1183e + ord(key), extra=harness.console_keys([key, "4"]))
+    diffs, _ = _state_machine_run(
+        ENTRY_MENU_READ_LEVEL_TENS,
+        lambda lib, buf: lib.g_menu_read_level_tens(buf, CALLER_A1, CALLER_A2),
+        pokes, frame_a6=FRAME_MENU_SLICE_A6, stop_pc=STOP_MENU_READ_LEVEL_TENS)
+    assert not diffs, f"tens {key!r}\n{report(diffs)}"
+
+
+# (tens already read, units key, the level, the grid square). The rows are both ends of the gate,
+# the two digits' carry, one square from each of the six grid rows, and the two REFUSALS: level 0 is
+# room 0, which sits behind the start square, and 36 is one past the last room.
+PRACTICE_LEVELS = (
+    (0, "1", 1, (5, 4)),
+    (0, "9", 9, (4, 3)),
+    (1, "0", 10, (4, 4)),
+    (1, "7", 17, (3, 0)),
+    (2, "4", 24, (1, 5)),
+    (3, "5", 35, (0, 5)),
+    (0, "0", 0, None),
+    (3, "6", 36, None),
+    (9, "9", 99, None),
+)
+
+
+@pytest.mark.parametrize("tens,units,level,square", PRACTICE_LEVELS)
+def test_menu_read_level_units(tens, units, level, square):
+    """`[P]`'s second digit and everything after it — the slice `[0x1186c, 0x1191e)`: the level
+    assembled, the 0 < n < 36 gate, and the 6 x 6 search that turns the level into a square."""
+    pokes = _state_machine_world(0x1186c + level,
+                                 extra=abi.merge_pokes(harness.console_key(units),
+                                                       abi.word_pokes({A_PRACTICE_GRID_ROW: tens})))
+    diffs, _ = _state_machine_run(
+        ENTRY_MENU_READ_LEVEL_UNITS,
+        lambda lib, buf: lib.g_menu_read_level_units(buf, FRAME_MENU_SLICE_A6, CALLER_A1,
+                                                     CALLER_A2),
+        pokes, frame_a6=FRAME_MENU_SLICE_A6, stop_pc=STOP_MENU_READ_LEVEL_UNITS)
+    assert not diffs, f"level {level}\n{report(diffs)}"
+
+
+@pytest.mark.parametrize("tens,units,level,square", PRACTICE_LEVELS)
+def test_menu_read_level_units_finds_the_square(tens, units, level, square):
+    """...and the square it found, which `game_top_loop` starts a practice game at. A level outside
+    1..35 sets nothing at all, which is what keeps room 0 — the hall-of-fame backdrop — off the
+    menu."""
+    pokes = _state_machine_world(0x1186c + level,
+                                 extra=abi.merge_pokes(harness.console_key(units),
+                                                       abi.word_pokes({A_PRACTICE_GRID_ROW: tens})))
+    image, _writes, _regs = emu.run(harness.make_image(pokes), ENTRY_MENU_READ_LEVEL_UNITS,
+                                    regs={"a4": abi.A4_BASE, "a1": CALLER_A1, "a2": CALLER_A2,
+                                          "a6": FRAME_MENU_SLICE_A6},
+                                    stop_pc=STOP_MENU_READ_LEVEL_UNITS, psg_seed=PSG_ON_ENTRY,
+                                    max_insns=STATE_MACHINE_MAX_INSNS)
+    assert _word(image, A_PRACTICE_MODE) == (0 if square is None else 1), f"level {level}"
+    if square is not None:
+        assert (_word(image, A_PRACTICE_GRID_ROW), _word(image, A_PRACTICE_GRID_COL)) == square, (
+            f"level {level} is not at grid {square}")
+
+
+def test_the_two_random_divisors_are_distinct_addresses_holding_one_value():
+    """The slideshow's LENGTH and its ROOM divide by 16794009.0 out of two SEPARATE DATA addresses.
+
+    No run can tell them apart — `fp_dispatch` reads the operand's value, and the two hold the same
+    eight bytes — so the pin is the addresses' own contents, exactly as
+    `test_the_loaders_open_the_names_the_reconstruction_points_at` pins GHOST.SCR's two copies. A
+    reconstruction that read one where the original reads the other is byte-identical, and this is
+    the only thing that says which is which.
+    """
+    image = harness.BASE_IMAGE
+    length = bytes(image[A_CONST_DEMO_LENGTH_DIVISOR:A_CONST_DEMO_LENGTH_DIVISOR + DOUBLE_BYTES])
+    room = bytes(image[A_CONST_DEMO_ROOM_DIVISOR:A_CONST_DEMO_ROOM_DIVISOR + DOUBLE_BYTES])
+    assert A_CONST_DEMO_LENGTH_DIVISOR != A_CONST_DEMO_ROOM_DIVISOR, (
+        "the two divisors are one address, so the C should name it once")
+    assert length == room == abi.double(DEMO_RANDOM_DIVISOR), (
+        f"the two divisors hold {length.hex()} and {room.hex()}, not "
+        f"{abi.double(DEMO_RANDOM_DIVISOR).hex()} — `../notes/frontend.md` §6 derives both attract "
+        f"ranges from this value")
+
+
+def test_the_menu_regions_meet_at_every_blocking_read():
+    """The regions above TILE `title_menu_loop`'s straight-line paths with no gap, and every join is
+    a `Cnecin` push — which is the whole claim this file makes about that routine.
+
+    A gap would be a region no case runs and nobody notices; a join anywhere else would mean a
+    slice really could have run further, and the model gap would be being used as an excuse.
+    """
+    for name, entry, stop in (("[G] ask", ENTRY_MENU_ASK_PLAYER_COUNT, ENTRY_MENU_READ_PLAYER_COUNT),
+                              ("the menu", ENTRY_MENU_DRAW, ENTRY_MENU_READ_KEY),
+                              ("[P] ask", ENTRY_MENU_ASK_PRACTICE_LEVEL, ENTRY_MENU_READ_LEVEL_TENS),
+                              ("[P] tens", ENTRY_MENU_READ_LEVEL_TENS, ENTRY_MENU_READ_LEVEL_UNITS)):
+        assert entry < stop, f"{name} is empty or backwards"
+        assert bytes(harness.BASE_IMAGE[stop:stop + len(CNECIN_PUSH)]) == CNECIN_PUSH, (
+            f"{name} stops at {stop:#x}, which is not a `move.w #$8,-(a7)` opening a Cnecin call")
+
+
+# `move.w #$8,-(a7)` — GEMDOS Cnecin's selector pushed, which is where each region above ends.
+CNECIN_PUSH = bytes.fromhex("3f3c0008")
+
+# ------------------------------------------------------------------------------- the demo player
+
+def _demo_pokes(records, cursor_record=0):
+    """GHOST.DEM staged in the scratch map, with the replay cursor parked on one of its records."""
+    body = bytes(records)
+    assert len(body) <= DEMO_FILE_BYTES, "a staged demo is longer than the file the loader reads"
+    return abi.merge_pokes(
+        {DEMO_BUFFER: body},
+        abi.long_pokes({A_DEMO_BASE: DEMO_BUFFER,
+                     A_DEMO_CURSOR: DEMO_BUFFER + cursor_record * DEMO_RECORD_BYTES}))
+
+
+# The six-byte records this battery drives one at a time, chosen for what each one reaches: the
+# origin, a blowing cell of two different facings (the puff trigger), a popped bubble (the pop
+# trigger), a record whose bytes are NEGATIVE (each is read signed and scaled), and the extremes.
+DEMO_RECORDS = (
+    (0, 0, 0, 0, 0, 0),
+    (40, 30, 4, 60, 20, 7),          # ghost facing 0, blowing
+    (10, 10, 29, 90, 40, 11),        # facing 5, blowing
+    (50, 25, 3, 70, 35, 0),          # the bubble popped
+    (-8, -8, 39, -4, -2, 4),         # negative coordinates, and facing 7 blowing
+    (127, 127, 12, 127, 127, 12),
+    (-128, -128, 0, -128, -128, 8),
+)
+
+
+def _demo_record_bytes(record):
+    return bytes(value & 0xff for value in record)
+
+
+@pytest.mark.parametrize("record", DEMO_RECORDS)
+def test_demo_play_record(record):
+    """ONE GHOST.DEM record — the slice `[0x11992, 0x11acc)`: six signed bytes into the six globals
+    the renderer reads, the frame drawn, and the two sound triggers the record can fire."""
+    body = _demo_record_bytes(record) + bytes(DEMO_RECORD_BYTES)
+    pokes = _state_machine_world(0x1199 + (record[2] & 0xff),
+                                 spans=((DEMO_BUFFER, DEMO_BUFFER_TOP),),
+                                 extra=_demo_pokes(body))
+    diffs, _ = _state_machine_run(
+        ENTRY_DEMO_RECORD, lambda lib, buf: lib.g_demo_play_record(buf, CALLER_A1, CALLER_A2),
+        pokes, frame_a6=FRAME_MENU_SLICE_A6, stop_pc=STOP_DEMO_RECORD)
+    assert not diffs, f"record {record}\n{report(diffs)}"
+
+
+DEMO_FUZZ_CHUNKS = 8
+DEMO_FUZZ_RECORDS = 8
+
+
+def _random_demo_record(rng):
+    """Six bytes with the two CELL INDICES kept inside the sprite bank they choose from.
+
+    The four coordinate bytes are unconstrained — each is read signed and scaled, and a record may
+    legitimately park a sprite off the play area. The other two are not free: `draw_sprites` uses
+    them to index the ghost's 47 and the bubble's 13 pointer tables with no bound of its own, so a
+    byte outside those ranges hands `vro_cpyfm` a pointer nothing allocated and the VDI model
+    refuses the run. The real GHOST.DEM holds only legal indices, which is the same statement.
+    """
+    return bytes((rng.randrange(256), rng.randrange(256), rng.randrange(GHOST_CELLS),
+                  rng.randrange(256), rng.randrange(256), rng.randrange(BUBBLE_CELLS)))
+
+
+@pytest.mark.parametrize("chunk", range(DEMO_FUZZ_CHUNKS))
+def test_demo_play_record_fuzz(chunk):
+    """...and random records, CHUNK-SEEDED so the suite runs `DEMO_FUZZ_CHUNKS` times as many as one
+    chunk does (`test/abi.py`'s `shard` docstring tells the two shard shapes apart)."""
+    rng = random.Random(0x11992 + chunk)
+    for index in range(DEMO_FUZZ_RECORDS):
+        body = bytes(_random_demo_record(rng) + _random_demo_record(rng))
+        pokes = _state_machine_world(0x11992 + chunk * 0x100 + index,
+                                     spans=((DEMO_BUFFER, DEMO_BUFFER_TOP),),
+                                     extra=_demo_pokes(body))
+        diffs, _ = _state_machine_run(
+            ENTRY_DEMO_RECORD, lambda lib, buf: lib.g_demo_play_record(buf, CALLER_A1, CALLER_A2),
+            pokes, frame_a6=FRAME_MENU_SLICE_A6, stop_pc=STOP_DEMO_RECORD)
+        assert not diffs, f"chunk {chunk} record {index} = {body[:6].hex()}\n{report(diffs)}"
+
+
+# How many records the composition below chains. The whole replay is 980, which is far more than one
+# oracle run can afford — each record redraws the room — so what this pins is the LOOP rather than
+# the file: the cursor stepping six bytes a record, the counter falling, and the mouse poll at the
+# end of each pass deciding whether there is another.
+DEMO_CHAINED_RECORDS = 4
+
+
+@pytest.mark.parametrize("first", (0, 1, 100))
+def test_demo_replay_chains_records(first):
+    """`DEMO_CHAINED_RECORDS` records of the REAL GHOST.DEM in one run — the slice
+    `[0x11992, 0x11ae6)`, entered at the loop body as the routine's own `bra` skips into it.
+
+    A per-record case cannot see the loop at all: it runs one body and stops. This runs the body,
+    the test, the counter and the next body, over the game's own data, which is what says the cursor
+    is stepped once per record and the counter read before it is decremented.
+    """
+    pokes = _state_machine_world(
+        0x11ae + first, spans=((DEMO_BUFFER, DEMO_BUFFER_TOP),),
+        extra=abi.merge_pokes(
+            _demo_pokes(GHOST_DEM[:DEMO_FILE_BYTES], cursor_record=first),
+            {FRAME_MENU_SLICE_A6 + MENU_FRAME_COUNTER: abi.long(DEMO_CHAINED_RECORDS - 1)}))
+    diffs, _ = _state_machine_run(
+        ENTRY_DEMO_RECORD,
+        lambda lib, buf: lib.g_demo_replay_from_record(buf, FRAME_MENU_SLICE_A6, CALLER_A1,
+                                                       CALLER_A2),
+        pokes, frame_a6=FRAME_MENU_SLICE_A6, stop_pc=STOP_DEMO_REPLAY)
+    assert not diffs, f"from record {first}\n{report(diffs)}"
+
+
+# The mouse state an attract case runs under. With the button DOWN every phase of the sequence bails
+# out at its own first test — which is what makes the whole 980-record replay, the slideshow and the
+# 37,000-poll idle affordable in one run while still running one pass of each.
+MOUSE_ABORT = (200, 100, 1)
+
+
+def test_menu_attract_sequence():
+    """`[D]`, phase one — the slice `[0x11930, 0x11ae6)`, with the left button held: room 1 composed
+    and given its ambience, then ONE record of the replay.
+
+    One record and not none, because the button is polled by the record body rather than before it —
+    which is the loop's own shape, and why the abort is affordable here at all.
+    """
+    pokes = _state_machine_world(0x11930, mouse=MOUSE_ABORT,
+                                 spans=((DEMO_BUFFER, DEMO_BUFFER_TOP),),
+                                 extra=_demo_pokes(GHOST_DEM[:DEMO_FILE_BYTES]))
+    diffs, _ = _state_machine_run(
+        ENTRY_MENU_ATTRACT_SEQUENCE,
+        lambda lib, buf: lib.g_menu_attract_sequence(buf, FRAME_MENU_SLICE_A6, CALLER_A1,
+                                                     CALLER_A2),
+        pokes, frame_a6=FRAME_MENU_SLICE_A6, stop_pc=STOP_MENU_ATTRACT_SEQUENCE)
+    assert not diffs, report(diffs)
+
+
+# The `Random()` the slideshow draws BOTH its length and each of its rooms from. It is one poked
+# longword per run (`harness.OS_RANDOM_VALUE`), so the two answers are not independent: 0 gives the
+# shortest slideshow the range allows (5 rooms) of the lowest room it allows (1), which is what makes
+# running the phase with the button UP affordable. The upper value is the 24-bit maximum, which is
+# what `../notes/frontend.md` §6 derives both ranges' upper ends from — 15 rooms is too many to run,
+# so it is used only with the button down.
+SLIDESHOW_RANDOM_LOW = 0
+# ...and the divisor both scalings use, at its two DATA addresses (include/frontend.h).
+A_CONST_DEMO_LENGTH_DIVISOR = 0x250ec
+A_CONST_DEMO_ROOM_DIVISOR = 0x25104
+DEMO_RANDOM_DIVISOR = 16794009.000000015
+DOUBLE_BYTES = 8
+SLIDESHOW_RANDOM_HIGH = 0xffffff
+# ...and the phase is 5 rooms x 30 frames of a 25,600-byte present, so it needs a cap of its own.
+SLIDESHOW_MAX_INSNS = 20_000_000
+
+
+@pytest.mark.parametrize("value", (SLIDESHOW_RANDOM_LOW, SLIDESHOW_RANDOM_HIGH))
+def test_menu_attract_slideshow(value):
+    """`[D]`, phase two — the slice `[0x11ae6, 0x11c34)`, with the left button held: the length drawn
+    from `Random()` through the fp package, and the loop leaving at its first test.
+
+    The two values are the range's own ends: `Random()` is one poked longword, and 0 and the 24-bit
+    maximum are what `../notes/frontend.md` §6 derives 5 and 15 from. Only the LENGTH is observable
+    here — it is drawn before the loop's first test — and one ROOM of the loop is the case below.
+    """
+    pokes = _state_machine_world(0x11ae6 + value, mouse=MOUSE_ABORT,
+                                 extra={harness.OS_RANDOM_VALUE: abi.long(value)})
+    diffs, _ = _state_machine_run(
+        ENTRY_MENU_ATTRACT_SLIDESHOW,
+        lambda lib, buf: lib.g_menu_attract_slideshow(buf, FRAME_MENU_SLICE_A6, CALLER_A1,
+                                                      CALLER_A2),
+        pokes, frame_a6=FRAME_MENU_SLICE_A6, stop_pc=STOP_MENU_ATTRACT_SLIDESHOW)
+    assert not diffs, f"random {value:#x}\n{report(diffs)}"
+
+
+@pytest.mark.parametrize("value", (SLIDESHOW_RANDOM_LOW, SLIDESHOW_RANDOM_HIGH))
+def test_menu_attract_slideshow_room(value):
+    """ONE room of it — the slice `[0x11b30, 0x11c1c)`, with the button UP so the whole body runs.
+
+    THIS IS WHAT RUNS THE PHASE AT ALL. Everything inside the loop — the room roll's own three
+    constants, `menu_show_room`, the ambience, the frame countdown and the THREE `Vsync`s, each with
+    its own trampoline return address — is unreachable from the phase head with the button held, and
+    unaffordable with it up (five rooms of thirty 25,600-byte presents fills the oracle's write
+    ledger). Measured: with only the head's cases, the room roll's constants could be swapped and any
+    of the three `Vsync` return addresses changed with the whole suite green.
+    """
+    pokes = _state_machine_world(0x11b30 + value, mouse=(200, 100, 0),
+                                 extra={harness.OS_RANDOM_VALUE: abi.long(value)})
+    diffs, _ = _state_machine_run(
+        ENTRY_MENU_ATTRACT_SLIDESHOW_ROOM,
+        lambda lib, buf: lib.g_menu_attract_slideshow_room(buf, FRAME_MENU_SLICE_A6, CALLER_A1,
+                                                           CALLER_A2),
+        pokes, frame_a6=FRAME_MENU_SLICE_A6, stop_pc=STOP_MENU_ATTRACT_SLIDESHOW_ROOM,
+        max_insns=SLIDESHOW_MAX_INSNS)
+    assert not diffs, f"random {value:#x}\n{report(diffs)}"
+
+
+# The title phase's idle loop is DEMO_TITLE_POLLS mouse polls with nothing else in them, which is far
+# more than one run can afford; the button-down row is what leaves it after one test. The button-UP
+# row is what runs `show_presentation` and its trigger, which the other one skips entirely.
+TITLE_MAX_INSNS = 30_000_000
+
+
+@pytest.mark.parametrize("mouse", (MOUSE_ABORT, (200, 100, 0)))
+def test_menu_attract_title(mouse):
+    """`[D]`, phase three — the slice `[0x11c34, 0x11ca8)`: the title picture, its trigger, and the
+    37,000-poll idle the mouse button ends."""
+    bank_pokes, _bank_span = _sprite_bank_pokes()
+    pokes = _state_machine_world(
+        0x11c34 + mouse[2], mouse=mouse,
+        spans=((BANK_ADDRESSES[DAT_BANK_PRE], BANK_ADDRESSES[DAT_BANK_PRE] + DAT_BANK_BYTES),),
+        extra={BANK_ADDRESSES[DAT_BANK_PRE]: GHOST_PRE[:DAT_BANK_BYTES]})
+    diffs, _ = _state_machine_run(
+        ENTRY_MENU_ATTRACT_TITLE,
+        lambda lib, buf: lib.g_menu_attract_title(buf, FRAME_MENU_SLICE_A6, CALLER_A1, CALLER_A2),
+        pokes, frame_a6=FRAME_MENU_SLICE_A6, stop_pc=STOP_MENU_ATTRACT_TITLE,
+        max_insns=TITLE_MAX_INSNS)
+    assert not diffs, f"mouse {mouse}\n{report(diffs)}"
+
+
+@pytest.mark.parametrize("max_room", (0, 1, 17, 35))
+def test_menu_hall_of_fame(max_room):
+    """`[H]` — the slice `[0x11cba, 0x11d60)`: the table, the furthest room reached as the backdrop
+    behind the HUD, room 0 as the picture, and an idle loop the button ends."""
+    pokes = _state_machine_world(0x11cb + max_room, mouse=MOUSE_ABORT,
+                                 extra=abi.word_pokes({A_MAX_ROOM_REACHED: max_room}))
+    diffs, _ = _state_machine_run(
+        ENTRY_MENU_HALL_OF_FAME,
+        lambda lib, buf: lib.g_menu_hall_of_fame(buf, FRAME_MENU_SLICE_A6, CALLER_A1, CALLER_A2),
+        pokes, frame_a6=FRAME_MENU_SLICE_A6, stop_pc=STOP_MENU_HALL_OF_FAME)
+    assert not diffs, f"max room {max_room}\n{report(diffs)}"
+
+
+# ---------------------------------------------------------------- game_top_loop, slice by slice
+
+def _top_run(entry, glue, pokes, stop, **kwargs):
+    """One `game_top_loop` slice: entered inside the routine, with its own frame staged."""
+    return _state_machine_run(entry, glue, pokes, frame_a6=FRAME_TOP_SLICE_A6, stop_pc=stop,
+                              **kwargs)
+
+
+# The boot path's four files, staged under the names the program opens. GHOST.LOA and GHOST.VOI
+# carry no drive letter because `init_globals` builds those two names in the BSS rather than in
+# DATA (`test_voice.py` says so from the other side).
+GHOST_LOA = (REC.parent / "bin" / "GHOST.LOA").read_bytes()
+GHOST_VOI = (REC.parent / "bin" / "GHOST.VOI").read_bytes()
+GHOST_SCR_SHIPPED = b"".join(b"%06d%02d" % (score, room)
+                             for score, room in zip((10, 20, 30, 40, 50), (1, 2, 3, 4, 5)))
+
+
+def test_game_top_boot():
+    """`game_top_boot` @ 0x101e6 — the slice `[0x101e6, 0x10232)`: the mouse hidden, the voice player
+    and the title picture loaded, the workstation cleared, the IKBD told to stop reporting the
+    mouse, the logical screen moved to the work buffer and the picture shown.
+
+    It stops at the `jsr play_voice`, which enters a SECOND PROGRAM the model cannot run
+    (../STATUS.md, "Not reconstructed").
+    """
+    pokes = _state_machine_world(
+        0x101e6, spans=((emu.OS_HEAP_BASE, emu.OS_HEAP_BASE + MALLOC_ARENA_SEEDED_BYTES),
+                        (A_LOA_IMAGE, A_LOA_IMAGE + len(GHOST_LOA))),
+        # THE OPENING `graf_mouse`'S MOUSE FORM CANNOT BE STAGED HERE, and ../STATUS.md records the
+        # residual: the call pushes only a zero word and the mode, so the `addr_in` LONG the AES
+        # reads spans that zero and the word at `frame - 10` — which, for a slice whose frame must
+        # sit exactly `TOP_LOCAL_BYTES` above `emu.STACK_TOP`, IS `emu.STACK_TOP`, where the harness
+        # writes its own sentinel return address. Both sides read the sentinel's zero high word, so
+        # a reconstruction reading a different offset of the same frame would match anyway.
+        extra=_staged(("GHOST.LOA", GHOST_LOA), ("GHOST.VOI", GHOST_VOI),
+                      ("A:GHOST.PRE", GHOST_PRE)))
+    diffs, _ = _top_run(ENTRY_GAME_TOP_BOOT,
+                        lambda lib, buf: lib.g_game_top_boot(buf, FRAME_TOP_SLICE_A6, CALLER_A1,
+                                                             CALLER_A2),
+                        pokes, STOP_GAME_TOP_BOOT)
+    assert not diffs, report(diffs)
+
+
+def test_game_top_boot_tail():
+    """`game_top_boot_tail` @ 0x10236 — the slice `[0x10236, 0x1024e)`: the six level pictures and
+    the hall of fame read off disk, then the IKBD told to report the mouse again."""
+    pokes = _state_machine_world(
+        0x10236, spans=((emu.OS_HEAP_BASE, emu.OS_HEAP_BASE + MALLOC_ARENA_SEEDED_BYTES),),
+        extra=_staged(("A:GHOST.DAT", GHOST_DAT), ("A:GHOST.SCR", GHOST_SCR_SHIPPED)))
+    diffs, _ = _top_run(ENTRY_GAME_TOP_BOOT_TAIL,
+                        lambda lib, buf: lib.g_game_top_boot_tail(buf, FRAME_TOP_SLICE_A6,
+                                                                  CALLER_A1, CALLER_A2),
+                        pokes, STOP_GAME_TOP_BOOT_TAIL)
+    assert not diffs, report(diffs)
+
+
+@pytest.mark.parametrize("hall", (HALL_UNBEATABLE, ((0, 0, 0, 0, 0), (1, 1, 1, 1, 1))))
+def test_game_top_boot_arm(hall):
+    """`game_top_boot_arm` @ 0x10258 — the slice `[0x10258, 0x1027e)`: the sixty sprite cells
+    grabbed, the sound driver installed and silenced, GHOST.DEM read, and the four globals a fresh
+    boot starts from — one of which is the displayed high score, taken from the hall of fame's BEST
+    entry (its LAST, since the table is sorted ascending)."""
+    pokes = _state_machine_world(
+        0x10258 + hall[0][0], hall=hall,
+        spans=((emu.OS_HEAP_BASE, emu.OS_HEAP_BASE + MALLOC_ARENA_SEEDED_BYTES),),
+        extra=_staged(("A:GHOST.DEM", GHOST_DEM)))
+    diffs, _ = _top_run(ENTRY_GAME_TOP_BOOT_ARM,
+                        lambda lib, buf: lib.g_game_top_boot_arm(buf, CALLER_A1, CALLER_A2),
+                        pokes, STOP_GAME_TOP_BOOT_ARM)
+    assert not diffs, f"hall {hall[0]}\n{report(diffs)}"
+
+
+@pytest.mark.parametrize("practice", (0, 1))
+@pytest.mark.parametrize("score", (0, 12345))
+def test_game_new_game(practice, score):
+    """`game_new_game` @ 0x1027e — the slice `[0x1027e, 0x102b0)`, which ends at the `jsr
+    title_menu_loop`: both players back in, the whole world reset, and the score offered to the hall
+    of fame — except in a practice game, which scores nothing and offers zero."""
+    pokes = _state_machine_world(0x1027e + practice * 4 + (score & 0xff),
+                                 extra=abi.merge_pokes(
+                                     abi.word_pokes({A_PRACTICE_MODE: practice}),
+                                     abi.long_pokes({A_SCORE: score})))
+    diffs, _ = _top_run(ENTRY_GAME_NEW_GAME, lambda lib, buf: lib.g_game_new_game(buf),
+                        pokes, STOP_GAME_NEW_GAME)
+    assert not diffs, f"practice {practice} score {score}\n{report(diffs)}"
+
+
+@pytest.mark.parametrize("practice,grid", ((0, (0, 0)), (1, (2, 3)), (1, (5, 5))))
+@pytest.mark.parametrize("player_count", (1, 2))
+def test_game_turn_init(practice, grid, player_count):
+    """`game_turn_init` @ 0x102b4 — the slice `[0x102b4, 0x1037a)`: where the chosen game starts, and
+    both players' twenty-slot shelves seeded from it. A practice game starts at the square `[P]`
+    found; an ordinary one at (5, 4), which IS room 1."""
+    grid_row, grid_col = grid
+    pokes = _state_machine_world(
+        0x102b4 + practice * 0x40 + grid_row * 8 + grid_col + player_count,
+        extra=abi.word_pokes({A_PRACTICE_MODE: practice, A_PLAYER_COUNT: player_count,
+                           A_PRACTICE_GRID_ROW: grid_row, A_PRACTICE_GRID_COL: grid_col}))
+    diffs, _ = _top_run(ENTRY_GAME_TURN_INIT, lambda lib, buf: lib.g_game_turn_init(buf),
+                        pokes, STOP_GAME_TURN_INIT)
+    assert not diffs, f"practice {practice} grid {grid} players {player_count}\n{report(diffs)}"
+
+
+# Whose turn it is, whether the other player is still in, and how many lives each has left — the
+# three things `game_player_change` branches on. Each row is (p1_turn, p2_turn, p1_lives, p2_lives,
+# p1_playing, p2_playing).
+PLAYER_CHANGE_STATES = (
+    (0, 1, 5, 5, 1, 1),          # the first handover of a fresh game: player one comes up
+    (1, 0, 5, 5, 1, 1),          # ...and back to player two
+    (1, 0, -1, 5, 1, 1),         # player one has run out: the card, then player two's turn
+    (0, 1, 5, -1, 1, 1),         # ...and the other way round
+    (1, 0, -1, -1, 0, 1),        # both out, and player one is not playing any more
+    (0, 1, 3, 3, 1, 0),          # the other player is out, so the turn does NOT change hands
+)
+
+
+@pytest.mark.parametrize("state", PLAYER_CHANGE_STATES)
+@pytest.mark.parametrize("player_count", (1, 2))
+def test_game_player_change(state, player_count):
+    """`game_player_change` @ 0x1037a — the slice `[0x1037a, 0x105e0)`, and the whole of two-player
+    mode: the "G A M E   O V E R" card for a player who has run out, the handover, the incoming
+    player's twenty slots and 58-word world put back, and the "P L A Y E R  x" card.
+
+    A ONE-PLAYER GAME SKIPS ALL OF IT, which is the `player_count` row: the slice is entered and
+    returns having written nothing, and that is as much a behaviour as the rest.
+    """
+    p1_turn, p2_turn, p1_lives, p2_lives, p1_playing, p2_playing = state
+    pokes = _state_machine_world(
+        0x1037a + p1_turn * 2 + p2_turn + (p1_lives & 7) * 8 + player_count,
+        extra=abi.merge_pokes(
+            abi.word_pokes({A_PLAYER_COUNT: player_count, A_SHOW_PLAYER_CHANGE: 1,
+                         A_P1_TURN: p1_turn, A_P2_TURN: p2_turn,
+                         A_P1_PLAYING: p1_playing, A_P2_PLAYING: p2_playing,
+                         A_P1_MAX_ROOM: 12, A_P2_MAX_ROOM: 7,
+                         A_P1_BONUS_BAR: 0x100, A_P2_BONUS_BAR: 0x80,
+                         A_P1_GRID_COL: 2, A_P2_GRID_COL: 4,
+                         A_P1_GRID_ROW: 3, A_P2_GRID_ROW: 1,
+                         A_P1_DEATHS_IN_ROOM: 1, A_P2_DEATHS_IN_ROOM: 2,
+                         A_P1_ENTRY_DIR: 0, A_P2_ENTRY_DIR: 3}),
+            abi.long_pokes({A_P1_LIVES: p1_lives & 0xffffffff, A_P2_LIVES: p2_lives & 0xffffffff,
+                         A_P1_SCORE: 4321, A_P2_SCORE: 8765})))
+    diffs, _ = _top_run(ENTRY_GAME_PLAYER_CHANGE,
+                        lambda lib, buf: lib.g_game_player_change(buf, FRAME_TOP_SLICE_A6,
+                                                                  CALLER_A1, CALLER_A2),
+                        pokes, STOP_GAME_PLAYER_CHANGE)
+    assert not diffs, f"{state} players {player_count}\n{report(diffs)}"
+
+
+def test_game_player_change_is_skipped_without_a_handover():
+    """...and the other way it does nothing: two players, but no handover pending."""
+    pokes = _state_machine_world(0x1038, extra=abi.word_pokes({A_PLAYER_COUNT: 2,
+                                                            A_SHOW_PLAYER_CHANGE: 0}))
+    diffs, _ = _top_run(ENTRY_GAME_PLAYER_CHANGE,
+                        lambda lib, buf: lib.g_game_player_change(buf, FRAME_TOP_SLICE_A6,
+                                                                  CALLER_A1, CALLER_A2),
+                        pokes, STOP_GAME_PLAYER_CHANGE)
+    assert not diffs, report(diffs)
+
+
+# (grid_row, grid_col, entry_dir, max_room_reached, practice, player_count, show_player_change).
+# The rows cover: a fresh room entered from the left, one entered from BELOW (the only way this game
+# awards a spare life), a room already seen, a practice room (whose entry direction comes from the
+# room number rather than from the previous room) and the two-player re-entry.
+ROOM_SETUP_STATES = (
+    (5, 4, 0, 0, 0, 1, 0),
+    (4, 0, 1, 5, 0, 1, 0),
+    (3, 3, 2, 35, 0, 1, 0),
+    (0, 5, 3, 0, 1, 1, 0),
+    # ...and the other two arms of the practice entry direction, which is THREE ranges and five
+    # SINGLETONS in the original — none of which any row reached until these five. The grid squares
+    # are chosen for the table's own boundaries — BOTH ENDS of each range, or a range that moved by
+    # one at the end nobody reached would survive: (5,4)/(5,0) are rooms 1 and 5, (3,4)/(3,0) are 13
+    # and 17, (1,4)/(1,0) are 25 and 29; (4,0) is room 6, one of the five singletons. The row above,
+    # room 35, is the fall-through.
+    (5, 4, 3, 0, 1, 1, 0),
+    (5, 0, 3, 0, 1, 1, 0),
+    (3, 4, 3, 0, 1, 1, 0),
+    (3, 0, 3, 0, 1, 1, 0),
+    (1, 4, 3, 0, 1, 1, 0),
+    (1, 0, 3, 0, 1, 1, 0),
+    (4, 0, 3, 0, 1, 1, 0),
+    (2, 2, 1, 35, 0, 2, 1),
+)
+
+
+@pytest.mark.parametrize("state", ROOM_SETUP_STATES)
+def test_game_room_setup(state):
+    """`game_room_setup` @ 0x105e0 — the slice `[0x105e0, 0x1078a)`: the room the grid square names,
+    the bubble placed at the entry point it arrives through, the room composed and slid in, the HUD
+    drawn, and the bonus bar refilled the first time a room is seen."""
+    grid_row, grid_col, entry_dir, max_room, practice, players, handover = state
+    pokes = _state_machine_world(
+        0x105e0 + grid_row * 8 + grid_col + entry_dir * 64,
+        extra=abi.merge_pokes(
+            abi.word_pokes({A_GRID_ROW: grid_row, A_GRID_COL: grid_col, A_ENTRY_DIR: entry_dir,
+                         A_MAX_ROOM_REACHED: max_room, A_PRACTICE_MODE: practice,
+                         A_PLAYER_COUNT: players, A_SHOW_PLAYER_CHANGE: handover}),
+            abi.long_pokes({A_LIVES: 3, A_SCORE: 4242, A_HI_SCORE: 90000})))
+    diffs, _ = _top_run(ENTRY_GAME_ROOM_SETUP,
+                        lambda lib, buf: lib.g_game_room_setup(buf, FRAME_TOP_SLICE_A6, CALLER_A1,
+                                                               CALLER_A2),
+                        pokes, STOP_GAME_ROOM_SETUP)
+    assert not diffs, f"{state}\n{report(diffs)}"
+
+
+# (bubble_x, bubble_y, room, bonus_tick, bonus_bar, ambient, lives). The rows cover: an ordinary
+# frame, each of the four exits, the bar's three-frame tick and its floor, the room-35 win, and the
+# ambient countdown underflowing (which is the only thing that re-rolls it).
+ROOM_FRAME_STATES = (
+    (160, 60, 12, 2, 0x100, 5, 3),
+    (0x121, 60, 12, 1, 0x100, 5, 3),
+    (-1, 60, 12, 0, 0x24, 5, 3),
+    (160, 0x81, 12, 0, 0x23, 5, 3),
+    (160, -1, 12, 2, 0x100, 0, 3),
+    (0xc4, 60, 35, 2, 0x100, 5, 3),
+    (0xc3, 60, 35, 2, 0x100, 5, 3),
+    (160, 60, 12, 2, 0x100, 5, -1),
+)
+
+
+@pytest.mark.parametrize("state", ROOM_FRAME_STATES)
+def test_game_room_frame_tail(state):
+    """`game_room_frame_tail` @ 0x10792 — the slice `[0x10792, 0x108d2)`, entered where
+    `game_frame_update` returns: the bonus bar's three-frame tick, the four ways out of a room and
+    the fifth that is winning, the room's own ambience, and the five calls that put the frame up."""
+    bubble_x, bubble_y, room, tick, bar, ambient, lives = state
+    pokes = _state_machine_world(
+        0x10792 + (bubble_x & 0xff) + (bubble_y & 0xff) * 4, room=room,
+        extra=abi.merge_pokes(
+            abi.word_pokes({A_BUBBLE_X: bubble_x, A_BUBBLE_Y: bubble_y, A_BONUS_TICK: tick,
+                         A_BONUS_BAR: bar, A_AMBIENT_SFX_COUNTDOWN: ambient, A_IN_ROOM: 1,
+                         A_GRID_ROW: 3, A_GRID_COL: 3, A_ENTRY_DIR: 0,
+                         A_GHOST_X: 80, A_GHOST_Y: 40, A_GHOST_TILE: 17,
+                         A_BUBBLE_FRAME: 7}),
+            abi.long_pokes({A_LIVES: lives & 0xffffffff, A_SCORE: 1234, A_HI_SCORE: 5678})))
+    diffs, _ = _top_run(ENTRY_GAME_ROOM_FRAME_TAIL,
+                        lambda lib, buf: lib.g_game_room_frame_tail(buf, FRAME_TOP_SLICE_A6,
+                                                                    CALLER_A1, CALLER_A2),
+                        pokes, STOP_GAME_ROOM_FRAME_TAIL)
+    assert not diffs, f"{state}\n{report(diffs)}"
+
+
+# (player_count, p1_turn, bonus_bar). The last row's bar is ALREADY AT THE FLOOR, so the tally runs
+# zero times — which is the only way the level-clear trigger's own volume survives to the end of the
+# run. Measured: with every row cashing a bar in, the trigger's volume could be changed from 9 to 8
+# with the whole suite green, because each tally step rewrites the same voice record.
+ENDING_STATES = ((1, 1, 0x50), (2, 1, 0x50), (2, 0, 0x50), (1, 1, TOP_BONUS_BAR_FLOOR))
+
+
+@pytest.mark.parametrize("player_count,p1_turn,bonus_bar", ENDING_STATES)
+def test_game_ending_sequence(player_count, p1_turn, bonus_bar):
+    """`game_ending_sequence` @ 0x108ec — the slice `[0x108ec, 0x10ce0)`: the whole of winning. The
+    ghost walks right to room 35's door, the door's two objects are opened and then retired, the
+    ghost falls through, the bonus bar is cashed in at TOP_BONUS_PER_STEP a step, and the winner's
+    turn is parked (two players) or the game ends (one)."""
+    pokes = _state_machine_world(
+        0x108ec + player_count * 2 + p1_turn + bonus_bar, room=35,
+        extra=abi.merge_pokes(
+            abi.word_pokes({A_PLAYER_COUNT: player_count, A_P1_TURN: p1_turn,
+                         A_P2_TURN: 1 - p1_turn, A_P1_PLAYING: 1, A_P2_PLAYING: 1,
+                         A_BONUS_BAR: bonus_bar, A_MAX_ROOM_REACHED: 35,
+                         A_GHOST_X: 150, A_GHOST_Y: 60, A_GHOST_TILE: 22,
+                         A_BUBBLE_X: 0xf8, A_BUBBLE_Y: 0xffee, A_BUBBLE_FRAME: 6}),
+            abi.long_pokes({A_SCORE: 20000, A_HI_SCORE: 30000, A_LIVES: 2})))
+    diffs, _ = _top_run(ENTRY_GAME_ENDING_SEQUENCE,
+                        lambda lib, buf: lib.g_game_ending_sequence(buf, FRAME_TOP_SLICE_A6,
+                                                                    CALLER_A1, CALLER_A2),
+                        pokes, STOP_GAME_ENDING_SEQUENCE)
+    assert not diffs, f"players {player_count} p1_turn {p1_turn} bar {bonus_bar}\n{report(diffs)}"
+
+
+# (practice, lives, show_player_change, max_room_reached, deaths_in_room, bonus_bar). The rows
+# cover: the ordinary exit from a fresh room (which awards the room bonus and the tally), an exit
+# from a room already visited (which awards neither), a practice game (which ends the turn), a turn
+# that has already run out, a pending handover, and a room left after several deaths.
+ROOM_EXIT_STATES = (
+    (0, 2, 0, 0, 0, 0x50),
+    (0, 2, 0, 35, 0, 0x50),
+    (0, 2, 0, 0, 3, 0x2d),
+    # 100 deaths is far more than five lives can produce and is STAGED rather than reached: the
+    # bonus is `5000 - deaths * 500` computed in a WORD and only then widened, and the game's own
+    # data never overflows that word. Measured as a survivor without this row.
+    (0, 2, 0, 0, 100, 0x50),
+    (1, 2, 0, 0, 0, 0x50),
+    (0, -1, 0, 0, 0, 0x50),
+    (0, 2, 1, 0, 0, 0x50),
+)
+
+
+@pytest.mark.parametrize("state", ROOM_EXIT_STATES)
+def test_game_room_exit(state):
+    """`game_room_exit` @ 0x10af8 — the slice `[0x10af8, 0x10ce0)`: leaving a room the ordinary way.
+    The bubble is popped and parked, the ghost walks back to its first cell, the room's own bonus is
+    awarded the FIRST time it is left, and the bar is cashed in at half the winning rate."""
+    practice, lives, handover, max_room, deaths, bar = state
+    pokes = _state_machine_world(
+        0x10af8 + practice * 32 + (lives & 7) * 4 + handover, room=12,
+        extra=abi.merge_pokes(
+            abi.word_pokes({A_PRACTICE_MODE: practice, A_SHOW_PLAYER_CHANGE: handover,
+                         A_MAX_ROOM_REACHED: max_room, A_DEATHS_IN_ROOM: deaths,
+                         A_BONUS_BAR: bar, A_GRID_ROW: 3, A_GRID_COL: 3,
+                         A_GHOST_X: 100, A_GHOST_Y: 50, A_GHOST_TILE: 33, A_BUBBLE_FRAME: 9}),
+            abi.long_pokes({A_LIVES: lives & 0xffffffff, A_SCORE: 8000, A_HI_SCORE: 9000})))
+    diffs, _ = _top_run(ENTRY_GAME_ROOM_EXIT,
+                        lambda lib, buf: lib.g_game_room_exit(buf, FRAME_TOP_SLICE_A6, CALLER_A1,
+                                                              CALLER_A2),
+                        pokes, STOP_GAME_ROOM_EXIT)
+    assert not diffs, f"{state}\n{report(diffs)}"
+
+
+# (player_count, p1_turn, p1_lives, p2_lives, lives)
+END_OF_TURN_STATES = (
+    (1, 1, 5, 5, 3),
+    (1, 1, 5, 5, -1),
+    (2, 1, -1, 5, -1),
+    (2, 0, 5, -1, -1),
+    (2, 1, 5, -1, 3),
+    (2, 0, -1, 5, 3),
+)
+
+
+@pytest.mark.parametrize("state", END_OF_TURN_STATES)
+def test_game_end_of_turn(state):
+    """`game_end_of_turn` @ 0x10ce0 — the slice `[0x10ce0, 0x10d34)`: who, if anyone, is still in.
+    A two-player game asks each player's own life count and only about the one whose turn it was; a
+    one-player game asks the live count and takes both players out with it."""
+    player_count, p1_turn, p1_lives, p2_lives, lives = state
+    pokes = _state_machine_world(
+        0x10ce0 + player_count * 8 + p1_turn * 4 + (lives & 3),
+        extra=abi.merge_pokes(
+            abi.word_pokes({A_PLAYER_COUNT: player_count, A_P1_TURN: p1_turn,
+                         A_P2_TURN: 1 - p1_turn, A_P1_PLAYING: 1, A_P2_PLAYING: 1,
+                         A_SHOW_PLAYER_CHANGE: 0}),
+            abi.long_pokes({A_P1_LIVES: p1_lives & 0xffffffff, A_P2_LIVES: p2_lives & 0xffffffff,
+                         A_LIVES: lives & 0xffffffff})))
+    diffs, _ = _top_run(ENTRY_GAME_END_OF_TURN, lambda lib, buf: lib.g_game_end_of_turn(buf),
+                        pokes, STOP_GAME_END_OF_TURN)
+    assert not diffs, f"{state}\n{report(diffs)}"
+
+
+@pytest.mark.parametrize("player_count,practice", ((1, 0), (1, 1), (2, 0)))
+def test_game_over_card(player_count, practice):
+    """`game_over_card` @ 0x10d44 — the slice `[0x10d44, 0x1027e)`, which ends at the branch back to
+    the top of the game loop. ONE-PLAYER, NON-PRACTICE games only: a two-player game has already
+    shown each player their own card and a practice game shows none."""
+    pokes = _state_machine_world(0x10d44 + player_count * 2 + practice,
+                                 extra=abi.word_pokes({A_PLAYER_COUNT: player_count,
+                                                    A_PRACTICE_MODE: practice}))
+    diffs, _ = _top_run(ENTRY_GAME_OVER_CARD,
+                        lambda lib, buf: lib.g_game_over_card(buf, FRAME_TOP_SLICE_A6, CALLER_A1,
+                                                              CALLER_A2),
+                        pokes, STOP_GAME_OVER_CARD)
+    assert not diffs, f"players {player_count} practice {practice}\n{report(diffs)}"
+
+
 MIRRORS = (
     ("A_VDI_PBLOCK", "include/frontend.h", "A_vdi_pblock"),
     ("A_VDI_CONTRL", "include/frontend.h", "A_vdi_contrl"),
@@ -1721,6 +2810,56 @@ MIRRORS = (
     ("A_TEXT_SCORE_LABELS", "include/frontend.h", "A_text_score_labels"),
     ("TEXT_SCORE_LABEL_BYTES", "include/frontend.h", "TEXT_SCORE_LABEL_BYTES"),
     ("A_TEXT_HALL", "include/frontend.h", "A_text_hall"),
+    ("A_PRACTICE_MODE", "include/frontend.h", "A_practice_mode"),
+    ("A_PRACTICE_GRID_ROW", "include/frontend.h", "A_practice_grid_row"),
+    ("A_PRACTICE_GRID_COL", "include/frontend.h", "A_practice_grid_col"),
+    ("A_P2_TURN", "include/frontend.h", "A_p2_turn"),
+    ("A_AMBIENT_SFX_COUNTDOWN", "include/frontend.h", "A_ambient_sfx_countdown"),
+    ("A_CONST_DEMO_LENGTH_DIVISOR", "include/frontend.h", "A_const_demo_length_divisor"),
+    ("A_CONST_DEMO_ROOM_DIVISOR", "include/frontend.h", "A_const_demo_room_divisor"),
+    ("DEMO_RECORD_BYTES", "include/frontend.h", "DEMO_RECORD_BYTES"),
+    ("TOP_BONUS_BAR_FULL", "include/frontend.h", "TOP_BONUS_BAR_FULL"),
+    ("TOP_BONUS_BAR_FLOOR", "include/frontend.h", "TOP_BONUS_BAR_FLOOR"),
+    ("MENU_LOCAL_BYTES", "include/frontend.h", "MENU_LOCAL_BYTES"),
+    ("SUBMIT_LOCAL_BYTES", "include/frontend.h", "SUBMIT_LOCAL_BYTES"),
+    ("INSERT_LOCAL_BYTES", "include/frontend.h", "INSERT_LOCAL_BYTES"),
+    ("CALL_FRAME_COST", "include/frontend.h", "CALL_FRAME_COST"),
+    ("TOP_LOCAL_BYTES", "include/frontend.h", "TOP_LOCAL_BYTES"),
+    ("A_P1_TURN", "include/gameplay.h", "A_p1_turn"),
+    ("A_SHOW_PLAYER_CHANGE", "include/gameplay.h", "A_show_player_change"),
+    ("A_P1_PLAYING", "include/gameplay.h", "A_p1_playing"),
+    ("A_P2_PLAYING", "include/gameplay.h", "A_p2_playing"),
+    ("A_P1_LIVES", "include/gameplay.h", "A_p1_lives"),
+    ("A_P2_LIVES", "include/gameplay.h", "A_p2_lives"),
+    ("A_P1_BONUS_BAR", "include/gameplay.h", "A_p1_bonus_bar"),
+    ("A_P2_BONUS_BAR", "include/gameplay.h", "A_p2_bonus_bar"),
+    ("A_P1_GRID_COL", "include/gameplay.h", "A_p1_grid_col"),
+    ("A_P2_GRID_COL", "include/gameplay.h", "A_p2_grid_col"),
+    ("A_P1_GRID_ROW", "include/gameplay.h", "A_p1_grid_row"),
+    ("A_P2_GRID_ROW", "include/gameplay.h", "A_p2_grid_row"),
+    ("A_P1_DEATHS_IN_ROOM", "include/gameplay.h", "A_p1_deaths_in_room"),
+    ("A_P2_DEATHS_IN_ROOM", "include/gameplay.h", "A_p2_deaths_in_room"),
+    ("A_P1_ENTRY_DIR", "include/gameplay.h", "A_p1_entry_dir"),
+    ("A_P2_ENTRY_DIR", "include/gameplay.h", "A_p2_entry_dir"),
+    ("A_GRID_ROW", "include/gameplay.h", "A_grid_row"),
+    ("A_GRID_COL", "include/gameplay.h", "A_grid_col"),
+    ("A_ENTRY_DIR", "include/gameplay.h", "A_entry_dir"),
+    ("A_IN_ROOM", "include/gameplay.h", "A_in_room"),
+    ("A_DEATHS_IN_ROOM", "include/gameplay.h", "A_deaths_in_room"),
+    ("A_BONUS_TICK", "include/gameplay.h", "A_bonus_tick"),
+    ("A_BONUS_BAR", "include/gameplay.h", "A_bonus_bar"),
+    ("A_LIVES", "include/gameplay.h", "A_lives"),
+    ("A_HI_SCORE", "include/gameplay.h", "A_hi_score"),
+    ("A_SOUND_ENABLED", "include/gameplay.h", "A_sound_enabled"),
+    ("A_LOA_IMAGE", "include/voice.h", "A_loa_image"),
+    ("A_NAME_GHOST_LOA", "include/voice.h", "A_name_ghost_loa"),
+    ("A_NAME_GHOST_VOI", "include/voice.h", "A_name_ghost_voi"),
+    ("A_SND_VOICE", "include/sound.h", "A_snd_voice"),
+    ("SND_VOICE_BYTES", "include/sound.h", "SND_VOICE_BYTES"),
+    ("SND_VC_PRIORITY", "include/sound.h", "SND_VC_PRIORITY"),
+    ("SND_VOICES", "include/sound.h", "SND_VOICES"),
+    ("TOS_VEC_TRAP9", "include/sound.h", "TOS_VEC_TRAP9"),
+    ("SND_TRAP9_HANDLER_ENTRY", "include/sound.h", "SND_TRAP9_HANDLER_ENTRY"),
     ("ROOM_BYTES", "include/blit.h", "ROOM_BYTES"),
     ("ROOM_TILE_ROWS", "include/blit.h", "ROOM_TILE_ROWS"),
     ("ROOM_TILE_COLS", "include/blit.h", "ROOM_TILE_COLS"),
@@ -1776,6 +2915,32 @@ ENTRY_PROLOGUES = {
     "ENTRY_SAVE_HISCORES": "4e56fff4486ce09c486ce09e486ce0a0",
     "ENTRY_HISCORE_SUBMIT_PLAYERS": "4e5600000c6c0002e252662e296ce26c",
     "ENTRY_DRAW_ROOM_TO_STAGE_CELL": "486ce1fe486ce200486ce2023f2ce3d4",
+    "ENTRY_TITLE_MENU_OPEN": "4e56fff04eba0792303c00003940e242",
+    "ENTRY_MENU_DRAW": "303c00003940e2423d40fff64eba2f8a",
+    "ENTRY_MENU_READ_KEY": "3f3c00084eba478e548f1d40ffff4267",
+    "ENTRY_MENU_ASK_PLAYER_COUNT": "3d7c0001fff6426ce25242672f2ce22e",
+    "ENTRY_MENU_READ_PLAYER_COUNT": "3f3c00084eba46de548f1d40fffe042e",
+    "ENTRY_MENU_ASK_PRACTICE_LEVEL": "203c000000002940e2682940e26c2940",
+    "ENTRY_MENU_READ_LEVEL_TENS": "3f3c00084eba4614548f3940e23e046c",
+    "ENTRY_MENU_READ_LEVEL_UNITS": "3f3c00084eba45e6548f3940e240046c",
+    "ENTRY_DEMO_RECORD": "206ce24a10104880c1fc00033940e0d8",
+    "ENTRY_MENU_ATTRACT_SEQUENCE": "426ce202397c0001e2064eba1dd64eba",
+    "ENTRY_MENU_ATTRACT_SLIDESHOW": "3f3c00114eba4350548f4eba39be486c",
+    "ENTRY_MENU_ATTRACT_SLIDESHOW_ROOM": "3f3c00114eba4306548f4eba3974486c",
+    "ENTRY_MENU_ATTRACT_TITLE": "0c6c0001e20267324ebaf27a3f3c0005",
+    "ENTRY_MENU_HALL_OF_FAME": "4eba01004ebaf23e202ce2082f003f3c",
+    "ENTRY_GAME_TOP_BOOT": "4e56fff642673f3c01004eba4a2c588f",
+    "ENTRY_GAME_TOP_BOOT_TAIL": "4eba37344eba1f643f3c00083f3c0004",
+    "ENTRY_GAME_TOP_BOOT_ARM": "4eba30924eba47244eba4314397c0002",
+    "ENTRY_GAME_NEW_GAME": "303c00013940e27e3940e280426ce0a4",
+    "ENTRY_GAME_TURN_INIT": "426ce05a397c0001e20642ace096397c",
+    "ENTRY_GAME_PLAYER_CHANGE": "0c6c0002e2526600025e302ce2866700",
+    "ENTRY_GAME_ROOM_SETUP": "397c0001e0a6302ce23c322ce23ac3fc",
+    "ENTRY_GAME_ROOM_FRAME_TAIL": "302ce05c536ce05c0c4000016c22397c",
+    "ENTRY_GAME_ENDING_SEQUENCE": "3f3c00014eba3c1e548f3f3c000a3f3c",
+    "ENTRY_GAME_ROOM_EXIT": "302ce2426708297cffffffffe08e0cac",
+    "ENTRY_GAME_END_OF_TURN": "0c6c0002e25266360cac00000000e274",
+    "ENTRY_GAME_OVER_CARD": "0c6c0001e252660000920c6c0000e242",
 }
 
 # ...and the CHECKPOINTS, pinned the same way and for the same reason: a `stop_pc` one instruction
@@ -1786,6 +2951,34 @@ STOP_PROLOGUES = {
     "STOP_SAVE_HISCORES_PROLOGUE": "4267486c023c4eba2ba45c8f3d40fff6",
     # the `addq.w #1,-2(a6)` that closes the room composer's loop body
     "STOP_DRAW_ROOM_TO_STAGE_CELL": "526efffe0c6e000afffe6d00ff1a526e",
+    "STOP_TITLE_MENU_OPEN": "3f3c00084eba478e548f1d40ffff4267",
+    "STOP_MENU_DRAW": "3f3c00084eba478e548f1d40ffff4267",
+    "STOP_MENU_READ_KEY": "b07c0047660000ca3d7c0001fff6426c",
+    "STOP_MENU_ASK_PLAYER_COUNT": "3f3c00084eba46de548f1d40fffe042e",
+    "STOP_MENU_PLAYER_COUNT_CHOSEN": "60000592102effff4880b07c00506600",
+    "STOP_MENU_PLAYER_COUNT_AGAIN": "600a3f3c00074eba46f6548f3f3c000b",
+    "STOP_MENU_ASK_PRACTICE_LEVEL": "3f3c00084eba4614548f3940e23e046c",
+    "STOP_MENU_READ_LEVEL_TENS": "3f3c00084eba45e6548f3940e240046c",
+    "STOP_MENU_READ_LEVEL_UNITS": "60000440102effff4880b07c00446600",
+    "STOP_DEMO_RECORD": "0c6c0001e2026712202efffa53aefffa",
+    "STOP_DEMO_REPLAY": "3f3c00114eba4350548f4eba39be486c",
+    "STOP_MENU_ATTRACT_SEQUENCE": "3f3c00114eba4350548f4eba39be486c",
+    "STOP_MENU_ATTRACT_SLIDESHOW": "0c6c0001e20267324ebaf27a3f3c0005",
+    "STOP_MENU_ATTRACT_SLIDESHOW_ROOM": "0c6c0001e2026710302efff8536efff8",
+    "STOP_MENU_ATTRACT_TITLE": "600000b6102effff4880b07c00486600",
+    "STOP_MENU_HALL_OF_FAME": "0c6e0000fff66700f8764e5e4e754e56",
+    "STOP_GAME_TOP_BOOT": "4eba3ab64eba37344eba1f643f3c0008",
+    "STOP_GAME_TOP_BOOT_TAIL": "2f2ce8824eba59aa588f4eba30924eba",
+    "STOP_GAME_TOP_BOOT_ARM": "303c00013940e27e3940e280426ce0a4",
+    "STOP_GAME_NEW_GAME": "4eba1324426ce05a397c0001e20642ac",
+    "STOP_GAME_TURN_INIT": "0c6c0002e2526600025e302ce2866700",
+    "STOP_GAME_PLAYER_CHANGE": "397c0001e0a6302ce23c322ce23ac3fc",
+    "STOP_GAME_ROOM_SETUP": "600001464eba1b92302ce05c536ce05c",
+    "STOP_GAME_ROOM_FRAME_TAIL": "302ce236670c0cacffffffffe08e6e00",
+    "STOP_GAME_ENDING_SEQUENCE": "0c6c0002e25266360cac00000000e274",
+    "STOP_GAME_ROOM_EXIT": "0c6c0002e25266360cac00000000e274",
+    "STOP_GAME_END_OF_TURN": "302ce2806600f640302ce27e6600f638",
+    "STOP_GAME_OVER_CARD": "303c00013940e27e3940e280426ce0a4",
 }
 
 

@@ -136,6 +136,21 @@ def read_long(image, address, signed=False):
     return int.from_bytes(bytes(image[address:address + 4]), "big", signed=signed)
 
 
+def word_pokes(values):
+    """{address: value} as a poke dict of big-endian WORDS — the shape a case's own game state takes.
+
+    Here rather than in a battery because two of them had grown a private copy under this name (and
+    `test_frontend.py` a `_long_pokes` twin beside it), which is the shape a third copy starts from.
+    A value may be signed; `word`/`long` wrap it the way `move.w #-1` does.
+    """
+    return {address: word(value) for address, value in values.items()}
+
+
+def long_pokes(values):
+    """...and the longword half of the same."""
+    return {address: long(value) for address, value in values.items()}
+
+
 # ---- combining pokes -----------------------------------------------------------------------------
 def merge_pokes(*dicts, allow_overlap=False):
     """One poke dict from several, REFUSING an overlap unless the caller says it means one.

@@ -65,6 +65,13 @@
 #define A_vdi_ptsout    0x232f0u
 #define A_vdi_handle    0x232eeu  /* word: the handle `v_opnvwk` returns, first argument of every
                                    * entry point below. It sits immediately under `ptsout` */
+
+/* ...and the handle READ out of it, which every drawing call in this program passes and none of them
+ * computes. Here rather than as a `static` in each caller: `src/frontend.c` and `src/gameplay.c` had
+ * grown a private copy each under the same name, which is the shape a third copy starts from. */
+static inline int16_t vdi_handle(const uint8_t *image) {
+    return (int16_t)be16(image + A_vdi_handle);
+}
 #define A_vdi_work_in   0x2377au  /* word[11] `init_gem_and_screens` fills: ten 1s and a 2 */
 #define A_vdi_work_out  0x23708u  /* word[57]: 45 intout entries then 6 ptsout PAIRS, which is what
                                    * `v_opnvwk` points the two output arrays at (+0 and +0x5a) */
@@ -369,6 +376,275 @@
 #define C_CREAT_MODE_TEXT 0u    /* `clr.w -(a7)` @ 0x120ce: the file is ASCII and has no newline */
 
 /* ================================================================================================
+ * The front end's state machine — `title_menu_loop` @ 0x115d6 and `game_top_loop` @ 0x101e6
+ *
+ * These two ARE the program: `main` calls `game_top_loop` and never gets it back, and everything
+ * else in this project is something one of them calls. `../notes/frontend.md` §2 draws the machine;
+ * what is named below is only what the two routines reach that no other subsystem already names.
+ *
+ * NEITHER ROUTINE RETURNS TO ITS CALLER on the real machine — `game_top_loop` is a `do { … } while
+ * (true)` and `title_menu_loop` only returns once a game has been chosen — so both are verified as
+ * a chain of `stop_pc` SLICES, plus (for `title_menu_loop`) whole runs on the two key paths that do
+ * return. ../STATUS.md's rows carry the `[start, end)` each case runs.
+ *
+ * BOTH KEEP THEIR LOCALS IN THE IMAGE rather than in C locals, for `save_hiscores`' reason
+ * (`SAVE_FRAME_SLOT` above): a slice entered part-way through has to find the locals the earlier
+ * part left, so the frame base is an argument and every local is named here. The bytes lie in the
+ * band the differential drops, so what a case stages there is an input to both sides alike.
+ * ============================================================================================= */
+
+/* --- the three XBIOS calls the rest of this file did not already need --- */
+#define XBIOS_SETCOLOR   7u      /* `move.w #$7,-(a7)` @ 0x10928 and @ 0x10bd4 */
+#define XBIOS_RANDOM    17u      /* `move.w #$11,-(a7)` @ 0x1085a, 0x11ae6 and 0x11b30 */
+#define XBIOS_VSYNC     37u      /* `move.w #$25,-(a7)` — three per slideshow frame @ 0x11bca.. */
+
+/* --- the state the menu writes and `game_top_loop` reads --- */
+#define A_practice_mode      0x2315cu /* word: set by `[P]`, and what makes a turn end after one
+                                       * room (`game_top_loop` forces `lives = -1` on the exit) */
+#define A_practice_grid_row  0x23158u /* word: where `[P]` found the level in `room_grid`... */
+#define A_practice_grid_col  0x2315au /* ...and its column. THE SEARCH REUSES BOTH AS ITS OWN LOOP
+                                       * COUNTERS WITH THE ROLES REVERSED — the outer loop counts in
+                                       * `A_practice_grid_col` over grid ROWS — and the two are put
+                                       * back the right way round from the frame at the end */
+#define A_p2_turn            0x23168u /* word: the twin of `include/gameplay.h`'s `A_p1_turn`. A new
+                                       * game starts with this one set, and the swap at the top of
+                                       * each room makes player one go first */
+
+/* --- the DATA-segment strings, in the order the two routines draw them --- */
+#define A_text_game_over_p1   0x24f3cu /* `pea 34(a6-relative DATA)`: the two-player card's… */
+#define A_text_player_one_out 0x24f50u /* …"G A M E    O V E R" over "P L A Y E R    O N E" */
+#define A_text_game_over_p2   0x24f66u
+#define A_text_player_two_out 0x24f7au
+#define A_text_player_one_up  0x24f90u /* the handover card, drawn as the turn starts */
+#define A_text_player_two_up  0x24fa6u
+#define A_text_game_over      0x24fccu /* …and the one-player one, at the end of the whole game */
+#define A_text_menu_game      0x24ff8u /* the four menu lines, at x = MENU_TEXT_X */
+#define A_text_menu_practice  0x2501cu
+#define A_text_menu_demo      0x25040u
+#define A_text_menu_hall      0x25064u
+#define A_text_one_player     0x25088u /* `[G]`'s two lines, at x = MENU_PLAYERS_X */
+#define A_text_two_players    0x250a8u
+#define A_text_enter_level    0x250c8u /* …and `[P]`'s one */
+
+/* --- the six DATA doubles the two `Random()` scalings read (`../notes/frontend.md` §6) ---
+ * The divisor appears TWICE at two addresses holding the same value; both are named because a call
+ * site reads one address and not the other, and `../out/prg_dis.txt` is what says which. */
+#define A_const_demo_length_divisor 0x250ecu /* 16794009.000000015 */
+#define A_const_demo_length_scale   0x250f4u /* 11.0 -> a slideshow of 5..15 rooms */
+#define A_const_demo_length_offset  0x250fcu /* 5.0 */
+#define A_const_demo_room_divisor   0x25104u /* 16794009.000000015 again, at its own address */
+#define A_const_demo_room_scale     0x2510cu /* 34.0 -> a room of 1..34: room 35 is unreachable */
+#define A_const_demo_room_offset    0x25114u /* 1.0 */
+
+/* --- the menu itself --- */
+#define MENU_TEXT_HEIGHT      6   /* `vst_height(handle, 6)` — the hall of fame's height too */
+#define MENU_PEN              1   /* `vst_color(handle, 1)` */
+#define MENU_TEXT_X        0x18   /* the four "Press [x] …" lines… */
+#define MENU_TEXT_Y_GAME   0x48   /* …one every MENU_TEXT_Y_PITCH scanlines */
+#define MENU_TEXT_Y_PITCH  0x10
+#define MENU_PLAYERS_X     0x28   /* `[G]`'s two lines */
+#define MENU_PLAYERS_Y     0x58
+#define MENU_LEVEL_X       0x18   /* …and `[P]`'s one */
+#define MENU_LEVEL_Y       0x60
+
+#define MENU_KEY_LOWER_A  0x60    /* `cmp.w #$60,d0 / ble`: a key ABOVE this is folded to upper… */
+#define MENU_KEY_CASE_BIT 0x20    /* …by `subi.b #$20`, on the BYTE and not on the widened word */
+#define MENU_DIGIT_ZERO   0x30    /* '0': both the player count and the two level digits */
+#define MENU_LEVEL_TENS     10    /* `move.w #$a,d0 / muls.w tens,d0` */
+#define MENU_LEVEL_LOWEST    0    /* `cmpi.w #$0 / ble`: a level must be strictly above 0… */
+#define MENU_LEVEL_ABOVE  0x24    /* …and strictly below 36, which is what keeps room 0 out */
+
+/* --- the `[D]` attract sequence (`../notes/frontend.md` §2) --- */
+#define DEMO_RECORDS       0x3d4u /* `move.l #$3d4,-6(a6)`: 980 of the file's 1,000 records */
+#define DEMO_RECORD_BYTES     6u  /* `addq.l #6` on the cursor, one byte per field below */
+#define DEMO_FIELD_GHOST_X    0u  /* …each byte read SIGNED and scaled by the factor beside it */
+#define DEMO_FIELD_GHOST_Y    1u
+#define DEMO_FIELD_GHOST_TILE 2u
+#define DEMO_FIELD_BUBBLE_X   3u
+#define DEMO_FIELD_BUBBLE_Y   4u
+#define DEMO_FIELD_BUBBLE_FRAME 5u
+#define DEMO_SCALE_X          3   /* `muls.w #$3`: the record's unit is 3 pixels across… */
+#define DEMO_SCALE_Y          2   /* …and 2 down */
+
+#define DEMO_SLIDESHOW_FRAMES 0x1eu /* `move.l #$1e,-6(a6)`: 30 frames per slideshow room, each held
+                                     * for THREE `Vsync`s — the only frame sync in the whole attract
+                                     * sequence, and three separate calls rather than a loop because
+                                     * the trampoline files a different return address for each */
+#define DEMO_TITLE_POLLS  0x9088u   /* `move.l #$9088,-6(a6)`: 37,000 mouse polls on the title */
+#define HALL_IDLE_POLLS    0x359u   /* `move.l #$359,-6(a6)`: 857 after the hall of fame */
+
+#define MOUSE_BUTTON_LEFT     1   /* `cmpi.w #$1,mouse_buttons`: what aborts every attract loop */
+#define DEMO_FIRST_ROOM       1   /* the replay is always of room 1 — the file has no room field */
+#define MENU_SFX_NOTE_ONE_SHOT (-1) /* a NEGATIVE note tells `sound_play` to leave the tone at the
+                                     * definition's own pitch rather than folding a MIDI note into
+                                     * the period table (`src/sound.c`'s `note >= 0` gate) */
+
+#define PUFF_VOICE            1   /* voice 1 is the GHOST'S BREATH everywhere — the demo
+                                   * replay's puff and the game loop's blow alike, which is
+                                   * why both end-of-room animations release it */
+#define DEMO_PUFF_NOTE     0xfa
+#define DEMO_POP_VOICE        2
+#define MENU_AMBIENCE_VOICE   0
+#define MENU_SFX_PRIORITY     5
+#define MENU_AMBIENCE_VOLUME  8   /* `muls.w #$8,sound_enabled` — the room ambience's volume… */
+#define MENU_LOUD_VOLUME    0xb   /* …and the louder one the pop and the title picture use */
+
+
+/* FRAME LAYOUT: `title_menu_loop`'s own `link a6,#$fff0` @ 0x115d6. */
+#define MENU_LOCAL_BYTES     16u  /* what the `link` reserves, which is where its callees' frames
+                                   * start (see `CALL_FRAME_COST`) */
+#define MENU_FRAME_KEY       (-1) /* BYTE: the key `Cnecin` answered, folded to upper case */
+#define MENU_FRAME_DIGIT     (-2) /* BYTE: `[G]`'s player-count digit, less '0' */
+#define MENU_FRAME_COUNTER   (-6) /* LONG: every attract loop's own countdown, one at a time */
+#define MENU_FRAME_SLIDESHOW (-8) /* word: how many rooms the slideshow still owes */
+#define MENU_FRAME_CHOSE    (-10) /* word: 0 redraws the menu, non-zero returns to `game_top_loop` */
+#define MENU_FRAME_LEVEL    (-12) /* word: `[P]`'s parsed level, tens * 10 + units */
+#define MENU_FRAME_FOUND_ROW (-14)/* word: where the grid search found it… */
+#define MENU_FRAME_FOUND_COL (-16)/* …NEITHER OF WHICH IS INITIALISED. A level 1..35 always matches
+                                   * exactly one cell of `room_grid`, so the pair is always written
+                                   * before it is read; the original relies on that and so does this */
+
+/* One `jsr` deep: the return address the call pushes, then the callee's own `link` saving A6. What
+ * the callee's `link` RESERVES is its own business and is subtracted separately, because only a
+ * chain of calls (the hall-of-fame submitter's) ever needs it. */
+#define CALL_FRAME_COST       8u
+#define SUBMIT_LOCAL_BYTES    0u  /* `link a6,#$0`    @ 0x11d6e */
+#define INSERT_LOCAL_BYTES   10u  /* `link a6,#$fff6` @ 0x11f84 */
+
+/* FRAME LAYOUT: `game_top_loop`'s own `link a6,#$fff6` @ 0x101e6. */
+#define TOP_LOCAL_BYTES      10u
+#define TOP_FRAME_ANIM_HOLD  (-4) /* LONG: the ending animation's two-state tile flip-flop */
+#define TOP_FRAME_DELAY     (-10) /* LONG: the four text cards' busy-wait counter */
+
+/* --- the boot sequence, once per run --- */
+#define IKBD_MOUSE_OFF     0x12u  /* BIOS `Bconout(4, $12)`: "disable mouse reporting"… */
+#define IKBD_MOUSE_RELATIVE 0x8u  /* …and "relative reporting on" once the picture is up. Device 4 is
+                                   * the only one the model serves and `os_ikbd_out` takes the byte
+                                   * alone, so the device itself is nowhere in this file */
+
+/* --- one game, one turn, one room --- */
+#define TOP_START_GRID_ROW    5   /* an ordinary game starts at grid (5, 4), which IS room 1 */
+#define TOP_START_GRID_COL    4
+#define TOP_LIVES_PER_TURN    5   /* `move.l #$5,-8050(a4)` */
+#define TOP_DRIFT_SPEED_ON_ENTRY 0x12c /* `move.w #$12c,-8014(a4)`: the bubble's drift, per room */
+#define A_ambient_sfx_countdown 0x22fc0u /* word: frames until the room's own ambience re-triggers.
+                                          * Set to 1 as the room opens, decremented once a frame,
+                                          * and re-rolled to 20..69 when it goes negative */
+#define A_const_ambient_scale 0x24fbcu /* 2.9769999999999967e-06 */
+#define A_const_ambient_offset 0x24fc4u /* 20.0 -> a countdown of 20..69 frames */
+#define TOP_AMBIENCE_VOLUME   7   /* `muls.w #$7` on `sound_enabled`, one step below the menu's */
+#define TOP_BONUS_BAR_FULL 0x13eu /* the bar's right end at the top of every room… */
+#define TOP_BONUS_BAR_FLOOR 0x23u /* …and the left end it is emptied down to */
+#define TOP_BONUS_STEP        5   /* `subq.w #5`: the tally's step, and the shrink's width */
+#define TOP_BONUS_PER_STEP  100   /* `addi.l #$64` @ 0x10a74: what a column is worth on the "WELL
+                                   * DONE" path, which is the one that pays double… */
+#define TOP_BONUS_PER_STEP_EXIT 50 /* …and `addi.l #$32` @ 0x10c72, the ordinary room exit's half */
+#define TOP_BONUS_TICK_RELOAD 2   /* `move.w #$2`: the bar steps once every three frames */
+#define TOP_TALLY_NOTE_BASE 100   /* `move.w #$64,d0 / sub.w bonus_bar/4,d0`: the glissando */
+#define TOP_TALLY_NOTE_DIVISOR 4
+#define TOP_TALLY_VOLUME      8
+#define TOP_TALLY_VOICE       2
+#define TOP_TALLY_PRIORITY   10
+#define TOP_ROOM_BONUS   0x1388   /* `move.w #$1388,d0`: 5,000 for a room… */
+#define TOP_DEATH_PENALTY 0x1f4   /* …less 500 for each death in it */
+#define TOP_LIVES_MAX         9   /* a spare life is awarded per room, capped here */
+
+#define TOP_EXIT_RIGHT   0x120    /* `cmpi.w #$120,bubble_x`: the room's four exits, in the pixels
+                                   * `../notes/frontend.md` §3 derives the play area from */
+#define TOP_EXIT_BOTTOM   0x80
+#define TOP_ENTRY_DIR_LEFT    0   /* the direction the NEXT room is entered from */
+#define TOP_ENTRY_DIR_BOTTOM  1
+#define TOP_ENTRY_DIR_RIGHT   2
+#define TOP_ENTRY_DIR_TOP     3
+#define TOP_ROOM_LAST      0x23   /* room 35, the last of the lap… */
+#define TOP_WIN_X          0xc3   /* …which is won by taking the bubble past this x */
+
+/* The "HALF WAY" rooms, which is what the entry-direction override at 0x1061e is really testing:
+ * in PRACTICE mode a room is entered from whichever side its own number says, because there is no
+ * previous room to have come from. Three ranges and five singletons, transcribed. */
+#define TOP_PRACTICE_RIGHT_RANGES { { 1, 5 }, { 0xd, 0x11 }, { 0x19, 0x1d } }
+#define TOP_PRACTICE_BOTTOM_ROOMS { 6, 0x12, 0x1e, 0xc, 0x18 }
+
+/* The two room-35 objects the ending animation retires, which is how the door opens: the pair is
+ * set to their "open" tiles and then to -1, the tile index `objects_animate_and_draw` skips. */
+#define TOP_ENDING_OBJECT_A     3u
+#define TOP_ENDING_OBJECT_B     4u
+#define TOP_ENDING_TILE_A  0x14eu
+#define TOP_ENDING_TILE_B  0x14fu
+#define TOP_OBJECT_RETIRED 0xffffu
+
+/* The ending walk, which is two loops over the same flip-flop: the ghost carried right to the door
+ * and then down through it. */
+#define TOP_ENDING_ANIM_FIRST    4  /* `cmpi.w #$b / bgt`: bubble_frame cycles 4..11 */
+#define TOP_ENDING_ANIM_LAST    11
+#define TOP_ENDING_HOLD          1  /* `move.l #$1,-4(a6)`: the tile flips every other frame */
+#define TOP_ENDING_TILE_LOW   0x2d  /* the two ghost tiles the walk alternates between */
+#define TOP_ENDING_TILE_HIGH  0x2e
+#define TOP_ENDING_TILE_STEP     5  /* `subq.w #5`: the pop animation walks the ghost tile down */
+#define TOP_ENDING_TILE_FLOOR    4
+#define TOP_ENDING_WALK_TO   0x100  /* the ghost walks right until bubble_x reaches this… */
+#define TOP_ENDING_FALL_TO 0xffe2   /* …and then falls until bubble_y passes -30 */
+#define TOP_ENDING_PARK_X     0xa0  /* where the game-over animation parks the popped bubble */
+#define TOP_ENDING_PARK_Y     0x40
+#define TOP_ENDING_POP_FRAME     3  /* `move.w #$3,bubble_frame`: the popped bubble's own cell */
+#define TOP_ENDING_FALL_FRAMES  10  /* `cmpi.w #$a`: ten frames of the ghost at the door */
+#define TOP_ENDING_TILE_CEILING 0x28 /* `cmpi.w #$28 / bge`: above this the walk-down is skipped */
+#define TOP_ENDING_PEN        0xf /* `Setcolor(15, $777)`: the ghost forced to white for both… */
+#define TOP_ENDING_COLOUR  0x777  /* …end-of-room animations */
+#define TOP_ENDING_VOICE         2
+#define TOP_ENDING_VOLUME        9  /* `muls.w #$9` — the room exit's own trigger uses 8 */
+#define TOP_ENDING_PRIORITY    10
+
+#define TOP_CARD_X          0x58  /* the four text cards, which are drawn straight onto the… */
+#define TOP_CARD_Y_TOP      0x58  /* …visible screen and held for TOP_CARD_DELAY iterations */
+#define TOP_CARD_Y_BOTTOM   0x68
+#define TOP_CARD_OUT_X      0x50
+#define TOP_CARD_TURN_X     0x50
+#define TOP_CARD_TURN_Y     0x60
+#define TOP_CARD_DELAY  0x493e0u  /* `cmpi.l #$493e0`: 300,000 empty iterations */
+#define TOP_HANDOVER_DELAY 0x186a0u /* …and 100,000 after the handover card */
+
+/* --- the trampoline return addresses, one per `jsr xbios_trap` / `jsr gemdos_trap` site --- */
+#define RET_MENU_SETPALETTE       0x11600u
+#define RET_MENU_SETSCREEN_PHYS   0x11618u
+#define RET_MENU_CRAWCIN          0x116b4u
+#define RET_MENU_CCONIS           0x116beu
+#define RET_MENU_CNECIN           0x116ccu
+#define RET_MENU_SETSCREEN_BACK   0x116e4u
+#define RET_MENU_G_SETSCREEN_PHYS 0x11724u
+#define RET_MENU_G_CRAWCIN        0x11764u
+#define RET_MENU_G_CCONIS         0x1176eu
+#define RET_MENU_G_CNECIN         0x1177cu
+#define RET_MENU_G_SETSCREEN_BACK 0x117c8u
+#define RET_MENU_P_SETSCREEN_PHYS 0x11808u
+#define RET_MENU_P_TENS_CRAWCIN   0x1182eu
+#define RET_MENU_P_TENS_CCONIS    0x11838u
+#define RET_MENU_P_TENS_CNECIN    0x11846u
+#define RET_MENU_P_UNITS_CRAWCIN  0x1185cu
+#define RET_MENU_P_UNITS_CCONIS   0x11866u
+#define RET_MENU_P_UNITS_CNECIN   0x11874u
+#define RET_MENU_P_SETSCREEN_BACK 0x1191au
+#define RET_DEMO_LENGTH_RANDOM    0x11aeeu
+#define RET_DEMO_ROOM_RANDOM      0x11b38u
+#define RET_DEMO_VSYNC_A          0x11bd2u
+#define RET_DEMO_VSYNC_B          0x11bdcu
+#define RET_DEMO_VSYNC_C          0x11be6u
+#define RET_HALL_SETPALETTE       0x11cd0u
+
+#define RET_TOP_SETSCREEN_BACK    0x1022au
+#define RET_TOP_P1_OUT_PHYS       0x103dcu
+#define RET_TOP_P1_OUT_BACK       0x10436u
+#define RET_TOP_P2_OUT_PHYS       0x1045cu
+#define RET_TOP_P2_OUT_BACK       0x104b6u
+#define RET_TOP_TURN_PHYS         0x104fau
+#define RET_TOP_TURN_BACK         0x105dcu
+#define RET_TOP_AMBIENCE_RANDOM   0x10862u
+#define RET_TOP_ENDING_SETCOLOR   0x10930u
+#define RET_TOP_EXIT_SETCOLOR     0x10bdcu
+#define RET_TOP_GAME_OVER_PHYS    0x10d98u
+#define RET_TOP_GAME_OVER_BACK    0x10ddau
+
+/* ================================================================================================
  * Cores
  * ============================================================================================= */
 
@@ -442,10 +718,62 @@ void save_hiscores(uint8_t *image, uint32_t frame, CallerAddressRegisters *live)
 void hiscore_insert_and_save(uint8_t *image, uint32_t save_frame, CallerAddressRegisters *live);
 void hiscore_submit_players(uint8_t *image, uint32_t save_frame, CallerAddressRegisters *live);
 
+/* THE FIVE CALLS EVERY ANIMATED FRAME OF THIS PROGRAM MAKES, in the order it makes them: the two
+ * sprite patches lifted off the work buffer, the sprites drawn, the room shown, the patches put back,
+ * and the room's objects ticked. Three subsystems run it — the front end's attract sequence and both
+ * end-of-room animations, and `src/gameplay.c`'s death sequence — so it is spelt once, here, where
+ * three of the five are declared and `include/blit.h` (above) declares the other two. */
+static inline void animation_frame(uint8_t *image, CallerAddressRegisters saved) {
+    save_sprite_backgrounds(image, saved);
+    draw_sprites(image, saved);
+    present_room(image);
+    restore_sprite_backgrounds(image, saved);
+    objects_animate_and_draw(image);
+}
+
 void show_presentation(uint8_t *image, CallerAddressRegisters saved);
 void load_demo(uint8_t *image, CallerAddressRegisters saved);
 void load_presentation(uint8_t *image, CallerAddressRegisters saved);
 void load_level_pictures(uint8_t *image, CallerAddressRegisters saved);
 void load_hiscores(uint8_t *image, uint32_t frame, CallerAddressRegisters saved);
+
+/* --- the front end's state machine ---
+ * `frame` is the routine's OWN A6: both keep their locals in the image (see the section above), so
+ * a mid-entry slice and a whole run are handed the same base. */
+void demo_play_record(uint8_t *image, CallerAddressRegisters saved);
+void demo_replay_from_record(uint8_t *image, uint32_t frame, CallerAddressRegisters saved);
+void menu_attract_sequence(uint8_t *image, uint32_t frame, CallerAddressRegisters saved);
+void menu_attract_slideshow(uint8_t *image, uint32_t frame, CallerAddressRegisters saved);
+void menu_attract_slideshow_room(uint8_t *image, uint32_t frame, CallerAddressRegisters saved);
+void menu_attract_title(uint8_t *image, uint32_t frame, CallerAddressRegisters saved);
+void menu_hall_of_fame(uint8_t *image, uint32_t frame, CallerAddressRegisters saved);
+void menu_draw(uint8_t *image, uint32_t frame, CallerAddressRegisters saved);
+int16_t menu_read_key_and_fold(uint8_t *image, uint32_t frame, CallerAddressRegisters saved);
+void menu_ask_player_count(uint8_t *image, uint32_t frame, CallerAddressRegisters saved);
+int16_t menu_read_player_count(uint8_t *image, uint32_t frame, CallerAddressRegisters saved);
+void menu_ask_practice_level(uint8_t *image, CallerAddressRegisters saved);
+void menu_read_level_tens(uint8_t *image, CallerAddressRegisters saved);
+void menu_read_level_units(uint8_t *image, uint32_t frame, CallerAddressRegisters saved);
+/* ...and the routine's opening, which threads ONE register file by pointer for `save_hiscores`'
+ * reason above: the submitter it starts with returns with A1 changed. */
+void title_menu_open(uint8_t *image, uint32_t frame, CallerAddressRegisters *live);
+
+/* --- `game_top_loop` @ 0x101e6, slice by slice ---
+ * The order they run in is `src/frontend.c`'s header comment for that section; the composition
+ * itself is read-verified, because it does not terminate. */
+void build_sprite_bank(uint8_t *image, CallerAddressRegisters saved);
+void game_top_boot(uint8_t *image, uint32_t frame, CallerAddressRegisters *live);
+void game_top_boot_tail(uint8_t *image, uint32_t frame, CallerAddressRegisters *live);
+void game_top_free_voice_buffer(uint8_t *image);
+void game_top_boot_arm(uint8_t *image, CallerAddressRegisters *live);
+void game_new_game(uint8_t *image);
+void game_turn_init(uint8_t *image);
+void game_player_change(uint8_t *image, uint32_t frame, CallerAddressRegisters saved);
+void game_room_setup(uint8_t *image, uint32_t frame, CallerAddressRegisters saved);
+void game_room_frame_tail(uint8_t *image, uint32_t frame, CallerAddressRegisters saved);
+void game_ending_sequence(uint8_t *image, uint32_t frame, CallerAddressRegisters saved);
+void game_room_exit(uint8_t *image, uint32_t frame, CallerAddressRegisters saved);
+void game_end_of_turn(uint8_t *image);
+void game_over_card(uint8_t *image, uint32_t frame, CallerAddressRegisters saved);
 
 #endif /* BG_FRONTEND_H */

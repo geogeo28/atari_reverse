@@ -42,16 +42,8 @@
 #undef MFDB_PLANES
 #include "os.h"
 
-/* Reading and writing the game's word globals. Every one of them is `n(a4)`, i.e. an absolute
- * address once a4 is fixed, so a named accessor pair is the whole abstraction this file needs. */
-static int16_t word_at(const uint8_t *image, uint32_t address) {
-    return (int16_t)be16(image + address);
-}
-
-static void set_word(uint8_t *image, uint32_t address, int16_t value) {
-    wr16(image + address, (uint16_t)value);
-}
-
+/* Reading and writing the game's word globals is `include/common.h`'s `word_at`/`set_word`; only
+ * the LONG reader below is this file's, since nothing else needs one. */
 static int32_t long_at(const uint8_t *image, uint32_t address) {
     return (int32_t)be32(image + address);
 }
@@ -845,12 +837,6 @@ void frame_drift_pulse(uint8_t *image) {
              (int16_t)(word_at(image, A_drift_interval) / DRIFT_INTERVAL_DIVISOR));
 }
 
-/* The workstation handle, re-read at every call site exactly as the original does: each VDI call
- * is `move.w -7212(a4),-(a7)` in its own right rather than a value held in a register. */
-static int16_t vdi_handle(const uint8_t *image) {
-    return (int16_t)be16(image + A_vdi_handle);
-}
-
 /* ================================================================================================
  * The front-end poll — the slice `[0x1233a, 0x12434)`
  *
@@ -862,9 +848,14 @@ static int16_t vdi_handle(const uint8_t *image) {
 /* `while (Cconis()) Crawcin();` — the idiom that appears twice, once before the read and once
  * inside the pause. Every key already queued is thrown away, so a held key cannot run the game a
  * frame per keystroke. The `Crawcin` cannot refuse: nothing reaches it unless `Cconis` has just
- * said a key is waiting. */
-static void drain_console_queue(uint8_t *image, uint32_t cconis_return, uint32_t crawcin_return,
-                                CallerAddressRegisters saved) {
+ * said a key is waiting.
+ *
+ * EXPORTED, because the front end's menu opens every one of its four key reads with it — the
+ * `menu_draw`, `menu_ask_player_count`, `menu_ask_practice_level` and `menu_read_level_tens` slices
+ * of `src/frontend.c` each end with one. It is declared in `include/gameplay.h` under this project's
+ * rule that a subsystem's own header is where another subsystem reaches it. */
+void drain_console_queue(uint8_t *image, uint32_t cconis_return, uint32_t crawcin_return,
+                         CallerAddressRegisters saved) {
     for (;;) {
         uint32_t key;
 
@@ -954,40 +945,17 @@ int16_t frame_poll_input(uint8_t *image, CallerAddressRegisters saved) {
  * handover.
  * ============================================================================================= */
 
-/* Where one player's turn is parked. The original writes the two sets as two straight-line blocks
- * that differ ONLY in these addresses, so the store list is written once below and driven twice.
- * `score` and `max_room` are `include/frontend.h`'s: the hall-of-fame submitter owns them. */
-typedef struct {
-    uint32_t max_room;          /* word */
-    uint32_t lives;             /* LONG */
-    uint32_t score;             /* LONG */
-    uint32_t bonus_bar;         /* word */
-    uint32_t grid_col;          /* word */
-    uint32_t grid_row;          /* word */
-    uint32_t deaths_in_room;    /* word */
-    uint32_t entry_dir;         /* word */
-    uint32_t world_block;       /* the WORLD_BLOCK_WORDS-word block `save_world` walks */
-} PlayerTurnSlots;
-
-static const PlayerTurnSlots PLAYER_ONE_SLOTS = {
+/* Where one player's turn is parked. `include/gameplay.h` freezes the record and declares the two
+ * instances; they are DEFINED here, in the subsystem that owns the state, and `src/frontend.c`'s
+ * player-change slice reads the same two to put a turn back. */
+const PlayerTurnSlots PLAYER_ONE_SLOTS = {
     A_p1_max_room, A_p1_lives, A_p1_score, A_p1_bonus_bar, A_p1_grid_col, A_p1_grid_row,
     A_p1_deaths_in_room, A_p1_entry_dir, A_p1_world_block,
 };
-static const PlayerTurnSlots PLAYER_TWO_SLOTS = {
+const PlayerTurnSlots PLAYER_TWO_SLOTS = {
     A_p2_max_room, A_p2_lives, A_p2_score, A_p2_bonus_bar, A_p2_grid_col, A_p2_grid_row,
     A_p2_deaths_in_room, A_p2_entry_dir, A_p2_world_block,
 };
-
-/* The five calls every animation frame of the sequence makes, in the order it makes them: the two
- * sprites lifted off the visible screen, redrawn, the room shown, the sprites' backgrounds put
- * back, and the room's objects ticked. */
-static void death_animation_frame(uint8_t *image, CallerAddressRegisters saved) {
-    save_sprite_backgrounds(image, saved);
-    draw_sprites(image, saved);
-    present_room(image);
-    restore_sprite_backgrounds(image, saved);
-    objects_animate_and_draw(image);
-}
 
 /* `Random()` scaled into DEATH_HOLD's 2..6 through the software float package, which is how the
  * original does it: the 24-bit answer is widened to a double, divided by a constant just above
@@ -1009,8 +977,11 @@ static int16_t random_hold_frames(uint8_t *image, CallerAddressRegisters saved) 
  * The original builds a WORD index — `muls.w #$2` on the direction, and `add.w #$1` again for the
  * y — scales it with `asl.l #1` and adds it with `adda.w`. So the byte offset is
  * `direction * ROOM_ENTRY_STRIDE + field`, TRUNCATED TO A WORD before it reaches the row pointer:
- * a direction big enough to overflow wraps back into the table rather than reaching past it. */
-static int16_t room_entry_coordinate(const uint8_t *image, int16_t direction, unsigned field) {
+ * a direction big enough to overflow wraps back into the table rather than reaching past it.
+ *
+ * EXPORTED, because the front end's room setup places the bubble through the same table and the
+ * same three constants (`src/frontend.c`'s `game_room_setup`). */
+int16_t room_entry_coordinate(const uint8_t *image, int16_t direction, unsigned field) {
     uint32_t row = addr_add(A_room_table + ROOM_ENTRY_POINTS,
                             (uint32_t)(word_at(image, A_room_number) * (int32_t)ROOM_STRIDE));
     int16_t offset = (int16_t)(direction * (int16_t)ROOM_ENTRY_STRIDE + (int16_t)field);
@@ -1065,7 +1036,7 @@ void frame_death_sequence(uint8_t *image, uint32_t hud_frame, CallerAddressRegis
     while (word_at(image, A_ghost_tile) > (int16_t)GHOST_TILES_PER_FACING - 1) {
         set_word(image, A_ghost_tile,
                  (int16_t)(word_at(image, A_ghost_tile) - (int16_t)GHOST_TILES_PER_FACING));
-        death_animation_frame(image, saved);
+        animation_frame(image, saved);
     }
 
     sound_release_voice(image, BLOW_VOICE);
@@ -1084,14 +1055,14 @@ void frame_death_sequence(uint8_t *image, uint32_t hud_frame, CallerAddressRegis
             set_word(image, A_ghost_tile, (int16_t)(word_at(image, A_ghost_tile) + 1));
         }
         set_word(image, A_seq_counter, (int16_t)(word_at(image, A_seq_counter) - 1));
-        death_animation_frame(image, saved);
+        animation_frame(image, saved);
     }
 
     /* 3. Ten frames of the last cell, standing still. */
     for (set_word(image, A_seq_counter, 0);
          word_at(image, A_seq_counter) < (int16_t)DEATH_PAUSE_FRAMES;
          set_word(image, A_seq_counter, (int16_t)(word_at(image, A_seq_counter) + 1)))
-        death_animation_frame(image, saved);
+        animation_frame(image, saved);
 
     respawn_bubble_at_entry_point(image);
     wr32(image + A_lives, (uint32_t)(long_at(image, A_lives) - 1));

@@ -2319,8 +2319,19 @@ one file compiled into both sides and each side owns a different ledger (Phase 1
 
 The **same one staged keystroke** `Bconstat`/`Bconin`/`Crawio` serve, through GEMDOS's door —
 deliberately one model and not a second, disconnected one, so a program that polls with `Cconis` and
-reads with `Cnecin` (Bubble Ghost's idiom everywhere) sees exactly the key a case staged, once.
-GEMDOS's console calls take no device argument, so there is no device to refuse.
+reads with `Cnecin` sees exactly the key a case staged, once. GEMDOS's console calls take no device
+argument, so there is no device to refuse.
+
+**WHAT ONE MODEL COSTS, measured against Bubble Ghost's own idiom** (this paragraph used to cite that
+idiom as the thing the shared queue serves, and it is the thing it cannot). Every key that program
+reads it reads as `while (Cconis()) Crawcin(); c = Cnecin();` — a FLUSH and then a blocking read — so
+the flush empties the very queue the read then needs, and no `console_keys` staging can put a key on
+the far side of it: on a real machine the key arrives AFTER the flush, which is a MOMENT and not an
+order. A run entered before such a flush cannot reach the read; a case has to enter AT the `Cnecin`
+with its own key staged, and `projects/bubbleghost/recreate/STATUS.md`'s front-end section is what
+that costs in slices. **Closing it means a second staged stream the flush does not drain**, of
+`os_console_take_key`'s shape — the same second stream `Cauxin` below asks for, which is why the two
+are worth doing together.
 
 * `Cconis` only LOOKS: `-1L` if a key is staged, 0 if not, never consuming and **never refusing**, so
   a poll loop may run it as often as it likes. Same relation to the pair below as `Bconstat` has to

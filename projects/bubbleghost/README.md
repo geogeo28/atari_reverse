@@ -4,11 +4,15 @@ A ghost blows a fragile bubble through the rooms of a castle, past candles, fans
 title picture signs it *by C.Andreani* over *Copyright 1988, ACCOLADE INC. TM*. One 61 KB
 `GHOST.PRG` plus six data files on a single-sided floppy, written in **Alcyon/DRI C, small model**.
 
-**Status: fully named, reconstruction not started.** The shipped executable was decrypted
-statically, the copy protection is understood and passes under Hatari, the graphics and speech are
-decoded out of the data files, and the whole program has been read — **132 of its 134 functions
-named, 181 globals, 123 plate comments** in `names.txt`. `recreate/` exists, with the differential
-harness bound and its image model pinned by 23 tests, but **no game function is ported yet**.
+**Status: fully named, and every named function reconstructed and verified.** The shipped
+executable was decrypted statically, the copy protection is understood and passes under Hatari, the
+graphics and speech are decoded out of the data files, and the whole program has been read —
+**132 of its 134 functions named, 203 globals, 161 plate comments** in `names.txt`. `recreate/`
+holds the C reconstruction: **all 132 of those functions are green under the differential harness**,
+byte-for-byte against the original 68000 code, across **1,895 tests**.
+[`recreate/STATUS.md`](recreate/STATUS.md) is the per-function ledger and says what the harness can
+and cannot see; what is left is `GHOST.LOA` — a second program with no address in this one — and
+five small regions of the two top-level routines that no slice may include.
 
 > No game data is in this repository. `bin/` and `out/` are gitignored; bring your own disk.
 
@@ -114,35 +118,36 @@ its own wrapper inside Hatari.
 
 ## What is next
 
-The naming loop is done: **132 of 134 functions, 181 globals, 123 plate comments**. Ghidra
-decompiled 123 of the 134; the 11 failures are all Alcyon C runtime, read out of the disassembly.
+The naming loop is done — **132 of 134 functions, 203 globals, 161 plate comments** — and so is the
+port: every one of those 132 is verified byte-for-byte against the original, in **1,895 tests**.
+Ghidra decompiled 123 of the 134; the 11 failures are all Alcyon C runtime, read out of the
+disassembly. [`recreate/README.md`](recreate/README.md) has the image model and the procedure;
+[`recreate/STATUS.md`](recreate/STATUS.md) has the ledger, the residuals and the kit's remaining
+model gaps.
 
-**The `recreate/` harness exists, and porting is the next step.** It is bound to this game by its
-`project.toml`, and the thing that had to be right first — the run-time image — is pinned by
-**23 tests**, one of which runs the program's **own crt0** and asserts the memory it produces
-equals the post-init fixture byte for byte. [`recreate/README.md`](recreate/README.md) has the
-image model; [`recreate/STATUS.md`](recreate/STATUS.md) has the per-function ledger and the kit's
-model gaps (`Cconis`/`Crawcin`/`Cnecin`, `Fseek`, BIOS `Bconout`, and a malloc heap base that
-currently lands inside this program). Port in this order:
+**What is left is three things, and none of them is a function of this program:**
 
-1. **The sound engine** — self-contained, no OS calls, highest value: a three-voice software
-   ADSR + LFO synthesiser for the YM2149 ticked at 200 Hz from Timer C, with **no music at all**
-   (no sequencer, no note stream, no tempo counter). Everything audible is a one-shot `0x8c`-byte
-   voice record — **11 fixed effects** (`snd_def_fx`, `0x201ca`) and **36 per-room tones**
-   (`snd_def_level`, `0x1f20a`) — triggered by `sound_play` (`0x142bc`); decode in
-   [`notes/sound_engine.md`](notes/sound_engine.md). Render them the way
-   [`projects/zynaps/tools/extract_audio.py`](../zynaps/tools/extract_audio.py) does: drive the
-   47 definitions under the oracle, log the `$ff8800`/`$ff8802` writes, feed
-   `projects/buggyboy/recreate/sound/ym2149.py`.
-2. **The blitters** — the raw `move.l` tile and screen copies (`0x131f0`..`0x13b1e`): no trap model needed, and the bulk of the game's cost.
-3. **The C library** — `c_malloc`, `c_ldiv`/`c_lmul`, `itoa_padded`, DRI software float.
+1. **`GHOST.LOA`** — the standalone MFP Timer A sample player, loaded as data and `jsr`ed. It is a
+   second program with no address in this one; the two game routines that load and arm it are
+   verified, and the LOA's own code is not. It programs a timer, busy-waits on a flag its own
+   interrupt handler sets, and arms the cartridge DAC — none of which the kit models.
+2. **A staged console stream the keyboard flush does not drain.** Every key this game reads it reads
+   as `while (Cconis()) Crawcin(); c = Cnecin();`, and the model's console is one queue the flush
+   empties — so no run can cross a flush into the blocking read behind it, and the whole front end
+   is verified as regions that each END at one. STATUS.md's "Model gaps" says what closing it needs.
+3. **A playable `.PRG`.** Everything the differential cannot see — the palette, the screen base, the
+   VDI's colour mapping, the font, `Vsync`, the text cards' timing — is invisible here by
+   construction, and the surface for all of it is an on-target run
+   ([`docs/on-target-execution.md`](../../docs/on-target-execution.md)). This project has no build
+   yet.
 
 The game is remarkably OS-friendly for 1987 — a **GEM application**: text, the bonus bar and every
 32×32 sprite blit go through the **VDI** (`trap #2`, `d0 = 0x73`), the input is the **mouse**
 (`vq_mouse` for position and facing, `vq_key_s` for the Shift-key blow), XBIOS carries the screen
 base and the palette, GEMDOS the files and the menu keys, there is no Line-A, and `$ffff8800` plus
-`$fffffa17` are the only hardware addresses in the image. So the port will be dominated by drawing
-code, not by hardware banging — and by teaching the kit the VDI. Everything the asset survey left
+`$fffffa17` are the only hardware addresses in the image. That is what the port turned out to be
+dominated by: drawing code rather than hardware banging, and teaching the kit the VDI — sixteen
+entry points, an ST raster and `vro_cpyfm`'s sixteen logic operations. Everything the asset survey left
 open is answered at the end of [`notes/assets_survey.md`](notes/assets_survey.md), with the bodies
 read in [`notes/frontend.md`](notes/frontend.md), [`notes/gameplay.md`](notes/gameplay.md) and
 [`notes/sound_engine.md`](notes/sound_engine.md).

@@ -282,9 +282,9 @@ harness._lib.g_frame_step_live_bubble.restype = ctypes.c_uint32
 
 # ================================================================================ staging helpers
 
-def word_pokes(pairs):
-    """One poke dict from `{address: signed word}`."""
-    return {address: abi.word(value) for address, value in pairs.items()}
+# `abi.word_pokes` is the one implementation now — this battery and `test_frontend.py` had a copy
+# each. Aliased rather than rewritten at 80-odd call sites.
+word_pokes = abi.word_pokes
 
 
 def screen_pokes(seed, extra=None):

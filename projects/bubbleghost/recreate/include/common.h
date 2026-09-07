@@ -58,4 +58,22 @@ static inline uint32_t longword_slot(uint32_t table, int16_t index) {
     return addr_add(table, muls_ext_w(index, (int32_t)LONG_BYTES));
 }
 
+/* A game WORD, read and written as the 68000 does: every one of this program's globals is a signed
+ * word reached through `a4`, and `move.w`/`ext.w` is what a core means by reading one — the SIGN is
+ * the game-specific half, which is why these are here rather than in the kit's `machine.h` beside
+ * `be16`/`wr16`. They were `src/gameplay.c`'s private pair; they moved when `src/frontend.c` became
+ * the second core to want them, which is the rule this header states above. */
+static inline int16_t word_at(const uint8_t *image, uint32_t address) {
+    return (int16_t)be16(image + address);
+}
+
+static inline void set_word(uint8_t *image, uint32_t address, int16_t value) {
+    wr16(image + address, (uint16_t)value);
+}
+
+/* One `move.w`: the width of every one of this program's globals, and the stride of every WORD table
+ * it indexes — the room grid's columns, a room's four entry points, the GEM parameter block's
+ * arrays. The 68000 reaches them with an `asl.l #1` or a `muls.w #2` on the index. */
+#define WORD_BYTES 2u
+
 #endif /* BUBBLEGHOST_COMMON_H */

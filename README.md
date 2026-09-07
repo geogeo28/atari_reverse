@@ -5,7 +5,8 @@ function, rewrite it as readable C **proven byte-for-byte against the original m
 run that C back on a 68000. The tooling and the [documentation](docs/README.md) are game-agnostic —
 point them at any GEMDOS `.PRG`. **Four games are solved with them** and a fifth is under way.
 Every picture below was **drawn by the reconstruction**, not screenshotted from the original —
-with the one exception marked where it appears: Bubble Ghost is still at the disassembly stage.
+with the two marked where they appear: Bubble Ghost's reconstruction is complete and verified, but
+it has no playable build yet, so its pictures come from the data files and the original binary.
 
 > **No game data is distributed here.** No `.PRG`, no data file, no disk image, no TOS ROM. Bring
 > your own copy; see [Credits & legal](#credits--legal).
@@ -64,11 +65,13 @@ Begins at the flux of the user's own floppy. **217 verified ranges · 4751 tests
 |:---:|:---:|
 | ![](assets/bubbleghost/title.png) | ![](assets/bubbleghost/menu-hatari.png) |
 
-**In progress — bootstrap only, no reconstruction yet.** Its `.PRG` is not crunched but *encrypted*,
+**Reconstructed and verified; no playable build yet.** Its `.PRG` is not crunched but *encrypted*,
 keyed by a CRC of the disk's protection track, so the check cannot be patched out; the 16-bit key
 fell to an exhaustive search and the program now decrypts **statically**, with the protection also
-passing under Hatari from an original disk. **134 functions, 38 named** · graphics and speech decoded
-out of the data files.
+passing under Hatari from an original disk. **132 of its 134 functions named and all 132 verified
+byte-for-byte** against the original, in 1,895 tests · graphics and speech decoded out of the data
+files. What is left is `GHOST.LOA` — a second program it loads and calls — and a build that runs on
+a real ST.
 → [`projects/bubbleghost/README.md`](projects/bubbleghost/README.md)
 
 ---
@@ -143,7 +146,7 @@ reverse/
 │   └── recreate_kit/         shared differential harness: PRG loader, Musashi oracle,
 │                             TOS traps — bound to a game by its recreate/project.toml
 └── projects/                 one directory per reversed game, scaffolded by new_project.sh
-    ├── bubbleghost/          names.txt · decomp.c · notes/ · tools/ (no recreate/ yet)
+    ├── bubbleghost/          names.txt · decomp.c · recreate/ · notes/ · tools/
     ├── buggyboy/             names.txt · decomp.c · recreate/ · remaster/ (the playable PRG) · docs/
     ├── joust/                names.txt · decomp.c · recreate/ (+ atari/ — the playable PRG)
     ├── wonderboy/            names.txt · decomp.c · recreate/ (+ atari/ — the PRG and its floppy) ·
@@ -226,8 +229,9 @@ no `SPRITES.CRU`, no `ZYNAPS17.PRG`, none of Zynaps' sixty-two data files, no `G
 Bubble Ghost's six data files, no flux or sector dump of any of these five games' floppies, no disk
 image of any of them, and no TOS ROM image. It holds analysis, documentation, tooling, and
 independently written C. The images in this repository's READMEs are output of that reconstruction —
-except Bubble Ghost's two, which have no reconstruction behind them yet and are its own artwork
-decoded from a data file and a screenshot of the original binary running in an emulator. All are
+except Bubble Ghost's two, which are its own artwork decoded from a data file and a screenshot of
+the original binary running in an emulator — that game is reconstructed but has no playable build to
+draw from yet. All are
 included to document what the work produces; reproducing any of them at all requires the game files
 this repository does not ship. Running any of it requires a copy of the game you already own.
 

@@ -87,6 +87,25 @@
 #define SND_DEF_WORDS     56u     /* pinned by test_sound.py::test_sound_play_every_definition */
 #define SND_DEF_BYTES     0x70u   /* = 2 * SND_DEF_WORDS; pinned by the same */
 
+/* THE FX TABLE'S INDICES, in one place. They used to be split between the headers of the two
+ * subsystems that trigger them, under two naming conventions — which `test_constants.py` cannot see,
+ * because it checks addresses and not table indices, so one entry could quietly acquire two names.
+ * `src/gameplay.c` still keeps its own two (`BLOW_SFX`, `POP_SFX`) as file-private constants. */
+#define SND_FX_LEVEL_CLEAR    0u  /* `pea -19792(a4)` — room 35 cleared, and the room exit's twin */
+#define SND_FX_ROOM_EXIT      1u  /* `pea -19680(a4)` */
+#define SND_FX_ROOM_WIPE      2u  /* `pea -19568(a4)` — the slide `room_wipe_in` is wrapped in */
+#define SND_FX_PUFF           3u  /* `pea -19456(a4)` — the ghost's breath */
+#define SND_FX_BUBBLE_POP     4u  /* `pea -19344(a4)` */
+#define SND_FX_BONUS_TALLY    8u  /* `pea -18896(a4)` — one note per bar column cashed in */
+
+/* One of the eleven `snd_def_fx` records, named by its index — which is what `../notes/frontend.md`
+ * §7 calls them and how every `pea -N(a4)` trigger site in the game reaches one. Here rather than in
+ * a caller because two subsystems trigger sounds: `src/frontend.c`'s front end and `src/blit.c`'s
+ * room wipe. */
+static inline uint32_t sound_fx_definition(uint16_t index) {
+    return addr_add(A_snd_def_fx, index * SND_DEF_BYTES);
+}
+
 /* ---- header ---- */
 #define SND_VC_DURATION        0x00u /* w: 200 Hz ticks left; 0 = idle. pinned by test_isr_* */
 #define SND_VC_TONE_PERIOD     0x02u /* w: base 12-bit tone period; <0 = this channel's tone is off.
