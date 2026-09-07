@@ -32,6 +32,10 @@
  * GHOST.DAT bank. Tile n is `dat_bank[n / TILES_PER_BANK] + (n % TILES_PER_BANK) * TILE_BYTES`. */
 #define TILE_PIXELS             32u     /* rows per tile, and its width in pixels */
 #define TILE_ROW_BYTES          16u     /* 4 x `move.l (a3)+,(a2)+`: 32 px x 4 planes */
+#define TILE_ROW_DEST_STEP_BYTES (SCREEN_ROW_BYTES - TILE_ROW_BYTES)
+                                        /* 144 = the tile blit's own `adda.w #$90,a2`: what the
+                                         * destination still needs once the row's four copies have
+                                         * carried it TILE_ROW_BYTES along */
 #define TILE_BYTES              512u    /* `muls.w #$200`: TILE_PIXELS x TILE_ROW_BYTES */
 #define TILE_ROW_SCREEN_BYTES   0x1400u /* `muls.w #$1400`: TILE_PIXELS screen rows = 5,120 bytes.
                                          * Also exactly what `present_hud_row` copies */

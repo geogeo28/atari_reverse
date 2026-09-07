@@ -20,30 +20,59 @@
 #include "machine.h"
 
 #include "blit.h"
-#include "common.h"     /* LONG_BYTES, muls_ext_w and the ascending copy every loop here is */
+#include "common.h"     /* LONG_BYTES, muls_ext_w, and the copy run every loop here is built of:
+                         * copy_one_longword, UNROLLED_RUN and copy_longs_ascending */
 #include "gameplay.h"   /* the object and room records these routines draw FROM */
 #include "sound.h"      /* the three key-offs and the trigger `room_wipe_in` is wrapped in */
 
+/* One `move.l (a3),(a2) / subq #4,a3 / subq #4,a2`. The copy comes FIRST and the two steps after
+ * it, which is the ascending step's own shape mirrored — and it is what keeps each copy addressing
+ * through a cursor rather than through the previous one's displacement. Written the other way round
+ * (step, then copy) GCC spends `lea -4(a3),a1 / lea -4(a2),a0 / move.l -4(a3),-4(a2)` — 44 cycles a
+ * longword against this shape's 36 — which gives back most of what the run came here for. */
+static inline void copy_one_longword_descending(const uint8_t **from, uint8_t **to) {
+    wr32(*to, be32(*from));
+    *from -= LONG_BYTES;
+    *to -= LONG_BYTES;
+    CURSOR_BARRIER(*from);
+    CURSOR_BARRIER(*to);
+}
+
 /* ...and the `move.l (a3),(a2) / subq.w #4,a3 / subq.w #4,a2` run `room_wipe_in` uses instead:
  * both cursors start at the LAST longword and walk down, which is what makes a move onto a span
- * overlapping four scanlines further on come out right. */
+ * overlapping four scanlines further on come out right. The three instructions are the original's
+ * own; what this port saves is its `dbf`, amortised over COPY_RUN_UNROLL copies instead of paid per
+ * longword. Why the cursors are barriered and the block spelt out is `include/common.h`'s. */
 static void copy_longs_descending(uint8_t *image, uint32_t src, uint32_t dst, uint32_t longs) {
-    for (uint32_t i = 0; i < longs; i++) {
-        wr32(image + dst, be32(image + src));
-        src = addr_add(src, -LONG_BYTES);
-        dst = addr_add(dst, -LONG_BYTES);
-    }
+    const uint8_t *from = image + src;
+    uint8_t *to = image + dst;
+
+    UNROLLED_RUN(longs, copy_one_longword_descending(&from, &to));
 }
 
 /* THE TILE BLIT, and it is the same instructions in all four routines that draw one: 32 passes of
  * four `move.l`s — one 32-pixel four-plane row — with the source running on and the destination
- * stepping to the next scanline (`adda.w #$90` after the four auto-increments). */
+ * stepping to the next scanline (`adda.w #$90` after the four auto-increments). The four are spelt
+ * out rather than run through `copy_longs_ascending`, because a run of four is all loop control:
+ * this is the whole of the row, and the loop closes around the row and not around a longword. The
+ * row count is a WORD, which is what the original counts rows in (`move.w #$1f,d0`) and what makes
+ * the close a `subq.w` (4 cycles) rather than a `subq.l` (8). It does NOT buy the original's `dbf`:
+ * GCC 16.1 emits no `dbf` anywhere in this object, so the close is 14 cycles against its 10. */
 static void blit_tile_32x32(uint8_t *image, uint32_t src, uint32_t dst) {
-    for (unsigned row = 0; row < TILE_PIXELS; row++) {
-        copy_longs_ascending(image, src, dst, TILE_ROW_BYTES / LONG_BYTES);
-        src = addr_add(src, TILE_ROW_BYTES);
-        dst = addr_add(dst, SCREEN_ROW_BYTES);
-    }
+    const uint8_t *from = image + src;
+    uint8_t *to = image + dst;
+    uint16_t rows = TILE_PIXELS;
+
+    _Static_assert(TILE_ROW_BYTES == 4 * LONG_BYTES, "a tile row is the original's four `move.l`s");
+    COUNT_BARRIER(rows);
+    do {
+        copy_one_longword(&from, &to);
+        copy_one_longword(&from, &to);
+        copy_one_longword(&from, &to);
+        copy_one_longword(&from, &to);
+        to += TILE_ROW_DEST_STEP_BYTES;
+        CURSOR_BARRIER(to);
+    } while (--rows != 0);
 }
 
 static uint32_t screen_back(const uint8_t *image) { return be32(image + A_screen_back); }
@@ -67,14 +96,22 @@ static uint32_t tile_source(const uint8_t *image, int16_t tile) {
  * what distinguishes them is which band of the screen the frame loop has just changed.
  * ============================================================================================= */
 
+/* One `move.l #$0,(a3)+` — `clear_physical_screen`'s whole body, and this file's only fill. GCC
+ * spells it `clr.l (a0)+`, which the 68000 reads before it writes: 20 cycles, the same as the
+ * original's own `move.l #$0,(a3)+` and 8 more than a zero held in a register would cost. Parity
+ * with the original is the target and this is a cold path, so the register is not worth the read. */
+static inline void store_zero_longword(uint8_t **to) {
+    wr32(*to, 0);
+    *to += LONG_BYTES;
+    CURSOR_BARRIER(*to);
+}
+
 /* clear_physical_screen @ 0x10efe — the visible screen only, and only the 192 rows a picture
  * covers. Called before the presentation and each text card. */
 void clear_physical_screen(uint8_t *image) {
-    uint32_t dst = screen_phys(image);
-    for (uint32_t i = 0; i < CLEARED_SCREEN_BYTES / LONG_BYTES; i++) {
-        wr32(image + dst, 0);
-        dst = addr_add(dst, LONG_BYTES);
-    }
+    uint8_t *to = image + screen_phys(image);
+
+    UNROLLED_RUN(CLEARED_SCREEN_BYTES / LONG_BYTES, store_zero_longword(&to));
 }
 
 /* present_room @ 0x13286 — the whole room area, work buffer to screen, once per frame. */
