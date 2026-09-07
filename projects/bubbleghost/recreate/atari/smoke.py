@@ -52,6 +52,7 @@ Every other check must stay green under every control: one that only required "s
 would pass on a build that crashed.
 """
 import re
+import shutil
 import struct
 import sys
 import time
@@ -117,6 +118,8 @@ A_screen_phys = scrape_define(BLIT_H, "A_screen_phys")
 A_screen_back = scrape_define(BLIT_H, "A_screen_back")
 SCREEN_BYTES = scrape_define(BLIT_H, "SCREEN_BYTES")
 A_text_menu_game = scrape_define(FRONTEND_H, "A_text_menu_game")
+PICTURE_BYTES = scrape_define(FRONTEND_H, "PICTURE_BYTES")   # ...and the 32-byte palette behind it
+PALETTE_BYTES = scrape_define(FRONTEND_H, "PALETTE_BYTES")
 IMAGE_BYTES = scrape_define(SHIM_OS_H, "BG_TARGET_IMAGE_BYTES")
 SCREEN_BASE = scrape_define(SHIM_OS_H, "BG_TARGET_SCREEN_BASE")
 HEAP_BASE = scrape_define(SHIM_OS_H, "BG_HEAP_BASE")
@@ -129,6 +132,22 @@ IMAGE_ALIGN = scrape_define(HERE / "bubble_main.c", "IMAGE_ALIGN")
 # upper case". The instruction before it is the last of `title_menu_open`, which is exactly where
 # our own `bg_anchor` stands.
 ORIGINAL_ANCHOR_PC = 0x116C4
+
+# ...AND ITS VOICE ANCHOR, the second address in that class: `game_top_loop`'s `jsr play_voice`
+# @ 0x10232, the instruction that hands control to GHOST.LOA. `show_presentation` has already loaded
+# the presentation's palette three calls earlier, so the chip must be showing GHOST.PRE's colours
+# HERE — which is exactly what the XBIOS door was built for and what a reissue made after this call
+# returned could not do. Ours is `enter_the_voice_player`, whose address the anchor table carries.
+ORIGINAL_VOICE_PC = 0x10232
+
+# ...and the first frame of a room, for the `game` mode: `game_top_loop`'s `jsr game_frame_update`
+# @ 0x1078e, the instruction the room loop's first pass reaches. Ours is `game_frame_update` itself.
+ORIGINAL_ROOM_FRAME_PC = 0x1078E
+
+# THE MENU'S OWN KEYS, as ST scancodes. `menu_read_key_and_fold` folds to upper case, so a lower-case
+# G is the same key (../src/frontend.c); the digit chooses the player count.
+KEY_G = 0x22
+KEY_ONE = 0x02
 
 RUN_VBLS = 12000                 # ~240 s of emulated time: a hard cap, not a schedule. The original
                                  # is the slower side and reaches its anchor in about 1,600, so the
@@ -145,6 +164,21 @@ FAULT_MARKERS = ("Bus Error", "Address Error", "CPU halted", "Failed to load", "
 TOS_ROM_PC = re.compile(r"PC=\$(e0|fc)[0-9a-f]{4}\b")
 
 # ---- what the run writes back, and what the debugger takes ------------------------------------
+# BASE.BIN is `bubble_main.c`'s `enum bg_anchor_slot`, one longword per slot: three runtime
+# addresses to break on and one to read a counter out of. The two files agree by the COUNT being
+# asserted rather than by anyone counting, exactly as the record's fields do.
+ANCHOR_TITLE_HOLD = 0
+ANCHOR_VOICE_ENTRY = 1
+ANCHOR_ROOM_FRAME = 2
+ANCHOR_PLAY_TALLY = 3
+ANCHOR_IMAGE_BASE = 4
+ANCHOR_SLOTS = 5
+
+# ...and `bubble_main.c`'s `enum bg_play_tally_slot`, the two longwords ANCHOR_PLAY_TALLY points at.
+TALLY_MENU_OPENS = 0
+TALLY_GAME_FRAMES = 1
+TALLY_SLOTS = 2
+
 FILE_ANCHOR_BASE = "BASE.BIN"
 FILE_SCREEN_DUMP = "SCREEN.BIN"
 FILE_STATE_RECORD = "STATE.BIN"
@@ -256,11 +290,85 @@ def arm_the_anchor(session, anchor_pc, side):
     return files
 
 
+VOICE_SETTLE_VBLS = 2            # XBIOS Setpalette is DEFERRED: TOS loads the sixteen registers
+                                 # from its own vertical-blank handler, so a dump taken AT the
+                                 # breakpoint can read the palette of the frame before
+
+
+def arm_the_voice_anchor(session, voice_pc, side):
+    """Break where the speech starts and read the chip's sixteen colour registers there.
+
+    THE MOMENT IS THE POINT. `show_presentation` loads GHOST.PRE's palette and then hands control to
+    GHOST.LOA, a second program that plays the digitised voice for about a second and a half. While
+    the XBIOS group had no door, the shim could only reissue that palette at the composition
+    boundary AFTER the slice — so a person watched the presentation in the DESKTOP's colours for the
+    whole length of the speech, and no check in this file could see it.
+
+    The settle is two vertical blanks because Setpalette is deferred; the `savebin` of one byte at
+    the end is the marker the driver waits on, exactly as the anchor capture's is.
+    """
+    work = session.work
+    files = {"pens": work / f"{side}_voice_pens.bin", "done": work / f"{side}_voice_done.bin"}
+    for stale in files.values():
+        stale.unlink(missing_ok=True)
+    dump = action_file(
+        work, f"{side}_voice.txt",
+        f"savebin {files['pens']} ${HW_PALETTE_BASE:x} ${PALETTE_PENS * PEN_BYTES:x}",
+        f"savebin {files['done']} ${HW_SHIFTER_MODE:x} $1")
+    session.arm(f"b pc = ${voice_pc:x} :once :quiet "
+                f"{settle_chain(work, VOICE_SETTLE_VBLS, dump, f'{side}_voicewait%d.txt')}")
+    return files
+
+
+def collect_voice_capture(result, files):
+    result["voice_pens"] = files["pens"].read_bytes() if files["pens"].is_file() else None
+
+
+def presentation_palette():
+    """GHOST.PRE's own sixteen colour words: the 32 bytes that follow the picture in the file.
+
+    Read off the shipped data file rather than named here, because it is the GAME's palette and
+    `load_presentation` (../src/frontend.c) reads it from exactly this offset.
+    """
+    raw = (BIN / "GHOST.PRE").read_bytes()
+    tail = raw[PICTURE_BYTES:PICTURE_BYTES + PALETTE_BYTES]
+    if len(tail) != PALETTE_BYTES:
+        raise SystemExit(f"ERROR: {BIN / 'GHOST.PRE'} is {len(raw)} bytes and the palette is read "
+                         f"from {PICTURE_BYTES:#x} — there is nothing there to compare against")
+    return struct.unpack(f">{PALETTE_PENS}H", tail)
+
+
 def collect_capture(result, files):
     """Read back what the anchor's action file dumped, whatever of it landed."""
     result["shot"] = files["shot"]
     for name in ("pens", "rez", "vbase"):
         result[name] = files[name].read_bytes() if files[name].is_file() else None
+
+
+def await_the_anchor_table(session, result):
+    """Wait for BASE.BIN and unpack it, or fill in `result["problem"]` and answer None.
+
+    It is the FIRST thing the run writes, before anything that can crash, so a run that gets this
+    far can still be judged when it dies later — and a run that does not get this far has nothing
+    below it worth judging.
+    """
+    base_file = DISK / "c" / FILE_ANCHOR_BASE
+    if not await_file(session, base_file, "waiting for the shim to publish its anchor table",
+                      AWAIT_DEADLINE_SECONDS, POLL_SECONDS):
+        result["status"] = session.close()
+        result["problem"] = (f"{FILE_ANCHOR_BASE} never appeared — the shim did not reach the "
+                             f"first thing it does, so nothing below has anything to judge")
+        return None
+    raw = base_file.read_bytes()
+    if len(raw) != ANCHOR_SLOTS * 4:
+        result["status"] = session.close()
+        result["problem"] = (f"{FILE_ANCHOR_BASE} is {len(raw)} bytes and this file expects "
+                             f"{ANCHOR_SLOTS} slots ({ANCHOR_SLOTS * 4} bytes): bubble_main.c's "
+                             f"`enum bg_anchor_slot` and this file have diverged")
+        return None
+    anchors = struct.unpack(f">{ANCHOR_SLOTS}I", raw)
+    result["anchor_pc"] = anchors[ANCHOR_TITLE_HOLD]
+    return anchors
 
 
 def run_ours(mode, work):
@@ -278,17 +386,12 @@ def run_ours(mode, work):
                               work / "ours.fifo", work)
     result = {"trace": trace, "log": work / "ours.log", "mode": mode}
 
-    base_file = DISK / "c" / FILE_ANCHOR_BASE
-    if not await_file(session, base_file, "waiting for the shim to publish its anchor",
-                      AWAIT_DEADLINE_SECONDS, POLL_SECONDS):
-        result["status"] = session.close()
-        result["problem"] = (f"{FILE_ANCHOR_BASE} never appeared — the shim did not reach the "
-                             f"first thing it does, so nothing below has anything to judge")
+    anchors = await_the_anchor_table(session, result)
+    if anchors is None:
         return result
-    anchor_pc = struct.unpack(">I", base_file.read_bytes())[0]
-    result["anchor_pc"] = anchor_pc
 
-    files = arm_the_anchor(session, anchor_pc, "ours")
+    voice = arm_the_voice_anchor(session, anchors[ANCHOR_VOICE_ENTRY], "ours")
+    files = arm_the_anchor(session, anchors[ANCHOR_TITLE_HOLD], "ours")
     if not await_file(session, files["done"], "waiting for the anchor capture",
                       AWAIT_DEADLINE_SECONDS, POLL_SECONDS):
         result["problem"] = "the anchor breakpoint never fired"
@@ -299,6 +402,7 @@ def run_ours(mode, work):
     session.wait(3.0)          # let the emulator run on PAST Pterm: a vector left installed halts
     result["status"] = session.close()                                # the machine about a second on
     collect_capture(result, files)
+    collect_voice_capture(result, voice)
     result["record"] = read_record(record_file)
     screen = DISK / "c" / FILE_SCREEN_DUMP
     result["screen"] = screen.read_bytes() if screen.is_file() else None
@@ -340,10 +444,12 @@ def run_original(work):
         result["problem"] = "the original never decrypted itself into RAM"
         return result
 
+    voice = arm_the_voice_anchor(session, base - LOAD_BASE + ORIGINAL_VOICE_PC, "orig")
     files = arm_the_anchor(session, base - LOAD_BASE + ORIGINAL_ANCHOR_PC, "orig")
     reached = await_file(session, files["done"], "waiting for the original to draw its menu",
                          AWAIT_DEADLINE_SECONDS, POLL_SECONDS)
     result["anchor_seconds"] = time.monotonic() - session.started
+    collect_voice_capture(result, voice)
     if not reached:
         result["problem"] = (f"the original never reached its menu anchor "
                             f"({ORIGINAL_ANCHOR_PC:#x} at load base {base:#x})")
@@ -633,6 +739,39 @@ def gemdos_file_calls(trace_path, drop_names=()):
     return calls
 
 
+def check_the_voice_palette(ours, original):
+    """HARDWARE-STATE VECTOR, at the moment the speech starts rather than at the menu.
+
+    The defect this exists for was reported by a person, not by a check: the presentation picture
+    was in the DESKTOP's colours for the whole length of "Welcome to Bubble Ghost". The cause was
+    that the XBIOS group had no door, so `show_presentation`'s Setpalette was swallowed inside a
+    verified core and `bubble_main.c` could only reissue it at the composition boundary AFTER the
+    slice that runs the voice. Nothing in this file could see it: the menu anchor is seconds later,
+    by which time the reissue has happened.
+
+    Three claims, and the third is what makes the first two mean something: the pens on the chip are
+    GHOST.PRE's own sixteen colour words, they are the same on both sides, and the ORIGINAL's are
+    that palette too — so a green here is a comparison against the shipped game and not against a
+    number this file believes.
+    """
+    problems = []
+    expected = presentation_palette()
+    for side, run in (("ours", ours), ("the original", original)):
+        raw = run.get("voice_pens")
+        if raw is None:
+            problems.append(f"{side}: the chip was never read at the voice anchor — the breakpoint "
+                            f"did not fire, so this check has nothing to judge")
+            continue
+        pens = struct.unpack(f">{PALETTE_PENS}H", raw)
+        wrong = [(pen, mine & SHIFTER_PEN_MASK, want & SHIFTER_PEN_MASK)
+                 for pen, (mine, want) in enumerate(zip(pens, expected))
+                 if (mine ^ want) & SHIFTER_PEN_MASK]
+        for pen, mine, want in wrong:
+            problems.append(f"{side}: pen {pen} is {mine:03x} when the speech starts and "
+                            f"GHOST.PRE's is {want:03x}")
+    return problems
+
+
 def check_the_trap_ledger(ours, original):
     """The GEMDOS calls the game makes, ours against the original's, in order AND in number.
 
@@ -762,6 +901,7 @@ CHECK_RECORD = "memory (the program's own record)"
 CHECK_FRAMEBUFFER = "memory (the displayed framebuffer, against the original's)"
 CHECK_LEDGER = "trap ledger"
 CHECK_HARDWARE = "hardware-state vector (the pens, $ff8260, the video base)"
+CHECK_VOICE_PALETTE = "hardware-state vector (the pens when the speech starts)"
 CHECK_NOT_BLANK = "rendered pixels (neither capture is a photograph of nothing)"
 CHECK_PIXELS = "rendered pixels (the two captures, byte for byte)"
 
@@ -772,6 +912,7 @@ CHECKS = {
     CHECK_FRAMEBUFFER: check_the_framebuffer,
     CHECK_LEDGER: check_the_trap_ledger,
     CHECK_HARDWARE: check_the_hardware_state,
+    CHECK_VOICE_PALETTE: check_the_voice_palette,
     CHECK_NOT_BLANK: check_neither_capture_is_blank,
     CHECK_PIXELS: check_the_rendered_pixels,
 }
@@ -905,13 +1046,302 @@ def run_the_floppy():
     return 0 if not problems else 1
 
 
+# ================================================================================================
+# The `game` mode — the G key, and the room behind it
+#
+# It is a run of its own for the floppy's reason: it shares no anchor with the title gate. It judges
+# the `play` .PRG, which has no hold and no photograph of its own — it composes the whole program
+# and runs until the window is closed — so what it does instead is DRIVE it: wait for the menu, send
+# the two keys a person sends, and watch the room loop turn.
+#
+# WHY IT EXISTS. A person reported that pressing G on the menu returned them to the desktop. Nothing
+# headless had ever pressed a key on this build: `smoke.py title` stops at the menu deliberately,
+# one instruction before the blocking read. This mode is that missing surface, and it is the whole
+# of what a machine with no mouse can say about the game — Bubble Ghost is PLAYED with the mouse,
+# and Hatari's control protocol has no mouse motion of any kind (atari/README.md's "Unpinned").
+# ================================================================================================
+MENU_DEADLINE_SECONDS = 120.0    # the boot is a real floppy-and-GEMDOS timeline on both sides
+ROOM_DEADLINE_SECONDS = 90.0
+GAME_KEY_RETRY_SECONDS = 2.5     # how long each resent key is given to land and be acted on
+GAME_FRAMES_REQUIRED = 10        # a room loop that TURNS, not one that was entered and stopped
+
+
+def read_play_tally(session, tally_address):
+    """The two longwords `bg_play_tally` holds, read out of the running machine."""
+    raw = session.savebin("tally.bin", tally_address, TALLY_SLOTS * 4)
+    return struct.unpack(f">{TALLY_SLOTS}I", raw)
+
+
+def await_play_tally(session, tally_address, slot, want, doing, deadline_seconds):
+    """Poll one tally until it reaches `want`. Answers the value it last read.
+
+    POLLING THE PROGRAM'S OWN COUNTER rather than waiting a fixed time is what tells a boot that is
+    still loading from a floppy apart from one that has finished: `TALLY_MENU_OPENS` moves when
+    `title_menu_open` returns, which is after its own console flush, so a key sent from here has a
+    program waiting for it.
+    """
+    deadline = time.monotonic() + deadline_seconds
+    value = 0
+    while time.monotonic() < deadline:
+        value = read_play_tally(session, tally_address)[slot]
+        if value >= want:
+            return value
+        session.require_alive(doing)
+        session.wait(POLL_SECONDS)
+    return value
+
+
+def arm_the_room_anchor(session, room_pc, side, screen_address):
+    """Break on a room's FIRST frame, dump the framebuffer THERE, and photograph four blanks later.
+
+    It is a deterministic moment on both sides and the strongest one this mode has: the room has
+    been composed and drawn, `game_room_frame_tail` has not run once, and the mouse — which is what
+    would otherwise make two runs diverge immediately — has not moved on either side, because
+    nothing headless can move it.
+
+    THE FRAMEBUFFER IS DUMPED AT THE BREAKPOINT AND THE PICTURE FOUR BLANKS LATER, and the split is
+    the whole reason this check means anything. Memory is exact at the instruction, so it needs no
+    settle; the DISPLAY surface is built scanline by scanline and does (docs/on-target-execution.md
+    class 8). Four blanks is four more frames of the room loop, and the ghost and the bubble are
+    ERASED AND REDRAWN every one of them — so a capture taken then catches whichever side of that
+    cycle the run happened to be on, and the two sides differed by exactly the ghost and the bubble
+    when the comparison was made off the late dump (measured, 556 of 32,000 bytes).
+    """
+    work = session.work
+    files = {"shot": work / f"{side}_room.png", "pens": work / f"{side}_room_pens.bin",
+             "screen": work / f"{side}_room_screen.bin", "done": work / f"{side}_room_done.bin"}
+    for stale in files.values():
+        stale.unlink(missing_ok=True)
+    shoot = action_file(
+        work, f"{side}_room.txt",
+        f"screenshot {files['shot']}",
+        f"savebin {files['pens']} ${HW_PALETTE_BASE:x} ${PALETTE_PENS * PEN_BYTES:x}",
+        f"savebin {files['done']} ${HW_SHIFTER_MODE:x} $1")
+    settle = settle_chain(work, ANCHOR_SETTLE_VBLS - 1, shoot, f"{side}_roomwait%d.txt")
+    entry = action_file(work, f"{side}_roomentry.txt",
+                        f"savebin {files['screen']} ${screen_address:x} ${SCREEN_BYTES:x}",
+                        f"b VBL > VBL :once :quiet {settle}")
+    session.arm(f"b pc = ${room_pc:x} :once :quiet {entry}")
+    return files
+
+
+def press_the_game_keys(session, room_is_open, deadline_seconds):
+    """Send `G` and then `1` over and over until the room opens. Answers whether it did.
+
+    BOTH KEYS ARE RESENT, and a single pass with a fixed gap is exactly what does not work —
+    measured, three failures to one success before the loop was written. Two things can eat a press
+    and neither is observable from here: `menu_ask_player_count` ENDS with a console flush
+    (`drain_console_queue`), so a `1` that arrives while the two prompt lines are still being drawn
+    is emptied by the program's own drain; and a `G` that arrives in the window between the anchor's
+    capture and the program reaching its `Cnecin` is simply not there when the read happens. Either
+    one leaves the run blocked for ever on a screen a check cannot tell from the other.
+
+    The PAIR is what makes the loop safe to repeat. On the menu, `G` opens the prompt and `1`
+    answers it; on the prompt, a stray `G` is a digit that is neither 1 nor 2 and the program asks
+    again; in the room, both are keys `frame_poll_input` does not act on. So every pass either makes
+    progress or changes nothing, whichever screen the program is on.
+    """
+    deadline = time.monotonic() + deadline_seconds
+    while time.monotonic() < deadline:
+        session.key(KEY_G)
+        session.wait(GAME_KEY_RETRY_SECONDS)      # ...for the prompt to draw AND run its flush
+        session.key(KEY_ONE)
+        session.wait(GAME_KEY_RETRY_SECONDS)
+        if not session.alive():
+            return False
+        if room_is_open():
+            return True
+    return False
+
+
+def run_the_game_ours(work):
+    """Boot the `play` build, wait for its menu, press G and 1, and watch the room loop turn."""
+    work.mkdir(parents=True, exist_ok=True)
+    for stale in (FILE_ANCHOR_BASE, FILE_SCREEN_DUMP, FILE_STATE_RECORD):
+        (DISK / "c" / stale).unlink(missing_ok=True)
+    trace = work / "ours.trace"
+    medium = ["--disk-a", str(DISK / "GHOST.ST"),
+              "--harddrive", str(DISK / "c"), "--auto", "C:\\BUBBLE.PRG"]
+    session = HeadlessSession(hatari_arguments(medium, trace), work / "ours.log",
+                              work / "ours.fifo", work)
+    result = {"trace": trace, "log": work / "ours.log", "mode": "game"}
+
+    anchors = await_the_anchor_table(session, result)
+    if anchors is None:
+        return result
+    if anchors[ANCHOR_ROOM_FRAME] == 0:
+        result["status"] = session.close()
+        result["problem"] = ("the .PRG under test composes no room loop — it is a `title` build, "
+                             "and this mode has nothing to drive. Run `bash atari/build.sh play`")
+        return result
+
+    tally = anchors[ANCHOR_PLAY_TALLY]
+    room = arm_the_room_anchor(session, anchors[ANCHOR_ROOM_FRAME], "ours",
+                               anchors[ANCHOR_IMAGE_BASE] + SCREEN_BASE)
+    if not await_play_tally(session, tally, TALLY_MENU_OPENS, 1,
+                            "waiting for the menu to be drawn", MENU_DEADLINE_SECONDS):
+        result["status"] = session.close()
+        result["problem"] = "the menu was never opened, so no key could be sent"
+        return result
+    press_the_game_keys(
+        session,
+        lambda: read_play_tally(session, tally)[TALLY_GAME_FRAMES] >= GAME_FRAMES_REQUIRED,
+        ROOM_DEADLINE_SECONDS)
+    result["alive"] = session.alive()
+    result["frames"] = read_play_tally(session, tally)[TALLY_GAME_FRAMES] if result["alive"] else 0
+    if room["done"].is_file():
+        result["room_pens"] = room["pens"].read_bytes()
+        result["screen"] = room["screen"].read_bytes()
+    result["shot"] = room["shot"]
+    result["status"] = session.close()
+    return result
+
+
+def run_the_game_original(work):
+    """The same two keys, on the shipped binary, judged at the same first-room-frame anchor."""
+    work.mkdir(parents=True, exist_ok=True)
+    trace = work / "orig.trace"
+    medium = ["--disk-a", str(ORIGINAL_STX), "--protect-floppy", "on",
+              "--harddrive", str(BIN), "--auto", ORIGINAL_PRG]
+    session = HeadlessSession(hatari_arguments(medium, trace), work / "orig.log",
+                              work / "orig.fifo", work)
+    result = {"trace": trace, "log": work / "orig.log"}
+
+    base = None
+    deadline = time.monotonic() + ORIGINAL_LOAD_DEADLINE_SECONDS
+    while time.monotonic() < deadline:
+        base = locate_by_signature(session.savebin("ram.bin", 0, MEMSIZE_MB * 0x100000),
+                                   ORIGINAL_PLAIN)
+        if base:
+            break
+        session.wait(ORIGINAL_LOAD_POLL_SECONDS)
+    result["load_base"] = base
+    if base is None:
+        result["status"] = session.close()
+        result["problem"] = "the original never decrypted itself into RAM"
+        return result
+
+    menu = arm_the_anchor(session, base - LOAD_BASE + ORIGINAL_ANCHOR_PC, "orig")
+    if not await_file(session, menu["done"], "waiting for the original to draw its menu",
+                      MENU_DEADLINE_SECONDS, POLL_SECONDS):
+        result["status"] = session.close()
+        result["problem"] = "the original never drew its menu, so no key could be sent"
+        return result
+    # ...AND ONLY NOW is there a screen base to dump from. `init_gem_and_screens` takes it off XBIOS
+    # long before the menu, but the plaintext this run breaks on exists from the moment the program
+    # decrypts itself — which is earlier still, so a read taken when the base was FOUND would be a
+    # read of whatever that longword held before the boot wrote it.
+    phys = struct.unpack(">I", session.savebin("phys.bin", base - LOAD_BASE + A_screen_phys, 4))[0]
+    result["screen_phys"] = phys
+    room = arm_the_room_anchor(session, base - LOAD_BASE + ORIGINAL_ROOM_FRAME_PC, "orig", phys)
+    if press_the_game_keys(session, room["done"].is_file, ROOM_DEADLINE_SECONDS):
+        result["room_pens"] = room["pens"].read_bytes()
+        result["screen"] = room["screen"].read_bytes()
+    result["alive"] = session.alive()
+    result["shot"] = room["shot"]
+    result["status"] = session.close()
+    return result
+
+
+def check_the_game_path(ours, original):
+    """The G key reached a running room loop, on a machine that faulted nowhere."""
+    problems = []
+    if ours.get("problem"):
+        problems.append(f"ours: {ours['problem']}")
+    if original.get("problem"):
+        problems.append(f"the original: {original['problem']}")
+    for side, run in (("ours", ours), ("the original", original)):
+        # ...only where the side got far enough for "gone" to MEAN something: a run that never
+        # reached its menu has already said so above, and this would repeat it as a second cause.
+        if not run.get("problem") and not run.get("alive", False):
+            problems.append(f"{side}: the program was gone before the run was stopped — it "
+                            f"terminated or the machine died, which is what a return to the "
+                            f"desktop looks like from here")
+        if run.get("status", 0) != 0:
+            problems.append(f"{side}: Hatari exited {run['status']}")
+        problems += [f"{side}: {line}" for line in faults(run["log"])]
+    frames = ours.get("frames", 0)
+    if frames < GAME_FRAMES_REQUIRED:
+        problems.append(f"the room loop ran {frames} frame(s) and this check needs "
+                        f"{GAME_FRAMES_REQUIRED}: pressing G did not reach a turning room loop")
+    return problems
+
+
+def check_the_room_state(ours, original):
+    """The chip and the framebuffer at the first frame of the room, ours against the original's."""
+    problems = []
+    for side, run in (("ours", ours), ("the original", original)):
+        if run.get("room_pens") is None:
+            problems.append(f"{side}: the first room frame was never reached, so there is nothing "
+                            f"to compare at it")
+    if problems:
+        return problems
+    mine = struct.unpack(f">{PALETTE_PENS}H", ours["room_pens"])
+    theirs = struct.unpack(f">{PALETTE_PENS}H", original["room_pens"])
+    for pen, (a, b) in enumerate(zip(mine, theirs)):
+        if (a ^ b) & SHIFTER_PEN_MASK:
+            problems.append(f"pen {pen} is {a & SHIFTER_PEN_MASK:03x} in our room and the "
+                            f"original's is {b & SHIFTER_PEN_MASK:03x}")
+    if ours.get("screen") and original.get("screen"):
+        differing = sum(1 for a, b in zip(ours["screen"], original["screen"]) if a != b)
+        if differing:
+            problems.append(f"{differing} of {SCREEN_BYTES} framebuffer bytes differ at the first "
+                            f"room frame")
+        elif not any(ours["screen"]):
+            problems.append("both room framebuffers are entirely zero, so their equality means "
+                            "nothing")
+    return problems
+
+
+CHECK_GAME_PATH = "exit status + log (the G key reaches a turning room loop)"
+CHECK_ROOM_STATE = "memory + hardware-state vector (the first room frame, against the original's)"
+
+
+def run_the_game():
+    # The `play` build by NAME, copied over the drive's BUBBLE.PRG exactly as run.sh does — so this
+    # mode judges the play .PRG whichever build ran last, rather than whatever the drive happens to
+    # be carrying.
+    play_prg = HERE / "build" / "BUBBLE-play.PRG"
+    if not play_prg.is_file():
+        raise SystemExit(f"ERROR: no {play_prg} — run `bash atari/build.sh play` first")
+    shutil.copy(play_prg, DISK / "c" / "BUBBLE.PRG")
+    if not (DISK / "GHOST.ST").is_file():
+        raise SystemExit(f"ERROR: no {DISK / 'GHOST.ST'} — run `bash atari/build.sh play` first")
+    if not ORIGINAL_STX.is_file():
+        raise SystemExit(f"ERROR: no {ORIGINAL_STX} — the original is half of this comparison")
+    work = OUT / "game"
+    ours = run_the_game_ours(work)
+    original = run_the_game_original(work)
+
+    checks = {CHECK_GAME_PATH: check_the_game_path,
+              CHECK_ROOM_STATE: check_the_room_state,
+              CHECK_NOT_BLANK: check_neither_capture_is_blank}
+    print(f"-- game on st / {TOS_ROM.name} at {MEMSIZE_MB} MB: G then 1, one player, "
+          f"the original at {original.get('load_base') or 0:#x}")
+    print(f"   ours ran {ours.get('frames', 0)} room frame(s) after the two keys")
+    failures = []
+    for name, check in sorted(checks.items()):
+        problems = check(ours, original)
+        print(f"   [{'red ' if problems else 'green'}] {name}   (must PASS)")
+        for problem in problems:
+            print(f"           {problem}")
+        if problems:
+            failures.append(name)
+    print("   the mouse is untouched on both sides: Hatari has no mouse-motion event, so this mode "
+          "judges the two keys and the room they open, not playing the game")
+    print("-- OK" if not failures else f"-- FAILED: {len(failures)} check(s)")
+    return 0 if not failures else 1
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "title"
-    if mode not in ("title", "floppy", *CONTROLS):
-        raise SystemExit(f"usage: smoke.py [title | {' | '.join(CONTROLS)} | floppy]")
+    if mode not in ("title", "floppy", "game", *CONTROLS):
+        raise SystemExit(f"usage: smoke.py [title | {' | '.join(CONTROLS)} | floppy | game]")
     require_gemdos_tos(TOS_ROM)
     if mode == "floppy":
         return run_the_floppy()
+    if mode == "game":
+        return run_the_game()
     for needed in (DISK / "c" / "BUBBLE.PRG", DISK / "GHOST.ST"):
         if not needed.is_file():
             raise SystemExit(f"ERROR: no {needed} — run `bash atari/build.sh {mode}` first")

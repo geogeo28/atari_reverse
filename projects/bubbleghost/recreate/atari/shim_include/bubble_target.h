@@ -16,15 +16,11 @@
 
 #include <stdint.h>
 
-/* ---- the image, and why its base is a pointer everything shares --------------------------------
- * The cores index a flat image at Ghidra addresses; on target that is one `.bss` array whose base
- * is rounded up to 256 at run time, because `image + OS_SCREEN_BASE` is handed to the shifter and
- * an STF's video base register has no low byte (docs/on-target-execution.md class 8).
- *
- * `bubble_main.c` owns the array and this pointer; `bubble_backend.c` reads it, and that is the
- * whole of why it is shared: the GEM parameter blocks hold IMAGE OFFSETS and the VDI needs machine
- * addresses, so the door that makes the `trap #2` is where an offset becomes an address. */
-extern uint8_t *bg_image_base;
+/* ---- the image base is NOT declared here -------------------------------------------------------
+ * `bg_image_base` is `os.h`'s, for this file's own rule: a name a DOOR keeps is declared in the
+ * header that keeps the door. Four of os.h's doors (the XBIOS video group) and the GEM door both
+ * turn an image offset into a machine address through it, so it is declared there and both C files
+ * reach it by including `os.h` — which they do already. */
 
 /* ---- bubble_main.c, for bubble_os.s ------------------------------------------------------------ */
 

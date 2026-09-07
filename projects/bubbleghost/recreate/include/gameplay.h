@@ -167,8 +167,8 @@
 #define KEY_SHIFT_CTRL_ONLY     4u      /* `cmpi.w #$4,-7684(a4)` @ 0x124aa */
 
 /* The ghost's colour while it is idle, and the colour the frame its breath runs out. Both go to
- * XBIOS `Setcolor(15, …)`, which the model no-ops — so the differential CANNOT see either
- * (STATUS.md's residual for this subsystem). */
+ * XBIOS `Setcolor(15, …)` through the kit's `os_setcolor` door: the call writes the shifter and no
+ * image byte, so the differential compares the ORDERED EVENT rather than a pixel. */
 #define GHOST_PEN               15u     /* `move.w #$f,-(a7)` @ 0x124f6 and @ 0x1254e */
 #define GHOST_COLOUR_IDLE       0x777u  /* @ 0x1254a */
 #define GHOST_COLOUR_SPENT      0x733u  /* @ 0x124f2 */

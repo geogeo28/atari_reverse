@@ -1128,14 +1128,29 @@ static void handle_trap(int vec) {
                              (uint16_t)m68k_read_memory_16(caller + 4));
             break;
         case 0x04:                                    /* Getrez -> low-res */
-        case 0x05: case 0x06: case 0x07:              /* Setscreen / Setpalette / Setcolor */
         case 0x19:                                    /* Ikbdws: serial write to the IKBD, no image effect */
+            break;
+        /* The video and colour group: no image effect, so each is an ORDERED EVENT and nothing else
+         * (os.h, "the XBIOS VIDEO AND COLOUR GROUP"). The arguments are read off the caller's stack
+         * above the function-number word, exactly as Giaccess's are. */
+        case 0x05:                                    /* Setscreen(log, phys, rez) */
+            event_log(OS_EVENT_SETSCREEN, m68k_read_memory_32(caller + 2));
+            break;
+        case 0x06:                                    /* Setpalette(table) */
+            event_log(OS_EVENT_SETPALETTE, m68k_read_memory_32(caller + 2));
+            break;
+        case 0x07:                                    /* Setcolor(index, colour) */
+            event_log(OS_EVENT_SETCOLOR,
+                      ((uint32_t)m68k_read_memory_16(caller + 2) << OS_SETCOLOR_INDEX_SHIFT)
+                      | (uint32_t)m68k_read_memory_16(caller + 4));
             break;
         case 0x20:                                    /* Dosound: writes the YM2149, no image effect */
             if (g_dosound_n < OS_DOSOUND_LOG_MAX)    /* log A0 (the command-list pointer) into the ledger */
                 g_dosound_arg[g_dosound_n++] = m68k_read_memory_32(arg1);
             break;
-        case 0x25: break;                             /* Vsync: waits for the VBL, no image effect */
+        case 0x25:                                    /* Vsync: waits for the VBL, no image effect */
+            event_log(OS_EVENT_VSYNC, 0);
+            break;
         default: modeled = 0; break;                  /* unknown */
         }
     } else if (vec == 2) {                            /* GEM: AES/VDI parameter-block calls */

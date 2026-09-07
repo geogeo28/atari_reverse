@@ -18,6 +18,7 @@
  *   os_malloc                     a bump arena inside the target image — see below
  *   os_pterm / os_super           the real traps, and `os_super` really changes privilege here
  *   os_random                     real XBIOS Random
+ *   the four XBIOS video doors    real Setscreen / Setpalette / Setcolor / Vsync
  *   os_vdi / os_aes               a real `trap #2`, with the parameter block TRANSLATED
  *   os_in_image                   the same arithmetic against the array that actually exists
  *   os_refused                    the kit's own -DOS_NO_REFUSAL_TALLY identity
@@ -34,14 +35,15 @@
  * routine. So the target answers a Logbase high enough for both buffers to be real, and the layout
  * below is where it comes from.
  *
- * THE OTHER XBIOS CALLS HAVE NO SEAM AT ALL, and that is this build's largest residual rather than
- * something this file can fix. `xbios_trap_call` swallows Setscreen, Setpalette, Setcolor and
- * Vsync as `return 0` — the model's no-op — so a target build cannot intercept them: they are
- * inside a verified core with no `os_*` call under them. `bubble_main.c` reissues the ones the
- * picture depends on at the composition boundary that follows the slice which would have made
- * them, which is LATER than the original makes them by the length of one slice; the README's
- * "Unpinned" section carries the cost, and closing it properly is a change to the CORES (a kit
- * door for the XBIOS group) and therefore to the differential, not to this directory.
+ * THE XBIOS VIDEO AND COLOUR GROUP NOW HAS A SEAM, and until it did it was this build's largest
+ * residual. `xbios_trap_call` (../src/frontend.c) used to swallow Setscreen, Setpalette, Setcolor
+ * and Vsync as the model's `return 0`, so nothing here could reach them and `bubble_main.c`
+ * reissued the ones the picture depends on at the composition boundary AFTER the slice that would
+ * have made them — a latency of one slice, which for the presentation is the whole length of the
+ * digitised voice, and two of the four were not reissued at all. The kit now gives the group four
+ * doors (`os_setscreen` / `os_setpalette` / `os_setcolor` / `os_vsync`), verified by the
+ * differential as ordered events; this file shadows them with the real traps, so the palette loads
+ * at the instant the core asks for it.
  */
 #ifndef BUBBLEGHOST_TARGET_OS_H
 #define BUBBLEGHOST_TARGET_OS_H
@@ -69,6 +71,10 @@
 #define os_pterm      os_model_pterm
 #define os_super      os_model_super
 #define os_random     os_model_random
+#define os_setscreen  os_model_setscreen
+#define os_setpalette os_model_setpalette
+#define os_setcolor   os_model_setcolor
+#define os_vsync      os_model_vsync
 #define os_ikbd_out   os_model_ikbd_out
 #define os_cconout    os_model_cconout
 #define os_cauxout    os_model_cauxout
@@ -93,6 +99,10 @@
 #undef os_pterm
 #undef os_super
 #undef os_random
+#undef os_setscreen
+#undef os_setpalette
+#undef os_setcolor
+#undef os_vsync
 #undef os_ikbd_out
 #undef os_cconout
 #undef os_cauxout
@@ -169,6 +179,16 @@ _Static_assert(BG_TARGET_SCREEN_BASE >= BG_SCREEN_WORLD_BELOW_LOGBASE,
 
 static inline int os_in_image(uint32_t addr, uint32_t count) {
     return addr <= BG_TARGET_IMAGE_BYTES && count <= BG_TARGET_IMAGE_BYTES - addr;
+}
+
+/* The array itself, which `bubble_main.c` allocates and rounds up to 256 at run time. It is
+ * declared HERE rather than in `bubble_target.h` because the doors below and the GEM door are what
+ * need it: every address a core hands through one of them is an IMAGE OFFSET, and this is what
+ * turns it into a machine address. */
+extern uint8_t *bg_image_base;
+
+static inline void *bg_machine_address(uint32_t image_address) {
+    return (void *)(bg_image_base + image_address);
 }
 
 /* ================================================================================================
@@ -390,6 +410,44 @@ static inline int os_super(uint32_t arg, uint32_t *out) {
     *out = (uint32_t)bg_leave_supervisor((void *)arg);
     return 1;
 }
+
+/* ================================================================================================
+ * The XBIOS video and colour group, made real
+ *
+ * These four are the whole reason the kit grew doors for them. Off target each is an ordered event
+ * and nothing else; here each is the trap it stands for, made AT the instant the core makes it —
+ * which is what a picture shown behind a second program playing a digitised voice needs, and what
+ * a reissue from the composition boundary after the slice cannot give.
+ *
+ * BOTH OF SETSCREEN'S BASES ARE IMAGE OFFSETS at every one of this program's call sites, so both
+ * are translated. XBIOS's `-1` ("leave that base where it is") is never passed by this game — the
+ * two call-site helpers in ../src/frontend.c always pass `screen_phys` and `screen_back` — and is
+ * NOT recognised here: it would be translated like any other offset. The resolution is passed
+ * through untouched; the game's own argument is 0 (ST low), which is the mode it has already
+ * refused to run outside of.
+ *
+ * `bg_image_base` IS 256-BYTE ALIGNED and both offsets are too (BG_TARGET_SCREEN_BASE above, and
+ * `screen_back` is that minus 32,000), so the physical base the shifter is handed is never
+ * truncated (docs/on-target-execution.md class 8).
+ * ============================================================================================= */
+static inline void os_setscreen(uint32_t log_base, uint32_t phys_base, int16_t resolution) {
+    Setscreen(bg_machine_address(log_base), bg_machine_address(phys_base), (short)resolution);
+}
+
+static inline void os_setpalette(uint32_t table) {
+    Setpalette(bg_machine_address(table));
+}
+
+/* XBIOS Setpalette is DEFERRED — it parks the block's address in TOS's `_colorptr` and TOS's own
+ * vertical-blank handler loads the sixteen registers at the next blank — so a Setcolor made
+ * immediately after one is overwritten a frame later. Both of this game's Setcolor sites are frames
+ * apart from any Setpalette, so nothing here waits; `bubble_main.c`'s pen-fault control does, and
+ * says why. */
+static inline void os_setcolor(int16_t index, int16_t colour) {
+    (void)Setcolor((short)index, (short)colour);
+}
+
+static inline void os_vsync(void) { Vsync(); }
 
 /* ================================================================================================
  * GEM: the real `trap #2`, and the pointers that have to be translated to reach it

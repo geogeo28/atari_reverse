@@ -342,14 +342,14 @@ void graf_mouse(uint8_t *image, int16_t mode, uint32_t mform, CallerAddressRegis
  * reproduces is the trampoline's three save slots plus what the model answers. A selector this
  * subsystem does not make refuses loudly rather than returning a plausible zero.
  *
- * EACH CALL GETS ITS OWN WRAPPER BELOW, and every wrapper names every argument the original pushes
- * even though the model reads none of them. All four write the shifter or report a machine fact and
- * so have no image effect at all (TRAP_MODEL.md, "the video and colour calls are modeled as
- * no-ops"), which means a wrong palette, a wrong screen base or a wrong resolution is invisible to
- * the differential and shows only on target (`docs/on-target-execution.md`). Dropping an argument
- * from the signature is how it would stop being part of the routine at all, and an on-target build
- * — whose trampoline really pushes them — is where that would surface as a crash rather than as a
- * diff. So they are carried and discarded here, once, rather than never written down. */
+ * EACH CALL GETS ITS OWN WRAPPER BELOW, and every wrapper names every argument the original pushes.
+ * The three that ANSWER a machine fact are here; the four that write the shifter or wait for it go
+ * through the kit's XBIOS doors (`os_setscreen`/`os_setpalette`/`os_setcolor`/`os_vsync`), which
+ * still have no image effect and record the call in the ordered OS event ledger — so a palette this
+ * program loads and one it drops are separable, and an on-target build makes the real trap AT the
+ * call rather than a slice later (tools/recreate_kit/include/os.h, "the XBIOS VIDEO AND COLOUR
+ * GROUP"). What the ledger cannot carry is Setscreen's physical base and resolution, so those stay
+ * arguments the model reads and discards. */
 static uint32_t xbios_trap_call(uint8_t *image, uint16_t selector, CallerAddressRegisters saved,
                                 uint32_t return_pc) {
     trap_save_registers(image, saved, return_pc);
@@ -357,10 +357,6 @@ static uint32_t xbios_trap_call(uint8_t *image, uint16_t selector, CallerAddress
     case XBIOS_LOGBASE:    return OS_SCREEN_BASE;
     case XBIOS_GETREZ:     return XBIOS_GETREZ_LOW_RES;
     case XBIOS_RANDOM:     return os_random(image);
-    case XBIOS_SETSCREEN:  return 0;
-    case XBIOS_SETPALETTE: return 0;
-    case XBIOS_SETCOLOR:   return 0;
-    case XBIOS_VSYNC:      return 0;
     default:               return (uint32_t)os_refused(0);
     }
 }
@@ -379,34 +375,32 @@ static uint32_t xbios_logbase(uint8_t *image, CallerAddressRegisters saved, uint
  * A resolution of -1 would mean "leave it"; this game always passes 0. */
 static void xbios_setscreen(uint8_t *image, uint32_t log_base, uint32_t phys_base,
                             int16_t resolution, CallerAddressRegisters saved, uint32_t return_pc) {
-    (void)log_base;
-    (void)phys_base;
-    (void)resolution;
-    xbios_trap_call(image, XBIOS_SETSCREEN, saved, return_pc);
+    trap_save_registers(image, saved, return_pc);
+    os_setscreen(log_base, phys_base, resolution);
 }
 
 /* Setpalette(palette) — sixteen words read off the tail of a picture file. */
 static void xbios_setpalette(uint8_t *image, uint32_t palette, CallerAddressRegisters saved,
                              uint32_t return_pc) {
-    (void)palette;
-    xbios_trap_call(image, XBIOS_SETPALETTE, saved, return_pc);
+    trap_save_registers(image, saved, return_pc);
+    os_setpalette(palette);
 }
 
 /* Setcolor(index, value) — one palette entry, which the two end-of-room animations force to white.
- * A no-op in the model like the rest of the colour group, so the trampoline's three save slots are
- * the whole of what a reconstruction reproduces. */
+ * Its ANSWER (the pen's previous colour) is discarded at both of the game's call sites, which is why
+ * the door is void. */
 static void xbios_setcolor(uint8_t *image, int16_t index, int16_t value,
                            CallerAddressRegisters saved, uint32_t return_pc) {
-    (void)index;
-    (void)value;
-    xbios_trap_call(image, XBIOS_SETCOLOR, saved, return_pc);
+    trap_save_registers(image, saved, return_pc);
+    os_setcolor(index, value);
 }
 
 /* Vsync() — takes no argument and answers nothing. It is the ONLY frame sync the front end makes,
  * three per slideshow frame, and it is off-image by definition: what a real machine spends waiting
  * for the raster is invisible to a differential (`docs/on-target-execution.md`). */
 static void xbios_vsync(uint8_t *image, CallerAddressRegisters saved, uint32_t return_pc) {
-    xbios_trap_call(image, XBIOS_VSYNC, saved, return_pc);
+    trap_save_registers(image, saved, return_pc);
+    os_vsync();
 }
 
 /* Random() — the only XBIOS call in this file whose ANSWER a routine uses. */

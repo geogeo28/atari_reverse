@@ -230,11 +230,16 @@ things about this build are not that one's, and each is argued in `atari/README.
   no door under it, and the model's `0x8000` puts this program's room staging area at a negative
   address — harmless off target only because every battery stages the two screen pointers itself.
 
-**What the on-target build does NOT have a seam for is the rest of the XBIOS group.** `Setscreen`,
-`Setpalette`, `Setcolor` and `Vsync` are `return 0` inside `src/frontend.c`'s `xbios_trap_call`, so
-the target reissues the first two at the composition boundary after the slice that would have made
-them and does not reissue the other two at all. Closing it means a KIT DOOR for the XBIOS group and
-a differential that covers it — a change to these cores, not to `atari/`.
+**The rest of the XBIOS group now has a seam, and getting it took a change to these cores.**
+`Setscreen`, `Setpalette`, `Setcolor` and `Vsync` used to be `return 0` inside `src/frontend.c`'s
+`xbios_trap_call`, so the target could only reissue two of them at the composition boundary after
+the slice that would have made them — and the cost was visible to a person: the presentation played
+its whole voice in the desktop's palette. They now go through the kit's own doors
+(`tools/recreate_kit/TRAP_MODEL.md`, Phase 14), which are ordered entries in the OS event ledger and
+still touch no image byte, so the target shadows them with the real traps. **The door found three
+`Setcolor` calls that were not in the C at all** — two in `frame_blow_or_recover`, one in
+`frame_death_sequence`, all three green for the life of the project because the difference was
+entirely off-image.
 
 **And it has no seam for `Fopen`'s mode.** The kit's `os_fopen` takes `(mem, name_ptr)` and no mode,
 so `c_open` drops the original's `mode & 3` before the door and the target opens read-only — which

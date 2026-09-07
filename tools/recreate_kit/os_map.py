@@ -59,6 +59,10 @@ OS_EVENT_VDI_CURSOR = 4      # value = 1 for VDI v_show_c, 0 for v_hide_c
 OS_EVENT_AUXOUT = 5          # value = a character byte written to AUX: (GEMDOS Cauxout)
 OS_EVENT_PRNOUT = 6          # value = a character byte written to the printer (GEMDOS Cprnout)
 OS_EVENT_PTERM = 7           # value = the exit code the process ended with (GEMDOS Pterm)
+OS_EVENT_SETSCREEN = 8       # value = the LOGICAL base XBIOS Setscreen was given
+OS_EVENT_SETPALETTE = 9      # value = the address of the sixteen-word colour table
+OS_EVENT_SETCOLOR = 10       # value = index << 16 | the colour word (XBIOS Setcolor)
+OS_EVENT_VSYNC = 11          # value = 0: XBIOS Vsync takes no argument and answers nothing
 
 # ---- the staged-file table's base (mirror of include/os.h) ----
 # Here rather than with the rest of the file-staging map in ``harness.py`` for this module's first

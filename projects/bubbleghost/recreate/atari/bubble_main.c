@@ -108,6 +108,38 @@ volatile uint32_t bg_timer_c_ticks;
 uint32_t bg_timer_c_chain;
 
 /* ================================================================================================
+ * WHAT A HEADLESS CHECK NEEDS TO KNOW BEFORE THE RUN CAN GO WRONG
+ *
+ * `smoke.py` drives the emulator's debugger, so it needs RUNTIME ADDRESSES: three to break on and
+ * one to read a counter out of. None of them is knowable before the program is loaded, so they are
+ * written to BASE.BIN as the first thing the run does — before anything that can crash — and the
+ * two files agree by the SLOT COUNT being asserted on both sides rather than by anyone counting.
+ * ============================================================================================= */
+enum bg_anchor_slot {
+    ANCHOR_TITLE_HOLD,    /* `bg_anchor`: where the title mode stops to be photographed */
+    ANCHOR_VOICE_ENTRY,   /* `enter_the_voice_player`: the instant the speech starts, which is the
+                           * moment the presentation's palette has to be on the chip already */
+    ANCHOR_ROOM_FRAME,    /* `game_frame_update`: a room's first frame. 0 outside the play mode */
+    ANCHOR_PLAY_TALLY,    /* the ADDRESS of `bg_play_tally` — a place to read, not to break on */
+    ANCHOR_IMAGE_BASE,    /* where the image array landed, so a check can read the game's screen
+                           * out of it before the record exists. Also in the record, and the two
+                           * are the same number by construction */
+    ANCHOR_SLOTS
+};
+
+/* What the play composition counts, for a check that cannot see a screen it can judge. A menu that
+ * has been opened is a program waiting on a key, which is when a key may be sent; a frame count
+ * that keeps rising is a room loop that is running, which is the whole of what "pressing G worked"
+ * means to something with no mouse. `volatile` because the debugger reads them from outside. */
+enum bg_play_tally_slot {
+    TALLY_MENU_OPENS,     /* `title_menu_open` returns — the four lines are drawn and a key is due */
+    TALLY_GAME_FRAMES,    /* `game_frame_update` calls: one room frame each */
+    TALLY_SLOTS
+};
+
+static volatile uint32_t bg_play_tally[TALLY_SLOTS];
+
+/* ================================================================================================
  * THE FRAME BAND — where the cores' `frame` arguments point
  *
  * `main`'s `link a6,#$0` puts its A6 at the stack pointer it was entered with, and this build puts
@@ -234,7 +266,7 @@ static void reached(uint32_t phase) { g_record[REC_PHASE_REACHED] = phase; }
  * Files the run writes, and the one it reads
  * ============================================================================================= */
 #define FILE_PROGRAM_IMAGE "GHOST.IMG"   /* the relocated program, read into image + BG_LOAD_BASE */
-#define FILE_ANCHOR_BASE   "BASE.BIN"    /* 4 bytes: where `bg_anchor` landed, for the breakpoint */
+#define FILE_ANCHOR_BASE   "BASE.BIN"    /* the anchor table above, one longword per slot */
 #define FILE_SCREEN_DUMP   "SCREEN.BIN"  /* 32000 bytes: the buffer the shifter was displaying */
 #define FILE_STATE_RECORD  "STATE.BIN"   /* the record above */
 
@@ -334,27 +366,18 @@ static void build_basepage(uint8_t *image) {
 /* ================================================================================================
  * THE MACHINE: the screen, the palette and the two vectors
  *
- * THE FOUR XBIOS CALLS THE CORES SWALLOW ARE REISSUED HERE, AND THIS IS THE BUILD'S LARGEST
- * DEVIATION. `xbios_trap_call` (../src/frontend.c) answers Setscreen, Setpalette, Setcolor and
- * Vsync with the model's `return 0` — a no-op inside a verified core with no `os_*` door under it,
- * so no include-path seam can reach them. What this file can do is make the same call at the
- * composition boundary that FOLLOWS the slice which would have made it. The cost is a latency of
- * one slice, and it is stated per call site rather than waved at:
+ * THE FOUR XBIOS CALLS THE CORES USED TO SWALLOW ARE NOT REISSUED HERE ANY MORE. They were, and it
+ * was this build's largest deviation: `xbios_trap_call` (../src/frontend.c) answered Setscreen,
+ * Setpalette, Setcolor and Vsync with the model's `return 0`, so this file made the same call at
+ * the composition boundary FOLLOWING the slice that would have made it — one slice late, and for
+ * Setcolor and Vsync not at all. The presentation was therefore in the DESKTOP's colours for the
+ * whole length of the digitised voice, which is what a person saw.
  *
- *   Setscreen  the logical base moves between the visible screen and the work buffer around every
- *              text card and the whole menu. Reissued either side of the slice that moves it, so
- *              the VDI draws where the original's VDI drew.
- *   Setpalette the two picture palettes. Reissued after the slice that loads the picture, so a
- *              freshly shown picture is in the DESKTOP's colours until that slice returns —
- *              seconds, on a floppy, for the presentation.
- *   Setcolor   not reissued at all in this build: both sites are end-of-room animations, which the
- *              title mode never reaches. Recorded as unpinned.
- *   Vsync      not reissued. Its only three sites are inside `menu_attract_slideshow_room`, in the
- *              middle of a slice, so there is nowhere outside it to put them; the attract
- *              slideshow therefore runs at renderer speed. Recorded as unpinned.
- *
- * Closing this properly is a change to the CORES — a kit door for the XBIOS group, verified by the
- * differential — and therefore not a change this directory may make.
+ * The cores now go through the kit's own doors for the group (`os_setscreen` and its three
+ * siblings), which `shim_include/os.h` shadows with the real traps — so each call is made where
+ * the original makes it and the differential compares the ordered stream of them. What is left
+ * here is the shim's OWN screen publication: pointing the shifter at the image before any core
+ * runs, and handing the desktop's back at the end.
  * ============================================================================================= */
 /* XBIOS Setscreen's third argument IS A RESOLUTION AND NOT A "leave it alone". 0 is ST LOW; -1 is
  * the code that keeps whatever the machine is already in. The first draft of this file called the 0
@@ -369,30 +392,15 @@ static void build_basepage(uint8_t *image) {
 #define PALETTE_PENS 16u
 #define SETCOLOR_READ_ONLY (-1)       /* Setcolor(index, -1) reports a pen without changing it */
 
-static void *machine_screen(uint32_t offset) { return bg_image_base + offset; }
-
 /* Point the shifter at the image, and read the answer back. `Setscreen` takes effect at the next
  * vertical blank, so the read-back needs a `Vsync` in front of it or it reports the old base —
  * and the read-back is the whole alignment check: `Physbase` answers what the register HOLDS, and
  * the register has no low byte, so the two are equal only if what was handed over was aligned. */
 static void publish_screen(uint32_t logical, uint32_t physical) {
-    Setscreen(machine_screen(logical), machine_screen(physical), SETSCREEN_ST_LOW);
-    g_record[REC_PUBLISHED_PHYSBASE] = (uint32_t)(uintptr_t)machine_screen(physical);
+    Setscreen(bg_machine_address(logical), bg_machine_address(physical), SETSCREEN_ST_LOW);
+    g_record[REC_PUBLISHED_PHYSBASE] = (uint32_t)(uintptr_t)bg_machine_address(physical);
     Vsync();
     g_record[REC_READBACK_PHYSBASE] = (uint32_t)Physbase();
-}
-
-/* The logical base alone — what the game's own `Setscreen` calls move, always with the same
- * physical base (../notes/frontend.md §5: "Setscreen is only ever called with phys = screen_phys"). */
-static void publish_logical_screen(uint32_t logical) {
-    Setscreen(machine_screen(logical), machine_screen(be32(bg_image_base + A_screen_phys)),
-              SETSCREEN_ST_LOW);
-}
-
-/* One of the two 32-byte palette blocks the picture loaders read off the tail of their file. The
- * argument is the ADDRESS OF THE POINTER, because that is how the game holds them. */
-static void publish_palette(uint32_t palette_pointer) {
-    Setpalette(bg_image_base + be32(bg_image_base + palette_pointer));
 }
 
 /* ================================================================================================
@@ -449,7 +457,7 @@ static void inject_pen_fault(void) {
      * made immediately after one is overwritten a frame later, which is what the first draft of this
      * control did: the pens read back unchanged and the control reported both colour-sensitive
      * surfaces as green under a fault that never reached the chip. The `Vsync` is inside the fault
-     * arm rather than in `publish_palette`, so the shipped build's timing is the original's. */
+     * arm rather than in the palette door, so the shipped build's timing is the original's. */
     Vsync();
     (void)Setcolor((short)BG_FAULT_PEN,
                    (short)(Setcolor((short)BG_FAULT_PEN, SETCOLOR_READ_ONLY) ^ BG_FAULT_PEN_XOR));
@@ -582,10 +590,9 @@ __attribute__((noinline)) static void bg_anchor(void) {
  * The four keys are `../notes/frontend.md`'s table and the four `cmpi.w` at 0x11700, 0x117d6,
  * 0x11928 and 0x11cb2. Everything else is a slice.
  *
- * THE SETSCREEN REISSUES ARE THE DEVIATION NAMED ABOVE. `menu_draw` draws the four menu lines onto
- * the VISIBLE page — its own `Setscreen(phys, phys)` @ 0x11618 is what puts them there — and
- * `menu_read_key_and_fold` puts the logical base back to the work buffer @ 0x116e4. Both are
- * swallowed by the core, so they are made here, either side of the slice.
+ * EVERY SETSCREEN IN IT IS THE CORES' OWN. `menu_draw` draws the four menu lines onto the VISIBLE
+ * page — its `Setscreen(phys, phys)` @ 0x11618 is what puts them there — and `menu_read_key_and_fold`
+ * puts the logical base back to the work buffer @ 0x116e4; both reach the machine through the door.
  */
 #define MENU_KEY_GAME     'G'
 #define MENU_KEY_PRACTICE 'P'
@@ -593,38 +600,25 @@ __attribute__((noinline)) static void bg_anchor(void) {
 #define MENU_KEY_HALL     'H'
 
 #if BG_MODE == BG_MODE_PLAY
-static void draw_the_menu(uint8_t *image, uint32_t frame, CallerAddressRegisters *live) {
-    publish_logical_screen(be32(image + A_screen_phys));
-    menu_draw(image, frame, *live);
-    publish_palette(A_dat_palette);
-}
-
 static void title_menu_loop(uint8_t *image, uint32_t frame, CallerAddressRegisters *live) {
-    publish_logical_screen(be32(image + A_screen_phys));
     title_menu_open(image, frame, live);          /* [0x115d6, 0x116c4) — includes menu_draw */
-    publish_palette(A_dat_palette);
+    bg_play_tally[TALLY_MENU_OPENS]++;
 
     for (;;) {
         int16_t key = menu_read_key_and_fold(image, frame, *live);   /* [0x116c4, 0x11700) */
 
-        publish_logical_screen(be32(image + A_screen_back));
         if (key == MENU_KEY_GAME) {
-            publish_logical_screen(be32(image + A_screen_phys));
             menu_ask_player_count(image, frame, *live);              /* [0x11708, 0x11774) */
             while (!menu_read_player_count(image, frame, *live))     /* [0x11774, 0x117cc) */
                 ;
-            publish_logical_screen(be32(image + A_screen_back));
         } else if (key == MENU_KEY_PRACTICE) {
-            publish_logical_screen(be32(image + A_screen_phys));
             menu_ask_practice_level(image, *live);                   /* [0x117de, 0x1183e) */
             menu_read_level_tens(image, *live);                      /* [0x1183e, 0x1186c) */
             menu_read_level_units(image, frame, *live);              /* [0x1186c, 0x1191e) */
-            publish_logical_screen(be32(image + A_screen_back));
         } else if (key == MENU_KEY_DEMO) {
             menu_attract_sequence(image, frame, *live);              /* [0x11930, 0x11ae6) */
             menu_attract_slideshow(image, frame, *live);             /* [0x11ae6, 0x11c34) */
             menu_attract_title(image, frame, *live);                 /* [0x11c34, 0x11ca8) */
-            publish_palette(A_pre_palette);                          /* the title picture's */
         } else if (key == MENU_KEY_HALL) {
             menu_hall_of_fame(image, frame, *live);                  /* [0x11cba, 0x11d60) */
         }
@@ -632,7 +626,7 @@ static void title_menu_loop(uint8_t *image, uint32_t frame, CallerAddressRegiste
         /* @ 0x11d60: a non-zero `chose` returns to `game_top_loop`; zero redraws the menu. */
         if ((int16_t)be16(image + frame + MENU_FRAME_CHOSE) != 0)
             return;
-        draw_the_menu(image, frame, live);
+        menu_draw(image, frame, *live);                              /* [0x115f2, 0x116c4) */
     }
 }
 
@@ -640,9 +634,11 @@ static void title_menu_loop(uint8_t *image, uint32_t frame, CallerAddressRegiste
  * branch the original simply falls through, which is what a reconstruction has instead of a
  * condition code: `frame_poll_input` says the key was ^P, and `frame_step_live_bubble` says the
  * bubble died. */
+__attribute__((noinline))
 static void game_frame_update(uint8_t *image, uint32_t top_frame, CallerAddressRegisters saved) {
     const uint32_t hud_frame = top_frame - TOP_LOCAL_BYTES - CALL_FRAME_COST - CALL_FRAME_COST;
 
+    bg_play_tally[TALLY_GAME_FRAMES]++;
     frame_advance_bubble_frame(image);                  /* [0x12322, 0x1233a) */
     if (frame_poll_input(image, saved))                 /* [0x1233a, 0x12434) */
         frame_poll_pause(image, saved);                 /* [0x1239e, 0x123de) */
@@ -708,6 +704,17 @@ static void translate_the_loa_sample_pointer(uint8_t *image) {
     wr32(image + slot, g_record[REC_VOI_POINTER_MACHINE]);
 }
 
+/* The `jsr` itself, given a name and an address of its own so that `smoke.py` can break on the
+ * INSTANT the speech starts and read the chip's sixteen colour registers there. That moment is
+ * what the XBIOS door was built for: `show_presentation` loads the presentation's palette three
+ * calls earlier, and while the group had no door the shim could only reissue it after this call
+ * returned — so the picture was in the desktop's colours for the whole length of the voice.
+ *
+ * `noinline` is not decoration: inlined, there is no address to break on. */
+__attribute__((noinline)) static void enter_the_voice_player(uint32_t entry) {
+    ((void (*)(void))(bg_image_base + entry))();
+}
+
 /* `game_top_loop`'s boot, `[0x101e6, 0x1027e)` — the four slices and the one thing between two of
  * them that no core can be: the `jsr` into GHOST.LOA.
  *
@@ -719,19 +726,17 @@ static void translate_the_loa_sample_pointer(uint8_t *image) {
  * composition's one hard join. */
 static void boot_the_program(uint8_t *image, uint32_t frame, CallerAddressRegisters *live) {
     game_top_boot(image, frame, live);                   /* [0x101e6, 0x10232) */
-    publish_logical_screen(be32(image + A_screen_back)); /* its swallowed Setscreen @ 0x1022a */
     reached(PHASE_BOOT_FILES_LOADED);
 
     {   /* @ 0x10232: jsr play_voice */
         uint32_t entry = play_voice_arm(image);          /* [0x13cea, 0x13d26) */
 
         translate_the_loa_sample_pointer(image);
-        ((void (*)(void))(bg_image_base + entry))();
+        enter_the_voice_player(entry);
     }
     reached(PHASE_VOICE_PLAYED);
 
     game_top_boot_tail(image, frame, live);              /* [0x10236, 0x1024e) */
-    publish_palette(A_pre_palette);                      /* show_presentation's, one slice late */
     reached(PHASE_PRESENTATION_SHOWN);
 
     game_top_free_voice_buffer(image);                   /* @ 0x1024e: c_free(voi_buffer) */
@@ -880,6 +885,25 @@ static void publish_the_tallies(void) {
     g_record[REC_FAULT_NO_TIMER_C] = (uint32_t)BG_FAULT_NO_TIMER_C;
 }
 
+/* The anchor table, written before anything can go wrong, so `smoke.py` can arm its breakpoints on
+ * a program that then crashes. `ANCHOR_ROOM_FRAME` is 0 outside the play mode, where the room loop
+ * is not composed at all — the smoke refuses to arm a breakpoint on 0 rather than reading it as an
+ * address. */
+static void publish_the_anchor_table(void) {
+    uint32_t table[ANCHOR_SLOTS];
+
+    table[ANCHOR_TITLE_HOLD] = (uint32_t)(uintptr_t)bg_anchor;
+    table[ANCHOR_VOICE_ENTRY] = (uint32_t)(uintptr_t)enter_the_voice_player;
+#if BG_MODE == BG_MODE_PLAY
+    table[ANCHOR_ROOM_FRAME] = (uint32_t)(uintptr_t)game_frame_update;
+#else
+    table[ANCHOR_ROOM_FRAME] = 0;
+#endif
+    table[ANCHOR_PLAY_TALLY] = (uint32_t)(uintptr_t)bg_play_tally;
+    table[ANCHOR_IMAGE_BASE] = (uint32_t)(uintptr_t)bg_image_base;
+    (void)write_file(FILE_ANCHOR_BASE, table, (long)sizeof table);
+}
+
 void bubble_main(void) {
     CallerAddressRegisters live = caller_registers(CALLER_A1, CALLER_A2);
     uint8_t *image;
@@ -907,12 +931,7 @@ void bubble_main(void) {
     read_palette(entry_pens);
     install_the_supervisor_gate();
 
-    /* The anchor's runtime address, written before anything can go wrong, so `smoke.py` can arm its
-     * breakpoint on a program that then crashes. */
-    {
-        uint32_t anchor = (uint32_t)(uintptr_t)bg_anchor;
-        (void)write_file(FILE_ANCHOR_BASE, &anchor, (long)sizeof anchor);
-    }
+    publish_the_anchor_table();
 
     g_record[REC_PROGRAM_BYTES] = (uint32_t)stage_program_image();
     reached(PHASE_IMAGE_STAGED);
@@ -966,9 +985,7 @@ void bubble_main(void) {
      * is exactly the point this mode must not reach. */
     inject_image_fault(image);
     game_new_game(image);
-    publish_logical_screen(be32(image + A_screen_phys));
     title_menu_open(image, TOP_FRAME - TOP_LOCAL_BYTES - CALL_FRAME_COST, &live);
-    publish_palette(A_dat_palette);
     inject_pen_fault();
     reached(PHASE_MENU_DRAWN);
 

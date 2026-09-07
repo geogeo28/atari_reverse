@@ -91,12 +91,28 @@ is recorded here beside the ledger it settled it against.
 | `install_sound_vectors`' MFP write and the 200 Hz ISR both run — 350-360 ticks by the time the anchor is reached, and `atari/smoke.py` asserts only that the count is NON-ZERO, because the anchor's hold is a count of vertical blanks over a real floppy timeline. The surface is `STATE.BIN`'s `TIMER_C_TICKS`, and `atari/build.sh titleisr` is the control that reds it | the Timer C row in "Model gaps": the model fires no interrupts |
 | `play_voice`'s `jsr` into `GHOST.LOA` is a REAL CALL: the file is opened and read, the sample pointer poked into the loaded image at +0x1e is translated from an image offset to a machine address (`VOI_POINTER_MACHINE` in the record, asserted equal to `IMAGE_BASE + VOI_BUFFER_OFFSET`), and the `jsr` returns. **What the second program then DOES is not observed by anything**: the harness runs with `--sound off`, no surface reads the PSG or the MFP timer the LOA programs, and "the speech plays" is not a claim this build has evidence for | the `GHOST.LOA` row in "Not reconstructed": on target it is real memory and a real MFP |
 
-**AND WHAT IT COULD NOT.** Four XBIOS calls — `Setscreen`, `Setpalette`, `Setcolor`, `Vsync` — are
-answered `return 0` INSIDE `src/frontend.c`'s `xbios_trap_call`, with no `os_*` door under them, so
-no include-path seam can reach them: the target build reissues two of them a slice late and cannot
-reissue the other two at all. That is the largest thing the port owes these cores, and closing it is
-a KIT change plus a differential, not an `atari/` change. `atari/README.md`'s "Unpinned" carries the
-per-call cost.
+**AND WHAT IT COULD NOT — CLOSED 2026-09-06.** Four XBIOS calls — `Setscreen`, `Setpalette`,
+`Setcolor`, `Vsync` — were answered `return 0` INSIDE `src/frontend.c`'s `xbios_trap_call` with no
+`os_*` door under them, so no include-path seam could reach them and the target build reissued two of
+them a slice late and the other two not at all. **A person found what that cost**: the presentation
+picture played its whole digitised voice in the DESKTOP's palette, because `show_presentation`'s
+`Setpalette` could not be reissued until after the slice whose next instruction is the `jsr` into
+`GHOST.LOA`.
+
+The kit now has doors for the group (`tools/recreate_kit/TRAP_MODEL.md`, Phase 14): each is an
+ordered entry in the off-image OS event ledger and still touches no image byte, so `xbios_trap_call`
+routes through them and the target shadows them with the real traps.
+
+**The door found three missing calls the differential had been green over for the life of the
+project.** `frame_blow_or_recover` (twice) and `frame_death_sequence` filed the trap trampoline's
+three save slots and made no `Setcolor` call at all — so the ghost never changed colour when its
+breath ran out. Forty-five cases in `test/test_gameplay.py` went red the moment the group became an
+event and were green again once the calls were written. That is the residual this table's second row
+used to name, retired by measurement rather than by argument.
+
+What is still unpinned is `Setscreen`'s PHYSICAL base and its resolution: an event carries one
+32-bit value and that call has three arguments, so the entry is the logical base alone.
+`atari/README.md`'s "Unpinned" carries it.
 
 ## Model gaps — read this before picking a function
 

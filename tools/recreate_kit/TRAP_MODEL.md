@@ -2654,6 +2654,52 @@ happening once**, which is what the `Pterm0` case now does with the same store.
 
 ---
 
+## Phase 14 — the XBIOS VIDEO AND COLOUR GROUP (`Setscreen`, `Setpalette`, `Setcolor`, `Vsync`)
+
+**Still modeled as no-ops, and now ORDERED EVENTS.** XBIOS `Setscreen` (0x05), `Setpalette` (0x06),
+`Setcolor` (0x07) and `Vsync` (0x25) touch no image byte and this phase does not change that: the
+oracle services each exactly as it did, and a candidate that calls the matching door writes nothing.
+What changed is that the call is now an entry in Phase 13's off-image OS event ledger, so a
+reconstruction that loads a picture's palette and one that silently drops it are separable.
+
+> **Four kinds**, in `os.h` and `os_map.py` like the rest: `OS_EVENT_SETSCREEN` (value = the
+> LOGICAL base), `OS_EVENT_SETPALETTE` (value = the address of the sixteen-word table),
+> `OS_EVENT_SETCOLOR` (value = `index << OS_SETCOLOR_INDEX_SHIFT | colour`), `OS_EVENT_VSYNC`
+> (value = 0). The doors are `os_setscreen(log, phys, rez)`, `os_setpalette(table)`,
+> `os_setcolor(index, colour)` and `os_vsync()`.
+
+**Why a door and not a comment.** The group is the one whose off-image effect is the POINT — a
+palette load is the picture the player sees — and it was reachable by nothing. A game's XBIOS
+trampoline is inside a verified core, so an on-target build with an include-path seam had no name to
+shadow: it could only *reissue* the call from the composition boundary AFTER the slice that would
+have made it. Bubble Ghost shipped that, and the cost was measurable by a person and by no check:
+`show_presentation` loads the presentation's palette and then hands control to a second program that
+plays a digitised voice, so the picture was in the DESKTOP's colours for the whole length of the
+speech (`projects/bubbleghost/recreate/atari/README.md`). The door removes the latency by giving the
+target something to substitute, and the ledger is what makes the substitution verifiable.
+
+**IT FOUND THREE MISSING CALLS ON ITS FIRST RUN**, which is the argument for the phase restated as a
+measurement. Bubble Ghost's `frame_blow_or_recover` and `frame_death_sequence` reproduced the trap
+trampoline's three save slots and made no call at all — the ghost's colour never changed when its
+breath ran out — and every battery over both routines was green, because the only difference was
+off-image. Adding the door reddened forty-five cases until the three `os_setcolor` calls were
+written.
+
+**WHAT THE LEDGER CANNOT CARRY, and it is Setscreen's.** An event is one 32-bit value and that call
+has three arguments, so the entry is the logical base alone; the physical base and the resolution
+reach a target build through the door's own parameters and are in no ordered stream. A reconstruction
+that passes the wrong physical base is still invisible to the differential. The residual is smaller
+than it was and it is not closed.
+
+**`tos_xbios_video_unmodeled = true`** in a `project.toml` drops the four kinds from BOTH streams
+before they are compared (`harness._vet_os_event_state`). It is for a project that models the group
+through seams of its OWN — Joust returns `Setpalette`'s table address and `Setcolor`'s colour word
+from the reconstruction so a test can compare them against the argument the ORACLE pushed; BuggyBoy
+routes all four through `src/os.c`'s empty `g_*` bodies, which its `.PRG` build replaces. Both
+declare it. The waiver reproduces exactly the coverage every project had before this phase existed,
+and retiring one is a reconstruction pass — every call site routed through its door — not a config
+change.
+
 ## Still unmodeled (an honest raise is the right answer)
 
 **A SEQUENCE of bytes one address yields, one per read.** `$fffc02` is a Phase 7 slot now, which

@@ -6,12 +6,13 @@ against the original binary on the six surfaces of
 
 ```bash
 bash atari/build.sh title            # -> atari/build/BUBBLE.PRG, atari/disk/{c,GHOST.ST}
-python3 atari/smoke.py title         # the gate: 8 checks, ours against the original
+python3 atari/smoke.py title         # the gate: 9 checks, ours against the original
 bash atari/build.sh titlefault && python3 atari/smoke.py titlefault   # control: one colour pen
 bash atari/build.sh titlepoke  && python3 atari/smoke.py titlepoke    # control: one image word
 bash atari/build.sh titleisr   && python3 atari/smoke.py titleisr     # control: no Timer C
 bash atari/build.sh title floppy && python3 atari/smoke.py floppy     # the bootable volume
-bash atari/build.sh play && bash atari/run.sh                         # for a person
+bash atari/build.sh play  && python3 atari/smoke.py game              # G, then 1: the room loop
+bash atari/build.sh play  && bash atari/run.sh                        # for a person
 ```
 
 **What it does today.** It boots — the crt0, `init_globals`, `main`, the GEM workstation, the six
@@ -20,19 +21,20 @@ draws the game's own menu. The menu it draws is **byte-identical to the original
 bytes of it, measured against a `savebin` of the shipped binary's own framebuffer at the same point.
 
 ```
--- title on st / TOS104US.img at 1 MB: image base 0x36c00, the original at 0x12596
-   memory: TPA [0x12496, 0xf7ff8), kept to 0xe5cbc, image 664 KiB at 0x36c00,
-           32956 B headroom, 0 guard byte(s) dirty
+-- title on st / TOS104US.img at 1 MB: image base 0x36d00, the original at 0x12596
+   memory: TPA [0x12496, 0xf7ff8), kept to 0xe5dc4, image 664 KiB at 0x36d00,
+           32964 B headroom, 0 guard byte(s) dirty
    the boot: 6 file opens (1 refused by the disk) + 3 the shim's, 11 Mallocs to 0x6f310,
-             68 VDI and 3 AES traps, 355 Timer C ticks
-   the speech: GHOST.VOI at image offset 0x3073a, poked into the LOA as 0x6733a
+             68 VDI and 3 AES traps, 354 Timer C ticks
+   the speech: GHOST.VOI at image offset 0x3073a, poked into the LOA as 0x6743a
    pens read off the chip, unmasked: 0000 0700 0256 0040 0050 0060 0237 0245
                                      0000 0757 0771 0333 0444 0555 0666 0777
-   timelines: power-on to the anchor, ours 30 s and the original's 27 s — REPORTED, not
+   timelines: power-on to the anchor, ours 30 s and the original's 28 s — REPORTED, not
               asserted: the original's decrypt and this driver's poll for it are in front
               of its number only
    [green] exit status + log
    [green] exit status + log (the fault scan can fail)
+   [green] hardware-state vector (the pens when the speech starts)
    [green] hardware-state vector (the pens, $ff8260, the video base)
    [green] memory (the displayed framebuffer, against the original's)
    [green] memory (the program's own record)
@@ -95,7 +97,8 @@ atari/
 ├── shim_include/     the seam: shadows of the kit's os.h / hw.h / psg.h / string.h, plus tos.h,
 │                     bubble_target.h (what the three shim files hand each other) and
 │                     bubble_mfdb.h (the one place blit.h's MFDB offsets are pinned to the kit's)
-├── smoke.py          the gate: two Hatari runs, eight checks, three negative controls
+├── smoke.py          the gate: two Hatari runs, nine checks, three negative controls, and two
+│                     modes of its own — the bootable floppy, and the G key's room loop
 └── run.sh            the `play` build, with a mouse and sound, for a person
 ```
 
@@ -119,6 +122,7 @@ the record's own prediction is built on).
 | `os_random` | a poked 24-bit constant | real XBIOS `Random`, masked to the same 24 bits |
 | `os_pterm` | a ledger entry that RETURNS | the real trap, which does not |
 | `os_vdi` / `os_aes` | the kit's software VDI/AES over the image | a real `trap #2`, with the parameter block **translated** — see below |
+| `os_setscreen` / `os_setpalette` / `os_setcolor` / `os_vsync` | an ordered entry in the OS event ledger, and no image effect | the real XBIOS traps, made where the core makes them. The two screen bases and the palette table are image OFFSETS and are translated |
 | `psg_port_write` / `psg_port_read` | an ordered ledger and a register file | the real `$ff8800`/`$ff8802`, through the `trap #9` gate, at IPL 7 across the select-and-access pair |
 | `hw_write8` | an ordered (address, width, value) ledger | a real byte store through the same gate. Two core call sites, both the MFP vector register — and `build.sh` counts them, because `HW_WRITES` is predicted exactly |
 | `os_in_image` | the model's 1 MiB | the same arithmetic against the 664 KiB array that actually exists |
@@ -173,31 +177,46 @@ block would have to know which fields the VDI writes; this has to know nothing. 
 left at 0, because that is the VDI's "the screen" and TOS substitutes the logical base `Setscreen`
 was given — which for this program is `screen_back`.
 
-## The XBIOS group has no seam at all, and that is this build's largest deviation
+## The XBIOS group's seam, and the deviation it replaced
 
-`xbios_trap_call` swallows **Setscreen, Setpalette, Setcolor and Vsync** as the model's `return 0`.
-They are inside a verified core with no `os_*` call under them, so no include-path seam can reach
-them, and `bubble_main.c` reissues the ones the picture depends on **at the composition boundary
-that follows the slice which would have made them**. The cost is a latency of one slice, and it is
-stated per call rather than waved at:
+Until 2026-09-06 this section said the group had NO seam, and it was this build's largest deviation.
+`xbios_trap_call` (`../src/frontend.c`) swallowed **Setscreen, Setpalette, Setcolor and Vsync** as
+the model's `return 0` — inside a verified core with no `os_*` call under them, so no include-path
+seam could reach them — and `bubble_main.c` reissued the ones the picture depends on at the
+composition boundary FOLLOWING the slice that would have made them. Two of the four were not
+reissued at all.
 
-| call | what the shim does | what it costs |
+**A person found what that cost, and no check here could have.** The presentation picture was in the
+DESKTOP's colours for the whole length of "Welcome to Bubble Ghost": `show_presentation` loads
+`GHOST.PRE`'s palette and `game_top_loop`'s very next instruction is the `jsr` into `GHOST.LOA`, the
+second program that plays the digitised voice — so the reissue could not happen until the voice had
+finished. Every surface in this directory was green, because the only anchor was seconds later.
+
+The kit now gives the group four doors (`os_setscreen`, `os_setpalette`, `os_setcolor`, `os_vsync`;
+`tools/recreate_kit/TRAP_MODEL.md`, Phase 14). Off target each is an ordered entry in the OS event
+ledger and still touches no image byte, so the differential is unchanged in what it compares about
+memory and gains the calls themselves; here `shim_include/os.h` shadows all four with the real
+traps. Each call is therefore made where the original makes it, and:
+
+| call | what it does now | what it cost while it had no door |
 |---|---|---|
-| `Setscreen` | reissued either side of the slice that moves the logical base — the menu and every text card are drawn onto the VISIBLE page by exactly that switch | the base moves at a slice boundary rather than mid-slice. No check can see the difference at the anchor |
-| `Setpalette` | reissued after the slice that loads the picture | a freshly shown picture is in the DESKTOP's colours until that slice returns — about a second for the presentation on a GEMDOS drive, several on a floppy |
-| `Setcolor` | **not reissued.** Both sites are end-of-room animations forcing pen 15 to `$777`, and three more inside `frame_blow_or_recover` and `frame_death_sequence` are not even present in the C (the cores file the trampoline's save slots and make no call) | the ghost does not change colour when its breath runs out. Unpinned, and the `play` build shows it |
-| `Vsync` | **not reissued.** Its only three sites are inside `menu_attract_slideshow_room`, mid-slice, so there is nowhere outside it to put them | the attract slideshow runs at renderer speed. Unpinned |
+| `Setscreen` | the real trap, both bases translated from image offsets | the base moved at a slice boundary rather than mid-slice |
+| `Setpalette` | the real trap, the table translated | a freshly shown picture was in the DESKTOP's colours until the slice returned — for the presentation, the whole of the speech |
+| `Setcolor` | the real trap. **Three of its five sites were not in the C at all** — the sixth defect below | the ghost did not change colour when its breath ran out |
+| `Vsync` | the real trap | the attract slideshow ran at renderer speed |
 
-Closing this properly is a change to the CORES — a kit door for the XBIOS group, verified by the
-differential — and therefore not a change this directory may make. It is the first thing the next
-milestone owes.
+**The surface under the palette row is new too**: `smoke.py` breaks at the instant the LOA is
+entered, on BOTH sides, and asserts the sixteen colour registers there are `GHOST.PRE`'s own
+palette. See "the anchors" below.
 
-## The four defects this build shipped, and what found them
+## The six defects this build shipped, and what found them
 
-All four are worth reading before the next on-target build in this workspace, because none is
+All six are worth reading before the next on-target build in this workspace, because none is
 visible in any source and each looks like something else. The first two crashed or blanked the
-machine; **the last two were silent, and the surfaces that eventually caught them did not exist
-until they were built** — which is the more useful half of the lesson.
+machine; **the last four were silent, and the surfaces that eventually caught them did not exist
+until they were built** — which is the more useful half of the lesson. The last two were not found
+by a check at all: one by a person playing the game, and one by the kit door that person's report
+led to.
 
 **1. The trap #9 gate was installed where the GAME installs its own, which is one instruction too
 late.** `install_sound_vectors` writes `image[$a4]` — an image byte — and the same routine's very
@@ -240,6 +259,27 @@ What found it was **adding that field to the assertions**: the record already ca
 nothing compared it. The seed now runs before the routine, the mirror after it, and every tick of
 the ISR mirrors its own write from inside the interrupt.
 
+**5. The presentation played its whole voice in the DESKTOP's palette.** Not found by anything here:
+a person ran `bash atari/build.sh play && bash atari/run.sh` and said so. `show_presentation`'s
+`Setpalette` was swallowed inside a verified core, the shim's only place to reissue it was after the
+slice — and the very next instruction of that slice is the `jsr` into `GHOST.LOA`, which plays about
+a second and a half of digitised speech. So the reissue was, exactly, the length of the voice late.
+Every surface in this directory was green, because the only anchor was the menu, seconds later.
+
+The fix was a KIT DOOR for the XBIOS video group, not a change here (the section above; `TRAP_MODEL.md`
+Phase 14), and the surface that keeps it fixed is a second anchor: `smoke.py` breaks at the instant
+the LOA is entered on BOTH sides and asserts the sixteen colour registers are `GHOST.PRE`'s own
+palette. It went from a defect nobody could see to a check that compares three things — our chip,
+the original's chip, and the shipped data file.
+
+**6. Three `Setcolor` calls were not in the reconstruction at all**, and the door found them the
+first time it ran. `frame_blow_or_recover` (twice) and `frame_death_sequence` file the trap
+trampoline's three save slots and made no call — so the ghost never turned pink when its breath ran
+out and never went back to white. Forty-five differential cases went red the moment the group became
+an ordered event, and were green again once the three `os_setcolor` calls were written. **They had
+been green for the whole life of the project**: the only difference was off-image, which is the one
+thing a byte diff cannot see and is precisely what the ledger is for.
+
 ## The six surfaces, and what each one measured
 
 `python3 atari/smoke.py title`, TOS 1.04, both sides at 1 MB on the same machine settings.
@@ -250,14 +290,28 @@ the ISR mirrors its own write from inside the interrupt.
 | **memory** | the 32,000-byte displayed framebuffer, written by the program from `image + screen_phys`, against a `savebin` of the original's own `screen_phys` | **byte-identical** |
 | **memory (the record)** | EVERY field of `STATE.BIN` against what the boot owes: the crt0's `a4`, the `Getrez` read at entry, the Mshrink's answer and the top it kept, `PROGRAM_BYTES` against the staged file's own size, the image's base (256-aligned) and extent, the two screen offsets against `Physbase`/`Logbase` read back, 6 file opens and 1 refusal plus the shim's own 3, 11 Mallocs and where they left the arena, 68 VDI and 3 AES traps, 60 raster copies, 2 MFP writes, the two vectors landing INSIDE this program's TPA, the speech pointer against the buffer it was translated from, a `$484` of 0, a clean guard band, and the TPA the size gate weighs against | all exact. The TPA figure is a MEASUREMENT pinned on every 1 MB run — the first draft carried Zynaps' number and was 8 bytes out |
 | **hardware-state vector** | the sixteen colour registers, `$ff8260` and the video base read off the chip by the DEBUGGER **at both anchors**, ours against the original's; and `Physbase`/`Logbase` read back against what the shim published | pens identical, `$ff8260` = 0 (low res) on both sides, and the read-back equals the published address — so it was 256-aligned and nothing was truncated |
+| **hardware-state vector, at the VOICE anchor** | the sixteen colour registers at the instant the `jsr` into `GHOST.LOA` is made, on BOTH sides, against `GHOST.PRE`'s own sixteen colour words read off the shipped file | identical on all three. It is the surface defect 5 did not have |
 | **trap ledger** | `--trace gemdos`: our `Fopen`/`Fread`/`Fclose` sequence against the original's, minus the shim's own four files and TOS's `DESKTOP.INF`, with the buffer address and the handle deliberately dropped — **and by LENGTH as well as content**, because a prefix comparison is green on a ledger missing its tail | identical, call for call, and the same number of them |
 | **rendered pixels** | a Hatari screenshot of each side, byte for byte, with `--frameskips 0 --statusbar off --drive-led off` and stop-then-shoot | **byte-identical** |
-| **timelines** | power-on to the anchor, on both sides | **reported, not asserted** — 30 s ours, 27 s the original's on this host. BOTH anchors are moments now (see below), but the two runs do not start together: the original's own decrypt, and this driver's polling of RAM for it, are in front of its number and not in front of ours. Saying so is more useful than a check that looks like coverage |
+| **timelines** | power-on to the anchor, on both sides | **reported, not asserted** — 30 s ours, 28 s the original's on this host. BOTH anchors are moments now (see below), but the two runs do not start together: the original's own decrypt, and this driver's polling of RAM for it, are in front of its number and not in front of ours. Saying so is more useful than a check that looks like coverage |
 
-## The two anchors, and why neither is a clock
+## The anchors, and why none of them is a clock
 
-**Ours** is `bg_anchor`, a `Vsync`-paced hold the shim enters once the menu is drawn; its runtime
-address is written to `BASE.BIN` before anything else, so `smoke.py` can arm a breakpoint on a
+`BASE.BIN` is the shim's ANCHOR TABLE — one longword per slot of `bubble_main.c`'s
+`enum bg_anchor_slot`, written before anything else the run does, so `smoke.py` can arm its
+breakpoints on a program that then crashes. Three of the slots are addresses to break on
+(`bg_anchor`, `enter_the_voice_player`, `game_frame_update`), one is where a counter lives and one is
+where the image landed. The two files agree by the SLOT COUNT being asserted on both sides, exactly
+as the record's fields do.
+
+**The voice anchor** is the second of them and the one defect 5 needed. Ours is
+`enter_the_voice_player`, the `jsr` into `GHOST.LOA` given a function of its own so it has an
+address; the original's is that same `jsr` at `0x10232`. Both sides settle two vertical blanks —
+XBIOS `Setpalette` is DEFERRED, so TOS loads the sixteen registers from its own VBL handler and a
+dump taken AT the breakpoint can read the frame before — and then dump the chip.
+
+**The menu anchor.** Ours is `bg_anchor`, a `Vsync`-paced hold the shim enters once the menu is
+drawn; its runtime address is in the table, so `smoke.py` can arm a breakpoint on a
 program that then crashes. **The original's** is `menu_read_key_and_fold` @ `0x116c4` — the slice
 boundary immediately after `title_menu_open`, where the shipped program has drawn the same menu and
 is about to block on a key it never gets. So the two are *the same place in the same program*, and
@@ -351,30 +405,75 @@ the second is not obvious:
 * a `#Z 01 A:\BUBBLE.PRG@` line in `DESKTOP.INF` — TOS 1.04's desktop READ the file (its `Fopen` is
   in the GEMDOS trace) and made no `Pexec`. That line is a later desktop's.
 
+## The `game` mode — the G key, and the room behind it
+
+`bash atari/build.sh play && python3 atari/smoke.py game` is the first check in this directory that
+PRESSES A KEY. It exists because a person reported that pressing G on the menu returned them to the
+desktop, and nothing headless had ever pressed one: `smoke.py title` stops at the menu deliberately,
+one instruction before the blocking read.
+
+It drives both binaries the same way — wait for the menu, then send `G` and `1` until a room opens —
+and judges three things: that neither program is gone when the run is stopped, that neither machine
+faulted, and that ours ran at least ten frames of `game_frame_update`. **Both waits are on the
+program's own state, never on a delay**: `bg_play_tally` is two longwords in the shim (menus opened,
+room frames run) and the driver reads them out of the running machine through the debugger. It
+refuses a `title` .PRG rather than grading one, the way the negative controls refuse a shipped
+build.
+
+At the room's FIRST frame — a deterministic moment on both sides, with the room drawn,
+`game_room_frame_tail` not yet run once and the mouse untouched because nothing headless can move
+it — it compares the sixteen colour registers and the 32,000 displayed bytes against the original's.
+**They are byte-identical**, which makes this the second place in this directory where the two
+programs' memory is compared and the first inside the game.
+
+**THE FRAMEBUFFER IS DUMPED AT THE BREAKPOINT AND THE PICTURE FOUR BLANKS LATER**, and the split is
+what makes the comparison mean anything. Memory is exact at the instruction; the DISPLAY surface is
+built scanline by scanline and needs the settle (class 8). Four blanks is four more frames of the
+room loop, and the ghost and the bubble are ERASED AND REDRAWN every one of them — so the first
+draft, which dumped memory after the settle like the picture, compared two runs on opposite sides of
+that cycle and reported 556 of 32,000 bytes differing. Those 556 bytes were the ghost.
+
+**AND BOTH KEYS ARE RESENT UNTIL THE ROOM OPENS.** A single `G` then `1` at a fixed gap failed three
+runs in four: `menu_ask_player_count` ends with a console flush, so a `1` sent while its two lines
+are still drawing is eaten by the program's own drain, and a `G` that arrives before the program
+reaches its `Cnecin` is not there when the read happens. The pair is safe to repeat on every screen
+the program can be on, which is why the loop sends both.
+
+**WHAT IT DID NOT DO IS REPRODUCE THE DEFECT.** The G path is green here across every configuration
+it was tried in — sound on and off, trace on and off, one player and two, up to sixty seconds inside
+the room — so the reported "returns to TOS" is not in anything this mode can reach. What this mode
+CANNOT reach is the mouse, which is most of Bubble Ghost's input: the ghost follows it, and Hatari's
+control protocol has no mouse-motion event of any kind. That is where the remaining suspicion sits,
+and it is written here as an open question rather than as a closed one.
+
 ## Unpinned, and why
 
-1. **The XBIOS group's reissue latency**, and the two calls not reissued at all. The table above has
-   the per-call cost. Nothing here can see it: the anchor is seconds after the last reissue.
-2. **`Setcolor` is not made anywhere.** Three of its five call sites are not in the C at all — the
-   cores file the trampoline's save slots and make no call, so the pen index and the colour are not
-   even present to reissue. The ghost does not change colour when its breath runs out.
-3. **The `play` build is unjudged.** It composes the whole program — the menu's blocking key reads,
-   the room loop, the endings, the hall of fame — and nothing headless can play it: Hatari's control
-   protocol has six events and **no mouse motion of any kind**, and Bubble Ghost is played by moving
-   the mouse. `run.sh` is the discharge, and it is a person, not a check.
-4. **The floppy path is not run end to end headless**, for the same reason: it needs a double-click
+1. **`Setscreen`'s physical base and resolution are not in the ordered stream.** The event ledger
+   carries one 32-bit value per call and that trap has three arguments, so the entry is the LOGICAL
+   base; the other two reach this build through the door's own parameters and nothing compares them
+   (`TRAP_MODEL.md` Phase 14). A reconstruction that passed the wrong physical base would be
+   invisible to the differential and visible only as a wrong picture here.
+2. **The `-1` bases are not recognised.** XBIOS `Setscreen` takes `-1` for "leave that base where it
+   is"; this game never passes one, and `shim_include/os.h`'s door would translate it like any other
+   image offset if it did.
+3. **The reported G-key defect is not reproduced and not closed.** See the `game` mode above: every
+   headless configuration is green, and the one input that mode cannot exercise is the mouse.
+4. **The `play` build is otherwise unjudged.** It composes the whole program — the endings, the hall
+   of fame, the practice and demo branches — and nothing headless can play it. `run.sh` is the
+   discharge for those, and it is a person, not a check.
+5. **The floppy path is not run end to end headless**, for the same reason: it needs a double-click
    and the pointer cannot be moved. What IS checked is the volume (byte-for-byte readback, a boot
    sector TOS mounts and does not execute, free space and root slots for the three files a run
    writes) and — since `smoke.py floppy` — that it really boots TOS to a drawn desktop that has read
    the `DESKTOP.INF` off it, with no fault and exit 0. The `.PRG` on it is never started.
-5. **Nothing has run on iron.** Every measurement here is Hatari 2.6.1 with TOS 1.04. The workspace's
+6. **Nothing has run on iron.** Every measurement here is Hatari 2.6.1 with TOS 1.04. The workspace's
    own taxonomy has two entries (11 and 12) that were only ever found on a real Atari.
-6. **One TOS, one machine.** `docs/on-target-execution.md` class 6's working rule is to run the smoke
+7. **One TOS, one machine.** `docs/on-target-execution.md` class 6's working rule is to run the smoke
    on more than one ROM; `tools/hatari/` carries TOS 1.02 as well, but Hatari refuses a GEMDOS drive
    below TOS 1.04, so the second ROM would need the floppy medium — which item 4 cannot drive.
-7. **`os_vdi`/`os_aes` always answer "modeled".** A real `trap #2` has no way to say otherwise, so
+8. **`os_vdi`/`os_aes` always answer "modeled".** A real `trap #2` has no way to say otherwise, so
    the cores' refusal arms are unreachable on target.
-8. **`Fopen`'s mode cannot cross the seam.** The original passes GEMDOS `mode & 3`; the kit's
+9. **`Fopen`'s mode cannot cross the seam.** The original passes GEMDOS `mode & 3`; the kit's
    `os_fopen` takes no mode at all, so `src/clib.c`'s `c_open` drops it before the door and this
    build opens read-only. That is what every live caller asks for — every `c_open` in the program
    requests a READ mode and the one file it writes goes through `c_creat` — but it is a value the
@@ -383,15 +482,15 @@ the second is not obvious:
    — a tally the title path never makes fire, because nothing on it writes a file through a core.
    That is why it is an alarm and not a check, and it is said here rather than left to look like
    coverage.
-9. **The conterm byte is mirrored, not shared, and the mirror is one-way per moment.** The cores
+10. **The conterm byte is mirrored, not shared, and the mirror is one-way per moment.** The cores
    write `image[$484]`; the shim seeds it from the machine before `init_gem_and_screens`, writes the
    core's clear back out after it, and mirrors the ISR's per-tick write from inside the interrupt.
    What is NOT mirrored is a write TOS makes to the real `$484` while the program runs — the image's
    copy would not see it — and nothing in this program cares, because the byte is only ever written.
-10. **The trap wrappers are the project's one wholly unverified surface** (class 3). What stands in
+11. **The trap wrappers are the project's one wholly unverified surface** (class 3). What stands in
     for a test is `tools/assert_trap_registers.sh`, which runs on every build over all 29 of them and
     proves on every run that it can fail.
-11. **Five files here are near-copies of `projects/zynaps/recreate/atari`'s** — `mkprg.py`, `tos.ld`,
+12. **Five files here are near-copies of `projects/zynaps/recreate/atari`'s** — `mkprg.py`, `tos.ld`,
     `run.sh`, `gen_image.py` and `mkfloppy.py` — and each says so in its own header. They are not
     hoisted, because the right home is a shared `tools/target/` that both games' `build.sh` bind by
     their `project.toml`, exactly as `tools/recreate_kit/` is bound today; doing that is a change to

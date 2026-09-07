@@ -20,12 +20,14 @@ files, the digitised speech, the presentation picture, the sprite bank and the s
 draws the game's own menu — **byte-identical to the original's**, all 32,000 framebuffer bytes,
 measured against a dump of the shipped binary at the same point — **both sides photographed at the
 same instruction**, ours at the shim's anchor and the original's at the slice boundary right after
-it draws the same menu. `atari/smoke.py` is the gate: eight checks over the six surfaces of
+it draws the same menu. `atari/smoke.py` is the gate: nine checks over the six surfaces of
 [`docs/on-target-execution.md`](../../docs/on-target-execution.md), with **three negative controls**
 (a colour register, a word of the staged program, the Timer C vector) each naming the surfaces it
-must redden, plus a bootable 720 KB floppy whose boot to the TOS desktop is checked too.
-**It is not play-tested**: the game is played with the mouse and Hatari's headless control protocol
-has no mouse motion of any kind, and nothing here has run on real hardware.
+must redden, plus a bootable 720 KB floppy whose boot to the TOS desktop is checked too, plus a
+`game` mode that presses the menu's own `G` and `1` and watches the room loop turn behind them.
+**The game itself is not play-tested by any check**: it is played with the mouse and Hatari's
+headless control protocol has no mouse motion of any kind, and nothing here has run on real
+hardware.
 
 > No game data is in this repository. `bin/` and `out/` are gitignored; bring your own disk.
 
@@ -138,7 +140,7 @@ disassembly. [`recreate/README.md`](recreate/README.md) has the image model and 
 [`recreate/STATUS.md`](recreate/STATUS.md) has the ledger, the residuals and the kit's remaining
 model gaps.
 
-**What is left is three things, and none of them is a function of this program:**
+**What is left is two things, and neither is a function of this program:**
 
 1. **`GHOST.LOA`** — the standalone MFP Timer A sample player, loaded as data and `jsr`ed. It is a
    second program with no address in this one; the two game routines that load and arm it are
@@ -148,14 +150,19 @@ model gaps.
    as `while (Cconis()) Crawcin(); c = Cnecin();`, and the model's console is one queue the flush
    empties — so no run can cross a flush into the blocking read behind it, and the whole front end
    is verified as regions that each END at one. STATUS.md's "Model gaps" says what closing it needs.
-3. **A seam for the XBIOS group, and a play-test.** `BUBBLE.PRG` exists and boots to the menu
-   ([`recreate/atari/README.md`](recreate/atari/README.md)), but `Setscreen`, `Setpalette`,
-   `Setcolor` and `Vsync` are swallowed INSIDE a verified core — `xbios_trap_call` answers each with
-   the model's `return 0`, and there is no `os_*` door under them — so the target build reissues
-   them a slice late and cannot reissue two of them at all. Closing that is a change to the cores,
-   verified by the differential. And nothing has played the game: Hatari's headless control protocol
-   has no mouse motion of any kind, and Bubble Ghost is played with the mouse, so `atari/run.sh` and
-   a person are the only discharge.
+
+**The XBIOS group's seam is CLOSED** (2026-09-06) and is worth reading as a worked example rather
+than as a gap. `Setscreen`, `Setpalette`, `Setcolor` and `Vsync` were swallowed INSIDE a verified
+core with no `os_*` door under them, so the target build could only reissue two of them a slice late
+and not the other two at all — and a person watching the presentation saw the cost: it played its
+whole digitised voice in the desktop's palette. The kit now has doors for the group
+([`TRAP_MODEL.md`](../../tools/recreate_kit/TRAP_MODEL.md), Phase 14), each an ordered entry in the
+off-image OS event ledger with no image effect, and the first run of them found **three `Setcolor`
+calls that were not in the reconstruction at all**.
+
+**What still has no discharge but a person** is playing the game: Hatari's headless control protocol
+has no mouse motion of any kind and Bubble Ghost is played with the mouse. `atari/smoke.py game`
+presses the menu's own keys and judges the room loop behind them; `atari/run.sh` is the rest.
 
 The game is remarkably OS-friendly for 1987 — a **GEM application**: text, the bonus bar and every
 32×32 sprite blit go through the **VDI** (`trap #2`, `d0 = 0x73`), the input is the **mouse**

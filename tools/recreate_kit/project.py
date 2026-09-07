@@ -162,9 +162,9 @@ def load(recreate_dir):
 
     Returns the config namespace: name, dir, prg, names, lib (absolute paths) plus
     load_base / image_size, the optional heap_base / heap_limit, and the optional
-    tos_malloc_unused waiver (see harness's _vet_os_memory_map). Re-binding the kit to a
-    *different* project inside one
-    process is refused — the module-level constants derived here are already frozen.
+    tos_malloc_unused / tos_xbios_video_unmodeled waivers (see harness's _vet_os_memory_map and
+    _vet_os_event_state). Re-binding the kit to a *different* project inside one process is refused
+    — the module-level constants derived here are already frozen.
     """
     global _CONFIG
     recreate_dir = Path(recreate_dir).resolve()
@@ -206,6 +206,15 @@ def load(recreate_dir):
         # Optional, and only meaningful under the waiver above: the spans inside that block which
         # are the PROGRAM's OWN DATA rather than the model's. See _program_data_ranges.
         poked_input_program_data=_program_data_ranges(raw, recreate_dir, poked_input_unused),
+        # Optional: this game's cores model the XBIOS video and colour group (Setscreen, Setpalette,
+        # Setcolor, Vsync) as their OWN no-ops rather than through the kit's `os_setscreen` /
+        # `os_setpalette` / `os_setcolor` / `os_vsync` doors, so the oracle records those events and
+        # the candidate cannot. The waiver drops the four kinds from BOTH streams before they are
+        # compared (harness._vet_os_event_state) — which is exactly the coverage every project had
+        # before the doors existed, declared instead of assumed. Dropping it is a reconstruction
+        # pass, not a config change: every one of that project's call sites has to route through the
+        # door before the stream can match.
+        tos_xbios_video_unmodeled=_bool_flag(raw, "tos_xbios_video_unmodeled", recreate_dir),
     )
 
     if str(ORACLE) not in sys.path:

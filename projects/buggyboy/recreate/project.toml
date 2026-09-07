@@ -7,3 +7,17 @@ lib        = "build/libbuggyboy.so"
 load_base  = 0x10000     # matches PrgLoader / run.sh default (see CLAUDE.md)
 image_size = 0x100000    # 1 MiB: program (ends 0x1bcf8) + room for file staging + load
                          # buffers (load_graphics reads ~245 KiB across two files) + stack
+
+# ---- the XBIOS video and colour group is modeled by THIS project's own seams --------------------
+# The kit gives Setscreen / Setpalette / Setcolor / Vsync doors (`os_setscreen` and its three
+# siblings) whose calls become ordered entries in the off-image OS event ledger. BuggyBoy reaches
+# those four traps through its OWN seam instead — `g_xbios_setscreen`, `g_xbios_setpalette`,
+# `g_xbios_setcolor` and `g_vsync` in src/os.c, empty in the harness and the real trap in the PRG
+# (see README.md, "the seam pattern"). So the oracle records those events and this candidate cannot,
+# and the comparison would fail on every case that pages a picture or paces on the vblank.
+#
+# The waiver drops the four kinds from BOTH streams, which is exactly the coverage this project has
+# had since it was closed. Retiring it is a reconstruction pass — each seam body calling its door,
+# and `g_xbios_setscreen` learning the two bases it is currently handed nothing about — not a config
+# change.
+tos_xbios_video_unmodeled = true

@@ -289,6 +289,10 @@ OS_EVENT_VDI_CURSOR = os_map.OS_EVENT_VDI_CURSOR
 OS_EVENT_AUXOUT = os_map.OS_EVENT_AUXOUT
 OS_EVENT_PRNOUT = os_map.OS_EVENT_PRNOUT
 OS_EVENT_PTERM = os_map.OS_EVENT_PTERM
+OS_EVENT_SETSCREEN = os_map.OS_EVENT_SETSCREEN
+OS_EVENT_SETPALETTE = os_map.OS_EVENT_SETPALETTE
+OS_EVENT_SETCOLOR = os_map.OS_EVENT_SETCOLOR
+OS_EVENT_VSYNC = os_map.OS_EVENT_VSYNC
 # ...and the VDI's share of the same block: its two input devices and its workstation state.
 OS_MOUSE = os_map.OS_MOUSE
 OS_MOUSE_OFF_X = os_map.OS_MOUSE_OFF_X
@@ -1077,10 +1081,18 @@ def _vet_write_ledger_below_cap(entry, o_regs):
 _OS_EVENT_NAMES = {OS_EVENT_CONOUT: "Cconout", OS_EVENT_IKBD: "Bconout(IKBD)",
                    OS_EVENT_GEM_MOUSE: "graf_mouse", OS_EVENT_VDI_CURSOR: "cursor",
                    OS_EVENT_AUXOUT: "Cauxout", OS_EVENT_PRNOUT: "Cprnout",
-                   OS_EVENT_PTERM: "Pterm"}
+                   OS_EVENT_PTERM: "Pterm", OS_EVENT_SETSCREEN: "Setscreen",
+                   OS_EVENT_SETPALETTE: "Setpalette", OS_EVENT_SETCOLOR: "Setcolor",
+                   OS_EVENT_VSYNC: "Vsync"}
 # The kinds whose value is a CHARACTER, so a diverging string reads as one. Pterm's is an exit code
 # and the IKBD's is a command byte — showing either as a letter would be actively misleading.
 _OS_EVENT_CHARACTER_KINDS = (OS_EVENT_CONOUT, OS_EVENT_AUXOUT, OS_EVENT_PRNOUT)
+
+# ...and the four the `tos_xbios_video_unmodeled` waiver drops. Spelt as a set here rather than
+# tested one kind at a time so that a fifth video kind added to os.h joins the waiver by being added
+# here, and not by five comparisons drifting apart.
+_OS_EVENT_XBIOS_VIDEO_KINDS = frozenset((OS_EVENT_SETSCREEN, OS_EVENT_SETPALETTE,
+                                         OS_EVENT_SETCOLOR, OS_EVENT_VSYNC))
 
 
 def _os_event_text(events):
@@ -1104,11 +1116,20 @@ def _vet_os_event_state(entry, o_regs):
     side lacks IS "who terminated", and a differing value is the exit code. Unconditional, unlike the
     Dosound ledger's check: every candidate links src/os_log.c (the ABI is required at import), so
     there is no "candidate cannot answer" case to branch on.
+
+    ...WITH ONE DECLARED EXCEPTION. The XBIOS video and colour group (Setscreen, Setpalette,
+    Setcolor, Vsync) reaches this stream only for a project whose cores go through the kit's doors
+    for it; one that models the group as its own no-ops declares `tos_xbios_video_unmodeled = true`
+    in its project.toml, and the four kinds are then dropped from BOTH sides. That is the coverage
+    every project had before the doors existed — stated in the config instead of assumed here.
     """
     oracle = [tuple(event) for event in o_regs.get("events", [])]
     n = _lib.g_os_event_count()
     kinds, values = _lib.g_os_event_kinds(), _lib.g_os_event_values()
     cand = [(kinds[i], values[i]) for i in range(n)]
+    if _CFG.tos_xbios_video_unmodeled:
+        oracle = [event for event in oracle if event[0] not in _OS_EVENT_XBIOS_VIDEO_KINDS]
+        cand = [event for event in cand if event[0] not in _OS_EVENT_XBIOS_VIDEO_KINDS]
     _vet_ledger_below_cap("OS event", len(oracle), len(cand), OS_EVENT_LOG_MAX, "OS_EVENT_LOG_MAX")
     if oracle == cand:
         return

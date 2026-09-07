@@ -151,7 +151,7 @@ byte to a device instead of storing one:
 | --- | --- | --- |
 | `g_os_event_reset` | `void(void)` | clear the ledger before each candidate run |
 | `g_os_event_count` / `g_os_event_kinds` / `g_os_event_values` | | the ordered `(kind, value)` stream |
-| `g_os_event` | `void(uint16_t, uint32_t)` | the recording side, which `os_cconout()` / `os_cauxout()` / `os_cprnout()` / `os_ikbd_out()` / `os_pterm()` call |
+| `g_os_event` | `void(uint16_t, uint32_t)` | the recording side, which `os_cconout()` / `os_cauxout()` / `os_cprnout()` / `os_ikbd_out()` / `os_pterm()` and the four XBIOS video doors (`os_setscreen()` / `os_setpalette()` / `os_setcolor()` / `os_vsync()`) call |
 
 GEMDOS `Cconout`/`Cconws`/`Crawio`'s write direction, `Cauxout`, `Cprnout`, BIOS `Bconout` to the
 IKBD, AES `graf_mouse` and VDI `v_show_c`/`v_hide_c` touch no memory, and neither does GEMDOS

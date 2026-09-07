@@ -23,3 +23,18 @@ image_size = 0x100000    # 1 MiB: program (text 0x13aae + data 0x7d00 -> ends 0x
 # enforced per run: see harness._vet_os_memory_map() and emu._vet_no_malloc_over_program() under
 # tools/recreate_kit/, pinned by test/test_heap_guard.py.
 tos_malloc_unused = true
+
+# ---- the XBIOS video and colour group is modeled by THIS project's own no-ops -------------------
+# The kit gives Setscreen / Setpalette / Setcolor / Vsync doors (`os_setscreen` and its three
+# siblings) whose calls become ordered entries in the off-image OS event ledger. Joust does not use
+# them: `xbios_setpalette` (src/init.c) RETURNS the table address, `flash_hiscore_color` (src/score.c)
+# returns the colour word, `save_palette` reads sixteen pens back as the model's constant zero, and
+# `init_system` / `restore_system` (src/input.c) leave their Setscreen and Setpalette entirely out
+# of the C — each of them pinned instead by a test that reads the argument off the ORACLE'S OWN
+# STACK (test_init.py, test_score.py, test_input.py). So the oracle records those events and this
+# candidate cannot, and the comparison would fail on every case that boots.
+#
+# The waiver drops the four kinds from BOTH streams, which is exactly the coverage this project has
+# had since it was closed. Retiring it is a reconstruction pass — every one of those call sites
+# routed through its door — not a config change.
+tos_xbios_video_unmodeled = true

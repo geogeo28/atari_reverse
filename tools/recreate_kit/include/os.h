@@ -248,6 +248,8 @@ uint32_t g_os_heap_pointer(void);
  *   GEMDOS Cconout / Cconws / Crawio(write)   a character to the console
  *   GEMDOS Cauxout(c)                         a character to the AUX: (serial) device
  *   GEMDOS Cprnout(c)                         a character to the printer
+ *   XBIOS  Setscreen / Setpalette / Setcolor  the shifter's screen base and colour registers
+ *   XBIOS  Vsync()                            the program waited for the raster
  *   GEMDOS Pterm(code)                        the process ENDED, and with which exit code
  *   BIOS   Bconout(dev 4, b)                  a COMMAND byte to the IKBD 6301
  *   AES    graf_mouse(mode)                   show/hide the GEM mouse pointer
@@ -274,6 +276,10 @@ uint32_t g_os_heap_pointer(void);
 #define OS_EVENT_AUXOUT     5    /* value = the character byte written to AUX: (GEMDOS Cauxout) */
 #define OS_EVENT_PRNOUT     6    /* value = the character byte written to the printer (Cprnout) */
 #define OS_EVENT_PTERM      7    /* value = the exit code the process ended with (Pterm) */
+#define OS_EVENT_SETSCREEN  8    /* value = the LOGICAL base XBIOS Setscreen was given */
+#define OS_EVENT_SETPALETTE 9    /* value = the address of the sixteen-word colour table */
+#define OS_EVENT_SETCOLOR  10    /* value = index << OS_SETCOLOR_INDEX_SHIFT | the colour word */
+#define OS_EVENT_VSYNC     11    /* value = 0: Vsync takes no argument and answers nothing */
 
 /* One off-image event a modeled call produced. `../src/gem.c` reports through this rather than
  * logging, because it is compiled into both sides and each side owns a different ledger.
@@ -354,6 +360,49 @@ static inline int32_t os_cprnout(uint8_t ch) {
  * `code` is the retcode WORD, unsigned, exactly as it sat on the emulated stack: a status of -1
  * records as 0xffff on both sides rather than as two different sign extensions. */
 static inline void os_pterm(uint16_t code)  { g_os_event(OS_EVENT_PTERM, code); }
+
+/* ---- the XBIOS VIDEO AND COLOUR GROUP (TRAP_MODEL.md, "Phase 14") ---------------------------
+ * Setscreen (0x05), Setpalette (0x06), Setcolor (0x07) and Vsync (0x25) write the shifter or wait
+ * for it. NONE of them touches an image byte, so the model still answers each of them with nothing
+ * at all — what these four doors add is that the call becomes a NAMED ENTRY IN THE ORDERED EVENT
+ * STREAM, exactly as a console byte does. A reconstruction that loads a picture's palette and one
+ * that silently drops the load are then separable, which they were not while the whole group was a
+ * `return 0` inside whichever core made it.
+ *
+ * THE OTHER HALF IS ON TARGET, and it is why the group needed a door rather than a comment. A build
+ * that runs on a real 68000 shadows these four names with the real traps (the include-path seam;
+ * `projects/bubbleghost/recreate/atari/shim_include/os.h` is the worked example), so the palette
+ * really loads AT THE INSTANT the core asks for it. Without a door the only place a shim can reissue
+ * one is the composition boundary after the slice that would have made it — a latency of one slice,
+ * which for a picture shown while a second program plays a digitised voice is the whole length of
+ * the speech.
+ *
+ * WHAT THE LEDGER CARRIES, AND WHAT IT DOES NOT. One entry per call, valued as the kind says. The
+ * entry for Setscreen is its LOGICAL base alone: an event is one 32-bit value and that call has
+ * three arguments, so the physical base and the resolution reach a TARGET build through the door's
+ * own parameters and are NOT in the ordered stream. A reconstruction that passes the wrong physical
+ * base is therefore still invisible to the differential — the residual is smaller than it was and it
+ * is not closed. */
+#define OS_SETCOLOR_INDEX_SHIFT 16u  /* Setcolor's index sits above its colour word in one event */
+
+static inline void os_setscreen(uint32_t log_base, uint32_t phys_base, int16_t resolution) {
+    (void)phys_base;
+    (void)resolution;
+    g_os_event(OS_EVENT_SETSCREEN, log_base);
+}
+
+static inline void os_setpalette(uint32_t table) { g_os_event(OS_EVENT_SETPALETTE, table); }
+
+/* Setcolor(index, colour) answers the pen's PREVIOUS value on a real machine, and -1 as the colour
+ * asks for that answer without changing anything. The model has no colour registers to report, so
+ * this door is void: a reconstruction whose original discards the answer (every one so far) reads
+ * the same either way, and one that needs it would be reading a value this model cannot supply. */
+static inline void os_setcolor(int16_t index, int16_t colour) {
+    g_os_event(OS_EVENT_SETCOLOR,
+               ((uint32_t)(uint16_t)index << OS_SETCOLOR_INDEX_SHIFT) | (uint32_t)(uint16_t)colour);
+}
+
+static inline void os_vsync(void) { g_os_event(OS_EVENT_VSYNC, 0); }
 
 /* ---- the direct $ff8800/$ff8802 PSG path (TRAP_MODEL.md, "Phase 6") --------------------------
  * The two ports the YM2149 answers on. They sit outside the image, so a reconstruction that drives

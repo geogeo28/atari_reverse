@@ -58,7 +58,8 @@ PINNED = ("OS_IMAGE_SIZE",
           # changed on one side alone would make every IKBD command compare as a console byte.
           "OS_EVENT_LOG_MAX", "OS_EVENT_NONE", "OS_EVENT_CONOUT", "OS_EVENT_IKBD",
           "OS_EVENT_GEM_MOUSE", "OS_EVENT_VDI_CURSOR", "OS_EVENT_AUXOUT", "OS_EVENT_PRNOUT",
-          "OS_EVENT_PTERM",
+          "OS_EVENT_PTERM", "OS_EVENT_SETSCREEN", "OS_EVENT_SETPALETTE", "OS_EVENT_SETCOLOR",
+          "OS_EVENT_VSYNC",
           # ...and that ledger's WIDTH tags. The C records them and the Python compares them, so a
           # tag changed on one side alone (a byte count swapped for an opcode size code, say) would
           # make every word store compare as a byte, silently.

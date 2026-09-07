@@ -662,10 +662,11 @@ void frame_blow_or_recover(uint8_t *image, CallerAddressRegisters saved) {
         if (sound_voice_priority(image, BLOW_VOICE) != 0)
             sound_release_voice(image, BLOW_VOICE);
         set_word(image, A_breath, 0);
-        /* ...through XBIOS `Setcolor(GHOST_PEN, GHOST_COLOUR_SPENT)`, which writes the shifter and
-         * so is modeled as a NO-OP: the trampoline's three save slots are the whole of what a
-         * reconstruction can reproduce, and a wrong colour is invisible here (STATUS.md). */
+        /* ...through XBIOS `Setcolor(GHOST_PEN, GHOST_COLOUR_SPENT)`. It writes the shifter and no
+         * image byte, so the trampoline's three save slots are still the only bytes a diff can see
+         * — but the CALL is now an ordered event, and on target it really moves the pen. */
         trap_save_registers(image, saved, RET_SETCOLOR_SPENT);
+        os_setcolor(GHOST_PEN, GHOST_COLOUR_SPENT);
         return;
     }
 
@@ -683,8 +684,9 @@ void frame_blow_or_recover(uint8_t *image, CallerAddressRegisters saved) {
     set_word(image, A_breath, breath);
     if (breath > (int16_t)BREATH_MAX)
         set_word(image, A_breath, BREATH_MAX);
-    /* ...and `Setcolor(GHOST_PEN, GHOST_COLOUR_IDLE)`, the same no-op. */
+    /* ...and `Setcolor(GHOST_PEN, GHOST_COLOUR_IDLE)`, the same call the other way. */
     trap_save_registers(image, saved, RET_SETCOLOR_IDLE);
+    os_setcolor(GHOST_PEN, GHOST_COLOUR_IDLE);
 }
 
 /* Slice 4, `[0x1255c, 0x125e6)` — the mouse buttons step the facing, one step per press.
@@ -1040,9 +1042,9 @@ void frame_death_sequence(uint8_t *image, uint32_t hud_frame, CallerAddressRegis
     }
 
     sound_release_voice(image, BLOW_VOICE);
-    /* ...and the ghost put back to its idle colour, through XBIOS `Setcolor` — a no-op in the
-     * model, so only the trampoline's three slots are comparable (STATUS.md's residual). */
+    /* ...and the ghost put back to its idle colour, through XBIOS `Setcolor`. */
     trap_save_registers(image, saved, RET_DEATH_SETCOLOR);
+    os_setcolor(GHOST_PEN, GHOST_COLOUR_IDLE);
 
     /* 2. The five death cells, each held for a random 2..6 frames. The hold is DECREMENTED every
      * frame and re-rolled when it has gone negative, so the first cell is shown

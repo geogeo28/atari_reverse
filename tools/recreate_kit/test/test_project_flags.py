@@ -6,10 +6,10 @@ Python, so a quoted ``tos_malloc_unused = "false"`` — a plausible hand-edit �
 waiver it was written to disable, silently. ``_bool_flag`` refuses anything that is not a real TOML
 boolean instead of interpreting it, and these cases pin that.
 
-Every case runs against BOTH flags. One is not a stand-in for the other: they waive different checks
-(the modeled Malloc heap; the harness-poked input block) and are read by separate lines of
-``project.load``, so a flag added to the config namespace but wired past ``_bool_flag`` would be
-invisible to a suite that only ever tested its sibling.
+Every case runs against EVERY flag. One is not a stand-in for another: they waive different checks
+(the modeled Malloc heap; the harness-poked input block; the XBIOS video and colour group's event
+kinds) and are read by separate lines of ``project.load``, so a flag added to the config namespace
+but wired past ``_bool_flag`` would be invisible to a suite that only ever tested its siblings.
 
 No project binding is needed: the helper is pure, so it is tested directly on a dict.
 """
@@ -26,7 +26,7 @@ RECREATE_DIR = Path("/nowhere/projects/example/recreate")   # only ever formatte
 
 # Every waiver flag project.load() reads. A flag added there and not added here is caught by
 # test_every_waiver_flag_is_covered below.
-FLAGS = ("tos_malloc_unused", "tos_poked_input_unused")
+FLAGS = ("tos_malloc_unused", "tos_poked_input_unused", "tos_xbios_video_unmodeled")
 
 # Values that are NOT TOML booleans. The two quoted ones are the dangerous pair: both are truthy in
 # Python, so "false" would read as an enabled waiver. 1/0 are rejected too — `isinstance(1, bool)`
