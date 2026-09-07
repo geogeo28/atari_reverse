@@ -662,7 +662,7 @@ void timer_c_sound_isr(uint8_t *image) {
      * `install_sound_vectors` parks `A_snd_voice + (SND_VOICES - 1) * SND_VOICE_BYTES`.
      *
      * `make guarded` IS the surface, and an earlier draft of this note said it was not. Its reserve
-     * runs from `image + PROGRAM_BYTES` to `image + PROGRAM_BYTES + (1 << 32)`, so the pointer form's
+     * runs from the end of the program image to 4 GiB above it, so the pointer form's
      * `image + 0xffffff84 + 0x8a` = `image + 0x10000000e` lands INSIDE it and faults, where the
      * address form would have wrapped to `image + 0x0e` and read the image. So the two spellings are
      * TELLABLE APART by a case that seeds such a base — and no case does. Unpinned rather than
