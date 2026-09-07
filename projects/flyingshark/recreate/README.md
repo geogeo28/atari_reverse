@@ -7,10 +7,11 @@ the compiled reconstruction runs on a copy of the same flat memory image, and th
 Why differential rather than byte-matching, and what it can and cannot see, is written up once in
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md).
 
-**Six of the ten subsystems are ported** — sprite, entity, player, weapons, hud and sound — over the
-skeleton this file describes: the binding, the image model, and the gates that catch a wave of
-subsystem agents getting either wrong. [`STATUS.md`](STATUS.md) is the ledger, and everything not
-yet ported is accounted for in its "Not reconstructed, and why" table rather than by absence.
+**All ten subsystems are ported** — sprite, entity, player, weapons, hud and sound in waves 1 and 2,
+then init, frontend, scroll and irq in wave 3 — over the skeleton this file describes: the binding,
+the image model, and the gates that catch a wave of subsystem agents getting either wrong.
+[`STATUS.md`](STATUS.md) is the ledger, and what is left is accounted for in its "Not reconstructed,
+and why" table rather than by absence.
 
 The game itself — the boot chain, the front end, the interrupt model, the entity records, the asset
 formats and the sound module — is written up in [`../notes/`](../notes), and every name in
@@ -147,10 +148,15 @@ recreate/
 ├── include/<subsystem>.h   one per subsystem: prototypes, addresses, record layout
 ├── src/<subsystem>.c       each core plus its `g_<name>` glue
 ├── test/harness.py         16-line shim: binds the kit and star-re-exports it
-├── test/abi.py             the scratch map, the ring placement, and the register-call stub
-├── test/conftest.py        the boot-chain replay, its two image fixtures, the autouse one that
-│                        installs the first as every differential's base, and the two STAGED
-│                        WORLDS the whole-frame batteries share (built once per `make test`)
+├── test/abi.py             the scratch map, the ring placement, the register-call stub, and the
+│                        two helpers every battery would otherwise copy — `run_case` (one
+│                        differential case) and `declare_glue` (a `g_*`'s ctypes signature)
+├── test/conftest.py        the boot-chain replay, the three image builders (`post_load`,
+│                        `post_new_game`, `started_level`) as plain functions plus the fixtures
+│                        over them, the autouse one that installs the first as every
+│                        differential's base, and the STAGED WORLDS the whole-frame batteries
+│                        share (built once per `make test`, cached across the xdist workers by
+│                        `built_once_per_run`)
 ├── test/test_image_model.py  the replay's pins, the second opinion, and the free-space census
 ├── test/test_constants.py    the CLAUDE.md §5 pin and the duplicate checks — a collector
 ├── test/test_heap_guard.py   the run-time half of project.toml's `tos_malloc_unused` waiver
@@ -222,11 +228,15 @@ The steps:
    restate it. This game is hand assembly with a REGISTER ABI: the glue takes the registers as
    parameters and a one-line comment maps register → role.
 3. Put addresses, record fields and the prototype in `include/<subsystem>.h`.
-4. Add edge + fuzz cases in `test/test_<subsystem>.py`. Pokes travel in `regs["_pokes"]` —
-   `harness.differential` has no `pokes=` parameter. You do **not** stage the post-load image
-   yourself: `conftest.py`'s autouse fixture installs it (ask for `post_new_game_image` by name if
-   your routine runs on a started game). A routine whose whole answer is in registers goes through
-   `abi.register_call_pokes`. Shard fuzz by `chunk` so `-n auto` spreads it.
+4. Add edge + fuzz cases in `test/test_<subsystem>.py`. A case is `abi.run_case(entry, glue,
+   pokes=…, regs=…, note=…)` — pokes travel in `regs["_pokes"]`, which `run_case` does for you
+   because `harness.differential` has no `pokes=` parameter — and every `g_*` a battery calls is
+   declared once with `abi.declare_glue`, so ctypes cannot pass a 64-bit image pointer as an `int`.
+   You do **not** stage the post-load image yourself: `conftest.py`'s autouse fixture installs it
+   (ask for `post_new_game_image` by name if your routine runs on a started game). A routine whose
+   whole answer is in registers goes through `abi.register_call_pokes`. Shard fuzz by `chunk` so
+   `-n auto` spreads it, and prefer an EXHAUSTIVE sweep over a random one wherever the input is
+   narrow enough — a one-byte input is 256 cases, and a 96-draw fuzz over it covered 78 of them.
    Declare the battery's `MIRRORS`, `ENTRY_PROLOGUES` and — if any case uses `stop_pc` —
    `STOP_PROLOGUES` at the bottom of that file; `test_constants.py` fails by name if a battery has
    no pins, if `src/<yours>.c` exists with no `test_<yours>.py` beside it, and if a module-level

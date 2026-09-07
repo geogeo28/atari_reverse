@@ -1537,7 +1537,7 @@ MIRRORS = (
     ("A_player", "include/player.h", "A_player"),
     ("A_player_hit", "include/player.h", "A_player_hit"),
     ("A_alt_bullet_glyph_flag", "include/hud.h", "A_alt_bullet_glyph_flag"),
-    ("A_scroll_pos", "include/hud.h", "A_scroll_pos"),
+    ("A_scroll_pos", "include/scroll.h", "A_scroll_pos"),
     ("SND_SFX_ACTIVE", "include/sound.h", "SND_SFX_ACTIVE"),
 )
 

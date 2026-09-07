@@ -1251,7 +1251,7 @@ MIRRORS = (
     ("SOUND_MODULE_OVER_ARENA_BYTES", "include/globals.h", "MODULE_OVER_ARENA_BYTES"),
     ("A_ENTITY_ARENA", "include/globals.h", "A_entity_arena"),
     ("A_MUSIC_SUSPEND_FLAG", "include/sound.h", "A_music_suspend_flag"),
-    ("A_LEVEL_TUNE_ID", "include/sound.h", "A_level_tune_id"),
+    ("A_LEVEL_TUNE_ID", "include/scroll.h", "A_level_tune_id"),
     "SND_ENTRY_VBL_TICK",
     "SND_ENTRY_STOP",
     "SND_ENTRY_SFX_START",

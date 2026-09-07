@@ -56,6 +56,20 @@ BuggyBoy's `flip_screen` toggles an index and writes the base to `$ffff8200`, th
   iron list" — *iron only*: Hatari's EmuTOS always leaves slot 0 free, so the fallback has never
   run).
 - **MFP timers** (`Xbtimer`, vectors `$100+`) — often the music/timer tick.
+- **The IKBD ACIA vector `$118`** (MFP channel 6) is the other vector games take outright, and one
+  interrupt delivers exactly **one byte**, so a handler that needs multi-byte packets is written as a
+  **state machine that re-vectors `$118` itself**. Flying Shark's `acia_ikbd_isr` reads `$fffffc02`
+  and, on the joystick packet headers `$FE`/`$FF`, points `$118` at a one-shot continuation which
+  stores the *next* byte into `joy0_state`/`joy1_state` and puts the main handler back; every arm ends
+  `bclr #6,$fffffa11` (clear the MFP in-service bit) then `rte`. Two things follow, and both look like
+  puzzles until you expect them. **Those packets exist only because the program asked for them** —
+  BIOS `Bconout(4, $14)`, set joystick event reporting — so the ISR's first two compares are
+  unreadable until you find that one call, and a controller left in its default mode routes the input
+  somewhere the game is not looking ([`on-target-execution.md`](on-target-execution.md),
+  taxonomy 12). And **a `Kbdvbase` handler installed by the same boot can be dead on arrival**: the
+  only caller of `joyvec` is TOS's own packet parser, which lives behind the vector the game has just
+  taken, so Flying Shark's `tos_joyvec_handler` is correct, installed, and unreachable
+  (`projects/flyingshark/notes/frontend.md` §4).
 - Low-memory system vars worth knowing: `0x420` memvalid, `0x4A2` _v_bas_ad (screen base),
   `0x484` **conterm** (keyboard/click config — games zero it), `0x466` _dumpflg.
 - Supervisor mode via GEMDOS `Super` or XBIOS `Supexec` is needed to touch most of this.

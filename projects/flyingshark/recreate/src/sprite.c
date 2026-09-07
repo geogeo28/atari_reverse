@@ -7,7 +7,7 @@
  *     in how many 16-pixel groups they span and which of them a clip lets through;
  *   * the FIVE restore blitters and `scroll_wrap_copy_1280`, which are unrolled `move.l` runs, and
  *     `tile_blit_overlay_masked`, which merges an overlay tile over a base tile;
- *   * `render_frame` @ 0x14446, the 46th and last call of the frame loop, which drives all of them:
+ *   * `render_frame` @ 0x14446, the 45th and last call of the frame loop, which drives all of them:
  *     the ring seam, two display-list passes, the overlay repaint, the flip, the newly exposed tile
  *     band and the restore-list replay.
  *
@@ -26,7 +26,7 @@
 #include <string.h>
 
 #include "machine.h"
-#include "common.h"       /* addr_sub, shared with hud.c */
+#include "common.h"       /* addr_sub and copy_longs, shared with hud.c and the two blit paths */
 #include "os.h"
 #include "sched.h"
 
@@ -286,13 +286,6 @@ DEFINE_CLIP_RIGHT_BLITTER(sprite_blit_w64_clip_right, 3u)
 #define RESTORE_LONGS_W48  6u   /* `lea 136` */
 #define RESTORE_LONGS_W64  8u   /* `lea 128` */
 #define RESTORE_LONGS_W80 10u   /* `lea 120` */
-#define LONG_BYTES         4u
-
-static void copy_longs(uint8_t *image, uint32_t src, uint32_t dst, unsigned longs) {
-    for (unsigned i = 0; i < longs; i++)
-        wr32(image + addr_add(dst, i * LONG_BYTES), be32(image + addr_add(src, i * LONG_BYTES)));
-}
-
 static void restore_blit_rows(uint8_t *image, uint32_t src, uint32_t dst, uint32_t rows_minus_one,
                               unsigned longs_per_row) {
     unsigned rows = loop_passes(rows_minus_one + 1u, COUNT_MASK_WORD);

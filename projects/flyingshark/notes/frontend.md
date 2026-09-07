@@ -44,7 +44,7 @@ from the hall-of-fame text and the cheat table both decoding cleanly under it.
 | `0x14d06` | `bra.w $15750` = `main`. |
 
 `main` (`0x15750`) calls `init_load_assets` (`0x11212`), `init_new_game` (`0x112fa`),
-`init_stage_state` (`0x1139a`), then falls into an endless 46-call frame loop
+`init_stage_state` (`0x1139a`), then falls into an endless 45-call frame loop
 `0x1575c`..`0x1580c` that ends `clr.w level_restarting; bra $1575c`.
 
 **Neither of the last two init calls returns.**  `init_new_game` ends `bra.w $1030e`

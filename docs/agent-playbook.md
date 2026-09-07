@@ -197,7 +197,12 @@ diff failure is almost always in the new code.
 - **Self-review before committing.** Run a review pass over the diff at its scale, fix the real
   findings, keep out-of-scope findings out of the commit (note them). In a byte-exact project this
   catches ISA-faithfulness slips (e.g. a `dbf` loop written as `< 0` instead of `== -1`) that pass
-  today's tests but aren't exact.
+  today's tests but aren't exact. It is not a formality: Flying Shark's gate returned **47 findings
+  across the two port waves** — commit `073d238`'s own figure — and, by the campaign's record rather
+  than by anything re-derivable from the tree, 47 more on the ~5,000-line bootstrap diff; six were
+  slips of exactly that kind, which no differential could have found. The inventory of the six, and the
+  contract-coverage cases that close them, are [`methodology.md`](methodology.md), "Contract
+  coverage".
 
 ## 8. Pitfalls that cost hours (learned the hard way)
 
@@ -254,6 +259,15 @@ measured in this workspace rather than imagined.
   filed as killed off a red baseline and alive when re-run from a green one. So: `rm -f build/*.so &&
   make test` to a clean green FIRST, then mutate, and say in the record which baseline the numbers
   were taken against.
+- **A sweep that never RAN the suite reports a clean sheet.** Flying Shark's first weapons sweep
+  passed `--timeout=600` to a pytest with no such plugin: every mutant exited non-zero at *argument
+  parsing*, before one test ran, and all eighteen were filed as killed. It is the stale-artifact class
+  with the failure moved one step earlier, and it defeats every "did it go red?" check, because it
+  did. **The gate is a pytest summary line per mutant** — record the `N failed, M passed` the run
+  actually printed and which cases produced it, never an exit code; a mutant whose run yields no
+  summary at all is a broken sweep, not a dead mutant. (Re-run without the flag, the same eighteen
+  were genuinely red, and two of them only after a blind spot in the battery was closed — which the
+  first sweep's clean sheet had hidden.)
 - **A shell gate under `set -euo pipefail` dies silently on a grep that matches nothing.** grep exits
   1, the pipeline inherits it, and the assignment aborts the script with no message at all. Measured:
   removing the last marker from a header killed the whole build at the gate's *first line* — the worst
@@ -312,6 +326,33 @@ for the agents to read, not about them.
   makes it the worst conflict surface in the tree unless each agent owns a heading — Zynaps gives each
   its own `## Verified — <yours> (N)` section and its count. (The ONE suite-total line is the
   orchestrator's, and §12's first bullet is why.)
+- **Stand up the IMAGE every battery stages on, and REPLAY it rather than transcribing it.** A wave's
+  cases all start from one fixture, so a fixture that is wrong is wrong inside every agent's green.
+  The bare loaded `.PRG` is usually not that image: Flying Shark loads eight files off disc and
+  derives nine screen pointers from `Physbase` before `main` reaches its frame loop, so a case staged
+  on `harness.BASE_IMAGE` runs against zeroed tile banks, a zeroed sprite bank and null screen
+  pointers — green, about a machine that never exists at run time. Four properties of the fixture that
+  replaced it transfer:
+  * **It is the ORIGINAL's own work.** `post_load_image` is three slices of the game's own boot code
+    run under the oracle, each with the files that slice reads staged for the trap model. The hand
+    transcription it replaced is kept beside it as a **second opinion**, diffed over the whole image
+    outside three named bands — and when the two disagree the replay is right: it caught an
+    `st $176ea` the transcription had missed, which is a mutation row of its own now.
+  * **An autouse session fixture installs it** as the base every `differential()` starts from, because
+    an agent forgetting it would not fail — it would quietly run the case against zeroes.
+  * **Per-slice staging is arithmetic, and the arithmetic gets its own test.** The model stages files
+    in ONE window (258,048 bytes here): the seven asset files fit with 1,625 spare and the
+    32,128-byte title picture does not fit beside them, so the title is a slice of its own.
+    `test_the_staging_window_is_why_the_replay_is_split` pins that, so a window that grows later
+    surfaces as a test to delete rather than as a split nobody can account for.
+  * **Name a fixture for the instant of the boot it holds** — `post_load_image` is where the asset
+    loader returns, `post_new_game_image` is that image with `init_new_game` run on it — so a battery
+    asks for the one its routine really runs on, and the name is checkable against the boot chain
+    instead of meaning "the good image".
+  What the replay CANNOT reproduce is stated rather than papered over: the model's `Physbase` answer
+  underflows this game's ring arithmetic, so the harness applies the routine's own formula at a base
+  it chooses, and where the ring really lands is filed under "Unpinned on target"
+  (`projects/flyingshark/recreate/README.md`, "The image model").
 - **Decide where a global lives before anyone needs one, and make it a rule with no protocol.**
   Zynaps': *a global lives in the header of the subsystem that owns the data*, any subsystem may
   `#include` another's header to read it, and there is deliberately **no promotion protocol and no
@@ -403,7 +444,10 @@ and the failures are all in the seams rather than in the code.
 - **Re-sum the ledger's ONE suite line at every merge.** Each wave reports its own count; if nobody
   adds them up the ledger's headline number stays at whichever wave last wrote it. Zynaps' sat
   stranded at wave A's 4,094 through four waves of growth until it was re-derived at 4,751
-  (`0f18092`). Same for any "N verified" total the merge does not recompute.
+  (`0f18092`). Same for any "N verified" total the merge does not recompute. Better than the habit is
+  a **surface**: Flying Shark's `test_status.py` re-derives every section's count from its own rows and
+  **refuses a literal grand total in the file's header at all**, so the headline is a sum of things
+  that are checked rather than a number somebody last recomputed.
 - **After merging a checker, grep for the counterpart of every name you renamed.** A rename made in
   one branch outside the conflict hunks merges clean and fails at *runtime*: a smoke check's
   `PACING_OVERFLOW_SHARE` became `PACING_OVERFLOW_FRAMES` in one wave (`59786c7`) and the next wave's
@@ -413,6 +457,22 @@ and the failures are all in the seams rather than in the code.
   `include/<yours>.h`, `test/test_<yours>.py` and your own `## Verified — <yours>` section of the
   ledger, with every shared file either nobody's or append-only — and produced no merge conflict in
   the code at all. The seams that did cost time were the *commit* ones below, not the edits.
+  It held again over **six** subsystem agents against one tree, several at a time (Flying Shark's two
+  port waves, 248 verified rows), on that same contract plus three **frozen headers** — the
+  58-byte entity record, the display-list/restore-list/repair-grid layouts, and the weapons header —
+  and a per-slice **proposals file** for the name map. Nothing in the code collided there either; what
+  did is the next bullet.
+- **A loan the borrower cannot repay is the ORCHESTRATOR's change.** §11's borrowed-global ledger
+  works because the duplicate pin calls the loan in — but notice who is in a position to answer it.
+  Repaying means deleting the `#define` from the borrowing header in the *same* change that adds it to
+  the owning one: the ownership table forbids an agent to edit somebody else's header, and the pin
+  ("one NAME, one home") refuses the two halves landing as two commits. So Flying Shark's player slice
+  shipped verified with eleven of its own globals still spelt in `hud.h` and `entity.h`, and the
+  migration — eleven names into `include/player.h`, and the ledger rows deleted — was one integrating
+  change made above the agents. Budget for it: it is not a merge conflict, and no agent can make it.
+  The by-product is worth having too, since reading the whole loan table at once is what showed five
+  rows that were never loans — cheat flags filed as debts of `hud.h` when the only routines that
+  WRITE them are hud's own, so the data was already living with its owner and the rows were the error.
 - **Commit BY PATH during a live wave, so files still in flight stay out.** `git add <paths>` is the
   workspace rule anyway; mid-wave it is also what lets you land one finished subsystem while three
   others are mid-edit in the same tree. Stage the finished agent's files, `git diff --cached --stat`,

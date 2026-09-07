@@ -11,7 +11,7 @@
 #include "machine.h"
 #include "os.h"
 #include "sched.h"
-#include "common.h"  /* SCC_TRUE, addr_sub and display_record_write, shared with entity.c */
+#include "common.h"  /* SCC_TRUE, addr_sub, const_word and display_record_write */
 #include "hud.h"
 #include "player.h"  /* the player record and the counters the icon rows draw */
 
@@ -517,7 +517,7 @@ void hiscore_insert_score_at_rank(uint8_t *image) {
     for (unsigned digit = 0; digit < SCORE_DIGITS; digit++)
         image[addr_add(row, digit)] = image[A_score_digits + digit];
     image[A_new_hiscore_pending] = SCC_TRUE;   /* `st $176e8`, into a word */
-    wr16(image + A_name_entry_timeout, be16(image + A_const_words_0123));
+    wr16(image + A_name_entry_timeout, const_word(image, CONST_WORD_ZERO));
 }
 
 /* `game_over_hiscore_check` @ 0x10724: place the finished score in the hall of fame, if it earns it.

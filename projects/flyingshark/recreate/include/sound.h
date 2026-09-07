@@ -36,14 +36,15 @@
 
 /* ---- BORROWED: two game globals the wrappers read ---------------------------------------------
  *
- * Neither belongs to this subsystem — both are written by the level/stage setup — and each is a
- * LOAN with a row in STATUS.md's "Borrowed globals" until the subsystem that owns it lands and
- * defines it in its own header. `../names.txt` spells both names.
+ * `A_level_tune_id` is `include/scroll.h`'s — `start_level` @ 0x11484 is its only writer — and the
+ * driver reads it from there. `A_music_suspend_flag` stays here and is a LOAN with a row in
+ * STATUS.md's "Borrowed globals": THREE subsystems write it and only this one reads it, so the
+ * census that settles every other loan does not settle this one. `../names.txt` spells both names.
  */
 #define A_music_suspend_flag 0x176a4u /* `tst.w $176a4` @ 0x1259c — non-zero suspends the restart;
-                                       * written by init_stage_state @ 0x1139a (frontend) */
-#define A_level_tune_id      0x1776eu /* the tune number start_level @ 0x11440 copies out of the
-                                       * level record (frontend); read by 0x121a2 and 0x125b0 */
+                                       * written by `player_vs_enemy_bullets` @ 0x110be (player),
+                                       * `init_stage_state` @ 0x113ca (init) and
+                                       * `restart_level_at_checkpoint` @ 0x14be0 (player) */
 
 /* ---- the module's four entry points, as the `jsr n(a0)` offsets the game uses ------------------
  *

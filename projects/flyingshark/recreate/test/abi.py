@@ -16,7 +16,45 @@ region of live game memory whose address the harness chooses. A stub or a scratc
 inside it would be memory the game overwrites for its own reasons the moment a ported draw routine
 runs. `test_constants.py` pins the map clear of the program, the ring and the staged-file table.
 """
-import harness  # noqa: F401  — imported for its side effect: it binds the kit to this project
+import ctypes
+
+import harness
+
+_IMAGE_ARG = ctypes.POINTER(ctypes.c_uint8)
+
+# ---- driving one case, and declaring the glue it calls -------------------------------------------
+#
+# Both are here rather than in a battery because every battery wrote the same six lines: the shape
+# of a case is the project's, not a subsystem's (`../README.md`, "Adding a function": `test/abi.py`
+# is shared and append-only, for the helper every battery would otherwise copy).
+
+
+def run_case(entry, glue, pokes=None, regs=None, note="", **kwargs):
+    """One differential case: stage `pokes`, enter the oracle at `entry`, and demand an empty diff.
+
+    Pokes travel in `regs["_pokes"]` because `harness.differential` has no `pokes=` parameter, and
+    both dictionaries are COPIED — a case that built its pokes from a session fixture would
+    otherwise be editing the fixture for every case after it.
+    """
+    run_regs = dict(regs or {})
+    run_regs["_pokes"] = dict(pokes or {})
+    diffs, info = harness.differential(entry, run_regs, glue, **kwargs)
+    assert not diffs, f"{note}\n{harness.report(diffs)}"
+    return info
+
+
+def declare_glue(*names, args=0, result=None):
+    """Give each named `g_*` its ctypes signature: the image pointer, then `args` register words.
+
+    STATED RATHER THAN LEFT TO CTYPES' DEFAULT, which passes a Python int as a C `int` and a
+    pointer it was not told about as one too: an image pointer truncated to 32 bits is a
+    segmentation fault at best and a run against the wrong megabyte at worst.
+    """
+    for name in names:
+        glue = getattr(harness._lib, name)
+        glue.argtypes = [_IMAGE_ARG] + [ctypes.c_uint32] * args
+        glue.restype = result
+
 
 # ---- where the harness puts the screen ring ------------------------------------------------------
 #

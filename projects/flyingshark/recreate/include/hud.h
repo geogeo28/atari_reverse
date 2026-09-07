@@ -23,9 +23,10 @@
 
 #include "globals.h"       /* the memory model — `A_screen_prev1` is its, and is read here */
 #include "display_list.h"  /* the six-byte record every routine here publishes — frozen, not restated */
-#include "sprite.h"        /* `A_map_row_ptr`, `A_map_row_ptr_reset` and `A_scroll_fine`, which the
-                            * debug overlay formats. The scroll subsystem owns them and is unported,
-                            * so sprite.h holds them on loan and this header READS them from there */
+#include "irq.h"           /* A_key_bits and A_joy1_state — the ACIA handler owns them, this reads */
+#include "scroll.h"        /* `A_map_row_ptr`, `A_map_row_ptr_reset`, `A_scroll_fine` and
+                            * `A_scroll_pos`, the four counters the debug overlay formats. All four
+                            * are the scroll subsystem's and are READ from its header */
 
 /* ---- the glyph alphabet -------------------------------------------------------------------- */
 #define GLYPH_A      0xabu   /* `cmpi.b #$ab,(a0)` @ 0x10984 — the wrap floor of name entry */
@@ -106,7 +107,13 @@
 #define A_hiscore_rank        0x176e0u /* `move.w #$5,$176e0` @ 0x1072a */
 #define A_hiscore_beaten      0x176e4u /* `st $176e4` @ 0x10a48 — a BYTE store into a word */
 #define A_new_hiscore_pending 0x176e8u /* `st $176e8` @ 0x107ee */
+/* The table's stride, so that `A_const_words_0123 + index * CONST_WORD_BYTES` is one fact from one
+ * header. `include/common.h`'s `const_word` is the read every core makes through it. */
+#define CONST_WORD_BYTES      2u
 #define A_const_words_0123    0x176acu /* `move.w $176ac,$176de` @ 0x107f4 — a constant 0 word */
+#define CONST_WORD_ZERO       0u       /* ...which is index 0, the one every subsystem reads:
+                                        * @ 0x107f4 and @ 0x1049e here, @ 0x112fa/0x11342/0x11354
+                                        * in `init_new_game` and @ 0x104f6 in the attract loop */
 
 #define HISCORE_LOWEST_RANK 5u /* `move.w #$5,$176e0` @ 0x1072a: rank 5 is the SIXTH row */
 /* `game_over_hiscore_check` stamps this over score digit 5 to make a tying score compare HIGH — and
@@ -128,8 +135,7 @@
 #define CHEAT_HANDLER_BYTES   4u       /* `lsl.w #2,d0` @ 0x10e0e — longword pointers */
 /* The arm key: a cheat only takes while keypad '4' is held, which the ACIA ISR reports as bit 0 of
  * `key_bits`. `check_cheat_name` spins CHEAT_ARM_SPINS times looking for it and gives up. */
-#define A_key_bits        0x17780u /* `btst #0,$17780` @ 0x10d9a */
-#define CHEAT_ARM_KEY_BIT 0u
+#define CHEAT_ARM_KEY_BIT 0u       /* of `A_key_bits`, which is `include/irq.h`'s */
 #define CHEAT_ARM_SPINS   0x1389u  /* `move.w #$1388,d7` + dbf @ 0x10d96: 5000 means 5001 passes */
 /* The PC the arm spin RE-READS `key_bits` at — the site every `sched_poll8` names and the trigger a
  * case's schedule declares. The byte is the ACIA interrupt's, so the count of iterations is only
@@ -230,8 +236,7 @@
  * Development code that survived into the shipped binary: a binary-dump printer with no caller at
  * all, and an overlay gated on a flag nothing ever writes (../notes/frontend.md §7).
  */
-#define A_joy1_state   0x1777fu /* `btst #7,$1777f` @ 0x149f0 */
-#define JOY_FIRE_BIT   7u
+#define JOY_FIRE_BIT   7u       /* of `A_joy1_state`, which is `include/irq.h`'s */
 /* The PC the fire-release wait RE-READS the byte at, which is the site every `sched_poll8` names and
  * the trigger a case's schedule declares (tools/recreate_kit/include/sched.h, "WAIT SITES"). */
 #define FIRE_RELEASE_WAIT_PC 0x149f0u
@@ -253,11 +258,9 @@
 #define A_debug_map_advance_field 0x14a05u /* `lea $14a05,a0` @ 0x14960 */
 #define A_debug_scroll_pos_field  0x14a11u /* `lea $14a11,a0` @ 0x14976 */
 #define A_debug_scroll_fine_field 0x14a1eu /* `lea $14a1e,a0` @ 0x14986 */
-/* All four counters it formats belong to subsystems that are unported. `A_map_row_ptr`,
- * `A_map_row_ptr_reset` and `A_scroll_fine` are on loan in `include/sprite.h` and read from there;
- * `A_scroll_pos` is the frontend's and is on loan HERE, because nothing else defines it yet. Each
- * has a row in STATUS.md's "Borrowed globals". */
-#define A_scroll_pos              0x17758u /* `move.w $17758,d0` @ 0x1497c — BORROWED, see STATUS */
+/* All four counters it formats are the SCROLL subsystem's — `A_map_row_ptr`, `A_map_row_ptr_reset`,
+ * `A_scroll_fine` and `A_scroll_pos` — and are read out of `include/scroll.h`. The last of them was
+ * on loan here while that subsystem was unported; the loan and its STATUS.md row are closed. */
 #define FORMAT_DIGITS             5u       /* the five `move.b #$30,(a0)+` @ 0x14a76..0x14a86 */
 #define FORMAT_RADIX              10u      /* `divu.w #$a,d0` @ 0x14a96 */
 

@@ -20,7 +20,7 @@
 #include "machine.h"
 #include "os.h"
 #include "sched.h"
-#include "common.h"  /* SCC_TRUE, the one spelling of the `Scc` byte */
+#include "common.h"  /* SCC_TRUE, and `const_word` — the table read this game spells 0..9 with */
 #include "player.h"
 
 /* The five weapon patterns, as `weapon_fire_tbl` holds them — the dispatch below turns one of these
@@ -46,13 +46,6 @@ static int bit_held(uint8_t byte, unsigned bit) { return (byte >> bit) & 1u; }
 #define KEY_PAUSE_BIT 1u   /* 'P' */
 #define KEY_ABORT_BIT 2u   /* F10 */
 #define KEY_BOMB_BIT  5u   /* space */
-
-/* One word out of `A_const_words_0123`, the table of 0..9 this program reads its small immediates
- * out of instead of spelling them (`move.w $176ae,$17712` is "lives = 1"). The index IS the value,
- * so the call reads as the constant it stands for while the read stays the original's. */
-static uint16_t const_word(const uint8_t *image, unsigned value) {
-    return be16(image + A_const_words_0123 + value * CONST_WORD_BYTES);
-}
 
 /* ================================================================================================
  * The take-off and fly-in scripts
@@ -826,7 +819,11 @@ void level_progress_check(uint8_t *image) {
 }
 
 /* restart_level_at_checkpoint @ 0x14aa8, SLICE [0x14aac, 0x14b22) — everything the stage restart
- * does before it reaches `clear_actor_arrays`, which is the init subsystem's and unported.
+ * does before it reaches `clear_actor_arrays` (the init subsystem's, and verified). The span stops
+ * there because that is where this slice's own work ends; what still has no core is the routine's
+ * TAIL, which ends `bra.w $1575c` — back to the frame loop's own top, unwinding the stack rather
+ * than returning, which is why a reconstruction cannot play a frame the plane dies in
+ * (`../gen_readme_assets.py` is where that bites).
  *
  * THE CHECKPOINT SCAN WALKS BACKWARDS AND HAS NO FLOOR. It starts on the SCROLL_POS word of the
  * table's seventh record — the shipped tables end with a 0x2710 sentinel there, far past any real

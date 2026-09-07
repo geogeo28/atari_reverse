@@ -1089,6 +1089,17 @@ diet took it to 597,470 B against a measured 908,138 and it runs on a 1 MB ST (`
   what a `memset` overrun leaves. Mutation-test both arms; Zynaps' first attempt had a single band
   sitting 768 B above the world's top and would have missed exactly the one-row overrun it existed
   for.
+- **A LOAD ADDRESS IS A BUDGET WITH TWO ENDS, and only one of them is the one you set.** The size
+  gate above bounds the program from below; a game that builds its own buffers **downwards** from
+  `Physbase` bounds it from above, and the two close on each other. So the target's boot harness
+  asserts a MAXIMUM LOAD ADDRESS per boot, beside the size it already asserts — one number, checked
+  where the machine actually put the program, rather than one somebody re-derives after a crash
+  (`projects/flyingshark/tools/boot_shots.py`). Assert it every run: the headroom is small enough to
+  be spent by a different TOS, a resident, or a `.PRG` that grew, so it is a measurement with a date
+  on it and not a property. Why such a game has an upper bound at all, what it looks like when the
+  bound is missed (one correct screen, then an illegal instruction, looking exactly like a missing
+  deprotection patch), and Flying Shark's own arithmetic are told once in
+  [`packed-executables.md`](packed-executables.md), "Gamex hard-disk installs".
 - **Say what the shrink left unpinned.** The kit's image-bounds helper (`os_in_image`,
   `tools/recreate_kit/include/os.h`) now stops at a different address on each shore, so two guards in
   verified code fail at different points off target and on. Both fail by *not writing*, the census

@@ -85,9 +85,13 @@ void bomb_publish(uint8_t *image) {
  * D0 IS AN INPUT, and an accidental one. `move.w $176ec,d0 / lsl.w #3,d0 / adda.l d0,a0` loads only
  * the low word and never touches the high one, and the add is a LONG — so which row of
  * `A_blast_offset_tbl` the routine reads depends on what its caller left in the top half of D0.
- * Reproduced rather than assumed away: the only call site is the unported frame loop, so nothing
- * here can say the high word is zero (`test_weapons.py::test_blast_step_indexes_the_table_with_the_
- * WHOLE_of_d0` is the case that proves the dependency is real). */
+ * Reproduced rather than assumed away, and the value is MEASURED and not assumed: the only call
+ * site is `frame_loop_once` @ 0x157d4, and
+ * `test_init.py::test_the_frame_loops_register_carries_are_what_the_original_leaves` reads D0 out
+ * of the ORACLE there over every staged frame. Its high word is 0 on all of them (its LOW word is
+ * not, and is overwritten below);
+ * `test_weapons.py::test_blast_step_indexes_the_table_with_the_WHOLE_of_d0` is the case that proves
+ * the dependency is real. */
 void bomb_blast_step(uint8_t *image, uint32_t scratch) {
     uint32_t offsets;
     unsigned point;

@@ -3,7 +3,8 @@
 Recovering lost 1980s Atari ST games from their shipped executables: disassemble one, name every
 function, rewrite it as readable C **proven byte-for-byte against the original machine code**, and
 run that C back on a 68000. The tooling and the [documentation](docs/README.md) are game-agnostic —
-point them at any GEMDOS `.PRG`. **Four games are solved with them** and a fifth is under way.
+point them at any GEMDOS `.PRG`. **Four games are solved with them**, a fifth is reconstructed
+and waiting on hardware, and a sixth is under way.
 Every picture below was **drawn by the reconstruction**, not screenshotted from the original —
 with the two marked where they appear: Bubble Ghost's reconstruction is complete and verified and
 boots to its menu and was play-tested by the author under Hatari (it plays well), but nothing of it
@@ -78,6 +79,19 @@ no headless check can reach, the game being mouse-driven — but nothing has run
 left is that, and `GHOST.LOA` — a second program it loads and calls.
 → [`projects/bubbleghost/README.md`](projects/bubbleghost/README.md)
 
+### Flying Shark (Taito 1987 / Firebird 1988) — the one still being written
+
+| Take-off, level 1 | Over the jungle |
+|:---:|:---:|
+| ![](assets/flyingshark/level1-takeoff.png) | ![](assets/flyingshark/level1-busy.png) |
+
+A vertically-scrolling shooter, taken out of a Gamex hard-disk release where the game is a packed
+stream inside a stub that fakes GEMDOS. **254 functions named · ten of ten subsystems verified ·
+277 verified rows across 3,553 differential tests** — all forty-five calls of the frame loop are
+reconstructed C, and the two frames above were drawn by one call into it per frame. No playable
+`.PRG` yet: that waits on the on-target build.
+→ [`projects/flyingshark/README.md`](projects/flyingshark/README.md)
+
 ---
 
 ## The three stages
@@ -103,7 +117,7 @@ left is that, and `GHOST.LOA` — a second program it loads and calls.
 
 Each stage is refereed by the one above it, so nothing can go wrong quietly. Stage 2 is judged by a
 cycle-accurate emulator running the original machine code; stage 3 is judged, frame by frame,
-against stage 2's verified cores. Only Buggy Boy has a stage 3; the other three go from stage 2
+against stage 2's verified cores. Only Buggy Boy has a stage 3; the others go from stage 2
 straight onto the 68000. Each game's README tells its own story.
 
 ## Quick start
@@ -151,6 +165,7 @@ reverse/
 │                             TOS traps — bound to a game by its recreate/project.toml
 └── projects/                 one directory per reversed game, scaffolded by new_project.sh
     ├── bubbleghost/          names.txt · decomp.c · recreate/ · notes/ · tools/
+    ├── flyingshark/          names.txt · decomp.c · recreate/ · notes/ · tools/
     ├── buggyboy/             names.txt · decomp.c · recreate/ · remaster/ (the playable PRG) · docs/
     ├── joust/                names.txt · decomp.c · recreate/ (+ atari/ — the playable PRG)
     ├── wonderboy/            names.txt · decomp.c · recreate/ (+ atari/ — the PRG and its floppy) ·
@@ -226,16 +241,26 @@ decoded from `GHOST.PRE` and shown above: the BUBBLE GHOST logo, *by C.Andreani*
 1988, ACCOLADE INC. TM*. Published by ERE Informatique in 1987 and by Accolade in 1988. All rights
 in the game belong to their respective owners.
 
+**Flying Shark** for the Atari ST — the credit reproduced here is the binary's own string,
+verbatim: *"PROGRAMMING BY PRIME SOFTWARE & IMAGES DESIGN"*, and the game's attract screen adds
+*"PROGRAMMING BY HENRY S CLARK AND KARL D JEFFERY / GRAPHICS BY JASON G LIHOU / SOUND BY
+J C BROOKE"*. *Flying Shark* is Taito's 1987 coin-op; this is the licensed Atari ST conversion
+published by Firebird in 1988, and the copy analysed here is the later Gamex hard-disk release,
+whose own `README.TXT` is signed "PP". All rights in the game and in the arcade original belong to
+their respective owners.
+
 This repository contains **no game code or data** — no executable, no `COURSES.DAT`, no
 `GRAPHICS.GRA`, no `JOUST.PRG`, no `JOUSTS.CTE`, no `HIGH.SCO`, no `SWB.PRG`, none of the `.RAD`
 resources (`TITLESCR`, `CREDITS`, `DATADISK`, `TILEDATA` and the thirty-seven `OVALAY*` overlays),
 no `SPRITES.CRU`, no `ZYNAPS17.PRG`, none of Zynaps' sixty-two data files, no `GHOST.PRG`, none of
-Bubble Ghost's six data files, no flux or sector dump of any of these five games' floppies, no disk
+Bubble Ghost's six data files, no `FSLA`, no `FRD`, no `FLYSHARK.PRG`, none of the twenty-one files
+in Flying Shark's container, no flux or sector dump of any of these six games' floppies, no disk
 image of any of them, and no TOS ROM image. It holds analysis, documentation, tooling, and
 independently written C. The images in this repository's READMEs are output of that reconstruction —
 except Bubble Ghost's two, which are its own artwork decoded from a data file and a screenshot of
-the original binary running in an emulator — that game is reconstructed but has no playable build to
-draw from yet. All are
+the original binary running in an emulator (that game is reconstructed but has no playable build to
+draw from yet), and Flying Shark's title picture, which is its own NEOchrome artwork as the game's
+own loader places it. All are
 included to document what the work produces; reproducing any of them at all requires the game files
 this repository does not ship. Running any of it requires a copy of the game you already own.
 
@@ -244,5 +269,5 @@ Reverse engineering here is for interoperability, preservation and study.
 **License.** The work in this repository — the tooling, the documentation and the reconstructed C —
 is Copyright © 2026 Geoffrey Anneheim and released under the **GNU General Public License, version
 2** ([`LICENSE`](LICENSE)). That covers this repository's own contents only; it grants no rights in
-Buggy Boy, Joust, Wonder Boy in Monsterland or Zynaps, all of which remain the property of their
-owners.
+Buggy Boy, Joust, Wonder Boy in Monsterland, Zynaps, Bubble Ghost or Flying Shark, all of which
+remain the property of their owners.

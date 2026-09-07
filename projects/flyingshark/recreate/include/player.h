@@ -22,6 +22,7 @@
 #include "entity.h"         /* the 58-byte entity record and the group tables the passes walk */
 #include "globals.h"
 #include "hud.h"            /* A_player, PLAYER_MODE, A_lives, A_bombs, A_player_hit, the cheats */
+#include "irq.h"            /* the four input bytes the ACIA handler writes and this one reads */
 #include "sound.h"          /* the sfx wrappers the death and the landing bonus call */
 #include "sprite.h"         /* the sprite record's hit box, and the scroll globals the restart sets */
 #include "weapons.h"       /* the shot slots the patterns fill, the bomb record, the enemy bullets */
@@ -155,9 +156,6 @@
 #define A_game_over_flag 0x1769au /* `st $1769a` @ 0x13c7c — `level_progress_check` reads it */
 #define A_game_over_delay 0x176aau /* `subi.w #$1,$176aa` @ 0x13c82 — frames the banner dwells */
 
-#define CONST_WORD_BYTES  2u /* `A_const_words_0123` (include/hud.h) holds the words 0..9 in order,
-                              * and the game reads an immediate out of it rather than spelling one:
-                              * `move.w $176ae,$17712` is "lives = 1". The index IS the value. */
 #define LIVES_AFTER_GAME_OVER 1u /* `move.w $176ae,$17712` @ 0x13c4c */
 #define BOMBS_AFTER_GAME_OVER 0u /* `move.w $176ac,$17710` @ 0x13c56 */
 
@@ -228,12 +226,10 @@
 #define A_level_just_started 0x17696u /* `st $17696` @ 0x14aac — the frame loop clears it at its
                                        * bottom, and `read_player_input` skips pause and abort
                                        * while it is set */
-#define A_joy0_state         0x1777eu /* `btst #7,$1777e` @ 0x143c8 — the second bomb button */
-#define A_key_last_scancode  0x17781u /* `clr.b $17781` @ 0x14ab2 — the raw byte `acia_ikbd_isr`
-                                       * keeps beside `key_bits`. THE RESTART CLEARS THIS AND NOT
-                                       * `key_bits`, which is why a held pause or abort key survives
-                                       * a stage reset and why `A_level_just_started` has to gate
-                                       * both of them off for the frame after one */
+/* `A_joy0_state` and `A_key_last_scancode` are `include/irq.h`'s — the ACIA handler writes them and
+ * this subsystem only reads and clears them. THE RESTART CLEARS THE SCANCODE AND NOT `key_bits`,
+ * which is why a held pause or abort key survives a stage reset and why `A_level_just_started` has
+ * to gate both of them off for the frame after one. */
 #define A_use_keyboard_flag  0x1770eu /* `tst.w $1770e` @ 0x14354 — read here, written nowhere */
 
 #define A_checkpoint_tables      0x15ab0u /* `lea $15ab0,a0` @ 0x14aca — one longword per level */

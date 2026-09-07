@@ -42,8 +42,10 @@ per entry), confirmed against every `lea` in the code.
 
 ## 2. The frame loop
 
-`main` (0x15750) runs three init calls then 46 subsystem calls forever
-(`bra.w $1575c`). **The same 46-call body appears verbatim three more times**:
+`main` (0x15750) runs three init calls then **45** subsystem calls forever
+(`bra.w $1575c`) — the table's row 46 is the loop's own `clr.w`, not a `bsr`, and
+`recreate/test/test_init.py` reads the count off the loaded image rather than
+trusting it. **The same body appears verbatim three more times**:
 in `level_start` (0x14aa8), and in 0x10724 and 0x124ae — the game-over and
 level-advance paths re-enter the loop rather than returning into it (0x124ae
 does `addq.l #4,a7 / bra.w $15758`; the abort key does `adda.l #$40,a7 /

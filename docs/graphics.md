@@ -99,4 +99,68 @@ Objects that overlay a background use a **mask + data** pair (often adjacent lon
 scaled object's left/right boundary. Scaling for pseudo-3D is done by choosing how many
 screen rows each source row covers, from a perspective table.
 
+The common hand-asm shape is **one unrolled body per width class**, entered at several points. A
+sprite of width class *n* stores `n+1` five-word groups per row — mask, then planes 0–3 — so its
+source stride is `(class+1) * 10` bytes, which is exactly what a top clip subtracts from the source
+pointer per clipped row and the cleanest statement of the layout there is; the sub-word shift is one
+`ror.l` of `x & 0xf` applied to all five words, and it makes the sprite span **one group more on
+screen** than it stores. The clipped variants are the same body behind a **ladder of rungs**, one per
+group the edge eats, and two things about them are worth knowing before you transcribe one. The gate
+is often a
+**byte in memory re-read once per group**, not a value latched on entry — Flying Shark's edge
+blitters consult `blit_clip_mask` inside the loop, and a reconstruction that hoisted that read was
+byte-identical on every sprite the game ships and unfaithful to the instruction (one of the six slips
+in [`methodology.md`](methodology.md), "Contract coverage"). And **the ladders are not symmetric**:
+two of that game's four right-hand ladders narrow the restore record they have just appended and two
+do not, so the wider sprites really do restore up to 24 bytes past the row they drew — an original
+bug, and the reason the rungs are transcribed as a table rather than generated from the width.
+
+## Scrolling by moving the video base, not the pixels
+
+A vertically scrolling game need not copy a byte to scroll. The shape to recognise — Flying Shark is
+the worked example (`projects/flyingshark/notes/gameplay.md` §4 and `notes/frontend.md` §2) — is
+**one circular framebuffer with several bases living inside it**:
+
+- The boot carves a `0x1f900`-byte region (808 scanlines) immediately below `Physbase` and rounds the
+  base **up** to 256 bytes, because the shifter's base register (`$ffff8201/8203`) holds only the two
+  high bytes and cannot point anywhere finer. Four screen bases sit in it, at `+0x7800`, `+0xfa00`,
+  `+0x17700` and `+0x1f400`.
+- Each displayed frame takes the next base round-robin, moves it **down** `0x500` bytes (8 scanlines),
+  wraps it by the region size when it passes the bottom, and publishes it with
+  `Setscreen(-1, base, -1)`. The picture scrolls and nothing is copied.
+- **The seam is what it costs.** A base near the bottom of the region is read by the shifter *across*
+  the region's end, so a frame that is in that window opens by copying the `0x500` bytes at the base
+  up to `base + 0x1f900`. A ring is only circular if the wrap-around rows are kept in step.
+- The **sub-tile phase** is separate arithmetic: a counter stepped 2 px a frame and masked (`0..0x1f`
+  here) indexes a 16-entry split table that says how many rows of the tile above and of the tile below
+  make up the newly exposed 8-scanline band; the map cursor steps one row whenever the counter wraps.
+
+Two consequences. A reconstruction must read every base **out of the image** and never compile one in
+— the region's address is a function of `Physbase`, which is the machine's answer and not the
+program's — and the whole scrolling surface is live game memory that is *not in the `.PRG` at all*,
+which a differential harness has to place deliberately (`projects/flyingshark/recreate/README.md`,
+"The image model"). Off target that harness can pin the *arithmetic* and not the address it lands on;
+the surface that sees a ring in the wrong place is rendered pixels — a scroll that tears or wraps at
+the wrong row ([`on-target-execution.md`](on-target-execution.md), "The observable surfaces").
+
+### Deferred drawing: display list, restore list, repair grid
+
+The renderer above is usually paired with a **display list**, and recognising the trio saves reading
+each drawing site: a fixed array of small records (Flying Shark: 223 × `x.w y.w frame.b active.b`),
+sub-ranges owned by subsystem, which every game routine *publishes into* rather than drawing. The
+active byte is also the layer — 0 hidden, negative drawn in pass A, `1..0x7f` in pass B — and one
+renderer walks the list twice.
+
+- **The restore list** is how the ring is paid for: each sprite drawn appends
+  `(screen offset, width class, row count)` to the list belonging to the buffer it drew into, and the
+  renderer replays that list two frames later to copy clean background over the dirt — source and
+  destination differing by exactly the scroll that separates the two buffers (`+0x280` = 4 scanlines
+  here), so the same world content lands in the same place.
+- **The repair grid** is how a sprite gets *behind* the scenery: pass A copies the overlay tile ids of
+  the map cells the sprite touched into a grid, which is drained after the pass and re-blitted with
+  colour 0 transparent, over the sprites. Pass B then draws on top of everything.
+
+The transferable part is that **no game routine touches the screen**: one function does, once, in a
+fixed order — which is why a single differential over that function can cover a whole frame.
+
 → Sound assets: [`sound.md`](sound.md). Naming the drawing code: [`methodology.md`](methodology.md).

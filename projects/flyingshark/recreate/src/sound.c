@@ -33,6 +33,7 @@
 #include "hw.h"
 
 #include "globals.h"
+#include "scroll.h"   /* `A_level_tune_id` — the stage start writes it, this reads */
 #include "sound.h"
 
 /* `ror.b #1,dn`: the bit rotated out is the old bit 0, and every use here tests exactly that bit

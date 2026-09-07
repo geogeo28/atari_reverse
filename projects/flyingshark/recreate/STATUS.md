@@ -12,12 +12,11 @@ nowhere: `test/test_status.py` re-derives each section's count from its rows, re
 grand total in this header, and refuses a `fn` line in `../names.txt` that is neither verified nor
 deferred.
 
-**SIX OF THE TEN SUBSYSTEMS ARE PORTED** — sprite, entity, player, weapons, hud and sound — by two
-waves of subsystem agents over the harness skeleton this file opened with. The four that are not
-(`init`, `frontend`, `scroll`, `irq`) still carry an empty heading, so that the first agent into
-each finds one rather than inventing it; a section stays exempt from `src/<name>.c` existing only
-while it carries no rows, and every unported routine is accounted for in "Not reconstructed, and
-why" rather than by absence.
+**ALL TEN SUBSYSTEMS ARE PORTED** — sprite, entity, player, weapons, hud and sound in waves 1 and
+2, then `init`, `frontend`, `scroll` and `irq` in wave 3 — over the harness skeleton this file
+opened with. Every section below has rows and a `src/<name>.c` beside it; what is left is accounted
+for in "Not reconstructed, and why" rather than by absence, and that table's remaining rows are
+model blockers and dead code rather than subsystems nobody has started.
 
 **The image model is README's, not this file's.** Where the screen ring is placed, what the
 post-load fixture holds and what it deliberately does not are decided in [`README.md`](README.md),
@@ -28,18 +27,19 @@ ownership table and the conventions all live there rather than being restated he
 
 ## Suite
 
-**3,229 tests, all passing, no skips** — `test_weapons.py` 902, `test_entity.py` 745,
-`test_player.py` 724, `test_hud.py` 333, `test_sound.py` 269, `test_sprite.py` 205,
-`test_image_model.py` 30, `test_constants.py` 8, `test_heap_guard.py` 8, `test_status.py` 5.
-Measured 2026-09-07 with
+**3,553 tests, all passing, no skips** — all fourteen files: `test_weapons.py` 902,
+`test_entity.py` 745, `test_player.py` 724, `test_hud.py` 333, `test_sound.py` 269,
+`test_sprite.py` 205, `test_frontend.py` 106, `test_irq.py` 80, `test_init.py` 76,
+`test_scroll.py` 62, `test_image_model.py` 30, `test_constants.py` 8, `test_heap_guard.py` 8,
+`test_status.py` 5. Measured 2026-09-07 with
 `rm -f build/*.so && find . -name __pycache__ -exec rm -rf {} + && make test`. `make guarded` runs
-the same 3,229 (Darwin/BSD only) and reports **9,598 guarded candidate runs** across its workers —
+the same 3,553 (Darwin/BSD only) and reports **10,804 guarded candidate runs** across its workers —
 every case whose candidate indexes the image with an address it computed.
 
 NOTHING SKIPS ANY MORE. The four skips this file opened with were the gates that arm on the first
-row anyone files, and all four have armed: `test_status.py::test_every_named_function_is_verified_or
-_deferred` accounts for the whole of `../names.txt`, and `test_constants.py`'s three battery gates
-now have six `src/*.c` and six batteries to check.
+row anyone files, and all four armed in wave 1: `test_status.py::test_every_named_function_is_
+verified_or_deferred` accounts for the whole of `../names.txt`, and `test_constants.py`'s three
+battery gates now have TEN `src/*.c` and ten batteries to check.
 
 Re-sum this line at every merge rather than carrying it (`docs/agent-playbook.md` §12): each wave
 reports its own count, and a headline nobody recomputes stays at whichever wave last wrote it. The
@@ -77,15 +77,224 @@ the case named:
 | `conftest.ENTRY_BOOT_INIT` moved two bytes on | `test_this_files_own_pins` — the entry prologue read off the loaded image |
 | `test_image_model`'s `A_sprite_bank` mirror moved two bytes on | `test_this_files_own_pins` (+4) |
 
-## Verified — init (0)
+## Verified — init (13)
 
-## Verified — frontend (0)
+Wave 3's init slice: the boot chain, the file loader, the three palette wrappers, the two resets,
+and ONE PASS OF THE FRAME LOOP — the integration test of the whole port.
 
-## Verified — scroll (0)
+THIS SECTION VERIFIES THE ROUTINES `test/conftest.py` REPLAYS. The fixture every other battery runs
+on is built by putting `boot_init` and `init_load_assets` under the oracle; these rows are the same
+routines' RECONSTRUCTIONS diffed against the same original, so a divergence between the fixture and
+the port shows up as a case in `test_init.py` rather than as a fixture nobody re-derives.
+
+**THE FRAME LOOP IS THE HEADLINE.** `frame_loop_once` @ 0x1575c calls the forty-five verified cores
+in `main`'s own order and one case diffs a WHOLE FRAME of a stage the ORIGINAL started — four
+screens in the ring, 223 display records, the entity arena, the HUD's digits, the sound module's
+state and the PSG's register stream. Twelve frames are verified, in THREE WINDOWS CUT FROM ONE
+CONTINUOUS PLAY-THROUGH of a level the game itself set up (`init_stage_state` @ 0x1139a run to its
+`rts`, which falls through `difficulty_apply_fire_rates` into `start_level`), plus three entered the
+way a stage restart leaves one. Nothing in the staging writes a game byte itself: every frame after
+the first is the previous frame run through the ORIGINAL's loop.
+
+**THE THIRD WINDOW IS THE BOMB CHAIN'S, and it is what makes four of the forty-five do anything.**
+`bomb_fall_step`, `bomb_publish`, `bomb_blast_step` and `bomb_blast_vs_entities` all return at their
+first guard on a frame with no bomb in the air, which every quiet and busy frame is. So the
+play-through holds the keyboard's bomb key (`key_bits` bit 5) from frame 182 — the frame after the
+busy window closes — and the third window is four frames of the blast that follows, entered with
+`bomb_exploding` set and `blast_step` between 1 and 14.
+`test_the_blast_window_really_has_a_blast_going_off` asserts both on every frame of it, so a window
+that drifted a bomb-cycle either way would fail rather than quietly become the busy one again.
+
+**THREE REGISTER CARRIES, MEASURED.** Two of the forty-five read registers their PREDECESSOR in the
+loop left rather than ones their own code sets — three registers between them. `bomb_blast_step`
+indexes `A_blast_offset_tbl` with the high word of a D0 it never writes (`src/weapons.c` argues the
+dependency; this is its only call site), and `player_publish` passes D1 and D2 on to the game-over
+banner's text script. `test_the_frame_loops_register_carries_are_what_the_original_leaves` reads all
+three out of the ORACLE at the two call sites over every staged frame rather than asserting them, so
+a change in any predecessor fails by name. What it measures: D1 and D2 are zero throughout, and D0's
+HIGH word — the half that reaches the table — is zero on all twelve staged frames while its LOW word
+is not (0x9d and 0xd3..0xd5 are what the predecessors leave, and `bomb_blast_step`'s own
+`move.w $176ec,d0` overwrites it before the `adda.l`). The BLAST window is why the figure is worth
+measuring at all: it is the only one of the three windows in which the routine gets past its
+`bomb_exploding` guard and actually indexes with it.
+
+**THE CALL ORDER IS PINNED AT THE SOURCE, because the byte diff cannot see it.** Dropping
+`level2_scenery_effect_gate` (it returns at once outside level 2) and swapping two neighbours that
+commute on a given frame BOTH SURVIVED the whole battery (measured 2026-09-07). So
+`test_frame_loop_once_calls_those_routines_in_that_order` reads `src/init.c`'s call list and matches
+it name-for-name against `../names.txt`'s name for each of the original's forty-five `bsr.w`
+targets. It is a source pin and is worth exactly what it says; that the routines themselves are
+right is the other sections of this file.
+
+**TWO ARMS THE VERIFIED FRAMES DO NOT REACH**, and neither is a matter of staging: both leave the
+loop by UNWINDING THE STACK rather than returning — `read_player_input`'s abort key
+(`adda.l #$40,a7`) and `level_progress_check`'s level-advance (`addq.l #4,a7 / bra.w $15758`) — and
+a C function cannot express either. A third, the player's death, reaches
+`restart_level_at_checkpoint` and branches back to the loop's TOP, so the oracle would make two
+passes where the candidate makes one; `test_init.py`'s staging watches the life count and refuses to
+hand out such a frame rather than producing one.
+
+**THE BOOT CHAIN MOVES THE STACK ONTO THE GAME'S OWN**, `movea.l #$19094,a7`, so the oracle's trap
+frames land inside the PROGRAM and the candidate — C, with no machine stack — writes none of them.
+The two `boot_init` cases exclude that band and `test_the_boot_stack_band_is_the_one_the_oracle_
+really_used` pins its depth against the oracle's own `min_a7`, because the harness only checks that
+an exclude band REACHES the stack and a band twice as deep would hide any store below it.
+
+**TWO XBIOS CALLS HAVE NO `os_*` DOOR** — `Physbase` and `Kbdvbase` — so `src/init.c` reads
+`OS_SCREEN_BASE` and `OS_KBDVBASE` out of the same `os.h` the shim answers them from. The
+differential is the real pin (the ring values and the joyvec store are derived from them);
+`test_the_two_undoored_xbios_answers_are_the_models_own` adds the two facts a diff cannot state. The
+gap is a row in "Follow-ups the kit should absorb".
+
+**A FINDING IN THE SHIPPED DATA.** `A\LEVEL1.MAP`'s record asks `load_file` for 0x1388 bytes to
+0x16432, which runs to 0x177ba — over `load_dest`, `load_len` and `load_file_handle`, the loader's
+own three scratch longwords. The file is 3,664 bytes and GEMDOS's SHORT READ is the only thing
+between the routine and closing a handle it has just overwritten with map data.
+`test_a_records_length_can_exceed_its_files` asserts the arithmetic rather than merely observing it,
+so a level map that grew would fail there.
+
+
+**Mutations tried**, each from a green baseline with `build/` and `__pycache__` swept and the
+candidate relinked (`docs/agent-playbook.md` §10). Three SURVIVED and each is recorded rather than
+worked around: two were closed by adding the case named, and the third cannot be closed off target.
+
+| mutation | result |
+|---|---|
+| `TITLE_COPY_LONGS` 0x1f40 -> 0x1f3f | red — `test_the_title_slice_loads_the_picture_and_copies_it_to_the_screen` |
+| `TITLE_COPY_OFFSET` 0x80 -> 0x40 | red — the same case |
+| the title slice makes only ONE `Setpalette` | red — the same case, through the OS event ledger |
+| `boot_init` drops the `move.l $70,$11650` chain-operand save | red — `test_boot_init_builds_the_machine_the_fixture_is_made_of` |
+| the ring's `addi.l #$100` rounding dropped | red — the same case |
+| the ring's 256-byte MASK dropped (`clr.b d0`) | red — `test_the_ring_derivation_rounds_at_a_physbase_the_model_cannot_answer_with[unaligned]`, and NOTHING ELSE (1 failed / 3,552 passed): every Physbase `boot_init` itself can be run at is already 256-aligned once the `subi.l` and the `addi.l` are done with it, so the mask changes nothing there. It survived the whole battery until that case existed |
+| the frame loop passes a NON-ZERO high word in D0 to `bomb_blast_step` | red — the four `test_a_whole_frame_with_the_smart_bomb_going_off` cases and `test_a_frame_entered_the_way_a_stage_restart_leaves_one[blast]`, and NOTHING ELSE (5 failed / 3,548 passed). On a quiet or busy frame the routine returns at its `bomb_exploding` guard before it indexes anything, so the carry has no surface there at all |
+| the boot `Setscreen`'s logical and physical bases swapped | red — the same case, through the event ledger (only the LOGICAL base is in it) |
+| `load_file` drops the handle store | red — the same case |
+| `load_file`'s destination and length swapped | red — the same case |
+| `clear_actor_arrays` stops one byte early | red — `test_clear_actor_arrays_clears_to_the_end_of_the_program` |
+| `NEW_GAME_LIVES` 5 -> 4 | red — `test_init_new_game_resets_the_per_game_state` |
+| `init_new_game` drops the `max_weapon_flag` guard | red — the same case's other arm |
+| `init_new_game` never calls `clear_actor_arrays` | red — the same case |
+| `STAGE_SCROLL_POS_SEED` 0x2e -> 0x2c | red — `test_init_stage_state_resets_the_per_stage_state` |
+| `init_stage_state` drops the `keep_player_hit_flag` guard | red — the same case's other arm |
+| `probe_disc` opens the CALLER's record | red — `test_probe_disc_ignores_its_callers_record` |
+| `set_palette_game` names the title table | red — `test_a_palette_wrapper_is_its_setpalette_and_nothing_else`, event ledger only |
+| the sprite directory relocates 128 records | red — `test_the_sprite_slice_loads_the_bank_and_relocates_its_directory` |
+| the four restore-list terminators are not written | **SURVIVED** until that case poked the fixture's own four terminators away — the boot chain has already written them, so a reconstruction writing none of them agreed over all four |
+| the frame loop drops `clr.w level_just_started` | **SURVIVED** every ordinary frame — the flag is already zero — until `test_a_frame_entered_the_way_a_stage_restart_leaves_one` entered one with it SET |
+| the frame loop drops `level2_scenery_effect_gate` | **SURVIVED** the whole battery: the gate returns at once outside level 2. Closed by `test_frame_loop_once_calls_those_routines_in_that_order`, the source-level order pin |
+| the frame loop swaps two adjacent calls | **SURVIVED** the byte diff for the same reason (the two commute on the staged frames); the order pin is what kills it |
+| `probe_disc` closes a NEGATIVE handle too | **SURVIVED, and cannot be killed off target** — see "Unpinned on target" |
+| `boot_init` drops the `clr.w cheat_used_flag` | **SURVIVED** — the byte ships as 0 and nothing in the fixture chain writes it, so the store was 0 over 0. Closed by seeding it in `test_boot_init_over_the_bare_loaded_image` |
+| `boot_init` never saves TOS's old joyvec | **SURVIVED** — that same case was zeroing the SOURCE (`OS_KBDVBASE + 0x18`) as well as the destination, so the copy had nothing to copy. Closed by seeding the source with a sentinel instead |
+| `clear_actor_arrays` clears ONE BYTE TOO MANY (`<` -> `<=`) | **SURVIVED** — the byte at `FS_PROGRAM_END` is 0 in the image, so the extra clear wrote 0 over 0 and the guard byte was only below the arena. Closed by putting a second guard byte ABOVE the limit |
+| any of TWELVE `clr.w`s in `init_new_game` (the six extra bonus-life flags, the three loop flags, `name_entry_first_pass`, `hiscore_beaten`, `item_pickup_pending`) | **SURVIVED** — every one of those words is zero in the shipped `.PRG` and nothing in the boot chain writes it, so a dropped store wrote 0 over 0. Closed by `test_init_new_game_over_random_prior_state`, which pokes all nineteen words the reset writes to junk first |
+| `load_file`'s `Fclose` given the REGISTER instead of the stored word | **SURVIVED, and cannot be killed**: the two are one value unless the load overwrote `A_load_file_handle`, and the only record that reaches it (a full-length `A\LEVEL1.MAP`) reaches the HANDLE word before `load_dest`, so the `Fclose` that follows is refused and the run is thrown away rather than differing. `_staged_record`'s docstring carries the argument |
+| the two `clr.l` cursors cleared as WORDS | **SURVIVED** — the stage fuzz poked two bytes at each, so the low word kept its zero. Closed by poking all four bytes at `A_spawn_script_cursor` and `A_bomb_path_cursor` |
+
+| Addr (Ghidra) | Name | Bytes | Status | Verification |
+|---------------|------|-------|--------|--------------|
+| `0x10000` | `entry_stub` | 4 | ✅ verified | SLICE [0x10000, 0x14d06) — the .PRG's entry point is `bra.w boot_init` and nothing else, so this is the row below entered one branch earlier. The branch stores nothing; what it adds is that the operand really names `boot_init` rather than the 44-byte plaintext banner at 0x10004 |
+| `0x10bfa` | `load_file` | 82 | ✅ verified | All EIGHT asset records, each staged with content of the test's own choosing so the `Fread` is visible over a fixture that already holds every file at its destination. Destinations and lengths are read out of the image (both longwords are relocated). The short-read case above, and poison on the three scratch longwords. Mutations: a dropped handle store and a dest/len swap are red |
+| `0x10c4c` | `probe_disc` | 64 | ✅ verified | Driven with all eight records in A0, which is what tests that it IGNORES its caller and opens its own `A\SPRITES.cru`: seven of them would name a file nothing staged and be REFUSED rather than merely differ. Poison on the longword result. Its NEGATIVE arm cannot be run off target — see "Unpinned on target" |
+| `0x111a6` | `set_palette_black` | 24 | ✅ verified | Writes no image byte at all: the ordered OS EVENT is the whole surface, and a wrapper that named a neighbour's table is separable there and nowhere else. Mutation: `set_palette_game` pointed at the title table is red |
+| `0x111be` | `set_palette_game` | 24 | ✅ verified | The same shape at `A_palette_game` |
+| `0x111d6` | `set_palette_title` | 24 | ✅ verified | The same shape at `A_palette_title`. Also reached as the first instruction of `init_load_assets` |
+| `0x11212` | `init_load_assets` | 108 | ✅ verified | SLICE [0x11212, 0x1127e) — the title picture: the palette, `A\FLY_SHK.NEO`, the NEO palette at header + 4, the Setscreen and the 32,000-byte copy to `Physbase - 0x80`. The picture is staged with the test's own bytes, because the fixture already holds `A\SPRITES.cru` at the same destination. Mutations: the copy one longword short, the offset halved and a dropped second Setpalette are red |
+| `0x112b2` | `init_load_assets` | 72 | ✅ verified | SLICE [0x112b2, 0x112fa) — the sprite bank: the level-0 flag, `A\SPRITES.cru` read RAW over the title picture, 256 directory pointers relocated in place and four restore-list terminators. A SECOND slice because the `bsr.w load_level_assets` @ 0x112ae between the two is the frontend subsystem's. The four terminators are poked away first: the boot chain has already written them into the fixture, and without that a reconstruction writing none of them agreed over all four (measured) |
+| `0x112fa` | `init_new_game` | 154 | ✅ verified | SLICE [0x112fa, 0x11394) — it ends `bra.w enter_title` and never returns to `main`. Both arms of its one branch (the "J H" cheat's `max_weapon_flag`), and a case that REWRITES `A_const_words_0123`, which four of its stores read their value from instead of using an immediate. Mutations: the life count, a dropped guard and a dropped `clear_actor_arrays` are red |
+| `0x1139a` | `init_stage_state` | 158 | ✅ verified | SLICE [0x1139a, 0x11438) — it ends in a DISPATCH, not a return: `tst.b hard_mode / beq.w $12cb6 / bra.w $12cc8` picks between the two entries of `difficulty_apply_fire_rates`, each of which falls into `start_level`. Both arms of the `keep_player_hit_flag` guard (its set arm is CONTRACT coverage — nothing in the image writes that flag), and a sharded fuzz that pokes every word it writes to junk first |
+| `0x115e2` | `clear_actor_arrays` | 26 | ✅ verified | 0x59984..0x5aedd over an arena seeded non-zero throughout, with a guard byte below it, plus poison. The loop is a DO-WHILE and its limit is the program's own end. Mutation: one byte short is red |
+| `0x14bee` | `boot_init` | 280 | ✅ verified | SLICE [0x14bee, 0x14d06) — the whole routine up to `bra.w main`: Super's token, the nine screen pointers, `A\MODULE.BAK`, the two exception vectors and the chain operand, the IKBD joystick-report command and TOS's displaced joyvec. Run twice — on the post-load fixture, and on one with the whole of its own output poked back to zero, which is what separates "wrote it" from "it was already there". PLUS THE RING DERIVATION ON ITS OWN, entered at 0x14c26 with the Physbase in the case's hands (`g_derive_screen_ring`, D0), at three of them: the harness's, the model's, and one whose ring base is NOT 256-aligned. That last one is the only thing in the project that drives the `clr.b` — every Physbase `boot_init` itself can run at is already aligned — and the nine longwords are poisoned first. Mutations: a dropped chain-operand save, a Setscreen argument swap and the ring's `addi.l #$100` are red; the MASK is red only at the unaligned Physbase (measured) |
+| `0x1575c` | `frame_loop_once` | 186 | ✅ verified | SLICE [0x1575c, 0x15816) — one pass of `main`'s endless loop: forty-five `bsr.w`s and the `clr.w level_just_started` that ends it. Fifteen whole-frame cases over three windows of a stage the ORIGINAL started — quiet, busy, and the bomb chain's blast — plus the source-level order pin and the register-carry measurement described above. Mutations: a dropped call, a swapped pair, a dropped final clear and a non-zero D0 high word into `bomb_blast_step` are all red — each only since the case that reaches it was added |
+
+## Verified — frontend (6)
+
+Wave 3's front-end slice: the asset loader's filename patch, the attract screen's stage start, level
+2's scenery band, the debug key wait and the hall-of-fame name entry.
+
+**FOUR OF THE SIX ARE SLICES, and the reason is the title flow's SHAPE.** It never returns to
+anybody — `hiscore_name_entry`'s every arm ends `bra.w $10720`, back into `title_frame_step`, and
+the attract loop past 0x1054a is one spin with four exits — so each slice is diffed at a checkpoint
+PC and the `[start, end)` span is in its row. The three routines the spans skip past
+(`set_palette_black` @ 0x111a6, `set_palette_game` @ 0x111be and `load_file` @ 0x10bfa) were the
+`init` subsystem's and unported when the spans were chosen; all three are verified now, which is why
+"Not reconstructed"'s row for the title flow no longer says the slice is waiting on them.
+
+**THE ATTRACT SCREEN'S STAGE START IS THE SCROLL SUBSYSTEM'S CODE.** `title_attract_loop` @ 0x10508
+and 0x1052a are byte-identical copies of `start_level` @ 0x1151e and 0x11544 — the map-cursor seed
+and the prescroll loop — so `src/frontend.c` calls `seed_map_row_cursor` and `prescroll_stage`
+(`include/scroll.h`) rather than restating them, and `test_scroll.py` runs every case of both at
+BOTH addresses. That the two copies are the same code is therefore something the differential
+settles rather than something the reconstruction assumes; the `title` half of those cases is counted
+with the 0x104f6 row's subsystem here only in prose, and with `scroll`'s rows in the ledger.
+
+**THE SCENERY BAND IS ALSO VERIFIED AT THE HEIGHT THE GAME ITSELF REACHES.** Every poked case drives
+one arm at a time and none of them reaches more than three whole tile rows; the window the GAME runs
+is 204 frames long (`level_distance` 0x8a2..0x96e, one frame each) and ends at SIX whole rows and six
+scanlines, with the band's offset having WRAPPED — seeded 0x8100, 0xa0 subtracted a frame, so it
+starts 32,512 bytes ABOVE `screen_draw` and is 0x180 BELOW it by the last growing frame. A session
+fixture replays the ORIGINAL's own effect across that whole window and hands the last two frames out
+as pokes; `test_the_replayed_window_reaches_the_band_the_measurement_names` is the positive control
+on it, and the two differentials write 30,912 bytes of screen through an address the routine
+computed — which is why `make guarded` is the bound on them.
+
+**`hiscore_name_entry` WAS THE HUD SLICE'S DEFERRAL and is closed.** Its two mid-routine `bsr`s into
+the sound module's sfx wrappers were the whole of the reason it was deferred; with `src/sound.c`
+landed those are one call each, and a whole-slice differential runs. Its confirming arm calls
+`check_cheat_name` @ 0x10d92 — the hud subsystem's core — whose own arm spin reads `key_bits`
+through the kit's scheduled-write model, so those cases carry a schedule for a wait site inside a
+routine they call.
+
+| Addr (Ghidra) | Name | Bytes | Status | Verification |
+|---------------|------|-------|--------|--------------|
+| `0x1003c` | `level2_scenery_effect` | 652 | ✅ verified | 44 cases. The three-part window as a SIGNED compare — below it (including the negative `level_distance` every attract loop really runs on), above it, and the three frames the two `bgt`s separate; the reset frame, where `clr.l $1779e` clears the whole-row count AND the partial-row count as one longword over two adjacent words; the growing carry at every partial count including the deliberate 0xffff that makes the following `addq` land on 0; the shrinking borrow and the `bpl` past the `clr.w` that the odd counts reach; both blit loops at four row/partial shapes; five tile-id sets including 0x80, where the WORD shift wraps the offset to zero, and 0x40..0x7f, where the `adda.w` sign-extends it NEGATIVE; five band offsets including the 0x8100 seed, which is negative and puts the band ABOVE `screen_draw`; and a 72-case sharded fuzz over all of it. PLUS THE BAND THE GAME ITSELF REACHES: the last growing frame and the first shrinking one at six whole rows and a WRAPPED (positive) offset, staged by replaying the original's own effect across the whole 204-frame window and pinned by a positive control on what that replay left. Every case indexes the screen ring with an address the routine computed, so `make guarded` is the bound. Mutation: an INVENTED four-row bound on the band — one of `docs/methodology.md`'s six "green differential, unfaithful arm" shapes — is red under those two cases and NOTHING ELSE (2 failed / 3,551 passed), because no poked case reaches more than three whole rows |
+| `0x10332` | `load_level_assets` | 64 | ✅ verified | SLICE [0x10332, 0x10372) — the five filename digits, ending at the first `bsr load_file`, which is the `init` subsystem's. All five levels out of the .PRG's own `level_bank_digits`, one level's row seeded so no shipped digit could stand in for another, and four out-of-range level numbers that pin `muls.w #$5` as SIGNED. Poisoned, so a candidate that wrote no digit could not pass on the shipped names |
+| `0x104f6` | `title_attract_loop` | 84 | ✅ verified | SLICE [0x104f6, 0x1054a) — the attract screen's stage start, entered one instruction past the `bsr set_palette_black` the `init` subsystem owns and ending where the attract poll begins. Scroll position back to zero out of `const_words_0123`, scroll phase to 0x1e, the map cursor to the end of the map, and the screen scrolled in with `prescroll_flag` set: four frame counts including 0, which still draws ONE frame, 16, where the phase wraps and the cursor steps, and the count the binary ships — 108 calls to `render_frame`, which is the machine `test_sprite.py` stages its own cases on. One more case pokes `const_words_0123[0]` to something other than zero and watches the scroll position follow it — `move.w $176ac,$17758` is a READ of that table, not a `clr.w`, and the prescroll then draws a different stretch of the map. The two shared blocks inside the slice are additionally verified at this site by `test_scroll.py`'s `title` parametrisation |
+| `0x10916` | `hiscore_name_entry` | 236 | ✅ verified | SLICE [0x10916, 0x10720) — it never returns; every arm branches into `title_frame_step`. 38 cases: the once-per-name space fill and the `st` that is a BYTE store into a word `tst.w` reads; the glyph step forward at every cursor position and back, with both wraps; the arms' ORDER (right over left, either direction over fire), which an if/else chain has and a set of independent tests would not; the confirm that COPIES THE GLYPH FORWARD so the next initial starts as this one; the third fire through `check_cheat_name` with the arm key up and with it down on a real cheat name; three ranks including the lowest; the countdown as a SIGN test, so 0x8000 steps to 0x7fff and is still positive; and an 84-case sharded fuzz over the stick, both flags, the cursor, the rank and the timeout. The countdown's reset writes `new_hiscore_pending` out of `const_words_0123[0]`, which is a 0 over a 0 on every other case: one case REWRITES that table word, and a mutation that spells the store as an immediate 0 is red under it alone (1 failed / 3,552 passed) |
+| `0x10bc8` | `level2_scenery_effect_gate` | 16 | ✅ verified | four level numbers: the effect runs on level 2 alone, and the others return having written nothing even with `level_distance` inside the window — which is why the gate is a routine and not a test inside the effect |
+| `0x11ba2` | `debug_wait_for_keypad4` | 20 | ✅ verified | It WRITES NOTHING, so the only thing a case can compare is how many times it read `key_bits` — the kit's scheduled-write model against the oracle's arrivals at the same PC. Four arrival points including "already down", and one case with every OTHER bit of the byte held, which a wait that tested the whole byte would end on. NO CALLER in the image: a leftover single-step hook, verified because it is reachable under the oracle and cheap to pin |
+
+## Verified — scroll (5)
+
+Wave 3's scroll slice: the frame loop's scroll step, and what a stage start does to the map cursor
+and to the screen.
+
+**`start_level` @ 0x11440 HAS NO WHOLE-ROUTINE ROW**, and one of its two reasons has since gone.
+It ends `bra.w music_play` rather than returning, so there is no `rts` a whole-routine case could
+stop at — that is structural. It also calls `clear_actor_arrays` @ 0x115e2, `set_palette_black`
+@ 0x111a6 and `set_palette_game` @ 0x111be, which were the `init` subsystem's and unported when
+these four spans were chosen; all three are verified now, so ONE case entered at 0x11440 and diffed
+at the closing `bra` is available — it is the follow-up row below, not a blocker. The four rows here
+carry their spans, and the row for 0x11440 is the routine's entry.
+
+**Follow-up (not a blocker):** fold the four spans into one whole-routine case at
+`[0x11440, 0x11564]`, stopped at `bra.w music_play`. It would cover the three `bsr`s and the ~140
+bytes of `load_level_assets` call sequence between 0x11494 and 0x1151e that no span claims today.
+Doing it means retiring four ✅ rows for one, which is a ledger change rather than a port.
+
+**TWO OF THESE CORES ARE VERIFIED AT TWO ADDRESSES EACH.** `seed_map_row_cursor` and
+`prescroll_stage` are the blocks `title_attract_loop` @ 0x10508 / 0x1052a and `start_level`
+@ 0x1151e / 0x11544 carry one copy of each, and `src/scroll.c` has one core for each rather than two.
+Every case runs at both entries, so a difference between the original's copies would fail at
+whichever site it is in; the ledger files each core under `start_level`'s address, because the title
+screen's copies are inside `frontend`'s 0x104f6 slice and one span may not be claimed twice.
+
+**`A_scroll_pos` AND THE SCROLLER BLOCK LIVE HERE NOW.** `include/scroll.h` owns 0x163da..0x16436
+(less `A_level_number`, which is the level-flow state `include/player.h` owns) plus `A_scroll_pos`
+and `A_level_distance`; the five "Borrowed globals" rows that held them in `include/sprite.h` and
+`include/hud.h` were deleted with the defines, and both headers now include this one.
+
+| Addr (Ghidra) | Name | Bytes | Status | Verification |
+|---------------|------|-------|--------|--------------|
+| `0x111ee` | `scroll_advance` | 36 | ✅ verified | the whole routine, poisoned: two pixels of scroll and `level_distance = ((scroll_pos - 0x30) >> 1) + 1` in 16 bits, at ten positions — both sides of the bias, the word wrap of the `addi.w`, and the halving's own sign boundary — plus a 320-case sharded fuzz over every position. THE SHIFT IS LOGICAL, which is what the sub-bias positions pin: the title screen seeds `scroll_pos` to 0 and really does run its first two dozen frames with `level_distance` up near 0xffff, and an `asr.w` would agree with every case at or above the bias |
+| `0x11440` | `start_level` | 26 | ✅ verified | SLICE [0x11440, 0x1145a) — the bomb count and the three per-stage resets, ending at the `bsr clear_actor_arrays` the `init` subsystem owns. Run on a started game with the count dirtied, and once more with `const_words_0123[3]` poked to something else: `move.w $176b2,$17710` is a READ of that table and not an immediate 3, which is what the second case separates |
+| `0x1145e` | `start_level` | 54 | ✅ verified | SLICE [0x1145e, 0x11494) — the object list cleared and the level's own 20-byte record copied into the four live parameters. All five records out of the .PRG's own `level_table`, one record seeded whole so no shipped field could stand in for another, and four out-of-range level numbers that pin `muls.w #$14` as SIGNED — the routine has neither floor nor ceiling. Poisoned over all four destinations |
+| `0x1151e` | `start_level` | 34 | ✅ verified | SLICE [0x1151e, 0x11540) — `seed_map_row_cursor`: the map cursor and its saved copy set to one past the END of the map, the game scrolling upward. The shipped LEVEL1.MAP header plus nine poked ones, poisoned, AT BOTH SITES (this one and `title_attract_loop` @ 0x10508, which holds the same ten bytes): row counts to 0xffff, where `mulu.w` is a 16x16 -> 32 the product needs, and a column count of 0x8000, where the `asl.w #1` wraps the STRIDE to zero before the multiply — the one case that separates a word doubling from a long one |
+| `0x11544` | `start_level` | 32 | ✅ verified | SLICE [0x11544, 0x11564) — `prescroll_stage`: `prescroll_flag` set, `prescroll_frames + 1` calls to `render_frame`, flag cleared. AT BOTH SITES again (this one and `title_attract_loop` @ 0x1052a). Four frame counts including 0, which still draws ONE frame because of the `dbf`, and 16, a whole tile row of scroll — so the phase wraps and the map cursor steps inside the run; the flag is poked to a value that is neither the 1 the routine writes nor the 0 it clears, so both stores must happen. `test_the_seed_staging_is_the_originals_own_work` pins that the map cursor these cases run on was written by the ORIGINAL's own seed slice and that the slice touched nothing else |
 
 ## Verified — sprite (20)
 
-Wave 1's sprite slice: `render_frame` @ 0x14446 — the 46th and last call of the frame loop — and
+Wave 1's sprite slice: `render_frame` @ 0x14446 — the 45th and last call of the frame loop — and
 every routine it draws through. `include/display_list.h` carries the FROZEN layouts the whole game
 publishes into: the 223 six-byte display records, the six-byte restore record, and the tile repair
 grid. Every field is tagged `pinned by <test>` or `names.txt, unpinned`, and a publisher includes
@@ -322,7 +531,7 @@ to its own re-entry into `main`.
 | `0x13fda` | `fire_pattern_level3` | 114 | ✅ verified | the same; this one leaves the fourth bullet's dx alone |
 | `0x1404c` | `fire_pattern_level4` | 128 | ✅ verified | the full five-way fan, whose last two bullets share one x |
 | `0x14354` | `read_player_input` | 242 | ✅ verified | all sixteen stick states x the button; the button through to the bullets at every weapon level; both bomb buttons alone and together; the input lock; `use_keyboard_flag` both ways, which pins that it moves ONE test (the "nothing held" short-circuit) because the direction tests re-read `joy1_state` regardless. The PAUSE key is a SCHEDULED wait — it spins on a byte only the ACIA interrupt writes, so the reconstruction polls through `sched_poll8` and the harness compares its polls against the oracle's arrivals at four release points; nothing else can see the iteration count. The ABORT key does not return: it throws away this routine's register save and its caller's return address, and is diffed through `game_over_hiscore_check` to `main`. 100-case sharded fuzz with the two system keys masked out |
-| `0x14aac` | `restart_level_at_checkpoint` | 118 | ✅ verified | SLICE [0x14aac, 0x14b22) — from `st level_just_started` to `bsr clear_actor_arrays`, which is the init subsystem's and unported; the entry instruction 0x14aa8 is a `bsr` into an unported palette call, so the slice starts after it. Every level's table x every record, driven at the record's own scroll position (where the `blt` either takes it or steps past it), plus one either side of record 0's — which is where the walk either stops or runs off the FRONT of the table, since it has no floor — plus a scroll past the tables' own 0x2710 sentinel, which is the only thing that says where the scan STARTS. Also over the machine `start_level` itself left. FINDING: the routine clears `key_last_scancode` (0x17781) and NOT `key_bits` beside it, so a held pause or abort key really does survive a restart — which is what `level_just_started` has to gate off |
+| `0x14aac` | `restart_level_at_checkpoint` | 118 | ✅ verified | SLICE [0x14aac, 0x14b22) — from `st level_just_started` to the `bsr clear_actor_arrays` that follows it; the entry instruction 0x14aa8 is a `bsr set_palette_black`, so the slice starts after it. Both of those calls are the init subsystem's and both are VERIFIED now, so the span is where this slice's own work is rather than where the port ran out; what still has no row is the routine's TAIL, which ends `bra.w $1575c` back to the frame loop's top instead of returning. Every level's table x every record, driven at the record's own scroll position (where the `blt` either takes it or steps past it), plus one either side of record 0's — which is where the walk either stops or runs off the FRONT of the table, since it has no floor — plus a scroll past the tables' own 0x2710 sentinel, which is the only thing that says where the scan STARTS. Also over the machine `start_level` itself left. FINDING: the routine clears `key_last_scancode` (0x17781) and NOT `key_bits` beside it, so a held pause or abort key really does survive a restart — which is what `level_just_started` has to gate off |
 
 **Mutations tried against this slice**, each from a green baseline with `build/*.so` removed and the
 candidate relinked (`docs/agent-playbook.md` §10). Fifty in all, and after the four holes below were
@@ -567,7 +776,70 @@ The two survivors are EQUIVALENT MUTATIONS — the same program, not a hole:
 | `0x14996` | `console_show_message` | 8 | ✅ verified | the Setscreen and the four VT52 cursor bytes through the OS event ledger; four messages, whose terminator is a byte with BIT 7 SET and not a NUL; and the fire-release spin through the scheduled-write model at four release points, so the loop's iteration count is compared poll-for-arrival rather than only its memory |
 | `0x14a76` | `format_5_digits` | 94 | ✅ verified | nine values at every digit count including zero (which writes no digits at all and leaves "00000"); four longwords, which `swap / clr.w / swap` masks to 16 bits before the first divide; 80-case sharded fuzz over the whole 32-bit range. A0's resting place and D0 come back through `abi.register_dump_pokes`, the routine walking A0 itself |
 
-## Verified — irq (0)
+## Verified — irq (5)
+
+Wave 3's interrupt slice: the level-4 vertical blank, the MFP channel-6 IKBD/MIDI ACIA handler and
+its two joystick continuations, and the TOS joystick callback the ACIA handler displaced.
+
+**AN INTERRUPT IS ENTERED BY THE 68000 AND LEAVES THROUGH `rte`,** so on the machine it runs on an
+exception frame. Every one of these four balances its own pushes BEFORE that instruction, so the
+frame is read by the `rte` alone — which is what lets each case enter at the routine's first
+instruction and stop AT the `rte` without fabricating a frame. `acia_ikbd_isr` has FOUR `rte`s, one
+per arm, and the case's declared ACIA byte is what picks the arm and therefore the checkpoint.
+
+**THE INPUT IS OFF-IMAGE AND DECLARED.** The byte the 6850 hands over is `hw_read8(OS_HW_ACIA_DATA)`
+against a `move.b $fffffc02,d1`, and the model serves it only to a case that declares it
+(`hw_seed=`). The port is VOLATILE — a read pops the receive register — so one declaration is one
+read, which is exactly what each of these three routines makes.
+
+**SO IS HALF THE OUTPUT.** Every path ends `bclr #6,$fffffa11`, a READ-MODIFY-WRITE and not a store:
+`hw_bclr8` is what puts it in the ordered hardware WRITE ledger and what keeps the other five
+channels' in-service bits alive on a target build. Its POSITION in the routine is not observable off
+target — see "Unpinned on target".
+
+**THE VBL's CHAIN IS WHERE THE SLICE ENDS.** `vbl_handler` closes `jmp $1164e.l`, whose operand
+`boot_init` fills from TOS's own $70. The model has no vector there, so the slice stops at the `jmp`
+and the chain itself is a row in "Unpinned on target" — where it already was before this slice
+landed. The counter's LONGWORD WRAP is driven anyway (0xffffffff + 1 = 0, unguarded), which is what
+separates a 32-bit increment from a 16-bit one.
+
+**THE ONE PLACE THE GAME'S OWN DATA PROVES THE LADDER RUNS WHOLE.** The eight watched scancodes are
+compared in an unrolled ladder with no early exit, and the shipped table lists 0x00 TWICE (bit 3 and
+bit 7) — so a received 0x00 moves two bits at once. That is game coverage, not a poked table.
+
+**THE ACIA BYTE IS SWEPT EXHAUSTIVELY, and it used not to be.** The handler's whole input is one
+byte, so 256 cases is the entire domain; what was there was a 96-draw random fuzz, which drew 78
+DISTINCT bytes and left 178 of the 256 undriven (measured 2026-09-07 by replaying its own seeds).
+`test_the_isr_over_every_byte_the_acia_can_hand_it` now runs 0..255, sharded four ways so `-n auto`
+still spreads it, with the entry `key_bits` and scancode still randomised per byte.
+
+
+**Mutations tried**, from a green baseline with a forced relink. One SURVIVED, and it is structural
+rather than a coverage hole a case could close.
+
+| mutation | result |
+|---|---|
+| the VBL counter incremented as a WORD | red — `test_the_vbl_counts_a_frame_and_ticks_the_sound_module`, at the wrap |
+| the VBL counter not incremented at all | red — the same case |
+| `vbl_handler` drops the module's `jsr 38(a0)` | red — the same case, through the image AND the PSG ledger |
+| the two joystick packet headers swapped | red — `test_a_joystick_header_re_points_the_vector_at_its_continuation` |
+| the make/break test reads the CLEARED bit instead of the original | red — `test_every_watched_scancode_moves_its_bit` |
+| the raw scancode is not kept in `key_last_scancode` | red — the same case |
+| `KEY_WATCH_SCANCODES` 8 -> 7 | red — the same case, at bit 3 |
+| `acia_joy0_byte` stores into joystick 1 | red — `test_a_continuation_stores_its_stick_and_hands_the_vector_back` |
+| a continuation never restores $118 | red — the same case, which is why its entry vector is swept |
+| the joystick packet is read one byte early | red — `test_tos_joyvec_copies_the_packets_two_state_bytes` |
+| the raw scancode store SKIPPED for one unwatched byte (0x42) | red — `test_the_isr_over_every_byte_the_acia_can_hand_it[2]`, and nothing else (1 failed / 3,552 passed). The random fuzz this replaced never drew 0x42, so the same mutant survived it — which is the measurement that made the sweep exhaustive |
+| `MFP_ISRB_ACIA_BIT` 6 -> 0 | **SURVIVED the differential and cannot not**: `hw_bclr8` ledgers `0 & ~(1 << bit)`, which is 0 for every bit, so the write entry is `(0xfffa11, 1 byte, 0)` whatever bit is named — the ADDRESS is pinned by the ledger and the BIT by nothing. Closed by `test_the_end_of_interrupt_names_channel_six_at_every_rte_path`, which reads the `bclr` instruction word out of the loaded image at all four `rte` paths; `test_constants.py`'s mirror is the second link that ties the C define to it |
+| the end-of-interrupt runs BEFORE the key ladder instead of after | **SURVIVED** — see "Unpinned on target": the hardware write ledger and the image diff are separate streams, so an off-image write cannot be ordered against image writes here |
+
+| Addr (Ghidra) | Name | Bytes | Status | Verification |
+|---------------|------|-------|--------|--------------|
+| `0x11636` | `vbl_handler` | 24 | ✅ verified | SLICE [0x11636, 0x1164e) — the counter and the sound module's tick, at both machine speeds and over six entry counts including the longword wrap. One case runs it over a driver `music_start` has left with a tune RUNNING (staged by the module's own routine under the oracle), so the tick has a whole frame of music to do and the PSG's register stream is the second surface. Mutations: a word-wide increment, no increment at all and a dropped `jsr 38(a0)` are red |
+| `0x141fa` | `tos_joyvec_handler` | 30 | ✅ verified | DEAD ON THE MACHINE and verifiable anyway: `acia_ikbd_isr` has taken the ACIA vector, so TOS's packet parser never calls it. Bytes 1 and 2 of a random three-byte packet into the two stick states, sharded, with a random byte 0 the callback must ignore; plus poison. Its `lea $1777e(pc),a1` loads an address nothing then uses |
+| `0x14218` | `acia_ikbd_isr` | 244 | ✅ verified | All three arms: the two joystick packet HEADERS (each re-points $118 at its continuation and touches nothing else) and the KEY path, whose eight rungs are driven for every watched scancode, pressed and released, over three entry states of `key_bits` — the rungs are `bset`/`bclr`, so a reconstruction that assigned the byte would pass at 0x00 and fail at 0xff. Plus unwatched codes at both ends of the make range and a sharded fuzz over all 256 bytes. The two vector operands are read out of the loaded image. Mutations: swapped headers, a make/break test on the cleared bit, a dropped raw-scancode store and a seven-rung ladder are red |
+| `0x1430c` | `acia_joy0_byte` | 36 | ✅ verified | The second byte of a joystick-0 report: store it, acknowledge the MFP, restore $118. 0xff is driven as a legitimate stick byte — the continuation does not decode, it stores, which is the whole reason the two-state machine exists — and the entry vector is swept over three values so that "restores" means something. Mutations: the wrong stick and a dropped restore are red |
+| `0x14330` | `acia_joy1_byte` | 36 | ✅ verified | The same shape at `A_joy1_state`; the two routines differ in one address |
 
 ## Verified — sound (30)
 
@@ -678,6 +950,37 @@ DATA, and the data is the cheat state; the player and weapons cores are readers,
 includes the header. `A_player_hit` is the one the cheat writes that really is the player's, and it
 moved with the record.
 
+**THE SCROLL SUBSYSTEM'S FIVE LOANS ARE PAID OFF and are no longer in this table.**
+`A_map_row_ptr`, `A_map_row_ptr_reset`, `A_scroll_fine` and `A_prescroll_flag` (from
+`include/sprite.h`) and `A_scroll_pos` (from `include/hud.h`) are defined ONCE, in
+`include/scroll.h`, which owns the scroller block at 0x163da..0x16436 and the two scroll counters in
+bss. `A_screen_ring_index` and `A_tile_split_row_table` moved with them although they never had rows
+— they sat in the same borrowed block — and `A_level_number` @ 0x1642a deliberately did NOT: it is
+inside the same address run but it is the level-flow state `include/player.h` owns, and one address
+has one home whatever its neighbours are. `include/sprite.h` and `include/hud.h` now include
+`include/scroll.h`; the batteries that mirrored those defines were repointed at the new path in the
+same change.
+
+**THE IRQ SUBSYSTEM'S FOUR LOANS ARE PAID OFF and are no longer in this table.** `A_joy0_state`,
+`A_joy1_state`, `A_key_bits` and `A_key_last_scancode` are the ACIA handler's — `src/irq.c` is
+their only writer, and `tos_joyvec_handler` (dead on the machine) the only other — so they are
+defined ONCE, in `include/irq.h`, beside `A_vbl_tick`, which is the same argument at the VBL's
+counter. They were declared by the subsystems that READ them, which was the opposite of every other
+row here; `include/player.h` and `include/hud.h` now include `include/irq.h` and the four batteries
+that mirrored them were repointed at the new path in the same change.
+
+**THE TUNE ID'S LOAN IS PAID OFF TOO.** `0x1776e` `level_tune_id` said "frontend" and its only
+writer is `start_level` @ 0x11484 — the SCROLL subsystem's — so it is defined in
+`include/scroll.h` now, beside the `LEVEL_REC_TUNE` field it is copied out of, and `src/sound.c`
+includes that header to read it.
+
+**ONE ROW BELOW IS NOT A CENSUS QUESTION AND STAYS.** `0x176a4` `music_suspend_flag` said "frontend"
+and now says what the image says: THREE subsystems write it — `player_vs_enemy_bullets` @ 0x110be
+and `restart_level_at_checkpoint` @ 0x14be0 (player), `init_stage_state` @ 0x113ca (init) — and only
+the sound driver reads it. The rule that settled every other row ("a global lives with the subsystem
+that owns the data") does not pick a winner here, so it stays in `include/sound.h`, with the reader
+as its home, until somebody argues one.
+
 **No header includes another to reach one of these**, which is what keeps the migration mechanical:
 `include/player.h` includes `hud.h` and `entity.h` for its own core's sake, and the borrowing goes
 the other way round through the `.c` files. A move that needed a header cycle would be a sign the
@@ -685,16 +988,9 @@ global belonged somewhere else.
 
 | Addr | Name | Owner | Defined in | Why on loan |
 |---|---|---|---|---|
-| `0x176a4` | `music_suspend_flag` | frontend | `include/sound.h` | `music_restart_if_stopped` @ 0x1259c reads it as its first guard. It is written by `init_stage_state` @ 0x1139a, which is the frontend's; the loan ends when that subsystem's header defines it |
-| `0x1776e` | `level_tune_id` | frontend | `include/sound.h` | the tune number `start_level` @ 0x11440 copies out of the level record. Read by `music_stop` @ 0x121a2 (where the module ignores it) and by `music_restart_if_stopped` @ 0x125b0; the loan ends the same way |
-| `0x16402` | `A_map_row_ptr` | scroll | `include/sprite.h` | the map read cursor. `render_frame` @ 0x1454a reads it and `advance_scroll` steps it, but `start_level` @ 0x11440 and `title_attract_loop` @ 0x1052a are what ESTABLISH it, and both are the scroll subsystem's. `include/hud.h` reads it from `sprite.h` for the debug overlay rather than restating it |
-| `0x16430` | `A_scroll_fine` | scroll | `include/sprite.h` | the sub-tile scroll phase, 0..30 even. Same argument and the same two writers; every clip and band decision in `render_frame` reads it |
-| `0x1642c` | `A_prescroll_flag` | frontend | `include/sprite.h` | `render_frame` @ 0x14474 READS it to short-circuit everything that draws a sprite or publishes a frame. Its three writers are the frontend's — `title_attract_loop` @ 0x1052a, `start_level` @ 0x11544 and `restart_level_at_checkpoint` @ 0x14bc0 |
-| `0x163fe` | `A_map_row_ptr_reset` | frontend | `include/sprite.h` | read by `render_frame` @ 0x147dc, on the arm the program itself disabled (0x147da is a `nop` and the store is overwritten two instructions later). Written by `title_attract_loop` @ 0x10524, `start_level` @ 0x1153a and read back by `restart_level_at_checkpoint` @ 0x14b9a; the loan ends with the first of those |
-| `0x17720` | `A_vbl_tick` | irq | `include/sprite.h` | `render_frame` @ 0x14786 waits it out and then clears it. `vbl_handler` @ 0x11636 is what increments it, and is unported |
+| `0x176a4` | `music_suspend_flag` | THREE writers; no owner the census picks | `include/sound.h` | `music_restart_if_stopped` @ 0x1259c reads it as its first guard, and is the only reader. Written by `player_vs_enemy_bullets` @ 0x110be and `restart_level_at_checkpoint` @ 0x14be0 (player) and by `init_stage_state` @ 0x113ca (init) — all three ported, so this is not a loan waiting on a subsystem. It stays with its reader because "the subsystem that owns the data" names nobody here; closing it means somebody arguing one of the three, and editing `include/sound.h` and `test_sound.py`'s mirror row |
 | `0x177cc` | `A_hard_mode` | frontend | `include/hud.h` | `game_over_hiscore_check` @ 0x10724 clears it; the title screen's left/right toggle sets it |
 | `0x16132`, `0x16136` | `A_title_word_easy`, `A_title_word_spam` | frontend | `include/hud.h` | `check_cheat_name` @ 0x10e16 copies one over the other, which is how the title's "MODE EASY" becomes "MODE SPAM" |
-| `0x17758` | `A_scroll_pos` | frontend | `include/hud.h` | `debug_show_counters` @ 0x1497c formats it into the overlay string. Its two companions are read out of `include/sprite.h`; this one has no owning header yet |
 
 **The predicted loan did NOT happen.** `include/globals.h` keeps `A_entity_arena`, `ENTITY_SLOTS`
 and `ENTITY_STRIDE` because the arena's PLACEMENT is part of the memory model. `include/entity.h`
@@ -716,6 +1012,9 @@ than making a fourth copy.
 | there is no `sched_poll32` | `tools/recreate_kit/include/sched.h`, which has `sched_poll8` and `sched_poll16` | `render_frame`'s VBL wait compares a LONGWORD (`move.l $17720,d1` @ 0x1479c). `src/sprite.c` spells it as `sched_poll16`'s shape one width up — one poll an iteration for the clock, then a full-width read — which loses that wrapper's own CAP and nothing else. A third width would make the wait one call again |
 | `test/abi.py`'s five stub builders | `register_call_pokes`, `register_dump_pokes`, `extend_call_pokes`, `call_sequence_with_d0_pokes` and the `_stub`/`_jsr` frame under them, all from `projects/zynaps` | none of them is this game's: they are 68000 encodings for driving a register-ABI routine under an oracle, which every project with one needs. What IS this project's is the scratch map they are poked into and the argument for where it sits |
 | `SCC_TRUE` and `addr_sub` | `include/common.h` here; the same two facts in Joust's, Zynaps' and Bubble Ghost's cores under other names | neither is about Flying Shark. `SCC_TRUE` is what a 68000 `Scc` writes and `addr_sub` is a backward pointer step, and `machine.h` already owns `addr_add`, `loop_passes` and `rotate_right32` for exactly that reason. `include/common.h`'s header says so |
+| the staged-file window holds 258,048 bytes, and this program's own boot loads 288,551 | `test/conftest.py`'s three-slice replay, and README.md's "The image model", both of which exist to work around it | `OS_FS_STAGING` runs from 0xc0000 to the stack guard, so a game whose boot chain loads eight files in one go cannot be replayed in one run — the fixture splits `init_load_assets` in two and `main`'s BOOT slice ("Not reconstructed") has no row at all. It is 30,503 bytes short, and everything that would close it is the kit's: a second staging window, or a bigger `OS_IMAGE_SIZE` with the area moved up. `OS_FS_SLOTS` went 8 -> 32 for Zynaps for the same class of reason, so the precedent is a kit constant moving rather than a project working round it |
+| XBIOS `Physbase`/`Logbase` has no `os_*` door | `src/init.c` asks through `include/init.h`'s `fs_physbase()`, which returns `OS_SCREEN_BASE` | every other trap the kit models has a named inline in `os.h` — `os_super`, `os_fopen`, `os_setpalette`, `os_ikbd_out` — so a core reads as what it does. This one is the exception, and a reconstruction that spells the constant is compiling in an answer rather than asking for one: on an ON-TARGET build (the include-path seam) `os_physbase()` would issue the real XBIOS call. It is a two-line inline and needs no shim change; `fs_physbase()` is the one place to swap |
+| XBIOS `Kbdvbase` has no `os_*` door, AND ITS ANSWER IS NOT AN IMAGE OFFSET | `src/init.c`'s `boot_init` asks through `include/init.h`'s `fs_kbdvbase()`, which returns `OS_KBDVBASE`, and then writes TOS's joyvec slot with `wr32(image + joyvec_slot, ...)` | this is a bigger gap than the Physbase row above it and is split from it for that reason. `OS_KBDVBASE` is a small number INSIDE the modeled image, so `image + it` is a legal index; a real `Kbdvbase()` returns a TOS pointer into ROM-owned RAM, which is not an offset into this program's image at all and which `image +` would send somewhere arbitrary. Closing it needs BOTH an `os_kbdvbase()` door and a core that reaches the struct through an absolute-address accessor rather than through `image +` — which is a kit shape (a `mem_wr32(addr)` that is the identity off target) rather than a `#define` |
 | the `Setscreen` ledger event carries ONE base | `tools/recreate_kit/include/os.h`, `os_setscreen` @ os.h:389 | the call takes a logical AND a physical base and the event records only the logical one, so a game that publishes frames by changing the PHYSICAL base — this one does, every frame — has the whole content of the call dropped. A two-argument event would make `render_frame`'s publish comparable off target, and it is the first row of "Unpinned on target" below |
 
 ## Unpinned on target
@@ -727,12 +1026,14 @@ Things the differential is structurally blind to, recorded here rather than disc
 |---|---|---|
 | `vbl_handler`'s chain tail — the `jmp` at 0x1164e whose operand `boot_init` fills from `$70` | the TOS model has no vector at `$70`, so the fixture holds 0 where an Atari holds TOS's own level-4 handler. Both sides read the same 0, so the diff agrees with itself (`test/conftest.py`, "what it does not hold") | an on-target run: the surface is TOS's blank-time housekeeping (`_frclock`, `_v_bas_ad`) still advancing under a program that owns the vector |
 | where the screen ring actually is | the model's `Physbase` (`OS_SCREEN_BASE` = 0x8000) underflows `boot_init`'s `- 0x1f900`, so the harness PLACES the ring at 0x60000 instead of taking the model's answer (`README.md`, "The image model"). The arithmetic is pinned; the address is the harness's choice | an on-target run: the surface is rendered pixels — a ring in the wrong place shows as a scroll that tears or wraps at the wrong row |
-| the IKBD `Bconout(4, $14)` and the `Kbdvbase` joyvec install | neither writes an image byte the fixture carries: the first is an OS-event-ledger entry, the second would store into the model's own poked-input block | an on-target run: the surface is the trap ledger, plus joystick input arriving at all |
+| what the IKBD `Bconout(4, $14)` and the `Kbdvbase` joyvec install DO | **the two calls themselves are pinned now** — `boot_init`'s row above verifies both: the command is an ordered OS EVENT the harness compares, and the joyvec save/install are ordinary image stores at `OS_KBDVBASE + 0x18` (0x518, well below the poked-input block at 0x600, which `test_init.py` asserts). What no differential can reach is their EFFECT: that the 6301 then really sends $FE/$FF-prefixed packets, and that TOS's parser would really call the vector — both live in a chip and an OS the model does not have | an on-target run: the surface is joystick input arriving at all. Its absence is the `Bconout` never having been issued |
 | everything `Setpalette` / `Setscreen` / `Vsync` do | modeled as ordered OS events with no image effect (`tools/recreate_kit/TRAP_MODEL.md`, Phase 14) | the event ledger for the calls, and rendered pixels for their effect |
 | the PHYSICAL screen base `render_frame` publishes | `Setscreen`'s ledger event carries only the LOGICAL base, and this game always passes -1 for it — so the physical base, which is the whole point of the call, is dropped by `os_setscreen` (`tools/recreate_kit/include/os.h`, "the XBIOS VIDEO AND COLOUR GROUP"). Every frame case therefore compares a call that says nothing about WHICH screen was published | an on-target run: the surface is rendered pixels, and a wrong base shows as a frame drawn into a buffer nobody is looking at. Off target it needs the two-argument ledger event named under "Follow-ups the kit should absorb" |
 | `music_start`'s and `sfx_start`'s CLEAR-BEFORE-FILL of the module's parameter block | BOTH are unobservable off target and for one reason: nothing can be interleaved with a C call, so a block that is cleared and then filled ends at the bytes the fill wrote, whatever the clear did. `sfx_start`'s flag ordering (row below) is the same argument at one byte; this is it at the whole block. Neither routine's clear has a surface here, and the STATUS row for 0x58df0 no longer claims one | an on-target run with the VBL live: the clear is what stops `vbl_handler`'s tick reading a half-written block on the frame an effect or a tune starts, so the symptom is one frame of the wrong period or duration |
 | `sfx_start`'s clear-then-fill-then-set of `sfx_active` | off target a C call cannot be interleaved with anything, so setting the flag first and last leaves the same final block; the mutation that does so SURVIVES the whole battery. On the machine the flag is the guard against `vbl_handler`'s tick landing mid-copy and running a half-written parameter block | an on-target run with the VBL live: the surface is what the chip is fed on the frame an effect starts, so a burst of the wrong period or duration for one frame is the symptom |
 | which machine speed the driver is really on | `$ff820a` bit 1 is a DECLARED case input (`hw_seed=`), so every case states the machine rather than measuring it. Both settings are driven, and the divider is pinned at every phase — but that the ST answers bit 1 set at all is the model's claim, not this reconstruction's | an on-target run: the surface is the music's tempo, which is 20% out if the branch goes the other way |
+| `probe_disc`'s NEGATIVE arm — the `bmi` that skips the `Fclose` when disc A is out | an `Fopen` of a name the harness has not staged is a REFUSAL on both sides: it sinks the ORACLE's whole run (`g_unmodeled`) and tallies against the candidate (`_vet_no_os_refusal`), so a case for "the disc is out" is a case the model throws away rather than one it answers -1 to. The mutation that closes a negative handle anyway therefore SURVIVES the battery, and cannot not (measured 2026-09-07) | an on-target run with the drive empty: the surface is the trap ledger — a `Fclose` of a negative handle, and the "INSERT DISC A" prompt that is supposed to spin on the probe |
+| WHERE in an ACIA handler the `bclr #6,$fffffa11` falls | the end-of-interrupt is an off-image HARDWARE WRITE and everything around it is an image write, and the harness compares the two as SEPARATE ordered streams — so moving the `bclr` from after the key ladder to before it leaves both streams unchanged and the mutation SURVIVES (measured 2026-09-07). It is the same shape as the sound module's clear-before-fill two rows down: an ordering nothing off target can interleave | an on-target run with the IKBD live: the surface is whether a second ACIA byte arriving mid-handler is serviced or lost, which is a keypress the game misses |
 | the sequencer's pattern cursor has no upper bound | `sequencer_fetch` walks forward until a byte ends the step, and the original has no check at all; the oracle bounds its reads at the image's end while the C indexes `image` directly. Every reachable pattern in `A\MODULE.BAK` ends a step within a few bytes, so nothing in the battery — including `make guarded`'s 744 candidate runs — reaches the walk | nothing off target: it needs a pattern the game's own data cannot produce. Recorded so that a future edit to the module's data is known to be able to run the cursor off the image |
 
 ## Not reconstructed, and why
@@ -743,12 +1044,12 @@ heading to the end, so a section added below it would have its hex read as defer
 Every `fn` line in `../names.txt` with no ✅ row above eventually appears here, with the reason:
 unreachable under the model, a model gap, or simply not yet started.
 
-**THIS TABLE IS A WAVE-1 SCAFFOLD, not a considered deferral list.** Filing the first ✅ row arms
-`test_status.py::test_every_named_function_is_verified_or_deferred`, which from that moment demands
-that every `fn` line in `../names.txt` be accounted for — and that is a WAVE-level obligation rather
-than any one subsystem's. So the rows below list, grouped by the subsystem the name map's own names
-put them in, everything wave 1 left unported. The grouping is a guess from the names; the addresses
-are exact. **An agent who verifies one of these deletes its address from its row in the same change
+**WHAT IS LEFT HERE IS NOT "not started".** The table opened as a wave-1 scaffold — filing the first
+✅ row arms `test_status.py::test_every_named_function_is_verified_or_deferred`, which from that
+moment demands that every `fn` line in `../names.txt` be accounted for — and waves 2 and 3 emptied it
+down to the six rows below. Each is a MODEL BLOCKER, a routine whose own shape has no checkpoint, or
+dead code, and each row says which. The grouping by subsystem is from the name map's own names; the
+addresses are exact. **An agent who verifies one of these deletes its address from its row in the same change
 that files the ✅ row** — which is what the gate says, by address, when it goes red.
 
 THE ENTITY SLICE'S TWO SEAMS ARE CLOSED, not merely verified: `0x10b8c` (`score_add_1000`, on the
@@ -757,12 +1058,8 @@ CALLED by `src/entity.c` now, so neither is in this table and no routine in it s
 
 | Routine(s) | Subsystem | Why not, and what would close it |
 |---|---|---|
-| `0x10916` | hud | Its joystick arms `bsr` the sound module's sfx wrappers (0x121ce and 0x121e6) MID-ROUTINE and carry on afterwards, so unlike `award_extra_life`'s tail-call there is no checkpoint that captures the whole routine. The arms that touch no sound — the `name_entry_done` countdown and the first-entry fill — are reachable and were left with it rather than filed as a partial. Closed by `include/sound.h` landing: the two wrappers are one line each (`jsr 1196(a0)` into the module with D0 = 5 and D0 = 2) |
 | `0x10e6a` | hud | `movea.l #$0,a0 / jsr (a0)` — it deliberately calls address zero. A booby trap, not a feature (../notes/frontend.md §6), and running it under the oracle executes whatever the vector page holds. `check_cheat_name`'s dispatch carries an explicit arm for it that does nothing, and its fuzz drops any name that would reach row 4. NOTHING would close this: the routine has no behaviour to verify, only a crash to record |
-| `0x10000` `0x10bfa` `0x10c4c` `0x111a6` `0x111be` `0x111d6` `0x11212` `0x112fa` `0x1139a` `0x115e2` `0x14bee` `0x15750` | init | Not started in wave 1 — the boot chain, the asset loader and the per-game resets. Nothing blocks these; they are simply unported. An agent who verifies one DELETES its address from this row in the same change that files its ✅ row |
-| `0x1003c` `0x1030e` `0x10332` `0x104f2` `0x10594` `0x10bc8` `0x11ba2` | frontend | Not started in wave 1 — the title screen, the attract loop, the hall of fame and the cheat entry. Nothing blocks these; they are simply unported. An agent who verifies one DELETES its address from this row in the same change that files its ✅ row |
-| `0x111ee` `0x11440` | scroll | Not started in wave 1 — the tile renderer, the map walk and the screen rotation. Nothing blocks these; they are simply unported. An agent who verifies one DELETES its address from this row in the same change that files its ✅ row |
+| `0x15750` | init | `main`'s three-call BOOT slice [0x15750, 0x1575c), and it is TWO MODEL BLOCKERS rather than effort. (1) `bsr init_load_assets` loads EIGHT files whose bytes total 288,551, and the kit stages files in ONE window — `OS_FS_STAGING` up to the stack guard, 258,048 bytes — which is 30,503 short (README.md, "The image model", is where the fixture's own split comes from). It is a KIT SIZE and not a fact about this game: the row under "Follow-ups the kit should absorb" carries it, with the `OS_FS_SLOTS` 8 -> 32 change Zynaps needed as the precedent. (2) `bsr init_new_game` NEVER RETURNS: it ends `bra.w enter_title`, so the run never reaches the third call, and the attract loop that eventually `rts`es back is a joystick spin. Its LOOP is verified above as `frame_loop_once` @ 0x1575c, which is the 45-call body and the `clr.w` that ends it; what has no row is the composition of the three inits |
+| `0x1030e` `0x104f2` `0x10594` | frontend | The three routines of the title FLOW, and all three are blocked on their own SHAPE rather than on anything missing — `set_palette_black` and `set_palette_game`, which the stated blocker used to name, are verified under `init` now. `enter_title` is four instructions between a `bsr` and a `bra title_attract_loop`; `title_attract_loop`'s own body past 0x1054a and `title_frame_step` are ONE spin loop with four exits — a `bsr set_palette_game`, a poll of the sound module's byte at +30, a joystick test and a branch back into each other — so neither has a single checkpoint a slice could be diffed at. Their SETUP is verified: 0x104f6 above is 84 of `title_attract_loop`'s bytes. What would close them is a `frame_loop_once`-shaped core over the whole spin with a SCHEDULE for the module poll and the joystick, which is a case shape this project has (`test_hud.py`'s wait sites) and has not applied here |
 | `0x1581a` | sprite | `tile_blit_unreferenced`: DEAD AND BROKEN, and it will stay in this table. NO instruction in the image names its entry — it sits after `main` at the end of TEXT — and its two clipped entries cannot work: the clip arithmetic scales the row count by 10 bytes a row (`mulu.w #$a`) while the unrolled block it jumps into steps 12 (four `move.l` + `lea 144(a0),a0`), so either clipped entry lands mid-instruction. Reaching it needs a caller that does not exist, and running it would need the bug fixed — which would make the reconstruction a remaster. The live tile drawing is the inline loop inside `render_frame` (0x1483a) and `tile_blit_overlay_masked`, both verified |
-| `0x141fa` `0x14218` `0x1430c` `0x14330` | player | The IKBD input path, which is an INTERRUPT and not the plane: `acia_ikbd_isr` and its two joystick continuations own the MFP channel-6 vector and end in `rte`, and `tos_joyvec_handler` is dead code the ISR took the vector away from. They fill the three bytes `read_player_input` reads, so the player slice verified the READER and left the writer; closing them needs the irq subsystem's entry model (an `rte` is not an `rts`) rather than anything this slice knows |
-| `0x14aa8` | player | The two instructions before this slice's start: `bsr set_palette_black` @ 0x111a6, which is the init subsystem's and unported. `0x14aac` — the whole of the rest of the routine up to `clear_actor_arrays` — IS verified above; this row is the entry, and it closes when the init slice lands |
-| `0x11636` | irq | Not started in wave 1 — the vertical-blank handler. Nothing blocks these; they are simply unported. An agent who verifies one DELETES its address from this row in the same change that files its ✅ row |
+| `0x14aa8` | player | The two instructions before that slice's start: `bsr set_palette_black` @ 0x111a6 and `st level_just_started`. `0x14aac` — the whole of the rest of the routine up to `clear_actor_arrays` — IS verified above, and this row is the ENTRY. **ITS STATED BLOCKER IS GONE:** `set_palette_black` and `clear_actor_arrays` are both verified under `init` now, so the whole-routine differential the row was waiting for is available and this is a row to close rather than a routine to think about |

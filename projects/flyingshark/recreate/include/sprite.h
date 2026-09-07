@@ -12,6 +12,11 @@
 
 #include "display_list.h"
 #include "globals.h"
+#include "irq.h"           /* `A_vbl_tick`, the frame counter the VBL handler owns and this file
+                            * only waits on */
+#include "scroll.h"        /* the scroller block `render_frame` reads and steps but does not own:
+                            * `A_map_row_ptr`, `A_map_row_ptr_reset`, `A_scroll_fine`,
+                            * `A_screen_ring_index`, `A_prescroll_flag`, `A_tile_split_row_table` */
 
 /* ---- one record of A\SPRITES.cru's 256-record directory ---------------------------------------
  *
@@ -90,23 +95,15 @@
 #define RESTORE_CLASS_W16          4u  /* the index whose blitter restores ONE 16-pixel group */
 #define RESTORE_CLASS_KEEP        (-1) /* ...and "this rung leaves the record's own class alone" */
 
-/* ---- the scroll state, BORROWED from the scroll subsystem -------------------------------------
+/* ---- the scroll state, READ from include/scroll.h ----------------------------------------------
  *
- * `render_frame` READS and STEPS these; it does not own them. The routines that establish them are
- * `start_level` @ 0x11440 and `title_attract_loop` @ 0x1052a — the `scroll` subsystem, unported —
- * so each has a row in STATUS.md's "Borrowed globals" and the migration is deleting the row and the
- * `#define` together. `include/hud.h` reads three of them from here for the debug overlay, which is
- * what a borrower does rather than restating them.
+ * `render_frame` READS and STEPS `A_map_row_ptr`, `A_screen_ring_index`, `A_scroll_fine`,
+ * `A_tile_split_row_table`, `A_prescroll_flag` and `A_map_row_ptr_reset`; it does not own any of
+ * them. They were held HERE on loan while the scroll subsystem was unported, and the loan is closed:
+ * `include/scroll.h` defines them, this header includes it, and STATUS.md's "Borrowed globals" rows
+ * went with the defines. What is below is what the SPRITE side of that reading needs — the geometry
+ * of a tile, a map row and the band the scroll exposes.
  * ---------------------------------------------------------------------------------------------- */
-#define A_map_row_ptr        0x16402u /* `movea.l $16402.l,a3` @ 0x1454a — the read cursor into the
-                                       * map's cells, stepped BACK one row per 32 pixels of scroll */
-#define A_screen_ring_index  0x1642eu /* `move.w $1642e.l,d0` @ 0x1448a — which of the four screens
-                                       * is being drawn, 0..3 */
-#define A_scroll_fine        0x16430u /* `addq.w #2,$16430.l` @ 0x147ba — the sub-tile scroll phase,
-                                       * 0,2,...,30 */
-#define A_tile_split_row_table 0x163dau /* `lea $163da.l,a0` @ 0x1484a — 16 byte PAIRS indexed by
-                                         * A_scroll_fine: (rows from the LOWER map cell, rows from
-                                         * the upper). Each pair sums to TILE_BAND_ROWS */
 #define TILE_BAND_ROWS       8u       /* the strip the scroll exposes per frame, and what every pair
                                        * in the table above adds up to */
 #define TILE_PIXELS          32u      /* one tile is 32x32: `asl.l #4 / asl.l #5` = *512 @ 0x1486e */
@@ -131,18 +128,9 @@
                                        * that the two agree is WHY one word index walks the map and
                                        * the repair grid alike (include/display_list.h) */
 
-/* ---- BORROWED: globals whose owning subsystem is not ported yet (STATUS.md, "Borrowed globals")
- * `prescroll_flag` and `map_row_ptr_reset` are written by `title_attract_loop` @ 0x104f2 and
- * `start_level` @ 0x11440 — the frontend's and init's routines; `vbl_tick` is the VBL handler's.
- * `render_frame` only READS the first and the third, and reaches the second through an arm the
- * program itself has disabled. Each row in STATUS.md names the owner; deleting the row and the
- * define below it is the whole of the migration. */
-#define A_prescroll_flag    0x1642cu /* BORROWED from the frontend: `tst.b $1642c.l` @ 0x14474 */
-#define A_map_row_ptr_reset 0x163feu /* BORROWED from the frontend: `move.l $163fe.l,$16402.l`
-                                      * @ 0x147dc, a store the very next instruction overwrites */
-#define A_vbl_tick          0x17720u /* BORROWED from the irq subsystem: `cmpi.l #$3,$17720.l`
-                                      * @ 0x14786, the frame budget render_frame waits out */
-#define RENDER_FRAME_VBL_BUDGET 3u   /* ...and the count it waits for: 3 VBLs, ~16.7 fps nominal */
+/* `A_vbl_tick` is `include/irq.h`'s — `vbl_handler` @ 0x11636 is its only writer — and is read from
+ * there. What IS this routine's is the count it waits for: `cmpi.l #$3,$17720` @ 0x14786. */
+#define RENDER_FRAME_VBL_BUDGET 3u   /* 3 VBLs a frame, ~16.7 fps nominal on a 50 Hz machine */
 
 /* ---- the ring seam ----------------------------------------------------------------------------
  * The shifter reads across the ring's wrap, so the bottom SCREEN_BYTES of the ring is duplicated

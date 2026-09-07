@@ -139,6 +139,7 @@ ENTRY_INIT_LOAD_ASSETS = 0x11212     # `bsr.s $111d6` — set_palette_title, the
 # and the directory fix-up. Entering HERE rather than following the `bra` is what splits the staging.
 ENTRY_LEVEL0_ASSETS = 0x112ac
 ENTRY_INIT_NEW_GAME = 0x112fa        # `move.w $176ac,$176c6`
+ENTRY_INIT_STAGE_STATE = 0x1139a     # `move.w #$1,$1775e`
 
 # Slice 1's checkpoint: `clr.l d0` @ 0x14cd2, the instruction after `move.w #$2300,sr`. It is the
 # last point at which boot_init has touched nothing but the image — the very next instructions are
@@ -157,6 +158,9 @@ STOP_INIT_NEW_GAME = 0x11394
 # each of which is one modeled trap rather than a loop.
 BOOT_SLICE_MAX_INSNS = 50_000
 LOAD_SLICE_MAX_INSNS = 200_000
+# `init_stage_state` falls through `difficulty_apply_fire_rates` into `start_level`, which loads
+# five files and PRESCROLLS a whole screen of terrain — `prescroll_frames + 1` whole frames.
+START_LEVEL_MAX_INSNS = 40_000_000
 # `emu.run`'s "no checkpoint": the run ends where the routine itself returns.
 STOP_AT_RTS = 0
 
@@ -368,17 +372,50 @@ def install_boot_state(image, physbase):
     return image
 
 
+# THE THREE BUILDERS ARE PLAIN FUNCTIONS AND THE FIXTURES BELOW ARE THIN. `../gen_readme_assets.py`
+# stages exactly this chain and is not a pytest run, so it calls these three by name; a fixture body
+# would have made it either re-implement the chain or reach in through private names, and both were
+# tried before this shape (README.md, "The image model", is the one description of what they build).
+
+
+def post_load():
+    """The image `init_load_assets` @ 0x11212 RETURNS on: the module docstring's three slices."""
+    image = replay_boot_init(bytearray(harness.BASE_IMAGE))
+    install_screen_ring(image, abi.SCREEN_RING_PHYSBASE)
+    return _without_staged_files(replay_load_assets(image))
+
+
+def post_new_game(image):
+    """...and the image after `init_new_game` @ 0x112fa, stopped at its `bra.w enter_title`."""
+    final, _writes, _regs = emu.run(bytearray(image), ENTRY_INIT_NEW_GAME,
+                                    stop_pc=STOP_INIT_NEW_GAME, max_insns=LOAD_SLICE_MAX_INSNS)
+    return _without_staged_files(bytearray(final))
+
+
+def started_level(image, loads=None, stop_pc=STOP_AT_RTS):
+    """...and a STAGE the original started: `init_stage_state` @ 0x1139a, with `loads` staged.
+
+    It is not a slice. The run follows the routine's own dispatch through
+    `difficulty_apply_fire_rates` into `start_level`, which loads the level's five files, installs
+    the level record, seeds the map cursor and prescrolls the whole screen in with the palette
+    black — so the world it leaves is the game's, down to the terrain in all four screens.
+
+    `stop_pc` is the caller's because `start_level` ends `bra.w music_play`: run to the `rts` and
+    the stage's tune is playing, stop at 0x1156a and it is not.
+    """
+    return _without_staged_files(_run_slice(image, BOOT_LOADS if loads is None else loads,
+                                            ENTRY_INIT_STAGE_STATE, stop_pc, START_LEVEL_MAX_INSNS))
+
+
 @pytest.fixture(scope="session")
 def post_load_image():
-    """The image `init_load_assets` @ 0x11212 RETURNS on: the module docstring's three slices.
+    """`post_load()`, once a session.
 
     `main` @ 0x15750 is `bsr init_load_assets / bsr init_new_game / bsr init_stage_state` and then
     its frame loop, so this is the machine the SECOND of those is entered on — the last image the
     boot chain reaches before any game state exists, and the base every differential runs on.
     """
-    image = replay_boot_init(bytearray(harness.BASE_IMAGE))
-    install_screen_ring(image, abi.SCREEN_RING_PHYSBASE)
-    return _without_staged_files(replay_load_assets(image))
+    return post_load()
 
 
 @pytest.fixture(scope="session")
@@ -396,9 +433,7 @@ def post_new_game_image(post_load_image):
     routine ends with rather than at an `rts`: `init_new_game` does not return to `main` itself, it
     falls into the title flow, whose own `rts` is what eventually comes back.
     """
-    final, _writes, _regs = emu.run(bytearray(post_load_image), ENTRY_INIT_NEW_GAME,
-                                    stop_pc=STOP_INIT_NEW_GAME, max_insns=LOAD_SLICE_MAX_INSNS)
-    return _without_staged_files(bytearray(final))
+    return post_new_game(post_load_image)
 
 
 # =================================================================================================
@@ -470,7 +505,7 @@ def byte_run_pokes(base, staged):
     return pokes
 
 
-def _built_once_per_run(tmp_path_factory, name, build):
+def built_once_per_run(tmp_path_factory, name, build):
     """`build()`'s bytes, computed by the FIRST xdist worker to need them and read by the rest.
 
     `tmp_path_factory.getbasetemp()` is per worker; its PARENT is the one directory the whole run
@@ -521,7 +556,7 @@ def new_game_pokes(post_load_image, post_new_game_image):
 @pytest.fixture(scope="session")
 def staged_world_pokes(post_load_image, post_new_game_image, tmp_path_factory):
     """A POPULATED arena the ORIGINAL filled, as pokes. See `_spawn_the_world`."""
-    image = _built_once_per_run(tmp_path_factory, "staged_world.img",
+    image = built_once_per_run(tmp_path_factory, "staged_world.img",
                                 lambda: _spawn_the_world(post_new_game_image))
     live = sum(1 for slot in range(ENTITY_SLOTS)
                if image[A_entity_arena + slot * ENTITY_STRIDE + ENTITY_ACTIVE:
@@ -556,7 +591,7 @@ def _differential_base_image(post_load_image):
 # on both sides, and stay green.
 #
 # A_vbl_chain_vector, VECTOR_VBL/ACIA and the two handler entries are deliberately absent: they
-# belong to the irq subsystem's header when that lands, and they are already pinned against the
+# belong to `include/irq.h` and `include/init.h`, and they are already pinned against the
 # ORIGINAL rather than against a second spelling — `test_the_boot_slice_really_wrote_the_things_it_
 # is_pinned_on` asserts the real boot chain wrote each handler at each vector, and the replay/
 # transcription diff catches a chain-operand address that names the wrong longword. So is
@@ -615,6 +650,8 @@ ENTRY_PROLOGUES = {
     "ENTRY_INIT_NEW_GAME": "33f9000176ac000176c6",
     # movea.l $17770,a0 / adda.l $17754,a0
     "ENTRY_SPAWN_SCRIPT_STEP": "207900017770d1f900017754",
+    # clr.b $17781 / clr.b $1777f -- init_stage_state, which falls through into start_level
+    "ENTRY_INIT_STAGE_STATE": "42390001778142390001",
 }
 
 STOP_PROLOGUES = {

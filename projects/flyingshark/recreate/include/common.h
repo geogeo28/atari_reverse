@@ -22,6 +22,7 @@
 
 #include "machine.h"
 #include "display_list.h"
+#include "hud.h"          /* `A_const_words_0123` and its stride, which `const_word` below reads */
 
 /* What a 68000 `Scc` writes when its condition holds: ONE BYTE of ones.
  *
@@ -59,6 +60,34 @@ static inline void display_record_write(uint8_t *image, uint32_t record, uint16_
     wr16(image + addr_add(record, DISPLAY_REC_Y), y);
     image[addr_add(record, DISPLAY_REC_FRAME)] = frame;
     image[addr_add(record, DISPLAY_REC_ACTIVE)] = active;
+}
+
+/* ONE WORD OUT OF `A_const_words_0123`, the table of 0..9 this program spells its small immediates
+ * by READING rather than by writing (`move.w $176ae,$17712` is "lives = 1").
+ *
+ * The index IS the value, because the table is the identity — but the call has to reproduce the
+ * READ: a case that poisons the table sees an immediate and a table read differ. Five files make
+ * it — `src/init.c`, `src/player.c`, `src/frontend.c`, `src/scroll.c` and `src/hud.c` — and
+ * `be16(image + A_const_words_0123 + 5 * CONST_WORD_BYTES)` at each site reads as arithmetic
+ * rather than as the index the instruction names.
+ */
+static inline uint16_t const_word(const uint8_t *image, unsigned index) {
+    return be16(image + A_const_words_0123 + index * CONST_WORD_BYTES);
+}
+
+/* A RUN OF `move.l (a0)+,(a1)+` — the copy this program's unrolled blitters, the title picture's
+ * 8,000-longword move and level 2's scenery band are all made of.
+ *
+ * Longwords and not bytes because that is the instruction: a byte loop would agree with every case
+ * whose length is a multiple of four and differ on none of them, and the width is what says the
+ * original moved 32 bits at a time. `addr_add` on each step, so the cursors wrap at 32 bits the way
+ * an address register does.
+ */
+#define LONG_BYTES 4u
+
+static inline void copy_longs(uint8_t *image, uint32_t src, uint32_t dst, unsigned longs) {
+    for (unsigned index = 0; index < longs; index++)
+        wr32(image + addr_add(dst, index * LONG_BYTES), be32(image + addr_add(src, index * LONG_BYTES)));
 }
 
 #endif /* FLYINGSHARK_COMMON_H */

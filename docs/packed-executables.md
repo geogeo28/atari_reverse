@@ -177,7 +177,9 @@ ring if its TEXT lands at or below `$d922`. From `AUTO\` it loads at `$aa56` and
 desktop it loads at `$12596`, the ring lands on top of the music driver it just read in, and it dies
 on an illegal instruction a second later — a symptom that looks like a missing deprotection patch
 and is nothing of the kind. **When a depacked payload draws one screen and then crashes, check the
-load address against its own buffer arithmetic before you go looking for protection.**
+load address against its own buffer arithmetic before you go looking for protection.** The general
+form — a load address is a *budget with two ends*, and how to assert it on every boot — is
+[`on-target-execution.md`](on-target-execution.md), "Fitting the machine".
 
 Three habits that run generalises.
 

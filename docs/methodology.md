@@ -389,6 +389,57 @@ The rule is about the KEY, not about the extent:
   EXACTLY on a cell boundary. Read the arithmetic term by term and ask, for each, which seed value
   makes it observable at all.
 
+## Contract coverage: the third hole is the INPUT DOMAIN, not the seeds
+
+The two holes above are about where a case puts its bytes. This one is about which inputs it is
+allowed to use, and it is the one a byte-exact port meets most often. A differential drives a routine
+with inputs the *game* can reach; a routine's arms are decided by the *instruction*. Any arm the
+shipped data cannot reach is therefore verified by nothing while every case in the battery stays
+green — the class is **green differential, unfaithful arm**, and it is invisible by construction,
+because the faithful and the unfaithful spelling agree on everything the game can produce.
+
+Nothing but a **line-by-line read against the disassembly** finds one. Flying Shark's review gate
+(`my-code-review` at high as the pre-commit gate: 47 findings on the ~5,000-line bootstrap diff, and
+47 more across the two port waves — the second figure is commit `073d238`'s own, the first is the
+campaign's record and is not re-derivable from the tree) turned up six that the differential could
+not see, and the six are worth carrying as a shape inventory:
+
+- a `dbf` arm the original leaves **unguarded**, written with the guard a C author would add;
+- a `cmp` transcribed **unsigned** where the instruction is signed;
+- a byte the original **re-reads from memory once per group**, hoisted out of the loop;
+- a **register input dropped** from a call the port made through its own argument list;
+- a **bounds guard invented** where the original walks off the front of its table;
+- a table **indexed past its end**, where the original aliases into whatever follows it.
+
+Every one of them is the same sentence: *the original's arm and the port's arm differ only on an
+input the game's own data cannot deliver.*
+
+**The remedy is a case that pokes the input anyway, and a row that says so.** Flying Shark's first
+sprite sweep excused four survivors with "the game cannot produce that input"; all four fell to a
+case that produced it (`projects/flyingshark/recreate/STATUS.md`, "Two things pinned by CONTRACT
+COVERAGE, not by game coverage"):
+
+- an **odd scroll phase** — the phase is seeded `0x1e`, stepped `+2` under a mask, and every shipped
+  checkpoint table's phase field is even — which separates a per-column band step from a fixed one,
+  and moves the repaint's last row start onto the two neighbours of a clip constant that had been
+  called equivalent on "row starts are even";
+- entering a **frame-budget wait at BUDGET − 1**, which is the only thing that pins a budget of 3
+  from below: a budget of 2 takes the same arm at a tick of 3 and is invisible from above;
+- a **screen base off the ring's own `0x500` grid**, the one input that separates `ring_base + size`
+  from `base + size`, since every base the game can hold is `ring_base + k*0x500`.
+
+So "the game cannot produce that input" is a reason to **label** a case contract coverage, not a
+reason to skip writing it.
+
+**And be honest where it really is unreachable.** Some arms cannot be driven at all: the same file's
+overlay repaint has an unguarded `dbf` whose only divergence from a guarded one is a 65,535-row pass
+— 10 MB of stores past a 1 MiB image, which the oracle drops on the floor and the candidate writes
+off the end of its buffer — so the port spells the unguarded instruction because that is the
+instruction, and the row reads *"no case separates it"* rather than *"equivalent"*. (The signed half
+of that same arithmetic **is** separated, by a negative-phase case.) A survivor argued from the
+comparison's limits is a finding about the surface ([`agent-playbook.md`](agent-playbook.md) §10); a
+survivor argued from the shipped data is a case nobody has written yet.
+
 ## Porting a boot chain that ends in a disk controller: find the SEAM, don't model the chip
 
 Almost every disk-loading game's boot chain bottoms out in code the differential cannot see — a

@@ -89,8 +89,8 @@
 #define A_level_map_cols  0x16432u  /* LEVELn.MAP header word 0: tile columns (always 10), and the
                                      * record destination A\LEVEL1.MAP is read to */
 /* The rest of the map header (rows, then the cells), how a CELL is read (base/overlay tile ids) and
- * what a row's stride is belong to the scroll subsystem, not to the memory model: they go in
- * include/scroll.h when that lands. */
+ * what a row's stride is belong to the scroll subsystem, not to the memory model: they are in
+ * include/scroll.h. */
 
 #define A_tile_banks      0x38928u  /* the four HSC_n.DAT banks, back to back: one 128 KB atlas of
                                      * TILE_BANK_TILES*4 tiles addressed by a single byte id */
@@ -125,7 +125,8 @@
 /* ---- the two big arrays ------------------------------------------------------------------- */
 
 #define A_entity_arena  0x59984u  /* 91 records of 58 bytes; the layout is the entity subsystem's,
-                                   * and belongs in include/entity.h when that lands */
+                                   * and is in include/entity.h — the PLACEMENT is what this file
+                                   * owns */
 #define ENTITY_SLOTS    91u
 #define ENTITY_STRIDE   58u
 

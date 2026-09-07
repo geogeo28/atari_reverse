@@ -97,6 +97,14 @@ player, which may be a separate file on the disk. Read it before exporting a `.w
 - The driver is usually **installed as a VBL handler** (see `hardware-map.md`: `_vblqueue`
   at `0x456`). Find who writes `0x456` — the pointer it installs is the per-frame sound
   update (BuggyBoy: `REFRESH`).
+- **The driver may not be in the program at all.** Flying Shark's whole audio path is `A\MODULE.BAK`,
+  a second GEMDOS `.PRG` (`ABSFLAG = 0xffff`, no relocation table, so genuinely position-independent)
+  read into bss as data and called at **`buffer + 28`** — the game's loader does not strip the header
+  and the game adds the 28 itself, so an entry offset taken against the buffer lands mid-word. Four
+  `jsr n(a0)` entries (per-VBL tick, stop, play effect, play music) are the whole API, and
+  `$ff8800`/`$ff8802` appear **nowhere else in the main program** — which is what proves the module's
+  own tables *are* the game's music and effects. Give such a module its own Ghidra project at its own
+  base (`projects/flyingshark/notes/sound_engine.md`).
 - Exported symbols, if present, name it for you. BuggyBoy shipped DRI symbols
   `INITTUNE`, `INITFX`, `TURNOFF`, `EGOFF`, `EGVOL`, `EGFREQ`, `EGFLAG`, `FXFLAG`,
   `MZFLAG`, `VOLUME`, `REFRESH` — a classic tune + envelope-generator (EG) + effects driver.
@@ -298,6 +306,42 @@ retrigger the envelope every frame), so the last write to 13 is the reset's, the
 since finished, and every such channel-frame is **silence** on real hardware. A renderer that
 masked the level to four bits instead would play a note there, and no image diff or ledger would
 see it — the difference exists only on the chip.
+
+### The other half of bit 4: a driver that really does drive the envelope
+
+The rule above is a property of *that* driver, and the opposite driver exists. Flying Shark's thirteen
+sound effects hold **channel C at volume `0x10`** with envelope shape `0x09` latched and sweep the
+period underneath it, while the music never touches the generator at all — so under a
+bit-4-is-silence rule the entire effect set captures as pure silence and reads as a broken capture.
+That is why audibility is the **caller's** declaration in `tools/ym_capture.py`
+(`channel_sounds(frame, channel, envelope_is_level=)`, default unchanged) rather than a rule the
+module picks. Decide it by reading **who writes register 13**, not by looking at the volume byte.
+Three more properties of an envelope-driven effect engine, each of which a first capture gets wrong:
+
+- **Register 13 is a one-shot latch, so "not written" is a value.** This driver keeps a shadow byte
+  that is pushed only on the ticks it is non-zero and zeroed by the push, so a per-frame register
+  vector has to carry "not written this frame" as distinct from "written 0" (YM6 spells it `0xff`).
+  No image byte records the push either, so the only thing that pins it in a differential is a case
+  that **counts** the pushes.
+- **Pre-emption is measurable off the register stream, by difference.** "An effect takes channel C
+  and nowhere else" is three claims, and two captures settle all three — the tune alone, and the same
+  tune with an effect injected at a known frame: channels A and B's period and volume registers
+  identical across the span, the mixer's A/B gates unchanged, and channel C in envelope mode on
+  frames after the injection and on none before it. Exclude the registers the claim is *about*
+  (channel C's own, and the envelope generator's) with a stated reason instead of comparing the whole
+  file (`projects/flyingshark/tools/extract_audio.py`, `check_sfx_preempts_channel_c`).
+- **The entry's documented argument is a byte and its callers hand a word.** `sfx_start`/`music_start`
+  take `d0.b`; the game's own sites pass a whole word straight out of a global (`move.w $1776e,d0`),
+  and what makes that legal is the module's own `ext.w` overwriting the word from the byte. Reproduce
+  the narrowing rather than assuming it, and drive the cases with high garbage in `d0` — the caller's
+  register is a hidden input of the call either way, and only one of the two readings survives it.
+
+And the tempo is a hardware **read**: `btst #1,$ffff820a` (bit 1 set = 50 Hz) is what makes this
+driver drop one tick in six on a 60 Hz machine. An oracle answers an undeclared hardware read with 0
+— i.e. the 60 Hz branch, a fifth slower — and both sides agree on it, so the whole differential is
+green about the wrong machine. Every case that reaches the music half therefore has to **declare**
+that byte (the kit's `hw_seed=`) and run both settings; BuggyBoy shipped exactly this defect green.
+The game-side half of the same fact is "One tempo caveat" above.
 
 ## Checking a dump against the real machine (Hatari as the second opinion)
 
