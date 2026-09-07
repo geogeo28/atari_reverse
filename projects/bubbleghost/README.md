@@ -25,9 +25,11 @@ it draws the same menu. `atari/smoke.py` is the gate: nine checks over the six s
 (a colour register, a word of the staged program, the Timer C vector) each naming the surfaces it
 must redden, plus a bootable 720 KB floppy whose boot to the TOS desktop is checked too, plus a
 `game` mode that presses the menu's own `G` and `1` and watches the room loop turn behind them.
-**The game itself is not play-tested by any check**: it is played with the mouse and Hatari's
-headless control protocol has no mouse motion of any kind, and nothing here has run on real
-hardware.
+**The game itself is play-tested by a person, not by a check**: it is played with the mouse and
+Hatari's headless control protocol has no mouse motion of any kind. The author played the `play`
+build from `atari/disk/BUBBLE.ST` under Hatari on 2026-09-06 and reports it plays well (an earlier
+report of the game dropping to TOS on `G` predates the XBIOS door and did not recur). Nothing here
+has run on real hardware.
 
 > No game data is in this repository. `bin/` and `out/` are gitignored; bring your own disk.
 

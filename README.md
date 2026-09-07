@@ -6,8 +6,8 @@ run that C back on a 68000. The tooling and the [documentation](docs/README.md) 
 point them at any GEMDOS `.PRG`. **Four games are solved with them** and a fifth is under way.
 Every picture below was **drawn by the reconstruction**, not screenshotted from the original —
 with the two marked where they appear: Bubble Ghost's reconstruction is complete and verified and
-boots to its menu, but it has not been play-tested, so its pictures come from the data files and the
-original binary.
+boots to its menu and was play-tested by the author under Hatari (it plays well), but nothing of it
+has run on real hardware, so its pictures come from the data files and the original binary.
 
 > **No game data is distributed here.** No `.PRG`, no data file, no disk image, no TOS ROM. Bring
 > your own copy; see [Credits & legal](#credits--legal).
@@ -73,9 +73,9 @@ under Hatari from an original disk. **132 of its 134 functions named and all 132
 byte-for-byte** against the original, in 1,895 tests · graphics and speech decoded out of the data
 files. Those cores compile unmodified into `BUBBLE.PRG`, which **boots to the game's own menu under
 Hatari with a byte-identical framebuffer** against the original's at the same instruction — but it
-is **not yet play-tested** (the game is mouse-driven and a headless Hatari has no mouse motion), and
-nothing has run **on iron**. What is left is that, and `GHOST.LOA` — a second program it loads and
-calls.
+was **play-tested under Hatari from the floppy image (2026-09-06: it plays well)** — the one surface
+no headless check can reach, the game being mouse-driven — but nothing has run **on iron**. What is
+left is that, and `GHOST.LOA` — a second program it loads and calls.
 → [`projects/bubbleghost/README.md`](projects/bubbleghost/README.md)
 
 ---

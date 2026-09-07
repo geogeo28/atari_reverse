@@ -458,9 +458,11 @@ and it is written here as an open question rather than as a closed one.
    image offset if it did.
 3. **The reported G-key defect is not reproduced and not closed.** See the `game` mode above: every
    headless configuration is green, and the one input that mode cannot exercise is the mouse.
-4. **The `play` build is otherwise unjudged.** It composes the whole program — the endings, the hall
-   of fame, the practice and demo branches — and nothing headless can play it. `run.sh` is the
-   discharge for those, and it is a person, not a check.
+4. **The `play` build is judged by a person, not a check.** It composes the whole program — the
+   endings, the hall of fame, the practice and demo branches — and nothing headless can play it.
+   `run.sh` and the floppy are the discharge, and the author discharged it under Hatari on
+   2026-09-06 ("the game works well"). That is a play-through, not a surface: it says nothing
+   re-derivable about which branches were reached.
 5. **The floppy path is not run end to end headless**, for the same reason: it needs a double-click
    and the pointer cannot be moved. What IS checked is the volume (byte-for-byte readback, a boot
    sector TOS mounts and does not execute, free space and root slots for the three files a run
