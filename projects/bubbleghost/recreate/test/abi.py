@@ -199,6 +199,26 @@ def shard(cases, chunk, chunks):
     return list(cases)[chunk::chunks]
 
 
+
+# ---- the trap trampoline's save slots -------------------------------------------------------------
+TRAP_SAVE_SLOTS = 3      # the trampoline parks the return address, A2 and A1, in that order
+LONG_BYTES = 4           # ...each a longword
+
+
+def trap_slot_noise(rng, saved_ret):
+    """The trampoline's three save slots under noise, so a wrapper that failed to write one is a
+    difference rather than a zero matching a zero.
+
+    `saved_ret` is the battery's OWN `A_trap_saved_ret`, which each battery restates and
+    `test_constants.py` pins to `include/clib.h` — the addresses stay per-battery and pinned, and
+    only the KNOWLEDGE that the three are consecutive longwords in ret/a2/a1 order lives here. It is
+    in this file rather than copied a fourth time because three batteries wanted it: `test_clib.py`,
+    `test_init.py` and `test_voice.py` had byte-identical bodies, and the third had quietly dropped
+    the `rng` and poked fixed bytes — which is a weaker pin under the same name.
+    """
+    return {saved_ret: rng.randbytes(TRAP_SAVE_SLOTS * LONG_BYTES)}
+
+
 # ---- seeding ------------------------------------------------------------------------------------
 # The default noise margin either side of a seeded span. IT IS NOT TIDINESS: most of what these
 # routines write is bss, which the loaded image already holds as zeroes, so a candidate clearing or

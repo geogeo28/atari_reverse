@@ -450,11 +450,21 @@ int16_t c_open(uint8_t *image, uint32_t path, uint16_t mode, CallerAddressRegist
         handle = (int16_t)device;
     } else {
         if (mode & OPEN_MODE_TRUNCATE) {
-            /* The truncating open deletes the file first (GEMDOS Fdelete, `c_unlink` @ 0x16868),
-             * which the kit does not model. Nothing in the game asks for it — c_creat requests
-             * OPEN_MODE_WRITE only — so this refuses rather than fabricating a result, and a case
-             * that reached it would fail loudly instead of passing (harness._vet_no_os_refusal). */
-            return (int16_t)os_refused(-1);
+            /* The truncating open makes the file EMPTY in three steps — delete it, create it, close
+             * the handle that created it — and then falls through into the ordinary Fopen below,
+             * which is what the caller actually gets back. A failed delete abandons the whole call.
+             * Nothing in the GAME asks for this mode (`c_creat` requests OPEN_MODE_WRITE only), but
+             * the model serves all three calls now, so the arm is run rather than refused. */
+            int16_t emptied;
+
+            if (c_unlink(image, path, saved) != 0)
+                return -1;
+            trap_save_registers(image, saved, RET_C_OPEN_TRUNC_FCREATE);
+            emptied = (int16_t)os_fcreate(image, path);
+            trap_save_registers(image, saved, RET_C_OPEN_TRUNC_FCLOSE);
+            /* The original discards BOTH answers: a failed create is closed like any other handle
+             * and the error is never looked at. */
+            (void)os_fclose(image, (uint16_t)emptied);
         }
         trap_save_registers(image, saved, RET_C_OPEN_FOPEN);
         /* The original passes GEMDOS the two access bits (`mode & 3`); `os_fopen` takes no mode at
@@ -1189,6 +1199,82 @@ void c_conout_write(uint8_t *image, uint32_t buffer, int16_t length,
     }
 }
 
+/* ================================================================================================
+ * The five wrappers that were waiting on the trap model — c_unlink @ 0x16868,
+ * c_auxout_write @ 0x16ba8, c_prtout_write @ 0x16bd6, c_exit_pterm @ 0x14d16, c_exit @ 0x14d2c
+ *
+ * Each is one GEMDOS call the kit did not model until Phase 13 grew Fdelete, Cauxout, Cprnout and
+ * Pterm (tools/recreate_kit/TRAP_MODEL.md). None of them is reachable in play; they are ported
+ * because the C library is otherwise complete, and each one's own surface is now real.
+ * ============================================================================================= */
+
+/* c_unlink @ 0x16868 — GEMDOS Fdelete. The result is filed in `A_c_errno` as a word and answered as
+ * 0 or -1, so a caller learns only whether it worked. Only `c_open`'s TRUNCATING arm calls it, and
+ * `c_creat` never asks for that mode. */
+int16_t c_unlink(uint8_t *image, uint32_t path, CallerAddressRegisters saved) {
+    trap_save_registers(image, saved, RET_C_UNLINK_FDELETE);
+    wr16(image + A_c_errno, (uint16_t)os_fdelete(image, path));
+    return be16(image + A_c_errno) == 0 ? 0 : -1;
+}
+
+/* The shape `c_auxout_write` and `c_prtout_write` share exactly: `length` bytes to one character
+ * device, one call each, with no translation of any kind. Like `c_conout_write` the loop tests the
+ * count BEFORE decrementing it, so a length of 0 writes nothing and a negative one runs
+ * 0x10000 + length times; unlike it, neither of these two touches the image at all, so the ordered
+ * event ledger and the trampoline's save slots are the whole of what a case compares. */
+static void write_to_character_device(uint8_t *image, uint32_t buffer, int16_t length,
+                                      uint32_t return_pc, void (*send)(uint8_t),
+                                      CallerAddressRegisters saved) {
+    while (length-- != 0) {
+        trap_save_registers(image, saved, return_pc);
+        send(image[buffer]);
+        buffer = addr_add(buffer, 1);
+    }
+}
+
+/* GEMDOS Cprnout answers whether the byte went out and the original DISCARDS the answer, so this
+ * adapter is what lets the two devices share the loop above. The model's printer never times out
+ * (os.h), which is why nothing here tests it. */
+static void send_to_printer(uint8_t byte) { (void)os_cprnout(byte); }
+
+/* c_auxout_write @ 0x16ba8 — the AUX: arm of `c_write`. */
+void c_auxout_write(uint8_t *image, uint32_t buffer, int16_t length,
+                    CallerAddressRegisters saved) {
+    write_to_character_device(image, buffer, length, RET_C_AUXOUT_BYTE, os_cauxout, saved);
+}
+
+/* c_prtout_write @ 0x16bd6 — and the PRT: arm. */
+void c_prtout_write(uint8_t *image, uint32_t buffer, int16_t length,
+                    CallerAddressRegisters saved) {
+    write_to_character_device(image, buffer, length, RET_C_PRTOUT_BYTE, send_to_printer, saved);
+}
+
+/* c_exit_pterm @ 0x14d16 — GEMDOS Pterm, which does not return on the real machine.
+ *
+ * The model's `os_pterm` LATCHES the event ledger, so anything a reconstruction did afterwards
+ * would be refused rather than silently accepted — which is what makes "returns" here safe to spell
+ * (tools/recreate_kit/include/os.h, "ON THE REAL MACHINE THIS DOES NOT RETURN"). Every caller must
+ * therefore return immediately, and both of this one's do. */
+void c_exit_pterm(uint8_t *image, uint16_t code, CallerAddressRegisters saved) {
+    trap_save_registers(image, saved, RET_C_EXIT_PTERM);
+    os_pterm(code);
+}
+
+/* c_exit @ 0x14d2c — close every FILE the library still holds open, then terminate.
+ *
+ * The walk is over ALL C_IOB_SLOTS records rather than over the open ones: a slot is in use exactly
+ * when its flags carry FILE_READ or FILE_WRITE, and the bound is the table's end address compared
+ * as a LONG, which is how the original spells it. */
+void c_exit(uint8_t *image, uint16_t code, CallerAddressRegisters *saved) {
+    uint32_t file;
+
+    for (file = A_c_iob; (int32_t)file < (int32_t)C_IOB_END; file = addr_add(file, C_IOB_STRIDE)) {
+        if (be16(image + file + FILE_OFF_FLAGS) & FILE_IN_USE)
+            c_fclose(image, file, saved);
+    }
+    c_exit_pterm(image, code, *saved);
+}
+
 /* c_write @ 0x16c04 — the library's `write(2)`: a pseudo-device's own byte writer, or GEMDOS
  * Fwrite with the text mode's newline expansion.
  *
@@ -1219,9 +1305,13 @@ int16_t c_write_reporting(uint8_t *image, uint16_t handle, uint32_t buffer, int1
         return length;
     }
     if (handle == FD_DEVICE_AUX || handle == FD_DEVICE_PRT) {
-        /* GEMDOS Cauxout (0x04) and Cprnout (0x05) — `c_auxout_write` @ 0x16ba8 and
-         * `c_prtout_write` @ 0x16bd6, neither modeled and neither reachable in play. */
-        return (int16_t)os_refused(-1);
+        /* GEMDOS Cauxout (0x04) and Cprnout (0x05). Like CON:'s arm, A2 already carries the buffer:
+         * `movea.l a3,a2` is the routine's second instruction. */
+        if (handle == FD_DEVICE_AUX)
+            c_auxout_write(image, buffer, length, carrying_in_a2(*saved, cursor));
+        else
+            c_prtout_write(image, buffer, length, carrying_in_a2(*saved, cursor));
+        return length;
     }
 
     binary = c_getfdmode(image, handle) != 0;
@@ -1648,8 +1738,16 @@ int16_t c_conin(uint8_t *image, uint16_t handle, CallerAddressRegisters saved) {
                 conin_echo(image, TEXT_MODE_LF, RET_C_CONIN_ECHO_EOL_LF, saved);
                 break;
             }
-            if (typed == CONIN_INTERRUPT)
-                return (int16_t)os_refused(-1); /* c_exit -> GEMDOS Pterm (0x4c), unmodeled */
+            if (typed == CONIN_INTERRUPT) {
+                /* ^C ends the program. The original FALLS THROUGH into the end-of-file test from
+                 * here, which is code the real machine never reaches — GEMDOS Pterm does not
+                 * return — so the reconstruction returns instead. Running on would append to a
+                 * ledger `os_pterm` has latched, and every entry after it is refused. */
+                CallerAddressRegisters live = saved;
+
+                c_exit(image, CONIN_EXIT_CODE, &live);
+                return -1;
+            }
             if (typed == CONIN_EOF) {
                 conin_append(image, (uint8_t)typed);
                 conin_echo(image, TEXT_MODE_CR, RET_C_CONIN_ECHO_EOF_CR, saved);
@@ -2342,6 +2440,30 @@ int32_t g_c_write(uint8_t *image, uint32_t handle, uint32_t buffer, uint32_t len
     CallerAddressRegisters saved = caller_registers(a1, a2);
 
     return c_write_reporting(image, (uint16_t)handle, buffer, (int16_t)length, &saved);
+}
+
+void g_c_auxout_write(uint8_t *image, uint32_t buffer, uint32_t length, uint32_t a1, uint32_t a2) {
+    c_auxout_write(image, buffer, (int16_t)length, caller_registers(a1, a2));
+}
+
+void g_c_prtout_write(uint8_t *image, uint32_t buffer, uint32_t length, uint32_t a1, uint32_t a2) {
+    c_prtout_write(image, buffer, (int16_t)length, caller_registers(a1, a2));
+}
+
+int32_t g_c_unlink(uint8_t *image, uint32_t path, uint32_t a1, uint32_t a2) {
+    return c_unlink(image, path, caller_registers(a1, a2));
+}
+
+void g_c_exit_pterm(uint8_t *image, uint32_t code, uint32_t a1, uint32_t a2) {
+    c_exit_pterm(image, (uint16_t)code, caller_registers(a1, a2));
+}
+
+/* `c_exit` threads the register block by POINTER for `c_fclose`'s reason: each close leaves A1 at
+ * `A_c_errno` and the traps after it file that, not what the caller was holding. */
+void g_c_exit(uint8_t *image, uint32_t code, uint32_t a1, uint32_t a2) {
+    CallerAddressRegisters live = caller_registers(a1, a2);
+
+    c_exit(image, (uint16_t)code, &live);
 }
 
 void g_c_conout_write(uint8_t *image, uint32_t buffer, uint32_t length, uint32_t a1, uint32_t a2) {

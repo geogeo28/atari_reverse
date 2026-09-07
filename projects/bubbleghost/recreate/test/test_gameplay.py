@@ -3,16 +3,15 @@
 WHAT IS HERE. `get_pixel` @ 0x13bea and `bubble_collision_probe` @ 0x13004 — the whole hazard
 model; the five routines that walk the 58-word world block (`reset_world_state` @ 0x10f20,
 `save_world_p1` @ 0x13ff4 / `p2` @ 0x14158, `restore_world_p1` @ 0x13d2c / `p2` @ 0x13e90);
-`itoa_padded` @ 0x114ee; a SLICE of `ghost_blow` @ 0x129b4; and SEVEN slices of
+`itoa_padded` @ 0x114ee; the three HUD painters; a SLICE of `ghost_blow` @ 0x129b4; and NINE slices of
 `game_frame_update` @ 0x12322.
 
-WHY `game_frame_update` IS SEVEN CASES AND NOT ONE. Two regions of it cannot be run here, and
-neither limit is this reconstruction's (src/gameplay.c's header comment has the argument):
-its front-end poll (`vq_mouse` @ 0x16a26 and `vq_key_s` @ 0x16a5e, plus the `Crawio` key read) is
-the front-end subsystem's unported VDI binding, and its death sequence at 0x1273c draws the two
-sprites through `src/blit.c`'s unported `vro_cpyfm` routines. So each slice is entered at its own
-PC and diffed at the next one's, and the two gaps are STATUS.md residuals rather than code nobody
-ran.
+WHY `game_frame_update` IS NINE CASES AND NOT ONE. The routine never runs straight through: it
+polls the front end, and one of the poll's arms — the `^P` pause — spins on `Crawio` until a second
+`^P` arrives, which no case can stage (the pause's own flush drains everything a queue could hold).
+So each slice is entered at its own PC and diffed at the next one's, and the pause is a STATUS.md
+residual rather than code nobody noticed. The nine TILE the routine with no gap, and
+`test_frame_slices_tile_game_frame_update` is what turns that from prose into a pin.
 
 THE WORK BUFFER IS THE CASE'S OWN INPUT. `get_pixel` reads `screen_back`, which the game takes
 from XBIOS `Logbase` — answered by the model with 0x8000, so the game's `Logbase - 0x7d00` would
@@ -30,6 +29,7 @@ import random
 import pytest
 
 import abi
+import emu
 import harness
 from harness import report
 
@@ -45,7 +45,7 @@ ENTRY_GET_PIXEL = 0x13bea
 ENTRY_SAVE_WORLD_P1 = 0x13ff4
 ENTRY_SAVE_WORLD_P2 = 0x14158
 
-# The seven slices of `game_frame_update` @ 0x12322, each entered inside the routine. A STOP is the
+# The slices of `game_frame_update` @ 0x12322, each entered inside the routine. A STOP is the
 # first instruction NOT verified, so the slices tile the parts of the frame that can be run.
 ENTRY_FRAME_ADVANCE_BUBBLE_FRAME = 0x12322
 STOP_FRAME_ADVANCE_BUBBLE_FRAME = 0x1233a   # the `pea` that starts the vq_mouse call
@@ -61,11 +61,26 @@ ENTRY_FRAME_STEP_LIVE_BUBBLE = 0x126e2
 STOP_FRAME_STEP_LIVE_BUBBLE = 0x1294a       # where every runnable path converges
 ENTRY_FRAME_DRIFT_PULSE = 0x1294a
 STOP_FRAME_DRIFT_PULSE = 0x129b0            # the `unlk a6`, which a mid-entry run must not reach
+# The two that used to be gaps: the front-end poll and the death sequence. The poll is one more
+# link in the chain above; the death sequence is NESTED inside `frame_step_live_bubble`, whose own
+# cases stop where it begins.
+ENTRY_FRAME_POLL_INPUT = 0x1233a
+STOP_FRAME_POLL_INPUT = 0x12434             # = ENTRY_FRAME_SCALE_MOUSE, the next slice's entry
+# ...and the ^P PAUSE inside it, which no case runs (../STATUS.md's residual): the resuming key
+# would have to arrive after the pause's own flush has drained the queue, and the console model
+# stages a queue rather than an arrival. A ^P case is diffed where the original branches into it.
+STOP_FRAME_POLL_AT_PAUSE = 0x1239e          # the `clr.b -7686(a4)` the pause opens with
+FRAME_POLL_PAUSE = (STOP_FRAME_POLL_AT_PAUSE, 0x123de)
+ENTRY_FRAME_DEATH_SEQUENCE = 0x1273c
+STOP_FRAME_DEATH_SEQUENCE = 0x1294a         # = ENTRY_FRAME_DRIFT_PULSE, where slice 7 also stops
 
-# The seven, in order, and the two regions between them that no slice covers — which is what
-# `test_frame_slices_tile_game_frame_update` turns from prose into a pin.
+# EVERY slice of `game_frame_update`, in address order, and they now TILE it with no gap at all:
+# the front-end poll and the death sequence — the two regions that used to sit between and inside
+# them — are ported (../STATUS.md's `frame_poll_input` and `frame_death_sequence` rows). Their
+# entries and stops are declared beside their own cases further down, so this tuple names them.
 FRAME_SLICES = (
     (ENTRY_FRAME_ADVANCE_BUBBLE_FRAME, STOP_FRAME_ADVANCE_BUBBLE_FRAME),
+    (ENTRY_FRAME_POLL_INPUT, STOP_FRAME_POLL_INPUT),
     (ENTRY_FRAME_SCALE_MOUSE, STOP_FRAME_SCALE_MOUSE),
     (ENTRY_FRAME_BLOW_OR_RECOVER, STOP_FRAME_BLOW_OR_RECOVER),
     (ENTRY_FRAME_STEP_FACING, STOP_FRAME_STEP_FACING),
@@ -73,18 +88,24 @@ FRAME_SLICES = (
     (ENTRY_FRAME_STEP_LIVE_BUBBLE, STOP_FRAME_STEP_LIVE_BUBBLE),
     (ENTRY_FRAME_DRIFT_PULSE, STOP_FRAME_DRIFT_PULSE),
 )
-# `game_frame_update` ends where `ghost_blow` begins — the `unlk a6 / rts` at STOP_FRAME_DRIFT_PULSE
-# is its last four bytes — so the routine's size needs no literal of its own.
+# `game_frame_update` ends where `ghost_blow` begins, so the routine's size needs no literal.
 FRAME_UPDATE_BYTES = ENTRY_GHOST_BLOW - ENTRY_FRAME_ADVANCE_BUBBLE_FRAME
-# The ONE gap between two consecutive slices: the front-end poll, which is `src/frontend.c`'s
-# `vq_mouse`/`vq_key_s` and the `Crawio(0xff)` key read (../STATUS.md, "Not reconstructed").
-FRAME_FRONT_END_POLL = (STOP_FRAME_ADVANCE_BUBBLE_FRAME, ENTRY_FRAME_SCALE_MOUSE)
-# ...and the region INSIDE slice 6 that no case reaches: the death sequence, which calls the three
-# sprite routines. It is inside a slice rather than between two, so it is subtracted rather than
-# skipped (`test_frame_step_live_bubble` never enters it — every case asserts the flag is 0).
-FRAME_DEATH_SEQUENCE = (0x1273c, 0x1294a)
-# What ../STATUS.md's `game_frame_update` row claims, and what the pin below re-derives.
-FRAME_VERIFIED_BYTES = 902
+# The death sequence is NESTED rather than adjacent: it lies inside the `frame_step_live_bubble`
+# slice, whose own cases never enter it (each asserts the flag is 0) and whose bytes are run by
+# `frame_death_sequence`'s cases instead. So it is not a gap and nothing is subtracted for it — but
+# it IS a claim about the shape of the tiling, and the pin below checks that shape.
+FRAME_DEATH_SEQUENCE = (ENTRY_FRAME_DEATH_SEQUENCE, STOP_FRAME_DEATH_SEQUENCE)
+# The four bytes NO mid-entry slice may reach: `unlk a6 / rts`. A slice diffed at the `unlk` would
+# be comparing a stack frame the candidate does not have.
+FRAME_UPDATE_EPILOGUE_BYTES = 4
+# What ../STATUS.md's THREE rows for this routine claim between them — the routine's own row and the
+# two slices filed under their own start addresses (README.md, "Adding a function").
+FRAME_LEDGER_ROWS = {
+    ENTRY_FRAME_ADVANCE_BUBBLE_FRAME: 902,      # `game_frame_update`'s own seven-slice row
+    ENTRY_FRAME_POLL_INPUT: 186,                # `frame_poll_input`, MINUS the ^P pause inside it
+    ENTRY_FRAME_DEATH_SEQUENCE: 526,            # `frame_death_sequence`
+}
+FRAME_VERIFIED_BYTES = sum(FRAME_LEDGER_ROWS.values())
 
 # ---- mirrors of include/gameplay.h --------------------------------------------------------------
 ROOM_COUNT = 36
@@ -1285,6 +1306,730 @@ def test_frame_drift_pulse_velocity(dir_x, dir_y):
     _drift_case(0, dir_x, dir_y, 300, 50, f"dir ({dir_x}, {dir_y})")
 
 
+
+# ================================================================================ the HUD painters
+#
+# All three draw through the front end's VDI binding, so a case here stages what any run below
+# `v_opnvwk` has to: the parameter block's five array pointers (zero in the loaded image), an open
+# workstation whose SCREEN is the game's own work buffer, and the handle the game keeps its own copy
+# of. `test_frontend.py` stages the same three for the binding's own cases; each battery declares its
+# neighbours' addresses and `test_constants.py` pins every copy to the one definition in
+# `include/frontend.h`, which is this project's shape for a battery reading another subsystem's
+# globals (README.md, "Adding a function").
+#
+# THE TEXT BUFFERS ARE NOT COMPARED and do not need to be: they are locals of the routine's own
+# frame, inside the stack band the differential drops. What the diff sees is what the VDI does with
+# them — the glyphs `v_gtext` rasters onto the work buffer — plus the two globals the routine writes
+# and the trampoline's three save slots. `test_hud_draw_counters_rasters_the_counters` is the pin
+# that the raster really is being compared, rather than the case being vacuous.
+
+ENTRY_HUD_BONUS_BAR_FILL = 0x112c8
+ENTRY_HUD_BONUS_BAR_SHRINK = 0x11346
+ENTRY_HUD_DRAW_COUNTERS = 0x113d2
+
+# ---- mirrors of include/gameplay.h's HUD block --------------------------------------------------
+HUD_TEXT_HEIGHT = 4
+HUD_TEXT_PEN = 5
+HUD_SCORE_DIGITS = 6
+HUD_ROOM_DIGITS = 2
+HUD_LIVES_DIGITS = 1
+HUD_COUNTER_X = 0xe6
+HUD_ROOM_X = 0x133
+HUD_LIVES_X = 0x139
+HUD_ROW_TOP = 0xad
+HUD_ROW_BOTTOM = 0xb7
+BONUS_BAR_Y = 0xbd
+BONUS_BAR_LEFT = 0x23
+BONUS_BAR_SHRINK_LEFT = 0x2d
+BONUS_BAR_PEN = 0x0b
+BONUS_BAR_ERASE_PEN = 0
+BONUS_BAR_SCANLINE_LONGS = 0x28
+BONUS_BAR_ROW_OFFSET = 0x7620
+A_hud_room_long = 0x22fa4
+A_bonus_bar = 0x22fb4
+
+# ---- ...and of include/frontend.h's GEM binding, which these three draw through -----------------
+A_vdi_pblock = 0x1e8ca
+A_vdi_contrl = 0x236f0
+A_vdi_intin = 0x235f0
+A_vdi_ptsin = 0x234f0
+A_vdi_intout = 0x233f0
+A_vdi_ptsout = 0x232f0
+A_vdi_handle = 0x232ee
+A_text_cell_h = 0x22fb6
+A_text_cell_w = 0x22fb8
+A_text_char_h = 0x22fba
+A_text_char_w = 0x22fbc
+A_screen_phys = 0x23148                  # include/blit.h — where the bar's scanline is shown
+
+OS_VDI_HANDLE = 1                        # the kit's model answers `v_opnvwk` with this
+
+# ---- where a HUD case stages the world ----------------------------------------------------------
+# Its own map, laid out from the scratch map's base rather than reusing `get_pixel`'s: these three
+# routines need two WHOLE screens — the work buffer the VDI draws into and the visible screen the
+# bar's scanline is copied to — where `get_pixel` needs one screen with wide unmapped margins either
+# side. The two screens are adjacent, as the game's own pair is.
+HUD_WORK = abi.SCRATCH                      # screen_back: what the VDI rasters into
+HUD_PHYS = HUD_WORK + SCREEN_BYTES          # screen_phys: what the scanline copy shows
+HUD_SPANS = ((HUD_WORK, HUD_PHYS + SCREEN_BYTES),)
+
+# The A6 a routine entered by `emu.run` leaves: A7 is forced to `emu.STACK_TOP` with the sentinel
+# return address there, so `link a6,#-n` puts A6 one longword below. All three routines' locals —
+# the four counter strings and the lent rectangle — live under it, inside the band the differential
+# drops as stack, which is why the frame is an argument of the core (docs/agent-playbook.md §5).
+HUD_FRAME_A6 = emu.STACK_TOP - 4
+
+# The four words the front-end poll fills: shift state, mouse y, mouse x, mouse buttons — one span,
+# because they are consecutive and every poll case seeds all of them.
+POLL_INPUT_BLOCK = (A_key_shift_state, A_mouse_buttons + 2)
+
+for _sym, _args in (("g_hud_draw_counters", 3), ("g_hud_bonus_bar_fill", 3),
+                    ("g_hud_bonus_bar_shrink", 4)):
+    getattr(harness._lib, _sym).argtypes = [_u8p] + [ctypes.c_uint32] * _args
+    getattr(harness._lib, _sym).restype = None
+
+
+def _vdi_pblock_pokes():
+    """The five VDI array pointers, as an open workstation leaves them.
+
+    They are ZERO in the loaded image — `v_opnvwk`'s tail is the only thing that ever writes them —
+    so a case entered below it stages what that call would have left, or the binding reaches its
+    arrays through a null pointer.
+
+    `test_frontend.py`'s `_pblock_pokes` stages the same five (and the AES's seven besides). The
+    ADDRESSES being restated here is the project's convention for a battery reading another
+    subsystem's globals — each has a MIRRORS row below pinning it to `include/frontend.h`. What is
+    NOT pinned is the SHAPE: if `v_opnvwk`'s tail ever filed a sixth array, that battery's own
+    binding cases would notice (they run `v_opnvwk` for real and watch the block appear) and every
+    case here would keep staging five. Recorded rather than closed: the fix is a shared builder
+    taking the five addresses, and it is worth doing the day a second battery below `v_opnvwk`
+    needs one.
+    """
+    return {A_vdi_pblock: b"".join(abi.long(array) for array in
+                                   (A_vdi_contrl, A_vdi_intin, A_vdi_ptsin, A_vdi_intout,
+                                    A_vdi_ptsout))}
+
+
+def _vdi_layers(**attributes):
+    """The three layers EVERY case in this half of the file stages, in the order they are applied.
+
+    Spelt once because the four worlds below — the HUD painters', the poll's, the poll's idle case
+    and the death sequence's — differ only in their SPANS and their own contents. Four copies would
+    each have to agree about which screen the VDI draws into and which is the visible one, and a
+    copy that drifted would run its cases against a workstation pointing at the wrong screen — which
+    the differential can only report as an unattributable diff.
+    """
+    return (_vdi_pblock_pokes(),
+            harness.vdi_state(screen=HUD_WORK, **attributes),
+            {A_vdi_handle: abi.word(OS_VDI_HANDLE),
+             A_screen_back: abi.long(HUD_WORK),
+             A_screen_phys: abi.long(HUD_PHYS)})
+
+
+def _hud_world(seed, extra=None, **attributes):
+    """Noise over both screens, then the staging every HUD case needs on top of it."""
+    return abi.stage_world(seed, HUD_SPANS, *_vdi_layers(**attributes), extra or {})
+
+
+def _hud_run(entry, glue, pokes, **kwargs):
+    """One differential entered with this program's `a4` and the caller's A1/A2 — which every VDI
+    call's trampoline files, and which nothing in these three routines computes."""
+    return _run(entry, glue, pokes, regs={"a1": CALLER_A1, "a2": CALLER_A2}, **kwargs)
+
+
+# ---------------------------------------------------------------------- hud_draw_counters
+
+# (score, hi-score, room, lives). The rows reach every branch and every width: a fresh game, a
+# six-digit score that fills its field, the widths' boundaries at 999999 / 35 / 9, the largest
+# long `itoa_padded` can be handed, and the three NEGATIVE cases — a lives count below zero takes
+# the arm that draws "0" and normalises the counter, and a negative room number is what pins the
+# `ext.l` that widens it (a word-sized widening would make room -1 into 65535 and draw "35").
+COUNTER_ROWS = (
+    (0, 0, 0, 5),
+    (12345, 999999, 7, 3),
+    (999999, 999999, 35, 9),
+    (1000000, 12, 100, 0),
+    (0x7fffffff, 0x7ffffffe, 35, 4),
+    (500, 500, -1, 2),
+    (500, 500, 7, -1),
+    (500, 500, 7, -5),
+)
+
+
+@pytest.mark.parametrize("score,hi,room,lives", COUNTER_ROWS)
+def test_hud_draw_counters(score, hi, room, lives):
+    """The four counters formatted and drawn. Poisoned: everything this routine writes — the two
+    globals and the raster — is written before it is read, so pre-inverting them cannot steer it."""
+    pokes = _hud_world(0x113d + room,
+                       extra=abi.merge_pokes({A_score: abi.long(score), A_hi_score: abi.long(hi),
+                                              A_lives: abi.long(lives)},
+                                             word_pokes({A_room_number: room})))
+    diffs, _ = _hud_run(ENTRY_HUD_DRAW_COUNTERS,
+                        lambda lib, buf: lib.g_hud_draw_counters(buf, HUD_FRAME_A6, CALLER_A1,
+                                                                 CALLER_A2),
+                        pokes, poison=True)
+    assert not diffs, f"score {score} hi {hi} room {room} lives {lives}\n{report(diffs)}"
+
+
+def test_hud_draw_counters_rasters_the_counters():
+    """The case above is not vacuous: two different scores really do leave different pixels.
+
+    The four strings are frame locals, inside the band the differential drops — so if the model's
+    `v_gtext` drew nothing, every row above would pass over a routine that formatted its digits into
+    memory nobody compares. This is the pin that what IS compared moves with the input.
+    """
+    def raster(score):
+        pokes = _hud_world(0x113d,
+                           extra=abi.merge_pokes({A_score: abi.long(score),
+                                                  A_hi_score: abi.long(0), A_lives: abi.long(1)},
+                                                 word_pokes({A_room_number: 3})))
+        image, _writes, _regs = emu.run(harness.make_image(pokes), ENTRY_HUD_DRAW_COUNTERS,
+                                        regs={"a4": abi.A4_BASE, "a1": CALLER_A1, "a2": CALLER_A2})
+        return bytes(image[HUD_WORK:HUD_WORK + SCREEN_BYTES])
+
+    assert raster(111111) != raster(222222), (
+        "two different scores rastered identically — the VDI model drew no text, so every "
+        "hud_draw_counters case is comparing memory the routine never changed")
+
+
+def test_hud_draw_counters_normalises_an_exhausted_life_count():
+    """A count below -1 is drawn as "0" and left at exactly -1, which is what `game_top_loop`'s
+    `cmpi.l #$ffffffff` ends the turn on. The oracle is what says so; the diff is what pins it."""
+    pokes = _hud_world(0x113e,
+                       extra=abi.merge_pokes({A_score: abi.long(0), A_hi_score: abi.long(0),
+                                              A_lives: abi.long(-9)},
+                                             word_pokes({A_room_number: 1})))
+    image, _writes, _regs = emu.run(harness.make_image(pokes), ENTRY_HUD_DRAW_COUNTERS,
+                                    regs={"a4": abi.A4_BASE, "a1": CALLER_A1, "a2": CALLER_A2})
+    assert abi.read_long(image, A_lives, signed=True) == -1
+    assert abi.read_long(image, A_hud_room_long, signed=True) == 1
+
+
+# ---------------------------------------------------------------------- hud_bonus_bar_fill
+
+# The bar's right end, which is also the fill loop's exclusive bound. BONUS_BAR_LEFT runs the loop
+# ZERO times (a vsf_color and nothing else), BONUS_BAR_LEFT + 1 runs it exactly once — the only
+# length at which every `vr_recfl` still sees the CALLER's A2 — and everything above it runs the
+# derived A2 as well. 318 is the value the game starts a room with.
+BONUS_BAR_LENGTHS = (BONUS_BAR_LEFT - 4, BONUS_BAR_LEFT, BONUS_BAR_LEFT + 1, BONUS_BAR_LEFT + 2,
+                     0x40, 318)
+
+
+@pytest.mark.parametrize("bonus", BONUS_BAR_LENGTHS)
+def test_hud_bonus_bar_fill(bonus):
+    """One filled column per unit, each followed by the bar's scanline copy."""
+    pokes = _hud_world(0x112c + bonus, extra=word_pokes({A_bonus_bar: bonus}))
+    diffs, _ = _hud_run(ENTRY_HUD_BONUS_BAR_FILL,
+                        lambda lib, buf: lib.g_hud_bonus_bar_fill(buf, HUD_FRAME_A6, CALLER_A1,
+                                                                  CALLER_A2),
+                        pokes)
+    assert not diffs, f"bonus bar to {bonus}\n{report(diffs)}"
+
+
+def test_hud_bonus_bar_fill_files_the_scanline_copys_a2():
+    """From the SECOND column on, the A2 `vr_recfl`'s trampoline files is the one the scanline copy
+    left — one longword past the row it wrote — not the caller's.
+
+    `movem.l` saves A2 at entry and the copy runs `move.l (a3)+,(a2)+` forty times, so the register
+    the next call parks is the routine's own arithmetic and not an input (docs/agent-playbook.md §5,
+    "derivable"). Read off the oracle rather than asserted from the C: a reconstruction that filed
+    the caller's A2 every time would differ in four bytes, and this names which four.
+    """
+    pokes = _hud_world(0x112d, extra=word_pokes({A_bonus_bar: BONUS_BAR_LEFT + 3}))
+    image, _writes, _regs = emu.run(harness.make_image(pokes), ENTRY_HUD_BONUS_BAR_FILL,
+                                    regs={"a4": abi.A4_BASE, "a1": CALLER_A1, "a2": CALLER_A2})
+    assert abi.read_long(image, A_trap_saved_a2) == (
+        HUD_PHYS + BONUS_BAR_ROW_OFFSET + BONUS_BAR_SCANLINE_LONGS * 4)
+    assert abi.read_long(image, A_trap_saved_a1) == CALLER_A1
+
+
+# ---------------------------------------------------------------------- hud_bonus_bar_shrink
+
+# (bar end, units erased). The pairs straddle the one branch: `end - units + 1 < BONUS_BAR_LEFT`
+# erases a FIXED span down to the floor, everything else erases from wherever the bar had got to.
+# The rows sit either side of that bound, at it, and past it — including a `units` big enough to
+# take the difference negative, and one of 0, which erases a single column.
+SHRINK_ROWS = (
+    (318, 1), (318, 5), (318, 100), (318, 283), (318, 284), (318, 400),
+    (0x40, 5), (BONUS_BAR_LEFT + 1, 1), (BONUS_BAR_LEFT, 1), (BONUS_BAR_LEFT, 0), (0x50, 0),
+)
+
+
+@pytest.mark.parametrize("bonus,units", SHRINK_ROWS)
+def test_hud_bonus_bar_shrink(bonus, units):
+    """One erasing rectangle off the bar's right end, then the same scanline copy."""
+    pokes = _hud_world(0x1134 + units,
+                       extra=abi.merge_pokes(word_pokes({A_bonus_bar: bonus}),
+                                             abi.stack_args((2, units))))
+    diffs, _ = _hud_run(ENTRY_HUD_BONUS_BAR_SHRINK,
+                        lambda lib, buf: lib.g_hud_bonus_bar_shrink(buf, HUD_FRAME_A6,
+                                                                    units & 0xffff, CALLER_A1,
+                                                                    CALLER_A2),
+                        pokes)
+    assert not diffs, f"bar {bonus} minus {units}\n{report(diffs)}"
+
+
+@pytest.mark.parametrize("chunk", range(CHUNKS))
+def test_hud_fuzz(chunk):
+    """Random counters and random bar states, each chunk drawing its own cases (`abi.shard`'s
+    CHUNK-SEEDED shape: more samples are simply better here)."""
+    rng = random.Random(0x11d0 + chunk)
+    for _ in range(6):
+        score = rng.randrange(-1 << 31, 1 << 31)
+        hi = rng.randrange(0, 1 << 31)
+        room = rng.randrange(-2, ROOM_COUNT)
+        lives = rng.randrange(-3, 10)
+        bonus = rng.randrange(0, 320)
+        units = rng.randrange(0, 320)
+
+        counters = _hud_world(rng.randrange(1 << 16),
+                              extra=abi.merge_pokes({A_score: abi.long(score),
+                                                     A_hi_score: abi.long(hi),
+                                                     A_lives: abi.long(lives)},
+                                                    word_pokes({A_room_number: room})))
+        diffs, _ = _hud_run(ENTRY_HUD_DRAW_COUNTERS,
+                            lambda lib, buf: lib.g_hud_draw_counters(buf, HUD_FRAME_A6, CALLER_A1,
+                                                                     CALLER_A2),
+                            counters)
+        assert not diffs, f"counters {score}/{hi}/{room}/{lives}\n{report(diffs)}"
+
+        bar = _hud_world(rng.randrange(1 << 16),
+                         extra=abi.merge_pokes(word_pokes({A_bonus_bar: bonus}),
+                                               abi.stack_args((2, units))))
+        diffs, _ = _hud_run(ENTRY_HUD_BONUS_BAR_SHRINK,
+                            lambda lib, buf: lib.g_hud_bonus_bar_shrink(buf, HUD_FRAME_A6, units,
+                                                                        CALLER_A1, CALLER_A2),
+                            bar)
+        assert not diffs, f"bar {bonus} minus {units}\n{report(diffs)}"
+
+
+# ============================================================ the front-end poll, [0x1233a, 0x12434)
+#
+# The mouse and the shift keys through the VDI, one raw key through GEMDOS, and the three control
+# keys the game watches for. `harness.console_keys` stages the QUEUE the reads drain, which is
+# exactly the shape the routine's `while (Cconis()) Crawcin();` flush expects (TRAP_MODEL.md,
+# Phase 13); `harness.mouse_state` and `harness.key_shift` stage what the two VDI queries answer.
+
+
+# ---- mirrors of include/gameplay.h's poll block -------------------------------------------------
+KEY_PAUSE = 0x10
+KEY_SOUND_TOGGLE = 0x13
+KEY_RESET = 0x12
+A_p1_playing = 0x2319a
+A_p2_playing = 0x23198
+A_level_complete = 0x22fbe
+A_p1_score = 0x23186                         # include/frontend.h — the hall of fame owns the pair
+A_p2_score = 0x23182
+A_key_raw = 0x23114                          # include/frontend.h — the BYTE the poll files its key
+                                             # in, and the flag the NEXT frame's flush loop is armed
+                                             # by. The only member of the input block this battery
+                                             # did not already need.
+
+harness._lib.g_frame_poll_input.argtypes = [_u8p, ctypes.c_uint32, ctypes.c_uint32]
+harness._lib.g_frame_poll_input.restype = ctypes.c_uint32
+harness._lib.g_frame_death_sequence.argtypes = [_u8p] + [ctypes.c_uint32] * 3
+harness._lib.g_frame_death_sequence.restype = None
+
+
+def _poll_world(seed, keys, mouse=(120, 80, 0), shift=0, stale_key=0, extra=None):
+    """The world a poll case runs in: an open workstation, a mouse, a shift state and a key queue.
+
+    `stale_key` IS AN INPUT OF EVERY CASE, not a default worth leaving to the image. The post-init
+    image holds `A_key_raw` = 1, so a case that does not stage it runs the flush loop — which eats
+    the very keystroke the case staged, and the run then takes the "no key" path while looking
+    exactly like a case that exercised a control key. Measured: the ^S, ^R and ^P cases all passed
+    that way, and the `^S` toggle could be INVERTED with the whole suite still green.
+    """
+    queue = harness.console_keys(keys) if keys else {}
+    # THE INPUT BLOCK IS SEEDED, and it has to be: the post-init fixture holds all four words as
+    # ZERO, so `mouse = (0, 0, 0)` with `shift = 0` would let a reconstruction that made no VDI call
+    # at all write nothing where the oracle writes zeros. Measured on the fixture: 0x23116..0x2311c
+    # are 0, 0, 0, 0.
+    return abi.stage_world(seed, HUD_SPANS + (POLL_INPUT_BLOCK,), *_vdi_layers(),
+                           {A_key_raw: bytes([stale_key])},
+                           harness.mouse_state(*mouse), harness.key_shift(shift), queue,
+                           extra or {})
+
+
+def _poll_case(seed, keys, name, mouse=(120, 80, 0), shift=0, stale_key=0, extra=None):
+    pokes = _poll_world(seed, keys, mouse=mouse, shift=shift, stale_key=stale_key, extra=extra)
+    diffs, info = _hud_run(ENTRY_FRAME_POLL_INPUT,
+                           lambda lib, buf: lib.g_frame_poll_input(buf, CALLER_A1, CALLER_A2),
+                           pokes, stop_pc=STOP_FRAME_POLL_INPUT)
+    assert not diffs, f"{name}\n{report(diffs)}"
+    assert info["ret"] & 0xffff == 0, (
+        f"{name}: the reconstruction answered \"^P\" on a key that is not ^P, so the composition "
+        f"would have paused the game")
+    return info
+
+
+def _poll_oracle(seed, keys, mouse=(120, 80, 0), shift=0, stale_key=0, extra=None):
+    """...and the image ONE oracle run leaves, for a case that must also say WHICH arm ran.
+
+    The byte diff proves the two programs agree; it cannot say the run reached the arm the case is
+    named after. Every control-key case below checks its own outcome as well.
+    """
+    pokes = _poll_world(seed, keys, mouse=mouse, shift=shift, stale_key=stale_key, extra=extra)
+    image, _writes, _regs = emu.run(harness.make_image(pokes), ENTRY_FRAME_POLL_INPUT,
+                                    regs={"a4": abi.A4_BASE, "a1": CALLER_A1, "a2": CALLER_A2},
+                                    stop_pc=STOP_FRAME_POLL_INPUT)
+    return image
+
+
+# Keys that are NONE of the three control codes, either side of the signed-byte boundary the
+# original's `ext.w` sits on. THE TWO HIGH-BIT ROWS DO NOT PIN THAT SIGN EXTENSION and are not
+# claimed to: the byte is only ever compared for equality against 0x10, 0x12 and 0x13, all below
+# 0x80, so no key value separates a signed widening from an unsigned one (../STATUS.md records the
+# mutation as equivalent). They are here because they are the bytes a real keyboard sends for the
+# keys the game ignores.
+POLL_KEYS = ("a", " ", "\x01", "\x7f", "\x80", "\xff")
+
+
+@pytest.mark.parametrize("key", POLL_KEYS)
+@pytest.mark.parametrize("stale", (0, 1))
+def test_frame_poll_input_ordinary_key(key, stale):
+    """A key that is none of the three control codes: read, kept, and the frame runs on.
+
+    `stale` is the key the PREVIOUS frame left behind, which is the only thing that arms the flush
+    loop — so the pair of rows runs the routine with the loop taken and skipped. THE TWO ROWS END
+    DIFFERENTLY AND THE CASE SAYS SO: the flush drains the whole queue, so when it runs it eats the
+    key this case staged and the `Crawio` after it finds an idle console. That is the routine's own
+    behaviour, and asserting it is what keeps the `stale = 1` half from reading as "a key was read
+    and kept" when nothing was.
+    """
+    seed = 0x1233 + ord(key) + stale
+    stale_key = stale and ord("z")
+    _poll_case(seed, [key], f"key {key!r} stale {stale}", stale_key=stale_key)
+    image = _poll_oracle(seed, [key], stale_key=stale_key)
+    assert image[A_key_raw] == (0 if stale else ord(key)), (
+        "the flush loop and the read did not compose the way this row is named for")
+
+
+@pytest.mark.parametrize("mouse", ((0, 0, 0), (319, 199, 1), (-1, -1, 3), (120, 80, 2)))
+def test_frame_poll_input_files_the_mouse(mouse):
+    """The three mouse words land in the game's own input block, in the right three words.
+
+    READ BACK off the oracle as well as diffed. The diff proves the two programs agree; it cannot
+    say the poll reached the VDI at all, and the `(0, 0, 0)` row is exactly the one where "wrote
+    nothing" and "wrote the right thing" would look alike if the block were not seeded (it is —
+    `_poll_world`'s `POLL_INPUT_BLOCK`).
+    """
+    x, y, buttons = mouse
+    seed = 0x1234 + buttons
+    _poll_case(seed, ["q"], f"mouse {mouse}", mouse=mouse, shift=2)
+    image = _poll_oracle(seed, ["q"], mouse=mouse, shift=2)
+    assert abi.read_word(image, A_mouse_x, signed=True) == x
+    assert abi.read_word(image, A_mouse_y, signed=True) == y
+    assert abi.read_word(image, A_mouse_buttons) == buttons & 0xffff
+
+
+@pytest.mark.parametrize("shift", (0, 1, 2, 3, 4, 0xffff))
+def test_frame_poll_input_files_the_shift_state(shift):
+    """...and the shift bitmap the next slice's blow gate reads, likewise read back — the `shift = 0`
+    row is the one a seeded block and an outcome check are needed for."""
+    _poll_case(0x1235 + shift, ["q"], f"shift {shift:#x}", shift=shift)
+    image = _poll_oracle(0x1235 + shift, ["q"], shift=shift)
+    assert abi.read_word(image, A_key_shift_state) == shift
+
+
+def test_frame_poll_input_ctrl_p_branches_into_the_pause():
+    """^P is DETECTED here and the pause itself is not run.
+
+    The pause spins on `Crawio` until a second ^P arrives, after its own flush has thrown away
+    everything a case could stage — so there is no queue that ends it (../STATUS.md's residual).
+    What this pins is the branch: the run is diffed where the original enters the loop, and the
+    reconstruction's answer says it would have entered it too.
+    """
+    pokes = _poll_world(0x1236, [chr(KEY_PAUSE)])
+    diffs, info = _hud_run(ENTRY_FRAME_POLL_INPUT,
+                           lambda lib, buf: lib.g_frame_poll_input(buf, CALLER_A1, CALLER_A2),
+                           pokes, stop_pc=STOP_FRAME_POLL_AT_PAUSE)
+    assert not diffs, report(diffs)
+    assert info["ret"] & 0xffff == 1, (
+        "the reconstruction did not answer \"^P\" — the oracle branched into the pause and the "
+        "candidate would have run on into the ^S test")
+
+
+@pytest.mark.parametrize("enabled", (0, 1, 7, -1))
+def test_frame_poll_input_ctrl_s_toggles_the_sound(enabled):
+    """^S flips `sound_enabled` — to 1 from zero and to 0 from ANY non-zero, which is what the
+    rows either side of 1 are for. The outcome is checked as well as diffed: a case that never
+    reached the arm would agree with the oracle about a flag neither of them touched."""
+    seed, staged = 0x1237 + (enabled & 0xff), word_pokes({A_sound_enabled: enabled})
+    _poll_case(seed, [chr(KEY_SOUND_TOGGLE)], f"^S from {enabled}", extra=staged)
+    image = _poll_oracle(seed, [chr(KEY_SOUND_TOGGLE)], extra=staged)
+    assert abi.read_word(image, A_sound_enabled) == (1 if enabled == 0 else 0)
+
+
+def test_frame_poll_input_ctrl_r_resets_the_game():
+    """^R throws the whole game away: both players' scores, the live score, the life count (left at
+    the -1 the turn ends on) and both "still playing" flags.
+
+    Every one of the seven is staged NON-ZERO, or a clear that never happened is invisible.
+    """
+    staged = abi.merge_pokes({A_lives: abi.long(4), A_score: abi.long(0x123456),
+                              A_p1_score: abi.long(0x1111), A_p2_score: abi.long(0x2222)},
+                             word_pokes({A_level_complete: 1, A_p1_playing: 1, A_p2_playing: 1}))
+    _poll_case(0x1238, [chr(KEY_RESET)], "^R reset", extra=staged)
+    image = _poll_oracle(0x1238, [chr(KEY_RESET)], extra=staged)
+    assert abi.read_long(image, A_lives, signed=True) == -1
+    for address in (A_score, A_p1_score, A_p2_score):
+        assert abi.read_long(image, address) == 0
+    for address in (A_level_complete, A_p1_playing, A_p2_playing):
+        assert abi.read_word(image, address) == 0
+
+
+def test_frame_poll_input_idle_console_leaves_no_key():
+    """With NOTHING staged the read is still made — `Crawio` never blocks — and the byte it files
+    is the model's idle answer rather than a key. The flush loop must not run either: a `Crawcin`
+    with an empty queue would REFUSE the run, and the case coming back green is what says it did
+    not happen."""
+    pokes = _poll_world(0x1239, keys=(), mouse=(50, 60, 0))
+    diffs, _ = _hud_run(ENTRY_FRAME_POLL_INPUT,
+                        lambda lib, buf: lib.g_frame_poll_input(buf, CALLER_A1, CALLER_A2),
+                        pokes, stop_pc=STOP_FRAME_POLL_INPUT)
+    assert not diffs, report(diffs)
+
+
+# ========================================================= the death sequence, [0x1273c, 0x1294a)
+#
+# Three animations, a respawn and the two-player handover. It composes eight already-verified
+# routines — the three sprite blits, `present_room`, `objects_animate_and_draw`, `sound_release_
+# voice`, `hud_draw_counters` and `save_world` — so the world it runs in is the UNION of what all of
+# them read (docs/agent-playbook.md §5, "world-staging").
+
+
+# ---- mirrors of include/gameplay.h's death block -----------------------------------------------
+DEATH_GHOST_FIRST_TILE = 0x28
+DEATH_GHOST_LAST_TILE = 0x2c
+DEATH_HOLD_INITIAL = 5
+DEATH_PAUSE_FRAMES = 10
+DRIFT_SPEED_INITIAL = 300
+ROOM_ENTRY_POINTS = 0x64
+ROOM_ENTRY_STRIDE = 4
+ROOM_ENTRY_X = 0
+ROOM_ENTRY_Y = 2
+A_seq_counter = 0x22fe2
+A_max_room_reached = 0x22f74
+A_in_room = 0x23150
+A_entry_dir = 0x23152
+A_grid_row = 0x23154
+A_grid_col = 0x23156
+A_p1_turn = 0x2316a
+A_show_player_change = 0x231a0
+A_p1_grid_row = 0x23174
+A_p2_grid_row = 0x23172
+A_p1_grid_col = 0x23178
+A_p2_grid_col = 0x23176
+A_p1_bonus_bar = 0x2317c
+A_p2_bonus_bar = 0x2317a
+A_p1_lives = 0x2318e
+A_p2_lives = 0x2318a
+A_p1_deaths_in_room = 0x2319e
+A_p2_deaths_in_room = 0x2319c
+A_p1_entry_dir = 0x231a4
+A_p2_entry_dir = 0x231a2
+A_player_count = 0x2316c                     # include/frontend.h
+A_p1_max_room = 0x23196
+A_p2_max_room = 0x23194
+A_ghost_sprite = 0x23028
+A_bubble_sprite = 0x22ff4
+A_ghost_bg = 0x230e8
+A_bubble_bg = 0x230e4
+A_mfdb_src = 0x23100                         # include/blit.h — the two MFDBs the trio re-points
+A_mfdb_dst = 0x230ec
+A_dat_bank = 0x2312a
+TILE_BYTES = 0x200
+TILE_PIXELS = 32
+DAT_BANKS = 7
+PICTURE_BYTES = 0x7800
+PLAYER_COUNT_TWO = 2
+# How the 60 grabbed cells are split between the two sprite tables. Not a `#define` anywhere — the
+# header spells the SPLIT POINT (`SPRITE_BANK_BUBBLE_FIRST`) and the tables' own lengths — so these
+# are derived here exactly as `test_frontend.py` derives them, and mirrored through that constant.
+GHOST_CELLS = 47
+BUBBLE_CELLS = 13
+
+# The A6 `hud_draw_counters` runs on when the sequence calls it. `game_frame_update` opens
+# `link a6,#$0`, so its A7 equals its A6 and both are `emu.STACK_TOP` for a run entered here; the
+# `jsr` then pushes a return address and `link a6,#$ffea` pushes the saved A6, which puts the
+# callee's frame two longwords down. Derived rather than measured so a `link` size cannot drift.
+HUD_CALLEE_FRAME = emu.STACK_TOP - 2 * 4
+
+# Where the death sequence's own world sits. It is the HUD map (two screens) plus the sprite bank's
+# 62 cells and the two junk rasters the MFDBs point at on entry — which are junk rather than zero
+# for `test_frontend.py`'s measured reason: half of the trio's twelve pointer stores write ZERO, and
+# over a zeroed field a deleted store is invisible.
+DEATH_SPRITES = HUD_PHYS + SCREEN_BYTES
+DEATH_MFDB_SRC_RASTER = DEATH_SPRITES + (GHOST_CELLS + BUBBLE_CELLS) * TILE_BYTES
+DEATH_MFDB_DST_RASTER = DEATH_MFDB_SRC_RASTER + TILE_BYTES
+DEATH_GHOST_BG = DEATH_MFDB_DST_RASTER + TILE_BYTES
+DEATH_BUBBLE_BG = DEATH_GHOST_BG + TILE_BYTES
+DEATH_BANK = DEATH_BUBBLE_BG + TILE_BYTES    # one GHOST.DAT bank, for the objects' tiles
+DEATH_TOP = DEATH_BANK + PICTURE_BYTES
+DEATH_SPANS = ((HUD_WORK, DEATH_TOP),)
+
+
+# One 32x32x4 sprite cell, which is the only raster shape this battery's MFDBs ever describe.
+MFDB_PLANES = 4
+MFDB_PIXELS_PER_WORD = 16
+MFDB_RESERVED_WORDS = 3
+
+
+def _mfdb_block(address):
+    """A GEM Memory Form Definition Block over one 32x32x4 cell at `address`.
+
+    NOT PARAMETERISED, deliberately: `test_frontend.py`'s `_mfdb` is the general encoder and takes a
+    width, and two general encoders of one GEM record is how the two come to round `wdwidth`
+    differently. The only rasters this battery describes are the two junk cells the sprite trio's
+    MFDBs point at on entry, so this states the one shape instead of re-deriving the general form.
+    """
+    words_across = TILE_PIXELS // MFDB_PIXELS_PER_WORD
+    return (abi.word(address >> 16) + abi.word(address)
+            + abi.word(TILE_PIXELS) + abi.word(TILE_PIXELS)
+            + abi.word(words_across) + abi.word(0) + abi.word(MFDB_PLANES)
+            + abi.word(0) * MFDB_RESERVED_WORDS)
+
+
+def _death_world(seed, extra=None):
+    """The union of what the eight verified routines the sequence calls read."""
+    cells = tuple(DEATH_SPRITES + index * TILE_BYTES
+                  for index in range(GHOST_CELLS + BUBBLE_CELLS))
+    return abi.stage_world(
+        seed, DEATH_SPANS, *_vdi_layers(),
+        {# every bank slot points at the ONE staged bank: the objects' tiles all come from it, and
+         # a slot left at zero would send `objects_animate_and_draw` to the vector page.
+         A_dat_bank: b"".join(abi.long(DEATH_BANK) for _ in range(DAT_BANKS)),
+         A_ghost_sprite: b"".join(abi.long(cells[i]) for i in range(GHOST_CELLS)),
+         A_bubble_sprite: b"".join(abi.long(cells[GHOST_CELLS + i]) for i in range(BUBBLE_CELLS)),
+         A_ghost_bg: abi.long(DEATH_GHOST_BG), A_bubble_bg: abi.long(DEATH_BUBBLE_BG),
+         A_mfdb_src: _mfdb_block(DEATH_MFDB_SRC_RASTER),
+         A_mfdb_dst: _mfdb_block(DEATH_MFDB_DST_RASTER)},
+        extra or {})
+
+
+# The sequence draws ~36 animation frames, each a `present_room` (25,600 bytes), an object pass and
+# three 32x32 raster copies. Loose enough not to be a tuning knob, tight enough to catch a runaway.
+DEATH_MAX_INSNS = 20_000_000
+
+
+def _death_pokes(seed, extra, random_value):
+    """...plus the `trap #9` vector `sound_release_voice` dispatches through and the Random answer.
+
+    The vector is ZERO in the post-init image — `install_sound_vectors` @ 0x148ea writes it — so a
+    case that omitted it would send the oracle to address 0 (STATUS.md, "Model gaps").
+    """
+    return abi.merge_pokes(_death_world(seed, extra), TRAP9_VECTOR,
+                           {harness.OS_RANDOM_VALUE: abi.long(random_value)},
+                           allow_overlap=True)
+
+
+def _death_case(seed, name, extra=None, random_value=0x00abcdef, max_insns=DEATH_MAX_INSNS):
+    diffs, _ = _hud_run(ENTRY_FRAME_DEATH_SEQUENCE,
+                        lambda lib, buf: lib.g_frame_death_sequence(buf, HUD_CALLEE_FRAME,
+                                                                    CALLER_A1, CALLER_A2),
+                        _death_pokes(seed, extra, random_value),
+                        stop_pc=STOP_FRAME_DEATH_SEQUENCE, max_insns=max_insns,
+                        psg_seed=PSG_ON_ENTRY)
+    assert not diffs, f"{name}\n{report(diffs)}"
+
+
+def _live_world(bubble_frame=8, ghost_tile=17, room=7, entry_dir=2, lives=3, players=1,
+                p1_turn=1):
+    """The live game state a death case starts from, every field staged NON-ZERO where it can be:
+    the sequence overwrites most of them, and a field staged at the value it is about to be given
+    cannot tell a store that happened from one that did not."""
+    return abi.merge_pokes(
+        word_pokes({A_bubble_frame: bubble_frame, A_ghost_tile: ghost_tile,
+                    A_ghost_facing: 3, A_ghost_anim: 2, A_bubble_alive: 0,
+                    A_ghost_x: 90, A_ghost_y: 60, A_bubble_x: 150, A_bubble_y: 100,
+                    A_entry_dir: entry_dir, A_seq_counter: 0x55,
+                    A_drift_dir_x: 1, A_drift_dir_y: -1, A_drift_interval: 60,
+                    A_drift_pulse: 6, A_drift_speed: 175, A_drift_vel_x: 40, A_drift_vel_y: -40,
+                    A_deaths_in_room: 2, A_bonus_bar: 200, A_max_room_reached: 9,
+                    A_grid_row: 4, A_grid_col: 5, A_in_room: 1, A_show_player_change: 0,
+                    A_player_count: players, A_p1_turn: p1_turn,
+                    A_p1_max_room: 0x5a5, A_p2_max_room: 0x6b6, A_p1_bonus_bar: 0x7c7,
+                    A_p2_bonus_bar: 0x8d8, A_p1_grid_col: 0x9e9, A_p2_grid_col: 0xafa,
+                    A_p1_grid_row: 0xb0b, A_p2_grid_row: 0xc1c, A_p1_deaths_in_room: 0xd2d,
+                    A_p2_deaths_in_room: 0xe3e, A_p1_entry_dir: 0xf4f, A_p2_entry_dir: 0x105,
+                    A_room_number: room}),
+        {A_lives: abi.long(lives), A_score: abi.long(0x4321), A_hi_score: abi.long(0x98765),
+         A_p1_lives: abi.long(0x11223344), A_p2_lives: abi.long(0x55667788),
+         A_p1_score: abi.long(0x99aabbcc), A_p2_score: abi.long(0xddeeff00)})
+
+
+# 4 and 5 are the bound's own pair (`> GHOST_TILES_PER_FACING - 1`); 17 and 39 run it three and
+# seven times. A row at 0 would be 4's twin — both skip the walk — and would pay a whole sequence
+# run for it, so it is not here.
+@pytest.mark.parametrize("ghost_tile", (4, 5, 17, 39))
+def test_frame_death_sequence_walks_the_ghost_back(ghost_tile):
+    """The first animation steps the ghost back one whole FACING per frame until it is under
+    GHOST_TILES_PER_FACING, so the rows run it zero, one, three and seven times."""
+    _death_case(0x1273 + ghost_tile, f"ghost tile {ghost_tile}",
+                extra=_live_world(ghost_tile=ghost_tile))
+
+
+@pytest.mark.parametrize("bubble_frame", (0, 3, 4, 12))
+def test_frame_death_sequence_gate(bubble_frame):
+    """`bubble_frame <= BUBBLE_DEATH_TRIGGER_FRAME` returns at once and touches nothing; above it
+    the whole sequence runs. Both sides of the bound, and at it."""
+    _death_case(0x1274 + bubble_frame, f"bubble frame {bubble_frame}",
+                extra=_live_world(bubble_frame=bubble_frame))
+
+
+# The hold each death cell gets is `trunc(Random() / 16794009.000000015 * 5 + 2)`, so a 24-bit
+# answer yields 2..6 — FIVE distinct holds, and the five values below reach all of them (2, 3, 4, 5
+# and 6). The 5 band is narrow, `[0x99C1B6, 0xCD0248]`, and is the one a mis-ordered or mis-rounded
+# float chain could hide in; it is here rather than left to the ends.
+DEATH_RANDOM_VALUES = (0x000000, 0x400000, 0x800000, 0xc00000, 0xffffff)
+
+
+@pytest.mark.parametrize("random_value", DEATH_RANDOM_VALUES)
+def test_frame_death_sequence_random_hold(random_value):
+    """The per-cell hold, run through the software float package exactly as the original does."""
+    _death_case(0x1275, f"Random {random_value:#08x}", extra=_live_world(),
+                random_value=random_value)
+
+
+# The four directions the game itself uses, and ONE that overflows the word the offset is added
+# through: 0x4000 * ROOM_ENTRY_STRIDE is 0x10000, which `adda.w` truncates to 0 — so the original
+# reads the room's OWN first entry pair, where a 32-bit add would read 64 KB past the table. The
+# game's `entry_dir` is never above 3, so this is the only thing that separates the two.
+DEATH_ENTRY_DIRECTIONS = (0, 1, 2, 3, 0x4000)
+
+
+@pytest.mark.parametrize("entry_dir", DEATH_ENTRY_DIRECTIONS)
+def test_frame_death_sequence_respawns_at_the_rooms_entry_point(entry_dir):
+    """The bubble is put back at `room_table[room].entry[dir]`, scaled from tiles to pixels — so
+    the four directions read four different word pairs of the room's own record, and the fifth row
+    pins the `adda.w` the offset is added through."""
+    _death_case(0x1276 + entry_dir, f"entry dir {entry_dir}",
+                extra=_live_world(entry_dir=entry_dir))
+
+
+@pytest.mark.parametrize("p1_turn", (0, 1))
+def test_frame_death_sequence_parks_the_turn(p1_turn):
+    """A two-player game breaks the room loop and parks the nine live values in THAT player's
+    slots. Both arms, because the two blocks differ only in their destinations and a swap would
+    look identical on either one alone."""
+    _death_case(0x1277 + p1_turn, f"two players, p1_turn {p1_turn}",
+                extra=_live_world(players=PLAYER_COUNT_TWO, p1_turn=p1_turn))
+
+
+def test_frame_death_sequence_one_player_parks_nothing():
+    """...and a one-player game leaves the room loop running and every slot untouched."""
+    _death_case(0x1278, "one player", extra=_live_world(players=1))
+
+
+# NO OUTCOME CASE FOR THE LIFE AND DEATH COUNTERS, deliberately, and the reasoning is worth keeping
+# because the case existed and was deleted. `_live_world` stages every one of the four values the
+# sequence changes AWAY from what it will become — lives 3 -> 2, deaths 2 -> 3, bubble_alive 0 -> 1,
+# drift_speed 175 -> 300 — and the differential compares the candidate against the ORACLE, not
+# against what was staged. So a reconstruction that incremented the life count already diverges in
+# every death case; a second multi-million-instruction oracle run to read the four back adds no
+# mutation coverage at all, only wall clock.
+
 # ================================================================================================
 # The pins `test/test_constants.py` collects: every constant this battery restates, against its one
 # home in the C, and every entry address against the original's own bytes.
@@ -1410,6 +2155,92 @@ MIRRORS = (
     ("SND_VC_PRIORITY", "include/sound.h", "SND_VC_PRIORITY"),
     ("TOS_VEC_TRAP9", "include/sound.h", "TOS_VEC_TRAP9"),
     ("SND_TRAP9_HANDLER_ENTRY", "include/sound.h", "SND_TRAP9_HANDLER_ENTRY"),
+    # ...and the HUD painters' own block, plus the GEM binding they draw through.
+    ("HUD_TEXT_HEIGHT", "include/gameplay.h", "HUD_TEXT_HEIGHT"),
+    ("HUD_TEXT_PEN", "include/gameplay.h", "HUD_TEXT_PEN"),
+    ("HUD_SCORE_DIGITS", "include/gameplay.h", "HUD_SCORE_DIGITS"),
+    ("HUD_ROOM_DIGITS", "include/gameplay.h", "HUD_ROOM_DIGITS"),
+    ("HUD_LIVES_DIGITS", "include/gameplay.h", "HUD_LIVES_DIGITS"),
+    ("HUD_COUNTER_X", "include/gameplay.h", "HUD_COUNTER_X"),
+    ("HUD_ROOM_X", "include/gameplay.h", "HUD_ROOM_X"),
+    ("HUD_LIVES_X", "include/gameplay.h", "HUD_LIVES_X"),
+    ("HUD_ROW_TOP", "include/gameplay.h", "HUD_ROW_TOP"),
+    ("HUD_ROW_BOTTOM", "include/gameplay.h", "HUD_ROW_BOTTOM"),
+    ("BONUS_BAR_Y", "include/gameplay.h", "BONUS_BAR_Y"),
+    ("BONUS_BAR_LEFT", "include/gameplay.h", "BONUS_BAR_LEFT"),
+    ("BONUS_BAR_SHRINK_LEFT", "include/gameplay.h", "BONUS_BAR_SHRINK_LEFT"),
+    ("BONUS_BAR_PEN", "include/gameplay.h", "BONUS_BAR_PEN"),
+    ("BONUS_BAR_ERASE_PEN", "include/gameplay.h", "BONUS_BAR_ERASE_PEN"),
+    ("BONUS_BAR_SCANLINE_LONGS", "include/gameplay.h", "BONUS_BAR_SCANLINE_LONGS"),
+    ("BONUS_BAR_ROW_OFFSET", "include/gameplay.h", "BONUS_BAR_ROW_OFFSET"),
+    ("A_hud_room_long", "include/gameplay.h", "A_hud_room_long"),
+    ("A_bonus_bar", "include/gameplay.h", "A_bonus_bar"),
+    ("A_vdi_pblock", "include/frontend.h", "A_vdi_pblock"),
+    ("A_vdi_contrl", "include/frontend.h", "A_vdi_contrl"),
+    ("A_vdi_intin", "include/frontend.h", "A_vdi_intin"),
+    ("A_vdi_ptsin", "include/frontend.h", "A_vdi_ptsin"),
+    ("A_vdi_intout", "include/frontend.h", "A_vdi_intout"),
+    ("A_vdi_ptsout", "include/frontend.h", "A_vdi_ptsout"),
+    ("A_vdi_handle", "include/frontend.h", "A_vdi_handle"),
+    ("A_text_cell_h", "include/frontend.h", "A_text_cell_h"),
+    ("A_text_cell_w", "include/frontend.h", "A_text_cell_w"),
+    ("A_text_char_h", "include/frontend.h", "A_text_char_h"),
+    ("A_text_char_w", "include/frontend.h", "A_text_char_w"),
+    ("A_screen_phys", "include/blit.h", "A_screen_phys"),
+    # ...and the two slices that used to be gaps.
+    ("KEY_PAUSE", "include/gameplay.h", "KEY_PAUSE"),
+    ("KEY_SOUND_TOGGLE", "include/gameplay.h", "KEY_SOUND_TOGGLE"),
+    ("KEY_RESET", "include/gameplay.h", "KEY_RESET"),
+    ("A_p1_playing", "include/gameplay.h", "A_p1_playing"),
+    ("A_p2_playing", "include/gameplay.h", "A_p2_playing"),
+    ("A_level_complete", "include/gameplay.h", "A_level_complete"),
+    ("A_key_raw", "include/frontend.h", "A_key_raw"),
+    ("A_p1_score", "include/frontend.h", "A_p1_score"),
+    ("A_p2_score", "include/frontend.h", "A_p2_score"),
+    ("DEATH_GHOST_FIRST_TILE", "include/gameplay.h", "DEATH_GHOST_FIRST_TILE"),
+    ("DEATH_GHOST_LAST_TILE", "include/gameplay.h", "DEATH_GHOST_LAST_TILE"),
+    ("DEATH_HOLD_INITIAL", "include/gameplay.h", "DEATH_HOLD_INITIAL"),
+    ("DEATH_PAUSE_FRAMES", "include/gameplay.h", "DEATH_PAUSE_FRAMES"),
+    ("DRIFT_SPEED_INITIAL", "include/gameplay.h", "DRIFT_SPEED_INITIAL"),
+    ("ROOM_ENTRY_POINTS", "include/gameplay.h", "ROOM_ENTRY_POINTS"),
+    ("ROOM_ENTRY_STRIDE", "include/gameplay.h", "ROOM_ENTRY_STRIDE"),
+    ("ROOM_ENTRY_X", "include/gameplay.h", "ROOM_ENTRY_X"),
+    ("ROOM_ENTRY_Y", "include/gameplay.h", "ROOM_ENTRY_Y"),
+    ("A_seq_counter", "include/gameplay.h", "A_seq_counter"),
+    ("A_max_room_reached", "include/gameplay.h", "A_max_room_reached"),
+    ("A_in_room", "include/gameplay.h", "A_in_room"),
+    ("A_entry_dir", "include/gameplay.h", "A_entry_dir"),
+    ("A_grid_row", "include/gameplay.h", "A_grid_row"),
+    ("A_grid_col", "include/gameplay.h", "A_grid_col"),
+    ("A_p1_turn", "include/gameplay.h", "A_p1_turn"),
+    ("A_show_player_change", "include/gameplay.h", "A_show_player_change"),
+    ("A_p1_grid_row", "include/gameplay.h", "A_p1_grid_row"),
+    ("A_p2_grid_row", "include/gameplay.h", "A_p2_grid_row"),
+    ("A_p1_grid_col", "include/gameplay.h", "A_p1_grid_col"),
+    ("A_p2_grid_col", "include/gameplay.h", "A_p2_grid_col"),
+    ("A_p1_bonus_bar", "include/gameplay.h", "A_p1_bonus_bar"),
+    ("A_p2_bonus_bar", "include/gameplay.h", "A_p2_bonus_bar"),
+    ("A_p1_lives", "include/gameplay.h", "A_p1_lives"),
+    ("A_p2_lives", "include/gameplay.h", "A_p2_lives"),
+    ("A_p1_deaths_in_room", "include/gameplay.h", "A_p1_deaths_in_room"),
+    ("A_p2_deaths_in_room", "include/gameplay.h", "A_p2_deaths_in_room"),
+    ("A_p1_entry_dir", "include/gameplay.h", "A_p1_entry_dir"),
+    ("A_p2_entry_dir", "include/gameplay.h", "A_p2_entry_dir"),
+    ("PLAYER_COUNT_TWO", "include/frontend.h", "PLAYER_COUNT_TWO"),
+    ("A_player_count", "include/frontend.h", "A_player_count"),
+    ("A_p1_max_room", "include/frontend.h", "A_p1_max_room"),
+    ("A_p2_max_room", "include/frontend.h", "A_p2_max_room"),
+    ("A_ghost_sprite", "include/frontend.h", "A_ghost_sprite"),
+    ("A_bubble_sprite", "include/frontend.h", "A_bubble_sprite"),
+    ("A_ghost_bg", "include/frontend.h", "A_ghost_bg"),
+    ("A_bubble_bg", "include/frontend.h", "A_bubble_bg"),
+    ("A_mfdb_src", "include/blit.h", "A_mfdb_src"),
+    ("A_mfdb_dst", "include/blit.h", "A_mfdb_dst"),
+    ("A_dat_bank", "include/blit.h", "A_dat_bank"),
+    ("TILE_BYTES", "include/blit.h", "TILE_BYTES"),
+    ("TILE_PIXELS", "include/blit.h", "TILE_PIXELS"),
+    ("DAT_BANKS", "include/blit.h", "DAT_BANKS"),
+    ("PICTURE_BYTES", "include/frontend.h", "PICTURE_BYTES"),
 )
 
 # ONE CONSTANT THIS BATTERY RESTATES AND CANNOT PIN: `CANDLE_NONE` (-1). `test_constants.py`'s
@@ -1420,37 +2251,47 @@ MIRRORS = (
 # is the sentinel itself and naming it would say nothing more.
 
 def test_frame_slices_tile_game_frame_update():
-    """The seven slices TILE `game_frame_update`, with one declared gap — and the "902 of 1682
-    bytes" in ../STATUS.md is re-derived here rather than believed.
+    """The eight slices TILE `game_frame_update` with NO gap, and the byte counts ../STATUS.md's
+    three rows for it carry are re-derived here rather than believed.
 
     A slice's `stop_pc` is the first instruction it does NOT verify, so consecutive slices must meet
     exactly: a GAP would be a region no case runs and nobody notices, and an OVERLAP would mean two
-    slices claim the same bytes and the ledger's byte count double-counts them. Only two regions are
-    exempt and both are named in ../STATUS.md: the front-end poll between slices 1 and 2, and the
-    death sequence inside slice 6.
+    slices claim the same bytes and the ledger double-counts them. There is no longer any exemption
+    — the front-end poll that used to sit between slices 1 and 2 is a slice of its own now.
     """
     for index, (entry, stop) in enumerate(FRAME_SLICES):
         assert entry < stop, f"slice {index} is empty or backwards: [{entry:#x}, {stop:#x})"
     for index, ((_entry, stop), (next_entry, _next_stop)) in enumerate(zip(FRAME_SLICES,
                                                                           FRAME_SLICES[1:])):
-        if (stop, next_entry) == FRAME_FRONT_END_POLL:
-            continue
         assert stop == next_entry, (
             f"slice {index} stops at {stop:#x} and slice {index + 1} starts at {next_entry:#x} — "
-            f"the {'gap' if stop < next_entry else 'overlap'} between them is unaccounted for; the "
-            f"only declared gap is the front-end poll "
-            f"[{FRAME_FRONT_END_POLL[0]:#x}, {FRAME_FRONT_END_POLL[1]:#x})")
+            f"the {'gap' if stop < next_entry else 'overlap'} between them is unaccounted for, and "
+            f"this routine has no declared gap left")
 
     assert FRAME_SLICES[0][0] == ENTRY_FRAME_ADVANCE_BUBBLE_FRAME
     death_start, death_end = FRAME_DEATH_SEQUENCE
     covering = [(entry, stop) for entry, stop in FRAME_SLICES if entry <= death_start < stop]
-    assert len(covering) == 1 and death_end <= covering[0][1], (
-        f"the death sequence [{death_start:#x}, {death_end:#x}) is not inside exactly one slice")
+    assert len(covering) == 1 and death_end == covering[0][1], (
+        f"the death sequence [{death_start:#x}, {death_end:#x}) is not the tail of exactly one "
+        f"slice — it is nested inside `frame_step_live_bubble`, which is what lets the two share "
+        f"the same bytes without either of them running the other's cases")
 
-    verified = sum(stop - entry for entry, stop in FRAME_SLICES) - (death_end - death_start)
-    assert verified == FRAME_VERIFIED_BYTES, (
-        f"the seven slices cover {verified} bytes of `game_frame_update`, not the "
-        f"{FRAME_VERIFIED_BYTES} ../STATUS.md's row states")
+    pause_start, pause_end = FRAME_POLL_PAUSE
+    inside = [(entry, stop) for entry, stop in FRAME_SLICES if entry <= pause_start < stop]
+    assert len(inside) == 1 and pause_end <= inside[0][1], (
+        f"the ^P pause [{pause_start:#x}, {pause_end:#x}) is not inside exactly one slice")
+
+    covered = sum(stop - entry for entry, stop in FRAME_SLICES) - (pause_end - pause_start)
+    assert covered == FRAME_VERIFIED_BYTES, (
+        f"the eight slices cover {covered} bytes of `game_frame_update`, but ../STATUS.md's three "
+        f"rows for it claim {FRAME_VERIFIED_BYTES} between them "
+        + ", ".join(f"{addr:#x}: {n}" for addr, n in sorted(FRAME_LEDGER_ROWS.items())))
+    unrun = FRAME_UPDATE_BYTES - covered
+    assert unrun == FRAME_UPDATE_EPILOGUE_BYTES + (pause_end - pause_start), (
+        f"{unrun} bytes of `game_frame_update` are run by no case, not the "
+        f"{FRAME_UPDATE_EPILOGUE_BYTES}-byte `unlk a6 / rts` epilogue plus the "
+        f"{pause_end - pause_start}-byte ^P pause, which are the only two regions ../STATUS.md "
+        f"records as unrun")
     assert FRAME_UPDATE_BYTES == 1682, (
         f"`game_frame_update` is {FRAME_UPDATE_BYTES} bytes, not the 1682 ../STATUS.md's row states")
 
@@ -1475,6 +2316,14 @@ ENTRY_PROLOGUES = {
     "ENTRY_FRAME_APPLY_FANS": "302ce206c1fc008c41ecb7aa",
     "ENTRY_FRAME_STEP_LIVE_BUBBLE": "302ce0c667544eba091a0c6c",
     "ENTRY_FRAME_DRIFT_PULSE": "426ce0c2426ce0c0426ce0ac",
+    # TWENTY-FOUR BYTES for the two bar routines, where twelve is enough everywhere else: they open
+    # with the identical `link a6,#$fff6 / movem / move.w #$bd,-6(a6) / move.w #$bd,-2(a6)` and
+    # separate only at their first VDI call. A twelve-byte pin would hold for either address.
+    "ENTRY_HUD_BONUS_BAR_FILL": "4e56fff648e700303d7c00bdfffa3d7c00bdfffe3f3c000b",
+    "ENTRY_HUD_BONUS_BAR_SHRINK": "4e56fff648e700303d7c00bdfffa3d7c00bdfffe302ce09a",
+    "ENTRY_HUD_DRAW_COUNTERS": "4e56ffea486ce09c486ce09e",
+    "ENTRY_FRAME_POLL_INPUT": "486ce1fe486ce200486ce202",
+    "ENTRY_FRAME_DEATH_SEQUENCE": "0c6c0003e0ce6f000206397c",
 }
 
 # ...and the CHECKPOINTS. A `stop_pc` is as able to name the wrong instruction as an entry is — one
@@ -1482,7 +2331,7 @@ ENTRY_PROLOGUES = {
 # row here for every module-level `STOP_*`.
 #
 # SIX OF THESE REPEAT AN `ENTRY_*` ROW ABOVE, and that is the point rather than a duplication: the
-# seven frame slices TILE the routine, so each one's stop IS the next one's entry
+# frame slices TILE the routine, so each one's stop IS the next one's entry
 # (`test_frame_slices_tile_game_frame_update` asserts it). The pins are per NAME, so each still fails
 # under the name of the constant that moved.
 STOP_PROLOGUES = {
@@ -1494,4 +2343,9 @@ STOP_PROLOGUES = {
     "STOP_FRAME_APPLY_FANS": "302ce0c667544eba091a0c6c",
     "STOP_FRAME_STEP_LIVE_BUBBLE": "426ce0c2426ce0c0426ce0ac",
     "STOP_FRAME_DRIFT_PULSE": "4e5e4e754e56fffc3f3c0001",
+    # ...and the two new slices'. Both REPEAT a row above, as the seven tiling stops do: the poll's
+    # stop is `frame_scale_mouse`'s entry and the death sequence's is `frame_drift_pulse`'s.
+    "STOP_FRAME_POLL_INPUT": "0c6c0023e2066624302ce200",
+    "STOP_FRAME_DEATH_SEQUENCE": "426ce0c2426ce0c0426ce0ac",
+    "STOP_FRAME_POLL_AT_PAUSE": "422ce1fa600a3f3c00074eba",
 }

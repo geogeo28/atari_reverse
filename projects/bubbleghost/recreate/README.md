@@ -88,13 +88,16 @@ recreate/
 ├── include/common.h        the 68000-shaped helpers more than one core needs; its own header
 │                        says why they are not in the kit's machine.h
 ├── include/<subsystem>.h   one per subsystem: prototypes, addresses, record layout
+├── include/init_globals_stream.h  GENERATED: `init_globals` @ 0x16d8e's 7,869-instruction
+│                        stream as data, decoded from the disassembly. Its own header says
+│                        why it is derived from the ASM and not from the image it produces
 ├── src/<subsystem>.c       each core plus its `g_<name>` glue
 ├── test/harness.py         16-line shim: binds the kit and star-re-exports it
 ├── test/abi.py             the scratch map, the C stack-argument builder, the two stub shapes,
 │                        and what every battery shares: `run_with_a4` (the one differential
-│                        spelling), `merge_pokes`, `stage_world`, the big-endian encoders
-│                        and decoders, and `shard` (the seeder, `abi.seed_spans`, is the
-│                        kit's — re-exported here)
+│                        spelling), `merge_pokes`, `stage_world`, `trap_slot_noise`, the
+│                        big-endian encoders and decoders, and `shard` (the seeder,
+│                        `abi.seed_spans`, is the kit's — re-exported here)
 ├── test/conftest.py        the post-init image fixture, and the autouse one that installs it
 ├── test/test_image_model.py  the relayout + crt0 pins and the free-space census
 ├── test/test_constants.py    the CLAUDE.md §5 pin and the duplicate checks — a collector
@@ -187,6 +190,20 @@ make venv                        # the kit's rule: python -m venv .venv + requir
 rm -f build/*.so && make test    # rebuild both libs and run the suite (-n auto)
 make guarded                     # the same suite over a PROT_NONE-bounded image (Darwin/BSD only)
 ```
+
+## Regenerating `include/init_globals_stream.h`
+
+`init_globals` @ 0x16d8e is 7,869 straight-line stores and its reconstruction is that stream as
+data. `../tools/gen_init_globals_stream.py` decodes it out of `../out/prg_dis.txt`, refuses any
+instruction outside its ten shapes, and checks its own output against an oracle run before writing
+a line:
+
+```bash
+cd projects/bubbleghost/recreate
+.venv/bin/python ../tools/gen_init_globals_stream.py -o include/init_globals_stream.h
+```
+
+Re-run it if the disassembly is re-cut or the load base moves. Do not hand-edit the header.
 
 `.venv` was built with `--system-site-packages` over the workspace's `atari_reverse` conda
 interpreter, as Zynaps' and Joust's were — a disk-space convenience, not a requirement.

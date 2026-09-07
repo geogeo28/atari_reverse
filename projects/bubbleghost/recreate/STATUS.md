@@ -5,11 +5,18 @@ byte-for-byte against the original 68000 code** by the shared differential harne
 (`tools/recreate_kit`: a Musashi oracle running the real code vs. the compiled reconstruction, on
 the same memory image). `../names.txt` is the source of truth for every name.
 
-**Verified: the sum of the per-section counts below**, out of the **134** functions Ghidra found in
-this program (`../notes/anchors.md`, "Shape of the image" — that is the whole code segment: the
-31 KB running to the end of TEXT is `init_globals`' own instruction stream, not undiscovered code).
-Five of the six sections carry rows today — `blit`, `sound`, `clib`, `gameplay` and
-`frontend`. `init` is still a heading waiting for its first function.
+**Verified: the sum of the per-section counts below.** That sum is larger than the number of
+FUNCTIONS, and deliberately: five rows are SLICES filed under the address the slice starts at rather
+than under a function's entry (README.md, "Adding a function", step 7), so the sum counts them too.
+Against `../names.txt` — the source of truth — the arithmetic is **130 of its 132 `fn` lines
+verified**, out of the 134 functions Ghidra found in this program (`../notes/anchors.md`, "Shape of
+the image": the 31 KB running to the end of TEXT is `init_globals`' own instruction stream, not
+undiscovered code).
+
+All seven sections carry rows now — `init`, `frontend`, `gameplay`, `blit`, `sound`, `voice` and
+`clib`. THE TWO `fn` LINES LEFT are `game_top_loop` @ 0x101e6 and `title_menu_loop` @ 0x115d6, and
+neither is blocked on the model; everything else in "Not reconstructed" is a SECOND program
+(`GHOST.LOA`) or a single GEMDOS call the model refuses on purpose.
 Each `## Verified — <subsystem>` heading carries its own count, so the only number an agent touches
 is its own section's; `test/test_status.py` fails if a count and its rows disagree, if a section that
 carries rows names a subsystem with no `src/<name>.c`, and if a literal grand total creeps back into
@@ -52,6 +59,19 @@ Every row above was **run**, from a clean `build/` with `__pycache__` swept, aga
 subset `test_image_model.py + test_status.py`. A mutation the suite does not catch is a coverage
 hole, not a licence — record it here.
 
+**WHAT THE PRE-COMMIT REVIEW CAUGHT that the mutation sweep did not, 2026-09-06.** Recorded because
+the two are different instruments and the difference is the useful part: a sweep can only flip what
+the code says, and three of these were about what the code did not say at all.
+
+| found | what it was |
+|---|---|
+| `c_open`'s truncating arm was missing the original's `Fcreate` + `Fclose` pair (0x15dd8..0x15df2) | a REAL defect in a region no case ran, and no mutation of the written code could have surfaced it |
+| the crt0's DATA move counted its `dbf` in 32 bits | a REAL defect, twelve lines from the same `dbf` transcribed correctly |
+| the poll's own cases staged no `A_key_raw`, so the flush ate every staged control key | the whole `^S`/`^R`/`^P` arm set was vacuous; the `^S` toggle could be INVERTED with the suite green |
+| `test_frame_poll_input_files_the_mouse`'s anti-vacuity assertion was `assert info["writes"]` | a tautology (the trampoline always writes), over an input block nothing seeded |
+| three helpers copied into a third battery, one of them with the `rng` quietly dropped | `abi.trap_slot_noise` is the one home now |
+| two names for one GEMDOS basepage field across two batteries, pinned by nothing | `test_the_basepage_offsets_have_one_meaning_across_both_files` |
+
 ## Model gaps — read this before picking a function
 
 The kit's TOS trap model (`tools/recreate_kit/TRAP_MODEL.md`) was built for the games before this
@@ -75,13 +95,14 @@ project uses `[0x30000, 0x90000)`, and the waiver is gone.
 | ~~**GEMDOS `Cconis` (0x0b), 6 sites**~~ **CLOSED** | every keyboard poll — the menu's "Press [G]…[P]…[D]…[H]", the pause | TRAP_MODEL.md Phase 13 models it over the poked console state, beside `Bconstat`. No routine here uses it yet: the menu is unported |
 | ~~**GEMDOS `Crawcin` (0x07), 7 sites / `Cnecin` (0x08), 4 sites**~~ **CLOSED** | the same keyboard paths, on the blocking side | Phase 13 models both, over the same one QUEUE every console read takes from (`harness.console_keys`, up to eight deep); a blocking read with nothing staged REFUSES rather than fabricating a key |
 | ~~**GEMDOS `Fseek` (0x42), 5 sites**~~ **CLOSED** | reached only through `c_lseek` @ 0x159dc, which neither hall-of-fame routine calls: both read and write GHOST.SCR sequentially | Phase 13 models it over the staged-file cursor, with a refusal rather than an error code for a seek the model cannot serve |
-| **GEMDOS `Fdelete` (0x41) / `Pterm` (0x4c) / `Cauxin` (0x03) / `Cauxout` (0x04) / `Cprnout` (0x05), 1 site each** | the C library's own wrappers (0x16868, 0x14d16, 0x16666, 0x16bae, 0x16bdc) — `clib` work, almost certainly unreachable in play | nothing, until someone ports those wrappers. Record them read-verified rather than growing the model for a path the game never takes |
+| ~~**GEMDOS `Fdelete` (0x41) / `Pterm` (0x4c) / `Cauxout` (0x04) / `Cprnout` (0x05)**~~ **CLOSED** | the C library's own wrappers (0x16868, 0x14d16, 0x16bae, 0x16bdc) | TRAP_MODEL.md Phase 13 models all four: `Fdelete` edits the staged-file table and answers TOS's EFILNF for a missing name, `Pterm` ends the run with an `OS_EVENT_PTERM` and LATCHES the ledger, and the two character writers take a ledger kind each. All five wrappers are ported and verified in `## Verified — clib` |
+| **GEMDOS `Cauxin` (0x03), 1 site** | `c_conin` @ 0x16518's AUX: handle | nothing, and deliberately: the console has a staged keystroke queue and the serial line has nothing at all, so every answer would be invented and the real call would BLOCK for one that never comes. The model refuses it by name. Closing it means a second staged input stream, of `os_console_take_key`'s shape |
 | ~~**BIOS `Bconout` (trap #13), 2 sites**~~ **CLOSED** | `game_top_loop` @ 0x101e6 only: the IKBD commands `$12` (disable the mouse) and `$08` (relative reporting back on) | Phase 13 models device 4 as an OS EVENT LEDGER entry per byte and refuses every other device. No routine here uses it yet: `game_top_loop` is unported |
 | ~~**`trap #2` (GEM), 2 trampolines**~~ **CLOSED** | the AES one @ 0x149b6 (`d0 = $c8`) and the VDI one @ 0x168d4 (`d0 = $73`) | Closed by TRAP_MODEL.md phases 11-13: the kit now models an ST raster, `vro_cpyfm`'s sixteen logic operations, and every VDI/AES opcode this game uses (VDI 3, 8, 12, 22, 25, 100, 109, 114, 124, 128; AES 10, 77, 78). Both trampolines and all sixteen entry points are verified in `## Verified — frontend` |
 | **`trap #9`, 1 site** | every PSG access from ordinary code: `psg_access` @ 0x14940 calls the game's OWN supervisor gate `trap9_psg_handler` @ 0x14950 | not a TOS trap at all, so the shim does not intercept it: the oracle dispatches through the vector at `$a4`, which is **zero unless the run has already executed `install_sound_vectors` @ 0x148ea**. A reconstruction cannot trap; it calls `psg_port_write()`/`psg_port_read()` from the kit's `psg.h` (TRAP_MODEL.md, Phase 6), and the ledger comparison is what holds the two equal |
 | **the Timer C ISR @ 0x1459a** | the music/sound player, installed at `$114` by `install_sound_vectors` | the model fires no interrupts, so the handler is entered explicitly by a stub that builds a 68000 exception frame — copy `interrupt_frame_pokes` from `projects/zynaps/recreate/test/abi.py`. It exits by pushing TOS's saved `$114` and `rts`ing, not by `rte`, so the stub's frame is not popped the usual way: read the tail before writing the case |
 | **the model's `Logbase` is 0x8000, and this game's back buffer is `Logbase - 0x7d00`** | `init_video_and_heap` @ 0x10118, and any draw routine driven from the pointers it stores | that puts the back buffer at **0x300**, so a 0x7d00-byte frame write covers `OS_KBDVBASE` (0x500) and the whole harness-poked input block (0x600..0x61f). Both sides do it identically, so the diff stays clean — but a case that ALSO stages a console key silently loses it. Stage the two screen pointers as test inputs rather than taking them from `init_video_and_heap`'s output |
-| **`GHOST.LOA` is a second program, `jsr`ed inside the BSS** | `play_voice` @ 0x13cea (`jsr a4-5982`) | it is an `ABSFLAG` `.PRG` read into `a4-6010` as data, with its sample pointer poked at +0x1e (`../notes/loader.md`). Running it means staging the file's bytes into the image first; it programs MFP Timer A and busy-waits, so it also needs Phase 8's scheduled writes or a slice that stops short of the wait |
+| **`GHOST.LOA` is a second program, `jsr`ed inside the BSS** | `play_voice` @ 0x13cea (`jsr a4-5982`) | it is an `ABSFLAG` `.PRG` read into `a4-6010` as data, with its sample pointer poked at +0x1e (`../notes/loader.md`). **THE GAME'S TWO ROUTINES ARE PORTED** — the slice stops short of the wait, exactly as this row said it could — and the LOA's own code is what is left: it programs MFP Timer A, and the byte its wait spins on is written by its own handler rather than by an external agent, so Phase 8's scheduled writes have no site to name |
 
 **What is modeled and needs no work**, so that this list is not read as "the OS is unusable": every
 XBIOS call the game makes — `Setscreen` (17 sites), `Setcolor` (5), `Random` (4), `Setpalette` (3),
@@ -91,12 +112,13 @@ and `Mfree`. The video and colour calls are modeled as **no-ops**, which is the 
 write hardware, not the image, so the differential cannot see a wrong palette or a wrong screen base
 at all (`docs/on-target-execution.md`).
 
-## Verified — init (0)
+## Verified — init (5)
 
 The boot chain: `crt0_start` @ 0x10036, `init_globals` @ 0x16d8e, `main` @ 0x100dc and
-`game_top_loop` @ 0x101e6. Every one of them is a slice rather than a function — the loop never
-returns — so each row's Verification column opens with the `[start, end)` the differential actually
-runs.
+`game_top_loop` @ 0x101e6 — the last of which is the one routine here still unported ("Not
+reconstructed"). Every one of them but `init_globals` is a slice rather than a function — nothing
+here returns — so each row's Verification column opens with the `[start, end)` the differential
+actually runs.
 
 **`crt0_setup_args` @ 0x10116 is not here either, and it IS reconstructed.** The crt0 calls it
 (`pea 128(a0) / jsr $10116`) and it is a bare `rts` — the Alcyon runtime's argv hook, stubbed out at
@@ -106,11 +128,69 @@ link time. It belongs to the C library rather than to this game's boot chain, so
 **`init_gem_and_screens` @ 0x10118 is NOT here**, though the boot chain calls it: it opens the AES
 connection and the VDI workstation and takes both screen bases off XBIOS, which is the front end's
 binding end to end, so it is verified in `## Verified — frontend` with the routines it is made of.
-`init_globals` is likewise not a boot-chain row waiting to be written — `test_image_model.py`
-already runs it under the oracle and proves the image it leaves equal to the real crt0's.
+**`init_globals` @ 0x16d8e IS A ROW HERE, and what makes it one is where its C comes from.**
+`test_image_model.py` already ran it under the ORACLE and proved the image it leaves equal to the
+real crt0's — but that says nothing about a reconstruction, and `test/conftest.py`'s post-init
+fixture IS this routine's output, so a C version read off that fixture would be green about nothing.
+`include/init_globals_stream.h` is the routine's 7,869-instruction stream decoded from the
+disassembly by a generator (which refuses any instruction outside its ten shapes and checks its own
+output against an oracle run before writing it), and `src/init.c`'s `init_globals` is the ten-case
+interpreter over it. The case that runs it is the one differential in the project that must NOT
+start from the post-init fixture: it winds the base image back to the loaded .PRG, where the BSS is
+still zero and all 7,056 bytes it changes are attributable.
 
 | Addr (Ghidra) | Name | Bytes | Status | Verification |
 |---------------|------|-------|--------|--------------|
+| `0x10036` | `crt0_relocate_and_clear` **(slice** `[0x10036, 0x100a6)` **)** | 112 of 166 | ✅ verified | `stop_pc` at the `jsr 48(a5)` into `init_globals`, on a FILE-LAYOUT image with a fabricated basepage — the program as TOS hands it over, before the segment move this slice IS. Six segment layouts including the two the original's `ble` before the `dbf` treats specially (a one-byte data segment moves NOTHING, a two-byte one moves both), everything it writes seeded with noise, and the A4 it establishes compared against the oracle's register file. **One excluded band**, the twelve bytes the Mshrink call pushes on the stack the crt0 has just MOVED — outside the differential's own guard — and the run's deepest A7 is asserted to be inside it |
+| `0x16d8e` | `init_globals` | 31,548 | ✅ verified | run to `rts` on `harness.BASE_IMAGE` (the .PRG as loaded, bss still zero — not the post-init fixture, which is this routine's own output), over four values of A5 including 0. Its C is generated from the instruction stream, not from the image it produces |
+| `0x100dc` | `main_check_resolution` **(slice** `[0x100dc, 0x1010a)` **)** | 46 of 58 | ✅ verified | `stop_pc` where the low-resolution branch lands; the trampoline's three save slots under noise, and the ANSWER (a flag this reconstruction invented, because the branch is not otherwise visible) compared against the arm the oracle took. **Residual:** `Getrez` is the model's constant — see below |
+| `0x100f4` | `main_wrong_resolution` **(slice** `[0x100f4, 0x100fe)` **)** | 10 | ✅ verified | entered at its own PC, because the gate above can never choose it under the model. `stop_pc` at the two-instruction spin that follows the `c_printf`; the console-byte ledger carries the whole message, and a second case reads it back out of the ledger to say the case is not vacuous |
+| `0x1010a` | `main_start_game` **(slice** `[0x1010a, 0x1010e)` **)** | 4 | ✅ verified | `stop_pc` at the `jsr game_top_loop` that never returns. It composes the verified `init_gem_and_screens`, so what this pins is the composition; a second case asserts the two screen bases and the parameter block really appear |
+
+**21 cases.**
+
+**Mutations tried against this battery**, each from a deleted `.so` with `__pycache__` swept, and
+each **red**:
+
+| mutation | what caught it |
+|---|---|
+| the DATA move one byte short | 4 cases |
+| the DATA move's counter read in 32 bits instead of through the `dbf`'s WORD (2026-09-06) | 1 case — `CRT0_SEGMENTS`' `dlen = 0x10001` row, **which did not exist until a review pass found the defect**: the `ble` above the loop is a LONG test and the `dbf` under it a WORD one, so 0x10001 passes the test and then moves exactly ONE byte. The program's own 0x2f4 can never separate the two readings |
+| the BSS clear FIVE bytes short | 6 cases |
+| the BSS clear starting one byte high | 6 cases |
+| `a4` taken from the BSS base rather than the DATA base | 6 cases, and `test_crt0_establishes_the_projects_a4` by name |
+| the seven A5-relative pointers built WITHOUT A5 | 4 cases — `test_init_globals_reads_a5`, whose other three values exist for this |
+| the stream's `COPY` reading its own destination | 5 cases |
+| the stream's word store advancing by a longword | 5 cases |
+| `include/init.h`'s `BASEPAGE_DBASE` and `test_image_model.py`'s `BP_DBASE` set to different values | `test_the_basepage_offsets_have_one_meaning_across_both_files`, added BECAUSE nothing else could see it: `test_constants.py` keys its duplicate check on the NAME and its value check on the `A_*` family, so two names for one GEMDOS field are invisible to both |
+
+**TWO MUTATIONS ARE EQUIVALENT, and both are worth recording so nobody re-tries them.**
+
+* **The BSS clear up to FOUR bytes short.** The very next instruction stores the basepage pointer at
+  `-4(a4)`, and `a4` is the END of the clear — so the last four bytes of it are overwritten whatever
+  the clear did, for every segment layout, not just this program's. Measured as a survivor first
+  (`- 1`), understood second, and then pinned from the other side: `- 5` is red.
+* **The stream's `ADVANCE` added in 32 bits instead of through `adda.w`'s sign extension.** The nine
+  `adda.w` in the whole routine carry 2 and 1400, both positive small words, so no input the
+  routine has can tell the two apart. This is the "the data cannot reach it" case CLAUDE.md names:
+  the branch is honestly unexercised rather than untested.
+
+### Residuals — what these rows do NOT pin
+
+1. **`Getrez` is the MODEL's answer, not the program's.** The kit services XBIOS `Getrez` and leaves
+   D0 = 0 with no `os_*` entry point of its own (`oracle/shim.c`'s `case 0x04`), so there is nothing
+   for a reconstruction to call and nothing a case could stage — `main_check_resolution` states the
+   model's answer. On a machine really in medium or high resolution the two sides would take
+   different arms and the differential could not see it; the surface is an on-target run, and this
+   project has no `.PRG` yet.
+2. **The crt0's `Mshrink` is a no-op with no ledger entry**, so the reconstruction reproduces its
+   arithmetic and not the call. The stack it makes room for is the harness's own.
+3. **The crt0's TAIL is not a slice.** `[0x100a6, 0x100dc)` — up to its own `rts` at 0x100da — is
+   four calls, `init_globals`, `crt0_setup_args`, `main` and `c_exit`, and the last two never
+   return, so the region is read-verified. The Cconout after `c_exit` is code the real machine
+   cannot reach at all.
+4. **`main`'s composition is read-verified**, for the same reason as the frame loop's: no case
+   enters `main` at 0x100dc and leaves, because the arm it takes calls `game_top_loop`.
 
 ## Verified — frontend (33)
 
@@ -350,40 +430,45 @@ from 10 to 11 writes a 1 into `work_in[10]` that the very next line overwrites w
    subsystem opens is "CON:", "AUX:" or "PRT:", which is what makes a pseudo-handle unreachable.
 
 
-## Verified — gameplay (10)
+## Verified — gameplay (15)
 
 The in-room simulation: the castle's four data tables, the ghost, the blow, the bubble and the
-hazard model — plus the HUD's number formatter. `../notes/gameplay.md` is the design doc,
+hazard model — plus the HUD, both its number formatter and the three painters that draw through the
+front end's VDI binding. `../notes/gameplay.md` is the design doc,
 `include/gameplay.h` the frozen record layout, and `src/gameplay.c`'s header comment says why
-`game_frame_update` is seven slices rather than one function.
+`game_frame_update` is nine slices rather than one function.
 
 **This subsystem now owns the three globals `include/blit.h` held on loan.** `A_room_number`,
 `A_object_table` and `A_room_table` — and the `OBJECT_*` / `ROOM_*` record offsets that moved with
 them — are defined in `include/gameplay.h`; `src/blit.c` includes it to read them, and the three
 rows that predicted this move are gone from "Borrowed globals" below.
 
-**The two regions of `game_frame_update` that are NOT here, and neither limit is this
-subsystem's.** Its front-end poll (`vq_mouse` @ 0x16a26, `vq_key_s` @ 0x16a5e and the `Crawio` key
-read, 0x1233a..0x12434) is the front end's own VDI/console binding, unported — a slice boundary
-either side of it is what keeps this file from carrying a second copy of somebody else's routine.
-Its death sequence (0x1273c..0x1294a) calls `save_sprite_backgrounds` / `draw_sprites` /
-`restore_sprite_backgrounds`, which are `src/blit.c`'s and unported. Both are in "Not
-reconstructed" with what would close them.
+**`game_frame_update` IS NOW WHOLE.** The two regions that used to sit between and inside its
+slices — the front-end poll `[0x1233a, 0x12434)` and the death sequence `[0x1273c, 0x1294a)` — have
+rows of their own below, filed under the addresses the slices start at. What is left unrun is two
+regions and no more, and `test_frame_slices_tile_game_frame_update` re-derives both: the four-byte
+`unlk a6 / rts` epilogue, which no mid-entry slice may reach, and the 64-byte `^P` pause inside the
+poll, whose residual is below.
 
 | Addr (Ghidra) | Name | Bytes | Status | Verification |
 |---------------|------|-------|--------|--------------|
 | `0x10f20` | `reset_world_state` | 936 | ✅ verified | run to `rts`; 3 seeds of noise over the three room-indexed tables and both players' 58-word blocks, plus poison. 174 straight-line stores, one list |
 | `0x114ee` | `itoa_padded` | 232 | ✅ verified | run to `rts`; every digit count the HUD reaches (0..0x7fffffff) x widths 1 and 6, widths 0/2/8, the three NEGATIVE values (`c_ldiv` is signed, so those write characters below `'0'`), and poison. Composes the verified `c_ldiv` and `c_strlen` |
-| `0x129b4` | `ghost_blow` **(slice** `[0x129b4, 0x12ff8)` **)** | 1604 of 1616 | ✅ verified | `stop_pc` at the `jsr hud_draw_counters` that ends the candle script — the score award IS inside the slice, only the drawing of it is not. Covers: the puff and its idle-voice gate; the `|dx| < 50` / `|dy| < 50` range gate at both bounds and at -32768 (`neg.w` of the most negative word is itself); all eight facings armed and all eight missed; the four diagonal cones at their `bge`/`ble` boundaries; the candle script over all ten shipped candle rooms, each placed from the room's OWN data; the four window bounds from both sides; the left-facing requirement. **Residual:** `hud_draw_counters` @ 0x113d2 and `present_score_strip` @ 0x131f0 |
-| `0x12322` | `game_frame_update` **(7 slices)** | 902 of 1682 | ✅ verified | Seven mid-entry slices, each entered at its own PC and diffed at the next one's: `[0x12322, 0x1233a)` the bubble's frame counter; `[0x12434, 0x124a4)` the mouse divided down through the software float package; `[0x124a4, 0x1255c)` blowing or recovering (entered with the caller's A1/A2, which the two `Setcolor` trampolines file); `[0x1255c, 0x125e6)` the mouse buttons' facing latches; `[0x125e6, 0x126e2)` the two fan slots; `[0x126e2, 0x1294a)` the bubble's own step, pop included; `[0x1294a, 0x129b0)` the drift pulse. **Residuals:** the front-end poll `[0x1233a, 0x12434)` and the death sequence `[0x1273c, 0x1294a)` — see above — and slice 3's ONE precondition below |
+| `0x129b4` | `ghost_blow` **(slice** `[0x129b4, 0x12ff8)` **)** | 1604 of 1616 | ✅ verified | `stop_pc` at the `jsr hud_draw_counters` that ends the candle script — the score award IS inside the slice, only the drawing of it is not. Covers: the puff and its idle-voice gate; the `|dx| < 50` / `|dy| < 50` range gate at both bounds and at -32768 (`neg.w` of the most negative word is itself); all eight facings armed and all eight missed; the four diagonal cones at their `bge`/`ble` boundaries; the candle script over all ten shipped candle rooms, each placed from the room's OWN data; the four window bounds from both sides; the left-facing requirement. **Residual:** the two redraws the slice stops short of — `hud_draw_counters` @ 0x113d2 and `present_score_strip` @ 0x131f0, both of which are now verified in their own right, so what is left is to move the `stop_pc` to the `rts` and stage the VDI world in all 360 cases |
+| `0x12322` | `game_frame_update` **(7 slices)** | 902 of 1682 | ✅ verified | Seven mid-entry slices, each entered at its own PC and diffed at the next one's: `[0x12322, 0x1233a)` the bubble's frame counter; `[0x12434, 0x124a4)` the mouse divided down through the software float package; `[0x124a4, 0x1255c)` blowing or recovering (entered with the caller's A1/A2, which the two `Setcolor` trampolines file); `[0x1255c, 0x125e6)` the mouse buttons' facing latches; `[0x125e6, 0x126e2)` the two fan slots; `[0x126e2, 0x1294a)` the bubble's own step, pop included; `[0x1294a, 0x129b0)` the drift pulse. The 186 + 526 bytes the two rows above carry make the routine's covered total 1,614 of 1,682 — the rest is the 4-byte epilogue and the 64-byte `^P` pause. **Residual:** slice 3's ONE precondition below |
 | `0x13004` | `bubble_collision_probe` | 492 | ✅ verified | run to `rts`; the phase stepped from 0..5 and from outside it, each of the eight rim probes driven alone with one non-background pixel under it, the word-truncated phase offset at phase 1024, and 8 x 12 chunk-seeded fuzz cases over a noisy screen. Composes `get_pixel` |
 | `0x13bea` | `get_pixel` | 130 | ✅ verified | run to `rts`, ANSWER compared (it writes nothing): all sixteen colour indices, all sixteen bit positions, five rows of ladder addressing, six negative-x rows (`divs.w` truncates toward zero and the bit index runs past 15), four row-offset wrap rows, and 8 x 12 chunk-seeded fuzz |
 | `0x13d2c` | `restore_world_p1` | 356 | ✅ verified | run to `rts`; 3 noise seeds + poison, and the numbered-block case that pins the block being filled BACKWARDS |
 | `0x13e90` | `restore_world_p2` | 356 | ✅ verified | as above |
 | `0x13ff4` | `save_world_p1` | 356 | ✅ verified | as above |
 | `0x14158` | `save_world_p2` | 356 | ✅ verified | as above |
+| `0x112c8` | `hud_bonus_bar_fill` | 126 | ✅ verified | run to `rts`; six bar lengths — below the bar's left end, AT it (the loop runs zero times), one past it (the only length at which every `vr_recfl` still sees the CALLER's A2), two past it, 0x40 and the 318 a room starts at — plus the fuzz. Composes the verified `vsf_color` and `vr_recfl` |
+| `0x11346` | `hud_bonus_bar_shrink` | 140 | ✅ verified | run to `rts`; eleven (bar, units) pairs either side of the `end - units + 1 < 35` branch, at it and past it — including a `units` that takes the difference negative and one of 0 — plus 8 x 6 chunk-seeded fuzz |
+| `0x1233a` | `frame_poll_input` **(slice** `[0x1233a, 0x12434)` **)** | 186 of 250 | ✅ verified | `stop_pc` at the next slice's entry; the mouse and the shift keys through the verified `vq_mouse`/`vq_key_s`, then one `Crawio(0xff)` and the three control keys. Covers: six keys including two with bit 7 set, the stale-key flush loop taken and skipped, four mouse positions x two, six shift states, the `^S` toggle from zero and from three non-zero values, the `^R` whole-game reset with all seven cleared fields staged non-zero, an idle console, and the `^P` branch. **Residual:** the `^P` pause `[0x1239e, 0x123de)`, 64 bytes, read-verified — see below |
+| `0x1273c` | `frame_death_sequence` **(slice** `[0x1273c, 0x1294a)` **)** | 526 | ✅ verified | `stop_pc` at the next slice's entry, on a world staged for the eight verified routines it composes. Covers: the frame-counter gate at both sides of `BUBBLE_DEATH_TRIGGER_FRAME` and at it; four ghost tiles through the walk-back (zero, one, three and seven passes); the five `Random()` answers that give all five distinct per-cell holds (2..6); the four entry directions the game uses and one that overflows the word its offset is added through; both `p1_turn` arms of the two-player handover and the one-player arm that parks nothing |
+| `0x113d2` | `hud_draw_counters` | 284 | ✅ verified | run to `rts` with poison; eight (score, hi, room, lives) rows covering every field width, 0x7fffffff, a NEGATIVE room (which pins the `ext.l` that widens it) and both negative-lives arms, plus the fuzz. Composes the verified `vst_height`, `vst_color`, `v_gtext` and `itoa_padded` |
 
-**396 cases.** The fuzzes are CHUNK-SEEDED rather than chunk-partitioned (`test/abi.py`'s `shard`
+**482 cases.** The fuzzes are CHUNK-SEEDED rather than chunk-partitioned (`test/abi.py`'s `shard`
 docstring tells the two apart), so each is `CHUNKS` x its own per-chunk count: `get_pixel` 8 x 12
 probes, `bubble_collision_probe` 8 x 12 worlds, the fan test 8 x 10 placements and the bubble step
 8 x 8 velocity/screen pairs. `make guarded` passes: `get_pixel` indexes the image with an address
@@ -451,6 +536,24 @@ each **red**:
 | the candle's two DEST slots swapped (2026-09-06) | 13 cases — the extinguish script writes each record's tile into the other's slot |
 | `muls_ext_w` multiplying in 32 bits, now that it lives in `include/common.h` (2026-09-06) | 11 cases across TWO batteries — `test_gameplay.py`'s two `get_pixel` row-offset wraps and its fuzz, and `test_blit.py`'s two tile-offset wraps and the wipe's word-sized counter. The helper used to be a private copy in each file, so a mutation had to be made twice to be measured once |
 | a frame slice's `stop_pc` moved two bytes (2026-09-06) | 40 cases, and `test_constants.py::test_entry_addresses_still_point_at_their_routines` BY NAME — the `STOP_PROLOGUES` pin, which did not exist before that day |
+| the entry-point offset added in 32 bits rather than through `adda.w` (2026-09-06) | 1 case — `test_frame_death_sequence_respawns_at_the_rooms_entry_point`'s `entry_dir = 0x4000` row, **added because a review pass measured the `sign_ext16` surviving**: the game's own `entry_dir` is 0..3 and cannot reach the wrap |
+| `HUD_ROOM_X` 0x133 -> 0x134 (2026-09-06) | 17 cases — every `hud_draw_counters` row and the fuzz |
+| `HUD_TEXT_PEN` 5 -> 6 (2026-09-06) | 17 cases |
+| `hud_bonus_bar_fill` filing the CALLER's A2 on every column (2026-09-06) | 4 cases — the two bar lengths that run more than one column, and `test_hud_bonus_bar_fill_files_the_scanline_copys_a2` by name |
+| `hud_draw_counters` leaving an exhausted life count at 0 rather than -1 (2026-09-06) | 8 cases |
+| the room number widened WITHOUT the `ext.l` (2026-09-06) | 6 cases — the negative-room row, built for it: a word-sized widening draws room -1 as "35" |
+| `hud_bonus_bar_shrink`'s surviving column off by one (2026-09-06) | 3 cases — the rows either side of the floor branch |
+| `hud_bonus_bar_fill`'s loop bound widened to `<=` (2026-09-06) | 6 cases |
+| the `^S` toggle inverted (2026-09-06) | 4 cases — and only after the poll's world started staging `A_key_raw` (see below) |
+| `^R` leaving the life count at 0 rather than -1 (2026-09-06) | 1 case, by its own outcome assertion |
+| the mouse `x` and `y` out-parameters swapped (2026-09-06) | 27 cases |
+| the stale-key flush loop deleted (2026-09-06) | 6 cases — the `stale` half of the ordinary-key rows |
+| the walk-back bound off by one (2026-09-06) | 1 case — `ghost_tile` = 5, the row built for the bound |
+| `DEATH_HOLD_INITIAL` 5 -> 6 (2026-09-06) | 18 cases |
+| the random scale and offset applied in the other order (2026-09-06) | 18 cases |
+| the respawn's entry-point x taken from the y word (2026-09-06) | 16 cases |
+| the two players' slot sets swapped (2026-09-06) | 2 cases — `test_frame_death_sequence_parks_the_turn`, both arms |
+| `BONUS_BAR_Y` 0xbd -> 0xbe (2026-09-06) | the BUILD, by name: `src/gameplay.c`'s `_Static_assert` that `BONUS_BAR_ROW_OFFSET` is row `BONUS_BAR_Y` of the screen. Recorded as a kill in the shape the pin takes, not as an untried mutation |
 
 **Twelve of those were survivors** — six found by the port agent's own sweep and six more by an
 independent reviewer — and each is why a case or a staging decision exists at all: the zeroed drift
@@ -473,6 +576,22 @@ that — but nothing between the two reads writes memory, so the two are one for
 NOT equivalent is caching it ACROSS the four calls, which the row above shows is red: a store made
 by one call can land on `A_room_number` itself.
 
+**A MEASURED SURVIVOR THAT WAS A STAGING DEFECT, 2026-09-06, and the fifth of its kind here.** The
+`^S` toggle could be INVERTED with the whole suite green. The post-init image holds `A_key_raw` = 1,
+so every poll case that did not stage that byte ran the routine's flush loop — which ate the very
+keystroke the case had staged, and the run then took the "no key" path while looking exactly like a
+case that exercised a control key. The `^S`, `^R` and `^P` cases were all vacuous. `_poll_world` now
+takes `stale_key` as an explicit input of every case, and the three control-key cases assert their
+own OUTCOME off the oracle as well as diffing: the byte diff proves the two programs agree, and it
+cannot say which arm ran.
+
+**Two more mutations of the poll are EQUIVALENT BY PROOF, not holes**, and `POLL_KEYS`' two
+high-bit rows say so rather than claiming to catch them. Both are about the key byte,
+and both are worth recording so nobody re-tries them: the flush gate spelt over the sign-extended
+word instead of the byte (`(int8_t)b != 0` iff `b != 0`, for every byte), and the key compared
+WITHOUT the `ext.w` (the three control codes are all below 0x80, and a byte at or above it equals
+none of them read either way). The transcription keeps the original's own spelling.
+
 **Three mutations were tried and are EQUIVALENT, not holes**, and are recorded so nobody re-tries
 them: `itoa_padded` reversing on its own digit count instead of re-measuring with `c_strlen` (the
 digits it writes are `'0' + r` for `r` in -9..9, never a NUL, so the two lengths agree for every
@@ -482,10 +601,12 @@ catch is a coverage hole, not a licence — record it here.
 
 ### Residuals — what these rows do NOT pin
 
-1. **The composition of the seven frame slices.** Each is diffed over its own region, and the ORDER
-   they run in is read-verified rather than run: no case enters `game_frame_update` at 0x12322 and
-   leaves at 0x129b0, because the front-end poll between them is unported. Closing it is the front
-   end's `vq_mouse` / `vq_key_s` / `Crawio` path, after which the whole routine runs to `rts`.
+1. **The composition of the nine slices.** Each is diffed over its own region, and the ORDER they
+   run in is read-verified rather than run: no case enters `game_frame_update` at 0x12322 and leaves
+   at 0x129b0. The reason is no longer a gap in the coverage — every region but the epilogue and the
+   `^P` pause has a case now — it is the `^P` pause itself, which a whole-routine run would enter on
+   a staged `^P` and never leave. A run that stages no key composes cleanly and is the shape a
+   future case would take.
 2. **The two `Setcolor` calls are no-ops in the model.** XBIOS `Setcolor` writes the shifter, which
    is not image state, so a reconstruction that recoloured the ghost wrongly — or never at all — is
    byte-identical here. Only the trampoline's three save slots are compared. **The surface is the
@@ -500,16 +621,36 @@ catch is a coverage hole, not a licence — record it here.
    into the death sequence; the core returns non-zero instead, because a silent fall-through in a
    function whose composition matters is a correctness trap. Every case asserts it is 0 — the run
    reached the stop PC, so it did not enter the sequence — which is a self-consistency check and
-   not a comparison with the oracle. **`BUBBLE_DEATH_TRIGGER_FRAME` (3) is therefore unpinned on
-   the other side**: no case can stage a dead bubble past frame 3, because the oracle would enter
-   the unported sequence and never reach the stop. Porting the three sprite routines closes it.
+   not a comparison with the oracle. **`BUBBLE_DEATH_TRIGGER_FRAME` (3) IS pinned on the other
+   side now**, and by the routine that used to be the blocker: `test_frame_death_sequence_gate`
+   enters at 0x1273c — whose first instruction is the `cmpi.w #$3` itself — with the frame at 0, 3,
+   4 and 12, so both sides of the bound and the bound itself are run.
 5. **The `short` return values are compared as D0's LOW WORD**, which is the Alcyon C ABI's answer
    and what every caller reads. `get_pixel` is the only routine here that answers at all.
 6. **Slice 3 calls `ghost_blow_body`, which is `ghost_blow` MINUS its two redraws** — and the
    original reaches those only when the candle script fires, every other exit branching over them.
    So the slice is equivalent to the original exactly while the current room has no candle left,
-   which is what every slice-3 case stages (`candle_table[room][0] = -1`). Closing it is the same
-   `hud_draw_counters` the `ghost_blow` row is waiting on.
+   which is what every slice-3 case stages (`candle_table[room][0] = -1`). **`hud_draw_counters`
+   is no longer what blocks it** — it is verified above; closing it means extending the `ghost_blow`
+   slice to its `rts` and staging the GEM parameter block in every case that reaches the redraws.
+
+7. **The `^P` pause `[0x1239e, 0x123de)` is READ-VERIFIED and no case runs it.** It throws the
+   console queue away and then spins on `Crawio` until a SECOND `^P` arrives — so the resuming key
+   has to arrive *after* the flush, and `harness.console_keys` stages a queue rather than an
+   arrival. The kit's scheduled-write model (TRAP_MODEL.md, Phase 8) does stage an arrival, but it
+   is keyed to the byte the original's own compare re-reads, and this wait's compare reads
+   `A_key_raw` — which the routine writes itself. The byte that really changes is the model's
+   console block, inside the trap, so there is no wait SITE to name. `frame_poll_input` therefore
+   ANSWERS "the key was ^P" instead of falling into `frame_poll_pause`, every case asserts that
+   answer, and the ^P case is diffed at the instruction the original branches into the loop at.
+   Closing it means a console model that can stage an arrival rather than a queue.
+
+8. **`hud_bonus_bar_fill`/`_shrink`'s rectangle is built RIGHT TO LEFT, and which of the two x
+   words is x1 is UNPINNED.** Both words are locals of the routine's own frame, inside the band the
+   differential drops, and `vr_recfl` lends the VDI the pointer rather than copying the words — so
+   the only observable is the span filled, and the VDI normalises it. Swapping the two stores was
+   measured green across the whole battery on 2026-09-06 and is **equivalent, not a hole**: no case
+   can separate them, and none should be written to try.
 
 ## Verified — blit (10)
 
@@ -591,6 +732,52 @@ reason three of those cases exist at all: a packed bank layout (closed by the ga
 `muls_ext_w` (closed by the two wrap cases) and a `bgt` countdown test (closed by the word-edge
 case). A mutation the suite does not catch is a coverage hole, not a licence — record it here.
 
+## Verified — voice (2)
+
+The digitised-voice path, which is a subsystem of its own for one reason: **the player is a second
+program.** `GHOST.LOA` is an `ABSFLAG` .PRG read into the BSS as data and `jsr`ed; `GHOST.VOI` is
+30,100 bytes of PCM. What is ported is the two routines of the GAME — the loader, and the call-up
+that pokes the sample pointer into the LOA image at +0x1e. The LOA's own code is not, and the row
+for it is in "Not reconstructed" with what closing it needs.
+
+| Addr (Ghidra) | Name | Bytes | Status | Verification |
+|---------------|------|-------|--------|--------------|
+| `0x13c6c` | `load_voice_player` | 126 | ✅ verified | run to `rts` on the REAL `../bin/GHOST.LOA` and `../bin/GHOST.VOI` staged under the names `init_globals` builds in the BSS, with every destination seeded. Composes the verified buffered layer (`c_fopen`/`c_fread`/`c_fclose`) and `c_malloc`; a second case reads both destinations back out of the oracle's image, including the VOI's LAST byte — the read is one byte short of the buffer, which is the program's arithmetic and the easiest thing to "fix" by accident |
+| `0x13cea` | `play_voice_arm` **(slice** `[0x13cea, 0x13d26)` **)** | 60 of 66 | ✅ verified | `stop_pc` at the `jsr (a0)` into the LOA image, which is not modeled. Three VOI-buffer addresses including 0 and one that wraps a 32-bit `addi.l`, and the ANSWER — the address it would have called — compared against the oracle's A0 |
+
+**6 cases.**
+
+**Mutations tried against this battery**, each from a deleted `.so` with `__pycache__` swept, and
+each **red**:
+
+| mutation | what caught it |
+|---|---|
+| the VOI read filling the whole buffer (0x7594 rather than 0x7593) | 1 case |
+| the LOA read one byte short | 1 case |
+| the VOI buffer allocated one GRANULE short | 1 case |
+| the poke's destination copy taken BEFORE the `+0x1e` | 3 cases |
+| the LOA entered at the pointer slot rather than at its text | 3 cases, and `test_play_voice_arm`'s A0 comparison by name |
+
+**TWO ARE EQUIVALENT, and both are properties of things outside this file:**
+
+* **the VOI buffer allocated one BYTE short** (`c_malloc(0x7593)`). `c_malloc` rounds a request up
+  to six-byte granules, and 0x7593 and 0x7594 round to the same 5,030 — so the block, its header
+  and the arena's new top are identical. One GRANULE short is red, which is what says the size is
+  pinned at all.
+* **the two mode strings collapsed to one.** `A_mode_ghost_loa` and `A_mode_ghost_voi` are two
+  copies of `"br"` at different addresses that the linker never merged; nothing records which was
+  read, so no case can separate them.
+
+### Residuals — what these rows do NOT pin
+
+1. **The LOA player itself is not run, and `play_voice` stops at the `jsr` into it.** See "Not
+   reconstructed" for the model gap (no MFP timer, no interrupt, and a busy-wait with no site to
+   name).
+2. **A failed open is not tested by the original at all** — `load_voice_player` has no retry and
+   never looks at what `c_fopen` answered, so a missing file would leave the read working on
+   garbage. Under the model an unstaged name is a refused run rather than a negative handle, so no
+   case reaches it; transcribed as the straight line it is.
+
 ## Verified — sound (12)
 
 The whole engine between 0x142bc and 0x149b4: a five-call trigger API, the 200 Hz Timer C handler
@@ -605,10 +792,10 @@ ledger, which carries reads as well as writes (TRAP_MODEL.md, Phase 6), and — 
 the hardware WRITE ledger (Phase 10). A reconstruction that made no chip access at all is
 byte-for-byte identical to one that makes every access the original makes.
 
-**Still unported in this subsystem:** the digitised-voice path (`load_voice_player` @ 0x13c6c,
-`play_voice` @ 0x13cea, `GHOST.LOA`), which is a second program `jsr`ed inside the BSS and has
-nothing to do with the engine here — it programs MFP Timer A and busy-waits, so it needs the model
-gap named in "Model gaps" closed first.
+**The digitised-voice path is NOT this subsystem's**, and never was: `load_voice_player` @ 0x13c6c
+and `play_voice` @ 0x13cea have a section of their own (`## Verified — voice`) because what they
+load is a SECOND PROGRAM — `GHOST.LOA`, `jsr`ed inside the BSS — with nothing to do with the PSG
+engine here. Both are verified; the LOA's own code is the row left in "Not reconstructed".
 
 | Addr (Ghidra) | Name | Bytes | Status | Verification |
 |---------------|------|-------|--------|--------------|
@@ -680,7 +867,7 @@ is a claim that would need a run on real hardware or a new kit surface to check.
    and what every caller reads; D0's high half is whatever the routine's own arithmetic left there.
    `psg_gate` is the exception and is compared whole, because it answers with a zero-extended byte.
 
-## Verified — clib (53)
+## Verified — clib (58)
 
 The Alcyon/DRI C runtime linked into the program, `src/clib.c` / `include/clib.h` / `test/test_clib.py`.
 Ported in dependency order: the string and 32-bit arithmetic leaves, the fd-mode side table, the
@@ -712,7 +899,7 @@ questions and only the second is asked. Half the fuzz's operands are raw 64-bit 
 doubles Python would name — the package has no special case for an infinity, a NaN or a denormal (a
 zero EXPONENT is the only value it tests for), so those are ordinary inputs to it.
 
-**568 cases.** The fuzzes are CHUNK-SEEDED rather than chunk-partitioned (`test/abi.py`'s `shard`
+**601 cases.** The fuzzes are CHUNK-SEEDED rather than chunk-partitioned (`test/abi.py`'s `shard`
 docstring tells the two apart), so each is `CHUNKS` x its own per-chunk count: the ldiv/lmul fuzz is
 8 x 24 pairs through each routine, the allocator fuzz 8 x 16 arenas, the arithmetic fuzz 8 x 24
 operand pairs, the conversion fuzz 8 x 24 patterns through each of three routines, and the printf
@@ -880,7 +1067,7 @@ compares final memory rather than write sequences. Transcribed and left honestly
 | `0x15af2` | `c_morecore` | 98 | ✅ verified | 5 granule counts across the quantum boundary; the c_free that links the new block in is part of the diff |
 | `0x15b54` | `c_malloc` | 170 | ✅ verified | an EMPTY list (self-init + morecore), 7 sizes over a six-block arena, and roughly half of the 8 x 16 fuzz arenas (the arm is a coin, and the case asserts both arms ran) |
 | `0x15bfe` | `c_free` | 130 | ✅ verified | 6 (victim, roving-pointer) combinations + the other half of the 8 x 16 fuzz arenas — both coalescing arms and the list's wrap. Every fuzz arena now carries at least one ALLOCATED block, so the free arm can no longer skip itself |
-| `0x15d64` | `c_open` | 214 | ✅ verified | 4 modes on a staged file + the three pseudo-devices, which never reach GEMDOS |
+| `0x15d64` | `c_open` | 214 | ✅ verified | 4 modes on a staged file + the three pseudo-devices, which never reach GEMDOS, + the TRUNCATING arm's only runnable path (its delete failing). Its other three calls are read-verified — see the residual below |
 | `0x14c7a` | `c_creat` | 154 | ✅ verified | 2 modes (Fcreate truncates the staged file) + the CON: path, which tail-calls c_open |
 | `0x14c3c` | `c_close` | 62 | ✅ verified | 2 real handles and 2 pseudo-handles; the signed word compare against 0x8300 is what separates them |
 | `0x1667c` | `c_read` | 332 | ✅ verified | 5 binary lengths + 5 text ones. The text pass drops CRs and TOPS THE BUFFER UP, so its later Freads leave a different `RET_*` and a different A2 |
@@ -917,6 +1104,28 @@ compares final memory rather than write sequences. Transcribed and left honestly
 | `0x16518` | `c_conin` | 356 | ✅ verified | 8 typed lines (RETURN, BACKSPACE with and without anything to rub out, the end-of-file character, a typed LINE FEED) + 4 already-gathered lines + 3 refused handles. Every echo is a console-ledger entry with its own RET_* |
 | `0x16b5e` | `c_conout_write` | 74 | ✅ verified | 7 spans incl. an empty one, a partial one and every printable byte; the ledger is the whole surface, and the zero-length case asserts an EMPTY ledger so "never ran" cannot pass as "wrote nothing" |
 | `0x16c04` | `c_write` | 394 | ✅ verified | 6 binary spans, 7 text ones over every newline position, and 3 to CON:. The three Fwrite sites leave different RET_*, so the run, the CR/LF pair and the tail are told apart by more than the file's bytes |
+| `0x16868` | `c_unlink` | 40 | ✅ verified | GEMDOS Fdelete over a name the harness staged and one it did not — the second answers TOS's EFILNF rather than refusing, because the staged-file table IS the model's filesystem — plus the exact code in `A_c_errno` and the table slot really being cleared |
+| `0x16ba8` | `c_auxout_write` | 46 | ✅ verified | 5 spans incl. an empty one, a partial one and a NUL/high-bit/newline mix; the ordered AUX: ledger is the whole surface, and the zero-length case asserts an EMPTY ledger so "never ran" cannot pass as "wrote nothing". Reached through `c_write`'s AUX: arm too |
+| `0x16bd6` | `c_prtout_write` | 46 | ✅ verified | the same five spans over Cprnout, whose answer the original discards. `test_character_device_write` runs both writers from one list, so a writer that sent to the other device is 15 cases red |
+| `0x14d16` | `c_exit_pterm` | 22 | ✅ verified | four exit codes. The oracle ENDS at the trap and the candidate returns from `os_pterm` — the one place the two shores differ by construction — so what is compared is the ledger entry and the trampoline's three save slots |
+| `0x14d2c` | `c_exit` | 70 | ✅ verified | the 73-record walk then Pterm: six flag sets either side of the `& 3` in-use test, two open streams at once, and one open in the LAST record — which is the only thing that pins the walk's bound |
+
+**Mutations tried against these five, each from a deleted `.so` with `__pycache__` swept:**
+
+| mutation | what caught it |
+|---|---|
+| `c_unlink`'s 0/-1 answer inverted | 2 cases — both rows of `test_c_unlink` |
+| `c_prtout_write` sending to AUX: instead of the printer | 15 cases — the shared list is what makes one writer's mistake the other's failure too |
+| the character writers' count tested AFTER the decrement | 26 cases |
+| `c_exit_pterm` never terminating | 11 cases |
+| `c_exit`'s walk one record short | 1 case — `test_c_exit_closes_the_LAST_slot`, **which did not exist until this mutant survived**: every other case's stream sits at FILE_SLOT, and a walk that stopped one record early passed the whole suite |
+| `c_open`'s truncating arm dropping the delete's `!= 0` test (2026-09-06) | 1 case — `test_c_open_truncating_abandons_the_call_when_the_delete_fails`, which is the arm's only runnable branch |
+
+**And one is EQUIVALENT, not a hole:** `c_exit`'s in-use test widened from `& FILE_IN_USE` to
+`!= 0`. `c_fclose` calls `c_fflush` first, and `c_fflush` returns -1 without touching anything on a
+record whose flags carry neither FILE_READ nor FILE_WRITE — so closing a record that is merely DIRTY
+writes nothing, makes no trap, and is indistinguishable from skipping it. Recorded so nobody
+re-tries it.
 
 ### What the demo-range chain now rests on
 
@@ -952,9 +1161,15 @@ executed rather than argued.
 * **`c_open`'s and `c_creat`'s "GEMDOS refused" arms are unreachable** for the same kind of reason:
   `os_fopen` REFUSES an unstaged name rather than returning a negative handle, so a case that asked
   for one would be rejected instead of exercising the arm. Read-verified.
-* **`c_open`'s truncating arm (`mode & 1`) calls `c_unlink` @ 0x16868 = GEMDOS Fdelete**, which the
-  kit does not model. The reconstruction routes it through `os_refused`, so a case reaching it fails
-  loudly. Nothing in the game asks for it — `c_creat` requests write access only.
+* **`c_open`'s truncating arm (`mode & 1`) is THREE-QUARTERS read-verified**, and the blocker is the
+  staged filesystem rather than a missing model. The arm is Fdelete, then Fcreate, then Fclose, then
+  the ordinary Fopen; `os_fdelete` CLEARS the staged slot's name and `os_fcreate` refuses a name the
+  harness has not declared ("the harness declares the filesystem", `tools/recreate_kit/include/
+  os.h`), so the create that follows the delete always refuses. What runs is the DELETE-FAILS path —
+  `test_c_open_truncating_abandons_the_call_when_the_delete_fails`, which is the arm's only branch —
+  and the three calls after it are transcribed and unrun. Nothing in the game asks for the mode at
+  all: `c_creat` requests write access only. Closing it means an `os_fcreate` that can re-declare a
+  name `os_fdelete` cleared.
 * **`c_read`'s console arm** (a handle at or below `FD_DEVICE_CON`) is still not reconstructed and
   still refuses — but the reason has changed and is now scope rather than a model gap. Its body is a
   loop calling `c_conin` @ 0x16518 once per byte until the count runs out or one answers -1, and
@@ -1028,18 +1243,20 @@ executed rather than argued.
   on. That is recorded here rather than reproduced, because reproducing it means writing outside a C
   array in the harness's process.
 
-### Not ported, and what each would need
+**`c_conin`'s `^C` arm is run now too**, and it is the one place where the reconstruction's shape
+differs from the original's on purpose: the original FALLS THROUGH from the `^C` branch into the
+end-of-file test, which is code the real machine never reaches because Pterm does not return. The
+reconstruction returns instead, and the model agrees from the other side — `os_pterm` latches the
+event ledger and every entry after it is refused. `test_c_conin_ctrl_c_ends_the_program` is what
+runs the arm at all; nothing else in the suite types a `^C`.
 
-Five wrappers, one unmodeled GEMDOS call each. Every other routine in this subsystem is verified
-above; none of these five is reachable in play.
+### The one arm of this subsystem still unrunnable
 
-| Routine | Why | What would close it |
-|---|---|---|
-| `c_unlink` @ 0x16868 | GEMDOS **Fdelete (0x41)**, unmodeled | clearing a staged slot's name (or its open flag) and answering 0/-1. One site, and only `c_open`'s truncating arm reaches it — which `c_creat` never asks for |
-| `c_exit_pterm` @ 0x14d16 | GEMDOS **Pterm (0x4c)**, unmodeled and unmodelable as a return | nothing: a run that terminates has no `rts` to diff at. Record it read-verified |
-| `c_exit` @ 0x14d2c | walks the 73 `c_iob` records calling `c_fclose` on every one whose flags & 3 is set, then `c_exit_pterm` | the walk is now ordinary work — `c_fclose` is verified — but the tail is Pterm, so it wants a `stop_pc` checkpoint at the call rather than a model for it. `c_conin`'s ^C arm is the other caller, and refuses for the same reason |
-| `c_auxout_write` @ 0x16ba8 | GEMDOS **Cauxout (0x04)**, unmodeled | an `OS_EVENT_CONOUT`-shaped ledger kind per device. `c_write`'s AUX: arm refuses until then |
-| `c_prtout_write` @ 0x16bd6 | GEMDOS **Cprnout (0x05)**, unmodeled | the same, for PRT:. `c_conin`'s AUX: arm wants **Cauxin (0x03)** on the read side and refuses likewise |
+**`c_conin`'s AUX: handle wants GEMDOS Cauxin (0x03), and the model REFUSES it deliberately.** The
+console has a staged keystroke queue behind it and the serial line has nothing at all, so every
+answer would be invented and the real call would block waiting for one that never comes
+(tools/recreate_kit/include/os.h, `os_cauxin`). The arm is transcribed as the refusal it is; closing
+it means a second staged input stream, of exactly `os_console_take_key`'s shape.
 
 ## Borrowed globals
 
@@ -1098,10 +1315,6 @@ like a gap when it has become ordinary work is the most expensive kind of stale 
 
 | Routine(s) | Subsystem | Why not, and what would close it |
 |---|---|---|
-| `load_voice_player` @ 0x13c6c, `play_voice` @ 0x13cea | sound | The digitised-voice path (`GHOST.LOA`): a second program `jsr`ed inside the BSS that programs MFP Timer A and busy-waits. Needs the timer/busy-wait gap in "Model gaps" closed first; it has nothing to do with the engine that IS ported |
-| `c_unlink` @ 0x16868, `c_exit_pterm` @ 0x14d16, `c_exit` @ 0x14d2c, `c_auxout_write` @ 0x16ba8, `c_prtout_write` @ 0x16bd6 | clib | **The whole C library except these five.** One unmodeled GEMDOS call each — Fdelete (0x41), Pterm (0x4c) twice over, Cauxout (0x04), Cprnout (0x05) — and `c_conin`'s AUX: arm wants Cauxin (0x03) on the read side. The clib section's table says what each would need; none of the five is reachable in play |
-| `hud_draw_counters` @ 0x113d2, `hud_bonus_bar_fill` @ 0x112c8, `hud_bonus_bar_shrink` @ 0x11346 | gameplay | **NOT BLOCKED ANY MORE — this row is now just work.** All three reach the game's own VDI binding (`vst_height`, `vst_color`, `vsf_color`, `v_gtext`, `vr_recfl`, and `vdi_call` behind them), which was the front end's and unported; it is ported and verified, so `#include "frontend.h"` and call it — `include/frontend.h` also carries `A_blit_pxy`, the rectangle `vr_recfl` is handed. Two things they still need: the CALLER's A1/A2, which every routine in that binding takes as an argument, and — for `hud_bonus_bar_fill`, which reaches `vdi_call` from inside a loop that has already reloaded A2 — a register that is derivable rather than an entry argument (`docs/agent-playbook.md` §5) |
-| `game_frame_update`'s front-end poll `[0x1233a, 0x12434)` | gameplay | **NEITHER HALF IS BLOCKED ANY MORE.** `vq_mouse` @ 0x16a26 and `vq_key_s` @ 0x16a5e are verified in `## Verified — frontend` and callable from here; the `Crawio(0xff)` key read between them at `[0x12360, 0x12434)` was never blocked (`Cconis`/`Crawcin`/`Cnecin` are modeled and `harness.console_keys()` stages a QUEUE the run drains, so even the `^P` pause is drivable). It is simply not done: it wants a slice entered at 0x1233a, the three trampoline save slots per trap, and a decision about the `^S` and `^R` arms' whole-game reset. Ordinary porting work, and the natural next thing in this subsystem |
-| `game_frame_update`'s death sequence `[0x1273c, 0x1294a)` | gameplay | **NOT BLOCKED ANY MORE.** The pop/respawn animation calls `save_sprite_backgrounds` / `draw_sprites` / `restore_sprite_backgrounds` five times over, and all three are verified in `## Verified — frontend` (they moved there with the sprite protocol). The `Random()` it runs through the fp package and the two-player save at 0x128c8 were never gaps |
-| `crt0_start` @ 0x10036, `init_globals` @ 0x16d8e, `main` @ 0x100dc, `game_top_loop` @ 0x101e6 | init | Not started; each is a slice rather than a function (see that section). `main`'s wrong-resolution arm reaches `c_printf`, which is verified now, so that arm is ordinary work; `game_top_loop` never returns, and the two `Bconout` IKBD commands that used to block it are modeled now — what is left is a chain of slices between calls that are themselves verified |
+| the `GHOST.LOA` player itself — a second program, so it has no address in this one | voice | **THE TWO GAME ROUTINES ARE PORTED** — `## Verified — voice` — and what is left is the second program `play_voice` loads and calls: an `ABSFLAG` .PRG that enters supervisor mode, saves the MFP registers, installs a handler at `$134`, programs Timer A from a rate table and busy-waits on a done flag (`../notes/loader.md`). The kit fires no interrupts, so the handler would be entered directly per sample (the shape `timer_c_sound_isr` uses) and the setup/teardown run as slices around the MFP writes; the WAIT has no site the scheduled-write model can name, because the byte it spins on is written by the handler and not by an external agent. It also arms the cartridge DAC, which nothing models |
+| `game_top_loop` @ 0x101e6 | init | The last routine of the boot chain, and the only one left: the `do { … } while (true)` that loads every file, installs the sound driver and runs a turn. Not blocked on the model — the two `Bconout` IKBD commands are modeled and every call it makes is verified — what is left is a chain of `stop_pc` slices between those calls, with the world staged for each |
 | `title_menu_loop` @ 0x115d6 and the demo player at 0x11992 | frontend | Not started, and no longer blocked on the model: `harness.console_keys` stages up to eight keystrokes in order, which is exactly the menu's `while (Cconis()) Crawcin(); c = Cnecin()` idiom. The `[D]` attract path polls `vq_mouse` 37,000 times and drives the fp package for its two `Random()` ranges — both verified — so what it needs is a mid-entry slice per menu branch and an instruction cap that fits |

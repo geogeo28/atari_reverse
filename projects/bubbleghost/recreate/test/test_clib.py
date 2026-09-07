@@ -109,6 +109,12 @@ FD_DEVICE_CON = 0x8300
 FD_DEVICE_AUX = 0x82ff
 FD_DEVICE_PRT = 0x82fe
 DEVICE_NAME_STRIDE = 6
+OPEN_MODE_TRUNCATE = 0x0001
+# The truncating arm's two extra trap sites. Restated and pinned even though only the arm's FIRST
+# call is runnable under the model: a wrong return PC in a read-verified transcription is exactly
+# what nothing else would ever look at.
+RET_C_OPEN_TRUNC_FCREATE = 0x15de6
+RET_C_OPEN_TRUNC_FCLOSE = 0x15df2
 OPEN_MODE_WRITE = 0x0002
 RET_GEMDOS_MALLOC = 0x15c92
 RET_GEMDOS_MFREE = 0x15ca8
@@ -261,6 +267,11 @@ for _name, _args, _ret in (
     ("g_c_fputs", [ctypes.c_void_p] + [ctypes.c_uint32] * 4, None),
     ("g_c_vfprintf", [ctypes.c_void_p] + [ctypes.c_uint32] * 6, ctypes.c_int32),
     ("g_c_printf", [ctypes.c_void_p] + [ctypes.c_uint32] * 5, ctypes.c_int32),
+    ("g_c_unlink", [ctypes.c_void_p] + [ctypes.c_uint32] * 3, ctypes.c_int32),
+    ("g_c_auxout_write", [ctypes.c_void_p] + [ctypes.c_uint32] * 4, None),
+    ("g_c_prtout_write", [ctypes.c_void_p] + [ctypes.c_uint32] * 4, None),
+    ("g_c_exit_pterm", [ctypes.c_void_p] + [ctypes.c_uint32] * 3, None),
+    ("g_c_exit", [ctypes.c_void_p] + [ctypes.c_uint32] * 3, None),
 ):
     getattr(_lib, _name).argtypes = _args
     getattr(_lib, _name).restype = _ret
@@ -484,13 +495,23 @@ def test_c_ldiv_by_zero_stores_zero_over_both_slots(dividend):
 
 
 def test_c_ldiv_by_zero_is_unrunnable_without_that_vector():
-    """...and the declaration is load-bearing: with $14 as the loader leaves it, the run is refused.
+    """...and the declaration is load-bearing: with $14 as the loader leaves it, nothing is verified.
 
     This is what keeps the case above honest. The oracle takes the exception to address 0 and
-    executes the vector page, so it never reaches the `rts` — and if the kit ever grows a model for
-    the vector, this reddens and the pair of cases gets revisited rather than quietly diverging.
+    executes the vector page, which reaches the `rts` the case is diffed at only by accident — so
+    the run has to FAIL, and the two shapes it can fail in are both accepted here because both are
+    the kit's answer to the same thing and neither is this reconstruction's:
+
+      * a REFUSAL, while the walk over the vector page reaches a call the model does not serve;
+      * an OS EVENT STREAM MISMATCH, once it does — the walk reaches a GEMDOS `Pterm`, which
+        Phase 13 now models as the process ending, and the candidate (which never divides by zero
+        at all) files no such event.
+
+    Either way the pair of cases gets revisited rather than quietly diverging if the kit grows a
+    model for the vector itself: this would then go green and fail by name.
     """
-    with pytest.raises(RuntimeError, match="unmodeled OS behaviour|did not reach"):
+    with pytest.raises((RuntimeError, AssertionError),
+                       match="unmodeled OS behaviour|did not reach|OS event streams differ"):
         ldiv_case(0, 5)
 
 
@@ -592,10 +613,12 @@ def test_c_getfdmode(handle):
 # ================================================================================================
 
 def trap_slot_noise(rng):
-    """The trampolines' three save slots under noise, so a wrapper that failed to write one is a
-    difference rather than a zero matching a zero. They are consecutive longwords in that order."""
+    """`abi.trap_slot_noise` over THIS battery's own `A_trap_saved_ret`.
+
+    The adjacency the shared helper relies on is asserted here, where the three addresses are
+    restated and pinned to `include/clib.h`."""
     assert A_TRAP_SAVED_A2 == A_TRAP_SAVED_RET + 4 and A_TRAP_SAVED_A1 == A_TRAP_SAVED_RET + 8
-    return {A_TRAP_SAVED_RET: rng.randbytes(12)}
+    return abi.trap_slot_noise(rng, A_TRAP_SAVED_RET)
 
 
 def caller_registers():
@@ -863,6 +886,34 @@ def test_c_open_a_staged_file(mode):
     check_d0_low_word(info, f"c_open({DEM_NAME!r}, {mode:#x})")
 
 
+# `mode & 1` — the TRUNCATING open. Its four GEMDOS calls are Fdelete, Fcreate, Fclose and then the
+# ordinary Fopen, and only the first is runnable here: `os_fdelete` CLEARS the staged slot's name,
+# and `os_fcreate` refuses a name the harness has not declared ("the harness declares the
+# filesystem", tools/recreate_kit/include/os.h) — so the create that follows the delete always
+# refuses. The DELETE-FAILS arm is the half that runs, and it is the half with a branch in it;
+# ../STATUS.md records the other three calls as read-verified with that exact blocker. Nothing in
+# the game asks for this mode at all: `c_creat` requests OPEN_MODE_WRITE only.
+
+def test_c_open_truncating_abandons_the_call_when_the_delete_fails():
+    """A delete that answers EFILNF returns -1 without creating anything.
+
+    The file the case names is NOT staged, so `c_unlink` answers -1 — which is the one input that
+    separates the arm's first call from the three after it, and the only path through the arm the
+    model can run to the `rts`.
+    """
+    rng = random.Random(0x571)
+    pokes, _handles = staged([(SCR_NAME, b"a different file")])
+    pokes = abi.merge_pokes(pokes, path_poke(rng, DEM_NAME), fd_table_poke(rng, ()),
+                            trap_slot_noise(rng),
+                            abi.stack_args((4, SCRATCH), (2, OPEN_MODE_TRUNCATE)))
+    info = check(ENTRY_C_OPEN,
+                 lambda lib, buf: lib.g_c_open(buf, SCRATCH, OPEN_MODE_TRUNCATE,
+                                               CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note="c_open truncating a missing file")
+    check_d0_low_word(info, "c_open truncating a missing file")
+    assert info["ret"] & 0xffff == 0xffff
+
+
 @pytest.mark.parametrize("name,handle", (("CON:", FD_DEVICE_CON), ("AUX:", FD_DEVICE_AUX),
                                          ("PRT:", FD_DEVICE_PRT)))
 def test_c_open_a_pseudo_device(name, handle):
@@ -971,9 +1022,6 @@ def test_c_read_text(length, payload):
 # noise (`trap_slot_noise`), exactly as the file layer's do.
 # ================================================================================================
 
-# The pseudo-devices c_write routes to a GEMDOS character call the kit does not model. They are
-# named so the skip reads as a gap rather than an oversight (../STATUS.md's per-routine table).
-UNMODELED_WRITE_DEVICES = (FD_DEVICE_AUX, FD_DEVICE_PRT)
 
 
 @pytest.mark.parametrize("text,length", (
@@ -1935,6 +1983,27 @@ def test_c_conin_hands_back_a_line_already_gathered(read_pos, length, line):
     check_d0_low_word(info, f"c_conin buffered {line!r} at {read_pos}")
 
 
+def test_c_conin_ctrl_c_ends_the_program():
+    """^C runs `c_exit`, which closes every open stream and terminates through GEMDOS Pterm.
+
+    THE ORIGINAL FALLS THROUGH from this branch into the end-of-file test, and that fall-through is
+    code the real machine never reaches — Pterm does not return — so the reconstruction returns
+    instead. The model says the same thing from the other side: `os_pterm` LATCHES the event ledger,
+    and anything appended after it is refused. This case is what runs the arm at all: nothing else
+    in the suite types a ^C.
+    """
+    rng = random.Random(0x1c03)
+    pokes = abi.merge_pokes(conin_poke(rng), iob_poke(rng), trap_slot_noise(rng),
+                            fd_table_poke(rng, ()),
+                            harness.console_keys([chr(CONIN_INTERRUPT)]),
+                            abi.stack_args((2, FD_DEVICE_CON)))
+    info = check(ENTRY_C_CONIN,
+                 lambda lib, buf: lib.g_c_conin(buf, FD_DEVICE_CON, CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note="c_conin: ^C")
+    assert info["regs"]["events"][-1] == (OS_EVENT_PTERM, CONIN_EXIT_CODE), (
+        f"the run did not end in Pterm({CONIN_EXIT_CODE}) — {info['regs']['events']}")
+
+
 @pytest.mark.parametrize("handle", (FD_DEVICE_PRT, 6, 0))
 def test_c_conin_refuses_every_handle_but_the_console_and_the_serial_port(handle):
     rng = random.Random(handle + 0xc1)
@@ -2519,10 +2588,307 @@ def test_c_printf(fmt, values):
 
 
 # ================================================================================================
+# The five wrappers the trap model used to block — c_unlink, c_auxout_write, c_prtout_write,
+# c_exit_pterm and c_exit
+#
+# One GEMDOS call each: Fdelete (0x41), Cauxout (0x04), Cprnout (0x05) and Pterm (0x4c) twice over.
+# None is reachable in play, and each has its own surface now: Fdelete edits the staged-file table
+# and answers a code, the two character writers make an OS EVENT per byte, and Pterm makes one and
+# LATCHES the ledger — so a reconstruction that ran on past it would be caught by the entries it
+# could no longer append (tools/recreate_kit/include/os.h).
+# ================================================================================================
+
+ENTRY_C_EXIT_PTERM = 0x14d16
+ENTRY_C_EXIT = 0x14d2c
+ENTRY_C_UNLINK = 0x16868
+ENTRY_C_AUXOUT_WRITE = 0x16ba8
+ENTRY_C_PRTOUT_WRITE = 0x16bd6
+
+CONIN_INTERRUPT = 0x03          # ^C — the library terminates the program here
+CONIN_EXIT_CODE = 2
+OS_EFILNF = -33                 # TOS's "file not found", which os_fdelete answers rather than refuses
+OS_EVENT_PTERM = harness.OS_EVENT_PTERM     # the ledger kind a terminated run ends with
+
+
+# ---- c_unlink ----------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("staged_name,answer", ((DEM_NAME, 0), (SCR_NAME, -1)))
+def test_c_unlink(staged_name, answer):
+    """Fdelete of a name the harness staged, and of one it did not.
+
+    The second is not a refusal: the staged-file table IS the model's whole filesystem, so a name it
+    does not carry is a name that does not exist, and the model gives TOS's own EFILNF for it. What
+    the case pins is that both answers are the ones the wrapper turns into 0 and -1.
+    """
+    rng = random.Random(len(staged_name))
+    pokes, _handles = staged([(staged_name, b"contents")])
+    pokes = abi.merge_pokes(pokes, path_poke(rng, DEM_NAME), trap_slot_noise(rng),
+                            abi.stack_args((4, SCRATCH)))
+    info = check(ENTRY_C_UNLINK,
+                 lambda lib, buf: lib.g_c_unlink(buf, SCRATCH, CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note=f"c_unlink with {staged_name} staged")
+    check_d0_low_word(info, f"c_unlink with {staged_name} staged")
+    assert info["ret"] & 0xffff == answer & 0xffff
+
+
+def test_c_unlink_of_a_missing_file_records_efilnf():
+    """The exact code, read off the oracle's own image."""
+    rng = random.Random(0x6869)
+    pokes, _handles = staged([(SCR_NAME, b"x")])
+    pokes = abi.merge_pokes(pokes, path_poke(rng, DEM_NAME), trap_slot_noise(rng),
+                            abi.stack_args((4, SCRATCH)))
+    image, _writes, _regs = emu.run(harness.make_image(pokes), ENTRY_C_UNLINK,
+                                    regs={"a4": abi.A4_BASE, **caller_registers()})
+    assert abi.read_word(image, A_C_ERRNO, signed=True) == OS_EFILNF
+
+
+def test_c_unlink_really_removes_the_staged_slot():
+    """A deleted name is gone from the table, which is what makes a later `c_open` of it refuse."""
+    rng = random.Random(0x686a)
+    pokes, _handles = staged([(DEM_NAME, b"contents")])
+    pokes = abi.merge_pokes(pokes, path_poke(rng, DEM_NAME), trap_slot_noise(rng),
+                            abi.stack_args((4, SCRATCH)))
+    image, _writes, _regs = emu.run(harness.make_image(pokes), ENTRY_C_UNLINK,
+                                    regs={"a4": abi.A4_BASE, **caller_registers()})
+    assert image[harness.OS_FS_TABLE] == 0, "the slot's name still starts with a byte, so it is not gone"
+
+
+# ---- c_auxout_write and c_prtout_write ---------------------------------------------------------
+
+AUXOUT_TEXTS = (
+    (b"", 0),
+    (b"A", 1),
+    (b"AUX line\n", 9),
+    (b"\x00\x80\xff\x0a", 4),          # a NUL, two high-bit bytes and a newline, none translated
+    (b"more than asked for", 5),
+)
+
+CHARACTER_DEVICES = {
+    "aux": (ENTRY_C_AUXOUT_WRITE, "g_c_auxout_write"),
+    "prt": (ENTRY_C_PRTOUT_WRITE, "g_c_prtout_write"),
+}
+
+
+@pytest.mark.parametrize("text,length", AUXOUT_TEXTS)
+@pytest.mark.parametrize("device", sorted(CHARACTER_DEVICES))
+def test_character_device_write(device, text, length):
+    """Every byte straight out, with no CR before a newline — which is what tells these two apart
+    from `c_conout_write`, whose identical-looking loop inserts one."""
+    entry, symbol = CHARACTER_DEVICES[device]
+    rng = random.Random(len(text) * 13 + length + len(device))
+    pokes = abi.merge_pokes(noise_around(rng, SCRATCH, text), trap_slot_noise(rng),
+                            abi.stack_args((4, SCRATCH), (2, length)))
+    check(entry, lambda lib, buf: getattr(lib, symbol)(buf, SCRATCH, length, CALLER_A1, CALLER_A2),
+          pokes=pokes, regs=caller_registers(), note=f"{device} {text!r} {length}")
+
+
+@pytest.mark.parametrize("device", sorted(CHARACTER_DEVICES))
+def test_character_device_write_of_nothing_leaves_the_ledger_empty(device):
+    """The count is tested BEFORE it is decremented, so a length of 0 writes nothing.
+
+    Asserted rather than left to the diff, for `c_conout_write`'s reason: these two touch no image
+    state at all, so an empty ledger on both sides is also what a routine that never ran produces.
+    The same staging at length 1 logs exactly one entry, which is what makes the pair evidence.
+    """
+    entry, symbol = CHARACTER_DEVICES[device]
+    rng = random.Random(0xa0 + len(device))
+
+    def run_with(length):
+        pokes = abi.merge_pokes(noise_around(rng, SCRATCH, b"A"), trap_slot_noise(rng),
+                                abi.stack_args((4, SCRATCH), (2, length)))
+        return check(entry,
+                     lambda lib, buf: getattr(lib, symbol)(buf, SCRATCH, length, CALLER_A1,
+                                                           CALLER_A2),
+                     pokes=pokes, regs=caller_registers(), note=f"{device}(_, {length})")
+
+    assert run_with(0)["regs"]["events"] == []
+    assert len(run_with(1)["regs"]["events"]) == 1
+
+
+@pytest.mark.parametrize("handle,text,length", ((FD_DEVICE_AUX, b"aux\n", 4),
+                                                (FD_DEVICE_PRT, b"prt\n", 4),
+                                                (FD_DEVICE_AUX, b"", 0)))
+def test_c_write_to_a_character_device(handle, text, length):
+    """...and `c_write`'s two arms that reach them, answered before the fd-mode table is consulted.
+
+    The count they answer is the LENGTH ASKED FOR, exactly as CON:'s arm does — neither writer
+    reports how much went out.
+    """
+    rng = random.Random(handle + length)
+    pokes = abi.merge_pokes(noise_around(rng, SCRATCH, text), trap_slot_noise(rng),
+                            fd_table_poke(rng, ()),
+                            abi.stack_args((2, handle), (4, SCRATCH), (2, length)))
+    info = check(ENTRY_C_WRITE,
+                 lambda lib, buf: lib.g_c_write(buf, handle, SCRATCH, length,
+                                                CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note=f"c_write {handle:#x} {text!r}")
+    check_d0_low_word(info, f"c_write {handle:#x} {text!r}")
+    assert info["ret"] & 0xffff == length
+
+
+# ---- c_exit_pterm and c_exit -------------------------------------------------------------------
+
+@pytest.mark.parametrize("code", (0, 1, 2, 0xffff))
+def test_c_exit_pterm(code):
+    """One Pterm, and the trampoline's three slots as its trace.
+
+    The oracle ends the run AT the trap — there is nothing after it to execute — and the candidate
+    returns from `os_pterm`, which is the one place the two shores differ by construction. What is
+    compared is the ledger entry and the save slots (tools/recreate_kit/include/os.h).
+    """
+    rng = random.Random(0x4d16 + code)
+    pokes = abi.merge_pokes(trap_slot_noise(rng), abi.stack_args((2, code)))
+    info = check(ENTRY_C_EXIT_PTERM,
+                 lambda lib, buf: lib.g_c_exit_pterm(buf, code, CALLER_A1, CALLER_A2),
+                 pokes=pokes, regs=caller_registers(), note=f"c_exit_pterm({code})")
+    assert info["regs"]["events"] == [(OS_EVENT_PTERM, code)], (
+        f"the oracle's ledger is {info['regs']['events']}, not one Pterm({code})")
+
+
+# The flag combinations `c_exit` walks the table for. A slot is closed exactly when its flags carry
+# FILE_READ or FILE_WRITE; the rows either side of that pair are what pin the mask being `& 3` and
+# not `!= 0` — FILE_DIRTY alone is a busy-LOOKING record that must be left alone.
+EXIT_TABLE_FLAGS = (
+    (0, "every slot free"),
+    (FILE_READ, "one slot open for reading"),
+    (FILE_WRITE, "one open for writing"),
+    (FILE_READ | FILE_WRITE, "one open for both"),
+    (FILE_DIRTY, "one DIRTY but not open — the mask is & 3, not != 0"),
+    (FILE_DIRTY | FILE_WRITE, "one dirty AND open, so its buffer is flushed on the way out"),
+)
+
+
+# The four bytes the dirty stream's buffer holds (`ptr - base` = 4), which `c_fflush` writes out
+# through `c_write` on the way to the Pterm. The staged file starts EMPTY, so the staging area's
+# first four bytes moving from what `stage_files` left to these is the whole evidence that the close
+# really happened — the oracle's own ledger cannot be, since the run ends in a Pterm either way.
+EXIT_FLUSHED_BYTES = b"tail"
+
+
+def _c_exit_oracle_image(pokes):
+    """The image ONE oracle run of `c_exit` leaves."""
+    image, _writes, _regs = emu.run(harness.make_image(pokes), ENTRY_C_EXIT,
+                                    regs={"a4": abi.A4_BASE, **caller_registers()})
+    return image
+
+
+def _staged_file_bytes(image, slot=0):
+    """One staged file's contents, read through its own table entry rather than at a fixed offset —
+    the flush writes at the GEMDOS CURSOR, which a case may have placed part-way in."""
+    entry = harness.OS_FS_TABLE + slot * harness.OS_FS_ENTRY
+    at = abi.read_long(image, entry + harness.OS_FS_OFF_STAGING)
+    size = abi.read_long(image, entry + harness.OS_FS_OFF_CAPACITY)
+    return bytes(image[at:at + size])
+
+
+def _c_exit_staged_file(pokes, slot=0):
+    """(before, after) for one staged file, across one oracle run of `c_exit`."""
+    staged = harness.make_image(pokes)
+    before = _staged_file_bytes(staged, slot)
+    final, _writes, _regs = emu.run(staged, ENTRY_C_EXIT,
+                                    regs={"a4": abi.A4_BASE, **caller_registers()})
+    return before, _staged_file_bytes(final, slot)
+
+
+@pytest.mark.parametrize("flags,note", EXIT_TABLE_FLAGS)
+def test_c_exit_closes_every_open_stream(flags, note):
+    """The 73-record walk, then Pterm. One record at FILE_SLOT carries `flags`; the rest are free.
+
+    The stream is staged with a real file, a real handle and a real buffer, so a record that IS
+    closed goes through `c_fclose` -> `c_fflush` -> `c_write` and leaves the staged file changed —
+    which is what makes the difference between closing it and skipping it visible in the image as
+    well as in the ledger.
+    """
+    rng = random.Random(0x4d2c + flags)
+    # The stream is placed PART-WAY THROUGH a file that really has bytes in it, and its buffer holds
+    # a few unread ones: a clean stream's flush seeks the cursor BACK over them, which the model
+    # refuses on a negative position — so a case that staged an empty file would be thrown away
+    # rather than run.
+    pokes, handles = staged([(SCR_NAME, bytes(range(0x80)), 0x100)], open_slots=(0,),
+                            cursors=((0, 0x40),))
+    handle = handles[SCR_NAME]
+    record = file_record(ptr=FILE_BUFFER + 4, cnt=0x10, base=FILE_BUFFER, flags=flags,
+                         fd=handle, offset=0, bufsiz=0x200)
+    pokes = abi.merge_pokes(pokes, iob_poke(rng, record), noise_around(rng, FILE_BUFFER, b"tail"),
+                            fd_table_poke(rng, ((handle, FD_MODE_BINARY),)), trap_slot_noise(rng),
+                            abi.stack_args((2, CONIN_EXIT_CODE)))
+    check(ENTRY_C_EXIT,
+          lambda lib, buf: lib.g_c_exit(buf, CONIN_EXIT_CODE, CALLER_A1, CALLER_A2),
+          pokes=pokes, regs=caller_registers(), note=f"c_exit, {note}")
+    # WHAT THE ORACLE'S LEDGER SAYS IS NOT EVIDENCE about the candidate — `check` already compares
+    # the two streams — so the outcome read back here is the one the byte diff attributes only in
+    # company with the whole image: whether the FILE'S OWN BYTES moved. A record that is dirty AND
+    # open is flushed on the way out; every other flag set leaves the staged file alone.
+    before, after = _c_exit_staged_file(pokes)
+    if flags & FILE_DIRTY and flags & FILE_WRITE:
+        assert EXIT_FLUSHED_BYTES in after and after != before, (
+            f"c_exit, {note}: the stream was not flushed — the staged file is unchanged")
+    else:
+        assert after == before, (
+            f"c_exit, {note}: a stream with no dirty buffer wrote to the file anyway")
+
+
+def test_c_exit_closes_the_LAST_slot():
+    """The walk's BOUND, not just its step: an open stream in record C_IOB_SLOTS - 1.
+
+    Measured: with every case's stream at FILE_SLOT, a walk that stopped one record short passed
+    the whole suite. The bound is `a3 < &c_iob[0] + 0x5b4` compared as a LONG, and this is the only
+    case that reaches the record it admits last.
+    """
+    rng = random.Random(0x4d2e)
+    pokes, handles = staged([(SCR_NAME, b"", 0x80)], open_slots=(0,))
+    handle = handles[SCR_NAME]
+    span = bytearray(iob_poke(rng, None)[A_C_UNBUF_CHARS])
+    at = A_C_IOB - A_C_UNBUF_CHARS + (C_IOB_SLOTS - 1) * C_IOB_STRIDE
+    span[at:at + C_IOB_STRIDE] = file_record(ptr=FILE_BUFFER + 4, cnt=0x10, base=FILE_BUFFER,
+                                             flags=FILE_WRITE | FILE_DIRTY, fd=handle,
+                                             bufsiz=0x200)
+    pokes = abi.merge_pokes(pokes, {A_C_UNBUF_CHARS: bytes(span)},
+                            noise_around(rng, FILE_BUFFER, b"last"),
+                            fd_table_poke(rng, ((handle, FD_MODE_BINARY),)),
+                            trap_slot_noise(rng), abi.stack_args((2, 0)))
+    check(ENTRY_C_EXIT, lambda lib, buf: lib.g_c_exit(buf, 0, CALLER_A1, CALLER_A2),
+          pokes=pokes, regs=caller_registers(), note="c_exit with the LAST slot open")
+    before, after = _c_exit_staged_file(pokes)
+    assert after != before and b"last" in after, (
+        "the walk stopped before the last record — its stream was never flushed")
+
+
+def test_c_exit_closes_more_than_one_stream():
+    """Two open records, so the walk's ADVANCE is pinned as well as its test: a version that
+    stopped at the first busy slot leaves the second stream's buffer unflushed."""
+    rng = random.Random(0x4d2d)
+    pokes, handles = staged([(SCR_NAME, b"", 0x80), (DEM_NAME, b"", 0x80)], open_slots=(0, 1))
+    scr, dem = handles[SCR_NAME], handles[DEM_NAME]
+    # Both records are DIRTY, so each flush WRITES rather than seeking back, and the two staged
+    # files end up holding different bytes — which is the image evidence that both were closed.
+    span = bytearray(iob_poke(rng, None)[A_C_UNBUF_CHARS])
+    for slot, handle in ((FILE_SLOT, scr), (FILE_SLOT + 1, dem)):
+        at = A_C_IOB - A_C_UNBUF_CHARS + slot * C_IOB_STRIDE
+        span[at:at + C_IOB_STRIDE] = file_record(ptr=FILE_BUFFER + 4, cnt=0x1fc, base=FILE_BUFFER,
+                                                 flags=FILE_WRITE | FILE_DIRTY, fd=handle,
+                                                 bufsiz=0x200)
+    pokes = abi.merge_pokes(pokes, {A_C_UNBUF_CHARS: bytes(span)},
+                            noise_around(rng, FILE_BUFFER, b"tail"),
+                            fd_table_poke(rng, ((scr, FD_MODE_BINARY), (dem, FD_MODE_BINARY))),
+                            trap_slot_noise(rng), abi.stack_args((2, 0)))
+    check(ENTRY_C_EXIT, lambda lib, buf: lib.g_c_exit(buf, 0, CALLER_A1, CALLER_A2),
+          pokes=pokes, regs=caller_registers(), note="c_exit with two open streams")
+    # BOTH staged files, so the walk's ADVANCE is read back and not only diffed: a version that
+    # stopped at the first busy slot leaves the second file as `stage_files` left it.
+    for slot in (0, 1):
+        before, after = _c_exit_staged_file(pokes, slot)
+        assert after != before and EXIT_FLUSHED_BYTES in after, (
+            f"stream {slot} was not flushed on the way out")
+
+
+# ================================================================================================
 # The cross-file pins this battery carries (README.md, "Adding a function", step 4)
 # ================================================================================================
 
 MIRRORS = (
+    ("CONIN_EXIT_CODE", "include/clib.h", "CONIN_EXIT_CODE"),
+    ("CONIN_INTERRUPT", "include/clib.h", "CONIN_INTERRUPT"),
     ("A_C_ERRNO", "include/clib.h", "A_c_errno"),
     ("A_C_MALLOC_FREELIST", "include/clib.h", "A_c_malloc_freelist"),
     ("A_C_MALLOC_SENTINEL", "include/clib.h", "A_c_malloc_sentinel"),
@@ -2547,6 +2913,9 @@ MIRRORS = (
     ("FD_DEVICE_AUX", "include/clib.h", "FD_DEVICE_AUX"),
     ("FD_DEVICE_PRT", "include/clib.h", "FD_DEVICE_PRT"),
     ("DEVICE_NAME_STRIDE", "include/clib.h", "DEVICE_NAME_STRIDE"),
+    ("OPEN_MODE_TRUNCATE", "include/clib.h", "OPEN_MODE_TRUNCATE"),
+    ("RET_C_OPEN_TRUNC_FCREATE", "include/clib.h", "RET_C_OPEN_TRUNC_FCREATE"),
+    ("RET_C_OPEN_TRUNC_FCLOSE", "include/clib.h", "RET_C_OPEN_TRUNC_FCLOSE"),
     ("OPEN_MODE_WRITE", "include/clib.h", "OPEN_MODE_WRITE"),
     ("RET_GEMDOS_MALLOC", "include/clib.h", "RET_GEMDOS_MALLOC"),
     ("RET_GEMDOS_MFREE", "include/clib.h", "RET_GEMDOS_MFREE"),
@@ -2615,6 +2984,13 @@ MIRRORS = (
 # prologue would let one stand for another and a mistyped entry would run the wrong routine and
 # still come back clean.
 ENTRY_PROLOGUES = {
+    "ENTRY_C_EXIT_PTERM": "4e5600003f2e00083f3c004c4eba1134",
+    "ENTRY_C_EXIT": "4e56fffe2f0b41ec9bee26486016302b",
+    "ENTRY_C_UNLINK": "4e5600002f2e00083f3c00414ebaf5e2",
+    # TWENTY-FOUR BYTES for the two character writers: they are the identical loop over two
+    # different GEMDOS selectors, and the selector is the first thing that tells them apart.
+    "ENTRY_C_AUXOUT_WRITE": "4e5600006018206e000852ae0008101048803f003f3c0004",
+    "ENTRY_C_PRTOUT_WRITE": "4e5600006018206e000852ae0008101048803f003f3c0005",
     # Only two of these bytes are the routine; the rest are `init_gem_and_screens` behind it, which
     # is what makes a sixteen-byte pin possible for a two-byte `rts`.
     "ENTRY_CRT0_SETUP_ARGS": "4e754e56fffa4eba4a763d40fffc426e",

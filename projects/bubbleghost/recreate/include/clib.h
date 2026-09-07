@@ -52,6 +52,9 @@ typedef struct {
 #define RET_GEMDOS_MALLOC_OR_FAIL  0x167e0u
 #define RET_C_CLOSE_FCLOSE         0x14c64u
 #define RET_C_CREAT_FCREATE        0x14cc2u
+#define RET_C_OPEN_TRUNC_FCREATE   0x15de6u   /* c_open's TRUNCATING arm, which empties the file by
+                                               * creating it and closing it again... */
+#define RET_C_OPEN_TRUNC_FCLOSE    0x15df2u
 #define RET_C_OPEN_FOPEN           0x15e0au
 #define RET_C_READ_FREAD_FIRST     0x166feu   /* the read that fills the caller's buffer */
 #define RET_C_READ_FREAD_REFILL    0x16762u   /* ...and the text mode's top-up read */
@@ -72,6 +75,11 @@ typedef struct {
 #define RET_C_CONOUT_CR            0x16b7eu   /* c_conout_write's two: the CR it prefixes a newline
                                               * with, and the byte itself */
 #define RET_C_CONOUT_BYTE          0x16b96u
+#define RET_C_UNLINK_FDELETE       0x16878u   /* `c_unlink`'s one Fdelete */
+#define RET_C_EXIT_PTERM           0x14d26u   /* ...and `c_exit_pterm`'s one Pterm, which on the
+                                               * real machine never comes back to it */
+#define RET_C_AUXOUT_BYTE          0x16bc4u   /* one per byte, in `c_auxout_write`'s loop... */
+#define RET_C_PRTOUT_BYTE          0x16bf2u   /* ...and in `c_prtout_write`'s */
 #define RET_C_CONIN_CRAWCIN        0x1654au   /* c_conin's blocking read... */
 #define RET_C_CONIN_ECHO_ESC       0x1656eu   /* ...and its echoes: ESC then 'D' backs the cursor up
                                               * over a rubbed-out character, */
@@ -262,6 +270,7 @@ static inline CallerAddressRegisters caller_registers(uint32_t a1, uint32_t a2) 
 #define CONIN_BACKSPACE 0x08u        /* rubs the last character out, and echoes ESC 'D' */
 #define CONIN_RETURN    0x0du        /* ends the line: a LF is stored, a CR/LF pair echoed */
 #define CONIN_INTERRUPT 0x03u        /* ^C — the library terminates the program here */
+#define CONIN_EXIT_CODE 0x02u        /* `move.w #$2,-(a7)` @ 0x165c2: the status ^C exits with */
 #define CONIN_EOF       0x1au        /* ^Z — stored, echoed, and answered as -1 when read back */
 #define CONIN_ECHO_ESCAPE   0x1bu    /* the two bytes that back the cursor up over a rubbed-out */
 #define CONIN_ECHO_LEFT     'D'      /* character (VT52 "cursor left") */
@@ -483,6 +492,24 @@ int16_t  c_write(uint8_t *image, uint16_t handle, uint32_t buffer, int16_t lengt
 void     c_conout_write(uint8_t *image, uint32_t buffer, int16_t length,
                         CallerAddressRegisters saved);
 int16_t  c_conin(uint8_t *image, uint16_t handle, CallerAddressRegisters saved);
+void     c_auxout_write(uint8_t *image, uint32_t buffer, int16_t length,
+                        CallerAddressRegisters saved);
+void     c_prtout_write(uint8_t *image, uint32_t buffer, int16_t length,
+                        CallerAddressRegisters saved);
+
+/* --- ending the program ---
+ * `c_exit` closes every FILE the library still holds open and then terminates through
+ * `c_exit_pterm`. NEITHER RETURNS ON THE REAL MACHINE, and the model's `os_pterm` says so by
+ * LATCHING the event ledger: every later entry is refused, so a caller that runs on past one is
+ * caught. Both are spelt `void` here for that reason — the original's `unlk a6 / rts` is code the
+ * program never executes. */
+void     c_exit_pterm(uint8_t *image, uint16_t code, CallerAddressRegisters saved);
+void     c_exit(uint8_t *image, uint16_t code, CallerAddressRegisters *saved);
+
+/* `c_unlink` answers 0 when the file was there and -1 when it was not — the model's `os_fdelete`
+ * gives TOS's own EFILNF for a name the harness never staged, which is an ANSWER and not a refusal
+ * (tools/recreate_kit/include/os.h says why the two calls differ). */
+int16_t  c_unlink(uint8_t *image, uint32_t path, CallerAddressRegisters saved);
 
 /* --- the printf engine ---
  *

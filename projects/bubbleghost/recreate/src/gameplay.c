@@ -4,20 +4,21 @@
  * of the routines it calls, or the world bookkeeping around it. `../notes/gameplay.md` is the
  * design doc and `include/gameplay.h` the frozen record layout; neither is restated here.
  *
- * `game_frame_update` IS PORTED AS SEVEN SLICES rather than as one function
- * (docs/agent-playbook.md §5), for two reasons that are properties of the routine and not of this
- * reconstruction:
+ * `game_frame_update` IS PORTED AS NINE SLICES rather than as one function
+ * (docs/agent-playbook.md §5), because it never runs straight through: the routine polls the front
+ * end, and one of its arms — the `^P` pause — spins until a key arrives that no case can stage.
+ * Each slice is entered at its own PC by `test/test_gameplay.py` and diffed at the next one's, so
+ * what is verified is exactly the straight-line region the core covers.
  *
- *   * it POLLS THE FRONT END. `vq_mouse` @ 0x16a26 and `vq_key_s` @ 0x16a5e are the game's own VDI
- *     binding, which belongs to the front-end subsystem and is unported; a slice boundary either
- *     side of them is what keeps this file from carrying a second copy of somebody else's routine.
- *   * its DEATH SEQUENCE draws sprites. The pop/respawn path at 0x1273c calls
- *     `save_sprite_backgrounds` / `draw_sprites` / `restore_sprite_backgrounds`, which are
- *     `src/blit.c`'s and unported.
+ * TWO OF THE NINE ARE NOT ADJACENT TO THE OTHERS, and both are worth knowing before reading them:
  *
- * Each slice below is entered at its own PC by `test/test_gameplay.py` and diffed at the next
- * one's, so what is verified is exactly the straight-line region the core covers. The composition
- * — the order the seven run in — is read-verified; STATUS.md carries that residual.
+ *   * `frame_poll_input` `[0x1233a, 0x12434)` is the front-end poll — `vq_mouse`, `vq_key_s` and
+ *     one `Crawio(0xff)` — and it ANSWERS whether the key was `^P` rather than falling into
+ *     `frame_poll_pause`, which is the one region here no case can run.
+ *   * `frame_death_sequence` `[0x1273c, 0x1294a)` is NESTED inside `frame_step_live_bubble`'s
+ *     slice: that slice's cases stop where it begins, and its own cases run it.
+ *
+ * The composition — the order the nine run in — is read-verified; STATUS.md carries that residual.
  */
 #include "machine.h"
 
@@ -27,6 +28,19 @@
 #include "frontend.h"   /* the input block the mouse poll and the key poll fill */
 #include "gameplay.h"
 #include "sound.h"      /* the trigger API a blow, a pop and a candle reach */
+
+/* THE TOS MODEL, for the front-end poll's three GEMDOS console calls and the death sequence's
+ * XBIOS `Random`. It also spells the MFDB record, which `include/blit.h` above spells as the
+ * GAME's own — and two of the six names collide (`MFDB_ADDR`, `MFDB_WDWIDTH`). NOTHING IN THIS FILE
+ * READS AN MFDB, so the game's six are dropped rather than reconciled: reconciling them is
+ * `src/frontend.c`'s job, and it is the one translation unit that means both records. */
+#undef MFDB_ADDR
+#undef MFDB_WIDTH
+#undef MFDB_HEIGHT
+#undef MFDB_WDWIDTH
+#undef MFDB_STANDARD
+#undef MFDB_PLANES
+#include "os.h"
 
 /* Reading and writing the game's word globals. Every one of them is `n(a4)`, i.e. an absolute
  * address once a4 is fixed, so a named accessor pair is the whole abstraction this file needs. */
@@ -570,7 +584,7 @@ void ghost_blow_body(uint8_t *image) {
 }
 
 /* ================================================================================================
- * game_frame_update @ 0x12322 — one frame, in seven slices
+ * game_frame_update @ 0x12322 — one frame, in nine slices
  *
  * The slice boundaries are named in `include/gameplay.h`'s prototypes and in
  * `test/test_gameplay.py`'s ENTRY_/STOP_ pairs; the two regions between them that are NOT here are
@@ -771,10 +785,10 @@ void frame_apply_fans(uint8_t *image) {
 
 /* Slice 6, `[0x126e2, 0x1294a)` — the bubble's own step.
  *
- * Answers non-zero when the frame has entered the DEATH SEQUENCE at 0x1273c, which draws the two
- * sprites through the VDI and is not reconstructed (STATUS.md's residual). That is a flag this
- * reconstruction needs to say where it stops, not a value the original computes: the original
- * simply falls into the sequence. */
+ * Answers non-zero when the frame has entered the DEATH SEQUENCE at 0x1273c — `frame_death_sequence`
+ * below, which is a slice of its own because it is 526 bytes with a world of its own to stage. That
+ * is a flag this reconstruction needs to say where this slice stops, not a value the original
+ * computes: the original simply falls into the sequence. */
 int16_t frame_step_live_bubble(uint8_t *image) {
     if (word_at(image, A_bubble_alive) != 0) {
         bubble_collision_probe(image);
@@ -831,6 +845,395 @@ void frame_drift_pulse(uint8_t *image) {
              (int16_t)(word_at(image, A_drift_interval) / DRIFT_INTERVAL_DIVISOR));
 }
 
+/* The workstation handle, re-read at every call site exactly as the original does: each VDI call
+ * is `move.w -7212(a4),-(a7)` in its own right rather than a value held in a register. */
+static int16_t vdi_handle(const uint8_t *image) {
+    return (int16_t)be16(image + A_vdi_handle);
+}
+
+/* ================================================================================================
+ * The front-end poll — the slice `[0x1233a, 0x12434)`
+ *
+ * Two VDI queries and one GEMDOS key read, then the three control keys the game watches for. Its
+ * A1/A2 are the caller's throughout: `vq_mouse`/`vq_key_s` reach the GEM trampoline, the console
+ * calls reach the GEMDOS one, and nothing between them writes an address register.
+ * ============================================================================================= */
+
+/* `while (Cconis()) Crawcin();` — the idiom that appears twice, once before the read and once
+ * inside the pause. Every key already queued is thrown away, so a held key cannot run the game a
+ * frame per keystroke. The `Crawcin` cannot refuse: nothing reaches it unless `Cconis` has just
+ * said a key is waiting. */
+static void drain_console_queue(uint8_t *image, uint32_t cconis_return, uint32_t crawcin_return,
+                                CallerAddressRegisters saved) {
+    for (;;) {
+        uint32_t key;
+
+        trap_save_registers(image, saved, cconis_return);
+        if (os_cconis(image) == 0)
+            return;
+        trap_save_registers(image, saved, crawcin_return);
+        os_crawcin(image, &key);
+    }
+}
+
+/* One `Crawio(0xff)`, the non-blocking raw read: the LOW BYTE of its answer is the ASCII, and that
+ * byte is all the game keeps. An idle console answers `OS_CRAWIO_RESULT`, so the poll runs on. */
+static void read_raw_key(uint8_t *image, uint32_t crawio_return, CallerAddressRegisters saved) {
+    trap_save_registers(image, saved, crawio_return);
+    image[A_key_raw] = (uint8_t)os_crawio(image, OS_CRAWIO_READ);
+}
+
+/* `move.b -7686(a4),d0 / ext.w d0` — the key compared as a SIGNED byte widened to a word, so a
+ * key with bit 7 set can never equal one of the three control codes. */
+static int16_t key_as_word(const uint8_t *image) {
+    return (int16_t)(int8_t)image[A_key_raw];
+}
+
+/* ^P, `[0x1239e, 0x123de)` — everything queued is thrown away and the game then SPINS on `Crawio`
+ * until a second ^P arrives.
+ *
+ * READ-VERIFIED, and no case runs it (../STATUS.md's residual). The flush drains EVERYTHING a case
+ * has staged, so the resuming key would have to arrive after it — and the console model stages a
+ * queue rather than an arrival. The kit's scheduled-write model does stage an arrival, but it is
+ * keyed to the byte the original's own compare re-reads, and this wait's compare reads `A_key_raw`,
+ * which the routine writes itself: the byte that really changes is the model's console block,
+ * inside the trap. There is no site to name, so the loop is transcribed and said to be unrun. */
+void frame_poll_pause(uint8_t *image, CallerAddressRegisters saved) {
+    image[A_key_raw] = 0;
+    drain_console_queue(image, RET_POLL_PAUSE_CCONIS, RET_POLL_PAUSE_CRAWCIN, saved);
+    while (key_as_word(image) != KEY_PAUSE)
+        read_raw_key(image, RET_POLL_PAUSE_CRAWIO, saved);
+}
+
+/* ^R: the whole game is thrown away — both players' scores, the live score, the life count and
+ * both "still playing" flags. The turn ends because `A_lives` is left at the -1 `game_top_loop`
+ * tests for. */
+static void reset_game_from_keyboard(uint8_t *image) {
+    set_word(image, A_level_complete, 0);
+    wr32(image + A_lives, (uint32_t)(int32_t)HUD_LIVES_EXHAUSTED);
+    wr32(image + A_p2_score, 0);
+    wr32(image + A_p1_score, 0);
+    wr32(image + A_score, 0);
+    set_word(image, A_p2_playing, 0);
+    set_word(image, A_p1_playing, 0);
+}
+
+/* ...and the poll itself, which ANSWERS whether the key was ^P rather than falling into the pause.
+ *
+ * The flag is this reconstruction's, not the original's — the original branches straight into the
+ * loop above. It exists because the loop is the one thing here no case can run: a silent
+ * fall-through into unrunnable code would make the difference between "the pause was entered" and
+ * "the key was ignored" invisible, and every case below asserts the answer instead
+ * (docs/agent-playbook.md §5, and `frame_step_live_bubble`'s residual is the same shape). */
+int16_t frame_poll_input(uint8_t *image, CallerAddressRegisters saved) {
+    vq_mouse(image, vdi_handle(image), A_mouse_buttons, A_mouse_x, A_mouse_y, saved);
+    vq_key_s(image, vdi_handle(image), A_key_shift_state, saved);
+
+    /* The flush runs only when the PREVIOUS frame left a key behind — `tst.b` on the byte itself,
+     * not on the sign-extended word, so any non-zero key arms it. */
+    if (image[A_key_raw] != 0)
+        drain_console_queue(image, RET_POLL_FLUSH_CCONIS, RET_POLL_FLUSH_CRAWCIN, saved);
+    read_raw_key(image, RET_POLL_CRAWIO, saved);
+
+    if (key_as_word(image) == KEY_PAUSE)
+        return 1;
+    if (key_as_word(image) == KEY_SOUND_TOGGLE) {
+        set_word(image, A_sound_enabled, word_at(image, A_sound_enabled) == 0 ? 1 : 0);
+        return 0;
+    }
+    if (key_as_word(image) == KEY_RESET)
+        reset_game_from_keyboard(image);
+    return 0;
+}
+
+/* ================================================================================================
+ * The death sequence — the slice `[0x1273c, 0x1294a)`
+ *
+ * `frame_step_live_bubble` falls into this when the popped bubble's frame counter has run past
+ * `BUBBLE_DEATH_TRIGGER_FRAME`. It is three animations, a respawn and — in a two-player game — the
+ * handover.
+ * ============================================================================================= */
+
+/* Where one player's turn is parked. The original writes the two sets as two straight-line blocks
+ * that differ ONLY in these addresses, so the store list is written once below and driven twice.
+ * `score` and `max_room` are `include/frontend.h`'s: the hall-of-fame submitter owns them. */
+typedef struct {
+    uint32_t max_room;          /* word */
+    uint32_t lives;             /* LONG */
+    uint32_t score;             /* LONG */
+    uint32_t bonus_bar;         /* word */
+    uint32_t grid_col;          /* word */
+    uint32_t grid_row;          /* word */
+    uint32_t deaths_in_room;    /* word */
+    uint32_t entry_dir;         /* word */
+    uint32_t world_block;       /* the WORLD_BLOCK_WORDS-word block `save_world` walks */
+} PlayerTurnSlots;
+
+static const PlayerTurnSlots PLAYER_ONE_SLOTS = {
+    A_p1_max_room, A_p1_lives, A_p1_score, A_p1_bonus_bar, A_p1_grid_col, A_p1_grid_row,
+    A_p1_deaths_in_room, A_p1_entry_dir, A_p1_world_block,
+};
+static const PlayerTurnSlots PLAYER_TWO_SLOTS = {
+    A_p2_max_room, A_p2_lives, A_p2_score, A_p2_bonus_bar, A_p2_grid_col, A_p2_grid_row,
+    A_p2_deaths_in_room, A_p2_entry_dir, A_p2_world_block,
+};
+
+/* The five calls every animation frame of the sequence makes, in the order it makes them: the two
+ * sprites lifted off the visible screen, redrawn, the room shown, the sprites' backgrounds put
+ * back, and the room's objects ticked. */
+static void death_animation_frame(uint8_t *image, CallerAddressRegisters saved) {
+    save_sprite_backgrounds(image, saved);
+    draw_sprites(image, saved);
+    present_room(image);
+    restore_sprite_backgrounds(image, saved);
+    objects_animate_and_draw(image);
+}
+
+/* `Random()` scaled into DEATH_HOLD's 2..6 through the software float package, which is how the
+ * original does it: the 24-bit answer is widened to a double, divided by a constant just above
+ * 2^24, multiplied by five and offset by two, then truncated toward zero. */
+static int16_t random_hold_frames(uint8_t *image, CallerAddressRegisters saved) {
+    trap_save_registers(image, saved, RET_DEATH_RANDOM);
+    fp_acc_load_long(image, os_random(image));
+    /* Each source is a plain double in DATA, never widened, so `fp_dispatch`'s widening scratch is
+     * unused and none is passed — as in `divide_into_accumulator` above. */
+    fp_dispatch(image, FP_OP_DIVIDE, A_fp_acc, A_const_random_divisor, 0, 0);
+    fp_dispatch(image, FP_OP_MULTIPLY, A_fp_acc, A_const_random_scale, 0, 0);
+    fp_dispatch(image, FP_OP_PLUS, A_fp_acc, A_const_random_offset, 0, 0);
+    return (int16_t)fp_acc_to_long(image);
+}
+
+/* One word of the current room's entry-point table, which is a PAIR per entry direction: `field` is
+ * ROOM_ENTRY_X or ROOM_ENTRY_Y, each a tile index the caller scales up to pixels.
+ *
+ * The original builds a WORD index — `muls.w #$2` on the direction, and `add.w #$1` again for the
+ * y — scales it with `asl.l #1` and adds it with `adda.w`. So the byte offset is
+ * `direction * ROOM_ENTRY_STRIDE + field`, TRUNCATED TO A WORD before it reaches the row pointer:
+ * a direction big enough to overflow wraps back into the table rather than reaching past it. */
+static int16_t room_entry_coordinate(const uint8_t *image, int16_t direction, unsigned field) {
+    uint32_t row = addr_add(A_room_table + ROOM_ENTRY_POINTS,
+                            (uint32_t)(word_at(image, A_room_number) * (int32_t)ROOM_STRIDE));
+    int16_t offset = (int16_t)(direction * (int16_t)ROOM_ENTRY_STRIDE + (int16_t)field);
+
+    return word_at(image, addr_add(row, sign_ext16((uint32_t)offset)));
+}
+
+/* The bubble put back at the room's entry point, with every drift term disarmed. */
+static void respawn_bubble_at_entry_point(uint8_t *image) {
+    int16_t direction = word_at(image, A_entry_dir);
+
+    set_word(image, A_ghost_tile, 0);
+    set_word(image, A_ghost_facing, 0);
+    set_word(image, A_ghost_anim, 0);
+    set_word(image, A_bubble_frame, BUBBLE_FIRST_FRAME);
+    set_word(image, A_bubble_alive, 1);
+    set_word(image, A_drift_dir_x, 0);
+    set_word(image, A_drift_dir_y, 0);
+    set_word(image, A_drift_interval, 0);
+    set_word(image, A_drift_pulse, 0);
+    set_word(image, A_drift_speed, DRIFT_SPEED_INITIAL);
+
+    set_word(image, A_bubble_x,
+             (int16_t)(room_entry_coordinate(image, direction, ROOM_ENTRY_X)
+                       * (int16_t)ENTRY_POINT_PIXELS));
+    set_word(image, A_bubble_y,
+             (int16_t)(room_entry_coordinate(image, direction, ROOM_ENTRY_Y)
+                       * (int16_t)ENTRY_POINT_PIXELS));
+    set_word(image, A_drift_vel_x, 0);
+    set_word(image, A_drift_vel_y, 0);
+}
+
+/* The eight live values, plus the world block, into one player's own slots. */
+static void park_turn(uint8_t *image, const PlayerTurnSlots *slots) {
+    set_word(image, slots->max_room, word_at(image, A_max_room_reached));
+    wr32(image + slots->lives, (uint32_t)long_at(image, A_lives));
+    wr32(image + slots->score, (uint32_t)long_at(image, A_score));
+    set_word(image, slots->bonus_bar, word_at(image, A_bonus_bar));
+    set_word(image, slots->grid_col, word_at(image, A_grid_col));
+    set_word(image, slots->grid_row, word_at(image, A_grid_row));
+    set_word(image, slots->deaths_in_room, word_at(image, A_deaths_in_room));
+    set_word(image, slots->entry_dir, word_at(image, A_entry_dir));
+    save_world(image, slots->world_block);
+}
+
+void frame_death_sequence(uint8_t *image, uint32_t hud_frame, CallerAddressRegisters saved) {
+    if (word_at(image, A_bubble_frame) <= (int16_t)BUBBLE_DEATH_TRIGGER_FRAME)
+        return;
+    set_word(image, A_bubble_frame, BUBBLE_DEATH_TRIGGER_FRAME);
+
+    /* 1. The ghost walked back to facing 0, one whole facing per frame. */
+    while (word_at(image, A_ghost_tile) > (int16_t)GHOST_TILES_PER_FACING - 1) {
+        set_word(image, A_ghost_tile,
+                 (int16_t)(word_at(image, A_ghost_tile) - (int16_t)GHOST_TILES_PER_FACING));
+        death_animation_frame(image, saved);
+    }
+
+    sound_release_voice(image, BLOW_VOICE);
+    /* ...and the ghost put back to its idle colour, through XBIOS `Setcolor` — a no-op in the
+     * model, so only the trampoline's three slots are comparable (STATUS.md's residual). */
+    trap_save_registers(image, saved, RET_DEATH_SETCOLOR);
+
+    /* 2. The five death cells, each held for a random 2..6 frames. The hold is DECREMENTED every
+     * frame and re-rolled when it has gone negative, so the first cell is shown
+     * DEATH_HOLD_INITIAL + 1 times before the roll ever happens. */
+    set_word(image, A_seq_counter, DEATH_HOLD_INITIAL);
+    set_word(image, A_ghost_tile, DEATH_GHOST_FIRST_TILE);
+    while (word_at(image, A_ghost_tile) < (int16_t)DEATH_GHOST_LAST_TILE) {
+        if (word_at(image, A_seq_counter) < 0) {
+            set_word(image, A_seq_counter, random_hold_frames(image, saved));
+            set_word(image, A_ghost_tile, (int16_t)(word_at(image, A_ghost_tile) + 1));
+        }
+        set_word(image, A_seq_counter, (int16_t)(word_at(image, A_seq_counter) - 1));
+        death_animation_frame(image, saved);
+    }
+
+    /* 3. Ten frames of the last cell, standing still. */
+    for (set_word(image, A_seq_counter, 0);
+         word_at(image, A_seq_counter) < (int16_t)DEATH_PAUSE_FRAMES;
+         set_word(image, A_seq_counter, (int16_t)(word_at(image, A_seq_counter) + 1)))
+        death_animation_frame(image, saved);
+
+    respawn_bubble_at_entry_point(image);
+    wr32(image + A_lives, (uint32_t)(long_at(image, A_lives) - 1));
+    set_word(image, A_deaths_in_room, (int16_t)(word_at(image, A_deaths_in_room) + 1));
+    hud_draw_counters(image, hud_frame, saved);
+    present_score_strip(image);
+
+    /* The handover, in a two-player game only: the room loop is broken so `game_top_loop` can put
+     * up the next player's card, and this turn is parked. */
+    if (word_at(image, A_player_count) != (int16_t)PLAYER_COUNT_TWO)
+        return;
+    set_word(image, A_in_room, 0);
+    set_word(image, A_show_player_change, 1);
+    park_turn(image, word_at(image, A_p1_turn) != 0 ? &PLAYER_ONE_SLOTS : &PLAYER_TWO_SLOTS);
+}
+
+/* ================================================================================================
+ * The HUD painters — hud_draw_counters @ 0x113d2, hud_bonus_bar_fill @ 0x112c8 and
+ * hud_bonus_bar_shrink @ 0x11346
+ *
+ * All three draw through the front end's VDI binding (`include/frontend.h`) and take two arguments
+ * their C prototypes would not have (docs/agent-playbook.md §5, "a parameter"):
+ *
+ *   * THEIR OWN STACK FRAME, because what they hand the VDI lives in it — the four counter strings
+ *     `itoa_padded` fills, and the four-word rectangle `vr_recfl` is lent. A C reconstruction has
+ *     no machine stack, and the frame lies in the band the differential drops, so both sides are
+ *     handed the same address.
+ *   * THE CALLER'S A1/A2, which the GEM trampoline files on every VDI call.
+ *
+ * ...and `hud_bonus_bar_fill` is the one routine in this file where the second is not constant
+ * through the run: its scanline copy leaves A2 one row past the bar, and the NEXT column's
+ * `vr_recfl` files that instead of the caller's. That is §5's "derivable" case — the value comes
+ * from the routine's own instructions — so the core computes it rather than taking it per call.
+ * ============================================================================================= */
+
+_Static_assert(BONUS_BAR_ROW_OFFSET == BONUS_BAR_Y * SCREEN_ROW_BYTES,
+               "the bonus bar's `add.l #$7620` is not row BONUS_BAR_Y of the screen");
+_Static_assert(BONUS_BAR_SCANLINE_LONGS * LONG_BYTES == SCREEN_ROW_BYTES,
+               "the bonus bar's copy loop is not one whole scanline");
+
+/* One word of the four-word rectangle the two bar routines build in their own frame. */
+#define BAR_PXY_WORD_BYTES 2u
+
+static uint32_t bar_pxy_word(uint32_t rectangle, unsigned index) {
+    return addr_add(rectangle, index * BAR_PXY_WORD_BYTES);
+}
+
+/* The bar's single scanline, work buffer to visible screen — the tail both bar routines share.
+ * It ANSWERS the A2 the copy leaves (one longword past the row it wrote), because the next
+ * `vr_recfl`'s trampoline files that register. */
+static uint32_t present_bonus_scanline(uint8_t *image) {
+    uint32_t src = addr_add(be32(image + A_screen_back), BONUS_BAR_ROW_OFFSET);
+    uint32_t dst = addr_add(be32(image + A_screen_phys), BONUS_BAR_ROW_OFFSET);
+
+    copy_longs_ascending(image, src, dst, BONUS_BAR_SCANLINE_LONGS);
+    return addr_add(dst, BONUS_BAR_SCANLINE_LONGS * LONG_BYTES);
+}
+
+/* hud_draw_counters @ 0x113d2 — score, hi-score, room and lives, in text height 4 and pen 5. */
+void hud_draw_counters(uint8_t *image, uint32_t frame, CallerAddressRegisters saved) {
+    uint32_t score_text = addr_add(frame, sign_ext16((uint32_t)HUD_FRAME_SCORE_TEXT));
+    uint32_t hi_text = addr_add(frame, sign_ext16((uint32_t)HUD_FRAME_HI_TEXT));
+    uint32_t room_text = addr_add(frame, sign_ext16((uint32_t)HUD_FRAME_ROOM_TEXT));
+    uint32_t lives_text = addr_add(frame, sign_ext16((uint32_t)HUD_FRAME_LIVES_TEXT));
+
+    vst_height(image, vdi_handle(image), HUD_TEXT_HEIGHT, A_text_char_w, A_text_char_h,
+               A_text_cell_w, A_text_cell_h, saved);
+    vst_color(image, vdi_handle(image), HUD_TEXT_PEN, saved);
+
+    /* `itoa_padded` takes a LONG, and the room number is a word — so the routine keeps a widened
+     * copy of it in a global of its own rather than on its stack. */
+    wr32(image + A_hud_room_long, (uint32_t)(int32_t)word_at(image, A_room_number));
+
+    itoa_padded(image, long_at(image, A_score), score_text, HUD_SCORE_DIGITS);
+    itoa_padded(image, long_at(image, A_hi_score), hi_text, HUD_SCORE_DIGITS);
+    itoa_padded(image, long_at(image, A_hud_room_long), room_text, HUD_ROOM_DIGITS);
+
+    if (long_at(image, A_lives) < 0) {
+        /* The last life is drawn as "0" and the counter is then normalised to exactly -1 — which
+         * matters for a count that arrived at -2 or below, and is what `game_top_loop`'s
+         * `cmpi.l #$ffffffff` ends the turn on. The zero really is stored before the format call:
+         * `itoa_padded` is handed the GLOBAL, not a register holding the old value. */
+        wr32(image + A_lives, 0);
+        itoa_padded(image, long_at(image, A_lives), lives_text, HUD_LIVES_DIGITS);
+        wr32(image + A_lives, (uint32_t)(int32_t)HUD_LIVES_EXHAUSTED);
+    } else {
+        itoa_padded(image, long_at(image, A_lives), lives_text, HUD_LIVES_DIGITS);
+    }
+
+    v_gtext(image, vdi_handle(image), HUD_COUNTER_X, HUD_ROW_TOP, score_text, saved);
+    v_gtext(image, vdi_handle(image), HUD_COUNTER_X, HUD_ROW_BOTTOM, hi_text, saved);
+    v_gtext(image, vdi_handle(image), HUD_ROOM_X, HUD_ROW_TOP, room_text, saved);
+    v_gtext(image, vdi_handle(image), HUD_LIVES_X, HUD_ROW_BOTTOM, lives_text, saved);
+}
+
+/* hud_bonus_bar_fill @ 0x112c8 — one filled column per unit, from the bar's left end to its
+ * current right end, each followed by the scanline copy that shows it. */
+void hud_bonus_bar_fill(uint8_t *image, uint32_t frame, CallerAddressRegisters saved) {
+    uint32_t rectangle = addr_add(frame, sign_ext16((uint32_t)HUD_FRAME_BAR_PXY));
+    CallerAddressRegisters live = saved;
+    int16_t column;
+
+    set_word(image, bar_pxy_word(rectangle, HUD_PXY_Y1), BONUS_BAR_Y);
+    set_word(image, bar_pxy_word(rectangle, HUD_PXY_Y2), BONUS_BAR_Y);
+    vsf_color(image, vdi_handle(image), BONUS_BAR_PEN, live);
+
+    /* `A_bonus_bar` is re-read every pass, as the `cmp.w -8038(a4),d0` at the bottom of the loop
+     * is: a column the VDI drew over the global would change the bound mid-run. */
+    for (column = BONUS_BAR_LEFT; column < word_at(image, A_bonus_bar); column++) {
+        set_word(image, bar_pxy_word(rectangle, HUD_PXY_X1), column);
+        set_word(image, bar_pxy_word(rectangle, HUD_PXY_X2), column);
+        vr_recfl(image, vdi_handle(image), rectangle, live);
+        live.a2 = present_bonus_scanline(image);
+    }
+}
+
+/* hud_bonus_bar_shrink @ 0x11346 — erase `units` columns off the bar's right end in one rectangle.
+ * The rectangle is built RIGHT to LEFT (x1 above x2), which the VDI normalises. */
+void hud_bonus_bar_shrink(uint8_t *image, uint32_t frame, int16_t units,
+                          CallerAddressRegisters saved) {
+    uint32_t rectangle = addr_add(frame, sign_ext16((uint32_t)HUD_FRAME_BAR_PXY));
+
+    set_word(image, bar_pxy_word(rectangle, HUD_PXY_Y1), BONUS_BAR_Y);
+    set_word(image, bar_pxy_word(rectangle, HUD_PXY_Y2), BONUS_BAR_Y);
+
+    /* The surviving column is one past what is erased. When fewer than BONUS_BAR_LEFT columns would
+     * be left, the whole bar down to its floor is erased instead — from a FIXED right end, not from
+     * wherever `A_bonus_bar` had got to. */
+    if ((int16_t)(word_at(image, A_bonus_bar) - units + 1) < BONUS_BAR_LEFT) {
+        set_word(image, bar_pxy_word(rectangle, HUD_PXY_X2), BONUS_BAR_LEFT);
+        set_word(image, bar_pxy_word(rectangle, HUD_PXY_X1), BONUS_BAR_SHRINK_LEFT);
+    } else {
+        set_word(image, bar_pxy_word(rectangle, HUD_PXY_X2),
+                 (int16_t)(word_at(image, A_bonus_bar) - units + 1));
+        set_word(image, bar_pxy_word(rectangle, HUD_PXY_X1), word_at(image, A_bonus_bar));
+    }
+
+    vsf_color(image, vdi_handle(image), BONUS_BAR_ERASE_PEN, saved);
+    vr_recfl(image, vdi_handle(image), rectangle, saved);
+    present_bonus_scanline(image);
+}
+
 /* ================================================================================================
  * Glue. Alcyon/DRI C passes arguments on the stack (test/abi.py), so the oracle side of a case
  * pokes them at 4(A7) and the candidate side is handed the same values as C arguments here.
@@ -859,6 +1262,34 @@ void g_frame_scale_mouse_to_ghost(uint8_t *image) { frame_scale_mouse_to_ghost(i
 /* The caller's A1/A2 — the registers the two `Setcolor` trampolines file (see the core). */
 void g_frame_blow_or_recover(uint8_t *image, uint32_t a1, uint32_t a2) {
     frame_blow_or_recover(image, caller_registers(a1, a2));
+}
+
+/* The three HUD painters: their own frame, and the caller's A1/A2 the GEM trampoline files. */
+void g_hud_draw_counters(uint8_t *image, uint32_t frame, uint32_t a1, uint32_t a2) {
+    hud_draw_counters(image, frame, caller_registers(a1, a2));
+}
+
+void g_hud_bonus_bar_fill(uint8_t *image, uint32_t frame, uint32_t a1, uint32_t a2) {
+    hud_bonus_bar_fill(image, frame, caller_registers(a1, a2));
+}
+
+void g_hud_bonus_bar_shrink(uint8_t *image, uint32_t frame, uint32_t units, uint32_t a1,
+                            uint32_t a2) {
+    hud_bonus_bar_shrink(image, frame, (int16_t)units, caller_registers(a1, a2));
+}
+
+/* The two regions that used to sit BETWEEN the slices: the front-end poll and the death sequence.
+ * `hud_frame` is the A6 `hud_draw_counters` runs on when the sequence calls it. */
+uint32_t g_frame_poll_input(uint8_t *image, uint32_t a1, uint32_t a2) {
+    return (uint16_t)frame_poll_input(image, caller_registers(a1, a2));
+}
+
+void g_frame_poll_pause(uint8_t *image, uint32_t a1, uint32_t a2) {
+    frame_poll_pause(image, caller_registers(a1, a2));
+}
+
+void g_frame_death_sequence(uint8_t *image, uint32_t hud_frame, uint32_t a1, uint32_t a2) {
+    frame_death_sequence(image, hud_frame, caller_registers(a1, a2));
 }
 
 void g_frame_step_facing(uint8_t *image) { frame_step_facing(image); }

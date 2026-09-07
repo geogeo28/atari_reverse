@@ -58,8 +58,9 @@
 #define ROOM_MAP_CELL_BYTES     2u      /* `asl.l #1,d0` @ 0x13a58: a map cell is a word */
 /* The four entry points, read off `lea -13420(a4)` @ 0x1286e (= room_table + 0x64), the
  * `add.w d1,d0` on entry_dir*2 + `asl.l #1` @ 0x12874 that indexes them, and the `move.w #$1,d0`
- * @ 0x12884 that reaches the pair's second word. names.txt, UNPINNED: the only routine that steps
- * by them is `game_frame_update`'s respawn, inside the unported death sequence. */
+ * @ 0x12884 that reaches the pair's second word. PINNED by
+ * test_gameplay.py::test_frame_death_sequence_respawns_at_the_rooms_entry_point, which drives all
+ * four directions through the respawn that is the only thing stepping by them. */
 #define ROOM_ENTRY_POINTS       0x64u   /* `lea -13420(a4)` @ 0x1286e = room_table + 0x64 */
 #define ROOM_ENTRY_STRIDE       4u      /* `muls.w #$2,d0` @ 0x12862 on entry_dir then `asl.l #1`
                                          * @ 0x12874: the index steps four bytes per direction */
@@ -235,12 +236,59 @@
  * The HUD
  * ============================================================================================= */
 
-/* `hud_draw_counters` @ 0x113d2 and the two bonus-bar routines are NOT reconstructed — they reach
- * the front end's VDI binding, which owns the parameter block (STATUS.md, "Not reconstructed") —
- * so their geometry is not named here. `itoa_padded`, which every counter is formatted through,
- * is; these two are its whole arithmetic. */
+/* `itoa_padded` @ 0x114ee formats every counter; these two constants are its whole arithmetic. */
 #define DECIMAL_RADIX           10u     /* `move.l #$a,d0` @ 0x114fc: itoa_padded's divisor */
 #define ASCII_ZERO              0x30u   /* `add.l #$30,d0` @ 0x1150c */
+
+/* --- hud_draw_counters @ 0x113d2 — the four numbers under the room ---
+ * Text height 4 in pen 5, then four `v_gtext` calls at fixed positions. The four strings are
+ * locals of the routine's OWN frame (`link a6,#$ffea`), which is why the core takes the frame
+ * address as an argument: a C reconstruction has no machine stack, and the differential drops the
+ * stack band, so both sides are handed the same address (docs/agent-playbook.md §5). */
+#define HUD_TEXT_HEIGHT          4      /* `move.w #$4,-(a7)` @ 0x113e6: vst_height's request */
+#define HUD_TEXT_PEN             5      /* `move.w #$5,-(a7)` @ 0x113f6: vst_color's index */
+#define HUD_SCORE_DIGITS         6      /* `move.w #$6,-(a7)` @ 0x1140e and @ 0x11422 */
+#define HUD_ROOM_DIGITS          2      /* `move.w #$2,-(a7)` @ 0x11436 */
+#define HUD_LIVES_DIGITS         1      /* `move.w #$1,-(a7)` @ 0x11458 and @ 0x11476 */
+#define HUD_COUNTER_X         0xe6      /* the score and the hi-score share a column @ 0x11492 */
+#define HUD_ROOM_X           0x133      /* `move.w #$133,-(a7)` @ 0x114c2 */
+#define HUD_LIVES_X          0x139      /* `move.w #$139,-(a7)` @ 0x114da */
+#define HUD_ROW_TOP           0xad      /* score and room @ 0x1148e / 0x114be */
+#define HUD_ROW_BOTTOM        0xb7      /* hi-score and lives @ 0x114a6 / 0x114d6 */
+#define HUD_LIVES_EXHAUSTED   (-1)      /* `move.l #$ffffffff,-8050(a4)` @ 0x1146c: a negative
+                                         * count is drawn as "0" and then normalised to exactly -1,
+                                         * which is what `game_top_loop`'s `cmpi.l #$ffffffff` tests */
+
+/* ...and the four text buffers in that frame, each `pea -n(a6)`. */
+#define HUD_FRAME_SCORE_TEXT   (-8)     /* six digits, NUL at -2(a6) */
+#define HUD_FRAME_HI_TEXT     (-16)     /* six digits, NUL at -10(a6) */
+#define HUD_FRAME_ROOM_TEXT   (-20)     /* two digits, NUL at -18(a6) */
+#define HUD_FRAME_LIVES_TEXT  (-22)     /* one digit, NUL at -21(a6) */
+
+/* --- hud_bonus_bar_fill @ 0x112c8 and hud_bonus_bar_shrink @ 0x11346 ---
+ * The bar is one pixel row of filled single-column rectangles. Both routines end by copying that
+ * ONE scanline from the work buffer to the visible screen, which is the only reason either is a
+ * separate routine from the counters above. Both lend `vr_recfl` a four-word rectangle built in
+ * their own frame, so both take the frame address for the same reason `hud_draw_counters` does. */
+#define BONUS_BAR_Y           0xbd      /* `move.w #$bd,-6(a6)` @ 0x112d0: the bar's single row */
+#define BONUS_BAR_LEFT        0x23      /* `move.w #$23,-10(a6)` @ 0x112ea: where the fill starts,
+                                         * and the floor the bar shrinks to */
+#define BONUS_BAR_SHRINK_LEFT 0x2d      /* `move.w #$2d,-8(a6)` @ 0x11370: the right end of the
+                                         * final erase, once fewer than BONUS_BAR_LEFT units remain */
+#define BONUS_BAR_PEN         0x0b      /* `move.w #$b,-(a7)` @ 0x112dc: vsf_color's fill index */
+#define BONUS_BAR_ERASE_PEN      0      /* `clr.w -(a7)` @ 0x1138c */
+#define BONUS_BAR_SCANLINE_LONGS 0x28   /* `move.w #$27,d0` + `dbf`: 40 longwords = SCREEN_ROW_BYTES */
+#define BONUS_BAR_ROW_OFFSET  0x7620u   /* `add.l #$7620,d0` @ 0x11310 — the byte offset of row
+                                         * BONUS_BAR_Y. Spelt as the literal the instruction carries
+                                         * and asserted equal to BONUS_BAR_Y * SCREEN_ROW_BYTES in
+                                         * `src/gameplay.c`, which is the file that includes both */
+
+/* The four words of the rectangle both routines lend `vr_recfl`, from `-8(a6)` upward. */
+#define HUD_FRAME_BAR_PXY      (-8)     /* `pea -8(a6)` @ 0x112fe and @ 0x11398 */
+#define HUD_PXY_X1               0u
+#define HUD_PXY_Y1               1u
+#define HUD_PXY_X2               2u
+#define HUD_PXY_Y2               3u
 
 /* ================================================================================================
  * Globals this subsystem owns
@@ -294,17 +342,46 @@
 
 /* --- HUD and score --- */
 #define A_bonus_tick            0x22f76u  /* word: the bar's 3-frame divider */
+#define A_hud_room_long         0x22fa4u  /* LONG: the room number widened for `itoa_padded`, which
+                                           * takes a long. Written and read only by
+                                           * `hud_draw_counters` @ 0x113d2 — 0x1140a and 0x1143e are
+                                           * its two references in the whole image */
 #define A_lives                 0x22fa8u  /* LONG: 5 per turn, and the turn ends at -1 */
 #define A_hi_score              0x22facu  /* LONG */
 #define A_score                 0x22fb0u  /* LONG */
 #define A_bonus_bar             0x22fb4u  /* word: the bar's right end, 318 down to a floor of 35 */
 
-/* --- the two players: the world block each turn is saved into (../notes/gameplay.md §9) ------
- * The rest of the per-player context (score, lives, grid position) is written by the death
- * sequence and by `game_top_loop`, neither of which is ported; those addresses are not named here
- * because nothing in this subsystem reaches them yet. */
+/* --- the two players: the world block each turn is saved into (../notes/gameplay.md §9) --- */
 #define A_p2_world_block        0x231a6u  /* WORLD_BLOCK_WORDS words */
 #define A_p1_world_block        0x2321au
+
+/* --- the two players' parked turns ---
+ * A two-player game swaps the whole live state at every death. The nine values below are one
+ * player's copy of it, and `game_frame_update`'s death sequence writes the set for whichever
+ * player's turn it is (`A_p1_turn`) before handing over. FOUR MORE MEMBERS OF THE SAME SET LIVE IN
+ * `include/frontend.h` — `A_p1_score`/`A_p2_score` and `A_p1_max_room`/`A_p2_max_room` — because
+ * the hall-of-fame submitter is what reads them; this file includes that header rather than
+ * restating them (README.md, "Adding a function": one name, one home). */
+#define A_p1_turn               0x2316au  /* word: 1 while player one is playing, 0 for player two.
+                                           * `move.w -7600(a4),d0 / beq` @ 0x128da */
+#define A_show_player_change    0x231a0u  /* word: set at a handover so the next turn opens with the
+                                           * "PLAYER ONE"/"PLAYER TWO" card. `move.w #$1,-7546(a4)`
+                                           * @ 0x128d4 */
+#define A_p2_grid_row           0x23172u  /* `move.w -7622(a4),-7592(a4)` @ 0x12934 */
+#define A_p1_grid_row           0x23174u  /* `move.w -7622(a4),-7590(a4)` @ 0x128fe */
+#define A_p2_grid_col           0x23176u  /* @ 0x1292e */
+#define A_p1_grid_col           0x23178u  /* @ 0x128f8 */
+#define A_p2_bonus_bar          0x2317au  /* @ 0x12928 */
+#define A_p1_bonus_bar          0x2317cu  /* @ 0x128f2 */
+#define A_p2_lives              0x2318au  /* LONG, @ 0x1291c */
+#define A_p1_lives              0x2318eu  /* LONG, @ 0x128e6 */
+#define A_p2_playing            0x23198u  /* word: cleared when that player is out. `move.w d0,
+                                           * -7554(a4)` @ 0x1242c, the ^R reset's own clear */
+#define A_p1_playing            0x2319au  /* @ 0x12430 */
+#define A_p2_deaths_in_room     0x2319cu  /* @ 0x1293a */
+#define A_p1_deaths_in_room     0x2319eu  /* @ 0x12904 */
+#define A_p2_entry_dir          0x231a2u  /* @ 0x12940 */
+#define A_p1_entry_dir          0x231a4u  /* @ 0x1290a */
 
 /* --- the sound-on flag, which this subsystem OWNS -----------------------------------------------
  * It used to be on loan from the front end. It is not: the routine that WRITES it is
@@ -330,6 +407,59 @@
                                                 * 0x12494: the opcode all three divides carry */
 
 /* ================================================================================================
+ * The front-end poll — `game_frame_update`'s slice `[0x1233a, 0x12434)`
+ *
+ * The mouse and the shift keys through the VDI, then ONE raw key through GEMDOS, then the three
+ * control keys the game watches for. The key is read with `Crawio(0xff)`, which is non-blocking:
+ * the poll never waits, and the flush loop around it (`while (Cconis()) Crawcin();`) is what keeps
+ * a key held down from queueing up behind the frame rate.
+ * ============================================================================================= */
+
+#define KEY_PAUSE               0x10    /* ^P — `cmpi.w #$10,d0` @ 0x12398 and @ 0x123d6 */
+#define KEY_SOUND_TOGGLE        0x13    /* ^S — `cmpi.w #$13,d0` @ 0x123e4 */
+#define KEY_RESET               0x12    /* ^R — `cmpi.w #$12,d0` @ 0x12404 */
+
+/* Where `gemdos_trap` @ 0x15e58 returns to for each of the poll's six console calls. The
+ * trampoline files its caller's return address, so each is a property of its call site
+ * (include/clib.h, "Where each wrapper's `jsr` to the trampoline returns to"). */
+#define RET_POLL_FLUSH_CRAWCIN  0x12370u  /* the flush loop that runs before the read... */
+#define RET_POLL_FLUSH_CCONIS   0x1237au
+#define RET_POLL_CRAWIO         0x1238cu  /* ...the read itself... */
+#define RET_POLL_PAUSE_CRAWCIN  0x123acu  /* ...and the same three again inside the ^P pause */
+#define RET_POLL_PAUSE_CCONIS   0x123b6u
+#define RET_POLL_PAUSE_CRAWIO   0x123cau
+
+/* ================================================================================================
+ * The death sequence — `game_frame_update`'s slice `[0x1273c, 0x1294a)`
+ *
+ * Reached when the bubble has popped and its frame counter has run past
+ * `BUBBLE_DEATH_TRIGGER_FRAME`. Three animations back to back — the ghost walked back to facing 0,
+ * the five-cell death sprite held for a random 2..6 frames each, and a ten-frame pause — then the
+ * world is reset, a life is taken, and (in a two-player game) the turn is parked in the player's
+ * own slots.
+ * ============================================================================================= */
+
+#define DEATH_GHOST_FIRST_TILE   0x28   /* `move.w #$28,-7984(a4)` @ 0x12790 */
+#define DEATH_GHOST_LAST_TILE    0x2c   /* `cmpi.w #$2c,-7984(a4)` @ 0x12802 — an EXCLUSIVE bound */
+#define DEATH_HOLD_INITIAL          5   /* `move.w #$5,-7992(a4)` @ 0x1278a: the first cell's hold */
+#define DEATH_PAUSE_FRAMES         10   /* `cmpi.w #$a,-7992(a4)` @ 0x12828 */
+#define DRIFT_SPEED_INITIAL       300   /* `move.w #$12c,-8014(a4)` @ 0x12858: what a respawn arms
+                                         * the drift at, before DRIFT_SPEED_DECAY starts on it */
+
+/* The random hold, one `Random()` run through the software float package: the 24-bit answer is
+ * divided by a constant just above 2^24, scaled by five and offset by two — so a cell is held for
+ * two to six frames. All three constants are doubles in the program's DATA segment. */
+#define A_const_random_divisor   0x2519au  /* `pea 640(a4)` @ 0x127ae: 16794009.000000015 */
+#define A_const_random_scale     0x251a2u  /* `pea 648(a4)` @ 0x127be: 5.0 */
+#define A_const_random_offset    0x251aau  /* `pea 656(a4)` @ 0x127ce: 2.0 */
+#define FP_OP_MULTIPLY           0x802u    /* `move.w #$802,-(a7)` @ 0x127c6 */
+#define FP_OP_PLUS               0x800u    /* `move.w #$800,-(a7)` @ 0x127d6 */
+
+/* Where `xbios_trap` @ 0x15e3c returns to for the death sequence's two XBIOS calls. */
+#define RET_DEATH_SETCOLOR       0x12788u  /* `Setcolor(GHOST_PEN, GHOST_COLOUR_IDLE)` @ 0x12784 */
+#define RET_DEATH_RANDOM         0x127a8u  /* `Random()` @ 0x127a4, once per held cell */
+
+/* ================================================================================================
  * Cores
  * ============================================================================================= */
 
@@ -341,7 +471,26 @@ void    restore_world(uint8_t *image, uint32_t block);
 void    itoa_padded(uint8_t *image, int32_t value, uint32_t buffer, int16_t width);
 void    ghost_blow_body(uint8_t *image);
 
-/* The seven slices of `game_frame_update` @ 0x12322, in the order it runs them. Each is entered at
+/* The three HUD painters. Each takes its own frame (the text buffers / the lent rectangle live in
+ * it) and the caller's A1/A2, which the GEM trampoline files on every VDI call. */
+void    hud_draw_counters(uint8_t *image, uint32_t frame, CallerAddressRegisters saved);
+void    hud_bonus_bar_fill(uint8_t *image, uint32_t frame, CallerAddressRegisters saved);
+void    hud_bonus_bar_shrink(uint8_t *image, uint32_t frame, int16_t units,
+                             CallerAddressRegisters saved);
+
+/* The two regions of `game_frame_update` that used to sit between and inside the other slices. Both take the
+ * caller's A1/A2 — the poll's six GEMDOS calls and the sequence's two XBIOS calls all trap through
+ * the program's own trampoline — and the death sequence also takes the frame `hud_draw_counters`
+ * runs on, which is `game_frame_update`'s own A7 less the `jsr` return address and the saved A6. */
+/* `frame_poll_input` ANSWERS whether the key was ^P — a flag this reconstruction invented, because
+ * the pause it would fall into is the one region here no case can run. `frame_poll_pause` is that
+ * region, transcribed and read-verified (../STATUS.md). */
+int16_t frame_poll_input(uint8_t *image, CallerAddressRegisters saved);
+void    frame_poll_pause(uint8_t *image, CallerAddressRegisters saved);
+void    frame_death_sequence(uint8_t *image, uint32_t hud_frame, CallerAddressRegisters saved);
+
+/* Seven of the nine slices of `game_frame_update` @ 0x12322, in the order it runs them (the poll
+ * and the death sequence are declared above). Each is entered at
  * its own PC by the battery and diffed at the next one's, so the region each covers is exactly what
  * the differential proves; the two gaps — the front-end poll and the death sequence — are named in
  * `src/gameplay.c`'s header comment and in STATUS.md. */
