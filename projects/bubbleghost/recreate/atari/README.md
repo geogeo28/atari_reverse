@@ -434,14 +434,27 @@ room frames run) and the driver reads them out of the running machine through th
 refuses a `title` .PRG rather than grading one, the way the negative controls refuse a shipped
 build.
 
-At the room's FIRST frame — a deterministic moment on both sides, with the room drawn,
-`game_room_frame_tail` not yet run once and the mouse untouched because nothing headless can move
-it — it compares the sixteen colour registers and the 32,000 displayed bytes against the original's.
-**They are byte-identical**, which makes this the second place in this directory where the two
+At the room's first TWO frame calls — deterministic moments on both sides, with the mouse untouched
+because nothing headless can move it — it compares the 32,000 displayed bytes against the
+original's, at each, and the sixteen colour registers once, off the settle after the second.
+**All of it is byte-identical**, which makes this the second place in this directory where the two
 programs' memory is compared and the first inside the game.
 
-**THE FRAMEBUFFER IS DUMPED AT THE BREAKPOINT AND THE PICTURE FOUR BLANKS LATER**, and the split is
-what makes the comparison mean anything. Memory is exact at the instruction; the DISPLAY surface is
+**THE SECOND ARRIVAL IS THE ONE THAT PINS THE GEM DOOR**, and it is why there are two. At the first,
+the room has been composed and `game_frame_update` has not run once, so no `vro_cpyfm` has reached
+the displayed screen and the MFDB raster translation in `bubble_backend.c`'s `raster_copy_call` is
+invisible — two mutations of it survived this mode AND `title` (`../STATUS.md`). One whole frame
+later — `save_sprite_backgrounds`, `draw_sprites`, `present_room`, `restore_sprite_backgrounds`,
+`objects_animate_and_draw` — the framebuffer carries the ghost and the bubble as the VDI drew them
+through that door, and deleting the source raster's translation now reddens it by 414 bytes. The
+second breakpoint is `b pc = $room_pc :2 :once`: Hatari's `:<count>` is "break only on every
+`<count>` hit", it rejects an explicit `:1`, and two breakpoints on one PC keep their own hit counts
+so the pair fires on consecutive arrivals (measured on 2.6.1). **The two captures are asserted to
+DIFFER** on each side — 361 bytes, the ghost and the bubble — because a second capture equal to the
+first is not a second arrival, and would compare the same pre-`vro_cpyfm` moment to itself and pass.
+
+**THE FRAMEBUFFERS ARE DUMPED AT THE BREAKPOINTS AND THE PICTURE FOUR BLANKS LATER**, and the split
+is what makes the comparison mean anything. Memory is exact at the instruction; the DISPLAY surface is
 built scanline by scanline and needs the settle (class 8). Four blanks is four more frames of the
 room loop, and the ghost and the bubble are ERASED AND REDRAWN every one of them — so the first
 draft, which dumped memory after the settle like the picture, compared two runs on opposite sides of
@@ -466,11 +479,19 @@ The room loop has **no Vsync and no wait of any kind** (`notes/gameplay.md` §2)
 renderer's speed: the game's pace AND its mouse-to-screen latency ARE the frame cost, and the target
 is parity with the original's cycles per frame rather than a budget to come in under.
 
-**WHERE THE FOUR WAVES BELOW LEAVE IT: 489.1K cycles a frame, 16.40 fps, x1.05** of the original's
-466.9K / 17.18 — waves 3a and 3b built together and both sides profiled in one session
-(`../STATUS.md`'s merge table). Every wave below reports its OWN window against its own baseline —
-wave 2's is 809.2K, waves 3a and 3b's is 517.4K — so a figure quoted mid-section is that wave's and
-not this one, and the first measurement below is the pre-wave-1 table rather than the current cost.
+**WHERE THE FIVE WAVES BELOW LEAVE IT: 485.6K cycles a frame, 16.52 fps, x1.04** of the original's
+466.9K / 17.18. Every wave below reports its OWN window against its own baseline — wave 2's is
+809.2K, waves 3a and 3b's is 517.4K, wave 4's is 489.1K — so a figure quoted mid-section is that
+wave's and not this one, and the first measurement below is the pre-wave-1 table rather than the
+current cost. **This instrument's own spread is 0.3%** (four windows of one binary in one session
+read 485.6K three times and 487.1K once), so a change worth less than that is an objdump claim and
+not a profiler one.
+
+**AND WAVE 4 IS WHERE THE CAMPAIGN STOPS unless something changes shape.** The last 18.6K is two
+rows: the shim's GEM door at 8.4K, which the shipped binary has NO counterpart for because its
+parameter block already holds machine addresses, and the 200 Hz tick at 8.0K, most of which is C
+against hand-asm in a body wave 3a already emptied of levers. `../STATUS.md`'s wave 4 prices every
+remaining lever and says which are NO-GO.
 
 ```
 python3 atari/profile.py ours            # builds the play .PRG, profiles one room's window
@@ -524,12 +545,13 @@ mean — which is what makes either of them worth reading.
 their own heading rather than ranking them. Hatari attaches cycle totals to SUBROUTINE arrivals
 alone, so a routine the two binaries ENTER DIFFERENTLY carries a full total on one side and almost
 none on the other. `timer_c_sound_isr` is the measured example: both sides tick 3,329 times in the
-window, ours reached by a `jsr` out of `bg_timer_c_tick` and the shipped one straight off its
+window, ours reached by a `jsr` out of `bg_timer_c_entry` and the shipped one straight off its
 autovector — of which Hatari charged 21. Ranked as a ratio it read **x81 and second in the table**;
 the original's ISR cost is not in that row at all, it is spread through the exclusive totals of
 whatever the interrupt landed in. `objects_animate_and_draw` is the same class the other way (theirs
 10,692 a frame, ours branch-entered and charged nothing). Ours costs 88.4K a frame through
-`bg_timer_c_tick`, 10.9% of the window, and **the original's is unmeasured by this instrument**.
+`bg_timer_c_entry` (through `bg_timer_c_tick`, the C half wave 4 deleted), 10.9% of the window,
+and **the original's is unmeasured by this instrument**.
 
 `game_room_frame_tail` has no shipped row for the same reason: it is the branch-entered slice
 `[0x10792, 0x108d2)` of `game_top_loop`, so ours' 760.6K a frame stands alone.
@@ -587,7 +609,7 @@ The dispatch half is the MFDB copy, above. The tick half is the `trap #9`, and *
 does not make one** — its own `psg_gate` @ `0x14940` carries 0.7 cycles a tick, because the handler
 writes the ports itself and only USER-mode callers trap. A 68000 exception handler is already
 supervisor and `bg_timer_c_entry` never lowers the interrupt's own IPL 6, so both of the things the
-gate provides are already true inside the tick: `bg_timer_c_tick` raises `bg_in_timer_c` for the
+gate provides are already true inside the tick: `bg_timer_c_entry` raises `bg_in_timer_c` for the
 length of the call and `shim_include/psg.h`'s door wrote the ports through `bg_psg_write_super`
 (`bubble_os.s`, beside the gate and out of its own constants) instead of trapping — a routine wave
 3a then deleted, folding the two stores into the header itself. The whole tick's
@@ -751,7 +773,7 @@ original's 6,431 for the same work (`vro_cpyfm` + `vdi_set_src_mfdb` + `vdi_set_
 routines' own exclusives) — parity, and no lever; the shim door adds 7,320; and the remaining ~18K is
 **the Timer C tick nested inside their inclusive totals**. The mechanism is visible in one row:
 `copy_longs_ascending` is a leaf, and its inclusive exceeds its exclusive by 14,001 cyc/frame —
-28% of our 50K tick, in a function that calls nothing. Hatari pushes `bg_timer_c_tick` on the
+28% of our 50K tick, in a function that calls nothing. Hatari pushes the tick's own routine on the
 callstack because the ISR `jsr`s to it, so every ancestor's INCLUSIVE carries the interrupt; on the
 shipped side nothing `jsr`s and the same cycles land in the interrupted routine's EXCLUSIVE instead.
 **A wave that halves the tick therefore collapses those three rows too**, and no work on the sprite
@@ -829,3 +851,31 @@ Each of these is measured rather than feared; `profile.py`'s header carries the 
     and `await_file`, which were the same shape of copy in `smoke.py`, HAVE been hoisted — into
     `tools/hatari_headless.py`, where Zynaps' own copies still shadow them until someone deletes
     those.
+
+### Wave 4 (2026-09-07) — the GEM door and the tick's shim, and the NO-GO ledger
+
+**489.1K -> 485.6K cycles a frame, 16.40 -> 16.52 fps, x1.05 -> x1.04.** `atari/` only; the cores are
+untouched, so `make test` is green either side of it and is not the evidence. `../STATUS.md`'s wave 4
+carries the objdump table, the per-lever NO-GO prices and the mutation sweep; the short version:
+
+| | before | after |
+|---|---|---|
+| the GEM door, exclusive | `bg_gem_dispatch` 10,241 a frame, 1,184 a call | `bg_gem_dispatch` + `raster_copy_call` **8,411**, **971 a call** |
+| the 200 Hz tick | 2,434 cyc/tick, 29.7K a frame | **2,297, 27.8K** |
+| ...the shim's own half of it | 428, three routines | **~296**, one — `bg_timer_c_entry` is the whole tick outside the ISR now, and `bg_timer_c_tick` is deleted |
+| the three sprite rows | x1.05 / x1.05 / x1.05 | **x1.04 / x1.05 / x1.04** |
+
+**Two gates came with it.** $484 joined the PSG ports in `build.sh`'s two-language loop — scraped from
+`../include/sound.h` and from `bubble_os.s` — and a second check pins the mirror instruction present
+exactly once INSIDE `bg_timer_c_entry`, label to label. `bubble_main.c` carries a `_Static_assert` on
+each of the four operand widths the assembly now hard-codes.
+
+**The wave's finding was a hole, not a win: the GEM door's MFDB translation had no surface here.**
+Deleting the destination MFDB's restore, and deleting the source raster's translation outright, were
+both GREEN through `smoke.py game` and `smoke.py title` — the game mode photographed the framebuffer
+at the FIRST arrival at `game_frame_update`, before that frame had drawn anything, and the title mode
+makes no `vro_cpyfm` at all. **CLOSED** by the second capture at the SECOND arrival described under
+"The `game` mode" above: the source translation now reds by 414 bytes, deleting the DESTINATION
+translation halts the CPU on a Bus Error, and the destination RESTORE stays green because it is an
+equivalent mutant — every `vro_cpyfm` call site rewrites both MFDB `fd_addr` fields first, so what it
+puts back is never read. `../STATUS.md` carries the table.

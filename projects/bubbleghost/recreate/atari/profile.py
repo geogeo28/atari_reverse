@@ -283,7 +283,7 @@ MINIMUM_WINDOW_SPAN = 0.9
 # OURS IS ONE CORE RANGE PLUS THE SHIM'S, BECAUSE THE LINK SPELT IT THAT WAY. Every helper the ISR
 # runs — `sound_voice_tick`, the two step routines, the three `write_*`, `key_off` — is `static` and
 # GCC inlines all of them into `timer_c_sound_isr`, so none carries an address range of its own;
-# what survives beside it is the shim's own entry, tick and $484 store.
+# what survives beside it is the shim's own entry, which is the whole of the rest of the tick.
 #
 # THE LISTS ARE HAND-MAINTAINED AGAINST WHAT THE MAPS SAY TODAY, and that is a live hazard in ONE
 # direction: a name that VANISHES is refused below, but a name that APPEARS is not noticed. A core
@@ -299,18 +299,19 @@ MINIMUM_WINDOW_SPAN = 0.9
 # They stay in the list so that a build which put the ISR's writes back through the gate would show
 # the whole cost here rather than appear to have got faster.
 #
-# THREE NAMES THAT USED TO BE HERE ARE GONE BECAUSE THE CODE IS (wave 3a, ../STATUS.md): the two
-# step routines are now inlined into `timer_c_sound_isr`, whose range therefore covers them, and the
-# ISR's chip write is a `move.b` pair the compiler puts inline where `bg_psg_write_super` used to be
-# `jsr`ed. `bg_write_byte` STAYS: the ISR's $484 mirror still calls it, and dropping a name whose
-# cycles the tick still spends would make the tick read cheaper than it is.
+# FIVE NAMES THAT USED TO BE HERE ARE GONE BECAUSE THE CODE IS. Three went in wave 3a
+# (../STATUS.md): the two step routines are now inlined into `timer_c_sound_isr`, whose range
+# therefore covers them, and the ISR's chip write is a `move.b` pair the compiler puts inline where
+# `bg_psg_write_super` used to be `jsr`ed. Two more went in wave 4: `bg_timer_c_tick` is DELETED —
+# `bg_timer_c_entry` is the whole tick outside the ISR now — and `bg_write_byte`'s only caller left
+# is `bubble_main.c`'s user-mode `mirror_conterm`, so a tick spends none of it and keeping the name
+# would fold that user-mode traffic into the 200 Hz figure.
 SOUND_TICK_SYMBOLS = {
-    OURS: ("bg_timer_c_entry",                                     # the autovector entry, bubble_os.s
-           "bg_timer_c_tick",                                      # ...and bubble_main.c's counter
+    OURS: ("bg_timer_c_entry",                                     # bubble_os.s — the WHOLE tick but
+                                                                   # the ISR: count, flag, $484 mirror
            "timer_c_sound_isr",                                    # src/sound.c, steps inlined
            "psg_gate", "trap9_psg_handler",                        # the gate those writes used to take
-           "bg_super_gate", "bg_super_gate_entry",                 # the `trap #9` under it
-           "bg_write_byte"),                                       # the conterm byte the ISR clears
+           "bg_super_gate", "bg_super_gate_entry"),                # the `trap #9` under it
     SHIPPED: ("timer_c_sound_isr",                                 # 0x1459a, the whole handler
               "psg_gate", "trap9_psg_handler"),                    # 0x14940 and 0x14950
 }
@@ -1070,7 +1071,7 @@ def print_ratios(ours, theirs):
     arrivals alone, so a routine the two binaries ENTER DIFFERENTLY carries a full total on one side
     and none on the other, and the subtraction between them is arithmetic on an attribution rather
     than on a cost. `timer_c_sound_isr` is the measured example and it is not a small one: both
-    sides tick 3,329 times in the window, but ours is reached by a `jsr` out of `bg_timer_c_tick`
+    sides tick 3,329 times in the window, but ours is reached by a `jsr` out of `bg_timer_c_entry`
     and the shipped one straight off its autovector — whose cycles Hatari leaves in whatever the
     interrupt landed in. Ranked as a ratio it reads x47.8 and second in the table. So those rows are
     listed BELOW the ranking, under what they actually are."""

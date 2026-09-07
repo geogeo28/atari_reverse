@@ -152,31 +152,61 @@ for GATE in PSG_WRITE PSG_READ STORE8; do
 done
 echo ">> the supervisor gate's 3 operations agree between tos.h and bubble_os.s"
 
-# ---- ...and the chip's two ports are ONE set of numbers in two languages ------------------------
-# The trapped write is bubble_os.s's `bg_super_gate_entry` and the ISR's untrapped one is
-# `psg_untrapped_write` in shim_include/psg.h; they address the same chip, so the port and the data
-# displacement are scraped from both and compared. A disagreement here writes a sound register to
-# whatever else lives at the address. (`PSG_REG_MASK` is deliberately NOT in this loop: only the
-# trapped door masks, for the reason psg.h's header gives.)
-for PORT in PSG_SELECT:BG_PSG_SELECT PSG_DATA:BG_PSG_DATA_OFFSET; do
+# ---- ...and the tick still mirrors $484 out to the machine ---------------------------------------
+# ...and that the mirror is still that store, INSIDE THE TICK. The tick is the only writer of $484 on
+# target after the boot and nothing else in this tree watches an instruction in this file — and a
+# file-wide grep would be satisfied by the store having been moved into some routine the interrupt
+# never reaches, which is the same hole `assert_trap_registers.sh` opens with "routine by routine and
+# not file-wide". The scrape is therefore the `bg_timer_c_entry:` label to the NEXT column-0 label.
+# `mirror_conterm`'s one-shot poke at PHASE_GEM_OPEN already leaves the machine byte at 0, and
+# `../src/sound.c` clears the image byte every tick, so smoke.py's CONTERM_AT_ANCHOR check passes
+# whether or not the per-tick mirror runs: this gate is the only thing that can see it go.
+CONTERM_MIRROR=$(awk '/^bg_timer_c_entry:/ {inside = 1; next}
+                      /^[A-Za-z_][A-Za-z_0-9]*:/ {inside = 0}
+                      inside' "$HERE/bubble_os.s" \
+                 | grep -c '^ *move\.b  *CONTERM(%a0),CONTERM *|' || true)
+[ "$CONTERM_MIRROR" = "1" ] || {
+  echo "ERROR: 'move.b CONTERM(%a0),CONTERM' was scraped $CONTERM_MIRROR times INSIDE"
+  echo "       bg_timer_c_entry in bubble_os.s, not once. That store IS the key click actually"
+  echo "       stopping; losing it — or moving it to a routine the 200 Hz interrupt never reaches —"
+  echo "       is a silent regression no screenshot and no differential can see."; exit 1; }
+echo ">> the 200 Hz tick still mirrors \$484 out to the machine"
+
+# ---- ...and the ADDRESSES bubble_os.s shares with a C header are ONE set of numbers -------------
+# Three entries, each `<asm name>:<C name>:<C file>`. The two PSG ports: the trapped write is
+# bubble_os.s's `bg_super_gate_entry` and the ISR's untrapped one is `psg_untrapped_write` in
+# shim_include/psg.h; they address the same chip, so a disagreement writes a sound register to
+# whatever else lives at the address. (`PSG_REG_MASK` is deliberately NOT here: only the trapped door
+# masks, for the reason psg.h's header gives.) And $484, TOS's key-click byte: the 200 Hz tick's last
+# act is `move.b CONTERM(%a0),CONTERM`, which mirrors the byte the VERIFIED core cleared in the image
+# out to the machine — so the address is spelt once in the core header the ISR reads it through and
+# once on target, and a disagreement would read one byte of the image and write a different byte of
+# TOS's low memory two hundred times a second. It is in assembly at all because the C spelling
+# (`*(volatile uint8_t *)TOS_CONTERM = ...`) compiles to that same one instruction and warns on every
+# build.
+for PORT in PSG_SELECT:BG_PSG_SELECT:"$HERE/shim_include/psg.h" \
+            PSG_DATA:BG_PSG_DATA_OFFSET:"$HERE/shim_include/psg.h" \
+            CONTERM:TOS_CONTERM:"$REC/include/sound.h"; do
+  C_FILE=${PORT##*:}
+  C_NAME=${PORT#*:}; C_NAME=${C_NAME%%:*}
   FROM_S=$(sed -n "s/^ *${PORT%%:*} *= *\([0-9a-fA-FxX]*\).*/\1/p" "$HERE/bubble_os.s")
-  FROM_H=$(sed -n "s/^#define ${PORT##*:}  *\([0-9a-fA-FxX]*\)u.*/\1/p" "$HERE/shim_include/psg.h")
+  FROM_H=$(sed -n "s/^#define $C_NAME  *\([0-9a-fA-FxX]*\)u.*/\1/p" "$C_FILE")
   # An EMPTY scrape is refused first, because `printf '%d' ""` is 0 with exit status 0 on the bash
   # this runs under — two missed patterns would otherwise agree at zero and the gate would print its
   # green line over nothing. Past that, both are normalised to decimal so 0x2 and 2 compare equal,
   # and a printf that REFUSES catches the other rot ("0x" out of a pattern that lost its digits).
   [ -n "$FROM_S" ] && [ -n "$FROM_H" ] || {
-    echo "ERROR: ${PORT%%:*} scraped EMPTY from bubble_os.s ('$FROM_S') or ${PORT##*:} from"
-    echo "       shim_include/psg.h ('$FROM_H') — the pattern has stopped matching, and a clean"
+    echo "ERROR: ${PORT%%:*} scraped EMPTY from bubble_os.s ('$FROM_S') or $C_NAME from"
+    echo "       $C_FILE ('$FROM_H') — the pattern has stopped matching, and a clean"
     echo "       report from it would mean nothing"; exit 1; }
   VALUE_S=$(printf '%d' "$FROM_S" 2>/dev/null) && VALUE_H=$(printf '%d' "$FROM_H" 2>/dev/null) || {
-    echo "ERROR: ${PORT%%:*} scraped as '$FROM_S' from bubble_os.s and ${PORT##*:} as '$FROM_H' from"
-    echo "       shim_include/psg.h, and at least one is not a number — the pattern is matching only"
-    echo "       part of what it should, and a clean report from it would mean nothing"; exit 1; }
+    echo "ERROR: ${PORT%%:*} scraped as '$FROM_S' from bubble_os.s and $C_NAME as '$FROM_H' from"
+    echo "       $C_FILE, and at least one is not a number — the pattern is matching only part of"
+    echo "       what it should, and a clean report from it would mean nothing"; exit 1; }
   [ "$VALUE_S" = "$VALUE_H" ] || {
-    echo "ERROR: the PSG port is $FROM_S in bubble_os.s (${PORT%%:*}) and $FROM_H in"
-    echo "       shim_include/psg.h (${PORT##*:}). The trapped and untrapped writes would reach"
-    echo "       different addresses."; exit 1; }
+    echo "ERROR: the address is $FROM_S in bubble_os.s (${PORT%%:*}) and $FROM_H in $C_FILE"
+    echo "       ($C_NAME). The two spellings would reach different bytes of the machine."
+    exit 1; }
 done
 # ...and that the untrapped door's BODY is those two macros and nothing else: exactly two volatile
 # byte stores, select before data. The equality above pins the numbers; this pins that they are what
@@ -208,8 +238,8 @@ PSG_TRAPPED_MASKS=$(grep -c '^ *andi\.l  *#PSG_REG_MASK,%d1$' "$HERE/bubble_os.s
   echo "       in bubble_os.s, not once. The TRAPPED door is where this build's register mask lives"
   echo "       (shim_include/psg.h's header argues why the untrapped one has none); losing it makes"
   echo "       the two doors agree where the original's two do not."; exit 1; }
-echo ">> the chip's 2 ports agree between psg.h and bubble_os.s, the ISR's store is those 2 stores" \
-     "and nothing else, and only the trapped door masks"
+echo ">> bubble_os.s's 3 shared addresses agree with their C headers, the ISR's store is those 2" \
+     "stores and nothing else, and only the trapped door masks"
 
 # ---- the trap-register scan ---------------------------------------------------------------------
 # docs/on-target-execution.md class 3's register half: the one hardware-only bug class no

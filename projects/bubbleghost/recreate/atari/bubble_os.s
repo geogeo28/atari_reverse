@@ -40,6 +40,12 @@
                                     | STACK_RESERVE_BYTES is the same number and build.sh asserts
                                     | the two are equal, because the size gate weighs the .PRG
                                     | against a budget this reserve is subtracted from.
+    CONTERM         = 0x484         | TOS's key-click/bell flags. ONE DEFINITION ACROSS THE
+                                    | LANGUAGE BOUNDARY (CLAUDE.md §5): the VERIFIED core header
+                                    | ../include/sound.h spells the same address as TOS_CONTERM —
+                                    | it is what the sound ISR clears in the image — and build.sh
+                                    | asserts the two are equal. The Timer C entry below mirrors
+                                    | that image byte out to the machine.
     BASEPAGE_BYTES  = 0x100         | GEMDOS puts the basepage immediately below p_tbase
     BP_TLEN         = 12            | the basepage's own segment lengths
     BP_DLEN         = 20
@@ -482,6 +488,28 @@ bg_super_gate_entry:
 | spellings equal; PSG_REG_MASK stays here alone, because only the TRAPPED door masks.
 
 | ---- the Timer C entry -------------------------------------------------------------------------
+| THE WHOLE TICK IS HERE, and that is a measurement rather than a preference. The count, the
+| supervisor flag and the $484 mirror used to be a C routine this entry `jsr`ed to
+| (`bg_timer_c_tick`), and the three of them together cost 428 cycles a tick — 148 here, 224 in the
+| C half's own plumbing and 56 inside `bg_write_byte`, most of it pushing the image base, RELOADING
+| it after the ISR, and pushing two arguments at a routine whose body is one `move.b`. The twelve
+| instructions below are ~280, so the wave took ~150 a tick: 1.8K a frame at 12.2 ticks, and the
+| profiler agreed at 146 (2,434 cyc/tick -> 2,288). **The 428 was the BEFORE figure, not the
+| saving** — the largest item left in it is the `movem` pair at 84.
+|
+| `../STATUS.md`'s wave 3a named this file as where the mirror belongs: in C the store is
+| `*(volatile uint8_t *)TOS_CONTERM = ...`, which GCC compiles to this same one instruction and
+| warns about on every build ("source object is likely at address zero").
+|
+| THE IMAGE BASE IS READ TWICE ON PURPOSE, and the cheap spelling is a bug waiting. Pushing it as
+| the ISR's argument and POPPING IT BACK afterwards would save 16 cycles a tick — but the m68k SysV
+| ABI makes a callee's incoming argument area the CALLEE's scratch, and GCC really does spill a
+| modified parameter into its own incoming slot. `timer_c_sound_isr` does not today (`core_sound.o`
+| reads `%sp@(48)` and never writes it, spilling to `%sp@(32..44)` below it), and if it ever did,
+| this entry would mirror a byte read from a garbage address into TOS's $484 two hundred times a
+| second — a MACHINE write, so no differential sees it and no screenshot tells it apart. 16 cycles
+| a tick, ~195 a frame, is the price of not resting on the callee's codegen.
+|
 | IT DOES NOT `rte`, AND THAT IS THE ORIGINAL'S SHAPE. `timer_c_sound_isr` @ 0x1459a ends by pushing
 | TOS's own saved $114 vector and `rts`ing, so the exception frame is left for TOS's handler to
 | return from and the 200 Hz work TOS still wants done — the clock, the key repeat — still happens.
@@ -489,8 +517,19 @@ bg_super_gate_entry:
 | it against what the verified installer parked in the image.
     .globl  bg_timer_c_entry
 bg_timer_c_entry:
-    movem.l %d0-%d1/%a0-%a1,-(%sp)  | the caller-saved set; the C half preserves the rest
-    jsr     bg_timer_c_tick         | bubble_main.c: bumps the count, runs the verified ISR
+    movem.l %d0-%d1/%a0-%a1,-(%sp)  | the caller-saved set; the verified ISR preserves the rest
+    addq.l  #1,bg_timer_c_ticks     | the surface: a run whose vector never took ticks 0, which no
+                                    | screenshot could tell from music that has not started
+    move.b  #1,bg_in_timer_c        | the ISR's chip writes go straight at the ports for the length
+                                    | of this call — an exception handler is already supervisor and
+                                    | still at the interrupt's own IPL 6, which is both halves of
+                                    | what the trap #9 gate provides (shim_include/tos.h)
+    move.l  bg_image_base,-(%sp)    | the ISR's one argument
+    jsr     timer_c_sound_isr       | ../src/sound.c — the verified handler, steps inlined
+    addq.l  #4,%sp                  | ...and the argument is the CALLEE's scratch, so it is dropped
+    movea.l bg_image_base,%a0       | ...and the base re-read rather than popped (see above)
+    move.b  CONTERM(%a0),CONTERM    | the ISR's own $484 write, made for real
+    clr.b   bg_in_timer_c           | ...cleared LAST, so every user-mode door still traps
     movem.l (%sp)+,%d0-%d1/%a0-%a1
     move.l  bg_timer_c_chain,-(%sp)
     rts

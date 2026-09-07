@@ -108,6 +108,18 @@ volatile uint32_t bg_timer_c_ticks;
 uint32_t bg_timer_c_chain;
 volatile uint8_t bg_in_timer_c;   /* shim_include/tos.h: what lets the ISR's chip writes skip the gate */
 
+/* THE 200 Hz TICK REACHES ALL FOUR OF THESE FROM ASSEMBLY, so their WIDTHS are the compiler's here
+ * and the programmer's there: `bg_timer_c_entry` (bubble_os.s) spells `addq.l`, `move.b`/`clr.b` and
+ * two `move.l`s against them, and nothing else would notice a type that grew. Widening
+ * `bg_in_timer_c` to an `int` is the one that bites without a diagnostic anywhere: `clr.b` would
+ * then clear only the big-endian TOP byte, the flag would read true for ever, and `psg.h`'s door
+ * would send every USER-mode chip write straight at $ff8800 — a bus error, which is what
+ * `smoke.py`'s fault scan finds after the fact rather than what a build refuses. */
+_Static_assert(sizeof bg_timer_c_ticks == 4, "bg_timer_c_entry bumps this with `addq.l`");
+_Static_assert(sizeof bg_timer_c_chain == 4, "bg_timer_c_entry pushes this with `move.l`");
+_Static_assert(sizeof bg_in_timer_c == 1, "bg_timer_c_entry sets and clears this with `move.b`/`clr.b`");
+_Static_assert(sizeof bg_image_base == 4, "bg_timer_c_entry pushes this with `move.l`");
+
 /* ================================================================================================
  * WHAT A HEADLESS CHECK NEEDS TO KNOW BEFORE THE RUN CAN GO WRONG
  *
@@ -530,7 +542,11 @@ static void poke_byte(uint32_t address, uint8_t value) {
  *   AFTER the GEM is open   the image byte is written BACK to the machine. THIS is the poke the
  *                     original makes for real, and the reason the key click actually stops.
  *   EVERY TICK        the ISR's own write is mirrored out — from inside the interrupt, which is
- *                     already supervisor, so `bg_timer_c_tick` stores directly instead of Supexec'ing.
+ *                     already supervisor, so `bg_timer_c_entry` (bubble_os.s) stores directly
+ *                     instead of Supexec'ing. It is spelt there rather than here because in C the
+ *                     store is `*(volatile uint8_t *)TOS_CONTERM = ...`, which GCC warns about on
+ *                     every build; `build.sh` pins that file's `CONTERM` equal to this file's
+ *                     `TOS_CONTERM` (../include/sound.h).
  *
  * The first draft ran the first two the other way round and then poked the machine's byte back onto
  * itself: a no-op that read as a mirror, with `CONTERM_AT_ANCHOR` sitting at TOS's own 7 all the way
@@ -549,23 +565,6 @@ static uint8_t peek_conterm(void) {
 static void seed_conterm(uint8_t *image) { image[TOS_CONTERM] = peek_conterm(); }
 
 static void mirror_conterm(const uint8_t *image) { poke_byte(TOS_CONTERM, image[TOS_CONTERM]); }
-
-/* The C half of the Timer C entry. The verified ISR is the whole body; the count is the surface —
- * a run whose sound is silent because the vector never took is a run whose tick count is 0, which
- * no screenshot could tell from a run whose music simply has not started. */
-void bg_timer_c_tick(void) {
-    bg_timer_c_ticks++;
-    /* The ISR's chip writes go straight at the ports for the length of this call: an exception
-     * handler is already supervisor and this one is still at the interrupt's own IPL 6, which is
-     * both halves of what the trap #9 gate exists to provide (shim_include/tos.h). Cleared on the
-     * way out, so every door reached from user code still traps. */
-    bg_in_timer_c = 1;
-    timer_c_sound_isr(bg_image_base);
-    /* The ISR's own $484 write, made for real. An exception handler already runs in supervisor mode,
-     * so this is a plain store where `mirror_conterm` needs a Supexec from user code. */
-    bg_write_byte(TOS_CONTERM, bg_image_base[TOS_CONTERM]);
-    bg_in_timer_c = 0;   /* ...cleared LAST, so the flag is true for the whole of the handler */
-}
 
 /* ================================================================================================
  * The anchor. `smoke.py` breaks on THIS function's entry — its runtime address is what BASE.BIN

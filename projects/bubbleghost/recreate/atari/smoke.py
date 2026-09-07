@@ -656,6 +656,26 @@ def check_the_record(ours, original):
     return problems
 
 
+def framebuffer_problems(mine, theirs, when, blank_hint=""):
+    """Two framebuffer dumps compared byte for byte, as the problem lines a check reports.
+
+    `when` names the moment inside each sentence, so one comparison serves anchors that stop at
+    different ones. THE LENGTHS ARE COMPARED FIRST, because `zip` stops at the shorter of the two: a
+    `savebin` that landed short against a full one would otherwise be counted as zero bytes
+    differing, and half a screen would pass as a match.
+    """
+    if len(mine) != len(theirs):
+        return [f"{len(mine)} bytes {when} against the original's {len(theirs)}"]
+    differing = sum(1 for a, b in zip(mine, theirs) if a != b)
+    if differing:
+        first = next(i for i, (a, b) in enumerate(zip(mine, theirs)) if a != b)
+        return [f"{differing} of {len(mine)} framebuffer bytes differ {when}, first at {first}"]
+    if not any(mine):
+        return [f"both framebuffers {when} are entirely zero, so their equality means nothing"
+                + blank_hint]
+    return []
+
+
 def check_the_framebuffer(ours, original):
     """MEMORY: the displayed 32,000 bytes, ours against the original's own.
 
@@ -666,16 +686,8 @@ def check_the_framebuffer(ours, original):
         return [f"{FILE_SCREEN_DUMP} was never written"]
     if original.get("screen") is None:
         return ["the original's framebuffer was never dumped"]
-    if len(ours["screen"]) != len(original["screen"]):
-        return [f"{len(ours['screen'])} bytes against the original's {len(original['screen'])}"]
-    differing = sum(1 for a, b in zip(ours["screen"], original["screen"]) if a != b)
-    if differing:
-        first = next(i for i, (a, b) in enumerate(zip(ours["screen"], original["screen"])) if a != b)
-        return [f"{differing} of {len(ours['screen'])} framebuffer bytes differ, first at {first}"]
-    if not any(ours["screen"]):
-        return ["both framebuffers are entirely zero, so their equality means nothing — the menu "
-                "drew nothing on either side"]
-    return []
+    return framebuffer_problems(ours["screen"], original["screen"], "at the anchor",
+                                " — the menu drew nothing on either side")
 
 
 def check_the_hardware_state(ours, original):
@@ -1127,25 +1139,52 @@ def await_play_tally(session, tally_address, slot, want, doing, deadline_seconds
     return value
 
 
+# Hatari's `:<count>` breakpoint option is "break only on every <count> hit" (`help b`, 2.6.1), so
+# `:2 :once` is the SECOND arrival and then retirement. It REJECTS an explicit `:1`, which is why
+# the first arrival's breakpoint below carries no count at all. Two breakpoints on one PC each keep
+# their own hit count, so the pair fires on consecutive arrivals — measured on 2.6.1 before it was
+# relied on here.
+ROOM_FRAME_SECOND_ARRIVAL = 2
+
+# THE TWO ROOM CAPTURES, AND THE ONLY PLACE EITHER IS NAMED: the result key each lands under, the
+# `arm_the_room_anchor` file it is read back from, and the words every check reports it in. The
+# arming, the read-back and the comparison all walk this one table, so a third capture is one row.
+ROOM_ENTRY_SCREEN = "room_entry_screen"
+ROOM_DRAWN_SCREEN = "room_drawn_screen"
+ROOM_CAPTURES = ((ROOM_ENTRY_SCREEN, "entry", "at the room's first frame call"),
+                 (ROOM_DRAWN_SCREEN, "drawn", "after one whole room frame"))
+
+
 def arm_the_room_anchor(session, room_pc, side, screen_address):
-    """Break on a room's FIRST frame, dump the framebuffer THERE, and photograph four blanks later.
+    """Dump the framebuffer at a room's first TWO frame calls, and photograph four blanks later.
 
-    It is a deterministic moment on both sides and the strongest one this mode has: the room has
-    been composed and drawn, `game_room_frame_tail` has not run once, and the mouse — which is what
-    would otherwise make two runs diverge immediately — has not moved on either side, because
-    nothing headless can move it.
+    Both are deterministic moments on both sides, and they are the strongest ones this mode has: the
+    mouse — which is what would otherwise make two runs diverge immediately — has not moved on
+    either side, because nothing headless can move it.
 
-    THE FRAMEBUFFER IS DUMPED AT THE BREAKPOINT AND THE PICTURE FOUR BLANKS LATER, and the split is
-    the whole reason this check means anything. Memory is exact at the instruction, so it needs no
-    settle; the DISPLAY surface is built scanline by scanline and does (docs/on-target-execution.md
-    class 8). Four blanks is four more frames of the room loop, and the ghost and the bubble are
-    ERASED AND REDRAWN every one of them — so a capture taken then catches whichever side of that
-    cycle the run happened to be on, and the two sides differed by exactly the ghost and the bubble
-    when the comparison was made off the late dump (measured, 556 of 32,000 bytes).
+    THE SECOND ARRIVAL IS THE ONE THAT PINS THE GEM DOOR. At the first, the room has been composed
+    and `game_frame_update` has not run once, so no `vro_cpyfm` has reached the displayed screen and
+    the whole MFDB raster translation (`atari/bubble_backend.c`, `raster_copy_call`) is invisible to
+    the comparison — two mutations of it survived this mode AND `title`, and that hole is what this
+    second capture closes. One whole frame later — `save_sprite_backgrounds`, `draw_sprites`,
+    `present_room`, `restore_sprite_backgrounds`, `objects_animate_and_draw` — the displayed
+    framebuffer carries the ghost and the bubble AS THE VDI DREW THEM THROUGH THAT DOOR.
+
+    THE FRAMEBUFFERS ARE DUMPED AT THE BREAKPOINTS AND THE PICTURE FOUR BLANKS AFTER THE SECOND —
+    and the pens with it, so they are read one room frame deeper into the loop than they were when
+    this anchor was a single one. The split is the whole reason these checks mean anything: memory is
+    exact at the instruction, so it needs no settle; the DISPLAY surface is built scanline by
+    scanline and does (docs/on-target-execution.md class 8). Four blanks is four more frames of the
+    room loop, and the ghost and the bubble are ERASED AND REDRAWN every one of them — so a capture
+    taken then catches whichever side of that cycle the run happened to be on, and the two sides
+    differed by exactly the ghost and the bubble when the comparison was made off the late dump
+    (measured, 556 of 32,000 bytes — a CROSS-SIDE count at a settled moment, not the 361 the two
+    captures within one run differ by).
     """
     work = session.work
     files = {"shot": work / f"{side}_room.png", "pens": work / f"{side}_room_pens.bin",
-             "screen": work / f"{side}_room_screen.bin", "done": work / f"{side}_room_done.bin"}
+             "entry": work / f"{side}_room_entry.bin", "drawn": work / f"{side}_room_drawn.bin",
+             "done": work / f"{side}_room_done.bin"}
     for stale in files.values():
         stale.unlink(missing_ok=True)
     shoot = action_file(
@@ -1155,10 +1194,25 @@ def arm_the_room_anchor(session, room_pc, side, screen_address):
         f"savebin {files['done']} ${HW_SHIFTER_MODE:x} $1")
     settle = settle_chain(work, ANCHOR_SETTLE_VBLS - 1, shoot, f"{side}_roomwait%d.txt")
     entry = action_file(work, f"{side}_roomentry.txt",
-                        f"savebin {files['screen']} ${screen_address:x} ${SCREEN_BYTES:x}",
+                        f"savebin {files['entry']} ${screen_address:x} ${SCREEN_BYTES:x}")
+    drawn = action_file(work, f"{side}_roomdrawn.txt",
+                        f"savebin {files['drawn']} ${screen_address:x} ${SCREEN_BYTES:x}",
                         f"b VBL > VBL :once :quiet {settle}")
     session.arm(f"b pc = ${room_pc:x} :once :quiet {entry}")
+    session.arm(f"b pc = ${room_pc:x} :{ROOM_FRAME_SECOND_ARRIVAL} :once :quiet {drawn}")
     return files
+
+
+def collect_room_capture(result, files):
+    """Read back what the room's anchors dumped, whatever of it landed.
+
+    `done` is written by the SECOND anchor's settle chain, so it witnesses the drawn capture and not
+    the entry one — a missing dump is answered as None here and reported by `check_the_room_state`,
+    rather than raised out of a run that has both emulators still to shut down.
+    """
+    result["room_pens"] = files["pens"].read_bytes() if files["pens"].is_file() else None
+    for result_key, file_key, _ in ROOM_CAPTURES:
+        result[result_key] = files[file_key].read_bytes() if files[file_key].is_file() else None
 
 
 def press_the_game_keys(session, room_is_open, deadline_seconds):
@@ -1224,16 +1278,14 @@ def run_the_game_ours(work):
         ROOM_DEADLINE_SECONDS)
     result["alive"] = session.alive()
     result["frames"] = read_play_tally(session, tally)[TALLY_GAME_FRAMES] if result["alive"] else 0
-    if room["done"].is_file():
-        result["room_pens"] = room["pens"].read_bytes()
-        result["screen"] = room["screen"].read_bytes()
+    collect_room_capture(result, room)
     result["shot"] = room["shot"]
     result["status"] = session.close()
     return result
 
 
 def run_the_game_original(work):
-    """The same two keys, on the shipped binary, judged at the same first-room-frame anchor."""
+    """The same two keys, on the shipped binary, judged at the same two room-frame anchors."""
     work.mkdir(parents=True, exist_ok=True)
     trace = work / "orig.trace"
     medium = original_medium()
@@ -1258,9 +1310,8 @@ def run_the_game_original(work):
     phys = struct.unpack(">I", session.savebin("phys.bin", base - LOAD_BASE + A_screen_phys, 4))[0]
     result["screen_phys"] = phys
     room = arm_the_room_anchor(session, base - LOAD_BASE + ORIGINAL_ROOM_FRAME_PC, "orig", phys)
-    if press_the_game_keys(session, room["done"].is_file, ROOM_DEADLINE_SECONDS):
-        result["room_pens"] = room["pens"].read_bytes()
-        result["screen"] = room["screen"].read_bytes()
+    press_the_game_keys(session, room["done"].is_file, ROOM_DEADLINE_SECONDS)
+    collect_room_capture(result, room)
     result["alive"] = session.alive()
     result["shot"] = room["shot"]
     result["status"] = session.close()
@@ -1291,12 +1342,22 @@ def check_the_game_path(ours, original):
 
 
 def check_the_room_state(ours, original):
-    """The chip and the framebuffer at the first frame of the room, ours against the original's."""
+    """The framebuffer at the room's first two frame calls, ours against the original's — and the
+    pens once, off the settle after the SECOND, which is where `arm_the_room_anchor` reads them.
+
+    THE SECOND CAPTURE IS THE ONE THAT PINS THE GEM DOOR'S MFDB TRANSLATION, and the first is what
+    proves it is a LATER moment rather than the same one read twice — see `arm_the_room_anchor`.
+    """
     problems = []
-    for side, run in (("ours", ours), ("the original", original)):
+    sides = (("ours", ours), ("the original", original))
+    for side, run in sides:
+        missing = [when for key, _, when in ROOM_CAPTURES if run.get(key) is None]
         if run.get("room_pens") is None:
-            problems.append(f"{side}: the first room frame was never reached, so there is nothing "
-                            f"to compare at it")
+            missing.append("the settle that reads the pens")
+        if missing:
+            problems.append(f"{side}: nothing was captured {' or '.join(missing)}, so there is "
+                            f"nothing to compare there — a breakpoint the debugger refused reads "
+                            f"exactly like a room the keys never opened, so check the run's log")
     if problems:
         return problems
     mine = struct.unpack(f">{PALETTE_PENS}H", ours["room_pens"])
@@ -1305,19 +1366,22 @@ def check_the_room_state(ours, original):
         if (a ^ b) & SHIFTER_PEN_MASK:
             problems.append(f"pen {pen} is {a & SHIFTER_PEN_MASK:03x} in our room and the "
                             f"original's is {b & SHIFTER_PEN_MASK:03x}")
-    if ours.get("screen") and original.get("screen"):
-        differing = sum(1 for a, b in zip(ours["screen"], original["screen"]) if a != b)
-        if differing:
-            problems.append(f"{differing} of {SCREEN_BYTES} framebuffer bytes differ at the first "
-                            f"room frame")
-        elif not any(ours["screen"]):
-            problems.append("both room framebuffers are entirely zero, so their equality means "
-                            "nothing")
+    for key, _, when in ROOM_CAPTURES:
+        problems += framebuffer_problems(ours[key], original[key], when)
+    # ...AND A SECOND CAPTURE THAT EQUALS THE FIRST IS NOT A SECOND ARRIVAL. Without this, a
+    # breakpoint count Hatari read differently than this file thinks would compare the same
+    # pre-`vro_cpyfm` moment to itself on both sides and pass — the exact shape of the hole the
+    # second anchor was added to close.
+    problems += [f"{side}: the framebuffer after one whole room frame is identical to the one at "
+                 f"the frame call before it, so nothing was drawn between the two anchors and the "
+                 f"later capture pins nothing"
+                 for side, run in sides if run[ROOM_DRAWN_SCREEN] == run[ROOM_ENTRY_SCREEN]]
     return problems
 
 
 CHECK_GAME_PATH = "exit status + log (the G key reaches a turning room loop)"
-CHECK_ROOM_STATE = "memory + hardware-state vector (the first room frame, against the original's)"
+CHECK_ROOM_STATE = ("memory (the room's first two frame calls, against the original's) + "
+                    "hardware-state vector (the pens, four blanks after the second)")
 
 
 def run_the_game():

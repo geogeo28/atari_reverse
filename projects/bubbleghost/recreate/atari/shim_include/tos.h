@@ -111,7 +111,7 @@ uint32_t bg_super_gate(uint32_t operation, uint32_t operand, uint32_t value);
  * lowered it would put an IKBD interrupt between the select and the data write, and the byte would
  * go to whatever register that path left selected.
  *
- * THE FLAG IS SET BY `bg_timer_c_tick` AND NOWHERE ELSE, so a door reached from user code always
+ * THE FLAG IS SET BY `bg_timer_c_entry` AND NOWHERE ELSE, so a door reached from user code always
  * reads 0. A flag wrongly left set would not be a quiet wrong answer either: the next user-mode
  * write to $ff8800 is a bus error, which `smoke.py`'s fault scan is. What has NO surface on target
  * is the byte pair itself — see ../STATUS.md, "Performance".
@@ -128,9 +128,10 @@ uint32_t bg_read_long(uint32_t address);
 void     bg_write_long(uint32_t address, uint32_t value);
 void     bg_write_byte(uint32_t address, uint8_t value);
 
-/* The two exception entries this build installs. Each is the `movem` pair the C cannot write; the
- * BODY of the Timer C one is the verified `timer_c_sound_isr` in ../src/sound.c, reached through
- * `bg_timer_c_tick` in `bubble_main.c`.
+/* The two exception entries this build installs. The Timer C one is the WHOLE 200 Hz tick — the
+ * count, this flag, the verified `timer_c_sound_isr` in ../src/sound.c and the $484 mirror —
+ * because the C half it used to `jsr` to spent most of its own 280 cycles on plumbing, and the
+ * tick's shim went 428 cycles to ~280 when it went (../STATUS.md, wave 4).
  *
  * `bg_timer_c_entry` does NOT `rte`. The original's handler chains: it pushes TOS's own saved $114
  * vector and `rts`es, leaving the exception frame for TOS's handler to return from, so the 200 Hz
