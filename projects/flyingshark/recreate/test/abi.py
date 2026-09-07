@@ -48,16 +48,51 @@ SCRATCH = 0x91000     # a test's own source/destination buffers
 # test_constants.py, so a battery that widens it has to move the map rather than overrun the table.
 SCRATCH_BYTES = 0x20000
 
+# ---- the stub builders, and the two words every one of them is made of ---------------------------
+_JSR_ABS_LONG = 0x4eb9   # jsr xxx.l — mode 111 reg 001
+_RTS = 0x4e75
+
+
+def _word(value):
+    return value.to_bytes(2, "big")
+
+
+def _jsr(routine):
+    """`jsr routine.l`, the call every stub below is built around."""
+    return _word(_JSR_ABS_LONG) + routine.to_bytes(4, "big")
+
+
+def _stub(*parts):
+    """The pokes for a stub assembled from `parts` and ended with an `rts`, poked at STUB.
+
+    One place that knows a stub lives at STUB and returns, so a new shape is the instructions it
+    adds rather than another copy of the frame — and a shape that forgot its `rts` would run off
+    into whatever the image holds next, which is the failure this shared frame removes.
+    """
+    return {STUB: b"".join(parts) + _word(_RTS)}
+
+
+_MOVEQ = 0x7000          # moveq #<data>,Dn — | (n << 9) | the data byte
+_SUBQ_B_1 = 0x5300       # subq.b #1,Dn — | n
+
+
+def _moveq(number, value):
+    """`moveq #value,d<number>` — the one-word way to put a small signed immediate in a register.
+
+    The whole byte range is reachable: 0x80..0xff arrive as -128..-1, which leaves the low byte the
+    caller asked for and sign in the rest, exactly as the game's own `move.w #$n,d0` sites do not.
+    """
+    return _word(_MOVEQ | (number << 9) | (value & 0xff))
+
+
 _MOVE_L_TO_A0_POSTINC = 0x20c0   # `move.l <ea>,(a0)+`, long, dest mode 011 reg 000; | the source ea
 _SOURCE_EA = {"d": 0x00, "a": 0x08}   # source mode field: 000 = Dn, 001 = An
-_JSR_ABS_LONG = 0x4eb9
-_RTS = 0x4e75
 
 
 def _store_through_a0(register):
     """One `move.l <register>,(a0)+` instruction word."""
     kind, number = register[0], int(register[1])
-    return (_MOVE_L_TO_A0_POSTINC | _SOURCE_EA[kind] | number).to_bytes(2, "big")
+    return _word(_MOVE_L_TO_A0_POSTINC | _SOURCE_EA[kind] | number)
 
 
 def register_call_pokes(routine, stores):
@@ -74,11 +109,116 @@ def register_call_pokes(routine, stores):
 
     Only usable while `routine` leaves A0 alone — which most of this game's leaves do not, since a
     register ABI hands arguments in A0 as readily as in D0. A routine that walks A0 needs a stub
-    that names its own destination (Zynaps' `register_dump_pokes`, a `movem.l <list>,RESULT`); it is
-    not here because nothing has needed it yet, and an unassembled encoding no case executes is a
-    liability rather than a head start.
+    that names its own destination instead: `register_dump_pokes` below.
     """
-    code = (_JSR_ABS_LONG.to_bytes(2, "big") + routine.to_bytes(4, "big")
-            + b"".join(_store_through_a0(r) for r in stores)
-            + _RTS.to_bytes(2, "big"))
-    return {STUB: code}
+    return _stub(_jsr(routine), *(_store_through_a0(r) for r in stores))
+
+
+# --- a stub for a routine that CLOBBERS A0: one store that names its own destination -------------
+#
+# `register_call_pokes` above stores THROUGH A0, which only works while the routine leaves A0 alone.
+# `build_text_display_list` @ 0x10698 walks A0 as its script cursor and answers in A1, D1 and D2, so
+# it needs a store that names its own destination. `movem.l <list>,RESULT` is that store: one
+# instruction, an absolute-long destination, and a register list the case chooses.
+_MOVEM_L_TO_ABS_LONG = 0x48f9   # movem.l <list>,xxx.l — dir 0 (regs to memory), mode 111 reg 001
+_MOVEM_BIT = {**{f"d{n}": n for n in range(8)}, **{f"a{n}": 8 + n for n in range(7)}}
+
+
+def register_dump_pokes(routine, registers):
+    """Pokes that call `routine` (register ABI) and `movem.l` the named registers to RESULT.
+
+        jsr     routine
+        movem.l <registers>,RESULT
+        rts
+
+    Needs no register of its own, unlike `register_call_pokes`, so it suits a routine that walks A0.
+    THE ORDER IS THE INSTRUCTION'S, NOT THE CALLER'S: `movem.l` always stores D0..D7 then A0..A6
+    ascending whatever order the list was written in, and the candidate's glue must mirror that. So
+    the argument is required to be in that order already — a list that is not is a bug in the case
+    rather than something to sort silently, since the glue beside it would then be storing in an
+    order the test author did not read.
+    """
+    bits = [_MOVEM_BIT[name] for name in registers]
+    assert bits == sorted(set(bits)), (
+        f"{registers} is not in movem order — the instruction stores d0..d7 then a0..a6 ascending, "
+        f"and the candidate glue mirrors that order")
+    mask = sum(1 << bit for bit in bits)
+    return _stub(_jsr(routine),
+                 _word(_MOVEM_L_TO_ABS_LONG) + _word(mask) + RESULT.to_bytes(4, "big"))
+
+
+# --- driving and reading the X FLAG, for a routine whose first `abcd` adds it --------------------
+#
+# X is the one condition bit with neither an entry register to set it nor an `Scc` suffix to read
+# it, and the oracle enters every routine at SR = 0x2700 (oracle/shim.c), so X = 0 unless a stub
+# makes it otherwise. `score_add_bcd` @ 0x10bec is entered through nine wrappers whose `movem.l` and
+# `lea` leave the condition codes alone, so what its first `abcd` adds is the CALLER's X — an input.
+# Its last `abcd` leaves one in turn, which is the X the caller's next instruction sees.
+_ADDX_B_D1_D1 = 0xd301
+
+EXTEND_CLEAR, EXTEND_SET = 0, 1
+# The register the setter borrows to make X, for a routine that does not read it. Overridable
+# per case: `item_drop_if_formation_cleared` takes its x in D0, and takes no D7 at all.
+EXTEND_SETTER_SCRATCH = "d0"
+BOTH_EXTENDS = (EXTEND_CLEAR, EXTEND_SET)
+
+# The register the stub's `addx.b d1,d1` leaves the outgoing flag in, and the mask that reads it.
+_EXTEND_ANSWER_REGISTER = "d1"
+_EXTEND_ANSWER_MASK = 0xff
+
+
+def oracle_extend(info):
+    """The X flag the ORACLE left, out of a `differential` run entered through `extend_call_pokes`."""
+    return info["regs"][_EXTEND_ANSWER_REGISTER] & _EXTEND_ANSWER_MASK
+
+
+def extend_call_pokes(routine, extend_in=EXTEND_CLEAR, scratch=EXTEND_SETTER_SCRATCH):
+    r"""Pokes that drive the X FLAG INTO `routine` and leave the X IT LEAVES in D1, as 0 or 1.
+
+        moveq   #0,<scratch>    ;  \  only when extend_in
+        subq.b  #1,<scratch>    ;  /   borrows, so X := 1
+        jsr     routine
+        moveq   #0,d1           ; sets N/Z/V/C and leaves X alone
+        addx.b  d1,d1           ; 0 + 0 + X
+        rts
+
+    It stores nothing: D1 is a reported register, so the case reads the oracle's through
+    `differential`'s `info["regs"]` (via `oracle_extend`) and compares it against what the
+    candidate's glue returned.
+
+    THE SETTER CLOBBERS `scratch`, so it must be a register `routine` does not read — the default D0
+    suits every score wrapper (each opens with a `movem.l` that saves A0 and A1 and nothing else),
+    while a routine taking an argument in D0 names a spare one instead. A wrong choice fails loudly:
+    the oracle then runs on a register the candidate's glue was never handed.
+    """
+    number = int(scratch[1])
+    setter = (_moveq(number, 0) + _word(_SUBQ_B_1 | number)) if extend_in else b""
+    return _stub(setter, _jsr(routine),
+                 _moveq(int(_EXTEND_ANSWER_REGISTER[1]), 0), _word(_ADDX_B_D1_D1))
+
+
+def call_sequence_with_d0_pokes(steps):
+    """Pokes that `moveq` an argument into D0 before each `jsr`, and then `rts`.
+
+        moveq   #steps[0][1],d0
+        jsr     steps[0][0]
+        ...
+        rts
+
+    `call_sequence_pokes` above cannot express a sequence whose calls take DIFFERENT arguments, and
+    the sound module's does: starting an effect over a running tune is `music_start(tune)` then a
+    run of ticks then `sfx_start(effect)` then more ticks, three different D0 values in one run.
+    Each step is `(routine, d0)` with `d0` in -128..127 or 0..255 (the byte is what every entry in
+    this game reads; the immediate is emitted signed).
+
+    The ticks in such a sequence take no argument at all and are listed with any D0 — the module's
+    `sound_vbl_tick` reads none, and `moveq` before it is one harmless word.
+
+    RUNNING SEVERAL CALLS IN ONE ORACLE RUN is the point, not an economy: `harness.differential`
+    rebuilds the image from the base for every call, so N separate cases would each re-run frame 1
+    of a module whose state carries from one frame to the next. It also puts the whole N-frame
+    chip-register stream into ONE PSG ledger, where the order ACROSS frames is compared and not
+    only within them. Every routine listed must preserve the registers the next one needs — the
+    stub emits nothing between the calls — which the four sound entries do, `movem.l` at both ends.
+    """
+    return _stub(*(_moveq(0, argument) + _jsr(routine) for routine, argument in steps))

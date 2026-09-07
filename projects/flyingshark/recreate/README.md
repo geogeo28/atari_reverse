@@ -7,8 +7,10 @@ the compiled reconstruction runs on a copy of the same flat memory image, and th
 Why differential rather than byte-matching, and what it can and cannot see, is written up once in
 [`../../buggyboy/recreate/README.md`](../../buggyboy/recreate/README.md).
 
-**Nothing is ported yet.** This is the skeleton: the binding, the image model, and the gates that
-catch a wave of subsystem agents getting either wrong. [`STATUS.md`](STATUS.md) is the ledger.
+**Six of the ten subsystems are ported** — sprite, entity, player, weapons, hud and sound — over the
+skeleton this file describes: the binding, the image model, and the gates that catch a wave of
+subsystem agents getting either wrong. [`STATUS.md`](STATUS.md) is the ledger, and everything not
+yet ported is accounted for in its "Not reconstructed, and why" table rather than by absence.
 
 The game itself — the boot chain, the front end, the interrupt model, the entity records, the asset
 formats and the sound module — is written up in [`../notes/`](../notes), and every name in
@@ -146,8 +148,9 @@ recreate/
 ├── src/<subsystem>.c       each core plus its `g_<name>` glue
 ├── test/harness.py         16-line shim: binds the kit and star-re-exports it
 ├── test/abi.py             the scratch map, the ring placement, and the register-call stub
-├── test/conftest.py        the boot-chain replay, its two image fixtures, and the autouse
-│                        one that installs the first as every differential's base
+├── test/conftest.py        the boot-chain replay, its two image fixtures, the autouse one that
+│                        installs the first as every differential's base, and the two STAGED
+│                        WORLDS the whole-frame batteries share (built once per `make test`)
 ├── test/test_image_model.py  the replay's pins, the second opinion, and the free-space census
 ├── test/test_constants.py    the CLAUDE.md §5 pin and the duplicate checks — a collector
 ├── test/test_heap_guard.py   the run-time half of project.toml's `tos_malloc_unused` waiver
@@ -157,9 +160,11 @@ recreate/
 └── STATUS.md        the per-function ledger, in per-subsystem sections
 ```
 
-There is no `addrs.h` and there is no shared "common" header yet: the 68000 primitives every core
-shares live in the kit's `machine.h`. If a SECOND core needs an idiom this program's assembly
-repeats, add `include/common.h` then — a helper with one caller belongs in that caller's file.
+There is no `addrs.h`, and the 68000 primitives every core shares live in the kit's `machine.h`.
+`include/common.h` is for the idioms this PROGRAM's assembly repeats that more than one core needs —
+it holds three, and the bar for a fourth is still two callers in two files, because a helper with one
+caller belongs in that caller's file. `test_constants.py::test_no_constant_is_defined_in_two_files`
+is what makes the alternative loud: one fact under two names is refused rather than merged silently.
 
 ## Adding a function
 
@@ -171,7 +176,8 @@ a function touches only files your subsystem owns.
 | `src/<yours>.c`, `include/<yours>.h`, `test/test_<yours>.py` | **you alone** |
 | `STATUS.md`, your `## Verified — <yours> (N)` section and its count | **you alone** |
 | `include/<someone else's>.h` | **nobody but its owner** — include it to READ a global, never edit it |
-| `include/globals.h`, `test/test_constants.py`, `test/test_status.py`, `test/test_image_model.py`, `test/conftest.py`, `Makefile`, `project.toml`, `test/harness.py` | **nobody**, in normal work |
+| `include/globals.h`, `test/test_constants.py`, `test/test_status.py`, `test/test_image_model.py`, `test/conftest.py`, `Makefile`, `project.toml`, `test/harness.py` | **nobody**, in normal work — `conftest.py`'s staged worlds are the one thing a battery reaches into, and by asking for the fixture rather than by editing it |
+| `include/common.h` | shared, **append-only**, and only for an idiom a SECOND core needs |
 | `test/abi.py` | shared, **append-only** — only if you need a new stub shape or a helper every battery would otherwise copy |
 
 The ten planned subsystems, which are the `## Verified` sections `STATUS.md` opens with and the

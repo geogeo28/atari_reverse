@@ -61,6 +61,7 @@ means to poke it has to say so — `bytearray(post_load_image)`, or `_pokes` in 
 `regs`.
 """
 import functools
+import os
 from pathlib import Path
 
 import pytest
@@ -400,6 +401,137 @@ def post_new_game_image(post_load_image):
     return _without_staged_files(bytearray(final))
 
 
+# =================================================================================================
+# The two STAGED WORLDS the whole-frame batteries share, and the one build the whole run does
+# =================================================================================================
+#
+# THREE BATTERIES ASKED FOR THE SAME MACHINE and each built its own: `test_entity.py` ran the spawn
+# script 6,000 times, `test_weapons.py` 3,000, and both derived their pokes with a private copy of
+# the same byte scan. A session fixture is per PROCESS, and `-n auto` is one process per core, so
+# what looked like "once a session" was really once per core per battery. It is built here once and
+# CACHED ACROSS THE WORKERS, so `make test` pays for the replay exactly once.
+
+A_spawn_script_ptr = 0x17770        # `movea.l $17770,a0` @ 0x12fc4
+A_spawn_script_cursor = 0x17754     # `adda.l $17754,a0` @ 0x12fca
+A_scroll_pos = 0x17758              # `move.w $17758,d0` @ 0x12fd8, the trigger the script compares
+A_level1_script = 0x1b350           # level 1's record in `A_level_records`, which `start_level` installs
+ENTRY_SPAWN_SCRIPT_STEP = 0x12fc4
+SPAWN_MAX_INSNS = 200_000
+# 6,000 steps is scroll_pos 0..0x2ee0, sixty of level 1's spawn records — the count `test_entity.py`
+# chose, and a superset of the 3,000 `test_weapons.py` used. ONE COUNT, so the two batteries verify
+# against the same world and a case that only passes on the thinner one fails where it is written.
+SPAWN_STEPS = 6000
+# Under a fifth of the arena live is not a world worth verifying a whole-frame pass against.
+SPAWN_MIN_LIVE_SLOTS = 20
+
+# The arena the replay fills, mirrored from `include/globals.h`, plus the one record field the live
+# count reads (`include/entity.h`'s, and the only field this file needs to know about).
+A_entity_arena = 0x59984
+ENTITY_SLOTS = 91
+ENTITY_STRIDE = 58
+ENTITY_ACTIVE = 14
+
+# The block the byte scan below compares whole before it looks at single bytes. The staged worlds
+# differ from the base in a few dozen short runs out of a megabyte, so nearly every block is
+# identical and one `==` retires 4,096 addresses.
+_POKE_SCAN_BLOCK = 4096
+
+
+def byte_run_pokes(base, staged):
+    """{address: bytes} for every run of bytes in which `staged` differs from `base`.
+
+    A staged image cannot be handed to `differential()` directly — the autouse fixture below owns
+    the base image, deliberately (README.md) — so the difference travels as ordinary pokes.
+
+    The block compare is not decoration: a byte-at-a-time scan of the whole image is the single most
+    expensive thing in the fixtures above it, and the two images differ in a handful of runs.
+    """
+    pokes, run_start, at, size = {}, None, 0, len(base)
+    while at < size:
+        end = min(at + _POKE_SCAN_BLOCK, size)
+        if base[at:end] == staged[at:end]:
+            if run_start is not None:
+                pokes[run_start] = bytes(staged[run_start:at])
+                run_start = None
+            at = end
+            continue
+        for address in range(at, end):
+            differs = base[address] != staged[address]
+            if differs and run_start is None:
+                run_start = address
+            elif not differs and run_start is not None:
+                pokes[run_start] = bytes(staged[run_start:address])
+                run_start = None
+        at = end
+    if run_start is not None:
+        pokes[run_start] = bytes(staged[run_start:])
+    assert all(address >= harness.OS_POKE_BLOCK_END for address in pokes), (
+        "a staged image differs inside the model's poked-input block, which make_image refuses")
+    return pokes
+
+
+def _built_once_per_run(tmp_path_factory, name, build):
+    """`build()`'s bytes, computed by the FIRST xdist worker to need them and read by the rest.
+
+    `tmp_path_factory.getbasetemp()` is per worker; its PARENT is the one directory the whole run
+    shares, which is pytest-xdist's own place for exactly this. The winner writes a scratch file
+    named after its pid and `os.replace`s it into position — atomic, so a reader never sees a
+    half-written image, and a loser simply replaces a byte-identical file. There is no lock and none
+    is needed: the work is deterministic, so the only cost of two workers racing is that both did it.
+    """
+    cached = tmp_path_factory.getbasetemp().parent / name
+    if cached.is_file():
+        return bytearray(cached.read_bytes())
+    built = build()
+    scratch = cached.with_suffix(f".{os.getpid()}")
+    scratch.write_bytes(bytes(built))
+    os.replace(scratch, cached)
+    return built
+
+
+def _spawn_the_world(post_new_game_image):
+    """Level 1's script installed the way `start_level` @ 0x11440 installs it, and then the game's
+    own `spawn_script_step` @ 0x12fc4 run once per two pixels of scroll — exactly as the frame loop
+    calls it. NOTHING HERE WRITES AN ENTITY RECORD: every live slot is the shape the game's own
+    descriptors, formation tables and movement scripts produce, which is what a hand-poked world
+    can never be.
+
+    `emu.run` returns a bytearray it allocated, so the loop carries that forward rather than copying
+    a megabyte per step. The TOS model's file band is restored ONCE, after the loop: the routine
+    makes no trap, so nothing inside the replay can disturb it, and the restore is there to keep the
+    band out of the poke set rather than to keep the run honest.
+    """
+    image = bytearray(post_new_game_image)
+    image[A_spawn_script_ptr:A_spawn_script_ptr + 4] = A_level1_script.to_bytes(4, "big")
+    image[A_spawn_script_cursor:A_spawn_script_cursor + 4] = bytes(4)
+    for step in range(SPAWN_STEPS):
+        image[A_scroll_pos:A_scroll_pos + 2] = (2 * step).to_bytes(2, "big")
+        image, _writes, _regs = emu.run(image, ENTRY_SPAWN_SCRIPT_STEP, max_insns=SPAWN_MAX_INSNS)
+    image[harness.OS_FS_TABLE:harness.OS_IMAGE_SIZE] = \
+        harness.BASE_IMAGE[harness.OS_FS_TABLE:harness.OS_IMAGE_SIZE]
+    return image
+
+
+@pytest.fixture(scope="session")
+def new_game_pokes(post_load_image, post_new_game_image):
+    """`init_new_game`'s machine as pokes: the arena zeroed and the per-game state reset."""
+    return byte_run_pokes(post_load_image, post_new_game_image)
+
+
+@pytest.fixture(scope="session")
+def staged_world_pokes(post_load_image, post_new_game_image, tmp_path_factory):
+    """A POPULATED arena the ORIGINAL filled, as pokes. See `_spawn_the_world`."""
+    image = _built_once_per_run(tmp_path_factory, "staged_world.img",
+                                lambda: _spawn_the_world(post_new_game_image))
+    live = sum(1 for slot in range(ENTITY_SLOTS)
+               if image[A_entity_arena + slot * ENTITY_STRIDE + ENTITY_ACTIVE:
+                        A_entity_arena + slot * ENTITY_STRIDE + ENTITY_ACTIVE + 2] != b"\0\0")
+    assert live > SPAWN_MIN_LIVE_SLOTS, (
+        f"the spawn replay left only {live} live slots — a world this thin would verify the "
+        f"whole-frame passes over an arena that is nearly all inactive")
+    return byte_run_pokes(post_load_image, image)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _differential_base_image(post_load_image):
     """Install the post-load image as the memory EVERY differential starts from.
@@ -430,6 +562,10 @@ def _differential_base_image(post_load_image):
 # transcription diff catches a chain-operand address that names the wrong longword. So is
 # A_level0_assets_loaded, which is the frontend's flag and is pinned the same way.
 MIRRORS = (
+    "A_entity_arena",
+    "ENTITY_SLOTS",
+    "ENTITY_STRIDE",
+    ("ENTITY_ACTIVE", "include/entity.h", "ENTITY_ACTIVE"),
     "A_sprite_bank",
     "A_sprite_restore_lists",
     "A_saved_super_ssp",
@@ -477,6 +613,8 @@ ENTRY_PROLOGUES = {
     "ENTRY_LEVEL0_ASSETS": "42406100f082",
     # move.w $176ac,$176c6
     "ENTRY_INIT_NEW_GAME": "33f9000176ac000176c6",
+    # movea.l $17770,a0 / adda.l $17754,a0
+    "ENTRY_SPAWN_SCRIPT_STEP": "207900017770d1f900017754",
 }
 
 STOP_PROLOGUES = {
