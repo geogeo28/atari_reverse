@@ -91,6 +91,36 @@ long bg_gem_trap(long d0, void *pblock);
 
 uint32_t bg_super_gate(uint32_t operation, uint32_t operand, uint32_t value);
 
+/* ...AND THE ONE CALLER THAT DOES NOT NEED IT.
+ *
+ * A 68000 exception handler already runs in supervisor mode, and `bg_timer_c_entry` never lowers the
+ * mask the exception raised — so inside the sound ISR both of the things the gate provides are
+ * already true: the privilege for $ff8800, and a select-then-data pair no MFP interrupt can land
+ * inside (the mask is at the interrupt's own level 6, and the MFP is level 6). So `psg.h`'s door
+ * reads the flag below and calls this instead of trapping.
+ *
+ * THAT IS ALSO WHAT THE ORIGINAL'S ISR DOES, which is how this was found rather than guessed: over a
+ * 1,000-vblank window its `psg_gate` @ 0x14940 carries 0.7 cycles a tick, because the handler writes
+ * the ports itself and only USER-mode callers trap. What the two paths cost a write is ONE
+ * measurement and it is kept in ONE place, atari/README.md's "Performance" table, which also carries
+ * how many writes a tick makes.
+ *
+ * IF THE ISR IS EVER MADE FAITHFUL ABOUT ITS OWN IPL, THE RAISE HAS TO COME BACK. The original's
+ * handler drops IPL 6 -> 5 so that other MFP channels can nest (`../../names.txt`, `cmt 0x1459a`),
+ * and only the reconstruction's inability to touch `%sr` from C keeps ours at 6. A build that
+ * lowered it would put an IKBD interrupt between the select and the data write, and the byte would
+ * go to whatever register that path left selected.
+ *
+ * THE FLAG IS SET BY `bg_timer_c_tick` AND NOWHERE ELSE, so a door reached from user code always
+ * reads 0. A flag wrongly left set would not be a quiet wrong answer either: the next user-mode
+ * write to $ff8800 is a bus error, which `smoke.py`'s fault scan is. What has NO surface on target
+ * is the byte pair itself — see ../STATUS.md, "Performance". */
+extern volatile uint8_t bg_in_timer_c;
+/* BOTH ARGUMENTS ARE LONGWORDS, as `bg_super_gate`'s three are and for the same reason: the routine
+ * reads `8(%sp)` with a `move.l`, and a prototype spelling the value `uint8_t` would be right only
+ * for as long as the ABI keeps promoting a sub-`int` argument to one. */
+void bg_psg_write_super(uint32_t reg, uint32_t value);
+
 /* ---- machine primitives the C cannot spell ---------------------------------------------------- */
 
 /* Read and write a 68000 exception vector. Both are supervisor-only, so both are Supexec'd from

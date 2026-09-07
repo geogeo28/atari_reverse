@@ -7,11 +7,15 @@
  * are absolute against the base it runs at. Here the VDI would take `0x236f0` for an address and
  * read its `contrl` out of the 68000's vector page.
  *
- * THE TRANSLATION IS PATCH-TRAP-RESTORE, and the shape is deliberate. Each block is patched IN
- * PLACE to machine addresses, the trap is made, and the original offsets are put straight back — so
- * the VDI writes its answers into the game's own `intout`/`ptsout` arrays with no copy back, and
- * the image the cores read afterwards holds exactly what it held before. A copy of each block would
- * have to know which fields the VDI writes; this has to know nothing.
+ * THE PARAMETER BLOCK IS RESTATED, NOT PATCHED. The trap is handed a block of the shim's own — the
+ * same five (or six) pointers, translated — so the VDI still reads its operands out of, and writes
+ * its answers into, the game's OWN arrays, with no copy back and no field this door has to know the
+ * meaning of. The image's block is never touched at all.
+ *
+ * A RASTER COPY IS STILL PATCH-TRAP-RESTORE, because two of its operands are reached by
+ * dereferencing the image rather than by being handed over: `contrl[7..10]` names two MFDBs, and
+ * each MFDB names a raster. Those four longwords are patched in place and put straight back, so the
+ * image the cores read afterwards holds exactly what it held before.
  *
  * NOTHING RE-ENTERS IT. The one interrupt this build installs is Timer C, whose handler is the
  * verified sound ISR and touches no GEM state at all, so a patch is never live across an interrupt
@@ -41,11 +45,16 @@ volatile uint32_t bg_vdi_raster_copies;
  * rather than as end addresses, because what the door does with them is a loop. */
 #define VDI_POINTER_LONGS 5u
 #define AES_POINTER_LONGS 6u
+#define GEM_POINTER_LONGS AES_POINTER_LONGS   /* the longer of the two, so one staging block serves */
 #define POINTER_BYTES     4u
 
+_Static_assert(VDI_POINTER_LONGS <= GEM_POINTER_LONGS,
+               "the staging block is sized for the AES's six longwords, and the VDI's block no "
+               "longer fits in it — `build_machine_pblock` would write past the array");
+
 /* The `contrl` word indices this door reads, the opcode whose operands are pointers, and the MFDB's
- * own length are ALL THE KIT'S — `VDI_CONTRL_OPCODE`, `VDI_CONTRL_SRC_MFDB`, `VDI_CONTRL_DST_MFDB`,
- * `VDI_VRO_CPYFM`, `MFDB_ADDR`, `MFDB_BYTES`, `MFDB_SCREEN_ADDR` in tools/recreate_kit/include/os.h,
+ * raster-pointer offset are ALL THE KIT'S — `VDI_CONTRL_OPCODE`, `VDI_CONTRL_SRC_MFDB`,
+ * `VDI_CONTRL_DST_MFDB`, `VDI_VRO_CPYFM`, `MFDB_ADDR`, `MFDB_SCREEN_ADDR` in recreate_kit/include/os.h,
  * which the shadow beside this file pulls in. They are the same numbers the game's own binding
  * uses, and a second spelling of them here is exactly the drift CLAUDE.md §5 is about; a first draft
  * had one, and the compiler said so. */
@@ -60,17 +69,11 @@ static uint32_t machine_address(uint32_t offset) {
                                       : (uint32_t)(uintptr_t)bg_image_base + offset;
 }
 
-/* The two MFDBs a raster copy names, in the shim's own memory with their raster pointers
- * translated. They are static because their MACHINE ADDRESSES are what goes into `contrl`, so they
- * have to outlive this function by the length of the trap. */
-static uint8_t g_src_mfdb[MFDB_BYTES];
-static uint8_t g_dst_mfdb[MFDB_BYTES];
-
-static void stage_mfdb(uint8_t *out, const uint8_t *mem, uint32_t mfdb_offset) {
-    for (unsigned byte = 0; byte < MFDB_BYTES; byte++)
-        out[byte] = mem[mfdb_offset + byte];
-    wr32(out + MFDB_ADDR, machine_address(be32(mem + mfdb_offset + MFDB_ADDR)));
-}
+/* THE BLOCK THE TRAP IS HANDED. It is static because it has to outlive this function by the length
+ * of the trap, and it is `uint32_t` rather than bytes because this file is compiled for the 68000
+ * alone: the machine's word order IS the image's, so a slot is one aligned `move.l`. Through a
+ * `uint8_t *` it would not be — GCC knows a byte array's alignment is one and stores four times. */
+static uint32_t g_machine_pblock[GEM_POINTER_LONGS];
 
 static uint32_t contrl_word_address(uint32_t contrl, unsigned index) {
     return contrl + index * WORD_SLOT_BYTES;
@@ -90,56 +93,82 @@ static void set_contrl_long(uint8_t *mem, uint32_t contrl, unsigned index, uint3
  * The door
  * ============================================================================================= */
 
-/* Patch a block of `longs` image offsets to machine addresses, remembering what was there. */
-static void translate_block(uint8_t *mem, uint32_t block, unsigned longs, uint32_t *saved) {
-    for (unsigned slot = 0; slot < longs; slot++) {
-        uint32_t at = block + slot * POINTER_BYTES;
-        saved[slot] = be32(mem + at);
-        wr32(mem + at, machine_address(saved[slot]));
-    }
-}
-
-static void restore_block(uint8_t *mem, uint32_t block, unsigned longs, const uint32_t *saved) {
+/* The game's block of `longs` image offsets, restated as machine addresses in the shim's own. */
+static void build_machine_pblock(const uint8_t *mem, uint32_t pblock, unsigned longs) {
     for (unsigned slot = 0; slot < longs; slot++)
-        wr32(mem + block + slot * POINTER_BYTES, saved[slot]);
+        g_machine_pblock[slot] = machine_address(be32(mem + pblock + slot * POINTER_BYTES));
 }
 
-/* A raster copy's two MFDB pointers, staged and patched. Answers whether it did anything, so the
- * restore below runs only for the call that needs it. */
-static int stage_raster_copy(uint8_t *mem, uint32_t contrl, uint32_t *saved_mfdbs) {
+/* One MFDB of a raster copy, as the things the trap has to put back: the image offset `contrl` named
+ * it by, and the raster address inside it. */
+typedef struct {
+    uint32_t mfdb;      /* what contrl[7..8] or contrl[9..10] held */
+    uint32_t raster;    /* ...and what that MFDB's own fd_addr held */
+    int translated;     /* ...unless the other operand named the SAME MFDB and did it already */
+} SavedMfdb;
+
+/* Both are patched IN PLACE, so the MFDB the VDI reads is the game's own. An earlier draft copied
+ * each MFDB into the shim's memory instead and pointed `contrl` at the copy; the copy was twenty
+ * BYTE moves through a pointer GCC could not prove even, and it was most of what this door cost
+ * (atari/README.md, "Performance").
+ *
+ * ONE MFDB CAN BE BOTH OPERANDS, and that is what `already` is for. The copy this replaced was immune
+ * by construction — it read the pristine image twice, into two separate buffers — and an in-place
+ * patch is not: a second pass over the same block would translate an ALREADY translated raster, and
+ * the restore would then leave a machine address in the game's own MFDB for good, silently and for
+ * every later frame. No call site in this program does it (`../src/frontend.c` always passes
+ * `A_mfdb_src` and `A_mfdb_dst`), so this costs one comparison a raster copy to keep an exported
+ * entry point that takes both as arguments from being a landmine. */
+static void patch_mfdb(uint8_t *mem, uint32_t contrl, unsigned contrl_index, SavedMfdb *saved,
+                       const SavedMfdb *already) {
+    saved->mfdb = contrl_long(mem, contrl, contrl_index);
+    saved->raster = 0;
+    saved->translated = already == 0 || already->mfdb != saved->mfdb;
+    if (saved->translated) {
+        saved->raster = be32(mem + saved->mfdb + MFDB_ADDR);
+        wr32(mem + saved->mfdb + MFDB_ADDR, machine_address(saved->raster));
+    }
+    set_contrl_long(mem, contrl, contrl_index, machine_address(saved->mfdb));
+}
+
+static void restore_mfdb(uint8_t *mem, uint32_t contrl, unsigned contrl_index,
+                         const SavedMfdb *saved) {
+    if (saved->translated)
+        wr32(mem + saved->mfdb + MFDB_ADDR, saved->raster);
+    set_contrl_long(mem, contrl, contrl_index, saved->mfdb);
+}
+
+/* A raster copy's two MFDBs, patched. Answers whether it did anything, so the restore below runs
+ * only for the call that needs it. */
+static int stage_raster_copy(uint8_t *mem, uint32_t contrl, SavedMfdb *source,
+                             SavedMfdb *destination) {
     if (be16(mem + contrl_word_address(contrl, VDI_CONTRL_OPCODE)) != VDI_VRO_CPYFM)
         return 0;
 
-    saved_mfdbs[0] = contrl_long(mem, contrl, VDI_CONTRL_SRC_MFDB);
-    saved_mfdbs[1] = contrl_long(mem, contrl, VDI_CONTRL_DST_MFDB);
-    stage_mfdb(g_src_mfdb, mem, saved_mfdbs[0]);
-    stage_mfdb(g_dst_mfdb, mem, saved_mfdbs[1]);
-    set_contrl_long(mem, contrl, VDI_CONTRL_SRC_MFDB, (uint32_t)(uintptr_t)g_src_mfdb);
-    set_contrl_long(mem, contrl, VDI_CONTRL_DST_MFDB, (uint32_t)(uintptr_t)g_dst_mfdb);
+    patch_mfdb(mem, contrl, VDI_CONTRL_SRC_MFDB, source, 0);
+    patch_mfdb(mem, contrl, VDI_CONTRL_DST_MFDB, destination, source);
     bg_vdi_raster_copies++;
     return 1;
 }
 
 int bg_gem_dispatch(uint8_t *mem, uint32_t selector, uint32_t pblock) {
-    uint32_t saved_pointers[AES_POINTER_LONGS];
-    uint32_t saved_mfdbs[2];
+    SavedMfdb source, destination;
     const unsigned longs = selector == GEM_VDI ? VDI_POINTER_LONGS : AES_POINTER_LONGS;
     int raster = 0;
 
     if (selector == GEM_VDI) {
-        raster = stage_raster_copy(mem, A_vdi_contrl, saved_mfdbs);
+        raster = stage_raster_copy(mem, A_vdi_contrl, &source, &destination);
         bg_vdi_calls++;
     } else {
         bg_aes_calls++;
     }
 
-    translate_block(mem, pblock, longs, saved_pointers);
-    (void)bg_gem_trap((long)selector, mem + pblock);
-    restore_block(mem, pblock, longs, saved_pointers);
+    build_machine_pblock(mem, pblock, longs);
+    (void)bg_gem_trap((long)selector, g_machine_pblock);
 
     if (raster) {
-        set_contrl_long(mem, A_vdi_contrl, VDI_CONTRL_SRC_MFDB, saved_mfdbs[0]);
-        set_contrl_long(mem, A_vdi_contrl, VDI_CONTRL_DST_MFDB, saved_mfdbs[1]);
+        restore_mfdb(mem, A_vdi_contrl, VDI_CONTRL_SRC_MFDB, &source);
+        restore_mfdb(mem, A_vdi_contrl, VDI_CONTRL_DST_MFDB, &destination);
     }
     /* The kit's door answers "modeled" — 1 when it serviced the call. TOS services every opcode
      * this program makes, and a `trap #2` has no way to say otherwise, so the answer is always 1

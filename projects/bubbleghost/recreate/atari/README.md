@@ -124,7 +124,7 @@ the record's own prediction is built on).
 | `os_pterm` | a ledger entry that RETURNS | the real trap, which does not |
 | `os_vdi` / `os_aes` | the kit's software VDI/AES over the image | a real `trap #2`, with the parameter block **translated** — see below |
 | `os_setscreen` / `os_setpalette` / `os_setcolor` / `os_vsync` | an ordered entry in the OS event ledger, and no image effect | the real XBIOS traps, made where the core makes them. The two screen bases and the palette table are image OFFSETS and are translated |
-| `psg_port_write` / `psg_port_read` | an ordered ledger and a register file | the real `$ff8800`/`$ff8802`, through the `trap #9` gate, at IPL 7 across the select-and-access pair |
+| `psg_port_write` / `psg_port_read` | an ordered ledger and a register file | the real `$ff8800`/`$ff8802` — through the `trap #9` gate at IPL 7 from user mode, and **straight at the ports from inside the sound ISR**, which is already supervisor at IPL 6 |
 | `hw_write8` | an ordered (address, width, value) ledger | a real byte store through the same gate. Two core call sites, both the MFP vector register — and `build.sh` counts them, because `HW_WRITES` is predicted exactly |
 | `os_in_image` | the model's 1 MiB | the same arithmetic against the 664 KiB array that actually exists |
 | `OS_SCREEN_BASE` | `0x8000`, XBIOS `Logbase`'s answer | **`0x9e100`** — the one constant this build changes, and the only change to what a verified core computes. See below |
@@ -170,13 +170,26 @@ machine's memory and starts at 0, and exactly right on the original, whose array
 against the base it runs at. Here the VDI would take `0x236f0` for an address and read its `contrl`
 out of the 68000's vector page.
 
-`bg_gem_dispatch` (`bubble_backend.c`) is the translation, and its shape is **patch-trap-restore**:
-each block is patched in place to machine addresses, the trap is made, and the original offsets are
-put straight back — so the VDI writes its answers into the game's own `intout`/`ptsout` arrays with
-no copy back, and the image the cores read afterwards holds what it held before. A copy of each
-block would have to know which fields the VDI writes; this has to know nothing. `fd_addr == 0` is
-left at 0, because that is the VDI's "the screen" and TOS substitutes the logical base `Setscreen`
-was given — which for this program is `screen_back`.
+`bg_gem_dispatch` (`bubble_backend.c`) is the translation, and it does two different things with the
+two kinds of pointer.
+
+**The parameter block is RESTATED, not patched.** The trap is handed `g_machine_pblock`, a block of
+the shim's own holding the same five (or six) pointers translated — so the VDI still reads its
+operands out of, and writes its answers into, the game's OWN arrays, with no copy back and no field
+this door has to know the meaning of, and the image's block is never touched at all.
+
+**A raster copy is still patch-trap-restore**, because two of its operands are reached by
+DEREFERENCING the image rather than by being handed over: `contrl[7..10]` names two MFDBs and each
+MFDB names a raster. Those four longwords are patched in place and put straight back, so the image
+the cores read afterwards holds what it held before. `fd_addr == 0` is left at 0, because that is the
+VDI's "the screen" and TOS substitutes the logical base `Setscreen` was given — which for this
+program is `screen_back`.
+
+Until 2026-09-07 both halves were patch-trap-restore, and each MFDB was COPIED into the shim's memory
+so its `fd_addr` could be translated. That copy cost more than everything else in the door put
+together: `g_src_mfdb` was a `uint8_t[]`, GCC knows a byte array's alignment is one, so each `wr32`
+through it became four byte stores and the 20-byte copy became a byte loop. "Performance" below has
+the before and the after.
 
 ## The XBIOS group's seam, and the deviation it replaced
 
@@ -528,6 +541,67 @@ equally fine (ours is the linked ELF at 447 names, the shipped side's is `../nam
 
 So **the raster engine is at parity**: `bg_gem_trap` is our own `trap #2` into that same ROM VDI, at
 268K a frame against its 280K. The gap is elsewhere, and it is mostly one function.
+
+### Wave 1 (2026-09-07) — the copy runs, and why the table above still stands
+
+**The table above is the last window this instrument MEASURED, and it is the pre-wave-1 one.** The
+copy every raw blit is built out of has since been rewritten to walk two barriered local cursors in
+spelt-out blocks of `COPY_RUN_UNROLL` — `present_room`'s own 32-fold unroll — instead of recomputing
+`image + offset` per longword. `../include/common.h` carries the shape and the GCC facts behind it;
+`../STATUS.md`'s "Performance" carries the objdump evidence (20.6 cycles a longword against 57.5,
+with the shipped binary at 21.9) and the projection that follows from it.
+
+**It is a projection because this directory refuses to build the change**: `build.sh`'s
+committed-cores gate has no override, so `profile.py ours` cannot run against an uncommitted core.
+**After the commit, run `profile.py ours` and `profile.py compare` and replace the table above with
+what they say** — `profile.py original` need not be re-run, since nothing about the shipped side
+moved. Note when you do that the wave's own arithmetic is on `present_room`'s EXCLUSIVE total: 45.1K
+of its 412.9K inclusive is the Timer C ISR nested inside it, which the window already counts
+elsewhere and which this change does not touch.
+
+### Wave 2 (2026-09-07) — the shim's two costs, MEASURED before and after
+
+`build.sh`'s committed-cores gate reads `src` and `include` and nothing else, so a change confined to
+THIS directory can be built and profiled while the cores are untouched — which is how these two were
+measured on their own, before wave 1 landed: 809.2K cycles a frame -> 776.2K, 9.91 fps -> 10.33,
+x1.73 -> x1.66, wave 1 not in it. **The two waves together, which is the number to hold the next
+change against: 809.2K -> 517.4K, 9.91 fps -> 15.50, x1.73 -> x1.11** against the original's 466.9K
+and 17.18. The table above is the pre-wave-1 window and stays as the baseline it was.
+
+| | before | after |
+|---|---|---|
+| `bg_gem_dispatch`, exclusive | 23,373 cyc/frame over 8.6 calls | **10,224** — x0.43 |
+| `save_sprite_backgrounds` / `draw_sprites` / `restore_sprite_backgrounds`, against the original's | x1.17 / x1.16 / x1.16 | **x1.09 / x1.09 / x1.08** |
+| one YM2149 write from the sound ISR | 324 cyc through the `trap #9` gate | **100** through `bg_psg_write_super` |
+| the 200 Hz tick, whole | 4,011 cyc/tick | **3,451 to 3,899** over four windows, 3,887 in the last |
+| ...against the original's 1,696-1,699 | x2.36 | **x2.03 to x2.30**, x2.29 in the last |
+
+The dispatch half is the MFDB copy, above. The tick half is the `trap #9`, and **the original's ISR
+does not make one** — its own `psg_gate` @ `0x14940` carries 0.7 cycles a tick, because the handler
+writes the ports itself and only USER-mode callers trap. A 68000 exception handler is already
+supervisor and `bg_timer_c_entry` never lowers the interrupt's own IPL 6, so both of the things the
+gate provides are already true inside the tick: `bg_timer_c_tick` raises `bg_in_timer_c` for the
+length of the call and `shim_include/psg.h`'s door writes the ports through `bg_psg_write_super`
+(`bubble_os.s`, beside the gate and out of its own constants) instead of trapping. The whole tick's
+cost tracks how many voices happen to be sounding, which the unseeded ambience varies window to
+window (2.5 to 3.0 chip writes a tick over those four) — which is why the per-WRITE figure is the one
+to read, and it came back as **100 cycles exactly** in every one. Each side's ranges are reported in
+BYTES beside the figure (1,932 of ours against the shipped handler's 914), because both lists are
+hand-maintained against what the maps say today and a map that gained a symbol would truncate a range
+silently.
+
+**How the tick was costed at all** is the transferable half. Hatari attaches cycles to SUBROUTINE
+arrivals, and both binaries reach their handler off the MFP's autovector, so 3,330 ticks arrive on the
+shipped side and **21** of them are charged. `profile.py` therefore sums the profiler's per-ADDRESS
+data over each side's own handler ranges (`SOUND_TICK_SYMBOLS`), which knows nothing about how an
+address was reached. Two Hatari facts that cost a run each, and are now in
+`docs/on-target-execution.md`: `profile save <file>` prints its rows to the debugger's OUTPUT and
+writes a file holding only the labels and one `[...]` per row; and `profile addresses` PAGES — one
+call printed 17 rows of 3,613 active addresses and looked complete.
+
+**What is left in the tick is the CORE**: `timer_c_sound_isr` plus the two step routines GCC did not
+inline cost 2,770-2,970 cycles a tick against the original's 1,696 for its whole handler.
+`../STATUS.md`'s "Performance" names the lever and says why this wave could not take it.
 
 ### What this instrument does not measure
 

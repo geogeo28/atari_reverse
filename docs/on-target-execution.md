@@ -1332,7 +1332,7 @@ hardware" into a localised answer. All are cheap and were decisive in the BuggyB
   the ORIGINAL can be measured exactly the way your port is, over a window of the same length, and
   every number then becomes a ratio instead of an emulator's arithmetic. Wonder Boy's
   `atari/profile.py` is the worked example — 1000 vblanks of each side, opened at the frame loop,
-  with a same-name cycles-per-call table at the bottom. Nine things about it that cost a session
+  with a same-name cycles-per-call table at the bottom. Ten things about it that cost a session
   each to learn:
   * **Load the symbols BEFORE `profile on`, and `symbols autoload off` before THAT.** Autoloading
     frees and replaces the table on every debugger entry, so a table loaded with it still on is gone
@@ -1373,6 +1373,27 @@ hardware" into a localised answer. All are cheap and were decisive in the BuggyB
     at every arrival at the frame loop and the window came back with ONE frame in it. Put the poke in
     the window's own opening action file, before `profile on`, and rely on the machine to leave it
     alone: with no real input events nothing rewrites that byte for the rest of the window.
+  * **AN INTERRUPT HANDLER IS NOT IN THE CALLERS REPORT AT ALL — sum the PER-ADDRESS data instead.**
+    An autovector entry is not a subroutine call, so a handler reached from a hardware vector carries
+    no totals: measured on a shipped Atari binary whose 200 Hz Timer C ISR arrived 3,330 times in a
+    window and had **21** of those arrivals charged, which reads as a routine that costs nothing
+    rather than as one that was never costed. The profiler's per-address data has no such notion — an
+    address's cycles are its own however the PC reached it — so the fix is to sum the rows inside the
+    handler's own address range, taken as [symbol, the next symbol in the map). It makes the ISR
+    comparable between a port and the original for the first time. Three things about getting those
+    rows out of Hatari 2.6:
+    - **`profile save <file>` is the command, and the rows come back in the LOG, not in the file.**
+      The disassembler prints to stdout whichever stream the profiler hands it, so the saved file
+      keeps the section header, the symbol labels and one `[...]` per row while the rows themselves
+      land in the debugger's output. A parser pointed at the file reads a well-formed dump of nothing.
+    - **`profile addresses` PAGES, like the debugger's `d`.** One call printed 17 rows of 3,613 active
+      addresses and left the rest for the next call — a report that looks exactly like a complete one.
+    - **Pin the row count.** Hatari prints `Disassembled N (of active M) CPU addresses`; assert that
+      your parse read N and that N == M. Rows are `<8 hex> <opcode words> <disassembly> P% (instrs,
+      cycles, ...)`, the disassembly carries parentheses of its own (`(a7)`, `($000c,a7)`) so anchor
+      on the TRAILING group, and the fields grow i-cache/d-cache columns when cache emulation is on —
+      take them by index. The rows are every address the window executed, so their cycles sum to the
+      window's own total: an exact second check, and it held to the cycle.
   * **`:trace` prints a match count, not the VBL line; a `cont`-only action file is the per-frame
     clock.** What prints `CPU=$..., VBL=N, FrameCycles=M` is a plain debugger ENTRY, and `:quiet` is
     exactly what suppresses it — so a breakpoint whose action file is nothing but `cont` times every

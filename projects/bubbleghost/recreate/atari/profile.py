@@ -52,6 +52,14 @@ narrower — Hatari attaches cycle totals to SUBROUTINE arrivals only, so a rout
 `bra`/`jmp` carries none of its own and its cost sits in whichever ancestor `jsr`ed to it. Those
 rows show `calls 0`.
 
+THE SOUND TICK IS COSTED OFF A THIRD READING, for the one row that rule makes unmeasurable. The
+200 Hz Timer C handler is reached from the MFP's autovector on BOTH sides, and on the shipped side
+nothing `jsr`s to it at all — 3,330 ticks arrive and Hatari charges 21. So the same window's
+per-ADDRESS data is summed instead (`profile save`, parsed by `address_cycles`): it knows nothing
+about how an address was reached, and the rows inside the handler's own code are its cost whatever
+entered it. `SOUND_TICK_SYMBOLS` names the ranges on each side and `print_side` reports the cycles
+one tick cost, which is the one figure the two sides can be held against each other on.
+
 Use:
 
     python3 atari/profile.py ours            # builds the play .PRG, profiles one room's window
@@ -232,10 +240,19 @@ DEBUGGER_ENTRY_RE = re.compile(r"CPU=\$([0-9a-f]+), VBL=(\d+), FrameCycles=(\d+)
 
 # GCC's interprocedural passes rename what they specialise: `-fipa-cp-clone` appends `.constprop.N`,
 # `-fipa-sra` `.isra.N`, and partial inlining `.part.N`. All of them name the same source function
-# — the cores are at -O2 and four such clones survive today's link — so the profile aggregates onto
-# the base name. The suffix is a naming artefact of the pass and never a distinction the ORIGINAL
-# made, whose map has no clones at all.
+# — the cores are at -O2 and several such clones survive today's link — so the profile aggregates
+# onto the base name. The suffix is a naming artefact of the pass and never a distinction the
+# ORIGINAL made, whose map has no clones at all.
 CLONE_SUFFIX_RE = re.compile(r"(?:\.(?:constprop|part|isra)\.\d+)+$")
+# ...AND ONE SOURCE FUNCTION CAN BE AT TWO ADDRESSES UNDER ONE NAME. A `static inline` in a header
+# that GCC could not fully inline is emitted LOCALLY in every translation unit that reached it, and
+# every copy carries the same name: `copy_longs_ascending.constprop.0` is in two of this link's
+# objects since include/common.h's copy runs were unrolled. `symbol_map`'s one-name-one-address rule
+# is what stops one name covering two DIFFERENT functions and must stay, so the copies are given
+# their own address as a suffix instead — and `base_symbol` takes it off again, which puts them back
+# on the one report row that means anything for one source function.
+DUPLICATE_ADDRESS_TAG = "@"
+DUPLICATE_ADDRESS_RE = re.compile(rf"{DUPLICATE_ADDRESS_TAG}[0-9a-f]+$")
 
 # Report shaping. The name column, once: three format strings share it, and a table whose header is
 # a different width from its rows is a table nobody reads twice.
@@ -257,9 +274,82 @@ MINIMUM_TIMED_ARRIVALS = 2
 # telling a window that ran from one that Hatari's vblank cap cut off, not measuring anything.
 MINIMUM_WINDOW_SPAN = 0.9
 
-# One run of one side: its whole log, and the PC the window was opened at (which the `frames` mode
-# needs to tell its own breakpoint's entries apart from anything else that stops the machine).
-Run = namedtuple("Run", "log frame_pc")
+# ---- the sound tick ------------------------------------------------------------------------------
+# WHICH CODE IS THE TICK, on each side, as symbol names read against that side's own map. A range is
+# [symbol, the next symbol in the WHOLE map), so these do not have to be contiguous and every name in
+# them must resolve — one that stopped existing (GCC inlined it, `../names.txt` was re-cut) would
+# otherwise drop that routine's cycles in silence, and `symbol_ranges` refuses instead.
+#
+# OURS IS SPELT FINELY BECAUSE THE LINK SPELT IT FINELY. `sound_voice_tick`, the three `write_*`
+# routines and `key_off` are all `static` and GCC inlined them into `timer_c_sound_isr`, so they
+# carry no address range of their own; what survives beside it is the two step routines it did not
+# inline, the chip writes, and the shim's own entry and tick.
+#
+# THE LISTS ARE HAND-MAINTAINED AGAINST WHAT THE MAPS SAY TODAY, and that is a live hazard in ONE
+# direction: a name that VANISHES is refused below, but a name that APPEARS is not noticed. Every
+# other helper the ISR runs — `sound_voice_tick`, the three `write_*`, `key_off` — is `static` and
+# inlined right now; a core edit or an `-O` change that stopped inlining one would take its cycles
+# out of the sum AND cut `timer_c_sound_isr`'s own range short at the new symbol, so the tick would
+# read low twice over with nothing red. The shipped side has the same shape for the other reason:
+# its one range runs to the next `fn` line in a HAND-EDITED map, so a naming sweep inside
+# [0x1459a, 0x148ea) would truncate it. `sound_tick_cost` reports the BYTES each side's ranges
+# cover, which is the cheap thing a reader can hold against the last run.
+#
+# THE TRAP #9 GATE IS STILL NAMED THOUGH THE TICK NO LONGER TAKES IT. `bg_psg_write_super` is the
+# path the ISR's chip writes take now (shim_include/psg.h), and what is left in `bg_super_gate` and
+# `trap9_psg_handler` is USER-mode traffic: about two cycles a tick, measured. They stay in the list
+# so that a build which put those writes back through the gate would show the whole cost here rather
+# than appear to have got faster.
+SOUND_TICK_SYMBOLS = {
+    OURS: ("bg_timer_c_entry",                                     # the autovector entry, bubble_os.s
+           "bg_timer_c_tick",                                      # ...and bubble_main.c's counter
+           "timer_c_sound_isr", "step_swept_envelope", "step_triangle_lfo",       # src/sound.c
+           "bg_psg_write_super",                                   # the chip writes, untrapped
+           "psg_gate", "trap9_psg_handler",                        # ...and the gate they used to take
+           "bg_super_gate", "bg_super_gate_entry",                 # the `trap #9` under it
+           "bg_write_byte"),                                       # the conterm byte the ISR clears
+    SHIPPED: ("timer_c_sound_isr",                                 # 0x1459a, the whole handler
+              "psg_gate", "trap9_psg_handler"),                    # 0x14940 and 0x14950
+}
+# ...and the FIRST name in each list is the routine every tick reaches exactly once, which is what
+# the cycles are divided by. Spelt as a position rather than as a second dict because two dicts that
+# have to agree about one name are two dicts that can disagree: a stale one still resolves every
+# range and then divides real cycles by a tick count from somewhere else.
+SOUND_TICK_ARRIVES_AT = 0
+# Where each side's symbol names come from, for a refusal that says which map was missing which name.
+SIDE_MAP_SOURCE = {OURS: ELF, SHIPPED: NAMES_TXT}
+
+# `profile save <file>` is what dumps one row per executed address, and BOTH halves of that sentence
+# are measured on Hatari 2.6.1 rather than assumed:
+#
+#   * THE ROWS COME BACK IN THE LOG, NOT IN THE FILE. The disassembler prints to stdout whatever
+#     stream the profiler hands it, so the saved file keeps the section's header, its symbol labels
+#     and a `[...]` for every row — and the rows themselves land in the debugger's own output.
+#   * `profile addresses` IS NOT THE COMMAND FOR THIS. It PAGES, like the debugger's `d`: one call
+#     printed 17 rows of 3,613 active addresses and left the rest for the next call, which is a
+#     report that looks exactly like a complete one until its row count is checked.
+#
+#   `00012712 48e7 2020   movem.l d2/a2,-(a7) == $00003780   0.00% (168, 4032, 0, 0)`
+#
+# The TRAILING group is what is read, not the disassembly — which carries parentheses of its own
+# (`(a7)`, `($000c,a7)`) — and its fields are taken by INDEX because Hatari appends i-cache and
+# d-cache columns when cache emulation is on.
+PROFILE_ADDRESSES_ECHO = "PROFILE_ADDRESSES"
+ADDRESS_ROW_RE = re.compile(r"^([0-9a-f]{6,8}) .*[\d.]+%\s*\(([^()]*)\)\s*$", re.M)
+ADDRESS_CYCLES_FIELD = 1        # instructions, CYCLES, [i-misses, d-hits]
+# ...and Hatari's own count of what it printed, which is what makes reading them back a MEASUREMENT:
+# a regex that stopped matching would otherwise sum a subset and report a tick that costs nothing.
+DISASSEMBLED_RE = re.compile(r"Disassembled (\d+) \(of active (\d+)\) CPU addresses")
+# The second, looser pin: the rows are every address the window executed, so their cycles are the
+# window's. Generous, because it is only telling a parse that read the dump from one that read a
+# tenth of it — the row count above is the exact check.
+MINIMUM_ADDRESS_COVERAGE = 0.9
+
+# One run of one side: its whole log, the PC the window was opened at (which the `frames` mode
+# needs to tell its own breakpoint's entries apart from anything else that stops the machine), and
+# the symbol map that run was measured with — `relocate` is what turns one of its addresses into a
+# runtime PC, which is 0 for a map that is already absolute.
+Run = namedtuple("Run", "log frame_pc symbols relocate")
 
 
 # ---- symbol maps ---------------------------------------------------------------------------------
@@ -325,6 +415,17 @@ def refuse_a_sentinel_that_is_not_the_top(symbols, source):
     return symbols
 
 
+def tag_duplicate_names(entries):
+    """One name at two addresses, made two names — see DUPLICATE_ADDRESS_TAG for why they exist."""
+    entries = list(entries)
+    placements = {}
+    for name, address, _ in entries:
+        placements.setdefault(name, set()).add(address)
+    return [(name if len(placements[name]) == 1 else f"{name}{DUPLICATE_ADDRESS_TAG}{address:x}",
+             address, kind)
+            for name, address, kind in entries]
+
+
 def elf_symbols(elf):
     """`nm` over the linked ELF as {name: (link-time offset, type letter)}.
 
@@ -333,9 +434,10 @@ def elf_symbols(elf):
     `pin_load_base` then pins against the machine. Clone suffixes are NOT folded here — that happens
     in `parse_callers`, because a base name and its clone are two distinct addresses and folding
     them into one map entry would lose one of them."""
-    symbols = symbol_map(((name, address, kind.upper())
-                          for address, kind, name in mkprg.nm_rows(elf)
-                          if kind in NM_SYMBOL_TYPES and not ASSEMBLER_LOCAL_RE.match(name)), elf)
+    symbols = symbol_map(tag_duplicate_names(
+        (name, address, kind.upper())
+        for address, kind, name in mkprg.nm_rows(elf)
+        if kind in NM_SYMBOL_TYPES and not ASSEMBLER_LOCAL_RE.match(name)), elf)
     if OUR_IMAGE_TOP_SYMBOL not in symbols:
         raise SystemExit(f"FAIL: {elf} carries no {OUR_IMAGE_TOP_SYMBOL} — tos.ld's own marker for "
                          f"the top of our image is gone, so every cycle spent above it (ROM TOS, "
@@ -413,6 +515,12 @@ def frames_window_commands(run, frame_pc):
             close_after_the_window(action_file(WORK, f"{run}-quit.ini", tail="q"))]
 
 
+def addresses_dump(run):
+    """The file `profile save` writes. Kept for its header and its symbol labels — the rows this
+    driver reads are in the LOG, for the reason ADDRESS_ROW_RE gives."""
+    return WORK / f"{run}-addresses.txt"
+
+
 def profile_window_commands(run, symbol_file, text_base=None):
     """...and the profiler's, in the one order that works (this file's header).
 
@@ -420,9 +528,14 @@ def profile_window_commands(run, symbol_file, text_base=None):
     map is already absolute and passes none. `profile stats` is kept beside the callers report
     because it is the one number that report does not carry — the cycles the whole window spent,
     which is what a per-frame cost is a share of. Quitting straight after is also what keeps the log
-    to ONE callers report, which `parse_callers`' completeness guard relies on."""
+    to ONE callers report, which `parse_callers`' completeness guard relies on.
+
+    `profile save` goes LAST, after the callers report, for that same guard: its thousands of rows
+    are printed to the log, and between the header and the report they would be read as callee rows
+    this parser does not recognise. Its own echo is what `address_cycles` anchors on."""
     dump = action_file(WORK, f"{run}-dump.ini", f"echo {PROFILE_DUMP_ECHO}",
-                       "profile stats", "profile callers", tail="q")
+                       "profile stats", "profile callers", f"echo {PROFILE_ADDRESSES_ECHO}",
+                       f"profile save {addresses_dump(run)}", tail="q")
     placed = text_base is not None
     return [marker_command(window_marker(run)), f"echo {PROFILE_ON_ECHO}",
             # Asked BEFORE the symbols are placed, so the log carries the machine's own answer for
@@ -552,7 +665,7 @@ def measure_ours(kind):
         if not frame_pc:
             raise SystemExit("FAIL: the .PRG under test composes no room loop — it is a `title` "
                              "build, and there is no frame to measure")
-        text_base = None
+        offsets, text_base = None, None
         commands = frames_window_commands(run, frame_pc)
         if kind == PROFILE:
             offsets = elf_symbols(ELF)
@@ -570,7 +683,7 @@ def measure_ours(kind):
         log = collect(session, run)
     if kind == PROFILE:
         pin_load_base(log, text_base)
-    return Run(log, frame_pc)
+    return Run(log, frame_pc, offsets, 0 if text_base is None else text_base)
 
 
 def measure_original(kind):
@@ -605,7 +718,9 @@ def measure_original(kind):
             raise SystemExit("FAIL: the original: the menu was never drawn, so no key could be sent")
         arm_the_window(session, run, frame_pc, commands)
         open_the_room(session, run)
-        return Run(collect(session, run), frame_pc)
+        # The shipped map is built at the base the run decrypted itself to, so it is already
+        # absolute and nothing further has to be added to reach a runtime PC.
+        return Run(collect(session, run), frame_pc, symbols, 0)
 
 
 def measure(side, kind):
@@ -661,8 +776,8 @@ def window_cycles(log):
 
 
 def base_symbol(name):
-    """The source function a linker symbol belongs to, whatever GCC specialised it into."""
-    return CLONE_SUFFIX_RE.sub("", name)
+    """The source function a linker symbol belongs to, whatever GCC specialised or copied it into."""
+    return CLONE_SUFFIX_RE.sub("", DUPLICATE_ADDRESS_RE.sub("", name))
 
 
 def parse_callers(log):
@@ -708,14 +823,109 @@ def parse_callers(log):
                 totals[into] += int(fields[TOTALS_CYCLES_FIELD])
                 if into == EXCLUSIVE:
                     totals["calls"] += int(fields[TOTALS_CALLS_FIELD])
-    # Every callee row after the header belongs to this one report (the dump script quits straight
-    # after printing it), so a loop that stopped early stopped on a line shape this parser does not
-    # know — and the functions past that point would be missing from the whole report in silence.
-    rows_in_block = sum(1 for line in lines[start:] if CALLEE_ROW_RE.match(line))
+    # Every callee row IN THIS REPORT belongs to it, so a loop that stopped early stopped on a line
+    # shape this parser does not know — and the functions past that point would be missing from the
+    # whole report in silence. The report used to run to the end of the log; `profile save` now puts
+    # thousands of address rows after it, so the count is bounded at that dump's own echo rather
+    # than resting on those rows happening not to look like callee rows.
+    end = next((index for index, line in enumerate(lines[start:], start)
+                if PROFILE_ADDRESSES_ECHO in line), len(lines))
+    rows_in_block = sum(1 for line in lines[start:end] if CALLEE_ROW_RE.match(line))
     if consumed != rows_in_block:
         raise SystemExit(f"FAIL: the callers report has {rows_in_block} callee rows but this parser "
                          f"read {consumed} of them — it stopped at a line it does not recognise")
     return rows
+
+
+def address_cycles(side, log):
+    """{runtime address: cycles} for every address the window EXECUTED, off `profile addresses`.
+
+    ANCHORED ON ITS OWN ECHO, because the log carries a whole boot's disassembly before it — every
+    debugger entry prints the instruction it stopped on, and those lines are the same shape without
+    the profile fields. Pinned on Hatari's own count of the rows it printed, so a regex that stopped
+    matching reds rather than summing a subset."""
+    echoed_at = log.find(PROFILE_ADDRESSES_ECHO)
+    if echoed_at < 0:
+        raise SystemExit(f"FAIL: {side}: the run's log carries no {PROFILE_ADDRESSES_ECHO} echo — "
+                         f"`profile save` never ran, and the sound tick is the one cost the "
+                         f"callers report cannot carry")
+    # THE ECHO IS NOT NEWLINE-TERMINATED where the profiler's own stream follows it, so the first
+    # row arrives glued to it and a `^`-anchored match would silently drop exactly one address.
+    block = "\n" + log[echoed_at + len(PROFILE_ADDRESSES_ECHO):]
+    rows = {}
+    for address, totals in ADDRESS_ROW_RE.findall(block):
+        rows[int(address, 16)] = int(totals.split(",")[ADDRESS_CYCLES_FIELD])
+    printed = DISASSEMBLED_RE.search(block)
+    if not printed:
+        raise SystemExit(f"FAIL: {side}: `profile save` printed no count of the rows it wrote, so "
+                         f"the {len(rows)} read back here are held against nothing")
+    shown, active = int(printed.group(1)), int(printed.group(2))
+    if len(rows) != shown or shown != active:
+        raise SystemExit(f"FAIL: {side}: Hatari printed {shown} of {active} active addresses and "
+                         f"this parser read {len(rows)} of them — a row shape it does not know, and "
+                         f"every range summed out of them would read low with nothing failing")
+    return rows
+
+
+def symbol_ranges(symbols, names, relocate, source):
+    """[start, end) runtime addresses for every symbol each name owns, the ends taken from the map.
+
+    A range ends at the next symbol ABOVE its own, which is why it matters that both maps carry a
+    sentinel at the top of the image (OUTSIDE_THE_PROGRAM): a named function with nothing above it
+    would have no end at all.
+
+    ONE NAME CAN OWN SEVERAL RANGES. `base_symbol` is what decides: a GCC clone (`.constprop.N`) and
+    a per-translation-unit copy both belong to the source function they were named after, and each
+    sits at its own address. Taking only the base symbol's own range would leave a clone's cycles
+    out of the sum with nothing red — and, where the clone happens to be laid down next to it, would
+    cut the base's range short as well."""
+    placed = sorted(address for address, _ in symbols.values())
+    owned = {}
+    for name, (address, _) in symbols.items():
+        owned.setdefault(base_symbol(name), []).append(address)
+    ranges = []
+    for name in names:
+        if name not in owned:
+            raise SystemExit(f"FAIL: {source} carries no symbol named {name} — the sound tick is "
+                             f"summed over its address range, so there is nothing to sum")
+        for start in sorted(owned[name]):
+            above = next((address for address in placed if address > start), None)
+            if above is None:
+                raise SystemExit(f"FAIL: {source} carries no symbol above {name} at {start:#x}, so "
+                                 f"its range has no end — the map's top-of-image sentinel is gone")
+            ranges.append((relocate + start, relocate + above))
+    return ranges
+
+
+def sound_tick_cost(side, run, functions, window):
+    """What one 200 Hz Timer C tick cost, summed off the window's per-ADDRESS data.
+
+    THE CALLERS REPORT CANNOT ANSWER THIS on the shipped side and that is the whole point (this
+    file's header): the handler is entered from the MFP's autovector, which is not a subroutine
+    call, so its cycles sit in whatever the interrupt landed in. Per-address data has no such
+    notion — an address's cycles are its own however the PC got there — so the ranges in
+    SOUND_TICK_SYMBOLS are summed instead, and the two sides become comparable at last.
+
+    WHAT IS NOT IN IT, on either side: the Timer C work TOS still wants done. Both handlers chain to
+    the saved $114 vector by pushing it and `rts`ing, and ROM is outside every range below."""
+    executed = address_cycles(side, run.log)
+    accounted = sum(executed.values())
+    if accounted < window * MINIMUM_ADDRESS_COVERAGE:
+        raise SystemExit(f"FAIL: {side}: the address rows account for {accounted:,} of the window's "
+                         f"{window:,} cycles — they are supposed to BE the window, so one of the "
+                         f"two is not the measurement it is read as")
+    ranges = symbol_ranges(run.symbols, SOUND_TICK_SYMBOLS[side], run.relocate,
+                           SIDE_MAP_SOURCE[side])
+    cycles = sum(count for address, count in executed.items()
+                 if any(start <= address < end for start, end in ranges))
+    covered = sum(end - start for start, end in ranges)
+    arrives_at = SOUND_TICK_SYMBOLS[side][SOUND_TICK_ARRIVES_AT]
+    ticks = functions.get(arrives_at, {}).get("arrivals", 0)
+    if not ticks:
+        raise SystemExit(f"FAIL: {side}: nothing arrived at {arrives_at} in the window, so the "
+                         f"tick's cycles are over an unknown number of ticks")
+    return {"cycles": cycles, "ticks": ticks, "per_tick": cycles / ticks, "accounted": accounted,
+            "bytes": covered}
 
 
 def refuse_a_window_of_the_wrong_length(side, cycles):
@@ -750,18 +960,19 @@ def measured_now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def summarise(side, log):
-    """Turn one run's log into the side's .json, refusing a window with no frames in it."""
-    functions = parse_callers(log)
-    data = {"side": side, "window_vbls": WINDOW_VBLS, "window_cycles": window_cycles(log),
+def summarise(side, run):
+    """Turn one run into the side's .json, refusing a window with no frames in it."""
+    functions = parse_callers(run.log)
+    data = {"side": side, "window_vbls": WINDOW_VBLS, "window_cycles": window_cycles(run.log),
             "measured_at": measured_now(),
             "frames": functions.get(FRAME_SYMBOL, {}).get("arrivals", 0), "functions": functions}
     refuse_a_window_of_the_wrong_length(side, data["window_cycles"])
-    refuse_symbols_hatari_dropped(log)
+    refuse_symbols_hatari_dropped(run.log)
     if not data["frames"]:
         raise SystemExit(f"FAIL: nothing arrived at {FRAME_SYMBOL} in the window — either the "
                          f"symbols were not loaded (they must precede `profile on`, and autoload "
                          f"must be off before that) or the window opened somewhere else")
+    data["sound_tick"] = sound_tick_cost(side, run, functions, data["window_cycles"])
     (OUT / f"profile-{side}.json").write_text(json.dumps(data, indent=1, sort_keys=True))
     return data
 
@@ -799,6 +1010,12 @@ def print_side(data):
     if loop.get("calls"):
         print(f"   {loop[INCLUSIVE] / frames / 1e3:9.1f}K cycles/frame inside {FRAME_SYMBOL} itself "
               f"({loop[INCLUSIVE] / window * 100:.1f}% of the window)")
+    tick = data.get("sound_tick")
+    if tick:
+        print(f"   {tick['cycles'] / frames / 1e3:9.1f}K cycles/frame in the 200 Hz sound tick "
+              f"= {tick['per_tick']:,.0f} a tick over {tick['ticks']:,} of them "
+              f"({tick['cycles'] / window * 100:.1f}% of the window, "
+              f"{tick.get('bytes', 0):,} bytes of code)")
     print(f"   {'function':<{NAME_COLUMN}} {'calls':>7} {'arrivals':>9} {'incl/frame':>12} "
           f"{'excl/frame':>12} {'cyc/call':>10}")
     ranked = sorted(data["functions"].items(), key=lambda item: -item[1][INCLUSIVE])
@@ -918,6 +1135,12 @@ def compare():
     shipped = theirs["window_cycles"] / theirs["frames"]
     print(f"\n== HEADLINE: ours {mine / 1e3:.1f}K cycles/frame against the original's "
           f"{shipped / 1e3:.1f}K = x{mine / shipped:.2f} ==")
+    mine_tick, shipped_tick = ours.get("sound_tick"), theirs.get("sound_tick")
+    if mine_tick and shipped_tick:
+        print(f"   the 200 Hz sound tick, off the per-address data: ours "
+              f"{mine_tick['per_tick']:,.0f} cycles a tick against the original's "
+              f"{shipped_tick['per_tick']:,.0f} = "
+              f"x{mine_tick['per_tick'] / shipped_tick['per_tick']:.2f}")
     print_ratios(ours, theirs)
     print("\n== WHAT ONLY ONE SIDE HAS ==")
     print_one_side_only(ours, theirs, "named only in OUR map (shim AND finer-named game code)")
@@ -1013,7 +1236,7 @@ def main():
     OUT.mkdir(exist_ok=True)
     WORK.mkdir(parents=True, exist_ok=True)
     if args in ([OURS], [SHIPPED]):
-        print_side(summarise(args[0], measure(args[0], PROFILE).log))
+        print_side(summarise(args[0], measure(args[0], PROFILE)))
     elif args == [COMPARE]:
         compare()
     elif len(args) == 2 and args[0] == FRAMES and args[1] in (OURS, SHIPPED):

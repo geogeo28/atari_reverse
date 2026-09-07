@@ -106,6 +106,7 @@ uint32_t bg_malloc_calls;
 
 volatile uint32_t bg_timer_c_ticks;
 uint32_t bg_timer_c_chain;
+volatile uint8_t bg_in_timer_c;   /* shim_include/tos.h: what lets the ISR's chip writes skip the gate */
 
 /* ================================================================================================
  * WHAT A HEADLESS CHECK NEEDS TO KNOW BEFORE THE RUN CAN GO WRONG
@@ -554,10 +555,16 @@ static void mirror_conterm(const uint8_t *image) { poke_byte(TOS_CONTERM, image[
  * no screenshot could tell from a run whose music simply has not started. */
 void bg_timer_c_tick(void) {
     bg_timer_c_ticks++;
+    /* The ISR's chip writes go straight at the ports for the length of this call: an exception
+     * handler is already supervisor and this one is still at the interrupt's own IPL 6, which is
+     * both halves of what the trap #9 gate exists to provide (shim_include/tos.h). Cleared on the
+     * way out, so every door reached from user code still traps. */
+    bg_in_timer_c = 1;
     timer_c_sound_isr(bg_image_base);
     /* The ISR's own $484 write, made for real. An exception handler already runs in supervisor mode,
      * so this is a plain store where `mirror_conterm` needs a Supexec from user code. */
     bg_write_byte(TOS_CONTERM, bg_image_base[TOS_CONTERM]);
+    bg_in_timer_c = 0;   /* ...cleared LAST, so the flag is true for the whole of the handler */
 }
 
 /* ================================================================================================

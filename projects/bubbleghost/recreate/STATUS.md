@@ -114,7 +114,7 @@ What is still unpinned is `Setscreen`'s PHYSICAL base and its resolution: an eve
 32-bit value and that call has three arguments, so the entry is the logical base alone.
 `atari/README.md`'s "Unpinned" carries it.
 
-## Performance — measured, not started
+## Performance — the baseline, and two waves measured on top of it
 
 `atari/profile.py` is the instrument the performance campaign will run on: 1000 vblanks of Hatari's
 CPU profiler on BOTH binaries, opened at the first arrival at `game_frame_update` and closed 1000
@@ -132,8 +132,143 @@ sides; a routine the two binaries enter differently (an interrupt vector against
 full total on one side and almost none on the other, and `compare` prints those under their own
 heading instead of ranking them. The full table, the four things this instrument does not measure —
 chief among them that the two windows are equal in vblanks and not in frames, which flatters the
-slower side — and the usage lines are in `atari/README.md`, "Performance". **Nothing has been
-optimised yet**; this is the baseline.
+slower side — and the usage lines are in `atari/README.md`, "Performance".
+
+### Wave 1, 2026-09-07 — the copy runs
+
+Every raw blit in this program was one helper, `include/common.h`'s `copy_longs_ascending`, and it
+walked two 32-bit image OFFSETS: GCC kept the offsets and recomputed `image + offset` per longword
+instead of postincrementing two address registers. It now walks two LOCAL cursors behind
+`CURSOR_BARRIER`, in spelt-out blocks of `COPY_RUN_UNROLL` closed by one `COUNT_BARRIER`ed counter —
+which is `present_room` @ 0x13286's own 32-fold unroll. The same shape now carries
+`copy_longs_descending`, `clear_physical_screen`'s fill, and — spelt as its own four-longword row,
+because a run of four is all loop control — the 32x32 tile blit that `objects_animate_and_draw`,
+`draw_room_to_stage`, `draw_hud_row_tiles` and `draw_tile_bank_screen` each drive. The why of the
+barriers is in `include/common.h` beside them, so that the next reader does not simplify them back.
+
+**What the target objects say**, read off `m68k-elf-objdump -d` of the cores built with
+`atari/build.sh`'s own flags. **This is codegen evidence, not a profiler window:**
+
+| | before | after |
+|---|---|---|
+| the whole-region run | `image + offset` recomputed per longword — 57.5 cyc/longword measured | 32 x `movel %a1@+,%a0@+` to one `subql`/`bnes`: **20.6** cyc/longword |
+| ...the same run in the shipped binary | | 32 x `move.l (a3)+,(a2)+` to one `dbf`: 20.3 in theory, **21.9** as Hatari charges it |
+| the tile blit's row | 4 longwords through the helper, plus per-row call | 4 x `movel %a1@+,%a0@+` + `lea %a0@(144),%a0` + `subqw`/`bnes` — the original's own row |
+| the wipe's descending run | `image + offset` recomputed per longword | the original's own `movel %a3@,%a0@` + two `subql #4`, with its `dbf` amortised over 32 of them |
+| the cores' `.text`, all seven | 145,326 B | 146,204 B (**+878**); the size gate reported 74,034 B spare BEFORE this change |
+
+**AND WHAT THE PROFILER SAYS**, taken once the change was committed (`3475866`) and `atari/build.sh`
+would build it — the projection this paragraph used to carry was ~583K a frame and ~13.7 fps from the
+copy runs alone, and the measured window came in under it:
+
+| | before | after |
+|---|---|---|
+| `present_room`, inclusive | 412,937 cyc/frame, x2.95 the original's | **149,874, x1.07** |
+| ...of which the run itself | 367,856 exclusive, all of it in the copy | 167 exclusive; the run is now its own row, `copy_longs_ascending` at **136,318** |
+| `blit_tile_32x32` | inside a branch-entered ancestor, uncharged | its own row at 4,530 exclusive over 328 arrivals |
+
+The projection undershot because it costed only the whole-region run; the tile blit's saving is in
+the window too and this instrument could not predict it.
+
+What IS pinned is that the change is behaviour-preserving: `make test` and `make guarded` are green
+over the whole suite, and the gate was shown to fail on mutations of exactly this shape — one `step`
+dropped from `UNROLLED_RUN_BLOCK` (191 failures) and the descending run walked upward (56 failures).
+
+**AND WHAT THE DIFFERENTIAL CANNOT SEE IS THE WHOLE POINT OF THE CHANGE.** Every mutation above is a
+mutation of BEHAVIOUR; what this wave buys is CODEGEN, and the suite is green either way. The first
+draft of `copy_longs_descending` proved it: it read correctly, passed all 1,895 cases and
+`make guarded`, and compiled to `lea -4(a3),a1 / lea -4(a2),a0 / move.l -4(a3),-4(a2)` — 44 cycles a
+longword, WORSE than the 36 the original spends, because its `CURSOR_BARRIER` sat after the store
+instead of the step. Nothing in the suite could say so; `m68k-elf-objdump -d` said it in one line.
+**Read the objdump for any change to these runs.** The differential is the correctness gate and not
+the performance one; `atari/profile.py` is the performance one, and until this is committed the
+codegen claims above are **unpinned by any check** — that is the honest state of this row.
+
+**Three facts this wave discovered, recorded because a green suite hides all three:**
+
+* **The singles tail has ONE live caller in the whole program** — the bonus bar's 40-longword
+  scanline. Every other count is an exact multiple of COPY_RUN_UNROLL (6400, 1280, 1024, 7680, and
+  `room_wipe_in_step`'s present, always 160 x (step + 1)), so a tail that is short by one is green
+  in all of them and red only through `test_gameplay.py` / `test_frontend.py`. `test_blit.py`, the
+  battery that owns these helpers, does not reach it. The note is in `include/common.h` over
+  `UNROLLED_RUN`, where the next editor of that loop reads it.
+* **`include/common.h` is declared append-only by [`README.md`](README.md)**, and this wave rewrote
+  the BODY of `copy_longs_ascending` rather than only adding beside it. The additions
+  (`copy_one_longword`, `COPY_RUN_UNROLL`, `UNROLLED_RUN*`) are append-only and are shared by three
+  cores as that rule requires; the body rewrite is recorded here rather than left to look like one.
+* **The kit hoist trigger is now met, and is REGISTERED rather than done.** `copy_one_longword` is
+  the same helper under the same name as `projects/wonderboy/recreate/include/scroll.h`'s, whose
+  header names the trigger ("a user in ANOTHER project") and the home
+  (`tools/recreate_kit/include/machine.h`); Zynaps' `src/init.c` registers three more copies of the
+  same loop waiting on the same move. `include/common.h`'s header carries the registration. Doing it
+  is a kit change plus a Wonder Boy re-verification, and is out of this wave's scope.
+
+### Wave 2, 2026-09-07 — the shim's two costs: the GEM dispatch and the sound tick
+
+`build.sh`'s committed-cores gate reads `src` and `include` and nothing else, so a change confined to
+`atari/` builds and profiles while the cores are untouched — which is how these two were measured on
+their own, before wave 1 landed: **809.2K cycles a frame -> 776.2K, 9.91 fps -> 10.33, x1.73 ->
+x1.66**, with wave 1 not in it. **The two waves together, which is the number to quote: 809.2K ->
+517.4K, 9.91 fps -> 15.50, x1.73 -> x1.11** against the original's 466.9K and 17.18.
+
+**The GEM dispatch, `bg_gem_dispatch` (atari/bubble_backend.c): 23.4K cycles a frame -> 10.2K,
+x0.43.** Every `trap #2` marshalled the game's parameter block by patching its five (or six) pointers
+in place, trapping, and putting them back; and a raster copy additionally COPIED each 20-byte MFDB
+into the shim's own memory so that its `fd_addr` could be translated. That copy was most of the cost:
+`g_src_mfdb` was a `uint8_t[]`, GCC knows a byte array's alignment is one, and every `wr32` through it
+therefore became four byte stores while the copy itself became a 20-iteration byte loop — about 2,700
+cycles a call over 8.6 calls a frame. The trap is now handed a block of the shim's OWN
+(`g_machine_pblock`, a `uint32_t[]`, so one aligned `move.l` a slot) and the image's block is never
+disturbed; the two MFDBs are patched IN PLACE, which is four longwords patched and put back instead
+of forty bytes copied. The three sprite routines came down with it, against the original's own:
+`save_sprite_backgrounds` x1.17 -> x1.09, `draw_sprites` x1.16 -> x1.10, `restore_sprite_backgrounds`
+x1.16 -> x1.09.
+
+**The 200 Hz sound tick, costed on BOTH sides for the first time — and the instrument is the
+finding.** Hatari charges cycles to SUBROUTINE arrivals, and both binaries reach their handler off the
+MFP's autovector: 3,330 ticks arrive on the shipped side and 21 of them are charged, so the row was
+unmeasurable rather than cheap. `profile.py` now sums the profiler's per-ADDRESS data over each side's
+own handler ranges (`SOUND_TICK_SYMBOLS`), which knows nothing about how an address was reached.
+**Ours cost 4,011 cycles a tick against the original's 1,696-1,699 over two windows — x2.36, 10.0% of
+our frame against 4.2% of theirs.** The tick's ABSOLUTE cost tracks how many voices happen to be
+sounding, which the unseeded ambience re-roll varies window to window (3,451 to 3,899 over four later
+windows, at 2.5 to 3.0 chip writes a tick), so the per-WRITE figure below is the one that is not a
+coin toss. It ends at **3,887 a tick against 1,696, x2.29**, with both sides' ranges reported in bytes
+(1,932 of ours against the shipped handler's 914) so that a later run can be held against this one.
+
+Where the excess was: 814 of those 4,011 were the `trap #9` supervisor gate, which **the original's
+ISR does not make** — its own `psg_gate` @ 0x14940 carries 0.7 cycles a tick, because the handler
+writes $ff8800 itself and only USER-mode callers trap. A 68000 exception handler is already
+supervisor, and `bg_timer_c_entry` never lowers the interrupt's own IPL 6, so both of the things the
+gate provides are already true inside the tick; `bg_timer_c_tick` now raises `bg_in_timer_c` for the
+length of the call and `shim_include/psg.h`'s door writes the ports through `bg_psg_write_super`
+(bubble_os.s, the gate's own constants) instead of trapping. **A chip write went from 324 cycles to
+100 exactly**, over 2.5-3.0 writes a tick, in every window since.
+
+**What is left is the CORE, and it is the next wave's.** `timer_c_sound_isr` plus the two step
+routines GCC did not inline cost 2,770-3,165 cycles a tick over those windows, against the original's
+1,696 for its whole handler — x1.7 to x1.9, the ordinary C-against-hand-asm gap, and now ~7% of a
+517.4K frame. The other lever the review named and this wave did not take: `bg_psg_write_super` is a
+`jsr` with two stack arguments around two `move.b`, so ~90 of its 100 cycles is call plumbing —
+`projects/zynaps/recreate/atari/shim_include/psg.h` writes the ports inline instead, which would need
+the port addresses spelt in a header plus a build.sh gate pinning them equal to `bubble_os.s`'s, and
+is worth about 0.7% of a frame. The lever named in `src/sound.c` is real and unspent: `field_w(image, record, OFFSET)`
+recomputes `image + record + offset` per field where the original walks one `a0` cursor. It is a CORE
+change, so `build.sh` refuses it until it is committed — which is why this wave did not take it.
+
+**Unpinned, and it is this wave's own finding.** Nothing on target watches the PSG. The differential
+pins the (register, value) pairs the core computes, and `smoke.py` pins that the handler runs
+(`TIMER_C_TICKS`) and does not fault, but no check reads a byte back off the chip — so the six
+instructions that carry a pair to the ports are covered by review and by the constants they share
+with the gate, not by a surface. One failure mode IS caught: a flag wrongly left set makes the next
+user-mode write to $ff8800 a bus error, which the fault scan reds on.
+
+Two smaller gaps in the same place, recorded rather than closed. `build.sh` counts the `hw_write8`
+call sites the CORES make but nothing counts the places the SHIM writes $ff8800 — that went from one
+to two here and a third would land silently. And `bg_in_timer_c` is the first shim variable whose
+value changes which branch a VERIFIED CORE takes (`core_sound.o` now carries `U bg_in_timer_c`); what
+it selects is only HOW the same (register, value) pair reaches the same chip, but the containment
+gate measures which HEADERS a core reaches and cannot see the class at all.
 
 ## Model gaps — read this before picking a function
 
