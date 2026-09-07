@@ -99,6 +99,7 @@ atari/
 │                     bubble_mfdb.h (the one place blit.h's MFDB offsets are pinned to the kit's)
 ├── smoke.py          the gate: two Hatari runs, nine checks, three negative controls, and two
 │                     modes of its own — the bootable floppy, and the G key's room loop
+├── profile.py        what a room frame COSTS, ours against the original's, over one window
 └── run.sh            the `play` build, with a mouse and sound, for a person
 ```
 
@@ -445,6 +446,106 @@ the room — so the reported "returns to TOS" is not in anything this mode can r
 CANNOT reach is the mouse, which is most of Bubble Ghost's input: the ghost follows it, and Hatari's
 control protocol has no mouse-motion event of any kind. That is where the remaining suspicion sits,
 and it is written here as an open question rather than as a closed one.
+
+## Performance — `atari/profile.py`, and the first measurement
+
+The room loop has **no Vsync and no wait of any kind** (`notes/gameplay.md` §2), so it turns at the
+renderer's speed: the game's pace AND its mouse-to-screen latency ARE the frame cost, and the target
+is parity with the original's cycles per frame rather than a budget to come in under.
+
+```
+python3 atari/profile.py ours            # builds the play .PRG, profiles one room's window
+python3 atari/profile.py original        # boots the shipped disk, profiles the same window
+python3 atari/profile.py compare         # reads both .json files back and ranks the difference
+python3 atari/profile.py frames ours     # the per-frame cost itself, over the same window
+python3 atari/profile.py frames original
+```
+
+Both sides are driven exactly as `smoke.py game` drives them — wait for the menu, send `G` and `1`
+until a room opens — and the window is then 1000 vblanks of Hatari's CPU profiler, opened at the
+FIRST arrival at `game_frame_update` and closed from inside that breakpoint's own action file. A
+frame is a COUNT, not an estimate: the arrivals at that one routine, which is one room frame on
+either side. **Because profiling stops on every debugger entry, the host may not issue a single
+`hatari-debug` command between arming the window and the dump landing** — so "the room is open" is a
+marker file the window's own script writes, and the two keys (which are `hatari-event`, not debugger
+entries) are the only thing the host does after that. `profile.py`'s header carries the rest.
+
+**THE MACHINE IS AT 60 Hz, NOT 50.** `hatari_arguments` boots TOS104US on an RGB monitor, which is a
+508 x 263 = 133,604-cycle video frame; the first window measured 133,545 cycles a vblank (0.04%
+off), where a 50 Hz frame would have been 160,256. Assuming the wrong one is a 20% error on every
+fps, so `refuse_a_window_of_the_wrong_length` keeps that measurement as a check.
+
+### The first measurement (2026-09-07, `play` build at -O2, TOS 1.04 US, 1 MB, mouse idle)
+
+| | ours | the original | |
+|---|---|---|---|
+| frames in 1000 vblanks (16.65 s) | 165 | 286 | |
+| **fps** | **9.91** | **17.18** | x0.58 |
+| **cycles/frame, whole window** | **809.2K** | **466.9K** | **x1.73** |
+| cycles/frame inside `game_frame_update` | 48.0K | 31.4K | x1.53 |
+| `frames` mode: median / p90 / max | 813.3K / 836.8K / 860.1K | 466.5K / 478.7K / 502.8K | |
+| `frames` mode: vblanks a frame (median) | 6.09 | 3.49 | |
+| `frames` mode: fps off the frames' own cycles | 9.90 | 17.18 | |
+
+**The two instruments agree to 0.1%** — the profiler's window average against the per-frame clock's
+mean — which is what makes either of them worth reading.
+
+**Where the 342.3K a frame goes.** `compare`'s ranked table, inclusive cycles per frame:
+
+| function | ours | the original | over | x |
+|---|---|---|---|---|
+| `present_room` | 412,937 | 139,959 | **+272,978** | 2.95 |
+| `game_frame_update` | 47,956 | 31,441 | +16,515 | 1.53 |
+| `save_sprite_backgrounds` | 105,602 | 90,150 | +15,452 | 1.17 |
+| `restore_sprite_backgrounds` | 113,597 | 98,349 | +15,248 | 1.16 |
+| `draw_sprites` | 107,319 | 92,344 | +14,975 | 1.16 |
+| `fp_dispatch` | 18,524 | 8,147 | +10,376 | 2.27 |
+
+**A ROW IS ONLY A RATIO WHERE BOTH SIDES WERE CHARGED,** and `compare` now prints the rest under
+their own heading rather than ranking them. Hatari attaches cycle totals to SUBROUTINE arrivals
+alone, so a routine the two binaries ENTER DIFFERENTLY carries a full total on one side and almost
+none on the other. `timer_c_sound_isr` is the measured example: both sides tick 3,329 times in the
+window, ours reached by a `jsr` out of `bg_timer_c_tick` and the shipped one straight off its
+autovector — of which Hatari charged 21. Ranked as a ratio it read **x81 and second in the table**;
+the original's ISR cost is not in that row at all, it is spread through the exclusive totals of
+whatever the interrupt landed in. `objects_animate_and_draw` is the same class the other way (theirs
+10,692 a frame, ours branch-entered and charged nothing). Ours costs 88.4K a frame through
+`bg_timer_c_tick`, 10.9% of the window, and **the original's is unmeasured by this instrument**.
+
+`game_room_frame_tail` has no shipped row for the same reason: it is the branch-entered slice
+`[0x10792, 0x108d2)` of `game_top_loop`, so ours' 760.6K a frame stands alone.
+
+**What each side has that the other has no name for**, exclusive (inclusive totals nest, so they
+cannot be summed over a set) — and this is **not** a shim budget, because the two maps are not
+equally fine (ours is the linked ELF at 447 names, the shipped side's is `../names.txt` at 133):
+
+* named only in OUR map — 24 symbols, **350,474** cycles/frame: `bg_gem_trap` 268,459,
+  `bg_gem_dispatch` 23,373, `game_room_frame_tail` 14,290, `step_swept_envelope` 11,748,
+  `step_triangle_lfo` 9,566. The last three are ported GAME code our source named more finely, not
+  shim.
+* named only in `../names.txt` — 11 symbols, **291,626** cycles/frame: `vdi_call` 280,100, which is
+  the real ROM VDI and 60% of the shipped window.
+
+So **the raster engine is at parity**: `bg_gem_trap` is our own `trap #2` into that same ROM VDI, at
+268K a frame against its 280K. The gap is elsewhere, and it is mostly one function.
+
+### What this instrument does not measure
+
+Each of these is measured rather than feared; `profile.py`'s header carries the same list.
+
+1. **The two windows are equal in VBLANKS, not in FRAMES**, and the room loop advances per frame. The
+   original ran 286 frames to our 165 from the same first frame, ticked its bonus bar 95 times to
+   our 55 and fired 8 ambience sounds to our 3. The bias is one-way — the faster side's window is
+   likelier to contain the expensive events — so it **flatters the slower side**, which is ours.
+   Closing on the Nth arrival (`b pc = $... :N`) is the fix, and it has not been made.
+2. **A run is not reproducible to better than about 2%**: two `ours` windows minutes apart gave 165
+   and 168 frames. The ambience re-roll draws `Random()` from an unseeded stream and
+   `smoke.press_the_game_keys` injects on a host wall clock, so whether a stray key is drained
+   inside the window is a real-time race. One run of each side is taken.
+3. **The mouse is idle on both sides** — this is a drifting bubble, not a played game.
+4. **The shipped map is coarser than ours** (~7 KB of shipped `.text` past the last `fn` line), so a
+   shipped row can absorb code our map splits out. That tilts a same-name ratio toward the original
+   looking more expensive than it is.
 
 ## Unpinned, and why
 

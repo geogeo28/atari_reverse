@@ -259,6 +259,44 @@ def hatari_arguments(medium, trace_file, extra=()):
             "--frameskips", "0"] + trace + list(medium) + list(extra)
 
 
+def ours_medium():
+    """The media OUR .PRG boots from: the game's data floppy in A:, and the C: drive it runs from."""
+    return ["--disk-a", str(DISK / "GHOST.ST"),
+            "--harddrive", str(DISK / "c"), "--auto", "C:\\BUBBLE.PRG"]
+
+
+def original_medium():
+    """...and the shipped binary's: the protected `.stx` in A:, `bin/` as C:. Both spellings live
+    here alone, because a comparison between two differently configured machines is a comparison of
+    the configurations (this file's header) — and three copies of a media list is how they drift."""
+    return ["--disk-a", str(ORIGINAL_STX), "--protect-floppy", "on",
+            "--harddrive", str(BIN), "--auto", ORIGINAL_PRG]
+
+
+def await_the_decrypted_original(session, result):
+    """Poll RAM for the shipped program's plaintext and answer the load base it was found at.
+
+    ITS ADDRESSES DO NOT EXIST YET when the run starts: the shipped program is encrypted against the
+    protection track and decrypts itself into RAM, so there is nothing to break on until it is
+    there. This polls exactly as ../../tools/boot_ghost.py does, and the base it finds turns every
+    Ghidra address into a real one. Answers None — having filled in `result` and shut the session
+    down — when the plaintext never appeared, which is a RESULT a caller reports rather than a
+    traceback.
+    """
+    deadline = time.monotonic() + ORIGINAL_LOAD_DEADLINE_SECONDS
+    while time.monotonic() < deadline:
+        base = locate_by_signature(session.savebin("ram.bin", 0, MEMSIZE_MB * 0x100000),
+                                   ORIGINAL_PLAIN)
+        if base:
+            result["load_base"] = base
+            return base
+        session.wait(ORIGINAL_LOAD_POLL_SECONDS)
+    result["load_base"] = None
+    result["status"] = session.close()
+    result["problem"] = "the original never decrypted itself into RAM"
+    return None
+
+
 def capture_files(work, side):
     """Where one side's anchor capture lands. BOTH SIDES ARE PHOTOGRAPHED THE SAME WAY, so the names
     are per side rather than per purpose: two runs sharing one filename would each read the other's."""
@@ -380,8 +418,7 @@ def run_ours(mode, work):
         stale.unlink(missing_ok=True)
 
     trace = work / "ours.trace"
-    medium = ["--disk-a", str(DISK / "GHOST.ST"),
-              "--harddrive", str(DISK / "c"), "--auto", "C:\\BUBBLE.PRG"]
+    medium = ours_medium()
     session = HeadlessSession(hatari_arguments(medium, trace), work / "ours.log",
                               work / "ours.fifo", work)
     result = {"trace": trace, "log": work / "ours.log", "mode": mode}
@@ -424,24 +461,13 @@ def run_original(work):
     for stale in capture_files(work, "orig").values():
         stale.unlink(missing_ok=True)
     trace = work / "orig.trace"
-    medium = ["--disk-a", str(ORIGINAL_STX), "--protect-floppy", "on",
-              "--harddrive", str(BIN), "--auto", ORIGINAL_PRG]
+    medium = original_medium()
     session = HeadlessSession(hatari_arguments(medium, trace), work / "orig.log",
                               work / "orig.fifo", work)
     result = {"trace": trace, "log": work / "orig.log"}
 
-    base = None
-    deadline = time.monotonic() + ORIGINAL_LOAD_DEADLINE_SECONDS
-    while time.monotonic() < deadline:
-        base = locate_by_signature(session.savebin("ram.bin", 0, MEMSIZE_MB * 0x100000),
-                                   ORIGINAL_PLAIN)
-        if base:
-            break
-        session.wait(ORIGINAL_LOAD_POLL_SECONDS)
-    result["load_base"] = base
+    base = await_the_decrypted_original(session, result)
     if base is None:
-        result["status"] = session.close()
-        result["problem"] = "the original never decrypted itself into RAM"
         return result
 
     voice = arm_the_voice_anchor(session, base - LOAD_BASE + ORIGINAL_VOICE_PC, "orig")
@@ -488,14 +514,24 @@ def faults(log_path):
     return [line for line in log_faults(log_path, FAULT_MARKERS) if not TOS_ROM_PC.search(line)]
 
 
+def check_machine_health(status, log_path):
+    """What one run's EXIT STATUS and its own log say went wrong, as a list of plain strings.
+
+    ONE DEFINITION, because three callers grade the same two things: the `title` gate below, the
+    `game` gate, and `atari/profile.py`'s measurement window — which is not a gate at all and must
+    still refuse a machine that faulted, because a profile of a crashed boot is not a slower frame,
+    it is a different program, and it prints as a perfectly plausible table.
+    """
+    return ([f"Hatari exited {status}"] if status != 0 else []) + faults(log_path)
+
+
 def check_exit_status_and_log(ours, original):
     problems = []
     for side, run in (("ours", ours), ("the original", original)):
         if run.get("problem"):
             problems.append(f"{side}: {run['problem']}")
-        if run.get("status", 0) != 0:
-            problems.append(f"{side}: Hatari exited {run['status']}")
-        problems += [f"{side}: {line}" for line in faults(run["log"])]
+        problems += [f"{side}: {problem}"
+                     for problem in check_machine_health(run.get("status", 0), run["log"])]
     return problems
 
 
@@ -1160,8 +1196,7 @@ def run_the_game_ours(work):
     for stale in (FILE_ANCHOR_BASE, FILE_SCREEN_DUMP, FILE_STATE_RECORD):
         (DISK / "c" / stale).unlink(missing_ok=True)
     trace = work / "ours.trace"
-    medium = ["--disk-a", str(DISK / "GHOST.ST"),
-              "--harddrive", str(DISK / "c"), "--auto", "C:\\BUBBLE.PRG"]
+    medium = ours_medium()
     session = HeadlessSession(hatari_arguments(medium, trace), work / "ours.log",
                               work / "ours.fifo", work)
     result = {"trace": trace, "log": work / "ours.log", "mode": "game"}
@@ -1201,24 +1236,13 @@ def run_the_game_original(work):
     """The same two keys, on the shipped binary, judged at the same first-room-frame anchor."""
     work.mkdir(parents=True, exist_ok=True)
     trace = work / "orig.trace"
-    medium = ["--disk-a", str(ORIGINAL_STX), "--protect-floppy", "on",
-              "--harddrive", str(BIN), "--auto", ORIGINAL_PRG]
+    medium = original_medium()
     session = HeadlessSession(hatari_arguments(medium, trace), work / "orig.log",
                               work / "orig.fifo", work)
     result = {"trace": trace, "log": work / "orig.log"}
 
-    base = None
-    deadline = time.monotonic() + ORIGINAL_LOAD_DEADLINE_SECONDS
-    while time.monotonic() < deadline:
-        base = locate_by_signature(session.savebin("ram.bin", 0, MEMSIZE_MB * 0x100000),
-                                   ORIGINAL_PLAIN)
-        if base:
-            break
-        session.wait(ORIGINAL_LOAD_POLL_SECONDS)
-    result["load_base"] = base
+    base = await_the_decrypted_original(session, result)
     if base is None:
-        result["status"] = session.close()
-        result["problem"] = "the original never decrypted itself into RAM"
         return result
 
     menu = arm_the_anchor(session, base - LOAD_BASE + ORIGINAL_ANCHOR_PC, "orig")
@@ -1257,9 +1281,8 @@ def check_the_game_path(ours, original):
             problems.append(f"{side}: the program was gone before the run was stopped — it "
                             f"terminated or the machine died, which is what a return to the "
                             f"desktop looks like from here")
-        if run.get("status", 0) != 0:
-            problems.append(f"{side}: Hatari exited {run['status']}")
-        problems += [f"{side}: {line}" for line in faults(run["log"])]
+        problems += [f"{side}: {problem}"
+                     for problem in check_machine_health(run.get("status", 0), run["log"])]
     frames = ours.get("frames", 0)
     if frames < GAME_FRAMES_REQUIRED:
         problems.append(f"the room loop ran {frames} frame(s) and this check needs "

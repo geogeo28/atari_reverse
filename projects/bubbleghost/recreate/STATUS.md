@@ -114,6 +114,27 @@ What is still unpinned is `Setscreen`'s PHYSICAL base and its resolution: an eve
 32-bit value and that call has three arguments, so the entry is the logical base alone.
 `atari/README.md`'s "Unpinned" carries it.
 
+## Performance — measured, not started
+
+`atari/profile.py` is the instrument the performance campaign will run on: 1000 vblanks of Hatari's
+CPU profiler on BOTH binaries, opened at the first arrival at `game_frame_update` and closed 1000
+vblanks later, so a frame is a count rather than an estimate. A second mode, `frames`, times the
+frames themselves off a per-arrival breakpoint and agrees with the profiler to 0.1%.
+
+**First measurement, 2026-09-07: ours 809.2K cycles a frame (9.91 fps) against the original's
+466.9K (17.18 fps) — x1.73.** `present_room` alone is +273K of that 342K gap, at x2.95: it copies
+25,600 bytes a frame through `copy_longs_ascending`, which the shipped binary does in an unrolled
+`move.l (a3)+,(a2)+` run at 21.9 cycles a longword and ours does at 57.4. The raster engine is
+already at parity — our `trap #2` into the ROM VDI costs 268K a frame against the original's 280K.
+
+**Read the table with its instrument in mind.** A row is only a ratio where Hatari CHARGED both
+sides; a routine the two binaries enter differently (an interrupt vector against a `jsr`) carries a
+full total on one side and almost none on the other, and `compare` prints those under their own
+heading instead of ranking them. The full table, the four things this instrument does not measure —
+chief among them that the two windows are equal in vblanks and not in frames, which flatters the
+slower side — and the usage lines are in `atari/README.md`, "Performance". **Nothing has been
+optimised yet**; this is the baseline.
+
 ## Model gaps — read this before picking a function
 
 The kit's TOS trap model (`tools/recreate_kit/TRAP_MODEL.md`) was built for the games before this

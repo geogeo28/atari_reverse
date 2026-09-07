@@ -204,8 +204,16 @@ bash atari/build.sh titlefault && python3 atari/smoke.py titlefault   # one colo
 bash atari/build.sh titlepoke  && python3 atari/smoke.py titlepoke    # one word of the image
 bash atari/build.sh titleisr   && python3 atari/smoke.py titleisr     # no Timer C vector
 bash atari/build.sh title floppy && python3 atari/smoke.py floppy     # the bootable volume boots
+bash atari/build.sh play && bash atari/smoke.py game         # the G key, and the room behind it
 bash atari/build.sh play && bash atari/run.sh               # the whole program, for a person
+
+python3 atari/profile.py ours && python3 atari/profile.py original && python3 atari/profile.py compare
+python3 atari/profile.py frames ours                        # ...and the per-frame cost itself
 ```
+
+`profile.py` is the performance campaign's instrument, not a gate: it measures what a room frame
+costs on both binaries over the same 1000-vblank window and ranks the difference by function
+(`atari/README.md`, "Performance"). `STATUS.md` carries the headline.
 
 **Both anchors are moments.** Ours is a PC in the shim, the original's is `menu_read_key_and_fold`
 @ `0x116c4` — the slice boundary right after `title_menu_open`, found by polling RAM for the
