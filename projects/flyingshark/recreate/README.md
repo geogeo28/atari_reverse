@@ -274,3 +274,34 @@ make guarded                     # the same suite over a PROT_NONE-bounded image
 
 The disc-A files the fixture reads live in [`../bin/disk/A/`](../bin/disk/A); `../notes/loader.md`
 has the carve from `../bin/FILES/FRD` if that folder is ever lost.
+
+## Running it on a 68000
+
+[`atari/`](atari) compiles the same cores with `m68k-elf-gcc` and boots them on a real Atari ST.
+Nothing in that directory changes anything here: the cores are compiled UNCHANGED, and the whole
+difference between the two builds is the include path (`atari/shim_include/` shadows the kit's
+`os.h`, `hw.h`, `psg.h` and `sched.h` with real-TOS versions, and this project's `include/init.h`
+with its two undoored XBIOS answers) plus the four kit sources the .PRG leaves out.
+
+```bash
+bash atari/build.sh          # -> atari/disk/AUTO/FLYSHARK.PRG and atari/disk/FLYSHARK.ST
+python3 atari/smoke.py       # boot it AND the original, and judge both on every surface
+bash atari/run.sh            # play it
+```
+
+**The frame it publishes at attract frame 120 is the original binary's frame, byte for byte.**
+[`atari/README.md`](atari/README.md) is the whole account: the memory map, why the original's
+`AUTO\`-only 0xd922 load ceiling does not apply to a build whose screen ring lives in its own `.bss`,
+which routines the shim supplies because STATUS.md files them under "Not reconstructed", the six
+surfaces `atari/smoke.py` checks, three deliberate divergences and what is still unpinned (chiefly:
+the joystick has never been pressed, and nothing has been played past the attract screen).
+
+Two things a core owner may want to know:
+
+* **`fs_physbase()` and `fs_kbdvbase()` are the seam they were written to be.** `include/init.h`
+  says an on-target build replaces those two bodies; `atari/shim_include/init.h` is that replacement,
+  and it is the only place a shim header shadows a CORE header.
+* **`KEY_ABORT_BIT` is private to `src/player.c`, and the target build needs it.** The frame loop's
+  abort exit unwinds the stack rather than returning, so the shim watches F10's bit at the frame
+  boundary and spells the same bit as `FS_ABORT_KEY_MASK`. When a core header grows that constant —
+  `include/irq.h` owns `A_key_bits` — the shim's copy should be deleted in the same change.

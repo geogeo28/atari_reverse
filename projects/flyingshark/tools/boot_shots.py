@@ -69,7 +69,8 @@ sys.path.insert(0, str(PROJECT / "tools"))
 from hatari_headless import (  # noqa: E402  (needs the paths above)
     HATARI, HeadlessSession, distinct_colours, locate_by_signature, log_faults, require_gemdos_tos,
     same_picture, strip_log_noise, tos_label, tos_version)
-from extract_assets import title_palette  # noqa: E402
+from extract_assets import NEO_PALETTE_OFFSET  # noqa: E402
+from st_pixels import read_palette_words  # noqa: E402
 from unpack_dist import (  # noqa: E402
     AUTO_SUBDIR, DEPACKED_GAME, DISK_SUBDIR, GAME_DATA_SUBDIR, NEO_NAME)
 
@@ -162,6 +163,17 @@ def st_colours(png_path):
 def palette_colours(words):
     """The same three-bit form, for a list of $0RGB colour words."""
     return {tuple((word >> shift) & ST_CHANNEL_MAX for shift in ST_CHANNEL_SHIFTS) for word in words}
+
+
+def title_palette(picture):
+    """The sixteen colour words out of a NEOchrome file's own header — the title's palette.
+
+    ONE FUNCTION FOR TWO CALLERS: this run and the reconstruction's `../recreate/atari/smoke.py`,
+    which recognises the same picture in the same way and imports this rather than restating it.
+    (It was an `extract_assets.title_palette` that no longer exists; the reader it wrapped —
+    `st_pixels.read_palette_words` at `extract_assets.NEO_PALETTE_OFFSET` — is what it did.)
+    """
+    return read_palette_words(picture, NEO_PALETTE_OFFSET)
 
 
 def wait_for_title(session, path, wanted):
