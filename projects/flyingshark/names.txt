@@ -1,0 +1,703 @@
+# Flying Shark name map — merged from out/names_*.txt proposals; addresses are Ghidra addresses (load base 0x10000)
+fn 0x10000 entry_stub
+cmt 0x10000 PRG entry: a single `bra.w $14bee` to boot_init. The 44 bytes that follow at 0x10004 are the plaintext banner "PROGRAMMING BY PRIME SOFTWARE & IMAGES DESIGN".
+var 0x10004 banner_programming_by
+fn 0x1003c level2_scenery_effect
+cmt 0x1003c Level-2 only scenery animation, gated by level_index == 2 and level_distance in 0x8a2..0x9c6. Blits tiles out of the third HSC bank into a band that grows then shrinks, tracked by 0x17798/0x1779e/0x177a0.
+fn 0x102de bigobj_extra_parts_publish
+fn 0x1030e enter_title
+cmt 0x1030e Enter the title screen: title_just_entered = 0xff, set_palette_black, and if level0_assets_loaded is still clear, set it and load_level_assets(0) first. Falls into title_attract_loop either way.
+fn 0x10332 load_level_assets
+cmt 0x10332 Load the five files a stage needs, for level d0 (0..4). First it PATCHES THE FILENAMES: five bytes from level_bank_digits + 5*d0 are written into byte 6 of each of the four "A\HSC_n.DAT" names (0x16354/0x16368/0x1637c/0x16390) and into byte 7 of "A\LEVEL1.MAP" (0x1633f), so one record set serves every stage. Then a per-level sequence of load_file calls interleaved with disc-swap prompts (all of which are patched out in this build -- see the PATCH section). Bank digits per level: 0->HSC 0,1,2,3 + LEVEL1; 1->4,5,6,7 + LEVEL2; 2->8,9,A,B + LEVEL3; 3->0,1,3,B + LEVEL4; 4->8,C,3,7 + LEVEL5. | d0.w = level number. Copies the five ASCII digits from level_asset_digit_table into the HSC and LEVEL filenames in asset_file_table, then loads bank 0, the map and banks 1..3, inserting the "insert disc B" prompt on the levels whose banks are not on disc A.
+proto 0x10332 level@D0
+fn 0x104f2 title_attract_loop
+cmt 0x104f2 The title/attract screen. Blacks the palette, scroll_y = 0, scroll_phase = 0x1e, rebuilds map_ptr/map_ptr_start from the map header, prescrolls prescroll_count+1 frames, then loops: sound_cmd(4) and wait for the sound module's byte at +30 to go non-zero. Exits with `rts` when joystick-1 FIRE is pressed and new_hiscore_pending is clear (the caller then starts a game); branches to hiscore_show_entry_screen when new_hiscore_pending is set. Joystick-1 LEFT copies title_word_easy into title_mode_word and sets hard_mode = 0, RIGHT copies title_word_hard and sets hard_mode = 1; both trigger the sound at 0x121e6. The attract text cycles on attract_page_timer, which reloads from attract_page_reload: below 0xc8 -> text_hall_of_fame, below 0x226 -> text_credits, otherwise text_publisher.
+fn 0x10594 title_frame_step
+cmt 0x10594 One attract frame: scroll_step(), then loop back into title_attract_loop's poll while scroll_y < 0xbb8 (3000); at 3000 the whole attract restarts. Reached only by branches from inside title_attract_loop -- it is not a separate callee.
+fn 0x10698 build_text_display_list
+cmt 0x10698 Interpret a text script into the 6-byte-per-slot display list at a1. The script is [start_x.b][start_y.b] then a byte stream: 0x00 = advance x by 8 (a space), 0x04 = advance x by 0x40, 0x05 = newline (y += 8, x = 0), 0x06 = x += the word at ADDRESS 0x40 (low memory, _etv_timer's high word -- almost certainly a bug), 0x09 = end, anything else = emit {x.w, y.w, code.b, enable=1} and advance x by 8. Character codes: 0xab..0xc4 = 'A'..'Z', 0xc5..0xce = '0'..'9', 0xcf = space, 0xd0+ = HUD glyphs.
+proto 0x10698 script@A0 dest@A1
+fn 0x106f2 hiscore_show_entry_screen
+cmt 0x106f2 Build the hall-of-fame page: hiscore_reset_last_digit, render text_hall_of_fame into the display list, and if name_entry_done is clear also render text_enter_your_name. Falls through into hiscore_name_entry.
+fn 0x10724 game_over_hiscore_check
+cmt 0x10724 Game over. hard_mode = 0, hiscore_rank = 5; convert score_bcd to characters and compare against hiscore_table entry 5 (the 6th, lowest). If the score does not beat it, clear new_hiscore_pending and jump to 0x15754 (restart at init_new_game). Otherwise walk UP the table to find the rank, shift the beaten entries down one slot each with hiscore_shift_entry_down, copy the six score characters into entry+16, set new_hiscore_pending = 0xff and name_entry_timeout = 0, and jump to 0x15754. Entered by `adda.l #$40,a7 / bra` from read_player_input (the F10 abort) and from 0x13c90 (lives exhausted) -- both unwind rather than return.
+fn 0x108aa hiscore_shift_entry_down
+cmt 0x108aa Copy 13 bytes from entry+9 to entry+9+22, i.e. push this hall-of-fame row's name and score down into the next row while leaving the leading layout bytes and the rank digit at +8 where they are.
+proto 0x108aa entry@A0
+fn 0x108c0 hiscore_reset_last_digit  # ctx
+cmt 0x108c0 Write '0' (0xc5) into byte 21 -- the last score character -- of all six hiscore_table entries. Called once, from hiscore_show_entry_screen.
+fn 0x108f8 digits6_compare
+cmt 0x108f8 Compare six character digits at a6 against the six at a5+16 (a5 is a hall-of-fame entry, so +16 is its score field). Returns d0 = -1 if a6 is lower or equal all the way, +1 if a6 is higher at the first differing digit. Both a5 and a6 are advanced past the compared bytes.
+proto 0x108f8 entry@A5 score@A6
+fn 0x10916 hiscore_name_entry
+cmt 0x10916 Three-character name entry into hiscore_table + 22*hiscore_rank + 11. On first entry (name_entry_done clear) the three characters are filled with 0xcf (space). Joystick-1 right increments the character (wrapping 0xcf->0xab), left decrements (wrapping 0xab->0xcf), fire advances name_entry_cursor. On the third fire it calls check_cheat_name and sets name_entry_done; after that name_entry_timeout counts down and, at -1, resets everything (new_hiscore_pending=0, name_entry_cursor=0, name_entry_done=0, name_entry_timeout=0x32) and the attract loop resumes.
+fn 0x10a02 hud_build_labels
+cmt 0x10a02 Write two fixed display-list slots at hud_label_slots: glyph 0xd0 at (0x5c,2) and glyph 0xd1 at (0xc8,2) -- the SCORE and HI-SCORE captions.
+fn 0x10a2a check_beat_hiscore
+cmt 0x10a2a Compare score_chars against hiscore_chars digit by digit; on the first digit where the score is higher, set beat_hiscore = 0xff. Ties and lower scores leave it alone.
+fn 0x10a50 hud_build_score_digits
+cmt 0x10a50 Emit the score into hud_score_slots at x=0x50,y=0xc and either score_chars (if beat_hiscore) or hiscore_chars into hud_hiscore_slots at x=0xc0,y=0xc -- so once you pass the hi-score both readouts show your score.
+fn 0x10a90 hud_publish_digit_row
+cmt 0x10a90 Emit five display-list slots {x,y,char,1} stepping x by 8, then a sixth slot forced to glyph 0xc5 ('0'). The forced last digit is why the score always shows a trailing zero.
+proto 0x10a90 chars@A0 slots@A1 x@D1 y@D2
+fn 0x10ab4 hud_blank_leading_zeros
+cmt 0x10ab4 Run hud_blank_leading_zeros_one over both hud_score_slots and hud_hiscore_slots.
+fn 0x10ac8 hud_blank_leading_zeros_row
+cmt 0x10ac8 Walk up to 5 six-byte slots and, while the glyph at +4 is '0' (0xc5), clear the enable byte at +5. Stops at the first non-zero digit.
+proto 0x10ac8 slots@A1
+fn 0x10ae4 scores_bcd_to_chars
+cmt 0x10ae4 bcd3_to_chars6(score_bcd -> score_chars) and bcd3_to_chars6(hiscore_bcd -> hiscore_chars).
+fn 0x10b04 bcd3_to_digits
+cmt 0x10b04 Expand 3 packed-BCD bytes into 6 character codes, high nibble first, each + 0xc5 -- which is why glyph 0xc5 is '0'.
+proto 0x10b04 bcd@A0 chars@A1
+fn 0x10b28 score_add_50
+fn 0x10b3c score_add_100
+fn 0x10b50 score_add_200
+fn 0x10b64 score_add_250
+fn 0x10b78 score_add_500
+fn 0x10b8c score_add_1000
+fn 0x10ba0 score_add_3000
+fn 0x10bb4 score_add_5000
+fn 0x10bc8 level2_scenery_effect_gate
+fn 0x10bd8 score_add_10000
+cmt 0x10bd8 The ninth award wrapper: a1 = 0x15a4b, so the three `abcd -(a1)` operands are 0x15a48..0x15a4a = 01 00 00 = 10000. Note the nine wrappers are NOT contiguous -- 0x10bc8 sits between the eighth and the ninth and is an unrelated level-2 hook.
+fn 0x10bec score_add_bcd
+cmt 0x10bec Add a 3-byte BCD value to score_bcd: `lea $15a2d,a0` then three `abcd -(a1),-(a0)`, so the addends are the three bytes BELOW a1 and the accumulator is 0x15a2a..0x15a2c. a1 therefore points ONE PAST the value; the nine wrappers below pass score_award_values + 3, +6, ... +27, selecting 50/100/200/250/500/1000/3000/5000/10000 in order.
+proto 0x10bec end_of_value@A1
+fn 0x10bfa load_file
+cmt 0x10bfa Load one file. a0 -> an 8-byte record [dest.l][length.l] followed by the NUL-terminated DOS path; both longwords are RELOCATED in the image, so at run time the first is an absolute address. Copies them to load_dest / load_len, GEMDOS Fopen(name, mode 2) -> load_file_handle, Fread(handle, load_len, load_dest), Fclose. THERE IS NO ERROR CHECK AT ALL -- a failed Fopen yields handle<0 and the Fread simply fails; the disc-presence handshake is done separately by probe_disc. | a0 = an asset_file_table record: Fopen the name at record+8, Fread record+4 bytes to the address at record+0, Fclose.  # ctx — called with a0 = a record at 0x10378/0x11214/0x11278 and nowhere else; body not read.
+proto 0x10bfa record@A0
+fn 0x10c4c probe_disc
+cmt 0x10c4c Disc-presence probe. Ignores its caller's a0: it always Fopens the name inside file_rec_sprites_cru ("A\SPRITES.cru") and stores the full LONGWORD result in disc_probe_result, closing the handle again if it opened. Callers read disc_probe_result: >=0 means disc A is in the drive, <0 means it is not -- which is how the "INSERT DISC B" prompts wait for disc A to be REMOVED.
+fn 0x10c8c bomb_blast_step
+fn 0x10d20 bomb_blast_publish
+fn 0x10d92 check_cheat_name
+cmt 0x10d92 Called from hiscore_name_entry the moment the third initial is confirmed, with a0 pointing at the LAST of the three characters. First it spins up to 5000 times waiting for key bit 0 (keypad '4', scancode 0x6b) to be held -- so a cheat only arms while that key is down. Then a0 -= 2 and the three characters are matched against cheat_name_table, four bytes per row: three name codes plus a handler index, terminated by 0x64. On a hit it sets 0x176d4 (nothing ever reads it), jsr's cheat_handler_table[index], and copies the four characters of title_word_spam over title_word_easy -- which is how the title's "MODE EASY" becomes "MODE SPAM" once a cheat has been entered.
+proto 0x10d92 name_last_char@A0
+fn 0x10e30 cheat_hsc_invulnerable
+cmt 0x10e30 Cheat "HSC": first use sets invuln_flag, which makes BOTH collision routines (0x1101c and 0x10f26) return immediately. Entering it a SECOND time instead sets player_hit = 1, i.e. it kills you.
+fn 0x10e4c cheat_kdj_infinite_lives
+cmt 0x10e4c Cheat "KDJ": sets infinite_lives_flag, read at 0x13c34 to skip the `lives -= 1`.
+fn 0x10e56 cheat_jgl_infinite_bombs
+cmt 0x10e56 Cheat "JGL": sets infinite_bombs_flag, read at 0x13d6c to skip the `bombs -= 1`.
+fn 0x10e60 cheat_gcc_alt_glyph
+cmt 0x10e60 Cheat "GCC": sets alt_bullet_glyph_flag, read at 0x1416a, which swaps the projectile glyph from 0x7f to 0xe4.
+fn 0x10e6a cheat_jml_crash
+cmt 0x10e6a Cheat "JML" (handler index 4): `movea.l #0,a0 / jsr (a0)` -- it deliberately calls address 0. A booby trap, not a feature. If it somehow returned it would fall through into cheat_jh_max_weapon.
+fn 0x10e72 cheat_jh_max_weapon
+cmt 0x10e72 Cheat "J H": sets max_weapon_flag, read at 0x13ec2 (forces weapon_level = 4 every time the weapon dispatcher runs), at 0x1134c and at 0x14b4e (keeps weapon_level across a new game and a checkpoint restart).
+fn 0x10e7c bomb_fall_step
+cmt 0x10e7c Bomb flight: follows bomb_fall_path, 4-byte steps (dy, frame) terminated by 999, then switches to bomb_exploding. The blast is four sprites whose offsets come from blast_offset_tbl (8 bytes per step, 15 steps) around the impact point in blast_state.
+fn 0x10ee2 bomb_publish
+fn 0x10f26 player_vs_entities
+fn 0x10f88 player_vs_entities_group
+fn 0x10fa0 player_vs_entity_group_test
+fn 0x1101c player_vs_enemy_bullets
+fn 0x110d4 award_extra_life
+cmt 0x110d4 Convert score_bcd to characters, then test the score against the seven thresholds at extra_life_thresholds (050000, 200000, 350000, 500000, 650000, 800000, 950000) in order, skipping any whose flag at 0x176c6..0x176d2 is already set. On the first one passed: set that flag, lives += 1, and tail-call the sound trigger at 0x121e6.
+fn 0x111a6 set_palette_black
+cmt 0x111a6 XBIOS Setpalette(palette_black). Used to hide the screen while a stage prescrolls.
+fn 0x111be set_palette_game
+cmt 0x111be XBIOS Setpalette(palette_game).
+fn 0x111d6 set_palette_title
+cmt 0x111d6 XBIOS Setpalette(palette_title). Note palette_title is also `lea`d into a0 at 0x11294 in the patched-out disc-wait block, where nothing reads it.
+fn 0x111ee scroll_advance
+fn 0x11212 init_load_assets
+cmt 0x11212 Title picture + sprite bank. set_palette_title(); load_file(file_rec_flyshk_neo) -> A\FLY_SHK.NEO at 0x1be36 (0x7d80 = 128-byte NEO header + 32000 pixels); XBIOS Setpalette(0x1be3a) = the NEO palette at header+4; Physbase (SAVED ON THE STACK across the following Setscreen and popped at 0x11266); Setscreen(phys,phys,0); Setpalette(0x1be36+4) again; copy 8000 longwords from 0x1be36 to physbase-0x80, so the 128-byte header lands just below the screen and the pixels land exactly on it. Then [PATCHED, see 0x1127e] load SPRITES.cru; set colour 11 white as a load indicator; [PATCHED] the insert-disc wait; load_level_assets(0); level0_assets_loaded = 0xff; load_file(file_rec_sprites_cru) -> A\SPRITES.cru at 0x1be36, OVERWRITING the NEO; then relocate the sprite directory in place -- 256 records of 20 bytes, first longword += 0x1be36 -- and write 0xffff into 0x18016/0x18216/0x18416/0x18616. | Loads A\FLY_SHK.NEO to 0x1be36, installs the NEOchrome palette from file offset +4 (0x1be3a), points Setscreen at the physical base and then copies 32,000 bytes from the START of the file to physbase-128 — so the 128-byte NEO header lands just below the screen and the image bytes land on it. This is the routine that proves FLY_SHK.NEO is an unmodified NEOchrome file.
+fn 0x112fa init_new_game
+cmt 0x112fa Reset the per-GAME state: the seven extra-life-awarded flags (0x176c6..0x176d2) and 0x1769c/0x1769e/0x176a0 to 0, game_over_timer = 0x50, level_index = 0, name_entry_timeout = 0x32, lives = 5 (from const_words[5]), 0x176d6/0x176e4/0x176c2 = 0. Unless the "J H" cheat flag is set it also clears weapon_level and 0x176a2. Then reset_score(), clear_hud_score_slots(), clear_actor_arrays() and `bra` into enter_title -- so init_new_game NEVER RETURNS to main; the title screen runs off this call's stack frame.
+fn 0x1139a init_stage_state
+cmt 0x1139a Reset the per-STAGE state (input bytes, 0x17754/0x1770c/0x1779a/0x176a4..0x176a8, scroll_phase = 0x1e, 0x176c0 = 10, 0x176f6 = 0, and unless the 0x177cb flag is set, player_hit = 0). Seeds the actor template words at 0x1953c..0x19776 when hard_mode is clear, otherwise calls 0x12cc8 instead. Tail-calls start_level.
+fn 0x11440 start_level
+cmt 0x11440 Start the stage named by level_index (0..4). bombs = 3; per-level parameters from the 20-byte table at level_params + 20*level_index -> 0x1771c, 0x1770a, 0x1776e and the longword pointer 0x17770; then load_level_assets(level_index) with a per-level branch that also forces hard_mode for levels 3 and 4. Re-derives map_ptr / map_ptr_start = map_data + map_rows*(map_width_words*2), sets prescroll_flag, calls scroll_step prescroll_count+1 times with the palette black, then set_palette_game and tail-calls sound_cmd(0). | Reads the level_table record for level_number into the live parameters (0x1771c, 0x1770a, tune number 0x1776e, script pointer 0x17770), then branches per level.  # ctx — only the table read at 0x11462..0x11492 was verified.
+fn 0x11570 debug_print_word_binary
+cmt 0x11570 Print d4 as 16 ASCII '0'/'1' characters followed by CR, via GEMDOS Cconout. NO CALLER anywhere in the image -- leftover development code.
+fn 0x1159c console_putc
+cmt 0x1159c GEMDOS Cconout(d0.w). Only used by debug_print_word_binary.
+proto 0x1159c ch@D0
+fn 0x115a8 clear_display_list
+cmt 0x115a8 Byte-clear display_list, 0x177ce..0x17d07 -- 0x53a bytes = 223 six-byte slots.
+fn 0x115c2 clear_hud_score_slots
+cmt 0x115c2 Clear the two six-byte display-list slots at 0x17cfc.
+fn 0x115e2 clear_actor_arrays
+cmt 0x115e2 Byte-clear the BSS block 0x59984..0x5aedd (the actor / bullet / explosion arrays).
+fn 0x115fc clear_object_list
+cmt 0x115fc Clear words from 0x1946e forward until a word already equal to 0x3e7 (999) -- the list's own sentinel.
+fn 0x11616 score_reset
+cmt 0x11616 Zero the 3-byte BCD score at score_bcd and set the LAST character of score_chars to '0' (0xc5), so the leading-zero blanker still leaves one visible digit.
+fn 0x1162e clear_3_bytes
+cmt 0x1162e Leaf: clr.b (a0)+ three times. Only caller is reset_score.
+fn 0x11636 vbl_handler
+cmt 0x11636 Vertical-blank handler, installed straight into vector $70 (NOT a _vblqueue slot). Increments the longword vbl_tick, then `lea $58944,a0 / jsr 38(a0)` into the loaded sound module, restores d0-d7/a0-a6 and ends `jmp $1164e.l`. THAT JMP IS SELF-DESCRIBING: its operand longword lives at 0x11650, the image ships it pointing at the jmp itself, and boot_init overwrites it with TOS's old $70 vector -- so the handler chains to TOS rather than rte'ing. | VBL handler installed at $70. Bumps vbl_counter, ticks the sound module, then chains to the saved TOS vector through the jmp operand at 0x11650, which _start patches. | Bumps the frame counter 0x17720 and calls the sound module's tick entry (+38). Nothing else in the image touches $ff8800/$ff8802, so all music and all effects go through the module.
+var 0x11650 vbl_chain_vector
+cmt 0x11650 The OPERAND of the `jmp` at 0x1164e. boot_init writes the old $70 vector here (`move.l $70.l,$11650.l`); until then it holds 0x1164e, i.e. a self-loop.
+fn 0x11654 count_game_frame
+cmt 0x11654 First call of the frame loop: addq.l #1 to the longword frame_counter, rts. Read at 0x119fc/0x11a16/0x11a30/0x11a66 as an animation phase.
+fn 0x1165c items_pickup_check
+fn 0x11698 sprite_hitbox_test
+cmt 0x11698 Builds a rectangle from the sprite_bank record of the frame in 4(a1): x = obj.x + rec[+8] + rec[+12], w = rec[+16]; y = obj.y + rec[+10] + rec[+14], h = rec[+18]; and overlaps it with a fixed 16x16 box at (a0). The only reader of a record's last six words, and the reason they are hit-box fields rather than bitmap dimensions.
+fn 0x1175c entity_hide_under_bigobj
+fn 0x11784 entity_hide_under_bigobj_group
+fn 0x1179a entity_hide_test
+cmt 0x1179a Sets an entity's +48 when it lies inside a 0x40 x 0x40 box around any member of entity_group_bigobj, which suppresses its display record — the "flying behind the big object" effect.
+fn 0x117f4 bigobj_overlap_depth_update
+fn 0x11820 bigobj_depth_test
+fn 0x1184e enemy_bombs_move
+fn 0x1187a items_move_all
+fn 0x118bc item_fall_step
+fn 0x118da item_path_step
+fn 0x1191c items_publish
+fn 0x119fc anim_frame_ids_update
+fn 0x11a82 bomb_blast_vs_entities
+fn 0x11b90 bomb_blast_vs_entities_if_active
+fn 0x11ba2 debug_wait_for_keypad4
+cmt 0x11ba2 Spin until key bit 0 (keypad '4', scancode 0x6b) is set. NO CALLER -- leftover single-step/debug hook. The same key is what arms check_cheat_name.
+fn 0x11bb6 bomb_blast_vs_entity_groups
+cmt 0x11bb6 Bomb blast vs entities: 22 group descriptors, box test between the blast quad and each active entity's hitbox from sprite_header_tbl, dispatching blast_hit_handler_tbl[descriptor+22].
+fn 0x11c76 blast_hit_score200
+fn 0x11c84 blast_hit_score200_drop_item_a
+fn 0x11caa blast_hit_score200_drop_item_b
+fn 0x11cce blast_hit_score200_drop_item_c
+fn 0x11cf2 blast_hit_score200_if_visible
+fn 0x11d06 blast_hit_immune
+fn 0x11d08 blast_hit_damage4_a
+fn 0x11d40 blast_hit_damage4_b
+fn 0x11d7c blast_hit_damage4_c
+fn 0x11dae blast_hit_score100
+fn 0x11dba blast_hit_damage4_d
+fn 0x11de6 player_bullets_vs_entities
+fn 0x11e04 player_bullets_vs_entities_group
+fn 0x11f0c player_bullet_vs_entity_groups
+cmt 0x11f0c Player bullet vs entities: same 22 groups, dispatching bullet_hit_handler_tbl[descriptor+22]. Damage handlers subtract 4 from the entity's hit points at +22.
+fn 0x11fca bullet_hit_score200
+fn 0x11fdc bullet_hit_score200_drop_item_a
+fn 0x12004 bullet_hit_score200_drop_item_b
+fn 0x1202c bullet_hit_score200_drop_item_c
+fn 0x12054 bullet_hit_score50
+fn 0x12084 bullet_hit_immune
+fn 0x12086 bullet_hit_damage_a
+fn 0x120c6 bullet_hit_damage_b
+fn 0x12104 bullet_hit_damage_c
+fn 0x1213a bullet_hit_score100
+fn 0x1214a bullet_hit_damage_d
+fn 0x1217a sfx_play_6
+fn 0x12192 music_stop
+cmt 0x12192 Calls the module's +434 stop entry and then clears music_active a second time itself. The d0 it loads from 0x1776e is ignored by the module.
+fn 0x121b6 sfx_play_10
+fn 0x121ce sfx_play_5
+fn 0x121e6 sfx_play_2
+fn 0x121fe item_drop_if_formation_cleared
+cmt 0x121fe Formation reward: called by six hit handlers with d0/d1 = the kill position + 0x11, d2 = the descriptor's +6, a0 = the group's slot array. It scans the first 7 slots and returns immediately if any is still active and not dying; only when the whole formation is cleared does it drop an item at (d0, d1) — d2 = 0 the weapon power-up (0x5ae9a, and it raises item_pickup_pending so the spawn script stops offering another), d2 = 1 the bonus item (0x5aeb8, path cursor preset to 0x32) plus 1000 points, otherwise the extra-life item (0x5aea4).
+fn 0x1227c muzzle_flash_publish_all           # ctx
+fn 0x122c0 muzzle_flash_publish_pair          # ctx
+fn 0x12348 muzzle_flash_publish_group         # ctx
+fn 0x123d8 hud_publish_bomb_and_life_icons
+fn 0x124ae level_progress_check
+cmt 0x124ae Level flow: when the player passes level_end_scroll_pos, start the level-clear tune and put the player in fly-off mode 2; past boss_scroll_pos raise 0x17706. When level_complete is set, advance level_index, wrap at 5 through the 0x176ae/0x176b0/0x176b2 sequence, and re-enter main's loop at 0x15758.
+fn 0x12588 music_play
+cmt 0x12588 d0.w = tune number, passed straight to the module's +1256 entry. Called with 4 (the level-start jingle, at 0x1054e) and with 0 (the boss theme, at 0x124f8); the per-level themes 1..3 go through music_restart_if_stopped.
+fn 0x1259c music_restart_if_stopped
+cmt 0x1259c If 0x176a4 is clear and the module's music_active byte (0x58962) has gone to zero, restarts the tune whose number the level_table put in 0x1776e. This is the game's own use of "track finished".
+fn 0x125bc enemy_bullets_publish
+fn 0x12602 enemies_fire_all
+fn 0x1273a enemies_fire_group_b               # ctx
+fn 0x127ba enemies_fire_group_a               # ctx
+fn 0x12810 enemies_fire_group_c               # ctx
+fn 0x12856 enemies_fire_nop
+fn 0x1286c enemies_fire_group_d               # ctx
+fn 0x128ce enemy_bullet_spawn_aimed
+cmt 0x128ce Aimed enemy shot: picks the free slot in enemy_bullets, looks the direction up in enemy_aim_dir_lut with ((x - player_x) >> 5) + ((y - player_y) >> 5) * 0x15, and takes (dx, dy) from enemy_bullet_velocity_tbl (4 bytes per direction), offset by the descriptor's muzzle position.
+fn 0x12964 enemy_bullets_move
+fn 0x129b2 turrets_aim_all
+fn 0x12a34 turrets_aim_group_active
+fn 0x12a50 turrets_aim_group
+fn 0x12a60 turrets_publish_all
+fn 0x12b40 turret_publish_group
+fn 0x12c04 turret_aim_step
+cmt 0x12c04 Turret aiming: reads the desired facing out of turret_facing_lut with ((y - player_y) >> 5) * 0x17 + ((x - (player_x + 4)) >> 5), then rotates the entity's facing (+26) one of 12 steps per call toward it, setting +24 when it moves.
+fn 0x12cc8 difficulty_apply_fire_rates
+fn 0x12d5c entities_move_all
+fn 0x12e22 entities_move_groups_extra
+fn 0x12e54 entities_move_group4
+fn 0x12e64 entities_move_bigobj
+fn 0x12e82 entities_move_one_group
+fn 0x12e88 entities_move_bigobj_parts
+fn 0x12e9e entity_move
+cmt 0x12e9e Entity update. Mode 0 (field +16 zero): x += dx, y += dy and count down +12; at zero, step the movement script — 8-byte records (dx.w, dy.w, duration.w, frame.w) terminated by 999, at +50 + (+54 advanced by 8). Mode non-zero: walk a path word table (entity_path_tbl_ptrs[+34] indexed by +36), frame = table word minus +20, y += 2 per frame, and if +44 == 4 drop an enemy bomb once.
+fn 0x12f2e enemy_bomb_drop
+fn 0x12fc4 spawn_script_step
+fn 0x13044 spawn_item_bomb
+fn 0x130aa spawn_formation_common
+cmt 0x130aa Shared 4-slot spawn body. a0 = script record, a5 = descriptor, a1 = formation table. a1 = *(formation_tbl + 4*formation_index) selects a formation record: four (dx,dy) word pairs at +0..+15 (0x63 in either word = slot unused), four movement-script offsets at +16..+31, and a movement-script base pointer at +32. Fills the descriptor's four entity slots with position, hit points, fire reload, facing and script pointers. spawn_single_common (0x131a4) is the same thing for one entity with 8-byte formation records {dx, dy, script offset.l} out of the table at 0x19a54.
+fn 0x131a4 spawn_single_common
+fn 0x1361c entities_publish_all
+fn 0x13634 entities_publish_facing_groups
+fn 0x136a2 entity_publish_group_facing
+fn 0x13702 entity_publish_group_bigobj
+fn 0x13764 entities_publish_bigobj_group
+fn 0x13774 entities_publish_plain_groups
+fn 0x137f4 entity_publish_group_plain
+fn 0x13838 entities_publish_anim_groups
+fn 0x1387a entity_publish_anim
+fn 0x138e8 entity_publish_group_offset
+fn 0x1393a entities_publish_last_groups
+fn 0x13992 entity_publish_group_last
+fn 0x13a20 player_script_step
+fn 0x13baa player_bank_recentre
+fn 0x13bd6 player_death_sequence_step
+fn 0x13c96 player_publish
+fn 0x13d12 player_frame_from_bank
+fn 0x13d24 player_reset_to_start
+fn 0x13d5c bomb_drop
+fn 0x13da0 player_move_up
+fn 0x13db0 player_move_down
+fn 0x13dc2 player_move_left
+fn 0x13de8 player_move_right
+fn 0x13e12 player_fire
+fn 0x13e4e player_shot_slot_alloc
+fn 0x13ebc player_fire_by_weapon_level
+cmt 0x13ebc Weapon dispatch: jumps through weapon_fire_tbl[weapon_level] (0..4); the 0x177ca cheat forces level 4. Each pattern activates a subset of the chosen shot's five bullet slots with different dx, giving the spread.
+fn 0x13ee0 fire_pattern_level0
+fn 0x13f20 fire_pattern_level1
+fn 0x13f72 fire_pattern_level2
+fn 0x13fda fire_pattern_level3
+fn 0x1404c fire_pattern_level4
+fn 0x140cc player_bullets_move_all
+fn 0x140ea player_bullets_move_group
+fn 0x14118 player_bullets_publish_all
+fn 0x141b4 player_shot_slots_release
+fn 0x141e4 player_shot_slot_release_if_empty
+fn 0x141fa tos_joyvec_handler
+cmt 0x141fa TOS KBDVBASE joyvec callback (a0 -> the 3-byte IKBD joystick packet): copies byte 1 to joy0_state and byte 2 to joy1_state. DEAD CODE in this build -- the only thing that would call it is TOS's IKBD packet parser, and acia_ikbd_isr has taken the ACIA vector away from it. Its `lea $1777e(pc),a1` at 0x141fe is loaded and never used.
+fn 0x14218 acia_ikbd_isr
+cmt 0x14218 IKBD/MIDI ACIA interrupt, installed at $118 (68000 vector 70 = MFP channel 6). Reads $fffffc02. 0xFE = joystick-0 packet header -> re-point $118 at acia_joy0_byte and return; 0xFF = joystick-1 header -> re-point at acia_joy1_byte. Anything else is a KEY: store the raw byte at key_last_scancode, clear bit 7 of it (make vs break) and compare it against the eight watched codes at key_watch_scancodes, doing `bset d0,key_bits` on a make and `bclr d0,key_bits` on a break. Every path ends `bclr #6,$fffffa11` (clear the MFP in-service bit) then rte. The game therefore OWNS the ACIA vector: TOS's own IKBD parser never runs, which is why tos_joyvec_handler is dead.
+fn 0x1430c acia_joy0_byte
+cmt 0x1430c Second half of an $FE joystick-0 packet: read $fffffc02 into joy0_state, clear MFP in-service bit 6, restore $118 to acia_ikbd_isr, rte.
+fn 0x14330 acia_joy1_byte
+cmt 0x14330 Second half of an $FF joystick-1 packet: read $fffffc02 into joy1_state, clear MFP in-service bit 6, restore $118 to acia_ikbd_isr, rte.
+fn 0x14354 read_player_input
+cmt 0x14354 Turn the raw input bytes into ship control. Picks key_bits when use_keyboard_flag is non-zero and joy1_state otherwise -- BUT use_keyboard_flag is read here and written NOWHERE in the image, so keyboard control is dead and the game always reads joystick 1. Does nothing while 0x1775e is set. When level_restarting is clear it services the two system keys first: key bit 1 ('P', 0x19) = PAUSE (spins until joy1_state goes non-zero), key bit 2 (F10, 0x44) = ABORT (`adda.l #$40,a7 / bra game_over_hiscore_check`, unwinding rather than returning). Then key bit 5 (SPACE) or joy0_state bit 7 fires the bomb (0x13d5c); joystick-1 bits 0/1/2/3 drive 0x13da0/0x13db0/0x13dc2/0x13de8 (up/down/left/right, with bits 2 and 3 also setting 0x1775c) and bit 7 fires (0x13e12), clearing 0x17760 when released. | Joystick/keys to player. Bits of 0x1777f: 0 up, 1 down, 2 left, 3 right, 7 fire; 0x17780 bit 1 pauses, bit 2 aborts to game_over_hiscore_entry, bit 5 drops a bomb; 0x1777e bit 7 also drops a bomb. Movement is 6 px per frame per axis and left/right also drives player_bank.
+fn 0x14446 render_frame
+cmt 0x14446 render_frame. (1) duplicate the 0x500-byte circular seam if the draw screen is in the low 0x7d00 of the region; (2) pass A: draw display-list records whose active byte is negative and mark the tiles they cover in tile_repair_grid; (3) repaint those overlay tiles masked (colour 0 transparent) so pass-A sprites end up UNDER the scenery; (4) pass B: draw records with active byte 1..0x7f; (5) XBIOS Setscreen to screen_draw + Vsync/vbl-count wait; (6) scroll_fine += 2, rotate screen_index, step this buffer's pointer up 0x500 and wrap; (7) draw the newly exposed 8-scanline tile band at the top; (8) repair the buffer from 2 frames ago from the restore list written 2 frames ago, sourcing clean background from screen_draw + 0x280 (= 4 scanlines of scroll). | Repaints the tile playfield and advances the scroll. Two halves: a full 10x7 refill that walks a word array and blits whole 32x32 tiles at a 160-byte row stride, and the per-frame strip at 0x1483a that walks map_row_ptr two bytes per column for ten columns and blends the bottom N rows of one map cell's tile with the top 8-N rows of the next, N coming from tile_split_row_table. The `lea 2(a3),a3` at 0x14906 is what pins the map cell at two bytes.  # ctx — read for the data formats only; the surrounding frame logic belongs to the gameplay slice.
+fn 0x14960 debug_show_counters
+cmt 0x14960 Format three counters into the debug string in place -- map_ptr - map_ptr_start into "MPOINTER:", scroll_y into "-MASTY:", scroll_phase into "-TCOUNT:" -- then FALL THROUGH into console_show_message to print it. Note it never loads a6 with text_debug_counters, so the fall-through prints whatever a6 happens to hold. Called only from 0x13e1a, gated on debug_overlay_flag, which nothing in the image ever writes: the overlay is permanently off, and this is probably why.
+fn 0x14996 console_show_message
+cmt 0x14996 Print a message over the game using TOS's VT52 console. XBIOS Setscreen(log = screen_prev1, phys = -1, rez = -1) so the console draws into the previous frame's buffer (it never restores the old logical base). Then GEMDOS Cconout of ESC 'Y' 0x38 0x20 = "position cursor at row 24, column 0", then Cconout of each byte of (a6)+ until one has bit 7 set (the terminator is >= 0x80, not NUL), then spins while joystick-1 fire is HELD -- i.e. it waits for fire to be released and leaves the press test to the caller.
+proto 0x14996 text@A6
+var 0x149fc text_debug_counters
+cmt 0x149fc "MPOINTER:00000-MASTY:00000-TCOUNT:00000" -- patched in place by debug_show_counters, whose digit fields start at 0x14a05, 0x14a11 and 0x14a1e.
+var 0x14a24 text_insert_disc_a
+cmt 0x14a24 "  PLEASE INSERT DISC A AND PRESS FIRE   ", terminated by a byte with bit 7 set. Bytes 0x14a3c/0x14a3d are the 'N','D' of "AND" and disassemble as `trap #4` -- that is a string, not an instruction.
+var 0x14a4d text_insert_disc_b
+fn 0x14a76 format_5_digits
+cmt 0x14a76 Fill five ASCII '0's forward from a0, then divide d0 by 10 repeatedly writing ASCII digits BACKWARDS with `move.b d0,-(a0)` until the quotient is zero. Leaves a0 wherever it stopped.
+proto 0x14a76 field_end@A0 value@D0
+fn 0x14aa8 restart_level_at_checkpoint
+cmt 0x14aa8 Restart the current stage after losing a life. Blacks the palette, sets level_restarting, clears the three input bytes and player_hit, then walks BACKWARDS through the 6-byte records of checkpoint_tables[level_index] (from base+0x26) until it finds one whose first word is below scroll_y - 0xd8, recovering the checkpoint's map offset (0x176fc), scroll position (0x17704, +0xd8) and scroll phase (0x17702). Clears the display list, the actor arrays and the object list, keeps weapon_level only if max_weapon_flag is set and player_hit only if 0x177cb is set, re-derives map_ptr from map_ptr_start + 0x176fc, prescrolls prescroll_count+1 frames, restores the game palette and branches to the frame-loop top at 0x1575c. | Level start / life restart: resets the scroll to the previous checkpoint by walking the level's checkpoint table backwards, rewinds the spawn script cursor to match, clears the arenas, then runs render_frame prescroll_frames times with prescroll_flag set so the first screen of tiles is drawn without sprites.
+fn 0x14bee boot_init
+cmt 0x14bee Boot. (1) a7 = 0x19094 (own supervisor stack, grows DOWN toward 0x19014). (2) GEMDOS Super(0), old SSP -> 0x19014 (never read back). (3) XBIOS Setscreen(log=0x70000, phys=0x78000, rez=0) to force low resolution. (4) XBIOS Physbase -> d0; screen_ring_base_raw = d0-0x1f900; screen_ring_base = that rounded UP to a 256-byte boundary (addi.l #$100 / clr.b d0); the four ring bases = +0x7800/+0xfa00/+0x17700/+0x1f400, with ring[0] also seeded into screen_prev1 and ring[1] into screen_draw and ring[3] into screen_prev2. (5) load_file(file_rec_module_bak) -> the sound driver at 0x58928. (6) sr=0x2700 (IPL 7), save $70 into the JMP OPERAND at vbl_chain_vector and install vbl_handler at $70, install acia_ikbd_isr at $118 (MFP ch.6 = IKBD/MIDI ACIA), sr=0x2300. (7) BIOS Bconout(dev=4, 0x14) = IKBD command $14 "set joystick event reporting" -- that is what makes the ACIA send $FE/$FF-prefixed joystick packets. (8) XBIOS Kbdvbase, save the old joyvec (+0x18) at 0x19098 and install tos_joyvec_handler. (9) clear 0x176d4, bra to main.
+fn 0x14d0a tile_blit_overlay_masked
+cmt 0x14d0a Called from the overlay path of draw_scrolling_map when either map cell carries a non-zero overlay tile; a5/a6 are the two tile sources and a2 the screen.  # ctx — not read.
+fn 0x14d58 restore_blit_w16
+fn 0x14d6a restore_blit_w32
+fn 0x14d80 restore_blit_w48
+fn 0x14d9a restore_blit_w64
+fn 0x14db8 restore_blit_w80
+fn 0x14dda sprite_blit_w16_clip_left
+fn 0x14df0 sprite_blit_w16_clip_right
+fn 0x14e98 sprite_blit_w32_clip_left
+fn 0x14ec0 sprite_blit_w32_clip_right
+fn 0x14fd8 sprite_blit_w48_clip_left
+fn 0x15012 sprite_blit_w48_clip_right
+fn 0x15188 sprite_blit_w64_clip_left
+fn 0x151d2 sprite_blit_w64_clip_right
+fn 0x153b2 sprite_blit_w16
+cmt 0x153b2 Masked sprite blitter, width class 0. Loads mask + 4 plane words into d1-d5 (d1 pre-set to 0xffff0000), ror.l by the sub-word shift d6, ANDs the mask and ORs each plane into two consecutive 16-px groups, then steps a1 by 146 to complete a 160-byte row. d7 = row count, a0 = source, a1 = screen. The three wider variants repeat the group; the clip-left/right variants gate groups with blit_clip_mask.
+fn 0x15408 sprite_blit_w32
+fn 0x154a4 sprite_blit_w48
+fn 0x15586 sprite_blit_w64
+fn 0x156ae scroll_wrap_copy_1280
+cmt 0x156ae 80 unrolled `move.l (a0)+,(a1)+` -- exactly two 160-byte screen rows. Four call sites inside scroll_step (0x14464..0x14470).
+fn 0x15750 main
+cmt 0x15750 Entry after boot_init: init_load_assets(), init_new_game(), init_stage_state(), then an ENDLESS 46-call frame loop from 0x1575c to 0x1580c that ends `clr.w level_restarting; bra $1575c`. 0x15754 (re-entry after the two init calls) and 0x1575c (frame-loop top) are both branched to from the frontend: game_over_hiscore_check jumps to 0x15754, restart_level_at_checkpoint to 0x1575c. | Frame loop: 3 init calls then 46 subsystem calls per frame, forever (bra.w $1575c). 0x14aa8 and 0x10724/0x124ae carry byte-identical copies of the 46-call body.
+fn 0x1581a tile_blit_unreferenced
+cmt 0x1581a Unreferenced 32x32 tile blitter (a1 = tile_atlas + d2*512, a0 = screen_draw + d0*4 + d1*160, jump-table clipping at the top and below row 0xa8). No instruction in the image names its entry, and its clip arithmetic steps the unrolled block by 10 bytes per row while the block's rows are 12 bytes, so both clipped entries would land mid-instruction: dead and buggy, superseded by the inline tile loop in render_frame.
+var 0x159f4 score_digits
+var 0x159fa hiscore_digits
+var 0x15a00 bonus_life_thresholds
+cmt 0x15a00 Seven 6-character score thresholds -- 050000, 200000, 350000, 500000, 650000, 800000, 950000 -- each granting one life exactly once, tracked by the flags at 0x176c6..0x176d2. | Bonus-life thresholds: 7 rows of 6 digit ids compared against score_digits, at 50000/200000/350000/500000/650000/800000/950000. Each row has a matching one-shot flag in bonus_life_awarded_0..6.
+var 0x15a2a score_bcd
+cmt 0x15a2a Score, 3 bytes packed BCD, added to with abcd by score_add_*. Digit ids (0xc5 + digit) are derived into score_digits; the HUD prints 5 digits plus a literal '0', so the low BCD digit is always zero.
+var 0x15a2d hiscore_bcd
+cmt 0x15a2d Three packed-BCD bytes, shipped as 25 00 00 = 250000, matching the top hall-of-fame row.
+var 0x15a30 score_value_50
+cmt 0x15a30 Nine 3-byte BCD awards -- 50, 100, 200, 250, 500, 1000, 3000, 5000, 10000 -- reached by score_add_bcd3 through a1 = this + 3*(n+1), because the `abcd -(a1)` operands are the three bytes BELOW a1.
+var 0x15a33 score_value_100
+var 0x15a36 score_value_200
+var 0x15a39 score_value_250
+var 0x15a3c score_value_500
+var 0x15a3f score_value_1000
+var 0x15a42 score_value_3000
+var 0x15a45 score_value_5000
+var 0x15a48 score_value_10000
+var 0x15a4c level_table
+cmt 0x15a4c Five 20-byte per-level records read by start_level: word -> 0x1771c, word -> 0x1770a, word -> 0x1776e, longword (relocated) -> 0x17770. | Five 20-byte records indexed by level_number (`muls #$14`) at 0x1146e. +0 WORD and +2 WORD are scroll positions compared against the level progress counter 0x17758 (the +0 one arms the boss at 0x124d6); +4 WORD is the tune number handed to the module's music_start (L1=1, L2=3, L3=2, L4=1, L5=2); +6 LONG is a relocated pointer to that level's script block in DATA (0x1b350, 0x1b5aa, 0x1b7e6, 0x1b9d2, 0x1bbd2 — the last runs to the end of DATA); +10..+19 are zero padding.
+var 0x15ab0 checkpoint_tables
+cmt 0x15ab0 Five longword pointers, one per level, to that stage's checkpoint list. restart_level_at_checkpoint scans a list BACKWARDS from base+0x26 in 6-byte records {scroll_y.w, ..., ...} to find the resume point.
+var 0x15ce6 bomb_fall_path
+var 0x15dc3 turret_facing_lut
+var 0x15f3a enemy_aim_dir_lut
+var 0x15fee enemy_bullet_velocity_tbl
+var 0x1606e blast_offset_tbl
+var 0x160de text_publisher
+cmt 0x160de Attract page: "PROGRAMMED BY BRITISH TELECOM / COPYRIGHT TAITO CORP 1987".
+var 0x16120 text_title_mode
+cmt 0x16120 A text script reading x=5, y=5, newline, two tabs, "MODE EASY", with the 4-character mode word at +10 (title_mode_word). NOTHING DRAWS IT: the only two instructions that name 0x16120 are the `lea $16120,a0 / lea 10(a0),a0` pairs in the title's left/right handlers, and the three attract pages build_text_display_list is actually given are 0x160de, 0x16146 and 0x161ce. The script also has no 0x09 terminator of its own -- it would run on through "HARD", "EASY", "SPAM" and "GAME OVER" -- so in this build the difficulty is selectable but its label is never displayed.
+var 0x1612a title_mode_word
+var 0x1612e title_word_hard
+var 0x16132 title_word_easy
+cmt 0x16132 The 4 characters "EASY" (0xaf 0xab 0xbd 0xc3), overwritten with "SPAM" by check_cheat_name once any cheat name has been accepted -- so the LEFT title option becomes "MODE SPAM" after a cheat. Copied into title_mode_word by the left handler at 0x10602, which also sets hard_mode = 0.
+var 0x16136 title_word_spam
+var 0x1613a text_game_over
+cmt 0x1613a "GAME OVER" at x=124, y=96, rendered by 0x13c6c into the display list at 0x17c36.
+var 0x16146 text_credits
+cmt 0x16146 Attract page: "PROGRAMMING BY HENRY S CLARK AND KARL D JEFFERY / GRAPHICS BY JASON G LIHOU / SOUND BY J C BROOKE" -- the source of the cheat initials HSC, KDJ, JGL.
+var 0x161ce text_hall_of_fame
+cmt 0x161ce Attract page: "HALL OF FAME" followed by the six live hiscore_table rows, which are part of this same script.
+var 0x161dd hiscore_table
+cmt 0x161dd Six 22-byte hall-of-fame rows, each also a fragment of text_hall_of_fame's script: +0..2 = 05 05 04 (newline newline tab), +3..7 = five spaces, +8 = the rank digit '1'..'6', +9..10 = spaces, +11..13 = the three name characters, +14..15 = spaces, +16..21 = the six score digits. Shipped defaults: HSC 250000, KDJ 200000, JGL 175000, R H 150000, J H 100000, R P 050000.
+var 0x16262 text_enter_your_name
+var 0x16274 palette_title
+cmt 0x16274 16 ST colour words, installed once by set_palette_title (0x111d6) from init_load_assets just before the NEO title installs its own; NOT the in-play palette (tiles render green-on-green under it). 022 262 023 000 243 770 022 440 777 662 220 330 550 770 624 624.
+var 0x16294 palette_game
+cmt 0x16294 16 ST colour words, the in-play palette: set_palette_game (0x111be) installs it at every level start (0x11564, 0x1055e, 0x14be6); sprites and tiles decode correctly against it (tools/extract_assets.py). 000 030 040 444 555 022 233 333 300 027 237 457 777 630 500 770.
+var 0x162b4 palette_black
+cmt 0x162b4 Sixteen zero words. set_palette_black points Setpalette here. | 16 zero words, installed by the wrapper at 0x111a6 to blank the screen between phases.
+var 0x162d4 level_bank_digits
+cmt 0x162d4 Five bytes per level (25 total, ASCII "012314567289AB3013B48C375"): the four HSC bank digits then the LEVEL map digit, patched into the filenames by load_level_assets. | The string "012314567289AB3013B48C375" — 5 rows of 5 ASCII digits, indexed by level*5 at 0x1033a. load_level_assets pokes bytes 0..3 into the '0' position of the four "A\HSC_n.DAT" names and byte 4 into the '1' of "A\LEVEL1.MAP", then loads them. So the per-level asset sets are: L1 = HSC 0,1,2,3 + LEVEL1; L2 = 4,5,6,7 + LEVEL2; L3 = 8,9,A,B + LEVEL3; L4 = 0,1,3,B + LEVEL4; L5 = 8,C,3,7 + LEVEL5. That is why there are thirteen HSC files and why levels 2 and up ask for disc B.
+var 0x162ee file_rec_flyshk_neo
+cmt 0x162ee First of eight 8-byte-header file records. Layout: [dest.l][length.l] then the NUL-terminated path; BOTH longwords carry relocation entries, so at run time the first is an absolute address. This one: 0x1be36, 0x7d80, "A\FLY_SHK.NEO". | Eight variable-length file records, each: LONG load address (stored as an image offset, relocated at load time), LONG byte count, then the ASCIZ GEMDOS path, padded to an even boundary. In order: A\FLY_SHK.NEO -> 0x1be36 len 0x7d80; A\MODULE.BAK -> 0x58928 len 0x1065; A\SPRITES.cru -> 0x1be36 len 0x1caf2; A\LEVEL1.MAP -> 0x16432 len 0x1388; A\HSC_0.DAT -> 0x38928; A\HSC_1.DAT -> 0x40928; A\HSC_2.DAT -> 0x48928; A\HSC_3.DAT -> 0x50928, each len 0x8000. There is no ninth record: the LEVEL and HSC digits are patched in place from level_asset_digit_table.
+var 0x16304 file_rec_module_bak
+cmt 0x16304 0x58928, 0x1065, "A\MODULE.BAK" -- the sound driver, and the only file boot_init loads.
+var 0x1631a file_rec_sprites_cru
+cmt 0x1631a 0x1be36, 0x1caf2, "A\SPRITES.cru". probe_disc hard-codes this record's NAME (0x16322) as its disc-presence test.
+var 0x16330 file_rec_level_map
+cmt 0x16330 0x16432, 0x1388, "A\LEVEL1.MAP" -- the '1' at 0x1633f is rewritten per level by load_level_assets.
+var 0x16346 file_rec_hsc_0
+cmt 0x16346 0x38928, 0x8000, "A\HSC_0.DAT". Four such 32 KB banks load back to back at 0x38928/0x40928/0x48928/0x50928, forming the single 128 KB tile atlas named at 0x38928; the digit at name byte 6 (0x16354 here) is rewritten per level by load_level_assets. The bank base is pinned by recreate/test/test_image_model.py, which reads the destination out of the relocated image.
+var 0x1635a file_rec_hsc_1
+var 0x1636e file_rec_hsc_2
+var 0x16382 file_rec_hsc_3
+var 0x16396 sprite_blit_tbl
+var 0x163a6 sprite_blit_clip_left_tbl
+var 0x163b6 sprite_blit_clip_right_tbl
+var 0x163c6 restore_blit_tbl
+var 0x163da tile_split_row_table
+cmt 0x163da Ten bytes 08 00 06 02 04 04 02 06 00 08, read as a PAIR at tile_scroll_offset (which steps 0,2,4,...,30): (rows from the upper map cell, rows from the lower). The pair always sums to 8, which is the height of the strip the scroller repaints per frame; entries beyond index 8 are 00 08.
+var 0x163fa screen_ring_base_raw
+cmt 0x163fa Physbase - 0x1f900, written once by boot_init and never read again except to compute screen_ring_base.
+var 0x163fe map_row_ptr_reset
+var 0x16402 map_row_ptr
+cmt 0x16402 The map read cursor ("MPOINTER" in the debug overlay). Initialised to map_data + map_rows*(map_width_words*2) -- the END of the map -- and stepped BACK 0x14 bytes (one row) every 16 displayed frames, because the game scrolls upward. | Cursor into level_map_cells, seeded at 0x1051e to ONE PAST THE END of the map (0x16436 + rows*cols*2) and stepped BACKWARDS 20 bytes (one map row) every 32 pixels of scroll, so the bottom of the file is the start of the level.
+var 0x16406 screen_ring
+cmt 0x16406 Four longword screen bases, 0x16406/0x1640a/0x1640e/0x16412, seeded to screen_ring_base + 0x7800/0xfa00/0x17700/0x1f400 (rows 192/400/600/800 of an 808-row circular framebuffer). Once per displayed frame the slot named by screen_ring_index has 0x500 (8 rows) subtracted and, if that takes it below screen_ring_base, 0x1f900 added back -- that subtraction IS the vertical scroll. | Four longwords, cycled by screen_buffer_index; each is lowered by 0x500 (two tile rows) per wrap and snapped forward by 0x1f900 when it passes screen_buffer_limit.
+var 0x1640a screen_ring_1
+var 0x1640e screen_ring_2
+var 0x16412 screen_ring_3
+var 0x16416 screen_draw
+cmt 0x16416 The buffer the frame is being drawn into, and the one handed to XBIOS Setscreen as the PHYSICAL base at 0x1476e. Rotated at 0x14820..0x14834: screen_prev2 = screen_prev1, screen_prev1 = screen_draw, screen_draw = screen_ring[screen_ring_index]. | Screen pointer pipeline. Four buffers live in a 0x1f900-byte circular region below Physbase; each frame the video base moves up 320 bytes (2 scanlines) and the buffer in use rotates, so each buffer steps 0x500 (8 scanlines) every 4 frames and wraps by +0x1f900 at the bottom. screen_draw is this frame's buffer; screen_prev/screen_prev2 are the previous two.
+var 0x1641a screen_prev1
+var 0x1641e screen_prev2
+var 0x16422 screen_ring_base
+cmt 0x16422 (Physbase - 0x1f900) rounded UP to a 256-byte boundary. It is both the low wrap limit of the screen ring and the source of the clean background rows that scroll_step copies in (0x1444c, 0x1480e). The alignment matters because the shifter's base register only takes the high two bytes of the address -- a 256-byte-aligned base is the finest the ST hardware can point at.
+var 0x16426 blit_clip_mask
+cmt 0x16426 One byte, written with 1/2/3/4/6/7/8/c/e/f/10/18/1c/1e/1f and btst'ed by the unrolled sprite blitters at 0x14dda..0x153c0. Clip/plane mask for the sprite writers -- owned by the gameplay/graphics slice, listed here only because boot-adjacent code sets it. | Clip mask byte written and tested by the left/right-clipped sprite blitters to select which 16-px column groups of the sprite reach the screen.
+var 0x1642a level_number
+cmt 0x1642a 0..4. Indexes level_table and level_asset_digit_table; incremented at 0x12504 and wrapped at 5.
+var 0x1642c prescroll_flag
+cmt 0x1642c Set while a stage is being pre-scrolled with the palette black and tested at 0x14474 inside scroll_step, so the prescroll skips whatever the normal path would draw.
+var 0x1642e screen_ring_index
+var 0x16430 scroll_fine
+cmt 0x16430 "TCOUNT" in the debug overlay. Advances by 2 each displayed frame and is masked with 0x1f, so it cycles 0,2,...,30 over 16 frames; the wrap to 0 is what steps map_ptr back one 0x14-byte row. | Vertical scroll phase in pixels, stepped +2 per frame and masked to 0..31; a wrap to 0 is what advances map_row_ptr by one 20-byte map row.
+var 0x16432 level_map_cols
+cmt 0x16432 LEVEL<n>.MAP header: word 0 = tile columns (10), word 1 = tile rows; the cell array starts at 0x16436. Each cell is a word: even byte = opaque base tile id, odd byte = overlay tile id (0 = none, drawn with colour 0 transparent). Row stride is columns*2 = 20 bytes. map_row_ptr is initialised to the END of the array (0x16436 + rows*cols*2) and walks upward 20 bytes every 32 scrolled pixels; the arm that would reset it at the top of the map is dead — 0x147da is a nop and the store that follows it is immediately overwritten at 0x147e6. | 5,000-byte (0x1388) reserved buffer in DATA that A\LEVELn.MAP is read into whole. File layout: WORD columns (always 10) at 0x16432, WORD rows at 0x16434, then rows*columns*2 bytes of cells from 0x16436. Row stride is 20 bytes; a cell is 2 bytes = (base tile index, overlay tile index), both indexing the 256 tiles at 0x38928. Overlay 0 means "no overlay" and takes the fast copy path at 0x14898; a non-zero overlay in either of the two cells being blended takes the masked merge path at 0x148c2. All five maps satisfy len == 4 + rows*20 exactly (L1 183 rows, L2 209, L3 204, L4 204, L5 231).
+var 0x16434 level_map_rows
+var 0x16436 level_map_data
+cmt 0x16436 A\LEVELn.MAP is loaded to 0x16432 -- INSIDE the DATA segment, not BSS. Its first two words are the row width in words and the row count; the tile rows start here. The record's length is 0x1388 (5000 bytes), so with 10 words per row that is 250 rows of 0x14 bytes.
+var 0x17692 disc_probe_result
+var 0x17696 level_just_started
+cmt 0x17696 Set by restart_level_at_checkpoint and cleared at the very bottom of the frame loop (0x15810); read_player_input skips the pause/abort keys while it is set.
+var 0x17698 title_just_entered  # ctx
+var 0x1769a game_over_flag  # ctx
+var 0x1769c loop_flag_1
+var 0x1769e loop_flag_2
+var 0x176a0 loop_flag_3
+var 0x176a4 music_suspend_flag
+var 0x176a6 item_bomb_spawned_flag
+var 0x176aa game_over_delay
+cmt 0x176aa Initialised to 0x50 (80) by init_new_game and decremented once per frame by the game-over block at 0x13c82; at -1 the code jumps to game_over_hiscore_check. It is the "GAME OVER" display dwell, not a credit count.
+var 0x176ac const_words_0123
+cmt 0x176ac A table of the ten word constants 0..9 at 0x176ac + 2*n, used as a memory source for immediates: `move.w $176ac,X` means X = 0, `$176b2` = 3, `$176b6` = 5. Not state.
+var 0x176ae start_lives
+var 0x176c0 weapon_decay_timer
+var 0x176c2 item_pickup_pending
+var 0x176c4 player_script_timer
+var 0x176c6 bonus_life_awarded_0
+cmt 0x176c6 Seven words at 0x176c6/c8/ca/cc/ce/d0/d2, one per extra_life_thresholds entry, set once the threshold has paid out.
+var 0x176c8 bonus_life_awarded_1
+var 0x176ca bonus_life_awarded_2
+var 0x176cc bonus_life_awarded_3
+var 0x176ce bonus_life_awarded_4
+var 0x176d0 bonus_life_awarded_5
+var 0x176d2 bonus_life_awarded_6
+var 0x176d4 cheat_used_flag
+cmt 0x176d4 Set to 0xff by check_cheat_name when a cheat name matches, cleared once by boot_init, and READ BY NOTHING -- swept for both the long and the short absolute encodings. A dead write.
+var 0x176dc name_entry_done
+var 0x176de name_entry_timeout
+var 0x176e0 hiscore_rank
+var 0x176e2 name_entry_cursor
+var 0x176e4 hiscore_beaten
+var 0x176e6 attract_page_timer
+var 0x176e8 new_hiscore_pending
+var 0x176ea level0_assets_loaded
+var 0x176ec blast_step
+var 0x176ee bomb_falling
+var 0x176f0 bomb_exploding
+var 0x176f2 bomb_path_cursor
+var 0x176f6 death_anim_cursor
+var 0x17706 player_hit  # ctx
+var 0x1770a boss_scroll_pos
+var 0x1770c player_script_fire_enable
+var 0x1770e use_keyboard_flag
+cmt 0x1770e Read once, at read_player_input, to choose key_bits over joy1_state. Written NOWHERE in the image -- keyboard control is a dormant switch and the game always reads joystick 1.
+var 0x17710 bombs
+var 0x17712 lives
+var 0x17714 weapon_level
+var 0x17716 shot_slot_0_busy
+var 0x17718 shot_slot_1_busy
+var 0x1771a shot_slot_2_busy
+var 0x1771c level_end_scroll_pos
+var 0x1771e attract_page_reload
+var 0x17720 vbl_tick
+cmt 0x17720 Longword incremented by vbl_handler. The frame pacer at 0x14786 waits for it to reach 3, XBIOS Vsyncs and clears it, so one displayed frame = three vertical blanks (about 16.7 Hz on a 50 Hz machine).
+var 0x17724 takeoff_script_cursor
+var 0x17726 takeoff_script
+var 0x17730 landing_script
+var 0x1773a landing_script_cursor
+var 0x1773c shadow_offset
+var 0x1773e takeoff_shadow_timer
+var 0x17740 landing_shadow_timer
+var 0x17742 player_bank
+var 0x17744 player_bank_frames
+var 0x17752 prescroll_frames
+var 0x17754 spawn_script_cursor
+var 0x17758 scroll_pos
+cmt 0x17758 "MASTY" in the debug overlay -- the distance scrolled so far. Zeroed at the title, and title_attract_loop restarts the attract when it passes 0xbb8 (3000).
+var 0x1775a level_complete
+var 0x1775c player_turning
+var 0x1775e player_input_locked
+var 0x17760 fire_held
+var 0x17762 shot_slots_full
+var 0x17764 frame_counter
+var 0x1776c bullet_slot_scan
+var 0x1776e level_tune_id
+var 0x17770 spawn_script_ptr
+cmt 0x17770 Level spawn script pointer. The script is 10-byte records: +0 trigger scroll position (0xa3a1 ends the script), +2 spawn handler index, +4 x, +6 y, +8 formation index. spawn_script_step fires one record per frame while scroll_pos has reached its trigger.
+var 0x17774 load_file_handle
+var 0x17776 load_dest
+var 0x1777a load_len
+var 0x1777e joy0_state
+cmt 0x1777e IKBD joystick-0 byte, written by acia_joy0_byte (and, in dead code, by tos_joyvec_handler). Bits 0-3 = up/down/left/right, bit 7 = fire. Only bit 7 is read (0x143c8, the alternate bomb button).
+var 0x1777f joy1_state
+cmt 0x1777f IKBD joystick-1 byte -- the player's controller. Bits 0-3 = up/down/left/right, bit 7 = fire. Read by read_player_input, by the title-screen mode toggle, by hiscore_name_entry and by every "press fire" wait.
+var 0x17780 key_bits
+cmt 0x17780 An eight-bit keyboard state built by acia_ikbd_isr: bit n is set while the key whose scancode is key_watch_scancodes[n] is held. Live bits: 0 = keypad '4' (arms check_cheat_name and debug_wait_for_keypad4), 1 = 'P' (pause), 2 = F10 (abort to game over), 5 = SPACE (bomb).
+var 0x17781 key_last_scancode
+var 0x17782 key_watch_scancodes
+cmt 0x17782 The eight scancodes acia_ikbd_isr watches, in bit order: 6b keypad'4', 19 'P', 44 F10, 00 (none), 74 keypad Enter, 39 SPACE, 62 HELP, 00 (none). Initialised data, never written at run time.
+var 0x1778a easter_egg_scancodes
+cmt 0x1778a Fourteen initialised scancode bytes -- 1e 32 32 15 39 17 1f 39 1e 39 20 17 2e 25, which spell a message in ST scancodes -- immediately above key_watch_scancodes. NO instruction anywhere in the image references this address, and acia_ikbd_isr stops at eight entries, so nothing reads them.
+var 0x1779a level_distance
+var 0x177a6 charset_order_table  # ctx
+var 0x177c6 invuln_flag
+var 0x177c7 infinite_lives_flag
+var 0x177c8 infinite_bombs_flag
+var 0x177c9 alt_bullet_glyph_flag
+var 0x177ca max_weapon_flag
+var 0x177cb keep_player_hit_flag
+cmt 0x177cb Read at 0x113e6 and 0x14b40 to suppress the `player_hit = 0` on a stage reset. Written NOWHERE -- a sixth cheat flag with no handler behind it.
+var 0x177cc hard_mode
+cmt 0x177cc 0 = EASY/SPAM, 1 = HARD. Set by the title screen's left/right toggle, forced on for levels 3 and 4 by start_level, cleared by game_over_hiscore_check, and read at 0x11432 to pick between 0x12cb6 and 0x12cc8.
+var 0x177cd debug_overlay_flag
+cmt 0x177cd Read at 0x13e12 to enable debug_show_counters. Written NOWHERE -- the overlay is permanently off.
+var 0x177ce display_list
+cmt 0x177ce 223 six-byte slots {x.w, y.w, glyph.b, enable.b} spanning 0x177ce..0x17d07, cleared wholesale by clear_display_list. Sub-ranges in use: 0x17c36 the GAME OVER text, 0x17c8a and 0x17ca2 object markers, 0x17ca8 the HUD captions, 0x17cb4 the score digits, 0x17cd8 the hi-score digits, 0x17cfc two slots cleared on their own. | Display list: 223 records of 6 bytes (x.w, y.w, frame.b, active.b) spanning 0x177ce..0x17d08, drawn back-to-front by render_frame. active = 0 hidden, 0xff drawn in pass A (repainted under the scenery overlay), 1..0x7f drawn in pass B (on top). Subsystems own fixed sub-ranges; the first 16 records double as the enemy dropped-bomb array and the last two are the player's shadow and plane.
+var 0x1782e dl_item_3
+var 0x17bc4 dl_enemy_bullets
+var 0x17c24 dl_item_0
+var 0x17c2a dl_item_1
+var 0x17c30 dl_item_2
+var 0x17c36 dl_bomb_icons
+var 0x17c60 dl_life_icons
+var 0x17c8a dl_blast
+var 0x17ca2 dl_bomb
+var 0x17ca8 hud_label_slots
+var 0x17cb4 hud_score_slots
+var 0x17cd8 hud_hiscore_slots
+var 0x17cfc dl_player_shadow
+var 0x17d02 dl_player
+var 0x17e0c tile_repair_grid
+cmt 0x17e0c Tile repair grid: 10 words per screen row (one per 32-px column), tile id in the LOW byte, copied straight out of map_row_ptr by render_frame pass A for every cell a sprite touches. render_frame drains it (clearing each entry) and blits the overlay tile masked, so colour 0 shows the sprite through.
+var 0x18014 sprite_restore_lists
+cmt 0x18014 Four sprite restore lists of 512 bytes, indexed by screen_index. Each entry is 6 bytes: screen byte offset, width class, row count; terminated by a 0xffff width. Written while drawing, consumed 2 frames later to copy clean background over the sprite dirt in the buffer about to be reused.
+var 0x19014 saved_super_ssp
+var 0x19094 stack_top
+cmt 0x19094 boot_init's `movea.l #$19094,a7`. The stack grows DOWN from here and reaches saved_super_ssp after only 0x80 bytes -- read_player_input's abort path unwinds 0x40 of it by hand.
+var 0x19098 saved_tos_joyvec
+var 0x1909c player_start_template
+var 0x190a4 player
+cmt 0x190a4 Player record, 7 bytes: +0 x.w, +2 y.w, +4 frame.b, +5 shadow frame.b, +6 control mode.b. Mode 0 = joystick, 1 = landing script, 2 = level-clear fly-off, 3 = dying (falls 2 px/frame through player_death_frames), 4 = game over, 0xff = take-off script. x is clamped to 0..0x121 and y to 0x0b..0xbb in 6-px steps.
+var 0x190ac takeoff_start_pos
+var 0x190b6 landing_start_pos
+var 0x190c0 spawn_handler_tbl
+cmt 0x190c0 Spawn handler table: longword pointers indexed by the level script record's type word. Each target is a 16-byte stub that loads a5 with an enemy descriptor and a1 with a formation-pointer table, then falls into spawn_formation_common.
+var 0x19128 entity_path_tbl_ptrs
+var 0x19134 bullet_hit_handler_tbl
+var 0x19180 blast_hit_handler_tbl
+var 0x191cc cheat_handler_table
+cmt 0x191cc Six longword handlers indexed by cheat_name_table's fourth byte: 0x10e30, 0x10e4c, 0x10e56, 0x10e60, 0x10e6a, 0x10e72.
+var 0x191e4 cheat_name_table
+cmt 0x191e4 Six 4-byte rows terminated by 0x64: three name characters plus a handler index. In the game's own 0xab='A' alphabet they read HSC, KDJ, JGL, GCC, JML and "J H".
+var 0x191fe entity_path_1
+var 0x19210 player_death_frames
+var 0x19220 entity_path_2
+var 0x19232 weapon_fire_tbl
+var 0x19246 entity_group_a0
+var 0x19262 entity_group_a1
+var 0x1927e entity_group_a2
+var 0x1929a entity_group_a3
+var 0x192b6 entity_group_t0
+var 0x192c6 dl_turret_t0
+var 0x192d6 entity_group_t1
+var 0x192e6 dl_turret_t1
+var 0x192f6 entity_group_t2
+var 0x19306 dl_turret_t2
+var 0x19316 entity_group_t3
+var 0x19326 dl_turret_t3
+var 0x19336 entity_group_t4
+var 0x19346 dl_turret_t4
+var 0x19356 entity_group_t5
+var 0x19366 dl_turret_t5
+var 0x19376 entity_group_t6
+var 0x19386 dl_turret_t6
+var 0x19396 entity_group_t7
+var 0x193a6 dl_turret_t7
+var 0x193b6 entity_group_bigobj
+var 0x193c6 entity_group_x0
+var 0x193d6 entity_group_x1
+var 0x193e6 entity_group_x2
+var 0x193f6 entity_group_x3
+var 0x19406 entity_group_x4
+var 0x19416 entity_group_pair
+var 0x19422 player_shot_slot_0
+var 0x19436 player_shot_slot_1
+var 0x1944a player_shot_slot_2
+var 0x1945e entity_group_a4
+var 0x1946e enemy_bullets
+cmt 0x1946e Enemy bullet array: 16 records of 10 bytes (x.w, y.w, dx.w, dy.w, active.w) followed by a 999 (0x3e7) terminator word. Aimed at the player by enemy_bullet_spawn_aimed through enemy_aim_dir_lut/enemy_bullet_velocity_tbl; published to dl_enemy_bullets each frame.
+var 0x19518 anim_frame_a
+var 0x1951c anim_frame_b
+var 0x19520 anim_frame_item0
+var 0x19525 anim_frame_item1
+var 0x1952a anim_frame_item3
+var 0x1952f anim_frame_bomb
+var 0x19534 enemy_desc_00
+cmt 0x19534 Enemy descriptor table, 26-30 bytes per entry: +0 long pointer to the group's 4-entity slot array, +4 base sprite frame, +6 secondary frame, +8 fire reload period (rewritten per level by difficulty_apply_fire_rates), +14 entity count minus 1, +16 hit-handler index (indexes both bullet_hit_handler_tbl and blast_hit_handler_tbl), +18/+20 death sprite offset, +24 initial hit points, +28/+30/+34 muzzle-flash offsets.
+var 0x19550 enemy_desc_01
+var 0x1956c enemy_desc_02
+var 0x19588 enemy_desc_03
+var 0x195a4 enemy_desc_04
+var 0x195be enemy_desc_05
+var 0x195d8 enemy_desc_06
+var 0x195f2 enemy_desc_07
+var 0x1960c enemy_desc_08
+var 0x19626 enemy_desc_09
+var 0x19640 enemy_desc_0a
+var 0x1965a enemy_desc_0b
+var 0x19674 enemy_desc_0c
+var 0x1968e enemy_desc_0d
+var 0x196a8 enemy_desc_0e
+var 0x196c2 enemy_desc_0f
+var 0x196de enemy_desc_10
+var 0x19702 enemy_desc_11
+var 0x19726 enemy_desc_12
+var 0x19742 enemy_desc_13
+var 0x1975e enemy_desc_14
+var 0x1977e enemy_desc_15
+var 0x1979a enemy_desc_16
+var 0x197b6 enemy_desc_17
+var 0x197d2 enemy_desc_18
+var 0x1ae0c formation_tbl_a
+var 0x1af80 formation_tbl_b
+var 0x1b02a item_flight_path
+var 0x1b19c credits_text
+var 0x1b28d greetings_text
+var 0x1b350 level1_script
+var 0x1b5aa level2_script
+var 0x1b7e6 level3_script
+var 0x1b9d2 level4_script
+var 0x1bbd2 level5_script
+var 0x1be36 sprite_bank
+cmt 0x1be36 SPRITES.cru header table. 20 bytes per record, indexed by a BYTE frame id (<=256 records): +0 long data pointer (into the same file); +4 word width class 0..3 (columns of 16 px, minus 1 — a source row is (class+1)*10 bytes = (class+1) groups of mask+4 planes); +6 word height in rows; +8/+10 word draw x/y offset added to the display record's x/y; +12/+14 word hitbox near corner; +16/+18 word hitbox far corner. Pixel data is masked: 5 words per 16-px group, mask first, mask bit set = transparent. | A\SPRITES.cru, 117,490 bytes, loaded RAW (the .cru extension is a red herring — nothing decrunches it). Layout: a 5,120-byte directory of 256 records of 20 bytes, then the pixel data from offset 0x1400. Record: +0 LONG data offset (patched to an absolute pointer at 0x112cc by adding 0x1be36 to all 256 records), +4 WORD width in 16-px words MINUS 1, +6 WORD height in rows MINUS 1, +8/+10 WORD hit-box offset A (x,y), +12/+14 WORD hit-box offset B (x,y), +16/+18 WORD hit-box width/height in pixels. Records 0..229 are real; 230..255 are zero-filled spares. Pixels are masked word-interleaved bitplanes: 5 words per 16-px group (mask, then planes 0..3), so the row stride is (width_words)*10 bytes and a frame is stride*(rows). 229 of the 230 used records satisfy stride*rows == next_record_offset - this_offset exactly, and the 230th ends at the last byte of the file. The hit box is INDEPENDENT of the bitmap size (record 50 is a 32x25 bitmap with a 49x39 box).
+var 0x38928 tile_banks
+cmt 0x38928 Tile atlas: the four HSC_n.DAT banks loaded back to back form one 128 KB array of 256 tiles, 32x32 px, 4 planes interleaved, 512 bytes each (32 rows of 16 bytes). Indexed as base + id*512 by every tile blitter. | 128 KB of 32x32 tiles: four 32,768-byte HSC_n.DAT files loaded back to back at 0x38928/0x40928/0x48928/0x50928, giving 256 tiles addressed by a single byte. A tile is 512 bytes = 32 rows of 16 bytes = four word-interleaved bitplanes, NO mask, 32 px wide. The map draw at 0x14862 confirms the stride: `asl.l #4 / asl.l #5` = index*512, and the blit copies 4 longwords then skips 144 bytes (16 + 144 = one 160-byte screen row).
+var 0x58928 sound_module_file
+cmt 0x58928 A\MODULE.BAK is loaded here by boot_init. Every entry point the game uses is taken relative to 0x58944 (= base + 0x1c): vbl_handler `jsr 38(a0)`, sound_cmd `jsr 1256(a0)`, 0x13e42 `jsr 1196(a0)`; status bytes at +30 and +31 are polled by the attract loop and the fire handler. ABI belongs to the sound/data slice. | A\MODULE.BAK read here whole, GEMDOS header included (0x1065 bytes). The game never strips the header — it calls the module at 0x58944 = 0x58928 + 28. See out/names_module.txt and notes/sound_engine.md.
+var 0x58944 sound_module
+cmt 0x58944 Sound module (MODULE.BAK, a nested .PRG: 0x58928 + its 28-byte header). Caller-side entries used by this slice: jsr 38(a0) per vblank, jsr 434(a0) start music d0, jsr 1196(a0) play sfx d0, jsr 1256(a0) start music d0; byte 30(a0) = music busy, byte 31(a0) = sfx busy. | TEXT base of the sound module and the base register (a3) for every address inside it. Entry points: +38 tick (per VBL), +434 stop, +1196 sfx_start(d0.b), +1256 music_start(d0.b). +0x1e = music_active, +0x1f = sfx_active — the two flags the game polls.
+var 0x59984 entity_arena
+cmt 0x59984 Entity arena: 91 records of 58 bytes (0x59984..0x5ae22). +0 x.w, +2 y.w, +4 frame offset.w, +6 draw flags.w (high byte becomes the display record's active byte), +8 dx.w, +10 dy.w, +12 script step countdown.w, +14 active.w, +16 dying.w, +18/+20 from descriptor +6/+4 (base frame), +22 hit points.w (from descriptor +24), +24 aim-changed flag.b, +26 facing 0..11.w, +30 fire countdown.w, +32 fire reload.w (from descriptor +8), +34 path table selector.w, +36 path cursor.w, +38 firing flag.w, +42 anim timer.w, +48 hidden-under-bigobj.w, +50 movement script base.l, +54 movement script cursor.l.
+var 0x5ae22 player_bullet_arena
+cmt 0x5ae22 Player bullet arena: 15 records of 8 bytes (x.w, y.w, dx.w, state.w). state 0 = free, 1 = in flight (y -= 0x13 per frame), 2 = hit this frame (drawn as the impact frame 0xe5, then freed). Grouped as three 5-slot shots by player_shot_slot_0..2.
+var 0x5ae9a item_weapon
+cmt 0x5ae9a Power-up items: 7 records of 10 bytes at 0x5ae9a..0x5aede (x.w, y.w, path cursor.l, active.w). item_weapon raises weapon_level (max 4), item_bomb raises bombs (max 6), item_life raises lives (max 7); player_bomb is the last record and carries the dropped bomb's x/start y/current y/frame.
+var 0x5aea4 item_life
+var 0x5aeae item_bomb
+var 0x5aeb8 item_extra
+var 0x5aec2 blast_state
+var 0x5aed6 player_bomb
+cmt 0x10390 PATCHED. `4df9` became `601e` (bra.s $103b0), leaving `0000 4a24` = the operand of `lea $14a24,a6` -- text_insert_disc_a. The prompt loop it skips is the canonical shape: show the message, wait for fire, probe_disc, and retry while disc_probe_result is negative.
+cmt 0x103ea PATCHED. One byte: `6a` became `60`, turning `bpl.w $103f0` (proceed once the disc opened) into an unconditional branch and orphaning the `bra.s $103cc` retry at 0x103ee. This is the one prompt whose `lea` head was left intact -- a6 = 0x16022, which is not a string but the middle of a word table, so its first byte is 0xff and console_show_message prints nothing before waiting.
+cmt 0x10422 PATCHED. `4df9` became `601e` (bra.s $10442); the surviving `0000 4a24` at 0x10424 is `lea text_insert_disc_a,a6`.
+cmt 0x1044c PATCHED. `4df9` became `6022` (bra.s $10470); the surviving `0000 4a4d` at 0x1044e is `lea text_insert_disc_b,a6`. The DISC B loop is the mirror image of the DISC A one: it waits for probe_disc to FAIL, because disc A being gone is how you know disc B went in.
+cmt 0x10498 PATCHED. `4df9` became `601e` (bra.s $104b8); the surviving `0000 4a24` at 0x1049a is `lea text_insert_disc_a,a6`.
+cmt 0x104cc PATCHED. `4df9` became `6022` (bra.s $104f0); the surviving `0000 4a4d` at 0x104ce is `lea text_insert_disc_b,a6`.
+cmt 0x1127e PATCHED. The two bytes here were `6100` and are now `602c` (bra.s $112ac). The four bytes at 0x11280 are still the original displacement: `6100 f97a` = `bsr.w $10bfa`, i.e. this was the FIRST load of A\SPRITES.cru, whose record a0 was loaded with two instructions earlier. The patch skips that load and the whole insert-disc wait at 0x11282..0x112aa; the sprite bank is loaded anyway at 0x112b8.
+cmt 0x147da SUSPECT, NOT PROVEN. A bare `nop` sits between `cmpa.l #$16432,a0` and a `move.l $163fe,$16402` that the very next instruction overwrites, which makes the map-wrap store dead. That is the shape of a two-byte conditional branch replaced by a nop, but unlike the six sites above no surviving operand confirms what the branch was, so it is recorded as an observation only.
+# --- spawn stubs, named by their index in spawn_handler_tbl (0x190c0): each loads a5 = enemy descriptor, a1 = formation table, then joins the common spawn path
+fn 0x1351c spawn_stub_type00
+fn 0x13526 spawn_stub_type01
+fn 0x13530 spawn_stub_type02
+fn 0x1353a spawn_stub_type03
+fn 0x133fe spawn_stub_type04
+fn 0x1340e spawn_stub_type05
+fn 0x1341e spawn_stub_type06
+fn 0x1342e spawn_stub_type07
+fn 0x133be spawn_stub_type08
+fn 0x133ce spawn_stub_type09
+fn 0x133de spawn_stub_type10
+fn 0x133ee spawn_stub_type11
+fn 0x1329c spawn_stub_type14
+fn 0x1328c spawn_stub_type15
+fn 0x132ac spawn_stub_type16
+fn 0x1305a spawn_stub_type17
+fn 0x1306a spawn_stub_type18
+fn 0x132cc spawn_stub_type19
+fn 0x1307a spawn_stub_type20
+fn 0x1308a spawn_stub_type21
+fn 0x1309a spawn_stub_type22
+fn 0x132bc spawn_stub_type25
+fn 0x139e4 takeoff_script_reset
+cmt 0x139e4 Copies the 5-word takeoff_start_pos record into takeoff_script and rewinds takeoff_script_cursor.
+fn 0x13a02 landing_script_reset
+cmt 0x13a02 Copies the 5-word landing_start_pos record into landing_script and rewinds landing_script_cursor.

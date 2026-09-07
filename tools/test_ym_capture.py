@@ -21,7 +21,9 @@ THREE GROUPS, and the failure each exists to catch:
   * the AUDIBILITY RULE — `channel_sounds`, whose three clauses (the envelope bit, the level, the
     two gates) each make a frame silent for a different reason. The NOISE gate's shift is pinned
     here in particular: a capture whose game never closes both gates on a live channel cannot tell
-    a right shift from a wrong one, so the chip's own bit assignment is stated here instead.
+    a right shift from a wrong one, so the chip's own bit assignment is stated here instead. The
+    envelope clause is the one that is the CALLER'S and not the chip's — `envelope_is_level` — so
+    both of its answers are pinned, and so is the gate helper the policy makes callers reuse.
 """
 import pathlib
 import struct
@@ -160,6 +162,46 @@ def test_the_envelope_bit_is_not_a_level(channel):
     volumes = [0, 0, 0]
     volumes[channel] = ym_capture.VOLUME_ENVELOPE_BIT | 0x0f
     assert not ym_capture.channel_sounds(frame_with(ALL_GATES_OPEN, volumes), channel)
+
+
+@pytest.mark.parametrize("channel", range(ym_capture.CHANNELS))
+def test_an_envelope_channel_sounds_only_under_the_envelope_policy(channel):
+    """`envelope_is_level` is the caller's driver, not the chip: the same frame reads both ways.
+
+    Whether a channel handed to the envelope generator is making a sound depends on whether that
+    driver ever starts one, which this module cannot know. The default says no — a driver that never
+    latches a shape leaves the generator at whatever it was, and reading that as audible would call
+    every silent frame loud. Flying Shark's effects DO drive channel C that way (volume 0x10, shape
+    0x09), and pass true. The low nibble is 0 in both frames below precisely because it is not a
+    level under bit 4: the policy alone is what separates the two answers.
+    """
+    volumes = [0, 0, 0]
+    volumes[channel] = ym_capture.VOLUME_ENVELOPE_BIT
+    frame = frame_with(ALL_GATES_OPEN, volumes)
+    assert not ym_capture.channel_sounds(frame, channel)
+    assert ym_capture.channel_sounds(frame, channel, envelope_is_level=True)
+    # ...and the gate still has the last word, under either policy.
+    shut = frame_with(ALL_GATES_SHUT, volumes)
+    assert not ym_capture.channel_sounds(shut, channel, envelope_is_level=True)
+
+
+def test_audible_frames_threads_the_envelope_policy():
+    """The count is `channel_sounds` per frame, policy and all — not a second, fixed rule."""
+    envelope = frame_with(ALL_GATES_OPEN, [ym_capture.VOLUME_ENVELOPE_BIT, 0, 0])
+    silent = frame_with(ALL_GATES_OPEN, [0, 0, 0])
+    assert ym_capture.audible_frames([envelope, silent]) == 0
+    assert ym_capture.audible_frames([envelope, silent], envelope_is_level=True) == 1
+
+
+@pytest.mark.parametrize("channel", range(ym_capture.CHANNELS))
+def test_gate_open_is_the_exported_half_of_the_rule(channel):
+    """The gate test callers reuse is the one `channel_sounds` runs, at the chip's own bit pair."""
+    assert ym_capture.gate_open(frame_with(ALL_GATES_OPEN, [0, 0, 0]), channel)
+    assert not ym_capture.gate_open(frame_with(ALL_GATES_SHUT, [0, 0, 0]), channel)
+    tone_only = ALL_GATES_SHUT & ~(1 << channel)
+    noise_only = ALL_GATES_SHUT & ~(1 << (channel + ym_capture.NOISE_MIXER_SHIFT))
+    assert ym_capture.gate_open(frame_with(tone_only, [0, 0, 0]), channel)
+    assert ym_capture.gate_open(frame_with(noise_only, [0, 0, 0]), channel)
 
 
 @pytest.mark.parametrize("channel", range(ym_capture.CHANNELS))

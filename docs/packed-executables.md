@@ -135,6 +135,73 @@ Worked on Joust: `JOUSTS.CTE` (37 KB, entropy 6.95) → `JOUST.PRG` (114 KB, ent
 (`PrgLoader`, no memory dump needed). Use Hatari when the packer is unknown/complex or
 self-modifying; use a static depacker when you can read the algorithm.
 
+### Gamex hard-disk installs: a stub-served container
+
+A hard-disk conversion of a floppy game has to answer the game's file opens without a floppy, and
+the shape the Gamex/"PP" releases use for that is worth recognising because it hides the payload in
+a place a first look does not check. Flying Shark (Firebird 1988; `projects/flyingshark`) is the
+worked example, and the same three parts recur:
+
+- A **stub PRG whose TEXT is the wrapper and whose DATA is the packed game.** `FILES/FSLA` is
+  24,790 bytes of which the TEXT is only `0x698`; everything behind it is one Gamex-LZ stream. So
+  `prg_dis` on the file reads a clean, small, unremarkable program and reports low entropy — the
+  packed part never shows, because it is DATA. **Run `depack_gamex.py` on a wrapper even when it
+  disassembles cleanly**: its stream scan walks past the stub and finds the payload where it lives
+  (offset `0x6d4` here → a 50,358-byte PRG, text `0x59f4`, 1563 relocations).
+- A **container of every file the game opens, concatenated with no per-file headers** — 600,440
+  bytes in `FILES/FRD`. The lengths are not in it: the stub carries a directory of fixed 16-byte
+  entries (a 12-byte NUL-padded name, then a be32 start offset), a file ends where the next entry
+  starts, and the last entry is a terminator whose start is the container's own length. Parse the
+  directory out of the stub — it is at a fixed TEXT offset and runs to the end of TEXT, which is
+  exactly the bound the stub's own name matcher uses — rather than copying the file list into your
+  tool.
+- A **`trap #1` hook that serves GEMDOS out of that container.** The stub stores the current file's
+  start and length **into its own instruction stream** (as the immediates of the Fread routine),
+  answers Fopen with a fixed handle, and passes anything it does not implement to the vector it
+  saved. Its Fopen skips the first two characters of the name before matching, which is the tell
+  that the game asks for its files by a **relative path with a one-letter directory** — `A\NAME`.
+
+That last point is what makes the payload runnable without any of the wrapper: put the depacked PRG
+in a folder with the container's files in a subdirectory named as the game spells it, and TOS's own
+GEMDOS answers the same opens the hook was faking. Flying Shark **plays** that way under plain
+TOS 1.04 with no Gamex runtime present at all — title, then its attract cycle over a live scrolling
+level (`projects/flyingshark/tools/unpack_dist.py` builds the folder, its `boot_shots.py` boots it).
+
+**Put the program in `AUTO\`, not at the folder's root.** TOS runs `\AUTO\*.PRG` on the boot drive
+before it loads the desktop, so the program gets the lowest TPA the machine has; started from the
+desktop it loads several tens of KB higher. That matters more than it sounds for a game of this era,
+because such a game typically asks for a screen at a FIXED address and builds its buffers downwards
+from `Physbase` without regard to where it was itself loaded. Flying Shark sets `$70000/$78000` and
+carves a scroll ring down to `$58800`; its own `0x4aede` of text+data+bss therefore only clears that
+ring if its TEXT lands at or below `$d922`. From `AUTO\` it loads at `$aa56` and plays; from the
+desktop it loads at `$12596`, the ring lands on top of the music driver it just read in, and it dies
+on an illegal instruction a second later — a symptom that looks like a missing deprotection patch
+and is nothing of the kind. **When a depacked payload draws one screen and then crashes, check the
+load address against its own buffer arithmetic before you go looking for protection.**
+
+Three habits that run generalises.
+
+**A boot capture has to be recognised, not timed.** Where the title lands in wall-clock time is the
+host's business, and the window here is *one or two emulated seconds* wide because the picture is
+the second file loaded. Anchoring on "every colour of the title file's own palette is on screen at
+once" separates the title (15/15) from the TOS desktop (5/15) and from a blank screen (1/15) with
+nothing to tune. Compare in the ST's 3-bit channel space: Hatari's 8-bit expansion of a colour word
+is not `st_pixels`' (73 vs 72), so a literal RGB comparison matches only black.
+
+**To photograph a window that narrow, widen it: `hatari --slowdown N` (1–30)** multiplies the
+per-VBL wait, so the whole timeline stretches by N while the machine still executes everything it
+would have. It costs a proportionally longer boot and nothing else, and it is the difference between
+a run that captures the title every time and one that captures it when the host happens to be busy.
+Two anchors that look better and are not: polling RAM for the program's TEXT is late (it is in
+memory seconds before it draws) and slow (a 1 MB `savebin` is a debugger stop per poll); and
+**Hatari's `--trace` file is BUFFERED**, so a live wait on a trace line fires long after the event —
+by the time the second file's `Fopen` reached the host, all eight were in the file and the program
+had crashed. Keep the trace, read it afterwards for the load order, never wait on it.
+
+**A wrapper's runtime patches are a finding.** Flying Shark's stub pokes three sites in the depacked
+image before jumping to it; reading which ones says which are the release's cheat options and which
+the game needs. See `projects/flyingshark/notes/loader.md`.
+
 ## When the wrapper ENCRYPTS instead of crunching
 
 Not every wrapper is a cruncher. A protection wrapper may leave the program at its original length

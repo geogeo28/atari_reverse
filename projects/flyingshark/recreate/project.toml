@@ -1,0 +1,47 @@
+# Binds the shared differential harness (tools/recreate_kit) to this game.
+# Read by recreate_kit.project.load(); paths are relative to this file's directory.
+name       = "flyingshark"
+prg        = "../bin/FLYSHARK.PRG"
+names      = "../names.txt"
+lib        = "build/libflyingshark.so"
+load_base  = 0x10000     # matches PrgLoader / run.sh default (see CLAUDE.md); ../names.txt
+                         # addresses are Ghidra addresses at this base, so it must not move
+image_size = 0x100000    # 1 MiB, and it must equal os.h's OS_IMAGE_SIZE: program (text 0x59f4,
+                         # data 0x6442, bss 0x3f0a8 -> ends 0x5aede) + the screen ring the fixture
+                         # places at 0x60000 + test/abi.py's scratch map + the TOS model's
+                         # staged-file table at 0xbf000 + the stack at the top
+
+# Flying Shark's bss runs to 0x5aede, covering the TOS model's Malloc arena (os.h's
+# OS_HEAP_BASE_DEFAULT = 0x20000) — in fact three of the four HSC tile banks and the whole sound
+# module live inside it. That is harmless here because the game never allocates, and the claim is
+# established by an exhaustive BYTE SCAN of the whole .PRG (header, text and data, at EVERY
+# alignment) rather than by reading a disassembly listing, whose linear sweep desyncs on data and
+# silently drops or invents trap sites (see docs/m68k-disassembly.md). Measured 2026-09-07 over
+# ../bin/FLYSHARK.PRG (50,358 bytes; text 0x59f4, data 0x6442):
+#
+#   * the byte pattern `3f 3c 00 48` (`move.w #$48,-(a7)` = GEMDOS Malloc) occurs ZERO times in
+#     the file, at any alignment. So does `3f 3c 00 4a` (Mshrink). There is no other spelling to
+#     look for: every GEMDOS call this program makes pushes its selector as an in-line `3f3c`
+#     immediate, and there is no register-loaded selector anywhere (below);
+#   * `4e41` (trap #1, GEMDOS) occurs 14 times. TWO of them (0x1188d, 0x124b5) are at ODD
+#     addresses, so they cannot be instructions at all — a 68000 fetches only on word boundaries;
+#   * each of the twelve EVEN sites is immediately preceded by its own `3f3c <sel>` push, and the
+#     twelve selectors are: 0x3d Fopen (0x10c14, 0x10c6c), 0x3f Fread (0x10c30), 0x3e Fclose
+#     (0x10c42, 0x10c82), 0x20 Super (0x14bfa) and 0x02 Cconout (0x115a2 and the five VT52 sites
+#     0x149ba/0x149c4/0x149ce/0x149d8/0x149ea). Nothing else;
+#   * the whole file holds seventeen distinct `3f3c` immediates, and every one is accounted for as
+#     a GEMDOS/BIOS/XBIOS selector or an argument push: 0x00/0x02/0x03/0x04/0x05/0x06/0x14/0x1b/
+#     0x20/0x22/0x25/0x38/0x3d/0x3e/0x3f/0x59/0xffff.
+#
+# So no modeled Malloc block can ever be handed out on top of the program. The claim is also
+# enforced per run: see harness._vet_os_memory_map() and emu._vet_no_malloc_over_program() under
+# tools/recreate_kit/, and test/test_heap_guard.py, which drives that guard here.
+tos_malloc_unused = true
+
+# The other two fixed regions need no waiver and are clear by inspection:
+#   * the staged-file table / staging area (0xbf000 / 0xc0000) sit above the program's 0x5aede end,
+#     above the screen ring (top 0x87600) and above test/abi.py's scratch map (top 0xb1000);
+#   * the harness-poked input block (0x600..0x65f) sits below load_base 0x10000, so
+#     `tos_poked_input_unused` is not a question here. boot_init's Kbdvbase call WOULD write into
+#     it (KBDVBASE+0x18, the joyvec slot) — which is why test/conftest.py's boot slice stops one
+#     instruction short of that call; see its docstring.

@@ -13,9 +13,15 @@ workspace's one synth, but it lives inside a reconstruction rather than in `tool
 imports it and hands `write_wav` the float track. That keeps this module to the standard library
 plus numpy, which is what its callers already need.
 
-PENDING MIGRATION. `projects/bubbleghost/tools/extract_audio.py` is the only caller today;
+PENDING MIGRATION. `projects/bubbleghost/tools/extract_audio.py` and
+`projects/flyingshark/tools/extract_audio.py` are the callers today;
 `projects/zynaps/tools/extract_audio.py` and `projects/wonderboy/tools/extract_audio.py` still hold
 verbatim copies of these functions and are the two files left to move over.
+
+WHAT IS THE CALLER'S, not the chip's: whether a channel handed to the envelope generator is making a
+sound. That is a property of the driver being captured — Flying Shark's effects hold channel C in
+envelope mode and Bubble Ghost's engine never starts a generator at all — so it is `channel_sounds`'s
+`envelope_is_level` argument rather than a rule this module picks.
 """
 import math
 import struct
@@ -68,27 +74,42 @@ def fold(shadow, writes):
     return touched
 
 
-def channel_sounds(frame, channel):
-    """Is `channel` audible in `frame`? A gate open, and a volume that is not silence.
+def gate_open(frame, channel):
+    """Is either of `channel`'s two mixer gates open? They are active LOW.
 
-    Bit 4 of a volume register selects the ENVELOPE generator rather than the 4-bit level, so a
-    caller whose driver never triggers the envelope reads such a channel as silent however large the
-    byte is — which is why the level is not simply masked to four bits and compared.
-
-    A channel with BOTH gates closed is silent too, and that is the chip: it holds the DAC at a
-    constant level, which is DC and not a sound.
+    Exported because it is half of the audibility rule and a caller with its own envelope policy
+    needs exactly this bit of the chip's decode — copying the two lines is how a wrong
+    `NOISE_MIXER_SHIFT` gets a second home.
     """
-    volume = frame[PSG_VOLUME_A_REG + channel]
-    if volume & VOLUME_ENVELOPE_BIT or not volume & VOLUME_LEVEL_MASK:
-        return False
-    mixer = frame[PSG_MIXER_REG]                                    # gates are active LOW
+    mixer = frame[PSG_MIXER_REG]
     return not (mixer >> channel) & 1 or not (mixer >> (channel + NOISE_MIXER_SHIFT)) & 1
 
 
-def audible_frames(frames):
-    """How many of `frames` would make a sound on the chip."""
+def channel_sounds(frame, channel, envelope_is_level=False):
+    """Is `channel` audible in `frame`? A gate open, and a volume that is not silence.
+
+    Bit 4 of a volume register selects the ENVELOPE generator rather than the 4-bit level, and what
+    that means for audibility is the CALLER'S DRIVER, not the chip: `envelope_is_level` false — the
+    default — reads such a channel as silent however large the byte is, which is right for a driver
+    that never triggers the generator and is why the level is not simply masked to four bits and
+    compared. A driver that DOES drive a channel through the envelope (Flying Shark's sound effects
+    hold channel C at volume 0x10 with a shape latched) passes true, and then an envelope-mode
+    channel with a gate open counts as sounding.
+
+    A channel with BOTH gates closed is silent either way, and that is the chip: it holds the DAC at
+    a constant level, which is DC and not a sound.
+    """
+    volume = frame[PSG_VOLUME_A_REG + channel]
+    if volume & VOLUME_ENVELOPE_BIT:
+        return envelope_is_level and gate_open(frame, channel)
+    return bool(volume & VOLUME_LEVEL_MASK) and gate_open(frame, channel)
+
+
+def audible_frames(frames, envelope_is_level=False):
+    """How many of `frames` would make a sound on the chip, under `channel_sounds`'s rule."""
     return sum(1 for frame in frames
-               if any(channel_sounds(frame, channel) for channel in range(CHANNELS)))
+               if any(channel_sounds(frame, channel, envelope_is_level)
+                      for channel in range(CHANNELS)))
 
 
 def peak_dbfs(level):
