@@ -5,8 +5,9 @@ function, rewrite it as readable C **proven byte-for-byte against the original m
 run that C back on a 68000. The tooling and the [documentation](docs/README.md) are game-agnostic —
 point them at any GEMDOS `.PRG`. **Four games are solved with them** and a fifth is under way.
 Every picture below was **drawn by the reconstruction**, not screenshotted from the original —
-with the two marked where they appear: Bubble Ghost's reconstruction is complete and verified, but
-it has no playable build yet, so its pictures come from the data files and the original binary.
+with the two marked where they appear: Bubble Ghost's reconstruction is complete and verified and
+boots to its menu, but it has not been play-tested, so its pictures come from the data files and the
+original binary.
 
 > **No game data is distributed here.** No `.PRG`, no data file, no disk image, no TOS ROM. Bring
 > your own copy; see [Credits & legal](#credits--legal).
@@ -65,13 +66,16 @@ Begins at the flux of the user's own floppy. **217 verified ranges · 4751 tests
 |:---:|:---:|
 | ![](assets/bubbleghost/title.png) | ![](assets/bubbleghost/menu-hatari.png) |
 
-**Reconstructed and verified; no playable build yet.** Its `.PRG` is not crunched but *encrypted*,
-keyed by a CRC of the disk's protection track, so the check cannot be patched out; the 16-bit key
-fell to an exhaustive search and the program now decrypts **statically**, with the protection also
-passing under Hatari from an original disk. **132 of its 134 functions named and all 132 verified
+**Reconstructed, verified, and it boots.** Its `.PRG` is not crunched but *encrypted*, keyed by a
+CRC of the disk's protection track, so the check cannot be patched out; the 16-bit key fell to an
+exhaustive search and the program now decrypts **statically**, with the protection also passing
+under Hatari from an original disk. **132 of its 134 functions named and all 132 verified
 byte-for-byte** against the original, in 1,895 tests · graphics and speech decoded out of the data
-files. What is left is `GHOST.LOA` — a second program it loads and calls — and a build that runs on
-a real ST.
+files. Those cores compile unmodified into `BUBBLE.PRG`, which **boots to the game's own menu under
+Hatari with a byte-identical framebuffer** against the original's at the same instruction — but it
+is **not yet play-tested** (the game is mouse-driven and a headless Hatari has no mouse motion), and
+nothing has run **on iron**. What is left is that, and `GHOST.LOA` — a second program it loads and
+calls.
 → [`projects/bubbleghost/README.md`](projects/bubbleghost/README.md)
 
 ---

@@ -52,6 +52,10 @@ POLL_SECONDS = 0.1
 FIFO_OPEN_SECONDS = 20.0
 FILE_WAIT_SECONDS = 30.0
 SHUTDOWN_SECONDS = 20.0
+# What a file the RUN writes may cost, as opposed to one the DEBUGGER writes: a program that has to
+# decrypt itself, load from a floppy and draw a menu before it writes anything spends emulated
+# minutes doing it, and emulation is real time.
+RUN_FILE_WAIT_SECONDS = 240.0
 # `loadbin` is asynchronous: the debugger returns before the write has landed, and a command sent
 # straight after it can be acted on first.
 POKE_SETTLE_SECONDS = 0.3
@@ -284,6 +288,47 @@ def action_file(directory, name, *commands, tail="cont"):
     path = Path(directory) / name
     path.write_text("".join(command + "\n" for command in commands) + tail + "\n")
     return f":file {path}"
+
+
+# The action files a settle chain writes. They are HOST paths, never on an emulated drive, so the
+# name matters only to a reader looking at a work directory.
+WAIT_ACTION_FILE = "wait%d.txt"
+
+
+def settle_chain(work, vblanks, clause, name_template=WAIT_ACTION_FILE):
+    """A `:file` clause that runs `clause` exactly `vblanks` vertical blanks after it is armed.
+
+    HATARI'S BREAKPOINT EXPRESSIONS HAVE NO ARITHMETIC. `b VBL > VBL + 4` is refused at the `+`
+    ("ERROR in parsed string", measured on 2.6.1), so "N vblanks from now" cannot be one
+    breakpoint. What DOES work is `b VBL > VBL`, because Hatari substitutes the expression's current
+    value on the right when the breakpoint is set — that is "the next vblank" — so N of them nested,
+    each arming the next, is N vblanks. `:once` on every one: a repeat would re-arm the chain.
+
+    WHY A CALLER WOULD WANT ITS OWN `name_template`: two chains armed in the same work directory
+    (one per side of a comparison) would otherwise overwrite each other's action files.
+    """
+    for step in range(vblanks):
+        clause = action_file(work, name_template % step, f"b VBL > VBL :once :quiet {clause}")
+    return clause
+
+
+def await_file(session, path, doing, deadline_seconds=RUN_FILE_WAIT_SECONDS,
+               poll_seconds=POLL_SECONDS):
+    """Wait for a file the RUN or the DEBUGGER writes; answer it, or None if it never appeared.
+
+    `HeadlessSession._await_file` is the DEBUGGER'S half — it raises, because a `savebin` that never
+    landed is a broken driver. This one answers None instead, because a program that never reached
+    the point where it writes is a RESULT a caller may want to report rather than an error: what did
+    not happen is more useful in a check's own words than in a traceback. The emulator is proved
+    alive on every poll either way, so a dead one is still an error.
+    """
+    deadline = time.monotonic() + deadline_seconds
+    while time.monotonic() < deadline:
+        if path.is_file() and path.stat().st_size:
+            return path
+        session.require_alive(doing)
+        session.wait(poll_seconds)
+    return None
 
 
 def poke_byte(address, value):

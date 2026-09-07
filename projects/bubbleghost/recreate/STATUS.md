@@ -75,6 +75,29 @@ the code says, and three of these were about what the code did not say at all.
 | three helpers copied into a third battery, one of them with the `rng` quietly dropped | `abi.trap_slot_noise` is the one home now |
 | two names for one GEMDOS basepage field across two batteries, pinned by nothing | `test_the_basepage_offsets_have_one_meaning_across_both_files` |
 
+## On target — what the .PRG proved, and what it could not
+
+`atari/` builds these cores into `BUBBLE.PRG` and runs them on a 68000
+(`atari/README.md`; the surfaces are `docs/on-target-execution.md`'s). **It is a different
+instrument from the differential and it found things the differential cannot**, so what it settled
+is recorded here beside the ledger it settled it against.
+
+| what the on-target run settled | which residual it was |
+|---|---|
+| `crt0_relocate_and_clear` establishes `A4_BASE` on a real machine, from a real basepage | "Verified — init" residual 2: the Mshrink was unmodeled off target. The .PRG makes the real call and the record carries GEMDOS's answer |
+| the whole menu is drawn, and its 32,000 displayed bytes are **byte-identical to the original's** | every "the video and colour calls are modeled as no-ops" residual in this file. The picture is now measured rather than assumed |
+| `Getrez` really answers, and the gate really branches on it | "Verified — init" residual 1: the model's constant. The record carries the arm the machine took |
+| the flush-then-blocking-read idiom is ONE LOOP again | the `Crawcin`/`Cnecin` row in "Model gaps": on target the read blocks and the machine answers, so the front end needs none of the slice boundaries the model forced |
+| `install_sound_vectors`' MFP write and the 200 Hz ISR both run — 350-360 ticks by the time the anchor is reached, and `atari/smoke.py` asserts only that the count is NON-ZERO, because the anchor's hold is a count of vertical blanks over a real floppy timeline. The surface is `STATE.BIN`'s `TIMER_C_TICKS`, and `atari/build.sh titleisr` is the control that reds it | the Timer C row in "Model gaps": the model fires no interrupts |
+| `play_voice`'s `jsr` into `GHOST.LOA` is a REAL CALL: the file is opened and read, the sample pointer poked into the loaded image at +0x1e is translated from an image offset to a machine address (`VOI_POINTER_MACHINE` in the record, asserted equal to `IMAGE_BASE + VOI_BUFFER_OFFSET`), and the `jsr` returns. **What the second program then DOES is not observed by anything**: the harness runs with `--sound off`, no surface reads the PSG or the MFP timer the LOA programs, and "the speech plays" is not a claim this build has evidence for | the `GHOST.LOA` row in "Not reconstructed": on target it is real memory and a real MFP |
+
+**AND WHAT IT COULD NOT.** Four XBIOS calls — `Setscreen`, `Setpalette`, `Setcolor`, `Vsync` — are
+answered `return 0` INSIDE `src/frontend.c`'s `xbios_trap_call`, with no `os_*` door under them, so
+no include-path seam can reach them: the target build reissues two of them a slice late and cannot
+reissue the other two at all. That is the largest thing the port owes these cores, and closing it is
+a KIT change plus a differential, not an `atari/` change. `atari/README.md`'s "Unpinned" carries the
+per-call cost.
+
 ## Model gaps — read this before picking a function
 
 The kit's TOS trap model (`tools/recreate_kit/TRAP_MODEL.md`) was built for the games before this

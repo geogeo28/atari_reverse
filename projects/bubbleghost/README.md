@@ -4,15 +4,28 @@ A ghost blows a fragile bubble through the rooms of a castle, past candles, fans
 title picture signs it *by C.Andreani* over *Copyright 1988, ACCOLADE INC. TM*. One 61 KB
 `GHOST.PRG` plus six data files on a single-sided floppy, written in **Alcyon/DRI C, small model**.
 
-**Status: fully named, and every named function reconstructed and verified.** The shipped
-executable was decrypted statically, the copy protection is understood and passes under Hatari, the
-graphics and speech are decoded out of the data files, and the whole program has been read —
-**132 of its 134 functions named, 203 globals, 161 plate comments** in `names.txt`. `recreate/`
-holds the C reconstruction: **all 132 of those functions are green under the differential harness**,
-byte-for-byte against the original 68000 code, across **1,895 tests**.
-[`recreate/STATUS.md`](recreate/STATUS.md) is the per-function ledger and says what the harness can
-and cannot see; what is left is `GHOST.LOA` — a second program with no address in this one — and
-five small regions of the two top-level routines that no slice may include.
+**Status: fully named, every named function reconstructed and verified, and the reconstruction
+BOOTS ON A 68000.** The shipped executable was decrypted statically, the copy protection is
+understood and passes under Hatari, the graphics and speech are decoded out of the data files, and
+the whole program has been read — **132 of its 134 functions named, 203 globals, 161 plate
+comments** in `names.txt`. `recreate/` holds the C reconstruction: **all 132 of those functions are
+green under the differential harness**, byte-for-byte against the original 68000 code, across
+**1,895 tests**. [`recreate/STATUS.md`](recreate/STATUS.md) is the per-function ledger and says what
+the harness can and cannot see; what is left is `GHOST.LOA` — a second program with no address in
+this one — and five small regions of the two top-level routines that no slice may include.
+
+**And it runs.** [`recreate/atari/`](recreate/atari/README.md) compiles those cores unmodified into
+`BUBBLE.PRG`, which boots TOS 1.04 under Hatari through the crt0, the GEM workstation, the six data
+files, the digitised speech, the presentation picture, the sprite bank and the sound driver, and
+draws the game's own menu — **byte-identical to the original's**, all 32,000 framebuffer bytes,
+measured against a dump of the shipped binary at the same point — **both sides photographed at the
+same instruction**, ours at the shim's anchor and the original's at the slice boundary right after
+it draws the same menu. `atari/smoke.py` is the gate: eight checks over the six surfaces of
+[`docs/on-target-execution.md`](../../docs/on-target-execution.md), with **three negative controls**
+(a colour register, a word of the staged program, the Timer C vector) each naming the surfaces it
+must redden, plus a bootable 720 KB floppy whose boot to the TOS desktop is checked too.
+**It is not play-tested**: the game is played with the mouse and Hatari's headless control protocol
+has no mouse motion of any kind, and nothing here has run on real hardware.
 
 > No game data is in this repository. `bin/` and `out/` are gitignored; bring your own disk.
 
@@ -108,9 +121,9 @@ loop. Formats and evidence: [`notes/assets_survey.md`](notes/assets_survey.md).
 
 ## Gallery
 
-**Neither picture below was drawn by a reconstruction** — there is none yet. The left one is
-`GHOST.PRE` decoded by `tools/extract_gfx.py`; the right one is the original binary, decrypted by
-its own wrapper inside Hatari.
+The left one is `GHOST.PRE` decoded by `tools/extract_gfx.py`; the right one is the original
+binary, decrypted by its own wrapper inside Hatari. **The reconstruction draws that second picture
+byte for byte** — `recreate/atari/smoke.py`'s framebuffer check is exactly that comparison.
 
 | `GHOST.PRE`, decoded from the file | the game's menu, past the protection |
 |:---:|:---:|
@@ -135,11 +148,14 @@ model gaps.
    as `while (Cconis()) Crawcin(); c = Cnecin();`, and the model's console is one queue the flush
    empties — so no run can cross a flush into the blocking read behind it, and the whole front end
    is verified as regions that each END at one. STATUS.md's "Model gaps" says what closing it needs.
-3. **A playable `.PRG`.** Everything the differential cannot see — the palette, the screen base, the
-   VDI's colour mapping, the font, `Vsync`, the text cards' timing — is invisible here by
-   construction, and the surface for all of it is an on-target run
-   ([`docs/on-target-execution.md`](../../docs/on-target-execution.md)). This project has no build
-   yet.
+3. **A seam for the XBIOS group, and a play-test.** `BUBBLE.PRG` exists and boots to the menu
+   ([`recreate/atari/README.md`](recreate/atari/README.md)), but `Setscreen`, `Setpalette`,
+   `Setcolor` and `Vsync` are swallowed INSIDE a verified core — `xbios_trap_call` answers each with
+   the model's `return 0`, and there is no `os_*` door under them — so the target build reissues
+   them a slice late and cannot reissue two of them at all. Closing that is a change to the cores,
+   verified by the differential. And nothing has played the game: Hatari's headless control protocol
+   has no mouse motion of any kind, and Bubble Ghost is played with the mouse, so `atari/run.sh` and
+   a person are the only discharge.
 
 The game is remarkably OS-friendly for 1987 — a **GEM application**: text, the bonus bar and every
 32×32 sprite blit go through the **VDI** (`trap #2`, `d0 = 0x73`), the input is the **mouse**

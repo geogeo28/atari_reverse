@@ -191,6 +191,56 @@ rm -f build/*.so && make test    # rebuild both libs and run the suite (-n auto)
 make guarded                     # the same suite over a PROT_NONE-bounded image (Darwin/BSD only)
 ```
 
+## On target
+
+[`atari/`](atari/README.md) compiles these cores — **unmodified, and `atari/build.sh` measures it
+rather than claiming it: `git` refuses a core that differs from its committed content or that git
+does not track, and five isolation gates refuse one that reaches into the shim** — into
+`BUBBLE.PRG`, and runs them on a 68000.
+
+```bash
+bash atari/build.sh title && python3 atari/smoke.py title   # the gate: 8 checks vs the original
+bash atari/build.sh titlefault && python3 atari/smoke.py titlefault   # one colour pen
+bash atari/build.sh titlepoke  && python3 atari/smoke.py titlepoke    # one word of the image
+bash atari/build.sh titleisr   && python3 atari/smoke.py titleisr     # no Timer C vector
+bash atari/build.sh title floppy && python3 atari/smoke.py floppy     # the bootable volume boots
+bash atari/build.sh play && bash atari/run.sh               # the whole program, for a person
+```
+
+**Both anchors are moments.** Ours is a PC in the shim, the original's is `menu_read_key_and_fold`
+@ `0x116c4` — the slice boundary right after `title_menu_open`, found by polling RAM for the
+decrypted plaintext and adding its load base. So the framebuffer comparison is two programs at one
+place in one program, not two waits.
+
+The seam is the INCLUDE PATH plus one omitted directory (the kit's own `src/`), exactly as in
+`projects/zynaps/recreate/atari`: `atari/shim_include/` shadows the kit's `os.h`, `hw.h` and `psg.h`
+so that every `os_*`, `psg_*` and `hw_*` door a core calls becomes a real trap or a real store. Three
+things about this build are not that one's, and each is argued in `atari/README.md`:
+
+* **it runs in USER mode**, because this is a GEM application and its AES and VDI calls are made
+  from the mode TOS expects them from — so `os_super` is the real trap here, and the three
+  supervisor-only stores the cores make go through a **`trap #9` gate**, which is the original's own
+  mechanism for exactly that problem;
+* **the crt0 really runs**: the target stages the FILE layout (`GHOST_PLAIN.PRG`) with a fabricated
+  basepage below it, so `crt0_relocate_and_clear` establishes A4 on the machine and the smoke pins
+  its answer at `0x24f1a`. That the two layouts agree is `test/test_image_model.py`'s proof, not a
+  new claim;
+* **one constant changes**, and it is the only change to what a verified core computes.
+  `xbios_trap_call` answers XBIOS `Logbase` with the kit's `OS_SCREEN_BASE` from inside a core with
+  no door under it, and the model's `0x8000` puts this program's room staging area at a negative
+  address — harmless off target only because every battery stages the two screen pointers itself.
+
+**What the on-target build does NOT have a seam for is the rest of the XBIOS group.** `Setscreen`,
+`Setpalette`, `Setcolor` and `Vsync` are `return 0` inside `src/frontend.c`'s `xbios_trap_call`, so
+the target reissues the first two at the composition boundary after the slice that would have made
+them and does not reissue the other two at all. Closing it means a KIT DOOR for the XBIOS group and
+a differential that covers it — a change to these cores, not to `atari/`.
+
+**And it has no seam for `Fopen`'s mode.** The kit's `os_fopen` takes `(mem, name_ptr)` and no mode,
+so `c_open` drops the original's `mode & 3` before the door and the target opens read-only — which
+is what every live caller in this program asks for, but a value the seam guesses rather than
+carries. Same shape of fix, same place: a kit door plus a case.
+
 ## Regenerating `include/init_globals_stream.h`
 
 `init_globals` @ 0x16d8e is 7,869 straight-line stores and its reconstruction is that stream as
