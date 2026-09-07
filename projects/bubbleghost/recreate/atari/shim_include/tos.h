@@ -114,12 +114,11 @@ uint32_t bg_super_gate(uint32_t operation, uint32_t operand, uint32_t value);
  * THE FLAG IS SET BY `bg_timer_c_tick` AND NOWHERE ELSE, so a door reached from user code always
  * reads 0. A flag wrongly left set would not be a quiet wrong answer either: the next user-mode
  * write to $ff8800 is a bus error, which `smoke.py`'s fault scan is. What has NO surface on target
- * is the byte pair itself — see ../STATUS.md, "Performance". */
+ * is the byte pair itself — see ../STATUS.md, "Performance".
+ *
+ * WHAT THE FLAG SELECTS is `psg.h`'s own two stores rather than a routine here: an untrapped write
+ * is a `move.b` pair and nothing else, and a `jsr` around it was 90 of its 100 cycles. */
 extern volatile uint8_t bg_in_timer_c;
-/* BOTH ARGUMENTS ARE LONGWORDS, as `bg_super_gate`'s three are and for the same reason: the routine
- * reads `8(%sp)` with a `move.l`, and a prototype spelling the value `uint8_t` would be right only
- * for as long as the ABI keeps promoting a sub-`int` argument to one. */
-void bg_psg_write_super(uint32_t reg, uint32_t value);
 
 /* ---- machine primitives the C cannot spell ---------------------------------------------------- */
 

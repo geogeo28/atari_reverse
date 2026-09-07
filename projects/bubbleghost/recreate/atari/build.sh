@@ -152,6 +152,48 @@ for GATE in PSG_WRITE PSG_READ STORE8; do
 done
 echo ">> the supervisor gate's 3 operations agree between tos.h and bubble_os.s"
 
+# ---- ...and the chip's two ports are ONE set of numbers in two languages ------------------------
+# The trapped write is bubble_os.s's `bg_super_gate_entry` and the ISR's untrapped one is
+# `psg_untrapped_write` in shim_include/psg.h; they address the same chip, so the port and the data
+# displacement are scraped from both and compared. A disagreement here writes a sound register to
+# whatever else lives at the address. (`PSG_REG_MASK` is deliberately NOT in this loop: only the
+# trapped door masks, for the reason psg.h's header gives.)
+for PORT in PSG_SELECT:BG_PSG_SELECT PSG_DATA:BG_PSG_DATA_OFFSET; do
+  FROM_S=$(sed -n "s/^ *${PORT%%:*} *= *\([0-9a-fA-FxX]*\).*/\1/p" "$HERE/bubble_os.s")
+  FROM_H=$(sed -n "s/^#define ${PORT##*:}  *\([0-9a-fA-FxX]*\)u.*/\1/p" "$HERE/shim_include/psg.h")
+  # An EMPTY scrape is refused first, because `printf '%d' ""` is 0 with exit status 0 on the bash
+  # this runs under — two missed patterns would otherwise agree at zero and the gate would print its
+  # green line over nothing. Past that, both are normalised to decimal so 0x2 and 2 compare equal,
+  # and a printf that REFUSES catches the other rot ("0x" out of a pattern that lost its digits).
+  [ -n "$FROM_S" ] && [ -n "$FROM_H" ] || {
+    echo "ERROR: ${PORT%%:*} scraped EMPTY from bubble_os.s ('$FROM_S') or ${PORT##*:} from"
+    echo "       shim_include/psg.h ('$FROM_H') — the pattern has stopped matching, and a clean"
+    echo "       report from it would mean nothing"; exit 1; }
+  VALUE_S=$(printf '%d' "$FROM_S" 2>/dev/null) && VALUE_H=$(printf '%d' "$FROM_H" 2>/dev/null) || {
+    echo "ERROR: ${PORT%%:*} scraped as '$FROM_S' from bubble_os.s and ${PORT##*:} as '$FROM_H' from"
+    echo "       shim_include/psg.h, and at least one is not a number — the pattern is matching only"
+    echo "       part of what it should, and a clean report from it would mean nothing"; exit 1; }
+  [ "$VALUE_S" = "$VALUE_H" ] || {
+    echo "ERROR: the PSG port is $FROM_S in bubble_os.s (${PORT%%:*}) and $FROM_H in"
+    echo "       shim_include/psg.h (${PORT##*:}). The trapped and untrapped writes would reach"
+    echo "       different addresses."; exit 1; }
+done
+# ...and that the untrapped door's BODY is those two macros and nothing else: exactly two volatile
+# byte stores, select before data. The equality above pins the numbers; this pins that they are what
+# the store reaches, which is the half no other surface has — the differential compiles the kit's
+# psg.c and not this header, and STATE.BIN records nothing about the chip. A rotted `sed` scrapes
+# empty, which is not the expected text either, so the check fails closed.
+PSG_STORES=$(sed -n '/^static inline void psg_untrapped_write/,/^}/p' "$HERE/shim_include/psg.h" \
+             | sed -n 's/^ *\*(volatile uint8_t \*)\(.*\) = .*;$/\1/p')
+PSG_STORES_EXPECTED='BG_PSG_SELECT
+(BG_PSG_SELECT + BG_PSG_DATA_OFFSET)'
+[ "$PSG_STORES" = "$PSG_STORES_EXPECTED" ] || {
+  echo "ERROR: psg_untrapped_write's body is not the two volatile byte stores this gate knows."
+  echo "       expected:"; echo "$PSG_STORES_EXPECTED" | sed 's/^/         /'
+  echo "       scraped:";  echo "$PSG_STORES"          | sed 's/^/         /'
+  echo "       The 200 Hz ISR reaches the chip through this and nothing else watches it."; exit 1; }
+echo ">> the chip's 2 ports agree between psg.h and bubble_os.s, and are what the ISR's store uses"
+
 # ---- the trap-register scan ---------------------------------------------------------------------
 # docs/on-target-execution.md class 3's register half: the one hardware-only bug class no
 # differential in this workspace can see. The count is asserted so a rotted regex reds rather than
@@ -209,6 +251,37 @@ for source in $CORES; do
   $CC $CFLAGS $DEF -c "$source" -o "$object"
   CORE_OBJECTS="$CORE_OBJECTS $object"
 done
+
+# ---- the sound tick is ONE symbol, because atari/profile.py measures it as one -------------------
+# `SOUND_TICK_SYMBOLS` sums the profiler's per-ADDRESS rows over `timer_c_sound_isr`'s range, which
+# is [its symbol, the next symbol above it). Every helper the 200 Hz handler runs is `static` and
+# GCC inlines all of them, so that range IS the handler. profile.py refuses a name that VANISHES
+# from the map and cannot see one that APPEARS — and a helper that stopped being inlined would both
+# take its own cycles out of the sum and cut the handler's range short at itself, so the tick would
+# read low twice over with nothing red. `static inline` is a hint; this is the assertion.
+# NOT `nm | grep -q`: this file runs under `set -o pipefail`, `grep -q` closes the pipe on its FIRST
+# match, and the SIGPIPE that kills `nm` then makes the pipeline's status 141 — so the one case the
+# gate exists to catch is the one case the `&&` does not fire on. Measured here, with the symbol
+# present and the gate green (2026-09-07). `grep -c` reads the whole stream instead.
+MUST_STAY_INLINED="step_swept_envelope step_triangle_lfo psg_untrapped_write"
+OBJECT_TEXT_SYMBOLS=$(m68k-elf-nm $CORE_OBJECTS $SHIM_OBJECTS | awk '$2 == "t" || $2 == "T" {print $3}')
+for NAME in $MUST_STAY_INLINED; do
+  OUT_OF_LINE=$(printf '%s\n' "$OBJECT_TEXT_SYMBOLS" | grep -c "^$NAME\$" || true)
+  [ "$OUT_OF_LINE" = "0" ] || {
+    echo "ERROR: $NAME has an out-of-line body in this build ($OUT_OF_LINE object(s)). It is one of"
+    echo "       the routines atari/profile.py's sound-tick range assumes is inlined into"
+    echo "       timer_c_sound_isr, so the tick would now be measured over less code than it runs."
+    echo "       Either restore the inlining or add $NAME to SOUND_TICK_SYMBOLS and re-measure."
+    exit 1; }
+done
+# ...and the gate is only worth its line if it can see a symbol at all, so the scrape's own output is
+# checked against a name that must always be there.
+SCRAPE_CONTROL=$(printf '%s\n' "$OBJECT_TEXT_SYMBOLS" | grep -c "^timer_c_sound_isr$" || true)
+[ "$SCRAPE_CONTROL" = "1" ] || {
+  echo "ERROR: the inlining gate's nm scrape names timer_c_sound_isr $SCRAPE_CONTROL time(s), not"
+  echo "       once — it is reading something other than this build's objects, and a clean report"
+  echo "       from it would mean nothing"; exit 1; }
+echo ">> the sound tick's helpers are inlined ($(echo $MUST_STAY_INLINED | wc -w | tr -d ' ') names)"
 
 # ---- the duplicate-symbol gate ------------------------------------------------------------------
 # The linker does object to a collision, but as `multiple definition of 'x'` in the middle of a

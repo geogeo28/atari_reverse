@@ -280,32 +280,35 @@ MINIMUM_WINDOW_SPAN = 0.9
 # them must resolve — one that stopped existing (GCC inlined it, `../names.txt` was re-cut) would
 # otherwise drop that routine's cycles in silence, and `symbol_ranges` refuses instead.
 #
-# OURS IS SPELT FINELY BECAUSE THE LINK SPELT IT FINELY. `sound_voice_tick`, the three `write_*`
-# routines and `key_off` are all `static` and GCC inlined them into `timer_c_sound_isr`, so they
-# carry no address range of their own; what survives beside it is the two step routines it did not
-# inline, the chip writes, and the shim's own entry and tick.
+# OURS IS ONE CORE RANGE PLUS THE SHIM'S, BECAUSE THE LINK SPELT IT THAT WAY. Every helper the ISR
+# runs — `sound_voice_tick`, the two step routines, the three `write_*`, `key_off` — is `static` and
+# GCC inlines all of them into `timer_c_sound_isr`, so none carries an address range of its own;
+# what survives beside it is the shim's own entry, tick and $484 store.
 #
 # THE LISTS ARE HAND-MAINTAINED AGAINST WHAT THE MAPS SAY TODAY, and that is a live hazard in ONE
-# direction: a name that VANISHES is refused below, but a name that APPEARS is not noticed. Every
-# other helper the ISR runs — `sound_voice_tick`, the three `write_*`, `key_off` — is `static` and
-# inlined right now; a core edit or an `-O` change that stopped inlining one would take its cycles
-# out of the sum AND cut `timer_c_sound_isr`'s own range short at the new symbol, so the tick would
-# read low twice over with nothing red. The shipped side has the same shape for the other reason:
+# direction: a name that VANISHES is refused below, but a name that APPEARS is not noticed. A core
+# edit or an `-O` change that stopped inlining one of those helpers would take its cycles out of the
+# sum AND cut `timer_c_sound_isr`'s own range short at the new symbol, so the tick would read low
+# twice over with nothing red. The shipped side has the same shape for the other reason:
 # its one range runs to the next `fn` line in a HAND-EDITED map, so a naming sweep inside
 # [0x1459a, 0x148ea) would truncate it. `sound_tick_cost` reports the BYTES each side's ranges
 # cover, which is the cheap thing a reader can hold against the last run.
 #
-# THE TRAP #9 GATE IS STILL NAMED THOUGH THE TICK NO LONGER TAKES IT. `bg_psg_write_super` is the
-# path the ISR's chip writes take now (shim_include/psg.h), and what is left in `bg_super_gate` and
-# `trap9_psg_handler` is USER-mode traffic: about two cycles a tick, measured. They stay in the list
-# so that a build which put those writes back through the gate would show the whole cost here rather
-# than appear to have got faster.
+# THE TRAP #9 GATE IS STILL NAMED THOUGH THE TICK NO LONGER TAKES IT. What is left in
+# `bg_super_gate` and `trap9_psg_handler` is USER-mode traffic: about two cycles a tick, measured.
+# They stay in the list so that a build which put the ISR's writes back through the gate would show
+# the whole cost here rather than appear to have got faster.
+#
+# THREE NAMES THAT USED TO BE HERE ARE GONE BECAUSE THE CODE IS (wave 3a, ../STATUS.md): the two
+# step routines are now inlined into `timer_c_sound_isr`, whose range therefore covers them, and the
+# ISR's chip write is a `move.b` pair the compiler puts inline where `bg_psg_write_super` used to be
+# `jsr`ed. `bg_write_byte` STAYS: the ISR's $484 mirror still calls it, and dropping a name whose
+# cycles the tick still spends would make the tick read cheaper than it is.
 SOUND_TICK_SYMBOLS = {
     OURS: ("bg_timer_c_entry",                                     # the autovector entry, bubble_os.s
            "bg_timer_c_tick",                                      # ...and bubble_main.c's counter
-           "timer_c_sound_isr", "step_swept_envelope", "step_triangle_lfo",       # src/sound.c
-           "bg_psg_write_super",                                   # the chip writes, untrapped
-           "psg_gate", "trap9_psg_handler",                        # ...and the gate they used to take
+           "timer_c_sound_isr",                                    # src/sound.c, steps inlined
+           "psg_gate", "trap9_psg_handler",                        # the gate those writes used to take
            "bg_super_gate", "bg_super_gate_entry",                 # the `trap #9` under it
            "bg_write_byte"),                                       # the conterm byte the ISR clears
     SHIPPED: ("timer_c_sound_isr",                                 # 0x1459a, the whole handler

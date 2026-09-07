@@ -475,21 +475,11 @@ bg_super_gate_entry:
 9:  movea.l (%sp)+,%a0
     rte
 
-| ---- the same PSG write, WITHOUT the trap ------------------------------------------------------
-| For a caller that is already supervisor with the MFP masked — which is the sound ISR and nothing
-| else (shim_include/tos.h argues it, shim_include/psg.h's door decides it). The constants are the
-| gate's own, ten lines up, so the two paths cannot drift apart in the address they write or the
-| four bits they decode; what is missing here against the gate is only the `trap`, the IPL raise the
-| caller already has, and the read-back no writer looks at.
-    .globl  bg_psg_write_super
-bg_psg_write_super:
-    move.l  4(%sp),%d0              | the register number...
-    move.l  8(%sp),%d1              | ...and the byte for it
-    lea     PSG_SELECT,%a0
-    andi.l  #PSG_REG_MASK,%d0
-    move.b  %d0,(%a0)
-    move.b  %d1,PSG_DATA(%a0)
-    rts
+| The SAME PSG write WITHOUT the trap — the sound ISR's, ~3 a tick — is not a routine here at all:
+| it is `psg_untrapped_write` in shim_include/psg.h, two `move.b`s the compiler puts inline, because a
+| `jsr` with two stack arguments around them cost 100 cycles a write where the stores cost ~40. The
+| port and its data displacement above are the two that header spells, and build.sh pins the two
+| spellings equal; PSG_REG_MASK stays here alone, because only the TRAPPED door masks.
 
 | ---- the Timer C entry -------------------------------------------------------------------------
 | IT DOES NOT `rte`, AND THAT IS THE ORIGINAL'S SHAPE. `timer_c_sound_isr` @ 0x1459a ends by pushing

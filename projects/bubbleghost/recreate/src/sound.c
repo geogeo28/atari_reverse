@@ -48,28 +48,43 @@ static uint32_t swap_halves(uint32_t value) {
 }
 
 /* ================================================================================================
- * Reading and writing a voice record, whose base is an image ADDRESS rather than a host pointer
+ * Reading and writing a voice record — THROUGH ONE CURSOR, the way the handler's `a0` does
  *
- * The interrupt handler takes its record base out of the image (`SND_ISR_TOP_VOICE`), so the
- * address is computed the way the 68000 computes it — 32-bit and wrapping — and only then turned
- * into an index. `make guarded` is the surface for that: a base or a stride one record out leaves
- * the image and faults instead of quietly reading the host heap.
+ * The original holds the record's base in `a0` for the whole of a voice's tick and reaches every
+ * field at `d16(a0)`, which is one instruction and no arithmetic. So does this: a caller resolves
+ * the base ONCE, as a host pointer, and the accessors below take that pointer.
+ *
+ * WHERE THE 68000's ADDRESS WRAP STILL LIVES, since these no longer carry it. Every ADDRESS this
+ * file computes is still built in 32 bits with `addr_add`, and there are three of them: the record
+ * base (`voice_record`, whose `adda.w` of a sign-extended word product is what an unchecked voice
+ * index rides), the interrupt handler's own cursor as it walks DOWN one record a voice, and the
+ * volume table's SIGNED word index. A pointer is formed from each only once it is final. What is
+ * left for the accessors below is a field's own displacement, which is 0..0x8a off a base that is
+ * already an image address and so can carry nothing round the top of the map.
+ *
+ * `make guarded` is the surface for a base or a stride one record out — it leaves the image and
+ * faults instead of quietly reading the host heap. It is NOT the surface for an offset one FIELD
+ * out: 0x8c bytes on either side of a record is the neighbouring record, which is image the
+ * differential compares rather than memory a guard page catches. Wonder Boy's
+ * `include/actor_view.h` carries `REC_WITHIN_RECORD`, a host-only assert for exactly that class;
+ * this file has the same shape and not that guard, and REGISTERING the second user is what this
+ * paragraph is for (`include/common.h`'s "the kit hoist trigger is met" note is the precedent).
  * ============================================================================================= */
 
-static int16_t field_w(const uint8_t *image, uint32_t record, unsigned offset) {
-    return (int16_t)be16(image + addr_add(record, offset));
+static int16_t record_w(const uint8_t *record, unsigned offset) {
+    return (int16_t)be16(record + offset);
 }
 
-static int32_t field_l(const uint8_t *image, uint32_t record, unsigned offset) {
-    return (int32_t)be32(image + addr_add(record, offset));
+static int32_t record_l(const uint8_t *record, unsigned offset) {
+    return (int32_t)be32(record + offset);
 }
 
-static void set_field_w(uint8_t *image, uint32_t record, unsigned offset, int16_t value) {
-    wr16(image + addr_add(record, offset), (uint16_t)value);
+static void set_record_w(uint8_t *record, unsigned offset, int16_t value) {
+    wr16(record + offset, (uint16_t)value);
 }
 
-static void set_field_l(uint8_t *image, uint32_t record, unsigned offset, int32_t value) {
-    wr32(image + addr_add(record, offset), (uint32_t)value);
+static void set_record_l(uint8_t *record, unsigned offset, int32_t value) {
+    wr32(record + offset, (uint32_t)value);
 }
 
 /* Where voice `voice`'s record lives. `muls.w #$8c,dn` builds a 32-bit product and `adda.w dn,a0`
@@ -82,8 +97,8 @@ static uint32_t voice_record(int16_t voice) {
 }
 
 /* `addq.w #1,n(a0)` on a phase word: attack becomes decay, decay becomes the sustain hold. */
-static void advance_phase(uint8_t *image, uint32_t record, unsigned phase_offset) {
-    set_field_w(image, record, phase_offset, (int16_t)(field_w(image, record, phase_offset) + 1));
+static void advance_phase(uint8_t *record, unsigned phase_offset) {
+    set_record_w(record, phase_offset, (int16_t)(record_w(record, phase_offset) + 1));
 }
 
 /* ================================================================================================
@@ -138,18 +153,18 @@ uint8_t psg_gate(uint16_t reg, int16_t value, uint16_t mask) {
  * its three siblings this one indexes the record array with whatever it is given, which is why
  * `voice_record` models the `adda.w` wrap rather than assuming 0..2. */
 int16_t sound_voice_priority(const uint8_t *image, int16_t voice) {
-    return field_w(image, voice_record(voice), SND_VC_PRIORITY);
+    return record_w(image + voice_record(voice), SND_VC_PRIORITY);
 }
 
 /* sound_stop_voice @ 0x144c4 — hard silence: the voice becomes free, idle, and mute. */
 void sound_stop_voice(uint8_t *image, int16_t voice) {
-    uint32_t record;
+    uint8_t *record;
 
     if (voice < 0 || voice > (int16_t)(SND_VOICES - 1))
         return;
-    record = voice_record(voice);
-    set_field_w(image, record, SND_VC_PRIORITY, 0);
-    set_field_w(image, record, SND_VC_DURATION, 0);
+    record = image + voice_record(voice);
+    set_record_w(record, SND_VC_PRIORITY, 0);
+    set_record_w(record, SND_VC_DURATION, 0);
     psg_gate((uint16_t)PSG_REG_VOLUME((unsigned)voice), 0, PSG_GATE_MASK_UNREAD);
 }
 
@@ -157,15 +172,15 @@ void sound_stop_voice(uint8_t *image, int16_t voice) {
  * makes the handler's key-off path fire on the very next tick, which is what runs the release
  * phase of every machine that is still going. A voice that is already idle is left alone. */
 void sound_release_voice(uint8_t *image, int16_t voice) {
-    uint32_t record;
+    uint8_t *record;
 
     if (voice < 0 || voice > (int16_t)(SND_VOICES - 1))
         return;
-    record = voice_record(voice);
-    if (field_w(image, record, SND_VC_DURATION) == 0)
+    record = image + voice_record(voice);
+    if (record_w(record, SND_VC_DURATION) == 0)
         return;
-    set_field_w(image, record, SND_VC_DURATION, 1);
-    set_field_w(image, record, SND_VC_GATE, -1);
+    set_record_w(record, SND_VC_DURATION, 1);
+    set_record_w(record, SND_VC_GATE, -1);
 }
 
 /* sound_stop_all @ 0x14576. */
@@ -186,7 +201,7 @@ static int16_t allocate_voice(const uint8_t *image) {
     int16_t lower_of_first_two;
 
     while (voice < (int16_t)SND_VOICES
-           && field_w(image, voice_record(voice), SND_VC_DURATION) != 0)
+           && record_w(image + voice_record(voice), SND_VC_DURATION) != 0)
         voice++;
     if (voice < (int16_t)SND_VOICES)
         return voice;
@@ -209,53 +224,57 @@ static int16_t fold_note_into_table(int16_t note) {
 
 /* Copy a definition into the record it describes: def[1..55] land at record offsets 0x02..0x6e, so
  * a definition IS the record's first 0x70 bytes minus its duration word. */
-static void load_definition(uint8_t *image, uint32_t record, uint32_t definition) {
+static void load_definition(uint8_t *record, const uint8_t *definition) {
     for (unsigned word = 1; word < SND_DEF_WORDS; word++)
-        wr16(image + addr_add(record, 2u * word), be16(image + addr_add(definition, 2u * word)));
+        wr16(record + 2u * word, be16(definition + 2u * word));
 }
 
-static void clear_accumulators(uint8_t *image, uint32_t record) {
-    set_field_l(image, record, SND_VC_PITCH_LFO_ACC, 0);
-    set_field_l(image, record, SND_VC_PITCH_ENV_ACC, 0);
-    set_field_l(image, record, SND_VC_NOISE_LFO_ACC, 0);
-    set_field_l(image, record, SND_VC_NOISE_ENV_ACC, 0);
-    set_field_l(image, record, SND_VC_VOL_LFO_ACC, 0);
-    set_field_l(image, record, SND_VC_VOL_ENV_ACC, 0);
+static void clear_accumulators(uint8_t *record) {
+    set_record_l(record, SND_VC_PITCH_LFO_ACC, 0);
+    set_record_l(record, SND_VC_PITCH_ENV_ACC, 0);
+    set_record_l(record, SND_VC_NOISE_LFO_ACC, 0);
+    set_record_l(record, SND_VC_NOISE_ENV_ACC, 0);
+    set_record_l(record, SND_VC_VOL_LFO_ACC, 0);
+    set_record_l(record, SND_VC_VOL_ENV_ACC, 0);
 }
 
 /* Arm the tone half and return the mixer bit that has to be SET (a set bit turns the channel off).
  * A negative base period means "this voice makes no tone": the mixer bit goes up and the whole
- * pitch machine is switched off with it. */
-static uint16_t arm_tone(uint8_t *image, uint32_t record, unsigned voice, int16_t note) {
+ * pitch machine is switched off with it.
+ *
+ * `image` is here only to reach `snd_note_period`, whose index is a sign-extended word and so is
+ * address arithmetic; `record` points INSIDE it and is what this routine writes through, so the
+ * `const` says which access path is read-only and not that the bytes do not change. */
+static uint16_t arm_tone(const uint8_t *image, uint8_t *record, unsigned voice, int16_t note) {
     int16_t period;
 
-    if (field_w(image, record, SND_VC_TONE_PERIOD) < 0) {
-        set_field_l(image, record, SND_VC_PITCH_LFO_LIMIT_HI, 0);
-        set_field_w(image, record, SND_VC_PITCH_PHASE, 0);
+    if (record_w(record, SND_VC_TONE_PERIOD) < 0) {
+        set_record_l(record, SND_VC_PITCH_LFO_LIMIT_HI, 0);
+        set_record_w(record, SND_VC_PITCH_PHASE, 0);
         return (uint16_t)PSG_MIXER_TONE_OFF(voice);
     }
     if (note >= 0) {
         int16_t slot = fold_note_into_table(note);
-        set_field_w(image, record, SND_VC_TONE_PERIOD,
-                    (int16_t)be16(image + addr_add(A_snd_note_period,
-                                                   sign_ext16((uint16_t)(2 * slot)))));
+        set_record_w(record, SND_VC_TONE_PERIOD,
+                     (int16_t)be16(image + addr_add(A_snd_note_period,
+                                                    sign_ext16((uint16_t)(2 * slot)))));
     }
     /* Both halves are non-negative here — the branch above guaranteed it — so the `asr.w #8` this
      * transcribes never sees a negative word. */
-    period = field_w(image, record, SND_VC_TONE_PERIOD);
+    period = record_w(record, SND_VC_TONE_PERIOD);
     psg_gate((uint16_t)PSG_REG_TONE_LOW(voice), (int16_t)(period & 0xff), PSG_GATE_MASK_UNREAD);
     psg_gate((uint16_t)PSG_REG_TONE_HIGH(voice), (int16_t)(period >> 8), PSG_GATE_MASK_UNREAD);
     return 0;
 }
 
 /* The same for the noise half, on the one register all three channels share. */
-static uint16_t arm_noise(uint8_t *image, uint32_t record, unsigned voice) {
-    if (field_w(image, record, SND_VC_NOISE_PERIOD) < 0) {
-        set_field_l(image, record, SND_VC_NOISE_LFO_LIMIT, 0);
-        set_field_w(image, record, SND_VC_NOISE_PHASE, 0);
+static uint16_t arm_noise(uint8_t *record, unsigned voice) {
+    if (record_w(record, SND_VC_NOISE_PERIOD) < 0) {
+        set_record_l(record, SND_VC_NOISE_LFO_LIMIT, 0);
+        set_record_w(record, SND_VC_NOISE_PHASE, 0);
         return (uint16_t)PSG_MIXER_NOISE_OFF(voice);
     }
-    psg_gate(PSG_REG_NOISE, field_w(image, record, SND_VC_NOISE_PERIOD), PSG_GATE_MASK_UNREAD);
+    psg_gate(PSG_REG_NOISE, record_w(record, SND_VC_NOISE_PERIOD), PSG_GATE_MASK_UNREAD);
     return 0;
 }
 
@@ -265,11 +284,11 @@ int16_t sound_play(uint8_t *image, uint32_t definition, int16_t voice, int16_t v
                    int16_t note, int16_t priority) {
     const int16_t chosen = (voice >= 0 && voice <= (int16_t)(SND_VOICES - 1))
                            ? voice : allocate_voice(image);
-    const uint32_t record = voice_record(chosen);
+    uint8_t *const record = image + voice_record(chosen);
     uint16_t mixer_bits;
     int16_t duration;
 
-    if (priority < field_w(image, record, SND_VC_PRIORITY))
+    if (priority < record_w(record, SND_VC_PRIORITY))
         return SOUND_PLAY_REFUSED;
     sound_stop_voice(image, chosen);
 
@@ -277,27 +296,27 @@ int16_t sound_play(uint8_t *image, uint32_t definition, int16_t voice, int16_t v
     if (duration == 0)
         return chosen;              /* a zero-duration definition is simply "stop that voice" */
 
-    load_definition(image, record, definition);
-    set_field_w(image, record, SND_VC_GATE, note);
-    set_field_w(image, record, SND_VC_PRIORITY, priority);
-    clear_accumulators(image, record);
+    load_definition(record, image + definition);
+    set_record_w(record, SND_VC_GATE, note);
+    set_record_w(record, SND_VC_PRIORITY, priority);
+    clear_accumulators(record);
 
     mixer_bits = arm_tone(image, record, (unsigned)chosen, note);
-    mixer_bits |= arm_noise(image, record, (unsigned)chosen);
+    mixer_bits |= arm_noise(record, (unsigned)chosen);
     /* `chosen` is 0..2 by construction, so this index needs none of `voice_record`'s wrap care. */
     psg_gate(PSG_REG_MIXER, (int16_t)mixer_bits,
              be16(image + addr_add(A_snd_mixer_and_mask, 2u * (uint32_t)chosen)));
 
     if (volume >= 0)
-        set_field_w(image, record, SND_VC_VOLUME_INDEX, volume);
-    if (field_w(image, record, SND_VC_VOL_PHASE) == SND_PHASE_IDLE) {
+        set_record_w(record, SND_VC_VOLUME_INDEX, volume);
+    if (record_w(record, SND_VC_VOL_PHASE) == SND_PHASE_IDLE) {
         /* No envelope at all: peg the accumulator at full scale and write the index straight to the
          * chip, which is how a constant-volume voice is made. */
-        set_field_l(image, record, SND_VC_VOL_ENV_ACC, SND_VOL_ENV_PEAK);
+        set_record_l(record, SND_VC_VOL_ENV_ACC, SND_VOL_ENV_PEAK);
         psg_gate((uint16_t)PSG_REG_VOLUME((unsigned)chosen),
-                 field_w(image, record, SND_VC_VOLUME_INDEX), PSG_GATE_MASK_UNREAD);
+                 record_w(record, SND_VC_VOLUME_INDEX), PSG_GATE_MASK_UNREAD);
     }
-    set_field_w(image, record, SND_VC_DURATION, duration);   /* LAST: this arms the voice */
+    set_record_w(record, SND_VC_DURATION, duration);   /* LAST: this arms the voice */
     return chosen;
 }
 
@@ -311,67 +330,66 @@ int16_t sound_play(uint8_t *image, uint32_t definition, int16_t voice, int16_t v
  *
  * The phase is compared with `cmp.b`, so only its low byte selects the branch — a phase word of
  * 0x0101 is an attack. Faithful rather than tidy: the field is a word everywhere else. */
-static void step_volume_envelope(uint8_t *image, uint32_t record) {
-    const uint8_t phase = (uint8_t)field_w(image, record, SND_VC_VOL_PHASE);
-    int32_t level = field_l(image, record, SND_VC_VOL_ENV_ACC);
+static void step_volume_envelope(uint8_t *record) {
+    const uint8_t phase = (uint8_t)record_w(record, SND_VC_VOL_PHASE);
+    int32_t level = record_l(record, SND_VC_VOL_ENV_ACC);
 
     if (phase == SND_PHASE_ATTACK) {
-        level = add_long(level, field_l(image, record, SND_VC_VOL_ATTACK_STEP));
+        level = add_long(level, record_l(record, SND_VC_VOL_ATTACK_STEP));
         if (level >= SND_VOL_ENV_PEAK) {
             level = SND_VOL_ENV_PEAK;
-            advance_phase(image, record, SND_VC_VOL_PHASE);
+            advance_phase(record, SND_VC_VOL_PHASE);
         }
     } else if (phase == SND_PHASE_DECAY) {
-        int32_t sustain = field_l(image, record, SND_VC_VOL_SUSTAIN);
-        level = add_long(level, field_l(image, record, SND_VC_VOL_DECAY_STEP));
+        int32_t sustain = record_l(record, SND_VC_VOL_SUSTAIN);
+        level = add_long(level, record_l(record, SND_VC_VOL_DECAY_STEP));
         if (level <= sustain) {
             level = sustain;
-            advance_phase(image, record, SND_VC_VOL_PHASE);
+            advance_phase(record, SND_VC_VOL_PHASE);
         }
     } else if (phase == SND_PHASE_RELEASE) {
-        level = add_long(level, field_l(image, record, SND_VC_VOL_RELEASE_STEP));
+        level = add_long(level, record_l(record, SND_VC_VOL_RELEASE_STEP));
         if (level <= 0) {
             level = 0;
-            set_field_w(image, record, SND_VC_VOL_PHASE, SND_PHASE_IDLE);
+            set_record_w(record, SND_VC_VOL_PHASE, SND_PHASE_IDLE);
             /* The silence sentinel: one more tick, which the key-off path spends writing volume 0. */
-            set_field_w(image, record, SND_VC_DURATION, 1);
+            set_record_w(record, SND_VC_DURATION, 1);
         }
     } else {
         return;
     }
-    set_field_l(image, record, SND_VC_VOL_ENV_ACC, level);
+    set_record_l(record, SND_VC_VOL_ENV_ACC, level);
 }
 
 /* The triangle LFO the volume and noise machines share: accumulate the step, fold at either limit,
  * and negate the step where it folds. A limit of 0 is the machine's off switch, and the onset delay
  * counts down once and is never reloaded. */
-static void step_triangle_lfo(uint8_t *image, uint32_t record, unsigned limit_offset,
-                              unsigned accumulator_offset) {
+static inline void step_triangle_lfo(uint8_t *record, unsigned limit_offset,
+                                     unsigned accumulator_offset) {
     const unsigned step_offset = limit_offset + SND_LFO_STEP_FROM_LIMIT;
     const unsigned delay_offset = limit_offset + SND_LFO_DELAY_FROM_LIMIT;
-    int32_t limit = field_l(image, record, limit_offset);
+    int32_t limit = record_l(record, limit_offset);
     int16_t delay;
     int32_t value;
 
     if (limit == 0)
         return;
-    delay = field_w(image, record, delay_offset);
+    delay = record_w(record, delay_offset);
     if (delay != 0) {
-        set_field_w(image, record, delay_offset, (int16_t)(delay - 1));
+        set_record_w(record, delay_offset, (int16_t)(delay - 1));
         return;
     }
 
-    value = add_long(field_l(image, record, accumulator_offset),
-                     field_l(image, record, step_offset));
+    value = add_long(record_l(record, accumulator_offset), record_l(record, step_offset));
     if (value < limit) {
         limit = neg_long(limit);
         if (value > limit) {
-            set_field_l(image, record, accumulator_offset, value);
+            set_record_l(record, accumulator_offset, value);
             return;
         }
     }
-    set_field_l(image, record, step_offset, neg_long(field_l(image, record, step_offset)));
-    set_field_l(image, record, accumulator_offset, limit);
+    set_record_l(record, step_offset, neg_long(record_l(record, step_offset)));
+    set_record_l(record, accumulator_offset, limit);
 }
 
 /* Push the voice's level at the chip. The gate is "the envelope is running OR the LFO's limit is
@@ -381,9 +399,10 @@ static void step_triangle_lfo(uint8_t *image, uint32_t record, unsigned limit_of
  * summed accumulator is shifted right 8 and only its low 16 bits reach the multiply, so a sum at or
  * above 0x01000000 folds. The shipped definitions stay far below that; the arithmetic is
  * transcribed as written rather than widened. */
-static void write_volume(uint8_t *image, uint32_t record, unsigned voice, uint32_t volume_scale) {
-    const uint16_t running = (uint16_t)field_w(image, record, SND_VC_VOL_PHASE)
-                           | (uint16_t)field_w(image, record, SND_VC_VOL_LFO_LIMIT);
+static void write_volume(const uint8_t *record, unsigned voice, const uint8_t *image,
+                         uint32_t volume_scale) {
+    const uint16_t running = (uint16_t)record_w(record, SND_VC_VOL_PHASE)
+                           | (uint16_t)record_w(record, SND_VC_VOL_LFO_LIMIT);
     int32_t modulated;
     int16_t scale;
     uint16_t level;
@@ -392,12 +411,13 @@ static void write_volume(uint8_t *image, uint32_t record, unsigned voice, uint32
         return;
 
     /* The index is doubled as a WORD and then sign-extended, and nothing bounds it: a volume index
-     * outside 0..15 reads past the 16-word table exactly as the original does. */
+     * outside 0..15 reads past the 16-word table exactly as the original's `move.w (a2,d0.w),d0`
+     * does, in EITHER direction — which is why this one stays address arithmetic. */
     scale = (int16_t)be16(image + addr_add(volume_scale,
-                sign_ext16((uint16_t)(2 * field_w(image, record, SND_VC_VOLUME_INDEX)))));
+                sign_ext16((uint16_t)(2 * record_w(record, SND_VC_VOLUME_INDEX)))));
 
-    modulated = add_long(field_l(image, record, SND_VC_VOL_ENV_ACC),
-                         field_l(image, record, SND_VC_VOL_LFO_ACC));
+    modulated = add_long(record_l(record, SND_VC_VOL_ENV_ACC),
+                         record_l(record, SND_VC_VOL_LFO_ACC));
     if (modulated < 0) {
         level = 0;
     } else {
@@ -415,32 +435,32 @@ static void write_volume(uint8_t *image, uint32_t record, unsigned voice, uint32
  * volume release — neither clears the phase nor re-arms the duration counter.
  *
  * The step's sign is read as `tst.w` on its HIGH WORD, which is the long's sign bit either way. */
-static void step_swept_envelope(uint8_t *image, uint32_t record, unsigned phase_offset,
-                                unsigned accumulator_offset) {
-    const uint8_t phase = (uint8_t)field_w(image, record, phase_offset);
-    int32_t value = field_l(image, record, accumulator_offset);
+static inline void step_swept_envelope(uint8_t *record, unsigned phase_offset,
+                                       unsigned accumulator_offset) {
+    const uint8_t phase = (uint8_t)record_w(record, phase_offset);
+    int32_t value = record_l(record, accumulator_offset);
     int32_t step;
 
     if (phase == SND_PHASE_ATTACK || phase == SND_PHASE_DECAY) {
         const unsigned segment = (phase == SND_PHASE_ATTACK) ? SND_ENV_STEP1_FROM_PHASE
                                                              : SND_ENV_STEP2_FROM_PHASE;
         const unsigned step_offset = phase_offset + segment;
-        const int32_t target = field_l(image, record, step_offset + SND_ENV_TARGET_FROM_STEP);
-        step = field_l(image, record, step_offset);
+        const int32_t target = record_l(record, step_offset + SND_ENV_TARGET_FROM_STEP);
+        step = record_l(record, step_offset);
         value = add_long(value, step);
         if (!(step < 0 ? value > target : value < target)) {
             value = target;
-            advance_phase(image, record, phase_offset);
+            advance_phase(record, phase_offset);
         }
     } else if (phase == SND_PHASE_RELEASE) {
-        step = field_l(image, record, phase_offset + SND_ENV_RELEASE_FROM_PHASE);
+        step = record_l(record, phase_offset + SND_ENV_RELEASE_FROM_PHASE);
         value = add_long(value, step);
         if (!(step < 0 ? value > 0 : value < 0))
             value = 0;
     } else {
         return;
     }
-    set_field_l(image, record, accumulator_offset, value);
+    set_record_l(record, accumulator_offset, value);
 }
 
 /* The pitch LFO, which is NOT a plain triangle: the step is added to the accumulator and, if that
@@ -448,58 +468,58 @@ static void step_swept_envelope(uint8_t *image, uint32_t record, unsigned phase_
  * reload fields — a two-rate sweep. The rising and falling halves also use different limits. At
  * either limit the step is negated as usual. The musical intent of the reload pair is not grounded,
  * so the names keep offset+role. */
-static void step_pitch_lfo(uint8_t *image, uint32_t record) {
-    int32_t limit = field_l(image, record, SND_VC_PITCH_LFO_LIMIT_HI);
+static void step_pitch_lfo(uint8_t *record) {
+    int32_t limit = record_l(record, SND_VC_PITCH_LFO_LIMIT_HI);
     int32_t step, accumulator, value;
     int16_t delay;
     int at_limit;
 
     if (limit == 0)
         return;
-    delay = field_w(image, record, SND_VC_PITCH_LFO_DELAY);
+    delay = record_w(record, SND_VC_PITCH_LFO_DELAY);
     if (delay != 0) {
-        set_field_w(image, record, SND_VC_PITCH_LFO_DELAY, (int16_t)(delay - 1));
+        set_record_w(record, SND_VC_PITCH_LFO_DELAY, (int16_t)(delay - 1));
         return;
     }
 
-    step = field_l(image, record, SND_VC_PITCH_LFO_STEP);
-    accumulator = field_l(image, record, SND_VC_PITCH_LFO_ACC);
+    step = record_l(record, SND_VC_PITCH_LFO_STEP);
+    accumulator = record_l(record, SND_VC_PITCH_LFO_ACC);
     value = add_long(step, accumulator);
     if (step >= 0) {
         if (long_add_extend((uint32_t)step, (uint32_t)accumulator))
-            set_field_l(image, record, SND_VC_PITCH_LFO_STEP,
-                        field_l(image, record, SND_VC_PITCH_LFO_STEP_RELOAD_UP));
+            set_record_l(record, SND_VC_PITCH_LFO_STEP,
+                         record_l(record, SND_VC_PITCH_LFO_STEP_RELOAD_UP));
         at_limit = !(value < limit);
     } else {
-        limit = field_l(image, record, SND_VC_PITCH_LFO_LIMIT_LO);
+        limit = record_l(record, SND_VC_PITCH_LFO_LIMIT_LO);
         if (!long_add_extend((uint32_t)step, (uint32_t)accumulator))
-            set_field_l(image, record, SND_VC_PITCH_LFO_STEP,
-                        field_l(image, record, SND_VC_PITCH_LFO_STEP_RELOAD_DOWN));
+            set_record_l(record, SND_VC_PITCH_LFO_STEP,
+                         record_l(record, SND_VC_PITCH_LFO_STEP_RELOAD_DOWN));
         at_limit = !(value > limit);
     }
     if (at_limit) {
         value = limit;
-        set_field_l(image, record, SND_VC_PITCH_LFO_STEP,
-                    neg_long(field_l(image, record, SND_VC_PITCH_LFO_STEP)));
+        set_record_l(record, SND_VC_PITCH_LFO_STEP,
+                     neg_long(record_l(record, SND_VC_PITCH_LFO_STEP)));
     }
-    set_field_l(image, record, SND_VC_PITCH_LFO_ACC, value);
+    set_record_l(record, SND_VC_PITCH_LFO_ACC, value);
 }
 
 /* Push the voice's tone period at the chip. The modulation is RELATIVE — `base * (1 + delta/4096)`
  * — with `delta` the high word of the summed accumulators, and the product rounded by adding one
  * when its own bit 15 is set (the `bpl` after the second `swap`). */
-static void write_tone_period(uint8_t *image, uint32_t record, unsigned voice) {
-    const uint16_t running = (uint16_t)field_w(image, record, SND_VC_PITCH_PHASE)
-                           | (uint16_t)field_w(image, record, SND_VC_PITCH_LFO_LIMIT_HI);
-    const int16_t base = field_w(image, record, SND_VC_TONE_PERIOD);
+static void write_tone_period(const uint8_t *record, unsigned voice) {
+    const uint16_t running = (uint16_t)record_w(record, SND_VC_PITCH_PHASE)
+                           | (uint16_t)record_w(record, SND_VC_PITCH_LFO_LIMIT_HI);
+    const int16_t base = record_w(record, SND_VC_TONE_PERIOD);
     uint32_t modulated, scaled, swapped;
     int16_t depth, period;
 
     if (running == 0)
         return;
 
-    modulated = (uint32_t)add_long(field_l(image, record, SND_VC_PITCH_LFO_ACC),
-                                   field_l(image, record, SND_VC_PITCH_ENV_ACC));
+    modulated = (uint32_t)add_long(record_l(record, SND_VC_PITCH_LFO_ACC),
+                                   record_l(record, SND_VC_PITCH_ENV_ACC));
     depth = (int16_t)(uint16_t)swap_halves(modulated);
     scaled = (uint32_t)((int32_t)depth * base) << SND_PITCH_MOD_SHIFT;
     swapped = swap_halves(scaled);
@@ -522,9 +542,9 @@ static void write_tone_period(uint8_t *image, uint32_t record, unsigned voice) {
  * THE UPPER CLAMP IS A BYTE COMPARE ON A WORD (`cmp.b #$1f,d0`), so a result of, say, 0x90 is a
  * NEGATIVE byte, slips past the clamp, and the chip takes its low five bits. Reproduced, not
  * fixed: it is the engine's own behaviour and it is audible. */
-static void write_noise_period(uint8_t *image, uint32_t record) {
-    const uint16_t running = (uint16_t)field_w(image, record, SND_VC_NOISE_PHASE)
-                           | (uint16_t)field_w(image, record, SND_VC_NOISE_LFO_LIMIT);
+static void write_noise_period(const uint8_t *record) {
+    const uint16_t running = (uint16_t)record_w(record, SND_VC_NOISE_PHASE)
+                           | (uint16_t)record_w(record, SND_VC_NOISE_LFO_LIMIT);
     uint32_t modulated;
     int16_t value;
     uint8_t period;
@@ -532,10 +552,10 @@ static void write_noise_period(uint8_t *image, uint32_t record) {
     if (running == 0)
         return;
 
-    modulated = (uint32_t)add_long(field_l(image, record, SND_VC_NOISE_LFO_ACC),
-                                   field_l(image, record, SND_VC_NOISE_ENV_ACC));
+    modulated = (uint32_t)add_long(record_l(record, SND_VC_NOISE_LFO_ACC),
+                                   record_l(record, SND_VC_NOISE_ENV_ACC));
     value = (int16_t)(uint16_t)((uint16_t)swap_halves(modulated)
-                                + (uint16_t)field_w(image, record, SND_VC_NOISE_PERIOD));
+                                + (uint16_t)record_w(record, SND_VC_NOISE_PERIOD));
     if (value < 0)
         period = 0;
     else if ((int8_t)(uint8_t)value > SND_NOISE_PERIOD_MAX)
@@ -549,65 +569,65 @@ static void write_noise_period(uint8_t *image, uint32_t record) {
  * is left alone; one that is running gets its release step turned round if it does not already
  * point back toward zero — the two signs are compared by XORing the accumulator's HIGH WORD with
  * the step's, so equal signs (a step running away from zero) is a non-negative result. */
-static void release_swept_machine(uint8_t *image, uint32_t record, unsigned phase_offset,
+static void release_swept_machine(uint8_t *record, unsigned phase_offset,
                                   unsigned accumulator_offset) {
     const unsigned step_offset = phase_offset + SND_ENV_RELEASE_FROM_PHASE;
     int16_t step_sign, accumulator_sign;
 
-    if (field_w(image, record, phase_offset) == 0)
+    if (record_w(record, phase_offset) == 0)
         return;
-    set_field_w(image, record, phase_offset, SND_PHASE_RELEASE);
-    step_sign = field_w(image, record, step_offset);
-    accumulator_sign = field_w(image, record, accumulator_offset);
+    set_record_w(record, phase_offset, SND_PHASE_RELEASE);
+    step_sign = record_w(record, step_offset);
+    accumulator_sign = record_w(record, accumulator_offset);
     if ((int16_t)(accumulator_sign ^ step_sign) >= 0)
-        set_field_l(image, record, step_offset, neg_long(field_l(image, record, step_offset)));
+        set_record_l(record, step_offset, neg_long(record_l(record, step_offset)));
 }
 
 /* The end of a voice's life, run only while the gate is negative — a sound triggered with
  * `note >= 0` sustains until a caller stops it and never comes through here. */
-static void key_off(uint8_t *image, uint32_t record, unsigned voice) {
+static void key_off(uint8_t *record, unsigned voice) {
     int16_t remaining;
 
-    if (field_w(image, record, SND_VC_GATE) >= 0)
+    if (record_w(record, SND_VC_GATE) >= 0)
         return;
-    remaining = (int16_t)(field_w(image, record, SND_VC_DURATION) - 1);
-    set_field_w(image, record, SND_VC_DURATION, remaining);
+    remaining = (int16_t)(record_w(record, SND_VC_DURATION) - 1);
+    set_record_w(record, SND_VC_DURATION, remaining);
     if (remaining != 0)
         return;
 
-    set_field_w(image, record, SND_VC_PRIORITY, 0);
-    if (field_w(image, record, SND_VC_VOL_PHASE) == SND_PHASE_IDLE) {
+    set_record_w(record, SND_VC_PRIORITY, 0);
+    if (record_w(record, SND_VC_VOL_PHASE) == SND_PHASE_IDLE) {
         psg_port_write(PSG_REG_VOLUME(voice), 0);
         return;
     }
     /* A second decrement takes the counter to -1, so this whole block fires exactly once while the
      * release phases it starts here run themselves out. */
-    set_field_w(image, record, SND_VC_DURATION, (int16_t)(remaining - 1));
-    set_field_w(image, record, SND_VC_VOL_PHASE, SND_PHASE_RELEASE);
-    release_swept_machine(image, record, SND_VC_PITCH_PHASE, SND_VC_PITCH_ENV_ACC);
-    release_swept_machine(image, record, SND_VC_NOISE_PHASE, SND_VC_NOISE_ENV_ACC);
+    set_record_w(record, SND_VC_DURATION, (int16_t)(remaining - 1));
+    set_record_w(record, SND_VC_VOL_PHASE, SND_PHASE_RELEASE);
+    release_swept_machine(record, SND_VC_PITCH_PHASE, SND_VC_PITCH_ENV_ACC);
+    release_swept_machine(record, SND_VC_NOISE_PHASE, SND_VC_NOISE_ENV_ACC);
 }
 
 /* One voice's whole tick: three machines, three chip writes, then the countdown. An idle voice
  * (duration 0) costs nothing at all. */
-static void sound_voice_tick(uint8_t *image, uint32_t record, unsigned voice,
+static void sound_voice_tick(uint8_t *record, unsigned voice, const uint8_t *image,
                              uint32_t volume_scale) {
-    if (field_w(image, record, SND_VC_DURATION) == 0)
+    if (record_w(record, SND_VC_DURATION) == 0)
         return;
 
-    step_volume_envelope(image, record);
-    step_triangle_lfo(image, record, SND_VC_VOL_LFO_LIMIT, SND_VC_VOL_LFO_ACC);
-    write_volume(image, record, voice, volume_scale);
+    step_volume_envelope(record);
+    step_triangle_lfo(record, SND_VC_VOL_LFO_LIMIT, SND_VC_VOL_LFO_ACC);
+    write_volume(record, voice, image, volume_scale);
 
-    step_swept_envelope(image, record, SND_VC_PITCH_PHASE, SND_VC_PITCH_ENV_ACC);
-    step_pitch_lfo(image, record);
-    write_tone_period(image, record, voice);
+    step_swept_envelope(record, SND_VC_PITCH_PHASE, SND_VC_PITCH_ENV_ACC);
+    step_pitch_lfo(record);
+    write_tone_period(record, voice);
 
-    step_swept_envelope(image, record, SND_VC_NOISE_PHASE, SND_VC_NOISE_ENV_ACC);
-    step_triangle_lfo(image, record, SND_VC_NOISE_LFO_LIMIT, SND_VC_NOISE_LFO_ACC);
-    write_noise_period(image, record);
+    step_swept_envelope(record, SND_VC_NOISE_PHASE, SND_VC_NOISE_ENV_ACC);
+    step_triangle_lfo(record, SND_VC_NOISE_LFO_LIMIT, SND_VC_NOISE_LFO_ACC);
+    write_noise_period(record);
 
-    key_off(image, record, voice);
+    key_off(record, voice);
 }
 
 /* timer_c_sound_isr @ 0x1459a — the 200 Hz tick.
@@ -623,7 +643,10 @@ static void sound_voice_tick(uint8_t *image, uint32_t record, unsigned voice,
  * the Timer C work TOS still wants done. See STATUS.md's residuals. */
 void timer_c_sound_isr(uint8_t *image) {
     const uint32_t volume_scale = be32(image + SND_ISR_VOLUME_SCALE);
-    uint32_t record = be32(image + SND_ISR_TOP_VOICE);
+    /* The cursor is an ADDRESS, not a pointer, because `lea -140(a0),a0` runs three times and the
+     * base comes out of the image: a base below 0x1a4 walks it round the bottom of the address
+     * space, which is arithmetic C's pointers do not have. The pointer is formed per voice. */
+    uint32_t cursor = be32(image + SND_ISR_TOP_VOICE);
     uint16_t still_sounding = 0;
     unsigned voice;
 
@@ -632,17 +655,16 @@ void timer_c_sound_isr(uint8_t *image) {
     image[TOS_CONTERM] = 0;
 
     for (voice = SND_VOICES; voice-- > 0; ) {
-        sound_voice_tick(image, record, voice, volume_scale);
-        record = addr_add(record, (uint32_t)-(int32_t)SND_VOICE_BYTES);
+        sound_voice_tick(image + cursor, voice, image, volume_scale);
+        cursor = addr_add(cursor, (uint32_t)-(int32_t)SND_VOICE_BYTES);
     }
 
-    /* `lea -140(a0),a0` ran once per voice, so the cursor now sits one record BELOW voice 0 and the
-     * three duration counters are at +0x8c, +0x118 and +0x1a4 from it — which is how the original
-     * reads them (0x148ca). */
+    /* The cursor now sits one record BELOW voice 0 and the three duration counters are at +0x8c,
+     * +0x118 and +0x1a4 from it — which is how the original reads them (0x148ca). */
     for (voice = 0; voice < SND_VOICES; voice++)
-        still_sounding |= (uint16_t)field_w(image,
-                                            addr_add(record, (voice + 1) * SND_VOICE_BYTES),
-                                            SND_VC_DURATION);
+        still_sounding |= (uint16_t)record_w(image + addr_add(cursor,
+                                                              (voice + 1) * SND_VOICE_BYTES),
+                                             SND_VC_DURATION);
     if (still_sounding == 0)
         image[TOS_CONTERM] = image[SND_ISR_SAVED_CONTERM];
 }
