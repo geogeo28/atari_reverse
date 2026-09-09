@@ -143,6 +143,15 @@ does not do) less the leads the port holds elsewhere — the copy runs, the coll
 sprite protocol are each under the original's own cost. Every smoke was green on this tree:
 `title` 9/9, the `titleisr` control red as designed, `game` 3/3 at both room-frame arrivals.
 
+**AND WHERE THE MERGE OF WAVES 7a+7b LEAVES IT — PARITY WITHIN THE INSTRUMENT'S RESOLUTION: 468.5K
+cycles a frame, 17.12 fps (285 frames in 1000 vblanks), x1.0034** of the original's 466.9K / 17.18
+(286 frames), three back-to-back windows on the merged tree at `5c82026` (2026-09-08) reading 468.5K
+every time, the tick 1,748–1,754 a tick against 1,697. **The gap is 1.6K a frame, which is this
+instrument's own ~0.3% spread**, so no further change can be read off a window; what is left is two
+rows the shipped binary does not have — the GEM door's translation and the C frame path — offset by
+the leads the port holds in the copy runs, the collision probe and the sprite protocol. Every smoke
+was green on this tree: `title` 9/9, the `titleisr` control red as designed, `game` 3/3.
+
 **AND WHERE WAVE 7a LEAVES IT — 468.5K cycles a frame, 17.12 fps (285 frames in 1000 vblanks),
 x1.0033** of the original's 466.9K / 17.18 (286 frames), re-measured back to back in one session on
 the merged tree plus this wave: three `ours` windows read 468,460 / 468,456 / 468,452 a frame at 285
