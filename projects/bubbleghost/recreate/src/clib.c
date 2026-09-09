@@ -1000,19 +1000,30 @@ void fp_mul(uint8_t *image, uint32_t dst, uint32_t src) {
  * shift by 31 as the REGISTER form `moveq #31,d5 / lsl.l d5,d3`: 8 + 2 a bit = 70 cycles, once a
  * step, 32 steps a call. As one 64-bit value it emits the original's own `lsr.l #1 / roxr.l #1`
  * (20). Measured 2026-09-07: a step went from ~166 cycles to 80 where it does not subtract and 98
- * where it does, against the original's ~64 and ~74.
+ * where it does — and the compare below took it the rest of the way to 64 and 78, which is the
+ * original's own 64 and 76.
  *
- * WHAT DID *NOT* CHANGE, because the objdump is the gate and not the hope: GCC still spends a
- * SEPARATE compare — `move.l d2,d6 / move.l d3,d7 / sub.l d5,d7 / subx.l d4,d6 / bhi`, whose result
- * it throws away — before the subtract's own `sub.l`/`subx.l`, where the original tests with
- * `cmp.l`/`bcs`/`bne`/`cmp.l`/`bhi` for ~14. Spelling the compare as the difference
- * (`if (remainder - divisor <= remainder)`) was tried and is WORSE: GCC recomputes it and adds two
- * `movea.l` shuffles. The ~10 cycles a step left is not reachable from C.
+ * THE COMPARE IS SPELT AS THE ORIGINAL'S TWO, and wave 3b's note said this was not reachable from C
+ * — it was reachable, by asking for the two halves rather than the pair. `divisor <= remainder` on
+ * one `uint64_t` makes GCC compute a whole 64-bit difference it throws away
+ * (`move.l d2,d6 / move.l d3,d7 / sub.l d5,d7 / subx.l d4,d6 / bhi`, 34 cycles) in front of the
+ * subtract's own `sub.l`/`subx.l`; asking the high halves first and the low ones only on equality
+ * gives `cmp.l d2,d4 / bhi / beq` and then `cmp.l d3,d5 / bcs`, which is the original's own
+ * `cmp.l`/`bcs`/`bne`/`cmp.l`/`bhi` @ 0x1522c. **The two conditions are the same condition** — an
+ * unsigned 64-bit `<=` IS `high <` or `high ==` and `low <=` — so nothing observable moves and
+ * `make test` is green on either spelling; ../STATUS.md's wave 5c measured the step at 64 cycles
+ * where it does not subtract and 78 where it does, against the original's 64 and 76 and this file's
+ * own 80 and 98 before. The loop counter is an `unsigned short` for the last 4 of that: the count
+ * only ever reaches 32, and GCC closes a word counter with `subq.w` where it spends `subq.l` on an
+ * `unsigned`. (`uint16_t` and not `unsigned short`: every other integer in these cores is
+ * fixed-width, and the measurement depends on the width being 16 and not on `short` being.)
+ * (`dbf` is 4 cheaper still and is NOT reachable — GCC normalises every countdown spelling tried
+ * here back to `moveq #32 / subq / bne`.)
  *
- * Nothing observable moves — `divisor <= remainder` on the pair IS
- * `divisor_high < remainder_high || (equal && divisor_low <= remainder_low)` — and `make test` is
- * green either way, which is why the note is here (../STATUS.md, wave 1: the differential is the
- * correctness gate and `m68k-elf-objdump -d` is the performance one). **`fp_float_to_double` above
+ * The rest of the note is what did not change, because the objdump is the gate and not the hope:
+ * spelling the compare as the difference (`if (remainder - divisor <= remainder)`) was tried and is
+ * WORSE — GCC recomputes it and adds two `movea.l` shuffles — and so are `remainder >= divisor` and
+ * `!(remainder < divisor)`, which GCC canonicalises to byte-identical code. **`fp_float_to_double` above
  * keeps the two-half spelling on purpose**: its shift is an `asr` on the high half over three fixed
  * passes on a path this program never takes (all four `fp_dispatch` sites pass an eight-byte
  * source), so it is a cold ~390 cycles and a sign-semantics risk, not a lever — ../STATUS.md's
@@ -1039,9 +1050,16 @@ void fp_div(uint8_t *image, uint32_t dst, uint32_t src) {
     exponent = (uint16_t)(exponent - src_exponent);
     exponent = (uint16_t)(exponent + FP_BIAS_DIV);
 
-    for (unsigned step = 0; step < FP_DIV_STEPS; step++) {
+    for (uint16_t step = FP_DIV_STEPS; step != 0u; step--) {
+        /* The pair's halves, named so the compare below can ask for them in the original's order.
+         * Both are subregisters of a value GCC already holds in a register pair, so neither shift
+         * is an instruction. */
+        uint32_t divisor_high = (uint32_t)(divisor >> 32);
+        uint32_t remainder_high = (uint32_t)(remainder >> 32);
+
         quotient <<= 1;
-        if (divisor <= remainder) {
+        if (divisor_high < remainder_high ||
+            (divisor_high == remainder_high && (uint32_t)divisor <= (uint32_t)remainder)) {
             /* `addq.w #1,d1` is a WORD add, which can never carry here: the shift above has just
              * cleared bit 0, so the low word is even. */
             quotient = set_low_word(quotient, (uint16_t)(quotient + 1u));
