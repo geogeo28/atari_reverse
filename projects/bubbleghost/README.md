@@ -100,6 +100,30 @@ left behind by one is visible in the picture itself: the HUD row along the botto
 carries that room's own number. Room 35 can never appear, for the truncation reason in
 [`notes/frontend.md`](notes/frontend.md) §2.
 
+## Controls
+
+The program reads exactly these, and nothing else — the whole of it has been read, so this is the
+list rather than a sample (`recreate/src/gameplay.c`, `frame_poll_input` / `frame_step_facing`;
+`notes/frontend.md` §2 for the menu). There are no cheat codes: the string table holds nothing the
+menu does not show, and the demo player writes the ghost's state directly rather than replaying
+input, so it cannot be steered.
+
+| where | key | effect |
+|---|---|---|
+| menu | `G` then `1` or `2` | one- or two-player game, from room 1 |
+| menu | `P` then two digits `01`..`35` | **practice one room**: the scores are zeroed and the game ends after that room — a level select in all but name. Room 0 exists in the data (it is the hall of fame's backdrop) and the `0 < n < 36` check is what keeps it out |
+| menu | `D` | the demo, then a random room slideshow, then the title picture; any key or button ends it |
+| menu | `H` | the hall of fame, until the mouse button |
+| play | mouse | the ghost follows the pointer (scaled by the room: `x / 1.115`, `y / 1.577`; room 35 `x / 1.684`) |
+| play | left / right button | turn the ghost one of its eight facings anticlockwise / clockwise, one step per press |
+| play | either **Shift**, or **Alt** | blow, while held. Ctrl alone does not — so the three combinations below never puff |
+| play | **Ctrl+P** | pause; `Ctrl+P` again resumes |
+| play | **Ctrl+S** | sound on / off |
+| play | **Ctrl+R** | end the whole game at once: lives to −1 and every score zeroed — a restart, not a room skip |
+
+The three `Ctrl` keys are not printed anywhere on screen; they are the only keys the play loop
+polls (`Crawio`, once a frame, beside the mouse and the shift state through the VDI).
+
 ## Performance
 
 The headline is the status paragraph above. The instrument, the twelve waves, the full per-routine
