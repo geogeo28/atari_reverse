@@ -719,8 +719,23 @@ static int fp_normalise_and_round(uint32_t *mantissa_out, uint16_t *exponent_out
  * IT IS A TAIL, NOT A FUNCTION: it pops the ten registers its caller pushed and unlinks its
  * caller's frame, so it is only ever reached by falling or jumping into it. `dst` supplies the sign
  * — the routines that change the sign have already XORed the destination's own high word — and a
- * zero mantissa stores eight zero bytes, dropping that sign with them. */
-void fp_pack_double(uint8_t *image, uint32_t dst, uint32_t mantissa, uint16_t exponent) {
+ * zero mantissa stores eight zero bytes, dropping that sign with them.
+ *
+ * WHICH IS WHY THE BODY IS `always_inline` AND THE EXPORTED NAME IS A ONE-LINE WRAPPER (wave 6b).
+ * The original's `fp_div` ends `bra.w $15394` and FALLS IN with its operands already in registers;
+ * ours pushed five stack arguments, `jsr`ed and paid a `movem` pair inside. Inlining is the
+ * FAITHFUL shape here rather than a departure from it: the original has no call to remove. The
+ * wrapper stays so that the symbol keeps a caller (`g_fp_pack_double`), the differential still
+ * enters it by name, and `atari/profile.py`'s map still has the row.
+ *
+ * WHAT IT IS ACTUALLY WORTH, MEASURED AND NOT PROJECTED. ../STATUS.md's wave 5c priced the call at
+ * ~250 cycles over 4.07 calls a frame (~1.0K); the profiler says the whole fp package moved 12,058
+ * -> 11,696, and the `REGISTER_BARRIER` below is a separately-priced part of that. It is ten
+ * expansions — the nine callers in this file and the wrapper — for +760 B of `.text`, which the
+ * size gate has 78,912 B of room for. ../STATUS.md's wave 6b carries the split. */
+static inline __attribute__((always_inline)) void fp_pack_double_tail(uint8_t *image, uint32_t dst,
+                                                                     uint32_t mantissa,
+                                                                     uint16_t exponent) {
     uint16_t low_word;
     uint32_t shifted;
     uint16_t high_word;
@@ -736,11 +751,23 @@ void fp_pack_double(uint8_t *image, uint32_t dst, uint32_t mantissa, uint16_t ex
     mantissa = set_low_word(mantissa, (uint16_t)(mantissa & FP_PACK_KEEP_DOUBLE));
     low_word = (uint16_t)mantissa;
     shifted = mantissa >> 12;
+    /* THE BARRIER IS WHAT MAKES THE NIBBLE A `swap`. The original reads the top nibble off the
+     * shifted value it already has (`swap`, 4 cycles); GCC re-derives it from `mantissa` as
+     * `moveq #28 / lsr.l` — 64 — because nothing forces it to keep `shifted` in a register.
+     * Measured off `m68k-elf-objdump -d`: 104 cycles down to 56 through this line, and all TEN
+     * `moveq #28` in `core_clib.o` are gone with it (../STATUS.md's wave 6b). */
+    REGISTER_BARRIER(shifted, REGISTER_BARRIER_DATA_CLASS);
     high_word = (uint16_t)(((uint16_t)(shifted >> 16) & FP_PACK_MANTISSA_NIBBLE) |
                            (uint16_t)((exponent & FP_EXPONENT_BITS) << FP_EXPONENT_SHIFT) |
                            (uint16_t)(be16(image + dst) & FP_SIGN_BIT));
     wr32(image + dst, ((uint32_t)high_word << 16) | (uint16_t)shifted);
     wr32(image + dst + 4, (uint32_t)(uint16_t)(low_word << 4) << 16);
+}
+
+/* The SYMBOL, for the differential (`g_fp_pack_double` below) and for `atari/profile.py`'s map.
+ * Everything inside this file falls into the tail instead — see the note over the body. */
+void fp_pack_double(uint8_t *image, uint32_t dst, uint32_t mantissa, uint16_t exponent) {
+    fp_pack_double_tail(image, dst, mantissa, exponent);
 }
 
 /* fp_pack_float @ 0x15132 (body at 0x15136) — the same tail for SINGLE precision: an 8-bit exponent
@@ -780,7 +807,7 @@ void fp_long_to_double(uint8_t *image, uint32_t operand) {
     uint16_t exponent;
 
     if (value == 0) {
-        fp_pack_double(image, operand, 0, 0);
+        fp_pack_double_tail(image, operand, 0, 0);
         return;
     }
     if ((int32_t)value < 0)
@@ -790,7 +817,7 @@ void fp_long_to_double(uint8_t *image, uint32_t operand) {
         value <<= 8;
         exponent = (uint16_t)(exponent - 8u);
     }
-    fp_pack_double(image, operand, value, exponent);
+    fp_pack_double_tail(image, operand, value, exponent);
 }
 
 /* fp_float_to_double @ 0x154d0 — widen a 32-bit float in place.
@@ -923,7 +950,7 @@ static void fp_add_body(uint8_t *image, uint32_t dst, uint32_t src) {
      * The flag is READ BACK from memory rather than carried in a register, which is what makes
      * fp_add and fp_sub one body with one exit. */
     wr16(image + src, (uint16_t)(be16(image + src) ^ be16(image + A_fp_sub_sign_flag)));
-    fp_pack_double(image, dst, sum, major_exponent);
+    fp_pack_double_tail(image, dst, sum, major_exponent);
 }
 
 void fp_add(uint8_t *image, uint32_t dst, uint32_t src) {
@@ -954,13 +981,13 @@ void fp_mul(uint8_t *image, uint32_t dst, uint32_t src) {
     uint32_t cross_b;
 
     if (exponent == 0) {
-        fp_pack_double(image, dst, 0, exponent);
+        fp_pack_double_tail(image, dst, 0, exponent);
         return;
     }
     src_mantissa = fp_mantissa(image, src);
     src_exponent = fp_exponent(image, src);
     if (src_exponent == 0) {
-        fp_pack_double(image, dst, 0, exponent);
+        fp_pack_double_tail(image, dst, 0, exponent);
         return;
     }
     exponent = (uint16_t)(exponent - FP_EXPONENT_BIAS);
@@ -984,7 +1011,7 @@ void fp_mul(uint8_t *image, uint32_t dst, uint32_t src) {
             high_product |= 2u;                      /* `bset #1,d1` — the sticky bit */
     }
     wr16(image + dst, (uint16_t)(be16(image + dst) ^ be16(image + src)));
-    fp_pack_double(image, dst, high_product, exponent);
+    fp_pack_double_tail(image, dst, high_product, exponent);
 }
 
 /* fp_div @ 0x151d0 — 32 steps of restoring division over a 64-bit remainder.
@@ -1038,13 +1065,13 @@ void fp_div(uint8_t *image, uint32_t dst, uint32_t src) {
     uint32_t quotient = 0;
 
     if (exponent == 0) {
-        fp_pack_double(image, dst, 0, exponent);
+        fp_pack_double_tail(image, dst, 0, exponent);
         return;
     }
     divisor = (uint64_t)fp_mantissa(image, src) << 32;
     src_exponent = fp_exponent(image, src);
     if (src_exponent == 0) {
-        fp_pack_double(image, dst, 0, exponent);
+        fp_pack_double_tail(image, dst, 0, exponent);
         return;
     }
     exponent = (uint16_t)(exponent - src_exponent);
@@ -1068,7 +1095,7 @@ void fp_div(uint8_t *image, uint32_t dst, uint32_t src) {
         divisor >>= 1;
     }
     wr16(image + dst, (uint16_t)(be16(image + dst) ^ be16(image + src)));
-    fp_pack_double(image, dst, quotient, exponent);
+    fp_pack_double_tail(image, dst, quotient, exponent);
 }
 
 /* fp_cmp @ 0x15190 — an ORDER-PRESERVING integer compare of two doubles, left in A_fp_ccr.

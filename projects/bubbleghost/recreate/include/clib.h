@@ -15,6 +15,7 @@
 
 #include "machine.h"
 #include "globals.h"
+#include "common.h"   /* GlobalsBase, for the base-register form of the trampoline's stores */
 
 /* ================================================================================================
  * The OS trap trampolines — `gemdos_trap` @ 0x15e58, `xbios_trap` @ 0x15e3c
@@ -96,12 +97,18 @@ typedef struct {
  * `src/clib.c`'s wrappers and `src/sound.c`'s two `Supexec` callers, which carried a second copy
  * until this moved here. It is a header inline rather than a function because it is the only thing
  * two translation units share and a `.c` for three stores would be its own file. */
+static inline void trap_save_registers_at_base(GlobalsBase globals, CallerAddressRegisters saved,
+                                               uint32_t return_pc) {
+    wr32(globals_at(globals, A_trap_saved_a1), saved.a1);
+    wr32(globals_at(globals, A_trap_saved_a2), saved.a2);
+    wr32(globals_at(globals, A_trap_saved_ret), return_pc);
+}
+
 static inline void trap_save_registers(uint8_t *image, CallerAddressRegisters saved,
                                        uint32_t return_pc) {
-    wr32(image + A_trap_saved_a1, saved.a1);
-    wr32(image + A_trap_saved_a2, saved.a2);
-    wr32(image + A_trap_saved_ret, return_pc);
+    trap_save_registers_at_base(globals_base(image), saved, return_pc);
 }
+
 
 /* ...and the block itself, built from the two values a case hands the candidate. EVERY glue
  * function in this reconstruction opens with one, and each of `src/clib.c`, `src/frontend.c` and

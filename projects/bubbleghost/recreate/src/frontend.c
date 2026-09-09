@@ -76,65 +76,26 @@ static uint32_t vdi_pblock_slot(unsigned index) {
     return A_vdi_pblock + index * LONG_BYTES;
 }
 
-/* ---- THE BASE REGISTER THE ORIGINAL KEEPS AND THIS FILE HAS TO MATERIALISE ----------------------
+/* ---- THE BASE REGISTER THE ORIGINAL KEEPS, AND WHERE THIS FILE'S COPY OF IT WENT ---------------
  *
- * Every global in this program is `d16(a4)` (../include/globals.h): the crt0 parks a4 at the
- * BSS/DATA boundary once, and `vq_key_s` @ 0x16a5e writes its four `contrl` slots as
- * `move.w #$80,-6186(a4)` and friends at 12-20 cycles apiece. A reconstruction has no such register
- * — `image` is an argument and a slot spelt `image + A_vdi_contrl` costs a 32-bit
- * `move.l #145136,Dn` (12) IN FRONT OF an indexed `(0,An,Dn.l)` access (2 more than the
- * displacement form), so it runs 14 dearer than the instruction it stands for. Ten such slots is a
- * whole VDI call's worth of overhead, and the twelve entry points below are the program's hottest
- * users of them.
+ * `GlobalsBase` / `globals_base` / `globals_at` were written here for ../STATUS.md's wave 5c and
+ * moved to `include/common.h` in wave 6b, once `src/gameplay.c` became the second core to want
+ * them — which is that header's own stated trigger. It carries the whole mechanism and the
+ * measurement; what is left to say HERE is which slots this file reaches through it, because it is
+ * the range that keeps every one of them a `d16` displacement:
  *
- * So the base is materialised ONCE per entry point and every slot is a displacement off it, which
- * is the instruction the original emits. **The barrier is the whole mechanism** — the same one
- * `atari/bubble_backend.c`'s GEM door took in ../STATUS.md's wave 3b, whose note records that
- * hoisting a plain local buys NOTHING because GCC re-folds the constant back into the index.
- *
- * REGISTERED, NOT DONE — THE HOIST. `include/common.h`'s rule puts a helper with ONE caller in that
- * caller's file, which is here today. Its next users are already named: this file's own
- * `sprite_pxy_*` writers and the AES binding below (both in the window, both cold, both left on the
- * `image + <address>` form on purpose), and then `src/clib.c`'s and `src/gameplay.c`'s globals. The
- * SECOND core to want it is the trigger, and the home is `include/globals.h` beside `A4_BASE`,
- * which is the one place this memory model is spelt — exactly as `common.h`'s `copy_one_longword`
- * registers its own move to the kit rather than making it.
- *
- * WHY THE DISPLACEMENTS FIT. The slots this file reaches run from `A_vdi_pblock` (0x1e8ca) to
- * `contrl[10]`, the second MFDB word (0x23704), which is -26192 to -6166 off A4_BASE: inside the
- * 68000's signed word, exactly as they are in the original. A global outside that window would
- * silently go back to the indexed form rather than break, so nothing here depends on the range
- * beyond the arrays it names. */
-/* IT IS ITS OWN TYPE, AND THAT IS THE REVIEW'S FINDING RATHER THAN A FLOURISH. The base and the
- * image are both a byte pointer, so handing one where the other is wanted compiles clean — and
- * because every displacement here is NEGATIVE, a wrong base does not reach a wrong slot, it writes
- * BELOW the image: `gem_trap_save_registers(image, …)` stores at `image - 26080`. That is off the
- * host's buffer entirely, where the byte differential has nothing to compare and only `make
- * guarded`'s reserve below the image can see it, and on target it is under `bubble_main.c`'s guard
- * bytes, which sit above. It happened once in this wave (11 red cases in `test_frontend.py`, and
- * they were luck rather than coverage). The struct makes it a compile error, and `m68k-elf-objdump`
- * says it is free: `core_frontend.o` is byte-identical with the bare pointer and with this.
- *
- * `always_inline` for the reason `sprite_copy` has it: the body IS an `asm`, which is what tipped
- * GCC into out-lining that helper, and thirteen call sites is more temptation, not less. Out of
- * line, every entry point below would pay a `jsr`/`rts` to save 14 cycles a slot. */
-typedef struct { uint8_t *at; } GemGlobals;
+ *   * the VDI binding — `A_vdi_pblock` (0x1e8ca) to `contrl[10]`, the second MFDB word (0x23704),
+ *     which is -26192 to -6166 off A4_BASE. `vq_key_s` @ 0x16a5e writes four of them per call and
+ *     a raster copy ten, which is what made this the file the lever was measured in;
+ *   * the sprite protocol — `A_blit_pxy`'s eight words at -7236, the two MFDBs' `fd_addr` at
+ *     -7706 (`A_mfdb_src`) and -7726 (`A_mfdb_dst`), the two saved-patch pointers at -7730 and
+ *     -7734, and the ghost's and bubble's coordinates and frame indices, -7976 to -7986 (wave 6b);
+ *   * NOT the AES binding, which keeps the `image + <address>` form on purpose: `aes_crysif`,
+ *     `aes_bind_parameter_block`, `appl_init`, `graf_handle` and `graf_mouse` are BOOT AND MENU and
+ *     make 0.00 calls in the profiled frame, so converting them would buy nothing measurable.
+ *     `gem_aes` materialises a base for its two saved-register stores and its neighbours do not —
+ *     the one place in this file where the two idioms sit side by side. */
 
-static inline __attribute__((always_inline)) GemGlobals globals_base(uint8_t *image) {
-    uint8_t *base = image + A4_BASE;
-
-    /* NOT `CURSOR_BARRIER`: `machine.h` reserves that name for a pointer walked by postincrement,
-     * and this one never moves. The class is the same `+a` — an address register is what the
-     * displacement addressing needs — and the general macro is what says so. */
-    REGISTER_BARRIER(base, REGISTER_BARRIER_ADDRESS_CLASS);
-    return (GemGlobals){ base };
-}
-
-/* One global off that base: the `n` in the original's own `n(a4)`. Both operands are constants at
- * every call site, so this is a displacement and not an addition. */
-static uint8_t *globals_at(GemGlobals globals, uint32_t address) {
-    return globals.at + ((int32_t)address - (int32_t)A4_BASE);
-}
 
 /* The GEM trampolines park only the two ADDRESS registers. Unlike `include/clib.h`'s GEMDOS/XBIOS
  * pair they do not pop and re-push their own return address — the selector travels in D0 rather
@@ -142,9 +103,9 @@ static uint8_t *globals_at(GemGlobals globals, uint32_t address) {
  *
  * It takes the BASE and not the image. Handing it the image files both saved registers 26 KB BELOW
  * the image — `test_frontend.py`'s `graf_mouse`, `appl_init`, `graf_handle` and `aes_crysif` cases
- * caught exactly that in this wave (11 failures, 2026-09-07) — and `GemGlobals` above is why the
+ * caught exactly that in this wave (11 failures, 2026-09-07) — and `GlobalsBase` above is why the
  * mistake can no longer be written. */
-static void gem_trap_save_registers(GemGlobals globals, CallerAddressRegisters saved) {
+static void gem_trap_save_registers(GlobalsBase globals, CallerAddressRegisters saved) {
     wr32(globals_at(globals, A_trap_saved_a1), saved.a1);
     wr32(globals_at(globals, A_trap_saved_a2), saved.a2);
 }
@@ -156,7 +117,7 @@ static void gem_trap_save_registers(GemGlobals globals, CallerAddressRegisters s
 /* vdi_call @ 0x168d4 — the whole VDI trap. Every entry point below fills `contrl` and jumps here.
  * The `contrl` pointer is re-filed on EVERY call rather than once at start-up, which is why a run
  * entered below `v_opnvwk` still reaches the right array. */
-static void vdi_call_at(uint8_t *image, GemGlobals globals, CallerAddressRegisters saved) {
+static void vdi_call_at(uint8_t *image, GlobalsBase globals, CallerAddressRegisters saved) {
     gem_trap_save_registers(globals, saved);
     wr32(globals_at(globals, vdi_pblock_slot(VDI_PB_CONTRL)), A_vdi_contrl);
     os_vdi(image, A_vdi_pblock);
@@ -169,7 +130,7 @@ void vdi_call(uint8_t *image, CallerAddressRegisters saved) {
 /* The tail every entry point shares: name the opcode, say how many ptsin PAIRS and intin entries
  * are being handed over, file the workstation handle, trap. The four stores are in the order the
  * original makes them, which is the order they appear in every one of the twelve routines. */
-static void vdi_trap(uint8_t *image, GemGlobals globals, uint16_t opcode, uint16_t ptsin_pairs,
+static void vdi_trap(uint8_t *image, GlobalsBase globals, uint16_t opcode, uint16_t ptsin_pairs,
                      uint16_t intin_entries, int16_t handle, CallerAddressRegisters saved) {
     wr16(globals_at(globals, gem_word(A_vdi_contrl, VDI_CONTRL_OPCODE)), opcode);
     wr16(globals_at(globals, gem_word(A_vdi_contrl, VDI_CONTRL_PTSIN_N)), ptsin_pairs);
@@ -181,7 +142,7 @@ static void vdi_trap(uint8_t *image, GemGlobals globals, uint16_t opcode, uint16
 /* An MFDB address arrives in `contrl` as two words, high half first. The original splits it with
  * `asr.l #8` twice and a `move.w`, and a `move.w` keeps the low word either way — so the shift's
  * sign fill is dropped before it is stored and a logical shift is the same sixteen bits. */
-static void vdi_set_mfdb(GemGlobals globals, unsigned contrl_index, uint32_t mfdb) {
+static void vdi_set_mfdb(GlobalsBase globals, unsigned contrl_index, uint32_t mfdb) {
     wr16(globals_at(globals, gem_word(A_vdi_contrl, contrl_index)), (uint16_t)(mfdb >> 16));
     wr16(globals_at(globals, gem_word(A_vdi_contrl, contrl_index + 1)), (uint16_t)(mfdb & 0xffffu));
 }
@@ -191,11 +152,11 @@ static void vdi_set_mfdb(GemGlobals globals, unsigned contrl_index, uint32_t mfd
  * `vro_cpyfm` calls the `_at` pair rather than the shared body: it already holds the base, and a
  * port that stopped making these two calls would leave two verified routines with no on-target
  * caller at all — only the differential's direct entries. */
-static void vdi_set_src_mfdb_at(GemGlobals globals, uint32_t mfdb) {
+static void vdi_set_src_mfdb_at(GlobalsBase globals, uint32_t mfdb) {
     vdi_set_mfdb(globals, VDI_CONTRL_SRC_MFDB, mfdb);
 }
 
-static void vdi_set_dst_mfdb_at(GemGlobals globals, uint32_t mfdb) {
+static void vdi_set_dst_mfdb_at(GlobalsBase globals, uint32_t mfdb) {
     vdi_set_mfdb(globals, VDI_CONTRL_DST_MFDB, mfdb);
 }
 
@@ -212,7 +173,7 @@ void vdi_set_dst_mfdb(uint8_t *image, uint32_t mfdb) {
  * asks for height 6 (menu, hall of fame, save banner) and 4 (the HUD). */
 void vst_height(uint8_t *image, int16_t handle, int16_t height, uint32_t char_w, uint32_t char_h,
                 uint32_t cell_w, uint32_t cell_h, CallerAddressRegisters saved) {
-    GemGlobals globals = globals_base(image);
+    GlobalsBase globals = globals_base(image);
 
     wr16(globals_at(globals, gem_word(A_vdi_ptsin, VDI_PTSIN_X)), 0);
     wr16(globals_at(globals, gem_word(A_vdi_ptsin, VDI_PTSIN_Y)), (uint16_t)height);
@@ -227,7 +188,7 @@ void vst_height(uint8_t *image, int16_t handle, int16_t height, uint32_t char_w,
  * intout answer back. Text colours seen are 1, 5 and 13; the only fill colours are 11 and 0. */
 static int16_t vdi_set_colour(uint8_t *image, uint16_t opcode, int16_t handle, int16_t index,
                               CallerAddressRegisters saved) {
-    GemGlobals globals = globals_base(image);
+    GlobalsBase globals = globals_base(image);
 
     wr16(globals_at(globals, gem_word(A_vdi_intin, 0)), (uint16_t)index);
     vdi_trap(image, globals, opcode, 0, 1, handle, saved);
@@ -252,7 +213,7 @@ int16_t vsf_color(uint8_t *image, int16_t handle, int16_t index, CallerAddressRe
  * does the model, which reads `contrl[6]` for nothing but its own reply. */
 void v_opnvwk(uint8_t *image, uint32_t work_in, uint32_t handle_out, uint32_t work_out,
               CallerAddressRegisters saved) {
-    GemGlobals globals = globals_base(image);
+    GlobalsBase globals = globals_base(image);
 
     wr32(globals_at(globals, vdi_pblock_slot(VDI_PB_INTIN)), work_in);
     wr32(globals_at(globals, vdi_pblock_slot(VDI_PB_INTOUT)), work_out);
@@ -278,7 +239,7 @@ void v_clrwk(uint8_t *image, int16_t handle, CallerAddressRegisters saved) {
  * first ptsout pair. Every attract loop polls this and bails out when the mask reads 1. */
 void vq_mouse(uint8_t *image, int16_t handle, uint32_t buttons_out, uint32_t x_out, uint32_t y_out,
               CallerAddressRegisters saved) {
-    GemGlobals globals = globals_base(image);
+    GlobalsBase globals = globals_base(image);
 
     vdi_trap(image, globals, VDI_VQ_MOUSE, 0, 0, handle, saved);
     wr16(image + buttons_out, be16(globals_at(globals, gem_word(A_vdi_intout, 0))));
@@ -289,7 +250,7 @@ void vq_mouse(uint8_t *image, int16_t handle, uint32_t buttons_out, uint32_t x_o
 /* vq_key_s @ 0x16a5e — VDI 128, the shift/control/alt bitmap in intout[0]. One caller: the blow
  * gate inside `game_frame_update`. */
 void vq_key_s(uint8_t *image, int16_t handle, uint32_t state_out, CallerAddressRegisters saved) {
-    GemGlobals globals = globals_base(image);
+    GlobalsBase globals = globals_base(image);
 
     vdi_trap(image, globals, VDI_VQ_KEY_S, 0, 0, handle, saved);
     wr16(image + state_out, be16(globals_at(globals, gem_word(A_vdi_intout, 0))));
@@ -304,7 +265,7 @@ void vq_key_s(uint8_t *image, int16_t handle, uint32_t state_out, CallerAddressR
  * comes near that, and the arithmetic is transcribed rather than simplified. */
 void v_gtext(uint8_t *image, int16_t handle, int16_t x, int16_t y, uint32_t text,
              CallerAddressRegisters saved) {
-    GemGlobals globals = globals_base(image);
+    GlobalsBase globals = globals_base(image);
 
     wr16(globals_at(globals, gem_word(A_vdi_ptsin, VDI_PTSIN_X)), (uint16_t)x);
     wr16(globals_at(globals, gem_word(A_vdi_ptsin, VDI_PTSIN_Y)), (uint16_t)y);
@@ -333,7 +294,7 @@ void v_gtext(uint8_t *image, int16_t handle, int16_t x, int16_t y, uint32_t text
  * for the duration of the call and puts the library's array back afterwards. Only the bonus bar
  * calls it. */
 void vr_recfl(uint8_t *image, int16_t handle, uint32_t pxy, CallerAddressRegisters saved) {
-    GemGlobals globals = globals_base(image);
+    GlobalsBase globals = globals_base(image);
 
     wr32(globals_at(globals, vdi_pblock_slot(VDI_PB_PTSIN)), pxy);
     vdi_trap(image, globals, VDI_VR_RECFL, 2, 0, handle, saved);
@@ -347,7 +308,7 @@ void vr_recfl(uint8_t *image, int16_t handle, uint32_t pxy, CallerAddressRegiste
  */
 void vro_cpyfm(uint8_t *image, int16_t handle, int16_t mode, uint32_t pxy, uint32_t src_mfdb,
                uint32_t dst_mfdb, CallerAddressRegisters saved) {
-    GemGlobals globals = globals_base(image);
+    GlobalsBase globals = globals_base(image);
 
     wr16(globals_at(globals, gem_word(A_vdi_intin, 0)), (uint16_t)mode);
     vdi_set_src_mfdb_at(globals, src_mfdb);
@@ -599,28 +560,33 @@ void init_gem_and_screens(uint8_t *image, uint32_t frame, CallerAddressRegisters
  * origin (the grab and the sprite draw) and a copy TO it (the background save).
  * ============================================================================================= */
 
+/* BOTH TAKE THE BASE, and so do the four routines below: eight rectangle words and two MFDB
+ * `fd_addr` longwords is TEN slots a copy, which is the same lever the VDI binding above took in
+ * ../STATUS.md's wave 5c and the same one it left here unspent. `include/globals.h` carries the
+ * mechanism; the numbers are `A_blit_pxy` -7236 and the two MFDBs -7702/-7706 off A4_BASE. */
+
 /* pxy = a full cell at (0,0) in the source, landing with its top-left corner at (x, y). */
-static void sprite_pxy_from_cell(uint8_t *image, int16_t x, int16_t y) {
-    wr16(image + gem_word(A_blit_pxy, BLIT_PXY_SRC_X1), 0);
-    wr16(image + gem_word(A_blit_pxy, BLIT_PXY_SRC_Y1), 0);
-    wr16(image + gem_word(A_blit_pxy, BLIT_PXY_SRC_X2), SPRITE_EXTENT);
-    wr16(image + gem_word(A_blit_pxy, BLIT_PXY_SRC_Y2), SPRITE_EXTENT);
-    wr16(image + gem_word(A_blit_pxy, BLIT_PXY_DST_X1), (uint16_t)x);
-    wr16(image + gem_word(A_blit_pxy, BLIT_PXY_DST_Y1), (uint16_t)y);
-    wr16(image + gem_word(A_blit_pxy, BLIT_PXY_DST_X2), (uint16_t)(x + SPRITE_EXTENT));
-    wr16(image + gem_word(A_blit_pxy, BLIT_PXY_DST_Y2), (uint16_t)(y + SPRITE_EXTENT));
+static void sprite_pxy_from_cell(GlobalsBase globals, int16_t x, int16_t y) {
+    wr16(globals_at(globals, gem_word(A_blit_pxy, BLIT_PXY_SRC_X1)), 0);
+    wr16(globals_at(globals, gem_word(A_blit_pxy, BLIT_PXY_SRC_Y1)), 0);
+    wr16(globals_at(globals, gem_word(A_blit_pxy, BLIT_PXY_SRC_X2)), SPRITE_EXTENT);
+    wr16(globals_at(globals, gem_word(A_blit_pxy, BLIT_PXY_SRC_Y2)), SPRITE_EXTENT);
+    wr16(globals_at(globals, gem_word(A_blit_pxy, BLIT_PXY_DST_X1)), (uint16_t)x);
+    wr16(globals_at(globals, gem_word(A_blit_pxy, BLIT_PXY_DST_Y1)), (uint16_t)y);
+    wr16(globals_at(globals, gem_word(A_blit_pxy, BLIT_PXY_DST_X2)), (uint16_t)(x + SPRITE_EXTENT));
+    wr16(globals_at(globals, gem_word(A_blit_pxy, BLIT_PXY_DST_Y2)), (uint16_t)(y + SPRITE_EXTENT));
 }
 
 /* ...and the other direction: a full cell at (x, y) in the source, landing at (0,0). */
-static void sprite_pxy_to_cell(uint8_t *image, int16_t x, int16_t y) {
-    wr16(image + gem_word(A_blit_pxy, BLIT_PXY_SRC_X1), (uint16_t)x);
-    wr16(image + gem_word(A_blit_pxy, BLIT_PXY_SRC_Y1), (uint16_t)y);
-    wr16(image + gem_word(A_blit_pxy, BLIT_PXY_SRC_X2), (uint16_t)(x + SPRITE_EXTENT));
-    wr16(image + gem_word(A_blit_pxy, BLIT_PXY_SRC_Y2), (uint16_t)(y + SPRITE_EXTENT));
-    wr16(image + gem_word(A_blit_pxy, BLIT_PXY_DST_X1), 0);
-    wr16(image + gem_word(A_blit_pxy, BLIT_PXY_DST_Y1), 0);
-    wr16(image + gem_word(A_blit_pxy, BLIT_PXY_DST_X2), SPRITE_EXTENT);
-    wr16(image + gem_word(A_blit_pxy, BLIT_PXY_DST_Y2), SPRITE_EXTENT);
+static void sprite_pxy_to_cell(GlobalsBase globals, int16_t x, int16_t y) {
+    wr16(globals_at(globals, gem_word(A_blit_pxy, BLIT_PXY_SRC_X1)), (uint16_t)x);
+    wr16(globals_at(globals, gem_word(A_blit_pxy, BLIT_PXY_SRC_Y1)), (uint16_t)y);
+    wr16(globals_at(globals, gem_word(A_blit_pxy, BLIT_PXY_SRC_X2)), (uint16_t)(x + SPRITE_EXTENT));
+    wr16(globals_at(globals, gem_word(A_blit_pxy, BLIT_PXY_SRC_Y2)), (uint16_t)(y + SPRITE_EXTENT));
+    wr16(globals_at(globals, gem_word(A_blit_pxy, BLIT_PXY_DST_X1)), 0);
+    wr16(globals_at(globals, gem_word(A_blit_pxy, BLIT_PXY_DST_Y1)), 0);
+    wr16(globals_at(globals, gem_word(A_blit_pxy, BLIT_PXY_DST_X2)), SPRITE_EXTENT);
+    wr16(globals_at(globals, gem_word(A_blit_pxy, BLIT_PXY_DST_Y2)), SPRITE_EXTENT);
 }
 
 /* Every one of the twelve copies passes the workstation handle and the two MFDBs the sprite bank
@@ -651,6 +617,13 @@ static inline __attribute__((always_inline)) void sprite_copy(uint8_t *image, in
  * bubble's, and the second table is reached with the UNBIASED index off a base 47 longwords below
  * `bubble_sprite` — so the two `lea`s differ by exactly that bias. */
 void build_sprite_bank_grab_cells(uint8_t *image, CallerAddressRegisters saved) {
+    /* THIS ONE IS NOT A PERFORMANCE CONVERSION — it makes 0.00 calls in a profiled frame, which is
+     * the same test that leaves the AES binding above on the image form. It takes the base because
+     * it shares `sprite_pxy_to_cell` with the three per-frame routines, and one writer beats a
+     * second spelling of the same eight stores. Hoisted out of the loop: the barrier is opaque, so
+     * inside it GCC would re-materialise the base once a cell. */
+    GlobalsBase globals = globals_base(image);
+
     for (int16_t cell = 0; cell < (int16_t)TILES_PER_BANK; cell++) {
         uint32_t buffer = c_malloc(image, (uint16_t)TILE_BYTES, saved);
 
@@ -659,9 +632,9 @@ void build_sprite_bank_grab_cells(uint8_t *image, CallerAddressRegisters saved) 
                               * (int16_t)TILE_PIXELS);
         int16_t y = (int16_t)(row * (int16_t)TILE_PIXELS);
 
-        wr32(image + A_mfdb_src + MFDB_ADDR, 0);      /* 0 = the workstation's own screen */
-        wr32(image + A_mfdb_dst + MFDB_ADDR, buffer);
-        sprite_pxy_to_cell(image, x, y);
+        wr32(globals_at(globals, A_mfdb_src + MFDB_ADDR), 0);  /* 0 = the workstation's own screen */
+        wr32(globals_at(globals, A_mfdb_dst + MFDB_ADDR), buffer);
+        sprite_pxy_to_cell(globals, x, y);
         sprite_copy(image, VDI_MODE_S_ONLY, saved);
 
         uint32_t table = cell < (int16_t)SPRITE_BANK_BUBBLE_FIRST
@@ -676,14 +649,18 @@ void build_sprite_bank_grab_cells(uint8_t *image, CallerAddressRegisters saved) 
 /* save_sprite_backgrounds @ 0x1342e — lift the 32x32 patch of the work buffer that is about to be
  * covered by each sprite into its own buffer, so `restore_sprite_backgrounds` can put it back. */
 void save_sprite_backgrounds(uint8_t *image, CallerAddressRegisters saved) {
-    wr32(image + A_mfdb_src + MFDB_ADDR, 0);
-    wr32(image + A_mfdb_dst + MFDB_ADDR, be32(image + A_ghost_bg));
-    sprite_pxy_to_cell(image, (int16_t)be16(image + A_ghost_x), (int16_t)be16(image + A_ghost_y));
+    GlobalsBase globals = globals_base(image);
+
+    wr32(globals_at(globals, A_mfdb_src + MFDB_ADDR), 0);
+    wr32(globals_at(globals, A_mfdb_dst + MFDB_ADDR), be32(globals_at(globals, A_ghost_bg)));
+    sprite_pxy_to_cell(globals, word_at_base(globals, A_ghost_x),
+                       word_at_base(globals, A_ghost_y));
     sprite_copy(image, VDI_MODE_S_ONLY, saved);
 
-    wr32(image + A_mfdb_src + MFDB_ADDR, 0);
-    wr32(image + A_mfdb_dst + MFDB_ADDR, be32(image + A_bubble_bg));
-    sprite_pxy_to_cell(image, (int16_t)be16(image + A_bubble_x), (int16_t)be16(image + A_bubble_y));
+    wr32(globals_at(globals, A_mfdb_src + MFDB_ADDR), 0);
+    wr32(globals_at(globals, A_mfdb_dst + MFDB_ADDR), be32(globals_at(globals, A_bubble_bg)));
+    sprite_pxy_to_cell(globals, word_at_base(globals, A_bubble_x),
+                       word_at_base(globals, A_bubble_y));
     sprite_copy(image, VDI_MODE_S_ONLY, saved);
 }
 
@@ -691,32 +668,43 @@ void save_sprite_backgrounds(uint8_t *image, CallerAddressRegisters saved) {
  * OR is the transparency: both sprite families use only colour 0 and colour 15, so a mask would buy
  * nothing and the VDI's own clipping keeps a sprite at the screen edge inside the raster. */
 void draw_sprites(uint8_t *image, CallerAddressRegisters saved) {
-    uint32_t ghost_cell = longword_slot(A_ghost_sprite, (int16_t)be16(image + A_ghost_tile));
-    wr32(image + A_mfdb_src + MFDB_ADDR, be32(image + ghost_cell));
-    wr32(image + A_mfdb_dst + MFDB_ADDR, 0);
-    sprite_pxy_from_cell(image, (int16_t)be16(image + A_ghost_x), (int16_t)be16(image + A_ghost_y));
+    GlobalsBase globals = globals_base(image);
+
+    /* THE TWO TABLE SLOTS STAY ON THE IMAGE, and they are the only run-time addresses in this
+     * group. `include/common.h`'s `globals_at` carries the rule: it is `image + (int32_t)address`
+     * where the image form is `image + (uint32_t)address`, so the two agree on every address this
+     * program can build and disagree only on one it cannot. Converting a run-time address would
+     * buy nothing and would put the host and the 32-bit target on different sides of that. */
+    uint32_t ghost_cell = longword_slot(A_ghost_sprite, word_at_base(globals, A_ghost_tile));
+    wr32(globals_at(globals, A_mfdb_src + MFDB_ADDR), be32(image + ghost_cell));
+    wr32(globals_at(globals, A_mfdb_dst + MFDB_ADDR), 0);
+    sprite_pxy_from_cell(globals, word_at_base(globals, A_ghost_x),
+                         word_at_base(globals, A_ghost_y));
     sprite_copy(image, VDI_MODE_S_OR_D, saved);
 
-    uint32_t bubble_cell = longword_slot(A_bubble_sprite, (int16_t)be16(image + A_bubble_frame));
-    wr32(image + A_mfdb_src + MFDB_ADDR, be32(image + bubble_cell));
-    wr32(image + A_mfdb_dst + MFDB_ADDR, 0);
-    sprite_pxy_from_cell(image, (int16_t)be16(image + A_bubble_x),
-                         (int16_t)be16(image + A_bubble_y));
+    uint32_t bubble_cell = longword_slot(A_bubble_sprite, word_at_base(globals, A_bubble_frame));
+    wr32(globals_at(globals, A_mfdb_src + MFDB_ADDR), be32(image + bubble_cell));
+    wr32(globals_at(globals, A_mfdb_dst + MFDB_ADDR), 0);
+    sprite_pxy_from_cell(globals, word_at_base(globals, A_bubble_x),
+                         word_at_base(globals, A_bubble_y));
     sprite_copy(image, VDI_MODE_S_OR_D, saved);
 }
 
 /* restore_sprite_backgrounds @ 0x135d2 — undo `draw_sprites`, leaving the work buffer holding the
  * room and its objects only, which is what `bubble_collision_probe` reads. */
 void restore_sprite_backgrounds(uint8_t *image, CallerAddressRegisters saved) {
-    wr32(image + A_mfdb_src + MFDB_ADDR, be32(image + A_ghost_bg));
-    wr32(image + A_mfdb_dst + MFDB_ADDR, 0);
-    sprite_pxy_from_cell(image, (int16_t)be16(image + A_ghost_x), (int16_t)be16(image + A_ghost_y));
+    GlobalsBase globals = globals_base(image);
+
+    wr32(globals_at(globals, A_mfdb_src + MFDB_ADDR), be32(globals_at(globals, A_ghost_bg)));
+    wr32(globals_at(globals, A_mfdb_dst + MFDB_ADDR), 0);
+    sprite_pxy_from_cell(globals, word_at_base(globals, A_ghost_x),
+                         word_at_base(globals, A_ghost_y));
     sprite_copy(image, VDI_MODE_S_ONLY, saved);
 
-    wr32(image + A_mfdb_src + MFDB_ADDR, be32(image + A_bubble_bg));
-    wr32(image + A_mfdb_dst + MFDB_ADDR, 0);
-    sprite_pxy_from_cell(image, (int16_t)be16(image + A_bubble_x),
-                         (int16_t)be16(image + A_bubble_y));
+    wr32(globals_at(globals, A_mfdb_src + MFDB_ADDR), be32(globals_at(globals, A_bubble_bg)));
+    wr32(globals_at(globals, A_mfdb_dst + MFDB_ADDR), 0);
+    sprite_pxy_from_cell(globals, word_at_base(globals, A_bubble_x),
+                         word_at_base(globals, A_bubble_y));
     sprite_copy(image, VDI_MODE_S_ONLY, saved);
 }
 

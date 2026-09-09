@@ -24,7 +24,8 @@
 
 #include "blit.h"       /* the two screens and the screen geometry `get_pixel` reads through */
 #include "clib.h"       /* c_ldiv / c_strlen, the fp package, and the trap trampoline's slots */
-#include "common.h"     /* muls_ext_w — the `muls.w` + `ext.l` every table index here is */
+#include "common.h"     /* muls_ext_w — the `muls.w` + `ext.l` every table index here is — and
+                        * `GlobalsBase`, the a4 this file's frame path reaches its globals off */
 #include "frontend.h"   /* the input block the mouse poll and the key poll fill */
 #include "gameplay.h"
 #include "sound.h"      /* the trigger API a blow, a pop and a candle reach */
@@ -622,13 +623,14 @@ static void divide_into_accumulator(uint8_t *image, int16_t numerator, uint32_t 
 }
 
 void frame_scale_mouse_to_ghost(uint8_t *image) {
-    uint32_t x_scale = word_at(image, A_room_number) == ROOM_WIDE
+    GlobalsBase globals = globals_base(image);
+    uint32_t x_scale = word_at_base(globals, A_room_number) == ROOM_WIDE
                            ? A_const_mouse_x_scale_room35 : A_const_mouse_x_scale;
 
-    divide_into_accumulator(image, word_at(image, A_mouse_x), x_scale);
-    set_word(image, A_ghost_x, (int16_t)fp_acc_to_long(image));
-    divide_into_accumulator(image, word_at(image, A_mouse_y), A_const_mouse_y_scale);
-    set_word(image, A_ghost_y, (int16_t)fp_acc_to_long(image));
+    divide_into_accumulator(image, word_at_base(globals, A_mouse_x), x_scale);
+    set_word_at_base(globals, A_ghost_x, (int16_t)fp_acc_to_long(image));
+    divide_into_accumulator(image, word_at_base(globals, A_mouse_y), A_const_mouse_y_scale);
+    set_word_at_base(globals, A_ghost_y, (int16_t)fp_acc_to_long(image));
 }
 
 /* Slice 3, `[0x124a4, 0x1255c)` — blowing, or recovering.
@@ -638,16 +640,18 @@ void frame_scale_mouse_to_ghost(uint8_t *image) {
  * address register — `sound_voice_priority` @ 0x1455e and `sound_release_voice` @ 0x14510 touch
  * only D0/A0 — so the registers the trampoline sees ARE the ones the slice was entered with. */
 void frame_blow_or_recover(uint8_t *image, CallerAddressRegisters saved) {
-    int16_t shift = word_at(image, A_key_shift_state);
+    GlobalsBase globals = globals_base(image);
+    int16_t shift = word_at_base(globals, A_key_shift_state);
     int16_t breath;
 
     if (shift != (int16_t)KEY_SHIFT_NONE && shift != (int16_t)KEY_SHIFT_CTRL_ONLY) {
-        set_word(image, A_ghost_anim, GHOST_BLOW_ANIM);
-        set_word(image, A_ghost_tile,
-                 (int16_t)((int16_t)(word_at(image, A_ghost_facing) * GHOST_TILES_PER_FACING)
-                           + word_at(image, A_ghost_anim)));
-        breath = (int16_t)(word_at(image, A_breath) - 1);
-        set_word(image, A_breath, breath);
+        set_word_at_base(globals, A_ghost_anim, GHOST_BLOW_ANIM);
+        set_word_at_base(globals, A_ghost_tile,
+                         (int16_t)((int16_t)(word_at_base(globals, A_ghost_facing)
+                                             * GHOST_TILES_PER_FACING)
+                                   + word_at_base(globals, A_ghost_anim)));
+        breath = (int16_t)(word_at_base(globals, A_breath) - 1);
+        set_word_at_base(globals, A_breath, breath);
         if (breath >= 0) {
             /* THE SLICE'S ONE PRECONDITION: `ghost_blow_body` is `ghost_blow` MINUS its two
              * redraws, and the original reaches those only when the candle script fires — every
@@ -661,11 +665,11 @@ void frame_blow_or_recover(uint8_t *image, CallerAddressRegisters saved) {
          * until the player lets go. */
         if (sound_voice_priority(image, BLOW_VOICE) != 0)
             sound_release_voice(image, BLOW_VOICE);
-        set_word(image, A_breath, 0);
+        set_word_at_base(globals, A_breath, 0);
         /* ...through XBIOS `Setcolor(GHOST_PEN, GHOST_COLOUR_SPENT)`. It writes the shifter and no
          * image byte, so the trampoline's three save slots are still the only bytes a diff can see
          * — but the CALL is now an ordered event, and on target it really moves the pen. */
-        trap_save_registers(image, saved, RET_SETCOLOR_SPENT);
+        trap_save_registers_at_base(globals, saved, RET_SETCOLOR_SPENT);
         os_setcolor(GHOST_PEN, GHOST_COLOUR_SPENT);
         return;
     }
@@ -674,18 +678,18 @@ void frame_blow_or_recover(uint8_t *image, CallerAddressRegisters saved) {
         sound_release_voice(image, BLOW_VOICE);
     /* The idle walk cycle, and the gauge refilling three times as fast as it drains. */
     {
-        int16_t previous = word_at(image, A_ghost_anim);
+        int16_t previous = word_at_base(globals, A_ghost_anim);
 
-        set_word(image, A_ghost_anim, (int16_t)(previous + 1));
+        set_word_at_base(globals, A_ghost_anim, (int16_t)(previous + 1));
         if (previous > (int16_t)GHOST_IDLE_ANIM_LAST)
-            set_word(image, A_ghost_anim, 0);
+            set_word_at_base(globals, A_ghost_anim, 0);
     }
-    breath = (int16_t)(word_at(image, A_breath) + BREATH_REFILL_PER_FRAME);
-    set_word(image, A_breath, breath);
+    breath = (int16_t)(word_at_base(globals, A_breath) + BREATH_REFILL_PER_FRAME);
+    set_word_at_base(globals, A_breath, breath);
     if (breath > (int16_t)BREATH_MAX)
-        set_word(image, A_breath, BREATH_MAX);
+        set_word_at_base(globals, A_breath, BREATH_MAX);
     /* ...and `Setcolor(GHOST_PEN, GHOST_COLOUR_IDLE)`, the same call the other way. */
-    trap_save_registers(image, saved, RET_SETCOLOR_IDLE);
+    trap_save_registers_at_base(globals, saved, RET_SETCOLOR_IDLE);
     os_setcolor(GHOST_PEN, GHOST_COLOUR_IDLE);
 }
 
@@ -693,37 +697,41 @@ void frame_blow_or_recover(uint8_t *image, CallerAddressRegisters saved) {
  *
  * Each button has its own BYTE edge latch: the step happens on the frame the button is seen down
  * with the latch armed, and the latch re-arms on the first frame the button is not that one. */
-static void step_facing(uint8_t *image, int16_t delta) {
-    int16_t facing = (int16_t)(word_at(image, A_ghost_facing) + delta);
+static void step_facing(GlobalsBase globals, int16_t delta) {
+    int16_t facing = (int16_t)(word_at_base(globals, A_ghost_facing) + delta);
 
-    set_word(image, A_ghost_facing, facing);
+    set_word_at_base(globals, A_ghost_facing, facing);
     /* Both tests are made AFTER the store, so the out-of-range value is written and only then
      * replaced — and each end wraps to the other. */
     if (delta > 0 ? facing > (int16_t)GHOST_FACINGS - 1 : facing < 0)
-        set_word(image, A_ghost_facing, delta > 0 ? 0 : (int16_t)GHOST_FACINGS - 1);
-    set_word(image, A_ghost_tile,
-             (int16_t)(word_at(image, A_ghost_facing) * GHOST_TILES_PER_FACING));
+        set_word_at_base(globals, A_ghost_facing, delta > 0 ? 0 : (int16_t)GHOST_FACINGS - 1);
+    set_word_at_base(globals, A_ghost_tile,
+                     (int16_t)(word_at_base(globals, A_ghost_facing) * GHOST_TILES_PER_FACING));
 }
 
 void frame_step_facing(uint8_t *image) {
-    int16_t buttons = word_at(image, A_mouse_buttons);
+    GlobalsBase globals = globals_base(image);
+    int16_t buttons = word_at_base(globals, A_mouse_buttons);
+    uint8_t *left_ready = globals_at(globals, A_btn_left_ready);
+    uint8_t *right_ready = globals_at(globals, A_btn_right_ready);
 
-    if (buttons == 1 && image[A_btn_left_ready] != 0) {
-        image[A_btn_left_ready] = 0;
-        step_facing(image, +1);
+    if (buttons == 1 && *left_ready != 0) {
+        *left_ready = 0;
+        step_facing(globals, +1);
     }
     if (buttons != 1)
-        image[A_btn_left_ready] = 1;
-    if (buttons == 2 && image[A_btn_right_ready] != 0) {
-        image[A_btn_right_ready] = 0;
-        step_facing(image, -1);
+        *left_ready = 1;
+    if (buttons == 2 && *right_ready != 0) {
+        *right_ready = 0;
+        step_facing(globals, -1);
     }
     if (buttons != 2)
-        image[A_btn_right_ready] = 1;
+        *right_ready = 1;
     /* ...and the tile is recomputed WITH the animation frame, which the two steps above leave out. */
-    set_word(image, A_ghost_tile,
-             (int16_t)((int16_t)(word_at(image, A_ghost_facing) * GHOST_TILES_PER_FACING)
-                       + word_at(image, A_ghost_anim)));
+    set_word_at_base(globals, A_ghost_tile,
+                     (int16_t)((int16_t)(word_at_base(globals, A_ghost_facing)
+                                         * GHOST_TILES_PER_FACING)
+                               + word_at_base(globals, A_ghost_anim)));
 }
 
 /* Slice 5, `[0x125e6, 0x126e2)` — the fans.
@@ -737,7 +745,14 @@ static uint32_t fan_field(int16_t room, unsigned slot, uint32_t field) {
                     muls_ext_w(room, OBJECT_ROOM_STRIDE));
 }
 
-static void apply_fan(uint8_t *image, int16_t room, unsigned slot) {
+/* IT TAKES BOTH, and the split is that `fan_field` is a RUN-TIME address: the room number goes
+ * through `muls_ext_w` and `addr_add`, which is the original's own `adda.w` truncation.
+ * `include/common.h`'s `globals_at` states the rule — it is `image + (int32_t)address` where the
+ * image form is `image + (uint32_t)address`, the same byte for every address this program can build
+ * and a different one only for an address it cannot. The three object fields therefore stay on
+ * `image`, where the arithmetic that produced them belongs, and only the five FIXED globals move to
+ * the base. `src/frontend.c`'s `draw_sprites` and `v_gtext` carry the same split. */
+static void apply_fan(const uint8_t *image, GlobalsBase globals, int16_t room, unsigned slot) {
     int16_t delta_x, delta_y;
 
     if (word_at(image, fan_field(room, slot, OBJECT_TILE)) != (int16_t)OBJECT_FAN_TILE)
@@ -747,12 +762,12 @@ static void apply_fan(uint8_t *image, int16_t room, unsigned slot) {
      * with a fan leaves different `delta_x`/`delta_y` behind than one without. */
     delta_x = (int16_t)((int16_t)(word_at(image, fan_field(room, slot, OBJECT_X))
                                   * ENTRY_POINT_PIXELS)
-                        - word_at(image, A_bubble_x));
-    set_word(image, A_delta_x, delta_x);
+                        - word_at_base(globals, A_bubble_x));
+    set_word_at_base(globals, A_delta_x, delta_x);
     delta_y = (int16_t)((int16_t)(word_at(image, fan_field(room, slot, OBJECT_Y))
                                   * ENTRY_POINT_PIXELS)
-                        - word_at(image, A_bubble_y));
-    set_word(image, A_delta_y, delta_y);
+                        - word_at_base(globals, A_bubble_y));
+    set_word_at_base(globals, A_delta_y, delta_y);
 
     if (delta_x <= FAN_DX_MIN || delta_x >= FAN_DX_MAX)
         return;
@@ -761,20 +776,22 @@ static void apply_fan(uint8_t *image, int16_t room, unsigned slot) {
 
     /* A fan pushes LEFT only: two pixels this frame through `x_impulse`, plus a one-hundredth of a
      * pixel a frame of drift that the pulse below keeps re-arming. */
-    set_word(image, A_drift_dir_x, -1);
-    set_word(image, A_x_impulse, -(int16_t)FAN_PUSH_PIXELS);
-    set_word(image, A_drift_vel_x, -1);
+    set_word_at_base(globals, A_drift_dir_x, -1);
+    set_word_at_base(globals, A_x_impulse, -(int16_t)FAN_PUSH_PIXELS);
+    set_word_at_base(globals, A_drift_vel_x, -1);
 }
 
 void frame_apply_fans(uint8_t *image) {
+    GlobalsBase globals = globals_base(image);
+
     /* The original re-reads `-7674(a4)` for each of its eight accesses here too, and caching it is
      * safe ONLY because every store this slice makes is to a fixed global — `A_delta_x`,
      * `A_delta_y`, `A_drift_dir_x`, `A_x_impulse`, `A_drift_vel_x` — and none of them is
      * `A_room_number`. That is not true of `extinguish_candle`, which is why it re-reads. */
-    int16_t room = word_at(image, A_room_number);
+    int16_t room = word_at_base(globals, A_room_number);
 
-    apply_fan(image, room, OBJECT_FAN_SLOT_A);
-    apply_fan(image, room, OBJECT_FAN_SLOT_B);
+    apply_fan(image, globals, room, OBJECT_FAN_SLOT_A);
+    apply_fan(image, globals, room, OBJECT_FAN_SLOT_B);
 }
 
 /* Slice 6, `[0x126e2, 0x1294a)` — the bubble's own step.
@@ -784,25 +801,29 @@ void frame_apply_fans(uint8_t *image) {
  * is a flag this reconstruction needs to say where this slice stops, not a value the original
  * computes: the original simply falls into the sequence. */
 int16_t frame_step_live_bubble(uint8_t *image) {
-    if (word_at(image, A_bubble_alive) != 0) {
+    GlobalsBase globals = globals_base(image);
+
+    if (word_at_base(globals, A_bubble_alive) != 0) {
         bubble_collision_probe(image);
-        if (word_at(image, A_bubble_frame) == (int16_t)BUBBLE_POPPED_FRAME) {
+        if (word_at_base(globals, A_bubble_frame) == (int16_t)BUBBLE_POPPED_FRAME) {
             sound_play(image, A_snd_def_fx + POP_SFX * SND_DEF_BYTES, POP_VOICE,
-                       (int16_t)(word_at(image, A_sound_enabled) * POP_VOLUME_STEP),
+                       (int16_t)(word_at_base(globals, A_sound_enabled) * POP_VOLUME_STEP),
                        POP_SFX_NOTE, POP_SFX_PRIORITY);
             return 0;
         }
         /* The velocity is in hundredths of a pixel and `x_impulse` is in whole ones. */
-        set_word(image, A_bubble_x,
-                 (int16_t)(word_at(image, A_bubble_x)
-                           + (int16_t)(word_at(image, A_drift_vel_x) / DRIFT_VELOCITY_SCALE)
-                           + word_at(image, A_x_impulse)));
-        set_word(image, A_bubble_y,
-                 (int16_t)(word_at(image, A_bubble_y)
-                           + (int16_t)(word_at(image, A_drift_vel_y) / DRIFT_VELOCITY_SCALE)));
+        set_word_at_base(globals, A_bubble_x,
+                         (int16_t)(word_at_base(globals, A_bubble_x)
+                                   + (int16_t)(word_at_base(globals, A_drift_vel_x)
+                                               / DRIFT_VELOCITY_SCALE)
+                                   + word_at_base(globals, A_x_impulse)));
+        set_word_at_base(globals, A_bubble_y,
+                         (int16_t)(word_at_base(globals, A_bubble_y)
+                                   + (int16_t)(word_at_base(globals, A_drift_vel_y)
+                                               / DRIFT_VELOCITY_SCALE)));
         return 0;
     }
-    return word_at(image, A_bubble_frame) > BUBBLE_DEATH_TRIGGER_FRAME;
+    return word_at_base(globals, A_bubble_frame) > BUBBLE_DEATH_TRIGGER_FRAME;
 }
 
 /* Slice 7, `[0x1294a, 0x129b0)` — the drift pulse, and the frame's tail.
@@ -871,15 +892,17 @@ void drain_console_queue(uint8_t *image, uint32_t cconis_return, uint32_t crawci
 
 /* One `Crawio(0xff)`, the non-blocking raw read: the LOW BYTE of its answer is the ASCII, and that
  * byte is all the game keeps. An idle console answers `OS_CRAWIO_RESULT`, so the poll runs on. */
-static void read_raw_key(uint8_t *image, uint32_t crawio_return, CallerAddressRegisters saved) {
-    trap_save_registers(image, saved, crawio_return);
-    image[A_key_raw] = (uint8_t)os_crawio(image, OS_CRAWIO_READ);
+static void read_raw_key(uint8_t *image, GlobalsBase globals, uint32_t crawio_return,
+                         CallerAddressRegisters saved) {
+    trap_save_registers_at_base(globals, saved, crawio_return);
+    *globals_at(globals, A_key_raw) = (uint8_t)os_crawio(image, OS_CRAWIO_READ);
 }
 
 /* `move.b -7686(a4),d0 / ext.w d0` — the key compared as a SIGNED byte widened to a word, so a
- * key with bit 7 set can never equal one of the three control codes. */
-static int16_t key_as_word(const uint8_t *image) {
-    return (int16_t)(int8_t)image[A_key_raw];
+ * key with bit 7 set can never equal one of the three control codes. Both readers below hold the
+ * base already, which is why this takes it rather than the image. */
+static int16_t key_as_word(GlobalsBase globals) {
+    return (int16_t)(int8_t)*globals_at(globals, A_key_raw);
 }
 
 /* ^P, `[0x1239e, 0x123de)` — everything queued is thrown away and the game then SPINS on `Crawio`
@@ -892,23 +915,25 @@ static int16_t key_as_word(const uint8_t *image) {
  * which the routine writes itself: the byte that really changes is the model's console block,
  * inside the trap. There is no site to name, so the loop is transcribed and said to be unrun. */
 void frame_poll_pause(uint8_t *image, CallerAddressRegisters saved) {
-    image[A_key_raw] = 0;
+    GlobalsBase globals = globals_base(image);
+
+    *globals_at(globals, A_key_raw) = 0;
     drain_console_queue(image, RET_POLL_PAUSE_CCONIS, RET_POLL_PAUSE_CRAWCIN, saved);
-    while (key_as_word(image) != KEY_PAUSE)
-        read_raw_key(image, RET_POLL_PAUSE_CRAWIO, saved);
+    while (key_as_word(globals) != KEY_PAUSE)
+        read_raw_key(image, globals, RET_POLL_PAUSE_CRAWIO, saved);
 }
 
 /* ^R: the whole game is thrown away — both players' scores, the live score, the life count and
  * both "still playing" flags. The turn ends because `A_lives` is left at the -1 `game_top_loop`
  * tests for. */
-static void reset_game_from_keyboard(uint8_t *image) {
-    set_word(image, A_level_complete, 0);
-    wr32(image + A_lives, (uint32_t)(int32_t)HUD_LIVES_EXHAUSTED);
-    wr32(image + A_p2_score, 0);
-    wr32(image + A_p1_score, 0);
-    wr32(image + A_score, 0);
-    set_word(image, A_p2_playing, 0);
-    set_word(image, A_p1_playing, 0);
+static void reset_game_from_keyboard(GlobalsBase globals) {
+    set_word_at_base(globals, A_level_complete, 0);
+    wr32(globals_at(globals, A_lives), (uint32_t)(int32_t)HUD_LIVES_EXHAUSTED);
+    wr32(globals_at(globals, A_p2_score), 0);
+    wr32(globals_at(globals, A_p1_score), 0);
+    wr32(globals_at(globals, A_score), 0);
+    set_word_at_base(globals, A_p2_playing, 0);
+    set_word_at_base(globals, A_p1_playing, 0);
 }
 
 /* ...and the poll itself, which ANSWERS whether the key was ^P rather than falling into the pause.
@@ -919,23 +944,26 @@ static void reset_game_from_keyboard(uint8_t *image) {
  * "the key was ignored" invisible, and every case below asserts the answer instead
  * (docs/agent-playbook.md §5, and `frame_step_live_bubble`'s residual is the same shape). */
 int16_t frame_poll_input(uint8_t *image, CallerAddressRegisters saved) {
+    GlobalsBase globals = globals_base(image);
+
     vq_mouse(image, vdi_handle(image), A_mouse_buttons, A_mouse_x, A_mouse_y, saved);
     vq_key_s(image, vdi_handle(image), A_key_shift_state, saved);
 
     /* The flush runs only when the PREVIOUS frame left a key behind — `tst.b` on the byte itself,
      * not on the sign-extended word, so any non-zero key arms it. */
-    if (image[A_key_raw] != 0)
+    if (*globals_at(globals, A_key_raw) != 0)
         drain_console_queue(image, RET_POLL_FLUSH_CCONIS, RET_POLL_FLUSH_CRAWCIN, saved);
-    read_raw_key(image, RET_POLL_CRAWIO, saved);
+    read_raw_key(image, globals, RET_POLL_CRAWIO, saved);
 
-    if (key_as_word(image) == KEY_PAUSE)
+    if (key_as_word(globals) == KEY_PAUSE)
         return 1;
-    if (key_as_word(image) == KEY_SOUND_TOGGLE) {
-        set_word(image, A_sound_enabled, word_at(image, A_sound_enabled) == 0 ? 1 : 0);
+    if (key_as_word(globals) == KEY_SOUND_TOGGLE) {
+        set_word_at_base(globals, A_sound_enabled,
+                         word_at_base(globals, A_sound_enabled) == 0 ? 1 : 0);
         return 0;
     }
-    if (key_as_word(image) == KEY_RESET)
-        reset_game_from_keyboard(image);
+    if (key_as_word(globals) == KEY_RESET)
+        reset_game_from_keyboard(globals);
     return 0;
 }
 

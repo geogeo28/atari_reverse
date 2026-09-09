@@ -23,6 +23,7 @@
 #define BUBBLEGHOST_COMMON_H
 
 #include "machine.h"
+#include "globals.h"   /* A4_BASE, for the base register below */
 
 /* One `move.l`: the unit every copy loop in this program counts in, and the stride of every
  * POINTER table it indexes (the parameter blocks' array pointers, the GHOST.DAT bank table, the two
@@ -162,17 +163,98 @@ static inline uint32_t longword_slot(uint32_t table, int16_t index) {
     return addr_add(table, muls_ext_w(index, (int32_t)LONG_BYTES));
 }
 
+/* ---- a4 ITSELF: the base register every global in this program is reached off ------------------
+ *
+ * `include/globals.h` says WHERE the globals are; this is HOW the original reaches them. `a4` is
+ * held at A4_BASE for the whole program and every global is one `move.w d16(a4)` (12 cycles). A
+ * reconstruction has no such register — `image + <address>` costs a 32-bit `move.l #<address>,Dn`
+ * (12) IN FRONT OF an indexed `(0,An,Dn.l)` access (2 dearer than the displacement form), so it
+ * runs 14 dearer than the instruction it stands for, and it burns a register per address that GCC
+ * then has to save in the prologue's `movem` — eleven of them across `save_sprite_backgrounds`
+ * before this, six after (../STATUS.md's wave 6b).
+ *
+ * So a routine that touches more than a slot or two materialises the base ONCE and reaches every
+ * global as a displacement off it. **THE BARRIER IS THE WHOLE MECHANISM**: ../STATUS.md's wave 3b
+ * records that hoisting a plain local buys NOTHING, because GCC re-folds the constant back into the
+ * index. It is `REGISTER_BARRIER` and not `CURSOR_BARRIER` — `machine.h` reserves the latter for a
+ * pointer walked by postincrement, and this one never moves — with the same `+a` class, because an
+ * address register is what displacement addressing needs. `always_inline` because the body IS an
+ * `asm`, which is what tipped GCC into out-lining `src/frontend.c`'s `sprite_copy` once its body
+ * shrank around one; out of line, every caller would pay a `jsr`/`rts` to save 14 cycles a slot.
+ *
+ * WHY IT IS HERE. It was written in `src/frontend.c` for ../STATUS.md's wave 5c, whose note named
+ * `include/globals.h` as its home the moment a SECOND core wanted it; `src/gameplay.c` is that
+ * second core, and ../README.md's own ownership table is what settles the file — `globals.h` is
+ * the one header it marks "nobody, in normal work", and THIS header is the one it marks shared and
+ * append-only "for an idiom a SECOND core needs". It also keeps `word_at_base` beside `word_at`.
+ *
+ * IT IS ITS OWN TYPE, AND THAT IS A REVIEW FINDING RATHER THAN A FLOURISH. The base and the image
+ * are both a byte pointer, so handing one where the other is wanted compiles clean — and because
+ * every displacement is NEGATIVE, a wrong base does not reach a wrong slot, it writes BELOW the
+ * image. **NOTHING ON TARGET CAN SEE THAT**: `atari/bubble_main.c`'s guard bytes sit ABOVE the
+ * image, so the only surface that catches it anywhere is `make guarded`'s reserve underneath — and
+ * a byte differential has nothing below the image to compare. It happened once (11 red cases in
+ * `test/test_frontend.py`, 2026-09-07, and they were luck rather than coverage). The struct makes
+ * it a compile error, and `m68k-elf-objdump -d` says the type costs NOTHING. That is why the type
+ * may not be simplified back to a bare pointer.
+ *
+ * WHY THE DISPLACEMENTS FIT. Every global this program has lies between BG_BSS_BASE (0x1e8ca) and
+ * BG_PROGRAM_END (0x2520e), which is -26192 to +756 off A4_BASE: inside the 68000's signed word,
+ * exactly as in the original. An address outside that window silently goes back to the indexed form
+ * rather than breaking.
+ *
+ * REGISTERED, NOT DONE — the third core. `src/clib.c` still spells ~56 globals as
+ * `image + <address>`, and it owns the fp package, which is 11.7K cycles a frame. Wave 6b took the
+ * frontend's sprite protocol and the gameplay frame path and left that one; it is the next
+ * instance of this lever and it is named here so the next wave does not re-derive it. */
+typedef struct { uint8_t *at; } GlobalsBase;
+
+static inline __attribute__((always_inline)) GlobalsBase globals_base(uint8_t *image) {
+    uint8_t *base = image + A4_BASE;
+
+    REGISTER_BARRIER(base, REGISTER_BARRIER_ADDRESS_CLASS);
+    return (GlobalsBase){ base };
+}
+
+/* One global off that base: the `n` in the original's own `n(a4)`. `address` is a constant at every
+ * call site, so this is a displacement and not an addition.
+ *
+ * THE CAST IS THE WHOLE OF THE DIFFERENCE FROM `image + address`, and it is why a RUN-TIME address
+ * must not come through here. This is `image + (int32_t)address`; the image form is
+ * `image + (uint32_t)address`. For every address below 0x80000000 — which is every address this
+ * program's `addr_add`/`muls_ext_w` arithmetic can produce, because a `sign_ext16` offset added to
+ * a ~0x22000 base wraps back to a small POSITIVE number — the two are the same byte. Above it they
+ * are not: the image form runs 4 GB past the buffer where `make guarded`'s upper reserve sees it,
+ * and this one runs backwards below the image where only its lower reserve does. Neither is a
+ * behaviour the program has, so a converted RUN-TIME address would be trading one unreachable
+ * out-of-bounds read for another — no gain, and a divergence between the host and the 32-bit
+ * target, where both spellings wrap to the same address. The run-time sites (`apply_fan`'s object
+ * fields, `draw_sprites`' sprite-table slots, `v_gtext`'s per-character `intin` index) therefore
+ * keep the image form, and say so where they are. */
+static inline uint8_t *globals_at(GlobalsBase globals, uint32_t address) {
+    return globals.at + ((int32_t)address - (int32_t)A4_BASE);
+}
+
 /* A game WORD, read and written as the 68000 does: every one of this program's globals is a signed
  * word reached through `a4`, and `move.w`/`ext.w` is what a core means by reading one — the SIGN is
  * the game-specific half, which is why these are here rather than in the kit's `machine.h` beside
  * `be16`/`wr16`. They were `src/gameplay.c`'s private pair; they moved when `src/frontend.c` became
- * the second core to want them, which is the rule this header states above. */
+ * the second core to want them, which is the rule this header states above. `word_at_base` /
+ * `set_word_at_base` below are the same two against a caller that already holds a4. */
 static inline int16_t word_at(const uint8_t *image, uint32_t address) {
     return (int16_t)be16(image + address);
 }
 
 static inline void set_word(uint8_t *image, uint32_t address, int16_t value) {
     wr16(image + address, (uint16_t)value);
+}
+
+static inline int16_t word_at_base(GlobalsBase globals, uint32_t address) {
+    return (int16_t)be16(globals_at(globals, address));
+}
+
+static inline void set_word_at_base(GlobalsBase globals, uint32_t address, int16_t value) {
+    wr16(globals_at(globals, address), (uint16_t)value);
 }
 
 /* One `move.w`: the width of every one of this program's globals, and the stride of every WORD table
