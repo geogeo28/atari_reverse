@@ -183,7 +183,7 @@ A_display_list, DISPLAY_REC_BYTES = 0x177ce, 6
 DISPLAY_REC_X, DISPLAY_REC_Y, DISPLAY_REC_FRAME, DISPLAY_REC_ACTIVE = 0, 2, 4, 5
 DISPLAY_ACTIVE_ON_TOP, DISPLAY_ACTIVE_UNDER_SCENERY = 0x01, 0xff
 A_player, PLAYER_X, PLAYER_Y = 0x190a4, 0, 2
-A_player_hit, A_alt_bullet_glyph_flag, A_scroll_pos = 0x17706, 0x177c9, 0x17758
+A_enemy_fire_inhibit, A_alt_bullet_glyph_flag, A_scroll_pos = 0x17706, 0x177c9, 0x17758
 A_sprite_bank, SPRITE_RECORD_BYTES = 0x1be36, 20
 SPRITE_REC_DRAW_DX, SPRITE_REC_DRAW_DY = 8, 10
 SPRITE_REC_HIT_DX, SPRITE_REC_HIT_DY, SPRITE_REC_HIT_W, SPRITE_REC_HIT_H = 12, 14, 16, 18
@@ -1057,16 +1057,16 @@ def test_enemy_bullets_publish_stops_at_the_sentinel(live):
 # ==================================================================================================
 # enemies_fire_all @ 0x12602 and its four groups
 # ==================================================================================================
-@pytest.mark.parametrize("player_hit", (0, 1, 0xffff))
-def test_enemies_fire_aborts_when_the_player_has_been_hit(player_hit, staged_world_pokes):
-    """`enemies_fire_abort_if_player_hit` @ 0x12856 is not the nop its old name claimed: it drops
-    its own return address so that a non-zero `player_hit` returns out of `enemies_fire_all`
+@pytest.mark.parametrize("inhibit", (0, 1, 0xffff))
+def test_enemies_fire_aborts_while_enemy_fire_is_inhibited(inhibit, staged_world_pokes):
+    """`enemies_fire_abort_if_inhibited` @ 0x12856 is not the nop its old name claimed: it drops
+    its own return address so that a non-zero `enemy_fire_inhibit` returns out of `enemies_fire_all`
     before anything fires."""
     pokes = dict(staged_world_pokes)
-    pokes[A_player_hit] = word(player_hit)
+    pokes[A_enemy_fire_inhibit] = word(inhibit)
     pokes[A_player] = word(0x80) + word(0x90)
     _case(ENTRY_ENEMIES_FIRE_ALL, {"_pokes": pokes},
-          lambda lib, buf: lib.g_enemies_fire_all(buf), note=f"player_hit={player_hit}")
+          lambda lib, buf: lib.g_enemies_fire_all(buf), note=f"inhibit={inhibit}")
 
 
 @pytest.mark.parametrize("countdown", (0, 1, 2, 0xffff))
@@ -1074,7 +1074,7 @@ def test_enemies_fire_over_the_staged_world(countdown, staged_world_pokes):
     """Every group, over the world the original spawned, at the four reload boundaries — the frame
     a countdown REACHES zero is the one that fires, and a countdown already at zero fires at once."""
     pokes = dict(staged_world_pokes)
-    pokes[A_player_hit] = word(0)
+    pokes[A_enemy_fire_inhibit] = word(0)
     pokes[A_player] = word(0x80) + word(0x60)
     image = bytearray(harness.BASE_IMAGE)
     for address, blob in staged_world_pokes.items():
@@ -1096,7 +1096,7 @@ def test_the_firing_window_edges(x, y, staged_world_pokes):
     """Every group but B refuses an entity above row 0; B lets one down to -16 fire. Driving the
     whole pass over one position at a time is what separates the two windows."""
     pokes = dict(staged_world_pokes)
-    pokes[A_player_hit] = word(0)
+    pokes[A_enemy_fire_inhibit] = word(0)
     pokes[A_player] = word(0x80) + word(0x60)
     image = bytearray(harness.BASE_IMAGE)
     for address, blob in staged_world_pokes.items():
@@ -1535,7 +1535,7 @@ MIRRORS = (
     ("SPRITE_REC_HIT_W", "include/sprite.h", "SPRITE_REC_HIT_W"),
     ("SPRITE_REC_HIT_H", "include/sprite.h", "SPRITE_REC_HIT_H"),
     ("A_player", "include/player.h", "A_player"),
-    ("A_player_hit", "include/player.h", "A_player_hit"),
+    ("A_enemy_fire_inhibit", "include/player.h", "A_enemy_fire_inhibit"),
     ("A_alt_bullet_glyph_flag", "include/hud.h", "A_alt_bullet_glyph_flag"),
     ("A_scroll_pos", "include/scroll.h", "A_scroll_pos"),
     ("SND_SFX_ACTIVE", "include/sound.h", "SND_SFX_ACTIVE"),

@@ -14,23 +14,28 @@ A case staged on BASE_IMAGE therefore runs against zeroed tile banks, a zeroed s
 screen pointers. It comes back green, about a machine that never exists at run time.
 
 HOW IT IS BUILT: BY RUNNING THE ORIGINAL, not by transcribing it. `post_load_image` is what the
-game's own code leaves behind after three slices under the oracle, each with the files that slice
+game's own code leaves behind after TWO slices under the oracle, each with the files that slice
 reads staged for the TOS model:
 
   1. `boot_init` 0x14bee -> STOP_BOOT_SLICE, with A\MODULE.BAK staged;
-  2. `init_load_assets` 0x11212 -> STOP_TITLE_COPY, with A\FLY_SHK.NEO staged — the title picture,
-     its palette and the 32,000-byte copy to `Physbase - 0x80`;
-  3. `init_load_assets` ENTRY_LEVEL0_ASSETS -> its `rts`, with the OTHER SEVEN files staged — the
-     four tile banks, the level map, the sprite bank, and the sound module the model still needs a
-     slot for.
+  2. `init_load_assets` 0x11212 -> its `rts`, with ALL EIGHT files staged — the title picture and
+     its 32,000-byte copy to `Physbase - 0x80`, then the four tile banks, the level map and the
+     sprite bank, whose directory it relocates in place.
 
-WHY THREE SLICES AND NOT ONE. The model stages files in ONE window, `OS_FS_STAGING` up to the stack
-guard = 258,048 bytes. The seven files of BOOT_LOADS are 256,423 bytes and fit with 1,625 to spare;
-A\FLY_SHK.NEO's 32,128 do not fit beside them, so the title slice stages it alone and the asset
-slice re-stages without it. `test_image_model.py::test_the_staging_window_is_why_the_replay_is_split`
-pins that arithmetic, so a window that grew would show up as a test to delete rather than as a split
-nobody could explain. Slice 1 is separate for a different reason: it stops one instruction short of
-the `Kbdvbase` pair, which would write into the model's own poked-input block.
+WHY TWO AND NOT ONE. `boot_init` ends by calling `Kbdvbase` and storing through its answer, which
+lands in the model's own poked-input block, so slice 1 stops one instruction short of that pair and
+the fixture supplies the ring itself (below).
+
+WHY SLICE 2 IS NOT ITSELF SPLIT — it used to be. The model stages files in ONE window, and at the
+kit's default that window is too small for this boot's eight files, so `init_load_assets` was
+replayed as two sub-slices around the staging: the title picture on its own, then the other seven
+entered at 0x112ac. `project.toml`'s `fs_base` moves the window down — that comment is the one
+canonical statement of the arithmetic, and nothing here restates it — so the eight fit at once and
+the sub-slice seam is gone. With it goes the one thing the fixture could not say, `main`'s own boot
+slice, which is a ✅ row now.
+`test_image_model.py::test_the_staged_file_window_holds_the_whole_boot` measures the window rather
+than believing it, so one that SHRANK fails there rather than in a `stage_files` assertion nobody
+could read.
 
 THE ONE THING THE REPLAY DOES NOT KEEP is where the screen ring lands. `boot_init` derives it from
 XBIOS `Physbase`, the model answers `OS_SCREEN_BASE` (0x8000), and `subi.l #$1f900,d0` underflows —
@@ -62,6 +67,7 @@ means to poke it has to say so — `bytearray(post_load_image)`, or `_pokes` in 
 """
 import functools
 import os
+import random
 from pathlib import Path
 
 import pytest
@@ -134,28 +140,29 @@ SPRITE_RESTORE_TERMINATOR = 0xffff
 
 # ---- the slices the replay runs, and where each stops -------------------------------------------
 ENTRY_BOOT_INIT = 0x14bee            # `movea.l #$19094,a7`
-ENTRY_INIT_LOAD_ASSETS = 0x11212     # `bsr.s $111d6` — set_palette_title, then the title picture
-# `clr.w d0` @ 0x112ac, where the title slice's `bra.s` was going: level 0's assets, the sprite bank
-# and the directory fix-up. Entering HERE rather than following the `bra` is what splits the staging.
-ENTRY_LEVEL0_ASSETS = 0x112ac
+ENTRY_INIT_LOAD_ASSETS = 0x11212     # `bsr.s $111d6` — set_palette_title, then the whole of it
 ENTRY_INIT_NEW_GAME = 0x112fa        # `move.w $176ac,$176c6`
 ENTRY_INIT_STAGE_STATE = 0x1139a     # `move.w #$1,$1775e`
+
+# ONE ADDRESS TWO BATTERIES NAME, which is why it is here rather than in either. 0x1054a is where
+# the attract screen's stage start ends and the jingle begins: `test_frontend.py` runs
+# `title_attract_start_tune` FROM it and stops the prescroll AT it, and `test_scroll.py` stops the
+# same prescroll there under its `title` parametrisation. Declared and pinned once (ENTRY_PROLOGUES
+# below), so the two cannot drift apart.
+ENTRY_ATTRACT_START_TUNE = 0x1054a   # `move.w #$4,d0 / bsr.w music_play`
 
 # Slice 1's checkpoint: `clr.l d0` @ 0x14cd2, the instruction after `move.w #$2300,sr`. It is the
 # last point at which boot_init has touched nothing but the image — the very next instructions are
 # the IKBD `Bconout` and the `Kbdvbase` pair, and the latter would store into the model's own
 # poked-input block.
 STOP_BOOT_SLICE = 0x14cd2
-# Slice 2's checkpoint: the `bra.s $112ac` @ 0x1127e, one instruction past the title copy loop. The
-# disc-prompt block it branches over (0x11280..0x112aa) is patched out in the shipped binary.
-STOP_TITLE_COPY = 0x1127e
 # `init_new_game` ends `bra.w enter_title` @ 0x11394 — it never returns to `main`, so its slice
 # stops at the branch rather than at an `rts`.
 STOP_INIT_NEW_GAME = 0x11394
 
 # Loose enough not to be tuning knobs, tight enough that a runaway is still caught. The title slice
-# copies 8,000 longwords in a `dbf` loop (~16k instructions) and the asset slice runs six `Fread`s,
-# each of which is one modeled trap rather than a loop.
+# copies 8,000 longwords in a `dbf` loop (~16k instructions) and the asset slice runs seven more
+# `Fread`s, each of which is one modeled trap rather than a loop.
 BOOT_SLICE_MAX_INSNS = 50_000
 LOAD_SLICE_MAX_INSNS = 200_000
 # `init_stage_state` falls through `difficulty_apply_fire_rates` into `start_level`, which loads
@@ -268,9 +275,42 @@ def disk_bytes(name, length):
 
 
 def staged_load(image, record, disk_name):
-    """(DOS path, bytes) for one BOOT_LOADS row, ready for `harness.stage_files`."""
+    """(DOS path, bytes) for one BOOT_LOADS row, ready for `harness.stage_files` — the REAL bytes.
+
+    Its twin is `seeded_load` below, and which of the two a case wants is a real question rather
+    than a flag: see that docstring.
+    """
     _dest, length, dos_path = file_record(image, record)
     return dos_path, disk_bytes(disk_name, length)
+
+
+def seeded_bytes(length, seed):
+    """`length` pseudo-random bytes from `seed` — file content of a test's OWN choosing.
+
+    Deterministic, because a case that stages random bytes has to stage the same random bytes on
+    every run and on every xdist worker: `random.Random(seed)` is the whole of that.
+    """
+    rng = random.Random(seed)
+    return bytes(rng.randrange(0x100) for _ in range(length))
+
+
+def seeded_load(image, record, disk_name, seed):
+    """`staged_load`'s twin: the same DOS path and the same LENGTH, with content nothing else holds.
+
+    TWO NAMED HELPERS AND NOT A `seeded=` FLAG, because the choice between them is the case's whole
+    argument. The post-load fixture ALREADY HOLDS the real files at their destinations, so a case
+    staged with `staged_load` cannot separate a reconstruction that read a file from one that read
+    nothing at all — content of the test's own choosing is what makes an `Fread` visible. The other
+    way round, a case that RENDERS from what it staged (the whole-boot run draws terrain out of
+    A\\LEVEL1.MAP and the tile banks) needs the real bytes: a map header of noise sends the
+    scroller's own cursor arithmetic somewhere the game never goes.
+
+    THE LENGTH IS THE FILE'S AND NOT THE RECORD'S, which is `staged_load`'s rule and matters here
+    too: several records ask for more than their file holds, and GEMDOS's short read is the only
+    thing between `load_file` and an overrun of the loader's own scratch longwords.
+    """
+    dos_path, real = staged_load(image, record, disk_name)
+    return dos_path, seeded_bytes(len(real), seed)
 
 
 def _run_slice(image, loads, entry, stop_pc, max_insns):
@@ -303,10 +343,14 @@ def replay_boot_init(image):
 
 
 def replay_load_assets(image):
-    """Slices 2 and 3: the real `init_load_assets`, split by the model's one staging window."""
-    image = _run_slice(image, [TITLE_LOAD], ENTRY_INIT_LOAD_ASSETS, STOP_TITLE_COPY,
-                       LOAD_SLICE_MAX_INSNS)
-    return _run_slice(image, BOOT_LOADS, ENTRY_LEVEL0_ASSETS, STOP_AT_RTS, LOAD_SLICE_MAX_INSNS)
+    """Slice 2: the real `init_load_assets`, WHOLE, with all eight of its files staged at once.
+
+    One slice because `project.toml`'s `fs_base` makes the model's staging window big enough to hold
+    them (the module docstring has the arithmetic). It used to be two, entered at 0x112ac for the
+    second, and the seam it left is why `main`'s boot slice had no row until the window moved.
+    """
+    return _run_slice(image, (TITLE_LOAD,) + BOOT_LOADS, ENTRY_INIT_LOAD_ASSETS, STOP_AT_RTS,
+                      LOAD_SLICE_MAX_INSNS)
 
 
 def _without_staged_files(image):
@@ -379,7 +423,7 @@ def install_boot_state(image, physbase):
 
 
 def post_load():
-    """The image `init_load_assets` @ 0x11212 RETURNS on: the module docstring's three slices."""
+    """The image `init_load_assets` @ 0x11212 RETURNS on: the module docstring's two slices."""
     image = replay_boot_init(bytearray(harness.BASE_IMAGE))
     install_screen_ring(image, abi.SCREEN_RING_PHYSBASE)
     return _without_staged_files(replay_load_assets(image))
@@ -445,6 +489,37 @@ def post_new_game_image(post_load_image):
 # the same byte scan. A session fixture is per PROCESS, and `-n auto` is one process per core, so
 # what looked like "once a session" was really once per core per battery. It is built here once and
 # CACHED ACROSS THE WORKERS, so `make test` pays for the replay exactly once.
+
+# ---- the two agents the ATTRACT LOOP runs under -------------------------------------------------
+#
+# TWO BATTERIES DRIVE THAT LOOP — `test_frontend.py` over `title_attract_loop` and `test_init.py`
+# over the whole boot behind it — and each built the same schedule from its own copy of the same
+# four constants, under two different names for the VBL budget. One builder here instead, so the
+# two cannot describe different agents while claiming to run the same loop.
+TITLE_FIRE_WAIT_PC = 0x1056a        # include/frontend.h — the `btst #7,$1777f` the poll re-reads at
+RENDER_FRAME_VBL_WAIT_PC = 0x1479c  # src/sprite.c — where `render_frame` re-reads the VBL counter
+RENDER_FRAME_VBL_BUDGET = 3         # include/sprite.h — the count that arm waits for
+A_vbl_tick = 0x17720                # include/irq.h
+A_joy1_state = 0x1777f              # include/irq.h
+JOY_FIRE_BIT = 7                    # include/hud.h
+
+
+def attract_schedule(fire_at, frames):
+    """The stick coming down at the `fire_at`th poll, and the VBL counter reaching its budget once
+    per attract frame.
+
+    `render_frame` CLEARS the counter at the end of every frame, so each frame's wait needs an
+    arrival of its own rather than one store standing for all of them.
+
+    The schedule is its own positive control: the kit sinks a run in which a scheduled store never
+    came due, so a loop that quietly stopped after one pass fails here rather than merely comparing
+    less (`tools/recreate_kit/include/os.h`, "WAIT SITES").
+    """
+    return [{"pc": TITLE_FIRE_WAIT_PC, "nth": fire_at, "addr": A_joy1_state, "width": 1,
+             "value": 1 << JOY_FIRE_BIT}] \
+        + [{"pc": RENDER_FRAME_VBL_WAIT_PC, "nth": frame + 1, "addr": A_vbl_tick, "width": 4,
+            "value": RENDER_FRAME_VBL_BUDGET} for frame in range(frames)]
+
 
 A_spawn_script_ptr = 0x17770        # `movea.l $17770,a0` @ 0x12fc4
 A_spawn_script_cursor = 0x17754     # `adda.l $17754,a0` @ 0x12fca
@@ -637,6 +712,13 @@ MIRRORS = (
     "A_screen_prev1",
     "A_screen_prev2",
     "A_screen_ring_base",
+    # `attract_schedule`'s four constants, each against the header that owns it.
+    ("TITLE_FIRE_WAIT_PC", "include/frontend.h", "TITLE_FIRE_WAIT_PC"),
+    ("RENDER_FRAME_VBL_WAIT_PC", "src/sprite.c", "RENDER_FRAME_VBL_WAIT_PC"),
+    ("RENDER_FRAME_VBL_BUDGET", "include/sprite.h", "RENDER_FRAME_VBL_BUDGET"),
+    ("A_vbl_tick", "include/irq.h", "A_vbl_tick"),
+    ("A_joy1_state", "include/irq.h", "A_joy1_state"),
+    ("JOY_FIRE_BIT", "include/hud.h", "JOY_FIRE_BIT"),
 )
 
 ENTRY_PROLOGUES = {
@@ -644,10 +726,10 @@ ENTRY_PROLOGUES = {
     "ENTRY_BOOT_INIT": "2e7c0001909442a7",
     # bsr.s $111d6 / movea.l #$162ee,a0
     "ENTRY_INIT_LOAD_ASSETS": "61c2207c000162ee",
-    # clr.w d0 / bsr.w $10332
-    "ENTRY_LEVEL0_ASSETS": "42406100f082",
     # move.w $176ac,$176c6
     "ENTRY_INIT_NEW_GAME": "33f9000176ac000176c6",
+    # move.w #$4,d0 / bsr.w $12588 / bsr.w -- the jingle, then the three lists
+    "ENTRY_ATTRACT_START_TUNE": "303c0004610020386100",
     # movea.l $17770,a0 / adda.l $17754,a0
     "ENTRY_SPAWN_SCRIPT_STEP": "207900017770d1f900017754",
     # clr.b $17781 / clr.b $1777f -- init_stage_state, which falls through into start_level
@@ -657,10 +739,6 @@ ENTRY_PROLOGUES = {
 STOP_PROLOGUES = {
     # clr.l d0 / move.w #$14,-(a7) -- the IKBD command push slice 1 deliberately stops before
     "STOP_BOOT_SLICE": "42803f3c0014",
-    # bra.s $112ac, then the first six bytes of the patched-out disc-prompt block it branches over
-    # (a line-F word and a `move.w #$777,$ff8256`) -- pinned too, so this is eight bytes like the
-    # rest rather than a two-byte branch that many addresses could match
-    "STOP_TITLE_COPY": "602cf97a33fc0777",
     # bra.w $1030e / rts -- init_new_game falls into enter_title instead of returning, so the `rts`
     # after the branch is unreachable
     "STOP_INIT_NEW_GAME": "6000ef784e75",

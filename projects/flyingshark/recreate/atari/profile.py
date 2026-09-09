@@ -6,8 +6,8 @@ function.
 binaries the same question on the same machine with the same instrument.
 
 WHY THE ATTRACT SCREEN IS THE WINDOW. It is the only thing either binary does with no person at the
-controls, and it is a real frame: `attract_poll` runs `scroll_advance`, rebuilds the text display
-list and calls `render_frame` (`flyshark_main.c`, `title_frame_step`), which is the whole renderer —
+controls, and it is a real frame: `title_attract_poll` runs `scroll_advance`, rebuilds the text
+display list and `title_frame_step` calls `render_frame` (`../src/frontend.c`), the whole renderer —
 the ring seam, both display-list passes, the overlay repaint, the publish, the tile band and the
 restore replay. The pace `README.md` quotes comes from exactly this loop.
 
@@ -92,7 +92,7 @@ FRAME_BUDGET_VBLS = smoke.VBLS_PER_FRAME_FLOOR
 # ---- the two sides' anchor ----------------------------------------------------------------------
 # ONE NAME, BOTH SIDES: ours resolves through the linked ELF's symbols and the original's through
 # ../names.txt, so neither address is written down here. `render_frame` is called exactly once per
-# attract frame on both sides (`flyshark_main.c`'s `title_frame_step`, and 0x10594 in the original),
+# attract frame on both sides (`../src/frontend.c`'s `title_frame_step`, and 0x10594 in the original),
 # which makes it both the pace clock and the frame counter inside a profile window.
 FRAME_SYMBOL = "render_frame"
 # ...and the symbol that says the ATTRACT frames have started. `render_frame` alone is not the
@@ -101,8 +101,8 @@ FRAME_SYMBOL = "render_frame"
 # everything that draws a sprite or publishes a frame (`../src/sprite.c`). Measured, before this
 # anchor existed: 108 of the first 126 arrivals were the prescroll's, and the pace they averaged
 # into was 1.9 vblanks a frame against the 12 the attract screen really takes. `set_palette_game` is
-# the LAST call `attract_poll` makes before its spin (0x1055e), on both sides, so the next arrival
-# after it is the first real attract frame.
+# the LAST call `title_attract_start_tune` makes before the spin (0x1055e), on both sides, so the
+# next arrival after it is the first real attract frame.
 ATTRACT_SPIN_SYMBOL = "set_palette_game"
 # ...and the one BSS symbol that says where a relocated program landed: `flyshark_main` fills the
 # record's magic before it does anything else, so `g_record`'s address in RAM minus its link-time

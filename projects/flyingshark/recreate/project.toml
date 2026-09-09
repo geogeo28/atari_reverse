@@ -9,7 +9,42 @@ load_base  = 0x10000     # matches PrgLoader / run.sh default (see CLAUDE.md); .
 image_size = 0x100000    # 1 MiB, and it must equal os.h's OS_IMAGE_SIZE: program (text 0x59f4,
                          # data 0x6442, bss 0x3f0a8 -> ends 0x5aede) + the screen ring the fixture
                          # places at 0x60000 + test/abi.py's scratch map + the TOS model's
-                         # staged-file table at 0xbf000 + the stack at the top
+                         # staged-file table (below) + the stack at the top
+
+# THE STAGED-FILE WINDOW, MOVED DOWN, and the reason is this program's own boot.
+#
+# THIS COMMENT IS THE CANONICAL STATEMENT OF THE ARITHMETIC. README.md, test/conftest.py,
+# test/test_image_model.py, test/test_init.py and STATUS.md all point HERE rather than restating the
+# figures, because five copies of one subtraction is five places for it to go stale — and the only
+# copy that is CHECKED is `test_the_staged_file_window_holds_the_whole_boot`, which reads the two
+# addresses back out of the harness (OS_FS_TABLE / OS_FS_STAGING) and asserts headroom rather than
+# a number in prose.
+#
+# `init_load_assets` opens EIGHT files totalling 288,551 bytes in one run, and the model stages
+# files in ONE window. At the kit's default the table sits at OS_FS_TABLE_DEFAULT (0xbf000) and the
+# raw bytes at 0xc0000, which leaves STACK_GUARD_LO - 0xc0000 = 258,048 — 30,503 short, so the boot
+# had to be replayed in two halves and `main`'s own boot slice had no row at all.
+#
+#   fs_base    = 0xb1000   the table; staging follows at fs_base + OS_FS_STAGING_OFFSET = 0xb2000
+#   the window = STACK_GUARD_LO (0xff000) - 0xb2000 = 315,392 bytes
+#   the boot   = 288,551 bytes of files, so 26,841 spare
+#
+# WHY 0xb1000 AND NOT SOMEWHERE MORE COMFORTABLE-LOOKING: the table sits DIRECTLY on top of
+# test/abi.py's scratch map, which ends at SCRATCH + SCRATCH_BYTES = 0x91000 + 0x20000 = 0xb1000.
+# That is the tightest legal placement and it is the one that puts the whole margin where growth
+# actually happens — above the table, where the FILES are. An earlier 0xb7000 left 24,576 bytes of
+# nothing between the scratch map and the table and only 2,265 above the files, so a ninth asset, or
+# a level map that grew, would have overflowed a window with 26 KB going spare below it.
+#
+# It clears everything below it by inspection and by `harness._vet_staged_file_window`, which
+# refuses a window over the program, the modeled framebuffer, the poked-input block or the stack
+# guard: the program ends at 0x5aede and the screen ring the fixture places tops out at 0x87600.
+# The scratch map is the one region the kit cannot know about, so
+# `test_the_staged_file_window_is_clear_of_the_scratch_map_and_the_ring` is what holds the two
+# apart — and it is an inequality, so widening SCRATCH_BYTES fails there rather than silently
+# overlapping the table. The kit's README, "The staged-file window is the second region a project
+# places", is where the key is defined.
+fs_base = 0xb1000
 
 # Flying Shark's bss runs to 0x5aede, covering the TOS model's Malloc arena (os.h's
 # OS_HEAP_BASE_DEFAULT = 0x20000) — in fact three of the four HSC tile banks and the whole sound
@@ -39,8 +74,9 @@ image_size = 0x100000    # 1 MiB, and it must equal os.h's OS_IMAGE_SIZE: progra
 tos_malloc_unused = true
 
 # The other two fixed regions need no waiver and are clear by inspection:
-#   * the staged-file table / staging area (0xbf000 / 0xc0000) sit above the program's 0x5aede end,
-#     above the screen ring (top 0x87600) and above test/abi.py's scratch map (top 0xb1000);
+#   * the staged-file table / staging area (0xb1000 / 0xb2000, above) sit above the program's
+#     0x5aede end, above the screen ring (top 0x87600) and on top of test/abi.py's scratch map
+#     (which ends at 0xb1000);
 #   * the harness-poked input block (0x600..0x65f) sits below load_base 0x10000, so
 #     `tos_poked_input_unused` is not a question here. boot_init's Kbdvbase call WOULD write into
 #     it (KBDVBASE+0x18, the joyvec slot) — which is why test/conftest.py's boot slice stops one

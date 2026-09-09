@@ -233,6 +233,42 @@ void init_load_assets_sprites(uint8_t *image) {
     }
 }
 
+/* init_load_assets @ 0x11212, WHOLE: the two slices above, and the level-0 asset load between them.
+ *
+ * `clr.w d0 / bsr.w load_level_assets` @ 0x112ac is the frontend subsystem's routine and was
+ * unported when the two slices were cut, which is why they were cut. Level 0 is a `clr.w`, so the
+ * boot always loads the FIRST stage's five files; a later stage's come from `start_level`.
+ *
+ * The `bra.s $112ac` @ 0x1127e that joins the two skips 0x11280..0x112aa, a disc prompt whose head
+ * was overwritten with that branch (../names.txt @ 0x1127e). This is a single-disc build.
+ */
+void init_load_assets(uint8_t *image) {
+    init_load_assets_title(image);          /* [0x11212, 0x1127e) */
+    load_level_assets(image, 0);            /* `clr.w d0 / bsr.w $10332` @ 0x112ac */
+    init_load_assets_sprites(image);        /* [0x112b2, its `rts`) */
+}
+
+/* ================================================================================================
+ * main @ 0x15750 — SLICE [0x15750, 0x15758), the boot's own two calls
+ * ============================================================================================= */
+
+/* Everything `main` does before control leaves for the title screen, which is its first two `bsr`s.
+ *
+ * THE SECOND ONE NEVER COMES BACK. `init_new_game` ends `bra.w enter_title` (its own slice stops at
+ * that branch), so the title flow runs off THIS call's stack frame and the third `bsr` @ 0x15758 is
+ * reached only when `title_attract_loop`'s `rts` returns into it. A C function cannot express that
+ * unwind, so the third call is not here; `test_init.py` composes the whole path — these two calls,
+ * `enter_title`, the attract screen and the fire button — in one case that runs the ORIGINAL's own
+ * branches from 0x15750 and stops at 0x15758.
+ *
+ * The name is not `main` because that name belongs to the C runtime; `../names.txt` @ 0x15750 is
+ * where the routine is called `main`, and `include/init.h` says so beside the prototype.
+ */
+void main_boot(uint8_t *image) {
+    init_load_assets(image);                /* `bsr.w $11212` @ 0x15750 */
+    init_new_game(image);                   /* `bsr.w $112fa` @ 0x15754 */
+}
+
 /* ================================================================================================
  * init_new_game @ 0x112fa — SLICE [0x112fa, 0x11394)
  * ============================================================================================= */
@@ -296,11 +332,11 @@ void init_stage_state(uint8_t *image) {
     wr16(image + A_landing_bomb_cash_timer, STAGE_BOMB_CASH_PERIOD);
     wr16(image + A_death_anim_cursor, 0);
 
-    /* The one guarded store. `keep_player_hit_flag` is written NOWHERE in the image, so the clear
+    /* The one guarded store. `keep_enemy_fire_inhibit` is written NOWHERE in the image, so the clear
      * always runs — reproduced as the test the original makes rather than folded away, because the
      * flag is one `st` away from mattering and a remaster would notice. */
-    if (image[A_keep_player_hit_flag] == 0)
-        wr16(image + A_player_hit, 0);
+    if (image[A_keep_enemy_fire_inhibit] == 0)
+        wr16(image + A_enemy_fire_inhibit, 0);
 
     wr16(image + A_game_over_flag, 0);
     wr16(image + A_player_script_timer, 0);
@@ -434,4 +470,6 @@ void g_init_load_assets_sprites(uint8_t *image) { init_load_assets_sprites(image
 void g_init_new_game(uint8_t *image) { init_new_game(image); }
 void g_init_stage_state(uint8_t *image) { init_stage_state(image); }
 void g_clear_actor_arrays(uint8_t *image) { clear_actor_arrays(image); }
+void g_init_load_assets(uint8_t *image) { init_load_assets(image); }
+void g_main_boot(uint8_t *image) { main_boot(image); }
 void g_frame_loop_once(uint8_t *image) { frame_loop_once(image); }

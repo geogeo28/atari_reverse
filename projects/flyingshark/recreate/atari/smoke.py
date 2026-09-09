@@ -169,8 +169,8 @@ BOOT_SETSCREEN_CALLS = 2
 #
 # The flow installs a palette FOUR times before the attract screen spins — three in
 # `init_load_assets_title` and `enter_title`'s own `set_palette_black` — and then TWO more every time
-# `title_attract_loop` goes round: `set_palette_black` at its head and `attract_poll`'s
-# `set_palette_game` before the frame spin. So the invariant is "four, plus two per pass", and the
+# `title_attract_loop` goes round: `title_attract_prescroll`'s `set_palette_black` at its head and
+# `title_attract_start_tune`'s `set_palette_game` before the frame spin. So the invariant is "four, plus two per pass", and the
 # smallest run that reaches the attract screen at all makes six.
 #
 # AN EQUALITY HERE WAS A TRANSCRIPT OF ONE RUN'S PACE. The loop goes round when the module says its

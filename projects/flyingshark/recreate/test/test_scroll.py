@@ -35,8 +35,9 @@ ENTRY_SEED_CURSOR_LEVEL = 0x1151e
 STOP_SEED_CURSOR_LEVEL = 0x11540
 
 # ---- prescroll_stage, at the same two sites ----------------------------------------------------
+# The title copy's checkpoint is `conftest.ENTRY_ATTRACT_START_TUNE`: `test_frontend.py` ENTERS the
+# jingle at the same 0x1054a, so the address is declared and pinned once, in conftest.
 ENTRY_PRESCROLL_TITLE = 0x1052a
-STOP_PRESCROLL_TITLE = 0x1054a
 ENTRY_PRESCROLL_LEVEL = 0x11544
 STOP_PRESCROLL_LEVEL = 0x11564
 
@@ -182,7 +183,7 @@ def test_seed_map_row_cursor_over_a_poked_header(entry, stop, rows, cols):
 # =================================================================================================
 
 PRESCROLL_SITES = (
-    pytest.param(ENTRY_PRESCROLL_TITLE, STOP_PRESCROLL_TITLE, id="title"),
+    pytest.param(ENTRY_PRESCROLL_TITLE, conftest.ENTRY_ATTRACT_START_TUNE, id="title"),
     pytest.param(ENTRY_PRESCROLL_LEVEL, STOP_PRESCROLL_LEVEL, id="start_level"),
 )
 
@@ -248,7 +249,7 @@ def test_prescroll_stage_at_the_shipped_frame_count(post_load_image):
     what the second site would add over the shorter counts above is the run time."""
     staged = _cursor_seeded(bytes(post_load_image))
     lo, hi = SEEDED_CURSOR_BAND
-    _run(ENTRY_PRESCROLL_TITLE, stop_pc=STOP_PRESCROLL_TITLE,
+    _run(ENTRY_PRESCROLL_TITLE, stop_pc=conftest.ENTRY_ATTRACT_START_TUNE,
          glue=lambda lib, buf: lib.g_prescroll_stage(buf),
          pokes={lo: staged[lo:hi], A_scroll_fine: SCROLL_FINE_SEED.to_bytes(WORD, "big")},
          max_insns=PRESCROLL_MAX_INSNS, note="the shipped prescroll_frames")
@@ -392,7 +393,6 @@ ENTRY_PROLOGUES = {
 STOP_PROLOGUES = {
     "STOP_SEED_CURSOR_TITLE": "13fc00010001642c3039",
     "STOP_SEED_CURSOR_LEVEL": "6100fc6413fc00010001",
-    "STOP_PRESCROLL_TITLE": "303c0004610020386100",
     "STOP_PRESCROLL_LEVEL": "6100fc5842406000101c",
     "STOP_START_LEVEL_RESET": "610001866100019c4280",
     "STOP_START_LEVEL_RECORD": "4a790001642a67220c79",

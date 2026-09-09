@@ -21,6 +21,7 @@
 #include "os.h"
 #include "sched.h"
 #include "common.h"  /* SCC_TRUE, and `const_word` — the table read this game spells 0..9 with */
+#include "init.h"    /* `set_palette_black` — the restart's own first instruction */
 #include "player.h"
 
 /* The five weapon patterns, as `weapon_fire_tbl` holds them — the dispatch below turns one of these
@@ -561,6 +562,27 @@ void player_publish(uint8_t *image, uint32_t text_x, uint32_t text_y) {
  * Input
  * ============================================================================================= */
 
+/* THE PAUSE KEY'S SPIN @ 0x14394: hold the frame until joystick 1 reports ANYTHING at all — any
+ * direction, or fire — which is how the game is un-paused. 1 when the stick moved.
+ *
+ * The byte is the ACIA interrupt's and nothing in this routine writes it, so the read goes through
+ * `sched_poll8`; the bound is `wait_may_go_round_again` (`include/common.h`), so the give-up stays
+ * behind the harness's own `-D` rather than shipping in the `.PRG`. On target the helper is a
+ * constant 1 and this is the original's unbounded spin.
+ *
+ * IT IS A FUNCTION AND NOT AN INLINE LOOP so that its caller can honour the 0 with a `return`
+ * (`tools/recreate_kit/include/sched.h`): a `break` back into the body would carry a REFUSED case
+ * on into the abort test and the stick reads, comparing a pass the original never made.
+ */
+static int pause_wait_for_stick(uint8_t *image) {
+    unsigned polls;
+
+    for (polls = 0; wait_may_go_round_again(polls); polls++)
+        if (sched_poll8(image, A_joy1_state, PAUSE_WAIT_PC) != 0)
+            return 1;
+    return 0;   /* the cap; the refusal is already tallied and the case is void */
+}
+
 /* read_player_input @ 0x14354 — the frame loop's sixth call: joystick 1 into the plane.
  *
  * THE KEYBOARD IS DEAD. `use_keyboard_flag` chooses `key_bits` over `joy1_state` for the byte the
@@ -568,10 +590,10 @@ void player_publish(uint8_t *image, uint32_t text_x, uint32_t text_y) {
  * below re-read `joy1_state` unconditionally anyway, so even a set flag would only move the bomb
  * button. Both are reproduced as they are.
  *
- * The pause key SPINS until joystick 1 reports anything at all, which is why the read goes through
- * `sched_poll8`: the byte is the ACIA interrupt's and nothing in this routine writes it. The abort
- * key does not return at all — `adda.l #$40,a7` throws away this routine's own register save AND
- * its caller's return address before branching into the hall of fame.
+ * The pause key SPINS in `pause_wait_for_stick` above, and its 0 — the harness's give-up, which no
+ * target build has — is honoured with a `return`. The abort key does not return at all:
+ * `adda.l #$40,a7` throws away this routine's own register save AND its caller's return address
+ * before branching into the hall of fame.
  */
 void read_player_input(uint8_t *image) {
     uint8_t bomb_button_byte = image[be16(image + A_use_keyboard_flag) != 0 ? A_key_bits
@@ -582,10 +604,8 @@ void read_player_input(uint8_t *image) {
         return;
 
     if (be16(image + A_level_just_started) == 0) {
-        if (bit_held(image[A_key_bits], KEY_PAUSE_BIT))
-            for (unsigned poll = 0; poll < OS_SCHED_POLL_MAX; poll++)
-                if (sched_poll8(image, A_joy1_state, PAUSE_WAIT_PC) != 0)
-                    break;
+        if (bit_held(image[A_key_bits], KEY_PAUSE_BIT) && !pause_wait_for_stick(image))
+            return;
         if (bit_held(image[A_key_bits], KEY_ABORT_BIT)) {
             game_over_hiscore_check(image);
             return;
@@ -746,7 +766,7 @@ void player_vs_enemy_bullets(uint8_t *image) {
         image[A_player + PLAYER_MODE] = PLAYER_MODE_DYING;
         wr16(image + bullet + ENEMY_BULLET_ACTIVE, 0);
         image[A_music_suspend_flag] = SCC_TRUE;
-        image[A_player_hit] = SCC_TRUE;
+        image[A_enemy_fire_inhibit] = SCC_TRUE;
         music_stop(image);
         sfx_play_6(image);
         return;
@@ -795,7 +815,9 @@ static void level_advance(uint8_t *image) {
  *
  * Three things in one routine, in the order the scroll passes them: the LEVEL ADVANCE, once the
  * landing script has finished; the END OF LEVEL, which starts the clear tune and puts the plane in
- * fly-off mode; and the BOSS trigger, which raises `player_hit`. `game_over_flag` gates the last
+ * fly-off mode; and the BOSS trigger, which raises `A_enemy_fire_inhibit` — a cease-fire with the
+ * plane untouched, which is the writer that makes `player_hit` the wrong name for that word.
+ * `game_over_flag` gates the last
  * two off, and a plane already on the landing script leaves through a bare `rts` shared with the
  * two turn routines.
  */
@@ -815,15 +837,20 @@ void level_progress_check(uint8_t *image) {
     }
     if ((int16_t)be16(image + A_boss_scroll_pos) > (int16_t)be16(image + A_scroll_pos))
         return;
-    image[A_player_hit] = SCC_TRUE;
+    image[A_enemy_fire_inhibit] = SCC_TRUE;
 }
 
-/* restart_level_at_checkpoint @ 0x14aa8, SLICE [0x14aac, 0x14b22) — everything the stage restart
+/* restart_level_at_checkpoint @ 0x14aa8, SLICE [0x14aa8, 0x14b22) — everything the stage restart
  * does before it reaches `clear_actor_arrays` (the init subsystem's, and verified). The span stops
  * there because that is where this slice's own work ends; what still has no core is the routine's
  * TAIL, which ends `bra.w $1575c` — back to the frame loop's own top, unwinding the stack rather
  * than returning, which is why a reconstruction cannot play a frame the plane dies in
  * (`../gen_readme_assets.py` is where that bites).
+ *
+ * IT OPENS ON THE PALETTE DOOR. `bsr.w set_palette_black` @ 0x14aa8 writes no image byte at all —
+ * the ordered OS EVENT is its whole surface — so the slice starts one instruction earlier than it
+ * used to and the event ledger is what separates a restart that blacks the screen from one that
+ * does not.
  *
  * THE CHECKPOINT SCAN WALKS BACKWARDS AND HAS NO FLOOR. It starts on the SCROLL_POS word of the
  * table's seventh record — the shipped tables end with a 0x2710 sentinel there, far past any real
@@ -837,13 +864,14 @@ void restart_level_at_checkpoint_setup(uint8_t *image) {
     uint32_t table;
     uint32_t record;
 
+    set_palette_black(image);                    /* `bsr.w $111a6` @ 0x14aa8 */
     image[A_level_just_started] = SCC_TRUE;
     /* The RAW scancode byte, not `key_bits` beside it — so a held pause or abort key really does
      * survive the restart, and `level_just_started` is what stops it acting on the next frame. */
     image[A_key_last_scancode] = 0;
     image[A_joy1_state] = 0;
     image[A_joy0_state] = 0;
-    wr16(image + A_player_hit, 0);
+    wr16(image + A_enemy_fire_inhibit, 0);
 
     table = be32(image + A_checkpoint_tables
                  + (uint16_t)(be16(image + A_level_number) * CHECKPOINT_TABLE_PTR_BYTES));

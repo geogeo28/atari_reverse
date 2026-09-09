@@ -77,10 +77,11 @@
  * it by `harness._vet_os_memory_map()`. Off target that megabyte costs nothing — it is a host
  * `calloc`. On target it is a `.bss` array inside a GEMDOS TPA.
  *
- * WHAT THE REST HELD IS HARNESS-ONLY: the staged-file table at 0xbf000, the staging window above
- * it, the oracle's stack at the top and `test/abi.py`'s scratch map at 0x90000 — none of which
- * exists here, because this build's file I/O is real GEMDOS and no kit source is linked into the
- * .PRG at all. So the target image only has to cover THE GAME'S OWN WORLD, and that world ends at
+ * WHAT THE REST HELD IS HARNESS-ONLY: the staged-file table and the staging window above it — whose
+ * base is ../project.toml's own `fs_base` key, and MOVES whenever the game's eight boot files need a
+ * wider window — the oracle's stack at the top and `test/abi.py`'s scratch map. None of it exists
+ * here, because this build's file I/O is real GEMDOS and no kit source is linked into the .PRG at
+ * all, which is why this file can name the key without ever naming its value. So the target image only has to cover THE GAME'S OWN WORLD, and that world ends at
  * the top of the screen ring: `test/abi.py`'s `SCREEN_RING_SPAN` is 0x60000..0x87600, and
  * ../atari/README.md's "Memory map" is the census.
  *

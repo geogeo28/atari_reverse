@@ -151,15 +151,19 @@ above the guard band is beyond any band; nothing here claims otherwise.
 Everything in this table is a routine `../STATUS.md` files under "Not reconstructed", or something a
 differential structurally cannot have. Each is composed from verified cores; none re-implements one.
 
+The title flow used to be four of these rows and is now none of them: `enter_title`,
+`title_attract_prescroll`, `title_attract_start_tune`, `title_attract_poll`, `title_frame_step` and
+`load_level_assets` are all cores (`../include/frontend.h`), each answering with the branch the
+original took. What is left is the row below — the frame counter and the stop test this build needs
+between those calls, which is why it restates `src/frontend.c`'s own composition instead of calling
+`title_attract_loop`.
+
 | what | why it is not a core | where |
 |---|---|---|
 | `_start`, the trap wrappers, `Super`/`fs_leave_supervisor` | the oracle services traps in-process; there is nothing to diff | `flyshark_os.s` |
 | the `$70` and `$118` entries and their dispatch | an exception frame and an `rte` are not expressible in C | `flyshark_os.s`, `dispatch_image_vector` |
-| `main`'s boot slice @ 0x15750 | the kit stages files in ONE 258,048-byte window and this boot loads 288,551 (`../STATUS.md`) | `run_the_whole_program` |
-| `enter_title` @ 0x1030e | four instructions and a branch into a loop that never returns | `enter_title` |
-| `title_attract_loop` past 0x1054a | a spin with four exits, none of them an `rts` a slice could be diffed at | `attract_poll` |
-| `title_frame_step` @ 0x10594 + the page cycle @ 0x105a8 | the other half of the same spin | `title_frame_step` |
-| `load_level_assets` past its verified patch slice | five `bsr`s whose ORDER is the two-disc layout | `load_level_assets` |
+| `main`'s two re-entry labels @ 0x15754 and 0x15758 | both are BRANCH targets rather than calls — `init_new_game` ends `bra.w enter_title`, and the stage loop is re-entered by an unwind — so the calls either side of them are composed here. The slice between them is a core (`main_boot`), and the window that once blocked it is a `project.toml` key now | `run_the_whole_program` |
+| the attract loop's frame limit and stop | `title_attract_loop` is verified whole, but its only exit is the fire button; a smoke run stops at a frame count | `run_the_title`, `run_the_attract_loop`, `run_the_attract_spin` |
 | `start_level`'s middle @ 0x11494 | five arms on the level number between two verified slices | `start_level` |
 | the frame loop's three exits | the original leaves them by unwinding the stack; a C function cannot | `run_the_frame_loop` |
 

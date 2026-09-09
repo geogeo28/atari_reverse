@@ -166,8 +166,9 @@ static inline uint32_t fs_kbdvbase(void) { return OS_KBDVBASE; }
 #define STAGE_TAKEOFF_SHADOW    0x13u /* `move.w #$13,$1773e` @ 0x1141a */
 #define STAGE_SHADOW_OFFSET     0x01u /* `move.w #$1,$1773c` @ 0x11422 */
 
-#define A_keep_player_hit_flag 0x177cbu /* `tst.b $177cb` @ 0x113e6 and @ 0x14b40 — when set, the
-                                         * stage reset leaves `player_hit` alone. WRITTEN NOWHERE in
+#define A_keep_enemy_fire_inhibit 0x177cbu /* `tst.b $177cb` @ 0x113e6 and @ 0x14b40 — when set, the
+                                         * stage reset leaves `A_enemy_fire_inhibit` alone. WRITTEN
+                                         * NOWHERE in
                                          * the image: a sixth cheat flag with no handler behind it,
                                          * so the guarded `clr.w` always runs */
 
@@ -213,9 +214,21 @@ void boot_init(uint8_t *image);
 void entry_stub(uint8_t *image);
 void init_load_assets_title(uint8_t *image);
 void init_load_assets_sprites(uint8_t *image);
+/* `init_load_assets` @ 0x11212 WHOLE — the two slices above with `load_level_assets(0)` between
+ * them, which is the frontend subsystem's and was unported when the two slices were cut. */
+void init_load_assets(uint8_t *image);
 void init_new_game(uint8_t *image);
 void init_stage_state(uint8_t *image);
 void clear_actor_arrays(uint8_t *image);
 void frame_loop_once(uint8_t *image);
+
+/* `main` @ 0x15750, SLICE [0x15750, 0x15758) — its first two `bsr`s. THE C CANNOT BE CALLED `main`:
+ * that name is the C runtime's and a translation unit cannot spell it with this signature, so the
+ * core carries the slice's name instead and `../names.txt`'s `fn 0x15750 main` is what it is filed
+ * under. What is NOT here is the third `bsr` @ 0x15758: `init_new_game` ends `bra.w enter_title`,
+ * so control leaves for the title screen and 0x15758 is reached only when `title_attract_loop`'s
+ * own `rts` comes back to it. `test_init.py` composes that whole path in one case; a C function
+ * cannot, because the stack unwind between them is not an expression. */
+void main_boot(uint8_t *image);
 
 #endif /* FS_INIT_H */

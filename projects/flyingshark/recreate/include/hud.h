@@ -167,8 +167,9 @@
  * things that WRITE them; the player and weapons cores read them out of this header. A global lives
  * with the subsystem that owns the data (../README.md), and the data is the cheat state.
  *
- * `A_player_hit`, which the invulnerability cheat also writes, is NOT one of them: it is the
- * player's own state that everything which fires reads, so it lives in `include/player.h`. */
+ * `A_enemy_fire_inhibit`, which the invulnerability cheat also writes, is NOT one of them: it is
+ * the level-flow state `include/player.h` owns, and the cheat is one of its three writers rather
+ * than its home. */
 
 /* ---- the display-list records this subsystem publishes into -----------------------------------
  * The RECORD is `include/display_list.h`'s and is not restated; what is here is where each of this

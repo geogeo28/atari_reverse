@@ -157,7 +157,7 @@ A_infinite_lives_flag = 0x177c7
 A_infinite_bombs_flag = 0x177c8
 A_alt_bullet_glyph_flag = 0x177c9
 A_max_weapon_flag = 0x177ca
-A_player_hit = 0x17706
+A_enemy_fire_inhibit = 0x17706
 LOW_MEMORY_INDENT_WORD = 0x40
 A_text_hall_of_fame = 0x161ce
 A_text_enter_your_name = 0x16262
@@ -1260,9 +1260,12 @@ def test_random_names_against_the_shipped_table(chunk):
         _cheat_case(name)
 
 
-def test_the_hsc_cheat_kills_you_the_second_time():
-    """Its arm is chosen by the flag its first use set, so entering it twice sets `player_hit`
-    instead of clearing anything."""
+def test_the_hsc_cheat_inhibits_enemy_fire_the_second_time():
+    """Its arm is chosen by the flag its FIRST use set, so entering the name twice raises
+    `enemy_fire_inhibit` as well — and that word's only reader is the enemies' fire guard @ 0x12856.
+    The second use therefore makes the plane MORE invulnerable, not less: nothing here touches the
+    player's mode, which is what kills. (The old name for the word, `player_hit`, is what the
+    entry's "it kills you" reading came from; no instruction was ever behind it.)"""
     _cheat_case(CHEAT_NAMES["HSC"], invuln=0)
     _cheat_case(CHEAT_NAMES["HSC"], invuln=1)
 
@@ -1291,7 +1294,7 @@ def test_each_one_line_cheat_handler(entry, glue):
 @pytest.mark.parametrize("invuln", (0, 1, 0xff))
 def test_the_hsc_handler_on_its_own(invuln):
     _run(ENTRY_CHEAT_HSC_INVULNERABLE, lambda lib, buf: g_cheat_hsc_invulnerable(buf),
-         pokes={A_invuln_flag: bytes([invuln]), A_player_hit: b"\x5a\x5a"}, poison=invuln != 0,
+         pokes={A_invuln_flag: bytes([invuln]), A_enemy_fire_inhibit: b"\x5a\x5a"}, poison=invuln != 0,
          note=f"invuln={invuln:#x}")
 
 
@@ -1430,7 +1433,7 @@ MIRRORS = (
     ("PLAYER_MODE_GAMEOVER", "include/player.h", "PLAYER_MODE_GAMEOVER"),
     ("A_lives", "include/player.h", "A_lives"),
     ("A_bombs", "include/player.h", "A_bombs"),
-    ("A_player_hit", "include/player.h", "A_player_hit"),
+    ("A_enemy_fire_inhibit", "include/player.h", "A_enemy_fire_inhibit"),
     ("A_dl_player_shadow", "include/player.h", "A_dl_player_shadow"),
     "A_cheat_handler_table", "A_cheat_name_table", "CHEAT_ROW_BYTES", "CHEAT_TABLE_END",
     "CHEAT_ARM_SPINS", "CHEAT_ARM_KEY_BIT", "CHEAT_ARM_WAIT_PC",

@@ -21,6 +21,7 @@
 #include <stdint.h>
 
 #include "machine.h"
+#include "os.h"           /* `OS_SCHED_POLL_MAX`, the give-up below counts against */
 #include "display_list.h"
 #include "hud.h"          /* `A_const_words_0123` and its stride, which `const_word` below reads */
 
@@ -88,6 +89,53 @@ static inline uint16_t const_word(const uint8_t *image, unsigned index) {
 static inline void copy_longs(uint8_t *image, uint32_t src, uint32_t dst, unsigned longs) {
     for (unsigned index = 0; index < longs; index++)
         wr32(image + addr_add(dst, index * LONG_BYTES), be32(image + addr_add(src, index * LONG_BYTES)));
+}
+
+/* THE BUSY-WAIT SEAM: 1 while a spin on an interrupt-written byte may go round again.
+ *
+ * The original's waits have no bound and a TARGET build must have none either — the ACIA really
+ * does write the byte, so the loop really does end. Off target nothing can change memory while the
+ * candidate runs except the case's own schedule, so a wait the schedule never releases is an
+ * INFINITE LOOP: the suite HANGS instead of failing, and a hung suite decides nothing
+ * (`docs/agent-playbook.md` §10). One mutation here already did it — `load_level_assets`' level
+ * compare read unsigned takes a negative level into the disc prompt, whose schedule that case has
+ * no reason to carry.
+ *
+ * So the give-up lives behind `RECREATE_HOST_DIFFERENTIAL`, the `-D` the harness build already
+ * passes and no `.PRG` build does (`tools/recreate_kit/kit.mk`, `atari/build.sh`), and compiles to
+ * a constant 1 on target with the counter and the tally both dropped — which is the original's own
+ * behaviour, a spin that ends when and only when the interrupt writes the byte.
+ *
+ * EXHAUSTION TALLIES A REFUSAL, exactly as `sched_wait8` does (`tools/recreate_kit/include/sched.h`,
+ * "WHY A CAP AT ALL"): a wait the case's schedule never released has already decided nothing, so the
+ * run must be thrown away with a name on it rather than allowed to compare whatever the routine did
+ * next. Without the tally the give-up is worse than the hang it replaces — the candidate silently
+ * carries on down a path the original never took, and the case comes back green or red about that.
+ * `test_frontend.py::test_a_wait_the_schedule_never_releases_is_REFUSED_and_not_quietly_abandoned`
+ * is the positive control, and the only case that reaches this line.
+ *
+ * WHAT THE DIAGNOSTIC WILL SAY. `os_refused` is one tally shared by every refusing helper, and this
+ * is not the kit's own wrapper, so `g_sched_exhausted` stays 0 and `harness._sched_refusal_hint`
+ * prints no "ran to OS_SCHED_POLL_MAX" clause: a run that dies here reports a bare refused os_* call
+ * and sends the reader after a missing guard. Check the wait sites first (STATUS.md, "Follow-ups the
+ * kit should absorb" — the row that asks the kit for this predicate).
+ *
+ * A CALLER MUST HONOUR THE 0. All four callers do, and each spells it as the shortest correct
+ * thing — a `return` out of the routine, not a `break` back into its body:
+ * `src/frontend.c`'s `wait_for_disc_swap` (which therefore does NOT run `probe_disc`) and
+ * `debug_wait_for_keypad4`, `src/hud.c`'s `console_show_message` fire-release wait, and
+ * `src/player.c`'s pause key.
+ */
+static inline int wait_may_go_round_again(unsigned polls) {
+#ifdef RECREATE_HOST_DIFFERENTIAL
+    if (polls < OS_SCHED_POLL_MAX)
+        return 1;
+    os_refused(0);   /* the cap: tally it, so `harness.differential` throws the case away */
+    return 0;
+#else
+    (void)polls;
+    return 1;
+#endif
 }
 
 #endif /* FLYINGSHARK_COMMON_H */

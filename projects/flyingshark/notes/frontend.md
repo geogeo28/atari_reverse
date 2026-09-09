@@ -388,7 +388,7 @@ SPAM".
 
 | name | handler | flag | effect |
 | --- | --- | --- | --- |
-| `HSC` | `0x10e30` | `invuln_flag` `0x177c6` | both collision routines (`0x1101c`, `0x10f26`) return immediately. Entering it a **second** time sets `player_hit` instead — it kills you. |
+| `HSC` | `0x10e30` | `invuln_flag` `0x177c6` | both collision routines (`0x1101c`, `0x10f26`) return immediately. Entering it a **second** time — the arm that flag itself chooses — also sets `enemy_fire_inhibit` (`0x17706`), whose only reader is the enemies' fire guard at `0x12856`, so the second use makes the plane **more** invulnerable rather than killing it. (The word used to be called `player_hit`, which is where the old "it kills you" reading came from; nothing in the handler touches the player's mode, which is what kills.) |
 | `KDJ` | `0x10e4c` | `infinite_lives_flag` `0x177c7` | `0x13c34` skips `lives -= 1` |
 | `JGL` | `0x10e56` | `infinite_bombs_flag` `0x177c8` | `0x13d6c` skips `bombs -= 1` |
 | `GCC` | `0x10e60` | `alt_bullet_glyph_flag` `0x177c9` | `0x1416a` swaps the projectile glyph `0x7f` → `0xe4` |
@@ -402,9 +402,9 @@ Two loose ends in the same system, both **write-only or read-only**:
 
 * `cheat_used_flag` (`0x176d4`) is set on any match and cleared once by `boot_init`, and
   **nothing ever reads it**.
-* `keep_player_hit_flag` (`0x177cb`) is read at `0x113e6` and `0x14b40` to suppress the
-  `player_hit = 0` on a stage reset, and **nothing ever writes it** — a seventh cheat with no
-  handler behind it.
+* `keep_enemy_fire_inhibit` (`0x177cb`) is read at `0x113e6` and `0x14b40` to suppress the
+  `enemy_fire_inhibit = 0` on a stage reset, and **nothing ever writes it** — a seventh cheat with
+  no handler behind it.
 * `debug_overlay_flag` (`0x177cd`) gates `debug_show_counters` and is likewise never written.
 
 There is one more piece of unreferenced initialised data: `easter_egg_scancodes` (`0x1778a`),
@@ -502,7 +502,7 @@ the frame loop that is another agent's is given by address.
 | `0x17752` | `prescroll_count` | w | prescroll repeats, constant **107** (`0x6b`) — read at `0x10532`, `0x1154c`, `0x14bc8`, written nowhere |
 | `0x17758` | `scroll_y` | w | distance scrolled ("MASTY"); attract restarts past `0xbb8` |
 | `0x176ac` | `const_words` | w×10 | the constants 0..9 at `+2n`, used as memory-source immediates |
-| `0x17706` | `player_hit` | w | player was hit / is dying |
+| `0x17706` | `enemy_fire_inhibit` | w | non-zero = no enemy fires this frame. THREE writers, only one of them the player being hit (`0x110c4` the death, `0x124ee` the boss trigger, `0x10e38` the HSC cheat's second use); ONE reader, `0x12856` |
 | `0x17710` | `bombs` | w | init 3, max 6 |
 | `0x17712` | `lives` | w | init 5 (`const_words[5]`), max 6 |
 | `0x17714` | `weapon_level` | w | 0..4, indexes the dispatcher at `0x19232` |

@@ -23,8 +23,10 @@ FIVE SEAMS, and every one of them is a routine that never returns:
 * `STOP_SCORE_ADD_200` — the collision pass's hit arm ends `bra.w score_add_200`, whose `abcd`
   chain adds the X FLAG the sound module's `sfx_start` left two instructions earlier. That X is not
   the collision routine's to know, so the hit is diffed at the branch;
-* `STOP_RESTART_LEVEL` — the death sequence's "lives left" arm unwinds its caller into
-  `restart_level_at_checkpoint`, of which only the head is reconstructed;
+* `ENTRY_RESTART_LEVEL` — the death sequence's "lives left" arm unwinds its caller into
+  `restart_level_at_checkpoint`, of which only the head is reconstructed, so the run stops at that
+  routine's ENTRY. It is the same address the restart slice is entered at, and one constant rather
+  than two says so;
 * `STOP_MAIN_REENTRY` — the death sequence's game-over arm and `read_player_input`'s ABORT key both
   reach `game_over_hiscore_check`, which IS verified and is therefore CALLED: the stop is that
   routine's own re-entry into `main`, so the two are diffed through the whole hall-of-fame walk;
@@ -81,13 +83,15 @@ ENTRY_FIRE_PATTERN_LEVEL2 = 0x13f72
 ENTRY_FIRE_PATTERN_LEVEL3 = 0x13fda
 ENTRY_FIRE_PATTERN_LEVEL4 = 0x1404c
 ENTRY_READ_PLAYER_INPUT = 0x14354
-ENTRY_RESTART_LEVEL_SETUP = 0x14aac   # the SLICE's start: `st level_just_started`
+# The SLICE's start, `bsr.w set_palette_black`, and ALSO the checkpoint the death sequence's
+# "lives left" arm is diffed at — it branches here rather than calling, and the slice below is what
+# runs next.
+ENTRY_RESTART_LEVEL = 0x14aa8
 
 # ---- the seams -------------------------------------------------------------------------------------
 STOP_SCORE_ADD_200 = 0x11018        # `bra.w score_add_200` — the hit arm's tail
 STOP_FRAME_LOOP_REENTRY = 0x1251a   # `addq.l #4,a7` before `bra.w $15758`
 STOP_CLEAR_ACTOR_ARRAYS = 0x14b22   # `bsr.w $115e2` — where the restart slice ends
-STOP_RESTART_LEVEL = 0x14aa8        # `bra.w restart_level_at_checkpoint`
 STOP_CONSOLE_SHOW_MESSAGE = 0x14996 # `debug_show_counters` falls through here, it does not return
 STOP_MAIN_REENTRY = 0x15754         # `game_over_hiscore_check`'s own re-entry into main
 
@@ -164,7 +168,7 @@ A_level_end_scroll_pos, A_boss_scroll_pos = 0x1771c, 0x1770a
 A_level_number, LEVELS, LEVEL_CLEAR_TUNE = 0x1642a, 5, 0
 A_level_loop_flag_1, A_level_loop_flag_2, A_level_loop_flag_3 = 0x1769c, 0x1769e, 0x176a0
 LEVEL_LOOP_1_START, LEVEL_LOOP_2_START, LEVEL_LOOP_3_START = 1, 2, 3
-A_scroll_pos, A_player_hit = 0x17758, 0x17706
+A_scroll_pos, A_enemy_fire_inhibit = 0x17758, 0x17706
 A_level_just_started, A_joy0_state, A_joy1_state, A_key_bits = 0x17696, 0x1777e, 0x1777f, 0x17780
 A_use_keyboard_flag, A_key_last_scancode = 0x1770e, 0x17781
 A_invuln_flag, A_infinite_lives_flag, A_infinite_bombs_flag = 0x177c6, 0x177c7, 0x177c8
@@ -753,7 +757,7 @@ def test_death_sequence_restarts_the_stage_while_a_life_is_left(lives, infinite)
            "_pokes": _death_pokes(cursor, lives=lives, infinite=infinite)},
           lambda lib, buf: lib.g_player_death_sequence_step(buf, A_player, TEXT_CURSOR_X,
                                                             TEXT_CURSOR_Y),
-          stop_pc=STOP_RESTART_LEVEL, note=f"lives={lives:#x} infinite={infinite}")
+          stop_pc=ENTRY_RESTART_LEVEL, note=f"lives={lives:#x} infinite={infinite}")
 
 
 @pytest.mark.parametrize("delay", (5, 1))
@@ -1211,7 +1215,7 @@ def _bullet_case(bullets, player_x, player_y, frame, note, mode=PLAYER_MODE_JOYS
                  invuln=0, poison=False):
     pokes = {A_player: player_record(x=player_x, y=player_y, frame=frame, shadow=1, mode=mode),
              A_invuln_flag: bytes([invuln]), A_music_suspend_flag: word(0),
-             A_player_hit: word(0), A_sound_module + SND_SFX_ACTIVE: bytes([0]),
+             A_enemy_fire_inhibit: word(0), A_sound_module + SND_SFX_ACTIVE: bytes([0]),
              A_enemy_bullets: b"".join(bullets)}
     _case(ENTRY_PLAYER_VS_ENEMY_BULLETS, {"_pokes": pokes},
           lambda lib, buf: lib.g_player_vs_enemy_bullets(buf), poison=poison, note=note)
@@ -1329,7 +1333,7 @@ def _progress_pokes(started_level_pokes, overrides=None):
     pokes.update({A_level_complete: word(0), A_game_over_flag: word(0),
                   A_player: player_record(x=0x8f, y=0x7e, frame=2, shadow=1,
                                           mode=PLAYER_MODE_JOYSTICK),
-                  A_player_hit: word(0)})
+                  A_enemy_fire_inhibit: word(0)})
     pokes.update(overrides or {})
     return pokes
 
@@ -1391,7 +1395,12 @@ def test_progress_wraps_the_fifth_level_through_the_three_loop_flags(started_lev
 
 
 # ==================================================================================================
-# restart_level_at_checkpoint @ 0x14aa8, SLICE [0x14aac, 0x14b22)
+# restart_level_at_checkpoint @ 0x14aa8, SLICE [0x14aa8, 0x14b22)
+#
+# THE SLICE OPENS ON `bsr.w set_palette_black`, which writes no image byte: the ordered OS EVENT is
+# its whole surface, and it is the only thing that separates this restart from one that leaves the
+# game palette up. Every case below therefore carries it, and a candidate that named a neighbouring
+# palette table — or made no call at all — fails on the ledger rather than on the bytes.
 # ==================================================================================================
 def _checkpoint_record(level, index):
     """One six-byte record of the shipped table for `level`, read out of the loaded image."""
@@ -1405,14 +1414,15 @@ def _checkpoint_record(level, index):
 
 def _restart_case(level, scroll_pos, note):
     pokes = {A_level_number: word(level), A_scroll_pos: word(scroll_pos),
-             A_level_just_started: word(0), A_player_hit: word(0xa5a5),
+             A_level_just_started: word(0), A_enemy_fire_inhibit: word(0xa5a5),
              A_key_bits: bytes([0xff]), A_key_last_scancode: bytes([0xff]),
              A_joy1_state: bytes([0xff]), A_joy0_state: bytes([0xff]),
              A_checkpoint_map_offset: word(0xdead), A_checkpoint_scroll_pos: word(0xbeef),
              A_checkpoint_scroll_fine: word(0xcafe)}
     # No poison pass: the scan reads `scroll_pos` AFTER subtracting from it, so inverting that word
-    # would send the second run's walk somewhere else entirely.
-    _case(ENTRY_RESTART_LEVEL_SETUP, {"_pokes": pokes},
+    # would send the second run's walk somewhere else entirely. The palette call at the slice's head
+    # is compared on every one of these cases all the same — the event ledger is not a poked byte.
+    _case(ENTRY_RESTART_LEVEL, {"_pokes": pokes},
           lambda lib, buf: lib.g_restart_level_at_checkpoint_setup(buf),
           stop_pc=STOP_CLEAR_ACTOR_ARRAYS, note=note)
 
@@ -1450,11 +1460,34 @@ def test_restart_scan_starts_on_the_seventh_records_scroll_word(level):
     _restart_case(level, 0x3000, f"past the sentinel, level={level}")
 
 
+@pytest.mark.parametrize("level", (0x4000, 0x4001))
+def test_restart_narrows_the_checkpoint_table_index_to_a_WORD(level):
+    """`clr.l d0 / move.w level_number,d0 / lsl.w #$2,d0 / adda.l d0,a0` @ 0x14ad2: the shift is a
+    WORD shift, so the bits it pushes past bit 15 are GONE rather than carried into the high half
+    that `adda.l` then adds. A level of 0x4000 therefore reads the table pointer at offset 0 —
+    level 0's — where a 32-bit multiply would index 0x10000 bytes past the table and dereference
+    whatever is there.
+
+    CONTRACT COVERAGE, latent in the shipped game, and named as such: nothing writes `level_number`
+    outside 0..4, so the narrowing is never REACHED by the game's own data and a `(uint32_t)` cast
+    survives every other case in this battery. It is driven for
+    `test_patch_filenames_indexes_the_digit_table_with_a_signed_multiply`'s reason — the arm is the
+    original's arithmetic and is reproduced rather than guarded — and at levels whose aliased table
+    the scan can actually walk, so the case says something about the index and not about a wild
+    pointer.
+    """
+    aliased = (level * CHECKPOINT_TABLE_PTR_BYTES & 0xffff) // CHECKPOINT_TABLE_PTR_BYTES
+    scroll = int.from_bytes(_checkpoint_record(aliased, 0)[CHECKPOINT_REC_SCROLL_POS:
+                                                           CHECKPOINT_REC_SCROLL_POS + 2], "big")
+    _restart_case(level, scroll + CHECKPOINT_SCROLL_BACK,
+                  f"level={level:#06x}, aliased onto table {aliased}")
+
+
 def test_restart_on_a_started_level(started_level_pokes):
     """The same slice over the machine `start_level` itself left, rather than over poked globals."""
     pokes = dict(started_level_pokes)
     pokes[A_scroll_pos] = word(0x800)
-    _case(ENTRY_RESTART_LEVEL_SETUP, {"_pokes": pokes},
+    _case(ENTRY_RESTART_LEVEL, {"_pokes": pokes},
           lambda lib, buf: lib.g_restart_level_at_checkpoint_setup(buf),
           stop_pc=STOP_CLEAR_ACTOR_ARRAYS, note="started level")
 
@@ -1468,7 +1501,7 @@ MIRRORS = (
     ("PLAYER_MODE_GAMEOVER", "include/player.h", "PLAYER_MODE_GAMEOVER"),
     ("A_lives", "include/player.h", "A_lives"),
     ("A_bombs", "include/player.h", "A_bombs"),
-    ("A_player_hit", "include/player.h", "A_player_hit"),
+    ("A_enemy_fire_inhibit", "include/player.h", "A_enemy_fire_inhibit"),
     ("A_dl_player_shadow", "include/player.h", "A_dl_player_shadow"),
     ("A_dl_bomb_icons", "include/hud.h", "A_dl_bomb_icons"),
     ("A_const_words_0123", "include/hud.h", "A_const_words_0123"),
@@ -1603,7 +1636,7 @@ ENTRY_PROLOGUES = {
     "ENTRY_FIRE_PATTERN_LEVEL3": "41f9000190a43010322800020641000a",
     "ENTRY_FIRE_PATTERN_LEVEL4": "41f9000190a43010322800020641000a",
     "ENTRY_READ_PLAYER_INPUT": "4a790001770e670a1039000177806000",
-    "ENTRY_RESTART_LEVEL_SETUP": "50f90001769642390001778142390001",
+    "ENTRY_RESTART_LEVEL": "6100c6fc50f900017696423900017781",
     "ENTRY_START_LEVEL": "33f9000176b200017710610028d86100",
 }
 
@@ -1614,6 +1647,5 @@ STOP_PROLOGUES = {
     "STOP_SCORE_ADD_200": "6000fb364a39000177c6661041f90001",
     "STOP_FRAME_LOOP_REENTRY": "588f6000323a4a790001769c661250f9",
     "STOP_CLEAR_ACTOR_ARRAYS": "6100cabe6100cad46100f1f842b90001",
-    "STOP_RESTART_LEVEL": "6100c6fc50f900017696423900017781",
     "STOP_MAIN_REENTRY": "6100bba46100bc406100bef66100c29a",
 }

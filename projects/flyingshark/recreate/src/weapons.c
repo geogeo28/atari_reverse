@@ -1127,16 +1127,16 @@ static const enemy_fire_row ENEMY_FIRE_ORDER[] = {
 
 /* enemies_fire_all @ 0x12602 — every firing group, in one pass, off one shared bullet cursor.
  *
- * The abort is `enemies_fire_abort_if_player_hit` @ 0x12856, which the name map used to call
- * `enemies_fire_nop` and which is not a nop at all: called with `bsr`, it
- * discards its own return address with `addq.l #4,a7` when the player has been hit, so the `rts`
- * that follows returns out of THIS routine. Reproduced as the guard it really is. */
+ * The abort is `enemies_fire_abort_if_inhibited` @ 0x12856, which the name map used to call
+ * `enemies_fire_nop` and which is not a nop at all: called with `bsr`, it discards its own return
+ * address with `addq.l #4,a7` when `A_enemy_fire_inhibit` is set, so the `rts` that follows returns
+ * out of THIS routine and no enemy fires. Reproduced as the guard it really is. */
 void enemies_fire_all(uint8_t *image) {
     uint16_t aim_x, aim_y;
     uint32_t cursor = A_enemy_bullets;
     unsigned row;
 
-    if (be16(image + A_player_hit) != 0)
+    if (be16(image + A_enemy_fire_inhibit) != 0)
         return;
 
     aim_x = (uint16_t)(be16(image + A_player + PLAYER_X) + ENEMY_AIM_PLAYER_OFFSET);

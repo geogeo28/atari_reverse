@@ -166,9 +166,9 @@ not expose — so the gallery stops at stage 4 rather than placing stage 5's byt
 
 **The boss is a scroll position, not a sprite.** `level_progress_check`'s verified body reaches both
 of the level record's triggers on the stage-1 run: the boss trigger (`level_table` +2) draws
-nothing at all — it only raises `player_hit`, which is what stops the enemies firing — and the end
-of the level (+0) starts the clear tune and hands the plane to the fly-off and then the landing
-script. `level1-landing.png` is that ending.
+nothing at all — it only raises `enemy_fire_inhibit`, which is what stops the enemies firing — and
+the end of the level (+0) starts the clear tune and hands the plane to the fly-off and then the
+landing script. `level1-landing.png` is that ending.
 
 ## Assets and audio
 

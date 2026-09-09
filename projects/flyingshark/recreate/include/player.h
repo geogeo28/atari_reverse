@@ -21,7 +21,8 @@
 #include "display_list.h"   /* the 6-byte record the player and its shadow are published into */
 #include "entity.h"         /* the 58-byte entity record and the group tables the passes walk */
 #include "globals.h"
-#include "hud.h"            /* A_player, PLAYER_MODE, A_lives, A_bombs, A_player_hit, the cheats */
+#include "hud.h"            /* the five cheat flags, JOY_FIRE_BIT, and the HUD cores the death,
+                             the restart and the landing bonus call */
 #include "irq.h"            /* the four input bytes the ACIA handler writes and this one reads */
 #include "sound.h"          /* the sfx wrappers the death and the landing bonus call */
 #include "sprite.h"         /* the sprite record's hit box, and the scroll globals the restart sets */
@@ -93,12 +94,15 @@
  * count is read by the icon row and spent by the smart bomb. */
 #define A_lives      0x17712u /* `addi.w #$1,$17712` @ 0x11194 */
 #define A_bombs      0x17710u /* `move.w $17710,d7` @ 0x1240e */
-#define A_player_hit 0x17706u /* `move.w #$1,$17706` @ 0x10e38 — set by the invulnerability cheat
-                               * and by the death path, read by everything that fires. `# ctx` in
-                               * ../names.txt, i.e. the name was inferred from its call sites;
-                               * CONFIRMED here from the bodies that write and read it —
-                               * `player_death_sequence_step` @ 0x13bd6 raises it on the collision
-                               * and `enemies_fire_abort_if_player_hit` @ 0x12856 is the guard */
+/* ../names.txt used to call 0x17706 `player_hit`, which is what its CALL SITES look like and not
+ * what the word means; the map has been MERGED and now spells it as this header does. It has
+ * exactly ONE reader in the whole image — `enemies_fire_abort_if_inhibited` @ 0x12856, which throws
+ * its own return address away so that no enemy fires this frame — and THREE writers, only one of
+ * which is the player being hit: `player_vs_enemy_bullets` @ 0x110c4 (the death),
+ * `level_progress_check` @ 0x124ee (the scroll passing `A_boss_scroll_pos`, with the plane
+ * untouched) and `cheat_hsc_invulnerable` @ 0x10e38 (the cheat's second use). So the name is what
+ * all three writers and the one reader agree on. */
+#define A_enemy_fire_inhibit 0x17706u /* `move.w #$1,$17706` @ 0x10e38 */
 /* The player's own two display records, cleared together by `clear_player_display_slots`
  * @ 0x115c2 (src/hud.c) on the game-over arm. `dl_player` follows the shadow's six bytes. */
 #define A_dl_player_shadow 0x17cfcu /* `lea $17cfc,a0` @ 0x115c6 */
@@ -233,7 +237,7 @@
 #define A_use_keyboard_flag  0x1770eu /* `tst.w $1770e` @ 0x14354 — read here, written nowhere */
 
 #define A_checkpoint_tables      0x15ab0u /* `lea $15ab0,a0` @ 0x14aca — one longword per level */
-/* `0x177cb` (`keep_player_hit_flag`) and the bomb count reloaded at 0x14b6e are past this slice's
+/* `0x177cb` (`keep_enemy_fire_inhibit`) and the bomb count reloaded at 0x14b6e are past this slice's
  * end at 0x14b22 and are the init subsystem's to define when the rest of the restart lands. */
 #define A_checkpoint_map_offset  0x176fcu /* `move.w (a1),$176fc` @ 0x14b00 */
 #define A_checkpoint_scroll_pos  0x17704u /* `move.w 2(a1),$17704` @ 0x14b06 */

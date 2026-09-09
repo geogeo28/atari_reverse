@@ -29,6 +29,7 @@ display records, the entity arena, the HUD and the sound module — of a level T
 See "the frame loop" below for how the worlds are staged and which arms they deliberately do not
 reach.
 """
+import ctypes
 import pickle
 import random
 import re
@@ -44,7 +45,14 @@ import harness
 abi.declare_glue("g_probe_disc", "g_set_palette_black", "g_set_palette_game",
                  "g_set_palette_title", "g_boot_init", "g_entry_stub",
                  "g_init_load_assets_title", "g_init_load_assets_sprites", "g_init_new_game",
-                 "g_init_stage_state", "g_clear_actor_arrays", "g_frame_loop_once")
+                 "g_init_stage_state", "g_clear_actor_arrays", "g_frame_loop_once",
+                 "g_init_load_assets", "g_main_boot")
+# THE TWO FRONTEND GLUES THE BOOT COMPOSITION NEEDS, and the only place this battery reaches out of
+# its own subsystem: `main`'s third `bsr` is reached by an `rts` from the title screen, so the case
+# that runs the whole boot has to run the title screen too. `test_frontend.py` is where both are
+# verified; here they are called, as `src/init.c` would call them if a C function could unwind.
+abi.declare_glue("g_title_attract_loop")
+abi.declare_glue("g_enter_title", result=ctypes.c_uint32)
 abi.declare_glue("g_load_file", "g_derive_screen_ring", args=1)
 
 # ---- the routines, and where each slice stops ---------------------------------------------------
@@ -77,6 +85,11 @@ STOP_INIT_STAGE_DISPATCH = 0x11438       # `beq.w $12cb6`, the difficulty dispat
 
 ENTRY_CLEAR_ACTOR_ARRAYS = 0x115e2
 
+ENTRY_MAIN = 0x15750                     # `bsr.w init_load_assets` — the program's first call
+# `bsr.w init_stage_state` @ 0x15758. It is where `main`'s boot slice STOPS and, in the whole-boot
+# case below, the instruction the title screen's own `rts` comes back to.
+STOP_MAIN_THIRD_CALL = 0x15758
+ENTRY_ENTER_TITLE = 0x1030e              # where `init_new_game` branches; the boot slice's stop
 ENTRY_FRAME_LOOP = 0x1575c               # the loop's top, and `include/init.h`'s FRAME_LOOP_TOP
 STOP_FRAME_LOOP = 0x15816                # `bra.w $1575c` — one pass ends here
 # The two carry sites the frame loop's register inputs are measured at (`src/init.c`).
@@ -110,7 +123,7 @@ NAME_ENTRY_TIMEOUT = 0x32
 CONST_WORD_ZERO = 0                # include/hud.h
 NEW_GAME_LIVES_INDEX = 5
 STAGE_SCROLL_POS_SEED = 0x2e
-A_keep_player_hit_flag = 0x177cb
+A_keep_enemy_fire_inhibit = 0x177cb
 A_unread_word_176a2 = 0x176a2
 A_unread_word_176a8 = 0x176a8
 FRAME_LOOP_TOP = 0x1575c
@@ -168,8 +181,9 @@ FS_PROGRAM_END = 0x5aede           # include/globals.h
 A_sprite_bank = 0x1be36            # include/globals.h
 A_max_weapon_flag = 0x177ca        # include/hud.h
 A_lives = 0x17712                  # include/player.h
-A_player_hit = 0x17706             # include/player.h
+A_enemy_fire_inhibit = 0x17706             # include/player.h
 A_joy1_state = 0x1777f             # include/irq.h
+JOY_FIRE_BIT = 7                   # include/hud.h
 A_vbl_tick = 0x17720               # include/irq.h
 A_scroll_pos = 0x17758             # include/scroll.h
 A_level_number = 0x1642a           # include/player.h
@@ -368,10 +382,8 @@ def _staged_record(post_load_image, record, seed):
     whole run rather than differing. The re-read is written as the original writes it and is
     unpinnable, not merely unpinned.
     """
-    dest, record_length, dos_path = conftest.file_record(post_load_image, record)
-    on_disc = len(conftest.disk_bytes(RECORD_DISC_NAMES[record], record_length))
-    rng = random.Random(seed)
-    data = bytes(rng.randrange(0x100) for _ in range(on_disc))
+    dest, _record_length, _dos_path = conftest.file_record(post_load_image, record)
+    dos_path, data = conftest.seeded_load(post_load_image, record, RECORD_DISC_NAMES[record], seed)
     pokes, _handles = harness.stage_files([(dos_path, data)])
     return pokes, dest, data
 
@@ -615,21 +627,21 @@ def test_init_new_game_reads_its_immediates_out_of_the_constant_table(post_load_
                  stop_pc=STOP_INIT_NEW_GAME, max_insns=conftest.LOAD_SLICE_MAX_INSNS)
 
 
-@pytest.mark.parametrize("keep_player_hit", (0x00, 0x01, 0xff))
+@pytest.mark.parametrize("keep_enemy_fire_inhibit", (0x00, 0x01, 0xff))
 def test_init_stage_state_resets_the_per_stage_state(post_new_game_image, new_game_pokes,
-                                                     keep_player_hit):
+                                                     keep_enemy_fire_inhibit):
     """The whole slice, over a started GAME, with the one guarded store on both arms.
 
-    `keep_player_hit_flag` is written nowhere in the image, so its set arm is CONTRACT coverage: the
+    `keep_enemy_fire_inhibit` is written nowhere in the image, so its set arm is CONTRACT coverage: the
     game can only ever reach the clear. Both are driven because the flag is one `st` away from
-    mattering, and `player_hit` is poked non-zero so the two arms differ.
+    mattering, and `enemy_fire_inhibit` is poked non-zero so the two arms differ.
     """
     pokes = dict(new_game_pokes)
-    pokes[A_keep_player_hit_flag] = bytes([keep_player_hit])
-    pokes[A_player_hit] = b"\x00\x01"
+    pokes[A_keep_enemy_fire_inhibit] = bytes([keep_enemy_fire_inhibit])
+    pokes[A_enemy_fire_inhibit] = b"\x00\x01"
     abi.run_case(ENTRY_INIT_STAGE_STATE, lambda lib, buf: lib.g_init_stage_state(buf), pokes=pokes,
                  stop_pc=STOP_INIT_STAGE_DISPATCH,
-                 note=f"keep_player_hit_flag={keep_player_hit:#04x}")
+                 note=f"keep_enemy_fire_inhibit={keep_enemy_fire_inhibit:#04x}")
 
 
 @pytest.mark.parametrize("chunk", range(FUZZ_CHUNKS))
@@ -643,7 +655,7 @@ def test_init_stage_state_over_random_prior_state(new_game_pokes, chunk):
     written = (A_key_last_scancode, A_joy1_state, A_joy0_state,
                A_player_script_fire_enable, A_level_distance, A_unread_word_176a8,
                A_item_bomb_spawned, A_music_suspend_flag, A_scroll_fine,
-               A_landing_bomb_cash_timer, A_death_anim_cursor, A_player_hit, A_game_over_flag,
+               A_landing_bomb_cash_timer, A_death_anim_cursor, A_enemy_fire_inhibit, A_game_over_flag,
                A_player_script_timer, A_bomb_falling, A_bomb_exploding,
                A_landing_shadow_timer, A_takeoff_shadow_timer, A_shadow_offset, A_scroll_pos)
     # THE TWO `clr.l` STORES GET FOUR BYTES, not two: the low word of each is 0 in the image and
@@ -657,7 +669,7 @@ def test_init_stage_state_over_random_prior_state(new_game_pokes, chunk):
             pokes[address] = bytes([rng.randrange(0x100), rng.randrange(0x100)])
         for address in written_long:
             pokes[address] = bytes(rng.randrange(0x100) for _ in range(4))
-        pokes[A_keep_player_hit_flag] = bytes([rng.choice([0, 0xff])])
+        pokes[A_keep_enemy_fire_inhibit] = bytes([rng.choice([0, 0xff])])
         abi.run_case(ENTRY_INIT_STAGE_STATE, lambda lib, buf: lib.g_init_stage_state(buf),
                      pokes=pokes, stop_pc=STOP_INIT_STAGE_DISPATCH)
 
@@ -714,7 +726,6 @@ def test_clear_actor_arrays_attribution(post_load_image):
 # loop's top — so a frame in which the player dies runs TWO passes on the oracle side and one on the
 # candidate's. `_stage_frames` refuses to hand out such a frame, by watching the life count.
 
-FRAME_VBL_BUDGET_REACHED = 3      # sprite.h's RENDER_FRAME_VBL_BUDGET: the Vsync arm's threshold
 # The joystick script the staged frames are driven with: fire every fourth frame and nothing else.
 # Holding a direction steers the plane into the scenery, and a plane that dies restarts the stage.
 FRAME_FIRE_PERIOD = 4
@@ -770,7 +781,7 @@ def _frame_input_pokes(frame):
     differential that verifies one of them enter each frame identically, so a case cannot verify a
     frame of a different play-through than the one its world came from.
     """
-    return {A_vbl_tick: FRAME_VBL_BUDGET_REACHED.to_bytes(4, "big"),
+    return {A_vbl_tick: conftest.RENDER_FRAME_VBL_BUDGET.to_bytes(4, "big"),
             A_joy1_state: bytes([_joystick_byte(frame)]),
             A_key_bits: bytes([_key_bits_byte(frame)])}
 
@@ -1067,6 +1078,98 @@ def test_frame_loop_once_calls_those_routines_in_that_order():
 
 
 # =================================================================================================
+# main @ 0x15750 — SLICE [0x15750, 0x15758), and the whole boot behind it
+# =================================================================================================
+#
+# THE ROW THIS CLOSES WAS TWO MODEL BLOCKERS, and both are gone. (1) `init_load_assets` opens EIGHT
+# files and the model stages files in ONE window, which at the kit's default is too small for them —
+# so the routine could not even be REPLAYED in one run, let alone diffed. `project.toml`'s `fs_base`
+# moves the window down; that comment carries the arithmetic, and
+# `test_image_model.py::test_the_staged_file_window_holds_the_whole_boot` measures it.
+# (2) `init_new_game` never returns: it ends `bra.w enter_title`, so the third `bsr` @ 0x15758 is
+# reached only when `title_attract_loop`'s own `rts` comes back to it. That is still true and still
+# inexpressible in C — so `main_boot` is the first two calls, and the case below composes the rest.
+
+MAIN_BOOT_MAX_INSNS = 1_000_000
+# The whole boot draws the title screen's 108-frame prescroll and then the attract frames the fire
+# button interrupts, so it is the most expensive run in the suite by an order of magnitude.
+WHOLE_BOOT_MAX_INSNS = 30_000_000
+ENTER_TITLE_ATTRACT = 1            # `include/frontend.h`'s enum: level 0's assets already loaded
+WHOLE_BOOT_FIRE_AT = 3             # the poll the button comes down on: two attract frames first
+WHOLE_BOOT_FRAMES = WHOLE_BOOT_FIRE_AT - 1
+# The seed the eight staged files' content is drawn from — `main`'s own entry, so that a reader can
+# see where the bytes came from and no other battery can draw the same ones by accident.
+BOOT_STAGE_SEED = 0x15750
+
+
+def _stage(staged):
+    pokes, _handles = harness.stage_files(staged)
+    return pokes
+
+
+def _boot_pokes_seeded(post_load_image):
+    """All eight of `init_load_assets`' files staged with bytes of this test's OWN choosing, so that
+    a reconstruction which opened nothing could not agree over a fixture that already holds the real
+    ones. `conftest.seeded_load` is where the choice between this and its twin below is argued."""
+    return _stage([conftest.seeded_load(post_load_image, record, RECORD_DISC_NAMES[record],
+                                        BOOT_STAGE_SEED + index)
+                   for index, record in enumerate(ALL_RECORDS)])
+
+
+def _boot_pokes_real(post_load_image):
+    """...and the same eight with their REAL bytes, which the whole-boot case needs: the title
+    screen renders terrain out of `A\\LEVEL1.MAP` and the tile banks, and a map header of noise
+    would send the scroller's own cursor arithmetic somewhere the game never goes."""
+    return _stage([conftest.staged_load(post_load_image, record, RECORD_DISC_NAMES[record])
+                   for record in ALL_RECORDS])
+
+
+def test_main_boots_the_program(post_load_image):
+    """[0x15750, 0x15758): `bsr init_load_assets` and `bsr init_new_game`, diffed where the second
+    of them branches into the title screen instead of returning.
+
+    Every file is staged with content of this test's own choosing, so both the eight `Fread`s and
+    the sprite directory's relocation are visible over a fixture that already holds the real ones.
+    """
+    abi.run_case(ENTRY_MAIN, lambda lib, buf: lib.g_main_boot(buf),
+                 pokes=_boot_pokes_seeded(post_load_image),
+                 stop_pc=ENTRY_ENTER_TITLE, max_insns=MAIN_BOOT_MAX_INSNS)
+
+
+def test_the_whole_boot_reaches_the_stage_start_the_fire_button_asks_for(post_load_image):
+    """THE PROGRAM FROM ITS FIRST INSTRUCTION TO THE FIRST STAGE, in one differential.
+
+    `main` @ 0x15750 loads the assets, resets the game, branches into `enter_title`, prescrolls the
+    attract screen, draws two attract frames, takes the fire button and `rts`es — back to the third
+    `bsr` @ 0x15758, which is where this stops. Nothing in the case says where one routine ends and
+    the next begins: the oracle runs the original's own branches and the candidate runs five cores
+    in the order the exit codes put them in.
+
+    IT IS THE ONLY CASE THAT CROSSES THE STACK UNWIND. `init_new_game` never returns and
+    `title_attract_loop`'s `rts` is what eventually comes back, so no C function can hold this
+    path; the composition is here, in the test, where the seam is visible.
+
+    The schedule is its own positive control — the kit sinks a run in which a scheduled store never
+    came due, so "the button comes down at the THIRD arrival at the poll, and the VBL counter
+    reaches its budget once per attract frame" is asserted by the case existing rather than by a
+    counter nobody reads. One fire store and two VBL stores, not five arrivals.
+    The files are staged with their REAL bytes, because this run RENDERS from them.
+    """
+    def candidate(lib, buf):
+        lib.g_main_boot(buf)
+        assert lib.g_enter_title(buf) == ENTER_TITLE_ATTRACT
+        lib.g_title_attract_loop(buf)
+
+    pokes = _boot_pokes_real(post_load_image)
+    pokes[A_joy1_state] = b"\x00"
+    pokes[A_vbl_tick] = (0).to_bytes(4, "big")
+    abi.run_case(ENTRY_MAIN, candidate, pokes=pokes, stop_pc=STOP_MAIN_THIRD_CALL,
+                 max_insns=WHOLE_BOOT_MAX_INSNS,
+                 schedule=conftest.attract_schedule(WHOLE_BOOT_FIRE_AT, WHOLE_BOOT_FRAMES),
+                 note="main -> title -> fire -> the third init")
+
+
+# =================================================================================================
 # the addresses and constants this battery names
 # =================================================================================================
 
@@ -1081,7 +1184,7 @@ MIRRORS = (
     "NEO_PALETTE_OFFSET", "TITLE_COPY_OFFSET", "TITLE_COPY_LONGS", "A_level0_assets_loaded",
     "GAME_OVER_DELAY_FRAMES", "NAME_ENTRY_TIMEOUT", "NEW_GAME_LIVES_INDEX",
     ("CONST_WORD_ZERO", "include/hud.h", "CONST_WORD_ZERO"),
-    "STAGE_SCROLL_POS_SEED", "A_keep_player_hit_flag",
+    "STAGE_SCROLL_POS_SEED", "A_keep_enemy_fire_inhibit",
     "A_unread_word_176a2", "A_unread_word_176a8",
     "FRAME_LOOP_TOP", "FRAME_LOOP_CALLS",
     "FRAME_BLAST_SCRATCH_D0", "FRAME_TEXT_X_D1", "FRAME_TEXT_Y_D2",
@@ -1100,7 +1203,7 @@ MIRRORS = (
     ("A_level_number", "include/player.h", "A_level_number"),
     ("A_level_just_started", "include/player.h", "A_level_just_started"),
     ("A_lives", "include/player.h", "A_lives"),
-    ("A_player_hit", "include/player.h", "A_player_hit"),
+    ("A_enemy_fire_inhibit", "include/player.h", "A_enemy_fire_inhibit"),
     ("A_joy1_state", "include/irq.h", "A_joy1_state"),
     ("A_vbl_tick", "include/irq.h", "A_vbl_tick"),
     ("A_scroll_pos", "include/scroll.h", "A_scroll_pos"),
@@ -1138,7 +1241,7 @@ MIRRORS = (
     ("A_level_loop_flag_2", "include/player.h", "A_level_loop_flag_2"),
     ("A_level_loop_flag_3", "include/player.h", "A_level_loop_flag_3"),
     ("SHIFTER_SYNC_50HZ", "include/sound.h", "SHIFTER_SYNC_50HZ"),
-    ("FRAME_VBL_BUDGET_REACHED", "include/sprite.h", "RENDER_FRAME_VBL_BUDGET"),
+    ("JOY_FIRE_BIT", "include/hud.h", "JOY_FIRE_BIT"),
 )
 
 # Eight bytes or more each: this program's routines nearly all open `movem.l #$fffe,-(a7)` or a
@@ -1166,7 +1269,11 @@ ENTRY_PROLOGUES = {
     "ENTRY_INIT_STAGE_STATE": "42390001778142390001",
     # movem.l #$fffe,-(a7) / lea $59984,a0
     "ENTRY_CLEAR_ACTOR_ARRAYS": "48e7fffe41f900059984",
-    # bsr.w $11654 / bsr.w $119fc -- the loop's first two calls
+    # bsr.w $11212 / bsr.w $112fa -- init_load_assets and init_new_game, main's own first two
+    "ENTRY_MAIN": "6100bac06100bba46100",
+    # st $17698 / bsr.w $111a6 -- the "just entered" flag, then set_palette_black
+    "ENTRY_ENTER_TITLE": "50f90001769861000e90",
+    # bsr.w $11654 / bsr.w $119fc -- the frame loop's first two calls
     "ENTRY_FRAME_LOOP": "6100bef66100c29a6100",
     # subi.l #$1f900,d0 / movea.l a7,a2 -- the ring arithmetic, past boot_init's Physbase
     "ENTRY_RING_ARITHMETIC": "04800001f900548f",
@@ -1183,7 +1290,9 @@ STOP_PROLOGUES = {
     "STOP_INIT_NEW_GAME": "6000ef784e75",
     # beq.w $12cb6 / bra.w $12cc8 -- the difficulty dispatch the slice stops in front of
     "STOP_INIT_STAGE_DISPATCH": "6700187c6000188a",
-    # bra.w $1575c / lea $38928,a1 -- tile_blit_unreferenced, the dead routine after `main`
+    # bsr.w $1139a / bsr.w $11654 -- main's THIRD call, which only the attract loop's `rts` reaches
+    "STOP_MAIN_THIRD_CALL": "6100bc406100bef66100",
+    # bra.w $1575c / lea $38928,a1 -- tile_blit_unreferenced, the dead routine after the loop
     "STOP_FRAME_LOOP": "6000ff4443f90003",
     # bsr.w $13c96 / bsr.w $13baa -- the `bsr player_publish` the register probe stops in front of
     "STOP_FRAME_AT_PLAYER_PUBLISH": "6100e5206100e430",

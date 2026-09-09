@@ -12,13 +12,23 @@
  * by an interrupt, so a bounded wait would abandon a player who had not touched the stick for 4,096
  * polls — the sibling project shipped exactly that at a high-score prompt before it was found.
  *
- * FOUR CALL SITES REACH THIS BUILD, all four spinning on a byte only `acia_ikbd_isr` writes or on
- * the longword only `vbl_handler` writes:
+ * SIX WAIT SITES IN THE CORES REACH THIS BUILD, every one of them spinning on a byte only
+ * `acia_ikbd_isr` writes or on the longword only `vbl_handler` writes:
  *
  *   ../src/sprite.c   `render_frame`'s frame pacer          — `A_vbl_tick`, the VBL's counter
  *   ../src/player.c   the pause key                         — `A_joy1_state`
  *   ../src/hud.c      the cheat arm and the fire release    — `A_key_bits` / `A_joy1_state`
+ *   ../src/frontend.c the level-4 disc prompt's fire press  — `A_joy1_state`
  *   ../src/frontend.c `debug_wait_for_keypad4`              — `A_key_bits` (no caller in the image)
+ *
+ * WHERE THE CAP BELONGS IS `../include/common.h`'s `wait_may_go_round_again` and not a core's own
+ * `for`: it is `OS_SCHED_POLL_MAX` under RECREATE_HOST_DIFFERENTIAL and a constant 1 here, so a wait
+ * written through it is bounded in the suite and uncapped in the shipped .PRG. A core that spells
+ * the cap inline ships the harness's give-up instead — the pause key would un-pause itself after
+ * 4,096 polls, and the disc prompt would walk on with no disc in the drive.
+ *
+ * THE ONE BOUND THAT DOES SHIP is the cheat arm's, because it is the ORIGINAL'S: `move.w #$1388,d7`
+ * + `dbf` @ 0x10d96, which is `../include/hud.h`'s CHEAT_ARM_SPINS and not a cap at all.
  *
  * EVERY READ IS `volatile`, which off target it need not be. The kit's own bodies are opaque to the
  * caller's optimiser — they are in another translation unit — so a core may spin on `sched_poll8`

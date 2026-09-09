@@ -2,7 +2,7 @@
 chain builds, and that the harness's fixed regions do not sit on top of it.
 
 Nothing else in this project can be trusted until this file is green, because every differential
-case is staged on that image. The fixture is a REPLAY of the original — three slices of the game's
+case is staged on that image. The fixture is a REPLAY of the original — two slices of the game's
 own code run under the oracle (`conftest.py`'s docstring has them) — so what is left to pin is that
 each slice is entered where it is claimed to be, that the parts of the chain the replay cannot keep
 are the routine's own arithmetic, and that the whole thing agrees with an independent transcription:
@@ -63,6 +63,16 @@ ENTITY_STRIDE = 58
 MODULE_OVER_ARENA_BYTES = 9
 SCREEN_RING_BYTES = 0x1f900
 SCREEN_BYTES = 0x7d00
+
+# The eight files `init_load_assets` opens in one run, and the fixed distance the kit puts between
+# the staged-file table and the raw bytes above it (`OS_FS_STAGING_OFFSET`, tools/recreate_kit/
+# include/os.h). `project.toml`'s `fs_base` sets the table; this is how the other address follows.
+BOOT_FILES = 8
+FS_STAGING_OFFSET = 0x1000
+# ...and the slack the window must keep above those eight. A MINIMUM rather than the exact spare,
+# so the test measures a property the project is willing to defend instead of pinning today's
+# subtraction: 16 KB is room for another tile bank, which is the largest asset this game loads.
+FS_WINDOW_MIN_HEADROOM = 0x4000
 
 # ---- the addresses this file drives, beyond the slices conftest.py declares ----------------------
 ENTRY_LOAD_FILE = 0x10bfa            # `movem.l d0-d7/a0-a6,-(a7)` — a0 -> a file record
@@ -327,27 +337,53 @@ def test_the_boot_slice_really_wrote_the_things_it_is_pinned_on(boot_slice):
 # ==================================================== the replay itself
 
 
-def test_the_staging_window_is_why_the_replay_is_split():
-    """The arithmetic `conftest.py` splits `init_load_assets` on, held rather than believed.
+def test_the_staged_file_window_holds_the_whole_boot():
+    """The arithmetic `project.toml`'s `fs_base` exists for, held rather than believed.
 
-    The model stages every file in one window and the seven the boot chain loads nearly fill it, so
-    the title picture cannot be staged beside them and the replay runs two sub-slices. That is a
-    limit, not a preference: if the window ever grew past both, this case is the one that says the
-    split can go — and if the files ever grew past the window, it is the one that says the fixture
-    cannot be built this way at all, rather than leaving a `stage_files` assertion to say it.
+    THE FIGURES ARE NOT RESTATED HERE. `project.toml`'s `fs_base` comment is the one canonical
+    statement of them — why the window moved, what it costs and what it buys — and this case reads
+    the two addresses back out of the HARNESS (`OS_FS_TABLE` / `OS_FS_STAGING`, which is where
+    `fs_base` ends up) so that a moved key is measured rather than described.
+
+    Two assertions, and the second is the point. The window must hold the eight files at all; and it
+    must hold them with FS_WINDOW_MIN_HEADROOM to spare, so that a ninth asset — or a level map that
+    grew — reddens here rather than inside `harness.stage_files`, one file into a fixture every case
+    in the suite depends on.
     """
     window = emu.STACK_GUARD_LO - harness.OS_FS_STAGING
-    staged = [conftest.staged_load(harness.BASE_IMAGE, *load) for load in conftest.BOOT_LOADS]
-    seven = sum(len(data) for _path, data in staged)
-    _path, title = conftest.staged_load(harness.BASE_IMAGE, *conftest.TITLE_LOAD)
-    assert seven <= window, (
-        f"the {len(staged)} boot files are {seven} bytes and the staging window "
-        f"[{harness.OS_FS_STAGING:#x}, {emu.STACK_GUARD_LO:#x}) is {window} — the asset slice "
-        f"cannot stage them all, so the replay cannot be built")
-    assert seven + len(title) > window, (
-        f"A\\FLY_SHK.NEO's {len(title)} bytes now fit beside the other {seven}, with {window} of "
-        f"window: `init_load_assets` no longer has to be replayed in two sub-slices, and "
-        f"conftest.ENTRY_LEVEL0_ASSETS can go")
+    staged = [conftest.staged_load(harness.BASE_IMAGE, *load)
+              for load in (conftest.TITLE_LOAD,) + conftest.BOOT_LOADS]
+    total = sum(len(data) for _path, data in staged)
+    assert len(staged) == BOOT_FILES
+    assert total <= window, (
+        f"the {len(staged)} files `init_load_assets` opens are {total} bytes and the staging window "
+        f"[{harness.OS_FS_STAGING:#x}, {emu.STACK_GUARD_LO:#x}) is {window} — the replay cannot "
+        f"stage them all in one slice, so `conftest.replay_load_assets` cannot be built this way")
+    assert window - total >= FS_WINDOW_MIN_HEADROOM, (
+        f"the staging window [{harness.OS_FS_STAGING:#x}, {emu.STACK_GUARD_LO:#x}) is {window} "
+        f"bytes and this boot's {len(staged)} files are {total}, leaving {window - total} — under "
+        f"the {FS_WINDOW_MIN_HEADROOM} this project keeps for growth. Lower `fs_base` in "
+        f"project.toml (and move test/abi.py's scratch map with it), or say there why the margin "
+        f"is smaller than it was")
+
+
+def test_the_staged_file_window_is_clear_of_the_scratch_map_and_the_ring():
+    """The kit refuses a window over the program, the framebuffer, the poked-input block and the
+    stack guard (`harness._vet_staged_file_window`); what it cannot know about is a region a PROJECT
+    invented. These two are this project's: `test/abi.py`'s scratch map and the screen ring the same
+    file places. The table has to sit above both, and this is the only thing that says so.
+
+    The first inequality is TIGHT by design — `project.toml` puts the table directly on top of the
+    scratch map, so every spare byte is above the files rather than between the two regions — which
+    means widening `abi.SCRATCH_BYTES` reddens here instead of quietly overlapping the table."""
+    assert abi.SCRATCH + abi.SCRATCH_BYTES <= harness.OS_FS_TABLE, (
+        f"test/abi.py's scratch map tops out at {abi.SCRATCH + abi.SCRATCH_BYTES:#x}, at or above "
+        f"the staged-file table at {harness.OS_FS_TABLE:#x} — a case's own buffers and the model's "
+        f"file bytes would overlap, and both sides would be corrupted identically")
+    assert abi.SCREEN_RING_SPAN[1] <= harness.OS_FS_TABLE
+    assert harness.OS_FS_STAGING == harness.OS_FS_TABLE + FS_STAGING_OFFSET, (
+        "the kit places the staging area a fixed distance above the table; project.toml's `fs_base` "
+        "sets one address and this is the other")
 
 
 def test_the_replay_and_the_transcription_agree(post_load_image):

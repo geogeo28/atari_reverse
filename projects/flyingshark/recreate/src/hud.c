@@ -595,11 +595,14 @@ void hiscore_show_entry_screen(uint8_t *image) {
  * The cheats
  * ============================================================================================== */
 
-/* Cheat "HSC" @ 0x10e30. The first use makes the player invulnerable; a SECOND use kills them
- * instead, because the arm is chosen by the flag the first use set. */
+/* Cheat "HSC" @ 0x10e30. The first use raises `A_invuln_flag`; a SECOND use — the arm the first
+ * one's own flag chooses — raises `A_enemy_fire_inhibit` as well, and nothing in the image reads
+ * that word but the enemies' fire guard. So the second use makes the player MORE invulnerable, not
+ * less: the entry's old reading ("it kills you") came from the flag's old name and no instruction
+ * behind it. Nothing here touches the player's mode, which is what kills. */
 void cheat_hsc_invulnerable(uint8_t *image) {
     if (image[A_invuln_flag] != 0)
-        wr16(image + A_player_hit, CHEAT_FLAG_SET);
+        wr16(image + A_enemy_fire_inhibit, CHEAT_FLAG_SET);
     else
         image[A_invuln_flag] = CHEAT_FLAG_SET;
 }
@@ -730,7 +733,10 @@ void debug_print_word_binary(uint32_t value) {
  * THE SPIN GOES THROUGH `sched_poll8`, because the byte it waits on is written by the ACIA interrupt
  * and nothing inside this routine ever changes it: a plain read would spin forever off target. The
  * poll counts against the wait site the case declares, so a reconstruction that polled a different
- * number of times fails rather than agreeing by accident.
+ * number of times fails rather than agreeing by accident. Its bound is `wait_may_go_round_again`
+ * (`include/common.h`) and not an inline `OS_SCHED_POLL_MAX`, so the give-up stays behind the
+ * harness's own `-D` instead of shipping in the `.PRG`: on target this is the original's unbounded
+ * spin, which ends when the ACIA writes the byte.
  */
 void console_show_message(uint8_t *image, uint32_t text) {
     static const uint8_t cursor_home[] = {
@@ -749,10 +755,10 @@ void console_show_message(uint8_t *image, uint32_t text) {
             break;
         os_cconout(ch);
     }
-    for (unsigned poll = 0; poll < OS_SCHED_POLL_MAX; poll++)
+    for (unsigned polls = 0; wait_may_go_round_again(polls); polls++)
         if (((sched_poll8(image, A_joy1_state, FIRE_RELEASE_WAIT_PC) >> JOY_FIRE_BIT) & 1u) == 0)
             return;
-    os_refused(0);   /* the cap: the case is void, so there is nothing left to do but leave */
+    /* the cap; the refusal is tallied and the case is void (include/common.h) */
 }
 
 /* `debug_show_counters` @ 0x14960: three counters patched into the message, in place.

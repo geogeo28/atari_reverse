@@ -52,20 +52,39 @@ session fixture installs it as the image every `differential()` starts from
 (`harness.set_base_image`). A battery therefore cannot forget it — which matters because forgetting
 would not fail, it would run the case against zeroes.
 
-**The fixture is produced by RUNNING THE ORIGINAL under the oracle, not by transcribing it.** Three
+**The fixture is produced by RUNNING THE ORIGINAL under the oracle, not by transcribing it.** Two
 slices of the game's own code, each with the files that slice reads staged for the TOS model:
 
 | slice | run | staged |
 |---|---|---|
 | 1 | `boot_init` 0x14bee → 0x14cd2 (one instruction short of the `Kbdvbase` pair) | `A\MODULE.BAK` |
-| 2 | `init_load_assets` 0x11212 → 0x1127e (the title picture and its 32,000-byte copy to `Physbase - 0x80`) | `A\FLY_SHK.NEO` |
-| 3 | `init_load_assets` 0x112ac → its `rts` (level 0's assets, the sprite bank, the directory fix-up) | the other **seven** |
+| 2 | `init_load_assets` 0x11212 → its `rts` (the title picture and its 32,000-byte copy to `Physbase - 0x80`, then level 0's assets, the sprite bank and the directory fix-up) | the other **seven** |
 
-Two sub-slices for `init_load_assets` because the model stages files in ONE window — `OS_FS_STAGING`
-up to the stack guard, 258,048 bytes. The seven files fit (256,423 bytes, 1,625 spare);
-`A\FLY_SHK.NEO`'s 32,128 do not fit beside them.
-`test_the_staging_window_is_why_the_replay_is_split` pins that arithmetic, so a window that grew
-would show up as a test to delete rather than as a split nobody could explain.
+**Slice 2 used to be two, and the staged-file window is why.** The model stages files in ONE window,
+and at the kit's default that window is smaller than this boot's eight files, so `init_load_assets`
+was replayed as the title picture on its own and then the other seven entered at 0x112ac — and the
+seam that left is why `main`'s own boot slice had no ✅ row at all. `project.toml`'s **`fs_base`**
+moves the table down onto the top of `test/abi.py`'s scratch map, and the eight then fit in one
+slice with room to spare.
+
+**The arithmetic lives in `project.toml`'s `fs_base` comment and nowhere else** — how big the window
+is, what the boot costs it and how much is left — because a subtraction restated in five files is a
+subtraction that goes stale in four of them. The map:
+
+```
+0x5aede   the program's end                 0xb1000   test/abi.py's scratch map ends,
+0x87600   the screen ring's end                       and the staged-file table begins  (fs_base)
+                                            0xb2000   the raw staged bytes  (fs_base + 0x1000)
+                                            0xff000   STACK_GUARD_LO — the top of the window
+```
+
+`test_the_staged_file_window_holds_the_whole_boot` **measures** that arithmetic — it reads the two
+addresses back out of the harness's own `OS_FS_TABLE`/`OS_FS_STAGING` and asserts the files fit with
+a stated minimum of headroom, so a ninth asset reddens there rather than inside `stage_files` — and
+`test_the_staged_file_window_is_clear_of_the_scratch_map_and_the_ring` pins the placement against
+the two regions THIS project invented — the kit's own `_vet_staged_file_window` knows about the
+program, the framebuffer, the poked-input block and the stack guard, and knows nothing about a ring
+or a scratch map a project placed.
 
 The **one** part of the chain the replay does not keep is where the screen ring lands: `boot_init`
 derives it from a `Physbase` the model answers with 0x8000, which underflows (below). The fixture
@@ -174,10 +193,17 @@ recreate/
 ```
 
 There is no `addrs.h`, and the 68000 primitives every core shares live in the kit's `machine.h`.
-`include/common.h` is for the idioms this PROGRAM's assembly repeats that more than one core needs —
-it holds three, and the bar for a fourth is still two callers in two files, because a helper with one
-caller belongs in that caller's file. `test_constants.py::test_no_constant_is_defined_in_two_files`
-is what makes the alternative loud: one fact under two names is refused rather than merged silently.
+`include/common.h` is for the idioms this PROGRAM's assembly repeats that more than one core needs,
+and the bar for adding one is still two callers in two files, because a helper with one caller
+belongs in that caller's file. `test_constants.py::test_no_constant_is_defined_in_two_files` is what
+makes the alternative loud: one fact under two names is refused rather than merged silently. One of
+its entries is not an idiom but a SEAM — `wait_may_go_round_again`, the harness-only give-up a spin
+on an interrupt-written byte is bounded by, which compiles to a constant 1 on target. It clears the
+two-caller bar like everything else here: all FOUR busy-waits in the reconstruction go through it,
+in three files. Its comment argues why a bound has to exist off target and must not exist on it, and
+why exhausting one has to tally a refusal rather than quietly return — and every caller honours the
+0 with a `return`, which is the contract `tools/recreate_kit/include/sched.h` states for the kit's
+own capped waits.
 
 ## Adding a function
 
@@ -303,9 +329,11 @@ bash atari/run.sh            # play it
 **The frame it publishes at attract frame 120 is the original binary's frame, byte for byte.**
 [`atari/README.md`](atari/README.md) is the whole account: the memory map, why the original's
 `AUTO\`-only 0xd922 load ceiling does not apply to a build whose screen ring lives in its own `.bss`,
-which routines the shim supplies because STATUS.md files them under "Not reconstructed", the six
-surfaces `atari/smoke.py` checks, three deliberate divergences and what is still unpinned (chiefly:
-the joystick has never been pressed, and nothing has been played past the attract screen).
+what the shim supplies and why none of it re-implements a core — it COMPOSES the verified ones, and
+what is left over is the handful of things a differential structurally cannot hold (an `rte`, a
+branch target that is not a call, a stack unwind, a smoke run's own frame limit) — the six surfaces
+`atari/smoke.py` checks, three deliberate divergences and what is still unpinned (chiefly: the
+joystick has never been pressed, and nothing has been played past the attract screen).
 
 Two things a core owner may want to know:
 

@@ -33,13 +33,18 @@
  * WHAT THE SHIM SUPPLIES, AND WHY EACH ONE IS NOT A CORE
  * ================================================================================================
  *
- * README.md's "Shim, not core" table is the inventory. In short: `main`'s three-call boot slice and
- * the title flow (`enter_title`, `title_attract_loop` past 0x1054a, `title_frame_step`) are
- * ../STATUS.md's "Not reconstructed" rows — each is a spin loop with four exits or a chain of calls
- * that never return, which a differential has no checkpoint to diff. They are composed here from
- * the cores they call, and the loop exits the cores CANNOT express (an `adda.l #$40,a7` and a `bra`
- * back into `main`) are watched for at the frame boundary instead, one frame late
+ * README.md's "Shim, not core" table is the inventory. In short: what is left here of the game's own
+ * control flow is `main`'s loop of loops, and it is here for one reason — the original LEAVES its
+ * inner loops by throwing a return address away and branching (an `adda.l #$40,a7`, an `addq.l #4,a7`
+ * and a `bra` back into `main`), which no C function can express. So the verified cores return
+ * instead, and the shim WATCHES for what they have already done, one frame late
  * (docs/on-target-execution.md class 7).
+ *
+ * THE TITLE FLOW IS NO LONGER AMONG THEM. `enter_title`, `title_attract_prescroll`,
+ * `title_attract_start_tune`, `title_attract_poll` and `title_frame_step` are cores that answer
+ * with the branch they took, and this file composes them exactly as ../src/frontend.c's own
+ * `title_attract_loop` does — with the smoke build's frame limit added, which is the only reason
+ * that composition is not simply called.
  */
 #include <stdint.h>
 
@@ -47,23 +52,20 @@
 #include "machine.h"
 #include "os.h"
 #include "psg.h"         /* the chip's two counters */
-#include "sched.h"       /* the uncapped poll the one surviving disc prompt spins on */
+#include "sched.h"       /* the uncapped polls every core's wait goes through on target */
 #include "string.h"      /* memset, for the guard band */
 #include "tos.h"
 
 #include "common.h"      /* SCC_TRUE — what a 68000 `Scc` writes */
-#include "display_list.h" /* A_display_list, where the text pages are compiled to */
 #include "entity.h"      /* difficulty_apply_fire_rates */
-#include "frontend.h"    /* the filename patch, the prescroll, and the hall-of-fame name entry */
+#include "frontend.h"    /* the title flow's five cores, their exit enums, and the asset loader */
 #include "globals.h"
-#include "hud.h"         /* clear_display_list, build_text_display_list, the hall of fame */
+#include "hud.h"         /* A_hard_mode, which `start_level`'s dispatch below reads */
 #include "init.h"        /* the boot chain, the resets, the frame loop — and FS_TARGET_PHYSBASE */
 #include "irq.h"         /* the two handlers and the bytes they write */
 #include "player.h"      /* A_level_number, A_game_over_delay */
-#include "scroll.h"      /* the stage-start blocks and scroll_advance */
-#include "sound.h"       /* music_play, sfx_play_2, the module's own "tune finished" byte */
-#include "sprite.h"      /* render_frame */
-#include "weapons.h"     /* clear_object_list */
+#include "scroll.h"      /* the stage-start blocks `start_level` composes */
+#include "sound.h"       /* music_play, which `start_level`'s tail is */
 
 /* ================================================================================================
  * The build's own knobs, and there are only two.
@@ -444,78 +446,6 @@ static uint32_t bytes_not(const uint8_t *from, uint32_t count, uint8_t expected)
  * the comments are `../out/prg_dis.txt`'s, so a reader can put the two side by side.
  * ============================================================================================= */
 
-/* THE ONE DISC PROMPT THE PATCH LEFT STANDING, at 0x103cc, and the only level that reaches it.
- *
- * Six of the seven prompt sites in this binary were patched into branches over themselves
- * (../notes/frontend.md §3, "The disc prompts, and why you will not see them"); this one had only
- * its retry BRANCH neutered — `6a` became `60` at 0x103ea, so the `bpl` that waited for the disc is
- * now an unconditional `bra` onward — and its head still runs. What it does is show a message,
- * wait for the fire button and probe the disc, and the message is not a message: a6 is loaded with
- * 0x16022, which is the middle of a word table rather than a string, so its first byte is 0xff and
- * `console_show_message` prints nothing. It is a silent pause, and the reconstruction keeps it.
- *
- * `../names.txt`'s `cmt 0x103ea` is the finding this comes from. The address has no `var` name
- * because it is not a datum — it is the operand a patched instruction was left holding. */
-#define A_text_that_prints_nothing 0x16022u
-/* `btst #7,$1777f / beq.s $103d6` — the wait's own PC, which is what the poll is keyed to off
- * target; here it names the site for a reader. `JOY_FIRE_BIT` is ../include/hud.h's. */
-#define DISC_PROMPT_FIRE_WAIT_PC 0x103d6u
-
-static void wait_for_the_disc(uint8_t *image) {
-    console_show_message(image, A_text_that_prints_nothing);   /* 0x103d2 */
-    while (((sched_poll8(image, A_joy1_state, DISC_PROMPT_FIRE_WAIT_PC) >> JOY_FIRE_BIT) & 1u) == 0)
-        ;                                                      /* 0x103d6, until FIRE is pressed */
-    probe_disc(image);                                         /* 0x103e0; its result is read by the
-                                                                * `tst.l` the patch orphaned */
-}
-
-/* The two levels whose asset loads take the two-disc order (`cmp.w #$2,d1` @ 0x1037c and
- * `cmp.w #$3,d1` @ 0x10384), which is also the test that decides whether level 4 waits above. */
-#define LEVEL_TWO_DISC_ORDER_FIRST 2u
-#define LEVEL_TWO_DISC_ORDER_LAST  3u
-
-/* load_level_assets @ 0x10332, past the verified filename patch at [0x10332, 0x10372).
- *
- * Six `load_file`s and one pause, and the ORDER is per-level because the original was a two-disc
- * game. `d1` in the original is the level number, kept across the patch slice. */
-static void load_level_assets(uint8_t *image, uint16_t level) {
-    load_level_assets_patch_filenames(image, level);
-
-    load_file(image, A_file_rec_hsc_0);                  /* 0x10372, on every arm */
-    if (level == LEVEL_TWO_DISC_ORDER_FIRST || level == LEVEL_TWO_DISC_ORDER_LAST) {
-        /* 0x10404 and 0x1047a — two arms that load the same six files in the same order, and the
-         * FIRST of them is `A\HSC_0.DAT` AGAIN. The repeat is the two-disc layout showing through:
-         * each arm was written to stand alone behind a disc prompt, so it re-opens the bank the
-         * common head has already read. Both `Fread`s land the same bytes; what they are visible in
-         * is the trap ledger, which is why the shim makes both. */
-        load_file(image, A_file_rec_hsc_0);
-        load_file(image, A_file_rec_hsc_1);
-        load_file(image, A_file_rec_hsc_2);
-        load_file(image, A_file_rec_hsc_3);              /* 0x10442 / 0x104b8, past the patched
-                                                          * prompt at 0x10424 / 0x1049a */
-        load_file(image, A_file_rec_level_map);          /* 0x10470 / 0x104c2 */
-        return;
-    }
-
-    load_file(image, A_file_rec_level_map);              /* 0x103b0 — levels 0, 1 and 4 */
-    load_file(image, A_file_rec_hsc_1);
-    if (level >= LEVEL_TWO_DISC_ORDER_LAST)              /* `cmpi.w #$3,d1 / blt.w $103f0` @ 0x103c4 */
-        wait_for_the_disc(image);                        /* 0x103cc — level 4 alone reaches it */
-    load_file(image, A_file_rec_hsc_2);                  /* 0x103f0 */
-    load_file(image, A_file_rec_hsc_3);
-}
-
-/* init_load_assets @ 0x11212 — the two verified slices with the level-0 load between them.
- *
- * ../include/init.h argues the split: [0x11212, 0x1127e) is the title picture, [0x112b2, 0x112f8]
- * is the sprite bank and its two fix-ups, and between them sits `clr.w d0 / bsr load_level_assets`
- * @ 0x112ac — which is why there is no whole-routine core and why this composition is here. */
-static void init_load_assets(uint8_t *image) {
-    init_load_assets_title(image);
-    load_level_assets(image, 0);
-    init_load_assets_sprites(image);
-}
-
 /* The three levels beyond which `start_level` forces hard mode (0x114fa and 0x11510), and the tune
  * its tail plays (`clr.w d0 / bra.w music_play` @ 0x11568). Spelt here rather than in a core header
  * so that no core acquires a constant it has no use for — the routine they belong to has no core. */
@@ -556,36 +486,20 @@ static void start_level(uint8_t *image) {
 
 /* ---- the attract screen -----------------------------------------------------------------------
  *
- * FIVE ADDRESSES NO CORE HEADER NAMES, because no core reads them: the attract screen's page timer
- * and its reload, the "the title was just entered" flag the mode toggle tests, and the two text
- * pages `title_frame_step` cycles that are not the hall of fame. ../names.txt is where each is
- * named, and they are here for the same reason `LEVEL_TUNE` is. */
-#define A_attract_page_timer  0x176e6u /* `subi.w #$1,$176e6` @ 0x105ae */
-#define A_attract_page_reload 0x1771eu /* `move.w $1771e,$176e6` @ 0x105b8 */
-#define A_title_just_entered  0x17698u /* `st $17698` @ 0x1030e, `clr.w` @ 0x10632 */
-#define A_text_publisher      0x160deu /* `lea $160de,a0` @ 0x105da */
-#define A_text_credits        0x16146u /* `lea $16146,a0` @ 0x10670 */
-#define A_text_title_mode     0x16120u /* `lea $16120,a0` @ 0x10608 and 0x10644 */
-#define A_title_word_hard     0x1612eu /* `lea $1612e,a1` @ 0x1064e */
-
-/* The three pages, by the timer value each is shown at (`cmpi.w` @ 0x105c2 and 0x105ce). */
-#define ATTRACT_HALL_OF_FAME_BELOW 0xc8u
-#define ATTRACT_CREDITS_BELOW      0x226u
-/* The mode word the title screen edits, and where inside the script it sits (`lea 10(a0),a0`). */
-#define TITLE_MODE_WORD_OFFSET 10u
-#define TITLE_MODE_WORD_BYTES  4u
-/* The two stick bits the mode toggle reads (`btst #2` and `#3` on `A_joy1_state` @ 0x105f8 and
- * 0x1063a) — left and right. ../src/player.c spells the same two as JOY_LEFT_BIT/JOY_RIGHT_BIT,
- * privately, for the plane; these are the title screen's own reads. */
-#define JOY_LEFT_BIT  2u
-#define JOY_RIGHT_BIT 3u
-/* The scroll position the attract screen restarts at (`cmpi.w #$bb8,$17758` @ 0x10598). */
-#define ATTRACT_END_SCROLL_POS 0xbb8u
-/* What the title screen's HARD arm writes to `hard_mode`: `move.b #$1,$177cc` @ 0x1065c, a 1 and
- * not an `Scc`'s 0xff — which `start_level`'s two `st $177cc` (0x114fa, 0x11510) are. Every reader
- * tests the byte against zero, so the difference is invisible to the game and visible to a reader
- * of the disassembly beside this, which is why both spellings are reproduced. */
-#define TITLE_HARD_MODE_ON 1u
+ * FIVE VERIFIED CORES, AND THE ONE THING THIS BUILD ADDS TO THEM. `enter_title`,
+ * `title_attract_prescroll`, `title_attract_start_tune`, `title_attract_poll` and
+ * `title_frame_step` are ../src/frontend.c's, and each answers with the branch the original took
+ * (../include/frontend.h names every exit). `title_attract_loop` there composes them into the whole
+ * attract screen — but its ONLY way out is the fire button, and this build needs two more: a smoke
+ * run stops at a frame count, and a fatal interrupt has to get out of the tune arm, which spins
+ * without drawing anything. So the composition is restated below — the same five calls in the same
+ * order — with the frame counter and the stop test between them. That is `run_the_frame_loop`'s
+ * arrangement one flow up: the cores decide, the shim watches (docs/on-target-execution.md class 7).
+ *
+ * NOTHING HERE READS THE GAME'S OWN STATE ANY MORE. The page timer, the two text pages, the mode
+ * word and the "just entered" flag are all inside `title_attract_poll`, and the stick byte its spin
+ * polls is the one `acia_ikbd_isr` writes — through shim_include/sched.h's uncapped `sched_poll8`,
+ * which is the whole of what this build changes about a core's wait. */
 
 /* How many attract frames have been drawn, and the limit a smoke build stops at. */
 static uint32_t g_attract_frames;
@@ -602,158 +516,86 @@ static int run_should_stop(void) {
 #endif
 }
 
-/* The mode toggle @ 0x105ea — the ONLY thing on the attract screen the player can change, and the
- * one place the original saves every register around a block that calls nothing.
- *
- * The word it copies is never drawn in this build: the script at `A_text_title_mode` is only ever
- * `lea`d for its +10 field and is not one of the three pages passed to `build_text_display_list`
- * (../notes/frontend.md §5). The copy and the flag it sets are reproduced anyway, because
- * `A_hard_mode` is what `init_stage_state`'s dispatch reads. */
-static void attract_mode_toggle(uint8_t *image) {
-    uint32_t word = addr_add(A_text_title_mode, TITLE_MODE_WORD_OFFSET);
-    unsigned byte;
-
-    if (be16(image + A_title_just_entered) != 0
-        || ((image[A_joy1_state] >> JOY_LEFT_BIT) & 1u) != 0) {          /* 0x105ee, 0x105f8 */
-        for (byte = 0; byte < TITLE_MODE_WORD_BYTES; byte++)
-            image[word + byte] = image[A_title_word_easy + byte];        /* 0x10612 */
-        image[A_hard_mode] = image[A_const_words_0123];                  /* `move.b $176ac,$177cc` */
-        if (be16(image + A_title_just_entered) == 0)
-            sfx_play_2(image);                                           /* 0x1062e */
-        wr16(image + A_title_just_entered, 0);                           /* 0x10632 */
-        return;
-    }
-    if (((image[A_joy1_state] >> JOY_RIGHT_BIT) & 1u) == 0)              /* 0x1063a */
-        return;
-    for (byte = 0; byte < TITLE_MODE_WORD_BYTES; byte++)
-        image[word + byte] = image[A_title_word_hard + byte];            /* 0x10654 */
-    image[A_hard_mode] = TITLE_HARD_MODE_ON;                             /* `move.b #$1`, not an st */
-    sfx_play_2(image);                                                   /* 0x10664 */
-}
-
-/* title_frame_step @ 0x10594 and the page cycle at 0x105a8 — ONE attract frame.
- *
- * Answers 0 while the attract screen should keep running and 1 when the scroll has reached the end
- * of its window, which is where the original branches back to `title_attract_loop`'s stage start
- * (`bra.w $104f2` @ 0x105a2) and re-prescrolls the map. */
-static int title_frame_step(uint8_t *image) {
-    uint32_t script, dest = A_display_list, text_x = 0, text_y = 0;
-    uint16_t timer;
-
-    /* The page timer counts DOWN and reloads from `attract_page_reload` when it goes negative. */
-    wr16(image + A_attract_page_timer, be16(image + A_attract_page_timer) - 1u);
-    if ((int16_t)be16(image + A_attract_page_timer) < 0)
-        wr16(image + A_attract_page_timer, be16(image + A_attract_page_reload));
-
-    timer = be16(image + A_attract_page_timer);
-    if ((int16_t)timer < (int16_t)ATTRACT_HALL_OF_FAME_BELOW) {          /* 0x10684 */
-        script = A_text_hall_of_fame;
-        build_text_display_list(image, &script, &dest, &text_x, &text_y);
-    } else if ((int16_t)timer < (int16_t)ATTRACT_CREDITS_BELOW) {        /* 0x10670 */
-        script = A_text_credits;
-        build_text_display_list(image, &script, &dest, &text_x, &text_y);
-    } else {                                                             /* 0x105da */
-        script = A_text_publisher;
-        build_text_display_list(image, &script, &dest, &text_x, &text_y);
-        attract_mode_toggle(image);
-    }
-
-    render_frame(image);                                                 /* 0x10594 */
-    g_attract_frames++;
-    return (int16_t)be16(image + A_scroll_pos) >= (int16_t)ATTRACT_END_SCROLL_POS;
-}
-
-/* What ended the attract loop — the FOUR EXITS ../STATUS.md's "Not reconstructed" row counts, plus
- * this build's own. Two of them leave the routine and two go back into it, and the original spells
- * every one of the four as a branch rather than as a value, which is why there is no core. */
+/* What ended a pass of the attract screen. Three of these are the original's own branches, relayed
+ * from the two exit enums the cores answer with; the fourth is this build's alone. */
 enum attract_exit {
     ATTRACT_START_GAME,      /* 0x105a6 `rts` — fire, with no high score waiting to be entered */
     ATTRACT_TUNE_ENDED,      /* 0x1057e `beq.s $1054a` — the module says the tune has finished */
     ATTRACT_RESTART_SCROLL,  /* 0x105a2 `bra.w $104f2` — the scroll has run out of map */
     ATTRACT_STOPPED          /* not the original's: this build's own frame limit, or a fatal ISR */
 };
-/* THE FOURTH OF THE ORIGINAL'S EXITS IS NOT IN THAT LIST, and that is the point: `bra.w $106f2`
- * @ 0x10590 goes to `hiscore_show_entry_screen`, which falls into `hiscore_name_entry`, whose every
- * arm branches to 0x10594 — `title_frame_step`, the next thing the loop does anyway. So it leaves
- * and comes straight back, once per frame, and the shim spells it as the call it is rather than as
- * a return value. An earlier draft returned it to `run_the_whole_program` and re-entered the attract
- * loop at its head: `hiscore_name_entry` was then never called, nothing ever cleared
+/* THE ORIGINAL'S FOURTH EXIT IS NOT IN THAT LIST, and that is the point: `bra.w $106f2` @ 0x10590
+ * goes to `hiscore_show_entry_screen`, which falls into `hiscore_name_entry`, whose every arm
+ * branches to 0x10594 — the frame step the loop was about to run anyway. So it leaves and comes
+ * straight back, once per frame, and `title_attract_poll` spells it as the call it is rather than
+ * as a return value. An earlier draft of THIS file returned it here and re-entered the attract loop
+ * at its head: `hiscore_name_entry` was then never called, nothing ever cleared
  * `new_hiscore_pending`, and a player who beat a score got an endless prescroll with no frame drawn
  * and no way out. */
 
-/* The tune the attract screen plays (`move.w #$4,d0` @ 0x1054a). */
-#define ATTRACT_TUNE 4u
-
-/* ONE PASS FROM 0x1054a: start the tune, clear the three lists, and then spin at 0x10562 until one
- * of the four exits fires. The spin is where every attract frame is drawn.
+/* The spin at 0x10562, one attract frame a pass: poll, and draw the frame the poll built.
  *
- * THE ORDER OF THE TWO TESTS AT THE HEAD IS THE ORIGINAL'S and it matters: the fire button starts a
- * game only while no high score is waiting to be entered, and the module's "still playing" byte is
- * tested BEFORE the frame is drawn, so a tune that has just ended restarts without a frame going
- * by. */
-static enum attract_exit attract_poll(uint8_t *image) {
-    music_play(image, ATTRACT_TUNE);         /* 0x1054a */
-    clear_display_list(image);               /* 0x10552 */
-    clear_actor_arrays(image);               /* 0x10556 */
-    clear_object_list(image);                /* 0x1055a */
-    set_palette_game(image);                 /* 0x1055e */
-
+ * THE FRAME IS COUNTED ON EVERY PASS THAT DRAWS ONE, the pass whose scroll test ends the attract
+ * cycle included — that frame reached the screen like any other. The stop is tested only on the
+ * pass that goes round again, because the three that do not are answered to the caller, which
+ * tests it there. */
+static enum attract_exit run_the_attract_spin(uint8_t *image) {
     for (;;) {
-        if (be16(image + A_new_hiscore_pending) == 0                    /* 0x10562 */
-            && ((image[A_joy1_state] >> JOY_FIRE_BIT) & 1u) != 0)       /* 0x1056a */
-            return ATTRACT_START_GAME;                                  /* 0x105a6 `rts` */
-        if (image[A_sound_module + SND_MUSIC_ACTIVE] == 0)              /* 0x10574 */
-            return ATTRACT_TUNE_ENDED;                                  /* 0x1057e */
+        title_poll_exit poll = title_attract_poll(image);   /* [0x10562, 0x10594) — verified */
+        title_frame_exit frame;
 
-        scroll_advance(image);                                          /* 0x10580 */
-        clear_display_list(image);                                      /* 0x10584 */
-        if (be16(image + A_new_hiscore_pending) != 0) {                 /* 0x10588 */
-            hiscore_show_entry_screen(image);                           /* 0x10590 -> 0x106f2 */
-            hiscore_name_entry(image);                                  /* ...which falls into it */
-        }
+        if (poll == TITLE_POLL_START_GAME)
+            return ATTRACT_START_GAME;
+        if (poll == TITLE_POLL_TUNE_ENDED)
+            return ATTRACT_TUNE_ENDED;
 
-        if (title_frame_step(image))                                    /* 0x105a8 .. 0x10594 */
-            return ATTRACT_RESTART_SCROLL;                              /* 0x105a2 */
+        frame = title_frame_step(image);                    /* [0x10594, 0x10562) — verified */
+        g_attract_frames++;
+        if (frame == TITLE_FRAME_ATTRACT_OVER)
+            return ATTRACT_RESTART_SCROLL;
         if (run_should_stop())
             return ATTRACT_STOPPED;
     }
 }
 
-/* title_attract_loop @ 0x104f2 — the stage start, and the two exits that come back to it. */
-static enum attract_exit title_attract_loop(uint8_t *image) {
+/* title_attract_loop @ 0x104f2 — the stage start, the tune, and the two exits that come back to it.
+ *
+ * The prescroll blacks the palette itself (../src/frontend.c opens the slice on `set_palette_black`
+ * @ 0x104f2), so the head of the loop is that one call and not two. */
+static enum attract_exit run_the_attract_loop(uint8_t *image) {
+    title_attract_prescroll(image);                  /* [0x104f2, 0x1054a) — verified */
     for (;;) {
-        set_palette_black(image);           /* 0x104f2 */
-        title_attract_prescroll(image);     /* [0x104f6, 0x1054a) — verified */
+        enum attract_exit why;
 
-        for (;;) {
-            enum attract_exit why = attract_poll(image);
+        title_attract_start_tune(image);             /* [0x1054a, 0x10562) — verified */
+        why = run_the_attract_spin(image);
 
-            if (why == ATTRACT_TUNE_ENDED) {
-                /* Back to 0x1054a to start the tune again — the original's own loop, and it draws
-                 * no frame on the way round. So the stop is tested HERE as well as after a drawn
-                 * frame: a module whose "still playing" byte never comes on (a short or unreadable
-                 * `A\MODULE.BAK`, which `load_file` reports to nobody, faithfully) spins in this
-                 * arm in the original too, and this is what lets a fatal interrupt out of it. */
-                if (run_should_stop())
-                    return ATTRACT_STOPPED;
-                continue;
-            }
-            if (why != ATTRACT_RESTART_SCROLL)
-                return why;
-            break;                          /* back to 0x104f2: prescroll the map again */
+        if (why == ATTRACT_RESTART_SCROLL) {
+            title_attract_prescroll(image);          /* `bra.w $104f2` @ 0x105a2 */
+            continue;
         }
+        if (why == ATTRACT_TUNE_ENDED) {
+            /* Back to 0x1054a to start the tune again — the original's own loop, and it draws no
+             * frame on the way round. So the stop is tested HERE as well as after a drawn frame: a
+             * module whose "still playing" byte never comes on (a short or unreadable
+             * `A\MODULE.BAK`, which `load_file` reports to nobody, faithfully) spins in this arm in
+             * the original too, and this is what lets a fatal interrupt out of it. */
+            if (run_should_stop())
+                return ATTRACT_STOPPED;
+            continue;
+        }
+        return why;
     }
 }
 
-/* enter_title @ 0x1030e — four instructions and a branch into the attract loop. */
-static enum attract_exit enter_title(uint8_t *image) {
-    image[A_title_just_entered] = SCC_TRUE;               /* `st $17698` */
-    set_palette_black(image);                             /* 0x10314 */
-    if (be16(image + A_level0_assets_loaded) == 0) {      /* 0x10318 */
-        image[A_level0_assets_loaded] = SCC_TRUE;
-        load_level_assets(image, 0);                      /* 0x1032a */
-    }
-    return title_attract_loop(image);
+/* enter_title @ 0x1030e — the verified four instructions, and the load its `bne.w` skips.
+ *
+ * The core answers which branch it took rather than making the call, because `load_level_assets` is
+ * the frontend's own routine and `enter_title`'s slice stops at that `bsr` (../include/frontend.h). */
+static enum attract_exit run_the_title(uint8_t *image) {
+    if (enter_title(image) == ENTER_TITLE_LOAD_LEVEL0)   /* [0x1030e, 0x1032a) — verified */
+        load_level_assets(image, 0);                     /* `clr.w d0 / bsr.w $10332` @ 0x1032a */
+    return run_the_attract_loop(image);
 }
 
 /* ---- the frame loop, and the three exits its cores cannot express -----------------------------
@@ -820,7 +662,7 @@ static void run_the_whole_program(uint8_t *image) {
 
     for (;;) {                                           /* 0x15754 — a new game */
         init_new_game(image);                            /* 0x15754, ends `bra.w enter_title` */
-        if (enter_title(image) != ATTRACT_START_GAME)
+        if (run_the_title(image) != ATTRACT_START_GAME)
             return;                                      /* the frame limit, or a fatal interrupt */
 
         for (;;) {                                       /* 0x15758 — a new stage */

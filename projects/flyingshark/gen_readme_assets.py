@@ -47,8 +47,8 @@ shifts the run: the run refuses instead of publishing a picture that no longer m
 THE STAGE-1 RUN IS PLAYED TO THE END OF THE LEVEL, and stops one frame short of where the
 reconstruction stops being the game. `level_progress_check`'s verified body reaches BOTH of the
 level record's triggers: the boss trigger (`level_table` +2, `A_boss_scroll_pos`), which draws
-nothing — it only raises `player_hit`, which is what stops the enemies firing — and the end of the
-level (+0), which starts the clear tune and puts the plane into fly-off and then on to the landing
+nothing — it only raises `enemy_fire_inhibit`, which is what stops the enemies firing — and the end
+of the level (+0), which starts the clear tune and puts the plane into fly-off and then on to the landing
 script. When that script ends it sets `level_complete`, and the same frame's `level_progress_check`
 takes its level-advance arm. In the ORIGINAL that arm never returns (`addq.l #4,a7 / bra.w $15758`,
 unwinding into a fresh `init_stage_state`); the C core increments `level_number` and returns, which
@@ -216,8 +216,11 @@ def input_script(frame_number):
 # script cannot express. So a run that lets the plane die keeps playing frames the original never
 # plays, and the pictures drift somewhere no machine goes. `HSC` — the first of the six developer
 # cheats, and `hud.c`'s own verified core — makes both collision routines return immediately, so the
-# run stays inside the arm the reconstruction covers. ONCE, never twice: a second use of `HSC` sets
-# `player_hit` instead and kills the player (../notes/frontend.md §6).
+# run stays inside the arm the reconstruction covers. ARMED ONCE, and never twice: the handler's
+# second use takes the arm its own flag chooses and raises `enemy_fire_inhibit` as well, which stops
+# the enemies firing at all — the gallery would then be pictures of an emptier game than the one the
+# player plays. (It does NOT kill the plane; that reading came from the word's old name, and
+# ../notes/frontend.md §6 is where it was corrected.)
 ARM_THE_CHEAT = "g_cheat_hsc_invulnerable"
 # ...and the modes that are still that arm. The run refuses the moment the plane leaves them, so the
 # guard above cannot silently stop working. Fly-off and landing are in the set because stage 1 is
@@ -277,10 +280,13 @@ SPRITE_REC_NO_BITMAP = 0xffff
 #
 # `title_attract_loop` @ 0x104f2 prescrolls the level-1 map and then cycles three text pages on a
 # timer, each of them ONE call into `build_text_display_list` @ 0x10698 followed by the loop's own
-# `bsr render_frame` @ 0x10594. Both of those are verified cores and so is the prescroll
-# (`title_attract_prescroll`, the slice [0x104f6, 0x1054a)), so a page is composed here out of the
-# three calls the attract loop itself makes — and NOT out of the loop, whose poll for the fire button
-# is one spin with four exits and no checkpoint (STATUS.md's "Not reconstructed").
+# `bsr render_frame` @ 0x10594. The WHOLE loop is verified now — `title_attract_prescroll` (the
+# slice [0x104f2, 0x1054a)), `title_attract_poll` and `title_frame_step` — but a page is still
+# composed here out of the three calls the loop makes for one, because the loop does not take a page
+# as an argument: it picks one off a countdown timer, advances the scroll under it, and spins on the
+# fire button and the module's "still playing" byte. Driving it to the page this script wants would
+# mean seeding that timer and photographing whatever terrain the poll had scrolled to, which is more
+# machinery for a different picture.
 A_text_credits = 0x16146             # `lea $16146,a0` @ 0x10670 — the second page of the three
 TEXT_PAGE_ORIGIN_X, TEXT_PAGE_ORIGIN_Y = 0, 0  # `clr.l d1 / clr.l d2` @ 0x105a8, before every page
 

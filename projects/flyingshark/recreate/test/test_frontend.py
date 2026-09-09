@@ -15,22 +15,35 @@ FOUR SHAPES OF CASE, and each is here because the routine has no simpler one.
 * `hiscore_name_entry` NEVER RETURNS — every arm ends `bra.w $10720`, back into the attract loop —
   and calls `check_cheat_name` @ 0x10d92, whose own arm spin reads `key_bits` through the same
   model. So the confirming case carries a schedule for a wait site inside a routine it calls.
+* THE TITLE FLOW is all four at once: five slices whose every exit is a branch, so each is diffed at
+  a checkpoint PC; a spin on `joy1_state` that only the scheduled-write model can end; a
+  `render_frame` in the middle of it that writes the screen ring through computed addresses; and
+  three whole-loop cases that run the ORIGINAL's own loop for several passes against
+  `title_attract_loop`'s C, which is where the loop STRUCTURE is verified rather than its pieces.
 """
+import ctypes
+import functools
+import pathlib
 import random
+import re
 
 import pytest
 
 import abi
 import conftest
 import emu
+import harness    # ...which also puts tools/ on sys.path, for the kit import below
+import recreate_kit
 
-# ---- load_level_assets @ 0x10332, SLICE [0x10332, 0x10372) --------------------------------------
-ENTRY_PATCH_FILENAMES = 0x10332
+# ---- load_level_assets @ 0x10332, whole; its head is the SLICE [0x10332, 0x10372) ---------------
+ENTRY_LOAD_LEVEL_ASSETS = 0x10332
 STOP_PATCH_FILENAMES = 0x10372
 
-# ---- title_attract_loop @ 0x104f2, SLICE [0x104f6, 0x1054a) -------------------------------------
-ENTRY_TITLE_PRESCROLL = 0x104f6
-STOP_TITLE_PRESCROLL = 0x1054a
+# ---- title_attract_loop @ 0x104f2, SLICE [0x104f2, 0x1054a) -------------------------------------
+# Both ends double as checkpoints of the loop's own exits — see "The title flow" below. The far one
+# is `conftest.ENTRY_ATTRACT_START_TUNE`: `test_scroll.py` diffs the prescroll at the same address,
+# so it is declared and PINNED once, in conftest, rather than under a second name here.
+ENTRY_TITLE_PRESCROLL = 0x104f2
 
 # ---- the whole routines -------------------------------------------------------------------------
 ENTRY_LEVEL2_SCENERY = 0x1003c
@@ -66,6 +79,27 @@ A_name_entry_cursor = 0x176e2
 NAME_ENTRY_LAST_CURSOR = 2
 NAME_ENTRY_NEXT_GLYPH_BIT = 3
 NAME_ENTRY_PREV_GLYPH_BIT = 2
+LEVEL_ASSETS_ORDER_LEVEL_2 = 2
+LEVEL_ASSETS_ORDER_LEVEL_3 = 3
+DISC_SWAP_ABOVE_LEVEL = 3
+A_disc_prompt_message = 0x16022
+DISC_PROMPT_WAIT_PC = 0x103d6
+A_title_just_entered = 0x17698
+A_attract_page_timer = 0x176e6
+A_attract_page_reload = 0x1771e
+A_text_publisher = 0x160de
+A_text_credits = 0x16146
+A_text_title_mode = 0x16120
+A_title_word_hard = 0x1612e
+ATTRACT_TUNE = 4
+ATTRACT_END_SCROLL_POS = 0xbb8
+ATTRACT_PAGE_HALL_OF_FAME_BELOW = 0xc8
+ATTRACT_PAGE_CREDITS_BELOW = 0x226
+TITLE_MODE_WORD_OFFSET = 10
+TITLE_MODE_WORD_BYTES = 4
+TITLE_MODE_EASY_BIT = 2
+TITLE_MODE_HARD_BIT = 3
+TITLE_HARD_MODE_ON = 1
 
 # ---- mirrors of the headers this subsystem READS ------------------------------------------------
 A_file_rec_level_map = 0x16330    # include/globals.h
@@ -92,26 +126,42 @@ A_key_bits = 0x17780              # include/irq.h
 CHEAT_ARM_KEY_BIT = 0             # include/hud.h
 CHEAT_ARM_WAIT_PC = 0x10d9a       # include/hud.h
 A_level_number = 0x1642a          # include/player.h
+LEVELS = 5                        # include/player.h
 A_level_distance = 0x1779a        # include/scroll.h
+A_file_rec_sprites_cru = 0x1631a  # include/globals.h
+FIRE_RELEASE_WAIT_PC = 0x149f0    # include/hud.h — inside `console_show_message`
 A_scroll_pos = 0x17758            # include/scroll.h
 A_scroll_fine = 0x16430           # include/scroll.h
 A_map_row_ptr = 0x16402           # include/scroll.h
 A_prescroll_flag = 0x1642c        # include/scroll.h
 A_prescroll_frames = 0x17752      # include/scroll.h
+SCC_TRUE = 0xff                   # include/common.h
+A_sound_module = 0x58944          # include/globals.h
+A_entity_arena = 0x59984          # include/globals.h
+SND_MUSIC_ACTIVE = 0x1e           # include/sound.h
+A_enemy_bullets = 0x1946e         # include/weapons.h
+A_display_list = 0x177ce          # include/display_list.h
+A_level0_assets_loaded = 0x176ea  # include/init.h
+A_hard_mode = 0x177cc             # include/hud.h
+A_title_word_easy = 0x16132       # include/hud.h
 
 WORD = 2
 U16 = 0xffff
 
 abi.declare_glue("g_title_attract_prescroll", "g_level2_scenery_effect",
                  "g_level2_scenery_effect_gate", "g_debug_wait_for_keypad4",
-                 "g_hiscore_name_entry")
-abi.declare_glue("g_load_level_assets_patch_filenames", args=1)
+                 "g_hiscore_name_entry", "g_title_attract_start_tune", "g_title_attract_loop")
+abi.declare_glue("g_load_level_assets_patch_filenames", "g_load_level_assets", args=1)
+# The three title-flow cores answer with the branch they took (`include/frontend.h`'s enums), so
+# their glue has a RESULT — which ctypes would otherwise read as an `int` it was never told about.
+abi.declare_glue("g_enter_title", "g_title_attract_poll", "g_title_frame_step",
+                 result=ctypes.c_uint32)
 
 _run = abi.run_case          # the project's one case shape (`test/abi.py`)
 
 
 # =================================================================================================
-# load_level_assets @ 0x10332, slice [0x10332, 0x10372) — the filename patch
+# load_level_assets @ 0x10332, head slice [0x10332, 0x10372) — the filename patch
 # =================================================================================================
 
 # The five bytes the patch overwrites, poisoned so that a candidate which wrote none of them could
@@ -125,12 +175,12 @@ def _patch_case(level, digits=None, poison=True):
     pokes = {address: b"\xde" for address in FILENAME_DIGITS}
     if digits is not None:
         pokes[A_level_bank_digits + (level & U16) * LEVEL_BANK_DIGITS] = digits
-    _run(ENTRY_PATCH_FILENAMES, lambda lib, buf: lib.g_load_level_assets_patch_filenames(buf, level),
+    _run(ENTRY_LOAD_LEVEL_ASSETS, lambda lib, buf: lib.g_load_level_assets_patch_filenames(buf, level),
          pokes=pokes, regs={"d0": level}, stop_pc=STOP_PATCH_FILENAMES, poison=poison,
          note=f"level={level}")
 
 
-@pytest.mark.parametrize("level", range(5))
+@pytest.mark.parametrize("level", range(LEVELS))
 def test_patch_filenames_for_every_level(level):
     """The .PRG's own `level_bank_digits`: five bytes a level, four into byte 6 of the "A\\HSC_n.DAT"
     names and the fifth into byte 7 of "A\\LEVEL1.MAP". The fifth is read WITHOUT a post-increment,
@@ -157,7 +207,182 @@ def test_patch_filenames_indexes_the_digit_table_with_a_signed_multiply(level):
 
 
 # =================================================================================================
-# title_attract_loop @ 0x104f2, slice [0x104f6, 0x1054a)
+# load_level_assets @ 0x10332, whole — the level's five files
+# =================================================================================================
+#
+# EVERY FILE IS STAGED WITH CONTENT THE IMAGE DOES NOT ALREADY HOLD, for `test_init.py`'s reason:
+# the post-load fixture has level 0's five files at their destinations already, so staging the REAL
+# bytes would let a reconstruction that copied nothing agree over every byte. The content is
+# pseudo-random and of the file's own on-disc length, which is what makes the `Fread` visible and
+# what keeps `A\LEVEL1.MAP`'s short read short (its record asks for more than the file holds —
+# ../STATUS.md, init 0x10bfa).
+#
+# THE PATHS ARE THE PATCHED ONES. The routine rewrites a digit inside each of the five names before
+# it opens them, so a case for level 4 must stage "A\HSC_8.DAT" and not "A\HSC_0.DAT" — and staging
+# the wrong name is not a soft failure: the model REFUSES an `Fopen` of a path nothing staged, and
+# the kit throws the run away by name.
+
+LEVEL_ASSETS_MAX_INSNS = 400_000
+
+
+def _signed(value):
+    """`value` as the 68000 reads a word in a `blt` — the routine's level tests are signed."""
+    return value - 0x10000 if value & 0x8000 else value
+
+
+LOAD_LEVEL_ASSETS_RECORDS = BANK_RECORDS + (A_file_rec_level_map,)
+
+# The two waits the level-4 prompt makes: fire RELEASED inside `console_show_message`, then fire
+# PRESSED at the routine's own spin. `probe_disc` after them opens A\SPRITES.cru, which is why that
+# record is staged too on this arm alone.
+DISC_PROMPT_SITES = [FIRE_RELEASE_WAIT_PC, DISC_PROMPT_WAIT_PC]
+
+
+STICK_ALL_DIRECTIONS = 0xff & ~(1 << JOY_FIRE_BIT)   # every bit of the byte but the fire button's
+
+
+def _disc_prompt_schedule(held, released=0, pressed=1 << JOY_FIRE_BIT):
+    """The agent that ends both waits, given whether the button is DOWN on entry.
+
+    With it up the release wait ends on its first read and needs no store at all — the site is
+    declared and its one arrival is compared against the candidate's one poll. With it down that
+    wait has to see it go up first, which is a store of its own and shifts the press by one.
+
+    `released` and `pressed` are the BYTES the two stores land, and they are parameters because both
+    waits are BIT tests (`btst #7,$1777f`) on a byte that also carries four directions: with the
+    directions always clear, "the fire bit is set" and "the byte is non-zero" are the same predicate
+    and a reconstruction spelling either one passes. The two cases below give them a stick.
+    """
+    schedule = []
+    if held:
+        schedule.append({"pc": FIRE_RELEASE_WAIT_PC, "nth": 2, "addr": A_joy1_state,
+                         "width": 1, "value": released})
+    schedule.append({"pc": DISC_PROMPT_WAIT_PC, "nth": 3 if held else 2, "addr": A_joy1_state,
+                     "width": 1, "value": pressed})
+    return schedule
+
+
+# How many bytes each record's file is staged with: as many as LEVEL 0's file for that record holds.
+# Every HSC bank is one length and every level map another, so this is the right count for any level
+# — and it is a COUNT rather than a file because a level's patched name need not name a file on disc
+# at all, which is exactly what an out-of-range level produces. Memoised per record, because reading
+# the four 32 KB banks off disc once a case is the most expensive thing in this battery.
+_level0_file_bytes = {}
+
+
+def _staged_bytes(post_load_image, record, seed):
+    if record not in _level0_file_bytes:
+        _dest, record_length, dos_path = conftest.file_record(post_load_image, record)
+        _level0_file_bytes[record] = len(
+            conftest.disk_bytes(dos_path.rsplit("\\", 1)[-1].upper(), record_length))
+    return conftest.seeded_bytes(_level0_file_bytes[record], seed)
+
+
+def _digit_row(level):
+    """Where `muls.w #$5,d0` puts the level's five digits. SIGNED, and with no floor or ceiling."""
+    return A_level_bank_digits + _signed(level) * LEVEL_BANK_DIGITS
+
+
+def _level_assets_pokes(post_load_image, level, extra_records=(), digits=None):
+    """The five files `level` names, staged, plus any extra record the case's arm also opens.
+
+    The names come out of `A_level_bank_digits` rather than being spelt, so this says what the
+    ROUTINE will do rather than restating the shipped table — which matters for level 3, whose row
+    is "013B4" and not five consecutive digits. `digits` replaces the row, which is how a level
+    whose row is not five printable bytes (an out-of-range one) can be staged at all.
+    """
+    image = bytearray(post_load_image)
+    row = _digit_row(level)
+    if digits is not None:
+        image[row:row + LEVEL_BANK_DIGITS] = digits
+    patched = bytes(image[row:row + LEVEL_BANK_DIGITS])
+    for record, digit in zip(BANK_RECORDS, patched[:len(BANK_RECORDS)]):
+        image[record + FILE_REC_NAME + HSC_NAME_DIGIT] = digit
+    image[A_file_rec_level_map + FILE_REC_NAME + MAP_NAME_DIGIT] = patched[-1]
+
+    staged = []
+    for index, record in enumerate(LOAD_LEVEL_ASSETS_RECORDS + tuple(extra_records)):
+        _dest, _record_length, dos_path = conftest.file_record(image, record)
+        staged.append((dos_path, _staged_bytes(post_load_image, record, (level << 8) | index)))
+    pokes, _handles = harness.stage_files(staged)
+    if digits is not None:
+        pokes[row] = digits
+    # The digits inside the NAMES are poisoned, so a candidate that skipped the patch would ask for
+    # the names the .PRG ships and be refused rather than quietly reading level 0's files.
+    for address in FILENAME_DIGITS:
+        pokes[address] = b"\xde"
+    return pokes
+
+
+def _level_assets_case(post_load_image, level, note, stick=0, digits=None, **arrivals):
+    prompts = _signed(level) > DISC_SWAP_ABOVE_LEVEL
+    extra = (A_file_rec_sprites_cru,) if prompts else ()
+    pokes = _level_assets_pokes(post_load_image, level, extra, digits)
+    pokes[A_joy1_state] = bytes([stick])
+    held = (stick >> JOY_FIRE_BIT) & 1
+    _run(ENTRY_LOAD_LEVEL_ASSETS, lambda lib, buf: lib.g_load_level_assets(buf, level),
+         pokes=pokes, regs={"d0": level}, max_insns=LEVEL_ASSETS_MAX_INSNS,
+         schedule=_disc_prompt_schedule(held, **arrivals) if prompts else None,
+         wait_sites=DISC_PROMPT_SITES if prompts else None, note=note)
+
+
+@pytest.mark.parametrize("level", range(LEVELS))
+def test_load_level_assets_loads_every_levels_five_files(level, post_load_image):
+    """All five stages, each through its own arm of the dispatch: levels 0 and 1 share the ordinary
+    arm, 2 and 3 have one apiece, and 4 takes the ordinary arm THROUGH the one disc prompt the build
+    has left. The two lettered arms are the same five loads in the same order — the original carries
+    the block twice — so driving both is what says the copies agree, and both of them RE-READ
+    A\\HSC_0.DAT, which the head has already loaded."""
+    _level_assets_case(post_load_image, level, f"level {level}")
+
+
+@pytest.mark.parametrize("level", (0xffff, 0xfffe))
+def test_load_level_assets_reads_the_level_as_a_SIGNED_word(level, post_load_image):
+    """A NEGATIVE level takes the ordinary arm and skips the disc prompt, because `cmp.w #$3,d1 /
+    blt.w $103f0` @ 0x103c4 is a SIGNED test. Read unsigned, 0x8000 and 0xffff are both "past 3" and
+    the routine would stop for a disc swap that never comes — a mutation that spells the compare
+    unsigned SURVIVED every other case in this file, because no in-range level is negative.
+
+    The digit row a negative level indexes (five bytes BELOW the table per step, `muls.w #$5` being
+    signed) is poked to level 0's, so the five names it patches are ones this case can stage.
+    Nothing about the arm depends on which names they are. A level far enough negative to index off
+    the image is not driven, for `test_patch_filenames_indexes_the_digit_table_with_a_signed_
+    multiply`'s reason: there the original reads memory the model does not have."""
+    _level_assets_case(post_load_image, level, f"level {level:#06x}, signed", digits=b"01231")
+
+
+def test_load_level_assets_waits_out_the_one_disc_prompt_the_build_has_left(post_load_image):
+    """Level 4's arm with the stick DOWN on entry, so that both of the prompt's waits really run:
+    the release wait inside `console_show_message` takes two reads to see the button go up, and the
+    press spin three more to see it come back down. Five of the six prompts in this routine were
+    patched out (each `lea <message>,a6` head overwritten with a `bra.s` past the block); this is
+    the survivor, and its own retry was patched too, so it asks once and proceeds whatever
+    `probe_disc` answers. The message it shows is empty: 0x16022 is the middle of a word table."""
+    _level_assets_case(post_load_image, LEVELS - 1, "the disc prompt, button held on entry",
+                       stick=1 << JOY_FIRE_BIT)
+
+
+def test_the_disc_prompts_press_spin_tests_the_FIRE_BIT_and_not_the_whole_byte(post_load_image):
+    """The press spin @ 0x103d6 is `btst #7,$1777f`, and every other case reaches it over a byte
+    whose four direction bits are clear — so "bit 7 is set" and "the byte is non-zero" agree on all
+    of them and a reconstruction spelling the second passes. Here the player is holding a direction
+    while the prompt is up: the spin must read 0x7f and go round again, and only the 0xff the agent
+    stores may end it. A `!= 0` test ends the wait one poll early, and the poll counts differ."""
+    _level_assets_case(post_load_image, LEVELS - 1, "a direction held under the prompt",
+                       stick=STICK_ALL_DIRECTIONS, pressed=0xff)
+
+
+def test_the_disc_prompts_release_wait_tests_the_FIRE_BIT_and_not_the_whole_byte(post_load_image):
+    """The other half of the same argument, one wait up: `console_show_message`'s release spin
+    @ 0x149f0 must end when the FIRE bit goes clear, not when the byte does. The stick enters with
+    everything held, the agent lets go of the button alone (0xff -> 0x7f), and only then does the
+    press spin start — which the 0xff at its own third poll ends."""
+    _level_assets_case(post_load_image, LEVELS - 1, "everything held, then fire alone released",
+                       stick=0xff, released=STICK_ALL_DIRECTIONS, pressed=0xff)
+
+
+# =================================================================================================
+# title_attract_loop @ 0x104f2, slice [0x104f2, 0x1054a)
 # =================================================================================================
 
 # 108 frames of `render_frame` under the oracle — the count the .PRG ships in `prescroll_frames`.
@@ -172,7 +397,7 @@ def _title_prescroll_case(frames=None, scroll_pos_word=None, note=""):
     if scroll_pos_word is not None:
         pokes[A_const_words_0123 + TITLE_SCROLL_POS_START * CONST_WORD_BYTES] = scroll_pos_word
     _run(ENTRY_TITLE_PRESCROLL, lambda lib, buf: lib.g_title_attract_prescroll(buf),
-         pokes=pokes, stop_pc=STOP_TITLE_PRESCROLL, max_insns=TITLE_PRESCROLL_MAX_INSNS,
+         pokes=pokes, stop_pc=conftest.ENTRY_ATTRACT_START_TUNE, max_insns=TITLE_PRESCROLL_MAX_INSNS,
          note=note or f"frames={frames}")
 
 
@@ -398,6 +623,413 @@ def test_the_scenery_gate_is_level_2_alone(level):
 
 
 # =================================================================================================
+# The title flow: enter_title @ 0x1030e, and title_attract_loop's three slices with title_frame_step
+# =================================================================================================
+#
+# FOUR ADDRESSES, EACH THE ENTRY OF ONE SLICE AND THE CHECKPOINT OF ANOTHER'S EXIT — which is what
+# a loop whose every exit is a branch looks like when it is cut into cores. 0x104f2 is the stage
+# start's entry and the frame step's "the scroll ran out" checkpoint; 0x1054a is the jingle's entry,
+# the stage start's stop and the poll's "the tune ended" checkpoint; 0x10562 is the poll's entry and
+# the frame step's "carry on" checkpoint; 0x10594 is the frame step's entry and the poll's "draw the
+# next frame" checkpoint. One constant apiece rather than an ENTRY_ and a STOP_ at each address.
+#
+# THE SPIN IS A WAIT ON THE STICK, so every case that reaches the `btst #7,$1777f` declares
+# `conftest.TITLE_FIRE_WAIT_PC` — with a schedule when the button has to come down mid-run, and as
+# a bare `wait_sites` when it does not. Declaring it either way is what makes the kit count the oracle's
+# arrivals against the candidate's `sched_poll8` calls; a run that reached the site without
+# declaring it would have the candidate's poll REFUSED instead of counted.
+
+ENTRY_ENTER_TITLE = 0x1030e
+STOP_ENTER_TITLE_LOAD = 0x1032a   # `bsr.w load_level_assets` with D0 = 0 — the arm's exit
+ENTRY_TITLE_POLL = 0x10562
+ENTRY_TITLE_FRAME_STEP = 0x10594
+
+TITLE_POLL_MAX_INSNS = 400_000
+# One attract frame is a whole `render_frame`; the flow cases below draw several and prescroll
+# between them.
+TITLE_FRAME_MAX_INSNS = 2_000_000
+TITLE_FLOW_MAX_INSNS = 40_000_000
+# The 108-frame prescroll and the jingle, run by the ORIGINAL to build the machine the frame step
+# and the whole-flow cases run on.
+ATTRACT_START_MAX_INSNS = 12_000_000
+
+# The three exits `title_attract_poll` answers with, and the two `title_frame_step` does —
+# `include/frontend.h`'s enums, in declaration order.
+TITLE_POLL_NEXT_FRAME, TITLE_POLL_START_GAME, TITLE_POLL_TUNE_ENDED = 0, 1, 2
+TITLE_FRAME_POLL_AGAIN, TITLE_FRAME_ATTRACT_OVER = 0, 1
+ENTER_TITLE_LOAD_LEVEL0, ENTER_TITLE_ATTRACT = 0, 1
+
+STICK_EASY = 1 << TITLE_MODE_EASY_BIT
+STICK_HARD = 1 << TITLE_MODE_HARD_BIT
+
+A_title_mode_word = A_text_title_mode + TITLE_MODE_WORD_OFFSET
+
+
+def word(value):
+    return (value & U16).to_bytes(WORD, "big")
+
+
+# ---- enter_title @ 0x1030e ----------------------------------------------------------------------
+
+def _enter_title_case(assets_loaded=None, stop_pc=ENTRY_TITLE_PRESCROLL, note=""):
+    """`title_just_entered` is poked clear first, so the `st` that opens the routine is visible over
+    a fixture in which the flag could otherwise already be set."""
+    pokes = {A_title_just_entered: word(0)}
+    if assets_loaded is not None:
+        pokes[A_level0_assets_loaded] = assets_loaded
+    return _run(ENTRY_ENTER_TITLE, lambda lib, buf: lib.g_enter_title(buf),
+                pokes=pokes, stop_pc=stop_pc, poison=True, note=note)
+
+
+def test_enter_title_falls_into_the_attract_loop_when_level_0_is_loaded():
+    """The arm the game itself always takes: the boot chain has already `st`ed
+    `A_level0_assets_loaded`, so the routine raises its own flag, blacks the palette and branches
+    on. The palette call writes no image byte — the ordered OS event is the whole of it."""
+    info = _enter_title_case(note="the flag the boot chain left set")
+    assert info["ret"] == ENTER_TITLE_ATTRACT
+
+
+def test_enter_title_loads_level_0_when_the_flag_is_clear():
+    """The other arm, unreachable in an ordinary boot and reached here by poking the word clear: the
+    routine `st`s the flag itself and answers with the `bsr load_level_assets` it makes next."""
+    info = _enter_title_case(assets_loaded=word(0), stop_pc=STOP_ENTER_TITLE_LOAD,
+                             note="level 0's assets not loaded yet")
+    assert info["ret"] == ENTER_TITLE_LOAD_LEVEL0
+
+
+def test_enter_title_tests_the_whole_word_and_not_the_st_byte():
+    """`st $176ea` is a BYTE store and `tst.w $176ea` a WORD read, so the flag's LOW byte is part of
+    the answer even though nothing ever writes it. With only that byte set the routine takes the
+    "already loaded" arm, and a reconstruction that read the `st`'s own byte would load again."""
+    info = _enter_title_case(assets_loaded=b"\x00\x01", note="only the low byte set")
+    assert info["ret"] == ENTER_TITLE_ATTRACT
+
+
+# ---- title_attract_loop @ 0x1054a, slice [0x1054a, 0x10562) --------------------------------------
+
+def test_the_attract_start_plays_the_jingle_and_clears_the_three_lists():
+    """The tune, the display list, the entity arena and the enemy-bullet array, then the game
+    palette. Everything it clears is poked dirty first and the module's "still playing" byte is
+    poked clear, so the jingle's own effect on it is visible rather than already there."""
+    _run(conftest.ENTRY_ATTRACT_START_TUNE, lambda lib, buf: lib.g_title_attract_start_tune(buf),
+         pokes={A_sound_module + SND_MUSIC_ACTIVE: b"\x00",
+                A_display_list: b"\xa5" * 0x40,
+                A_entity_arena: b"\x5a" * 0x40,
+                A_enemy_bullets: b"\x3c" * 0x20},
+         stop_pc=ENTRY_TITLE_POLL, max_insns=TITLE_POLL_MAX_INSNS,
+         note="the jingle and the three lists")
+
+
+# ---- title_attract_loop @ 0x10562, slice [0x10562, 0x10594) --------------------------------------
+
+# `hard_mode` poked to a byte NEITHER toggle arm writes (easy writes `const_words_0123`'s high byte,
+# hard writes 1), so a pass that took no arm is separable from one that took the wrong one.
+HARD_MODE_POISON = 0x5a
+
+
+def _poll_pokes(pending=0, stick=0, music=SCC_TRUE, timer=None, just_entered=0,
+                const_word_zero=None):
+    pokes = {A_new_hiscore_pending: word(pending),
+             A_joy1_state: bytes([stick]),
+             A_sound_module + SND_MUSIC_ACTIVE: bytes([music]),
+             A_title_just_entered: word(just_entered),
+             A_hard_mode: bytes([HARD_MODE_POISON]),
+             A_title_mode_word: b"\xde\xad\xbe\xef"}
+    if timer is not None:
+        pokes[A_attract_page_timer] = word(timer)
+    if const_word_zero is not None:
+        pokes[A_const_words_0123] = word(const_word_zero)
+    return pokes
+
+
+def _poll_case(stop_pc=ENTRY_TITLE_FRAME_STEP, note="", schedule=None, **kwargs):
+    return _run(ENTRY_TITLE_POLL, lambda lib, buf: lib.g_title_attract_poll(buf),
+                pokes=_poll_pokes(**kwargs), stop_pc=stop_pc, max_insns=TITLE_POLL_MAX_INSNS,
+                schedule=schedule, wait_sites=[conftest.TITLE_FIRE_WAIT_PC], note=note)
+
+
+def test_the_poll_starts_a_game_when_fire_is_already_down():
+    """The loop's only `rts`. The stick is read through the kit's scheduled-write model with an
+    EMPTY schedule — "the button is already down", stated as itself — so the one arrival the
+    original makes at the `btst` is compared against the candidate's one poll."""
+    info = _poll_case(stick=1 << JOY_FIRE_BIT, stop_pc=0, note="fire held on entry")
+    assert info["ret"] == TITLE_POLL_START_GAME
+
+
+def test_the_poll_starts_a_game_when_fire_arrives():
+    """The same exit with the button coming down while the run is in flight rather than held on
+    entry. ONE pass of the poll makes ONE read, so an arrival of 2 here would be a store that never
+    came due — which is the kit refusing the case, and is why the multi-pass arrivals are the
+    whole-loop cases at the foot of this section."""
+    info = _poll_case(stop_pc=0, note="fire on the poll's own read",
+                      schedule=[{"pc": conftest.TITLE_FIRE_WAIT_PC, "nth": 1, "addr": A_joy1_state,
+                                 "width": 1, "value": 1 << JOY_FIRE_BIT}])
+    assert info["ret"] == TITLE_POLL_START_GAME
+
+
+def test_the_poll_ignores_fire_while_a_high_score_is_waiting():
+    """`tst.w new_hiscore_pending / bne` skips the `btst` entirely, so the stick is not read at all
+    on that arm — zero arrivals against zero polls — and the button cannot start a game over a name
+    that has not been entered. The run goes on to the name-entry screen instead."""
+    info = _poll_case(pending=1, stick=1 << JOY_FIRE_BIT, note="fire held, a name still to enter")
+    assert info["ret"] == TITLE_POLL_NEXT_FRAME
+
+
+def test_the_poll_restarts_the_jingle_when_the_module_says_it_has_finished():
+    """`tst.b 30(a0)` on the sound module — its ONLY "tune finished" signal — and the branch back to
+    0x1054a. Nothing is drawn on this pass: the test is made before the scroll step."""
+    info = _poll_case(music=0, stop_pc=conftest.ENTRY_ATTRACT_START_TUNE, note="the tune has ended")
+    assert info["ret"] == TITLE_POLL_TUNE_ENDED
+
+
+@pytest.mark.parametrize("timer,page", (
+    (1, "hall of fame"),                             # steps to 0, below both thresholds
+    (ATTRACT_PAGE_HALL_OF_FAME_BELOW, "hall of fame"),   # steps to 0xc7, the last of that page
+    (ATTRACT_PAGE_HALL_OF_FAME_BELOW + 1, "credits"),    # steps to 0xc8, the first of the next
+    (ATTRACT_PAGE_CREDITS_BELOW, "credits"),             # steps to 0x225, the last of it
+    (ATTRACT_PAGE_CREDITS_BELOW + 1, "publisher"),       # steps to 0x226, the first publisher frame
+    (0x8000, "publisher"),   # steps to 0x7fff, which is below NEITHER threshold — the third arm
+))
+def test_the_poll_publishes_the_page_its_timer_names(timer, page):
+    """The page cycle at 0x105a8: the timer down one, then two SIGNED tests on what is left. Both
+    thresholds are driven from either side, which is the only thing that separates the three
+    scripts — they compile into the same display list from its head. The publisher page also runs
+    the mode toggle, which is why `title_just_entered` is poked clear on every one of these."""
+    info = _poll_case(timer=timer, note=f"timer {timer:#x} -> {page}")
+    assert info["ret"] == TITLE_POLL_NEXT_FRAME
+
+
+def test_the_page_timer_reloads_when_it_goes_negative():
+    """A timer of 0 steps to 0xffff, which is NEGATIVE, so the `bpl` falls through to the reload —
+    and the page then chosen is the RELOADED value's, not the 0xffff one's. The shipped reload is
+    0x2ee, which is the publisher page."""
+    _poll_case(timer=0, note="the timer reloads")
+
+
+def test_the_page_timer_reload_is_read_and_not_an_immediate():
+    """The same arm with `attract_page_reload` poked, so the value the timer comes back with follows
+    it and the page the reload lands on changes with it."""
+    pokes = _poll_pokes(timer=0)
+    pokes[A_attract_page_reload] = word(0x40)
+    _run(ENTRY_TITLE_POLL, lambda lib, buf: lib.g_title_attract_poll(buf),
+         pokes=pokes, stop_pc=ENTRY_TITLE_FRAME_STEP, max_insns=TITLE_POLL_MAX_INSNS,
+         wait_sites=[conftest.TITLE_FIRE_WAIT_PC], note="a poked reload, into the hall of fame")
+
+
+# The publisher page is the only one the toggle runs on, so every toggle case names its timer.
+PUBLISHER_TIMER = ATTRACT_PAGE_CREDITS_BELOW + 1
+
+
+@pytest.mark.parametrize("stick,note", (
+    (0, "the stick centred"),
+    (STICK_EASY, "stick left"),
+    (STICK_HARD, "stick right"),
+    (STICK_EASY | STICK_HARD, "both directions at once"),
+))
+def test_the_mode_toggle_arms(stick, note):
+    """Left copies `title_word_easy` over the mode word and clears `hard_mode`, right copies
+    `title_word_hard` and writes a literal 1, and both play the same effect. The ARMS' ORDER is what
+    the fourth case pins: left is tested first and wins, which an if/else chain has and two
+    independent tests would not. The mode word and `hard_mode` are poked to values neither arm
+    writes, so a pass that took no arm is separable from one that took the wrong one."""
+    _poll_case(stick=stick, timer=PUBLISHER_TIMER, note=note)
+
+
+def test_the_mode_toggle_resets_to_easy_silently_when_the_title_was_just_entered():
+    """`title_just_entered` takes the EASY arm without the stick, SUPPRESSES its sound effect, and
+    then clears itself — so entering the title screen resets the difficulty in silence where the
+    stick does it audibly. The sound is an ordered OS event on the module, so the two are separable
+    even though the bytes the arm writes are the same."""
+    _poll_case(just_entered=0xff00, timer=PUBLISHER_TIMER, note="just entered, stick centred")
+
+
+def test_the_just_entered_flag_is_a_WHOLE_WORD_on_both_the_test_and_the_clear():
+    """`st $17698` is a BYTE store into a word that `tst.w` @ 0x105ee and @ 0x10624 READ WHOLE and
+    `clr.w` @ 0x10632 WRITES WHOLE — so the flag's LOW byte is part of both answers even though
+    nothing in the program ever sets it. Entered with only that byte up, the toggle must still take
+    the silent easy arm and must still leave the word 0x0000: a reconstruction testing the `st`'s
+    own byte plays the sound effect instead, and one clearing only that byte leaves 0x00ff behind.
+    The sibling `test_enter_title_tests_the_whole_word_and_not_the_st_byte` is the same shape one
+    routine up."""
+    _poll_case(just_entered=0x00ff, timer=PUBLISHER_TIMER, note="only the flag's low byte set")
+
+
+def test_the_easy_arm_writes_hard_mode_out_of_the_const_word_table():
+    """`move.b $176ac,$177cc` is a READ of `A_const_words_0123`'s HIGH byte, not a `clr.b`. With that
+    byte poked non-zero `hard_mode` follows it — and the game would then be in hard mode having been
+    told to go easy, which is the original's spelling and not a repair."""
+    _poll_case(stick=STICK_EASY, timer=PUBLISHER_TIMER, const_word_zero=0x7700,
+               note="const_words_0123[0] high byte poked")
+
+
+@pytest.mark.parametrize("done", (0, 0xff00))
+def test_the_poll_runs_the_name_entry_screen_while_a_high_score_is_pending(done):
+    """`bra.w $106f2` @ 0x10590 leaves the loop for `hiscore_show_entry_screen`, which falls into
+    `hiscore_name_entry`, whose every arm branches to 0x10594 — the frame step this pass was going
+    to reach anyway. So the arm is a CALL of two verified cores and not a fourth exit, and the whole
+    hall-of-fame page plus one pass of the name entry is inside this one slice. Both of the name
+    entry's halves are driven: the glyph walk (`done` clear) and the countdown (`done` set)."""
+    pokes = _poll_pokes(pending=1)
+    pokes[A_name_entry_done] = word(done)
+    pokes[A_name_entry_first_pass] = word(0xff00)
+    pokes[A_name_entry_timeout] = word(4)
+    pokes[A_hiscore_rank] = word(2)
+    info = _run(ENTRY_TITLE_POLL, lambda lib, buf: lib.g_title_attract_poll(buf),
+                pokes=pokes, stop_pc=ENTRY_TITLE_FRAME_STEP, max_insns=TITLE_POLL_MAX_INSNS,
+                wait_sites=[conftest.TITLE_FIRE_WAIT_PC], note=f"name entry, done={done:#x}")
+    assert info["ret"] == TITLE_POLL_NEXT_FRAME
+
+
+@pytest.mark.parametrize("chunk", range(4))
+def test_the_poll_fuzz(chunk):
+    """The three exits, the three pages, the reload and both toggle arms together — every state the
+    poll reads, drawn at random, which is how the arms' combinations are covered rather than one at
+    a time."""
+    rng = random.Random(0x104f2 + chunk)
+    for _ in range(8):
+        pending = rng.choice((0, 0, 1))
+        music = rng.choice((0, SCC_TRUE, SCC_TRUE, SCC_TRUE))
+        stick = rng.randrange(0x100) & ~(1 << JOY_FIRE_BIT)
+        # The module test is made on BOTH arms of the high-score branch, so a silent tune ends the
+        # pass whatever `new_hiscore_pending` says.
+        stop = conftest.ENTRY_ATTRACT_START_TUNE if music == 0 else ENTRY_TITLE_FRAME_STEP
+        _poll_case(pending=pending, music=music, stick=stick,
+                   timer=rng.randrange(0x10000), just_entered=rng.choice((0, 0xff00)),
+                   stop_pc=stop, note=f"chunk={chunk} pending={pending} music={music:#x} "
+                                      f"stick={stick:#04x}")
+
+
+# ---- title_frame_step @ 0x10594, slice [0x10594, 0x10562) ----------------------------------------
+
+@functools.lru_cache(maxsize=None)
+def _attract_started(post_load_bytes):
+    """The machine the attract frame really runs on, built by the ORIGINAL: its own
+    [0x104f2, 0x10562) — the black palette, the 108-frame prescroll and the jingle — replayed from
+    the post-load fixture. That leaves real terrain in all four screens and the module playing.
+
+    Cached on the fixture's bytes, so the prescroll runs once per session however many cases ask.
+    """
+    final, _writes, _regs = emu.run(bytearray(post_load_bytes), ENTRY_TITLE_PRESCROLL,
+                                    stop_pc=ENTRY_TITLE_POLL, max_insns=ATTRACT_START_MAX_INSNS)
+    return bytes(final)
+
+
+@pytest.fixture(scope="session")
+def attract_started_pokes(post_load_image):
+    return conftest.byte_run_pokes(post_load_image, _attract_started(bytes(post_load_image)))
+
+
+def _frame_step_case(attract_started_pokes, scroll_pos, over, note=""):
+    pokes = dict(attract_started_pokes)
+    pokes[A_scroll_pos] = word(scroll_pos)
+    # The budget already spent, so `render_frame` takes its Vsync arm and makes no scheduled wait —
+    # the wait itself is `test_sprite.py`'s, and what this slice is about is the compare below it.
+    pokes[conftest.A_vbl_tick] = conftest.RENDER_FRAME_VBL_BUDGET.to_bytes(4, "big")
+    info = _run(ENTRY_TITLE_FRAME_STEP, lambda lib, buf: lib.g_title_frame_step(buf),
+                pokes=pokes,
+                stop_pc=ENTRY_TITLE_PRESCROLL if over else ENTRY_TITLE_POLL,
+                max_insns=TITLE_FRAME_MAX_INSNS, note=note or f"scroll_pos={scroll_pos:#06x}")
+    assert info["ret"] == (TITLE_FRAME_ATTRACT_OVER if over else TITLE_FRAME_POLL_AGAIN)
+
+
+@pytest.mark.parametrize("scroll_pos,over", (
+    (0, False),
+    (ATTRACT_END_SCROLL_POS - 1, False),
+    (ATTRACT_END_SCROLL_POS, True),
+    (ATTRACT_END_SCROLL_POS + 1, True),
+    (0x7fff, True),
+    (0x8000, False),   # the most negative word: an UNSIGNED compare would restart here
+    (0xffff, False),   # ...and so would -1, the other end of the same half of the number line
+))
+def test_the_frame_step_restarts_the_attract_at_its_own_scroll_position(attract_started_pokes,
+                                                                        scroll_pos, over):
+    """One whole attract frame, then `cmpi.w #$bb8,$17758 / blt` — a SIGNED compare.
+
+    THE TWO NEGATIVE POSITIONS ARE CONTRACT COVERAGE, and are named as such rather than claimed to
+    be the game's own state: `scroll_pos` is seeded 0 by the stage start and `scroll_advance` only
+    ever adds 2, so the attract's own run climbs to 0xbb8 and never reaches the far half of the
+    number line. (The word that DOES go negative in the first two dozen frames is `level_distance`,
+    which this compare does not read — see `test_scenery_does_nothing_below_the_window`, where the
+    same shape IS reached by the game.) Poked here because the instruction is signed, and an
+    unsigned reading would restart the attract on a position the original carries on from.
+
+    The frame is drawn either way, into the screen ring through addresses the routine computed,
+    which is why `make guarded` is the bound here."""
+    _frame_step_case(attract_started_pokes, scroll_pos, over)
+
+
+# ---- the whole loop: title_attract_loop @ 0x104f2 to its `rts` ------------------------------------
+#
+# THE INTEGRATION PIN, and the shape `test_init.py`'s frame-loop windows have: the cores above are
+# each diffed over one pass, and these run the ORIGINAL's own loop for several passes and let the
+# reconstruction's loop structure be what agrees or does not. Every one of them ends at the `rts`,
+# with the fire button arriving on a poll the case chose.
+#
+# The prescroll is shortened by poking `A_prescroll_frames`: 108 frames of `render_frame` is what
+# `test_title_attract_prescroll_at_the_shipped_frame_count` above already verifies, and paying for
+# it again here would buy nothing but minutes.
+
+
+def _flow_pokes(prescroll_frames=1, scroll_seed=None):
+    pokes = {A_joy1_state: b"\x00", A_new_hiscore_pending: word(0),
+             conftest.A_vbl_tick: (0).to_bytes(4, "big"),
+             A_prescroll_frames: word(prescroll_frames),
+             A_attract_page_timer: word(PUBLISHER_TIMER)}
+    if scroll_seed is not None:
+        pokes[A_const_words_0123] = word(scroll_seed)
+    return pokes
+
+
+def _flow_case(entry, glue, pokes, fire_at, frames, note):
+    _run(entry, glue, pokes=pokes, max_insns=TITLE_FLOW_MAX_INSNS,
+         schedule=conftest.attract_schedule(fire_at, frames), note=note)
+
+
+def test_the_whole_attract_loop_from_its_stage_start_to_the_fire_button():
+    """The loop the four cores make: the palette blacked, the map rewound and prescrolled, the
+    jingle started, three attract frames drawn, and the button on the fourth poll. Nothing in the
+    case says where one core ends and the next begins — the oracle runs the original's branches and
+    the candidate runs `title_attract_loop`'s C, and the whole image is compared."""
+    _flow_case(ENTRY_TITLE_PRESCROLL, lambda lib, buf: lib.g_title_attract_loop(buf),
+               _flow_pokes(), fire_at=4, frames=3, note="three attract frames, then fire")
+
+
+def test_the_whole_flow_from_enter_title():
+    """The same with `enter_title` in front of it, which is how the game reaches the title screen:
+    `init_new_game` ends `bra.w enter_title`, and the attract loop runs off that call's frame. The
+    candidate is the two cores in the order the exit code puts them in."""
+    def candidate(lib, buf):
+        assert lib.g_enter_title(buf) == ENTER_TITLE_ATTRACT
+        lib.g_title_attract_loop(buf)
+
+    _flow_case(ENTRY_ENTER_TITLE, candidate, _flow_pokes(), fire_at=3, frames=2,
+               note="enter_title, two attract frames, then fire")
+
+
+def test_the_tune_ending_restarts_the_jingle_without_leaving_the_loop():
+    """The `beq.s $1054a` exit, driven inside a running loop: the module's "still playing" byte is
+    stored clear by the same agent that works the stick, on the second poll. That pass draws NO
+    frame — the test is made before the scroll step — and the loop goes back to 0x1054a, where
+    `music_play` sets the byte again and the attract carries on."""
+    schedule = conftest.attract_schedule(fire_at=5, frames=3)
+    schedule.append({"pc": conftest.TITLE_FIRE_WAIT_PC, "nth": 2, "width": 1, "value": 0,
+                     "addr": A_sound_module + SND_MUSIC_ACTIVE})
+    _run(ENTRY_TITLE_PRESCROLL, lambda lib, buf: lib.g_title_attract_loop(buf),
+         pokes=_flow_pokes(), max_insns=TITLE_FLOW_MAX_INSNS, schedule=schedule,
+         note="the tune ends on the second poll")
+
+
+def test_the_attract_scroll_running_out_restarts_the_stage_start():
+    """The `bra.w $104f2` exit, twice, inside one run. `const_words_0123[0]` — the word the stage
+    start seeds `scroll_pos` from — is poked four short of the end of the attract's window, so two
+    frames of scroll reach it and the whole stage start runs again. It is also the case that says
+    the seed is a table READ: an immediate 0 there would never reach the end at all."""
+    _flow_case(ENTRY_TITLE_PRESCROLL, lambda lib, buf: lib.g_title_attract_loop(buf),
+               _flow_pokes(prescroll_frames=0, scroll_seed=ATTRACT_END_SCROLL_POS - 4),
+               fire_at=5, frames=4, note="the attract restarts twice, then fire")
+
+
+# =================================================================================================
 # debug_wait_for_keypad4 @ 0x11ba2
 # =================================================================================================
 
@@ -423,6 +1055,42 @@ def test_debug_wait_for_keypad4_ignores_the_other_key_bits():
          schedule=[{"pc": DEBUG_WAIT_KEY_PC, "nth": 3, "addr": A_key_bits, "width": 1,
                     "value": 0xff}],
          note="every bit but 0 held on entry")
+
+
+# The kit's give-up, READ OUT OF ITS HEADER rather than restated — `include/common.h`'s
+# `wait_may_go_round_again` counts against this same constant, and a case that spelt its own copy
+# would stop driving the seam the day the kit moved it (CLAUDE.md §5).
+KIT_OS_H = pathlib.Path(recreate_kit.__file__).parent / "include" / "os.h"
+OS_SCHED_POLL_MAX = int(re.search(r"^#define\s+OS_SCHED_POLL_MAX\s+(\d+)u?\s*$",
+                                  KIT_OS_H.read_text(), re.M).group(1))
+# One arrival past it, so the ORACLE still finishes (its loop is two instructions) while the
+# CANDIDATE runs out of polls first — which is the only way to drive the give-up from a case.
+UNRELEASED_WAIT_ARRIVAL = OS_SCHED_POLL_MAX + 1
+UNRELEASED_WAIT_MAX_INSNS = 100_000
+
+
+def test_a_wait_the_schedule_never_releases_is_REFUSED_and_not_quietly_abandoned():
+    """THE POSITIVE CONTROL ON `include/common.h`'s BUSY-WAIT SEAM, and the only case that reaches
+    its give-up.
+
+    Every wait in this reconstruction is bounded off target, because a wait a case never releases is
+    an infinite loop in the candidate and a hung suite decides nothing. The bound is worth having
+    only if EXHAUSTING it is loud: a give-up that merely returned would let the routine carry on
+    down a path the original never took and let the case come back green or red about that. So
+    `wait_may_go_round_again` tallies through `os_refused` exactly as `sched_wait8` does
+    (`tools/recreate_kit/include/sched.h`, "WHY A CAP AT ALL"), and `harness.differential` throws
+    the run away with a name on it.
+
+    This drives it at the simplest wait in the project — `debug_wait_for_keypad4`, which writes
+    nothing at all — by putting the key's arrival one poll BEYOND the cap. Delete the tally from the
+    helper and this case stops raising, which is what it is here to say.
+    """
+    with pytest.raises(AssertionError, match=r"os_\* call"):
+        _run(ENTRY_DEBUG_WAIT_KEYPAD4, lambda lib, buf: lib.g_debug_wait_for_keypad4(buf),
+             pokes={A_key_bits: b"\x00"}, max_insns=UNRELEASED_WAIT_MAX_INSNS,
+             schedule=[{"pc": DEBUG_WAIT_KEY_PC, "nth": UNRELEASED_WAIT_ARRIVAL,
+                        "addr": A_key_bits, "width": 1, "value": 1 << CHEAT_ARM_KEY_BIT}],
+             note="a key that arrives one poll past the cap")
 
 
 # =================================================================================================
@@ -453,7 +1121,7 @@ def _name_entry_case(stick=0, done=0, first_pass=0, cursor=0, rank=0, timeout=1,
     if name is not None:
         pokes[_name_address(rank & U16)] = name
     if const_word_zero is not None:
-        pokes[A_const_words_0123] = const_word_zero.to_bytes(WORD, "big")
+        pokes[A_const_words_0123] = word(const_word_zero)
     _run(ENTRY_HISCORE_NAME_ENTRY, lambda lib, buf: lib.g_hiscore_name_entry(buf),
          pokes=pokes, stop_pc=STOP_HISCORE_NAME_ENTRY, max_insns=NAME_ENTRY_MAX_INSNS,
          note=note or f"stick={stick:#04x} done={done} first={first_pass} cursor={cursor}",
@@ -600,7 +1268,16 @@ def test_name_entry_fuzz(chunk):
 MIRROR_HEADER = "include/frontend.h"
 MIRRORS = (
     "A_level_bank_digits", "LEVEL_BANK_DIGITS", "HSC_NAME_DIGIT", "MAP_NAME_DIGIT",
+    "LEVEL_ASSETS_ORDER_LEVEL_2", "LEVEL_ASSETS_ORDER_LEVEL_3", "DISC_SWAP_ABOVE_LEVEL",
+    "A_disc_prompt_message",
+    "DISC_PROMPT_WAIT_PC",
     "TITLE_SCROLL_POS_START",
+    "A_title_just_entered", "A_attract_page_timer", "A_attract_page_reload",
+    "A_text_publisher", "A_text_credits", "A_text_title_mode", "A_title_word_hard",
+    "ATTRACT_TUNE", "ATTRACT_END_SCROLL_POS",
+    "ATTRACT_PAGE_HALL_OF_FAME_BELOW", "ATTRACT_PAGE_CREDITS_BELOW",
+    "TITLE_MODE_WORD_OFFSET", "TITLE_MODE_WORD_BYTES", "TITLE_MODE_EASY_BIT",
+    "TITLE_MODE_HARD_BIT", "TITLE_HARD_MODE_ON",
     "A_scenery_band_offset", "A_scenery_band_rows", "A_scenery_band_partial",
     "A_charset_order_table", "SCENERY_WINDOW_START", "SCENERY_WINDOW_GROW", "SCENERY_WINDOW_END",
     "SCENERY_BAND_OFFSET_SEED", "SCENERY_BAND_ROWS_MAX", "SCENERY_GROW_OFFSET_STEP",
@@ -613,6 +1290,8 @@ MIRRORS = (
     ("A_file_rec_hsc_1", "include/globals.h", "A_file_rec_hsc_1"),
     ("A_file_rec_hsc_2", "include/globals.h", "A_file_rec_hsc_2"),
     ("A_file_rec_hsc_3", "include/globals.h", "A_file_rec_hsc_3"),
+    ("A_file_rec_sprites_cru", "include/globals.h", "A_file_rec_sprites_cru"),
+    ("FIRE_RELEASE_WAIT_PC", "include/hud.h", "FIRE_RELEASE_WAIT_PC"),
     ("FILE_REC_NAME", "include/globals.h", "FILE_REC_NAME"),
     ("A_hiscore_table", "include/hud.h", "A_hiscore_table"),
     ("HISCORE_STRIDE", "include/hud.h", "HISCORE_STRIDE"),
@@ -632,19 +1311,32 @@ MIRRORS = (
     ("A_const_words_0123", "include/hud.h", "A_const_words_0123"),
     ("CONST_WORD_BYTES", "include/hud.h", "CONST_WORD_BYTES"),
     ("A_level_number", "include/player.h", "A_level_number"),
+    ("LEVELS", "include/player.h", "LEVELS"),
     ("A_level_distance", "include/scroll.h", "A_level_distance"),
     ("A_scroll_pos", "include/scroll.h", "A_scroll_pos"),
     ("A_scroll_fine", "include/scroll.h", "A_scroll_fine"),
     ("A_map_row_ptr", "include/scroll.h", "A_map_row_ptr"),
     ("A_prescroll_flag", "include/scroll.h", "A_prescroll_flag"),
     ("A_prescroll_frames", "include/scroll.h", "A_prescroll_frames"),
+    ("SCC_TRUE", "include/common.h", "SCC_TRUE"),
+    ("A_sound_module", "include/globals.h", "A_sound_module"),
+    ("A_entity_arena", "include/globals.h", "A_entity_arena"),
+    ("SND_MUSIC_ACTIVE", "include/sound.h", "SND_MUSIC_ACTIVE"),
+    ("A_enemy_bullets", "include/weapons.h", "A_enemy_bullets"),
+    ("A_display_list", "include/display_list.h", "A_display_list"),
+    ("A_level0_assets_loaded", "include/init.h", "A_level0_assets_loaded"),
+    ("A_hard_mode", "include/hud.h", "A_hard_mode"),
+    ("A_title_word_easy", "include/hud.h", "A_title_word_easy"),
 )
 
 # TEN BYTES, for the reason `test_sprite.py` gives: this program's routines open on a `lea` or a
 # `move` of an absolute long, and a shorter pin would match dozens of addresses.
 ENTRY_PROLOGUES = {
-    "ENTRY_PATCH_FILENAMES": "41f9000162d43200c1fc",
-    "ENTRY_TITLE_PRESCROLL": "33f9000176ac00017758",
+    "ENTRY_LOAD_LEVEL_ASSETS": "41f9000162d43200c1fc",
+    "ENTRY_ENTER_TITLE": "50f90001769861000e90",
+    "ENTRY_TITLE_PRESCROLL": "61000cb233f9000176ac",
+    "ENTRY_TITLE_POLL": "4a79000176e8660a0839",
+    "ENTRY_TITLE_FRAME_STEP": "61003eb00c790bb80001",
     "ENTRY_LEVEL2_SCENERY": "0c7908a20001779a6d00",
     "ENTRY_LEVEL2_SCENERY_GATE": "0c7900020001642a6604",
     "ENTRY_DEBUG_WAIT_KEYPAD4": "48e7fffe083900000001",
@@ -652,6 +1344,6 @@ ENTRY_PROLOGUES = {
 }
 STOP_PROLOGUES = {
     "STOP_PATCH_FILENAMES": "41f90001634661000880",
-    "STOP_TITLE_PRESCROLL": "303c0004610020386100",
+    "STOP_ENTER_TITLE_LOAD": "61000006600001c241f9",
     "STOP_HISCORE_NAME_ENTRY": "6000fe724239000177cc",
 }
