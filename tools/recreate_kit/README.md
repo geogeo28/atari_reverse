@@ -275,6 +275,7 @@ the witness — a case that declares one against a candidate lacking the group i
 | --- | --- | --- |
 | `sched_poll8` | `uint8_t(uint8_t *, uint32_t addr, uint32_t site_pc)` | one iteration of a busy-wait AT `site_pc`: count the poll against that site, apply any store it brings due, then read the byte |
 | `sched_poll16` | `int(uint8_t *, uint32_t addr, uint32_t site_pc, uint16_t *seen)` | one iteration of a CAPPED WORD wait: the poll above plus a full-width read; 0 once the site has spent `OS_SCHED_POLL_MAX` |
+| `sched_poll32` | `int(uint8_t *, uint32_t addr, uint32_t site_pc, uint32_t *seen)` | ...and of a CAPPED LONGWORD wait, the same contract four bytes wide. The two share one clock, so a width cannot drift |
 | `g_sched_reset` | `void(const uint32_t *entries, uint32_t n, const uint32_t *sites, uint32_t site_n)` | install the run's schedule AND its wait sites + clear the counters, before each candidate run |
 | `g_sched_count` / `g_sched_polls` / `g_sched_applied` / `g_sched_refused` | | entries carried, polls made, stores made, stores refused |
 | `g_sched_site_count` / `g_sched_site_polls` / `g_sched_undeclared` | | sites declared, polls at the ith, and polls naming no declared site (each a refusal) |
@@ -291,6 +292,12 @@ reconstruction's loop does. What makes it a test is the **count**: the oracle co
 candidate counts polls, and `harness.differential` compares them — so a port that spins a different
 number of times, or not at all, fails. Poll only the byte the wait is ON, once per iteration; an
 ordinary field read stays a plain guarded read.
+
+**A CASE MAY DECLARE A SITE WITH NO SCHEDULE AT ALL**, and that is an ordinary shape rather than a
+degenerate one: "the key is never pressed", or any loop that re-reads a byte a bounded number of
+times and gives up. The counting is armed by the **site** declaration, not by the schedule's length
+— gated on the latter, such a case compared the candidate's real polls against zero arrivals, and
+the workaround was a dummy entry that could never come due.
 
 **BOTH COUNTS ARE PER WAIT SITE**, keyed by the address at which the ORIGINAL re-reads the byte,
 which the candidate names at every poll and the case declares with `wait_sites=` (defaulting to the

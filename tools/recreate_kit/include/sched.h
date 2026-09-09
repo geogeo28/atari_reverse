@@ -29,19 +29,20 @@
  * a guard that reads the same address BEFORE the loop (Wonder Boy's `$638` tests the press code at
  * `$642` before spinning on the release at `$64e`) is not a poll and must not consume one.
  *
- * THE WIDTH: A BYTE POLL IS THE CLOCK, AND A WORD WAIT IS THAT CLOCK PLUS A WIDER READ. A wait whose
- * compare is a WORD is spelt with `sched_poll16` below: ONE `sched_poll8` per iteration ticks the
- * clock and applies the due store, and the word the caller compares is read at full width from the
- * same address. One poll per arrival, so none of the aliasing `test/test_sched_model.py` documents.
- * What a hand-rolled `sched_poll8`-plus-read loop would lose is the CAP, which is why the wrapper
- * exists at all. A word compare must NEVER be spelt as two byte polls: two polls per arrival is
+ * THE WIDTH: A BYTE POLL IS THE CLOCK, AND A WIDER WAIT IS THAT CLOCK PLUS A WIDER READ. A wait
+ * whose compare is a WORD is spelt with `sched_poll16` below, and one whose compare is a LONGWORD
+ * with `sched_poll32`: ONE `sched_poll8` per iteration ticks the clock and applies the due store,
+ * and the value the caller compares is read at full width from the same address. One poll per
+ * arrival, so none of the aliasing `test/test_sched_model.py` documents. What a hand-rolled
+ * `sched_poll8`-plus-read loop would lose is the CAP, which is why the wrappers exist at all. A
+ * wide compare must NEVER be spelt as two or four byte polls: several polls per arrival is
  * precisely that aliasing mutant, invisible at any `nth` that is a multiple of the polling rate.
  *
  * ON TARGET this file IS EXCLUDED FROM THE BUILD, exactly like src/hw.c and src/psg.c: a build for
  * the real machine spins on the address itself, because the interrupt really does write it, and
- * supplies its own `sched_wait8`/`sched_poll16` that loop without a cap. Off target it must be
- * compiled — the harness refuses a case that declares a schedule against a candidate lacking these
- * symbols.
+ * supplies its own `sched_wait8`/`sched_poll16`/`sched_poll32` that loop without a cap. Off target
+ * it must be compiled — the harness refuses a case that declares a schedule against a candidate
+ * lacking these symbols.
  */
 #ifndef RECREATE_KIT_SCHED_H
 #define RECREATE_KIT_SCHED_H
@@ -98,6 +99,20 @@ int sched_wait8(uint8_t *image, uint32_t addr, uint8_t until, uint32_t site_pc);
  *     return 0;                     // the cap; sched_poll16 has already tallied the refusal
  */
 int sched_poll16(uint8_t *image, uint32_t addr, uint32_t site_pc, uint16_t *seen);
+
+/* ...AND THE LONGWORD WAIT, `sched_poll16`'s contract at four bytes: one `sched_poll8` at `site_pc`
+ * ticks the clock and applies the due store, then the LONG at `addr` comes back through `seen`
+ * (big-endian; an address outside the image reads 0). Returns 1 while the caller should go round
+ * again and 0 once the site has spent `OS_SCHED_POLL_MAX` polls, the refusal already tallied.
+ *
+ * IT EXISTS BECAUSE THE CAP IS WHAT THE WRAPPER IS FOR. A longword wait CAN be hand-rolled as a
+ * `sched_poll8` plus a `be32` — Flying Shark's `render_frame` VBL wait was spelt as `sched_poll16`
+ * one width down, polling the clock correctly and DISCARDING the word it handed back — and what
+ * that loses is the give-up: a case whose schedule never comes due then HANGS the suite instead of
+ * being refused (measured, projects/flyingshark/recreate/src/sprite.c). The kit carries the width
+ * rather than every caller re-deriving the bound.
+ */
+int sched_poll32(uint8_t *image, uint32_t addr, uint32_t site_pc, uint32_t *seen);
 
 /* ---- what the harness drives (see README.md, "What the candidate .so must export") ---- */
 /* Install the run's schedule and clear the counters. `entries` is the flattened OS_SCHED_FIELDS-wide

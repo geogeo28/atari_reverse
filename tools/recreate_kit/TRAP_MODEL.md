@@ -1361,15 +1361,20 @@ the byte the wait is ON, and only where the original's compare reads it. Wonder 
 the *press* code at `$642` before spinning on the *release* at `$64e` — same address, and the first
 is not a poll.
 
-**A WORD WAIT IS A BYTE POLL PLUS A WIDER READ, and needs no capability of its own.** `sched_poll16`
-is ONE `sched_poll8` (the clock, which counts the arrival and applies the due store) and a full-width
-read of the same address — one poll per arrival, so none of the aliasing below. What it adds over a
-hand-rolled poll-and-read loop is the CAP, and that is the whole reason it exists. It is an
-ITERATOR rather than a `sched_wait16(until)` because the two word waits that motivated it compare
-differently — one is a signed threshold, the other is against a copy the routine took an instruction
-earlier — so an equality wrapper would fit neither and a predicate enumeration would put the
-caller's arithmetic inside the kit. **A word compare must never be spelt as two byte polls**: that is
-exactly the aliasing mutant, invisible at any `nth` that is a multiple of the polling rate.
+**A WIDE WAIT IS A BYTE POLL PLUS A WIDER READ, and needs no capability of its own.** `sched_poll16`
+and `sched_poll32` are each ONE `sched_poll8` (the clock, which counts the arrival and applies the
+due store) and a full-width read of the same address — one poll per arrival, so none of the aliasing
+below. What they add over a hand-rolled poll-and-read loop is the CAP, and that is the whole reason
+they exist: a case whose schedule never comes due then HANGS the suite instead of being refused.
+Both are ITERATORS rather than a `sched_wait16(until)` because the two word waits that motivated the
+first compare differently — one is a signed threshold, the other is against a copy the routine took
+an instruction earlier — so an equality wrapper would fit neither and a predicate enumeration would
+put the caller's arithmetic inside the kit. **A wide compare must never be spelt as several byte
+polls**: that is exactly the aliasing mutant, invisible at any `nth` that is a multiple of the
+polling rate. The three widths share one clock (`src/sched.c`'s `sched_tick_wide`), so the cap and
+the undeclared-site refusal cannot drift between them; **the longword** exists because Flying
+Shark's `render_frame` VBL wait had to be spelt as `sched_poll16` one width down, polling correctly
+and discarding the word it was handed.
 
 ### WAIT SITES: which wait a poll belongs to
 
@@ -1412,6 +1417,18 @@ wait in it and needs no thought. **A run that polls at a site no entry stores on
 `flip_screen`'s first wait falls through in a single poll when the counter is seeded ready, and that
 poll still has to be counted. A poll at an undeclared site is a REFUSAL (`os_refused`), not a
 service: an uncounted poll is the hole itself.
+
+**THE SITE COUNT IS WHAT ARMS THE COUNTING, NOT THE SCHEDULE'S LENGTH.** A case may declare
+`wait_sites=` with an EMPTY schedule, and that is an ordinary shape: "the key never comes down", or
+any loop that re-reads a byte a bounded number of times and gives up. `sched_fire` used to run under
+`if (g_sched_n && n)`, so such a case counted **zero** arrivals on the oracle while the candidate
+counted real polls — an unconditional red about nothing, worked round in two Flying Shark batteries
+by carrying a dummy entry that could never come due. The gate is `(g_sched_n || g_sched_site_n)`
+now, and `test_a_declared_wait_site_counts_arrivals_with_NO_SCHEDULE_AT_ALL` is what holds it:
+a counted read loop whose oracle arrivals, candidate polls and own iteration count are one number.
+(A *release* wait cannot be that case with more than one iteration in it — with nothing to change the
+byte it leaves on its first read or never leaves — which is why the probe's routine is a `dbra`
+loop.)
 
 **THE SITE IS THE PC AND NEVER THE ADDRESS.** A per-ADDRESS counter was this model's first registered
 remedy and it was wrong for the very case it was registered against: `game_key_actions` has two waits
@@ -1458,7 +1475,7 @@ a case that knows which iteration each lands on.
 ### What is pinned, and what is not
 
 **The model** is pinned kit-side by [`test/test_sched_model.py`](test/test_sched_model.py) and its
-`sched_model_probe.c`, which drives **both** implementations in one process (22 cases, as pytest
+`sched_model_probe.c`, which drives **both** implementations in one process (34 cases, as pytest
 collects them), and the declaration's own arithmetic by
 [`test/test_os_map.py`](test/test_os_map.py). The load-bearing one is RED: the same planted spin with **no** schedule does not
 return, which is the state every such routine was in before this phase. Then: the store landing
@@ -1473,7 +1490,9 @@ widths `os_sched_store` carries, read out of its own guard and pinned against `e
 the candidate side, the poll count matching the oracle's arrivals, and two negative controls it
 separates — a body that polls once and then reads
 the image directly (the shape of a port written against a byte that "is already there"), and one
-that polls twice per iteration, whose final image is a correct run's exactly.
+that polls twice per iteration, whose final image is a correct run's exactly. And, at each of the
+three widths, an undeclared site tallying one poll one way, plus — for the two wide wrappers — the
+full-width comparand and the cap that stops an unreleased wait hanging the suite.
 
 **One hole is measured and stated rather than papered over**: at an `nth` that is a multiple of the
 port's polls-per-iteration, the double-poller's extra poll lands on the iteration the release was due
@@ -1509,7 +1528,7 @@ case; it read "five rows" while there were six.)
 | direct `$ff8800`/`$ff8802` PSG accesses, **reads included** | `shim.c`'s `g_psg_kind`/`g_psg_reg`/`g_psg_val` ledger | emit the same ordered `(kind, reg, val)` stream — call `psg_port_write()` / `psg_port_read()` from `psg.h` (BuggyBoy predates it and emits through `g_REFRESH` out-params instead) |
 | the YM2149's register contents, which a read-back returns | `shim.c`'s `g_psg_file` + its known mask | `psg_port_read()`/`psg_port_write()` keep the same file; `harness.differential` compares it, and the case seeds both sides with `psg_seed=` (Phase 6) |
 | reads of the modeled hardware bytes `$fffa01`, `$ff820a`, `$ff8207`, `$ff8209` | `shim.c`'s `g_hw_log_slot`/`g_hw_log_val` ledger + `g_hw_file` | emit the same ordered `(slot, val)` stream — call `hw_read8()` from `hw.h` with an `OS_HW_*` constant; the case declares both sides' bytes with `hw_seed=` (Phase 7). A VOLATILE one (`$ff8207`/`$ff8209`) may be read at most ONCE per run: a second read is refused, and the remedy is the case's shape — end it before the second read, or split it into two runs |
-| a memory byte an EXTERNAL AGENT writes while the run is in flight (an interrupt storing a scancode) | `shim.c`'s `g_sched` list, applied by arrival count per declared WAIT SITE | poll the byte through `sched_poll8()`/`sched_poll16()` from `sched.h`, once per wait iteration, NAMING the site (the original compare's PC); the case declares the store with `schedule=` and the sites with `wait_sites=` (Phase 8), and `harness.differential` compares the candidate's polls against the oracle's arrivals SITE BY SITE |
+| a memory byte an EXTERNAL AGENT writes while the run is in flight (an interrupt storing a scancode) | `shim.c`'s `g_sched` list, applied by arrival count per declared WAIT SITE | poll the byte through `sched_poll8()`/`sched_poll16()`/`sched_poll32()` from `sched.h`, once per wait iteration, NAMING the site (the original compare's PC); the case declares the store with `schedule=` and the sites with `wait_sites=` (Phase 8), and `harness.differential` compares the candidate's polls against the oracle's arrivals SITE BY SITE |
 | the FILE-LOAD SEAM (Phase 9) | nothing — the substitution is in the image | define `disk_read_file` (`disk.h`). Off target `src/disk.c` supplies it; an ON-TARGET build must define its own, and the project's build should require the symbol so a core calling it cannot silently link the model |
 | every STORE to a memory-mapped I/O register — the shifter's colour row and screen base, the MFP's in-service registers, the ACIA's data port | `shim.c`'s `g_hw_write_addr`/`_width`/`_val` ledger | emit the same ordered `(address, width, value)` stream — call `hw_write8()`/`hw_write16()`/`hw_write32()` from `hw.h` with the 24-bit address, or `hw_bset8()`/`hw_bclr8()`/`hw_and8()` where the original's instruction is a read-modify-write (Phase 10). Compared for EVERY case by default; a case whose candidate models a routine's hardware half as a no-op declares those addresses in `hw_waiver={address: reason}` |
 

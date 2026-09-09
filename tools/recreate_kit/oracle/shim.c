@@ -1280,7 +1280,14 @@ int osh_run(uint8_t *mem, uint32_t size, uint32_t entry,
          * one too many for a wait loop whose compare IS the entry instruction — and it is compared
          * against the candidate's poll count. Skipping iteration 0 makes both trigger kinds 1-based
          * and costs nothing: nothing executed there. */
-        if (g_sched_n && n) sched_fire(pc, n);
+        /* GATED ON THE SITE COUNT AS WELL AS THE SCHEDULE'S. A run may declare a wait SITE with
+         * an EMPTY schedule — "the byte the wait is on never changes", which is the natural shape
+         * of "the key is never pressed" and of any bounded poll loop — and its arrivals have to be
+         * counted all the same, because the candidate's polls at that site are counted and the
+         * harness compares the two. Keyed on g_sched_n alone this counted 0 against a real poll
+         * count: an unconditional red about nothing, which two Flying Shark batteries worked round
+         * by carrying a dummy entry that could never come due. */
+        if ((g_sched_n || g_sched_site_n) && n) sched_fire(pc, n);
         if (g_cov_on && pc < COV_SIZE) g_cov[pc >> 3] |= (uint8_t)(1u << (pc & 7));   /* coverage */
         uint32_t cur_a7 = m68k_get_reg(0, M68K_REG_A7);
         if (cur_a7 < g_min_a7) g_min_a7 = cur_a7;

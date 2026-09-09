@@ -55,6 +55,11 @@ WAIT_INSNS_PER_ITERATION = 2
 WORD_HELD = 0x1234
 WORD_WANT = 0x5678
 TWO_WAIT_NTH = 3
+# The LONGWORD wait's two values, and the fixed number of reads the bounded loop makes — which is
+# what "the oracle counts arrivals from the SITE declaration alone" is measured against.
+LONG_HELD = 0x11112222
+LONG_WANT = 0x33334444
+BOUNDED_READ_PASSES = 4
 
 
 
@@ -73,6 +78,12 @@ def scratch(cases, name):
     return tuple(s[f"scratch{i}"] for i in range(4))
 
 
+def long_word(cases, name):
+    """The LONGWORD the run left at the probe's `LONG_ADDR`, big-endian as the model stores it."""
+    s = scalars(cases, name)
+    return int.from_bytes(bytes(s[f"long{i}"] for i in range(4)), "big")
+
+
 # ---- the capability, and what it is worth ------------------------------------------------------
 
 def test_a_wait_on_a_byte_nothing_writes_does_not_return_without_a_schedule(cases):
@@ -87,6 +98,39 @@ def test_a_wait_on_a_byte_nothing_writes_does_not_return_without_a_schedule(case
     assert s["reached"] == 0
     assert (s["count"], s["applied"], s["arrivals"]) == (0, 0, 0)
     assert s["watch"] == HELD, "nothing declared a store, so nothing may have changed the byte"
+
+
+def test_a_declared_wait_site_counts_arrivals_with_NO_SCHEDULE_AT_ALL(cases):
+    """A wait SITE alone arms the counting; a schedule ENTRY is not what does it.
+
+    THE EMPTY SCHEDULE IS AN ORDINARY CASE, not an exotic one. "The key is never pressed" is a wait
+    whose byte no agent ever writes, and so is any loop that re-reads a byte a bounded number of
+    times and gives up — the reconstruction still polls, and those polls still have to be compared
+    against something. `oracle/shim.c` used to gate its arrival counting on the SCHEDULE's length,
+    so such a case counted real polls against ZERO arrivals: an unconditional red about nothing,
+    which two Flying Shark batteries worked round by carrying a dummy entry that could never come
+    due (`projects/flyingshark/recreate/STATUS.md`, "Follow-ups the kit should absorb"). The gate is
+    the SITE count now.
+
+    A release wait cannot BE this case with more than one iteration in it — with nothing to change
+    the byte it leaves on its first read or never leaves — so the probe's routine is a counted loop
+    (`moveq #N-1,d0 / move.b (WATCH2).l,d1 / dbra d0,*`), whose re-read is the site. The oracle's
+    arrivals, the candidate's polls and the loop's own iteration count are then all one number.
+    """
+    oracle = scalars(cases, "no_schedule_but_a_declared_site")
+    cand = scalars(cases, "cand_no_schedule_but_a_declared_site")
+    assert oracle["count"] == cand["count"] == 0, "the case declares no store at all"
+    assert oracle["sites"] == cand["sites"] == 1, "...and exactly one wait site"
+    assert oracle["reached"] == 1, "the bounded loop ends on its own, schedule or no schedule"
+    assert oracle["arrivals"] == oracle["arrivals0"] == BOUNDED_READ_PASSES, (
+        "the oracle must count its arrivals at a declared site with nothing scheduled — this is "
+        "the defect: it counted 0 while the candidate counted real polls")
+    assert cand["polls"] == cand["polls0"] == BOUNDED_READ_PASSES
+    assert oracle["arrivals0"] == cand["polls0"], (
+        "the two sides ran the same loop, which is the only thing the counts exist to say")
+    assert oracle["applied"] == cand["applied"] == 0, "nothing was declared, so nothing may store"
+    assert (cand["undeclared"], cand["os_refusals"], cand["exhausted"]) == (0, 0, 0), (
+        "a poll at a DECLARED site is served, and an empty schedule does not make it a refusal")
 
 
 def test_the_declared_store_lands_before_the_nth_arrival_and_the_wait_ends(cases):
@@ -378,26 +422,29 @@ def test_a_poll_at_an_undeclared_site_is_refused_rather_than_counted(cases):
     assert s["applied"] == 0 and s["watch"] == HELD, "so the store never landed"
 
 
-def test_the_two_primitives_tally_an_undeclared_site_THE_SAME_WAY(cases):
+def test_every_primitive_tallies_an_undeclared_site_THE_SAME_WAY(cases):
     """SYMMETRY IS THE MODEL'S STATED PRINCIPLE, and a refusal path is where it is cheapest to lose.
 
-    `sched_poll8` counts the poll and then refuses it; `sched_poll16` stops the caller's loop instead
-    of handing back a word, and an earlier draft returned WITHOUT counting — so one event tallied two
-    ways depending on which primitive a reconstruction reached for, and `g_sched_polls()` (which the
-    refusal diagnostic prints) would have disagreed with itself. Both now count.
+    `sched_poll8` counts the poll and then refuses it; the WIDE wrappers stop the caller's loop
+    instead of handing back a value, and an earlier draft returned WITHOUT counting — so one event
+    tallied two ways depending on which primitive a reconstruction reached for, and
+    `g_sched_polls()` (which the refusal diagnostic prints) would have disagreed with itself. All
+    three now count, and they share one `sched_tick_wide` so that the widths cannot drift apart.
 
-    The counts differ in MAGNITUDE and that is the two loops' own shape, not the model's: the byte
-    poll returns a byte so the body spins to its own guard, while the word poll returns 0 and the
-    body stops at once. What must match is polls == undeclared == refusals on each.
+    The counts differ in MAGNITUDE and that is the loops' own shape, not the model's: the byte poll
+    returns a byte so the body spins to its own guard, while a wide poll returns 0 and the body stops
+    at once. What must match is polls == undeclared == refusals on each.
     """
-    for name in ("cand_polls_at_an_undeclared_site", "cand_word_wait_at_an_undeclared_site"):
+    for name in ("cand_polls_at_an_undeclared_site", "cand_word_wait_at_an_undeclared_site",
+                 "cand_long_wait_at_an_undeclared_site"):
         s = scalars(cases, name)
         assert s["polls"] == s["undeclared"] == s["os_refusals"], (
             f"{name}: {s['polls']} poll(s), {s['undeclared']} undeclared, "
             f"{s['os_refusals']} refusal(s) — the three count one event and must agree")
         assert s["applied"] == 0, f"{name}: a store landed on a poll nobody counted"
-    assert scalars(cases, "cand_word_wait_at_an_undeclared_site")["polls"] == 1, (
-        "the word poll stops the caller's loop on the first refusal, unlike the byte poll")
+    for name in ("cand_word_wait_at_an_undeclared_site", "cand_long_wait_at_an_undeclared_site"):
+        assert scalars(cases, name)["polls"] == 1, (
+            f"{name}: a wide poll stops the caller's loop on the first refusal, unlike the byte poll")
 
 
 # ---- the WORD wait: sched_poll16, the capped wrapper --------------------------------------------
@@ -439,6 +486,43 @@ def test_an_unreleased_word_wait_is_CAPPED_like_a_byte_one(cases):
         "the probe's word-wait guard must be ABOVE the kit's cap, or it hides the case")
 
 
+# ---- the LONGWORD wait: sched_poll32, the third width -------------------------------------------
+
+def test_the_longword_wait_polls_once_per_arrival_at_full_width(cases):
+    """`sched_poll32` is `sched_poll16`'s contract at four bytes: ONE `sched_poll8` (the clock) plus
+    a LONG read (the comparand).
+
+    Before it existed a longword wait had to be spelt as `sched_poll16` one width down — polling the
+    clock correctly and DISCARDING the word it handed back, then re-reading the address at full
+    width (Flying Shark's `render_frame` VBL wait). That is right about the count and silent about
+    the width, which is exactly the kind of thing a third caller gets wrong.
+    """
+    oracle = scalars(cases, "long_released_at_the_third_arrival")
+    cand = scalars(cases, "cand_long_wait")
+    assert cand["polls"] == oracle["arrivals"] == 3
+    assert cand["d1"] == oracle["d1l"] == LONG_WANT, (
+        "the comparand is the whole longword, not its low word")
+    assert long_word(cases, "long_released_at_the_third_arrival") == LONG_WANT
+    assert long_word(cases, "cand_long_wait") == LONG_WANT, (
+        "both sides made the same four-byte store from the same entry")
+    assert (cand["exhausted"], cand["os_refusals"]) == (0, 0)
+
+
+def test_an_unreleased_longword_wait_is_CAPPED_like_the_other_two(cases):
+    """The cap is the only reason the wrapper exists rather than a hand-rolled poll-and-read loop,
+    and it is what the width-down spelling loses: a case whose schedule never comes due HANGS the
+    suite instead of being refused.
+
+    The entry fires and stores the longword the wait ALREADY finds, so the release never comes.
+    """
+    s = scalars(cases, "cand_long_wait_never_released")
+    assert s["applied"] == 1, "the store was made"
+    assert long_word(cases, "cand_long_wait_never_released") == LONG_HELD, "...and changed nothing"
+    assert s["polls"] == _os_h_int("OS_SCHED_POLL_MAX"), "it stopped at the KIT's cap"
+    assert (s["exhausted"], s["os_refusals"]) == (1, 1)
+    assert s["d1"] == 0, "the body honoured the 0 rather than carrying on"
+
+
 # ---- the sizes and the bytes, pinned against their sources -------------------------------------
 
 def _c_define(source, name):
@@ -478,7 +562,9 @@ def test_the_probe_and_this_suite_agree_on_the_bytes():
     for name, value in (("HELD", HELD), ("WANT", WANT), ("SCRATCH_BYTE", SCRATCH_BYTE),
                         ("PROBE_MAX_INSNS", PROBE_MAX_INSNS), ("CAND_POLL_CAP", CAND_POLL_CAP),
                         ("WORD_HELD", WORD_HELD), ("WORD_WANT", WORD_WANT),
-                        ("TWO_WAIT_NTH", TWO_WAIT_NTH)):
+                        ("TWO_WAIT_NTH", TWO_WAIT_NTH), ("LONG_HELD", LONG_HELD),
+                        ("LONG_WANT", LONG_WANT),
+                        ("BOUNDED_READ_PASSES", BOUNDED_READ_PASSES)):
         assert _c_define(src, name) == value, f"{name} has moved in {PROBE_SRC.name}"
     m = re.search(r"^#define\s+SCRATCH_LONG\s+0x([0-9a-fA-F]{8})u\b", src, re.M)
     assert m and tuple(bytes.fromhex(m.group(1))) == SCRATCH_LONG

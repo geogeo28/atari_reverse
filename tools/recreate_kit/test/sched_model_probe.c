@@ -59,6 +59,13 @@ uint32_t osh_sched_site_arrivals(uint32_t i);
 #define WORD_WANT    0x5678u   /* ...and what releases it */
 #define TWO_WAIT_NTH 3u        /* the arrival the two-wait routine's SECOND spin is released at */
 
+/* ...and the LONGWORD the sched_poll32 cases spin on, past the word and clear of it. Both halves of
+ * each value are non-zero and differ, so a wrapper that read only a word — which is what the wait
+ * was spelt as before the width existed — cannot produce the right answer by accident. */
+#define LONG_ADDR    0x3028u
+#define LONG_HELD    0x11112222u
+#define LONG_WANT    0x33334444u
+
 /* A PC the planted routine never executes, for the entry that can never come due. It is inside the
  * image and even, so nothing but the arrival count can be what stops it firing. */
 #define UNREACHED_PC 0x2ffeu
@@ -83,8 +90,12 @@ uint32_t osh_sched_site_arrivals(uint32_t i);
  * probe_common.h — this was its third copy across the probes, which is the file's own threshold.) */
 #define CMPI_B_IMM_ABSL   0x0c39u /* cmpi.b #imm,(xxx).l — imm in the low byte of the next word */
 #define CMPI_W_IMM_ABSL   0x0c79u /* cmpi.w #imm,(xxx).l — the WORD compare sched_poll16 mirrors */
+#define CMPI_L_IMM_ABSL   0x0cb9u /* cmpi.l #imm32,(xxx).l — the LONG compare sched_poll32 mirrors */
 #define MOVE_W_ABSL_TO_D1 0x3239u /* move.w (xxx).l,d1 */
+#define MOVE_L_ABSL_TO_D1 0x2239u /* move.l (xxx).l,d1 */
 #define BNE_S             0x6600u /* bne.s <disp8>, the displacement in the low byte */
+#define MOVEQ_TO_D0       0x7000u /* moveq #imm8,d0 — seeds the bounded loop's own counter */
+#define DBRA_D0           0x51c8u /* dbra d0,<disp16> (dbf), the displacement in the next word */
 
 /* One `cmpi.<size> #imm,(addr).l / bne.s <back to the cmpi>` spin at `at`; returns the address past
  * it. The compare is the instruction a `pc` trigger names AND the wait's SITE, and it qualifies
@@ -141,6 +152,47 @@ static void plant_word_spin(void) {
     plant_rts(plant_long(at + 2, WORD_ADDR));
 }
 
+/* ...and the LONGWORD wait `sched_poll32` mirrors. `plant_wait` cannot serve it: a `cmpi.l` carries
+ * a 32-bit immediate where the other two carry a word, so the whole instruction is a different
+ * length and the branch back a different displacement. */
+static void plant_long_spin(void) {
+    uint32_t site = PROBE_ENTRY;
+    uint32_t at;
+
+    plant_word(site, CMPI_L_IMM_ABSL);
+    at = plant_long(plant_long(site + 2, LONG_WANT), LONG_ADDR);
+    int32_t back = (int32_t)site - (int32_t)(at + 2);
+    plant_word(at, (uint16_t)(BNE_S | (uint8_t)back));
+    at += 2;
+    plant_word(at, MOVE_L_ABSL_TO_D1);
+    plant_rts(plant_long(at + 2, LONG_ADDR));
+}
+
+/* ---- THE BOUNDED READ LOOP: a wait SITE with NO SCHEDULE AT ALL --------------------------------
+ *
+ * The empty-schedule case is not an exotic one — it is "the key never comes down", and any loop that
+ * re-reads a byte a fixed number of times and gives up has it. The oracle must count its arrivals
+ * from the SITE declaration alone; keyed on the schedule's own length it counted zero while the
+ * candidate counted real polls, which is a red about nothing (shim.c's gate says so).
+ *
+ * A release wait cannot be that case with more than one iteration in it — with nothing to change the
+ * byte it either leaves on its first read or never leaves — so the routine is a counted loop:
+ * `moveq #N-1,d0` then `move.b (WATCH2).l,d1 / dbra d0,<the move>`. The re-read IS the site, and the
+ * arrivals, the candidate's polls and the loop's own iteration count are all N. */
+#define BOUNDED_READ_PASSES 4u
+#define BOUNDED_READ_SITE   (PROBE_ENTRY + 2u)   /* past the `moveq` that seeds the counter */
+
+static void plant_bounded_reads(void) {
+    uint32_t at = plant_long(BOUNDED_READ_SITE + 2, WATCH2_ADDR);
+
+    plant_word(PROBE_ENTRY, (uint16_t)(MOVEQ_TO_D0 | (BOUNDED_READ_PASSES - 1u)));
+    plant_word(BOUNDED_READ_SITE, MOVE_B_ABSL_TO_D1);
+    plant_word(at, DBRA_D0);
+    /* A dbcc's displacement is measured from its own extension word. */
+    plant_word(at + 2, (uint16_t)((int32_t)BOUNDED_READ_SITE - (int32_t)(at + 2)));
+    plant_rts(at + 4);
+}
+
 /* Build one flattened entry into `flat` at index `i`. Every case spells its entries through this, so
  * the field ORDER lives in one place on this side of the model too. */
 static void set_entry(uint32_t *flat, uint32_t i, uint32_t kind, uint32_t trigger, uint32_t nth,
@@ -164,6 +216,7 @@ static void arm_image(void) {
      * the second spins (Wonder Boy's `flip_screen`). No other case reads it. */
     g_image[WATCH2_ADDR] = WANT;
     plant_word(WORD_ADDR, WORD_HELD);
+    plant_long(LONG_ADDR, LONG_HELD);
     memset(g_image + SCRATCH_ADDR, 0, 4);
 }
 
@@ -183,6 +236,7 @@ static void oracle_case(const char *name, void (*plant)(void), const uint32_t *e
     printf("K %s reached %d\n", name, reached);
     printf("K %s d1 %u\n", name, out[1] & 0xffu);
     printf("K %s d1w %u\n", name, out[1] & 0xffffu);
+    printf("K %s d1l %u\n", name, out[1]);
     printf("K %s count %u\n", name, osh_sched_count());
     printf("K %s applied %u\n", name, osh_sched_applied());
     printf("K %s arrivals %u\n", name, osh_sched_arrivals());
@@ -194,6 +248,8 @@ static void oracle_case(const char *name, void (*plant)(void), const uint32_t *e
     printf("K %s watch2 %u\n", name, g_image[WATCH2_ADDR]);
     for (int i = 0; i < 4; i++)
         printf("K %s scratch%d %u\n", name, i, g_image[SCRATCH_ADDR + i]);
+    for (int i = 0; i < 4; i++)
+        printf("K %s long%d %u\n", name, i, g_image[LONG_ADDR + i]);
 }
 
 /* ---- the candidate side: ../src/sched.c, driven the way harness.differential drives it --------- */
@@ -301,6 +357,43 @@ static uint32_t cand_body_word_wait(uint8_t *image) {
     return 0;                           /* the cap; sched_poll16 has already tallied the refusal */
 }
 
+/* ---- the LONGWORD wait: sched_poll32, the third width ------------------------------------------ */
+
+/* The faithful body for the planted `cmpi.l` spin. Same shape as the word body above it, one width
+ * up: one poll an iteration ticks the clock and the comparand is the full LONG. The guard is above
+ * OS_SCHED_POLL_MAX for `cand_body_word_wait`'s reason — the kit's own cap must be what stops this,
+ * so a mutant that removed it FAILS rather than hanging the suite. */
+static uint32_t cand_body_long_wait(uint8_t *image) {
+    uint32_t seen;
+    uint32_t guard = 0;
+
+    while (sched_poll32(image, LONG_ADDR, PROBE_ENTRY, &seen) && ++guard < WORD_POLL_GUARD)
+        if (seen == LONG_WANT)
+            return seen;
+    return 0;                           /* the cap; sched_poll32 has already tallied the refusal */
+}
+
+/* MUTANT — the LONG wait at a site the run did not declare, which must tally exactly as the byte
+ * and word polls do on the same refusal: one poll counted, one undeclared, one os_refused. */
+static uint32_t cand_body_long_wait_at_an_undeclared_site(uint8_t *image) {
+    uint32_t seen;
+    uint32_t guard = 0;
+
+    while (sched_poll32(image, LONG_ADDR, UNREACHED_PC, &seen) && ++guard < WORD_POLL_GUARD)
+        if (seen == LONG_WANT)
+            return seen;
+    return 0;
+}
+
+/* ---- the bounded read loop's faithful body: N polls at a declared site, NO schedule ------------- */
+static uint32_t cand_body_bounded_reads(uint8_t *image) {
+    uint8_t seen = 0;
+
+    for (uint32_t pass = 0; pass < BOUNDED_READ_PASSES; pass++)
+        seen = sched_poll8(image, WATCH2_ADDR, BOUNDED_READ_SITE);
+    return seen;
+}
+
 static void candidate_case(const char *name, const uint32_t *entries, uint32_t n,
                            const uint32_t *sites, uint32_t site_n,
                            uint32_t (*body)(uint8_t *image)) {
@@ -342,6 +435,8 @@ static void candidate_case(const char *name, const uint32_t *entries, uint32_t n
     printf("K %s watch2 %u\n", name, g_image[WATCH2_ADDR]);
     for (int i = 0; i < 4; i++)
         printf("K %s scratch%d %u\n", name, i, g_image[SCRATCH_ADDR + i]);
+    for (int i = 0; i < 4; i++)
+        printf("K %s long%d %u\n", name, i, g_image[LONG_ADDR + i]);
 }
 
 int main(void) {
@@ -359,6 +454,7 @@ int main(void) {
     const uint32_t no_sites[] = {0};
     const uint32_t unreached_site[] = {UNREACHED_PC};
     const uint32_t two_sites[] = {TWO_WAIT_SITE_1, TWO_WAIT_SITE_2};
+    const uint32_t bounded_site[] = {BOUNDED_READ_SITE};
 
     /* THE RED CASE, and the reason the capability exists: the routine spins on a byte nothing in it
      * writes, so with no schedule it never returns. */
@@ -506,5 +602,26 @@ int main(void) {
     set_entry(flat, 0, OS_SCHED_AT_PC, PROBE_ENTRY, 3, WORD_ADDR, 2, WORD_WANT);
     candidate_case("cand_word_wait_at_an_undeclared_site", flat, 1, one_site, 1,
                    cand_body_word_wait_at_an_undeclared_site);
+
+    /* ---- THE LONGWORD WAIT: the same three claims one width up ---- */
+    set_entry(flat, 0, OS_SCHED_AT_PC, PROBE_ENTRY, 3, LONG_ADDR, 4, LONG_WANT);
+    oracle_case("long_released_at_the_third_arrival", plant_long_spin, flat, 1, one_site, 1);
+    candidate_case("cand_long_wait", flat, 1, one_site, 1, cand_body_long_wait);
+    candidate_case("cand_long_wait_at_an_undeclared_site", flat, 1, one_site, 1,
+                   cand_body_long_wait_at_an_undeclared_site);
+
+    /* ...and its cap: the store lands and leaves the long as the wait already found it. */
+    set_entry(flat, 0, OS_SCHED_AT_PC, PROBE_ENTRY, 1, LONG_ADDR, 4, LONG_HELD);
+    candidate_case("cand_long_wait_never_released", flat, 1, one_site, 1, cand_body_long_wait);
+
+    /* ---- A DECLARED SITE WITH NO SCHEDULE AT ALL, on both shores ----
+     * The bounded read loop reads its byte BOUNDED_READ_PASSES times whatever the byte holds, so
+     * both counts are that number and neither depends on a store. `n = 0` is the whole point: the
+     * oracle used to count arrivals only while the run carried an entry, and a case in this shape
+     * compared real polls against zero. */
+    memset(flat, 0, sizeof flat);
+    oracle_case("no_schedule_but_a_declared_site", plant_bounded_reads, flat, 0, bounded_site, 1);
+    candidate_case("cand_no_schedule_but_a_declared_site", flat, 0, bounded_site, 1,
+                   cand_body_bounded_reads);
     return 0;
 }

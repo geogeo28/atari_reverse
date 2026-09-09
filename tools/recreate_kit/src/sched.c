@@ -12,8 +12,9 @@
  * poll/arrival comparison measures.
  *
  * ON-TARGET builds exclude this file — a reconstruction on the real machine spins on the address
- * and the interrupt writes it — and supply their own uncapped `sched_wait8`/`sched_poll16`. Off
- * target it is compiled into every candidate by kit.mk, which is what the harness checks for.
+ * and the interrupt writes it — and supply their own uncapped `sched_wait8`/`sched_poll16`/
+ * `sched_poll32`. Off target it is compiled into every candidate by kit.mk, which is what the
+ * harness checks for.
  */
 #include <stdint.h>
 
@@ -118,9 +119,12 @@ int sched_wait8(uint8_t *image, uint32_t addr, uint8_t until, uint32_t site_pc) 
     return sched_give_up();
 }
 
-int sched_poll16(uint8_t *image, uint32_t addr, uint32_t site_pc, uint16_t *seen) {
+/* THE CLOCK HALF OF A WIDE WAIT, shared by sched_poll16 and sched_poll32 so that the cap, the
+ * undeclared-site refusal and the one poll an iteration are ONE decision across the widths — the
+ * only thing that may differ between them is how many bytes the caller then reads. Returns 1 when
+ * the caller should read its value and go round again, 0 when the wait is over. */
+static int sched_tick_wide(uint8_t *image, uint32_t addr, uint32_t site_pc) {
     uint32_t site = os_sched_site_index(g_sched_sites, g_sched_site_n, site_pc);
-    *seen = 0;
     if (site == OS_SCHED_NO_SITE) {
         /* sched_poll8 would tally the refusal and hand back a byte, and the caller's loop would then
          * spin to no cap at all — this side owns the bound, so it must be the side that stops.
@@ -138,6 +142,21 @@ int sched_poll16(uint8_t *image, uint32_t addr, uint32_t site_pc, uint16_t *seen
     if (g_sched_site_polls_n[site] >= OS_SCHED_POLL_MAX)
         return sched_give_up();
     (void)sched_poll8(image, addr, site_pc);   /* the clock: counts the arrival, applies the store */
+    return 1;
+}
+
+int sched_poll16(uint8_t *image, uint32_t addr, uint32_t site_pc, uint16_t *seen) {
+    *seen = 0;
+    if (!sched_tick_wide(image, addr, site_pc))
+        return 0;
     *seen = os_in_image(addr, 2) ? be16(image + addr) : (uint16_t)0;
+    return 1;
+}
+
+int sched_poll32(uint8_t *image, uint32_t addr, uint32_t site_pc, uint32_t *seen) {
+    *seen = 0;
+    if (!sched_tick_wide(image, addr, site_pc))
+        return 0;
+    *seen = os_in_image(addr, 4) ? be32(image + addr) : 0u;
     return 1;
 }
