@@ -347,9 +347,13 @@ class AsmTwins:
         # return address at `stack_top` and arg0 at `stack_top + 4`, and the remaining arguments sit
         # above those. Everything higher, up to the image, is the twin's to leave alone.
         frame_end = self.stack_top + 8 + 4 * len(args)
+        # `count(0) != span` and not `any(...)`: both slice the same ~1 MB, but `count` runs in C
+        # where `any` iterates in Python. Measured 4.28 ms -> 0.51 ms a sweep on Bubble Ghost's
+        # 1 MiB image, which is 8.5x of a twin call's whole cost — and a twin suite makes one call
+        # per tick per case (measured 2026-09-08, projects/bubbleghost wave 5b).
         for lo, hi, where in ((frame_end, self.image_at, "before the start of"),
                               (self.image_at + self.image_size, self.sentinel, "past the end of")):
-            if any(mem[lo:hi]):
+            if mem[lo:hi].count(0) != hi - lo:
                 raise AssertionError(
                     f"{symbol} stored {where} the image — a span one row or one word too generous, "
                     f"which the image comparison cannot see")

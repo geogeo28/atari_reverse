@@ -156,6 +156,14 @@ NM_SYMBOL_TYPES = "TtDdBb"
 # local symbols. Naming them splits one routine's cycles across rows that mean nothing, and there
 # are two `L3`s, which `symbol_map`'s duplicate refusal would (rightly) stop the run over.
 ASSEMBLER_LOCAL_RE = re.compile(r"^L\d+$")
+# An asm twin's own SPAN BRACKETS (`<name>_body`, `<name>_body_end`), which `test_sound_asm.py` reads
+# out of the object to compare the transcribed span against the .PRG. They have to be real symbols
+# for that, and `nm` reports local text symbols — so left in the map each one ENDS the range before
+# it, splitting one routine across three names and reading the tick low unless every bracket is also
+# named in SOUND_TICK_SYMBOLS. Dropped here rather than renamed in the `.S`: a bracket that has to
+# dodge an address cannot cover the span it claims to. Ported from
+# projects/zynaps/recreate/atari/profile.py, which measured the same thing first.
+SPAN_MARKER_RE = re.compile(r"_body(_end)?$")
 
 NAMES_TXT = smoke.PROJECT / "names.txt"
 NAMES_FN_RE = re.compile(r"^fn\s+0x([0-9a-fA-F]+)\s+(\S+)", re.M)
@@ -280,16 +288,19 @@ MINIMUM_WINDOW_SPAN = 0.9
 # them must resolve — one that stopped existing (GCC inlined it, `../names.txt` was re-cut) would
 # otherwise drop that routine's cycles in silence, and `symbol_ranges` refuses instead.
 #
-# OURS IS ONE CORE RANGE PLUS THE SHIM'S, BECAUSE THE LINK SPELT IT THAT WAY. Every helper the ISR
-# runs — `sound_voice_tick`, the two step routines, the three `write_*`, `key_off` — is `static` and
-# GCC inlines all of them into `timer_c_sound_isr`, so none carries an address range of its own;
-# what survives beside it is the shim's own entry, which is the whole of the rest of the tick.
+# OURS IS THE TWIN'S RANGES PLUS THE SHIM'S, BECAUSE THE LINK SPELT IT THAT WAY. The handler is
+# `../src/asm/sound_tick.S` now (wave 5b) and it publishes three symbols, all named below; what
+# survives beside them is the shim's own entry, which is the whole of the rest of the tick. The C
+# core it replaces has the shape it always had — every helper it runs is `static` and GCC inlines
+# all of them into `timer_c_sound_isr` — and is named below for the reason the next paragraph but
+# one gives.
 #
 # THE LISTS ARE HAND-MAINTAINED AGAINST WHAT THE MAPS SAY TODAY, and that is a live hazard in ONE
-# direction: a name that VANISHES is refused below, but a name that APPEARS is not noticed. A core
-# edit or an `-O` change that stopped inlining one of those helpers would take its cycles out of the
-# sum AND cut `timer_c_sound_isr`'s own range short at the new symbol, so the tick would read low
-# twice over with nothing red. The shipped side has the same shape for the other reason:
+# direction: a name that VANISHES is refused below, but a name that APPEARS is not noticed. A label
+# added inside the twin, or an `-O` change that stopped inlining one of the C core's helpers, would
+# take that code's cycles out of the sum AND cut the range before it short at the new symbol, so the
+# tick would read low twice over with nothing red. The shipped side has the same shape for the other
+# reason:
 # its one range runs to the next `fn` line in a HAND-EDITED map, so a naming sweep inside
 # [0x1459a, 0x148ea) would truncate it. `sound_tick_cost` reports the BYTES each side's ranges
 # cover, which is the cheap thing a reader can hold against the last run.
@@ -306,10 +317,18 @@ MINIMUM_WINDOW_SPAN = 0.9
 # `bg_timer_c_entry` is the whole tick outside the ISR now — and `bg_write_byte`'s only caller left
 # is `bubble_main.c`'s user-mode `mirror_conterm`, so a tick spends none of it and keeping the name
 # would fold that user-mode traffic into the 200 Hz figure.
+#
+# ...AND WAVE 5b PUT THE HANDLER ITSELF IN ASSEMBLY. `timer_c_sound_isr_asm` is one range like any
+# other: the twin's two SPAN BRACKETS would have split it into three, and `SPAN_MARKER_RE` above
+# drops them from the map instead of this list carrying them. The C core stays in the list though
+# nothing calls it now: it is still linked, its range costs 0, and a build that went back to it
+# would otherwise take its cycles out of this sum with nothing red (atari/build.sh's own gate is
+# the loud half of that — it asks the linked binary which of the two the vector reaches).
 SOUND_TICK_SYMBOLS = {
     OURS: ("bg_timer_c_entry",                                     # bubble_os.s — the WHOLE tick but
-                                                                   # the ISR: count, flag, $484 mirror
-           "timer_c_sound_isr",                                    # src/sound.c, steps inlined
+                                                                   # the handler: count, $484 mirror
+           "timer_c_sound_isr_asm",                                # src/asm/sound_tick.S, the handler
+           "timer_c_sound_isr",                                    # src/sound.c — linked, uncalled
            "psg_gate", "trap9_psg_handler",                        # the gate those writes used to take
            "bg_super_gate", "bg_super_gate_entry"),                # the `trap #9` under it
     SHIPPED: ("timer_c_sound_isr",                                 # 0x1459a, the whole handler
@@ -441,7 +460,8 @@ def elf_symbols(elf):
     symbols = symbol_map(tag_duplicate_names(
         (name, address, kind.upper())
         for address, kind, name in mkprg.nm_rows(elf)
-        if kind in NM_SYMBOL_TYPES and not ASSEMBLER_LOCAL_RE.match(name)), elf)
+        if kind in NM_SYMBOL_TYPES and not ASSEMBLER_LOCAL_RE.match(name)
+        and not SPAN_MARKER_RE.search(name)), elf)
     if OUR_IMAGE_TOP_SYMBOL not in symbols:
         raise SystemExit(f"FAIL: {elf} carries no {OUR_IMAGE_TOP_SYMBOL} — tos.ld's own marker for "
                          f"the top of our image is gone, so every cycle spent above it (ROM TOS, "

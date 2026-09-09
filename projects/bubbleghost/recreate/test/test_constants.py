@@ -32,6 +32,7 @@ from pathlib import Path
 import harness
 
 import loader
+from recreate_kit import asm_twin
 
 REC = Path(__file__).resolve().parents[1]
 TEST_DIR = Path(__file__).resolve().parent
@@ -256,3 +257,114 @@ def test_every_named_address_is_inside_the_program():
                     f"{path}'s {name} = {value:#x} is outside the program's globals "
                     f"[{bss_base:#x}, {loader.PROGRAM_END:#x}) — an `n(a4)` displacement is not an "
                     f"address; the address is A4_BASE + n, signed")
+
+
+# =================================================================================================
+# The asm twin's own constants
+# =================================================================================================
+# `src/asm/*.S` cannot include `include/*.h`: those headers spell their values with C's `u` suffix,
+# which the assembler will not parse. So a twin restates the handful it needs as `.equ`, and
+# CLAUDE.md's rule for two spellings that cannot import each other applies — pin the copy equal with
+# a test. This is that test, and it reads the values out of the ASSEMBLED OBJECT rather than out of
+# the `.S` text: what it compares is then the number the assembler actually used, arithmetic and
+# all, rather than a second parse of the source. Ported from
+# `projects/zynaps/recreate/test/test_constants.py`, whose header carries the rest of the argument.
+#
+# PER OBJECT, NOT PER BLOB: two `.S` files that both `.equ` a name collapse into one symbol in the
+# linked blob, so a wrong value in one would be vouched for by its neighbour's correct one. kit.mk
+# keeps `build/asm/<stem>.o` per source for exactly this.
+_EQU_RE = re.compile(r"^\s*\.equ\s+(\w+)\s*,", re.M)
+# Any `#define NAME`, whatever its value looks like — the set of names a header OWNS, as opposed to
+# `_iter_defines`'s narrower set of names whose value it can also READ. The gap between the two is
+# where an unpinned constant hides: a twin restating a header value that is an expression rather
+# than a literal would be `name not in headers`, and skipped in silence. Zynaps measured exactly
+# that (its `ASM_DERIVED_PINS` comment: the three most drift-prone values in one `.S` were vouched
+# for by a test that never looked at them), so the two sets are kept apart here too.
+_DEFINE_NAME_RE = re.compile(r"^#define\s+(\w+)", re.M)
+
+# The header constants whose value the scraper cannot read, because they are expressions over other
+# constants. A twin that restates one restates its RESULT, so the derivation has to be recomputed
+# here — spelt as the header spells it, over values the scraper CAN read. EMPTY TODAY and kept
+# rather than dropped: `src/asm/sound_tick.S` needs none (it spells `PSG_REG_VOLUME(v)` and its two
+# siblings as the arithmetic they are, which the transcription pin holds), and the first twin that
+# does need one must add its derivation rather than go unpinned.
+ASM_DERIVED_PINS = {}
+
+# THE SHIM'S HEADERS ARE IN THE HEADER SET TOO, which `_sources()` is not. A twin addresses the
+# machine as well as the image — `sound_tick.S` writes $ffff8800 — and those two numbers live in
+# `atari/shim_include/psg.h` beside the C door that writes them from the other side of the seam
+# (`atari/build.sh` pins the same pair against `bubble_os.s`). Left out, the twin's copy of them
+# would be the one spelling nothing checked.
+_ASM_HEADER_GLOBS = ("include/*.h", "atari/shim_include/*.h")
+
+
+def _asm_header_defines():
+    """{name: (value, path)} over every header a twin may restate a constant from."""
+    out = {}
+    for glob in _ASM_HEADER_GLOBS:
+        for path in sorted(REC.glob(glob)):
+            for name, value in _iter_defines(path.relative_to(REC)):
+                out.setdefault(name, (value, str(path.relative_to(REC))))
+    return out
+
+
+def _asm_header_define_names():
+    """Every name those headers define, readable value or not."""
+    names = set()
+    for glob in _ASM_HEADER_GLOBS:
+        for path in sorted(REC.glob(glob)):
+            names.update(_DEFINE_NAME_RE.findall(path.read_text()))
+    return names
+
+
+def _asm_objects():
+    """[(source, object)] for every twin, or a failure naming the build step that makes them."""
+    sources = sorted((REC / "src" / "asm").glob("*.S"))
+    assert sources, "no twins in src/asm — this test would pass over any build at all"
+    pairs = []
+    for source in sources:
+        obj = REC / "build" / "asm" / f"{source.stem}.o"
+        assert obj.exists(), (
+            f"{obj} is missing — the asm twins were never assembled. `make test` builds them "
+            f"first; `make asm` builds them alone.")
+        pairs.append((source, obj))
+    return pairs
+
+
+def test_asm_twin_equates_match_the_headers():
+    """Every `.equ` in a twin whose name a header also defines must hold the header's value.
+
+    NON-VACUOUS PER FILE, not per suite: each `.S` must contribute at least one pinned name, and is
+    read from its OWN object so a neighbour's correct copy cannot vouch for it. A name no header
+    defines is the twin's own (`../src/asm/sound_tick.S`'s `cmp_imm_*` macros use none), and is left
+    alone rather than demanded — but a name that LOOKS like a header's and is not is the thing this
+    would miss, so a twin names its constants as the headers name them.
+    """
+    headers = _asm_header_defines()
+    header_names = _asm_header_define_names()
+    for source, obj in _asm_objects():
+        equates = {name: value
+                   for name, (value, kind) in asm_twin.elf_symbols(obj).items() if kind == "a"}
+        pinned = [name for name in _EQU_RE.findall(source.read_text()) if name in header_names]
+        assert pinned, (
+            f"src/asm/{source.name} declares no `.equ` that any header also defines, so nothing in "
+            f"it is pinned. Name its constants as the headers name them.")
+        for name in pinned:
+            assert name in equates, (
+                f"src/asm/{source.name} declares `.equ {name}` but its object has no such absolute "
+                f"symbol — the scrape and the assembler disagree about what a `.equ` is")
+            if name in headers:
+                expected, header = headers[name]
+            else:
+                # A header EXPRESSION rather than a literal. It still has to be pinned, so the
+                # derivation is recomputed here rather than the name being skipped.
+                assert name in ASM_DERIVED_PINS, (
+                    f"src/asm/{source.name} restates {name}, which a header defines as an "
+                    f"expression this file's scraper cannot read. Add its derivation to "
+                    f"ASM_DERIVED_PINS so the value is pinned — a name that is neither readable "
+                    f"nor derived is UNPINNED, and silence there is what this test prevents.")
+                expected = ASM_DERIVED_PINS[name]({k: v for k, (v, _) in headers.items()})
+                header = "a derived define, recomputed by ASM_DERIVED_PINS"
+            assert equates[name] == expected, (
+                f"src/asm/{source.name}'s {name} assembles to {equates[name]:#x}, but {header} "
+                f"defines it as {expected:#x}")

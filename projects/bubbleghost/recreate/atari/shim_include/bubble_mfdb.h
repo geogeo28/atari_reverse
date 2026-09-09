@@ -2,8 +2,10 @@
  *
  * `MFDB_ADDR` and `MFDB_WDWIDTH` are spelt twice in this build's include closure: the kit's `os.h`
  * names the GEM Memory Form Definition Block's fields for its software VDI, and `../include/blit.h`
- * names them for the game's own binding. The two shim C files are the only translation units in the
- * tree that include both, so the redefinition is theirs to deal with.
+ * names them for the game's own binding. `bubble_main.c` is the only translation unit in the tree
+ * that includes both, so the redefinition is its to deal with — and since wave 5a the GEM door is
+ * assembly and takes the KIT's spelling straight from `build.sh`'s two-language loop, which is what
+ * makes the assertion below the only thing left holding the two sides of the number together.
  *
  * A BARE `#undef` PAIR WOULD HIDE A REAL BUG, which is why this file exists instead of one. The two
  * headers agree today (0 and 8); if `blit.h` ever stopped agreeing with the kit, the cores and this

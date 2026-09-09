@@ -63,11 +63,11 @@ long  Random(void);                                       /* 0x11 */
 void  Vsync(void);                                        /* 0x25 */
 long  Supexec(void (*routine)(void));                     /* 0x26 */
 
-/* ---- GEM (trap #2): the one call both bindings make ------------------------------------------- */
-/* `d0` selects the AES (0xc8) or the VDI (0x73) and `d1` is the parameter block — which is exactly
- * what the game's own `gem_aes` @ 0x149b6 and `vdi_call` @ 0x168d4 do. The POINTER TRANSLATION that
- * has to happen around it is `os.h`'s, not this file's: this is the trap and nothing else. */
-long bg_gem_trap(long d0, void *pblock);
+/* ---- GEM (trap #2) is NOT declared here --------------------------------------------------------
+ * `bubble_os.s`'s `bg_gem_trap` takes its selector and its parameter block in `d0`/`d1` — exactly
+ * as the game's own `gem_aes` @ 0x149b6 and `vdi_call` @ 0x168d4 do — and is reached only from the
+ * door in that same file, so it has no C calling convention to declare. What C DOES call is
+ * `bg_gem_dispatch`, and `os.h` declares it beside the two doors that are one call to it. */
 
 /* ---- the trap #9 supervisor gate --------------------------------------------------------------
  * THE ORIGINAL'S OWN MECHANISM, and this build needs it for the original's own reason. A user-mode

@@ -792,9 +792,11 @@ def candidate_image(img):
     A COPY of ``img``, never an alias of it: a caller that needs the reconstruction to write through
     a buffer it already holds is a different shape and must not come here.
 
-    SEVEN CALL SITES, and the number is grepped rather than remembered
+    EIGHT CALL SITES, and the number is grepped rather than remembered
     (``grep -rn 'candidate_image(' tools projects --include='*.py'``): this module's ``differential``
-    and its attribution pass, and five in Wonder Boy — ``leaf.run_candidate_only`` plus the four
+    and its attribution pass, Bubble Ghost's ``test_sound_asm.py`` (an ASM TWIN's differential, which
+    runs the C core on its own to compare the twin against), and five in Wonder Boy —
+    ``leaf.run_candidate_only`` plus the four
     enumerations that drive the candidate directly with no oracle beside them (``test_behavior.py``'s
     65,536 raw type values, its 256 swoop states and its 256 pickup indices, and ``test_sound.py``'s
     refusal stepping). Those four matter most: they are the WILDEST pointers any case computes, so a
@@ -901,10 +903,10 @@ def _sched_refusal_hint():
         clauses.append(
             f" {_lib.g_sched_undeclared()} of them were a POLL AT A SITE THIS CASE DID NOT DECLARE: "
             f"the run's declared sites took {declared}"
-            f", and the reconstruction called sched_poll8/sched_poll16 naming another PC. A poll "
-            f"nobody counts is the hole the sites close (os.h, \"WAIT SITES\"), so it is refused "
-            f"rather than served. Either the case is missing that PC from `wait_sites=`, or the "
-            f"reconstruction names a site the original's wait does not re-execute.")
+            f", and the reconstruction called sched_poll8/sched_poll16/sched_poll32 naming another "
+            f"PC. A poll nobody counts is the hole the sites close (os.h, \"WAIT SITES\"), so it "
+            f"is refused rather than served. Either the case is missing that PC from `wait_sites=`, "
+            f"or the reconstruction names a site the original's wait does not re-execute.")
     if _lib.g_sched_exhausted():
         clauses.append(
             f" {_lib.g_sched_exhausted()} of them were a WAIT that ran to os.h's OS_SCHED_POLL_MAX "
@@ -1352,6 +1354,26 @@ def arm_candidate(psg_seed=None, hw_seed=None, scheduled=(), sites=()):
     _seed_candidate_psg(psg_seed)
     _seed_candidate_hw(hw_seed)
     _seed_candidate_sched(scheduled, sites)
+
+
+def candidate_psg_events():
+    """The candidate's ordered YM2149 stream from the run that just finished, as the oracle's
+    ``emu.psg_events()`` reports the oracle's: ``(kind, register, value)`` per direct access.
+
+    PUBLIC for `arm_candidate`'s reason. An ASM TWIN's differential compares the twin's chip traffic
+    against the C core's as two separate candidate runs (the twin's lands in the ORACLE's ledger,
+    since it writes the real ports under Musashi), and the alternative — a hand copy of these three
+    lines reaching into ``_lib`` across a module boundary — is what the first twin suite to need it
+    actually wrote. The copy also loses the optional-ABI diagnosis below.
+    """
+    if not _has_psg_ledger:
+        raise AssertionError(
+            f"{_CFG.name}'s candidate exports no {'/'.join(_missing_psg_ledger)}, so it keeps no "
+            f"direct-PSG ledger to read — build it with tools/recreate_kit/src/psg.c (README.md, "
+            f"\"What the candidate .so must export\")")
+    count = _lib.g_psg_log_count()
+    kinds, regs, vals = _lib.g_psg_log_kinds(), _lib.g_psg_log_regs(), _lib.g_psg_log_vals()
+    return [(kinds[i], regs[i], vals[i]) for i in range(count)]
 
 
 def _seed_candidate_sched(scheduled, sites):

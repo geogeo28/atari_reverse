@@ -172,8 +172,8 @@ CONTERM_MIRROR=$(awk '/^bg_timer_c_entry:/ {inside = 1; next}
   echo "       is a silent regression no screenshot and no differential can see."; exit 1; }
 echo ">> the 200 Hz tick still mirrors \$484 out to the machine"
 
-# ---- ...and the ADDRESSES bubble_os.s shares with a C header are ONE set of numbers -------------
-# Three entries, each `<asm name>:<C name>:<C file>`. The two PSG ports: the trapped write is
+# ---- ...and the NUMBERS bubble_os.s shares with a C header are ONE set of numbers ---------------
+# Fourteen entries, each `<asm name>:<C name>:<C file>`. The two PSG ports: the trapped write is
 # bubble_os.s's `bg_super_gate_entry` and the ISR's untrapped one is `psg_untrapped_write` in
 # shim_include/psg.h; they address the same chip, so a disagreement writes a sound register to
 # whatever else lives at the address. (`PSG_REG_MASK` is deliberately NOT here: only the trapped door
@@ -184,13 +184,47 @@ echo ">> the 200 Hz tick still mirrors \$484 out to the machine"
 # TOS's low memory two hundred times a second. It is in assembly at all because the C spelling
 # (`*(volatile uint8_t *)TOS_CONTERM = ...`) compiles to that same one instruction and warns on every
 # build.
+#
+# AND THE ELEVEN THE GEM DOOR IS BUILT OUT OF. `bg_gem_dispatch` is hand-written 68000 (wave 5a), so
+# the selector it puts in `d0`, the `contrl` slots it patches, the opcode it dispatches on, the
+# MFDB field it walks and the length of each parameter block are all IMMEDIATES in assembly where
+# they used to be macros the compiler resolved. Every one of them is scraped back out of the header
+# that owns it — the kit's `os.h` for the GEM layout, the cores' `frontend.h` for the game's own
+# `contrl` address — so a slot index that moves reds the build instead of making the door patch the
+# wrong two words. The two `_PB_` entries are the LAST index of each block, and the door derives
+# each block's length as one more than it.
+SHARED_NUMBERS=0
 for PORT in PSG_SELECT:BG_PSG_SELECT:"$HERE/shim_include/psg.h" \
             PSG_DATA:BG_PSG_DATA_OFFSET:"$HERE/shim_include/psg.h" \
-            CONTERM:TOS_CONTERM:"$REC/include/sound.h"; do
+            CONTERM:TOS_CONTERM:"$REC/include/sound.h" \
+            GEM_VDI:GEM_VDI:"$KIT/include/os.h" \
+            GEM_AES:GEM_AES:"$KIT/include/os.h" \
+            VDI_VRO_CPYFM:VDI_VRO_CPYFM:"$KIT/include/os.h" \
+            VDI_CONTRL_OPCODE:VDI_CONTRL_OPCODE:"$KIT/include/os.h" \
+            VDI_CONTRL_SRC_MFDB:VDI_CONTRL_SRC_MFDB:"$KIT/include/os.h" \
+            VDI_CONTRL_DST_MFDB:VDI_CONTRL_DST_MFDB:"$KIT/include/os.h" \
+            VDI_PB_PTSOUT:VDI_PB_PTSOUT:"$KIT/include/os.h" \
+            AES_PB_ADDROUT:AES_PB_ADDROUT:"$KIT/include/os.h" \
+            MFDB_ADDR:MFDB_ADDR:"$KIT/include/os.h" \
+            MFDB_SCREEN_ADDR:MFDB_SCREEN_ADDR:"$KIT/include/os.h" \
+            A_VDI_CONTRL:A_vdi_contrl:"$REC/include/frontend.h"; do
   C_FILE=${PORT##*:}
   C_NAME=${PORT#*:}; C_NAME=${C_NAME%%:*}
-  FROM_S=$(sed -n "s/^ *${PORT%%:*} *= *\([0-9a-fA-FxX]*\).*/\1/p" "$HERE/bubble_os.s")
-  FROM_H=$(sed -n "s/^#define $C_NAME  *\([0-9a-fA-FxX]*\)u.*/\1/p" "$C_FILE")
+  # ...and the SAME anchoring on the assembly side, for the same reason: `MFDB_ADDR = 0 + 8` would
+  # otherwise scrape `0`, agree with the header's 0, and leave the door reading the raster pointer
+  # from offset 8. The constants block right below these eleven is itself written in expression form
+  # (`CONTRL_SRC_MFDB_SLOT = VDI_CONTRL_SRC_MFDB * CONTRL_WORD_BYTES`), so that respelling is the
+  # natural next edit. A `|` comment is this file's line-end, so it is what may follow the digits.
+  # (`@` is the delimiter, because `|` is the pattern's own line-end comment character.)
+  FROM_S=$(sed -n "s@^ *${PORT%%:*} *= *\([0-9a-fA-FxX][0-9a-fA-FxX]*\)\([ 	]*\(|.*\)\{0,1\}\)\{0,1\}\$@\1@p" "$HERE/bubble_os.s")
+  # The `u` suffix is OPTIONAL, because the kit spells `GEM_VDI 0x73u` and `VDI_CONTRL_SRC_MFDB 7`
+  # — and THE VALUE IS ANCHORED, because making `u` optional on its own turns this scrape from
+  # fail-closed to fail-OPEN. With `u` mandatory, `#define VDI_PB_PTSOUT 4 + 1` matched nothing and
+  # the empty-scrape guard below reddened the build; optional, it scrapes the leading `4`, compares
+  # equal to the assembly's 4, and prints the green line over a value that is really 5. So what may
+  # follow the digits is pinned too: an optional u/U, then end of line or whitespace or a comment.
+  # `printf '%d'` cannot catch this — a truncated numeric prefix is still a number.
+  FROM_H=$(sed -n "s|^#define $C_NAME  *\([0-9a-fA-FxX][0-9a-fA-FxX]*\)[uU]\{0,1\}\([ 	]*\(/\*.*\)\{0,1\}\)\{0,1\}\$|\1|p" "$C_FILE")
   # An EMPTY scrape is refused first, because `printf '%d' ""` is 0 with exit status 0 on the bash
   # this runs under — two missed patterns would otherwise agree at zero and the gate would print its
   # green line over nothing. Past that, both are normalised to decimal so 0x2 and 2 compare equal,
@@ -204,9 +238,11 @@ for PORT in PSG_SELECT:BG_PSG_SELECT:"$HERE/shim_include/psg.h" \
     echo "       $C_FILE, and at least one is not a number — the pattern is matching only part of"
     echo "       what it should, and a clean report from it would mean nothing"; exit 1; }
   [ "$VALUE_S" = "$VALUE_H" ] || {
-    echo "ERROR: the address is $FROM_S in bubble_os.s (${PORT%%:*}) and $FROM_H in $C_FILE"
-    echo "       ($C_NAME). The two spellings would reach different bytes of the machine."
+    echo "ERROR: the value is $FROM_S in bubble_os.s (${PORT%%:*}) and $FROM_H in $C_FILE"
+    echo "       ($C_NAME). The two spellings would reach different bytes of the machine, or"
+    echo "       different words of the game's own arrays."
     exit 1; }
+  SHARED_NUMBERS=$((SHARED_NUMBERS + 1))
 done
 # ...and that the untrapped door's BODY is those two macros and nothing else: exactly two volatile
 # byte stores, select before data. The equality above pins the numbers; this pins that they are what
@@ -238,8 +274,41 @@ PSG_TRAPPED_MASKS=$(grep -c '^ *andi\.l  *#PSG_REG_MASK,%d1$' "$HERE/bubble_os.s
   echo "       in bubble_os.s, not once. The TRAPPED door is where this build's register mask lives"
   echo "       (shim_include/psg.h's header argues why the untrapped one has none); losing it makes"
   echo "       the two doors agree where the original's two do not."; exit 1; }
-echo ">> bubble_os.s's 3 shared addresses agree with their C headers, the ISR's store is those 2" \
-     "stores and nothing else, and only the trapped door masks"
+echo ">> bubble_os.s's $SHARED_NUMBERS shared numbers agree with their C headers, the ISR's store" \
+     "is those 2 stores and nothing else, and only the trapped door masks"
+
+# ---- ...and the GEM door's C ARGUMENT LAYOUT, which is the number the loop above cannot see -----
+# `bg_gem_dispatch` is assembly and reads its three arguments at fixed `%sp` offsets (`ARG_MEM = 4`,
+# `ARG_SELECTOR = 8`, `ARG_PBLOCK = 12`, m68k SysV: every scalar in its own longword slot, first
+# argument lowest). Those offsets ARE the C prototype, restated in a second language — and unlike
+# the eleven constants above there is no `#define` to scrape, so the prototype's own text is what is
+# pinned. Reorder the parameters, widen one, or add a fourth and the door silently reads the wrong
+# slots: `%d1` becomes the selector, every staged pointer is translated by 0x73, and the ROM VDI is
+# handed wild addresses inside a `trap #2`. That is a hardware-only fault (the differential never
+# runs this door) with no other surface in the tree.
+DOOR_PROTOTYPE=$(sed -n 's/^\(int bg_gem_dispatch(.*);\)$/\1/p' "$HERE/shim_include/os.h")
+DOOR_PROTOTYPE_EXPECTED='int bg_gem_dispatch(uint8_t *mem, uint32_t selector, uint32_t pblock);'
+[ "$DOOR_PROTOTYPE" = "$DOOR_PROTOTYPE_EXPECTED" ] || {
+  echo "ERROR: the GEM door's prototype in shim_include/os.h is not the one bubble_os.s's ARG_MEM /"
+  echo "       ARG_SELECTOR / ARG_PBLOCK offsets are written for."
+  echo "       expected: $DOOR_PROTOTYPE_EXPECTED"
+  echo "       scraped:  $DOOR_PROTOTYPE"
+  echo "       Change the offsets with it, or change it back."; exit 1; }
+
+# ...and that the door still BUMPS the three counters with a longword add. `bubble_backend.c` pins
+# the C side (`_Static_assert(sizeof bg_vdi_calls == 4)`), which can only see C narrowing the type —
+# an `addq.w` in the assembly would increment the high half of the neighbouring counter on this
+# big-endian layout and nothing in C could say so. This is the other direction, in the same shape as
+# the PSG store-line gate above: the instruction itself, counted.
+for COUNTER in bg_vdi_calls bg_aes_calls bg_vdi_raster_copies; do
+  BUMPS=$(grep -c "^ *addq\.l  *#1,$COUNTER\$" "$HERE/bubble_os.s" || true)
+  [ "$BUMPS" = "1" ] || {
+    echo "ERROR: 'addq.l #1,$COUNTER' was scraped $BUMPS times in bubble_os.s, not once. STATE.BIN"
+    echo "       publishes this counter and smoke.py pins it; a narrowed or duplicated bump is a"
+    echo "       silently wrong record."; exit 1; }
+done
+echo ">> the GEM door's C prototype matches its asm argument offsets, and its 3 counters take an" \
+     "addq.l each"
 
 # ---- the trap-register scan ---------------------------------------------------------------------
 # docs/on-target-execution.md class 3's register half: the one hardware-only bug class no
@@ -262,12 +331,18 @@ git -C "$REC" diff --quiet HEAD -- src include || {
   echo "       program with the same name. Commit (or revert) these first:"
   git -C "$REC" diff --stat HEAD -- src include | sed 's/^/         /'
   exit 1; }
-UNTRACKED_CORES=$(git -C "$REC" ls-files --others --exclude-standard -- 'src/*.c' 'include/*.h')
+# ...OVER `src/asm/*.S` TOO, which is not decoration: an asm twin is a shipping core (it is linked
+# below, and it is what the 200 Hz vector reaches), and an UNTRACKED one would be assembled, linked
+# and certified by this gate's own green line. The tracked half above already covers a `.S` once it
+# is committed; this is the half that was open. Measured 2026-09-08: with only the two C globs,
+# `ls-files --others` returned nothing while `src/asm/sound_tick.S` sat untracked in the tree.
+CORE_GLOBS=("src/*.c" "include/*.h" "src/asm/*.S")
+UNTRACKED_CORES=$(git -C "$REC" ls-files --others --exclude-standard -- "${CORE_GLOBS[@]}")
 [ -z "$UNTRACKED_CORES" ] || {
   echo "ERROR: ../src or ../include holds source git does not track, and \`git diff\` is silent about"
   echo "       untracked files — so the gate above would have passed over it. Commit or remove:"
   echo "$UNTRACKED_CORES" | sed 's/^/         /'; exit 1; }
-CORE_FILE_COUNT=$(git -C "$REC" ls-files -- 'src/*.c' 'include/*.h' | wc -l | tr -d ' ')
+CORE_FILE_COUNT=$(git -C "$REC" ls-files -- "${CORE_GLOBS[@]}" | wc -l | tr -d ' ')
 [ "$CORE_FILE_COUNT" -gt 0 ] || {
   echo "ERROR: git tracks no ../src/*.c or ../include/*.h at all — the scrape is broken and a clean"
   echo "       report from this gate would mean nothing"; exit 1; }
@@ -283,6 +358,15 @@ CFLAGS="-m68000 -O2 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-
 CORES="$(ls "$REC"/src/*.c)"
 [ -n "$CORES" ] || { echo "ERROR: no cores found in $REC/src"; exit 1; }
 SHIM_SOURCES="$HERE/bubble_os.s $HERE/bubble_main.c $HERE/bubble_backend.c"
+# ---- ...and the ASM TWINS, which are cores too --------------------------------------------------
+# `../src/asm/*.S` are hand-written m68k TRANSCRIPTIONS of the original binary's own instruction
+# stream, each carrying the C signature of the verified core it substitutes for here. They are built
+# from the SAME source the differential runs — `test/test_sound_asm.py` assembles them through
+# kit.mk and compares each against its C core over the whole image and the PSG ledger — so what
+# ships is instruction-for-instruction what was verified. Each `.S`'s own header says what it
+# transcribes, what it does NOT, and which pin holds which half.
+ASM_CORES="$(ls "$REC"/src/asm/*.S 2>/dev/null || true)"
+[ -n "$ASM_CORES" ] || { echo "ERROR: no asm twins found in $REC/src/asm"; exit 1; }
 
 OBJ="$BUILD/obj"
 rm -rf "$OBJ"; mkdir -p "$OBJ"
@@ -295,6 +379,16 @@ for source in $SHIM_SOURCES; do
 done
 for source in $CORES; do
   object="$OBJ/core_$(basename "${source%.c}").o"
+  $CC $CFLAGS $DEF -c "$source" -o "$object"
+  CORE_OBJECTS="$CORE_OBJECTS $object"
+done
+# A LOOP OF ITS OWN, and the reason is the object PREFIX rather than the flags: they are the C
+# loop's flags exactly. `asm_` keeps a future `foo.c` and `foo.S` from writing the same object.
+# (What kit.mk adds for the off-target assembly of these same files — `-DRECREATE_HOST_DIFFERENTIAL`
+# and the door macros — is not subtracted here, because this build never had it; the two builds are
+# held to the same bytes by the span check after the link rather than by their flag lists.)
+for source in $ASM_CORES; do
+  object="$OBJ/asm_$(basename "${source%.S}").o"
   $CC $CFLAGS $DEF -c "$source" -o "$object"
   CORE_OBJECTS="$CORE_OBJECTS $object"
 done
@@ -453,6 +547,59 @@ ENTRY=$(m68k-elf-nm "$BUILD/bubble.elf" | awk '$3=="_start"{print $1}')
 
 DISASSEMBLY="$BUILD/bubble.dis"
 m68k-elf-objdump -d "$BUILD/bubble.elf" > "$DISASSEMBLY"
+
+# ---- the asm twin is what the 200 Hz vector reaches, and the C core it replaces is not ----------
+# ASKED OF THE LINKED BINARY, because the way this substitution fails is SILENT: `bg_timer_c_entry`
+# calling `timer_c_sound_isr` again would boot, play, sound identical and cost 440 cycles a tick
+# more — the C core is still linked (both are, and both are correct), so nothing else here would
+# notice. Two counts rather than one: a build that called NEITHER would leave the tick doing nothing
+# at all, which is also a clean-looking screenshot for the length of a menu.
+#
+# SCOPED TO `bg_timer_c_entry`'s OWN BLOCK, label to next label, for the CONTERM_MIRROR gate's
+# reason and for one more: the harness glue in ../src/sound.c is linked into this .PRG too, and
+# `g_timer_c_sound_isr` is a `bra` into the core while `g_timer_c_sound_isr_ticks` reaches it
+# through `%a2` — so a file-wide count would be asserting GCC's tail-call decisions, and would
+# refuse a correct build the day one of them became a `jsr`.
+#
+# `jsr|bsr`, not `jsr`: the two call forms assemble differently and a `bsr` to the C core would read
+# as "never called" — a FALSE PASS, which is the direction that matters here.
+TICK_ENTRY_BLOCK=$(awk '/^[0-9a-f]+ <bg_timer_c_entry>:/ {inside = 1; next}
+                        /^[0-9a-f]+ <[A-Za-z_]/ {inside = 0}
+                        inside' "$DISASSEMBLY")
+[ -n "$TICK_ENTRY_BLOCK" ] || {
+  echo "ERROR: bg_timer_c_entry has no block in $DISASSEMBLY — the scrape is broken and a clean"
+  echo "       report from this gate would mean nothing"; exit 1; }
+TICK_TWIN_CALLS=$(printf '%s\n' "$TICK_ENTRY_BLOCK" \
+                  | grep -cE '(jsr|bsr).*<timer_c_sound_isr_asm>' || true)
+TICK_CORE_CALLS=$(printf '%s\n' "$TICK_ENTRY_BLOCK" \
+                  | grep -cE '(jsr|bsr).*<timer_c_sound_isr>' || true)
+[ "$TICK_TWIN_CALLS" = "1" ] && [ "$TICK_CORE_CALLS" = "0" ] || {
+  echo "ERROR: bg_timer_c_entry reaches timer_c_sound_isr_asm $TICK_TWIN_CALLS time(s) and the C"
+  echo "       core timer_c_sound_isr $TICK_CORE_CALLS time(s); this build wants 1 and 0."
+  echo "       ../src/asm/sound_tick.S is the hand-written transcription that replaces the core on"
+  echo "       target (test/test_sound_asm.py is what verifies it equals the core), and"
+  echo "       bg_timer_c_entry in bubble_os.s is its one call site."; exit 1; }
+
+# ...AND THE BYTES THAT SHIP ARE THE BYTES THAT WERE VERIFIED. `test/test_sound_asm.py` compares the
+# twin's transcribed span against the original's — but over the blob KIT.MK assembles, with kit.mk's
+# flags. This build assembles the same `.S` with its own, and nothing held the two outputs against
+# each other: a twin that ever grew an `#ifdef` (the callback door the kit documents, a `BG_MODE`
+# guard) would leave the differential verifying one instruction stream while the .PRG shipped
+# another, with the transcription pin green either way. So the same span is compared again HERE,
+# against the same reference — the relocated image this build just generated, which IS the
+# original's memory at ../project.toml's load base.
+# The transcribed span's address in the original — the same pair `test/test_sound_asm.py` calls
+# ORIGINAL_BODY, and the two are held equal by both comparing against the same image bytes.
+TWIN_BODY_AT=0x145be
+TWIN_SPAN=$("$PY" "$HERE/asm_twin_ships.py" "$OBJ/asm_sound_tick.o" timer_c_sound_isr \
+            "$TWIN_BODY_AT" "$DISK/c/GHOST.IMG" "$LOAD_BASE")
+[ "$TWIN_SPAN" = "OK" ] || {
+  echo "ERROR: the asm twin this build assembled is not a transcription of the original: $TWIN_SPAN"
+  echo "       test/test_sound_asm.py compares the same span over the blob the KIT assembles; this"
+  echo "       is the same comparison over the object about to be LINKED, so the two builds cannot"
+  echo "       ship different instruction streams under one green differential."; exit 1; }
+echo ">> the 200 Hz vector reaches the asm twin, nothing calls the C core it replaces, and the 792" \
+     "bytes about to ship are the original's own"
 
 # ---- the codegen scan: docs/on-target-execution.md class 6 --------------------------------------
 # A store through the same address register the source operand postincrements. The 68000 computes a

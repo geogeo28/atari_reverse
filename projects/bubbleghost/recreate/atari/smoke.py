@@ -1164,7 +1164,7 @@ def arm_the_room_anchor(session, room_pc, side, screen_address):
 
     THE SECOND ARRIVAL IS THE ONE THAT PINS THE GEM DOOR. At the first, the room has been composed
     and `game_frame_update` has not run once, so no `vro_cpyfm` has reached the displayed screen and
-    the whole MFDB raster translation (`atari/bubble_backend.c`, `raster_copy_call`) is invisible to
+    the whole MFDB raster translation (`atari/bubble_os.s`, `bg_gem_raster_copy`) is invisible to
     the comparison — two mutations of it survived this mode AND `title`, and that hole is what this
     second capture closes. One whole frame later — `save_sprite_backgrounds`, `draw_sprites`,
     `present_room`, `restore_sprite_backgrounds`, `objects_animate_and_draw` — the displayed

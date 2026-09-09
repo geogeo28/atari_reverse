@@ -459,10 +459,13 @@ static inline void os_vsync(void) { Vsync(); }
  * against the base it runs at. Here the VDI would dereference an offset as an address and write
  * over the 68000's vector page.
  *
- * So the translation lives in the door, and `bg_gem_dispatch` (bubble_backend.c) is it: it builds a
- * machine-address parameter block over the image's own arrays, walks the MFDB chain for a raster
- * copy, makes the trap, and leaves every ANSWER where the game's code reads it — the output arrays
- * are the image's, so the VDI writes straight into them and nothing is copied back.
+ * So the translation lives in the door, and `bg_gem_dispatch` (bubble_os.s, "GEM (trap #2): the
+ * whole door") is it: it builds a machine-address parameter block over the image's own arrays,
+ * walks the MFDB chain for a raster copy, makes the trap, and leaves every ANSWER where the game's
+ * code reads it — the output arrays are the image's, so the VDI writes straight into them and
+ * nothing is copied back. It is hand-written 68000 because a C door cannot keep a value in a
+ * register across a `jsr` to a routine that traps; that file's header comment carries the whole
+ * argument and ../STATUS.md's wave 5a the measurement.
  * ============================================================================================= */
 int bg_gem_dispatch(uint8_t *mem, uint32_t selector, uint32_t pblock);
 

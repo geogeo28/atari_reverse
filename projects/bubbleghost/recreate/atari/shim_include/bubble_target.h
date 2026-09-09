@@ -60,7 +60,10 @@ extern uint32_t bg_timer_c_chain;
 
 /* How many `trap #2` calls the GEM door made, split by binding. STATE.BIN publishes both: a VDI
  * count of zero is a menu that drew nothing, which no screenshot of a black page can tell from a
- * palette fault. */
+ * palette fault. The door that bumps them is `bubble_os.s`'s; the storage stays in C so that a
+ * `_Static_assert` (bubble_backend.c) can pin the width — which catches C narrowing the TYPE and
+ * NOT the assembly narrowing its `addq.l` to an `addq.w`. `build.sh` counts the three instructions
+ * for that other direction, the way it counts the ISR's two PSG stores. */
 extern volatile uint32_t bg_vdi_calls;
 extern volatile uint32_t bg_aes_calls;
 

@@ -34,6 +34,7 @@ import pytest
 import abi
 import harness
 import emu
+import test_sound_asm
 from harness import report
 
 ENTRY_SOUND_PLAY = 0x142bc
@@ -707,6 +708,13 @@ def isr_case(records, conterm=0x8f, ticks=1, volume_scale=A_snd_volume_scale,
                         voice_records(records), stub)
     diffs, _info = abi.run_with_a4(entry, glue, pokes=pokes)
     assert not diffs, report(diffs)
+    # ...AND THE SAME CASE AGAINST THE HAND-WRITTEN TWIN. The target build runs
+    # `../src/asm/sound_tick.S` where this C runs here (../atari/README.md, "The one core this
+    # build does NOT run, and what replaces it"), so
+    # every case that verifies the core verifies the code that ships — over the same image and the
+    # same PSG ledger, from this one call rather than from a second case list nobody would keep in
+    # step. `test_sound_asm.py::test_the_c_battery_runs_the_twin` is what keeps this line here.
+    test_sound_asm.assert_twin_matches_the_c(pokes, ticks)
 
 
 def test_isr_skips_idle_voices(staged):
@@ -964,6 +972,13 @@ def test_isr_reads_its_pointers_out_of_the_state_block(staged):
     diffs, _info = abi.run_with_a4(ENTRY_TIMER_C_SOUND_ISR,
                                    lambda lib, buf: lib.g_timer_c_sound_isr(buf), pokes=pokes)
     assert not diffs, report(diffs)
+    # ...AND THIS IS THE ONE BATTERY THE TWIN MOST NEEDS. Its two pointer loads are the only
+    # arithmetic in `../src/asm/sound_tick.S` that is NOT a transcription of the original — the
+    # original reads two absolute addresses out of its own TEXT, the twin reads them out of the
+    # image and adds the base — so they lie outside the bracket the transcription pin covers, and a
+    # relocated record base is what tells a right one from a wrong one. This case does not go
+    # through `isr_case` (it stages its own pokes), so the call it makes is spelt here too.
+    test_sound_asm.assert_twin_matches_the_c(pokes, 1)
 
 
 @pytest.mark.parametrize("chunk", range(FUZZ_CHUNKS))

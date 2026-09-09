@@ -1058,6 +1058,39 @@ problem, not a transcription problem**: the legitimate fix is a faster dispatch 
 a translation that was always ours, since the original has no such lookup — which is a decision with
 its own differential and its own mutation sweep, not a transcription (`b4b1ebd`).
 
+**IF THE TWIN'S OFF-IMAGE EFFECT IS ONE THE ORACLE ALREADY MODELS, IT NEEDS NO DOOR AND NO SECOND
+SPELLING.** The door above exists for a twin that calls a HOST core; a twin that drives modelled
+HARDWARE is a different case and a happier one. The kit's oracle decodes the YM2149's two ports in
+its own memory callback (`m68k_write_memory_8`), and `run_bench` shares those callbacks — so a twin
+that writes `$ffff8800`/`$ffff8802` with the original's own bare `move.b` pairs leaves its register
+writes in the ORACLE's ordered PSG ledger, while the C core it is compared against leaves the same
+writes in the CANDIDATE's (`src/psg.c`). Comparing the two streams beside the image is then the whole
+differential, the `.S` carries no `#ifdef` at all, and **what the differential runs is
+instruction-for-instruction what the machine runs**. Bubble Ghost's `src/asm/sound_tick.S` is the
+worked case: the mutation that proves the surface is live is changing the data port from 2 to 3,
+which leaves the image byte-identical and reddens 31 cases on the ledger alone
+(`projects/bubbleghost/recreate/STATUS.md`, wave 5b). Check what your oracle already decodes before
+reaching for a door — every seam you do not open is a seam that cannot drift.
+
+**AND THE `.S` IS ASSEMBLED TWICE, SO PIN THE OBJECT THAT SHIPS, not only the blob that is tested.**
+The host differential assembles it with the kit's flags and the target build with its own. Nothing
+holds the two outputs together: a twin that grew an `#ifdef` — the callback door, a build-mode
+guard — would be verified in one form and shipped in another with the transcription pin green over
+the wrong one. The fix is nine lines and belongs in the target build: objcopy the object about to be
+LINKED, slice it between the same `<name>_body` / `<name>_body_end` labels the test uses, and compare
+it against the same original bytes (`projects/bubbleghost/recreate/atari/asm_twin_ships.py`). The
+same gate catches the cheaper mistake of the two builds diverging by accident — a `-D` that changes
+an `.equ`, an include path that resolves differently.
+
+**A TRANSCRIPTION PIN BRACKETS THE TRANSCRIBED SPAN, AND THE PROLOGUE IS OUTSIDE IT.** Say so
+wherever the prologue's properties are relied on. Bubble Ghost's interrupt entry pops the image base
+back off the stack rather than re-reading it — legal only because the hand-written callee treats its
+incoming argument slot as read-only, which m68k SysV does not require of a callee and GCC does not do
+— and the comment justifying it cited the byte pin, which does not cover those eleven instructions.
+The surface that does is three lines of test over the `.S`'s own source: outside the bracket, the
+stack pointer may be named exactly N times and the argument load must be one of them. Match `%a7` as
+well as `%sp`; they are one register, and a scan for one spelling is a scan a future edit walks past.
+
 ## Fitting the machine — measuring a memory budget instead of assuming one
 
 A reconstruction is a GEMDOS program *inside* a TPA where the original often *was* the machine's

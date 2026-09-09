@@ -408,18 +408,292 @@ Supexec:
     movem.l (%sp)+,%d2/%a2
     rts
 
-| ---- GEM (trap #2) -----------------------------------------------------------------------------
-| The game's own two bindings, `gem_aes` @ 0x149b6 and `vdi_call` @ 0x168d4, are this instruction
-| with `d0` = 0xc8 or 0x73 and `d1` = the parameter block. What has to happen to the block before it
-| is handed over is shim_include/os.h's and bubble_backend.c's, not this file's.
-    .globl  bg_gem_trap
+| ---- GEM (trap #2): the whole door -------------------------------------------------------------
+| EVERY POINTER THE CORES PUT IN A GEM PARAMETER BLOCK IS AN IMAGE OFFSET. That is right in the
+| differential's world, where the image IS the machine's memory and starts at 0, and right on the
+| original, whose arrays are absolute against the base it runs at. Here the VDI would take `0x236f0`
+| for an address and read its `contrl` out of the 68000's vector page. So a `trap #2` on this build
+| has to RESTATE the block first, and `bg_gem_dispatch` below is the whole of that:
+|
+|   * the five (VDI) or six (AES) array pointers are staged into `bg_gem_staged_pblock`, each
+|     translated by the image base — so the VDI still reads its operands out of, and writes its
+|     answers into, the game's OWN arrays, with no copy back and no field this door has to know the
+|     meaning of. The image's own block is never touched at all.
+|   * a raster copy (`vro_cpyfm`) has two more operands that are reached by DEREFERENCING the image
+|     rather than by being handed over: `contrl[7..8]` and `contrl[9..10]` name two MFDBs, and each
+|     MFDB names a raster. Those four longwords are patched in place, trapped on, and put straight
+|     back, so the image the cores read afterwards holds exactly what it held before.
+|
+| A ZERO STAYS ZERO, AND THE SENTINEL IS LOAD-BEARING ON BOTH KINDS OF SLOT. For an MFDB's `fd_addr`
+| 0 is `MFDB_SCREEN_ADDR`, the VDI's "the screen", and TOS substitutes the logical base `Setscreen`
+| was given; translating it would point the copy at the bottom of the image. For a PARAMETER-BLOCK
+| slot 0 is not a sentinel but a slot the game has not filled yet — `init_globals` leaves all five
+| of `A_vdi_pblock`'s longwords zero and `../src/frontend.c`'s `v_opnvwk` fills `intin`, `intout`
+| and `ptsout` but not `ptsin`, so the FIRST VDI call of every run is made with a ptsin of 0, and
+| the shipped binary makes it with a ptsin of 0 too. Wave 4 took the test off the block's slots on
+| the argument that it could not arise, was GREEN through both smokes because that call declares
+| zero ptsin pairs, and reverted it (../STATUS.md, "Performance", wave 4). One `beq` covers both.
+|
+| THAT IS WHY THIS DOOR HAS ITS OWN TRANSLATION AND DOES NOT USE `shim_include/os.h`'s
+| `bg_machine_address`, which is `bg_image_base + offset` with NO zero test: the XBIOS video doors
+| translate values the game always fills, and this one translates slots it may not have. The two
+| must not be swapped either way round.
+|
+| WHAT THE MUTATIONS ACTUALLY PROVE ABOUT THE MFDB HALF, because the paragraph above is easy to
+| over-read: the PARAMETER-BLOCK half is proven load-bearing by wave 4's ptsin of 0. For an MFDB's
+| `fd_addr` the sentinel is the VDI's documented "the screen" and is kept for that reason — but both
+| of wave 5a's raster mutations fault on a DEREFERENCED offset, which means both `fd_addr`s are
+| NON-ZERO in the frames the smoke captures. Whether this program's own MFDBs ever carry 0 is
+| **unpinned by anything in this tree** (../STATUS.md, wave 5a), so the branch stays for the VDI's
+| contract and not on evidence that this game reaches it.
+|
+| WHY IT IS ASSEMBLY. In C the door was `bg_gem_dispatch` + `raster_copy_call` in
+| `bubble_backend.c`, 8,493 cycles a frame over 8.63 calls, and its cost was not the work: GCC has
+| no way to keep a value in a register across a `jsr` to a routine that traps, so every live value
+| went through the frame, and 184 of the raster path's 1,204 cycles went on pushing three arguments
+| between the two entry points and the trap wrapper and reading them back. Here the image base, the
+| two cursors and the raster path's seven live values are registers for the whole call. The staging
+| run is 40 cycles a longword and there is no cheaper spelling of "translate unless zero" on a
+| 68000 — `movem.l` in and out of a five-register
+| block counts the same 200 — so the five-slot restatement IS the door's floor, and the rest of
+| this routine is written to add as little to it as it can.
+|
+| NOTHING RE-ENTERS IT, AND THE DOOR CANNOT SURVIVE ANYTHING THAT DOES. `bg_gem_staged_pblock` is
+| ONE block for the whole program, and between the raster path's patch and its restore the game's
+| own MFDB holds a MACHINE address where every other reader expects an image offset. The one
+| interrupt this build installs is Timer C, whose handler is the sound tick and touches no GEM state
+| at all — so no `trap #2` is ever live across an interrupt that could reach either. **A GEM call
+| added to any interrupt path breaks both halves at once**: the inner call overwrites all five
+| staged slots while the outer trap is still reading them, and a tick landing inside the patch reads
+| a machine address out of the game's MFDB. Neither is visible to the differential (the oracle runs
+| no interrupt), to `make test`, or to any smoke check. This paragraph is the whole of that guard.
+|
+| REGISTERS. %d0/%d1/%a0/%a1 are the door's scratch (GCC's caller-saved set). **%d1 IS THE IMAGE BASE
+| FOR THE WHOLE CALL** — `TRANSLATE_D0` and `STAGE_POINTERS` both read it and neither says so in its
+| operands, so nothing may reuse %d1 before the last staging run. The raster path's
+| seven live values are %d3-%d6/%a3-%a5. Those are SAVED because m68k SysV makes them callee-saved
+| and the C caller owns them; that TOS ALSO preserves them across the trap is why nothing more than
+| the seven has to be saved. The original's own
+| trampolines are the spec for that: `vdi_call` @ 0x168d4 and `gem_aes` @ 0x149b6 each save %a1 and
+| %a2 around their `trap #2` AND NOTHING ELSE, while keeping their global base in %a4 across it.
+| %d2/%a2 are the pair GCC believes is callee-saved and TOS may destroy; they are saved in
+| `bg_gem_trap` below, which is the only routine here that traps.
+
+    | THE CONSTANTS ARE THE KIT'S AND THE CORES', NOT THIS FILE'S (CLAUDE.md §5). Every one of them
+    | is scraped out of the C header beside it by `build.sh`'s two-language loop and refused on a
+    | disagreement, so a slot index that moved in `tools/recreate_kit/include/os.h` reds the build
+    | rather than making this door patch the wrong two words of `contrl`.
+    GEM_VDI             = 0x73      | tools/recreate_kit/include/os.h — d0 for a VDI call
+    GEM_AES             = 0xc8      | ...and for an AES call
+    VDI_VRO_CPYFM       = 109       | the one opcode whose operands are reached by dereference
+    VDI_CONTRL_OPCODE   = 0         | contrl[] is an array of WORDS; these index it
+    VDI_CONTRL_SRC_MFDB = 7         | ...and [8]: the source MFDB address, high word first
+    VDI_CONTRL_DST_MFDB = 9         | ...and [10]: the destination MFDB address
+    VDI_PB_PTSOUT       = 4         | the LAST slot of each parameter block, so each block's length
+    AES_PB_ADDROUT      = 5         | is one more than the kit's own index for it
+    MFDB_ADDR           = 0         | an MFDB's raster pointer, a long
+    MFDB_SCREEN_ADDR    = 0         | fd_addr == this means the VDI's own screen
+    A_VDI_CONTRL        = 0x236f0   | ../include/frontend.h — the game's own contrl array
+
+    CONTRL_WORD_BYTES   = 2         | contrl is `word[]` (../include/frontend.h)
+    POINTER_BYTES       = 4         | ...and a parameter block is an array of longs
+    CONTRL_OPCODE_SLOT   = VDI_CONTRL_OPCODE   * CONTRL_WORD_BYTES
+    CONTRL_SRC_MFDB_SLOT = VDI_CONTRL_SRC_MFDB * CONTRL_WORD_BYTES
+    CONTRL_DST_MFDB_SLOT = VDI_CONTRL_DST_MFDB * CONTRL_WORD_BYTES
+    VDI_POINTER_LONGS = VDI_PB_PTSOUT  + 1
+    AES_POINTER_LONGS = AES_PB_ADDROUT + 1
+
+    | `bg_gem_dispatch`'s three C arguments, at the entry %sp. Nothing below re-reads them after a
+    | `movem` has moved the stack, so these offsets are never adjusted.
+    ARG_MEM       = 4
+    ARG_SELECTOR  = 8
+    ARG_PBLOCK    = 12
+
+    | THE SENTINEL IS A `beq`, so it can only be zero. The assembler refuses the drift rather than
+    | this file carrying a comment that claims what the code no longer does.
+    .ifne   MFDB_SCREEN_ADDR
+    .error  "MFDB_SCREEN_ADDR is no longer 0, and this door tests for it with beq"
+    .endif
+    .ifgt   VDI_POINTER_LONGS-AES_POINTER_LONGS
+    .error  "the VDI's block no longer fits bg_gem_staged_pblock, which is sized for the AES's"
+    .endif
+
+    | ...AND BOTH LENGTHS ARE PINNED TO THEIR VALUE, not only to each other. `build.sh` pins the two
+    | kit indices these are derived FROM, but nothing pins that each is its block's HIGHEST index —
+    | a re-spelling of the kit's `VDI_PB_*` block that renumbered `PTSOUT` down would agree with the
+    | loop, silently stage four pointers, and leave TOS writing its output counts through a stale
+    | one. These two are the deleted `_Static_assert(VDI_POINTER_LONGS == 5u, ...)` pair, restated.
+    .ifne   VDI_POINTER_LONGS-5
+    .error  "the VDI parameter block is no longer five longwords"
+    .endif
+    .ifne   AES_POINTER_LONGS-6
+    .error  "the AES parameter block is no longer six longwords"
+    .endif
+
+    | AN IMAGE OFFSET IN %d0 BECOMES A MACHINE ADDRESS, on the flags the load that produced it set.
+    | THE LOCAL LABEL IS `\@`, GAS's per-expansion counter, and not a bare `9:`: this file writes its
+    | own numeric labels by hand (`bg_super_gate_entry` uses 1/2/9), and a macro that emits into that
+    | same namespace would let a later routine's `9f` bind to a label INSIDE a staging run.
+    .macro  TRANSLATE_D0
+    beq.s   9\@f                        | 0 is MFDB_SCREEN_ADDR, or a slot the game never filled
+    add.l   %d1,%d0
+9\@:
+    .endm
+
+    | ...and the block's own pointers, `\count` of them, from the game's block at (%a0)+ into the
+    | staged one at (%a1)+. 40 cycles a longword: load 12, the sentinel 8, the add 8, the store 12.
+    .macro  STAGE_POINTERS  count
+    .rept   \count
+    move.l  (%a0)+,%d0
+    TRANSLATE_D0
+    move.l  %d0,(%a1)+
+    .endr
+    .endm
+
+    | THE STAGE-AND-TRAP TAIL, WHICH IS ONE FACT AND WAS ONCE THREE COPIES OF IT. The selector and
+    | the block's length must agree — a mismatched pair either over-reads the game's block or leaves
+    | the AES's `addr_out` holding the previous call's stale machine address — and the deleted C
+    | `stage_and_trap` existed to hold them together. This macro is that helper, at zero cycles.
+    |
+    | Entered with %a0 = the game's block and %d1 = the image base; it ends `%d1` as the STAGED
+    | block, which is why the address is materialised twice (`lea` into the cursor, `move.l` into
+    | the trap's operand): %d1 has to stay the image base until the last `TRANSLATE_D0`, so there is
+    | no register to keep the constant in across the run.
+    .macro  TRAP_STAGED  count, selector
+    lea     bg_gem_staged_pblock,%a1
+    STAGE_POINTERS \count
+    .if     \selector <= 127
+    moveq   #\selector,%d0
+    .else
+    move.l  #\selector,%d0             | 0xc8 is past moveq's sign-extended range
+    .endif
+    move.l  #bg_gem_staged_pblock,%d1
+    jsr     bg_gem_trap
+    .endm
+
+| int bg_gem_dispatch(uint8_t *mem, uint32_t selector, uint32_t pblock) — shim_include/os.h's
+| `os_vdi` and `os_aes` are one call to this. It answers 1 ("modeled") on every path: TOS services
+| every opcode this program makes and a `trap #2` has no way to say otherwise, so the cores' refusal
+| arms are unreachable here (atari/README.md, "Unpinned", carries that as a residual).
+|
+| Hand-counted off the 68000's own tables and the objdump: 406 cycles for a non-raster VDI call,
+| 412 for an AES one and 878 for a `vro_cpyfm`, plus `bg_gem_trap`'s own 68 either way (the trap and
+| the ROM behind it are on top of all three). ../STATUS.md's wave 5a holds those against what Hatari
+| charges, and prices what is left in them.
+    .globl  bg_gem_dispatch
+bg_gem_dispatch:
+    move.l  ARG_MEM(%sp),%d1            | the image base — the whole door's translation term
+    movea.l %d1,%a0
+    adda.l  ARG_PBLOCK(%sp),%a0         | ...and the game's own block, in the cursor the staging
+                                        | run reads, so no arm has to move it there
+    moveq   #GEM_VDI,%d0
+    cmp.l   ARG_SELECTOR(%sp),%d0
+    bne.s   bg_gem_aes_call             | THE DOOR HAS EXACTLY TWO CALLERS (os.h's `os_vdi` and
+                                        | `os_aes`), so anything that is not the VDI is the AES
+    addq.l  #1,bg_vdi_calls
+    movea.l %d1,%a1
+    adda.l  #A_VDI_CONTRL,%a1           | ...and only a VDI call has a contrl array, so only it pays
+    cmpi.w  #VDI_VRO_CPYFM,CONTRL_OPCODE_SLOT(%a1)
+    beq     bg_gem_raster_copy
+    TRAP_STAGED VDI_POINTER_LONGS, GEM_VDI
+    moveq   #1,%d0                      | the kit's door answers "modeled" on every path
+    rts
+
+| Entered by `bne` with %d1 = the image base and %a0 = the game's block. Nothing else is live.
+bg_gem_aes_call:
+    addq.l  #1,bg_aes_calls
+    TRAP_STAGED AES_POINTER_LONGS, GEM_AES
+    moveq   #1,%d0
+    rts
+
+| THE RASTER COPY, patch-trap-restore. Its seven live values are all in the set TOS preserves:
+|   %a3 the source MFDB's fd_addr slot      %d3 what that slot held
+|   %a4 the destination's, or 0 if the two MFDBs are ONE       %d4 what THAT slot held
+|   %a5 contrl      %d5 the source MFDB's own offset      %d6 the destination's
+| ONE MFDB CAN BE BOTH OPERANDS, and a second pass over it would translate an ALREADY translated
+| raster — the restore would then leave a machine address in the game's own MFDB for good, silently
+| and for every later frame. No call site in this program does it (`../src/frontend.c` always passes
+| `A_mfdb_src` and `A_mfdb_dst`); the comparison keeps an entry point that takes both as arguments
+| from being a landmine. A staged slot is never 0 because the image base never is, so %a4 IS the
+| "was the destination staged" flag.
+| Entered by `beq` with %d1 = the image base, %a0 = the game's block and %a1 = contrl.
+bg_gem_raster_copy:
+    addq.l  #1,bg_vdi_raster_copies
+    movem.l %d3-%d6/%a3-%a5,-(%sp)      | SAVED BECAUSE THE C CALLER OWNS THEM (m68k SysV makes
+                                        | %d2-%d7/%a2-%a6 callee-saved), not because of the trap;
+                                        | that TOS preserves this set is why seven is all that is
+                                        | needed rather than why any of it is saved
+    movea.l %a1,%a5                     | contrl, off the scratch register it was computed in
+    movea.l %d1,%a1                     | ...and the image base borrows %a1 for the two leas below,
+                                        | leaving %a0 pointing at the game's block for the staging
+    move.l  CONTRL_SRC_MFDB_SLOT(%a5),%d5
+    move.l  CONTRL_DST_MFDB_SLOT(%a5),%d6
+    lea     MFDB_ADDR(%a1,%d5.l),%a3    | the source MFDB's raster
+    move.l  (%a3),%d3
+    move.l  %d3,%d0
+    TRANSLATE_D0
+    move.l  %d0,(%a3)
+    move.l  %d5,%d0                     | ...and the source MFDB pointer itself. ITS ZERO TEST CANNOT
+                                        | FIRE — `../src/frontend.c` always fills contrl[7..10] with
+                                        | `A_mfdb_src`/`A_mfdb_dst` — and the two of them cost 96
+                                        | cycles a frame for the macro's uniformity. Measured and
+                                        | kept: a bare `add.l` here would be the one translation in
+                                        | the door written a second way (../STATUS.md, wave 5a)
+    TRANSLATE_D0
+    move.l  %d0,CONTRL_SRC_MFDB_SLOT(%a5)
+    suba.l  %a4,%a4                     | ...and nothing is staged for the destination yet
+    cmp.l   %d5,%d6
+    beq.s   2f                          | one MFDB is both operands: nothing more to stage
+    lea     MFDB_ADDR(%a1,%d6.l),%a4    | the destination MFDB's raster
+    move.l  (%a4),%d4
+    move.l  %d4,%d0
+    TRANSLATE_D0
+    move.l  %d0,(%a4)
+2:  move.l  %d6,%d0                     | ...and the destination MFDB pointer, aliased or not
+    TRANSLATE_D0
+    move.l  %d0,CONTRL_DST_MFDB_SLOT(%a5)
+
+    TRAP_STAGED VDI_POINTER_LONGS, GEM_VDI
+
+    move.l  %d3,(%a3)                   | ...and the image put back exactly as it was
+    move.l  %d5,CONTRL_SRC_MFDB_SLOT(%a5)
+    move.l  %a4,%d0
+    beq.s   3f
+    move.l  %d4,(%a4)
+3:  move.l  %d6,CONTRL_DST_MFDB_SLOT(%a5)
+    movem.l (%sp)+,%d3-%d6/%a3-%a5
+    moveq   #1,%d0
+    rts
+
+| The trap itself, and it is ITS OWN ROUTINE for two reasons rather than one. Hatari's profiler
+| charges an exception's whole ROM execution to the symbol that issued the `trap` — a trap is not a
+| subroutine call, so the profiler never leaves the routine it was in — which is why this label,
+| and not `bg_gem_dispatch`, is what `atari/profile.py` holds against the original's own `vdi_call`
+| @ 0x168d4 as the ROM VDI's row. Folding it into the door would save the `jsr`/`rts` (34 cycles a
+| call, ~290 a frame, 0.06%) and cost the campaign the one row that separates the door's own work
+| from the ROM's. And `tools/assert_trap_registers.sh` reads routines label to label: one small
+| routine that traps is one routine to keep the %d2/%a2 rule in.
+|
+| d0 = the selector, d1 = the staged block, exactly as the original's two trampolines set them up.
+| NOT A C ENTRY POINT — its arguments are registers, so it has no declaration in shim_include/tos.h
+| and NO `.globl` either: a C caller re-added from a later wave would compile with one warning in a
+| build that has no `-Werror` and trap with a garbage selector. `m68k-elf-nm` still lists a local
+| label as `t`, which is what `atari/profile.py`'s symbol map reads, so the ROM row survives.
 bg_gem_trap:
     movem.l %d2/%a2,-(%sp)
-    move.l  12(%sp),%d0             | selector
-    move.l  16(%sp),%d1             | the parameter block, as a MACHINE address
     trap    #2
     movem.l (%sp)+,%d2/%a2
     rts
+
+    | The block the trap is handed. It has to outlive the call by the length of the trap, so it is
+    | storage and not stack. THE `.balign` IS A REQUEST AND NOT A GUARANTEE: `atari/tos.ld` places
+    | .bss with `SUBALIGN(2)`, which caps per-symbol alignment at a WORD and overrides this — an
+    | even address is all a 68000 `move.l` needs, and even is what SUBALIGN(2) does guarantee.
+    .bss
+    .balign POINTER_BYTES
+bg_gem_staged_pblock:
+    .space  AES_POINTER_LONGS*POINTER_BYTES
+    .text
 
 | ---- the trap #9 supervisor gate ---------------------------------------------------------------
 | The user-mode half. Three arguments in the registers the handler reads, exactly as the original's
@@ -493,22 +767,35 @@ bg_super_gate_entry:
 | (`bg_timer_c_tick`), and the three of them together cost 428 cycles a tick — 148 here, 224 in the
 | C half's own plumbing and 56 inside `bg_write_byte`, most of it pushing the image base, RELOADING
 | it after the ISR, and pushing two arguments at a routine whose body is one `move.b`. The twelve
-| instructions below are ~280, so the wave took ~150 a tick: 1.8K a frame at 12.2 ticks, and the
-| profiler agreed at 146 (2,434 cyc/tick -> 2,288). **The 428 was the BEFORE figure, not the
-| saving** — the largest item left in it is the `movem` pair at 84.
+| instructions that replaced it were ~280, so the wave took ~150 a tick: 1.8K a frame at 12.2 ticks,
+| and the profiler agreed at 146 (2,434 cyc/tick -> 2,288). **The 428 was the BEFORE figure, not the
+| saving** — the largest item left in it is the `movem` pair at 84. Wave 5b took three more of the
+| twelve out (below); the `movem` pair is still the largest thing here.
 |
 | `../STATUS.md`'s wave 3a named this file as where the mirror belongs: in C the store is
 | `*(volatile uint8_t *)TOS_CONTERM = ...`, which GCC compiles to this same one instruction and
 | warns about on every build ("source object is likely at address zero").
 |
-| THE IMAGE BASE IS READ TWICE ON PURPOSE, and the cheap spelling is a bug waiting. Pushing it as
-| the ISR's argument and POPPING IT BACK afterwards would save 16 cycles a tick — but the m68k SysV
-| ABI makes a callee's incoming argument area the CALLEE's scratch, and GCC really does spill a
-| modified parameter into its own incoming slot. `timer_c_sound_isr` does not today (`core_sound.o`
-| reads `%sp@(48)` and never writes it, spilling to `%sp@(32..44)` below it), and if it ever did,
-| this entry would mirror a byte read from a garbage address into TOS's $484 two hundred times a
-| second — a MACHINE write, so no differential sees it and no screenshot tells it apart. 16 cycles
-| a tick, ~195 a frame, is the price of not resting on the callee's codegen.
+| THE HANDLER IS HAND-WRITTEN ASSEMBLY, AND THAT IS WHAT THE `jsr` REACHES. `../src/asm/sound_tick.S`
+| is a byte-for-byte transcription of the original binary's own 0x145be..0x148d6 carrying
+| `timer_c_sound_isr`'s C signature; the C core stays the reference and `test/test_sound_asm.py`
+| compares the two over every case the C is verified on, image and PSG ledger both. Two lines went
+| with the substitution:
+|
+|   * `bg_in_timer_c` is no longer raised. It exists so a chip write made from INSIDE this interrupt
+|     skips the `trap #9` gate (shim_include/psg.h), and nothing C runs inside it any more — the
+|     twin writes $ffff8800 itself, which is the original's own shape. The flag and its door stay
+|     for the user-mode callers that still take the gate; on this path they are 40 cycles a tick
+|     spent arming a branch nothing takes.
+|   * the image base is POPPED rather than re-read. It used to be read twice because the m68k SysV
+|     ABI makes a callee's incoming argument area the CALLEE's scratch and GCC really does spill a
+|     modified parameter into its own slot — so resting on `timer_c_sound_isr`'s codegen would have
+|     mirrored a byte from a garbage address into TOS's $484 two hundred times a second, a MACHINE
+|     write no differential sees. The twin is hand-written and never names `%sp` after its prologue,
+|     so the argument slot is ours to read back: 16 cycles. NOT the transcription pin's doing — that
+|     pin brackets the transcribed body, and the prologue is outside it;
+|     `test_sound_asm.py::test_the_twin_never_stores_through_its_own_frame` is the check that holds
+|     this one, over the twin's own source.
 |
 | IT DOES NOT `rte`, AND THAT IS THE ORIGINAL'S SHAPE. `timer_c_sound_isr` @ 0x1459a ends by pushing
 | TOS's own saved $114 vector and `rts`ing, so the exception frame is left for TOS's handler to
@@ -517,19 +804,14 @@ bg_super_gate_entry:
 | it against what the verified installer parked in the image.
     .globl  bg_timer_c_entry
 bg_timer_c_entry:
-    movem.l %d0-%d1/%a0-%a1,-(%sp)  | the caller-saved set; the verified ISR preserves the rest
+    movem.l %d0-%d1/%a0-%a1,-(%sp)  | the caller-saved set; the twin preserves the rest
     addq.l  #1,bg_timer_c_ticks     | the surface: a run whose vector never took ticks 0, which no
                                     | screenshot could tell from music that has not started
-    move.b  #1,bg_in_timer_c        | the ISR's chip writes go straight at the ports for the length
-                                    | of this call — an exception handler is already supervisor and
-                                    | still at the interrupt's own IPL 6, which is both halves of
-                                    | what the trap #9 gate provides (shim_include/tos.h)
-    move.l  bg_image_base,-(%sp)    | the ISR's one argument
-    jsr     timer_c_sound_isr       | ../src/sound.c — the verified handler, steps inlined
-    addq.l  #4,%sp                  | ...and the argument is the CALLEE's scratch, so it is dropped
-    movea.l bg_image_base,%a0       | ...and the base re-read rather than popped (see above)
-    move.b  CONTERM(%a0),CONTERM    | the ISR's own $484 write, made for real
-    clr.b   bg_in_timer_c           | ...cleared LAST, so every user-mode door still traps
+    move.l  bg_image_base,-(%sp)    | the tick's one argument
+    jsr     timer_c_sound_isr_asm   | ../src/asm/sound_tick.S — the original's own instructions
+    movea.l (%sp)+,%a0              | ...and the argument comes back, the twin never having stored
+                                    | through its own frame (see above)
+    move.b  CONTERM(%a0),CONTERM    | the tick's own $484 write, made for real
     movem.l (%sp)+,%d0-%d1/%a0-%a1
     move.l  bg_timer_c_chain,-(%sp)
     rts
