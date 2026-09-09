@@ -205,6 +205,7 @@ bash atari/build.sh titlepoke  && python3 atari/smoke.py titlepoke    # one word
 bash atari/build.sh titleisr   && python3 atari/smoke.py titleisr     # no Timer C vector
 bash atari/build.sh title floppy && python3 atari/smoke.py floppy     # the bootable volume boots
 bash atari/build.sh play && bash atari/smoke.py game         # the G key, and the room behind it
+bash atari/build.sh play && python3 atari/showcase.py       # the README gallery, drawn by the .PRG
 bash atari/build.sh play && bash atari/run.sh               # the whole program, for a person
 
 python3 atari/profile.py ours && python3 atari/profile.py original && python3 atari/profile.py compare

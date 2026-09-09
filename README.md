@@ -5,10 +5,7 @@ function, rewrite it as readable C **proven byte-for-byte against the original m
 run that C back on a 68000. The tooling and the [documentation](docs/README.md) are game-agnostic —
 point them at any GEMDOS `.PRG`. **Four games are solved with them**, a fifth is reconstructed
 and waiting on hardware, and a sixth is under way.
-Every picture below was **drawn by the reconstruction**, not screenshotted from the original —
-with the two marked where they appear: Bubble Ghost's reconstruction is complete and verified and
-boots to its menu and was play-tested by the author under Hatari (it plays well), but nothing of it
-has run on real hardware, so its pictures come from the data files and the original binary.
+Every picture below was **drawn by the reconstruction**, not screenshotted from the original.
 
 > **No game data is distributed here.** No `.PRG`, no data file, no disk image, no TOS ROM. Bring
 > your own copy; see [Credits & legal](#credits--legal).
@@ -63,20 +60,18 @@ Begins at the flux of the user's own floppy. **217 verified ranges · 4751 tests
 
 ### Bubble Ghost (ERE Informatique 1987 / Accolade 1988) — the one wrapped in a cipher
 
-| `GHOST.PRE`, decoded from the file | The game's menu, past the protection |
+| The presentation screen | Room 1, replaying the built-in demo |
 |:---:|:---:|
-| ![](assets/bubbleghost/title.png) | ![](assets/bubbleghost/menu-hatari.png) |
+| ![](assets/bubbleghost/title.png) | ![](assets/bubbleghost/demo-late.png) |
 
-**Reconstructed, verified, and it boots.** Its `.PRG` is not crunched but *encrypted*, keyed by a
-CRC of the disk's protection track, so the check cannot be patched out; the 16-bit key fell to an
-exhaustive search and the program now decrypts **statically**, with the protection also passing
-under Hatari from an original disk. **132 of its 134 functions named and all 132 verified
-byte-for-byte** against the original, in 1,895 tests · graphics and speech decoded out of the data
-files. Those cores compile unmodified into `BUBBLE.PRG`, which **boots to the game's own menu under
-Hatari with a byte-identical framebuffer** against the original's at the same instruction — but it
-was **play-tested under Hatari from the floppy image (2026-09-06: it plays well)** — the one surface
-no headless check can reach, the game being mouse-driven — but nothing has run **on iron**. What is
-left is that, and `GHOST.LOA` — a second program it loads and calls.
+Its `.PRG` is not crunched but *encrypted*, keyed by a CRC of the disk's protection track, so the
+check cannot be patched out — the 16-bit key fell to an exhaustive search, the program now decrypts
+**statically**, and the protection itself passes under Hatari from an original disk. **132 of 134
+functions named, all 132 verified byte-for-byte · 1,909 tests** · a `BUBBLE.PRG` whose menu is
+byte-identical to the original's at the same instruction and which **runs at the original's speed:
+17.1 frames a second against 17.2**, on hand-written 68000 twins for the GEM door and the sound
+tick. Play-tested from its floppy image by a person (2026-09-06) — the game is mouse-driven and no
+headless check can reach that. What is left is **iron**, and `GHOST.LOA`, a second program it calls.
 → [`projects/bubbleghost/README.md`](projects/bubbleghost/README.md)
 
 ### Flying Shark (Taito 1987 / Firebird 1988) — the one still being written

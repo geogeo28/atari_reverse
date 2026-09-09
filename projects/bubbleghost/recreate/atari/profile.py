@@ -38,7 +38,7 @@ the `frames` mode's refresh and truncation pins. The four that shape the code be
     single `hatari-debug` command between arming the window and the dump landing. "The room is
     open" is therefore the MARKER FILE the window's own script writes — a `savebin` the debugger
     makes from inside that one entry — and never a `savebin` sent from here. Keys go through
-    `hatari-event` and are not debugger entries, and `smoke.press_the_game_keys` explains why an
+    `hatari-event` and are not debugger entries, and `smoke.press_the_menu_keys` explains why an
     extra G or 1 after the room opened changes nothing.
   * `:trace` PRINTS NOTHING PER ARRIVAL. What prints `CPU=$..., VBL=N, FrameCycles=M` is a plain
     debugger ENTRY, which `:quiet` is precisely what suppresses — so a breakpoint whose action file
@@ -89,7 +89,7 @@ WHAT THIS INSTRUMENT DOES NOT MEASURE, and each of these is measured rather than
     (atari/README.md, "Unpinned"), so this is a drifting bubble and not a played game.
   * A RUN IS NOT REPRODUCIBLE TO BETTER THAN ABOUT 2%. Two `ours` windows minutes apart gave 165
     and 168 frames. The ambience re-roll draws `Random()` from an unseeded stream (the two sides
-    fired 3 and 8 sounds), and `smoke.press_the_game_keys` injects on a HOST wall clock, so whether
+    fired 3 and 8 sounds), and `smoke.press_the_menu_keys` injects on a HOST wall clock, so whether
     a stray key is drained inside the window is a real-time race. One run of each side is taken, so
     a 2% build regression and the wobble are not distinguishable.
   * THE TWO SYMBOL MAPS ARE NOT EQUALLY FINE — ours is the linked ELF (447 names), the shipped
@@ -592,7 +592,7 @@ def arm_the_window(session, run, frame_pc, commands):
 
 def open_the_room(session, run):
     """Press G and 1 until the window's marker appears, and refuse a run where it never did."""
-    if not smoke.press_the_game_keys(session, window_marker(run).is_file,
+    if not smoke.press_the_menu_keys(session, window_marker(run).is_file,
                                      smoke.ROOM_DEADLINE_SECONDS):
         raise SystemExit(f"FAIL: {run}: the two keys never opened a room, so no window opened "
                          f"and nothing was measured — see {run_log(run)}")

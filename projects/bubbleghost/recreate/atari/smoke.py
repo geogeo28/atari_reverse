@@ -1239,10 +1239,13 @@ def collect_room_capture(result, files):
         result[result_key] = files[file_key].read_bytes() if files[file_key].is_file() else None
 
 
-def press_the_game_keys(session, room_is_open, deadline_seconds):
-    """Send `G` and then `1` over and over until the room opens. Answers whether it did.
+def press_the_menu_keys(session, screen_changed, deadline_seconds, keys=(KEY_G, KEY_ONE)):
+    """Send the menu's keys over and over until the screen they open arrives. Answers whether it did.
 
-    BOTH KEYS ARE RESENT, and a single pass with a fixed gap is exactly what does not work —
+    `keys` defaults to this file's own pair; `atari/showcase.py` passes `D` and `H`, whose reads are
+    the same three-call idiom and so carry the same race.
+
+    EVERY KEY IS RESENT, and a single pass with a fixed gap is exactly what does not work —
     measured, three failures to one success before the loop was written. Two things can eat a press
     and neither is observable from here: `menu_ask_player_count` ENDS with a console flush
     (`drain_console_queue`), so a `1` that arrives while the two prompt lines are still being drawn
@@ -1250,20 +1253,23 @@ def press_the_game_keys(session, room_is_open, deadline_seconds):
     capture and the program reaching its `Cnecin` is simply not there when the read happens. Either
     one leaves the run blocked for ever on a screen a check cannot tell from the other.
 
-    The PAIR is what makes the loop safe to repeat. On the menu, `G` opens the prompt and `1`
+    WHAT MAKES THE LOOP SAFE TO REPEAT is that a resent key is either progress or nothing, on every
+    screen the caller's own keys can be on. For `G`/`1`: on the menu, `G` opens the prompt and `1`
     answers it; on the prompt, a stray `G` is a digit that is neither 1 nor 2 and the program asks
-    again; in the room, both are keys `frame_poll_input` does not act on. So every pass either makes
-    progress or changes nothing, whichever screen the program is on.
+    again; in the room, both are keys `frame_poll_input` does not act on. For `D` and `H`, which are
+    each sent alone: every phase they open is ended by the MOUSE BUTTON and reads no key at all
+    (`../src/frontend.c`, `menu_aborted`), so a resent letter simply waits in the console queue and
+    is emptied by the next screen's own flush. A caller whose key the game acts on MID-phase would
+    break that, and would have to say why its own key is safe here.
     """
     deadline = time.monotonic() + deadline_seconds
     while time.monotonic() < deadline:
-        session.key(KEY_G)
-        session.wait(GAME_KEY_RETRY_SECONDS)      # ...for the prompt to draw AND run its flush
-        session.key(KEY_ONE)
-        session.wait(GAME_KEY_RETRY_SECONDS)
+        for key in keys:
+            session.key(key)
+            session.wait(GAME_KEY_RETRY_SECONDS)  # ...for the prompt to draw AND run its flush
         if not session.alive():
             return False
-        if room_is_open():
+        if screen_changed():
             return True
     return False
 
@@ -1296,7 +1302,7 @@ def run_the_game_ours(work):
         result["status"] = session.close()
         result["problem"] = "the menu was never opened, so no key could be sent"
         return result
-    press_the_game_keys(
+    press_the_menu_keys(
         session,
         lambda: read_play_tally(session, tally)[TALLY_GAME_FRAMES] >= GAME_FRAMES_REQUIRED,
         ROOM_DEADLINE_SECONDS)
@@ -1334,7 +1340,7 @@ def run_the_game_original(work):
     phys = struct.unpack(">I", session.savebin("phys.bin", base - LOAD_BASE + A_screen_phys, 4))[0]
     result["screen_phys"] = phys
     room = arm_the_room_anchor(session, base - LOAD_BASE + ORIGINAL_ROOM_FRAME_PC, "orig", phys)
-    press_the_game_keys(session, room["done"].is_file, ROOM_DEADLINE_SECONDS)
+    press_the_menu_keys(session, room["done"].is_file, ROOM_DEADLINE_SECONDS)
     collect_room_capture(result, room)
     result["alive"] = session.alive()
     result["shot"] = room["shot"]
@@ -1408,16 +1414,23 @@ CHECK_ROOM_STATE = ("memory (the room's first two frame calls, against the origi
                     "hardware-state vector (the pens, four blanks after the second)")
 
 
-def run_the_game():
-    # The `play` build by NAME, copied over the drive's BUBBLE.PRG exactly as run.sh does — so this
-    # mode judges the play .PRG whichever build ran last, rather than whatever the drive happens to
-    # be carrying.
+def stage_the_play_prg():
+    """Put the `play` build on the C: drive, with its A: data volume beside it.
+
+    The `play` build by NAME, copied over the drive's BUBBLE.PRG exactly as run.sh does — so a mode
+    that calls this judges the play .PRG whichever build ran last, rather than whatever the drive
+    happens to be carrying. `atari/showcase.py` stages the same way, for the same reason.
+    """
     play_prg = HERE / "build" / "BUBBLE-play.PRG"
     if not play_prg.is_file():
         raise SystemExit(f"ERROR: no {play_prg} — run `bash atari/build.sh play` first")
     shutil.copy(play_prg, DISK / "c" / "BUBBLE.PRG")
     if not (DISK / "GHOST.ST").is_file():
         raise SystemExit(f"ERROR: no {DISK / 'GHOST.ST'} — run `bash atari/build.sh play` first")
+
+
+def run_the_game():
+    stage_the_play_prg()
     if not ORIGINAL_STX.is_file():
         raise SystemExit(f"ERROR: no {ORIGINAL_STX} — the original is half of this comparison")
     work = OUT / "game"

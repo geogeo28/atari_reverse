@@ -12,6 +12,7 @@ bash atari/build.sh titlepoke  && python3 atari/smoke.py titlepoke    # control:
 bash atari/build.sh titleisr   && python3 atari/smoke.py titleisr     # control: no Timer C
 bash atari/build.sh title floppy && python3 atari/smoke.py floppy     # the bootable volume
 bash atari/build.sh play  && python3 atari/smoke.py game              # G, then 1: the room loop
+bash atari/build.sh play  && python3 atari/showcase.py                # the README's nine pictures
 bash atari/build.sh play  && bash atari/run.sh                        # for a person
 ```
 
@@ -103,6 +104,8 @@ atari/
 ├── smoke.py          the gate: two Hatari runs, nine checks, three negative controls, and two
 │                     modes of its own — the bootable floppy, and the G key's room loop
 ├── profile.py        what a room frame COSTS, ours against the original's, over one window
+├── showcase.py       the README gallery: nine framebuffers this .PRG drew, each at a named
+│                     instruction, decoded to PNG — no screenshots, no data-file decodes
 └── run.sh            the `play` build, with a mouse and sound, for a person
 ```
 
@@ -545,6 +548,33 @@ CANNOT reach is the mouse, which is most of Bubble Ghost's input: the ghost foll
 control protocol has no mouse-motion event of any kind. That is where the remaining suspicion sits,
 and it is written here as an open question rather than as a closed one.
 
+**AND THE MOUSE CAN BE FAKED HALFWAY, which is measured and does not close it.** `showcase.py`'s
+development tried the obvious substitute: a repeating breakpoint on `frame_scale_mouse_to_ghost`
+whose action file writes `A_mouse_x`/`A_mouse_y` in the image, between the VDI read that fills them
+and the scale step that turns them into the ghost's position. **The ghost moves** — three runs, the
+ghost's own globals read back at frames 6, 40 and 90 as (x 98, y 44), (121, 64) and (147, 64) from
+pokes of (110, 70), (135, 102) and (165, 102), so the poke is what `vq_mouse` would have delivered.
+Holding a shift key down with a bare `hatari-event keydown $2a` puts it into its BLOWING pose too,
+which is `frame_blow_or_recover`'s own test on `A_key_shift_state` and not the mouse buttons.
+**What none of that did was move the bubble**: at 90 frames with the ghost parked 13 px from it and
+blowing, `A_bubble_x`/`A_bubble_y` never left (160, 64). So the substitute reaches the ghost and
+stops short of the game, and no picture in the gallery below claims a played frame.
+
+## The gallery — `atari/showcase.py`
+
+`bash atari/build.sh play && python3 atari/showcase.py` writes the nine pictures the project README
+shows, and **every one of them is a framebuffer this `.PRG` drew**: four boots of the `play` build,
+each driven by the game's own keys to a moment named as *an arrival count at one of the
+reconstruction's own functions*, with the 32,000 displayed bytes `savebin`ned AT that instruction and
+decoded by `../../../../tools/st_pixels.py`. Nothing is screenshotted — a Hatari screenshot is of the
+last RENDERED surface and needs a settle the attract mode's unsynced replay cannot afford — and the
+palette is the one thing read late, three blanks on, because `Setpalette` is deferred to TOS's own
+vertical blank exactly as the voice anchor above found. The run refuses a blank picture, a pair that
+turns out to be one moment photographed twice, a hall-of-fame capture taken with some other room on
+the screen, a faulted machine, and a deterministic picture whose sha256 moved since the last
+invocation. The script's header carries the rest, including which single picture cannot be
+deterministic and why.
+
 ## Performance — `atari/profile.py`, and the first measurement
 
 The room loop has **no Vsync and no wait of any kind** (`notes/gameplay.md` §2), so it turns at the
@@ -897,7 +927,7 @@ Each of these is measured rather than feared; `profile.py`'s header carries the 
    Closing on the Nth arrival (`b pc = $... :N`) is the fix, and it has not been made.
 2. **A run is not reproducible to better than about 2%**: two `ours` windows minutes apart gave 165
    and 168 frames. The ambience re-roll draws `Random()` from an unseeded stream and
-   `smoke.press_the_game_keys` injects on a host wall clock, so whether a stray key is drained
+   `smoke.press_the_menu_keys` injects on a host wall clock, so whether a stray key is drained
    inside the window is a real-time race. One run of each side is taken.
 3. **The mouse is idle on both sides** — this is a drifting bubble, not a played game.
 4. **The shipped map is coarser than ours** (~7 KB of shipped `.text` past the last `fn` line), so a

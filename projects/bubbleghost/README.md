@@ -10,7 +10,7 @@ understood and passes under Hatari, the graphics and speech are decoded out of t
 the whole program has been read — **132 of its 134 functions named, 203 globals, 161 plate
 comments** in `names.txt`. `recreate/` holds the C reconstruction: **all 132 of those functions are
 green under the differential harness**, byte-for-byte against the original 68000 code, across
-**1,895 tests**. [`recreate/STATUS.md`](recreate/STATUS.md) is the per-function ledger and says what
+**1,909 tests**. [`recreate/STATUS.md`](recreate/STATUS.md) is the per-function ledger and says what
 the harness can and cannot see; what is left is `GHOST.LOA` — a second program with no address in
 this one — and five small regions of the two top-level routines that no slice may include.
 
@@ -31,7 +31,82 @@ build from `atari/disk/BUBBLE.ST` under Hatari on 2026-09-06 and reports it play
 report of the game dropping to TOS on `G` predates the XBIOS door and did not recur). Nothing here
 has run on real hardware.
 
+**And it runs at the original's speed.** `atari/profile.py` opens Hatari's CPU profiler at the first
+`game_frame_update` on both binaries and closes it 1000 vertical blanks later: **468.5K cycles a
+frame, 17.12 fps, against the shipped binary's 466.9K and 17.18 — x1.0034, which is inside this
+instrument's own ~0.3% spread**. The first measurement was 809.2K (9.91 fps, x1.73); twelve waves
+took it down, ending with two hand-written 68000 twins — the shim's GEM door and the 200 Hz sound
+tick — that the differential pins against the C they replace. The game's mouse latency is one frame
+time, because the room loop has no `Vsync` in it at all: it runs as fast as it draws, on the
+original as much as here.
+
 > No game data is in this repository. `bin/` and `out/` are gitignored; bring your own disk.
+
+## Gallery
+
+**Every picture here was drawn by `BUBBLE.PRG` on a 68000** — the reconstruction's own framebuffer,
+`savebin`ned out of Hatari at a named instruction and decoded by `tools/st_pixels.py`, not a
+screenshot and not a decode of a data file. [`recreate/atari/showcase.py`](recreate/atari/README.md)
+is the whole recipe: four boots of the `play` build, each driven by the game's own keys, each moment
+chosen as *an arrival count at one of the reconstruction's functions* rather than as a delay — so a
+caption names a place in the program and not a wall clock. It asserts that no picture holds a single
+colour, that the two demo frames are different moments and the two room frames different pictures,
+and it stores every deterministic picture's sha256 and refuses the next run if one moves.
+
+| The presentation | The menu | The hall of fame |
+|:---:|:---:|:---:|
+| ![](../../assets/bubbleghost/title.png) | ![](../../assets/bubbleghost/menu.png) | ![](../../assets/bubbleghost/hall-of-fame.png) |
+
+`GHOST.PRE` as the reconstruction unpacks and draws it, photographed at the instruction that hands
+control to `GHOST.LOA` and starts the digitised speech — which is the moment the presentation's own
+palette has to be on the chip, and the surface the XBIOS door was built for: before that door
+existed a person watched this picture in the *desktop's* colours for the whole length of the voice.
+The menu is taken at `menu_read_key_and_fold`, the read that blocks on those four keys, which is the
+same place `smoke.py` photographs the shipped binary — and all 32,000 bytes of the two agree. The
+hall of fame is `[H]`: the five `SCORE` rows drawn over room 0 as a backdrop, photographed at the
+idle loop's first animation step, which is the first instruction after the table, the backdrop and
+the HUD row are all on the visible screen.
+
+| `[D]`, record 400 of the demo | …and record 720 | Room 1, one frame after `[G] [1]` |
+|:---:|:---:|:---:|
+| ![](../../assets/bubbleghost/demo-early.png) | ![](../../assets/bubbleghost/demo-late.png) | ![](../../assets/bubbleghost/room1-start.png) |
+
+The attract mode's first phase replays `GHOST.DEM` into room 1 — 980 six-byte records fed one per
+drawn frame — and these are two of them, chosen by their arrival count so that the pair is the same
+pair on every run. There is **no `Vsync` in that loop**: it runs as fast as the renderer does, which
+is why the moment is a record number and could not be a delay. The script asserts the ghost is in a
+different place in the two, so the later one cannot be the earlier one photographed twice. The third
+is the game itself: `[G]` then `[1]`, one whole room frame in — the first moment the ghost and the
+bubble have been through the GEM door onto the visible screen, and the moment `smoke.py game`
+compares against the original's own room, byte for byte.
+
+| 90 frames into room 1 | The slideshow, room 21 | …and room 33 |
+|:---:|:---:|:---:|
+| ![](../../assets/bubbleghost/room1-busy.png) | ![](../../assets/bubbleghost/slideshow-a.png) | ![](../../assets/bubbleghost/slideshow-b.png) |
+
+The first is the same room 88 frames later, and what has moved in it is the fans, the ghost's own
+animation and the bonus bar — **not the bubble**, which nothing blows while the mouse is still.
+Hatari's headless protocol has no mouse motion of any kind, which is the same reason the game as a
+game is play-tested by a person rather than by a check; poking a position into the game's own mouse
+globals each frame *does* move the ghost and a held shift key *does* put it into its blowing pose,
+but neither moved the bubble — the three runs and the coordinates they read back are recorded in
+[`recreate/atari/README.md`](recreate/atari/README.md) — so no picture here claims a played frame.
+The last two are the attract mode's second phase, a slideshow of 5..15 rooms picked by XBIOS
+`Random` — **the one pair here that two runs cannot agree on**, since the seed is the clock: the
+script publishes the first two candidates that drew *different* rooms and reads the room off
+`A_room_number` at the same instruction as the picture, so these two captions name the rooms of the
+run that made these two files rather than promising a room. A re-run replaces both, and a caption
+left behind by one is visible in the picture itself: the HUD row along the bottom of every room
+carries that room's own number. Room 35 can never appear, for the truncation reason in
+[`notes/frontend.md`](notes/frontend.md) §2.
+
+## Performance
+
+The headline is the status paragraph above. The instrument, the twelve waves, the full per-routine
+table and the four things the profiler cannot see are in
+[`recreate/atari/README.md`](recreate/atari/README.md) ("Performance") and
+[`recreate/STATUS.md`](recreate/STATUS.md) ("Performance — the baseline, and the twelve waves
+measured on top of it"), and are not restated here.
 
 ## The disk
 
@@ -123,20 +198,10 @@ state* — `(ghost_x/3, ghost_y/2, ghost_tile, bubble_x/3, bubble_y/2, bubble_fr
 against the demo player: one record per drawn frame, 980 of the 1,000 replayed, no `Vsync` in the
 loop. Formats and evidence: [`notes/assets_survey.md`](notes/assets_survey.md).
 
-## Gallery
-
-The left one is `GHOST.PRE` decoded by `tools/extract_gfx.py`; the right one is the original
-binary, decrypted by its own wrapper inside Hatari. **The reconstruction draws that second picture
-byte for byte** — `recreate/atari/smoke.py`'s framebuffer check is exactly that comparison.
-
-| `GHOST.PRE`, decoded from the file | the game's menu, past the protection |
-|:---:|:---:|
-| ![](../../assets/bubbleghost/title.png) | ![](../../assets/bubbleghost/menu-hatari.png) |
-
 ## What is next
 
 The naming loop is done — **132 of 134 functions, 203 globals, 161 plate comments** — and so is the
-port: every one of those 132 is verified byte-for-byte against the original, in **1,895 tests**.
+port: every one of those 132 is verified byte-for-byte against the original, in **1,909 tests**.
 Ghidra decompiled 123 of the 134; the 11 failures are all Alcyon C runtime, read out of the
 disassembly. [`recreate/README.md`](recreate/README.md) has the image model and the procedure;
 [`recreate/STATUS.md`](recreate/STATUS.md) has the ledger, the residuals and the kit's remaining
