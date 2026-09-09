@@ -48,10 +48,12 @@ def compile_probe(probe_src, tmpdir, extra_src=()):
                     f"run a project's `make oracle` first")
     binary = Path(tmpdir) / "probe"
     # -O0 because this compiles ~800 KiB of generated opcode table on every run and the optimiser
-    # changes nothing a probe asks about; -DM68K_EMULATE_TRACE=0 mirrors kit.mk's OCFLAGS, which
-    # shim.c refuses to build without.
+    # changes nothing a probe asks about; -DM68K_EMULATE_TRACE=0 and -DOS_FS_TABLE_RUNTIME mirror
+    # kit.mk's OCFLAGS — shim.c refuses to build without the first, and without the second a probe
+    # would compile a DIFFERENT os.h from the shipped oracle's (a constant staged-file window in
+    # place of the variable one), which is the divergence a probe exists to rule out.
     subprocess.run(
-        ["cc", "-O0", "-DM68K_EMULATE_TRACE=0",
+        ["cc", "-O0", "-DM68K_EMULATE_TRACE=0", "-DOS_FS_TABLE_RUNTIME",
          f"-I{KIT / 'include'}", f"-I{MUSASHI}", f"-I{GENDIR}", f"-I{MUSASHI / 'softfloat'}",
          *[str(src) for src in ORACLE_SRC], *[str(src) for src in extra_src],
          str(probe_src), "-o", str(binary)],

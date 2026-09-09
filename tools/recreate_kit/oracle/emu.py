@@ -34,21 +34,47 @@ SENTINEL = 0x00000002     # even, mapped, never real code (code >= 0x10000): rts
 OS_HEAP_BASE_DEFAULT = 0x20000
 _cfg = project.current()
 OS_HEAP_BASE = OS_HEAP_BASE_DEFAULT if _cfg.heap_base is None else _cfg.heap_base
-# ...and where it must STOP. The arena grows upward without bound, and only its BASE was ever
+# ---- the staged-file window: the map's OTHER per-project region ----
+# The table's address, and the staging area a fixed distance above it. Resolved here rather than in
+# harness.py for OS_HEAP_BASE's reason and one more of its own: the heap's CEILING is the table's
+# address, so a project that moves the window moves the arena's ceiling with it, and emu is where
+# that ceiling is resolved. harness.py serves both names back. The whole mechanism is in
+# ../README.md, "The staged-file window is the second region a project places".
+OS_FS_TABLE = os_map.OS_FS_TABLE_DEFAULT if _cfg.fs_base is None else _cfg.fs_base
+OS_FS_STAGING = OS_FS_TABLE + os_map.OS_FS_STAGING_OFFSET
+
+
+def fs_base_source():
+    """Where the staged-file window's base came from, as a phrase naming the file to edit.
+
+    Two spellings, for ``heap_base_source``'s reason: a project that never set the key has no
+    `fs_base` line to go and change.
+    """
+    if _cfg.fs_base is None:
+        return (f"`OS_FS_TABLE_DEFAULT` in tools/recreate_kit/include/os.h "
+                f"(no `fs_base` in {_cfg.dir / project.CONFIG_NAME})")
+    return f"`fs_base` in {_cfg.dir / project.CONFIG_NAME}"
+
+
+# ...and where the arena must STOP. It grows upward without bound, and only its BASE was ever
 # vetted, so a run that allocated past the staged-file table scribbled over it on both sides and
 # compared equal. project.toml's optional `heap_limit` narrows the ceiling further, for a project
 # whose free window ends below the table (its own scratch map, or a region its cases poke); the
-# kit's own ceiling is os_map.OS_FS_TABLE and a project may only lower it, never raise it.
+# kit's own ceiling is the resolved OS_FS_TABLE and a project may only lower it, never raise it.
 def resolve_heap_limit(configured):
     """The ceiling a project's ``heap_limit`` really buys: the kit's own, which it may only LOWER.
 
     A function rather than an expression so the clamp has a surface — the resolution runs once at
     import, from the bound project's config, and a project that raised the ceiling past the
     staged-file table would be granting itself exactly what the kit-wide limit exists to refuse.
+
+    The kit's own ceiling is the RESOLVED table address, not os.h's default: a project that moved
+    its window down moved the arena's ceiling down with it, and a clamp against the default would
+    let the arena grow into the table the harness stages files into.
     """
     if configured is None:
-        return os_map.OS_FS_TABLE
-    return min(configured, os_map.OS_FS_TABLE)
+        return OS_FS_TABLE
+    return min(configured, OS_FS_TABLE)
 
 
 HEAP_LIMIT = resolve_heap_limit(_cfg.heap_limit)
@@ -69,8 +95,8 @@ def heap_base_source():
 
 def heap_limit_source():
     """...and where the ceiling came from, in the same two spellings."""
-    if _cfg.heap_limit is None or _cfg.heap_limit >= os_map.OS_FS_TABLE:
-        return "the staged-file table (OS_FS_TABLE, tools/recreate_kit/include/os.h)"
+    if _cfg.heap_limit is None or _cfg.heap_limit >= OS_FS_TABLE:
+        return f"the staged-file table (OS_FS_TABLE {OS_FS_TABLE:#x}, {fs_base_source()})"
     return f"`heap_limit` in {_cfg.dir / project.CONFIG_NAME}"
 
 _DREG_NAMES = ("d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7")
@@ -171,12 +197,17 @@ def install_heap_limit(lib, symbol, limit, on_missing):
     """Install the arena's CEILING into one shared object. Returns whether it did.
 
     ``install_heap_base``'s twin, and required on the same terms: an .so predating the entry point
-    already carries OS_HEAP_LIMIT_DEFAULT (the staged-file table), so a project that narrowed
-    nothing is served correctly by an old build, while one that DID narrow its window and was
-    silently served the kit's wider ceiling would have `Malloc(-1)` report free memory it does not
-    have — and answer a query the game branches on with a number from another project's map.
+    already carries OS_HEAP_LIMIT_DEFAULT (the staged-file table's DEFAULT address), so a project
+    that narrowed nothing is served correctly by an old build, while one that DID narrow its window
+    and was silently served the kit's wider ceiling would have `Malloc(-1)` report free memory it
+    does not have — and answer a query the game branches on with a number from another project's map.
+
+    The skip compares against what an .so ALREADY CARRIES, never against this project's resolved
+    ceiling: a project that moved its staged-file window down moved the ceiling with it while
+    setting no `heap_limit` at all, and a skip keyed on `resolve_heap_limit(None)` would call that
+    ceiling "the default" and leave both objects allocating up into the moved table.
     """
-    if limit == resolve_heap_limit(None):
+    if limit == os_map.OS_FS_TABLE_DEFAULT:
         return False
     if not hasattr(lib, symbol):
         raise on_missing(symbol)
@@ -190,11 +221,42 @@ def _missing_heap_limit_abi(symbol):
     """The oracle side's refusal for an .so predating ``symbol``."""
     return _stale_oracle(
         symbol,
-        f"so {_cfg.name}'s `heap_limit = {HEAP_LIMIT:#x}` (project.toml) cannot be installed and "
-        f"Malloc(-1) would report the free window as reaching {resolve_heap_limit(None):#x}.")
+        f"so {_cfg.name}'s ceiling of {HEAP_LIMIT:#x} cannot be installed and Malloc(-1) would "
+        f"report the free window as reaching {os_map.OS_FS_TABLE_DEFAULT:#x}.")
 
 
 install_heap_limit(_LIB, "osh_set_heap_limit", HEAP_LIMIT, _missing_heap_limit_abi)
+
+
+def install_fs_table(lib, symbol, base, on_missing):
+    """Install the staged-file window's base into ONE shared object. Returns whether it did.
+
+    ``install_heap_base``'s twin for the map's other per-project region, and required on the same
+    terms: an .so predating the entry point already reads the table at OS_FS_TABLE_DEFAULT, so a
+    project that moved nothing is served correctly by an old build — while one that MOVED its window
+    and was silently served the old address would have every ``os_fopen`` look at a table the harness
+    never wrote, on that side alone. The staging area follows the table, so this one value places
+    both halves.
+    """
+    if base == os_map.OS_FS_TABLE_DEFAULT:
+        return False
+    if not hasattr(lib, symbol):
+        raise on_missing(symbol)
+    entry = getattr(lib, symbol)
+    entry.argtypes = [ctypes.c_uint32]
+    entry(base)
+    return True
+
+
+def _missing_fs_table_abi(symbol):
+    """The oracle side's refusal for an .so predating ``symbol`` — install_fs_table's ``on_missing``."""
+    return _stale_oracle(
+        symbol,
+        f"so {_cfg.name}'s `fs_base = {OS_FS_TABLE:#x}` (project.toml) cannot be installed and the "
+        f"oracle would keep serving Fopen out of a table at {os_map.OS_FS_TABLE_DEFAULT:#x}.")
+
+
+install_fs_table(_LIB, "osh_set_fs_table", OS_FS_TABLE, _missing_fs_table_abi)
 if not hasattr(_LIB, "osh_poked_input_calls"):
     raise _stale_oracle(
         "osh_poked_input_calls",
@@ -1112,8 +1174,8 @@ def _vet_heap_within_bounds(heap_end):
     overwrites the stub the case poked. Both are plain image writes served identically to the oracle
     and the candidate, so the two corrupted runs compare EQUAL and the case reports green.
 
-    The ceiling is os_map.OS_FS_TABLE, narrowed by project.toml's optional ``heap_limit`` for a
-    project whose free window ends lower (HEAP_LIMIT above). ``heap_end`` is the bump pointer at the
+    The ceiling is the resolved OS_FS_TABLE, narrowed by project.toml's optional ``heap_limit`` for
+    a project whose free window ends lower (HEAP_LIMIT above). ``heap_end`` is the bump pointer at the
     END of the run — shim.c resets it to the base at every osh_run — so this measures one run's
     demand, which is what a differential case is.
     """

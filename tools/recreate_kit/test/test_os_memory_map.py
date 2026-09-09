@@ -22,7 +22,8 @@ OS_H = KIT / "include" / "os.h"
 # The Python mirror is split across three files: harness.py holds the file-staging map it pokes into
 # the image, oracle/emu.py holds the Malloc arena's default base (its per-run guards need it), and
 # os_map.py holds what harness.py and emu.py BOTH ask about, so neither can own it — the
-# harness-poked input block, and OS_FS_TABLE (the arena's ceiling as well as the table's address).
+# harness-poked input block, and the staged-file window's default place (the arena's default ceiling
+# as well as the table's default address).
 # Each constant must be defined in exactly one of them (asserted below) so there is still one
 # source; harness.py re-exports the other two files' names, and a re-export is not a definition.
 PY_MIRRORS = (KIT / "harness.py", KIT / "oracle" / "emu.py", KIT / "os_map.py")
@@ -41,7 +42,11 @@ PINNED = ("OS_IMAGE_SIZE",
           # the Malloc arena's base against the band a game draws a frame into; its LENGTH has no C
           # counterpart to pin (the model never draws), so harness.py states that one alone.
           "OS_SCREEN_BASE",
-          "OS_FS_TABLE", "OS_FS_STAGING", "OS_FS_ENTRY",
+          # the staged-file window's DEFAULT place and the distance from its table to its staging
+          # area. The DEFAULTS, for OS_HEAP_BASE_DEFAULT's reason: the live addresses are variables
+          # on both sides once project.toml's `fs_base` moves them, so there is no constant to pin —
+          # test_fs_window.py is where the two sides are checked to agree on the moved value.
+          "OS_FS_TABLE_DEFAULT", "OS_FS_STAGING_OFFSET", "OS_FS_ENTRY",
           "OS_FS_SLOTS", "OS_FS_NAME", "OS_FS_FIRST_HANDLE", "OS_DOSOUND_LOG_MAX",
           # the two off-image ledger caps: both sides truncate at the SAME entry, or two streams
           # that diverge past the cap would compare equal (harness.differential asserts below them)
@@ -187,6 +192,10 @@ def test_every_low_model_address_is_guarded_or_declared_unvetted():
         # rather than like Dosound's because one Cconws of a screen of text is already hundreds of
         # entries. Not a place in the image either.
         "OS_EVENT_LOG_MAX",
+        # 4096 bytes — the DISTANCE from the staged-file table to the staging area above it, not a
+        # place in the image. The window's own address is `fs_base` in a project.toml, and its
+        # default is OS_FS_TABLE_DEFAULT, well clear of this range.
+        "OS_FS_STAGING_OFFSET",
     }
     UNVETTED = {
         # 0x500, the KBDVBASE struct XBIOS Kbdvbase returns. Its only reader is that trap, which IS
@@ -245,9 +254,15 @@ def test_every_modeled_hardware_address_is_above_the_image():
 
 
 def test_staged_file_table_fits_below_staging():
-    """The table must hold OS_FS_SLOTS entries without running into the staging area below it."""
+    """The table must hold OS_FS_SLOTS entries without running into the staging area above it.
+
+    Asked of the DISTANCE between the two rather than of their addresses, because the window moves:
+    project.toml's `fs_base` places the table and the staging area follows a fixed
+    OS_FS_STAGING_OFFSET above it, so this is the one relation that has to hold wherever it lands.
+    """
     c = _c_defines(OS_H.read_text(), PINNED)
     table_bytes = c["OS_FS_SLOTS"] * c["OS_FS_ENTRY"]
-    assert c["OS_FS_TABLE"] + table_bytes <= c["OS_FS_STAGING"], (
-        f"the {c['OS_FS_SLOTS']}-entry staged-file table at {c['OS_FS_TABLE']:#x} "
-        f"({table_bytes} bytes) overruns OS_FS_STAGING at {c['OS_FS_STAGING']:#x}")
+    assert table_bytes <= c["OS_FS_STAGING_OFFSET"], (
+        f"the {c['OS_FS_SLOTS']}-entry staged-file table ({table_bytes} bytes) overruns the "
+        f"{c['OS_FS_STAGING_OFFSET']:#x}-byte gap OS_FS_STAGING_OFFSET leaves ahead of the "
+        f"staging area")

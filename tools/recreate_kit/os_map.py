@@ -64,13 +64,22 @@ OS_EVENT_SETPALETTE = 9      # value = the address of the sixteen-word colour ta
 OS_EVENT_SETCOLOR = 10       # value = index << 16 | the colour word (XBIOS Setcolor)
 OS_EVENT_VSYNC = 11          # value = 0: XBIOS Vsync takes no argument and answers nothing
 
-# ---- the staged-file table's base (mirror of include/os.h) ----
+# ---- the staged-file window's DEFAULT place (mirror of include/os.h) ----
 # Here rather than with the rest of the file-staging map in ``harness.py`` for this module's first
-# reason: it is the ceiling the Malloc arena may not reach, and BOTH files ask about it —
-# ``harness._vet_os_memory_map`` checks where the arena is PLACED and ``emu._vet_heap_within_bounds``
-# checks how far one run grew it. ``harness.OS_FS_TABLE`` re-exports it, so the rest of the map still
-# reads as one namespace.
-OS_FS_TABLE = 0xBF000
+# reason: the table's address is the ceiling the Malloc arena may not reach, and BOTH files ask about
+# it — ``harness._vet_os_memory_map`` checks where the arena is PLACED and
+# ``emu._vet_heap_within_bounds`` checks how far one run grew it.
+#
+# The DEFAULT, because the window is one of the two regions a project may place (project.toml's
+# ``fs_base``; see ../README.md, "The staged-file window is the second region a project places").
+# ``emu.OS_FS_TABLE`` / ``emu.OS_FS_STAGING`` are the resolved addresses every guard reads, and
+# ``harness`` serves those back under its own names — so the rest of the map still reads as one
+# namespace, and no copy of a live value can go stale.
+OS_FS_TABLE_DEFAULT = 0xBF000
+# ...and the DISTANCE from the table to the raw file bytes. A distance and not a second address, so
+# a project that moves the window moves both halves together and the table can never be placed over
+# its own staging area (os.h asserts OS_FS_SLOTS * OS_FS_ENTRY fits inside it at compile time).
+OS_FS_STAGING_OFFSET = 0x1000
 
 # ---- the direct-PSG ledger's event kinds (mirror of include/os.h, "Phase 6") ----
 # NOT poked-input state — they live here for this module's OTHER reason: `emu.psg_events` tags each

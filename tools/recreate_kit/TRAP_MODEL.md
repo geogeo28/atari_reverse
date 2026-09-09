@@ -292,13 +292,15 @@ pending, hands back four bytes of code as the key, and **zeroes four bytes of co
 `OS_CON_PENDING` — identically on both sides, since both run the same `os.h`. The diff is clean and
 the case proves nothing.
 
-### The Malloc arena is the one part of the map a project places
+### The Malloc arena is one of the two parts of the map a project places
 
 GEMDOS `Malloc` (0x48) bump-allocates from an in-image arena, and `Mshrink`/`Mfree` return 0. Where
-that arena starts and how far it may grow are the only two parts of the model's memory map a project
-configures — `heap_base` and `heap_limit` in its `project.toml` — and the whole mechanism, both
-entry points and all the refusals, is written once in [`README.md`](README.md), "The Malloc arena is
-the one region a project places".
+that arena starts and how far it may grow are configured by `heap_base` and `heap_limit` in a
+project's `project.toml`, and the whole mechanism, both entry points and all the refusals, is written
+once in [`README.md`](README.md), "The Malloc arena is the one region a project places". The map's
+OTHER placed region is the staged-file window (`fs_base`, Phase 4 below); the two interlock, because
+the arena's ceiling **is** the staged-file table's address, so moving the window down moves the
+ceiling with it.
 
 What belongs here is the **trap** half. `OS_HEAP_BASE` reads in C as it always did but is now a
 variable read rather than a constant expression, and two refusals key on what the traps did rather
@@ -612,6 +614,22 @@ file grown by `Fwrite` cannot land on the next file's bytes. `Fcreate(name, attr
 already-staged file to zero length and opens it; `Fwrite(handle, count, buf)` copies into staging
 at the cursor, extends the length, and returns the byte count. All of it lands **in the image**, so
 both cores see the bytes and the diff covers them.
+
+**Where the window IS, is the project's choice.** The table's address — and with it the staging
+area, a fixed `OS_FS_STAGING_OFFSET` above it — is the map's second per-project region, set by
+`fs_base` in a `project.toml` and installed into both shared objects at import exactly as the Malloc
+arena's base is. The whole mechanism is written once in [`README.md`](README.md), "The staged-file
+window is the second region a project places"; what belongs here is why a project needs it. At the
+default place the raw bytes start at `0xc0000`, which leaves `STACK_GUARD_LO - 0xc0000` = **258,048
+bytes** for every file one case stages at once — and a boot slice that opens more than that cannot
+be replayed at all: Flying Shark's `init_load_assets` opens eight files totalling 288,551. The
+files' own reservations are what fills the window, so this is a limit on a CASE and not on the
+model: `stage_files` refuses the overflow loudly rather than laying one file over another.
+
+`OS_FS_TABLE` and `OS_FS_STAGING` therefore read in C as they always did but are **variable reads**
+off target rather than constant expressions, under `-DOS_FS_TABLE_RUNTIME`, which only the two
+off-target builds pass. An on-target build compiles the constant it always did — real RAM, one
+program, nothing to place.
 
 **Design choice — the harness declares the filesystem.** Nothing here ever invents a staging
 address. `Fcreate` of a name the harness never staged returns -1 (→ raise) instead of handing out a

@@ -350,6 +350,23 @@ void g_stores_the_arena_base_without_allocating(uint8_t *image, uint32_t at) {
     wr32(image + at, OS_HEAP_BASE);
 }
 
+/* ---- the staged-file window (see test_fs_window.py) -------------------------------------------
+ * The candidate half of the .PRG's `Fopen` + `Fread`: a reconstruction reads a staged file through
+ * the same os.h inlines the shim services the traps from, so both sides resolve the table at
+ * OS_FS_TABLE and copy out of the staging area above it. That is what makes a MOVED window
+ * checkable — a side still reading the default table finds no such name and refuses, which
+ * `emu.run` turns into a raise rather than a silent miss.
+ *
+ * The byte count is stored into the image because a trap's return value is off-image and a
+ * differential compares memory; the addresses are ARGUMENTS for `g_stores_a_malloc_block`'s reason.
+ */
+void g_reads_a_staged_file(uint8_t *image, uint32_t name_at, uint32_t count, uint32_t buf,
+                           uint32_t result_at) {
+    int32_t handle = os_fopen(image, name_at);
+    int32_t nread = handle < 0 ? handle : os_fread(image, (uint16_t)handle, count, buf);
+    wr32(image + result_at, (uint32_t)nread);
+}
+
 /* ---- Phase 13's terminating routine: the candidate half of the .PRG's GEMDOS Pterm ----
  * `os_pterm` cannot END anything from this side — it is a C call, and the only way back to the
  * harness is to return — so the whole of its contract is on the CALLER: return immediately, with no

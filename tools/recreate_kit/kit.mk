@@ -13,7 +13,13 @@ CC      ?= clang
 # defines it. A core keys a HOST-ONLY check on it (a bound the differential cannot state, asserted
 # where there is a process to abort); nothing behavioural may hang off it, or the two builds would
 # stop being the same program.
-CFLAGS  ?= -std=c11 -O2 -fPIC -Wall -Wextra -DRECREATE_HOST_DIFFERENTIAL -Iinclude -I$(KIT)/include
+# -DOS_FS_TABLE_RUNTIME makes os.h's OS_FS_TABLE/OS_FS_STAGING variable reads rather than constants,
+# so `fs_base` in a project.toml can place the staged-file window (README.md, "The staged-file window
+# is the second region a project places"). Both OFF-TARGET builds pass it — this one and $(ORACLE)
+# below — because one liboracle.so serves every project and a #define cannot answer "where" per
+# project. A project's own .PRG build never passes it and compiles the address it always did.
+CFLAGS  ?= -std=c11 -O2 -fPIC -Wall -Wextra -DRECREATE_HOST_DIFFERENTIAL -DOS_FS_TABLE_RUNTIME \
+           -Iinclude -I$(KIT)/include
 PY      := .venv/bin/python
 
 CAND    := build/lib$(GAME).so
@@ -50,7 +56,7 @@ ORACLE  := $(GENDIR)/liboracle.so
 # the oracle single-step self-decrypting protection code (Wonder Boy's Copylock is the live case),
 # which is what its stub's "forgetting it is loud, not silent" property rests on NOT happening —
 # see projects/wonderboy/recreate/PORTABILITY.md §6.1.
-OCFLAGS := -O2 -fPIC -DM68K_EMULATE_TRACE=0 \
+OCFLAGS := -O2 -fPIC -DM68K_EMULATE_TRACE=0 -DOS_FS_TABLE_RUNTIME \
            -I$(KIT)/include -I$(MUSASHI) -I$(GENDIR) -I$(MUSASHI)/softfloat
 
 $(CAND): $(SRC) $(wildcard include/*.h) $(wildcard $(KIT)/include/*.h)

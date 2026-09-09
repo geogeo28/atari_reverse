@@ -74,8 +74,9 @@ uint32_t g_os_refusal_count(void);      /* ...and raises on what it reads back *
  * image_size are per-project (project.toml). They therefore assume a program that fits below
  * OS_FS_TABLE and an image large enough to hold the staging area below the stack guard —
  * harness._vet_os_memory_map() checks both against the bound project and fails loudly if not,
- * which is the signal to move a region here (and its Python mirror in harness.py). The Malloc
- * arena is the exception: it is per-project too, see OS_HEAP_BASE below. */
+ * which is the signal to move a region here (and its Python mirror in harness.py). TWO regions are
+ * the exceptions, and both are per-project: the Malloc arena (see OS_HEAP_BASE below) and the
+ * staged-file window (see OS_FS_TABLE further down). */
 #define OS_IMAGE_SIZE  0x100000u /* the flat image both cores run on is this long. Kit-wide for the
                                   * same reason the addresses below are: os_fread/os_fwrite must
                                   * bound their memcpy against something, and a reconstruction that
@@ -106,9 +107,12 @@ void os_set_heap_base(uint32_t base); /* ...installed once, before any run; the 
  * `heap_limit`. `harness` installs the resolved value into both shared objects at import, exactly as
  * it installs the base, so `Malloc(-1)`'s answer and the ceiling check below describe the window the
  * bound project really has. A VARIABLE READ, not a constant expression, for OS_HEAP_BASE's reason.
- * (OS_FS_TABLE is declared with the staged-file map further down; a macro body is expanded where it
- * is USED, so naming it here keeps one source for the table's address rather than a second copy.) */
-#define OS_HEAP_LIMIT_DEFAULT OS_FS_TABLE
+ * (OS_FS_TABLE_DEFAULT is declared with the staged-file map further down; a macro body is expanded
+ * where it is USED, so naming it here keeps one source for the table's address rather than a second
+ * copy. The DEFAULT and not the live OS_FS_TABLE, because this is a static initialiser: a project
+ * that moved its window has its resolved ceiling installed by `os_set_heap_limit` at import, the
+ * same way its base is.) */
+#define OS_HEAP_LIMIT_DEFAULT OS_FS_TABLE_DEFAULT
 extern uint32_t g_os_heap_limit;
 void os_set_heap_limit(uint32_t limit);
 #define OS_HEAP_LIMIT  (g_os_heap_limit)
@@ -1141,10 +1145,37 @@ static inline uint32_t os_random(const uint8_t *mem) {
  * name the table does not hold. See its own comment for why that is not the fabrication the
  * governing rule forbids, and why os_fopen's identical "no such name" is still a refusal. */
 #define OS_EFILNF (-33)              /* GEMDOS "file not found" — TOS's own value for the errno */
-#define OS_FS_TABLE        0xbf000u  /* staged-file table: OS_FS_SLOTS entries of OS_FS_ENTRY bytes.
-                                      * Kit-wide (see the memory-map note above): it must sit above
-                                      * every game's program and below emu.STACK_GUARD_LO */
-#define OS_FS_STAGING      0xc0000u  /* raw file bytes, laid out below the stack by the harness */
+/* ---- the staged-file WINDOW: the second region of the map that MOVES ------------------------
+ * The table's address, and with it the staging area a fixed distance above it. Installed at run
+ * time from project.toml's optional `fs_base`, for the same reason the Malloc arena's base is:
+ * os.h is compiled into two SHARED objects and a #define cannot answer "where" per project. The
+ * whole mechanism is in ../README.md, "The staged-file window is the second region a project
+ * places"; the one fact a reader of THIS file needs is that OS_FS_TABLE and OS_FS_STAGING are
+ * VARIABLE READS off target — usable in an expression, not in a case label, an array bound or a
+ * static initialiser.
+ *
+ * WHY ON-TARGET BUILDS KEEP THE CONSTANT. A project's own .PRG build links none of the kit's src/,
+ * so an unconditional `extern` would fail at LINK for the one project that keeps this model on
+ * target (projects/joust). On target there is also nothing to place: real RAM, one program, and no
+ * liboracle.so shared with anyone. So the variable is opted into by the two OFF-TARGET builds that
+ * need it — kit.mk's candidate and oracle rules both pass -DOS_FS_TABLE_RUNTIME — and every target
+ * build compiles the address it always did, byte for byte. */
+#define OS_FS_TABLE_DEFAULT   0xbf000u  /* staged-file table: OS_FS_SLOTS entries of OS_FS_ENTRY
+                                         * bytes. It must sit above every game's program, above the
+                                         * harness-poked block, and far enough below
+                                         * emu.STACK_GUARD_LO to hold the files staged into it */
+#define OS_FS_STAGING_OFFSET  0x1000u   /* the raw file bytes start this far above the table. A
+                                         * DISTANCE and not a second address, so moving the window
+                                         * moves both halves together and the table can never be
+                                         * placed over its own staging area */
+#ifdef OS_FS_TABLE_RUNTIME
+extern uint32_t g_os_fs_table;        /* the live table base (src/os_fs.c; oracle/shim.c has its own) */
+void os_set_fs_table(uint32_t base);  /* ...installed once, before any run, by harness.py */
+#define OS_FS_TABLE        (g_os_fs_table)
+#else
+#define OS_FS_TABLE        OS_FS_TABLE_DEFAULT
+#endif
+#define OS_FS_STAGING      (OS_FS_TABLE + OS_FS_STAGING_OFFSET)
 /* WHY 32 AND NOT 8. The table held eight entries while the games that used it opened one or two
  * files; Zynaps's boot opens about thirty in one straight line (`_start` @ 0x10000 makes 22
  * `load_file` calls before 0x10814, and each level section loads five more), and 0x101ba is where
@@ -1163,11 +1194,12 @@ static inline uint32_t os_random(const uint8_t *mem) {
 
 /* THE TABLE MUST END BELOW THE STAGING AREA. It grew from 8 slots to 32 and could grow again, and
  * the failure it would then have is silent: entry N's bytes would be written over the first staged
- * file's, which os_fread would go on serving as if they were the file. A compile-time check rather
- * than a runtime one because both numbers are constants here — the harness's Python mirror is
- * pinned equal to them by test/test_os_memory_map.py, so this covers that side too. */
-#if OS_FS_TABLE + OS_FS_SLOTS * OS_FS_ENTRY > OS_FS_STAGING
-#error "the staged-file table overruns OS_FS_STAGING: fewer OS_FS_SLOTS, or move the staging area up"
+ * file's, which os_fread would go on serving as if they were the file. Asked of the DISTANCE
+ * between the two rather than of their addresses, so it holds wherever a project places the window;
+ * a compile-time check because both numbers are constants — the harness's Python mirror is pinned
+ * equal to them by test/test_os_memory_map.py, so this covers that side too. */
+#if OS_FS_SLOTS * OS_FS_ENTRY > OS_FS_STAGING_OFFSET
+#error "the staged-file table overruns its staging area: fewer OS_FS_SLOTS, or a larger OS_FS_STAGING_OFFSET"
 #endif
 
 /* Does the byte range [addr, addr + count) lie inside the image? Every m68k_*_memory_* callback

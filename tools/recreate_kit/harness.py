@@ -151,12 +151,24 @@ def _missing_heap_limit_abi(symbol):
         f"Malloc(-1) would report free memory it does not have.")
 
 
-# Tell the CANDIDATE where this project's Malloc arena starts and ends — emu.py has already told the
-# oracle. Two objects in one process, so each is told separately, from the one value project.toml
-# configured; emu.install_heap_base/_limit are the one implementation and say when the ABI is
-# required.
+def _missing_fs_table_abi(symbol):
+    """The candidate side's twin of ``emu._missing_fs_table_abi``."""
+    return _missing_candidate_abi(
+        symbol,
+        f"so tools/recreate_kit/src/os_fs.c is not linked into {_CFG.name}'s candidate and its "
+        f"`fs_base = {emu.OS_FS_TABLE:#x}` ({_CFG.dir / project.CONFIG_NAME}) cannot be installed "
+        f"— every os_fopen the reconstruction makes would look at a table at "
+        f"{os_map.OS_FS_TABLE_DEFAULT:#x}, which the harness never wrote, and report every file "
+        f"unstaged.")
+
+
+# Tell the CANDIDATE where this project's Malloc arena starts and ends and where its staged-file
+# window sits — emu.py has already told the oracle. Two objects in one process, so each is told
+# separately, from the one value project.toml configured; emu.install_heap_base/_limit/fs_table are
+# the one implementation and say when the ABI is required.
 emu.install_heap_base(_lib, "os_set_heap_base", emu.OS_HEAP_BASE, _missing_heap_base_abi)
 emu.install_heap_limit(_lib, "os_set_heap_limit", emu.HEAP_LIMIT, _missing_heap_limit_abi)
+emu.install_fs_table(_lib, "os_set_fs_table", emu.OS_FS_TABLE, _missing_fs_table_abi)
 
 # The off-image OS EVENT ledger (src/os_log.c) and the candidate's Malloc arena (src/os_heap.c) are
 # REQUIRED ABI, like the refusal tally above and unlike the Dosound ledger. The Dosound ledger can be
@@ -220,23 +232,22 @@ def label(addr):
 # These addresses are KIT-WIDE (one set of C constants serves every game), while load_base /
 # image_size are per-project. tools/recreate_kit/test/test_os_memory_map.py pins this mirror equal
 # to os.h; _vet_os_memory_map() below checks the addresses actually fit the bound project's image.
-# Three pieces of the mirror live elsewhere and are re-exported here, so `harness.*` still reads as
-# one map: OS_HEAP_BASE in oracle/emu.py (its per-run Malloc guards need it), and both the
-# poked-input block and OS_FS_TABLE in os_map.py (harness.py and emu.py each guard those, and
-# neither can import the other).
+# Pieces of the mirror live elsewhere and are re-exported here, so `harness.*` still reads as one
+# map: the poked-input block and the staged-file window's DEFAULT place in os_map.py (harness.py and
+# emu.py each guard those, and neither can import the other), and the three PER-PROJECT addresses —
+# OS_HEAP_BASE, OS_FS_TABLE, OS_FS_STAGING — in oracle/emu.py, which resolves them from the bound
+# project and whose per-run guards need them.
 OS_IMAGE_SIZE = 0x100000     # image length the C model bounds its copies against (vetted below)
 OS_SCREEN_BASE = 0x8000      # what Physbase/Logbase return: the in-image screen region
 OS_SCREEN_BYTES = 0x7d00     # ...and its length, an ST low-res framebuffer. PYTHON-ONLY, so
                              # test_os_memory_map.py has nothing to pin it against: the model never
                              # draws, so no C constant states it. It is here because the arena's
                              # placement is checked against the band a game handed Logbase writes
-# `OS_HEAP_BASE` is the one PER-PROJECT entry in this map and is served by __getattr__ at the bottom
-# of this file rather than defined here: oracle/emu.py owns it (README.md, "The Malloc arena is the
-# one region a project places"), and a copy frozen at import would disagree with the oracle's the
-# moment a test moved the base.
-OS_FS_TABLE = os_map.OS_FS_TABLE   # staged-file table base — defined in os_map.py, where emu can
-                                   # reach it too (its per-run arena-ceiling guard needs it)
-OS_FS_STAGING = 0xC0000      # raw file bytes grow upward from here
+# `OS_HEAP_BASE`, `OS_FS_TABLE` and `OS_FS_STAGING` are the PER-PROJECT entries in this map and are
+# served by __getattr__ at the bottom of this file rather than defined here: oracle/emu.py owns all
+# three (README.md, "The Malloc arena is the one region a project places" and "The staged-file window
+# is the second region a project places"), and a copy frozen at import would disagree with the
+# oracle's the moment a test moved one.
 OS_FS_ENTRY = 36             # name[16] | staging u32 | size u32 | cursor u32 | open u32 | cap u32
 OS_FS_SLOTS = 32             # entries in the table; a 33rd file would be written past its end
 OS_FS_NAME = 16
@@ -353,19 +364,51 @@ _HEAP_OVER_PROGRAM = emu.heap_overlaps_program()
 # poked-input one.
 
 
-def _overlap_error(name, addr):
-    """The shared diagnostic for a kit-wide TOS-model region that collides with the loaded program.
+def _vet_staged_file_window():
+    """Refuse a staged-file window — the table, and the staging area above it — that is not placeable.
 
-    NOT the Malloc arena's, which has refusals of its own — one per region it can collide with —
-    because its address is the PROJECT's (project.toml's ``heap_base``) rather than os.h's: every
-    clause here, the file to look in and the file to edit alike, would name the wrong one.
+    Its base is a project's own choice (``project.toml``'s ``fs_base``; README.md, "The staged-file
+    window is the second region a project places"), so the arithmetic that was true by construction
+    for a kit-wide constant has to be asserted, exactly as it is for the Malloc arena. Every failure
+    here is SILENT otherwise: a staged file is a plain image write, so a window laid over the
+    program, over the model's own poked state or over the framebuffer corrupts BOTH sides
+    identically and the two runs compare equal.
+
+    THE ARENA NEEDS NO CLAUSE OF ITS OWN. The heap's ceiling IS this table's address
+    (``emu.resolve_heap_limit`` clamps to it), and ``_vet_os_memory_map`` already refuses a
+    ``heap_base`` at or above it — so a window moved DOWN pulls the ceiling down with it and the two
+    regions cannot overlap by construction. What is left is the four collisions the arena's own
+    checks have: the program, the poked block, the framebuffer, and the far end of the image.
     """
-    return RuntimeError(
-        f"{name} ({addr:#x}, tools/recreate_kit/include/os.h) lies inside {_CFG.name}'s "
-        f"program, which ends at {loader.PROGRAM_END:#x} — a Malloc block or a staged file "
-        f"would overwrite its own code/bss. Move that region (and its Python mirror, in harness.py, "
-        f"os_map.py or oracle/emu.py) above the program, or lower load_base in "
-        f"{_CFG.dir / project.CONFIG_NAME}.")
+    table, staging = emu.OS_FS_TABLE, emu.OS_FS_STAGING
+    source = emu.fs_base_source()
+    if table < OS_POKE_BLOCK_END:
+        raise RuntimeError(
+            f"the staged-file window starts at {table:#x} ({source}), at or below the console-key "
+            f"poke block (OS_POKE_BLOCK_END {OS_POKE_BLOCK_END:#x}, "
+            f"tools/recreate_kit/include/os.h) — the table would cover the model's own console, "
+            f"Random and PSG state, on both sides, so the diff would compare two identically "
+            f"corrupted runs. Raise `fs_base` above {OS_POKE_BLOCK_END:#x}.")
+    if OS_SCREEN_BASE <= table < OS_SCREEN_BASE + OS_SCREEN_BYTES:
+        raise RuntimeError(
+            f"the staged-file window starts at {table:#x} ({source}), inside the model's "
+            f"framebuffer ({OS_SCREEN_BASE:#x}..{OS_SCREEN_BASE + OS_SCREEN_BYTES - 1:#x} — "
+            f"OS_SCREEN_BASE, tools/recreate_kit/include/os.h, plus an ST low-res screen). A game "
+            f"handed that address by Physbase/Logbase draws a whole frame over the table and the "
+            f"files staged behind it, on BOTH sides. Move `fs_base` clear of that band.")
+    if table < loader.PROGRAM_END:
+        raise RuntimeError(
+            f"the staged-file window starts at {table:#x} ({source}), inside {_CFG.name}'s program, "
+            f"which ends at {loader.PROGRAM_END:#x} — the table and the files staged behind it "
+            f"would overwrite the program's own code/bss, identically on both sides. Raise "
+            f"`fs_base` above {loader.PROGRAM_END:#x}, or lower load_base in "
+            f"{_CFG.dir / project.CONFIG_NAME}.")
+    if staging >= emu.STACK_GUARD_LO:
+        raise RuntimeError(
+            f"the staged-file window's staging area starts at {staging:#x} ({source}, plus "
+            f"OS_FS_STAGING_OFFSET), at or above the stack guard {emu.STACK_GUARD_LO:#x} — staged "
+            f"file bytes would land in the band the differential drops. Lower `fs_base` in "
+            f"{_CFG.dir / project.CONFIG_NAME}, or raise image_size there.")
 
 
 def _vet_os_memory_map():
@@ -384,15 +427,15 @@ def _vet_os_memory_map():
     unvetted". The framebuffer IS checked against the ARENA below, which is a different question —
     where a project puts its heap, not where its program lands.
 
-    A program that reaches OS_HEAP_BASE or OS_FS_TABLE would have its own code/bss silently
-    overwritten by a Malloc block or a staged file — nothing else would catch that, since both are
-    plain image writes. Staging at or above the stack guard is the mirror hazard: those bytes are
-    dropped from the diff. (A too-small image_size is already caught loudly by stage_files.)
+    A program that reaches OS_HEAP_BASE would have its own code/bss silently overwritten by a
+    Malloc block — nothing else would catch that, since it is a plain image write. The staged-file
+    window's four clauses are `_vet_staged_file_window` above, because it is the map's SECOND
+    per-project region and its refusals must name `fs_base` rather than os.h.
 
     The heap check has one opt-out: only a GEMDOS Malloc ever writes at OS_HEAP_BASE, so a game
     that issues none can declare ``tos_malloc_unused = true`` in its project.toml (which must
-    justify it) and let its program cover that region. OS_FS_TABLE has no such waiver — the
-    harness stages files itself, so an overlap there is always live.
+    justify it) and let its program cover that region. The staged-file window has no such waiver —
+    the harness stages files itself, so an overlap there is always live.
 
     The heap is also the one region a project PLACES, with project.toml's ``heap_base`` — so it is
     checked against the model's other fixed regions too, which for a kit-wide constant would be
@@ -427,12 +470,13 @@ def _vet_os_memory_map():
             f"handed that address by Physbase/Logbase draws a whole frame over it, so a block "
             f"handed out here is overwritten mid-run on BOTH sides and the diff compares two "
             f"identically trampled runs. Move `heap_base` clear of that band.")
-    if heap_base >= OS_FS_TABLE:
+    if heap_base >= emu.OS_FS_TABLE:
         raise RuntimeError(
             f"the Malloc arena starts at {heap_base:#x} ({heap_source}), at or above the staged-file "
-            f"table (OS_FS_TABLE {OS_FS_TABLE:#x}, tools/recreate_kit/include/os.h) — the arena "
+            f"table (OS_FS_TABLE {emu.OS_FS_TABLE:#x}, {emu.fs_base_source()}) — the arena "
             f"grows upward, so the first block handed out would overwrite the table the harness "
-            f"stages files into, with no diagnostic. Lower `heap_base` below {OS_FS_TABLE:#x}.")
+            f"stages files into, with no diagnostic. Lower `heap_base` below "
+            f"{emu.OS_FS_TABLE:#x}.")
     if emu.heap_overlaps_program() and not _CFG.tos_malloc_unused:
         raise RuntimeError(
             f"the Malloc arena starts at {heap_base:#x} ({heap_source}), inside {_CFG.name}'s "
@@ -447,14 +491,7 @@ def _vet_os_memory_map():
             f"{emu.HEAP_LIMIT:#x} ({emu.heap_limit_source()}) — the window is empty, so the first "
             f"block handed out is already past the ceiling and every allocating run is refused. "
             f"Lower `heap_base` or raise `heap_limit` in {_CFG.dir / project.CONFIG_NAME}.")
-    if OS_FS_TABLE < loader.PROGRAM_END:
-        raise _overlap_error("OS_FS_TABLE", OS_FS_TABLE)
-    if OS_FS_STAGING >= emu.STACK_GUARD_LO:
-        raise RuntimeError(
-            f"OS_FS_STAGING ({OS_FS_STAGING:#x}, tools/recreate_kit/include/os.h) is at or above "
-            f"the stack guard {emu.STACK_GUARD_LO:#x} — staged file bytes would land in the band "
-            f"the differential drops. Raise image_size in {_CFG.dir / project.CONFIG_NAME}, or "
-            f"move the region down.")
+    _vet_staged_file_window()
     if emu.poked_input_overlaps_program() and not _CFG.tos_poked_input_unused:
         raise RuntimeError(
             f"the harness-poked input block ({OS_CON_PENDING:#x}..{OS_POKE_BLOCK_END - 1:#x}, "
@@ -713,7 +750,7 @@ def stage_files(files):
     assert len(files) <= OS_FS_SLOTS, (
         f"{len(files)} files staged into a {OS_FS_SLOTS}-slot table — the extra entries would be "
         f"written past its end, over the staging area os_fread then serves bytes from")
-    pokes, handles, off = {}, {}, OS_FS_STAGING
+    pokes, handles, off = {}, {}, emu.OS_FS_STAGING
     for slot, spec in enumerate(files):
         name, data = spec[0], spec[1]
         capacity = spec[2] if len(spec) > 2 else len(data)
@@ -727,7 +764,7 @@ def stage_files(files):
                              (OS_FS_OFF_CURSOR, 0), (OS_FS_OFF_OPEN, 0),
                              (OS_FS_OFF_CAPACITY, capacity)):
             entry[field:field + 4] = value.to_bytes(4, "big")
-        pokes[OS_FS_TABLE + slot * OS_FS_ENTRY] = bytes(entry)
+        pokes[emu.OS_FS_TABLE + slot * OS_FS_ENTRY] = bytes(entry)
         pokes[off] = bytes(data)
         handles[name] = OS_FS_FIRST_HANDLE + slot
         off += capacity                    # step by the RESERVATION: two files must not overlap
@@ -1996,18 +2033,22 @@ def report(diffs):
     return "\n".join(f"  {label(a)} (0x{a:x}): oracle={o:#04x} cand={c:#04x}" for a, o, c in diffs)
 
 # ---- the names this module SERVES rather than stores -------------------------------------------
-# `OS_HEAP_BASE` is oracle/emu.py's — the one per-project entry in the TOS memory map — and a copy
-# taken here at import would go stale the moment anything moved the base, which the kit's own
-# test/test_heap_base.py does on purpose. Served live instead, so `harness.OS_HEAP_BASE` and
-# `emu.OS_HEAP_BASE` cannot disagree.
+# These three are oracle/emu.py's — the per-project entries in the TOS memory map, the Malloc
+# arena's base and the staged-file window's two addresses — and a copy taken here at import would go
+# stale the moment anything moved one, which the kit's own test/test_heap_base.py and
+# test/test_fs_window.py both do on purpose. Served live instead, so `harness.OS_FS_TABLE` and
+# `emu.OS_FS_TABLE` cannot disagree.
 #
 # A PROJECT SHIM STILL HOLDS A SNAPSHOT, and that is unchanged: `test/harness.py` in each project is
 # `from recreate_kit.harness import *`, which binds every exported name into the shim's own module
-# once. No project moves its base at run time, so the snapshot equals the live value there; a test
-# that DOES move one reads `emu.OS_HEAP_BASE` (or this module directly) as the kit's own suite does.
+# once. No project moves one of these at run time, so the snapshot equals the live value there; a
+# test that DOES move one reads `emu.*` (or this module directly) as the kit's own suite does.
+_SERVED_BY_EMU = ("OS_HEAP_BASE", "OS_FS_TABLE", "OS_FS_STAGING")
+
+
 def __getattr__(name):
-    if name == "OS_HEAP_BASE":
-        return emu.OS_HEAP_BASE
+    if name in _SERVED_BY_EMU:
+        return getattr(emu, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -2016,4 +2057,4 @@ def __getattr__(name):
 # above — so the list is DERIVED from that same dict (every public name, exactly what the star
 # import already took) plus the served one, which getattr() then reaches. It must stay LAST in the
 # file: a name defined below it would not be exported.
-__all__ = sorted([name for name in globals() if not name.startswith("_")] + ["OS_HEAP_BASE"])
+__all__ = sorted([name for name in globals() if not name.startswith("_")] + list(_SERVED_BY_EMU))

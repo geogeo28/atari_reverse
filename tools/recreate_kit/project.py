@@ -79,9 +79,9 @@ def _heap_limit(raw, recreate_dir):
     """The optional ``heap_limit`` address — the first address the arena may NOT reach — or None.
 
     ``heap_base`` says where the arena starts; this says where it must stop. Absent means the kit's
-    own ceiling, ``os_map.OS_FS_TABLE`` (``emu`` resolves the two, as it does for the base). A
-    project sets it when the free window above its program is narrower than that — because its own
-    scratch map, or a region its cases poke, sits below the table.
+    own ceiling, the resolved ``emu.OS_FS_TABLE`` (``emu`` resolves the two, as it does for the
+    base). A project sets it when the free window above its program is narrower than that — because
+    its own scratch map, or a region its cases poke, sits below the table.
 
     Only the shape is checked here: whether the value leaves the arena any room at all is
     ``harness._vet_os_memory_map``'s question, since only it knows where the base ended up.
@@ -96,6 +96,38 @@ def _heap_limit(raw, recreate_dir):
     if value <= 0:
         raise ValueError(f"{recreate_dir / CONFIG_NAME}: `{key}` is {value}; the first address the "
                          f"Malloc arena may not reach must be a positive address")
+    return value
+
+
+def _fs_base(raw, recreate_dir):
+    """The optional ``fs_base`` address — the staged-file TABLE's base — or None when absent.
+
+    The staging area follows a fixed ``os_map.OS_FS_STAGING_OFFSET`` above it, so this one key
+    places the whole window; the mechanism is in ../README.md, "The staged-file window is the second
+    region a project places". A project sets it when the window's default place leaves too little
+    room below the stack guard for the files its boot opens — Flying Shark's opens eight totalling
+    288,551 bytes, which the default 258,048-byte window cannot hold.
+
+    None rather than the default itself, for ``_heap_base``'s reason: the default is C's
+    (``OS_FS_TABLE_DEFAULT``, mirrored in ``os_map``), and ``emu`` resolves the two.
+
+    Only the shape is checked here; whether the address is a legal PLACE — clear of the program, of
+    the poked-input block and of the stack guard — is ``harness._vet_os_memory_map``'s question,
+    because only it knows where the program ends. Odd is refused because every field of a table entry
+    is a longword the model reads and writes through ``wr32``/``be32``, and 68000 code handed a
+    staged file's address takes words from it.
+    """
+    key = "fs_base"
+    if key not in raw:
+        return None
+    value = raw[key]
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise TypeError(f"{recreate_dir / CONFIG_NAME}: `{key}` must be an integer address "
+                        f"(e.g. 0xb7000), not {type(value).__name__} {value!r}")
+    if value <= 0 or value % 2:
+        raise ValueError(f"{recreate_dir / CONFIG_NAME}: `{key}` is {value:#x}; the staged-file "
+                         f"table's base must be a positive EVEN address — every field of an entry "
+                         f"is a longword, and 68000 code reads words out of the bytes it serves")
     return value
 
 
@@ -161,7 +193,7 @@ def load(recreate_dir):
     """Read ``<recreate_dir>/project.toml`` and bind it to the kit. Idempotent.
 
     Returns the config namespace: name, dir, prg, names, lib (absolute paths) plus
-    load_base / image_size, the optional heap_base / heap_limit, and the optional
+    load_base / image_size, the optional heap_base / heap_limit / fs_base, and the optional
     tos_malloc_unused / tos_xbios_video_unmodeled waivers (see harness's _vet_os_memory_map and
     _vet_os_event_state). Re-binding the kit to a *different* project inside one process is refused
     — the module-level constants derived here are already frozen.
@@ -190,9 +222,15 @@ def load(recreate_dir):
         # both .so files at import and vetted by harness._vet_os_memory_map.
         heap_base=_heap_base(raw, recreate_dir),
         # Optional: the first address the arena may not reach, for a project whose free window ends
-        # below the kit's own ceiling (os_map.OS_FS_TABLE). None = that ceiling; emu.HEAP_LIMIT is
+        # below the kit's own ceiling (emu.OS_FS_TABLE). None = that ceiling; emu.HEAP_LIMIT is
         # the resolved value, and emu.run() refuses any run that grew the bump pointer past it.
         heap_limit=_heap_limit(raw, recreate_dir),
+        # Optional: where the staged-file window starts — the table, with its staging area a fixed
+        # distance above it. None = the kit's own default; emu.OS_FS_TABLE / emu.OS_FS_STAGING are
+        # the resolved addresses, installed into both .so files at import and vetted by
+        # harness._vet_os_memory_map. A project sets it when the default window is too small for the
+        # files its boot opens.
+        fs_base=_fs_base(raw, recreate_dir),
         # Optional: the game issues no GEMDOS Malloc, so the modeled heap is never allocated from
         # and may sit inside its program. The project.toml declaring it must justify it there.
         tos_malloc_unused=_bool_flag(raw, "tos_malloc_unused", recreate_dir),

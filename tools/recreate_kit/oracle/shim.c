@@ -927,6 +927,12 @@ static uint32_t g_heap_base = OS_HEAP_BASE_DEFAULT;
  * SIZE; how far a run actually grew the arena is still refused in Python
  * (emu._vet_heap_within_bounds), which is where the message that names the key lives. */
 static uint32_t g_heap_limit = OS_HEAP_LIMIT_DEFAULT;
+#ifdef OS_FS_TABLE_RUNTIME
+/* ...and the staged-file window's base, the map's OTHER per-project region — os.h's OS_FS_TABLE is
+ * a read of this. Not `static`, because os.h declares it `extern` for the inline os_fopen/os_fread
+ * this file calls; the candidate's own copy is src/os_fs.c's, installed from the same key. */
+uint32_t g_os_fs_table = OS_FS_TABLE_DEFAULT;
+#endif
 static uint32_t g_heap;         /* Malloc bump pointer */
 static uint32_t g_malloc_n;     /* GEMDOS Malloc calls serviced this run (see osh_malloc_count) */
 static uint32_t g_unmodeled;    /* count of traps whose real effect we do NOT model (fabricated D0) */
@@ -1549,6 +1555,11 @@ void            osh_set_heap_base(uint32_t base) { g_heap_base = base; }
 /* ...and the arena's ceiling (project.toml's `heap_limit`, clamped to OS_FS_TABLE). emu.py installs
  * it at import beside the base; it is what Malloc(-1) measures the free window against. */
 void            osh_set_heap_limit(uint32_t limit) { g_heap_limit = limit; }
+#ifdef OS_FS_TABLE_RUNTIME
+/* Install the staged-file table's base (project.toml's `fs_base`), which carries the staging area
+ * with it. emu.py calls it once, at import, exactly as it installs the heap's two ends. */
+void            osh_set_fs_table(uint32_t base) { g_os_fs_table = base; }
+#endif
 /* How many GEMDOS Malloc calls the last osh_run serviced. This, NOT the bump pointer, is what
  * "did this run allocate?" means: a serviced Malloc whose rounded size is 0 hands back a block at
  * the arena base without moving g_heap, so a pointer comparison would miss it. emu.run() keys the

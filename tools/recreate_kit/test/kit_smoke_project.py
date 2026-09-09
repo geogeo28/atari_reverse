@@ -236,11 +236,47 @@ _PTERM_CODE = (struct.pack(">HH", _MOVE_W_IMM_PUSH, PTERM_EXIT_CODE)
 # Where that store sits, relative to the routine's entry: the two pushes and the trap ahead of it.
 PTERM_AFTER_TRAP_OFFSET = 10
 
+# ---- the staged-file window: open a staged file and read the front of it ----
+# `Fopen(name, 0)` then `Fread(handle, count, buf)`, which is the shape every loader in this
+# workspace has. Both traps resolve the table at OS_FS_TABLE and copy out of the staging area above
+# it, so this routine is what says a MOVED window reached the oracle: a side still looking at the
+# default table finds no such name, refuses, and `emu.run` raises.
+#
+# The byte count is stored into the image for `_MALLOC_CODE`'s reason — a trap's return value is
+# off-image, and a differential compares memory.
+GEMDOS_FOPEN = 0x3D
+GEMDOS_FREAD = 0x3F
+FS_STAGED_NAME = "STAGED.DAT"         # < OS_FS_NAME bytes, as stage_files requires
+FS_NAME_AT = 0x30020                  # in-image, above this program and clear of the two canaries
+FS_RESULT_AT = 0x30030                # the longword byte count Fread answered
+FS_BUF_AT = 0x30040                   # ...and where the file's bytes land
+FS_READ_BYTES = 8                     # short enough that the whole file fits one staged poke
+_MOVE_L_IMM_PUSH = 0x2F3C             # move.l #imm,-(sp)
+_MOVE_W_D0_PUSH = 0x3F00              # move.w d0,-(sp) — the handle Fopen answered, as a word
+_MOVE_L_D0_ABSL = 0x23C0              # move.l d0,<abs.l>
+_FOPEN_FRAME_BYTES = 8                # the mode word, the name longword and the selector word
+_FREAD_FRAME_BYTES = 12               # the buffer and count longwords, the handle and selector words
+_FOPEN_READ_MODE = 0                  # the mode word the model ignores; TOS's "read only"
+
+_STAGED_FILE_CODE = (struct.pack(">HH", _MOVE_W_IMM_PUSH, _FOPEN_READ_MODE)
+                     + struct.pack(">HI", _MOVE_L_IMM_PUSH, FS_NAME_AT)
+                     + struct.pack(">HH", _MOVE_W_IMM_PUSH, GEMDOS_FOPEN)
+                     + struct.pack(">H", stubs.GEMDOS_TRAP)
+                     + struct.pack(">HH", _LEA_SP_CONST, _FOPEN_FRAME_BYTES)
+                     + struct.pack(">HI", _MOVE_L_IMM_PUSH, FS_BUF_AT)
+                     + struct.pack(">HI", _MOVE_L_IMM_PUSH, FS_READ_BYTES)
+                     + struct.pack(">H", _MOVE_W_D0_PUSH)
+                     + struct.pack(">HH", _MOVE_W_IMM_PUSH, GEMDOS_FREAD)
+                     + struct.pack(">H", stubs.GEMDOS_TRAP)
+                     + struct.pack(">HH", _LEA_SP_CONST, _FREAD_FRAME_BYTES)
+                     + struct.pack(">HI", _MOVE_L_D0_ABSL, FS_RESULT_AT)
+                     + struct.pack(">H", 0x4E75))                          # rts
+
 _ROUTINES = (_RMW_CODE, _GIACCESS_CODE, _HW_READ_CODE, _SYNC_ONLY_CODE, _WRITE_THEN_READ_CODE,
              _WIDE_READ_CODE, _VOLATILE_TWICE_CODE, _STATIC_TWICE_CODE,
              _HW_WRITE_CODE, _ACIA_SEND_CODE, _ACIA_RECEIVE_CODE, _ACIA_RECEIVE_TWICE_CODE,
              _ACIA_SEND_THEN_RECEIVE_CODE, _HW_RMW_CODE, _MALLOC_CODE, _MALLOC_SIZED_CODE,
-             _EVENT_MALLOC_CODE, _PTERM_CODE)
+             _EVENT_MALLOC_CODE, _PTERM_CODE, _STAGED_FILE_CODE)
 
 
 def _entries():
@@ -256,7 +292,7 @@ def _entries():
  WIDE_READ_ENTRY, VOLATILE_TWICE_ENTRY, STATIC_TWICE_ENTRY,
  HW_WRITE_ENTRY, ACIA_SEND_ENTRY, ACIA_RECEIVE_ENTRY, ACIA_RECEIVE_TWICE_ENTRY,
  ACIA_SEND_THEN_RECEIVE_ENTRY, HW_RMW_ENTRY, MALLOC_ENTRY, MALLOC_SIZED_ENTRY,
- EVENT_MALLOC_ENTRY, PTERM_ENTRY) = _entries()
+ EVENT_MALLOC_ENTRY, PTERM_ENTRY, STAGED_FILE_ENTRY) = _entries()
 
 # The only PC after the Pterm trap — a checkpoint the run can never reach, because it ends first.
 PTERM_AFTER_TRAP = PTERM_ENTRY + PTERM_AFTER_TRAP_OFFSET
@@ -302,7 +338,8 @@ def _build_candidate(root):
     """
     sources = sorted((KIT / "src").glob("*.c")) + [CANDIDATE_SRC]
     subprocess.run(
-        ["cc", "-std=c11", "-O0", "-fPIC", "-shared", f"-I{KIT / 'include'}",
+        ["cc", "-std=c11", "-O0", "-fPIC", "-shared", "-DOS_FS_TABLE_RUNTIME",
+         f"-I{KIT / 'include'}",
          *[str(src) for src in sources], "-o", str(root / "libkitsmoke.so")],
         check=True, capture_output=True, text=True)
 

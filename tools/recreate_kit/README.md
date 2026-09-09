@@ -24,9 +24,10 @@ tools/recreate_kit/
 ├── include/          machine.h (big-endian image accessors)  os.h (deterministic TOS trap model)
 │                     raster.h (the ST device-format raster the VDI opcodes draw through)
 ├── src/              C linked into EVERY candidate .so: dosound_log.c (the Dosound ledger below),
-│                     os_heap.c (the Malloc arena, installed per project), os_log.c (the off-image
-│                     OS event ledger), and gem.c + raster.c — the GEM/VDI model, the two files the
-│                     ORACLE links too, so both sides draw the same pixels by construction
+│                     os_heap.c (the Malloc arena) and os_fs.c (the staged-file window) — the two
+│                     regions installed per project — os_log.c (the off-image OS event ledger), and
+│                     gem.c + raster.c: the GEM/VDI model, the two files the ORACLE links too, so
+│                     both sides draw the same pixels by construction
 ├── oracle/           loader.py (load+relocate PRG)  emu.py (Musashi runner)  shim.c (callbacks)
 │                     isa_conformance.py  tos_probe.py   musashi/ + build/ (gitignored)
 ├── test/             the kit's own regression tests (`make test` here; no project needed)
@@ -47,6 +48,7 @@ tools/recreate_kit/
    image_size = 0x100000
    # heap_base  = 0x30000               # only if the program covers the default 0x20000 arena
    # heap_limit = 0x90000               # ...and only if the free window ends below OS_FS_TABLE
+   # fs_base    = 0xb7000               # only if the boot stages more than the default window holds
    ```
 
    `load_base` must clear the poked-input block (`OS_POKE_BLOCK_END`, `0x660`) and `image_size`
@@ -54,7 +56,10 @@ tools/recreate_kit/
    `OS_IMAGE_SIZE`, which `os_fread`/`os_fwrite` bound their copies against — the harness checks
    both at import and names `project.toml` when they disagree. `heap_base` and `heap_limit` are
    optional and place the modeled Malloc arena; leave them out unless the program's text+bss reaches
-   `0x20000` (see "The Malloc arena is the one region a project places").
+   `0x20000` (see "The Malloc arena is the one region a project places"). `fs_base` is optional too
+   and places the staged-file window; leave it out unless the files a case must stage do not fit the
+   default 258,048-byte staging area (see "The staged-file window is the second region a project
+   places").
 
 2. `projects/<game>/recreate/Makefile`:
 
@@ -142,6 +147,17 @@ candidate predating the file already starts at `OS_HEAP_BASE_DEFAULT` and stops 
 `OS_HEAP_LIMIT_DEFAULT`, which is right for a project that configured nothing and wrong — silently,
 by a whole arena — for one that moved or narrowed its heap. See "The Malloc arena is the one region
 a project places".
+
+Its twin is the **staged-file window's placement**, one symbol, from `src/os_fs.c`:
+
+| symbol | signature | purpose |
+| --- | --- | --- |
+| `os_set_fs_table` | `void(uint32_t)` | install `project.toml`'s `fs_base`, so every `os_fopen` resolves the same table the harness staged into (the staging area follows it) |
+
+Required on the same terms and for the same failure: a candidate predating the file reads the table
+at `OS_FS_TABLE_DEFAULT`, which is right for a project that configured nothing and wrong — every
+file reported unstaged, on that side alone — for one that moved its window. See "The staged-file
+window is the second region a project places".
 
 Beside it sit two more **required** groups, from `src/os_log.c` and `src/os_heap.c`. The FOURTH is
 the **off-image OS event ledger** — Dosound's ledger generalised to every other call that hands a
@@ -359,18 +375,25 @@ hardware whose real value is time-varying still reaches both cores identically:
 
 ### The shared TOS memory map
 
-`include/os.h` fixes the modeled Malloc heap (`OS_HEAP_BASE`), the staged-file table
+`include/os.h` fixes the modeled Malloc heap (`OS_HEAP_BASE`), the staged-file window
 (`OS_FS_TABLE` / `OS_FS_STAGING`, `OS_FS_SLOTS` entries — 32 of them, sized by the longest boot the
 workspace has met, Zynaps's ~30 opens) and the poked-input block above at kit-wide addresses, mirrored
-in Python by `harness.py` — except the heap base, which sits in `oracle/emu.py` where the per-run
-Malloc guard below needs it, and the poked-input block, which sits in `os_map.py` because
-`harness.py` and `emu.py` both guard it. Both are re-exported (`harness.OS_HEAP_BASE`,
+in Python by `harness.py` — except the three PER-PROJECT addresses (`OS_HEAP_BASE`, `OS_FS_TABLE`,
+`OS_FS_STAGING`), which sit in `oracle/emu.py` where the per-run guards below need them, and the
+poked-input block plus the window's own default place, which sit in `os_map.py` because `harness.py`
+and `emu.py` both guard those. All are re-exported (`harness.OS_HEAP_BASE`, `harness.OS_FS_TABLE`,
 `harness.OS_CON_PENDING`, …). `test/test_os_memory_map.py` pins every constant equal to `os.h` and
-refuses a second Python copy. They are **not** derived from `project.toml`, so the
+refuses a second Python copy. The kit-wide ones are **not** derived from `project.toml`, so the
 harness checks at import that they clear the bound project's program, stay below the stack guard,
 sit below its `load_base`, and that `OS_IMAGE_SIZE` matches its `image_size` — failing with a
-diagnostic naming `project.toml` when they do not. A game whose text+bss reaches
-`0xbf000` (staging) needs those constants moved on both sides.
+diagnostic naming `project.toml` when they do not.
+
+**Two regions of the map a project PLACES**, because a kit-wide constant cannot answer for every
+game: the Malloc arena (`heap_base` / `heap_limit`) and the staged-file window (`fs_base`). Each has
+its own section below, and the two mechanisms are built the same way — an optional `project.toml`
+key, defaulting to the kit's own address; resolved in `oracle/emu.py`; installed into **both** shared
+objects at import, since `os.h` is compiled into `liboracle.so` (shared by every project) and into
+the game's candidate.
 
 #### The Malloc arena is the one region a project places
 
@@ -501,6 +524,62 @@ that the kit's own suite can pin the geometry (`test/test_os_map.py`). What that
 reach is the *wiring* — both guards live in modules that load a compiled `.so` at import — so that
 half stays pinned in `projects/wonderboy/recreate/test/test_poked_input_guard.py`, the only project
 the overlap exists for.
+
+#### The staged-file window is the second region a project places
+
+**This is the one place the staged-file window's placement is written out.** Every other mention of
+it — `os.h`, `shim.c`, `src/os_fs.c`, `emu.py`, `harness.py`, `TRAP_MODEL.md`, and a project's own
+`project.toml` — is a pointer here plus the one fact a reader of that file needs.
+
+The window is the arena's twin, for the same structural reason and a different practical one: a
+program's **boot** can simply need more staging space than the default place leaves. The table at
+`OS_FS_TABLE_DEFAULT` (`0xbf000`) puts the raw file bytes at `0xc0000`, which leaves
+`STACK_GUARD_LO - 0xc0000` = **258,048 bytes**; Flying Shark's `init_load_assets` opens eight files
+totalling **288,551**, so its boot slice could not be staged at all. `fs_base = 0xb7000` moves the
+table below its program's scratch map and buys 290,816.
+
+| | |
+|---|---|
+| `fs_base = 0xb7000` | optional key in `project.toml`; absent = `os.h`'s `OS_FS_TABLE_DEFAULT` (`0xbf000`), so every project that does not set it is byte-for-byte unchanged |
+| `OS_FS_STAGING_OFFSET` | the **distance** from the table to the raw bytes (`0x1000`), never a second address — one key places both halves, and the table can never be put over its own staging area (`os.h` asserts the 32 entries fit inside the gap at compile time) |
+| `emu.OS_FS_TABLE` / `emu.OS_FS_STAGING` | the resolved addresses every Python guard, diagnostic and `stage_files()` call reads. `harness.OS_FS_TABLE` / `harness.OS_FS_STAGING` serve them back live, through the same module `__getattr__` that serves `OS_HEAP_BASE`, and are in `harness.__all__` so a project's `from recreate_kit.harness import *` shim still carries them |
+| `osh_set_fs_table()` | the oracle's entry point (`oracle/shim.c`), called once by `emu` at import |
+| `os_set_fs_table()` | the candidate's (`src/os_fs.c`, swept into every candidate by `kit.mk`), called once by `harness` at import |
+| `emu.install_fs_table()` | "tell one `.so`", the twin of `install_heap_base()` — each side supplies its own refusal, since they name different files and different rebuilds |
+| `OS_FS_TABLE` / `OS_FS_STAGING` | unchanged in C, but **variable reads** off target rather than constant expressions — usable in an expression, not in a case label, an array bound or a static initialiser |
+
+**Off target only, and that is deliberate.** `os.h` makes the two a variable *only* under
+`-DOS_FS_TABLE_RUNTIME`, which `kit.mk` passes on both off-target builds (the candidate `.so` and
+`liboracle.so`) and no project's own `.PRG` build passes at all. A target build links none of the
+kit's `src/`, so an unconditional `extern` would fail at link for the one project that keeps this
+model on target (`projects/joust`) — and on target there is nothing to place: real RAM, one program,
+and no shared `liboracle.so`. `test/probe_build.py` and `test/kit_smoke_project.py` pass the same
+`-D`, so every off-target build compiles the same `os.h`.
+
+**Both entry points are required ABI only when the key is set**, exactly as the heap's are: an `.so`
+predating them already reads the table at the default, so a default project is served correctly by
+an old build, while a project that moved its window and was silently served the old address would
+have every `os_fopen` look at a table the harness never wrote — on that side alone — and report
+every file unstaged.
+
+**Moving the window moves the arena's ceiling with it.** `emu.resolve_heap_limit()` clamps to the
+*resolved* `OS_FS_TABLE`, not to `os.h`'s default, so a project that lowers `fs_base` and sets no
+`heap_limit` cannot have its arena grow into the moved table; the other direction is
+`_vet_os_memory_map`'s existing `heap_base >= OS_FS_TABLE` refusal. That is why the window needs no
+arena clause of its own, and it is also why `install_heap_limit()` decides "is this the default?"
+against what an `.so` already **carries** rather than against this project's resolved ceiling.
+
+`harness._vet_staged_file_window()` checks the four collisions left, every one of them silent
+otherwise (a staged file is a plain image write on both sides, so two corrupted runs compare equal):
+the **poked-input block** below, the **framebuffer** (`OS_SCREEN_BASE`..`+0x7d00`), the **program**,
+and the **stack guard** above — staging at or past which puts file bytes in the band the differential
+drops. Every refusal names the value's source: `fs_base` in `project.toml`, or `OS_FS_TABLE_DEFAULT`
+in `os.h` when the project set no key.
+
+`test/test_fs_window.py` pins the key, every refusal, both installers' missing-ABI errors, the
+ceiling interaction, and — through the miniature project — that a set of files the DEFAULT window
+cannot hold is staged, opened and read back identically by the oracle's `Fopen`/`Fread` traps and by
+the candidate's `os_fopen`/`os_fread`.
 
 ## Binding
 
