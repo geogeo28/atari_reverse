@@ -96,10 +96,11 @@ uint32_t bg_super_gate(uint32_t operation, uint32_t operand, uint32_t value);
  * A 68000 exception handler already runs in supervisor mode, and `bg_timer_c_entry` never lowers the
  * mask the exception raised — so inside the sound ISR both of the things the gate provides are
  * already true: the privilege for $ff8800, and a select-then-data pair no MFP interrupt can land
- * inside (the mask is at the interrupt's own level 6, and the MFP is level 6). That is why the flag
- * below exists. Since wave 5b nothing C runs inside the interrupt — the 200 Hz handler is
- * `../src/asm/sound_tick.S`, which writes the two ports with the original's own bare `move.b`
- * pairs — so NOTHING SETS THE FLAG any more, and `psg.h`'s door reads 0 on every call it ever sees.
+ * inside (the mask is at the interrupt's own level 6, and the MFP is level 6). So the ISR does not
+ * come through this gate at all: since wave 5b the 200 Hz handler is `../src/asm/sound_tick.S`,
+ * which writes the two ports with the original's own bare `move.b` pairs, and since wave 7a there
+ * is no second door and no flag selecting one — `psg.h` traps, unconditionally, on every call it
+ * ever sees.
  *
  * THAT IS ALSO WHAT THE ORIGINAL'S ISR DOES, which is how this was found rather than guessed: over a
  * 1,000-vblank window its `psg_gate` @ 0x14940 carries 0.7 cycles a tick, because the handler writes
@@ -113,18 +114,16 @@ uint32_t bg_super_gate(uint32_t operation, uint32_t operand, uint32_t value);
  * handler being assembly, as a decision recorded in `../src/asm/sound_tick.S`'s own header. A
  * build that lowered it would put an IKBD interrupt between the select and the data write, and the
  * byte would go to whatever register that path left selected; what would have to come back with the
- * drop is either this gate or a raise of the flag below.
+ * drop is a way for a supervisor-side caller to bypass this gate.
  *
- * NOTHING SETS THE FLAG, so a door reached from user code always reads 0, and the branch it arms is
- * dead by construction rather than by argument. It is kept rather than deleted because it is what
- * the seam would need back the day the IPL drop is made faithful — and because a flag wrongly left
- * set is not a quiet wrong answer either: the next user-mode write to $ff8800 would be a bus error,
- * which `smoke.py`'s fault scan is. What has NO surface on target is the byte pair itself — see
- * ../STATUS.md, "Performance".
- *
- * WHAT THE FLAG SELECTS is `psg.h`'s own two stores rather than a routine here: an untrapped write
- * is a `move.b` pair and nothing else, and a `jsr` around it was 90 of its 100 cycles. */
-extern volatile uint8_t bg_in_timer_c;
+ * WAVE 7a DELETED THE ONE THIS BUILD USED TO CARRY, AND SAID SO HERE RATHER THAN LEAVING IT. It was
+ * `bg_in_timer_c`, a byte `psg.h`'s door tested to choose between the trap and a pair of bare
+ * stores. Nothing had set it since wave 5b, so the arm was dead by construction and the test was
+ * not: `psg.h`'s door is `static inline`, so the cores' six call sites became 25 `tst.b`/branch
+ * pairs in the .PRG's text, selecting a branch no run could take. The shape to restore, should the
+ * IPL drop be made faithful, is in this file's git history and named in `psg.h`'s header —
+ * restoring it means restoring the WRITER too, which is what was missing.
+ */
 
 /* ---- machine primitives the C cannot spell ---------------------------------------------------- */
 

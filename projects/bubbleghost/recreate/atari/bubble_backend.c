@@ -1,5 +1,5 @@
-/* bubble_backend.c — the GEM door's three counters, and the three libc functions a freestanding
- * build owes GCC.
+/* bubble_backend.c — the GEM door's three counters and its cache flag, and the three libc
+ * functions a freestanding build owes GCC.
  *
  * THE DOOR ITSELF IS `bubble_os.s`'s, and its header comment is where the argument lives: every
  * pointer the cores put in a GEM parameter block is an IMAGE OFFSET, so a `trap #2` here has to
@@ -23,6 +23,16 @@ volatile uint32_t bg_vdi_raster_copies;
 _Static_assert(sizeof bg_vdi_calls == 4, "bg_gem_dispatch bumps this with `addq.l`");
 _Static_assert(sizeof bg_aes_calls == 4, "bg_gem_dispatch bumps this with `addq.l`");
 _Static_assert(sizeof bg_vdi_raster_copies == 4, "bg_gem_dispatch bumps this with `addq.l`");
+
+/* WHETHER THE DOOR'S VDI PARAMETER-BLOCK CACHE HAS BEEN TAKEN — `bg_gem_cache_vdi_pblock` sets it,
+ * and every VDI call tests it to choose between restating one slot and restating five (see
+ * `shim_include/os.h`). Here rather than in the assembly's .bss for the counters' reason: the
+ * assembly `move.b`s and `tst.b`s it, so a C type that grew would leave the door setting one byte
+ * of the object and testing another — which is a SLOW door on a machine, not a broken one, and so
+ * has no other surface at all. */
+volatile uint8_t bg_vdi_pblock_cached;
+
+_Static_assert(sizeof bg_vdi_pblock_cached == 1, "bg_gem_dispatch tests this one byte with `tst.b`");
 
 /* ================================================================================================
  * The three libc functions, hand-written

@@ -133,6 +133,19 @@ scrape_c_define() {   # <header> <name> -> its value as written, or nothing
   sed -n "s|^#define $2  *\([0-9a-fA-FxX][0-9a-fA-FxX]*\)[uU]\{0,1\}\([ 	]*\(/\*.*\)\{0,1\}\)\{0,1\}\$|\1|p" "$1"
 }
 
+# ONE SHAPE FOR THE FIVE COMPARISONS, for `scrape_c_define`'s and `require_once_in_routine`'s
+# reason: five copies of "compare, print both, exit" is five places to fix when the format moves.
+# A rotted pattern scrapes EMPTY, which is not the expected text either, so every one fails closed.
+require_scrape_equals() {   # <expected> <scraped> <headline> <why it matters...>
+  local expected=$1 scraped=$2 headline=$3; shift 3
+  [ "$scraped" = "$expected" ] && return 0
+  echo "ERROR: $headline"
+  printf '       %s\n' "$@"
+  echo "       expected:"; printf '%s\n' "$expected" | sed 's/^/         /'
+  echo "       scraped:";  printf '%s\n' "$scraped"  | sed 's/^/         /'
+  exit 1
+}
+
 GLOBALS_LOAD_BASE=$(scrape_c_define "$REC/include/globals.h" BG_LOAD_BASE)
 [ -n "$GLOBALS_LOAD_BASE" ] || { echo "ERROR: no BG_LOAD_BASE in $REC/include/globals.h"; exit 1; }
 [ "$((GLOBALS_LOAD_BASE))" = "$((LOAD_BASE))" ] || {
@@ -167,16 +180,15 @@ done
 echo ">> the supervisor gate's 3 operations agree between tos.h and bubble_os.s"
 
 # ---- ...and the NUMBERS bubble_os.s shares with a C header are ONE set of numbers ---------------
-# Thirteen entries, each `<asm name>:<C name>:<C file>`. The two PSG ports: the trapped write is
-# bubble_os.s's `bg_super_gate_entry` and the UNTRAPPED one is `psg_untrapped_write` in
-# shim_include/psg.h; they address the same chip, so a disagreement writes a sound register to
-# whatever else lives at the address. (`PSG_REG_MASK` is deliberately NOT here: only the trapped door
-# masks, for the reason psg.h's header gives.) **THE UNTRAPPED DOOR IS UNREACHED SINCE WAVE 5b** —
-# it is guarded by `bg_in_timer_c`, which nothing sets now that the 200 Hz handler is assembly and
-# writes the two ports itself. It is pinned anyway, and the ports doubly so: those five bare
-# `move.b` pairs in `../src/asm/sound_tick.S` are the ones the chip really sees, and what holds
-# THEM is the transcription pin (the same two numbers, `.equ`'d in that file and held to psg.h by
-# test/test_constants.py).
+# Fifteen entries, each `<asm name>:<C name>:<C file>`. The two PSG ports: bubble_os.s's trapped
+# door (`bg_super_gate_entry`) and `../src/asm/sound_tick.S`'s five bare store pairs address the
+# same chip from the two sides of the seam, and `shim_include/psg.h` is where the pair is spelt
+# once — so a disagreement writes a sound register to whatever else lives at the address. This loop
+# holds the trapped door to that header; `test/test_constants.py` holds the twin's `.equ`s to the
+# same header, which is the half that reaches the chip 200 times a second. (`PSG_REG_MASK` is
+# deliberately NOT here: only the trapped door masks, for the reason psg.h's header gives. **AND
+# THERE IS NO LONGER A C UNTRAPPED DOOR TO PIN** — wave 7a deleted `psg_untrapped_write` and the
+# `bg_in_timer_c` test that selected it, an arm nothing had set since wave 5b.)
 #
 # $484 IS NO LONGER ONE OF THEM, AND THAT IS ONE SPELLING FEWER RATHER THAN ONE PIN FEWER. The 200 Hz
 # tick's `$484` mirror moved into `../src/asm/sound_tick.S` with the vector itself (wave 6a), where
@@ -186,14 +198,18 @@ echo ">> the supervisor gate's 3 operations agree between tos.h and bubble_os.s"
 # `../include/sound.h`'s own value: the two languages are compared there, against the instruction
 # that ships, rather than against a second `= 0x484` nobody executes.
 #
-# AND THE ELEVEN THE GEM DOOR IS BUILT OUT OF. `bg_gem_dispatch` is hand-written 68000 (wave 5a), so
+# AND THE THIRTEEN THE GEM DOOR IS BUILT OUT OF. `bg_gem_dispatch` is hand-written 68000 (wave 5a), so
 # the selector it puts in `d0`, the `contrl` slots it patches, the opcode it dispatches on, the
 # MFDB field it walks and the length of each parameter block are all IMMEDIATES in assembly where
 # they used to be macros the compiler resolved. Every one of them is scraped back out of the header
 # that owns it — the kit's `os.h` for the GEM layout, the cores' `frontend.h` for the game's own
 # `contrl` address — so a slot index that moves reds the build instead of making the door patch the
 # wrong two words. The two `_PB_` entries are the LAST index of each block, and the door derives
-# each block's length as one more than it.
+# each block's length as one more than it. `VDI_PB_PTSIN` is there because the door's cached tail
+# restates that ONE slot by displacement, so an index that moved would restate the wrong pointer
+# and leave the VDI reading its coordinates out of whichever array the game last put beside it.
+# `A_VDI_PBLOCK` is there because `bg_gem_cache_vdi_pblock` reads the block DIRECTLY rather than
+# being handed it, which is the one place in this file that names the game's block itself.
 #
 SHARED_NUMBERS=0
 for PORT in PSG_SELECT:BG_PSG_SELECT:"$HERE/shim_include/psg.h" \
@@ -204,16 +220,18 @@ for PORT in PSG_SELECT:BG_PSG_SELECT:"$HERE/shim_include/psg.h" \
             VDI_CONTRL_OPCODE:VDI_CONTRL_OPCODE:"$KIT/include/os.h" \
             VDI_CONTRL_SRC_MFDB:VDI_CONTRL_SRC_MFDB:"$KIT/include/os.h" \
             VDI_CONTRL_DST_MFDB:VDI_CONTRL_DST_MFDB:"$KIT/include/os.h" \
+            VDI_PB_PTSIN:VDI_PB_PTSIN:"$KIT/include/os.h" \
             VDI_PB_PTSOUT:VDI_PB_PTSOUT:"$KIT/include/os.h" \
             AES_PB_ADDROUT:AES_PB_ADDROUT:"$KIT/include/os.h" \
             MFDB_ADDR:MFDB_ADDR:"$KIT/include/os.h" \
             MFDB_SCREEN_ADDR:MFDB_SCREEN_ADDR:"$KIT/include/os.h" \
-            A_VDI_CONTRL:A_vdi_contrl:"$REC/include/frontend.h"; do
+            A_VDI_CONTRL:A_vdi_contrl:"$REC/include/frontend.h" \
+            A_VDI_PBLOCK:A_vdi_pblock:"$REC/include/frontend.h"; do
   C_FILE=${PORT##*:}
   C_NAME=${PORT#*:}; C_NAME=${C_NAME%%:*}
   # ...and the SAME anchoring on the assembly side, for the same reason: `MFDB_ADDR = 0 + 8` would
   # otherwise scrape `0`, agree with the header's 0, and leave the door reading the raster pointer
-  # from offset 8. The constants block right below these eleven is itself written in expression form
+  # from offset 8. The constants block right below these fifteen is written in expression form
   # (`CONTRL_SRC_MFDB_SLOT = VDI_CONTRL_SRC_MFDB * CONTRL_WORD_BYTES`), so that respelling is the
   # natural next edit. A `|` comment is this file's line-end, so it is what may follow the digits.
   # (`@` is the delimiter, because `|` is the pattern's own line-end comment character.)
@@ -242,55 +260,49 @@ done
 # byte stores, select before data. The equality above pins the numbers; this pins that they are what
 # the store reaches, which is the half no other surface has — the differential compiles the kit's
 # psg.c and not this header, and STATE.BIN records nothing about the chip. A rotted `sed` scrapes
-# empty, which is not the expected text either, so the check fails closed. **WHAT IT DOES NOT COVER
-# is the tick**: since wave 5b the 200 Hz handler reaches the chip through its own transcribed
-# `move.b` pairs and not through this door at all, so deleting those five pairs from
-# `../src/asm/sound_tick.S` is caught by the transcription pin and by nothing here.
-# THE WHOLE STORE LINE IS PINNED, NOT ONLY ITS TARGET. A first draft scraped the destination alone
-# (`... \(.*\) = .*;`), which swallowed the value expression — so `(uint8_t)(reg & 15)` in the select
-# store passed this gate green, and psg.h's whole argument for NOT masking (the original's ISR does
-# not) would have been a comment contradicting its own code with no surface to say so.
-PSG_STORES=$(sed -n '/^static inline void psg_untrapped_write/,/^}/p' "$HERE/shim_include/psg.h" \
-             | sed -n 's/^ *\(\*(volatile uint8_t \*).* = .*;\)$/\1/p')
-PSG_STORES_EXPECTED='*(volatile uint8_t *)BG_PSG_SELECT = (uint8_t)reg;
-*(volatile uint8_t *)(BG_PSG_SELECT + BG_PSG_DATA_OFFSET) = value;'
-[ "$PSG_STORES" = "$PSG_STORES_EXPECTED" ] || {
-  echo "ERROR: psg_untrapped_write's body is not the two volatile byte stores this gate knows."
-  echo "       expected:"; echo "$PSG_STORES_EXPECTED" | sed 's/^/         /'
-  echo "       scraped:";  echo "$PSG_STORES"          | sed 's/^/         /'
-  echo "       The 200 Hz ISR reaches the chip through this and nothing else watches it."; exit 1; }
+# THE C SIDE OF THIS PAIR IS A HEADER CONSTANT NOW AND NOT A FUNCTION BODY, which is one gate
+# fewer here rather than one pin fewer. Until wave 7a the loop above was backed by a scrape of
+# `psg_untrapped_write`'s two volatile stores — the check that they were those two macros, select
+# before data, value expression included, so that `(uint8_t)(reg & 15)` could not appear in one of
+# them without the argument moving. That door is deleted (nothing had set the flag selecting it
+# since wave 5b), so what reaches $ff8800 is the trapped door below and the twin's five transcribed
+# pairs, and each is held by its own pin: the `andi.l` check here, and `test/test_sound_asm.py`'s
+# transcription of `../src/asm/sound_tick.S`.
 
 # ...and that the TRAPPED door still MASKS, which is the other half of the asymmetry psg.h argues.
 # The two doors are meant to disagree here — the original's do, its ISR writing the ports bare and
-# only its trap handler carrying `and.b #$f,d1` @ 0x1495c — and neither half was watched by anything:
-# the differential compiles the kit's psg.c and never this pair, so deleting the `andi.l` would make
-# the doors agree silently, in the direction the header spends a page refusing.
+# only its trap handler carrying `and.b #$f,d1` @ 0x1495c — and the trapped half is watched by
+# nothing else: the differential compiles the kit's psg.c and never this door, so deleting the
+# `andi.l` would make the two agree silently, in the direction the header spends a page refusing.
 PSG_TRAPPED_MASKS=$(grep -c '^ *andi\.l  *#PSG_REG_MASK,%d1$' "$HERE/bubble_os.s" || true)
 [ "$PSG_TRAPPED_MASKS" = "1" ] || {
   echo "ERROR: bg_super_gate_entry's 'andi.l #PSG_REG_MASK,%d1' was scraped $PSG_TRAPPED_MASKS times"
   echo "       in bubble_os.s, not once. The TRAPPED door is where this build's register mask lives"
   echo "       (shim_include/psg.h's header argues why the untrapped one has none); losing it makes"
   echo "       the two doors agree where the original's two do not."; exit 1; }
-echo ">> bubble_os.s's $SHARED_NUMBERS shared numbers agree with their C headers, the untrapped" \
-     "door's store is those 2 stores and nothing else, and only the trapped door masks"
+echo ">> bubble_os.s's $SHARED_NUMBERS shared numbers agree with their C headers, and only" \
+     "the trapped door masks"
 
-# ---- ...and the GEM door's C ARGUMENT LAYOUT, which is the number the loop above cannot see -----
-# `bg_gem_dispatch` is assembly and reads its three arguments at fixed `%sp` offsets (`ARG_MEM = 4`,
-# `ARG_SELECTOR = 8`, `ARG_PBLOCK = 12`, m68k SysV: every scalar in its own longword slot, first
-# argument lowest). Those offsets ARE the C prototype, restated in a second language — and unlike
-# the eleven constants above there is no `#define` to scrape, so the prototype's own text is what is
-# pinned. Reorder the parameters, widen one, or add a fourth and the door silently reads the wrong
-# slots: `%d1` becomes the selector, every staged pointer is translated by 0x73, and the ROM VDI is
-# handed wild addresses inside a `trap #2`. That is a hardware-only fault (the differential never
-# runs this door) with no other surface in the tree.
-DOOR_PROTOTYPE=$(sed -n 's/^\(int bg_gem_dispatch(.*);\)$/\1/p' "$HERE/shim_include/os.h")
-DOOR_PROTOTYPE_EXPECTED='int bg_gem_dispatch(uint8_t *mem, uint32_t selector, uint32_t pblock);'
-[ "$DOOR_PROTOTYPE" = "$DOOR_PROTOTYPE_EXPECTED" ] || {
-  echo "ERROR: the GEM door's prototype in shim_include/os.h is not the one bubble_os.s's ARG_MEM /"
-  echo "       ARG_SELECTOR / ARG_PBLOCK offsets are written for."
-  echo "       expected: $DOOR_PROTOTYPE_EXPECTED"
-  echo "       scraped:  $DOOR_PROTOTYPE"
-  echo "       Change the offsets with it, or change it back."; exit 1; }
+# ---- ...and the TWO C ARGUMENT LAYOUTS bubble_os.s hard-codes, which the loop above cannot see ---
+# `bg_gem_dispatch` and `bg_gem_cache_vdi_pblock` are assembly and read their arguments at fixed
+# `%sp` offsets (`ARG_MEM = 4`, `ARG_SELECTOR = 8`, `ARG_PBLOCK = 12`, m68k SysV: every scalar in
+# its own longword slot, first argument lowest). Those offsets ARE the C prototypes, restated in a
+# second language — and unlike the fifteen constants above there is no `#define` to scrape, so each
+# prototype's own text is what is pinned. Reorder the parameters, widen one, or add one in front and
+# the routine silently reads the wrong slots: for the door `%d1` becomes the selector, every staged
+# pointer is translated by 0x73, and the ROM VDI is handed wild addresses inside a `trap #2`; for
+# the cache primer `%a0` is built from a garbage base, five wild pointers are staged, and the flag
+# is set anyway, so every VDI call for the rest of the run traps on them. Both are hardware-only
+# faults (the differential runs neither routine) with no other surface in the tree — the anchor
+# check would see the second, but only after the picture had been drawn through it.
+for PROTOTYPE in "int bg_gem_dispatch(uint8_t *mem, uint32_t selector, uint32_t pblock);" \
+                 "void bg_gem_cache_vdi_pblock(uint8_t *mem);"; do
+  NAME=${PROTOTYPE#* }; NAME=${NAME%%(*}
+  SCRAPED=$(grep -h "^[a-z].* $NAME(.*);\$" "$HERE"/shim_include/*.h)
+  require_scrape_equals "$PROTOTYPE" "$SCRAPED" \
+    "$NAME's prototype is not the one bubble_os.s's ARG_* stack offsets are written for." \
+    "Change the offsets with it, or change it back."
+done
 
 # ...and that the door still BUMPS the three counters with a longword add. `bubble_backend.c` pins
 # the C side (`_Static_assert(sizeof bg_vdi_calls == 4)`), which can only see C narrowing the type —
@@ -304,8 +316,8 @@ for COUNTER in bg_vdi_calls bg_aes_calls bg_vdi_raster_copies; do
     echo "       publishes this counter and smoke.py pins it; a narrowed or duplicated bump is a"
     echo "       silently wrong record."; exit 1; }
 done
-echo ">> the GEM door's C prototype matches its asm argument offsets, and its 3 counters take an" \
-     "addq.l each"
+echo ">> the 2 C prototypes bubble_os.s reads at fixed %sp offsets match it, and the door's 3" \
+     "counters take an addq.l each"
 
 # ---- the trap-register scan ---------------------------------------------------------------------
 # docs/on-target-execution.md class 3's register half: the one hardware-only bug class no
@@ -314,6 +326,133 @@ echo ">> the GEM door's C prototype matches its asm argument offsets, and its 3 
 TRAP_WRAPPERS=29
 echo ">> trap-register scan ($TRAP_WRAPPERS wrappers)"
 "$TOOLS/assert_trap_registers.sh" --expect "$TRAP_WRAPPERS" "$HERE/bubble_os.s"
+
+# ---- the VDI parameter block's CONSTANT SLOTS, which the door CACHES ----------------------------
+# `bg_gem_cache_vdi_pblock` (bubble_os.s) translates the game's five VDI array pointers ONCE, on the
+# line after `init_gem_and_screens` returns, and `bg_gem_dispatch` then restages `ptsin` alone — 130
+# cycles of every VDI call (../STATUS.md, wave 7a). That rests on a claim about the CORES, which is
+# the one kind of claim the rest of that door is written not to make: once the workstation is open,
+# the four slots that are not `ptsin` never change again.
+#
+# THE CLAIM IS TRUE OF THIS TREE, AND THIS IS WHERE IT STAYS TRUE. Five scrapes over the committed
+# cores AND the shim's own C — the shim is in the list because it can call a core slice directly
+# (`bubble_main.c` composes the boot out of them), so a workstation reopen written THERE would
+# rebind the block with every core-side scrape still green:
+#   1. every parameter-block address in the tree is `vdi_pblock_slot`'s, and every one of ITS call
+#      sites names a `VDI_PB_*` constant — so the ledger in 3 can see every writer, and a computed
+#      index cannot walk round it;
+#   2. the door is handed THAT block: the argument of every `os_vdi` call is `A_vdi_pblock`, which
+#      is what the cache was taken from;
+#   3. the writers of a NON-`ptsin` slot are exactly the ones the door expects, named by their
+#      enclosing function: `vdi_call_at`, which files `contrl` on every call, and `v_opnvwk`, which
+#      lends the VDI three of its caller's arrays and puts the library's four back — all of it
+#      BEFORE the cache is taken;
+#   4. ...and what `vdi_call_at` files there is the constant the cache holds. That is the half a
+#      (function, slot) pair cannot see, and only the VALUE is pinned, not the whole store line:
+#      the accessor around it is the cores' to rename;
+#   5. those two writers run when the door thinks they do — `v_opnvwk` is called from
+#      `init_gem_and_screens`, and `init_gem_and_screens` from `main_start_game`, which is the call
+#      `bubble_main.c` primes the cache on the line after. The `g_*` callers in each expected list
+#      are the differential's own entry glue, which no target build reaches.
+# A `ptsin` WRITER IS DELIBERATELY NOT PINNED: that slot is restated on every call, so a new one is
+# free, and a gate that refused it would refuse the next honest change for nothing. And what no
+# scrape of C can reach — one of the four moved at RUN time, by a poke or a path this cannot see —
+# is `bubble_main.c`'s anchor check, published as STATE.BIN's `VDI_PBLOCK_CACHE_STATE` and required
+# to be 0 by `smoke.py`. Neither surface is the whole of it; the door's header says so too.
+#
+# EVERY SORT IS `LC_ALL=C`, because the expected lists below are literals in BYTE order: under a
+# UTF-8 locale glibc gives `_` no primary weight, `vdi_call_at` and `v_opnvwk` swap, and the gate
+# reds on an untouched tree.
+PBLOCK_SOURCES=("$REC"/src/*.c "$HERE"/*.c)
+
+# The awk prologue both ledger scrapes share — the enclosing function of a line, and comment lines
+# skipped. Shared because a second copy of it is how the two would drift, and the COMMENT RULE IS
+# FIRST so a block-comment line that happens to look like a function header cannot set `fn`; `fn`
+# is reset per FILE so a match before a file's first header is never blamed on the previous file's
+# last routine.
+AWK_ENCLOSING_FUNCTION='
+  FNR == 1 { fn = "<file scope>" }
+  /^[ \t]*[*\/]/ { next }
+  /^[A-Za-z_][A-Za-z0-9_ *]*[A-Za-z0-9_*]\(/ {
+      head = $0; sub(/\(.*/, "", head); n = split(head, part, /[ \t*]+/); fn = part[n] }'
+
+# 1. the spelling: the block is addressed through `vdi_pblock_slot`, and only by a named slot
+PBLOCK_NAMERS=$(awk "$AWK_ENCLOSING_FUNCTION"'
+  /A_vdi_pblock/ { print fn }' "${PBLOCK_SOURCES[@]}" | LC_ALL=C sort -u)
+require_scrape_equals 'vdi_call_at
+vdi_pblock_cache_state
+vdi_pblock_slot' "$PBLOCK_NAMERS" \
+  "A_vdi_pblock is named in a routine this build does not know." \
+  "The GEM door caches four of that block's five slots, so EVERY writer has to be visible to the" \
+  "ledger below — which means every slot address goes through vdi_pblock_slot(). The block itself" \
+  "is named only to define that helper, to hand the door its argument, and to re-read the four" \
+  "cached slots back at the anchor."
+SLOT_CALLS=$(grep -h "vdi_pblock_slot(" "${PBLOCK_SOURCES[@]}" | grep -cv "vdi_pblock_slot(unsigned" || true)
+SLOT_CALLS_NAMED=$(grep -hc "vdi_pblock_slot(VDI_PB_" "${PBLOCK_SOURCES[@]}" | paste -sd+ - | bc)
+require_scrape_equals "$SLOT_CALLS" "$SLOT_CALLS_NAMED" \
+  "a vdi_pblock_slot() call site does not name a VDI_PB_* slot." \
+  "The ledger below reads slots by that spelling, so an index computed at run time — a loop, a" \
+  "wrapper, a variable — would be a writer it cannot see, which is exactly the class the door" \
+  "cannot survive. (counts are call sites total vs call sites naming a VDI_PB_* constant)"
+
+# 2. ...and the door is handed that block and no other
+OS_VDI_ARGUMENTS=$(grep -h "os_vdi(" "${PBLOCK_SOURCES[@]}" | grep -v "^[[:space:]]*[*/]" \
+                   | sed 's/.*os_vdi([^,]*, *//; s/).*//' | LC_ALL=C sort -u)
+require_scrape_equals 'A_vdi_pblock' "$OS_VDI_ARGUMENTS" \
+  "an os_vdi() call passes a parameter block other than the one the cache was taken from." \
+  "bg_gem_cache_vdi_pblock stages A_vdi_pblock's five pointers; the door then trusts four of its" \
+  "own staged slots for whatever block it is handed."
+
+# 3. the ledger: who writes a slot that is NOT ptsin, by enclosing function. EVERY occurrence on a
+#    line is read, not the last one: a line naming two slots would otherwise report only the second,
+#    and one whose second is `ptsin` would take the whole line out of the ledger — fail-open, in the
+#    one gate whose comment promises the opposite.
+PBLOCK_WRITERS=$(awk "$AWK_ENCLOSING_FUNCTION"'
+  {
+      rest = $0
+      while (match(rest, /vdi_pblock_slot\(VDI_PB_[A-Z]+\)/)) {
+          slot = substr(rest, RSTART, RLENGTH)
+          rest = substr(rest, RSTART + RLENGTH)
+          sub(/^vdi_pblock_slot\(VDI_PB_/, "", slot); sub(/\)$/, "", slot)
+          if (slot != "PTSIN") print fn "|" slot
+      }
+  }' "${PBLOCK_SOURCES[@]}" | LC_ALL=C sort)
+require_scrape_equals 'v_opnvwk|INTIN
+v_opnvwk|INTIN
+v_opnvwk|INTOUT
+v_opnvwk|INTOUT
+v_opnvwk|PTSOUT
+v_opnvwk|PTSOUT
+vdi_call_at|CONTRL' "$PBLOCK_WRITERS" \
+  "a core writes a VDI parameter-block slot the GEM door's cache does not expect." \
+  "The door translates contrl/intin/intout/ptsout ONCE, after init_gem_and_screens, and restates" \
+  "only ptsin per call — so a writer of one of those four outside v_opnvwk leaves TOS reading the" \
+  "game's arrays through a stale pointer, on a path no differential runs." \
+  "Either move the writer, or take the cache out of bubble_os.s with it." \
+  "(the list is <enclosing function>|<slot>, sorted)"
+
+# 4. ...and the one PER-CALL writer files the constant the cache holds
+CONTRL_VALUE=$(grep -h "vdi_pblock_slot(VDI_PB_CONTRL)" "${PBLOCK_SOURCES[@]}" \
+               | sed 's/.*vdi_pblock_slot(VDI_PB_CONTRL))*, *//; s/ *);.*//' | LC_ALL=C sort -u)
+require_scrape_equals 'A_vdi_contrl' "$CONTRL_VALUE" \
+  "the per-call contrl store does not file the array the door's cache holds." \
+  "vdi_call_at runs on EVERY VDI call, so what it stores IS what the cache must have translated." \
+  "Only the value is pinned here; the accessor around it is the cores' to rename."
+
+# 5. ...and the two writers run before the cache is taken, which is their CALLERS
+for CHAIN in v_opnvwk:'g_v_opnvwk
+init_gem_and_screens' init_gem_and_screens:'g_init_gem_and_screens
+main_start_game'; do
+  CALLEE=${CHAIN%%:*}
+  CALLERS=$(awk "$AWK_ENCLOSING_FUNCTION"'
+    $0 ~ callee "\\(" { if (fn != callee) print fn }' callee="$CALLEE" "${PBLOCK_SOURCES[@]}" \
+            | LC_ALL=C sort -u)
+  require_scrape_equals "${CHAIN#*:}" "$CALLERS" \
+    "$CALLEE is called from somewhere the GEM door's cache does not account for." \
+    "It may only run BEFORE bubble_main.c primes the cache — which is the line after" \
+    "main_start_game — because it rebinds slots the door then stops restating."
+done
+echo ">> the VDI parameter block's 4 cached slots have the writers and the callers the door expects"
 
 # ---- the cores are the tree's COMMITTED cores ---------------------------------------------------
 # The isolation gates further down measure what reaches the cores. NONE of them looks at what the
@@ -400,16 +539,16 @@ done
 # the range IS the handler. profile.py refuses a name that VANISHES from the map and cannot see one
 # that APPEARS — a helper that stopped being inlined would take its own cycles out of the sum AND cut
 # the core's range short at itself, so the row would read low twice over with nothing red.
-# `static inline` is a hint; this is the assertion. (`psg_untrapped_write` is in the list because it
-# inlines into the SAME C core: out of line it would cut that core's range short at itself just as
-# the two step routines would. It is NOT there for the tick's own cost — since wave 5b the tick runs
-# no C at all — so a build that put it out of line wants the inlining restored, not a new entry in
-# SOUND_TICK_SYMBOLS, which would fold every user-mode chip write into the 200 Hz figure.)
+# `static inline` is a hint; this is the assertion. (A third name stood in this list until wave 7a:
+# `psg_untrapped_write`, which inlined into the same C core and would have cut its range short at
+# itself just as the two step routines would. It is deleted with the `bg_in_timer_c` arm that
+# selected it, so there is nothing left to keep inlined — a user-mode chip write is one `jsr` into
+# the trap gate now, and the tick runs no C at all.)
 # NOT `nm | grep -q`: this file runs under `set -o pipefail`, `grep -q` closes the pipe on its FIRST
 # match, and the SIGPIPE that kills `nm` then makes the pipeline's status 141 — so the one case the
 # gate exists to catch is the one case the `&&` does not fire on. Measured here, with the symbol
 # present and the gate green (2026-09-07). `grep -c` reads the whole stream instead.
-MUST_STAY_INLINED="step_swept_envelope step_triangle_lfo psg_untrapped_write"
+MUST_STAY_INLINED="step_swept_envelope step_triangle_lfo"
 OBJECT_TEXT_SYMBOLS=$(m68k-elf-nm $CORE_OBJECTS $SHIM_OBJECTS | awk '$2 == "t" || $2 == "T" {print $3}')
 for NAME in $MUST_STAY_INLINED; do
   OUT_OF_LINE=$(printf '%s\n' "$OBJECT_TEXT_SYMBOLS" | grep -c "^$NAME\$" || true)
@@ -418,8 +557,7 @@ for NAME in $MUST_STAY_INLINED; do
     echo "       the routines atari/profile.py's sound-tick ranges assume is inlined into"
     echo "       timer_c_sound_isr, so that row would now be measured over less code than it holds."
     echo "       RESTORE THE INLINING. Adding \$NAME to SOUND_TICK_SYMBOLS is not the fix: its range"
-    echo "       would then fold whatever else calls it — every user-mode chip write, in"
-    echo "       psg_untrapped_write's case — into the 200 Hz figure."
+    echo "       would then fold whatever else calls it into the 200 Hz figure."
     exit 1; }
 done
 # ...and the gate is only worth its line if it can see a symbol at all, so the scrape's own output is

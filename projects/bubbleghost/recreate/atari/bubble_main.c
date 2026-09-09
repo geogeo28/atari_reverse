@@ -106,23 +106,16 @@ uint32_t bg_malloc_calls;
 
 volatile uint32_t bg_timer_c_ticks;
 uint32_t bg_timer_c_chain;
-/* Kept, and NOTHING SETS IT: it exists so a chip write from inside the interrupt could skip the
- * `trap #9` gate, and since wave 5b no C runs there at all. `shim_include/tos.h` says what would
- * bring it back. */
-volatile uint8_t bg_in_timer_c;
 
-/* THE 200 Hz TICK REACHES THREE OF THESE FROM ASSEMBLY, so their WIDTHS are the compiler's here and
+/* THE 200 Hz TICK REACHES THESE THREE FROM ASSEMBLY, so their WIDTHS are the compiler's here and
  * the programmer's there: `bg_timer_c_entry` (../src/asm/sound_tick.S, the vector itself since wave
  * 6a) spells one `addq.l` and two `move.l`s against them, and nothing else would notice a type that
- * grew. The fourth is `bg_in_timer_c`, which NOTHING sets any more — the interrupt runs no C, so
- * `shim_include/psg.h`'s door reads it as a byte and always finds 0 — and widening it to an `int`
- * would still be the one that bites without a diagnostic anywhere: the door's `if` would then read a
- * different byte of the object, and a non-zero one would send every USER-mode chip write straight at
- * $ff8800 — a bus error, which is what `smoke.py`'s fault scan finds after the fact rather than what
- * a build refuses. */
+ * grew. (A fourth stood here until wave 7a: `bg_in_timer_c`, the byte `shim_include/psg.h`'s door
+ * tested to skip the `trap #9` gate. Nothing had set it since the interrupt stopped running C, and
+ * the whole flag is deleted rather than carried; `shim_include/tos.h` says what bringing it back
+ * would mean.) */
 _Static_assert(sizeof bg_timer_c_ticks == 4, "bg_timer_c_entry bumps this with `addq.l`");
 _Static_assert(sizeof bg_timer_c_chain == 4, "bg_timer_c_entry pushes this with `move.l`");
-_Static_assert(sizeof bg_in_timer_c == 1, "shim_include/psg.h's door tests this one byte");
 _Static_assert(sizeof bg_image_base == 4, "bg_timer_c_entry loads this with `movea.l`");
 
 /* ================================================================================================
@@ -231,6 +224,9 @@ enum bg_record_field {
     REC_VDI_CALLS,
     REC_AES_CALLS,
     REC_VDI_RASTER_COPIES,
+    REC_VDI_PBLOCK_CACHE_STATE, /* the door's four cached VDI slots against the game's own, re-read
+                                 * at the anchor: 0 = taken and still true. See
+                                 * `vdi_pblock_cache_state` */
     REC_TIMER_C_TICKS,       /* 200 Hz, from the moment sound_start installed the handler */
     REC_TIMER_C_CHAIN,       /* TOS's own $114, read off the machine before the install... */
     REC_TIMER_C_SAVED,       /* ...and what the verified installer parked in the image */
@@ -896,6 +892,45 @@ static void publish_the_tallies(void) {
     g_record[REC_FAULT_NO_TIMER_C] = (uint32_t)BG_FAULT_NO_TIMER_C;
 }
 
+/* WHAT THE GEM DOOR'S VDI CACHE ASSUMED, RE-DERIVED FROM THE GAME'S OWN BLOCK AFTER THE RUN.
+ *
+ * `bg_gem_cache_vdi_pblock` (bubble_os.s) translates the block's five pointers once and the door
+ * then restates `ptsin` alone, on the ground that the other four are constants from the moment
+ * `init_gem_and_screens` returns. `atari/build.sh` refuses a core that writes one of those four
+ * outside the routine that may; this is the same claim measured on the machine instead of scraped
+ * out of C, and it is the only surface for the class where a slot moves at RUN time — a poke, or a
+ * writer reached by a path the scan cannot see. A stale cache is not visible in the picture: the
+ * cores read the library arrays by their own addresses and only TOS reads them through the block,
+ * so both sides can be self-consistently wrong.
+ *
+ * The answer is a bitmask over `VDI_PB_*` rather than a flag, so a red names the slot; and it is
+ * `VDI_PBLOCK_NEVER_CACHED` — not 0 — when the cache was never taken, because that build is SLOW
+ * rather than wrong and must not read as "checked and true". */
+#define VDI_PBLOCK_NEVER_CACHED 0xFFFFFFFFu
+
+static uint32_t vdi_pblock_cache_state(const uint8_t *image) {
+    uint32_t stale = 0;
+
+    if (!bg_vdi_pblock_cached)
+        return VDI_PBLOCK_NEVER_CACHED;
+    /* EVERY SLOT OF THE BLOCK BUT `ptsin`, derived rather than listed: a block that gained a sixth
+     * pointer would leave a hand-written list silently short, and this check reporting 0 for a slot
+     * it never looked at is the one answer it must never give. */
+    for (unsigned slot = VDI_PB_CONTRL; slot <= VDI_PB_PTSOUT; slot++) {
+        uint32_t offset;
+        uint32_t machine;
+
+        if (slot == VDI_PB_PTSIN)
+            continue;                   /* restated on every call, so nothing is cached about it */
+        offset = be32(image + A_vdi_pblock + slot * LONG_BYTES);
+        /* the door's own `TRANSLATE_D0`: a zero slot stays zero rather than becoming the image base */
+        machine = offset ? (uint32_t)(uintptr_t)(bg_image_base + offset) : 0u;
+        if (bg_vdi_staged_pblock[slot] != machine)
+            stale |= 1u << slot;
+    }
+    return stale;
+}
+
 /* The anchor table, written before anything can go wrong, so `smoke.py` can arm its breakpoints on
  * a program that then crashes. `ANCHOR_ROOM_FRAME` is 0 outside the play mode, where the room loop
  * is not composed at all — the smoke refuses to arm a breakpoint on 0 rather than reading it as an
@@ -953,6 +988,12 @@ void bubble_main(void) {
     build_basepage(image);
     a4 = crt0_relocate_and_clear(image, BG_BASEPAGE);
     g_record[REC_A4_BASE] = a4;
+    /* ...AND THE CACHE-STATE FIELD STARTS AT ITS "NEVER TAKEN" SENTINEL, because 0 means "taken,
+     * and every cached slot still agrees" and `g_record` is BSS. The resolution-refusal arm below
+     * writes STATE.BIN without ever reaching `bg_gem_cache_vdi_pblock` or the anchor read, so a
+     * field only the happy path fills would ship that arm a clean answer about a cache it never
+     * took. The anchor read overwrites this. */
+    g_record[REC_VDI_PBLOCK_CACHE_STATE] = VDI_PBLOCK_NEVER_CACHED;
     wr32(image + a4 + (uint32_t)(int32_t)CRT0_BASEPAGE_SLOT, BG_BASEPAGE);
     init_globals(image, BG_LOAD_BASE);
     crt0_setup_args(image, BG_BASEPAGE + BASEPAGE_TAIL);
@@ -975,6 +1016,11 @@ void bubble_main(void) {
      * is TOS's own; the mirror straight after is that clear, made on the machine. */
     seed_conterm(image);
     main_start_game(image, TOP_FRAME, live);
+    /* ...and the workstation is open, so the four VDI parameter-block slots that never move again
+     * are translated ONCE here. Every VDI call after this restates `ptsin` alone
+     * (shim_include/os.h). It must be THIS side of `main_start_game`: `v_opnvwk` lends the VDI
+     * three of its caller's arrays for the length of its own trap. */
+    bg_gem_cache_vdi_pblock(image);
     mirror_conterm(image);
     g_record[REC_SCREEN_PHYS] = be32(image + A_screen_phys);
     g_record[REC_SCREEN_BACK] = be32(image + A_screen_back);
@@ -1009,6 +1055,7 @@ void bubble_main(void) {
     g_record[REC_TIMER_C_VECTOR] = peek_long(TOS_VEC_TIMER_C);
     g_record[REC_TRAP9_VECTOR] = peek_long(TOS_VEC_TRAP9);
     g_record[REC_CONTERM_AT_ANCHOR] = peek_conterm();
+    g_record[REC_VDI_PBLOCK_CACHE_STATE] = vdi_pblock_cache_state(image);
     g_record[REC_READBACK_LOGBASE] = (uint32_t)Logbase();
     g_record[REC_GUARD_DIRTY] = guard_bytes_dirty();
 

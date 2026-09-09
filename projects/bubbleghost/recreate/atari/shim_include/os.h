@@ -472,4 +472,29 @@ int bg_gem_dispatch(uint8_t *mem, uint32_t selector, uint32_t pblock);
 static inline int os_vdi(uint8_t *mem, uint32_t pblk) { return bg_gem_dispatch(mem, GEM_VDI, pblk); }
 static inline int os_aes(uint8_t *mem, uint32_t pblk) { return bg_gem_dispatch(mem, GEM_AES, pblk); }
 
+/* ...AND THE FOUR SLOTS OF THAT BLOCK THAT NEVER MOVE AGAIN, TRANSLATED ONCE. Four of the VDI
+ * block's five pointers hold the same library arrays from the moment `init_gem_and_screens` has
+ * opened the workstation; only `ptsin` carries a runtime value (`vr_recfl` and `vro_cpyfm` lend the
+ * VDI their caller's own rectangle). So `bubble_main.c` calls this on the instruction after that
+ * routine returns, and the door restates one slot a call instead of five — 130 cycles of every one
+ * of the ~8.7 VDI calls a frame (../STATUS.md, wave 7a).
+ *
+ * IT IS A PRECONDITION AND NOT A PROOF, so it has three surfaces rather than a comment:
+ * `atari/build.sh`'s "the VDI parameter block's constant slots" gate reads every writer of a
+ * non-`ptsin` slot out of the cores and the shim and refuses one this door does not expect;
+ * `bubble_main.c` re-reads the game's own four slots at the anchor and files any disagreement in
+ * STATE.BIN, where `smoke.py` requires 0; and before this call the door restates all five, so the
+ * boot's own calls do not depend on it at all.
+ *
+ * IT IS DECLARED HERE, BESIDE THE DOOR IT PRIMES, by `bubble_target.h`'s own rule — a name a DOOR
+ * keeps is declared in the header whose door keeps it. Its FLAG is not: that object is defined in
+ * `bubble_backend.c`, so its declaration belongs where that file will see it. */
+void bg_gem_cache_vdi_pblock(uint8_t *mem);
+
+/* The cache itself — `bubble_os.s`'s own .bss, sized there as `VDI_POINTER_LONGS` longwords and
+ * indexed here by the same `VDI_PB_*` that index the game's block. `volatile` because the writer is
+ * the assembly: a read GCC felt free to hoist or fold would answer what C last knew rather than what
+ * the door last staged. Nothing in C may write it. */
+extern volatile uint32_t bg_vdi_staged_pblock[VDI_PB_PTSOUT + 1];
+
 #endif /* BUBBLEGHOST_TARGET_OS_H */

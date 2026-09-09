@@ -107,6 +107,12 @@ def scrape_define(header, name):
     return int(match.group(1), 0)
 
 
+# ...and the door's cache sentinel, read out of the C rather than copied: 0 means "taken, and every
+# cached slot still agrees", so "never taken" needs a value of its own and both files must mean the
+# same one by it. `VDI_PB_*` name the slots a bitmask names, in the kit's own order.
+VDI_PBLOCK_NEVER_CACHED = scrape_define(HERE / "bubble_main.c", "VDI_PBLOCK_NEVER_CACHED")
+VDI_PBLOCK_SLOT_NAMES = ("contrl", "intin", "ptsin", "intout", "ptsout")
+
 MEMSIZE_MB = scrape_build_constant("MEMSIZE_MB")
 TPA_1MB_BYTES = scrape_build_constant("TPA_1MB_BYTES")
 STACK_RESERVE_BYTES = scrape_build_constant("STACK_RESERVE_BYTES")
@@ -198,7 +204,8 @@ ST_LOW_RESOLUTION = 0
 RECORD_FIELDS = """MAGIC IMAGE_BASE IMAGE_BYTES PROGRAM_BYTES A4_BASE LOW_RESOLUTION SCREEN_PHYS
 SCREEN_BACK PUBLISHED_PHYSBASE READBACK_PHYSBASE PHASE_REACHED FILE_OPENS FILE_OPEN_FAILURES
 FILE_REFUSALS FILE_WRITE_FAILURES SHIM_FILE_OPENS SHIM_FILE_FAILURES MALLOC_CALLS HEAP_POINTER
-HW_WRITES VDI_CALLS AES_CALLS VDI_RASTER_COPIES TIMER_C_TICKS TIMER_C_CHAIN TIMER_C_SAVED
+HW_WRITES VDI_CALLS AES_CALLS VDI_RASTER_COPIES VDI_PBLOCK_CACHE_STATE TIMER_C_TICKS
+TIMER_C_CHAIN TIMER_C_SAVED
 TIMER_C_VECTOR TRAP9_VECTOR CONTERM_AT_ANCHOR ENTRY_RESOLUTION READBACK_LOGBASE VOI_BUFFER_OFFSET
 VOI_POINTER_MACHINE TPA_LOW TPA_HIGH KEPT_TOP MSHRINK_RESULT IMAGE_HEADROOM GUARD_DIRTY FAULT_PEN
 FAULT_IMAGE_WORD FAULT_NO_TIMER_C TAIL""".split()
@@ -559,7 +566,8 @@ def check_the_fault_scan_can_fail(ours, original):
 # claim this file and atari/README.md make is "every field the boot owes", and a field added to
 # `bubble_main.c` with no assertion here would make that claim quietly false.
 FIELDS_ASSERTED_BY_HAND = frozenset("""IMAGE_BASE VOI_BUFFER_OFFSET TIMER_C_CHAIN TIMER_C_SAVED
-TIMER_C_TICKS TIMER_C_VECTOR TRAP9_VECTOR TPA_LOW TPA_HIGH KEPT_TOP IMAGE_HEADROOM""".split())
+TIMER_C_TICKS TIMER_C_VECTOR TRAP9_VECTOR TPA_LOW TPA_HIGH KEPT_TOP IMAGE_HEADROOM
+VDI_PBLOCK_CACHE_STATE""".split())
 FIELDS_THE_CONTROLS_GRADE = frozenset({"FAULT_PEN", "FAULT_IMAGE_WORD", "FAULT_NO_TIMER_C"})
 
 
@@ -635,6 +643,22 @@ def check_the_record(ours, original):
                         f"what the verified installer saved ({record['TIMER_C_SAVED']:#x})")
     if record["TIMER_C_TICKS"] == 0:
         problems.append("the 200 Hz Timer C handler never fired — the sound engine is not running")
+    # THE GEM DOOR'S VDI PARAMETER-BLOCK CACHE, re-derived from the game's own block at the anchor.
+    # The door translates four constant slots once and restates `ptsin` alone (bubble_os.s); this is
+    # the program answering whether those four were still what it cached. `atari/build.sh` covers
+    # the same claim from the C side; this is the half that can see a RUN-TIME change — and the only
+    # one, since a stale cache leaves the picture identical (only TOS reads the block).
+    # BY HAND rather than in `exact_record_fields` because the field has two failure meanings and a
+    # bare "is 0x2, not 0x0" names neither.
+    cache_state = record["VDI_PBLOCK_CACHE_STATE"]
+    if cache_state == VDI_PBLOCK_NEVER_CACHED:
+        problems.append("the GEM door's VDI parameter-block cache was never taken — the run is "
+                        "correct but slow, and this field must not read as a clean answer")
+    elif cache_state:
+        moved = [name for index, name in enumerate(VDI_PBLOCK_SLOT_NAMES) if cache_state >> index & 1]
+        problems.append(f"the GEM door cached VDI parameter-block slot(s) {', '.join(moved)} and the "
+                        f"game's own block no longer agrees: TOS was handed a stale pointer "
+                        f"(VDI_PBLOCK_CACHE_STATE {cache_state:#x})")
     # THE TWO VECTORS POINT AT US. Neither address is knowable here — they are link-time addresses
     # of shim routines — so what is asserted is that each one moved off TOS's ROM and INTO the
     # program's own TPA, which is the whole of what "the shim took the vector" means.

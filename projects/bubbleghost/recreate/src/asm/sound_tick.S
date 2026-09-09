@@ -62,9 +62,11 @@
  * IF THAT IPL DROP IS EVER MADE FAITHFUL, THE CHIP WRITES NEED THE GATE BACK. What kept this build
  * safe without it is that the handler owns the machine at IPL 6 for its whole length, so nothing
  * can land between one of the five `move.b <reg>,(%a1)` selects and its data write. At IPL 5 the
- * IKBD can, and `atari/shim_include/psg.h`'s trap #9 gate (or a raise of `bg_in_timer_c`, which
- * `bg_timer_c_entry` no longer does) is what would have to come back with it. Assembly can touch
- * `%sr` where the C could not, so this is now a decision rather than an inability.
+ * IKBD can, and what would have to come back with the drop is a bracket around these five pairs —
+ * `atari/shim_include/psg.h`'s trap #9 gate, or the supervisor-side bypass that header's own
+ * comment names (wave 7a deleted the one this build carried, an arm nothing had set since 5b).
+ * Assembly can touch `%sr` where the C could not, so this is now a decision rather than an
+ * inability.
  *
  * AND THE INSTRUCTIONS OUTSIDE THE BRACKET ARE NOT UNDER THE TRANSCRIPTION PIN, which is why each
  * arm carries a check of its own. The HOST arm's run on every differential case, and

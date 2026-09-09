@@ -409,10 +409,21 @@ Supexec:
 | for an address and read its `contrl` out of the 68000's vector page. So a `trap #2` on this build
 | has to RESTATE the block first, and `bg_gem_dispatch` below is the whole of that:
 |
-|   * the five (VDI) or six (AES) array pointers are staged into `bg_gem_staged_pblock`, each
-|     translated by the image base — so the VDI still reads its operands out of, and writes its
-|     answers into, the game's OWN arrays, with no copy back and no field this door has to know the
-|     meaning of. The image's own block is never touched at all.
+|   * the five (VDI) or six (AES) array pointers are staged into this file's own block for that
+|     binding, each translated by the image base — so the VDI still reads its operands out of, and
+|     writes its answers into, the game's OWN arrays, with no copy back and no field this door has
+|     to know the meaning of. The image's own block is never touched at all.
+|   * ...and for the VDI, staged ONCE. Four of its five slots hold the same four constants from the
+|     moment the workstation is open, so `bg_gem_cache_vdi_pblock` translates all five after
+|     `init_gem_and_screens` returns and every call after that restages `ptsin` alone — the one slot
+|     that carries a runtime value. THIS IS THE ONE ASSUMPTION IN THIS FILE THAT IS ABOUT THE CORES
+|     RATHER THAN ABOUT THE MACHINE, and it is held from three sides: `atari/build.sh`'s
+|     "the VDI parameter block's constant slots" gate reads every writer out of `../src/frontend.c`
+|     and refuses one this door does not expect; `bubble_main.c` re-reads the game's four slots at
+|     the anchor and files any disagreement in STATE.BIN (`REC_VDI_PBLOCK_CACHE_STATE`, which
+|     `smoke.py` requires to be 0); and until the cache is taken the door restates all five, so the
+|     boot calls that run BEFORE it — `v_opnvwk`'s own, which lends the VDI three of the caller's
+|     arrays — are staged the old way rather than out of a cache that does not exist yet.
 |   * a raster copy (`vro_cpyfm`) has two more operands that are reached by DEREFERENCING the image
 |     rather than by being handed over: `contrl[7..8]` and `contrl[9..10]` name two MFDBs, and each
 |     MFDB names a raster. Those four longwords are patched in place, trapped on, and put straight
@@ -448,12 +459,15 @@ Supexec:
 | between the two entry points and the trap wrapper and reading them back. Here the image base, the
 | two cursors and the raster path's seven live values are registers for the whole call. The staging
 | run is 40 cycles a longword and there is no cheaper spelling of "translate unless zero" on a
-| 68000 — `movem.l` in and out of a five-register
-| block counts the same 200 — so the five-slot restatement IS the door's floor, and the rest of
-| this routine is written to add as little to it as it can.
+| 68000 — `movem.l` in and out of a five-register block counts the same 200 — so a five-slot
+| restatement is the floor for as long as five slots have to be restated. WHAT WAVE 7a TOOK IS THE
+| OTHER FOUR: with the cache primed a VDI call stages ONE slot, and the whole tail is 82 cycles
+| against 212 (`tst.b` on an absolute long 16, the taken `bne` 10, `move.l d16(%a0),%d0` 16, the
+| sentinel 8, the add 8, `move.l %d0,xxx.l` 24 — the same M68000UM table 8-5 the 40-cycle staging
+| row below is counted off). ../STATUS.md's wave 7a holds that hand count against the profiler.
 |
-| NOTHING RE-ENTERS IT, AND THE DOOR CANNOT SURVIVE ANYTHING THAT DOES. `bg_gem_staged_pblock` is
-| ONE block for the whole program, and between the raster path's patch and its restore the game's
+| NOTHING RE-ENTERS IT, AND THE DOOR CANNOT SURVIVE ANYTHING THAT DOES. There is one staged block
+| per binding for the whole program, and between the raster path's patch and its restore the game's
 | own MFDB holds a MACHINE address where every other reader expects an image offset. The one
 | interrupt this build installs is Timer C, whose handler is the sound tick and touches no GEM state
 | at all — so no `trap #2` is ever live across an interrupt that could reach either. **A GEM call
@@ -483,11 +497,15 @@ Supexec:
     VDI_CONTRL_OPCODE   = 0         | contrl[] is an array of WORDS; these index it
     VDI_CONTRL_SRC_MFDB = 7         | ...and [8]: the source MFDB address, high word first
     VDI_CONTRL_DST_MFDB = 9         | ...and [10]: the destination MFDB address
-    VDI_PB_PTSOUT       = 4         | the LAST slot of each parameter block, so each block's length
-    AES_PB_ADDROUT      = 5         | is one more than the kit's own index for it
+    VDI_PB_PTSIN        = 2         | the ONE VDI slot with a runtime value: the cached tail
+    VDI_PB_PTSOUT       = 4         | restages this and nothing else
+    AES_PB_ADDROUT      = 5         | ...and these two are the LAST slot of each parameter block,
+                                    | so each block's length is one more than the kit's own index
     MFDB_ADDR           = 0         | an MFDB's raster pointer, a long
     MFDB_SCREEN_ADDR    = 0         | fd_addr == this means the VDI's own screen
     A_VDI_CONTRL        = 0x236f0   | ../include/frontend.h — the game's own contrl array
+    A_VDI_PBLOCK        = 0x1e8ca   | ...and its VDI parameter block, which is what the cache is
+                                    | taken FROM and what every VDI caller hands this door
 
     CONTRL_WORD_BYTES   = 2         | contrl is `word[]` (../include/frontend.h)
     POINTER_BYTES       = 4         | ...and a parameter block is an array of longs
@@ -496,6 +514,7 @@ Supexec:
     CONTRL_DST_MFDB_SLOT = VDI_CONTRL_DST_MFDB * CONTRL_WORD_BYTES
     VDI_POINTER_LONGS = VDI_PB_PTSOUT  + 1
     AES_POINTER_LONGS = AES_PB_ADDROUT + 1
+    VDI_PTSIN_SLOT    = VDI_PB_PTSIN   * POINTER_BYTES
 
     | `bg_gem_dispatch`'s three C arguments, at the entry %sp. Nothing below re-reads them after a
     | `movem` has moved the stack, so these offsets are never adjusted.
@@ -507,9 +526,6 @@ Supexec:
     | this file carrying a comment that claims what the code no longer does.
     .ifne   MFDB_SCREEN_ADDR
     .error  "MFDB_SCREEN_ADDR is no longer 0, and this door tests for it with beq"
-    .endif
-    .ifgt   VDI_POINTER_LONGS-AES_POINTER_LONGS
-    .error  "the VDI's block no longer fits bg_gem_staged_pblock, which is sized for the AES's"
     .endif
 
     | ...AND BOTH LENGTHS ARE PINNED TO THEIR VALUE, not only to each other. `build.sh` pins the two
@@ -544,24 +560,68 @@ Supexec:
     .endr
     .endm
 
-    | THE STAGE-AND-TRAP TAIL, WHICH IS ONE FACT AND WAS ONCE THREE COPIES OF IT. The selector and
-    | the block's length must agree — a mismatched pair either over-reads the game's block or leaves
-    | the AES's `addr_out` holding the previous call's stale machine address — and the deleted C
-    | `stage_and_trap` existed to hold them together. This macro is that helper, at zero cycles.
+    | THE STAGE-AND-TRAP TAIL, WHICH IS ONE FACT AND WAS ONCE THREE COPIES OF IT. The staged block,
+    | its length and the selector must agree — a mismatched set either over-reads the game's block
+    | or leaves the AES's `addr_out` holding the previous call's stale machine address — and the
+    | deleted C `stage_and_trap` existed to hold them together. This macro is that helper, at zero
+    | cycles, and the three now travel as one argument list.
+    |
+    | AND THE ASSEMBLER HOLDS THE THREE TOGETHER, which the old two-argument form did not have to:
+    | while there was ONE staged block, a `.ifgt VDI_POINTER_LONGS-AES_POINTER_LONGS` made any
+    | `\count` safe by construction. With a block per binding a one-token slip —
+    | `bg_vdi_staged_pblock, AES_POINTER_LONGS` — stages six pointers into five longwords, inside a
+    | `trap #2`, with no differential, no gate and no smoke able to see it. So the block DERIVES its
+    | length, its selector and whether it is the cached one, and disagreement is an assembly error.
+    |
+    | THE CACHED ARM IS THE VDI'S ALONE. Once `bg_gem_cache_vdi_pblock` has translated the four
+    | constant slots, a VDI call restates `ptsin` and nothing else (this file's header carries what
+    | holds that assumption). The AES keeps the full restatement: its six pointers include
+    | `addr_in`/`addr_out`, which are not constant, and it makes 0.00 calls in a profiled frame.
     |
     | Entered with %a0 = the game's block and %d1 = the image base; it ends `%d1` as the STAGED
     | block, which is why the address is materialised twice (`lea` into the cursor, `move.l` into
     | the trap's operand): %d1 has to stay the image base until the last `TRANSLATE_D0`, so there is
     | no register to keep the constant in across the run.
-    .macro  TRAP_STAGED  count, selector
-    lea     bg_gem_staged_pblock,%a1
+    |
+    | %a0 IS NOT THE SAME ON EXIT FROM THE TWO ARMS — the restatement leaves it advanced by
+    | `\count` longwords and the cached arm leaves it where it was. No caller reads it afterwards
+    | (both VDI arms and the AES arm `rts`, and the raster restore uses only %d3-%d6/%a3-%a5); one
+    | that started to would work on the AES path and on the boot's un-cached VDI calls and fail
+    | only once the cache is taken.
+    .macro  TRAP_STAGED  block, count, selector
+    .ifc    "\block","bg_vdi_staged_pblock"
+    .ifne   \count-VDI_POINTER_LONGS
+    .error  "the VDI's staged block holds VDI_POINTER_LONGS pointers and may be staged no other length"
+    .endif
+    .ifne   \selector-GEM_VDI
+    .error  "the VDI's staged block is trapped on with GEM_VDI"
+    .endif
+    tst.b   bg_vdi_pblock_cached
+    bne.s   1\@f
+    .else
+    .ifne   \count-AES_POINTER_LONGS
+    .error  "the AES's staged block holds AES_POINTER_LONGS pointers and may be staged no other length"
+    .endif
+    .ifne   \selector-GEM_AES
+    .error  "the AES's staged block is trapped on with GEM_AES"
+    .endif
+    .endif
+    lea     \block,%a1
     STAGE_POINTERS \count
+    .ifc    "\block","bg_vdi_staged_pblock"
+    bra.s   2\@f
+1\@:
+    move.l  VDI_PTSIN_SLOT(%a0),%d0     | the only slot a caller ever moves after the cache is taken
+    TRANSLATE_D0
+    move.l  %d0,\block+VDI_PTSIN_SLOT
+2\@:
+    .endif
     .if     \selector <= 127
     moveq   #\selector,%d0
     .else
     move.l  #\selector,%d0             | 0xc8 is past moveq's sign-extended range
     .endif
-    move.l  #bg_gem_staged_pblock,%d1
+    move.l  #\block,%d1
     jsr     bg_gem_trap
     .endm
 
@@ -570,10 +630,11 @@ Supexec:
 | every opcode this program makes and a `trap #2` has no way to say otherwise, so the cores' refusal
 | arms are unreachable here (atari/README.md, "Unpinned", carries that as a residual).
 |
-| Hand-counted off the 68000's own tables and the objdump: 406 cycles for a non-raster VDI call,
-| 412 for an AES one and 878 for a `vro_cpyfm`, plus `bg_gem_trap`'s own 68 either way (the trap and
-| the ROM behind it are on top of all three). ../STATUS.md's wave 5a holds those against what Hatari
-| charges, and prices what is left in them.
+| Hand-counted off the 68000's own tables and the objdump, with the VDI cache primed: 276 cycles for
+| a non-raster VDI call, 412 for an AES one and 748 for a `vro_cpyfm`, plus `bg_gem_trap`'s own 68
+| either way (the trap and the ROM behind it are on top of all three). The two VDI figures were 406
+| and 878 while every call restated five slots; ../STATUS.md's wave 5a holds THOSE against what
+| Hatari charged, and its wave 7a holds the 130-cycle difference against a second window.
     .globl  bg_gem_dispatch
 bg_gem_dispatch:
     move.l  ARG_MEM(%sp),%d1            | the image base — the whole door's translation term
@@ -589,14 +650,14 @@ bg_gem_dispatch:
     adda.l  #A_VDI_CONTRL,%a1           | ...and only a VDI call has a contrl array, so only it pays
     cmpi.w  #VDI_VRO_CPYFM,CONTRL_OPCODE_SLOT(%a1)
     beq     bg_gem_raster_copy
-    TRAP_STAGED VDI_POINTER_LONGS, GEM_VDI
+    TRAP_STAGED bg_vdi_staged_pblock, VDI_POINTER_LONGS, GEM_VDI
     moveq   #1,%d0                      | the kit's door answers "modeled" on every path
     rts
 
 | Entered by `bne` with %d1 = the image base and %a0 = the game's block. Nothing else is live.
 bg_gem_aes_call:
     addq.l  #1,bg_aes_calls
-    TRAP_STAGED AES_POINTER_LONGS, GEM_AES
+    TRAP_STAGED bg_aes_staged_pblock, AES_POINTER_LONGS, GEM_AES
     moveq   #1,%d0
     rts
 
@@ -647,7 +708,7 @@ bg_gem_raster_copy:
     TRANSLATE_D0
     move.l  %d0,CONTRL_DST_MFDB_SLOT(%a5)
 
-    TRAP_STAGED VDI_POINTER_LONGS, GEM_VDI
+    TRAP_STAGED bg_vdi_staged_pblock, VDI_POINTER_LONGS, GEM_VDI
 
     move.l  %d3,(%a3)                   | ...and the image put back exactly as it was
     move.l  %d5,CONTRL_SRC_MFDB_SLOT(%a5)
@@ -679,13 +740,44 @@ bg_gem_trap:
     movem.l (%sp)+,%d2/%a2
     rts
 
-    | The block the trap is handed. It has to outlive the call by the length of the trap, so it is
-    | storage and not stack. THE `.balign` IS A REQUEST AND NOT A GUARANTEE: `atari/tos.ld` places
+| void bg_gem_cache_vdi_pblock(uint8_t *mem) — shim_include/os.h declares it beside the door.
+| CALLED ONCE, from `bubble_main.c`, on the instruction after `init_gem_and_screens` returns: from
+| that point the game's `contrl`, `intin`, `intout` and `ptsout` slots hold the four library
+| constants for the rest of the run, so their translations are staged here and the door's VDI tail
+| restages `ptsin` alone. `ptsin` is staged too — it is one more longword out of the same run and it
+| keeps this routine "the block, translated", rather than "the block except one slot".
+|
+| WHAT MAKES THE MOMENT RIGHT is `v_opnvwk`: it LENDS the VDI three of its caller's own arrays for
+| the length of its own trap and puts the library's four back afterwards, so a cache taken any
+| earlier would hold `work_in`/`work_out` and hand them to every later call. Taking it before
+| `init_gem_and_screens` is what `bubble_main.c`'s anchor check and `smoke.py`'s
+| `VDI_PBLOCK_CACHE_STATE` would report, and what the picture would show.
+    .globl  bg_gem_cache_vdi_pblock
+bg_gem_cache_vdi_pblock:
+    move.l  ARG_MEM(%sp),%d1            | the same first argument, at the same offset, as the door's
+    movea.l %d1,%a0
+    adda.l  #A_VDI_PBLOCK,%a0
+    lea     bg_vdi_staged_pblock,%a1
+    STAGE_POINTERS VDI_POINTER_LONGS
+    move.b  #1,bg_vdi_pblock_cached     | ...and ONLY now, so a fault mid-run leaves the door on its
+    rts                                 | full-restatement arm rather than on half a cache
+
+    | The blocks the trap is handed. Each has to outlive the call by the length of the trap, so it is
+    | storage and not stack, and there is ONE PER BINDING rather than one shared: the VDI's four
+    | constant slots are a cache that lives between calls, and a six-longword AES restatement into
+    | the same bytes would overwrite it — silently, and only on the menu's `graf_mouse`, which is
+    | the one AES call that happens after the cache is taken. `bubble_main.c` reads the VDI block
+    | back at the anchor; nothing would have read it back mid-run.
+    | THE `.balign` IS A REQUEST AND NOT A GUARANTEE: `atari/tos.ld` places
     | .bss with `SUBALIGN(2)`, which caps per-symbol alignment at a WORD and overrides this — an
     | even address is all a 68000 `move.l` needs, and even is what SUBALIGN(2) does guarantee.
     .bss
     .balign POINTER_BYTES
-bg_gem_staged_pblock:
+    .globl  bg_vdi_staged_pblock        | read back by bubble_main.c's anchor check, and by nothing
+bg_vdi_staged_pblock:                   | else: this is the door's own storage
+    .space  VDI_POINTER_LONGS*POINTER_BYTES
+    .balign POINTER_BYTES
+bg_aes_staged_pblock:
     .space  AES_POINTER_LONGS*POINTER_BYTES
     .text
 
@@ -749,11 +841,14 @@ bg_super_gate_entry:
 9:  movea.l (%sp)+,%a0
     rte
 
-| The SAME PSG write WITHOUT the trap — the sound ISR's, ~3 a tick — is not a routine here at all:
-| it is `psg_untrapped_write` in shim_include/psg.h, two `move.b`s the compiler puts inline, because a
-| `jsr` with two stack arguments around them cost 100 cycles a write where the stores cost ~40. The
-| port and its data displacement above are the two that header spells, and build.sh pins the two
-| spellings equal; PSG_REG_MASK stays here alone, because only the TRAPPED door masks.
+| The SAME PSG write WITHOUT THE TRAP — the sound ISR's, ~3 a tick — is not here and is no longer in
+| C either: it is the five bare `move.b <reg>,(%a1)` / `move.b <data>,2(%a1)` pairs transcribed into
+| `../src/asm/sound_tick.S`, which is the original's own shape. (It was a `jsr` here until wave 3a,
+| then `psg_untrapped_write` in shim_include/psg.h until wave 7a, which deleted that door with the
+| `bg_in_timer_c` flag nothing had set since 5b.) The port and its data displacement above are the
+| two `shim_include/psg.h` spells, and build.sh pins THIS file's pair equal to that header while
+| `test/test_constants.py` pins the twin's; PSG_REG_MASK stays here alone, because only the TRAPPED
+| door masks.
 
 | ---- the Timer C entry is NOT HERE, and that is a measurement ------------------------------------
 | `bg_timer_c_entry` — the machine's $114 vector — is in `../src/asm/sound_tick.S`, at the head of

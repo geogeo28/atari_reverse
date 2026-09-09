@@ -125,9 +125,9 @@ the record's own prediction is built on).
 | `os_super` | returns the cookie, no privilege change | **the real trap**, and the way back is `bg_leave_supervisor`, which plants the USP itself (class 9) |
 | `os_random` | a poked 24-bit constant | real XBIOS `Random`, masked to the same 24 bits |
 | `os_pterm` | a ledger entry that RETURNS | the real trap, which does not |
-| `os_vdi` / `os_aes` | the kit's software VDI/AES over the image | a real `trap #2`, with the parameter block **translated** — one hand-written 68000 routine, `bg_gem_dispatch` in `bubble_os.s`, which stages the block's five (or six) pointers, patches a raster copy's two MFDBs, traps and puts the image back. See below |
+| `os_vdi` / `os_aes` | the kit's software VDI/AES over the image | a real `trap #2`, with the parameter block **translated** — one hand-written 68000 routine, `bg_gem_dispatch` in `bubble_os.s`, which stages the block's pointers into its own storage (one block per binding), patches a raster copy's two MFDBs, traps and puts the image back. The VDI's four CONSTANT slots are staged once, after `init_gem_and_screens`, so a call restates `ptsin` alone; `build.sh` and `STATE.BIN`'s `VDI_PBLOCK_CACHE_STATE` are what hold that. See below |
 | `os_setscreen` / `os_setpalette` / `os_setcolor` / `os_vsync` | an ordered entry in the OS event ledger, and no image effect | the real XBIOS traps, made where the core makes them. The two screen bases and the palette table are image OFFSETS and are translated |
-| `psg_port_write` / `psg_port_read` | an ordered ledger and a register file | the real `$ff8800`/`$ff8802`, through the `trap #9` gate at IPL 7 from user mode. The ISR's own writes no longer come through here at all: `../src/asm/sound_tick.S` writes the two ports itself, which is the original's own shape, so `bg_in_timer_c` is never raised and `psg_untrapped_write` is an unreached branch this build keeps for the argument in `shim_include/psg.h` |
+| `psg_port_write` / `psg_port_read` | an ordered ledger and a register file | the real `$ff8800`/`$ff8802`, through the `trap #9` gate at IPL 7 from user mode — **unconditionally**, since wave 7a. The ISR's own writes do not come through here at all: `../src/asm/sound_tick.S` writes the two ports itself, which is the original's own shape, so the second door this header used to carry (`psg_untrapped_write`, selected by a `bg_in_timer_c` byte nothing set) is deleted along with the 25 `tst.b`/branch pairs that shipped to choose it — the cores' six call sites, inlined |
 | `hw_write8` | an ordered (address, width, value) ledger | a real byte store through the same gate. Two core call sites, both the MFP vector register — and `build.sh` counts them, because `HW_WRITES` is predicted exactly |
 | `os_in_image` | the model's 1 MiB | the same arithmetic against the 664 KiB array that actually exists |
 | `OS_SCREEN_BASE` | `0x8000`, XBIOS `Logbase`'s answer | **`0x9e100`** — the one constant this build changes, and the only change to what a verified core computes. See below |
@@ -221,10 +221,24 @@ header comment carries the register map and the argument; "Performance" below ca
 measurement. `bubble_backend.c` keeps only the three counters the record publishes — in C, so that
 the width the assembly's `addq.l` assumes is pinned by a `_Static_assert`.
 
-**The parameter block is RESTATED, not patched.** The trap is handed `bg_gem_staged_pblock`, a block
-of the shim's own holding the same five (or six) pointers translated — so the VDI still reads its
-operands out of, and writes its answers into, the game's OWN arrays, with no copy back and no field
-this door has to know the meaning of, and the image's block is never touched at all.
+**The parameter block is RESTATED, not patched.** The trap is handed a block of the shim's OWN —
+`bg_vdi_staged_pblock` or `bg_aes_staged_pblock`, one per binding — holding the same five (or six)
+pointers translated, so the VDI still reads its operands out of, and writes its answers into, the
+game's OWN arrays, with no copy back and no field this door has to know the meaning of, and the
+image's block is never touched at all.
+
+**...AND THE VDI'S IS RESTATED ONCE, SINCE WAVE 7a.** Four of its five slots — `contrl`, `intin`,
+`intout`, `ptsout` — hold the same library arrays from the moment `init_gem_and_screens` has opened
+the workstation; only `ptsin` carries a runtime value, because `vr_recfl` and `vro_cpyfm` lend the
+VDI their caller's own rectangle for the length of the call. So `bubble_main.c` calls
+`bg_gem_cache_vdi_pblock` on the line after that routine returns, and every VDI call after it
+restates `ptsin` alone: 82 cycles a call where restating five is 212. That is the ONE assumption
+this door makes about what the cores mean, and it is why the AES has a block of its own — a
+six-pointer restatement into shared storage would overwrite the cache on the menu's first
+`graf_mouse`. Three things hold it, none of them a comment: `build.sh`'s "the VDI parameter block's
+constant slots" gate (five scrapes over the cores AND this directory's C), `bubble_main.c`'s
+re-derivation of the four slots at the anchor into `STATE.BIN`'s `VDI_PBLOCK_CACHE_STATE`, and the
+door's own un-cached arm, which restates all five until the cache is taken.
 
 **A raster copy is still patch-trap-restore**, because two of its operands are reached by
 DEREFERENCING the image rather than by being handed over: `contrl[7..10]` names two MFDBs and each
@@ -233,13 +247,15 @@ the cores read afterwards holds what it held before. `fd_addr == 0` is left at 0
 VDI's "the screen" and TOS substitutes the logical base `Setscreen` was given — which for this
 program is `screen_back`.
 
-**The eleven numbers the door is built out of are the kit's and the cores'**, not the shim's:
-`GEM_VDI`/`GEM_AES`, the four `contrl` indices, `VDI_VRO_CPYFM`, `MFDB_ADDR`, `MFDB_SCREEN_ADDR` and
-the two block lengths come from `tools/recreate_kit/include/os.h`, and `A_vdi_contrl` from
-`../include/frontend.h`. In assembly they are immediates where they used to be macros the compiler
-resolved, so `build.sh`'s two-language loop scrapes every one of them back out of the header that
-owns it and refuses a disagreement — and the assembler itself refuses a `MFDB_SCREEN_ADDR` that is
-no longer 0, which is what the door's `beq` tests for.
+**The thirteen numbers the door is built out of are the kit's and the cores'**, not the shim's:
+`GEM_VDI`/`GEM_AES`, the four `contrl` indices, `VDI_VRO_CPYFM`, `MFDB_ADDR`, `MFDB_SCREEN_ADDR`,
+the two block lengths and `VDI_PB_PTSIN` (the one slot the cached tail restates) come from
+`tools/recreate_kit/include/os.h`, and `A_vdi_contrl` and `A_vdi_pblock` from `../include/frontend.h`.
+In assembly they are immediates where they used to be macros the compiler resolved, so `build.sh`'s
+two-language loop — fifteen entries, these thirteen plus the two PSG ports — scrapes every one of
+them back out of the header that owns it and refuses a disagreement. The assembler refuses two more
+on its own: a `MFDB_SCREEN_ADDR` that is no longer 0, which is what the door's `beq` tests for, and
+a staged block whose length or selector does not match the binding it names.
 
 Until 2026-09-07 both halves were patch-trap-restore, and each MFDB was COPIED into the shim's memory
 so its `fd_addr` could be translated. That copy cost more than everything else in the door put
@@ -542,7 +558,15 @@ is **1,844 cycles a tick against 1,697, x1.09** in the same window. The three wa
 were 482.2K, 476.8K and 482.2K, each in its own worktree against its own baseline — which is why
 this row exists rather than a sum. **The remaining gap is 6.7K a frame.**
 
-**AND WHERE THE MERGE OF WAVES 6a+6b LEAVES IT — MEASURED THE SAME WAY: 470.4K cycles a frame,
+**AND WHERE WAVE 7a LEAVES IT — 468.5K cycles a frame, 17.12 fps (285 frames in 1000 vblanks),
+x1.0033** of the original's 466.9K / 17.18 (286 frames), re-measured back to back in one session:
+three `ours` windows read 468,460 / 468,456 / 468,452 a frame at 285 frames each, and the shipped
+side re-read 466,939 — the same number the previous baseline carries. **The gap is 1,520 cycles a frame, which is
+AT this instrument's ~1.5K spread**, so parity is met to within what the instrument can resolve and
+a claim either side of it would be reading noise. `title` 9/9, the `titleisr` control red as
+designed, `game` 3/3.
+
+**AND WHERE THE MERGE OF WAVES 6a+6b LEFT IT — MEASURED THE SAME WAY: 470.4K cycles a frame,
 17.05 fps (284 frames in 1000 vblanks), x1.0075** of the original's 466.9K / 17.18 (286 frames), two
 back-to-back windows on the merged tree at `7cfbfcf` (2026-09-08) reading 470.4K both times, the
 tick 1,750 and 1,755 a tick against the original's 1,700. **The gap is 3.5K a frame, about twice
@@ -1012,8 +1036,8 @@ twice), and says that the only one crossing 1,750 folds the vector entry into th
 is a seam decision rather than a tuning one.
 
 Two lines left `bg_timer_c_entry` with the substitution and both are recorded there: `bg_in_timer_c`
-is no longer raised (nothing C runs inside the interrupt any more, so `psg_untrapped_write` is an
-unreached branch this build keeps for the argument `shim_include/psg.h` makes), and the image base
+is no longer raised (nothing C runs inside the interrupt any more, which left `psg_untrapped_write`
+an unreached branch — wave 7a deleted both), and the image base
 is popped rather than re-read — which `test_sound_asm.py::test_the_twin_never_stores_through_its_own_frame`
 is what makes safe, not the transcription pin, whose bracket the prologue is outside.
 
@@ -1133,3 +1157,78 @@ hazard that does not exist; `../include/common.h` now states the real rule.
 the right gate half-built — `MUST_STAY_INLINED` would take the three names as a one-line change —
 plus two codegen scans beside it. `build.sh` was wave 6a's file in the same working tree, so this is
 named rather than done.
+
+### Wave 7a (2026-09-08) — the VDI block staged ONCE, and a dead branch on 27 call sites
+
+**470.4K cycles a frame -> 468.5K, 17.05 fps -> 17.12, x1.0075 -> x1.0033**; the gap is 1,520 a
+frame against a ~1.5K spread, so **the door's own row is the evidence and the headline is not**.
+`bg_gem_dispatch` went **6,891 cycles a frame -> 5,716 / 5,638 / 5,704** over three windows, 797 a
+call -> 657, against 130 hand-counted off the 68000's tables. The .PRG's `.text` went 141,568 B ->
+**141,056**, which is +256 for lever 1 and **-768** for lever 2, each measured on its own build.
+
+| lever | what moved |
+|---|---|
+| the VDI parameter block's four CONSTANT slots staged once | `bg_gem_cache_vdi_pblock` translates all five on the line after `init_gem_and_screens` returns and the door's VDI tail then restates `ptsin` alone — 212 cycles a call -> 82. Wave 6a priced this and declined it because the door would have had to know which VDI OPCODE rebinds the block; it does not, because the rebinding is `v_opnvwk`'s and the cache is taken after it |
+| the AES got its own staged block | not decoration: `graf_mouse` is an AES call the top loop makes AFTER the cache is taken, so one shared block would have overwritten it on the first menu redraw. The mutation reds four checks |
+| `bg_in_timer_c`, the branch it armed, and `psg_untrapped_write` | a flag nothing had set since wave 5b, tested by a `static inline` door — so the cores' six call sites became 25 `tst.b`/branch pairs, each with an untrapped store pair behind it, in the .PRG's text. Worth ~24 cycles on a user-mode chip write, which at 0.19 gate arrivals a frame the profiler cannot see: this is a size and dead-code lever and `../STATUS.md` says so |
+
+**Three surfaces hold the cache**, because the picture holds none of it — a stale cache is invisible
+to the framebuffer, since the cores read the library arrays by their own addresses and only TOS
+reads them through the block. `build.sh`'s new gate reads every writer of a non-`ptsin` slot out of
+`../src/frontend.c` by enclosing function and refuses one the door does not expect; `bubble_main.c`
+re-derives the four slots at the anchor into `STATE.BIN`'s `VDI_PBLOCK_CACHE_STATE`, which
+`smoke.py` requires to be 0 (`0xffffffff` = never taken, a bitmask = which slot moved); and the
+door's unprimed arm restates all five, so the boot never depends on the cache. Eight mutations, four
+refused by the gate and four red at a named check, are in `../STATUS.md`'s wave 7a.
+
+**Three shim items were priced and NOT taken**, so the next wave has the numbers: folding
+`bg_gem_trap` into the door (294 a frame, and it costs the one row that separates our door's work
+from the ROM's), the `movem.l %d2/%a2` around the trap (450 a frame, and mandatory — TOS may destroy
+that pair), and the door's three call counters (~410 a frame, and they are the trap ledger's own
+`VDI_CALLS`/`AES_CALLS`/`VDI_RASTER_COPIES`).
+
+### Wave 7b (2026-09-08) — the frame path priced SLICE BY SLICE, off the per-ADDRESS dump
+
+**The window did not move: 470.4K cycles a frame on both sides of this change**, two `ours` windows
+reading 470,402 and 470,400 against the same scratch tree's HEAD cores at 470,404. What moved is
+**-433 a frame over eight rows** — 0.09%, under a third of this instrument's spread — so the
+evidence is the per-address dump and not the headline. Measured in a throwaway worktree of
+`9e18f40` with `src/` and `include/` only, so wave 7a is NOT in this window and the two do not add
+up.
+
+**The instrument is the half of this file's own output nobody had used.** `profile save` writes
+Hatari's cycle count against every executed ADDRESS, and `profile.py` already parses it for the
+sound tick (`address_cycles`, because the 200 Hz handler is entered by a vector and the callers
+report charges it nothing). Summed over a symbol's range instead, it prices a BODY exactly: no
+callee in it, no branch-entered descendant folded in, and — the reason this wave exists — it can be
+summed over an ARBITRARY range, so the original's single `game_frame_update` splits at the slice
+boundaries `../src/gameplay.c` names and each of our nine slices is comparable with the bytes it was
+transcribed from. `../STATUS.md`'s wave 7b carries that table and the mutations.
+
+| lever | what moved |
+|---|---|
+| `frame_drift_pulse` on the base register | 379 -> **271** a frame. Wave 6b left it on the arithmetic that "two slots cost 20 and save 28"; the objdump says seven slots on the frame it does not fire on |
+| `game_room_frame_tail` on the base register | 867 -> **760**. The last per-frame routine in `../src/frontend.c` still on `image + <address>` — eleven slots, `A_lives`' longword among them |
+| the poll's prologue: `vdi_handle_at_base` beside `vdi_handle`, and `drain_console_queue` declared `noinline` | 671 -> **605**. The handle is 24 cycles off the base across the poll's two reads and was 44; the inlined flush was costing the poll a `%d2-%d5/%a2-%a4` prologue (64 in, 68 out) every frame for a body that runs on none of them |
+| `fp_double_to_long` on ONE operand pointer — the original's own `movea.l 8(a6),a0` | `fp_acc_to_long` 897 -> **872** and `fp_div` 7,150 -> **7,118**. The saving is not in the out-of-line copy (GCC gets the `lea` there already) but in the inlined one, where `operand` is CONSTANT and GCC re-materialises `move.l #125594,%dn` six times for one address |
+| `sprite_copy` on the base its three callers already hold — a review finding, not the brief's | -97 a frame across `save_`/`draw_`/`restore_sprite_backgrounds`, whose prologues went `%d2-%d4/%a2-%a4` -> `%d2-%d3/%a2-%a3`. Six times what the same new helper bought at the two sites it was written for |
+
+**WHERE THE WHOLE GAP IS, partitioned so every row lands in one group** (`../STATUS.md` has the
+table): the door is **+5,695** a frame and the frame path **+2,265**, and every other group is a
+LEAD — the copy runs -2,196, the sprite protocol with the VDI bindings we inline -1,996, the three
+game-logic probes -1,965. The single biggest row left is **`game_frame_update`'s own body at 529
+cycles against the original's 28**, which is eight `jsr`s and their stack arguments where the
+original falls through nine regions with `a4` loaded. That routine is `bubble_main.c`'s, not a
+core's, and the lever — the slices as `always_inline` bodies expanded at their one composition site,
+the shape wave 6b used for `fp_pack_double_tail` — is named and left.
+
+**`build.sh` gained no gate and the two codegen constraints this wave adds are unpinned**, which is
+the third wave to record it: `MUST_STAY_INLINED` is the exact shape of the scrape that would refuse
+an inlined `drain_console_queue` (inverted), and this file's owner is a different wave again.
+One gate DID matter without being touched: `AWK_ENCLOSING_FUNCTION` reads an attribute line at
+column 0 as a function head, so `noinline` went on the DECLARATION in `../include/gameplay.h` rather
+than above the definition in `../src/gameplay.c`.
+
+**`smoke.py title` fails on this tree and it is NOT this change**: "Hatari died (status 0) while
+waiting for the anchor capture", identically on HEAD's own cores in both the scratch worktree and
+the main tree. `smoke.py game` is green on all three surfaces at both room-frame arrivals.

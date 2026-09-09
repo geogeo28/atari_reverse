@@ -22,39 +22,46 @@
  * ...EXCEPT FROM INSIDE THE SOUND ISR, WHICH IS ALREADY SUPERVISOR, and that is where nearly every
  * write in this program is made: ~3 a tick, 200 times a second. `tos.h` argues the privilege and
  * the interrupt mask; the ORIGINAL's ISR writes the ports itself for the same reason, and the trap
- * it does not make was 20% of what our tick cost (../STATUS.md, "Performance"). The WRITE is what
- * takes the short path — `psg_port_read` is reached only from `trap9_psg_handler`, which nothing on
- * the interrupt's own path calls, so it would be a branch that is never taken.
+ * it does not make was 20% of what our tick cost (../STATUS.md, "Performance").
  *
- * AND THE SHORT PATH IS SPELT HERE RATHER THAN CALLED. It was a `jsr` into bubble_os.s with two
- * stack arguments around two `move.b`, which measured 100 cycles a write against the 32 the two
- * stores were later profiled at — 300 of wave 2's closing 3,887-cycle tick spent on plumbing
- * (../STATUS.md, "Performance": wave 2 for the 100, wave 3a's declined-levers list for the 32). The
- * two numbers it needs are the gate's own, below, and `atari/build.sh` pins them equal to
- * bubble_os.s's — and pins this function's body to be those two macros and nothing else — so that
- * the two doors cannot drift apart in the address they write.
+ * THAT SHORT PATH IS NO LONGER A DOOR IN THIS FILE, AND SINCE WAVE 7a IT IS NOT A BRANCH HERE
+ * EITHER. It began as a `jsr` into bubble_os.s (100 cycles a write), became two `move.b`s the
+ * compiler put inline (32), and then stopped having a caller at all: since wave 5b the 200 Hz
+ * handler is `../../src/asm/sound_tick.S`, which writes $ffff8800 with its own transcribed store
+ * pairs and reaches nothing here. What stood until wave 7a was `psg_untrapped_write` plus the
+ * `bg_in_timer_c` test that selected it — a flag NOTHING set. `../../src/sound.c` calls this door
+ * on six lines, and GCC's inlining turned them into 25 `tst.b`/branch pairs in the shipped `play`
+ * text, each with an untrapped store pair behind it, arming an arm no run could take. Both are
+ * deleted; the door below is the
+ * trap, unconditionally. THE TWO PORT NUMBERS STAY HERE and this file is still their one home:
+ * `atari/build.sh` pins them equal to `bubble_os.s`'s (the trapped gate's own `lea`), and
+ * `test/test_constants.py` pins the twin's `.equ`s equal to them, so the gate and the tick cannot
+ * drift apart in the address they write. If the ISR's IPL drop is ever made faithful the
+ * protection has to come back — `tos.h` says what it would be, and this paragraph is where the
+ * deleted spelling of it is named.
  *
  * THE REFUSAL THE MODEL MAKES AND THE CHIP DOES NOT. The kit refuses a READ of a register whose
  * contents the case never declared; that refusal cannot exist here, because the chip answers
  * whatever it holds. Its other refusal — a register number above 15 — is a different thing, and the
  * register mask is what it is about.
  *
- * WHY THE TWO DOORS DISAGREE ABOUT THE REGISTER MASK: BECAUSE THE ORIGINAL'S TWO DO. The TRAPPED
- * door masks (`andi.l #PSG_REG_MASK` in `bg_super_gate_entry`) because the original's own gate does
- * (`and.b #$f,d1` @ 0x1495c). The UNTRAPPED one below does not, because the original's ISR does
- * not either: it loads `a1` with $ffff8800 once @ 0x145a6 and every one of its FIVE write pairs is a
+ * WHY THE TWO PATHS TO THE CHIP DISAGREE ABOUT THE REGISTER MASK: BECAUSE THE ORIGINAL'S TWO DO.
+ * The TRAPPED door masks (`andi.l #PSG_REG_MASK` in `bg_super_gate_entry`) because the original's
+ * own gate does (`and.b #$f,d1` @ 0x1495c). The TICK'S OWN STORES (`../../src/asm/sound_tick.S`)
+ * do not, because the original's ISR does not either: it loads `a1` with $ffff8800 once
+ * @ 0x145a6 and every one of its FIVE write pairs is a
  * bare `move.b <reg>,(a1)` / `move.b <data>,2(a1)` — the volume @ 0x14682, the tone period's two
  * halves @ 0x14780 and 0x14788, the shared noise register @ 0x1485c and the key-off's volume 0 @
  * 0x1487c — on a register number it built as `voice + 8`, `2 * voice` (+1) or a constant, and never
  * bounded. Reproducing that asymmetry is the point; smoothing it would be the change.
  *
- * SO `reg` MUST BE 0..15 HERE, AND THAT IS A PRECONDITION RATHER THAN A ROUNDING. An earlier draft
- * of this header claimed a byte with a non-zero upper nibble selects register 0 — "the same four
- * bits a mask would have left" — and that is NOT established: the AY-3-8910 compares the upper
- * nibble against its own chip address and stops responding when they differ, the YM2149 replaced
- * those pins with /CS, and nothing in this workspace has measured what an ST actually does with a
- * write of 16 to $ff8800. This build depends on none of it, and the claim is withdrawn rather than
- * replaced by the opposite one.
+ * SO `reg` MUST BE 0..15 ON THAT PATH, AND THAT IS A PRECONDITION RATHER THAN A ROUNDING. An
+ * earlier draft of this header claimed a byte with a non-zero upper nibble selects register 0 —
+ * "the same four bits a mask would have left" — and that is NOT established: the AY-3-8910
+ * compares the upper nibble against its own chip address and stops responding when they differ,
+ * the YM2149 replaced those pins with /CS, and nothing in this workspace has measured what an ST
+ * actually does with a write of 16 to $ff8800. This build depends on none of it, and the claim is
+ * withdrawn rather than replaced by the opposite one.
  *
  * WHAT HOLDS THE PRECONDITION IS A SURFACE AND NOT THE CHIP. The kit's `psg.h` REFUSES a register
  * above 15 instead of masking it down (`tools/recreate_kit/src/psg.c`, through `os_refused`), so a
@@ -63,13 +70,13 @@
  * `voice + 8`, `2 * voice` and `2 * voice + 1` over voices 0..2, so at most 10, and
  * `trap9_psg_handler` masks with `PSG_REG_SELECT_MASK` (../include/sound.h) before it calls.
  *
- * MASKING HERE TOO WAS MEASURED AND DECLINED. `(uint8_t)(reg & 15)` in the store below compiles to
- * the SAME BYTES — GCC proves every call site's register number small at every inlined site (which
- * is what `atari/build.sh`'s "the sound tick's helpers are inlined" gate keeps true) and folds the
- * `and` away; `core_sound.o` came back byte-identical at 5,090 B (measured 2026-09-07). Left out
- * for the reason above, and the decision now has a surface: `build.sh` pins BOTH store lines here
- * WHOLE — value expression included, which its first draft did not — and pins the `andi.l` in
- * `bg_super_gate_entry`, so neither door can quietly start or stop masking.
+ * MASKING IN THE UNTRAPPED STORES WAS MEASURED AND DECLINED, and the measurement is kept because
+ * it is the argument the twin's five store pairs still rest on. `(uint8_t)(reg & 15)` compiled to
+ * the SAME BYTES — GCC proved every call site's register number small at every inlined site and
+ * folded the `and` away; `core_sound.o` came back byte-identical at 5,090 B (measured 2026-09-07).
+ * What has a surface now is the trapped door's half: `build.sh` pins the `andi.l` in
+ * `bg_super_gate_entry`, so THAT door cannot quietly start or stop masking, and the twin's stores
+ * are held by the transcription pin in `test/test_sound_asm.py`.
  */
 #ifndef BUBBLEGHOST_SHIM_PSG_H
 #define BUBBLEGHOST_SHIM_PSG_H
@@ -93,21 +100,11 @@
 #define BG_PSG_SELECT      0xffff8800u  /* write = select a register, read = the selected one */
 #define BG_PSG_DATA_OFFSET 2u           /* ...and $ffff8802 is where a write's data goes */
 
-/* The untrapped write, for a caller that is already supervisor with the MFP masked — the sound ISR
- * and nothing else. Two ordered stores and NOTHING ELSE, which is what the original's handler
- * spends here (`move.b d1,(a1)` / `move.b d0,2(a1)` @ 0x14780). `reg` MUST be 0..15: the mask the
- * trapped door carries is deliberately absent, for the reason this file's header gives, and
- * `atari/build.sh` pins these two lines whole so it cannot be added without the argument moving. */
-static inline void psg_untrapped_write(unsigned reg, uint8_t value) {
-    *(volatile uint8_t *)BG_PSG_SELECT = (uint8_t)reg;
-    *(volatile uint8_t *)(BG_PSG_SELECT + BG_PSG_DATA_OFFSET) = value;
-}
-
+/* Every write a CORE makes is a user-mode write, and there is exactly one path for it. The
+ * supervisor-side path is not a branch here and not a function here: it is the twin's own
+ * transcribed store pairs (see this file's header). */
 static inline void psg_port_write(unsigned reg, uint8_t value) {
-    if (bg_in_timer_c)
-        psg_untrapped_write(reg, value);
-    else
-        bg_super_gate(BG_GATE_PSG_WRITE, reg, value);
+    bg_super_gate(BG_GATE_PSG_WRITE, reg, value);
 }
 
 static inline uint8_t psg_port_read(unsigned reg) {

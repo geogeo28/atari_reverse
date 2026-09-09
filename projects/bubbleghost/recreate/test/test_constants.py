@@ -292,9 +292,9 @@ ASM_DERIVED_PINS = {}
 
 # THE SHIM'S HEADERS ARE IN THE HEADER SET TOO, which `_sources()` is not. A twin addresses the
 # machine as well as the image — `sound_tick.S` writes $ffff8800 — and those two numbers live in
-# `atari/shim_include/psg.h` beside the C door that writes them from the other side of the seam
-# (`atari/build.sh` pins the same pair against `bubble_os.s`). Left out, the twin's copy of them
-# would be the one spelling nothing checked.
+# `atari/shim_include/psg.h`, which is their one home now that the C untrapped door beside them is
+# gone (wave 7a): `atari/build.sh` pins the same pair against `bubble_os.s`'s trapped gate from the
+# other side. Left out, the twin's copy of them would be the one spelling nothing checked.
 _ASM_HEADER_GLOBS = ("include/*.h", "atari/shim_include/*.h")
 
 

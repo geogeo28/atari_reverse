@@ -68,6 +68,19 @@ extern uint32_t bg_timer_c_chain;
 extern volatile uint32_t bg_vdi_calls;
 extern volatile uint32_t bg_aes_calls;
 
+/* WHETHER THE GEM DOOR'S VDI PARAMETER-BLOCK CACHE HAS BEEN TAKEN. `bg_gem_cache_vdi_pblock`
+ * (declared in `os.h`, beside the door it primes) sets it, and every VDI call tests it to choose
+ * between restating one slot and restating five — see that header for what holds the assumption
+ * under it. A build that never primed is SLOW and not wrong.
+ *
+ * IT IS DECLARED HERE AND NOT WITH THE DOOR, and that is the counters' reason rather than a
+ * different one: `bubble_backend.c` DEFINES it and includes this header, so its definition and its
+ * declaration meet in one translation unit and a widened type is a compile error. Declared only in
+ * `os.h` — which that file does not include — its own `_Static_assert` would be checking the
+ * definition against itself, and a `uint32_t` extern would leave `bubble_main.c` reading four bytes
+ * of a one-byte object with no diagnostic anywhere. */
+extern volatile uint8_t bg_vdi_pblock_cached;
+
 /* ...and how many of the VDI's calls were the raster copy whose MFDB chain the door has to walk.
  * It is the one translation with more than one level of indirection, so it is the one whose
  * absence would show as sprites drawn from the 68000's vector page rather than as nothing at all. */

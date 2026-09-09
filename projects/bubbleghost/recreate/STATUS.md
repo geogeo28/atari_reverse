@@ -114,7 +114,7 @@ What is still unpinned is `Setscreen`'s PHYSICAL base and its resolution: an eve
 32-bit value and that call has three arguments, so the entry is the logical base alone.
 `atari/README.md`'s "Unpinned" carries it.
 
-## Performance — the baseline, and the ten waves measured on top of it
+## Performance — the baseline, and the twelve waves measured on top of it
 
 `atari/profile.py` is the instrument the performance campaign will run on: 1000 vblanks of Hatari's
 CPU profiler on BOTH binaries, opened at the first arrival at `game_frame_update` and closed 1000
@@ -142,6 +142,16 @@ the instrument's spread**, and it is the GEM door's translation (~6.7K, which th
 does not do) less the leads the port holds elsewhere — the copy runs, the collision probe and the
 sprite protocol are each under the original's own cost. Every smoke was green on this tree:
 `title` 9/9, the `titleisr` control red as designed, `game` 3/3 at both room-frame arrivals.
+
+**AND WHERE WAVE 7a LEAVES IT — 468.5K cycles a frame, 17.12 fps (285 frames in 1000 vblanks),
+x1.0033** of the original's 466.9K / 17.18 (286 frames), re-measured back to back in one session on
+the merged tree plus this wave: three `ours` windows read 468,460 / 468,456 / 468,452 a frame at 285
+frames each, and the original re-read 466,939 at 286 — the same figure the stored baseline carries, which
+is how stable this instrument's shipped side is. **The gap is 1,520 cycles a frame, which is AT the
+instrument's ~1.5K spread**: the campaign's target is met to within what this instrument can
+resolve, and a further claim of "under" or "over" would be reading noise. The tick is 1,749 and
+1,752 a tick against the original's 1,697 (wave 7a does not touch it). Every smoke green on this
+tree: `title` 9/9, the `titleisr` control red as designed, `game` 3/3.
 
 The three waves' own windows were 482.2K (5a), 476.8K (5b) and 482.2K (5c), each measured in its own
 worktree against its own baseline, and this row is why none of them may be added: the merge is
@@ -1793,6 +1803,334 @@ for computed addresses. The counts today are 66 base-form sites against 307 imag
 the two files, and `apply_fan` spells both three lines apart. It is the right end state and it is a
 wave of its own — it reaches `src/clib.c`, `src/init.c`, `src/sound.c` and `src/blit.c`, whose owners
 are not this one.
+
+### Wave 7a, 2026-09-08 — the VDI block staged ONCE, and a dead branch on 27 call sites
+
+**THE WHOLE WINDOW: 470.4K cycles a frame -> 468.5K, 17.05 fps -> 17.12, x1.0075 -> x1.0033**, two
+`ours` windows reading 468,460 / 468,456 / 468,452 and the original re-read at 466,939 in the same
+session.
+**The gap is 1,520 a frame against a ~1.5K spread**, so this is where the instrument stops being
+able to tell the two binaries apart — and the wave's evidence is the door's own row and the hand
+count under it, not the headline, exactly as every wave since 5b has had to say.
+
+| | before | after |
+|---|---|---|
+| `bg_gem_dispatch`, exclusive | 6,891 cyc/frame over 8.65 calls | **5,716 / 5,638 / 5,704** over three windows (mean 5,686) |
+| ...per call, measured | 797 | **657** — a saving of 140, against 130 hand-counted |
+| the .PRG's `.text` (`title`) | 141,568 B | **141,056 (-512)**; the size gate's spare 79,656 -> 82,216 B |
+| ...of which lever 1 | | **+256 B** (measured on its own: a build with lever 2 reverted is 141,824) |
+| ...and lever 2 | | **-768 B** |
+| `.bss` | 684,578 B | 684,602 (+24: the second staged block and the cache flag) |
+
+**LEVER 1 — THE FOUR CONSTANT SLOTS, STAGED ONCE. Wave 6a priced this as option (c) and DECLINED it
+at 0.20% of a frame; this wave took it, and the reason the trade changed is the gate, not the
+number.** The objection was that the door would acquire knowledge of which VDI OPCODE rebinds the
+block — a semantic coupling to `../src/frontend.c` that `bubble_os.s`'s header disclaims in as many
+words. **That coupling is not needed at all**: the door needs no opcode, because the rebinding
+happens once, inside `init_gem_and_screens`, and the cache is simply taken AFTER it. What the door
+gains is one byte's worth of state (`bg_vdi_pblock_cached`) and a `tst.b`, and what pays for it is a
+build gate that reads every writer out of the core rather than an assumption the door states in a
+comment.
+
+| the VDI tail, off the 68000's own tables | before | after |
+|---|---|---|
+| the staging | `lea` 12 + 5 x (load 12, sentinel 8, add 8, store 12) = **212** | `tst.b` 16, the taken `bne` 10, `move.l 8(%a0),%d0` 16, sentinel 8, add 8, `move.l %d0,xxx.l` 24 = **82** |
+| ...a frame, at this window's 8.65 VDI calls | | **-1,125 predicted, -1,205 measured** (mean of the three windows) |
+
+**AND THE AES GOT ITS OWN BLOCK, WHICH IS NOT DECORATION.** `bg_gem_staged_pblock` was ONE six-long
+block for both bindings, so an AES call restates all six of them — and `graf_mouse` is an AES call
+the top loop makes AFTER the cache is taken. Sharing the storage would therefore have overwritten
+the VDI cache on the first menu redraw. The mutation is in the sweep below and it reds four checks.
+
+**LEVER 2 — `bg_in_timer_c` AND THE BRANCH IT ARMED.** Wave 6a priced it and left it: nothing has
+set that byte since wave 5b (the 200 Hz handler is the twin, which writes the two ports itself), so
+`shim_include/psg.h`'s door tested a flag that is always 0 — and the door is `static inline`, so the
+test shipped at every one of `psg_port_write`'s INLINED call sites: `../src/sound.c` calls the door
+on six lines and the shipped `play` text carries **25 `tst.b`/branch pairs, each with an untrapped
+store pair behind it — 768 B**, measured as the difference between two `title` builds. (Wave 6a's
+own estimate was 27 pairs and ~250-350 B; both were low.) The flag, the branch and
+`psg_untrapped_write` are all deleted; `build.sh`'s scrape of that function's two stores and its
+`MUST_STAY_INLINED` entry go with them. What does NOT go is `psg.h`'s pair of port numbers: they are
+still the one home for $ffff8800/$ffff8802, held to `bubble_os.s`'s trapped gate by `build.sh` and to
+`../src/asm/sound_tick.S`'s five transcribed store pairs by `test/test_constants.py`. **It is worth
+~24 cycles on a user-mode chip write and the profiler cannot see it** — `bg_super_gate` arrives 0.19
+times a frame — so this lever is a SIZE and a dead-code lever, and saying otherwise would be
+inventing a number.
+
+**LEVER 3 — NOTHING ELSE IN THE SHIM CLEARS THE BAR, and the two items that come closest are priced
+here so the next wave does not re-derive them.**
+
+| item | measured | why not |
+|---|---|---|
+| folding `bg_gem_trap` into the door | 34 cyc a call, **294 a frame (0.063%)** | it costs the one row that separates the door's own work from the ROM's — `bg_gem_trap` 278.5K a frame against `vdi_call`'s 279.3K is how this campaign knows the trap itself is at parity. Three arms would each need their own trap and their own `%d2/%a2` save, which `tools/assert_trap_registers.sh` reads label to label |
+| the `movem.l %d2/%a2` around the trap | 52 cyc a call, **450 a frame** | mandatory. GCC believes the pair is callee-saved and TOS may destroy it — a class this workspace has already been bitten by on real hardware, not in theory |
+| the door's three `addq.l` call counters | ~410 a frame | they are the `VDI_CALLS` / `AES_CALLS` / `VDI_RASTER_COPIES` fields `smoke.py` predicts EXACTLY. Instrumentation the trap ledger grades is not spare cycles |
+| `Crawio` against the original's `gemdos_trap` | 3,463 against 3,467 | already at parity |
+
+**WHAT WATCHES LEVER 1, AND IT IS THREE THINGS BECAUSE NO ONE OF THEM IS ENOUGH.**
+
+| the surface | what it holds |
+|---|---|
+| `build.sh`'s "the VDI parameter block's constant slots" gate | the CORES. Three scrapes: every slot address goes through `vdi_pblock_slot` (so the ledger sees every writer); the writers of a non-`ptsin` slot are exactly `vdi_call_at|CONTRL` and `v_opnvwk`'s six, by enclosing function, with `vdi_call_at`'s whole store line pinned so it cannot start filing something other than the constant; and `v_opnvwk`/`init_gem_and_screens` are called only from where the door assumes. A `ptsin` writer is deliberately NOT pinned — that slot is restated every call, so a new one is free |
+| `bubble_main.c`'s anchor check -> `STATE.BIN`'s `VDI_PBLOCK_CACHE_STATE` -> `smoke.py` | the RUN. The cache is compared against the game's own four slots on the machine, at the anchor. 0 is "taken and still true", a bitmask over `VDI_PB_*` names the slot that moved, and `0xffffffff` says the cache was never taken — which is a build that is SLOW and not wrong, and must not read here as a clean answer |
+| the door's own unprimed arm | the BOOT. Until `bg_gem_cache_vdi_pblock` runs, every call restates all five slots, so `v_opnvwk`'s own trap — the one call that lends the VDI three of its caller's arrays — never depends on the cache at all |
+
+**AND THE HONEST LIMIT OF THE PICTURE, WHICH THE SWEEP IS WHAT ESTABLISHED.** A cache that has gone
+stale is INVISIBLE to the framebuffer: the cores read the library arrays by their own addresses and
+only TOS reads them through the block, so both sides can be self-consistently wrong. That is why the
+record field exists, and the mutation below shows it as the ONLY check that moves.
+
+**THE MUTATION SWEEP**, every build forced with `rm -rf atari/build/obj` and every core mutation
+COMMITTED in the scratch worktree first (a dirty core is refused by the committed-cores gate, which
+would have looked like a new gate firing), each restored after:
+
+| mutation | result |
+|---|---|
+| a second non-`ptsin` writer — `vro_cpyfm` also lends the VDI its rectangle as `intin` | **REFUSED**: "a core writes a VDI parameter-block slot the GEM door's cache does not expect", with the expected and scraped ledgers printed |
+| the per-call `contrl` store files `A_vdi_contrl + 0` instead of `A_vdi_contrl` | **REFUSED**: the whole store line is pinned, value expression included — the half a (function, slot) pair cannot see |
+| a slot addressed as `A_vdi_pblock + 2 * LONG_BYTES` instead of through `vdi_pblock_slot` | **REFUSED**: "A_vdi_pblock is named in a routine this build does not know" — the spelling pin, without which the ledger scrape could be walked round |
+| **two slots written on ONE line, `ptsin` last** — the fail-open the first draft's greedy extractor had | **REFUSED** by the rewritten scrape. Against the first draft this was GREEN: the `intout` writer was invisible to the ledger and the build said so in a green line |
+| a slot index computed at run time (`vdi_pblock_slot(handle ? VDI_PB_PTSIN : VDI_PB_INTIN)`) | **REFUSED**: "a vdi_pblock_slot() call site does not name a VDI_PB_* slot" — the premise the ledger rests on, which the first draft asserted in a comment |
+| `os_vdi` handed a block other than `A_vdi_pblock` | **REFUSED** — the cache was taken from that block and the door trusts its own staged slots for whatever it is handed |
+| **`init_gem_and_screens` called a second time from `bubble_main.c`**, after the prime | **REFUSED**: the scan covers `atari/*.c`. Against the first draft this was GREEN in all three surfaces — `v_opnvwk` restores the four slots at its end, so the anchor check reads 0 too |
+| `TRAP_STAGED bg_vdi_staged_pblock, AES_POINTER_LONGS, GEM_VDI` — a one-token slip | **REFUSED by the assembler**: "the VDI's staged block holds VDI_POINTER_LONGS pointers and may be staged no other length" |
+| `TRAP_STAGED bg_aes_staged_pblock, AES_POINTER_LONGS, GEM_VDI` | **REFUSED by the assembler**: "the AES's staged block is trapped on with GEM_AES" |
+| `bg_gem_cache_vdi_pblock` given a leading argument | **REFUSED**: its prototype is now in the same gate as the door's, and the routine would have staged five pointers off a garbage base and set the flag anyway |
+| `v_opnvwk` called from `vdi_call_at` — i.e. a rebind on the per-call path | **REFUSED**: "v_opnvwk is called from somewhere the GEM door's cache does not account for", scraping `vdi_call_at` beside the two expected callers |
+| the cache primed BEFORE `init_gem_and_screens` | **RED, and hard**: the run never reaches the anchor — `WARN : Bus Error writing at address $4, PC=$fcb644`, the ROM VDI dereferencing a block of zeros |
+| **one of the four cached slots poked at RUN time**, after priming (`intin` -> `A_vdi_intout`) | **RED in exactly one check**, and only the shim's record names it: `VDI_PBLOCK_CACHE_STATE is 0x2, not 0x0`, with **every pixel check green**. Worth doing twice: written as `A_vdi_pblock + …` the BUILD refuses it (the gate reads `atari/*.c` now), so the run-time-only class has to be spelt by literal address — which is what the class is |
+| the prime call deleted — the cache never taken | **RED**: `VDI_PBLOCK_CACHE_STATE is 0xffffffff`, with the framebuffer and the record's other 30 fields green. The sentinel arm works AND the door's unprimed arm is proved still correct |
+| the two staged blocks made ONE again, as they were before this wave | **RED in four checks**: 2,300 of 32,000 framebuffer bytes differ, the capture is a photograph of nothing, and `VDI_PBLOCK_CACHE_STATE is 0x1b` — all four cached slots stale, because `graf_mouse`'s AES restatement lands on top of them |
+
+**WHAT THE PRE-COMMIT REVIEW MOVED, AND IT IS THE GATE AGAIN RATHER THAN THE ASSEMBLY.** Five
+finder angles over the isolated diff found no wrong instruction in the door — the register liveness
+at both `TRAP_STAGED` sites, `%a0` and `%d1` still holding the game's block and the image base
+inside `bg_gem_raster_copy`, the `1\@`/`2\@` labels against the file's hand-written `1`/`2`/`3`/`9`,
+and both `.s` displacements all held. What it found was the gate weaker than its own prose, the
+same shape wave 6a's review found, and **eight of the checks in the tables above are this wave's
+second draft**:
+
+| what | why it mattered |
+|---|---|
+| **the ledger's slot extractor was greedy**, so a line naming two slots reported only the LAST one — and a line whose last slot was `ptsin` left the ledger entirely | fail-OPEN, in the one gate whose comment promises the opposite. It now reads EVERY occurrence on a line, and the mutation that proves it (`intout` and `ptsin` written on one line) is in the sweep |
+| **`sort` with no `LC_ALL=C`** against expected lists that are literals in BYTE order | glibc gives `_` no primary weight, so `vdi_call_at` and `v_opnvwk` swap and the gate reds on an UNTOUCHED tree under any UTF-8 locale — i.e. on any Linux host. Every sort in the gate is `LC_ALL=C` now |
+| **the gate read `../src/*.c` and not this directory's C**, where `bubble_main.c` composes the boot out of core slices and can call `init_gem_and_screens` itself | a workstation reopen written in the shim would rebind the block with all three surfaces green — `v_opnvwk` restores the four slots at its end, so even the anchor check would read 0. The scan covers `atari/*.c` too, and the mutation is in the sweep |
+| **a slot index computed at run time named neither `A_vdi_pblock` nor `VDI_PB_`**, so it passed both scrapes | the ledger's own premise was unenforced. Every `vdi_pblock_slot(` call site must now name a `VDI_PB_*` constant |
+| **the `contrl` store was pinned as a whole LINE**, accessor included | brittle against a core rename that has no semantic content — and this tree has a concurrent wave sweeping exactly that idiom. Only the VALUE is pinned now; the destination is scrape 3's job |
+| **`bg_gem_cache_vdi_pblock`'s prototype was unpinned**, though it reads `ARG_MEM(%sp)` exactly as the door does | the gate that exists for that hazard covered one of the two routines. It covers both, out of one list |
+| **the assembler held nothing about the block/length/selector triple** — the deleted `.ifgt` had made any `\count` safe while there was ONE block | `TRAP_STAGED bg_vdi_staged_pblock, AES_POINTER_LONGS, GEM_VDI` assembles clean and stages six pointers into five longwords, inside a `trap #2`. The block now DERIVES all three, and two mutations of it are assembly errors |
+| **the never-cached sentinel was defeated on the resolution-refusal arm**, which writes STATE.BIN without reaching either the prime or the anchor read | `g_record` is BSS, so that arm shipped 0 — "taken, and every slot still agrees" — about a cache it never took. The field is initialised to the sentinel before the gate |
+| four smaller ones, each taken: `bg_vdi_pblock_cached`'s only `extern` was in a header its DEFINING file does not include, so its `_Static_assert` was checking the definition against itself; `vdi_pblock_cache_state` re-spelt `LONG_BYTES` as `sizeof(uint32_t)` and listed the constant slots by hand where deriving them tracks a block that gains one; the `smoke.py` end of the sentinel was a comment rather than a scrape; and the door's hand count read `move.l d16(%a0),%d0` as 20 where M68000UM table 8-5 says 16 — which is why the tail above is 82 and the saving 130, not 86 and 126 | |
+| three stale sentences the wave itself left: `bubble_os.s`'s own PSG block still named `psg_untrapped_write` as the current ISR path; `atari/README.md`'s live "The GEM door" section still described one shared block restated five slots a call; and three files disagreed about how many `tst.b` pairs lever 2 deleted (27 / 26 / 25 — the objdump says 25) | each is a sentence the next reader would act on |
+
+**WHAT IS UNPINNED, said plainly.** The gate reads C with `awk`, so it sees the writers a STATIC
+read can see; a slot written through a pointer is the runtime check's job and not the gate's. And
+the runtime check runs at the ANCHOR — a slot moved and moved BACK is caught by neither, which is
+not hypothetical: `v_opnvwk`, `vr_recfl` and `vro_cpyfm` are all move-then-restore, so the class the
+anchor check really covers is "a slot still wrong at the end". Both are recorded rather than argued,
+and the class they leave open is the one the shared-block mutation above shows the framebuffer DOES
+catch when it changes what TOS reads.
+
+**AND THREE ITEMS THE REVIEW RAISED THAT WERE PRICED AND LEFT.** (1) The raster arm's un-cached
+branch cannot execute — no `vro_cpyfm` happens before `bg_gem_cache_vdi_pblock` on any path — so its
+`tst.b`/`bne` is 26 cycles a raster copy, **~156 a frame**, for a branch that is dead today. It is
+kept because what makes it dead is a call-order fact, and the alternative is a third macro arm whose
+correctness rests on that fact holding for ever. (2) `contrl` could be left out of the cache and
+restated beside `ptsin`, which would delete the value sub-gate for ~40 cycles a call (~346 a frame);
+the sub-gate is eight lines and the cycles are the wave. (3) `build.sh` computes `CORE_STRIPPED` (a
+preprocessor pass over the cores) further down, and these scrapes could read it instead of filtering
+comments themselves — but it needs `CFLAGS`, which is set after the cores are gated, so hoisting it
+is a restructure of the file rather than a line.
+
+### Wave 7b, 2026-09-08 — the frame path measured SLICE BY SLICE, and the eight rows that moved
+
+**THE WHOLE WINDOW DID NOT MOVE AND THAT IS THE HONEST HEADLINE: 470.4K cycles a frame both sides
+of this change**, two `ours` windows on the scratch tree reading 470,402 and 470,400 against the
+same tree's HEAD cores at 470,404. What moved is **-433 cycles a frame over eight named rows**,
+which is 0.09% — under a third of this instrument's ~1.5K spread. The evidence is the per-ADDRESS
+dump and not the headline: `atari/profile.py` already leaves `out/profile/profile-<side>.log` with
+Hatari's own cycle count against every executed address (it parses it for the sound tick, which the
+callers report charges nothing). Summed over a symbol's range instead, it prices a BODY exactly —
+no callee in it, no branch-entered descendant folded in. Measured in a throwaway worktree of
+`9e18f40` with `src/` and `include/` only, so wave 7a is NOT in this window and the two do not add
+up — whoever merges them re-measures.
+
+| exclusive cycles a frame, per-address | before | after | the original |
+|---|---|---|---|
+| `frame_drift_pulse` | 379 | **271** | 204 |
+| `game_room_frame_tail`'s own body | 867 | **760** | 456 |
+| `frame_poll_input` | 671 | **605** | 353 |
+| `draw_sprites` | 1,403 | **1,367** | 781 (+ the bindings ours inlines) |
+| `save_sprite_backgrounds` | 1,258 | **1,227** | 710 (+ the bindings ours inlines) |
+| `restore_sprite_backgrounds` | 1,253 | **1,224** | 709 (+ the bindings ours inlines) |
+| `fp_div` | 7,150 | **7,118** | 5,871 (+ `fp_pack_double` 2,326, which ours inlines) |
+| `fp_acc_to_long` | 897 | **872** | 154 (+ `fp_double_to_long` 807, which ours inlines) |
+| `core_clib.o` `.text` | 18,230 B | **18,192 B** | — |
+| `core_frontend.o` `.text` | 23,420 B | **23,260 B** | — |
+| `core_gameplay.o` `.text` | 8,194 B | **7,998 B** | — |
+
+Three untouched rows drifted the other way in the same windows — `copy_longs_ascending` +322,
+`INIT_GLOBALS_STREAM` (the ROM) +70, `bg_timer_c_entry` +34 — which is what the spread looks like
+from inside, and why the window total is flat while the rows are not. Wave 6b's section records the
+same shape.
+
+**WHAT THIS WAVE IS REALLY FOR IS THE MEASUREMENT UNDER IT.** Every wave since 3b has priced the
+`frame_*` family as ONE row against the original's `game_frame_update`, because the callers report
+is all the profiler was asked for. The per-address dump can be summed over an ARBITRARY range, so
+the original's single routine splits at the slice boundaries `../src/gameplay.c` already names and
+each of our nine slices is comparable with the bytes it was transcribed from. That table is below,
+and it is what the next wave should start from rather than re-derive.
+
+| the slice, at its `../names.txt` range | ours before | ours after | the original |
+|---|---|---|---|
+| 1 `frame_advance_bubble_frame` `[0x12322,0x1233a)` | 108 | 108 | 65 |
+| the front-end poll `[0x1233a,0x12434)` | 671 | **605** | 353 |
+| 2 `frame_scale_mouse_to_ghost` `[0x12434,0x124a4)` | 689 | 689 | 292 |
+| 3 `frame_blow_or_recover` `[0x124a4,0x1255c)` | 531 | 531 | 256 |
+| 4 `frame_step_facing` `[0x1255c,0x125e6)` | 176 | 176 | 224 |
+| 5 `frame_apply_fans` `[0x125e6,0x126e2)` | 249 | 249 | 208 |
+| 6 `frame_step_live_bubble` `[0x126e2,0x1294a)` | 621 | 621 | 469 |
+| 7 `frame_drift_pulse` `[0x1294a,0x129b0)` | 379 | **271** | 204 |
+| `game_frame_update`'s OWN body — the dispatch | 529 | 529 | 28 |
+| `game_room_frame_tail` `[0x10792,0x108d2)` | 867 | **760** | 456 |
+| **the frame path, summed** | **4,820** | **4,539** | **2,555** |
+
+**THE +1,984 THAT IS LEFT IS THE C ABI AND NOT UNSPENT WORK, and the biggest single row of it is not
+in this wave's files.** `game_frame_update`'s own body is **529 cycles against the original's 28**,
+and every one of them is call plumbing: eight `jsr`s, a pushed `image` at each, the two-longword
+`CallerAddressRegisters` pushed at two of them, a `movem.l %d2/%d4-%d5` pair and the `lea`s that
+unwind the arguments. The original spends 28 because its nine regions fall through one another with
+`a4` already loaded. **That routine lives in `atari/bubble_main.c`**, which this wave does not own,
+so the lever — expanding the slices as `always_inline` bodies at their one composition site, the
+shape wave 6b used for `fp_pack_double_tail` — is named here and left. The three slice rows still
+over 150 (`frame_scale_mouse_to_ghost` +397, `frame_blow_or_recover` +275, `frame_step_live_bubble`
++152) are the same cost seen from inside: a `movem` pair, a base to re-materialise and an `rts`
+each, plus — in the scaling slice — six stack arguments to `fp_dispatch` where the original pushes
+three `pea n(a4)`s.
+
+**AND WHERE THE WHOLE 3.5K GAP IS, partitioned so that every row lands in exactly one group.**
+Summed from the same per-address dumps at `d047ded` (ours 470,403 a frame, the original 466,940);
+rows the levers above did not touch are quoted from that dump rather than re-measured:
+
+| group | ours | the original | |
+|---|---|---|---|
+| the GEM/GEMDOS/XBIOS door (`bg_gem_*`, `bg_super_gate`, `Crawio`, `Setcolor`) | 7,730 | 2,035 (`vdi_call` + the two trap wrappers) | **+5,695** |
+| the frame path above | 4,820 | 2,555 | **+2,265** |
+| the 200 Hz tick | 20,432 | 19,772 | +660 |
+| the fp package | 11,332 | 10,712 | +620 |
+| `vq_mouse` + `vq_key_s` bodies | 811 | 392 | +419 |
+| the copy runs and the object animator | 138,681 | 140,877 | -2,196 |
+| the sprite protocol WITH the VDI bindings ours inlines | 4,141 | 6,137 | -1,996 |
+| `get_pixel`, `bubble_collision_probe`, `hud_bonus_bar_shrink` | 6,347 | 8,312 | -1,965 |
+| the ROM, both sides | 275,550 | 275,754 | -204 |
+
+These nine rows account for **3,292 of the 3,463**; the rest is a scatter of sub-250 rows
+(`bubble_main` against `game_top_loop`, -220, is the largest). So the gap is **two rows and
+everything else is a lead**: the door's translation, which the shipped binary does not do at all
+(wave 7a's), and the slice boundary, which is `atari/bubble_main.c`'s.
+
+**LEVER 1 — `frame_drift_pulse` ON THE BASE, 379 -> 271.** Wave 6b left it and
+`frame_advance_bubble_frame` alone on the arithmetic that "two slots each cost 20 to materialise and
+save 28". The objdump says the pulse touches SEVEN slots on the frame it does not fire on — four
+clears and a read/modify/write of the counter — and each was a `move.l #<address>,%dn` in front of
+an indexed access. Hand-counted off `m68k-elf-objdump -d`, the hot path is 245 cycles before and 166
+after; the profiler measured -108. `frame_advance_bubble_frame` is still left, and correctly: it
+really is two slots.
+
+**LEVER 2 — `game_room_frame_tail` ON THE BASE, 867 -> 760.** The last per-frame routine in
+`../src/frontend.c` still on `image + <address>`: eleven slots on the path a frame that stays in the
+room takes, `A_lives`' longword among them. It holds the base across four calls, which is the
+counter-cost `include/common.h` names — and the row is the answer: -106 measured, `core_frontend.o`
+smaller with it.
+
+**LEVER 3 — THE POLL'S PROLOGUE, 671 -> 605**, and it is two changes with one cause.
+`vdi_handle(image)` is read twice a frame and cost 44 cycles across the two reads (GCC materialises
+the address once into a register and indexes through it); `include/frontend.h` now carries
+`vdi_handle_at_base` beside `vdi_handle`, which is 24 — the same "`word_at_base` beside `word_at`"
+pairing `include/common.h` states, under the `_at_base` suffix the other three helpers of this shape
+already use. That alone did not shrink the prologue, because the INLINED `drain_console_queue` still
+wanted `%d2-%d5/%a2-%a4`: 64 cycles in and 68 out, every frame, for a flush that runs on no profiled
+frame. `noinline` **on its declaration in `include/gameplay.h`** leaves the poll `%d2-%d3/%a2`
+(32 + 36) at the price of re-reading `image` off its own frame for the two GEM calls (+24), and
+`core_gameplay.o` is 32 B smaller with it. Two honest notes: the four callers in `src/frontend.c`
+were already paying a `jsr` (there is no LTO), so the attribute changes only the two in
+`src/gameplay.c`, one of which is the unrun pause; and `%d4`/`%d5` were among the seven saved
+registers although the body never referenced either, so part of that 132 was an allocator artefact
+rather than the flush's cost. **The original pays neither**: it spells the flush inline inside
+`game_frame_update` and has no prologue at all.
+
+**LEVER 4 — `fp_double_to_long` ON ONE OPERAND POINTER, and it is the registration
+`include/common.h` has carried since wave 6b** ("`src/clib.c` still spells ~56 globals as
+`image + <address>` ... it is the third core of this lever and the only one not taken"). The base
+register is the wrong tool for the fp package, because its operand is a PARAMETER and not a
+constant; the right one is the original's own `movea.l 8(a6),a0`, i.e. one pointer that all five
+field accesses hang off. **The saving is not in the out-of-line copy — GCC already gets the `lea`
+there — it is in `fp_acc_to_long`, which is this routine inlined with `operand` CONSTANT**, and
+against a constant GCC drops the pointer and re-materialises `move.l #125594,%dn` in front of an
+indexed access six times over. The barrier survives that inlining and collapses the six to one:
+`fp_acc_to_long` 897 -> **872**, and `fp_div` 7,150 -> **7,118** as a side effect, its own
+`movea.l %sp@(48),%a1 / addal %a0,%a1` reload having collapsed into one `addal`.
+
+**LEVER 5 — `sprite_copy` ON THE BASE ITS THREE CALLERS ALREADY HOLD, and it is the pre-commit
+review's finding rather than the brief's.** `sprite_copy` is `always_inline` into
+`save_sprite_backgrounds`, `draw_sprites` and `restore_sprite_backgrounds` — all of which open with
+`globals_base(image)` — and it was still reading the handle as `vdi_handle(image)`, so each of the
+three paid a `move.l #144110,%d4`, two indexed reads instead of displacements, and `%d4` in a
+`movem.l %d2-%d4/%a2-%a4` prologue that is now `%d2-%d3/%a2-%a3`. **-97 a frame across the three**
+(1,258/1,403/1,253 -> 1,227/1,367/1,224), which is six times what the same helper bought at the two
+sites it was written for. The wave had promoted an idiom into a shared header for its coldest use.
+
+**WHAT WAS TRIED AND REJECTED, measured rather than argued, so the next wave does not re-try it:**
+
+| tried | why not |
+|---|---|
+| `fp_long_to_double`'s normalise loop, which is FIVE instructions where every other expansion of the same loop in `core_clib.o` is the original's three (`subqw #1,%dn / addl / bpls`). GCC puts that one expansion's exponent in `%a0` and copies it to `%d1` each pass | three spellings, all off the objdump. `REGISTER_BARRIER` on the exponent in `fp_long_to_double`: four instructions, ~4 cycles a pass over 31 passes a frame (~125, under the floor) for +30 B. The same barrier inside `fp_normalise_and_round`: the routine stops being inlined ANYWHERE (`core_clib.o` 18,230 -> 17,728 B and a `link`/`jsr` at all five sites — smaller and much slower). `always_inline` forced beside it: 18,096 B and the loop UNCHANGED. **Left unspent**; the cause is register pressure from two `fp_pack_double_tail` expansions in one routine |
+| `fp_acc_to_long`'s own closing `be32(image + A_fp_acc)` (30 cycles a call) moved onto `globals_base`/`globals_at` | the read becomes 20, but the base costs `moveal %sp@(12),%a1 / addal #151322,%a1` beside the operand pointer the inlined body already needs — 84 cycles of addressing against 66. **Measured worse and reverted** |
+| `fp_long_to_double`'s zero arm folded into one tail expansion | byte-identical object — GCC already does it |
+| `divide_into_accumulator` out of line, to stop GCC hoisting three function ADDRESSES into `%a3`-`%a5` across `frame_scale_mouse_to_ghost` (36 cycles of `lea` plus 48 of `movem`, to save 16) | hand-counted 689 -> 876. The hoist is `-ffunction-cse`, and the flag is `atari/build.sh`'s, which this wave does not own |
+| `bubble_collision_probe`'s five header slots on the base (~50 a frame), and the nine `vdi_handle(image)` reads left in the HUD painters | under the brief's 150-a-frame floor. `bubble_collision_probe` is already 716 UNDER the original's row, and `hud_draw_counters`/`hud_bonus_bar_*` hold no base to read off |
+
+**THE MUTATIONS — six, one per lever, each from a forced relink** (`rm -f build/*.so`,
+`__pycache__` swept), each **RED**, and the tree green at 1,909 after every restore:
+
+| mutation | result |
+|---|---|
+| `frame_drift_pulse` clears `A_x_impulse` through `A_drift_vel_x`'s slot | **RED**, 29 failures |
+| `game_room_frame_tail`'s right-hand exit steps the grid ROW off the base | **RED**, `test_game_room_frame_tail[state1]` |
+| `frame_poll_input` hands `vq_key_s` the handle + 1 | **RED**, 29 failures |
+| `fp_mantissa`'s splice reads `value + WORD_BYTES` instead of `+ FP_DOUBLE_LOW_LONG` | **RED**, 112 failures |
+| `fp_double_to_long` takes the sign from `value[1]` | **RED**, 22 failures |
+| `sprite_copy` hands `vro_cpyfm` the handle + 1 | **RED**, 29 failures |
+
+**WHAT THE PRE-COMMIT REVIEW MOVED**, five finder angles over the isolated diff. **No angle found a
+correctness defect** — one reconstructed the pre-image and diffed it against the post-image with the
+spellings normalised (`word_at_base(globals,` -> `word_at(image,`, `globals_at(globals,` ->
+`image +`) and got back a token-identical statement stream, including the one ordering that would
+have been silently fatal: `fp_double_to_long` still reads the sign byte BEFORE it writes. Seven
+things no gate here can see:
+
+| found | what it was |
+|---|---|
+| the wave had promoted `vdi_handle_at` into a shared header for the two coldest of its nine candidate sites, and left `sprite_copy`'s three — which already hold a base — on the image form | LEVER 5 above, six times the saving of the sites it was written for |
+| `_at` was given two opposite meanings in one wave: `vdi_handle_at(GlobalsBase)` against `fp_mantissa_at(const uint8_t *)` | the base form is `_at_base` everywhere else (`word_at_base`, `set_word_at_base`, `trap_save_registers_at_base`). Renamed; and `fp_mantissa`/`fp_exponent` now simply TAKE the pointer, so the two offset wrappers and their two `_at` twins are one pair again |
+| `be16(value + LONG_BYTES)` named a double's low-longword FIELD with a table-stride constant | `FP_DOUBLE_LOW_LONG` beside the other `FP_*` field constants, with the distinction in its comment |
+| `include/frontend.h` used `GlobalsBase`/`word_at_base` on a transitive include through `clib.h` | it includes `common.h` itself now, with the reason — the shape every other header here uses |
+| `__attribute__((noinline))` at column 0 in `../src/*.c` is read as a function head by `atari/build.sh`'s `AWK_ENCLOSING_FUNCTION`, which would attribute a whole body to a function named `__attribute__` | moved to the DECLARATION in `include/gameplay.h`, where all six callers see it, the ledger scrapes never do, and the "why" is next to the contract rather than hidden in one `.c` |
+| the `noinline`'s comment priced a trade it did not fully account for | four of the six callers were already paying a `jsr`; two of the seven saved registers were never referenced. Both now stated |
+| the barrier's comment restated `include/common.h`'s argument and named `globals_base`, which is not what is happening here | trimmed to the one thing this site adds: the constant-operand inline copy is where the re-materialisation happens |
+
+**AND WHAT NO SURFACE HERE CATCHES, registered for the THIRD time.** Deleting the `REGISTER_BARRIER`
+in `fp_double_to_long`, or the `noinline` on `drain_console_queue`, is green under `make test` and
+`make guarded` and gives the lever back. `atari/build.sh`'s `MUST_STAY_INLINED` scrape is the exact
+shape of the gate that would catch the second (inverted, as `MUST_STAY_OUT_OF_LINE`), and a codegen
+scan beside it the first. `atari/build.sh` is **again** another wave's file in this same working
+tree, which is the same reason waves 5c, 6b and 7b have each recorded this instead of doing it.
+
+**WHAT THIS WAVE COULD NOT VERIFY.** `atari/smoke.py title` fails "Hatari died (status 0) while
+waiting for the anchor capture" — and it fails **identically on HEAD's own cores**, both in the
+scratch worktree and in the main tree, so it is not this change. `atari/smoke.py game` is green on
+all three surfaces at both room-frame arrivals with these cores. `atari/` is wave 7a's in this same
+working tree, so the title mode's failure is recorded here and left to whoever owns it.
 
 ## Model gaps — read this before picking a function
 
