@@ -147,6 +147,11 @@ recreate/
 │                        destinations, the two big arrays — and nothing else
 ├── include/<subsystem>.h   one per subsystem: prototypes, addresses, record layout
 ├── src/<subsystem>.c       each core plus its `g_<name>` glue
+├── src/asm/*.S             ASM TWINS: the original's own instruction sequence for a core the
+│                        target build wants at the original's speed, carrying that core's C
+│                        signature. Off target they are never linked — `test/test_asm_*.py`
+│                        runs them under Musashi and compares them against the C. See
+│                        `src/asm/README.md`
 ├── test/harness.py         16-line shim: binds the kit and star-re-exports it
 ├── test/abi.py             the scratch map, the ring placement, the register-call stub, and the
 │                        two helpers every battery would otherwise copy — `run_case` (one
@@ -163,6 +168,8 @@ recreate/
 ├── test/test_status.py       STATUS.md's counts against its rows, and its rows against
 │                        `../names.txt`: every `fn` is verified or deferred, never both
 ├── test/test_<subsystem>.py  one differential battery per subsystem
+├── test/asm_twins.py       the machinery every asm-twin differential shares (a copy of Zynaps')
+├── test/test_asm_<name>.py  one twin's differential, transcription pin and cost pin
 └── STATUS.md        the per-function ledger, in per-subsystem sections
 ```
 
@@ -278,14 +285,18 @@ has the carve from `../bin/FILES/FRD` if that folder is ever lost.
 ## Running it on a 68000
 
 [`atari/`](atari) compiles the same cores with `m68k-elf-gcc` and boots them on a real Atari ST.
-Nothing in that directory changes anything here: the cores are compiled UNCHANGED, and the whole
-difference between the two builds is the include path (`atari/shim_include/` shadows the kit's
-`os.h`, `hw.h`, `psg.h` and `sched.h` with real-TOS versions, and this project's `include/init.h`
-with its two undoored XBIOS answers) plus the four kit sources the .PRG leaves out.
+The cores are compiled UNCHANGED — the difference between the two builds is the include path
+(`atari/shim_include/` shadows the kit's `os.h`, `hw.h`, `psg.h` and `sched.h` with real-TOS
+versions, and this project's `include/init.h` with its two undoored XBIOS answers), the four kit
+sources the .PRG leaves out, and the two things the performance campaign added: `src/sprite.c` is
+compiled with hotter flags, and its unclipped blitter is called through `src/asm/sprite.S` instead
+of the C. Both are *source*-identical and both are pinned — the twin by `test/test_asm_sprite.py`,
+and the whole build by the framebuffer identity `atari/smoke.py` checks.
 
 ```bash
 bash atari/build.sh          # -> atari/disk/AUTO/FLYSHARK.PRG and atari/disk/FLYSHARK.ST
 python3 atari/smoke.py       # boot it AND the original, and judge both on every surface
+python3 atari/profile.py pace   # ...and what a frame costs, against the original's own
 bash atari/run.sh            # play it
 ```
 

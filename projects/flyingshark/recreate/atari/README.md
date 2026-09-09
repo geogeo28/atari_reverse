@@ -2,8 +2,12 @@
 
 The ten verified subsystems in [`../src`](../src) compiled by `m68k-elf-gcc` and run on a real Atari
 ST (Hatari, and a real machine when you put the floppy in one). **The cores are compiled unchanged**:
-the only difference between this build and the differential `.so` is the include path and the four
-kit source files it leaves out. `make test` in [`..`](..) is untouched by anything in this directory.
+what differs between this build and the differential `.so` is the include path, the four kit source
+files it leaves out, one core's optimisation FLAGS, and one routine it calls the asm twin for
+instead of the C — the last two being the performance campaign's, both pinned by
+[`../test/test_asm_sprite.py`](../test/test_asm_sprite.py) and by this directory's own framebuffer
+identity, and both written up in [`../STATUS.md`](../STATUS.md)'s "On-target performance".
+`make test` in [`..`](..) is untouched by anything in this directory.
 
 **Two builds, and the order matters.** `build.sh` with no argument makes the PLAYABLE program: it
 writes no files anywhere, which is what you want on a floppy and which means the full smoke has
@@ -32,30 +36,43 @@ the pictures are evidence of a run rather than of a commit).
 
 | what | number |
 |---|---|
-| `FLYSHARK.PRG` | play: text 50,432 + data 0 + bss 559,268, 560 relocations, 51,158 B on disc. The `smoke` build adds the record's two files and the frame limit: text 50,688, 577 relocations, 51,430 B. Both are byte-reproducible across rebuilds |
+| `FLYSHARK.PRG` | play: text 56,576 + data 0 + bss 559,268, 582 relocations, 57,334 B on disc. The `smoke` build adds the record's two files and the frame limit: the same text, 599 relocations, 57,351 B. Both are byte-reproducible across rebuilds. (Text was 50,432 before the performance campaign; the whole +6,144 is `src/sprite.c` compiled at -O3 with bounded unrolling — the asm twin is 792 B of body and a NET 256 B SMALLER than the C call sites it replaces, because GCC no longer specialises the blitter four ways. `../STATUS.md`'s "On-target performance" has the measurements) |
 | `FLYSHARK.IMG` | 48,694 B — the original's relocated TEXT+DATA, staged into the image at boot |
-| loaded at | `0xa956` (TPA low), image base `0x17200` (smoke) / `0x17100` (play), program ends `0x9327a` |
+| loaded at | `0xa956` (TPA low), image base `0x18900` (both builds now carry the same text), program ends `0x9327a` |
 | headroom on a 1 MB ST | 413,054 B between the program's top and the stack GEMDOS gave it, against a 65,536 B floor |
 | the screen ring | `0x60000` + `0x7800`/`0xfa00`/`0x17700`/`0x1f400`, the verified pointers |
 | files | 8 opened, 288,551 B read, 0 failures |
-| the chip | 41,028 PSG register writes = 82,056 hardware stores, 0 refused; SR $2304 — supervisor at IPL 3, the level the original chooses for itself |
-| pace | 15.8 vertical blanks a frame = **3.2 fps**, against the original's own 3 = 16.7 fps |
+| the chip | 13,611 PSG register writes = 27,222 hardware stores, 0 refused; SR $2304 — supervisor at IPL 3, the level the original chooses for itself. (It was 41,028 before the performance campaign, and the drop is the point: the sound module ticks on the VERTICAL BLANK, so 200 frames that now cost 1,047 blanks instead of 3,160 drive the chip for a third of the emulated time — the music-to-frame ratio is now the original's, where before it was three times too fast) |
+| pace | **4.56 vertical blanks a frame = 11.0 fps, against the original's own measured 4.00 = 12.5 fps** — 1.14x, and 89 of 127 frames take exactly the four the original takes (`profile.py pace`, on the steady attract screen). The smoke's own line says 5.24 over the whole run and the two are the same build: the smoke divides ALL the run's blanks — the boot, the 108-call prescroll, the heavier text pages — by the 200 frames it counted, where `profile.py` clocks frame to frame past the prescroll. The smoke's number is a floor check, this one is the pace |
 
-The pace is the one number that is not the original's, and it is the whole of class 13
-(`docs/on-target-execution.md`): the reconstruction is byte-correct and about five times too slow.
-Nothing here has been optimised — no asm twin, no profile — so it is a campaign that has not started
-rather than a defect. It is loud on the attract screen (a scroll that steps 8 rows five times a
-second) and would be louder in play.
+The pace is the one number that is not the original's, and it is class 13
+(`docs/on-target-execution.md`). **The campaign has run** (`../STATUS.md`, "On-target performance"):
+the frame went from 13.60 vertical blanks to 4.56 against the original's own measured 4.00, in three
+measured levers — the blitter's inner-loop `memcpy` spelt out, `-O3` with bounded unrolling for the
+one file the profiler named, and an asm twin for the four unclipped sprite blitters that is the
+original's own machine code byte for byte. Two more levers were tried and refused, and the size
+budget that refused them is written down beside them.
 
-**One lever is already measured, and it is deliberately not pulled in this change.** `-ffreestanding`
-implies `-fno-builtin`, so `../src/sprite.c`'s fixed-size 16-byte copy in the sprite blitter's
-innermost loop compiles to `jsr memcpy` — about 600 cycles to move 16 bytes, 1,200 calls a frame,
-**roughly a third of every frame** (measured off `build/flyshark.elf` and the anchor's own display
-list during this change's review; `-O2 -ffreestanding -fbuiltin` emits four `move.l` and no call).
-Taking it changes the codegen of ten verified cores, which is a performance campaign's first
-decision and not a by-product of getting the game to boot, so it is recorded here and in
-`../STATUS.md` for the campaign that makes it — with the acceptance test already in place, since
-`smoke.py`'s framebuffer identity is exactly what says a codegen change altered nothing.
+**`profile.py` is the instrument, and it is in this directory.** `pace` clocks both binaries with a
+repeating breakpoint on `render_frame`; `ours` / `original` / `compare` run the Hatari CPU profiler
+over a window of the same length on each and ratio them function by function. Every number in the
+STATUS section came out of it, and re-running it is one command:
+
+```bash
+python3 atari/profile.py pace            # ours: vblanks per frame, and its spread
+python3 atari/profile.py original-pace   # ...the 1988 binary's, the same way
+python3 atari/profile.py ours            # ...and where the cycles are, per symbol
+```
+
+**Every ours-side mode rebuilds and RESTAGES `disk/`** with a smoke build whose frame limit is far
+above what a measurement window can hold, and says so as it goes. That is the wrong volume to play
+or to run the full smoke against, so the two-build order above applies afterwards as well: run
+`bash atari/build.sh` before `atari/run.sh`. `--no-build` measures whatever is already staged.
+
+**The original does not make its own budget either, and that is the number to compare against.**
+`render_frame` waits for the third vertical blank of the frame it just published, so 3 blanks is
+the BUDGET; measured, the shipped binary takes 4.000 on every one of 129 attract frames. 12.5 fps,
+not 16.7.
 
 ## The load-address budget
 
@@ -182,11 +199,14 @@ vectors `$70` and `$118` (the cores store Ghidra addresses into the image's vect
 shim's two entries dispatch on what they find — which is what makes `acia_ikbd_isr`'s two-state
 machine work here with no knowledge of it in the shim), and TOS's KBDVBASE (above).
 
-`build.sh` runs three gates before the compiler and two after it. Before: every `os_*` a core calls
-is shadowed (10 of them), no core includes a shim header by name, and every trap wrapper saves
+`build.sh` runs three gates before the compiler and three after it. Before: every `os_*` a core
+calls is shadowed (10 of them), no core includes a shim header by name, and every trap wrapper saves
 `%d2`/`%a2` (`tools/assert_trap_registers.sh`, 16 wrappers, and it proves on every run that it can
-fail). After: `_start` is at offset 0, where GEMDOS enters — and `g_record` is still in the linked
-program, which is not bookkeeping but the one thing that makes a PLAY build locatable. Nothing reads
+fail). After: **the asm twin is what the game calls** — `blit_sprite_rows_unclipped_asm` defined by
+the `.S` object and referenced by the core object, because that substitution otherwise fails
+SILENTLY (drop `-DFS_ASM_SPRITE` and the seam resolves to the C, everything still links, the pixels
+are still right, and only the frame rate says so; `../src/asm/README.md`); `_start` is at offset 0,
+where GEMDOS enters; and `g_record` is still in the linked program, which is not bookkeeping but the one thing that makes a PLAY build locatable. Nothing reads
 that array in a play build, so as a file-static it is dead stores and GCC deletes it; the check was
 written after `smoke.py --floppy-only` found the magic at zero addresses in a megabyte of RAM, and
 making the array static again reddens the build.
@@ -219,8 +239,13 @@ making the array static again reddens the build.
   fires at once — on the attract screen, a wrong picture rather than a missed one (with a
   five-second poll for the program, the arming lost that race two runs in three and the check failed
   at 4/15, the attract screen's own score). So the smoke build writes a BEACON as its first act and
-  the driver waits on that instead of polling, then reads the byte out of the dump it located from:
-  already set means it is late, and the capture is refused with the elapsed time rather than taken.
+  the driver waits on that instead of polling. **The arming's own cost was the rest of that race**,
+  found during the performance campaign: the driver then located the program by dumping the whole
+  megabyte and scanning it, and the dump spent enough of the window that the capture came back BLACK
+  about one run in three. The beacon's four bytes ARE the image base — `flyshark_main.c` had been
+  writing it there all along — so the breakpoint is now armed straight off the file with nothing
+  between, and the "was it already late" test is a one-byte read taken AFTER the breakpoint stands.
+  Three consecutive green runs since, with both scores identical.
   The second race is the other way round: class 8 says photograph at the NEXT vertical blank, but
   the rest of this boot — 117 KB of sprite bank and `enter_title`'s `set_palette_black` — can pass
   in less than one blank, and one run in three came back black. So BOTH captures are taken, at the
@@ -296,7 +321,10 @@ them and wonder.
 `tools/st_build.py`'s (which is what makes the boot sector one TOS will mount and not execute); what
 this project's file adds is the second subdirectory, because `st_build.build()` writes one.
 
-706,560 B used and 21,504 B free — every level's assets fit, with 21 clusters to spare. If a build
+712,704 B used and 15,360 B free for the PLAY volume — every level's assets fit, with 15 clusters
+to spare. It was 21,504 B free before the performance campaign spent 6,144 B on hotter codegen for
+one file; `../STATUS.md`'s "On-target performance" is where that budget is argued, including the two
+levers it refused for overrunning it. If a build
 grew past that, the volume drops LATER LEVELS' tile banks whole rather than in part, and says which;
 the boot's own eight files are required, and a volume that cannot hold them is refused rather than
 written.

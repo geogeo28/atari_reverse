@@ -64,11 +64,20 @@ TITLE_NEO = ORIGINAL_DRIVE / "A" / "FLY_SHK.NEO"
 RECORD_FILENAME = "STATE.BIN"       # flyshark_main.c's FILE_STATE_RECORD, and the marker that says
                                    # a .PRG was built with the record compiled in (see below)
 STATE_RECORD = OURS_DRIVE / RECORD_FILENAME
-# ...and its BEACON, which a smoke build writes as early as a file can be written. It is a WAKE-UP,
-# not a locate: what it says is "the program is running NOW", which is the only way to arm a
-# breakpoint before the title picture has come and gone (flyshark_main.c carries the argument). Its
-# CONTENTS are not read — the image base comes out of the record in RAM, the same way on every
-# medium — so a beacon that were somehow stale could not put this driver on the wrong address.
+# ...and its BEACON, which a smoke build writes as early as a file can be written and whose four
+# bytes ARE the image base (`flyshark_main.c`, `write_file(FILE_BEACON, &g_record[REC_IMAGE_BASE])`,
+# beside the three record fields it fills before anything else). It is a wake-up AND a locate, and
+# the second half is what makes the title capture armable: the window between
+# `level0_assets_loaded` and the sprite bank landing on the picture is a fraction of a second, and
+# the alternative locate — a savebin of the whole megabyte, then a scan — spends a good part of it.
+# MEASURED: with the base read out of a RAM dump the capture came back BLACK about one run in three,
+# over seven runs of one binary; reading it from the beacon takes the dump off the critical path.
+#
+# A STALE BEACON CANNOT PUT THIS DRIVER ON THE WRONG ADDRESS, which is what the RAM scan bought and
+# has to be paid for another way: the file is deleted before the run starts, so anything read here
+# was written by THIS boot, and the base it names is checked against the record's own — read out of
+# RAM after the capture, off the critical path — before any surface is judged on it.
+BEACON_BYTES = 4
 BEACON = OURS_DRIVE / "STARTED.BIN"
 # The floppy. `--floppy` boots the volume `mkfloppy.py` wrote, which carries whichever build.sh mode
 # ran last — the PLAY build is the one a person puts in a drive.
@@ -156,12 +165,26 @@ SMOKE_ATTRACT_FRAMES = 200
 # The two `Setscreen`s the boot makes before the first frame: `boot_init`'s resolution call at
 # 0x14c18 and `init_load_assets_title`'s at 0x11258. Every other one is a frame being published.
 BOOT_SETSCREEN_CALLS = 2
-# ...and the `Setpalette`s of a run that reaches the attract screen and stops at the frame limit,
-# MEASURED rather than derived: three in `init_load_assets_title`, one per `set_palette_black` and
-# `set_palette_game` on the way through `enter_title` and the attract loop's stage start. It is a
-# count of a FLOW, so it moves if the flow changes shape — which is what makes it worth asserting
-# and why it is a number with a date on it rather than an arithmetic identity.
-BOOT_SETPALETTE_CALLS = 8
+# ...and the `Setpalette`s. THIS ONE IS A SHAPE, NOT A COUNT, and the difference is the whole point.
+#
+# The flow installs a palette FOUR times before the attract screen spins — three in
+# `init_load_assets_title` and `enter_title`'s own `set_palette_black` — and then TWO more every time
+# `title_attract_loop` goes round: `set_palette_black` at its head and `attract_poll`'s
+# `set_palette_game` before the frame spin. So the invariant is "four, plus two per pass", and the
+# smallest run that reaches the attract screen at all makes six.
+#
+# AN EQUALITY HERE WAS A TRANSCRIPT OF ONE RUN'S PACE. The loop goes round when the module says its
+# tune has finished, and the tune advances on the VERTICAL BLANK while this build's limit counts
+# FRAMES — so the number of passes inside 200 frames is a function of how fast a frame is. It was 8
+# (two passes) when a frame cost 15.8 blanks and became 6 (one pass) at 5.24, for no reason but the
+# performance campaign (`../STATUS.md`, "On-target performance"), and it would move again on the next
+# lever — reddening with a message that sends the reader hunting a flow regression that is not there.
+# The shape below is what the FLOW claims and it holds at any pace; a real regression (a pass that
+# stopped installing one of its two, a boot that installed a fifth) still fails it.
+SETPALETTE_CALLS_BEFORE_THE_ATTRACT_SPIN = 4
+SETPALETTE_CALLS_PER_ATTRACT_PASS = 2
+BOOT_SETPALETTE_CALLS = (SETPALETTE_CALLS_BEFORE_THE_ATTRACT_SPIN
+                         + SETPALETTE_CALLS_PER_ATTRACT_PASS)   # the fewest a run can make: one pass
 # GEMDOS Super(0)'s answer in the kit's token model ('\0SUP'), which `shim_include/os.h` keeps so
 # that the core's return value means the same thing on both shores.
 OS_SUPER_TOKEN = 0x00535550
@@ -274,18 +297,22 @@ class Failures:
         return False
 
 
-def hatari_arguments(media, trace_path):
+def hatari_arguments(media, trace_path, run_vbls=RUN_VBLS):
     """The whole Hatari command line except `--cmd-fifo`, which the session appends.
 
     `media` is the only thing that varies between the three runs — a GEMDOS drive for ours and the
     original, a floppy for the .ST — and it is a parameter rather than a second list because the
     machine the runs are compared ON has to be the same one: TOS, memory size, frameskips and the
     trace flags all decide what the comparison means.
+
+    `run_vbls` is the emulator's own deadline and is a parameter for ONE caller: `profile.py` runs
+    the same machine for as long as a measurement window needs, which is longer than any check here
+    waits for. Every smoke run takes the default, so the machine this file judges is unchanged.
     """
     return [HATARI, "--tos", str(TOS_ROM), "--machine", "st", "--memsize", str(MEMSIZE_MB),
             "--monitor", "rgb", "--confirm-quit", "off", "--statusbar", "off",
             "--drive-led", "off", "--frameskips", "0", "--sound", "off",
-            "--run-vbls", str(RUN_VBLS), *media,
+            "--run-vbls", str(run_vbls), *media,
             *TRACE_ARGUMENTS, "--trace-file", str(trace_path)]
 
 
@@ -316,6 +343,14 @@ def arm_title_capture(session, work, shots, image_base):
 
     So the trigger shoots AT ONCE and arms the settled shot, and the caller scores both: a torn
     capture loses to the settled one, and a program that ran ahead loses to the immediate one.
+
+    A THIRD SHOT ONE BLANK FURTHER WAS TRIED AND BOUGHT NOTHING (measured 2026-09-08, during the
+    performance campaign; `../STATUS.md`, "On-target performance"). This check comes back black about
+    one run in three, and the shots agree on THAT outcome every time — all 15/15 or all 1/15 — so a
+    black run is not a frame the shifter had yet to latch but a breakpoint that fired in the wrong
+    place, and no number of extra blanks addresses it. The third shot was removed again rather than
+    left in as insurance against a mechanism that had been ruled out. The two above stay: on a green
+    run they have been measured at 14 and 15, which is the torn frame the second one is for.
     """
     for shot in shots:
         shot.unlink(missing_ok=True)
@@ -366,6 +401,18 @@ def image_base_from_ram(ram):
     `_bss_start` (measured: it matches at 0x200 and everywhere else zeroes run). A magic that the
     program itself wrote is exact, and its uniqueness is asserted rather than assumed.
     """
+    found = record_in_ram(ram)
+    return found[1] if found else None
+
+
+def record_in_ram(ram):
+    """WHERE THE RECORD IS and what image base it names, as (machine address, image base).
+
+    `image_base_from_ram` above wants only the second; `profile.py` wants the FIRST as well, because
+    the record's address is how a relocated program is placed: `g_record`'s link-time offset is in
+    the ELF, so `address - offset` is the text base every symbol and every breakpoint is measured
+    from. One scan answers both, and neither caller writes a second one.
+    """
     magic = struct.pack(">I", RECORD_MAGIC)
     found = []
     at = ram.find(magic)
@@ -376,12 +423,12 @@ def image_base_from_ram(ram):
         # which is a test the instruction stream does not pass by accident.
         fields, base = struct.unpack_from(">II", ram, at + 4)
         if fields == len(RECORD_FIELDS) and base and base % IMAGE_ALIGN == 0:
-            found.append(base)
+            found.append((at, base))
         at = ram.find(magic, at + 1)
     if len(found) > 1:
         raise SystemExit(f"the record is at {len(found)} addresses in RAM "
-                         f"({[hex(where) for where in found]}) — something else in memory carries "
-                         f"its magic AND its shape")
+                         f"({[hex(where) for where, _ in found]}) — something else in memory "
+                         f"carries its magic AND its shape")
     return found[0] if found else None
 
 
@@ -399,19 +446,6 @@ def give_up(doing, started, deadline_seconds, log):
         f"  after {time.monotonic() - started:.0f} s of a {deadline_seconds:.0f} s deadline\n"
         f"  the emulator was alive throughout; its log ends:\n    {tail}\n"
         f"  full log: {log}")
-
-
-def locate_before_the_title(ram):
-    """The image base AND whether the title window is still open, out of one RAM dump.
-
-    The two are read together on purpose: whether this driver is in time to photograph the title is
-    a property of the SAME instant the base was found at, and asking a second time would be asking
-    about a later one.
-    """
-    base = image_base_from_ram(ram)
-    if base is None:
-        return None
-    return base, ram[base + A_LEVEL0_ASSETS_LOADED] != TITLE_READY_FLAG
 
 
 def keep_looking(session, look, doing, deadline_seconds, started=None, log=None,
@@ -537,20 +571,23 @@ def run_reconstruction(out_dir):
         if await_file(session, BEACON, "the program's beacon", BEACON_DEADLINE_SECONDS) is None:
             give_up(f"{BEACON.name}, which a smoke build writes as its first act",
                     session.started, BEACON_DEADLINE_SECONDS, log)
-        located = keep_looking(session, locate_before_the_title,
-                               "the program to reach its first instructions",
-                               LOCATE_DEADLINE_SECONDS, started=session.started, log=log,
-                               poll_seconds=OURS_POLL_SECONDS)
-        result["image_base"], title_window_open = located
-        if not title_window_open:
-            give_up(f"the program, EARLY ENOUGH: it was found {time.monotonic() - session.started:.0f} s "
-                    f"after power-on with `level0_assets_loaded` already set, which means the title "
-                    f"picture had already been drawn. A breakpoint armed now would fire on whatever "
-                    f"is on screen, so the capture is refused rather than taken",
-                    session.started, LOCATE_DEADLINE_SECONDS, log)
-
+        # THE BASE COMES OUT OF THE BEACON AND THE BREAKPOINT IS ARMED AT ONCE. Nothing between the
+        # file appearing and the `arm` below costs the emulated machine anything it could spend on
+        # the title's window.
+        result["image_base"] = struct.unpack(">I", BEACON.read_bytes()[:BEACON_BYTES])[0]
         shots = (out / "title.png", out / "title_settled.png")
         arm_title_capture(session, out / "work", shots, result["image_base"])
+
+        # ...and only THEN the checks that need a dump. Whether the arming was in time is still
+        # asked — a capture taken after the picture is a wrong answer, not a slow one — but it is
+        # asked of a ONE-BYTE read rather than of a megabyte, and after the breakpoint is standing.
+        if session.savebin("late.bin", result["image_base"] + A_LEVEL0_ASSETS_LOADED,
+                           1)[0] == TITLE_READY_FLAG:
+            give_up(f"the program, EARLY ENOUGH: `level0_assets_loaded` was already set "
+                    f"{time.monotonic() - session.started:.0f} s after power-on, which means the "
+                    f"title picture had already been drawn when the breakpoint was armed. It would "
+                    f"fire on whatever is on screen, so the capture is refused rather than taken",
+                    session.started, LOCATE_DEADLINE_SECONDS, log)
         for shot in shots:
             if await_file(session, shot, f"the title picture ({shot.name})",
                           TITLE_DEADLINE_SECONDS) is None:
@@ -749,7 +786,7 @@ def check_the_picture(fail, ours):
           f"colours  ({ours['title']})")
     print(f"  both captures scored {ours['title_scores']} — the better one is the picture, and the "
           f"other is a torn frame or a program that ran on (`arm_title_capture` says why there are "
-          f"two)")
+          f"two, and why a third was tried and removed)")
     print(f"  {ours['attract'].name}: {distinct_colours(ours['attract'])} distinct colours "
           f"({ours['attract']})")
     fail.check(ours["title_matched"] == ours["title_wanted"],
@@ -832,13 +869,18 @@ def check_the_record(fail, record, staged):
     fail.check(record["LEVEL0_ASSETS_LOADED"] == SCC_TRUE,
                "the boot chain recorded that level 0's assets are in memory")
     # `Vsync` is AT MOST one a frame, and it is the arm `render_frame`'s pacer takes when the frame
-    # was already over its three-blank budget. Equality therefore says every frame was late — which
-    # at 15.8 blanks a frame every one of them is — while the bound is what stays true if the port
-    # ever gets fast enough to take the spin arm instead.
-    fail.check(record["SETPALETTE_CALLS"] == BOOT_SETPALETTE_CALLS
+    # was already over its three-blank budget. A bound rather than an equality because the port is no
+    # longer always late: at 4.56 blanks a frame one frame in the 200 comes in UNDER budget and takes
+    # the spin arm instead, so the run measures 199 (`../STATUS.md`, "On-target performance").
+    attract_passes, spare = divmod(record["SETPALETTE_CALLS"]
+                                   - SETPALETTE_CALLS_BEFORE_THE_ATTRACT_SPIN,
+                                   SETPALETTE_CALLS_PER_ATTRACT_PASS)
+    fail.check(spare == 0 and attract_passes >= 1
                and record["VSYNC_CALLS"] <= record["ATTRACT_FRAMES"],
-               f"the palette was installed {BOOT_SETPALETTE_CALLS} times, as the flow says, and the "
-               f"pacer waited at most once a frame ({record['VSYNC_CALLS']})")
+               f"the palette was installed {record['SETPALETTE_CALLS']} times = "
+               f"{SETPALETTE_CALLS_BEFORE_THE_ATTRACT_SPIN} + "
+               f"{SETPALETTE_CALLS_PER_ATTRACT_PASS} x {attract_passes} attract passes, as the flow "
+               f"says, and the pacer waited at most once a frame ({record['VSYNC_CALLS']})")
 
     print(f"  teardown: $70 {record['VBL_VECTOR_AFTER']:#x}, $118 "
           f"{record['ACIA_VECTOR_AFTER']:#x}, joyvec {record['JOYVEC_AFTER']:#x}, Physbase "
@@ -1038,6 +1080,14 @@ def main():
     if ours is not None:
         check_the_picture(fail, ours)
         record = read_record(STATE_RECORD)
+        # THE BEACON'S BASE AGAINST THE PROGRAM'S OWN. The GEMDOS run arms its title breakpoint on
+        # the four bytes the beacon carried, before anything has read RAM (see BEACON above); this
+        # is where that address is confirmed against the record the SAME run wrote at its teardown.
+        # A beacon left over from another build would have put every capture on the wrong address,
+        # and this is the check that would say so rather than the pictures being quietly wrong.
+        fail.check(record["IMAGE_BASE"] == ours["image_base"],
+                   f"the beacon named the image base the program's own record does "
+                   f"({ours['image_base']:#x})")
         staged = STAGED_IMAGE.read_bytes()
         check_the_record(fail, record, staged)
         check_the_pacing(fail, record)

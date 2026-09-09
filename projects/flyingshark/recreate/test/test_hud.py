@@ -1170,23 +1170,23 @@ CHEAT_JML = (0xb4, 0xb7, 0xb6)          # row 4 — the `jsr 0` booby trap, neve
 def _cheat_case(name, armed_at=1, invuln=0, poison=False):
     """One name, with the arm key ARRIVING at the `armed_at`th read of `key_bits`.
 
-    EVERY CASE CARRIES A SCHEDULE, for `console_show_message`'s reason one section down: the arm spin
-    reads a byte only the ACIA interrupt writes, so the reconstruction reads it through `sched_poll8`
-    and the harness compares its polls against the oracle's arrivals at the same PC — which is the
-    only thing that can see the ITERATION COUNT at all, the memory being identical either way. The
-    oracle counts those arrivals only while the run carries a schedule, so "the key is already down"
-    is expressed as `armed_at = 1`: the store lands before the first read.
+    EVERY CASE DECLARES THE WAIT SITE, for `console_show_message`'s reason one section down: the arm
+    spin reads a byte only the ACIA interrupt writes, so the reconstruction reads it through
+    `sched_poll8` and the harness compares its polls against the oracle's arrivals at the same PC —
+    which is the only thing that can see the ITERATION COUNT at all, the memory being identical
+    either way.
     """
     pokes = {CHEAT_NAME: bytes(name), A_key_bits: b"\x00", A_invuln_flag: bytes([invuln])}
     last = CHEAT_NAME + HISCORE_NAME_CHARS - 1
-    # `armed_at = None` is the key that never comes down. It is still a REAL entry rather than no
-    # schedule, because an entry that never came due is refused by the oracle and no schedule at all
-    # would leave the arrivals uncounted: the ACIA reports, at the first read, that the key is up.
-    arrival, value = (1, 0) if armed_at is None else (armed_at, 1 << CHEAT_ARM_KEY_BIT)
+    # `armed_at = None` is the key that never comes down, so there is nothing to schedule: the site
+    # alone arms the counting, and the 5001 polls are compared against 5001 arrivals at a key the
+    # ACIA reports up on every one of them.
+    schedule = None if armed_at is None else [
+        {"pc": CHEAT_ARM_WAIT_PC, "nth": armed_at, "addr": A_key_bits,
+         "width": 1, "value": 1 << CHEAT_ARM_KEY_BIT}]
     _run(ENTRY_CHECK_CHEAT_NAME, lambda lib, buf: g_check_cheat_name(buf, last), pokes=pokes,
          regs={"a0": last}, poison=poison,
-         schedule=[{"pc": CHEAT_ARM_WAIT_PC, "nth": arrival, "addr": A_key_bits,
-                    "width": 1, "value": value}],
+         schedule=schedule, wait_sites=[CHEAT_ARM_WAIT_PC],
          note=f"name={bytes(name).hex()} armed_at={armed_at} invuln={invuln}")
 
 
@@ -1320,22 +1320,21 @@ def test_debug_print_word_binary(value):
 
 def _console_case(message, released_at=1):
     """One message, with the joystick's fire button HELD on entry and released by the ACIA at the
-    `released_at`th poll of the wait.
+    `released_at`th poll of the wait — or, at `released_at = 1`, already up when the wait is reached.
 
-    EVERY CASE CARRIES A SCHEDULE, and not for want of a shorter one. The routine's last act is a
-    spin on `joy1_state` bit 7, a byte only the ACIA interrupt ever clears, so a candidate that read
-    it straight out of the image would never leave — `sched_poll8` is what makes the wait runnable
-    off target, and its polls are compared against the ORACLE's arrivals at the same PC. The oracle
-    counts those arrivals only while the run carries a schedule (oracle/shim.c's `sched_fire` is
-    called under `g_sched_n`), so a case that merely declared the site and let the button be up on
-    entry would compare one poll against zero arrivals. `released_at = 1` IS that case, expressed so
-    that both sides count it: the release lands before the first poll reads the byte.
+    The routine's last act is a spin on `joy1_state` bit 7, a byte only the ACIA interrupt ever
+    clears, so a candidate that read it straight out of the image would never leave — `sched_poll8`
+    is what makes the wait runnable off target, and its polls are compared against the ORACLE's
+    arrivals at the same PC. A release AT the first poll needs no agent at all: the button is up on
+    entry and the case declares the site, which is what arms the counting on both shores.
     """
-    pokes = {CONSOLE_TEXT: message, A_joy1_state: bytes([0xff])}
+    held = released_at > 1
+    pokes = {CONSOLE_TEXT: message, A_joy1_state: bytes([0xff if held else 0x00])}
+    schedule = [{"pc": FIRE_RELEASE_WAIT_PC, "nth": released_at, "addr": A_joy1_state,
+                 "width": 1, "value": 0x00}] if held else None
     _run(ENTRY_CONSOLE_SHOW_MESSAGE, lambda lib, buf: g_console_show_message(buf, CONSOLE_TEXT),
          pokes=pokes, regs={"a6": CONSOLE_TEXT},
-         schedule=[{"pc": FIRE_RELEASE_WAIT_PC, "nth": released_at, "addr": A_joy1_state,
-                    "width": 1, "value": 0x00}],
+         schedule=schedule, wait_sites=[FIRE_RELEASE_WAIT_PC],
          note=f"message={message.hex()} released at poll {released_at}")
 
 

@@ -3,7 +3,7 @@
  * The kit's header names this file before it exists: "ON TARGET this file IS EXCLUDED FROM THE
  * BUILD, exactly like src/hw.c and src/psg.c: a build for the real machine spins on the address
  * itself, because the interrupt really does write it, and supplies its own `sched_wait8`/
- * `sched_poll16` that loop without a cap."
+ * `sched_poll16`/`sched_poll32` that loop without a cap."
  *
  * THE CAP IS THE WHOLE DIFFERENCE, and dropping it is not an optimisation — it is the seam's
  * reason to exist (docs/on-target-execution.md, "Two ways a seam leaks the harness into the shipped
@@ -27,9 +27,9 @@
  * on a byte it read once. (../src/sprite.c's `vbl_tick_now` makes the same argument for its own
  * longword read, in the core, where it is true on both shores.)
  *
- * THE KIT'S HEADER IS NOT `#include_next`ed: its `sched_poll8`/`sched_wait8`/`sched_poll16` are
- * declared `extern` and C forbids a `static inline` definition of a name already declared without
- * `static`. Its other names are the harness's `g_sched_*` accessors, which exist only off target.
+ * THE KIT'S HEADER IS NOT `#include_next`ed: its `sched_poll8`/`sched_wait8`/`sched_poll16`/
+ * `sched_poll32` are declared `extern` and C forbids a `static inline` definition of a name already
+ * declared without `static`. Its other names are the harness's `g_sched_*` accessors, which exist only off target.
  */
 #ifndef FS_SHIM_SCHED_H
 #define FS_SHIM_SCHED_H
@@ -54,13 +54,24 @@ static inline int sched_wait8(uint8_t *image, uint32_t addr, uint8_t until, uint
 }
 
 /* ONE iteration of a word wait, and the caller keeps its own compare (the kit's header argues why).
- * Answers 1 — "go round again" — always: the loop is left by the caller's own test, which is what
- * `render_frame`'s pacer does with the LONGWORD at `A_vbl_tick`. */
+ * Answers 1 — "go round again" — always: the loop is left by the caller's own test. */
 static inline int sched_poll16(uint8_t *image, uint32_t addr, uint32_t site_pc, uint16_t *seen) {
     const volatile uint8_t *word = image + addr;
 
     (void)site_pc;
     *seen = (uint16_t)(((uint16_t)word[0] << 8) | word[1]);
+    return 1;
+}
+
+/* ...and the same iteration at four bytes, which is what `render_frame`'s pacer spins on: the
+ * LONGWORD at `A_vbl_tick`, written by the level-4 handler. Answers 1 always, for `sched_poll16`'s
+ * reason — the cap is the harness's and does not ship. */
+static inline int sched_poll32(uint8_t *image, uint32_t addr, uint32_t site_pc, uint32_t *seen) {
+    const volatile uint8_t *lword = image + addr;
+
+    (void)site_pc;
+    *seen = ((uint32_t)lword[0] << 24) | ((uint32_t)lword[1] << 16)
+            | ((uint32_t)lword[2] << 8) | (uint32_t)lword[3];
     return 1;
 }
 

@@ -23,8 +23,6 @@
 #include <assert.h>
 #endif
 
-#include <string.h>
-
 #include "machine.h"
 #include "common.h"       /* addr_sub and copy_longs, shared with hud.c and the two blit paths */
 #include "os.h"
@@ -124,7 +122,14 @@ static uint32_t blit_sprite_row(uint8_t *image, uint32_t src, uint32_t dst,
         }
 
         spill_mask = mask;
-        memcpy(spill_plane, plane, sizeof spill_plane);
+        /* SPELT OUT RATHER THAN `memcpy`, and it is a performance fact rather than a style one.
+         * `atari/build.sh` compiles with `-ffreestanding`, which implies `-fno-builtin`, so a
+         * 16-byte `memcpy` here is a real `jsr` into the shim's byte loop — 588 cycles a call,
+         * 802 calls a frame, 472,000 cycles a frame, 28% of the whole window (measured with
+         * `atari/profile.py ours`). The four assignments are four `move.l`s and no call.
+         */
+        for (unsigned p = 0; p < SPRITE_PLANES; p++)
+            spill_plane[p] = plane[p];
     }
     return src;
 }
@@ -139,20 +144,47 @@ static void blit_sprite_rows(uint8_t *image, uint32_t src, uint32_t dst, unsigne
     }
 }
 
+/* ---- THE ASM-TWIN SEAM, and it covers the UNGATED half of the routine above ---------------------
+ *
+ * `src/asm/sprite.S` transcribes the original's own four unclipped blitters (0x153b2 / 0x15408 /
+ * 0x154a4 / 0x15586) and `atari/build.sh` links that twin into the TARGET build, where it is 3.2x
+ * the C's speed because it is the original's instruction sequence and nothing else
+ * (`atari/profile.py`, and `../STATUS.md`'s "On-target performance"). The differential build never
+ * sees it: `test/test_asm_sprite.py` is what proves the two equal, over this file's own cases.
+ *
+ * A MACRO OVER THE ARGUMENTS RATHER THAN A WRAPPER FUNCTION, so that the gated call site below
+ * keeps `blit_sprite_rows` referenced in both builds. A wrapper would be an unused `static` in the
+ * build that has the twin, which is a warning at best and a silently dropped body at worst.
+ *
+ * THE GATED HALF KEEPS THE C. `blit_sprite_clipped` is 8% of the blitter's cycles measured over the
+ * attract screen (53,398 a frame against 582,591), it is four more transcribed bodies, and the four
+ * it would add are the ones with a `btst` on an absolute address that the image base makes
+ * un-transcribable byte for byte. `../STATUS.md` carries the row.
+ */
+#ifdef FS_ASM_SPRITE
+void blit_sprite_rows_unclipped_asm(uint8_t *image, uint32_t src, uint32_t dst,
+                                    unsigned width_class, unsigned shift, uint32_t rows_minus_one);
+#define BLIT_SPRITE_ROWS_UNCLIPPED(image, src, dst, klass, shift, rows)                            \
+    blit_sprite_rows_unclipped_asm((image), (src), (dst), (klass), (shift), (rows))
+#else
+#define BLIT_SPRITE_ROWS_UNCLIPPED(image, src, dst, klass, shift, rows)                            \
+    blit_sprite_rows((image), (src), (dst), (klass), (shift), (rows), SPRITE_GATE_UNCLIPPED)
+#endif
+
 void sprite_blit_w16(uint8_t *image, uint32_t src, uint32_t dst, uint32_t shift, uint32_t rows_minus_one) {
-    blit_sprite_rows(image, src, dst, 0u, shift, rows_minus_one, SPRITE_GATE_UNCLIPPED);
+    BLIT_SPRITE_ROWS_UNCLIPPED(image, src, dst, 0u, shift, rows_minus_one);
 }
 
 void sprite_blit_w32(uint8_t *image, uint32_t src, uint32_t dst, uint32_t shift, uint32_t rows_minus_one) {
-    blit_sprite_rows(image, src, dst, 1u, shift, rows_minus_one, SPRITE_GATE_UNCLIPPED);
+    BLIT_SPRITE_ROWS_UNCLIPPED(image, src, dst, 1u, shift, rows_minus_one);
 }
 
 void sprite_blit_w48(uint8_t *image, uint32_t src, uint32_t dst, uint32_t shift, uint32_t rows_minus_one) {
-    blit_sprite_rows(image, src, dst, 2u, shift, rows_minus_one, SPRITE_GATE_UNCLIPPED);
+    BLIT_SPRITE_ROWS_UNCLIPPED(image, src, dst, 2u, shift, rows_minus_one);
 }
 
 void sprite_blit_w64(uint8_t *image, uint32_t src, uint32_t dst, uint32_t shift, uint32_t rows_minus_one) {
-    blit_sprite_rows(image, src, dst, 3u, shift, rows_minus_one, SPRITE_GATE_UNCLIPPED);
+    BLIT_SPRITE_ROWS_UNCLIPPED(image, src, dst, 3u, shift, rows_minus_one);
 }
 
 /* ---- the clip ladders -------------------------------------------------------------------------
@@ -558,8 +590,7 @@ static uint32_t dispatch_sprite_blit(uint8_t *image, DrawPass pass, unsigned wid
 #endif
     entry = &SPRITE_BLIT_TABLE[index];
     if (!entry->ladder) {
-        blit_sprite_rows(image, src, dst, entry->width_class, shift, rows_minus_one,
-                         SPRITE_GATE_UNCLIPPED);
+        BLIT_SPRITE_ROWS_UNCLIPPED(image, src, dst, entry->width_class, shift, rows_minus_one);
         return restore_cursor;
     }
     return blit_sprite_clipped(image, entry->ladder, entry->side, src, dst, entry->width_class,
@@ -742,18 +773,14 @@ static void publish_and_wait(uint8_t *image) {
         /* The frame came in under budget: spin until the level-4 handler has counted the third VBL.
          * Nothing inside this program writes the counter, so the wait goes through the kit's
          * SCHEDULED WRITE model — ONE poll an iteration is the clock, and the case's store lands
-         * just before the poll that brings it due.
-         *
-         * `sched_poll16` rather than a bare `sched_poll8`, although the compare is a LONG and the
-         * word it hands back is not what this wait tests. The kit has no `sched_poll32`, and the
-         * wrapper's own contract is "one poll, then read at full width" — what it adds over the
-         * pair is the CAP, and without it a case whose schedule never comes due HANGS here instead
-         * of being refused (measured: `RENDER_FRAME_VBL_BUDGET` mutated to 4 hung the whole suite
-         * against a hand-rolled pair and is an ordinary red against this). */
-        uint16_t unused_polled_word;   /* the wrapper's out-parameter; this wait tests the LONG */
+         * just before the poll that brings it due. `sched_poll32` because the compare is a LONG;
+         * what the wrapper adds over a hand-rolled poll-and-read is the CAP, without which a case
+         * whose schedule never comes due HANGS here instead of being refused (measured:
+         * `RENDER_FRAME_VBL_BUDGET` mutated to 4 hung the whole suite against that pair). */
+        uint32_t tick;
 
-        while (sched_poll16(image, A_vbl_tick, RENDER_FRAME_VBL_WAIT_PC, &unused_polled_word)) {
-            if (vbl_tick_now(image) >= (int32_t)RENDER_FRAME_VBL_BUDGET)
+        while (sched_poll32(image, A_vbl_tick, RENDER_FRAME_VBL_WAIT_PC, &tick)) {
+            if ((int32_t)tick >= (int32_t)RENDER_FRAME_VBL_BUDGET)
                 break;
         }
     }

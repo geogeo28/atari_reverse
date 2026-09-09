@@ -27,14 +27,18 @@ ownership table and the conventions all live there rather than being restated he
 
 ## Suite
 
-**3,553 tests, all passing, no skips** — all fourteen files: `test_weapons.py` 902,
+**3,633 tests, all passing, no skips** — all fifteen files: `test_weapons.py` 902,
 `test_entity.py` 745, `test_player.py` 724, `test_hud.py` 333, `test_sound.py` 269,
-`test_sprite.py` 205, `test_frontend.py` 106, `test_irq.py` 80, `test_init.py` 76,
-`test_scroll.py` 62, `test_image_model.py` 30, `test_constants.py` 8, `test_heap_guard.py` 8,
-`test_status.py` 5. Measured 2026-09-07 with
+`test_sprite.py` 205, `test_frontend.py` 106, `test_irq.py` 80, `test_asm_sprite.py` 80,
+`test_init.py` 76, `test_scroll.py` 62, `test_image_model.py` 30, `test_constants.py` 8,
+`test_heap_guard.py` 8, `test_status.py` 5. Measured 2026-09-08 with
 `rm -f build/*.so && find . -name __pycache__ -exec rm -rf {} + && make test`. `make guarded` runs
-the same 3,553 (Darwin/BSD only) and reports **10,804 guarded candidate runs** across its workers —
+the same 3,633 (Darwin/BSD only) and reports **10,972 guarded candidate runs** across its workers —
 every case whose candidate indexes the image with an address it computed.
+
+`test_asm_sprite.py` is the fifteenth file and a different KIND of differential: it compares the asm
+twin in `src/asm/sprite.S` against the C core it stands in for on the target build, rather than the C
+against the original. "On-target performance" below is where that fits.
 
 NOTHING SKIPS ANY MORE. The four skips this file opened with were the gates that arm on the first
 row anyone files, and all four armed in wave 1: `test_status.py::test_every_named_function_is_
@@ -357,15 +361,12 @@ bank so the exclusion cannot go stale.
 
 **The under-budget wait runs through the SCHEDULED WRITE model**, not left unpinned. `render_frame`
 spins on `vbl_tick` until the level-4 handler has counted the third VBL, and nothing inside this
-program moves that counter — so the reconstruction reads it through `sched_poll16` at the original's
+program moves that counter — so the reconstruction reads it through `sched_poll32` at the original's
 own re-read PC (0x1479c) and `test_render_frame_waits_out_the_rest_of_its_frame_budget` supplies the
-handler's store from an external agent, exactly as `test_hud.py` does for the two ACIA waits. Two
-details are this routine's: the compare is a LONG and the kit has only `sched_poll8`/`sched_poll16`,
-so the loop is `sched_poll16`'s shape one width up — one poll an iteration for the clock, then a
-full-width read — which loses that wrapper's CAP and nothing else; and the gate at 0x14786 reads the
-same counter at its own PC and is deliberately NOT a poll. Without those cases the budget of 3 would
-be pinned only from above: a budget of 2 takes the same arm at a tick of 3 and is invisible
-(measured).
+handler's store from an external agent, exactly as `test_hud.py` does for the two ACIA waits. One
+detail is this routine's: the gate at 0x14786 reads the same counter at its own PC and is deliberately
+NOT a poll. Without those cases the budget of 3 would be pinned only from above: a budget of 2 takes
+the same arm at a tick of 3 and is invisible (measured).
 
 | Addr (Ghidra) | Name | Bytes | Status | Verification |
 |---------------|------|-------|--------|--------------|
@@ -1003,19 +1004,25 @@ them, every field tagged `pinned by <test>` or `names.txt, unpinned`, as
 Not this project's to fix, and recorded here so the next agent to touch the kit finds them rather
 than making a fourth copy.
 
+**Two rows are CLOSED BY 49d8eb3** and struck from the table below: a declared wait site now counts
+arrivals with NO SCHEDULE AT ALL (so `test_hud.py`'s two waits state "the key never comes down" and
+"the button is already up" as themselves, rather than carrying a dummy entry to arm the counting),
+and `sched_poll32` exists (so `render_frame`'s LONGWORD wait is one capped call again instead of
+`sched_poll16`'s shape one width up).
+
 | What | Where it is copied | Why it belongs in the kit |
 |---|---|---|
 | `test/test_heap_guard.py` | near-verbatim in `projects/joust`, `projects/zynaps` and here | the file is entirely about the KIT's `tos_malloc_unused` waiver; only the game's name, its bss bounds and the `project.toml` prose differ. The Malloc stub itself is already hoisted (`recreate_kit.stubs.gemdos_malloc_stub`) and this file now calls it |
 | `test/abi.py`'s `register_call_pokes` / `_store_through_a0` | verbatim from `projects/zynaps` | a `move.l <reg>,(a0)+` stub is 68000 encoding, not this game's ABI. What IS this project's is the scratch map around it and the reason the ring cannot hold it |
 | `test/test_constants.py`'s and `test/test_status.py`'s collectors | ported from `projects/bubbleghost` (originally Joust's) | the discovery rules (`MIRRORS`, `ENTRY_PROLOGUES`, the STATUS.md section grammar) are conventions the kit defines; every project restating them is how one project's fix stops being everyone's |
-| an EMPTY schedule counts 0 arrivals at every wait site | `oracle/shim.c`'s arrival counting, keyed on `g_sched_n` | a wait whose input is already present makes no arrival, which is a legitimate case — but with no schedule entry at all the counter never arms, so the candidate's polls are compared against 0 rather than against "none due". `test_hud.py`'s two wait sites carry a DUMMY entry (an arrival that can never come due) to get the count armed, which is a workaround in a battery for a shim behaviour |
-| there is no `sched_poll32` | `tools/recreate_kit/include/sched.h`, which has `sched_poll8` and `sched_poll16` | `render_frame`'s VBL wait compares a LONGWORD (`move.l $17720,d1` @ 0x1479c). `src/sprite.c` spells it as `sched_poll16`'s shape one width up — one poll an iteration for the clock, then a full-width read — which loses that wrapper's own CAP and nothing else. A third width would make the wait one call again |
 | `test/abi.py`'s five stub builders | `register_call_pokes`, `register_dump_pokes`, `extend_call_pokes`, `call_sequence_with_d0_pokes` and the `_stub`/`_jsr` frame under them, all from `projects/zynaps` | none of them is this game's: they are 68000 encodings for driving a register-ABI routine under an oracle, which every project with one needs. What IS this project's is the scratch map they are poked into and the argument for where it sits |
 | `SCC_TRUE` and `addr_sub` | `include/common.h` here; the same two facts in Joust's, Zynaps' and Bubble Ghost's cores under other names | neither is about Flying Shark. `SCC_TRUE` is what a 68000 `Scc` writes and `addr_sub` is a backward pointer step, and `machine.h` already owns `addr_add`, `loop_passes` and `rotate_right32` for exactly that reason. `include/common.h`'s header says so |
 | the staged-file window holds 258,048 bytes, and this program's own boot loads 288,551 | `test/conftest.py`'s three-slice replay, and README.md's "The image model", both of which exist to work around it | `OS_FS_STAGING` runs from 0xc0000 to the stack guard, so a game whose boot chain loads eight files in one go cannot be replayed in one run — the fixture splits `init_load_assets` in two and `main`'s BOOT slice ("Not reconstructed") has no row at all. It is 30,503 bytes short, and everything that would close it is the kit's: a second staging window, or a bigger `OS_IMAGE_SIZE` with the area moved up. `OS_FS_SLOTS` went 8 -> 32 for Zynaps for the same class of reason, so the precedent is a kit constant moving rather than a project working round it |
 | XBIOS `Physbase`/`Logbase` has no `os_*` door | `src/init.c` asks through `include/init.h`'s `fs_physbase()`, which returns `OS_SCREEN_BASE` | every other trap the kit models has a named inline in `os.h` — `os_super`, `os_fopen`, `os_setpalette`, `os_ikbd_out` — so a core reads as what it does. This one is the exception, and a reconstruction that spells the constant is compiling in an answer rather than asking for one: on an ON-TARGET build (the include-path seam) `os_physbase()` would issue the real XBIOS call. It is a two-line inline and needs no shim change; `fs_physbase()` is the one place to swap |
 | XBIOS `Kbdvbase` has no `os_*` door, AND ITS ANSWER IS NOT AN IMAGE OFFSET | `src/init.c`'s `boot_init` asks through `include/init.h`'s `fs_kbdvbase()`, which returns `OS_KBDVBASE`, and then writes TOS's joyvec slot with `wr32(image + joyvec_slot, ...)` | this is a bigger gap than the Physbase row above it and is split from it for that reason. `OS_KBDVBASE` is a small number INSIDE the modeled image, so `image + it` is a legal index; a real `Kbdvbase()` returns a TOS pointer into ROM-owned RAM, which is not an offset into this program's image at all and which `image +` would send somewhere arbitrary. Closing it needs BOTH an `os_kbdvbase()` door and a core that reaches the struct through an absolute-address accessor rather than through `image +` — which is a kit shape (a `mem_wr32(addr)` that is the identity off target) rather than a `#define` |
 | the `Setscreen` ledger event carries ONE base | `tools/recreate_kit/include/os.h`, `os_setscreen` @ os.h:389 | the call takes a logical AND a physical base and the event records only the logical one, so a game that publishes frames by changing the PHYSICAL base — this one does, every frame — has the whole content of the call dropped. A two-argument event would make `render_frame`'s publish comparable off target, and it is the first row of "Unpinned on target" below |
+| `test/asm_twins.py` | verbatim from `projects/zynaps` | it names no game: the differential, the transcription pin and the cost pin are what EVERY asm twin needs, and the file's own header says it belongs in `tools/` beside `asm_twin.py`, which is already there. This copy is deliberately unedited so the day it moves there is a delete rather than a reconciliation |
+| `atari/profile.py`'s parse AND CLOCK halves | the FOURTH copy — `projects/wonderboy`, `projects/zynaps`, `projects/bubbleghost` and now here | `symbol_map`, `write_symbol_file`, `parse_callers`, `pin_text_base`, `base_name` describe HATARI'S OUTPUT FORMAT, and `DEBUGGER_ENTRY_RE`, `CYCLES_PER_VBL`, `absolute_cycle`, `debugger_entries` and the growing-log arrival count describe its CLOCK — neither is about any game. **The duplication has already produced two answers to one physical question**: this copy and Zynaps' spell `CYCLES_PER_VBL` as `512 * 313` (160,256) where Wonder Boy's and Bubble Ghost's derive it as `ST_CPU_HZ / VBL_HZ` (160,212), so a cycles-per-frame figure here is 0.03% off one of the two conventions and nothing says which is meant. `tools/hatari_headless.py` already owns the Hatari-driving primitives and is where both halves belong |
 | `mkprg.py` and `tos.ld` | verbatim in `projects/joust/recreate/atari`, `projects/wonderboy/recreate/atari` and now here | THREE copies of a GEMDOS `.PRG` wrapper and a linker script that know nothing about any game. Both already carried a "shared with" marker naming one sibling; this project's copies name both, which is the convention working and also the reason it does not scale. `tools/recreate_kit/` is where they belong, and each copy's own header says so |
 | `st_build.build()` writes ONE subdirectory, hard-coded as `AUTO\` | `atari/mkfloppy.py`'s `place_directories`, which is `build()` generalised to a mapping of directory to file list | this volume needs `AUTO\` for the program AND `A\` for the game's twenty data files, because the file records spell `A\NAME`. Nothing about a second subdirectory is this game's: the function's own loop over one name becomes a loop over a mapping, and `mkfloppy.py` shrinks back to a file list. Every primitive it uses is `st_build`'s already |
 
@@ -1040,15 +1047,108 @@ Things the differential is structurally blind to, recorded here rather than disc
 | the EASY arm of `difficulty_apply_fire_rates` @ 0x12cb6 | it is four register immediates ahead of the verified entry at 0x12cc8, and `init_stage_state`'s closing `tst.b hard_mode / beq.w $12cb6 / bra.w $12cc8` picks between them. Only the hard arm has a core, so the on-target build calls it on BOTH arms: an easy game gets a 10-frame enemy fire reload where the original gives it 35, and turret hit points of 12 where the original gives 15. Off target nothing notices, because no case enters at 0x12cb6 | porting the easy entry as its own slice — the two share a body and differ in four `move.w`s, so it is one differential over the same table with the other four constants. `atari/README.md`'s "Deliberate divergences" carries it meanwhile |
 | the joystick, end to end | the harness has no chip and no packets, and the EMULATOR cannot press a stick either: Hatari's `--cmd-fifo` carries no joystick event and a key bound to its keyboard-as-joystick emulation is swallowed headless (`tools/hatari_headless.py`; `docs/on-target-execution.md` class 12 is a defect found exactly this way). `atari/smoke.py` exercises the rest of the same path — a real KEY through the real `$118` into `acia_ikbd_isr`, with the byte it filed and the `bclr` it made both asserted — so what is left untested is the IKBD's `$14` mode, the `$FE`/`$FF` packet headers and the two continuation vectors | a person, a stick in port 1 and `bash atari/run.sh`. Nothing else can |
 | everything past the attract screen, on target | no automated check has ever started a game: `frame_loop_once`, its three watched exits and every routine they reach are verified off target and have never run on a 68000. The smoke's own build stops after 200 attract frames | the same person and stick, or a headless check that can cross the fire-button gate — which is the row above |
-| the reconstruction's SPEED | the differential compares memory, and an instruction count is not memory. Measured on target: 15.8 vertical blanks a frame against the original's own three, i.e. 3.2 fps against 16.7 | it is measured (`atari/smoke.py`'s pacing section prints it every run and holds it above the game's own three-blank floor). What does not exist is a campaign to close it — no profile, no asm twin, no measurement of where the frame goes |
+| the reconstruction's SPEED | the differential compares memory, and an instruction count is not memory | it is measured, and the campaign has RUN: 4.56 vertical blanks a frame against the original's own measured 4.00 (1.14x), from 3.40x — see "On-target performance" below for every lever, the NO-GOs included. `atari/profile.py` is the instrument and `atari/smoke.py`'s pacing section prints the pace on every run |
 | the window in which TOS still owns the keyboard | `boot_init` sends the IKBD `$14` command and stores the game's handler into the IMAGE's `$118`; the shim installs the REAL `$118` immediately after that slice returns rather than inside it, so a joystick packet arriving in between is taken by TOS's handler. The model has no window at all, both stores being ordinary image writes | an on-target run that presses the stick during the boot, which is the row above with a harder question attached. It is microseconds and it is not the original's window |
 | real hardware, and a second TOS | every number in `atari/README.md` is Hatari's under TOS 1.04. `docs/on-target-execution.md` class 6's working rule is two ROMs — EmuTOS is forgiving where real TOS is not — and the floppy `atari/mkfloppy.py` writes has been verified by a parser and has not been in a drive | booting `atari/disk/FLYSHARK.ST` on the user's STE, and running `atari/smoke.py` against a second ROM |
 | the two busy-waits whose CAP is spelt IN A CORE | `src/player.c`'s pause key (`for (poll = 0; poll < OS_SCHED_POLL_MAX; poll++)`) and `src/hud.c`'s fire-release wait bound themselves rather than going through a kit helper, so the harness's 4,096-poll give-up is compiled into the TARGET build too — `atari/shim_include/sched.h` can only uncap the helpers, and neither site calls one. On the machine the pause key therefore un-pauses itself after 4,096 reads of `A_joy1_state`, a fraction of a millisecond, where the original spins until the stick moves; and `os_refused` — the harness's refusal tally — is a live statement in shipped code. This is `docs/on-target-execution.md`'s "Two ways a seam leaks the harness into the shipped program", first bullet, and the sibling project shipped the same shape at a high-score prompt before it was found | the fix is in the CORES and belongs to their owner: put both waits behind one give-up helper whose body a target build compiles away, as `projects/zynaps/recreate`'s "THE BUSY-WAIT SEAM" does. The surface that would catch it is a person pressing P on a real machine |
 | the IKBD's mode after the program ends | `boot_init` sends `$14` (report joystick events), which also stops the 6301 sending MOUSE packets, and the original never terminates so it never undoes it. `atari/flyshark_main.c`'s teardown now sends `$1a`/`$08` to put it back — but what a wrong mode looks like is a dead GEM mouse pointer, and no headless check can move a mouse | a person quitting to the desktop and moving the mouse. The trace ledger sees the two commands go out; that they RESTORE anything is the machine's answer, not the ledger's |
 | every seam counter in the PLAY build | `flyshark_main.c` copies the counters into the record only after the frame loop returns, and a play build has no frame limit — so `FILE_OPEN_FAILURES`, `PSG_REFUSED`, `FATAL`, `IMAGE_TAIL_DIRTY` and `IMAGE_GUARD_CHANGED` are live in RAM and never published in the build a person actually plays. Combined with `load_file` having no error handling at all (the original's behaviour, kept), a bad read of a level-2 asset on a real floppy draws the previous buffer with nothing counting it | the smoke build, which does publish them — and `atari/smoke.py --floppy-only`, which judges the play build's FRAME rather than its counters. Closing it properly means a record written at a point a play build reaches |
 | which interrupt level the run is at | the original establishes its own (`move.w #$2300,sr` @ 0x14cce — supervisor, IPL 3); the model has no interrupts, so the pair around the vector installs is deliberately not in the C (`src/init.c`), and the target build keeps whatever SR GEMDOS entered it with. The record now carries `SR_AT_END` so the number is answerable, and nothing asserts it | measuring it on both shores: if TOS enters at a lower IPL than the original chose, the machine takes interrupts the 1988 binary masked, which is the right shape for part of the 5x frame-rate gap and is not otherwise visible |
-| where the on-target frame rate goes | the differential compares memory and an instruction count is not memory, so nothing off target can see it. MEASURED on target during the atari build's review: `-ffreestanding` implies `-fno-builtin`, so `src/sprite.c`'s fixed-size 16-byte `memcpy` in the sprite blitter's innermost loop is a real `jsr` — about 600 cycles to move 16 bytes, ~1,200 calls a frame, roughly a THIRD of every frame — and `-O2 -ffreestanding -fbuiltin` emits four `move.l` instead. The flag is not pulled here: it changes the codegen of all ten cores, which is a performance campaign's first decision rather than part of getting the game to boot | `atari/smoke.py`'s framebuffer identity, which is what says a codegen change altered nothing, plus its pacing section. Both already exist; what does not exist is the campaign |
-| WHEN a headless capture of the title picture lands | the picture is on screen from the boot's copy until the attract screen's first published frame, and off a GEMDOS drive that whole span — 117 KB of sprite bank, the directory fix-up, the per-game reset — can pass in UNDER ONE VERTICAL BLANK. So neither of the two obvious recipes is reliable on its own: polling for the program arms the breakpoint after the window (measured: 2 runs in 3, and the capture is then the attract screen at 4/15 of the palette), and `docs/on-target-execution.md` class 8's stop-then-shoot photographs one blank late, which came back BLACK 1 run in 3. `atari/smoke.py` waits on a beacon the smoke build writes as its first act, refuses the capture if it is already late, and takes BOTH shots — at the trigger and one blank later — scoring the better | it is pinned as far as this project can pin it: three consecutive green runs with both scores printed. What would make it deterministic is a program that HOLDS at that moment until the driver releases it, which is the "poke on the gate's own read" shape from class 12 and is not written here |
+| where the on-target frame rate goes | the differential compares memory and an instruction count is not memory, so nothing off target can see it | `atari/profile.py ours` / `original` / `compare` — the Hatari CPU profiler over a window of the same length on both binaries, which is where every row of "On-target performance" below comes from. What it says now: `render_frame` is 1.36x the original's, the unclipped blitter is at parity by construction (it is the original's own bytes), and the largest single item left is the GATED blitter at 2.9x for 7% of the frame |
+| WHEN a headless capture of the title picture lands | the picture is on screen from the boot's copy until the sprite bank overwrites it, and off a GEMDOS drive that span is a fraction of a second. Neither obvious recipe is reliable on its own: polling for the program arms the breakpoint after the window (measured: 2 runs in 3, and the capture is then the attract screen at 4/15 of the palette), and `docs/on-target-execution.md` class 8's stop-then-shoot photographs one blank late. `atari/smoke.py` waits on the beacon the smoke build writes as its first act, arms on the FOUR BYTES that beacon carries — the image base, which the program had already been writing there — and takes both shots, at the trigger and one blank later, scoring the better. **THE ARMING'S OWN COST WAS THE RACE**, found during the performance campaign: the driver used to locate the program by dumping the whole megabyte and scanning it for the record's magic, and that dump spent enough of the window to come back BLACK about one run in three (measured over seven runs of one binary). Reading the base off the beacon takes the dump off the critical path | it is deterministic now as far as seven runs can say: three consecutive greens after the change, with both scores identical (14 and 15 — the immediate shot IS the torn frame the second one is for). A third shot one blank further was tried and bought nothing, because the shots agree on the outcome every time. What the beacon's base costs is a check of its own: `check_the_record` compares it against the record the same run wrote |
+
+## On-target performance
+
+**The frame is 4.56 vertical blanks against the original's own 4.00 — 1.14x, from 3.40x.** Measured
+on 2026-09-08 with `atari/profile.py`, which boots both binaries on the same Hatari, opens a window
+at the same place in the same screen, and clocks them with the same instrument. Nothing below is an
+estimate: every row is a before/after from that tool, and the NO-GOs are recorded as carefully as
+the GOs because the next agent's first question is which levers are already spent.
+
+**The correctness surface for every row is `atari/smoke.py`'s framebuffer identity** — the frame the
+reconstruction publishes at attract frame 120, against the frame the original publishes there, all
+32,000 bytes. A performance change that moves a pixel is a bug, and that check is what says none of
+these did. `make test` and `make guarded` are the surface for the two that touched a core.
+
+### What the frame cost, lever by lever
+
+The pace is `atari/profile.py pace`: a repeating breakpoint on `render_frame`, over ~120 attract
+frames, past the prescroll. It is a COUNT of vertical blanks and not a stopwatch.
+
+| # | lever | VBL/frame | fps | cycles/frame | verdict |
+|---|---|---|---|---|---|
+| — | the baseline (b8ad1b0) | 13.603 | 3.68 | 2,179,891 | 3.40x the original |
+| 1 | the blitter's inner-loop `memcpy` spelt out (`src/sprite.c`) | 10.516 | 4.75 | 1,685,214 | **GO**, −22.7% |
+| 2a | `-O3` for every core | 8.339 | 6.00 | 1,336,660 | **NO-GO on SIZE**: text 130,560 B, and the floppy drops TWO levels' assets |
+| 2b | `-Os` for every core | 21.164 | 2.36 | 3,391,773 | **NO-GO**, 2.0x WORSE than -O2 |
+| 2c | `-O3 -funroll-loops` for every core | 6.891 | 7.26 | 1,104,250 | **NO-GO on SIZE**: text 143,360 B, four levels' assets dropped |
+| 2d | `-O3` for `src/sprite.c` only | 8.760 | 5.71 | 1,404,161 | GO, superseded by 2e |
+| 2e | `-O3 -funroll-loops --param max-unroll-times=2` for `src/sprite.c` only | 7.744 | 6.46 | 1,241,629 | **GO**, −26.3%, +12,544 B of text |
+| — | (the same flags AFTER lever 3, which is what ships) | — | — | — | +6,144 B: with the twin owning the unclipped path, GCC has four fewer specialised copies of the C blitter to unroll |
+| 3 | the asm twin for the four unclipped sprite blitters | **4.559** | **10.97** | **731,229** | **GO**, −41.1% |
+| 2e′ | lever 2e RE-MEASURED after lever 3, because the twin took the path 2e was chosen for: `src/sprite.c` back at -O2, twin linked | 5.532 | 9.04 | 886,488 | the flags still earn their 6,144 B — **worth 0.97 blanks a frame (21%)** even now that the C blitter they were aimed at runs only the gated path. What they buy today is `render_frame`'s own body, which lives in the same file |
+| — | the original, measured the same way | 4.000 | 12.50 | 641,039 | — |
+
+Two things in that table are worth reading twice.
+
+**The original does not make its own budget either.** `render_frame` waits for the third vertical
+blank of the frame it just published, so `README.md`'s "3 VBL = 16.7 fps" is the BUDGET; measured,
+the shipped binary takes 4.000 blanks on every single one of 129 attract frames, because its own
+work overruns three and it takes the `Vsync` arm. 12.5 fps is the number to be compared against.
+
+**A size budget bounds the flag levers.** The 720 KB floppy has ~20 KB of slack over the -O2 build
+(`atari/mkfloppy.py` refuses to drop the boot's own eight files and drops later levels' tile banks
+instead, saying which). That is what turns 2a and 2c from wins into NO-GOs, and it is why 2e applies
+its flags to ONE file: `atari/profile.py ours` had already said that 77% of the frame is inside
+`src/sprite.c`, so the flags are spent where the cycles are. Every text figure in the table is
+measured on the SAME build shape — the smoke build with the twin linked — so the four are
+comparable; the shipped one is 56,576 B against the campaign's opening 50,688 B, and **all 5,888 of
+that is the flags: the twin itself is 256 bytes SMALLER** than the C it replaces at the call sites
+(832 bytes of object text, against four specialised copies of `blit_sprite_row` that GCC no longer
+has to emit).
+
+### What each lever was
+
+| lever | what changed | what it cost |
+|---|---|---|
+| 1 | `blit_sprite_row`'s `memcpy(spill_plane, plane, …)` is four assignments. `-ffreestanding` implies `-fno-builtin`, so a fixed-size 16-byte `memcpy` was a real `jsr` into `atari/flyshark_backend.c`'s byte loop: 588 cycles a call, 802 calls a frame, 471,898 cycles a frame — 28% of the whole window, and the ONLY `memcpy` call site in the linked program | a core edit; `make test` + `make guarded` green (3,553 at the time), framebuffer identity unchanged |
+| 2e | `atari/build.sh` compiles `src/sprite.c` with `-O3 -funroll-loops --param max-unroll-times=2` and every other core at -O2 | 12,544 B of text; the SOURCE is unchanged, so it is a flag and not a variant |
+| 3 | `src/asm/sprite.S` transcribes the original's own four unclipped blitters (0x153b2 / 0x15408 / 0x154a4 / 0x15586), byte for byte, and `src/sprite.c`'s `BLIT_SPRITE_ROWS_UNCLIPPED` seam calls it in the target build | 832 B of object text, and NET −256 B of PROGRAM text (see above); four gates, each proved able to fail (`src/asm/README.md`) |
+
+### Where the remaining 1.14x is
+
+`atari/profile.py ours` / `original` / `compare`, over a 1000-vblank window (ours 191 frames,
+the original's 250). Per frame, ours against theirs:
+
+| what | ours | the original | note |
+|---|---|---|---|
+| the whole window | 699,208 | 534,278 | 1.31x by this measure, 1.14x by the pace |
+| `render_frame` | 625,662 | 461,206 | 1.36x — everything below is inside it |
+| the unclipped blitter | 230,265 (the twin) | 231,480 | **parity, and the two windows are NOT what says so.** Ours holds 60.2 calls a frame at 3,823 cycles each and the original's 70.0 at 3,308: two windows over the same screen catch different text pages, so the per-frame agreement is 14% fewer calls times 16% more cycles cancelling, and the shipped profile carries no `sprite_blit_w32/w48/w64` row to sum against ours at all. What says parity is the pair of pins in `test/test_asm_sprite.py`: the twin's four bodies are BYTE-IDENTICAL to the .PRG's, and over one staged case clocked on one instrument the twin costs the original's cycles plus a fixed 264-306 of C-ABI frame |
+| `blit_sprite_clipped` (the gated path, still C) | 50,990 | 4,292 | 2.9x per call; 7% of the frame |
+| `Vsync` | 90,653 | not attributed | the pacer's own wait, i.e. the frame's idle |
+| `build_text_display_list` | 28,812 | 16,617 | 1.74x — it is a SHIM routine (`atari/flyshark_main.c`), not a core |
+| `clear_display_list` | 41,396 | 54,187 | **0.77x — ours is faster** |
+| `__mulsi3` | 18,271 | none | 2.6%: `-funroll-loops`' own unrolling prologue in the restore blit's `copy_longs`, which divides to peel |
+
+### What is left, and why it is not done here
+
+| candidate | what it is worth | why it is left |
+|---|---|---|
+| a twin for the four GATED bodies (0x14e1e / 0x14f06 / 0x1505e / 0x15230) | up to ~46,000 cycles a frame (7%) | it is four more transcriptions, and every one of them `btst`s an ABSOLUTE address (`$16426`) once per group — which in a reconstruction is `image base + 0x16426` and cannot be byte-pinned. It would be the first body here whose transcription pin needed an exception, and that case should be made by a measurement rather than by symmetry |
+| `COUNT_BARRIER` / `CURSOR_BARRIER` on `include/common.h`'s `copy_longs` | ~18,000 cycles a frame (the `__mulsi3` row) | the idiom is the kit's and documented (`machine.h`, "WHAT KEEPS A SPELT-OUT COPY RUN A POSTINCREMENT RUN"), but `copy_longs` lives in `include/common.h`, which this campaign did not own. It is one edit and one re-measure |
+| `build_text_display_list` at 1.74x | ~12,000 cycles a frame | it is shim code composed from verified cores, so a twin for it would be transcribing a routine the reconstruction does not have a core for |
+| the last blank: 4.56 → 4.00 | the whole remaining gap | STRUCTURAL. To land on 4 blanks the frame's WORK must fit under four (641,039 cycles), and the original is already at 4.000 with its own work overrunning three — so parity everywhere is what 4.00 costs, not a lever. The distribution says the same thing more usefully: **89 of 127 frames already take 4 blanks, exactly as the original does**; the 35 that take 6 are the attract screen's heavier text page, where the display list is longest |
+
+### What the campaign did NOT pin, and it is named rather than left implicit
+
+Three gaps the review found, each real and each cheaper to record than to close badly.
+
+| gap | why it matters | what would close it |
+|---|---|---|
+| **the `-O3` arm of `src/sprite.c` is pinned by ONE frame** | it is the only file compiled differently on target, it is the most branch-dense core in the program, and `make test` / `make guarded` build the candidate with the KIT's flags — so the target codegen of `blit_sprite_clipped`'s four ladders, the restore path and the tile band is verified by exactly one check: `atari/smoke.py`'s framebuffer identity at attract frame 120. An unrolling defect in an arm the attract screen never reaches leaves no trace anywhere | a second framebuffer anchor at a frame whose display list exercises the clip ladders — or playing past the attract screen at all, which is the row above |
+| **`HOT_CFLAGS` has no build gate** | the diff argues at length that losing `-DFS_ASM_SPRITE` is invisible to every check but the frame rate, and gates it by asking the objects. `HOT_CFLAGS` has exactly that property and no gate: drop it and the frame loses 21% while `make test`, the framebuffer identity and the twin gates all stay green | the only non-vacuous surface is a MEASUREMENT — `atari/profile.py pace` — and a build gate that asserted a code-size floor instead would redden on any legitimate codegen change. So it is recorded rather than gated, and re-running `pace` after any build change is the working rule |
+| **the twin's C ABI is spelt in three places** | `src/sprite.c`'s `extern`, `src/asm/sprite.S`'s `ARG_*` block and `test/test_asm_sprite.py`'s argument tuple must agree in order and count, and nothing compares them. The differential build never compiles the `extern`, so it is exercised by no test at all. `atari/build.sh`'s byte gate covers the ASSEMBLY (the shipped object must equal the blob the tests pinned) but not the C declaration facing it | a prototype in `include/sprite.h` that both the core and the gate read, which is a file this campaign did not own. Until then the failure mode is named here: a twin that gains an argument and a declaration that does not would push the wrong frame, and only the one framebuffer compare could notice |
 
 ## Not reconstructed, and why
 
