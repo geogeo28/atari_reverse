@@ -17,8 +17,11 @@ program out and proving it still runs. It does.
 subsystems rewritten as C and **verified byte-for-byte against the original 68000 code**. The
 pictures above and below are **drawn by that C**, not screenshotted:
 [`gen_readme_assets.py`](gen_readme_assets.py) starts level 1 the way the game does and then plays
-it with the reconstruction's own frame loop — one call into `frame_loop_once` per frame. There is no
-playable `.PRG` yet: that waits on an on-target build rather than on more porting (below).
+it with the reconstruction's own frame loop — one call into `frame_loop_once` per frame. The same
+cores, compiled unchanged for the 68000, are the playable `FLYSHARK.PRG` and the bootable
+`FLYSHARK.ST` under [`recreate/atari/`](recreate/atari/): the frame they publish at attract frame 120
+is the original binary's, byte for byte, at 11.0 frames a second against the original's 12.5
+measured under the same profiler (below).
 
 > **No game data is in this repository.** `bin/` and `out/` are gitignored; bring your own copy of
 > the release.
@@ -208,15 +211,14 @@ in the game can start** ([`notes/sound_engine.md`](notes/sound_engine.md)).
   slice needs the kit to stage eight files in one window rather than seven), three routines whose
   own shape has no checkpoint a slice could stop at (the title flow's spin loops), and two pieces of
   dead code.
-* **Not built.** A playable `.PRG`, which waits on the ON-TARGET BUILD rather than on more porting:
-  the game hangs its screen ring 0x1f900 bytes below whatever `Physbase` answers and hard-codes
-  nothing about where that is, so a `.PRG` needs either an `AUTO\` launch or a low-load stub to get
-  the ring to `$58800` — plus real `Kbdvbase()` and `Physbase()` doors behind
-  `recreate/include/init.h`'s two seams, since neither answer is an offset into the modeled image.
-  And a real `.ST` floppy:
-  `tools/st_build.py` writes one hard-coded `AUTO\`, and this disk needs *two* directories —
-  `AUTO\FLYSHARK.PRG` and `A\` with the 21 data files (650,798 bytes, which does fit a 728,064-byte
-  volume). Nothing has run on real hardware.
+* **Built, not yet played by a human.** [`recreate/atari/`](recreate/atari/) compiles the cores
+  unchanged for the 68000; `smoke.py` pins the framebuffer identity against the original at attract
+  frame 120 on the GEMDOS folder and on the floppy, the trap ledger, the palette and two `Physbase`
+  read-backs; `profile.py` measures 4.56 vertical blanks a frame (11.0 fps) against the original's
+  4.00 (12.5 fps) after the memcpy lever, `-O3` on the blitter file alone and byte-identical asm
+  twins of the four unclipped blitters. Headless Hatari cannot press a joystick, so play past the
+  attract screen, the STE and the easy-difficulty entry are unpinned — see
+  [`recreate/atari/README.md`](recreate/atari/README.md).
 
 ## Notes
 

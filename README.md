@@ -88,8 +88,9 @@ left is that, and `GHOST.LOA` — a second program it loads and calls.
 A vertically-scrolling shooter, taken out of a Gamex hard-disk release where the game is a packed
 stream inside a stub that fakes GEMDOS. **254 functions named · ten of ten subsystems verified ·
 277 verified rows across 3,553 differential tests** — all forty-five calls of the frame loop are
-reconstructed C, and the two frames above were drawn by one call into it per frame. No playable
-`.PRG` yet: that waits on the on-target build.
+reconstructed C, and the two frames above were drawn by one call into it per frame. The same cores
+compiled for the 68000 are a playable `FLYSHARK.PRG` and a bootable `.ST`, byte-identical to the
+original's attract frame at 11.0 fps against its 12.5 — untested under a real stick and on iron.
 → [`projects/flyingshark/README.md`](projects/flyingshark/README.md)
 
 ---
