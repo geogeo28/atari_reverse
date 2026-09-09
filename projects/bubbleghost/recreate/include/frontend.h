@@ -45,6 +45,7 @@
 
 #include "blit.h"    /* the tile geometry a sprite cell IS, and the two screens */
 #include "clib.h"    /* CallerAddressRegisters, the trap save slots, and the C library's cores */
+#include "common.h"  /* GlobalsBase and word_at_base, for the base-register reads below */
 
 /* ================================================================================================
  * The VDI parameter block — `vdi_call` @ 0x168d4 and the twelve entry points that fill it
@@ -71,6 +72,19 @@
  * grown a private copy each under the same name, which is the shape a third copy starts from. */
 static inline int16_t vdi_handle(const uint8_t *image) {
     return (int16_t)be16(image + A_vdi_handle);
+}
+
+/* ...and the same read for a caller that already holds the base — `word_at_base` beside `word_at`,
+ * and named `_at_base` because that is what the two in `include/common.h` and
+ * `trap_save_registers_at_base` are called.
+ *
+ * WHAT IT IS WORTH, off `m68k-elf-objdump -d` rather than from the cycle tables: the image form
+ * needs the address in a register, so GCC spends one `movea.l #<address>,%an` and then reads the
+ * handle through the two-register index — 44 cycles across `frame_poll_input`'s two reads against
+ * 24 here — and the register it burns is one more the prologue's `movem` saves and restores.
+ * `sprite_copy`'s three callers take it for the same reason (../STATUS.md's wave 7b). */
+static inline int16_t vdi_handle_at_base(GlobalsBase globals) {
+    return word_at_base(globals, A_vdi_handle);
 }
 #define A_vdi_work_in   0x2377au  /* word[11] `init_gem_and_screens` fills: ten 1s and a 2 */
 #define A_vdi_work_out  0x23708u  /* word[57]: 45 intout entries then 6 ptsout PAIRS, which is what

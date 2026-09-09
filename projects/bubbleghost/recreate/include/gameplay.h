@@ -511,7 +511,19 @@ void    hud_bonus_bar_shrink(uint8_t *image, uint32_t frame, int16_t units,
  * region, transcribed and read-verified (../STATUS.md). */
 /* `while (Cconis()) Crawcin();` — the flush every console read in this program opens with,
  * here rather than in `src/frontend.c` too: this subsystem's poll is where it is verified,
- * and the menu's four read sites differ from it only in the return addresses they file. */
+ * and the menu's four read sites differ from it only in the return addresses they file.
+ *
+ * `noinline` SO THAT ALL SIX CALLERS PAY THE SAME `jsr`. The four in `src/frontend.c` already did
+ * — there is no LTO — and the two in `src/gameplay.c` did not, so GCC put this body's two
+ * trap-wrapper addresses and its scratch inside `frame_poll_input`, whose prologue then saved
+ * `%d2-%d5/%a2-%a4` (64 cycles in, 68 out) on EVERY frame for a flush that runs on almost none.
+ * Off `m68k-elf-objdump -d` the poll's prologue is now `%d2-%d3/%a2` (32 + 36) against 24 cycles of
+ * re-reading `image` off its own frame for the two GEM calls; two of the seven it used to save,
+ * `%d4`/`%d5`, the body never referenced at all, so part of that 132 was an allocator artefact and
+ * ../STATUS.md's wave 7b says so. **Nothing in this tree reddens if this attribute is deleted** —
+ * `atari/build.sh`'s `MUST_STAY_INLINED` scrape is the shape of the gate that would (inverted), and
+ * that file belongs to another wave in this working tree. */
+__attribute__((noinline))
 void    drain_console_queue(uint8_t *image, uint32_t cconis_return, uint32_t crawcin_return,
                            CallerAddressRegisters saved);
 int16_t frame_poll_input(uint8_t *image, CallerAddressRegisters saved);

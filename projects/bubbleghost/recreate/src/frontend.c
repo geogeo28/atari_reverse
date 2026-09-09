@@ -599,9 +599,10 @@ static void sprite_pxy_to_cell(GlobalsBase globals, int16_t x, int16_t y) {
  * 104. Inlined, the raster copy is 376 cycles a site off the objdump against the 548 it cost before
  * this wave; out of line it is 526, which is most of the lever given back. ../STATUS.md's wave 4
  * records the same shape in the shim's GEM door. */
-static inline __attribute__((always_inline)) void sprite_copy(uint8_t *image, int16_t mode,
+static inline __attribute__((always_inline)) void sprite_copy(uint8_t *image, GlobalsBase globals,
+                                                              int16_t mode,
                                                               CallerAddressRegisters saved) {
-    vro_cpyfm(image, vdi_handle(image), mode, A_blit_pxy, A_mfdb_src, A_mfdb_dst,
+    vro_cpyfm(image, vdi_handle_at_base(globals), mode, A_blit_pxy, A_mfdb_src, A_mfdb_dst,
               saved);
 }
 
@@ -635,7 +636,7 @@ void build_sprite_bank_grab_cells(uint8_t *image, CallerAddressRegisters saved) 
         wr32(globals_at(globals, A_mfdb_src + MFDB_ADDR), 0);  /* 0 = the workstation's own screen */
         wr32(globals_at(globals, A_mfdb_dst + MFDB_ADDR), buffer);
         sprite_pxy_to_cell(globals, x, y);
-        sprite_copy(image, VDI_MODE_S_ONLY, saved);
+        sprite_copy(image, globals, VDI_MODE_S_ONLY, saved);
 
         uint32_t table = cell < (int16_t)SPRITE_BANK_BUBBLE_FIRST
             ? A_ghost_sprite
@@ -655,13 +656,13 @@ void save_sprite_backgrounds(uint8_t *image, CallerAddressRegisters saved) {
     wr32(globals_at(globals, A_mfdb_dst + MFDB_ADDR), be32(globals_at(globals, A_ghost_bg)));
     sprite_pxy_to_cell(globals, word_at_base(globals, A_ghost_x),
                        word_at_base(globals, A_ghost_y));
-    sprite_copy(image, VDI_MODE_S_ONLY, saved);
+    sprite_copy(image, globals, VDI_MODE_S_ONLY, saved);
 
     wr32(globals_at(globals, A_mfdb_src + MFDB_ADDR), 0);
     wr32(globals_at(globals, A_mfdb_dst + MFDB_ADDR), be32(globals_at(globals, A_bubble_bg)));
     sprite_pxy_to_cell(globals, word_at_base(globals, A_bubble_x),
                        word_at_base(globals, A_bubble_y));
-    sprite_copy(image, VDI_MODE_S_ONLY, saved);
+    sprite_copy(image, globals, VDI_MODE_S_ONLY, saved);
 }
 
 /* draw_sprites @ 0x134f6 — the ghost's current frame and the bubble's, OR'd onto the work buffer.
@@ -680,14 +681,14 @@ void draw_sprites(uint8_t *image, CallerAddressRegisters saved) {
     wr32(globals_at(globals, A_mfdb_dst + MFDB_ADDR), 0);
     sprite_pxy_from_cell(globals, word_at_base(globals, A_ghost_x),
                          word_at_base(globals, A_ghost_y));
-    sprite_copy(image, VDI_MODE_S_OR_D, saved);
+    sprite_copy(image, globals, VDI_MODE_S_OR_D, saved);
 
     uint32_t bubble_cell = longword_slot(A_bubble_sprite, word_at_base(globals, A_bubble_frame));
     wr32(globals_at(globals, A_mfdb_src + MFDB_ADDR), be32(image + bubble_cell));
     wr32(globals_at(globals, A_mfdb_dst + MFDB_ADDR), 0);
     sprite_pxy_from_cell(globals, word_at_base(globals, A_bubble_x),
                          word_at_base(globals, A_bubble_y));
-    sprite_copy(image, VDI_MODE_S_OR_D, saved);
+    sprite_copy(image, globals, VDI_MODE_S_OR_D, saved);
 }
 
 /* restore_sprite_backgrounds @ 0x135d2 — undo `draw_sprites`, leaving the work buffer holding the
@@ -699,13 +700,13 @@ void restore_sprite_backgrounds(uint8_t *image, CallerAddressRegisters saved) {
     wr32(globals_at(globals, A_mfdb_dst + MFDB_ADDR), 0);
     sprite_pxy_from_cell(globals, word_at_base(globals, A_ghost_x),
                          word_at_base(globals, A_ghost_y));
-    sprite_copy(image, VDI_MODE_S_ONLY, saved);
+    sprite_copy(image, globals, VDI_MODE_S_ONLY, saved);
 
     wr32(globals_at(globals, A_mfdb_src + MFDB_ADDR), be32(globals_at(globals, A_bubble_bg)));
     wr32(globals_at(globals, A_mfdb_dst + MFDB_ADDR), 0);
     sprite_pxy_from_cell(globals, word_at_base(globals, A_bubble_x),
                          word_at_base(globals, A_bubble_y));
-    sprite_copy(image, VDI_MODE_S_ONLY, saved);
+    sprite_copy(image, globals, VDI_MODE_S_ONLY, saved);
 }
 
 /* ================================================================================================
@@ -1946,68 +1947,69 @@ void game_room_setup(uint8_t *image, uint32_t frame, CallerAddressRegisters save
  * `game_frame_update` returns: the bonus bar's tick, the four ways out of a room, the win test, the
  * room's own ambience and the five calls that put the frame on screen. */
 void game_room_frame_tail(uint8_t *image, uint32_t frame, CallerAddressRegisters saved) {
+    GlobalsBase globals = globals_base(image);
     uint32_t callee = top_callee_frame(frame);
-    int16_t tick = word_at(image, A_bonus_tick);
+    int16_t tick = word_at_base(globals, A_bonus_tick);
 
-    set_word(image, A_bonus_tick, (int16_t)(tick - 1));
+    set_word_at_base(globals, A_bonus_tick, (int16_t)(tick - 1));
     if (tick < 1) {
         int16_t bar;
 
-        set_word(image, A_bonus_tick, TOP_BONUS_TICK_RELOAD);
-        bar = (int16_t)(word_at(image, A_bonus_bar) - 1);
-        set_word(image, A_bonus_bar, bar);
+        set_word_at_base(globals, A_bonus_tick, TOP_BONUS_TICK_RELOAD);
+        bar = (int16_t)(word_at_base(globals, A_bonus_bar) - 1);
+        set_word_at_base(globals, A_bonus_bar, bar);
         if (bar < (int16_t)TOP_BONUS_BAR_FLOOR)
-            set_word(image, A_bonus_bar, TOP_BONUS_BAR_FLOOR);
+            set_word_at_base(globals, A_bonus_bar, TOP_BONUS_BAR_FLOOR);
         hud_bonus_bar_shrink(image, callee, 1, saved);
     }
 
     /* The four exits, each of which steps one square of the grid and says which side of the NEXT
      * room the bubble will arrive through. All four tests are made, so a bubble that has left
      * through two of them at once takes the last one's exit. */
-    if (word_at(image, A_bubble_x) > (int16_t)TOP_EXIT_RIGHT) {
-        set_word(image, A_in_room, 0);
-        set_word(image, A_entry_dir, TOP_ENTRY_DIR_LEFT);
-        set_word(image, A_grid_col, (int16_t)(word_at(image, A_grid_col) + 1));
+    if (word_at_base(globals, A_bubble_x) > (int16_t)TOP_EXIT_RIGHT) {
+        set_word_at_base(globals, A_in_room, 0);
+        set_word_at_base(globals, A_entry_dir, TOP_ENTRY_DIR_LEFT);
+        set_word_at_base(globals, A_grid_col, (int16_t)(word_at_base(globals, A_grid_col) + 1));
     }
-    if (word_at(image, A_bubble_x) < 0) {
-        set_word(image, A_in_room, 0);
-        set_word(image, A_entry_dir, TOP_ENTRY_DIR_RIGHT);
-        set_word(image, A_grid_col, (int16_t)(word_at(image, A_grid_col) - 1));
+    if (word_at_base(globals, A_bubble_x) < 0) {
+        set_word_at_base(globals, A_in_room, 0);
+        set_word_at_base(globals, A_entry_dir, TOP_ENTRY_DIR_RIGHT);
+        set_word_at_base(globals, A_grid_col, (int16_t)(word_at_base(globals, A_grid_col) - 1));
     }
-    if (word_at(image, A_bubble_y) > (int16_t)TOP_EXIT_BOTTOM) {
-        set_word(image, A_in_room, 0);
-        set_word(image, A_entry_dir, TOP_ENTRY_DIR_TOP);
-        set_word(image, A_grid_row, (int16_t)(word_at(image, A_grid_row) + 1));
+    if (word_at_base(globals, A_bubble_y) > (int16_t)TOP_EXIT_BOTTOM) {
+        set_word_at_base(globals, A_in_room, 0);
+        set_word_at_base(globals, A_entry_dir, TOP_ENTRY_DIR_TOP);
+        set_word_at_base(globals, A_grid_row, (int16_t)(word_at_base(globals, A_grid_row) + 1));
     }
-    if (word_at(image, A_bubble_y) < 0) {
-        set_word(image, A_in_room, 0);
-        set_word(image, A_entry_dir, TOP_ENTRY_DIR_BOTTOM);
-        set_word(image, A_grid_row, (int16_t)(word_at(image, A_grid_row) - 1));
+    if (word_at_base(globals, A_bubble_y) < 0) {
+        set_word_at_base(globals, A_in_room, 0);
+        set_word_at_base(globals, A_entry_dir, TOP_ENTRY_DIR_BOTTOM);
+        set_word_at_base(globals, A_grid_row, (int16_t)(word_at_base(globals, A_grid_row) - 1));
     }
 
     /* ...and the fifth way out, which is winning: the last room's own right-hand door. */
-    if (word_at(image, A_room_number) == (int16_t)TOP_ROOM_LAST
-        && word_at(image, A_bubble_x) > (int16_t)TOP_WIN_X) {
-        set_word(image, A_level_complete, 1);
-        set_word(image, A_in_room, 0);
+    if (word_at_base(globals, A_room_number) == (int16_t)TOP_ROOM_LAST
+        && word_at_base(globals, A_bubble_x) > (int16_t)TOP_WIN_X) {
+        set_word_at_base(globals, A_level_complete, 1);
+        set_word_at_base(globals, A_in_room, 0);
     } else {
-        set_word(image, A_level_complete, 0);
+        set_word_at_base(globals, A_level_complete, 0);
     }
 
-    if (word_at(image, A_in_room) == 0)
+    if (word_at_base(globals, A_in_room) == 0)
         return;
-    if ((int32_t)be32(image + A_lives) <= HUD_LIVES_EXHAUSTED)
+    if ((int32_t)be32(globals_at(globals, A_lives)) <= HUD_LIVES_EXHAUSTED)
         return;
 
     /* The room's ambience, re-rolled every 20..69 frames (`../notes/frontend.md` §6). */
     {
-        int16_t countdown = word_at(image, A_ambient_sfx_countdown);
+        int16_t countdown = word_at_base(globals, A_ambient_sfx_countdown);
 
-        set_word(image, A_ambient_sfx_countdown, (int16_t)(countdown - 1));
+        set_word_at_base(globals, A_ambient_sfx_countdown, (int16_t)(countdown - 1));
         if (countdown < 0) {
-            set_word(image, A_ambient_sfx_countdown,
-                     random_scaled(image, A_const_ambient_scale, A_const_ambient_offset,
-                                   saved, RET_TOP_AMBIENCE_RANDOM));
+            set_word_at_base(globals, A_ambient_sfx_countdown,
+                             random_scaled(image, A_const_ambient_scale, A_const_ambient_offset,
+                                           saved, RET_TOP_AMBIENCE_RANDOM));
             play_room_ambience(image, TOP_AMBIENCE_VOLUME);
         }
     }

@@ -618,6 +618,8 @@ int16_t c_write(uint8_t *image, uint16_t handle, uint32_t buffer, int16_t length
                                  * implicit 1 */
 #define FP_MANTISSA_SPLICE 5u   /* `lsr.w #5` on the double's third word: the 11 bits that fill the
                                  * hole the shift above left at the bottom */
+#define FP_DOUBLE_LOW_LONG 4u   /* `4(a0)`: where a double's SECOND longword starts. It is a field
+                                 * offset and not a stride, which is why it is not `LONG_BYTES` */
 #define FP_IMPLICIT_ONE 0x80000000u
 #define FP_SIGN_BIT_HIGH_BYTE 0x80u  /* `btst #7,(a0)`: the sign bit read as the first BYTE's top */
 #define LONG_SIGN_BIT   0x80000000u  /* `bset #31,Dn` — the same bit under its other meaning */
@@ -647,18 +649,22 @@ int16_t c_write(uint8_t *image, uint16_t handle, uint32_t buffer, int16_t length
 #define CCR_V 0x02u
 #define CCR_C 0x01u
 
-static uint32_t fp_mantissa(const uint8_t *image, uint32_t operand) {
-    uint32_t mantissa = (be32(image + operand) << FP_MANTISSA_SHIFT) | FP_IMPLICIT_ONE;
+/* Both read their operand through the POINTER the caller already has, which is the original's own
+ * `movea.l 8(a6),a0`: every routine here reaches its operand's four fields off one address
+ * register rather than re-adding the offset per field. */
+static uint32_t fp_mantissa(const uint8_t *value) {
+    uint32_t mantissa = (be32(value) << FP_MANTISSA_SHIFT) | FP_IMPLICIT_ONE;
 
     return set_low_word(mantissa,
                         (uint16_t)((uint16_t)mantissa |
-                                   (uint16_t)(be16(image + operand + 4) >> FP_MANTISSA_SPLICE)));
+                                   (uint16_t)(be16(value + FP_DOUBLE_LOW_LONG)
+                                              >> FP_MANTISSA_SPLICE)));
 }
 
-static uint16_t fp_exponent(const uint8_t *image, uint32_t operand) {
+static uint16_t fp_exponent(const uint8_t *value) {
     /* `asr.w #4` then `and.w #$7ff`: the arithmetic shift's sign fill lands entirely above the
      * mask, so this is the plain 11-bit exponent field however the sign bit reads. */
-    return (uint16_t)(((int16_t)be16(image + operand) >> FP_EXPONENT_SHIFT) & FP_EXPONENT_BITS);
+    return (uint16_t)(((int16_t)be16(value) >> FP_EXPONENT_SHIFT) & FP_EXPONENT_BITS);
 }
 
 /* The normalise-and-round both packing tails open with: shift the mantissa up until the bit leaving
@@ -855,8 +861,18 @@ void fp_float_to_double(uint8_t *image, uint32_t operand) {
  * exponent 64 above FP_TRUNC_EXPONENT shifts by nothing at all rather than by 64. Reproduced. */
 #define SHIFT_COUNT_MOD 64u
 void fp_double_to_long(uint8_t *image, uint32_t operand) {
-    uint32_t mantissa = fp_mantissa(image, operand);
-    uint16_t exponent = fp_exponent(image, operand);
+    /* ONE POINTER FOR ALL FIVE FIELD ACCESSES. `fp_acc_to_long` is this routine inlined with
+     * `operand` CONSTANT, and against a constant GCC drops the pointer and re-materialises
+     * `move.l #<address>,%dn` in front of an indexed access per field; the four routines whose
+     * operand is a live parameter get the `lea` on their own. The barrier is the mechanism —
+     * `include/common.h`'s `globals_base` argues it. */
+    uint8_t *value = image + operand;
+    uint32_t mantissa;
+    uint16_t exponent;
+
+    REGISTER_BARRIER(value, REGISTER_BARRIER_ADDRESS_CLASS);
+    mantissa = fp_mantissa(value);
+    exponent = fp_exponent(value);
 
     if (exponent == 0) {
         mantissa = 0;
@@ -869,9 +885,9 @@ void fp_double_to_long(uint8_t *image, uint32_t operand) {
             mantissa = count >= 32u ? 0u : mantissa >> count;
         }
     }
-    if (image[operand] & FP_SIGN_BIT_HIGH_BYTE)      /* `btst #7,(a0)`: the double's sign bit */
+    if (value[0] & FP_SIGN_BIT_HIGH_BYTE)            /* `btst #7,(a0)`: the double's sign bit */
         mantissa = -mantissa;
-    wr32(image + operand, mantissa);
+    wr32(value, mantissa);
 }
 
 /* fp_acc_load_long @ 0x154b0 — store a longword in the package's accumulator and widen it there.
@@ -902,8 +918,8 @@ static void fp_add_body(uint8_t *image, uint32_t dst, uint32_t src) {
     /* `major` is whichever operand turns out to be the larger; `minor` is the one that gets shifted
      * down to meet it. They start out as destination and source and are swapped if they are the
      * wrong way round. */
-    uint32_t major_mantissa = fp_mantissa(image, dst);
-    uint16_t major_exponent = fp_exponent(image, dst);
+    uint32_t major_mantissa = fp_mantissa(image + dst);
+    uint16_t major_exponent = fp_exponent(image + dst);
     uint32_t minor_mantissa;
     uint16_t minor_exponent;
     uint16_t dst_sign_word;
@@ -911,8 +927,8 @@ static void fp_add_body(uint8_t *image, uint32_t dst, uint32_t src) {
 
     if (major_exponent == 0)
         major_mantissa = 0;
-    minor_mantissa = fp_mantissa(image, src);
-    minor_exponent = fp_exponent(image, src);
+    minor_mantissa = fp_mantissa(image + src);
+    minor_exponent = fp_exponent(image + src);
     if (minor_exponent == 0)
         minor_mantissa = 0;
 
@@ -971,8 +987,8 @@ void fp_sub(uint8_t *image, uint32_t dst, uint32_t src) {
  * fp_pack_double's round-to-even sees that something was thrown away. A zero exponent on either
  * side short-circuits to a zero result, sign and all. */
 void fp_mul(uint8_t *image, uint32_t dst, uint32_t src) {
-    uint32_t dst_mantissa = fp_mantissa(image, dst);
-    uint16_t exponent = fp_exponent(image, dst);
+    uint32_t dst_mantissa = fp_mantissa(image + dst);
+    uint16_t exponent = fp_exponent(image + dst);
     uint32_t src_mantissa;
     uint16_t src_exponent;
     uint32_t low_product;
@@ -984,8 +1000,8 @@ void fp_mul(uint8_t *image, uint32_t dst, uint32_t src) {
         fp_pack_double_tail(image, dst, 0, exponent);
         return;
     }
-    src_mantissa = fp_mantissa(image, src);
-    src_exponent = fp_exponent(image, src);
+    src_mantissa = fp_mantissa(image + src);
+    src_exponent = fp_exponent(image + src);
     if (src_exponent == 0) {
         fp_pack_double_tail(image, dst, 0, exponent);
         return;
@@ -1058,8 +1074,8 @@ void fp_mul(uint8_t *image, uint32_t dst, uint32_t src) {
 #define FP_DIV_STEPS 32u
 void fp_div(uint8_t *image, uint32_t dst, uint32_t src) {
     /* `<< 32` puts a mantissa where the pair's HIGH longword is; the low one starts empty. */
-    uint64_t remainder = (uint64_t)fp_mantissa(image, dst) << 32;
-    uint16_t exponent = fp_exponent(image, dst);
+    uint64_t remainder = (uint64_t)fp_mantissa(image + dst) << 32;
+    uint16_t exponent = fp_exponent(image + dst);
     uint64_t divisor;
     uint16_t src_exponent;
     uint32_t quotient = 0;
@@ -1068,8 +1084,8 @@ void fp_div(uint8_t *image, uint32_t dst, uint32_t src) {
         fp_pack_double_tail(image, dst, 0, exponent);
         return;
     }
-    divisor = (uint64_t)fp_mantissa(image, src) << 32;
-    src_exponent = fp_exponent(image, src);
+    divisor = (uint64_t)fp_mantissa(image + src) << 32;
+    src_exponent = fp_exponent(image + src);
     if (src_exponent == 0) {
         fp_pack_double_tail(image, dst, 0, exponent);
         return;

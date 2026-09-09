@@ -833,31 +833,34 @@ int16_t frame_step_live_bubble(uint8_t *image) {
  * pulse to a floor of 100 and the gap between pulses grows to 20 frames, so a blown bubble steps
  * 3, 2.5, 2, 1.5, 1 pixels and visibly stalls. */
 void frame_drift_pulse(uint8_t *image) {
-    int16_t pulse = word_at(image, A_drift_pulse);
+    GlobalsBase globals = globals_base(image);
+    int16_t pulse = word_at_base(globals, A_drift_pulse);
     int16_t speed, interval;
 
-    set_word(image, A_drift_vel_x, 0);
-    set_word(image, A_drift_vel_y, 0);
-    set_word(image, A_x_impulse, 0);
-    set_word(image, A_drift_pulse, (int16_t)(pulse - 1));
+    set_word_at_base(globals, A_drift_vel_x, 0);
+    set_word_at_base(globals, A_drift_vel_y, 0);
+    set_word_at_base(globals, A_x_impulse, 0);
+    set_word_at_base(globals, A_drift_pulse, (int16_t)(pulse - 1));
     if (pulse != 0)
         return;
 
-    speed = word_at(image, A_drift_speed);
-    set_word(image, A_drift_vel_x, (int16_t)(word_at(image, A_drift_dir_x) * speed));
-    set_word(image, A_drift_vel_y, (int16_t)(word_at(image, A_drift_dir_y) * speed));
+    speed = word_at_base(globals, A_drift_speed);
+    set_word_at_base(globals, A_drift_vel_x,
+                     (int16_t)(word_at_base(globals, A_drift_dir_x) * speed));
+    set_word_at_base(globals, A_drift_vel_y,
+                     (int16_t)(word_at_base(globals, A_drift_dir_y) * speed));
 
     speed = (int16_t)(speed - DRIFT_SPEED_DECAY);
-    set_word(image, A_drift_speed, speed);
+    set_word_at_base(globals, A_drift_speed, speed);
     if (speed < DRIFT_SPEED_FLOOR)
-        set_word(image, A_drift_speed, DRIFT_SPEED_FLOOR);
+        set_word_at_base(globals, A_drift_speed, DRIFT_SPEED_FLOOR);
 
-    interval = (int16_t)(word_at(image, A_drift_interval) + 1);
-    set_word(image, A_drift_interval, interval);
+    interval = (int16_t)(word_at_base(globals, A_drift_interval) + 1);
+    set_word_at_base(globals, A_drift_interval, interval);
     if (interval > DRIFT_INTERVAL_MAX)
-        set_word(image, A_drift_interval, DRIFT_INTERVAL_MAX);
-    set_word(image, A_drift_pulse,
-             (int16_t)(word_at(image, A_drift_interval) / DRIFT_INTERVAL_DIVISOR));
+        set_word_at_base(globals, A_drift_interval, DRIFT_INTERVAL_MAX);
+    set_word_at_base(globals, A_drift_pulse,
+                     (int16_t)(word_at_base(globals, A_drift_interval) / DRIFT_INTERVAL_DIVISOR));
 }
 
 /* ================================================================================================
@@ -876,7 +879,12 @@ void frame_drift_pulse(uint8_t *image) {
  * EXPORTED, because the front end's menu opens every one of its four key reads with it — the
  * `menu_draw`, `menu_ask_player_count`, `menu_ask_practice_level` and `menu_read_level_tens` slices
  * of `src/frontend.c` each end with one. It is declared in `include/gameplay.h` under this project's
- * rule that a subsystem's own header is where another subsystem reaches it. */
+ * rule that a subsystem's own header is where another subsystem reaches it.
+ *
+ * `include/gameplay.h` declares it `noinline` and says why; the attribute is on the DECLARATION so
+ * that all six callers see the same contract, and so that `atari/build.sh`'s ledger scrapes — whose
+ * "enclosing function" regex reads an attribute line at column 0 as a function head — never see one
+ * in `../src`. */
 void drain_console_queue(uint8_t *image, uint32_t cconis_return, uint32_t crawcin_return,
                          CallerAddressRegisters saved) {
     for (;;) {
@@ -946,8 +954,8 @@ static void reset_game_from_keyboard(GlobalsBase globals) {
 int16_t frame_poll_input(uint8_t *image, CallerAddressRegisters saved) {
     GlobalsBase globals = globals_base(image);
 
-    vq_mouse(image, vdi_handle(image), A_mouse_buttons, A_mouse_x, A_mouse_y, saved);
-    vq_key_s(image, vdi_handle(image), A_key_shift_state, saved);
+    vq_mouse(image, vdi_handle_at_base(globals), A_mouse_buttons, A_mouse_x, A_mouse_y, saved);
+    vq_key_s(image, vdi_handle_at_base(globals), A_key_shift_state, saved);
 
     /* The flush runs only when the PREVIOUS frame left a key behind — `tst.b` on the byte itself,
      * not on the sign-extended word, so any non-zero key arms it. */
