@@ -76,16 +76,17 @@ headless check can reach that. What is left is **iron**, and `GHOST.LOA`, a seco
 
 ### Flying Shark (Taito 1987 / Firebird 1988) — the one still being written
 
-| Take-off, level 1 | Over the jungle |
+| The river, level 1 | Over the carrier, level 2 |
 |:---:|:---:|
-| ![](assets/flyingshark/level1-takeoff.png) | ![](assets/flyingshark/level1-busy.png) |
+| ![](assets/flyingshark/level1-firefight.png) | ![](assets/flyingshark/level2-carrier.png) |
 
 A vertically-scrolling shooter, taken out of a Gamex hard-disk release where the game is a packed
 stream inside a stub that fakes GEMDOS. **254 functions named · ten of ten subsystems verified ·
 277 verified rows across 3,553 differential tests** — all forty-five calls of the frame loop are
-reconstructed C, and the two frames above were drawn by one call into it per frame. The same cores
-compiled for the 68000 are a playable `FLYSHARK.PRG` and a bootable `.ST`, byte-identical to the
-original's attract frame at 11.0 fps against its 12.5 — untested under a real stick and on iron.
+reconstructed C, and the two frames above were drawn by one call into it per frame — as is the whole
+gallery, four stages of it, each staged by the reconstruction's own cores. The same cores compiled
+for the 68000 are a playable `FLYSHARK.PRG` and a bootable `.ST`, byte-identical to the original's
+attract frame at 11.0 fps against its 12.5 — untested under a real stick and on iron.
 → [`projects/flyingshark/README.md`](projects/flyingshark/README.md)
 
 ---

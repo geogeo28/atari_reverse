@@ -9,15 +9,16 @@ floppy release but **"PP"'s Gamex hard-disk install**, in which the game is a pa
 in the DATA of a stub that fakes GEMDOS out of one 600 KB blob — so step 0 was getting the real
 program out and proving it still runs. It does.
 
-| Level 1, flown by the reconstruction | The title picture, as the original's own loader left it |
+| The river on stage 1, flown by the reconstruction | The title picture, as the original's own loader left it |
 |:---:|:---:|
-| ![](../../assets/flyingshark/level1-busy.png) | ![](../../assets/flyingshark/title.png) |
+| ![](../../assets/flyingshark/level1-firefight.png) | ![](../../assets/flyingshark/title.png) |
 
 **Status: named and reconstructed.** 254 functions named in [`names.txt`](names.txt); all ten
-subsystems rewritten as C and **verified byte-for-byte against the original 68000 code**. The
-pictures above and below are **drawn by that C**, not screenshotted:
-[`gen_readme_assets.py`](gen_readme_assets.py) starts level 1 the way the game does and then plays
-it with the reconstruction's own frame loop — one call into `frame_loop_once` per frame. The same
+subsystems rewritten as C and **verified byte-for-byte against the original 68000 code**. Every
+picture on this page except the title is **drawn by that C**, not screenshotted:
+[`gen_readme_assets.py`](gen_readme_assets.py) starts each of the first four stages the way the game
+does and then plays it with the reconstruction's own frame loop — one call into `frame_loop_once`
+per frame, from the take-off to the landing that clears the level. The same
 cores, compiled unchanged for the 68000, are the playable `FLYSHARK.PRG` and the bootable
 `FLYSHARK.ST` under [`recreate/atari/`](recreate/atari/): the frame they publish at attract frame 120
 is the original binary's, byte for byte, at 11.0 frames a second against the original's 12.5
@@ -112,25 +113,62 @@ there rather than trusting this sentence.
 `main` @ 0x15750 is three init calls and then a body of **forty-five `bsr`s and a closing `clr.w`,
 forever**. The whole of that body is ONE verified core — `frame_loop_once` @ 0x1575c — so
 [`gen_readme_assets.py`](gen_readme_assets.py) makes exactly one call into the reconstruction per
-frame to draw the pictures on this page: the level is started by the original under the oracle
+frame to draw the pictures on this page: the stage is started by the original under the oracle
 (`init_stage_state` → `start_level`, stopping one instruction before its tail-call into the sound
 module), and then played frame by frame by the C. Not one pixel comes from the original, and now by
 construction rather than by inspection.
 
-| Take-off, frame 48 | Over the jungle | Over the carrier |
-|:---:|:---:|:---:|
-| ![](../../assets/flyingshark/level1-takeoff.png) | ![](../../assets/flyingshark/level1-busy.png) | ![](../../assets/flyingshark/level1-crowded.png) |
+### The gallery
 
-Two things make those pictures checkable rather than decorative. The frame each one is taken at is
-**searched for, not typed** — the run plays on until the display list carries a stated number of
-live records and refuses to publish if it never does — and the whole set is rendered twice per run
-and refused if the two renderings differ, so nothing on the path may read a clock. The flight is
-flown with the game's own **`HSC` invulnerability cheat** armed, which is `hud.c`'s verified core:
-the death path branches into `restart_level_at_checkpoint`, whose tail has no core and which never
-RETURNS — it ends `bra.w $1575c`, back to the frame loop's own top, unwinding the stack — so a run
-that let the plane die would keep playing frames no machine ever plays. (Measured: with the cheat
-off, this joystick script loses the plane on frame 194.) The run asserts the plane never leaves a
-flying mode, so that seam cannot quietly stop holding.
+Every picture below the first is **drawn by the reconstruction's C**. The stages are reached the way
+the game reaches them: `level_progress_check`'s own level-advance arm walks `level_number` up, then
+`load_level_assets_patch_filenames` writes that stage's five filename digits into the game's file
+records — both verified cores — and the original's `start_level` is run over exactly the files those
+records now name.
+
+| | what is happening, and what drew it |
+|---|---|
+| ![](../../assets/flyingshark/title.png) | **The title picture** — the one picture here the C did *not* draw. `A\FLY_SHK.NEO` exactly where the ORIGINAL's `init_load_assets` copied it, at `Physbase - 0x80`, in the palette the NEO's own header carries. |
+| ![](../../assets/flyingshark/level1-takeoff.png) | **Stage 1, frame 48: the take-off.** The take-off script still holds the controls; the biplane is climbing off the strip and its shadow is walking out from under it. A stated frame, because the moment is what the picture is of. |
+| ![](../../assets/flyingshark/level1-smart-bomb.png) | **The smart bomb.** The first frame the blast reaches step 6 of `blast_offset_tbl`'s fourteen — its fireballs strung across the jungle and the beach, published by `bomb_blast_step` and drawn by `render_frame`. |
+| ![](../../assets/flyingshark/level1-firefight.png) | **Stage 1, the river.** Searched for: five enemy bullets in the air, the player's own on screen, an enemy going up beside the bridge, a dropped power-up falling and a score on the board. |
+| ![](../../assets/flyingshark/level1-landing.png) | **Stage 1 cleared.** The plane back on the strip with its shadow under it — the LAST frame the reconstruction can honestly draw of the level, because the very next one takes `level_progress_check`'s level-advance arm, which in the original never returns. |
+| ![](../../assets/flyingshark/level2-fleet.png) | **Stage 2, the open sea.** 25 of the 91 entity slots alive and eight bullets in the air, with a big green vessel below and a squadron overhead. |
+| ![](../../assets/flyingshark/level2-carrier.png) | **Stage 2, over the carrier.** Two enemies going up under twelve bullets of return fire, with the ship's gun mounts firing back — the busiest frame in the gallery. |
+| ![](../../assets/flyingshark/level3-airfield.png) | **Stage 3, the airfield.** Twenty defenders alive and nine bullets in the air, over the runway and the hangars, with a gunboat in the water at the left. |
+| ![](../../assets/flyingshark/level3-scenery-band.png) | **Stage 3, `level2_scenery_effect`.** The dark grey blocks at the top are a four-tile-wide band the effect blits STRAIGHT onto the draw screen — no display record, no map cell — caught at the first frame it has grown to six whole tile rows. Its name is its `level_number == 2` gate, and that is the game's THIRD stage. |
+| ![](../../assets/flyingshark/level4-jungle.png) | **Stage 4, the jungle.** Two enemies going up under eight bullets of return fire, three gun emplacements dug into the trees and a squadron crossing the top of the screen. |
+| ![](../../assets/flyingshark/attract-credits.png) | **The attract screen's credits page**, composed out of the three calls `title_attract_loop` itself makes — `title_attract_prescroll`, `build_text_display_list` over the credits script at 0x16146, and `render_frame` — all verified cores. |
+| ![](../../assets/flyingshark/attract-hall-of-fame.png) | **HALL OF FAME**, the same three cores over the script at 0x161ce. The six rows are the shipped defaults, and they are simultaneously the text script's own tail — which is why `hiscore_shift_entry_down` rearranging the table rearranges the page. |
+| ![](../../assets/flyingshark/sprites.png) | **The four masked blitters**, one band each: `sprite_blit_w16`, `_w32`, `_w48`, `_w64` drawing eighteen `SPRITES.cru` records — the first that fit each band — onto a screen this script cleared. |
+
+Three things make those pictures checkable rather than decorative. The frame each play picture is
+taken at is **searched for, not typed** — the run plays on until a stated CENSUS holds (bullets in
+flight on both sides, enemies dying, an item dropped, a score on the board, the scenery band's
+height) and **refuses a floor the stage's start already meets**, so a caption cannot outlive a
+change that shifts the run. The whole set is **rendered twice per run and refused if the two
+renderings differ**, so nothing on the path may read a clock. And the flight is flown with the
+game's own **`HSC` invulnerability cheat** armed, which is `hud.c`'s verified core: the death path
+branches into `restart_level_at_checkpoint`, whose tail has no core and which never RETURNS — it
+ends `bra.w $1575c`, back to the frame loop's own top, unwinding the stack — so a run that let the
+plane die would keep playing frames no machine ever plays. (Measured: with the cheat off, an earlier
+joystick script lost the plane on frame 194.) Every frame asserts that the plane is still in a
+flying mode and still inside the middle half of the screen, so neither seam can quietly stop
+holding.
+
+**Stage 5 is not in the gallery, and the reason is the game's own.** `load_level_assets` dispatches
+on the level number, and level 4's arm alone falls into the block at 0x103cc — the *insert disc B*
+prompt, followed by `btst #7,$1777f / beq.s $103d6`, a spin on the fire button that only the IKBD
+can end. `init_stage_state` clears `joy1_state` at its second instruction, so no byte poked before
+the run survives to that spin, and `conftest.started_level` runs the original with no external agent
+to press it. Reaching stage 5 would need the kit's scheduled-write model, which that builder does
+not expose — so the gallery stops at stage 4 rather than placing stage 5's bytes by hand.
+
+**The boss is a scroll position, not a sprite.** `level_progress_check`'s verified body reaches both
+of the level record's triggers on the stage-1 run: the boss trigger (`level_table` +2) draws
+nothing at all — it only raises `player_hit`, which is what stops the enemies firing — and the end
+of the level (+0) starts the clear tune and hands the plane to the fly-off and then the landing
+script. `level1-landing.png` is that ending.
 
 ## Assets and audio
 
@@ -146,13 +184,9 @@ installs, not by guessing at a header ([`notes/assets_survey.md`](notes/assets_s
 | `levels/level_1..5.png` | **all five maps rendered whole**, base tile with its overlay over it, the level's start at the top — 320 × up to 7,392 pixels |
 | `palettes/` + `palettes.txt` | the four sixteen-colour rows the game installs, as swatches and as words |
 
-| The four masked blitters, drawing twelve sprite records |
-|:---:|
-| ![](../../assets/flyingshark/sprites.png) |
-
-That sheet is not from the extractor: it is drawn by `recreate/src/sprite.c`'s own
-`sprite_blit_w16`/`w32`/`w48`/`w64` onto a cleared screen, three records of each width class, so all
-four blitters run.
+The [gallery](#the-gallery)'s `sprites.png` is **not** from that extractor: it is drawn by
+`recreate/src/sprite.c`'s own `sprite_blit_w16`/`w32`/`w48`/`w64` onto a cleared screen, one band
+per width class, so all four blitters run and each band's cell is only as wide as its class needs.
 
 [`tools/extract_audio.py`](tools/extract_audio.py) captures **5 tunes and 13 sound effects** as
 `.ym` and `.wav` by running the original `MODULE.BAK` driver under the same Musashi oracle and
