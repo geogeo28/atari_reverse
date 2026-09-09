@@ -542,6 +542,15 @@ is **1,844 cycles a tick against 1,697, x1.09** in the same window. The three wa
 were 482.2K, 476.8K and 482.2K, each in its own worktree against its own baseline — which is why
 this row exists rather than a sum. **The remaining gap is 6.7K a frame.**
 
+**AND WHERE THE MERGE OF WAVES 6a+6b LEAVES IT — MEASURED THE SAME WAY: 470.4K cycles a frame,
+17.05 fps (284 frames in 1000 vblanks), x1.0075** of the original's 466.9K / 17.18 (286 frames), two
+back-to-back windows on the merged tree at `7cfbfcf` (2026-09-08) reading 470.4K both times, the
+tick 1,750 and 1,755 a tick against the original's 1,700. **The gap is 3.5K a frame, about twice
+the instrument's spread**, and it is the GEM door's translation (~6.7K, which the shipped binary
+does not do) less the leads the port holds elsewhere — the copy runs, the collision probe and the
+sprite protocol are each under the original's own cost. Every smoke was green on this tree:
+`title` 9/9, the `titleisr` control red as designed, `game` 3/3 at both room-frame arrivals.
+
 Every wave below reports its OWN window against its own baseline — wave 2's is 809.2K, waves
 3a and 3b's is 517.4K, wave 4's is 489.1K, wave 5a's is the saved 483.8K — so a figure quoted
 mid-section is that wave's and not this one, and the first measurement below is the pre-wave-1 table
