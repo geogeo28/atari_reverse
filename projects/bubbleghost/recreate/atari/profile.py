@@ -46,11 +46,11 @@ the `frames` mode's refresh and truncation pins. The four that shape the code be
     the whole instrument behind the `frames` mode, which is NOT the profiler.
 
 WHAT THE NUMBERS COVER. `window_cycles` is EVERY profiled region summed, ROM TOS included: the
-original polls its input through the real VDI and we poll ours through `bubble_backend.c`, so a
-figure that quietly dropped ROM would flatter one side and not the other. The per-function table is
-narrower — Hatari attaches cycle totals to SUBROUTINE arrivals only, so a routine entered by
-`bra`/`jmp` carries none of its own and its cost sits in whichever ancestor `jsr`ed to it. Those
-rows show `calls 0`.
+original polls its input through the real VDI and we poll ours through `bubble_os.s`'s GEM door into
+that same ROM, so a figure that quietly dropped ROM would flatter one side and not the other. The
+per-function table is narrower — Hatari attaches cycle totals to SUBROUTINE arrivals only, so a
+routine entered by `bra`/`jmp` carries none of its own and its cost sits in whichever ancestor
+`jsr`ed to it. Those rows show `calls 0`.
 
 THE SOUND TICK IS COSTED OFF A THIRD READING, for the one row that rule makes unmeasurable. The
 200 Hz Timer C handler is reached from the MFP's autovector on BOTH sides, and on the shipped side
@@ -288,12 +288,13 @@ MINIMUM_WINDOW_SPAN = 0.9
 # them must resolve — one that stopped existing (GCC inlined it, `../names.txt` was re-cut) would
 # otherwise drop that routine's cycles in silence, and `symbol_ranges` refuses instead.
 #
-# OURS IS THE TWIN'S RANGES PLUS THE SHIM'S, BECAUSE THE LINK SPELT IT THAT WAY. The handler is
-# `../src/asm/sound_tick.S` now (wave 5b) and it publishes three symbols, all named below; what
-# survives beside them is the shim's own entry, which is the whole of the rest of the tick. The C
-# core it replaces has the shape it always had — every helper it runs is `static` and GCC inlines
-# all of them into `timer_c_sound_isr` — and is named below for the reason the next paragraph but
-# one gives.
+# OURS IS ONE RANGE FOR THE WHOLE TICK, BECAUSE THE LINK SPELT IT THAT WAY. The handler is
+# `../src/asm/sound_tick.S` (wave 5b) and since wave 6a the $114 VECTOR is its head, so
+# `bg_timer_c_entry` covers the count, the transcribed body and the $484 mirror in one span — the
+# twin's other two target symbols are its span BRACKETS, which sit inside that range and which
+# `SPAN_MARKER_RE` above drops from the map for exactly that reason. The C core it replaces has the
+# shape it always had — every helper it runs is `static` and GCC inlines all of them into
+# `timer_c_sound_isr` — and is named below for the reason the next paragraph but one gives.
 #
 # THE LISTS ARE HAND-MAINTAINED AGAINST WHAT THE MAPS SAY TODAY, and that is a live hazard in ONE
 # direction: a name that VANISHES is refused below, but a name that APPEARS is not noticed. A label
@@ -314,20 +315,29 @@ MINIMUM_WINDOW_SPAN = 0.9
 # (../STATUS.md): the two step routines are now inlined into `timer_c_sound_isr`, whose range
 # therefore covers them, and the ISR's chip write is a `move.b` pair the compiler puts inline where
 # `bg_psg_write_super` used to be `jsr`ed. Two more went in wave 4: `bg_timer_c_tick` is DELETED —
-# `bg_timer_c_entry` is the whole tick outside the ISR now — and `bg_write_byte`'s only caller left
+# `bg_timer_c_entry` is the whole tick now — and `bg_write_byte`'s only caller left
 # is `bubble_main.c`'s user-mode `mirror_conterm`, so a tick spends none of it and keeping the name
 # would fold that user-mode traffic into the 200 Hz figure.
 #
-# ...AND WAVE 5b PUT THE HANDLER ITSELF IN ASSEMBLY. `timer_c_sound_isr_asm` is one range like any
-# other: the twin's two SPAN BRACKETS would have split it into three, and `SPAN_MARKER_RE` above
-# drops them from the map instead of this list carrying them. The C core stays in the list though
-# nothing calls it now: it is still linked, its range costs 0, and a build that went back to it
-# would otherwise take its cycles out of this sum with nothing red (atari/build.sh's own gate is
-# the loud half of that — it asks the linked binary which of the two the vector reaches).
+# ...AND WAVE 5b PUT THE HANDLER ITSELF IN ASSEMBLY, WHICH WAVE 6a THEN MADE THE VECTOR.
+# `SPAN_MARKER_RE`'s LOAD-BEARING CONSUMER IS NOW `bg_timer_c_entry`: its 868-byte range holds both
+# of the twin's bracket labels, so a build in which those stopped being dropped — or in which
+# `sound_tick.S` gained a `.globl` of its own — would truncate the whole tick to its ~50-byte
+# prologue and report a 40-fold speedup with nothing red. `timer_c_sound_isr_asm` is gone from this
+# list because the target no longer assembles that entry at all; re-adding it fails the run, which is
+# the right direction. The C core stays in the list though nothing calls it: it is still linked, its
+# range costs 0, and a build that went back to it would otherwise take its cycles out of this sum
+# with nothing red (atari/build.sh's own gate is the loud half of that — it reads the vector's whole
+# routine out of the linked disassembly and refuses a call of any kind, and a prologue that branches
+# round the body).
 SOUND_TICK_SYMBOLS = {
-    OURS: ("bg_timer_c_entry",                                     # bubble_os.s — the WHOLE tick but
-                                                                   # the handler: count, $484 mirror
-           "timer_c_sound_isr_asm",                                # src/asm/sound_tick.S, the handler
+    OURS: ("bg_timer_c_entry",                                     # src/asm/sound_tick.S — the WHOLE
+                                                                   # tick, vector to chain, since the
+                                                                   # entry folded into the twin
+                                                                   # (wave 6a). Its range runs to the
+                                                                   # next symbol, and the twin's two
+                                                                   # span brackets inside it are
+                                                                   # dropped by SPAN_MARKER_RE
            "timer_c_sound_isr",                                    # src/sound.c — linked, uncalled
            "psg_gate", "trap9_psg_handler",                        # the gate those writes used to take
            "bg_super_gate", "bg_super_gate_entry"),                # the `trap #9` under it
@@ -1090,11 +1100,15 @@ def print_ratios(ours, theirs):
     A ROW IS ONLY A RATIO WHERE BOTH SIDES WERE CHARGED. Hatari attaches cycle totals to SUBROUTINE
     arrivals alone, so a routine the two binaries ENTER DIFFERENTLY carries a full total on one side
     and none on the other, and the subtraction between them is arithmetic on an attribution rather
-    than on a cost. `timer_c_sound_isr` is the measured example and it is not a small one: both
-    sides tick 3,329 times in the window, but ours is reached by a `jsr` out of `bg_timer_c_entry`
-    and the shipped one straight off its autovector — whose cycles Hatari leaves in whatever the
-    interrupt landed in. Ranked as a ratio it reads x47.8 and second in the table. So those rows are
-    listed BELOW the ranking, under what they actually are."""
+    than on a cost. `timer_c_sound_isr` was the measured example and it is not a small one: both
+    sides tick 3,329 times in the window, and while ours was reached by a `jsr` out of
+    `bg_timer_c_entry` it carried a full total against a shipped side whose autovectored cycles
+    Hatari leaves in whatever the interrupt landed in — ranked as a ratio, x47.8 and second in the
+    table. **WAVE 6a RETIRED THAT ASYMMETRY** by making our vector the twin itself, so both sides are
+    now autovectored and both leave the tick's cycles in their victims; what our `timer_c_sound_isr`
+    row reports today is the C core sitting linked and UNCALLED, which is 0 against a real shipped
+    total and lands here for the opposite reason. Either way these rows are listed BELOW the ranking,
+    under what they actually are."""
     ranked, incomparable = [], []
     for row in ratio_rows(ours, theirs):
         comparable = min(row.ours_share, row.theirs_share) >= ATTRIBUTED_SHARE
@@ -1127,8 +1141,9 @@ def print_one_side_only(data, other, label):
     THIS IS NOT "WHAT THE SHIM COSTS", and reading it that way over-counts. The set is every name
     the OTHER side's map does not happen to carry, and the two maps are not equally fine: ours is
     the linked ELF (447 symbols), the shipped side's is `../names.txt` (133). So our side's list
-    holds real shim — `bubble_os.s`'s trap doors, `bubble_backend.c`'s stand-ins, the Timer C ISR —
-    beside PORTED GAME CODE our source simply named more finely than the name map did
+    holds real shim — `bubble_os.s`'s trap doors and GEM door, `bubble_backend.c`'s three libc
+    stand-ins, and `bg_timer_c_entry`, which since wave 6a is the whole 200 Hz tick and this side's
+    single largest ours-only range — beside PORTED GAME CODE our source named more finely than the map
     (`game_room_frame_tail` is an un-named slice of the original's branch-entered `game_top_loop`;
     the sound engine's envelope and LFO steps are inside its ISR). The shipped side's list is
     dominated by `vdi_call`, which is the ROM VDI. Subtracting the two totals is therefore not a

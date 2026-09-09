@@ -91,13 +91,15 @@ long  Supexec(void (*routine)(void));                     /* 0x26 */
 
 uint32_t bg_super_gate(uint32_t operation, uint32_t operand, uint32_t value);
 
-/* ...AND THE ONE CALLER THAT DOES NOT NEED IT.
+/* ...AND THE ONE PATH THAT DOES NOT NEED IT — WHICH NO LONGER READS THIS FLAG AT ALL.
  *
  * A 68000 exception handler already runs in supervisor mode, and `bg_timer_c_entry` never lowers the
  * mask the exception raised — so inside the sound ISR both of the things the gate provides are
  * already true: the privilege for $ff8800, and a select-then-data pair no MFP interrupt can land
- * inside (the mask is at the interrupt's own level 6, and the MFP is level 6). So `psg.h`'s door
- * reads the flag below and calls this instead of trapping.
+ * inside (the mask is at the interrupt's own level 6, and the MFP is level 6). That is why the flag
+ * below exists. Since wave 5b nothing C runs inside the interrupt — the 200 Hz handler is
+ * `../src/asm/sound_tick.S`, which writes the two ports with the original's own bare `move.b`
+ * pairs — so NOTHING SETS THE FLAG any more, and `psg.h`'s door reads 0 on every call it ever sees.
  *
  * THAT IS ALSO WHAT THE ORIGINAL'S ISR DOES, which is how this was found rather than guessed: over a
  * 1,000-vblank window its `psg_gate` @ 0x14940 carries 0.7 cycles a tick, because the handler writes
@@ -105,16 +107,20 @@ uint32_t bg_super_gate(uint32_t operation, uint32_t operand, uint32_t value);
  * measurement and it is kept in ONE place, atari/README.md's "Performance" table, which also carries
  * how many writes a tick makes.
  *
- * IF THE ISR IS EVER MADE FAITHFUL ABOUT ITS OWN IPL, THE RAISE HAS TO COME BACK. The original's
- * handler drops IPL 6 -> 5 so that other MFP channels can nest (`../../names.txt`, `cmt 0x1459a`),
- * and only the reconstruction's inability to touch `%sr` from C keeps ours at 6. A build that
- * lowered it would put an IKBD interrupt between the select and the data write, and the byte would
- * go to whatever register that path left selected.
+ * IF THE ISR IS EVER MADE FAITHFUL ABOUT ITS OWN IPL, THE PROTECTION HAS TO COME BACK. The
+ * original's handler drops IPL 6 -> 5 so that other MFP channels can nest (`../../names.txt`,
+ * `cmt 0x1459a`), and ours has never done it — first because C cannot touch `%sr`, and now, the
+ * handler being assembly, as a decision recorded in `../src/asm/sound_tick.S`'s own header. A
+ * build that lowered it would put an IKBD interrupt between the select and the data write, and the
+ * byte would go to whatever register that path left selected; what would have to come back with the
+ * drop is either this gate or a raise of the flag below.
  *
- * THE FLAG IS SET BY `bg_timer_c_entry` AND NOWHERE ELSE, so a door reached from user code always
- * reads 0. A flag wrongly left set would not be a quiet wrong answer either: the next user-mode
- * write to $ff8800 is a bus error, which `smoke.py`'s fault scan is. What has NO surface on target
- * is the byte pair itself — see ../STATUS.md, "Performance".
+ * NOTHING SETS THE FLAG, so a door reached from user code always reads 0, and the branch it arms is
+ * dead by construction rather than by argument. It is kept rather than deleted because it is what
+ * the seam would need back the day the IPL drop is made faithful — and because a flag wrongly left
+ * set is not a quiet wrong answer either: the next user-mode write to $ff8800 would be a bus error,
+ * which `smoke.py`'s fault scan is. What has NO surface on target is the byte pair itself — see
+ * ../STATUS.md, "Performance".
  *
  * WHAT THE FLAG SELECTS is `psg.h`'s own two stores rather than a routine here: an untrapped write
  * is a `move.b` pair and nothing else, and a `jsr` around it was 90 of its 100 cycles. */
@@ -129,9 +135,10 @@ void     bg_write_long(uint32_t address, uint32_t value);
 void     bg_write_byte(uint32_t address, uint8_t value);
 
 /* The two exception entries this build installs. The Timer C one is the WHOLE 200 Hz tick — the
- * count, this flag, the verified `timer_c_sound_isr` in ../src/sound.c and the $484 mirror —
- * because the C half it used to `jsr` to spent most of its own 280 cycles on plumbing, and the
- * tick's shim went 428 cycles to ~280 when it went (../STATUS.md, wave 4).
+ * count, the handler and the $484 mirror — and it is NOT IN `bubble_os.s`: it is the head of
+ * `../src/asm/sound_tick.S`, so the vector falls straight into the transcribed handler instead
+ * of `jsr`ing to it. Two waves of glue went that way (428 cycles a tick to ~280 in wave 4, 356 to
+ * 260 in wave 6a); `atari/build.sh` reads the folded routine back out of the linked disassembly.
  *
  * `bg_timer_c_entry` does NOT `rte`. The original's handler chains: it pushes TOS's own saved $114
  * vector and `rts`es, leaving the exception frame for TOS's handler to return from, so the 200 Hz

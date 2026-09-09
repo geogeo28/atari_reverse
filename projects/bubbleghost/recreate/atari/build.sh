@@ -120,7 +120,21 @@ IMG_BYTES=$(wc -c < "$DISK/c/GHOST.IMG" | tr -d ' ')        # BSD wc pads with s
 LOAD_BASE=$(sed -n 's/^load_base *= *\(0x[0-9a-fA-F]*\).*/\1/p' "$REC/project.toml")
 [ -n "$LOAD_BASE" ] || { echo "ERROR: no load_base in $REC/project.toml"; exit 1; }
 DEF="$DEF -DPROGRAM_BYTES=$IMG_BYTES"
-GLOBALS_LOAD_BASE=$(sed -n 's/^#define BG_LOAD_BASE *\(0x[0-9a-fA-F]*\).*/\1/p' "$REC/include/globals.h")
+# ONE SCRAPER FOR A C `#define`, because FOUR sites in this file want it and a copy each is how they
+# drift (wave 4's review found a third hand-written copy of this shape already drifted from
+# the other two). The `u` suffix is OPTIONAL, because the kit spells `GEM_VDI 0x73u` and
+# `VDI_CONTRL_SRC_MFDB 7` — and THE VALUE IS ANCHORED, because making `u` optional on its own turns
+# this scrape from fail-closed to fail-OPEN. With `u` mandatory, `#define VDI_PB_PTSOUT 4 + 1`
+# matched nothing and the empty-scrape guards below reddened; optional, it scrapes the leading `4`,
+# compares equal to the assembly's 4, and prints a green line over a value that is really 5. So what
+# may follow the digits is pinned too: an optional u/U, then end of line or whitespace or a comment.
+# `printf '%d'` cannot catch this — a truncated numeric prefix is still a number.
+scrape_c_define() {   # <header> <name> -> its value as written, or nothing
+  sed -n "s|^#define $2  *\([0-9a-fA-FxX][0-9a-fA-FxX]*\)[uU]\{0,1\}\([ 	]*\(/\*.*\)\{0,1\}\)\{0,1\}\$|\1|p" "$1"
+}
+
+GLOBALS_LOAD_BASE=$(scrape_c_define "$REC/include/globals.h" BG_LOAD_BASE)
+[ -n "$GLOBALS_LOAD_BASE" ] || { echo "ERROR: no BG_LOAD_BASE in $REC/include/globals.h"; exit 1; }
 [ "$((GLOBALS_LOAD_BASE))" = "$((LOAD_BASE))" ] || {
   echo "ERROR: project.toml's load_base ($LOAD_BASE) and include/globals.h's BG_LOAD_BASE"
   echo "       ($GLOBALS_LOAD_BASE) disagree, so the staged image and the cores' A_* addresses are"
@@ -141,7 +155,7 @@ OS_RESERVE=$(sed -n 's/^ *STACK_RESERVE *= *\([0-9][0-9]*\).*/\1/p' "$HERE/bubbl
 # `bubble_os.s`'s handler dispatches on them and `shim_include/tos.h`'s callers pass them; a
 # disagreement about which operation is 2 would store a PSG register number to an address.
 for GATE in PSG_WRITE PSG_READ STORE8; do
-  FROM_H=$(sed -n "s/^#define BG_GATE_$GATE  *\([0-9]*\)u.*/\1/p" "$HERE/shim_include/tos.h")
+  FROM_H=$(scrape_c_define "$HERE/shim_include/tos.h" "BG_GATE_$GATE")
   FROM_S=$(sed -n "s/^ *GATE_$GATE *= *\([0-9]*\).*/\1/p" "$HERE/bubble_os.s")
   [ -n "$FROM_H" ] && [ -n "$FROM_S" ] || {
     echo "ERROR: the gate operation BG_GATE_$GATE is missing from tos.h ('$FROM_H') or bubble_os.s"
@@ -152,38 +166,25 @@ for GATE in PSG_WRITE PSG_READ STORE8; do
 done
 echo ">> the supervisor gate's 3 operations agree between tos.h and bubble_os.s"
 
-# ---- ...and the tick still mirrors $484 out to the machine ---------------------------------------
-# ...and that the mirror is still that store, INSIDE THE TICK. The tick is the only writer of $484 on
-# target after the boot and nothing else in this tree watches an instruction in this file — and a
-# file-wide grep would be satisfied by the store having been moved into some routine the interrupt
-# never reaches, which is the same hole `assert_trap_registers.sh` opens with "routine by routine and
-# not file-wide". The scrape is therefore the `bg_timer_c_entry:` label to the NEXT column-0 label.
-# `mirror_conterm`'s one-shot poke at PHASE_GEM_OPEN already leaves the machine byte at 0, and
-# `../src/sound.c` clears the image byte every tick, so smoke.py's CONTERM_AT_ANCHOR check passes
-# whether or not the per-tick mirror runs: this gate is the only thing that can see it go.
-CONTERM_MIRROR=$(awk '/^bg_timer_c_entry:/ {inside = 1; next}
-                      /^[A-Za-z_][A-Za-z_0-9]*:/ {inside = 0}
-                      inside' "$HERE/bubble_os.s" \
-                 | grep -c '^ *move\.b  *CONTERM(%a0),CONTERM *|' || true)
-[ "$CONTERM_MIRROR" = "1" ] || {
-  echo "ERROR: 'move.b CONTERM(%a0),CONTERM' was scraped $CONTERM_MIRROR times INSIDE"
-  echo "       bg_timer_c_entry in bubble_os.s, not once. That store IS the key click actually"
-  echo "       stopping; losing it — or moving it to a routine the 200 Hz interrupt never reaches —"
-  echo "       is a silent regression no screenshot and no differential can see."; exit 1; }
-echo ">> the 200 Hz tick still mirrors \$484 out to the machine"
-
 # ---- ...and the NUMBERS bubble_os.s shares with a C header are ONE set of numbers ---------------
-# Fourteen entries, each `<asm name>:<C name>:<C file>`. The two PSG ports: the trapped write is
-# bubble_os.s's `bg_super_gate_entry` and the ISR's untrapped one is `psg_untrapped_write` in
+# Thirteen entries, each `<asm name>:<C name>:<C file>`. The two PSG ports: the trapped write is
+# bubble_os.s's `bg_super_gate_entry` and the UNTRAPPED one is `psg_untrapped_write` in
 # shim_include/psg.h; they address the same chip, so a disagreement writes a sound register to
 # whatever else lives at the address. (`PSG_REG_MASK` is deliberately NOT here: only the trapped door
-# masks, for the reason psg.h's header gives.) And $484, TOS's key-click byte: the 200 Hz tick's last
-# act is `move.b CONTERM(%a0),CONTERM`, which mirrors the byte the VERIFIED core cleared in the image
-# out to the machine — so the address is spelt once in the core header the ISR reads it through and
-# once on target, and a disagreement would read one byte of the image and write a different byte of
-# TOS's low memory two hundred times a second. It is in assembly at all because the C spelling
-# (`*(volatile uint8_t *)TOS_CONTERM = ...`) compiles to that same one instruction and warns on every
-# build.
+# masks, for the reason psg.h's header gives.) **THE UNTRAPPED DOOR IS UNREACHED SINCE WAVE 5b** —
+# it is guarded by `bg_in_timer_c`, which nothing sets now that the 200 Hz handler is assembly and
+# writes the two ports itself. It is pinned anyway, and the ports doubly so: those five bare
+# `move.b` pairs in `../src/asm/sound_tick.S` are the ones the chip really sees, and what holds
+# THEM is the transcription pin (the same two numbers, `.equ`'d in that file and held to psg.h by
+# test/test_constants.py).
+#
+# $484 IS NO LONGER ONE OF THEM, AND THAT IS ONE SPELLING FEWER RATHER THAN ONE PIN FEWER. The 200 Hz
+# tick's `$484` mirror moved into `../src/asm/sound_tick.S` with the vector itself (wave 6a), where
+# the store's operand IS that file's `TOS_CONTERM` equate — the same name the verified core header
+# spells, held equal to it by test/test_constants.py over the assembled object. What this build adds
+# on top is the conterm-mirror gate after the link, which builds its search pattern out of
+# `../include/sound.h`'s own value: the two languages are compared there, against the instruction
+# that ships, rather than against a second `= 0x484` nobody executes.
 #
 # AND THE ELEVEN THE GEM DOOR IS BUILT OUT OF. `bg_gem_dispatch` is hand-written 68000 (wave 5a), so
 # the selector it puts in `d0`, the `contrl` slots it patches, the opcode it dispatches on, the
@@ -193,10 +194,10 @@ echo ">> the 200 Hz tick still mirrors \$484 out to the machine"
 # `contrl` address — so a slot index that moves reds the build instead of making the door patch the
 # wrong two words. The two `_PB_` entries are the LAST index of each block, and the door derives
 # each block's length as one more than it.
+#
 SHARED_NUMBERS=0
 for PORT in PSG_SELECT:BG_PSG_SELECT:"$HERE/shim_include/psg.h" \
             PSG_DATA:BG_PSG_DATA_OFFSET:"$HERE/shim_include/psg.h" \
-            CONTERM:TOS_CONTERM:"$REC/include/sound.h" \
             GEM_VDI:GEM_VDI:"$KIT/include/os.h" \
             GEM_AES:GEM_AES:"$KIT/include/os.h" \
             VDI_VRO_CPYFM:VDI_VRO_CPYFM:"$KIT/include/os.h" \
@@ -217,14 +218,7 @@ for PORT in PSG_SELECT:BG_PSG_SELECT:"$HERE/shim_include/psg.h" \
   # natural next edit. A `|` comment is this file's line-end, so it is what may follow the digits.
   # (`@` is the delimiter, because `|` is the pattern's own line-end comment character.)
   FROM_S=$(sed -n "s@^ *${PORT%%:*} *= *\([0-9a-fA-FxX][0-9a-fA-FxX]*\)\([ 	]*\(|.*\)\{0,1\}\)\{0,1\}\$@\1@p" "$HERE/bubble_os.s")
-  # The `u` suffix is OPTIONAL, because the kit spells `GEM_VDI 0x73u` and `VDI_CONTRL_SRC_MFDB 7`
-  # — and THE VALUE IS ANCHORED, because making `u` optional on its own turns this scrape from
-  # fail-closed to fail-OPEN. With `u` mandatory, `#define VDI_PB_PTSOUT 4 + 1` matched nothing and
-  # the empty-scrape guard below reddened the build; optional, it scrapes the leading `4`, compares
-  # equal to the assembly's 4, and prints the green line over a value that is really 5. So what may
-  # follow the digits is pinned too: an optional u/U, then end of line or whitespace or a comment.
-  # `printf '%d'` cannot catch this — a truncated numeric prefix is still a number.
-  FROM_H=$(sed -n "s|^#define $C_NAME  *\([0-9a-fA-FxX][0-9a-fA-FxX]*\)[uU]\{0,1\}\([ 	]*\(/\*.*\)\{0,1\}\)\{0,1\}\$|\1|p" "$C_FILE")
+  FROM_H=$(scrape_c_define "$C_FILE" "$C_NAME")
   # An EMPTY scrape is refused first, because `printf '%d' ""` is 0 with exit status 0 on the bash
   # this runs under — two missed patterns would otherwise agree at zero and the gate would print its
   # green line over nothing. Past that, both are normalised to decimal so 0x2 and 2 compare equal,
@@ -248,7 +242,10 @@ done
 # byte stores, select before data. The equality above pins the numbers; this pins that they are what
 # the store reaches, which is the half no other surface has — the differential compiles the kit's
 # psg.c and not this header, and STATE.BIN records nothing about the chip. A rotted `sed` scrapes
-# empty, which is not the expected text either, so the check fails closed.
+# empty, which is not the expected text either, so the check fails closed. **WHAT IT DOES NOT COVER
+# is the tick**: since wave 5b the 200 Hz handler reaches the chip through its own transcribed
+# `move.b` pairs and not through this door at all, so deleting those five pairs from
+# `../src/asm/sound_tick.S` is caught by the transcription pin and by nothing here.
 # THE WHOLE STORE LINE IS PINNED, NOT ONLY ITS TARGET. A first draft scraped the destination alone
 # (`... \(.*\) = .*;`), which swallowed the value expression — so `(uint8_t)(reg & 15)` in the select
 # store passed this gate green, and psg.h's whole argument for NOT masking (the original's ISR does
@@ -274,8 +271,8 @@ PSG_TRAPPED_MASKS=$(grep -c '^ *andi\.l  *#PSG_REG_MASK,%d1$' "$HERE/bubble_os.s
   echo "       in bubble_os.s, not once. The TRAPPED door is where this build's register mask lives"
   echo "       (shim_include/psg.h's header argues why the untrapped one has none); losing it makes"
   echo "       the two doors agree where the original's two do not."; exit 1; }
-echo ">> bubble_os.s's $SHARED_NUMBERS shared numbers agree with their C headers, the ISR's store" \
-     "is those 2 stores and nothing else, and only the trapped door masks"
+echo ">> bubble_os.s's $SHARED_NUMBERS shared numbers agree with their C headers, the untrapped" \
+     "door's store is those 2 stores and nothing else, and only the trapped door masks"
 
 # ---- ...and the GEM door's C ARGUMENT LAYOUT, which is the number the loop above cannot see -----
 # `bg_gem_dispatch` is assembly and reads its three arguments at fixed `%sp` offsets (`ARG_MEM = 4`,
@@ -393,13 +390,21 @@ for source in $ASM_CORES; do
   CORE_OBJECTS="$CORE_OBJECTS $object"
 done
 
-# ---- the sound tick is ONE symbol, because atari/profile.py measures it as one -------------------
-# `SOUND_TICK_SYMBOLS` sums the profiler's per-ADDRESS rows over `timer_c_sound_isr`'s range, which
-# is [its symbol, the next symbol above it). Every helper the 200 Hz handler runs is `static` and
-# GCC inlines all of them, so that range IS the handler. profile.py refuses a name that VANISHES
-# from the map and cannot see one that APPEARS — and a helper that stopped being inlined would both
-# take its own cycles out of the sum and cut the handler's range short at itself, so the tick would
-# read low twice over with nothing red. `static inline` is a hint; this is the assertion.
+# ---- the C sound tick is ONE symbol, because atari/profile.py measures it as one -----------------
+# `SOUND_TICK_SYMBOLS` sums the profiler's per-ADDRESS rows over a range [symbol, the next symbol
+# above it), and `../src/sound.c`'s `timer_c_sound_isr` is one of the ranges it sums on OUR side —
+# not because the interrupt runs it (since wave 5b it runs the asm twin, and since wave 6a the
+# vector IS the twin) but because it is still LINKED, and a build that somehow reached it again must
+# show the cycles rather than hide them. For that reading to mean "the C core cost nothing" it has to
+# cover the WHOLE C core: every helper the handler runs is `static` and GCC inlines all of them, so
+# the range IS the handler. profile.py refuses a name that VANISHES from the map and cannot see one
+# that APPEARS — a helper that stopped being inlined would take its own cycles out of the sum AND cut
+# the core's range short at itself, so the row would read low twice over with nothing red.
+# `static inline` is a hint; this is the assertion. (`psg_untrapped_write` is in the list because it
+# inlines into the SAME C core: out of line it would cut that core's range short at itself just as
+# the two step routines would. It is NOT there for the tick's own cost — since wave 5b the tick runs
+# no C at all — so a build that put it out of line wants the inlining restored, not a new entry in
+# SOUND_TICK_SYMBOLS, which would fold every user-mode chip write into the 200 Hz figure.)
 # NOT `nm | grep -q`: this file runs under `set -o pipefail`, `grep -q` closes the pipe on its FIRST
 # match, and the SIGPIPE that kills `nm` then makes the pipeline's status 141 — so the one case the
 # gate exists to catch is the one case the `&&` does not fire on. Measured here, with the symbol
@@ -410,9 +415,11 @@ for NAME in $MUST_STAY_INLINED; do
   OUT_OF_LINE=$(printf '%s\n' "$OBJECT_TEXT_SYMBOLS" | grep -c "^$NAME\$" || true)
   [ "$OUT_OF_LINE" = "0" ] || {
     echo "ERROR: $NAME has an out-of-line body in this build ($OUT_OF_LINE object(s)). It is one of"
-    echo "       the routines atari/profile.py's sound-tick range assumes is inlined into"
-    echo "       timer_c_sound_isr, so the tick would now be measured over less code than it runs."
-    echo "       Either restore the inlining or add $NAME to SOUND_TICK_SYMBOLS and re-measure."
+    echo "       the routines atari/profile.py's sound-tick ranges assume is inlined into"
+    echo "       timer_c_sound_isr, so that row would now be measured over less code than it holds."
+    echo "       RESTORE THE INLINING. Adding \$NAME to SOUND_TICK_SYMBOLS is not the fix: its range"
+    echo "       would then fold whatever else calls it — every user-mode chip write, in"
+    echo "       psg_untrapped_write's case — into the 200 Hz figure."
     exit 1; }
 done
 # ...and the gate is only worth its line if it can see a symbol at all, so the scrape's own output is
@@ -548,46 +555,226 @@ ENTRY=$(m68k-elf-nm "$BUILD/bubble.elf" | awk '$3=="_start"{print $1}')
 DISASSEMBLY="$BUILD/bubble.dis"
 m68k-elf-objdump -d "$BUILD/bubble.elf" > "$DISASSEMBLY"
 
-# ---- the asm twin is what the 200 Hz vector reaches, and the C core it replaces is not ----------
-# ASKED OF THE LINKED BINARY, because the way this substitution fails is SILENT: `bg_timer_c_entry`
-# calling `timer_c_sound_isr` again would boot, play, sound identical and cost 440 cycles a tick
-# more — the C core is still linked (both are, and both are correct), so nothing else here would
-# notice. Two counts rather than one: a build that called NEITHER would leave the tick doing nothing
-# at all, which is also a clean-looking screenshot for the length of a menu.
+# ---- the 200 Hz vector IS the asm twin, read back out of the linked binary ----------------------
+# THE WHOLE TICK IS ONE ROUTINE NOW. `bg_timer_c_entry` is the head of `../src/asm/sound_tick.S`
+# (wave 6a): the machine's $114 vector saves the register set, loads the image base, FALLS THROUGH
+# into the 792 transcribed bytes, mirrors $484 out to the machine and `rts`es into TOS's own
+# handler. Nothing about that shape is visible to any differential — it is interrupt glue,
+# `docs/on-target-execution.md` class 3 — and every way it can fail is silent: calling the C core
+# again would boot, play and sound identical at 440 cycles a tick more; losing the mirror would
+# leave TOS's key click on with every check in the tree green; a vector that fell out before the
+# body would leave the tick doing nothing at all, which is also a clean-looking screenshot for the
+# length of a menu.
 #
-# SCOPED TO `bg_timer_c_entry`'s OWN BLOCK, label to next label, for the CONTERM_MIRROR gate's
-# reason and for one more: the harness glue in ../src/sound.c is linked into this .PRG too, and
-# `g_timer_c_sound_isr` is a `bra` into the core while `g_timer_c_sound_isr_ticks` reaches it
-# through `%a2` — so a file-wide count would be asserting GCC's tail-call decisions, and would
-# refuse a correct build the day one of them became a `jsr`.
-#
-# `jsr|bsr`, not `jsr`: the two call forms assemble differently and a `bsr` to the C core would read
-# as "never called" — a FALSE PASS, which is the direction that matters here.
-TICK_ENTRY_BLOCK=$(awk '/^[0-9a-f]+ <bg_timer_c_entry>:/ {inside = 1; next}
-                        /^[0-9a-f]+ <[A-Za-z_]/ {inside = 0}
-                        inside' "$DISASSEMBLY")
-[ -n "$TICK_ENTRY_BLOCK" ] || {
-  echo "ERROR: bg_timer_c_entry has no block in $DISASSEMBLY — the scrape is broken and a clean"
-  echo "       report from this gate would mean nothing"; exit 1; }
-TICK_TWIN_CALLS=$(printf '%s\n' "$TICK_ENTRY_BLOCK" \
-                  | grep -cE '(jsr|bsr).*<timer_c_sound_isr_asm>' || true)
-TICK_CORE_CALLS=$(printf '%s\n' "$TICK_ENTRY_BLOCK" \
-                  | grep -cE '(jsr|bsr).*<timer_c_sound_isr>' || true)
-[ "$TICK_TWIN_CALLS" = "1" ] && [ "$TICK_CORE_CALLS" = "0" ] || {
-  echo "ERROR: bg_timer_c_entry reaches timer_c_sound_isr_asm $TICK_TWIN_CALLS time(s) and the C"
-  echo "       core timer_c_sound_isr $TICK_CORE_CALLS time(s); this build wants 1 and 0."
-  echo "       ../src/asm/sound_tick.S is the hand-written transcription that replaces the core on"
-  echo "       target (test/test_sound_asm.py is what verifies it equals the core), and"
-  echo "       bg_timer_c_entry in bubble_os.s is its one call site."; exit 1; }
+# SO THE ROUTINE ITSELF IS THE SCRAPE, entry label to its ONE `rts` — which is the whole routine
+# because the transcribed body contains no `rts` of its own, and is a tighter scope than the
+# label-to-next-label form the C door's gates use (this routine HAS interior labels: the twin's two
+# span brackets sit inside it).
+# ONE SPELLING OF EACH SYMBOL for the checks below and the messages they print, so re-pointing the
+# gate at a renamed vector is one edit rather than a dozen.
+TICK_VECTOR=bg_timer_c_entry
+TICK_BODY=timer_c_sound_isr_body
+TICK_BODY_END=${TICK_BODY}_end
+TICK_VECTOR_ROUTINE=$(awk -v sym="$TICK_VECTOR" '$0 ~ "^[0-9a-f]+ <" sym ">:" {inside = 1}
+                                                 inside {print}
+                                                 inside && /[[:space:]]rts$/ {exit}' "$DISASSEMBLY")
+[ -n "$TICK_VECTOR_ROUTINE" ] || {
+  echo "ERROR: $TICK_VECTOR has no routine in $DISASSEMBLY — the scrape is broken and a clean"
+  echo "       report from every check below it would mean nothing"; exit 1; }
+
+# ...AND THE SCRAPE REALLY STOPPED AT THIS ROUTINE'S OWN `rts`, which the `-n` test above cannot
+# say: the awk prints to END OF FILE when there is no `rts` to stop it, so a vector that left by
+# `rte` instead would hand every check below a window running through its NEIGHBOURS, and each of
+# them would then be answering about whatever the linker placed next. Two assertions close it — the
+# last line IS the `rts`, and the only labels inside are this routine's own three.
+TICK_VECTOR_LAST=$(printf '%s\n' "$TICK_VECTOR_ROUTINE" | awk -F'\t' 'END {print $NF}')
+[ "$TICK_VECTOR_LAST" = "rts" ] || {
+  echo "ERROR: $TICK_VECTOR's scrape ends on '$TICK_VECTOR_LAST', not rts. The routine leaves by"
+  echo "       pushing bg_timer_c_chain and returning through it — that IS how TOS's own 200 Hz"
+  echo "       work still happens — so an rte here is both a lost chain and a scrape that ran on"
+  echo "       into the next routine."; exit 1; }
+TICK_VECTOR_LABELS=$(printf '%s\n' "$TICK_VECTOR_ROUTINE" | sed -n 's/^[0-9a-f]* <\(.*\)>:$/\1/p')
+[ "$TICK_VECTOR_LABELS" = "$(printf '%s\n%s\n%s' "$TICK_VECTOR" "$TICK_BODY" "$TICK_BODY_END")" ] || {
+  echo "ERROR: $TICK_VECTOR's routine holds the labels below, not exactly its own three in order."
+  printf '       %s\n' $TICK_VECTOR_LABELS
+  echo "       Either the twin gained a symbol, or the scrape ran past this routine's end."
+  exit 1; }
+
+# ...AND IT IS THE TWIN'S OWN ROUTINE, not a same-named stub somewhere else. `nm` is asked of the
+# object the twin was assembled into, because that is the claim: the vector the machine jumps to is
+# the head of the transcription, in the file the differential verifies.
+TICK_VECTOR_IN_TWIN=$(defined_globals "$OBJ/asm_sound_tick.o" | grep -c "^$TICK_VECTOR\$" || true)
+[ "$TICK_VECTOR_IN_TWIN" = "1" ] || {
+  echo "ERROR: $OBJ/asm_sound_tick.o defines $TICK_VECTOR $TICK_VECTOR_IN_TWIN time(s), not"
+  echo "       once. The 200 Hz vector is the head of ../src/asm/sound_tick.S's transcription; a"
+  echo "       definition anywhere else is a second handler with the same name."; exit 1; }
+
+# CHECKS 2-6 BELOW ARE ONE SHAPE — "this is in the routine exactly once" — and are one function
+# rather than five copies of a `grep -c` and a four-line `echo`. Each FAILS CLOSED: a pattern that
+# rotted counts zero, which is not one. (Check 1 is the exception, being a must-be-ZERO, and carries
+# its own whole-disassembly control for that reason.)
+require_once_in_routine() {   # <grep flag: E|F> <pattern> <what it is> <why it matters...>
+  local flag=$1 pattern=$2 what=$3; shift 3
+  local seen
+  seen=$(printf '%s\n' "$TICK_VECTOR_ROUTINE" | grep -c"$flag" -- "$pattern" || true)
+  [ "$seen" = "1" ] && return 0
+  echo "ERROR: $what appears $seen time(s) in $TICK_VECTOR's routine, not once."
+  printf '       %s\n' "$@"
+  exit 1
+}
+
+# 1. IT CALLS NOTHING. `jsr|bsr|jmp`, all three: the two call forms assemble differently and a `bsr`
+#    to the C core would read as "never called" — a FALSE PASS, the direction that matters — and a
+#    `jmp` would leave the routine without running its own epilogue. This is the successor to the
+#    pair of counts this gate used to make (one call to the twin, none to the C core): with the
+#    vector folded INTO the twin there is no correct call left to make from here. `bra`/`Bcc`/`dbf`
+#    are NOT in this pattern, because the transcribed body is full of them; what covers a branch
+#    round the body is check 2, over the prologue alone.
+CALL_RE='[[:space:]](jsr|bsr|jmp)'
+TICK_VECTOR_CALLS=$(printf '%s\n' "$TICK_VECTOR_ROUTINE" | grep -cE "$CALL_RE" || true)
+[ "$TICK_VECTOR_CALLS" = "0" ] || {
+  echo "ERROR: $TICK_VECTOR's routine makes $TICK_VECTOR_CALLS call(s)/jump(s); it must make"
+  echo "       none. It runs ../src/asm/sound_tick.S's transcription by falling into it, and the C"
+  echo "       core ../src/sound.c::timer_c_sound_isr — still linked, still the reference — must"
+  echo "       not be what the interrupt reaches."; exit 1; }
+#    ...and this is the ONE check here that fails OPEN, because a rotted pattern counts zero and
+#    reads as a clean pass. So the same pattern is run over the WHOLE disassembly, where the answer
+#    cannot be zero in a program built out of `jsr`s.
+grep -qE "$CALL_RE" "$DISASSEMBLY" || {
+  echo "ERROR: the call scan matched no jsr/bsr/jmp in the WHOLE of $DISASSEMBLY — its pattern has"
+  echo "       rotted, so the zero it reported above meant nothing"; exit 1; }
+
+# 2. THE PROLOGUE FALLS THROUGH INTO THE BODY, which is the claim the body's LABEL alone does not
+#    make: a label inside the scrape says the two are laid out in that order and nothing about flow.
+#    A `tst.b`/`beq` guard added to the prologue — or a `bra` left behind while bisecting — would
+#    skip all 792 transcribed bytes with every other check here still green, still bumping
+#    `bg_timer_c_ticks`, and still passing smoke.py's TIMER_C_TICKS. So the prologue is scraped on
+#    its own and must contain NO control transfer of any kind.
+TICK_VECTOR_PROLOGUE=$(printf '%s\n' "$TICK_VECTOR_ROUTINE" \
+                       | awk -v body="$TICK_BODY" '$0 ~ "^[0-9a-f]+ <" body ">:" {exit} {print}')
+PROLOGUE_BRANCHES=$(printf '%s\n' "$TICK_VECTOR_PROLOGUE" \
+                    | grep -cE '[[:space:]](jsr|bsr|jmp|rts|rte|dbf|b[a-z])' || true)
+[ "$PROLOGUE_BRANCHES" = "0" ] || {
+  echo "ERROR: $TICK_VECTOR's prologue holds $PROLOGUE_BRANCHES control transfer(s); it must hold"
+  echo "       none. The vector reaches the original's own 792 bytes by FALLING INTO them, and a"
+  echo "       branch that skips them leaves a mute 200 Hz tick that every other check here — and"
+  echo "       every smoke — reports as healthy."; exit 1; }
+require_once_in_routine E "^[0-9a-f]+ <$TICK_BODY>:" "the transcribed body's label" \
+  "The prologue falls through, so the body has to be what it falls INTO; this is the other" \
+  "half of that, and it is where the 792 bytes the differential verified actually sit."
+
+# 3. IT SAVES AND RESTORES THE WHOLE SET IT TOUCHES. This is `docs/on-target-execution.md`'s register
+#    check, applied to the one arm no differential reaches: a vector owes its victim every register
+#    it writes, and dropping a name is INVISIBLE everywhere else — the image is identical, the twin's
+#    own battery runs the C-signature arm and never this one, and the cost pin gets CHEAPER.
+#    DERIVED, NOT SPELT: the two lists are read out of the disassembly and held equal to each other,
+#    and then every register the routine so much as MENTIONS has to be inside them — so a body that
+#    starts using %a4 reds here instead of returning %a4 clobbered at 200 Hz, which a literal
+#    `movem.l %d0-%d3/%a0-%a3` comparison could never have caught.
+TICK_SAVE_LIST=$(printf '%s\n' "$TICK_VECTOR_ROUTINE" | sed -n 's/.*moveml \(%[^,]*\),%sp@-$/\1/p')
+TICK_RESTORE_LIST=$(printf '%s\n' "$TICK_VECTOR_ROUTINE" | sed -n 's/.*moveml %sp@+,\(%.*\)$/\1/p')
+[ -n "$TICK_SAVE_LIST" ] && [ "$TICK_SAVE_LIST" = "$TICK_RESTORE_LIST" ] || {
+  echo "ERROR: $TICK_VECTOR saves '$TICK_SAVE_LIST' and restores '$TICK_RESTORE_LIST'. A vector"
+  echo "       must hand every register back; an asymmetric pair (or a scrape that found neither)"
+  echo "       corrupts whatever the interrupt landed in, 200 times a second."; exit 1; }
+# `%d0-%d3/%a0-%a3` -> one register a line, so the mentioned set can be compared against it.
+TICK_SAVED_REGISTERS=$(printf '%s\n' "$TICK_SAVE_LIST" | awk 'BEGIN { RS = "/" } {
+    sub(/\n$/, "");
+    if (length($0) == 3) { print $0; next }
+    file = substr($0, 2, 1); low = substr($0, 3, 1) + 0; high = substr($0, 7, 1) + 0;
+    for (n = low; n <= high; n++) print "%" file n
+  }' | sort -u)
+# ...against every register the routine names OUTSIDE those two instructions. `%sp` is objdump's own
+# spelling for %a7 and is never in a `movem` list, so it cannot appear here.
+TICK_USED_REGISTERS=$(printf '%s\n' "$TICK_VECTOR_ROUTINE" | grep -v moveml \
+                      | grep -oE '%[da][0-7]' | sort -u)
+[ -n "$TICK_USED_REGISTERS" ] || {
+  echo "ERROR: $TICK_VECTOR's routine names no data or address register at all — the register scan"
+  echo "       is broken and a clean report from it would mean nothing"; exit 1; }
+UNSAVED=$(comm -23 <(printf '%s\n' "$TICK_USED_REGISTERS") <(printf '%s\n' "$TICK_SAVED_REGISTERS"))
+[ -z "$UNSAVED" ] || {
+  echo "ERROR: $TICK_VECTOR touches register(s) its movem pair does not save:"
+  printf '       %s\n' $UNSAVED
+  echo "       A 68000 vector owes its victim every register it writes, and nothing off target can"
+  echo "       see this one: the image is identical, the differential runs the other arm, and the"
+  echo "       twin's cost pin gets cheaper. Widen both movem lists in ../src/asm/sound_tick.S."
+  exit 1; }
+
+# 4. NOTHING ELSE TOUCHES THE STACK. The host arm has this rule as a pytest over its own object
+#    (`test_the_twin_never_stores_through_its_own_frame`); this is the same rule on the arm that
+#    pytest cannot see. Three mentions and no more: the chain push and the two `movem`s. A spill or a
+#    scratch push added here writes memory nobody staged, and an unbalanced one makes the closing
+#    `rts` return into the register file.
+TICK_VECTOR_STACK=$(printf '%s\n' "$TICK_VECTOR_ROUTINE" | grep -cE '%sp|%a7' || true)
+[ "$TICK_VECTOR_STACK" = "3" ] || {
+  echo "ERROR: $TICK_VECTOR's routine names the stack pointer $TICK_VECTOR_STACK time(s), not 3 —"
+  echo "       the bg_timer_c_chain push and the two movem halves. Anything else in an interrupt"
+  echo "       handler's own frame is a write nobody staged."; exit 1; }
+#    ...and the chain push is checked by POSITION rather than by count, because what matters is that
+#    it happens BEFORE the register save: it is this routine's return address, so pushed anywhere
+#    else the closing `rts` returns into the register file. (`awk -F'\t'` rather than a `sed` with a
+#    `\t` in its pattern: only some `sed`s read that escape, and the one that does not would compare
+#    a whole objdump line against the expected mnemonic.)
+TICK_VECTOR_FIRST=$(printf '%s\n' "$TICK_VECTOR_ROUTINE" | awk -F'\t' 'NR == 2 {print $NF}')
+case "$TICK_VECTOR_FIRST" in
+  "movel "*"<bg_timer_c_chain>,%sp@-") ;;
+  *) echo "ERROR: $TICK_VECTOR's first instruction is '$TICK_VECTOR_FIRST', not the push of"
+     echo "       bg_timer_c_chain. TOS's own 200 Hz handler is this routine's return address and"
+     echo "       has to be on the stack UNDER the saved registers."; exit 1;; esac
+
+# 5. IT STILL MIRRORS $484 OUT TO THE MACHINE, at the address the VERIFIED CORE HEADER gives. The
+#    pattern is built from `../include/sound.h`'s own TOS_CONTERM, so this is the two-language pin
+#    the shared-numbers loop used to carry for `CONTERM` — made against the instruction that ships
+#    rather than against a source line. `mirror_conterm`'s one-shot poke at PHASE_GEM_OPEN already
+#    leaves the machine byte at 0 and the body clears the image byte every tick, so smoke.py's
+#    CONTERM_AT_ANCHOR check passes whether or not the per-tick mirror runs: this is the only thing
+#    in the tree that can see it go.
+CONTERM_FROM_H=$(scrape_c_define "$REC/include/sound.h" TOS_CONTERM)
+[ -n "$CONTERM_FROM_H" ] || {
+  echo "ERROR: TOS_CONTERM scraped EMPTY from $REC/include/sound.h — the pattern has stopped"
+  echo "       matching, and the mirror check below would be looking for the wrong address"; exit 1; }
+CONTERM_DEC=$(printf '%d' "$CONTERM_FROM_H")
+#    THE SOURCE REGISTER IS DERIVED, NOT SPELT, and that is what makes this check cover the base load
+#    as well: the prologue's `movea.l bg_image_base,%aN` names the register, and the mirror has to
+#    read the SAME one. Drop the base load and there is no register to derive; aim the mirror at a
+#    different one and it does not match. Either way the tick would otherwise run on whatever %aN the
+#    interrupt landed in — the whole handler against a wild base, silently, 200 times a second.
+TICK_BASE_REGISTER=$(printf '%s\n' "$TICK_VECTOR_PROLOGUE" \
+                     | sed -n 's/.*moveal [0-9a-f]* <bg_image_base>,\(%a[0-7]\)$/\1/p')
+[ -n "$TICK_BASE_REGISTER" ] || {
+  echo "ERROR: $TICK_VECTOR's prologue does not load bg_image_base into an address register. Every"
+  echo "       address the transcribed body forms is that base plus an offset; without the load the"
+  echo "       whole tick runs against whatever the interrupt was using."; exit 1; }
+# `([^0-9a-f]|$)`, not `[^0-9a-f]`: objdump only annotates an absolute operand with `<symbol+0x..>`
+# when a symbol resolves at or below it, so requiring a character AFTER the address would turn a
+# link with nothing under $484 into a false red that reads exactly like the regression this catches.
+CONTERM_MIRROR_RE="moveb $TICK_BASE_REGISTER@\($CONTERM_DEC\),$(printf '%x' "$CONTERM_DEC")([^0-9a-f]|\$)"
+require_once_in_routine E "$CONTERM_MIRROR_RE" \
+  "'move.b TOS_CONTERM($TICK_BASE_REGISTER),MACHINE_CONTERM' at $CONTERM_FROM_H (../include/sound.h's TOS_CONTERM)" \
+  "That store IS the key click actually stopping, and losing it — or aiming it somewhere" \
+  "else — is a silent regression no screenshot and no differential can see."
+
+# 6. AND THE MIRROR HAPPENS BEFORE THE REGISTERS COME BACK, which every check above is blind to
+#    because they all count rather than order. Restored first, the mirror reads
+#    `interrupted_code_a3 + $484` and stores THAT byte into TOS's own key-click flag, twice a frame,
+#    for the life of the run — with all five patterns still matching exactly once, the transcription
+#    pin untouched (both instructions are outside its bracket), `make test` running the other arm,
+#    and smoke.py's CONTERM_AT_ANCHOR green because `mirror_conterm` already left the machine byte
+#    at 0. Line numbers within the routine are the cheapest thing that can see it.
+MIRROR_AT=$(printf '%s\n' "$TICK_VECTOR_ROUTINE" | grep -nE "$CONTERM_MIRROR_RE" | cut -d: -f1)
+RESTORE_AT=$(printf '%s\n' "$TICK_VECTOR_ROUTINE" | grep -nF 'moveml %sp@+,' | cut -d: -f1)
+[ "$MIRROR_AT" -lt "$RESTORE_AT" ] || {
+  echo "ERROR: $TICK_VECTOR mirrors \$484 at line $MIRROR_AT of its routine and restores its"
+  echo "       registers at line $RESTORE_AT. The mirror reads the IMAGE through $TICK_BASE_REGISTER"
+  echo "       and must run while that register is still ours."; exit 1; }
 
 # ...AND THE BYTES THAT SHIP ARE THE BYTES THAT WERE VERIFIED. `test/test_sound_asm.py` compares the
 # twin's transcribed span against the original's — but over the blob KIT.MK assembles, with kit.mk's
-# flags. This build assembles the same `.S` with its own, and nothing held the two outputs against
-# each other: a twin that ever grew an `#ifdef` (the callback door the kit documents, a `BG_MODE`
-# guard) would leave the differential verifying one instruction stream while the .PRG shipped
-# another, with the transcription pin green either way. So the same span is compared again HERE,
-# against the same reference — the relocated image this build just generated, which IS the
-# original's memory at ../project.toml's load base.
+# flags and its `-DRECREATE_HOST_DIFFERENTIAL`. This build assembles the same `.S` with its own, and
+# the two arms of that flag are exactly the entry and the epilogue AROUND the span: nothing else may
+# differ, and nothing else held the two outputs against each other. So the same span is compared
+# again HERE, against the same reference — the relocated image this build just generated, which IS
+# the original's memory at ../project.toml's load base.
 # The transcribed span's address in the original — the same pair `test/test_sound_asm.py` calls
 # ORIGINAL_BODY, and the two are held equal by both comparing against the same image bytes.
 TWIN_BODY_AT=0x145be
@@ -598,8 +785,9 @@ TWIN_SPAN=$("$PY" "$HERE/asm_twin_ships.py" "$OBJ/asm_sound_tick.o" timer_c_soun
   echo "       test/test_sound_asm.py compares the same span over the blob the KIT assembles; this"
   echo "       is the same comparison over the object about to be LINKED, so the two builds cannot"
   echo "       ship different instruction streams under one green differential."; exit 1; }
-echo ">> the 200 Hz vector reaches the asm twin, nothing calls the C core it replaces, and the 792" \
-     "bytes about to ship are the original's own"
+echo ">> the 200 Hz vector IS the asm twin (calls nothing, falls into the body, saves the whole" \
+     "register set, chains, mirrors $CONTERM_FROM_H), and the 792 bytes about to ship are the" \
+     "original's own"
 
 # ---- the codegen scan: docs/on-target-execution.md class 6 --------------------------------------
 # A store through the same address register the source operand postincrements. The 68000 computes a

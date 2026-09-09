@@ -106,19 +106,24 @@ uint32_t bg_malloc_calls;
 
 volatile uint32_t bg_timer_c_ticks;
 uint32_t bg_timer_c_chain;
-volatile uint8_t bg_in_timer_c;   /* shim_include/tos.h: what lets the ISR's chip writes skip the gate */
+/* Kept, and NOTHING SETS IT: it exists so a chip write from inside the interrupt could skip the
+ * `trap #9` gate, and since wave 5b no C runs there at all. `shim_include/tos.h` says what would
+ * bring it back. */
+volatile uint8_t bg_in_timer_c;
 
-/* THE 200 Hz TICK REACHES ALL FOUR OF THESE FROM ASSEMBLY, so their WIDTHS are the compiler's here
- * and the programmer's there: `bg_timer_c_entry` (bubble_os.s) spells `addq.l`, `move.b`/`clr.b` and
- * two `move.l`s against them, and nothing else would notice a type that grew. Widening
- * `bg_in_timer_c` to an `int` is the one that bites without a diagnostic anywhere: `clr.b` would
- * then clear only the big-endian TOP byte, the flag would read true for ever, and `psg.h`'s door
- * would send every USER-mode chip write straight at $ff8800 — a bus error, which is what
- * `smoke.py`'s fault scan finds after the fact rather than what a build refuses. */
+/* THE 200 Hz TICK REACHES THREE OF THESE FROM ASSEMBLY, so their WIDTHS are the compiler's here and
+ * the programmer's there: `bg_timer_c_entry` (../src/asm/sound_tick.S, the vector itself since wave
+ * 6a) spells one `addq.l` and two `move.l`s against them, and nothing else would notice a type that
+ * grew. The fourth is `bg_in_timer_c`, which NOTHING sets any more — the interrupt runs no C, so
+ * `shim_include/psg.h`'s door reads it as a byte and always finds 0 — and widening it to an `int`
+ * would still be the one that bites without a diagnostic anywhere: the door's `if` would then read a
+ * different byte of the object, and a non-zero one would send every USER-mode chip write straight at
+ * $ff8800 — a bus error, which is what `smoke.py`'s fault scan finds after the fact rather than what
+ * a build refuses. */
 _Static_assert(sizeof bg_timer_c_ticks == 4, "bg_timer_c_entry bumps this with `addq.l`");
 _Static_assert(sizeof bg_timer_c_chain == 4, "bg_timer_c_entry pushes this with `move.l`");
-_Static_assert(sizeof bg_in_timer_c == 1, "bg_timer_c_entry sets and clears this with `move.b`/`clr.b`");
-_Static_assert(sizeof bg_image_base == 4, "bg_timer_c_entry pushes this with `move.l`");
+_Static_assert(sizeof bg_in_timer_c == 1, "shim_include/psg.h's door tests this one byte");
+_Static_assert(sizeof bg_image_base == 4, "bg_timer_c_entry loads this with `movea.l`");
 
 /* ================================================================================================
  * WHAT A HEADLESS CHECK NEEDS TO KNOW BEFORE THE RUN CAN GO WRONG
@@ -542,11 +547,11 @@ static void poke_byte(uint32_t address, uint8_t value) {
  *   AFTER the GEM is open   the image byte is written BACK to the machine. THIS is the poke the
  *                     original makes for real, and the reason the key click actually stops.
  *   EVERY TICK        the ISR's own write is mirrored out — from inside the interrupt, which is
- *                     already supervisor, so `bg_timer_c_entry` (bubble_os.s) stores directly
- *                     instead of Supexec'ing. It is spelt there rather than here because in C the
- *                     store is `*(volatile uint8_t *)TOS_CONTERM = ...`, which GCC warns about on
- *                     every build; `build.sh` pins that file's `CONTERM` equal to this file's
- *                     `TOS_CONTERM` (../include/sound.h).
+ *                     already supervisor, so `bg_timer_c_entry` (../src/asm/sound_tick.S) stores
+ *                     directly instead of Supexec'ing. It is spelt in assembly rather than here
+ *                     because in C the store is `*(volatile uint8_t *)TOS_CONTERM = ...`, which GCC
+ *                     warns about on every build; `build.sh` reads the store back out of the linked
+ *                     binary at the address ../include/sound.h's own `TOS_CONTERM` gives.
  *
  * The first draft ran the first two the other way round and then poked the machine's byte back onto
  * itself: a no-op that read as a mirror, with `CONTERM_AT_ANCHOR` sitting at TOS's own 7 all the way

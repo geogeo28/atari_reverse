@@ -1087,9 +1087,44 @@ wherever the prologue's properties are relied on. Bubble Ghost's interrupt entry
 back off the stack rather than re-reading it — legal only because the hand-written callee treats its
 incoming argument slot as read-only, which m68k SysV does not require of a callee and GCC does not do
 — and the comment justifying it cited the byte pin, which does not cover those eleven instructions.
-The surface that does is three lines of test over the `.S`'s own source: outside the bracket, the
-stack pointer may be named exactly N times and the argument load must be one of them. Match `%a7` as
-well as `%sp`; they are one register, and a scan for one spelling is a scan a future edit walks past.
+The surface that does is three lines of test: outside the bracket, the stack pointer may be named
+exactly N times and the argument load must be one of them. Match `%a7` as well as `%sp`; they are one
+register, and a scan for one spelling is a scan a future edit walks past. **Read those lines out of
+the assembled OBJECT rather than out of the `.S`'s text** — the moment the file has two arms behind a
+build flag, a text scan reads both and can be satisfied by the one this build did not assemble.
+
+**AND WHEN THE TWINNED ROUTINE IS AN INTERRUPT HANDLER, THE CHEAPEST PROLOGUE IS THE VECTOR ITSELF.**
+The usual shape puts the port's vector glue in the shim — save the caller-saved half, push the image
+base, `jsr` the twin (which saves the callee-saved half and reads the base back off the stack), pop
+it, do the hardware mirror, restore, chain — and pays for two register saves, an argument pushed and
+popped, and a call/return pair on top of a body that is already the original's. Fold the vector INTO
+the `.S` as a second entry behind the host/target flag: the two arms are mutually exclusive, the
+target's falls THROUGH into the transcribed body, and one epilogue serves both if the vector pushes
+its chain address BEFORE saving any register, so that the closing `rts` is one instruction either way.
+Bubble Ghost measured 356 cycles a tick of glue down to 260 at 200 ticks a second, hand-counted and
+confirmed by the profiler to the cycle. **Know what the seam costs before taking it**: `kit.mk` says
+of `RECREATE_HOST_DIFFERENTIAL` that what may hang off it is "the one instruction that stands in for
+a link, and nothing else", and this hangs a whole entry and epilogue there — so the fold widens that
+contract and has to pay for the widening. Guarding the target arm on a project `-D` instead is not
+the way out: a `.S` is a core, and a core that reads a target-only macro is what the containment gate
+exists to refuse. Two things come with it. The `.S` now holds an arm no
+differential runs, so it needs a gate of its own over the LINKED disassembly — the routine from its
+label to its one `rts`. **Write those checks as DERIVATIONS, not as literals, and pin ORDER as well as
+presence** — the first draft of Bubble Ghost's did neither and a review found four holes in it, each
+of which a green build would have shipped: `jsr|bsr|jmp` is not a branch, so a `bra` round the body
+passed everything (scrape the PROLOGUE separately and refuse any control transfer in it); the awk
+scoped "to the routine's `rts`" printed to end of FILE when there was none, so an `rte` epilogue
+would have moved every check into the neighbouring routine (assert the last line IS the `rts` and
+that the only labels inside are the routine's own); a literal `movem.l %d0-%d3/%a0-%a3` cannot see
+the body starting to write `%a4` (read both lists out of the disassembly, hold them equal, and
+require every register the routine MENTIONS to be in them); and counting the hardware store proves
+nothing about when it runs (derive its base register from the prologue's own load, and assert its
+line precedes the restore — mirrored after the `movem`, it reads the interrupted code's register and
+stores that byte into the OS's flag, at 200 Hz, with every count still exactly one).
+And the profiler's accounting changes under you: while the tick was `jsr`ed its cycles came out of
+whatever it interrupted and into a row of its own, where an autovectored handler leaves them in — so
+folding the vector made the port's per-function rows comparable with the original's for the first
+time, and made every same-name comparison taken before it incomparable with the ones taken after.
 
 ## Fitting the machine — measuring a memory budget instead of assuming one
 

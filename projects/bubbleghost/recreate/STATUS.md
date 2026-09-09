@@ -114,7 +114,7 @@ What is still unpinned is `Setscreen`'s PHYSICAL base and its resolution: an eve
 32-bit value and that call has three arguments, so the entry is the logical base alone.
 `atari/README.md`'s "Unpinned" carries it.
 
-## Performance — the baseline, and six waves measured on top of it
+## Performance — the baseline, and the ten waves measured on top of it
 
 `atari/profile.py` is the instrument the performance campaign will run on: 1000 vblanks of Hatari's
 CPU profiler on BOTH binaries, opened at the first arrival at `game_frame_update` and closed 1000
@@ -127,12 +127,18 @@ frames themselves off a per-arrival breakpoint and agrees with the profiler to 0
 `move.l (a3)+,(a2)+` run at 21.9 cycles a longword and ours does at 57.4. The raster engine is
 already at parity — our `trap #2` into the ROM VDI costs 268K a frame against the original's 280K.
 
-**WHERE WAVE 5a LEAVES IT: 482.2K cycles a frame, 16.63 fps, x1.03** of the original's 466.9K /
-17.18. Every wave below reports its OWN window against its own baseline, so a figure quoted
-mid-section is that wave's and not this one — and this instrument's own spread is 0.3%, so hold a
-change against the objdump too. **THIS HEADLINE IS WAVE 5a's WINDOW AND NOTHING ELSE'S**: waves 5b
-and 5c were measured in their own worktrees at the same time and are NOT in it, so whoever merges
-the three re-measures rather than adding the three savings up.
+**WHERE THE MERGE OF WAVES 5a+5b+5c LEAVES IT — MEASURED, NOT ADDED UP: 473.6K cycles a frame,
+16.94 fps (282 frames in 1000 vblanks), x1.014** of the original's 466.9K / 17.18, both sides
+profiled back to back in one session on the merged tree at `7a2d648` (2026-09-08). The 200 Hz tick
+in the same window is **1,844 cycles a tick against the original's 1,697, x1.09**. **The gap is
+6.7K a frame** and this instrument's spread is ~0.3% (1.5K), so the gap is real and about four
+times the noise.
+
+The three waves' own windows were 482.2K (5a), 476.8K (5b) and 482.2K (5c), each measured in its own
+worktree against its own baseline, and this row is why none of them may be added: the merge is
+**re-measured**. Every wave below still reports ITS window against ITS baseline, so a figure quoted
+mid-section is that wave's and not this one — and a change worth less than 0.3% is an objdump claim
+rather than a profiler one.
 
 **WAVE 4 SAID THE CAMPAIGN STOPPED HERE UNLESS SOMETHING CHANGED SHAPE, AND WAVE 5a CHANGED THE
 DOOR'S.** Its 18.6K was two rows — the shim's GEM door at 8.4K, which the shipped binary has NO
@@ -1079,7 +1085,9 @@ branch no call site on the interrupt's path reaches.
 
 **THE PIN IS A SECOND DIFFERENTIAL, and it needs no second model of the chip.** The twin writes
 `$ffff8800`/`$ffff8802` with the original's own bare `move.b` pairs — the same instruction stream in
-both builds, no `#ifdef` anywhere in the file — and the kit's oracle decodes those two ports in its
+both builds, no `#ifdef` anywhere in the file (**wave 6a put two in it — around the ENTRY and the
+EPILOGUE, never inside the bracket; `atari/asm_twin_ships.py` is what holds the two assemblies equal
+there now**) — and the kit's oracle decodes those two ports in its
 memory callback (`tools/recreate_kit/oracle/shim.c`, `m68k_write_memory_8`). So a twin run under
 Musashi leaves its register writes in the ORACLE's PSG ledger while the C core's `psg_port_write`
 leaves them in the CANDIDATE's, and `test/test_sound_asm.py` compares the two streams beside the
@@ -1347,6 +1355,435 @@ header could be `#include`d instead of scraped: the first is pre-existing code t
 touch, and the second needs `__ASSEMBLER__` guards in `tools/recreate_kit/include/os.h` and
 `../include/frontend.h`, which are the kit's and the cores' and out of an `atari/`-only wave's scope.
 Both are real and both are somebody's next change.
+
+### Wave 6a, 2026-09-08 — the 200 Hz VECTOR folded into the twin, and the door's block re-read
+
+**THE TICK: 1,844 cycles a tick -> 1,748, 1,755 and 1,755 over three windows, against the
+original's 1,697 — x1.087 -> x1.030/x1.034**, and 20.6-20.7K a frame where it was 21.8K. **The 1,750
+target this wave was set is therefore MET IN ONE WINDOW AND MISSED BY FIVE CYCLES IN THE OTHER TWO**,
+which is the honest reading: the tick's absolute cost tracks how many voices happen to be sounding
+and the unseeded ambience re-roll varies that window to window (wave 2 measured 3,451 to 3,899 on one
+binary), so this row sits AT the bar rather than under it. **The whole window did NOT move outside this instrument's
+spread** (473.6K -> 473.7K, 282 frames both, 16.94 -> 16.93 fps, x1.014): 1.2K a frame is 0.25% and
+the spread is 0.3%, so **the tick's own row and the hand count under it are this wave's evidence and
+the headline is not.** The BEFORE window is the merged tree's own (`7a2d648`, the row at the top of
+this section); the two AFTER windows are that tree plus this change, `atari/` and `../src/asm/` only.
+`make test` is green either side of it because none of this is a behaviour change: 1,908 cases before
+and **1,909** after, the extra one being this wave's own
+`test_the_host_build_carries_no_target_vector`.
+
+**THE HAND COUNT AND THE PROFILER AGREE TO THE CYCLE, which is worth more than either alone.** The
+glue outside the transcribed body was 356 cycles a tick and is 260; the first window read 96 fewer
+and the other two 89.
+
+| the tick's glue, off the 68000's own tables | before | after |
+|---|---|---|
+| the vector's register save | `movem.l %d0-%d1/%a0-%a1` 40 + the twin's `movem.l %d2-%d3/%a2-%a3` 40 | ONE `movem.l %d0-%d3/%a0-%a3`, **72** |
+| ...and its restore | 44 + 44 | **76** |
+| the image base | pushed as an argument 28, read back `movea.l 20(%sp)` 20, popped `movea.l (%sp)+` 12 | `movea.l bg_image_base,%a3`, **20** |
+| the call | `jsr` 20 + `rts` 16 | **none** — the vector FALLS THROUGH into the body |
+| the tick count, the $484 mirror, the chain push and the closing `rts` | 28 + 20 + 28 + 16 | unchanged |
+| **total** | **356** | **260** |
+| `bubble_os.o` + `asm_sound_tick.o` `.text` | 1,270 + 848 = 2,118 B | 1,228 + 868 = **2,096 (-22)** |
+
+**WHAT IT IS.** `bg_timer_c_entry` is no longer a routine in `atari/bubble_os.s`; it is the second
+entry of `src/asm/sound_tick.S`, selected by `RECREATE_HOST_DIFFERENTIAL` — the flag kit.mk already
+sets for the OFF-TARGET assembly of a twin. The two arms are mutually exclusive and neither build
+carries the other's:
+
+* **off target** `timer_c_sound_isr_asm(uint8_t *image)`, unchanged to the byte — same `movem`, same
+  `movea.l 20(%sp)`, same epilogue — so `test_sound_asm.py`'s cost bar and its whole case list read
+  exactly what they read before.
+* **on target** `bg_timer_c_entry`, the $114 vector: push `bg_timer_c_chain`, `movem` the whole set
+  the body writes, count the tick, load `bg_image_base`, FALL THROUGH the 792 transcribed bytes,
+  mirror $484 out to the machine, restore, `rts` into TOS's own handler.
+
+**THE CHAIN IS PUSHED BEFORE THE REGISTERS, and that is what makes one epilogue serve both arms.**
+On target the closing `rts` lands on TOS's saved $114 with the exception frame still under it (the
+original's own shape @ 0x1459a); off target the same instruction returns to the C caller. Without
+that ordering the two arms would need two epilogues, and the body — which falls into exactly one —
+would have to be entered by a `bsr`, giving back 34 of the 96.
+
+**AND IT REMOVES AN ACCOUNTING ASYMMETRY THIS FILE HAS WARNED ABOUT SINCE WAVE 2.** Hatari charges
+cycles to SUBROUTINE arrivals, so while our tick was reached by a `jsr` its cycles came OUT of
+whatever it interrupted and into a row of its own, where the shipped side's autovectored handler
+leaves them spread through its victims. Ours is now autovectored into the twin as well, and the
+per-function rows moved to match: `bg_gem_trap`'s exclusive went 268.3K a frame -> **279.0K** against
+`vdi_call`'s 280.2K, and `copy_longs_ascending`'s 135.9K -> 141.7K against `present_room`'s 139.3K.
+**Neither routine changed.** Those rows are now like-for-like where they were not, and any earlier
+same-name comparison in this section is reading two different accountings.
+
+**WHAT WATCHES THE HALF NO DIFFERENTIAL REACHES.** The target arm is interrupt glue —
+`docs/on-target-execution.md` class 3, uncovered by construction — and it is now inside a file whose
+whole warrant is the differential, so `atari/build.sh` reads it back out of the LINKED disassembly
+instead: the vector's own routine, entry label to its ONE `rts` (the transcribed body contains none),
+with four assertions over that routine and one more over the object it was assembled into.
+
+| the gate | what it refuses |
+|---|---|
+| `bg_timer_c_entry` is defined in `asm_sound_tick.o` | a same-named handler anywhere else |
+| the routine makes NO `jsr`/`bsr`/`jmp` | the vector calling the C core again — which boots, plays and sounds identical at 440 cycles a tick more. It fails OPEN on a rotted pattern, so the same pattern is re-run over the whole disassembly, where zero is impossible |
+| `timer_c_sound_isr_body`'s label is INSIDE the routine | a vector that stopped falling into the 792 bytes it exists to run |
+| the first instruction is the `bg_timer_c_chain` push, and `movem.l %d0-%d3/%a0-%a3` appears once each way | a name dropped from either list — the register class `docs/on-target-execution.md` says the other checks cannot see: the image is identical, the twin's own battery runs the OTHER arm, and the cost pin gets CHEAPER — and a chain pushed after the registers, which makes the closing `rts` return into the register file |
+| the `$484` mirror is present once, at `../include/sound.h`'s own `TOS_CONTERM` | the store going, or aiming somewhere else. **This is the two-language pin the shared-numbers loop used to carry for `CONTERM`**, made against the instruction that ships: `bubble_os.s`'s second spelling of $484 is deleted with the routine, and the .S's own `TOS_CONTERM` equate — the store's operand — is held equal to the header by `test_constants.py` over the object |
+
+**THE MUTATION SWEEP, each from a FORCED rebuild** (`rm -rf atari/build/obj` before every one — a
+same-second edit is enough for `make` to relink nothing and report a live mutant as survived,
+`docs/agent-playbook.md` §10) and each restored after. The `.S` is a gated core, so every mutation
+of it was COMMITTED in the scratch worktree first: a dirty core is refused by the committed-cores
+gate, which would have looked like the new gates firing and is not.
+
+| mutation | result |
+|---|---|
+| the vector `jsr`s the C core again instead of falling through | **REFUSED**: "makes 1 call(s)/jump(s); it must make none" |
+| **a `bra` round the transcribed body** — the hole the review found, and the reason checks 1 and 2 are two checks | **REFUSED** by the rewritten gate: "the prologue holds 1 control transfer(s); it must hold none". Against the FIRST draft this was GREEN: every count still matched, `bg_timer_c_ticks` still bumped, and `smoke.py`'s TIMER_C_TICKS still passed over a tick that ran none of the 792 bytes |
+| the `$484` machine mirror deleted from the epilogue | **REFUSED**: "…appears 0 time(s) in bg_timer_c_entry's routine, not once" |
+| **the `$484` mirror MOVED after the register restore** — same instruction, same count, wrong moment | **REFUSED**: "mirrors \$484 at line 284 of its routine and restores its registers at line 285". Against the first draft this was GREEN, and on the machine it stores `interrupted_a3 + $484` into TOS's key-click flag twice a frame for the life of the run |
+| **the `bg_image_base` load deleted** — the one prologue instruction the first draft's gates never mentioned | **REFUSED**: "the prologue does not load bg_image_base into an address register", because the mirror's source register is DERIVED from that load and there is then nothing to derive |
+| `%d3` dropped from BOTH of the vector's `movem` lists — the register class nothing else in the tree can see | **REFUSED**: "touches register(s) its movem pair does not save: %d3". `make test` is green on this mutation and so is the twin's own cost pin, which gets CHEAPER |
+| **the routine starts using `%a4`** — the half of that class a literal `movem.l %d0-%d3/%a0-%a3` comparison could never catch | **REFUSED** by the same derived check |
+| **lever 2's own failure mode**: the door stages `A_vdi_ptsin` into the block's third slot on every call, which is what a cache primed before the first raster copy would hand the VDI | **RED**: `smoke.py game`, *13,302 of 32,000 framebuffer bytes differ after one whole room frame, first at 2* — the second-arrival capture, doing exactly the job wave 4 built it for |
+
+**THREE OF THOSE EIGHT WERE GREEN AGAINST THE GATES AS FIRST WRITTEN**, which is the useful half of
+running them: the sweep is what turned "five checks over the vector" into six derived ones, and the
+review is what named the mutations to try. Every build was forced (`rm -rf atari/build/obj`) and the
+`.S` committed in the scratch worktree first, so a dirty core could not be mistaken for a gate
+firing.
+
+**AND THE HOST ARM'S CHECK MOVED FROM THE SOURCE TO THE OBJECT**, which the `#ifdef` forced and which
+is stronger anyway. `test_the_twin_never_stores_through_its_own_frame` used to partition
+`sound_tick.S`'s TEXT; with two arms in the file a text scan reads both and can be satisfied by the
+wrong one. It disassembles `build/asm/sound_tick.o` now — the object the differential actually runs
+— and a new battery beside it, `test_the_host_build_carries_no_target_vector`, asserts that object
+does NOT define `bg_timer_c_entry`, which is the only check in the tree that the guard selects one
+arm at all.
+
+**WHAT THE RULE IS WORTH NOW, said plainly.** The three-stack-instruction rule was written for
+wave 5b's entry popping the image base back off the twin's argument slot; the vector no longer calls
+anything, so nothing off target depends on that slot surviving. It is kept for the CLASS: a spill
+added to a hand-written interrupt handler's prologue is a write to memory nobody staged, and neither
+the transcription pin (whose bracket starts after the prologue) nor the differential (which stages a
+clean frame every case) would name it.
+
+**THE IPL DROP IS STILL NOT TAKEN, and now it is a decision rather than an inability.** The original
+drops IPL 6 -> 5 so other MFP channels nest inside it; assembly can spell that where the C could not.
+It is left alone because it costs cycles rather than saving them and because what would have to come
+back with it is `shim_include/psg.h`'s gate — at IPL 5 an IKBD interrupt can land between one of the
+body's five register selects and its data write. Recorded at the vector in `sound_tick.S` and in
+`shim_include/tos.h`, whose block on `bg_in_timer_c` this wave also corrected: wave 5b stopped
+raising that flag and the header still said the entry sets it.
+
+**WHAT THE PRE-COMMIT REVIEW MOVED, and the important half of it is that FOUR OF THE FIVE GATES
+ABOVE ARE THIS WAVE'S SECOND DRAFT.** Five finder angles over the isolated diff found no wrong
+instruction in the assembly — the stack discipline, the saved set against what the body writes, the
+`movea.w` sign-extension and the chain's position under the `movem` frame all held — and found the
+gates over it weaker than their own prose:
+
+| what | why it mattered |
+|---|---|
+| **the fall-through was never proven.** `CALL_RE` is `jsr|bsr|jmp`, and a `bra`/`Bcc` is neither — so a guard added to the prologue (`tst.b`/`beq`, or a `bra` left behind while bisecting) would skip all 792 bytes with every gate green, `bg_timer_c_ticks` still bumping and `smoke.py`'s TIMER_C_TICKS still passing | the body's LABEL inside the routine says the two are laid out in that order and nothing about flow. The PROLOGUE is now scraped on its own and must hold NO control transfer of any kind |
+| **the routine's own end was not pinned** — the awk prints to end of FILE when there is no `rts`, so an `rte` epilogue would have handed every check a window running through the NEXT routine, and each would have answered about whatever the linker placed there | the last line must BE the `rts`, and the only labels inside must be this routine's own three, in order |
+| **the register list was a LITERAL**, so it could catch a name dropped from one `movem` and could never catch the body starting to write `%a4` | both lists are read out of the disassembly and held equal to each other, and every register the routine so much as MENTIONS must be inside them |
+| **the epilogue's ORDER was unpinned, and the base load was named by nothing.** Restore before mirror and the store reads `interrupted_a3 + $484` into TOS's key-click byte twice a frame, with all five patterns still matching once | the mirror's source register is DERIVED from the prologue's `movea.l bg_image_base,%aN` — so dropping the load leaves nothing to derive — and the mirror's line must come before the restore's |
+| **nothing watched the target arm's stack**, where the host arm has had that rule as a pytest since wave 5b | three mentions and no more: the chain push and the two `movem`s |
+| **`[^0-9a-f]` after the mirror's absolute operand** required a character that exists only because a symbol happens to resolve at or below $484 | `([^0-9a-f]|$)`, or a link with nothing under $484 reds a correct build with the message of the regression |
+| four prose defects the wave itself created or inherited: `atari/shim_include/bubble_target.h` still said the tick was in `bubble_os.s` and still named "the supervisor flag"; `bubble_main.c`'s definition comment still said the flag arms the ISR's writes; `build.sh`'s PSG gate still said "the 200 Hz ISR reaches the chip through this"; and `profile.py` still explained `SPAN_MARKER_RE` around a symbol the target no longer defines | each is a sentence the next reader would act on: re-arming a flag that costs 40 cycles a tick, or deleting the twin's own five chip-write pairs believing a gate covers them |
+
+**AND THE SAME REVIEW NAMED THE SEAM COST PLAINLY, so it is recorded rather than argued.**
+`tools/recreate_kit/kit.mk` says of `RECREATE_HOST_DIFFERENTIAL` that "what hangs off this flag is
+the one instruction that stands in for a link, and nothing else"; this wave hangs an entry and an
+epilogue off it. **The obvious alternative is CLOSED, and by another gate**: guarding the target arm
+affirmatively on a project `-D` would make a core read a target-only macro, which `build.sh`'s own
+containment gate refuses by name. So the flag is the only seam available, and what pays for widening
+it is the three pins named above — `asm_twin_ships.py` over the object that ships, the host suite's
+`test_the_host_build_carries_no_target_vector`, and the six linked-disassembly checks. **The kit's
+own note is left unamended and is REGISTERED here as the next change**, in the shape this file uses
+for a kit hoist: the second project to fold a vector is the trigger, and `docs/on-target-execution.md`
+carries the recipe and the obligations in the meantime. Two residuals go with it, neither closed:
+a THIRD assembly of `sound_tick.S` that defines neither flag takes the target arm and fails at LINK
+naming a shim symbol rather than the missing flag; and the ~100 lines of gate are project-local
+where `tools/assert_trap_registers.sh` is the workspace's precedent for exactly this kind of
+routine-scoped scan — at one folded vector, extracting would be speculative.
+
+**AND ONE MEASURED ITEM THE REVIEW PRICED THAT THIS WAVE DID NOT TAKE.** `bg_in_timer_c`'s branch is
+now unreachable by construction, and `shim_include/psg.h` is `static inline`, so the guard ships at
+every one of `psg_port_write`'s call sites: **27 `tst.b`/branch pairs, ~250-350 bytes of the .PRG's
+text and ~20 cycles on every user-mode chip write**, for an arm nothing can reach. Deleting it is a
+seam change wave 5b deliberately declined (it is what the IPL drop would need back), and the size
+gate reports 78,400 B spare, so it is priced here rather than taken.
+
+**THREE OF WAVE 5b's FOUR OPEN ITEMS ARE CLOSED HERE, and the fourth is not.** Its
+`shim_include/tos.h` block still said the entry raises `bg_in_timer_c` and named the C's inability to
+touch `%sr` as what keeps the ISR at IPL 6 — both false since 5b, and the second one the more
+misleading, so the header now says nothing sets the flag and that the IPL is a decision.
+`bubble_main.c`'s `_Static_assert` message said the entry sets and clears it, and now names the door
+that reads it. `build.sh`'s `MUST_STAY_INLINED` gate pinned the inlining of helpers the tick no
+longer runs; it is kept with its real job stated — `profile.py` still sums a range over the LINKED,
+UNCALLED C core, and that row means "the C core cost nothing" only if it covers the whole core.
+Wave 5b's fourth item — this project's twin machinery being a second copy of
+`projects/zynaps/recreate/test/asm_twins.py`, which belongs in the kit — is untouched and still open.
+**And wave 5c's own "LEFT, and why" is one item shorter**: the two stale `bubble_backend.c`
+references in `atari/profile.py` were left because another wave was editing that file; that wave has
+landed, and they are corrected here.
+
+**LEVER 2 — THE GEM DOOR'S FIVE-SLOT RESTATEMENT — WAS SCOPED ON A PREMISE THAT IS FALSE, and
+reading every writer is what says so.** The restatement is 200 cycles of every door call (five slots
+at 40: load 12, the zero test 8, the add 8, the store 12) and **1,730 a frame** at this window's 8.65
+calls — the largest single item in the door's own ledger (wave 5a). The wave was to stage it ONCE, on
+the ground that the five pointers are constants after `init_gem_and_screens`. `../src/frontend.c` is
+the only file in the program that writes a VDI parameter-block slot — eleven stores through
+`vdi_pblock_slot`, and `grep` finds none in `clib.c`, `gameplay.c`, `init.c` or anywhere else — and
+they divide like this:
+
+| slot | who writes it | what the door sees at the trap |
+|---|---|---|
+| `contrl` | `vdi_call_at`, on EVERY call | `A_vdi_contrl` — constant |
+| `intin` / `intout` / `ptsout` | `v_opnvwk`, twice: the caller's `work_in` / `work_out` / `work_out + 90` before its own trap, then `A_vdi_intin` / `A_vdi_intout` / `A_vdi_ptsout` after it | constant EXCEPT inside `v_opnvwk` itself, which is one call at boot |
+| `ptsin` | `v_opnvwk`'s restore, plus `vr_recfl` and `vro_cpyfm`, which each lend the VDI their caller's own rectangle and put the library's array back afterwards | **three values in the steady state**: `A_vdi_ptsin`; `A_blit_pxy`, which all seven `vro_cpyfm` sites pass through `sprite_copy`; and `frame + HUD_FRAME_BAR_PXY` — a RUNTIME address — at the bonus bar's two `vr_recfl` sites |
+
+**So option (a) — skip the restatement behind a build gate that asserts every core writer stores one
+constant — is not available: that gate would refuse the first build it ran, naming three writers that
+do not.** That is the gate working and it is the answer.
+
+**Option (b), a compare against a cached copy of the game's block, is a measured LOSS.** The cheapest
+sound spelling is `cmpm.l (%a0)+,(%a1)+` + `bne` = 28 cycles a slot, so an unchanged block costs 140
+against the restatement's 200 and a changed one costs 140 + 8 (`lea` back) + 200 + 60 (updating the
+cache) = 408. The window's own call order changes the block at least twice a frame — the two console
+polls hold `A_vdi_ptsin`, the six `vro_cpyfm`s hold `A_blit_pxy`, the bonus bar holds its own frame
+address — so at four misses in 8.65 calls the arithmetic is 4 x 408 + 4.65 x 140 = **2,283 against
+1,730**, and it does not break even until fewer than two calls a frame change the block.
+
+**Option (c) — (a) restricted to the four slots that ARE constant, with `v_opnvwk` forcing a full
+restage on its own opcode — is priced and DECLINED at 0.20% of a frame.** Per call it is a primed
+flag (26), an opcode compare the door does not already make (26) and the one `ptsin` slot in
+displacement form (52) = 104 against 212, so **108 a call and ~930 a frame**, 14% of the 6.7K gap.
+What it costs is not cycles: the door would acquire knowledge of which VDI OPCODE rebinds the block —
+a semantic coupling to `../src/frontend.c` that `bubble_os.s`'s own header disclaims in as many words
+("no field this door has to know the meaning of") — plus a second piece of cross-call state in a
+routine whose header spends a paragraph on nothing re-entering it, plus a build gate parsing core C.
+Named here with its number so the next wave does not re-derive it.
+
+**AND THE SMOKE IS HALF A SURFACE FOR A STALE `ptsin`, WHICH IS THE USEFUL ANSWER RATHER THAN
+EITHER OF THE TWO OBVIOUS ONES.** The question was put to the tree directly, by mutating the door to
+stage `A_vdi_ptsin` into the block's third slot on every call — which is exactly what a cache primed
+before the first raster copy would hand the VDI:
+
+| the call | what the mutation does to it | what saw it |
+|---|---|---|
+| `vro_cpyfm` / `vr_recfl` (6.3 a frame) | the VDI reads its four ptsin PAIRS out of the library's array instead of the caller's rectangle | **RED**: `smoke.py game`, *13,302 of 32,000 framebuffer bytes differ after one whole room frame, first at 2* |
+| the boot `v_opnvwk`, and every call declaring zero ptsin pairs | hands TOS a pointer it never dereferences | **GREEN in both smokes** — wave 4 measured this from the other side, translating that boot `ptsin` of 0 into a non-null pointer where the original hands NULL |
+
+So the second-arrival capture pins the slot for the calls that READ it and is blind to the calls that
+do not, and a cache's failure mode spans both. Any of (a)/(b)/(c) would therefore rest on its build
+gate for the half the smoke cannot reach — and (a)'s gate is the one that cannot be written, because
+the writers it would have to find storing one constant do not. That is the finding, and with the
+arithmetic above it is why this lever is NO-GO rather than deferred.
+
+### Wave 6b, 2026-09-08 — the GAME TIER, on the base register the original keeps in a4
+
+**THE GAME TIER IS NOW 1,770 CYCLES A FRAME UNDER THE SHIPPED BINARY'S, WHERE IT WAS 829 OVER**, and
+that row is this wave's evidence. The whole window went **473.6K a frame -> 471.9K, 16.94 fps ->
+17.00, x1.0143 -> x1.0107** against the original's 466.9K / 17.18 — 1.7K against a spread of ~1.5K,
+so **the headline is NOT what this section rests on**. The rows sum to -2,599 where the window shows
+-1,676; the difference is three untouched rows drifting (`bg_gem_trap` +210, `copy_longs_ascending`
++17, `bg_timer_c_entry` +619), which is what the spread looks like from inside. Measured in a scratch
+worktree of the merged tree `7a2d648`, `src/` and `include/` only, so **wave 6a is NOT in this window**
+and the two do not add up — whoever merges them re-measures.
+
+| exclusive cycles a frame | before | after | the original |
+|---|---|---|---|
+| **the whole GAME TIER** — every row either binary names for the room simulation | 31,369 | **28,770** | 30,540 |
+| ...the sprite protocol (`save_`/`draw_`/`restore_sprite_backgrounds`) | 5,758 | **4,052** | 6,379 |
+| ...the fp package (dispatch, the two widenings, the packing tail) | 12,058 | **11,772** | 11,433 |
+| ...`frame_*` + `game_frame_update` | 5,333 | **4,921** | 3,031 (`game_frame_update` 2,209 + `xbios_trap` 822) |
+| ...`vq_key_s` + `vq_mouse` bodies | 865 | **828** | 412 |
+| `frame_step_facing` | 301 | **183** | — |
+| `frame_step_live_bubble` | 756 | **627** | — |
+| `frame_blow_or_recover` | 1,432 | **1,335** | — |
+| `frame_poll_input` | 790 | **692** | — |
+| `save_` / `draw_` / `restore_sprite_backgrounds`, each | 1,869 / 2,016 / 1,873 | **1,328 / 1,470 / 1,254** | — |
+| `game_frame_update`, INCLUSIVE | 34,410 | **33,472** | 31,311 |
+| `core_frontend.o` `.text` | 24,848 B | **23,420 B** | — |
+| `core_gameplay.o` `.text` | 9,496 B | **8,194 B** | — |
+| `core_clib.o` `.text` | 18,804 B | **18,230 B** | — |
+| the size gate's spare | 78,656 B | **81,472 B** | — |
+
+**LEVER 1 — THE BASE REGISTER MOVED TO `include/common.h`.** Wave 5c wrote `GlobalsBase` /
+`globals_base` / `globals_at` in `src/frontend.c` and registered `include/globals.h` beside `A4_BASE`
+as the home the SECOND core to want it would earn; `src/gameplay.c` is that second core, and the FILE
+is `common.h` rather than `globals.h` — [`README.md`](README.md)'s ownership table marks `globals.h`
+"nobody, in normal work" and marks `common.h` shared and append-only "for an idiom a SECOND core
+needs", which is exactly this trigger. It also keeps `word_at_base` / `set_word_at_base` beside
+`word_at` / `set_word`, whose own note records the identical precedent. The move is codegen-neutral
+and the objdump says so: all seven core objects are **byte-identical** across it.
+
+**LEVER 2 — THE SPRITE PROTOCOL, 5,758 -> 4,052 (-1,706 a frame), three times what wave 5c priced.**
+That wave costed the two `sprite_pxy_*` writers at ~92 cycles a site over six sites (~550) and named
+the ten MFDB stores beside them as the same lever, unspent. What it could not see without doing it is
+the REGISTER PRESSURE: `image + <address>` needs a data register per address, and GCC was hoisting
+**eleven** of them across `save_sprite_backgrounds` — `movem.l %d2-%d7/%a2-%fp`, 96 cycles in and 100
+out. On the base the same routine keeps six (`%d2-%d4/%a2-%a4`, 56 + 60), and every
+`move.l #144086,%d2 / move.w %d3,%a3@(0,%d2:l)` pair collapses to one `move.w %d3,%a2@(-7236)`. Off
+`m68k-elf-objdump -d`, counting every instruction in the body once: **1,784 -> 1,264** cycles for
+`save_sprite_backgrounds`, the same for `restore_`, 1,910 -> 1,396 for `draw_`.
+
+**GCC KEEPS ONE BASE ACROSS THE INLINED `vro_cpyfm`, WHICH IS WHY THE CALLER MAY MATERIALISE ITS OWN.**
+The worry that nearly killed this lever was that `sprite_copy` -> `vro_cpyfm` calls `globals_base`
+again — an `asm` barrier is opaque, so two calls are two values, two `move.l #151322,An / add.l` pairs
+and two live registers. The objdump says otherwise: ONE `movea.l #151322,%a2 / adda.l %a3,%a2` serves
+the caller's ten stores AND the whole inlined body. So `vro_cpyfm` keeps its real call site and wave
+5c's rule — a verified routine may not be left with only its differential entry — is untouched.
+
+**LEVER 3 — THE `frame_*` SLICES, 5,333 -> 4,921.** The six routines in the profiled frame path
+(`frame_poll_input`, `frame_blow_or_recover`, `frame_scale_mouse_to_ghost`, `frame_step_live_bubble`,
+`frame_step_facing`, `frame_apply_fans`) hold the base and reach their globals off it.
+`frame_advance_bubble_frame` and `frame_drift_pulse` were left alone: two slots each, where the base
+costs 20 cycles to materialise and saves 28.
+
+**LEVER 4 — `trap_save_registers` IS ONE BODY AGAIN, AND IT IS THE PRE-COMMIT REVIEW'S FINDING RATHER
+THAN THE BRIEF'S.** The wave's first draft added a second three-store copy in `include/clib.h` for
+callers holding a base, which is CLAUDE.md §6's copy-paste-with-tweaks over the ONE thing forty-three
+wrappers share. Expressing the image form as `trap_save_registers_at_base(globals_base(image), …)`
+deletes the duplicate — and upgrades every existing site at the same time, because the trampoline's
+three slots are -26080/-26084/-26088 off A4_BASE and the original writes them as `n(a4)` too. It is
+the single biggest SIZE row in the wave: `core_clib.o` -1,334 B, `core_frontend.o` -898,
+`core_gameplay.o` -96, `core_sound.o` -44, `core_init.o` -24 = **-2,396 B**, the size gate's spare
+78,912 -> **81,472**, at an unchanged window (471,933 -> 471,931 over two runs).
+
+**LEVER 5 — `fp_pack_double` IS A FALL-THROUGH TAIL ON BOTH SIDES NOW.** Wave 5c priced its call at
+~250 cycles over 4.07 calls a frame (~1.0K) and declined it as "a structural change to a verified
+core". It is not a departure from the original, it is the original: `fp_div` ends `bra.w $15394` and
+FALLS IN with its operands in registers, and the routine's own header has said since it was written
+that "it is a tail, not a function". The body is now `static inline __attribute__((always_inline))
+fp_pack_double_tail`, expanded at TEN sites (the nine callers in this file and the exported wrapper);
+`fp_pack_double` stays as that wrapper so the symbol keeps a caller, the differential still enters it
+by name and `atari/profile.py`'s map still has the row.
+
+**AND THE THREE-WAY MEASUREMENT THAT PRICES IT HONESTLY, because the projection was wrong.** Three
+profiler windows on the same tree, differing only in this attribute:
+
+| the fp package, exclusive cycles a frame | value |
+|---|---|
+| before (`7a2d648`) | 12,058 |
+| the barrier below, no `always_inline` (the tail is out-lined, and its own row is counted) | 11,811 |
+| both — what ships | **11,727** |
+| the original | 11,433 |
+
+So `always_inline` is worth ~84 cycles a frame on the fp rows and ~220 on `game_frame_update`'s
+inclusive, for **+738 B** of `.text` — a tenth of what wave 5c's ~1.0K projection implied, because the
+inlined tail spills at the bigger sites and because GCC re-chose which of `fp_acc_load_long` /
+`fp_long_to_double` to out-line. It is kept because 738 B against 81,472 of spare is cheap and the
+shape is the original's; it is recorded at its MEASURED price so the next wave does not inherit the
+projection.
+
+**...AND THE `>> 28` WAVE 5c MEASURED AND DECLINED, TAKEN — which is most of that row.**
+`shifted = mantissa >> 12` then `(uint16_t)(shifted >> 16)` re-derived the nibble from `mantissa` as
+`moveq #28 / lsr.l`, **64 cycles**, because nothing forced GCC to keep `shifted` in a register. One
+`REGISTER_BARRIER(shifted, REGISTER_BARRIER_DATA_CLASS)` makes it `move.l/clr.w/swap/and.w`, which is
+the original's own `swap`. All **ten** `moveq #28` in `core_clib.o` are gone, and so is the dead
+`move.l %d4,%sp@(12)` spill beside them. Wave 5c refused it for spending a barrier "on something that
+is not a cursor or a count"; the argument that was missing is that the barrier makes our instruction
+the original's.
+
+**WHAT STAYED ON `image + <address>`, AND WHY THE FIRST DRAFT'S REASON FOR IT WAS FALSE.** Three sites
+keep the image form: `apply_fan`'s three object fields, `draw_sprites`' two `longword_slot` table
+slots, and — from wave 5c — `v_gtext`'s per-character `intin` index. Each is a RUN-TIME address built
+by `muls_ext_w`/`addr_add`, which is the original's `adda.w` truncation. **The first draft said a
+wrapped address read off the base "would land ~26 KB below it", and the pre-commit review proved that
+arithmetically false**: `globals_at` is `image + (int32_t)address` where the image form is
+`image + (uint32_t)address`, so the two are THE SAME BYTE for every address below 0x80000000 — which
+is every address this program can build, because a `sign_ext16` offset added to a ~0x22000 table base
+wraps back to a small positive number. They differ only above it, where the image form runs 4 GB past
+the buffer and the base form runs backwards below it: two unreachable out-of-bounds reads, not one
+right and one wrong, and on the 32-bit target both wrap to the same address anyway. The sites keep
+the image form because that is where the arithmetic that produced them belongs, and `common.h`'s
+`globals_at` now states the real rule where the next editor will read it. **The review also refuted
+the claim that "no case seeds the wrap"** — `test_gameplay.py::test_frame_apply_fans_room_offset_wraps_in_a_signed_word`
+seeds rooms 235, 469 and -1 through exactly that path, and would stay green either way, which is the
+point: the two spellings are equivalent here, so no case CAN tell them apart.
+
+**THE MUTATIONS — six, one per lever, each from a forced relink** (`rm -f build/*.so`, `__pycache__`
+swept) in a clean worktree of `7a2d648` where the suite is **1,908 green**:
+
+| mutation | result |
+|---|---|
+| `sprite_pxy_from_cell`'s `BLIT_PXY_DST_Y2` loses the cell height | **RED**, 66 failures |
+| `save_sprite_backgrounds` files the ghost patch through the SOURCE MFDB | **RED**, 58 failures |
+| `word_at_base` loses `A4_BASE` (reads the image, not the globals) | **RED**, 216 failures |
+| `frame_step_facing`'s two edge latches are swapped | **RED**, 16 failures |
+| `trap_save_registers_at_base` files a1 and a2 into each other's slot | **RED**, 296 failures — every one of the forty-three wrappers reaches this body now |
+| the inlined tail shifts the packed mantissa one bit too far (`>> 13`) | **RED**, 137 failures |
+| ...and restored | **GREEN**, 1,908 |
+
+**THE SURFACE FOR THE HALF THAT RUNS ON TARGET IS `smoke.py game`, and it is green** — lever 4
+rewrites how forty-three trap wrappers address the trampoline's three slots, which is a `.PRG`
+change and not only a codegen one, and that mode compares the room's first two frame calls against
+the original's memory byte for byte, checks the hardware-state vector (the pens, four blanks) and
+photographs the rendered pixels. `smoke.py title` is NOT green in the scratch worktree — and it is
+not green there at the UNCHANGED baseline either, `7a2d648` with no edits at all, which is what says
+it is the worktree and not this change (Hatari exits 0 waiting for the anchor capture; the `game`
+mode boots the same binary through the same drive and passes). It has not been run against the merge.
+
+**STILL UNPINNED, AND IT IS THE SAME FINDING WAVES 3b AND 5c BOTH RECORDED.** Nothing in this tree
+reddens if a later editor deletes the `REGISTER_BARRIER` in `globals_base` or the one in
+`fp_pack_double_tail`, or drops `always_inline` from `fp_pack_double_tail`, `globals_base` or
+`sprite_copy`: all of them are green under `make test` and `make guarded` either way, and each gives
+back a third to a half of its lever. `m68k-elf-objdump -d` is the only surface that sees them.
+**`atari/build.sh` already has the right gate half-built** — `MUST_STAY_INLINED` names
+`step_swept_envelope`, `step_triangle_lfo` and `psg_untrapped_write` and would take these three as a
+one-line change; the two barriers need codegen scans beside it (refuse `move.l #14....` inside
+`core_frontend.o`/`core_gameplay.o`, refuse `moveq #28` inside `core_clib.o`). It is **registered and
+not done for the second time**, because `atari/build.sh` is wave 6a's file in this same working tree
+and a concurrent read-modify-write is how a lost update happens.
+
+**WHAT IS LEFT IN THE GAME TIER, PRICED, so the next wave does not re-derive it.** The tier is under
+the original overall, and every row still OVER is structural rather than unspent:
+
+* **`frame_*` + `game_frame_update` is +1,890 over the original's 3,031, and it is the C ABI.** The
+  original falls straight through nine regions of one routine with a4 already loaded; ours calls nine
+  functions, each with a `jsr`/`rts`, a pushed `image` and a prologue, and passes `vq_mouse`'s five
+  addresses and `fp_dispatch`'s six arguments on the stack. Closing it means changing verified
+  signatures or `atari/bubble_main.c`'s frame composition — another wave's brief.
+* **`vq_key_s` + `vq_mouse` bodies are +416.** Wave 5c already put their slots on the base; what is
+  left is the C entry and the readback through the caller's four pointers.
+* **`hud_bonus_bar_shrink`'s two VDI callees are +125 together** (`vsf_color` 110 vs 54, `vr_recfl`
+  130 vs 61), under this wave's 150-a-frame floor. Its own body is 618 against 615 — at parity,
+  exactly as wave 5c found it.
+* **The fp package is +294**, i.e. inside the noise of a single division's operand values.
+* `get_pixel` (4,800 vs 6,000) and `bubble_collision_probe` (1,500 vs 2,285) are already well under.
+* **`src/clib.c` still spells ~56 globals as `image + <address>`** and owns the 11.7K-a-frame fp
+  package. It is the third core of this lever and the only one not taken; the registration lives in
+  `include/common.h` over `globals_base`, where wave 5c's own registration used to be.
+
+**AND WHERE THE WHOLE WINDOW'S REMAINING 5.0K IS — none of it in the game tier.** Summed the same way,
+everything OUTSIDE the tier is **+6.8K a frame**: `bg_gem_dispatch` 6,644 with no shipped counterpart
+at all, `game_room_frame_tail` 2,657, `bg_timer_c_entry` 1,702, against ours being ahead on
+`bg_gem_trap` (268.4K against the ROM VDI's 280.2K) and `copy_longs_ascending` (135.9K against
+`present_room`'s 139.3K). That is wave 6a's half and this section makes no claim about it.
+
+**WHAT ELSE THE PRE-COMMIT REVIEW MOVED**, five finder angles over the isolated diff. No angle found a
+functional defect — every converted address was re-derived and all 49 are compile-time constants
+inside the signed-word window, every width and sign is unchanged, and no statement was added, dropped
+or reordered — and nine defects of the kind no gate here can see:
+
+| what | why it mattered |
+|---|---|
+| **the run-time-address rule was arithmetically false** (above) | three comments and this section's own prose asserted a hazard that does not exist; acting on it, someone would either freeze a hot slot forever or "restore faithfulness" by folding the A4_BASE subtraction into `fan_field`, which really would move the wrap |
+| **the sprite protocol's MFDB displacements were wrong** | the note said "-7702/-7706"; `A_mfdb_src` is -7706 and `A_mfdb_dst` -7726, and -7702 is no slot in this program. Those numbers ARE the check that every slot fits a `d16` |
+| **`GlobalsBase` was filed in the one header README says nobody edits** | see lever 1. Two angles found it independently |
+| **`trap_save_registers` was duplicated rather than unified** | see lever 4 — the finding that bought 2,396 B |
+| **`key_as_word` had grown a twin** | two spellings of `(int16_t)(int8_t)` over one byte, with the sign-extension rationale attached to only one. Folded back into one `key_as_word(GlobalsBase)` |
+| **`frame_poll_pause` re-materialised the base inside its `while`** | the barrier is opaque, so GCC cannot hoist it; the routine also still read the same byte two other ways. One base at the top now |
+| **`build_sprite_bank_grab_cells` re-materialised it inside its 60-cell loop** | same shape, hoisted — and the routine now says why a BOOT path takes the base at all (it shares `sprite_pxy_to_cell`, and one writer beats a second spelling of eight stores) |
+| **the moved warning lost its on-target half** | "on target it is under `bubble_main.c`'s guard bytes, which sit ABOVE" is the sentence that says NO on-target surface sees a below-image write. Restored, and it is why the struct may not be simplified back to a bare pointer |
+| **five continuation lines kept the old call's indentation**, and `fp_pack_double_tail`'s comment counted twelve sites where there are ten | mechanical rename artefacts in the two sentences a reviewer would check the trade against |
+
+**LEFT, and why.** The review proposed one deeper change this wave did not make: collapsing the two
+accessor families into one, so that `GlobalsBase` carries every FIXED global and `image` is reserved
+for computed addresses. The counts today are 66 base-form sites against 307 image-form ones across
+the two files, and `apply_fan` spells both three lines apart. It is the right end state and it is a
+wave of its own — it reaches `src/clib.c`, `src/init.c`, `src/sound.c` and `src/blit.c`, whose owners
+are not this one.
 
 ## Model gaps — read this before picking a function
 

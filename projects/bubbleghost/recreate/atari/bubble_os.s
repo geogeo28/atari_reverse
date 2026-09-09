@@ -40,12 +40,6 @@
                                     | STACK_RESERVE_BYTES is the same number and build.sh asserts
                                     | the two are equal, because the size gate weighs the .PRG
                                     | against a budget this reserve is subtracted from.
-    CONTERM         = 0x484         | TOS's key-click/bell flags. ONE DEFINITION ACROSS THE
-                                    | LANGUAGE BOUNDARY (CLAUDE.md §5): the VERIFIED core header
-                                    | ../include/sound.h spells the same address as TOS_CONTERM —
-                                    | it is what the sound ISR clears in the image — and build.sh
-                                    | asserts the two are equal. The Timer C entry below mirrors
-                                    | that image byte out to the machine.
     BASEPAGE_BYTES  = 0x100         | GEMDOS puts the basepage immediately below p_tbase
     BP_TLEN         = 12            | the basepage's own segment lengths
     BP_DLEN         = 20
@@ -761,60 +755,20 @@ bg_super_gate_entry:
 | port and its data displacement above are the two that header spells, and build.sh pins the two
 | spellings equal; PSG_REG_MASK stays here alone, because only the TRAPPED door masks.
 
-| ---- the Timer C entry -------------------------------------------------------------------------
-| THE WHOLE TICK IS HERE, and that is a measurement rather than a preference. The count, the
-| supervisor flag and the $484 mirror used to be a C routine this entry `jsr`ed to
-| (`bg_timer_c_tick`), and the three of them together cost 428 cycles a tick — 148 here, 224 in the
-| C half's own plumbing and 56 inside `bg_write_byte`, most of it pushing the image base, RELOADING
-| it after the ISR, and pushing two arguments at a routine whose body is one `move.b`. The twelve
-| instructions that replaced it were ~280, so the wave took ~150 a tick: 1.8K a frame at 12.2 ticks,
-| and the profiler agreed at 146 (2,434 cyc/tick -> 2,288). **The 428 was the BEFORE figure, not the
-| saving** — the largest item left in it is the `movem` pair at 84. Wave 5b took three more of the
-| twelve out (below); the `movem` pair is still the largest thing here.
+| ---- the Timer C entry is NOT HERE, and that is a measurement ------------------------------------
+| `bg_timer_c_entry` — the machine's $114 vector — is in `../src/asm/sound_tick.S`, at the head of
+| the hand-written transcription it used to `jsr` to. It lived here for two waves as twelve
+| instructions of glue: save four registers, push the image base, call the twin (which saved four
+| more and read the base back off the stack), pop the base, mirror $484, restore, push TOS's chain,
+| `rts`. That glue cost 356 cycles of every 200 Hz tick; folded into the twin, where the vector's
+| own `movem` is the only register save and the base is one absolute load, it costs 260
+| (../STATUS.md, "Performance", wave 6a).
 |
-| `../STATUS.md`'s wave 3a named this file as where the mirror belongs: in C the store is
-| `*(volatile uint8_t *)TOS_CONTERM = ...`, which GCC compiles to this same one instruction and
-| warns about on every build ("source object is likely at address zero").
-|
-| THE HANDLER IS HAND-WRITTEN ASSEMBLY, AND THAT IS WHAT THE `jsr` REACHES. `../src/asm/sound_tick.S`
-| is a byte-for-byte transcription of the original binary's own 0x145be..0x148d6 carrying
-| `timer_c_sound_isr`'s C signature; the C core stays the reference and `test/test_sound_asm.py`
-| compares the two over every case the C is verified on, image and PSG ledger both. Two lines went
-| with the substitution:
-|
-|   * `bg_in_timer_c` is no longer raised. It exists so a chip write made from INSIDE this interrupt
-|     skips the `trap #9` gate (shim_include/psg.h), and nothing C runs inside it any more — the
-|     twin writes $ffff8800 itself, which is the original's own shape. The flag and its door stay
-|     for the user-mode callers that still take the gate; on this path they are 40 cycles a tick
-|     spent arming a branch nothing takes.
-|   * the image base is POPPED rather than re-read. It used to be read twice because the m68k SysV
-|     ABI makes a callee's incoming argument area the CALLEE's scratch and GCC really does spill a
-|     modified parameter into its own slot — so resting on `timer_c_sound_isr`'s codegen would have
-|     mirrored a byte from a garbage address into TOS's $484 two hundred times a second, a MACHINE
-|     write no differential sees. The twin is hand-written and never names `%sp` after its prologue,
-|     so the argument slot is ours to read back: 16 cycles. NOT the transcription pin's doing — that
-|     pin brackets the transcribed body, and the prologue is outside it;
-|     `test_sound_asm.py::test_the_twin_never_stores_through_its_own_frame` is the check that holds
-|     this one, over the twin's own source.
-|
-| IT DOES NOT `rte`, AND THAT IS THE ORIGINAL'S SHAPE. `timer_c_sound_isr` @ 0x1459a ends by pushing
-| TOS's own saved $114 vector and `rts`ing, so the exception frame is left for TOS's handler to
-| return from and the 200 Hz work TOS still wants done — the clock, the key repeat — still happens.
-| `bubble_main.c` fills `bg_timer_c_chain` from the vector it read before the install, and asserts
-| it against what the verified installer parked in the image.
-    .globl  bg_timer_c_entry
-bg_timer_c_entry:
-    movem.l %d0-%d1/%a0-%a1,-(%sp)  | the caller-saved set; the twin preserves the rest
-    addq.l  #1,bg_timer_c_ticks     | the surface: a run whose vector never took ticks 0, which no
-                                    | screenshot could tell from music that has not started
-    move.l  bg_image_base,-(%sp)    | the tick's one argument
-    jsr     timer_c_sound_isr_asm   | ../src/asm/sound_tick.S — the original's own instructions
-    movea.l (%sp)+,%a0              | ...and the argument comes back, the twin never having stored
-                                    | through its own frame (see above)
-    move.b  CONTERM(%a0),CONTERM    | the tick's own $484 write, made for real
-    movem.l (%sp)+,%d0-%d1/%a0-%a1
-    move.l  bg_timer_c_chain,-(%sp)
-    rts
+| WHAT WATCHES IT NOW that it is not in this file: `build.sh`'s conterm-mirror gate reads the store
+| back out of the LINKED disassembly instead of out of this source, scoped to the vector's own
+| routine — entry to its one `rts` — and asserts in the same scrape that the routine calls nothing
+| and contains the transcribed body. `atari/shim_include/tos.h` still declares the entry, because
+| `bubble_main.c` is what puts its address on the vector.
 
 | ---- machine primitives, all three supervisor-only and all three Supexec'd ----------------------
 

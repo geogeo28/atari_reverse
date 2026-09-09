@@ -41,9 +41,10 @@ extern uint8_t *bg_kept_top;
 extern uint32_t bg_mshrink_result;
 
 /* Timer C interrupts this run has taken, at 200 Hz — bumped by `bg_timer_c_entry` itself, which is
- * the WHOLE tick (bubble_os.s: the count, the supervisor flag, the verified ISR and the $484
- * mirror). `volatile` because the anchor's hold reads it from a spin whose only way out is the
- * interrupt itself. */
+ * the WHOLE tick and, since wave 6a, the head of `../../src/asm/sound_tick.S`: the count, the
+ * transcribed handler and the $484 mirror in one routine that falls through from its own vector.
+ * `volatile` because the anchor's hold reads it from a spin whose only way out is the interrupt
+ * itself. */
 extern volatile uint32_t bg_timer_c_ticks;
 
 /* Where `bg_timer_c_entry` chains to — TOS's own $114, read off the machine before the install and

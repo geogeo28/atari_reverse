@@ -18,26 +18,46 @@
  * 0x145be..0x148d6, which is the stronger of the two claims:
  * not "computes the same thing" but "IS the same machine code".
  *
+ * TWO ENTRIES, ONE BODY, AND WHICH ONE IS ASSEMBLED IS THE BUILD. `RECREATE_HOST_DIFFERENTIAL` is
+ * kit.mk's mark for the OFF-TARGET assembly of a twin, so the two arms below are mutually exclusive
+ * and neither build carries the other's:
+ *
+ *   off target   `timer_c_sound_isr_asm(uint8_t *image)`, the C signature `test_sound_asm.py` runs
+ *                against ../sound.c's `timer_c_sound_isr`, case for case.
+ *   on target    `bg_timer_c_entry`, the $114 VECTOR itself — the whole 200 Hz tick in one routine:
+ *                the chain push, the tick count, the image base, this body, the $484 mirror out to
+ *                the machine, and the closing `rts` into TOS's own handler.
+ *
+ * THE VECTOR IS HERE BECAUSE OF WHAT IT COST BEING SOMEWHERE ELSE. It used to be a routine in
+ * `atari/bubble_os.s` that saved four registers, pushed the image base, `jsr`ed to the C-signature
+ * entry above (which saved four more and read the base back off the stack), popped the base and
+ * mirrored $484 — 356 cycles a tick of glue around the body, at 200 ticks a second in a loop with
+ * no Vsync. Folded, the same work is one `movem` of eight, one absolute load and the mirror: 260.
+ * ../../STATUS.md, "Performance", wave 6a, has the window.
+ *
  * WHAT IS *NOT* TRANSCRIBED, and why each one differs:
  *
  *   the prologue      the original is a VECTOR handler: it saves d0-d3/a0-a2 (its whole working
- *                     set) because an interrupt owes its victim every register. This is a C
- *                     function, so it saves the m68k SysV callee-saved half of that set and leaves
- *                     the caller-saved half to `bg_timer_c_entry`, which is the vector here and
- *                     saves d0-d1/a0-a1 itself.
+ *                     set) because an interrupt owes its victim every register. The target arm
+ *                     saves that set plus %a3, the image base this reconstruction needs and the
+ *                     original does not; the host arm is a C function and saves the m68k SysV
+ *                     callee-saved half, its caller owning the rest.
  *   the two pointers  the original reads `&snd_volume_scale` and `&snd_voice[2]` from its own TEXT
  *                     with `movea.l d16(pc)` and uses them as ABSOLUTE addresses, because the
  *                     program IS the memory. This reconstruction addresses a flat image through a
  *                     base pointer, so the same two longwords are read out of the image and the
  *                     base added to each — `image + address`, the shape `../sound.c` uses.
- *   $484              the original writes TOS's conterm byte directly. Here the tick writes the
- *                     IMAGE's mirror of it (which is what the differential can see) and
- *                     `bg_timer_c_entry` copies that byte out to the machine once the tick returns
- *                     — atari/build.sh's conterm-mirror gate is what keeps that store there.
+ *   $484              the original writes TOS's conterm byte directly. The body writes the IMAGE's
+ *                     mirror of it, which is what the differential can see, and the TARGET arm's
+ *                     epilogue copies that byte out to the machine — one `move.b` from image to
+ *                     machine, the two addresses being the same number because the image models
+ *                     the machine's own memory map. `atari/build.sh`'s conterm-mirror gate reads
+ *                     that store back out of the LINKED binary.
  *   the SR work       the original drops from IPL 6 to IPL 5 so other MFP channels can nest inside
  *                     it, and leaves by pushing TOS's saved $114 vector rather than `rte`ing. The
  *                     first is a residual this build has never had (../../STATUS.md, "the sound
- *                     engine's residuals"); the second is `bg_timer_c_entry`'s closing pair.
+ *                     engine's residuals"); the second is the target arm's own closing pair, and it
+ *                     is now spelt here rather than in `bubble_os.s`.
  *
  * IF THAT IPL DROP IS EVER MADE FAITHFUL, THE CHIP WRITES NEED THE GATE BACK. What kept this build
  * safe without it is that the handler owns the machine at IPL 6 for its whole length, so nothing
@@ -46,19 +66,25 @@
  * `bg_timer_c_entry` no longer does) is what would have to come back with it. Assembly can touch
  * `%sr` where the C could not, so this is now a decision rather than an inability.
  *
- * AND THE ELEVEN INSTRUCTIONS OUTSIDE THE BRACKET ARE NOT UNDER THE TRANSCRIPTION PIN. They are
- * under the differential like everything else — every case runs them — plus one check of their own:
- * `test_the_twin_never_stores_through_its_own_frame` asserts they read `%sp` once and never write
- * it, which is what lets `bg_timer_c_entry` pop the image base back off the stack instead of
- * re-reading it.
+ * AND THE INSTRUCTIONS OUTSIDE THE BRACKET ARE NOT UNDER THE TRANSCRIPTION PIN, which is why each
+ * arm carries a check of its own. The HOST arm's run on every differential case, and
+ * `test_the_twin_never_stores_through_its_own_frame` reads them back out of the ASSEMBLED OBJECT
+ * rather than out of this text — only one arm is ever assembled, and the object is what says which.
+ * The TARGET arm runs under no differential at all; it is interrupt glue, `docs/on-target-
+ * execution.md` class 3, so `atari/build.sh` reads IT back out of the linked disassembly: the
+ * vector's own routine, its entry to its one `rts`, must call nothing, must carry the $484 mirror
+ * exactly once at the address ../../include/sound.h gives, and must contain the transcribed body.
  *
  * THE CHIP WRITES ARE THE ORIGINAL'S OWN — five bare `move.b <reg>,(%a1)` / `move.b <data>,2(%a1)`
  * pairs on `%a1` = $ffff8800, with no register mask, exactly as `shim_include/psg.h` describes
  * them. They need no `#ifdef`: the kit's oracle decodes those two ports in its memory callback
  * (`tools/recreate_kit/oracle/shim.c`, `m68k_write_memory_8`), so off target the same two stores
  * land in the oracle's ordered PSG ledger and the test compares that against the ledger the C
- * core's `psg_port_write` fills. This file therefore has ONE spelling for both builds — what the
- * differential runs is what the machine runs, instruction for instruction.
+ * core's `psg_port_write` fills. Inside the bracket this file therefore has ONE spelling for both
+ * builds — what the differential runs is what the machine runs, instruction for instruction. The
+ * `#ifdef` above is the entry and the epilogue and nothing else, and `atari/asm_twin_ships.py`
+ * compares the bracketed bytes the TARGET is about to link against the same original the host blob
+ * is compared to, so the two builds cannot diverge inside it under one green pin.
  *
  * WHY THE CONSTANTS ARE RESTATED. `../../include/sound.h` spells its values with C's `u` suffix,
  * which the assembler will not parse, so the handful this file needs are `.equ`s — and CLAUDE.md's
@@ -73,6 +99,14 @@
     .equ SND_ISR_TOP_VOICE,     0x1493a    /* l: &snd_voice[2] — its a0 @ 0x145a2; the loop walks DOWN */
     .equ SND_ISR_SAVED_CONTERM, 0x1493e    /* b: TOS's own $484, put back when every voice is idle */
     .equ TOS_CONTERM,           0x0484     /* ...the image's mirror of TOS's key-click/bell byte */
+/* ...and the MACHINE's own $484. It is DEFINED AS the line above rather than restated, because it
+ * is not a second number: the image models the machine's memory map, so image[$484] stands exactly
+ * where TOS's byte stands, and there is nothing here for a second spelling to drift from. The name
+ * exists so that the epilogue's one instruction reads as the two SIDES it crosses —
+ * `move.b TOS_CONTERM(%a3),MACHINE_CONTERM` is image to machine — and the value is pinned once,
+ * where `TOS_CONTERM` is: to ../../include/sound.h by test/test_constants.py over the object, and
+ * to the shipped store's operand by atari/build.sh over the linked disassembly. */
+    .equ MACHINE_CONTERM,       TOS_CONTERM
 
 /* ---- the voice records ------------------------------------------------------------------------ */
     .equ SND_VOICES,            3
@@ -162,10 +196,8 @@
 
     .text
 
-/* timer_c_sound_isr_asm(uint8_t *image) — the twin of ../sound.c's `timer_c_sound_isr`.
- *
- * Enters with the image base at 4(%sp) and returns with every callee-saved register put back.
- * The register map for the whole run is the original's, plus one:
+/* The 200 Hz tick, under whichever of its two entries this build assembles (the header's "TWO
+ * ENTRIES, ONE BODY"). The register map for the whole run is the original's, plus one:
  *
  *     %a3   the image base            (ours: the original addressed memory absolutely)
  *     %a2   image + &snd_volume_scale — the 16-word table `write_volume`'s index reads
@@ -174,11 +206,42 @@
  *     %d2   the voice number, 2 down to 0 — and the channel the register numbers are built from
  *     %d0/%d1/%d3  scratch
  */
+#ifdef RECREATE_HOST_DIFFERENTIAL
+
+/* timer_c_sound_isr_asm(uint8_t *image) — the twin of ../sound.c's `timer_c_sound_isr`, entered
+ * with the image base at 4(%sp) and leaving every callee-saved register as it found it. This is the
+ * entry `test/test_sound_asm.py` runs; the target has no caller for it and does not assemble it. */
     .globl  timer_c_sound_isr_asm
 timer_c_sound_isr_asm:
     movem.l %d2-%d3/%a2-%a3,-(%sp)      | the m68k SysV callee-saved half of the original's set;
-                                        | `bg_timer_c_entry` saves %d0-%d1/%a0-%a1, being the vector
+                                        | the C caller owns %d0-%d1/%a0-%a1
     movea.l 20(%sp),%a3                 | 4 arg + 16 saved: the image base
+
+#else
+
+/* bg_timer_c_entry — the machine's $114 vector, and the WHOLE tick outside this body: the count,
+ * the image base, the $484 mirror and the chain. `atari/bubble_main.c` puts its address on the
+ * vector and fills `bg_timer_c_chain` from what `install_sound_vectors` saved.
+ *
+ * THE CHAIN IS PUSHED FIRST, BEFORE ANY REGISTER, so that the epilogue's `rts` is the same
+ * instruction in both arms: here it lands on TOS's own 200 Hz handler, leaving the exception frame
+ * for that handler to `rte` from — which is the original's own shape @ 0x1459a, and is why TOS's
+ * clock and key repeat still run. In the host arm the same `rts` returns to the C caller.
+ *
+ * IT DOES NOT DROP TO IPL 5, and the original does. That is a residual and not an oversight: at
+ * IPL 5 an IKBD interrupt can land between one of the body's five register selects and its data
+ * write, and what would have to come back with the drop is `atari/shim_include/psg.h`'s gate (see
+ * this file's header). Assembly could spell it; nothing here measures it, so it is left alone. */
+    .globl  bg_timer_c_entry
+bg_timer_c_entry:
+    move.l  bg_timer_c_chain,-(%sp)     | TOS's own handler, as this routine's return address
+    movem.l %d0-%d3/%a0-%a3,-(%sp)      | a vector owes its victim every register it touches: the
+                                        | original's whole working set, plus %a3 for the image base
+    addq.l  #1,bg_timer_c_ticks         | the surface: a run whose vector never took ticks 0, which
+                                        | no screenshot could tell from music that has not started
+    movea.l bg_image_base,%a3           | ...and the base, which the original does not need at all
+
+#endif
     /* The two pointers, read out of the ISR state block and turned into host pointers. The block
      * is at 0x14936, past a d16 displacement's reach, so the offset goes through %d0 as an index —
      * once each, outside the loop. */
@@ -557,5 +620,15 @@ timer_c_sound_isr_body_end:
     move.l  #SND_ISR_SAVED_CONTERM,%d0
     move.b  (%a3,%d0.l),TOS_CONTERM(%a3)
 .Ldone:
+/* The two arms close in the same order they opened: the host's first. */
+#ifdef RECREATE_HOST_DIFFERENTIAL
     movem.l (%sp)+,%d2-%d3/%a2-%a3
-    rts
+#else
+    move.b  TOS_CONTERM(%a3),MACHINE_CONTERM   | the tick's own $484 write, made for real. The image
+                                        | byte the body just wrote is TOS's key click actually
+                                        | stopping; `atari/build.sh` reads this store back out of
+                                        | the linked binary, because nothing else in the tree can
+                                        | see it go
+    movem.l (%sp)+,%d0-%d3/%a0-%a3
+#endif
+    rts                                 | the host arm's caller; on target, `bg_timer_c_chain`

@@ -131,7 +131,7 @@ the record's own prediction is built on).
 | `hw_write8` | an ordered (address, width, value) ledger | a real byte store through the same gate. Two core call sites, both the MFP vector register — and `build.sh` counts them, because `HW_WRITES` is predicted exactly |
 | `os_in_image` | the model's 1 MiB | the same arithmetic against the 664 KiB array that actually exists |
 | `OS_SCREEN_BASE` | `0x8000`, XBIOS `Logbase`'s answer | **`0x9e100`** — the one constant this build changes, and the only change to what a verified core computes. See below |
-| the Timer C ISR | never entered; the harness drives it explicitly | installed at `$114` behind an asm entry that CHAINS to TOS's own handler, exactly as the original's does — and the handler it calls is `../src/asm/sound_tick.S`, not the C core (below) |
+| the Timer C ISR | never entered; the harness drives it explicitly | installed at `$114`, and the vector IS `../src/asm/sound_tick.S` — one routine that saves the register set, runs the original's own transcribed instructions and CHAINS to TOS's own handler rather than `rte`ing, exactly as the original's does. Not the C core, and since wave 6a not a call to anything (below) |
 | `image[$a4]`, `image[$114]`, `image[$484]` | ordinary diffable image bytes | **not vectors.** `$114` is seeded from the machine before the installer runs (so it saves something real) and taken by the shim's entry after. `$484` is seeded before `init_gem_and_screens`, mirrored OUT after it — which is the poke that really stops the key click — and mirrored out again by every tick of the ISR, from inside the interrupt |
 | `sound_stop` at the hand-back | not run: the harness has no teardown | **run**, so the PSG is really silenced and the MFP's vector register really goes back to software EOI. `$114` and `$484` are then mirrored out the same way the install's were |
 
@@ -139,11 +139,17 @@ the record's own prediction is built on).
 
 Every row above is a core running as written. **There is one exception, and it is the only one:**
 the 200 Hz Timer C handler. `../src/sound.c`'s `timer_c_sound_isr` is still linked into the .PRG,
-but nothing calls it — `bg_timer_c_entry` calls `timer_c_sound_isr_asm`, which is
-`../src/asm/sound_tick.S`: a hand-written m68k routine carrying the same C signature, added by wave
-5b because the tick runs 200 times a second in a loop that has no Vsync, and GCC's version of it
-cost 2,297 cycles against the original's 1,704 with the C already at the compiler's floor
-(`../STATUS.md`, "Performance").
+but nothing calls it — the machine's `$114` vector IS `../src/asm/sound_tick.S`, a hand-written m68k
+routine added by wave 5b because the tick runs 200 times a second in a loop that has no Vsync, and
+GCC's version of it cost 2,297 cycles against the original's 1,704 with the C already at the
+compiler's floor (`../STATUS.md`, "Performance").
+
+**THE FILE HAS TWO ENTRIES AND EACH BUILD ASSEMBLES ONE**, behind `RECREATE_HOST_DIFFERENTIAL` —
+kit.mk's own mark for the off-target assembly of a twin. Off target it is
+`timer_c_sound_isr_asm(uint8_t *image)`, the C signature the differential runs against the core.
+On target it is `bg_timer_c_entry`, the vector itself: the tick count, the image base, the body, the
+`$484` mirror and the chain, in one routine with no call in it. Wave 6a folded it that way and the
+glue outside the body went 356 cycles a tick to 260.
 
 **It is a TRANSCRIPTION, not a translation**, and that is what makes the substitution safe to make
 at all: 792 of its 856 bytes are the original binary's own 0x145be..0x148d6, byte for byte, and the
@@ -158,14 +164,16 @@ places where a C function on a based image cannot be a vector handler on absolut
 | the twin leaves the image and the PSG ledger exactly where the C core leaves them, over every case the C core is verified on | `../test/test_sound_asm.py`, called from `test_sound.py::isr_case` |
 | the 792-byte body IS the original's machine code | `test_asm_body_transcribes_the_original` |
 | the constants it restates (`u`-suffixed C the assembler cannot parse) hold their headers' values | `../test/test_constants.py::test_asm_twin_equates_match_the_headers` |
-| the linked .PRG reaches the twin once and the C core it replaces never | `build.sh`, over `bubble.dis` |
+| the linked .PRG's `$114` vector IS the twin: its routine calls nothing, contains the transcribed body's own label, saves and restores `%d0-%d3/%a0-%a3`, pushes TOS's chain first and mirrors `$484` at the core header's own address | `build.sh`, over `bubble.dis` — five checks, because none of this is reachable by any differential |
+| the object about to be LINKED carries the same 792 bytes the host blob was verified over | `build.sh`, via `asm_twin_ships.py` — the `.S` is assembled twice and the `#ifdef` above is the only thing that may differ |
 
 The first of those needs no callback door and no second model of the chip: the twin writes
 `$ffff8800`/`$ffff8802` with the original's own `move.b` pairs, and the kit's oracle decodes those
 two ports in its memory callback — so off target the twin's register writes land in the oracle's PSG
 ledger while the C core's land in the candidate's, and the suite compares the two streams. **One
-spelling serves both builds**, chip writes included, so what the differential runs is
-instruction-for-instruction what the machine runs.
+spelling serves both builds INSIDE THE BRACKET**, chip writes included, so what the differential runs
+there is instruction-for-instruction what the machine runs; the `#ifdef` is the entry and the
+epilogue and nothing else, and the last pin above is what holds the two assemblies to that.
 
 ### The one constant this build changes, and why it has to
 
@@ -527,15 +535,19 @@ The room loop has **no Vsync and no wait of any kind** (`notes/gameplay.md` §2)
 renderer's speed: the game's pace AND its mouse-to-screen latency ARE the frame cost, and the target
 is parity with the original's cycles per frame rather than a budget to come in under.
 
-**WHERE WAVE 5a LEAVES IT: 482.2K cycles a frame, 16.63 fps, x1.03** of the original's 466.9K /
-17.18. Every wave below reports its OWN window against its own baseline — wave 2's is 809.2K, waves
+**WHERE THE MERGE OF WAVES 5a+5b+5c LEAVES IT — MEASURED, NOT ADDED UP: 473.6K cycles a frame,
+16.94 fps (282 frames in 1000 vblanks), x1.014** of the original's 466.9K / 17.18, both sides
+profiled back to back in one session on the merged tree at `7a2d648` (2026-09-08); the 200 Hz tick
+is **1,844 cycles a tick against 1,697, x1.09** in the same window. The three waves' own windows
+were 482.2K, 476.8K and 482.2K, each in its own worktree against its own baseline — which is why
+this row exists rather than a sum. **The remaining gap is 6.7K a frame.**
+
+Every wave below reports its OWN window against its own baseline — wave 2's is 809.2K, waves
 3a and 3b's is 517.4K, wave 4's is 489.1K, wave 5a's is the saved 483.8K — so a figure quoted
 mid-section is that wave's and not this one, and the first measurement below is the pre-wave-1 table
 rather than the current cost. **This instrument's own spread is 0.3%** (four windows of one binary
 in one session read 485.6K three times and 487.1K once), so a change worth less than that is an
-objdump claim and not a profiler one — which is exactly what wave 5a is at the whole-window level,
-and is not at the door's own row. **Waves 5b and 5c were measured in their own worktrees beside 5a
-and are not in this headline**; whoever merges them re-measures rather than adding the savings up.
+objdump claim and not a profiler one.
 
 **WAVE 4 SAID THE CAMPAIGN STOPPED HERE unless something changed shape, and wave 5a changed the
 door's.** Its 18.6K was two rows: the shim's GEM door at 8.4K, which the shipped binary has NO
@@ -1020,3 +1032,95 @@ difference GCC computed and threw away, and takes the step to 64/78 against the 
 32-bit address constant per slot, so every `contrl` slot is the `move.w #$80,-6186(a4)` the original
 writes; `vq_key_s` is 426 -> 346 cycles hand-counted and the raster copy inlined at a sprite site is
 548 -> 376.
+
+### Wave 6a (2026-09-08) — the 200 Hz VECTOR is the twin, and the door's block re-read
+
+**1,844 cycles a tick -> 1,748, 1,755 and 1,755 over three windows**, against the original's 1,697:
+x1.087 -> **x1.030/x1.034**, and 20.6-20.7K a frame where it was 21.8K — so the 1,750 target is met
+in one window and missed by five cycles in the other two, which is inside the wobble the unseeded
+ambience puts on this row. **The whole window did not move outside the instrument's spread** (473.6K
+-> 473.7K, 282 frames both ways, 16.94 -> 16.93 fps) — 1.2K a frame is 0.25% against a 0.3% spread —
+so the tick's row is this wave's evidence and the headline is not. `atari/` and `../src/asm/` only.
+
+| the tick's glue, hand-counted off the 68000's tables | before | after |
+|---|---|---|
+| the register save + restore | two `movem` pairs (four registers each), 40+40 / 44+44 | ONE pair of eight, **72 / 76** |
+| the image base | pushed 28, read back 20, popped 12 | one `movea.l bg_image_base,%a3`, **20** |
+| the call into the handler | `jsr` 20 + `rts` 16 | **none** — the vector falls through into the body |
+| **total** | **356** | **260** |
+| `bubble_os.o` + `asm_sound_tick.o` `.text` | 2,118 B | **2,096 B** |
+
+**The profiler read 96 fewer cycles a tick in the first window and 89 in the other two, against a
+hand count of 96.**
+
+`bg_timer_c_entry` is no longer in `bubble_os.s`. It is the target-side entry of
+`../src/asm/sound_tick.S`, behind `RECREATE_HOST_DIFFERENTIAL`, and the two arms are mutually
+exclusive: the host build assembles the C signature the differential runs (byte for byte what it
+assembled before, so the cost bar and every case read what they read), the target build assembles
+the vector. **The chain is pushed before the registers**, which is what lets one `rts` close both
+arms — TOS's saved `$114` on target, the C caller off it.
+
+**It also removes an accounting asymmetry.** Hatari charges cycles to subroutine ARRIVALS, so while
+our tick was `jsr`ed its cycles came out of whatever it interrupted; the shipped side's autovectored
+handler leaves them in. Ours is autovectored now too, and the rows moved to match — `bg_gem_trap`'s
+exclusive 268.3K -> **279.0K** against `vdi_call`'s 280.2K, `copy_longs_ascending`'s 135.9K ->
+141.7K against `present_room`'s 139.3K — with neither routine changed. Same-name comparisons taken
+before this wave and after it are reading two different accountings.
+
+**The target arm is reachable by no differential in this workspace** (`docs/on-target-execution.md`
+class 3), so `build.sh` reads it out of the linked disassembly instead: the routine from its label to
+its one `rts` must call nothing, must contain the transcribed body's own label, must push
+`bg_timer_c_chain` first, must `movem` `%d0-%d3/%a0-%a3` both ways, and must carry the `$484` mirror
+once at `../include/sound.h`'s own address — which is the two-language pin the shared-numbers loop
+used to carry for `CONTERM`, now made against the instruction that ships. `../STATUS.md`'s wave 6a
+carries the mutation sweep and the register-class argument.
+
+**The GEM door's five-slot restatement was scoped and is NO-GO**, and `../STATUS.md` says why with
+the arithmetic: the five pointers are NOT constant — `vro_cpyfm` and `vr_recfl` lend the VDI their
+caller's own rectangle, and one of the two is a runtime frame address — so the build gate that lever
+asked for would refuse its own first build; a compare-against-a-cache costs 2,283 cycles a frame
+against the restatement's 1,730 at this window's call mix; and the version that IS available (cache
+the four constant slots, restage `ptsin` alone) buys ~930 a frame for a semantic coupling between
+the door and `../src/frontend.c`'s opcodes that `bubble_os.s`'s own header disclaims.
+
+### Wave 6b (2026-09-08) — the GAME TIER, on the base register the original keeps in a4
+
+**The rows this wave owns are now 1,770 cycles a frame UNDER the shipped binary's, where they were
+829 over** — 31,369 -> **28,770** against 30,540, summed over every function either map names for the
+room simulation (the sprite protocol, the fp package, the `frame_*` slices, the two input VDI bodies,
+`get_pixel`, `bubble_collision_probe`, the HUD's bar). The whole window went 473.6K a frame ->
+**471.9K**, 16.94 fps -> **17.00**, x1.0143 -> **x1.0107**; that is 1.7K against a ~1.5K spread, so
+**the tier's row is this wave's evidence and the headline is not**. Measured in a scratch worktree of
+`7a2d648` with `src/` and `include/` only, so wave 6a is NOT in the window and the two do not add up.
+`../STATUS.md`'s wave 6b carries the per-row table, the objdump counts and the six mutations.
+
+| lever | what moved |
+|---|---|
+| `GlobalsBase` moved from `../src/frontend.c` to `../include/common.h` | the header `../README.md`'s ownership table designates for "an idiom a SECOND core needs" — and it keeps `word_at_base` beside `word_at`. Codegen-neutral: all seven core objects byte-identical across the move |
+| the sprite protocol on the base | 5,758 -> **4,052** a frame. Ten slots a copy, and — the half wave 5c could not price — eleven hoisted address registers down to six, which is 80 cycles of `movem` a call |
+| the `frame_*` slices on the base | 5,333 -> **4,921** a frame |
+| `trap_save_registers` unified onto the base form (a review finding, not the brief) | **-2,396 B** across five core objects; the size gate's spare 78,912 -> **81,472 B**, at an unchanged window |
+| `fp_pack_double` inlined as the fall-through tail the original has, and its `>> 28` given the original's `swap` | the fp package 12,058 -> **11,727**; the `always_inline` half is ~84 of that for +738 B, measured three ways rather than projected |
+
+**What is left in the tier is structural and priced in `../STATUS.md`**: +1,890 on the `frame_*`
+slices is the C ABI (nine `jsr`s and stack arguments where the original falls through nine regions of
+one routine with `a4` already loaded), and closing it means `bubble_main.c`'s frame composition plus
+verified signatures — another wave's brief. **The whole window's remaining 5.0K is entirely OUTSIDE
+this tier** (+6.8K summed the other way: `bg_gem_dispatch` 6,644 with no shipped counterpart,
+`game_room_frame_tail` 2,657, `bg_timer_c_entry` 1,702, against ours being ahead on the VDI trap and
+the copy run).
+
+**Three sites deliberately keep the `image + <address>` form**, and the pre-commit review corrected
+why. `globals_at` is `image + (int32_t)address` where the image form is `image + (uint32_t)address`:
+the same byte for every address this program can build, and a different one only above 0x80000000,
+which `muls_ext_w`/`addr_add` cannot reach. So `apply_fan`'s object fields, `draw_sprites`' sprite
+table slots and `v_gtext`'s `intin` index keep the image form because that is where the arithmetic
+that built them belongs — not because converting them would be wrong. The first draft claimed a
+hazard that does not exist; `../include/common.h` now states the real rule.
+
+**Unpinned, and registered for the second time.** Deleting either `REGISTER_BARRIER`, or
+`always_inline` from `fp_pack_double_tail`, `globals_base` or `sprite_copy`, is green under
+`make test` and `make guarded` and gives back a third to a half of its lever. `build.sh` already has
+the right gate half-built — `MUST_STAY_INLINED` would take the three names as a one-line change —
+plus two codegen scans beside it. `build.sh` was wave 6a's file in the same working tree, so this is
+named rather than done.

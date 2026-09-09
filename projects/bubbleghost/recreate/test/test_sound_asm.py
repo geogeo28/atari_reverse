@@ -25,6 +25,7 @@ machine runs.
 """
 import functools
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -35,10 +36,18 @@ import emu
 import loader
 from harness import report
 
+from recreate_kit import asm_twin
 from recreate_kit.asm_twin import AsmTwins
 
 # The twin, and the C core it stands in for.
 TWIN = "timer_c_sound_isr_asm"
+# The transcribed span's own bracket labels — real symbols, so the object carries them, and the two
+# checks below plus `atari/asm_twin_ships.py` all slice on the same pair.
+BODY, BODY_END = "timer_c_sound_isr_body", "timer_c_sound_isr_body_end"
+# The TARGET build's entry into the same body — the machine's $114 vector, which this build must not
+# carry (`test_the_host_build_carries_no_target_vector`). It is `atari/build.sh` that checks the
+# target side of the same guard, over the linked disassembly.
+TARGET_VECTOR = "bg_timer_c_entry"
 # The transcribed span: [0x145be, 0x148d6) of the original — the whole per-voice loop plus the three
 # duration counters read back at the end. What lies outside it, on both sides, is in
 # `../src/asm/sound_tick.S`'s header comment.
@@ -151,7 +160,7 @@ def test_asm_body_transcribes_the_original():
     the right answer by different instructions still fails here.
     """
     blob = twins()
-    lo, hi = blob.entry("timer_c_sound_isr_body"), blob.entry("timer_c_sound_isr_body_end")
+    lo, hi = blob.entry(BODY), blob.entry(BODY_END)
     assert hi > lo, "empty body bracket — the two labels are in the wrong order"
     mine = blob.bin.read_bytes()[lo:hi]
     theirs = bytes(harness.BASE_IMAGE[ORIGINAL_BODY[0]:ORIGINAL_BODY[1]])
@@ -163,37 +172,87 @@ def test_asm_body_transcribes_the_original():
         f"  twin     {mine.hex()}\n  original {theirs.hex()}")
 
 
-def test_the_twin_never_stores_through_its_own_frame():
-    """The eleven instructions OUTSIDE the transcribed span may read `%sp` once and never write it.
+def _twin_object():
+    """The object kit.mk assembled `sound_tick.S` into for THIS build, or a failure naming the step
+    that makes it. Both checks below read the object rather than the source, because the file has
+    two mutually exclusive arms and only the object says which one was assembled."""
+    obj = Path(__file__).resolve().parents[1] / "build" / "asm" / "sound_tick.o"
+    assert obj.exists(), (
+        f"{obj} is missing — the twins were never assembled. `make test` builds them first.")
+    return obj
 
-    `bg_timer_c_entry` pops the image base back off the stack after the call rather than re-reading
-    `bg_image_base`, which is only safe because this callee treats its incoming argument slot as
-    read-only — the m68k SysV ABI does not require that of a callee, and GCC's version of this
-    handler was the reason the base used to be read twice (`atari/bubble_os.s`, the Timer C entry).
-    The transcription pin does not hold it: the prologue and the epilogue are exactly the bytes
-    OUTSIDE its bracket. So it is asserted here, over the source, where a spill added to the
-    prologue would otherwise mirror a byte from a garbage address into TOS's $484 two hundred times
-    a second — a machine write no differential and no screenshot can see.
+
+def _host_arm_instructions():
+    """The twin's PROLOGUE and EPILOGUE as the HOST BUILD assembled them, one text line each.
+
+    A source scan would read both of the file's arms and could be satisfied by the wrong one.
     """
-    source = (Path(__file__).resolve().parents[1] / "src" / "asm" / "sound_tick.S").read_text()
-    head, _, rest = source.partition(f"\n{TWIN}:\n")
-    assert rest, f"src/asm/sound_tick.S no longer defines {TWIN} at the start of a line"
-    prologue, _, body = rest.partition("\ntimer_c_sound_isr_body:")
-    epilogue = body.partition("\ntimer_c_sound_isr_body_end:")[2]
-    assert prologue and epilogue, "the body's two bracket labels are gone or in the wrong order"
-    # `%a7` IS `%sp` — one register, two spellings the assembler takes equally — so a spill written
-    # the other way would slip past a scan for one of them. Comment lines are stripped first, and
-    # the comment column with them: this is about instructions.
-    stack = [line for line in (prologue + epilogue).splitlines()
-             if not line.lstrip().startswith(("/*", "*", "|"))
-             and re.search(r"%sp|%a7", line.split("|")[0])]
+    obj = _twin_object()
+    listing = subprocess.check_output(["m68k-elf-objdump", "-d", obj], text=True).splitlines()
+    label = re.compile(r"^[0-9a-f]+ <(\S+)>:$")
+    # The twin is three labelled regions: the prologue, the transcribed body (which this test does
+    # not read — the byte pin owns it), and the epilogue after the body's closing bracket. ANY OTHER
+    # label ends the region rather than continuing it: several routines per `.S` is the house pattern
+    # (`projects/zynaps/recreate/src/asm/`), and a second twin added here would otherwise have its
+    # own prologue counted as this one's epilogue — loudly if it names `%sp`, and silently, by
+    # exempting itself from this check, if it does not.
+    starts = {TWIN: "prologue", BODY: None, BODY_END: "epilogue"}
+    region, out = None, {"prologue": [], "epilogue": []}
+    for line in listing:
+        named = label.match(line)
+        if named:
+            region = starts.get(named.group(1))
+            continue
+        if region and "\t" in line:
+            out[region].append(line.split("\t")[-1].strip())
+    assert out["prologue"] and out["epilogue"], (
+        f"no prologue/epilogue disassembled around {TWIN} in {obj.name}; the span labels or the "
+        f"objdump format have moved:\n" + "\n".join(listing[:40]))
+    return out
+
+
+def test_the_twin_never_stores_through_its_own_frame():
+    """The host arm's instructions outside the transcribed span may read `%sp` once and never write
+    it.
+
+    THE RULE OUTLIVED THE REASON IT WAS WRITTEN FOR AND IS KEPT DELIBERATELY. It was `bg_timer_c_entry`
+    popping the image base back off the stack after the call that needed it — and the vector no
+    longer calls anything, so nothing off-target depends on the argument slot surviving today. What
+    the assertion is worth now is the class: a spill added to a hand-written interrupt handler's
+    prologue is a write to memory nobody staged, and neither the transcription pin (whose bracket
+    starts after the prologue) nor the differential (which stages a clean frame every case) would
+    name it. `%a7` IS `%sp` — one register, two spellings — so both are matched.
+    """
+    arms = _host_arm_instructions()
+    stack = [line for line in arms["prologue"] + arms["epilogue"] if re.search(r"%sp|%a7", line)]
     assert len(stack) == 3, (
-        f"src/asm/sound_tick.S names the stack pointer on {len(stack)} instruction(s) outside its "
-        f"transcribed body; this suite knows three — the two `movem`s and the one `movea.l "
-        f"20(%sp)` that reads the image base:\n" + "\n".join(stack))
-    assert re.match(r"\s*movea\.l\s+20\(%(sp|a7)\),%a3", stack[1]), (
+        f"the host arm of src/asm/sound_tick.S names the stack pointer on {len(stack)} "
+        f"instruction(s) outside its transcribed body; this suite knows three — the two `movem`s "
+        f"and the one `movea.l 20(%sp)` that reads the image base:\n" + "\n".join(stack))
+    assert re.match(r"moveal %(sp|a7)@\(20\),%a3", stack[1]), (
         f"the argument load is not the middle of the three stack instructions any more:\n"
         + "\n".join(stack))
+
+
+def test_the_host_build_carries_no_target_vector():
+    """`bg_timer_c_entry` — the $114 vector, and the whole of what the target build adds around this
+    body — must not be in the object the differential runs.
+
+    THE TWO ARMS ARE MUTUALLY EXCLUSIVE AND THIS IS THE HALF OF THAT WHICH CAN BE CHECKED HERE. The
+    vector reads three globals that live in the shim (`bg_timer_c_chain`, `bg_timer_c_ticks`,
+    `bg_image_base`) and writes TOS's own $484 on the machine; assembled into the host blob it would
+    either fail to link or run a store into the harness's address space on every case. The other
+    half — that the TARGET arm is there, falls into the body and calls nothing — is `atari/build.sh`,
+    over the linked disassembly, because no differential in this workspace reaches interrupt glue.
+    """
+    obj = _twin_object()
+    defined = asm_twin.elf_symbols(obj)
+    assert TWIN in defined, (
+        f"{obj.name} does not define {TWIN}, so this build assembled neither arm and the checks "
+        f"either side of this one are reading nothing")
+    assert TARGET_VECTOR not in defined, (
+        f"the host object defines {TARGET_VECTOR} — the target's $114 vector — so the "
+        f"RECREATE_HOST_DIFFERENTIAL guard in src/asm/sound_tick.S is not selecting one arm")
 
 
 # =================================================================================================
