@@ -62,6 +62,7 @@ STATUS section came out of it, and re-running it is one command:
 python3 atari/profile.py pace            # ours: vblanks per frame, and its spread
 python3 atari/profile.py original-pace   # ...the 1988 binary's, the same way
 python3 atari/profile.py ours            # ...and where the cycles are, per symbol
+python3 atari/profile.py ours --phases   # DIAGNOSTIC: inlining off, so each phase is a row — read for SHAPE, not for cost
 ```
 
 **Every ours-side mode rebuilds and RESTAGES `disk/`** with a smoke build whose frame limit is far

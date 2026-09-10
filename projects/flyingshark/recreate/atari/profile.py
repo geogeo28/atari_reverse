@@ -47,11 +47,21 @@ Use:
     python3 atari/profile.py ours               # OUR per-symbol cycles over a 1000-vblank window
     python3 atari/profile.py original           # ...the shipped binary's, from names.txt symbols
     python3 atari/profile.py compare            # both profiles read back and ratioed
+    python3 atari/profile.py ours --phases      # ...ours again, with the inlined phases as ROWS
+
+`--phases` is a DIAGNOSTIC and applies to our side only (`pace` and `ours`). `src/sprite.c` is
+compiled `-O3` and every static helper in it is inlined, so a plain `ours` window charges the whole
+frame to ONE `render_frame` row and says nothing about which phase the cycles are in. `--phases`
+rebuilds with GCC's inlining off — the helpers keep their symbols — and writes to `-phases` output
+names of its own, so the plain window it must be read beside is not overwritten. IT IS NOT THE
+SHIPPED BUILD: the call frames it restores are real cycles, so read a phases window for the SHAPE of
+a frame and take every absolute figure from the plain one.
 
 Every mode leaves its raw Hatari log and a `.json` of what was parsed out of it in `atari/out/`.
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -136,6 +146,15 @@ WINDOW_OPENS_AT_FRAME = 20
 # 1000 vblanks — so it is far above what any window can hold rather than tuned to one.
 PROFILE_BUILD_FRAMES = 2000
 
+# WHAT `--phases` COMPILES WITH, appended to `build.sh`'s CFLAGS through $FS_DIAG_CFLAGS. The three
+# cover the three ways GCC inlines a static helper at -O2/-O3: on its size, on the optimiser's own
+# estimate, and — the one that matters most here — because it has exactly one call site, which is
+# what `copy_ring_seam`, `repaint_overlay_tiles`, `publish_and_wait`, `advance_scroll`,
+# `draw_exposed_tile_band` and `replay_restore_list` all are inside `render_frame`.
+PHASE_CFLAGS = "-fno-inline-functions -fno-inline-small-functions -fno-inline-functions-called-once"
+# ...and what its outputs are called, so a phases run never overwrites the window it is read beside.
+PHASES_SUFFIX = "-phases"
+
 # `nm` type letters worth giving Hatari: text, data and bss, local or global.
 NM_SYMBOL_TYPES = "TtDdBb"
 # ...MINUS the asm twins' span brackets. `../src/asm/*.S` marks each transcribed span with
@@ -175,9 +194,12 @@ NAMES_FN_RE = re.compile(r"^fn\s+0x([0-9a-fA-F]+)\s+(\S+)", re.M)
 # =================================================================================================
 # Building, and the symbol maps
 # =================================================================================================
-def build(frames):
+def build(frames, diagnostic_cflags=""):
     """`build.sh smoke <frames>`, refused loudly — a stale .PRG profiled against a fresh map reads
     perfectly and names the wrong functions.
+
+    `diagnostic_cflags` reaches `build.sh` as $FS_DIAG_CFLAGS (see PHASE_CFLAGS). Empty is the
+    shipped build and is what every mode but `--phases` asks for.
 
     THE SMOKE BUILD AND NOT THE PLAY ONE. The play build writes no files, which is what makes it a
     game and also means nothing says it has started; the smoke build's beacon is how this driver
@@ -186,9 +208,11 @@ def build(frames):
     teardown — and `run_should_stop()` is one compare a frame. `--build-frames` is far above what a
     window can hold, so the limit is never reached inside one.
     """
-    print(f"building smoke {frames}...", flush=True)
+    diagnostic = f" PHASES [{diagnostic_cflags}]" if diagnostic_cflags else ""
+    print(f"building smoke {frames}{diagnostic}...", flush=True)
     done = subprocess.run(["bash", str(HERE / "build.sh"), "smoke", str(frames)],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True,
+                          env={**os.environ, "FS_DIAG_CFLAGS": diagnostic_cflags})
     if done.returncode != 0:
         raise SystemExit(f"FAIL: `build.sh smoke {frames}` exited {done.returncode}\n"
                          + (done.stdout + done.stderr)[-2000:])
@@ -445,9 +469,12 @@ def frame_and_spin_pcs(session, log, side):
             image_base + symbol_at(symbols, ATTRACT_SPIN_SYMBOL, NAMES_TXT), symbols)
 
 
-def run_pace(side, frames):
-    """Boot one side and clock every attract frame it draws."""
-    name = f"pace-{side}"
+def run_pace(side, frames, label=None):
+    """Boot one side and clock every attract frame it draws.
+
+    `label` names the OUTPUT files and defaults to the side. It is what keeps a `--phases` run's
+    numbers out of the plain run's `pace-ours.*`, which they are only meaningful beside."""
+    name = f"pace-{label or side}"
     log = OUT / f"{name}.log"
     session = session_for(our_media() if side == OURS else original_media(), name)
     try:
@@ -559,8 +586,11 @@ def pin_text_base(log_text, expected):
                          f"wrong function")
 
 
-def profile_result(side, log, text_base):
-    """One side's parsed window, saved beside its log so `compare` can read it back."""
+def profile_result(side, log, text_base, label=None):
+    """One side's parsed window, saved beside its log so `compare` can read it back.
+
+    `label` names the .json, and `side` stays the side — so a `--phases` window says in its own
+    payload which binary it measured while living under a filename of its own."""
     text = Path(log).read_text(errors="replace")
     pin_text_base(text, text_base)
     functions = parse_callers(text)
@@ -571,7 +601,7 @@ def profile_result(side, log, text_base):
     result = {"side": side, "window_vbls": WINDOW_VBLS, "window_cycles": window_cycles(text),
               "frames": frames, "functions": functions}
     OUT.mkdir(parents=True, exist_ok=True)
-    (OUT / f"profile-{side}.json").write_text(json.dumps(result, indent=1, sort_keys=True))
+    (OUT / f"profile-{label or side}.json").write_text(json.dumps(result, indent=1, sort_keys=True))
     return result
 
 
@@ -593,9 +623,12 @@ def await_window(session, log_path):
     raise SystemExit(f"FAIL: the profile window never closed — see {log_path}")
 
 
-def run_profile(side):
-    """Open a WINDOW_VBLS window at the same frame on either side and report what it held."""
-    name = f"profile-{side}"
+def run_profile(side, label=None):
+    """Open a WINDOW_VBLS window at the same frame on either side and report what it held.
+
+    `label` names the outputs (see `run_pace`); the SIDE still chooses the media and the symbols."""
+    label = label or side
+    name = f"profile-{label}"
     log = OUT / f"{name}.log"
     with tempfile.TemporaryDirectory() as scratch:
         work = Path(scratch)
@@ -604,7 +637,7 @@ def run_profile(side):
             base, frame_pc, spin_pc, symbols = frame_and_spin_pcs(session, log, side)
             if side == OURS:
                 symbol_file = write_symbol_file(symbols, OUT / f"{name}.sym")
-                opening = profile_on_commands(symbol_file, dump_script(work, side), base)
+                opening = profile_on_commands(symbol_file, dump_script(work, label), base)
             else:
                 # ../names.txt's addresses are GHIDRA addresses at the project's 0x10000 load base,
                 # and the shipped .PRG lands BELOW that — so Hatari's own offset would have to be
@@ -612,15 +645,15 @@ def run_profile(side):
                 relocated = {symbol: (base - smoke.LOAD_BASE + address, kind)
                              for symbol, (address, kind) in symbols.items()}
                 symbol_file = write_symbol_file(relocated, OUT / f"{name}.sym")
-                opening = profile_on_commands(symbol_file, dump_script(work, side))
+                opening = profile_on_commands(symbol_file, dump_script(work, label))
             arm_after_the_prescroll(
                 session, work, spin_pc,
                 f"b pc = ${frame_pc:x} :{WINDOW_OPENS_AT_FRAME} :once :quiet "
-                + action_file(work, f"FSON-{side}.INI", *opening), f"FSARM-{side}.INI")
+                + action_file(work, f"FSON-{label}.INI", *opening), f"FSARM-{label}.INI")
             await_window(session, log)
         finally:
             require_survived(session.close(), log)
-    return profile_result(side, log, base)
+    return profile_result(side, log, base, label)
 
 
 def print_profile(result):
@@ -731,6 +764,10 @@ def main():
                         help="the frame limit the profiled smoke build is given")
     parser.add_argument("--no-build", action="store_true",
                         help="measure the .PRG that is already staged (a bisection wants this)")
+    parser.add_argument("--phases", action="store_true",
+                        help="DIAGNOSTIC, our side only: rebuild with inlining off so src/sprite.c's "
+                             "phase helpers are rows of their own, into `-phases` output names. The "
+                             "extra call frames are real cycles — see this file's header")
     options = parser.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
 
@@ -738,15 +775,24 @@ def main():
         compare()
         return 0
     side = OURS if options.mode in (PACE, OURS) else SHIPPED
+    # REFUSED RATHER THAN IGNORED on the shipped binary: nothing here recompiles it, so a `--phases`
+    # that quietly did nothing would leave a reader holding a plain window under a `-phases` name.
+    if options.phases and side != OURS:
+        raise SystemExit(f"FAIL: --phases rebuilds OUR cores; `{options.mode}` measures the shipped "
+                         f"binary, which this repository does not compile")
+    if options.phases and options.no_build:
+        raise SystemExit("FAIL: --phases IS a rebuild — with --no-build it would profile whatever "
+                         "is staged and name the result a phases window")
+    label = side + PHASES_SUFFIX if options.phases else side
     if side == OURS and not options.no_build:
-        build(options.build_frames)
+        build(options.build_frames, PHASE_CFLAGS if options.phases else "")
 
     if options.mode in (PACE, ORIGINAL_PACE):
-        summary = summarise_pace(side, run_pace(side, options.frames))
-        (OUT / f"pace-{side}.json").write_text(json.dumps(summary, indent=1))
+        summary = summarise_pace(side, run_pace(side, options.frames, label))
+        (OUT / f"pace-{label}.json").write_text(json.dumps(summary, indent=1))
         print_pace(summary)
         return 0
-    print_profile(run_profile(side))
+    print_profile(run_profile(side, label))
     return 0
 
 

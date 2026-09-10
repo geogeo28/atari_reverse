@@ -25,6 +25,13 @@
 #   4. HOT_CFLAGS, which recompiles ONE core at a higher optimisation level.
 # Both 3 and 4 are pinned: 3 by ../test/test_asm_sprite.py plus the two gates below, and both by
 # smoke.py's framebuffer identity, which is what says a codegen change altered no pixel.
+#
+# $FS_DIAG_CFLAGS IS A FIFTH, AND IT IS DIAGNOSTIC ONLY. It is appended to CFLAGS for every core and
+# for the link, and NOTHING in this repository sets it except `atari/profile.py --phases`, which
+# turns GCC's inlining off so that `../src/sprite.c`'s static phase helpers keep their own symbols
+# and the profiler can charge a phase instead of folding all of them into `render_frame`. A build
+# made with it runs EXTRA CALL FRAMES and is therefore slower than the one that ships: it is a
+# measuring instrument, not a game, and it must never be what a play build is made with.
 set -euo pipefail
 
 # The smoke build's default frame limit, which smoke.py's SMOKE_ATTRACT_FRAMES mirrors and asserts.
@@ -57,7 +64,12 @@ CC=m68k-elf-gcc
 # shim_include FIRST: that is the whole seam.
 CFLAGS="-m68000 -O2 -fno-tree-loop-distribute-patterns -ffreestanding -fno-jump-tables \
         -fomit-frame-pointer -nostdlib -DOS_NO_REFUSAL_TALLY \
-        -I$HERE/shim_include -I$REC/include -I$KIT/include -Wall -Wextra"
+        -I$HERE/shim_include -I$REC/include -I$KIT/include -Wall -Wextra \
+        ${FS_DIAG_CFLAGS:-}"
+if [ -n "${FS_DIAG_CFLAGS:-}" ]; then
+  echo ">> DIAGNOSTIC BUILD: FS_DIAG_CFLAGS=${FS_DIAG_CFLAGS}"
+  echo "   the .PRG this leaves staged is an INSTRUMENT, not a game — re-run build.sh to undo it"
+fi
 CORES="$(ls "$REC"/src/*.c)"
 
 echo ">> stage drive"
