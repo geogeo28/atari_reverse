@@ -547,6 +547,13 @@ static void sfx_update(uint8_t *image) {
 static const uint8_t SHADOW_FLUSH_REGS[SND_SHADOW_BYTES] = {1, 0, 3, 2, 5, 4, 6, 8, 9, 10, 12, 11};
 #define SHADOW_MIXER_GOES_BEFORE 7u   /* ...before shadow byte 7, the first volume */
 
+/* Unroll the next loop, whose trip count `count` is. `#pragma GCC unroll` does NOT macro-expand its
+ * operand, so the count reaches it through `_Pragma` and two levels of stringification — otherwise
+ * each of the two runs below would need a hand-copied second spelling of a length it already names.
+ * Both are `#undef`ed after the one function they exist for. */
+#define PRAGMA_TEXT(text) _Pragma(#text)
+#define UNROLL_FULLY(count) PRAGMA_TEXT(GCC unroll count)
+
 /* Compute the mixer byte and push the whole shadow at the chip @ 0x58a5e.
  *
  * The envelope shape is a ONE-SHOT LATCH: pushed only on the ticks its shadow byte is non-zero, and
@@ -569,16 +576,30 @@ static void flush_shadow_to_psg(uint8_t *image) {
             mixer ^= MIXER_EOR[index];
     }
 
-    for (index = 0; index < SND_SHADOW_BYTES; index++) {
-        if (index == SHADOW_MIXER_GOES_BEFORE)
-            psg_port_write(PSG_REG_MIXER, mixer);
+    /* TWO LOOPS AND NOT ONE WITH A TEST IN IT, AND BOTH UNROLLED. Where the mixer goes is a
+     * compile-time fact, so an `index == SHADOW_MIXER_GOES_BEFORE` inside the body asks twelve
+     * times a question that is true once. Split, each run has a constant trip count, and unrolled
+     * each register number is a literal at its own store — which also folds away `psg_port_write`'s
+     * range test, since a literal is provably in range. On the ST that is part of the difference
+     * between 199 and 110 cycles a register write — the rest is the seam's own, in
+     * ../atari/shim_include/psg.h — and the flush is thirteen of them inside every vertical blank
+     * (measured 2026-09-09; ../STATUS.md, "What a vertical blank costs"). The ORDER is unchanged:
+     * shadow bytes 0..6, the mixer, then shadow bytes 7..11. */
+UNROLL_FULLY(SHADOW_MIXER_GOES_BEFORE)
+    for (index = 0; index < SHADOW_MIXER_GOES_BEFORE; index++)
         psg_port_write(SHADOW_FLUSH_REGS[index], base[index]);
-    }
+    psg_port_write(PSG_REG_MIXER, mixer);
+UNROLL_FULLY(SND_SHADOW_BYTES - SHADOW_MIXER_GOES_BEFORE)
+    for (index = SHADOW_MIXER_GOES_BEFORE; index < SND_SHADOW_BYTES; index++)
+        psg_port_write(SHADOW_FLUSH_REGS[index], base[index]);
+
     if (base[SND_SHADOW_ENV_SHAPE] != 0) {
         psg_port_write(PSG_REG_ENV_SHAPE, base[SND_SHADOW_ENV_SHAPE]);
         base[SND_SHADOW_ENV_SHAPE] = 0;
     }
 }
+#undef UNROLL_FULLY
+#undef PRAGMA_TEXT
 
 /* One VBL @ 0x5896a — the module's only entry the game calls per frame, from `vbl_handler`. */
 void sound_vbl_tick(uint8_t *image) {

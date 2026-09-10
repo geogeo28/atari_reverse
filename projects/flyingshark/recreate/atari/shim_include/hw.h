@@ -59,16 +59,30 @@
  * are the only surface a target run has for a hardware access, and the record carries them.
  * Defined in flyshark_backend.c, because a definition in a header would be one per translation
  * unit and the counts would be per-file rather than per-run. */
-extern volatile uint32_t fs_hw_writes;   /* plain stores through the three widths */
+/* Plain stores. Today every one of them is half of a YM2149 register write and reaches this
+ * counter from psg.h rather than from a door — see `hw_store8` below — so the number smoke.py
+ * checks against `2 x PSG_WRITES` is still the run's store count, and a store made anywhere else,
+ * through any of the three widths, is what would break that equality. */
+extern volatile uint32_t fs_hw_writes;
 extern volatile uint32_t fs_hw_rmw;      /* ...and read-modify-writes, which is the ACIA's EOI */
 extern volatile uint32_t fs_hw_reads;    /* reads, which is the ACIA data port and $ff820a */
 
 /* ---- the three plain stores -------------------------------------------------------------------
  *
  * WIDTH IS NOT DECORATION: a byte store widened to a word clobbers the register beside it, and on
- * this bus the register beside a shifter byte is another shifter register. */
-static inline void hw_write8(uint32_t addr, uint32_t value) {
+ * this bus the register beside a shifter byte is another shifter register.
+ *
+ * THE BYTE DOOR IS IN TWO HALVES, and the split exists so that the bus arithmetic and the width have
+ * ONE spelling. `psg_port_write` (psg.h) is the caller that needs the untallied half: the vertical
+ * blank pushes thirteen register writes through the select/data pair, where counting each store
+ * separately cost more than making it did, so that seam stores twice and counts once. Nothing else
+ * uses `hw_store8` — a store made anywhere else goes through the door and is counted there. */
+static inline void hw_store8(uint32_t addr, uint32_t value) {
     *(volatile uint8_t *)FS_HW_BUS(addr) = (uint8_t)value;
+}
+
+static inline void hw_write8(uint32_t addr, uint32_t value) {
+    hw_store8(addr, value);
     fs_hw_writes++;
 }
 

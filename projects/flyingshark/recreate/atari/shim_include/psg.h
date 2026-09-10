@@ -26,7 +26,7 @@
  * include would find the shadowing os.h by directory and strand its `#include_next`. */
 #include <os.h>
 
-#include "hw.h"       /* the doors, and the counters they keep */
+#include "hw.h"       /* hw_store8, and the counters the doors keep */
 
 /* Writes this seam made, and writes it REFUSED. A register outside 0..15 is refused rather than
  * masked down: the ST's select latch decodes four bits, so a driver that put anything in the upper
@@ -35,13 +35,37 @@
 extern volatile uint32_t fs_psg_writes;
 extern volatile uint32_t fs_psg_refused;
 
+/* One half of the select/data pair: hw.h's own store, and the ONE it is worth to `fs_hw_writes`.
+ *
+ * It is `hw_write8` with the counter taken out from under it. An `addq.l #1,(xxx).L` costs 26 cycles
+ * on this bus; the vertical blank's only PSG traffic is `flush_shadow_to_psg`'s thirteen register
+ * writes, so hw_write8's per-store increment plus `fs_psg_writes`' own came to THREE of them per
+ * register write — 926 cycles a blank spent counting against 352 spent storing (measured 2026-09-09
+ * by `profile cycles`; ../STATUS.md, "What a vertical blank costs").
+ *
+ * Returning the tally instead lets the caller add it once, and the compiler folds the sum to a
+ * literal 2 — so the pair costs ONE increment and the count is still DERIVED FROM THE STORES rather
+ * than asserted about them. That is what keeps smoke.py's `HW_WRITES == 2 x PSG_WRITES` a check on
+ * the pair rather than an identity: a store deleted from this function takes its own tally with it
+ * and the two numbers stop agreeing, where a constant `+= 2` written beside the stores would go on
+ * claiming both were made. It is the only surface the target build's PSG pair has — `make test`
+ * compiles the KIT's psg.c and never this header. */
+static inline unsigned fs_psg_store(uint32_t port, uint8_t value) {
+    hw_store8(port, value);
+    return 1;
+}
+
+/* SELECT THEN DATA, AND NOTHING BETWEEN THEM — the protocol this file's header argues. */
 static inline void psg_port_write(unsigned reg, uint8_t value) {
+    unsigned stores;
+
     if (reg >= OS_PSG_NREGS) {
         fs_psg_refused++;
         return;
     }
-    hw_write8(OS_PSG_PORT_SELECT, (uint8_t)reg);
-    hw_write8(OS_PSG_PORT_DATA, value);
+    stores = fs_psg_store(OS_PSG_PORT_SELECT, (uint8_t)reg);
+    stores += fs_psg_store(OS_PSG_PORT_DATA, value);
+    fs_hw_writes += stores;
     fs_psg_writes++;
 }
 

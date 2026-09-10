@@ -1150,7 +1150,8 @@ Things the differential is structurally blind to, recorded here rather than disc
 ## On-target performance
 
 **The frame is 4.56 vertical blanks against the original's own 4.00 — 1.14x, from 3.40x.** Measured
-on 2026-09-08 with `atari/profile.py`, which boots both binaries on the same Hatari, opens a window
+on 2026-09-08 with `atari/profile.py` (levers 1-3; lever 4 and "What a vertical blank costs" are
+2026-09-09 on the same instrument), which boots both binaries on the same Hatari, opens a window
 at the same place in the same screen, and clocks them with the same instrument. Nothing below is an
 estimate: every row is a before/after from that tool, and the NO-GOs are recorded as carefully as
 the GOs because the next agent's first question is which levers are already spent.
@@ -1177,6 +1178,7 @@ frames, past the prescroll. It is a COUNT of vertical blanks and not a stopwatch
 | — | (the same flags AFTER lever 3, which is what ships) | — | — | — | +6,144 B: with the twin owning the unclipped path, GCC has four fewer specialised copies of the C blitter to unroll |
 | 3 | the asm twin for the four unclipped sprite blitters | **4.559** | **10.97** | **731,229** | **GO**, −41.1% |
 | 2e′ | lever 2e RE-MEASURED after lever 3, because the twin took the path 2e was chosen for: `src/sprite.c` back at -O2, twin linked | 5.532 | 9.04 | 886,488 | the flags still earn their 6,144 B — **worth 0.97 blanks a frame (21%)** even now that the C blitter they were aimed at runs only the gated path. What they buy today is `render_frame`'s own body, which lives in the same file |
+| 4 | the vertical-blank path: the PSG flush split, unrolled, and counted per PAIR instead of per store (`src/sound.c`, `atari/shim_include/psg.h`, `atari/shim_include/hw.h`) | 4.548 | 10.99 | 729,592 | **GO on the BLANK, and the pace cannot show it**: −1,178 profiled cycles a vertical blank (−17%). At 4.5 blanks that is ~6,400 wall cycles a frame against a 160,256-cycle blank, so it lands in the `Vsync` idle and the distribution barely moves — 3x1 4x89 5x2 6x**34** over 126 frames, against 3x1 4x89 5x2 6x**35** over 127. The evidence for this row is the per-blank table below, not the pace |
 | — | the original, measured the same way | 4.000 | 12.50 | 641,039 | — |
 
 Two things in that table are worth reading twice.
@@ -1204,6 +1206,55 @@ has to emit).
 | 1 | `blit_sprite_row`'s `memcpy(spill_plane, plane, …)` is four assignments. `-ffreestanding` implies `-fno-builtin`, so a fixed-size 16-byte `memcpy` was a real `jsr` into `atari/flyshark_backend.c`'s byte loop: 588 cycles a call, 802 calls a frame, 471,898 cycles a frame — 28% of the whole window, and the ONLY `memcpy` call site in the linked program | a core edit; `make test` + `make guarded` green (3,553 at the time), framebuffer identity unchanged |
 | 2e | `atari/build.sh` compiles `src/sprite.c` with `-O3 -funroll-loops --param max-unroll-times=2` and every other core at -O2 | 12,544 B of text; the SOURCE is unchanged, so it is a flag and not a variant |
 | 3 | `src/asm/sprite.S` transcribes the original's own four unclipped blitters (0x153b2 / 0x15408 / 0x154a4 / 0x15586), byte for byte, and `src/sprite.c`'s `BLIT_SPRITE_ROWS_UNCLIPPED` seam calls it in the target build | 832 B of object text, and NET −256 B of PROGRAM text (see above); four gates, each proved able to fail (`src/asm/README.md`) |
+| 4 | `flush_shadow_to_psg`'s one loop with an `index == SHADOW_MIXER_GOES_BEFORE` test inside it became TWO constant-length loops with the mixer between them, both `#pragma GCC unroll`ed — so each register number is a literal at its own store and `psg_port_write`'s range test folds away. And the pair is counted ONCE: `atari/shim_include/hw.h` splits `hw_store8` (the bus arithmetic and the byte width, no tally) out of `hw_write8`, and `psg.h`'s `fs_psg_store` returns the 1 its store is worth so the two fold into a single `addq.l #2` — three read-modify-writes a register write become two. 199 cycles a register write became 110 | +512 B of the play build's text (57,344 → 57,856) and 1,024 B of the floppy's free bytes (14,336 → 13,312) |
+
+### What a vertical blank costs, layer by layer
+
+The frame's cost is not all in `render_frame`: the vertical-blank handler runs 4 to 6 times inside
+every one of them, and it is the one path in the program with a shipped counterpart small enough to
+read whole. Measured 2026-09-09 over a 1000-vblank window at the attract screen, in PROFILED cycles
+per blank. The two right-hand columns are Hatari's callers report, which prints an INCLUSIVE and an
+EXCLUSIVE total per row — so a layer's own cost is its exclusive figure and the layers sum.
+
+| layer | before | after | what it is |
+|---|---|---|---|
+| `fs_vbl_entry` (`atari/flyshark_os.s`) | 152 | 152 | the `movem` pair the m68k SysV scratch set needs, the `jsr`, and the push-and-`rts` that chains to TOS's handler. Hatari attributes the exception sequence itself (~44 more) to no row at all |
+| `fs_vbl_tick` own (`atari/flyshark_main.c`) | 268 | 267 | the entry count, the read of the image's own $70, the compare against the table, the handler count, and the fresh read of the chain operand |
+| `vbl_handler` + `sound_vbl_tick`'s own code | 3,867 | **2,687** | the frame counter, the 50/60 Hz divider, `music_update`'s own body, and the PSG FLUSH — which was 2,616 of that 3,867 and is now 1,436 |
+| `channel_frame_update` + `channel_sequencer_step` | 2,421 | 2,426 | untouched; the 5 cycles are the window's own spread |
+| **the whole path** | **6,752** | **5,574** | −1,178, i.e. −17% |
+| the original, the same way | **2,318** | | 307 for its six-instruction `vbl_handler` @ 0x11636 plus ~2,000 for `A\MODULE.BAK`'s tick at +38 |
+
+**The shim's three dispatch layers were never the cost.** A phase report of 2026-09-09 estimated
+them at ~3,300 of the blank's 6,531 and the reconstructed handler plus the sound tick at ~3,200; the
+callers report says the shim is **470** and the driver is the other 6,300. The reason is in the
+disassembly: `VBL_HANDLERS` has one entry, so `dispatch_image_vector`'s loop compiles to a single
+`cmpl` against a literal and a `beq` — the fast path the design wanted is already what GCC emits,
+and there is nothing left to shave there. **Every cycle of this gap is the sound driver's body.**
+
+**What pins lever 4, and what it does not.** The PSG stream — thirteen (register, value) pairs in
+one order, then the conditional envelope-shape latch — is pinned off target by the kit's PSG event
+ledger, so `make test` covers the `src/sound.c` half and a mutation that moves the mixer write
+reddens 70 cases (checked). The `atari/shim_include/psg.h` half is compiled by NO test: off target
+`src/sound.c` gets the kit's `psg.c` instead. Its one surface is `smoke.py`'s
+`HW_WRITES == 2 x PSG_WRITES`, and it survives this lever only because the tally is returned BY the
+store (`fs_psg_store`) rather than asserted beside it — a constant `+= 2` would have made the
+equality an identity, which is what an earlier draft of this change did and what the review caught.
+Two mutations still pass it green, exactly as they did before this lever and for the same reason:
+deleting the store INSIDE `fs_psg_store` while keeping its `return 1`, and transposing
+`OS_PSG_PORT_SELECT` with `OS_PSG_PORT_DATA`. Both are recorded here rather than gated.
+
+Two things were measured on that path and NOT taken, so the next agent does not re-measure them:
+
+* **Inlining `channel_frame_update` into `music_update`** (`always_inline`, the body/wrapper split
+  `src/frontend.c` and `projects/bubbleghost` use) removes 242 cycles of C ABI per call — and made
+  the blank **SLOWER**, 5,012 → 6,352, because GCC then stopped inlining `apply_vibrato` and the
+  four other helpers into the tripled body. Forcing those in too got it to 5,055 — still worse than
+  leaving all of it alone — for 1,542 B of .PRG. Reverted.
+* **Dropping `volatile` from `fs_psg_writes`** so the thirteen counter increments could merge into
+  one. They do not merge: the intervening stores go through a `volatile uint8_t *`, which by C's
+  aliasing rules may alias the counter, so GCC keeps every read-modify-write with or without the
+  qualifier (checked on the emitted m68k). It would have weakened a surface for nothing.
 
 ### Where the remaining 1.14x is
 
@@ -1228,7 +1279,8 @@ the original's 250). Per frame, ours against theirs:
 | a twin for the four GATED bodies (0x14e1e / 0x14f06 / 0x1505e / 0x15230) | up to ~46,000 cycles a frame (7%) | it is four more transcriptions, and every one of them `btst`s an ABSOLUTE address (`$16426`) once per group — which in a reconstruction is `image base + 0x16426` and cannot be byte-pinned. It would be the first body here whose transcription pin needed an exception, and that case should be made by a measurement rather than by symmetry |
 | `COUNT_BARRIER` / `CURSOR_BARRIER` on `include/common.h`'s `copy_longs` | ~18,000 cycles a frame (the `__mulsi3` row) | the idiom is the kit's and documented (`machine.h`, "WHAT KEEPS A SPELT-OUT COPY RUN A POSTINCREMENT RUN"), but `copy_longs` lives in `include/common.h`, which this campaign did not own. It is one edit and one re-measure |
 | `build_text_display_list` at 1.74x | ~12,000 cycles a frame | it is shim code composed from verified cores, so a twin for it would be transcribing a routine the reconstruction does not have a core for |
-| the last blank: 4.56 → 4.00 | the whole remaining gap | STRUCTURAL. To land on 4 blanks the frame's WORK must fit under four (641,039 cycles), and the original is already at 4.000 with its own work overrunning three — so parity everywhere is what 4.00 costs, not a lever. The distribution says the same thing more usefully: **89 of 127 frames already take 4 blanks, exactly as the original does**; the 35 that take 6 are the attract screen's heavier text page, where the display list is longest |
+| an asm twin for `A\MODULE.BAK`'s vertical-blank tick (0x5896a and the routines under it) | **2,890 cycles a BLANK, i.e. ~17,300 a frame at 6 blanks** — the whole of what is left on that path: 5,208 today against the original's 2,318 | the C levers on that path are spent (see "What a vertical blank costs" above): the shim's dispatch is 470 cycles and cannot shrink, and the two remaining C rewrites were measured and made it worse. What is left is the driver's body, where the original addresses every one of its tables `(d16,PC)` in 12 cycles and GCC has to materialise a 32-bit image offset into a data register first — 28. That is not a C-level defect and no C-level change reaches it. The twin would be the FIRST one taken from the runtime-loaded module rather than from the .PRG, and `projects/flyingshark/out/names_module.txt` — its 23 symbols — still says "NOTHING HERE IS APPLIED YET", so applying that name map is step one |
+| the last blank: 4.56 → 4.00 | the whole remaining gap | STRUCTURAL. To land on 4 blanks the frame's WORK must fit under four (641,039 cycles), and the original is already at 4.000 with its own work overrunning three — so parity everywhere is what 4.00 costs, not a lever. The distribution says the same thing more usefully: **89 of 126 frames already take 4 blanks, exactly as the original does** (2026-09-09, after lever 4; it was 89 of 127 before it); the 34 that take 6 are the attract screen's heavier text page, where the display list is longest |
 
 ### What the campaign did NOT pin, and it is named rather than left implicit
 
