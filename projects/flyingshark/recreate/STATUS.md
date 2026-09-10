@@ -1158,10 +1158,18 @@ Things the differential is structurally blind to, recorded here rather than disc
 
 ## On-target performance
 
-**The frame is 4.56 vertical blanks against the original's own 4.00 — 1.14x, from 3.40x.** Measured
-on 2026-09-08 with `atari/profile.py` (levers 1-3; lever 4 and "What a vertical blank costs" are
-2026-09-09 on the same instrument), which boots both binaries on the same Hatari, opens a window
-at the same place in the same screen, and clocks them with the same instrument. Nothing below is an
+**The frame is 3.59 vertical blanks against the original's own 4.00 — 0.90x on the mean, from 3.40x.**
+Re-summed 2026-09-09 at the merge of levers 1-9 (89ab001): 128 attract frames, 2x6 3x77 4x9 5x36
+against the original's 4x128. The LIGHT attract page runs at the game's own three-blank budget, which
+the shipped binary never reaches; the HEAVY page is still five blanks against its four — its work is
+~684,000 wall cycles against the 641,039 four blanks allow, and "What is left" names where the
+remainder is. The 2s and the 4s are page-transition intervals rather than frames of their own: the
+pace is the interval between two `render_frame` ENTRIES, and a heavy frame's post-publish work (the
+restore replay, the tile band) is longer than a light one's, so the entry after a heavy frame lands
+late and the one after a light frame lands early. Levers 1-3 were measured on 2026-09-08 and 4-9 on
+2026-09-09, each on its own tree; every figure is from `atari/profile.py`, which boots both binaries
+on the same Hatari, opens a window at the same place in the same screen, and clocks them with the
+same instrument. Nothing below is an
 estimate: every row is a before/after from that tool, and the NO-GOs are recorded as carefully as
 the GOs because the next agent's first question is which levers are already spent.
 

@@ -248,8 +248,9 @@ in the game can start** ([`notes/sound_engine.md`](notes/sound_engine.md)).
 * **Built, not yet played by a human.** [`recreate/atari/`](recreate/atari/) compiles the cores
   unchanged for the 68000; `smoke.py` pins the framebuffer identity against the original at attract
   frames 50 and 120 on the GEMDOS folder and on the floppy, the trap ledger, the palette and two
-  `Physbase` read-backs; `profile.py` measures 4.53 vertical blanks a frame (11.0 fps) against the
-  original's 4.00 (12.5 fps) after the memcpy lever, `-O3` on the blitter file alone, byte-identical
+  `Physbase` read-backs; `profile.py` measures 3.59 vertical blanks a frame (13.9 fps) against the
+  original's 4.00 (12.5 fps) — the light attract page at the game's own 3-blank budget, the heavy
+  page still at 5 — after the memcpy lever, `-O3` on the blitter file alone, byte-identical
   asm twins of the four unclipped blitters and the text compiler's cursors taken out from behind
   their pointers. Headless Hatari cannot press a joystick, so play past the
   attract screen, the STE and the easy-difficulty entry are unpinned — see

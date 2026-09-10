@@ -86,7 +86,7 @@ stream inside a stub that fakes GEMDOS. **254 functions named · ten of ten subs
 reconstructed C, and the two frames above were drawn by one call into it per frame — as is the whole
 gallery, four stages of it, each staged by the reconstruction's own cores. The same cores compiled
 for the 68000 are a playable `FLYSHARK.PRG` and a bootable `.ST`, byte-identical to the original's
-attract frame at 11.0 fps against its 12.5 — untested under a real stick and on iron.
+attract frames at 13.9 fps against its 12.5 — untested under a real stick and on iron.
 → [`projects/flyingshark/README.md`](projects/flyingshark/README.md)
 
 ---
