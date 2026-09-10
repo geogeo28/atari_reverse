@@ -193,13 +193,14 @@ void scroll_wrap_copy_1280(uint8_t *image, uint32_t src, uint32_t dst);
 void render_frame(uint8_t *image);
 
 /* ================================================================================================
- * The ASM TWINS the target build substitutes for three of the cores above.
+ * The ASM TWINS the target build substitutes for four of the cores above.
  *
- * `../src/asm/sprite.S` and `../src/asm/restore.S` transcribe the ORIGINAL's own instruction
- * sequence for these routines, and `atari/build.sh` links them into the .PRG with `-DFS_ASM_SPRITE`,
- * which is what makes `../src/sprite.c`'s three seams call a twin instead of its own C. The
- * differential build never defines it and never links them; `test/test_asm_sprite.py` and
- * `test/test_asm_restore.py` are what prove each twin equal to the core it stands in for.
+ * `../src/asm/sprite.S`, `../src/asm/restore.S` and `../src/asm/clipped.S` transcribe the ORIGINAL's
+ * own instruction sequence for these routines, and `atari/build.sh` links them into the .PRG with
+ * `-DFS_ASM_SPRITE`, which is what makes `../src/sprite.c`'s four seams call a twin instead of its
+ * own C. The differential build never defines it and never links them; `test/test_asm_sprite.py`,
+ * `test/test_asm_restore.py` and `test/test_asm_clipped.py` are what prove each twin equal to the
+ * core it stands in for.
  *
  * THE SIGNATURES LIVE HERE AND NOWHERE ELSE, which is the point of the block rather than a tidying.
  * They were `extern`s inside `src/sprite.c` that the host build never compiles, so a twin that
@@ -211,6 +212,10 @@ void render_frame(uint8_t *image);
 #ifdef FS_ASM_SPRITE
 void blit_sprite_rows_unclipped_asm(uint8_t *image, uint32_t src, uint32_t dst,
                                     unsigned width_class, unsigned shift, uint32_t rows_minus_one);
+/* ...and the GATED half of the same core, `src/asm/clipped.S`. Same arguments: the caller has
+ * already installed the gate byte at `A_blit_clip_mask`, exactly as the clip ladders do. */
+void blit_sprite_rows_gated_asm(uint8_t *image, uint32_t src, uint32_t dst,
+                                unsigned width_class, unsigned shift, uint32_t rows_minus_one);
 void restore_blit_rows_asm(uint8_t *image, uint32_t src, uint32_t dst, uint32_t rows_minus_one,
                            unsigned longs_per_row);
 void scroll_wrap_copy_1280_asm(uint8_t *image, uint32_t src, uint32_t dst);

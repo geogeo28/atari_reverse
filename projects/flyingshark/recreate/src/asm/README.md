@@ -5,11 +5,14 @@ sequence** for one routine, carrying the C signature of the verified core it sta
 target build (`../../atari/build.sh`) links the twin instead of calling the C; the host differential
 build never sees it.
 
-This directory holds two:
+This directory holds three:
 
 * `sprite.S` — the four **unclipped** masked sprite blitters (0x153b2 / 0x15408 / 0x154a4 / 0x15586);
 * `restore.S` — the five **restore** blitters (0x14d58 / 0x14d6a / 0x14d80 / 0x14d9a / 0x14db8) and
-  the **ring-seam copy** (0x156ae).
+  the **ring-seam copy** (0x156ae);
+* `clipped.S` — the four **gated** (clipped) blitter bodies (0x14e1e / 0x14f06 / 0x1505e / 0x15230),
+  and the one file here that is **not byte-identical** to the .PRG. See "The gated twin's declared
+  substitution" below, which is where the exception is stated and bounded.
 
 The recipe is written out at length in
 [`projects/zynaps/recreate/src/asm/README.md`](../../../../zynaps/recreate/src/asm/README.md),
@@ -52,12 +55,16 @@ Six things judge a twin, and a new one needs all six:
 
 | check | where | what it catches | proved able to fail |
 |---|---|---|---|
-| the differential | `test/test_asm_{sprite,restore}.py` | any byte the twin computes differently, anywhere in the image | `lea 146` → `lea 144` in one sprite body: 21 cases red; `SCREEN_ROW_BYTES` 160 → 158 in `restore.S`: 34 cases red |
-| the transcription pin | `test_the_twin_transcribes_the_original` | a body that stopped being the original's own machine code | the same two mutations, named by address |
-| the cost pin | `test_the_twin_costs_what_the_original_costs` | a translation that quietly costs cycles | dropping `%d7` from the `movem` pair; the same `restore.S` mutation moves all five |
+| the differential | `test/test_asm_{sprite,restore,clipped}.py` | any byte the twin computes differently, anywhere in the image | `lea 146` → `lea 144` in one sprite body: 21 cases red; `SCREEN_ROW_BYTES` 160 → 158 in `restore.S`: 34 cases red; the same `lea` in `clipped.S`: 5 cases red |
+| the transcription pin | `test_the_twin_transcribes_the_original` | a body that stopped being the original's own machine code | the same three mutations, named by address (for `clipped.S`, by SEGMENT) |
+| the cost pin | `test_the_twin_costs_what_the_original_costs[_less_the_substitution]` | a translation that quietly costs cycles | dropping `%d7` from the `movem` pair; the same `restore.S` mutation moves all five; every `clipped.S` mutation moves all four |
 | the build gate | `../../atari/build.sh` | the twin not actually being what the game calls | dropping `-DFS_ASM_SPRITE`: exits 1. And per twin: unhooking only the restore seam names `restore_blit_rows_asm` |
-| the SHIPPED bytes | `../../atari/assert_twin_bytes.py`, run from `build.sh` | the object that ships not being the one the suite pinned | `lea 138` → `lea 136` in one body, and `SCROLL_WRAP_COPY_LONGS` 80 → 79: each named by address |
+| the SHIPPED bytes | `../../atari/assert_twin_bytes.py`, run from `build.sh` | the object that ships not being the one the suite pinned | `lea 138` → `lea 136` in one body, and `SCROLL_WRAP_COPY_LONGS` 80 → 79: each named by address. For `clipped.S`, a segment address off by two and a segment dropped from the build line: named, and named as unpinned |
 | no conditional assembly | `build.sh`, one `grep` | the two assemblies of a `.S` being able to differ at all | an empty `#ifdef` in either file: exits 1 |
+
+...and `clipped.S` needs **four more**, because it is the one twin whose bodies are not the .PRG's
+bytes. They are the substitution's own pins and they are in "The gated twin's declared substitution"
+below, with what each was proved able to fail on.
 
 The build gates are the ones worth dwelling on, and there are three because this substitution fails
 **silently** in three different ways.
@@ -127,14 +134,8 @@ translation that quietly cost cycles shows up in them.
 original's 413. Of the blitter's cycles, **92% go through the unclipped path** (the gated one, which
 the clip ladders reach, was 53,398 cycles a frame against 582,591).
 
-So the sprite twin is the unclipped path, and `../sprite.c` keeps the C for the gated one. Two
-reasons, and the second is the interesting one:
-
-* it is 8% of the blitter, so it buys about a twentieth of what the unclipped path did;
-* the gated bodies `btst #n,$16426.l` once per group — an **absolute** address, which in a
-  reconstruction is `image base + 0x16426` and cannot be transcribed byte for byte at all. It would
-  be the first body in this directory whose transcription pin had to carve an exception, and the
-  case for one should be made by a measurement rather than by symmetry.
+So the sprite twin took the unclipped path first, and `../sprite.c` kept the C for the gated one
+until a measurement made the case for the exception the next section states.
 
 `restore.S` came next because a later profile named it, not because it was symmetrical: on a matched
 75-sprite frame the restore replay was **149,634 profiled cycles against the original's 73,647**, the
@@ -145,6 +146,57 @@ sprite bodies do — and the twin came out 2,048 bytes SMALLER than the C it rep
 longer has five specialised `copy_longs` to unroll.
 
 `../STATUS.md`'s "On-target performance" carries the rows.
+
+## The gated twin's declared substitution
+
+`clipped.S` is the first file here that is **not** byte-identical to the .PRG, and this section is
+the whole of why, what it costs, and what stands in for the pin it cannot have.
+
+**It is impossible by construction, not merely inconvenient.** Each gated body differs from its
+unclipped twin by ONE instruction per screen group:
+
+    btst    #n,$16426.l          | 0839 000n 0001 6426 — 8 bytes, 20 cycles
+
+an **absolute** address. This reconstruction receives the image base as a run-time ARGUMENT — that
+is what `recreate_kit/asm_twin.py`'s memory layout exists to enforce, and what the target build
+actually does — so no operand in a `.S` can name `image + 0x16426`. There is no 8-byte form of the
+instruction that does not, either: `(An)` is 4 bytes and `(d16,An)` is 6, so a padded transcription
+would have to invent an instruction, which is worse than declaring the substitution.
+
+**The substitution is one instruction and one register.** `btst #n,(%a2)`, 4 bytes and 12 cycles,
+with `%a2` holding `image + A_blit_clip_mask`. `%a2` is free: no instruction in any of the four
+bodies touches it — they use a0, a1 and d0-d7 — and the file's own transcription is the evidence.
+The register is loaded ONCE per call, by `../sprite.c`'s seam for the game and by the C-ABI entry
+for the suite, so no body computes an address and the substitution stays the only divergence.
+
+**The semantics are the original's.** The gate byte is still read FROM MEMORY at every group of
+every row rather than hoisted, so a blit whose own destination covers 0x16426 draws its later groups
+under the gate its earlier ones wrote — which `test_sprite.py`'s poked-destination case pins on the
+C side and this twin's differential carries over.
+
+**What replaces "the body IS the original's bytes".** Four pins in `../../test/test_asm_clipped.py`,
+which together say *every byte is the original's except these*:
+
+| pin | what it says | what it catches |
+|---|---|---|
+| the SEGMENTS | each run between two substituted instructions is the .PRG's own bytes at its own address (22 spans over four bodies) | any instruction that is not the original's |
+| the TILING | each segment's ASSEMBLED length is its declared one, and the spans plus the excluded bytes cover the body exactly | a segment that lost its last instruction — which still matches a PREFIX of the original and passes the span compare (proved: deleting one `swap %d5` reddens the tiling pin alone) |
+| the SUBSTITUTION | the gap between two segments is exactly four bytes, and it is `btst #n,(%a2)` on the bit the ORIGINAL's own 8 bytes at that address name | a wrong bit number — the substitution's one free parameter — and anything smuggled in beside it |
+| the `dbf` | the row loop's back-branch displacement is the original's plus four per substituted site | the substitution's one consequence, and the only other instruction outside a segment |
+
+**Every other branch in these bodies is intra-group** — the `bne.s` over a skipped group and the
+`bra.w` past its merge both stay between two gates — so the `dbf` is the only displacement the shrink
+moves, and the segment compare is what proves that rather than the claim's being taken on trust.
+
+**The cost pin cannot be equality**, because the substitution is 8 cycles CHEAPER per group per row.
+What is pinned instead is `twin == original - 8 * groups * rows + FRAME`, and the saving itself is a
+second measurement: `test_the_substitution_saves_what_the_arithmetic_says` runs one body at two row
+counts and checks that the twin's advantage grows by `8 * groups` a row, so a wrong constant cannot
+move both sides of the cost test together.
+
+**And `atari/build.sh` asks the shipped object for all 22 spans**, the same way it asks for the other
+two twins' — with the "bodies this gate was not asked about" check making a span added to the `.S`
+and not to the build line red rather than invisible.
 
 ## The shape of a twin here
 

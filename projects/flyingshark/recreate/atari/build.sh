@@ -18,15 +18,15 @@
 #      real-TOS ones, and ../include/init.h with its two XBIOS answers (README.md's seam table);
 #   2. the kit sources left out: src/hw.c, src/psg.c, src/sched.c and src/os_log.c, whose work the
 #      shim does for real;
-#   3. -DFS_ASM_SPRITE, which makes ../src/sprite.c's three seams CALL THE ASM TWINS instead of
-#      their own C — the unclipped sprite blitters, the five restore blitters and the ring-seam
-#      copy. It is the one -D here that changes which code runs, and it is gated below rather than
-#      trusted — a -D that changed a core's BEHAVIOUR would be a different thing entirely and does
-#      not belong in this list;
+#   3. -DFS_ASM_SPRITE, which makes ../src/sprite.c's four seams CALL THE ASM TWINS instead of
+#      their own C — the unclipped sprite blitters, the GATED ones, the five restore blitters and
+#      the ring-seam copy. It is the one -D here that changes which code runs, and it is gated below
+#      rather than trusted — a -D that changed a core's BEHAVIOUR would be a different thing
+#      entirely and does not belong in this list;
 #   4. HOT_CFLAGS, which recompiles ONE core at a higher optimisation level.
-# Both 3 and 4 are pinned: 3 by ../test/test_asm_sprite.py and ../test/test_asm_restore.py plus the
-# three gates below, and both by smoke.py's framebuffer identity, which is what says a codegen
-# change altered no pixel.
+# Both 3 and 4 are pinned: 3 by ../test/test_asm_{sprite,restore,clipped}.py plus the three gates
+# below, and both by smoke.py's framebuffer identity, which is what says a codegen change altered no
+# pixel.
 #
 # $FS_DIAG_CFLAGS IS A FIFTH, AND IT IS DIAGNOSTIC ONLY. It is appended to CFLAGS for every core and
 # for the link, and NOTHING in this repository sets it except `atari/profile.py --phases`, which
@@ -121,13 +121,14 @@ bash "$REPO/tools/assert_trap_registers.sh" --expect 16 "$HERE/flyshark_os.s"
 # compiled unchanged — this is a flag, not a variant — and `smoke.py`'s framebuffer identity is what
 # says the codegen change altered nothing.
 # THE ASM TWINS. `../src/asm/sprite.S` transcribes the original's own four unclipped sprite
-# blitters and `../src/asm/restore.S` its five restore blitters and its ring-seam copy;
-# `-DFS_ASM_SPRITE` is what makes `../src/sprite.c`'s three seams call them instead of the C
-# (`src/sprite.c`, "THE ASM-TWIN SEAM"). It is ONE define for the whole of `src/asm/` rather than
-# one per twin, and `../include/sprite.h` declares what it selects. The differential build never
-# defines it, and `../test/test_asm_sprite.py` / `../test/test_asm_restore.py` are what prove the
-# twins equal to their cores.
-ASM_TWINS="$REC/src/asm/sprite.S $REC/src/asm/restore.S"
+# blitters, `../src/asm/restore.S` its five restore blitters and its ring-seam copy, and
+# `../src/asm/clipped.S` its four GATED blitter bodies; `-DFS_ASM_SPRITE` is what makes
+# `../src/sprite.c`'s four seams call them instead of the C (`src/sprite.c`, "THE ASM-TWIN SEAM").
+# It is ONE define for the whole of `src/asm/` rather than one per twin, and `../include/sprite.h`
+# declares what it selects. The differential build never defines it, and `../test/test_asm_sprite.py`
+# / `../test/test_asm_restore.py` / `../test/test_asm_clipped.py` are what prove the twins equal to
+# their cores.
+ASM_TWINS="$REC/src/asm/sprite.S $REC/src/asm/restore.S $REC/src/asm/clipped.S"
 DEF="$DEF -DFS_ASM_SPRITE"
 
 HOT_CORE="$REC/src/sprite.c"
@@ -191,6 +192,20 @@ python3 "$HERE/assert_twin_bytes.py" "$BUILD/sprite_asm.o" "$DISK/FLYSHARK.IMG" 
 python3 "$HERE/assert_twin_bytes.py" "$BUILD/restore_asm.o" "$DISK/FLYSHARK.IMG" 0x10000 \
     restore_blit_w16=0x14d58 restore_blit_w32=0x14d6a restore_blit_w48=0x14d80 \
     restore_blit_w64=0x14d9a restore_blit_w80=0x14db8 scroll_wrap_copy_1280=0x156ae
+# FOUR SEGMENTED BODIES, spelt as `<name>=<lo>:<hi>:<substitution sites>`. The gated twin's bodies
+# read the clip gate with `btst #n,$16426.l` — an ABSOLUTE address, which a reconstruction whose
+# image base is a run-time argument cannot name — so `../src/asm/clipped.S` substitutes
+# `btst #n,(%a2)` and is pinned as the runs BETWEEN those instructions. `assert_twin_bytes.py`
+# DERIVES those runs from the four numbers per body and asserts they tile the extent, which is what
+# lets this list be the same four numbers `../test/test_asm_clipped.py`'s `GATED_BODIES` carries
+# rather than twenty-two addresses copied by hand. What is not checked here is the substituted
+# instruction itself and the `dbf` its shrink moves: those need the original's bit numbers and are
+# the suite's, whose header carries the whole argument.
+python3 "$HERE/assert_twin_bytes.py" "$BUILD/clipped_asm.o" "$DISK/FLYSHARK.IMG" 0x10000 \
+    sprite_blit_w16_gated=0x14e1e:0x14e98:0x14e40,0x14e6c \
+    sprite_blit_w32_gated=0x14f06:0x14fd8:0x14f28,0x14f80,0x14fac \
+    sprite_blit_w48_gated=0x1505e:0x15188:0x15080,0x150d8,0x1512e,0x1515c \
+    sprite_blit_w64_gated=0x15230:0x153b2:0x15252,0x152aa,0x15302,0x1535a,0x15386
 
 # ONE LIST, AND IT COMES FROM THE HEADER — not from a literal here, and NOT from `../src/sprite.c`,
 # which is the file being policed. A checklist grepped out of the seams could only ever confirm what

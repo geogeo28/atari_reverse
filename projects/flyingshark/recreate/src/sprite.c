@@ -79,9 +79,6 @@ static int16_t asr16(int16_t value, unsigned count) {
     return (int16_t)bits;
 }
 
-static uint16_t low_word(uint32_t value)  { return (uint16_t)value; }
-static uint16_t high_word(uint32_t value) { return (uint16_t)(value >> 16); }
-
 /* `and.w <keep>,(aN) / or.w <pixels>,(aN)` — the masked read-modify-write of ONE plane word, which
  * is the primitive under every drawing routine in this file: the sprite blitters' per-group write,
  * the overlay repaint's, and the tile merge's. One definition, so a faithfulness correction to it
@@ -89,6 +86,19 @@ static uint16_t high_word(uint32_t value) { return (uint16_t)(value >> 16); }
 static void merge_plane_word(uint8_t *image, uint32_t word, uint16_t pixels, uint16_t keep) {
     wr16(image + word, (uint16_t)((be16(image + word) & keep) | pixels));
 }
+
+/* ---- the C blitter, which the TARGET BUILD does not compile at all ------------------------------
+ *
+ * Both halves of this routine are asm twins on target (`src/asm/sprite.S` and `src/asm/clipped.S`,
+ * reached through the two macros below), so under `-DFS_ASM_SPRITE` nothing in the program calls
+ * either function and GCC would emit 884 bytes of `-O3 -funroll-loops` row loop for a `g_*` glue the
+ * host suite alone drives. Guarding the pair — and that glue, at the foot of this file — is what
+ * keeps them out of the .PRG. `restore_blit_rows` is the same substitution in the other shape: its
+ * `#ifdef` is inside the one function every call site goes through, so its C arm is already excluded.
+ * ---------------------------------------------------------------------------------------------- */
+#ifndef FS_ASM_SPRITE
+static uint16_t low_word(uint32_t value)  { return (uint16_t)value; }
+static uint16_t high_word(uint32_t value) { return (uint16_t)(value >> 16); }
 
 /* One screen row. Returns the source cursor advanced past the row's groups, as the original's
  * `(a0)+` leaves it. `dst` is not returned because the caller steps whole 160-byte rows: the
@@ -143,8 +153,9 @@ static void blit_sprite_rows(uint8_t *image, uint32_t src, uint32_t dst, unsigne
         dst = addr_add(dst, SCREEN_ROW_BYTES);
     }
 }
+#endif /* !FS_ASM_SPRITE */
 
-/* ---- THE ASM-TWIN SEAM, and it covers the UNGATED half of the routine above ---------------------
+/* ---- THE ASM-TWIN SEAM, and it covers BOTH halves of the routine above --------------------------
  *
  * `src/asm/sprite.S` transcribes the original's own four unclipped blitters (0x153b2 / 0x15408 /
  * 0x154a4 / 0x15586) and `atari/build.sh` links that twin into the TARGET build, where it is 3.2x
@@ -160,16 +171,18 @@ static void blit_sprite_rows(uint8_t *image, uint32_t src, uint32_t dst, unsigne
  * and the suite reaches the same ladder through the entry above it (`src/asm/README.md`, "The two
  * entries", for why the framebuffer identity is the surface for this glue).
  *
- * A MACRO OVER THE ARGUMENTS RATHER THAN A WRAPPER FUNCTION, so that the gated call site below
- * keeps `blit_sprite_rows` referenced in both builds. A wrapper would be an unused `static` in the
- * build that has the twin, which is a warning at best and a silently dropped body at worst. (The
- * restore seam further down has no gated half to keep its C referenced, so it takes the other
- * shape — the `#ifdef` inside the one function every call site already goes through.)
+ * A MACRO PER GATE STATE RATHER THAN A WRAPPER FUNCTION, because the two twins are two entry points
+ * with two register conventions (the gated one takes the gate address in `%a2` as well), and a
+ * wrapper would put a C frame back in front of each. (The restore seam further down has one
+ * convention and one entry, so it takes the other shape: the `#ifdef` inside the one function every
+ * call site already goes through.)
  *
- * THE GATED HALF KEEPS THE C. `blit_sprite_clipped` is 8% of the blitter's cycles measured over the
- * attract screen (53,398 a frame against 582,591), it is four more transcribed bodies, and the four
- * it would add are the ones with a `btst` on an absolute address that the image base makes
- * un-transcribable byte for byte. `../STATUS.md` carries the row.
+ * AND THE GATED HALF IS A TWIN TOO, which it was not when this seam was written. Its four bodies
+ * (0x14e1e / 0x14f06 / 0x1505e / 0x15230) `btst` an ABSOLUTE address once per group, so they cannot
+ * be transcribed byte for byte at all — the image base is a run-time argument here. `src/asm/
+ * clipped.S` transcribes them with ONE DECLARED SUBSTITUTION, `btst #n,$16426.l` becoming
+ * `btst #n,(%a2)`, pinned per segment against the .PRG with the substitution sites named; that
+ * file's header and `src/asm/README.md` carry the case, and `../STATUS.md` the measurement.
  *
  * `-DFS_ASM_SPRITE` MEANS "THIS BUILD LINKS THE TWINS", all of them — it is one define for the
  * whole of `src/asm/`, not one per twin, and `include/sprite.h` declares what it selects.
@@ -188,9 +201,29 @@ static void blit_sprite_rows(uint8_t *image, uint32_t src, uint32_t dst, unsigne
                              : /* every input is an in-out above */                                \
                              : "d1", "d2", "d3", "d4", "d5", "cc", "memory");                      \
     } while (0)
+/* ...and the gated entry, which takes ONE register more: `%a2` = the gate byte's address. Loading
+ * it here rather than inside a body is what keeps the twin's `btst` substitution its only
+ * divergence from the original's bytes (`src/asm/clipped.S`). No body writes `%a2`, so it is an
+ * input and not an in-out. */
+#define BLIT_SPRITE_ROWS_GATED(image, src, dst, klass, shift, rows)                                \
+    do {                                                                                           \
+        register uint8_t *sprite_cursor __asm__("a0") = (image) + (src);                           \
+        register uint8_t *screen_cursor __asm__("a1") = (image) + (dst);                           \
+        register uint8_t *gate_cursor __asm__("a2") = (image) + A_blit_clip_mask;                  \
+        register uint32_t width_class_arg __asm__("d0") = (klass);                                 \
+        register uint32_t shift_count __asm__("d6") = (shift);                                     \
+        register uint32_t row_count __asm__("d7") = (rows);                                        \
+        __asm__ __volatile__("jsr blit_sprite_rows_gated_regs"                                     \
+                             : "+a"(sprite_cursor), "+a"(screen_cursor), "+d"(width_class_arg),    \
+                               "+d"(shift_count), "+d"(row_count)                                  \
+                             : "a"(gate_cursor)                                                    \
+                             : "d1", "d2", "d3", "d4", "d5", "cc", "memory");                      \
+    } while (0)
 #else
 #define BLIT_SPRITE_ROWS_UNCLIPPED(image, src, dst, klass, shift, rows)                            \
     blit_sprite_rows((image), (src), (dst), (klass), (shift), (rows), SPRITE_GATE_UNCLIPPED)
+#define BLIT_SPRITE_ROWS_GATED(image, src, dst, klass, shift, rows)                                \
+    blit_sprite_rows((image), (src), (dst), (klass), (shift), (rows), SPRITE_GATE_CLIP_MASK)
 #endif
 
 void sprite_blit_w16(uint8_t *image, uint32_t src, uint32_t dst, uint32_t shift, uint32_t rows_minus_one) {
@@ -304,7 +337,7 @@ static uint32_t blit_sprite_clipped(uint8_t *image, const SpriteClipLadder *ladd
         wr16(image + addr_sub(restore_cursor, PENDING_RESTORE_CLASS_BACK),
              (uint16_t)rung->restore_class);
 
-    blit_sprite_rows(image, src, dst, width_class, shift, rows_minus_one, SPRITE_GATE_CLIP_MASK);
+    BLIT_SPRITE_ROWS_GATED(image, src, dst, width_class, shift, rows_minus_one);
     return restore_cursor;
 }
 
@@ -605,10 +638,16 @@ static void mark_tile_repair_cells(uint8_t *image, int16_t x, int16_t y) {
  * twelve entries of the three tables differ only in which clip ladder they carry. Index = table
  * base + class is then the whole dispatch, exactly as the `adda.w` is. `test_sprite.py`'s class-4
  * case is what separates this from a bounds check. */
+/* THE TWO SMALL FIELDS ARE 16-BIT SO THE ENTRY IS EIGHT BYTES, and that is a measurement rather
+ * than a preference: with an `unsigned` side and class the entry is twelve, and indexing a 12-byte
+ * stride costs GCC four `add.l` where a power of two costs one `lsl.l` — 28 cycles a drawn record,
+ * 75 records a frame (`../STATUS.md`, "On-target performance", lever 9). A side is 0 or 1 and a
+ * width class 0..3, so nothing is narrowed that had range to lose. */
 typedef struct {
     const SpriteClipLadder *ladder;   /* 0 for the four unclipped entries, which have no `btst` */
-    SpriteClipSide side;              /* meaningless without a ladder, as the entry itself is */
-    unsigned width_class;
+    uint16_t side;                    /* a SpriteClipSide; meaningless without a ladder, as the
+                                       * entry itself is */
+    uint16_t width_class;
 } SpriteBlitEntry;
 
 #define SPRITE_BLIT_TBL_PLAIN       0u  /* A_sprite_blit_tbl @ 0x16396 */
@@ -655,8 +694,9 @@ static uint32_t dispatch_sprite_blit(uint8_t *image, DrawPass pass, unsigned wid
         BLIT_SPRITE_ROWS_UNCLIPPED(image, src, dst, entry->width_class, shift, rows_minus_one);
         return restore_cursor;
     }
-    return blit_sprite_clipped(image, entry->ladder, entry->side, src, dst, entry->width_class,
-                               shift, rows_minus_one, (uint32_t)(uint16_t)x, restore_cursor);
+    return blit_sprite_clipped(image, entry->ladder, (SpriteClipSide)entry->side, src, dst,
+                               entry->width_class, shift, rows_minus_one, (uint32_t)(uint16_t)x,
+                               restore_cursor);
 }
 
 static uint32_t draw_display_list_pass(uint8_t *image, DrawPass pass, uint32_t restore_cursor) {
@@ -670,8 +710,12 @@ static uint32_t draw_display_list_pass(uint8_t *image, DrawPass pass, uint32_t r
         if (!pass_draws(pass, image[record + DISPLAY_REC_ACTIVE]))
             continue;
 
+        /* `clr.w d0 / move.b 4(a6),d0` then four shifts and an add @ 0x146b4: the record index is a
+         * BYTE, so the product is at most 5,100 and the 32-bit spelling is the 16-bit one's value.
+         * It is spelt 32-bit because the `(uint16_t)` cast that used to be here made GCC mask the
+         * product back down with an `andi.l #$ffff` it does not need — 16 cycles a record. */
         sprite_rec = addr_add(A_sprite_bank,
-                              (uint16_t)(image[record + DISPLAY_REC_FRAME] * SPRITE_RECORD_BYTES));
+                              (uint32_t)image[record + DISPLAY_REC_FRAME] * SPRITE_RECORD_BYTES);
         rows_minus_one = (int16_t)be16(image + sprite_rec + SPRITE_REC_ROWS);
         src = be32(image + sprite_rec + SPRITE_REC_DATA);
         width_class = be16(image + sprite_rec + SPRITE_REC_WIDTH_CLASS);
@@ -1081,6 +1125,23 @@ DEFINE_CLIPPED_BLIT_GLUE(sprite_blit_w16_clip_right)
 DEFINE_CLIPPED_BLIT_GLUE(sprite_blit_w32_clip_right)
 DEFINE_CLIPPED_BLIT_GLUE(sprite_blit_w48_clip_right)
 DEFINE_CLIPPED_BLIT_GLUE(sprite_blit_w64_clip_right)
+
+/* ...and the gated ROW LOOP the eight above share, without a ladder in front of it — the original's
+ * own `bra.w $14e1e` target, entered with the gate byte already installed. It is what
+ * `test/test_asm_clipped.py` drives the C core through, so that the twin is compared against the
+ * same body the eight entries reach rather than against a ladder the twin does not have. Same
+ * registers as the four unclipped glues, plus d0 = the width class the ladder would have chosen.
+ *
+ * GUARDED WITH THE CORE IT CALLS: on target that core is `src/asm/clipped.S` and this glue would be
+ * the only thing left keeping a C copy of the row loop in the .PRG (see the guard above). The host
+ * build, which is the only one that drives it, always has both. */
+#ifndef FS_ASM_SPRITE
+void g_blit_sprite_rows_gated(uint8_t *image, uint32_t a0_src, uint32_t a1_dst, uint32_t d0_class,
+                              uint32_t d6_shift, uint32_t d7_rows_minus_one) {
+    blit_sprite_rows(image, a0_src, a1_dst, d0_class, d6_shift, d7_rows_minus_one,
+                     SPRITE_GATE_CLIP_MASK);
+}
+#endif
 
 /* a0 = source, a1 = destination, d7 = row count. */
 #define DEFINE_RESTORE_GLUE(name)                                                                  \

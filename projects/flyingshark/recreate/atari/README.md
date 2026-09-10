@@ -3,10 +3,11 @@
 The ten verified subsystems in [`../src`](../src) compiled by `m68k-elf-gcc` and run on a real Atari
 ST (Hatari, and a real machine when you put the floppy in one). **The cores are compiled unchanged**:
 what differs between this build and the differential `.so` is the include path, the four kit source
-files it leaves out, one core's optimisation FLAGS, and one routine it calls the asm twin for
+files it leaves out, one core's optimisation FLAGS, and the routines it calls an asm twin for
 instead of the C — the last two being the performance campaign's, both pinned by
-[`../test/test_asm_sprite.py`](../test/test_asm_sprite.py) and by this directory's own framebuffer
-identity, and both written up in [`../STATUS.md`](../STATUS.md)'s "On-target performance".
+[`../test/test_asm_sprite.py`](../test/test_asm_sprite.py) and its two siblings and by this
+directory's own framebuffer identity, and both written up in
+[`../STATUS.md`](../STATUS.md)'s "On-target performance".
 `make test` in [`..`](..) is untouched by anything in this directory.
 
 **Two builds, and the order matters.** `build.sh` with no argument makes the PLAYABLE program: it
@@ -38,25 +39,27 @@ the pictures are evidence of a run rather than of a commit).
 
 | what | number |
 |---|---|
-| `FLYSHARK.PRG` | play: text 56,576 + data 0 + bss 559,268, 582 relocations, 57,334 B on disc. The `smoke` build adds the record's two files and the frame limit: the same text, 599 relocations, 57,351 B. Both are byte-reproducible across rebuilds. (Text was 50,432 before the performance campaign; the whole +6,144 is `src/sprite.c` compiled at -O3 with bounded unrolling — the asm twin is 792 B of body and a NET 256 B SMALLER than the C call sites it replaces, because GCC no longer specialises the blitter four ways. `../STATUS.md`'s "On-target performance" has the measurements) |
+| `FLYSHARK.PRG` | play: text 54,784 + data 0 + bss 559,268, 696 relocations, 55,638 B on disc. The `smoke` build adds the record's two files and the frame limit: text 55,040, 710 relocations, 55,909 B. Both are byte-reproducible across rebuilds. (Text was 50,432 before the performance campaign; the +4,352 is `src/sprite.c` compiled at -O3 with bounded unrolling, and the THREE asm twins have been paying it back — each is a net LOSS of text, because GCC no longer has a specialised copy of the C to unroll at every call site. `../STATUS.md`'s "On-target performance" has the measurements) |
 | `FLYSHARK.IMG` | 48,694 B — the original's relocated TEXT+DATA, staged into the image at boot |
 | loaded at | `0xa956` (TPA low), image base `0x18900` (both builds now carry the same text), program ends `0x9327a` |
 | headroom on a 1 MB ST | 413,054 B between the program's top and the stack GEMDOS gave it, against a 65,536 B floor |
 | the screen ring | `0x60000` + `0x7800`/`0xfa00`/`0x17700`/`0x1f400`, the verified pointers |
 | files | 8 opened, 288,551 B read, 0 failures |
 | the chip | 13,611 PSG register writes = 27,222 hardware stores, 0 refused; SR $2304 — supervisor at IPL 3, the level the original chooses for itself. (It was 41,028 before the performance campaign, and the drop is the point: the sound module ticks on the VERTICAL BLANK, so 200 frames that now cost 1,047 blanks instead of 3,160 drive the chip for a third of the emulated time — the music-to-frame ratio is now the original's, where before it was three times too fast) |
-| pace | **4.32 vertical blanks a frame = 11.6 fps, against the original's own measured 4.00 = 12.5 fps** — 1.08x, and 89 of ~133 frames take exactly the four the original takes, one takes three and the rest take five (`profile.py pace`, on the steady attract screen). A blank is 160,256 cycles, so a lever worth less than one is INVISIBLE here: the frame still ends on the blank it ended on and the saving becomes `Vsync` idle inside it. That is why the vertical-blank path's own 17% (`../STATUS.md`, "What a vertical blank costs") moved this line from 4.559 to 4.548 and nothing else — a per-blank profile is the instrument for a per-blank lever. The smoke's own line says 5.24 over the whole run and the two are the same build: the smoke divides ALL the run's blanks — the boot, the 108-call prescroll, the heavier text pages — by the 200 frames it counted, where `profile.py` clocks frame to frame past the prescroll. The smoke's number is a floor check, this one is the pace |
+| pace | **3.70 vertical blanks a frame = 13.5 fps, against the original's own measured 4.00 = 12.5 fps** — the mean is now BELOW the original's, because the attract screen's lighter text page fits in THREE blanks where the original takes four (71 of ~125 frames at 3, 21 at 4, 33 at 5 — `profile.py pace`, on the steady attract screen). The 33 that take five are the heavier page, and that is where the remaining gap is: a heavy frame's WORK is 684,096 wall cycles against the 641,039 four blanks need (`../STATUS.md`, "What is left"). A blank is 160,256 cycles, so a lever worth less than one is INVISIBLE here: the frame still ends on the blank it ended on and the saving becomes `Vsync` idle inside it. That is why the vertical-blank path's own 17% (`../STATUS.md`, "What a vertical blank costs") moved this line from 4.559 to 4.548 and nothing else — a per-blank profile is the instrument for a per-blank lever, and for a lever aimed at the HEAVY page the instrument is the work-vs-threshold reading, not the mean. The smoke's own line divides ALL the run's blanks — the boot, the 108-call prescroll, the heavier text pages — by the 200 frames it counted, where `profile.py` clocks frame to frame past the prescroll. The smoke's number is a floor check, this one is the pace |
 
 The pace is the one number that is not the original's, and it is class 13
 (`docs/on-target-execution.md`). **The campaign has run** (`../STATUS.md`, "On-target performance"):
-the frame went from 13.60 vertical blanks to 4.32 against the original's own measured 4.00, in seven
+the frame went from 13.60 vertical blanks to 3.70 against the original's own measured 4.00, in nine
 measured levers — the blitter's inner-loop `memcpy` spelt out, `-O3` with bounded unrolling for the
 one file the profiler named, asm twins for the four unclipped sprite blitters and then for the five
 restore blitters and the ring-seam copy (each the original's own machine code byte for byte), a
-register ABI at the two hot twins' seams, `build_text_display_list`'s cursors moved out from behind
-their in/out pointers, and a 17% cut to the vertical-blank path, which the pace can barely show for
-the reason the row above gives. Two more levers were tried and refused, and the
-size budget that refused them is written down beside them.
+register ABI at the two hot twins' seams, a 17% cut to the vertical-blank path (which the pace can
+barely show, for the reason the row above gives), `build_text_display_list`'s cursors moved out from
+behind their in/out pointers, a twin for the four GATED blitter bodies — the one
+whose transcription needed a declared substitution, because those bodies read the clip gate at an
+ABSOLUTE address — and two C changes in display-list pass B. Several more were tried and refused,
+and what refused them (a size budget, or GCC's own canonicalisation) is written down beside them.
 
 **`profile.py` is the instrument, and it is in this directory.** `pace` clocks both binaries with a
 repeating breakpoint on `render_frame`; `ours` / `original` / `compare` run the Hatari CPU profiler

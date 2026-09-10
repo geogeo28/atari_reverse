@@ -1,7 +1,24 @@
 #!/usr/bin/env python3
 """Assert that the asm twin THIS BUILD LINKS is the original binary's own machine code.
 
-    assert_twin_bytes.py <twin.o> <FLYSHARK.IMG> <load base> <name>=<original address> ...
+    assert_twin_bytes.py <twin.o> <FLYSHARK.IMG> <load base> <span> ...
+
+...where each `<span>` names either ONE transcribed body or one SEGMENTED body:
+
+    <name>=<address>                                 a body: `<name>_body` .. `<name>_body_end`
+    <name>=<lo>:<hi>:<site>,<site>,...               a body cut into `<name>_seg0`, `_seg1`, ...
+
+THE SEGMENTED FORM IS FOR A TWIN THAT IS NOT BYTE-IDENTICAL, which today is `../src/asm/clipped.S`
+alone: its four bodies read the clip gate at an ABSOLUTE address, which a reconstruction whose image
+base is a run-time argument cannot spell, so each `btst #n,$16426.l` becomes a 4-byte
+`btst #n,(%a2)` and the body is pinned as the runs BETWEEN those instructions. `<lo>`/`<hi>` are the
+body's own extent (`<hi>` one past its closing `rts`) and `<site>` each substituted instruction;
+this file derives the segments from them — the same derivation `../test/test_asm_clipped.py`'s
+`segments()` makes, from the same four numbers — and then asserts that the assembled segments TILE
+that extent, which the per-span compare cannot say on its own: a segment that lost its last
+instruction still matches a PREFIX of the original. `src/asm/README.md`, "The gated twin's declared
+substitution", carries the case; what is NOT checked here is the substituted instruction itself,
+which is the suite's job because it needs the original's bit numbers.
 
 WHY THE TEST SUITE IS NOT ENOUGH, which is the whole reason this file exists. `../test/
 test_asm_sprite.py` compares the KIT's blob (`../build/asm/twins.bin`, assembled by `kit.mk` with
@@ -40,6 +57,49 @@ DIFF_BYTES = 32
 # `nm` type letters for a symbol that names an ADDRESS IN `.text`: global and local. Everything else
 # a twin defines — an `.equ`, which is `a` — is a value, not a place.
 TEXT_SYMBOL_TYPES = "Tt"
+# What a SEGMENTED body's spans are called: `<name>_seg0`, `_seg1`, ... — `../src/asm/clipped.S`'s
+# labels and `../test/test_asm_clipped.py`'s `segments()`, which derives the same list.
+SEGMENT_SUFFIX = "_seg"
+# The instruction a segmented twin substitutes, and its consequence — both EXCLUDED from the spans
+# this file compares, and both pinned by `../test/test_asm_clipped.py` instead (it needs the
+# original's bit numbers, which are not derivable from the extent). 8 bytes of
+# `btst #n,$xxxxxxxx.l`, and the row loop's own 4-byte `dbf`, which sits six bytes before the end.
+SUBSTITUTED_BYTES = 8
+LOOP_BRANCH_BYTES = 4
+CLOSING_RTS_BYTES = 2
+
+
+def segments_of(name, lo, hi, sites):
+    """[(span name, original address, length)] for one SEGMENTED body — the runs between the
+    substituted instructions, plus the run between the last of them and the `dbf`, plus the `rts`.
+
+    THE SAME DERIVATION `../test/test_asm_clipped.py`'s `segments()` MAKES, from the same four
+    numbers, so the two spellings of the table are the four numbers and not twenty-two addresses.
+    """
+    excluded = [(site, SUBSTITUTED_BYTES) for site in sites]
+    excluded.append((hi - CLOSING_RTS_BYTES - LOOP_BRANCH_BYTES, LOOP_BRANCH_BYTES))
+    spans, at = [], lo
+    for cut, skipped in excluded:
+        spans.append((cut - at, at))
+        at = cut + skipped
+    spans.append((hi - at, at))
+    return [(f"{name}{SEGMENT_SUFFIX}{i}", address, length)
+            for i, (length, address) in enumerate(spans)]
+
+
+def parse_span(argument):
+    """One `<span>` argument into [(span name, original address, expected length or None)].
+
+    `<name>=<address>` is one whole body and this gate learns its length from the object's own
+    bracket; `<name>=<lo>:<hi>:<sites>` is a segmented one and the lengths are DERIVED, which is what
+    makes the tiling assertion below possible at all.
+    """
+    name, _, extent = argument.partition("=")
+    if ":" not in extent:
+        return [(name, int(extent, 0), None)]
+    lo, hi, sites = extent.split(":")
+    return segments_of(name, int(lo, 0), int(hi, 0),
+                       tuple(int(site, 0) for site in sites.split(",")))
 
 
 def symbols(obj):
@@ -72,14 +132,14 @@ def main(argv):
     if len(argv) < 4:
         raise SystemExit(__doc__)
     obj, image_path, load_base = Path(argv[0]), Path(argv[1]), int(argv[2], 0)
-    spans = [pair.split("=") for pair in argv[3:]]
+    spans = [span for argument in argv[3:] for span in parse_span(argument)]
 
     table, text, image = symbols(obj), text_of(obj), image_path.read_bytes()
     # EVERY TRANSCRIBED SPAN IN THE OBJECT MUST BE ON THE COMMAND LINE. `kit.mk` globs `src/asm/` and
     # the test suites list their own bodies, so a body added to a `.S` is pinned there the day it is
     # written — but this gate is an argv list, and a body missing from it is a span the SHIPPED
     # object carries and nobody compared. That is the silent half of this file's own argument.
-    named = {name for name, _ in spans}
+    named = {name for name, _, _ in spans}
     unpinned = sorted(sym[:-len(BODY_SUFFIX)] for sym in table
                       if sym.endswith(BODY_SUFFIX) and sym[:-len(BODY_SUFFIX)] not in named)
     if unpinned:
@@ -87,8 +147,7 @@ def main(argv):
                          f"{', '.join(unpinned)}\n"
                          f"       add each as <name>=<original address> to the build.sh call, or "
                          f"the object that ships carries a span nobody compared")
-    for name, address in spans:
-        address = int(address, 0)
+    for name, address, expected in spans:
         try:
             lo, hi = table[name + BODY_SUFFIX], table[name + BODY_END_SUFFIX]
         except KeyError:
@@ -96,6 +155,14 @@ def main(argv):
                              f"bracket — a transcribed span has to name itself to be pinned") from None
         if hi <= lo:
             raise SystemExit(f"ERROR: {name}'s body bracket is empty ({lo:#x}..{hi:#x})")
+        # THE TILING ASSERTION, and it is only possible for a SEGMENTED body: the byte compare below
+        # is a PREFIX compare — a segment that lost its last instruction still matches the original's
+        # first bytes and passes. The derived length is what says it did not, and the segments'
+        # derivation is what makes them cover the body's whole extent.
+        if expected is not None and hi - lo != expected:
+            raise SystemExit(f"ERROR: {name} assembles to {hi - lo} bytes and the original's span at "
+                             f"{address:#x} is {expected} — the segment gained or lost an "
+                             f"instruction, and a byte compare alone could not have said so")
         mine = text[lo:hi]
         theirs = image[address - load_base:address - load_base + len(mine)]
         if mine != theirs:
