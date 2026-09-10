@@ -313,7 +313,7 @@ def settle_chain(work, vblanks, clause, name_template=WAIT_ACTION_FILE):
 
 
 def await_file(session, path, doing, deadline_seconds=RUN_FILE_WAIT_SECONDS,
-               poll_seconds=POLL_SECONDS):
+               poll_seconds=POLL_SECONDS, minimum_bytes=1, an_exit_is_an_answer=False):
     """Wait for a file the RUN or the DEBUGGER writes; answer it, or None if it never appeared.
 
     `HeadlessSession._await_file` is the DEBUGGER'S half — it raises, because a `savebin` that never
@@ -321,11 +321,26 @@ def await_file(session, path, doing, deadline_seconds=RUN_FILE_WAIT_SECONDS,
     the point where it writes is a RESULT a caller may want to report rather than an error: what did
     not happen is more useful in a check's own words than in a traceback. The emulator is proved
     alive on every poll either way, so a dead one is still an error.
+
+    `minimum_bytes` is how much of the file counts as ARRIVED, and the default of 1 is the behaviour
+    every caller had before it existed. A big `savebin` is worth raising: a megabyte the host catches
+    half-written satisfies "non-empty" and is then read short, which the reader blames on its own
+    contents rather than on the file.
+
+    `an_exit_is_an_answer` is for the one shape where Hatari STOPPING is not a fault: a run bounded
+    by `--run-vbls` reaches its own end, and a caller waiting on something that run was supposed to
+    produce wants "it did not" rather than a `SystemExit` out from under it. The file is re-checked
+    once after the exit is seen, because a program's last write and its exit are the same instant.
     """
+    def arrived():
+        return path.is_file() and path.stat().st_size >= minimum_bytes
+
     deadline = time.monotonic() + deadline_seconds
     while time.monotonic() < deadline:
-        if path.is_file() and path.stat().st_size:
+        if arrived():
             return path
+        if an_exit_is_an_answer and not session.alive():
+            return path if arrived() else None
         session.require_alive(doing)
         session.wait(poll_seconds)
     return None

@@ -328,7 +328,10 @@ python3 atari/profile.py pace   # ...and what a frame costs, against the origina
 bash atari/run.sh            # play it
 ```
 
-**The frame it publishes at attract frame 120 is the original binary's frame, byte for byte.**
+**The frames it publishes at attract frames 50 and 120 — one per attract text page — are the
+original binary's frames, byte for byte.** Both are `screen_prev1`, the buffer the shifter is
+fetching, and reading it rather than `screen_draw` is what puts a sprite inside the comparison at
+all (`atari/smoke.py`'s `A_SCREEN_DRAW` comment has the measurement).
 [`atari/README.md`](atari/README.md) is the whole account: the memory map, why the original's
 `AUTO\`-only 0xd922 load ceiling does not apply to a build whose screen ring lives in its own `.bss`,
 what the shim supplies and why none of it re-implements a core — it COMPOSES the verified ones, and

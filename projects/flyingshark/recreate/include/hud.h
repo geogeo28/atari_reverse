@@ -289,6 +289,8 @@ void hud_build_labels(uint8_t *image);
 void hud_publish_bomb_and_life_icons(uint8_t *image);
 void clear_display_list(uint8_t *image);
 void clear_player_display_slots(uint8_t *image);
+/* The four in/out cursors must point OUTSIDE `image` — a host local, never an image offset; see
+ * `src/hud.c`, which runs them in locals and writes them back once. */
 void build_text_display_list(uint8_t *image, uint32_t *script, uint32_t *dest, uint32_t *x,
                              uint32_t *y);
 

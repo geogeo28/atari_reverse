@@ -28,8 +28,10 @@ for a file that build never writes, and names the command above.
 ## What it does, measured
 
 Booted headless on TOS 1.04 with `--memsize 1`, from `AUTO\` on a GEMDOS drive, the reconstruction
-loads its eight files, draws the title picture, and runs the attract screen — and **the frame it
-publishes at attract frame 120 is the ORIGINAL binary's frame, byte for byte, all 32,000 of them**.
+loads its eight files, draws the title picture, and runs the attract screen — and **the frames it
+publishes at attract frames 50 and 120 are the ORIGINAL binary's frames, byte for byte, all 32,000
+of them each**. Two anchors because the attract screen has two text pages and one anchor pinned only
+the second (`../STATUS.md`, "On-target performance").
 `smoke.py` is where that is checked, along with everything else a run can be watched on, and it
 leaves its captures in `../../out/smoke/` for a person to look at (that directory is gitignored, so
 the pictures are evidence of a run rather than of a commit).
@@ -47,12 +49,13 @@ the pictures are evidence of a run rather than of a commit).
 
 The pace is the one number that is not the original's, and it is class 13
 (`docs/on-target-execution.md`). **The campaign has run** (`../STATUS.md`, "On-target performance"):
-the frame went from 13.60 vertical blanks to 4.32 against the original's own measured 4.00, in six
+the frame went from 13.60 vertical blanks to 4.32 against the original's own measured 4.00, in seven
 measured levers — the blitter's inner-loop `memcpy` spelt out, `-O3` with bounded unrolling for the
 one file the profiler named, asm twins for the four unclipped sprite blitters and then for the five
 restore blitters and the ring-seam copy (each the original's own machine code byte for byte), a
-register ABI at the two hot twins' seams, and a 17% cut to the vertical-blank path, which the pace
-can barely show for the reason the row above gives. Two more levers were tried and refused, and the
+register ABI at the two hot twins' seams, `build_text_display_list`'s cursors moved out from behind
+their in/out pointers, and a 17% cut to the vertical-blank path, which the pace can barely show for
+the reason the row above gives. Two more levers were tried and refused, and the
 size budget that refused them is written down beside them.
 
 **`profile.py` is the instrument, and it is in this directory.** `pace` clocks both binaries with a
@@ -223,15 +226,22 @@ making the array static again reddens the build.
 `smoke.py` boots the reconstruction and the original through the same recipe and checks all six
 (`docs/on-target-execution.md`, "The observable surfaces"):
 
-* **memory** — the published framebuffer against the original's at `scroll_pos == 0xf0`, byte for
-  byte. Its control costs no extra boot: the same comparison against the frame the original
-  published one `render_frame` earlier must DIVERGE, and does (12,779 bytes).
+* **memory** — the published framebuffer (`screen_prev1`, which is what the shifter is fetching)
+  against the original's, at TWO anchors: `scroll_pos == 0x64` and `== 0xf0`, attract frames 50 and
+  120, one per attract text page the smoke build reaches. 32,000 bytes each, and each with a control
+  that costs no extra boot: the same comparison against the frame the original published one
+  `render_frame` earlier must DIVERGE, and does (7,190 and 12,668 bytes). Each anchor also reads
+  `attract_page_timer` on both sides, so a comparison of two different text pages says so instead of
+  reddening as a moved pixel. **It reads `screen_prev1` and not `screen_draw`, and that distinction
+  is the whole pen** — `smoke.py`'s `A_SCREEN_DRAW` comment block has the mechanism and the mutation
+  that measured it. Read it before touching this.
 * **the trap ledger** — `--trace os_base`: the same eight files opened in the same order.
 * **the hardware-state vector** — the sixteen colour registers against the game palette in the
   program's own table, the resolution byte, and TWO class-8 read-backs: `Physbase()` against the
   address handed to `Setscreen` at the boot, and — at the end of the run — the shifter's own two
-  bytes against `image base + screen_draw`, which is the only check there is that the game's
-  per-frame publish reaches the chip. That one matters most: the game moves the physical base every
+  bytes against `image base + screen_prev1` — the frame just published, for the same reason the
+  memory pen reads it — which is the only check there is that the game's per-frame publish reaches
+  the chip. That one matters most: the game moves the physical base every
   frame and the harness's `Setscreen` event drops that argument entirely.
 * **the input path** — a real key through the real `$118` into `acia_ikbd_isr`, asserted twice: an
   UNWATCHED scancode must move none of the eight bits, and a WATCHED one must move its own, caught

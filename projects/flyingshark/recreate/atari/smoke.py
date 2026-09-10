@@ -12,8 +12,9 @@ release ships and the one `../tools/boot_shots.py` proved the original by.
 THE SIX SURFACES (docs/on-target-execution.md, "The observable surfaces"), and what each is here:
 
   memory                  the framebuffer the game has just published, byte for byte against the
-                          ORIGINAL's at the same anchor — the strongest check in this file, and the
-                          one a mis-anchor control proves is sensitive
+                          ORIGINAL's — the strongest check in this file, and the one a mis-anchor
+                          control proves is sensitive. TWO anchors, one per ATTRACT TEXT PAGE, so
+                          that neither page is judged by the other's frame (see FRAME_ANCHORS)
   the trap ledger         `--trace os_base`: our Fopen sequence against the original's, same eight
                           names in the same order
   the hardware-state      the sixteen colour registers, the resolution byte and the video base,
@@ -39,6 +40,7 @@ import re
 import struct
 import sys
 import time
+from collections import namedtuple
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -107,9 +109,29 @@ IMAGE_ALIGN = 256                   # flyshark_main.c IMAGE_ALIGN — a differen
                                     # that every screen address inside it can be 256-aligned too
 RING_OFFSETS = (0x7800, 0xfa00, 0x17700, 0x1f400)   # globals.h SCREEN_RING_0_OFF .. _3_OFF
 TARGET_PHYSBASE = 0x7f800           # shim_include/init.h FS_TARGET_PHYSBASE (= test/abi.py's)
-A_SCREEN_DRAW = 0x16416             # globals.h
-A_SCREEN_PREV1 = 0x1641a            # globals.h — the frame published one render_frame ago
+# THE THREE ROTATING BASES, and WHICH ONE HOLDS A DRAWN FRAME AT THE ANCHOR IS THE WHOLE POINT.
+# `render_frame` (../src/sprite.c) draws the display list into `screen_draw`, publishes it with
+# `Setscreen`, THEN rotates — prev2 <- prev1, prev1 <- screen_draw, screen_draw <- the next base —
+# and only then replays the restore list, which wipes the sprite dirt out of the NEW prev2. So at
+# the anchor, which fires in `scroll_advance` one frame later:
+#   screen_prev1  the frame just published, sprites and all: what the shifter is fetching
+#   screen_draw   the buffer about to be drawn into, whose sprites a replay has already restored
+#   screen_prev2  the frame published before that, likewise restored back to bare background
+# An earlier draft compared `screen_draw`, i.e. the background alone — MEASURED 2026-09-09 with a
+# mutation that made the first attract page compile the wrong text script: `screen_prev1` diverged
+# by 1,335 bytes and `screen_draw` by NONE, so the strongest check in this file could not see a
+# sprite, a glyph or the HUD. It compares the published frame now, and the control below is a
+# published frame it must NOT match.
+A_SCREEN_DRAW = 0x16416             # globals.h — the next buffer to be drawn into
+A_SCREEN_PREV1 = 0x1641a            # globals.h — the frame the shifter is fetching
+A_SCREEN_PREV2 = 0x1641e            # globals.h — the frame published one render_frame before that
 A_SCROLL_POS = 0x17758              # scroll.h
+# WHICH TEXT SCRIPT AN ATTRACT FRAME COMPILED, which is what makes an anchor's page a MEASUREMENT
+# rather than a label. `title_attract_page_step` (../src/frontend.c) counts this word down once a
+# frame and picks a script by two signed tests on what is left.
+A_ATTRACT_PAGE_TIMER = 0x176e6      # frontend.h
+ATTRACT_PAGE_HALL_OF_FAME_BELOW = 0xc8   # frontend.h
+ATTRACT_PAGE_CREDITS_BELOW = 0x226       # frontend.h
 A_KEY_LAST_SCANCODE = 0x17781       # irq.h
 A_KEY_BITS = 0x17780                # irq.h
 A_PALETTE_GAME = 0x16294            # init.h A_palette_game — sixteen colour words in the image
@@ -137,7 +159,12 @@ MIRRORS = (
     ("SCREEN_RING_ALIGN", CORE_INCLUDE / "globals.h", "SCREEN_RING_ALIGN"),
     ("A_SCREEN_DRAW", CORE_INCLUDE / "globals.h", "A_screen_draw"),
     ("A_SCREEN_PREV1", CORE_INCLUDE / "globals.h", "A_screen_prev1"),
+    ("A_SCREEN_PREV2", CORE_INCLUDE / "globals.h", "A_screen_prev2"),
     ("A_SCROLL_POS", CORE_INCLUDE / "scroll.h", "A_scroll_pos"),
+    ("A_ATTRACT_PAGE_TIMER", CORE_INCLUDE / "frontend.h", "A_attract_page_timer"),
+    ("ATTRACT_PAGE_HALL_OF_FAME_BELOW", CORE_INCLUDE / "frontend.h",
+     "ATTRACT_PAGE_HALL_OF_FAME_BELOW"),
+    ("ATTRACT_PAGE_CREDITS_BELOW", CORE_INCLUDE / "frontend.h", "ATTRACT_PAGE_CREDITS_BELOW"),
     ("A_KEY_BITS", CORE_INCLUDE / "irq.h", "A_key_bits"),
     ("A_KEY_LAST_SCANCODE", CORE_INCLUDE / "irq.h", "A_key_last_scancode"),
     ("A_PALETTE_GAME", CORE_INCLUDE / "init.h", "A_palette_game"),
@@ -152,14 +179,65 @@ MIRRORS = (
 DEFINE_PATTERN = r"^#define\s+%s\s+(0x[0-9a-fA-F]+|\d+)u?\b"
 ASSIGNMENT_PATTERN = r"^%s\s*=\s*(0x[0-9a-fA-F]+|\d+)\b"
 
-# --- the anchor ----------------------------------------------------------------------------------
-# WHERE THE TWO RUNS ARE COMPARED. `scroll_advance` adds two to `scroll_pos` once per attract frame,
-# so this is attract frame 120 — far enough in for the map to have scrolled a screen and a half and
-# for two of the three text pages to have been compiled, and well inside the 200 frames the smoke
-# build draws before it stops. The breakpoint fires on the store, which is BEFORE the frame is
-# drawn, so what both sides are asked for is the frame they last PUBLISHED.
-ANCHOR_SCROLL_POS = 0xf0
+# --- the anchors ---------------------------------------------------------------------------------
+# WHERE THE TWO RUNS ARE COMPARED. `scroll_advance` adds two to `scroll_pos` once per attract frame
+# and `title_attract_prescroll` seeds it to 0 when the title screen is entered, so `scroll_pos / 2`
+# is the attract frame index counted from the same event on both shores — which is what makes an
+# anchor a MATCHED frame rather than merely a frame. The breakpoint fires on the store, which is
+# BEFORE the frame is drawn, so what both sides are asked for is the frame they last PUBLISHED.
+#
+# IT IS THE INDEX WITHIN AN ATTRACT CYCLE, and the cycle is long. The only thing that re-seeds
+# `scroll_pos` is `title_attract_prescroll`, and the attract loop re-enters that in ONE case:
+# `title_frame_step` finding `scroll_pos >= ATTRACT_END_SCROLL_POS` (0xbb8 — 1,500 attract frames,
+# about two minutes of the original). A tune running out does NOT re-seed it; that arm goes back to
+# `title_attract_start_tune`, which writes neither `scroll_pos` nor `attract_page_timer`. So the two
+# runs can be matched on this index and still be in different CYCLES, with the free-running page
+# timer at unrelated points — which is why `text_page_in` reads the page rather than assuming it.
+#
+# ONE ANCHOR PER ATTRACT TEXT PAGE THE SMOKE BUILD CAN REACH, and the second one is why.
+# `title_attract_page_step` (../src/frontend.c) counts `attract_page_timer` down once a frame from
+# the 0x280 its own data segment carries, and picks between THREE scripts by two signed tests on
+# what is left: at or above 0x226 the PUBLISHER page (48 glyphs), below that the CREDITS page (75),
+# and below 0xc8 the HALL OF FAME page (70). 0x280 - 0x226 = 90 frames, so frames 0..89 are the
+# publisher page and 90 on are the credits — and a single anchor at frame 120 judged the credits
+# page only, leaving the first pinned by nothing at all on a build whose renderer draws 48 records
+# there instead of 75. Both are pinned now.
+#
+# THE THIRD PAGE IS OUT OF REACH AND STAYS UNPINNED: the hall of fame needs the timer under 0xc8,
+# i.e. attract frame 440, and SMOKE_ATTRACT_FRAMES below stops the build at 200. Raising the limit
+# far enough to anchor it would roughly triple every run in this file (`../STATUS.md`, "What the
+# harness cannot see"), so it is named rather than bought.
 SCROLL_POS_PER_FRAME = 2
+
+
+class FrameAnchor(namedtuple("FrameAnchor", "name frame page")):
+    """One matched attract frame: the attract frame index, and which text page draws there.
+
+    `name` is a filename and a dictionary key as well as a label, so it carries no spaces: the
+    dump's path goes into a Hatari `savebin` command line, where a space is an argument separator.
+
+    `scroll_pos` — what the breakpoint actually waits for — is DERIVED rather than stored, so an
+    anchor moved to another frame cannot be left carrying the old one's position.
+    """
+
+    @property
+    def scroll_pos(self):
+        return self.frame * SCROLL_POS_PER_FRAME
+
+    def __str__(self):
+        return (f"{self.name}: scroll_pos = {self.scroll_pos:#x} = attract frame {self.frame}, "
+                f"the {self.page} text page")
+
+
+FRAME_ANCHORS = (
+    FrameAnchor("page1", 50, "publisher"),
+    FrameAnchor("page2", 120, "credits"),
+)
+# The two ends, DERIVED rather than assumed of the tuple's order: an anchor appended in the wrong
+# place would otherwise silently move which dump `check_the_input_path` reads and which frame
+# `check_the_record` bounds the build's limit by.
+EARLIEST_ANCHOR = min(FRAME_ANCHORS, key=lambda anchor: anchor.frame)
+LAST_ANCHOR = max(FRAME_ANCHORS, key=lambda anchor: anchor.frame)
 # The smoke build's own limit, which build.sh passes and this file only reports.
 SMOKE_ATTRACT_FRAMES = 200
 # The two `Setscreen`s the boot makes before the first frame: `boot_init`'s resolution call at
@@ -222,6 +300,10 @@ WATCHED_KEY_BIT = 0x01
 # for, and every give-up prints the elapsed time and the tail of Hatari's own log — a deadline that
 # fires should tell you whether the machine was slow or the program was wrong.
 TITLE_DEADLINE_SECONDS = 480.0
+# THE ANCHORS' DEADLINE IS AN OUTER BOUND AND NOT THE USUAL ONE. What actually ends the wait for a
+# dump that is never coming is the EMULATOR: every run is launched with `--run-vbls` (RUN_VBLS
+# above, ~400 s of vertical blanks), and `await_the_anchors` treats Hatari reaching that as an
+# answer rather than as a death. This number is what remains if the emulator outlives its own limit.
 ANCHOR_DEADLINE_SECONDS = 900.0
 RECORD_DEADLINE_SECONDS = 900.0
 # The one place a fixed wait is right: nothing can be in RAM before TOS has booted, and a dump of a
@@ -366,11 +448,93 @@ def anchor_clause(session, work, dump, address, value, name):
 
     The whole megabyte rather than the framebuffer alone, because WHERE the framebuffer is is a
     longword inside the run's own image that this driver has to read first — and reading it needs a
-    dump. One `savebin` answers both.
+    dump. One `savebin` answers both. The file the dump will land in comes back, so a caller arming
+    several never spells a path twice.
     """
     dump.unlink(missing_ok=True)
     clause = action_file(work, name, f"savebin {dump} 0 {ST_RAM_BYTES:#x}")
     session.arm(f"b (${address:x}).w = ${value:x} :once :quiet {clause}")
+    return dump
+
+
+def arm_the_anchors(session, work, out, image_base):
+    """Arm every FRAME_ANCHORS dump at once, and say which file each will land in.
+
+    ALL OF THEM TOGETHER RATHER THAN ONE AT A TIME: arming a later anchor from the host after the
+    earlier one had landed would put host round-trips inside the very frames being measured.
+    """
+    return {anchor.name: anchor_clause(session, work, out / f"anchor-{anchor.name}.bin",
+                                       image_base + A_SCROLL_POS, anchor.scroll_pos,
+                                       f"anchor-{anchor.name}.txt")
+            for anchor in FRAME_ANCHORS}
+
+
+def await_the_anchors(session, dumps):
+    """Wait for every anchor's dump, on ONE deadline for the set rather than one deadline each.
+
+    THE SET SHARES A DEADLINE because the dumps need not arrive in the order `FRAME_ANCHORS` lists
+    them: a run that armed BETWEEN two anchors reaches the later one first, and — for the original,
+    which has no frame limit — the earlier one a whole attract cycle later. A deadline EACH would
+    let one run sit for half an hour past the point where it was already doomed.
+
+    EACH DUMP MUST HAVE LANDED WHOLE, which is what `minimum_bytes` is for: `await_file` counts a
+    file as arrived on its first byte, and a megabyte the host catches half-written is then read
+    short — a fault the frame compare would blame on the frame rather than on the file.
+
+    AND HATARI STOPPING IS AN ANSWER HERE, not an error. Every run is bounded by `--run-vbls`, so
+    the emulator reaching its own end is the normal way for an anchor that will never fire to become
+    knowable; without `an_exit_is_an_answer` the wait raises `SystemExit` out from under
+    `--keep-going`, which is the one flag whose whole purpose is to reach the next surface.
+    """
+    deadline = time.monotonic() + ANCHOR_DEADLINE_SECONDS
+    landed = set()
+
+    for anchor in FRAME_ANCHORS:
+        if await_file(session, dumps[anchor.name], f"the framebuffer anchor at {anchor}",
+                      max(0.0, deadline - time.monotonic()), minimum_bytes=ST_RAM_BYTES,
+                      an_exit_is_an_answer=True) is not None:
+            landed.add(anchor.name)
+    return landed
+
+
+def anchor_the_run(session, out, result, one_pass):
+    """Arm every anchor for one run, wait the dumps out, and say which of them landed.
+
+    ONE FUNCTION FOR ALL THREE RUNS, which is what stops the arm and the wait drifting apart in one
+    of them — the same argument `compare_the_frame`'s docstring makes about the copy that lost its
+    length guard.
+
+    THE ARM IS A RACE, AND `one_pass` SAYS WHETHER LOSING IT IS FATAL. Emulation here is real time,
+    and each anchor is a `:once` breakpoint on a word that counts up two a frame. `scroll_pos` is
+    re-seeded only by `title_attract_prescroll`, and the attract loop re-enters that in ONE case:
+    `title_frame_step` finding `scroll_pos >= ATTRACT_END_SCROLL_POS` (0xbb8, i.e. 1,500 attract
+    frames — about two minutes of the original). A tune running out does NOT re-seed it; that arm
+    goes back to `title_attract_start_tune`, which writes neither `scroll_pos` nor
+    `attract_page_timer`. So:
+
+      * the ORIGINAL runs uncapped and comes round to its next cycle, so an arm past an anchor still
+        catches it — measured, it armed 315 attract frames in and its breakpoints fired on the next
+        cycle. It is exempt.
+      * OUR builds stop at their frame limit inside one cycle, so an arm past the earliest anchor is
+        a CERTAIN miss, and waiting the run out to discover it wastes the whole deadline. Measured
+        margin on this host: the arm lands at attract frame 10 or 11, about 4.0 s of emulated time
+        ahead of frame 50 — and a `FrameAnchor` moved inside that margin is refused in 13 s.
+
+    The scroll is read AFTER the breakpoints are standing, so the reading cannot itself be what
+    makes the arm late.
+    """
+    result["ram_dumps"] = arm_the_anchors(session, out / "work", out, result["image_base"])
+    result["armed_at_scroll_pos"] = struct.unpack(
+        ">H", session.savebin("scroll_now.bin", result["image_base"] + A_SCROLL_POS, 2))[0]
+    if one_pass and result["armed_at_scroll_pos"] >= EARLIEST_ANCHOR.scroll_pos:
+        give_up(f"the anchors, ARMED IN TIME: the scroll was already at "
+                f"{result['armed_at_scroll_pos']:#x} when they went in, past "
+                f"{EARLIEST_ANCHOR.name}'s {EARLIEST_ANCHOR.scroll_pos:#x}. This build stops at its "
+                f"frame limit without coming round again, so that anchor cannot fire — the run is "
+                f"refused here rather than waited out",
+                session.started, ANCHOR_DEADLINE_SECONDS, session.log_path)
+    result["landed"] = await_the_anchors(session, result["ram_dumps"])
+    result["anchored"] = len(result["landed"]) == len(FRAME_ANCHORS)
 
 
 def frame_at(ram, image_base, pointer_address, translate):
@@ -383,6 +547,42 @@ def frame_at(ram, image_base, pointer_address, translate):
     pointer = struct.unpack_from(">I", ram, image_base + pointer_address)[0]
     machine = image_base + pointer if translate else pointer
     return ram[machine:machine + SCREEN_BYTES], pointer, machine
+
+
+def bytes_differing(first, second):
+    """How many of two framebuffers' bytes differ, or None if either is not a whole frame.
+
+    THE LENGTH GUARD IS THE POINT and is why this is a function rather than a `sum(zip(...))` at
+    each of the three sites. `frame_at` slices RAM, so a pointer that ran off the end of the dump
+    yields a SHORT slice, `zip` stops at the shorter of the two, and "0 differ" is then a statement
+    about nothing at all. An earlier draft had the guard at two sites out of three.
+    """
+    if len(first) != SCREEN_BYTES or len(second) != SCREEN_BYTES:
+        return None
+    return sum(1 for a, b in zip(first, second) if a != b)
+
+
+def text_page_in(ram, image_base):
+    """Which of the three attract scripts the frame in this dump compiled, out of the run's own state.
+
+    THE ANCHOR'S `page` IS A CLAIM AND THIS IS WHAT CHECKS IT. `scroll_pos` is re-seeded at the top
+    of an attract CYCLE, so it matches the two runs frame for frame within one — but
+    `attract_page_timer` is NOT re-seeded at all: it free-runs from the value the data segment
+    carries, counting down past its own reload for as long as the program is left running. Two runs
+    on different cycles therefore sit at the same `scroll_pos` with unrelated timers, and if the
+    bands disagree the framebuffer compare reddens as though a pixel had moved. Reading the timer
+    makes that failure name itself. (`../STATUS.md`, "What the harness cannot see" — a per-phase
+    report called exactly this a reconstruction divergence in 2026-09, and it was the frame index.)
+
+    The two tests are SIGNED words, as `title_attract_page_step`'s `cmpi.w`/`blt` pair is.
+    """
+    timer = struct.unpack_from(">h", ram, image_base + A_ATTRACT_PAGE_TIMER)[0]
+
+    if timer < ATTRACT_PAGE_HALL_OF_FAME_BELOW:
+        return "hall of fame"
+    if timer < ATTRACT_PAGE_CREDITS_BELOW:
+        return "credits"
+    return "publisher"
 
 
 def image_base_from_ram(ram):
@@ -616,13 +816,10 @@ def run_reconstruction(out_dir):
         session.key(WATCHED_KEY_MAKE)
         session.key(PROBE_KEY_MAKE)
 
-        result["ram"] = out / "anchor.bin"
-        anchor_clause(session, out / "work", result["ram"],
-                      result["image_base"] + A_SCROLL_POS, ANCHOR_SCROLL_POS, "anchor.txt")
-        result["anchored"] = await_file(session, result["ram"], "the framebuffer anchor",
-                                        ANCHOR_DEADLINE_SECONDS) is not None
-        # The attract screen as it is at the anchor, for a reader: taken WHILE the program still
-        # owns the machine, because after the teardown the desktop owns it and the capture is TOS's.
+        anchor_the_run(session, out, result, one_pass=True)
+        # The attract screen as it is at the last anchor, for a reader: taken WHILE the program
+        # still owns the machine, because after the teardown the desktop owns it and the capture is
+        # TOS's.
         result["attract"] = session.screenshot(out / "attract.png")
         result["record_written"] = await_file(session, STATE_RECORD, "the run's record",
                                               RECORD_DEADLINE_SECONDS) is not None
@@ -656,11 +853,7 @@ def run_original(out_dir):
         result["text_base"] = text
         result["image_base"] = text - LOAD_BASE
 
-        result["ram"] = out / "anchor.bin"
-        anchor_clause(session, out / "work", result["ram"],
-                      result["image_base"] + A_SCROLL_POS, ANCHOR_SCROLL_POS, "anchor.txt")
-        result["anchored"] = await_file(session, result["ram"], "the framebuffer anchor",
-                                        ANCHOR_DEADLINE_SECONDS) is not None
+        anchor_the_run(session, out, result, one_pass=False)
     finally:
         result["status"] = session.close()
     strip_log_noise(log)
@@ -671,11 +864,11 @@ def run_original(out_dir):
 def run_floppy(out_dir):
     """Boot the .ST the way a person will: drive A:, no hard disk, TOS's own AUTO scan.
 
-    THE GATE IS THE ANCHOR FIRING. Reaching `scroll_pos == ANCHOR_SCROLL_POS` from a floppy means
-    the volume mounted, TOS found `AUTO\\FLYSHARK.PRG`, the program staged its image off the disc,
-    the boot loaded all eight files through the same GEMDOS calls, and the attract screen drew 120
-    frames. The frame it dumps there is then compared with the ORIGINAL's, exactly as the GEMDOS
-    run's is — so the floppy is not merely alive, it is drawing the same pixels.
+    THE GATE IS THE ANCHORS FIRING. Reaching the last of FRAME_ANCHORS from a floppy means the
+    volume mounted, TOS found `AUTO\\FLYSHARK.PRG`, the program staged its image off the disc, the
+    boot loaded all eight files through the same GEMDOS calls, and the attract screen drew 120
+    frames. The frames it dumps there are then compared with the ORIGINAL's, exactly as the GEMDOS
+    run's are — so the floppy is not merely alive, it is drawing the same pixels on both text pages.
     """
     out = out_dir / "floppy"
     out.mkdir(parents=True, exist_ok=True)
@@ -691,11 +884,7 @@ def run_floppy(out_dir):
                                             LOCATE_DEADLINE_SECONDS, started=session.started,
                                             log=log)
 
-        result["ram"] = out / "anchor.bin"
-        anchor_clause(session, out / "work", result["ram"],
-                      result["image_base"] + A_SCROLL_POS, ANCHOR_SCROLL_POS, "anchor.txt")
-        result["anchored"] = await_file(session, result["ram"], "the framebuffer anchor",
-                                        ANCHOR_DEADLINE_SECONDS) is not None
+        anchor_the_run(session, out, result, one_pass=True)
         result["attract"] = session.screenshot(out / "attract.png")
     finally:
         result["status"] = session.close()
@@ -711,12 +900,11 @@ def check_the_floppy(fail, floppy, original):
     print(f"  {floppy['attract'].name}: {distinct_colours(floppy['attract'])} distinct colours "
           f"({floppy['attract']})")
     # The emulator's own verdict on this run is `check_the_runs_finished`'s, which lists every run
-    # the invocation made — including the anchor firing, which for a floppy IS the boot: reaching
+    # the invocation made — including the anchors firing, which for a floppy IS the boot: reaching
     # attract frame 120 means the volume mounted, TOS ran the AUTO program, the image was staged off
-    # the disc and all eight files loaded through it.
-    if not floppy["anchored"]:
-        return
-    compare_the_frame(fail, "floppy", floppy, original)
+    # the disc and all eight files loaded through it. A missing dump is `compare_the_frame`'s own
+    # first check, per anchor, so there is nothing to guard here.
+    compare_the_frames(fail, "floppy", floppy, original)
 
 
 def require_a_build_that_can_answer(prg, floppy_only):
@@ -774,7 +962,13 @@ def check_the_runs_finished(fail, runs):
         print(f"  {side}: Hatari exit {run['status']}, log {run['log']}")
         fail.check(not run["faults"], f"{side}: no fault lines in the log ({run['faults']})")
         fail.check(run["status"] == 0, f"{side}: Hatari exited cleanly ({run['status']})")
-        fail.check(run["anchored"], f"{side}: the framebuffer anchor fired")
+        # Where the scroll had got to when the anchors went in — `anchor_the_run` says what the
+        # number means and which runs it is fatal for.
+        print(f"  {side}: anchors armed at scroll_pos {run['armed_at_scroll_pos']:#x}, "
+              f"{EARLIEST_ANCHOR.name}'s is {EARLIEST_ANCHOR.scroll_pos:#x}")
+        fail.check(run["anchored"],
+                   f"{side}: all {len(FRAME_ANCHORS)} framebuffer anchors landed whole "
+                   f"({sorted(run['landed'])})")
         if "record_written" in run:
             fail.check(run["record_written"], f"{side}: the run wrote its record and tore down")
 
@@ -932,10 +1126,10 @@ def check_the_record(fail, record, staged):
                and (record["SR_AT_END"] >> SR_IPL_SHIFT) & SR_IPL_MASK == ORIGINAL_IPL,
                f"the run is in supervisor mode at the interrupt level the original chooses "
                f"(SR {record['SR_AT_END']:#06x}, IPL {(record['SR_AT_END'] >> SR_IPL_SHIFT) & SR_IPL_MASK})")
-    fail.check(record["ATTRACT_FRAMES"] == record["ATTRACT_FRAME_LIMIT"]
-               > ANCHOR_SCROLL_POS // SCROLL_POS_PER_FRAME,
+    fail.check(record["ATTRACT_FRAMES"] == record["ATTRACT_FRAME_LIMIT"] > LAST_ANCHOR.frame,
                f"the loop stopped at the frame limit the build was given "
-               f"({record['ATTRACT_FRAME_LIMIT']}), which is past the framebuffer anchor")
+               f"({record['ATTRACT_FRAME_LIMIT']}), which is past the last framebuffer anchor "
+               f"(frame {LAST_ANCHOR.frame})")
 
     pens = [record[f"PEN{pen}"] for pen in range(PALETTE_PENS)]
     wanted_pens = [image_word(staged, A_PALETTE_GAME + pen * 2) for pen in range(PALETTE_PENS)]
@@ -963,8 +1157,14 @@ def check_the_pacing(fail, record):
                f"the scroll advanced exactly twice a frame ({record['SCROLL_POS_AT_END']})")
 
 
-def check_the_input_path(fail, record, ram, image_base, marker):
+def check_the_input_path(fail, record, ours, marker):
     print("\n-- the ACIA seam: a real key through the reconstruction's own handler ------------")
+    if LAST_ANCHOR.name not in ours["landed"]:
+        print(f"  skipped: {LAST_ANCHOR.name} did not dump, and the two bytes this reads live "
+              f"in it")
+        return
+    ram = ours["ram_dumps"][LAST_ANCHOR.name].read_bytes()
+    image_base = ours["image_base"]
     scancode = ram[image_base + A_KEY_LAST_SCANCODE]
     key_bits = ram[image_base + A_KEY_BITS]
     print(f"  {record['ACIA_ENTRIES']} ACIA interrupts, key_last_scancode {scancode:#04x}, "
@@ -982,7 +1182,7 @@ def check_the_input_path(fail, record, ram, image_base, marker):
     # THE POSITIVE CONTROL for the two checks above: a WATCHED scancode must move the bit the ladder
     # owns, caught by a breakpoint while the key is down. Without it, "no bit moved" would be just as
     # true of a handler whose eight comparisons never ran at all.
-    fail.check(marker is not None and marker.read_bytes() == bytes([WATCHED_KEY_BIT]),
+    fail.check(marker.is_file() and marker.read_bytes() == bytes([WATCHED_KEY_BIT]),
                f"a watched scancode ({WATCHED_KEY_MAKE:#04x}) set its own bit in `key_bits` while "
                f"it was held")
 
@@ -1000,44 +1200,88 @@ def check_the_trap_ledger(fail, ours, original):
                f"both runs opened the same {len(original_names)} files in the same order")
 
 
-def compare_the_frame(fail, side, run, original):
-    """One side's published frame against the original's at the same anchor, with its control.
+def compare_the_frame(fail, side, run, original, anchor):
+    """One side's published frame against the original's at ONE anchor, with its control.
 
     ONE FUNCTION FOR BOTH ARMS. The GEMDOS run and the floppy run ask exactly the same question, and
     an earlier draft asked it twice — the copy in the floppy arm had lost the length guard, which is
     what stops a slice that ran off the end of RAM reporting "0 differ" over nothing.
+
+    THE FRAME IS `screen_prev1` AND THE CONTROL IS `screen_prev2`; A_SCREEN_DRAW above says why
+    neither is `screen_draw`. Answers the frame it judged, or None if it could not judge one.
     """
-    mine, mine_pointer, mine_machine = frame_at(run["ram"].read_bytes(), run["image_base"],
-                                                A_SCREEN_DRAW, True)
-    original_ram = original["ram"].read_bytes()
+    where = f"{side} at {anchor.name}"
+    if not fail.check(anchor.name in run["landed"] and anchor.name in original["landed"],
+                      f"{where}: both runs dumped this anchor"):
+        return None
+
+    mine_ram = run["ram_dumps"][anchor.name].read_bytes()
+    mine, mine_pointer, mine_machine = frame_at(mine_ram, run["image_base"], A_SCREEN_PREV1, True)
+    original_ram = original["ram_dumps"][anchor.name].read_bytes()
     theirs, their_pointer, their_machine = frame_at(original_ram, original["image_base"],
-                                                    A_SCREEN_DRAW, False)
-    print(f"  {side} screen_draw {mine_pointer:#x} (image) -> {mine_machine:#x} (machine); "
+                                                    A_SCREEN_PREV1, False)
+    print(f"  {where} screen_prev1 {mine_pointer:#x} (image) -> {mine_machine:#x} (machine); "
           f"original {their_pointer:#x} -> {their_machine:#x}")
-    differing = sum(1 for a, b in zip(mine, theirs) if a != b)
+
+    # WHICH PAGE EACH SIDE IS REALLY ON, asked BEFORE the pixels: a mismatch here says the two runs
+    # are on different attract cycles, which is an instrument fault and not a moved pixel.
+    mine_page = text_page_in(mine_ram, run["image_base"])
+    their_page = text_page_in(original_ram, original["image_base"])
+    print(f"  attract page: {side} {mine_page}, original {their_page} (the anchor names "
+          f"{anchor.page})")
+    fail.check(mine_page == their_page == anchor.page,
+               f"{where}: both runs compiled the {anchor.page} text script for this frame")
+
+    differing = bytes_differing(mine, theirs)
     print(f"  {SCREEN_BYTES} bytes compared, {differing} differ")
-    if not fail.check(len(mine) == len(theirs) == SCREEN_BYTES,
-                      f"{side}: both framebuffers are a whole {SCREEN_BYTES}-byte frame"):
-        return
+    if not fail.check(differing is not None,
+                      f"{where}: both framebuffers are a whole {SCREEN_BYTES}-byte frame"):
+        return None
     fail.check(differing == 0,
-               f"{side}: the published frame is the ORIGINAL's, byte for byte")
+               f"{where}: the published frame is the ORIGINAL's, byte for byte")
 
     # THE CONTROL, and it costs no extra boot: the same comparison against the frame the original
     # published one `render_frame` EARLIER must fail. Without it a comparison that had silently
     # started reading zeroes on both sides would report the same green.
-    before, _, before_machine = frame_at(original_ram, original["image_base"], A_SCREEN_PREV1, False)
-    mis = sum(1 for a, b in zip(mine, before) if a != b)
+    before, _, before_machine = frame_at(original_ram, original["image_base"], A_SCREEN_PREV2, False)
+    mis = bytes_differing(mine, before)
     print(f"  control: against the original's PREVIOUS frame ({before_machine:#x}), {mis} differ")
-    fail.check(mis > 0,
-               f"{side}: the mis-anchored comparison diverges, so the green above is about this frame")
+    fail.check(mis is not None and mis > 0,
+               f"{where}: the mis-anchored comparison diverges, so the green above is about this frame")
+    return mine
+
+
+def compare_the_frames(fail, side, run, original):
+    """Every FRAME_ANCHORS frame of one run against the original's, and the set's own control.
+
+    THE SET NEEDS A DEGENERACY CONTROL. Two anchors that fired at the same moment would report two
+    greens over one frame, so the frames they dump must DIFFER from each other. It is asked of every
+    CONSECUTIVE pair, which is what makes adding a third anchor pin the third rather than leave an
+    untested one in the middle.
+
+    IT IS NOT THE PAGE CHECK, and an earlier draft of `../STATUS.md` claimed it was. Two anchors 70
+    attract frames apart differ by the map having scrolled 140 pixels between them, whatever script
+    each compiled — so this control cannot fail for a page reason. What pins the page is
+    `compare_the_frame`'s `text_page_in` read of `attract_page_timer`, on both sides.
+    """
+    judged = [(anchor, compare_the_frame(fail, side, run, original, anchor))
+              for anchor in FRAME_ANCHORS]
+    for (earlier, earlier_frame), (later, later_frame) in zip(judged, judged[1:]):
+        if earlier_frame is None or later_frame is None:
+            continue
+        between = bytes_differing(earlier_frame, later_frame)
+        print(f"  control: {earlier.name} against {later.name} on our own side, {between} differ")
+        fail.check(between is not None and between > 0,
+                   f"{side}: {earlier.name} and {later.name} caught two different frames, so "
+                   f"neither anchor is reporting the other's")
 
 
 def check_the_framebuffer(fail, ours, original):
     print("\n-- memory: the published framebuffer, against the original's --------------------")
-    print(f"  anchor: scroll_pos = {ANCHOR_SCROLL_POS:#x} = attract frame "
-          f"{ANCHOR_SCROLL_POS // SCROLL_POS_PER_FRAME}; the original loaded at "
-          f"{original['text_base']:#x}")
-    compare_the_frame(fail, "ours", ours, original)
+    for anchor in FRAME_ANCHORS:
+        print(f"  anchor {anchor}")
+    print(f"  the original loaded at {original['text_base']:#x}")
+    compare_the_frames(fail, "ours", ours, original)
 
 
 def main():
@@ -1091,8 +1335,10 @@ def main():
         staged = STAGED_IMAGE.read_bytes()
         check_the_record(fail, record, staged)
         check_the_pacing(fail, record)
-        check_the_input_path(fail, record, ours["ram"].read_bytes(), ours["image_base"],
-                             ours["key_bit_marker"] if ours["key_bit_marker"].is_file() else None)
+        # The LAST anchor's dump, because the two keys are pressed before any of them fire and this
+        # asks what the handler filed once both were released — the latest picture of that is the
+        # right one. It is the ONE dump this check needs, so it is gated on that dump alone.
+        check_the_input_path(fail, record, ours, ours["key_bit_marker"])
         check_the_trap_ledger(fail, ours, original)
         check_the_framebuffer(fail, ours, original)
     if floppy is not None:

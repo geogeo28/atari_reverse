@@ -412,38 +412,62 @@ void hud_publish_bomb_and_life_icons(uint8_t *image) {
  *
  * `script`, `dest`, `x` and `y` are all in/out: the cursors come back advanced, which is what lets
  * `hiscore_show_entry_screen` compile a second script straight on to the end of the first.
+ *
+ * THE FOUR CURSORS RUN IN LOCALS AND ARE WRITTEN BACK ONCE, and that is an on-target performance
+ * fact rather than a matter of taste. `image` is a `uint8_t *`, which in C may alias any object at
+ * all, so a compiler that kept the cursors behind their pointers has to RELOAD all four after each
+ * of the four stores `publish_slot` makes through the image — and `m68k-elf-gcc -O2` did exactly
+ * that, at nearly four times the original's cycles a glyph (../STATUS.md, "On-target performance",
+ * has the measurement). The image reads and writes keep their order and their widths, so the bytes
+ * this routine leaves are unchanged; what moves is only where the CURSORS live while it runs.
+ *
+ * THE WRITE-BACK IS PINNED, not merely intended. `g_build_text_display_list` hands all four cursors
+ * back and `test_hud.py`'s `_text_case` diffs them against the oracle's a0/a1/d1/d2, so deleting
+ * the four stores reddens 21 cases and adding an exit to `default:` that skips them reddens 48
+ * (both measured). What is NOT pinned is a caller passing a cursor pointer INTO the image: every
+ * one of the five passes the address of a host local, and `include/hud.h` carries that precondition
+ * beside the prototype because no test can reach a sixth that does not.
  */
 void build_text_display_list(uint8_t *image, uint32_t *script, uint32_t *dest, uint32_t *x,
                              uint32_t *y) {
-    *x = set_low_word(*x, set_low_byte((uint16_t)*x, image[*script]));
-    *script = addr_add(*script, 1u);
-    *y = set_low_word(*y, set_low_byte((uint16_t)*y, image[*script]));
-    *script = addr_add(*script, 1u);
+    uint32_t cursor = *script;      /* a0 in the original */
+    uint32_t slot = *dest;          /* a1 */
+    uint32_t text_x = *x;           /* d1 */
+    uint32_t text_y = *y;           /* d2 */
+
+    text_x = set_low_word(text_x, set_low_byte((uint16_t)text_x, image[cursor]));
+    cursor = addr_add(cursor, 1u);
+    text_y = set_low_word(text_y, set_low_byte((uint16_t)text_y, image[cursor]));
+    cursor = addr_add(cursor, 1u);
 
     for (;;) {
-        uint8_t op = image[*script];
+        uint8_t op = image[cursor];
 
-        *script = addr_add(*script, 1u);
+        cursor = addr_add(cursor, 1u);
         switch (op) {
         case TEXT_OP_END:
+            *script = cursor;
+            *dest = slot;
+            *x = text_x;
+            *y = text_y;
             return;
         case TEXT_OP_SPACE:
-            *x = set_low_word(*x, (uint16_t)(*x + TEXT_GLYPH_WIDTH));
+            text_x = set_low_word(text_x, (uint16_t)(text_x + TEXT_GLYPH_WIDTH));
             break;
         case TEXT_OP_TAB:
-            *x = set_low_word(*x, (uint16_t)(*x + TEXT_TAB_WIDTH));
+            text_x = set_low_word(text_x, (uint16_t)(text_x + TEXT_TAB_WIDTH));
             break;
         case TEXT_OP_NEWLINE:
-            *y = set_low_word(*y, (uint16_t)(*y + TEXT_LINE_HEIGHT));
-            *x = set_low_word(*x, 0);
+            text_y = set_low_word(text_y, (uint16_t)(text_y + TEXT_LINE_HEIGHT));
+            text_x = set_low_word(text_x, 0);
             break;
         case TEXT_OP_INDENT:
-            *x = set_low_word(*x, (uint16_t)(*x + be16(image + LOW_MEMORY_INDENT_WORD)));
+            text_x = set_low_word(text_x, (uint16_t)(text_x + be16(image + LOW_MEMORY_INDENT_WORD)));
             break;
         default:
-            publish_slot(image, *dest, (uint16_t)*x, (uint16_t)*y, op);
-            *dest = addr_add(*dest, DISPLAY_REC_BYTES);
-            *x = set_low_word(*x, (uint16_t)(*x + TEXT_GLYPH_WIDTH));
+            publish_slot(image, slot, (uint16_t)text_x, (uint16_t)text_y, op);
+            slot = addr_add(slot, DISPLAY_REC_BYTES);
+            text_x = set_low_word(text_x, (uint16_t)(text_x + TEXT_GLYPH_WIDTH));
             break;
         }
     }

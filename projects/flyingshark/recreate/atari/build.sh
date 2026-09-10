@@ -38,7 +38,8 @@ set -euo pipefail
 
 # The smoke build's default frame limit, which smoke.py's SMOKE_ATTRACT_FRAMES mirrors and asserts.
 # 200 attract frames is past the prescroll, past two of the three text pages, and eighty frames past
-# the framebuffer differential's own anchor (smoke.py's ANCHOR_SCROLL_POS = attract frame 120).
+# the LAST of the framebuffer differential's anchors (smoke.py's FRAME_ANCHORS: attract frames 50
+# and 120, one per text page; `check_the_record` asserts this limit outlasts the later of them).
 SMOKE_FRAMES_DEFAULT=200
 
 MODE="${1:-play}"
