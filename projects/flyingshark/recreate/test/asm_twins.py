@@ -8,9 +8,9 @@ subsystem the routine belongs to:
     the cost pin          the twin costs what the original costs, on one instrument
     (the build gate lives in atari/build.sh and is asked of the objects, not from here)
 
-`test_asm_sprite.py` is this project's first and so far only user. What stays in a suite is what
-is genuinely its own: which cases to stage (borrowed from that subsystem's C battery), which spans
-are byte-pinned, and what each twin's cost ceiling is.
+`test_asm_sprite.py` and `test_asm_restore.py` are this project's users. What stays in a suite is
+what is genuinely its own: which cases to stage (borrowed from that subsystem's C battery), which
+spans are byte-pinned, and what each twin's cost ceiling is.
 
 THIS FILE IS A COPY of `projects/zynaps/recreate/test/asm_twins.py`, unchanged below this paragraph
 and deliberately so: it names no game, and the day it moves to `tools/` beside `asm_twin.py` a copy

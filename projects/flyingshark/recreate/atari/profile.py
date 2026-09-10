@@ -681,29 +681,46 @@ def load_json(name):
     return json.loads(path.read_text())
 
 
-# The suffix an asm twin's symbol carries (`../src/asm/*.S`). A twin IS the routine — the same work,
-# transcribed from the original's own instructions — so it has to be ratioed against the original's
-# row for the routine it stands in for, or the very functions a wave rewrote drop out of the table.
+# The suffixes an asm twin's ENTRY POINTS carry (`../src/asm/`). A twin IS the routine — the same
+# work, transcribed from the original's own instructions — so it has to be ratioed against the
+# original's row for the routine it stands in for, or the very functions a wave rewrote drop out of
+# the table.
 #
-# TODAY'S ONE TWIN STILL DOES NOT RATIO, and that is a property of the twin rather than a gap here:
-# `blit_sprite_rows_unclipped_asm` stands in for FOUR of the original's routines
-# (`sprite_blit_w16`..`w64`, which the original's caller picks between with a jump table), so there
-# is no single shipped row to divide by and a per-call ratio would not mean anything. Its cycles are
-# compared in `../STATUS.md`'s "On-target performance" table instead, per FRAME, where the four are
-# summed on both sides. The rename below is kept because it is what the next twin will need.
-ASM_TWIN_SUFFIX = "_asm"
+# THERE ARE TWO SUFFIXES BECAUSE A TWIN HAS TWO ENTRY POINTS: `<name>_asm` carries the C ABI and is
+# what the differential suites drive, `<name>_regs` takes the original's own registers and is what
+# the game calls (`../src/asm/README.md`, "The two entries"). A profile of the .PRG therefore holds
+# the `_regs` row and not the `_asm` one, and a mapping that knew only `_asm` would leave every
+# shipped twin cycle under a name nothing here could resolve — which is how the routines a wave
+# rewrote go missing from the wave's own instrument.
+#
+# TWO OF TODAY'S THREE TWINS STILL DO NOT RATIO, and that is a property of the twin rather than a gap
+# here: `blit_sprite_rows_unclipped_*` stands in for FOUR of the original's routines
+# (`sprite_blit_w16`..`w64`, which the original's caller picks between with a jump table) and
+# `restore_blit_rows_*` for five, so there is no single shipped row to divide by and a per-call ratio
+# would not mean anything. Their cycles are compared in `../STATUS.md`'s "On-target performance"
+# table instead, per FRAME, where the family is summed on both sides. `scroll_wrap_copy_1280_asm`
+# does ratio: it stands in for exactly one.
+ASM_TWIN_SUFFIXES = ("_asm", "_regs")
+
+
+def twin_core_name(name):
+    """The routine a twin entry point stands in for, or the name unchanged."""
+    for suffix in ASM_TWIN_SUFFIXES:
+        if name.endswith(suffix):
+            return name[:-len(suffix)]
+    return name
 
 
 def with_asm_twins_renamed(functions):
     """Our side's rows under the ORIGINAL's names, so a twin ratios against what it replaced.
 
-    A name is SUMMED rather than overwritten because both spellings can be present: the C core is
-    still compiled and linked (it is what the differential pins the twin against), so it has a
-    symbol — with, in a correct build, no samples against it at all."""
+    A name is SUMMED rather than overwritten because several spellings can be present: the C core is
+    still compiled and linked (it is what the differential pins the twin against) and BOTH of a
+    twin's entry points have symbols — with, in a correct build, no samples against the one the game
+    does not enter."""
     renamed = {}
     for name, row in functions.items():
-        key = name[:-len(ASM_TWIN_SUFFIX)] if name.endswith(ASM_TWIN_SUFFIX) else name
-        into = renamed.setdefault(key, {"calls": 0, "cycles": 0})
+        into = renamed.setdefault(twin_core_name(name), {"calls": 0, "cycles": 0})
         into["calls"] += row["calls"]
         into["cycles"] += row["cycles"]
     return renamed
@@ -737,9 +754,11 @@ def compare():
     # original's routines has no single shipped row to divide by, so it drops out of the table
     # above — and a reader running this after landing one can reasonably read its absence as the
     # twin not being linked at all. Name them instead.
-    unratioed = sorted(name for name in ours["functions"]
-                       if name.endswith(ASM_TWIN_SUFFIX)
-                       and name[:-len(ASM_TWIN_SUFFIX)] not in theirs["functions"])
+    # `row["calls"]` so the entry the game does NOT enter — a twin's other ABI, which is linked and
+    # therefore has a symbol — is not announced as an unratioed twin carrying zero cycles.
+    unratioed = sorted(name for name, row in ours["functions"].items()
+                       if twin_core_name(name) != name and row["calls"]
+                       and twin_core_name(name) not in theirs["functions"])
     for name in unratioed:
         row = ours["functions"][name]
         print(f"   ({name}: {row['cycles'] / ours['frames']:.0f} cycles a frame over "

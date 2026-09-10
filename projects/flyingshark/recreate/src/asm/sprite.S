@@ -1,8 +1,11 @@
 | sprite.S — the asm twin for the four UNCLIPPED masked sprite blitters, TRANSCRIBED from the
 | original binary.
 |
-|   blit_sprite_rows_unclipped_asm  <- the original @ 0x153b2 / 0x15408 / 0x154a4 / 0x15586,
-|                                      the C reference ../sprite.c's `blit_sprite_rows`
+|   blit_sprite_rows_unclipped_asm   <- the original @ 0x153b2 / 0x15408 / 0x154a4 / 0x15586,
+|                                       the C reference ../sprite.c's `blit_sprite_rows`
+|   blit_sprite_rows_unclipped_regs  <- the same ladder and bodies, entered with the registers
+|                                       loaded. The C-ABI entry above is what the SUITE drives;
+|                                       this is what the GAME calls (see "THE REGISTER-ABI ENTRY")
 |
 | WHAT A TWIN IS. The C in `../sprite.c` is byte-for-byte equivalent to the original —
 | `test/test_sprite.py`'s differential against the Musashi oracle says so — so when a core costs
@@ -15,7 +18,7 @@
 | The corollary matters as much: DO NOT IMPROVE ON THE ORIGINAL. A cleverer instruction is a
 | divergence you now have to justify, in a file whose whole warrant is that it does not diverge.
 | `projects/zynaps/recreate/src/asm/README.md` is where that recipe is written out at length; this
-| is Flying Shark's first twin and it follows it unchanged.
+| was Flying Shark's first twin and `restore.S` is its second, and both follow it unchanged.
 |
 | THE CHAIN OF EVIDENCE
 |
@@ -48,9 +51,12 @@
 |   d7 = the row count        `dbf %d7` makes d7's low word + 1 passes, which is exactly the C's
 |                             `loop_passes(rows_minus_one + 1, COUNT_MASK_WORD)`.
 |
-| THE `bsr` BRACKET. Each body ends in the original's own `rts`, so the ladder CALLS it and the
-| epilogue runs on the way back. One `bsr.w` (18 cycles) is what keeps every body byte-identical to
-| the original's, closing `rts` included.
+| THE LADDER BRANCHES, IT DOES NOT CALL. Each body ends in the original's own `rts` — that closing
+| instruction is part of the transcribed span and cannot be dropped — so the ladder `bra`s to a body
+| and lets that `rts` return to whoever entered the ladder. Through the C-ABI entry that is the
+| instruction after its `bsr.s`, i.e. its own epilogue; through the register-ABI entry it is the
+| game. (It was a `bsr.w` + `bra.s` back to a shared epilogue while the epilogue lived inside the
+| ladder; once the two entries split, that bracket was 34 cycles a call of nothing.)
 |
 | REGISTERS: the original's, unchanged through all four bodies —
 |   a0 = sprite cursor   a1 = screen cursor   d6 = the shift   d7 = the row count
@@ -75,23 +81,55 @@
 |
 | ...which is `../sprite.c`'s `blit_sprite_rows` without its `gated` argument, because this twin is
 | the ungated half of that function and the seam only routes the ungated call sites to it.
-    .equ    SAVED, (6 * 4)                  | what the prologue pushes: %d2-%d7
-    .equ    ARG_IMAGE,            4 + SAVED
-    .equ    ARG_SRC,              8 + SAVED
-    .equ    ARG_DST,             12 + SAVED
-    .equ    ARG_WIDTH_CLASS,     16 + SAVED
-    .equ    ARG_SHIFT,           20 + SAVED
-    .equ    ARG_ROWS_MINUS_ONE,  24 + SAVED
+    .equ    SPRITE_SAVED, (6 * 4)                  | what the prologue pushes: %d2-%d7
+    .equ    SPRITE_ARG_IMAGE,            4 + SPRITE_SAVED
+    .equ    SPRITE_ARG_SRC,              8 + SPRITE_SAVED
+    .equ    SPRITE_ARG_DST,             12 + SPRITE_SAVED
+    .equ    SPRITE_ARG_WIDTH_CLASS,     16 + SPRITE_SAVED
+    .equ    SPRITE_ARG_SHIFT,           20 + SPRITE_SAVED
+    .equ    SPRITE_ARG_ROWS_MINUS_ONE,  24 + SPRITE_SAVED
 
         .globl  blit_sprite_rows_unclipped_asm
 blit_sprite_rows_unclipped_asm:
         movem.l %d2-%d7,%sp@-
-        movea.l ARG_IMAGE(%sp),%a0
+        | THE WIDTH CLASS IS LOADED FIRST, and the order is load-bearing rather than tidy: `move.l`
+        | sets the flags, so loading it LAST would leave the ladder's `tst.l %d0` redundant on this
+        | path — and a `tst.l` deleted from the ladder would then still pass every test in
+        | `../../test/test_asm_sprite.py` while the register-ABI entry, whose caller sets no flags
+        | at all, silently picked a body off whatever the flags happened to hold. Loading it here
+        | and `%d7` after it means the flags entering the ladder are the ROW COUNT's, so the suite
+        | reddens on that deletion the way the game would.
+        move.l  SPRITE_ARG_WIDTH_CLASS(%sp),%d0
+        movea.l SPRITE_ARG_IMAGE(%sp),%a0
         movea.l %a0,%a1
-        adda.l  ARG_SRC(%sp),%a0
-        adda.l  ARG_DST(%sp),%a1
-        move.l  ARG_SHIFT(%sp),%d6
-        move.l  ARG_ROWS_MINUS_ONE(%sp),%d7
+        adda.l  SPRITE_ARG_SRC(%sp),%a0
+        adda.l  SPRITE_ARG_DST(%sp),%a1
+        move.l  SPRITE_ARG_SHIFT(%sp),%d6
+        move.l  SPRITE_ARG_ROWS_MINUS_ONE(%sp),%d7
+        bsr.s   blit_sprite_rows_unclipped_regs
+        movem.l %sp@+,%d2-%d7
+        rts
+
+| ---- THE REGISTER-ABI ENTRY, and it is the one the TARGET BUILD CALLS ---------------------------
+| Same ladder, same bodies, entered with the values already in the original's own registers:
+|
+|   a0 = the sprite cursor (image + src)   a1 = the screen cursor (image + dst)
+|   d6 = the shift    d7 = the row count   d0 = the width class, consumed by the ladder
+|   d1-d5 = the bodies' scratch, and therefore the caller's to save
+|
+| WHY BOTH ENTRIES EXIST. The kit's `AsmTwins.call` drives a twin through the C STACK ABI, so the
+| entry the SUITE pins has to be a C function — and that C frame is not free: `movem.l %d2-%d7`
+| either way plus five argument loads and two `adda`s, and the call site another ~110 cycles pushing
+| six longwords. MEASURED at 3,774 cycles a call against this entry's 3,544 — two builds of one tree
+| with nothing else changed (`atari/profile.py ours`, same window; the shipped build, which also
+| moved the restore seam and dropped the ladder's `bsr` bracket, reads 3,447 here). So
+| `../sprite.c`'s seam
+| calls THIS one under `-DFS_ASM_SPRITE` and the suite still drives the one above, which reaches it
+| through the `bsr.s` — every case the differential runs walks this ladder and these bodies.
+| `../../STATUS.md` carries the row, and what is shipped-only is the handful of register moves GCC
+| emits at the seam, which `atari/smoke.py`'s 32,000-byte framebuffer identity is the surface for.
+        .globl  blit_sprite_rows_unclipped_regs
+blit_sprite_rows_unclipped_regs:
         | THE LADDER'S DOMAIN IS 0..3, and the fall-through arm below therefore takes class 3 and
         | nothing else. That is a property of every call site rather than a bound this file imposes,
         | and it is provable rather than assumed: `sprite_blit_w16`..`w64` pass a literal, and
@@ -102,25 +140,19 @@ blit_sprite_rows_unclipped_asm:
         | `SPRITE_BLIT_TBL_RESTORE`, which `../sprite.c` answers with the restore blitter before any
         | of this is called. So a class above 3 cannot arrive, and if one ever could the C would
         | draw `class + 2` screen groups where this ladder would draw five.
-        move.l  ARG_WIDTH_CLASS(%sp),%d0
+        tst.l   %d0
         beq.s   .Lwidth16
         subq.l  #1,%d0
         beq.s   .Lwidth32
         subq.l  #1,%d0
         beq.s   .Lwidth48
-        bsr.w   sprite_blit_w64_body
-        bra.s   .Ldone
+        bra.w   sprite_blit_w64_body
 .Lwidth48:
-        bsr.w   sprite_blit_w48_body
-        bra.s   .Ldone
+        bra.w   sprite_blit_w48_body
 .Lwidth32:
-        bsr.w   sprite_blit_w32_body
-        bra.s   .Ldone
+        bra.w   sprite_blit_w32_body
 .Lwidth16:
-        bsr.w   sprite_blit_w16_body
-.Ldone:
-        movem.l %sp@+,%d2-%d7
-        rts
+        bra.w   sprite_blit_w16_body
 
 | ---- the transcribed bodies --------------------------------------------------------------------
     .globl  sprite_blit_w16_body

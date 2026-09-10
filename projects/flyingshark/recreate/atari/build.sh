@@ -18,13 +18,15 @@
 #      real-TOS ones, and ../include/init.h with its two XBIOS answers (README.md's seam table);
 #   2. the kit sources left out: src/hw.c, src/psg.c, src/sched.c and src/os_log.c, whose work the
 #      shim does for real;
-#   3. -DFS_ASM_SPRITE, which makes ../src/sprite.c's seam CALL THE ASM TWIN instead of its own C.
-#      It is the one -D here that changes which code runs, and it is gated below rather than
+#   3. -DFS_ASM_SPRITE, which makes ../src/sprite.c's three seams CALL THE ASM TWINS instead of
+#      their own C — the unclipped sprite blitters, the five restore blitters and the ring-seam
+#      copy. It is the one -D here that changes which code runs, and it is gated below rather than
 #      trusted — a -D that changed a core's BEHAVIOUR would be a different thing entirely and does
 #      not belong in this list;
 #   4. HOT_CFLAGS, which recompiles ONE core at a higher optimisation level.
-# Both 3 and 4 are pinned: 3 by ../test/test_asm_sprite.py plus the two gates below, and both by
-# smoke.py's framebuffer identity, which is what says a codegen change altered no pixel.
+# Both 3 and 4 are pinned: 3 by ../test/test_asm_sprite.py and ../test/test_asm_restore.py plus the
+# three gates below, and both by smoke.py's framebuffer identity, which is what says a codegen
+# change altered no pixel.
 #
 # $FS_DIAG_CFLAGS IS A FIFTH, AND IT IS DIAGNOSTIC ONLY. It is appended to CFLAGS for every core and
 # for the link, and NOTHING in this repository sets it except `atari/profile.py --phases`, which
@@ -117,11 +119,14 @@ bash "$REPO/tools/assert_trap_registers.sh" --expect 16 "$HERE/flyshark_os.s"
 # drop later levels' tile banks. Applied to this one file it costs a few KB. The SOURCE is still
 # compiled unchanged — this is a flag, not a variant — and `smoke.py`'s framebuffer identity is what
 # says the codegen change altered nothing.
-# THE ASM TWIN. `../src/asm/sprite.S` transcribes the original's own four unclipped sprite
-# blitters; `-DFS_ASM_SPRITE` is what makes `../src/sprite.c`'s seam call it instead of the C
-# (`src/sprite.c`, "THE ASM-TWIN SEAM"). The differential build never defines it, and
-# `../test/test_asm_sprite.py` is what proves the two equal.
-ASM_TWINS="$REC/src/asm/sprite.S"
+# THE ASM TWINS. `../src/asm/sprite.S` transcribes the original's own four unclipped sprite
+# blitters and `../src/asm/restore.S` its five restore blitters and its ring-seam copy;
+# `-DFS_ASM_SPRITE` is what makes `../src/sprite.c`'s three seams call them instead of the C
+# (`src/sprite.c`, "THE ASM-TWIN SEAM"). It is ONE define for the whole of `src/asm/` rather than
+# one per twin, and `../include/sprite.h` declares what it selects. The differential build never
+# defines it, and `../test/test_asm_sprite.py` / `../test/test_asm_restore.py` are what prove the
+# twins equal to their cores.
+ASM_TWINS="$REC/src/asm/sprite.S $REC/src/asm/restore.S"
 DEF="$DEF -DFS_ASM_SPRITE"
 
 HOT_CORE="$REC/src/sprite.c"
@@ -133,10 +138,18 @@ COOL_CORES="$(echo "$CORES" | grep -vxF "$HOT_CORE")"
 
 echo ">> compile + link (base 0, keep relocs)"
 $CC $CFLAGS $HOT_CFLAGS $DEF -c "$HOT_CORE" -o "$BUILD/sprite.o"
-$CC $CFLAGS $DEF -c "$ASM_TWINS" -o "$BUILD/sprite_asm.o"
+# ONE OBJECT PER `.S`, for the reason kit.mk assembles the suite's blob that way: the byte gate
+# below asks an object what it defines, and two twins in one object would let a span pin name the
+# wrong file when a body moved between them.
+ASM_TWIN_OBJS=""
+for twin in $ASM_TWINS; do
+  obj="$BUILD/$(basename "$twin" .S)_asm.o"
+  $CC $CFLAGS $DEF -c "$twin" -o "$obj"
+  ASM_TWIN_OBJS="$ASM_TWIN_OBJS $obj"
+done
 $CC $CFLAGS $DEF -T "$HERE/tos.ld" -Wl,--emit-relocs \
     "$HERE/flyshark_os.s" "$HERE/flyshark_main.c" "$HERE/flyshark_backend.c" \
-    $COOL_CORES "$BUILD/sprite.o" "$BUILD/sprite_asm.o" -lgcc \
+    $COOL_CORES "$BUILD/sprite.o" $ASM_TWIN_OBJS -lgcc \
     -o "$BUILD/flyshark.elf"
 
 # THE ASM-TWIN GATE. This substitution fails SILENTLY: drop -DFS_ASM_SPRITE and the seam resolves to
@@ -174,23 +187,63 @@ echo ">> asm twins: the shipped object against the original's own bytes"
 python3 "$HERE/assert_twin_bytes.py" "$BUILD/sprite_asm.o" "$DISK/FLYSHARK.IMG" 0x10000 \
     sprite_blit_w16=0x153b2 sprite_blit_w32=0x15408 \
     sprite_blit_w48=0x154a4 sprite_blit_w64=0x15586
+python3 "$HERE/assert_twin_bytes.py" "$BUILD/restore_asm.o" "$DISK/FLYSHARK.IMG" 0x10000 \
+    restore_blit_w16=0x14d58 restore_blit_w32=0x14d6a restore_blit_w48=0x14d80 \
+    restore_blit_w64=0x14d9a restore_blit_w80=0x14db8 scroll_wrap_copy_1280=0x156ae
 
-ASM_TWIN_SYMBOLS="blit_sprite_rows_unclipped_asm"
-# The two symbol tables are read ONCE into variables rather than piped into `grep -q`: under
+# ONE LIST, AND IT COMES FROM THE HEADER — not from a literal here, and NOT from `../src/sprite.c`,
+# which is the file being policed. A checklist grepped out of the seams could only ever confirm what
+# those seams already say: delete one seam and the name leaves the list, the remaining twins check
+# out, and the build goes green on exactly the silent regression this gate exists to catch. So the
+# expectation is stated somewhere the seam cannot edit: `../include/sprite.h`'s prototype block,
+# which is where a twin's C signature lives (../STATUS.md's "the twin's C ABI is spelt in three
+# places").
+#
+# EACH TWIN HAS TWO ENTRY POINTS and the core may call EITHER: `<name>_asm` carries the C ABI and is
+# what ../test/test_asm_sprite.py and ../test/test_asm_restore.py drive; `<name>_regs` takes the
+# original's own registers and is what the two hot seams `jsr` (`src/asm/sprite.S`, "THE
+# REGISTER-ABI ENTRY"). Both must be DEFINED when they exist, and the core must reference one of
+# them PER TWIN — which is what makes unhooking a single seam red rather than invisible.
+#
+# `|| true`, so that finding NOTHING reaches the check below: under `set -e -o pipefail` a grep with
+# no match would otherwise kill the script here, with an exit status and no sentence.
+echo ">> asm twins: what ../include/sprite.h declares, against the objects"
+ASM_TWIN_ENTRIES="$(grep -oE '\b[a-z0-9_]+_asm\(' "$REC/include/sprite.h" | tr -d '(' | sort -u || true)"
+[ -n "$ASM_TWIN_ENTRIES" ] || {
+  echo "ERROR: ../include/sprite.h declares no *_asm twin — either the block moved and this gate"
+  echo "       now checks nothing, or the seam has genuinely gone"; exit 1; }
+# The symbol tables are read ONCE into variables rather than piped into `grep -q`: under
 # `set -o pipefail`, `grep -q` exits at its first match and leaves `nm` with a SIGPIPE, which makes
 # the whole pipeline non-zero on a build that was perfectly good.
-TWIN_DEFINED="$(m68k-elf-nm "$BUILD/sprite_asm.o")"
+TWIN_DEFINED="$(m68k-elf-nm $ASM_TWIN_OBJS)"
 CORE_SYMBOLS="$(m68k-elf-nm "$BUILD/sprite.o")"
-for twin in $ASM_TWIN_SYMBOLS; do
+# ...AND THE HEADER MUST NAME EVERY TWIN THE OBJECTS DEFINE, which is the same check inverted and is
+# what stops the list going quietly short: a declaration that wrapped across two lines, or a twin
+# added to a `.S` and to nothing else, would otherwise drop out of the loop below and the build
+# would print a green line having checked one twin fewer than it has.
+while read -r defined; do
+  grep -qx "$defined" <<< "$ASM_TWIN_ENTRIES" || {
+    echo "ERROR: $defined is defined by $ASM_TWINS and not declared in ../include/sprite.h, so it"
+    echo "       is a twin no gate here knows about"; exit 1; }
+done < <(grep -oE ' T [a-z0-9_]+_asm$' <<< "$TWIN_DEFINED" | cut -d' ' -f3 | sort -u)
+for twin in $ASM_TWIN_ENTRIES; do
   grep -qE " T $twin$" <<< "$TWIN_DEFINED" || {
     echo "ERROR: $twin is not defined by $ASM_TWINS"; exit 1; }
-  grep -qE " U $twin$" <<< "$CORE_SYMBOLS" || {
-    echo "ERROR: the core does not call $twin — the seam resolved to the C, and the only symptom"
-    echo "       would have been the frame rate"; exit 1; }
+  regs="${twin%_asm}_regs"
+  called=""
+  for entry in "$twin" "$regs"; do
+    grep -qE " U $entry$" <<< "$CORE_SYMBOLS" && called="$entry"
+  done
+  [ -n "$called" ] || {
+    echo "ERROR: the core calls neither $twin nor $regs — that seam resolved to the C, and the only"
+    echo "       symptom would have been the frame rate"; exit 1; }
+  # A register-ABI entry that EXISTS must also be the one the game enters. Otherwise the seam could
+  # quietly fall back to the C ABI and pay the frame this wave measured and removed.
+  if grep -qE " T $regs$" <<< "$TWIN_DEFINED" && [ "$called" != "$regs" ]; then
+    echo "ERROR: $regs is defined but the core calls $twin — the seam is back on the C ABI"; exit 1
+  fi
+  echo "   $twin: defined, and the core calls $called"
 done
-# The list, not a literal: a second twin added above must appear in what this line claims to have
-# checked, or the build announces one gate and ran two (or the other way round).
-echo ">> asm twins: $ASM_TWIN_SYMBOLS — defined by the .S and called by the core"
 
 # _start must sit at the very first byte of text (GEMDOS enters there).
 ENTRY=$(m68k-elf-nm "$BUILD/flyshark.elf" | awk '$3=="_start"{print $1}')

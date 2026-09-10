@@ -315,9 +315,11 @@ The cores are compiled UNCHANGED — the difference between the two builds is th
 (`atari/shim_include/` shadows the kit's `os.h`, `hw.h`, `psg.h` and `sched.h` with real-TOS
 versions, and this project's `include/init.h` with its two undoored XBIOS answers), the four kit
 sources the .PRG leaves out, and the two things the performance campaign added: `src/sprite.c` is
-compiled with hotter flags, and its unclipped blitter is called through `src/asm/sprite.S` instead
-of the C. Both are *source*-identical and both are pinned — the twin by `test/test_asm_sprite.py`,
-and the whole build by the framebuffer identity `atari/smoke.py` checks.
+compiled with hotter flags, and three of its routines are called through an asm twin instead of the
+C — the unclipped blitter through `src/asm/sprite.S`, the five restore blitters and the ring-seam
+copy through `src/asm/restore.S`. Both are *source*-identical and both are pinned — the twins by
+`test/test_asm_sprite.py` and `test/test_asm_restore.py`, and the whole build by the framebuffer
+identity `atari/smoke.py` checks.
 
 ```bash
 bash atari/build.sh          # -> atari/disk/AUTO/FLYSHARK.PRG and atari/disk/FLYSHARK.ST

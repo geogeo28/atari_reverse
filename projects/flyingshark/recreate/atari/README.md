@@ -43,16 +43,17 @@ the pictures are evidence of a run rather than of a commit).
 | the screen ring | `0x60000` + `0x7800`/`0xfa00`/`0x17700`/`0x1f400`, the verified pointers |
 | files | 8 opened, 288,551 B read, 0 failures |
 | the chip | 13,611 PSG register writes = 27,222 hardware stores, 0 refused; SR $2304 — supervisor at IPL 3, the level the original chooses for itself. (It was 41,028 before the performance campaign, and the drop is the point: the sound module ticks on the VERTICAL BLANK, so 200 frames that now cost 1,047 blanks instead of 3,160 drive the chip for a third of the emulated time — the music-to-frame ratio is now the original's, where before it was three times too fast) |
-| pace | **4.55 vertical blanks a frame = 11.0 fps, against the original's own measured 4.00 = 12.5 fps** — 1.14x, and 89 of 126 frames take exactly the four the original takes (`profile.py pace`, on the steady attract screen). A blank is 160,256 cycles, so a lever worth less than one is INVISIBLE here: the frame still ends on the blank it ended on and the saving becomes `Vsync` idle inside it. That is why the vertical-blank path's own 17% (`../STATUS.md`, "What a vertical blank costs") moved this line from 4.559 to 4.548 and nothing else — a per-blank profile is the instrument for a per-blank lever. The smoke's own line says 5.24 over the whole run and the two are the same build: the smoke divides ALL the run's blanks — the boot, the 108-call prescroll, the heavier text pages — by the 200 frames it counted, where `profile.py` clocks frame to frame past the prescroll. The smoke's number is a floor check, this one is the pace |
+| pace | **4.32 vertical blanks a frame = 11.6 fps, against the original's own measured 4.00 = 12.5 fps** — 1.08x, and 89 of ~133 frames take exactly the four the original takes, one takes three and the rest take five (`profile.py pace`, on the steady attract screen). A blank is 160,256 cycles, so a lever worth less than one is INVISIBLE here: the frame still ends on the blank it ended on and the saving becomes `Vsync` idle inside it. That is why the vertical-blank path's own 17% (`../STATUS.md`, "What a vertical blank costs") moved this line from 4.559 to 4.548 and nothing else — a per-blank profile is the instrument for a per-blank lever. The smoke's own line says 5.24 over the whole run and the two are the same build: the smoke divides ALL the run's blanks — the boot, the 108-call prescroll, the heavier text pages — by the 200 frames it counted, where `profile.py` clocks frame to frame past the prescroll. The smoke's number is a floor check, this one is the pace |
 
 The pace is the one number that is not the original's, and it is class 13
 (`docs/on-target-execution.md`). **The campaign has run** (`../STATUS.md`, "On-target performance"):
-the frame went from 13.60 vertical blanks to 4.56 against the original's own measured 4.00, in three
+the frame went from 13.60 vertical blanks to 4.32 against the original's own measured 4.00, in six
 measured levers — the blitter's inner-loop `memcpy` spelt out, `-O3` with bounded unrolling for the
-one file the profiler named, and an asm twin for the four unclipped sprite blitters that is the
-original's own machine code byte for byte. A fourth cut the vertical-blank path by 23%, which the
-pace can barely show for the reason the row above gives. Levers were also tried and refused, and the
-size budget and the measurements that refused them are written down beside them.
+one file the profiler named, asm twins for the four unclipped sprite blitters and then for the five
+restore blitters and the ring-seam copy (each the original's own machine code byte for byte), a
+register ABI at the two hot twins' seams, and a 17% cut to the vertical-blank path, which the pace
+can barely show for the reason the row above gives. Two more levers were tried and refused, and the
+size budget that refused them is written down beside them.
 
 **`profile.py` is the instrument, and it is in this directory.** `pace` clocks both binaries with a
 repeating breakpoint on `render_frame`; `ours` / `original` / `compare` run the Hatari CPU profiler

@@ -152,20 +152,42 @@ static void blit_sprite_rows(uint8_t *image, uint32_t src, uint32_t dst, unsigne
  * (`atari/profile.py`, and `../STATUS.md`'s "On-target performance"). The differential build never
  * sees it: `test/test_asm_sprite.py` is what proves the two equal, over this file's own cases.
  *
+ * AND IT ENTERS AT THE TWIN'S REGISTER-ABI LABEL. The twin has two entry points into one ladder and
+ * one set of bodies: a C-ABI `blit_sprite_rows_unclipped_asm`, which is what the kit's `AsmTwins`
+ * can drive and therefore what the differential walks, and `blit_sprite_rows_unclipped_regs`, which
+ * expects the values in the original's own registers. The C frame between them is not free —
+ * measured, 3,774 cycles a call against 3,544 — so the seam loads the five registers and `jsr`s,
+ * and the suite reaches the same ladder through the entry above it (`src/asm/README.md`, "The two
+ * entries", for why the framebuffer identity is the surface for this glue).
+ *
  * A MACRO OVER THE ARGUMENTS RATHER THAN A WRAPPER FUNCTION, so that the gated call site below
  * keeps `blit_sprite_rows` referenced in both builds. A wrapper would be an unused `static` in the
- * build that has the twin, which is a warning at best and a silently dropped body at worst.
+ * build that has the twin, which is a warning at best and a silently dropped body at worst. (The
+ * restore seam further down has no gated half to keep its C referenced, so it takes the other
+ * shape — the `#ifdef` inside the one function every call site already goes through.)
  *
  * THE GATED HALF KEEPS THE C. `blit_sprite_clipped` is 8% of the blitter's cycles measured over the
  * attract screen (53,398 a frame against 582,591), it is four more transcribed bodies, and the four
  * it would add are the ones with a `btst` on an absolute address that the image base makes
  * un-transcribable byte for byte. `../STATUS.md` carries the row.
+ *
+ * `-DFS_ASM_SPRITE` MEANS "THIS BUILD LINKS THE TWINS", all of them — it is one define for the
+ * whole of `src/asm/`, not one per twin, and `include/sprite.h` declares what it selects.
  */
 #ifdef FS_ASM_SPRITE
-void blit_sprite_rows_unclipped_asm(uint8_t *image, uint32_t src, uint32_t dst,
-                                    unsigned width_class, unsigned shift, uint32_t rows_minus_one);
 #define BLIT_SPRITE_ROWS_UNCLIPPED(image, src, dst, klass, shift, rows)                            \
-    blit_sprite_rows_unclipped_asm((image), (src), (dst), (klass), (shift), (rows))
+    do {                                                                                           \
+        register uint8_t *sprite_cursor __asm__("a0") = (image) + (src);                           \
+        register uint8_t *screen_cursor __asm__("a1") = (image) + (dst);                           \
+        register uint32_t width_class_arg __asm__("d0") = (klass);                                 \
+        register uint32_t shift_count __asm__("d6") = (shift);                                     \
+        register uint32_t row_count __asm__("d7") = (rows);                                        \
+        __asm__ __volatile__("jsr blit_sprite_rows_unclipped_regs"                                 \
+                             : "+a"(sprite_cursor), "+a"(screen_cursor), "+d"(width_class_arg),    \
+                               "+d"(shift_count), "+d"(row_count)                                  \
+                             : /* every input is an in-out above */                                \
+                             : "d1", "d2", "d3", "d4", "d5", "cc", "memory");                      \
+    } while (0)
 #else
 #define BLIT_SPRITE_ROWS_UNCLIPPED(image, src, dst, klass, shift, rows)                            \
     blit_sprite_rows((image), (src), (dst), (klass), (shift), (rows), SPRITE_GATE_UNCLIPPED)
@@ -318,8 +340,39 @@ DEFINE_CLIP_RIGHT_BLITTER(sprite_blit_w64_clip_right, 3u)
 #define RESTORE_LONGS_W48  6u   /* `lea 136` */
 #define RESTORE_LONGS_W64  8u   /* `lea 128` */
 #define RESTORE_LONGS_W80 10u   /* `lea 120` */
+/* ---- THE ASM-TWIN SEAM for the restore blitters, and it covers EVERY call site -----------------
+ *
+ * `src/asm/restore.S` transcribes the original's own five restore bodies (0x14d58 / 0x14d6a /
+ * 0x14d80 / 0x14d9a / 0x14db8) and picks one of them off `longs_per_row`. The restore replay is the
+ * largest single item in the frame — 149,634 profiled cycles against the original's 73,647 on a
+ * matched 75-sprite frame, 2,138 a call against 862 — because `copy_longs` INDEXES the image
+ * (it takes its cursors as offsets, so it cannot postincrement) and `-funroll-loops` peels its run
+ * with a `__mulsi3` call per restore. `test/test_asm_restore.py` is what proves the two equal.
+ *
+ * THE `#ifdef` IS INSIDE THE FUNCTION, and that is the difference from the sprite seam above.
+ * There, a macro keeps the C body referenced through the gated call site; here all seven call sites
+ * are this one function, so a macro would leave the C an unused `static` in the target build. One
+ * seam inside the routine they already share routes the replay AND `dispatch_sprite_blit`'s class-4
+ * arm together, which is the property wanted: a second seam is a second thing to forget.
+ *
+ * IT ENTERS AT THE REGISTER-ABI LABEL for the same measured reason as the sprite seam — 1,133
+ * cycles a call through the C ABI against 1,005 through this one — and the bodies touch no data
+ * register but %d0 and %d7, so this one needs no clobber list beyond the two it already names.
+ */
 static void restore_blit_rows(uint8_t *image, uint32_t src, uint32_t dst, uint32_t rows_minus_one,
                               unsigned longs_per_row) {
+#ifdef FS_ASM_SPRITE
+    register uint8_t *source_cursor __asm__("a0") = image + src;
+    register uint8_t *screen_cursor __asm__("a1") = image + dst;
+    register uint32_t longs_per_row_arg __asm__("d0") = longs_per_row;
+    register uint32_t row_count __asm__("d7") = rows_minus_one;
+
+    __asm__ __volatile__("jsr restore_blit_rows_regs"
+                         : "+a"(source_cursor), "+a"(screen_cursor), "+d"(longs_per_row_arg),
+                           "+d"(row_count)
+                         : /* every input is an in-out above */
+                         : "cc", "memory");
+#else
     unsigned rows = loop_passes(rows_minus_one + 1u, COUNT_MASK_WORD);
 
     for (unsigned row = 0; row < rows; row++) {
@@ -327,6 +380,7 @@ static void restore_blit_rows(uint8_t *image, uint32_t src, uint32_t dst, uint32
         src = addr_add(src, SCREEN_ROW_BYTES);
         dst = addr_add(dst, SCREEN_ROW_BYTES);
     }
+#endif
 }
 
 void restore_blit_w16(uint8_t *image, uint32_t src, uint32_t dst, uint32_t rows_minus_one) {
@@ -349,8 +403,16 @@ void restore_blit_w80(uint8_t *image, uint32_t src, uint32_t dst, uint32_t rows_
     restore_blit_rows(image, src, dst, rows_minus_one, RESTORE_LONGS_W80);
 }
 
+/* ...and the seam copy takes the same twin treatment, for the same reason and at the same seam
+ * depth: it is `copy_longs` over 80 longwords in one run, ~4 calls a frame whenever the draw base
+ * is inside the ring's lowest screen, and `src/asm/restore.S` carries the original's 80
+ * `move.l (a0)+,(a1)+` @ 0x156ae beside the five restore bodies. */
 void scroll_wrap_copy_1280(uint8_t *image, uint32_t src, uint32_t dst) {
+#ifdef FS_ASM_SPRITE
+    scroll_wrap_copy_1280_asm(image, src, dst);
+#else
     copy_longs(image, src, dst, SCROLL_WRAP_COPY_LONGS);
+#endif
 }
 
 /* ================================================================================================
@@ -576,7 +638,7 @@ static uint32_t dispatch_sprite_blit(uint8_t *image, DrawPass pass, unsigned wid
 
     if (index == SPRITE_BLIT_TBL_RESTORE) {
         /* The clip-RIGHT table at class 4: `A_restore_blit_tbl`'s first entry, `restore_blit_w32`
-         * @ 0x14d58, entered with the same A0/A1/D7 — an unmasked eight-byte-a-row COPY where a
+         * @ 0x14d6a, entered with the same A0/A1/D7 — an unmasked sixteen-byte-a-row COPY where a
          * masked blit was meant, and it leaves the restore cursor alone. */
         restore_blit_rows(image, src, dst, rows_minus_one, RESTORE_LONGS_W32);
         return restore_cursor;

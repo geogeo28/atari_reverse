@@ -47,21 +47,29 @@ BODIES = (("sprite_blit_w16", sprite.ENTRY_SPRITE_BLIT_W16),
 
 # WHAT THE TWIN COSTS OVER THE ORIGINAL, per width class, MEASURED. Everything the twin spends
 # beyond the original's own body is the C-ABI frame the original does not have: a six-register
-# `movem` each way, the four argument loads and the two `adda`s that make the image base real, the
-# width ladder, and the `bsr.w` bracket that lets each body keep the original's own closing `rts`.
+# `movem` each way, the five argument loads and the two `adda`s that make the image base real, the
+# `bsr.s` into the register-ABI entry, and the width ladder's own test and `bra.w`.
+#
+# THE GAME DOES NOT PAY THIS FRAME. `../src/sprite.c`'s seam enters at
+# `blit_sprite_rows_unclipped_regs` with its arguments already in the original's own registers, so
+# it pays the ladder and nothing else — MEASURED at 3,774 cycles a call through the C-ABI entry
+# against 3,544 through the register one, one build apart with nothing else changed
+# (`atari/profile.py ours`; the shipped build reads 3,447).
+# What is measured here is the C-ABI entry the SUITE drives, and it is still the right thing to pin:
+# the ladder and the four bodies it reaches are the shipped ones, so a translation that quietly cost
+# cycles would show up in it.
 #
 # IT IS A FIXED COST AND NOT A SHARE, so the bar is cycles rather than a ratio. A one-row class-0
-# call is ~420 cycles and a 64-row class-3 call is ~84,000; the same ~280 cycles is most of the
-# first and 0.3% of the second, so any single ratio would either exempt the small calls or fail the
+# call is ~420 cycles and a 64-row class-3 call is ~84,000; the same ~300 cycles is most of the
+# first and 0.4% of the second, so any single ratio would either exempt the small calls or fail the
 # large ones.
 #
 # THE FOUR NUMBERS DIFFER BY THE LADDER ARM EACH CLASS WALKS, and that is the whole of the spread:
-# class 0 leaves at the first `beq.s` and falls into the epilogue; each class after it pays one more
-# `subq.l`/`beq.s` pair (16 cycles) plus the `bra.s` back to the epilogue (10), and class 3 falls
-# through its last test instead of taking it (-2). Equality rather than a ceiling, so that ONE more
-# register in either `movem` list (16 cycles) reddens it — a deliberate change to the ladder is
-# re-measured here, not accommodated by loosening it.
-TWIN_FRAME_CYCLES = (264, 290, 306, 304)
+# class 0 leaves at the first `beq.s`; each class after it pays one more `subq.l`/`beq.s` pair (16
+# cycles); and class 3 falls through its last test instead of taking it (-2). Equality rather than a
+# ceiling, so that ONE more register in either `movem` list (16 cycles) reddens it — a deliberate
+# change to the ladder is re-measured here, not accommodated by loosening it.
+TWIN_FRAME_CYCLES = (278, 294, 310, 308)
 
 
 def _case(image, width_class, src, shift, rows_minus_one):

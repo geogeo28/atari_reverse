@@ -37,15 +37,25 @@ BODY_SUFFIX = "_body"
 BODY_END_SUFFIX = "_body_end"
 # How much of a mismatch to print. Enough to see which instruction moved, short enough to read.
 DIFF_BYTES = 32
+# `nm` type letters for a symbol that names an ADDRESS IN `.text`: global and local. Everything else
+# a twin defines — an `.equ`, which is `a` — is a value, not a place.
+TEXT_SYMBOL_TYPES = "Tt"
 
 
 def symbols(obj):
-    """{name: offset} for the object's own symbols, which for a `.o` are section-relative."""
+    """{name: text offset} for the object's own CODE symbols, which for a `.o` are section-relative.
+
+    TYPE-FILTERED, because a `.S` here also defines `.equ` names and `nm` prints those with the same
+    three fields and an ABSOLUTE value — 152, say, for a `lea` displacement. The moment a twin
+    derives a symbol name inside a macro (`restore.S`'s `RESTORE_BODY` does), one of those could be
+    read back as a span offset and this gate would compare a wrong, short slice of `.text` and pass.
+    The kit's own parser keeps the type letter for the same reason (`recreate_kit/asm_twin.py`).
+    """
     found = {}
     for line in subprocess.run([NM, str(obj)], check=True, capture_output=True,
                                text=True).stdout.splitlines():
         fields = line.split()
-        if len(fields) == 3:
+        if len(fields) == 3 and fields[1] in TEXT_SYMBOL_TYPES:
             found[fields[2]] = int(fields[0], 16)
     return found
 
@@ -65,6 +75,18 @@ def main(argv):
     spans = [pair.split("=") for pair in argv[3:]]
 
     table, text, image = symbols(obj), text_of(obj), image_path.read_bytes()
+    # EVERY TRANSCRIBED SPAN IN THE OBJECT MUST BE ON THE COMMAND LINE. `kit.mk` globs `src/asm/` and
+    # the test suites list their own bodies, so a body added to a `.S` is pinned there the day it is
+    # written — but this gate is an argv list, and a body missing from it is a span the SHIPPED
+    # object carries and nobody compared. That is the silent half of this file's own argument.
+    named = {name for name, _ in spans}
+    unpinned = sorted(sym[:-len(BODY_SUFFIX)] for sym in table
+                      if sym.endswith(BODY_SUFFIX) and sym[:-len(BODY_SUFFIX)] not in named)
+    if unpinned:
+        raise SystemExit(f"ERROR: {obj} defines transcribed bodies this gate was not asked about: "
+                         f"{', '.join(unpinned)}\n"
+                         f"       add each as <name>=<original address> to the build.sh call, or "
+                         f"the object that ships carries a span nobody compared")
     for name, address in spans:
         address = int(address, 0)
         try:

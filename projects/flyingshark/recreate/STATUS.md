@@ -27,17 +27,17 @@ ownership table and the conventions all live there rather than being restated he
 
 ## Suite
 
-**3,689 tests, all passing, no skips** — all fifteen files: `test_weapons.py` 902,
+**3,731 tests, all passing, no skips** — all sixteen files: `test_weapons.py` 902,
 `test_entity.py` 745, `test_player.py` 726, `test_hud.py` 333, `test_sound.py` 269,
 `test_sprite.py` 205, `test_frontend.py` 157, `test_asm_sprite.py` 80, `test_irq.py` 80,
-`test_init.py` 78, `test_scroll.py` 62, `test_image_model.py` 31, `test_constants.py` 8,
-`test_heap_guard.py` 8, `test_status.py` 5. Measured 2026-09-09 with
+`test_init.py` 78, `test_scroll.py` 62, `test_asm_restore.py` 42, `test_image_model.py` 31,
+`test_constants.py` 8, `test_heap_guard.py` 8, `test_status.py` 5. Measured 2026-09-09 with
 `rm -f build/*.so && find . -name __pycache__ -exec rm -rf {} + && make test`. `make guarded` runs
-the same 3,689 (Darwin/BSD only) and reports **11,058 guarded candidate runs** across its workers —
+the same 3,731 (Darwin/BSD only) and reports **11,290 guarded candidate runs** across its workers —
 every case whose candidate indexes the image with an address it computed.
 
-`test_asm_sprite.py` is the fifteenth file and a different KIND of differential: it compares the asm
-twin in `src/asm/sprite.S` against the C core it stands in for on the target build, rather than the C
+`test_asm_sprite.py` and `test_asm_restore.py` are a different KIND of differential: they compare the
+asm twins in `src/asm/` against the C cores they stand in for on the target build, rather than the C
 against the original. "On-target performance" below is where that fits.
 
 NOTHING SKIPS ANY MORE. The four skips this file opened with were the gates that arm on the first
@@ -1179,6 +1179,8 @@ frames, past the prescroll. It is a COUNT of vertical blanks and not a stopwatch
 | 3 | the asm twin for the four unclipped sprite blitters | **4.559** | **10.97** | **731,229** | **GO**, −41.1% |
 | 2e′ | lever 2e RE-MEASURED after lever 3, because the twin took the path 2e was chosen for: `src/sprite.c` back at -O2, twin linked | 5.532 | 9.04 | 886,488 | the flags still earn their 6,144 B — **worth 0.97 blanks a frame (21%)** even now that the C blitter they were aimed at runs only the gated path. What they buy today is `render_frame`'s own body, which lives in the same file |
 | 4 | the vertical-blank path: the PSG flush split, unrolled, and counted per PAIR instead of per store (`src/sound.c`, `atari/shim_include/psg.h`, `atari/shim_include/hw.h`) | 4.548 | 10.99 | 729,592 | **GO on the BLANK, and the pace cannot show it**: −1,178 profiled cycles a vertical blank (−17%). At 4.5 blanks that is ~6,400 wall cycles a frame against a 160,256-cycle blank, so it lands in the `Vsync` idle and the distribution barely moves — 3x1 4x89 5x2 6x**34** over 126 frames, against 3x1 4x89 5x2 6x**35** over 127. The evidence for this row is the per-blank table below, not the pace |
+| 5 | an asm twin for the five restore blitters and the ring-seam copy | **4.321** | **11.57** | **692,561** | **GO**, −5.3% on the mean and the whole shape of the tail: every heavy frame went from **6 vertical blanks to 5** (distribution 3x1 4x89 5x2 6x35 → 3x1 4x89 5x44; the window's tail moves by a frame between runs, so the 5-blank count reads 43 or 44). −2,048 B of text |
+| 6 | a register ABI at the two hot twins' seams, replacing the C stack ABI | **4.316** | **11.59** | **691,486** | **GO on WORK, no change to the pace**: −27,980 profiled (−33,688 wall) cycles a frame, measured as the first column against the last of the table below — real, and it lands inside the same 5-blank bucket. 0 B of text. Levers 4 and 5-6 were each measured on their own tree from 57dc371, without the other; the merged pace is the headline |
 | — | the original, measured the same way | 4.000 | 12.50 | 641,039 | — |
 
 Two things in that table are worth reading twice.
@@ -1194,10 +1196,12 @@ instead, saying which). That is what turns 2a and 2c from wins into NO-GOs, and 
 its flags to ONE file: `atari/profile.py ours` had already said that 77% of the frame is inside
 `src/sprite.c`, so the flags are spent where the cycles are. Every text figure in the table is
 measured on the SAME build shape — the smoke build with the twin linked — so the four are
-comparable; the shipped one is 56,576 B against the campaign's opening 50,688 B, and **all 5,888 of
-that is the flags: the twin itself is 256 bytes SMALLER** than the C it replaces at the call sites
-(832 bytes of object text, against four specialised copies of `blit_sprite_row` that GCC no longer
-has to emit).
+comparable; it was 56,576 B against the campaign's opening 50,688 B, and **all 5,888 of that was the
+flags: the sprite twin itself is 256 bytes SMALLER** than the C it replaces at the call sites (832
+bytes of object text, against four specialised copies of `blit_sprite_row` that GCC no longer has to
+emit). **Lever 4 then took text back off it again** — measured on the PLAY build before and after,
+55,040 B against 57,088, because five specialised copies of `copy_longs` went the same way the
+blitter's did; the smoke build, which is what the rest of this table is measured on, is 55,296 B.
 
 ### What each lever was
 
@@ -1207,6 +1211,8 @@ has to emit).
 | 2e | `atari/build.sh` compiles `src/sprite.c` with `-O3 -funroll-loops --param max-unroll-times=2` and every other core at -O2 | 12,544 B of text; the SOURCE is unchanged, so it is a flag and not a variant |
 | 3 | `src/asm/sprite.S` transcribes the original's own four unclipped blitters (0x153b2 / 0x15408 / 0x154a4 / 0x15586), byte for byte, and `src/sprite.c`'s `BLIT_SPRITE_ROWS_UNCLIPPED` seam calls it in the target build | 832 B of object text, and NET −256 B of PROGRAM text (see above); four gates, each proved able to fail (`src/asm/README.md`) |
 | 4 | `flush_shadow_to_psg`'s one loop with an `index == SHADOW_MIXER_GOES_BEFORE` test inside it became TWO constant-length loops with the mixer between them, both `#pragma GCC unroll`ed — so each register number is a literal at its own store and `psg_port_write`'s range test folds away. And the pair is counted ONCE: `atari/shim_include/hw.h` splits `hw_store8` (the bus arithmetic and the byte width, no tally) out of `hw_write8`, and `psg.h`'s `fs_psg_store` returns the 1 its store is worth so the two fold into a single `addq.l #2` — three read-modify-writes a register write become two. 199 cycles a register write became 110 | +512 B of the play build's text (57,344 → 57,856) and 1,024 B of the floppy's free bytes (14,336 → 13,312) |
+| 5 | `src/asm/restore.S` transcribes the original's own five restore blitters (0x14d58 / 0x14d6a / 0x14d80 / 0x14d9a / 0x14db8) and its ring-seam copy (0x156ae), byte for byte, and `src/sprite.c`'s `restore_blit_rows` and `scroll_wrap_copy_1280` call them in the target build. The replay was the frame's LARGEST single item — 149,634 profiled cycles against the original's 73,647 on a matched 75-sprite frame, 2,138 a call against 862 — because `include/common.h`'s `copy_longs` indexes the image (it takes its cursors as offsets, so it cannot postincrement) and `-funroll-loops` peels it with a `__mulsi3` call per restore | NET **−2,048 B** of program text: GCC no longer has five specialised `copy_longs` to unroll. `test/test_asm_restore.py` (42 tests) plus the build's byte gate over six more spans, every gate proved able to fail |
+| 6 | each hot twin gained a second entry point into the SAME ladder and bodies — `blit_sprite_rows_unclipped_regs` / `restore_blit_rows_regs`, entered with a0/a1/d0/d6/d7 already loaded — and `src/sprite.c`'s two seams `jsr` it from a ten-line inline `asm` instead of pushing a C frame. Measured per call: the sprite twin 3,774 → 3,503 cycles, the restore twin 1,133 → 1,005 (`atari/profile.py ours`, same window). The seam copy kept the C ABI: its whole frame is 56 cycles at ~1 call a frame | 0 B of text. The C-ABI entries stay — they are what `AsmTwins.call` can drive, so the suite still walks the shipped ladder and bodies on every case; the shipped-only part is the register marshalling, whose surface is the framebuffer identity (`src/asm/README.md`, "The two entries") |
 
 ### What a vertical blank costs, layer by layer
 
@@ -1256,7 +1262,41 @@ Two things were measured on that path and NOT taken, so the next agent does not 
   aliasing rules may alias the counter, so GCC keeps every read-modify-write with or without the
   qualifier (checked on the emitted m68k). It would have weakened a surface for nothing.
 
-### Where the remaining 1.14x is
+### Where the remaining gap is, re-measured after levers 4 to 6
+
+`atari/profile.py ours --frames 100`, a 1000-vblank window opened at the same attract frame on each
+of the three builds, so the three columns are the same instrument on the same content. Per frame,
+except the two `cyc/call` rows which are per call over ~13,000 calls and are the low-noise readings:
+
+**The three columns are three builds of ONE tree**, and they isolate lever 5 — lever 4 is already
+landed in all three:
+
+| what | lever 5 off | lever 5 on the SPRITE twin only | lever 5 on both (ships) |
+|---|---|---|---|
+| frames in the window | 213 | 215 | 215 |
+| profiled cycles/frame | 627,133 | 621,299 | 621,338 |
+| the `Vsync` spin, i.e. the IDLE | 59,636 | 68,707 | 81,821 |
+| **WORK** = total − idle | **567,497** | **552,592** | **539,517** |
+| the unclipped sprite twin, cyc/call | 3,774 | **3,544** | 3,447 |
+| the restore twin, cyc/call | 1,133 | 1,138 | **965** |
+| the restore path, cycles/frame | 74,161 | 74,648 | **63,293** |
+
+Read three things off it. **The per-call figures are the clean readings** — each is an average over
+~13,000 calls, and the middle column isolates one seam: the sprite twin's ABI is 3,774 → 3,544 with
+only that seam moved. The last column is both seams AND the `bsr`/`bra` bracket the split made
+vestigial (`src/asm/sprite.S`, "THE LADDER BRANCHES, IT DOES NOT CALL" — 34 cycles a call that used
+to return to an epilogue the ladder no longer has), which is where the further 3,544 → 3,447 and
+1,138 → 965 come from. **Lever 5's whole win is the first column against the last**,
+567,497 − 539,517 = **27,980 profiled** = 33,688 wall. **And it buys no blank**: a heavy frame's WORK
+is ~709,000 wall after it, against the 641,039 four blanks need, so it is banked against the levers
+below rather than visible today.
+
+Lever 4's own win is not in this table — its before is the phase report's matched 75-sprite frame,
+where the restore replay cost **149,634 profiled cycles against the original's 73,647**. What the
+pace measured of it is the honest figure: the heavy page's wall mean fell 961,544 → 801,407, one
+whole vertical blank.
+
+### Where the remaining 1.14x was, measured before levers 4 and 5
 
 `atari/profile.py ours` / `original` / `compare`, over a 1000-vblank window (ours 191 frames,
 the original's 250). Per frame, ours against theirs:
@@ -1265,7 +1305,7 @@ the original's 250). Per frame, ours against theirs:
 |---|---|---|---|
 | the whole window | 699,208 | 534,278 | 1.31x by this measure, 1.14x by the pace |
 | `render_frame` | 625,662 | 461,206 | 1.36x — everything below is inside it |
-| the unclipped blitter | 230,265 (the twin) | 231,480 | **parity, and the two windows are NOT what says so.** Ours holds 60.2 calls a frame at 3,823 cycles each and the original's 70.0 at 3,308: two windows over the same screen catch different text pages, so the per-frame agreement is 14% fewer calls times 16% more cycles cancelling, and the shipped profile carries no `sprite_blit_w32/w48/w64` row to sum against ours at all. What says parity is the pair of pins in `test/test_asm_sprite.py`: the twin's four bodies are BYTE-IDENTICAL to the .PRG's, and over one staged case clocked on one instrument the twin costs the original's cycles plus a fixed 264-306 of C-ABI frame |
+| the unclipped blitter | 230,265 (the twin) | 231,480 | **parity, and the two windows are NOT what says so.** Ours holds 60.2 calls a frame at 3,823 cycles each and the original's 70.0 at 3,308: two windows over the same screen catch different text pages, so the per-frame agreement is 14% fewer calls times 16% more cycles cancelling, and the shipped profile carries no `sprite_blit_w32/w48/w64` row to sum against ours at all. What says parity is the pair of pins in `test/test_asm_sprite.py`: the twin's four bodies are BYTE-IDENTICAL to the .PRG's, and over one staged case clocked on one instrument the twin costs the original's cycles plus a fixed frame — 264-306 when that was measured, 278-310 today |
 | `blit_sprite_clipped` (the gated path, still C) | 50,990 | 4,292 | 2.9x per call; 7% of the frame |
 | `Vsync` | 90,653 | not attributed | the pacer's own wait, i.e. the frame's idle |
 | `build_text_display_list` | 28,812 | 16,617 | 1.74x — it is a SHIM routine (`atari/flyshark_main.c`), not a core |
@@ -1277,20 +1317,23 @@ the original's 250). Per frame, ours against theirs:
 | candidate | what it is worth | why it is left |
 |---|---|---|
 | a twin for the four GATED bodies (0x14e1e / 0x14f06 / 0x1505e / 0x15230) | up to ~46,000 cycles a frame (7%) | it is four more transcriptions, and every one of them `btst`s an ABSOLUTE address (`$16426`) once per group — which in a reconstruction is `image base + 0x16426` and cannot be byte-pinned. It would be the first body here whose transcription pin needed an exception, and that case should be made by a measurement rather than by symmetry |
-| `COUNT_BARRIER` / `CURSOR_BARRIER` on `include/common.h`'s `copy_longs` | ~18,000 cycles a frame (the `__mulsi3` row) | the idiom is the kit's and documented (`machine.h`, "WHAT KEEPS A SPELT-OUT COPY RUN A POSTINCREMENT RUN"), but `copy_longs` lives in `include/common.h`, which this campaign did not own. It is one edit and one re-measure |
+| ~~`COUNT_BARRIER` / `CURSOR_BARRIER` on `include/common.h`'s `copy_longs`~~ | ~18,000 cycles a frame (the `__mulsi3` row) | **SUBSUMED by lever 5.** It was the `__mulsi3` half of the restore replay, and the twin took the whole of it: `__mulsi3` is now 501 cycles a frame (420 calls in a 1000-vblank window, none of them a restore). `copy_longs` still has no barrier and `include/common.h` is still the kit's, so the idiom is a kit follow-up rather than a lever here |
 | `build_text_display_list` at 1.74x | ~12,000 cycles a frame | it is shim code composed from verified cores, so a twin for it would be transcribing a routine the reconstruction does not have a core for |
 | an asm twin for `A\MODULE.BAK`'s vertical-blank tick (0x5896a and the routines under it) | **2,890 cycles a BLANK, i.e. ~17,300 a frame at 6 blanks** — the whole of what is left on that path: 5,208 today against the original's 2,318 | the C levers on that path are spent (see "What a vertical blank costs" above): the shim's dispatch is 470 cycles and cannot shrink, and the two remaining C rewrites were measured and made it worse. What is left is the driver's body, where the original addresses every one of its tables `(d16,PC)` in 12 cycles and GCC has to materialise a 32-bit image offset into a data register first — 28. That is not a C-level defect and no C-level change reaches it. The twin would be the FIRST one taken from the runtime-loaded module rather than from the .PRG, and `projects/flyingshark/out/names_module.txt` — its 23 symbols — still says "NOTHING HERE IS APPLIED YET", so applying that name map is step one |
-| the last blank: 4.56 → 4.00 | the whole remaining gap | STRUCTURAL. To land on 4 blanks the frame's WORK must fit under four (641,039 cycles), and the original is already at 4.000 with its own work overrunning three — so parity everywhere is what 4.00 costs, not a lever. The distribution says the same thing more usefully: **89 of 126 frames already take 4 blanks, exactly as the original does** (2026-09-09, after lever 4; it was 89 of 127 before it); the 34 that take 6 are the attract screen's heavier text page, where the display list is longest |
+| the last blank: 4.32 → 4.00 | the whole remaining gap | STRUCTURAL. To land on 4 blanks a HEAVY frame's WORK must fit under four (641,039 wall cycles) and it is now ~709,000 — so ~68,000 wall short, which is roughly the clipped blitter's excess plus the VBL handler's. The distribution says the same thing more usefully: **89 of 134 frames already take 4 blanks, exactly as the original does** (and one takes 3); the 43-44 that take 5 are the attract screen's heavier text page, where the display list is longest, and levers 5 and 6 took those from 6 blanks to 5 |
+| the clipped blitter at 2.85x per call | ~35,000 profiled / ~42,000 wall cycles a frame | ours is 10,826 cycles a call against the original's 3,802 at 5.0 calls a frame. The asm route is the row above it; the route that needs no exception is a C-level rewrite of `blit_sprite_clipped`'s row loop, which `make test` and `make guarded` pin |
 
 ### What the campaign did NOT pin, and it is named rather than left implicit
 
-Three gaps the review found, each real and each cheaper to record than to close badly.
+Four gaps the review found, each real and each cheaper to record than to close badly — and the
+fourth is the third one CLOSED, kept as a row because what replaced it is narrower rather than gone.
 
 | gap | why it matters | what would close it |
 |---|---|---|
 | **the `-O3` arm of `src/sprite.c` is pinned by ONE frame** | it is the only file compiled differently on target, it is the most branch-dense core in the program, and `make test` / `make guarded` build the candidate with the KIT's flags — so the target codegen of `blit_sprite_clipped`'s four ladders, the restore path and the tile band is verified by exactly one check: `atari/smoke.py`'s framebuffer identity at attract frame 120. An unrolling defect in an arm the attract screen never reaches leaves no trace anywhere | a second framebuffer anchor at a frame whose display list exercises the clip ladders — or playing past the attract screen at all, which is the row above |
 | **`HOT_CFLAGS` has no build gate** | the diff argues at length that losing `-DFS_ASM_SPRITE` is invisible to every check but the frame rate, and gates it by asking the objects. `HOT_CFLAGS` has exactly that property and no gate: drop it and the frame loses 21% while `make test`, the framebuffer identity and the twin gates all stay green | the only non-vacuous surface is a MEASUREMENT — `atari/profile.py pace` — and a build gate that asserted a code-size floor instead would redden on any legitimate codegen change. So it is recorded rather than gated, and re-running `pace` after any build change is the working rule |
-| **the twin's C ABI is spelt in three places** | `src/sprite.c`'s `extern`, `src/asm/sprite.S`'s `ARG_*` block and `test/test_asm_sprite.py`'s argument tuple must agree in order and count, and nothing compares them. The differential build never compiles the `extern`, so it is exercised by no test at all. `atari/build.sh`'s byte gate covers the ASSEMBLY (the shipped object must equal the blob the tests pinned) but not the C declaration facing it | a prototype in `include/sprite.h` that both the core and the gate read, which is a file this campaign did not own. Until then the failure mode is named here: a twin that gains an argument and a declaration that does not would push the wrong frame, and only the one framebuffer compare could notice |
+| ~~**the twin's C ABI is spelt in three places**~~ — **CLOSED by lever 4** | it was `src/sprite.c`'s `extern`, `src/asm/sprite.S`'s `ARG_*` block and `test/test_asm_sprite.py`'s argument tuple agreeing by hand, with nothing comparing them | every twin's C prototype now lives in `include/sprite.h` under one `#ifdef FS_ASM_SPRITE` block, and `atari/build.sh` DERIVES its gate's symbol list from that block (and the list of what the core must CALL from `src/sprite.c`'s own seams) rather than from a literal. Both derivations are proved able to fail. What is left is narrower and is the row below |
+| **the register-ABI seams are shipped-only code** | lever 5 put a ten-line inline `asm` in each of `src/sprite.c`'s two hot seams, and the host differential build never compiles either. The twins' ladders and bodies are still walked by every differential case (the C-ABI entry the suite drives `bsr`s into the same ladder), so what is unpinned is exactly the register marshalling — loading a0/a1/d0/d6/d7 and a `jsr` | nothing cheap. `atari/smoke.py`'s 32,000-byte framebuffer identity IS a surface for it, and a sufficient one in the sense that every value the glue marshals is consumed by the blit, so a defect moves pixels rather than hiding — but it is one frame of one screen, which is the `-O3` row's limitation over again. The honest close is the same second framebuffer anchor that row asks for |
 
 ## Not reconstructed, and why
 
